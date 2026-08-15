@@ -24,7 +24,7 @@ nekro-nxt/
 3. 阅读 [`docs/NekroNxt项目共识.md`](docs/NekroNxt项目共识.md)；
 4. 新功能设计前阅读 [`docs/02-未来扩展方向.md`](docs/02-未来扩展方向.md) 和相关 Decision Note；
 5. 消息、频道或 Adapter 工作必须阅读 [`docs/03-消息内容与投递协议.md`](docs/03-消息内容与投递协议.md)；
-6. 开始一期实现前阅读 [`docs/06-一期开发计划与决策清单.md`](docs/06-一期开发计划与决策清单.md)；
+6. 开始一期实现前阅读 [`docs/04-一期开发计划与决策清单.md`](docs/04-一期开发计划与决策清单.md)；
 7. 打开 [`prototype/index.html`](prototype/index.html) 验证产品交互；
 8. 需要深入架构时再阅读完整设计和专题协议。
 
