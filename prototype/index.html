@@ -1,0 +1,69 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="description" content="NekroNxt 新一代智能体平台交互原型" />
+    <title>NekroNxt · 产品交互原型</title>
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <div class="prototype-bar">
+      <div class="prototype-mark"><span>需求确认原型</span><b>V2</b></div>
+      <label class="scenario-picker">
+        <span>快速跳转</span>
+        <select id="scenarioSelect" aria-label="选择演示场景">
+          <option value="agents">1 · 智能体首页</option>
+          <option value="agent-create">2 · 创建智能体</option>
+          <option value="channel">3 · 单频道会话</option>
+          <option value="capabilities">4 · 智能体能力配置</option>
+          <option value="binding">5 · 频道绑定</option>
+          <option value="creator">6 · 创造工作台</option>
+          <option value="extension">7 · 本地扩展详情</option>
+        </select>
+      </label>
+      <label class="annotation-toggle">
+        <input id="annotationToggle" type="checkbox" />
+        <span>显示交互逻辑标注</span>
+      </label>
+      <span class="prototype-hint">所有操作均为本地演示，不写入真实配置</span>
+    </div>
+
+    <div class="app-shell">
+      <header class="titlebar">
+        <button class="brand" data-action="navigate" data-view="agents" aria-label="返回智能体首页">
+          <span class="brand-symbol">N</span>
+          <span>NekroNxt</span>
+        </button>
+        <div id="titleContext" class="title-context"></div>
+        <div class="runtime-summary">
+          <span class="status-dot healthy"></span>
+          <span>本地节点正常</span>
+          <button class="icon-button" data-action="open-command" title="快速操作">⌘ K</button>
+        </div>
+      </header>
+
+      <aside class="sidebar">
+        <nav class="primary-nav" aria-label="主导航">
+          <button data-action="navigate" data-view="agents"><span class="nav-icon">◎</span><span>智能体</span></button>
+          <button data-action="navigate" data-view="channel"><span class="nav-icon">▤</span><span>消息</span><i id="messageBadge" class="nav-badge">3</i></button>
+          <button data-action="navigate" data-view="binding"><span class="nav-icon">⌁</span><span>连接</span></button>
+          <button data-action="navigate" data-view="extension"><span class="nav-icon">✦</span><span>扩展</span></button>
+          <button data-action="navigate" data-view="settings"><span class="nav-icon">⚙</span><span>设置</span></button>
+        </nav>
+        <div id="sidebarContext" class="sidebar-context"></div>
+        <div class="sidebar-user">
+          <span class="avatar mini warm">M</span>
+          <div><strong>管理员</strong><small>本地实例</small></div>
+          <button class="icon-button">⌄</button>
+        </div>
+      </aside>
+
+      <main id="screen" class="screen" tabindex="-1"></main>
+    </div>
+
+    <div id="toastRegion" class="toast-region" aria-live="polite"></div>
+    <div id="modalRoot"></div>
+    <script src="./app.js"></script>
+  </body>
+</html>

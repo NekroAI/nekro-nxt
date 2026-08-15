@@ -1,0 +1,26 @@
+node_modules/
+.pnpm-store/
+dist/
+build/
+coverage/
+.DS_Store
+*.log
+.env
+.env.*
+!.env.example
+data/
+tmp/
+
+# Local-only research, operating notes, deployment details and AI context.
+.local/
+docs-private/
+*.local.md
+
+# Credentials and signing material must never enter the public repository.
+.npmrc
+*.pem
+*.p12
+*.pfx
+*.mobileprovision
+credentials*.json
+secrets/

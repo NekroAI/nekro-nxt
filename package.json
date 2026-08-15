@@ -1,0 +1,12 @@
+{
+  "name": "nekro-nxt",
+  "version": "0.0.0",
+  "private": true,
+  "description": "NekroAI 下一代智能体平台",
+  "type": "module",
+  "scripts": {
+    "prototype": "python3 -m http.server 4173 --directory prototype",
+    "check:prototype": "node --check prototype/app.js",
+    "check:public": "node scripts/check-public-boundary.mjs"
+  }
+}
