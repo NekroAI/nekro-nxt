@@ -599,9 +599,10 @@ export const createNekroHostApi = (webServer: WebServer, runtime: NekroRuntime):
     path: '/api/dynamic',
     handler: async (req, res) => {
       const url = new URL(req.url ?? '/', 'http://localhost')
-      const match = /^\/api\/dynamic\/([^/]+)\/(approve|decline|invoke|get-client-code|report-render-failure)$/.exec(
-        url.pathname,
-      )
+      const match =
+        /^\/api\/dynamic\/([^/]+)\/(approve|decline|invoke|get-client-code|report-render-failure|run-host-half|settle-user-run)$/.exec(
+          url.pathname,
+        )
       if (!match) {
         writeError(res, 404, 'not-found', `未定义路由：${req.method} ${url.pathname}。`)
         return
@@ -668,6 +669,52 @@ export const createNekroHostApi = (webServer: WebServer, runtime: NekroRuntime):
           writeJson(res, 200, { ok: result.ok, ...(result.ok ? { value: result.value } : { message: result.message }) })
         } catch (error) {
           writeError(res, 400, 'dynamic-invoke-failed', error instanceof Error ? error.message : String(error))
+        }
+        return
+      }
+      if (action === 'run-host-half') {
+        const parsed = z
+          .object({
+            pluginId: z.string().trim().min(1),
+            packageId: z.string().trim().min(1),
+            mode: z.enum(['run', 'update']),
+            requestId: z.string().nullable().optional(),
+            approveFutureVersions: z.boolean().optional().default(false),
+          })
+          .strict()
+          .parse(body)
+        try {
+          const result = await runtime.host.runDynamicHostHalf(
+            dshSessionId,
+            parsed.pluginId,
+            parsed.packageId,
+            parsed.mode,
+            parsed.requestId ?? null,
+            parsed.approveFutureVersions,
+          )
+          writeJson(res, 200, result)
+        } catch (error) {
+          writeError(res, 400, 'dynamic-host-half-failed', error instanceof Error ? error.message : String(error))
+        }
+        return
+      }
+      if (action === 'settle-user-run') {
+        const parsed = z
+          .object({
+            pluginId: z.string().trim().min(1),
+            resolution: z.unknown(),
+          })
+          .strict()
+          .parse(body)
+        try {
+          const result = await runtime.host.settleDynamicUserRun(
+            dshSessionId,
+            parsed.pluginId,
+            parsed.resolution as never,
+          )
+          writeJson(res, 200, result)
+        } catch (error) {
+          writeError(res, 400, 'dynamic-settle-failed', error instanceof Error ? error.message : String(error))
         }
         return
       }
