@@ -62,8 +62,9 @@ Web 端不复制一份业务事实到 Zustand。`ProductHostPort.getSnapshot()` 
 ### 3.2 Web 侧
 
 - `apps/web/src/http-host.ts` 实现 `ProductHostPort`：`getSnapshot()` 缓存式 `fetch('/api/snapshot')`；`subscribe()` 用 `EventSource('/api/events')`（`channel-fact`/`status` 触发刷新，网络故障静默降级+自动重连）；`execute()` 映射真实命令。
-- `execute` 命令表：`agents.create`、`channels.sendMessage`、`agents`（占位）、`extensions.activate`、`extensions.deactivate`、`connections.create`；未知命令静默返回 `null`（不崩 UI，等切片后续补齐）。
-- `product-store` 的 `createAgent`/`sendMessage`/`createConnection`/`setExtensionActive` 在有活动 Host 时委托 `execute`，无 Host 保留 demo 数据（现有 UI 测试不破）。
+- `execute` 命令表：`agents.create`、`channels.sendMessage`、`agents`（占位）、`extensions.activate`、`extensions.deactivate`、`extensions.saveFromDynamic`、`connections.create`、`connections.test`、`dynamic.approve`、`dynamic.decline`；未知命令静默返回 `null`（不崩 UI，等切片后续补齐）。
+- `product-store` 的 `createAgent`/`sendMessage`/`createConnection`/`setExtensionActive`/`resolveApproval` 在有活动 Host 时委托 `execute`，无 Host 保留 demo 数据（现有 UI 测试不破）。
+- 创造工作台（Creator 页）改读快照投影的真实 `dynamic`（运行动态 Package + 审批请求），`resolveApproval` 经 `dynamic.approve/decline` 派发真实审批；`HttpDynamicClientHost` 实现 `DynamicClientHostPort` 驱动浏览器动态 Client 回路。
 - `main.tsx` 启动 `ProductHostCoordinator(new HttpProductHost())`；Vite `dev` 把 `/api` proxy 到 4949（`NEKRO_API_PROXY` 可覆盖）。
 
 ### 3.3 Server 可执行入口
