@@ -1,7 +1,7 @@
 import type { WebServer, WebRoute } from '@deepseek-ai/dsh-host-webserver'
 import type { OutboundState } from '@nekro-nxt/channel-runtime'
 import type { AgentRevisionContent } from '@nekro-nxt/core'
-import type { AgentId, ChannelId, MessagePart } from '@nekro-nxt/contracts'
+import type { AgentId, ChannelId, ExtensionId, ExtensionRevisionId, MessagePart } from '@nekro-nxt/contracts'
 import type { IncomingMessage, ServerResponse } from 'node:http'
 import { z } from 'zod'
 import type { NekroRuntime } from './bootstrap.js'
@@ -63,6 +63,13 @@ const messageBodySchema = z
   )
 
 const idParamSchema = z.string().trim().min(1)
+
+const activationSchema = z
+  .object({
+    agentId: z.string().trim().min(1),
+    revisionId: z.string().trim().min(1),
+  })
+  .strict()
 
 export interface SnapshotMessage {
   readonly id: string
@@ -148,6 +155,45 @@ export const buildSnapshotMessage = (runtime: NekroRuntime, channelId: ChannelId
   return out.toReversed()
 }
 
+/** Project persisted local Extensions and their Agent Activations for the Shell. */
+const projectExtensions = (
+  runtime: NekroRuntime,
+): Array<{
+  id: string
+  slug: string
+  displayName: string
+  description: string
+  revisionNumber: number
+  activation: string
+  agentId?: string
+}> => {
+  const activations = runtime.repository.listActiveActivations()
+  return runtime.repository.listExtensionRevisions().flatMap((revision) => {
+    const extension = runtime.repository.getExtension(revision.extensionId)
+    if (!extension || extension.deletedAt !== undefined) return []
+    const activation = activations.find((candidate) => candidate.extensionId === extension.id)
+    const displayState =
+      activation === undefined
+        ? 'inactive'
+        : activation.state === 'active'
+          ? 'active'
+          : activation.state === 'failed'
+            ? 'failed'
+            : 'waiting-safe-switch'
+    return [
+      {
+        id: extension.id,
+        slug: extension.slug,
+        displayName: extension.displayName,
+        description: extension.description,
+        revisionNumber: revision.revisionNumber,
+        activation: displayState,
+        ...(activation === undefined ? {} : { agentId: activation.agentId }),
+      },
+    ]
+  })
+}
+
 export const createNekroHostApi = (webServer: WebServer, runtime: NekroRuntime): NekroHostApi => {
   const disposers: Array<() => void> = []
 
@@ -201,7 +247,7 @@ export const createNekroHostApi = (webServer: WebServer, runtime: NekroRuntime):
       channels: channelProjection,
       messages,
       connections: connections ? [connections] : [],
-      extensions: [],
+      extensions: projectExtensions(runtime),
     }
   }
 
@@ -326,8 +372,71 @@ export const createNekroHostApi = (webServer: WebServer, runtime: NekroRuntime):
     },
   })
 
+  // POST/DELETE /api/extensions/:id/activation → AgentActivation lifecycle (M4).
+  registerRoute({
+    kind: 'prefix',
+    path: '/api/extensions',
+    handler: async (req, res) => {
+      const url = new URL(req.url ?? '/', 'http://localhost')
+      const match = /^\/api\/extensions\/([^/]+)\/(activation|revisions)$/.exec(url.pathname)
+      if (!match) {
+        writeError(res, 404, 'not-found', `未定义路由：${req.method} ${url.pathname}。`)
+        return
+      }
+      const extensionId = idParamSchema.safeParse(match[1]!)
+      if (!extensionId.success) {
+        writeError(res, 400, 'invalid-extension', '无效的扩展 ID。')
+        return
+      }
+      const action = match[2]!
+      if (action !== 'activation') {
+        writeError(res, 501, 'not-implemented', '扩展保存流程尚未通过此端点开放。')
+        return
+      }
+      if (req.method === 'POST') {
+        // Activate a saved Revision for an intelligent-agent.
+        let parsed: z.output<typeof activationSchema>
+        try {
+          parsed = activationSchema.parse(await readJsonBody(req))
+        } catch (error) {
+          writeError(res, 400, 'invalid-request', error instanceof Error ? error.message : String(error))
+          return
+        }
+        try {
+          const activation = await runtime.activation.activate({
+            agentId: parsed.agentId as AgentId,
+            extensionId: extensionId.data as ExtensionId,
+            revisionId: parsed.revisionId as ExtensionRevisionId,
+          })
+          writeJson(res, 200, { activation: { id: activation.id, state: activation.state } })
+        } catch (error) {
+          writeError(res, 400, 'activation-failed', error instanceof Error ? error.message : String(error))
+        }
+        return
+      }
+      if (req.method === 'DELETE') {
+        // Disable the current Activation of this Extension (any Agent).
+        try {
+          const activation = runtime.repository
+            .listActiveActivations()
+            .find((candidate) => candidate.extensionId === (extensionId.data as ExtensionId))
+          if (!activation) {
+            writeError(res, 404, 'not-active', '该扩展当前没有已启用的 Activation。')
+            return
+          }
+          await runtime.activation.disable(activation.id)
+          writeJson(res, 200, { disabled: true })
+        } catch (error) {
+          writeError(res, 400, 'disable-failed', error instanceof Error ? error.message : String(error))
+        }
+        return
+      }
+      writeError(res, 405, 'method-not-allowed', '只支持 POST/DELETE。')
+    },
+  })
+
   // Catch-all under /api: slice-2 endpoints (QQ Connection, Extension save &
-  // Activation, capability changes) return 501 this round.
+  // capability changes) return 501 this round.
   registerRoute({
     kind: 'prefix',
     path: '/api',
