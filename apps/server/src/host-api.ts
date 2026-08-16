@@ -71,6 +71,13 @@ const activationSchema = z
   })
   .strict()
 
+const createConnectionSchema = z
+  .object({
+    appId: z.string().trim().min(1),
+    credentialRef: z.string().trim().min(1),
+  })
+  .strict()
+
 export interface SnapshotMessage {
   readonly id: string
   readonly channelId: ChannelId
@@ -243,12 +250,12 @@ export const createNekroHostApi = (webServer: WebServer, runtime: NekroRuntime):
       }
     })
     const messages: SnapshotMessage[] = channels.flatMap((channel) => buildSnapshotMessage(runtime, channel.id))
-    const connections = runtime.repository.getConnection(runtime.webConnectionId)
+    const connections = runtime.core.listConnections()
     return {
       agents,
       channels: channelProjection,
       messages,
-      connections: connections ? [connections] : [],
+      connections,
       extensions: projectExtensions(runtime),
     }
   }
@@ -370,6 +377,40 @@ export const createNekroHostApi = (webServer: WebServer, runtime: NekroRuntime):
         })
       } catch (error) {
         writeError(res, 400, 'inbound-failed', error instanceof Error ? error.message : String(error))
+      }
+    },
+  })
+
+  // POST /api/connections → create a configured Connection (e.g. QQ 机器人账号).
+  registerRoute({
+    kind: 'exact',
+    path: '/api/connections',
+    handler: async (req, res) => {
+      if (req.method !== 'POST') {
+        writeError(res, 405, 'method-not-allowed', '只支持 POST。')
+        return
+      }
+      let parsed: z.output<typeof createConnectionSchema>
+      try {
+        parsed = createConnectionSchema.parse(await readJsonBody(req))
+      } catch (error) {
+        writeError(res, 400, 'invalid-request', error instanceof Error ? error.message : String(error))
+        return
+      }
+      try {
+        // 真实凭据只以引用形式保存；配置与状态进入持久化 Connection 记录。
+        const connection = runtime.core.createConnection({
+          adapterKey: 'qq-openclaw',
+          config: { appId: parsed.appId },
+          credentialRefs: { clientSecret: parsed.credentialRef },
+        })
+        writeJson(res, 201, {
+          connectionId: connection.id,
+          adapterKey: connection.adapterKey,
+          status: connection.status,
+        })
+      } catch (error) {
+        writeError(res, 400, 'connection-failed', error instanceof Error ? error.message : String(error))
       }
     },
   })

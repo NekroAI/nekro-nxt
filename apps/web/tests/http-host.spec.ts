@@ -198,6 +198,30 @@ describe('HttpProductHost', () => {
     unsubscribe()
   })
 
+  it('routes connections.create to POST /api/connections with a credential reference', async () => {
+    const requests: Array<{ url: string; init?: RequestInit }> = []
+    fetchMock = vi.fn((input: string, init?: RequestInit) => {
+      requests.push({ url: input, ...(init === undefined ? {} : { init }) })
+      if (input === '/api/snapshot') return Promise.resolve(stubResponse(200, snapshotBody()))
+      if (input === '/api/connections' && init?.method === 'POST') {
+        return Promise.resolve(stubResponse(201, { connectionId: 'connection-qq', status: 'configured' }))
+      }
+      return Promise.resolve(stubResponse(404, { error: { code: 'not-found', message: 'x' } }))
+    })
+    vi.stubGlobal('fetch', fetchMock)
+    vi.stubGlobal('EventSource', FakeEventSource)
+
+    const host = new HttpProductHost()
+    const unsubscribe = host.subscribe(() => undefined)
+    await flush()
+
+    await host.execute('connections.create', { appId: 'app-1', credentialRef: 'credential:qq-1' })
+    const createCall = requests.find((request) => request.url === '/api/connections' && request.init?.method === 'POST')
+    expect(createCall?.init?.method).toBe('POST')
+    expect(JSON.parse(createCall?.init?.body as string)).toEqual({ appId: 'app-1', credentialRef: 'credential:qq-1' })
+    unsubscribe()
+  })
+
   it('refreshes the projection when a channel-fact SSE event arrives', async () => {
     let snapshotCalls = 0
     fetchMock = vi.fn((input: string) => {

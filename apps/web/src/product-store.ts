@@ -17,7 +17,7 @@ export const getActiveProductHost = (): ProductHostPort | null => activeHost
 
 export type AgentRuntimeState = '空闲' | '思考中' | '使用工具' | '等待输入' | '已暂停' | '不可用'
 export type DeliveryState = '已发送' | '发送中' | '部分发送' | '失败' | '结果未知'
-export type ConnectionState = '已连接' | '正在连接' | '认证过期' | '已断开' | '异常'
+export type ConnectionState = '已连接' | '正在连接' | '认证过期' | '已配置' | '已断开' | '异常'
 
 export interface AgentSummary {
   readonly id: string
@@ -332,7 +332,11 @@ export const useProductStore = create<ProductState>((set) => ({
       }
     })
   },
-  createConnection: ({ name, appId, credentialRef }) =>
+  createConnection: ({ name, appId, credentialRef }) => {
+    if (activeHost) {
+      void activeHost.execute('connections.create', { appId, credentialRef })
+      return
+    }
     set((state) => ({
       connections: [
         ...state.connections,
@@ -350,7 +354,8 @@ export const useProductStore = create<ProductState>((set) => ({
           sendTest: '未测试' as const,
         },
       ],
-    })),
+    }))
+  },
   sendMessage: (channelId, body) => {
     if (activeHost) {
       void activeHost.execute('channels.sendMessage', { channelId, body })

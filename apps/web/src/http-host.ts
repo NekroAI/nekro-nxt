@@ -174,9 +174,21 @@ const projectSnapshot = (json: SnapshotJson): ProductSnapshot => {
   })
   const connections: ConnectionSummary[] = json.connections.map((connection) => ({
     id: connection.id,
-    name: connection.adapterKey === 'web' ? '本地 Web' : connection.adapterKey,
+    name:
+      connection.adapterKey === 'web'
+        ? '本地 Web'
+        : connection.adapterKey === 'qq-openclaw'
+          ? 'QQ 机器人账号'
+          : connection.adapterKey,
     adapter: connection.adapterKey,
-    state: connection.status === 'active' ? '已连接' : '已断开',
+    state:
+      connection.status === 'active'
+        ? '已连接'
+        : connection.status === 'configured'
+          ? '已配置'
+          : connection.status === 'failed'
+            ? '异常'
+            : '已断开',
     appId: '',
     credentialRef: '',
     proactiveSend: false,
@@ -261,6 +273,14 @@ export class HttpProductHost implements ProductHostPort {
         const result = await postJson(`/api/channels/${encodeURIComponent(channelId)}/messages`, {
           parts: [{ type: 'text', text }],
         })
+        await this.#refreshAndNotify()
+        return result
+      }
+      if (command === 'connections.create') {
+        const appId = typeof input?.appId === 'string' ? input.appId : ''
+        const credentialRef = typeof input?.credentialRef === 'string' ? input.credentialRef : ''
+        if (!appId.trim() || !credentialRef.trim()) return null
+        const result = await postJson('/api/connections', { appId, credentialRef })
         await this.#refreshAndNotify()
         return result
       }
