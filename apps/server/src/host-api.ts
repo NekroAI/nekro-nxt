@@ -599,7 +599,9 @@ export const createNekroHostApi = (webServer: WebServer, runtime: NekroRuntime):
     path: '/api/dynamic',
     handler: async (req, res) => {
       const url = new URL(req.url ?? '/', 'http://localhost')
-      const match = /^\/api\/dynamic\/([^/]+)\/(approve|decline|invoke|report-render-failure)$/.exec(url.pathname)
+      const match = /^\/api\/dynamic\/([^/]+)\/(approve|decline|invoke|get-client-code|report-render-failure)$/.exec(
+        url.pathname,
+      )
       if (!match) {
         writeError(res, 404, 'not-found', `未定义路由：${req.method} ${url.pathname}。`)
         return
@@ -666,6 +668,45 @@ export const createNekroHostApi = (webServer: WebServer, runtime: NekroRuntime):
           writeJson(res, 200, { ok: result.ok, ...(result.ok ? { value: result.value } : { message: result.message }) })
         } catch (error) {
           writeError(res, 400, 'dynamic-invoke-failed', error instanceof Error ? error.message : String(error))
+        }
+        return
+      }
+      if (action === 'get-client-code') {
+        const parsed = z
+          .object({ pluginId: z.string().trim().min(1), pluginRunId: z.string().trim().min(1) })
+          .strict()
+          .parse(body)
+        try {
+          const client = runtime.host.getDynamicClientCode(dshSessionId, parsed.pluginId, parsed.pluginRunId)
+          writeJson(res, 200, {
+            pluginId: client.pluginId,
+            pluginRunId: client.pluginRunId,
+            code: client.code,
+          })
+        } catch (error) {
+          writeError(res, 400, 'dynamic-client-code-failed', error instanceof Error ? error.message : String(error))
+        }
+        return
+      }
+      if (action === 'report-render-failure') {
+        const parsed = z
+          .object({
+            pluginId: z.string().trim().min(1),
+            pluginRunId: z.string().trim().min(1),
+            failure: z.unknown().optional(),
+          })
+          .strict()
+          .parse(body)
+        try {
+          await runtime.host.reportDynamicRenderFailure(
+            dshSessionId,
+            parsed.pluginId,
+            parsed.pluginRunId,
+            parsed.failure as never,
+          )
+          writeJson(res, 200, { ok: true })
+        } catch (error) {
+          writeError(res, 400, 'dynamic-render-failure', error instanceof Error ? error.message : String(error))
         }
         return
       }

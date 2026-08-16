@@ -117,6 +117,16 @@ describe('NekroNxt domain API — browser dynamic client circuit', () => {
       // The run resolves and client code is now available to load in the browser.
       const clientCode = runtime.host.getDynamicClientCode(dshSessionId, defined.pluginId, pluginRunId)
       expect(clientCode.code).toContain('apply')
+
+      // The browser fetches the client code through the API to render it into a Slot.
+      const codeResponse = await fetch(`${origin}/api/dynamic/${entity.agentId}/get-client-code`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ pluginId: defined.pluginId, pluginRunId }),
+      })
+      expect(codeResponse.ok).toBe(true)
+      const code = (await codeResponse.json()) as { code: string }
+      expect(code.code).toContain('apply')
     } finally {
       api.dispose()
       await webContext.fiber.dispose()
