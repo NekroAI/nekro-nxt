@@ -1,0 +1,17 @@
+{
+  "name": "@nekro-nxt/client-migrations",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": {
+      "types": "./lib/types/index.d.ts",
+      "import": "./dist/index.mjs"
+    }
+  },
+  "scripts": {
+    "build": "tsdown",
+    "test": "vitest run --root ../.. packages/client-migrations/tests",
+    "typecheck": "tsc --noEmit"
+  }
+}

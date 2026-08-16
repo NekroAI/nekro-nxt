@@ -1,0 +1,21 @@
+{
+  "name": "@nekro-nxt/test-harness",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": {
+      "types": "./lib/types/index.d.ts",
+      "import": "./dist/index.mjs"
+    }
+  },
+  "scripts": {
+    "build": "tsdown",
+    "test": "vitest run --root ../.. packages/test-harness/tests",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@nekro-nxt/adapter-sdk": "workspace:*",
+    "@nekro-nxt/contracts": "workspace:*"
+  }
+}
