@@ -2,7 +2,7 @@
 
 > 文档编号：08
 >
-> 状态：切片1 闭环 A 已贯通、切片3 扩展生命周期、切片2 QQ 连接配置已落地；收发测试与动态扩展保存待外部环境/创造工作台接线
+> 状态：切片1 闭环 A、切片3 扩展生命周期（含实时 SSE 订阅与「保存动态包为本地扩展」）、切片2 QQ 连接配置已落地；QQ 真实收发待外部环境、浏览器动态 runner 完整创造回路待接线
 >
 > 日期：2026-08-16
 >
@@ -54,7 +54,7 @@ Web 端不复制一份业务事实到 Zustand。`ProductHostPort.getSnapshot()` 
 | 创建智能体引导跑动 | —— | —— | —— |
 | 修改能力 | `POST /api/agents/:id/capabilities` | 切换到新 AgentRevision | ⏳ 待接 |
 | QQ 收发测试 | `POST /api/connections/:id/test` | 触发 receive/send 测试 | ⏳ 需真实凭据/外部环境 |
-| 保存扩展 | `POST /api/extensions` | Draft → 本地 Extension Revision（不自动启用） | ⏳ 待创造工作台动态 runner 接线 |
+| 保存动态包 | `POST /api/extensions/save-from-dynamic` | 把活动会话中的运行动态 Package 保存为本地 Extension Revision（不自动启用） | ✅ 服务端+Web命令；浏览器动态 runner 完整创造回路待接线 |
 
 `GET /api/snapshot` 现在投影：全部 `Connection`（Web + QQ，credentialRefs 只含引用）、已绑定 Agent、频道、近期频道事实、全部已保存本地扩展（含当前 AgentActivation 状态）。
 
