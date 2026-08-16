@@ -387,14 +387,19 @@ export const useProductStore = create<ProductState>((set) => ({
         connection.id === id ? { ...connection, ...patch } : connection,
       ),
     })),
-  runConnectionTest: (id, direction) =>
+  runConnectionTest: (id, direction) => {
+    if (activeHost) {
+      void activeHost.execute('connections.test', { connectionId: id, direction })
+      return
+    }
     set((state) => ({
       connections: state.connections.map((connection) =>
         connection.id === id
           ? { ...connection, [direction === 'receive' ? 'receiveTest' : 'sendTest']: '通过' as const }
           : connection,
       ),
-    })),
+    }))
+  },
   resolveApproval: (id, approved) =>
     set((state) => ({
       approvals: state.approvals.map((approval) =>

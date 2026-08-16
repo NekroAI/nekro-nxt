@@ -287,6 +287,14 @@ export class HttpProductHost implements ProductHostPort {
         await this.#refreshAndNotify()
         return result
       }
+      if (command === 'connections.test') {
+        const connectionId = typeof input?.connectionId === 'string' ? input.connectionId : ''
+        const direction = input?.direction === 'receive' || input?.direction === 'send' ? input.direction : undefined
+        if (!connectionId.trim() || direction === undefined) return null
+        const result = await postJson(`/api/connections/${encodeURIComponent(connectionId)}/test`, { direction })
+        await this.#refreshAndNotify()
+        return result
+      }
       if (command === 'extensions.activate') {
         const extensionId = typeof input?.extensionId === 'string' ? input.extensionId : ''
         const agentId = typeof input?.agentId === 'string' ? input.agentId : ''

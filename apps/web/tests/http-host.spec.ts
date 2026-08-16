@@ -238,6 +238,35 @@ describe('HttpProductHost', () => {
     unsubscribe()
   })
 
+  it('routes connections.test to the diagnostic endpoint', async () => {
+    const requests: Array<{ url: string; init?: RequestInit }> = []
+    fetchMock = vi.fn((input: string, init?: RequestInit) => {
+      requests.push({ url: input, ...(init === undefined ? {} : { init }) })
+      if (input === '/api/snapshot') return Promise.resolve(stubResponse(200, snapshotBody()))
+      if (input === '/api/connections/connection-qq/test' && init?.method === 'POST') {
+        return Promise.resolve(
+          stubResponse(200, { status: 'needs-credentials', message: '已配置该连接；真实收发需平台 Client Secret。' }),
+        )
+      }
+      return Promise.resolve(stubResponse(404, { error: { code: 'not-found', message: 'x' } }))
+    })
+    vi.stubGlobal('fetch', fetchMock)
+    vi.stubGlobal('EventSource', FakeEventSource)
+
+    const host = new HttpProductHost()
+    const unsubscribe = host.subscribe(() => undefined)
+    await flush()
+
+    const result = await host.execute('connections.test', { connectionId: 'connection-qq', direction: 'send' })
+    expect(result).toMatchObject({ status: 'needs-credentials' })
+    const testCall = requests.find(
+      (request) => request.url === '/api/connections/connection-qq/test' && request.init?.method === 'POST',
+    )
+    expect(testCall?.init?.method).toBe('POST')
+    expect(JSON.parse(testCall?.init?.body as string)).toEqual({ direction: 'send' })
+    unsubscribe()
+  })
+
   it('routes extensions.saveFromDynamic to the save endpoint', async () => {
     const requests: Array<{ url: string; init?: RequestInit }> = []
     fetchMock = vi.fn((input: string, init?: RequestInit) => {

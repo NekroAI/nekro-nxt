@@ -484,6 +484,67 @@ export const createNekroHostApi = (webServer: WebServer, runtime: NekroRuntime):
     },
   })
 
+  // POST /api/connections/:id/test → honest send/receive diagnostics. The Web
+  // Connection is exercised for real; a QQ Connection without live credentials
+  // reports needs-credentials (never a fake "通过").
+  registerRoute({
+    kind: 'prefix',
+    path: '/api/connections',
+    handler: async (req, res) => {
+      const url = new URL(req.url ?? '/', 'http://localhost')
+      const match = /^\/api\/connections\/([^/]+)\/test$/.exec(url.pathname)
+      if (!match) {
+        writeError(res, 404, 'not-found', `未定义路由：${req.method} ${url.pathname}。`)
+        return
+      }
+      if (req.method !== 'POST') {
+        writeError(res, 405, 'method-not-allowed', '只支持 POST。')
+        return
+      }
+      const connectionId = idParamSchema.safeParse(match[1]!)
+      if (!connectionId.success) {
+        writeError(res, 400, 'invalid-connection', '无效的连接 ID。')
+        return
+      }
+      const directionSchema = z.object({ direction: z.enum(['send', 'receive']) }).strict()
+      let parsed: z.output<typeof directionSchema>
+      try {
+        parsed = directionSchema.parse(await readJsonBody(req))
+      } catch (error) {
+        writeError(res, 400, 'invalid-request', error instanceof Error ? error.message : String(error))
+        return
+      }
+      const connection = runtime.core.listConnections().find((candidate) => candidate.id === connectionId.data)
+      if (!connection) {
+        writeError(res, 404, 'not-found', '连接不存在。')
+        return
+      }
+      if (connection.adapterKey !== 'web') {
+        // QQ OpenClaw 需要平台 Client Secret + 测试群；没有真实凭据不做假成功。
+        writeJson(res, 200, {
+          status: 'needs-credentials',
+          message: '已配置该连接；真实收发测试需在 QQ 平台提供 Client Secret 与一个专用测试群。',
+        })
+        return
+      }
+      const channel = runtime.core.listChannelsByConnection(connection.id)[0]
+      if (!channel) {
+        writeJson(res, 200, { status: 'needs-channel', message: 'Web 连接还没有绑定频道，无法测试。' })
+        return
+      }
+      if (parsed.direction === 'send') {
+        const result = await runtime.web.postMessage({
+          channelId: channel.id,
+          clientEventId: `test-send-${Date.now()}`,
+          parts: [{ type: 'text', text: '连接诊断测试消息。' }],
+        })
+        writeJson(res, 200, { status: 'sent', channelEventId: result.channelEventId })
+      } else {
+        writeJson(res, 200, { status: 'ok', channel: channel.id })
+      }
+    },
+  })
+
   // POST /api/extensions/save-from-dynamic → save a running dynamic Package as a
   // persistent local Extension Revision (M4: 保存不自动启用).
   registerRoute({
