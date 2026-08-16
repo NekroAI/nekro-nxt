@@ -1,0 +1,334 @@
+.button,
+.iconButton {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  min-height: 34px;
+  border: 1px solid transparent;
+  border-radius: 7px;
+  padding: 0 13px;
+  color: var(--nxt-text-primary);
+  background: transparent;
+  font-size: 13px;
+  font-weight: 620;
+  line-height: 1;
+  cursor: pointer;
+  transition:
+    color var(--nxt-motion-fast) var(--nxt-ease-standard),
+    background var(--nxt-motion-fast) var(--nxt-ease-standard),
+    border-color var(--nxt-motion-fast) var(--nxt-ease-standard),
+    opacity var(--nxt-motion-fast) var(--nxt-ease-standard);
+}
+
+.button:disabled,
+.iconButton:disabled {
+  color: var(--nxt-text-disabled);
+  cursor: not-allowed;
+  opacity: 0.66;
+}
+
+.primary {
+  color: var(--nxt-accent-foreground);
+  background: var(--nxt-accent);
+}
+
+.primary:not(:disabled):hover {
+  background: var(--nxt-accent-hover);
+}
+
+.secondary {
+  border-color: var(--nxt-border-default);
+  background: var(--nxt-bg-surface);
+}
+
+.secondary:not(:disabled):hover,
+.ghost:not(:disabled):hover,
+.iconButton:not(:disabled):hover {
+  background: var(--nxt-bg-hover);
+}
+
+.danger {
+  color: var(--nxt-danger);
+  border-color: color-mix(in srgb, var(--nxt-danger) 28%, transparent);
+  background: var(--nxt-danger-soft);
+}
+
+.ghost {
+  color: var(--nxt-text-secondary);
+}
+
+.small {
+  min-height: 28px;
+  padding: 0 9px;
+  font-size: 12px;
+}
+
+.iconButton {
+  width: 34px;
+  min-width: 34px;
+  padding: 0;
+}
+
+.panel {
+  border: 1px solid var(--nxt-border-subtle);
+  border-radius: 10px;
+  background: var(--nxt-bg-surface);
+}
+
+.badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 22px;
+  border-radius: 999px;
+  padding: 0 8px;
+  color: var(--nxt-text-secondary);
+  background: var(--nxt-bg-subtle);
+  font-size: 11px;
+  font-weight: 650;
+  white-space: nowrap;
+}
+
+.badge::before {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: currentcolor;
+  content: '';
+}
+
+.success {
+  color: var(--nxt-success);
+  background: var(--nxt-success-soft);
+}
+
+.warning {
+  color: var(--nxt-warning);
+  background: var(--nxt-warning-soft);
+}
+
+.error {
+  color: var(--nxt-danger);
+  background: var(--nxt-danger-soft);
+}
+
+.info {
+  color: var(--nxt-accent);
+  background: var(--nxt-accent-soft);
+}
+
+.unknown {
+  color: var(--nxt-unknown);
+  background: var(--nxt-unknown-soft);
+}
+
+.field {
+  display: grid;
+  gap: 6px;
+}
+
+.fieldLabel {
+  color: var(--nxt-text-secondary);
+  font-size: 12px;
+  font-weight: 650;
+}
+
+.fieldHint {
+  color: var(--nxt-text-muted);
+  font-size: 11px;
+  line-height: 1.5;
+}
+
+.input,
+.textarea,
+.selectTrigger {
+  width: 100%;
+  min-height: 36px;
+  border: 1px solid var(--nxt-border-default);
+  border-radius: 7px;
+  padding: 7px 10px;
+  color: var(--nxt-text-primary);
+  background: var(--nxt-bg-surface);
+  transition:
+    border-color var(--nxt-motion-fast) var(--nxt-ease-standard),
+    box-shadow var(--nxt-motion-fast) var(--nxt-ease-standard);
+}
+
+.input:hover,
+.textarea:hover,
+.selectTrigger:hover {
+  border-color: var(--nxt-border-strong);
+}
+
+.input:focus,
+.textarea:focus,
+.selectTrigger:focus {
+  border-color: var(--nxt-focus-ring);
+  outline: none;
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--nxt-focus-ring) 18%, transparent);
+}
+
+.textarea {
+  min-height: 96px;
+  resize: vertical;
+}
+
+.switchRow {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.switchCopy {
+  min-width: 0;
+}
+
+.switchLabel {
+  font-size: 13px;
+  font-weight: 650;
+}
+
+.switchDescription {
+  margin-top: 2px;
+  color: var(--nxt-text-muted);
+  font-size: 11px;
+}
+
+.switchRoot {
+  position: relative;
+  width: 34px;
+  height: 19px;
+  flex: 0 0 auto;
+  border: 0;
+  border-radius: 999px;
+  background: var(--nxt-border-strong);
+  cursor: pointer;
+  transition: background var(--nxt-motion-fast) var(--nxt-ease-standard);
+}
+
+.switchRoot[data-state='checked'] {
+  background: var(--nxt-accent);
+}
+
+.switchThumb {
+  display: block;
+  width: 15px;
+  height: 15px;
+  border-radius: 50%;
+  background: #fff;
+  box-shadow: 0 1px 3px rgb(0 0 0 / 22%);
+  transform: translateX(2px);
+  transition: transform var(--nxt-motion-fast) var(--nxt-ease-standard);
+}
+
+.switchRoot[data-state='checked'] .switchThumb {
+  transform: translateX(17px);
+}
+
+.selectTrigger {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  text-align: left;
+}
+
+.selectContent,
+.tooltipContent {
+  z-index: 60;
+  border: 1px solid var(--nxt-border-default);
+  border-radius: 8px;
+  color: var(--nxt-text-primary);
+  background: var(--nxt-bg-elevated);
+  box-shadow: var(--nxt-shadow-popover);
+}
+
+.selectContent {
+  min-width: var(--radix-select-trigger-width);
+  padding: 5px;
+}
+
+.selectItem {
+  display: flex;
+  align-items: center;
+  min-height: 30px;
+  border-radius: 5px;
+  padding: 0 9px;
+  font-size: 13px;
+  cursor: default;
+  outline: none;
+}
+
+.selectItem[data-highlighted] {
+  background: var(--nxt-bg-hover);
+}
+
+.tooltipContent {
+  max-width: 260px;
+  padding: 6px 8px;
+  font-size: 11px;
+  animation: tooltipIn var(--nxt-motion-fast) var(--nxt-ease-enter);
+}
+
+.dialogOverlay {
+  position: fixed;
+  z-index: 80;
+  inset: 0;
+  background: rgb(3 11 17 / 42%);
+  animation: fadeIn var(--nxt-motion-standard) var(--nxt-ease-standard);
+}
+
+.dialogContent {
+  position: fixed;
+  z-index: 81;
+  top: 50%;
+  left: 50%;
+  width: min(520px, calc(100vw - 48px));
+  border: 1px solid var(--nxt-border-default);
+  border-radius: 12px;
+  padding: 22px;
+  background: var(--nxt-bg-elevated);
+  box-shadow: var(--nxt-shadow-popover);
+  transform: translate(-50%, -50%);
+  animation: dialogIn var(--nxt-motion-standard) var(--nxt-ease-enter);
+}
+
+.dialogTitle {
+  margin: 0;
+  font-size: 18px;
+  line-height: 1.35;
+}
+
+.dialogDescription {
+  margin: 8px 0 0;
+  color: var(--nxt-text-secondary);
+  font-size: 13px;
+}
+
+.dialogActions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 20px;
+}
+
+@keyframes fadeIn {
+  from {
+    opacity: 0;
+  }
+}
+
+@keyframes tooltipIn {
+  from {
+    opacity: 0;
+    transform: translateY(2px);
+  }
+}
+
+@keyframes dialogIn {
+  from {
+    opacity: 0;
+    transform: translate(-50%, calc(-50% + 5px)) scale(0.985);
+  }
+}

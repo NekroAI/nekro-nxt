@@ -1,0 +1,16 @@
+{
+  "extends": "../../tsconfig.client.json",
+  "compilerOptions": {
+    "composite": true,
+    "rootDir": "src",
+    "outDir": "lib/types",
+    "emitDeclarationOnly": true,
+    "tsBuildInfoFile": "lib/types.tsbuildinfo"
+  },
+  "include": ["src/**/*.ts", "src/**/*.tsx"],
+  "references": [
+    { "path": "../../packages/dsh-compat" },
+    { "path": "../../packages/extension-runtime" },
+    { "path": "../../packages/extension-sdk" }
+  ]
+}
