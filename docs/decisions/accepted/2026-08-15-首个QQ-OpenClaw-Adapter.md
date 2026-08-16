@@ -1,12 +1,14 @@
-# 提案：首个外部 Adapter 采用 QQ OpenClaw
+# 决策：首个外部 Adapter 采用 QQ OpenClaw
 
-状态：proposed
+状态：accepted
+
+离线实现证据见 `../implemented/2026-08-16-M5-QQ-OpenClaw-Adapter离线实现.md`；真实账号验收和产品配置/诊断 UI 仍待完成。
 
 ## 问题
 
 NekroNxt 首期需要一个真实外部平台验证 Connection、Channel、Binding、稳定成员身份、Mention、媒体、引用、触发、安全间隙注入和可靠出站。现有 Nekro Agent QQ OpenClaw 适配器已跑通基础链路，但仍是半成品，不能直接复制为 NekroNxt 的首版契约。
 
-## 决定候选
+## 决定
 
 首个外部 Adapter 选择 QQ 官方机器人 OpenClaw 渠道，参考：
 
@@ -30,7 +32,7 @@ NekroNxt 首期需要一个真实外部平台验证 Connection、Channel、Bindi
 1. 单个 Connection 对应一个 QQ 机器人账号；
 2. WebSocket Gateway、Token 刷新、心跳、Resume、断线重连；
 3. C2C 私聊和 QQ 群 Channel；
-4. 文本、结构化 Mention、图片、文件、音频和引用；
+4. 文本、结构化 Mention、图片、文件、音频和引用；视频作为普通文件处理；
 5. 群消息被 Mention、回复机器人、总是响应、仅观察等 Binding 触发策略；
 6. 普通群消息可靠入库但不一定触发；
 7. Markdown 文本和 `<@openid>` Mention 正确发送；
@@ -45,7 +47,7 @@ NekroNxt 首期需要一个真实外部平台验证 Connection、Channel、Bindi
 
 - 多账号：Connection 模型允许多个实例，但首期一个 Connection 一个账号；
 - Webhook：Transport 联合类型保留，首期只实现 WebSocket；
-- 视频：Adapter capability 保留未来类型，首期统一消息词汇先不增加 video；
+- 视频：首期不增加专用 video 类型，平台 `video/*` 资源按普通 file 完整入库和转发；
 - STT/TTS、Typing、流式更新、按钮和平台命令；
 - 私聊 pairing 和复杂群级工具策略；
 - 全量群成员同步；QQ 平台未必提供可靠完整列表，首期使用“已知成员目录”。
@@ -61,14 +63,14 @@ PlatformIdentity
 ├─ platformUserId      # user_openid/member_openid
 ├─ displayName
 ├─ firstSeenAt / lastSeenAt
-└─ source              # inbound / mention / lookup
+└─ seenCount
 
 ChannelMember
 ├─ id                  # MessagePart.memberId 指向这里
 ├─ channelId
 ├─ platformIdentityId
 ├─ channelDisplayName?
-└─ lastSeenAt
+└─ firstSeenAt / lastSeenAt / seenCount
 ```
 
 `PlatformIdentity` 唯一约束为 `(connectionId, platformUserId)`，`ChannelMember` 唯一约束为 `(channelId, platformIdentityId)`。不能只用 OpenID，也不能把昵称当身份。Channel 中引用成员使用 NekroNxt `memberId`，Adapter 发送前通过 ChannelMember 和同一 Connection 的 PlatformIdentity 解析平台 OpenID。
@@ -116,7 +118,7 @@ Nekro Agent 的内部 `[@id:xxx@]` 是旧框架协议。NekroNxt 不把这种文
 - 对机器人自身 Mention 从普通显示文本中移除，但保留触发事实；
 - 对其他成员 Mention 保留成员 ID 和显示名；
 - 无法获得精确文本位置时，保留平台给出的结构顺序证据并使用确定性降级，不伪造精确位置；
-- 图片、文件、音频先进入 NekroNxt Asset Service，Channel Event 只保存 `assetId`；
+- 图片、文件、音频和视频文件先进入内容寻址 Asset Service，Channel Event 只保存 `assetId` 与本次 Occurrence；
 - 引用映射到规范化 `messageId`，平台 `ref_idx` 只属于 Adapter checkpoint/索引；
 - 编辑、撤回等事件若当前 Gateway 不提供，capability 明确声明不支持。
 
@@ -171,7 +173,7 @@ interface QQReplyContext {
 - 不接受宿主绝对路径和任意 URL 作为公共发送输入；
 - 上传 prepare、分片、finish 和消息发送分别记录 attempt；
 - 上传成功但消息发送失败时，逻辑消息仍为 failed/partial，不能只因获得 `file_info` 就成功；
-- 首期按 QQ 实际限制实现图片、音频和文件；视频等待统一 MessagePart 扩展。
+- 首期按 QQ 实际限制实现图片、音频和文件；视频使用 file Part，不做转码、抽帧或内容理解。
 
 ## 连接恢复与幂等
 
@@ -265,19 +267,19 @@ QQ 首期采用层级 2 + 层级 3：通用表单负责 App ID、Credential Refe
 - C2C 与群聊收发；
 - 真正触发 QQ Mention 通知和高亮；
 - 引用机器人消息触发；
-- 图片、文件、音频；
+- 图片、文件、音频，以及作为普通文件接收的视频；
 - 断网后恢复；
 - 收发测试分别显示结果。
 
 真实测试使用专用账号和测试群，不把凭据与平台原始 payload 提交到仓库。
 
-## 待决策项
+## 已确认范围
 
-1. 首期是否加入 Webhook；推荐否，只保留 Transport seam；
-2. 首期是否支持多账号；推荐领域模型支持多个 Connection，但每个 Connection 单账号，UI 后续增加多个连接；
-3. 首期是否做 `@昵称` 唯一匹配；推荐先做 UI 已知成员选择，不做自由文本反查；
-4. 首期是否支持视频；推荐等统一 `MessagePart` 增加 video 后再做；
-5. QQ Adapter 与 Core 的包边界；推荐独立 Extension package，通过 Adapter SDK 接入，不编进 Channel Runtime。
+- 首期只实现 WebSocket，Webhook 只保留 Transport 接缝；
+- 一个 Connection 对应一个机器人账号，领域模型允许创建多个 Connection，多连接管理 UI 延后；
+- 通信工具只接受 `memberId`，UI 可以从已知成员目录中选择或唯一匹配，不做自由文本模糊反查；
+- 视频首期作为普通 file；专用 video Part 与理解能力等待真实消费者后再设计；
+- QQ Adapter 是独立 Extension package，通过 Adapter SDK 接入，不编进 Channel Runtime。
 
 ## 未来方向检查
 
@@ -287,7 +289,7 @@ QQ 首期采用层级 2 + 层级 3：通用表单负责 App ID、Credential Refe
 
 避免锁死：不把 OpenID 当全局用户 ID，不把 QQ Markdown 写入 Core，不把单账号写进 Adapter 接口，不让 Job 绕过通信工具。
 
-本次不做：Webhook、多账号 UI、STT/TTS、视频、按钮卡片、平台命令、完整成员同步、旧数据导入和旧文本协议兼容。
+本次不做：Webhook、多账号 UI、STT/TTS、专用视频理解/转码、按钮卡片、平台命令、完整成员同步、旧数据导入和旧文本协议兼容。
 
 ## 参考证据
 

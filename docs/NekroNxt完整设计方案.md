@@ -171,7 +171,7 @@ DSH 的智能体运行域 Cordis Composition，决定一个运行实例拥有的
 
 #### Connection
 
-某个平台的一个登录账号或连接实例，例如一个 Discord Bot、QQ 账号或 Telegram Bot。
+某个平台的一个登录账号或连接实例，例如一个 Discord 机器人账号、QQ 机器人账号或 Telegram 机器人账号。
 
 #### Channel
 
@@ -255,7 +255,7 @@ NekroNxt 复用这一机制，但产品映射为：
 
 首版官方 Preset 建议只有：
 
-- 通用模式；
+- 通用方式；
 - 极简模式；
 - PTC/Code 模式。
 
@@ -273,7 +273,7 @@ DSH Permission Preset 的 sandbox/approval 机制可以复用，但 NekroNxt 不
 
 - 新会话直接使用新 Revision；
 - 正在执行的会话继续当前 Step；
-- 需要立即生效时，在安全间隙结束当前 Episode，创建新 Session，注入必要摘要并切换 Binding；
+- 兼容变化可以在安全间隙更新对应运行配置；只有明确不兼容的变化需要结束当前 Episode、创建新 Session、注入必要摘要并切换 Binding；
 - 旧 Session 保持只读可回放。
 
 ### 5.5 DSH 插件兼容
@@ -349,6 +349,8 @@ Channel Binding 至少支持：
 
 通信工具接受有序 `MessagePart[]`，首版统一表达文字、Mention、图片、文件、音频和引用。Mention 使用成员 ID，媒体使用受控 `assetId`，不暴露宿主路径。Adapter 显式声明媒体、回复、混合内容和大小限制；不支持混合内容的平台可将一个逻辑消息按顺序拆成多个物理消息。
 
+媒体原件由内容寻址 Asset Service 统一拥有：相同字节只保存一个 blob，每次接收保留独立 Occurrence 并更新最后接收时间与次数。视频首期作为普通文件，不做专用理解。图片按模型能力原生投影或使用版本化摘要/OCR，多模态模型还可以通过授权工具主动重读历史图片。完整契约见 `decisions/accepted/2026-08-16-内容寻址资源与图片理解.md`。
+
 ```text
 send_message Tool
 → 校验目标、能力与内容
@@ -377,7 +379,7 @@ Extension
 └─ client-ui
 ```
 
-扩展中心、本地插件列表和智能体管理只管理 Extension、Revision 和 Activation。不同子系统消费各自理解的 Contribution。
+扩展中心、本地扩展列表和智能体管理只管理 Extension、Revision 和 Activation。不同子系统消费各自理解的 Contribution。
 
 ### 7.2 Adapter 不是第二套插件
 
@@ -417,7 +419,7 @@ LocalExtension
 
 ### 7.5 激活范围
 
-动态或本地插件默认只激活给明确选择的智能体。系统级激活属于高级能力，必须在界面上明确显示，但首版不要求每次运行重复审批。
+动态或本地扩展默认只激活给明确选择的智能体。系统级激活属于高级能力，必须在界面上明确显示，但首版不要求每次运行重复审批。
 
 实现上可以先为每个智能体Runtime 挂载对应插件实例，之后再优化为共享智能体Scope；产品契约先冻结“Activation 属于智能体”，不提前把优化方式暴露给用户。
 
@@ -425,7 +427,7 @@ LocalExtension
 
 智能体只能通过公开管理 Service 修改自己的人设、能力设置、扩展和频道策略，不能直接写核心数据库。是否允许修改、允许修改到什么程度，由智能体管理页配置。
 
-## 8. 创造状态与本地插件生产
+## 8. 创造状态与本地扩展生产
 
 ### 8.1 定位
 
@@ -442,7 +444,7 @@ LocalExtension
 - 修改自己创建的插件；
 - 运行、更新、停止插件；
 - 使用开发 Shell；
-- 保存为本地插件；
+- 保存为本地扩展；
 - 给其他智能体激活插件；
 - 访问完整宿主文件系统。
 
@@ -473,9 +475,9 @@ LocalExtension
 - Adapter/Channel 接口；
 - NekroNxt Slot；
 - Contribution Schema；
-- 本地插件目录和构建状态；
+- 本地扩展目录和构建状态；
 - Fake Channel 场景；
-- 保存、构建和激活本地插件。
+- 保存、构建和激活本地扩展。
 
 这些知识通过查询工具按需提供，不塞入超长系统 Prompt。
 
@@ -499,7 +501,7 @@ LocalExtension
 
 #### 保存
 
-把动态源码物化为本地 TypeScript Extension，构建后加载正式本地版本，并记录 Revision 与 Activation。重启后可以恢复。
+把动态源码物化为不可变的本地 TypeScript Extension Revision。构建产物是按需生成、可删除重建的缓存；用户完成验证后再单独决定是否为智能体创建 Activation。重启后可以从源码 Revision 重建。
 
 ### 8.6 UI 优先
 
@@ -554,7 +556,7 @@ DSH 当前界面以 Workspace、Session 和 Preset 为中心。NekroNxt 普通�
 ```text
 首页
 
-Agents
+智能体
   小奈
     Web 控制台
     QQ 用户群
@@ -614,7 +616,7 @@ Desktop 和 Server 共用：
 - SQLite 与 Session Provider；
 - Adapter SDK；
 - Client Web UI；
-- 本地插件构建和加载。
+- 本地扩展构建和加载。
 
 ### 10.2 Desktop
 
@@ -641,7 +643,7 @@ Desktop 和 Server 共用：
 - 更新前停止 Runtime 并备份关键本地数据；
 - 数据 Schema 使用单向版本迁移；
 - 失败时可以回到上一应用版本和备份；
-- 本地插件版本与 Framework 版本分开；
+- 本地扩展版本与 Framework 版本分开；
 - 不首版实现云端灰度、自动签名晋升和复杂跨组件协调。
 
 ## 11. 数据与文件布局
@@ -675,7 +677,7 @@ Desktop 和 Server 共用：
 
 1. Bash、动态创造、完整文件访问由用户在智能体管理中显式开启；
 2. 动态插件的目标智能体和影响范围必须可见，默认只作用于当前智能体；
-3. 用户可以停止、禁用和删除本地插件；启动失败时可以进入不加载本地插件的恢复模式；
+3. 用户可以停止、禁用和删除本地扩展；启动失败时可以进入不加载本地扩展的恢复模式；
 4. Secret 默认通过引用和专用接口使用，不主动写入 Prompt、普通日志和插件源码；
 5. 管理服务默认只绑定本机，开放远程时明确配置；
 6. Core 数据库不作为普通插件 API 暴露；
@@ -753,7 +755,7 @@ docs/
 - 能从 TypeScript 生成的 Tool、Slot、RPC 和配置目录不重复手写；
 - 本地敏感资料放 Git 忽略目录，不进入公开文档。
 
-当前事实、未来方向、Decision Note、package 说明、操作指南和历史研究必须分层保存；一个事实只在一个位置完整描述，其他文档用链接引用。具体路由见 `05-知识体系与AI开发流程.md`。
+当前事实、未来方向、Decision Note、package 说明、操作指南和历史研究必须分层保存；一个事实只在一个位置完整描述，其他文档用链接引用。具体路由见 `README.md`、`00-文档公开边界.md` 和 `06-开发与测试规范.md`。
 
 ### 13.4 Decision Note
 
@@ -768,7 +770,7 @@ docs/
 ## 影响
 ```
 
-使用 `proposed/implemented/rejected` 状态目录即可。首版不强制每个非平凡修改都写 Note，不做中英文双份、sidecar 哈希和复杂文档门禁。
+使用 `proposed/accepted/implemented/rejected` 状态目录即可。首版不强制每个非平凡修改都写 Note，不做中英文双份、sidecar 哈希和复杂文档门禁。
 
 ### 13.5 AI 开发闭环
 
@@ -816,7 +818,7 @@ docs/
 ### 14.4 插件生命周期
 
 - 动态插件可以 define/run/update/stop/undefine；
-- 本地插件可以加载、卸载和重启恢复；
+- 本地扩展可以加载、卸载和重启恢复；
 - 插件停止后 listener、timer、Tool 和 Slot 必须清理；
 - 坏插件不能永久阻止系统以恢复模式启动；
 - Revision 和 Activation 状态可解释。
@@ -871,7 +873,7 @@ docs/
 - NekroNxt Inspect Provider；
 - Tool 和 Client Slot 动态运行；
 - 保存为本地 TypeScript 插件；
-- 本地插件重新加载、停止和恢复；
+- 本地扩展重新加载、停止和恢复；
 -智能体-centric 基础 UI。
 
 ### 15.2 产品 MVP 必须补齐
@@ -908,7 +910,7 @@ docs/
 - 资源分发 CDN；
 - 社区账号和同步。
 
-未来能力必须围绕现有 Extension/Revision/Activation 增量生长，不能要求首版本地插件重写。
+未来能力必须围绕现有 Extension/Revision/Activation 增量生长，不能要求首版本地扩展重写。
 
 ## 16. 明确不会做
 
@@ -952,7 +954,7 @@ docs/
 6. `AgentDefinition` 使用 Revision，支持未来同步和发布；
 7. DSH 通过兼容层和 Bundle 集成；
 8. Client UI 通过 Slot 扩展；
-9. 本地插件清单允许以后增量增加社区字段；
+9. 本地扩展清单允许以后增量增加社区字段；
 10. Desktop 和 Server 共享 Runtime。
 
 不为尚未实现的未来功能创建空服务、复杂状态机和占位数据库表。
@@ -995,24 +997,15 @@ docs/
 
 ### Future：社区生态
 
-在本地插件模型稳定、真实用户有分享需求后单独立项。
+在本地扩展模型稳定、真实用户有分享需求后单独立项。
 
 一期更细的里程碑、包边界与待决策矩阵见 `04-一期开发计划与决策清单.md`。
 
-## 19. 立项后优先冻结的技术决策
+## 19. 已冻结决定与 M0 验证项
 
-1. 正式项目名和 npm namespace；
-2. 首个锁定 DSH 版本；
-3. `AgentRevision` 到 DSH Preset 的映射方式；
-4. 动态插件如何限定到目标智能体Scope；
-5. 一个智能体多 Channel 时 Session 的组织方式；
-6. 本地 Extension 源码、构建和 Revision 存储格式；
-7. NekroNxt Client 在 DSH Web Slot 之上的复用范围；
-8. Desktop 与 Server 的统一启动契约；
-9. 首个外部 Adapter；
-10. 本地数据目录和备份格式。
+项目名、纯 TypeScript 主栈、连续 Channel Session、本地源码 Revision、QQ OpenClaw Adapter、React 18 与 UI 基础、双 SQLite、Adapter 配置层级和客户端 migration 所有权已经冻结，统一记录在 `04-一期开发计划与决策清单.md` 与 `decisions/accepted/`。
 
-这些问题通过小型可运行 Spike 冻结，不通过长篇推演替代实现验证。
+M0 不重新选择这些方向，而是验证完整 DSH npm package set、Client Slot 复用边界、动态 Package 的目标智能体作用域、双 SQLite 恢复、动态构建器和 migration 崩溃恢复。Spike 失败时记录实际证据并修订对应 Decision，不能用兼容垫片掩盖基础方案不成立。
 
 ## 20. 首个版本完成标准
 

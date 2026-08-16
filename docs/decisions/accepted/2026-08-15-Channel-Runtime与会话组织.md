@@ -1,6 +1,6 @@
-# 提案：Channel Runtime 与会话组织
+# 决策：Channel Runtime 与会话组织
 
-状态：proposed
+状态：accepted
 
 ## 问题
 
@@ -208,11 +208,11 @@ Adapter 不负责：
 - 直接写 DSH Session；
 - 绕过通信工具发业务消息。
 
-## 待决策项
+## 已确认范围与延后项
 
-1. Core SQLite 使用 Drizzle、Kysely 还是直接 SQLite API；推荐 Drizzle，只支持 SQLite 一种方言；
-2. Channel Event Log 是否首期记录 reaction/member 事件；推荐类型保留，QQ 首期只实现消息、引用和必要成员更新；
-3. “未知发送结果”是否允许用户手工重试；推荐允许，但必须产生新的 attempt 并提示可能重复。
+- Core 使用 `node:sqlite + Drizzle`，只支持 SQLite；M0 负责验证 Drizzle、FTS5、WAL 和备份能力；
+- Channel Event 联合类型保留 reaction/member，QQ 首期只实现消息、引用和触发所需的成员更新；
+- `unknown` 不自动重试；手工重试 UI 延后到出站诊断页面实现，重试必须创建新 attempt 并提示可能重复。
 
 ## 验证
 
