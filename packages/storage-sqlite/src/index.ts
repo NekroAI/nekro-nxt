@@ -426,6 +426,17 @@ export class SqliteCoreRepository
     }
   }
 
+  listConnectionIdsByAdapter(adapterKey?: string): readonly ConnectionId[] {
+    const rows = (
+      adapterKey === undefined
+        ? this.#database.prepare('SELECT id FROM connections ORDER BY created_at, id').all()
+        : this.#database
+            .prepare('SELECT id FROM connections WHERE adapter_key = ? ORDER BY created_at, id')
+            .all(adapterKey)
+    ) as SqliteRow[]
+    return rows.map((row) => requiredString(row, 'id') as ConnectionId)
+  }
+
   createChannel(record: ChannelRecord): void {
     this.#database
       .prepare(

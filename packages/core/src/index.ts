@@ -148,6 +148,7 @@ export interface CoreRepository {
   ): void
   createConnection(record: ConnectionRecord): void
   getConnection(id: ConnectionId): ConnectionRecord | undefined
+  listConnectionIdsByAdapter(adapterKey?: string): readonly ConnectionId[]
   createChannel(record: ChannelRecord): void
   ensureChannel(record: ChannelRecord): ChannelRecord
   getChannel(id: ChannelId): ChannelRecord | undefined
@@ -365,6 +366,20 @@ export class CoreService {
     }
     this.#repository.createConnection(record)
     return record
+  }
+
+  listConnections(): readonly ConnectionRecord[] {
+    return this.#repository.listConnectionIdsByAdapter().flatMap((id) => {
+      const connection = this.#repository.getConnection(id)
+      return connection ? [connection] : []
+    })
+  }
+
+  listConnectionsByAdapter(adapterKey: string): readonly ConnectionRecord[] {
+    return this.#repository.listConnectionIdsByAdapter(adapterKey).flatMap((id) => {
+      const connection = this.#repository.getConnection(id)
+      return connection ? [connection] : []
+    })
   }
 
   createChannel(input: {

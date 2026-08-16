@@ -65,6 +65,12 @@ class MemoryRepository implements CoreRepository {
     return this.connections.get(id)
   }
 
+  listConnectionIdsByAdapter(adapterKey?: string): readonly ConnectionId[] {
+    return [...this.connections.values()]
+      .filter((connection) => adapterKey === undefined || connection.adapterKey === adapterKey)
+      .map((connection) => connection.id)
+  }
+
   createChannel(record: ChannelRecord): void {
     this.channels.set(record.id, record)
   }
