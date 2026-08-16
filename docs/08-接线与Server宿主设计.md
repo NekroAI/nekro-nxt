@@ -56,7 +56,7 @@ Web 端不复制一份业务事实到 Zustand。`ProductHostPort.getSnapshot()` 
 | QQ 收发测试 | `POST /api/connections/:id/test` | Web 连接真实收发；QQ 无真实凭据时诚实返回 `needs-credentials`（拒假成功） | ✅ 入口已接通；真实凭据收发待外部环境 |
 | 保存动态包 | `POST /api/extensions/save-from-dynamic` | 把活动会话中的运行动态 Package 保存为本地 Extension Revision（不自动启用） | ✅ 服务端+Web命令；浏览器动态 runner 完整创造回路待接线 |
 
-`GET /api/snapshot` 现在投影：全部 `Connection`（Web + QQ，credentialRefs 只含引用）、已绑定 Agent、频道、近期频道事实、全部已保存本地扩展（含当前 AgentActivation 状态）。
+`GET /api/snapshot` 现在投影：全部 `Connection`（Web + QQ，credentialRefs 只含引用）、已绑定 Agent、频道、近期频道事实、全部已保存本地扩展（含当前 AgentActivation 状态）、各智能体活动会话中运行的动态 Package（plugin/package/审批状态）。
 
 ### 3.2 Web 侧
 
