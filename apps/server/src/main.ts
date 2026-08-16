@@ -16,6 +16,7 @@ import {
 import WebServer from '@deepseek-ai/dsh-host-webserver'
 import type { Context as LlmContext } from '@deepseek-ai/cordis'
 import { existsSync } from 'node:fs'
+import { mkdir } from 'node:fs/promises'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { NekroRuntime } from './bootstrap.js'
@@ -43,6 +44,7 @@ export const startNekroServer = async (options: StartServerOptions): Promise<Nek
   const host = options.host ?? '127.0.0.1'
   const port = options.port ?? 0
   const dataRoot = resolveRoot(options.dataRoot)
+  await mkdir(path.dirname(path.join(dataRoot, 'core.sqlite')), { recursive: true })
 
   const runtime = await NekroRuntime.create({
     coreDatabasePath: path.join(dataRoot, 'core.sqlite'),
