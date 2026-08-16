@@ -2,15 +2,28 @@ import { execFileSync } from 'node:child_process'
 import { existsSync, readFileSync, statSync } from 'node:fs'
 import { extname } from 'node:path'
 
-const repositoryFiles = execFileSync(
-  'git',
-  ['ls-files', '--cached', '--others', '--exclude-standard', '-z'],
-  { encoding: 'utf8' },
-).split('\0').filter(Boolean)
+const repositoryFiles = execFileSync('git', ['ls-files', '--cached', '--others', '--exclude-standard', '-z'], {
+  encoding: 'utf8',
+})
+  .split('\0')
+  .filter(Boolean)
 
 const forbiddenTrackedPrefixes = ['.local/', 'docs-private/', 'data/', 'secrets/']
 const textExtensions = new Set([
-  '', '.css', '.html', '.js', '.json', '.jsx', '.md', '.mjs', '.svg', '.ts', '.tsx', '.txt', '.yaml', '.yml',
+  '',
+  '.css',
+  '.html',
+  '.js',
+  '.json',
+  '.jsx',
+  '.md',
+  '.mjs',
+  '.svg',
+  '.ts',
+  '.tsx',
+  '.txt',
+  '.yaml',
+  '.yml',
 ])
 const genericPatterns = [
   { name: 'macOS absolute user or volume path', pattern: /\/(?:Users|Volumes)\/[^\s"'`<>]+/g },
@@ -27,8 +40,8 @@ const localPatternPath = '.local/forbidden-patterns.txt'
 const localPatterns = existsSync(localPatternPath)
   ? readFileSync(localPatternPath, 'utf8')
       .split(/\r?\n/u)
-      .map(line => line.trim())
-      .filter(line => line.length > 0 && !line.startsWith('#'))
+      .map((line) => line.trim())
+      .filter((line) => line.length > 0 && !line.startsWith('#'))
   : []
 
 const findings = []
@@ -36,7 +49,7 @@ const findings = []
 for (const path of repositoryFiles) {
   if (!existsSync(path)) continue
 
-  if (forbiddenTrackedPrefixes.some(prefix => path.startsWith(prefix))) {
+  if (forbiddenTrackedPrefixes.some((prefix) => path.startsWith(prefix))) {
     findings.push(`${path}: local/private path is part of the publish candidate`)
     continue
   }

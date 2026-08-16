@@ -4,9 +4,36 @@
   "private": true,
   "description": "NekroAI 下一代智能体平台",
   "type": "module",
+  "packageManager": "pnpm@11.7.0",
+  "engines": {
+    "node": "^22.19.0 || >=24.0.0"
+  },
   "scripts": {
+    "dev": "pnpm -r --parallel --if-present run dev",
+    "build": "tsc -b && pnpm -r --if-present run build && node scripts/check-built-exports.mjs",
+    "check": "pnpm check:format && pnpm typecheck && pnpm lint && pnpm check:docs && pnpm check:public && pnpm check:workspace",
+    "check:format": "prettier --check .",
+    "check:docs": "node scripts/check-doc-links.mjs && node scripts/check-decision-status.mjs && node scripts/check-terminology.mjs",
     "prototype": "python3 -m http.server 4173 --directory prototype",
     "check:prototype": "node --check prototype/app.js",
-    "check:public": "node scripts/check-public-boundary.mjs"
+    "check:public": "node scripts/check-public-boundary.mjs",
+    "check:workspace": "node scripts/check-workspace-boundaries.mjs && node scripts/check-react-singleton.mjs",
+    "format": "prettier --write .",
+    "lint": "eslint .",
+    "test": "vitest run",
+    "test:coverage": "vitest run --coverage",
+    "typecheck": "tsc -b && tsc -p tsconfig.lint.json"
+  },
+  "devDependencies": {
+    "@eslint/js": "9.39.5",
+    "@types/node": "22.20.0",
+    "@vitest/coverage-v8": "4.1.8",
+    "eslint": "9.39.5",
+    "prettier": "3.9.6",
+    "tsdown": "0.22.2",
+    "tsx": "4.22.4",
+    "typescript": "6.0.3",
+    "typescript-eslint": "8.67.0",
+    "vitest": "4.1.8"
   }
 }

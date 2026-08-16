@@ -1,0 +1,19 @@
+{
+  "files": [],
+  "references": [
+    { "path": "apps/server" },
+    { "path": "apps/web" },
+    { "path": "packages/contracts" },
+    { "path": "packages/adapter-sdk" },
+    { "path": "packages/adapter-qq-openclaw" },
+    { "path": "packages/adapter-web" },
+    { "path": "packages/core" },
+    { "path": "packages/channel-runtime" },
+    { "path": "packages/client-migrations" },
+    { "path": "packages/dsh-compat" },
+    { "path": "packages/extension-sdk" },
+    { "path": "packages/extension-runtime" },
+    { "path": "packages/storage-sqlite" },
+    { "path": "packages/test-harness" }
+  ]
+}

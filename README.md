@@ -1,7 +1,7 @@
 # NekroNxt
 
 > 包名：`nekro-nxt`  
-> 状态：立项与交互确认阶段
+> 状态：M0-M2 已实现，正在推进 M3-M4 动态创造与本地扩展
 
 NekroNxt 是 NekroAI 的下一代智能体产品：以 DSH 为核心智能体引擎，原生支持网页与多平台群聊，同时兼具娱乐性、生产力和可由智能体参与开发的动态扩展能力。
 
@@ -13,8 +13,8 @@ nekro-nxt/
 ├─ docs/                     # 可公开的当前设计、协议与决策
 ├─ prototype/                # 无依赖、可交互的需求确认原型
 ├─ assets/product-concepts/  # 早期概念图，仅作视觉参考
-├─ apps/                     # 未来 Desktop、Server、Web 应用
-└─ packages/                 # 未来核心、运行时和扩展包
+├─ apps/                     # Server Host 与共享 Web UI
+└─ packages/                 # 核心、运行时、Adapter 与共享基础包
 ```
 
 ## 从哪里开始
@@ -25,8 +25,10 @@ nekro-nxt/
 4. 新功能设计前阅读 [`docs/02-未来扩展方向.md`](docs/02-未来扩展方向.md) 和相关 Decision Note；
 5. 消息、频道或 Adapter 工作必须阅读 [`docs/03-消息内容与投递协议.md`](docs/03-消息内容与投递协议.md)；
 6. 开始一期实现前阅读 [`docs/04-一期开发计划与决策清单.md`](docs/04-一期开发计划与决策清单.md)；
-7. 打开 [`prototype/index.html`](prototype/index.html) 验证产品交互；
-8. 需要深入架构时再阅读完整设计和专题协议。
+7. 开发前阅读 [`docs/06-开发与测试规范.md`](docs/06-开发与测试规范.md)；
+8. 新架构或新能力阅读 [`docs/07-参考项目复用指南.md`](docs/07-参考项目复用指南.md)；
+9. 打开 [`prototype/index.html`](prototype/index.html) 验证产品交互；
+10. 需要深入架构时再阅读完整设计和专题协议。
 
 ## 当前最重要的产品约束
 

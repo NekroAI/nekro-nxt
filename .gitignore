@@ -2,7 +2,10 @@ node_modules/
 .pnpm-store/
 dist/
 build/
+lib/
 coverage/
+.turbo/
+.tsbuildinfo
 .DS_Store
 *.log
 .env
