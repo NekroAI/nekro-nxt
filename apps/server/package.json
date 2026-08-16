@@ -1,0 +1,54 @@
+{
+  "name": "@nekro-nxt/server",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": {
+      "types": "./lib/types/index.d.ts",
+      "import": "./dist/index.mjs"
+    }
+  },
+  "scripts": {
+    "build": "tsdown",
+    "test": "vitest run --root ../.. apps/server/tests",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@nekro-nxt/adapter-qq-openclaw": "workspace:*",
+    "@deepseek-ai/cordis": "4.0.1",
+    "@deepseek-ai/dsh-agent": "0.1.0-rc.6",
+    "@deepseek-ai/dsh-agent-loop": "0.1.0-rc.6",
+    "@deepseek-ai/dsh-attachment": "0.1.0-rc.6",
+    "@deepseek-ai/dsh-bash-sandbox": "0.1.0-rc.6",
+    "@deepseek-ai/dsh-compaction-basic": "0.1.0-rc.6",
+    "@deepseek-ai/dsh-cordis-host-runner": "0.1.0-rc.6",
+    "@deepseek-ai/dsh-fs-observation-policy": "0.1.0-rc.6",
+    "@deepseek-ai/dsh-fs-sandbox": "0.1.0-rc.6",
+    "@deepseek-ai/dsh-llm": "0.1.0-rc.6",
+    "@deepseek-ai/dsh-sandbox-local": "0.1.0-rc.6",
+    "@deepseek-ai/dsh-sandbox-policy": "0.1.0-rc.6",
+    "@deepseek-ai/dsh-scope": "0.1.0-rc.6",
+    "@deepseek-ai/dsh-session": "0.1.0-rc.6",
+    "@deepseek-ai/dsh-session-checkpoint-policy": "0.1.0-rc.6",
+    "@deepseek-ai/dsh-session-persistence-sqlite": "0.1.0-rc.6",
+    "@deepseek-ai/dsh-system-prompt": "0.1.0-rc.6",
+    "@deepseek-ai/dsh-shell-env": "0.1.0-rc.6",
+    "@deepseek-ai/dsh-subprocess-local": "0.1.0-rc.6",
+    "@deepseek-ai/dsh-token-meter": "0.1.0-rc.6",
+    "@deepseek-ai/dsh-tool-bash": "0.1.0-rc.6",
+    "@deepseek-ai/dsh-tool-cordis": "0.1.0-rc.6",
+    "@deepseek-ai/dsh-tool-fs": "0.1.0-rc.6",
+    "@deepseek-ai/dsh-tools": "0.1.0-rc.6",
+    "@nekro-nxt/channel-runtime": "workspace:*",
+    "@nekro-nxt/contracts": "workspace:*",
+    "@nekro-nxt/core": "workspace:*",
+    "@nekro-nxt/extension-runtime": "workspace:*",
+    "@nekro-nxt/extension-sdk": "workspace:*",
+    "sharp": "0.35.3"
+  },
+  "devDependencies": {
+    "@nekro-nxt/adapter-web": "workspace:*",
+    "@nekro-nxt/storage-sqlite": "workspace:*"
+  }
+}
