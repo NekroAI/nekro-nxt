@@ -16,7 +16,7 @@ const state = {
     name: "小奈",
     persona: "活泼、可靠，擅长在群聊中提供帮助",
     model: "DeepSeek V4",
-    mode: "通用模式",
+    mode: "通用方式",
   },
   agents: [
     { id: "xiaonai", name: "小奈", letter: "奈", status: "tool", channels: 3, extensions: 4, activity: "正在处理：QQ 用户群的天气查询", last: "刚刚" },
@@ -143,8 +143,8 @@ function updateChrome() {
     channel: "<strong>消息</strong> / QQ 用户群",
     capabilities: "<strong>智能体</strong> / 小奈 / 能力",
     binding: "<strong>连接</strong> / 绑定消息频道",
-    creator: "<strong>创造工作台</strong> / 网页摘要助手",
-    extension: "<strong>扩展</strong> / 网页摘要助手",
+    creator: "<strong>创造工作台</strong> / 网页摘要",
+    extension: "<strong>扩展</strong> / 网页摘要",
     settings: "<strong>设置</strong> / 本地实例",
   };
   titleContext.innerHTML = titles[state.view] || "NekroNxt";
@@ -185,7 +185,7 @@ function renderSidebarContext() {
     return `
       <div class="side-section-title"><span>连接列表</span><button class="icon-button">＋</button></div>
       <div class="side-list">
-        <button class="side-item active"><span class="avatar mini gold">Q</span><span>QQ Bot</span><span class="side-status status-dot healthy"></span></button>
+        <button class="side-item active"><span class="avatar mini gold">Q</span><span>QQ 机器人账号</span><span class="side-status status-dot healthy"></span></button>
         <button class="side-item"><span class="avatar mini green">D</span><span>Discord</span><span class="side-status status-dot healthy"></span></button>
       </div>`;
   }
@@ -194,7 +194,7 @@ function renderSidebarContext() {
     return `
       <div class="side-section-title"><span>本地扩展</span><button class="icon-button">＋</button></div>
       <div class="side-list">
-        <button class="side-item ${state.view === "extension" ? "active" : ""}" data-action="navigate" data-view="extension"><span>▧</span><span>网页摘要助手</span><span class="side-status status-dot healthy"></span></button>
+        <button class="side-item ${state.view === "extension" ? "active" : ""}" data-action="navigate" data-view="extension"><span>▧</span><span>网页摘要</span><span class="side-status status-dot healthy"></span></button>
         <button class="side-item"><span>◉</span><span>QQ 适配器</span><span class="side-status status-dot healthy"></span></button>
         <button class="side-item"><span>▣</span><span>图片工具包</span><span class="side-status status-dot healthy"></span></button>
       </div>
@@ -279,7 +279,7 @@ function renderAgentCreate() {
   } else if (state.wizardStep === 2) {
     body = `<div class="panel"><div class="panel-title"><div><h2>选择模型</h2><p>先选择一个可用模型，路由和高级参数以后再配置。</p></div></div><div class="choice-grid">${["DeepSeek V4", "Claude Sonnet", "GPT-5", "自定义 OpenAI 兼容服务"].map((m) => `<button class="choice-card ${state.wizard.model === m ? "active" : ""}" data-action="select-model" data-value="${m}"><strong>${m}</strong><small>${m === "DeepSeek V4" ? "推荐 · 已完成连接测试" : "可稍后配置凭据"}</small></button>`).join("")}</div></div>`;
   } else if (state.wizardStep === 3) {
-    body = `<div class="panel"><div class="panel-title"><div><h2>工作方式与初始能力</h2><p>默认保持克制，高权限能力创建后单独授权。</p></div></div><div class="choice-grid">${["通用模式", "群聊伙伴", "效率助手", "自定义 Preset"].map((m) => `<button class="choice-card ${state.wizard.mode === m ? "active" : ""}" data-action="select-mode" data-value="${m}"><strong>${m}</strong><small>${m === "通用模式" ? "对话、检索与图片理解" : "创建后仍可调整"}</small></button>`).join("")}</div><div class="divider"></div><div class="summary-list"><div class="summary-row"><span>网页搜索</span><span class="tag success">开启</span></div><div class="summary-row"><span>图片理解</span><span class="tag success">开启</span></div><div class="summary-row"><span>动态创造</span><span class="tag">关闭</span></div><div class="summary-row"><span>开发 Shell / 完整文件访问</span><span class="tag">关闭</span></div></div></div>`;
+    body = `<div class="panel"><div class="panel-title"><div><h2>工作方式与初始能力</h2><p>默认保持克制，高权限能力创建后单独授权。</p></div></div><div class="choice-grid">${["通用方式", "群聊伙伴", "效率工作", "自定义 Preset"].map((m) => `<button class="choice-card ${state.wizard.mode === m ? "active" : ""}" data-action="select-mode" data-value="${m}"><strong>${m}</strong><small>${m === "通用方式" ? "对话、检索与图片理解" : "创建后仍可调整"}</small></button>`).join("")}</div><div class="divider"></div><div class="summary-list"><div class="summary-row"><span>网页搜索</span><span class="tag success">开启</span></div><div class="summary-row"><span>图片理解</span><span class="tag success">开启</span></div><div class="summary-row"><span>动态创造</span><span class="tag">关闭</span></div><div class="summary-row"><span>开发 Shell / 完整文件访问</span><span class="tag">关闭</span></div></div></div>`;
   } else {
     body = `<div class="panel"><div class="panel-title"><div><h2>确认智能体</h2><p>点击创建前不会写入任何正式数据。</p></div></div><div class="summary-list"><div class="summary-row"><span>智能体</span><strong>${esc(state.wizard.name)}</strong></div><div class="summary-row"><span>人设</span><span>${esc(state.wizard.persona)}</span></div><div class="summary-row"><span>模型</span><strong>${esc(state.wizard.model)}</strong></div><div class="summary-row"><span>工作方式</span><strong>${esc(state.wizard.mode)}</strong></div><div class="summary-row"><span>高权限能力</span><span>动态创造、开发 Shell、完整文件访问均关闭</span></div></div><div class="info-callout" style="margin-top:14px">创建时会原子生成智能体、首个配置版本、网页频道与默认频道绑定。任何一步失败都不会留下半创建对象。</div></div>`;
   }
@@ -318,7 +318,7 @@ function renderChannel() {
           ${state.channelMessages.map((m) => message("NekroNxt", "N", m.time, esc(m.text), "green")).join("")}
         </div>
         <form class="composer" data-action="send-channel-form" data-note="发送目标始终可见；这里没有脱离消息语境的能力或创造按钮">
-          <div class="composer-target">发送到：<strong>QQ 用户群</strong>（以 Bot 身份）</div>
+          <div class="composer-target">发送到：<strong>QQ 用户群</strong>（通过 QQ 机器人账号）</div>
           <div class="composer-row"><button type="button" class="btn">＋</button><input id="channelInput" placeholder="向该群发送消息…" autocomplete="off" /><button class="btn primary" type="submit">发送</button></div>
         </form>
       </div>
@@ -339,16 +339,16 @@ function capabilityDiffs() {
 function renderCapabilities() {
   const diffs = capabilityDiffs();
   return `
-    <section class="view"><header class="page-header"><div><div class="eyebrow">智能体 / 小奈 / 能力</div><div class="button-row"><h1>小奈的能力配置</h1>${diffs.length ? `<span class="tag warning">草稿 · 有未保存更改</span>` : `<span class="tag success">已保存</span>`}</div></div><div class="header-actions"><button class="btn" data-action="discard-capabilities" ${!diffs.length ? "disabled" : ""}>放弃更改</button><button class="btn primary" data-action="save-capabilities" ${!diffs.length ? "disabled" : ""} data-note="只发布新配置版本，不替换活动会话">保存为新配置</button><button class="btn primary" data-action="save-rollover" ${!diffs.length ? "disabled" : ""} data-note="先发布，再等待工具结束后的安全间隙切换">保存并在空闲后切换</button></div></header>
+    <section class="view"><header class="page-header"><div><div class="eyebrow">智能体 / 小奈 / 能力</div><div class="button-row"><h1>小奈的能力配置</h1>${diffs.length ? `<span class="tag warning">草稿 · 有未保存更改</span>` : `<span class="tag success">已保存</span>`}</div></div><div class="header-actions"><button class="btn" data-action="discard-capabilities" ${!diffs.length ? "disabled" : ""}>放弃更改</button><button class="btn primary" data-action="save-capabilities" ${!diffs.length ? "disabled" : ""} data-note="只发布新配置版本，不替换活动会话">保存为新配置</button><button class="btn primary" data-action="save-rollover" ${!diffs.length ? "disabled" : ""} data-note="发布后先计算兼容性，必要时才在安全间隙滚动会话">应用到当前会话</button></div></header>
       <div class="capability-layout">
-        <div class="panel revision-banner"><div class="revision-segment"><small>当前已发布</small><strong>配置版本 r${state.agentRevision} · 使用中</strong></div><div class="revision-segment"><small>正在编辑</small><strong>${diffs.length ? `基于 r${state.agentRevision} 的草稿` : "无草稿"}</strong></div><div class="revision-segment"><small>生效规则</small><span class="muted">保存会生成 r${state.agentRevision + 1}。已有会话继续使用 r${state.agentRevision}；新会话使用新版本。</span></div></div>
+        <div class="panel revision-banner"><div class="revision-segment"><small>当前已发布</small><strong>配置版本 r${state.agentRevision} · 使用中</strong></div><div class="revision-segment"><small>正在编辑</small><strong>${diffs.length ? `基于 r${state.agentRevision} 的草稿` : "无草稿"}</strong></div><div class="revision-segment"><small>生效规则</small><span class="muted">保存会生成 r${state.agentRevision + 1}。已有会话继续使用 r${state.agentRevision}；应用到当前会话前先检查兼容性。</span></div></div>
         <div class="capability-stack">
           <div class="panel"><div class="panel-title"><div><h2>常用能力</h2><p>日常对话中最常用、风险较低的能力。</p></div></div><div class="capability-list">${capabilityRow("web", "网页检索", "WebSearch 扩展", "搜索网页并返回来源")}${capabilityRow("knowledge", "知识库读取", "Knowledge 扩展", "从已授权知识库检索内容")}${capabilityRow("vision", "图片理解", "Vision 扩展", "理解截图、图表与照片")}${capabilityRow("scheduler", "定时任务", "Scheduler 扩展", "创建和管理提醒")}</div></div>
           <div class="panel" data-note="三个高能力分别授权；创造能力不隐式获得 Shell 或完整文件访问"><div class="panel-title"><div><h2>创造与开发</h2><p>允许此智能体在创造工作台生成并动态运行扩展。</p></div><button class="text-button" data-action="navigate" data-view="creator">进入创造工作台</button></div><div class="capability-list">${capabilityRow("creation", "动态创造", "NekroNxt 创造工作台", "生成并动态运行扩展草稿", "中风险")}${capabilityRow("shell", "开发 Shell", "主机运行时", "在受限环境执行开发命令", "高风险")}${capabilityRow("fullFiles", "完整文件访问", "主机运行时", "读写指定目录外的宿主文件", "极高风险")}</div></div>
           <div class="panel"><div class="panel-title"><div><h2>外部服务与 MCP</h2><p>通过 Connection 或 MCP 接入外部工具。</p></div><button class="btn small">管理连接</button></div><div class="summary-list"><div class="summary-row"><span>GitHub MCP</span><strong>仅读取 · 已连接</strong></div><div class="summary-row"><span>本地文件</span><strong>指定目录 · 已连接</strong></div></div></div>
-          <div class="panel"><div class="panel-title"><h2>配置生效规则</h2></div><div class="effect-flow"><div class="effect-step"><strong>1 编辑草稿</strong><br><span>调整 r${state.agentRevision} 的草稿</span></div><span class="arrow">→</span><div class="effect-step"><strong>2 保存配置版本</strong><br><span>发布为不可变新版本</span></div><span class="arrow">→</span><div class="effect-step"><strong>3 新会话生效</strong><br><span>活动会话默认不热替换</span></div></div></div>
+          <div class="panel"><div class="panel-title"><h2>配置生效规则</h2></div><div class="effect-flow"><div class="effect-step"><strong>1 编辑草稿</strong><br><span>调整 r${state.agentRevision} 的草稿</span></div><span class="arrow">→</span><div class="effect-step"><strong>2 保存配置版本</strong><br><span>发布为不可变新版本</span></div><span class="arrow">→</span><div class="effect-step"><strong>3 明确应用</strong><br><span>兼容变化安全切换，不兼容变化滚动会话</span></div></div></div>
         </div>
-        <aside class="panel"><div class="panel-title"><h2>草稿影响范围</h2></div><div class="summary-list"><div class="summary-row"><span>新会话</span><strong>保存后采用新版本</strong></div><div class="summary-row"><span>活动会话</span><strong>${state.rollover ? "等待安全切换" : `仍在 r${state.agentRevision}`}</strong></div></div><div class="divider"></div><div class="panel-title"><h3>待保存变更（${diffs.length}）</h3></div><div class="diff-list">${diffs.length ? diffs.map((diff, i) => `<div class="diff-item"><span class="diff-number">${i + 1}</span><span>${diff}</span></div>`).join("") : `<span class="muted">当前配置与已发布版本一致。</span>`}</div></aside>
+        <aside class="panel"><div class="panel-title"><h2>草稿影响范围</h2></div><div class="summary-list"><div class="summary-row"><span>未来启用</span><strong>默认引用新版本</strong></div><div class="summary-row"><span>活动会话</span><strong>${state.rollover ? "等待兼容性检查" : `仍在 r${state.agentRevision}`}</strong></div></div><div class="divider"></div><div class="panel-title"><h3>待保存变更（${diffs.length}）</h3></div><div class="diff-list">${diffs.length ? diffs.map((diff, i) => `<div class="diff-item"><span class="diff-number">${i + 1}</span><span>${diff}</span></div>`).join("") : `<span class="muted">当前配置与已发布版本一致。</span>`}</div></aside>
       </div>
     </section>`;
 }
@@ -406,16 +406,16 @@ function renderCreator() {
   return `
     <section class="view flush"><div class="creator-shell">
       <header class="creator-top"><strong>NekroNxt 创造工作台</strong><h1>为小奈创建能力</h1><button class="btn small" data-action="navigate" data-view="extension">退出创造工作台</button></header>
-      <aside class="creator-left"><div class="panel-title"><h2>创造会话</h2></div><div class="card draft-card"><small class="faint">关联智能体</small><div class="button-row" style="margin:8px 0 13px"><span class="avatar small">奈</span><strong>小奈</strong></div><small class="faint">扩展草稿</small><div class="button-row" style="margin-top:8px"><strong>网页摘要助手</strong><span class="tag accent">草稿中</span></div></div><div class="timeline"><div class="timeline-item done"><span class="timeline-dot"></span><strong>需求已确认</strong><small class="faint">10:24</small></div><div class="timeline-item done"><span class="timeline-dot"></span><strong>草稿 v1</strong><small class="faint">10:31</small></div><div class="timeline-item active"><span class="timeline-dot"></span><strong>动态包 #3</strong><small class="faint">当前</small></div><div class="timeline-item ${allPass ? "done" : ""}"><span class="timeline-dot"></span><strong>验证结果</strong></div><div class="timeline-item ${c.saved ? "done" : ""}"><span class="timeline-dot"></span><strong>${c.saved ? `已保存扩展版本 r${c.revision}` : "尚未保存"}</strong></div></div><button class="btn">＋ 新建检查点</button><div class="info-callout" style="margin-top:16px">本会话只操作此扩展草稿，不影响其他草稿或已保存版本。</div></aside>
+      <aside class="creator-left"><div class="panel-title"><h2>创造会话</h2></div><div class="card draft-card"><small class="faint">关联智能体</small><div class="button-row" style="margin:8px 0 13px"><span class="avatar small">奈</span><strong>小奈</strong></div><small class="faint">扩展草稿</small><div class="button-row" style="margin-top:8px"><strong>网页摘要</strong><span class="tag accent">草稿中</span></div></div><div class="timeline"><div class="timeline-item done"><span class="timeline-dot"></span><strong>需求已确认</strong><small class="faint">10:24</small></div><div class="timeline-item done"><span class="timeline-dot"></span><strong>草稿 v1</strong><small class="faint">10:31</small></div><div class="timeline-item active"><span class="timeline-dot"></span><strong>动态包 #3</strong><small class="faint">当前</small></div><div class="timeline-item ${allPass ? "done" : ""}"><span class="timeline-dot"></span><strong>验证结果</strong></div><div class="timeline-item ${c.saved ? "done" : ""}"><span class="timeline-dot"></span><strong>${c.saved ? `已保存扩展版本 r${c.revision}` : "尚未保存"}</strong></div></div><button class="btn">＋ 新建检查点</button><div class="info-callout" style="margin-top:16px">本会话只操作此扩展草稿，不影响其他草稿或已保存版本。</div></aside>
       <main class="creator-chat"><div class="panel-title"><h2>与小奈协作创造</h2><span class="tag">小奈 · 已启用创造能力</span></div><div class="chat-stream"><div class="chat-bubble user">做一个可以读取网页并输出带引用摘要的能力，只允许网络读取。</div><div class="chat-bubble"><strong>小奈 · 实现计划</strong><div class="plan-card"><div class="plan-row"><span>贡献</span><strong>Tool: summarize_web</strong></div><div class="plan-row"><span>输入</span><span>URL、摘要长度</span></div><div class="plan-row"><span>输出</span><span>摘要、引用列表</span></div><div class="plan-row"><span>权限</span><span class="tag accent">network:read</span></div></div></div><div class="chat-bubble"><strong>已生成动态包 #3</strong><p class="muted">新增网页读取与摘要工具、引用提取逻辑和异常 URL 测试；没有申请 Shell 或完整文件访问。</p><button class="btn small">查看生成文件</button></div>${c.messages.map((m) => `<div class="chat-bubble ${m.role === "user" ? "user" : ""}">${esc(m.text)}</div>`).join("")}</div><form class="creator-composer" data-action="creator-message-form"><textarea id="creatorInput" placeholder="描述要修改的行为或补充测试场景…"></textarea><button class="btn primary" type="submit">发送</button></form></main>
       <aside class="creator-inspector" data-note="验证展示可展开的真实证据，不使用“AI 说成功”作为可信依据"><div class="tabs"><button class="tab ${c.activeTab === "preview" ? "active" : ""}" data-action="creator-tab" data-tab="preview">预览</button><button class="tab ${c.activeTab === "validation" ? "active" : ""}" data-action="creator-tab" data-tab="validation">验证</button><button class="tab ${c.activeTab === "changes" ? "active" : ""}" data-action="creator-tab" data-tab="changes">变更</button></div>${renderCreatorInspector()}</aside>
-      <footer class="creator-footer" data-note="动态运行、持久化保存、为智能体启用是三个独立状态变化"><div class="creator-principle"><span><b>1 动态运行</b> · 临时加载</span><span><b>2 保存</b> · 本地扩展版本</span><span><b>3 启用</b> · 给指定智能体使用</span></div><div class="creator-actions"><button class="btn" data-action="creator-continue">继续修改</button><button class="btn primary" data-action="save-extension" ${!allPass || c.saved ? "disabled" : ""}>${c.saved ? `已保存 r${c.revision}` : "保存为本地插件"}</button><button class="btn ${c.activated ? "" : "primary"}" data-action="activate-extension" ${!c.saved || c.activated ? "disabled" : ""}>${c.activated ? "已启用给小奈" : "启用给小奈"}</button></div></footer>
+      <footer class="creator-footer" data-note="动态运行、持久化保存、为智能体启用是三个独立状态变化"><div class="creator-principle"><span><b>1 动态运行</b> · 临时加载</span><span><b>2 保存</b> · 本地扩展版本</span><span><b>3 启用</b> · 给指定智能体使用</span></div><div class="creator-actions"><button class="btn" data-action="creator-continue">继续修改</button><button class="btn primary" data-action="save-extension" ${!allPass || c.saved ? "disabled" : ""}>${c.saved ? `已保存 r${c.revision}` : "保存为本地扩展"}</button><button class="btn ${c.activated ? "" : "primary"}" data-action="activate-extension" ${!c.saved || c.activated ? "disabled" : ""}>${c.activated ? "已启用给小奈" : "启用给小奈"}</button></div></footer>
     </div></section>`;
 }
 
 function renderExtension() {
   const e = state.extension;
-  if (e.deleted) return `<section class="view"><div class="empty-state"><div><strong>网页摘要助手已从本地删除</strong><p>这是原型演示状态。刷新页面可以恢复初始数据。</p><button class="btn primary" onclick="location.reload()">恢复原型</button></div></div></section>`;
+  if (e.deleted) return `<section class="view"><div class="empty-state"><div><strong>网页摘要已从本地删除</strong><p>这是原型演示状态。刷新页面可以恢复初始数据。</p><button class="btn primary" onclick="location.reload()">恢复原型</button></div></div></section>`;
   const activeCount = e.activations.filter((a) => a.enabled).length;
   const revisions = {
     3: { title: "新增引用去重", date: "2 小时前", validation: "12/12", hash: "a18f7cd2" },
@@ -424,14 +424,14 @@ function renderExtension() {
   };
   const selected = revisions[e.selectedRevision];
   return `
-    <section class="view"><div class="extension-header"><span class="extension-icon">▤</span><div class="extension-heading"><div class="button-row"><h1>网页摘要助手</h1><span class="tag">本地创建</span><span class="tag accent">NekroNxt 扩展</span><span class="tag success">扩展版本 r${e.defaultRevision} · 当前默认</span></div><p>读取网页并输出带引用的摘要。</p></div><button class="btn primary" data-action="navigate" data-view="creator" data-note="进入创造工作台并创建新草稿；不会直接编辑已保存版本">新建修改会话</button><button class="btn">•••</button></div>
+    <section class="view"><div class="extension-header"><span class="extension-icon">▤</span><div class="extension-heading"><div class="button-row"><h1>网页摘要</h1><span class="tag">本地创建</span><span class="tag accent">NekroNxt 扩展</span><span class="tag success">扩展版本 r${e.defaultRevision} · 当前默认</span></div><p>读取网页并输出带引用的摘要。</p></div><button class="btn primary" data-action="navigate" data-view="creator" data-note="进入创造工作台并创建新草稿；不会直接编辑已保存版本">新建修改会话</button><button class="btn">•••</button></div>
       <div class="panel extension-summary"><div class="extension-stat"><small>状态</small><strong class="strong">已保存</strong></div><div class="extension-stat"><small>来源</small><strong>创造工作台</strong></div><div class="extension-stat"><small>权限</small><strong>network:read</strong></div><div class="extension-stat"><small>最近验证</small><strong style="color:var(--green)">全部通过 · 2 小时前</strong></div></div>
       <div class="extension-grid">
         <div class="panel"><div class="panel-title"><div><h2>贡献能力</h2><p>扩展版本向系统提供的工具、预设和界面能力。</p></div></div><div class="contribution-row"><span class="tool-symbol" style="width:36px;height:36px">⌕</span><div><strong>summarize_web</strong><small class="faint" style="display:block;margin-top:4px">输入 URL 与摘要长度 · network:read</small></div><span class="tag success">r2 引入 · 可用</span></div><div class="contribution-row"><span class="tool-symbol" style="width:36px;height:36px">≡</span><div><strong>带引用摘要预设</strong><small class="faint" style="display:block;margin-top:4px">生成带来源引用的结构化摘要</small></div><span class="tag success">r1 引入 · 可用</span></div></div>
         <div class="panel" data-note="智能体启用关系引用指定扩展版本，各智能体独立管理"><div class="panel-title"><div><h2>智能体启用情况</h2><p>安装扩展不会自动让所有智能体获得能力。</p></div><button class="btn small">管理启用</button></div>${e.activations.map((a) => `<div class="activation-row"><span class="avatar small ${a.id === "ops" ? "green" : a.id === "assist" ? "warm" : ""}">${a.letter}</span><div><strong>${a.name}</strong><small class="faint" style="display:block">${a.enabled ? "已启用" : "未启用"}</small></div><div>${a.enabled ? `使用 r${a.revision} · ${a.scope}${a.revision < e.defaultRevision ? ` <span class="tag warning">有可用更新</span>` : ""}` : "—"}</div>${a.enabled ? (a.revision < e.defaultRevision ? `<button class="btn small" data-action="update-activation" data-id="${a.id}">切换到 r${e.defaultRevision}</button>` : `<button class="btn small" data-action="toggle-activation" data-id="${a.id}">停用</button>`) : `<button class="btn small" data-action="toggle-activation" data-id="${a.id}">启用</button>`}</div>`).join("")}</div>
       </div>
       <div class="revision-grid"><div class="panel"><div class="panel-title"><h2>扩展版本历史</h2></div><div class="revision-list">${Object.entries(revisions).map(([n, r]) => `<button class="revision-item ${Number(n) === e.selectedRevision ? "active" : ""}" data-action="select-revision" data-revision="${n}"><strong>r${n}</strong><span>${r.title}<small class="faint" style="display:block;margin-top:3px">${r.date}</small></span>${Number(n) === e.defaultRevision ? `<span class="tag success">当前默认</span>` : ""}</button>`).join("")}</div><div class="info-callout" style="margin-top:13px">默认版本只影响未来启用关系或新会话，不强制热替换活动会话。</div></div><div class="panel"><div class="panel-title"><div><h2>选中版本：r${e.selectedRevision}</h2><p>${selected.title}</p></div><span class="tag success">验证通过</span></div><div class="summary-list"><div class="summary-row"><span>变更摘要</span><strong>${selected.title}，保持输出结构兼容</strong></div><div class="summary-row"><span>验证证据</span><strong>${selected.validation} 项全部通过</strong></div><div class="summary-row"><span>包指纹</span><strong>${selected.hash}</strong></div><div class="summary-row"><span>权限</span><strong>network:read（无变化）</strong></div></div><div class="button-row" style="margin-top:15px"><button class="btn primary" data-action="navigate" data-view="creator">在创造工作台基于 r${e.selectedRevision} 修改</button><button class="btn" data-action="switch-default" ${e.selectedRevision === e.defaultRevision ? "disabled" : ""}>设为默认版本</button></div></div></div>
-      <div class="panel danger-zone"><div class="danger-copy"><strong style="color:#ff9d9d">危险操作</strong><p class="muted">先从全部智能体停用，再删除本地资源。</p></div><button class="btn danger" data-action="stop-all-activations" ${activeCount === 0 ? "disabled" : ""}>从全部智能体停用</button><button class="btn danger" data-action="delete-extension" ${activeCount > 0 ? "disabled" : ""} data-note="没有智能体使用时才允许删除">删除本地插件</button><span class="muted">${activeCount > 0 ? `仍有 ${activeCount} 个智能体正在使用` : "可以安全删除"}</span></div>
+      <div class="panel danger-zone"><div class="danger-copy"><strong style="color:#ff9d9d">危险操作</strong><p class="muted">先从全部智能体停用，再删除本地资源。</p></div><button class="btn danger" data-action="stop-all-activations" ${activeCount === 0 ? "disabled" : ""}>从全部智能体停用</button><button class="btn danger" data-action="delete-extension" ${activeCount > 0 ? "disabled" : ""} data-note="没有智能体使用时才允许删除">删除本地扩展</button><span class="muted">${activeCount > 0 ? `仍有 ${activeCount} 个智能体正在使用` : "可以安全删除"}</span></div>
     </section>`;
 }
 
@@ -468,11 +468,11 @@ document.addEventListener("click", (event) => {
   if (action === "discard-capabilities") { state.capabilities = { ...state.publishedCapabilities }; state.rollover = false; render(); toast("已放弃草稿", `恢复到配置版本 r${state.agentRevision}。`); }
   if (action === "save-capabilities") {
     state.agentRevision += 1; state.publishedCapabilities = { ...state.capabilities }; state.rollover = false; render();
-    toast(`已发布配置版本 r${state.agentRevision}`, `新会话使用 r${state.agentRevision}；已有活动会话不受影响。`);
+    toast(`已发布配置版本 r${state.agentRevision}`, `未来启用默认引用 r${state.agentRevision}；已有活动会话不受影响。`);
   }
   if (action === "save-rollover") {
     state.agentRevision += 1; state.publishedCapabilities = { ...state.capabilities }; state.rollover = true; render();
-    toast(`已发布配置版本 r${state.agentRevision}`, "活动会话将在当前工具完成后的安全间隙滚动切换。");
+    toast(`已发布配置版本 r${state.agentRevision}`, "系统会先检查兼容性；只有不兼容变化才在安全间隙滚动会话。");
   }
   if (action === "binding-step") { state.binding.step = Number(target.dataset.step); render(); }
   if (action === "binding-next") { state.binding.step = Math.min(5, state.binding.step + 1); render(); }
@@ -495,11 +495,11 @@ document.addEventListener("click", (event) => {
   if (action === "creator-continue") { state.creator.saved = false; state.creator.activated = false; state.creator.revision = null; state.creator.messages.push({ role: "assistant", text: "已基于 Package #3 创建新的修改检查点，请描述下一轮修改。" }); render(); }
   if (action === "save-extension") {
     state.creator.saved = true; state.creator.revision = 1; render();
-    toast("已保存为本地插件版本 r1", "扩展已持久化，但尚未为任何智能体启用。");
+    toast("已保存为本地扩展版本 r1", "源码版本已持久化，但尚未为任何智能体启用。");
   }
-  if (action === "activate-extension") { state.creator.activated = true; render(); toast("已启用给小奈", "小奈将在新会话中使用网页摘要助手 r1。"); }
+  if (action === "activate-extension") { state.creator.activated = true; render(); toast("已启用给小奈", "小奈的未来启用状态将引用网页摘要 r1。"); }
   if (action === "select-revision") { state.extension.selectedRevision = Number(target.dataset.revision); render(); }
-  if (action === "switch-default") { state.extension.defaultRevision = state.extension.selectedRevision; render(); toast(`默认版本已切换到 r${state.extension.defaultRevision}`, "只影响未来启用关系或新会话。"); }
+  if (action === "switch-default") { state.extension.defaultRevision = state.extension.selectedRevision; render(); toast(`默认版本已切换到 r${state.extension.defaultRevision}`, "只影响未来启用关系。"); }
   if (action === "toggle-activation") {
     const activation = state.extension.activations.find((a) => a.id === target.dataset.id);
     activation.enabled = !activation.enabled;
@@ -513,8 +513,8 @@ document.addEventListener("click", (event) => {
   }
   if (action === "stop-all-activations") showModal({ title: "从全部智能体停用？", body: "这会从所有智能体移除此能力，但保留扩展源码和全部版本。", confirmLabel: "从全部智能体停用", confirmAction: "confirm-stop-all", danger: true });
   if (action === "confirm-stop-all") { state.extension.activations.forEach((a) => { a.enabled = false; a.revision = null; }); closeModal(); render(); toast("已从全部智能体停用", "本地扩展和全部版本仍然保留。"); }
-  if (action === "delete-extension") showModal({ title: "删除本地插件？", body: "当前没有智能体使用此扩展。删除会移除本地扩展资源和全部版本，此原型中可通过刷新恢复。", confirmLabel: "删除本地插件", confirmAction: "confirm-delete-extension", danger: true });
-  if (action === "confirm-delete-extension") { state.extension.deleted = true; closeModal(); render(); toast("本地插件已删除"); }
+  if (action === "delete-extension") showModal({ title: "删除本地扩展？", body: "当前没有智能体使用此扩展。删除会移除本地扩展资源和全部版本，此原型中可通过刷新恢复。", confirmLabel: "删除本地扩展", confirmAction: "confirm-delete-extension", danger: true });
+  if (action === "confirm-delete-extension") { state.extension.deleted = true; closeModal(); render(); toast("本地扩展已删除"); }
   if (action === "close-modal") closeModal();
   if (action === "open-command") showModal({ title: "快速跳转", body: "这是需求确认原型。可使用顶部“快速跳转”依次检查七个核心界面和状态。", confirmLabel: "知道了" });
 });
