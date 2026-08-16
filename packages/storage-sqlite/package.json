@@ -1,0 +1,29 @@
+{
+  "name": "@nekro-nxt/storage-sqlite",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": {
+      "types": "./lib/types/index.d.ts",
+      "import": "./dist/index.mjs"
+    }
+  },
+  "scripts": {
+    "build": "tsdown",
+    "test": "vitest run --root ../.. packages/storage-sqlite/tests",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@nekro-nxt/adapter-sdk": "workspace:*",
+    "@nekro-nxt/contracts": "workspace:*",
+    "@nekro-nxt/core": "workspace:*",
+    "@nekro-nxt/extension-runtime": "workspace:*",
+    "@nekro-nxt/channel-runtime": "workspace:*",
+    "drizzle-orm": "0.45.2"
+  },
+  "devDependencies": {
+    "@nekro-nxt/test-harness": "workspace:*",
+    "drizzle-kit": "0.31.10"
+  }
+}

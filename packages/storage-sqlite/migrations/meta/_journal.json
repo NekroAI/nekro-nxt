@@ -1,0 +1,62 @@
+{
+  "version": "7",
+  "dialect": "sqlite",
+  "entries": [
+    {
+      "idx": 0,
+      "version": "6",
+      "when": 1786816012328,
+      "tag": "0000_red_darkstar",
+      "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "6",
+      "when": 1786819023428,
+      "tag": "0001_broad_taskmaster",
+      "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "6",
+      "when": 1786819633915,
+      "tag": "0002_runtime",
+      "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "6",
+      "when": 1786820350629,
+      "tag": "0003_assets",
+      "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "6",
+      "when": 1786822141989,
+      "tag": "0005_episode_rollover",
+      "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "6",
+      "when": 1786822658161,
+      "tag": "0006_asset_enrichment",
+      "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "6",
+      "when": 1786843909331,
+      "tag": "0007_agent_capabilities",
+      "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "6",
+      "when": 1786844806335,
+      "tag": "0008_extension_runtime",
+      "breakpoints": true
+    }
+  ]
+}
