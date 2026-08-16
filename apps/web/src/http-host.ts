@@ -247,6 +247,9 @@ export class HttpProductHost implements ProductHostPort {
     source.addEventListener('channel-fact', () => {
       void this.#refreshAndNotify()
     })
+    source.addEventListener('extensions-changed', () => {
+      void this.#refreshAndNotify()
+    })
     source.addEventListener('status', () => {
       void this.#refreshAndNotify()
     })

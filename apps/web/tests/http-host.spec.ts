@@ -72,6 +72,22 @@ const snapshotBody = () => ({
   extensions: [],
 })
 
+const snapshotBodyWithExtension = () => ({
+  ...snapshotBody(),
+  extensions: [
+    {
+      id: 'extension-1',
+      slug: 'channel-summary',
+      displayName: '频道摘要',
+      description: '生成结构化阶段摘要。',
+      revisionNumber: 1,
+      revisionId: 'revision-1',
+      activation: 'active',
+      agentId: 'agent-1',
+    },
+  ],
+})
+
 const flush = (): Promise<void> => new Promise((resolve) => setTimeout(resolve, 0))
 
 describe('HttpProductHost', () => {
@@ -278,6 +294,41 @@ describe('HttpProductHost', () => {
     expect(listener).toHaveBeenCalledTimes(2)
     expect(host.getSnapshot().messages).toHaveLength(3)
     expect(host.getSnapshot().messages.at(-1)).toMatchObject({ role: 'agent', body: '第二条回复。' })
+    unsubscribe()
+  })
+
+  it('refreshes the projection when an extensions-changed SSE event arrives after Activation', async () => {
+    let withExtension = false
+    fetchMock = vi.fn((input: string) => {
+      if (input === '/api/snapshot') {
+        return Promise.resolve(stubResponse(200, withExtension ? snapshotBodyWithExtension() : snapshotBody()))
+      }
+      return Promise.resolve(stubResponse(404, { error: { code: 'not-found', message: 'x' } }))
+    })
+    vi.stubGlobal('fetch', fetchMock)
+    vi.stubGlobal('EventSource', FakeEventSource)
+
+    const host = new HttpProductHost()
+    const listener = vi.fn()
+    const unsubscribe = host.subscribe(listener)
+    await flush()
+    expect(listener).toHaveBeenCalledTimes(1)
+    expect(host.getSnapshot().extensions).toHaveLength(0)
+
+    // The Server broadcasts extensions-changed after an Activation change.
+    withExtension = true
+    const source = FakeEventSource.instances[0]
+    source?.emit('extensions-changed', { changed: true })
+    await flush()
+
+    expect(listener).toHaveBeenCalledTimes(2)
+    const extension = host.getSnapshot().extensions[0]
+    expect(extension).toMatchObject({
+      name: '频道摘要',
+      revision: 1,
+      activation: '已激活',
+      targetAgent: '小奈',
+    })
     unsubscribe()
   })
 

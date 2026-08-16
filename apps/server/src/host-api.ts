@@ -98,6 +98,7 @@ type SseEvent =
       readonly event: 'channel-fact'
       readonly data: { readonly channelId: ChannelId; readonly message: SnapshotMessage }
     }
+  | { readonly event: 'extensions-changed'; readonly data: { readonly changed: true } }
   | { readonly event: 'status'; readonly data: { readonly ok: boolean; readonly message: string } }
 
 const renderSse = (payload: SseEvent): string => `event: ${payload.event}\ndata: ${JSON.stringify(payload.data)}\n\n`
@@ -210,6 +211,20 @@ export const createNekroHostApi = (webServer: WebServer, runtime: NekroRuntime):
     disposers.push(webServer.register(route))
   }
 
+  // Active SSE clients, so a single domain change (e.g. an AgentActivation
+  // transition) can be broadcast for live projection refresh on all open tabs.
+  const sseClients = new Set<ServerResponse>()
+  const broadcastExtensionsChanged = (): void => {
+    const frame = renderSse({ event: 'extensions-changed', data: { changed: true } })
+    for (const client of sseClients) {
+      try {
+        client.write(frame)
+      } catch {
+        // Connection already closed; the next close handler removes it.
+      }
+    }
+  }
+
   const buildSnapshot = (): unknown => {
     // Enumerate channels durably from the Core repository so the snapshot
     // survives restart, then discover bound Agents via their Bindings.
@@ -281,6 +296,7 @@ export const createNekroHostApi = (webServer: WebServer, runtime: NekroRuntime):
         'x-accel-buffering': 'no',
       })
       res.write(renderSse({ event: 'status', data: { ok: true, message: '已连接' } }))
+      sseClients.add(res)
 
       const unsubscribe = runtime.web.subscribe(({ request }) => {
         // Only push the settled delivered intent; the receipt stream is the
@@ -293,6 +309,7 @@ export const createNekroHostApi = (webServer: WebServer, runtime: NekroRuntime):
       })
       const heartbeat = setInterval(() => res.write(`: heartbeat\n\n`), 15_000)
       const onClose = (): void => {
+        sseClients.delete(res)
         unsubscribe()
         clearInterval(heartbeat)
         res.end()
@@ -452,6 +469,7 @@ export const createNekroHostApi = (webServer: WebServer, runtime: NekroRuntime):
             revisionId: parsed.revisionId as ExtensionRevisionId,
           })
           writeJson(res, 200, { activation: { id: activation.id, state: activation.state } })
+          broadcastExtensionsChanged()
         } catch (error) {
           writeError(res, 400, 'activation-failed', error instanceof Error ? error.message : String(error))
         }
@@ -469,6 +487,7 @@ export const createNekroHostApi = (webServer: WebServer, runtime: NekroRuntime):
           }
           await runtime.activation.disable(activation.id)
           writeJson(res, 200, { disabled: true })
+          broadcastExtensionsChanged()
         } catch (error) {
           writeError(res, 400, 'disable-failed', error instanceof Error ? error.message : String(error))
         }
