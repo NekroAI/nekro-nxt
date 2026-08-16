@@ -93,6 +93,12 @@ class MemoryRepository implements CoreRepository {
     )
   }
 
+  listChannelIdsByConnection(connectionId: ConnectionId): readonly ChannelId[] {
+    return [...this.channels.values()]
+      .filter((channel) => channel.connectionId === connectionId)
+      .map((channel) => channel.id)
+  }
+
   ensurePlatformIdentity(record: PlatformIdentityRecord): PlatformIdentityRecord {
     const existing = [...this.identities.values()].find(
       (identity) => identity.connectionId === record.connectionId && identity.platformUserId === record.platformUserId,

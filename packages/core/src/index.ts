@@ -152,6 +152,7 @@ export interface CoreRepository {
   ensureChannel(record: ChannelRecord): ChannelRecord
   getChannel(id: ChannelId): ChannelRecord | undefined
   getChannelByPlatformId(connectionId: ConnectionId, platformChannelId: string): ChannelRecord | undefined
+  listChannelIdsByConnection(connectionId: ConnectionId): readonly ChannelId[]
   ensurePlatformIdentity(record: PlatformIdentityRecord): PlatformIdentityRecord
   getPlatformIdentity(id: PlatformIdentityId): PlatformIdentityRecord | undefined
   ensureChannelMember(record: ChannelMemberRecord): ChannelMemberRecord
@@ -462,6 +463,13 @@ export class CoreService {
     return this.#repository.getChannelByPlatformId(connectionId, platformChannelId)
   }
 
+  listChannelsByConnection(connectionId: ConnectionId): readonly ChannelRecord[] {
+    return this.#repository.listChannelIdsByConnection(connectionId).flatMap((id) => {
+      const channel = this.#repository.getChannel(id)
+      return channel ? [channel] : []
+    })
+  }
+
   resolvePlatformMessage(
     connectionId: ConnectionId,
     channelId: ChannelId,
@@ -498,6 +506,10 @@ export class CoreService {
     }
     this.#repository.createBinding(record)
     return record
+  }
+
+  listBindings(channelId: ChannelId): readonly BindingRecord[] {
+    return this.#repository.listBindings(channelId)
   }
 
   appendInbound(event: AdapterInboundEvent): AppendChannelEventCommit {

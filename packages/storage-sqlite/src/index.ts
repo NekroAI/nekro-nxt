@@ -495,6 +495,13 @@ export class SqliteCoreRepository
     return row ? this.#channel(row) : undefined
   }
 
+  listChannelIdsByConnection(connectionId: ConnectionId): readonly ChannelId[] {
+    const rows = this.#database
+      .prepare('SELECT id FROM channels WHERE connection_id = ? ORDER BY created_at, id')
+      .all(connectionId) as SqliteRow[]
+    return rows.map((row) => requiredString(row, 'id') as ChannelId)
+  }
+
   ensurePlatformIdentity(record: PlatformIdentityRecord): PlatformIdentityRecord {
     this.#database
       .prepare(
