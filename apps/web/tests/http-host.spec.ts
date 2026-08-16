@@ -239,6 +239,34 @@ describe('HttpProductHost', () => {
     unsubscribe()
   })
 
+  it('routes agents.updateCapabilities to the capabilities endpoint', async () => {
+    const requests: Array<{ url: string; init?: RequestInit }> = []
+    fetchMock = vi.fn((input: string, init?: RequestInit) => {
+      requests.push({ url: input, ...(init === undefined ? {} : { init }) })
+      if (input === '/api/snapshot') return Promise.resolve(stubResponse(200, snapshotBody()))
+      if (input === '/api/agents/agent-1/capabilities' && init?.method === 'POST') {
+        return Promise.resolve(
+          stubResponse(200, { currentRevisionId: 'revision-2', capabilities: { dynamicCreation: true } }),
+        )
+      }
+      return Promise.resolve(stubResponse(404, { error: { code: 'not-found', message: 'x' } }))
+    })
+    vi.stubGlobal('fetch', fetchMock)
+    vi.stubGlobal('EventSource', FakeEventSource)
+
+    const host = new HttpProductHost()
+    const unsubscribe = host.subscribe(() => undefined)
+    await flush()
+
+    await host.execute('agents.updateCapabilities', { agentId: 'agent-1', dynamicCreation: true })
+    const capCall = requests.find(
+      (request) => request.url === '/api/agents/agent-1/capabilities' && request.init?.method === 'POST',
+    )
+    expect(capCall?.init?.method).toBe('POST')
+    expect(JSON.parse(capCall?.init?.body as string)).toEqual({ dynamicCreation: true })
+    unsubscribe()
+  })
+
   it('routes connections.test to the diagnostic endpoint', async () => {
     const requests: Array<{ url: string; init?: RequestInit }> = []
     fetchMock = vi.fn((input: string, init?: RequestInit) => {

@@ -452,6 +452,65 @@ export const createNekroHostApi = (webServer: WebServer, runtime: NekroRuntime):
     },
   })
 
+  // POST /api/agents/:id/capabilities → create a new immutable AgentRevision
+  // with updated capability grants (dynamicCreation / developmentShell / fullFileAccess).
+  registerRoute({
+    kind: 'prefix',
+    path: '/api/agents',
+    handler: async (req, res) => {
+      const url = new URL(req.url ?? '/', 'http://localhost')
+      const match = /^\/api\/agents\/([^/]+)\/capabilities$/.exec(url.pathname)
+      if (!match) {
+        writeError(res, 404, 'not-found', `未定义路由：${req.method} ${url.pathname}。`)
+        return
+      }
+      if (req.method !== 'POST') {
+        writeError(res, 405, 'method-not-allowed', '只支持 POST。')
+        return
+      }
+      const agentId = idParamSchema.safeParse(match[1]!)
+      if (!agentId.success) {
+        writeError(res, 400, 'invalid-agent', '无效的智能体 ID。')
+        return
+      }
+      const parsed = z
+        .object({
+          dynamicCreation: z.boolean().optional(),
+          developmentShell: z.boolean().optional(),
+          fullFileAccess: z.boolean().optional(),
+        })
+        .strict()
+        .refine((value) => Object.values(value).some((v) => v !== undefined), '至少提供一个能力。')
+        .parse(await readJsonBody(req))
+      try {
+        const commit = runtime.repository.getAgent(agentId.data as AgentId)
+        if (!commit) {
+          writeError(res, 404, 'not-found', '智能体不存在。')
+          return
+        }
+        const revision = commit.revision
+        const capabilities = {
+          ...revision.capabilities,
+          ...(parsed.dynamicCreation === undefined ? {} : { dynamicCreation: parsed.dynamicCreation }),
+          ...(parsed.developmentShell === undefined ? {} : { developmentShell: parsed.developmentShell }),
+          ...(parsed.fullFileAccess === undefined ? {} : { fullFileAccess: parsed.fullFileAccess }),
+        }
+        const updated = runtime.core.reviseAgent(agentId.data as AgentId, revision.id, {
+          displayName: revision.displayName,
+          persona: revision.persona,
+          model: revision.model,
+          capabilities,
+        })
+        writeJson(res, 200, {
+          currentRevisionId: updated.revision.id,
+          capabilities: updated.revision.capabilities,
+        })
+      } catch (error) {
+        writeError(res, 400, 'capabilities-failed', error instanceof Error ? error.message : String(error))
+      }
+    },
+  })
+
   // POST /api/channels/:id/messages → assemble inbound and acceptInbound it.
   registerRoute({
     kind: 'prefix',

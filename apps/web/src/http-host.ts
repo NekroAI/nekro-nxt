@@ -297,6 +297,18 @@ export class HttpProductHost implements ProductHostPort {
         await this.#refreshAndNotify()
         return result
       }
+      if (command === 'agents.updateCapabilities') {
+        const agentId = typeof input?.agentId === 'string' ? input.agentId : ''
+        if (!agentId.trim()) return null
+        const body: Record<string, unknown> = {}
+        if (typeof input?.dynamicCreation === 'boolean') body.dynamicCreation = input.dynamicCreation
+        if (typeof input?.developmentShell === 'boolean') body.developmentShell = input.developmentShell
+        if (typeof input?.fullFileAccess === 'boolean') body.fullFileAccess = input.fullFileAccess
+        if (Object.keys(body).length === 0) return null
+        const result = await postJson(`/api/agents/${encodeURIComponent(agentId)}/capabilities`, body)
+        await this.#refreshAndNotify()
+        return result
+      }
       if (command === 'connections.create') {
         const appId = typeof input?.appId === 'string' ? input.appId : ''
         const credentialRef = typeof input?.credentialRef === 'string' ? input.credentialRef : ''

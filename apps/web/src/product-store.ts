@@ -377,12 +377,17 @@ export const useProductStore = create<ProductState>((set) => ({
       ],
     }))
   },
-  setCapability: (agentId, capability, enabled) =>
+  setCapability: (agentId, capability, enabled) => {
+    if (activeHost) {
+      void activeHost.execute('agents.updateCapabilities', { agentId, [capability]: enabled })
+      return
+    }
     set((state) => ({
       agents: state.agents.map((agent) =>
         agent.id === agentId ? { ...agent, capabilities: { ...agent.capabilities, [capability]: enabled } } : agent,
       ),
-    })),
+    }))
+  },
   updateConnection: (id, patch) =>
     set((state) => ({
       connections: state.connections.map((connection) =>

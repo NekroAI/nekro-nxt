@@ -177,4 +177,46 @@ describe('NekroNxt Server domain API (WebServer seam)', () => {
       await runtime.dispose()
     }
   })
+
+  it('creates a new AgentRevision when capabilities change through the API', async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), 'nekro-nxt-cap-api-'))
+    temporaryDirectories.push(directory)
+    const runtime = await NekroRuntime.create({
+      coreDatabasePath: path.join(directory, 'core.sqlite'),
+      sessionDatabasePath: path.join(directory, 'sessions.sqlite'),
+      assetRoot: path.join(directory, 'assets'),
+      extensionDataRoot: path.join(directory, 'extension-data'),
+      extensionCacheRoot: path.join(directory, 'extension-cache'),
+    })
+    const entity = runtime.createAgentWithWebChannel({
+      displayName: '能力智能体',
+      persona: '',
+      model: { provider: 'test-provider', model: 'chat-model' },
+    })
+    const before = runtime.repository.getAgent(entity.agentId)!
+    const webContext = new Context()
+    await webContext.plugin(WebServer, { host: '127.0.0.1', port: 0 })
+    const api = createNekroHostApi(webContext.webServer, runtime)
+    const origin = `http://127.0.0.1:${api.port}`
+    try {
+      const response = await fetch(`${origin}/api/agents/${entity.agentId}/capabilities`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ dynamicCreation: true }),
+      })
+      expect(response.ok).toBe(true)
+      const result = (await response.json()) as { currentRevisionId: string; capabilities: Record<string, boolean> }
+      expect(result.capabilities).toMatchObject({
+        dynamicCreation: true,
+        developmentShell: false,
+        fullFileAccess: false,
+      })
+      // 不可变 Revision：新 Revision id 与原不同。
+      expect(result.currentRevisionId).not.toBe(before.revision.id)
+    } finally {
+      api.dispose()
+      await webContext.fiber.dispose()
+      await runtime.dispose()
+    }
+  })
 })
