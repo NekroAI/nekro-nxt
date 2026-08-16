@@ -73,6 +73,12 @@ importers:
       '@deepseek-ai/dsh-fs-sandbox':
         specifier: 0.1.0-rc.6
         version: 0.1.0-rc.6(ecb3879f4d04c46d1738d96f48eb96de)
+      '@deepseek-ai/dsh-host-frontend-static':
+        specifier: 0.1.0-rc.6
+        version: 0.1.0-rc.6(@deepseek-ai/cordis@4.0.1)(@deepseek-ai/dsh-host-webserver@0.1.0-rc.6(@deepseek-ai/cordis@4.0.1)(@deepseek-ai/dsh-invariants@0.1.0-rc.6(@deepseek-ai/cordis@4.0.1)))(@deepseek-ai/dsh-invariants@0.1.0-rc.6(@deepseek-ai/cordis@4.0.1))
+      '@deepseek-ai/dsh-host-webserver':
+        specifier: 0.1.0-rc.6
+        version: 0.1.0-rc.6(@deepseek-ai/cordis@4.0.1)(@deepseek-ai/dsh-invariants@0.1.0-rc.6(@deepseek-ai/cordis@4.0.1))
       '@deepseek-ai/dsh-llm':
         specifier: 0.1.0-rc.6
         version: 0.1.0-rc.6(@deepseek-ai/cordis@4.0.1)(@deepseek-ai/dsh-attachment@0.1.0-rc.6(@deepseek-ai/cordis@4.0.1)(@deepseek-ai/dsh-brand@0.1.0-rc.6(@deepseek-ai/cordis@4.0.1)(@deepseek-ai/dsh-invariants@0.1.0-rc.6(@deepseek-ai/cordis@4.0.1)))(@deepseek-ai/dsh-invariants@0.1.0-rc.6(@deepseek-ai/cordis@4.0.1)))(@deepseek-ai/dsh-brand@0.1.0-rc.6(@deepseek-ai/cordis@4.0.1)(@deepseek-ai/dsh-invariants@0.1.0-rc.6(@deepseek-ai/cordis@4.0.1)))(@deepseek-ai/dsh-invariants@0.1.0-rc.6(@deepseek-ai/cordis@4.0.1))(@deepseek-ai/dsh-timeout@0.1.0-rc.6(@deepseek-ai/cordis@4.0.1)(@deepseek-ai/dsh-invariants@0.1.0-rc.6(@deepseek-ai/cordis@4.0.1)))
@@ -121,6 +127,12 @@ importers:
       '@nekro-nxt/adapter-qq-openclaw':
         specifier: workspace:*
         version: link:../../packages/adapter-qq-openclaw
+      '@nekro-nxt/adapter-sdk':
+        specifier: workspace:*
+        version: link:../../packages/adapter-sdk
+      '@nekro-nxt/adapter-web':
+        specifier: workspace:*
+        version: link:../../packages/adapter-web
       '@nekro-nxt/channel-runtime':
         specifier: workspace:*
         version: link:../../packages/channel-runtime
@@ -136,16 +148,25 @@ importers:
       '@nekro-nxt/extension-sdk':
         specifier: workspace:*
         version: link:../../packages/extension-sdk
-      sharp:
-        specifier: 0.35.3
-        version: 0.35.3(@types/node@22.20.0)
-    devDependencies:
-      '@nekro-nxt/adapter-web':
-        specifier: workspace:*
-        version: link:../../packages/adapter-web
       '@nekro-nxt/storage-sqlite':
         specifier: workspace:*
         version: link:../../packages/storage-sqlite
+      sharp:
+        specifier: 0.35.3
+        version: 0.35.3(@types/node@22.20.0)
+      ulid:
+        specifier: 3.0.2
+        version: 3.0.2
+      zod:
+        specifier: 4.4.3
+        version: 4.4.3
+    devDependencies:
+      tsx:
+        specifier: 4.22.4
+        version: 4.22.4
+      vitest:
+        specifier: 4.1.8
+        version: 4.1.8(@opentelemetry/api@1.9.1)(@types/node@22.20.0)(@vitest/coverage-v8@4.1.8)(vite@6.4.3(@types/node@22.20.0)(tsx@4.22.4)(yaml@2.9.0))
 
   apps/web:
     dependencies:

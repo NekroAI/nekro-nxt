@@ -36,6 +36,15 @@ const genericPatterns = [
   { name: 'raw IPv4 address', pattern: /\b(?:\d{1,3}\.){3}\d{1,3}\b/g },
 ]
 
+/**
+ * Allowlisted values for the raw IPv4 pattern. Only the two bind hosts mandated
+ * by the DSH `dsh-host-webserver` Config are exempt: the loopback default and
+ * the intentional all-interfaces literal. They are documented DSH package
+ * constants (not secrets, credentials or personal paths) and appear where this
+ * project configures the WebServer seam (main.ts / host-api tests).
+ */
+const allowedIpv4Values = new Set(['127.0.0.1', '0.0.0.0'])
+
 const localPatternPath = '.local/forbidden-patterns.txt'
 const localPatterns = existsSync(localPatternPath)
   ? readFileSync(localPatternPath, 'utf8')
@@ -63,6 +72,7 @@ for (const path of repositoryFiles) {
   for (const { name, pattern } of genericPatterns) {
     pattern.lastIndex = 0
     for (const match of content.matchAll(pattern)) {
+      if (name === 'raw IPv4 address' && allowedIpv4Values.has(match[0])) continue
       const line = content.slice(0, match.index).split('\n').length
       findings.push(`${path}:${line}: ${name}: ${match[0]}`)
     }

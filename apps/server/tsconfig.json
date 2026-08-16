@@ -14,6 +14,9 @@
     { "path": "../../packages/extension-runtime" },
     { "path": "../../packages/extension-sdk" },
     { "path": "../../packages/channel-runtime" },
-    { "path": "../../packages/adapter-qq-openclaw" }
+    { "path": "../../packages/adapter-qq-openclaw" },
+    { "path": "../../packages/adapter-sdk" },
+    { "path": "../../packages/adapter-web" },
+    { "path": "../../packages/storage-sqlite" }
   ]
 }
