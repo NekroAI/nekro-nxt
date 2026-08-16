@@ -52,7 +52,7 @@ Web 端不复制一份业务事实到 Zustand。`ProductHostPort.getSnapshot()` 
 | 启用扩展 | `POST /api/extensions/:id/activation` | AgentActivation 启用（body `{agentId, revisionId}`） | ✅ |
 | 停用扩展 | `DELETE /api/extensions/:id/activation` | 停用当前 Activation（安全间隙后完成） | ✅ |
 | 创建智能体引导跑动 | —— | —— | —— |
-| 修改能力 | `POST /api/agents/:id/capabilities` | 切换到新 AgentRevision | ⏳ 待接 |
+| 修改能力 | `POST /api/agents/:id/capabilities` | 按当前 Revision 生成新不可变 AgentRevision，更新 dynamicCreation/developmentShell/fullFileAccess | ✅ Server+Web 命令+store 委托 |
 | QQ 收发测试 | `POST /api/connections/:id/test` | Web 连接真实收发；QQ 无真实凭据时诚实返回 `needs-credentials`（拒假成功） | ✅ 入口已接通；真实凭据收发待外部环境 |
 | 保存动态包 | `POST /api/extensions/save-from-dynamic` | 把活动会话中的运行动态 Package 保存为本地 Extension Revision（不自动启用） | ✅ |
 | 动态审批/调用 | `POST /api/dynamic/:agentId/{approve\|decline\|invoke\|run-host-half\|get-client-code\|settle-user-run\|report-render-failure}` | 解析智能体活动会话并调用 DshHostRuntime 动态方法（审批解析、Host half 启动、Client 源码获取、Host 方法调用、用户 run 结算、渲染失败上报） | ✅ 服务端+Web `HttpDynamicClientHost`；浏览器视觉 Slot 渲染待真实浏览器 |
