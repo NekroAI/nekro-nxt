@@ -2,7 +2,7 @@
 
 > 文档编号：08
 >
-> 状态：设计已确认，M6 接线实施中
+> 状态：切片1 闭环 A 已贯通、切片3 扩展生命周期、切片2 QQ 连接配置已落地；收发测试与动态扩展保存待外部环境/创造工作台接线
 >
 > 日期：2026-08-16
 >
@@ -40,32 +40,35 @@ Web 端不复制一份业务事实到 Zustand。`ProductHostPort.getSnapshot()` 
 
 ### 3.1 领域 API（`NekroHostApi`，落在 apps/server）
 
-传输：`WebServer.register` 的具名路由 + 一个 `GET /api/events` SSE 端。
+传输：`WebServer.register` 的具名路由 + 一个 `GET /api/events` SSE 端。已实现状态以✅/⏳标注：
 
-| 方法 | 路由 | 语义 | 对应服务 |
+| 方法 | 路由 | 语义 | 状态 |
 |---|---|---|---|
-| 快照 | `GET /api/snapshot` | 返回 agents/channels/messages/connections/extensions/approvals 权威投影 | CoreService + Runtime 查询 |
-| 订阅 | `GET /api/events` (SSE) | 推送频道事件、智能体状态、扩展回执 | ChannelRuntime 出站 + 状态变化 |
-| 创建智能体 | `POST /api/agents` | createAgent + ensureChannel + createBinding（自动 Web Channel） | CoreService |
-| 修改能力 | `POST /api/agents/:id/capabilities` | 切换到新 AgentRevision | CoreService.reviseAgent |
-| 发送消息 | `POST /api/channels/:id/messages` | 构造入站事件并经 acceptInbound 进入 Runtime | ChannelRuntime |
-| 创建连接 | `POST /api/connections` | 创建 Connection（未来含 QQ 凭据引用） | CoreService +
-Adapter 装配 |
-| 连接测试 | `POST /api/connections/:id/test` | 触发 receive/send 测试 | Adapter + Runtime |
-| 保存扩展 | `POST /api/extensions` | Draft → 本地 Extension Revision（不自动启用） | ExtensionService |
-| 启用/停用 | `POST /api/extensions/:id/activation` | AgentActivation 切换（安全间隙） | ExtensionActivationCoordinator |
+| 快照 | `GET /api/snapshot` | 返回 agents/channels/messages/connections/extensions/approvals 权威投影 | ✅ |
+| 订阅 | `GET /api/events` (SSE) | 推送频道 `channel-fact`（智能体回复）与 `status`；心跳保持 | ✅ |
+| 创建智能体 | `POST /api/agents` | createAgent + ensureChannel + createBinding（自动 Web Channel） | ✅ |
+| 发送消息 | `POST /api/channels/:id/messages` | 构造入站事件并经 acceptInbound 进入 Runtime | ✅ |
+| 创建连接 | `POST /api/connections` | 创建 configured Connection；QQ 凭据只保存引用不泄 secret | ✅ |
+| 启用扩展 | `POST /api/extensions/:id/activation` | AgentActivation 启用（body `{agentId, revisionId}`） | ✅ |
+| 停用扩展 | `DELETE /api/extensions/:id/activation` | 停用当前 Activation（安全间隙后完成） | ✅ |
+| 创建智能体引导跑动 | —— | —— | —— |
+| 修改能力 | `POST /api/agents/:id/capabilities` | 切换到新 AgentRevision | ⏳ 待接 |
+| QQ 收发测试 | `POST /api/connections/:id/test` | 触发 receive/send 测试 | ⏳ 需真实凭据/外部环境 |
+| 保存扩展 | `POST /api/extensions` | Draft → 本地 Extension Revision（不自动启用） | ⏳ 待创造工作台动态 runner 接线 |
 
-（实现过程中以最终代码声明的端点为准，本表为准入范围。）
+`GET /api/snapshot` 现在投影：全部 `Connection`（Web + QQ，credentialRefs 只含引用）、已绑定 Agent、频道、近期频道事实、全部已保存本地扩展（含当前 AgentActivation 状态）。
 
 ### 3.2 Web 侧
 
-- `apps/web/src` 实现 `ProductHostPort` 的真实 Host：`getSnapshot()` 用 `fetch('/api/snapshot')`，`subscribe()` 用 `EventSource('/api/events')`，`execute()` 映射到对应 POST/PATCH。
-- `apps/web` 的 Vite `dev` 增加 `server.proxy`，把 `/api` 代理到 Server 端口；生产构建由 `dsh-host-frontend-static` 直接托管。
+- `apps/web/src/http-host.ts` 实现 `ProductHostPort`：`getSnapshot()` 缓存式 `fetch('/api/snapshot')`；`subscribe()` 用 `EventSource('/api/events')`（`channel-fact`/`status` 触发刷新，网络故障静默降级+自动重连）；`execute()` 映射真实命令。
+- `execute` 命令表：`agents.create`、`channels.sendMessage`、`agents`（占位）、`extensions.activate`、`extensions.deactivate`、`connections.create`；未知命令静默返回 `null`（不崩 UI，等切片后续补齐）。
+- `product-store` 的 `createAgent`/`sendMessage`/`createConnection`/`setExtensionActive` 在有活动 Host 时委托 `execute`，无 Host 保留 demo 数据（现有 UI 测试不破）。
+- `main.tsx` 启动 `ProductHostCoordinator(new HttpProductHost())`；Vite `dev` 把 `/api` proxy 到 4949（`NEKRO_API_PROXY` 可覆盖）。
 
 ### 3.3 Server 可执行入口
 
-- `apps/server` 新增 `src/main.ts`（或 `start.ts`）可执行入口 + `dev`/`start` 脚本；把测试内联的主装配（DB→Core→Asset→Host→ChannelRuntime→Extension）抽成 `src/bootstrap.ts` 的可复用 `NekroRuntime` 装配函数。
-- 需要把 `dsh-host-webserver`、`dsh-host-frontend-static` 提升为 `apps/server` 的 dependencies，并补齐 `data/` 数据目录、`dist/` 前端产物路径约定。
+- `apps/server/src/bootstrap.ts` 抽成可复用 `NekroRuntime` 装配；`src/main.ts` + `dev`/`start` 脚本；`NEKRO_DATA`/`NEKRO_PORT`(默认4949)/`NEKRO_DIST_INDEX` 环境变量；启动时创建数据目录。
+- `dsh-host-webserver`、`dsh-host-frontend-static` 提升为 `apps/server` dependencies，静态 dist 由 fallback 席位同源托管。
 
 ## 4. 完成证据
 
