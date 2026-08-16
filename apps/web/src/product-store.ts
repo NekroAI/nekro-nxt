@@ -1,5 +1,5 @@
 import { create } from 'zustand'
-import type { ProductHostPort } from './product-port.js'
+import type { DynamicPackageSummary, ProductHostPort } from './product-port.js'
 
 /**
  * The active real-host port (when the Shell is wired to a live Server, set by
@@ -99,6 +99,7 @@ interface ProductState {
   readonly connections: readonly ConnectionSummary[]
   readonly extensions: readonly LocalExtensionSummary[]
   readonly approvals: readonly DynamicApproval[]
+  readonly dynamic: readonly DynamicPackageSummary[]
   readonly theme: ThemeChoice
   readonly reducedMotion: boolean
   readonly diagnosticNote: string
@@ -291,6 +292,7 @@ export const useProductStore = create<ProductState>((set) => ({
       state: '等待批准',
     },
   ],
+  dynamic: [],
   theme: initialTheme(),
   reducedMotion: false,
   diagnosticNote: 'Core、DSH Session 与扩展运行时均正常；QQ Gateway 最近一次 resume 成功。',

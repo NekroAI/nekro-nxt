@@ -129,10 +129,18 @@ describe('NekroNxt domain API — save a running dynamic Package as a local Exte
       // The saved Extension appears in the snapshot, not auto-activated.
       const snapshot = (await (await fetch(`${origin}/api/snapshot`)).json()) as {
         extensions: Array<{ id: string; slug: string; activation: string }>
+        dynamic: Array<{ agentId: string; pluginId: string; status: string }>
       }
       expect(snapshot.extensions.some((extension) => extension.slug === 'saved-probe')).toBe(true)
       const savedExt = snapshot.extensions.find((extension) => extension.id === saved.extensionId)
       expect(savedExt?.activation).toBe('inactive')
+
+      // The running dynamic Package is also projected as the creator runtime state.
+      expect(
+        snapshot.dynamic.some(
+          (item) => item.agentId === entity.agentId && item.status === 'running' && item.pluginId === defined.pluginId,
+        ),
+      ).toBe(true)
     } finally {
       api.dispose()
       await webContext.fiber.dispose()

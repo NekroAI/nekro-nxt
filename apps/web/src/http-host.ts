@@ -59,6 +59,7 @@ const emptySnapshot = (): ProductSnapshot => ({
   connections: [],
   extensions: [],
   approvals: [],
+  dynamic: [],
   diagnosticNote: '正在连接本机 Server 数据源…',
 })
 
@@ -108,12 +109,21 @@ interface SnapshotExtensionJson {
   readonly agentId?: string
 }
 
+interface SnapshotDynamicItemJson {
+  readonly agentId: string
+  readonly pluginId: string
+  readonly packageId?: string
+  readonly approvalRequestId?: string
+  readonly status: string
+}
+
 interface SnapshotJson {
   readonly agents: readonly SnapshotAgentJson[]
   readonly channels: readonly SnapshotChannelJson[]
   readonly messages: readonly SnapshotMessageJson[]
   readonly connections: readonly SnapshotConnectionJson[]
   readonly extensions: readonly SnapshotExtensionJson[]
+  readonly dynamic: readonly SnapshotDynamicItemJson[]
 }
 
 const isSnapshotJson = (value: unknown): value is SnapshotJson => {
@@ -124,7 +134,8 @@ const isSnapshotJson = (value: unknown): value is SnapshotJson => {
     Array.isArray(candidate.channels) &&
     Array.isArray(candidate.messages) &&
     Array.isArray(candidate.connections) &&
-    Array.isArray(candidate.extensions)
+    Array.isArray(candidate.extensions) &&
+    Array.isArray(candidate.dynamic)
   )
 }
 
@@ -227,6 +238,13 @@ const projectSnapshot = (json: SnapshotJson): ProductSnapshot => {
     connections,
     extensions: extensionsLocal,
     approvals: [],
+    dynamic: json.dynamic.map((item) => ({
+      agentId: item.agentId,
+      pluginId: item.pluginId,
+      ...(item.packageId === undefined ? {} : { packageId: item.packageId }),
+      ...(item.approvalRequestId === undefined ? {} : { approvalRequestId: item.approvalRequestId }),
+      status: item.status,
+    })),
     diagnosticNote: `已连接真实 Server（${agents.length} 个智能体 · ${channels.length} 个频道 · ${extensionsLocal.length} 个本地扩展）。`,
   }
 }

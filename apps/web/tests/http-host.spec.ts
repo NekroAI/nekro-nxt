@@ -70,6 +70,7 @@ const snapshotBody = () => ({
   ],
   connections: [{ id: 'connection-web', adapterKey: 'web', status: 'active' }],
   extensions: [],
+  dynamic: [],
 })
 
 const snapshotBodyWithExtension = () => ({

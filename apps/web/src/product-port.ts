@@ -15,7 +15,17 @@ export interface ProductSnapshot {
   readonly connections: readonly ConnectionSummary[]
   readonly extensions: readonly LocalExtensionSummary[]
   readonly approvals: readonly DynamicApproval[]
+  /** Running dynamic Packages by intelligent-agent (from the creator runtime). */
+  readonly dynamic: readonly DynamicPackageSummary[]
   readonly diagnosticNote: string
+}
+
+export interface DynamicPackageSummary {
+  readonly agentId: string
+  readonly pluginId: string
+  readonly packageId?: string
+  readonly approvalRequestId?: string
+  readonly status: string
 }
 
 export interface ProductHostPort {
@@ -59,6 +69,7 @@ export class ProductHostCoordinator implements ProductHostPort {
         connections: snapshot.connections,
         extensions: snapshot.extensions,
         approvals: snapshot.approvals,
+        dynamic: snapshot.dynamic,
         diagnosticNote: snapshot.diagnosticNote,
       })
     }

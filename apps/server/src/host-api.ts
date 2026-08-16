@@ -217,6 +217,38 @@ const projectExtensions = (
   })
 }
 
+/** Running dynamic Packages owned by an intelligent-agent's active Session. */
+const projectDynamicInventory = (
+  runtime: NekroRuntime,
+  agentId: string,
+): Array<{ pluginId: string; packageId?: string; approvalRequestId?: string; status: string }> => {
+  const episode = runtime.repository
+    .listActiveEpisodesForAgent(agentId as never)
+    .find((candidate) => candidate.dshSessionId !== undefined)
+  if (!episode?.dshSessionId) return []
+  try {
+    return runtime.host.dynamicInventory(episode.dshSessionId).flatMap((row) => {
+      const status = row.activeRun
+        ? 'running'
+        : row.latestRun?.status === 'awaiting-approval'
+          ? 'awaiting-approval'
+          : 'stopped'
+      return [
+        {
+          pluginId: row.pluginId,
+          ...(row.currentPackageId === undefined ? {} : { packageId: row.currentPackageId }),
+          ...(row.latestRun?.approvalRequestId === undefined
+            ? {}
+            : { approvalRequestId: row.latestRun.approvalRequestId }),
+          status,
+        },
+      ]
+    })
+  } catch {
+    return []
+  }
+}
+
 /**
  * Save the first currently-running dynamic Package owned by an intelligent-agent
  * as a persistent local Extension Revision. Persistence does NOT auto-activate
@@ -324,6 +356,9 @@ export const createNekroHostApi = (webServer: WebServer, runtime: NekroRuntime):
       messages,
       connections,
       extensions: projectExtensions(runtime),
+      dynamic: [...agentIds].flatMap((agentId) =>
+        projectDynamicInventory(runtime, agentId).map((plugin) => ({ agentId, ...plugin })),
+      ),
     }
   }
 
