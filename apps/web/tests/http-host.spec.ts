@@ -238,6 +238,42 @@ describe('HttpProductHost', () => {
     unsubscribe()
   })
 
+  it('routes extensions.saveFromDynamic to the save endpoint', async () => {
+    const requests: Array<{ url: string; init?: RequestInit }> = []
+    fetchMock = vi.fn((input: string, init?: RequestInit) => {
+      requests.push({ url: input, ...(init === undefined ? {} : { init }) })
+      if (input === '/api/snapshot') return Promise.resolve(stubResponse(200, snapshotBody()))
+      if (input === '/api/extensions/save-from-dynamic' && init?.method === 'POST') {
+        return Promise.resolve(
+          stubResponse(200, { extensionId: 'extension-saved', revisionId: 'revision-saved', activation: 'inactive' }),
+        )
+      }
+      return Promise.resolve(stubResponse(404, { error: { code: 'not-found', message: 'x' } }))
+    })
+    vi.stubGlobal('fetch', fetchMock)
+    vi.stubGlobal('EventSource', FakeEventSource)
+
+    const host = new HttpProductHost()
+    const unsubscribe = host.subscribe(() => undefined)
+    await flush()
+
+    const result = await host.execute('extensions.saveFromDynamic', {
+      agentId: 'agent-1',
+      name: '保存探针',
+      slug: 'saved-probe',
+    })
+    expect(result).toEqual({ extensionId: 'extension-saved', revisionId: 'revision-saved', activation: 'inactive' })
+    const saveCall = requests.find(
+      (request) => request.url === '/api/extensions/save-from-dynamic' && request.init?.method === 'POST',
+    )
+    expect(saveCall?.init?.method).toBe('POST')
+    const body = JSON.parse(saveCall?.init?.body as string) as { agentId: string; slug: string; displayName: string }
+    expect(body.agentId).toBe('agent-1')
+    expect(body.slug).toBe('saved-probe')
+    expect(body.displayName).toBe('保存探针')
+    unsubscribe()
+  })
+
   it('refreshes the projection when a channel-fact SSE event arrives', async () => {
     let snapshotCalls = 0
     fetchMock = vi.fn((input: string) => {

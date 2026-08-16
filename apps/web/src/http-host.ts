@@ -308,6 +308,21 @@ export class HttpProductHost implements ProductHostPort {
         await this.#refreshAndNotify()
         return result
       }
+      if (command === 'extensions.saveFromDynamic') {
+        const agentId = typeof input?.agentId === 'string' ? input.agentId : ''
+        const name = typeof input?.name === 'string' ? input.name : ''
+        const slug = typeof input?.slug === 'string' ? input.slug : ''
+        if (!agentId.trim() || !name.trim() || !slug.trim()) return null
+        const result = await postJson('/api/extensions/save-from-dynamic', {
+          agentId,
+          name,
+          displayName: name,
+          slug,
+          description: '从创造工作台保存的动态 Package。',
+        })
+        await this.#refreshAndNotify()
+        return result
+      }
       // 尚未提供的能力（如保存动态扩展）：静默返回，避免让 Shell 因未接线而崩溃。
       return null
     } catch {

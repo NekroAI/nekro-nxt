@@ -78,6 +78,19 @@ const createConnectionSchema = z
   })
   .strict()
 
+const saveFromDynamicSchema = z
+  .object({
+    agentId: z.string().trim().min(1),
+    name: z.string().trim().min(1).max(80),
+    displayName: z.string().trim().min(1).max(80),
+    slug: z
+      .string()
+      .trim()
+      .regex(/^[a-z0-9][a-z0-9-]{1,62}[a-z0-9]$/),
+    description: z.string().max(500).default(''),
+  })
+  .strict()
+
 export interface SnapshotMessage {
   readonly id: string
   readonly channelId: ChannelId
@@ -201,6 +214,45 @@ const projectExtensions = (
         ...(activation === undefined ? {} : { agentId: activation.agentId }),
       },
     ]
+  })
+}
+
+/**
+ * Save the first currently-running dynamic Package owned by an intelligent-agent
+ * as a persistent local Extension Revision. Persistence does NOT auto-activate
+ * it for the Agent — Activation is a separate lifecycle action (M4).
+ */
+const saveActiveDynamicPackage = async (
+  runtime: NekroRuntime,
+  agentId: string,
+  meta: { readonly name: string; readonly displayName: string; readonly slug: string; readonly description: string },
+): Promise<{ readonly extension: { readonly id: string }; readonly revision: { readonly id: string } }> => {
+  const episode = runtime.repository
+    .listActiveEpisodesForAgent(agentId as never)
+    .find((candidate) => candidate.dshSessionId !== undefined)
+  if (!episode?.dshSessionId) {
+    throw new Error('该智能体没有活动会话可保存的动态 Package。')
+  }
+  const inventory = runtime.host.dynamicInventory(episode.dshSessionId)
+  const row = inventory.find((candidate) => candidate.currentPackageId !== undefined)
+  if (!row?.currentPackageId) {
+    throw new Error('该智能体的活动会话中没有正在运行的动态 Package。')
+  }
+  const inspection = runtime.host.inspectDynamicPackage(episode.dshSessionId, row.pluginId, row.currentPackageId)
+  const captured = runtime.extensionService.captureDynamicPackage(agentId as never, {
+    dshSessionId: episode.dshSessionId,
+    dynamicPluginId: row.pluginId,
+    dynamicPackageId: row.currentPackageId,
+    name: meta.name,
+    purpose: '从创造工作台保存的动态 Package。',
+    ...(inspection.code.host === undefined ? {} : { hostCode: inspection.code.host }),
+    ...(inspection.code.client === undefined ? {} : { clientCode: inspection.code.client }),
+  })
+  return await runtime.extensionService.saveDraftPackage({
+    draftPackageId: captured.package.id,
+    slug: meta.slug,
+    displayName: meta.displayName,
+    description: meta.description,
   })
 }
 
@@ -428,6 +480,41 @@ export const createNekroHostApi = (webServer: WebServer, runtime: NekroRuntime):
         })
       } catch (error) {
         writeError(res, 400, 'connection-failed', error instanceof Error ? error.message : String(error))
+      }
+    },
+  })
+
+  // POST /api/extensions/save-from-dynamic → save a running dynamic Package as a
+  // persistent local Extension Revision (M4: 保存不自动启用).
+  registerRoute({
+    kind: 'exact',
+    path: '/api/extensions/save-from-dynamic',
+    handler: async (req, res) => {
+      if (req.method !== 'POST') {
+        writeError(res, 405, 'method-not-allowed', '只支持 POST。')
+        return
+      }
+      let parsed: z.output<typeof saveFromDynamicSchema>
+      try {
+        parsed = saveFromDynamicSchema.parse(await readJsonBody(req))
+      } catch (error) {
+        writeError(res, 400, 'invalid-request', error instanceof Error ? error.message : String(error))
+        return
+      }
+      try {
+        const saved = await saveActiveDynamicPackage(runtime, parsed.agentId, {
+          name: parsed.name,
+          displayName: parsed.displayName,
+          slug: parsed.slug,
+          description: parsed.description,
+        })
+        writeJson(res, 200, {
+          extensionId: saved.extension.id,
+          revisionId: saved.revision.id,
+          activation: 'inactive',
+        })
+      } catch (error) {
+        writeError(res, 400, 'save-failed', error instanceof Error ? error.message : String(error))
       }
     },
   })
