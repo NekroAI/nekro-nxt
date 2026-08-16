@@ -1,7 +1,7 @@
 import type { WebServer, WebRoute } from '@deepseek-ai/dsh-host-webserver'
 import type { OutboundState } from '@nekro-nxt/channel-runtime'
 import type { AgentRevisionContent } from '@nekro-nxt/core'
-import type { AgentId, ChannelId, ExtensionId, ExtensionRevisionId, MessagePart } from '@nekro-nxt/contracts'
+import type { AgentId, ChannelId, ExtensionId, ExtensionRevisionId, JsonValue, MessagePart } from '@nekro-nxt/contracts'
 import type { IncomingMessage, ServerResponse } from 'node:http'
 import { z } from 'zod'
 import type { NekroRuntime } from './bootstrap.js'
@@ -247,6 +247,17 @@ const projectDynamicInventory = (
   } catch {
     return []
   }
+}
+
+/** Resolve the dshSessionId of an intelligent-agent's active Episode, or throw. */
+const resolveActiveSession = (runtime: NekroRuntime, agentId: string): string => {
+  const episode = runtime.repository
+    .listActiveEpisodesForAgent(agentId as never)
+    .find((candidate) => candidate.dshSessionId !== undefined)
+  if (!episode?.dshSessionId) {
+    throw new Error('该智能体没有活动会话。')
+  }
+  return episode.dshSessionId
 }
 
 /**
@@ -577,6 +588,88 @@ export const createNekroHostApi = (webServer: WebServer, runtime: NekroRuntime):
       } else {
         writeJson(res, 200, { status: 'ok', channel: channel.id })
       }
+    },
+  })
+
+  // POST /api/dynamic/:agentId/{approve|decline|invoke|report-render-failure} →
+  // browser dynamic client circuit (creator workbench): resolve approvals and
+  // invoke Host halves against the Agent's live Session.
+  registerRoute({
+    kind: 'prefix',
+    path: '/api/dynamic',
+    handler: async (req, res) => {
+      const url = new URL(req.url ?? '/', 'http://localhost')
+      const match = /^\/api\/dynamic\/([^/]+)\/(approve|decline|invoke|report-render-failure)$/.exec(url.pathname)
+      if (!match) {
+        writeError(res, 404, 'not-found', `未定义路由：${req.method} ${url.pathname}。`)
+        return
+      }
+      if (req.method !== 'POST') {
+        writeError(res, 405, 'method-not-allowed', '只支持 POST。')
+        return
+      }
+      const agentId = idParamSchema.safeParse(match[1]!)
+      const action = match[2]!
+      if (!agentId.success) {
+        writeError(res, 400, 'invalid-agent', '无效的智能体 ID。')
+        return
+      }
+      let body: unknown
+      try {
+        body = await readJsonBody(req)
+      } catch (error) {
+        writeError(res, 400, 'invalid-request', error instanceof Error ? error.message : String(error))
+        return
+      }
+      let dshSessionId: string
+      try {
+        dshSessionId = resolveActiveSession(runtime, agentId.data)
+      } catch (error) {
+        writeError(res, 400, 'no-session', error instanceof Error ? error.message : String(error))
+        return
+      }
+      if (action === 'approve' || action === 'decline') {
+        const parsed = z
+          .object({ requestId: z.string().trim().min(1), pluginRunId: z.string().trim().optional() })
+          .strict()
+          .parse(body)
+        try {
+          const resolution =
+            action === 'approve'
+              ? { ok: true, ...(parsed.pluginRunId === undefined ? {} : { pluginRunId: parsed.pluginRunId }) }
+              : { ok: false, reason: 'user-declined' }
+          const ack = await runtime.host.resolveDynamicRunRequest(dshSessionId, parsed.requestId, resolution as never)
+          writeJson(res, 200, { accepted: ack.accepted })
+        } catch (error) {
+          writeError(res, 400, 'dynamic-operation-failed', error instanceof Error ? error.message : String(error))
+        }
+        return
+      }
+      if (action === 'invoke') {
+        const parsed = z
+          .object({
+            pluginId: z.string().trim().min(1),
+            pluginRunId: z.string().trim().min(1),
+            method: z.string().min(1),
+            args: z.unknown().optional(),
+          })
+          .strict()
+          .parse(body)
+        try {
+          const result = await runtime.host.invokeDynamicHost(
+            dshSessionId,
+            parsed.pluginId,
+            parsed.pluginRunId,
+            parsed.method,
+            parsed.args as JsonValue | undefined,
+          )
+          writeJson(res, 200, { ok: result.ok, ...(result.ok ? { value: result.value } : { message: result.message }) })
+        } catch (error) {
+          writeError(res, 400, 'dynamic-invoke-failed', error instanceof Error ? error.message : String(error))
+        }
+        return
+      }
+      writeError(res, 501, 'not-implemented', '该动态操作尚未开放。')
     },
   })
 

@@ -313,6 +313,18 @@ export class HttpProductHost implements ProductHostPort {
         await this.#refreshAndNotify()
         return result
       }
+      if (command === 'dynamic.approve' || command === 'dynamic.decline') {
+        const agentId = typeof input?.agentId === 'string' ? input.agentId : ''
+        const requestId = typeof input?.requestId === 'string' ? input.requestId : ''
+        const pluginRunId = typeof input?.pluginRunId === 'string' ? input.pluginRunId : ''
+        if (!agentId.trim() || !requestId.trim()) return null
+        const result = await postJson(
+          `/api/dynamic/${encodeURIComponent(agentId)}/${command === 'dynamic.approve' ? 'approve' : 'decline'}`,
+          { requestId, ...(pluginRunId.trim() ? { pluginRunId } : {}) },
+        )
+        await this.#refreshAndNotify()
+        return result
+      }
       if (command === 'extensions.activate') {
         const extensionId = typeof input?.extensionId === 'string' ? input.extensionId : ''
         const agentId = typeof input?.agentId === 'string' ? input.agentId : ''
