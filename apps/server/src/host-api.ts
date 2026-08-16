@@ -164,6 +164,7 @@ const projectExtensions = (
   displayName: string
   description: string
   revisionNumber: number
+  revisionId: string
   activation: string
   agentId?: string
 }> => {
@@ -187,6 +188,7 @@ const projectExtensions = (
         displayName: extension.displayName,
         description: extension.description,
         revisionNumber: revision.revisionNumber,
+        revisionId: revision.id,
         activation: displayState,
         ...(activation === undefined ? {} : { agentId: activation.agentId }),
       },

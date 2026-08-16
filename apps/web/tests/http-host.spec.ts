@@ -156,6 +156,48 @@ describe('HttpProductHost', () => {
     unsubscribe()
   })
 
+  it('routes extension activate/deactivate to the activation endpoints', async () => {
+    const requests: Array<{ url: string; init?: RequestInit }> = []
+    fetchMock = vi.fn((input: string, init?: RequestInit) => {
+      requests.push({ url: input, ...(init === undefined ? {} : { init }) })
+      if (input === '/api/snapshot') return Promise.resolve(stubResponse(200, snapshotBody()))
+      if (input.startsWith('/api/extensions/') && init?.method === 'POST') {
+        return Promise.resolve(stubResponse(200, { activation: { id: 'act-1', state: 'active' } }))
+      }
+      if (input.startsWith('/api/extensions/') && init?.method === 'DELETE') {
+        return Promise.resolve(stubResponse(200, { disabled: true }))
+      }
+      return Promise.resolve(stubResponse(404, { error: { code: 'not-found', message: 'x' } }))
+    })
+    vi.stubGlobal('fetch', fetchMock)
+    vi.stubGlobal('EventSource', FakeEventSource)
+
+    const host = new HttpProductHost()
+    const unsubscribe = host.subscribe(() => undefined)
+    await flush()
+
+    await host.execute('extensions.activate', {
+      extensionId: 'extension-1',
+      agentId: 'agent-1',
+      revisionId: 'revision-1',
+    })
+    const activateCall = requests.find(
+      (request) => request.url === '/api/extensions/extension-1/activation' && request.init?.method === 'POST',
+    )
+    expect(activateCall?.init?.method).toBe('POST')
+    expect(JSON.parse(activateCall?.init?.body as string)).toEqual({
+      agentId: 'agent-1',
+      revisionId: 'revision-1',
+    })
+
+    await host.execute('extensions.deactivate', { extensionId: 'extension-1' })
+    const deactivateCall = requests.find(
+      (request) => request.url === '/api/extensions/extension-1/activation' && request.init?.method === 'DELETE',
+    )
+    expect(deactivateCall?.init?.method).toBe('DELETE')
+    unsubscribe()
+  })
+
   it('refreshes the projection when a channel-fact SSE event arrives', async () => {
     let snapshotCalls = 0
     fetchMock = vi.fn((input: string) => {

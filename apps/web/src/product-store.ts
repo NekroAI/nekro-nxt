@@ -77,6 +77,9 @@ export interface LocalExtensionSummary {
   readonly activation: '已激活' | '等待安全切换' | '未激活' | '激活失败'
   readonly targetAgent: string
   readonly contributions: readonly string[]
+  /** Saved Revision id + owning Agent id, present when projected from a live Server. */
+  readonly revisionId?: string
+  readonly agentId?: string
 }
 
 export interface DynamicApproval {
@@ -393,12 +396,23 @@ export const useProductStore = create<ProductState>((set) => ({
         approval.id === id ? { ...approval, state: approved ? '已批准' : '已拒绝' } : approval,
       ),
     })),
-  setExtensionActive: (id, enabled) =>
+  setExtensionActive: (id, enabled) => {
+    if (activeHost) {
+      const extension = useProductStore.getState().extensions.find((candidate) => candidate.id === id)
+      if (!extension?.revisionId || !extension.agentId) return
+      void activeHost.execute(enabled ? 'extensions.activate' : 'extensions.deactivate', {
+        extensionId: id,
+        agentId: extension.agentId,
+        revisionId: extension.revisionId,
+      })
+      return
+    }
     set((state) => ({
       extensions: state.extensions.map((extension) =>
         extension.id === id ? { ...extension, activation: enabled ? '已激活' : '未激活' } : extension,
       ),
-    })),
+    }))
+  },
   setTheme: (theme) => {
     if (typeof window !== 'undefined') {
       if (theme === 'system') window.localStorage.removeItem('nekro-nxt.theme')

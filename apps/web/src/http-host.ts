@@ -97,12 +97,23 @@ interface SnapshotConnectionJson {
   readonly status: string
 }
 
+interface SnapshotExtensionJson {
+  readonly id: string
+  readonly slug: string
+  readonly displayName: string
+  readonly description: string
+  readonly revisionNumber: number
+  readonly revisionId: string
+  readonly activation: string
+  readonly agentId?: string
+}
+
 interface SnapshotJson {
   readonly agents: readonly SnapshotAgentJson[]
   readonly channels: readonly SnapshotChannelJson[]
   readonly messages: readonly SnapshotMessageJson[]
   readonly connections: readonly SnapshotConnectionJson[]
-  readonly extensions: readonly unknown[]
+  readonly extensions: readonly SnapshotExtensionJson[]
 }
 
 const isSnapshotJson = (value: unknown): value is SnapshotJson => {
@@ -174,14 +185,37 @@ const projectSnapshot = (json: SnapshotJson): ProductSnapshot => {
     receiveTest: '未测试',
     sendTest: '未测试',
   }))
+  const extensionsLocal = json.extensions.map((extension) => {
+    const targetAgent = extension.agentId
+      ? (json.agents.find((agent) => agent.id === extension.agentId)?.displayName ?? extension.agentId)
+      : ''
+    return {
+      id: extension.id,
+      name: extension.displayName,
+      description: extension.description,
+      revision: extension.revisionNumber,
+      activation:
+        extension.activation === 'active'
+          ? ('已激活' as const)
+          : extension.activation === 'failed'
+            ? ('激活失败' as const)
+            : extension.activation === 'waiting-safe-switch'
+              ? ('等待安全切换' as const)
+              : ('未激活' as const),
+      targetAgent,
+      contributions: [],
+      revisionId: extension.revisionId,
+      ...(extension.agentId === undefined ? {} : { agentId: extension.agentId }),
+    }
+  })
   return {
     agents,
     channels,
     messages,
     connections,
-    extensions: [],
+    extensions: extensionsLocal,
     approvals: [],
-    diagnosticNote: `已连接真实 Server（${agents.length} 个智能体 · ${channels.length} 个频道）。`,
+    diagnosticNote: `已连接真实 Server（${agents.length} 个智能体 · ${channels.length} 个频道 · ${extensionsLocal.length} 个本地扩展）。`,
   }
 }
 
@@ -230,7 +264,28 @@ export class HttpProductHost implements ProductHostPort {
         await this.#refreshAndNotify()
         return result
       }
-      // 切片2/3 尚未提供的能力：静默返回，避免让 Shell 因未接线而崩溃。
+      if (command === 'extensions.activate') {
+        const extensionId = typeof input?.extensionId === 'string' ? input.extensionId : ''
+        const agentId = typeof input?.agentId === 'string' ? input.agentId : ''
+        const revisionId = typeof input?.revisionId === 'string' ? input.revisionId : ''
+        if (!extensionId.trim() || !agentId.trim() || !revisionId.trim()) return null
+        const result = await postJson(`/api/extensions/${encodeURIComponent(extensionId)}/activation`, {
+          agentId,
+          revisionId,
+        })
+        await this.#refreshAndNotify()
+        return result
+      }
+      if (command === 'extensions.deactivate') {
+        const extensionId = typeof input?.extensionId === 'string' ? input.extensionId : ''
+        if (!extensionId.trim()) return null
+        const result = await requestJson(`/api/extensions/${encodeURIComponent(extensionId)}/activation`, {
+          method: 'DELETE',
+        })
+        await this.#refreshAndNotify()
+        return result
+      }
+      // 尚未提供的能力（如保存动态扩展）：静默返回，避免让 Shell 因未接线而崩溃。
       return null
     } catch {
       // 网络/Server 暂不可用：保留上一次快照，不让 UI 崩溃。
@@ -265,6 +320,20 @@ const createAgentRequestBody = (input?: Readonly<Record<string, unknown>>): unkn
       ? { provider: 'deepseek', model: modelLabel.trim() }
       : { provider: 'deepseek', model: 'deepseek-chat' },
   }
+}
+
+const requestJson = async (
+  path: string,
+  init?: { readonly method?: 'POST' | 'DELETE'; readonly body?: unknown },
+): Promise<unknown> => {
+  const response = await fetch(path, {
+    method: init?.method ?? 'POST',
+    headers: { 'content-type': 'application/json' },
+    ...(init?.body === undefined ? {} : { body: JSON.stringify(init.body) }),
+  })
+  const json: unknown = await response.json().catch(() => null)
+  if (!response.ok) throw new Error(`Server 请求失败：${response.status}`)
+  return json
 }
 
 const postJson = async (path: string, body: unknown): Promise<unknown> => {
