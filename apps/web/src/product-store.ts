@@ -1,4 +1,19 @@
 import { create } from 'zustand'
+import type { ProductHostPort } from './product-port.js'
+
+/**
+ * The active real-host port (when the Shell is wired to a live Server, set by
+ * the browser entry). Mutating product actions prefer this port's `execute`;
+ * without it they fall back to the local demo data so the Shell stays fully
+ * usable offline (and the existing UI tests keep passing).
+ */
+let activeHost: ProductHostPort | null = null
+
+export const setActiveProductHost = (host: ProductHostPort | null): void => {
+  activeHost = host
+}
+
+export const getActiveProductHost = (): ProductHostPort | null => activeHost
 
 export type AgentRuntimeState = '空闲' | '思考中' | '使用工具' | '等待输入' | '已暂停' | '不可用'
 export type DeliveryState = '已发送' | '发送中' | '部分发送' | '失败' | '结果未知'
@@ -276,7 +291,11 @@ export const useProductStore = create<ProductState>((set) => ({
   theme: initialTheme(),
   reducedMotion: false,
   diagnosticNote: 'Core、DSH Session 与扩展运行时均正常；QQ Gateway 最近一次 resume 成功。',
-  createAgent: ({ name, model }) =>
+  createAgent: ({ name, model }) => {
+    if (activeHost) {
+      void activeHost.execute('agents.create', { displayName: name, modelLabel: model })
+      return
+    }
     set((state) => {
       const sequence = ++agentSequence
       const id = `agent-${sequence}`
@@ -308,7 +327,8 @@ export const useProductStore = create<ProductState>((set) => ({
           },
         ],
       }
-    }),
+    })
+  },
   createConnection: ({ name, appId, credentialRef }) =>
     set((state) => ({
       connections: [
@@ -328,7 +348,11 @@ export const useProductStore = create<ProductState>((set) => ({
         },
       ],
     })),
-  sendMessage: (channelId, body) =>
+  sendMessage: (channelId, body) => {
+    if (activeHost) {
+      void activeHost.execute('channels.sendMessage', { channelId, body })
+      return
+    }
     set((state) => ({
       messages: [
         ...state.messages,
@@ -341,7 +365,8 @@ export const useProductStore = create<ProductState>((set) => ({
           time: new Date().toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' }),
         },
       ],
-    })),
+    }))
+  },
   setCapability: (agentId, capability, enabled) =>
     set((state) => ({
       agents: state.agents.map((agent) =>

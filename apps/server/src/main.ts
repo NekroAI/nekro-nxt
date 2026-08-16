@@ -95,6 +95,12 @@ if (isEntryPoint()) {
   void (async () => {
     const dataRoot = process.env.NEKRO_DATA ?? 'data'
     const distIndexEnv = process.env.NEKRO_DIST_INDEX
+    const portEnv = process.env.NEKRO_PORT
+    const port = portEnv !== undefined && portEnv.trim() !== '' ? Number(portEnv) : 4949
+    if (!Number.isInteger(port) || port < 0 || port > 65535) {
+      console.error(`[nekro-nxt] NEKRO_PORT 无效：${portEnv}`)
+      process.exit(1)
+    }
     try {
       const distIndex = distIndexEnv
         ? resolveRoot(distIndexEnv)
@@ -104,7 +110,7 @@ if (isEntryPoint()) {
           `Web dist/index.html 不存在：${distIndex}。请先运行 ` + '`pnpm --filter @nekro-nxt/web build`。',
         )
       }
-      const handle = await startNekroServer({ dataRoot, distIndex })
+      const handle = await startNekroServer({ dataRoot, distIndex, port })
       console.log(`[nekro-nxt] Server 已监听 http://127.0.0.1:${handle.port}`)
       const onSignal = (signal: NodeJS.Signals): void => {
         console.log(`[nekro-nxt] 收到 ${signal}，正在关闭。`)

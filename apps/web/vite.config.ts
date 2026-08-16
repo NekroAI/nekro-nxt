@@ -1,9 +1,21 @@
 import react from '@vitejs/plugin-react'
 import { defineConfig } from 'vite'
 
+const apiProxyTarget = process.env.NEKRO_API_PROXY ?? 'http://127.0.0.1:4949'
+
 export default defineConfig({
   plugins: [react()],
   resolve: {
     dedupe: ['react', 'react-dom'],
+  },
+  server: {
+    proxy: {
+      // 开发模式下把领域 API 转发到本机 NekroNxt Server（apps/server，默认 4949）。
+      // 生产构建由 server 通过 dsh-host-frontend-static 同源托管，无需代理。
+      '/api': {
+        target: apiProxyTarget,
+        changeOrigin: true,
+      },
+    },
   },
 })

@@ -25,12 +25,27 @@ export interface ProductHostPort {
 }
 
 /** Applies authoritative Host projections to the Shell without exposing transport or database details to pages. */
-export class ProductHostCoordinator {
+export class ProductHostCoordinator implements ProductHostPort {
   readonly #host: ProductHostPort
   #unsubscribe: (() => void) | undefined
 
   constructor(host: ProductHostPort) {
     this.#host = host
+  }
+
+  /** The latest authoritative projection (delegated to the underlying Host). */
+  getSnapshot(): ProductSnapshot {
+    return this.#host.getSnapshot()
+  }
+
+  /** Subscribes the listener to Host updates (delegated to the underlying Host). */
+  subscribe(listener: () => void): () => void {
+    return this.#host.subscribe(listener)
+  }
+
+  /** Delegates product actions to the underlying Host (may be a no-op in demo mode). */
+  execute(command: string, input?: Readonly<Record<string, unknown>>): Promise<unknown> {
+    return this.#host.execute(command, input)
   }
 
   start(): void {
