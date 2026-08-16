@@ -112,7 +112,7 @@ interface ProductState {
     patch: Partial<Pick<ConnectionSummary, 'appId' | 'credentialRef' | 'proactiveSend'>>,
   ): void
   runConnectionTest(id: string, direction: 'receive' | 'send'): void
-  resolveApproval(id: string, approved: boolean): void
+  resolveApproval(input: { requestId: string; agentId: string; approved: boolean }): void
   setExtensionActive(id: string, enabled: boolean): void
   setTheme(theme: ThemeChoice): void
   setReducedMotion(enabled: boolean): void
@@ -402,12 +402,17 @@ export const useProductStore = create<ProductState>((set) => ({
       ),
     }))
   },
-  resolveApproval: (id, approved) =>
+  resolveApproval: ({ requestId, agentId, approved }) => {
+    if (activeHost) {
+      void activeHost.execute(approved ? 'dynamic.approve' : 'dynamic.decline', { agentId, requestId })
+      return
+    }
     set((state) => ({
       approvals: state.approvals.map((approval) =>
-        approval.id === id ? { ...approval, state: approved ? '已批准' : '已拒绝' } : approval,
+        approval.id === requestId ? { ...approval, state: approved ? '已批准' : '已拒绝' } : approval,
       ),
-    })),
+    }))
+  },
   setExtensionActive: (id, enabled) => {
     if (activeHost) {
       const extension = useProductStore.getState().extensions.find((candidate) => candidate.id === id)

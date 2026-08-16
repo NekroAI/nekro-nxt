@@ -662,13 +662,15 @@ function ExtensionsPage() {
 }
 
 function CreatorPage() {
-  const approval = useProductStore((state) => state.approvals[0])
+  const dynamic = useProductStore((state) => state.dynamic)
+  const pendingApproval = dynamic.find((item) => item.status === 'awaiting-approval' && item.approvalRequestId)
   const [reviewOpen, setReviewOpen] = useState(false)
+  const firstRunning = dynamic.find((item) => item.status === 'running')
   return (
     <div className={styles.page}>
       <PageHeader
         eyebrow="创造工作台"
-        title="为“小奈”创建能力"
+        title="为智能体创建能力"
         description="同一智能体在获得动态创造授权后表现出的工作状态；不会创建另一个智能体。"
         actions={
           <Button variant="primary">
@@ -684,8 +686,8 @@ function CreatorPage() {
             <div className={styles.draftMeta}>已完成</div>
           </div>
           <div className={styles.draftItem}>
-            <div className={styles.draftName}>动态 Package draft-4</div>
-            <div className={styles.draftMeta}>等待 Client UI 批准</div>
+            <div className={styles.draftName}>动态 Package {firstRunning?.pluginId ?? '—'}</div>
+            <div className={styles.draftMeta}>{pendingApproval ? '等待 Client UI 批准' : '未在运行'}</div>
           </div>
           <div className={styles.draftItem}>
             <div className={styles.draftName}>保存为本地扩展</div>
@@ -693,48 +695,52 @@ function CreatorPage() {
           </div>
         </Panel>
         <div className={styles.formStack}>
-          {approval ? (
+          {pendingApproval ? (
             <div className={styles.approval}>
-              <div className={styles.approvalTitle}>{approval.title}</div>
-              <div className={styles.approvalBody}>{approval.purpose}</div>
-              <StatusBadge tone={approval.state === '等待批准' ? 'warning' : 'success'}>
-                {approval.state}
-              </StatusBadge>{' '}
-              {approval.state === '等待批准' ? (
-                <Button size="small" onClick={() => setReviewOpen(true)}>
-                  审查并决定
-                </Button>
-              ) : null}
+              <div className={styles.approvalTitle}>等待批准的动态 Package</div>
+              <div className={styles.approvalBody}>
+                {pendingApproval.pluginId} · 审批请求 {pendingApproval.approvalRequestId}
+              </div>
+              <StatusBadge tone="warning">等待批准</StatusBadge>{' '}
+              <Button size="small" onClick={() => setReviewOpen(true)}>
+                审查并决定
+              </Button>
             </div>
           ) : null}
           <Panel className={styles.settingSection}>
             <h2 className={styles.detailTitle}>真实验证结果</h2>
             <div className={styles.codePanel}>{`构建            通过
-Host Tool       已加载
-Client UI       等待批准
+${firstRunning ? 'Host Tool       已加载' : '运行动态 Package  无'}
+Client UI       ${pendingApproval ? '等待批准' : '未在运行'}
 停止与卸载      通过
-目标智能体       小奈`}</div>
+目标智能体       当前绑定的智能体`}</div>
             <div className={styles.headerActions}>
               <Button>
                 <FlaskConical size={14} /> 重新验证
               </Button>
-              <Button variant="primary" disabled={approval?.state !== '已批准'}>
+              <Button variant="primary" disabled={!pendingApproval || pendingApproval.status !== 'awaiting-approval'}>
                 保存为本地扩展
               </Button>
             </div>
           </Panel>
         </div>
       </div>
-      {approval ? (
+      {pendingApproval ? (
         <ConfirmDialog
           open={reviewOpen}
           onOpenChange={setReviewOpen}
           title="批准动态 Client UI"
           description="该 Package 将在当前浏览器中注册预览 Slot。批准只影响本次动态运行，不会自动保存或给其他智能体启用。"
           confirmLabel="批准本次运行"
-          onConfirm={() => useProductStore.getState().resolveApproval(approval.id, true)}
+          onConfirm={() =>
+            useProductStore.getState().resolveApproval({
+              requestId: pendingApproval.approvalRequestId!,
+              agentId: pendingApproval.agentId,
+              approved: true,
+            })
+          }
         >
-          <div className={styles.codePanel}>{approval.packageName}</div>
+          <div className={styles.codePanel}>{pendingApproval.pluginId}</div>
         </ConfirmDialog>
       ) : null}
     </div>

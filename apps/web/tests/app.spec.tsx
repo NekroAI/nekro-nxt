@@ -35,11 +35,11 @@ describe('NekroNxt product shell', () => {
 
   it('separates dynamic approval, saving and activation semantics', () => {
     const creator = renderRoute('/creator')
-    expect(creator).toContain('等待 Client UI 批准')
     expect(creator).toContain('保存为本地扩展')
     expect(creator).toContain('不会创建另一个智能体')
 
-    useProductStore.getState().resolveApproval('approval-1', true)
+    // 动态审批经真实 Host 命令派发；无 Host 时保留 demo 语义（与 id 匹配的 mock 项被标记）。
+    useProductStore.getState().resolveApproval({ requestId: 'approval-1', agentId: 'agent-1', approved: true })
     expect(useProductStore.getState().approvals[0]?.state).toBe('已批准')
   })
 
