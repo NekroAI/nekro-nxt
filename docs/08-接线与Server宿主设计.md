@@ -2,7 +2,7 @@
 
 > 文档编号：08
 >
-> 状态：切片1 闭环 A、切片3 扩展生命周期（含实时 SSE、保存动态包、动态审批/调用端点）、切片2 QQ 连接配置与诊断已落地；浏览器动态 Slot 渲染完整创造回路与 QQ 真实收发待真实浏览器/外部凭据接线
+> 状态：切片1 闭环 A、切片3 扩展生命周期（实时 SSE、保存动态包、浏览器动态 client 回路）、切片2 QQ 连接配置与诊断已落地；实际浏览器中 DSH 动态 Client UI 的视觉 Slot 渲染、QQ 真实收发待真实浏览器/外部凭据
 >
 > 日期：2026-08-16
 >
@@ -55,7 +55,7 @@ Web 端不复制一份业务事实到 Zustand。`ProductHostPort.getSnapshot()` 
 | 修改能力 | `POST /api/agents/:id/capabilities` | 切换到新 AgentRevision | ⏳ 待接 |
 | QQ 收发测试 | `POST /api/connections/:id/test` | Web 连接真实收发；QQ 无真实凭据时诚实返回 `needs-credentials`（拒假成功） | ✅ 入口已接通；真实凭据收发待外部环境 |
 | 保存动态包 | `POST /api/extensions/save-from-dynamic` | 把活动会话中的运行动态 Package 保存为本地 Extension Revision（不自动启用） | ✅ |
-| 动态审批/调用 | `POST /api/dynamic/:agentId/{approve\|decline\|invoke}` | 解析智能体活动会话并调用 DshHostRuntime 动态方法（审批解析、Host half 调用） | ✅ 服务端；浏览器 Slot 渲染回路待接线 |
+| 动态审批/调用 | `POST /api/dynamic/:agentId/{approve\|decline\|invoke\|run-host-half\|get-client-code\|settle-user-run\|report-render-failure}` | 解析智能体活动会话并调用 DshHostRuntime 动态方法（审批解析、Host half 启动、Client 源码获取、Host 方法调用、用户 run 结算、渲染失败上报） | ✅ 服务端+Web `HttpDynamicClientHost`；浏览器视觉 Slot 渲染待真实浏览器 |
 
 `GET /api/snapshot` 现在投影：全部 `Connection`（Web + QQ，credentialRefs 只含引用）、已绑定 Agent、频道、近期频道事实、全部已保存本地扩展（含当前 AgentActivation 状态）、各智能体活动会话中运行的动态 Package（plugin/package/审批状态）。
 
