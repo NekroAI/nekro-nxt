@@ -97,6 +97,98 @@ export interface AdapterConnectionContext {
   readonly now: () => number
 }
 
+export type AdapterConfigurationProperty =
+  | {
+      readonly type: 'string' | 'credential-reference'
+      readonly title: string
+      readonly description?: string
+      readonly default?: string
+    }
+  | {
+      readonly type: 'boolean'
+      readonly title: string
+      readonly description?: string
+      readonly default?: boolean
+    }
+  | {
+      readonly type: 'number'
+      readonly title: string
+      readonly description?: string
+      readonly default?: number
+    }
+
+/** Product-facing, versioned Connection setup metadata contributed by an Adapter. */
+export interface AdapterConnectionDescriptor {
+  readonly key: string
+  readonly displayName: string
+  readonly description: string
+  /** System-managed adapters remain visible for diagnostics but cannot be created by users. */
+  readonly userCreatable: boolean
+  readonly configSchema: {
+    readonly schemaVersion: number
+    readonly type: 'object'
+    readonly required: readonly string[]
+    readonly properties: Readonly<Record<string, AdapterConfigurationProperty>>
+  }
+}
+
+export interface ParsedAdapterConnectionConfiguration {
+  readonly configuration: Readonly<Record<string, string | number | boolean>>
+  readonly credentials: Readonly<Record<string, string>>
+}
+
+/**
+ * Validates the public schema subset before an Adapter-specific creator receives values.
+ * Credential-reference fields accept write-only secret material separately from durable config.
+ */
+export function parseAdapterConnectionConfiguration(
+  descriptor: AdapterConnectionDescriptor,
+  input: {
+    readonly configuration?: Readonly<Record<string, unknown>>
+    readonly credentials?: Readonly<Record<string, unknown>>
+  },
+): ParsedAdapterConnectionConfiguration {
+  const configurationInput = input.configuration ?? {}
+  const credentialInput = input.credentials ?? {}
+  const known = new Set(Object.keys(descriptor.configSchema.properties))
+  const unknownConfiguration = Object.keys(configurationInput).find((key) => !known.has(key))
+  const unknownCredential = Object.keys(credentialInput).find((key) => !known.has(key))
+  if (unknownConfiguration || unknownCredential) {
+    throw new TypeError(`连接配置包含未知字段：${unknownConfiguration ?? unknownCredential}`)
+  }
+
+  const configuration: Record<string, string | number | boolean> = {}
+  const credentials: Record<string, string> = {}
+  for (const [key, property] of Object.entries(descriptor.configSchema.properties)) {
+    const required = descriptor.configSchema.required.includes(key)
+    if (property.type === 'credential-reference') {
+      const value = credentialInput[key]
+      if (typeof value === 'string' && value.length > 0) credentials[key] = value
+      else if (required) throw new TypeError(`请填写${property.title}。`)
+      continue
+    }
+
+    const value = configurationInput[key] ?? property.default
+    if (value === undefined) {
+      if (required) throw new TypeError(`请填写${property.title}。`)
+      continue
+    }
+    if (property.type === 'string') {
+      if (typeof value !== 'string' || value.trim() === '') throw new TypeError(`${property.title} 必须是非空文本。`)
+      configuration[key] = value.trim()
+    } else if (property.type === 'boolean') {
+      if (typeof value !== 'boolean') throw new TypeError(`${property.title} 必须是布尔值。`)
+      configuration[key] = value
+    } else {
+      if (typeof value !== 'number' || !Number.isFinite(value) || value <= 0) {
+        throw new TypeError(`${property.title} 必须是正数。`)
+      }
+      configuration[key] = value
+    }
+  }
+  return { configuration, credentials }
+}
+
 /** Adapter-owned durable state, namespaced by Connection and an Adapter-defined key. */
 export interface AdapterRuntimeStateStore {
   load(connectionId: ConnectionId, key: string): Promise<JsonValue | undefined>

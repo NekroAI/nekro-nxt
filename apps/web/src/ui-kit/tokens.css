@@ -39,7 +39,33 @@
   --nxt-danger-soft: #fff0f1;
   --nxt-unknown: #655b7b;
   --nxt-unknown-soft: #f1eef7;
+  --nxt-space-1: 4px;
+  --nxt-space-2: 8px;
+  --nxt-space-3: 12px;
+  --nxt-space-4: 16px;
+  --nxt-space-5: 20px;
+  --nxt-space-6: 24px;
+  --nxt-space-8: 32px;
+  --nxt-space-10: 40px;
+  --nxt-space-12: 48px;
+  --nxt-space-16: 64px;
+  --nxt-radius-control: 7px;
+  --nxt-radius-panel: 10px;
+  --nxt-radius-popover: 8px;
+  --nxt-radius-dialog: 12px;
+  --nxt-radius-md: var(--nxt-radius-panel);
+  --nxt-radius-lg: var(--nxt-radius-dialog);
+  --nxt-radius-round: 999px;
+  --nxt-shadow-control: 0 1px 2px rgb(25 48 61 / 7%);
   --nxt-shadow-popover: 0 18px 44px rgb(25 48 61 / 16%), 0 2px 8px rgb(25 48 61 / 8%);
+  --nxt-shadow-dialog: 0 28px 72px rgb(25 48 61 / 22%), 0 4px 14px rgb(25 48 61 / 10%);
+  --nxt-shadow-float: var(--nxt-shadow-popover);
+  --nxt-layer-content: 0;
+  --nxt-layer-sticky: 20;
+  --nxt-layer-floating: 60;
+  --nxt-layer-modal-base: 80;
+  --nxt-layer-modal-step: 4;
+  --nxt-layer-notification: 1000;
   --nxt-font-sans:
     Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Microsoft YaHei',
     sans-serif;
@@ -48,8 +74,10 @@
   --nxt-motion-fast: 120ms;
   --nxt-motion-standard: 180ms;
   --nxt-motion-spatial: 240ms;
+  --nxt-motion-spinner: 720ms;
   --nxt-ease-standard: cubic-bezier(0.2, 0.7, 0.2, 1);
   --nxt-ease-enter: cubic-bezier(0.16, 1, 0.3, 1);
+  --nxt-ease-exit: cubic-bezier(0.4, 0, 1, 1);
   font-family: var(--nxt-font-sans);
   font-synthesis: none;
   text-rendering: optimizeLegibility;
@@ -85,7 +113,9 @@
   --nxt-danger-soft: #35191c;
   --nxt-unknown: #c2b3df;
   --nxt-unknown-soft: #282337;
+  --nxt-shadow-control: 0 1px 2px rgb(0 0 0 / 18%);
   --nxt-shadow-popover: 0 20px 52px rgb(0 0 0 / 44%), 0 2px 10px rgb(0 0 0 / 25%);
+  --nxt-shadow-dialog: 0 32px 88px rgb(0 0 0 / 58%), 0 4px 16px rgb(0 0 0 / 30%);
 }
 
 @media (prefers-color-scheme: dark) {

@@ -1,0 +1,147 @@
+.providerSettings {
+  display: grid;
+  gap: 16px;
+}
+
+.toolbar,
+.editorHeading,
+.actions,
+.secondaryActions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.toolbar h2,
+.editorHeading h3 {
+  margin: 0;
+  color: var(--nxt-text-primary);
+  font-size: 15px;
+}
+
+.toolbar p,
+.editorHeading p {
+  margin: 3px 0 0;
+  color: var(--nxt-text-muted);
+  font-size: 11px;
+}
+
+.layout {
+  display: grid;
+  grid-template-columns: minmax(260px, 0.68fr) minmax(440px, 1.32fr);
+  gap: 20px;
+  align-items: start;
+}
+
+.providerList {
+  display: grid;
+  border-top: 1px solid var(--nxt-border-default);
+  background: var(--nxt-bg-surface);
+}
+
+.providerButton {
+  width: 100%;
+  min-height: 60px;
+  justify-content: space-between;
+  border: 0;
+  border-bottom: 1px solid var(--nxt-border-subtle);
+  border-radius: 0;
+  padding: 8px 12px;
+  text-align: left;
+}
+
+.providerButton > span:first-child {
+  display: grid;
+  min-width: 0;
+  gap: 3px;
+}
+
+.providerButton strong {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.providerButton small {
+  color: var(--nxt-text-muted);
+  font-size: 11px;
+  font-weight: 400;
+}
+
+.providerButtonActive {
+  background: var(--nxt-accent-soft);
+  box-shadow: inset 2px 0 var(--nxt-accent);
+}
+
+.addProvider {
+  justify-content: flex-start;
+  margin-top: 12px;
+}
+
+.listEmpty {
+  padding: 20px 12px;
+  color: var(--nxt-text-muted);
+  font-size: 12px;
+}
+
+.editor {
+  display: grid;
+  gap: 16px;
+  border: 1px solid var(--nxt-border-subtle);
+  border-radius: var(--nxt-radius-md);
+  padding: 20px;
+  background: var(--nxt-bg-surface);
+}
+
+.modelSection {
+  display: grid;
+  gap: 8px;
+}
+
+.fieldLabel {
+  color: var(--nxt-text-secondary);
+  font-size: 12px;
+  font-weight: 650;
+}
+
+.modelList {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.modelList span {
+  border: 1px solid var(--nxt-border-subtle);
+  border-radius: var(--nxt-radius-round);
+  padding: 3px 8px;
+  color: var(--nxt-text-secondary);
+  background: var(--nxt-bg-subtle);
+  font-size: 11px;
+}
+
+.advanced {
+  border-top: 1px solid var(--nxt-border-subtle);
+  border-bottom: 1px solid var(--nxt-border-subtle);
+  padding: 12px 0;
+}
+
+.advanced summary {
+  color: var(--nxt-text-secondary);
+  font-size: 12px;
+  font-weight: 650;
+  cursor: pointer;
+}
+
+.advancedFields {
+  display: grid;
+  gap: 16px;
+  padding-top: 16px;
+}
+
+@media (width < 1180px) {
+  .layout {
+    grid-template-columns: minmax(230px, 0.65fr) minmax(390px, 1.35fr);
+    gap: 16px;
+  }
+}

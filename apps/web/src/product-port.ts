@@ -5,10 +5,16 @@ import type {
   ConversationMessage,
   DynamicApproval,
   LocalExtensionSummary,
+  ModelSummary,
+  ProductHostState,
 } from './product-store.js'
+import type { AdapterConnectionDescriptor } from '@nekro-nxt/adapter-sdk'
 import { useProductStore } from './product-store.js'
 
 export interface ProductSnapshot {
+  readonly host: ProductHostState
+  readonly connectionAdapters: readonly AdapterConnectionDescriptor[]
+  readonly models: readonly ModelSummary[]
   readonly agents: readonly AgentSummary[]
   readonly channels: readonly ChannelSummary[]
   readonly messages: readonly ConversationMessage[]
@@ -53,7 +59,7 @@ export class ProductHostCoordinator implements ProductHostPort {
     return this.#host.subscribe(listener)
   }
 
-  /** Delegates product actions to the underlying Host (may be a no-op in demo mode). */
+  /** Delegates product actions to the underlying Host and preserves rejection semantics. */
   execute(command: string, input?: Readonly<Record<string, unknown>>): Promise<unknown> {
     return this.#host.execute(command, input)
   }
@@ -63,6 +69,9 @@ export class ProductHostCoordinator implements ProductHostPort {
     const apply = (): void => {
       const snapshot = this.#host.getSnapshot()
       useProductStore.setState({
+        host: snapshot.host,
+        connectionAdapters: snapshot.connectionAdapters,
+        models: snapshot.models,
         agents: snapshot.agents,
         channels: snapshot.channels,
         messages: snapshot.messages,

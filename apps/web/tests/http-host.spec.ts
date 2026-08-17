@@ -23,6 +23,10 @@ class FakeEventSource {
   emit(type: string, data: unknown): void {
     for (const listener of this.listeners.get(type) ?? []) listener({ data: JSON.stringify(data) })
   }
+
+  fail(): void {
+    this.onerror?.()
+  }
 }
 
 const stubResponse = (status: number, body: unknown) => ({
@@ -32,11 +36,45 @@ const stubResponse = (status: number, body: unknown) => ({
 })
 
 const snapshotBody = () => ({
+  connectionAdapters: [
+    {
+      key: 'web',
+      displayName: '本地 Web',
+      description: '系统托管',
+      userCreatable: false,
+      configSchema: { schemaVersion: 1, type: 'object', required: [], properties: {} },
+    },
+    {
+      key: 'qq-openclaw',
+      displayName: 'QQ 官方机器人',
+      description: '连接 QQ 官方机器人账号',
+      userCreatable: true,
+      configSchema: {
+        schemaVersion: 1,
+        type: 'object',
+        required: ['appId', 'clientSecretCredentialRef'],
+        properties: {
+          appId: { type: 'string', title: 'App ID' },
+          clientSecretCredentialRef: { type: 'credential-reference', title: 'Client Secret' },
+        },
+      },
+    },
+  ],
+  models: [
+    {
+      provider: 'test-provider',
+      providerName: '测试供应商',
+      id: 'chat-model',
+      name: 'Chat Model',
+    },
+  ],
   agents: [
     {
       id: 'agent-1',
       displayName: '小奈',
-      model: { provider: 'deepseek', model: 'deepseek-chat' },
+      persona: '谨慎复核证据。',
+      currentRevisionId: 'agent-revision-1',
+      model: { provider: 'deepseek', model: 'deepseek-chat', reasoningEffort: 'high' },
       capabilities: { dynamicCreation: true, developmentShell: false, fullFileAccess: false },
       channels: ['channel-1'],
     },
@@ -49,6 +87,7 @@ const snapshotBody = () => ({
       kind: 'web',
       displayName: '小奈的网页频道',
       boundAgentId: 'agent-1',
+      bindings: [{ id: 'binding-1', agentId: 'agent-1', triggerPolicy: 'always', revision: 1 }],
     },
   ],
   messages: [
@@ -108,16 +147,24 @@ describe('HttpProductHost', () => {
     vi.stubGlobal('EventSource', FakeEventSource)
 
     const host = new HttpProductHost()
+    expect(host.getSnapshot().host).toEqual({ status: 'initializing', error: null, lastSuccessfulAt: null })
     const listener = vi.fn()
     const unsubscribe = host.subscribe(listener)
     await flush()
 
     const snapshot = host.getSnapshot()
+    expect(snapshot.host).toMatchObject({ status: 'ready', error: null })
+    expect(snapshot.host.lastSuccessfulAt).toBeTypeOf('number')
+    expect(snapshot.diagnosticNote).toContain('服务连接正常')
+    expect(snapshot.diagnosticNote).not.toContain('Server')
     expect(snapshot.agents).toHaveLength(1)
     expect(snapshot.agents[0]).toMatchObject({
       id: 'agent-1',
       name: '小奈',
-      model: 'deepseek-chat',
+      model: '未命名模型',
+      modelRef: { provider: 'deepseek', model: 'deepseek-chat', reasoningEffort: 'high' },
+      persona: '谨慎复核证据。',
+      currentRevisionId: 'agent-revision-1',
       capabilities: { dynamicCreation: true, developmentShell: false, fullFileAccess: false },
       channels: ['channel-1'],
     })
@@ -125,6 +172,7 @@ describe('HttpProductHost', () => {
       id: 'channel-1',
       name: '小奈的网页频道',
       kind: 'web',
+      connectionName: '网页聊天',
       agentId: 'agent-1',
       trigger: '始终响应',
     })
@@ -136,7 +184,12 @@ describe('HttpProductHost', () => {
       body: '这是通信工具确认发送的回复。',
       delivery: '已发送',
     })
-    expect(snapshot.connections[0]).toMatchObject({ id: 'connection-web', adapter: 'web', state: '已连接' })
+    expect(snapshot.connections[0]).toMatchObject({
+      id: 'connection-web',
+      adapter: '网页聊天',
+      adapterKey: 'web',
+      state: '已连接',
+    })
     expect(listener).toHaveBeenCalledTimes(1)
     unsubscribe()
   })
@@ -156,7 +209,10 @@ describe('HttpProductHost', () => {
     const unsubscribe = host.subscribe(() => undefined)
     await flush()
 
-    const result = await host.execute('agents.create', { displayName: '资料员', modelLabel: 'deepseek-chat' })
+    const result = await host.execute('agents.create', {
+      displayName: '资料员',
+      model: { provider: 'test-provider', model: 'chat-model' },
+    })
     expect(result).toEqual({ agentId: 'agent-2', channelId: 'channel-2', connectionId: 'conn' })
 
     const createCall = fetchMock.mock.calls.find(([input]) => input === '/api/agents')
@@ -168,7 +224,40 @@ describe('HttpProductHost', () => {
     expect(JSON.parse(rawBody as string)).toEqual({
       displayName: '资料员',
       persona: '',
-      model: { provider: 'deepseek', model: 'deepseek-chat' },
+      model: { provider: 'test-provider', model: 'chat-model' },
+    })
+    unsubscribe()
+  })
+
+  it('routes agents.revise with the current immutable revision id and exact DSH model selection', async () => {
+    fetchMock = vi.fn((input: string, init?: RequestInit) => {
+      if (input === '/api/agents/agent-1/revision' && init?.method === 'POST') {
+        return Promise.resolve(stubResponse(200, { currentRevisionId: 'agent-revision-2' }))
+      }
+      if (input === '/api/snapshot') return Promise.resolve(stubResponse(200, snapshotBody()))
+      return Promise.resolve(stubResponse(404, { error: { code: 'not-found', message: 'x' } }))
+    })
+    vi.stubGlobal('fetch', fetchMock)
+    vi.stubGlobal('EventSource', FakeEventSource)
+
+    const host = new HttpProductHost()
+    const unsubscribe = host.subscribe(() => undefined)
+    await flush()
+    await host.execute('agents.revise', {
+      agentId: 'agent-1',
+      expectedCurrentRevisionId: 'agent-revision-1',
+      displayName: '新小奈',
+      persona: '新人设',
+      model: { provider: 'test-provider', model: 'chat-model' },
+    })
+
+    const call = fetchMock.mock.calls.find(([input]) => input === '/api/agents/agent-1/revision')
+    expect(call).toBeDefined()
+    expect(JSON.parse((call?.[1] as RequestInit).body as string)).toEqual({
+      expectedCurrentRevisionId: 'agent-revision-1',
+      displayName: '新小奈',
+      persona: '新人设',
+      model: { provider: 'test-provider', model: 'chat-model' },
     })
     unsubscribe()
   })
@@ -215,7 +304,7 @@ describe('HttpProductHost', () => {
     unsubscribe()
   })
 
-  it('routes connections.create to POST /api/connections with a credential reference', async () => {
+  it('routes connections.create to POST /api/connections with a one-time Secret submission', async () => {
     const requests: Array<{ url: string; init?: RequestInit }> = []
     fetchMock = vi.fn((input: string, init?: RequestInit) => {
       requests.push({ url: input, ...(init === undefined ? {} : { init }) })
@@ -232,11 +321,45 @@ describe('HttpProductHost', () => {
     const unsubscribe = host.subscribe(() => undefined)
     await flush()
 
-    await host.execute('connections.create', { appId: 'app-1', credentialRef: 'credential:qq-1' })
+    await host.execute('connections.create', {
+      adapterKey: 'qq-openclaw',
+      configuration: { appId: 'app-1', proactiveSend: true },
+      credentials: { clientSecretCredentialRef: 'secret-qq-1' },
+    })
     const createCall = requests.find((request) => request.url === '/api/connections' && request.init?.method === 'POST')
     expect(createCall?.init?.method).toBe('POST')
-    expect(JSON.parse(createCall?.init?.body as string)).toEqual({ appId: 'app-1', credentialRef: 'credential:qq-1' })
+    expect(JSON.parse(createCall?.init?.body as string)).toEqual({
+      adapterKey: 'qq-openclaw',
+      configuration: { appId: 'app-1', proactiveSend: true },
+      credentials: { clientSecretCredentialRef: 'secret-qq-1' },
+    })
     unsubscribe()
+  })
+
+  it('creates a channel Binding through the generic product Host command', async () => {
+    const requests: Array<{ url: string; init?: RequestInit }> = []
+    fetchMock = vi.fn((input: string, init?: RequestInit) => {
+      requests.push({ url: input, ...(init === undefined ? {} : { init }) })
+      if (input === '/api/bindings' && init?.method === 'POST') {
+        return Promise.resolve(stubResponse(201, { id: 'binding-2' }))
+      }
+      return Promise.resolve(stubResponse(200, snapshotBody()))
+    })
+    vi.stubGlobal('fetch', fetchMock)
+    vi.stubGlobal('EventSource', FakeEventSource)
+
+    const host = new HttpProductHost()
+    await host.execute('bindings.create', {
+      agentId: 'agent-1',
+      channelId: 'channel-2',
+      triggerPolicy: 'mentioned-or-replied',
+    })
+    const request = requests.find((candidate) => candidate.url === '/api/bindings')
+    expect(JSON.parse(request?.init?.body as string)).toEqual({
+      agentId: 'agent-1',
+      channelId: 'channel-2',
+      triggerPolicy: 'mentioned-or-replied',
+    })
   })
 
   it('routes agents.updateCapabilities to the capabilities endpoint', async () => {
@@ -273,9 +396,7 @@ describe('HttpProductHost', () => {
       requests.push({ url: input, ...(init === undefined ? {} : { init }) })
       if (input === '/api/snapshot') return Promise.resolve(stubResponse(200, snapshotBody()))
       if (input === '/api/connections/connection-qq/test' && init?.method === 'POST') {
-        return Promise.resolve(
-          stubResponse(200, { status: 'needs-credentials', message: '已配置该连接；真实收发需平台 Client Secret。' }),
-        )
+        return Promise.resolve(stubResponse(200, { status: 'sent', platformMessageId: 'qq-message-1' }))
       }
       return Promise.resolve(stubResponse(404, { error: { code: 'not-found', message: 'x' } }))
     })
@@ -286,13 +407,17 @@ describe('HttpProductHost', () => {
     const unsubscribe = host.subscribe(() => undefined)
     await flush()
 
-    const result = await host.execute('connections.test', { connectionId: 'connection-qq', direction: 'send' })
-    expect(result).toMatchObject({ status: 'needs-credentials' })
+    const result = await host.execute('connections.test', {
+      connectionId: 'connection-qq',
+      direction: 'send',
+      channelId: 'channel-qq',
+    })
+    expect(result).toMatchObject({ status: 'sent', platformMessageId: 'qq-message-1' })
     const testCall = requests.find(
       (request) => request.url === '/api/connections/connection-qq/test' && request.init?.method === 'POST',
     )
     expect(testCall?.init?.method).toBe('POST')
-    expect(JSON.parse(testCall?.init?.body as string)).toEqual({ direction: 'send' })
+    expect(JSON.parse(testCall?.init?.body as string)).toEqual({ direction: 'send', channelId: 'channel-qq' })
     unsubscribe()
   })
 
@@ -457,7 +582,7 @@ describe('HttpProductHost', () => {
     unsubscribe()
   })
 
-  it('degrades silently when the Server is unreachable and keeps the last snapshot', async () => {
+  it('publishes an explicit error when the initial load fails and rejects mutations', async () => {
     fetchMock = vi.fn((input: string) => Promise.reject(new Error(`network down: ${input}`)))
     vi.stubGlobal('fetch', fetchMock)
     vi.stubGlobal('EventSource', FakeEventSource)
@@ -467,9 +592,173 @@ describe('HttpProductHost', () => {
     const unsubscribe = host.subscribe(listener)
     await flush()
 
-    expect(listener).not.toHaveBeenCalled()
+    expect(listener).toHaveBeenCalledTimes(1)
+    expect(host.getSnapshot().host).toEqual({
+      status: 'error',
+      error: { code: 'network', message: 'network down: /api/snapshot' },
+      lastSuccessfulAt: null,
+    })
     expect(host.getSnapshot().agents).toEqual([])
-    expect(await host.execute('agents.create', { displayName: 'x' })).toBeNull()
+    await expect(
+      host.execute('agents.create', {
+        displayName: 'x',
+        model: { provider: 'test-provider', model: 'chat-model' },
+      }),
+    ).rejects.toThrow('network down: /api/agents')
+    expect(host.getSnapshot().host).toMatchObject({
+      status: 'error',
+      error: { code: 'network', message: 'network down: /api/agents' },
+    })
     unsubscribe()
+  })
+
+  it('keeps the last good data as stale on non-2xx and returns to ready after recovery', async () => {
+    let snapshotMode: 'ready' | 'failed' = 'ready'
+    fetchMock = vi.fn((input: string) => {
+      if (input !== '/api/snapshot') return Promise.resolve(stubResponse(404, null))
+      return Promise.resolve(
+        snapshotMode === 'ready'
+          ? stubResponse(200, snapshotBody())
+          : stubResponse(503, { error: { code: 'unavailable', message: 'Server 正在升级。' } }),
+      )
+    })
+    vi.stubGlobal('fetch', fetchMock)
+    vi.stubGlobal('EventSource', FakeEventSource)
+
+    const host = new HttpProductHost()
+    const listener = vi.fn()
+    const unsubscribe = host.subscribe(listener)
+    await flush()
+    const firstSuccessfulAt = host.getSnapshot().host.lastSuccessfulAt
+    expect(host.getSnapshot().agents).toHaveLength(1)
+
+    snapshotMode = 'failed'
+    await expect(host.execute('host.refresh')).rejects.toThrow('Server 正在升级。')
+    expect(host.getSnapshot().host).toEqual({
+      status: 'stale',
+      error: { code: 'http', message: 'Server 正在升级。' },
+      lastSuccessfulAt: firstSuccessfulAt,
+    })
+    expect(host.getSnapshot().agents).toHaveLength(1)
+
+    snapshotMode = 'ready'
+    FakeEventSource.instances[0]?.emit('status', { connected: true })
+    await flush()
+    expect(host.getSnapshot().host).toMatchObject({ status: 'ready', error: null })
+    expect(host.getSnapshot().agents).toHaveLength(1)
+    expect(listener).toHaveBeenCalledTimes(3)
+    unsubscribe()
+  })
+
+  it('publishes invalid snapshots and SSE failures without discarding good data', async () => {
+    let validSnapshot = true
+    fetchMock = vi.fn((input: string) =>
+      Promise.resolve(
+        input === '/api/snapshot'
+          ? stubResponse(200, validSnapshot ? snapshotBody() : { agents: 'not-an-array' })
+          : stubResponse(404, null),
+      ),
+    )
+    vi.stubGlobal('fetch', fetchMock)
+    vi.stubGlobal('EventSource', FakeEventSource)
+
+    const host = new HttpProductHost()
+    const listener = vi.fn()
+    const unsubscribe = host.subscribe(listener)
+    await flush()
+
+    validSnapshot = false
+    await expect(host.execute('host.refresh')).rejects.toThrow('数据格式无效')
+    expect(host.getSnapshot().host).toMatchObject({
+      status: 'stale',
+      error: { code: 'invalid-snapshot' },
+    })
+    expect(host.getSnapshot().agents[0]?.name).toBe('小奈')
+
+    FakeEventSource.instances[0]?.fail()
+    expect(host.getSnapshot().host).toMatchObject({ status: 'stale', error: { code: 'sse' } })
+    expect(host.getSnapshot().agents[0]?.name).toBe('小奈')
+    expect(listener).toHaveBeenCalledTimes(3)
+    unsubscribe()
+  })
+
+  it('rejects invalid input for supported and unknown commands instead of returning null', async () => {
+    vi.stubGlobal('fetch', vi.fn())
+    vi.stubGlobal('EventSource', FakeEventSource)
+    const host = new HttpProductHost()
+
+    await expect(host.execute('channels.sendMessage', { channelId: '', body: 'hello' })).rejects.toThrow('缺少目标频道')
+    await expect(host.execute('agents.updateCapabilities', { agentId: 'agent-1' })).rejects.toThrow('至少一项')
+    await expect(host.execute('extensions.activate', { extensionId: 'extension-1' })).rejects.toThrow('缺少目标智能体')
+    await expect(host.execute('unknown.command')).rejects.toThrow('不支持操作')
+    expect(fetch).not.toHaveBeenCalled()
+  })
+
+  it('uses safe display placeholders instead of raw identifiers', async () => {
+    const raw = snapshotBody()
+    fetchMock = vi.fn(() =>
+      Promise.resolve(
+        stubResponse(200, {
+          ...raw,
+          connectionAdapters: [],
+          agents: raw.agents.map((agent) => ({ ...agent, displayName: '' })),
+          channels: [
+            {
+              ...raw.channels[0],
+              connectionId: 'secret-connection-id',
+              platformChannelId: 'qq-group-9876',
+              kind: 'group',
+              displayName: '',
+            },
+          ],
+          connections: [{ id: 'secret-connection-id', adapterKey: 'private-adapter-key', status: 'active' }],
+          extensions: [],
+        }),
+      ),
+    )
+    vi.stubGlobal('fetch', fetchMock)
+    vi.stubGlobal('EventSource', FakeEventSource)
+
+    const host = new HttpProductHost()
+    const unsubscribe = host.subscribe(() => undefined)
+    await flush()
+    const snapshot = host.getSnapshot()
+    expect(snapshot.agents[0]?.name).toBe('未命名智能体')
+    expect(snapshot.agents[0]?.model).toBe('未命名模型')
+    expect(snapshot.messages.find((message) => message.role === 'agent')?.author).toBe('未命名智能体')
+    expect(snapshot.channels[0]).toMatchObject({
+      name: 'QQ 群聊（尾号 9876）',
+      connectionName: '未命名连接',
+    })
+    expect(snapshot.connections[0]).toMatchObject({
+      name: '未命名连接平台',
+      adapter: '未命名连接平台',
+      adapterKey: 'private-adapter-key',
+    })
+    expect(snapshot.channels[0]?.name).not.toContain('secret-connection-id')
+    expect(snapshot.channels[0]?.connectionName).not.toContain('secret-connection-id')
+    unsubscribe()
+  })
+
+  it('propagates the Server domain error message for a failed Connection action', async () => {
+    fetchMock = vi.fn((input: string, init?: RequestInit) => {
+      if (input === '/api/connections' && init?.method === 'POST') {
+        return Promise.resolve(
+          stubResponse(400, { error: { code: 'connection-failed', message: 'Client Secret 无法使用。' } }),
+        )
+      }
+      return Promise.resolve(stubResponse(200, snapshotBody()))
+    })
+    vi.stubGlobal('fetch', fetchMock)
+    vi.stubGlobal('EventSource', FakeEventSource)
+
+    const host = new HttpProductHost()
+    await expect(
+      host.execute('connections.create', {
+        adapterKey: 'qq-openclaw',
+        configuration: { appId: 'app-1', proactiveSend: false },
+        credentials: { clientSecretCredentialRef: 'bad-secret' },
+      }),
+    ).rejects.toThrow('Client Secret 无法使用。')
   })
 })

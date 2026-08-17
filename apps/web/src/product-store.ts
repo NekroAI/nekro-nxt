@@ -1,12 +1,7 @@
+import type { AdapterConnectionDescriptor } from '@nekro-nxt/adapter-sdk'
 import { create } from 'zustand'
 import type { DynamicPackageSummary, ProductHostPort } from './product-port.js'
 
-/**
- * The active real-host port (when the Shell is wired to a live Server, set by
- * the browser entry). Mutating product actions prefer this port's `execute`;
- * without it they fall back to the local demo data so the Shell stays fully
- * usable offline (and the existing UI tests keep passing).
- */
 let activeHost: ProductHostPort | null = null
 
 export const setActiveProductHost = (host: ProductHostPort | null): void => {
@@ -25,6 +20,13 @@ export interface AgentSummary {
   readonly description: string
   readonly state: AgentRuntimeState
   readonly model: string
+  readonly modelRef?: {
+    readonly provider: string
+    readonly model: string
+    readonly reasoningEffort?: string
+  }
+  readonly persona?: string
+  readonly currentRevisionId?: string
   readonly channels: readonly string[]
   readonly extensionCount: number
   readonly capabilities: {
@@ -34,13 +36,27 @@ export interface AgentSummary {
   }
 }
 
+export interface ModelSummary {
+  readonly provider: string
+  readonly providerName: string
+  readonly id: string
+  readonly name: string
+  readonly description?: string
+}
+
 export interface ChannelSummary {
   readonly id: string
+  readonly connectionId: string
   readonly name: string
   readonly kind: 'web' | 'qq-group'
   readonly connectionName: string
   readonly agentId: string
   readonly trigger: string
+  readonly bindings: readonly {
+    readonly id: string
+    readonly agentId: string
+    readonly triggerPolicy: 'always' | 'mentioned-or-replied' | 'command' | 'observe-only'
+  }[]
   readonly unread: number
 }
 
@@ -58,15 +74,20 @@ export interface ConversationMessage {
 export interface ConnectionSummary {
   readonly id: string
   readonly name: string
+  /** User-facing Adapter name. The stable key remains available only for internal branching. */
   readonly adapter: string
+  readonly adapterKey: string
   readonly state: ConnectionState
   readonly appId: string
-  readonly credentialRef: string
+  readonly credentialConfigured: boolean
+  readonly gatewayState: string
+  readonly lastError: string
   readonly proactiveSend: boolean
   readonly channels: number
+  readonly knownChannels: readonly { readonly id: string; readonly name: string; readonly kind: string }[]
   readonly lastEvent: string
-  readonly receiveTest: '未测试' | '通过' | '失败'
-  readonly sendTest: '未测试' | '通过' | '失败'
+  readonly receiveTest: string
+  readonly sendTest: string
 }
 
 export interface LocalExtensionSummary {
@@ -77,7 +98,7 @@ export interface LocalExtensionSummary {
   readonly activation: '已激活' | '等待安全切换' | '未激活' | '激活失败'
   readonly targetAgent: string
   readonly contributions: readonly string[]
-  /** Saved Revision id + owning Agent id, present when projected from a live Server. */
+  /** Saved Revision id + owning intelligent-agent id; not intended for display. */
   readonly revisionId?: string
   readonly agentId?: string
 }
@@ -91,8 +112,35 @@ export interface DynamicApproval {
 }
 
 export type ThemeChoice = 'system' | 'light' | 'dark'
+export type ProductHostStatus = 'initializing' | 'ready' | 'stale' | 'error'
 
-interface ProductState {
+export interface ProductHostError {
+  readonly code: 'network' | 'http' | 'invalid-snapshot' | 'sse' | 'unknown'
+  readonly message: string
+}
+
+export interface ProductHostState {
+  readonly status: ProductHostStatus
+  readonly error: ProductHostError | null
+  readonly lastSuccessfulAt: number | null
+}
+
+export type ProductActionErrorCode = 'host-unavailable' | 'invalid-input' | 'missing-prerequisite'
+
+export class ProductActionError extends Error {
+  constructor(
+    readonly code: ProductActionErrorCode,
+    message: string,
+  ) {
+    super(message)
+    this.name = 'ProductActionError'
+  }
+}
+
+export interface ProductState {
+  readonly host: ProductHostState
+  readonly connectionAdapters: readonly AdapterConnectionDescriptor[]
+  readonly models: readonly ModelSummary[]
   readonly agents: readonly AgentSummary[]
   readonly channels: readonly ChannelSummary[]
   readonly messages: readonly ConversationMessage[]
@@ -103,17 +151,31 @@ interface ProductState {
   readonly theme: ThemeChoice
   readonly reducedMotion: boolean
   readonly diagnosticNote: string
-  createAgent(input: { readonly name: string; readonly model: string }): void
-  createConnection(input: { readonly name: string; readonly appId: string; readonly credentialRef: string }): void
-  sendMessage(channelId: string, body: string): void
-  setCapability(agentId: string, capability: keyof AgentSummary['capabilities'], enabled: boolean): void
-  updateConnection(
-    id: string,
-    patch: Partial<Pick<ConnectionSummary, 'appId' | 'credentialRef' | 'proactiveSend'>>,
-  ): void
-  runConnectionTest(id: string, direction: 'receive' | 'send'): void
-  resolveApproval(input: { requestId: string; agentId: string; approved: boolean }): void
-  setExtensionActive(id: string, enabled: boolean): void
+  refreshHost(): Promise<void>
+  createAgent(input: { readonly name: string; readonly model: ModelSummary }): Promise<void>
+  reviseAgent(input: {
+    readonly agentId: string
+    readonly expectedCurrentRevisionId?: string
+    readonly displayName: string
+    readonly persona: string
+    readonly model: ModelSummary
+    readonly reasoningEffort?: string
+  }): Promise<void>
+  createConnection(input: {
+    readonly adapterKey: string
+    readonly configuration: Readonly<Record<string, string | number | boolean>>
+    readonly credentials: Readonly<Record<string, string>>
+  }): Promise<void>
+  createBinding(input: {
+    readonly agentId: string
+    readonly channelId: string
+    readonly triggerPolicy: 'always' | 'mentioned-or-replied' | 'command' | 'observe-only'
+  }): Promise<void>
+  sendMessage(channelId: string, body: string): Promise<void>
+  setCapability(agentId: string, capability: keyof AgentSummary['capabilities'], enabled: boolean): Promise<void>
+  runConnectionTest(id: string, direction: 'receive' | 'send', channelId?: string): Promise<void>
+  resolveApproval(input: { requestId: string; agentId: string; approved: boolean }): Promise<void>
+  setExtensionActive(id: string, enabled: boolean): Promise<void>
   setTheme(theme: ThemeChoice): void
   setReducedMotion(enabled: boolean): void
 }
@@ -124,323 +186,122 @@ const initialTheme = (): ThemeChoice => {
   return stored === 'light' || stored === 'dark' ? stored : 'system'
 }
 
-let messageSequence = 10
-let agentSequence = 2
-let connectionSequence = 2
+const requireHost = (): ProductHostPort => {
+  if (activeHost === null)
+    throw new ProductActionError('host-unavailable', '当前未连接 NekroNxt Host，无法执行此操作。')
+  return activeHost
+}
 
-export const useProductStore = create<ProductState>((set) => ({
-  agents: [
-    {
-      id: 'xiaonai',
-      name: '小奈',
-      description: '负责频道协作、资料整理与本地扩展创造。',
-      state: '使用工具',
-      model: 'DeepSeek V4 · 高推理',
-      channels: ['web-main', 'qq-product'],
-      extensionCount: 2,
-      capabilities: { dynamicCreation: true, developmentShell: false, fullFileAccess: false },
-    },
-    {
-      id: 'reviewer',
-      name: '审阅者',
-      description: '专注于方案复核与风险检查。',
-      state: '空闲',
-      model: 'DeepSeek V4 · 标准',
-      channels: ['web-review'],
-      extensionCount: 0,
-      capabilities: { dynamicCreation: false, developmentShell: false, fullFileAccess: false },
-    },
-  ],
-  channels: [
-    {
-      id: 'web-main',
-      name: 'Web 控制台',
-      kind: 'web',
-      connectionName: '本地 Web',
-      agentId: 'xiaonai',
-      trigger: '始终响应',
-      unread: 0,
-    },
-    {
-      id: 'qq-product',
-      name: 'QQ 产品讨论群',
-      kind: 'qq-group',
-      connectionName: 'QQ 机器人账号',
-      agentId: 'xiaonai',
-      trigger: '被提及或回复时',
-      unread: 3,
-    },
-    {
-      id: 'web-review',
-      name: '审阅工作台',
-      kind: 'web',
-      connectionName: '本地 Web',
-      agentId: 'reviewer',
-      trigger: '始终响应',
-      unread: 0,
-    },
-  ],
-  messages: [
-    {
-      id: 'm1',
-      channelId: 'web-main',
-      author: '你',
-      role: 'member',
-      body: '复核一下第一期计划，先把 QQ 适配器的可靠性问题收口。',
-      time: '12:41',
-    },
-    {
-      id: 'm2',
-      channelId: 'web-main',
-      author: '小奈',
-      role: 'agent',
-      body: '已经完成离线链路复核。Gateway 只在事实提交后推进，媒体按内容去重，响应丢失会保留为结果未知。',
-      time: '12:43',
-      delivery: '已发送',
-    },
-    {
-      id: 'm3',
-      channelId: 'web-main',
-      author: '系统事件',
-      role: 'system',
-      body: '3 条新消息已收录，将在当前工具完成后纳入下一步思考。',
-      time: '12:44',
-    },
-    {
-      id: 'm4',
-      channelId: 'web-main',
-      author: '小奈',
-      role: 'agent',
-      body: '正在运行全仓检查，完成后会更新实现记录。',
-      time: '12:45',
-      delivery: '发送中',
-      attachment: { name: 'M5 验证摘要.md', kind: 'file' },
-    },
-    {
-      id: 'q1',
-      channelId: 'qq-product',
-      author: '成员甲',
-      role: 'member',
-      body: '@小奈 请确认这个视频会不会被忽略。',
-      time: '12:20',
-      attachment: { name: '演示视频.mp4', kind: 'file' },
-    },
-    {
-      id: 'q2',
-      channelId: 'qq-product',
-      author: '小奈',
-      role: 'agent',
-      body: '不会。视频在一期作为普通文件完整入库与转发，不会伪装成已经理解。',
-      time: '12:21',
-      delivery: '已发送',
-    },
-  ],
-  connections: [
-    {
-      id: 'qq-main',
-      name: 'QQ 机器人账号',
-      adapter: 'QQ OpenClaw',
-      state: '已连接',
-      appId: '102•••••481',
-      credentialRef: 'credential:qq-main',
-      proactiveSend: false,
-      channels: 1,
-      lastEvent: '42 秒前',
-      receiveTest: '通过',
-      sendTest: '未测试',
-    },
-    {
-      id: 'web-local',
-      name: '本地 Web',
-      adapter: 'Web Channel',
-      state: '已连接',
-      appId: 'local',
-      credentialRef: '无需凭据',
-      proactiveSend: true,
-      channels: 2,
-      lastEvent: '刚刚',
-      receiveTest: '通过',
-      sendTest: '通过',
-    },
-  ],
-  extensions: [
-    {
-      id: 'channel-summary',
-      name: '频道摘要',
-      description: '生成结构化阶段摘要，并保留来源消息引用。',
-      revision: 3,
-      activation: '已激活',
-      targetAgent: '小奈',
-      contributions: ['Tool', 'Client UI'],
-    },
-    {
-      id: 'asset-catalog',
-      name: '资源目录',
-      description: '按频道整理已授权的图片与文件。',
-      revision: 1,
-      activation: '等待安全切换',
-      targetAgent: '小奈',
-      contributions: ['Tool'],
-    },
-  ],
-  approvals: [
-    {
-      id: 'approval-1',
-      title: '运行“频道摘要”动态界面',
-      purpose: '在创造工作台预览摘要结果和来源。',
-      packageName: 'channel-summary-preview@draft-4',
-      state: '等待批准',
-    },
-  ],
+const requireValue = (value: string, message: string, code: ProductActionErrorCode = 'invalid-input'): string => {
+  const normalized = value.trim()
+  if (!normalized) throw new ProductActionError(code, message)
+  return normalized
+}
+
+export const useProductStore = create<ProductState>(() => ({
+  host: { status: 'initializing', error: null, lastSuccessfulAt: null },
+  connectionAdapters: [],
+  models: [],
+  agents: [],
+  channels: [],
+  messages: [],
+  connections: [],
+  extensions: [],
+  approvals: [],
   dynamic: [],
   theme: initialTheme(),
   reducedMotion: false,
-  diagnosticNote: 'Core、DSH Session 与扩展运行时均正常；QQ Gateway 最近一次 resume 成功。',
-  createAgent: ({ name, model }) => {
-    if (activeHost) {
-      void activeHost.execute('agents.create', { displayName: name, modelLabel: model })
-      return
-    }
-    set((state) => {
-      const sequence = ++agentSequence
-      const id = `agent-${sequence}`
-      const channelId = `web-agent-${sequence}`
-      return {
-        agents: [
-          ...state.agents,
-          {
-            id,
-            name,
-            description: '新创建的智能体；尚未补充人设说明。',
-            state: '空闲' as const,
-            model,
-            channels: [channelId],
-            extensionCount: 0,
-            capabilities: { dynamicCreation: false, developmentShell: false, fullFileAccess: false },
-          },
-        ],
-        channels: [
-          ...state.channels,
-          {
-            id: channelId,
-            name: `${name}的 Web 频道`,
-            kind: 'web' as const,
-            connectionName: '本地 Web',
-            agentId: id,
-            trigger: '始终响应',
-            unread: 0,
-          },
-        ],
-      }
+  diagnosticNote: '正在连接 NekroNxt Host…',
+  refreshHost: async () => {
+    await requireHost().execute('host.refresh')
+  },
+  createAgent: async ({ name, model }) => {
+    await requireHost().execute('agents.create', {
+      displayName: requireValue(name, '请输入智能体名称。'),
+      model: { provider: model.provider, model: model.id },
     })
   },
-  createConnection: ({ name, appId, credentialRef }) => {
-    if (activeHost) {
-      void activeHost.execute('connections.create', { appId, credentialRef })
-      return
-    }
-    set((state) => ({
-      connections: [
-        ...state.connections,
-        {
-          id: `qq-${++connectionSequence}`,
-          name,
-          adapter: 'QQ OpenClaw',
-          state: '已断开' as const,
-          appId,
-          credentialRef,
-          proactiveSend: false,
-          channels: 0,
-          lastEvent: '尚无事件',
-          receiveTest: '未测试' as const,
-          sendTest: '未测试' as const,
-        },
-      ],
-    }))
-  },
-  sendMessage: (channelId, body) => {
-    if (activeHost) {
-      void activeHost.execute('channels.sendMessage', { channelId, body })
-      return
-    }
-    set((state) => ({
-      messages: [
-        ...state.messages,
-        {
-          id: `local-${++messageSequence}`,
-          channelId,
-          author: '你',
-          role: 'member' as const,
-          body,
-          time: new Date().toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' }),
-        },
-      ],
-    }))
-  },
-  setCapability: (agentId, capability, enabled) => {
-    if (activeHost) {
-      void activeHost.execute('agents.updateCapabilities', { agentId, [capability]: enabled })
-      return
-    }
-    set((state) => ({
-      agents: state.agents.map((agent) =>
-        agent.id === agentId ? { ...agent, capabilities: { ...agent.capabilities, [capability]: enabled } } : agent,
+  reviseAgent: async ({ agentId, expectedCurrentRevisionId, displayName, persona, model, reasoningEffort }) => {
+    await requireHost().execute('agents.revise', {
+      agentId: requireValue(agentId, '缺少智能体标识，请刷新页面后重试。'),
+      expectedCurrentRevisionId: requireValue(
+        expectedCurrentRevisionId ?? '',
+        '缺少当前智能体配置版本，请刷新页面后重试。',
+        'missing-prerequisite',
       ),
-    }))
+      displayName: requireValue(displayName, '请输入智能体名称。'),
+      persona,
+      model: { provider: model.provider, model: model.id, ...(reasoningEffort ? { reasoningEffort } : {}) },
+    })
   },
-  updateConnection: (id, patch) =>
-    set((state) => ({
-      connections: state.connections.map((connection) =>
-        connection.id === id ? { ...connection, ...patch } : connection,
-      ),
-    })),
-  runConnectionTest: (id, direction) => {
-    if (activeHost) {
-      void activeHost.execute('connections.test', { connectionId: id, direction })
+  createConnection: async ({ adapterKey, configuration, credentials }) => {
+    await requireHost().execute('connections.create', {
+      adapterKey: requireValue(adapterKey, '请选择连接平台。'),
+      configuration,
+      credentials,
+    })
+  },
+  createBinding: async ({ agentId, channelId, triggerPolicy }) => {
+    await requireHost().execute('bindings.create', {
+      agentId: requireValue(agentId, '缺少智能体标识，请刷新页面后重试。'),
+      channelId: requireValue(channelId, '请选择要绑定的频道。'),
+      triggerPolicy,
+    })
+  },
+  sendMessage: async (channelId, body) => {
+    await requireHost().execute('channels.sendMessage', {
+      channelId: requireValue(channelId, '缺少目标频道，请刷新页面后重试。'),
+      body: requireValue(body, '消息内容不能为空。'),
+    })
+  },
+  setCapability: async (agentId, capability, enabled) => {
+    await requireHost().execute('agents.updateCapabilities', {
+      agentId: requireValue(agentId, '缺少智能体标识，请刷新页面后重试。'),
+      [capability]: enabled,
+    })
+  },
+  runConnectionTest: async (id, direction, channelId) => {
+    await requireHost().execute('connections.test', {
+      connectionId: requireValue(id, '缺少连接标识，请刷新页面后重试。'),
+      direction,
+      ...(channelId === undefined ? {} : { channelId }),
+    })
+  },
+  resolveApproval: async ({ requestId, agentId, approved }) => {
+    await requireHost().execute(approved ? 'dynamic.approve' : 'dynamic.decline', {
+      requestId: requireValue(requestId, '缺少批准请求，请刷新页面后重试。'),
+      agentId: requireValue(agentId, '缺少智能体标识，请刷新页面后重试。'),
+    })
+  },
+  setExtensionActive: async (id, enabled) => {
+    const extensionId = requireValue(id, '缺少本地扩展标识，请刷新页面后重试。')
+    const extension = useProductStore.getState().extensions.find((candidate) => candidate.id === extensionId)
+    if (extension === undefined) {
+      throw new ProductActionError('missing-prerequisite', '找不到要更新的本地扩展，请刷新页面后重试。')
+    }
+
+    if (enabled) {
+      const agentId = requireValue(
+        extension.agentId ?? '',
+        '此本地扩展缺少目标智能体，无法启用。',
+        'missing-prerequisite',
+      )
+      const revisionId = requireValue(
+        extension.revisionId ?? '',
+        '此本地扩展缺少可启用版本，请重新保存后重试。',
+        'missing-prerequisite',
+      )
+      await requireHost().execute('extensions.activate', { extensionId, agentId, revisionId })
       return
     }
-    set((state) => ({
-      connections: state.connections.map((connection) =>
-        connection.id === id
-          ? { ...connection, [direction === 'receive' ? 'receiveTest' : 'sendTest']: '通过' as const }
-          : connection,
-      ),
-    }))
-  },
-  resolveApproval: ({ requestId, agentId, approved }) => {
-    if (activeHost) {
-      void activeHost.execute(approved ? 'dynamic.approve' : 'dynamic.decline', { agentId, requestId })
-      return
-    }
-    set((state) => ({
-      approvals: state.approvals.map((approval) =>
-        approval.id === requestId ? { ...approval, state: approved ? '已批准' : '已拒绝' } : approval,
-      ),
-    }))
-  },
-  setExtensionActive: (id, enabled) => {
-    if (activeHost) {
-      const extension = useProductStore.getState().extensions.find((candidate) => candidate.id === id)
-      if (!extension?.revisionId || !extension.agentId) return
-      void activeHost.execute(enabled ? 'extensions.activate' : 'extensions.deactivate', {
-        extensionId: id,
-        agentId: extension.agentId,
-        revisionId: extension.revisionId,
-      })
-      return
-    }
-    set((state) => ({
-      extensions: state.extensions.map((extension) =>
-        extension.id === id ? { ...extension, activation: enabled ? '已激活' : '未激活' } : extension,
-      ),
-    }))
+    await requireHost().execute('extensions.deactivate', { extensionId })
   },
   setTheme: (theme) => {
     if (typeof window !== 'undefined') {
       if (theme === 'system') window.localStorage.removeItem('nekro-nxt.theme')
       else window.localStorage.setItem('nekro-nxt.theme', theme)
     }
-    set({ theme })
+    useProductStore.setState({ theme })
   },
-  setReducedMotion: (reducedMotion) => set({ reducedMotion }),
+  setReducedMotion: (reducedMotion) => useProductStore.setState({ reducedMotion }),
 }))

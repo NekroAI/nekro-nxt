@@ -14,6 +14,7 @@ import {
   name as frontendStaticName,
 } from '@deepseek-ai/dsh-host-frontend-static'
 import WebServer from '@deepseek-ai/dsh-host-webserver'
+import * as LlmPiAi from '@deepseek-ai/dsh-llm-pi-ai'
 import type { Context as LlmContext } from '@deepseek-ai/cordis'
 import { existsSync } from 'node:fs'
 import { mkdir } from 'node:fs/promises'
@@ -23,6 +24,36 @@ import { NekroRuntime } from './bootstrap.js'
 import { createNekroHostApi } from './host-api.js'
 
 const resolveRoot = (input: string): string => (path.isAbsolute(input) ? input : path.resolve(process.cwd(), input))
+
+const PROVIDER_ROUTE_PATTERN = /^[a-z0-9][a-z0-9-]*$/u
+
+/** Parse the Host-owned provider route allowlist; DSH still owns each route's catalog and protocol. */
+export const parseLlmProviderRoutes = (input: string | undefined): readonly string[] => {
+  if (input === undefined || input.trim() === '') return []
+  const routes = [
+    ...new Set(
+      input
+        .split(',')
+        .map((route) => route.trim())
+        .filter(Boolean),
+    ),
+  ]
+  const invalid = routes.find((route) => !PROVIDER_ROUTE_PATTERN.test(route))
+  if (invalid) throw new TypeError(`NEKRO_LLM_PROVIDERS 包含无效路由：${invalid}`)
+  return routes
+}
+
+/** Mount DSH's generic provider plugin; NekroNxt does not copy provider endpoints or model catalogs. */
+export const configureDshLlmProviders =
+  (routes: readonly string[]): NonNullable<StartServerOptions['configureLlm']> =>
+  async (context) => {
+    const providers: Record<string, LlmPiAi.PiAiProviderProfile> = Object.fromEntries(
+      routes.map((route) => [route, {}]),
+    )
+    await context.plugin(LlmPiAi, { providers })
+  }
+
+export const defaultWebDistIndex = (): string => fileURLToPath(new URL('../../web/dist/index.html', import.meta.url))
 
 export interface StartServerOptions {
   /** Root of the durable data directory (core.sqlite / sessions.sqlite / assets / extension-*). */
@@ -52,6 +83,9 @@ export const startNekroServer = async (options: StartServerOptions): Promise<Nek
     assetRoot: path.join(dataRoot, 'assets'),
     extensionDataRoot: path.join(dataRoot, 'extension-data'),
     extensionCacheRoot: path.join(dataRoot, 'extension-cache'),
+    credentialRoot: path.join(dataRoot, 'credentials'),
+    llmSettingsPath: path.join(dataRoot, 'dsh', 'settings.yaml'),
+    llmCredentialPath: path.join(dataRoot, 'dsh', '.credentials.yaml'),
     ...(options.configureLlm === undefined ? {} : { configureLlm: options.configureLlm }),
   })
   await runtime.start()
@@ -96,22 +130,29 @@ if (isEntryPoint()) {
     const dataRoot = process.env.NEKRO_DATA ?? 'data'
     const distIndexEnv = process.env.NEKRO_DIST_INDEX
     const portEnv = process.env.NEKRO_PORT
-    const port = portEnv !== undefined && portEnv.trim() !== '' ? Number(portEnv) : 4949
+    const llmProviderRoutes = parseLlmProviderRoutes(process.env.NEKRO_LLM_PROVIDERS)
+    const port = portEnv !== undefined && portEnv.trim() !== '' ? Number(portEnv) : 4960
     if (!Number.isInteger(port) || port < 0 || port > 65535) {
       console.error(`[nekro-nxt] NEKRO_PORT 无效：${portEnv}`)
       process.exit(1)
     }
     try {
-      const distIndex = distIndexEnv
-        ? resolveRoot(distIndexEnv)
-        : path.resolve(process.cwd(), 'apps/web/dist/index.html')
+      const distIndex = distIndexEnv ? resolveRoot(distIndexEnv) : defaultWebDistIndex()
       if (!existsSync(distIndex)) {
         throw new Error(
           `Web dist/index.html 不存在：${distIndex}。请先运行 ` + '`pnpm --filter @nekro-nxt/web build`。',
         )
       }
-      const handle = await startNekroServer({ dataRoot, distIndex, port })
+      const handle = await startNekroServer({
+        dataRoot,
+        distIndex,
+        port,
+        configureLlm: configureDshLlmProviders(llmProviderRoutes),
+      })
       console.log(`[nekro-nxt] Server 已监听 http://127.0.0.1:${handle.port}`)
+      if (llmProviderRoutes.length > 0) {
+        console.log(`[nekro-nxt] DSH 模型供应商已启用：${llmProviderRoutes.join(', ')}`)
+      }
       const onSignal = (signal: NodeJS.Signals): void => {
         console.log(`[nekro-nxt] 收到 ${signal}，正在关闭。`)
         process.removeListener('SIGINT', onSignal)

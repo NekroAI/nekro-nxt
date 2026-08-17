@@ -4,7 +4,11 @@ import type {
   ConnectionSummary,
   ConversationMessage,
   DeliveryState,
+  ModelSummary,
+  ProductHostError,
 } from './product-store.js'
+import type { AdapterConnectionDescriptor } from '@nekro-nxt/adapter-sdk'
+import { providerDisplayName } from './provider-labels.js'
 import type { ProductHostPort, ProductSnapshot } from './product-port.js'
 
 /**
@@ -17,8 +21,9 @@ import type { ProductHostPort, ProductSnapshot } from './product-port.js'
  * The `ProductHostPort` contract is synchronous (`getSnapshot`), so this class
  * keeps the latest fetched projection as a cached snapshot; `subscribe` starts
  * the SSE stream and refreshes the cache on each event. Transient network
- * failures degrade silently to the last good snapshot instead of crashing the
- * Shell (the UI keeps working against the previous projection).
+ * failures while reading degrade to the last good snapshot. Mutations reject
+ * with the Server's user-facing error so the initiating UI can show the real
+ * outcome instead of presenting a false success.
  */
 
 /** Delivery states from the domain Outbox, mapped to the UI 文案 vocabulary. */
@@ -53,6 +58,9 @@ const partsToBody = (parts: readonly { type: string; text?: string; memberId?: s
     .join('')
 
 const emptySnapshot = (): ProductSnapshot => ({
+  host: { status: 'initializing', error: null, lastSuccessfulAt: null },
+  connectionAdapters: [],
+  models: [],
   agents: [],
   channels: [],
   messages: [],
@@ -60,13 +68,15 @@ const emptySnapshot = (): ProductSnapshot => ({
   extensions: [],
   approvals: [],
   dynamic: [],
-  diagnosticNote: '正在连接本机 Server 数据源…',
+  diagnosticNote: '正在连接 NekroNxt 服务…',
 })
 
 interface SnapshotAgentJson {
   readonly id: string
   readonly displayName: string
-  readonly model: { readonly provider: string; readonly model: string }
+  readonly persona?: string
+  readonly currentRevisionId?: string
+  readonly model: { readonly provider: string; readonly model: string; readonly reasoningEffort?: string }
   readonly capabilities: {
     readonly dynamicCreation: boolean
     readonly developmentShell: boolean
@@ -75,12 +85,26 @@ interface SnapshotAgentJson {
   readonly channels: readonly string[]
 }
 
+interface SnapshotModelJson {
+  readonly provider: string
+  readonly providerName: string
+  readonly id: string
+  readonly name: string
+  readonly description?: string
+}
+
 interface SnapshotChannelJson {
   readonly id: string
+  readonly connectionId: string
   readonly platformChannelId: string
   readonly kind: string
   readonly displayName?: string
   readonly boundAgentId?: string
+  readonly bindings: readonly {
+    readonly id: string
+    readonly agentId: string
+    readonly triggerPolicy: 'always' | 'mentioned-or-replied' | 'command' | 'observe-only'
+  }[]
 }
 
 interface SnapshotMessageJson {
@@ -96,6 +120,15 @@ interface SnapshotConnectionJson {
   readonly id: string
   readonly adapterKey: string
   readonly status: string
+  readonly appId?: string
+  readonly proactiveSend?: boolean
+  readonly credentialConfigured?: boolean
+  readonly channelCount?: number
+  readonly knownChannels?: readonly { readonly id: string; readonly name: string; readonly kind: string }[]
+  readonly gateway?: { readonly state: string; readonly lastError?: string }
+  readonly lastInbound?: { readonly receivedAt: number }
+  readonly receiveTest?: { readonly status: string; readonly message?: string }
+  readonly sendTest?: { readonly status: string; readonly message?: string }
 }
 
 interface SnapshotExtensionJson {
@@ -118,6 +151,8 @@ interface SnapshotDynamicItemJson {
 }
 
 interface SnapshotJson {
+  readonly connectionAdapters: readonly AdapterConnectionDescriptor[]
+  readonly models?: readonly SnapshotModelJson[]
   readonly agents: readonly SnapshotAgentJson[]
   readonly channels: readonly SnapshotChannelJson[]
   readonly messages: readonly SnapshotMessageJson[]
@@ -126,17 +161,159 @@ interface SnapshotJson {
   readonly dynamic: readonly SnapshotDynamicItemJson[]
 }
 
+const isRecord = (value: unknown): value is Record<string, unknown> =>
+  typeof value === 'object' && value !== null && !Array.isArray(value)
+
+const hasString = (value: Record<string, unknown>, key: string): boolean => typeof value[key] === 'string'
+const hasOptionalString = (value: Record<string, unknown>, key: string): boolean =>
+  value[key] === undefined || typeof value[key] === 'string'
+const hasOptionalBoolean = (value: Record<string, unknown>, key: string): boolean =>
+  value[key] === undefined || typeof value[key] === 'boolean'
+const hasOptionalFiniteNumber = (value: Record<string, unknown>, key: string): boolean =>
+  value[key] === undefined || (typeof value[key] === 'number' && Number.isFinite(value[key]))
+
 const isSnapshotJson = (value: unknown): value is SnapshotJson => {
-  if (typeof value !== 'object' || value === null) return false
-  const candidate = value as Partial<SnapshotJson>
-  return (
-    Array.isArray(candidate.agents) &&
-    Array.isArray(candidate.channels) &&
-    Array.isArray(candidate.messages) &&
-    Array.isArray(candidate.connections) &&
-    Array.isArray(candidate.extensions) &&
-    Array.isArray(candidate.dynamic)
+  if (!isRecord(value)) return false
+  const arrays = ['connectionAdapters', 'agents', 'channels', 'messages', 'connections', 'extensions', 'dynamic']
+  if (!arrays.every((key) => Array.isArray(value[key]))) return false
+  if (value.models !== undefined && !Array.isArray(value.models)) return false
+
+  const adaptersValid = (value.connectionAdapters as unknown[]).every(
+    (item) => isRecord(item) && hasString(item, 'key') && hasString(item, 'displayName'),
   )
+  const modelsValid = ((value.models as unknown[] | undefined) ?? []).every(
+    (item) =>
+      isRecord(item) &&
+      hasString(item, 'provider') &&
+      hasString(item, 'providerName') &&
+      hasString(item, 'id') &&
+      hasString(item, 'name') &&
+      hasOptionalString(item, 'description'),
+  )
+  const agentsValid = (value.agents as unknown[]).every(
+    (item) =>
+      isRecord(item) &&
+      hasString(item, 'id') &&
+      hasString(item, 'displayName') &&
+      hasOptionalString(item, 'persona') &&
+      hasOptionalString(item, 'currentRevisionId') &&
+      isRecord(item.model) &&
+      hasString(item.model, 'provider') &&
+      hasString(item.model, 'model') &&
+      hasOptionalString(item.model, 'reasoningEffort') &&
+      isRecord(item.capabilities) &&
+      typeof item.capabilities.dynamicCreation === 'boolean' &&
+      typeof item.capabilities.developmentShell === 'boolean' &&
+      typeof item.capabilities.fullFileAccess === 'boolean' &&
+      Array.isArray(item.channels) &&
+      item.channels.every((channelId) => typeof channelId === 'string'),
+  )
+  const channelsValid = (value.channels as unknown[]).every(
+    (item) =>
+      isRecord(item) &&
+      hasString(item, 'id') &&
+      hasString(item, 'connectionId') &&
+      hasString(item, 'platformChannelId') &&
+      (item.kind === 'web' || item.kind === 'group') &&
+      hasOptionalString(item, 'displayName') &&
+      hasOptionalString(item, 'boundAgentId') &&
+      Array.isArray(item.bindings) &&
+      item.bindings.every(
+        (binding) =>
+          isRecord(binding) &&
+          hasString(binding, 'id') &&
+          hasString(binding, 'agentId') &&
+          ['always', 'mentioned-or-replied', 'command', 'observe-only'].includes(
+            typeof binding.triggerPolicy === 'string' ? binding.triggerPolicy : '',
+          ),
+      ),
+  )
+  const messagesValid = (value.messages as unknown[]).every(
+    (item) =>
+      isRecord(item) &&
+      hasString(item, 'id') &&
+      hasString(item, 'channelId') &&
+      (item.role === 'member' || item.role === 'agent') &&
+      typeof item.occurredAt === 'number' &&
+      Number.isFinite(item.occurredAt) &&
+      hasOptionalString(item, 'deliveryState') &&
+      Array.isArray(item.parts) &&
+      item.parts.every(
+        (part) =>
+          isRecord(part) &&
+          hasString(part, 'type') &&
+          hasOptionalString(part, 'text') &&
+          hasOptionalString(part, 'memberId'),
+      ),
+  )
+  const connectionsValid = (value.connections as unknown[]).every(
+    (item) =>
+      isRecord(item) &&
+      hasString(item, 'id') &&
+      hasString(item, 'adapterKey') &&
+      hasString(item, 'status') &&
+      hasOptionalString(item, 'appId') &&
+      hasOptionalBoolean(item, 'proactiveSend') &&
+      hasOptionalBoolean(item, 'credentialConfigured') &&
+      hasOptionalFiniteNumber(item, 'channelCount') &&
+      (item.knownChannels === undefined ||
+        (Array.isArray(item.knownChannels) &&
+          item.knownChannels.every(
+            (channel) =>
+              isRecord(channel) && hasString(channel, 'id') && hasString(channel, 'name') && hasString(channel, 'kind'),
+          ))) &&
+      (item.gateway === undefined ||
+        (isRecord(item.gateway) && hasString(item.gateway, 'state') && hasOptionalString(item.gateway, 'lastError'))) &&
+      (item.lastInbound === undefined ||
+        (isRecord(item.lastInbound) &&
+          typeof item.lastInbound.receivedAt === 'number' &&
+          Number.isFinite(item.lastInbound.receivedAt))) &&
+      (item.receiveTest === undefined ||
+        (isRecord(item.receiveTest) &&
+          hasString(item.receiveTest, 'status') &&
+          hasOptionalString(item.receiveTest, 'message'))) &&
+      (item.sendTest === undefined ||
+        (isRecord(item.sendTest) && hasString(item.sendTest, 'status') && hasOptionalString(item.sendTest, 'message'))),
+  )
+  const extensionsValid = (value.extensions as unknown[]).every(
+    (item) =>
+      isRecord(item) &&
+      hasString(item, 'id') &&
+      hasString(item, 'slug') &&
+      hasString(item, 'displayName') &&
+      hasString(item, 'description') &&
+      typeof item.revisionNumber === 'number' &&
+      Number.isFinite(item.revisionNumber) &&
+      hasString(item, 'revisionId') &&
+      hasString(item, 'activation') &&
+      hasOptionalString(item, 'agentId'),
+  )
+  const dynamicValid = (value.dynamic as unknown[]).every(
+    (item) =>
+      isRecord(item) &&
+      hasString(item, 'agentId') &&
+      hasString(item, 'pluginId') &&
+      hasString(item, 'status') &&
+      hasOptionalString(item, 'packageId') &&
+      hasOptionalString(item, 'approvalRequestId'),
+  )
+  return (
+    adaptersValid &&
+    modelsValid &&
+    agentsValid &&
+    channelsValid &&
+    messagesValid &&
+    connectionsValid &&
+    extensionsValid &&
+    dynamicValid
+  )
+}
+
+const nonEmptyLabel = (value: string | undefined, fallback: string): string => value?.trim() || fallback
+
+const qqGroupLabel = (platformChannelId: string): string => {
+  const suffix = platformChannelId.trim().match(/([\p{L}\p{N}]{4})$/u)?.[1]
+  return suffix ? `QQ 群聊（尾号 ${suffix}）` : '未命名 QQ 群聊'
 }
 
 /**
@@ -144,31 +321,66 @@ const isSnapshotJson = (value: unknown): value is SnapshotJson => {
  * shape. Business facts are not copied into a second store — the Shell only
  * re-shapes them for display (design docs/08 §2.3).
  */
-const projectSnapshot = (json: SnapshotJson): ProductSnapshot => {
+const projectSnapshot = (json: SnapshotJson, successfulAt: number): ProductSnapshot => {
+  const models: ModelSummary[] = (json.models ?? []).map((model) => ({
+    provider: model.provider,
+    providerName: providerDisplayName(model.provider, model.providerName),
+    id: model.id,
+    name: nonEmptyLabel(model.name, '未命名模型'),
+    ...(model.description === undefined ? {} : { description: model.description }),
+  }))
   const agentNameByChannel = new Map<string, string>()
   for (const channel of json.channels) {
     if (channel.boundAgentId !== undefined) {
       const agent = json.agents.find((candidate) => candidate.id === channel.boundAgentId)
-      if (agent) agentNameByChannel.set(channel.id, agent.displayName)
+      if (agent) agentNameByChannel.set(channel.id, nonEmptyLabel(agent.displayName, '未命名智能体'))
     }
   }
   const agents: AgentSummary[] = json.agents.map((agent) => ({
     id: agent.id,
-    name: agent.displayName,
+    name: nonEmptyLabel(agent.displayName, '未命名智能体'),
     description: '',
     state: '空闲',
-    model: agent.model.model,
+    model:
+      models.find((model) => model.provider === agent.model.provider && model.id === agent.model.model)?.name ??
+      '未命名模型',
+    modelRef: { ...agent.model },
+    persona: agent.persona ?? '',
+    ...(agent.currentRevisionId === undefined ? {} : { currentRevisionId: agent.currentRevisionId }),
     channels: [...agent.channels],
     extensionCount: 0,
     capabilities: { ...agent.capabilities },
   }))
+  const connectionNameById = new Map(
+    json.connections.map((connection) => [
+      connection.id,
+      connection.adapterKey === 'web'
+        ? '网页聊天'
+        : nonEmptyLabel(
+            json.connectionAdapters.find((adapter) => adapter.key === connection.adapterKey)?.displayName,
+            '未命名连接',
+          ),
+    ]),
+  )
   const channels: ChannelSummary[] = json.channels.map((channel) => ({
     id: channel.id,
-    name: channel.displayName ?? (channel.kind === 'web' ? 'Web 频道' : channel.platformChannelId),
+    connectionId: channel.connectionId,
+    name: nonEmptyLabel(
+      channel.displayName,
+      channel.kind === 'web' ? '未命名 Web 频道' : qqGroupLabel(channel.platformChannelId),
+    ),
     kind: channel.kind === 'group' ? 'qq-group' : 'web',
-    connectionName: '本地 Web',
+    connectionName: connectionNameById.get(channel.connectionId) ?? '未命名连接',
     agentId: channel.boundAgentId ?? '',
-    trigger: '始终响应',
+    trigger:
+      channel.bindings[0]?.triggerPolicy === 'mentioned-or-replied'
+        ? '被提及或回复时'
+        : channel.bindings[0]?.triggerPolicy === 'observe-only'
+          ? '仅观察'
+          : channel.bindings[0]?.triggerPolicy === 'command'
+            ? '收到命令时'
+            : '始终响应',
+    bindings: channel.bindings,
     unread: 0,
   }))
   const messages: ConversationMessage[] = json.messages.map((message) => {
@@ -183,34 +395,58 @@ const projectSnapshot = (json: SnapshotJson): ProductSnapshot => {
       ...(delivery === undefined ? {} : { delivery }),
     }
   })
-  const connections: ConnectionSummary[] = json.connections.map((connection) => ({
-    id: connection.id,
-    name:
+  const testLabel = (result: { readonly status: string; readonly message?: string } | undefined): string => {
+    if (!result) return '未测试'
+    if (result.status === 'received' || result.status === 'sent') return '通过'
+    return result.message ?? result.status
+  }
+  const connections: ConnectionSummary[] = json.connections.map((connection) => {
+    const adapterName =
       connection.adapterKey === 'web'
-        ? '本地 Web'
-        : connection.adapterKey === 'qq-openclaw'
-          ? 'QQ 机器人账号'
-          : connection.adapterKey,
-    adapter: connection.adapterKey,
-    state:
-      connection.status === 'active'
-        ? '已连接'
-        : connection.status === 'configured'
-          ? '已配置'
-          : connection.status === 'failed'
-            ? '异常'
-            : '已断开',
-    appId: '',
-    credentialRef: '',
-    proactiveSend: false,
-    channels: 0,
-    lastEvent: '',
-    receiveTest: '未测试',
-    sendTest: '未测试',
-  }))
+        ? '网页聊天'
+        : nonEmptyLabel(
+            json.connectionAdapters.find((adapter) => adapter.key === connection.adapterKey)?.displayName,
+            '未命名连接平台',
+          )
+    return {
+      id: connection.id,
+      name:
+        connection.adapterKey === 'web'
+          ? '网页聊天'
+          : connection.adapterKey === 'qq-openclaw'
+            ? 'QQ 机器人账号'
+            : adapterName,
+      adapter: adapterName,
+      adapterKey: connection.adapterKey,
+      state:
+        connection.status === 'active'
+          ? '已连接'
+          : connection.status === 'configured'
+            ? '已配置'
+            : connection.status === 'failed'
+              ? '异常'
+              : '已断开',
+      appId: connection.appId ?? '',
+      credentialConfigured: connection.credentialConfigured ?? false,
+      gatewayState: connection.gateway?.state ?? connection.status,
+      lastError: connection.gateway?.lastError ?? '',
+      proactiveSend: connection.proactiveSend ?? false,
+      channels: connection.channelCount ?? 0,
+      knownChannels: (connection.knownChannels ?? []).map((channel) => ({
+        ...channel,
+        name: nonEmptyLabel(channel.name, channel.kind === 'group' ? '未命名 QQ 群聊' : '未命名频道'),
+      })),
+      lastEvent:
+        connection.lastInbound === undefined
+          ? '尚无入站消息'
+          : new Date(connection.lastInbound.receivedAt).toLocaleString('zh-CN'),
+      receiveTest: testLabel(connection.receiveTest),
+      sendTest: testLabel(connection.sendTest),
+    }
+  })
   const extensionsLocal = json.extensions.map((extension) => {
     const targetAgent = extension.agentId
-      ? (json.agents.find((agent) => agent.id === extension.agentId)?.displayName ?? extension.agentId)
+      ? nonEmptyLabel(json.agents.find((agent) => agent.id === extension.agentId)?.displayName, '未命名智能体')
       : ''
     return {
       id: extension.id,
@@ -232,6 +468,9 @@ const projectSnapshot = (json: SnapshotJson): ProductSnapshot => {
     }
   })
   return {
+    host: { status: 'ready', error: null, lastSuccessfulAt: successfulAt },
+    connectionAdapters: json.connectionAdapters,
+    models,
     agents,
     channels,
     messages,
@@ -245,7 +484,7 @@ const projectSnapshot = (json: SnapshotJson): ProductSnapshot => {
       ...(item.approvalRequestId === undefined ? {} : { approvalRequestId: item.approvalRequestId }),
       status: item.status,
     })),
-    diagnosticNote: `已连接真实 Server（${agents.length} 个智能体 · ${channels.length} 个频道 · ${extensionsLocal.length} 个本地扩展）。`,
+    diagnosticNote: `服务连接正常（${agents.length} 个智能体 · ${channels.length} 个频道 · ${extensionsLocal.length} 个本地扩展）。`,
   }
 }
 
@@ -261,152 +500,294 @@ export class HttpProductHost implements ProductHostPort {
     if (this.#listener) throw new Error('HttpProductHost 已经订阅，不能再订阅。')
     this.#listener = listener
     void this.#refreshAndNotify()
-    const source = new EventSource('/api/events')
-    source.addEventListener('channel-fact', () => {
-      void this.#refreshAndNotify()
-    })
-    source.addEventListener('extensions-changed', () => {
-      void this.#refreshAndNotify()
-    })
-    source.addEventListener('status', () => {
-      void this.#refreshAndNotify()
-    })
-    // SSE 连接失败或中断时静默保留上一次快照；EventSource 会按浏览器语义自动重连。
-    source.onerror = () => undefined
+    let source: EventSource | undefined
+    try {
+      source = new EventSource('/api/events')
+      source.addEventListener('open', () => {
+        void this.#refreshAndNotify()
+      })
+      source.addEventListener('channel-fact', () => {
+        void this.#refreshAndNotify()
+      })
+      source.addEventListener('extensions-changed', () => {
+        void this.#refreshAndNotify()
+      })
+      source.addEventListener('status', () => {
+        void this.#refreshAndNotify()
+      })
+      source.onerror = () => {
+        this.#publishFailure({ code: 'sse', message: '与 NekroNxt Host 的实时连接已中断，正在尝试恢复。' })
+      }
+    } catch (cause) {
+      this.#publishFailure({ code: 'sse', message: errorMessage(cause, '无法建立 NekroNxt Host 实时连接。') })
+    }
     return () => {
       this.#listener = undefined
-      source.close()
+      source?.close()
     }
   }
 
   async execute(command: string, input?: Readonly<Record<string, unknown>>): Promise<unknown> {
+    if (command === 'host.refresh') {
+      const failure = await this.#refreshAndNotify()
+      if (failure !== null) throw failure
+      return null
+    }
+    if (command === 'agents.create') {
+      const body = createAgentRequestBody(input)
+      const result = await this.#postJson('/api/agents', body)
+      await this.#refreshAndNotify()
+      return result
+    }
+    if (command === 'agents.revise') {
+      const agentId = typeof input?.agentId === 'string' ? input.agentId : ''
+      const expectedCurrentRevisionId =
+        typeof input?.expectedCurrentRevisionId === 'string' ? input.expectedCurrentRevisionId : ''
+      const displayName = typeof input?.displayName === 'string' ? input.displayName : ''
+      const persona = typeof input?.persona === 'string' ? input.persona : ''
+      const rawModel = typeof input?.model === 'object' && input.model !== null ? input.model : {}
+      const model = rawModel as Record<string, unknown>
+      if (
+        !agentId.trim() ||
+        !expectedCurrentRevisionId.trim() ||
+        !displayName.trim() ||
+        typeof model.provider !== 'string' ||
+        !model.provider.trim() ||
+        typeof model.model !== 'string' ||
+        !model.model.trim()
+      ) {
+        throw new Error('智能体配置不完整，请刷新页面后重试。')
+      }
+      const result = await this.#postJson(`/api/agents/${encodeURIComponent(agentId)}/revision`, {
+        expectedCurrentRevisionId,
+        displayName,
+        persona,
+        model: {
+          provider: model.provider,
+          model: model.model,
+          ...(typeof model.reasoningEffort === 'string' ? { reasoningEffort: model.reasoningEffort } : {}),
+        },
+      })
+      await this.#refreshAndNotify()
+      return result
+    }
+    if (command === 'channels.sendMessage') {
+      const channelId = typeof input?.channelId === 'string' ? input.channelId : ''
+      const text = typeof input?.body === 'string' ? input.body : ''
+      if (!channelId.trim()) throw new Error('缺少目标频道，请刷新页面后重试。')
+      if (!text.trim()) throw new Error('消息内容不能为空。')
+      const result = await this.#postJson(`/api/channels/${encodeURIComponent(channelId)}/messages`, {
+        parts: [{ type: 'text', text }],
+      })
+      await this.#refreshAndNotify()
+      return result
+    }
+    if (command === 'agents.updateCapabilities') {
+      const agentId = typeof input?.agentId === 'string' ? input.agentId : ''
+      if (!agentId.trim()) throw new Error('缺少智能体标识，请刷新页面后重试。')
+      const body: Record<string, unknown> = {}
+      if (typeof input?.dynamicCreation === 'boolean') body.dynamicCreation = input.dynamicCreation
+      if (typeof input?.developmentShell === 'boolean') body.developmentShell = input.developmentShell
+      if (typeof input?.fullFileAccess === 'boolean') body.fullFileAccess = input.fullFileAccess
+      if (Object.keys(body).length === 0) throw new Error('请选择至少一项要更新的智能体权限。')
+      const result = await this.#postJson(`/api/agents/${encodeURIComponent(agentId)}/capabilities`, body)
+      await this.#refreshAndNotify()
+      return result
+    }
+    if (command === 'connections.create') {
+      const adapterKey = typeof input?.adapterKey === 'string' ? input.adapterKey : ''
+      const configuration = isRecord(input?.configuration) ? input.configuration : undefined
+      const credentials = isRecord(input?.credentials) ? input.credentials : undefined
+      if (!adapterKey.trim()) throw new Error('请选择连接平台。')
+      if (configuration === undefined || credentials === undefined) throw new Error('连接配置格式无效，请重新填写。')
+      const result = await this.#postJson('/api/connections', { adapterKey, configuration, credentials })
+      await this.#refreshAndNotify()
+      return result
+    }
+    if (command === 'bindings.create') {
+      const agentId = typeof input?.agentId === 'string' ? input.agentId : ''
+      const channelId = typeof input?.channelId === 'string' ? input.channelId : ''
+      const triggerPolicy = typeof input?.triggerPolicy === 'string' ? input.triggerPolicy : ''
+      if (!agentId.trim()) throw new Error('缺少智能体标识，请刷新页面后重试。')
+      if (!channelId.trim()) throw new Error('请选择要绑定的频道。')
+      if (!['always', 'mentioned-or-replied', 'command', 'observe-only'].includes(triggerPolicy)) {
+        throw new Error('频道触发策略无效，请重新选择。')
+      }
+      const result = await this.#postJson('/api/bindings', { agentId, channelId, triggerPolicy })
+      await this.#refreshAndNotify()
+      return result
+    }
+    if (command === 'connections.test') {
+      const connectionId = typeof input?.connectionId === 'string' ? input.connectionId : ''
+      const direction = input?.direction === 'receive' || input?.direction === 'send' ? input.direction : undefined
+      const channelId = typeof input?.channelId === 'string' ? input.channelId : undefined
+      if (!connectionId.trim()) throw new Error('缺少连接标识，请刷新页面后重试。')
+      if (direction === undefined) throw new Error('连接测试方向无效，请重新选择。')
+      const result = await this.#postJson(`/api/connections/${encodeURIComponent(connectionId)}/test`, {
+        direction,
+        ...(channelId === undefined ? {} : { channelId }),
+      })
+      await this.#refreshAndNotify()
+      return result
+    }
+    if (command === 'dynamic.approve' || command === 'dynamic.decline') {
+      const agentId = typeof input?.agentId === 'string' ? input.agentId : ''
+      const requestId = typeof input?.requestId === 'string' ? input.requestId : ''
+      const pluginRunId = typeof input?.pluginRunId === 'string' ? input.pluginRunId : ''
+      if (!agentId.trim()) throw new Error('缺少智能体标识，请刷新页面后重试。')
+      if (!requestId.trim()) throw new Error('缺少批准请求，请刷新页面后重试。')
+      const result = await this.#postJson(
+        `/api/dynamic/${encodeURIComponent(agentId)}/${command === 'dynamic.approve' ? 'approve' : 'decline'}`,
+        { requestId, ...(pluginRunId.trim() ? { pluginRunId } : {}) },
+      )
+      await this.#refreshAndNotify()
+      return result
+    }
+    if (command === 'extensions.activate') {
+      const extensionId = typeof input?.extensionId === 'string' ? input.extensionId : ''
+      const agentId = typeof input?.agentId === 'string' ? input.agentId : ''
+      const revisionId = typeof input?.revisionId === 'string' ? input.revisionId : ''
+      if (!extensionId.trim()) throw new Error('缺少本地扩展标识，请刷新页面后重试。')
+      if (!agentId.trim()) throw new Error('此本地扩展缺少目标智能体，无法启用。')
+      if (!revisionId.trim()) throw new Error('此本地扩展缺少可启用版本，请重新保存后重试。')
+      const result = await this.#postJson(`/api/extensions/${encodeURIComponent(extensionId)}/activation`, {
+        agentId,
+        revisionId,
+      })
+      await this.#refreshAndNotify()
+      return result
+    }
+    if (command === 'extensions.deactivate') {
+      const extensionId = typeof input?.extensionId === 'string' ? input.extensionId : ''
+      if (!extensionId.trim()) throw new Error('缺少本地扩展标识，请刷新页面后重试。')
+      const result = await this.#requestJson(`/api/extensions/${encodeURIComponent(extensionId)}/activation`, {
+        method: 'DELETE',
+      })
+      await this.#refreshAndNotify()
+      return result
+    }
+    if (command === 'extensions.saveFromDynamic') {
+      const agentId = typeof input?.agentId === 'string' ? input.agentId : ''
+      const name = typeof input?.name === 'string' ? input.name : ''
+      const slug = typeof input?.slug === 'string' ? input.slug : ''
+      if (!agentId.trim()) throw new Error('缺少智能体标识，请刷新页面后重试。')
+      if (!name.trim()) throw new Error('请输入本地扩展名称。')
+      if (!slug.trim()) throw new Error('缺少本地扩展标识，请重新生成后重试。')
+      const result = await this.#postJson('/api/extensions/save-from-dynamic', {
+        agentId,
+        name,
+        displayName: name,
+        slug,
+        description: '从创造工作台保存的动态 Package。',
+      })
+      await this.#refreshAndNotify()
+      return result
+    }
+    throw new Error(`当前 Web Host 不支持操作“${command}”。`)
+  }
+
+  async #postJson(path: string, body: unknown): Promise<unknown> {
+    return this.#observeRequest(() => postJson(path, body))
+  }
+
+  async #requestJson(
+    path: string,
+    init: { readonly method?: 'POST' | 'DELETE'; readonly body?: unknown },
+  ): Promise<unknown> {
+    return this.#observeRequest(() => requestJson(path, init))
+  }
+
+  async #observeRequest(request: () => Promise<unknown>): Promise<unknown> {
     try {
-      if (command === 'agents.create') {
-        const body = createAgentRequestBody(input)
-        const result = await postJson('/api/agents', body)
-        await this.#refreshAndNotify()
-        return result
+      return await request()
+    } catch (cause) {
+      if (cause instanceof HostRequestError && cause.kind === 'network') {
+        this.#publishFailure({ code: 'network', message: cause.message })
       }
-      if (command === 'channels.sendMessage') {
-        const channelId = typeof input?.channelId === 'string' ? input.channelId : ''
-        const text = typeof input?.body === 'string' ? input.body : ''
-        if (!channelId.trim() || !text.trim()) return null
-        const result = await postJson(`/api/channels/${encodeURIComponent(channelId)}/messages`, {
-          parts: [{ type: 'text', text }],
-        })
-        await this.#refreshAndNotify()
-        return result
-      }
-      if (command === 'agents.updateCapabilities') {
-        const agentId = typeof input?.agentId === 'string' ? input.agentId : ''
-        if (!agentId.trim()) return null
-        const body: Record<string, unknown> = {}
-        if (typeof input?.dynamicCreation === 'boolean') body.dynamicCreation = input.dynamicCreation
-        if (typeof input?.developmentShell === 'boolean') body.developmentShell = input.developmentShell
-        if (typeof input?.fullFileAccess === 'boolean') body.fullFileAccess = input.fullFileAccess
-        if (Object.keys(body).length === 0) return null
-        const result = await postJson(`/api/agents/${encodeURIComponent(agentId)}/capabilities`, body)
-        await this.#refreshAndNotify()
-        return result
-      }
-      if (command === 'connections.create') {
-        const appId = typeof input?.appId === 'string' ? input.appId : ''
-        const credentialRef = typeof input?.credentialRef === 'string' ? input.credentialRef : ''
-        if (!appId.trim() || !credentialRef.trim()) return null
-        const result = await postJson('/api/connections', { appId, credentialRef })
-        await this.#refreshAndNotify()
-        return result
-      }
-      if (command === 'connections.test') {
-        const connectionId = typeof input?.connectionId === 'string' ? input.connectionId : ''
-        const direction = input?.direction === 'receive' || input?.direction === 'send' ? input.direction : undefined
-        if (!connectionId.trim() || direction === undefined) return null
-        const result = await postJson(`/api/connections/${encodeURIComponent(connectionId)}/test`, { direction })
-        await this.#refreshAndNotify()
-        return result
-      }
-      if (command === 'dynamic.approve' || command === 'dynamic.decline') {
-        const agentId = typeof input?.agentId === 'string' ? input.agentId : ''
-        const requestId = typeof input?.requestId === 'string' ? input.requestId : ''
-        const pluginRunId = typeof input?.pluginRunId === 'string' ? input.pluginRunId : ''
-        if (!agentId.trim() || !requestId.trim()) return null
-        const result = await postJson(
-          `/api/dynamic/${encodeURIComponent(agentId)}/${command === 'dynamic.approve' ? 'approve' : 'decline'}`,
-          { requestId, ...(pluginRunId.trim() ? { pluginRunId } : {}) },
-        )
-        await this.#refreshAndNotify()
-        return result
-      }
-      if (command === 'extensions.activate') {
-        const extensionId = typeof input?.extensionId === 'string' ? input.extensionId : ''
-        const agentId = typeof input?.agentId === 'string' ? input.agentId : ''
-        const revisionId = typeof input?.revisionId === 'string' ? input.revisionId : ''
-        if (!extensionId.trim() || !agentId.trim() || !revisionId.trim()) return null
-        const result = await postJson(`/api/extensions/${encodeURIComponent(extensionId)}/activation`, {
-          agentId,
-          revisionId,
-        })
-        await this.#refreshAndNotify()
-        return result
-      }
-      if (command === 'extensions.deactivate') {
-        const extensionId = typeof input?.extensionId === 'string' ? input.extensionId : ''
-        if (!extensionId.trim()) return null
-        const result = await requestJson(`/api/extensions/${encodeURIComponent(extensionId)}/activation`, {
-          method: 'DELETE',
-        })
-        await this.#refreshAndNotify()
-        return result
-      }
-      if (command === 'extensions.saveFromDynamic') {
-        const agentId = typeof input?.agentId === 'string' ? input.agentId : ''
-        const name = typeof input?.name === 'string' ? input.name : ''
-        const slug = typeof input?.slug === 'string' ? input.slug : ''
-        if (!agentId.trim() || !name.trim() || !slug.trim()) return null
-        const result = await postJson('/api/extensions/save-from-dynamic', {
-          agentId,
-          name,
-          displayName: name,
-          slug,
-          description: '从创造工作台保存的动态 Package。',
-        })
-        await this.#refreshAndNotify()
-        return result
-      }
-      // 尚未提供的能力（如保存动态扩展）：静默返回，避免让 Shell 因未接线而崩溃。
-      return null
-    } catch {
-      // 网络/Server 暂不可用：保留上一次快照，不让 UI 崩溃。
-      return null
+      throw cause
     }
   }
 
-  async #refreshAndNotify(): Promise<void> {
+  async #refreshAndNotify(): Promise<Error | null> {
+    let response: Response
     try {
-      const response = await fetch('/api/snapshot', { headers: { accept: 'application/json' } })
-      if (!response.ok) return
-      const json: unknown = await response.json()
-      if (!isSnapshotJson(json)) return
-      this.#snapshot = projectSnapshot(json)
-      this.#listener?.()
-    } catch {
-      // 静默降级：保留上一次成功投影。
+      response = await fetch('/api/snapshot', { headers: { accept: 'application/json' } })
+    } catch (cause) {
+      const failure = new Error(errorMessage(cause, '无法连接 NekroNxt Host。'))
+      this.#publishFailure({ code: 'network', message: failure.message })
+      return failure
     }
+
+    let json: unknown = null
+    try {
+      json = await response.json()
+    } catch (cause) {
+      if (response.ok) {
+        const failure = new Error(errorMessage(cause, 'NekroNxt Host 返回了无法读取的数据。'))
+        this.#publishFailure({ code: 'invalid-snapshot', message: failure.message })
+        return failure
+      }
+    }
+    if (!response.ok) {
+      const message = serverErrorMessage(response.status, json)
+      const failure = new Error(message)
+      this.#publishFailure({ code: 'http', message })
+      return failure
+    }
+    if (!isSnapshotJson(json)) {
+      const failure = new Error('NekroNxt Host 返回的数据格式无效，请刷新或检查服务版本。')
+      this.#publishFailure({ code: 'invalid-snapshot', message: failure.message })
+      return failure
+    }
+    this.#snapshot = projectSnapshot(json, Date.now())
+    this.#listener?.()
+    return null
+  }
+
+  #publishFailure(error: ProductHostError): void {
+    const hasSnapshot = this.#snapshot.host.lastSuccessfulAt !== null
+    this.#snapshot = {
+      ...this.#snapshot,
+      host: {
+        status: hasSnapshot ? 'stale' : 'error',
+        error,
+        lastSuccessfulAt: this.#snapshot.host.lastSuccessfulAt,
+      },
+      diagnosticNote: hasSnapshot
+        ? `Host 连接异常，当前显示上次成功数据：${error.message}`
+        : `Host 初始化失败：${error.message}`,
+    }
+    this.#listener?.()
   }
 }
 
 const createAgentRequestBody = (input?: Readonly<Record<string, unknown>>): unknown => {
   const displayName = typeof input?.displayName === 'string' ? input.displayName : ''
-  const modelLabel = typeof input?.modelLabel === 'string' ? input.modelLabel : ''
-  const hasModel = modelLabel.trim().length > 0
-  // 切片1 的界面还没有真实模型选择器，统一使用 DeepSeek 通道；
-  // UI 拿到模型选择后（切片2 或后续 UI 精细化）再透传 provider/model。
+  const model =
+    typeof input?.model === 'object' && input.model !== null
+      ? (input.model as { readonly provider?: unknown; readonly model?: unknown })
+      : undefined
+  const provider = typeof model?.provider === 'string' ? model.provider.trim() : ''
+  const modelId = typeof model?.model === 'string' ? model.model.trim() : ''
+  if (!displayName.trim()) throw new Error('请输入智能体名称。')
+  if (!provider || !modelId) throw new Error('请选择当前可用的模型。')
   return {
     displayName: displayName.trim(),
     persona: '',
-    model: hasModel
-      ? { provider: 'deepseek', model: modelLabel.trim() }
-      : { provider: 'deepseek', model: 'deepseek-chat' },
+    model: { provider, model: modelId },
+  }
+}
+
+const errorMessage = (cause: unknown, fallback: string): string =>
+  cause instanceof Error && cause.message.trim() ? cause.message : fallback
+
+class HostRequestError extends Error {
+  constructor(
+    readonly kind: 'network' | 'http',
+    message: string,
+  ) {
+    super(message)
+    this.name = 'HostRequestError'
   }
 }
 
@@ -414,23 +795,29 @@ const requestJson = async (
   path: string,
   init?: { readonly method?: 'POST' | 'DELETE'; readonly body?: unknown },
 ): Promise<unknown> => {
-  const response = await fetch(path, {
-    method: init?.method ?? 'POST',
-    headers: { 'content-type': 'application/json' },
-    ...(init?.body === undefined ? {} : { body: JSON.stringify(init.body) }),
-  })
+  let response: Response
+  try {
+    response = await fetch(path, {
+      method: init?.method ?? 'POST',
+      headers: { 'content-type': 'application/json' },
+      ...(init?.body === undefined ? {} : { body: JSON.stringify(init.body) }),
+    })
+  } catch (cause) {
+    throw new HostRequestError('network', errorMessage(cause, '无法连接 NekroNxt Host。'))
+  }
   const json: unknown = await response.json().catch(() => null)
-  if (!response.ok) throw new Error(`Server 请求失败：${response.status}`)
+  if (!response.ok) throw new HostRequestError('http', serverErrorMessage(response.status, json))
   return json
 }
 
-const postJson = async (path: string, body: unknown): Promise<unknown> => {
-  const response = await fetch(path, {
-    method: 'POST',
-    headers: { 'content-type': 'application/json' },
-    body: JSON.stringify(body),
-  })
-  const json: unknown = await response.json().catch(() => null)
-  if (!response.ok) throw new Error(`Server 请求失败：${response.status}`)
-  return json
+const postJson = (path: string, body: unknown): Promise<unknown> => requestJson(path, { method: 'POST', body })
+
+const serverErrorMessage = (status: number, body: unknown): string => {
+  if (typeof body === 'object' && body !== null && 'error' in body) {
+    const error = body.error
+    if (typeof error === 'object' && error !== null && 'message' in error && typeof error.message === 'string') {
+      return error.message
+    }
+  }
+  return `服务请求失败：${status}`
 }

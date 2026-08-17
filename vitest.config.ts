@@ -5,7 +5,13 @@ export default defineConfig({
   resolve: {
     alias: {
       '@nekro-nxt/adapter-sdk': fileURLToPath(new URL('./packages/adapter-sdk/src/index.ts', import.meta.url)),
+      '@nekro-nxt/adapter-qq-openclaw': fileURLToPath(
+        new URL('./packages/adapter-qq-openclaw/src/index.ts', import.meta.url),
+      ),
       '@nekro-nxt/adapter-web': fileURLToPath(new URL('./packages/adapter-web/src/index.ts', import.meta.url)),
+      '@nekro-nxt/client-migrations': fileURLToPath(
+        new URL('./packages/client-migrations/src/index.ts', import.meta.url),
+      ),
       '@nekro-nxt/contracts': fileURLToPath(new URL('./packages/contracts/src/index.ts', import.meta.url)),
       '@nekro-nxt/core': fileURLToPath(new URL('./packages/core/src/index.ts', import.meta.url)),
       '@nekro-nxt/extension-sdk': fileURLToPath(new URL('./packages/extension-sdk/src/index.ts', import.meta.url)),

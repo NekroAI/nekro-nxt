@@ -126,4 +126,11 @@ export class QQOpenClawRuntime implements AdapterConnectionRuntime {
   deliver(request: PhysicalDeliveryRequest, signal: AbortSignal): Promise<AdapterDeliveryReceipt> {
     return this.#connection.deliver(request, signal)
   }
+
+  /** Explicit platform diagnostic; it is not an intelligent-agent channel message. */
+  async testSend(channelId: PhysicalDeliveryRequest['channelId'], signal: AbortSignal): Promise<string> {
+    const target = await this.#connection.resolveDiagnosticTarget(channelId)
+    const receipt = await this.#connection.sendDiagnosticText(target, 'NekroNxt QQ 连接发送测试。', signal)
+    return receipt.platformMessageId
+  }
 }

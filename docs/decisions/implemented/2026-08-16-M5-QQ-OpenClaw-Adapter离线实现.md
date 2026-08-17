@@ -56,9 +56,9 @@ Adapter 不读取这些表。`QQCoreBridge` 只调用 Core Service，远端媒�
 - Runtime 停止会等待 Gateway 与 Transport 静止；
 - 当前全仓共有 22 个测试文件、86 项测试，`pnpm check`、`pnpm test` 与 `pnpm build` 通过。
 
-## 尚待 M6 与真实环境完成
+## 后续进展与真实环境边界
 
-- 通用 schema Connection 表单、Credential 录入、Gateway 状态、已知 Channel、收发测试、额度和可操作错误面板；
+- Connection 表单、一次性 Credential 录入、Gateway 状态、已知 Channel、收发测试、重启恢复和可操作错误已经由后续 Server 组合根实现，见 `../accepted/2026-08-17-本地凭据与QQ连接宿主.md`；
 - 使用专用 QQ 账号与测试群验证真正的通知高亮、平台额度、断网恢复、C2C/群收发和实际 CDN/上传响应；
 - 真实平台验收可能校准默认字符、字节、文件大小和 TTL，但不得改变结构化 MessagePart、身份作用域、失败联合或 checkpoint 提交顺序。
 

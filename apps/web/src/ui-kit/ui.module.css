@@ -28,6 +28,16 @@
   opacity: 0.66;
 }
 
+.button[data-loading],
+.iconButton[data-loading] {
+  cursor: wait;
+}
+
+.loadingSpinner {
+  flex: 0 0 auto;
+  animation: loadingSpin var(--nxt-motion-spinner) linear infinite;
+}
+
 .primary {
   color: var(--nxt-accent-foreground);
   background: var(--nxt-accent);
@@ -140,6 +150,12 @@
   line-height: 1.5;
 }
 
+.fieldError {
+  color: var(--nxt-danger);
+  font-size: 11px;
+  line-height: 1.5;
+}
+
 .input,
 .textarea,
 .selectTrigger {
@@ -169,6 +185,21 @@
   box-shadow: 0 0 0 2px color-mix(in srgb, var(--nxt-focus-ring) 18%, transparent);
 }
 
+.input[aria-invalid='true'],
+.textarea[aria-invalid='true'],
+.selectTrigger[aria-invalid='true'] {
+  border-color: var(--nxt-danger);
+}
+
+.input:disabled,
+.textarea:disabled,
+.selectTrigger[data-disabled] {
+  color: var(--nxt-text-disabled);
+  background: var(--nxt-bg-subtle);
+  cursor: not-allowed;
+  opacity: 0.72;
+}
+
 .textarea {
   min-height: 96px;
   resize: vertical;
@@ -196,6 +227,11 @@
   font-size: 11px;
 }
 
+.switchRow[data-disabled] .switchCopy {
+  color: var(--nxt-text-disabled);
+  opacity: 0.75;
+}
+
 .switchRoot {
   position: relative;
   width: 34px;
@@ -210,6 +246,11 @@
 
 .switchRoot[data-state='checked'] {
   background: var(--nxt-accent);
+}
+
+.switchRoot:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
 }
 
 .switchThumb {
@@ -234,11 +275,14 @@
   text-align: left;
 }
 
+.selectTrigger[data-placeholder] {
+  color: var(--nxt-text-muted);
+}
+
 .selectContent,
 .tooltipContent {
-  z-index: 60;
   border: 1px solid var(--nxt-border-default);
-  border-radius: 8px;
+  border-radius: var(--nxt-radius-popover);
   color: var(--nxt-text-primary);
   background: var(--nxt-bg-elevated);
   box-shadow: var(--nxt-shadow-popover);
@@ -246,7 +290,14 @@
 
 .selectContent {
   min-width: var(--radix-select-trigger-width);
+  max-height: min(320px, var(--radix-select-content-available-height));
+  overflow: hidden;
   padding: 5px;
+}
+
+.selectViewport {
+  max-height: inherit;
+  overflow-y: auto;
 }
 
 .selectItem {
@@ -264,6 +315,11 @@
   background: var(--nxt-bg-hover);
 }
 
+.selectItem[data-disabled] {
+  color: var(--nxt-text-disabled);
+  pointer-events: none;
+}
+
 .tooltipContent {
   max-width: 260px;
   padding: 6px 8px;
@@ -273,25 +329,55 @@
 
 .dialogOverlay {
   position: fixed;
-  z-index: 80;
+  z-index: var(--nxt-dialog-overlay-layer, var(--nxt-layer-modal-base));
   inset: 0;
   background: rgb(3 11 17 / 42%);
-  animation: fadeIn var(--nxt-motion-standard) var(--nxt-ease-standard);
 }
 
 .dialogContent {
   position: fixed;
-  z-index: 81;
+  z-index: var(--nxt-dialog-content-layer, calc(var(--nxt-layer-modal-base) + 1));
   top: 50%;
   left: 50%;
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr) auto;
   width: min(520px, calc(100vw - 48px));
+  max-height: min(720px, calc(100dvh - var(--nxt-space-16)));
+  overflow: hidden;
   border: 1px solid var(--nxt-border-default);
-  border-radius: 12px;
-  padding: 22px;
+  border-radius: var(--nxt-radius-dialog);
   background: var(--nxt-bg-elevated);
-  box-shadow: var(--nxt-shadow-popover);
+  box-shadow: var(--nxt-shadow-dialog);
   transform: translate(-50%, -50%);
+}
+
+.dialogOverlay[data-state='open'] {
+  animation: fadeIn var(--nxt-motion-standard) var(--nxt-ease-enter);
+}
+
+.dialogOverlay[data-state='closed'] {
+  animation: fadeOut var(--nxt-motion-fast) var(--nxt-ease-exit);
+}
+
+.dialogContent[data-state='open'] {
   animation: dialogIn var(--nxt-motion-standard) var(--nxt-ease-enter);
+}
+
+.dialogContent[data-state='closed'] {
+  animation: dialogOut var(--nxt-motion-fast) var(--nxt-ease-exit);
+}
+
+.dialogHeader {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--nxt-space-4);
+  padding: var(--nxt-space-5) var(--nxt-space-5) var(--nxt-space-4);
+  border-bottom: 1px solid var(--nxt-border-subtle);
+}
+
+.dialogHeading {
+  min-width: 0;
+  flex: 1;
 }
 
 .dialogTitle {
@@ -306,15 +392,96 @@
   font-size: 13px;
 }
 
-.dialogActions {
+.dialogClose {
+  display: inline-flex;
+  width: 30px;
+  height: 30px;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+  margin: -4px -4px 0 0;
+  border: 0;
+  border-radius: var(--nxt-radius-control);
+  color: var(--nxt-text-secondary);
+  background: transparent;
+  cursor: pointer;
+  transition:
+    color var(--nxt-motion-fast) var(--nxt-ease-standard),
+    background var(--nxt-motion-fast) var(--nxt-ease-standard);
+}
+
+.dialogClose:not(:disabled):hover {
+  color: var(--nxt-text-primary);
+  background: var(--nxt-bg-hover);
+}
+
+.dialogClose:disabled {
+  color: var(--nxt-text-disabled);
+  cursor: wait;
+}
+
+.dialogBody {
+  min-height: 0;
+  overflow-y: auto;
+  padding: var(--nxt-space-5);
+  outline: none;
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable;
+}
+
+.dialogBody:focus-visible {
+  box-shadow: inset 0 0 0 2px var(--nxt-focus-ring);
+}
+
+.dialogFooter {
   display: flex;
   justify-content: flex-end;
-  gap: 8px;
-  margin-top: 20px;
+  gap: var(--nxt-space-2);
+  padding: var(--nxt-space-4) var(--nxt-space-5);
+  border-top: 1px solid var(--nxt-border-subtle);
+  background: var(--nxt-bg-elevated);
+}
+
+.tabsList {
+  display: flex;
+  gap: var(--nxt-space-1);
+  border-bottom: 1px solid var(--nxt-border-subtle);
+}
+
+.tabsTrigger {
+  min-height: 36px;
+  border: 0;
+  border-bottom: 2px solid transparent;
+  padding: 0 var(--nxt-space-3);
+  color: var(--nxt-text-secondary);
+  background: transparent;
+  font-size: 13px;
+  font-weight: 620;
+  cursor: pointer;
+}
+
+.tabsTrigger[data-state='active'] {
+  border-bottom-color: var(--nxt-accent);
+  color: var(--nxt-text-primary);
+}
+
+.tabsTrigger:disabled {
+  color: var(--nxt-text-disabled);
+  cursor: not-allowed;
+}
+
+.tabsContent:focus-visible {
+  outline-offset: 4px;
 }
 
 @keyframes fadeIn {
   from {
+    opacity: 0;
+  }
+}
+
+@keyframes fadeOut {
+  to {
     opacity: 0;
   }
 }
@@ -330,5 +497,18 @@
   from {
     opacity: 0;
     transform: translate(-50%, calc(-50% + 5px)) scale(0.985);
+  }
+}
+
+@keyframes dialogOut {
+  to {
+    opacity: 0;
+    transform: translate(-50%, calc(-50% + 3px)) scale(0.99);
+  }
+}
+
+@keyframes loadingSpin {
+  to {
+    transform: rotate(1turn);
   }
 }

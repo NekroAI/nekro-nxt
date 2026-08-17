@@ -149,6 +149,7 @@ export interface CoreRepository {
   createConnection(record: ConnectionRecord): void
   getConnection(id: ConnectionId): ConnectionRecord | undefined
   listConnectionIdsByAdapter(adapterKey?: string): readonly ConnectionId[]
+  updateConnectionStatus(id: ConnectionId, status: ConnectionRecord['status']): void
   createChannel(record: ChannelRecord): void
   ensureChannel(record: ChannelRecord): ChannelRecord
   getChannel(id: ChannelId): ChannelRecord | undefined
@@ -380,6 +381,13 @@ export class CoreService {
       const connection = this.#repository.getConnection(id)
       return connection ? [connection] : []
     })
+  }
+
+  updateConnectionStatus(id: ConnectionId, status: ConnectionRecord['status']): ConnectionRecord {
+    const current = this.#repository.getConnection(id)
+    if (!current) throw new Error(`Unknown connection: ${id}`)
+    this.#repository.updateConnectionStatus(id, status)
+    return { ...current, status }
   }
 
   createChannel(input: {

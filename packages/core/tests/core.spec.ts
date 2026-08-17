@@ -71,6 +71,12 @@ class MemoryRepository implements CoreRepository {
       .map((connection) => connection.id)
   }
 
+  updateConnectionStatus(id: ConnectionId, status: ConnectionRecord['status']): void {
+    const current = this.connections.get(id)
+    if (!current) throw new Error(`Unknown connection: ${id}`)
+    this.connections.set(id, { ...current, status })
+  }
+
   createChannel(record: ChannelRecord): void {
     this.channels.set(record.id, record)
   }

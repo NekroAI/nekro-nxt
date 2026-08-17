@@ -1,4 +1,5 @@
 import type {
+  AdapterConnectionDescriptor,
   AdapterConnectionContext,
   AdapterConnectionRuntime,
   AdapterDeliveryReceipt,
@@ -67,6 +68,14 @@ export const QQ_OPENCLAW_CONFIG_SCHEMA = {
     maxTextBytes: { type: 'number', title: '单条 UTF-8 字节上限', default: 7200 },
   },
 } as const
+
+export const QQ_OPENCLAW_CONNECTION_DESCRIPTOR: AdapterConnectionDescriptor = {
+  key: QQ_OPENCLAW_ADAPTER_KEY,
+  displayName: 'QQ 官方机器人',
+  description: '连接 QQ 官方机器人账号，接收群聊与私聊消息，并按平台能力发送内容。',
+  userCreatable: true,
+  configSchema: QQ_OPENCLAW_CONFIG_SCHEMA,
+}
 
 export const QQ_OPENCLAW_CAPABILITIES: AdapterOutboundCapabilities = {
   text: true,
@@ -429,6 +438,17 @@ export class QQOpenClawConnection implements AdapterConnectionRuntime {
       input.expiresAt ?? this.#context.now() + this.#config.passiveReplyTtlMs,
       input.remainingReplies ?? this.#config.passiveReplyLimit,
     )
+  }
+
+  async resolveDiagnosticTarget(channelId: ChannelId): Promise<QQTarget> {
+    const target = await this.#directory.resolveTarget(this.#context.connectionId, channelId)
+    if (!target) throw new Error('QQ diagnostic target is unknown for this Channel.')
+    return target
+  }
+
+  sendDiagnosticText(target: QQTarget, content: string, signal: AbortSignal): Promise<QQTransportReceipt> {
+    if (!this.#running) return Promise.reject(new Error('QQ OpenClaw Connection is not running.'))
+    return this.#transport.sendText({ target, markdown: false, content, signal })
   }
 
   async receive(

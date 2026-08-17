@@ -2,7 +2,7 @@
 
 状态：accepted
 
-离线实现证据见 `../implemented/2026-08-16-M5-QQ-OpenClaw-Adapter离线实现.md`；真实账号验收和产品配置/诊断 UI 仍待完成。
+离线实现证据见 `../implemented/2026-08-16-M5-QQ-OpenClaw-Adapter离线实现.md`；产品配置、凭据宿主与诊断 UI 的后续实现见 `2026-08-17-本地凭据与QQ连接宿主.md`，当前只剩真实账号环境验收。
 
 ## 问题
 

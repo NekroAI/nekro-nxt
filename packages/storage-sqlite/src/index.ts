@@ -437,6 +437,11 @@ export class SqliteCoreRepository
     return rows.map((row) => requiredString(row, 'id') as ConnectionId)
   }
 
+  updateConnectionStatus(id: ConnectionId, status: ConnectionRecord['status']): void {
+    const result = this.#database.prepare('UPDATE connections SET status = ? WHERE id = ?').run(status, id)
+    if (result.changes !== 1) throw new Error(`Unknown connection: ${id}`)
+  }
+
   createChannel(record: ChannelRecord): void {
     this.#database
       .prepare(

@@ -1,4 +1,5 @@
 import type {
+  AdapterConnectionDescriptor,
   AdapterConnectionContext,
   AdapterConnectionRuntime,
   AdapterDeliveryReceipt,
@@ -9,6 +10,14 @@ import type {
 import type { ChannelId, ChannelMemberId, ConnectionId, MessagePart } from '@nekro-nxt/contracts'
 
 export const WEB_ADAPTER_KEY = 'web'
+
+export const WEB_CONNECTION_DESCRIPTOR: AdapterConnectionDescriptor = {
+  key: WEB_ADAPTER_KEY,
+  displayName: '本地 Web',
+  description: '由 NekroNxt 宿主管理的本地网页频道，不需要创建账号连接。',
+  userCreatable: false,
+  configSchema: { schemaVersion: 1, type: 'object', required: [], properties: {} },
+}
 
 export const WEB_ADAPTER_CAPABILITIES: AdapterOutboundCapabilities = {
   text: true,

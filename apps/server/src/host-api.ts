@@ -40,6 +40,55 @@ const createAgentSchema = z
   })
   .strict()
 
+const reviseAgentSchema = createAgentSchema.extend({
+  expectedCurrentRevisionId: z.string().trim().min(1),
+})
+
+const llmModelProfileSchema = z
+  .object({
+    id: z.string().trim().min(1),
+    name: z.string().trim().min(1).optional(),
+    contextWindow: z.number().int().positive().optional(),
+    maxTokens: z.number().int().positive().optional(),
+  })
+  .strict()
+
+const saveLlmProviderSchema = z
+  .object({
+    expectedRevision: z.number().int().nonnegative(),
+    apiKey: z
+      .string()
+      .min(1)
+      .max(64 * 1024)
+      .optional(),
+    displayName: z.string().trim().min(1).max(120).optional(),
+    baseURL: z.url().optional(),
+    api: z.string().trim().min(1).optional(),
+    models: z.array(llmModelProfileSchema).optional(),
+  })
+  .strict()
+
+const discoverLlmModelsSchema = z
+  .object({
+    provider: z.string().trim().min(1).optional(),
+    settingsNs: z.string().trim().min(1).optional(),
+    baseURL: z.url().optional(),
+    api: z.string().trim().min(1).optional(),
+    apiKey: z
+      .string()
+      .min(1)
+      .max(64 * 1024)
+      .optional(),
+  })
+  .strict()
+
+const testLlmProviderSchema = z
+  .object({
+    provider: z.string().trim().min(1),
+    model: z.string().trim().min(1),
+  })
+  .strict()
+
 const messageBodySchema = z
   .object({
     parts: z
@@ -73,8 +122,17 @@ const activationSchema = z
 
 const createConnectionSchema = z
   .object({
-    appId: z.string().trim().min(1),
-    credentialRef: z.string().trim().min(1),
+    adapterKey: z.string().trim().min(1),
+    configuration: z.record(z.string(), z.unknown()).default({}),
+    credentials: z.record(z.string(), z.string().max(16 * 1024)).default({}),
+  })
+  .strict()
+
+const createBindingSchema = z
+  .object({
+    agentId: z.string().trim().min(1),
+    channelId: z.string().trim().min(1),
+    triggerPolicy: z.enum(['always', 'mentioned-or-replied', 'command', 'observe-only']),
   })
   .strict()
 
@@ -320,26 +378,27 @@ export const createNekroHostApi = (webServer: WebServer, runtime: NekroRuntime):
     }
   }
 
-  const buildSnapshot = (): unknown => {
+  const buildSnapshot = async (): Promise<unknown> => {
     // Enumerate channels durably from the Core repository so the snapshot
     // survives restart, then discover bound Agents via their Bindings.
-    const channels = runtime.core.listChannelsByConnection(runtime.webConnectionId)
-    const agentByChannel = new Map<string, AgentId>()
-    for (const channel of channels) {
-      const binding = runtime.core.listBindings(channel.id)[0]
-      if (binding) agentByChannel.set(channel.id, binding.agentId)
-    }
-    const agentIds = new Set(agentByChannel.values())
+    const channels = runtime.core
+      .listConnections()
+      .flatMap((connection) => runtime.core.listChannelsByConnection(connection.id))
+    const bindingsByChannel = new Map(channels.map((channel) => [channel.id, runtime.core.listBindings(channel.id)]))
+    const agentIds = new Set(
+      [...bindingsByChannel.values()].flatMap((bindings) => bindings.map((binding) => binding.agentId)),
+    )
     const agents = [...agentIds].flatMap((agentId) => {
       const commit = runtime.repository.getAgent(agentId)
       if (!commit) return []
       const ownedChannels = channels
-        .filter((channel) => agentByChannel.get(channel.id) === agentId)
+        .filter((channel) => bindingsByChannel.get(channel.id)?.some((binding) => binding.agentId === agentId))
         .map((channel) => channel.id)
       return [
         {
           id: agentId,
           displayName: commit.revision.displayName,
+          persona: commit.revision.persona,
           model: commit.revision.model,
           capabilities: commit.revision.capabilities,
           currentRevisionId: commit.revision.id,
@@ -349,7 +408,8 @@ export const createNekroHostApi = (webServer: WebServer, runtime: NekroRuntime):
       ]
     })
     const channelProjection = channels.map((channel) => {
-      const boundAgentId = agentByChannel.get(channel.id)
+      const bindings = bindingsByChannel.get(channel.id) ?? []
+      const boundAgentId = bindings[0]?.agentId
       return {
         id: channel.id,
         connectionId: channel.connectionId,
@@ -357,11 +417,44 @@ export const createNekroHostApi = (webServer: WebServer, runtime: NekroRuntime):
         kind: channel.kind,
         ...(channel.displayName === undefined ? {} : { displayName: channel.displayName }),
         ...(boundAgentId === undefined ? {} : { boundAgentId }),
+        bindings: bindings.map((binding) => ({
+          id: binding.id,
+          agentId: binding.agentId,
+          triggerPolicy: binding.triggerPolicy,
+          revision: binding.revision,
+        })),
       }
     })
     const messages: SnapshotMessage[] = channels.flatMap((channel) => buildSnapshotMessage(runtime, channel.id))
-    const connections = runtime.core.listConnections()
+    const connections = runtime.core.listConnections().map((connection) => {
+      const config = connection.config as { readonly appId?: unknown; readonly proactiveSend?: unknown }
+      const diagnostic = runtime.connectionDiagnostic(connection.id)
+      return {
+        id: connection.id,
+        adapterKey: connection.adapterKey,
+        status: connection.status,
+        appId: typeof config.appId === 'string' ? config.appId : '',
+        proactiveSend: config.proactiveSend === true,
+        credentialConfigured: connection.adapterKey === 'web' ? true : (diagnostic?.credentialConfigured ?? false),
+        channelCount: runtime.core.listChannelsByConnection(connection.id).length,
+        knownChannels: runtime.core.listChannelsByConnection(connection.id).map((channel) => ({
+          id: channel.id,
+          name: channel.displayName ?? channel.platformChannelId,
+          kind: channel.kind,
+        })),
+        ...(diagnostic === undefined
+          ? {}
+          : {
+              gateway: diagnostic.gateway,
+              ...(diagnostic.lastInbound === undefined ? {} : { lastInbound: diagnostic.lastInbound }),
+              ...(diagnostic.receiveTest === undefined ? {} : { receiveTest: diagnostic.receiveTest }),
+              ...(diagnostic.sendTest === undefined ? {} : { sendTest: diagnostic.sendTest }),
+            }),
+      }
+    })
     return {
+      models: await runtime.host.listAvailableLlmModels(),
+      connectionAdapters: runtime.listConnectionAdapters(),
       agents,
       channels: channelProjection,
       messages,
@@ -377,8 +470,135 @@ export const createNekroHostApi = (webServer: WebServer, runtime: NekroRuntime):
   registerRoute({
     kind: 'exact',
     path: '/api/snapshot',
-    handler: (_req, res) => {
-      writeJson(res, 200, buildSnapshot())
+    handler: async (_req, res) => {
+      writeJson(res, 200, await buildSnapshot())
+    },
+  })
+
+  registerRoute({
+    kind: 'exact',
+    path: '/api/bindings',
+    handler: async (req, res) => {
+      if (req.method !== 'POST') {
+        writeError(res, 405, 'method-not-allowed', '只支持 POST。')
+        return
+      }
+      try {
+        const parsed = createBindingSchema.parse(await readJsonBody(req))
+        const binding = runtime.core.createBinding({
+          agentId: parsed.agentId as AgentId,
+          channelId: parsed.channelId as ChannelId,
+          triggerPolicy: parsed.triggerPolicy,
+        })
+        writeJson(res, 201, binding)
+      } catch (error) {
+        writeError(res, 400, 'binding-failed', error instanceof Error ? error.message : String(error))
+      }
+    },
+  })
+
+  // DSH-owned provider/settings/credentials plane. Secrets are accepted write-only and never returned.
+  registerRoute({
+    kind: 'exact',
+    path: '/api/llm/providers',
+    handler: async (req, res) => {
+      if (req.method !== 'GET') {
+        writeError(res, 405, 'method-not-allowed', '只支持 GET。')
+        return
+      }
+      try {
+        writeJson(res, 200, await runtime.host.getLlmProviderSettings())
+      } catch (error) {
+        writeError(res, 500, 'llm-settings-failed', error instanceof Error ? error.message : String(error))
+      }
+    },
+  })
+
+  registerRoute({
+    kind: 'exact',
+    path: '/api/llm/discover-models',
+    handler: async (req, res) => {
+      if (req.method !== 'POST') {
+        writeError(res, 405, 'method-not-allowed', '只支持 POST。')
+        return
+      }
+      try {
+        const parsed = discoverLlmModelsSchema.parse(await readJsonBody(req))
+        writeJson(res, 200, {
+          models: await runtime.host.discoverLlmProviderModels({
+            ...(parsed.provider === undefined ? {} : { provider: parsed.provider }),
+            ...(parsed.settingsNs === undefined ? {} : { settingsNs: parsed.settingsNs }),
+            ...(parsed.baseURL === undefined ? {} : { baseURL: parsed.baseURL }),
+            ...(parsed.api === undefined ? {} : { api: parsed.api }),
+            ...(parsed.apiKey === undefined ? {} : { apiKey: parsed.apiKey }),
+          }),
+        })
+      } catch (error) {
+        writeError(res, 400, 'model-discovery-failed', error instanceof Error ? error.message : String(error))
+      }
+    },
+  })
+
+  registerRoute({
+    kind: 'exact',
+    path: '/api/llm/test-provider',
+    handler: async (req, res) => {
+      if (req.method !== 'POST') {
+        writeError(res, 405, 'method-not-allowed', '只支持 POST。')
+        return
+      }
+      try {
+        const parsed = testLlmProviderSchema.parse(await readJsonBody(req))
+        writeJson(res, 200, await runtime.host.testLlmProvider(parsed.provider, parsed.model))
+      } catch (error) {
+        writeError(res, 400, 'llm-provider-test-failed', error instanceof Error ? error.message : String(error))
+      }
+    },
+  })
+
+  registerRoute({
+    kind: 'prefix',
+    path: '/api/llm/providers',
+    handler: async (req, res) => {
+      const url = new URL(req.url ?? '/', 'http://localhost')
+      const match = /^\/api\/llm\/providers\/([^/]+)$/.exec(url.pathname)
+      if (!match) {
+        writeError(res, 404, 'not-found', `未定义路由：${req.method} ${url.pathname}。`)
+        return
+      }
+      if (req.method !== 'POST') {
+        writeError(res, 405, 'method-not-allowed', '只支持 POST。')
+        return
+      }
+      try {
+        const provider = decodeURIComponent(match[1]!)
+        const parsed = saveLlmProviderSchema.parse(await readJsonBody(req))
+        writeJson(
+          res,
+          200,
+          await runtime.host.saveLlmProvider({
+            provider,
+            expectedRevision: parsed.expectedRevision,
+            ...(parsed.apiKey === undefined ? {} : { apiKey: parsed.apiKey }),
+            ...(parsed.displayName === undefined ? {} : { displayName: parsed.displayName }),
+            ...(parsed.baseURL === undefined ? {} : { baseURL: parsed.baseURL }),
+            ...(parsed.api === undefined ? {} : { api: parsed.api }),
+            ...(parsed.models === undefined
+              ? {}
+              : {
+                  models: parsed.models.map((model) => ({
+                    id: model.id,
+                    ...(model.name === undefined ? {} : { name: model.name }),
+                    ...(model.contextWindow === undefined ? {} : { contextWindow: model.contextWindow }),
+                    ...(model.maxTokens === undefined ? {} : { maxTokens: model.maxTokens }),
+                  })),
+                }),
+          }),
+        )
+      } catch (error) {
+        const code = error instanceof Error && 'code' in error && error.code === 'SETTINGS_CONFLICT' ? 409 : 400
+        writeError(res, code, 'llm-provider-save-failed', error instanceof Error ? error.message : String(error))
+      }
     },
   })
 
@@ -452,14 +672,13 @@ export const createNekroHostApi = (webServer: WebServer, runtime: NekroRuntime):
     },
   })
 
-  // POST /api/agents/:id/capabilities → create a new immutable AgentRevision
-  // with updated capability grants (dynamicCreation / developmentShell / fullFileAccess).
+  // POST /api/agents/:id/{capabilities,revision} → create a new immutable AgentRevision.
   registerRoute({
     kind: 'prefix',
     path: '/api/agents',
     handler: async (req, res) => {
       const url = new URL(req.url ?? '/', 'http://localhost')
-      const match = /^\/api\/agents\/([^/]+)\/capabilities$/.exec(url.pathname)
+      const match = /^\/api\/agents\/([^/]+)\/(capabilities|revision)$/.exec(url.pathname)
       if (!match) {
         writeError(res, 404, 'not-found', `未定义路由：${req.method} ${url.pathname}。`)
         return
@@ -473,15 +692,6 @@ export const createNekroHostApi = (webServer: WebServer, runtime: NekroRuntime):
         writeError(res, 400, 'invalid-agent', '无效的智能体 ID。')
         return
       }
-      const parsed = z
-        .object({
-          dynamicCreation: z.boolean().optional(),
-          developmentShell: z.boolean().optional(),
-          fullFileAccess: z.boolean().optional(),
-        })
-        .strict()
-        .refine((value) => Object.values(value).some((v) => v !== undefined), '至少提供一个能力。')
-        .parse(await readJsonBody(req))
       try {
         const commit = runtime.repository.getAgent(agentId.data as AgentId)
         if (!commit) {
@@ -489,6 +699,34 @@ export const createNekroHostApi = (webServer: WebServer, runtime: NekroRuntime):
           return
         }
         const revision = commit.revision
+        if (match[2] === 'revision') {
+          const parsed = reviseAgentSchema.parse(await readJsonBody(req))
+          if (parsed.expectedCurrentRevisionId !== revision.id) {
+            writeError(res, 409, 'revision-conflict', '智能体配置已在其他位置更新，请刷新后重试。')
+            return
+          }
+          const updated = runtime.core.reviseAgent(agentId.data as AgentId, revision.id, {
+            displayName: parsed.displayName,
+            persona: parsed.persona,
+            model: {
+              provider: parsed.model.provider,
+              model: parsed.model.model,
+              ...(parsed.model.reasoningEffort === undefined ? {} : { reasoningEffort: parsed.model.reasoningEffort }),
+            },
+            capabilities: revision.capabilities,
+          })
+          writeJson(res, 200, { currentRevisionId: updated.revision.id })
+          return
+        }
+        const parsed = z
+          .object({
+            dynamicCreation: z.boolean().optional(),
+            developmentShell: z.boolean().optional(),
+            fullFileAccess: z.boolean().optional(),
+          })
+          .strict()
+          .refine((value) => Object.values(value).some((v) => v !== undefined), '至少提供一个能力。')
+          .parse(await readJsonBody(req))
         const capabilities = {
           ...revision.capabilities,
           ...(parsed.dynamicCreation === undefined ? {} : { dynamicCreation: parsed.dynamicCreation }),
@@ -506,7 +744,7 @@ export const createNekroHostApi = (webServer: WebServer, runtime: NekroRuntime):
           capabilities: updated.revision.capabilities,
         })
       } catch (error) {
-        writeError(res, 400, 'capabilities-failed', error instanceof Error ? error.message : String(error))
+        writeError(res, 400, 'revision-failed', error instanceof Error ? error.message : String(error))
       }
     },
   })
@@ -555,7 +793,7 @@ export const createNekroHostApi = (webServer: WebServer, runtime: NekroRuntime):
     },
   })
 
-  // POST /api/connections → create a configured Connection (e.g. QQ 机器人账号).
+  // POST /api/connections → create through the selected user-creatable Adapter contribution.
   registerRoute({
     kind: 'exact',
     path: '/api/connections',
@@ -572,12 +810,8 @@ export const createNekroHostApi = (webServer: WebServer, runtime: NekroRuntime):
         return
       }
       try {
-        // 真实凭据只以引用形式保存；配置与状态进入持久化 Connection 记录。
-        const connection = runtime.core.createConnection({
-          adapterKey: 'qq-openclaw',
-          config: { appId: parsed.appId },
-          credentialRefs: { clientSecret: parsed.credentialRef },
-        })
+        // Secret 由 Host 按 Adapter schema 写入凭据存储；Core 只接收不可猜测引用。
+        const connection = await runtime.createConnection(parsed)
         writeJson(res, 201, {
           connectionId: connection.id,
           adapterKey: connection.adapterKey,
@@ -589,9 +823,7 @@ export const createNekroHostApi = (webServer: WebServer, runtime: NekroRuntime):
     },
   })
 
-  // POST /api/connections/:id/test → honest send/receive diagnostics. The Web
-  // Connection is exercised for real; a QQ Connection without live credentials
-  // reports needs-credentials (never a fake "通过").
+  // POST /api/connections/:id/test → honest send/receive diagnostics.
   registerRoute({
     kind: 'prefix',
     path: '/api/connections',
@@ -611,7 +843,9 @@ export const createNekroHostApi = (webServer: WebServer, runtime: NekroRuntime):
         writeError(res, 400, 'invalid-connection', '无效的连接 ID。')
         return
       }
-      const directionSchema = z.object({ direction: z.enum(['send', 'receive']) }).strict()
+      const directionSchema = z
+        .object({ direction: z.enum(['send', 'receive']), channelId: z.string().trim().min(1).optional() })
+        .strict()
       let parsed: z.output<typeof directionSchema>
       try {
         parsed = directionSchema.parse(await readJsonBody(req))
@@ -624,12 +858,16 @@ export const createNekroHostApi = (webServer: WebServer, runtime: NekroRuntime):
         writeError(res, 404, 'not-found', '连接不存在。')
         return
       }
-      if (connection.adapterKey !== 'web') {
-        // QQ OpenClaw 需要平台 Client Secret + 测试群；没有真实凭据不做假成功。
-        writeJson(res, 200, {
-          status: 'needs-credentials',
-          message: '已配置该连接；真实收发测试需在 QQ 平台提供 Client Secret 与一个专用测试群。',
-        })
+      if (connection.adapterKey === 'qq-openclaw') {
+        writeJson(
+          res,
+          200,
+          await runtime.testConnection(
+            connection.id,
+            parsed.direction,
+            parsed.channelId === undefined ? undefined : (parsed.channelId as ChannelId),
+          ),
+        )
         return
       }
       const channel = runtime.core.listChannelsByConnection(connection.id)[0]
@@ -648,6 +886,17 @@ export const createNekroHostApi = (webServer: WebServer, runtime: NekroRuntime):
         writeJson(res, 200, { status: 'ok', channel: channel.id })
       }
     },
+  })
+
+  const unsubscribeConnectionChanges = runtime.subscribeConnectionChanges(() => {
+    const frame = renderSse({ event: 'status', data: { ok: true, message: '连接状态已更新' } })
+    for (const client of sseClients) {
+      try {
+        client.write(frame)
+      } catch {
+        // Closed clients are removed by their close handler.
+      }
+    }
   })
 
   // POST /api/dynamic/:agentId/{approve|decline|invoke|report-render-failure} →
@@ -936,6 +1185,7 @@ export const createNekroHostApi = (webServer: WebServer, runtime: NekroRuntime):
       return webServer.port
     },
     dispose() {
+      unsubscribeConnectionChanges()
       for (const disposer of disposers.splice(0)) disposer()
     },
   }

@@ -10,6 +10,8 @@ import AttachmentStore, {
 import SandboxBashExecutor from '@deepseek-ai/dsh-bash-sandbox'
 import { BasicCompactionEngine } from '@deepseek-ai/dsh-compaction-basic'
 import { Context, type Fiber } from '@deepseek-ai/cordis'
+import { credentialRef } from '@deepseek-ai/dsh-credentials'
+import LocalCredentialProvider from '@deepseek-ai/dsh-credentials-local'
 import DynamicCordisRunnerService, {
   ApprovalRequestId,
   CordisDynamicPackageId,
@@ -31,7 +33,15 @@ import DynamicCordisRunnerService, {
   type DynamicCordisUndefineReceipt,
   type HostCordisInspectProviderRegistration,
 } from '@deepseek-ai/dsh-cordis-host-runner'
-import { freezeMessage, MessageId, type ContentBlock, type LlmAdapter, type UserMessage } from '@deepseek-ai/dsh-llm'
+import {
+  createUserMessage,
+  freezeMessage,
+  MessageId,
+  type ContentBlock,
+  type LlmAdapter,
+  type UserMessage,
+} from '@deepseek-ai/dsh-llm'
+import { supportedProtocols as piAiSupportedProtocols } from '@deepseek-ai/dsh-llm-pi-ai'
 import * as FsObservationPolicy from '@deepseek-ai/dsh-fs-observation-policy'
 import SandboxedFileSystem from '@deepseek-ai/dsh-fs-sandbox'
 import LocalSandboxProvider from '@deepseek-ai/dsh-sandbox-local'
@@ -40,6 +50,8 @@ import { SessionId, SessionStore } from '@deepseek-ai/dsh-session'
 import { scopeOf } from '@deepseek-ai/dsh-scope'
 import * as SessionCheckpointPolicy from '@deepseek-ai/dsh-session-checkpoint-policy'
 import { SqliteSessionPersistence } from '@deepseek-ai/dsh-session-persistence-sqlite'
+import { settingsNamespace, type SettingsPathOp } from '@deepseek-ai/dsh-settings'
+import FileSettingsProvider from '@deepseek-ai/dsh-settings-file'
 import { PERSONA_ORDER, PERSONA_SECTION, SystemPrompt } from '@deepseek-ai/dsh-system-prompt'
 import TokenMeter from '@deepseek-ai/dsh-token-meter'
 import * as CordisTool from '@deepseek-ai/dsh-tool-cordis'
@@ -87,6 +99,15 @@ import sharp from 'sharp'
 
 export * from './qq-openclaw.js'
 
+export interface AvailableLlmModel {
+  readonly provider: string
+  readonly providerName: string
+  readonly id: string
+  readonly name: string
+  readonly description?: string
+  readonly inputModalities?: readonly string[]
+}
+
 declare module '@deepseek-ai/dsh-llm' {
   interface MessageSourceMap {
     'nekro-nxt-channel': {
@@ -111,7 +132,10 @@ const HOST_DSH_PACKAGE_VERSIONS = {
   '@deepseek-ai/dsh-bash-sandbox': '0.1.0-rc.6',
   '@deepseek-ai/dsh-compaction-basic': '0.1.0-rc.6',
   '@deepseek-ai/dsh-cordis-host-runner': '0.1.0-rc.6',
+  '@deepseek-ai/dsh-credentials': '0.1.0-rc.6',
+  '@deepseek-ai/dsh-credentials-local': '0.1.0-rc.6',
   '@deepseek-ai/dsh-llm': '0.1.0-rc.6',
+  '@deepseek-ai/dsh-llm-pi-ai': '0.1.0-rc.6',
   '@deepseek-ai/dsh-fs-observation-policy': '0.1.0-rc.6',
   '@deepseek-ai/dsh-fs-sandbox': '0.1.0-rc.6',
   '@deepseek-ai/dsh-sandbox-local': '0.1.0-rc.6',
@@ -120,6 +144,8 @@ const HOST_DSH_PACKAGE_VERSIONS = {
   '@deepseek-ai/dsh-session': '0.1.0-rc.6',
   '@deepseek-ai/dsh-session-checkpoint-policy': '0.1.0-rc.6',
   '@deepseek-ai/dsh-session-persistence-sqlite': '0.1.0-rc.6',
+  '@deepseek-ai/dsh-settings': '0.1.0-rc.6',
+  '@deepseek-ai/dsh-settings-file': '0.1.0-rc.6',
   '@deepseek-ai/dsh-system-prompt': '0.1.0-rc.6',
   '@deepseek-ai/dsh-shell-env': '0.1.0-rc.6',
   '@deepseek-ai/dsh-subprocess-local': '0.1.0-rc.6',
@@ -155,7 +181,65 @@ export interface DshHostRuntimeOptions {
   /** Absolute workspace used by explicitly granted development capabilities. */
   readonly developmentWorkspaceRoot?: string
   readonly configureLlm?: (context: Context) => Promise<void> | void
+  /** DSH-owned settings and write-only credential documents. Both paths must be absolute when enabled. */
+  readonly llmSettingsPath?: string
+  readonly llmCredentialPath?: string
 }
+
+export interface ConfigurableLlmProviderView {
+  readonly provider: string
+  readonly displayName: string
+  readonly settingsNs: string
+  readonly settingsPath: readonly string[]
+  readonly settingsRevision: number
+  readonly declared: boolean
+  readonly active: boolean
+  readonly configured: boolean
+  readonly baseURL?: string
+  readonly api?: string
+  readonly credential?: { readonly configured: boolean; readonly source?: string; readonly writable: boolean }
+  readonly models: readonly {
+    readonly id: string
+    readonly name: string
+    readonly contextWindow?: number
+    readonly maxTokens?: number
+  }[]
+}
+
+export interface LlmProviderSettingsView {
+  readonly writable: boolean
+  readonly protocols: readonly string[]
+  readonly providers: readonly ConfigurableLlmProviderView[]
+}
+
+export interface SaveLlmProviderInput {
+  readonly provider: string
+  readonly expectedRevision: number
+  readonly apiKey?: string
+  readonly displayName?: string
+  readonly baseURL?: string
+  readonly api?: string
+  readonly models?: readonly {
+    readonly id: string
+    readonly name?: string
+    readonly contextWindow?: number
+    readonly maxTokens?: number
+  }[]
+}
+
+const readObjectPath = (value: unknown, pathSegments: readonly string[]): Record<string, unknown> | undefined => {
+  let current: unknown = value
+  for (const segment of pathSegments) {
+    if (typeof current !== 'object' || current === null || Array.isArray(current)) return undefined
+    current = (current as Record<string, unknown>)[segment]
+  }
+  return typeof current === 'object' && current !== null && !Array.isArray(current)
+    ? (current as Record<string, unknown>)
+    : undefined
+}
+
+const credentialReferenceForProvider = (provider: string): string =>
+  `${provider.toUpperCase().replaceAll('-', '_')}_API_KEY`
 
 export interface DynamicPackageDefinitionInput {
   readonly plugin:
@@ -631,6 +715,7 @@ export class DshHostRuntime implements AgentSessionDriver, ExtensionActivationHo
   readonly #assets: AssetEnrichmentRepository
   readonly #resolveAgentRevision: DshHostRuntimeOptions['resolveAgentRevision']
   readonly #developmentWorkspaceRoot: string | undefined
+  readonly #hasLlmSettings: boolean
   readonly #handles = new Map<string, AgentHandle>()
   readonly #imageInputSessions = new Set<string>()
   readonly #dynamicSessions = new Map<
@@ -648,6 +733,7 @@ export class DshHostRuntime implements AgentSessionDriver, ExtensionActivationHo
     this.#assets = options.assets
     this.#resolveAgentRevision = options.resolveAgentRevision
     this.#developmentWorkspaceRoot = options.developmentWorkspaceRoot
+    this.#hasLlmSettings = options.llmSettingsPath !== undefined
   }
 
   static async create(options: DshHostRuntimeOptions): Promise<DshHostRuntime> {
@@ -658,12 +744,25 @@ export class DshHostRuntime implements AgentSessionDriver, ExtensionActivationHo
     if (options.developmentWorkspaceRoot !== undefined && !path.isAbsolute(options.developmentWorkspaceRoot)) {
       throw new TypeError('Development workspace root must be absolute when configured.')
     }
+    if ((options.llmSettingsPath === undefined) !== (options.llmCredentialPath === undefined)) {
+      throw new TypeError('DSH LLM settings and credential paths must be configured together.')
+    }
+    if (
+      (options.llmSettingsPath !== undefined && !path.isAbsolute(options.llmSettingsPath)) ||
+      (options.llmCredentialPath !== undefined && !path.isAbsolute(options.llmCredentialPath))
+    ) {
+      throw new TypeError('DSH LLM settings and credential paths must be absolute.')
+    }
     const context = new Context()
     try {
       await context.plugin(NekroAssetAttachmentStore, {
         assets: options.assets,
         assetService: options.assetService,
       })
+      if (options.llmSettingsPath !== undefined && options.llmCredentialPath !== undefined) {
+        await context.plugin(FileSettingsProvider, { path: options.llmSettingsPath })
+        await context.plugin(LocalCredentialProvider, { path: options.llmCredentialPath })
+      }
       await context.plugin((await import('@deepseek-ai/dsh-llm')).LlmRuntime)
       await options.configureLlm?.(context)
       await context.plugin(SessionStore)
@@ -688,6 +787,177 @@ export class DshHostRuntime implements AgentSessionDriver, ExtensionActivationHo
   registerLlmAdapter(providers: string[], adapter: LlmAdapter): () => void {
     this.#assertActive()
     return this.#context.llm.registerAdapter(providers, adapter)
+  }
+
+  /** Read the live DSH adapter registry; NekroNxt does not maintain a second provider catalog. */
+  async listAvailableLlmModels(): Promise<readonly AvailableLlmModel[]> {
+    this.#assertActive()
+    const groups = await Promise.all(
+      this.#context.llm.listProviders().map(async (provider) =>
+        (await this.#context.llm.listModels(provider.id)).map((model) => ({
+          provider: provider.id,
+          providerName: provider.name,
+          id: model.id,
+          name: model.name,
+          ...(model.description === undefined ? {} : { description: model.description }),
+          ...(model.inputModalities === undefined ? {} : { inputModalities: [...model.inputModalities] }),
+        })),
+      ),
+    )
+    return groups.flat()
+  }
+
+  /** Project DSH's configurable-provider directory and redacted settings/credential facts. */
+  async getLlmProviderSettings(): Promise<LlmProviderSettingsView> {
+    this.#assertActive()
+    if (!this.#hasLlmSettings) throw new Error('DSH 模型设置服务未启用。')
+    const descriptors = new Map(
+      this.#context.settings.describe({ redactSecrets: true }).map((descriptor) => [descriptor.ns, descriptor]),
+    )
+    const active = new Map(this.#context.llm.listProviders().map((provider) => [provider.id, provider]))
+    const providers = await Promise.all(
+      this.#context.llm.listConfigurableProviders().map(async (entry): Promise<ConfigurableLlmProviderView> => {
+        const descriptor = descriptors.get(settingsNamespace(entry.settingsNs))
+        if (!descriptor) throw new Error(`DSH 模型设置 namespace 未注册：${entry.settingsNs}`)
+        const profile = readObjectPath(descriptor.value, entry.settingsPath)
+        const configured = profile !== undefined
+        const apiKeyEnv = typeof profile?.apiKeyEnv === 'string' ? profile.apiKeyEnv : undefined
+        const credential =
+          apiKeyEnv === undefined ? undefined : await this.#context.credentials.describe(credentialRef(apiKeyEnv))
+        const configuredModels = Array.isArray(profile?.models)
+          ? profile.models.flatMap((candidate) => {
+              if (typeof candidate !== 'object' || candidate === null || Array.isArray(candidate)) return []
+              const model = candidate as Record<string, unknown>
+              if (typeof model.id !== 'string') return []
+              return [
+                {
+                  id: model.id,
+                  name: typeof model.name === 'string' ? model.name : model.id,
+                  ...(typeof model.contextWindow === 'number' ? { contextWindow: model.contextWindow } : {}),
+                  ...(typeof model.maxTokens === 'number' ? { maxTokens: model.maxTokens } : {}),
+                },
+              ]
+            })
+          : []
+        const liveModels = active.has(entry.provider)
+          ? (await this.#context.llm.listModels(entry.provider)).map((model) => ({ id: model.id, name: model.name }))
+          : []
+        return {
+          provider: entry.provider,
+          displayName: entry.displayName,
+          settingsNs: entry.settingsNs,
+          settingsPath: [...entry.settingsPath],
+          settingsRevision: descriptor.revision,
+          declared: entry.declared === true,
+          active: active.has(entry.provider),
+          configured,
+          ...(typeof profile?.baseURL === 'string' ? { baseURL: profile.baseURL } : {}),
+          ...(typeof profile?.api === 'string' ? { api: profile.api } : {}),
+          ...(credential === undefined
+            ? {}
+            : {
+                credential: {
+                  configured: credential.configured,
+                  writable: credential.writable,
+                  ...(credential.source === undefined ? {} : { source: credential.source }),
+                },
+              }),
+          models: configuredModels.length > 0 ? configuredModels : liveModels,
+        }
+      }),
+    )
+    return { writable: this.#context.settings.writable, protocols: [...piAiSupportedProtocols()], providers }
+  }
+
+  /** Persist one DSH provider profile, then store a supplied key through the write-only credential seam. */
+  async saveLlmProvider(input: SaveLlmProviderInput): Promise<LlmProviderSettingsView> {
+    this.#assertActive()
+    if (!this.#hasLlmSettings) throw new Error('DSH 模型设置服务未启用。')
+    if (!/^[a-z][a-z0-9-]*$/u.test(input.provider)) throw new Error('Provider ID 必须以小写字母开头。')
+    const directory = this.#context.llm.listConfigurableProviders()
+    const entry = directory.find((candidate) => candidate.provider === input.provider)
+    const settingsNs = entry?.settingsNs ?? 'llm-pi-ai'
+    const settingsPath = entry?.settingsPath ?? ['providers', input.provider]
+    const descriptor = this.#context.settings
+      .describe({ redactSecrets: true })
+      .find((candidate) => candidate.ns === settingsNamespace(settingsNs))
+    if (!descriptor) throw new Error(`DSH 模型设置 namespace 未注册：${settingsNs}`)
+    const current = readObjectPath(descriptor.value, settingsPath)
+    const credentialRefName =
+      typeof current?.apiKeyEnv === 'string' ? current.apiKeyEnv : credentialReferenceForProvider(input.provider)
+    const fields: Record<string, unknown> = {}
+    if (input.displayName !== undefined) fields.displayName = input.displayName
+    if (input.baseURL !== undefined) fields.baseURL = input.baseURL
+    if (input.api !== undefined) fields.api = input.api
+    if (input.models !== undefined) fields.models = input.models.map((model) => ({ ...model }))
+    if (input.apiKey !== undefined || typeof current?.apiKeyEnv === 'string') fields.apiKeyEnv = credentialRefName
+    if (entry === undefined) {
+      if (!input.displayName || !input.baseURL || !input.api || !input.models?.length) {
+        throw new Error('自定义供应商需要名称、API 地址、协议和至少一个模型。')
+      }
+    }
+    const ops: SettingsPathOp[] =
+      current === undefined
+        ? [{ op: 'set', path: settingsPath, value: fields }]
+        : Object.entries(fields).map(([key, value]) => ({ op: 'set' as const, path: [...settingsPath, key], value }))
+    if (ops.length === 0 && current === undefined) ops.push({ op: 'set', path: settingsPath, value: {} })
+    if (ops.length > 0) {
+      await this.#context.settings.mutate(settingsNamespace(settingsNs), ops, input.expectedRevision)
+    }
+    if (input.apiKey !== undefined) {
+      await this.#context.credentials.set(credentialRef(credentialRefName), input.apiKey)
+    }
+    return this.getLlmProviderSettings()
+  }
+
+  async discoverLlmProviderModels(input: {
+    readonly provider?: string
+    readonly settingsNs?: string
+    readonly baseURL?: string
+    readonly api?: string
+    readonly apiKey?: string
+  }): Promise<
+    readonly {
+      readonly id: string
+      readonly name?: string
+      readonly contextWindow?: number
+      readonly maxTokens?: number
+    }[]
+  > {
+    this.#assertActive()
+    const settingsNs =
+      input.settingsNs ??
+      this.#context.llm.listConfigurableProviders().find((entry) => entry.provider === input.provider)?.settingsNs ??
+      'llm-pi-ai'
+    return this.#context.llm.discoverModels(settingsNs, input)
+  }
+
+  /** Make one minimal provider request and return no generated content. */
+  async testLlmProvider(
+    provider: string,
+    model: string,
+  ): Promise<{ readonly provider: string; readonly model: string }> {
+    this.#assertActive()
+    let finished = false
+    for await (const chunk of this.#context.llm.stream({
+      provider,
+      model,
+      system: '这是一次连接测试。请只回复 OK。',
+      messages: [createUserMessage({ content: [{ type: 'text', text: 'OK' }], source: { kind: 'user' } })],
+      maxTokens: 16,
+    })) {
+      if (chunk.type !== 'finish') continue
+      finished = true
+      if (chunk.reason.kind === 'error' || chunk.reason.kind === 'aborted') {
+        const code = chunk.reason.failure.code
+        if (code === 'AUTH' || code === 'MISSING_CREDENTIAL') throw new Error('认证失败，请更新 API 密钥。')
+        if (code === 'QUOTA') throw new Error('供应商额度不足或订阅限制。')
+        if (code === 'RATE_LIMIT') throw new Error('供应商限流，请稍后再试。')
+        throw new Error(`模型请求失败（${code}）。`)
+      }
+    }
+    if (!finished) throw new Error('供应商没有返回完整结果。')
+    return { provider, model }
   }
 
   async createSession(input: Parameters<AgentSessionDriver['createSession']>[0]): Promise<string> {
