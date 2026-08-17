@@ -4,6 +4,8 @@ import { fileURLToPath } from 'node:url'
 export default defineConfig({
   resolve: {
     alias: {
+      '@nekro-nxt/dsh-compat/client': fileURLToPath(new URL('./packages/dsh-compat/src/client.ts', import.meta.url)),
+      '@nekro-nxt/dsh-compat': fileURLToPath(new URL('./packages/dsh-compat/src/index.ts', import.meta.url)),
       '@nekro-nxt/adapter-sdk': fileURLToPath(new URL('./packages/adapter-sdk/src/index.ts', import.meta.url)),
       '@nekro-nxt/adapter-qq-openclaw': fileURLToPath(
         new URL('./packages/adapter-qq-openclaw/src/index.ts', import.meta.url),
