@@ -14,12 +14,13 @@ jobs:
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11.7.0
       - uses: actions/setup-node@v4
         with:
           node-version: 22.23.2
           cache: pnpm
-      - run: corepack enable
-      - run: corepack prepare pnpm@11.7.0 --activate
       - run: pnpm install --frozen-lockfile
       - run: pnpm check
       - run: pnpm test
@@ -33,12 +34,13 @@ jobs:
         node: [22.23.2, 24]
     steps:
       - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11.7.0
       - uses: actions/setup-node@v4
         with:
           node-version: ${{ matrix.node }}
           cache: pnpm
-      - run: corepack enable
-      - run: corepack prepare pnpm@11.7.0 --activate
       - run: pnpm install --frozen-lockfile
       - run: pnpm typecheck
       - run: pnpm test
