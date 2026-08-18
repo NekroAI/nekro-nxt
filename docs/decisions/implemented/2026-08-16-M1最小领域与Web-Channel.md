@@ -2,6 +2,8 @@
 
 状态：implemented
 
+> 后续命名说明：本记录保留 M1 实施当时的 `send_message` 历史名称。为避免与 DSH 子智能体控制工具冲突，当前频道通信工具已更名为 `send_channel_message`。
+
 ## 结论
 
 一期 M1 已形成可离线重复验证的真实垂直闭环：网页消息通过 Internal Web Adapter 进入 Channel Event Log，Channel Runtime 创建 Episode 与 Admission，生产 Host roster 启动 DSH Agent Loop；只有智能体调用 `send_message` 产生的 Outbox、PhysicalDelivery 和成功回执会成为频道消息，模型原始文字只保留在 DSH Session 日志。

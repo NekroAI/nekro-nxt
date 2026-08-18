@@ -352,7 +352,7 @@ Channel Binding 至少支持：
 媒体原件由内容寻址 Asset Service 统一拥有：相同字节只保存一个 blob，每次接收保留独立 Occurrence 并更新最后接收时间与次数。视频首期作为普通文件，不做专用理解。图片按模型能力原生投影或使用版本化摘要/OCR，多模态模型还可以通过授权工具主动重读历史图片。完整契约见 `decisions/accepted/2026-08-16-内容寻址资源与图片理解.md`。
 
 ```text
-send_message Tool
+send_channel_message Tool
 → 校验目标、能力与内容
 → 持久化 OutboundMessageIntent
 → Channel Runtime 规划 Delivery

@@ -60,7 +60,7 @@ class ScriptedCommunicationModel extends LlmAdapter {
       const toolCall = {
         type: 'tool-call' as const,
         id: callId,
-        name: 'send_message',
+        name: 'send_channel_message',
         arguments: JSON.stringify({
           target: { type: 'current' },
           parts: [{ type: 'text', text: '这是通信工具确认发送的回复。' }],
@@ -70,7 +70,7 @@ class ScriptedCommunicationModel extends LlmAdapter {
       yield { type: 'text-delta', index: 0, text: '这段模型原始文字只能留在运行轨迹。' }
       yield { type: 'block-end', index: 0, block: { type: 'text', text: '这段模型原始文字只能留在运行轨迹。' } }
       yield { type: 'block-start', index: 1, blockType: 'tool-call' }
-      yield { type: 'tool-call-delta', index: 1, id: callId, name: 'send_message', argumentsDelta: toolCall.arguments }
+      yield { type: 'tool-call-delta', index: 1, id: callId, name: 'send_channel_message', argumentsDelta: toolCall.arguments }
       yield { type: 'block-end', index: 1, block: toolCall }
       yield { type: 'usage', usage: { inputTokens: 16, outputTokens: 8 } }
       yield { type: 'finish', reason: { kind: 'tool-calls' } }
@@ -265,7 +265,7 @@ describe('NekroNxt Server domain API (WebServer seam)', () => {
       })
       expect(admitted.status).toBe(200)
 
-      // Wait for the DSH Agent Loop to settle (the scripted model replies via send_message).
+      // Wait for the DSH Agent Loop to settle (the scripted model replies via send_channel_message).
       const web = runtime.web
       const session = runtime.host
       const before = Date.now()

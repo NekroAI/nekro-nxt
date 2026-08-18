@@ -78,7 +78,7 @@ class ScriptedCommunicationModel extends LlmAdapter {
       const toolCall = {
         type: 'tool-call' as const,
         id: callId,
-        name: 'send_message',
+        name: 'send_channel_message',
         arguments: JSON.stringify({
           target: { type: 'current' },
           parts: [{ type: 'text', text: '这是通信工具确认发送的回复。' }],
@@ -96,7 +96,7 @@ class ScriptedCommunicationModel extends LlmAdapter {
         type: 'tool-call-delta',
         index: 1,
         id: callId,
-        name: 'send_message',
+        name: 'send_channel_message',
         argumentsDelta: toolCall.arguments,
       }
       yield { type: 'block-end', index: 1, block: toolCall }
@@ -583,7 +583,7 @@ describe('DSH Host and Web Channel vertical slice', () => {
     }
   })
 
-  it('keeps raw model text internal and publishes only send_message Outbox delivery', async () => {
+  it('keeps raw model text internal and publishes only send_channel_message Outbox delivery', async () => {
     expect(assertHostDshPackageVersions).not.toThrow()
     const directory = await mkdtemp(path.join(tmpdir(), 'nekro-nxt-dsh-channel-'))
     temporaryDirectories.push(directory)
@@ -696,7 +696,7 @@ describe('DSH Host and Web Channel vertical slice', () => {
         'asset_inspect',
         'conversation_history_read',
         'conversation_history_search',
-        'send_message',
+        'send_channel_message',
       ])
       const eventText = JSON.stringify(host.sessionEvents(episode.dsh_session_id))
       expect(eventText).toContain('这段模型原始文字只能留在运行轨迹。')

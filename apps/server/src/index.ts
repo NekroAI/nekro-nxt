@@ -422,11 +422,11 @@ class NekroAssetAttachmentStore extends AttachmentStore {
   }
 }
 
-const SEND_MESSAGE_POLICY = `你正在参与 NekroNxt 频道对话。任何用户可见发言都必须调用 send_message；普通模型文字只会记录为内部输出，不会发送到频道。需要回复时请明确调用工具，不要声称已经发送但不调用工具。`
+const CHANNEL_MESSAGE_POLICY = `你正在参与 NekroNxt 频道对话。任何用户可见发言都必须调用 send_channel_message；普通模型文字只会记录为内部输出，不会发送到频道。需要回复时请明确调用工具，不要声称已经发送但不调用工具。send_message 专用于给可继续子智能体安排下一轮任务，绝不会向频道发言。`
 
-const communicationTool = (episodeId: EpisodeId, communication: AgentCommunicationPort) =>
+const channelCommunicationTool = (episodeId: EpisodeId, communication: AgentCommunicationPort) =>
   defineTool({
-    name: 'send_message',
+    name: 'send_channel_message',
     description: '向触发当前对话的频道发送一条用户可见消息。普通模型文字不会自动发送。',
     parameters: {
       target: {
@@ -520,7 +520,7 @@ const communicationTool = (episodeId: EpisodeId, communication: AgentCommunicati
       ],
     },
     async execute(args, exec) {
-      if (!exec.agent) throw new Error('send_message requires a live DSH Agent execution.')
+      if (!exec.agent) throw new Error('send_channel_message requires a live DSH Agent execution.')
       const parts = parseMessageParts(args.parts)
       const result = await communication.sendMessage({
         episodeId,
@@ -1036,9 +1036,9 @@ export class DshHostRuntime implements AgentSessionDriver, ExtensionActivationHo
       agentContext.systemPrompt.section({
         name: 'nekro-nxt:channel-communication',
         order: 20,
-        text: SEND_MESSAGE_POLICY,
+        text: CHANNEL_MESSAGE_POLICY,
       })
-      agentContext.tools.register(communicationTool(input.episodeId, this.#communication))
+      agentContext.tools.register(channelCommunicationTool(input.episodeId, this.#communication))
       for (const tool of historyTools(input.channelId, this.#history)) agentContext.tools.register(tool)
       agentContext.tools.register(assetInspectTool(input.channelId, this.#assets))
       if (supportsImage) {
