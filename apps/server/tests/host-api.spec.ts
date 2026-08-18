@@ -345,12 +345,9 @@ describe('NekroNxt Server domain API (WebServer seam)', () => {
       expect(reboundSnapshot.agents.find((agent) => agent.id === observer.agentId)?.channels).toContain(
         created.channelId,
       )
-      expect(reboundSnapshot.channels.find((channel) => channel.id === created.channelId)?.bindings).toEqual(
-        expect.arrayContaining([
-          expect.objectContaining({ agentId: created.agentId, triggerPolicy: 'always' }),
-          expect.objectContaining({ agentId: observer.agentId, triggerPolicy: 'observe-only' }),
-        ]),
-      )
+      expect(reboundSnapshot.channels.find((channel) => channel.id === created.channelId)?.bindings).toEqual([
+        expect.objectContaining({ agentId: observer.agentId, triggerPolicy: 'observe-only' }),
+      ])
     } finally {
       api.dispose()
       await webContext.fiber.dispose()

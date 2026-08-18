@@ -52,7 +52,7 @@ Web 端不复制一份业务事实到 Zustand。`ProductHostPort.getSnapshot()` 
 | 频道资源 | `GET /api/channels/:channelId/assets/:assetId` | 校验频道访问权和 blob 状态后同源读取图片、音频或文件，不暴露宿主路径 | ✅ |
 | 频道本地名称 | `POST /api/channels/:id/display-name` | 保存仅用于 NekroNxt 展示的频道名称，不修改平台频道 ID | ✅ |
 | 创建连接 | `POST /api/connections` | 接收 `adapterKey + configuration + credentials`；按已安装 Adapter schema 校验，Host 私有存储凭据后创建对应 Runtime | ✅ |
-| 创建频道绑定 | `POST /api/bindings` | 对已发现 Channel 与指定智能体创建独立 Binding，保存触发策略；同频道允许多个智能体 Binding | ✅ |
+| 创建频道绑定 | `POST /api/bindings` | 对已发现 Channel 与指定智能体创建独立 Binding，保存触发策略；智能体可绑定多个频道，频道换绑时只保留一个活动智能体 | ✅ |
 | 启用扩展 | `POST /api/extensions/:id/activation` | AgentActivation 启用（body `{agentId, revisionId}`） | ✅ |
 | 停用扩展 | `DELETE /api/extensions/:id/activation` | 停用当前 Activation（安全间隙后完成） | ✅ |
 | 创建智能体引导跑动 | —— | —— | —— |

@@ -118,8 +118,8 @@ export const bindings = sqliteTable(
   },
   (table) => [
     uniqueIndex('bindings_channel_agent_uq').on(table.channelId, table.agentId),
-    uniqueIndex('bindings_active_agent_uq')
-      .on(table.agentId)
+    uniqueIndex('bindings_active_channel_uq')
+      .on(table.channelId)
       .where(sql`${table.active} = 1`),
   ],
 )

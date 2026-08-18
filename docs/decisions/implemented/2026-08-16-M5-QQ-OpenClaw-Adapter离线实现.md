@@ -66,7 +66,7 @@ Adapter 不读取这些表。`QQCoreBridge` 只调用 Core Service，远端媒�
 
 ## 未来方向与参考取舍
 
-关联方向：更多 Adapter、多媒体、同频道多个智能体、长期 Job、Webhook 和多账号管理。
+关联方向：更多 Adapter、多媒体、智能体多频道、长期 Job、Webhook 和多账号管理。
 
 保留接缝：Adapter SDK、Connection runtime state、双向消息映射、声明式配置、可选 UI Slot、Transport/Directory/Asset Bridge 和平台无关 Outbox。没有把 QQ OpenID、Markdown、Gateway sequence 或上传对象写进 Core 通用消息，因此未锁死其他平台。
 

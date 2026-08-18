@@ -110,7 +110,7 @@ export {
 } from './schema.js'
 
 /** The Core schema version starts at one with the upgrade journal table. */
-export const CORE_SCHEMA_VERSION = 14
+export const CORE_SCHEMA_VERSION = 15
 const CORE_MIGRATION_FILES = [
   '0000_red_darkstar.sql',
   '0001_broad_taskmaster.sql',
@@ -126,6 +126,7 @@ const CORE_MIGRATION_FILES = [
   '0011_inbound_logical_message.sql',
   '0012_delivery_adapter_context.sql',
   '0013_single_active_agent_binding.sql',
+  '0014_single_active_channel_binding.sql',
 ] as const
 
 /** Opens an owned Core database with the durability and integrity settings shared by both Hosts. */
@@ -627,7 +628,7 @@ export class SqliteCoreRepository
 
   replaceBinding(record: BindingRecord): BindingRecord {
     return withTransaction(this.#database, () => {
-      this.#database.prepare('UPDATE bindings SET active = 0 WHERE agent_id = ? AND active = 1').run(record.agentId)
+      this.#database.prepare('UPDATE bindings SET active = 0 WHERE channel_id = ? AND active = 1').run(record.channelId)
       const existing = this.#database
         .prepare('SELECT * FROM bindings WHERE channel_id = ? AND agent_id = ?')
         .get(record.channelId, record.agentId) as SqliteRow | undefined

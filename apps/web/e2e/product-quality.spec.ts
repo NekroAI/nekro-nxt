@@ -563,7 +563,7 @@ test('dialog floating layers, Escape, focus return, and pending failure recovery
 
   await page.goto('/agents/agent-target-internal-id')
   await page.getByRole('tab', { name: '频道' }).click()
-  await page.getByRole('button', { name: '更换频道' }).click()
+  await page.getByRole('button', { name: '绑定频道' }).click()
   const bindingDialog = page.getByRole('dialog')
   let attempts = 0
   await page.route('**/api/bindings', async (route) => {
@@ -579,14 +579,14 @@ test('dialog floating layers, Escape, focus return, and pending failure recovery
     return route.fulfill({ status: 201, contentType: 'application/json', body: '{}' })
   })
 
-  const confirm = bindingDialog.getByRole('button', { name: '更换绑定' })
+  const confirm = bindingDialog.getByRole('button', { name: '绑定频道' })
   await confirm.click()
   await expect(bindingDialog.getByRole('button', { name: '处理中…' })).toBeDisabled()
   await expect(page.getByText('测试写入失败')).toBeVisible()
   await expect(confirm).toBeEnabled()
   await confirm.click()
   await expect(bindingDialog).toBeHidden()
-  await expect(page.getByText('频道绑定已更换。')).toBeVisible()
+  await expect(page.getByText('频道已绑定。')).toBeVisible()
   await capture(page, testInfo, 'binding-toast-success')
   expect(attempts).toBe(2)
   expect(

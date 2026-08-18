@@ -95,7 +95,10 @@ test('adding a connection selects a platform before showing its fields', async (
   expect(failures, failures.join('\n')).toEqual([])
 })
 
-test('an intelligent-agent can replace its current Binding from the channel tab', async ({ page, request }) => {
+test("an intelligent-agent can add another channel while replacing that channel's previous agent", async ({
+  page,
+  request,
+}) => {
   const failures = installRuntimeFailureGate(page)
   const createAgent = async (displayName: string): Promise<{ agentId: string; channelId: string }> => {
     const response = await request.post('/api/agents', {
@@ -115,27 +118,29 @@ test('an intelligent-agent can replace its current Binding from the channel tab'
 
   await page.goto(`/agents/${target.agentId}`)
   await page.getByRole('tab', { name: '频道' }).click()
-  await page.getByRole('button', { name: '更换频道' }).click()
+  await page.getByRole('button', { name: '绑定频道' }).click()
   const dialog = page.getByRole('dialog')
-  await expect(dialog.getByRole('heading', { name: '更换绑定频道' })).toBeVisible()
+  await expect(dialog.getByRole('heading', { name: '新增频道绑定' })).toBeVisible()
   await dialog.getByLabel('频道').click()
   await page.getByRole('option', { name: `网页聊天 · ${sourceName} 的网页频道`, exact: true }).click()
   await dialog.getByLabel('响应方式').click()
   await page.getByRole('option', { name: '仅观察' }).click()
-  await dialog.getByRole('button', { name: '更换绑定' }).click()
+  await dialog.getByRole('button', { name: '绑定频道' }).click()
 
-  await expect(page.getByText('频道绑定已更换。')).toBeVisible()
+  await expect(page.getByText('频道已绑定。')).toBeVisible()
   await expect(page.getByText(`${sourceName} 的网页频道`, { exact: true })).toBeVisible()
   const snapshot = (await (await request.get('/api/snapshot')).json()) as {
     agents: Array<{ id: string; channels: string[] }>
     channels: Array<{ id: string; bindings: Array<{ agentId: string; triggerPolicy: string }> }>
   }
-  expect(snapshot.agents.find((agent) => agent.id === target.agentId)?.channels).toEqual([source.channelId])
-  expect(snapshot.channels.find((channel) => channel.id === target.channelId)?.bindings).not.toEqual(
-    expect.arrayContaining([expect.objectContaining({ agentId: target.agentId })]),
+  expect(snapshot.agents.find((agent) => agent.id === target.agentId)?.channels).toEqual(
+    expect.arrayContaining([target.channelId, source.channelId]),
   )
-  expect(snapshot.channels.find((channel) => channel.id === source.channelId)?.bindings).toEqual(
-    expect.arrayContaining([expect.objectContaining({ agentId: target.agentId, triggerPolicy: 'observe-only' })]),
-  )
+  expect(snapshot.channels.find((channel) => channel.id === target.channelId)?.bindings).toEqual([
+    expect.objectContaining({ agentId: target.agentId }),
+  ])
+  expect(snapshot.channels.find((channel) => channel.id === source.channelId)?.bindings).toEqual([
+    expect.objectContaining({ agentId: target.agentId, triggerPolicy: 'observe-only' }),
+  ])
   expect(failures, failures.join('\n')).toEqual([])
 })

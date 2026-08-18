@@ -42,8 +42,8 @@
 -智能体是长期产品实体；
 - Channel 是一段消息事实流；
 - Channel Binding 决定哪个智能体响应该 Channel；
-- 一个智能体同一时间只保留一个有效 Channel Binding；更换频道时旧 Binding 转为历史记录，不删除既有消息与 Session 引用；
-- 一个 Channel 仍可按明确响应策略绑定多个智能体；
+- 一个智能体可以同时保留多个有效 Channel Binding，并分别参与多个独立频道；
+- 一个 Channel 同一时间只能绑定一个智能体；换绑时旧 Binding 转为历史记录，不删除既有消息与 Session 引用；
 - 一个 Channel Conversation 只显示该 Channel 的消息；
 - 跨 Channel 长期记忆可以共享，但短期聊天记录不直接混合；
 - 切换左侧 Channel 就是切换中央 Conversation，而不是筛选同一混合流。

@@ -40,15 +40,20 @@ const temporaryDirectory = async (): Promise<string> => {
 }
 
 describe('Core SQLite capabilities', () => {
-  it('atomically switches one agent between current channel bindings while preserving binding history', async () => {
+  it('allows one agent on multiple channels and atomically replaces the agent assigned to one channel', async () => {
     const directory = await temporaryDirectory()
     const database = await openMigratedCoreDatabase(path.join(directory, 'core.sqlite'))
     try {
       const repository = new SqliteCoreRepository(database)
       let id = 0
       const core = new CoreService(repository, { now: () => 1000 + id, nextUlid: () => `B${++id}` })
-      const agent = core.createAgent({
-        displayName: '换绑智能体',
+      const firstAgent = core.createAgent({
+        displayName: '多频道智能体',
+        persona: '',
+        model: { provider: 'test', model: 'model' },
+      })
+      const secondAgent = core.createAgent({
+        displayName: '接替智能体',
         persona: '',
         model: { provider: 'test', model: 'model' },
       })
@@ -57,22 +62,30 @@ describe('Core SQLite capabilities', () => {
       const second = core.createChannel({ connectionId: connection.id, platformChannelId: 'second', kind: 'web' })
       const original = core.createBinding({
         channelId: first.id,
-        agentId: agent.definition.id,
+        agentId: firstAgent.definition.id,
         triggerPolicy: 'always',
       })
-      core.createBinding({ channelId: second.id, agentId: agent.definition.id, triggerPolicy: 'command' })
-      expect(core.listBindings(first.id)).toEqual([])
-      const restored = core.createBinding({
+      core.createBinding({ channelId: second.id, agentId: firstAgent.definition.id, triggerPolicy: 'command' })
+      expect(core.listBindings(first.id)).toEqual([
+        expect.objectContaining({ id: original.id, agentId: firstAgent.definition.id }),
+      ])
+      expect(core.listBindings(second.id)).toEqual([
+        expect.objectContaining({ agentId: firstAgent.definition.id, triggerPolicy: 'command' }),
+      ])
+
+      core.createBinding({
         channelId: first.id,
-        agentId: agent.definition.id,
+        agentId: secondAgent.definition.id,
         triggerPolicy: 'observe-only',
       })
-      expect(restored).toMatchObject({ id: original.id, revision: 2, triggerPolicy: 'observe-only' })
-      expect(core.listBindings(second.id)).toEqual([])
+      expect(core.listBindings(first.id)).toEqual([
+        expect.objectContaining({ agentId: secondAgent.definition.id, triggerPolicy: 'observe-only' }),
+      ])
+      expect(core.listBindings(second.id)).toEqual([
+        expect.objectContaining({ agentId: firstAgent.definition.id, triggerPolicy: 'command' }),
+      ])
       expect(
-        database
-          .prepare('SELECT COUNT(*) AS count FROM bindings WHERE agent_id = ? AND active = 1')
-          .get(agent.definition.id),
+        database.prepare('SELECT COUNT(*) AS count FROM bindings WHERE channel_id = ? AND active = 1').get(first.id),
       ).toEqual({ count: 1 })
     } finally {
       database.close()
@@ -396,9 +409,54 @@ describe('Core SQLite capabilities', () => {
       expect(
         database
           .prepare("SELECT name FROM sqlite_master WHERE type = 'index' AND name = ?")
-          .get('bindings_active_agent_uq'),
-      ).toEqual({ name: 'bindings_active_agent_uq' })
+          .get('bindings_active_channel_uq'),
+      ).toEqual({ name: 'bindings_active_channel_uq' })
       expect(database.prepare('PRAGMA user_version').get()).toEqual({ user_version: CORE_SCHEMA_VERSION })
+    } finally {
+      database.close()
+    }
+  })
+
+  it("repairs the reversed active-binding constraint without losing an agent's other channels", async () => {
+    const directory = await temporaryDirectory()
+    const database = openCoreDatabase(path.join(directory, 'binding-repair.sqlite'))
+    try {
+      database.exec(`
+        CREATE TABLE bindings (
+          id TEXT PRIMARY KEY NOT NULL,
+          channel_id TEXT NOT NULL,
+          agent_id TEXT NOT NULL,
+          active INTEGER DEFAULT 1 NOT NULL,
+          created_at INTEGER NOT NULL
+        );
+        CREATE UNIQUE INDEX bindings_active_agent_uq ON bindings (agent_id) WHERE active = 1;
+        INSERT INTO bindings VALUES
+          ('web-a', 'channel-web', 'agent-a', 0, 1),
+          ('qq-a', 'channel-qq', 'agent-a', 1, 2),
+          ('shared-a', 'channel-shared', 'agent-a', 0, 3),
+          ('shared-b', 'channel-shared', 'agent-b', 1, 4);
+        PRAGMA user_version = 14;
+      `)
+
+      await migrateCoreDatabase(database)
+
+      expect(
+        database.prepare('SELECT id, channel_id, agent_id FROM bindings WHERE active = 1 ORDER BY channel_id').all(),
+      ).toEqual([
+        { id: 'qq-a', channel_id: 'channel-qq', agent_id: 'agent-a' },
+        { id: 'shared-b', channel_id: 'channel-shared', agent_id: 'agent-b' },
+        { id: 'web-a', channel_id: 'channel-web', agent_id: 'agent-a' },
+      ])
+      expect(
+        database
+          .prepare("SELECT name FROM sqlite_master WHERE type = 'index' AND name = ?")
+          .get('bindings_active_agent_uq'),
+      ).toBeUndefined()
+      expect(
+        database
+          .prepare("SELECT name FROM sqlite_master WHERE type = 'index' AND name = ?")
+          .get('bindings_active_channel_uq'),
+      ).toEqual({ name: 'bindings_active_channel_uq' })
     } finally {
       database.close()
     }
@@ -424,7 +482,12 @@ describe('Core SQLite capabilities', () => {
         CREATE TABLE agent_revisions (id TEXT PRIMARY KEY NOT NULL);
         CREATE TABLE channel_events (id TEXT PRIMARY KEY NOT NULL);
         CREATE TABLE physical_deliveries (id TEXT PRIMARY KEY NOT NULL);
-        CREATE TABLE bindings (id TEXT PRIMARY KEY NOT NULL, agent_id TEXT NOT NULL, created_at INTEGER NOT NULL);
+        CREATE TABLE bindings (
+          id TEXT PRIMARY KEY NOT NULL,
+          channel_id TEXT NOT NULL,
+          agent_id TEXT NOT NULL,
+          created_at INTEGER NOT NULL
+        );
         INSERT INTO agent_revisions (id) VALUES ('legacy-revision');
         PRAGMA user_version = 7;
       `)

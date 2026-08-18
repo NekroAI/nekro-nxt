@@ -4,4 +4,4 @@
 
 若 Drizzle 没有对 `node:sqlite` 的稳定驱动，本包保留 Drizzle schema/migration，并通过窄 Repository 使用原生 `DatabaseSync`，不因此引入 `better-sqlite3` 或第二种数据库。
 
-`bindings_active_agent_uq` 是部分唯一索引，只约束每个智能体最多一个活动 Binding；历史 Binding 保留以维持 Episode 外键和审计语义。Agent Revision 的历史复用和当前指针切换也在事务提交边界内完成。
+`bindings_active_channel_uq` 是部分唯一索引，只约束每个频道最多一个活动 Binding；同一智能体可以同时绑定多个频道。频道换绑时历史 Binding 保留，以维持 Episode 外键和审计语义。Agent Revision 的历史复用和当前指针切换也在事务提交边界内完成。

@@ -283,7 +283,7 @@ QQ 首期采用层级 2 + 层级 3：通用表单负责 App ID、Credential Refe
 
 ## 未来方向检查
 
-关联方向：更多 Adapter、多媒体、同频道多个智能体、主动 Job。
+关联方向：更多 Adapter、多媒体、智能体多频道、主动 Job。
 
 保留接缝：Connection 与 Adapter 分离、账号作用域成员 ID、Adapter capability、Transport 联合类型、逻辑/物理消息分离、声明式配置和可选 UI Slot 分层。
 

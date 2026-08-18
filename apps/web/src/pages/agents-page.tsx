@@ -585,7 +585,7 @@ export function AgentManagePage() {
                   setBindingOpen(true)
                 }}
               >
-                <Plus size={14} aria-hidden="true" /> {boundChannels.length > 0 ? '更换频道' : '绑定频道'}
+                <Plus size={14} aria-hidden="true" /> 绑定频道
               </Button>
             </div>
             {boundChannels.length === 0 ? (
@@ -674,13 +674,9 @@ export function AgentManagePage() {
           setBindingOpen(open)
           if (!open) setBindingError('')
         }}
-        title={boundChannels.length > 0 ? '更换绑定频道' : '绑定频道'}
-        description={
-          boundChannels.length > 0
-            ? `“${agent.name}”当前绑定“${boundChannels[0]?.name ?? ''}”；保存后将改为所选频道。`
-            : '选择频道和响应方式。'
-        }
-        confirmLabel={boundChannels.length > 0 ? '更换绑定' : '绑定频道'}
+        title="新增频道绑定"
+        description="一个智能体可以绑定多个频道；如果所选频道已绑定其他智能体，保存后该频道将改由当前智能体负责。"
+        confirmLabel="绑定频道"
         onConfirm={async () => {
           if (!bindingChannelId) {
             setBindingError('当前没有可绑定的频道。')
@@ -693,11 +689,7 @@ export function AgentManagePage() {
               channelId: bindingChannelId,
               triggerPolicy: bindingTriggerPolicy,
             })
-            notify(
-              boundChannels.length > 0 ? '频道绑定已更换。' : '频道已绑定。',
-              'success',
-              `agent-binding:${agent.id}`,
-            )
+            notify('频道已绑定。', 'success', `agent-binding:${agent.id}`)
             return true
           } catch (error) {
             notify(error instanceof Error ? error.message : String(error), 'error', `agent-binding:${agent.id}`)

@@ -187,7 +187,7 @@ class MemoryRepository implements CoreRepository {
   }
 
   replaceBinding(record: BindingRecord): BindingRecord {
-    const currentIndex = this.bindings.findIndex((binding) => binding.agentId === record.agentId)
+    const currentIndex = this.bindings.findIndex((binding) => binding.channelId === record.channelId)
     if (currentIndex >= 0) this.bindings.splice(currentIndex, 1)
     const existingIndex = this.bindings.findIndex(
       (binding) => binding.channelId === record.channelId && binding.agentId === record.agentId,
@@ -342,7 +342,7 @@ describe('CoreService', () => {
     expect(repository.events).toHaveLength(1)
   })
 
-  it('keeps only one current channel binding for an agent', () => {
+  it('allows one agent to bind multiple channels while each channel keeps one agent', () => {
     const repository = new MemoryRepository()
     let id = 0
     const core = new CoreService(repository, { now: () => 100, nextUlid: () => `ID${++id}` })
@@ -356,7 +356,22 @@ describe('CoreService', () => {
     const second = core.createChannel({ connectionId: connection.id, platformChannelId: 'second', kind: 'web' })
     core.createBinding({ channelId: first.id, agentId: agent.definition.id, triggerPolicy: 'always' })
     core.createBinding({ channelId: second.id, agentId: agent.definition.id, triggerPolicy: 'command' })
-    expect(core.listBindings(first.id)).toEqual([])
+    expect(core.listBindings(first.id)).toEqual([
+      expect.objectContaining({ agentId: agent.definition.id, triggerPolicy: 'always' }),
+    ])
+    expect(core.listBindings(second.id)).toEqual([
+      expect.objectContaining({ agentId: agent.definition.id, triggerPolicy: 'command' }),
+    ])
+
+    const replacement = core.createAgent({
+      displayName: '小新',
+      persona: '',
+      model: { provider: 'deepseek', model: 'v4' },
+    })
+    core.createBinding({ channelId: first.id, agentId: replacement.definition.id, triggerPolicy: 'observe-only' })
+    expect(core.listBindings(first.id)).toEqual([
+      expect.objectContaining({ agentId: replacement.definition.id, triggerPolicy: 'observe-only' }),
+    ])
     expect(core.listBindings(second.id)).toEqual([
       expect.objectContaining({ agentId: agent.definition.id, triggerPolicy: 'command' }),
     ])

@@ -100,7 +100,7 @@ Adapter 事件
 
 #### 并发
 
-首期每个 `(channelId, agentId)` 只有一个活动 Turn lane。多个事件可以并发入库，但 Trigger、Admission claim 和 Episode rollover 在该 lane 串行化。未来同频道多个智能体使用不同 `agentId` lane，不把 Channel 主键锁死为单智能体。
+首期每个 Channel 只有一个活动智能体 Binding，对应一个 `(channelId, agentId)` Turn lane。一个智能体可以同时拥有多个频道 lane；多个事件可以并发入库，但每条 lane 的 Trigger、Admission claim 和 Episode rollover 串行化。频道换绑不会删除旧 Binding、Episode 或消息事实。
 
 ### 3. 工具执行期间的新消息
 
@@ -227,13 +227,13 @@ Adapter 不负责：
 
 ## 未来方向检查
 
-关联方向：更多 Adapter、同频道多个智能体、长期记忆、长期 Job、多媒体消息。
+关联方向：更多 Adapter、智能体多频道、长期记忆、长期 Job、多媒体消息。
 
 保留接缝：稳定 ID、Binding 与 Channel 分离、显式 `agentId`、Episode、Admission、MessagePart、Adapter capability、逻辑消息与物理发送分离。
 
-避免锁死：不把 Channel 的事实存储等同于 DSH Session，不把一个 Channel 写成只能绑定一个智能体，不把平台差异写进 Core，也不自建与 DSH 重叠的压缩内核。
+避免锁死：不把 Channel 的事实存储等同于 DSH Session，不把智能体永久锁定到一个频道，不在换绑时删除历史，不把平台差异写进 Core，也不自建与 DSH 重叠的压缩内核。
 
-本次不做：多智能体仲裁、自动长期记忆、分布式队列、基于压缩次数的 rollover、向量记忆系统、跨节点调度。
+本次不做：跨频道短期上下文混合、自动长期记忆、分布式队列、基于压缩次数的 rollover、向量记忆系统、跨节点调度。
 
 ## 参考证据
 
