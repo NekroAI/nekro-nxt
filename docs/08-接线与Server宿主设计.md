@@ -2,7 +2,7 @@
 
 > 文档编号：08
 >
-> 状态：QQ 凭据录入、私有本地存储、生产 Runtime、Gateway 状态、真实收发诊断与重启恢复已接通；外部账号手工验收仍待用户凭据。动态 Client Runtime 尚未挂入真实浏览器入口，M6 仍未完成
+> 状态：QQ 凭据录入、私有本地存储、生产 Runtime、Gateway 状态、真实收发诊断与重启恢复已接通；动态 Client Runtime 已挂入真实浏览器入口并通过生产旅程。外部 QQ 账号手工验收和闭环 A 的连续保存/启用/重启产品验收仍待完成
 >
 > 日期：2026-08-16
 >
@@ -34,7 +34,7 @@ DSH 自带的 `apiproxy`/Typert 协议深度绑定 DSH 自己的 `SessionsApi`/`
 
 ### 2.3 单一数据入口：Web 是消费端
 
-Web 端不复制一份业务事实到 Zustand。`ProductHostPort.getSnapshot()` 返回 Server 权威投影；`subscribe()` 订阅 SSH 事实流（频道事件、智能体状态、扩展回执）；`execute(command, input)` 派发一次性操作（创建智能体、发送消息、创建连接、保存扩展等）。Zustand 只保留 UI 本地态（主题、减少动效、草稿）。
+Web 端不复制一份业务事实到 Zustand。`ProductHostPort.getSnapshot()` 返回 Server 权威投影；`subscribe()` 订阅 SSE 事实流（频道事件、智能体状态、扩展回执）；`execute(command, input)` 派发一次性操作（创建智能体、发送消息、创建连接、保存扩展等）。Zustand 只保留 UI 本地态（主题、减少动效、草稿）。
 
 ## 3. 接线形态
 
@@ -44,12 +44,15 @@ Web 端不复制一份业务事实到 Zustand。`ProductHostPort.getSnapshot()` 
 
 | 方法 | 路由 | 语义 | 状态 |
 |---|---|---|---|
-| 快照 | `GET /api/snapshot` | 返回 models/connectionAdapters/agents/channels/messages/connections/extensions/approvals 权威投影 | ✅ |
+| 快照 | `GET /api/snapshot` | 返回 models/connectionAdapters/agents/channels/connections/extensions/dynamic 权威投影；`messages` 保持空数组，历史按频道读取 | ✅ |
 | 订阅 | `GET /api/events` (SSE) | 推送频道 `channel-fact`（智能体回复）与 `status`；心跳保持 | ✅ |
 | 创建智能体 | `POST /api/agents` | createAgent + ensureChannel + createBinding（自动 Web Channel） | ✅ |
 | 发送消息 | `POST /api/channels/:id/messages` | 构造入站事件并经 acceptInbound 进入 Runtime | ✅ |
+| 频道历史 | `GET /api/channels/:id/messages` | 按 `(occurredAt, sourceId)` 游标读取频道内消息；默认最近 40 条，返回 oldest-first 与 `hasMore` | ✅ |
+| 频道资源 | `GET /api/channels/:channelId/assets/:assetId` | 校验频道访问权和 blob 状态后同源读取图片、音频或文件，不暴露宿主路径 | ✅ |
+| 频道本地名称 | `POST /api/channels/:id/display-name` | 保存仅用于 NekroNxt 展示的频道名称，不修改平台频道 ID | ✅ |
 | 创建连接 | `POST /api/connections` | 接收 `adapterKey + configuration + credentials`；按已安装 Adapter schema 校验，Host 私有存储凭据后创建对应 Runtime | ✅ |
-| 创建频道绑定 | `POST /api/bindings` | 对已发现 Channel 与指定智能体创建独立 Binding，保存触发策略；同频道允许多个智能体 Binding | ✅ |
+| 创建频道绑定 | `POST /api/bindings` | 对已发现 Channel 与指定智能体创建独立 Binding，保存触发策略；智能体可绑定多个频道，频道换绑时只保留一个活动智能体 | ✅ |
 | 启用扩展 | `POST /api/extensions/:id/activation` | AgentActivation 启用（body `{agentId, revisionId}`） | ✅ |
 | 停用扩展 | `DELETE /api/extensions/:id/activation` | 停用当前 Activation（安全间隙后完成） | ✅ |
 | 创建智能体引导跑动 | —— | —— | —— |
@@ -61,9 +64,9 @@ Web 端不复制一份业务事实到 Zustand。`ProductHostPort.getSnapshot()` 
 | 测试模型供应商 | `POST /api/llm/test-provider` | 经 DSH 发起最小真实模型请求，不返回生成内容，脱敏呈现认证、额度与限流错误 | ✅ |
 | QQ 收发测试 | `POST /api/connections/:id/test` | 接收只在真实 Gateway 入站提交后通过；发送经已发现 Channel 的 QQ HTTP Transport 返回平台 message ID | ✅ 生产装配测试通过；外部账号待手工验收 |
 | 保存动态包 | `POST /api/extensions/save-from-dynamic` | 把活动会话中的运行动态 Package 保存为本地 Extension Revision（不自动启用） | ✅ |
-| 动态审批/调用 | `POST /api/dynamic/:agentId/{approve\|decline\|invoke\|run-host-half\|get-client-code\|settle-user-run\|report-render-failure}` | 解析智能体活动会话并调用 DshHostRuntime 动态方法（审批解析、Host half 启动、Client 源码获取、Host 方法调用、用户 run 结算、渲染失败上报） | ✅ 服务端+Web `HttpDynamicClientHost`；浏览器视觉 Slot 渲染待真实浏览器 |
+| 动态审批/调用 | `POST /api/dynamic/:agentId/{inventory\|approve\|decline\|invoke\|run-host-half\|get-client-code\|settle-user-run\|report-render-failure}` | 解析智能体活动会话并调用 DshHostRuntime 动态方法（清单、审批解析、Host half 启动、Client 源码获取、Host 方法调用、用户 run 结算、渲染失败上报） | ✅ 服务端、Web Host 与生产浏览器 Slot 旅程 |
 
-`GET /api/snapshot` 现在投影：DSH 实时注册的 provider/model 目录、已安装 Adapter 的连接配置描述、全部 `Connection`（不返回 Secret 或 credential reference）、Gateway 状态、凭据是否已配置、收发测试、已绑定 Agent、频道、近期频道事实、全部已保存本地扩展（含当前 AgentActivation 状态）、各智能体活动会话中运行的动态 Package。
+`GET /api/snapshot` 现在投影：DSH 实时注册的 provider/model 目录和 `idle/running` 状态、已安装 Adapter 的连接配置描述、全部 `Connection`（不返回 Secret 或 credential reference）、Gateway 状态、凭据是否已配置、收发测试、已绑定智能体、频道、全部已保存本地扩展（含当前 AgentActivation 状态）、各智能体活动会话中运行的动态 Package。它不再附带每个频道的近期消息，避免进入任意页面都扫描全部历史；发送者、Mention、资源和回执由频道历史端点按需投影。成员与平台内部 ID 只用于关联，不作为 UI 文案。
 
 ### 3.2 Web 侧
 
@@ -72,16 +75,18 @@ Web 端不复制一份业务事实到 Zustand。`ProductHostPort.getSnapshot()` 
 - 创建智能体的模型选择器来自快照中的 DSH 实时目录，并把确切 `{provider, model}` 写入不可变 AgentRevision；Server 未注册模型时明确阻止创建，不再硬编码显示文案或伪造模型 ID。
 - 添加连接先从 Server 投影的 `connectionAdapters` 选择用户可创建的平台，再按 Adapter 的版本化 JSON Schema 子集渲染通用表单；`credential-reference` 字段经独立只写对象提交。系统托管的本地 Web 不出现在创建目录，也不显示 QQ 账号字段或收发测试。
 - 智能体频道页从全量 Connection Channel 投影选择频道和触发策略，经 `bindings.create` 创建真实 Binding。外部 Connection 尚未收到消息、因此没有发现 Channel 时明确提示先发送一条平台消息，不再保留空按钮。
+- 消息页按智能体分组频道；每个频道首次进入才读取最近一页，滚到顶部按游标加载更早消息，prepend 后补偿滚动高度并记忆频道位置。图片、音频和文件只使用频道受控资源 URL，图片由浏览器懒加载。
+- QQ 群名称只消费平台事件可选的 `group_name/group_nick/group_title`；QQ 事件仅提供 `group_openid` 时不伪造名称，允许用户保存本地频道名称，稳定 `platformChannelId` 不变。
 - QQ 当前贡献 App ID、Client Secret、主动发送和平台限制字段；Secret 提交成功后立即从浏览器表单清除，快照只显示“已配置”。Gateway 状态、最后错误、已知频道数和收发测试来自 Server 权威投影。
 - 创建连接与收发测试等待真实 HTTP 结果；失败时保留创建弹窗或在诊断区展示 Server 错误，不会静默清空 Secret 或把失败表现为成功。
 - 发送测试不会任意选择群聊；发现一个频道时可直接使用，发现多个频道时必须由用户明确选择目标。
 - `product-store` 的 `createAgent`/`sendMessage`/`createConnection`/`setExtensionActive`/`resolveApproval` 在有活动 Host 时委托 `execute`，无 Host 保留 demo 数据（现有 UI 测试不破）。
-- 创造工作台（Creator 页）改读快照投影的真实 `dynamic`（运行动态 Package + 审批请求），`resolveApproval` 经 `dynamic.approve/decline` 派发真实审批；`HttpDynamicClientHost` 实现 `DynamicClientHostPort` 驱动浏览器动态 Client 回路。
+- 创造工作台（Creator 页）改读快照投影的真实 `dynamic`（运行动态 Package + 审批请求），`resolveApproval` 经产品级 DSH Client Coordinator 派发真实审批；Coordinator 安装官方 React Slot Renderer，以一个页面级 ModuleLoader 按当前选中智能体切换清单，避免跨会话短插件 ID 冲突，并在状态变化或离开页面时 retract。`HttpDynamicClientHost` 实现 `DynamicClientHostPort` 驱动浏览器动态 Client 回路。
 - `main.tsx` 启动 `ProductHostCoordinator(new HttpProductHost())`；Vite `dev` 把 `/api` proxy 到 4960（`NEKRO_API_PROXY` 可覆盖）。
 
 ### 3.3 Server 可执行入口
 
-- `apps/server/src/bootstrap.ts` 抽成可复用 `NekroRuntime` 装配；`src/main.ts` + `dev`/`start` 脚本；`NEKRO_DATA`/`NEKRO_PORT`（默认 4960）/`NEKRO_DIST_INDEX` 环境变量；启动时创建数据目录。
+- `apps/server/src/bootstrap.ts` 抽成可复用 `NekroRuntime` 装配；`src/main.ts` + `dev`/`start` 脚本；`NEKRO_DATA`/`NEKRO_PORT`（默认 4960）/`NEKRO_DIST_INDEX` 环境变量；启动时创建数据目录。智能体开发工作区零配置落在 `<dataRoot>/workspaces/<agentId>/`，开启开发 Shell 或文件能力后自动创建；`NEKRO_DEVELOPMENT_WORKSPACE_ROOT` 仅作为高级宿主覆盖，仍保留智能体子目录隔离。
 - Server 始终以休眠姿态挂载 DSH `dsh-llm-pi-ai`，Web 设置页通过 DSH settings/credentials 激活 provider；端点、协议、模型 catalog、推理档位和凭据引用由锁定的 DSH 版本拥有，NekroNxt 不复制第二份供应商实现。`NEKRO_LLM_PROVIDERS` 仅保留为无页面部署的可选组合层。
 - `NekroRuntime` 复用持久 Web Connection，恢复 Extension save/Activation，并按持久 QQ Connection 的凭据引用重建 HTTP、Gateway、checkpoint 和 Adapter 注册；凭据目录位于主要数据目录下。
 - `dsh-host-webserver`、`dsh-host-frontend-static` 提升为 `apps/server` dependencies，静态 dist 由 fallback 席位同源托管。

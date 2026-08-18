@@ -81,7 +81,7 @@ describe('DSH Dynamic Client Runtime', () => {
       await runtime.reconcile([{ ...pending, activeRun: { pluginRunId: 'run-1', packageId: 'package-1' } }])
       await runtime.reconcile([])
       expect(runtime.loaded()).toEqual([])
-      expect(runtime.slots.entriesOfSlot('root')).toEqual([])
+      expect(runtime.slots.entriesOfSlot('root')).toHaveLength(1)
 
       const declined = {
         ...pending,

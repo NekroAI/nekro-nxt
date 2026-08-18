@@ -1,9 +1,10 @@
 import { Plus, RefreshCw } from 'lucide-react'
 import { useEffect, useMemo, useState, type FormEvent } from 'react'
-import { EmptyState, InlineFeedback } from './components/product-feedback.js'
+import { notify } from './components/notifications.js'
+import { EmptyState } from './components/product-feedback.js'
 import { useProductStore } from './product-store.js'
 import { providerDisplayName } from './provider-labels.js'
-import { Button, Field, Input, SelectField, StatusBadge, Textarea } from './ui-kit/index.js'
+import { Button, Dialog, Field, Input, SelectField, StatusBadge, Textarea } from './ui-kit/index.js'
 import styles from './llm-settings.module.css'
 
 interface ProviderModelView {
@@ -62,6 +63,8 @@ export function LlmProviderSettings(): React.ReactNode {
   const [settings, setSettings] = useState<ProviderSettingsView | null>(null)
   const [selectedId, setSelectedId] = useState('')
   const [customMode, setCustomMode] = useState(false)
+  const [addOpen, setAddOpen] = useState(false)
+  const [addCandidate, setAddCandidate] = useState('')
   const [displayName, setDisplayName] = useState('')
   const [baseURL, setBaseURL] = useState('')
   const [api, setApi] = useState('')
@@ -70,7 +73,6 @@ export function LlmProviderSettings(): React.ReactNode {
   const [discovered, setDiscovered] = useState<readonly ProviderModelView[]>([])
   const [pending, setPending] = useState<'load' | 'save' | 'discover' | 'test' | null>('load')
   const [error, setError] = useState('')
-  const [note, setNote] = useState('')
   const [submitted, setSubmitted] = useState(false)
 
   const selected = useMemo(
@@ -78,6 +80,8 @@ export function LlmProviderSettings(): React.ReactNode {
     [selectedId, settings],
   )
   const selectedDisplayName = selected ? providerDisplayName(selected.provider, selected.displayName) : undefined
+  const configuredProviders = settings?.providers.filter((provider) => provider.configured) ?? []
+  const availableProviders = settings?.providers.filter((provider) => !provider.configured) ?? []
   const customEditor = customMode || selected?.declared === true
   const providerId = customMode
     ? settings
@@ -94,17 +98,18 @@ export function LlmProviderSettings(): React.ReactNode {
     if (pending === 'load' && settings) return
     setPending('load')
     setError('')
-    setNote('')
     try {
       const next = await requestJson<ProviderSettingsView>('/api/llm/providers')
       setSettings(next)
       setSelectedId((current) =>
-        next.providers.some((provider) => provider.provider === current)
+        next.providers.some((provider) => provider.provider === current && provider.configured)
           ? current
-          : (next.providers.find((provider) => provider.configured)?.provider ?? next.providers[0]?.provider ?? ''),
+          : (next.providers.find((provider) => provider.configured)?.provider ?? ''),
       )
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : String(cause))
+      const message = cause instanceof Error ? cause.message : String(cause)
+      setError(message)
+      if (settings) notify(`模型供应商刷新失败：${message}`, 'error', 'llm-provider-refresh')
     } finally {
       setPending(null)
     }
@@ -135,7 +140,6 @@ export function LlmProviderSettings(): React.ReactNode {
     setApiKey('')
     setDiscovered([])
     setError('')
-    setNote('')
     setSubmitted(false)
   }
 
@@ -143,7 +147,6 @@ export function LlmProviderSettings(): React.ReactNode {
     setCustomMode(false)
     setSelectedId(provider.provider)
     setError('')
-    setNote('')
     setSubmitted(false)
   }
 
@@ -151,7 +154,6 @@ export function LlmProviderSettings(): React.ReactNode {
     if (!providerId || pending) return
     setPending('discover')
     setError('')
-    setNote('')
     try {
       const result = await requestJson<{ readonly models: readonly ProviderModelView[] }>('/api/llm/discover-models', {
         method: 'POST',
@@ -166,9 +168,9 @@ export function LlmProviderSettings(): React.ReactNode {
       })
       setDiscovered(result.models)
       if (customEditor && result.models.length > 0) setModels(modelLines(result.models))
-      setNote(`已找到 ${result.models.length} 个可用模型。`)
+      notify(`已找到 ${result.models.length} 个可用模型。`, 'success', `llm-provider-discover:${providerId}`)
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : String(cause))
+      notify(cause instanceof Error ? cause.message : String(cause), 'error', `llm-provider-discover:${providerId}`)
     } finally {
       setPending(null)
     }
@@ -190,7 +192,6 @@ export function LlmProviderSettings(): React.ReactNode {
     if (revision === undefined || pending) return
     setPending('save')
     setError('')
-    setNote('')
     try {
       const next = await requestJson<ProviderSettingsView>(`/api/llm/providers/${encodeURIComponent(providerId)}`, {
         method: 'POST',
@@ -209,14 +210,16 @@ export function LlmProviderSettings(): React.ReactNode {
       setSubmitted(false)
       try {
         await useProductStore.getState().refreshHost()
-        setNote('供应商配置已保存。API 密钥只写入本机凭据存储。')
+        notify('供应商配置已保存。API 密钥只写入本机凭据存储。', 'success', `llm-provider-save:${providerId}`)
       } catch (refreshError) {
-        setError(
+        notify(
           `配置已保存，但页面数据刷新失败：${refreshError instanceof Error ? refreshError.message : String(refreshError)}`,
+          'warning',
+          `llm-provider-save:${providerId}`,
         )
       }
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : String(cause))
+      notify(cause instanceof Error ? cause.message : String(cause), 'error', `llm-provider-save:${providerId}`)
     } finally {
       setPending(null)
     }
@@ -227,16 +230,15 @@ export function LlmProviderSettings(): React.ReactNode {
     if (!selected?.active || !model || pending) return
     setPending('test')
     setError('')
-    setNote('')
     try {
       await requestJson('/api/llm/test-provider', {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify({ provider: selected.provider, model: model.id }),
       })
-      setNote(`连接测试通过，可使用 ${model.name}。`)
+      notify(`连接测试通过，可使用 ${model.name}。`, 'success', `llm-provider-test:${selected.provider}`)
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : String(cause))
+      notify(cause instanceof Error ? cause.message : String(cause), 'error', `llm-provider-test:${selected.provider}`)
     } finally {
       setPending(null)
     }
@@ -289,8 +291,8 @@ export function LlmProviderSettings(): React.ReactNode {
 
       <div className={styles.layout}>
         <aside className={styles.providerList} aria-label="供应商列表">
-          {settings.providers.length === 0 ? <div className={styles.listEmpty}>还没有供应商</div> : null}
-          {settings.providers.map((provider) => (
+          {configuredProviders.length === 0 ? <div className={styles.listEmpty}>还没有已配置的供应商</div> : null}
+          {configuredProviders.map((provider) => (
             <Button
               className={[
                 styles.providerButton,
@@ -306,138 +308,200 @@ export function LlmProviderSettings(): React.ReactNode {
                 <strong>{providerDisplayName(provider.provider, provider.displayName)}</strong>
                 <small>{provider.models.length} 个模型</small>
               </span>
-              <StatusBadge tone={provider.configured ? (provider.active ? 'success' : 'warning') : 'neutral'}>
-                {provider.configured ? (provider.active ? '可用' : '待启用') : '未配置'}
+              <StatusBadge tone={provider.active ? 'success' : 'warning'}>
+                {provider.active ? '可用' : '待启用'}
               </StatusBadge>
             </Button>
           ))}
-          <Button className={styles.addProvider} onClick={enterCustomMode}>
-            <Plus size={14} aria-hidden="true" /> 添加自定义供应商
+          <Button
+            className={styles.addProvider}
+            onClick={() => {
+              setAddCandidate(availableProviders[0]?.provider ?? '__custom__')
+              setAddOpen(true)
+            }}
+          >
+            <Plus size={14} aria-hidden="true" /> 添加供应商
           </Button>
         </aside>
 
-        <form className={styles.editor} onSubmit={(event) => void save(event)}>
-          <div className={styles.editorHeading}>
-            <div>
-              <h3>{customMode ? '自定义供应商' : (selectedDisplayName ?? '选择供应商')}</h3>
-              {selected ? <p>{selected.credential?.configured ? 'API 密钥已保存' : '尚未保存 API 密钥'}</p> : null}
-            </div>
-            {selected ? (
-              <StatusBadge tone={selected.active ? 'success' : selected.configured ? 'warning' : 'neutral'}>
-                {selected.active ? '可用' : selected.configured ? '待启用' : '未配置'}
-              </StatusBadge>
-            ) : null}
-          </div>
-
-          {customEditor ? (
-            <Field label="供应商名称" error={displayNameError}>
-              <Input value={displayName} onChange={(event) => setDisplayName(event.target.value)} />
-            </Field>
-          ) : null}
-          <Field
-            label="API 密钥"
-            hint={
-              selected?.credential?.configured
-                ? '留空会保留当前密钥。页面不会读取或回显已保存的密钥。'
-                : '保存后不会在页面中回显。'
-            }
-          >
-            <Input
-              type="password"
-              autoComplete="new-password"
-              value={apiKey}
-              onChange={(event) => setApiKey(event.target.value)}
-            />
-          </Field>
-
-          {selected?.models.length ? (
-            <div className={styles.modelSection}>
-              <div className={styles.fieldLabel}>可用模型</div>
-              <div className={styles.modelList}>
-                {selected.models.map((model) => (
-                  <span key={model.id}>{model.name}</span>
-                ))}
+        {selected || customMode ? (
+          <form className={styles.editor} onSubmit={(event) => void save(event)}>
+            <div className={styles.editorHeading}>
+              <div>
+                <h3>{customMode ? '自定义供应商' : (selectedDisplayName ?? '选择供应商')}</h3>
+                {selected ? <p>{selected.credential?.configured ? 'API 密钥已保存' : '尚未保存 API 密钥'}</p> : null}
               </div>
+              {selected ? (
+                <StatusBadge tone={selected.active ? 'success' : selected.configured ? 'warning' : 'neutral'}>
+                  {selected.active ? '可用' : selected.configured ? '待启用' : '未配置'}
+                </StatusBadge>
+              ) : null}
             </div>
-          ) : null}
-          {discovered.length > 0 && !customEditor ? (
-            <div className={styles.modelSection}>
-              <div className={styles.fieldLabel}>刚刚获取</div>
-              <div className={styles.modelList}>
-                {discovered.map((model) => (
-                  <span key={model.id}>{model.name || '未命名模型'}</span>
-                ))}
-              </div>
-            </div>
-          ) : null}
 
-          <details className={styles.advanced} open={customMode}>
-            <summary>高级设置</summary>
-            <div className={styles.advancedFields}>
-              <Field
-                label="API 地址"
-                hint={!customEditor ? '留空使用供应商默认地址。' : undefined}
-                error={baseUrlError}
-              >
-                <Input
-                  value={baseURL}
-                  onChange={(event) => setBaseURL(event.target.value)}
-                  placeholder="https://…/v1"
-                />
+            {customEditor ? (
+              <Field label="供应商名称" error={displayNameError}>
+                <Input value={displayName} onChange={(event) => setDisplayName(event.target.value)} />
               </Field>
-              {customEditor ? (
-                <SelectField
-                  label="API 协议"
-                  value={api}
-                  onValueChange={setApi}
-                  options={settings.protocols.map((protocol) => ({ value: protocol, label: protocol }))}
-                  error={apiError}
-                />
-              ) : null}
-              {customEditor ? (
-                <Field label="模型" hint="每行一个模型名；也可以先获取可用模型。" error={modelsError}>
-                  <Textarea value={models} onChange={(event) => setModels(event.target.value)} />
-                </Field>
-              ) : null}
-            </div>
-          </details>
-
-          {error ? <InlineFeedback tone="error">{error}</InlineFeedback> : null}
-          {note ? <InlineFeedback tone="success">{note}</InlineFeedback> : null}
-
-          <div className={styles.actions}>
-            <div className={styles.secondaryActions}>
-              <Button
-                type="button"
-                onClick={() => void discover()}
-                loading={pending === 'discover'}
-                loadingLabel="获取中…"
-                disabled={!providerId || pending !== null}
-              >
-                获取可用模型
-              </Button>
-              <Button
-                type="button"
-                onClick={() => void testConnection()}
-                loading={pending === 'test'}
-                loadingLabel="测试中…"
-                disabled={!selected?.active || selected.models.length === 0 || pending !== null || customMode}
-              >
-                测试连接
-              </Button>
-            </div>
-            <Button
-              type="submit"
-              variant="primary"
-              loading={pending === 'save'}
-              loadingLabel="保存中…"
-              disabled={!canSave || pending !== null}
+            ) : null}
+            <Field
+              label="API 密钥"
+              hint={
+                selected?.credential?.configured
+                  ? '留空会保留当前密钥。页面不会读取或回显已保存的密钥。'
+                  : '保存后不会在页面中回显。'
+              }
             >
-              保存供应商
-            </Button>
+              <Input
+                type="password"
+                autoComplete="new-password"
+                value={apiKey}
+                onChange={(event) => setApiKey(event.target.value)}
+              />
+            </Field>
+
+            {selected?.models.length ? (
+              <div className={styles.modelSection}>
+                <div className={styles.fieldLabel}>可用模型</div>
+                <div className={styles.modelList}>
+                  {selected.models.map((model) => (
+                    <span key={model.id}>{model.name}</span>
+                  ))}
+                </div>
+              </div>
+            ) : null}
+            {discovered.length > 0 && !customEditor ? (
+              <div className={styles.modelSection}>
+                <div className={styles.fieldLabel}>刚刚获取</div>
+                <div className={styles.modelList}>
+                  {discovered.map((model) => (
+                    <span key={model.id}>{model.name || '未命名模型'}</span>
+                  ))}
+                </div>
+              </div>
+            ) : null}
+
+            <details className={styles.advanced} open={customMode}>
+              <summary>高级设置</summary>
+              <div className={styles.advancedFields}>
+                <Field
+                  label="API 地址"
+                  hint={!customEditor ? '留空使用供应商默认地址。' : undefined}
+                  error={baseUrlError}
+                >
+                  <Input
+                    value={baseURL}
+                    onChange={(event) => setBaseURL(event.target.value)}
+                    placeholder="https://…/v1"
+                  />
+                </Field>
+                {customEditor ? (
+                  <SelectField
+                    label="API 协议"
+                    value={api}
+                    onValueChange={setApi}
+                    options={settings.protocols.map((protocol) => ({ value: protocol, label: protocol }))}
+                    error={apiError}
+                  />
+                ) : null}
+                {customEditor ? (
+                  <Field label="模型" hint="每行一个模型名；也可以先获取可用模型。" error={modelsError}>
+                    <Textarea value={models} onChange={(event) => setModels(event.target.value)} />
+                  </Field>
+                ) : null}
+              </div>
+            </details>
+
+            <div className={styles.actions}>
+              <div className={styles.secondaryActions}>
+                <Button
+                  type="button"
+                  onClick={() => void discover()}
+                  loading={pending === 'discover'}
+                  loadingLabel="获取中…"
+                  disabled={!providerId || pending !== null}
+                >
+                  获取可用模型
+                </Button>
+                <Button
+                  type="button"
+                  onClick={() => void testConnection()}
+                  loading={pending === 'test'}
+                  loadingLabel="测试中…"
+                  disabled={!selected?.active || selected.models.length === 0 || pending !== null || customMode}
+                >
+                  测试连接
+                </Button>
+              </div>
+              <Button
+                type="submit"
+                variant="primary"
+                loading={pending === 'save'}
+                loadingLabel="保存中…"
+                disabled={!canSave || pending !== null}
+              >
+                保存供应商
+              </Button>
+            </div>
+          </form>
+        ) : (
+          <div className={styles.editor}>
+            <EmptyState
+              title="还没有已配置的供应商"
+              description="从当前运行环境的供应商目录中选择一项并保存配置。"
+              action={
+                <Button
+                  onClick={() => {
+                    setAddCandidate(availableProviders[0]?.provider ?? '__custom__')
+                    setAddOpen(true)
+                  }}
+                >
+                  添加供应商
+                </Button>
+              }
+            />
           </div>
-        </form>
+        )}
       </div>
+
+      <Dialog
+        open={addOpen}
+        onOpenChange={setAddOpen}
+        title="添加模型供应商"
+        description="候选项来自当前运行环境的可配置供应商目录。"
+        footer={
+          <>
+            <Button variant="ghost" onClick={() => setAddOpen(false)}>
+              取消
+            </Button>
+            <Button
+              variant="primary"
+              onClick={() => {
+                setAddOpen(false)
+                if (addCandidate === '__custom__') enterCustomMode()
+                else {
+                  const provider = settings.providers.find((candidate) => candidate.provider === addCandidate)
+                  if (provider) selectProvider(provider)
+                }
+              }}
+            >
+              开始配置
+            </Button>
+          </>
+        }
+      >
+        <SelectField
+          label="模型供应商"
+          value={addCandidate}
+          onValueChange={setAddCandidate}
+          options={[
+            ...availableProviders.map((provider) => ({
+              value: provider.provider,
+              label: providerDisplayName(provider.provider, provider.displayName),
+            })),
+            { value: '__custom__', label: '自定义 OpenAI 兼容供应商' },
+          ]}
+        />
+      </Dialog>
     </div>
   )
 }

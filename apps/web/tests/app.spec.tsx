@@ -392,6 +392,22 @@ describe.sequential('NekroNxt browser projections', () => {
     await page.route('**/api/events', (request) =>
       request.fulfill({ status: 200, contentType: 'text/event-stream', body: '' }),
     )
+    await page.route('**/api/channels/*/messages?*', (request) => {
+      const channelId = new URL(request.request().url()).pathname.split('/')[3]
+      const source = snapshot as { readonly messages?: readonly unknown[] }
+      const messages = (source.messages ?? []).filter(
+        (message) =>
+          typeof message === 'object' && message !== null && 'channelId' in message && message.channelId === channelId,
+      )
+      return request.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({ messages, hasMore: false }),
+      })
+    })
+    await page.route('**/api/dynamic/*/inventory', (request) =>
+      request.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ rows: [] }) }),
+    )
     try {
       await page.goto(`${baseUrl}${route}`)
       await page.locator('#root').waitFor({ state: 'visible' })
@@ -411,8 +427,8 @@ describe.sequential('NekroNxt browser projections', () => {
     })
 
     await withProductPage('/extensions', async (page) => {
-      await playwrightExpect(page.getByText('文档复核', { exact: true })).toBeVisible()
-      await playwrightExpect(page.getByText('已启用', { exact: true })).toBeVisible()
+      await playwrightExpect(page.getByRole('button', { name: /文档复核/u })).toBeVisible()
+      await playwrightExpect(page.getByText('已启用', { exact: true }).first()).toBeVisible()
       await playwrightExpect(page.locator('body')).not.toContainText('extension-revision-internal-id')
       await playwrightExpect(page.locator('body')).not.toContainText('Revision')
     })
@@ -446,8 +462,8 @@ describe.sequential('NekroNxt browser projections', () => {
 
   it('shows real dynamic state without displaying package or approval identifiers', async () => {
     await withProductPage('/creator', async (page) => {
-      await playwrightExpect(page.getByText('等待确认', { exact: true })).toBeVisible()
-      await playwrightExpect(page.getByText('资料员的临时扩展', { exact: true })).toBeVisible()
+      await playwrightExpect(page.getByRole('button', { name: /资料员的临时扩展/u })).toBeVisible()
+      await playwrightExpect(page.getByText('等待确认', { exact: true }).first()).toBeVisible()
       await playwrightExpect(page.locator('body')).not.toContainText('technical-plugin-id')
       await playwrightExpect(page.locator('body')).not.toContainText('technical-package-id')
       await playwrightExpect(page.locator('body')).not.toContainText('approval-internal-id')

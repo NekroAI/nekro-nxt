@@ -1,0 +1,66 @@
+.viewport {
+  position: fixed;
+  z-index: var(--nxt-layer-notification);
+  top: var(--nxt-space-4);
+  left: 50%;
+  display: grid;
+  width: min(520px, calc(100vw - var(--nxt-space-8)));
+  gap: var(--nxt-space-2);
+  pointer-events: none;
+  transform: translateX(-50%);
+}
+
+.notification {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: var(--nxt-space-2);
+  min-height: 42px;
+  border: 1px solid var(--nxt-border-default);
+  border-radius: var(--nxt-radius-popover);
+  padding: 8px 8px 8px 12px;
+  color: var(--nxt-text-primary);
+  background: var(--nxt-bg-elevated);
+  box-shadow: var(--nxt-shadow-popover);
+  font-size: 12px;
+  line-height: 18px;
+  pointer-events: auto;
+  animation: notificationIn var(--nxt-motion-standard) var(--nxt-ease-enter);
+}
+
+.notification > svg {
+  color: var(--nxt-accent);
+}
+.notification.success > svg {
+  color: var(--nxt-success);
+}
+.notification.warning > svg {
+  color: var(--nxt-warning);
+}
+.notification.error > svg {
+  color: var(--nxt-danger);
+}
+
+.closeButton {
+  width: 28px;
+  min-width: 28px;
+  height: 28px;
+  min-height: 28px;
+}
+
+@keyframes notificationIn {
+  from {
+    opacity: 0;
+    transform: translateY(-8px) scale(0.985);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .notification {
+    animation: none;
+  }
+}
+
+:global([data-reduced-motion='true']) .notification {
+  animation: none;
+}

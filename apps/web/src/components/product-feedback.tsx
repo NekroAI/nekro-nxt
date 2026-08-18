@@ -2,6 +2,7 @@ import { AlertCircle, Inbox, LoaderCircle, RefreshCw, WifiOff } from 'lucide-rea
 import { useState, type ReactNode } from 'react'
 import { useProductStore } from '../product-store.js'
 import { Button } from '../ui-kit/index.js'
+import { notify } from './notifications.js'
 import styles from './product-feedback.module.css'
 
 export async function runHostRefresh(
@@ -85,10 +86,15 @@ export function EmptyState({
 export function HostNotice() {
   const host = useProductStore((state) => state.host)
   const [pending, setPending] = useState(false)
-  const [refreshError, setRefreshError] = useState('')
   const reconnect = async (): Promise<void> => {
     if (pending) return
-    await runHostRefresh(() => useProductStore.getState().refreshHost(), setPending, setRefreshError)
+    await runHostRefresh(
+      () => useProductStore.getState().refreshHost(),
+      setPending,
+      (message) => {
+        if (message) notify(`重新连接失败：${message}`, 'error', 'host-reconnect')
+      },
+    )
   }
 
   if (host.status === 'ready') return null
@@ -105,13 +111,7 @@ export function HostNotice() {
   return (
     <div className={[styles.hostNotice, stale ? styles.hostStale : styles.hostError].join(' ')} role="alert">
       <WifiOff size={15} aria-hidden="true" />
-      <span>
-        {refreshError
-          ? `重新连接失败：${refreshError}`
-          : stale
-            ? '连接不稳定，当前仍显示最近一次同步的数据。'
-            : '无法连接，当前内容可能为空或不是最新状态。'}
-      </span>
+      <span>{stale ? '连接不稳定，当前仍显示最近一次同步的数据。' : '无法连接，当前内容可能为空或不是最新状态。'}</span>
       <Button size="small" variant="ghost" loading={pending} loadingLabel="连接中…" onClick={() => void reconnect()}>
         <RefreshCw size={14} aria-hidden="true" /> 重新连接
       </Button>

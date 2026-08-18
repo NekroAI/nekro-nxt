@@ -50,12 +50,35 @@ const deliveryStateToUi = (state: string | undefined): DeliveryState | undefined
 const formatTime = (occurredAt: number): string =>
   new Date(occurredAt).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })
 
-const partsToBody = (parts: readonly { type: string; text?: string; memberId?: string }[]): string =>
-  parts
-    .map((part) =>
-      part.type === 'text' ? (part.text ?? '') : part.type === 'mention' ? `@${part.memberId ?? ''}` : '',
-    )
-    .join('')
+const visibleText = (text: string): string =>
+  text
+    .replaceAll('[QQ 消息不包含可处理内容]', '该 QQ 消息包含暂不支持显示的内容。')
+    .replace(/<faceType=\d+,faceId="[^"]*",ext="[^"]*">/gu, '[QQ 表情]')
+
+export const renderConversationBody = (
+  parts: readonly {
+    type: string
+    text?: string
+    memberId?: string
+    displayName?: string
+    assetId?: string
+    alt?: string
+    name?: string
+  }[],
+  mentionedConnectionAccount = false,
+): string =>
+  [
+    ...(mentionedConnectionAccount ? ['@机器人账号'] : []),
+    ...parts.map((part) => {
+      if (part.type === 'text') return visibleText(part.text ?? '')
+      if (part.type === 'mention') return `@${nonEmptyLabel(part.displayName, '群成员')}`
+      if (part.type === 'image' || part.type === 'file' || part.type === 'audio') return ''
+      if (part.type === 'quote') return '[引用消息]'
+      return '[暂不支持显示的消息内容]'
+    }),
+  ]
+    .filter((token) => token.trim().length > 0)
+    .join(' ')
 
 const emptySnapshot = (): ProductSnapshot => ({
   host: { status: 'initializing', error: null, lastSuccessfulAt: null },
@@ -76,6 +99,7 @@ interface SnapshotAgentJson {
   readonly displayName: string
   readonly persona?: string
   readonly currentRevisionId?: string
+  readonly runtimeStatus?: 'idle' | 'running'
   readonly model: { readonly provider: string; readonly model: string; readonly reasoningEffort?: string }
   readonly capabilities: {
     readonly dynamicCreation: boolean
@@ -111,7 +135,17 @@ interface SnapshotMessageJson {
   readonly id: string
   readonly channelId: string
   readonly role: 'member' | 'agent'
-  readonly parts: readonly { type: string; text?: string; memberId?: string }[]
+  readonly parts: readonly {
+    type: string
+    text?: string
+    memberId?: string
+    displayName?: string
+    assetId?: string
+    alt?: string
+    name?: string
+  }[]
+  readonly sender?: { readonly memberId: string; readonly displayName?: string }
+  readonly mentionedConnectionAccount?: boolean
   readonly occurredAt: number
   readonly deliveryState?: string
 }
@@ -197,6 +231,7 @@ const isSnapshotJson = (value: unknown): value is SnapshotJson => {
       hasString(item, 'displayName') &&
       hasOptionalString(item, 'persona') &&
       hasOptionalString(item, 'currentRevisionId') &&
+      (item.runtimeStatus === undefined || item.runtimeStatus === 'idle' || item.runtimeStatus === 'running') &&
       isRecord(item.model) &&
       hasString(item.model, 'provider') &&
       hasString(item.model, 'model') &&
@@ -214,7 +249,7 @@ const isSnapshotJson = (value: unknown): value is SnapshotJson => {
       hasString(item, 'id') &&
       hasString(item, 'connectionId') &&
       hasString(item, 'platformChannelId') &&
-      (item.kind === 'web' || item.kind === 'group') &&
+      (item.kind === 'web' || item.kind === 'group' || item.kind === 'direct') &&
       hasOptionalString(item, 'displayName') &&
       hasOptionalString(item, 'boundAgentId') &&
       Array.isArray(item.bindings) &&
@@ -237,13 +272,22 @@ const isSnapshotJson = (value: unknown): value is SnapshotJson => {
       typeof item.occurredAt === 'number' &&
       Number.isFinite(item.occurredAt) &&
       hasOptionalString(item, 'deliveryState') &&
+      (item.sender === undefined ||
+        (isRecord(item.sender) &&
+          hasString(item.sender, 'memberId') &&
+          hasOptionalString(item.sender, 'displayName'))) &&
+      hasOptionalBoolean(item, 'mentionedConnectionAccount') &&
       Array.isArray(item.parts) &&
       item.parts.every(
         (part) =>
           isRecord(part) &&
           hasString(part, 'type') &&
           hasOptionalString(part, 'text') &&
-          hasOptionalString(part, 'memberId'),
+          hasOptionalString(part, 'memberId') &&
+          hasOptionalString(part, 'displayName') &&
+          hasOptionalString(part, 'assetId') &&
+          hasOptionalString(part, 'alt') &&
+          hasOptionalString(part, 'name'),
       ),
   )
   const connectionsValid = (value.connections as unknown[]).every(
@@ -311,9 +355,51 @@ const isSnapshotJson = (value: unknown): value is SnapshotJson => {
 
 const nonEmptyLabel = (value: string | undefined, fallback: string): string => value?.trim() || fallback
 
-const qqGroupLabel = (platformChannelId: string): string => {
+const qqChannelLabel = (platformChannelId: string, kind: 'group' | 'direct' = 'group'): string => {
   const suffix = platformChannelId.trim().match(/([\p{L}\p{N}]{4})$/u)?.[1]
-  return suffix ? `QQ 群聊（尾号 ${suffix}）` : '未命名 QQ 群聊'
+  const type = kind === 'group' ? '群聊' : '私聊'
+  return suffix ? `QQ ${type}（尾号 ${suffix}）` : `未命名 QQ ${type}`
+}
+
+const projectConversationMessage = (
+  message: SnapshotMessageJson,
+  channels: readonly ChannelSummary[],
+  agents: readonly AgentSummary[],
+): ConversationMessage => {
+  const delivery = deliveryStateToUi(message.deliveryState)
+  const sourceChannel = channels.find((channel) => channel.id === message.channelId)
+  const sourceAgent = agents.find((agent) => agent.id === sourceChannel?.agentId)
+  const resources = message.parts.flatMap((part) => {
+    if (!part.assetId || !['image', 'file', 'audio'].includes(part.type)) return []
+    const kind = part.type as 'image' | 'file' | 'audio'
+    const fallback = kind === 'image' ? '图片' : kind === 'audio' ? '语音' : '文件'
+    return [
+      {
+        assetId: part.assetId,
+        kind,
+        name: nonEmptyLabel(part.name ?? part.alt, fallback),
+        url: `/api/channels/${encodeURIComponent(message.channelId)}/assets/${encodeURIComponent(part.assetId)}`,
+      },
+    ]
+  })
+  return {
+    id: message.id,
+    channelId: message.channelId,
+    role: message.role === 'agent' ? 'agent' : 'member',
+    author:
+      message.role === 'agent'
+        ? (sourceAgent?.name ?? '智能体')
+        : message.sender !== undefined
+          ? nonEmptyLabel(message.sender.displayName, '群成员')
+          : sourceChannel?.kind === 'web'
+            ? '你'
+            : '群成员',
+    body: renderConversationBody(message.parts, message.mentionedConnectionAccount),
+    time: formatTime(message.occurredAt),
+    occurredAt: message.occurredAt,
+    resources,
+    ...(delivery === undefined ? {} : { delivery }),
+  }
 }
 
 /**
@@ -329,18 +415,11 @@ const projectSnapshot = (json: SnapshotJson, successfulAt: number): ProductSnaps
     name: nonEmptyLabel(model.name, '未命名模型'),
     ...(model.description === undefined ? {} : { description: model.description }),
   }))
-  const agentNameByChannel = new Map<string, string>()
-  for (const channel of json.channels) {
-    if (channel.boundAgentId !== undefined) {
-      const agent = json.agents.find((candidate) => candidate.id === channel.boundAgentId)
-      if (agent) agentNameByChannel.set(channel.id, nonEmptyLabel(agent.displayName, '未命名智能体'))
-    }
-  }
   const agents: AgentSummary[] = json.agents.map((agent) => ({
     id: agent.id,
     name: nonEmptyLabel(agent.displayName, '未命名智能体'),
     description: '',
-    state: '空闲',
+    state: agent.runtimeStatus === 'running' ? '思考中' : '空闲',
     model:
       models.find((model) => model.provider === agent.model.provider && model.id === agent.model.model)?.name ??
       '未命名模型',
@@ -348,7 +427,7 @@ const projectSnapshot = (json: SnapshotJson, successfulAt: number): ProductSnaps
     persona: agent.persona ?? '',
     ...(agent.currentRevisionId === undefined ? {} : { currentRevisionId: agent.currentRevisionId }),
     channels: [...agent.channels],
-    extensionCount: 0,
+    extensionCount: json.extensions.filter((extension) => extension.agentId === agent.id).length,
     capabilities: { ...agent.capabilities },
   }))
   const connectionNameById = new Map(
@@ -367,9 +446,11 @@ const projectSnapshot = (json: SnapshotJson, successfulAt: number): ProductSnaps
     connectionId: channel.connectionId,
     name: nonEmptyLabel(
       channel.displayName,
-      channel.kind === 'web' ? '未命名 Web 频道' : qqGroupLabel(channel.platformChannelId),
+      channel.kind === 'web'
+        ? '未命名 Web 频道'
+        : qqChannelLabel(channel.platformChannelId, channel.kind === 'group' ? 'group' : 'direct'),
     ),
-    kind: channel.kind === 'group' ? 'qq-group' : 'web',
+    kind: channel.kind === 'group' ? 'qq-group' : channel.kind === 'direct' ? 'qq-direct' : 'web',
     connectionName: connectionNameById.get(channel.connectionId) ?? '未命名连接',
     agentId: channel.boundAgentId ?? '',
     trigger:
@@ -383,18 +464,9 @@ const projectSnapshot = (json: SnapshotJson, successfulAt: number): ProductSnaps
     bindings: channel.bindings,
     unread: 0,
   }))
-  const messages: ConversationMessage[] = json.messages.map((message) => {
-    const delivery = deliveryStateToUi(message.deliveryState)
-    return {
-      id: message.id,
-      channelId: message.channelId,
-      role: message.role === 'agent' ? 'agent' : 'member',
-      author: message.role === 'agent' ? (agentNameByChannel.get(message.channelId) ?? '智能体') : '你',
-      body: partsToBody(message.parts),
-      time: formatTime(message.occurredAt),
-      ...(delivery === undefined ? {} : { delivery }),
-    }
-  })
+  const messages: ConversationMessage[] = json.messages.map((message) =>
+    projectConversationMessage(message, channels, agents),
+  )
   const testLabel = (result: { readonly status: string; readonly message?: string } | undefined): string => {
     if (!result) return '未测试'
     if (result.status === 'received' || result.status === 'sent') return '通过'
@@ -434,7 +506,12 @@ const projectSnapshot = (json: SnapshotJson, successfulAt: number): ProductSnaps
       channels: connection.channelCount ?? 0,
       knownChannels: (connection.knownChannels ?? []).map((channel) => ({
         ...channel,
-        name: nonEmptyLabel(channel.name, channel.kind === 'group' ? '未命名 QQ 群聊' : '未命名频道'),
+        name:
+          channel.kind === 'group' && /^(?:group|guild):/u.test(channel.name)
+            ? qqChannelLabel(channel.name)
+            : channel.kind !== 'group' && /^(?:private|c2c):/u.test(channel.name)
+              ? qqChannelLabel(channel.name, 'direct')
+              : nonEmptyLabel(channel.name, channel.kind === 'group' ? '未命名 QQ 群聊' : '未命名频道'),
       })),
       lastEvent:
         connection.lastInbound === undefined
@@ -491,6 +568,7 @@ const projectSnapshot = (json: SnapshotJson, successfulAt: number): ProductSnaps
 export class HttpProductHost implements ProductHostPort {
   #snapshot: ProductSnapshot = emptySnapshot()
   #listener: (() => void) | undefined
+  readonly #loadedChannels = new Set<string>()
 
   getSnapshot(): ProductSnapshot {
     return this.#snapshot
@@ -506,8 +584,13 @@ export class HttpProductHost implements ProductHostPort {
       source.addEventListener('open', () => {
         void this.#refreshAndNotify()
       })
-      source.addEventListener('channel-fact', () => {
-        void this.#refreshAndNotify()
+      source.addEventListener('channel-fact', (event) => {
+        const data = JSON.parse((event as MessageEvent<string>).data) as { readonly channelId?: unknown }
+        if (typeof data.channelId === 'string' && this.#loadedChannels.has(data.channelId)) {
+          void this.#loadChannelMessages(data.channelId, 'latest', 40)
+        } else {
+          void this.#refreshAndNotify()
+        }
       })
       source.addEventListener('extensions-changed', () => {
         void this.#refreshAndNotify()
@@ -578,6 +661,26 @@ export class HttpProductHost implements ProductHostPort {
       if (!text.trim()) throw new Error('消息内容不能为空。')
       const result = await this.#postJson(`/api/channels/${encodeURIComponent(channelId)}/messages`, {
         parts: [{ type: 'text', text }],
+      })
+      await this.#refreshAndNotify()
+      return result
+    }
+    if (command === 'channels.listMessages') {
+      const channelId = typeof input?.channelId === 'string' ? input.channelId : ''
+      const mode = input?.mode === 'older' || input?.mode === 'latest' ? input.mode : 'initial'
+      const limit = typeof input?.limit === 'number' ? Math.min(Math.max(Math.trunc(input.limit), 1), 100) : 40
+      if (!channelId.trim()) throw new Error('缺少目标频道，请刷新页面后重试。')
+      const beforeOccurredAt = typeof input?.beforeOccurredAt === 'number' ? input.beforeOccurredAt : undefined
+      const beforeSourceId = typeof input?.beforeSourceId === 'string' ? input.beforeSourceId : undefined
+      return await this.#loadChannelMessages(channelId, mode, limit, beforeOccurredAt, beforeSourceId)
+    }
+    if (command === 'channels.rename') {
+      const channelId = typeof input?.channelId === 'string' ? input.channelId : ''
+      const displayName = typeof input?.displayName === 'string' ? input.displayName : ''
+      if (!channelId.trim()) throw new Error('缺少目标频道，请刷新页面后重试。')
+      if (!displayName.trim()) throw new Error('请输入频道名称。')
+      const result = await this.#postJson(`/api/channels/${encodeURIComponent(channelId)}/display-name`, {
+        displayName,
       })
       await this.#refreshAndNotify()
       return result
@@ -670,6 +773,7 @@ export class HttpProductHost implements ProductHostPort {
       const agentId = typeof input?.agentId === 'string' ? input.agentId : ''
       const name = typeof input?.name === 'string' ? input.name : ''
       const slug = typeof input?.slug === 'string' ? input.slug : ''
+      const description = typeof input?.description === 'string' ? input.description : ''
       if (!agentId.trim()) throw new Error('缺少智能体标识，请刷新页面后重试。')
       if (!name.trim()) throw new Error('请输入本地扩展名称。')
       if (!slug.trim()) throw new Error('缺少本地扩展标识，请重新生成后重试。')
@@ -678,7 +782,7 @@ export class HttpProductHost implements ProductHostPort {
         name,
         displayName: name,
         slug,
-        description: '从创造工作台保存的动态 Package。',
+        description: description.trim() || '从创造工作台保存的动态 Package。',
       })
       await this.#refreshAndNotify()
       return result
@@ -688,6 +792,40 @@ export class HttpProductHost implements ProductHostPort {
 
   async #postJson(path: string, body: unknown): Promise<unknown> {
     return this.#observeRequest(() => postJson(path, body))
+  }
+
+  async #loadChannelMessages(
+    channelId: string,
+    mode: 'initial' | 'older' | 'latest',
+    limit: number,
+    beforeOccurredAt?: number,
+    beforeSourceId?: string,
+  ): Promise<{ readonly messages: readonly ConversationMessage[]; readonly hasMore: boolean }> {
+    const query = new URLSearchParams({ limit: String(limit) })
+    if (beforeOccurredAt !== undefined && beforeSourceId) {
+      query.set('beforeOccurredAt', String(beforeOccurredAt))
+      query.set('beforeSourceId', beforeSourceId)
+    }
+    const raw = await this.#observeRequest(() =>
+      requestJson(`/api/channels/${encodeURIComponent(channelId)}/messages?${query.toString()}`, { method: 'GET' }),
+    )
+    if (!isRecord(raw) || !Array.isArray(raw.messages) || typeof raw.hasMore !== 'boolean') {
+      throw new Error('频道历史返回结果无效，请重新加载。')
+    }
+    const projected = (raw.messages as SnapshotMessageJson[]).map((message) =>
+      projectConversationMessage(message, this.#snapshot.channels, this.#snapshot.agents),
+    )
+    const other = this.#snapshot.messages.filter((message) => message.channelId !== channelId)
+    const current = this.#snapshot.messages.filter((message) => message.channelId === channelId)
+    const combined =
+      mode === 'older' ? [...projected, ...current] : mode === 'latest' ? [...current, ...projected] : projected
+    const deduplicated = [...new Map(combined.map((message) => [message.id, message])).values()].sort(
+      (left, right) => (left.occurredAt ?? 0) - (right.occurredAt ?? 0),
+    )
+    this.#loadedChannels.add(channelId)
+    this.#snapshot = { ...this.#snapshot, messages: [...other, ...deduplicated] }
+    this.#listener?.()
+    return { messages: projected, hasMore: raw.hasMore }
   }
 
   async #requestJson(
@@ -739,7 +877,11 @@ export class HttpProductHost implements ProductHostPort {
       this.#publishFailure({ code: 'invalid-snapshot', message: failure.message })
       return failure
     }
-    this.#snapshot = projectSnapshot(json, Date.now())
+    const projected = projectSnapshot(json, Date.now())
+    this.#snapshot = {
+      ...projected,
+      messages: this.#loadedChannels.size > 0 ? this.#snapshot.messages : projected.messages,
+    }
     this.#listener?.()
     return null
   }
@@ -769,12 +911,22 @@ const createAgentRequestBody = (input?: Readonly<Record<string, unknown>>): unkn
       : undefined
   const provider = typeof model?.provider === 'string' ? model.provider.trim() : ''
   const modelId = typeof model?.model === 'string' ? model.model.trim() : ''
+  const persona = typeof input?.persona === 'string' ? input.persona : ''
+  const rawCapabilities =
+    typeof input?.capabilities === 'object' && input.capabilities !== null
+      ? (input.capabilities as Record<string, unknown>)
+      : {}
   if (!displayName.trim()) throw new Error('请输入智能体名称。')
   if (!provider || !modelId) throw new Error('请选择当前可用的模型。')
   return {
     displayName: displayName.trim(),
-    persona: '',
+    persona,
     model: { provider, model: modelId },
+    capabilities: {
+      dynamicCreation: rawCapabilities.dynamicCreation === true,
+      developmentShell: rawCapabilities.developmentShell === true,
+      fullFileAccess: rawCapabilities.fullFileAccess === true,
+    },
   }
 }
 
@@ -793,7 +945,7 @@ class HostRequestError extends Error {
 
 const requestJson = async (
   path: string,
-  init?: { readonly method?: 'POST' | 'DELETE'; readonly body?: unknown },
+  init?: { readonly method?: 'GET' | 'POST' | 'DELETE'; readonly body?: unknown },
 ): Promise<unknown> => {
   let response: Response
   try {

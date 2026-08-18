@@ -32,6 +32,6 @@
 
 ## 参考取舍
 
-关联方向：更多 Adapter、同频道多个智能体、长期历史、多媒体与持续升级。
+关联方向：更多 Adapter、智能体多频道、长期历史、多媒体与持续升级。
 
 参考 DSH 的 Agent Factory、Scope、Session Persistence、Tool Runtime、原 Session compaction 和 checkpoint；拒绝深 Fork、私有 inbox、自动投递模型文字和把 DSH Session 数据库当 Core 数据库。参考 Nekro Agent 与 QQ OpenClaw 的群聊经验只用于后续 Adapter 机制，不导入旧数据、旧文本 Mention 协议或平台特例。

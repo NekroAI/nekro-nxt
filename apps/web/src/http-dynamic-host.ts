@@ -1,4 +1,4 @@
-import type { DynamicClientHostPort } from './dsh-dynamic-client.js'
+import type { DynamicClientHostPort, DynamicInventoryRow } from './dsh-dynamic-client.js'
 
 // Derive the exact Host-seam types from the interface so we never import a DSH
 // package that is not a direct dependency of this app.
@@ -20,6 +20,14 @@ export class HttpDynamicClientHost implements DynamicClientHostPort {
 
   constructor(agentId: string) {
     this.#agentId = agentId
+  }
+
+  async inventory(): Promise<readonly DynamicInventoryRow[]> {
+    const result = await this.#post('inventory', {})
+    if (typeof result !== 'object' || result === null || !('rows' in result) || !Array.isArray(result.rows)) {
+      throw new Error('Dynamic Host 返回的运行清单无效。')
+    }
+    return result.rows as readonly DynamicInventoryRow[]
   }
 
   runHostHalf(

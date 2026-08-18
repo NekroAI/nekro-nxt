@@ -64,6 +64,21 @@ class MemoryCoreRepository implements CoreRepository {
   getAgentRevision(id: AgentRevisionId) {
     return this.revisions.get(id)
   }
+  getAgentRevisionByDigest(agentId: AgentId, contentDigest: string) {
+    return [...this.revisions.values()].find(
+      (revision) => revision.agentId === agentId && revision.contentDigest === contentDigest,
+    )
+  }
+  getNextAgentRevisionNumber(agentId: AgentId): number {
+    return (
+      Math.max(
+        0,
+        ...[...this.revisions.values()]
+          .filter((revision) => revision.agentId === agentId)
+          .map((revision) => revision.revision),
+      ) + 1
+    )
+  }
   appendAgentRevision(
     definition: AgentDefinitionRecord,
     revision: AgentRevisionRecord,
@@ -73,6 +88,15 @@ class MemoryCoreRepository implements CoreRepository {
     if (current?.definition.currentRevisionId !== expectedCurrentRevisionId) throw new Error('revision conflict')
     this.agents.set(definition.id, { definition, revision })
     this.revisions.set(revision.id, revision)
+  }
+  activateAgentRevision(
+    definition: AgentDefinitionRecord,
+    revision: AgentRevisionRecord,
+    expectedCurrentRevisionId: AgentRevisionId,
+  ): void {
+    const current = this.agents.get(definition.id)
+    if (current?.definition.currentRevisionId !== expectedCurrentRevisionId) throw new Error('revision conflict')
+    this.agents.set(definition.id, { definition, revision })
   }
   createConnection(record: ConnectionRecord): void {
     this.connections.set(record.id, record)
@@ -98,6 +122,12 @@ class MemoryCoreRepository implements CoreRepository {
     if (existing) return existing
     this.channels.set(record.id, record)
     return record
+  }
+
+  updateChannelDisplayName(id: ChannelId, displayName: string): void {
+    const current = this.channels.get(id)
+    if (!current) throw new Error(`Unknown channel: ${id}`)
+    this.channels.set(id, { ...current, displayName })
   }
   getChannel(id: ChannelId) {
     return this.channels.get(id)
@@ -137,8 +167,11 @@ class MemoryCoreRepository implements CoreRepository {
       (member) => member.channelId === channelId && member.platformIdentityId === platformIdentityId,
     )
   }
-  createBinding(record: BindingRecord): void {
+  replaceBinding(record: BindingRecord): BindingRecord {
+    const currentIndex = this.bindings.findIndex((binding) => binding.agentId === record.agentId)
+    if (currentIndex >= 0) this.bindings.splice(currentIndex, 1)
     this.bindings.push(record)
+    return record
   }
   getBinding(channelId: ChannelId, agentId: AgentId) {
     return this.bindings.find((binding) => binding.channelId === channelId && binding.agentId === agentId)

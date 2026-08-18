@@ -1,9 +1,21 @@
-import { File, MessageSquare, Send, UsersRound } from 'lucide-react'
-import { useEffect, useMemo, useRef, useState, type FormEvent } from 'react'
-import { Link, useParams } from 'react-router-dom'
+import {
+  Activity,
+  Download,
+  File,
+  Headphones,
+  Image as ImageIcon,
+  MessageSquare,
+  Send,
+  Settings2,
+  UsersRound,
+  Wrench,
+} from 'lucide-react'
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, type FormEvent } from 'react'
+import { Link, useNavigate, useParams } from 'react-router-dom'
+import { notify } from '../components/notifications.js'
 import { EmptyState, InlineFeedback } from '../components/product-feedback.js'
-import { useProductStore, type AgentRuntimeState, type DeliveryState } from '../product-store.js'
-import { Button, StatusBadge, Textarea, type StatusTone } from '../ui-kit/index.js'
+import { useProductStore, type AgentRuntimeState, type ChannelSummary, type DeliveryState } from '../product-store.js'
+import { Button, Field, Input, StatusBadge, Textarea, type StatusTone } from '../ui-kit/index.js'
 import styles from './product-pages.module.css'
 
 const deliveryTone = (state: DeliveryState): StatusTone => {
@@ -30,45 +42,118 @@ const runtimeDescription = (state: AgentRuntimeState): string => {
   return '智能体当前空闲。'
 }
 
+function ChannelLink({ item, active }: { readonly item: ChannelSummary; readonly active: boolean }) {
+  return (
+    <Link
+      to={`/channels/${item.id}`}
+      className={[styles.channelLink, active ? styles.channelLinkActive : ''].filter(Boolean).join(' ')}
+    >
+      {item.kind === 'web' ? (
+        <MessageSquare size={15} aria-hidden="true" />
+      ) : (
+        <UsersRound size={15} aria-hidden="true" />
+      )}
+      <span>
+        <strong>{item.name}</strong>
+        <small>{item.connectionName}</small>
+      </span>
+      {item.unread > 0 ? <span className={styles.unread}>{item.unread}</span> : null}
+    </Link>
+  )
+}
+
 export function ChannelConversationPage() {
   const { channelId } = useParams()
+  const navigate = useNavigate()
   const host = useProductStore((state) => state.host)
   const channels = useProductStore((state) => state.channels)
   const agents = useProductStore((state) => state.agents)
   const allMessages = useProductStore((state) => state.messages)
+  const channelHistory = useProductStore((state) => state.channelHistory)
   const channel = channels.find((item) => item.id === channelId) ?? (channelId ? undefined : channels[0])
   const agent = channel ? agents.find((item) => item.id === channel.agentId) : undefined
   const messages = useMemo(
     () => (channel ? allMessages.filter((message) => message.channelId === channel.id) : []),
     [allMessages, channel],
   )
+  const history = channel ? channelHistory[channel.id] : undefined
+  const channelGroups = useMemo(() => {
+    const boundIds = new Set<string>()
+    const groups = agents.flatMap((candidate) => {
+      const items = channels.filter((item) => item.bindings.some((binding) => binding.agentId === candidate.id))
+      for (const item of items) boundIds.add(item.id)
+      return items.length > 0 ? [{ agent: candidate, channels: items }] : []
+    })
+    const unbound = channels.filter((item) => !boundIds.has(item.id))
+    return { groups, unbound }
+  }, [agents, channels])
   const [draft, setDraft] = useState('')
   const [sendPending, setSendPending] = useState(false)
-  const [sendError, setSendError] = useState('')
+  const [channelName, setChannelName] = useState(channel?.name ?? '')
+  const [renamePending, setRenamePending] = useState(false)
   const [hasNewMessages, setHasNewMessages] = useState(false)
   const messageListRef = useRef<HTMLDivElement | null>(null)
   const followLatestRef = useRef(true)
   const previousCountRef = useRef(0)
   const previousChannelRef = useRef('')
+  const previousOldestRef = useRef('')
+  const scrollMemoryRef = useRef(new Map<string, { top: number; atBottom: boolean }>())
+  const prependAnchorRef = useRef<{ channelId: string; height: number; top: number } | null>(null)
 
   useEffect(() => {
+    if (!channel) return
+    void useProductStore
+      .getState()
+      .loadChannelMessages(channel.id)
+      .catch(() => undefined)
+  }, [channel?.id])
+
+  useEffect(() => {
+    setChannelName(channel?.name ?? '')
+  }, [channel?.id, channel?.name])
+
+  useLayoutEffect(() => {
     const list = messageListRef.current
     if (!list || !channel) return
     const changedChannel = previousChannelRef.current !== channel.id
     const added = messages.length > previousCountRef.current
+    const prepended = added && previousOldestRef.current !== '' && messages[0]?.id !== previousOldestRef.current
+    const anchor = prependAnchorRef.current
+    if (anchor?.channelId === channel.id) {
+      list.scrollTop = anchor.top + (list.scrollHeight - anchor.height)
+      prependAnchorRef.current = null
+      previousChannelRef.current = channel.id
+      previousCountRef.current = messages.length
+      previousOldestRef.current = messages[0]?.id ?? ''
+      return
+    }
     if (changedChannel) {
-      followLatestRef.current = true
+      const remembered = scrollMemoryRef.current.get(channel.id)
+      followLatestRef.current = remembered?.atBottom ?? true
       setHasNewMessages(false)
-      list.scrollTop = list.scrollHeight
-    } else if (added && followLatestRef.current) {
+      list.scrollTop = remembered && !remembered.atBottom ? remembered.top : list.scrollHeight
+    } else if (added && !prepended && followLatestRef.current) {
       list.scrollTop = list.scrollHeight
       setHasNewMessages(false)
-    } else if (added) {
+    } else if (added && !prepended) {
       setHasNewMessages(true)
     }
     previousChannelRef.current = channel.id
     previousCountRef.current = messages.length
-  }, [channel, messages.length])
+    previousOldestRef.current = messages[0]?.id ?? ''
+  }, [channel?.id, history?.loaded, messages.length, messages[0]?.id])
+
+  const loadOlder = (): void => {
+    const list = messageListRef.current
+    if (!channel || !list || history?.loadingMore || history?.hasMore === false) return
+    prependAnchorRef.current = { channelId: channel.id, height: list.scrollHeight, top: list.scrollTop }
+    void useProductStore
+      .getState()
+      .loadChannelMessages(channel.id, 'older')
+      .catch(() => {
+        prependAnchorRef.current = null
+      })
+  }
 
   const jumpToLatest = (): void => {
     const list = messageListRef.current
@@ -83,41 +168,71 @@ export function ChannelConversationPage() {
     const value = draft.trim()
     if (!channel || !value || sendPending) return
     setSendPending(true)
-    setSendError('')
     try {
       await useProductStore.getState().sendMessage(channel.id, value)
       setDraft('')
     } catch (error) {
-      setSendError(error instanceof Error ? error.message : String(error))
+      notify(
+        `发送失败：${error instanceof Error ? error.message : String(error)}。草稿已保留。`,
+        'error',
+        `channel-send:${channel.id}`,
+      )
     } finally {
       setSendPending(false)
+    }
+  }
+
+  const rename = async (): Promise<void> => {
+    if (!channel || !channelName.trim() || channelName.trim() === channel.name || renamePending) return
+    setRenamePending(true)
+    try {
+      await useProductStore.getState().renameChannel(channel.id, channelName)
+      notify('频道名称已保存。', 'success', `channel-rename:${channel.id}`)
+    } catch (error) {
+      notify(error instanceof Error ? error.message : String(error), 'error', `channel-rename:${channel.id}`)
+    } finally {
+      setRenamePending(false)
     }
   }
 
   return (
     <div className={styles.conversationPage}>
       <aside className={styles.channelDirectory}>
-        <div className={styles.railHeading}>频道</div>
+        <div className={styles.railHeading}>按智能体查看</div>
         {channels.length === 0 ? (
           <div className={styles.railEmpty}>{host.status === 'initializing' ? '正在读取…' : '还没有频道'}</div>
         ) : (
-          channels.map((item) => (
-            <Link
-              to={`/channels/${item.id}`}
-              className={[styles.channelLink, item.id === channel?.id ? styles.channelLinkActive : '']
-                .filter(Boolean)
-                .join(' ')}
-              key={item.id}
-            >
-              {item.kind === 'web' ? (
-                <MessageSquare size={15} aria-hidden="true" />
-              ) : (
-                <UsersRound size={15} aria-hidden="true" />
-              )}
-              <span>{item.name}</span>
-              {item.unread > 0 ? <span className={styles.unread}>{item.unread}</span> : null}
-            </Link>
-          ))
+          <div className={styles.channelGroups}>
+            {channelGroups.groups.map((group) => (
+              <section className={styles.channelGroup} key={group.agent.id}>
+                <div className={styles.channelGroupHeader}>
+                  <span className={styles.agentAvatar}>{group.agent.name.slice(0, 1)}</span>
+                  <span>
+                    <strong>{group.agent.name}</strong>
+                    <small>{group.channels.length} 个频道</small>
+                  </span>
+                  <StatusBadge tone={agentTone(group.agent.state)}>{group.agent.state}</StatusBadge>
+                </div>
+                {group.channels.map((item) => (
+                  <ChannelLink key={`${group.agent.id}-${item.id}`} item={item} active={item.id === channel?.id} />
+                ))}
+              </section>
+            ))}
+            {channelGroups.unbound.length > 0 ? (
+              <section className={styles.channelGroup}>
+                <div className={styles.channelGroupHeader}>
+                  <span className={styles.agentAvatar}>?</span>
+                  <span>
+                    <strong>未绑定频道</strong>
+                    <small>{channelGroups.unbound.length} 个频道</small>
+                  </span>
+                </div>
+                {channelGroups.unbound.map((item) => (
+                  <ChannelLink key={item.id} item={item} active={item.id === channel?.id} />
+                ))}
+              </section>
+            ) : null}
+          </div>
         )}
       </aside>
 
@@ -141,7 +256,18 @@ export function ChannelConversationPage() {
                 <h1>{channel.name}</h1>
                 <p>{agent ? `由“${agent.name}”响应 · ${channel.trigger}` : '尚未绑定智能体'}</p>
               </div>
-              {agent ? <StatusBadge tone={agentTone(agent.state)}>{agent.state}</StatusBadge> : null}
+              <div className={styles.conversationHeaderActions}>
+                {agent ? <StatusBadge tone={agentTone(agent.state)}>{agent.state}</StatusBadge> : null}
+                {agent ? (
+                  <Button
+                    size="small"
+                    variant="ghost"
+                    onClick={() => void navigate(`/agents/${agent.id}?tab=channels`)}
+                  >
+                    <Settings2 size={14} aria-hidden="true" /> 管理绑定
+                  </Button>
+                ) : null}
+              </div>
             </header>
 
             <div
@@ -151,10 +277,31 @@ export function ChannelConversationPage() {
                 const element = event.currentTarget
                 const atBottom = element.scrollHeight - element.scrollTop - element.clientHeight <= 32
                 followLatestRef.current = atBottom
+                if (channel) scrollMemoryRef.current.set(channel.id, { top: element.scrollTop, atBottom })
                 if (atBottom) setHasNewMessages(false)
+                if (element.scrollTop <= 80) loadOlder()
               }}
             >
-              {messages.length === 0 ? (
+              {agent && agent.state !== '空闲' ? (
+                <div className={styles.runtimeCard}>
+                  <div className={styles.runtimeCardIcon}>
+                    {agent.state === '使用工具' ? (
+                      <Wrench size={17} aria-hidden="true" />
+                    ) : (
+                      <Activity size={17} aria-hidden="true" />
+                    )}
+                  </div>
+                  <span>
+                    <strong>{runtimeDescription(agent.state)}</strong>
+                    <small>新消息会可靠入库，并在安全间隙进入后续处理。</small>
+                  </span>
+                  <StatusBadge tone={agentTone(agent.state)}>{agent.state}</StatusBadge>
+                </div>
+              ) : null}
+              {history?.loading ? <div className={styles.historyNotice}>正在读取最近消息…</div> : null}
+              {history?.loadingMore ? <div className={styles.historyNotice}>正在加载更早消息…</div> : null}
+              {history?.error ? <InlineFeedback tone="error">历史消息加载失败：{history.error}</InlineFeedback> : null}
+              {messages.length === 0 && !history?.loading ? (
                 <EmptyState title="还没有消息" description="从下方发送第一条消息，或等待平台频道收到新消息。" />
               ) : (
                 messages.map((message) =>
@@ -173,12 +320,45 @@ export function ChannelConversationPage() {
                             <StatusBadge tone={deliveryTone(message.delivery)}>{message.delivery}</StatusBadge>
                           ) : null}
                         </div>
-                        <div className={styles.messageBody}>{message.body}</div>
-                        {message.attachment ? (
-                          <div className={styles.attachment}>
-                            <File size={15} aria-hidden="true" /> {message.attachment.name}
-                          </div>
-                        ) : null}
+                        {message.body ? <div className={styles.messageBody}>{message.body}</div> : null}
+                        {(message.resources ?? []).map((resource) =>
+                          resource.kind === 'image' ? (
+                            <a
+                              className={styles.messageImageLink}
+                              href={resource.url}
+                              target="_blank"
+                              rel="noreferrer"
+                              key={resource.assetId}
+                            >
+                              <img
+                                className={styles.messageImage}
+                                src={resource.url}
+                                alt={resource.name}
+                                loading="lazy"
+                              />
+                              <span>
+                                <ImageIcon size={14} aria-hidden="true" /> {resource.name}
+                              </span>
+                            </a>
+                          ) : resource.kind === 'audio' ? (
+                            <div className={styles.attachment} key={resource.assetId}>
+                              <Headphones size={15} aria-hidden="true" />
+                              <audio controls preload="none" src={resource.url}>
+                                你的浏览器不支持音频播放。
+                              </audio>
+                            </div>
+                          ) : (
+                            <a
+                              className={styles.attachment}
+                              href={resource.url}
+                              download={resource.name}
+                              key={resource.assetId}
+                            >
+                              <File size={15} aria-hidden="true" /> {resource.name}
+                              <Download size={14} aria-hidden="true" />
+                            </a>
+                          ),
+                        )}
                       </div>
                     </article>
                   ),
@@ -207,7 +387,11 @@ export function ChannelConversationPage() {
                   value={draft}
                   onChange={(event) => {
                     setDraft(event.target.value)
-                    if (sendError) setSendError('')
+                  }}
+                  onKeyDown={(event) => {
+                    if (event.key !== 'Enter' || event.shiftKey || event.nativeEvent.isComposing) return
+                    event.preventDefault()
+                    if (draft.trim() && !sendPending) event.currentTarget.form?.requestSubmit()
                   }}
                   aria-label="消息内容"
                   placeholder={agent || channel.kind !== 'web' ? '输入消息' : '请先绑定智能体'}
@@ -223,7 +407,6 @@ export function ChannelConversationPage() {
                   <Send size={15} aria-hidden="true" /> 发送
                 </Button>
               </div>
-              {sendError ? <InlineFeedback tone="error">发送失败：{sendError}。草稿已保留。</InlineFeedback> : null}
             </form>
           </main>
 
@@ -237,7 +420,28 @@ export function ChannelConversationPage() {
                 <dd>{channel.trigger}</dd>
                 <dt>来源</dt>
                 <dd>{channel.kind === 'web' ? '网页聊天' : 'QQ 机器人账号'}</dd>
+                <dt>消息</dt>
+                <dd>{messages.length} 条</dd>
+                <dt>最近活动</dt>
+                <dd>{messages.at(-1)?.time ?? '暂无'}</dd>
               </dl>
+              <div className={styles.channelRename}>
+                <Field
+                  label="频道名称"
+                  hint={channel.kind === 'web' ? '用于消息列表显示。' : 'QQ 不提供群名称时，可在此设置本地名称。'}
+                >
+                  <Input value={channelName} onChange={(event) => setChannelName(event.target.value)} maxLength={120} />
+                </Field>
+                <Button
+                  size="small"
+                  loading={renamePending}
+                  loadingLabel="保存中…"
+                  disabled={!channelName.trim() || channelName.trim() === channel.name}
+                  onClick={() => void rename()}
+                >
+                  保存名称
+                </Button>
+              </div>
             </section>
             <section>
               <h2>当前状态</h2>
@@ -249,6 +453,19 @@ export function ChannelConversationPage() {
                 <InlineFeedback tone="warning">绑定智能体后才能自动响应消息。</InlineFeedback>
               )}
             </section>
+            {agent ? (
+              <section>
+                <h2>继续操作</h2>
+                <div className={styles.inspectorActions}>
+                  <Button size="small" onClick={() => void navigate(`/agents/${agent.id}?tab=channels`)}>
+                    编辑频道绑定
+                  </Button>
+                  <Button size="small" variant="ghost" onClick={() => void navigate(`/agents/${agent.id}`)}>
+                    管理智能体
+                  </Button>
+                </div>
+              </section>
+            ) : null}
           </aside>
         </>
       )}

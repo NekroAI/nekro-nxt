@@ -33,8 +33,9 @@ const productSnapshot = {
       displayName: '资料员',
       persona: '严谨、简洁',
       currentRevisionId: 'revision-target-internal-id',
+      runtimeStatus: 'running',
       model: { provider: 'deepseek', model: 'deepseek-v4-flash' },
-      capabilities: { dynamicCreation: false, developmentShell: false, fullFileAccess: false },
+      capabilities: { dynamicCreation: true, developmentShell: false, fullFileAccess: false },
       channels: ['channel-target'],
     },
     {
@@ -66,16 +67,16 @@ const productSnapshot = {
       boundAgentId: 'agent-source-internal-id',
       bindings: [{ id: 'binding-source', agentId: 'agent-source-internal-id', triggerPolicy: 'always' }],
     },
-  ],
-  messages: [
     {
-      id: 'message-visible',
-      channelId: 'channel-target',
-      role: 'member',
-      parts: [{ type: 'text', text: '请复核今天的记录。' }],
-      occurredAt: 1_725_000_000_000,
+      id: 'channel-qq',
+      connectionId: 'connection-qq',
+      platformChannelId: 'group:9CC4F6A7D6FE',
+      kind: 'group',
+      displayName: '产品讨论群',
+      bindings: [],
     },
   ],
+  messages: [],
   connections: [
     {
       id: 'connection-web',
@@ -85,10 +86,77 @@ const productSnapshot = {
       channelCount: 2,
       knownChannels: [],
     },
+    {
+      id: 'connection-qq',
+      adapterKey: 'qq-openclaw',
+      status: 'active',
+      appId: '12345678',
+      proactiveSend: false,
+      credentialConfigured: true,
+      channelCount: 1,
+      knownChannels: [{ id: 'channel-qq', name: 'group:9CC4F6A7D6FE', kind: 'group' }],
+      gateway: { state: 'connected' },
+      lastInbound: { receivedAt: 1_725_000_010_000 },
+      receiveTest: { status: 'received' },
+      sendTest: { status: 'sent' },
+    },
   ],
-  extensions: [],
-  dynamic: [],
+  extensions: [
+    {
+      id: 'extension-summary',
+      slug: 'group-summary',
+      displayName: '群聊摘要',
+      description: '把群聊讨论整理为可继续跟进的摘要。',
+      revisionNumber: 2,
+      revisionId: 'extension-revision-internal-id',
+      activation: 'active',
+      agentId: 'agent-target-internal-id',
+    },
+  ],
+  dynamic: [
+    {
+      agentId: 'agent-target-internal-id',
+      pluginId: 'dynamic-plugin-internal-id',
+      packageId: 'dynamic-package-internal-id',
+      status: 'running',
+    },
+  ],
 } as const
+
+const channelMessages = [
+  {
+    id: 'message-visible',
+    channelId: 'channel-target',
+    role: 'member',
+    parts: [{ type: 'text', text: '请复核今天的记录。' }],
+    occurredAt: 1_725_000_000_000,
+  },
+  {
+    id: 'message-qq-visible',
+    channelId: 'channel-qq',
+    role: 'member',
+    sender: { memberId: 'member-sender-internal-id', displayName: '成员甲' },
+    mentionedConnectionAccount: true,
+    parts: [
+      { type: 'text', text: '请和' },
+      { type: 'mention', memberId: 'member-target-internal-id', displayName: '成员乙' },
+      { type: 'text', text: '一起复核。' },
+    ],
+    occurredAt: 1_725_000_010_000,
+  },
+  {
+    id: 'message-resources',
+    channelId: 'channel-target',
+    role: 'agent',
+    parts: [
+      { type: 'text', text: '这是本次交付的资源。' },
+      { type: 'image', assetId: 'asset-image', alt: '界面预览图' },
+      { type: 'file', assetId: 'asset-file', name: '验收记录.txt' },
+    ],
+    occurredAt: 1_725_000_020_000,
+    deliveryState: 'sent',
+  },
+] as const
 
 const installRuntimeFailureGate = (page: Page): string[] => {
   const failures: string[] = []
@@ -103,25 +171,52 @@ const installProductRoutes = async (page: Page): Promise<void> => {
   await page.route('**/api/snapshot', (route) =>
     route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(productSnapshot) }),
   )
+  await page.route('**/api/channels/*/messages?*', (route) => {
+    const channelId = new URL(route.request().url()).pathname.split('/').at(-2)
+    const messages = channelMessages.filter((message) => message.channelId === channelId)
+    return route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({ messages, hasMore: false }),
+    })
+  })
+  await page.route('**/api/dynamic/*/inventory', (route) =>
+    route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ rows: [] }) }),
+  )
+  await page.route('**/api/channels/channel-target/assets/asset-image', (route) =>
+    route.fulfill({
+      status: 200,
+      contentType: 'image/svg+xml',
+      body: `<svg xmlns="http://www.w3.org/2000/svg" width="360" height="180" viewBox="0 0 360 180">
+        <rect width="360" height="180" rx="16" fill="#dff6fc"/>
+        <rect x="24" y="24" width="312" height="32" rx="8" fill="#0cadd8" opacity=".22"/>
+        <rect x="24" y="76" width="196" height="16" rx="8" fill="#007fa6" opacity=".42"/>
+        <rect x="24" y="108" width="268" height="12" rx="6" fill="#007fa6" opacity=".2"/>
+        <rect x="24" y="136" width="232" height="12" rx="6" fill="#007fa6" opacity=".2"/>
+      </svg>`,
+    }),
+  )
+  await page.route('**/api/channels/channel-target/assets/asset-file', (route) =>
+    route.fulfill({ status: 200, contentType: 'text/plain; charset=utf-8', body: '资源下载正常' }),
+  )
 }
 
 const assertViewportIntegrity = async (page: Page): Promise<void> => {
   const geometry = await page.evaluate(() => {
     const sidebar = document.querySelector('aside')?.getBoundingClientRect()
     const main = document.querySelector('main')?.getBoundingClientRect()
-    const routeContent = document.querySelector('main > div > div')?.getBoundingClientRect()
     return {
       viewportWidth: window.innerWidth,
       viewportHeight: window.innerHeight,
       documentWidth: document.documentElement.scrollWidth,
       bodyWidth: document.body.scrollWidth,
-      routeContentHeight: routeContent?.height ?? 0,
+      mainHeight: main?.height ?? 0,
       overlaps: sidebar && main ? sidebar.right > main.left + 1 : false,
     }
   })
   expect(geometry.documentWidth).toBeLessThanOrEqual(geometry.viewportWidth)
   expect(geometry.bodyWidth).toBeLessThanOrEqual(geometry.viewportWidth)
-  expect(geometry.routeContentHeight).toBeGreaterThanOrEqual(geometry.viewportHeight - 1)
+  expect(geometry.mainHeight).toBeGreaterThanOrEqual(geometry.viewportHeight - 1)
   expect(geometry.overlaps).toBe(false)
 }
 
@@ -146,12 +241,265 @@ test('three desktop viewports remain usable in both themes and reduced motion', 
       await page.goto('/channels/channel-target')
       await expect(page.getByRole('heading', { name: '资料员的网页频道' })).toBeVisible()
       await expect(page.getByText('请复核今天的记录。')).toBeVisible()
+      await expect(page.getByRole('img', { name: '界面预览图' })).toBeVisible()
+      await expect
+        .poll(() =>
+          page.getByRole('img', { name: '界面预览图' }).evaluate((image: HTMLImageElement) => image.naturalWidth),
+        )
+        .toBeGreaterThan(0)
+      await expect(page.getByRole('link', { name: /验收记录\.txt/u })).toBeVisible()
       await expect(page.getByLabel('消息内容')).toBeVisible()
+      const hierarchy = await page.evaluate(() => {
+        const parentName = [...document.querySelectorAll('strong')].find((node) => node.textContent === '资料员')
+        const parent = parentName?.parentElement?.parentElement
+        const child = [...document.querySelectorAll('a')].find((node) => node.textContent?.includes('资料员的网页频道'))
+        const group = parent?.parentElement
+        return {
+          parentLeft: parent?.getBoundingClientRect().left ?? 0,
+          childLeft: child?.getBoundingClientRect().left ?? 0,
+          guide: group ? getComputedStyle(group, '::before').content : 'none',
+        }
+      })
+      expect(hierarchy.childLeft).toBeGreaterThan(hierarchy.parentLeft)
+      expect(hierarchy.guide).not.toBe('none')
       await assertViewportIntegrity(page)
+      if (colorScheme === 'dark') {
+        const semanticTokens = await page.evaluate(() => {
+          const styles = getComputedStyle(document.documentElement)
+          return {
+            warning: styles.getPropertyValue('--nxt-warning-soft').trim(),
+            success: styles.getPropertyValue('--nxt-success-soft').trim(),
+            danger: styles.getPropertyValue('--nxt-danger-soft').trim(),
+          }
+        })
+        expect(semanticTokens).toEqual({ warning: '#332711', success: '#112d22', danger: '#35191c' })
+      }
       await capture(page, testInfo, `channel-${viewport.width}x${viewport.height}-${colorScheme}`)
     }
   }
 
+  expect(failures, failures.join('\n')).toEqual([])
+})
+
+test('group conversations preserve sender and Mention semantics without exposing internal identities', async ({
+  page,
+}, testInfo) => {
+  const failures = installRuntimeFailureGate(page)
+  await installProductRoutes(page)
+  await page.setViewportSize({ width: 1440, height: 900 })
+  await page.goto('/channels/channel-qq')
+
+  await expect(page.getByText('成员甲', { exact: true })).toBeVisible()
+  await expect(page.getByText('@机器人账号 请和 @成员乙 一起复核。', { exact: true })).toBeVisible()
+  const visibleText = await page.locator('body').innerText()
+  expect(visibleText).not.toContain('member-sender-internal-id')
+  expect(visibleText).not.toContain('member-target-internal-id')
+  expect(visibleText).not.toContain('group:9CC4F6A7D6FE')
+  await assertViewportIntegrity(page)
+  await capture(page, testInfo, 'qq-group-member-mentions')
+  expect(failures, failures.join('\n')).toEqual([])
+})
+
+test('redesigned relationship and lifecycle pages stay legible across representative themes', async ({
+  page,
+}, testInfo) => {
+  const failures = installRuntimeFailureGate(page)
+  await installProductRoutes(page)
+  const scenes = [
+    { route: '/agents', text: '当前概览', width: 1440, height: 900, colorScheme: 'light' },
+    {
+      route: '/agents/agent-target-internal-id?tab=capabilities',
+      text: '完整文件访问',
+      width: 1100,
+      height: 720,
+      colorScheme: 'dark',
+    },
+    {
+      route: '/connections',
+      text: '网页聊天由当前设备管理，不需要配置账号凭据。',
+      width: 1440,
+      height: 900,
+      colorScheme: 'light',
+    },
+    { route: '/creator', text: '与资料员协作创造', width: 1920, height: 1080, colorScheme: 'dark' },
+    { route: '/extensions', text: '贡献能力', width: 1920, height: 1080, colorScheme: 'light' },
+  ] as const
+
+  for (const scene of scenes) {
+    await page.setViewportSize({ width: scene.width, height: scene.height })
+    await page.emulateMedia({ colorScheme: scene.colorScheme, reducedMotion: 'reduce' })
+    await page.goto(scene.route)
+    await expect(page.getByText(scene.text).first()).toBeVisible()
+    await assertViewportIntegrity(page)
+    await capture(
+      page,
+      testInfo,
+      `redesign-${scene.route.split(/[/?]/u).filter(Boolean).join('-')}-${scene.colorScheme}`,
+    )
+  }
+
+  await page.goto('/connections')
+  await page
+    .getByRole('button', { name: /QQ 机器人账号/u })
+    .first()
+    .click()
+  await expect(page.getByText('QQ 群聊（尾号 D6FE）')).toBeVisible()
+  const connectionText = await page.locator('body').innerText()
+  expect(connectionText).not.toContain('group:9CC4F6A7D6FE')
+  expect(connectionText).not.toContain('QQ 群聊（尾号 D6FE） · 群聊')
+  await capture(page, testInfo, 'redesign-connection-qq-light')
+  expect(failures, failures.join('\n')).toEqual([])
+})
+
+test('the product Client runtime approves, renders, and retracts a live DSH interface without reloading', async ({
+  page,
+}) => {
+  const failures = installRuntimeFailureGate(page)
+  let phase: 'pending' | 'active' | 'stopped' = 'pending'
+  let releaseStatus!: () => void
+  const statusGate = new Promise<void>((resolve) => {
+    releaseStatus = resolve
+  })
+  const calls: string[] = []
+  const dynamicSummary = () => [
+    {
+      agentId: 'agent-target-internal-id',
+      pluginId: 'client-probe-1',
+      ...(phase === 'pending' ? { approvalRequestId: 'approval-1' } : { packageId: 'package-1' }),
+      status: phase === 'pending' ? 'awaiting-approval' : phase === 'active' ? 'running' : 'stopped',
+    },
+  ]
+  const inventoryRows = () => [
+    {
+      pluginId: 'client-probe-1',
+      agentId: 'agent-target-internal-id',
+      packages: [
+        {
+          packageId: 'package-1',
+          name: '即时界面探针',
+          purpose: '验证产品中的 DSH Client 装卸链路。',
+          hasHostHalf: false,
+          hasClientHalf: true,
+        },
+      ],
+      ...(phase === 'active' ? { activeRun: { pluginRunId: 'run-1', packageId: 'package-1' } } : {}),
+      latestRun: {
+        pluginRunId: 'run-1',
+        packageId: 'package-1',
+        mode: 'run',
+        status: phase === 'pending' ? 'awaiting-approval' : phase === 'active' ? 'running' : 'stopped',
+        ...(phase === 'pending' ? { approvalRequestId: 'approval-1', requiresApproval: true } : {}),
+      },
+    },
+  ]
+
+  await page.route('**/api/snapshot', (route) =>
+    route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({ ...productSnapshot, dynamic: dynamicSummary() }),
+    }),
+  )
+  await page.route('**/api/events', async (route) => {
+    await statusGate
+    await route.fulfill({
+      status: 200,
+      contentType: 'text/event-stream',
+      body: 'event: status\ndata: {}\n\n',
+    })
+  })
+  await page.route('**/api/dynamic/*/inventory', (route) =>
+    route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ rows: inventoryRows() }) }),
+  )
+  await page.route('**/api/dynamic/*/run-host-half', (route) => {
+    calls.push('run-host-half')
+    return route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({
+        ok: true,
+        pluginId: 'client-probe-1',
+        packageId: 'package-1',
+        pluginRunId: 'run-1',
+        waitingFor: [],
+        startedHere: true,
+      }),
+    })
+  })
+  await page.route('**/api/dynamic/*/get-client-code', (route) => {
+    calls.push('get-client-code')
+    return route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({
+        pluginId: 'client-probe-1',
+        packageId: 'package-1',
+        pluginRunId: 'run-1',
+        code: `return {
+          inject: ['slots'],
+          apply(ctx) {
+            ctx.slots.register(
+              { name: 'root' },
+              () => React.createElement('section', { 'data-live-client': 'probe' }, '即时界面已真实加载')
+            )
+          }
+        }`,
+      }),
+    })
+  })
+  await page.route('**/api/dynamic/*/approve', (route) => {
+    calls.push('approve')
+    phase = 'active'
+    return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ accepted: true }) })
+  })
+
+  await page.goto('/creator')
+  await page.getByRole('button', { name: '审查界面预览' }).click()
+  await page.getByRole('dialog').getByRole('button', { name: '允许本次预览' }).click()
+  await expect(page.getByText('即时界面已真实加载')).toBeVisible()
+  expect(calls).toEqual(['run-host-half', 'get-client-code', 'approve'])
+
+  phase = 'stopped'
+  releaseStatus()
+  await expect(page.getByText('即时界面已真实加载')).toBeHidden()
+  await expect(page.getByText('已停止', { exact: true }).first()).toBeVisible()
+  expect(failures, failures.join('\n')).toEqual([])
+})
+
+test('the four-step creation wizard submits identity, model, and explicit capabilities', async ({ page }, testInfo) => {
+  const failures = installRuntimeFailureGate(page)
+  await installProductRoutes(page)
+  let submitted: unknown
+  await page.route('**/api/agents', async (route) => {
+    submitted = route.request().postDataJSON()
+    await route.fulfill({
+      status: 201,
+      contentType: 'application/json',
+      body: JSON.stringify({ agentId: 'created-agent', channelId: 'channel-target', connectionId: 'connection-web' }),
+    })
+  })
+  await page.setViewportSize({ width: 1100, height: 720 })
+  await page.goto('/agents')
+  await page.getByRole('button', { name: '创建智能体' }).click()
+  const dialog = page.getByRole('dialog')
+  await dialog.getByLabel('名称').fill('研究员')
+  await dialog.getByLabel('人设').fill('先核对证据，再给出结论。')
+  await dialog.getByRole('button', { name: '下一步' }).click()
+  await expect(dialog.getByText('DeepSeek V4 Flash')).toBeVisible()
+  await dialog.getByRole('button', { name: '下一步' }).click()
+  await dialog.getByRole('switch', { name: '动态创造' }).click()
+  await dialog.getByRole('switch', { name: '开发命令' }).click()
+  await dialog.getByRole('button', { name: '下一步' }).click()
+  await expect(dialog.getByText('动态创造、开发命令', { exact: true })).toBeVisible()
+  await capture(page, testInfo, 'agent-create-confirmation')
+  await dialog.getByRole('button', { name: '创建并打开频道' }).click()
+  await expect(page).toHaveURL(/\/channels\/channel-target$/u)
+  expect(submitted).toEqual({
+    displayName: '研究员',
+    persona: '先核对证据，再给出结论。',
+    model: { provider: 'deepseek', model: 'deepseek-v4-flash' },
+    capabilities: { dynamicCreation: true, developmentShell: true, fullFileAccess: false },
+  })
   expect(failures, failures.join('\n')).toEqual([])
 })
 
@@ -234,14 +582,89 @@ test('dialog floating layers, Escape, focus return, and pending failure recovery
   const confirm = bindingDialog.getByRole('button', { name: '绑定频道' })
   await confirm.click()
   await expect(bindingDialog.getByRole('button', { name: '处理中…' })).toBeDisabled()
-  await expect(bindingDialog.getByText('测试写入失败')).toBeVisible()
+  await expect(page.getByText('测试写入失败')).toBeVisible()
   await expect(confirm).toBeEnabled()
   await confirm.click()
   await expect(bindingDialog).toBeHidden()
   await expect(page.getByText('频道已绑定。')).toBeVisible()
+  await capture(page, testInfo, 'binding-toast-success')
   expect(attempts).toBe(2)
   expect(
     failures.filter((failure) => !failure.includes('500 (Internal Server Error)')),
     failures.join('\n'),
   ).toEqual([])
+})
+
+test('model settings hide unconfigured providers behind the DSH-backed add flow', async ({ page }, testInfo) => {
+  const failures = installRuntimeFailureGate(page)
+  await installProductRoutes(page)
+  await page.route('**/api/llm/providers', (route) =>
+    route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({
+        writable: true,
+        protocols: ['openai-completions'],
+        providers: [
+          {
+            provider: 'configured-provider',
+            displayName: '已配置供应商',
+            settingsNs: 'llm-pi-ai',
+            settingsRevision: 3,
+            declared: false,
+            active: true,
+            configured: true,
+            credential: { configured: true, writable: true },
+            models: [{ id: 'model-a', name: '模型 A' }],
+          },
+          {
+            provider: 'catalog-candidate',
+            displayName: '目录候选供应商',
+            settingsNs: 'llm-pi-ai',
+            settingsRevision: 3,
+            declared: false,
+            active: false,
+            configured: false,
+            models: [],
+          },
+        ],
+      }),
+    }),
+  )
+
+  await page.goto('/settings')
+  await expect(page.getByRole('button', { name: /已配置供应商/u })).toBeVisible()
+  await expect(page.getByRole('button', { name: /目录候选供应商/u })).toHaveCount(0)
+  await page.getByRole('button', { name: '添加供应商' }).first().click()
+  const dialog = page.getByRole('dialog')
+  await dialog.getByLabel('模型供应商').click()
+  await expect(page.getByRole('option', { name: '目录候选供应商' })).toBeVisible()
+  await expect(page.getByRole('option', { name: '自定义 OpenAI 兼容供应商' })).toBeVisible()
+  await capture(page, testInfo, 'provider-add-catalog')
+  expect(failures, failures.join('\n')).toEqual([])
+})
+
+test('message composer sends with Enter and keeps Shift+Enter for a new line', async ({ page }) => {
+  const failures = installRuntimeFailureGate(page)
+  await installProductRoutes(page)
+  const submitted: string[] = []
+  await page.route('**/api/channels/channel-target/messages', async (route) => {
+    const body = route.request().postDataJSON() as {
+      readonly parts?: readonly { readonly type?: string; readonly text?: string }[]
+    }
+    submitted.push(body.parts?.find((part) => part.type === 'text')?.text ?? '')
+    await route.fulfill({ status: 200, contentType: 'application/json', body: '{}' })
+  })
+
+  await page.goto('/channels/channel-target')
+  const composer = page.getByLabel('消息内容')
+  await composer.fill('第一行')
+  await composer.press('Shift+Enter')
+  await expect(composer).toHaveValue('第一行\n')
+  expect(submitted).toEqual([])
+  await composer.type('第二行')
+  await composer.press('Enter')
+  await expect.poll(() => submitted).toEqual(['第一行\n第二行'])
+  await expect(composer).toHaveValue('')
+  expect(failures, failures.join('\n')).toEqual([])
 })

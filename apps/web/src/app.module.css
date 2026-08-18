@@ -94,13 +94,6 @@
   padding-top: 12px;
 }
 
-.refreshError {
-  margin-top: 8px;
-  color: var(--nxt-danger);
-  font-size: 11px;
-  line-height: 16px;
-}
-
 .main {
   display: flex;
   min-width: 0;

@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { HttpProductHost } from '../src/http-host.ts'
+import { HttpProductHost, renderConversationBody } from '../src/http-host.ts'
 
 /** Minimal EventSource stand-in: captures registered listeners and lets tests emit events. */
 class FakeEventSource {
@@ -74,6 +74,7 @@ const snapshotBody = () => ({
       displayName: '小奈',
       persona: '谨慎复核证据。',
       currentRevisionId: 'agent-revision-1',
+      runtimeStatus: 'running',
       model: { provider: 'deepseek', model: 'deepseek-chat', reasoningEffort: 'high' },
       capabilities: { dynamicCreation: true, developmentShell: false, fullFileAccess: false },
       channels: ['channel-1'],
@@ -165,6 +166,7 @@ describe('HttpProductHost', () => {
       modelRef: { provider: 'deepseek', model: 'deepseek-chat', reasoningEffort: 'high' },
       persona: '谨慎复核证据。',
       currentRevisionId: 'agent-revision-1',
+      state: '思考中',
       capabilities: { dynamicCreation: true, developmentShell: false, fullFileAccess: false },
       channels: ['channel-1'],
     })
@@ -191,6 +193,133 @@ describe('HttpProductHost', () => {
       state: '已连接',
     })
     expect(listener).toHaveBeenCalledTimes(1)
+    unsubscribe()
+  })
+
+  it('shows external group senders and Mention names without leaking member IDs or QQ markup', async () => {
+    const base = snapshotBody()
+    const body = {
+      ...base,
+      channels: [
+        {
+          ...base.channels[0]!,
+          connectionId: 'connection-qq',
+          platformChannelId: 'group:opaque-platform-id',
+          kind: 'group',
+          displayName: '研发群',
+        },
+      ],
+      messages: [
+        {
+          id: 'event-group-1',
+          channelId: 'channel-1',
+          role: 'member',
+          sender: { memberId: 'mbr_sender-internal', displayName: '成员甲' },
+          mentionedConnectionAccount: true,
+          parts: [
+            { type: 'text', text: '<faceType=6,faceId="0",ext="encoded"> 请看' },
+            { type: 'mention', memberId: 'mbr_target-internal', displayName: '成员乙' },
+          ],
+          occurredAt: 1_700_000_000_000,
+        },
+      ],
+      connections: [{ id: 'connection-qq', adapterKey: 'qq-openclaw', status: 'active' }],
+    }
+    fetchMock = vi.fn((input: string) =>
+      Promise.resolve(
+        input === '/api/snapshot'
+          ? stubResponse(200, body)
+          : stubResponse(404, { error: { code: 'not-found', message: 'x' } }),
+      ),
+    )
+    vi.stubGlobal('fetch', fetchMock)
+    vi.stubGlobal('EventSource', FakeEventSource)
+
+    const host = new HttpProductHost()
+    const unsubscribe = host.subscribe(() => {})
+    await flush()
+
+    expect(host.getSnapshot().messages[0]).toMatchObject({
+      author: '成员甲',
+      body: '@机器人账号 [QQ 表情] 请看 @成员乙',
+    })
+    expect(host.getSnapshot().messages[0]?.body).not.toContain('mbr_')
+    expect(host.getSnapshot().messages[0]?.body).not.toContain('faceType')
+    unsubscribe()
+  })
+
+  it('renders a safe fallback for unresolved Mention labels', () => {
+    expect(renderConversationBody([{ type: 'mention', memberId: 'mbr_internal' }])).toBe('@群成员')
+  })
+
+  it('loads one Channel history page on demand and projects controlled media URLs', async () => {
+    fetchMock = vi.fn((input: string, init?: RequestInit) => {
+      if (input === '/api/snapshot') return Promise.resolve(stubResponse(200, { ...snapshotBody(), messages: [] }))
+      if (input === '/api/channels/channel-1/messages?limit=40' && init?.method === 'GET') {
+        return Promise.resolve(
+          stubResponse(200, {
+            hasMore: true,
+            messages: [
+              {
+                id: 'event-media',
+                channelId: 'channel-1',
+                role: 'member',
+                parts: [
+                  { type: 'text', text: '附件如下' },
+                  { type: 'image', assetId: 'asset-image', alt: '现场照片' },
+                  { type: 'file', assetId: 'asset-file', name: '说明.pdf' },
+                ],
+                occurredAt: 1_700_000_000_000,
+              },
+            ],
+          }),
+        )
+      }
+      return Promise.resolve(stubResponse(404, { error: { code: 'not-found', message: 'x' } }))
+    })
+    vi.stubGlobal('fetch', fetchMock)
+    vi.stubGlobal('EventSource', FakeEventSource)
+    const host = new HttpProductHost()
+    const unsubscribe = host.subscribe(() => undefined)
+    await flush()
+
+    const page = await host.execute('channels.listMessages', { channelId: 'channel-1', mode: 'initial', limit: 40 })
+    expect(page).toMatchObject({ hasMore: true })
+    expect(host.getSnapshot().messages[0]).toMatchObject({
+      body: '附件如下',
+      resources: [
+        {
+          kind: 'image',
+          name: '现场照片',
+          url: '/api/channels/channel-1/assets/asset-image',
+        },
+        {
+          kind: 'file',
+          name: '说明.pdf',
+          url: '/api/channels/channel-1/assets/asset-file',
+        },
+      ],
+    })
+    unsubscribe()
+  })
+
+  it('routes a local Channel display name without changing the platform identity', async () => {
+    fetchMock = vi.fn((input: string, init?: RequestInit) => {
+      if (input === '/api/channels/channel-1/display-name' && init?.method === 'POST') {
+        return Promise.resolve(stubResponse(200, { channelId: 'channel-1', displayName: '研发讨论群' }))
+      }
+      if (input === '/api/snapshot') return Promise.resolve(stubResponse(200, snapshotBody()))
+      return Promise.resolve(stubResponse(404, { error: { code: 'not-found', message: 'x' } }))
+    })
+    vi.stubGlobal('fetch', fetchMock)
+    vi.stubGlobal('EventSource', FakeEventSource)
+    const host = new HttpProductHost()
+    const unsubscribe = host.subscribe(() => undefined)
+    await flush()
+    await host.execute('channels.rename', { channelId: 'channel-1', displayName: '研发讨论群' })
+    const call = fetchMock.mock.calls.find(([input]) => input === '/api/channels/channel-1/display-name')
+    const request = call?.[1] as RequestInit | undefined
+    expect(JSON.parse(request?.body as string)).toEqual({ displayName: '研发讨论群' })
     unsubscribe()
   })
 
@@ -225,6 +354,7 @@ describe('HttpProductHost', () => {
       displayName: '资料员',
       persona: '',
       model: { provider: 'test-provider', model: 'chat-model' },
+      capabilities: { dynamicCreation: false, developmentShell: false, fullFileAccess: false },
     })
     unsubscribe()
   })
@@ -737,6 +867,44 @@ describe('HttpProductHost', () => {
     })
     expect(snapshot.channels[0]?.name).not.toContain('secret-connection-id')
     expect(snapshot.channels[0]?.connectionName).not.toContain('secret-connection-id')
+    unsubscribe()
+  })
+
+  it('accepts QQ direct channels and projects them as private conversations', async () => {
+    const raw = snapshotBody()
+    fetchMock = vi.fn(() =>
+      Promise.resolve(
+        stubResponse(200, {
+          ...raw,
+          channels: [
+            {
+              ...raw.channels[0],
+              connectionId: 'connection-qq',
+              platformChannelId: 'c2c:private-4321',
+              kind: 'direct',
+              displayName: '',
+            },
+          ],
+          connections: [
+            {
+              id: 'connection-qq',
+              adapterKey: 'qq-openclaw',
+              status: 'active',
+              knownChannels: [{ id: 'channel-1', name: 'c2c:private-4321', kind: 'direct' }],
+            },
+          ],
+        }),
+      ),
+    )
+    vi.stubGlobal('fetch', fetchMock)
+    vi.stubGlobal('EventSource', FakeEventSource)
+
+    const host = new HttpProductHost()
+    const unsubscribe = host.subscribe(() => undefined)
+    await flush()
+
+    expect(host.getSnapshot().channels[0]).toMatchObject({ kind: 'qq-direct', name: 'QQ 私聊（尾号 4321）' })
+    expect(host.getSnapshot().connections[0]?.knownChannels[0]?.name).toBe('QQ 私聊（尾号 4321）')
     unsubscribe()
   })
 

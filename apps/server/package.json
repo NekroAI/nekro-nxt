@@ -11,7 +11,7 @@
   },
   "scripts": {
     "build": "tsdown",
-    "dev": "tsx src/main.ts",
+    "dev": "tsx watch --clear-screen=false --include '../../packages/*/dist/*.mjs' src/main.ts",
     "start": "tsx src/main.ts",
     "test": "vitest run --root ../.. apps/server/tests",
     "typecheck": "tsc --noEmit"

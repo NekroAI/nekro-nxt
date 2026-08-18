@@ -585,6 +585,8 @@ export function ConfirmDialog({
   description,
   confirmLabel,
   onConfirm,
+  backLabel,
+  onBack,
   children,
 }: {
   readonly open: boolean
@@ -593,6 +595,8 @@ export function ConfirmDialog({
   readonly description: string
   readonly confirmLabel: string
   readonly onConfirm: () => boolean | void | Promise<boolean | void>
+  readonly backLabel?: string | undefined
+  readonly onBack?: (() => void) | undefined
   readonly children?: ReactNode
 }) {
   const [pending, setPending] = useState(false)
@@ -617,6 +621,11 @@ export function ConfirmDialog({
           <Button variant="ghost" disabled={pending} onClick={() => onOpenChange(false)}>
             取消
           </Button>
+          {backLabel && onBack ? (
+            <Button variant="secondary" disabled={pending} onClick={onBack}>
+              {backLabel}
+            </Button>
+          ) : null}
           <Button variant="primary" loading={pending} loadingLabel="处理中…" onClick={() => void confirm()}>
             {confirmLabel}
           </Button>

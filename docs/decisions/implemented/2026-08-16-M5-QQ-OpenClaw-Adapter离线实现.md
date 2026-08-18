@@ -16,6 +16,8 @@ QQ OpenClaw Adapter 的无凭据实现已经形成完整离线闭环：Gateway�
 - 原始事件解码覆盖 `C2C_MESSAGE_CREATE`、`GROUP_AT_MESSAGE_CREATE` 和 `GROUP_MESSAGE_CREATE`，包括 OpenID、Mention、附件、时间戳、`message_scene.ext` 与 quote `msg_elements` 优先级；
 - 普通群消息始终进入事实流，`mentionedBot`、`replyToBot` 和 `targetKind` 只作为 Binding Policy 输入，Adapter 不替智能体决定触发；
 - 机器人自身 Mention 从显示文本移除并保留触发事实；其他 Mention 转成稳定 `memberId`。出站只接受结构化 Mention 并输出原子 `<@openid>`，旧 `[@id:...]` 永远是普通文本；
+- Server 产品投影通过成员目录补充群消息发送者和 Mention 昵称，Web 不再把所有外部成员显示为“你”，也不展示 `memberId` 或 OpenID；DSH 准入消息同时包含发送者名称、稳定成员标识、成员 Mention 和“提及机器人账号”事实，因此触发语义不会在进入智能体上下文前丢失；
+- QQ 平台表情标记先降级为可读的“QQ 表情”，历史数据在 Web 投影时同样脱敏，不再泄漏 `<faceType=...>` 协议文本；
 - 视频沿用通用 file Part，不增加专用类型或虚假的视频理解能力。
 
 ## 身份、Quote 与媒体
@@ -64,7 +66,7 @@ Adapter 不读取这些表。`QQCoreBridge` 只调用 Core Service，远端媒�
 
 ## 未来方向与参考取舍
 
-关联方向：更多 Adapter、多媒体、同频道多个智能体、长期 Job、Webhook 和多账号管理。
+关联方向：更多 Adapter、多媒体、智能体多频道、长期 Job、Webhook 和多账号管理。
 
 保留接缝：Adapter SDK、Connection runtime state、双向消息映射、声明式配置、可选 UI Slot、Transport/Directory/Asset Bridge 和平台无关 Outbox。没有把 QQ OpenID、Markdown、Gateway sequence 或上传对象写进 Core 通用消息，因此未锁死其他平台。
 

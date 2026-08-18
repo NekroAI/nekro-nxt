@@ -110,7 +110,7 @@ export {
 } from './schema.js'
 
 /** The Core schema version starts at one with the upgrade journal table. */
-export const CORE_SCHEMA_VERSION = 13
+export const CORE_SCHEMA_VERSION = 15
 const CORE_MIGRATION_FILES = [
   '0000_red_darkstar.sql',
   '0001_broad_taskmaster.sql',
@@ -125,6 +125,8 @@ const CORE_MIGRATION_FILES = [
   '0010_adapter_runtime_state.sql',
   '0011_inbound_logical_message.sql',
   '0012_delivery_adapter_context.sql',
+  '0013_single_active_agent_binding.sql',
+  '0014_single_active_channel_binding.sql',
 ] as const
 
 /** Opens an owned Core database with the durability and integrity settings shared by both Hosts. */
@@ -378,6 +380,20 @@ export class SqliteCoreRepository
     return row ? this.#agentRevision(row) : undefined
   }
 
+  getAgentRevisionByDigest(agentId: AgentId, contentDigest: string): AgentRevisionRecord | undefined {
+    const row = this.#database
+      .prepare('SELECT * FROM agent_revisions WHERE agent_id = ? AND content_digest = ?')
+      .get(agentId, contentDigest) as SqliteRow | undefined
+    return row ? this.#agentRevision(row) : undefined
+  }
+
+  getNextAgentRevisionNumber(agentId: AgentId): number {
+    const row = this.#database
+      .prepare('SELECT COALESCE(MAX(revision), 0) + 1 AS next_revision FROM agent_revisions WHERE agent_id = ?')
+      .get(agentId) as SqliteRow
+    return requiredInteger(row, 'next_revision')
+  }
+
   appendAgentRevision(
     definition: AgentDefinitionRecord,
     revision: AgentRevisionRecord,
@@ -388,6 +404,20 @@ export class SqliteCoreRepository
       const result = this.#database
         .prepare('UPDATE agent_definitions SET current_revision_id = ? WHERE id = ? AND current_revision_id = ?')
         .run(definition.currentRevisionId, definition.id, expectedCurrentRevisionId)
+      if (result.changes !== 1) throw new Error(`Agent revision conflict: expected ${expectedCurrentRevisionId}.`)
+    })
+  }
+
+  activateAgentRevision(
+    definition: AgentDefinitionRecord,
+    revision: AgentRevisionRecord,
+    expectedCurrentRevisionId: AgentRevisionId,
+  ): void {
+    withTransaction(this.#database, () => {
+      if (revision.agentId !== definition.id) throw new Error('Agent revision does not belong to this agent.')
+      const result = this.#database
+        .prepare('UPDATE agent_definitions SET current_revision_id = ? WHERE id = ? AND current_revision_id = ?')
+        .run(revision.id, definition.id, expectedCurrentRevisionId)
       if (result.changes !== 1) throw new Error(`Agent revision conflict: expected ${expectedCurrentRevisionId}.`)
     })
   }
@@ -482,6 +512,11 @@ export class SqliteCoreRepository
       throw new Error(`Platform Channel kind conflict: ${record.platformChannelId}.`)
     }
     return stored
+  }
+
+  updateChannelDisplayName(id: ChannelId, displayName: string): void {
+    const result = this.#database.prepare('UPDATE channels SET display_name = ? WHERE id = ?').run(displayName, id)
+    if (result.changes !== 1) throw new Error(`Unknown channel: ${id}`)
   }
 
   getChannel(id: ChannelId): ChannelRecord | undefined {
@@ -591,18 +626,35 @@ export class SqliteCoreRepository
     return row ? this.#channelMember(row) : undefined
   }
 
-  createBinding(record: BindingRecord): void {
-    this.#database
-      .prepare(
-        `INSERT INTO bindings (id, channel_id, agent_id, trigger_policy, revision, created_at)
-         VALUES (?, ?, ?, ?, ?, ?)`,
-      )
-      .run(record.id, record.channelId, record.agentId, record.triggerPolicy, record.revision, record.createdAt)
+  replaceBinding(record: BindingRecord): BindingRecord {
+    return withTransaction(this.#database, () => {
+      this.#database.prepare('UPDATE bindings SET active = 0 WHERE channel_id = ? AND active = 1').run(record.channelId)
+      const existing = this.#database
+        .prepare('SELECT * FROM bindings WHERE channel_id = ? AND agent_id = ?')
+        .get(record.channelId, record.agentId) as SqliteRow | undefined
+      if (existing) {
+        this.#database
+          .prepare(
+            `UPDATE bindings
+                SET trigger_policy = ?, revision = revision + 1, active = 1, created_at = ?
+              WHERE id = ?`,
+          )
+          .run(record.triggerPolicy, record.createdAt, requiredString(existing, 'id'))
+      } else {
+        this.#database
+          .prepare(
+            `INSERT INTO bindings (id, channel_id, agent_id, trigger_policy, revision, active, created_at)
+             VALUES (?, ?, ?, ?, ?, 1, ?)`,
+          )
+          .run(record.id, record.channelId, record.agentId, record.triggerPolicy, record.revision, record.createdAt)
+      }
+      return this.getBinding(record.channelId, record.agentId)!
+    })
   }
 
   getBinding(channelId: ChannelId, agentId: AgentId): BindingRecord | undefined {
     const row = this.#database
-      .prepare('SELECT * FROM bindings WHERE channel_id = ? AND agent_id = ?')
+      .prepare('SELECT * FROM bindings WHERE channel_id = ? AND agent_id = ? AND active = 1')
       .get(channelId, agentId) as SqliteRow | undefined
     if (!row) return undefined
     return this.#binding(row)
@@ -610,7 +662,7 @@ export class SqliteCoreRepository
 
   listBindings(channelId: ChannelId): readonly BindingRecord[] {
     const rows = this.#database
-      .prepare('SELECT * FROM bindings WHERE channel_id = ? ORDER BY created_at, id')
+      .prepare('SELECT * FROM bindings WHERE channel_id = ? AND active = 1 ORDER BY created_at, id')
       .all(channelId) as SqliteRow[]
     return rows.map((row) => this.#binding(row))
   }
@@ -1181,12 +1233,12 @@ export class SqliteCoreRepository
     }
     const union = `
       SELECT 'channel-event' AS source, id AS source_id, channel_id, received_at AS occurred_at,
-             parts_json, NULL AS logical_message_id, NULL AS state
+             sender_member_id, parts_json, facts_json, NULL AS logical_message_id, NULL AS state
         FROM channel_events
        WHERE channel_id = ?
       UNION ALL
       SELECT 'outbound-intent' AS source, id AS source_id, channel_id, created_at AS occurred_at,
-             parts_json, logical_message_id, state
+             NULL AS sender_member_id, parts_json, NULL AS facts_json, logical_message_id, state
         FROM outbound_intents
        WHERE channel_id = ?`
     const rows = options.before
@@ -1223,8 +1275,9 @@ export class SqliteCoreRepository
     const select = `
       SELECT f.source_kind AS source, f.source_id, f.channel_id,
              coalesce(e.received_at, o.created_at) AS occurred_at,
+             e.sender_member_id,
              coalesce(e.parts_json, o.parts_json) AS parts_json,
-             o.logical_message_id, o.state`
+             e.facts_json, o.logical_message_id, o.state`
     const joins = `
         FROM channel_history_fts f
         LEFT JOIN channel_events e ON f.source_kind = 'channel-event' AND e.id = f.source_id
@@ -2329,12 +2382,16 @@ export class SqliteCoreRepository
     const source = requiredString(row, 'source')
     const parts = parseMessageParts(JSON.parse(requiredString(row, 'parts_json')))
     if (source === 'channel-event') {
+      const senderMemberId = optionalString(row, 'sender_member_id')
+      const facts = optionalString(row, 'facts_json')
       return {
         source,
         sourceId: requiredString(row, 'source_id') as ChannelEventId,
         channelId: requiredString(row, 'channel_id') as ChannelId,
         occurredAt: requiredInteger(row, 'occurred_at'),
+        ...(senderMemberId === undefined ? {} : { senderMemberId: senderMemberId as ChannelMemberId }),
         parts,
+        ...(facts === undefined ? {} : { facts: requiredObject(parseStoredJson(facts, 'facts_json'), 'facts_json') }),
       }
     }
     if (source === 'outbound-intent') {
