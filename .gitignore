@@ -3,6 +3,8 @@ node_modules/
 dist/
 build/
 lib/
+!scripts/lib/
+!scripts/lib/quality-baseline.mjs
 coverage/
 .turbo/
 .tsbuildinfo
