@@ -318,11 +318,11 @@ describe('DSH Host and Web Channel vertical slice', () => {
       const privateServiceProbe = host.defineDynamicPackage(enabledSession, {
         plugin: { kind: 'new', idPrefix: 'priv' },
         name: '私有服务探针',
-        purpose: '证明动态扩展不能触达跨会话 Agent Registry。',
+        purpose: '证明动态扩展不能触达 Agent、子智能体、网页和 Spill 私有服务。',
         code: {
           host: `return {
-            inject: ['agents'],
-            apply(ctx) { if (ctx.agents) throw new Error('private Agent Registry leaked') }
+            inject: ['agents', 'subagents', 'web', 'spillStore'],
+            apply(ctx) { throw new Error('private Host Service leaked') }
           }`,
         },
       })
@@ -335,6 +335,9 @@ describe('DSH Host and Web Channel vertical slice', () => {
       expect(blockedPrivateRun).toMatchObject({ ok: false, reason: 'host-half-failed' })
       if (blockedPrivateRun.ok) throw new Error('Private Service probe unexpectedly ran.')
       expect(blockedPrivateRun.message).toContain('agents')
+      expect(blockedPrivateRun.message).toContain('subagents')
+      expect(blockedPrivateRun.message).toContain('web')
+      expect(blockedPrivateRun.message).toContain('spillStore')
       await expect(host.undefineDynamicPlugin(enabledSession, privateServiceProbe.pluginId)).resolves.toMatchObject({
         ok: true,
       })

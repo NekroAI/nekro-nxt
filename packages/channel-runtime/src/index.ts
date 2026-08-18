@@ -379,7 +379,7 @@ export class ChannelRuntime {
     if (!channel) throw new Error(`Episode channel no longer exists: ${episode.channelId}`)
     const adapter = this.#resolveAdapter(channel.connectionId)
     if (!adapter) throw new Error(`Connection adapter is not running: ${channel.connectionId}`)
-    if (input.parts.length === 0) throw new Error('send_message requires at least one content part.')
+    if (input.parts.length === 0) throw new Error('send_channel_message requires at least one content part.')
     for (const part of input.parts) {
       if (!supportsPart(adapter, part)) throw new Error(`Adapter does not support message part: ${part.type}`)
     }

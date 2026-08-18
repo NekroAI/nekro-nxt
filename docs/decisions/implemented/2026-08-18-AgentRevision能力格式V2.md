@@ -4,7 +4,7 @@
 
 ## 结论
 
-智能体能力授权从历史三字段升级为六项独立授权：`subagents`、`fileTools`、`webSearch`、`dynamicCreation`、`developmentShell`、`unrestrictedFileAccess`。本决定只冻结领域格式、持久兼容与现有文件/Shell 装配语义；子智能体和网页搜索的 DSH 服务组装、可用状态及产品默认值由后续阶段落实。
+智能体能力授权从历史三字段升级为六项独立授权：`subagents`、`fileTools`、`webSearch`、`dynamicCreation`、`developmentShell`、`unrestrictedFileAccess`。本决定冻结领域格式、持久兼容与文件/Shell 装配语义；子智能体和网页搜索的后续组装见《DSH rc.6 群聊能力组合》实施记录。
 
 ## 持久兼容
 

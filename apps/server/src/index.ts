@@ -9,6 +9,7 @@ import AttachmentStore, {
 } from '@deepseek-ai/dsh-attachment'
 import SandboxBashExecutor from '@deepseek-ai/dsh-bash-sandbox'
 import { BasicCompactionEngine } from '@deepseek-ai/dsh-compaction-basic'
+import ToolResultPruner from '@deepseek-ai/dsh-compaction-tool-result-pruner'
 import { Context, type Fiber } from '@deepseek-ai/cordis'
 import { credentialRef } from '@deepseek-ai/dsh-credentials'
 import LocalCredentialProvider from '@deepseek-ai/dsh-credentials-local'
@@ -42,11 +43,13 @@ import {
   type UserMessage,
 } from '@deepseek-ai/dsh-llm'
 import { supportedProtocols as piAiSupportedProtocols } from '@deepseek-ai/dsh-llm-pi-ai'
+import * as LlmRetry from '@deepseek-ai/dsh-llm-retry'
 import * as FsObservationPolicy from '@deepseek-ai/dsh-fs-observation-policy'
 import SandboxedFileSystem from '@deepseek-ai/dsh-fs-sandbox'
 import LocalSandboxProvider from '@deepseek-ai/dsh-sandbox-local'
 import SandboxPolicyService from '@deepseek-ai/dsh-sandbox-policy'
 import { SessionId, SessionStore } from '@deepseek-ai/dsh-session'
+import SessionProjectionRegistry from '@deepseek-ai/dsh-session-projection'
 import { scopeOf } from '@deepseek-ai/dsh-scope'
 import * as SessionCheckpointPolicy from '@deepseek-ai/dsh-session-checkpoint-policy'
 import { SqliteSessionPersistence } from '@deepseek-ai/dsh-session-persistence-sqlite'
@@ -54,10 +57,21 @@ import { settingsNamespace, type SettingsPathOp } from '@deepseek-ai/dsh-setting
 import FileSettingsProvider from '@deepseek-ai/dsh-settings-file'
 import { PERSONA_ORDER, PERSONA_SECTION, SystemPrompt } from '@deepseek-ai/dsh-system-prompt'
 import TokenMeter from '@deepseek-ai/dsh-token-meter'
+import SubagentRuntime, { type SubagentListEntry } from '@deepseek-ai/dsh-subagent'
+import * as SubagentSpawnInProcess from '@deepseek-ai/dsh-subagent-spawn-in-process'
 import * as CordisTool from '@deepseek-ai/dsh-tool-cordis'
 import * as BashTool from '@deepseek-ai/dsh-tool-bash'
+import * as ToolCallTimeoutPolicy from '@deepseek-ai/dsh-tool-call-timeout-policy'
 import * as FsTool from '@deepseek-ai/dsh-tool-fs'
+import * as ToolSubagent from '@deepseek-ai/dsh-tool-subagent'
+import * as ToolSubagentControl from '@deepseek-ai/dsh-tool-subagent-control'
+import * as ToolSubagentListAgents from '@deepseek-ai/dsh-tool-subagent-control/list-agents'
+import * as ToolSubagentReport from '@deepseek-ai/dsh-tool-subagent-report'
+import * as ToolWeb from '@deepseek-ai/dsh-tool-web'
 import { defineTool, ToolRuntime, type ToolDefinition } from '@deepseek-ai/dsh-tools'
+import WebRuntime from '@deepseek-ai/dsh-web'
+import * as DeepSeekWebSearch from '@deepseek-ai/dsh-web-search-deepseek'
+import * as SpillPolicy from '@deepseek-ai/dsh-spill-policy'
 import * as ShellEnv from '@deepseek-ai/dsh-shell-env'
 import LocalSubprocessRuntime from '@deepseek-ai/dsh-subprocess-local'
 import type {
@@ -97,6 +111,7 @@ import { createRequire } from 'node:module'
 import path from 'node:path'
 import { pathToFileURL } from 'node:url'
 import sharp from 'sharp'
+import { QuotaLocalSpillStore } from './dsh-spill.js'
 
 export * from './qq-openclaw.js'
 
@@ -132,11 +147,15 @@ const HOST_DSH_PACKAGE_VERSIONS = {
   '@deepseek-ai/dsh-attachment': '0.1.0-rc.6',
   '@deepseek-ai/dsh-bash-sandbox': '0.1.0-rc.6',
   '@deepseek-ai/dsh-compaction-basic': '0.1.0-rc.6',
+  '@deepseek-ai/dsh-compaction-tool-result-pruner': '0.1.0-rc.6',
   '@deepseek-ai/dsh-cordis-host-runner': '0.1.0-rc.6',
   '@deepseek-ai/dsh-credentials': '0.1.0-rc.6',
   '@deepseek-ai/dsh-credentials-local': '0.1.0-rc.6',
+  '@deepseek-ai/dsh-launch-environment': '0.1.0-rc.6',
   '@deepseek-ai/dsh-llm': '0.1.0-rc.6',
   '@deepseek-ai/dsh-llm-pi-ai': '0.1.0-rc.6',
+  '@deepseek-ai/dsh-llm-retry': '0.1.0-rc.6',
+  '@deepseek-ai/dsh-output-retention': '0.1.0-rc.6',
   '@deepseek-ai/dsh-fs-observation-policy': '0.1.0-rc.6',
   '@deepseek-ai/dsh-fs-sandbox': '0.1.0-rc.6',
   '@deepseek-ai/dsh-sandbox-local': '0.1.0-rc.6',
@@ -145,16 +164,29 @@ const HOST_DSH_PACKAGE_VERSIONS = {
   '@deepseek-ai/dsh-session': '0.1.0-rc.6',
   '@deepseek-ai/dsh-session-checkpoint-policy': '0.1.0-rc.6',
   '@deepseek-ai/dsh-session-persistence-sqlite': '0.1.0-rc.6',
+  '@deepseek-ai/dsh-session-projection': '0.1.0-rc.6',
   '@deepseek-ai/dsh-settings': '0.1.0-rc.6',
   '@deepseek-ai/dsh-settings-file': '0.1.0-rc.6',
   '@deepseek-ai/dsh-system-prompt': '0.1.0-rc.6',
   '@deepseek-ai/dsh-shell-env': '0.1.0-rc.6',
   '@deepseek-ai/dsh-subprocess-local': '0.1.0-rc.6',
   '@deepseek-ai/dsh-token-meter': '0.1.0-rc.6',
+  '@deepseek-ai/dsh-spill': '0.1.0-rc.6',
+  '@deepseek-ai/dsh-spill-local': '0.1.0-rc.6',
+  '@deepseek-ai/dsh-spill-policy': '0.1.0-rc.6',
+  '@deepseek-ai/dsh-subagent': '0.1.0-rc.6',
+  '@deepseek-ai/dsh-subagent-spawn-in-process': '0.1.0-rc.6',
   '@deepseek-ai/dsh-tool-bash': '0.1.0-rc.6',
+  '@deepseek-ai/dsh-tool-call-timeout-policy': '0.1.0-rc.6',
   '@deepseek-ai/dsh-tool-cordis': '0.1.0-rc.6',
   '@deepseek-ai/dsh-tool-fs': '0.1.0-rc.6',
+  '@deepseek-ai/dsh-tool-subagent': '0.1.0-rc.6',
+  '@deepseek-ai/dsh-tool-subagent-control': '0.1.0-rc.6',
+  '@deepseek-ai/dsh-tool-subagent-report': '0.1.0-rc.6',
+  '@deepseek-ai/dsh-tool-web': '0.1.0-rc.6',
   '@deepseek-ai/dsh-tools': '0.1.0-rc.6',
+  '@deepseek-ai/dsh-web': '0.1.0-rc.6',
+  '@deepseek-ai/dsh-web-search-deepseek': '0.1.0-rc.6',
 } as const
 
 export function assertHostDshPackageVersions(): void {
@@ -213,6 +245,16 @@ export interface LlmProviderSettingsView {
   readonly providers: readonly ConfigurableLlmProviderView[]
 }
 
+export interface WebSearchCapabilityStatus {
+  readonly provider: 'deepseek-official'
+  readonly available: boolean
+  readonly credentialConfigured: boolean
+  readonly credentialReference: string
+  readonly maxUsesPerCall: number
+  readonly maxResultsPerCall: number
+  readonly timeoutMs: number
+}
+
 export interface SaveLlmProviderInput {
   readonly provider: string
   readonly expectedRevision: number
@@ -242,6 +284,9 @@ const readObjectPath = (value: unknown, pathSegments: readonly string[]): Record
 const credentialReferenceForProvider = (provider: string): string =>
   `${provider.toUpperCase().replaceAll('-', '_')}_API_KEY`
 
+const errorFromUnknown = (cause: unknown, message: string): Error =>
+  cause instanceof Error ? cause : new Error(message, { cause })
+
 export interface DynamicPackageDefinitionInput {
   readonly plugin:
     | { readonly kind: 'new'; readonly idPrefix: string }
@@ -264,12 +309,17 @@ const EXTENSION_PRIVATE_SERVICE_KEYS = [
   'llm',
   'sandbox',
   'sandboxPolicy',
+  'sessionProjections',
   'sessionPersistence',
   'sessions',
   'shell',
   'shellEnv',
   'subprocess',
+  'subagents',
+  'spillStore',
   'tokenMeter',
+  'toolResultPruner',
+  'web',
 ] as const
 const PERSISTENT_EXTENSION_HOST_SERVICES = new Set(['tools'])
 
@@ -747,6 +797,33 @@ async function mountDevelopmentCapabilities(
   }
 }
 
+const CHILD_MAX_TOKENS = 4096
+
+async function mountDelegationCapabilities(agentContext: Context, revision: AgentRevisionRecord): Promise<void> {
+  if (!revision.capabilities.subagents) return
+  await agentContext.plugin(ToolSubagentControl)
+  await agentContext.plugin(ToolSubagentListAgents)
+  await agentContext.plugin(ToolSubagent, {
+    provider: 'spawn',
+    toolName: 'subagent',
+    backgroundMode: 'continuable',
+    enableRunInBackground: true,
+    maxDepth: 1,
+    agentOptions: { maxTokens: CHILD_MAX_TOKENS },
+    toolFilter: { allow: [] },
+  })
+}
+
+async function mountWebCapabilities(agentContext: Context, revision: AgentRevisionRecord): Promise<void> {
+  if (!revision.capabilities.webSearch) return
+  await agentContext.plugin(ToolWeb, {
+    search: true,
+    fetch: false,
+    searchMaxResults: 5,
+    searchTimeoutMs: 60_000,
+  })
+}
+
 const resolveAgentWorkspace = (workspaceRoot: string, agentId: AgentRevisionRecord['agentId']): string => {
   if (agentId === '.' || agentId === '..' || /[\\/]/u.test(agentId)) {
     throw new Error(`智能体 ID 无法用于创建开发工作区：${agentId}`)
@@ -817,12 +894,46 @@ export class DshHostRuntime implements AgentSessionDriver, ExtensionActivationHo
         path: options.sessionDatabasePath,
         writeBatchMaxDelayMs: 1,
       })
+      await context.plugin(SessionProjectionRegistry)
       await context.plugin(SystemPrompt, { persona: '' })
       await context.plugin(ToolRuntime, { mode: 'native' })
       await context.plugin(AgentRegistry)
+      await context.plugin(SubagentRuntime)
+      await context.plugin(SubagentSpawnInProcess, { providerName: 'spawn' })
+      await context.plugin(ToolSubagentReport, { reportDelivery: 'wakeup' })
+      context.effect(
+        () =>
+          context.subagents.registerContinuableSetup((childContext) => {
+            const dispose = childContext.on('agent/request', async (_payload, next) => ({
+              ...(await next()),
+              maxTokens: CHILD_MAX_TOKENS,
+            }))
+            return () => {
+              dispose()
+            }
+          }),
+        'nekro-nxt: continuable child request limit',
+      )
       await context.plugin(TokenMeter)
+      await context.plugin(ToolResultPruner, {
+        thresholdChars: 8192,
+        headChars: 4096,
+        tailChars: 1024,
+      })
       await context.plugin(BasicCompactionEngine, { auto: true })
       await context.plugin(AgentLoop, { agents: [] })
+      await context.plugin(LlmRetry)
+      await context.plugin(ToolCallTimeoutPolicy)
+      await context.plugin(QuotaLocalSpillStore, {
+        root: path.join(path.dirname(options.sessionDatabasePath), 'dsh', 'spill'),
+      })
+      await context.plugin(SpillPolicy, { maxInlineBytes: 50_000 })
+      await context.plugin(WebRuntime, { searchProvider: 'deepseek-official' })
+      await context.plugin(DeepSeekWebSearch, {
+        apiKeyEnv: 'DEEPSEEK_API_KEY',
+        maxTokens: 1024,
+        maxUses: 2,
+      })
       await context.plugin(SessionCheckpointPolicy)
       return new DshHostRuntime(context, options)
     } catch (error) {
@@ -914,6 +1025,36 @@ export class DshHostRuntime implements AgentSessionDriver, ExtensionActivationHo
       }),
     )
     return { writable: this.#context.settings.writable, protocols: [...piAiSupportedProtocols()], providers }
+  }
+
+  /** Project Web Provider readiness through the same DSH settings/credentials seams used at execution time. */
+  async getWebSearchCapabilityStatus(): Promise<WebSearchCapabilityStatus> {
+    this.#assertActive()
+    const fallback: WebSearchCapabilityStatus = {
+      provider: 'deepseek-official',
+      available: false,
+      credentialConfigured: false,
+      credentialReference: 'DEEPSEEK_API_KEY',
+      maxUsesPerCall: 2,
+      maxResultsPerCall: 5,
+      timeoutMs: 60_000,
+    }
+    if (!this.#hasLlmSettings) return fallback
+    const descriptor = this.#context.settings
+      .describe({ redactSecrets: true })
+      .find((candidate) => candidate.ns === settingsNamespace('web-search-deepseek'))
+    const value = descriptor?.value
+    const values =
+      typeof value === 'object' && value !== null && !Array.isArray(value)
+        ? (value as Record<string, unknown>)
+        : undefined
+    const credentialReference = typeof values?.apiKeyEnv === 'string' ? values.apiKeyEnv : fallback.credentialReference
+    const credential = await this.#context.credentials.describe(credentialRef(credentialReference))
+    const inlineSecretConfigured =
+      descriptor?.secrets?.some((secret) => secret.set && secret.path.length === 1 && secret.path[0] === 'apiKey') ===
+      true
+    const credentialConfigured = credential.configured || inlineSecretConfigured
+    return { ...fallback, available: credentialConfigured, credentialConfigured, credentialReference }
   }
 
   /** Persist one DSH provider profile, then store a supplied key through the write-only credential seam. */
@@ -1082,6 +1223,8 @@ export class DshHostRuntime implements AgentSessionDriver, ExtensionActivationHo
           }
         }, 'nekro-nxt: dynamic session ownership')
       }
+      await mountDelegationCapabilities(agentContext, revision)
+      await mountWebCapabilities(agentContext, revision)
       await mountDevelopmentCapabilities(agentContext, revision, developmentWorkspace)
       await this.#mountPersistentExtensionsIntoSession(revision.agentId, sessionId, agentContext)
     }
@@ -1235,12 +1378,33 @@ export class DshHostRuntime implements AgentSessionDriver, ExtensionActivationHo
     const sessionId = SessionId(dshSessionId)
     const handle = this.#handles.get(sessionId)
     if (!handle) throw new Error(`DSH Agent Session is not owned by this Host: ${dshSessionId}`)
-    handle.agent.cancel({ kind: 'hook', reason })
-    await handle.dispose()
-    this.#handles.delete(sessionId)
-    this.#imageInputSessions.delete(sessionId)
-    this.#dynamicSessions.delete(sessionId)
-    this.#productAgentBySession.delete(sessionId)
+    let drainError: unknown
+    try {
+      await this.#context.subagents.drainContinuableDescendants([handle.agent])
+    } catch (error) {
+      drainError = error
+    }
+    let disposeError: unknown
+    try {
+      handle.agent.cancel({ kind: 'hook', reason })
+      await handle.dispose()
+    } catch (error) {
+      disposeError = error
+    } finally {
+      this.#handles.delete(sessionId)
+      this.#imageInputSessions.delete(sessionId)
+      this.#dynamicSessions.delete(sessionId)
+      this.#productAgentBySession.delete(sessionId)
+    }
+    if (drainError !== undefined && disposeError !== undefined) {
+      throw new AggregateError([drainError, disposeError], `DSH Session teardown failed: ${dshSessionId}`)
+    }
+    if (drainError !== undefined) {
+      throw errorFromUnknown(drainError, `DSH descendant drain failed: ${dshSessionId}`)
+    }
+    if (disposeError !== undefined) {
+      throw errorFromUnknown(disposeError, `DSH Session disposal failed: ${dshSessionId}`)
+    }
   }
 
   async applyCompatibleRevision(input: Parameters<AgentSessionDriver['applyCompatibleRevision']>[0]): Promise<void> {
@@ -1283,6 +1447,14 @@ export class DshHostRuntime implements AgentSessionDriver, ExtensionActivationHo
     const agent = this.#context.agents.get(SessionId(dshSessionId))
     if (!agent) throw new Error(`DSH Agent Session is not live: ${dshSessionId}`)
     return agent.session.events
+  }
+
+  /** Read DSH's durable direct-child projection without resuming cold children. */
+  listSubagents(dshSessionId: string, signal?: AbortSignal): Promise<readonly SubagentListEntry[]> {
+    this.#assertActive()
+    const agent = this.#context.agents.get(SessionId(dshSessionId))
+    if (!agent) throw new Error(`DSH Agent Session is not live: ${dshSessionId}`)
+    return this.#context.subagents.listChildren(agent.id, signal)
   }
 
   defineDynamicPackage(dshSessionId: string, input: DynamicPackageDefinitionInput): DynamicCordisDefineReceipt {
@@ -1531,16 +1703,30 @@ export class DshHostRuntime implements AgentSessionDriver, ExtensionActivationHo
   async dispose(): Promise<void> {
     if (this.#disposed) return
     this.#disposed = true
-    await Promise.allSettled(
+    const failures: unknown[] = []
+    const extensions = await Promise.allSettled(
       [...this.#persistentExtensions.values()].map((entry) => this.#unmountPersistentExtension(entry)),
     )
-    await Promise.allSettled([...this.#handles.values()].map((handle) => handle.dispose()))
+    for (const result of extensions) if (result.status === 'rejected') failures.push(result.reason)
+    const handles = [...this.#handles.values()]
+    try {
+      await this.#context.subagents.drainContinuableDescendants(handles.map((handle) => handle.agent))
+    } catch (error) {
+      failures.push(error)
+    }
+    const disposedHandles = await Promise.allSettled(handles.map((handle) => handle.dispose()))
+    for (const result of disposedHandles) if (result.status === 'rejected') failures.push(result.reason)
     this.#handles.clear()
     this.#imageInputSessions.clear()
     this.#dynamicSessions.clear()
     this.#productAgentBySession.clear()
     this.#persistentExtensions.clear()
-    await this.#context.fiber.dispose()
+    try {
+      await this.#context.fiber.dispose()
+    } catch (error) {
+      failures.push(error)
+    }
+    if (failures.length > 0) throw new AggregateError(failures, 'DSH Host Runtime disposal failed.')
   }
 
   #assertActive(): void {
