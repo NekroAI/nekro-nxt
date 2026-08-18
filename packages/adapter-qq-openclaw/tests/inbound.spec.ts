@@ -81,4 +81,14 @@ describe('QQ inbound event decoder', () => {
       decodeQQInboundMessage('GROUP_MESSAGE_CREATE', { id: 'message', group_openid: 'group', author: {} }),
     ).toThrow('group sender OpenID is required')
   })
+
+  it('projects QQ face markup as a readable content marker instead of leaking the platform token', () => {
+    expect(
+      decodeQQInboundMessage('C2C_MESSAGE_CREATE', {
+        id: 'qq-face-1',
+        author: { user_openid: 'user-openid', nickname: '小青' },
+        content: '<faceType=6,faceId="0",ext="eyJ0ZXh0IjoiIn0=">',
+      }),
+    ).toMatchObject({ content: '[QQ 表情]' })
+  })
 })

@@ -11,7 +11,7 @@ import {
   ExtensionSourceStore,
 } from '@nekro-nxt/extension-runtime'
 import { openMigratedCoreDatabase, SqliteCoreRepository } from '@nekro-nxt/storage-sqlite'
-import { mkdtemp, rm } from 'node:fs/promises'
+import { access, mkdtemp, rm, stat } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
@@ -530,9 +530,10 @@ describe('DSH Host and Web Channel vertical slice', () => {
         kind: 'web',
       }),
     )
+    const workspaceRoot = path.join(directory, 'workspaces')
     const host = await DshHostRuntime.create({
       sessionDatabasePath: path.join(directory, 'sessions.sqlite'),
-      developmentWorkspaceRoot: directory,
+      developmentWorkspaceRoot: workspaceRoot,
       communication: { sendMessage: () => Promise.reject(new Error('not used')) },
       history: repository,
       assets: repository,
@@ -568,6 +569,14 @@ describe('DSH Host and Web Channel vertical slice', () => {
 
       expect(completeTools).toEqual(expect.arrayContaining(['bash', 'read', 'write', 'edit']))
       expect(completeTools).not.toContain('cordis_define')
+
+      await expect(access(path.join(workspaceRoot, definitions[0]!.definition.id))).rejects.toThrow()
+      for (const agent of definitions.slice(1)) {
+        const workspace = path.join(workspaceRoot, agent.definition.id)
+        expect((await stat(workspace)).isDirectory()).toBe(true)
+        expect((await stat(workspace)).mode & 0o777).toBe(0o700)
+      }
+      expect(new Set(definitions.slice(1).map((agent) => path.join(workspaceRoot, agent.definition.id))).size).toBe(3)
     } finally {
       await host.dispose()
       database.close()
@@ -595,6 +604,20 @@ describe('DSH Host and Web Channel vertical slice', () => {
       platformChannelId: 'main',
       kind: 'web',
     })
+    const sender = core.observeChannelMember({
+      connectionId: connection.id,
+      channelId: channel.id,
+      platformUserId: 'member-sender',
+      displayName: '成员甲',
+      observedAt: 1000,
+    }).member
+    const mentionedMember = core.observeChannelMember({
+      connectionId: connection.id,
+      channelId: channel.id,
+      platformUserId: 'member-target',
+      displayName: '成员乙',
+      observedAt: 1000,
+    }).member
     core.createBinding({ channelId: channel.id, agentId: agent.definition.id, triggerPolicy: 'always' })
 
     const runtimeRef: { current?: ChannelRuntime } = {}
@@ -635,10 +658,21 @@ describe('DSH Host and Web Channel vertical slice', () => {
 
     try {
       await web.start()
-      await web.postMessage({
+      await runtime.acceptInbound({
+        connectionId: connection.id,
         channelId: channel.id,
-        clientEventId: 'browser-event-1',
-        parts: [{ type: 'text', text: '你好，请回复我。' }],
+        adapterKey: 'web',
+        platformEventId: 'browser-event-1',
+        kind: 'message-created',
+        senderMemberId: sender.id,
+        parts: [
+          { type: 'text', text: '你好，请回复我。' },
+          { type: 'mention', memberId: mentionedMember.id },
+        ],
+        platformTimestamp: 1000,
+        receivedAt: 1000,
+        dedupeKey: 'web:browser-event-1',
+        facts: { mentionedBot: true },
       })
       const episode = database.prepare("SELECT dsh_session_id FROM episodes WHERE status = 'active'").get() as {
         dsh_session_id: string
@@ -646,6 +680,12 @@ describe('DSH Host and Web Channel vertical slice', () => {
       await host.whenIdle(episode.dsh_session_id)
 
       expect(observed).toEqual(['这是通信工具确认发送的回复。'])
+      expect(repository.listChannelHistory(channel.id).find((entry) => entry.source === 'channel-event')).toMatchObject(
+        {
+          senderMemberId: sender.id,
+          facts: { mentionedBot: true },
+        },
+      )
       expect(database.prepare('SELECT COUNT(*) AS count FROM outbound_intents').get()).toEqual({ count: 1 })
       expect(database.prepare('SELECT state, parts_json FROM outbound_intents').get()).toEqual({
         state: 'sent',
@@ -663,6 +703,9 @@ describe('DSH Host and Web Channel vertical slice', () => {
       expect(eventText).toContain('工具完成后的原始结束文字也不会发送。')
       expect(eventText).toContain('nekro-nxt-channel')
       expect(eventText).toContain('这是通信工具确认发送的回复。')
+      expect(eventText).toContain('发送成员：成员甲')
+      expect(eventText).toContain('提及频道成员：成员乙')
+      expect(eventText).toContain('该消息提及了当前智能体关联的机器人账号')
 
       core.reviseAgent(agent.definition.id, agent.revision.id, {
         displayName: '小奈',

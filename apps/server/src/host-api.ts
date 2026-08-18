@@ -2,6 +2,7 @@ import type { WebServer, WebRoute } from '@deepseek-ai/dsh-host-webserver'
 import type { OutboundState } from '@nekro-nxt/channel-runtime'
 import type { AgentRevisionContent } from '@nekro-nxt/core'
 import type { AgentId, ChannelId, ExtensionId, ExtensionRevisionId, JsonValue, MessagePart } from '@nekro-nxt/contracts'
+import { readFile } from 'node:fs/promises'
 import type { IncomingMessage, ServerResponse } from 'node:http'
 import { z } from 'zod'
 import type { NekroRuntime } from './bootstrap.js'
@@ -153,7 +154,9 @@ export interface SnapshotMessage {
   readonly id: string
   readonly channelId: ChannelId
   readonly role: 'member' | 'agent'
-  readonly parts: readonly MessagePart[]
+  readonly parts: readonly (MessagePart & { readonly displayName?: string })[]
+  readonly sender?: { readonly memberId: string; readonly displayName?: string }
+  readonly mentionedConnectionAccount?: boolean
   readonly occurredAt: number
   readonly deliveryState?: OutboundState
 }
@@ -208,15 +211,38 @@ export const parseMessagePartsRequestBody = (input: unknown): z.output<typeof me
   messageBodySchema.parse(input)
 
 /** Build the authoritative projection snapshot from the assembled services only. */
-export const buildSnapshotMessage = (runtime: NekroRuntime, channelId: ChannelId): readonly SnapshotMessage[] => {
+export const buildSnapshotMessage = (
+  runtime: NekroRuntime,
+  channelId: ChannelId,
+  options: {
+    readonly limit?: number
+    readonly before?: { readonly occurredAt: number; readonly sourceId: string }
+  } = {},
+): readonly SnapshotMessage[] => {
   const out: SnapshotMessage[] = []
-  for (const entry of runtime.repository.listChannelHistory(channelId, { limit: 100 })) {
+  for (const entry of runtime.repository.listChannelHistory(channelId, options)) {
+    const parts = entry.parts.map((part) => {
+      if (part.type !== 'mention') return part
+      const displayName = runtime.repository.getChannelMember(part.memberId)?.displayName
+      return { ...part, ...(displayName === undefined ? {} : { displayName }) }
+    })
     if (entry.source === 'channel-event') {
+      const sender =
+        entry.senderMemberId === undefined ? undefined : runtime.repository.getChannelMember(entry.senderMemberId)
       out.push({
         id: entry.sourceId,
         channelId: entry.channelId,
         role: 'member',
-        parts: entry.parts,
+        parts,
+        ...(entry.senderMemberId === undefined
+          ? {}
+          : {
+              sender: {
+                memberId: entry.senderMemberId,
+                ...(sender?.displayName === undefined ? {} : { displayName: sender.displayName }),
+              },
+            }),
+        ...(entry.facts?.mentionedBot === true ? { mentionedConnectionAccount: true } : {}),
         occurredAt: entry.occurredAt,
       })
     } else if (entry.source === 'outbound-intent') {
@@ -224,7 +250,7 @@ export const buildSnapshotMessage = (runtime: NekroRuntime, channelId: ChannelId
         id: entry.sourceId,
         channelId: entry.channelId,
         role: 'agent',
-        parts: entry.parts,
+        parts,
         occurredAt: entry.occurredAt,
         deliveryState: entry.state,
       })
@@ -402,6 +428,7 @@ export const createNekroHostApi = (webServer: WebServer, runtime: NekroRuntime):
           model: commit.revision.model,
           capabilities: commit.revision.capabilities,
           currentRevisionId: commit.revision.id,
+          runtimeStatus: runtime.host.runtimeStatus(commit.definition.id),
           createdAt: commit.revision.createdAt,
           channels: ownedChannels,
         },
@@ -425,7 +452,10 @@ export const createNekroHostApi = (webServer: WebServer, runtime: NekroRuntime):
         })),
       }
     })
-    const messages: SnapshotMessage[] = channels.flatMap((channel) => buildSnapshotMessage(runtime, channel.id))
+    // Message history is loaded per Channel through its cursor endpoint. Keeping
+    // it out of the global snapshot prevents every navigation from rereading
+    // every Channel's history.
+    const messages: SnapshotMessage[] = []
     const connections = runtime.core.listConnections().map((connection) => {
       const config = connection.config as { readonly appId?: unknown; readonly proactiveSend?: unknown }
       const diagnostic = runtime.connectionDiagnostic(connection.id)
@@ -485,9 +515,19 @@ export const createNekroHostApi = (webServer: WebServer, runtime: NekroRuntime):
       }
       try {
         const parsed = createBindingSchema.parse(await readJsonBody(req))
+        const agentId = parsed.agentId as AgentId
+        const channelId = parsed.channelId as ChannelId
+        if (!runtime.repository.getAgent(agentId)) throw new Error('智能体不存在。')
+        if (!runtime.repository.getChannel(channelId)) throw new Error('频道不存在。')
+        const previousEpisodes = runtime.repository
+          .listActiveEpisodesForAgent(agentId)
+          .filter((episode) => episode.channelId !== channelId)
+        for (const episode of previousEpisodes) {
+          await runtime.channels.stopEpisode(episode.id, 'permission-revoked')
+        }
         const binding = runtime.core.createBinding({
-          agentId: parsed.agentId as AgentId,
-          channelId: parsed.channelId as ChannelId,
+          agentId,
+          channelId,
           triggerPolicy: parsed.triggerPolicy,
         })
         writeJson(res, 201, binding)
@@ -749,24 +789,94 @@ export const createNekroHostApi = (webServer: WebServer, runtime: NekroRuntime):
     },
   })
 
-  // POST /api/channels/:id/messages → assemble inbound and acceptInbound it.
+  // Channel history, local display name, controlled Assets, and Web inbound.
   registerRoute({
     kind: 'prefix',
     path: '/api/channels',
     handler: async (req, res) => {
       const url = new URL(req.url ?? '/', 'http://localhost')
-      const match = /^\/api\/channels\/([^/]+)\/messages$/.exec(url.pathname)
-      if (!match) {
+      const messageMatch = /^\/api\/channels\/([^/]+)\/messages$/.exec(url.pathname)
+      const nameMatch = /^\/api\/channels\/([^/]+)\/display-name$/.exec(url.pathname)
+      const assetMatch = /^\/api\/channels\/([^/]+)\/assets\/([^/]+)$/.exec(url.pathname)
+      const rawChannelId = messageMatch?.[1] ?? nameMatch?.[1] ?? assetMatch?.[1]
+      if (!rawChannelId) {
         writeError(res, 404, 'not-found', `未定义路由：${req.method} ${url.pathname}。`)
         return
       }
-      if (req.method !== 'POST') {
-        writeError(res, 405, 'method-not-allowed', '只支持 POST。')
-        return
-      }
-      const channelId = idParamSchema.safeParse(match[1]!)
+      const channelId = idParamSchema.safeParse(rawChannelId)
       if (!channelId.success) {
         writeError(res, 400, 'invalid-channel', '无效的频道 ID。')
+        return
+      }
+      const typedChannelId = channelId.data as ChannelId
+
+      if (assetMatch) {
+        if (req.method !== 'GET') {
+          writeError(res, 405, 'method-not-allowed', '只支持 GET。')
+          return
+        }
+        const assetId = decodeURIComponent(assetMatch[2]!) as never
+        if (!runtime.repository.canAccessAsset(assetId, typedChannelId)) {
+          writeError(res, 404, 'asset-not-found', '当前频道无法访问此资源。')
+          return
+        }
+        const asset = runtime.repository.getAssetById(assetId)
+        if (!asset || asset.blobState !== 'present') {
+          writeError(res, 404, 'asset-not-found', '资源尚不可用。')
+          return
+        }
+        try {
+          const bytes = await readFile(runtime.assetService.blobPath(asset))
+          res.writeHead(200, {
+            'content-type': asset.mediaType,
+            'content-length': String(bytes.byteLength),
+            'cache-control': 'private, max-age=31536000, immutable',
+            'x-content-type-options': 'nosniff',
+          })
+          res.end(bytes)
+        } catch (error) {
+          writeError(res, 500, 'asset-read-failed', error instanceof Error ? error.message : String(error))
+        }
+        return
+      }
+
+      if (nameMatch) {
+        if (req.method !== 'POST') {
+          writeError(res, 405, 'method-not-allowed', '只支持 POST。')
+          return
+        }
+        try {
+          const body = z
+            .object({ displayName: z.string().trim().min(1).max(120) })
+            .strict()
+            .parse(await readJsonBody(req))
+          const updated = runtime.core.updateChannelDisplayName(typedChannelId, body.displayName)
+          writeJson(res, 200, { channelId: updated.id, displayName: updated.displayName })
+        } catch (error) {
+          writeError(res, 400, 'channel-name-failed', error instanceof Error ? error.message : String(error))
+        }
+        return
+      }
+
+      if (req.method === 'GET') {
+        const limit = Math.min(Math.max(Number(url.searchParams.get('limit') ?? 40) || 40, 1), 100)
+        const beforeOccurredAt = Number(url.searchParams.get('beforeOccurredAt'))
+        const beforeSourceId = url.searchParams.get('beforeSourceId')?.trim()
+        const before =
+          Number.isSafeInteger(beforeOccurredAt) && beforeOccurredAt >= 0 && beforeSourceId
+            ? { occurredAt: beforeOccurredAt, sourceId: beforeSourceId }
+            : undefined
+        const page = buildSnapshotMessage(runtime, typedChannelId, {
+          limit: limit + 1,
+          ...(before === undefined ? {} : { before }),
+        })
+        const hasMore = page.length > limit
+        const messages = hasMore ? page.slice(1) : page
+        writeJson(res, 200, { messages, hasMore })
+        return
+      }
+      if (req.method !== 'POST') {
+        writeError(res, 405, 'method-not-allowed', '只支持 GET 或 POST。')
         return
       }
       let parsed: z.output<typeof messageBodySchema>
@@ -778,7 +888,7 @@ export const createNekroHostApi = (webServer: WebServer, runtime: NekroRuntime):
       }
       try {
         const result = await runtime.web.postMessage({
-          channelId: channelId.data as ChannelId,
+          channelId: typedChannelId,
           clientEventId: parsed.clientEventId ?? `http-${Date.now()}`,
           parts: parsed.parts as MessagePart[],
           ...(parsed.senderMemberId === undefined ? {} : { senderMemberId: parsed.senderMemberId as never }),
@@ -898,6 +1008,16 @@ export const createNekroHostApi = (webServer: WebServer, runtime: NekroRuntime):
       }
     }
   })
+  const unsubscribeRuntimeStatus = runtime.host.subscribeRuntimeStatus(() => {
+    const frame = renderSse({ event: 'status', data: { ok: true, message: '智能体运行状态已更新' } })
+    for (const client of sseClients) {
+      try {
+        client.write(frame)
+      } catch {
+        // Closed clients are removed by their close handler.
+      }
+    }
+  })
 
   // POST /api/dynamic/:agentId/{approve|decline|invoke|report-render-failure} →
   // browser dynamic client circuit (creator workbench): resolve approvals and
@@ -908,7 +1028,7 @@ export const createNekroHostApi = (webServer: WebServer, runtime: NekroRuntime):
     handler: async (req, res) => {
       const url = new URL(req.url ?? '/', 'http://localhost')
       const match =
-        /^\/api\/dynamic\/([^/]+)\/(approve|decline|invoke|get-client-code|report-render-failure|run-host-half|settle-user-run)$/.exec(
+        /^\/api\/dynamic\/([^/]+)\/(inventory|approve|decline|invoke|get-client-code|report-render-failure|run-host-half|settle-user-run)$/.exec(
           url.pathname,
         )
       if (!match) {
@@ -937,6 +1057,10 @@ export const createNekroHostApi = (webServer: WebServer, runtime: NekroRuntime):
         dshSessionId = resolveActiveSession(runtime, agentId.data)
       } catch (error) {
         writeError(res, 400, 'no-session', error instanceof Error ? error.message : String(error))
+        return
+      }
+      if (action === 'inventory') {
+        writeJson(res, 200, { rows: runtime.host.dynamicInventory(dshSessionId) })
         return
       }
       if (action === 'approve' || action === 'decline') {
@@ -1186,6 +1310,7 @@ export const createNekroHostApi = (webServer: WebServer, runtime: NekroRuntime):
     },
     dispose() {
       unsubscribeConnectionChanges()
+      unsubscribeRuntimeStatus()
       for (const disposer of disposers.splice(0)) disposer()
     },
   }

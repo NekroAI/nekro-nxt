@@ -106,6 +106,13 @@ const required = (value: string | undefined, description: string): string => {
 
 const regexEscape = (value: string): string => value.replace(/[.*+?^${}()|[\]\\]/gu, '\\$&')
 
+const normalizeQQContent = (value: unknown): string | undefined => {
+  const content = text(value)
+  if (!content) return undefined
+  const normalized = content.replace(/<faceType=\d+,faceId="[^"]*",ext="[^"]*">/gu, '[QQ 表情]').trim()
+  return normalized || undefined
+}
+
 const stripStructuredMentions = (
   content: string | undefined,
   mentions: readonly { readonly openId: string; readonly displayName?: string }[],
@@ -139,7 +146,7 @@ export const decodeQQInboundMessage = (
   if (typedEvent === 'C2C_MESSAGE_CREATE') {
     const senderOpenId = required(text(author.user_openid, author.id, author.union_openid), 'C2C sender OpenID')
     const senderDisplayName = displayName(author)
-    const content = text(raw.content)
+    const content = normalizeQQContent(raw.content)
     return {
       eventType: typedEvent,
       platformMessageId,
@@ -169,7 +176,7 @@ export const decodeQQInboundMessage = (
     .filter((mention): mention is NonNullable<typeof mention> => mention !== undefined)
   const targetDisplayName = text(raw.group_name, raw.group_nick, raw.group_title)
   const senderDisplayName = displayName(author)
-  const content = stripStructuredMentions(text(raw.content), mentions)
+  const content = stripStructuredMentions(normalizeQQContent(raw.content), mentions)
   return {
     eventType: typedEvent,
     platformMessageId,

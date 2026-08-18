@@ -58,6 +58,11 @@ export const defaultWebDistIndex = (): string => fileURLToPath(new URL('../../we
 export interface StartServerOptions {
   /** Root of the durable data directory (core.sqlite / sessions.sqlite / assets / extension-*). */
   readonly dataRoot: string
+  /**
+   * Optional Host workspace root override. Defaults to `<dataRoot>/workspaces`;
+   * each intelligent-agent still receives its own `<agentId>` child directory.
+   */
+  readonly developmentWorkspaceRoot?: string
   /** Absolute path to the built Web `dist/index.html`. */
   readonly distIndex: string
   readonly host?: '127.0.0.1' | '0.0.0.0'
@@ -75,7 +80,9 @@ export const startNekroServer = async (options: StartServerOptions): Promise<Nek
   const host = options.host ?? '127.0.0.1'
   const port = options.port ?? 0
   const dataRoot = resolveRoot(options.dataRoot)
-  await mkdir(path.dirname(path.join(dataRoot, 'core.sqlite')), { recursive: true })
+  const developmentWorkspaceRoot = resolveRoot(options.developmentWorkspaceRoot ?? path.join(dataRoot, 'workspaces'))
+  await mkdir(dataRoot, { recursive: true, mode: 0o700 })
+  await mkdir(developmentWorkspaceRoot, { recursive: true, mode: 0o700 })
 
   const runtime = await NekroRuntime.create({
     coreDatabasePath: path.join(dataRoot, 'core.sqlite'),
@@ -86,6 +93,7 @@ export const startNekroServer = async (options: StartServerOptions): Promise<Nek
     credentialRoot: path.join(dataRoot, 'credentials'),
     llmSettingsPath: path.join(dataRoot, 'dsh', 'settings.yaml'),
     llmCredentialPath: path.join(dataRoot, 'dsh', '.credentials.yaml'),
+    developmentWorkspaceRoot,
     ...(options.configureLlm === undefined ? {} : { configureLlm: options.configureLlm }),
   })
   await runtime.start()
@@ -128,6 +136,7 @@ const isEntryPoint = (): boolean => {
 if (isEntryPoint()) {
   void (async () => {
     const dataRoot = process.env.NEKRO_DATA ?? 'data'
+    const developmentWorkspaceRoot = process.env.NEKRO_DEVELOPMENT_WORKSPACE_ROOT
     const distIndexEnv = process.env.NEKRO_DIST_INDEX
     const portEnv = process.env.NEKRO_PORT
     const llmProviderRoutes = parseLlmProviderRoutes(process.env.NEKRO_LLM_PROVIDERS)
@@ -147,6 +156,9 @@ if (isEntryPoint()) {
         dataRoot,
         distIndex,
         port,
+        ...(developmentWorkspaceRoot === undefined || developmentWorkspaceRoot.trim() === ''
+          ? {}
+          : { developmentWorkspaceRoot }),
         configureLlm: configureDshLlmProviders(llmProviderRoutes),
       })
       console.log(`[nekro-nxt] Server 已监听 http://127.0.0.1:${handle.port}`)

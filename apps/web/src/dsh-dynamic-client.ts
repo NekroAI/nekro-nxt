@@ -1,6 +1,5 @@
 import * as Cordis from '@deepseek-ai/cordis'
-import { Context } from '@deepseek-ai/cordis'
-import Loader from '@deepseek-ai/cordis-plugin-loader'
+import { Context, type Fiber, type Plugin } from '@deepseek-ai/cordis'
 import clientRunnerBundle from '@deepseek-ai/dsh-cordis-client-runner/client?raw'
 import type {
   ApprovalRequestId,
@@ -10,8 +9,10 @@ import type {
 import clientModulesBundle from '@deepseek-ai/dsh-client-modules/client?raw'
 import clientRuntimeBundle from '@deepseek-ai/dsh-client-runtime/client?raw'
 import * as SlotModule from '@deepseek-ai/dsh-client-ui-slots'
+import { createSlotRenderer } from '@deepseek-ai/dsh-client-web-react'
 import type { StoredEntry } from '@deepseek-ai/dsh-client-ui-slots'
 import * as React from 'react'
+import type { ReactNode } from 'react'
 
 interface ClientPluginHandoff {
   readonly id: string
@@ -28,6 +29,60 @@ interface ClientModuleSystemFace {
   invalidate(id: string): void
 }
 
+interface BrowserDynamicLoaderEntry {
+  readonly fiber: Fiber
+}
+
+interface BrowserDynamicLoaderFace {
+  create(options: { readonly name: string }): Promise<string>
+  resolve(id: string): BrowserDynamicLoaderEntry
+  remove(id: string): Promise<void>
+}
+
+/**
+ * Browser-only subset of the Cordis Loader used by DSH's dynamic Client
+ * runner. The published full Loader owns Node config/import machinery and
+ * therefore cannot be bundled into the Web shell. Dynamic packages already
+ * arrive through the official ClientModuleSystem, so this seam only turns one
+ * module-table entry into a Cordis Fiber and disposes that Fiber on retract.
+ */
+class BrowserDynamicLoader implements BrowserDynamicLoaderFace {
+  readonly #context: Context
+  readonly #modules: ClientModuleSystemFace
+  readonly #entries = new Map<string, BrowserDynamicLoaderEntry>()
+  #sequence = 0
+
+  constructor(context: Context, modules: ClientModuleSystemFace) {
+    this.#context = context
+    this.#modules = modules
+  }
+
+  async create(options: { readonly name: string }): Promise<string> {
+    const exported = await this.#modules.import(options.name)
+    const plugin =
+      typeof exported === 'object' && exported !== null && 'default' in exported
+        ? (exported as { readonly default: unknown }).default
+        : exported
+    const id = `dynamic-client-entry-${++this.#sequence}`
+    const fiber = this.#context.plugin(plugin as Plugin)
+    this.#entries.set(id, { fiber })
+    return id
+  }
+
+  resolve(id: string): BrowserDynamicLoaderEntry {
+    const entry = this.#entries.get(id)
+    if (!entry) throw new Error(`Dynamic Client loader entry is unavailable: ${id}`)
+    return entry
+  }
+
+  async remove(id: string): Promise<void> {
+    const entry = this.#entries.get(id)
+    if (!entry) return
+    this.#entries.delete(id)
+    await entry.fiber.dispose()
+  }
+}
+
 interface ClientModuleSystemConstructor {
   new (options: {
     readonly modules: readonly unknown[]
@@ -38,6 +93,9 @@ interface ClientModuleSystemConstructor {
 
 interface SlotRegistryFace {
   entriesOfSlot(key: string): readonly StoredEntry[]
+  register(options: { readonly name: 'root'; readonly priority: number }, component: () => ReactNode): () => void
+  install(renderer: ReturnType<typeof createSlotRenderer>): void
+  renderSlot(key: 'root', owner: object): ReactNode
 }
 
 interface DynamicPackageRunnerFace {
@@ -53,7 +111,7 @@ interface DynamicPackageRunnerFace {
 interface DynamicPackageRunnerConstructor {
   new (environment: {
     readonly ctx: Context
-    readonly loader: Loader
+    readonly loader: BrowserDynamicLoaderFace
     readonly modules: ClientModuleSystemFace
     readonly slots: SlotRegistryFace
     readonly invoke: (pluginId: string, pluginRunId: string, method: string, args: unknown) => Promise<unknown>
@@ -77,6 +135,30 @@ interface RunOrchestratorConstructor {
 
 interface SlotRegistryConstructor {
   new (context: Context): SlotRegistryFace
+}
+
+const staticObservable = <T>(snapshot: T) => ({
+  getSnapshot: (): T => snapshot,
+  subscribe: (): (() => void) => () => undefined,
+})
+
+/** Minimal object-layer feeds required by the official Slot renderer host. */
+const installSlotRendererShellFeeds = (context: Context): void => {
+  context.reflect.provide('sessions', {
+    list: staticObservable({ phase: 'ready', ids: [], byId: {}, current: undefined }),
+    currentProvideInfo: staticObservable({ sessionId: undefined, hooks: {}, props: {} }),
+  })
+  context.reflect.provide('workspaces', {
+    list: staticObservable({
+      items: [],
+      archivedSessionIds: [],
+      state: 'idle',
+      phase: 'ready',
+      error: null,
+      baselinesReady: true,
+      recentWorkspaceId: undefined,
+    }),
+  })
 }
 
 interface DynamicClientModules {
@@ -204,14 +286,20 @@ export class DshDynamicClientRuntime {
     const { modules, moduleSystem } = await loadDynamicClientModules(documentValue)
     const context = new Context()
     try {
-      await context.plugin(Loader, {})
-      context.loader.internal = moduleSystem as never
+      const loader = new BrowserDynamicLoader(context, moduleSystem)
+      installSlotRendererShellFeeds(context)
       await context.plugin(modules.SlotRegistry)
       const slots = context.get('slots') as unknown as SlotRegistryFace | undefined
       if (!slots) throw new Error('DSH SlotRegistry did not publish its Service.')
+      slots.install(createSlotRenderer())
+      // The official renderer requires a stable shell-owned root registration.
+      // Dynamic root entries receive negative priorities and temporarily win;
+      // this null shell entry prevents a transient empty-root crash while a
+      // retraction notification propagates through React.
+      slots.register({ name: 'root', priority: 0 }, () => null)
       const runner = new modules.DynamicCordisPackageRunner({
         ctx: context,
-        loader: context.loader,
+        loader,
         modules: moduleSystem,
         slots,
         invoke: (pluginId, pluginRunId, method, args) => host.invoke(pluginId, pluginRunId, method, args),
@@ -267,6 +355,11 @@ export class DshDynamicClientRuntime {
   loaded(): readonly DynamicCordisLivePackage[] {
     this.#assertActive()
     return this.#runner.getSnapshot()
+  }
+
+  renderRoot(): ReactNode {
+    this.#assertActive()
+    return this.slots.renderSlot('root', {})
   }
 
   async dispose(): Promise<void> {

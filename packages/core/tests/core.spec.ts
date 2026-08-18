@@ -45,6 +45,21 @@ class MemoryRepository implements CoreRepository {
   getAgentRevision(id: AgentRevisionId) {
     return this.revisions.get(id)
   }
+  getAgentRevisionByDigest(agentId: AgentId, contentDigest: string) {
+    return [...this.revisions.values()].find(
+      (revision) => revision.agentId === agentId && revision.contentDigest === contentDigest,
+    )
+  }
+  getNextAgentRevisionNumber(agentId: AgentId): number {
+    return (
+      Math.max(
+        0,
+        ...[...this.revisions.values()]
+          .filter((revision) => revision.agentId === agentId)
+          .map((revision) => revision.revision),
+      ) + 1
+    )
+  }
 
   appendAgentRevision(
     definition: AgentDefinitionRecord,
@@ -55,6 +70,16 @@ class MemoryRepository implements CoreRepository {
     if (current?.definition.currentRevisionId !== expectedCurrentRevisionId) throw new Error('revision conflict')
     this.agents.set(definition.id, { definition, revision })
     this.revisions.set(revision.id, revision)
+  }
+
+  activateAgentRevision(
+    definition: AgentDefinitionRecord,
+    revision: AgentRevisionRecord,
+    expectedCurrentRevisionId: AgentRevisionId,
+  ): void {
+    const current = this.agents.get(definition.id)
+    if (current?.definition.currentRevisionId !== expectedCurrentRevisionId) throw new Error('revision conflict')
+    this.agents.set(definition.id, { definition, revision })
   }
 
   createConnection(record: ConnectionRecord): void {
@@ -93,6 +118,12 @@ class MemoryRepository implements CoreRepository {
     }
     this.channels.set(record.id, record)
     return record
+  }
+
+  updateChannelDisplayName(id: ChannelId, displayName: string): void {
+    const current = this.channels.get(id)
+    if (!current) throw new Error(`Unknown channel: ${id}`)
+    this.channels.set(id, { ...current, displayName })
   }
 
   getChannel(id: ChannelId) {
@@ -155,8 +186,15 @@ class MemoryRepository implements CoreRepository {
     )
   }
 
-  createBinding(record: BindingRecord): void {
+  replaceBinding(record: BindingRecord): BindingRecord {
+    const currentIndex = this.bindings.findIndex((binding) => binding.agentId === record.agentId)
+    if (currentIndex >= 0) this.bindings.splice(currentIndex, 1)
+    const existingIndex = this.bindings.findIndex(
+      (binding) => binding.channelId === record.channelId && binding.agentId === record.agentId,
+    )
+    if (existingIndex >= 0) this.bindings.splice(existingIndex, 1)
     this.bindings.push(record)
+    return record
   }
 
   getBinding(channelId: ChannelId, agentId: AgentId) {
@@ -226,6 +264,18 @@ describe('CoreService', () => {
       model: { provider: 'deepseek', model: 'v4' },
     })
     expect(second.revision).toMatchObject({ revision: 2, agentId: first.definition.id })
+    const restored = core.reviseAgent(first.definition.id, second.revision.id, {
+      displayName: '小奈',
+      persona: '保持简洁。',
+      model: { provider: 'deepseek', model: 'v4' },
+    })
+    expect(restored.revision.id).toBe(first.revision.id)
+    const third = core.reviseAgent(first.definition.id, restored.revision.id, {
+      displayName: '小奈',
+      persona: '第三种配置。',
+      model: { provider: 'deepseek', model: 'v4' },
+    })
+    expect(third.revision.revision).toBe(3)
     expect(() =>
       core.reviseAgent(first.definition.id, first.revision.id, {
         displayName: '过期修改',
@@ -290,6 +340,26 @@ describe('CoreService', () => {
     const replay = core.appendInbound(event)
     expect(replay.inserted).toBe(false)
     expect(repository.events).toHaveLength(1)
+  })
+
+  it('keeps only one current channel binding for an agent', () => {
+    const repository = new MemoryRepository()
+    let id = 0
+    const core = new CoreService(repository, { now: () => 100, nextUlid: () => `ID${++id}` })
+    const agent = core.createAgent({
+      displayName: '小奈',
+      persona: '',
+      model: { provider: 'deepseek', model: 'v4' },
+    })
+    const connection = core.createConnection({ adapterKey: 'web', config: {} })
+    const first = core.createChannel({ connectionId: connection.id, platformChannelId: 'first', kind: 'web' })
+    const second = core.createChannel({ connectionId: connection.id, platformChannelId: 'second', kind: 'web' })
+    core.createBinding({ channelId: first.id, agentId: agent.definition.id, triggerPolicy: 'always' })
+    core.createBinding({ channelId: second.id, agentId: agent.definition.id, triggerPolicy: 'command' })
+    expect(core.listBindings(first.id)).toEqual([])
+    expect(core.listBindings(second.id)).toEqual([
+      expect.objectContaining({ agentId: agent.definition.id, triggerPolicy: 'command' }),
+    ])
   })
 
   it('scopes platform identities to a Connection and keeps stable Channel members', () => {

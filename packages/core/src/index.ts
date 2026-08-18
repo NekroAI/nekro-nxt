@@ -141,7 +141,14 @@ export interface CoreRepository {
   createAgent(commit: CreateAgentCommit): void
   getAgent(id: AgentId): CreateAgentCommit | undefined
   getAgentRevision(id: AgentRevisionId): AgentRevisionRecord | undefined
+  getAgentRevisionByDigest(agentId: AgentId, contentDigest: string): AgentRevisionRecord | undefined
+  getNextAgentRevisionNumber(agentId: AgentId): number
   appendAgentRevision(
+    definition: AgentDefinitionRecord,
+    revision: AgentRevisionRecord,
+    expectedCurrentRevisionId: AgentRevisionId,
+  ): void
+  activateAgentRevision(
     definition: AgentDefinitionRecord,
     revision: AgentRevisionRecord,
     expectedCurrentRevisionId: AgentRevisionId,
@@ -152,6 +159,7 @@ export interface CoreRepository {
   updateConnectionStatus(id: ConnectionId, status: ConnectionRecord['status']): void
   createChannel(record: ChannelRecord): void
   ensureChannel(record: ChannelRecord): ChannelRecord
+  updateChannelDisplayName(id: ChannelId, displayName: string): void
   getChannel(id: ChannelId): ChannelRecord | undefined
   getChannelByPlatformId(connectionId: ConnectionId, platformChannelId: string): ChannelRecord | undefined
   listChannelIdsByConnection(connectionId: ConnectionId): readonly ChannelId[]
@@ -163,7 +171,7 @@ export interface CoreRepository {
     channelId: ChannelId,
     platformIdentityId: PlatformIdentityId,
   ): ChannelMemberRecord | undefined
-  createBinding(record: BindingRecord): void
+  replaceBinding(record: BindingRecord): BindingRecord
   getBinding(channelId: ChannelId, agentId: AgentId): BindingRecord | undefined
   listBindings(channelId: ChannelId): readonly BindingRecord[]
   appendChannelEvent(candidate: ChannelEventRecord): AppendChannelEventCommit
@@ -338,11 +346,17 @@ export class CoreService {
     const content = agentRevisionContentSchema.parse(input) as NormalizedAgentRevisionContent
     const digest = digestRevision(content)
     if (digest === current.revision.contentDigest) return current
+    const existing = this.#repository.getAgentRevisionByDigest(agentId, digest)
+    if (existing) {
+      const definition = { ...current.definition, currentRevisionId: existing.id }
+      this.#repository.activateAgentRevision(definition, existing, expectedCurrentRevisionId)
+      return { definition, revision: existing }
+    }
     const revision: AgentRevisionRecord = {
       ...content,
       id: this.#id<AgentRevisionId>('arev'),
       agentId,
-      revision: current.revision.revision + 1,
+      revision: this.#repository.getNextAgentRevisionNumber(agentId),
       contentDigest: digest,
       createdAt: this.#timestamp(),
     }
@@ -430,6 +444,14 @@ export class CoreService {
       ...(parsed.displayName === undefined ? {} : { displayName: parsed.displayName }),
       createdAt: parsed.observedAt,
     })
+  }
+
+  updateChannelDisplayName(channelId: ChannelId, displayName: string): ChannelRecord {
+    const parsed = z.string().trim().min(1).max(120).parse(displayName)
+    const current = this.#repository.getChannel(channelId)
+    if (!current) throw new Error(`Unknown channel: ${channelId}`)
+    this.#repository.updateChannelDisplayName(channelId, parsed)
+    return { ...current, displayName: parsed }
   }
 
   observeChannelMember(input: {
@@ -527,8 +549,7 @@ export class CoreService {
       revision: 1,
       createdAt: this.#timestamp(),
     }
-    this.#repository.createBinding(record)
-    return record
+    return this.#repository.replaceBinding(record)
   }
 
   listBindings(channelId: ChannelId): readonly BindingRecord[] {

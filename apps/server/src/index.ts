@@ -1,4 +1,4 @@
-import { AgentRegistry, type Agent, type AgentHandle } from '@deepseek-ai/dsh-agent'
+import { AgentRegistry, type Agent, type AgentHandle, type AgentStatus } from '@deepseek-ai/dsh-agent'
 import AgentLoop from '@deepseek-ai/dsh-agent-loop'
 import AttachmentStore, {
   AttachmentId,
@@ -82,6 +82,7 @@ import type {
   AssetRecord,
   AssetService,
   ChannelEventRecord,
+  CoreRepository,
 } from '@nekro-nxt/core'
 import type {
   ExtensionActivationHost,
@@ -91,7 +92,7 @@ import type {
 } from '@nekro-nxt/extension-runtime'
 import type { ExtensionHostEnvironment, ExtensionJsonValue, ExtensionPluginFactory } from '@nekro-nxt/extension-sdk'
 import { createHash } from 'node:crypto'
-import { readFile } from 'node:fs/promises'
+import { mkdir, readFile } from 'node:fs/promises'
 import { createRequire } from 'node:module'
 import path from 'node:path'
 import { pathToFileURL } from 'node:url'
@@ -174,7 +175,7 @@ export interface AgentCommunicationPort {
 export interface DshHostRuntimeOptions {
   readonly sessionDatabasePath: string
   readonly communication: AgentCommunicationPort
-  readonly history: ChannelHistoryRepository
+  readonly history: ChannelHistoryRepository & Pick<CoreRepository, 'getChannelMember'>
   readonly assets: AssetEnrichmentRepository
   readonly assetService: AssetService
   readonly resolveAgentRevision: (revisionId: AgentRevisionId) => AgentRevisionRecord | undefined
@@ -537,9 +538,30 @@ const communicationTool = (episodeId: EpisodeId, communication: AgentCommunicati
     },
   })
 
+type ProductChannelHistoryRepository = ChannelHistoryRepository & Pick<CoreRepository, 'getChannelMember'>
+
+const memberSummary = (
+  history: ProductChannelHistoryRepository,
+  memberId: NonNullable<ChannelEventRecord['senderMemberId']>,
+): { readonly memberId: string; readonly displayName?: string } => {
+  const displayName = history.getChannelMember(memberId)?.displayName
+  return { memberId, ...(displayName === undefined ? {} : { displayName }) }
+}
+
+const enrichedHistoryEntry = (
+  history: ProductChannelHistoryRepository,
+  entry: ReturnType<ProductChannelHistoryRepository['listChannelHistory']>[number],
+) => ({
+  ...entry,
+  ...(entry.source === 'channel-event' && entry.senderMemberId !== undefined
+    ? { sender: memberSummary(history, entry.senderMemberId) }
+    : {}),
+  mentions: entry.parts.flatMap((part) => (part.type === 'mention' ? [memberSummary(history, part.memberId)] : [])),
+})
+
 const historyTools = (
   channelId: Parameters<ChannelHistoryRepository['listChannelHistory']>[0],
-  history: ChannelHistoryRepository,
+  history: ProductChannelHistoryRepository,
 ) => [
   defineTool({
     name: 'conversation_history_read',
@@ -563,7 +585,9 @@ const historyTools = (
           ? { before: { occurredAt: args.beforeOccurredAt!, sourceId: args.beforeSourceId! } }
           : {}),
       })
-      return Promise.resolve(JSON.parse(JSON.stringify(entries)) as JsonValue[])
+      return Promise.resolve(
+        JSON.parse(JSON.stringify(entries.map((entry) => enrichedHistoryEntry(history, entry)))) as JsonValue[],
+      )
     },
   }),
   defineTool({
@@ -581,7 +605,11 @@ const historyTools = (
       const hits = history.searchChannelHistory(channelId, args.query, {
         ...(args.limit === undefined ? {} : { limit: args.limit }),
       })
-      return Promise.resolve(JSON.parse(JSON.stringify(hits)) as JsonValue[])
+      return Promise.resolve(
+        JSON.parse(
+          JSON.stringify(hits.map((hit) => ({ ...hit, entry: enrichedHistoryEntry(history, hit.entry) }))),
+        ) as JsonValue[],
+      )
     },
   }),
 ]
@@ -640,11 +668,15 @@ const assetViewImageTool = (
     },
   })
 
-const projectEvent = (event: ChannelEventRecord): ContentBlock[] => {
+const projectEvent = (event: ChannelEventRecord, history: ProductChannelHistoryRepository): ContentBlock[] => {
+  const sender = event.senderMemberId === undefined ? undefined : memberSummary(history, event.senderMemberId)
+  const senderDescription =
+    sender === undefined ? '' : `，发送成员：${sender.displayName ?? '未知成员'}（成员标识 ${sender.memberId}）`
+  const mentionDescription = event.facts?.mentionedBot === true ? '；该消息提及了当前智能体关联的机器人账号' : ''
   const blocks: ContentBlock[] = [
     {
       type: 'text',
-      text: `频道事件 ${event.id}${event.senderMemberId ? `，发送成员 ${event.senderMemberId}` : ''}：`,
+      text: `频道事件 ${event.id}${senderDescription}${mentionDescription}：`,
     },
   ]
   for (const part of event.parts) {
@@ -653,7 +685,13 @@ const projectEvent = (event: ChannelEventRecord): ContentBlock[] => {
         blocks.push({ type: 'text', text: part.text })
         break
       case 'mention':
-        blocks.push({ type: 'text', text: `提及频道成员 ${part.memberId}` })
+        {
+          const member = memberSummary(history, part.memberId)
+          blocks.push({
+            type: 'text',
+            text: `提及频道成员：${member.displayName ?? '未知成员'}（成员标识 ${member.memberId}）`,
+          })
+        }
         break
       case 'image':
         blocks.push({ type: 'text', text: `收到图片资源 ${part.assetId}${part.alt ? `（${part.alt}）` : ''}` })
@@ -707,11 +745,18 @@ async function mountDevelopmentCapabilities(
   }
 }
 
+const resolveAgentWorkspace = (workspaceRoot: string, agentId: AgentRevisionRecord['agentId']): string => {
+  if (agentId === '.' || agentId === '..' || /[\\/]/u.test(agentId)) {
+    throw new Error(`智能体 ID 无法用于创建开发工作区：${agentId}`)
+  }
+  return path.join(workspaceRoot, agentId)
+}
+
 /** Owns the minimal production DSH Host roster and adapts it to Channel Runtime. */
 export class DshHostRuntime implements AgentSessionDriver, ExtensionActivationHost {
   readonly #context: Context
   readonly #communication: AgentCommunicationPort
-  readonly #history: ChannelHistoryRepository
+  readonly #history: ProductChannelHistoryRepository
   readonly #assets: AssetEnrichmentRepository
   readonly #resolveAgentRevision: DshHostRuntimeOptions['resolveAgentRevision']
   readonly #developmentWorkspaceRoot: string | undefined
@@ -968,6 +1013,14 @@ export class DshHostRuntime implements AgentSessionDriver, ExtensionActivationHo
     if (!revision || revision.id !== input.agentRevisionId || revision.agentId !== input.agentId) {
       throw new Error(`Cannot resolve the pinned Agent Revision: ${input.agentRevisionId}`)
     }
+    const hasDevelopmentCapabilities = revision.capabilities.developmentShell || revision.capabilities.fullFileAccess
+    const developmentWorkspace =
+      hasDevelopmentCapabilities && this.#developmentWorkspaceRoot !== undefined
+        ? resolveAgentWorkspace(this.#developmentWorkspaceRoot, revision.agentId)
+        : undefined
+    if (developmentWorkspace !== undefined) {
+      await mkdir(developmentWorkspace, { recursive: true, mode: 0o700 })
+    }
     const modelInfo = await this.#context.llm.resolveModelInfo(revision.model.provider, revision.model.model)
     const supportsImage = modelInfo.inputModalities?.includes('image') === true
     const setup = async (agentContext: Context): Promise<void> => {
@@ -1027,7 +1080,7 @@ export class DshHostRuntime implements AgentSessionDriver, ExtensionActivationHo
           }
         }, 'nekro-nxt: dynamic session ownership')
       }
-      await mountDevelopmentCapabilities(agentContext, revision, this.#developmentWorkspaceRoot)
+      await mountDevelopmentCapabilities(agentContext, revision, developmentWorkspace)
       await this.#mountPersistentExtensionsIntoSession(revision.agentId, sessionId, agentContext)
     }
     const persisted = (await this.#context.sessionPersistence.list()).some(({ id }) => id === sessionId)
@@ -1039,10 +1092,7 @@ export class DshHostRuntime implements AgentSessionDriver, ExtensionActivationHo
         })
       : await this.#context.agents.create({
           sessionId,
-          ...((revision.capabilities.developmentShell || revision.capabilities.fullFileAccess) &&
-          this.#developmentWorkspaceRoot !== undefined
-            ? { meta: { cwd: this.#developmentWorkspaceRoot } }
-            : {}),
+          ...(developmentWorkspace === undefined ? {} : { meta: { cwd: developmentWorkspace } }),
           agentOptions: { provider: revision.model.provider, model: revision.model.model },
           setup,
         })
@@ -1136,7 +1186,10 @@ export class DshHostRuntime implements AgentSessionDriver, ExtensionActivationHo
     return agent.runMaintenance(async (signal) => {
       const entries = this.#history.listChannelHistory(input.episode.channelId, { limit: 100 }).toReversed()
       const transcript = entries
-        .map((entry) => `${entry.occurredAt} ${entry.source} ${entry.sourceId}: ${JSON.stringify(entry.parts)}`)
+        .map(
+          (entry) =>
+            `${entry.occurredAt} ${entry.source} ${entry.sourceId}: ${JSON.stringify(enrichedHistoryEntry(this.#history, entry))}`,
+        )
         .join('\n')
       const message = freezeMessage({
         id: MessageId(`handoff-input-${input.episode.id}`),
@@ -1199,6 +1252,29 @@ export class DshHostRuntime implements AgentSessionDriver, ExtensionActivationHo
     const agent = this.#context.agents.get(SessionId(dshSessionId))
     if (!agent) throw new Error(`DSH Agent Session is not live: ${dshSessionId}`)
     await agent.whenIdle()
+  }
+
+  /** Aggregate the public DSH status of every live Session owned by one product intelligent-agent. */
+  runtimeStatus(agentId: AgentRevisionRecord['agentId']): AgentStatus {
+    this.#assertActive()
+    for (const [sessionId, ownedAgentId] of this.#productAgentBySession) {
+      if (ownedAgentId === agentId && this.#context.agents.get(SessionId(sessionId))?.status === 'running') {
+        return 'running'
+      }
+    }
+    return 'idle'
+  }
+
+  /** Notify the product projection when DSH enters or leaves active turn processing. */
+  subscribeRuntimeStatus(
+    listener: (change: { readonly agentId: AgentRevisionRecord['agentId']; readonly status: AgentStatus }) => void,
+  ): () => boolean {
+    this.#assertActive()
+    return this.#context.on('agent/status', ({ agent }) => {
+      const agentId = this.#productAgentBySession.get(agent.id)
+      if (agentId === undefined) return
+      listener({ agentId, status: this.runtimeStatus(agentId) })
+    })
   }
 
   sessionEvents(dshSessionId: string) {
@@ -1599,7 +1675,7 @@ export class DshHostRuntime implements AgentSessionDriver, ExtensionActivationHo
   }
 
   async #projectEvent(sessionId: SessionId, event: ChannelEventRecord): Promise<ContentBlock[]> {
-    const blocks = projectEvent(event).filter(
+    const blocks = projectEvent(event, this.#history).filter(
       (block) =>
         !(
           block.type === 'text' &&

@@ -234,11 +234,14 @@
 
 .switchRoot {
   position: relative;
+  display: flex;
   width: 34px;
   height: 19px;
   flex: 0 0 auto;
+  align-items: center;
   border: 0;
   border-radius: 999px;
+  padding: 0;
   background: var(--nxt-border-strong);
   cursor: pointer;
   transition: background var(--nxt-motion-fast) var(--nxt-ease-standard);
@@ -472,6 +475,10 @@
 
 .tabsContent:focus-visible {
   outline-offset: 4px;
+}
+
+.tabsContent {
+  margin-top: var(--nxt-space-4);
 }
 
 @keyframes fadeIn {

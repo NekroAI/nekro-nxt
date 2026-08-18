@@ -136,7 +136,9 @@ export type ChannelHistoryEntry =
       readonly sourceId: ChannelEventId
       readonly channelId: ChannelId
       readonly occurredAt: number
+      readonly senderMemberId?: ChannelEventRecord['senderMemberId']
       readonly parts: readonly MessagePart[]
+      readonly facts?: ChannelEventRecord['facts']
     }
   | {
       readonly source: 'outbound-intent'

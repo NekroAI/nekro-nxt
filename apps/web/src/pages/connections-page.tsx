@@ -1,5 +1,7 @@
-import { Cable, Plus, Radio, Send } from 'lucide-react'
+import { ArrowRight, Cable, Check, Circle, Plus, Radio, Send } from 'lucide-react'
 import { useEffect, useMemo, useState } from 'react'
+import { useNavigate } from 'react-router-dom'
+import { notify } from '../components/notifications.js'
 import { EmptyState, InlineFeedback, PageHeader } from '../components/product-feedback.js'
 import { useProductStore, type ConnectionState } from '../product-store.js'
 import {
@@ -37,10 +39,20 @@ const maskedAccount = (value: string): string => {
   return trimmed.length <= 4 ? '已提供' : `尾号 ${trimmed.slice(-4)}`
 }
 
+export const friendlyKnownChannelLabel = (channel: { readonly name: string; readonly kind: string }): string => {
+  if (!/^(?:group|guild|private|c2c):/u.test(channel.name)) return channel.name
+  const suffix = channel.name.match(/([\p{L}\p{N}]{4})$/u)?.[1]
+  if (channel.kind === 'group') return suffix ? `QQ 群聊（尾号 ${suffix}）` : 'QQ 群聊'
+  return suffix ? `QQ 私聊（尾号 ${suffix}）` : 'QQ 私聊'
+}
+
 export function ConnectionsPage() {
   const host = useProductStore((state) => state.host)
   const connections = useProductStore((state) => state.connections)
   const descriptors = useProductStore((state) => state.connectionAdapters)
+  const agents = useProductStore((state) => state.agents)
+  const channels = useProductStore((state) => state.channels)
+  const navigate = useNavigate()
   const creatablePlatforms = useMemo(() => descriptors.filter((descriptor) => descriptor.userCreatable), [descriptors])
   const [selectedId, setSelectedId] = useState(connections[0]?.id ?? '')
   const [createOpen, setCreateOpen] = useState(false)
@@ -49,10 +61,9 @@ export function ConnectionsPage() {
   const [configuration, setConfiguration] = useState<Record<string, string | number | boolean>>({})
   const [credentials, setCredentials] = useState<Record<string, string>>({})
   const [createError, setCreateError] = useState('')
-  const [createNote, setCreateNote] = useState('')
   const [testPending, setTestPending] = useState<'receive' | 'send' | null>(null)
-  const [testFeedback, setTestFeedback] = useState<{ tone: 'error' | 'success'; message: string } | null>(null)
   const [testChannelByConnection, setTestChannelByConnection] = useState<Record<string, string>>({})
+  const [bindingAgentId, setBindingAgentId] = useState(agents[0]?.id ?? '')
 
   useEffect(() => {
     if (!connections.some((connection) => connection.id === selectedId)) {
@@ -60,12 +71,18 @@ export function ConnectionsPage() {
     }
   }, [connections, selectedId])
 
+  useEffect(() => {
+    if (!agents.some((agent) => agent.id === bindingAgentId)) setBindingAgentId(agents[0]?.id ?? '')
+  }, [agents, bindingAgentId])
+
   const selected = connections.find((connection) => connection.id === selectedId) ?? connections[0]
   const selectedPlatform = creatablePlatforms.find((platform) => platform.key === selectedPlatformKey)
   const selectedTestChannelId = selected
     ? (testChannelByConnection[selected.id] ?? selected.knownChannels[0]?.id ?? '')
     : ''
   const sendTargetAvailable = selectedTestChannelId.length > 0
+  const selectedChannels = selected ? channels.filter((channel) => channel.connectionId === selected.id) : []
+  const bindingCount = selectedChannels.reduce((count, channel) => count + channel.bindings.length, 0)
 
   const openCreate = (): void => {
     setCreateStage('platform')
@@ -79,7 +96,6 @@ export function ConnectionsPage() {
   const runTest = async (direction: 'receive' | 'send'): Promise<void> => {
     if (!selected || testPending) return
     setTestPending(direction)
-    setTestFeedback(null)
     try {
       await useProductStore
         .getState()
@@ -88,12 +104,17 @@ export function ConnectionsPage() {
           direction,
           direction === 'send' ? selectedTestChannelId || undefined : undefined,
         )
-      setTestFeedback({
-        tone: 'success',
-        message: direction === 'receive' ? '接收测试已完成，结果已刷新。' : '测试消息已提交，结果已刷新。',
-      })
+      notify(
+        direction === 'receive' ? '接收测试已完成，结果已刷新。' : '测试消息已提交，结果已刷新。',
+        'success',
+        `connection-test:${selected.id}:${direction}`,
+      )
     } catch (error) {
-      setTestFeedback({ tone: 'error', message: error instanceof Error ? error.message : String(error) })
+      notify(
+        error instanceof Error ? error.message : String(error),
+        'error',
+        `connection-test:${selected.id}:${direction}`,
+      )
     } finally {
       setTestPending(null)
     }
@@ -112,8 +133,6 @@ export function ConnectionsPage() {
           ) : undefined
         }
       />
-      {createNote ? <InlineFeedback tone="success">{createNote}</InlineFeedback> : null}
-
       {connections.length === 0 ? (
         <EmptyState
           loading={host.status === 'initializing'}
@@ -140,10 +159,7 @@ export function ConnectionsPage() {
                   .filter(Boolean)
                   .join(' ')}
                 variant="ghost"
-                onClick={() => {
-                  setSelectedId(connection.id)
-                  setTestFeedback(null)
-                }}
+                onClick={() => setSelectedId(connection.id)}
                 key={connection.id}
               >
                 <Cable size={16} aria-hidden="true" />
@@ -167,6 +183,26 @@ export function ConnectionsPage() {
                 </div>
                 <StatusBadge tone={connectionTone(selected.state)}>{selected.state}</StatusBadge>
               </div>
+
+              {selected.adapterKey !== 'web' ? (
+                <ol className={styles.connectionProgress} aria-label="连接完成进度">
+                  {[
+                    { label: '连接账号', done: selected.state === '已连接' || selected.state === '已配置' },
+                    { label: '发现频道', done: selected.knownChannels.length > 0 },
+                    { label: '测试接收', done: selected.receiveTest === '通过' },
+                    { label: '测试发送', done: selected.sendTest === '通过' },
+                    { label: '绑定智能体', done: bindingCount > 0 },
+                  ].map((step, index) => (
+                    <li data-done={step.done ? '' : undefined} key={step.label}>
+                      <span>
+                        {step.done ? <Check size={12} aria-hidden="true" /> : <Circle size={10} aria-hidden="true" />}
+                      </span>
+                      <small>{step.label}</small>
+                      {index < 4 ? <i aria-hidden="true" /> : null}
+                    </li>
+                  ))}
+                </ol>
+              ) : null}
 
               {selected.lastError ? <InlineFeedback tone="error">{selected.lastError}</InlineFeedback> : null}
 
@@ -200,10 +236,15 @@ export function ConnectionsPage() {
                       onValueChange={(channelId) =>
                         setTestChannelByConnection((current) => ({ ...current, [selected.id]: channelId }))
                       }
-                      options={selected.knownChannels.map((channel) => ({
-                        value: channel.id,
-                        label: `${channel.name} · ${channel.kind === 'group' ? '群聊' : '私聊'}`,
-                      }))}
+                      options={selected.knownChannels.map((channel) => {
+                        const label = friendlyKnownChannelLabel(channel)
+                        return {
+                          value: channel.id,
+                          label: /^QQ (?:群聊|私聊)/u.test(label)
+                            ? label
+                            : `${label} · ${channel.kind === 'group' ? '群聊' : '私聊'}`,
+                        }
+                      })}
                     />
                   ) : (
                     <InlineFeedback tone="warning">
@@ -242,9 +283,36 @@ export function ConnectionsPage() {
                       </Button>
                     </div>
                   </div>
-                  {testFeedback ? (
-                    <InlineFeedback tone={testFeedback.tone}>{testFeedback.message}</InlineFeedback>
-                  ) : null}
+                  <div className={styles.sectionDivider} />
+                  <div className={styles.sectionBar}>
+                    <div>
+                      <div className={styles.sectionHeading}>绑定智能体</div>
+                      <div className={styles.secondaryText}>
+                        {bindingCount > 0
+                          ? `已有 ${bindingCount} 个频道绑定。`
+                          : '收发确认后，为频道选择响应的智能体。'}
+                      </div>
+                    </div>
+                    {bindingCount > 0 ? <StatusBadge tone="success">已完成</StatusBadge> : null}
+                  </div>
+                  {agents.length > 0 ? (
+                    <div className={styles.bindingNextStep}>
+                      <SelectField
+                        label="要配置的智能体"
+                        value={bindingAgentId}
+                        onValueChange={setBindingAgentId}
+                        options={agents.map((agent) => ({ value: agent.id, label: agent.name }))}
+                      />
+                      <Button
+                        disabled={!bindingAgentId || selected.knownChannels.length === 0}
+                        onClick={() => void navigate(`/agents/${bindingAgentId}?tab=channels`)}
+                      >
+                        前往绑定频道 <ArrowRight size={14} aria-hidden="true" />
+                      </Button>
+                    </div>
+                  ) : (
+                    <InlineFeedback tone="warning">请先创建智能体，再绑定已发现的频道。</InlineFeedback>
+                  )}
                 </>
               )}
             </section>
@@ -293,13 +361,13 @@ export function ConnectionsPage() {
               configuration,
               credentials,
             })
-            setCreateNote(`${selectedPlatform.displayName}连接已创建。`)
+            notify(`${selectedPlatform.displayName}连接已创建。`, 'success', 'connection-create')
             setConfiguration({})
             setCredentials({})
             setCreateStage('platform')
             return true
           } catch (error) {
-            setCreateError(error instanceof Error ? error.message : String(error))
+            notify(error instanceof Error ? error.message : String(error), 'error', 'connection-create')
             return false
           }
         }}

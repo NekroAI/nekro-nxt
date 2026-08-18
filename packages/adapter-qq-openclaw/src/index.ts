@@ -529,7 +529,12 @@ export class QQOpenClawConnection implements AdapterConnectionRuntime {
         replyToBot = quote.authoredByAgent
       }
     }
-    if (parts.length === 0) parts.push({ type: 'text', text: '[QQ 消息不包含可处理内容]' })
+    if (parts.length === 0) {
+      parts.push({
+        type: 'text',
+        text: mentionedBot ? '（未包含其他可显示内容）' : '该 QQ 消息包含暂不支持显示的内容。',
+      })
+    }
     this.observeReplyContext(message.platformMessageId, {
       ...(message.replyExpiresAt === undefined ? {} : { expiresAt: message.replyExpiresAt }),
       ...(message.remainingReplies === undefined ? {} : { remainingReplies: message.remainingReplies }),

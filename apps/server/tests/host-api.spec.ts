@@ -130,17 +130,53 @@ describe('NekroNxt Server domain API (WebServer seam)', () => {
       expect(created.agentId.length).toBeGreaterThan(0)
       expect(created.channelId.length).toBeGreaterThan(0)
 
+      const sender = runtime.core.observeChannelMember({
+        connectionId: created.connectionId as never,
+        channelId: created.channelId as never,
+        platformUserId: 'sender-openid',
+        displayName: '成员甲',
+        observedAt: Date.now(),
+      }).member
+      const mentioned = runtime.core.observeChannelMember({
+        connectionId: created.connectionId as never,
+        channelId: created.channelId as never,
+        platformUserId: 'mentioned-openid',
+        displayName: '成员乙',
+        observedAt: Date.now(),
+      }).member
+      runtime.core.appendInbound({
+        connectionId: created.connectionId as never,
+        channelId: created.channelId as never,
+        adapterKey: 'web',
+        platformEventId: 'member-projection-1',
+        kind: 'message-created',
+        senderMemberId: sender.id,
+        parts: [
+          { type: 'text', text: '请看' },
+          { type: 'mention', memberId: mentioned.id },
+        ],
+        platformTimestamp: Date.now(),
+        receivedAt: Date.now(),
+        dedupeKey: 'member-projection-1',
+        facts: { mentionedBot: true },
+      })
+
       // The authoritative snapshot exposes the new intelligent-agent + its Web Channel.
       const snapshot = (await (await fetch(`${origin}/api/snapshot`)).json()) as {
         connectionAdapters: Array<{ key: string; displayName: string; userCreatable: boolean }>
         models: Array<{ provider: string; id: string; name: string }>
-        agents: Array<{ id: string; displayName: string; channels: string[] }>
+        agents: Array<{ id: string; displayName: string; runtimeStatus: 'idle' | 'running'; channels: string[] }>
         channels: Array<{
           id: string
           boundAgentId?: string
           bindings: Array<{ agentId: string; triggerPolicy: string }>
         }>
-        messages: Array<{ role: string; parts: Array<{ type: string; text?: string }> }>
+        messages: Array<{
+          role: string
+          sender?: { memberId: string; displayName?: string }
+          mentionedConnectionAccount?: boolean
+          parts: Array<{ type: string; text?: string; memberId?: string; displayName?: string }>
+        }>
       }
       expect(snapshot.models.find((model) => model.id === 'chat-model')).toMatchObject({
         provider: 'test-provider',
@@ -154,8 +190,72 @@ describe('NekroNxt Server domain API (WebServer seam)', () => {
       )
       expect(snapshot.agents.some((agent) => agent.id === created.agentId)).toBe(true)
       expect(snapshot.agents.find((agent) => agent.id === created.agentId)?.displayName).toBe('网页智能体')
+      expect(snapshot.agents.find((agent) => agent.id === created.agentId)?.runtimeStatus).toBe('idle')
       expect(snapshot.channels.some((channel) => channel.id === created.channelId)).toBe(true)
       expect(snapshot.channels.find((channel) => channel.id === created.channelId)?.boundAgentId).toBe(created.agentId)
+      expect(snapshot.messages).toEqual([])
+      const renamed = await fetch(`${origin}/api/channels/${created.channelId}/display-name`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ displayName: '本地识别名称' }),
+      })
+      expect(renamed.status).toBe(200)
+      const renamedSnapshot = (await (await fetch(`${origin}/api/snapshot`)).json()) as {
+        channels: Array<{ id: string; displayName?: string; platformChannelId: string }>
+      }
+      expect(renamedSnapshot.channels.find((channel) => channel.id === created.channelId)).toMatchObject({
+        displayName: '本地识别名称',
+        platformChannelId: `web-${created.agentId}`,
+      })
+      const initialHistory = (await (
+        await fetch(`${origin}/api/channels/${created.channelId}/messages?limit=40`)
+      ).json()) as typeof snapshot & { hasMore: boolean }
+      expect(initialHistory.messages.find((message) => message.sender?.memberId === sender.id)).toMatchObject({
+        sender: { displayName: '成员甲' },
+        mentionedConnectionAccount: true,
+        parts: [
+          { type: 'text', text: '请看' },
+          { type: 'mention', memberId: mentioned.id, displayName: '成员乙' },
+        ],
+      })
+
+      const pngBytes = new Uint8Array(
+        Buffer.from(
+          'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=',
+          'base64',
+        ),
+      )
+      const preparedAsset = await runtime.assetService.prepare({
+        bytes: pngBytes,
+        receivedAt: Date.now(),
+        declaredMediaType: 'image/png',
+      })
+      const assetEvent = await runtime.channels.acceptInbound({
+        connectionId: created.connectionId as never,
+        channelId: created.channelId as never,
+        adapterKey: 'web',
+        platformEventId: 'asset-http-event',
+        platformMessageId: 'asset-http-message',
+        kind: 'message-created',
+        parts: [{ type: 'image', assetId: preparedAsset.asset.id, alt: '一像素图片' }],
+        platformTimestamp: Date.now(),
+        receivedAt: Date.now(),
+        dedupeKey: 'asset-http-event',
+      })
+      await preparedAsset.commit({
+        id: 'asset-occurrence-http' as never,
+        channelEventId: assetEvent.channelEventId,
+        channelId: created.channelId as never,
+        connectionId: created.connectionId as never,
+        platformMessageId: 'asset-http-message',
+        receivedAt: Date.now(),
+        filename: 'pixel.png',
+        declaredMediaType: 'image/png',
+      })
+      const assetResponse = await fetch(`${origin}/api/channels/${created.channelId}/assets/${preparedAsset.asset.id}`)
+      expect(assetResponse.status).toBe(200)
+      expect(assetResponse.headers.get('content-type')).toBe('image/png')
+      expect(new Uint8Array(await assetResponse.arrayBuffer())).toEqual(pngBytes)
 
       // Admit a Web message through the real HTTP surface.
       const admitted = await fetch(`${origin}/api/channels/${created.channelId}/messages`, {
@@ -169,9 +269,11 @@ describe('NekroNxt Server domain API (WebServer seam)', () => {
       const web = runtime.web
       const session = runtime.host
       const before = Date.now()
-      // Poll the snapshot until the agent reply lands (bounded wait, no fake clock).
+      // Poll the Channel history endpoint until the agent reply lands (bounded wait, no fake clock).
       for (;;) {
-        const latest = (await (await fetch(`${origin}/api/snapshot`)).json()) as {
+        const latest = (await (
+          await fetch(`${origin}/api/channels/${created.channelId}/messages?limit=40`)
+        ).json()) as {
           messages: Array<{ role: string; parts: Array<{ type: string; text?: string }> }>
         }
         const agentMessages = latest.messages.filter((message) => message.role === 'agent')
@@ -187,7 +289,9 @@ describe('NekroNxt Server domain API (WebServer seam)', () => {
       void session
 
       // Only the communication-tool reply is a channel message; raw model text stays internal.
-      const finalSnapshot = (await (await fetch(`${origin}/api/snapshot`)).json()) as {
+      const finalSnapshot = (await (
+        await fetch(`${origin}/api/channels/${created.channelId}/messages?limit=40`)
+      ).json()) as {
         messages: Array<{ role: string; parts: Array<{ type: string; text?: string }> }>
       }
       const allTexts = finalSnapshot.messages.flatMap((message) =>
@@ -196,6 +300,23 @@ describe('NekroNxt Server domain API (WebServer seam)', () => {
       expect(allTexts).toContain('这是通信工具确认发送的回复。')
       expect(allTexts.join(' ')).not.toContain('模型原始文字只能留在运行轨迹')
       expect(allTexts.join(' ')).not.toContain('工具完成后的原始结束文字也不会发送')
+
+      const firstPage = (await (
+        await fetch(`${origin}/api/channels/${created.channelId}/messages?limit=1`)
+      ).json()) as {
+        messages: Array<{ id: string; occurredAt: number }>
+        hasMore: boolean
+      }
+      expect(firstPage.messages).toHaveLength(1)
+      expect(firstPage.hasMore).toBe(true)
+      const cursor = firstPage.messages[0]!
+      const olderPage = (await (
+        await fetch(
+          `${origin}/api/channels/${created.channelId}/messages?limit=1&beforeOccurredAt=${cursor.occurredAt}&beforeSourceId=${cursor.id}`,
+        )
+      ).json()) as typeof firstPage
+      expect(olderPage.messages).toHaveLength(1)
+      expect(olderPage.messages[0]?.id).not.toBe(cursor.id)
 
       const observerResponse = await fetch(`${origin}/api/agents`, {
         method: 'POST',
@@ -272,6 +393,19 @@ describe('NekroNxt Server domain API (WebServer seam)', () => {
       })
       // 不可变 Revision：新 Revision id 与原不同。
       expect(result.currentRevisionId).not.toBe(before.revision.id)
+
+      const restoredResponse = await fetch(`${origin}/api/agents/${entity.agentId}/capabilities`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ dynamicCreation: false }),
+      })
+      expect(restoredResponse.ok).toBe(true)
+      const restored = (await restoredResponse.json()) as {
+        currentRevisionId: string
+        capabilities: Record<string, boolean>
+      }
+      expect(restored.currentRevisionId).toBe(before.revision.id)
+      expect(restored.capabilities.dynamicCreation).toBe(false)
     } finally {
       api.dispose()
       await webContext.fiber.dispose()

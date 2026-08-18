@@ -40,6 +40,45 @@ const temporaryDirectory = async (): Promise<string> => {
 }
 
 describe('Core SQLite capabilities', () => {
+  it('atomically switches one agent between current channel bindings while preserving binding history', async () => {
+    const directory = await temporaryDirectory()
+    const database = await openMigratedCoreDatabase(path.join(directory, 'core.sqlite'))
+    try {
+      const repository = new SqliteCoreRepository(database)
+      let id = 0
+      const core = new CoreService(repository, { now: () => 1000 + id, nextUlid: () => `B${++id}` })
+      const agent = core.createAgent({
+        displayName: '换绑智能体',
+        persona: '',
+        model: { provider: 'test', model: 'model' },
+      })
+      const connection = core.createConnection({ adapterKey: 'web', config: {} })
+      const first = core.createChannel({ connectionId: connection.id, platformChannelId: 'first', kind: 'web' })
+      const second = core.createChannel({ connectionId: connection.id, platformChannelId: 'second', kind: 'web' })
+      const original = core.createBinding({
+        channelId: first.id,
+        agentId: agent.definition.id,
+        triggerPolicy: 'always',
+      })
+      core.createBinding({ channelId: second.id, agentId: agent.definition.id, triggerPolicy: 'command' })
+      expect(core.listBindings(first.id)).toEqual([])
+      const restored = core.createBinding({
+        channelId: first.id,
+        agentId: agent.definition.id,
+        triggerPolicy: 'observe-only',
+      })
+      expect(restored).toMatchObject({ id: original.id, revision: 2, triggerPolicy: 'observe-only' })
+      expect(core.listBindings(second.id)).toEqual([])
+      expect(
+        database
+          .prepare('SELECT COUNT(*) AS count FROM bindings WHERE agent_id = ? AND active = 1')
+          .get(agent.definition.id),
+      ).toEqual({ count: 1 })
+    } finally {
+      database.close()
+    }
+  })
+
   it('persists, builds, switches, rolls back and cache-restores local Extension Revisions', async () => {
     const directory = await temporaryDirectory()
     const database = await openMigratedCoreDatabase(path.join(directory, 'core.sqlite'))
@@ -354,6 +393,11 @@ describe('Core SQLite capabilities', () => {
           .prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = ?")
           .get('adapter_runtime_states'),
       ).toEqual({ name: 'adapter_runtime_states' })
+      expect(
+        database
+          .prepare("SELECT name FROM sqlite_master WHERE type = 'index' AND name = ?")
+          .get('bindings_active_agent_uq'),
+      ).toEqual({ name: 'bindings_active_agent_uq' })
       expect(database.prepare('PRAGMA user_version').get()).toEqual({ user_version: CORE_SCHEMA_VERSION })
     } finally {
       database.close()
@@ -380,6 +424,7 @@ describe('Core SQLite capabilities', () => {
         CREATE TABLE agent_revisions (id TEXT PRIMARY KEY NOT NULL);
         CREATE TABLE channel_events (id TEXT PRIMARY KEY NOT NULL);
         CREATE TABLE physical_deliveries (id TEXT PRIMARY KEY NOT NULL);
+        CREATE TABLE bindings (id TEXT PRIMARY KEY NOT NULL, agent_id TEXT NOT NULL, created_at INTEGER NOT NULL);
         INSERT INTO agent_revisions (id) VALUES ('legacy-revision');
         PRAGMA user_version = 7;
       `)

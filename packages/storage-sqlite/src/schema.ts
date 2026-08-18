@@ -113,9 +113,15 @@ export const bindings = sqliteTable(
       enum: ['always', 'mentioned-or-replied', 'command', 'observe-only'],
     }).notNull(),
     revision: integer('revision').notNull(),
+    active: integer('active', { mode: 'boolean' }).notNull().default(true),
     createdAt: integer('created_at').notNull(),
   },
-  (table) => [uniqueIndex('bindings_channel_agent_uq').on(table.channelId, table.agentId)],
+  (table) => [
+    uniqueIndex('bindings_channel_agent_uq').on(table.channelId, table.agentId),
+    uniqueIndex('bindings_active_agent_uq')
+      .on(table.agentId)
+      .where(sql`${table.active} = 1`),
+  ],
 )
 
 export const channelEvents = sqliteTable(

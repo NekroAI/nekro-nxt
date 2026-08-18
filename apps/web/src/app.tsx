@@ -2,7 +2,9 @@ import { Bot, Boxes, Cable, MessageSquare, RefreshCw, Settings } from 'lucide-re
 import { Component, useEffect, useMemo, useState, type ErrorInfo, type ReactNode } from 'react'
 import { Navigate, NavLink, Outlet, Route, Routes, useLocation } from 'react-router-dom'
 import styles from './app.module.css'
+import { NotificationCenter, notify } from './components/notifications.js'
 import { HostNotice, runHostRefresh } from './components/product-feedback.js'
+import { DynamicClientProvider } from './dynamic-client-coordinator.js'
 import {
   AgentManagePage,
   AgentsPage,
@@ -36,10 +38,15 @@ function AppShell() {
   const host = useProductStore((state) => state.host)
   const status = hostPresentation(host.status)
   const [refreshPending, setRefreshPending] = useState(false)
-  const [refreshError, setRefreshError] = useState('')
   const reconnect = async (): Promise<void> => {
     if (refreshPending) return
-    await runHostRefresh(() => useProductStore.getState().refreshHost(), setRefreshPending, setRefreshError)
+    await runHostRefresh(
+      () => useProductStore.getState().refreshHost(),
+      setRefreshPending,
+      (message) => {
+        if (message) notify(`重新连接失败：${message}`, 'error', 'host-reconnect')
+      },
+    )
   }
 
   return (
@@ -79,14 +86,10 @@ function AppShell() {
               </Button>
             ) : null}
           </div>
-          {refreshError ? (
-            <div className={styles.refreshError} role="alert">
-              重新连接失败：{refreshError}
-            </div>
-          ) : null}
         </div>
       </aside>
       <main className={styles.main}>
+        <NotificationCenter />
         <HostNotice />
         <div className={styles.routeView} key={location.pathname.split('/')[1]}>
           <Outlet />
@@ -157,24 +160,26 @@ export function NekroNxtApp() {
   const tooltipProps = useMemo(() => ({ delayDuration: 450 }), [])
   return (
     <ProductErrorBoundary>
-      <Tooltip.Provider {...tooltipProps}>
-        <ThemeEffects />
-        <Routes>
-          <Route element={<AppShell />}>
-            <Route index element={<Navigate to="/agents" replace />} />
-            <Route path="agents" element={<AgentsPage />} />
-            <Route path="agents/:agentId" element={<AgentManagePage />} />
-            <Route path="channels" element={<ChannelConversationPage />} />
-            <Route path="channels/:channelId" element={<ChannelConversationPage />} />
-            <Route path="connections" element={<ConnectionsPage />} />
-            <Route path="extensions" element={<ExtensionsPage />} />
-            <Route path="creator" element={<CreatorPage />} />
-            <Route path="runtime" element={<RuntimePage />} />
-            <Route path="settings" element={<SettingsPage />} />
-            <Route path="*" element={<NotFoundPage />} />
-          </Route>
-        </Routes>
-      </Tooltip.Provider>
+      <DynamicClientProvider>
+        <Tooltip.Provider {...tooltipProps}>
+          <ThemeEffects />
+          <Routes>
+            <Route element={<AppShell />}>
+              <Route index element={<Navigate to="/agents" replace />} />
+              <Route path="agents" element={<AgentsPage />} />
+              <Route path="agents/:agentId" element={<AgentManagePage />} />
+              <Route path="channels" element={<ChannelConversationPage />} />
+              <Route path="channels/:channelId" element={<ChannelConversationPage />} />
+              <Route path="connections" element={<ConnectionsPage />} />
+              <Route path="extensions" element={<ExtensionsPage />} />
+              <Route path="creator" element={<CreatorPage />} />
+              <Route path="runtime" element={<RuntimePage />} />
+              <Route path="settings" element={<SettingsPage />} />
+              <Route path="*" element={<NotFoundPage />} />
+            </Route>
+          </Routes>
+        </Tooltip.Provider>
+      </DynamicClientProvider>
     </ProductErrorBoundary>
   )
 }

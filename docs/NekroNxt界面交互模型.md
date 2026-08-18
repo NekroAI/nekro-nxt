@@ -42,7 +42,8 @@
 -智能体是长期产品实体；
 - Channel 是一段消息事实流；
 - Channel Binding 决定哪个智能体响应该 Channel；
-- 一个智能体可以绑定多个 Channel；
+- 一个智能体同一时间只保留一个有效 Channel Binding；更换频道时旧 Binding 转为历史记录，不删除既有消息与 Session 引用；
+- 一个 Channel 仍可按明确响应策略绑定多个智能体；
 - 一个 Channel Conversation 只显示该 Channel 的消息；
 - 跨 Channel 长期记忆可以共享，但短期聊天记录不直接混合；
 - 切换左侧 Channel 就是切换中央 Conversation，而不是筛选同一混合流。
@@ -170,7 +171,7 @@
 | 按钮 | 显示条件 | 结果 |
 |---|---|---|
 | 创建智能体| 用户可管理当前 Space | 打开智能体Draft 向导 |
-| 打开 |智能体至少有一个 Web Channel 或 Channel Binding | 打开最近使用的 Channel；没有则创建 Web Channel |
+| 打开 |智能体已有有效 Channel Binding | 打开当前 Channel；没有则进入绑定流程 |
 | 管理 | 用户可管理该智能体| 打开智能体管理页 |
 | 暂停响应 |智能体有监听中的 Channel | 暂停新 Turn，不取消当前 Tool |
 
