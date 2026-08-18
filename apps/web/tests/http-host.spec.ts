@@ -76,7 +76,14 @@ const snapshotBody = () => ({
       currentRevisionId: 'agent-revision-1',
       runtimeStatus: 'running',
       model: { provider: 'deepseek', model: 'deepseek-chat', reasoningEffort: 'high' },
-      capabilities: { dynamicCreation: true, developmentShell: false, fullFileAccess: false },
+      capabilities: {
+        subagents: false,
+        fileTools: false,
+        webSearch: false,
+        dynamicCreation: true,
+        developmentShell: false,
+        unrestrictedFileAccess: false,
+      },
       channels: ['channel-1'],
     },
   ],
@@ -167,7 +174,14 @@ describe('HttpProductHost', () => {
       persona: '谨慎复核证据。',
       currentRevisionId: 'agent-revision-1',
       state: '思考中',
-      capabilities: { dynamicCreation: true, developmentShell: false, fullFileAccess: false },
+      capabilities: {
+        subagents: false,
+        fileTools: false,
+        webSearch: false,
+        dynamicCreation: true,
+        developmentShell: false,
+        unrestrictedFileAccess: false,
+      },
       channels: ['channel-1'],
     })
     expect(snapshot.channels[0]).toMatchObject({
@@ -354,7 +368,14 @@ describe('HttpProductHost', () => {
       displayName: '资料员',
       persona: '',
       model: { provider: 'test-provider', model: 'chat-model' },
-      capabilities: { dynamicCreation: false, developmentShell: false, fullFileAccess: false },
+      capabilities: {
+        subagents: false,
+        fileTools: false,
+        webSearch: false,
+        dynamicCreation: false,
+        developmentShell: false,
+        unrestrictedFileAccess: false,
+      },
     })
     unsubscribe()
   })

@@ -715,8 +715,8 @@ async function mountDevelopmentCapabilities(
   revision: AgentRevisionRecord,
   workspaceRoot: string | undefined,
 ): Promise<void> {
-  const { developmentShell, fullFileAccess } = revision.capabilities
-  if (!developmentShell && !fullFileAccess) return
+  const { developmentShell, fileTools, unrestrictedFileAccess } = revision.capabilities
+  if (!developmentShell && !fileTools) return
   if (workspaceRoot === undefined) {
     throw new Error('Development capabilities require an explicit workspace root.')
   }
@@ -729,12 +729,14 @@ async function mountDevelopmentCapabilities(
     .isolate('shell')
     .isolate('shellEnv')
   await capabilityContext.plugin(SandboxPolicyService, {
-    mode: fullFileAccess ? 'danger-full-access' : 'workspace-write',
+    mode: unrestrictedFileAccess ? 'danger-full-access' : 'workspace-write',
     workspaceRoot,
   })
-  await capabilityContext.plugin(SandboxedFileSystem, { cwd: workspaceRoot })
-  await capabilityContext.plugin(FsObservationPolicy)
-  await capabilityContext.plugin(FsTool, {})
+  if (fileTools) {
+    await capabilityContext.plugin(SandboxedFileSystem, { cwd: workspaceRoot })
+    await capabilityContext.plugin(FsObservationPolicy)
+    await capabilityContext.plugin(FsTool, {})
+  }
 
   if (developmentShell) {
     await capabilityContext.plugin(LocalSubprocessRuntime)
@@ -1013,7 +1015,7 @@ export class DshHostRuntime implements AgentSessionDriver, ExtensionActivationHo
     if (!revision || revision.id !== input.agentRevisionId || revision.agentId !== input.agentId) {
       throw new Error(`Cannot resolve the pinned Agent Revision: ${input.agentRevisionId}`)
     }
-    const hasDevelopmentCapabilities = revision.capabilities.developmentShell || revision.capabilities.fullFileAccess
+    const hasDevelopmentCapabilities = revision.capabilities.developmentShell || revision.capabilities.fileTools
     const developmentWorkspace =
       hasDevelopmentCapabilities && this.#developmentWorkspaceRoot !== undefined
         ? resolveAgentWorkspace(this.#developmentWorkspaceRoot, revision.agentId)

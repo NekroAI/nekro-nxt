@@ -25,9 +25,17 @@ export interface AgentModelSelection {
 }
 
 export interface AgentCapabilityGrants {
+  readonly subagents: boolean
+  readonly fileTools: boolean
+  readonly webSearch: boolean
   readonly dynamicCreation: boolean
   readonly developmentShell: boolean
-  readonly fullFileAccess: boolean
+  readonly unrestrictedFileAccess: boolean
+}
+
+export interface AgentCapabilitiesEnvelopeV2 {
+  readonly version: 2
+  readonly grants: AgentCapabilityGrants
 }
 
 export interface AgentRevisionContent {
@@ -142,6 +150,7 @@ export interface CoreRepository {
   getAgent(id: AgentId): CreateAgentCommit | undefined
   getAgentRevision(id: AgentRevisionId): AgentRevisionRecord | undefined
   getAgentRevisionByDigest(agentId: AgentId, contentDigest: string): AgentRevisionRecord | undefined
+  listAgentRevisions(agentId: AgentId): readonly AgentRevisionRecord[]
   getNextAgentRevisionNumber(agentId: AgentId): number
   appendAgentRevision(
     definition: AgentDefinitionRecord,
@@ -206,20 +215,68 @@ const agentRevisionContentSchema = z
       .strict(),
     capabilities: z
       .object({
+        subagents: z.boolean().default(false),
+        fileTools: z.boolean().default(false),
+        webSearch: z.boolean().default(false),
         dynamicCreation: z.boolean().default(false),
         developmentShell: z.boolean().default(false),
-        fullFileAccess: z.boolean().default(false),
+        unrestrictedFileAccess: z.boolean().default(false),
       })
       .strict()
-      .default({ dynamicCreation: false, developmentShell: false, fullFileAccess: false }),
+      .default({
+        subagents: false,
+        fileTools: false,
+        webSearch: false,
+        dynamicCreation: false,
+        developmentShell: false,
+        unrestrictedFileAccess: false,
+      }),
     settings: z.json().optional(),
   })
   .strict()
 
 const agentCapabilityGrantsSchema = agentRevisionContentSchema.shape.capabilities
 
+const storedAgentCapabilityGrantsV1Schema = z
+  .object({
+    dynamicCreation: z.boolean(),
+    developmentShell: z.boolean(),
+    fullFileAccess: z.boolean(),
+  })
+  .strict()
+
+const storedAgentCapabilitiesV2Schema = z
+  .object({
+    version: z.literal(2),
+    grants: agentCapabilityGrantsSchema,
+  })
+  .strict()
+
 export function parseAgentCapabilityGrants(input: unknown): AgentCapabilityGrants {
   return agentCapabilityGrantsSchema.parse(input)
+}
+
+export function encodeAgentCapabilities(input: AgentCapabilityGrants): AgentCapabilitiesEnvelopeV2 {
+  return { version: 2, grants: agentCapabilityGrantsSchema.parse(input) }
+}
+
+export function parseStoredAgentCapabilityGrants(input: unknown): AgentCapabilityGrants {
+  if (typeof input === 'object' && input !== null && !Array.isArray(input) && Object.hasOwn(input, 'version')) {
+    const version = (input as { readonly version?: unknown }).version
+    if (typeof version === 'number' && version > 2) {
+      throw new Error(`Unsupported Agent capabilities version: ${version}`)
+    }
+    return storedAgentCapabilitiesV2Schema.parse(input).grants
+  }
+  const legacy = storedAgentCapabilityGrantsV1Schema.parse(input)
+  return {
+    subagents: false,
+    fileTools: legacy.developmentShell || legacy.fullFileAccess,
+    webSearch: false,
+    dynamicCreation: legacy.dynamicCreation,
+    developmentShell: legacy.developmentShell,
+    unrestrictedFileAccess: legacy.fullFileAccess,
+  }
 }
 
 const connectionInputSchema = z
@@ -301,10 +358,36 @@ type NormalizedAgentRevisionContent = Omit<AgentRevisionContent, 'capabilities'>
   readonly capabilities: AgentCapabilityGrants
 }
 
+const normalizedRevisionPayload = (content: NormalizedAgentRevisionContent): JsonValue => ({
+  displayName: content.displayName,
+  persona: content.persona,
+  model: {
+    provider: content.model.provider,
+    model: content.model.model,
+    reasoningEffort: content.model.reasoningEffort ?? null,
+  },
+  capabilities: encodeAgentCapabilities(content.capabilities) as unknown as JsonValue,
+  settings: content.settings ?? null,
+})
+
 const digestRevision = (content: NormalizedAgentRevisionContent): string =>
-  createHash('sha256')
-    .update(canonicalJson(content as unknown as JsonValue))
-    .digest('hex')
+  `v2:sha256:${createHash('sha256')
+    .update('nekro-nxt.agent-revision.v2\0')
+    .update(canonicalJson(normalizedRevisionPayload(content)))
+    .digest('hex')}`
+
+const revisionContent = (revision: AgentRevisionRecord): NormalizedAgentRevisionContent => ({
+  displayName: revision.displayName,
+  persona: revision.persona,
+  model: revision.model,
+  capabilities: revision.capabilities,
+  ...(revision.settings === undefined ? {} : { settings: revision.settings }),
+})
+
+const equivalentRevisionContent = (
+  left: NormalizedAgentRevisionContent,
+  right: NormalizedAgentRevisionContent,
+): boolean => canonicalJson(normalizedRevisionPayload(left)) === canonicalJson(normalizedRevisionPayload(right))
 
 /** Product-domain commit service. Every returned record has already crossed the Repository commit point. */
 export class CoreService {
@@ -344,9 +427,13 @@ export class CoreService {
       throw new Error(`Agent revision conflict: expected ${expectedCurrentRevisionId}.`)
     }
     const content = agentRevisionContentSchema.parse(input) as NormalizedAgentRevisionContent
+    if (equivalentRevisionContent(content, revisionContent(current.revision))) return current
     const digest = digestRevision(content)
-    if (digest === current.revision.contentDigest) return current
-    const existing = this.#repository.getAgentRevisionByDigest(agentId, digest)
+    const existing =
+      this.#repository.getAgentRevisionByDigest(agentId, digest) ??
+      this.#repository
+        .listAgentRevisions(agentId)
+        .find((candidate) => equivalentRevisionContent(content, revisionContent(candidate)))
     if (existing) {
       const definition = { ...current.definition, currentRevisionId: existing.id }
       this.#repository.activateAgentRevision(definition, existing, expectedCurrentRevisionId)

@@ -35,7 +35,14 @@ const productSnapshot = {
       currentRevisionId: 'revision-target-internal-id',
       runtimeStatus: 'running',
       model: { provider: 'deepseek', model: 'deepseek-v4-flash' },
-      capabilities: { dynamicCreation: true, developmentShell: false, fullFileAccess: false },
+      capabilities: {
+        subagents: false,
+        fileTools: false,
+        webSearch: false,
+        dynamicCreation: true,
+        developmentShell: false,
+        unrestrictedFileAccess: false,
+      },
       channels: ['channel-target'],
     },
     {
@@ -44,7 +51,14 @@ const productSnapshot = {
       persona: '',
       currentRevisionId: 'revision-source-internal-id',
       model: { provider: 'deepseek', model: 'deepseek-v4-flash' },
-      capabilities: { dynamicCreation: false, developmentShell: false, fullFileAccess: false },
+      capabilities: {
+        subagents: false,
+        fileTools: false,
+        webSearch: false,
+        dynamicCreation: false,
+        developmentShell: false,
+        unrestrictedFileAccess: false,
+      },
       channels: ['channel-source'],
     },
   ],
@@ -498,7 +512,14 @@ test('the four-step creation wizard submits identity, model, and explicit capabi
     displayName: '研究员',
     persona: '先核对证据，再给出结论。',
     model: { provider: 'deepseek', model: 'deepseek-v4-flash' },
-    capabilities: { dynamicCreation: true, developmentShell: true, fullFileAccess: false },
+    capabilities: {
+      subagents: false,
+      fileTools: false,
+      webSearch: false,
+      dynamicCreation: true,
+      developmentShell: true,
+      unrestrictedFileAccess: false,
+    },
   })
   expect(failures, failures.join('\n')).toEqual([])
 })

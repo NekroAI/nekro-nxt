@@ -32,9 +32,12 @@ const createAgentSchema = z
       .strict(),
     capabilities: z
       .object({
+        subagents: z.boolean().default(false),
+        fileTools: z.boolean().default(false),
+        webSearch: z.boolean().default(false),
         dynamicCreation: z.boolean().default(false),
         developmentShell: z.boolean().default(false),
-        fullFileAccess: z.boolean().default(false),
+        unrestrictedFileAccess: z.boolean().default(false),
       })
       .strict()
       .optional(),
@@ -760,18 +763,26 @@ export const createNekroHostApi = (webServer: WebServer, runtime: NekroRuntime):
         }
         const parsed = z
           .object({
+            subagents: z.boolean().optional(),
+            fileTools: z.boolean().optional(),
+            webSearch: z.boolean().optional(),
             dynamicCreation: z.boolean().optional(),
             developmentShell: z.boolean().optional(),
-            fullFileAccess: z.boolean().optional(),
+            unrestrictedFileAccess: z.boolean().optional(),
           })
           .strict()
           .refine((value) => Object.values(value).some((v) => v !== undefined), '至少提供一个能力。')
           .parse(await readJsonBody(req))
         const capabilities = {
           ...revision.capabilities,
+          ...(parsed.subagents === undefined ? {} : { subagents: parsed.subagents }),
+          ...(parsed.fileTools === undefined ? {} : { fileTools: parsed.fileTools }),
+          ...(parsed.webSearch === undefined ? {} : { webSearch: parsed.webSearch }),
           ...(parsed.dynamicCreation === undefined ? {} : { dynamicCreation: parsed.dynamicCreation }),
           ...(parsed.developmentShell === undefined ? {} : { developmentShell: parsed.developmentShell }),
-          ...(parsed.fullFileAccess === undefined ? {} : { fullFileAccess: parsed.fullFileAccess }),
+          ...(parsed.unrestrictedFileAccess === undefined
+            ? {}
+            : { unrestrictedFileAccess: parsed.unrestrictedFileAccess }),
         }
         const updated = runtime.core.reviseAgent(agentId.data as AgentId, revision.id, {
           displayName: revision.displayName,

@@ -70,7 +70,13 @@ class ScriptedCommunicationModel extends LlmAdapter {
       yield { type: 'text-delta', index: 0, text: '这段模型原始文字只能留在运行轨迹。' }
       yield { type: 'block-end', index: 0, block: { type: 'text', text: '这段模型原始文字只能留在运行轨迹。' } }
       yield { type: 'block-start', index: 1, blockType: 'tool-call' }
-      yield { type: 'tool-call-delta', index: 1, id: callId, name: 'send_channel_message', argumentsDelta: toolCall.arguments }
+      yield {
+        type: 'tool-call-delta',
+        index: 1,
+        id: callId,
+        name: 'send_channel_message',
+        argumentsDelta: toolCall.arguments,
+      }
       yield { type: 'block-end', index: 1, block: toolCall }
       yield { type: 'usage', usage: { inputTokens: 16, outputTokens: 8 } }
       yield { type: 'finish', reason: { kind: 'tool-calls' } }
@@ -386,7 +392,7 @@ describe('NekroNxt Server domain API (WebServer seam)', () => {
       expect(result.capabilities).toMatchObject({
         dynamicCreation: true,
         developmentShell: false,
-        fullFileAccess: false,
+        unrestrictedFileAccess: false,
       })
       // 不可变 Revision：新 Revision id 与原不同。
       expect(result.currentRevisionId).not.toBe(before.revision.id)

@@ -40,6 +40,87 @@ const temporaryDirectory = async (): Promise<string> => {
 }
 
 describe('Core SQLite capabilities', () => {
+  it('stores new capability grants in V2 and reads legacy V1 rows without rewriting them', async () => {
+    const directory = await temporaryDirectory()
+    const database = await openMigratedCoreDatabase(path.join(directory, 'core.sqlite'))
+    try {
+      const repository = new SqliteCoreRepository(database)
+      let id = 0
+      const core = new CoreService(repository, { now: () => 1000, nextUlid: () => `C${++id}` })
+      const created = core.createAgent({
+        displayName: '能力格式智能体',
+        persona: '',
+        model: { provider: 'test', model: 'model' },
+        capabilities: { subagents: true, webSearch: true },
+      })
+      const stored = database
+        .prepare('SELECT capabilities_json FROM agent_revisions WHERE id = ?')
+        .get(created.revision.id) as { capabilities_json: string }
+      expect(JSON.parse(stored.capabilities_json)).toEqual({
+        version: 2,
+        grants: {
+          subagents: true,
+          fileTools: false,
+          webSearch: true,
+          dynamicCreation: false,
+          developmentShell: false,
+          unrestrictedFileAccess: false,
+        },
+      })
+
+      const legacyJson = '{"dynamicCreation":false,"developmentShell":true,"fullFileAccess":false}'
+      database
+        .prepare('UPDATE agent_revisions SET capabilities_json = ?, content_digest = ? WHERE id = ?')
+        .run(legacyJson, 'legacy-v1-digest', created.revision.id)
+      expect(repository.getAgentRevision(created.revision.id)?.capabilities).toEqual({
+        subagents: false,
+        fileTools: true,
+        webSearch: false,
+        dynamicCreation: false,
+        developmentShell: true,
+        unrestrictedFileAccess: false,
+      })
+      expect(
+        database
+          .prepare('SELECT capabilities_json, content_digest FROM agent_revisions WHERE id = ?')
+          .get(created.revision.id),
+      ).toEqual({ capabilities_json: legacyJson, content_digest: 'legacy-v1-digest' })
+    } finally {
+      database.close()
+    }
+  })
+
+  it('raises schema 15 to 16 without rewriting historical capability JSON or digests', async () => {
+    const directory = await temporaryDirectory()
+    const database = await openMigratedCoreDatabase(path.join(directory, 'core.sqlite'))
+    try {
+      const repository = new SqliteCoreRepository(database)
+      let id = 0
+      const core = new CoreService(repository, { now: () => 1000, nextUlid: () => `M${++id}` })
+      const created = core.createAgent({
+        displayName: '迁移智能体',
+        persona: '',
+        model: { provider: 'test', model: 'model' },
+      })
+      const legacyJson = '{"dynamicCreation":false,"developmentShell":false,"fullFileAccess":false}'
+      database
+        .prepare('UPDATE agent_revisions SET capabilities_json = ?, content_digest = ? WHERE id = ?')
+        .run(legacyJson, 'historical-digest', created.revision.id)
+      database.exec('PRAGMA user_version = 15')
+
+      await migrateCoreDatabase(database)
+
+      expect(database.prepare('PRAGMA user_version').get()).toEqual({ user_version: 16 })
+      expect(
+        database
+          .prepare('SELECT capabilities_json, content_digest FROM agent_revisions WHERE id = ?')
+          .get(created.revision.id),
+      ).toEqual({ capabilities_json: legacyJson, content_digest: 'historical-digest' })
+    } finally {
+      database.close()
+    }
+  })
+
   it('allows one agent on multiple channels and atomically replaces the agent assigned to one channel', async () => {
     const directory = await temporaryDirectory()
     const database = await openMigratedCoreDatabase(path.join(directory, 'core.sqlite'))

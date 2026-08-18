@@ -62,7 +62,7 @@ describe('NekroNxt domain API — save a running dynamic Package as a local Exte
       displayName: '创造智能体',
       persona: '',
       model: { provider: 'test-provider', model: 'chat-model' },
-      capabilities: { dynamicCreation: true, developmentShell: false, fullFileAccess: false },
+      capabilities: { dynamicCreation: true },
     })
 
     // Admit one message so an active Episode + DSH Session is formed and the

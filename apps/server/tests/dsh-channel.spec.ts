@@ -243,7 +243,7 @@ describe('DSH Host and Web Channel vertical slice', () => {
       displayName: '创造智能体',
       persona: '',
       model: { provider: 'test-provider', model: 'chat-model' },
-      capabilities: { dynamicCreation: true, developmentShell: false, fullFileAccess: false },
+      capabilities: { dynamicCreation: true },
     })
     const denied = core.createAgent({
       displayName: '普通智能体',
@@ -303,7 +303,14 @@ describe('DSH Host and Web Channel vertical slice', () => {
       expect(await host.queryNekroNxtInspect(enabledSession, 'currentContext')).toMatchObject({
         agent: {
           agentId: enabled.definition.id,
-          capabilities: { dynamicCreation: true, developmentShell: false, fullFileAccess: false },
+          capabilities: {
+            subagents: false,
+            fileTools: false,
+            webSearch: false,
+            dynamicCreation: true,
+            developmentShell: false,
+            unrestrictedFileAccess: false,
+          },
         },
         channel: { channelId: enabledChannel.id, episodeId: enabledEpisode },
       })
@@ -488,7 +495,7 @@ describe('DSH Host and Web Channel vertical slice', () => {
     }
   })
 
-  it('mounts creation, development Shell and complete file access as independent Agent grants', async () => {
+  it('mounts creation, file tools, development Shell and unrestricted file access as independent grants', async () => {
     const directory = await mkdtemp(path.join(tmpdir(), 'nekro-nxt-capability-grants-'))
     temporaryDirectories.push(directory)
     const database = await openMigratedCoreDatabase(path.join(directory, 'core.sqlite'))
@@ -501,25 +508,25 @@ describe('DSH Host and Web Channel vertical slice', () => {
         displayName: '创造智能体',
         persona: '',
         model: { provider: 'test-provider', model: 'chat-model' },
-        capabilities: { dynamicCreation: true, developmentShell: false, fullFileAccess: false },
+        capabilities: { dynamicCreation: true },
       }),
       core.createAgent({
         displayName: '开发智能体',
         persona: '',
         model: { provider: 'test-provider', model: 'chat-model' },
-        capabilities: { dynamicCreation: false, developmentShell: true, fullFileAccess: false },
+        capabilities: { fileTools: false, developmentShell: true },
       }),
       core.createAgent({
         displayName: '文件智能体',
         persona: '',
         model: { provider: 'test-provider', model: 'chat-model' },
-        capabilities: { dynamicCreation: false, developmentShell: false, fullFileAccess: true },
+        capabilities: { fileTools: true, unrestrictedFileAccess: true },
       }),
       core.createAgent({
         displayName: '完整开发智能体',
         persona: '',
         model: { provider: 'test-provider', model: 'chat-model' },
-        capabilities: { dynamicCreation: false, developmentShell: true, fullFileAccess: true },
+        capabilities: { fileTools: true, developmentShell: true, unrestrictedFileAccess: true },
       }),
     ]
     const connection = core.createConnection({ adapterKey: 'web', config: {} })
@@ -560,7 +567,8 @@ describe('DSH Host and Web Channel vertical slice', () => {
       expect(creationTools).not.toContain('bash')
       expect(creationTools).not.toContain('read')
 
-      expect(shellTools).toEqual(expect.arrayContaining(['bash', 'read', 'write', 'edit']))
+      expect(shellTools).toContain('bash')
+      expect(shellTools).not.toEqual(expect.arrayContaining(['read', 'write', 'edit']))
       expect(shellTools).not.toContain('cordis_define')
 
       expect(fileTools).toEqual(expect.arrayContaining(['read', 'write', 'edit']))

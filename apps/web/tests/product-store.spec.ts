@@ -87,7 +87,14 @@ describe('product store Host mutations', () => {
           model: '测试模型',
           channels: [],
           extensionCount: 1,
-          capabilities: { dynamicCreation: false, developmentShell: false, fullFileAccess: false },
+          capabilities: {
+            subagents: false,
+            fileTools: false,
+            webSearch: false,
+            dynamicCreation: false,
+            developmentShell: false,
+            unrestrictedFileAccess: false,
+          },
         },
       ],
       extensions: [

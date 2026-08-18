@@ -61,7 +61,7 @@ describe('NekroNxt domain API — browser dynamic client circuit', () => {
       displayName: '创造智能体',
       persona: '',
       model: { provider: 'test-provider', model: 'chat-model' },
-      capabilities: { dynamicCreation: true, developmentShell: false, fullFileAccess: false },
+      capabilities: { dynamicCreation: true },
     })
     await runtime.web.postMessage({
       channelId: entity.channelId,

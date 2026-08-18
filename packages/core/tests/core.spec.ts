@@ -21,7 +21,16 @@ import type {
   CreateAgentCommit,
   PlatformIdentityRecord,
 } from '../src/index.ts'
-import { CoreService, digestRevision } from '../src/index.ts'
+import { CoreService, digestRevision, encodeAgentCapabilities, parseStoredAgentCapabilityGrants } from '../src/index.ts'
+
+const deniedCapabilities = {
+  subagents: false,
+  fileTools: false,
+  webSearch: false,
+  dynamicCreation: false,
+  developmentShell: false,
+  unrestrictedFileAccess: false,
+} as const
 
 class MemoryRepository implements CoreRepository {
   readonly agents = new Map<AgentId, CreateAgentCommit>()
@@ -49,6 +58,11 @@ class MemoryRepository implements CoreRepository {
     return [...this.revisions.values()].find(
       (revision) => revision.agentId === agentId && revision.contentDigest === contentDigest,
     )
+  }
+  listAgentRevisions(agentId: AgentId) {
+    return [...this.revisions.values()]
+      .filter((revision) => revision.agentId === agentId)
+      .sort((left, right) => left.revision - right.revision || left.id.localeCompare(right.id))
   }
   getNextAgentRevisionNumber(agentId: AgentId): number {
     return (
@@ -286,23 +300,91 @@ describe('CoreService', () => {
   })
 
   it('uses canonical content digests independent of object key order', () => {
+    const first = digestRevision({
+      displayName: '小奈',
+      persona: '',
+      model: { provider: 'deepseek', model: 'v4' },
+      settings: { b: 2, a: 1 },
+      capabilities: deniedCapabilities,
+    })
+    const second = digestRevision({
+      persona: '',
+      displayName: '小奈',
+      model: { model: 'v4', provider: 'deepseek' },
+      settings: { a: 1, b: 2 },
+      capabilities: { ...deniedCapabilities },
+    })
+    expect(first).toBe(second)
+    expect(first).toMatch(/^v2:sha256:[a-f0-9]{64}$/u)
+  })
+
+  it('decodes legacy capability grants and rejects unknown stored formats', () => {
     expect(
-      digestRevision({
-        displayName: '小奈',
-        persona: '',
-        model: { provider: 'deepseek', model: 'v4' },
-        settings: { b: 2, a: 1 },
-        capabilities: { dynamicCreation: false, developmentShell: false, fullFileAccess: false },
+      parseStoredAgentCapabilityGrants({
+        dynamicCreation: true,
+        developmentShell: false,
+        fullFileAccess: false,
       }),
-    ).toBe(
-      digestRevision({
-        persona: '',
-        displayName: '小奈',
-        model: { model: 'v4', provider: 'deepseek' },
-        settings: { a: 1, b: 2 },
-        capabilities: { fullFileAccess: false, developmentShell: false, dynamicCreation: false },
+    ).toEqual({ ...deniedCapabilities, dynamicCreation: true })
+    expect(
+      parseStoredAgentCapabilityGrants({
+        dynamicCreation: false,
+        developmentShell: true,
+        fullFileAccess: false,
       }),
+    ).toEqual({ ...deniedCapabilities, fileTools: true, developmentShell: true })
+    expect(
+      parseStoredAgentCapabilityGrants({
+        dynamicCreation: false,
+        developmentShell: false,
+        fullFileAccess: true,
+      }),
+    ).toEqual({ ...deniedCapabilities, fileTools: true, unrestrictedFileAccess: true })
+
+    const encoded = encodeAgentCapabilities({ ...deniedCapabilities, subagents: true, webSearch: true })
+    expect(encoded).toEqual({
+      version: 2,
+      grants: { ...deniedCapabilities, subagents: true, webSearch: true },
+    })
+    expect(parseStoredAgentCapabilityGrants(encoded)).toEqual(encoded.grants)
+    expect(() => parseStoredAgentCapabilityGrants({ version: 3, grants: deniedCapabilities })).toThrow(
+      'Unsupported Agent capabilities version: 3',
     )
+    expect(() =>
+      parseStoredAgentCapabilityGrants({ version: 2, grants: deniedCapabilities, fullFileAccess: false }),
+    ).toThrow()
+    expect(() =>
+      parseStoredAgentCapabilityGrants({
+        dynamicCreation: false,
+        developmentShell: false,
+        fullFileAccess: false,
+        fileTools: false,
+      }),
+    ).toThrow()
+  })
+
+  it('reuses a semantically equivalent historical Revision even when it has a legacy digest', () => {
+    const repository = new MemoryRepository()
+    let id = 0
+    const core = new CoreService(repository, { now: () => 100, nextUlid: () => `ID${++id}` })
+    const first = core.createAgent({
+      displayName: '小奈',
+      persona: '第一版',
+      model: { provider: 'deepseek', model: 'v4' },
+    })
+    repository.revisions.set(first.revision.id, { ...first.revision, contentDigest: 'legacy-v1-digest' })
+    const second = core.reviseAgent(first.definition.id, first.revision.id, {
+      displayName: '小奈',
+      persona: '第二版',
+      model: { provider: 'deepseek', model: 'v4' },
+    })
+    const restored = core.reviseAgent(first.definition.id, second.revision.id, {
+      displayName: '小奈',
+      persona: '第一版',
+      model: { provider: 'deepseek', model: 'v4' },
+    })
+    expect(restored.revision.id).toBe(first.revision.id)
+    expect(repository.revisions).toHaveLength(2)
   })
 
   it('commits connection/channel/binding and idempotent inbound facts', () => {

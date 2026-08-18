@@ -56,7 +56,7 @@ const exerciseDevelopmentWorkspace = async (developmentWorkspaceRoot?: string) =
         displayName: '开发工作区智能体',
         persona: '',
         model: { provider: 'workspace-provider', model: 'workspace-model' },
-        capabilities: { dynamicCreation: false, developmentShell: true, fullFileAccess: false },
+        capabilities: { fileTools: true, developmentShell: true },
       }),
     })
     expect(createdResponse.status).toBe(201)

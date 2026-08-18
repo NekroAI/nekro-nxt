@@ -102,9 +102,12 @@ interface SnapshotAgentJson {
   readonly runtimeStatus?: 'idle' | 'running'
   readonly model: { readonly provider: string; readonly model: string; readonly reasoningEffort?: string }
   readonly capabilities: {
+    readonly subagents: boolean
+    readonly fileTools: boolean
+    readonly webSearch: boolean
     readonly dynamicCreation: boolean
     readonly developmentShell: boolean
-    readonly fullFileAccess: boolean
+    readonly unrestrictedFileAccess: boolean
   }
   readonly channels: readonly string[]
 }
@@ -237,9 +240,12 @@ const isSnapshotJson = (value: unknown): value is SnapshotJson => {
       hasString(item.model, 'model') &&
       hasOptionalString(item.model, 'reasoningEffort') &&
       isRecord(item.capabilities) &&
+      typeof item.capabilities.subagents === 'boolean' &&
+      typeof item.capabilities.fileTools === 'boolean' &&
+      typeof item.capabilities.webSearch === 'boolean' &&
       typeof item.capabilities.dynamicCreation === 'boolean' &&
       typeof item.capabilities.developmentShell === 'boolean' &&
-      typeof item.capabilities.fullFileAccess === 'boolean' &&
+      typeof item.capabilities.unrestrictedFileAccess === 'boolean' &&
       Array.isArray(item.channels) &&
       item.channels.every((channelId) => typeof channelId === 'string'),
   )
@@ -689,9 +695,14 @@ export class HttpProductHost implements ProductHostPort {
       const agentId = typeof input?.agentId === 'string' ? input.agentId : ''
       if (!agentId.trim()) throw new Error('缺少智能体标识，请刷新页面后重试。')
       const body: Record<string, unknown> = {}
+      if (typeof input?.subagents === 'boolean') body.subagents = input.subagents
+      if (typeof input?.fileTools === 'boolean') body.fileTools = input.fileTools
+      if (typeof input?.webSearch === 'boolean') body.webSearch = input.webSearch
       if (typeof input?.dynamicCreation === 'boolean') body.dynamicCreation = input.dynamicCreation
       if (typeof input?.developmentShell === 'boolean') body.developmentShell = input.developmentShell
-      if (typeof input?.fullFileAccess === 'boolean') body.fullFileAccess = input.fullFileAccess
+      if (typeof input?.unrestrictedFileAccess === 'boolean') {
+        body.unrestrictedFileAccess = input.unrestrictedFileAccess
+      }
       if (Object.keys(body).length === 0) throw new Error('请选择至少一项要更新的智能体权限。')
       const result = await this.#postJson(`/api/agents/${encodeURIComponent(agentId)}/capabilities`, body)
       await this.#refreshAndNotify()
@@ -923,9 +934,12 @@ const createAgentRequestBody = (input?: Readonly<Record<string, unknown>>): unkn
     persona,
     model: { provider, model: modelId },
     capabilities: {
+      subagents: rawCapabilities.subagents === true,
+      fileTools: rawCapabilities.fileTools === true,
+      webSearch: rawCapabilities.webSearch === true,
       dynamicCreation: rawCapabilities.dynamicCreation === true,
       developmentShell: rawCapabilities.developmentShell === true,
-      fullFileAccess: rawCapabilities.fullFileAccess === true,
+      unrestrictedFileAccess: rawCapabilities.unrestrictedFileAccess === true,
     },
   }
 }

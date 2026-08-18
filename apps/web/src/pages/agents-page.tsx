@@ -45,9 +45,12 @@ export function AgentsPage() {
   const [newPersona, setNewPersona] = useState('')
   const [selectedModelKey, setSelectedModelKey] = useState('')
   const [newCapabilities, setNewCapabilities] = useState<AgentSummary['capabilities']>({
+    subagents: false,
+    fileTools: false,
+    webSearch: false,
     dynamicCreation: false,
     developmentShell: false,
-    fullFileAccess: false,
+    unrestrictedFileAccess: false,
   })
   const [createError, setCreateError] = useState('')
 
@@ -62,7 +65,14 @@ export function AgentsPage() {
     setCreateStep(0)
     setNewName('')
     setNewPersona('')
-    setNewCapabilities({ dynamicCreation: false, developmentShell: false, fullFileAccess: false })
+    setNewCapabilities({
+      subagents: false,
+      fileTools: false,
+      webSearch: false,
+      dynamicCreation: false,
+      developmentShell: false,
+      unrestrictedFileAccess: false,
+    })
     setCreateError('')
   }
   const openCreate = (): void => {
@@ -287,6 +297,12 @@ export function AgentsPage() {
                 }
               />
               <SwitchField
+                label="文件工具"
+                description="允许读取文件，并在智能体开发工作区中写入文件。读取范围取决于宿主进程权限。"
+                checked={newCapabilities.fileTools}
+                onCheckedChange={(enabled) => setNewCapabilities((current) => ({ ...current, fileTools: enabled }))}
+              />
+              <SwitchField
                 label="开发命令"
                 description="允许在这个智能体的独立开发工作区中运行命令。"
                 checked={newCapabilities.developmentShell}
@@ -301,9 +317,9 @@ export function AgentsPage() {
                   </span>
                 }
                 description="扩大文件访问范围；不会自动开启开发命令。"
-                checked={newCapabilities.fullFileAccess}
+                checked={newCapabilities.unrestrictedFileAccess}
                 onCheckedChange={(enabled) =>
-                  setNewCapabilities((current) => ({ ...current, fullFileAccess: enabled }))
+                  setNewCapabilities((current) => ({ ...current, unrestrictedFileAccess: enabled }))
                 }
               />
             </div>
@@ -327,8 +343,9 @@ export function AgentsPage() {
                 <strong>
                   {[
                     newCapabilities.dynamicCreation ? '动态创造' : '',
+                    newCapabilities.fileTools ? '文件工具' : '',
                     newCapabilities.developmentShell ? '开发命令' : '',
-                    newCapabilities.fullFileAccess ? '完整文件访问' : '',
+                    newCapabilities.unrestrictedFileAccess ? '完整文件访问' : '',
                   ]
                     .filter(Boolean)
                     .join('、') || '不授予开发能力'}
@@ -361,13 +378,19 @@ const capabilityCopy: readonly {
     risk: { label: '中风险', tone: 'warning' },
   },
   {
+    key: 'fileTools',
+    label: '文件工具',
+    description: '允许读取文件，并在智能体开发工作区中写入文件；读取范围取决于宿主进程权限。',
+    risk: { label: '高风险', tone: 'warning' },
+  },
+  {
     key: 'developmentShell',
     label: '开发命令',
     description: '允许在明确授权的开发工作区中运行命令。',
     risk: { label: '高风险', tone: 'warning' },
   },
   {
-    key: 'fullFileAccess',
+    key: 'unrestrictedFileAccess',
     label: '完整文件访问',
     description: '扩大已授权文件能力的可访问范围，不会自动开启开发命令。',
     risk: { label: '极高风险', tone: 'error' },

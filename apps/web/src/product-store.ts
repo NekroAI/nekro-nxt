@@ -31,9 +31,12 @@ export interface AgentSummary {
   readonly channels: readonly string[]
   readonly extensionCount: number
   readonly capabilities: {
+    readonly subagents: boolean
+    readonly fileTools: boolean
+    readonly webSearch: boolean
     readonly dynamicCreation: boolean
     readonly developmentShell: boolean
-    readonly fullFileAccess: boolean
+    readonly unrestrictedFileAccess: boolean
   }
 }
 

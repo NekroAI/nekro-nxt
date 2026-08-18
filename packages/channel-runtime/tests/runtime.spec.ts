@@ -69,6 +69,11 @@ class MemoryCoreRepository implements CoreRepository {
       (revision) => revision.agentId === agentId && revision.contentDigest === contentDigest,
     )
   }
+  listAgentRevisions(agentId: AgentId) {
+    return [...this.revisions.values()]
+      .filter((revision) => revision.agentId === agentId)
+      .sort((left, right) => left.revision - right.revision || left.id.localeCompare(right.id))
+  }
   getNextAgentRevisionNumber(agentId: AgentId): number {
     return (
       Math.max(

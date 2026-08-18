@@ -68,7 +68,7 @@ import type {
   PlatformIdentityRecord,
   PlatformMessageReferenceRecord,
 } from '@nekro-nxt/core'
-import { parseAgentCapabilityGrants } from '@nekro-nxt/core'
+import { encodeAgentCapabilities, parseStoredAgentCapabilityGrants } from '@nekro-nxt/core'
 import type {
   AgentActivationRecord,
   DraftPackageRecord,
@@ -110,7 +110,7 @@ export {
 } from './schema.js'
 
 /** The Core schema version starts at one with the upgrade journal table. */
-export const CORE_SCHEMA_VERSION = 15
+export const CORE_SCHEMA_VERSION = 16
 const CORE_MIGRATION_FILES = [
   '0000_red_darkstar.sql',
   '0001_broad_taskmaster.sql',
@@ -127,6 +127,7 @@ const CORE_MIGRATION_FILES = [
   '0012_delivery_adapter_context.sql',
   '0013_single_active_agent_binding.sql',
   '0014_single_active_channel_binding.sql',
+  '0015_agent_capabilities_v2.sql',
 ] as const
 
 /** Opens an owned Core database with the durability and integrity settings shared by both Hosts. */
@@ -365,7 +366,7 @@ export class SqliteCoreRepository
         model: requiredString(row, 'model_id'),
         ...(reasoningEffort === undefined ? {} : { reasoningEffort }),
       },
-      capabilities: parseAgentCapabilityGrants(
+      capabilities: parseStoredAgentCapabilityGrants(
         parseStoredJson(requiredString(row, 'capabilities_json'), 'capabilities_json'),
       ),
       ...(settings === undefined ? {} : { settings: parseStoredJson(settings, 'settings_json') }),
@@ -385,6 +386,14 @@ export class SqliteCoreRepository
       .prepare('SELECT * FROM agent_revisions WHERE agent_id = ? AND content_digest = ?')
       .get(agentId, contentDigest) as SqliteRow | undefined
     return row ? this.#agentRevision(row) : undefined
+  }
+
+  listAgentRevisions(agentId: AgentId): readonly AgentRevisionRecord[] {
+    return (
+      this.#database
+        .prepare('SELECT * FROM agent_revisions WHERE agent_id = ? ORDER BY revision ASC, id ASC')
+        .all(agentId) as SqliteRow[]
+    ).map((row) => this.#agentRevision(row))
   }
 
   getNextAgentRevisionNumber(agentId: AgentId): number {
@@ -1972,7 +1981,7 @@ export class SqliteCoreRepository
         revision.model.provider,
         revision.model.model,
         revision.model.reasoningEffort ?? null,
-        JSON.stringify(revision.capabilities),
+        JSON.stringify(encodeAgentCapabilities(revision.capabilities)),
         revision.settings === undefined ? null : JSON.stringify(revision.settings),
         revision.contentDigest,
         revision.createdAt,
@@ -1993,7 +2002,7 @@ export class SqliteCoreRepository
         model: requiredString(row, 'model_id'),
         ...(reasoningEffort === undefined ? {} : { reasoningEffort }),
       },
-      capabilities: parseAgentCapabilityGrants(
+      capabilities: parseStoredAgentCapabilityGrants(
         parseStoredJson(requiredString(row, 'capabilities_json'), 'capabilities_json'),
       ),
       ...(settings === undefined ? {} : { settings: parseStoredJson(settings, 'settings_json') }),
