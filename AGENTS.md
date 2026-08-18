@@ -24,6 +24,7 @@
 
 - 纯 TypeScript 主栈，ESM 优先；
 - 使用 pnpm workspace 的单一仓库；
+- 默认直接在 `main` 分支开发和提交；除非用户明确要求，否则禁止为普通功能、修复或临时工作擅自创建新分支；
 - Desktop、Server、Web UI、社区后端和共享包最终都位于本仓库；
 - 先形成少量清晰包，禁止为了“未来可能复用”过早拆出大量包；
 - 根命令应逐步收敛为 `pnpm dev`、`pnpm check`、`pnpm test`、`pnpm build`；
