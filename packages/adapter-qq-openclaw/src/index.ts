@@ -1,5 +1,4 @@
 import type {
-  AdapterConnectionDescriptor,
   AdapterConnectionContext,
   AdapterConnectionRuntime,
   AdapterDeliveryReceipt,
@@ -8,9 +7,9 @@ import type {
   InboundCommitResult,
   PhysicalDeliveryRequest,
 } from '@nekro-nxt/adapter-sdk'
+import { defineAdapterConnection } from '@nekro-nxt/adapter-sdk'
 import type {
   AssetId,
-  ChannelEventId,
   ChannelId,
   ChannelMemberId,
   ConnectionId,
@@ -18,6 +17,7 @@ import type {
   LogicalMessageId,
   MessagePart,
 } from '@nekro-nxt/contracts'
+import { LogicalMessageIdSchema } from '@nekro-nxt/contracts'
 import { z } from 'zod'
 import { isQQTransportError } from './transport-error.js'
 
@@ -30,52 +30,74 @@ export * from './websocket.js'
 
 export const QQ_OPENCLAW_ADAPTER_KEY = 'qq-openclaw'
 
-export const QQOpenClawConfigSchema = z
+export const QQOpenClawConnectionConfigurationSchema = z
   .object({
     appId: z.string().trim().min(1),
-    clientSecretCredentialRef: z.string().trim().min(1),
     proactiveSend: z.boolean().default(false),
     markdown: z.boolean().default(true),
     maxTextLength: z.number().int().positive().default(1800),
     maxTextBytes: z.number().int().positive().default(7200),
-    maxAssetBytes: z
-      .number()
-      .int()
-      .positive()
-      .default(20 * 1024 * 1024),
-    passiveReplyTtlMs: z
-      .number()
-      .int()
-      .positive()
-      .default(5 * 60 * 1000),
-    passiveReplyLimit: z.number().int().positive().default(5),
   })
   .strict()
+
+export const QQOpenClawCredentialsSchema = z
+  .object({
+    clientSecretCredentialRef: z.string().trim().min(1),
+  })
+  .strict()
+
+export const QQOpenClawConnectionInputSchema = QQOpenClawConnectionConfigurationSchema.extend({
+  clientSecret: z.string().trim().min(1),
+}).strict()
+
+export type QQOpenClawConnectionInput = z.input<typeof QQOpenClawConnectionInputSchema>
+
+export const QQOpenClawConfigSchema = QQOpenClawConnectionConfigurationSchema.extend({
+  ...QQOpenClawCredentialsSchema.shape,
+  maxAssetBytes: z
+    .number()
+    .int()
+    .positive()
+    .default(20 * 1024 * 1024),
+  passiveReplyTtlMs: z
+    .number()
+    .int()
+    .positive()
+    .default(5 * 60 * 1000),
+  passiveReplyLimit: z.number().int().positive().default(5),
+}).strict()
 
 export type QQOpenClawConfig = z.input<typeof QQOpenClawConfigSchema>
 type QQResolvedOpenClawConfig = z.output<typeof QQOpenClawConfigSchema>
 
-export const QQ_OPENCLAW_CONFIG_SCHEMA = {
-  schemaVersion: 1,
-  type: 'object',
-  required: ['appId', 'clientSecretCredentialRef'],
-  properties: {
-    appId: { type: 'string', title: 'App ID' },
-    clientSecretCredentialRef: { type: 'credential-reference', title: 'Client Secret' },
-    proactiveSend: { type: 'boolean', title: '允许主动发送', default: false },
-    markdown: { type: 'boolean', title: '使用 Markdown', default: true },
-    maxTextLength: { type: 'number', title: '单条字符上限', default: 1800 },
-    maxTextBytes: { type: 'number', title: '单条 UTF-8 字节上限', default: 7200 },
-  },
-} as const
-
-export const QQ_OPENCLAW_CONNECTION_DESCRIPTOR: AdapterConnectionDescriptor = {
+export const QQ_OPENCLAW_CONNECTION_DEFINITION = defineAdapterConnection({
   key: QQ_OPENCLAW_ADAPTER_KEY,
   displayName: 'QQ 官方机器人',
   description: '连接 QQ 官方机器人账号，接收群聊与私聊消息，并按平台能力发送内容。',
   userCreatable: true,
-  configSchema: QQ_OPENCLAW_CONFIG_SCHEMA,
-}
+  configurationSchema: QQOpenClawConnectionConfigurationSchema,
+  credentialsSchema: QQOpenClawCredentialsSchema,
+  configSchema: {
+    schemaVersion: 1,
+    type: 'object',
+    required: ['appId', 'clientSecretCredentialRef'],
+    properties: {
+      appId: { type: 'string', title: 'App ID' },
+      clientSecretCredentialRef: { type: 'credential-reference', title: 'Client Secret' },
+      proactiveSend: { type: 'boolean', title: '允许主动发送', default: false },
+      markdown: { type: 'boolean', title: '使用 Markdown', default: true },
+      maxTextLength: { type: 'number', title: '单条字符上限', default: 1800 },
+      maxTextBytes: { type: 'number', title: '单条 UTF-8 字节上限', default: 7200 },
+    },
+  },
+  create: (configuration, credentials) => ({
+    ...configuration,
+    clientSecret: credentials.clientSecretCredentialRef,
+  }),
+})
+
+export const QQ_OPENCLAW_CONFIG_SCHEMA = QQ_OPENCLAW_CONNECTION_DEFINITION.descriptor.configSchema
+export const QQ_OPENCLAW_CONNECTION_DESCRIPTOR = QQ_OPENCLAW_CONNECTION_DEFINITION.descriptor
 
 export const QQ_OPENCLAW_CAPABILITIES: AdapterOutboundCapabilities = {
   text: true,
@@ -149,7 +171,6 @@ export interface QQInboundBridge {
     readonly assetId: AssetId
     readonly mediaType: string
     readonly fileName?: string
-    readonly finalize?: (channelEventId: ChannelEventId) => Promise<void>
   }>
   resolveQuote(input: {
     readonly connectionId: ConnectionId
@@ -184,7 +205,6 @@ export interface QQNormalizedInboundMessage {
   readonly receivedAt?: number
   readonly replyExpiresAt?: number
   readonly remainingReplies?: number
-  readonly checkpoint?: JsonValue
 }
 
 export interface QQTransportReceipt {
@@ -383,7 +403,7 @@ export class QQOpenClawConnection implements AdapterConnectionRuntime {
       ? await this.#directory.resolvePlatformMessageId(
           input.connectionId,
           input.channelId,
-          logicalReplyTarget as LogicalMessageId,
+          LogicalMessageIdSchema.parse(logicalReplyTarget),
         )
       : undefined
     if (logicalReplyTarget && !replyPlatformMessageId) {
@@ -473,7 +493,7 @@ export class QQOpenClawConnection implements AdapterConnectionRuntime {
       observedAt: receivedAt,
     })
     const parts: MessagePart[] = []
-    const finalizeAssets: Array<(channelEventId: ChannelEventId) => Promise<void>> = []
+    const assetOccurrences: { readonly partIndex: number; readonly assetId: AssetId }[] = []
     let replyToBot = false
     if (message.content) parts.push({ type: 'text', text: message.content })
     let mentionedBot = message.eventType === 'GROUP_AT_MESSAGE_CREATE'
@@ -501,7 +521,7 @@ export class QQOpenClawConnection implements AdapterConnectionRuntime {
         attachmentIndex,
         signal,
       })
-      if (imported.finalize) finalizeAssets.push(imported.finalize)
+      assetOccurrences.push({ partIndex: parts.length, assetId: imported.assetId })
       if (imported.mediaType.startsWith('image/')) {
         parts.push({
           type: 'image',
@@ -557,9 +577,8 @@ export class QQOpenClawConnection implements AdapterConnectionRuntime {
         replyToBot,
         targetKind: message.target.kind,
       },
-      ...(message.checkpoint === undefined ? {} : { checkpoint: message.checkpoint }),
+      ...(assetOccurrences.length === 0 ? {} : { assetOccurrences }),
     })
-    for (const finalize of finalizeAssets) await finalize(commit.channelEventId)
     return commit
   }
 
@@ -576,8 +595,8 @@ export class QQOpenClawConnection implements AdapterConnectionRuntime {
       !Array.isArray(request.adapterContext)
         ? request.adapterContext
         : undefined
-    const plannedReply = adapterContext?.replyPlatformMessageId
-    const plannedReplyMode = adapterContext?.replyMode
+    const plannedReply = adapterContext?.['replyPlatformMessageId']
+    const plannedReplyMode = adapterContext?.['replyMode']
     const replyMessageId = typeof plannedReply === 'string' ? plannedReply : request.replyTo
     const passive =
       plannedReplyMode === 'proactive' ? undefined : this.#replyBudget.reserve(replyMessageId, this.#context.now())

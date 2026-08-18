@@ -1,16 +1,16 @@
 import type { AdapterInboundEvent, AdapterConnectionContext, PhysicalDeliveryRequest } from '@nekro-nxt/adapter-sdk'
-import type {
-  ChannelEventId,
-  ChannelId,
-  ConnectionId,
-  LogicalMessageId,
-  PhysicalDeliveryId,
+import {
+  ChannelEventIdSchema,
+  ChannelIdSchema,
+  ConnectionIdSchema,
+  LogicalMessageIdSchema,
+  PhysicalDeliveryIdSchema,
 } from '@nekro-nxt/contracts'
 import { describe, expect, it } from 'vitest'
 import { FakeAdapterConnection, ScenarioDriver, VirtualClock } from '../src/index.ts'
 
-const connectionId = 'connection-1' as ConnectionId
-const channelId = 'channel-1' as ChannelId
+const connectionId = ConnectionIdSchema.parse('con_test')
+const channelId = ChannelIdSchema.parse('chn_test')
 
 const inbound = (id: number): AdapterInboundEvent => ({
   connectionId,
@@ -26,12 +26,11 @@ const inbound = (id: number): AdapterInboundEvent => ({
 })
 
 const delivery = (id: number): PhysicalDeliveryRequest => ({
-  deliveryId: `delivery-${id}` as PhysicalDeliveryId,
-  logicalMessageId: 'logical-1' as LogicalMessageId,
+  deliveryId: PhysicalDeliveryIdSchema.parse(`phy_${id}`),
+  logicalMessageId: LogicalMessageIdSchema.parse('msg_test'),
   connectionId,
   channelId,
   parts: [{ type: 'text', text: `outbound-${id}` }],
-  attempt: 1,
 })
 
 describe('FakeAdapterConnection', () => {
@@ -43,9 +42,8 @@ describe('FakeAdapterConnection', () => {
       acceptInbound: (event) => {
         accepted.push(event.dedupeKey)
         return Promise.resolve({
-          channelEventId: `channel-event-${accepted.length}` as ChannelEventId,
+          channelEventId: ChannelEventIdSchema.parse(`evt_${accepted.length}`),
           inserted: accepted.length === 1,
-          checkpointCommitted: true,
         })
       },
     }

@@ -1,5 +1,5 @@
 import type { AdapterRuntimeStateStore } from '@nekro-nxt/adapter-sdk'
-import type { ConnectionId, JsonValue } from '@nekro-nxt/contracts'
+import { JsonValueSchema, type ConnectionId } from '@nekro-nxt/contracts'
 import { z } from 'zod'
 
 export const QQ_GATEWAY_INTENTS = (1 << 25) | (1 << 12) | (1 << 30) | (1 << 26)
@@ -13,12 +13,7 @@ const gatewayPayloadSchema = z
   })
   .passthrough()
 
-export interface QQGatewayPayload {
-  readonly op: number
-  readonly d?: unknown
-  readonly s?: number
-  readonly t?: string
-}
+export type QQGatewayPayload = z.infer<typeof gatewayPayloadSchema>
 
 export interface QQGatewayCheckpoint {
   readonly appId: string
@@ -56,8 +51,11 @@ export const createQQGatewayCheckpointStore = (
     await states.clear(connectionId, QQ_GATEWAY_RUNTIME_STATE_KEY)
     return undefined
   },
-  save: (checkpoint) =>
-    states.save(connectionId, QQ_GATEWAY_RUNTIME_STATE_KEY, checkpoint as unknown as JsonValue, checkpoint.savedAt),
+  save: async (checkpoint) => {
+    const parsed = qqGatewayCheckpointSchema.parse(checkpoint)
+    const value = JsonValueSchema.parse(parsed)
+    await states.save(connectionId, QQ_GATEWAY_RUNTIME_STATE_KEY, value, parsed.savedAt)
+  },
   clear: () => states.clear(connectionId, QQ_GATEWAY_RUNTIME_STATE_KEY),
 })
 
@@ -113,13 +111,14 @@ export interface QQGatewayClientOptions {
   readonly maxReconnectDelayMs?: number
 }
 
-const dataObject = (value: unknown): Readonly<Record<string, unknown>> =>
-  typeof value === 'object' && value !== null && !Array.isArray(value)
-    ? (value as Readonly<Record<string, unknown>>)
-    : {}
+const gatewayDataSchema = z.record(z.string(), z.unknown())
 
-export const parseQQGatewayPayload = (input: string): QQGatewayPayload =>
-  gatewayPayloadSchema.parse(JSON.parse(input)) as QQGatewayPayload
+const dataObject = (value: unknown): Readonly<Record<string, unknown>> => {
+  const parsed = gatewayDataSchema.safeParse(value)
+  return parsed.success ? parsed.data : {}
+}
+
+export const parseQQGatewayPayload = (input: string): QQGatewayPayload => gatewayPayloadSchema.parse(JSON.parse(input))
 
 /** Owns Gateway identify/resume, heartbeat, reconnect and post-commit sequence checkpoints. */
 export class QQGatewayClient {
@@ -186,7 +185,7 @@ export class QQGatewayClient {
         if (signal.aborted) throw signal.reason
         const payload = parseQQGatewayPayload(raw)
         if (payload.op === 10) {
-          const interval = dataObject(payload.d).heartbeat_interval
+          const interval = dataObject(payload.d)['heartbeat_interval']
           const heartbeatInterval = typeof interval === 'number' && interval >= 1_000 ? interval : 45_000
           await socket.send(JSON.stringify(this.#identifyOrResume(token)))
           cancelHeartbeat?.()
@@ -216,7 +215,7 @@ export class QQGatewayClient {
         const eventType = payload.t ?? ''
         const data = dataObject(payload.d)
         if (eventType === 'READY') {
-          const sessionId = data.session_id
+          const sessionId = data['session_id']
           if (typeof sessionId !== 'string' || !sessionId) throw new Error('QQ Gateway READY omitted session_id.')
           this.#sessionId = sessionId
           await this.#commitSequence(payload.s)

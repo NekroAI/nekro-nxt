@@ -1,9 +1,10 @@
 import { LlmAdapter, type StreamChunk } from '@deepseek-ai/dsh-llm'
+import { HostApiContracts } from '@nekro-nxt/contracts'
 import { access, mkdir, mkdtemp, rm, stat, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
-import { defaultWebDistIndex, parseLlmProviderRoutes, startNekroServer } from '../src/main.js'
+import { defaultDataRoot, defaultWebDistIndex, parseLlmProviderRoutes, startNekroServer } from '../src/main.js'
 
 const temporaryDirectories: string[] = []
 
@@ -56,11 +57,18 @@ const exerciseDevelopmentWorkspace = async (developmentWorkspaceRoot?: string) =
         displayName: '开发工作区智能体',
         persona: '',
         model: { provider: 'workspace-provider', model: 'workspace-model' },
-        capabilities: { fileTools: true, developmentShell: true },
+        capabilities: {
+          subagents: false,
+          fileTools: true,
+          webSearch: false,
+          dynamicCreation: false,
+          developmentShell: true,
+          unrestrictedFileAccess: false,
+        },
       }),
     })
-    expect(createdResponse.status).toBe(201)
-    const created = (await createdResponse.json()) as { agentId: string; channelId: string }
+    expect(createdResponse.status, await createdResponse.clone().text()).toBe(201)
+    const created = HostApiContracts.createAgent.parseResponse(await createdResponse.json())
     const admitted = await fetch(`${origin}/api/channels/${created.channelId}/messages`, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
@@ -91,6 +99,10 @@ const exerciseDevelopmentWorkspace = async (developmentWorkspaceRoot?: string) =
 describe('Server executable defaults', () => {
   it('resolves the Web build independently from the workspace command cwd', () => {
     expect(defaultWebDistIndex()).toBe(path.resolve(import.meta.dirname, '../../web/dist/index.html'))
+  })
+
+  it('uses the repository data root instead of creating a package-local parallel root', () => {
+    expect(defaultDataRoot()).toBe(path.resolve(import.meta.dirname, '../../../data'))
   })
 
   it('parses an explicit, deduplicated DSH provider route allowlist', () => {

@@ -7,7 +7,18 @@ import type {
   ModelSummary,
   ProductHostError,
 } from './product-store.js'
-import type { AdapterConnectionDescriptor } from '@nekro-nxt/adapter-sdk'
+import type { AdapterConnectionDescriptor, AdapterConfigurationProperty } from '@nekro-nxt/adapter-sdk'
+import {
+  HostApiContracts,
+  HostApiErrorSchema,
+  ChannelFactSseDataSchema,
+  buildHostApiContractPath,
+  type HostApiContract,
+  type HostApiContractParams,
+  type HostApiContractRequest,
+  type HostApiRequest,
+  type HostApiResponse,
+} from '@nekro-nxt/contracts'
 import { providerDisplayName } from './provider-labels.js'
 import type { ProductHostPort, ProductSnapshot } from './product-port.js'
 
@@ -58,12 +69,12 @@ const visibleText = (text: string): string =>
 export const renderConversationBody = (
   parts: readonly {
     type: string
-    text?: string
-    memberId?: string
-    displayName?: string
-    assetId?: string
-    alt?: string
-    name?: string
+    text?: string | undefined
+    memberId?: string | undefined
+    displayName?: string | undefined
+    assetId?: string | undefined
+    alt?: string | undefined
+    name?: string | undefined
   }[],
   mentionedConnectionAccount = false,
 ): string =>
@@ -106,289 +117,66 @@ const emptySnapshot = (): ProductSnapshot => ({
   diagnosticNote: '正在连接 NekroNxt 服务…',
 })
 
-interface SnapshotAgentJson {
-  readonly id: string
-  readonly displayName: string
-  readonly persona?: string
-  readonly currentRevisionId?: string
-  readonly runtimeStatus?: 'idle' | 'running'
-  readonly model: { readonly provider: string; readonly model: string; readonly reasoningEffort?: string }
-  readonly capabilities: {
-    readonly subagents: boolean
-    readonly fileTools: boolean
-    readonly webSearch: boolean
-    readonly dynamicCreation: boolean
-    readonly developmentShell: boolean
-    readonly unrestrictedFileAccess: boolean
-  }
-  readonly channels: readonly string[]
-}
-
-interface SnapshotModelJson {
-  readonly provider: string
-  readonly providerName: string
-  readonly id: string
-  readonly name: string
-  readonly description?: string
-}
-
-interface SnapshotChannelJson {
-  readonly id: string
-  readonly connectionId: string
-  readonly platformChannelId: string
-  readonly kind: string
-  readonly displayName?: string
-  readonly boundAgentId?: string
-  readonly bindings: readonly {
-    readonly id: string
-    readonly agentId: string
-    readonly triggerPolicy: 'always' | 'mentioned-or-replied' | 'command' | 'observe-only'
-  }[]
-}
-
-interface SnapshotMessageJson {
-  readonly id: string
-  readonly channelId: string
-  readonly role: 'member' | 'agent'
-  readonly parts: readonly {
-    type: string
-    text?: string
-    memberId?: string
-    displayName?: string
-    assetId?: string
-    alt?: string
-    name?: string
-  }[]
-  readonly sender?: { readonly memberId: string; readonly displayName?: string }
-  readonly mentionedConnectionAccount?: boolean
-  readonly occurredAt: number
-  readonly deliveryState?: string
-}
-
-interface SnapshotConnectionJson {
-  readonly id: string
-  readonly adapterKey: string
-  readonly status: string
-  readonly appId?: string
-  readonly proactiveSend?: boolean
-  readonly credentialConfigured?: boolean
-  readonly channelCount?: number
-  readonly knownChannels?: readonly { readonly id: string; readonly name: string; readonly kind: string }[]
-  readonly gateway?: { readonly state: string; readonly lastError?: string }
-  readonly lastInbound?: { readonly receivedAt: number }
-  readonly receiveTest?: { readonly status: string; readonly message?: string }
-  readonly sendTest?: { readonly status: string; readonly message?: string }
-}
-
-interface SnapshotExtensionJson {
-  readonly id: string
-  readonly slug: string
-  readonly displayName: string
-  readonly description: string
-  readonly revisionNumber: number
-  readonly revisionId: string
-  readonly activation: string
-  readonly agentId?: string
-}
-
-interface SnapshotDynamicItemJson {
-  readonly agentId: string
-  readonly pluginId: string
-  readonly packageId?: string
-  readonly approvalRequestId?: string
-  readonly status: string
-}
-
-interface SnapshotJson {
-  readonly connectionAdapters: readonly AdapterConnectionDescriptor[]
-  readonly capabilityAvailability: ProductSnapshot['capabilityAvailability']
-  readonly models?: readonly SnapshotModelJson[]
-  readonly agents: readonly SnapshotAgentJson[]
-  readonly channels: readonly SnapshotChannelJson[]
-  readonly messages: readonly SnapshotMessageJson[]
-  readonly connections: readonly SnapshotConnectionJson[]
-  readonly extensions: readonly SnapshotExtensionJson[]
-  readonly dynamic: readonly SnapshotDynamicItemJson[]
-}
+type SnapshotJson = HostApiResponse<'snapshot'>
+type SnapshotMessageJson = SnapshotJson['messages'][number]
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === 'object' && value !== null && !Array.isArray(value)
 
-const hasString = (value: Record<string, unknown>, key: string): boolean => typeof value[key] === 'string'
-const hasOptionalString = (value: Record<string, unknown>, key: string): boolean =>
-  value[key] === undefined || typeof value[key] === 'string'
-const hasOptionalBoolean = (value: Record<string, unknown>, key: string): boolean =>
-  value[key] === undefined || typeof value[key] === 'boolean'
-const hasOptionalFiniteNumber = (value: Record<string, unknown>, key: string): boolean =>
-  value[key] === undefined || (typeof value[key] === 'number' && Number.isFinite(value[key]))
+const isStringRecord = (value: unknown): value is Record<string, string> =>
+  isRecord(value) && Object.values(value).every((entry) => typeof entry === 'string')
 
-const isSnapshotJson = (value: unknown): value is SnapshotJson => {
-  if (!isRecord(value)) return false
-  const arrays = ['connectionAdapters', 'agents', 'channels', 'messages', 'connections', 'extensions', 'dynamic']
-  if (!arrays.every((key) => Array.isArray(value[key]))) return false
-  if (value.models !== undefined && !Array.isArray(value.models)) return false
-  if (!isRecord(value.capabilityAvailability)) return false
-  if (!isRecord(value.capabilityAvailability.subagents)) return false
-  if (typeof value.capabilityAvailability.subagents.available !== 'boolean') return false
-  if (!isRecord(value.capabilityAvailability.webSearch)) return false
-  const webSearch = value.capabilityAvailability.webSearch
-  if (
-    !hasString(webSearch, 'provider') ||
-    typeof webSearch.available !== 'boolean' ||
-    typeof webSearch.credentialConfigured !== 'boolean' ||
-    !hasString(webSearch, 'credentialReference') ||
-    !['maxUsesPerCall', 'maxResultsPerCall', 'timeoutMs'].every(
-      (key) => typeof webSearch[key] === 'number' && Number.isFinite(webSearch[key]),
-    )
-  ) {
-    return false
-  }
-
-  const adaptersValid = (value.connectionAdapters as unknown[]).every(
-    (item) => isRecord(item) && hasString(item, 'key') && hasString(item, 'displayName'),
-  )
-  const modelsValid = ((value.models as unknown[] | undefined) ?? []).every(
-    (item) =>
-      isRecord(item) &&
-      hasString(item, 'provider') &&
-      hasString(item, 'providerName') &&
-      hasString(item, 'id') &&
-      hasString(item, 'name') &&
-      hasOptionalString(item, 'description'),
-  )
-  const agentsValid = (value.agents as unknown[]).every(
-    (item) =>
-      isRecord(item) &&
-      hasString(item, 'id') &&
-      hasString(item, 'displayName') &&
-      hasOptionalString(item, 'persona') &&
-      hasOptionalString(item, 'currentRevisionId') &&
-      (item.runtimeStatus === undefined || item.runtimeStatus === 'idle' || item.runtimeStatus === 'running') &&
-      isRecord(item.model) &&
-      hasString(item.model, 'provider') &&
-      hasString(item.model, 'model') &&
-      hasOptionalString(item.model, 'reasoningEffort') &&
-      isRecord(item.capabilities) &&
-      typeof item.capabilities.subagents === 'boolean' &&
-      typeof item.capabilities.fileTools === 'boolean' &&
-      typeof item.capabilities.webSearch === 'boolean' &&
-      typeof item.capabilities.dynamicCreation === 'boolean' &&
-      typeof item.capabilities.developmentShell === 'boolean' &&
-      typeof item.capabilities.unrestrictedFileAccess === 'boolean' &&
-      Array.isArray(item.channels) &&
-      item.channels.every((channelId) => typeof channelId === 'string'),
-  )
-  const channelsValid = (value.channels as unknown[]).every(
-    (item) =>
-      isRecord(item) &&
-      hasString(item, 'id') &&
-      hasString(item, 'connectionId') &&
-      hasString(item, 'platformChannelId') &&
-      (item.kind === 'web' || item.kind === 'group' || item.kind === 'direct') &&
-      hasOptionalString(item, 'displayName') &&
-      hasOptionalString(item, 'boundAgentId') &&
-      Array.isArray(item.bindings) &&
-      item.bindings.every(
-        (binding) =>
-          isRecord(binding) &&
-          hasString(binding, 'id') &&
-          hasString(binding, 'agentId') &&
-          ['always', 'mentioned-or-replied', 'command', 'observe-only'].includes(
-            typeof binding.triggerPolicy === 'string' ? binding.triggerPolicy : '',
-          ),
-      ),
-  )
-  const messagesValid = (value.messages as unknown[]).every(
-    (item) =>
-      isRecord(item) &&
-      hasString(item, 'id') &&
-      hasString(item, 'channelId') &&
-      (item.role === 'member' || item.role === 'agent') &&
-      typeof item.occurredAt === 'number' &&
-      Number.isFinite(item.occurredAt) &&
-      hasOptionalString(item, 'deliveryState') &&
-      (item.sender === undefined ||
-        (isRecord(item.sender) &&
-          hasString(item.sender, 'memberId') &&
-          hasOptionalString(item.sender, 'displayName'))) &&
-      hasOptionalBoolean(item, 'mentionedConnectionAccount') &&
-      Array.isArray(item.parts) &&
-      item.parts.every(
-        (part) =>
-          isRecord(part) &&
-          hasString(part, 'type') &&
-          hasOptionalString(part, 'text') &&
-          hasOptionalString(part, 'memberId') &&
-          hasOptionalString(part, 'displayName') &&
-          hasOptionalString(part, 'assetId') &&
-          hasOptionalString(part, 'alt') &&
-          hasOptionalString(part, 'name'),
-      ),
-  )
-  const connectionsValid = (value.connections as unknown[]).every(
-    (item) =>
-      isRecord(item) &&
-      hasString(item, 'id') &&
-      hasString(item, 'adapterKey') &&
-      hasString(item, 'status') &&
-      hasOptionalString(item, 'appId') &&
-      hasOptionalBoolean(item, 'proactiveSend') &&
-      hasOptionalBoolean(item, 'credentialConfigured') &&
-      hasOptionalFiniteNumber(item, 'channelCount') &&
-      (item.knownChannels === undefined ||
-        (Array.isArray(item.knownChannels) &&
-          item.knownChannels.every(
-            (channel) =>
-              isRecord(channel) && hasString(channel, 'id') && hasString(channel, 'name') && hasString(channel, 'kind'),
-          ))) &&
-      (item.gateway === undefined ||
-        (isRecord(item.gateway) && hasString(item.gateway, 'state') && hasOptionalString(item.gateway, 'lastError'))) &&
-      (item.lastInbound === undefined ||
-        (isRecord(item.lastInbound) &&
-          typeof item.lastInbound.receivedAt === 'number' &&
-          Number.isFinite(item.lastInbound.receivedAt))) &&
-      (item.receiveTest === undefined ||
-        (isRecord(item.receiveTest) &&
-          hasString(item.receiveTest, 'status') &&
-          hasOptionalString(item.receiveTest, 'message'))) &&
-      (item.sendTest === undefined ||
-        (isRecord(item.sendTest) && hasString(item.sendTest, 'status') && hasOptionalString(item.sendTest, 'message'))),
-  )
-  const extensionsValid = (value.extensions as unknown[]).every(
-    (item) =>
-      isRecord(item) &&
-      hasString(item, 'id') &&
-      hasString(item, 'slug') &&
-      hasString(item, 'displayName') &&
-      hasString(item, 'description') &&
-      typeof item.revisionNumber === 'number' &&
-      Number.isFinite(item.revisionNumber) &&
-      hasString(item, 'revisionId') &&
-      hasString(item, 'activation') &&
-      hasOptionalString(item, 'agentId'),
-  )
-  const dynamicValid = (value.dynamic as unknown[]).every(
-    (item) =>
-      isRecord(item) &&
-      hasString(item, 'agentId') &&
-      hasString(item, 'pluginId') &&
-      hasString(item, 'status') &&
-      hasOptionalString(item, 'packageId') &&
-      hasOptionalString(item, 'approvalRequestId'),
-  )
-  return (
-    adaptersValid &&
-    modelsValid &&
-    agentsValid &&
-    channelsValid &&
-    messagesValid &&
-    connectionsValid &&
-    extensionsValid &&
-    dynamicValid
-  )
-}
+const isTriggerPolicy = (value: unknown): value is 'always' | 'mentioned-or-replied' | 'command' | 'observe-only' =>
+  value === 'always' || value === 'mentioned-or-replied' || value === 'command' || value === 'observe-only'
 
 const nonEmptyLabel = (value: string | undefined, fallback: string): string => value?.trim() || fallback
+
+const projectAdapterProperty = (
+  property: SnapshotJson['connectionAdapters'][number]['configSchema']['properties'][string],
+): AdapterConfigurationProperty => {
+  if (property.type === 'boolean') {
+    return {
+      type: property.type,
+      title: property.title,
+      ...(property.description === undefined ? {} : { description: property.description }),
+      ...(property.default === undefined ? {} : { default: property.default }),
+    }
+  }
+  if (property.type === 'number') {
+    return {
+      type: property.type,
+      title: property.title,
+      ...(property.description === undefined ? {} : { description: property.description }),
+      ...(property.default === undefined ? {} : { default: property.default }),
+    }
+  }
+  return {
+    type: property.type,
+    title: property.title,
+    ...(property.description === undefined ? {} : { description: property.description }),
+    ...(property.default === undefined ? {} : { default: property.default }),
+  }
+}
+
+const projectAdapterDescriptor = (
+  descriptor: SnapshotJson['connectionAdapters'][number],
+): AdapterConnectionDescriptor => ({
+  key: descriptor.key,
+  displayName: descriptor.displayName,
+  description: descriptor.description,
+  userCreatable: descriptor.userCreatable,
+  configSchema: {
+    schemaVersion: descriptor.configSchema.schemaVersion,
+    type: 'object',
+    required: descriptor.configSchema.required,
+    properties: Object.fromEntries(
+      Object.entries(descriptor.configSchema.properties).map(([key, property]) => [
+        key,
+        projectAdapterProperty(property),
+      ]),
+    ),
+  },
+})
 
 const qqChannelLabel = (platformChannelId: string, kind: 'group' | 'direct' = 'group'): string => {
   const suffix = platformChannelId.trim().match(/([\p{L}\p{N}]{4})$/u)?.[1]
@@ -405,14 +193,15 @@ const projectConversationMessage = (
   const sourceChannel = channels.find((channel) => channel.id === message.channelId)
   const sourceAgent = agents.find((agent) => agent.id === sourceChannel?.agentId)
   const resources = message.parts.flatMap((part) => {
-    if (!part.assetId || !['image', 'file', 'audio'].includes(part.type)) return []
-    const kind = part.type as 'image' | 'file' | 'audio'
+    if (part.type !== 'image' && part.type !== 'file' && part.type !== 'audio') return []
+    const kind = part.type
     const fallback = kind === 'image' ? '图片' : kind === 'audio' ? '语音' : '文件'
+    const label = part.type === 'image' ? part.alt : part.type === 'file' ? part.name : undefined
     return [
       {
         assetId: part.assetId,
         kind,
-        name: nonEmptyLabel(part.name ?? part.alt, fallback),
+        name: nonEmptyLabel(label, fallback),
         url: `/api/channels/${encodeURIComponent(message.channelId)}/assets/${encodeURIComponent(part.assetId)}`,
       },
     ]
@@ -444,7 +233,7 @@ const projectConversationMessage = (
  */
 const projectSnapshot = (json: SnapshotJson, successfulAt: number): ProductSnapshot => {
   const models: ModelSummary[] = (json.models ?? []).map((model) => ({
-    provider: model.provider,
+    provider: model['provider'],
     providerName: providerDisplayName(model.provider, model.providerName),
     id: model.id,
     name: nonEmptyLabel(model.name, '未命名模型'),
@@ -456,13 +245,19 @@ const projectSnapshot = (json: SnapshotJson, successfulAt: number): ProductSnaps
     description: '',
     state: agent.runtimeStatus === 'running' ? '思考中' : '空闲',
     model:
-      models.find((model) => model.provider === agent.model.provider && model.id === agent.model.model)?.name ??
-      '未命名模型',
-    modelRef: { ...agent.model },
+      models.find((model) => model['provider'] === agent.model['provider'] && model.id === agent.model['model'])
+        ?.name ?? '未命名模型',
+    modelRef: {
+      provider: agent.model['provider'],
+      model: agent.model['model'],
+      ...(agent.model['reasoningEffort'] === undefined ? {} : { reasoningEffort: agent.model['reasoningEffort'] }),
+    },
     persona: agent.persona ?? '',
     ...(agent.currentRevisionId === undefined ? {} : { currentRevisionId: agent.currentRevisionId }),
     channels: [...agent.channels],
-    extensionCount: json.extensions.filter((extension) => extension.agentId === agent.id).length,
+    extensionCount: json.extensions.filter((extension) =>
+      extension.activations.some((activation) => activation.agentId === agent.id),
+    ).length,
     capabilities: { ...agent.capabilities },
   }))
   const connectionNameById = new Map(
@@ -496,13 +291,19 @@ const projectSnapshot = (json: SnapshotJson, successfulAt: number): ProductSnaps
           : channel.bindings[0]?.triggerPolicy === 'command'
             ? '收到命令时'
             : '始终响应',
-    bindings: channel.bindings,
+    bindings: channel.bindings.map((binding) => ({
+      id: `${binding.channelId}:${binding.agentId}:${binding.boundAt}`,
+      agentId: binding.agentId,
+      triggerPolicy: binding.triggerPolicy,
+    })),
     unread: 0,
   }))
   const messages: ConversationMessage[] = json.messages.map((message) =>
     projectConversationMessage(message, channels, agents),
   )
-  const testLabel = (result: { readonly status: string; readonly message?: string } | undefined): string => {
+  const testLabel = (
+    result: { readonly status: string; readonly message?: string | undefined } | undefined,
+  ): string => {
     if (!result) return '未测试'
     if (result.status === 'received' || result.status === 'sent') return '通过'
     return result.message ?? result.status
@@ -515,6 +316,7 @@ const projectSnapshot = (json: SnapshotJson, successfulAt: number): ProductSnaps
             json.connectionAdapters.find((adapter) => adapter.key === connection.adapterKey)?.displayName,
             '未命名连接平台',
           )
+    const gatewayState = connection.gateway?.state ?? (connection.adapterKey === 'web' ? 'connected' : 'disconnected')
     return {
       id: connection.id,
       name:
@@ -526,16 +328,16 @@ const projectSnapshot = (json: SnapshotJson, successfulAt: number): ProductSnaps
       adapter: adapterName,
       adapterKey: connection.adapterKey,
       state:
-        connection.status === 'active'
+        gatewayState === 'connected'
           ? '已连接'
-          : connection.status === 'configured'
-            ? '已配置'
-            : connection.status === 'failed'
-              ? '异常'
+          : gatewayState === 'failed'
+            ? '异常'
+            : connection.credentialConfigured
+              ? '已配置'
               : '已断开',
       appId: connection.appId ?? '',
       credentialConfigured: connection.credentialConfigured ?? false,
-      gatewayState: connection.gateway?.state ?? connection.status,
+      gatewayState,
       lastError: connection.gateway?.lastError ?? '',
       proactiveSend: connection.proactiveSend ?? false,
       channels: connection.channelCount ?? 0,
@@ -557,31 +359,30 @@ const projectSnapshot = (json: SnapshotJson, successfulAt: number): ProductSnaps
     }
   })
   const extensionsLocal = json.extensions.map((extension) => {
-    const targetAgent = extension.agentId
-      ? nonEmptyLabel(json.agents.find((agent) => agent.id === extension.agentId)?.displayName, '未命名智能体')
+    const targetAgentId = extension.createdByAgentId
+    const activation =
+      targetAgentId === undefined
+        ? undefined
+        : extension.activations.find((candidate) => candidate.agentId === targetAgentId)
+    const latestRevision = extension.revisions.at(-1)
+    const targetAgent = targetAgentId
+      ? nonEmptyLabel(json.agents.find((agent) => agent.id === targetAgentId)?.displayName, '未命名智能体')
       : ''
     return {
       id: extension.id,
       name: extension.displayName,
       description: extension.description,
-      revision: extension.revisionNumber,
-      activation:
-        extension.activation === 'active'
-          ? ('已激活' as const)
-          : extension.activation === 'failed'
-            ? ('激活失败' as const)
-            : extension.activation === 'waiting-safe-switch'
-              ? ('等待安全切换' as const)
-              : ('未激活' as const),
+      revision: latestRevision?.revisionNumber ?? 0,
+      activation: activation === undefined ? ('未激活' as const) : ('已激活' as const),
       targetAgent,
       contributions: [],
-      revisionId: extension.revisionId,
-      ...(extension.agentId === undefined ? {} : { agentId: extension.agentId }),
+      ...(latestRevision === undefined ? {} : { revisionId: latestRevision.id }),
+      ...(targetAgentId === undefined ? {} : { agentId: targetAgentId }),
     }
   })
   return {
     host: { status: 'ready', error: null, lastSuccessfulAt: successfulAt },
-    connectionAdapters: json.connectionAdapters,
+    connectionAdapters: json.connectionAdapters.map(projectAdapterDescriptor),
     capabilityAvailability: json.capabilityAvailability,
     models,
     agents,
@@ -603,6 +404,7 @@ const projectSnapshot = (json: SnapshotJson, successfulAt: number): ProductSnaps
 
 export class HttpProductHost implements ProductHostPort {
   #snapshot: ProductSnapshot = emptySnapshot()
+  #hostSnapshot: SnapshotJson | undefined
   #listener: (() => void) | undefined
   readonly #loadedChannels = new Set<string>()
 
@@ -621,9 +423,20 @@ export class HttpProductHost implements ProductHostPort {
         void this.#refreshAndNotify()
       })
       source.addEventListener('channel-fact', (event) => {
-        const data = JSON.parse((event as MessageEvent<string>).data) as { readonly channelId?: unknown }
-        if (typeof data.channelId === 'string' && this.#loadedChannels.has(data.channelId)) {
-          void this.#loadChannelMessages(data.channelId, 'latest', 40)
+        const rawData: unknown = event instanceof MessageEvent ? event.data : undefined
+        if (typeof rawData !== 'string') {
+          void this.#refreshAndNotify()
+          return
+        }
+        let data: ReturnType<typeof ChannelFactSseDataSchema.safeParse>
+        try {
+          data = ChannelFactSseDataSchema.safeParse(JSON.parse(rawData))
+        } catch {
+          void this.#refreshAndNotify()
+          return
+        }
+        if (data.success && this.#loadedChannels.has(data.data.channelId)) {
+          void this.#loadChannelMessages(data.data.channelId, 'latest', 40)
         } else {
           void this.#refreshAndNotify()
         }
@@ -654,185 +467,216 @@ export class HttpProductHost implements ProductHostPort {
     }
     if (command === 'agents.create') {
       const body = createAgentRequestBody(input)
-      const result = await this.#postJson('/api/agents', body)
+      const result = await this.#call(HostApiContracts.createAgent, {}, body)
       await this.#refreshAndNotify()
       return result
     }
     if (command === 'agents.revise') {
-      const agentId = typeof input?.agentId === 'string' ? input.agentId : ''
+      const agentId = typeof input?.['agentId'] === 'string' ? input['agentId'] : ''
       const expectedCurrentRevisionId =
-        typeof input?.expectedCurrentRevisionId === 'string' ? input.expectedCurrentRevisionId : ''
-      const displayName = typeof input?.displayName === 'string' ? input.displayName : ''
-      const persona = typeof input?.persona === 'string' ? input.persona : ''
-      const rawModel = typeof input?.model === 'object' && input.model !== null ? input.model : {}
-      const model = rawModel as Record<string, unknown>
+        typeof input?.['expectedCurrentRevisionId'] === 'string' ? input['expectedCurrentRevisionId'] : ''
+      const displayName = typeof input?.['displayName'] === 'string' ? input['displayName'] : ''
+      const persona = typeof input?.['persona'] === 'string' ? input['persona'] : ''
+      const model = isRecord(input?.['model']) ? input['model'] : {}
       if (
         !agentId.trim() ||
         !expectedCurrentRevisionId.trim() ||
         !displayName.trim() ||
-        typeof model.provider !== 'string' ||
-        !model.provider.trim() ||
-        typeof model.model !== 'string' ||
-        !model.model.trim()
+        typeof model['provider'] !== 'string' ||
+        !model['provider'].trim() ||
+        typeof model['model'] !== 'string' ||
+        !model['model'].trim()
       ) {
         throw new Error('智能体配置不完整，请刷新页面后重试。')
       }
-      const result = await this.#postJson(`/api/agents/${encodeURIComponent(agentId)}/revision`, {
-        expectedCurrentRevisionId,
-        displayName,
-        persona,
-        model: {
-          provider: model.provider,
-          model: model.model,
-          ...(typeof model.reasoningEffort === 'string' ? { reasoningEffort: model.reasoningEffort } : {}),
+      const result = await this.#call(
+        HostApiContracts.reviseAgent,
+        { agentId },
+        {
+          expectedCurrentRevisionId,
+          displayName,
+          persona,
+          model: {
+            provider: model['provider'],
+            model: model['model'],
+            ...(typeof model['reasoningEffort'] === 'string' ? { reasoningEffort: model['reasoningEffort'] } : {}),
+          },
         },
-      })
+      )
       await this.#refreshAndNotify()
       return result
     }
     if (command === 'channels.sendMessage') {
-      const channelId = typeof input?.channelId === 'string' ? input.channelId : ''
-      const text = typeof input?.body === 'string' ? input.body : ''
+      const channelId = typeof input?.['channelId'] === 'string' ? input['channelId'] : ''
+      const text = typeof input?.['body'] === 'string' ? input['body'] : ''
       if (!channelId.trim()) throw new Error('缺少目标频道，请刷新页面后重试。')
       if (!text.trim()) throw new Error('消息内容不能为空。')
-      const result = await this.#postJson(`/api/channels/${encodeURIComponent(channelId)}/messages`, {
-        parts: [{ type: 'text', text }],
-      })
+      const result = await this.#call(
+        HostApiContracts.sendChannelMessage,
+        { channelId },
+        {
+          parts: [{ type: 'text', text }],
+        },
+      )
       await this.#refreshAndNotify()
       return result
     }
     if (command === 'channels.listMessages') {
-      const channelId = typeof input?.channelId === 'string' ? input.channelId : ''
-      const mode = input?.mode === 'older' || input?.mode === 'latest' ? input.mode : 'initial'
-      const limit = typeof input?.limit === 'number' ? Math.min(Math.max(Math.trunc(input.limit), 1), 100) : 40
+      const channelId = typeof input?.['channelId'] === 'string' ? input['channelId'] : ''
+      const mode = input?.['mode'] === 'older' || input?.['mode'] === 'latest' ? input['mode'] : 'initial'
+      const limit = typeof input?.['limit'] === 'number' ? Math.min(Math.max(Math.trunc(input['limit']), 1), 100) : 40
       if (!channelId.trim()) throw new Error('缺少目标频道，请刷新页面后重试。')
-      const beforeOccurredAt = typeof input?.beforeOccurredAt === 'number' ? input.beforeOccurredAt : undefined
-      const beforeSourceId = typeof input?.beforeSourceId === 'string' ? input.beforeSourceId : undefined
+      const beforeOccurredAt = typeof input?.['beforeOccurredAt'] === 'number' ? input['beforeOccurredAt'] : undefined
+      const beforeSourceId = typeof input?.['beforeSourceId'] === 'string' ? input['beforeSourceId'] : undefined
       return await this.#loadChannelMessages(channelId, mode, limit, beforeOccurredAt, beforeSourceId)
     }
     if (command === 'channels.rename') {
-      const channelId = typeof input?.channelId === 'string' ? input.channelId : ''
-      const displayName = typeof input?.displayName === 'string' ? input.displayName : ''
+      const channelId = typeof input?.['channelId'] === 'string' ? input['channelId'] : ''
+      const displayName = typeof input?.['displayName'] === 'string' ? input['displayName'] : ''
       if (!channelId.trim()) throw new Error('缺少目标频道，请刷新页面后重试。')
       if (!displayName.trim()) throw new Error('请输入频道名称。')
-      const result = await this.#postJson(`/api/channels/${encodeURIComponent(channelId)}/display-name`, {
-        displayName,
-      })
+      const result = await this.#call(
+        HostApiContracts.renameChannel,
+        { channelId },
+        {
+          displayName,
+        },
+      )
       await this.#refreshAndNotify()
       return result
     }
     if (command === 'agents.updateCapabilities') {
-      const agentId = typeof input?.agentId === 'string' ? input.agentId : ''
+      const agentId = typeof input?.['agentId'] === 'string' ? input['agentId'] : ''
       if (!agentId.trim()) throw new Error('缺少智能体标识，请刷新页面后重试。')
       const body: Record<string, unknown> = {}
-      if (typeof input?.subagents === 'boolean') body.subagents = input.subagents
-      if (typeof input?.fileTools === 'boolean') body.fileTools = input.fileTools
-      if (typeof input?.webSearch === 'boolean') body.webSearch = input.webSearch
-      if (typeof input?.dynamicCreation === 'boolean') body.dynamicCreation = input.dynamicCreation
-      if (typeof input?.developmentShell === 'boolean') body.developmentShell = input.developmentShell
-      if (typeof input?.unrestrictedFileAccess === 'boolean') {
-        body.unrestrictedFileAccess = input.unrestrictedFileAccess
+      if (typeof input?.['subagents'] === 'boolean') body['subagents'] = input['subagents']
+      if (typeof input?.['fileTools'] === 'boolean') body['fileTools'] = input['fileTools']
+      if (typeof input?.['webSearch'] === 'boolean') body['webSearch'] = input['webSearch']
+      if (typeof input?.['dynamicCreation'] === 'boolean') body['dynamicCreation'] = input['dynamicCreation']
+      if (typeof input?.['developmentShell'] === 'boolean') body['developmentShell'] = input['developmentShell']
+      if (typeof input?.['unrestrictedFileAccess'] === 'boolean') {
+        body['unrestrictedFileAccess'] = input['unrestrictedFileAccess']
       }
       if (Object.keys(body).length === 0) throw new Error('请选择至少一项要更新的智能体权限。')
-      const result = await this.#postJson(`/api/agents/${encodeURIComponent(agentId)}/capabilities`, body)
+      const result = await this.#call(HostApiContracts.updateAgentCapabilities, { agentId }, body)
       await this.#refreshAndNotify()
       return result
     }
     if (command === 'connections.create') {
-      const adapterKey = typeof input?.adapterKey === 'string' ? input.adapterKey : ''
-      const configuration = isRecord(input?.configuration) ? input.configuration : undefined
-      const credentials = isRecord(input?.credentials) ? input.credentials : undefined
+      const adapterKey = typeof input?.['adapterKey'] === 'string' ? input['adapterKey'] : ''
+      const configuration = isRecord(input?.['configuration'])
+        ? HostApiContracts.createConnection.request.shape.configuration.parse(input['configuration'])
+        : undefined
+      const credentials = isStringRecord(input?.['credentials']) ? input['credentials'] : undefined
       if (!adapterKey.trim()) throw new Error('请选择连接平台。')
       if (configuration === undefined || credentials === undefined) throw new Error('连接配置格式无效，请重新填写。')
-      const result = await this.#postJson('/api/connections', { adapterKey, configuration, credentials })
+      const result = await this.#call(HostApiContracts.createConnection, {}, { adapterKey, configuration, credentials })
       await this.#refreshAndNotify()
       return result
     }
     if (command === 'bindings.create') {
-      const agentId = typeof input?.agentId === 'string' ? input.agentId : ''
-      const channelId = typeof input?.channelId === 'string' ? input.channelId : ''
-      const triggerPolicy = typeof input?.triggerPolicy === 'string' ? input.triggerPolicy : ''
+      const agentId = typeof input?.['agentId'] === 'string' ? input['agentId'] : ''
+      const channelId = typeof input?.['channelId'] === 'string' ? input['channelId'] : ''
+      const triggerPolicy = isTriggerPolicy(input?.['triggerPolicy']) ? input['triggerPolicy'] : undefined
       if (!agentId.trim()) throw new Error('缺少智能体标识，请刷新页面后重试。')
       if (!channelId.trim()) throw new Error('请选择要绑定的频道。')
-      if (!['always', 'mentioned-or-replied', 'command', 'observe-only'].includes(triggerPolicy)) {
+      if (triggerPolicy === undefined) {
         throw new Error('频道触发策略无效，请重新选择。')
       }
-      const result = await this.#postJson('/api/bindings', { agentId, channelId, triggerPolicy })
+      const result = await this.#call(HostApiContracts.createBinding, {}, { agentId, channelId, triggerPolicy })
       await this.#refreshAndNotify()
       return result
     }
     if (command === 'connections.test') {
-      const connectionId = typeof input?.connectionId === 'string' ? input.connectionId : ''
-      const direction = input?.direction === 'receive' || input?.direction === 'send' ? input.direction : undefined
-      const channelId = typeof input?.channelId === 'string' ? input.channelId : undefined
+      const connectionId = typeof input?.['connectionId'] === 'string' ? input['connectionId'] : ''
+      const direction =
+        input?.['direction'] === 'receive' || input?.['direction'] === 'send' ? input['direction'] : undefined
+      const channelId = typeof input?.['channelId'] === 'string' ? input['channelId'] : undefined
       if (!connectionId.trim()) throw new Error('缺少连接标识，请刷新页面后重试。')
       if (direction === undefined) throw new Error('连接测试方向无效，请重新选择。')
-      const result = await this.#postJson(`/api/connections/${encodeURIComponent(connectionId)}/test`, {
-        direction,
-        ...(channelId === undefined ? {} : { channelId }),
-      })
+      const result = await this.#call(
+        HostApiContracts.testConnection,
+        { connectionId },
+        {
+          direction,
+          ...(channelId === undefined ? {} : { channelId }),
+        },
+      )
       await this.#refreshAndNotify()
       return result
     }
     if (command === 'dynamic.approve' || command === 'dynamic.decline') {
-      const agentId = typeof input?.agentId === 'string' ? input.agentId : ''
-      const requestId = typeof input?.requestId === 'string' ? input.requestId : ''
-      const pluginRunId = typeof input?.pluginRunId === 'string' ? input.pluginRunId : ''
+      const agentId = typeof input?.['agentId'] === 'string' ? input['agentId'] : ''
+      const requestId = typeof input?.['requestId'] === 'string' ? input['requestId'] : ''
+      const pluginRunId = typeof input?.['pluginRunId'] === 'string' ? input['pluginRunId'] : ''
       if (!agentId.trim()) throw new Error('缺少智能体标识，请刷新页面后重试。')
       if (!requestId.trim()) throw new Error('缺少批准请求，请刷新页面后重试。')
-      const result = await this.#postJson(
-        `/api/dynamic/${encodeURIComponent(agentId)}/${command === 'dynamic.approve' ? 'approve' : 'decline'}`,
+      const result = await this.#call(
+        command === 'dynamic.approve' ? HostApiContracts.dynamicApprove : HostApiContracts.dynamicDecline,
+        { agentId },
         { requestId, ...(pluginRunId.trim() ? { pluginRunId } : {}) },
       )
       await this.#refreshAndNotify()
       return result
     }
     if (command === 'extensions.activate') {
-      const extensionId = typeof input?.extensionId === 'string' ? input.extensionId : ''
-      const agentId = typeof input?.agentId === 'string' ? input.agentId : ''
-      const revisionId = typeof input?.revisionId === 'string' ? input.revisionId : ''
+      const extensionId = typeof input?.['extensionId'] === 'string' ? input['extensionId'] : ''
+      const agentId = typeof input?.['agentId'] === 'string' ? input['agentId'] : ''
+      const revisionId = typeof input?.['revisionId'] === 'string' ? input['revisionId'] : ''
       if (!extensionId.trim()) throw new Error('缺少本地扩展标识，请刷新页面后重试。')
       if (!agentId.trim()) throw new Error('此本地扩展缺少目标智能体，无法启用。')
       if (!revisionId.trim()) throw new Error('此本地扩展缺少可启用版本，请重新保存后重试。')
-      const result = await this.#postJson(`/api/extensions/${encodeURIComponent(extensionId)}/activation`, {
-        agentId,
-        revisionId,
-      })
+      const result = await this.#call(HostApiContracts.activateExtension, { agentId, extensionId }, { revisionId })
       await this.#refreshAndNotify()
       return result
     }
     if (command === 'extensions.deactivate') {
-      const extensionId = typeof input?.extensionId === 'string' ? input.extensionId : ''
+      const extensionId = typeof input?.['extensionId'] === 'string' ? input['extensionId'] : ''
       if (!extensionId.trim()) throw new Error('缺少本地扩展标识，请刷新页面后重试。')
-      const result = await this.#requestJson(`/api/extensions/${encodeURIComponent(extensionId)}/activation`, {
-        method: 'DELETE',
-      })
+      const agentId = typeof input?.['agentId'] === 'string' ? input['agentId'] : ''
+      if (!agentId.trim()) throw new Error('此本地扩展缺少目标智能体，无法停用。')
+      const result = await this.#call(HostApiContracts.deactivateExtension, { agentId, extensionId }, undefined)
       await this.#refreshAndNotify()
       return result
     }
     if (command === 'extensions.saveFromDynamic') {
-      const agentId = typeof input?.agentId === 'string' ? input.agentId : ''
-      const name = typeof input?.name === 'string' ? input.name : ''
-      const slug = typeof input?.slug === 'string' ? input.slug : ''
-      const description = typeof input?.description === 'string' ? input.description : ''
+      const agentId = typeof input?.['agentId'] === 'string' ? input['agentId'] : ''
+      const name = typeof input?.['name'] === 'string' ? input['name'] : ''
+      const slug = typeof input?.['slug'] === 'string' ? input['slug'] : ''
+      const description = typeof input?.['description'] === 'string' ? input['description'] : ''
       if (!agentId.trim()) throw new Error('缺少智能体标识，请刷新页面后重试。')
       if (!name.trim()) throw new Error('请输入本地扩展名称。')
       if (!slug.trim()) throw new Error('缺少本地扩展标识，请重新生成后重试。')
-      const result = await this.#postJson('/api/extensions/save-from-dynamic', {
-        agentId,
-        name,
-        displayName: name,
-        slug,
-        description: description.trim() || '从创造工作台保存的动态 Package。',
-      })
+      const dynamicPackage = this.#hostSnapshot?.dynamic.find(
+        (item) => item.agentId === agentId && item.packageId !== undefined,
+      )
+      if (dynamicPackage?.packageId === undefined) throw new Error('该智能体当前没有可保存的动态包。')
+      const result = await this.#call(
+        HostApiContracts.saveExtensionFromDynamic,
+        {},
+        {
+          agentId,
+          episodeId: dynamicPackage.episodeId,
+          pluginId: dynamicPackage.pluginId,
+          packageId: dynamicPackage.packageId,
+          name,
+          displayName: name,
+          slug,
+          description: description.trim() || '从创造工作台保存的动态 Package。',
+        },
+      )
       await this.#refreshAndNotify()
       return result
     }
     throw new Error(`当前 Web Host 不支持操作“${command}”。`)
   }
 
-  async #postJson(path: string, body: unknown): Promise<unknown> {
-    return this.#observeRequest(() => postJson(path, body))
+  async #call<Contract extends HostApiContract, Output>(
+    contract: Contract & { readonly parseResponse: (input: unknown) => Output },
+    params: HostApiContractParams<Contract>,
+    body: HostApiContractRequest<Contract>,
+  ): Promise<Output> {
+    return this.#observeRequest(() => callHostApi(contract, params, body))
   }
 
   async #loadChannelMessages(
@@ -842,18 +686,17 @@ export class HttpProductHost implements ProductHostPort {
     beforeOccurredAt?: number,
     beforeSourceId?: string,
   ): Promise<{ readonly messages: readonly ConversationMessage[]; readonly hasMore: boolean }> {
-    const query = new URLSearchParams({ limit: String(limit) })
-    if (beforeOccurredAt !== undefined && beforeSourceId) {
-      query.set('beforeOccurredAt', String(beforeOccurredAt))
-      query.set('beforeSourceId', beforeSourceId)
-    }
-    const raw = await this.#observeRequest(() =>
-      requestJson(`/api/channels/${encodeURIComponent(channelId)}/messages?${query.toString()}`, { method: 'GET' }),
+    const raw = await this.#call(
+      HostApiContracts.listChannelMessages,
+      {
+        channelId,
+        limit,
+        ...(beforeOccurredAt === undefined ? {} : { beforeOccurredAt }),
+        ...(beforeSourceId === undefined ? {} : { beforeSourceId }),
+      },
+      undefined,
     )
-    if (!isRecord(raw) || !Array.isArray(raw.messages) || typeof raw.hasMore !== 'boolean') {
-      throw new Error('频道历史返回结果无效，请重新加载。')
-    }
-    const projected = (raw.messages as SnapshotMessageJson[]).map((message) =>
+    const projected = raw.messages.map((message) =>
       projectConversationMessage(message, this.#snapshot.channels, this.#snapshot.agents),
     )
     const other = this.#snapshot.messages.filter((message) => message.channelId !== channelId)
@@ -869,14 +712,7 @@ export class HttpProductHost implements ProductHostPort {
     return { messages: projected, hasMore: raw.hasMore }
   }
 
-  async #requestJson(
-    path: string,
-    init: { readonly method?: 'POST' | 'DELETE'; readonly body?: unknown },
-  ): Promise<unknown> {
-    return this.#observeRequest(() => requestJson(path, init))
-  }
-
-  async #observeRequest(request: () => Promise<unknown>): Promise<unknown> {
+  async #observeRequest<Result>(request: () => Promise<Result>): Promise<Result> {
     try {
       return await request()
     } catch (cause) {
@@ -888,37 +724,24 @@ export class HttpProductHost implements ProductHostPort {
   }
 
   async #refreshAndNotify(): Promise<Error | null> {
-    let response: Response
+    let json: SnapshotJson
     try {
-      response = await fetch('/api/snapshot', { headers: { accept: 'application/json' } })
+      json = await callHostApi(HostApiContracts.snapshot, {}, undefined)
     } catch (cause) {
-      const failure = new Error(errorMessage(cause, '无法连接 NekroNxt Host。'))
-      this.#publishFailure({ code: 'network', message: failure.message })
-      return failure
-    }
-
-    let json: unknown = null
-    try {
-      json = await response.json()
-    } catch (cause) {
-      if (response.ok) {
-        const failure = new Error(errorMessage(cause, 'NekroNxt Host 返回了无法读取的数据。'))
-        this.#publishFailure({ code: 'invalid-snapshot', message: failure.message })
-        return failure
-      }
-    }
-    if (!response.ok) {
-      const message = serverErrorMessage(response.status, json)
-      const failure = new Error(message)
-      this.#publishFailure({ code: 'http', message })
-      return failure
-    }
-    if (!isSnapshotJson(json)) {
-      const failure = new Error('NekroNxt Host 返回的数据格式无效，请刷新或检查服务版本。')
-      this.#publishFailure({ code: 'invalid-snapshot', message: failure.message })
+      const failure = cause instanceof Error ? cause : new Error(errorMessage(cause, '无法连接 NekroNxt Host。'))
+      const code =
+        cause instanceof HostRequestError
+          ? cause.kind === 'network'
+            ? 'network'
+            : cause.kind === 'http'
+              ? 'http'
+              : 'invalid-snapshot'
+          : 'invalid-snapshot'
+      this.#publishFailure({ code, message: failure.message })
       return failure
     }
     const projected = projectSnapshot(json, Date.now())
+    this.#hostSnapshot = json
     this.#snapshot = {
       ...projected,
       messages: this.#loadedChannels.size > 0 ? this.#snapshot.messages : projected.messages,
@@ -944,19 +767,13 @@ export class HttpProductHost implements ProductHostPort {
   }
 }
 
-const createAgentRequestBody = (input?: Readonly<Record<string, unknown>>): unknown => {
-  const displayName = typeof input?.displayName === 'string' ? input.displayName : ''
-  const model =
-    typeof input?.model === 'object' && input.model !== null
-      ? (input.model as { readonly provider?: unknown; readonly model?: unknown })
-      : undefined
-  const provider = typeof model?.provider === 'string' ? model.provider.trim() : ''
-  const modelId = typeof model?.model === 'string' ? model.model.trim() : ''
-  const persona = typeof input?.persona === 'string' ? input.persona : ''
-  const rawCapabilities =
-    typeof input?.capabilities === 'object' && input.capabilities !== null
-      ? (input.capabilities as Record<string, unknown>)
-      : {}
+const createAgentRequestBody = (input?: Readonly<Record<string, unknown>>): HostApiRequest<'createAgent'> => {
+  const displayName = typeof input?.['displayName'] === 'string' ? input['displayName'] : ''
+  const model = isRecord(input?.['model']) ? input['model'] : undefined
+  const provider = typeof model?.['provider'] === 'string' ? model['provider'].trim() : ''
+  const modelId = typeof model?.['model'] === 'string' ? model['model'].trim() : ''
+  const persona = typeof input?.['persona'] === 'string' ? input['persona'] : ''
+  const rawCapabilities = isRecord(input?.['capabilities']) ? input['capabilities'] : {}
   if (!displayName.trim()) throw new Error('请输入智能体名称。')
   if (!provider || !modelId) throw new Error('请选择当前可用的模型。')
   return {
@@ -964,12 +781,12 @@ const createAgentRequestBody = (input?: Readonly<Record<string, unknown>>): unkn
     persona,
     model: { provider, model: modelId },
     capabilities: {
-      subagents: rawCapabilities.subagents === true,
-      fileTools: rawCapabilities.fileTools === true,
-      webSearch: rawCapabilities.webSearch === true,
-      dynamicCreation: rawCapabilities.dynamicCreation === true,
-      developmentShell: rawCapabilities.developmentShell === true,
-      unrestrictedFileAccess: rawCapabilities.unrestrictedFileAccess === true,
+      subagents: rawCapabilities['subagents'] === true,
+      fileTools: rawCapabilities['fileTools'] === true,
+      webSearch: rawCapabilities['webSearch'] === true,
+      dynamicCreation: rawCapabilities['dynamicCreation'] === true,
+      developmentShell: rawCapabilities['developmentShell'] === true,
+      unrestrictedFileAccess: rawCapabilities['unrestrictedFileAccess'] === true,
     },
   }
 }
@@ -979,7 +796,7 @@ const errorMessage = (cause: unknown, fallback: string): string =>
 
 class HostRequestError extends Error {
   constructor(
-    readonly kind: 'network' | 'http',
+    readonly kind: 'network' | 'http' | 'invalid-response',
     message: string,
   ) {
     super(message)
@@ -987,33 +804,41 @@ class HostRequestError extends Error {
   }
 }
 
-const requestJson = async (
-  path: string,
-  init?: { readonly method?: 'GET' | 'POST' | 'DELETE'; readonly body?: unknown },
-): Promise<unknown> => {
+const callHostApi = async <Contract extends HostApiContract, Output>(
+  contract: Contract & { readonly parseResponse: (input: unknown) => Output },
+  params: HostApiContractParams<Contract>,
+  body: HostApiContractRequest<Contract>,
+): Promise<Output> => {
+  const path = buildHostApiContractPath(contract, params)
+  const requestBody = contract.parseRequest(body)
   let response: Response
   try {
     response = await fetch(path, {
-      method: init?.method ?? 'POST',
-      headers: { 'content-type': 'application/json' },
-      ...(init?.body === undefined ? {} : { body: JSON.stringify(init.body) }),
+      method: contract.method,
+      headers: {
+        accept: 'application/json',
+        ...(requestBody === undefined ? {} : { 'content-type': 'application/json' }),
+      },
+      ...(requestBody === undefined ? {} : { body: JSON.stringify(requestBody) }),
     })
   } catch (cause) {
     throw new HostRequestError('network', errorMessage(cause, '无法连接 NekroNxt Host。'))
   }
   const json: unknown = await response.json().catch(() => null)
-  if (!response.ok) throw new HostRequestError('http', serverErrorMessage(response.status, json))
-  return json
-}
-
-const postJson = (path: string, body: unknown): Promise<unknown> => requestJson(path, { method: 'POST', body })
-
-const serverErrorMessage = (status: number, body: unknown): string => {
-  if (typeof body === 'object' && body !== null && 'error' in body) {
-    const error = body.error
-    if (typeof error === 'object' && error !== null && 'message' in error && typeof error.message === 'string') {
-      return error.message
-    }
+  if (!response.ok) {
+    const parsedError = HostApiErrorSchema.safeParse(json)
+    throw new HostRequestError(
+      'http',
+      parsedError.success ? parsedError.data.error.message : `服务请求失败：${response.status}`,
+    )
   }
-  return `服务请求失败：${status}`
+  try {
+    const parseResponse: (input: unknown) => Output = contract.parseResponse
+    return parseResponse(json)
+  } catch (cause) {
+    throw new HostRequestError(
+      'invalid-response',
+      `NekroNxt Host 返回的数据格式无效：${cause instanceof Error ? cause.message : String(cause)}`,
+    )
+  }
 }

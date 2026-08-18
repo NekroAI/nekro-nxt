@@ -1,0 +1,6 @@
+{
+  "version": 1,
+  "description": "生产源码静态安全债务；按规则和文件计数只能下降。DSH 固定例外必须匹配完整表达式。",
+  "counts": {},
+  "fixedExceptions": []
+}

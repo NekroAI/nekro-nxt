@@ -30,6 +30,8 @@ const iconForTone = (tone: NotificationTone) => {
   return Info
 }
 
+const classForTone = (tone: NotificationTone): string => (tone === 'info' ? '' : styles[tone])
+
 export function NotificationCenter(): React.ReactNode {
   const [items, setItems] = useState<readonly NotificationItem[]>([])
   const timers = useRef(new Map<number, number>())
@@ -79,7 +81,7 @@ export function NotificationCenter(): React.ReactNode {
         const Icon = iconForTone(item.tone)
         return (
           <div
-            className={[styles.notification, styles[item.tone]].join(' ')}
+            className={[styles.notification, classForTone(item.tone)].filter(Boolean).join(' ')}
             role={item.tone === 'error' ? 'alert' : 'status'}
             key={item.id}
           >

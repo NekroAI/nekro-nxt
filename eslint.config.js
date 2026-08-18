@@ -3,7 +3,16 @@ import tseslint from 'typescript-eslint'
 
 export default tseslint.config(
   {
-    ignores: ['.local/**', 'assets/**', 'coverage/**', '**/dist/**', '**/lib/**', 'node_modules/**', 'prototype/**'],
+    ignores: [
+      '.local/**',
+      'assets/**',
+      'coverage/**',
+      '**/dist/**',
+      'apps/*/lib/**',
+      'packages/*/lib/**',
+      'node_modules/**',
+      'prototype/**',
+    ],
   },
   eslint.configs.recommended,
   ...tseslint.configs.recommendedTypeChecked.map((config) => ({
@@ -22,6 +31,8 @@ export default tseslint.config(
       '@typescript-eslint/consistent-type-imports': 'error',
       '@typescript-eslint/no-explicit-any': 'error',
       '@typescript-eslint/no-floating-promises': 'error',
+      '@typescript-eslint/no-unsafe-type-assertion': 'error',
+      '@typescript-eslint/no-unnecessary-type-assertion': 'error',
       '@typescript-eslint/switch-exhaustiveness-check': 'error',
     },
   },

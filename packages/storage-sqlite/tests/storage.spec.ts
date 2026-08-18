@@ -1,1073 +1,1402 @@
-import { mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises'
-import { tmpdir } from 'node:os'
+import BetterSqlite3 from 'better-sqlite3'
+import { count, eq } from 'drizzle-orm'
+import { mkdtemp, readFile, rm } from 'node:fs/promises'
+import os from 'node:os'
 import path from 'node:path'
-import type { AdapterConnectionContext } from '@nekro-nxt/adapter-sdk'
-import type { AgentSessionDriver } from '@nekro-nxt/channel-runtime'
-import { ChannelRuntime } from '@nekro-nxt/channel-runtime'
-import type { AgentActivationId, ChannelId, EpisodeId } from '@nekro-nxt/contracts'
-import { AssetEnrichmentService, AssetIngestionPipeline, AssetService, CoreService } from '@nekro-nxt/core'
-import {
-  ExtensionActivationCoordinator,
-  ExtensionBuilder,
-  ExtensionService,
-  ExtensionSourceStore,
-  type ExtensionActivationHost,
-  type MountedExtension,
-} from '@nekro-nxt/extension-runtime'
-import { FakeAdapterConnection } from '@nekro-nxt/test-harness'
-import { pathToFileURL } from 'node:url'
 import { afterEach, describe, expect, it } from 'vitest'
+import { z } from 'zod'
+import {
+  AdmissionIdSchema,
+  AgentIdSchema,
+  AgentRevisionIdSchema,
+  AssetIdSchema,
+  ChannelEventIdSchema,
+  ChannelIdSchema,
+  ChannelMemberIdSchema,
+  ConnectionIdSchema,
+  EpisodeHandoffIdSchema,
+  EpisodeIdSchema,
+  ExtensionIdSchema,
+  ExtensionRevisionIdSchema,
+  LogicalMessageIdSchema,
+  OutboundIntentIdSchema,
+  PhysicalDeliveryIdSchema,
+  PlatformIdentityIdSchema,
+} from '@nekro-nxt/contracts'
+import type { JsonValue } from '@nekro-nxt/contracts'
+import { CoreService } from '@nekro-nxt/core'
 import {
   backupCoreDatabase,
-  CORE_SCHEMA_VERSION,
+  coreSchema,
   createSqliteBackupSet,
-  migrateCoreDatabase,
-  openCoreDatabase,
   openMigratedCoreDatabase,
+  SqliteBackupManifestSchema,
   SqliteCoreRepository,
+  agentDefinitions,
+  assetOccurrences,
+  channelEvents,
+  channels,
+  physicalDeliveries,
 } from '../src/index.ts'
 
-const temporaryDirectories: string[] = []
-
-afterEach(async () => {
-  await Promise.all(temporaryDirectories.splice(0).map((directory) => rm(directory, { recursive: true, force: true })))
-})
-
+const directories: string[] = []
 const temporaryDirectory = async (): Promise<string> => {
-  const directory = await mkdtemp(path.join(tmpdir(), 'nekro-nxt-sqlite-'))
-  temporaryDirectories.push(directory)
+  const directory = await mkdtemp(path.join(os.tmpdir(), 'nekro-nxt-storage-'))
+  directories.push(directory)
   return directory
 }
 
-describe('Core SQLite capabilities', () => {
-  it('stores new capability grants in V2 and reads legacy V1 rows without rewriting them', async () => {
-    const directory = await temporaryDirectory()
-    const database = await openMigratedCoreDatabase(path.join(directory, 'core.sqlite'))
-    try {
-      const repository = new SqliteCoreRepository(database)
-      let id = 0
-      const core = new CoreService(repository, { now: () => 1000, nextUlid: () => `C${++id}` })
-      const created = core.createAgent({
-        displayName: '能力格式智能体',
-        persona: '',
-        model: { provider: 'test', model: 'model' },
-        capabilities: { subagents: true, webSearch: true },
-      })
-      const stored = database
-        .prepare('SELECT capabilities_json FROM agent_revisions WHERE id = ?')
-        .get(created.revision.id) as { capabilities_json: string }
-      expect(JSON.parse(stored.capabilities_json)).toEqual({
-        version: 2,
-        grants: {
-          subagents: true,
-          fileTools: false,
-          webSearch: true,
-          dynamicCreation: false,
-          developmentShell: false,
-          unrestrictedFileAccess: false,
-        },
-      })
+afterEach(async () => {
+  await Promise.all(directories.splice(0).map((directory) => rm(directory, { recursive: true, force: true })))
+})
 
-      const legacyJson = '{"dynamicCreation":false,"developmentShell":true,"fullFileAccess":false}'
-      database
-        .prepare('UPDATE agent_revisions SET capabilities_json = ?, content_digest = ? WHERE id = ?')
-        .run(legacyJson, 'legacy-v1-digest', created.revision.id)
-      expect(repository.getAgentRevision(created.revision.id)?.capabilities).toEqual({
-        subagents: false,
-        fileTools: true,
-        webSearch: false,
-        dynamicCreation: false,
-        developmentShell: true,
-        unrestrictedFileAccess: false,
-      })
-      expect(
-        database
-          .prepare('SELECT capabilities_json, content_digest FROM agent_revisions WHERE id = ?')
-          .get(created.revision.id),
-      ).toEqual({ capabilities_json: legacyJson, content_digest: 'legacy-v1-digest' })
+const capabilities = {
+  subagents: false,
+  fileTools: false,
+  webSearch: false,
+  dynamicCreation: false,
+  developmentShell: false,
+  unrestrictedFileAccess: false,
+}
+
+const createFixture = async () => {
+  const directory = await temporaryDirectory()
+  const database = await openMigratedCoreDatabase(path.join(directory, 'core.sqlite'))
+  const repository = new SqliteCoreRepository(database)
+  let sequence = 0
+  const core = new CoreService(repository, { now: () => 1000 + sequence, nextUlid: () => `T${++sequence}` })
+  const connection = core.createConnection({ adapterKey: 'web', config: {} })
+  return { directory, database, repository, core, connection }
+}
+
+const createAgent = (core: CoreService) =>
+  core.createAgent({
+    displayName: '测试智能体',
+    persona: '保持事实准确。',
+    model: { provider: 'test', model: 'model' },
+    capabilities,
+  })
+
+const mutateSqlite = (filename: string, statement: string, ...parameters: (string | number)[]): void => {
+  const native = new BetterSqlite3(filename)
+  try {
+    native.prepare(statement).run(...parameters)
+  } finally {
+    native.close()
+  }
+}
+
+const mutateSqliteWithForeignKeysOff = (
+  filename: string,
+  statement: string,
+  ...parameters: (string | number)[]
+): void => {
+  const native = new BetterSqlite3(filename)
+  try {
+    native.pragma('foreign_keys = OFF')
+    native.prepare(statement).run(...parameters)
+  } finally {
+    native.close()
+  }
+}
+
+const appendTextEvent = (
+  core: CoreService,
+  connectionId: ReturnType<CoreService['createConnection']>['id'],
+  channelId: ReturnType<CoreService['createChannel']>['id'],
+  dedupeKey: string,
+  text: string,
+  receivedAt: number,
+  options: {
+    readonly platformMessageId?: string
+    readonly facts?: Readonly<Record<string, JsonValue>>
+    readonly kind?: 'message-created' | 'message-edited' | 'control'
+  } = {},
+) =>
+  core.appendInbound({
+    connectionId,
+    channelId,
+    adapterKey: 'web',
+    ...(options.platformMessageId === undefined ? {} : { platformMessageId: options.platformMessageId }),
+    kind: options.kind ?? 'message-created',
+    parts: [{ type: 'text', text }],
+    platformTimestamp: receivedAt,
+    receivedAt,
+    dedupeKey,
+    ...(options.facts === undefined ? {} : { facts: options.facts }),
+  }).event
+
+describe('Core SQLite baseline', () => {
+  it('accepts better-sqlite3 table_list metadata and migrates a clean 22-table database', async () => {
+    expect(Object.keys(coreSchema)).toHaveLength(22)
+    expect(channelEvents.logicalMessageId.name).toBe('logical_message_id')
+    expect('logicalMessageId' in channels).toBe(false)
+
+    const { database, core } = await createFixture()
+    try {
+      expect(database.pragma('foreign_keys')).toBe(1)
+      expect(database.pragma('journal_mode')).toBe('wal')
+      expect(core.listConnections()).toHaveLength(1)
     } finally {
       database.close()
     }
   })
 
-  it('raises schema 16 to 17 without rewriting historical capability JSON or digests', async () => {
+  it('rejects a non-baseline development database instead of upgrading it', async () => {
     const directory = await temporaryDirectory()
-    const database = await openMigratedCoreDatabase(path.join(directory, 'core.sqlite'))
-    try {
-      const repository = new SqliteCoreRepository(database)
-      let id = 0
-      const core = new CoreService(repository, { now: () => 1000, nextUlid: () => `M${++id}` })
-      const created = core.createAgent({
-        displayName: '迁移智能体',
-        persona: '',
-        model: { provider: 'test', model: 'model' },
-      })
-      const legacyJson = '{"dynamicCreation":false,"developmentShell":false,"fullFileAccess":false}'
-      database
-        .prepare('UPDATE agent_revisions SET capabilities_json = ?, content_digest = ? WHERE id = ?')
-        .run(legacyJson, 'historical-digest', created.revision.id)
-      database.exec('PRAGMA user_version = 16')
-
-      await migrateCoreDatabase(database)
-
-      expect(database.prepare('PRAGMA user_version').get()).toEqual({ user_version: 17 })
-      expect(
-        database
-          .prepare('SELECT capabilities_json, content_digest FROM agent_revisions WHERE id = ?')
-          .get(created.revision.id),
-      ).toEqual({ capabilities_json: legacyJson, content_digest: 'historical-digest' })
-    } finally {
-      database.close()
-    }
+    const filename = path.join(directory, 'legacy.sqlite')
+    const legacy = new BetterSqlite3(filename)
+    legacy.exec('CREATE TABLE migration_journal (version INTEGER NOT NULL)')
+    legacy.close()
+    await expect(openMigratedCoreDatabase(filename)).rejects.toThrow('基线已重置')
   })
 
-  it('allows one agent on multiple channels and atomically replaces the agent assigned to one channel', async () => {
-    const directory = await temporaryDirectory()
-    const database = await openMigratedCoreDatabase(path.join(directory, 'core.sqlite'))
+  it('reads missing revisions, appends revisions with CAS, and rejects stale or foreign activation', async () => {
+    const { database, repository, core } = await createFixture()
     try {
-      const repository = new SqliteCoreRepository(database)
-      let id = 0
-      const core = new CoreService(repository, { now: () => 1000 + id, nextUlid: () => `B${++id}` })
-      const firstAgent = core.createAgent({
-        displayName: '多频道智能体',
+      const first = createAgent(core)
+      const second = core.createAgent({
+        displayName: '带推理配置的智能体',
         persona: '',
-        model: { provider: 'test', model: 'model' },
+        model: { provider: 'test', model: 'model', reasoningEffort: 'high' },
+        capabilities,
       })
-      const secondAgent = core.createAgent({
-        displayName: '接替智能体',
-        persona: '',
-        model: { provider: 'test', model: 'model' },
-      })
-      const connection = core.createConnection({ adapterKey: 'web', config: {} })
-      const first = core.createChannel({ connectionId: connection.id, platformChannelId: 'first', kind: 'web' })
-      const second = core.createChannel({ connectionId: connection.id, platformChannelId: 'second', kind: 'web' })
-      const original = core.createBinding({
-        channelId: first.id,
-        agentId: firstAgent.definition.id,
-        triggerPolicy: 'always',
-      })
-      core.createBinding({ channelId: second.id, agentId: firstAgent.definition.id, triggerPolicy: 'command' })
-      expect(core.listBindings(first.id)).toEqual([
-        expect.objectContaining({ id: original.id, agentId: firstAgent.definition.id }),
+      const missingAgentId = AgentIdSchema.parse('agt_MISSING')
+      const missingRevisionId = AgentRevisionIdSchema.parse('arev_MISSING')
+      expect(repository.getAgent(missingAgentId)).toBeUndefined()
+      expect(repository.listAgents().map(({ definition }) => definition.id)).toEqual([
+        first.definition.id,
+        second.definition.id,
       ])
-      expect(core.listBindings(second.id)).toEqual([
-        expect.objectContaining({ agentId: firstAgent.definition.id, triggerPolicy: 'command' }),
-      ])
+      expect(repository.getAgentRevision(missingRevisionId)).toBeUndefined()
+      expect(repository.getAgentRevisionByDigest(first.definition.id, 'sha256:missing')).toBeUndefined()
+      expect(repository.listAgentRevisions(missingAgentId)).toEqual([])
+      expect(repository.getNextAgentRevisionNumber(missingAgentId)).toBe(1)
+      expect(repository.getAgentRevision(second.revision.id)?.model.reasoningEffort).toBe('high')
 
-      core.createBinding({
-        channelId: first.id,
-        agentId: secondAgent.definition.id,
-        triggerPolicy: 'observe-only',
+      const revised = core.reviseAgent(first.definition.id, first.revision.id, {
+        displayName: '更新后的智能体',
+        persona: first.revision.persona,
+        model: first.revision.model,
+        capabilities,
       })
-      expect(core.listBindings(first.id)).toEqual([
-        expect.objectContaining({ agentId: secondAgent.definition.id, triggerPolicy: 'observe-only' }),
-      ])
-      expect(core.listBindings(second.id)).toEqual([
-        expect.objectContaining({ agentId: firstAgent.definition.id, triggerPolicy: 'command' }),
-      ])
-      expect(
-        database.prepare('SELECT COUNT(*) AS count FROM bindings WHERE channel_id = ? AND active = 1').get(first.id),
-      ).toEqual({ count: 1 })
-    } finally {
-      database.close()
-    }
-  })
-
-  it('persists, builds, switches, rolls back and cache-restores local Extension Revisions', async () => {
-    const directory = await temporaryDirectory()
-    const database = await openMigratedCoreDatabase(path.join(directory, 'core.sqlite'))
-    const repository = new SqliteCoreRepository(database)
-    let coreId = 0
-    let extensionId = 0
-    let activationId = 0
-    const core = new CoreService(repository, { now: () => 1000, nextUlid: () => `E${++coreId}` })
-    const agent = core.createAgent({
-      displayName: '扩展智能体',
-      persona: '',
-      model: { provider: 'test', model: 'model' },
-      capabilities: { dynamicCreation: true },
-    })
-    const sourceStore = new ExtensionSourceStore(path.join(directory, 'extension-data'))
-    const service = new ExtensionService(repository, sourceStore, {
-      now: () => 1100 + extensionId,
-      nextUlid: () => `X${++extensionId}`,
-    })
-    const cacheRoot = path.join(directory, 'extension-cache')
-    const builder = new ExtensionBuilder(cacheRoot)
-    const hostCode = (value: string) => `return {
-      apply(ctx) {
-        const tool = harness.defineTool({
-          name: 'saved_probe',
-          description: 'Saved probe ${value}',
-          parameters: {},
-          output: { schema: { type: 'string' }, render(_args, result) { return [{ type: 'text', text: result }] } },
-          execute() { return ${JSON.stringify(value)} }
-        })
-        harness.registerTool(ctx, tool)
-      }
-    }`
-    const clientCode = `return {
-      inject: ['slots'],
-      apply(ctx) {
-        ctx.slots.register({ name: 'root' }, () => React.createElement('div', null, '扩展界面'))
-      }
-    }`
-
-    const firstCapture = service.captureDynamicPackage(agent.definition.id, {
-      dshSessionId: 'session-1',
-      dynamicPluginId: 'probe-1',
-      dynamicPackageId: 'pkg-1',
-      name: '保存探针',
-      purpose: '验证扩展保存与启用。',
-      hostCode: hostCode('v1'),
-      clientCode,
-    })
-    expect(
-      service.captureDynamicPackage(agent.definition.id, {
-        dshSessionId: 'session-1',
-        dynamicPluginId: 'probe-1',
-        dynamicPackageId: 'pkg-1',
-        name: '保存探针',
-        purpose: '验证扩展保存与启用。',
-        hostCode: hostCode('v1'),
-        clientCode,
-      }).package.id,
-    ).toBe(firstCapture.package.id)
-    const first = await service.saveDraftPackage({
-      draftPackageId: firstCapture.package.id,
-      slug: 'saved-probe',
-      displayName: '保存探针',
-      description: '用于验证不可变本地扩展。',
-    })
-    expect(first.revision).toMatchObject({ revisionNumber: 1, storageState: 'saved' })
-    expect(
-      await readFile(path.join(service.revisionSourceDirectory(first.revision), 'manifest.json'), 'utf8'),
-    ).toContain('保存探针')
-    expect(repository.listActiveActivations(agent.definition.id)).toEqual([])
-
-    const activeTools = new Map<string, string>()
-    const lifecycle: string[] = []
-    const activationHost: ExtensionActivationHost = {
-      waitUntilSafe: (agentId) => {
-        lifecycle.push(`safe:${agentId}`)
-        return Promise.resolve()
-      },
-      mount: async (_agentId, revision, artifact): Promise<MountedExtension> => {
-        lifecycle.push(`mount:${revision.revisionNumber}`)
-        if (!artifact.hostEntry) throw new Error('Host artifact is required by this test.')
-        const module = (await import(`${pathToFileURL(artifact.hostEntry).href}?load=${lifecycle.length}`)) as {
-          default(environment: unknown): Promise<{ apply(context: unknown): void }>
-        }
-        const disposers: (() => void)[] = []
-        const plugin = await module.default({
-          harness: {
-            defineTool: (definition: unknown) => definition,
-            registerTool: (_context: unknown, definition: unknown) => {
-              const tool = definition as { name: string; execute(): string }
-              activeTools.set(tool.name, tool.execute())
-              const dispose = () => activeTools.delete(tool.name)
-              disposers.push(dispose)
-              return dispose
-            },
-            handle: () => () => {},
-          },
-        })
-        plugin.apply({})
-        return {
-          evidence: {
-            hostLoaded: true,
-            clientBuilt: artifact.clientEntry !== undefined,
-            details: [revision.contentDigest],
-          },
-          dispose: () => {
-            lifecycle.push(`dispose:${revision.revisionNumber}`)
-            for (const dispose of disposers.splice(0)) dispose()
-            return Promise.resolve()
-          },
-        }
-      },
-    }
-    const coordinator = new ExtensionActivationCoordinator(repository, service, builder, activationHost, {
-      now: () => 2000 + activationId,
-      nextUlid: () => `A${++activationId}`,
-    })
-    const firstActivation = await coordinator.activate({
-      agentId: agent.definition.id,
-      extensionId: first.extension.id,
-      revisionId: first.revision.id,
-    })
-    expect(firstActivation.state).toBe('active')
-    expect(activeTools.get('saved_probe')).toBe('v1')
-
-    const secondCapture = service.captureDynamicPackage(agent.definition.id, {
-      dshSessionId: 'session-1',
-      dynamicPluginId: 'probe-1',
-      dynamicPackageId: 'pkg-2',
-      name: '保存探针 v2',
-      purpose: '验证安全切换。',
-      hostCode: hostCode('v2'),
-      clientCode,
-    })
-    const second = await service.saveDraftPackage({
-      draftPackageId: secondCapture.package.id,
-      extensionId: first.extension.id,
-      slug: 'saved-probe',
-      displayName: '保存探针',
-      description: '用于验证不可变本地扩展。',
-    })
-    expect(second.revision.revisionNumber).toBe(2)
-    const secondActivation = await coordinator.activate({
-      agentId: agent.definition.id,
-      extensionId: first.extension.id,
-      revisionId: second.revision.id,
-    })
-    expect(repository.getActivation(firstActivation.id)?.state).toBe('disabled')
-    expect(secondActivation.state).toBe('active')
-    expect(activeTools.get('saved_probe')).toBe('v2')
-    expect(lifecycle).toEqual(expect.arrayContaining([`safe:${agent.definition.id}`, 'dispose:1', 'mount:2']))
-
-    const rollback = await coordinator.activate({
-      agentId: agent.definition.id,
-      extensionId: first.extension.id,
-      revisionId: first.revision.id,
-    })
-    expect(rollback.state).toBe('active')
-    expect(activeTools.get('saved_probe')).toBe('v1')
-
-    const brokenCapture = service.captureDynamicPackage(agent.definition.id, {
-      dshSessionId: 'session-1',
-      dynamicPluginId: 'broken-probe',
-      dynamicPackageId: 'broken-package',
-      name: '损坏探针',
-      purpose: '验证坏 Revision 不阻止其他扩展恢复。',
-      hostCode: hostCode('broken'),
-    })
-    const broken = await service.saveDraftPackage({
-      draftPackageId: brokenCapture.package.id,
-      slug: 'broken-probe',
-      displayName: '损坏探针',
-      description: '验证隔离恢复。',
-    })
-    const brokenActivationId = 'act_broken' as AgentActivationId
-    repository.createActivation({
-      id: brokenActivationId,
-      agentId: agent.definition.id,
-      extensionId: broken.extension.id,
-      extensionRevisionId: broken.revision.id,
-      config: {},
-      state: 'pending',
-      runtimeKind: 'in-process',
-      createdAt: 2500,
-    })
-    repository.markActivationWaiting(brokenActivationId)
-    repository.commitActivationSwitch(brokenActivationId, undefined, 2501)
-    await rm(service.revisionSourceDirectory(broken.revision), { recursive: true, force: true })
-
-    await coordinator.dispose()
-    expect(activeTools).toEqual(new Map())
-    await rm(cacheRoot, { recursive: true, force: true })
-    const restored = new ExtensionActivationCoordinator(
-      repository,
-      service,
-      new ExtensionBuilder(cacheRoot),
-      activationHost,
-      { now: () => 3000, nextUlid: () => `R${++activationId}` },
-    )
-    expect(await restored.restore()).toEqual({ restored: 1, failed: 1 })
-    const failedActivation = repository.getActivation(brokenActivationId)
-    expect(failedActivation?.state).toBe('failed')
-    expect(failedActivation?.lastError).toContain('ENOENT')
-    expect(activeTools.get('saved_probe')).toBe('v1')
-    await restored.disable(rollback.id)
-    expect(activeTools).toEqual(new Map())
-    database.close()
-  })
-
-  it('recovers committed saves and isolates interrupted, missing or digest-mismatched Revision sources', async () => {
-    const directory = await temporaryDirectory()
-    const database = await openMigratedCoreDatabase(path.join(directory, 'core.sqlite'))
-    const repository = new SqliteCoreRepository(database)
-    let id = 0
-    const core = new CoreService(repository, { now: () => 4000, nextUlid: () => `RC${++id}` })
-    const agent = core.createAgent({
-      displayName: '恢复智能体',
-      persona: '',
-      model: { provider: 'test', model: 'model' },
-    })
-    const sourceStore = new ExtensionSourceStore(path.join(directory, 'extension-data'))
-    const service = new ExtensionService(repository, sourceStore, {
-      now: () => 4100 + id,
-      nextUlid: () => `RS${++id}`,
-    })
-    const save = async (sequence: number) => {
-      const captured = service.captureDynamicPackage(agent.definition.id, {
-        dshSessionId: 'recovery-session',
-        dynamicPluginId: `recovery-${sequence}`,
-        dynamicPackageId: `package-${sequence}`,
-        name: `恢复探针 ${sequence}`,
-        purpose: '验证保存崩溃恢复。',
-        hostCode: 'return { apply() {} }',
-      })
-      return service.saveDraftPackage({
-        draftPackageId: captured.package.id,
-        slug: `recovery-probe-${sequence}`,
-        displayName: `恢复探针 ${sequence}`,
-        description: '验证保存崩溃恢复。',
-      })
-    }
-
-    try {
-      const committed = await save(1)
-      database
-        .prepare("UPDATE extension_save_operations SET state = 'running', completed_at = NULL WHERE revision_id = ?")
-        .run(committed.revision.id)
-      database
-        .prepare("UPDATE extension_revisions SET storage_state = 'saving' WHERE id = ?")
-        .run(committed.revision.id)
-      expect(await service.recoverSaves()).toEqual({ completed: 1, failed: 0, damaged: 0 })
-      expect(repository.getExtensionRevision(committed.revision.id)?.storageState).toBe('saved')
-
-      const invalid = await save(2)
-      database
-        .prepare("UPDATE extension_save_operations SET state = 'running', completed_at = NULL WHERE revision_id = ?")
-        .run(invalid.revision.id)
-      database.prepare("UPDATE extension_revisions SET storage_state = 'saving' WHERE id = ?").run(invalid.revision.id)
-      await writeFile(
-        path.join(service.revisionSourceDirectory(invalid.revision), 'content.sha256'),
-        'invalid\n',
-        'utf8',
+      expect(repository.listAgentRevisions(first.definition.id)).toHaveLength(2)
+      expect(repository.getNextAgentRevisionNumber(first.definition.id)).toBe(3)
+      expect(repository.getAgentRevisionByDigest(first.definition.id, revised.revision.contentDigest)).toEqual(
+        revised.revision,
       )
-      expect(await service.recoverSaves()).toEqual({ completed: 0, failed: 1, damaged: 0 })
-      expect(repository.getExtensionRevision(invalid.revision.id)?.storageState).toBe('quarantined')
 
-      const interrupted = await save(3)
-      database
-        .prepare("UPDATE extension_save_operations SET state = 'running', completed_at = NULL WHERE revision_id = ?")
-        .run(interrupted.revision.id)
-      database
-        .prepare("UPDATE extension_revisions SET storage_state = 'saving' WHERE id = ?")
-        .run(interrupted.revision.id)
-      await rm(service.revisionSourceDirectory(interrupted.revision), { recursive: true, force: true })
-      expect(await service.recoverSaves()).toEqual({ completed: 0, failed: 1, damaged: 0 })
-      expect(repository.getExtensionRevision(interrupted.revision.id)?.storageState).toBe('damaged')
-
-      const missing = await save(4)
-      await rm(service.revisionSourceDirectory(missing.revision), { recursive: true, force: true })
-      expect(await service.recoverSaves()).toEqual({ completed: 0, failed: 0, damaged: 1 })
-      expect(repository.getExtensionRevision(missing.revision.id)?.storageState).toBe('damaged')
-    } finally {
-      database.close()
-    }
-  })
-
-  it('applies the generated Drizzle migration to a clean database', async () => {
-    const directory = await temporaryDirectory()
-    const database = openCoreDatabase(path.join(directory, 'core.sqlite'))
-    try {
-      await migrateCoreDatabase(database)
-      expect(
-        database.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = ?").get('migration_journal'),
-      ).toEqual({
-        name: 'migration_journal',
+      const restored = core.reviseAgent(first.definition.id, revised.revision.id, {
+        displayName: first.revision.displayName,
+        persona: first.revision.persona,
+        model: first.revision.model,
+        capabilities,
       })
-      expect(
-        database.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = ?").get('channel_events'),
-      ).toEqual({ name: 'channel_events' })
-      expect(
-        database.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = ?").get('channel_history_fts'),
-      ).toEqual({ name: 'channel_history_fts' })
-      expect(
-        database.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = ?").get('platform_identities'),
-      ).toEqual({ name: 'platform_identities' })
-      expect(
-        database.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = ?").get('channel_members'),
-      ).toEqual({ name: 'channel_members' })
-      expect(
-        database
-          .prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = ?")
-          .get('adapter_runtime_states'),
-      ).toEqual({ name: 'adapter_runtime_states' })
-      expect(
-        database
-          .prepare("SELECT name FROM sqlite_master WHERE type = 'index' AND name = ?")
-          .get('bindings_active_channel_uq'),
-      ).toEqual({ name: 'bindings_active_channel_uq' })
-      expect(database.prepare('PRAGMA user_version').get()).toEqual({ user_version: CORE_SCHEMA_VERSION })
+      expect(restored.revision.id).toBe(first.revision.id)
+
+      const candidate = {
+        ...revised.revision,
+        id: AgentRevisionIdSchema.parse('arev_CONFLICT'),
+        revision: 3,
+        displayName: '不会提交的修订',
+        contentDigest: 'sha256:conflict',
+      }
+      expect(() =>
+        repository.appendAgentRevision(
+          { ...first.definition, currentRevisionId: candidate.id },
+          candidate,
+          AgentRevisionIdSchema.parse('arev_STALE'),
+        ),
+      ).toThrow('Agent revision conflict')
+      expect(repository.getAgentRevision(candidate.id)).toBeUndefined()
+
+      expect(() => repository.activateAgentRevision(first.definition, second.revision, first.revision.id)).toThrow(
+        'does not belong',
+      )
+      expect(() =>
+        repository.activateAgentRevision(first.definition, first.revision, AgentRevisionIdSchema.parse('arev_STALE')),
+      ).toThrow('Agent revision conflict')
     } finally {
       database.close()
     }
   })
 
-  it("repairs the reversed active-binding constraint without losing an agent's other channels", async () => {
-    const directory = await temporaryDirectory()
-    const database = openCoreDatabase(path.join(directory, 'binding-repair.sqlite'))
+  it('atomically creates Agent, Revision, current pointer, Channel and Binding', async () => {
+    const { database, repository, core, connection } = await createFixture()
     try {
-      database.exec(`
-        CREATE TABLE bindings (
-          id TEXT PRIMARY KEY NOT NULL,
-          channel_id TEXT NOT NULL,
-          agent_id TEXT NOT NULL,
-          active INTEGER DEFAULT 1 NOT NULL,
-          created_at INTEGER NOT NULL
-        );
-        CREATE UNIQUE INDEX bindings_active_agent_uq ON bindings (agent_id) WHERE active = 1;
-        INSERT INTO bindings VALUES
-          ('web-a', 'channel-web', 'agent-a', 0, 1),
-          ('qq-a', 'channel-qq', 'agent-a', 1, 2),
-          ('shared-a', 'channel-shared', 'agent-a', 0, 3),
-          ('shared-b', 'channel-shared', 'agent-b', 1, 4);
-        PRAGMA user_version = 14;
-      `)
+      const committed = core.createAgentWithChannel(
+        {
+          displayName: '原子智能体',
+          persona: '',
+          model: { provider: 'test', model: 'model' },
+          capabilities,
+        },
+        {
+          connectionId: connection.id,
+          kind: 'web',
+          platformChannelId: 'fixed-channel',
+          triggerPolicy: 'always',
+        },
+      )
+      expect(repository.getBinding(committed.channel.id)).toEqual(committed.binding)
+      expect(repository.getAgent(committed.definition.id)?.revision.id).toBe(committed.revision.id)
 
-      await migrateCoreDatabase(database)
+      expect(() =>
+        core.createAgentWithChannel(
+          {
+            displayName: '冲突智能体',
+            persona: '',
+            model: { provider: 'test', model: 'model' },
+            capabilities,
+          },
+          {
+            connectionId: connection.id,
+            kind: 'web',
+            platformChannelId: 'fixed-channel',
+            triggerPolicy: 'always',
+          },
+        ),
+      ).toThrow()
+      expect(database.db.select({ value: count() }).from(agentDefinitions).get()?.value).toBe(1)
+    } finally {
+      database.close()
+    }
+  })
 
+  it('stores one current Binding per Channel while one Agent can own several Channels', async () => {
+    const { database, repository, core, connection } = await createFixture()
+    try {
+      const firstAgent = createAgent(core)
+      const secondAgent = createAgent(core)
+      const first = core.createChannel({ connectionId: connection.id, platformChannelId: 'first', kind: 'group' })
+      const second = core.createChannel({ connectionId: connection.id, platformChannelId: 'second', kind: 'group' })
+      core.createBinding({ channelId: first.id, agentId: firstAgent.definition.id, triggerPolicy: 'always' })
+      core.createBinding({ channelId: second.id, agentId: firstAgent.definition.id, triggerPolicy: 'command' })
+      core.replaceBinding({ channelId: first.id, agentId: secondAgent.definition.id, triggerPolicy: 'observe-only' })
+      expect(repository.getBinding(first.id)).toMatchObject({ agentId: secondAgent.definition.id })
+      expect(repository.getBinding(second.id)).toMatchObject({ agentId: firstAgent.definition.id })
+    } finally {
+      database.close()
+    }
+  })
+
+  it('round-trips optional channel records, cursors, lookups, and database constraints', async () => {
+    const { database, repository, core, connection } = await createFixture()
+    try {
+      const otherConnection = core.createConnection({ adapterKey: 'qq-openclaw', config: { token: 'x' } })
+      expect(repository.getConnection(ConnectionIdSchema.parse('con_MISSING'))).toBeUndefined()
+      expect(repository.listConnectionIdsByAdapter('web')).toEqual([connection.id])
+      expect(repository.listConnectionIdsByAdapter('missing')).toEqual([])
+
+      const channel = core.ensureChannel({
+        connectionId: connection.id,
+        platformChannelId: 'optional-channel',
+        kind: 'web',
+        observedAt: 10,
+      })
+      const updatedChannel = core.ensureChannel({
+        connectionId: connection.id,
+        platformChannelId: 'optional-channel',
+        kind: 'group',
+        displayName: '带名称的频道',
+        observedAt: 11,
+      })
+      expect(updatedChannel).toMatchObject({ id: channel.id, kind: 'group', displayName: '带名称的频道' })
+      expect(repository.getChannelByPlatformId(connection.id, 'optional-channel')).toEqual(updatedChannel)
+      expect(repository.getChannel(ChannelIdSchema.parse('chn_MISSING'))).toBeUndefined()
+      expect(repository.getChannelByPlatformId(connection.id, 'missing')).toBeUndefined()
+      expect(repository.listChannelIdsByConnection(connection.id)).toEqual([channel.id])
+      expect(repository.listChannelIdsByConnection(otherConnection.id)).toEqual([])
+      core.updateChannelDisplayName(channel.id, '再次更新')
+      expect(repository.getChannel(channel.id)?.displayName).toBe('再次更新')
+      expect(() => repository.updateChannelDisplayName(ChannelIdSchema.parse('chn_MISSING'), '不存在')).toThrow(
+        'Unknown channel',
+      )
+
+      expect(repository.getBinding(channel.id)).toBeUndefined()
+      expect(repository.listBindings(channel.id)).toEqual([])
+      const agent = createAgent(core)
+      core.createBinding({ channelId: channel.id, agentId: agent.definition.id, triggerPolicy: 'always' })
+      expect(repository.listBindings(channel.id)).toHaveLength(1)
+
+      const observed = core.observeChannelMember({
+        connectionId: connection.id,
+        channelId: channel.id,
+        platformUserId: 'user-1',
+        displayName: '初始显示名',
+        observedAt: 12,
+      })
+      const observedAgain = core.observeChannelMember({
+        connectionId: connection.id,
+        channelId: channel.id,
+        platformUserId: 'user-1',
+        displayName: '显示名',
+        observedAt: 13,
+      })
+      expect(observedAgain.identity.id).toBe(observed.identity.id)
+      expect(observedAgain.member.id).toBe(observed.member.id)
+      expect(repository.getPlatformIdentity(observed.identity.id)?.displayName).toBe('显示名')
+      expect(repository.getChannelMember(observed.member.id)?.displayName).toBe('显示名')
+      const observedWithoutDisplayName = core.observeChannelMember({
+        connectionId: connection.id,
+        channelId: channel.id,
+        platformUserId: 'user-1',
+        observedAt: 14,
+      })
+      expect(observedWithoutDisplayName.identity).toEqual(observedAgain.identity)
+      expect(observedWithoutDisplayName.member).toEqual(observedAgain.member)
+      expect(repository.getPlatformIdentity(PlatformIdentityIdSchema.parse('pid_MISSING'))).toBeUndefined()
+      expect(repository.getChannelMember(ChannelMemberIdSchema.parse('mbr_MISSING'))).toBeUndefined()
+      expect(repository.getChannelMemberByIdentity(channel.id, observed.identity.id)).toEqual(observedAgain.member)
       expect(
-        database.prepare('SELECT id, channel_id, agent_id FROM bindings WHERE active = 1 ORDER BY channel_id').all(),
-      ).toEqual([
-        { id: 'qq-a', channel_id: 'channel-qq', agent_id: 'agent-a' },
-        { id: 'shared-b', channel_id: 'channel-shared', agent_id: 'agent-b' },
-        { id: 'web-a', channel_id: 'channel-web', agent_id: 'agent-a' },
-      ])
+        repository.getChannelMemberByIdentity(channel.id, PlatformIdentityIdSchema.parse('pid_MISSING')),
+      ).toBeUndefined()
+
+      const firstEvent = core.appendInbound({
+        connectionId: connection.id,
+        channelId: channel.id,
+        adapterKey: 'web',
+        platformMessageId: 'platform-in-1',
+        kind: 'message-created',
+        senderMemberId: observed.member.id,
+        parts: [{ type: 'text', text: '第一条' }],
+        platformTimestamp: 20,
+        receivedAt: 20,
+        dedupeKey: 'channel-event-1',
+        facts: { source: 'test' },
+      }).event
+      appendTextEvent(core, connection.id, channel.id, 'channel-event-2', '第二条', 20)
+      expect(repository.getChannelEvent(firstEvent.id)).toMatchObject({
+        platformMessageId: 'platform-in-1',
+        senderMemberId: observed.member.id,
+        facts: { source: 'test' },
+      })
+      expect(repository.getChannelEvent(ChannelEventIdSchema.parse('evt_MISSING'))).toBeUndefined()
+      const newest = repository.listChannelEvents(channel.id, { limit: 1 })
+      expect(newest).toHaveLength(1)
+      const newestEvent = newest[0]
+      if (newestEvent === undefined) throw new Error('Expected the newest Channel Event.')
+      expect(repository.listChannelEvents(channel.id, { before: newestEvent, limit: 10 })).toHaveLength(1)
+      expect(() => repository.listChannelEvents(channel.id, { limit: 0 })).toThrow('Invalid Channel Event limit')
+      expect(() => repository.listChannelEvents(channel.id, { limit: 1001 })).toThrow('Invalid Channel Event limit')
+
+      expect(repository.resolvePlatformMessage(connection.id, channel.id, 'platform-in-1')).toEqual({
+        logicalMessageId: firstEvent.logicalMessageId,
+        authoredByAgent: false,
+      })
+      expect(repository.resolvePlatformMessage(otherConnection.id, channel.id, 'platform-in-1')).toBeUndefined()
+      expect(repository.resolvePlatformMessage(connection.id, channel.id, 'missing')).toBeUndefined()
+      expect(repository.resolveLogicalMessagePlatformId(connection.id, channel.id, firstEvent.logicalMessageId)).toBe(
+        'platform-in-1',
+      )
       expect(
-        database
-          .prepare("SELECT name FROM sqlite_master WHERE type = 'index' AND name = ?")
-          .get('bindings_active_agent_uq'),
+        repository.resolveLogicalMessagePlatformId(
+          connection.id,
+          channel.id,
+          LogicalMessageIdSchema.parse('msg_MISSING'),
+        ),
       ).toBeUndefined()
       expect(
-        database
-          .prepare("SELECT name FROM sqlite_master WHERE type = 'index' AND name = ?")
-          .get('bindings_active_channel_uq'),
-      ).toEqual({ name: 'bindings_active_channel_uq' })
+        repository.resolveLogicalMessagePlatformId(otherConnection.id, channel.id, firstEvent.logicalMessageId),
+      ).toBeUndefined()
+
+      expect(() => repository.createConnection(connection)).toThrow()
+      expect(() =>
+        core.createChannel({ connectionId: connection.id, platformChannelId: 'optional-channel', kind: 'web' }),
+      ).toThrow()
+      expect(() =>
+        repository.createChannel({
+          id: ChannelIdSchema.parse('chn_BADFK'),
+          connectionId: ConnectionIdSchema.parse('con_MISSING'),
+          platformChannelId: 'bad-fk',
+          kind: 'web',
+          createdAt: 1,
+        }),
+      ).toThrow()
+      const invalidChannel: Parameters<SqliteCoreRepository['createChannel']>[0] = {
+        id: ChannelIdSchema.parse('chn_BADCHECK'),
+        connectionId: connection.id,
+        platformChannelId: 'bad-check',
+        kind: 'web',
+        createdAt: 1,
+      }
+      Object.defineProperty(invalidChannel, 'kind', { value: 'invalid' })
+      expect(() => repository.createChannel(invalidChannel)).toThrow()
+      const invalidBinding: Parameters<SqliteCoreRepository['replaceBinding']>[0] = {
+        channelId: channel.id,
+        agentId: agent.definition.id,
+        triggerPolicy: 'always',
+        boundAt: 1,
+      }
+      Object.defineProperty(invalidBinding, 'triggerPolicy', { value: 'invalid' })
+      expect(() => repository.replaceBinding(invalidBinding)).toThrow()
+    } finally {
+      database.close()
+    }
+  })
+})
+
+describe('relations, admissions and outbox', () => {
+  it('commits Channel Event and Asset Occurrence atomically and deduplicates replay', async () => {
+    const { database, repository, core, connection } = await createFixture()
+    try {
+      const channel = core.createChannel({ connectionId: connection.id, platformChannelId: 'asset', kind: 'group' })
+      const assetId = AssetIdSchema.parse('ast_ASSET1')
+      repository.ensureAsset({
+        id: assetId,
+        contentDigest: `sha256:${'a'.repeat(64)}`,
+        byteSize: 4,
+        mediaType: 'image/png',
+        createdAt: 1,
+      })
+      const event = {
+        connectionId: connection.id,
+        channelId: channel.id,
+        adapterKey: 'web',
+        platformMessageId: 'platform-1',
+        kind: 'message-created' as const,
+        parts: [{ type: 'image' as const, assetId }],
+        platformTimestamp: 10,
+        receivedAt: 11,
+        dedupeKey: 'asset-event-1',
+        assetOccurrences: [{ partIndex: 0, assetId }],
+      }
+      const first = core.appendInbound(event)
+      const replay = core.appendInbound(event)
+      expect(first.inserted).toBe(true)
+      expect(replay.inserted).toBe(false)
+      expect(database.db.select({ value: count() }).from(channelEvents).get()?.value).toBe(1)
+      expect(database.db.select({ value: count() }).from(assetOccurrences).get()?.value).toBe(1)
+      expect(repository.canAccessAsset(assetId, channel.id)).toBe(true)
+      expect(repository.canAccessAsset(assetId, ChannelIdSchema.parse('chn_OTHER'))).toBe(false)
+      expect(repository.getAssetById(AssetIdSchema.parse('ast_MISSING'))).toBeUndefined()
+      expect(
+        repository.ensureAsset({
+          id: AssetIdSchema.parse('ast_ASSET2'),
+          contentDigest: `sha256:${'a'.repeat(64)}`,
+          byteSize: 999,
+          mediaType: 'application/octet-stream',
+          createdAt: 99,
+        }),
+      ).toEqual(repository.getAssetById(assetId))
+
+      core.appendInbound({
+        connectionId: connection.id,
+        channelId: channel.id,
+        adapterKey: 'web',
+        kind: 'message-created',
+        parts: [{ type: 'text', text: '没有资源 occurrence' }],
+        platformTimestamp: 12,
+        receivedAt: 13,
+        dedupeKey: 'plain-event',
+      })
+      expect(database.db.select({ value: count() }).from(assetOccurrences).get()?.value).toBe(1)
     } finally {
       database.close()
     }
   })
 
-  it('rejects a future Core schema without modifying it', async () => {
-    const directory = await temporaryDirectory()
-    const database = openCoreDatabase(path.join(directory, 'future.sqlite'))
+  it('returns every unadmitted event beyond the former 100-event window', async () => {
+    const { database, repository, core, connection } = await createFixture()
     try {
-      database.exec(`PRAGMA user_version = ${CORE_SCHEMA_VERSION + 1}`)
-      await expect(migrateCoreDatabase(database)).rejects.toThrow('newer than supported')
-      expect(database.prepare('PRAGMA user_version').get()).toEqual({ user_version: CORE_SCHEMA_VERSION + 1 })
+      const agent = createAgent(core)
+      const channel = core.createChannel({ connectionId: connection.id, platformChannelId: 'backlog', kind: 'group' })
+      core.createBinding({ channelId: channel.id, agentId: agent.definition.id, triggerPolicy: 'command' })
+      for (let index = 0; index < 225; index += 1) {
+        core.appendInbound({
+          connectionId: connection.id,
+          channelId: channel.id,
+          adapterKey: 'web',
+          platformMessageId: `p-${index}`,
+          kind: 'message-created',
+          parts: [{ type: 'text', text: `消息 ${index}` }],
+          platformTimestamp: index,
+          receivedAt: 2000 + index,
+          dedupeKey: `event-${index}`,
+        })
+      }
+      expect(repository.listUnadmittedEvents(channel.id, agent.definition.id, 0)).toHaveLength(225)
     } finally {
       database.close()
     }
   })
 
-  it('upgrades pre-capability Agent rows with three independent grants denied by default', async () => {
-    const directory = await temporaryDirectory()
-    const database = openCoreDatabase(path.join(directory, 'capability-upgrade.sqlite'))
+  it('persists relational Admission events and structured delivery receipts', async () => {
+    const { database, repository, core, connection } = await createFixture()
     try {
-      database.exec(`
-        CREATE TABLE agent_revisions (id TEXT PRIMARY KEY NOT NULL);
-        CREATE TABLE channel_events (id TEXT PRIMARY KEY NOT NULL);
-        CREATE TABLE physical_deliveries (id TEXT PRIMARY KEY NOT NULL);
-        CREATE TABLE bindings (
-          id TEXT PRIMARY KEY NOT NULL,
-          channel_id TEXT NOT NULL,
-          agent_id TEXT NOT NULL,
-          created_at INTEGER NOT NULL
-        );
-        INSERT INTO agent_revisions (id) VALUES ('legacy-revision');
-        PRAGMA user_version = 7;
-      `)
-      await migrateCoreDatabase(database)
-      expect(database.prepare('SELECT capabilities_json FROM agent_revisions').get()).toEqual({
-        capabilities_json: '{"dynamicCreation":false,"developmentShell":false,"fullFileAccess":false}',
+      const agent = createAgent(core)
+      const channel = core.createChannel({ connectionId: connection.id, platformChannelId: 'runtime', kind: 'web' })
+      const event = core.appendInbound({
+        connectionId: connection.id,
+        channelId: channel.id,
+        adapterKey: 'web',
+        kind: 'message-created',
+        parts: [{ type: 'text', text: 'hello' }],
+        platformTimestamp: 1,
+        receivedAt: 2,
+        dedupeKey: 'runtime-event',
+      }).event
+      const episodeId = EpisodeIdSchema.parse('eps_EPISODE1')
+      repository.createEpisode({
+        id: episodeId,
+        channelId: channel.id,
+        agentId: agent.definition.id,
+        agentRevisionId: agent.revision.id,
+        status: 'opening',
+        openedAtEventId: event.id,
+        createdAt: 3,
+      })
+      repository.activateEpisode(episodeId, 'dsh-session-1')
+      const admissionId = AdmissionIdSchema.parse('adm_ADMISSION1')
+      repository.createAdmission({
+        id: admissionId,
+        episodeId,
+        eventIds: [event.id],
+        mode: 'followup',
+        state: 'pending',
+        createdAt: 4,
+      })
+      repository.claimAdmission(admissionId)
+      repository.completeAdmission(admissionId, 'dsh-message-1', event.id)
+
+      const intentId = OutboundIntentIdSchema.parse('out_INTENT1')
+      const deliveryId = PhysicalDeliveryIdSchema.parse('phy_DELIVERY1')
+      repository.createOutboundPlan(
+        {
+          id: intentId,
+          logicalMessageId: LogicalMessageIdSchema.parse('msg_OUTBOUND1'),
+          agentRevisionId: agent.revision.id,
+          episodeId,
+          parts: [{ type: 'text', text: 'reply' }],
+          state: 'planned',
+          createdAt: 5,
+        },
+        [{ id: deliveryId, intentId, sequence: 0, parts: [{ type: 'text', text: 'reply' }], state: 'planned' }],
+      )
+      repository.markIntentSending(intentId)
+      repository.markDeliverySending(deliveryId)
+      repository.recordDeliveryReceipt(deliveryId, { status: 'sent', platformMessageId: 'platform-out-1' }, 6)
+      repository.completeOutboundIntent(intentId, 'sent')
+      expect(repository.getOutbound(intentId).receipts).toEqual([
+        {
+          physicalDeliveryId: deliveryId,
+          receipt: { status: 'sent', platformMessageId: 'platform-out-1' },
+          completedAt: 6,
+        },
+      ])
+      expect(
+        database.db.select().from(physicalDeliveries).where(eq(physicalDeliveries.id, deliveryId)).get(),
+      ).toMatchObject({
+        state: 'sent',
+        platformMessageId: 'platform-out-1',
       })
     } finally {
       database.close()
     }
   })
 
-  it('enables WAL and supports FTS5 with source-row lookup', async () => {
-    const directory = await temporaryDirectory()
-    const database = openCoreDatabase(path.join(directory, 'core.sqlite'))
+  it('searches literal percent, underscore and Chinese text within one Channel only', async () => {
+    const { database, repository, core, connection } = await createFixture()
     try {
-      expect(database.prepare('PRAGMA journal_mode').get()).toMatchObject({ journal_mode: 'wal' })
-      expect(database.prepare('PRAGMA foreign_keys').get()).toMatchObject({ foreign_keys: 1 })
-      database.exec(`
-        CREATE TABLE message_source (id TEXT PRIMARY KEY, content TEXT NOT NULL);
-        CREATE VIRTUAL TABLE message_search USING fts5(id UNINDEXED, content, tokenize = 'trigram');
-      `)
-      database
-        .prepare('INSERT INTO message_source (id, content) VALUES (?, ?)')
-        .run('message-1', '小奈正在整理频道摘要')
-      database
-        .prepare('INSERT INTO message_search (id, content) VALUES (?, ?)')
-        .run('message-1', '小奈正在整理频道摘要')
-      const hit = database.prepare("SELECT id FROM message_search WHERE message_search MATCH '频道摘'").get()
-      expect(hit).toEqual({ id: 'message-1' })
-      expect(database.prepare('SELECT content FROM message_source WHERE id = ?').get(String(hit?.id))).toEqual({
-        content: '小奈正在整理频道摘要',
-      })
+      const first = core.createChannel({ connectionId: connection.id, platformChannelId: 'search-1', kind: 'web' })
+      const second = core.createChannel({ connectionId: connection.id, platformChannelId: 'search-2', kind: 'web' })
+      for (const [channel, text, key] of [
+        [first, '进度 100%_完成', 'first'],
+        [second, '进度 100%_完成', 'second'],
+      ] as const) {
+        core.appendInbound({
+          connectionId: connection.id,
+          channelId: channel.id,
+          adapterKey: 'web',
+          kind: 'message-created',
+          parts: [{ type: 'text', text }],
+          platformTimestamp: 1,
+          receivedAt: 1,
+          dedupeKey: key,
+        })
+      }
+      expect(repository.searchChannelHistory(first.id, '100%_完')).toHaveLength(1)
+      expect(repository.searchChannelHistory(first.id, '不存在')).toHaveLength(0)
     } finally {
       database.close()
     }
   })
 
-  it('creates a readable online backup while the source uses WAL', async () => {
-    const directory = await temporaryDirectory()
-    const source = openCoreDatabase(path.join(directory, 'core.sqlite'))
-    const destination = path.join(directory, 'backup.sqlite')
+  it('covers episode lifecycle conflicts, admissions, handoff links, and recovery queries', async () => {
+    const { database, repository, core, connection } = await createFixture()
     try {
-      source.exec("CREATE TABLE facts (value TEXT NOT NULL); INSERT INTO facts VALUES ('preserved');")
-      await backupCoreDatabase(source, destination)
-    } finally {
-      source.close()
-    }
+      const agent = createAgent(core)
+      const channel = core.createChannel({
+        connectionId: connection.id,
+        platformChannelId: 'runtime-lifecycle',
+        kind: 'web',
+      })
+      const openedEvent = appendTextEvent(core, connection.id, channel.id, 'lifecycle-open', 'open', 1)
+      const episodeId = EpisodeIdSchema.parse('eps_LIFECYCLE1')
+      repository.createEpisode({
+        id: episodeId,
+        channelId: channel.id,
+        agentId: agent.definition.id,
+        agentRevisionId: agent.revision.id,
+        status: 'opening',
+        openedAtEventId: openedEvent.id,
+        createdAt: 2,
+      })
+      expect(repository.getEpisode(EpisodeIdSchema.parse('eps_MISSING'))).toBeUndefined()
+      expect(repository.getActiveEpisode(channel.id, agent.definition.id)?.status).toBe('opening')
+      expect(repository.listRecoverableEpisodes()).toHaveLength(1)
+      expect(repository.listActiveEpisodesForAgent(agent.definition.id)).toEqual([])
 
-    expect((await readFile(destination)).byteLength).toBeGreaterThan(0)
-    const restored = openCoreDatabase(destination)
+      const active = repository.activateEpisode(episodeId, 'session-lifecycle')
+      expect(active).toMatchObject({ status: 'active', dshSessionId: 'session-lifecycle' })
+      expect(repository.getActiveEpisode(channel.id, agent.definition.id)?.id).toBe(episodeId)
+      expect(repository.listActiveEpisodesForAgent(agent.definition.id)).toHaveLength(1)
+      expect(() => repository.activateEpisode(episodeId, 'session-again')).toThrow('Episode is not opening')
+
+      const revised = core.reviseAgent(agent.definition.id, agent.revision.id, {
+        displayName: '生命周期新版本',
+        persona: agent.revision.persona,
+        model: agent.revision.model,
+        capabilities,
+      })
+      expect(repository.updateEpisodeRevision(episodeId, agent.revision.id, revised.revision.id).agentRevisionId).toBe(
+        revised.revision.id,
+      )
+      expect(() => repository.updateEpisodeRevision(episodeId, agent.revision.id, agent.revision.id)).toThrow(
+        'Episode Revision transition conflict',
+      )
+      expect(() => repository.failEpisode(episodeId)).toThrow('Episode is not opening')
+
+      const closeEvent = appendTextEvent(core, connection.id, channel.id, 'lifecycle-close', 'close', 3)
+      const closed = repository.closeEpisode(episodeId, 'manual', closeEvent.id, 4)
+      expect(closed).toMatchObject({
+        status: 'closed',
+        closedAtEventId: closeEvent.id,
+        closedAt: 4,
+        closeReason: 'manual',
+      })
+      expect(repository.getActiveEpisode(channel.id, agent.definition.id)).toBeUndefined()
+      expect(repository.listRecoverableEpisodes()).toEqual([])
+      expect(() => repository.closeEpisode(episodeId, 'manual', closeEvent.id, 5)).toThrow('Episode is not live')
+
+      const failedEpisodeId = EpisodeIdSchema.parse('eps_FAILED1')
+      repository.createEpisode({
+        id: failedEpisodeId,
+        channelId: channel.id,
+        agentId: agent.definition.id,
+        agentRevisionId: revised.revision.id,
+        status: 'opening',
+        openedAtEventId: closeEvent.id,
+        createdAt: 5,
+      })
+      repository.failEpisode(failedEpisodeId)
+      expect(repository.getEpisode(failedEpisodeId)?.status).toBe('failed')
+      expect(() => repository.failEpisode(failedEpisodeId)).toThrow('Episode is not opening')
+
+      const admissionEvent = appendTextEvent(core, connection.id, channel.id, 'lifecycle-admission', 'admit', 6)
+      const admissionId = AdmissionIdSchema.parse('adm_LIFECYCLE1')
+      expect(() =>
+        repository.createAdmission({
+          id: AdmissionIdSchema.parse('adm_EMPTY'),
+          episodeId,
+          eventIds: [],
+          mode: 'followup',
+          state: 'pending',
+          createdAt: 7,
+        }),
+      ).toThrow('at least one Event')
+      repository.createAdmission({
+        id: admissionId,
+        episodeId,
+        eventIds: [admissionEvent.id],
+        mode: 'inject',
+        state: 'pending',
+        createdAt: 8,
+      })
+      expect(repository.listRecoverableAdmissions(episodeId)).toHaveLength(1)
+      expect(repository.listRecoverableAdmissions(EpisodeIdSchema.parse('eps_MISSING'))).toEqual([])
+      repository.claimAdmission(admissionId)
+      expect(repository.listRecoverableAdmissions(episodeId)).toHaveLength(1)
+      expect(() => repository.claimAdmission(admissionId)).toThrow('Admission is not pending')
+      repository.completeAdmission(admissionId, 'dsh-message-lifecycle', admissionEvent.id)
+      expect(repository.listRecoverableAdmissions(episodeId)).toEqual([])
+      expect(
+        repository.listUnadmittedEvents(channel.id, agent.definition.id, 0).some(({ id }) => id === admissionEvent.id),
+      ).toBe(false)
+      expect(() => repository.completeAdmission(admissionId, 'dsh-message-again', admissionEvent.id)).toThrow(
+        'Admission is not claimed',
+      )
+      expect(() =>
+        repository.completeAdmission(AdmissionIdSchema.parse('adm_MISSING'), 'dsh-message-missing', admissionEvent.id),
+      ).toThrow('Unknown Admission')
+
+      expect(repository.getEpisodeHandoffTo(episodeId)).toBeUndefined()
+      const rolloverFromId = EpisodeIdSchema.parse('eps_ROLLOVERFROM')
+      repository.createEpisode({
+        id: rolloverFromId,
+        channelId: channel.id,
+        agentId: agent.definition.id,
+        agentRevisionId: revised.revision.id,
+        status: 'opening',
+        openedAtEventId: closeEvent.id,
+        createdAt: 9,
+      })
+      repository.activateEpisode(rolloverFromId, 'session-rollover-from')
+      const rolloverToId = EpisodeIdSchema.parse('eps_ROLLOVERTO')
+      const handoffId = EpisodeHandoffIdSchema.parse('hof_LIFECYCLE1')
+      repository.commitEpisodeRollover({
+        fromEpisodeId: rolloverFromId,
+        reason: 'incompatible-revision',
+        closedAtEventId: closeEvent.id,
+        closedAt: 10,
+        nextEpisode: {
+          id: rolloverToId,
+          channelId: channel.id,
+          agentId: agent.definition.id,
+          agentRevisionId: revised.revision.id,
+          status: 'opening',
+          openedAtEventId: admissionEvent.id,
+          createdAt: 11,
+        },
+        handoff: {
+          id: handoffId,
+          fromEpisodeId: rolloverFromId,
+          toEpisodeId: rolloverToId,
+          sourceEventIds: [openedEvent.id],
+          recentEventIds: [admissionEvent.id],
+          summary: '生命周期摘要',
+          provider: 'test-provider',
+          model: 'test-model',
+          createdAt: 12,
+        },
+      })
+      expect(repository.getEpisode(rolloverFromId)?.status).toBe('closed')
+      expect(repository.getEpisodeHandoffTo(rolloverToId)).toMatchObject({
+        id: handoffId,
+        sourceEventIds: [openedEvent.id],
+        recentEventIds: [admissionEvent.id],
+      })
+      expect(() =>
+        repository.commitEpisodeRollover({
+          fromEpisodeId: rolloverFromId,
+          reason: 'manual',
+          closedAtEventId: closeEvent.id,
+          closedAt: 13,
+          nextEpisode: {
+            id: EpisodeIdSchema.parse('eps_ROLLOVERCONFLICT'),
+            channelId: channel.id,
+            agentId: agent.definition.id,
+            agentRevisionId: revised.revision.id,
+            status: 'opening',
+            openedAtEventId: admissionEvent.id,
+            createdAt: 14,
+          },
+          handoff: {
+            id: EpisodeHandoffIdSchema.parse('hof_ROLLOVERCONFLICT'),
+            fromEpisodeId: rolloverFromId,
+            toEpisodeId: EpisodeIdSchema.parse('eps_ROLLOVERCONFLICT'),
+            sourceEventIds: [],
+            recentEventIds: [],
+            summary: '',
+            provider: 'test-provider',
+            model: 'test-model',
+            createdAt: 15,
+          },
+        }),
+      ).toThrow('Episode rollover conflict')
+    } finally {
+      database.close()
+    }
+  })
+
+  it('loads, merges, clears, and recovers connection state values', async () => {
+    const { directory, database, repository, connection } = await createFixture()
+    const filename = path.join(directory, 'core.sqlite')
     try {
-      expect(restored.prepare('SELECT value FROM facts').get()).toEqual({ value: 'preserved' })
+      const missingConnectionId = ConnectionIdSchema.parse('con_MISSING')
+      expect(await repository.load(missingConnectionId, 'missing')).toBeUndefined()
+      await repository.clear(missingConnectionId, 'missing')
+      await repository.save(connection.id, 'first', { nested: true }, 20)
+      expect(await repository.load(connection.id, 'first')).toEqual({ nested: true })
+      expect(await repository.load(connection.id, 'missing')).toBeUndefined()
+      await repository.save(connection.id, 'second', ['value'], 21)
+      expect(await repository.load(connection.id, 'second')).toEqual(['value'])
+      await repository.clear(connection.id, 'first')
+      expect(await repository.load(connection.id, 'first')).toBeUndefined()
+      expect(await repository.load(connection.id, 'second')).toEqual(['value'])
+      await repository.clear(connection.id, 'missing')
+
+      database.close()
+      mutateSqlite(filename, 'UPDATE connection_state SET state = ? WHERE connection_id = ?', '[]', connection.id)
+      const reopened = await openMigratedCoreDatabase(filename)
+      try {
+        const reopenedRepository = new SqliteCoreRepository(reopened)
+        expect(await reopenedRepository.load(connection.id, 'second')).toBeUndefined()
+        await reopenedRepository.clear(connection.id, 'second')
+        await reopenedRepository.save(connection.id, 'recovered', 'value', 22)
+        expect(await reopenedRepository.load(connection.id, 'recovered')).toBe('value')
+      } finally {
+        reopened.close()
+      }
+    } finally {
+      // The database is deliberately closed before corruption; this keeps the mutation outside the live connection.
+      try {
+        database.close()
+      } catch {
+        // Already closed by the corruption setup.
+      }
+    }
+  })
+
+  it('persists sent, failed, unknown, and partially-sent deliveries with recovery guards', async () => {
+    const { database, repository, core, connection } = await createFixture()
+    try {
+      const agent = createAgent(core)
+      const channel = core.createChannel({
+        connectionId: connection.id,
+        platformChannelId: 'outbox-cases',
+        kind: 'web',
+      })
+      const openedEvent = appendTextEvent(core, connection.id, channel.id, 'outbox-open', 'history start', 1)
+      const episodeId = EpisodeIdSchema.parse('eps_OUTBOXCASES')
+      repository.createEpisode({
+        id: episodeId,
+        channelId: channel.id,
+        agentId: agent.definition.id,
+        agentRevisionId: agent.revision.id,
+        status: 'active',
+        dshSessionId: 'session-outbox-cases',
+        openedAtEventId: openedEvent.id,
+        createdAt: 2,
+      })
+
+      const failedIntentId = OutboundIntentIdSchema.parse('out_FAILEDCASE')
+      const failedDeliveryId = PhysicalDeliveryIdSchema.parse('phy_FAILEDCASE')
+      repository.createOutboundPlan(
+        {
+          id: failedIntentId,
+          logicalMessageId: LogicalMessageIdSchema.parse('msg_FAILEDCASE'),
+          agentRevisionId: agent.revision.id,
+          episodeId,
+          sourceTurnId: 'turn-1',
+          parts: [{ type: 'text', text: 'failed delivery' }],
+          replyTo: 'reply-1',
+          clientRequestId: 'request-failed',
+          state: 'planned',
+          createdAt: 3,
+        },
+        [
+          {
+            id: failedDeliveryId,
+            intentId: failedIntentId,
+            sequence: 0,
+            parts: [{ type: 'text', text: 'failed delivery' }],
+            adapterContext: { attempt: 1 },
+            state: 'planned',
+          },
+        ],
+      )
+      expect(repository.getOutbound(failedIntentId)).toMatchObject({
+        intent: { sourceTurnId: 'turn-1', replyTo: 'reply-1', clientRequestId: 'request-failed' },
+        deliveries: [{ state: 'planned', adapterContext: { attempt: 1 } }],
+        receipts: [],
+      })
+      expect(repository.findOutboundByClientRequest(agent.definition.id, channel.id, 'request-failed')?.intent.id).toBe(
+        failedIntentId,
+      )
+      expect(repository.findOutboundByClientRequest(agent.definition.id, channel.id, 'missing')).toBeUndefined()
+      expect(repository.listUnsettledOutboundIds()).toContain(failedIntentId)
+      repository.markIntentSending(failedIntentId)
+      repository.markDeliverySending(failedDeliveryId)
+      expect(repository.getOutbound(failedIntentId).receipts).toEqual([])
+      repository.recordDeliveryReceipt(
+        failedDeliveryId,
+        { status: 'failed', failure: { kind: 'transient', message: 'try again', retryAfterMs: 250 } },
+        4,
+      )
+      expect(repository.getOutbound(failedIntentId).deliveries[0]).toMatchObject({
+        state: 'failed',
+        receipt: { status: 'failed', failure: { kind: 'transient', message: 'try again', retryAfterMs: 250 } },
+        completedAt: 4,
+      })
+      repository.completeOutboundIntent(failedIntentId, 'failed')
+      expect(repository.getOutbound(failedIntentId).intent.state).toBe('failed')
+      expect(() => repository.completeOutboundIntent(failedIntentId, 'sent')).toThrow('not sending')
+      expect(() =>
+        repository.recordDeliveryReceipt(failedDeliveryId, { status: 'unknown', message: 'late' }, 5),
+      ).toThrow('not sending')
+
+      const unknownIntentId = OutboundIntentIdSchema.parse('out_UNKNOWNCASE')
+      const unknownDeliveryId = PhysicalDeliveryIdSchema.parse('phy_UNKNOWNCASE')
+      repository.createOutboundPlan(
+        {
+          id: unknownIntentId,
+          logicalMessageId: LogicalMessageIdSchema.parse('msg_UNKNOWNCASE'),
+          agentRevisionId: agent.revision.id,
+          episodeId,
+          parts: [{ type: 'text', text: 'unknown delivery' }],
+          state: 'planned',
+          createdAt: 5,
+        },
+        [{ id: unknownDeliveryId, intentId: unknownIntentId, sequence: 0, parts: [], state: 'planned' }],
+      )
+      repository.markIntentSending(unknownIntentId)
+      repository.markDeliverySending(unknownDeliveryId)
+      repository.recordDeliveryReceipt(unknownDeliveryId, { status: 'unknown', message: '结果未知' }, 6)
+      expect(repository.getOutbound(unknownIntentId).receipts[0]).toMatchObject({
+        receipt: { status: 'unknown', message: '结果未知' },
+        completedAt: 6,
+      })
+      repository.completeOutboundIntent(unknownIntentId, 'unknown')
+
+      const partialIntentId = OutboundIntentIdSchema.parse('out_PARTIALCASE')
+      const sentDeliveryId = PhysicalDeliveryIdSchema.parse('phy_PARTIALSENT')
+      const partialFailedDeliveryId = PhysicalDeliveryIdSchema.parse('phy_PARTIALFAILED')
+      repository.createOutboundPlan(
+        {
+          id: partialIntentId,
+          logicalMessageId: LogicalMessageIdSchema.parse('msg_PARTIALCASE'),
+          agentRevisionId: agent.revision.id,
+          episodeId,
+          parts: [{ type: 'text', text: 'partial needle' }],
+          state: 'planned',
+          createdAt: 7,
+        },
+        [
+          { id: sentDeliveryId, intentId: partialIntentId, sequence: 0, parts: [], state: 'planned' },
+          { id: partialFailedDeliveryId, intentId: partialIntentId, sequence: 1, parts: [], state: 'planned' },
+        ],
+      )
+      repository.markIntentSending(partialIntentId)
+      repository.markDeliverySending(sentDeliveryId)
+      repository.markDeliverySending(partialFailedDeliveryId)
+      repository.recordDeliveryReceipt(
+        sentDeliveryId,
+        { status: 'sent', platformMessageId: 'platform-partial', capabilityOutcomes: { text: true } },
+        8,
+      )
+      repository.recordDeliveryReceipt(
+        partialFailedDeliveryId,
+        { status: 'failed', failure: { kind: 'permanent', message: 'rejected' } },
+        9,
+      )
+      repository.completeOutboundIntent(partialIntentId, 'partially-sent')
+      expect(repository.getOutbound(partialIntentId).receipts).toHaveLength(2)
+      expect(repository.resolvePlatformMessage(connection.id, channel.id, 'platform-partial')).toEqual({
+        logicalMessageId: LogicalMessageIdSchema.parse('msg_PARTIALCASE'),
+        authoredByAgent: true,
+      })
+      expect(
+        repository.resolveLogicalMessagePlatformId(
+          connection.id,
+          channel.id,
+          LogicalMessageIdSchema.parse('msg_PARTIALCASE'),
+        ),
+      ).toBe('platform-partial')
+      expect(repository.listUnsettledOutboundIds()).toEqual([])
+
+      const emptyIntentId = OutboundIntentIdSchema.parse('out_EMPTYCASE')
+      repository.createOutboundPlan(
+        {
+          id: emptyIntentId,
+          logicalMessageId: LogicalMessageIdSchema.parse('msg_EMPTYCASE'),
+          agentRevisionId: agent.revision.id,
+          episodeId,
+          parts: [],
+          state: 'planned',
+          createdAt: 10,
+        },
+        [],
+      )
+      expect(repository.getOutbound(emptyIntentId).deliveries).toEqual([])
+      expect(repository.getOutbound(emptyIntentId).receipts).toEqual([])
+      const invalidSettledState = z
+        .custom<Parameters<SqliteCoreRepository['completeOutboundIntent']>[1]>((value) => value === 'invalid')
+        .parse('invalid')
+      expect(() => repository.completeOutboundIntent(emptyIntentId, invalidSettledState)).toThrow(
+        'Invalid settled state',
+      )
+      expect(() => repository.markIntentSending(OutboundIntentIdSchema.parse('out_MISSING'))).toThrow('not planned')
+      expect(() => repository.markDeliverySending(PhysicalDeliveryIdSchema.parse('phy_MISSING'))).toThrow('not planned')
+      expect(() => repository.getOutbound(OutboundIntentIdSchema.parse('out_MISSING'))).toThrow(
+        'Unknown Outbound Intent',
+      )
+
+      const invalidIntent = OutboundIntentIdSchema.parse('out_INVALIDCONSTRAINT')
+      expect(() =>
+        repository.createOutboundPlan(
+          {
+            id: invalidIntent,
+            logicalMessageId: LogicalMessageIdSchema.parse('msg_INVALIDCONSTRAINT'),
+            agentRevisionId: agent.revision.id,
+            episodeId,
+            parts: [],
+            state: 'planned',
+            createdAt: 16,
+          },
+          [
+            {
+              id: PhysicalDeliveryIdSchema.parse('phy_INVALIDCONSTRAINT'),
+              intentId: invalidIntent,
+              sequence: -1,
+              parts: [],
+              state: 'planned',
+            },
+          ],
+        ),
+      ).toThrow()
+      expect(() =>
+        repository.createOutboundPlan(
+          {
+            id: OutboundIntentIdSchema.parse('out_DUPLICATEDELIVERY'),
+            logicalMessageId: LogicalMessageIdSchema.parse('msg_DUPLICATEDELIVERY'),
+            agentRevisionId: agent.revision.id,
+            episodeId,
+            parts: [],
+            state: 'planned',
+            createdAt: 17,
+          },
+          [
+            {
+              id: PhysicalDeliveryIdSchema.parse('phy_DUPLICATE1'),
+              intentId: OutboundIntentIdSchema.parse('out_DUPLICATEDELIVERY'),
+              sequence: 0,
+              parts: [],
+              state: 'planned',
+            },
+            {
+              id: PhysicalDeliveryIdSchema.parse('phy_DUPLICATE2'),
+              intentId: OutboundIntentIdSchema.parse('out_DUPLICATEDELIVERY'),
+              sequence: 0,
+              parts: [],
+              state: 'planned',
+            },
+          ],
+        ),
+      ).toThrow()
+
+      const historyBeforeAdmission = repository.listEpisodeHistory(episodeId)
+      expect(historyBeforeAdmission).toHaveLength(4)
+      expect(historyBeforeAdmission.every((entry) => entry.source === 'outbound-intent')).toBe(true)
+      expect(repository.listEpisodeHistory(EpisodeIdSchema.parse('eps_MISSING'))).toEqual([])
+      const historyAdmissionId = AdmissionIdSchema.parse('adm_OUTBOXHISTORY')
+      repository.createAdmission({
+        id: historyAdmissionId,
+        episodeId,
+        eventIds: [openedEvent.id],
+        mode: 'followup',
+        state: 'pending',
+        createdAt: 11,
+      })
+      repository.claimAdmission(historyAdmissionId)
+      repository.completeAdmission(historyAdmissionId, 'dsh-history', openedEvent.id)
+      expect(repository.listEpisodeHistory(episodeId).map((entry) => entry.source)).toEqual([
+        'outbound-intent',
+        'outbound-intent',
+        'outbound-intent',
+        'outbound-intent',
+        'channel-event',
+      ])
+
+      for (let index = 0; index < 105; index += 1) {
+        appendTextEvent(core, connection.id, channel.id, `history-${index}`, `ordinary ${index}`, 100 + index)
+      }
+      appendTextEvent(core, connection.id, channel.id, 'history-needle', 'old NEEDLE text', 2)
+      const history = repository.listChannelHistory(channel.id, { limit: 100 })
+      expect(history).toHaveLength(100)
+      expect(repository.listChannelHistory(channel.id, { before: history.at(-1)!, limit: 100 })).toHaveLength(11)
+      expect(() => repository.listChannelHistory(channel.id, { limit: 0 })).toThrow('History limit')
+      expect(() => repository.listChannelHistory(channel.id, { limit: 101 })).toThrow('History limit')
+      expect(repository.searchChannelHistory(channel.id, '  NEEDLE  ', { limit: 1 })).toHaveLength(1)
+      expect(repository.searchChannelHistory(channel.id, 'partial needle')).toHaveLength(1)
+      expect(repository.searchChannelHistory(channel.id, '   ')).toEqual([])
+      expect(() => repository.searchChannelHistory(channel.id, 'needle', { limit: 101 })).toThrow('History limit')
+    } finally {
+      database.close()
+    }
+  })
+})
+
+describe('Extension and backup', () => {
+  it('stores one current Activation per Agent and Extension without transitional rows', async () => {
+    const { database, repository, core } = await createFixture()
+    try {
+      const firstAgent = createAgent(core)
+      const secondAgent = createAgent(core)
+      const extensionId = ExtensionIdSchema.parse('ext_EXTENSION1')
+      const revisionId = ExtensionRevisionIdSchema.parse('xrv_REVISION1')
+      repository.saveExtensionRevision({
+        extension: {
+          id: extensionId,
+          slug: 'test-extension',
+          displayName: '测试扩展',
+          description: '',
+          createdByAgentId: firstAgent.definition.id,
+          createdAt: 1,
+        },
+        revision: { id: revisionId, extensionId, revisionNumber: 1, contentDigest: 'sha256:test', createdAt: 1 },
+      })
+      repository.upsertActivation({
+        agentId: firstAgent.definition.id,
+        extensionId,
+        extensionRevisionId: revisionId,
+        config: { first: true },
+        activatedAt: 2,
+      })
+      repository.upsertActivation({
+        agentId: secondAgent.definition.id,
+        extensionId,
+        extensionRevisionId: revisionId,
+        config: { second: true },
+        activatedAt: 3,
+      })
+      expect(repository.listActivations()).toHaveLength(2)
+      repository.deleteActivation(firstAgent.definition.id, extensionId)
+      expect(repository.listActivations()).toHaveLength(1)
+    } finally {
+      database.close()
+    }
+  })
+
+  it('lists Extension records and filters activations independently for multiple intelligent agents', async () => {
+    const { database, repository, core } = await createFixture()
+    try {
+      const firstAgent = createAgent(core)
+      const secondAgent = core.createAgent({
+        displayName: '第二个智能体',
+        persona: '',
+        model: { provider: 'test', model: 'model' },
+        capabilities,
+      })
+      const extensionId = ExtensionIdSchema.parse('ext_QUERYCASE')
+      const revisionOneId = ExtensionRevisionIdSchema.parse('xrv_QUERYONE')
+      const revisionTwoId = ExtensionRevisionIdSchema.parse('xrv_QUERYTWO')
+      repository.saveExtensionRevision({
+        extension: {
+          id: extensionId,
+          slug: 'query-extension',
+          displayName: '查询扩展',
+          description: '有创建者',
+          createdByAgentId: firstAgent.definition.id,
+          createdAt: 1,
+        },
+        revision: {
+          id: revisionOneId,
+          extensionId,
+          revisionNumber: 1,
+          contentDigest: 'sha256:query-one',
+          createdAt: 1,
+        },
+      })
+      repository.saveExtensionRevision({
+        extension: {
+          id: extensionId,
+          slug: 'query-extension',
+          displayName: '查询扩展',
+          description: '重复的扩展元数据不会覆盖',
+          createdAt: 2,
+        },
+        revision: {
+          id: revisionTwoId,
+          extensionId,
+          revisionNumber: 2,
+          contentDigest: 'sha256:query-two',
+          createdAt: 2,
+        },
+      })
+      expect(repository.listExtensions()).toMatchObject([
+        { id: extensionId, slug: 'query-extension', createdByAgentId: firstAgent.definition.id },
+      ])
+      expect(repository.getExtension(extensionId)?.description).toBe('有创建者')
+      expect(repository.getExtensionBySlug('query-extension')?.id).toBe(extensionId)
+      expect(repository.getExtension(ExtensionIdSchema.parse('ext_MISSING'))).toBeUndefined()
+      expect(repository.getExtensionBySlug('missing')).toBeUndefined()
+      expect(repository.listExtensionRevisions()).toHaveLength(2)
+      expect(repository.listExtensionRevisions(extensionId).map(({ id }) => id)).toEqual([revisionOneId, revisionTwoId])
+      expect(repository.getExtensionRevision(revisionOneId)?.revisionNumber).toBe(1)
+      expect(repository.getExtensionRevision(ExtensionRevisionIdSchema.parse('xrv_MISSING'))).toBeUndefined()
+      expect(repository.nextExtensionRevisionNumber(extensionId)).toBe(3)
+      expect(repository.nextExtensionRevisionNumber(ExtensionIdSchema.parse('ext_EMPTY'))).toBe(1)
+
+      repository.upsertActivation({
+        agentId: firstAgent.definition.id,
+        extensionId,
+        extensionRevisionId: revisionOneId,
+        config: { owner: 'first' },
+        activatedAt: 3,
+      })
+      repository.upsertActivation({
+        agentId: firstAgent.definition.id,
+        extensionId,
+        extensionRevisionId: revisionTwoId,
+        config: { owner: 'first', revision: 2 },
+        activatedAt: 4,
+      })
+      repository.upsertActivation({
+        agentId: secondAgent.definition.id,
+        extensionId,
+        extensionRevisionId: revisionTwoId,
+        config: { owner: 'second' },
+        activatedAt: 5,
+      })
+      expect(repository.getActivation(firstAgent.definition.id, extensionId)).toMatchObject({
+        extensionRevisionId: revisionTwoId,
+        config: { owner: 'first', revision: 2 },
+      })
+      expect(repository.getActivation(AgentIdSchema.parse('agt_MISSING'), extensionId)).toBeUndefined()
+      expect(repository.listActivations(firstAgent.definition.id)).toHaveLength(1)
+      expect(repository.listActivations(secondAgent.definition.id)).toHaveLength(1)
+      expect(repository.listActivations()).toHaveLength(2)
+      repository.deleteActivation(secondAgent.definition.id, extensionId)
+      repository.deleteActivation(secondAgent.definition.id, extensionId)
+      expect(repository.listActivations()).toHaveLength(1)
+    } finally {
+      database.close()
+    }
+  })
+
+  it('rejects malformed JSON and branded identifiers when reading persisted rows', async () => {
+    const { directory, database, core } = await createFixture()
+    const filename = path.join(directory, 'core.sqlite')
+    try {
+      const connection = core.listConnections()[0]
+      if (connection === undefined) throw new Error('Fixture connection missing')
+      const channel = core.createChannel({
+        connectionId: connection.id,
+        platformChannelId: 'corrupt-channel',
+        kind: 'web',
+      })
+      database.close()
+      mutateSqlite(filename, 'UPDATE connections SET config = ? WHERE id = ?', '{not-json', connection.id)
+      const malformedJsonDatabase = await openMigratedCoreDatabase(filename)
+      try {
+        expect(() => new SqliteCoreRepository(malformedJsonDatabase).getConnection(connection.id)).toThrow()
+      } finally {
+        malformedJsonDatabase.close()
+      }
+
+      mutateSqlite(filename, 'UPDATE connections SET config = ? WHERE id = ?', '{}', connection.id)
+      mutateSqliteWithForeignKeysOff(
+        filename,
+        'UPDATE channels SET connection_id = ? WHERE id = ?',
+        'bad-connection-id',
+        channel.id,
+      )
+      const brandedDatabase = await openMigratedCoreDatabase(filename)
+      try {
+        expect(() => new SqliteCoreRepository(brandedDatabase).getChannel(channel.id)).toThrow()
+      } finally {
+        brandedDatabase.close()
+      }
+    } finally {
+      try {
+        database.close()
+      } catch {
+        // Closed before reopening the corrupted database.
+      }
+    }
+  })
+
+  it('creates a readable online WAL backup and a two-database backup set', async () => {
+    const { directory, database, core } = await createFixture()
+    const backupPath = path.join(directory, 'core-backup.sqlite')
+    core.createConnection({ adapterKey: 'qq-openclaw', config: {} })
+    await backupCoreDatabase(database, backupPath)
+    database.close()
+
+    const restored = await openMigratedCoreDatabase(backupPath)
+    try {
+      expect(new SqliteCoreRepository(restored).listConnectionIdsByAdapter()).toHaveLength(2)
     } finally {
       restored.close()
     }
-  })
 
-  it('commits a readable Core and DSH SQLite backup set only after both snapshots exist', async () => {
-    const directory = await temporaryDirectory()
-    const corePath = path.join(directory, 'core.sqlite')
-    const dshPath = path.join(directory, 'sessions.sqlite')
+    const dshPath = path.join(directory, 'dsh.sqlite')
+    const dsh = new BetterSqlite3(dshPath)
+    dsh.exec("CREATE TABLE sessions (id TEXT PRIMARY KEY); INSERT INTO sessions VALUES ('session-1')")
+    dsh.close()
     const destination = path.join(directory, 'backup-set')
-    const core = openCoreDatabase(corePath)
-    const dsh = openCoreDatabase(dshPath)
-    try {
-      core.exec("CREATE TABLE core_fact (value TEXT NOT NULL); INSERT INTO core_fact VALUES ('core');")
-      dsh.exec("CREATE TABLE session_fact (value TEXT NOT NULL); INSERT INTO session_fact VALUES ('dsh');")
+    const manifest = await createSqliteBackupSet(
+      [
+        { name: 'core', filename: backupPath },
+        { name: 'dsh-sessions', filename: dshPath },
+      ],
+      destination,
+      42,
+    )
+    expect(manifest.databases).toHaveLength(2)
+    expect(
+      SqliteBackupManifestSchema.parse(JSON.parse(await readFile(path.join(destination, 'manifest.json'), 'utf8'))),
+    ).toEqual(manifest)
+  })
 
-      expect(
-        await createSqliteBackupSet(
+  it('reports backup destination, source, staging, and manifest errors', async () => {
+    const { directory, database } = await createFixture()
+    const source = path.join(directory, 'core.sqlite')
+    try {
+      await expect(
+        backupCoreDatabase(database, path.join(directory, 'missing-parent', 'backup.sqlite')),
+      ).rejects.toThrow()
+      await expect(createSqliteBackupSet([], path.join(directory, 'empty-set'))).rejects.toThrow('at least one')
+      await expect(
+        createSqliteBackupSet([{ name: 'core', filename: source }], path.join(directory, 'bad-time'), -1),
+      ).rejects.toThrow('createdAt')
+      await expect(
+        createSqliteBackupSet(
+          [{ name: 'core', filename: source }],
+          path.join(directory, 'bad-time-safe'),
+          Number.MAX_SAFE_INTEGER + 1,
+        ),
+      ).rejects.toThrow('createdAt')
+      await expect(createSqliteBackupSet([{ name: 'core', filename: source }], directory)).rejects.toThrow(
+        'already exists',
+      )
+      await expect(
+        createSqliteBackupSet(
           [
-            { name: 'core', filename: corePath },
-            { name: 'dsh-sessions', filename: dshPath },
+            { name: 'bad_name', filename: source },
+            { name: 'bad_name', filename: source },
           ],
-          destination,
-          123,
+          path.join(directory, 'bad-name'),
         ),
-      ).toEqual({
-        format: 'nxt.sqlite-backup-set',
-        version: 1,
-        createdAt: 123,
-        databases: [
-          { name: 'core', filename: 'core.sqlite' },
-          { name: 'dsh-sessions', filename: 'dsh-sessions.sqlite' },
-        ],
-      })
-    } finally {
-      core.close()
-      dsh.close()
-    }
-
-    const coreBackup = openCoreDatabase(path.join(destination, 'core.sqlite'))
-    const dshBackup = openCoreDatabase(path.join(destination, 'dsh-sessions.sqlite'))
-    try {
-      expect(coreBackup.prepare('SELECT value FROM core_fact').get()).toEqual({ value: 'core' })
-      expect(dshBackup.prepare('SELECT value FROM session_fact').get()).toEqual({ value: 'dsh' })
-      expect(JSON.parse(await readFile(path.join(destination, 'manifest.json'), 'utf8'))).toMatchObject({
-        format: 'nxt.sqlite-backup-set',
-        version: 1,
-      })
-    } finally {
-      coreBackup.close()
-      dshBackup.close()
-    }
-  })
-
-  it('persists the Core domain and atomically deduplicates inbound events with checkpoints', async () => {
-    const directory = await temporaryDirectory()
-    const databasePath = path.join(directory, 'domain.sqlite')
-    const database = await openMigratedCoreDatabase(databasePath)
-    let id = 0
-    try {
-      const repository = new SqliteCoreRepository(database)
-      const core = new CoreService(repository, { now: () => 200, nextUlid: () => `SQL${++id}` })
-      const agent = core.createAgent({
-        displayName: '小奈',
-        persona: '',
-        model: { provider: 'deepseek', model: 'v4' },
-      })
-      const connection = core.createConnection({ adapterKey: 'web', config: {} })
-      const channel = core.createChannel({
-        connectionId: connection.id,
-        platformChannelId: 'main',
-        kind: 'web',
-      })
-      core.createBinding({ channelId: channel.id, agentId: agent.definition.id, triggerPolicy: 'always' })
-
-      const inbound = {
-        connectionId: connection.id,
-        channelId: channel.id,
-        adapterKey: 'web',
-        platformEventId: 'event-1',
-        platformMessageId: 'platform-inbound-1',
-        kind: 'message-created' as const,
-        parts: [{ type: 'text' as const, text: '你好' }],
-        platformTimestamp: 201,
-        receivedAt: 202,
-        dedupeKey: 'event:event-1',
-        checkpoint: { cursor: 'cursor-1' },
-      }
-      const first = core.appendInbound(inbound)
-      const replays = Array.from({ length: 100 }, () => core.appendInbound(inbound))
-      expect(first.inserted).toBe(true)
-      expect(replays.every(({ inserted }) => !inserted)).toBe(true)
-      expect(replays.at(-1)).toMatchObject({ inserted: false, event: { id: first.event.id } })
-      expect(database.prepare('SELECT COUNT(*) AS count FROM channel_events').get()).toEqual({ count: 1 })
-      expect(database.prepare('SELECT checkpoint_json FROM adapter_checkpoints').get()).toEqual({
-        checkpoint_json: '{"cursor":"cursor-1"}',
-      })
-      expect(core.resolvePlatformMessage(connection.id, channel.id, 'platform-inbound-1')).toEqual({
-        logicalMessageId: first.event.logicalMessageId,
-        authoredByAgent: false,
-      })
-    } finally {
-      database.close()
-    }
-
-    const reopened = await openMigratedCoreDatabase(databasePath)
-    try {
-      const row = reopened
-        .prepare(
-          `SELECT d.id AS agent_id
-             FROM agent_definitions d
-             JOIN agent_revisions r ON r.id = d.current_revision_id`,
-        )
-        .get()
-      expect(row).toMatchObject({ agent_id: 'agt_SQL1' })
-    } finally {
-      reopened.close()
-    }
-  })
-
-  it('persists Connection-scoped platform identities and stable Channel members', async () => {
-    const directory = await temporaryDirectory()
-    const database = await openMigratedCoreDatabase(path.join(directory, 'identities.sqlite'))
-    let id = 0
-    try {
-      const repository = new SqliteCoreRepository(database)
-      const core = new CoreService(repository, { now: () => 500, nextUlid: () => `I${++id}` })
-      const connection = core.createConnection({ adapterKey: 'qq-openclaw', config: {} })
-      const channel = core.ensureChannel({
-        connectionId: connection.id,
-        platformChannelId: 'group:openid-1',
-        kind: 'group',
-        displayName: '旧群名',
-        observedAt: 501,
-      })
-      expect(
-        core.ensureChannel({
-          connectionId: connection.id,
-          platformChannelId: 'group:openid-1',
-          kind: 'group',
-          displayName: '新群名',
-          observedAt: 502,
+      ).rejects.toThrow('kebab-case')
+      await expect(
+        createSqliteBackupSet(
+          [
+            { name: 'duplicate', filename: source },
+            { name: 'duplicate', filename: source },
+          ],
+          path.join(directory, 'duplicate-name'),
+        ),
+      ).rejects.toThrow('kebab-case')
+      await expect(
+        createSqliteBackupSet(
+          [{ name: 'relative', filename: 'relative.sqlite' }],
+          path.join(directory, 'relative-source'),
+        ),
+      ).rejects.toThrow('absolute')
+      await expect(
+        createSqliteBackupSet([{ name: 'memory', filename: ':memory:' }], path.join(directory, 'memory-source')),
+      ).rejects.toThrow('absolute')
+      const missingDestination = path.join(directory, 'missing-source-set')
+      await expect(
+        createSqliteBackupSet(
+          [{ name: 'missing', filename: path.join(directory, 'does-not-exist.sqlite') }],
+          missingDestination,
+        ),
+      ).rejects.toThrow()
+      await expect(readFile(path.join(missingDestination, 'manifest.json'), 'utf8')).rejects.toThrow()
+      expect(() =>
+        SqliteBackupManifestSchema.parse({
+          format: 'nxt.sqlite-backup-set',
+          version: 1,
+          createdAt: 1,
+          databases: [],
+          extra: true,
         }),
-      ).toMatchObject({ id: channel.id, displayName: '新群名' })
-      const first = core.observeChannelMember({
-        connectionId: connection.id,
-        channelId: channel.id,
-        platformUserId: 'member-openid',
-        displayName: '成员甲',
-        observedAt: 503,
-      })
-      const repeated = core.observeChannelMember({
-        connectionId: connection.id,
-        channelId: channel.id,
-        platformUserId: 'member-openid',
-        displayName: '成员乙',
-        observedAt: 504,
-      })
-      expect(repeated.identity).toMatchObject({
-        id: first.identity.id,
-        displayName: '成员乙',
-        firstSeenAt: 503,
-        lastSeenAt: 504,
-        seenCount: 2,
-      })
-      expect(repeated.member).toMatchObject({
-        id: first.member.id,
-        displayName: '成员乙',
-        firstSeenAt: 503,
-        lastSeenAt: 504,
-        seenCount: 2,
-      })
-      expect(core.resolveChannelMemberIdentity(connection.id, channel.id, repeated.member.id)).toMatchObject({
-        platformUserId: 'member-openid',
-      })
-      expect(database.prepare('SELECT COUNT(*) AS count FROM platform_identities').get()).toEqual({ count: 1 })
-      expect(database.prepare('SELECT COUNT(*) AS count FROM channel_members').get()).toEqual({ count: 1 })
-      await repository.save(connection.id, 'qq-openclaw.gateway-session', { sequence: 9 }, 505)
-      await expect(repository.load(connection.id, 'qq-openclaw.gateway-session')).resolves.toEqual({ sequence: 9 })
-      await repository.clear(connection.id, 'qq-openclaw.gateway-session')
-      await expect(repository.load(connection.id, 'qq-openclaw.gateway-session')).resolves.toBeUndefined()
+      ).toThrow()
     } finally {
       database.close()
-    }
-  })
-
-  it('persists Episode, Admission, Outbox and structured receipts through the Runtime repository', async () => {
-    const directory = await temporaryDirectory()
-    const database = await openMigratedCoreDatabase(path.join(directory, 'runtime.sqlite'))
-    let coreId = 0
-    let runtimeId = 0
-    try {
-      const repository = new SqliteCoreRepository(database)
-      const core = new CoreService(repository, { now: () => 300, nextUlid: () => `C${++coreId}` })
-      const agent = core.createAgent({
-        displayName: '小奈',
-        persona: '',
-        model: { provider: 'deepseek', model: 'v4' },
-      })
-      const connection = core.createConnection({ adapterKey: 'web', config: {} })
-      const channel = core.createChannel({
-        connectionId: connection.id,
-        platformChannelId: 'runtime-main',
-        kind: 'web',
-      })
-      core.createBinding({ channelId: channel.id, agentId: agent.definition.id, triggerPolicy: 'always' })
-
-      const sessionDriver: AgentSessionDriver = {
-        createSession: () => Promise.resolve('dsh-session-runtime'),
-        applyCompatibleRevision: () => Promise.resolve(),
-        sessionStatus: () => 'idle',
-        findAdmissionMessage: () => undefined,
-        createHandoffSummary: ({ revision }) =>
-          Promise.resolve({ summary: '交接摘要', provider: revision.model.provider, model: revision.model.model }),
-        cancelSession: () => Promise.resolve(),
-        admit: ({ admissionId }) => Promise.resolve({ dshMessageId: `dsh-message-${admissionId}` }),
-      }
-      const adapterContext: AdapterConnectionContext = {
-        connectionId: connection.id,
-        now: () => 300,
-        acceptInbound: () => Promise.reject(new Error('runtime is called directly in this test')),
-      }
-      const adapter = new FakeAdapterConnection(adapterContext)
-      await adapter.start()
-      const runtime = new ChannelRuntime(core, repository, repository, sessionDriver, {
-        now: () => 300,
-        nextUlid: () => `R${++runtimeId}`,
-        resolveAdapter: (id) => (id === connection.id ? adapter : undefined),
-      })
-
-      await runtime.acceptInbound({
-        connectionId: connection.id,
-        channelId: channel.id,
-        adapterKey: 'web',
-        platformEventId: 'runtime-event-1',
-        kind: 'message-created',
-        parts: [{ type: 'text', text: '请回复' }],
-        platformTimestamp: 301,
-        receivedAt: 302,
-        dedupeKey: 'event:runtime-event-1',
-      })
-      const episodeRow = database.prepare("SELECT id FROM episodes WHERE status = 'active'").get() as { id: string }
-      adapter.queueReceipt({ status: 'sent', platformMessageId: 'web-message-1' })
-      const result = await runtime.sendMessage({
-        episodeId: episodeRow.id as EpisodeId,
-        parts: [{ type: 'text', text: '已收到' }],
-        clientRequestId: 'runtime-request-1',
-      })
-      expect(result.status).toBe('sent')
-      expect(database.prepare('SELECT state FROM admissions').get()).toEqual({ state: 'logged-to-session' })
-      expect(database.prepare('SELECT state FROM outbound_intents').get()).toEqual({ state: 'sent' })
-      const receiptRow = database.prepare('SELECT receipt_json FROM delivery_receipts').get() as {
-        receipt_json: string
-      }
-      expect(JSON.parse(receiptRow.receipt_json)).toEqual({
-        status: 'sent',
-        platformMessageId: 'web-message-1',
-      })
-      expect(core.resolvePlatformMessage(connection.id, channel.id, 'web-message-1')).toEqual({
-        logicalMessageId: result.logicalMessageId,
-        authoredByAgent: true,
-      })
-
-      await runtime.sendMessage({
-        episodeId: episodeRow.id as EpisodeId,
-        parts: [{ type: 'text', text: '不会重复发送' }],
-        clientRequestId: 'runtime-request-1',
-      })
-      expect(adapter.deliveries).toHaveLength(1)
-      const [inboundHit] = repository.searchChannelHistory(channel.id, '请回复')
-      expect(inboundHit?.entry).toMatchObject({
-        source: 'channel-event',
-        parts: [{ type: 'text', text: '请回复' }],
-      })
-      const [outboundHit] = repository.searchChannelHistory(channel.id, '已收到')
-      expect(outboundHit?.entry).toMatchObject({
-        source: 'outbound-intent',
-        parts: [{ type: 'text', text: '已收到' }],
-      })
-      expect(repository.listChannelHistory(channel.id)).toHaveLength(2)
-      const privateChannel = core.createChannel({
-        connectionId: connection.id,
-        platformChannelId: 'runtime-private',
-        kind: 'web',
-      })
-      core.appendInbound({
-        connectionId: connection.id,
-        channelId: privateChannel.id,
-        adapterKey: 'web',
-        platformEventId: 'private-event-1',
-        kind: 'message-created',
-        parts: [{ type: 'text', text: '另一个频道的秘密内容' }],
-        platformTimestamp: 400,
-        receivedAt: 400,
-        dedupeKey: 'event:private-event-1',
-      })
-      expect(repository.searchChannelHistory(channel.id, '秘密内容')).toEqual([])
-      expect(repository.searchChannelHistory(privateChannel.id, '秘密内容')).toHaveLength(1)
-      await adapter.stop()
-    } finally {
-      database.close()
-    }
-  })
-
-  it('deduplicates Asset blobs while durably preserving every receive occurrence and journal result', async () => {
-    const directory = await temporaryDirectory()
-    const databasePath = path.join(directory, 'assets.sqlite')
-    const assetRoot = path.join(directory, 'asset-store')
-    const database = await openMigratedCoreDatabase(databasePath)
-    let coreId = 0
-    let assetId = 0
-    const receiveCount = 40
-    try {
-      const repository = new SqliteCoreRepository(database)
-      const core = new CoreService(repository, { now: () => 500, nextUlid: () => `A${++coreId}` })
-      const connection = core.createConnection({ adapterKey: 'web', config: {} })
-      const channel = core.createChannel({
-        connectionId: connection.id,
-        platformChannelId: 'asset-main',
-        kind: 'web',
-      })
-      const events = Array.from(
-        { length: receiveCount },
-        (_, index) =>
-          core.appendInbound({
-            connectionId: connection.id,
-            channelId: channel.id,
-            adapterKey: 'web',
-            platformEventId: `asset-event-${index}`,
-            platformMessageId: `asset-message-${index}`,
-            kind: 'message-created',
-            parts: [{ type: 'text', text: '普通文件' }],
-            platformTimestamp: 501 + index,
-            receivedAt: 501 + index,
-            dedupeKey: `event:asset-event-${index}`,
-          }).event,
-      )
-      const service = new AssetService(repository, assetRoot, {
-        now: () => 600,
-        nextUlid: () => `ASSET${++assetId}`,
-      })
-      let enhancementCalls = 0
-      const enrichment = new AssetEnrichmentService(
-        repository,
-        service,
-        {
-          enhance: ({ blobPath }) => {
-            enhancementCalls += 1
-            expect(blobPath).toContain('blobs/sha256')
-            return Promise.resolve({ summary: '一张包含文字的测试图片', ocrText: '测试文字', tags: ['测试'] })
-          },
-        },
-        { now: () => 800, nextUlid: () => `ENRICH${++assetId}` },
-      )
-      const pipeline = new AssetIngestionPipeline(service, {
-        enrichment,
-        specs: [
-          {
-            enhancerId: 'vision-summary',
-            provider: 'test-provider',
-            modelId: 'vision-model',
-            promptVersion: 1,
-            schemaVersion: 1,
-          },
-        ],
-      })
-      const bytes = new Uint8Array(
-        Buffer.from(
-          'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Wl6ZQAAAABJRU5ErkJggg==',
-          'base64',
-        ),
-      )
-
-      const commits = await Promise.all(
-        events.map((event, index) =>
-          pipeline.import({
-            bytes,
-            occurrence: {
-              channelEventId: event.id,
-              channelId: channel.id,
-              connectionId: connection.id,
-              ...(event.platformMessageId === undefined ? {} : { platformMessageId: event.platformMessageId }),
-              receivedAt: 700 + index,
-              filename: 'clip.mp4',
-              declaredMediaType: 'video/mp4',
-            },
-          }),
-        ),
-      )
-
-      expect(new Set(commits.map(({ asset }) => asset.id)).size).toBe(1)
-      expect(database.prepare('SELECT COUNT(*) AS count FROM assets').get()).toEqual({ count: 1 })
-      expect(database.prepare('SELECT COUNT(*) AS count FROM asset_occurrences').get()).toEqual({
-        count: receiveCount,
-      })
-      expect(
-        database.prepare('SELECT COUNT(*) AS count FROM asset_operations WHERE state = ?').get('completed'),
-      ).toEqual({ count: receiveCount })
-      expect(database.prepare('SELECT media_type, receive_count, last_received_at FROM assets').get()).toEqual({
-        media_type: 'image/png',
-        receive_count: receiveCount,
-        last_received_at: 700 + receiveCount - 1,
-      })
-      expect(database.prepare('SELECT DISTINCT declared_media_type FROM asset_occurrences').all()).toEqual([
-        { declared_media_type: 'video/mp4' },
-      ])
-      const digestPrefixes = await readdir(path.join(assetRoot, 'blobs/sha256'))
-      expect(digestPrefixes).toHaveLength(1)
-      expect(await readdir(path.join(assetRoot, 'blobs/sha256', digestPrefixes[0]!))).toHaveLength(1)
-
-      expect(database.prepare('SELECT COUNT(*) AS count FROM asset_enrichments').get()).toEqual({ count: 1 })
-      expect(await enrichment.drain()).toBe(1)
-      expect(enhancementCalls).toBe(1)
-      expect(repository.listAssetEnrichments(commits[0]!.asset.id)[0]).toMatchObject({
-        state: 'succeeded',
-        summary: '一张包含文字的测试图片',
-        ocrText: '测试文字',
-      })
-      enrichment.enqueue(commits[0]!.asset, {
-        enhancerId: 'vision-summary',
-        provider: 'test-provider',
-        modelId: 'vision-model',
-        promptVersion: 2,
-        schemaVersion: 1,
-      })
-      expect(repository.claimPendingAssetEnrichment(801)?.state).toBe('running')
-      expect(enrichment.recover()).toBe(1)
-      expect(await enrichment.drain()).toBe(1)
-      expect(enhancementCalls).toBe(2)
-      expect(repository.listAssetEnrichments(commits[0]!.asset.id)).toHaveLength(2)
-      expect(repository.canAccessAsset(commits[0]!.asset.id, channel.id)).toBe(true)
-      expect(repository.canAccessAsset(commits[0]!.asset.id, 'another-channel' as ChannelId)).toBe(false)
-    } finally {
-      database.close()
-    }
-
-    const reopened = await openMigratedCoreDatabase(databasePath)
-    try {
-      const repository = new SqliteCoreRepository(reopened)
-      const service = new AssetService(repository, assetRoot)
-      expect(await service.recover()).toEqual([])
-      expect(reopened.prepare('SELECT COUNT(*) AS count FROM asset_occurrences').get()).toEqual({
-        count: receiveCount,
-      })
-    } finally {
-      reopened.close()
     }
   })
 })

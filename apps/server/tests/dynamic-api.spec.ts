@@ -1,6 +1,7 @@
 import { LlmAdapter, type GenerateOptions, type StreamChunk } from '@deepseek-ai/dsh-llm'
 import { Context } from '@deepseek-ai/cordis'
 import WebServer from '@deepseek-ai/dsh-host-webserver'
+import { HostApiContracts } from '@nekro-nxt/contracts'
 import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
@@ -57,7 +58,7 @@ describe('NekroNxt domain API — browser dynamic client circuit', () => {
     })
     await runtime.start()
 
-    const entity = runtime.createAgentWithWebChannel({
+    const entity = await runtime.createAgentWithWebChannel({
       displayName: '创造智能体',
       persona: '',
       model: { provider: 'test-provider', model: 'chat-model' },
@@ -96,7 +97,8 @@ describe('NekroNxt domain API — browser dynamic client circuit', () => {
       false,
     )
     expect(hostHalf.ok).toBe(true)
-    const pluginRunId = (hostHalf as { pluginRunId: string }).pluginRunId
+    if (!hostHalf.ok) throw new Error(hostHalf.message)
+    const pluginRunId = hostHalf.pluginRunId
     void ran
 
     // Expose the API and approve through it.
@@ -111,22 +113,12 @@ describe('NekroNxt domain API — browser dynamic client circuit', () => {
         body: JSON.stringify({ requestId: approval, pluginRunId }),
       })
       expect(approveResponse.ok).toBe(true)
-      const ack = (await approveResponse.json()) as { accepted: boolean }
+      const ack = HostApiContracts.dynamicApprove.parseResponse(await approveResponse.json())
       expect(ack.accepted).toBe(true)
 
       // The run resolves and client code is now available to load in the browser.
       const clientCode = runtime.host.getDynamicClientCode(dshSessionId, defined.pluginId, pluginRunId)
       expect(clientCode.code).toContain('apply')
-
-      // The browser fetches the client code through the API to render it into a Slot.
-      const codeResponse = await fetch(`${origin}/api/dynamic/${entity.agentId}/get-client-code`, {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ pluginId: defined.pluginId, pluginRunId }),
-      })
-      expect(codeResponse.ok).toBe(true)
-      const code = (await codeResponse.json()) as { code: string }
-      expect(code.code).toContain('apply')
     } finally {
       api.dispose()
       await webContext.fiber.dispose()

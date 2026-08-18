@@ -1,82 +1,132 @@
-import { integer, sqliteTable, text, uniqueIndex } from 'drizzle-orm/sqlite-core'
+import type { AdapterFailureKind } from '@nekro-nxt/adapter-sdk'
+import type {
+  AgentId,
+  AgentRevisionId,
+  AdmissionId,
+  AssetId,
+  ChannelEventId,
+  ChannelId,
+  ChannelMemberId,
+  ConnectionId,
+  EpisodeHandoffId,
+  EpisodeId,
+  ExtensionId,
+  ExtensionRevisionId,
+  JsonValue,
+  LogicalMessageId,
+  MessagePart,
+  OutboundIntentId,
+  PhysicalDeliveryId,
+  PlatformIdentityId,
+} from '@nekro-nxt/contracts'
+import type { AgentCapabilityGrants } from '@nekro-nxt/core'
 import { sql } from 'drizzle-orm'
+import { check, foreignKey, index, integer, primaryKey, sqliteTable, text, uniqueIndex } from 'drizzle-orm/sqlite-core'
 
-/** Durable Host upgrade journal; domain tables are introduced with their first real consumers. */
-export const migrationJournal = sqliteTable('migration_journal', {
-  id: text('id').primaryKey(),
-  state: text('state', { enum: ['running', 'completed', 'failed'] }).notNull(),
-  startedAt: integer('started_at').notNull(),
-  completedAt: integer('completed_at'),
-  errorSummary: text('error_summary'),
-})
+const jsonText = <T>(name: string) => text(name, { mode: 'json' }).$type<T>()
 
 export const agentDefinitions = sqliteTable('agent_definitions', {
-  id: text('id').primaryKey(),
-  currentRevisionId: text('current_revision_id').notNull(),
+  id: text().$type<AgentId>().primaryKey(),
   createdAt: integer('created_at').notNull(),
 })
 
 export const agentRevisions = sqliteTable(
   'agent_revisions',
   {
-    id: text('id').primaryKey(),
+    id: text().$type<AgentRevisionId>().notNull(),
     agentId: text('agent_id')
+      .$type<AgentId>()
       .notNull()
-      .references(() => agentDefinitions.id, { onDelete: 'cascade' }),
-    revision: integer('revision').notNull(),
+      .references(() => agentDefinitions.id, { onDelete: 'restrict' }),
+    revision: integer().notNull(),
     displayName: text('display_name').notNull(),
-    persona: text('persona').notNull(),
+    persona: text().notNull(),
     modelProvider: text('model_provider').notNull(),
     modelId: text('model_id').notNull(),
     reasoningEffort: text('reasoning_effort'),
-    capabilitiesJson: text('capabilities_json').notNull(),
-    settingsJson: text('settings_json'),
+    capabilities: jsonText<AgentCapabilityGrants>('capabilities').notNull(),
     contentDigest: text('content_digest').notNull(),
     createdAt: integer('created_at').notNull(),
   },
   (table) => [
+    primaryKey({ columns: [table.id] }),
+    uniqueIndex('agent_revisions_id_agent_uq').on(table.id, table.agentId),
     uniqueIndex('agent_revisions_agent_revision_uq').on(table.agentId, table.revision),
     uniqueIndex('agent_revisions_agent_digest_uq').on(table.agentId, table.contentDigest),
+    check('agent_revisions_revision_ck', sql`${table.revision} > 0`),
   ],
 )
 
-export const connections = sqliteTable('connections', {
-  id: text('id').primaryKey(),
-  adapterKey: text('adapter_key').notNull(),
-  configJson: text('config_json').notNull(),
-  credentialRefsJson: text('credential_refs_json').notNull(),
-  status: text('status', { enum: ['configured', 'active', 'stopped', 'failed'] }).notNull(),
-  createdAt: integer('created_at').notNull(),
+export const agentCurrentRevisions = sqliteTable(
+  'agent_current_revisions',
+  {
+    agentId: text('agent_id').$type<AgentId>().primaryKey(),
+    revisionId: text('revision_id').$type<AgentRevisionId>().notNull(),
+  },
+  (table) => [
+    foreignKey({
+      name: 'agent_current_revisions_agent_fk',
+      columns: [table.agentId],
+      foreignColumns: [agentDefinitions.id],
+    }).onDelete('cascade'),
+    foreignKey({
+      name: 'agent_current_revisions_revision_fk',
+      columns: [table.revisionId, table.agentId],
+      foreignColumns: [agentRevisions.id, agentRevisions.agentId],
+    }).onDelete('restrict'),
+  ],
+)
+
+export const connections = sqliteTable(
+  'connections',
+  {
+    id: text().$type<ConnectionId>().primaryKey(),
+    adapterKey: text('adapter_key').notNull(),
+    config: jsonText<JsonValue>('config').notNull(),
+    credentialRefs: jsonText<Readonly<Record<string, string>>>('credential_refs').notNull(),
+    createdAt: integer('created_at').notNull(),
+  },
+  (table) => [index('connections_adapter_idx').on(table.adapterKey, table.createdAt)],
+)
+
+export const connectionState = sqliteTable('connection_state', {
+  connectionId: text('connection_id')
+    .$type<ConnectionId>()
+    .primaryKey()
+    .references(() => connections.id, { onDelete: 'cascade' }),
+  state: jsonText<JsonValue>('state').notNull(),
+  updatedAt: integer('updated_at').notNull(),
 })
 
 export const channels = sqliteTable(
   'channels',
   {
-    id: text('id').primaryKey(),
-    logicalMessageId: text('logical_message_id').notNull().unique(),
+    id: text().$type<ChannelId>().primaryKey(),
     connectionId: text('connection_id')
+      .$type<ConnectionId>()
       .notNull()
-      .references(() => connections.id, { onDelete: 'cascade' }),
+      .references(() => connections.id, { onDelete: 'restrict' }),
     platformChannelId: text('platform_channel_id').notNull(),
-    kind: text('kind', { enum: ['web', 'direct', 'group'] }).notNull(),
+    kind: text({ enum: ['web', 'direct', 'group'] }).notNull(),
     displayName: text('display_name'),
     createdAt: integer('created_at').notNull(),
   },
-  (table) => [uniqueIndex('channels_connection_platform_uq').on(table.connectionId, table.platformChannelId)],
+  (table) => [
+    uniqueIndex('channels_connection_platform_uq').on(table.connectionId, table.platformChannelId),
+    check('channels_kind_ck', sql`${table.kind} IN ('web', 'direct', 'group')`),
+  ],
 )
 
 export const platformIdentities = sqliteTable(
   'platform_identities',
   {
-    id: text('id').primaryKey(),
+    id: text().$type<PlatformIdentityId>().primaryKey(),
     connectionId: text('connection_id')
+      .$type<ConnectionId>()
       .notNull()
-      .references(() => connections.id, { onDelete: 'cascade' }),
+      .references(() => connections.id, { onDelete: 'restrict' }),
     platformUserId: text('platform_user_id').notNull(),
     displayName: text('display_name'),
-    firstSeenAt: integer('first_seen_at').notNull(),
-    lastSeenAt: integer('last_seen_at').notNull(),
-    seenCount: integer('seen_count').notNull(),
   },
   (table) => [uniqueIndex('platform_identities_connection_user_uq').on(table.connectionId, table.platformUserId)],
 )
@@ -84,120 +134,97 @@ export const platformIdentities = sqliteTable(
 export const channelMembers = sqliteTable(
   'channel_members',
   {
-    id: text('id').primaryKey(),
+    id: text().$type<ChannelMemberId>().primaryKey(),
     channelId: text('channel_id')
+      .$type<ChannelId>()
       .notNull()
-      .references(() => channels.id, { onDelete: 'cascade' }),
+      .references(() => channels.id, { onDelete: 'restrict' }),
     platformIdentityId: text('platform_identity_id')
+      .$type<PlatformIdentityId>()
       .notNull()
-      .references(() => platformIdentities.id, { onDelete: 'cascade' }),
+      .references(() => platformIdentities.id, { onDelete: 'restrict' }),
     displayName: text('display_name'),
-    firstSeenAt: integer('first_seen_at').notNull(),
-    lastSeenAt: integer('last_seen_at').notNull(),
-    seenCount: integer('seen_count').notNull(),
   },
   (table) => [uniqueIndex('channel_members_channel_identity_uq').on(table.channelId, table.platformIdentityId)],
 )
 
-export const bindings = sqliteTable(
-  'bindings',
+export const channelBindings = sqliteTable(
+  'channel_bindings',
   {
-    id: text('id').primaryKey(),
     channelId: text('channel_id')
-      .notNull()
-      .references(() => channels.id, { onDelete: 'cascade' }),
+      .$type<ChannelId>()
+      .primaryKey()
+      .references(() => channels.id, { onDelete: 'restrict' }),
     agentId: text('agent_id')
+      .$type<AgentId>()
       .notNull()
-      .references(() => agentDefinitions.id, { onDelete: 'cascade' }),
+      .references(() => agentDefinitions.id, { onDelete: 'restrict' }),
     triggerPolicy: text('trigger_policy', {
       enum: ['always', 'mentioned-or-replied', 'command', 'observe-only'],
     }).notNull(),
-    revision: integer('revision').notNull(),
-    active: integer('active', { mode: 'boolean' }).notNull().default(true),
-    createdAt: integer('created_at').notNull(),
+    boundAt: integer('bound_at').notNull(),
   },
   (table) => [
-    uniqueIndex('bindings_channel_agent_uq').on(table.channelId, table.agentId),
-    uniqueIndex('bindings_active_channel_uq')
-      .on(table.channelId)
-      .where(sql`${table.active} = 1`),
+    index('channel_bindings_agent_idx').on(table.agentId, table.boundAt),
+    check(
+      'channel_bindings_trigger_policy_ck',
+      sql`${table.triggerPolicy} IN ('always', 'mentioned-or-replied', 'command', 'observe-only')`,
+    ),
   ],
 )
 
 export const channelEvents = sqliteTable(
   'channel_events',
   {
-    id: text('id').primaryKey(),
-    connectionId: text('connection_id')
-      .notNull()
-      .references(() => connections.id, { onDelete: 'cascade' }),
+    id: text().$type<ChannelEventId>().notNull(),
+    logicalMessageId: text('logical_message_id').$type<LogicalMessageId>().notNull(),
     channelId: text('channel_id')
+      .$type<ChannelId>()
       .notNull()
-      .references(() => channels.id, { onDelete: 'cascade' }),
-    adapterKey: text('adapter_key').notNull(),
-    platformEventId: text('platform_event_id'),
+      .references(() => channels.id, { onDelete: 'restrict' }),
     platformMessageId: text('platform_message_id'),
-    kind: text('kind').notNull(),
-    senderMemberId: text('sender_member_id'),
-    partsJson: text('parts_json').notNull(),
-    platformSequence: integer('platform_sequence'),
-    platformTimestamp: integer('platform_timestamp').notNull(),
+    kind: text({
+      enum: ['message-created', 'message-edited', 'message-deleted', 'member-updated', 'reaction', 'control'],
+    }).notNull(),
+    senderMemberId: text('sender_member_id').$type<ChannelMemberId>(),
+    parts: jsonText<readonly MessagePart[]>('parts').notNull(),
+    sourceTimestamp: integer('source_timestamp').notNull(),
     receivedAt: integer('received_at').notNull(),
     dedupeKey: text('dedupe_key').notNull(),
-    factsJson: text('facts_json'),
-    createdAt: integer('created_at').notNull(),
+    facts: jsonText<Readonly<Record<string, JsonValue>>>('facts'),
+    searchText: text('search_text').notNull(),
   },
-  (table) => [uniqueIndex('channel_events_connection_dedupe_uq').on(table.connectionId, table.dedupeKey)],
-)
-
-export const adapterCheckpoints = sqliteTable('adapter_checkpoints', {
-  connectionId: text('connection_id')
-    .primaryKey()
-    .references(() => connections.id, { onDelete: 'cascade' }),
-  checkpointJson: text('checkpoint_json').notNull(),
-  channelEventId: text('channel_event_id')
-    .notNull()
-    .references(() => channelEvents.id, { onDelete: 'cascade' }),
-  updatedAt: integer('updated_at').notNull(),
-})
-
-export const adapterRuntimeStates = sqliteTable(
-  'adapter_runtime_states',
-  {
-    connectionId: text('connection_id')
-      .notNull()
-      .references(() => connections.id, { onDelete: 'cascade' }),
-    stateKey: text('state_key').notNull(),
-    stateJson: text('state_json').notNull(),
-    updatedAt: integer('updated_at').notNull(),
-  },
-  (table) => [uniqueIndex('adapter_runtime_states_connection_key_uq').on(table.connectionId, table.stateKey)],
+  (table) => [
+    primaryKey({ columns: [table.id] }),
+    uniqueIndex('channel_events_id_channel_uq').on(table.id, table.channelId),
+    uniqueIndex('channel_events_logical_message_uq').on(table.logicalMessageId),
+    uniqueIndex('channel_events_channel_dedupe_uq').on(table.channelId, table.dedupeKey),
+    index('channel_events_history_idx').on(table.channelId, table.receivedAt, table.id),
+    index('channel_events_platform_message_idx').on(table.channelId, table.platformMessageId),
+    foreignKey({
+      name: 'channel_events_sender_fk',
+      columns: [table.senderMemberId],
+      foreignColumns: [channelMembers.id],
+    }).onDelete('restrict'),
+    check(
+      'channel_events_kind_ck',
+      sql`${table.kind} IN ('message-created', 'message-edited', 'message-deleted', 'member-updated', 'reaction', 'control')`,
+    ),
+  ],
 )
 
 export const episodes = sqliteTable(
   'episodes',
   {
-    id: text('id').primaryKey(),
-    channelId: text('channel_id')
-      .notNull()
-      .references(() => channels.id, { onDelete: 'cascade' }),
-    agentId: text('agent_id')
-      .notNull()
-      .references(() => agentDefinitions.id, { onDelete: 'cascade' }),
-    agentRevisionId: text('agent_revision_id')
-      .notNull()
-      .references(() => agentRevisions.id),
-    bindingId: text('binding_id')
-      .notNull()
-      .references(() => bindings.id),
-    bindingRevision: integer('binding_revision').notNull(),
-    dshSessionId: text('dsh_session_id'),
-    status: text('status', { enum: ['opening', 'active', 'rolling-over', 'closed', 'failed'] }).notNull(),
-    openedAtEventId: text('opened_at_event_id')
-      .notNull()
-      .references(() => channelEvents.id),
-    lastAdmittedEventId: text('last_admitted_event_id').references(() => channelEvents.id),
-    closedAtEventId: text('closed_at_event_id').references(() => channelEvents.id),
+    id: text().$type<EpisodeId>().notNull(),
+    channelId: text('channel_id').$type<ChannelId>().notNull(),
+    agentId: text('agent_id').$type<AgentId>().notNull(),
+    agentRevisionId: text('agent_revision_id').$type<AgentRevisionId>().notNull(),
+    dshSessionId: text('dsh_session_id').unique(),
+    status: text({ enum: ['opening', 'active', 'closed', 'failed'] }).notNull(),
+    openedAtEventId: text('opened_at_event_id').$type<ChannelEventId>().notNull(),
+    lastAdmittedEventId: text('last_admitted_event_id').$type<ChannelEventId>(),
+    closedAtEventId: text('closed_at_event_id').$type<ChannelEventId>(),
     closedAt: integer('closed_at'),
     closeReason: text('close_reason', {
       enum: [
@@ -207,308 +234,307 @@ export const episodes = sqliteTable(
         'incompatible-activation',
         'unrecoverable-session',
         'permission-revoked',
+        'binding-replaced',
         'stopped',
       ],
     }),
     createdAt: integer('created_at').notNull(),
   },
   (table) => [
+    primaryKey({ columns: [table.id] }),
+    uniqueIndex('episodes_id_channel_agent_uq').on(table.id, table.channelId, table.agentId),
     uniqueIndex('episodes_live_lane_uq')
       .on(table.channelId, table.agentId)
-      .where(sql`${table.status} IN ('opening', 'active', 'rolling-over')`),
+      .where(sql`${table.status} IN ('opening', 'active')`),
+    index('episodes_agent_history_idx').on(table.agentId, table.createdAt),
+    foreignKey({
+      name: 'episodes_channel_fk',
+      columns: [table.channelId],
+      foreignColumns: [channels.id],
+    }).onDelete('restrict'),
+    check('episodes_status_ck', sql`${table.status} IN ('opening', 'active', 'closed', 'failed')`),
+    check(
+      'episodes_close_reason_ck',
+      sql`${table.closeReason} IS NULL OR ${table.closeReason} IN ('manual', 'idle-timeout', 'incompatible-revision', 'incompatible-activation', 'unrecoverable-session', 'permission-revoked', 'binding-replaced', 'stopped')`,
+    ),
+    foreignKey({
+      name: 'episodes_revision_fk',
+      columns: [table.agentRevisionId, table.agentId],
+      foreignColumns: [agentRevisions.id, agentRevisions.agentId],
+    }).onDelete('restrict'),
+    foreignKey({
+      name: 'episodes_opened_event_fk',
+      columns: [table.openedAtEventId, table.channelId],
+      foreignColumns: [channelEvents.id, channelEvents.channelId],
+    }).onDelete('restrict'),
+    foreignKey({
+      name: 'episodes_last_event_fk',
+      columns: [table.lastAdmittedEventId, table.channelId],
+      foreignColumns: [channelEvents.id, channelEvents.channelId],
+    }).onDelete('restrict'),
+    foreignKey({
+      name: 'episodes_closed_event_fk',
+      columns: [table.closedAtEventId, table.channelId],
+      foreignColumns: [channelEvents.id, channelEvents.channelId],
+    }).onDelete('restrict'),
   ],
 )
 
-export const episodeHandoffs = sqliteTable('episode_handoffs', {
-  id: text('id').primaryKey(),
-  fromEpisodeId: text('from_episode_id')
-    .notNull()
-    .references(() => episodes.id),
-  toEpisodeId: text('to_episode_id')
-    .notNull()
-    .references(() => episodes.id),
-  sourceEventIdsJson: text('source_event_ids_json').notNull(),
-  recentEventIdsJson: text('recent_event_ids_json').notNull(),
-  summary: text('summary').notNull(),
-  provider: text('provider').notNull(),
-  model: text('model').notNull(),
-  createdAt: integer('created_at').notNull(),
-})
+export const episodeHandoffs = sqliteTable(
+  'episode_handoffs',
+  {
+    id: text().$type<EpisodeHandoffId>().primaryKey(),
+    fromEpisodeId: text('from_episode_id')
+      .$type<EpisodeId>()
+      .notNull()
+      .references(() => episodes.id, { onDelete: 'restrict' }),
+    toEpisodeId: text('to_episode_id')
+      .$type<EpisodeId>()
+      .notNull()
+      .references(() => episodes.id, { onDelete: 'restrict' }),
+    summary: text().notNull(),
+    provider: text().notNull(),
+    model: text().notNull(),
+    createdAt: integer('created_at').notNull(),
+  },
+  (table) => [
+    uniqueIndex('episode_handoffs_from_uq').on(table.fromEpisodeId),
+    uniqueIndex('episode_handoffs_to_uq').on(table.toEpisodeId),
+  ],
+)
 
-export const admissions = sqliteTable('admissions', {
-  id: text('id').primaryKey(),
-  episodeId: text('episode_id')
-    .notNull()
-    .references(() => episodes.id, { onDelete: 'cascade' }),
-  channelEventIdsJson: text('channel_event_ids_json').notNull(),
-  reason: text('reason', { enum: ['trigger', 'running-injection', 'recovery'] }).notNull(),
-  state: text('state', { enum: ['pending', 'claimed', 'logged-to-session', 'rejected'] }).notNull(),
-  dshMessageId: text('dsh_message_id'),
-  createdAt: integer('created_at').notNull(),
-  claimedAt: integer('claimed_at'),
-  loggedAt: integer('logged_at'),
-})
+export const episodeHandoffEvents = sqliteTable(
+  'episode_handoff_events',
+  {
+    handoffId: text('handoff_id')
+      .$type<EpisodeHandoffId>()
+      .notNull()
+      .references(() => episodeHandoffs.id, { onDelete: 'cascade' }),
+    eventId: text('event_id')
+      .$type<ChannelEventId>()
+      .notNull()
+      .references(() => channelEvents.id, { onDelete: 'restrict' }),
+    role: text({ enum: ['source', 'recent'] }).notNull(),
+    position: integer().notNull(),
+  },
+  (table) => [
+    primaryKey({ columns: [table.handoffId, table.role, table.position] }),
+    uniqueIndex('episode_handoff_events_event_uq').on(table.handoffId, table.role, table.eventId),
+    check('episode_handoff_events_role_ck', sql`${table.role} IN ('source', 'recent')`),
+    check('episode_handoff_events_position_ck', sql`${table.position} >= 0`),
+  ],
+)
+
+export const admissions = sqliteTable(
+  'admissions',
+  {
+    id: text().$type<AdmissionId>().primaryKey(),
+    episodeId: text('episode_id')
+      .$type<EpisodeId>()
+      .notNull()
+      .references(() => episodes.id, { onDelete: 'restrict' }),
+    mode: text({ enum: ['followup', 'inject'] }).notNull(),
+    state: text({ enum: ['pending', 'claimed', 'logged-to-session'] }).notNull(),
+    dshMessageId: text('dsh_message_id'),
+    createdAt: integer('created_at').notNull(),
+  },
+  (table) => [
+    index('admissions_recovery_idx').on(table.episodeId, table.state, table.createdAt),
+    check('admissions_mode_ck', sql`${table.mode} IN ('followup', 'inject')`),
+    check('admissions_state_ck', sql`${table.state} IN ('pending', 'claimed', 'logged-to-session')`),
+  ],
+)
+
+export const admissionEvents = sqliteTable(
+  'admission_events',
+  {
+    admissionId: text('admission_id')
+      .notNull()
+      .references(() => admissions.id, { onDelete: 'cascade' }),
+    eventId: text('event_id')
+      .$type<ChannelEventId>()
+      .notNull()
+      .references(() => channelEvents.id, { onDelete: 'restrict' }),
+    position: integer().notNull(),
+  },
+  (table) => [
+    primaryKey({ columns: [table.admissionId, table.position] }),
+    uniqueIndex('admission_events_event_uq').on(table.admissionId, table.eventId),
+    index('admission_events_event_idx').on(table.eventId),
+    check('admission_events_position_ck', sql`${table.position} >= 0`),
+  ],
+)
 
 export const outboundIntents = sqliteTable(
   'outbound_intents',
   {
-    id: text('id').primaryKey(),
-    logicalMessageId: text('logical_message_id').notNull().unique(),
-    agentId: text('agent_id')
-      .notNull()
-      .references(() => agentDefinitions.id),
-    agentRevisionId: text('agent_revision_id')
-      .notNull()
-      .references(() => agentRevisions.id),
+    id: text().$type<OutboundIntentId>().primaryKey(),
+    logicalMessageId: text('logical_message_id').$type<LogicalMessageId>().notNull().unique(),
     episodeId: text('episode_id')
+      .$type<EpisodeId>()
       .notNull()
-      .references(() => episodes.id),
+      .references(() => episodes.id, { onDelete: 'restrict' }),
+    agentRevisionId: text('agent_revision_id')
+      .$type<AgentRevisionId>()
+      .notNull()
+      .references(() => agentRevisions.id, { onDelete: 'restrict' }),
     sourceTurnId: text('source_turn_id'),
-    channelId: text('channel_id')
-      .notNull()
-      .references(() => channels.id),
-    partsJson: text('parts_json').notNull(),
+    parts: jsonText<readonly MessagePart[]>('parts').notNull(),
+    searchText: text('search_text').notNull(),
     replyTo: text('reply_to'),
     clientRequestId: text('client_request_id'),
-    state: text('state', {
-      enum: ['planned', 'sending', 'sent', 'partially-sent', 'failed', 'unknown'],
-    }).notNull(),
+    state: text({ enum: ['planned', 'sending', 'sent', 'partially-sent', 'failed', 'unknown'] }).notNull(),
     createdAt: integer('created_at').notNull(),
   },
   (table) => [
-    uniqueIndex('outbound_intents_client_request_uq').on(table.agentId, table.channelId, table.clientRequestId),
+    uniqueIndex('outbound_intents_client_request_uq').on(table.episodeId, table.clientRequestId),
+    index('outbound_intents_recovery_idx').on(table.state, table.createdAt),
+    index('outbound_intents_episode_history_idx').on(table.episodeId, table.createdAt),
+    check(
+      'outbound_intents_state_ck',
+      sql`${table.state} IN ('planned', 'sending', 'sent', 'partially-sent', 'failed', 'unknown')`,
+    ),
   ],
 )
 
 export const physicalDeliveries = sqliteTable(
   'physical_deliveries',
   {
-    id: text('id').primaryKey(),
+    id: text().$type<PhysicalDeliveryId>().primaryKey(),
     intentId: text('intent_id')
+      .$type<OutboundIntentId>()
       .notNull()
       .references(() => outboundIntents.id, { onDelete: 'cascade' }),
-    sequence: integer('sequence').notNull(),
-    partsJson: text('parts_json').notNull(),
-    adapterContextJson: text('adapter_context_json'),
-    state: text('state', { enum: ['planned', 'sending', 'sent', 'failed', 'unknown'] }).notNull(),
-    attemptCount: integer('attempt_count').notNull(),
+    sequence: integer().notNull(),
+    parts: jsonText<readonly MessagePart[]>('parts').notNull(),
+    adapterContext: jsonText<JsonValue>('adapter_context'),
+    state: text({ enum: ['planned', 'sending', 'sent', 'failed', 'unknown'] }).notNull(),
+    platformMessageId: text('platform_message_id'),
+    capabilityOutcomes: jsonText<Readonly<Record<string, JsonValue>>>('capability_outcomes'),
+    failureKind: text('failure_kind', {
+      enum: ['transient', 'permanent', 'rate-limited', 'authentication', 'invalid'],
+    }).$type<AdapterFailureKind>(),
+    resultMessage: text('result_message'),
+    retryAfterMs: integer('retry_after_ms'),
+    completedAt: integer('completed_at'),
   },
-  (table) => [uniqueIndex('physical_deliveries_intent_sequence_uq').on(table.intentId, table.sequence)],
-)
-
-export const deliveryReceipts = sqliteTable(
-  'delivery_receipts',
-  {
-    id: text('id').primaryKey(),
-    physicalDeliveryId: text('physical_delivery_id')
-      .notNull()
-      .references(() => physicalDeliveries.id, { onDelete: 'cascade' }),
-    attempt: integer('attempt').notNull(),
-    receiptJson: text('receipt_json').notNull(),
-    createdAt: integer('created_at').notNull(),
-  },
-  (table) => [uniqueIndex('delivery_receipts_delivery_attempt_uq').on(table.physicalDeliveryId, table.attempt)],
+  (table) => [
+    uniqueIndex('physical_deliveries_intent_sequence_uq').on(table.intentId, table.sequence),
+    check('physical_deliveries_sequence_ck', sql`${table.sequence} >= 0`),
+    check('physical_deliveries_state_ck', sql`${table.state} IN ('planned', 'sending', 'sent', 'failed', 'unknown')`),
+  ],
 )
 
 export const assets = sqliteTable(
   'assets',
   {
-    id: text('id').primaryKey(),
-    contentDigest: text('content_digest').notNull(),
+    id: text().$type<AssetId>().primaryKey(),
+    contentDigest: text('content_digest').notNull().unique(),
     byteSize: integer('byte_size').notNull(),
     mediaType: text('media_type').notNull(),
-    blobState: text('blob_state', { enum: ['present', 'evicted', 'missing', 'quarantined'] }).notNull(),
-    firstReceivedAt: integer('first_received_at').notNull(),
-    lastReceivedAt: integer('last_received_at').notNull(),
-    receiveCount: integer('receive_count').notNull(),
-    lastAccessedAt: integer('last_accessed_at'),
-    storageFormatVersion: integer('storage_format_version').notNull(),
+    createdAt: integer('created_at').notNull(),
   },
-  (table) => [uniqueIndex('assets_content_digest_uq').on(table.contentDigest)],
+  (table) => [check('assets_byte_size_ck', sql`${table.byteSize} >= 0`)],
 )
 
-export const assetOccurrences = sqliteTable('asset_occurrences', {
-  id: text('id').primaryKey(),
-  assetId: text('asset_id')
-    .notNull()
-    .references(() => assets.id, { onDelete: 'cascade' }),
-  channelEventId: text('channel_event_id')
-    .notNull()
-    .references(() => channelEvents.id, { onDelete: 'cascade' }),
-  channelId: text('channel_id')
-    .notNull()
-    .references(() => channels.id, { onDelete: 'cascade' }),
-  connectionId: text('connection_id')
-    .notNull()
-    .references(() => connections.id, { onDelete: 'cascade' }),
-  platformMessageId: text('platform_message_id'),
-  receivedAt: integer('received_at').notNull(),
-  filename: text('filename'),
-  declaredMediaType: text('declared_media_type'),
-})
-
-export const assetOperations = sqliteTable('asset_operations', {
-  id: text('id').primaryKey(),
-  state: text('state', { enum: ['running', 'completed', 'failed'] }).notNull(),
-  stagingRelativePath: text('staging_relative_path').notNull(),
-  blobRelativePath: text('blob_relative_path').notNull(),
-  candidateJson: text('candidate_json').notNull(),
-  occurrenceJson: text('occurrence_json').notNull(),
-  createdAt: integer('created_at').notNull(),
-  completedAt: integer('completed_at'),
-  errorSummary: text('error_summary'),
-})
-
-export const assetEnrichments = sqliteTable(
-  'asset_enrichments',
+export const assetOccurrences = sqliteTable(
+  'asset_occurrences',
   {
-    id: text('id').primaryKey(),
+    channelEventId: text('channel_event_id')
+      .$type<ChannelEventId>()
+      .notNull()
+      .references(() => channelEvents.id, { onDelete: 'cascade' }),
+    partIndex: integer('part_index').notNull(),
     assetId: text('asset_id')
+      .$type<AssetId>()
       .notNull()
-      .references(() => assets.id, { onDelete: 'cascade' }),
-    enhancerId: text('enhancer_id').notNull(),
-    provider: text('provider').notNull(),
-    modelId: text('model_id').notNull(),
-    promptVersion: integer('prompt_version').notNull(),
-    schemaVersion: integer('schema_version').notNull(),
-    state: text('state', { enum: ['pending', 'running', 'succeeded', 'failed'] }).notNull(),
-    summary: text('summary'),
-    ocrText: text('ocr_text'),
-    tagsJson: text('tags_json'),
-    inputDigest: text('input_digest').notNull(),
-    attemptCount: integer('attempt_count').notNull(),
-    failureKind: text('failure_kind'),
-    errorSummary: text('error_summary'),
-    createdAt: integer('created_at').notNull(),
-    updatedAt: integer('updated_at').notNull(),
+      .references(() => assets.id, { onDelete: 'restrict' }),
   },
   (table) => [
-    uniqueIndex('asset_enrichments_key_uq').on(
-      table.assetId,
-      table.enhancerId,
-      table.modelId,
-      table.promptVersion,
-      table.schemaVersion,
-    ),
-  ],
-)
-
-export const extensionDrafts = sqliteTable(
-  'extension_drafts',
-  {
-    id: text('id').primaryKey(),
-    agentId: text('agent_id')
-      .notNull()
-      .references(() => agentDefinitions.id, { onDelete: 'cascade' }),
-    sourceDshSessionId: text('source_dsh_session_id').notNull(),
-    sourceDynamicPluginId: text('source_dynamic_plugin_id').notNull(),
-    displayName: text('display_name').notNull(),
-    description: text('description').notNull(),
-    state: text('state', { enum: ['open', 'saved', 'discarded'] }).notNull(),
-    createdAt: integer('created_at').notNull(),
-    updatedAt: integer('updated_at').notNull(),
-  },
-  (table) => [
-    uniqueIndex('extension_drafts_open_source_uq')
-      .on(table.agentId, table.sourceDshSessionId, table.sourceDynamicPluginId)
-      .where(sql`${table.state} = 'open'`),
-  ],
-)
-
-export const draftPackages = sqliteTable(
-  'draft_packages',
-  {
-    id: text('id').primaryKey(),
-    draftId: text('draft_id')
-      .notNull()
-      .references(() => extensionDrafts.id, { onDelete: 'cascade' }),
-    sourceDynamicPackageId: text('source_dynamic_package_id').notNull(),
-    sequence: integer('sequence').notNull(),
-    name: text('name').notNull(),
-    purpose: text('purpose').notNull(),
-    hostCode: text('host_code'),
-    clientCode: text('client_code'),
-    createdAt: integer('created_at').notNull(),
-  },
-  (table) => [
-    uniqueIndex('draft_packages_source_uq').on(table.draftId, table.sourceDynamicPackageId),
-    uniqueIndex('draft_packages_sequence_uq').on(table.draftId, table.sequence),
+    primaryKey({ columns: [table.channelEventId, table.partIndex] }),
+    index('asset_occurrences_asset_idx').on(table.assetId, table.channelEventId),
+    check('asset_occurrences_part_index_ck', sql`${table.partIndex} >= 0`),
   ],
 )
 
 export const localExtensions = sqliteTable('local_extensions', {
-  id: text('id').primaryKey(),
-  slug: text('slug').notNull().unique(),
+  id: text().$type<ExtensionId>().primaryKey(),
+  slug: text().notNull().unique(),
   displayName: text('display_name').notNull(),
-  description: text('description').notNull(),
-  origin: text('origin', { enum: ['local-created', 'local-imported'] }).notNull(),
-  createdByAgentId: text('created_by_agent_id').references(() => agentDefinitions.id),
-  defaultRevisionId: text('default_revision_id'),
+  description: text().notNull(),
+  createdByAgentId: text('created_by_agent_id')
+    .$type<AgentId>()
+    .references(() => agentDefinitions.id, { onDelete: 'restrict' }),
   createdAt: integer('created_at').notNull(),
-  deletedAt: integer('deleted_at'),
 })
 
 export const extensionRevisions = sqliteTable(
   'extension_revisions',
   {
-    id: text('id').primaryKey(),
+    id: text().$type<ExtensionRevisionId>().notNull(),
     extensionId: text('extension_id')
+      .$type<ExtensionId>()
       .notNull()
-      .references(() => localExtensions.id, { onDelete: 'cascade' }),
+      .references(() => localExtensions.id, { onDelete: 'restrict' }),
     revisionNumber: integer('revision_number').notNull(),
     contentDigest: text('content_digest').notNull(),
-    manifestSchemaVersion: integer('manifest_schema_version').notNull(),
-    extensionApiVersion: text('extension_api_version').notNull(),
-    sourceKind: text('source_kind', { enum: ['dynamic-package', 'local-source'] }).notNull(),
-    sourceDynamicPackageRef: text('source_dynamic_package_ref'),
-    compatibleNekroNxtRange: text('compatible_nekro_nxt_range').notNull(),
-    compatibleDshRange: text('compatible_dsh_range').notNull(),
-    storageState: text('storage_state', { enum: ['saving', 'saved', 'damaged', 'quarantined'] }).notNull(),
-    lastBuildStatus: text('last_build_status', { enum: ['succeeded', 'failed'] }),
-    lastValidationStatus: text('last_validation_status', { enum: ['succeeded', 'failed'] }),
     createdAt: integer('created_at').notNull(),
   },
   (table) => [
+    primaryKey({ columns: [table.id] }),
+    uniqueIndex('extension_revisions_id_extension_uq').on(table.id, table.extensionId),
     uniqueIndex('extension_revisions_number_uq').on(table.extensionId, table.revisionNumber),
     uniqueIndex('extension_revisions_digest_uq').on(table.extensionId, table.contentDigest),
   ],
 )
 
-export const extensionSaveOperations = sqliteTable('extension_save_operations', {
-  id: text('id').primaryKey(),
-  draftPackageId: text('draft_package_id')
-    .notNull()
-    .references(() => draftPackages.id),
-  extensionId: text('extension_id')
-    .notNull()
-    .references(() => localExtensions.id),
-  revisionId: text('revision_id')
-    .notNull()
-    .references(() => extensionRevisions.id),
-  stagingRelativePath: text('staging_relative_path').notNull(),
-  finalRelativePath: text('final_relative_path').notNull(),
-  state: text('state', { enum: ['running', 'completed', 'failed'] }).notNull(),
-  errorSummary: text('error_summary'),
-  createdAt: integer('created_at').notNull(),
-  completedAt: integer('completed_at'),
-})
+export const agentActivations = sqliteTable(
+  'agent_activations',
+  {
+    agentId: text('agent_id')
+      .$type<AgentId>()
+      .notNull()
+      .references(() => agentDefinitions.id, { onDelete: 'restrict' }),
+    extensionId: text('extension_id')
+      .$type<ExtensionId>()
+      .notNull()
+      .references(() => localExtensions.id, { onDelete: 'restrict' }),
+    extensionRevisionId: text('extension_revision_id').$type<ExtensionRevisionId>().notNull(),
+    config: jsonText<JsonValue>('config').notNull(),
+    activatedAt: integer('activated_at').notNull(),
+  },
+  (table) => [
+    primaryKey({ columns: [table.agentId, table.extensionId] }),
+    foreignKey({
+      name: 'agent_activations_revision_fk',
+      columns: [table.extensionRevisionId, table.extensionId],
+      foreignColumns: [extensionRevisions.id, extensionRevisions.extensionId],
+    }).onDelete('restrict'),
+    index('agent_activations_extension_idx').on(table.extensionId, table.agentId),
+  ],
+)
 
-export const agentActivations = sqliteTable('agent_activations', {
-  id: text('id').primaryKey(),
-  agentId: text('agent_id')
-    .notNull()
-    .references(() => agentDefinitions.id, { onDelete: 'cascade' }),
-  extensionId: text('extension_id')
-    .notNull()
-    .references(() => localExtensions.id, { onDelete: 'cascade' }),
-  extensionRevisionId: text('extension_revision_id')
-    .notNull()
-    .references(() => extensionRevisions.id),
-  configJson: text('config_json').notNull(),
-  state: text('state', { enum: ['pending', 'waiting-safe-switch', 'active', 'failed', 'disabled'] }).notNull(),
-  runtimeKind: text('runtime_kind', { enum: ['in-process'] }).notNull(),
-  createdAt: integer('created_at').notNull(),
-  activatedAt: integer('activated_at'),
-  disabledAt: integer('disabled_at'),
-  lastError: text('last_error'),
-})
+export const coreSchema = {
+  agentDefinitions,
+  agentRevisions,
+  agentCurrentRevisions,
+  connections,
+  connectionState,
+  channels,
+  platformIdentities,
+  channelMembers,
+  channelBindings,
+  channelEvents,
+  episodes,
+  episodeHandoffs,
+  episodeHandoffEvents,
+  admissions,
+  admissionEvents,
+  outboundIntents,
+  physicalDeliveries,
+  assets,
+  assetOccurrences,
+  localExtensions,
+  extensionRevisions,
+  agentActivations,
+} as const

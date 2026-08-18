@@ -1,28 +1,56 @@
 import { Context } from '@deepseek-ai/cordis'
 import Loader from '@deepseek-ai/cordis-plugin-loader'
 import { assertEntriesActivated, composeEntries } from '@deepseek-ai/dsh-app-boot'
-import PluginInventory, { type PluginInventoryGateway } from '@deepseek-ai/dsh-host-plugin-inventory'
+import PluginInventory from '@deepseek-ai/dsh-host-plugin-inventory'
 import { describe, expect, it } from 'vitest'
+import { z } from 'zod'
 
 const moduleUrl = (source: string): string => `data:text/javascript,${encodeURIComponent(source)}`
+
+const PluginInventorySnapshotSchema = z
+  .object({
+    entries: z.array(
+      z
+        .object({
+          entryId: z.string(),
+          moduleName: z.string(),
+          enabled: z.boolean(),
+          fiberPhase: z.enum(['pending', 'loading', 'active', 'failed', 'unloading']).nullable(),
+        })
+        .passthrough(),
+    ),
+  })
+  .passthrough()
+const PluginEntryIdSchema = z.string().min(1)
+
+interface PluginInventoryService {
+  readonly list: () => unknown
+}
+
+const isPluginInventoryService = (value: unknown): value is PluginInventoryService =>
+  typeof value === 'object' && value !== null && 'list' in value && typeof value.list === 'function'
 
 describe('DSH rc.6 Loader/Profile compatibility spike', () => {
   it('loads, updates, inventories, removes, and fully retracts a public Cordis plugin entry', async () => {
     const context = new Context()
     await context.plugin(Loader, { baseUrl: import.meta.url })
     await context.plugin(PluginInventory)
-    const inventory = context.get('pluginInventory') as PluginInventoryGateway
+    const inventory: unknown = context.get('pluginInventory')
+    if (!isPluginInventoryService(inventory)) {
+      throw new TypeError('DSH plugin inventory service is unavailable.')
+    }
+    const listInventory = () => PluginInventorySnapshotSchema.parse(inventory.list())
     const name = moduleUrl(`
       export default function apply(ctx, config) {
         ctx.reflect.provide('nxtSpike', { value: config.value })
       }
     `)
     try {
-      const id = await context.loader.create({ name, config: { value: 1 } })
+      const id = PluginEntryIdSchema.parse(await context.loader.create({ name, config: { value: 1 } }))
       await context.loader.await()
       await assertEntriesActivated(context, 'nekro-nxt-loader-spike')
       expect(context.get('nxtSpike')).toEqual({ value: 1 })
-      expect(inventory.list().entries).toEqual([
+      expect(listInventory().entries).toEqual([
         expect.objectContaining({ entryId: id, moduleName: name, enabled: true, fiberPhase: 'active' }),
       ])
 
@@ -33,7 +61,7 @@ describe('DSH rc.6 Loader/Profile compatibility spike', () => {
 
       await context.loader.remove(id)
       expect(context.get('nxtSpike')).toBeUndefined()
-      expect(inventory.list().entries).toEqual([])
+      expect(listInventory().entries).toEqual([])
     } finally {
       await context.fiber.dispose()
     }

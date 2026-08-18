@@ -18,6 +18,7 @@ const visibleAttributeNames = new Set([
   'title',
 ])
 const displayPropertyNames = new Set(['displayName', 'label', 'title', 'description', 'hint', 'placeholder'])
+/** @type {ReadonlyArray<readonly [string, RegExp]>} */
 const forbiddenTerms = [
   ['Agent', /\bAgent\b/iu],
   ['Revision', /\bRevision\b/iu],
@@ -150,7 +151,12 @@ function inspectSource(relativePath, source) {
   const visit = (node) => {
     if (ts.isJsxText(node) && node.text.trim()) addTextFinding(node, node.text, ' JSX 文本')
 
-    if (ts.isJsxAttribute(node) && visibleAttributeNames.has(node.name.text) && node.initializer) {
+    if (
+      ts.isJsxAttribute(node) &&
+      ts.isIdentifier(node.name) &&
+      visibleAttributeNames.has(node.name.text) &&
+      node.initializer
+    ) {
       if (ts.isStringLiteral(node.initializer))
         addTextFinding(node.initializer, node.initializer.text, `属性 ${node.name.text}`)
       else if (ts.isJsxExpression(node.initializer) && node.initializer.expression) {
@@ -171,9 +177,10 @@ function inspectSource(relativePath, source) {
       displayedCollections.has(node.name.text) &&
       node.initializer
     ) {
+      const collectionName = node.name.text
       const inspectCollection = (child) => {
         if (ts.isStringLiteralLike(child) || ts.isNoSubstitutionTemplateLiteral(child)) {
-          addTextFinding(child, child.text, `展示集合 ${node.name.text}`)
+          addTextFinding(child, child.text, `展示集合 ${collectionName}`)
           return
         }
         if (!ts.isFunctionLike(child)) ts.forEachChild(child, inspectCollection)

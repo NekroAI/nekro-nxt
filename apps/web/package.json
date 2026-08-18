@@ -22,6 +22,7 @@
     "@deepseek-ai/dsh-client-web-react": "0.1.0-rc.6",
     "@deepseek-ai/dsh-cordis-client-runner": "0.1.0-rc.6",
     "@nekro-nxt/adapter-sdk": "workspace:*",
+    "@nekro-nxt/contracts": "workspace:*",
     "@nekro-nxt/dsh-compat": "workspace:*",
     "@nekro-nxt/extension-sdk": "workspace:*",
     "@radix-ui/react-dialog": "1.1.23",
@@ -36,7 +37,6 @@
     "zustand": "5.0.15"
   },
   "devDependencies": {
-    "@nekro-nxt/contracts": "workspace:*",
     "@nekro-nxt/extension-runtime": "workspace:*",
     "@types/react": "18.3.31",
     "@types/react-dom": "18.3.7",

@@ -1,4 +1,46 @@
 import { expect, test, type Page } from '@playwright/test'
+import { AgentIdSchema, AgentRevisionIdSchema, ChannelIdSchema, HostApiContracts } from '@nekro-nxt/contracts'
+
+type HostSnapshot = ReturnType<typeof HostApiContracts.snapshot.response.parse>
+
+const isRecord = (value: unknown): value is Record<string, unknown> =>
+  typeof value === 'object' && value !== null && !Array.isArray(value)
+
+const installDeepSeekProviderRoutes = async (page: Page, initiallySaved = false): Promise<void> => {
+  let saved = initiallySaved
+  const responseBody = (): Record<string, unknown> => ({
+    writable: true,
+    protocols: ['openai-completions', 'openai-responses', 'anthropic-messages'],
+    providers: [
+      {
+        provider: 'deepseek',
+        displayName: 'deepseek',
+        settingsNs: 'llm-pi-ai',
+        settingsPath: ['providers', 'deepseek'],
+        settingsRevision: saved ? 2 : 1,
+        declared: false,
+        active: saved,
+        configured: true,
+        credential: { configured: saved, writable: true },
+        models: [{ id: 'deepseek-v4-flash', name: 'DeepSeek V4 Flash' }],
+      },
+    ],
+  })
+
+  await page.route('**/api/llm/providers', async (route) => {
+    if (route.request().method() !== 'GET') return route.continue()
+    return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(responseBody()) })
+  })
+  await page.route('**/api/llm/providers/deepseek', async (route) => {
+    if (route.request().method() !== 'POST') return route.continue()
+    const payload: unknown = route.request().postDataJSON()
+    if (!isRecord(payload) || typeof payload['expectedRevision'] !== 'number') {
+      throw new TypeError('模型供应商保存请求缺少 expectedRevision。')
+    }
+    saved = true
+    return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(responseBody()) })
+  })
+}
 
 const installRuntimeFailureGate = (page: Page): string[] => {
   const failures: string[] = []
@@ -33,6 +75,7 @@ test('production bundle keeps every primary route usable without runtime errors'
 
 test('settings exposes the provider editor and survives real navigation', async ({ page }) => {
   const failures = installRuntimeFailureGate(page)
+  await installDeepSeekProviderRoutes(page, true)
   await page.goto('/settings')
 
   await expect(page.getByRole('heading', { name: '模型供应商' })).toBeVisible()
@@ -66,6 +109,7 @@ test('DSH extension settings load the official native surface and generic fallba
 
 test('settings saves a built-in provider credential without exposing it again', async ({ page }) => {
   const failures = installRuntimeFailureGate(page)
+  await installDeepSeekProviderRoutes(page)
   await page.goto('/settings')
 
   await page.getByRole('button', { name: /DeepSeek/u }).click()
@@ -116,21 +160,146 @@ test("an intelligent-agent can add another channel while replacing that channel'
   request,
 }) => {
   const failures = installRuntimeFailureGate(page)
+  const runId = Date.now().toString(36)
+  const sourceName = `绑定来源-${runId}`
+  const targetName = `绑定目标-${runId}`
+  const sourcePlan = {
+    agentId: AgentIdSchema.parse('agt_journeysource'),
+    revisionId: AgentRevisionIdSchema.parse('arev_journeysource'),
+    channelId: ChannelIdSchema.parse('chn_journeysource'),
+    displayName: sourceName,
+  }
+  const targetPlan = {
+    agentId: AgentIdSchema.parse('agt_journeytarget'),
+    revisionId: AgentRevisionIdSchema.parse('arev_journeytarget'),
+    channelId: ChannelIdSchema.parse('chn_journeytarget'),
+    displayName: targetName,
+  }
+  const plans = [sourcePlan, targetPlan] as const
+  const baseResponse = await request.get('/api/snapshot')
+  expect(baseResponse.ok()).toBe(true)
+  const baseSnapshot = HostApiContracts.snapshot.response.parse(await baseResponse.json())
+  const webConnection = baseSnapshot.connections.find((connection) => connection.adapterKey === 'web')
+  if (!webConnection) throw new Error('测试快照缺少 Web 连接。')
+  let snapshot: HostSnapshot = {
+    ...baseSnapshot,
+    models: baseSnapshot.models.some((model) => model.provider === 'deepseek' && model.id === 'deepseek-v4-flash')
+      ? baseSnapshot.models
+      : [
+          ...baseSnapshot.models,
+          { provider: 'deepseek', providerName: 'deepseek', id: 'deepseek-v4-flash', name: 'DeepSeek V4 Flash' },
+        ],
+  }
+  let created = 0
+
+  await page.route('**/api/snapshot', (route) =>
+    route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(snapshot) }),
+  )
+  await page.route('**/api/agents', async (route) => {
+    if (route.request().method() !== 'POST') return route.continue()
+    const plan = plans[created]
+    if (!plan) throw new Error('测试只允许创建两个智能体。')
+    const rawRequest: unknown = route.request().postDataJSON()
+    const input = HostApiContracts.createAgent.request.parse(rawRequest)
+    if (input.displayName !== plan.displayName) throw new Error('创建智能体顺序与测试计划不一致。')
+    const agent: HostSnapshot['agents'][number] = {
+      id: plan.agentId,
+      displayName: input.displayName,
+      persona: input.persona,
+      currentRevisionId: plan.revisionId,
+      createdAt: 1_725_000_000_000 + created * 100,
+      runtimeStatus: 'idle',
+      model: input.model,
+      capabilities: input.capabilities ?? {
+        subagents: true,
+        fileTools: false,
+        webSearch: false,
+        dynamicCreation: false,
+        developmentShell: false,
+        unrestrictedFileAccess: false,
+      },
+      channels: [plan.channelId],
+    }
+    const channel: HostSnapshot['channels'][number] = {
+      id: plan.channelId,
+      connectionId: webConnection.id,
+      platformChannelId: `journey-${created}`,
+      kind: 'web',
+      displayName: `${plan.displayName} 的网页频道`,
+      boundAgentId: plan.agentId,
+      bindings: [
+        {
+          channelId: plan.channelId,
+          agentId: plan.agentId,
+          triggerPolicy: 'always',
+          boundAt: 1_725_000_000_000 + created * 100,
+        },
+      ],
+    }
+    snapshot = {
+      ...snapshot,
+      agents: [...snapshot.agents, agent],
+      channels: [...snapshot.channels, channel],
+      connections: snapshot.connections.map((connection) =>
+        connection.id === webConnection.id ? { ...connection, channelCount: connection.channelCount + 1 } : connection,
+      ),
+    }
+    created += 1
+    const response = HostApiContracts.createAgent.response.parse({
+      agentId: plan.agentId,
+      channelId: plan.channelId,
+      connectionId: webConnection.id,
+    })
+    return route.fulfill({ status: 201, contentType: 'application/json', body: JSON.stringify(response) })
+  })
+  await page.route('**/api/bindings', async (route) => {
+    if (route.request().method() !== 'POST') return route.continue()
+    const rawRequest: unknown = route.request().postDataJSON()
+    const input = HostApiContracts.createBinding.request.parse(rawRequest)
+    const binding = HostApiContracts.createBinding.response.parse({
+      channelId: input.channelId,
+      agentId: input.agentId,
+      triggerPolicy: input.triggerPolicy,
+      boundAt: 1_725_000_001_000,
+    })
+    snapshot = {
+      ...snapshot,
+      agents: snapshot.agents.map((agent) =>
+        agent.id !== input.agentId || agent.channels.includes(input.channelId)
+          ? agent
+          : { ...agent, channels: [...agent.channels, input.channelId] },
+      ),
+      channels: snapshot.channels.map((channel) =>
+        channel.id === input.channelId ? { ...channel, boundAgentId: input.agentId, bindings: [binding] } : channel,
+      ),
+    }
+    return route.fulfill({ status: 201, contentType: 'application/json', body: JSON.stringify(binding) })
+  })
+
+  await page.goto('/agents')
   const createAgent = async (displayName: string): Promise<{ agentId: string; channelId: string }> => {
-    const response = await request.post('/api/agents', {
-      data: {
+    const result = await page.evaluate(
+      async (input) => {
+        const response = await fetch('/api/agents', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify(input),
+        })
+        const body: unknown = await response.json()
+        return { status: response.status, body }
+      },
+      {
         displayName,
         persona: '',
         model: { provider: 'deepseek', model: 'deepseek-v4-flash' },
       },
-    })
-    expect(response.status()).toBe(201)
-    return response.json() as Promise<{ agentId: string; channelId: string }>
+    )
+    expect(result.status).toBe(201)
+    const responseBody: unknown = result.body
+    return HostApiContracts.createAgent.response.parse(responseBody)
   }
-  const runId = Date.now().toString(36)
-  const sourceName = `绑定来源-${runId}`
   const source = await createAgent(sourceName)
-  const target = await createAgent(`绑定目标-${runId}`)
+  const target = await createAgent(targetName)
 
   await page.goto(`/agents/${target.agentId}`)
   await page.getByRole('tab', { name: '频道' }).click()
@@ -145,17 +314,21 @@ test("an intelligent-agent can add another channel while replacing that channel'
 
   await expect(page.getByText('频道已绑定。')).toBeVisible()
   await expect(page.getByText(`${sourceName} 的网页频道`, { exact: true })).toBeVisible()
-  const snapshot = (await (await request.get('/api/snapshot')).json()) as {
-    agents: Array<{ id: string; channels: string[] }>
-    channels: Array<{ id: string; bindings: Array<{ agentId: string; triggerPolicy: string }> }>
-  }
-  expect(snapshot.agents.find((agent) => agent.id === target.agentId)?.channels).toEqual(
+  const currentResponse = await page.evaluate(async () => {
+    const response = await fetch('/api/snapshot')
+    const body: unknown = await response.json()
+    return { status: response.status, body }
+  })
+  expect(currentResponse.status).toBe(200)
+  const currentBody: unknown = currentResponse.body
+  const currentSnapshot = HostApiContracts.snapshot.response.parse(currentBody)
+  expect(currentSnapshot.agents.find((agent) => agent.id === target.agentId)?.channels).toEqual(
     expect.arrayContaining([target.channelId, source.channelId]),
   )
-  expect(snapshot.channels.find((channel) => channel.id === target.channelId)?.bindings).toEqual([
+  expect(currentSnapshot.channels.find((channel) => channel.id === target.channelId)?.bindings).toEqual([
     expect.objectContaining({ agentId: target.agentId }),
   ])
-  expect(snapshot.channels.find((channel) => channel.id === source.channelId)?.bindings).toEqual([
+  expect(currentSnapshot.channels.find((channel) => channel.id === source.channelId)?.bindings).toEqual([
     expect.objectContaining({ agentId: target.agentId, triggerPolicy: 'observe-only' }),
   ])
   expect(failures, failures.join('\n')).toEqual([])

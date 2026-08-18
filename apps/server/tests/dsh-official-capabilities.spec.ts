@@ -4,12 +4,13 @@ import { credentialRef } from '@deepseek-ai/dsh-credentials'
 import { SessionId } from '@deepseek-ai/dsh-session'
 import { sessionDir } from '@deepseek-ai/dsh-spill-local'
 import { AssetService, CoreService } from '@nekro-nxt/core'
-import type { AdmissionId, EpisodeId } from '@nekro-nxt/contracts'
+import { AdmissionIdSchema, EpisodeIdSchema } from '@nekro-nxt/contracts'
 import { openMigratedCoreDatabase, SqliteCoreRepository } from '@nekro-nxt/storage-sqlite'
 import { mkdir, mkdtemp, readFile, rm, truncate, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
+import { z } from 'zod'
 import {
   QuotaLocalSpillStore,
   SPILL_ARTIFACT_MAX_BYTES,
@@ -214,7 +215,7 @@ describe('DSH rc.6 official capability composition', () => {
         await context.credentials.set(credentialRef('DEEPSEEK_API_KEY'), 'configured-test-key')
       },
     })
-    const episodeId = 'search-episode' as EpisodeId
+    const episodeId = EpisodeIdSchema.parse('eps_SEARCH')
     const sessionId = SessionId(`nxt-${episodeId}`)
     try {
       await host.createSession({
@@ -237,7 +238,7 @@ describe('DSH rc.6 official capability composition', () => {
       }).event
       await host.admit({
         dshSessionId: sessionId,
-        admissionId: 'search-admission' as AdmissionId,
+        admissionId: AdmissionIdSchema.parse('adm_SEARCH'),
         events: [event],
         mode: 'followup',
       })
@@ -246,10 +247,10 @@ describe('DSH rc.6 official capability composition', () => {
       expect(fetchSpy).toHaveBeenCalledTimes(1)
       const request = fetchSpy.mock.calls[0]?.[1]
       if (typeof request?.body !== 'string') throw new Error('Expected a JSON string Web request body.')
-      const body = JSON.parse(request.body) as {
-        max_tokens: number
-        tools: Array<{ max_uses: number }>
-      }
+      const body = z
+        .object({ max_tokens: z.number(), tools: z.array(z.object({ max_uses: z.number() }).passthrough()) })
+        .passthrough()
+        .parse(JSON.parse(request.body))
       expect(body.max_tokens).toBe(1024)
       expect(body.tools[0]?.max_uses).toBe(2)
       const secondRequest = model.calls[1]
@@ -361,7 +362,7 @@ describe('DSH rc.6 official capability composition', () => {
           context.llm.registerAdapter(['test-provider'], model)
         },
       })
-    const episodeId = 'delegation-episode' as EpisodeId
+    const episodeId = EpisodeIdSchema.parse('eps_DELEGATION')
     const sessionId = SessionId(`nxt-${episodeId}`)
     let host = await createHost()
     try {
@@ -372,13 +373,13 @@ describe('DSH rc.6 official capability composition', () => {
         agentRevisionId: definition.revision.id,
       })
       const siblingSessionId = await host.createSession({
-        episodeId: 'delegation-sibling-episode' as EpisodeId,
+        episodeId: EpisodeIdSchema.parse('eps_DELEGATIONSIBLING'),
         channelId: siblingChannel.id,
         agentId: definition.definition.id,
         agentRevisionId: definition.revision.id,
       })
       const deniedSessionId = await host.createSession({
-        episodeId: 'delegation-denied-episode' as EpisodeId,
+        episodeId: EpisodeIdSchema.parse('eps_DELEGATIONDENIED'),
         channelId: deniedChannel.id,
         agentId: deniedDefinition.definition.id,
         agentRevisionId: deniedDefinition.revision.id,
@@ -391,7 +392,7 @@ describe('DSH rc.6 official capability composition', () => {
       )
       await host.admit({
         dshSessionId: sessionId,
-        admissionId: 'admission-1' as AdmissionId,
+        admissionId: AdmissionIdSchema.parse('adm_DELEGATION1'),
         events: [appendEvent('启动后台子任务。')],
         mode: 'followup',
       })
@@ -400,7 +401,7 @@ describe('DSH rc.6 official capability composition', () => {
 
       await host.admit({
         dshSessionId: sessionId,
-        admissionId: 'admission-2' as AdmissionId,
+        admissionId: AdmissionIdSchema.parse('adm_DELEGATION2'),
         events: [appendEvent('子任务运行时继续响应这条频道消息。')],
         mode: 'followup',
       })
@@ -446,7 +447,7 @@ describe('DSH rc.6 official capability composition', () => {
       model.followupChildId = child.id
       await host.admit({
         dshSessionId: sessionId,
-        admissionId: 'admission-3' as AdmissionId,
+        admissionId: AdmissionIdSchema.parse('adm_DELEGATION3'),
         events: [appendEvent('继续先前的子任务。')],
         mode: 'followup',
       })

@@ -56,7 +56,7 @@ Web 端不复制一份业务事实到 Zustand。`ProductHostPort.getSnapshot()` 
 | 启用扩展 | `POST /api/extensions/:id/activation` | AgentActivation 启用（body `{agentId, revisionId}`） | ✅ |
 | 停用扩展 | `DELETE /api/extensions/:id/activation` | 停用当前 Activation（安全间隙后完成） | ✅ |
 | 创建智能体引导跑动 | —— | —— | —— |
-| 修改能力 | `POST /api/agents/:id/capabilities` | 按当前 Revision 生成或复用不可变 AgentRevision，更新 subagents/fileTools/webSearch/dynamicCreation/developmentShell/unrestrictedFileAccess | ✅ V2 codec、Server+Web 命令+store 委托、Revision Scope 运行时 |
+| 修改能力 | `POST /api/agents/:id/capabilities` | 按当前 Revision 生成或复用不可变 AgentRevision，更新 subagents/fileTools/webSearch/dynamicCreation/developmentShell/unrestrictedFileAccess | ✅ 严格六字段 Schema、共享 HTTP Contract、Revision Scope 运行时 |
 | 修改智能体配置 | `POST /api/agents/:id/revision` | 携带 expectedCurrentRevisionId 保存名称、人设与 DSH provider/model 为新不可变 AgentRevision；冲突要求刷新 | ✅ Server+Web 管理页 |
 | 模型供应商目录 | `GET /api/llm/providers` | 投影 DSH 可配置供应商、脱敏 settings 层、凭据状态和活动模型 | ✅ |
 | 保存模型供应商 | `POST /api/llm/providers/:id` | 用 DSH settings mutate 保存 profile，API Key 经 DSH credentials 只写保存 | ✅ |

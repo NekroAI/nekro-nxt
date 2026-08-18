@@ -1,4 +1,4 @@
-import type { AssetId } from '@nekro-nxt/contracts'
+import { AssetIdSchema } from '@nekro-nxt/contracts'
 import { AssetService, CoreService } from '@nekro-nxt/core'
 import { openMigratedCoreDatabase, SqliteCoreRepository } from '@nekro-nxt/storage-sqlite'
 import { mkdtemp, rm } from 'node:fs/promises'
@@ -20,7 +20,7 @@ describe('QQ product bridge', () => {
         import: (input) => {
           imported.push(input)
           return Promise.resolve({
-            assetId: 'asset-1' as AssetId,
+            assetId: AssetIdSchema.parse('ast_ASSET1'),
             mediaType: input.mediaType ?? 'application/octet-stream',
             ...(input.fileName === undefined ? {} : { fileName: input.fileName }),
           })
@@ -91,7 +91,7 @@ describe('QQ product bridge', () => {
     }
   })
 
-  it('reserves, finalizes and replay-deduplicates remote media around the Channel Event commit', async () => {
+  it('publishes, commits and replay-deduplicates remote media with the Channel Event', async () => {
     const directory = await mkdtemp(path.join(tmpdir(), 'nekro-nxt-qq-assets-'))
     const database = await openMigratedCoreDatabase(':memory:')
     try {
@@ -103,17 +103,6 @@ describe('QQ product bridge', () => {
         connectionId: connection.id,
         platformChannelId: 'group:media',
         kind: 'group',
-      })
-      const event = core.appendInbound({
-        connectionId: connection.id,
-        channelId: channel.id,
-        adapterKey: 'qq-openclaw',
-        platformMessageId: 'media-message',
-        kind: 'message-created',
-        parts: [{ type: 'text', text: '媒体占位事实' }],
-        platformTimestamp: 201,
-        receivedAt: 201,
-        dedupeKey: 'media-message',
       })
       const assetService = new AssetService(repository, directory, { now: () => 202, nextUlid: () => `A${++id}` })
       const fetchAsset: typeof fetch = () =>
@@ -139,11 +128,35 @@ describe('QQ product bridge', () => {
       const first = await importer.import(input)
       const replay = await importer.import(input)
       expect(replay.assetId).toBe(first.assetId)
-      await first.finalize?.(event.event.id)
-      await replay.finalize?.(event.event.id)
-      expect(database.prepare('SELECT COUNT(*) AS count FROM assets').get()).toEqual({ count: 1 })
-      expect(database.prepare('SELECT receive_count FROM assets').get()).toEqual({ receive_count: 1 })
-      expect(database.prepare('SELECT COUNT(*) AS count FROM asset_occurrences').get()).toEqual({ count: 1 })
+      const event = core.appendInbound({
+        connectionId: connection.id,
+        channelId: channel.id,
+        adapterKey: 'qq-openclaw',
+        platformMessageId: 'media-message',
+        kind: 'message-created',
+        parts: [{ type: 'file', assetId: first.assetId, name: 'video.mp4' }],
+        platformTimestamp: 201,
+        receivedAt: 201,
+        dedupeKey: 'media-message',
+        assetOccurrences: [{ partIndex: 0, assetId: first.assetId }],
+      })
+      expect(event.inserted).toBe(true)
+      expect(
+        core.appendInbound({
+          connectionId: connection.id,
+          channelId: channel.id,
+          adapterKey: 'qq-openclaw',
+          platformMessageId: 'media-message',
+          kind: 'message-created',
+          parts: [{ type: 'file', assetId: replay.assetId, name: 'video.mp4' }],
+          platformTimestamp: 201,
+          receivedAt: 201,
+          dedupeKey: 'media-message',
+          assetOccurrences: [{ partIndex: 0, assetId: replay.assetId }],
+        }).inserted,
+      ).toBe(false)
+      expect(repository.getAssetById(first.assetId)).toMatchObject({ id: first.assetId, byteSize: 3 })
+      expect(repository.canAccessAsset(first.assetId, channel.id)).toBe(true)
     } finally {
       database.close()
       await rm(directory, { recursive: true, force: true })

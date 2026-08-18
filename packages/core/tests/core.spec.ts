@@ -7,6 +7,13 @@ import type {
   ConnectionId,
   PlatformIdentityId,
 } from '@nekro-nxt/contracts'
+import {
+  AgentIdSchema,
+  AssetIdSchema,
+  ChannelIdSchema,
+  ChannelMemberIdSchema,
+  ConnectionIdSchema,
+} from '@nekro-nxt/contracts'
 import { describe, expect, it } from 'vitest'
 import type {
   AgentDefinitionRecord,
@@ -19,9 +26,16 @@ import type {
   ConnectionRecord,
   CoreRepository,
   CreateAgentCommit,
+  CreateAgentWithChannelCommit,
   PlatformIdentityRecord,
 } from '../src/index.ts'
-import { CoreService, digestRevision, encodeAgentCapabilities, parseStoredAgentCapabilityGrants } from '../src/index.ts'
+import {
+  CoreService,
+  canonicalJson,
+  digestRevision,
+  parseAgentCapabilityGrants,
+  parseStoredAgentCapabilityGrants,
+} from '../src/index.ts'
 
 const deniedCapabilities = {
   subagents: false,
@@ -47,8 +61,21 @@ class MemoryRepository implements CoreRepository {
     this.revisions.set(commit.revision.id, commit.revision)
   }
 
+  createAgentWithChannel(commit: CreateAgentWithChannelCommit): void {
+    this.createAgent(commit)
+    this.createChannel(commit.channel)
+    this.replaceBinding(commit.binding)
+  }
+
   getAgent(id: AgentId) {
     return this.agents.get(id)
+  }
+
+  listAgents() {
+    return [...this.agents.values()].sort(
+      (left, right) =>
+        left.definition.createdAt - right.definition.createdAt || left.definition.id.localeCompare(right.definition.id),
+    )
   }
 
   getAgentRevision(id: AgentRevisionId) {
@@ -110,12 +137,6 @@ class MemoryRepository implements CoreRepository {
       .map((connection) => connection.id)
   }
 
-  updateConnectionStatus(id: ConnectionId, status: ConnectionRecord['status']): void {
-    const current = this.connections.get(id)
-    if (!current) throw new Error(`Unknown connection: ${id}`)
-    this.connections.set(id, { ...current, status })
-  }
-
   createChannel(record: ChannelRecord): void {
     this.channels.set(record.id, record)
   }
@@ -164,8 +185,6 @@ class MemoryRepository implements CoreRepository {
       ? {
           ...existing,
           ...(record.displayName === undefined ? {} : { displayName: record.displayName }),
-          lastSeenAt: Math.max(existing.lastSeenAt, record.lastSeenAt),
-          seenCount: existing.seenCount + 1,
         }
       : record
     this.identities.set(stored.id, stored)
@@ -182,8 +201,6 @@ class MemoryRepository implements CoreRepository {
       ? {
           ...existing,
           ...(record.displayName === undefined ? {} : { displayName: record.displayName }),
-          lastSeenAt: Math.max(existing.lastSeenAt, record.lastSeenAt),
-          seenCount: existing.seenCount + 1,
         }
       : record
     this.members.set(stored.id, stored)
@@ -211,8 +228,8 @@ class MemoryRepository implements CoreRepository {
     return record
   }
 
-  getBinding(channelId: ChannelId, agentId: AgentId) {
-    return this.bindings.find((binding) => binding.channelId === channelId && binding.agentId === agentId)
+  getBinding(channelId: ChannelId) {
+    return this.bindings.find((binding) => binding.channelId === channelId)
   }
 
   listBindings(channelId: ChannelId) {
@@ -220,11 +237,11 @@ class MemoryRepository implements CoreRepository {
   }
 
   appendChannelEvent(candidate: ChannelEventRecord): AppendChannelEventCommit {
-    const key = `${candidate.connectionId}:${candidate.dedupeKey}`
+    const key = `${candidate.channelId}:${candidate.dedupeKey}`
     const existing = this.events.get(key)
-    if (existing) return { event: existing, inserted: false, checkpointCommitted: true }
+    if (existing) return { event: existing, inserted: false }
     this.events.set(key, candidate)
-    return { event: candidate, inserted: true, checkpointCommitted: true }
+    return { event: candidate, inserted: true }
   }
 
   getChannelEvent(id: ChannelEventRecord['id']) {
@@ -253,7 +270,7 @@ class MemoryRepository implements CoreRepository {
   resolvePlatformMessage(connectionId: ConnectionId, channelId: ChannelId, platformMessageId: string) {
     const event = [...this.events.values()].find(
       (candidate) =>
-        candidate.connectionId === connectionId &&
+        this.channels.get(candidate.channelId)?.connectionId === connectionId &&
         candidate.channelId === channelId &&
         candidate.platformMessageId === platformMessageId,
     )
@@ -267,7 +284,7 @@ class MemoryRepository implements CoreRepository {
   ) {
     return [...this.events.values()].find(
       (event) =>
-        event.connectionId === connectionId &&
+        this.channels.get(event.channelId)?.connectionId === connectionId &&
         event.channelId === channelId &&
         event.logicalMessageId === logicalMessageId,
     )?.platformMessageId
@@ -284,6 +301,7 @@ describe('CoreService', () => {
       persona: '保持简洁。',
       model: { provider: 'deepseek', model: 'v4' },
     })
+    expect(core.listAgents()).toEqual([first])
     const unchanged = core.reviseAgent(first.definition.id, first.revision.id, {
       displayName: '小奈',
       persona: '保持简洁。',
@@ -323,63 +341,23 @@ describe('CoreService', () => {
       displayName: '小奈',
       persona: '',
       model: { provider: 'deepseek', model: 'v4' },
-      settings: { b: 2, a: 1 },
       capabilities: deniedCapabilities,
     })
     const second = digestRevision({
       persona: '',
       displayName: '小奈',
       model: { model: 'v4', provider: 'deepseek' },
-      settings: { a: 1, b: 2 },
       capabilities: { ...deniedCapabilities },
     })
     expect(first).toBe(second)
     expect(first).toMatch(/^v2:sha256:[a-f0-9]{64}$/u)
   })
 
-  it('decodes legacy capability grants and rejects unknown stored formats', () => {
-    expect(
-      parseStoredAgentCapabilityGrants({
-        dynamicCreation: true,
-        developmentShell: false,
-        fullFileAccess: false,
-      }),
-    ).toEqual({ ...deniedCapabilities, dynamicCreation: true })
-    expect(
-      parseStoredAgentCapabilityGrants({
-        dynamicCreation: false,
-        developmentShell: true,
-        fullFileAccess: false,
-      }),
-    ).toEqual({ ...deniedCapabilities, fileTools: true, developmentShell: true })
-    expect(
-      parseStoredAgentCapabilityGrants({
-        dynamicCreation: false,
-        developmentShell: false,
-        fullFileAccess: true,
-      }),
-    ).toEqual({ ...deniedCapabilities, fileTools: true, unrestrictedFileAccess: true })
-
-    const encoded = encodeAgentCapabilities({ ...deniedCapabilities, subagents: true, webSearch: true })
-    expect(encoded).toEqual({
-      version: 2,
-      grants: { ...deniedCapabilities, subagents: true, webSearch: true },
-    })
-    expect(parseStoredAgentCapabilityGrants(encoded)).toEqual(encoded.grants)
-    expect(() => parseStoredAgentCapabilityGrants({ version: 3, grants: deniedCapabilities })).toThrow(
-      'Unsupported Agent capabilities version: 3',
-    )
-    expect(() =>
-      parseStoredAgentCapabilityGrants({ version: 2, grants: deniedCapabilities, fullFileAccess: false }),
-    ).toThrow()
-    expect(() =>
-      parseStoredAgentCapabilityGrants({
-        dynamicCreation: false,
-        developmentShell: false,
-        fullFileAccess: false,
-        fileTools: false,
-      }),
-    ).toThrow()
+  it('accepts only the current strict capability object', () => {
+    const current = { ...deniedCapabilities, subagents: true, webSearch: true }
+    expect(parseStoredAgentCapabilityGrants(current)).toEqual(current)
+    expect(() => parseStoredAgentCapabilityGrants({ version: 2, grants: current })).toThrow()
+    expect(() => parseStoredAgentCapabilityGrants({ ...current, fullFileAccess: false })).toThrow()
   })
 
   it('reuses a semantically equivalent historical Revision even when it has a legacy digest', () => {
@@ -424,7 +402,7 @@ describe('CoreService', () => {
     })
     expect(
       core.createBinding({ channelId: channel.id, agentId: agent.definition.id, triggerPolicy: 'always' }),
-    ).toMatchObject({ revision: 1, triggerPolicy: 'always' })
+    ).toMatchObject({ triggerPolicy: 'always' })
 
     const event: AdapterInboundEvent = {
       connectionId: connection.id,
@@ -469,7 +447,7 @@ describe('CoreService', () => {
       persona: '',
       model: { provider: 'deepseek', model: 'v4' },
     })
-    core.createBinding({ channelId: first.id, agentId: replacement.definition.id, triggerPolicy: 'observe-only' })
+    core.replaceBinding({ channelId: first.id, agentId: replacement.definition.id, triggerPolicy: 'observe-only' })
     expect(core.listBindings(first.id)).toEqual([
       expect.objectContaining({ agentId: replacement.definition.id, triggerPolicy: 'observe-only' }),
     ])
@@ -517,20 +495,212 @@ describe('CoreService', () => {
     expect(repeated.identity).toMatchObject({
       id: first.identity.id,
       displayName: '成员乙',
-      firstSeenAt: 103,
-      lastSeenAt: 104,
-      seenCount: 2,
     })
     expect(repeated.member).toMatchObject({
       id: first.member.id,
       displayName: '成员乙',
-      firstSeenAt: 103,
-      lastSeenAt: 104,
-      seenCount: 2,
     })
     expect(core.resolveChannelMemberIdentity(firstConnection.id, firstChannel.id, repeated.member.id)).toMatchObject({
       platformUserId: 'member-openid',
     })
     expect(core.resolveChannelMemberIdentity(secondConnection.id, firstChannel.id, repeated.member.id)).toBeUndefined()
+  })
+
+  it('creates an agent with a default Web Channel and lists only existing matching connections', () => {
+    const repository = new MemoryRepository()
+    let id = 0
+    const core = new CoreService(repository, { now: () => 100, nextUlid: () => `ID${++id}` })
+    const connection = core.createConnection({ adapterKey: 'web', config: {} })
+    const otherConnection = core.createConnection({ adapterKey: 'qq-openclaw', config: { account: 'two' } })
+
+    expect(core.listConnections()).toEqual([connection, otherConnection])
+    expect(core.listConnectionsByAdapter('web')).toEqual([connection])
+
+    const commit = core.createAgentWithChannel(
+      { displayName: '小奈', persona: '', model: { provider: 'deepseek', model: 'v4' } },
+      { connectionId: connection.id, kind: 'web', triggerPolicy: 'always' },
+    )
+
+    expect(commit.channel).toMatchObject({
+      connectionId: connection.id,
+      platformChannelId: `web-${commit.definition.id}`,
+      kind: 'web',
+    })
+    expect(core.getChannel(commit.channel.id)).toEqual(commit.channel)
+    expect(core.getChannelByPlatformId(connection.id, commit.channel.platformChannelId)).toEqual(commit.channel)
+    expect(core.listChannelsByConnection(connection.id)).toEqual([commit.channel])
+    expect(core.listBindings(commit.channel.id)).toEqual([commit.binding])
+  })
+
+  it('rejects invalid inputs and unknown domain references before committing', () => {
+    const repository = new MemoryRepository()
+    let id = 0
+    const core = new CoreService(repository, { now: () => 100, nextUlid: () => `ID${++id}` })
+
+    expect(() =>
+      core.createAgent({ displayName: ' ', persona: '', model: { provider: 'deepseek', model: 'v4' } }),
+    ).toThrow()
+    expect(() => core.createConnection({ adapterKey: 'Not valid', config: {} })).toThrow()
+    expect(() => core.createConnection({ adapterKey: 'web', config: {}, credentialRefs: { token: ' ' } })).toThrow()
+    expect(() =>
+      core.createAgentWithChannel(
+        { displayName: '小奈', persona: '', model: { provider: 'deepseek', model: 'v4' } },
+        { connectionId: ConnectionIdSchema.parse('con_missing'), kind: 'web', triggerPolicy: 'always' },
+      ),
+    ).toThrow('Unknown connection')
+    expect(() =>
+      core.createChannel({
+        connectionId: ConnectionIdSchema.parse('con_missing'),
+        platformChannelId: 'main',
+        kind: 'group',
+      }),
+    ).toThrow('Unknown connection')
+    expect(() =>
+      core.ensureChannel({
+        connectionId: ConnectionIdSchema.parse('con_missing'),
+        platformChannelId: 'main',
+        kind: 'group',
+        observedAt: 100,
+      }),
+    ).toThrow('Unknown connection')
+    expect(() => core.updateChannelDisplayName(ChannelIdSchema.parse('chn_missing'), '新名称')).toThrow(
+      'Unknown channel',
+    )
+    expect(() => core.updateChannelDisplayName(ChannelIdSchema.parse('chn_missing'), ' ')).toThrow()
+
+    const agent = core.createAgent({ displayName: '小奈', persona: '', model: { provider: 'deepseek', model: 'v4' } })
+    expect(() => core.reviseAgent(AgentIdSchema.parse('agt_missing'), agent.revision.id, agent.revision)).toThrow(
+      'Unknown agent',
+    )
+    expect(() =>
+      core.createBinding({
+        channelId: ChannelIdSchema.parse('chn_missing'),
+        agentId: agent.definition.id,
+        triggerPolicy: 'always',
+      }),
+    ).toThrow('Unknown channel')
+    expect(() =>
+      core.replaceBinding({
+        channelId: ChannelIdSchema.parse('chn_missing'),
+        agentId: agent.definition.id,
+        triggerPolicy: 'always',
+      }),
+    ).toThrow('Unknown channel')
+    expect(() =>
+      core.createBinding({
+        channelId: ChannelIdSchema.parse('chn_missing'),
+        agentId: AgentIdSchema.parse('agt_missing'),
+        triggerPolicy: 'always',
+      }),
+    ).toThrow('Unknown channel')
+  })
+
+  it('validates binding replacement, member ownership, and inbound asset occurrences', () => {
+    const repository = new MemoryRepository()
+    let id = 0
+    const core = new CoreService(repository, { now: () => 100, nextUlid: () => `ID${++id}` })
+    const connection = core.createConnection({ adapterKey: 'web', config: {} })
+    const otherConnection = core.createConnection({ adapterKey: 'web', config: {} })
+    const channel = core.createChannel({ connectionId: connection.id, platformChannelId: 'main', kind: 'group' })
+    const otherChannel = core.createChannel({
+      connectionId: otherConnection.id,
+      platformChannelId: 'other',
+      kind: 'group',
+    })
+    const agent = core.createAgent({ displayName: '小奈', persona: '', model: { provider: 'deepseek', model: 'v4' } })
+    const replacement = core.createAgent({
+      displayName: '小新',
+      persona: '',
+      model: { provider: 'deepseek', model: 'v4' },
+    })
+    const member = core.observeChannelMember({
+      connectionId: connection.id,
+      channelId: channel.id,
+      platformUserId: 'member-1',
+      displayName: '成员',
+      observedAt: 100,
+    })
+
+    core.createBinding({ channelId: channel.id, agentId: agent.definition.id, triggerPolicy: 'always' })
+    expect(() =>
+      core.createBinding({ channelId: channel.id, agentId: replacement.definition.id, triggerPolicy: 'always' }),
+    ).toThrow('already bound')
+    expect(() =>
+      core.replaceBinding({
+        channelId: otherChannel.id,
+        agentId: AgentIdSchema.parse('agt_missing'),
+        triggerPolicy: 'always',
+      }),
+    ).toThrow('Unknown agent')
+    expect(
+      core.replaceBinding({ channelId: channel.id, agentId: replacement.definition.id, triggerPolicy: 'command' }),
+    ).toMatchObject({
+      agentId: replacement.definition.id,
+      triggerPolicy: 'command',
+    })
+    expect(core.resolveChannelMemberIdentity(connection.id, otherChannel.id, member.member.id)).toBeUndefined()
+    expect(
+      core.resolveChannelMemberIdentity(connection.id, channel.id, ChannelMemberIdSchema.parse('mbr_missing')),
+    ).toBeUndefined()
+
+    const assetId = AssetIdSchema.parse('ast_image1')
+    const event: AdapterInboundEvent = {
+      connectionId: connection.id,
+      channelId: channel.id,
+      adapterKey: 'web',
+      platformMessageId: 'platform-asset',
+      kind: 'message-created',
+      senderMemberId: member.member.id,
+      parts: [
+        { type: 'text', text: '图片' },
+        { type: 'image', assetId },
+      ],
+      platformTimestamp: 100,
+      receivedAt: 101,
+      dedupeKey: 'asset-event',
+      assetOccurrences: [{ partIndex: 1, assetId }],
+    }
+    expect(core.appendInbound(event)).toMatchObject({ inserted: true })
+    expect(core.resolvePlatformMessage(connection.id, channel.id, 'platform-asset')).toMatchObject({
+      authoredByAgent: false,
+    })
+    expect(
+      core.resolveLogicalMessagePlatformId(
+        connection.id,
+        channel.id,
+        [...repository.events.values()][0]!.logicalMessageId,
+      ),
+    ).toBe('platform-asset')
+    expect(() =>
+      core.appendInbound({ ...event, dedupeKey: 'bad-occurrence', assetOccurrences: [{ partIndex: 0, assetId }] }),
+    ).toThrow('does not match message part')
+    expect(() =>
+      core.appendInbound({
+        ...event,
+        dedupeKey: 'wrong-sender',
+        senderMemberId: ChannelMemberIdSchema.parse('mbr_other'),
+      }),
+    ).toThrow('does not belong to channel')
+    expect(() => core.appendInbound({ ...event, dedupeKey: 'wrong-adapter', adapterKey: 'qq-openclaw' })).toThrow(
+      'does not own connection',
+    )
+    expect(() => core.appendInbound({ ...event, dedupeKey: 'wrong-channel', channelId: otherChannel.id })).toThrow(
+      'does not belong to connection',
+    )
+  })
+
+  it('covers canonical JSON arrays and validates clock and capability boundaries', () => {
+    expect(canonicalJson({ z: [true, null, 2], a: 'x' })).toBe('{"a":"x","z":[true,null,2]}')
+    expect(parseAgentCapabilityGrants({ subagents: true })).toEqual({ ...deniedCapabilities, subagents: true })
+
+    const repository = new MemoryRepository()
+    const invalidClock = new CoreService(repository, { now: () => -1, nextUlid: () => 'ID' })
+    expect(() =>
+      invalidClock.createAgent({ displayName: '小奈', persona: '', model: { provider: 'p', model: 'm' } }),
+    ).toThrow('Clock must return')
+    const invalidId = new CoreService(repository, { now: () => 100, nextUlid: () => '' })
+    expect(() =>
+      invalidId.createAgent({ displayName: '小奈', persona: '', model: { provider: 'p', model: 'm' } }),
+    ).toThrow()
   })
 })

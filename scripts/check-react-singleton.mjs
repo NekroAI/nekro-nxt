@@ -5,6 +5,7 @@ import { createRequire } from 'node:module'
 const root = process.cwd()
 const expectedVersion = '18.3.1'
 const errors = []
+const isNodeError = (error, code) => error instanceof Error && 'code' in error && error.code === code
 
 async function workspaceManifests(directory) {
   const manifests = []
@@ -14,7 +15,7 @@ async function workspaceManifests(directory) {
     try {
       manifests.push([manifestPath, JSON.parse(await readFile(manifestPath, 'utf8'))])
     } catch (error) {
-      if (error?.code !== 'ENOENT') throw error
+      if (!isNodeError(error, 'ENOENT')) throw error
     }
   }
   return manifests

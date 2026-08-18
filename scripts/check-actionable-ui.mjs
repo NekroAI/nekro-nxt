@@ -8,7 +8,9 @@ const productRoot = 'apps/web/src'
 const actionableTags = new Set(['Button', 'IconButton', 'button'])
 
 const attribute = (attributes, name) =>
-  attributes.properties.find((property) => ts.isJsxAttribute(property) && property.name.text === name)
+  attributes.properties.find(
+    (property) => ts.isJsxAttribute(property) && ts.isIdentifier(property.name) && property.name.text === name,
+  )
 
 const expressionAttribute = (attributes, name) => {
   const candidate = attribute(attributes, name)

@@ -7,6 +7,17 @@ import { fileURLToPath } from 'node:url'
 import { chromium, expect as playwrightExpect, type Browser, type Page } from '@playwright/test'
 import { createServer, type ViteDevServer } from 'vite'
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
+import {
+  AgentIdSchema,
+  AgentRevisionIdSchema,
+  ChannelEventIdSchema,
+  ChannelIdSchema,
+  ConnectionIdSchema,
+  EpisodeIdSchema,
+  ExtensionIdSchema,
+  ExtensionRevisionIdSchema,
+  HostApiContracts,
+} from '@nekro-nxt/contracts'
 import { hostPresentation, NekroNxtApp } from '../src/app.js'
 import { runHostRefresh } from '../src/components/product-feedback.js'
 import { ProductHostCoordinator, type ProductSnapshot } from '../src/product-port.js'
@@ -19,7 +30,19 @@ const renderRoute = (route: string): string =>
     </MemoryRouter>,
   )
 
-const browserSnapshot = {
+const browserAgentId = AgentIdSchema.parse('agt_verylongtechnicalid')
+const browserRevisionId = AgentRevisionIdSchema.parse('arev_technicalid')
+const browserChannelId = ChannelIdSchema.parse('chn_webmain')
+const emptyChannelId = ChannelIdSchema.parse('chn_empty')
+const qqChannelId = ChannelIdSchema.parse('chn_qqinternal')
+const browserConnectionId = ConnectionIdSchema.parse('con_webinternal')
+const qqConnectionId = ConnectionIdSchema.parse('con_qqinternal')
+const browserExtensionId = ExtensionIdSchema.parse('ext_internal')
+const browserExtensionRevisionId = ExtensionRevisionIdSchema.parse('xrv_internal')
+const browserEpisodeId = EpisodeIdSchema.parse('eps_browser')
+const browserEventId = ChannelEventIdSchema.parse('evt_current')
+const otherEventId = ChannelEventIdSchema.parse('evt_other')
+const browserSnapshot = HostApiContracts.snapshot.response.parse({
   capabilityAvailability: {
     subagents: { available: true },
     webSearch: {
@@ -51,10 +74,12 @@ const browserSnapshot = {
   models: [{ provider: 'openai', providerName: 'OpenAI', id: 'gpt-5', name: 'GPT-5' }],
   agents: [
     {
-      id: 'agent-very-long-technical-id',
+      id: browserAgentId,
       displayName: '资料员',
       persona: '严谨、简洁',
-      currentRevisionId: 'revision-technical-id',
+      currentRevisionId: browserRevisionId,
+      createdAt: 1_725_000_000_000,
+      runtimeStatus: 'idle',
       model: { provider: 'openai', model: 'gpt-5' },
       capabilities: {
         subagents: false,
@@ -64,67 +89,70 @@ const browserSnapshot = {
         developmentShell: false,
         unrestrictedFileAccess: false,
       },
-      channels: ['web-main', 'empty-channel'],
+      channels: [browserChannelId, emptyChannelId],
     },
   ],
   channels: [
     {
-      id: 'web-main',
-      connectionId: 'connection-web-internal-id',
+      id: browserChannelId,
+      connectionId: browserConnectionId,
       platformChannelId: 'web-main-platform-id',
       kind: 'web',
       displayName: '资料员对话',
-      boundAgentId: 'agent-very-long-technical-id',
+      boundAgentId: browserAgentId,
       bindings: [
         {
-          id: 'binding-internal-id',
-          agentId: 'agent-very-long-technical-id',
+          channelId: browserChannelId,
+          agentId: browserAgentId,
           triggerPolicy: 'always',
+          boundAt: 1_725_000_000_000,
         },
       ],
     },
     {
-      id: 'empty-channel',
-      connectionId: 'connection-web-internal-id',
+      id: emptyChannelId,
+      connectionId: browserConnectionId,
       platformChannelId: 'empty-platform-id',
       kind: 'web',
       displayName: '空频道',
-      boundAgentId: 'agent-very-long-technical-id',
+      boundAgentId: browserAgentId,
       bindings: [
         {
-          id: 'binding-empty-id',
-          agentId: 'agent-very-long-technical-id',
+          channelId: emptyChannelId,
+          agentId: browserAgentId,
           triggerPolicy: 'always',
+          boundAt: 1_725_000_000_100,
         },
       ],
     },
     {
-      id: 'qq-channel-internal-id',
-      connectionId: 'connection-qq-internal-id',
+      id: qqChannelId,
+      connectionId: qqConnectionId,
       platformChannelId: 'qq-platform-channel-1234',
       kind: 'group',
       displayName: '产品讨论群',
-      boundAgentId: 'agent-very-long-technical-id',
+      boundAgentId: browserAgentId,
       bindings: [
         {
-          id: 'binding-qq-id',
-          agentId: 'agent-very-long-technical-id',
+          channelId: qqChannelId,
+          agentId: browserAgentId,
           triggerPolicy: 'mentioned-or-replied',
+          boundAt: 1_725_000_000_200,
         },
       ],
     },
   ],
   messages: [
     {
-      id: 'message-current-id',
-      channelId: 'web-main',
+      id: browserEventId,
+      channelId: browserChannelId,
       role: 'member',
       parts: [{ type: 'text', text: '只属于当前频道' }],
       occurredAt: 1_725_000_000_000,
     },
     {
-      id: 'message-other-id',
-      channelId: 'qq-channel-internal-id',
+      id: otherEventId,
+      channelId: qqChannelId,
       role: 'member',
       parts: [{ type: 'text', text: '不能混入当前频道' }],
       occurredAt: 1_725_000_001_000,
@@ -132,49 +160,55 @@ const browserSnapshot = {
   ],
   connections: [
     {
-      id: 'connection-web-internal-id',
+      id: browserConnectionId,
       adapterKey: 'web',
-      status: 'active',
+      appId: '',
+      proactiveSend: false,
       credentialConfigured: true,
       channelCount: 2,
       knownChannels: [],
     },
     {
-      id: 'connection-qq-internal-id',
+      id: qqConnectionId,
       adapterKey: 'qq-openclaw',
-      status: 'active',
       appId: '1234567890',
       credentialConfigured: true,
       proactiveSend: true,
       channelCount: 1,
-      knownChannels: [{ id: 'qq-channel-internal-id', name: '产品讨论群', kind: 'group' }],
-      gateway: { state: 'websocket-resumed-internal-enum' },
-      receiveTest: { status: 'received' },
-      sendTest: { status: 'not-run' },
+      knownChannels: [{ id: qqChannelId, name: '产品讨论群', kind: 'group' }],
+      gateway: { state: 'connected', resumed: true },
+      receiveTest: { status: 'received', channelId: qqChannelId, platformMessageId: 'qq-received' },
     },
   ],
   extensions: [
     {
-      id: 'extension-internal-id',
+      id: browserExtensionId,
       slug: 'document-review',
       displayName: '文档复核',
       description: '检查文档中的遗漏',
-      revisionNumber: 3,
-      revisionId: 'extension-revision-internal-id',
-      activation: 'active',
-      agentId: 'agent-very-long-technical-id',
+      createdByAgentId: browserAgentId,
+      revisions: [{ id: browserExtensionRevisionId, revisionNumber: 3, createdAt: 1_725_000_000_000 }],
+      activations: [
+        {
+          agentId: browserAgentId,
+          extensionRevisionId: browserExtensionRevisionId,
+          config: {},
+          activatedAt: 1_725_000_000_000,
+        },
+      ],
     },
   ],
   dynamic: [
     {
-      agentId: 'agent-very-long-technical-id',
+      agentId: browserAgentId,
+      episodeId: browserEpisodeId,
       pluginId: 'technical-plugin-id',
       packageId: 'technical-package-id',
       approvalRequestId: 'approval-internal-id',
       status: 'awaiting-approval',
     },
   ],
-} as const
+})
 
 const providerSettingsSnapshot = {
   writable: true,
@@ -184,6 +218,7 @@ const providerSettingsSnapshot = {
       provider: 'openai',
       displayName: 'OpenAI',
       settingsNs: 'llm-pi-ai',
+      settingsPath: ['providers', 'openai'],
       settingsRevision: 2,
       declared: false,
       active: true,
@@ -364,7 +399,7 @@ describe('NekroNxt product shell', () => {
       execute: (command) => (command === 'channels.sendMessage' ? Promise.reject(failure) : Promise.resolve(null)),
     })
 
-    await expect(useProductStore.getState().sendMessage('web-main', '保留这段草稿')).rejects.toBe(failure)
+    await expect(useProductStore.getState().sendMessage(browserChannelId, '保留这段草稿')).rejects.toBe(failure)
   })
 })
 
@@ -407,19 +442,16 @@ describe.sequential('NekroNxt browser projections', () => {
     page.on('console', (message) => {
       if (message.type() === 'error') runtimeErrors.push(message.text())
     })
+    const parsedSnapshot = HostApiContracts.snapshot.response.parse(snapshot)
     await page.route('**/api/snapshot', (request) =>
-      request.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(snapshot) }),
+      request.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(parsedSnapshot) }),
     )
     await page.route('**/api/events', (request) =>
       request.fulfill({ status: 200, contentType: 'text/event-stream', body: '' }),
     )
     await page.route('**/api/channels/*/messages?*', (request) => {
       const channelId = new URL(request.request().url()).pathname.split('/')[3]
-      const source = snapshot as { readonly messages?: readonly unknown[] }
-      const messages = (source.messages ?? []).filter(
-        (message) =>
-          typeof message === 'object' && message !== null && 'channelId' in message && message.channelId === channelId,
-      )
+      const messages = parsedSnapshot.messages.filter((message) => message.channelId === channelId)
       return request.fulfill({
         status: 200,
         contentType: 'application/json',
@@ -443,14 +475,14 @@ describe.sequential('NekroNxt browser projections', () => {
     await withProductPage('/agents', async (page) => {
       await playwrightExpect(page.getByText('资料员', { exact: true })).toBeVisible()
       await playwrightExpect(page.getByText('GPT-5', { exact: true })).toBeVisible()
-      await playwrightExpect(page.locator('body')).not.toContainText('agent-very-long-technical-id')
-      await playwrightExpect(page.locator('body')).not.toContainText('revision-technical-id')
+      await playwrightExpect(page.locator('body')).not.toContainText(browserAgentId)
+      await playwrightExpect(page.locator('body')).not.toContainText(browserRevisionId)
     })
 
     await withProductPage('/extensions', async (page) => {
       await playwrightExpect(page.getByRole('button', { name: /文档复核/u })).toBeVisible()
       await playwrightExpect(page.getByText('已启用', { exact: true }).first()).toBeVisible()
-      await playwrightExpect(page.locator('body')).not.toContainText('extension-revision-internal-id')
+      await playwrightExpect(page.locator('body')).not.toContainText(browserExtensionRevisionId)
       await playwrightExpect(page.locator('body')).not.toContainText('Revision')
     })
   })
@@ -467,7 +499,7 @@ describe.sequential('NekroNxt browser projections', () => {
   })
 
   it('isolates Channel messages, renders a true empty state, and names the send target', async () => {
-    await withProductPage('/channels/web-main', async (page) => {
+    await withProductPage(`/channels/${browserChannelId}`, async (page) => {
       await playwrightExpect(page.getByText('只属于当前频道', { exact: true })).toBeVisible()
       await playwrightExpect(page.locator('body')).not.toContainText('不能混入当前频道')
       await playwrightExpect(page.getByText('发送给：资料员', { exact: true })).toBeVisible()
@@ -475,7 +507,7 @@ describe.sequential('NekroNxt browser projections', () => {
       await playwrightExpect(page.locator('body')).not.toContainText('正在使用工具')
     })
 
-    await withProductPage('/channels/empty-channel', async (page) => {
+    await withProductPage(`/channels/${emptyChannelId}`, async (page) => {
       await playwrightExpect(page.getByText('还没有消息', { exact: true })).toBeVisible()
       await playwrightExpect(page.getByText('发送给：资料员', { exact: true })).toBeVisible()
     })
@@ -587,7 +619,10 @@ describe.sequential('NekroNxt browser projections', () => {
       }),
     )
     await page.route('**/api/dsh/settings/web-search-deepseek/mutate', async (route) => {
-      const body = route.request().postDataJSON() as Record<string, unknown>
+      const body: unknown = route.request().postDataJSON()
+      if (typeof body !== 'object' || body === null || Array.isArray(body)) {
+        throw new TypeError('DSH Settings mutation body must be a JSON object.')
+      }
       mutations.push(body)
       if (mutations.length > 1) {
         return route.fulfill({
@@ -608,7 +643,8 @@ describe.sequential('NekroNxt browser projections', () => {
       })
     })
     await page.route('**/api/dsh/credentials/DEEPSEEK_API_KEY', async (route) => {
-      credentialWrites.push(route.request().postDataJSON())
+      const body: unknown = route.request().postDataJSON()
+      credentialWrites.push(body)
       return route.fulfill({
         status: 200,
         contentType: 'application/json',
@@ -788,7 +824,13 @@ describe.sequential('NekroNxt browser projections', () => {
   it('keeps priority layouts within the desktop viewport at 1100, 1440, and 1920 pixels', async () => {
     const cases = [
       { width: 1100, height: 720, route: '/connections', name: 'connections-1100', marker: 'QQ 机器人账号' },
-      { width: 1440, height: 900, route: '/channels/web-main', name: 'channel-1440', marker: '只属于当前频道' },
+      {
+        width: 1440,
+        height: 900,
+        route: `/channels/${browserChannelId}`,
+        name: 'channel-1440',
+        marker: '只属于当前频道',
+      },
       { width: 1920, height: 1080, route: '/agents', name: 'agents-1920', marker: '资料员' },
       {
         width: 1440,
@@ -801,7 +843,7 @@ describe.sequential('NekroNxt browser projections', () => {
       },
       { width: 1440, height: 900, route: '/settings', name: 'settings-1440', marker: 'API 密钥已保存' },
     ] as const
-    const captureDirectory = process.env.NEKRO_VISUAL_CAPTURE
+    const captureDirectory = process.env['NEKRO_VISUAL_CAPTURE']
     if (captureDirectory) await mkdir(captureDirectory, { recursive: true })
 
     for (const scenario of cases) {

@@ -1,7 +1,13 @@
-import { Context, Service, type Fiber, type Plugin } from '@deepseek-ai/cordis'
+import { Context, Service, type Fiber } from '@deepseek-ai/cordis'
 import { SlotCore } from '@nekro-nxt/dsh-compat/client'
-import type { ExtensionClientEnvironment, ExtensionJsonValue, ExtensionPluginFactory } from '@nekro-nxt/extension-sdk'
+import type { ExtensionJsonValue } from '@nekro-nxt/extension-sdk'
 import * as React from 'react'
+import {
+  registerDynamicSlot,
+  requireCordisPlugin,
+  requireExtensionPluginFactory,
+  requireModuleRecord,
+} from './dsh-interop/unsafe.js'
 
 class SlotsService extends Service {
   readonly core: SlotCore
@@ -12,10 +18,7 @@ class SlotsService extends Service {
   }
 
   register(options: unknown, component: unknown): () => void {
-    const core = this.core as unknown as {
-      register(options: unknown, component: unknown): () => void
-    }
-    const dispose = core.register(options, component)
+    const dispose = registerDynamicSlot(this.core, options, component)
     this.ctx.effect(() => dispose, 'nekro-nxt: Client Extension Slot')
     return dispose
   }
@@ -49,16 +52,16 @@ export class ExtensionClientRuntime {
   ): Promise<MountedClientExtension> {
     if (this.#disposed) throw new Error('Extension Client Runtime is disposed.')
     await this.#ready
-    const loaded = (await import(`${moduleUrl}${moduleUrl.includes('?') ? '&' : '?'}nxt=${Date.now()}`)) as {
-      readonly default?: unknown
-    }
-    if (typeof loaded.default !== 'function') throw new Error('Extension Client artifact has no default factory.')
-    const factory = loaded.default as ExtensionPluginFactory<ExtensionClientEnvironment>
+    const loaded = requireModuleRecord(
+      await import(`${moduleUrl}${moduleUrl.includes('?') ? '&' : '?'}nxt=${Date.now()}`),
+      'Extension Client module',
+    )
+    const factory = requireExtensionPluginFactory(loaded['default'])
     const plugin = await factory({ React, host, styles })
     if ((typeof plugin !== 'object' || plugin === null) && typeof plugin !== 'function') {
       throw new TypeError('Extension Client factory must return a Cordis Plugin.')
     }
-    const fiber = this.#context.plugin(plugin as Plugin)
+    const fiber = this.#context.plugin(requireCordisPlugin(plugin, 'Extension Client factory result'))
     try {
       await fiber
     } catch (error) {

@@ -1,0 +1,10 @@
+{
+  "version": 1,
+  "description": "仅允许通过运行时结构校验后的固定 DSH 声明接缝；数量只可下降，不可增长。",
+  "counts": {
+    "@typescript-eslint/no-unsafe-type-assertion": {
+      "apps/server/src/dsh-interop/unsafe.ts": 1,
+      "apps/web/src/dsh-interop/unsafe.ts": 5
+    }
+  }
+}

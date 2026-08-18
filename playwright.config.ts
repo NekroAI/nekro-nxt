@@ -6,8 +6,8 @@ export default defineConfig({
   testDir: './apps/web/e2e',
   outputDir: './.local/playwright-results',
   fullyParallel: false,
-  forbidOnly: Boolean(process.env.CI),
-  retries: process.env.CI ? 1 : 0,
+  forbidOnly: Boolean(process.env['CI']),
+  retries: process.env['CI'] ? 1 : 0,
   reporter: [['list'], ['html', { outputFolder: '.local/playwright-report', open: 'never' }]],
   use: {
     baseURL: `http://127.0.0.1:${productPort}`,

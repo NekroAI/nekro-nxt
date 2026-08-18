@@ -134,27 +134,32 @@ interface FieldContextValue {
 
 const FieldContext = createContext<FieldContextValue | null>(null)
 
+interface NativeFieldProps {
+  readonly id?: string | undefined
+  readonly 'aria-labelledby'?: string | undefined
+  readonly 'aria-describedby'?: string | undefined
+  readonly 'aria-errormessage'?: string | undefined
+  readonly 'aria-invalid'?: AriaAttributes['aria-invalid'] | undefined
+}
+
+const isNativeFieldElement = (value: ReactNode): value is ReactElement<NativeFieldProps> => {
+  if (!isValidElement(value) || typeof value.type !== 'string') return false
+  return value.type === 'input' || value.type === 'select' || value.type === 'textarea'
+}
+
 const joinIds = (...ids: readonly (string | undefined)[]): string | undefined => {
   const unique = [...new Set(ids.flatMap((id) => id?.split(/\s+/u).filter(Boolean) ?? []))]
   return unique.length > 0 ? unique.join(' ') : undefined
 }
 
 function nativeFieldChild(children: ReactNode, field: FieldContextValue): ReactNode {
-  if (!isValidElement(children) || typeof children.type !== 'string') return children
-  if (!['input', 'select', 'textarea'].includes(children.type)) return children
-  const child = children as ReactElement<{
-    id?: string | undefined
-    'aria-labelledby'?: string | undefined
-    'aria-describedby'?: string | undefined
-    'aria-errormessage'?: string | undefined
-    'aria-invalid'?: AriaAttributes['aria-invalid'] | undefined
-  }>
-  return cloneElement(child, {
-    id: child.props.id ?? field.controlId,
-    'aria-labelledby': joinIds(field.labelId, child.props['aria-labelledby']),
-    'aria-describedby': joinIds(child.props['aria-describedby'], field.hintId, field.errorId),
-    'aria-errormessage': child.props['aria-errormessage'] ?? field.errorId,
-    'aria-invalid': child.props['aria-invalid'] ?? (field.errorId ? true : undefined),
+  if (!isNativeFieldElement(children)) return children
+  return cloneElement(children, {
+    id: children.props.id ?? field.controlId,
+    'aria-labelledby': joinIds(field.labelId, children.props['aria-labelledby']),
+    'aria-describedby': joinIds(children.props['aria-describedby'], field.hintId, field.errorId),
+    'aria-errormessage': children.props['aria-errormessage'] ?? field.errorId,
+    'aria-invalid': children.props['aria-invalid'] ?? (field.errorId ? true : undefined),
   })
 }
 
@@ -385,6 +390,12 @@ export function SelectField({ id, label, helper, error, ...props }: SelectFieldP
 
 type DialogContentProps = ComponentPropsWithoutRef<typeof RadixDialog.Content>
 
+type DialogLayerVariables = CSSProperties & {
+  readonly '--nxt-dialog-overlay-layer': number
+  readonly '--nxt-dialog-content-layer': number
+  readonly '--nxt-dialog-floating-layer': number
+}
+
 export interface DialogLayoutProps {
   readonly title: ReactNode
   readonly description?: ReactNode | undefined
@@ -502,11 +513,11 @@ export function Dialog({
     closeReason.current = reason
     if (canCloseDialog(pending, reason)) onOpenChange(false)
   }
-  const layerVariables = {
+  const layerVariables: DialogLayerVariables = {
     '--nxt-dialog-overlay-layer': layer.overlay,
     '--nxt-dialog-content-layer': layer.content,
     '--nxt-dialog-floating-layer': layer.floating,
-  } as CSSProperties
+  }
 
   return (
     <RadixDialog.Root

@@ -27,7 +27,7 @@ const directoryBytes = async (directory: string): Promise<number> => {
   try {
     entries = await readdir(directory, { withFileTypes: true })
   } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return 0
+    if (error instanceof Error && 'code' in error && error.code === 'ENOENT') return 0
     throw error
   }
   let bytes = 0

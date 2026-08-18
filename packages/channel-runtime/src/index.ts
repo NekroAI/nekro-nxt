@@ -12,7 +12,6 @@ import type {
   ChannelEventId,
   ChannelId,
   ConnectionId,
-  DeliveryReceiptId,
   EpisodeId,
   EpisodeHandoffId,
   JsonValue,
@@ -20,6 +19,14 @@ import type {
   MessagePart,
   OutboundIntentId,
   PhysicalDeliveryId,
+} from '@nekro-nxt/contracts'
+import {
+  AdmissionIdSchema,
+  EpisodeHandoffIdSchema,
+  EpisodeIdSchema,
+  LogicalMessageIdSchema,
+  OutboundIntentIdSchema,
+  PhysicalDeliveryIdSchema,
 } from '@nekro-nxt/contracts'
 import type {
   AgentRevisionRecord,
@@ -31,15 +38,13 @@ import type {
 import { canonicalJson } from '@nekro-nxt/core'
 import { monotonicFactory } from 'ulid'
 
-export type EpisodeStatus = 'opening' | 'active' | 'rolling-over' | 'closed' | 'failed'
+export type EpisodeStatus = 'opening' | 'active' | 'closed' | 'failed'
 
 export interface EpisodeRecord {
   readonly id: EpisodeId
   readonly channelId: ChannelId
   readonly agentId: AgentId
   readonly agentRevisionId: AgentRevisionId
-  readonly bindingId: BindingRecord['id']
-  readonly bindingRevision: number
   readonly dshSessionId?: string
   readonly status: EpisodeStatus
   readonly openedAtEventId: ChannelEventId
@@ -57,6 +62,7 @@ export type EpisodeCloseReason =
   | 'incompatible-activation'
   | 'unrecoverable-session'
   | 'permission-revoked'
+  | 'binding-replaced'
   | 'stopped'
 
 export interface EpisodeHandoffRecord {
@@ -72,30 +78,32 @@ export interface EpisodeHandoffRecord {
   readonly createdAt: number
 }
 
-export type AdmissionState = 'pending' | 'claimed' | 'logged-to-session' | 'rejected'
+export type AdmissionState = 'pending' | 'claimed' | 'logged-to-session'
 
 export interface AdmissionRecord {
   readonly id: AdmissionId
   readonly episodeId: EpisodeId
-  readonly channelEventIds: readonly ChannelEventId[]
-  readonly reason: 'trigger' | 'running-injection' | 'recovery'
+  readonly eventIds: readonly ChannelEventId[]
+  readonly mode: 'followup' | 'inject'
   readonly state: AdmissionState
   readonly dshMessageId?: string
   readonly createdAt: number
-  readonly claimedAt?: number
-  readonly loggedAt?: number
 }
 
 export type OutboundState = 'planned' | 'sending' | 'sent' | 'partially-sent' | 'failed' | 'unknown'
 
+export interface ChannelFact {
+  readonly channelId: ChannelId
+  readonly kind: 'inbound' | 'outbound'
+  readonly sourceId: ChannelEventId | OutboundIntentId
+}
+
 export interface OutboundIntentRecord {
   readonly id: OutboundIntentId
   readonly logicalMessageId: LogicalMessageId
-  readonly agentId: AgentId
   readonly agentRevisionId: AgentRevisionId
   readonly episodeId: EpisodeId
   readonly sourceTurnId?: string
-  readonly channelId: ChannelId
   readonly parts: readonly MessagePart[]
   readonly replyTo?: string
   readonly clientRequestId?: string
@@ -110,15 +118,14 @@ export interface PhysicalDeliveryRecord {
   readonly parts: readonly MessagePart[]
   readonly adapterContext?: JsonValue
   readonly state: 'planned' | 'sending' | 'sent' | 'failed' | 'unknown'
-  readonly attemptCount: number
+  readonly receipt?: AdapterDeliveryReceipt
+  readonly completedAt?: number
 }
 
 export interface DeliveryReceiptRecord {
-  readonly id: DeliveryReceiptId
   readonly physicalDeliveryId: PhysicalDeliveryId
-  readonly attempt: number
   readonly receipt: AdapterDeliveryReceipt
-  readonly createdAt: number
+  readonly completedAt: number
 }
 
 export interface OutboundSnapshot {
@@ -163,6 +170,8 @@ export interface ChannelHistoryRepository {
     channelId: ChannelId,
     options?: { readonly before?: ChannelHistoryCursor; readonly limit?: number },
   ): readonly ChannelHistoryEntry[]
+  /** Project only facts that were admitted or sent by one Episode; results are newest-first. */
+  listEpisodeHistory(episodeId: EpisodeId, options?: { readonly limit?: number }): readonly ChannelHistoryEntry[]
   searchChannelHistory(
     channelId: ChannelId,
     query: string,
@@ -183,8 +192,6 @@ export interface RuntimeRepository {
     expectedRevisionId: AgentRevisionId,
     targetRevisionId: AgentRevisionId,
   ): EpisodeRecord
-  beginEpisodeRollover(id: EpisodeId): EpisodeRecord
-  cancelEpisodeRollover(id: EpisodeId): EpisodeRecord
   closeEpisode(
     id: EpisodeId,
     reason: EpisodeCloseReason,
@@ -202,9 +209,9 @@ export interface RuntimeRepository {
   failEpisode(id: EpisodeId): void
   createAdmission(record: AdmissionRecord): void
   listRecoverableAdmissions(episodeId: EpisodeId): readonly AdmissionRecord[]
-  listAdmittedEventIds(channelId: ChannelId, agentId: AgentId): readonly ChannelEventId[]
-  claimAdmission(id: AdmissionId, claimedAt: number): void
-  completeAdmission(id: AdmissionId, dshMessageId: string, eventId: ChannelEventId, loggedAt: number): void
+  listUnadmittedEvents(channelId: ChannelId, agentId: AgentId, boundAt: number): readonly ChannelEventRecord[]
+  claimAdmission(id: AdmissionId): void
+  completeAdmission(id: AdmissionId, dshMessageId: string, eventId: ChannelEventId): void
   findOutboundByClientRequest(
     agentId: AgentId,
     channelId: ChannelId,
@@ -212,8 +219,8 @@ export interface RuntimeRepository {
   ): OutboundSnapshot | undefined
   createOutboundPlan(intent: OutboundIntentRecord, deliveries: readonly PhysicalDeliveryRecord[]): void
   markIntentSending(id: OutboundIntentId): void
-  markDeliverySending(id: PhysicalDeliveryId, attempt: number): void
-  recordDeliveryReceipt(record: DeliveryReceiptRecord): void
+  markDeliverySending(id: PhysicalDeliveryId): void
+  recordDeliveryReceipt(id: PhysicalDeliveryId, receipt: AdapterDeliveryReceipt, completedAt: number): void
   completeOutboundIntent(id: OutboundIntentId, state: OutboundState): void
   getOutbound(id: OutboundIntentId): OutboundSnapshot
   listUnsettledOutboundIds(): readonly OutboundIntentId[]
@@ -228,6 +235,10 @@ export interface AgentSessionDriver {
     readonly handoff?: {
       readonly id: EpisodeHandoffId
       readonly fromEpisodeId: EpisodeId
+      readonly sourceEventIds: readonly ChannelEventId[]
+      readonly createdAt: number
+      readonly provider: string
+      readonly model: string
       readonly summary: string
       readonly recentEvents: readonly ChannelEventRecord[]
     }
@@ -245,7 +256,8 @@ export interface AgentSessionDriver {
     readonly episode: EpisodeRecord
     readonly revision: AgentRevisionRecord
     readonly sourceEvents: readonly ChannelEventRecord[]
-    readonly recentEvents: readonly ChannelEventRecord[]
+    readonly previousHandoff?: EpisodeHandoffRecord
+    readonly generatedAt: number
   }): Promise<{ readonly summary: string; readonly provider: string; readonly model: string }>
   cancelSession(dshSessionId: string, reason: EpisodeCloseReason): Promise<void>
   admit(input: {
@@ -264,6 +276,21 @@ export interface ChannelRuntimeOptions {
 }
 
 const HANDOFF_RECENT_EVENT_LIMIT = 12
+
+const deterministicHandoffFallback = (
+  episode: EpisodeRecord,
+  revision: AgentRevisionRecord,
+  sourceEvents: readonly ChannelEventRecord[],
+): Awaited<ReturnType<AgentSessionDriver['createHandoffSummary']>> => ({
+  summary: [
+    '模型交接摘要不可用；不要假设旧上下文已经完整恢复。',
+    `旧 Episode：${episode.id}`,
+    `边界锚点：${sourceEvents.map(({ id }) => id).join(' → ') || '无'}`,
+    '需要具体细节时，请使用 conversation_history_search 或 conversation_history_read 回查当前频道原文。',
+  ].join('\n'),
+  provider: revision.model.provider,
+  model: revision.model.model,
+})
 
 export interface SendMessageInput {
   readonly episodeId: EpisodeId
@@ -294,9 +321,9 @@ const isTriggered = (binding: BindingRecord, event: ChannelEventRecord): boolean
     case 'observe-only':
       return false
     case 'mentioned-or-replied':
-      return event.facts?.mentionedBot === true || event.facts?.replyToBot === true
+      return event.facts?.['mentionedBot'] === true || event.facts?.['replyToBot'] === true
     case 'command':
-      return typeof event.facts?.command === 'string' && event.facts.command.length > 0
+      return typeof event.facts?.['command'] === 'string' && event.facts['command'].length > 0
   }
 }
 
@@ -324,9 +351,7 @@ export const isSessionCompatibleRevision = (previous: AgentRevisionRecord, targe
   previous.model.provider === target.model.provider &&
   previous.model.model === target.model.model &&
   previous.model.reasoningEffort === target.model.reasoningEffort &&
-  canonicalJson(previous.capabilities as unknown as JsonValue) ===
-    canonicalJson(target.capabilities as unknown as JsonValue) &&
-  canonicalJson(previous.settings ?? null) === canonicalJson(target.settings ?? null)
+  canonicalJson({ ...previous.capabilities }) === canonicalJson({ ...target.capabilities })
 
 /** Single-lane M1 Runtime. M2 extends the same persisted states with injection and recovery. */
 export class ChannelRuntime {
@@ -339,6 +364,7 @@ export class ChannelRuntime {
   readonly #nextUlid: () => string
   readonly #idleRolloverMs: number | false
   readonly #lanes = new Map<string, Promise<void>>()
+  readonly #factListeners = new Set<(fact: ChannelFact) => void>()
 
   constructor(
     core: CoreService,
@@ -363,10 +389,18 @@ export class ChannelRuntime {
   async acceptInbound(event: AdapterInboundEvent): Promise<InboundCommitResult> {
     const commit = this.#core.appendInbound(event)
     if (commit.inserted) {
+      this.#publishFact({ channelId: event.channelId, kind: 'inbound', sourceId: commit.event.id })
       await Promise.all(
         this.#coreRepository
           .listBindings(event.channelId)
-          .filter((binding) => isTriggered(binding, commit.event))
+          .filter((binding) => {
+            if (isTriggered(binding, commit.event)) return true
+            const episode = this.#runtimeRepository.getActiveEpisode(binding.channelId, binding.agentId)
+            return (
+              episode?.dshSessionId !== undefined &&
+              this.#sessionDriver.sessionStatus(episode.dshSessionId) === 'running'
+            )
+          })
           .map((binding) =>
             this.#withLane(binding.channelId, binding.agentId, () => this.#admit(binding, commit.event)),
           ),
@@ -375,8 +409,36 @@ export class ChannelRuntime {
     return {
       channelEventId: commit.event.id,
       inserted: commit.inserted,
-      checkpointCommitted: commit.checkpointCommitted,
     }
+  }
+
+  subscribeFacts(listener: (fact: ChannelFact) => void): () => void {
+    this.#factListeners.add(listener)
+    return () => this.#factListeners.delete(listener)
+  }
+
+  async replaceBinding(input: {
+    readonly channelId: ChannelId
+    readonly agentId: AgentId
+    readonly triggerPolicy: BindingRecord['triggerPolicy']
+  }): Promise<BindingRecord> {
+    const current = this.#coreRepository.getBinding(input.channelId)
+    const laneAgentId = current?.agentId ?? input.agentId
+    return this.#withLane(input.channelId, laneAgentId, async () => {
+      if (current !== undefined && current.agentId !== input.agentId) {
+        const episode = this.#runtimeRepository.getActiveEpisode(input.channelId, current.agentId)
+        if (episode?.dshSessionId !== undefined) {
+          await this.#sessionDriver.cancelSession(episode.dshSessionId, 'binding-replaced')
+          this.#runtimeRepository.closeEpisode(
+            episode.id,
+            'binding-replaced',
+            episode.lastAdmittedEventId ?? episode.openedAtEventId,
+            this.#timestamp(),
+          )
+        }
+      }
+      return this.#core.replaceBinding(input)
+    })
   }
 
   async sendMessage(input: SendMessageInput): Promise<SendMessageResult> {
@@ -400,8 +462,8 @@ export class ChannelRuntime {
       if (existing) return this.#sendResult(existing)
     }
 
-    const intentId = this.#id<OutboundIntentId>('out')
-    const logicalMessageId = this.#id<LogicalMessageId>('msg')
+    const intentId = OutboundIntentIdSchema.parse(`out_${this.#nextUlid()}`)
+    const logicalMessageId = LogicalMessageIdSchema.parse(`msg_${this.#nextUlid()}`)
     const plans = adapter.planOutbound
       ? await adapter.planOutbound({
           connectionId: channel.connectionId,
@@ -430,11 +492,9 @@ export class ChannelRuntime {
     const intent: OutboundIntentRecord = {
       id: intentId,
       logicalMessageId,
-      agentId: episode.agentId,
       agentRevisionId: episode.agentRevisionId,
       episodeId: episode.id,
       ...(input.sourceTurnId === undefined ? {} : { sourceTurnId: input.sourceTurnId }),
-      channelId: episode.channelId,
       parts: input.parts,
       ...(input.replyTo === undefined ? {} : { replyTo: input.replyTo }),
       ...(input.clientRequestId === undefined ? {} : { clientRequestId: input.clientRequestId }),
@@ -442,15 +502,15 @@ export class ChannelRuntime {
       createdAt: this.#timestamp(),
     }
     const deliveries: PhysicalDeliveryRecord[] = plans.map(({ parts, adapterContext }, sequence) => ({
-      id: this.#id<PhysicalDeliveryId>('phy'),
+      id: PhysicalDeliveryIdSchema.parse(`phy_${this.#nextUlid()}`),
       intentId,
       sequence,
       parts,
       ...(adapterContext === undefined ? {} : { adapterContext }),
       state: 'planned',
-      attemptCount: 0,
     }))
     this.#runtimeRepository.createOutboundPlan(intent, deliveries)
+    this.#publishFact({ channelId: channel.id, kind: 'outbound', sourceId: intent.id })
     const settled = await this.#dispatchOutbound(intent.id, input.signal ?? new AbortController().signal)
     return this.#sendResult(settled.snapshot)
   }
@@ -467,11 +527,17 @@ export class ChannelRuntime {
         let episode = recoverable
         const handoff = this.#runtimeRepository.getEpisodeHandoffTo(episode.id)
         const recoverableAdmissions = this.#runtimeRepository.listRecoverableAdmissions(episode.id)
+        if (episode.status === 'opening' && handoff !== undefined) {
+          const previous = this.#runtimeRepository.getEpisode(handoff.fromEpisodeId)
+          if (previous?.dshSessionId !== undefined) {
+            await this.#sessionDriver.cancelSession(previous.dshSessionId, previous.closeReason ?? 'manual')
+          }
+        }
         const recentEvents =
           handoff?.recentEventIds
             .map((eventId) => this.#coreRepository.getChannelEvent(eventId))
             .filter((event): event is ChannelEventRecord => event !== undefined) ?? []
-        let dshSessionId = await this.#sessionDriver.createSession({
+        const dshSessionId = await this.#sessionDriver.createSession({
           episodeId: episode.id,
           channelId: episode.channelId,
           agentId: episode.agentId,
@@ -482,6 +548,10 @@ export class ChannelRuntime {
                 handoff: {
                   id: handoff.id,
                   fromEpisodeId: handoff.fromEpisodeId,
+                  sourceEventIds: handoff.sourceEventIds,
+                  createdAt: handoff.createdAt,
+                  provider: handoff.provider,
+                  model: handoff.model,
                   summary: handoff.summary,
                   recentEvents,
                 },
@@ -491,40 +561,30 @@ export class ChannelRuntime {
         else if (episode.dshSessionId !== dshSessionId) {
           throw new Error(`Recovered DSH Session identity changed for Episode ${episode.id}.`)
         }
-        const current = this.#coreRepository.getAgent(episode.agentId)
-        if (current && episode.agentRevisionId !== current.revision.id && recoverableAdmissions.length > 0) {
-          const binding = this.#coreRepository.getBinding(episode.channelId, episode.agentId)
-          const anchorId = episode.lastAdmittedEventId ?? episode.openedAtEventId
-          const anchor = this.#coreRepository.getChannelEvent(anchorId)
-          if (!binding || !anchor) throw new Error(`Cannot recover Episode rollover prerequisites: ${episode.id}`)
-          episode = await this.#rolloverIfNeeded(binding, episode, anchor)
-          dshSessionId = episode.dshSessionId!
-        }
         report.resumedEpisodes += 1
 
         for (const admission of recoverableAdmissions) {
-          if (admission.state === 'pending') this.#runtimeRepository.claimAdmission(admission.id, this.#timestamp())
+          if (admission.state === 'pending') this.#runtimeRepository.claimAdmission(admission.id)
           const existing = this.#sessionDriver.findAdmissionMessage(dshSessionId, admission.id)
-          const lastEventId = admission.channelEventIds.at(-1)
+          const lastEventId = admission.eventIds.at(-1)
           if (!lastEventId) throw new Error(`Recoverable Admission has no Channel Events: ${admission.id}`)
           if (existing) {
-            this.#runtimeRepository.completeAdmission(admission.id, existing, lastEventId, this.#timestamp())
+            this.#runtimeRepository.completeAdmission(admission.id, existing, lastEventId)
             report.recoveredAdmissions += 1
             continue
           }
-          const events = admission.channelEventIds.map((id) => {
+          const events = admission.eventIds.map((id) => {
             const event = this.#coreRepository.getChannelEvent(id)
             if (!event) throw new Error(`Admission references a missing Channel Event: ${id}`)
             return event
           })
-          const mode = this.#sessionDriver.sessionStatus(dshSessionId) === 'running' ? 'inject' : 'followup'
           const result = await this.#sessionDriver.admit({
             dshSessionId,
             admissionId: admission.id,
             events,
-            mode,
+            mode: admission.mode,
           })
-          this.#runtimeRepository.completeAdmission(admission.id, result.dshMessageId, lastEventId, this.#timestamp())
+          this.#runtimeRepository.completeAdmission(admission.id, result.dshMessageId, lastEventId)
           report.recoveredAdmissions += 1
         }
         await this.#recoverTriggeredBacklog(episode.channelId, episode.agentId)
@@ -582,12 +642,12 @@ export class ChannelRuntime {
       if (!episode || episode.status !== 'active' || !episode.dshSessionId) {
         throw new Error(`Episode is not active: ${episodeId}`)
       }
-      const binding = this.#coreRepository.getBinding(episode.channelId, episode.agentId)
-      if (!binding) throw new Error(`Episode Binding no longer exists: ${episode.bindingId}`)
+      const binding = this.#coreRepository.getBinding(episode.channelId)
+      if (!binding || binding.agentId !== episode.agentId) throw new Error(`Episode Binding no longer exists.`)
       const anchorId = episode.lastAdmittedEventId ?? episode.openedAtEventId
       const anchor = this.#coreRepository.getChannelEvent(anchorId)
       if (!anchor) throw new Error(`Episode anchor Event no longer exists: ${anchorId}`)
-      return this.#rolloverIfNeeded(binding, episode, anchor, reason)
+      return this.#rolloverIfNeeded(episode, anchor, reason)
     })
   }
 
@@ -597,12 +657,10 @@ export class ChannelRuntime {
       const agent = this.#coreRepository.getAgent(binding.agentId)
       if (!agent) throw new Error(`Binding agent no longer exists: ${binding.agentId}`)
       const opening: EpisodeRecord = {
-        id: this.#id<EpisodeId>('eps'),
+        id: EpisodeIdSchema.parse(`eps_${this.#nextUlid()}`),
         channelId: binding.channelId,
         agentId: binding.agentId,
         agentRevisionId: agent.revision.id,
-        bindingId: binding.id,
-        bindingRevision: binding.revision,
         status: 'opening',
         openedAtEventId: event.id,
         createdAt: this.#timestamp(),
@@ -624,77 +682,63 @@ export class ChannelRuntime {
     if (episode.status !== 'active' || episode.dshSessionId === undefined) {
       throw new Error(`Episode is not ready for admission: ${episode.id}`)
     }
-    const candidateEvents = this.#candidateTriggeredEvents(binding, episode, event)
+    episode = await this.#rolloverIfNeeded(episode, event)
+    episode = await this.#applyCurrentCompatibleRevision(episode)
+    const dshSessionId = episode.dshSessionId
+    if (dshSessionId === undefined) throw new Error(`Episode has no DSH Session after revision switch: ${episode.id}`)
+    const candidateEvents = this.#candidateTriggeredEvents(binding, event)
     const existingAdmission = this.#runtimeRepository
       .listRecoverableAdmissions(episode.id)
-      .find((candidate) => candidate.channelEventIds.includes(event.id))
-    const admissionId = existingAdmission?.id ?? this.#id<AdmissionId>('adm')
+      .find((candidate) => candidate.eventIds.includes(event.id))
+    const admissionId = existingAdmission?.id ?? AdmissionIdSchema.parse(`adm_${this.#nextUlid()}`)
     if (existingAdmission === undefined) {
       this.#runtimeRepository.createAdmission({
         id: admissionId,
         episodeId: episode.id,
-        channelEventIds: candidateEvents.map(({ id }) => id),
-        reason: this.#sessionDriver.sessionStatus(episode.dshSessionId) === 'running' ? 'running-injection' : 'trigger',
+        eventIds: candidateEvents.map(({ id }) => id),
+        mode: this.#sessionDriver.sessionStatus(dshSessionId) === 'running' ? 'inject' : 'followup',
         state: 'pending',
         createdAt: this.#timestamp(),
       })
     }
-    episode = await this.#rolloverIfNeeded(binding, episode, event)
-    episode = await this.#applyCurrentCompatibleRevision(episode)
-    const dshSessionId = episode.dshSessionId
-    if (dshSessionId === undefined) throw new Error(`Episode has no DSH Session after revision switch: ${episode.id}`)
     const admission = this.#runtimeRepository
       .listRecoverableAdmissions(episode.id)
       .find((candidate) => candidate.id === admissionId)
-    if (!admission) throw new Error(`Admission was not carried into target Episode: ${admissionId}`)
-    this.#runtimeRepository.claimAdmission(admission.id, this.#timestamp())
+    if (!admission) throw new Error(`Admission was not persisted in target Episode: ${admissionId}`)
+    this.#runtimeRepository.claimAdmission(admission.id)
     const result = await this.#sessionDriver.admit({
       dshSessionId,
       admissionId: admission.id,
-      events: admission.channelEventIds.map((eventId) => {
+      events: admission.eventIds.map((eventId) => {
         const candidate = this.#coreRepository.getChannelEvent(eventId)
         if (!candidate) throw new Error(`Admission references a missing Channel Event: ${eventId}`)
         return candidate
       }),
-      mode: admission.reason === 'running-injection' ? 'inject' : 'followup',
+      mode: admission.mode,
     })
-    this.#runtimeRepository.completeAdmission(
-      admission.id,
-      result.dshMessageId,
-      admission.channelEventIds.at(-1)!,
-      this.#timestamp(),
-    )
+    const lastEventId = admission.eventIds.at(-1)
+    if (lastEventId === undefined) throw new Error(`Admission has no events: ${admission.id}`)
+    this.#runtimeRepository.completeAdmission(admission.id, result.dshMessageId, lastEventId)
   }
 
-  #candidateTriggeredEvents(
-    binding: BindingRecord,
-    episode: EpisodeRecord,
-    current: ChannelEventRecord,
-  ): readonly ChannelEventRecord[] {
-    const events = this.#coreRepository.listChannelEvents(binding.channelId, { limit: 100 })
-    const admitted = new Set(this.#runtimeRepository.listAdmittedEventIds(binding.channelId, binding.agentId))
-    const candidates = events.filter(
-      (candidate) =>
-        candidate.receivedAt >= binding.createdAt && !admitted.has(candidate.id) && isTriggered(binding, candidate),
-    )
+  #candidateTriggeredEvents(binding: BindingRecord, current: ChannelEventRecord): readonly ChannelEventRecord[] {
+    const candidates = this.#runtimeRepository.listUnadmittedEvents(binding.channelId, binding.agentId, binding.boundAt)
     return candidates.some(({ id }) => id === current.id) ? candidates : [...candidates, current]
   }
 
   async #recoverTriggeredBacklog(channelId: ChannelId, agentId: AgentId): Promise<void> {
-    const binding = this.#coreRepository.getBinding(channelId, agentId)
+    const binding = this.#coreRepository.getBinding(channelId)
     const episode = this.#runtimeRepository.getActiveEpisode(channelId, agentId)
     if (!binding || !episode) return
-    const events = this.#coreRepository.listChannelEvents(channelId, { limit: 100 })
+    const events = this.#runtimeRepository.listUnadmittedEvents(channelId, agentId, binding.boundAt)
     for (const event of events) {
-      const admitted = new Set(this.#runtimeRepository.listAdmittedEventIds(channelId, agentId))
-      if (event.receivedAt >= binding.createdAt && !admitted.has(event.id) && isTriggered(binding, event)) {
+      if (isTriggered(binding, event)) {
         await this.#admit(binding, event)
       }
     }
   }
 
   async #rolloverIfNeeded(
-    binding: BindingRecord,
     episode: EpisodeRecord,
     event: ChannelEventRecord,
     forcedReason?: EpisodeCloseReason,
@@ -715,44 +759,49 @@ export class ChannelRuntime {
     if (reason === undefined) return episode
     if (!episode.dshSessionId) throw new Error(`Episode has no DSH Session for rollover: ${episode.id}`)
 
-    this.#runtimeRepository.beginEpisodeRollover(episode.id)
     const sourceEvents = [
-      this.#coreRepository.getChannelEvent(episode.openedAtEventId),
-      episode.lastAdmittedEventId === undefined
-        ? undefined
-        : this.#coreRepository.getChannelEvent(episode.lastAdmittedEventId),
-    ].filter((sourceEvent): sourceEvent is ChannelEventRecord => sourceEvent !== undefined)
+      ...new Map(
+        [
+          this.#coreRepository.getChannelEvent(episode.openedAtEventId),
+          episode.lastAdmittedEventId === undefined
+            ? undefined
+            : this.#coreRepository.getChannelEvent(episode.lastAdmittedEventId),
+        ]
+          .filter((sourceEvent): sourceEvent is ChannelEventRecord => sourceEvent !== undefined)
+          .map((sourceEvent) => [sourceEvent.id, sourceEvent]),
+      ).values(),
+    ]
     const recentEvents = this.#coreRepository.listChannelEvents(episode.channelId, {
       before: { receivedAt: event.receivedAt, id: event.id },
       limit: HANDOFF_RECENT_EVENT_LIMIT,
     })
-    let summary: Awaited<ReturnType<AgentSessionDriver['createHandoffSummary']>>
+    const previousHandoff = this.#runtimeRepository.getEpisodeHandoffTo(episode.id)
+    const handoffCreatedAt = this.#timestamp()
+    let summary = deterministicHandoffFallback(episode, previousRevision, sourceEvents)
     try {
       summary = await this.#sessionDriver.createHandoffSummary({
         dshSessionId: episode.dshSessionId,
         episode,
         revision: previousRevision,
         sourceEvents,
-        recentEvents,
+        ...(previousHandoff === undefined ? {} : { previousHandoff }),
+        generatedAt: handoffCreatedAt,
       })
-    } catch (error) {
-      this.#runtimeRepository.cancelEpisodeRollover(episode.id)
-      throw error
+    } catch {
+      // A handoff is advisory. Summary generation and projection failures must not block the Session switch.
     }
 
     const nextEpisode: EpisodeRecord = {
-      id: this.#id<EpisodeId>('eps'),
+      id: EpisodeIdSchema.parse(`eps_${this.#nextUlid()}`),
       channelId: episode.channelId,
       agentId: episode.agentId,
       agentRevisionId: current.revision.id,
-      bindingId: binding.id,
-      bindingRevision: binding.revision,
       status: 'opening',
       openedAtEventId: event.id,
       createdAt: this.#timestamp(),
     }
     const handoff: EpisodeHandoffRecord = {
-      id: this.#id<EpisodeHandoffId>('hof'),
+      id: EpisodeHandoffIdSchema.parse(`hof_${this.#nextUlid()}`),
       fromEpisodeId: episode.id,
       toEpisodeId: nextEpisode.id,
       sourceEventIds: sourceEvents.map(({ id }) => id),
@@ -760,7 +809,7 @@ export class ChannelRuntime {
       summary: summary.summary,
       provider: summary.provider,
       model: summary.model,
-      createdAt: this.#timestamp(),
+      createdAt: handoffCreatedAt,
     }
     const closedAtEventId = episode.lastAdmittedEventId ?? episode.openedAtEventId
     this.#runtimeRepository.commitEpisodeRollover({
@@ -780,6 +829,10 @@ export class ChannelRuntime {
       handoff: {
         id: handoff.id,
         fromEpisodeId: handoff.fromEpisodeId,
+        sourceEventIds: handoff.sourceEventIds,
+        createdAt: handoff.createdAt,
+        provider: handoff.provider,
+        model: handoff.model,
         summary: handoff.summary,
         recentEvents,
       },
@@ -813,8 +866,10 @@ export class ChannelRuntime {
     signal: AbortSignal,
   ): Promise<{ readonly snapshot: OutboundSnapshot; readonly unknownDeliveries: number }> {
     let snapshot = this.#runtimeRepository.getOutbound(id)
-    const channel = this.#coreRepository.getChannel(snapshot.intent.channelId)
-    if (!channel) throw new Error(`Outbound channel no longer exists: ${snapshot.intent.channelId}`)
+    const episode = this.#runtimeRepository.getEpisode(snapshot.intent.episodeId)
+    if (!episode) throw new Error(`Outbound Episode no longer exists: ${snapshot.intent.episodeId}`)
+    const channel = this.#coreRepository.getChannel(episode.channelId)
+    if (!channel) throw new Error(`Outbound channel no longer exists: ${episode.channelId}`)
     const adapter = this.#resolveAdapter(channel.connectionId)
     if (!adapter) throw new Error(`Connection adapter is not running: ${channel.connectionId}`)
     if (snapshot.intent.state === 'planned') {
@@ -826,22 +881,19 @@ export class ChannelRuntime {
     let unknownDeliveries = 0
     for (const delivery of snapshot.deliveries) {
       if (delivery.state === 'sending') {
-        this.#runtimeRepository.recordDeliveryReceipt({
-          id: this.#id<DeliveryReceiptId>('rcp'),
-          physicalDeliveryId: delivery.id,
-          attempt: delivery.attemptCount,
-          receipt: {
+        this.#runtimeRepository.recordDeliveryReceipt(
+          delivery.id,
+          {
             status: 'unknown',
             message: 'Host restarted after dispatch began and before an authoritative receipt was committed.',
           },
-          createdAt: this.#timestamp(),
-        })
+          this.#timestamp(),
+        )
         unknownDeliveries += 1
         continue
       }
       if (delivery.state !== 'planned') continue
-      const attempt = delivery.attemptCount + 1
-      this.#runtimeRepository.markDeliverySending(delivery.id, attempt)
+      this.#runtimeRepository.markDeliverySending(delivery.id)
       let receipt: AdapterDeliveryReceipt
       try {
         const request: PhysicalDeliveryRequest = {
@@ -851,7 +903,6 @@ export class ChannelRuntime {
           channelId: channel.id,
           parts: delivery.parts,
           ...(snapshot.intent.replyTo === undefined ? {} : { replyTo: snapshot.intent.replyTo }),
-          attempt,
           ...(delivery.adapterContext === undefined ? {} : { adapterContext: delivery.adapterContext }),
         }
         receipt = await adapter.deliver(request, signal)
@@ -861,17 +912,22 @@ export class ChannelRuntime {
           message: `Adapter delivery threw before an authoritative receipt: ${error instanceof Error ? error.message : String(error)}`,
         }
       }
-      this.#runtimeRepository.recordDeliveryReceipt({
-        id: this.#id<DeliveryReceiptId>('rcp'),
-        physicalDeliveryId: delivery.id,
-        attempt,
-        receipt,
-        createdAt: this.#timestamp(),
-      })
+      this.#runtimeRepository.recordDeliveryReceipt(delivery.id, receipt, this.#timestamp())
     }
     const state = this.#aggregate(this.#runtimeRepository.getOutbound(id).receipts)
     this.#runtimeRepository.completeOutboundIntent(id, state)
+    this.#publishFact({ channelId: channel.id, kind: 'outbound', sourceId: id })
     return { snapshot: this.#runtimeRepository.getOutbound(id), unknownDeliveries }
+  }
+
+  #publishFact(fact: ChannelFact): void {
+    for (const listener of this.#factListeners) {
+      try {
+        listener(fact)
+      } catch {
+        // A projection listener must never roll back an already committed fact.
+      }
+    }
   }
 
   #aggregate(receipts: readonly DeliveryReceiptRecord[]): OutboundState {
@@ -885,13 +941,19 @@ export class ChannelRuntime {
 
   #sendResult(snapshot: OutboundSnapshot): SendMessageResult {
     const status = snapshot.intent.state
-    if (!['sent', 'partially-sent', 'failed', 'unknown'].includes(status)) {
-      throw new Error(`Outbound intent has not settled: ${snapshot.intent.id}`)
-    }
-    return {
-      logicalMessageId: snapshot.intent.logicalMessageId,
-      status: status as SendMessageResult['status'],
-      receipts: snapshot.receipts,
+    switch (status) {
+      case 'sent':
+      case 'partially-sent':
+      case 'failed':
+      case 'unknown':
+        return {
+          logicalMessageId: snapshot.intent.logicalMessageId,
+          status,
+          receipts: snapshot.receipts,
+        }
+      case 'planned':
+      case 'sending':
+        throw new Error(`Outbound intent has not settled: ${snapshot.intent.id}`)
     }
   }
 
@@ -911,10 +973,6 @@ export class ChannelRuntime {
       release()
       if (this.#lanes.get(key) === tail) this.#lanes.delete(key)
     }
-  }
-
-  #id<T extends string>(prefix: string): T {
-    return `${prefix}_${this.#nextUlid()}` as T
   }
 
   #timestamp(): number {

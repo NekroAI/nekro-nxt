@@ -1,7 +1,13 @@
 # SQLite storage
 
-该包拥有 NekroNxt Core SQLite 接入，以及 Host 对多个 SQLite 所有者执行在线快照所需的窄基础设施。M0 验证 Node 内置 `node:sqlite`、Drizzle schema、FTS5、WAL、在线备份和 Core/DSH 双快照提交；协调器不读取 DSH Session 私有表，也不提前建立尚无领域消费者的正式业务表。
+该包拥有 NekroNxt Core SQLite 的唯一结构事实源、Drizzle Repository、迁移执行和在线备份。DSH Session SQLite 继续由 DSH 自己拥有；本包只协调备份文件，不读取 DSH 私有表。
 
-若 Drizzle 没有对 `node:sqlite` 的稳定驱动，本包保留 Drizzle schema/migration，并通过窄 Repository 使用原生 `DatabaseSync`，不因此引入 `better-sqlite3` 或第二种数据库。
+当前基线使用 `better-sqlite3 13.x + drizzle-orm 0.45.x`。`CoreDatabase` 只公开 typed Drizzle DB、迁移、事务、pragma、backup 和 close；领域代码不得获得原生连接，也不得调用 `.prepare()`、`.exec()`、`sql.raw()` 或拼接 SQL。WAL、foreign keys、busy timeout 与在线备份分别使用驱动的 `pragma()` 和 `backup()` API。
 
-`bindings_active_channel_uq` 是部分唯一索引，只约束每个频道最多一个活动 Binding；同一智能体可以同时绑定多个频道。频道换绑时历史 Binding 保留，以维持 Episode 外键和审计语义。Agent Revision 的历史复用和当前指针切换也在事务提交边界内完成。
+数据库由 22 张领域表组成，按 agents、channels、runtime、outbox、assets、extensions 六个 Repository 文件维护。所有持久 JSON 读出后均经过 `drizzle-zod` 行 Schema 和领域 Schema；ID 使用带格式校验的 Zod brand。
+
+迁移目录只保留 Drizzle Kit 生成的 `0000_initial`。空数据库应用该基线；已有当前基线可直接打开；任何不含 Drizzle migration 元数据的旧实验数据库都会被明确拒绝并要求重置。本项目不维护 0000–0016 的升级兼容，也不允许人工编辑迁移 SQL。
+
+频道历史搜索保存规范化 `search_text`，按频道分页后在 TypeScript 中执行字面子串匹配。因此 `%`、`_` 和中文短文本都保持字面语义，同时不再维护 FTS5 virtual table、trigger、`MATCH` 或 `bm25` 手写查询。
+
+Binding 只表达每个频道的当前归属，以 `channel_id` 为主键；历史消息和 Episode 不依赖历史 Binding 行。Agent Revision 继续不可变，当前 Revision 指针由独立表和复合外键保证归属。Asset Occurrence 以 `(channel_event_id, part_index)` 记录授权来源；Extension Activation 以 `(agent_id, extension_id)` 保存每个智能体当前启用版本。

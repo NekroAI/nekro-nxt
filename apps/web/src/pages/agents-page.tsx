@@ -32,6 +32,16 @@ const modelKey = (model: Pick<ModelSummary, 'provider' | 'id'>): string =>
 const modelValueForAgent = (agent: AgentSummary): string =>
   agent.modelRef ? modelKey({ provider: agent.modelRef.provider, id: agent.modelRef.model }) : ''
 
+type TriggerPolicy = 'always' | 'mentioned-or-replied' | 'command' | 'observe-only'
+
+const isTriggerPolicy = (value: string): value is TriggerPolicy =>
+  value === 'always' || value === 'mentioned-or-replied' || value === 'command' || value === 'observe-only'
+
+type AgentSettingsTab = 'profile' | 'channels' | 'capabilities' | 'extensions'
+
+const isAgentSettingsTab = (value: string | null): value is AgentSettingsTab =>
+  value === 'profile' || value === 'channels' || value === 'capabilities' || value === 'extensions'
+
 export function AgentsPage() {
   const host = useProductStore((state) => state.host)
   const agents = useProductStore((state) => state.agents)
@@ -56,8 +66,9 @@ export function AgentsPage() {
   const [createError, setCreateError] = useState('')
 
   useEffect(() => {
-    if (models.length > 0 && !models.some((model) => modelKey(model) === selectedModelKey)) {
-      setSelectedModelKey(modelKey(models[0]!))
+    const firstModel = models[0]
+    if (firstModel && !models.some((model) => modelKey(model) === selectedModelKey)) {
+      setSelectedModelKey(modelKey(firstModel))
     }
   }, [models, selectedModelKey])
 
@@ -87,7 +98,7 @@ export function AgentsPage() {
   }
   const channelName = (channelId: string): string =>
     channels.find((channel) => channel.id === channelId)?.name ?? '频道'
-  const wizardSteps = ['身份', '模型', '工作方式', '确认'] as const
+  const wizardSteps = ['身份', '模型', '工作方式', '确认']
 
   return (
     <div className={styles.page}>
@@ -448,9 +459,7 @@ export function AgentManagePage() {
   const [capabilityPending, setCapabilityPending] = useState<Capability | null>(null)
   const [bindingOpen, setBindingOpen] = useState(false)
   const [bindingChannelId, setBindingChannelId] = useState('')
-  const [bindingTriggerPolicy, setBindingTriggerPolicy] = useState<
-    'always' | 'mentioned-or-replied' | 'command' | 'observe-only'
-  >('mentioned-or-replied')
+  const [bindingTriggerPolicy, setBindingTriggerPolicy] = useState<TriggerPolicy>('mentioned-or-replied')
   const [bindingError, setBindingError] = useState('')
 
   useEffect(() => {
@@ -540,9 +549,7 @@ export function AgentManagePage() {
     (connection) => connection.adapterKey !== 'web' && connection.knownChannels.length === 0,
   )
   const requestedTab = searchParams.get('tab')
-  const activeTab = ['profile', 'channels', 'capabilities', 'extensions'].includes(requestedTab ?? '')
-    ? requestedTab!
-    : 'profile'
+  const activeTab: AgentSettingsTab = isAgentSettingsTab(requestedTab) ? requestedTab : 'profile'
 
   return (
     <div className={styles.page}>
@@ -777,9 +784,9 @@ export function AgentManagePage() {
               <SelectField
                 label="响应方式"
                 value={bindingTriggerPolicy}
-                onValueChange={(value) =>
-                  setBindingTriggerPolicy(value as 'always' | 'mentioned-or-replied' | 'command' | 'observe-only')
-                }
+                onValueChange={(value) => {
+                  if (isTriggerPolicy(value)) setBindingTriggerPolicy(value)
+                }}
                 options={[
                   { value: 'mentioned-or-replied', label: '被提及或回复时' },
                   { value: 'always', label: '每条消息' },

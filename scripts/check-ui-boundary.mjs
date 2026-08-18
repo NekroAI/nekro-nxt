@@ -20,7 +20,9 @@ async function filesUnder(relativeDirectory) {
 }
 
 const attribute = (attributes, name) =>
-  attributes.properties.find((property) => ts.isJsxAttribute(property) && property.name.text === name)
+  attributes.properties.find(
+    (property) => ts.isJsxAttribute(property) && ts.isIdentifier(property.name) && property.name.text === name,
+  )
 
 const staticBooleanAttribute = (attributes, name) => {
   const candidate = attribute(attributes, name)

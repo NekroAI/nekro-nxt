@@ -17,7 +17,7 @@ export type MigrationErrorCode =
 /** A classified migration failure that callers can map to reset or recovery UI. */
 export class MigrationError extends Error {
   readonly code: MigrationErrorCode
-  readonly cause?: unknown
+  override readonly cause?: unknown
 
   constructor(code: MigrationErrorCode, message: string, cause?: unknown) {
     super(message)

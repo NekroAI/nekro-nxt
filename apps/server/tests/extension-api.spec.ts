@@ -1,5 +1,6 @@
 import { Context } from '@deepseek-ai/cordis'
 import WebServer from '@deepseek-ai/dsh-host-webserver'
+import { HostApiContracts } from '@nekro-nxt/contracts'
 import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
@@ -35,13 +36,11 @@ describe('NekroNxt domain API — local Extension lifecycle (M4 slice)', () => {
       persona: '',
       model: { provider: 'test-provider', model: 'chat-model' },
     })
-    const captured = runtime.extensionService.captureDynamicPackage(agent.definition.id, {
-      dshSessionId: 'session-test-1',
-      dynamicPluginId: 'plugin-test-1',
-      dynamicPackageId: 'pkg-test-1',
-      name: '频道摘要',
-      purpose: '生成结构化阶段摘要。',
-      hostCode: `return {
+    const saved = await runtime.extensionService.saveDynamicPackage({
+      snapshot: {
+        name: '频道摘要',
+        purpose: '生成结构化阶段摘要。',
+        hostCode: `return {
         inject: ['tools'],
         apply(ctx) {
           harness.registerTool(ctx, harness.defineTool({
@@ -53,12 +52,11 @@ describe('NekroNxt domain API — local Extension lifecycle (M4 slice)', () => {
           }))
         }
       }`,
-    })
-    const saved = await runtime.extensionService.saveDraftPackage({
-      draftPackageId: captured.package.id,
+      },
       slug: 'channel-summary',
       displayName: '频道摘要',
       description: '生成结构化阶段摘要。',
+      createdByAgentId: agent.definition.id,
     })
 
     const webContext = new Context()
@@ -68,56 +66,46 @@ describe('NekroNxt domain API — local Extension lifecycle (M4 slice)', () => {
 
     try {
       // The saved Extension appears in the authoritative snapshot (inactive).
-      let snapshot = (await (await fetch(`${origin}/api/snapshot`)).json()) as {
-        extensions: Array<{
-          id: string
-          slug: string
-          displayName: string
-          activation: string
-          revisionNumber: number
-        }>
-      }
+      let snapshot = HostApiContracts.snapshot.parseResponse(await (await fetch(`${origin}/api/snapshot`)).json())
       expect(snapshot.extensions).toHaveLength(1)
-      expect(snapshot.extensions[0]).toMatchObject({ slug: 'channel-summary', activation: 'inactive' })
+      expect(snapshot.extensions[0]).toMatchObject({
+        slug: 'channel-summary',
+        revisions: [{ id: saved.revision.id, revisionNumber: 1 }],
+        activations: [],
+      })
 
       // Activate it for the intelligent-agent through the API.
-      const activationResponse = await fetch(`${origin}/api/extensions/${saved.extension.id}/activation`, {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ agentId: agent.definition.id, revisionId: saved.revision.id }),
-      })
+      const activationResponse = await fetch(
+        `${origin}/api/agents/${agent.definition.id}/extensions/${saved.extension.id}/activation`,
+        {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ revisionId: saved.revision.id }),
+        },
+      )
       expect(activationResponse.ok).toBe(true)
-      const activationJson = (await activationResponse.json()) as { activation: { state: string } }
-      expect(['active', 'pending'].includes(activationJson.activation.state)).toBe(true)
+      const activationJson = HostApiContracts.activateExtension.parseResponse(await activationResponse.json())
+      expect(activationJson.activation).toMatchObject({
+        agentId: agent.definition.id,
+        extensionId: saved.extension.id,
+        extensionRevisionId: saved.revision.id,
+      })
 
       // The snapshot now reports the Extension as active for that agent.
-      snapshot = (await (await fetch(`${origin}/api/snapshot`)).json()) as {
-        extensions: Array<{
-          id: string
-          slug: string
-          displayName: string
-          activation: string
-          revisionNumber: number
-        }>
-      }
-      expect(snapshot.extensions.find((extension) => extension.id === saved.extension.id)?.activation).toBe('active')
+      snapshot = HostApiContracts.snapshot.parseResponse(await (await fetch(`${origin}/api/snapshot`)).json())
+      expect(snapshot.extensions.find((extension) => extension.id === saved.extension.id)?.activations).toEqual([
+        expect.objectContaining({ agentId: agent.definition.id, extensionRevisionId: saved.revision.id }),
+      ])
 
       // Disable it through the API.
-      const disableResponse = await fetch(`${origin}/api/extensions/${saved.extension.id}/activation`, {
-        method: 'DELETE',
-      })
+      const disableResponse = await fetch(
+        `${origin}/api/agents/${agent.definition.id}/extensions/${saved.extension.id}/activation`,
+        { method: 'DELETE' },
+      )
       expect(disableResponse.ok).toBe(true)
 
-      snapshot = (await (await fetch(`${origin}/api/snapshot`)).json()) as {
-        extensions: Array<{
-          id: string
-          slug: string
-          displayName: string
-          activation: string
-          revisionNumber: number
-        }>
-      }
-      expect(snapshot.extensions.find((extension) => extension.id === saved.extension.id)?.activation).toBe('inactive')
+      snapshot = HostApiContracts.snapshot.parseResponse(await (await fetch(`${origin}/api/snapshot`)).json())
+      expect(snapshot.extensions.find((extension) => extension.id === saved.extension.id)?.activations).toEqual([])
     } finally {
       api.dispose()
       await webContext.fiber.dispose()

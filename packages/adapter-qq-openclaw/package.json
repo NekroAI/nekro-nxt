@@ -11,7 +11,7 @@
   },
   "scripts": {
     "build": "tsdown",
-    "dev": "tsdown --watch",
+    "dev": "tsdown --watch --no-clean",
     "test": "vitest run --root ../.. packages/adapter-qq-openclaw/tests",
     "typecheck": "tsc --noEmit"
   },

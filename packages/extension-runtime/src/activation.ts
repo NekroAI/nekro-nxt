@@ -1,13 +1,7 @@
-import type { AgentActivationId, AgentId, ExtensionId, ExtensionRevisionId, JsonValue } from '@nekro-nxt/contracts'
-import { monotonicFactory } from 'ulid'
+import type { AgentId, ExtensionId, ExtensionRevisionId, JsonValue } from '@nekro-nxt/contracts'
 import type { ExtensionBuilder } from './builder.js'
 import type { ExtensionService } from './service.js'
-import type {
-  AgentActivationRecord,
-  ExtensionBuildArtifact,
-  ExtensionRepository,
-  ExtensionRevisionRecord,
-} from './types.js'
+import type { Activation, ExtensionBuildArtifact, ExtensionRepository, Revision } from './types.js'
 
 export interface MountedExtension {
   readonly evidence: {
@@ -22,34 +16,38 @@ export interface ExtensionActivationHost {
   waitUntilSafe(agentId: AgentId): Promise<void>
   mount(
     agentId: AgentId,
-    revision: ExtensionRevisionRecord,
+    revision: Revision,
     artifact: ExtensionBuildArtifact,
     config: JsonValue,
   ): Promise<MountedExtension>
 }
 
+type ArtifactBuilder = Pick<ExtensionBuilder, 'build'>
+type RevisionSourceResolver = Pick<ExtensionService, 'revisionSourceDirectory'>
+
 export class ExtensionActivationCoordinator {
   readonly #repository: ExtensionRepository
-  readonly #service: ExtensionService
-  readonly #builder: ExtensionBuilder
+  readonly #service: RevisionSourceResolver
+  readonly #builder: ArtifactBuilder
   readonly #host: ExtensionActivationHost
   readonly #now: () => number
-  readonly #nextUlid: () => string
-  readonly #mounted = new Map<AgentActivationId, MountedExtension>()
+  readonly #mounted = new Map<string, MountedExtension>()
+  readonly #transitions = new Map<string, Promise<void>>()
+  #disposed = false
+  #disposePromise: Promise<void> | undefined
 
   constructor(
     repository: ExtensionRepository,
-    service: ExtensionService,
-    builder: ExtensionBuilder,
+    service: RevisionSourceResolver,
+    builder: ArtifactBuilder,
     host: ExtensionActivationHost,
-    options: { readonly now?: () => number; readonly nextUlid?: () => string } = {},
+    options: { readonly now?: () => number } = {},
   ) {
     this.#repository = repository
     this.#service = service
     this.#builder = builder
     this.#host = host
     this.#now = options.now ?? Date.now
-    this.#nextUlid = options.nextUlid ?? monotonicFactory()
   }
 
   async activate(input: {
@@ -57,118 +55,182 @@ export class ExtensionActivationCoordinator {
     readonly extensionId: ExtensionId
     readonly revisionId: ExtensionRevisionId
     readonly config?: JsonValue
-  }): Promise<AgentActivationRecord> {
-    const revision = this.#repository.getExtensionRevision(input.revisionId)
-    if (!revision || revision.extensionId !== input.extensionId || revision.storageState !== 'saved') {
-      throw new Error('Activation requires a saved Revision owned by the selected Extension.')
-    }
-    const activation: AgentActivationRecord = {
-      id: this.#id<AgentActivationId>('act'),
-      agentId: input.agentId,
-      extensionId: input.extensionId,
-      extensionRevisionId: input.revisionId,
-      config: input.config ?? {},
-      state: 'pending',
-      runtimeKind: 'in-process',
-      createdAt: this.#timestamp(),
-    }
-    this.#repository.createActivation(activation)
-    const previous = this.#repository.getActiveActivation(input.agentId, input.extensionId)
-    try {
+  }): Promise<Activation> {
+    const key = this.#key(input.agentId, input.extensionId)
+    return this.#exclusive(key, async () => {
+      this.#assertAvailable()
+      const revision = this.#repository.getExtensionRevision(input.revisionId)
+      if (!revision || revision.extensionId !== input.extensionId) {
+        throw new Error('Activation requires a Revision owned by the selected Extension.')
+      }
+
       const artifact = await this.#build(revision)
-      this.#repository.markActivationWaiting(activation.id)
+      const previous = this.#repository.getActivation(input.agentId, input.extensionId)
+      const previousInstance = this.#mounted.get(key)
+      const rollback = previousInstance && previous ? await this.#prepareRollback(previous) : undefined
       await this.#host.waitUntilSafe(input.agentId)
-      const previousInstance = previous ? this.#mounted.get(previous.id) : undefined
-      await previousInstance?.dispose()
-      if (previous) this.#mounted.delete(previous.id)
+
+      if (previousInstance) {
+        await previousInstance.dispose()
+        this.#mounted.delete(key)
+      }
+
       let mounted: MountedExtension
       try {
-        mounted = await this.#host.mount(input.agentId, revision, artifact, activation.config)
+        mounted = await this.#host.mount(input.agentId, revision, artifact, input.config ?? {})
       } catch (error) {
-        if (previous) await this.#restorePrevious(previous)
+        await this.#restorePrevious(key, rollback, error)
         throw error
+      }
+
+      const activation: Activation = {
+        agentId: input.agentId,
+        extensionId: input.extensionId,
+        extensionRevisionId: input.revisionId,
+        config: input.config ?? {},
+        activatedAt: this.#timestamp(),
       }
       try {
-        this.#repository.commitActivationSwitch(activation.id, previous?.id, this.#timestamp())
+        this.#repository.upsertActivation(activation)
       } catch (error) {
-        await mounted.dispose()
-        if (previous) await this.#restorePrevious(previous)
+        await mounted.dispose().catch(() => undefined)
+        await this.#restorePrevious(key, rollback, error)
         throw error
       }
-      this.#mounted.set(activation.id, mounted)
-      this.#repository.markExtensionValidation(revision.id, 'succeeded')
-      return this.#repository.getActivation(activation.id)!
-    } catch (error) {
-      this.#repository.failActivation(activation.id, error instanceof Error ? error.message : String(error))
-      this.#repository.markExtensionValidation(revision.id, 'failed')
-      throw error
-    }
+      this.#mounted.set(key, mounted)
+      return activation
+    })
   }
 
+  /** Mounts the repository's committed current Activations without inventing failure states. */
   async restore(): Promise<{ readonly restored: number; readonly failed: number }> {
+    this.#assertAvailable()
     let restored = 0
     let failed = 0
-    for (const activation of this.#repository.listActiveActivations()) {
-      const revision = this.#repository.getExtensionRevision(activation.extensionRevisionId)
-      if (!revision || revision.storageState !== 'saved') {
-        this.#repository.failActivation(activation.id, 'Activation Revision source is unavailable.')
-        failed += 1
-        continue
-      }
+    for (const activation of this.#repository.listActivations()) {
+      const key = this.#key(activation.agentId, activation.extensionId)
       try {
-        const artifact = await this.#build(revision)
-        this.#mounted.set(
-          activation.id,
-          await this.#host.mount(activation.agentId, revision, artifact, activation.config),
-        )
-        restored += 1
-      } catch (error) {
-        this.#repository.failActivation(activation.id, error instanceof Error ? error.message : String(error))
+        const mounted = await this.#exclusive(key, async () => {
+          this.#assertAvailable()
+          if (this.#mounted.has(key)) return false
+          const revision = this.#repository.getExtensionRevision(activation.extensionRevisionId)
+          if (!revision || revision.extensionId !== activation.extensionId) {
+            throw new Error('Activation refers to an unavailable Extension Revision.')
+          }
+          const artifact = await this.#build(revision)
+          this.#mounted.set(key, await this.#host.mount(activation.agentId, revision, artifact, activation.config))
+          return true
+        })
+        if (mounted) restored += 1
+      } catch {
         failed += 1
       }
     }
     return { restored, failed }
   }
 
-  async disable(id: AgentActivationId): Promise<void> {
-    const activation = this.#repository.getActivation(id)
-    if (!activation || activation.state !== 'active') throw new Error(`Activation is not active: ${id}`)
-    await this.#host.waitUntilSafe(activation.agentId)
-    await this.#mounted.get(id)?.dispose()
-    this.#mounted.delete(id)
-    this.#repository.disableActivation(id, this.#timestamp())
+  async disable(agentId: AgentId, extensionId: ExtensionId): Promise<void> {
+    const key = this.#key(agentId, extensionId)
+    await this.#exclusive(key, async () => {
+      this.#assertAvailable()
+      const activation = this.#repository.getActivation(agentId, extensionId)
+      if (!activation) throw new Error(`Extension is not active for Agent: ${extensionId}`)
+      const instance = this.#mounted.get(key)
+      const rollback = instance ? await this.#prepareRollback(activation) : undefined
+      await this.#host.waitUntilSafe(agentId)
+      if (instance) {
+        await instance.dispose()
+        this.#mounted.delete(key)
+      }
+      try {
+        this.#repository.deleteActivation(agentId, extensionId)
+      } catch (error) {
+        await this.#restorePrevious(key, rollback, error)
+        throw error
+      }
+    })
   }
 
   async dispose(): Promise<void> {
-    const instances = [...this.#mounted.values()]
-    this.#mounted.clear()
-    await Promise.allSettled(instances.map((instance) => instance.dispose()))
+    if (this.#disposePromise) return this.#disposePromise
+    this.#disposed = true
+    this.#disposePromise = (async () => {
+      await Promise.allSettled([...this.#transitions.values()])
+      const instances = [...this.#mounted.values()]
+      this.#mounted.clear()
+      await Promise.allSettled(instances.map((instance) => instance.dispose()))
+    })()
+    return this.#disposePromise
   }
 
-  async #build(revision: ExtensionRevisionRecord): Promise<ExtensionBuildArtifact> {
+  async #build(revision: Revision): Promise<ExtensionBuildArtifact> {
+    return this.#builder.build({
+      extensionId: revision.extensionId,
+      revisionId: revision.id,
+      contentDigest: revision.contentDigest,
+      sourceDirectory: this.#service.revisionSourceDirectory(revision),
+    })
+  }
+
+  async #prepareRollback(activation: Activation): Promise<{
+    readonly activation: Activation
+    readonly revision: Revision
+    readonly artifact: ExtensionBuildArtifact
+  }> {
+    const revision = this.#repository.getExtensionRevision(activation.extensionRevisionId)
+    if (!revision || revision.extensionId !== activation.extensionId) {
+      throw new Error('Current Activation refers to an unavailable Extension Revision.')
+    }
+    return { activation, revision, artifact: await this.#build(revision) }
+  }
+
+  async #restorePrevious(
+    key: string,
+    rollback:
+      | { readonly activation: Activation; readonly revision: Revision; readonly artifact: ExtensionBuildArtifact }
+      | undefined,
+    originalError: unknown,
+  ): Promise<void> {
+    if (!rollback) return
     try {
-      const artifact = await this.#builder.build({
-        revisionId: revision.id,
-        contentDigest: revision.contentDigest,
-        sourceDirectory: this.#service.revisionSourceDirectory(revision),
-      })
-      this.#repository.markExtensionBuild(revision.id, 'succeeded')
-      return artifact
-    } catch (error) {
-      this.#repository.markExtensionBuild(revision.id, 'failed')
-      throw error
+      this.#mounted.set(
+        key,
+        await this.#host.mount(
+          rollback.activation.agentId,
+          rollback.revision,
+          rollback.artifact,
+          rollback.activation.config,
+        ),
+      )
+    } catch (restoreError) {
+      throw new AggregateError(
+        [originalError, restoreError],
+        'Activation failed and the previous mount could not be restored.',
+      )
     }
   }
 
-  async #restorePrevious(previous: AgentActivationRecord): Promise<void> {
-    const revision = this.#repository.getExtensionRevision(previous.extensionRevisionId)
-    if (!revision) return
-    const artifact = await this.#build(revision)
-    this.#mounted.set(previous.id, await this.#host.mount(previous.agentId, revision, artifact, previous.config))
+  async #exclusive<T>(key: string, operation: () => Promise<T>): Promise<T> {
+    const preceding = this.#transitions.get(key) ?? Promise.resolve()
+    const result = preceding.catch(() => undefined).then(operation)
+    const tail = result.then(
+      () => undefined,
+      () => undefined,
+    )
+    this.#transitions.set(key, tail)
+    try {
+      return await result
+    } finally {
+      if (this.#transitions.get(key) === tail) this.#transitions.delete(key)
+    }
   }
 
-  #id<T extends string>(prefix: string): T {
-    return `${prefix}_${this.#nextUlid()}` as T
+  #key(agentId: AgentId, extensionId: ExtensionId): string {
+    return `${agentId}\0${extensionId}`
+  }
+
+  #assertAvailable(): void {
+    if (this.#disposed) throw new Error('Extension Activation coordinator is disposed.')
   }
 
   #timestamp(): number {

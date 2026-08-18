@@ -6,6 +6,9 @@ import { SelectField, SwitchField, Tabs } from '../ui-kit/index.js'
 import { useSearchParams } from 'react-router-dom'
 import styles from './product-pages.module.css'
 
+const isThemeChoice = (value: string): value is ThemeChoice =>
+  value === 'system' || value === 'light' || value === 'dark'
+
 export function SettingsPage() {
   const [searchParams, setSearchParams] = useSearchParams()
   const theme = useProductStore((state) => state.theme)
@@ -42,7 +45,9 @@ export function SettingsPage() {
             <SelectField
               label="主题"
               value={theme}
-              onValueChange={(value) => useProductStore.getState().setTheme(value as ThemeChoice)}
+              onValueChange={(value) => {
+                if (isThemeChoice(value)) useProductStore.getState().setTheme(value)
+              }}
               options={[
                 { value: 'system', label: '跟随系统' },
                 { value: 'light', label: '浅色' },

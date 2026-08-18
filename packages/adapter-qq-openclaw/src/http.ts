@@ -20,8 +20,10 @@ export interface QQOpenClawHttpOptions {
 
 type JsonObject = Readonly<Record<string, unknown>>
 
-const object = (value: unknown): JsonObject =>
-  typeof value === 'object' && value !== null && !Array.isArray(value) ? (value as JsonObject) : {}
+const isJsonObject = (value: unknown): value is JsonObject =>
+  typeof value === 'object' && value !== null && !Array.isArray(value)
+
+const object = (value: unknown): JsonObject => (isJsonObject(value) ? value : {})
 
 const string = (...values: readonly unknown[]): string | undefined => {
   for (const value of values) if (typeof value === 'string' && value.trim()) return value.trim()
@@ -93,7 +95,7 @@ export class QQOpenClawHttpTransport implements QQOpenClawTransport, QQGatewayAc
 
   async gatewayUrl(signal: AbortSignal): Promise<string> {
     const response = await this.#requestJson('GET', '/gateway', undefined, signal, false)
-    const url = string(response.url)
+    const url = string(response['url'])
     if (!url) throw new QQTransportError('transient', 'QQ gateway response omitted its URL.')
     return url
   }
@@ -109,8 +111,8 @@ export class QQOpenClawHttpTransport implements QQOpenClawTransport, QQGatewayAc
     const body: Record<string, unknown> = input.markdown
       ? { msg_type: 2, markdown: { content: input.content } }
       : { msg_type: 0, content: input.content }
-    if (input.replyMessageId) body.msg_id = input.replyMessageId
-    if (input.messageSequence !== undefined) body.msg_seq = input.messageSequence
+    if (input.replyMessageId) body['msg_id'] = input.replyMessageId
+    if (input.messageSequence !== undefined) body['msg_seq'] = input.messageSequence
     return this.#messageReceipt(
       await this.#requestJson('POST', targetPath(input.target, 'messages'), body, input.signal, true),
     )
@@ -138,15 +140,16 @@ export class QQOpenClawHttpTransport implements QQOpenClawTransport, QQGatewayAc
       input.signal,
       false,
     )
-    const uploadId = string(prepared.upload_id)
+    const uploadId = string(prepared['upload_id'])
     if (!uploadId) throw new QQTransportError('transient', 'QQ upload preparation omitted upload_id.')
-    const blockSize = integer(prepared.block_size) ?? bytes.byteLength
-    const parts = Array.isArray(prepared.parts) ? prepared.parts.map(object) : []
+    const blockSize = integer(prepared['block_size']) ?? bytes.byteLength
+    const rawParts = prepared['parts']
+    const parts = Array.isArray(rawParts) ? rawParts.map(object) : []
     for (const [position, rawPart] of parts.entries()) {
-      const partIndex = integer(rawPart.index) ?? integer(rawPart.part_number) ?? position + 1
-      const offset = integer(rawPart.offset) ?? (partIndex - 1) * blockSize
-      const size = integer(rawPart.size) ?? Math.min(blockSize, bytes.byteLength - offset)
-      const uploadUrl = string(rawPart.presigned_url, rawPart.upload_url, rawPart.url)
+      const partIndex = integer(rawPart['index']) ?? integer(rawPart['part_number']) ?? position + 1
+      const offset = integer(rawPart['offset']) ?? (partIndex - 1) * blockSize
+      const size = integer(rawPart['size']) ?? Math.min(blockSize, bytes.byteLength - offset)
+      const uploadUrl = string(rawPart['presigned_url'], rawPart['upload_url'], rawPart['url'])
       if (!uploadUrl || size <= 0 || offset < 0 || offset + size > bytes.byteLength) {
         throw new QQTransportError('permanent', 'QQ upload preparation contained an invalid part.')
       }
@@ -167,7 +170,7 @@ export class QQOpenClawHttpTransport implements QQOpenClawTransport, QQGatewayAc
       input.signal,
       false,
     )
-    const rawFileInfo = completed.file_info
+    const rawFileInfo = completed['file_info']
     const fileInfo = typeof rawFileInfo === 'string' ? rawFileInfo : JSON.stringify(rawFileInfo ?? '')
     if (!fileInfo || fileInfo === '""') {
       throw new QQTransportError('transient', 'QQ upload completion omitted file_info.')
@@ -183,8 +186,8 @@ export class QQOpenClawHttpTransport implements QQOpenClawTransport, QQGatewayAc
     readonly signal: AbortSignal
   }): Promise<QQTransportReceipt> {
     const body: Record<string, unknown> = { msg_type: 7, media: { file_info: input.fileInfo } }
-    if (input.replyMessageId) body.msg_id = input.replyMessageId
-    if (input.messageSequence !== undefined) body.msg_seq = input.messageSequence
+    if (input.replyMessageId) body['msg_id'] = input.replyMessageId
+    if (input.messageSequence !== undefined) body['msg_seq'] = input.messageSequence
     return this.#messageReceipt(
       await this.#requestJson('POST', targetPath(input.target, 'messages'), body, input.signal, true),
     )
@@ -219,9 +222,9 @@ export class QQOpenClawHttpTransport implements QQOpenClawTransport, QQGatewayAc
     }
     if (!response.ok) throw this.#httpError(response, false)
     const data = await this.#json(response)
-    const token = string(data.access_token, data.accessToken)
+    const token = string(data['access_token'], data['accessToken'])
     if (!token) throw new QQTransportError('authentication', 'QQ token response omitted access_token.')
-    const expiresIn = integer(data.expires_in) ?? integer(data.expiresIn) ?? 7_200
+    const expiresIn = integer(data['expires_in']) ?? integer(data['expiresIn']) ?? 7_200
     this.#token = { value: token, expiresAt: this.#now() + Math.max(60, expiresIn) * 1_000 }
     return token
   }
@@ -292,9 +295,9 @@ export class QQOpenClawHttpTransport implements QQOpenClawTransport, QQGatewayAc
   }
 
   #messageReceipt(response: JsonObject): QQTransportReceipt {
-    const platformMessageId = string(response.id, response.msg_id)
+    const platformMessageId = string(response['id'], response['msg_id'])
     if (!platformMessageId) throw new QQTransportError('unknown', 'QQ message response omitted its message ID.')
-    const refIndex = string(object(response.ext_info).ref_idx)
+    const refIndex = string(object(response['ext_info'])['ref_idx'])
     return { platformMessageId, ...(refIndex === undefined ? {} : { refIndex }) }
   }
 }

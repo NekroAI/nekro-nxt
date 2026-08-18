@@ -1,17 +1,11 @@
+import { isValidElement } from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { materializeDynamicPackage, ExtensionBuilder, ExtensionSourceStore } from '@nekro-nxt/extension-runtime'
-import type {
-  DraftPackageId,
-  ExtensionDraftId,
-  ExtensionId,
-  ExtensionRevisionId,
-  ExtensionSaveOperationId,
-} from '@nekro-nxt/contracts'
+import { AgentIdSchema, ExtensionIdSchema, ExtensionRevisionIdSchema } from '@nekro-nxt/contracts'
 import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { pathToFileURL } from 'node:url'
-import { createElement } from 'react'
 import { afterEach, describe, expect, it } from 'vitest'
 import {
   ExtensionClientActivationCoordinator,
@@ -29,17 +23,12 @@ describe('Extension Client Runtime', () => {
   it('loads a built Client artifact, renders its real Slot component and retracts it on dispose', async () => {
     const directory = await mkdtemp(path.join(tmpdir(), 'nekro-nxt-extension-client-'))
     temporaryDirectories.push(directory)
-    const extensionId = 'ext_client' as ExtensionId
-    const revisionId = 'xrv_client' as ExtensionRevisionId
+    const extensionId = ExtensionIdSchema.parse('ext_client')
+    const revisionId = ExtensionRevisionIdSchema.parse('xrv_client')
     const materialized = materializeDynamicPackage({
       extensionId,
       revisionId,
-      displayName: 'Client 渲染探针',
-      draftPackage: {
-        id: 'xdp_client' as DraftPackageId,
-        draftId: 'xdr_client' as ExtensionDraftId,
-        sourceDynamicPackageId: 'pkg-client',
-        sequence: 1,
+      snapshot: {
         name: 'Client 渲染探针',
         purpose: '验证真实 Client Slot 生命周期。',
         clientCode: `return {
@@ -48,17 +37,15 @@ describe('Extension Client Runtime', () => {
             ctx.slots.register({ name: 'root' }, () => React.createElement('section', { 'data-extension': 'client-probe' }, '扩展界面已渲染'))
           }
         }`,
-        createdAt: 1,
       },
     })
     const sourceStore = new ExtensionSourceStore(path.join(directory, 'data'))
-    const staging = sourceStore.stagingRelativePath('xop_client' as ExtensionSaveOperationId)
-    const final = sourceStore.revisionRelativePath(extensionId, revisionId)
-    await sourceStore.commit(staging, final, materialized)
+    await sourceStore.publish(extensionId, revisionId, materialized)
     const artifact = await new ExtensionBuilder(path.join(directory, 'cache')).build({
+      extensionId,
       revisionId,
       contentDigest: materialized.contentDigest,
-      sourceDirectory: sourceStore.absoluteRevisionPath(final),
+      sourceDirectory: sourceStore.revisionSourceDirectory(extensionId, revisionId),
     })
     expect(artifact.clientEntry).toBeDefined()
 
@@ -69,9 +56,10 @@ describe('Extension Client Runtime', () => {
       })
       const [entry] = runtime.slots.entriesOfSlot('root')
       expect(entry).toBeDefined()
-      expect(renderToStaticMarkup(createElement(entry!.component as () => ReturnType<typeof createElement>))).toBe(
-        '<section data-extension="client-probe">扩展界面已渲染</section>',
-      )
+      if (typeof entry?.component !== 'function') throw new TypeError('Client Slot component must be callable.')
+      const rendered: unknown = Reflect.apply(entry.component, undefined, [{}])
+      if (!isValidElement(rendered)) throw new TypeError('Client Slot component must return a React element.')
+      expect(renderToStaticMarkup(rendered)).toBe('<section data-extension="client-probe">扩展界面已渲染</section>')
       await mounted.dispose()
       expect(runtime.slots.entriesOfSlot('root')).toEqual([])
     } finally {
@@ -110,9 +98,10 @@ describe('Extension Client Runtime', () => {
     }
     const host = { call: () => Promise.resolve(null) }
     await coordinator.start()
-    publish([{ activationId: 'activation-1', moduleUrl: 'client-v1.mjs', host }])
+    const activationKey = `${AgentIdSchema.parse('agt_client')}\0${ExtensionIdSchema.parse('ext_client')}`
+    publish([{ activationId: activationKey, moduleUrl: 'client-v1.mjs', host }])
     await coordinator.idle()
-    publish([{ activationId: 'activation-1', moduleUrl: 'client-v2.mjs', host }])
+    publish([{ activationId: activationKey, moduleUrl: 'client-v2.mjs', host }])
     await coordinator.idle()
     publish([])
     await coordinator.idle()

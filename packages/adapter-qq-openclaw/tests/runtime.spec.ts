@@ -1,5 +1,11 @@
 import type { AdapterInboundEvent } from '@nekro-nxt/adapter-sdk'
-import type { AssetId, ChannelEventId, ChannelId, ChannelMemberId, ConnectionId } from '@nekro-nxt/contracts'
+import {
+  AssetIdSchema,
+  ChannelEventIdSchema,
+  ChannelIdSchema,
+  ChannelMemberIdSchema,
+  ConnectionIdSchema,
+} from '@nekro-nxt/contracts'
 import { describe, expect, it } from 'vitest'
 import {
   QQOpenClawRuntime,
@@ -8,8 +14,8 @@ import {
   type QQOpenClawTransport,
 } from '../src/index.ts'
 
-const connectionId = 'connection-runtime' as ConnectionId
-const channelId = 'channel-runtime' as ChannelId
+const connectionId = ConnectionIdSchema.parse('con_runtime')
+const channelId = ChannelIdSchema.parse('chn_runtime')
 
 const socketFrom = (payloads: readonly unknown[]): QQGatewaySocket => ({
   messages: {
@@ -32,8 +38,8 @@ const socketFrom = (payloads: readonly unknown[]): QQGatewaySocket => ({
 })
 
 describe('QQ OpenClaw composed runtime', () => {
-  it('decodes Gateway media, commits the Channel fact, advances its checkpoint and stops quiescently', async () => {
-    let checkpoint: QQGatewayCheckpoint | undefined
+  it('decodes Gateway media, commits the Channel fact, saves resume state and stops quiescently', async () => {
+    let resumeState: QQGatewayCheckpoint | undefined
     let accepted: AdapterInboundEvent | undefined
     let resolveAccepted: (() => void) | undefined
     const acceptedPromise = new Promise<void>((resolve) => {
@@ -58,9 +64,8 @@ describe('QQ OpenClaw composed runtime', () => {
           accepted = event
           resolveAccepted?.()
           return Promise.resolve({
-            channelEventId: 'event-runtime' as ChannelEventId,
+            channelEventId: ChannelEventIdSchema.parse('evt_runtime'),
             inserted: true,
-            checkpointCommitted: true,
           })
         },
       },
@@ -82,10 +87,10 @@ describe('QQ OpenClaw composed runtime', () => {
       assets: { read: () => Promise.reject(new Error('not used')) },
       inbound: {
         ensureTarget: () => Promise.resolve(channelId),
-        ensureMember: ({ openId }) => Promise.resolve(`member-${openId}` as ChannelMemberId),
+        ensureMember: ({ openId }) => Promise.resolve(ChannelMemberIdSchema.parse(`mbr_${openId.replaceAll('-', '')}`)),
         importAttachment: ({ fileName, mediaType }) =>
           Promise.resolve({
-            assetId: 'asset-video' as AssetId,
+            assetId: AssetIdSchema.parse('ast_video'),
             mediaType: mediaType ?? 'application/octet-stream',
             ...(fileName === undefined ? {} : { fileName }),
           }),
@@ -120,13 +125,13 @@ describe('QQ OpenClaw composed runtime', () => {
             ),
         },
         checkpoints: {
-          load: () => Promise.resolve(checkpoint),
+          load: () => Promise.resolve(resumeState),
           save: (value) => {
-            checkpoint = value
+            resumeState = value
             return Promise.resolve()
           },
           clear: () => {
-            checkpoint = undefined
+            resumeState = undefined
             return Promise.resolve()
           },
         },
@@ -148,11 +153,10 @@ describe('QQ OpenClaw composed runtime', () => {
     await runtime.stop()
     expect(accepted).toMatchObject({
       platformSequence: 2,
-      parts: [{ type: 'file', assetId: 'asset-video' }],
+      parts: [{ type: 'file', assetId: 'ast_video' }],
       facts: { mentionedBot: false, replyToBot: false, targetKind: 'group' },
-      checkpoint: { gatewaySequence: 2 },
     })
-    expect(checkpoint).toMatchObject({ sessionId: 'session-runtime', sequence: 2 })
+    expect(resumeState).toMatchObject({ sessionId: 'session-runtime', sequence: 2 })
     expect(transportStops).toBe(1)
   })
 })

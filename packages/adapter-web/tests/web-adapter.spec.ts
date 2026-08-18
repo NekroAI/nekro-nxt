@@ -1,31 +1,44 @@
-import type {
-  ChannelEventId,
-  ChannelId,
-  ConnectionId,
-  LogicalMessageId,
-  PhysicalDeliveryId,
+import {
+  ChannelEventIdSchema,
+  ChannelIdSchema,
+  ConnectionIdSchema,
+  LogicalMessageIdSchema,
+  PhysicalDeliveryIdSchema,
 } from '@nekro-nxt/contracts'
+import { parseAdapterConnectionConfiguration } from '@nekro-nxt/adapter-sdk'
 import { describe, expect, it } from 'vitest'
-import { createWebAdapterConnection } from '../src/index.ts'
+import { createWebAdapterConnection, WEB_CONNECTION_DEFINITION, WEB_CONNECTION_DESCRIPTOR } from '../src/index.ts'
 
 describe('Internal Web Adapter', () => {
-  it('normalizes browser messages and commits the client checkpoint through Core', async () => {
+  it('models the system-managed Web Adapter as an empty configuration and credential definition', () => {
+    expect(parseAdapterConnectionConfiguration(WEB_CONNECTION_DEFINITION, {})).toEqual({
+      configuration: {},
+      credentials: {},
+    })
+    expect(WEB_CONNECTION_DESCRIPTOR.configSchema).toEqual({
+      schemaVersion: 1,
+      type: 'object',
+      required: [],
+      properties: {},
+    })
+  })
+
+  it('normalizes browser messages and commits them through Core', async () => {
     const accepted: unknown[] = []
     const adapter = createWebAdapterConnection(
-      'connection-web' as ConnectionId,
+      ConnectionIdSchema.parse('con_web'),
       (event) => {
         accepted.push(event)
         return Promise.resolve({
-          channelEventId: 'channel-event-1' as ChannelEventId,
+          channelEventId: ChannelEventIdSchema.parse('evt_1'),
           inserted: true,
-          checkpointCommitted: true,
         })
       },
       () => 123,
     )
     await adapter.start()
     await adapter.postMessage({
-      channelId: 'channel-web' as ChannelId,
+      channelId: ChannelIdSchema.parse('chn_web'),
       clientEventId: 'client-1',
       parts: [{ type: 'text', text: '你好' }],
     })
@@ -33,13 +46,12 @@ describe('Internal Web Adapter', () => {
       expect.objectContaining({
         adapterKey: 'web',
         dedupeKey: 'web-event:client-1',
-        checkpoint: { clientEventId: 'client-1' },
       }),
     ])
   })
 
   it('publishes only physical Outbox deliveries and contains live-listener failures', async () => {
-    const adapter = createWebAdapterConnection('connection-web' as ConnectionId, () =>
+    const adapter = createWebAdapterConnection(ConnectionIdSchema.parse('con_web'), () =>
       Promise.reject(new Error('unused')),
     )
     const observed: string[] = []
@@ -52,12 +64,11 @@ describe('Internal Web Adapter', () => {
     await adapter.start()
     const receipt = await adapter.deliver(
       {
-        deliveryId: 'delivery-1' as PhysicalDeliveryId,
-        logicalMessageId: 'logical-1' as LogicalMessageId,
-        connectionId: 'connection-web' as ConnectionId,
-        channelId: 'channel-web' as ChannelId,
+        deliveryId: PhysicalDeliveryIdSchema.parse('phy_1'),
+        logicalMessageId: LogicalMessageIdSchema.parse('msg_1'),
+        connectionId: ConnectionIdSchema.parse('con_web'),
+        channelId: ChannelIdSchema.parse('chn_web'),
         parts: [{ type: 'text', text: '已发送' }],
-        attempt: 1,
       },
       new AbortController().signal,
     )

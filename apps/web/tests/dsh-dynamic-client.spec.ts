@@ -1,32 +1,46 @@
-import { createElement } from 'react'
+import { isValidElement } from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
-import { describe, expect, it } from 'vitest'
-import {
-  DshDynamicClientRuntime,
-  type DynamicClientHostPort,
-  type DynamicInventoryRow,
-} from '../src/dsh-dynamic-client.ts'
+import { AgentIdSchema, HostApiContracts } from '@nekro-nxt/contracts'
+import { afterEach, describe, expect, it, vi } from 'vitest'
+import { DshDynamicClientRuntime, type DynamicInventoryRow } from '../src/dsh-dynamic-client.ts'
+import { HttpDynamicClientHost } from '../src/http-dynamic-host.ts'
+
+const stubResponse = (status: number, body: unknown) => ({
+  ok: status >= 200 && status < 300,
+  status,
+  json: () => Promise.resolve(body),
+})
 
 describe('DSH Dynamic Client Runtime', () => {
+  const agentId = AgentIdSchema.parse('agt_dynamicclient')
+
+  afterEach(() => vi.unstubAllGlobals())
+
   it('uses the published Client runner to approve, load, render, retract and decline a dynamic Package', async () => {
     const resolutions: unknown[] = []
-    const host: DynamicClientHostPort = {
-      runHostHalf: (_agentId, pluginId, packageId) =>
-        Promise.resolve({
-          ok: true,
-          pluginId,
-          packageId,
-          pluginRunId: 'run-1' as never,
-          waitingFor: [],
-          startedHere: true,
-        }),
-      getClientCode: (_agentId, pluginId, pluginRunId) =>
-        Promise.resolve({
-          pluginId,
-          packageId: 'package-1' as never,
-          pluginRunId,
-          name: '动态界面探针',
-          code: `return {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn((input: string, init?: RequestInit) => {
+        if (input.endsWith('/run-host-half')) {
+          return Promise.resolve(
+            stubResponse(200, {
+              ok: true,
+              pluginId: 'plugin-1',
+              packageId: 'package-1',
+              pluginRunId: 'run-1',
+              waitingFor: [],
+              startedHere: true,
+            }),
+          )
+        }
+        if (input.endsWith('/get-client-code')) {
+          return Promise.resolve(
+            stubResponse(200, {
+              pluginId: 'plugin-1',
+              packageId: 'package-1',
+              pluginRunId: 'run-1',
+              name: '动态界面探针',
+              code: `return {
             inject: ['slots'],
             apply(ctx) {
               ctx.slots.register(
@@ -35,20 +49,27 @@ describe('DSH Dynamic Client Runtime', () => {
               )
             }
           }`,
-        }),
-      resolveRequestRun: (_requestId, resolution) => {
-        resolutions.push(resolution)
-        return Promise.resolve({ accepted: true })
-      },
-      settleUserRun: () => Promise.reject(new Error('not used')),
-      invoke: () => Promise.reject(new Error('not used')),
-      reportRenderFailure: () => Promise.resolve(),
-      reportGuardFailure: () => Promise.resolve(),
-    }
+            }),
+          )
+        }
+        if (input.endsWith('/approve') || input.endsWith('/decline')) {
+          const body = init?.body
+          if (typeof body !== 'string') throw new TypeError('dynamic decision request body must be JSON text.')
+          resolutions.push(
+            input.endsWith('/approve')
+              ? HostApiContracts.dynamicApprove.request.parse(JSON.parse(body))
+              : HostApiContracts.dynamicDecline.request.parse(JSON.parse(body)),
+          )
+          return Promise.resolve(stubResponse(200, { accepted: true }))
+        }
+        return Promise.resolve(stubResponse(404, { error: { code: 'not-found', message: 'x' } }))
+      }),
+    )
+    const host = new HttpDynamicClientHost(agentId)
     const runtime = await DshDynamicClientRuntime.create(host, { querySelectorAll: () => [] })
     const pending: DynamicInventoryRow = {
       pluginId: 'plugin-1',
-      agentId: 'session-1',
+      agentId,
       packages: [
         {
           packageId: 'package-1',
@@ -70,13 +91,14 @@ describe('DSH Dynamic Client Runtime', () => {
     try {
       await runtime.reconcile([pending])
       await runtime.approve('approval-1')
-      expect(resolutions).toEqual([expect.objectContaining({ ok: true, pluginRunId: 'run-1' })])
+      expect(resolutions).toEqual([{ requestId: 'approval-1', pluginRunId: 'run-1' }])
       expect(runtime.loaded()).toHaveLength(1)
       const [entry] = runtime.slots.entriesOfSlot('root')
       expect(entry).toBeDefined()
-      expect(renderToStaticMarkup(createElement(entry!.component as () => ReturnType<typeof createElement>))).toBe(
-        '<section data-dynamic="probe">动态界面已加载</section>',
-      )
+      if (typeof entry?.component !== 'function') throw new TypeError('Dynamic Slot component must be callable.')
+      const rendered: unknown = Reflect.apply(entry.component, undefined, [{}])
+      if (!isValidElement(rendered)) throw new TypeError('Dynamic Slot component must return a React element.')
+      expect(renderToStaticMarkup(rendered)).toBe('<section data-dynamic="probe">动态界面已加载</section>')
 
       await runtime.reconcile([{ ...pending, activeRun: { pluginRunId: 'run-1', packageId: 'package-1' } }])
       await runtime.reconcile([])
@@ -89,7 +111,7 @@ describe('DSH Dynamic Client Runtime', () => {
       }
       await runtime.reconcile([declined])
       await runtime.decline('approval-2')
-      expect(resolutions.at(-1)).toMatchObject({ ok: false, reason: 'rejected' })
+      expect(resolutions.at(-1)).toEqual({ requestId: 'approval-2' })
     } finally {
       await runtime.dispose()
     }

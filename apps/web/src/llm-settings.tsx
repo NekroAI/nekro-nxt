@@ -1,5 +1,12 @@
 import { Plus, RefreshCw } from 'lucide-react'
 import { useEffect, useMemo, useState, type FormEvent } from 'react'
+import {
+  HostApiContracts,
+  HostApiErrorSchema,
+  buildHostApiContractPath,
+  type HostApiContract,
+  type HostApiResponse,
+} from '@nekro-nxt/contracts'
 import { notify } from './components/notifications.js'
 import { EmptyState } from './components/product-feedback.js'
 import { useProductStore } from './product-store.js'
@@ -7,41 +14,32 @@ import { providerDisplayName } from './provider-labels.js'
 import { Button, Dialog, Field, Input, SelectField, StatusBadge, Textarea } from './ui-kit/index.js'
 import styles from './llm-settings.module.css'
 
-interface ProviderModelView {
-  readonly id: string
-  readonly name: string
-  readonly contextWindow?: number
-  readonly maxTokens?: number
+type ProviderSettingsView = HostApiResponse<'llmProviders'>
+type ProviderView = ProviderSettingsView['providers'][number]
+type DiscoveredModelView = HostApiResponse<'llmDiscoverModels'>['models'][number]
+
+const requestHostApi = async <Output,>(
+  contract: HostApiContract,
+  responseSchema: { parse(input: unknown): Output },
+  params: unknown,
+  request: unknown,
+): Promise<Output> => {
+  const url = buildHostApiContractPath(contract, params)
+  const requestBody = contract.parseRequest(request)
+  const response = await fetch(url, {
+    method: contract.method,
+    headers: { 'content-type': 'application/json' },
+    ...(contract.method === 'GET' || contract.method === 'DELETE' ? {} : { body: JSON.stringify(requestBody) }),
+  })
+  const responseBody: unknown = await response.json()
+  if (!response.ok) {
+    const parsedError = HostApiErrorSchema.safeParse(responseBody)
+    throw new Error(parsedError.success ? parsedError.data.error.message : `请求失败（HTTP ${response.status}）`)
+  }
+  return responseSchema.parse(responseBody)
 }
 
-interface ProviderView {
-  readonly provider: string
-  readonly displayName: string
-  readonly settingsNs: string
-  readonly settingsRevision: number
-  readonly declared: boolean
-  readonly active: boolean
-  readonly configured: boolean
-  readonly baseURL?: string
-  readonly api?: string
-  readonly credential?: { readonly configured: boolean; readonly source?: string; readonly writable: boolean }
-  readonly models: readonly ProviderModelView[]
-}
-
-interface ProviderSettingsView {
-  readonly writable: boolean
-  readonly protocols: readonly string[]
-  readonly providers: readonly ProviderView[]
-}
-
-const requestJson = async <T,>(url: string, init?: RequestInit): Promise<T> => {
-  const response = await fetch(url, init)
-  const body = (await response.json()) as T & { readonly error?: { readonly message?: string } }
-  if (!response.ok) throw new Error(body.error?.message ?? `请求失败（HTTP ${response.status}）`)
-  return body
-}
-
-const modelLines = (models: readonly ProviderModelView[]): string => models.map((model) => model.id).join('\n')
+const modelLines = (models: readonly { readonly id: string }[]): string => models.map((model) => model.id).join('\n')
 
 const customProviderKey = (displayName: string, providers: readonly ProviderView[]): string => {
   const base =
@@ -70,7 +68,7 @@ export function LlmProviderSettings(): React.ReactNode {
   const [api, setApi] = useState('')
   const [apiKey, setApiKey] = useState('')
   const [models, setModels] = useState('')
-  const [discovered, setDiscovered] = useState<readonly ProviderModelView[]>([])
+  const [discovered, setDiscovered] = useState<readonly DiscoveredModelView[]>([])
   const [pending, setPending] = useState<'load' | 'save' | 'discover' | 'test' | null>('load')
   const [error, setError] = useState('')
   const [submitted, setSubmitted] = useState(false)
@@ -99,7 +97,12 @@ export function LlmProviderSettings(): React.ReactNode {
     setPending('load')
     setError('')
     try {
-      const next = await requestJson<ProviderSettingsView>('/api/llm/providers')
+      const next = await requestHostApi(
+        HostApiContracts.llmProviders,
+        HostApiContracts.llmProviders.response,
+        {},
+        undefined,
+      )
       setSettings(next)
       setSelectedId((current) =>
         next.providers.some((provider) => provider.provider === current && provider.configured)
@@ -155,17 +158,18 @@ export function LlmProviderSettings(): React.ReactNode {
     setPending('discover')
     setError('')
     try {
-      const result = await requestJson<{ readonly models: readonly ProviderModelView[] }>('/api/llm/discover-models', {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({
+      const result = await requestHostApi(
+        HostApiContracts.llmDiscoverModels,
+        HostApiContracts.llmDiscoverModels.response,
+        {},
+        {
           provider: providerId,
           settingsNs: selected?.settingsNs ?? 'llm-pi-ai',
           ...(baseURL.trim() ? { baseURL: baseURL.trim() } : {}),
           ...(api ? { api } : {}),
           ...(apiKey ? { apiKey } : {}),
-        }),
-      })
+        },
+      )
       setDiscovered(result.models)
       if (customEditor && result.models.length > 0) setModels(modelLines(result.models))
       notify(`已找到 ${result.models.length} 个可用模型。`, 'success', `llm-provider-discover:${providerId}`)
@@ -193,16 +197,17 @@ export function LlmProviderSettings(): React.ReactNode {
     setPending('save')
     setError('')
     try {
-      const next = await requestJson<ProviderSettingsView>(`/api/llm/providers/${encodeURIComponent(providerId)}`, {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({
+      const next = await requestHostApi(
+        HostApiContracts.llmSaveProvider,
+        HostApiContracts.llmSaveProvider.response,
+        { provider: providerId },
+        {
           expectedRevision: revision,
           ...(apiKey ? { apiKey } : {}),
           ...(baseURL.trim() ? { baseURL: baseURL.trim() } : {}),
           ...(customEditor ? { displayName: displayName.trim(), api, models: parsedModels } : {}),
-        }),
-      })
+        },
+      )
       setSettings(next)
       setSelectedId(providerId)
       setCustomMode(false)
@@ -231,11 +236,12 @@ export function LlmProviderSettings(): React.ReactNode {
     setPending('test')
     setError('')
     try {
-      await requestJson('/api/llm/test-provider', {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ provider: selected.provider, model: model.id }),
-      })
+      await requestHostApi(
+        HostApiContracts.llmTestProvider,
+        HostApiContracts.llmTestProvider.response,
+        {},
+        { provider: selected.provider, model: model.id },
+      )
       notify(`连接测试通过，可使用 ${model.name}。`, 'success', `llm-provider-test:${selected.provider}`)
     } catch (cause) {
       notify(cause instanceof Error ? cause.message : String(cause), 'error', `llm-provider-test:${selected.provider}`)

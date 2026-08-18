@@ -15,7 +15,7 @@
   },
   "scripts": {
     "build": "tsdown",
-    "dev": "tsdown --watch",
+    "dev": "tsdown --watch --no-clean",
     "test": "vitest run --root ../.. packages/dsh-compat/tests",
     "typecheck": "tsc --noEmit"
   },

@@ -11,20 +11,24 @@
   },
   "scripts": {
     "build": "tsdown",
-    "dev": "tsdown --watch",
+    "dev": "tsdown --watch --no-clean",
     "test": "vitest run --root ../.. packages/storage-sqlite/tests",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
     "@nekro-nxt/adapter-sdk": "workspace:*",
+    "@nekro-nxt/channel-runtime": "workspace:*",
     "@nekro-nxt/contracts": "workspace:*",
     "@nekro-nxt/core": "workspace:*",
     "@nekro-nxt/extension-runtime": "workspace:*",
-    "@nekro-nxt/channel-runtime": "workspace:*",
-    "drizzle-orm": "0.45.2"
+    "better-sqlite3": "13.0.3",
+    "drizzle-orm": "0.45.2",
+    "drizzle-zod": "0.8.3",
+    "zod": "4.4.3"
   },
   "devDependencies": {
     "@nekro-nxt/test-harness": "workspace:*",
+    "@types/better-sqlite3": "9.6.0",
     "drizzle-kit": "0.31.10"
   }
 }

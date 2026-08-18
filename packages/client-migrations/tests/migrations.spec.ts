@@ -8,8 +8,36 @@ import {
   type PersistedEnvelope,
 } from '../src/index.ts'
 
+const isRecord = (value: unknown): value is Record<string, unknown> => typeof value === 'object' && value !== null
+
+const parsePersistedEnvelope = (value: unknown): PersistedEnvelope => {
+  if (
+    !isRecord(value) ||
+    typeof value['format'] !== 'string' ||
+    typeof value['version'] !== 'number' ||
+    !Number.isSafeInteger(value['version']) ||
+    value['version'] < 0 ||
+    !('data' in value)
+  ) {
+    throw new Error('invalid persisted envelope')
+  }
+  return { format: value['format'], version: value['version'], data: value['data'] }
+}
+
+const parseV1Data = (data: unknown): { readonly name: string } => {
+  if (!isRecord(data) || typeof data['name'] !== 'string') throw new Error('invalid v1 data')
+  return { name: data['name'] }
+}
+
+const parseItems = (data: unknown): { readonly items: string[] } => {
+  if (!isRecord(data) || !Array.isArray(data['items']) || !data['items'].every((item) => typeof item === 'string')) {
+    throw new Error('invalid items data')
+  }
+  return { items: data['items'] }
+}
+
 const readFixture = async (name: string): Promise<PersistedEnvelope> =>
-  JSON.parse(await readFile(new URL(`./fixtures/${name}`, import.meta.url), 'utf8')) as PersistedEnvelope
+  parsePersistedEnvelope(JSON.parse(await readFile(new URL(`./fixtures/${name}`, import.meta.url), 'utf8')))
 
 const parseV2 = (data: unknown): { readonly name: string; readonly enabled: boolean } => {
   if (typeof data !== 'object' || data === null || !('name' in data) || !('enabled' in data)) {
@@ -26,7 +54,7 @@ const registry = () =>
     currentVersion: 2,
     steps: [
       { from: 0, migrate: (data) => ({ name: String(data) }) },
-      { from: 1, migrate: (data) => ({ ...(data as { name: string }), enabled: true }) },
+      { from: 1, migrate: (data) => ({ ...parseV1Data(data), enabled: true }) },
     ],
     parseCurrent: parseV2,
   })
@@ -97,7 +125,7 @@ describe('MigrationRegistry', () => {
         {
           from: 0,
           migrate: (data) => {
-            const mutable = data as { items: string[] }
+            const mutable = parseItems(data)
             mutable.items.push('b')
             throw new Error('boom')
           },

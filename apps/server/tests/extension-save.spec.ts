@@ -1,6 +1,7 @@
 import { LlmAdapter, type GenerateOptions, type StreamChunk } from '@deepseek-ai/dsh-llm'
 import { Context } from '@deepseek-ai/cordis'
 import WebServer from '@deepseek-ai/dsh-host-webserver'
+import { HostApiContracts } from '@nekro-nxt/contracts'
 import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
@@ -58,7 +59,7 @@ describe('NekroNxt domain API — save a running dynamic Package as a local Exte
     await runtime.start()
 
     // Create an intelligent-agent with dynamic creation + its default Web Channel.
-    const entity = runtime.createAgentWithWebChannel({
+    const entity = await runtime.createAgentWithWebChannel({
       displayName: '创造智能体',
       persona: '',
       model: { provider: 'test-provider', model: 'chat-model' },
@@ -113,6 +114,9 @@ describe('NekroNxt domain API — save a running dynamic Package as a local Exte
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify({
           agentId: entity.agentId,
+          episodeId: episode!.id,
+          pluginId: defined.pluginId,
+          packageId: defined.packageId,
           name: '保存探针',
           displayName: '保存探针（已保存）',
           slug: 'saved-probe',
@@ -120,26 +124,25 @@ describe('NekroNxt domain API — save a running dynamic Package as a local Exte
         }),
       })
       expect(saveResponse.ok).toBe(true)
-      const saved = (await saveResponse.json()) as { extensionId: string; revisionId: string; activation: string }
+      const saved = HostApiContracts.saveExtensionFromDynamic.parseResponse(await saveResponse.json())
       expect(saved.extensionId.length).toBeGreaterThan(0)
       expect(saved.revisionId.length).toBeGreaterThan(0)
       // 保存不自动启用。
       expect(saved.activation).toBe('inactive')
 
-      // The saved Extension appears in the snapshot, not auto-activated.
-      const snapshot = (await (await fetch(`${origin}/api/snapshot`)).json()) as {
-        extensions: Array<{ id: string; slug: string; activation: string }>
-        dynamic: Array<{ agentId: string; pluginId: string; status: string }>
-      }
-      expect(snapshot.extensions.some((extension) => extension.slug === 'saved-probe')).toBe(true)
-      const savedExt = snapshot.extensions.find((extension) => extension.id === saved.extensionId)
-      expect(savedExt?.activation).toBe('inactive')
+      // The saved Revision is durable and remains independent from Activation.
+      expect(runtime.repository.getExtension(saved.extensionId)).toMatchObject({ slug: 'saved-probe' })
+      expect(runtime.repository.getExtensionRevision(saved.revisionId)).toMatchObject({
+        id: saved.revisionId,
+        extensionId: saved.extensionId,
+      })
+      expect(runtime.repository.listActivations(entity.agentId)).toEqual([])
 
-      // The running dynamic Package is also projected as the creator runtime state.
+      // Saving does not stop or replace the running creator-workbench Package.
       expect(
-        snapshot.dynamic.some(
-          (item) => item.agentId === entity.agentId && item.status === 'running' && item.pluginId === defined.pluginId,
-        ),
+        runtime.host
+          .dynamicInventory(dshSessionId)
+          .some((item) => item.latestRun?.status === 'running' && item.pluginId === defined.pluginId),
       ).toBe(true)
     } finally {
       api.dispose()

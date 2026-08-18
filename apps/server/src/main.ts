@@ -54,6 +54,7 @@ export const configureDshLlmProviders =
   }
 
 export const defaultWebDistIndex = (): string => fileURLToPath(new URL('../../web/dist/index.html', import.meta.url))
+export const defaultDataRoot = (): string => fileURLToPath(new URL('../../../data', import.meta.url))
 
 export interface StartServerOptions {
   /** Root of the durable data directory (core.sqlite / sessions.sqlite / assets / extension-*). */
@@ -135,11 +136,11 @@ const isEntryPoint = (): boolean => {
 // Only auto-start when invoked as an entry point (pnpm dev/start), not on import.
 if (isEntryPoint()) {
   void (async () => {
-    const dataRoot = process.env.NEKRO_DATA ?? 'data'
-    const developmentWorkspaceRoot = process.env.NEKRO_DEVELOPMENT_WORKSPACE_ROOT
-    const distIndexEnv = process.env.NEKRO_DIST_INDEX
-    const portEnv = process.env.NEKRO_PORT
-    const llmProviderRoutes = parseLlmProviderRoutes(process.env.NEKRO_LLM_PROVIDERS)
+    const dataRoot = process.env['NEKRO_DATA'] ?? defaultDataRoot()
+    const developmentWorkspaceRoot = process.env['NEKRO_DEVELOPMENT_WORKSPACE_ROOT']
+    const distIndexEnv = process.env['NEKRO_DIST_INDEX']
+    const portEnv = process.env['NEKRO_PORT']
+    const llmProviderRoutes = parseLlmProviderRoutes(process.env['NEKRO_LLM_PROVIDERS'])
     const port = portEnv !== undefined && portEnv.trim() !== '' ? Number(portEnv) : 4960
     if (!Number.isInteger(port) || port < 0 || port > 65535) {
       console.error(`[nekro-nxt] NEKRO_PORT 无效：${portEnv}`)

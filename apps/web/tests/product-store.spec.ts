@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
+import { AgentIdSchema, ExtensionIdSchema, ExtensionRevisionIdSchema } from '@nekro-nxt/contracts'
 import { ProductHostCoordinator } from '../src/product-port.ts'
 import { ProductActionError, setActiveProductHost, useProductStore } from '../src/product-store.ts'
 
@@ -39,6 +40,10 @@ const captureRejection = async (promise: Promise<unknown>): Promise<unknown> => 
     return cause
   }
 }
+
+const agentId = AgentIdSchema.parse('agt_store')
+const extensionId = ExtensionIdSchema.parse('ext_store')
+const extensionRevisionId = ExtensionRevisionIdSchema.parse('xrv_store')
 
 describe('product store Host mutations', () => {
   afterEach(resetBusinessFacts)
@@ -92,7 +97,7 @@ describe('product store Host mutations', () => {
     useProductStore.setState({
       agents: [
         {
-          id: 'agent-1',
+          id: agentId,
           name: '测试智能体',
           description: '',
           state: '空闲',
@@ -111,15 +116,15 @@ describe('product store Host mutations', () => {
       ],
       extensions: [
         {
-          id: 'extension-1',
+          id: extensionId,
           name: '测试扩展',
           description: '',
           revision: 1,
           activation: '未激活',
           targetAgent: '测试智能体',
           contributions: [],
-          revisionId: 'revision-1',
-          agentId: 'agent-1',
+          revisionId: extensionRevisionId,
+          agentId,
         },
       ],
       approvals: [
@@ -133,11 +138,11 @@ describe('product store Host mutations', () => {
       ],
     })
 
-    await expect(useProductStore.getState().setCapability('agent-1', 'dynamicCreation', true)).rejects.toBe(failure)
+    await expect(useProductStore.getState().setCapability(agentId, 'dynamicCreation', true)).rejects.toBe(failure)
     await expect(
-      useProductStore.getState().resolveApproval({ requestId: 'request-1', agentId: 'agent-1', approved: true }),
+      useProductStore.getState().resolveApproval({ requestId: 'request-1', agentId, approved: true }),
     ).rejects.toBe(failure)
-    await expect(useProductStore.getState().setExtensionActive('extension-1', true)).rejects.toBe(failure)
+    await expect(useProductStore.getState().setExtensionActive(extensionId, true)).rejects.toBe(failure)
     expect(execute).toHaveBeenCalledTimes(3)
     expect(useProductStore.getState().agents[0]?.capabilities.dynamicCreation).toBe(false)
     expect(useProductStore.getState().approvals[0]?.state).toBe('等待批准')
@@ -146,7 +151,7 @@ describe('product store Host mutations', () => {
 
   it('rejects missing Host and Extension activation prerequisites instead of mutating locally', async () => {
     const unavailable = await captureRejection(
-      useProductStore.getState().setCapability('agent-1', 'dynamicCreation', true),
+      useProductStore.getState().setCapability(agentId, 'dynamicCreation', true),
     )
     expect(unavailable).toBeInstanceOf(ProductActionError)
     if (!(unavailable instanceof ProductActionError)) throw new Error('Expected ProductActionError')
@@ -163,7 +168,7 @@ describe('product store Host mutations', () => {
     useProductStore.setState({
       extensions: [
         {
-          id: 'extension-1',
+          id: extensionId,
           name: '缺少版本的扩展',
           description: '',
           revision: 1,
@@ -174,15 +179,13 @@ describe('product store Host mutations', () => {
       ],
     })
 
-    const missingPrerequisite = await captureRejection(
-      useProductStore.getState().setExtensionActive('extension-1', true),
-    )
+    const missingPrerequisite = await captureRejection(useProductStore.getState().setExtensionActive(extensionId, true))
     expect(missingPrerequisite).toBeInstanceOf(ProductActionError)
     if (!(missingPrerequisite instanceof ProductActionError)) throw new Error('Expected ProductActionError')
     expect(missingPrerequisite.code).toBe('missing-prerequisite')
     expect(missingPrerequisite.message).toContain('缺少目标智能体')
     await expect(
-      useProductStore.getState().resolveApproval({ requestId: '', agentId: 'agent-1', approved: true }),
+      useProductStore.getState().resolveApproval({ requestId: '', agentId, approved: true }),
     ).rejects.toThrow('缺少批准请求')
     expect(execute).not.toHaveBeenCalled()
   })

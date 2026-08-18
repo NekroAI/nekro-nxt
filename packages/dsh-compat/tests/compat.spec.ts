@@ -34,6 +34,13 @@ const DSH_DEVELOPMENT_COMPATIBILITY_VERSIONS = {
   '@deepseek-ai/dsh-web-app': '0.1.0-rc.6',
 } as const
 
+const parsePackageManifest = (input: unknown): { readonly version: string } => {
+  if (typeof input !== 'object' || input === null || !('version' in input) || typeof input.version !== 'string') {
+    throw new Error('DSH package does not expose a string version.')
+  }
+  return { version: input.version }
+}
+
 describe('DSH package family', () => {
   it('resolves every production Client package at the exact validated version', () => {
     expect(readInstalledDshVersions()).toEqual(DSH_PACKAGE_VERSIONS)
@@ -44,7 +51,7 @@ describe('DSH package family', () => {
     const require = createRequire(import.meta.url)
     const installed = Object.fromEntries(
       Object.keys(DSH_DEVELOPMENT_COMPATIBILITY_VERSIONS).map((name) => {
-        const manifest = require(`${name}/package.json`) as { readonly version?: unknown }
+        const manifest = parsePackageManifest(require(`${name}/package.json`))
         return [name, manifest.version]
       }),
     )

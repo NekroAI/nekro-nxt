@@ -2,15 +2,59 @@ import { LlmAdapter, CallId, type GenerateOptions, type StreamChunk } from '@dee
 import { credentialRef } from '@deepseek-ai/dsh-credentials'
 import { Context } from '@deepseek-ai/cordis'
 import WebServer from '@deepseek-ai/dsh-host-webserver'
+import { HostApiContracts } from '@nekro-nxt/contracts'
 import { mkdir, mkdtemp, rm, stat } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
+import { z } from 'zod'
 import { NekroRuntime } from '../src/bootstrap.js'
 import { createNekroHostApi } from '../src/host-api.js'
 import { configureDshLlmProviders } from '../src/main.js'
 
 const temporaryDirectories: string[] = []
+
+const LlmProviderSnapshotSchema = z
+  .object({
+    providers: z.array(
+      z
+        .object({
+          provider: z.string(),
+          settingsRevision: z.number(),
+          configured: z.boolean().optional(),
+          active: z.boolean().optional(),
+        })
+        .passthrough(),
+    ),
+  })
+  .passthrough()
+
+const DshPluginCatalogSchema = z
+  .object({
+    plugins: z.array(
+      z.object({ packageName: z.string(), overall: z.string(), settingsNamespaces: z.array(z.string()) }).passthrough(),
+    ),
+  })
+  .passthrough()
+
+const DshSettingsSnapshotSchema = z
+  .object({
+    namespaces: z.array(
+      z
+        .object({
+          ns: z.string(),
+          revision: z.number(),
+          resolved: z.record(z.string(), z.unknown()),
+          secrets: z.array(z.unknown()),
+        })
+        .passthrough(),
+    ),
+  })
+  .passthrough()
+
+const DshSettingsMutationSchema = z
+  .object({ revision: z.number(), resolved: z.object({ maxUses: z.number() }).passthrough() })
+  .passthrough()
 
 afterEach(async () => {
   await Promise.all(temporaryDirectories.splice(0).map((directory) => rm(directory, { recursive: true, force: true })))
@@ -122,6 +166,33 @@ describe('NekroNxt Server domain API (WebServer seam)', () => {
       expect(providerTest.ok).toBe(true)
       expect(await providerTest.json()).toEqual({ provider: 'test-provider', model: 'chat-model' })
 
+      const invalidModelResponse = await fetch(`${origin}/api/agents`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          displayName: '不应创建的智能体',
+          persona: '',
+          model: { provider: 'test-provider', model: 'missing-model' },
+        }),
+      })
+      expect(invalidModelResponse.status).toBe(400)
+      expect(
+        HostApiContracts.snapshot.parseResponse(await (await fetch(`${origin}/api/snapshot`)).json()).agents,
+      ).toEqual([])
+
+      const importedAgent = runtime.core.createAgent({
+        displayName: '仅迁入配置的智能体',
+        persona: '没有迁入频道数据。',
+        model: { provider: 'test-provider', model: 'chat-model' },
+      })
+      const importedSnapshot = HostApiContracts.snapshot.parseResponse(
+        await (await fetch(`${origin}/api/snapshot`)).json(),
+      )
+      expect(importedSnapshot.agents).toEqual([
+        expect.objectContaining({ id: importedAgent.definition.id, channels: [] }),
+      ])
+      expect(importedSnapshot.channels).toEqual([])
+
       // Closed-loop A: create an intelligent-agent through the real HTTP surface.
       const createdResponse = await fetch(`${origin}/api/agents`, {
         method: 'POST',
@@ -133,32 +204,32 @@ describe('NekroNxt Server domain API (WebServer seam)', () => {
         }),
       })
       expect(createdResponse.status).toBe(201)
-      const created = (await createdResponse.json()) as { agentId: string; channelId: string; connectionId: string }
+      const created = HostApiContracts.createAgent.parseResponse(await createdResponse.json())
       expect(created.agentId.length).toBeGreaterThan(0)
       expect(created.channelId.length).toBeGreaterThan(0)
-      expect(runtime.repository.getAgent(created.agentId as never)?.revision.capabilities).toMatchObject({
+      expect(runtime.repository.getAgent(created.agentId)?.revision.capabilities).toMatchObject({
         subagents: true,
         fileTools: false,
         webSearch: false,
       })
 
       const sender = runtime.core.observeChannelMember({
-        connectionId: created.connectionId as never,
-        channelId: created.channelId as never,
+        connectionId: created.connectionId,
+        channelId: created.channelId,
         platformUserId: 'sender-openid',
         displayName: '成员甲',
         observedAt: Date.now(),
       }).member
       const mentioned = runtime.core.observeChannelMember({
-        connectionId: created.connectionId as never,
-        channelId: created.channelId as never,
+        connectionId: created.connectionId,
+        channelId: created.channelId,
         platformUserId: 'mentioned-openid',
         displayName: '成员乙',
         observedAt: Date.now(),
       }).member
       runtime.core.appendInbound({
-        connectionId: created.connectionId as never,
-        channelId: created.channelId as never,
+        connectionId: created.connectionId,
+        channelId: created.channelId,
         adapterKey: 'web',
         platformEventId: 'member-projection-1',
         kind: 'message-created',
@@ -174,22 +245,7 @@ describe('NekroNxt Server domain API (WebServer seam)', () => {
       })
 
       // The authoritative snapshot exposes the new intelligent-agent + its Web Channel.
-      const snapshot = (await (await fetch(`${origin}/api/snapshot`)).json()) as {
-        connectionAdapters: Array<{ key: string; displayName: string; userCreatable: boolean }>
-        models: Array<{ provider: string; id: string; name: string }>
-        agents: Array<{ id: string; displayName: string; runtimeStatus: 'idle' | 'running'; channels: string[] }>
-        channels: Array<{
-          id: string
-          boundAgentId?: string
-          bindings: Array<{ agentId: string; triggerPolicy: string }>
-        }>
-        messages: Array<{
-          role: string
-          sender?: { memberId: string; displayName?: string }
-          mentionedConnectionAccount?: boolean
-          parts: Array<{ type: string; text?: string; memberId?: string; displayName?: string }>
-        }>
-      }
+      const snapshot = HostApiContracts.snapshot.parseResponse(await (await fetch(`${origin}/api/snapshot`)).json())
       expect(snapshot.models.find((model) => model.id === 'chat-model')).toMatchObject({
         provider: 'test-provider',
         name: 'Chat model',
@@ -212,16 +268,16 @@ describe('NekroNxt Server domain API (WebServer seam)', () => {
         body: JSON.stringify({ displayName: '本地识别名称' }),
       })
       expect(renamed.status).toBe(200)
-      const renamedSnapshot = (await (await fetch(`${origin}/api/snapshot`)).json()) as {
-        channels: Array<{ id: string; displayName?: string; platformChannelId: string }>
-      }
+      const renamedSnapshot = HostApiContracts.snapshot.parseResponse(
+        await (await fetch(`${origin}/api/snapshot`)).json(),
+      )
       expect(renamedSnapshot.channels.find((channel) => channel.id === created.channelId)).toMatchObject({
         displayName: '本地识别名称',
         platformChannelId: `web-${created.agentId}`,
       })
-      const initialHistory = (await (
-        await fetch(`${origin}/api/channels/${created.channelId}/messages?limit=40`)
-      ).json()) as typeof snapshot & { hasMore: boolean }
+      const initialHistory = HostApiContracts.listChannelMessages.parseResponse(
+        await (await fetch(`${origin}/api/channels/${created.channelId}/messages?limit=40`)).json(),
+      )
       expect(initialHistory.messages.find((message) => message.sender?.memberId === sender.id)).toMatchObject({
         sender: { displayName: '成员甲' },
         mentionedConnectionAccount: true,
@@ -239,12 +295,11 @@ describe('NekroNxt Server domain API (WebServer seam)', () => {
       )
       const preparedAsset = await runtime.assetService.prepare({
         bytes: pngBytes,
-        receivedAt: Date.now(),
         declaredMediaType: 'image/png',
       })
-      const assetEvent = await runtime.channels.acceptInbound({
-        connectionId: created.connectionId as never,
-        channelId: created.channelId as never,
+      await runtime.channels.acceptInbound({
+        connectionId: created.connectionId,
+        channelId: created.channelId,
         adapterKey: 'web',
         platformEventId: 'asset-http-event',
         platformMessageId: 'asset-http-message',
@@ -253,16 +308,7 @@ describe('NekroNxt Server domain API (WebServer seam)', () => {
         platformTimestamp: Date.now(),
         receivedAt: Date.now(),
         dedupeKey: 'asset-http-event',
-      })
-      await preparedAsset.commit({
-        id: 'asset-occurrence-http' as never,
-        channelEventId: assetEvent.channelEventId,
-        channelId: created.channelId as never,
-        connectionId: created.connectionId as never,
-        platformMessageId: 'asset-http-message',
-        receivedAt: Date.now(),
-        filename: 'pixel.png',
-        declaredMediaType: 'image/png',
+        assetOccurrences: [{ partIndex: 0, assetId: preparedAsset.asset.id }],
       })
       const assetResponse = await fetch(`${origin}/api/channels/${created.channelId}/assets/${preparedAsset.asset.id}`)
       expect(assetResponse.status).toBe(200)
@@ -283,14 +329,14 @@ describe('NekroNxt Server domain API (WebServer seam)', () => {
       const before = Date.now()
       // Poll the Channel history endpoint until the agent reply lands (bounded wait, no fake clock).
       for (;;) {
-        const latest = (await (
-          await fetch(`${origin}/api/channels/${created.channelId}/messages?limit=40`)
-        ).json()) as {
-          messages: Array<{ role: string; parts: Array<{ type: string; text?: string }> }>
-        }
+        const latest = HostApiContracts.listChannelMessages.parseResponse(
+          await (await fetch(`${origin}/api/channels/${created.channelId}/messages?limit=40`)).json(),
+        )
         const agentMessages = latest.messages.filter((message) => message.role === 'agent')
         if (
-          agentMessages.some((message) => message.parts.some((part) => part.text === '这是通信工具确认发送的回复。'))
+          agentMessages.some((message) =>
+            message.parts.some((part) => part.type === 'text' && part.text === '这是通信工具确认发送的回复。'),
+          )
         ) {
           break
         }
@@ -301,32 +347,32 @@ describe('NekroNxt Server domain API (WebServer seam)', () => {
       void session
 
       // Only the communication-tool reply is a channel message; raw model text stays internal.
-      const finalSnapshot = (await (
-        await fetch(`${origin}/api/channels/${created.channelId}/messages?limit=40`)
-      ).json()) as {
-        messages: Array<{ role: string; parts: Array<{ type: string; text?: string }> }>
-      }
+      const finalSnapshot = HostApiContracts.listChannelMessages.parseResponse(
+        await (await fetch(`${origin}/api/channels/${created.channelId}/messages?limit=40`)).json(),
+      )
       const allTexts = finalSnapshot.messages.flatMap((message) =>
-        message.parts.map((part) => part.text ?? '').filter((text) => text.length > 0),
+        message.parts
+          .filter((part) => part.type === 'text')
+          .map((part) => part.text)
+          .filter((text) => text.length > 0),
       )
       expect(allTexts).toContain('这是通信工具确认发送的回复。')
       expect(allTexts.join(' ')).not.toContain('模型原始文字只能留在运行轨迹')
       expect(allTexts.join(' ')).not.toContain('工具完成后的原始结束文字也不会发送')
 
-      const firstPage = (await (
-        await fetch(`${origin}/api/channels/${created.channelId}/messages?limit=1`)
-      ).json()) as {
-        messages: Array<{ id: string; occurredAt: number }>
-        hasMore: boolean
-      }
+      const firstPage = HostApiContracts.listChannelMessages.parseResponse(
+        await (await fetch(`${origin}/api/channels/${created.channelId}/messages?limit=1`)).json(),
+      )
       expect(firstPage.messages).toHaveLength(1)
       expect(firstPage.hasMore).toBe(true)
       const cursor = firstPage.messages[0]!
-      const olderPage = (await (
-        await fetch(
-          `${origin}/api/channels/${created.channelId}/messages?limit=1&beforeOccurredAt=${cursor.occurredAt}&beforeSourceId=${cursor.id}`,
-        )
-      ).json()) as typeof firstPage
+      const olderPage = HostApiContracts.listChannelMessages.parseResponse(
+        await (
+          await fetch(
+            `${origin}/api/channels/${created.channelId}/messages?limit=1&beforeOccurredAt=${cursor.occurredAt}&beforeSourceId=${cursor.id}`,
+          )
+        ).json(),
+      )
       expect(olderPage.messages).toHaveLength(1)
       expect(olderPage.messages[0]?.id).not.toBe(cursor.id)
 
@@ -339,7 +385,7 @@ describe('NekroNxt Server domain API (WebServer seam)', () => {
           model: { provider: 'test-provider', model: 'chat-model' },
         }),
       })
-      const observer = (await observerResponse.json()) as { agentId: string }
+      const observer = HostApiContracts.createAgent.parseResponse(await observerResponse.json())
       const bindingResponse = await fetch(`${origin}/api/bindings`, {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
@@ -350,10 +396,9 @@ describe('NekroNxt Server domain API (WebServer seam)', () => {
         }),
       })
       expect(bindingResponse.status).toBe(201)
-      const reboundSnapshot = (await (await fetch(`${origin}/api/snapshot`)).json()) as {
-        agents: Array<{ id: string; channels: string[] }>
-        channels: Array<{ id: string; bindings: Array<{ agentId: string; triggerPolicy: string }> }>
-      }
+      const reboundSnapshot = HostApiContracts.snapshot.parseResponse(
+        await (await fetch(`${origin}/api/snapshot`)).json(),
+      )
       expect(reboundSnapshot.agents.find((agent) => agent.id === observer.agentId)?.channels).toContain(
         created.channelId,
       )
@@ -377,11 +422,19 @@ describe('NekroNxt Server domain API (WebServer seam)', () => {
       extensionDataRoot: path.join(directory, 'extension-data'),
       extensionCacheRoot: path.join(directory, 'extension-cache'),
     })
-    const entity = runtime.createAgentWithWebChannel({
-      displayName: '能力智能体',
-      persona: '',
-      model: { provider: 'test-provider', model: 'chat-model' },
-    })
+    const seeded = runtime.core.createAgentWithChannel(
+      {
+        displayName: '能力智能体',
+        persona: '',
+        model: { provider: 'test-provider', model: 'chat-model' },
+      },
+      {
+        connectionId: runtime.webConnectionId,
+        kind: 'web',
+        triggerPolicy: 'always',
+      },
+    )
+    const entity = { agentId: seeded.definition.id, channelId: seeded.channel.id }
     const before = runtime.repository.getAgent(entity.agentId)!
     const webContext = new Context()
     await webContext.plugin(WebServer, { host: '127.0.0.1', port: 0 })
@@ -394,7 +447,7 @@ describe('NekroNxt Server domain API (WebServer seam)', () => {
         body: JSON.stringify({ dynamicCreation: true }),
       })
       expect(response.ok).toBe(true)
-      const result = (await response.json()) as { currentRevisionId: string; capabilities: Record<string, boolean> }
+      const result = HostApiContracts.updateAgentCapabilities.parseResponse(await response.json())
       expect(result.capabilities).toMatchObject({
         dynamicCreation: true,
         developmentShell: false,
@@ -409,10 +462,7 @@ describe('NekroNxt Server domain API (WebServer seam)', () => {
         body: JSON.stringify({ dynamicCreation: false }),
       })
       expect(restoredResponse.ok).toBe(true)
-      const restored = (await restoredResponse.json()) as {
-        currentRevisionId: string
-        capabilities: Record<string, boolean>
-      }
+      const restored = HostApiContracts.updateAgentCapabilities.parseResponse(await restoredResponse.json())
       expect(restored.currentRevisionId).toBe(before.revision.id)
       expect(restored.capabilities.dynamicCreation).toBe(false)
     } finally {
@@ -436,6 +486,7 @@ describe('NekroNxt Server domain API (WebServer seam)', () => {
       llmSettingsPath: path.join(dshRoot, 'settings.yaml'),
       llmCredentialPath: path.join(dshRoot, 'credentials.yaml'),
       configureLlm: async (context: Context) => {
+        context.llm.registerAdapter(['test-provider'], new ScriptedCommunicationModel())
         await context.credentials.set(credentialRef('DEEPSEEK_API_KEY'), 'configured-test-key')
       },
     })
@@ -453,9 +504,9 @@ describe('NekroNxt Server domain API (WebServer seam)', () => {
           model: { provider: 'test-provider', model: 'chat-model' },
         }),
       })
-      expect(response.status).toBe(201)
-      const created = (await response.json()) as { readonly agentId: string }
-      expect(runtime.repository.getAgent(created.agentId as never)?.revision.capabilities).toMatchObject({
+      expect(response.status, await response.clone().text()).toBe(201)
+      const created = HostApiContracts.createAgent.parseResponse(await response.json())
+      expect(runtime.repository.getAgent(created.agentId)?.revision.capabilities).toMatchObject({
         subagents: true,
         fileTools: false,
         webSearch: true,
@@ -477,11 +528,19 @@ describe('NekroNxt Server domain API (WebServer seam)', () => {
       extensionDataRoot: path.join(directory, 'extension-data'),
       extensionCacheRoot: path.join(directory, 'extension-cache'),
     })
-    const entity = runtime.createAgentWithWebChannel({
-      displayName: '旧名称',
-      persona: '旧人设',
-      model: { provider: 'old-provider', model: 'old-model', reasoningEffort: 'high' },
-    })
+    const seeded = runtime.core.createAgentWithChannel(
+      {
+        displayName: '旧名称',
+        persona: '旧人设',
+        model: { provider: 'old-provider', model: 'old-model', reasoningEffort: 'high' },
+      },
+      {
+        connectionId: runtime.webConnectionId,
+        kind: 'web',
+        triggerPolicy: 'always',
+      },
+    )
+    const entity = { agentId: seeded.definition.id, channelId: seeded.channel.id }
     const before = runtime.repository.getAgent(entity.agentId)!
     const webContext = new Context()
     await webContext.plugin(WebServer, { host: '127.0.0.1', port: 0 })
@@ -536,9 +595,9 @@ describe('NekroNxt Server domain API (WebServer seam)', () => {
     await firstWeb.plugin(WebServer, { host: '127.0.0.1', port: 0 })
     const firstApi = createNekroHostApi(firstWeb.webServer, first)
     try {
-      const before = (await (await fetch(`http://127.0.0.1:${firstApi.port}/api/llm/providers`)).json()) as {
-        providers: Array<{ provider: string; settingsRevision: number; configured: boolean }>
-      }
+      const before = LlmProviderSnapshotSchema.parse(
+        await (await fetch(`http://127.0.0.1:${firstApi.port}/api/llm/providers`)).json(),
+      )
       const opencode = before.providers.find((provider) => provider.provider === 'opencode-go')!
       expect(opencode.configured).toBe(false)
       const savedResponse = await fetch(`http://127.0.0.1:${firstApi.port}/api/llm/providers/opencode-go`, {
@@ -549,9 +608,7 @@ describe('NekroNxt Server domain API (WebServer seam)', () => {
       expect(savedResponse.ok).toBe(true)
       const savedText = await savedResponse.text()
       expect(savedText).not.toContain('write-only-test-key')
-      const saved = JSON.parse(savedText) as {
-        providers: Array<{ provider: string; active: boolean; settingsRevision: number }>
-      }
+      const saved = LlmProviderSnapshotSchema.parse(JSON.parse(savedText))
       expect(saved.providers.find((provider) => provider.provider === 'opencode-go')?.active).toBe(true)
 
       const customResponse = await fetch(`http://127.0.0.1:${firstApi.port}/api/llm/providers/acme-gateway`, {
@@ -569,9 +626,7 @@ describe('NekroNxt Server domain API (WebServer seam)', () => {
       expect(customResponse.ok).toBe(true)
       const customText = await customResponse.text()
       expect(customText).not.toContain('custom-write-only-test-key')
-      const custom = JSON.parse(customText) as {
-        providers: Array<{ provider: string; active: boolean; settingsRevision: number }>
-      }
+      const custom = LlmProviderSnapshotSchema.parse(JSON.parse(customText))
       expect(custom.providers.find((provider) => provider.provider === 'acme-gateway')?.active).toBe(true)
       const customRow = custom.providers.find((provider) => provider.provider === 'acme-gateway')!
       const editedResponse = await fetch(`http://127.0.0.1:${firstApi.port}/api/llm/providers/acme-gateway`, {
@@ -589,9 +644,7 @@ describe('NekroNxt Server domain API (WebServer seam)', () => {
 
       const pluginResponse = await fetch(`http://127.0.0.1:${firstApi.port}/api/dsh/plugins`)
       expect(pluginResponse.ok).toBe(true)
-      const pluginCatalog = (await pluginResponse.json()) as {
-        plugins: Array<{ packageName: string; overall: string; settingsNamespaces: string[] }>
-      }
+      const pluginCatalog = DshPluginCatalogSchema.parse(await pluginResponse.json())
       expect(pluginCatalog.plugins).toContainEqual(
         expect.objectContaining({
           packageName: '@deepseek-ai/dsh-web-search-deepseek',
@@ -605,9 +658,7 @@ describe('NekroNxt Server domain API (WebServer seam)', () => {
       const settingsText = await settingsResponse.text()
       expect(settingsText).not.toContain('write-only-test-key')
       expect(settingsText).not.toContain('custom-write-only-test-key')
-      const settings = JSON.parse(settingsText) as {
-        namespaces: Array<{ ns: string; revision: number; resolved: Record<string, unknown>; secrets: unknown[] }>
-      }
+      const settings = DshSettingsSnapshotSchema.parse(JSON.parse(settingsText))
       const webSearch = settings.namespaces.find((namespace) => namespace.ns === 'web-search-deepseek')!
       expect(webSearch.resolved).toMatchObject({ apiKeyEnv: 'DEEPSEEK_API_KEY', maxTokens: 1024, maxUses: 2 })
       expect(webSearch.secrets).toEqual(
@@ -626,7 +677,7 @@ describe('NekroNxt Server domain API (WebServer seam)', () => {
         },
       )
       expect(mutateResponse.ok).toBe(true)
-      const mutated = (await mutateResponse.json()) as { revision: number; resolved: { maxUses: number } }
+      const mutated = DshSettingsMutationSchema.parse(await mutateResponse.json())
       expect(mutated).toMatchObject({ resolved: { maxUses: 3 } })
       const conflictResponse = await fetch(
         `http://127.0.0.1:${firstApi.port}/api/dsh/settings/web-search-deepseek/mutate`,

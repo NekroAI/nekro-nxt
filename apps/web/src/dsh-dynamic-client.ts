@@ -1,5 +1,5 @@
 import * as Cordis from '@deepseek-ai/cordis'
-import { Context, type Fiber, type Plugin } from '@deepseek-ai/cordis'
+import { Context, type Fiber } from '@deepseek-ai/cordis'
 import clientRunnerBundle from '@deepseek-ai/dsh-cordis-client-runner/client?raw'
 import type {
   ApprovalRequestId,
@@ -14,20 +14,31 @@ import clientSettingsPluginsBundle from '@deepseek-ai/dsh-client-ui-settings-plu
 import * as SchemaFormModule from '@deepseek-ai/dsh-client-schema-form'
 import * as SlotModule from '@deepseek-ai/dsh-client-ui-slots'
 import { createSlotRenderer } from '@deepseek-ai/dsh-client-web-react'
-import type { PropsRenderSlots, StoredEntry } from '@deepseek-ai/dsh-client-ui-slots'
+import type { PropsRenderSlots } from '@deepseek-ai/dsh-client-ui-slots'
 import type {} from '@deepseek-ai/dsh-client-ui-settings/client'
+import {
+  DshCredentialsChangedSseDataSchema,
+  DshSettingsChangedSseDataSchema,
+  HostApiContracts,
+  HostApiErrorSchema,
+  buildHostApiContractPath,
+  parseJsonValue,
+  type HostApiContract,
+  type HostApiResponse,
+} from '@nekro-nxt/contracts'
 import * as React from 'react'
 import * as ReactJsxRuntime from 'react/jsx-runtime'
 import type { ReactNode } from 'react'
-
-interface ClientPluginHandoff {
-  readonly id: string
-  readonly factory: (requireModule: (specifier: string) => unknown) => Record<string, unknown>
-}
-
-interface ModuleWindow {
-  __ModuleLoader__?: { load(handoff: ClientPluginHandoff): void }
-}
+import {
+  requireApprovalRequestId,
+  requireClientPluginHandoff,
+  requireConstructorExport,
+  requireCordisPlugin,
+  requireModuleRecord,
+  requireSlotRegistry,
+  type ClientPluginHandoff,
+  type SlotRegistryFace,
+} from './dsh-interop/unsafe.js'
 
 interface ClientModuleSystemFace {
   import(specifier: string): Promise<unknown>
@@ -66,11 +77,9 @@ class BrowserDynamicLoader implements BrowserDynamicLoaderFace {
   async create(options: { readonly name: string }): Promise<string> {
     const exported = await this.#modules.import(options.name)
     const plugin =
-      typeof exported === 'object' && exported !== null && 'default' in exported
-        ? (exported as { readonly default: unknown }).default
-        : exported
+      typeof exported === 'object' && exported !== null && 'default' in exported ? exported['default'] : exported
     const id = `dynamic-client-entry-${++this.#sequence}`
-    const fiber = this.#context.plugin(plugin as Plugin)
+    const fiber = this.#context.plugin(requireCordisPlugin(plugin, `DSH Client module ${options.name}`))
     this.#entries.set(id, { fiber })
     return id
   }
@@ -95,16 +104,6 @@ interface ClientModuleSystemConstructor {
     readonly staticModules: Readonly<Record<string, unknown>>
     readonly loadBundle: (url: string) => Promise<void>
   }): ClientModuleSystemFace
-}
-
-interface SlotRegistryFace {
-  entriesOfSlot(key: string): readonly StoredEntry[]
-  register<Props extends object>(
-    options: Readonly<Record<string, unknown>>,
-    component: (props: Props) => ReactNode,
-  ): () => void
-  install(renderer: ReturnType<typeof createSlotRenderer>): void
-  renderSlot(key: 'root', owner: object): ReactNode
 }
 
 interface DynamicPackageRunnerFace {
@@ -181,13 +180,13 @@ const NativeSettingsRoot = ({ renderSlot }: NativeSettingsRootProps): ReactNode 
   renderSlot('settings.section', { close: () => undefined }, { only: 'plugins' })
 
 interface RemoteBridgeFace {
-  $on(event: string, listener: (...args: never[]) => void): () => void
+  $on(event: string, listener: (...args: unknown[]) => void): () => void
 }
 
 class DshRemoteBridge implements RemoteBridgeFace {
-  readonly #listeners = new Map<string, Set<(...args: never[]) => void>>()
+  readonly #listeners = new Map<string, Set<(...args: unknown[]) => void>>()
 
-  $on(event: string, listener: (...args: never[]) => void): () => void {
+  $on(event: string, listener: (...args: unknown[]) => void): () => void {
     const listeners = this.#listeners.get(event) ?? new Set()
     listeners.add(listener)
     this.#listeners.set(event, listeners)
@@ -195,38 +194,68 @@ class DshRemoteBridge implements RemoteBridgeFace {
   }
 
   emit(event: string, ...args: unknown[]): void {
-    for (const listener of this.#listeners.get(event) ?? []) listener(...(args as never[]))
+    for (const listener of this.#listeners.get(event) ?? []) listener(...args)
   }
 }
 
 const rpcOk = <T>(value: T) => ({ rpcId: 'nekro-nxt-dsh-bridge', result: { ok: true as const, value } })
 
-const apiJson = async <T>(url: string, init?: RequestInit): Promise<T> => {
+const requestHostApi = async <Output>(
+  contract: HostApiContract,
+  responseSchema: { parse(input: unknown): Output },
+  params: unknown,
+  request: unknown,
+): Promise<Output> => {
+  const url = buildHostApiContractPath(contract, params)
+  const requestBody = contract.parseRequest(request)
   const response = await fetch(url, {
-    ...init,
-    headers: { 'content-type': 'application/json', ...(init?.headers ?? {}) },
+    method: contract.method,
+    headers: { 'content-type': 'application/json' },
+    ...(contract.method === 'GET' || contract.method === 'DELETE' ? {} : { body: JSON.stringify(requestBody) }),
   })
-  const body = (await response.json()) as { readonly error?: { readonly message?: unknown } }
+  const responseBody: unknown = await response.json()
   if (!response.ok) {
-    throw new Error(typeof body.error?.message === 'string' ? body.error.message : `DSH Bridge HTTP ${response.status}`)
+    const parsedError = HostApiErrorSchema.safeParse(responseBody)
+    throw Object.assign(
+      new Error(parsedError.success ? parsedError.data.error.message : `DSH Bridge HTTP ${response.status}`),
+      { status: response.status },
+    )
   }
-  return body as T
+  return responseSchema.parse(responseBody)
 }
 
-const unsupportedRemoteError = (): Error & { code: 'unsupported-remote' } => {
-  const error = new Error('DSH 原生界面请求了当前桥接未支持的 Remote。') as Error & {
-    code: 'unsupported-remote'
+const parseDshSettingsChangedEvent = (text: string) => {
+  try {
+    return DshSettingsChangedSseDataSchema.parse(parseJsonValue(JSON.parse(text)))
+  } catch {
+    return undefined
   }
-  error.code = 'unsupported-remote'
-  return error
 }
+
+const parseDshCredentialsChangedEvent = (text: string) => {
+  try {
+    return DshCredentialsChangedSseDataSchema.parse(parseJsonValue(JSON.parse(text)))
+  } catch {
+    return undefined
+  }
+}
+
+const unsupportedRemoteError = (): Error & { code: 'unsupported-remote' } =>
+  Object.assign(new Error('DSH 原生界面请求了当前桥接未支持的 Remote。'), {
+    code: 'unsupported-remote' as const,
+  })
 
 const createDshConnectionBridge = () => ({
   isLoopback: true,
   api: {
     settings: {
       describe: async () => {
-        const response = await apiJson<{ readonly namespaces: readonly Record<string, unknown>[] }>('/api/dsh/settings')
+        const response = await requestHostApi(
+          HostApiContracts.dshSettings,
+          HostApiContracts.dshSettings.response,
+          {},
+          undefined,
+        )
         return rpcOk({
           writable: response.namespaces.every((namespace) => namespace.writable !== false),
           hasDocument: true,
@@ -247,12 +276,11 @@ const createDshConnectionBridge = () => ({
         readonly ops: readonly unknown[]
         readonly expectedRevision?: number
       }) => {
-        const value = await apiJson<Record<string, unknown>>(
-          `/api/dsh/settings/${encodeURIComponent(payload.ns)}/mutate`,
-          {
-            method: 'POST',
-            body: JSON.stringify({ expectedRevision: payload.expectedRevision ?? 0, ops: payload.ops }),
-          },
+        const value = await requestHostApi(
+          HostApiContracts.dshSettingsMutate,
+          HostApiContracts.dshSettingsMutate.response,
+          { namespace: payload.ns },
+          { expectedRevision: payload.expectedRevision ?? 0, ops: payload.ops },
         )
         return rpcOk({
           ns: value.ns,
@@ -269,20 +297,29 @@ const createDshConnectionBridge = () => ({
     credentials: {
       describe: async (payload: { readonly refs: readonly string[] }) =>
         rpcOk(
-          await apiJson<{ readonly credentials: Readonly<Record<string, unknown>> }>('/api/dsh/credentials/describe', {
-            method: 'POST',
-            body: JSON.stringify(payload),
-          }),
+          await requestHostApi(
+            HostApiContracts.dshCredentialsDescribe,
+            HostApiContracts.dshCredentialsDescribe.response,
+            {},
+            payload,
+          ),
         ),
       set: async (payload: { readonly ref: string; readonly value: string }) => {
-        await apiJson(`/api/dsh/credentials/${encodeURIComponent(payload.ref)}`, {
-          method: 'PUT',
-          body: JSON.stringify({ value: payload.value }),
-        })
+        await requestHostApi(
+          HostApiContracts.dshCredentialSet,
+          HostApiContracts.dshCredentialSet.response,
+          { ref: payload.ref },
+          { value: payload.value },
+        )
         return rpcOk({})
       },
       unset: async (payload: { readonly ref: string }) => {
-        await apiJson(`/api/dsh/credentials/${encodeURIComponent(payload.ref)}`, { method: 'DELETE' })
+        await requestHostApi(
+          HostApiContracts.dshCredentialUnset,
+          HostApiContracts.dshCredentialUnset.response,
+          { ref: payload.ref },
+          undefined,
+        )
         return rpcOk({})
       },
     },
@@ -303,25 +340,17 @@ interface DynamicClientModules {
   readonly CordisRunOrchestrator: RunOrchestratorConstructor
 }
 
-export interface DynamicInventoryRow {
-  readonly pluginId: string
-  readonly agentId: string
-  readonly packages: readonly {
-    readonly packageId: string
-    readonly name: string
-    readonly purpose: string
-    readonly hasHostHalf: boolean
-    readonly hasClientHalf: boolean
-  }[]
-  readonly activeRun?: { readonly pluginRunId: string; readonly packageId: string }
-  readonly latestRun?: {
-    readonly pluginRunId: string
-    readonly packageId: string
-    readonly mode: 'run' | 'update'
-    readonly status: string
-    readonly approvalRequestId?: string
-    readonly requiresApproval?: boolean
-  }
+type DynamicInventoryResponseRow = HostApiResponse<'dynamicInventory'>['rows'][number]
+type DynamicInventoryLatestRun = NonNullable<DynamicInventoryResponseRow['latestRun']>
+
+export type DynamicInventoryRow = Pick<
+  DynamicInventoryResponseRow,
+  'pluginId' | 'agentId' | 'packages' | 'activeRun'
+> & {
+  readonly latestRun?: Pick<
+    DynamicInventoryLatestRun,
+    'pluginRunId' | 'packageId' | 'mode' | 'status' | 'approvalRequestId' | 'requiresApproval'
+  >
 }
 
 export interface DynamicClientHostPort extends CordisRunHostSeam {
@@ -330,29 +359,29 @@ export interface DynamicClientHostPort extends CordisRunHostSeam {
   reportGuardFailure(agentId: string, pluginId: string, pluginRunId: string, failure: unknown): Promise<void>
 }
 
-const evaluateClientBundle = (source: string, moduleWindow: ModuleWindow, documentValue: unknown): void => {
+const evaluateClientBundle = (source: string, moduleWindow: Record<string, unknown>, documentValue: unknown): void => {
   // The published DSH Client export is a classic ModuleLoader registration bundle, not a normal ESM module.
   // Dynamic Cordis already requires closure evaluation; this executes only the exact lockfile-pinned trusted bundle.
   // eslint-disable-next-line @typescript-eslint/no-implied-eval -- DSH publishes this exact Client entry as a classic registration bundle.
-  const evaluate = new Function('window', 'document', source) as (window: ModuleWindow, document: unknown) => void
-  evaluate(moduleWindow, documentValue)
+  const evaluate = new Function('window', 'document', source)
+  Reflect.apply(evaluate, undefined, [moduleWindow, documentValue])
 }
 
 const captureBootstrapModule = (
   source: string,
-  moduleWindow: ModuleWindow,
+  moduleWindow: Record<string, unknown>,
   documentValue: unknown,
 ): Record<string, unknown> => {
   let captured: ClientPluginHandoff | undefined
-  moduleWindow.__ModuleLoader__ = {
-    load: (handoff) => {
+  moduleWindow['__ModuleLoader__'] = {
+    load: (handoff: unknown) => {
       if (captured) throw new Error('DSH bootstrap bundle registered more than one module.')
-      captured = handoff
+      captured = requireClientPluginHandoff(handoff)
     },
   }
   evaluateClientBundle(source, moduleWindow, documentValue)
   if (!captured) throw new Error('DSH bootstrap bundle did not register its module.')
-  return captured.factory((specifier) => {
+  return captured.factory((specifier: string) => {
     throw new Error(`DSH bootstrap module unexpectedly required: ${specifier}`)
   })
 }
@@ -363,12 +392,17 @@ const loadDynamicClientModules = async (
   readonly modules: DynamicClientModules
   readonly moduleSystem: ClientModuleSystemFace
 }> => {
-  const moduleWindow = globalThis as ModuleWindow
-  if (moduleWindow.__ModuleLoader__) throw new Error('A DSH Client module loader is already installed in this page.')
+  const moduleWindow = requireModuleRecord(globalThis, 'DSH Client global')
+  if (moduleWindow['__ModuleLoader__']) {
+    throw new Error('A DSH Client module loader is already installed in this page.')
+  }
   const bootstrap = captureBootstrapModule(clientModulesBundle, moduleWindow, documentValue)
-  delete moduleWindow.__ModuleLoader__
-  const ClientModuleSystem = bootstrap.ClientModuleSystem as ClientModuleSystemConstructor | undefined
-  if (!ClientModuleSystem) throw new Error('DSH ClientModuleSystem export is unavailable.')
+  delete moduleWindow['__ModuleLoader__']
+  const ClientModuleSystem = requireConstructorExport<ClientModuleSystemConstructor>(bootstrap, 'ClientModuleSystem', [
+    'import',
+    'registerStatic',
+    'invalidate',
+  ])
   const moduleSystem = new ClientModuleSystem({
     modules: [],
     staticModules: {
@@ -385,14 +419,30 @@ const loadDynamicClientModules = async (
   evaluateClientBundle(clientSettingsBundle, moduleWindow, documentValue)
   evaluateClientBundle(clientLocaleBundle, moduleWindow, documentValue)
   evaluateClientBundle(clientSettingsPluginsBundle, moduleWindow, documentValue)
-  const runtime = (await moduleSystem.import('@deepseek-ai/dsh-client-runtime')) as Record<string, unknown>
-  const runner = (await moduleSystem.import('@deepseek-ai/dsh-cordis-client-runner')) as Record<string, unknown>
-  const SlotRegistry = runtime.SlotRegistry as SlotRegistryConstructor | undefined
-  const DynamicCordisPackageRunner = runner.DynamicCordisPackageRunner as DynamicPackageRunnerConstructor | undefined
-  const CordisRunOrchestrator = runner.CordisRunOrchestrator as RunOrchestratorConstructor | undefined
-  if (!SlotRegistry || !DynamicCordisPackageRunner || !CordisRunOrchestrator) {
-    throw new Error('DSH dynamic Client exports are incomplete.')
-  }
+  const runtime = requireModuleRecord(
+    await moduleSystem.import('@deepseek-ai/dsh-client-runtime'),
+    'DSH Client Runtime module',
+  )
+  const runner = requireModuleRecord(
+    await moduleSystem.import('@deepseek-ai/dsh-cordis-client-runner'),
+    'DSH Cordis Client Runner module',
+  )
+  const SlotRegistry = requireConstructorExport<SlotRegistryConstructor>(runtime, 'SlotRegistry', [
+    'entriesOfSlot',
+    'register',
+    'install',
+    'renderSlot',
+  ])
+  const DynamicCordisPackageRunner = requireConstructorExport<DynamicPackageRunnerConstructor>(
+    runner,
+    'DynamicCordisPackageRunner',
+    ['load', 'retract', 'subscribe', 'getSnapshot', 'isLoaded', 'dispose'],
+  )
+  const CordisRunOrchestrator = requireConstructorExport<RunOrchestratorConstructor>(runner, 'CordisRunOrchestrator', [
+    'reconcileApprovals',
+    'approve',
+    'decline',
+  ])
   return {
     moduleSystem,
     modules: { ClientModuleSystem, SlotRegistry, DynamicCordisPackageRunner, CordisRunOrchestrator },
@@ -453,9 +503,8 @@ export class DshClientRuntime {
       nativeContext.reflect.provide('connection', connection)
       nativeContext.reflect.provide('remote', remote)
       await Promise.all([dynamicContext.plugin(modules.SlotRegistry), nativeContext.plugin(modules.SlotRegistry)])
-      const slots = dynamicContext.get('slots') as unknown as SlotRegistryFace | undefined
-      const nativeSlots = nativeContext.get('slots') as unknown as SlotRegistryFace | undefined
-      if (!slots || !nativeSlots) throw new Error('DSH SlotRegistry did not publish its Service.')
+      const slots = requireSlotRegistry(dynamicContext.get('slots'), 'DSH Dynamic SlotRegistry')
+      const nativeSlots = requireSlotRegistry(nativeContext.get('slots'), 'DSH Native SlotRegistry')
       slots.install(createSlotRenderer())
       // The official renderer requires a stable shell-owned root registration.
       // Dynamic root entries receive negative priorities and temporarily win;
@@ -487,14 +536,14 @@ export class DshClientRuntime {
       const orchestrator = new modules.CordisRunOrchestrator({ runner, host })
       const eventSource = typeof EventSource === 'undefined' ? undefined : new EventSource('/api/events')
       eventSource?.addEventListener('dsh-settings-changed', (event) => {
-        const value = JSON.parse((event as MessageEvent<string>).data) as { namespace?: unknown; revision?: unknown }
-        if (typeof value.namespace === 'string' && typeof value.revision === 'number') {
-          remote.emit('settings/document-updated', value.namespace, value.revision)
-        }
+        if (!(event instanceof MessageEvent) || typeof event.data !== 'string') return
+        const value = parseDshSettingsChangedEvent(event.data)
+        if (value) remote.emit('settings/document-updated', value.namespace, value.revision)
       })
       eventSource?.addEventListener('dsh-credentials-changed', (event) => {
-        const value = JSON.parse((event as MessageEvent<string>).data) as { ref?: unknown }
-        if (typeof value.ref === 'string') remote.emit('credentials/updated', value.ref)
+        if (!(event instanceof MessageEvent) || typeof event.data !== 'string') return
+        const value = parseDshCredentialsChangedEvent(event.data)
+        if (value) remote.emit('credentials/updated', value.ref)
       })
       return new DshClientRuntime(
         dynamicContext,
@@ -539,12 +588,12 @@ export class DshClientRuntime {
 
   approve(requestId: string, approveFutureVersions = false): Promise<void> {
     this.#assertActive()
-    return this.#orchestrator.approve(requestId as ApprovalRequestId, approveFutureVersions)
+    return this.#orchestrator.approve(requireApprovalRequestId(requestId), approveFutureVersions)
   }
 
   decline(requestId: string): Promise<void> {
     this.#assertActive()
-    return this.#orchestrator.decline(requestId as ApprovalRequestId)
+    return this.#orchestrator.decline(requireApprovalRequestId(requestId))
   }
 
   loaded(): readonly DynamicCordisLivePackage[] {

@@ -30,7 +30,17 @@ export default defineConfig({
     coverage: {
       provider: 'v8',
       include: ['packages/*/src/**/*.ts'],
+      exclude: ['packages/storage-sqlite/src/schema.ts'],
       reporter: ['text', 'html'],
+      thresholds: {
+        lines: 90,
+        branches: 80,
+        'packages/core/src/**': { lines: 90, branches: 80 },
+        'packages/channel-runtime/src/**': { lines: 90, branches: 80 },
+        'packages/storage-sqlite/src/**': { lines: 90, branches: 80 },
+        'packages/contracts/src/**': { lines: 90, branches: 80 },
+        'packages/extension-runtime/src/**': { lines: 90, branches: 80 },
+      },
     },
   },
 })

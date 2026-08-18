@@ -244,6 +244,9 @@ const requireValue = (value: string, message: string, code: ProductActionErrorCo
   return normalized
 }
 
+const isRecord = (value: unknown): value is Record<string, unknown> =>
+  typeof value === 'object' && value !== null && !Array.isArray(value)
+
 export const useProductStore = create<ProductState>(() => ({
   host: { status: 'initializing', error: null, lastSuccessfulAt: null },
   connectionAdapters: [],
@@ -281,15 +284,10 @@ export const useProductStore = create<ProductState>(() => ({
       model: { provider: model.provider, model: model.id },
       capabilities,
     })
-    if (
-      typeof result !== 'object' ||
-      result === null ||
-      typeof (result as { readonly agentId?: unknown }).agentId !== 'string' ||
-      typeof (result as { readonly channelId?: unknown }).channelId !== 'string'
-    ) {
+    if (!isRecord(result) || typeof result['agentId'] !== 'string' || typeof result['channelId'] !== 'string') {
       throw new ProductActionError('invalid-input', '智能体已创建，但返回结果不完整，请刷新页面。')
     }
-    return result as { readonly agentId: string; readonly channelId: string }
+    return { agentId: result['agentId'], channelId: result['channelId'] }
   },
   reviseAgent: async ({ agentId, expectedCurrentRevisionId, displayName, persona, model, reasoningEffort }) => {
     await requireHost().execute('agents.revise', {
@@ -353,13 +351,10 @@ export const useProductStore = create<ProductState>(() => ({
           ? { beforeOccurredAt: oldest.occurredAt, beforeSourceId: oldest.id }
           : {}),
       })
-      if (
-        typeof result !== 'object' ||
-        result === null ||
-        typeof (result as { readonly hasMore?: unknown }).hasMore !== 'boolean'
-      ) {
+      if (!isRecord(result) || typeof result['hasMore'] !== 'boolean') {
         throw new ProductActionError('invalid-input', '频道历史返回结果无效，请重新加载。')
       }
+      const hasMore = result['hasMore']
       useProductStore.setState((state) => ({
         channelHistory: {
           ...state.channelHistory,
@@ -367,7 +362,7 @@ export const useProductStore = create<ProductState>(() => ({
             loaded: true,
             loading: false,
             loadingMore: false,
-            hasMore: (result as { readonly hasMore: boolean }).hasMore,
+            hasMore,
             error: '',
           },
         },
@@ -450,7 +445,10 @@ export const useProductStore = create<ProductState>(() => ({
       await requireHost().execute('extensions.activate', { extensionId, agentId, revisionId })
       return
     }
-    await requireHost().execute('extensions.deactivate', { extensionId })
+    await requireHost().execute('extensions.deactivate', {
+      extensionId,
+      agentId: requireValue(extension.agentId ?? '', '此本地扩展缺少目标智能体，无法停用。'),
+    })
   },
   setTheme: (theme) => {
     if (typeof window !== 'undefined') {

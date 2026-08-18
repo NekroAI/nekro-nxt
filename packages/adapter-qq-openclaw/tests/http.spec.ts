@@ -1,6 +1,11 @@
 import { createHash } from 'node:crypto'
 import { describe, expect, it } from 'vitest'
+import { z } from 'zod'
 import { QQOpenClawHttpTransport, QQTransportError } from '../src/index.ts'
+
+const jsonObjectSchema = z.record(z.string(), z.unknown())
+
+const parseJsonObject = (input: string): Readonly<Record<string, unknown>> => jsonObjectSchema.parse(JSON.parse(input))
 
 const json = (body: unknown, status = 200, headers?: HeadersInit): Response =>
   new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json', ...headers } })
@@ -69,7 +74,7 @@ describe('QQ OpenClaw HTTP transport', () => {
     expect(calls[1]?.init?.headers).toMatchObject({ authorization: 'QQBot token-1' })
     expect(calls[3]?.init?.headers).toMatchObject({ authorization: 'QQBot token-2' })
     expect(bodyText(calls[1]?.init?.body)).not.toContain('private-secret')
-    expect(JSON.parse(bodyText(calls[3]?.init?.body))).toEqual({
+    expect(parseJsonObject(bodyText(calls[3]?.init?.body))).toEqual({
       msg_type: 2,
       markdown: { content: '你好' },
       msg_id: 'inbound-1',
@@ -117,8 +122,9 @@ describe('QQ OpenClaw HTTP transport', () => {
       .catch((error: unknown) => error)
     expect(failure).toBeInstanceOf(QQTransportError)
     expect(failure).toMatchObject({ kind: 'unknown' })
-    expect(String((failure as Error).message)).not.toContain('private-secret')
-    expect((failure as Error).message.length).toBeLessThanOrEqual(512)
+    if (!(failure instanceof QQTransportError)) throw new TypeError('Expected QQTransportError.')
+    expect(failure.message).not.toContain('private-secret')
+    expect(failure.message.length).toBeLessThanOrEqual(512)
   })
 
   it('performs hashed multipart upload before sending the media message', async () => {
@@ -157,7 +163,7 @@ describe('QQ OpenClaw HTTP transport', () => {
         signal: new AbortController().signal,
       }),
     ).resolves.toEqual({ platformMessageId: 'media-message-1' })
-    const prepare: unknown = JSON.parse(bodyText(calls[1]?.init?.body))
+    const prepare = parseJsonObject(bodyText(calls[1]?.init?.body))
     expect(prepare).toMatchObject({
       file_type: 2,
       file_name: 'clip.mp4',

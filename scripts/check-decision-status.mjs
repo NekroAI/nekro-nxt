@@ -11,6 +11,7 @@ const expected = new Map([
 ])
 
 const errors = []
+const isNodeError = (error, code) => error instanceof Error && 'code' in error && error.code === code
 
 for (const [directory, status] of expected) {
   const absolute = path.join(decisionRoot, directory)
@@ -18,7 +19,7 @@ for (const [directory, status] of expected) {
   try {
     names = await readdir(absolute)
   } catch (error) {
-    if (error?.code === 'ENOENT') continue
+    if (isNodeError(error, 'ENOENT')) continue
     throw error
   }
 

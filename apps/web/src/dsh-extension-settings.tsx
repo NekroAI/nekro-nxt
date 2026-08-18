@@ -1,9 +1,22 @@
-import { deletePath, getPath, rehydrateSchema, setPath, validateDraft } from '@deepseek-ai/dsh-client-schema-form'
-import type {
-  DshCredentialView,
-  DshSettingsNamespaceView,
-  DshSettingsPathOperation,
-  PluginSupportAssessment,
+/// <reference types="vite/client" />
+
+import {
+  deletePath,
+  getPath,
+  rehydrateSchema,
+  setPath,
+  validateDraft,
+  type SchemaNode,
+} from '@deepseek-ai/dsh-client-schema-form'
+import type { HostApiContract, HostApiRequest, HostApiResponse } from '@nekro-nxt/contracts'
+import {
+  DshCredentialsChangedSseDataSchema,
+  DshSettingsChangedSseDataSchema,
+  HostApiContracts,
+  HostApiErrorSchema,
+  buildHostApiContractPath,
+  JsonValueSchema,
+  parseJsonValue,
 } from '@nekro-nxt/contracts'
 import { ChevronDown, ChevronUp, KeyRound, RotateCcw, ShieldAlert } from 'lucide-react'
 import { Component, useCallback, useEffect, useMemo, useState, type ReactNode } from 'react'
@@ -12,29 +25,10 @@ import { DshNativeSettingsSlots } from './dynamic-client-coordinator.js'
 import { Button, Field, Input, SelectField, StatusBadge, SwitchField, Tabs, Textarea } from './ui-kit/index.js'
 import styles from './dsh-extension-settings.module.css'
 
-interface SchemaNode {
-  readonly type: string
-  readonly meta?: {
-    readonly default?: unknown
-    readonly required?: boolean
-    readonly disabled?: boolean
-    readonly hidden?: boolean
-    readonly collapse?: boolean
-    readonly role?: string
-    readonly description?: string | Readonly<Record<string, string>>
-    readonly comment?: string
-    readonly link?: string
-    readonly pattern?: { readonly source: string; readonly flags?: string }
-    readonly min?: number
-    readonly max?: number
-    readonly step?: number
-    readonly badges?: readonly { readonly text: string; readonly type: string }[]
-  }
-  readonly dict?: Readonly<Record<string, SchemaNode>>
-  readonly inner?: SchemaNode
-  readonly list?: readonly SchemaNode[]
-  readonly value?: unknown
-}
+type PluginSupportAssessment = HostApiResponse<'dshPlugins'>['plugins'][number]
+type DshSettingsNamespaceView = HostApiResponse<'dshSettings'>['namespaces'][number]
+type DshCredentialView = HostApiResponse<'dshCredentialsDescribe'>['credentials'][string]
+type DshSettingsPathOperation = HostApiRequest<'dshSettingsMutate'>['ops'][number]
 
 interface DshSettingsCatalog {
   readonly plugins: readonly PluginSupportAssessment[]
@@ -53,17 +47,17 @@ class NativeSettingsBoundary extends Component<
   { readonly children: ReactNode; readonly onFailure: (message: string) => void },
   { readonly failed: boolean }
 > {
-  state = { failed: false }
+  override state = { failed: false }
 
-  static getDerivedStateFromError() {
+  static getDerivedStateFromError(): { readonly failed: true } {
     return { failed: true }
   }
 
-  componentDidCatch(error: Error): void {
+  override componentDidCatch(error: Error): void {
     this.props.onFailure(error.message)
   }
 
-  render(): ReactNode {
+  override render(): ReactNode {
     return this.state.failed ? null : this.props.children
   }
 }
@@ -71,28 +65,52 @@ class NativeSettingsBoundary extends Component<
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === 'object' && value !== null && !Array.isArray(value)
 
-const requestJson = async <T,>(url: string, init?: RequestInit): Promise<T> => {
+const requestHostApi = async <Output,>(
+  contract: HostApiContract,
+  responseSchema: { parse(input: unknown): Output },
+  params: unknown,
+  request: unknown,
+): Promise<Output> => {
+  const url = buildHostApiContractPath(contract, params)
+  const requestBody = contract.parseRequest(request)
   const response = await fetch(url, {
-    ...init,
-    headers: { 'content-type': 'application/json', ...(init?.headers ?? {}) },
+    method: contract.method,
+    headers: { 'content-type': 'application/json' },
+    ...(contract.method === 'GET' || contract.method === 'DELETE' ? {} : { body: JSON.stringify(requestBody) }),
   })
-  const body = (await response.json()) as { readonly error?: { readonly message?: unknown } }
+  const responseBody: unknown = await response.json()
   if (!response.ok) {
-    const message =
-      typeof body.error?.message === 'string' ? body.error.message : `请求失败（HTTP ${response.status}）。`
-    const error = new Error(message) as Error & { status?: number }
-    error.status = response.status
-    throw error
+    const parsedError = HostApiErrorSchema.safeParse(responseBody)
+    throw Object.assign(
+      new Error(parsedError.success ? parsedError.data.error.message : `请求失败（HTTP ${response.status}）。`),
+      { status: response.status },
+    )
   }
-  return body as T
+  return responseSchema.parse(responseBody)
 }
 
 const loadCatalog = async (): Promise<DshSettingsCatalog> => {
   const [plugins, settings] = await Promise.all([
-    requestJson<{ readonly plugins: readonly PluginSupportAssessment[] }>('/api/dsh/plugins'),
-    requestJson<{ readonly namespaces: readonly DshSettingsNamespaceView[] }>('/api/dsh/settings'),
+    requestHostApi(HostApiContracts.dshPlugins, HostApiContracts.dshPlugins.response, {}, undefined),
+    requestHostApi(HostApiContracts.dshSettings, HostApiContracts.dshSettings.response, {}, undefined),
   ])
   return { plugins: plugins.plugins, namespaces: settings.namespaces }
+}
+
+const parseDshSettingsChangedEvent = (text: string) => {
+  try {
+    return DshSettingsChangedSseDataSchema.parse(parseJsonValue(JSON.parse(text)))
+  } catch {
+    return undefined
+  }
+}
+
+const parseDshCredentialsChangedEvent = (text: string) => {
+  try {
+    return DshCredentialsChangedSseDataSchema.parse(parseJsonValue(JSON.parse(text)))
+  } catch {
+    return undefined
+  }
 }
 
 const supportLabel = (status: PluginSupportAssessment['overall']): string => {
@@ -132,7 +150,7 @@ const packageLabel = (name: string): string => {
 const fieldDescription = (node: SchemaNode): string | undefined => {
   const description = node.meta?.description
   if (typeof description === 'string') return description
-  if (description && typeof description.zh === 'string') return description.zh
+  if (description && typeof description['zh'] === 'string') return description['zh']
   if (description && typeof description['zh-CN'] === 'string') return description['zh-CN']
   return node.meta?.comment
 }
@@ -288,7 +306,7 @@ function UnsupportedField({ name, node, path, value, disabled, onSet, onUnset }:
             disabled={disabled}
             onClick={() => {
               try {
-                onSet(path, JSON.parse(text) as unknown)
+                onSet(path, parseJsonValue(JSON.parse(text)))
                 setError('')
               } catch (cause) {
                 setError(cause instanceof Error ? cause.message : String(cause))
@@ -489,7 +507,7 @@ function GenericField(props: GenericFieldProps): ReactNode {
         </InlineFeedback>
       )
     }
-    const entries: unknown[] = Array.isArray(value) ? (value as unknown[]) : []
+    const entries: readonly unknown[] = Array.isArray(value) ? value : []
     return (
       <SchemaGroup name={name} node={node} disabled={locked}>
         {entries.map((entry, index) => (
@@ -562,7 +580,7 @@ function GenericField(props: GenericFieldProps): ReactNode {
   }
 
   if (node.type === 'tuple' && node.list) {
-    const entries: unknown[] = Array.isArray(value) ? (value as unknown[]) : []
+    const entries: readonly unknown[] = Array.isArray(value) ? value : []
     return (
       <SchemaGroup name={name} node={node} disabled={locked}>
         {node.list.map((child, index) => (
@@ -586,7 +604,7 @@ function GenericField(props: GenericFieldProps): ReactNode {
       0,
       node.list.findIndex((candidate) => {
         try {
-          return validateDraft(candidate as never, value) === undefined
+          return validateDraft(candidate, value) === undefined
         } catch {
           return false
         }
@@ -612,12 +630,22 @@ function GenericField(props: GenericFieldProps): ReactNode {
   if (node.type === 'intersect' && node.list?.every((candidate) => candidate.type === 'object')) {
     const dict: Record<string, SchemaNode> = {}
     for (const candidate of node.list) Object.assign(dict, candidate.dict ?? {})
-    const merged: SchemaNode = {
-      type: 'object',
-      dict,
-      ...(node.meta === undefined ? {} : { meta: node.meta }),
-    }
-    return <GenericField {...props} node={merged} disabled={locked} />
+    return (
+      <SchemaGroup name={name} node={node} disabled={locked}>
+        {Object.entries(dict).map(([key, child]) => (
+          <GenericField
+            key={key}
+            name={key}
+            node={child}
+            path={[...path, key]}
+            value={isRecord(value) ? value[key] : undefined}
+            disabled={locked}
+            onSet={onSet}
+            onUnset={onUnset}
+          />
+        ))}
+      </SchemaGroup>
+    )
   }
 
   return <UnsupportedField {...props} disabled={locked} />
@@ -629,9 +657,11 @@ function CredentialEditor({ refName, onChanged }: { readonly refName: string; re
   const [pending, setPending] = useState(false)
   const [error, setError] = useState('')
   const load = useCallback(async () => {
-    const result = await requestJson<{ readonly credentials: Readonly<Record<string, DshCredentialView>> }>(
-      '/api/dsh/credentials/describe',
-      { method: 'POST', body: JSON.stringify({ refs: [refName] }) },
+    const result = await requestHostApi(
+      HostApiContracts.dshCredentialsDescribe,
+      HostApiContracts.dshCredentialsDescribe.response,
+      {},
+      { refs: [refName] },
     )
     setInfo(result.credentials[refName] ?? { configured: false, writable: false })
   }, [refName])
@@ -644,10 +674,12 @@ function CredentialEditor({ refName, onChanged }: { readonly refName: string; re
     setError('')
     try {
       setInfo(
-        await requestJson<DshCredentialView>(`/api/dsh/credentials/${encodeURIComponent(refName)}`, {
-          method: 'PUT',
-          body: JSON.stringify({ value }),
-        }),
+        await requestHostApi(
+          HostApiContracts.dshCredentialSet,
+          HostApiContracts.dshCredentialSet.response,
+          { ref: refName },
+          { value },
+        ),
       )
       setValue('')
       onChanged()
@@ -694,9 +726,12 @@ function CredentialEditor({ refName, onChanged }: { readonly refName: string; re
             if (pending) return
             setPending(true)
             setError('')
-            void requestJson<DshCredentialView>(`/api/dsh/credentials/${encodeURIComponent(refName)}`, {
-              method: 'DELETE',
-            })
+            void requestHostApi(
+              HostApiContracts.dshCredentialUnset,
+              HostApiContracts.dshCredentialUnset.response,
+              { ref: refName },
+              undefined,
+            )
               .then((next) => {
                 setInfo(next)
                 onChanged()
@@ -727,7 +762,7 @@ function NamespaceEditor({
   const [conflict, setConflict] = useState(false)
   const schema = useMemo(() => {
     try {
-      return rehydrateSchema(namespace.schema) as SchemaNode
+      return rehydrateSchema(namespace.schema)
     } catch {
       return undefined
     }
@@ -752,8 +787,13 @@ function NamespaceEditor({
       setError('DSH Settings 只允许路径级修改，当前根 Schema 无法安全整体替换。')
       return
     }
+    const parsedValue = JsonValueSchema.safeParse(value)
+    if (!parsedValue.success) {
+      setError('DSH Settings 修改值必须是合法 JSON。')
+      return
+    }
     setNotice('')
-    setOps((current) => new Map(current).set(pathKey(path), { op: 'set', path: [...path], value }))
+    setOps((current) => new Map(current).set(pathKey(path), { op: 'set', path: [...path], value: parsedValue.data }))
   }
   const onUnset = (path: readonly string[]): void => {
     if (path.length === 0) {
@@ -770,27 +810,30 @@ function NamespaceEditor({
     setConflict(false)
     try {
       if (schema) {
-        const validation = validateDraft(schema as never, rootValue)
+        const validation = validateDraft(schema, rootValue)
         if (validation) throw new Error(validation)
       }
-      const saved = await requestJson<DshSettingsNamespaceView>(
-        `/api/dsh/settings/${encodeURIComponent(authority.ns)}/mutate`,
-        {
-          method: 'POST',
-          body: JSON.stringify({ expectedRevision: authority.revision, ops: [...ops.values()] }),
-        },
+      const saved = await requestHostApi(
+        HostApiContracts.dshSettingsMutate,
+        HostApiContracts.dshSettingsMutate.response,
+        { namespace: authority.ns },
+        { expectedRevision: authority.revision, ops: [...ops.values()] },
       )
       setAuthority(saved)
       setOps(new Map())
       setNotice(saved.applies === 'restart' ? '已保存，重启后生效。' : '已保存并实时生效。')
       onSaved()
     } catch (cause) {
-      const current = cause as Error & { status?: number }
-      if (current.status === 409) {
+      const status =
+        cause instanceof Error && 'status' in cause && typeof cause.status === 'number' ? cause.status : undefined
+      if (status === 409) {
         setConflict(true)
         try {
-          const latest = await requestJson<{ readonly namespaces: readonly DshSettingsNamespaceView[] }>(
-            '/api/dsh/settings',
+          const latest = await requestHostApi(
+            HostApiContracts.dshSettings,
+            HostApiContracts.dshSettings.response,
+            {},
+            undefined,
           )
           const descriptor = latest.namespaces.find((item) => item.ns === authority.ns)
           if (descriptor) setAuthority(descriptor)
@@ -798,7 +841,7 @@ function NamespaceEditor({
           // Keep the original conflict and draft; a later SSE/manual save can refresh authority.
         }
       }
-      setError(current.message)
+      setError(cause instanceof Error ? cause.message : String(cause))
     } finally {
       setSaving(false)
     }
@@ -807,7 +850,7 @@ function NamespaceEditor({
     if (!schema) return authority.resolved
     const user = applySettingsOps(authority.user, ops)
     try {
-      return (schema as unknown as (value?: unknown) => unknown)(mergeSettingsLayers(authority.base ?? {}, user))
+      return parseJsonValue(schema(mergeSettingsLayers(authority.base ?? {}, user)))
     } catch {
       return mergeSettingsLayers(authority.resolved, user)
     }
@@ -823,11 +866,12 @@ function NamespaceEditor({
       if (node.type === 'object')
         for (const [key, child] of Object.entries(node.dict ?? {})) walk(child, [...path, key])
       if (node.type === 'dict' && node.inner && isRecord(getPath(rootValue, path))) {
-        for (const key of Object.keys(getPath(rootValue, path) as Record<string, unknown>))
-          walk(node.inner, [...path, key])
+        const current = getPath(rootValue, path)
+        if (isRecord(current)) for (const key of Object.keys(current)) walk(node.inner, [...path, key])
       }
       if (node.type === 'array' && node.inner && Array.isArray(getPath(rootValue, path))) {
-        for (const index of (getPath(rootValue, path) as unknown[]).keys()) walk(node.inner, [...path, String(index)])
+        const current = getPath(rootValue, path)
+        if (Array.isArray(current)) for (const index of current.keys()) walk(node.inner, [...path, String(index)])
       }
       if (node.type === 'tuple' && node.list) node.list.forEach((child, index) => walk(child, [...path, String(index)]))
     }
@@ -908,9 +952,18 @@ export function DshExtensionSettings() {
   useEffect(() => {
     void refresh()
     const source = new EventSource('/api/events')
-    const listener = (): void => void refresh()
-    source.addEventListener('dsh-settings-changed', listener)
-    source.addEventListener('dsh-credentials-changed', listener)
+    const settingsListener = (event: Event): void => {
+      if (!(event instanceof MessageEvent) || typeof event.data !== 'string') return
+      if (parseDshSettingsChangedEvent(event.data) === undefined) return
+      void refresh()
+    }
+    const credentialsListener = (event: Event): void => {
+      if (!(event instanceof MessageEvent) || typeof event.data !== 'string') return
+      if (parseDshCredentialsChangedEvent(event.data) === undefined) return
+      void refresh()
+    }
+    source.addEventListener('dsh-settings-changed', settingsListener)
+    source.addEventListener('dsh-credentials-changed', credentialsListener)
     return () => source.close()
   }, [refresh])
   const entries = useMemo<readonly DshSettingsCatalogEntry[]>(() => {
@@ -1045,7 +1098,12 @@ export function DshExtensionSettings() {
               />
             ) : null}
             {selected?.packageName === '@deepseek-ai/dsh-web-search-deepseek' && activeNamespace ? (
-              <Tabs.Root value={configView} onValueChange={(value) => setConfigView(value as 'native' | 'generic')}>
+              <Tabs.Root
+                value={configView}
+                onValueChange={(value) => {
+                  if (value === 'native' || value === 'generic') setConfigView(value)
+                }}
+              >
                 <Tabs.List aria-label="DSH 扩展配置界面">
                   <Tabs.Trigger value="native">DSH 原生界面</Tabs.Trigger>
                   <Tabs.Trigger value="generic">通用配置</Tabs.Trigger>

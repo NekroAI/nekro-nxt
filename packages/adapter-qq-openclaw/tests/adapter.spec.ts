@@ -1,15 +1,21 @@
-import type { AdapterConnectionContext, AdapterInboundEvent } from '@nekro-nxt/adapter-sdk'
-import type {
-  AssetId,
-  ChannelEventId,
-  ChannelId,
-  ChannelMemberId,
-  ConnectionId,
-  LogicalMessageId,
-  PhysicalDeliveryId,
-} from '@nekro-nxt/contracts'
-import { describe, expect, it } from 'vitest'
 import {
+  parseAdapterConnectionConfiguration,
+  type AdapterConnectionContext,
+  type AdapterInboundEvent,
+} from '@nekro-nxt/adapter-sdk'
+import {
+  AssetIdSchema,
+  ChannelEventIdSchema,
+  ChannelIdSchema,
+  ChannelMemberIdSchema,
+  ConnectionIdSchema,
+  LogicalMessageIdSchema,
+  PhysicalDeliveryIdSchema,
+} from '@nekro-nxt/contracts'
+import { describe, expect, expectTypeOf, it } from 'vitest'
+import {
+  QQ_OPENCLAW_CONNECTION_DEFINITION,
+  QQ_OPENCLAW_CONNECTION_DESCRIPTOR,
   QQOpenClawConnection,
   splitQQMarkdownAtoms,
   type QQAssetSource,
@@ -17,10 +23,11 @@ import {
   type QQInboundBridge,
   type QQOpenClawTransport,
 } from '../src/index.ts'
+import type { QQOpenClawConnectionConfigurationSchema, QQOpenClawCredentialsSchema } from '../src/index.ts'
 
-const connectionId = 'connection-qq' as ConnectionId
-const channelId = 'channel-qq' as ChannelId
-const memberId = 'member-qq' as ChannelMemberId
+const connectionId = ConnectionIdSchema.parse('con_qq')
+const channelId = ChannelIdSchema.parse('chn_qq')
+const memberId = ChannelMemberIdSchema.parse('mbr_qq')
 
 const context: AdapterConnectionContext = {
   connectionId,
@@ -29,6 +36,46 @@ const context: AdapterConnectionContext = {
 }
 
 describe('QQ OpenClaw Adapter', () => {
+  it('derives QQ configuration, credentials, UI fields, and creator inputs from the same definition', () => {
+    const parsed = parseAdapterConnectionConfiguration(QQ_OPENCLAW_CONNECTION_DEFINITION, {
+      configuration: { appId: ' app-id ', proactiveSend: true },
+      credentials: { clientSecretCredentialRef: 'client-secret' },
+    })
+    expect(parsed).toEqual({
+      configuration: {
+        appId: 'app-id',
+        proactiveSend: true,
+        markdown: true,
+        maxTextLength: 1800,
+        maxTextBytes: 7200,
+      },
+      credentials: { clientSecretCredentialRef: 'client-secret' },
+    })
+    expect(QQ_OPENCLAW_CONNECTION_DESCRIPTOR.configSchema).toEqual({
+      schemaVersion: 1,
+      type: 'object',
+      required: ['appId', 'clientSecretCredentialRef'],
+      properties: {
+        appId: { type: 'string', title: 'App ID' },
+        clientSecretCredentialRef: { type: 'credential-reference', title: 'Client Secret' },
+        proactiveSend: { type: 'boolean', title: '允许主动发送', default: false },
+        markdown: { type: 'boolean', title: '使用 Markdown', default: true },
+        maxTextLength: { type: 'number', title: '单条字符上限', default: 1800 },
+        maxTextBytes: { type: 'number', title: '单条 UTF-8 字节上限', default: 7200 },
+      },
+    })
+    expectTypeOf(parsed.configuration).toEqualTypeOf<ReturnType<typeof QQOpenClawConnectionConfigurationSchema.parse>>()
+    expectTypeOf(parsed.credentials).toEqualTypeOf<ReturnType<typeof QQOpenClawCredentialsSchema.parse>>()
+    expect(QQ_OPENCLAW_CONNECTION_DEFINITION.create(parsed.configuration, parsed.credentials)).toEqual({
+      appId: 'app-id',
+      proactiveSend: true,
+      markdown: true,
+      maxTextLength: 1800,
+      maxTextBytes: 7200,
+      clientSecret: 'client-secret',
+    })
+  })
+
   it('keeps QQ Mention atomic and treats legacy AT markup as ordinary text', () => {
     const chunks = splitQQMarkdownAtoms(
       [
@@ -108,22 +155,21 @@ describe('QQ OpenClaw Adapter', () => {
         { type: 'text', text: '你好 ' },
         { type: 'mention', memberId },
         { type: 'text', text: ' 请查看' },
-        { type: 'file', assetId: 'asset-video' as AssetId, name: 'clip.mp4' },
+        { type: 'file', assetId: AssetIdSchema.parse('ast_video'), name: 'clip.mp4' },
       ],
     })
     expect(planned).toEqual([
       { parts: [{ type: 'text', text: '你好 <@member-openid> 请查看' }] },
-      { parts: [{ type: 'file', assetId: 'asset-video', name: 'clip.mp4' }] },
+      { parts: [{ type: 'file', assetId: 'ast_video', name: 'clip.mp4' }] },
     ])
     const request = (plan: (typeof planned)[number], sequence: number) => ({
-      deliveryId: `physical-${sequence}` as PhysicalDeliveryId,
-      logicalMessageId: 'logical-1' as LogicalMessageId,
+      deliveryId: PhysicalDeliveryIdSchema.parse(`phy_${sequence}`),
+      logicalMessageId: LogicalMessageIdSchema.parse('msg_1'),
       connectionId,
       channelId,
       parts: plan.parts,
       ...(plan.adapterContext === undefined ? {} : { adapterContext: plan.adapterContext }),
       replyTo: 'inbound-1',
-      attempt: 1,
     })
     await expect(adapter.deliver(request(planned[0]!, 1), new AbortController().signal)).resolves.toMatchObject({
       status: 'sent',
@@ -202,7 +248,9 @@ describe('QQ OpenClaw Adapter', () => {
           resolveTarget: () => Promise.resolve({ kind: 'group', openId: 'group-1' }),
           resolveMemberOpenId: () => Promise.resolve(undefined),
           resolvePlatformMessageId: (_connection, _channel, logicalMessageId) =>
-            Promise.resolve(logicalMessageId === ('logical-inbound' as LogicalMessageId) ? 'qq-inbound' : undefined),
+            Promise.resolve(
+              logicalMessageId === LogicalMessageIdSchema.parse('msg_inbound') ? 'qq-inbound' : undefined,
+            ),
         },
         assets: { read: () => Promise.reject(new Error('not used')) },
         transport: {
@@ -223,7 +271,7 @@ describe('QQ OpenClaw Adapter', () => {
       connectionId,
       channelId,
       parts: [
-        { type: 'quote', messageId: 'logical-inbound' as LogicalMessageId },
+        { type: 'quote', messageId: LogicalMessageIdSchema.parse('msg_inbound') },
         { type: 'text', text: '引用回复' },
       ],
     })
@@ -234,13 +282,12 @@ describe('QQ OpenClaw Adapter', () => {
     await expect(
       adapter.deliver(
         {
-          deliveryId: 'physical-quote' as PhysicalDeliveryId,
-          logicalMessageId: 'logical-outbound' as LogicalMessageId,
+          deliveryId: PhysicalDeliveryIdSchema.parse('phy_quote'),
+          logicalMessageId: LogicalMessageIdSchema.parse('msg_outbound'),
           connectionId,
           channelId,
           parts: plan!.parts,
           ...(plan!.adapterContext === undefined ? {} : { adapterContext: plan!.adapterContext }),
-          attempt: 1,
         },
         new AbortController().signal,
       ),
@@ -250,9 +297,9 @@ describe('QQ OpenClaw Adapter', () => {
       connectionId,
       channelId,
       parts: [
-        { type: 'quote', messageId: 'logical-inbound' as LogicalMessageId },
+        { type: 'quote', messageId: LogicalMessageIdSchema.parse('msg_inbound') },
         { type: 'text', text: '额度不足时整组主动发送' },
-        { type: 'file', assetId: 'asset-proactive' as AssetId },
+        { type: 'file', assetId: AssetIdSchema.parse('ast_proactive') },
       ],
     })
     expect(proactivePlans).toHaveLength(2)
@@ -262,7 +309,7 @@ describe('QQ OpenClaw Adapter', () => {
           typeof adapterContext === 'object' &&
           adapterContext !== null &&
           !Array.isArray(adapterContext) &&
-          adapterContext.replyMode === 'proactive',
+          adapterContext['replyMode'] === 'proactive',
       ),
     ).toBe(true)
     await adapter.stop()
@@ -308,13 +355,12 @@ describe('QQ OpenClaw Adapter', () => {
     await adapter.start()
     adapter.observeReplyContext('inbound-budget', { expiresAt: 1000, remainingReplies: 1 })
     const request = {
-      deliveryId: 'physical-budget' as PhysicalDeliveryId,
-      logicalMessageId: 'logical-budget' as LogicalMessageId,
+      deliveryId: PhysicalDeliveryIdSchema.parse('phy_budget'),
+      logicalMessageId: LogicalMessageIdSchema.parse('msg_budget'),
       connectionId,
       channelId,
       parts: [{ type: 'text' as const, text: '测试' }],
       replyTo: 'inbound-budget',
-      attempt: 1,
     }
     await expect(adapter.deliver(request, new AbortController().signal)).resolves.toMatchObject({
       status: 'failed',
@@ -340,22 +386,22 @@ describe('QQ OpenClaw Adapter', () => {
       acceptInbound: (event) => {
         accepted.push(event)
         return Promise.resolve({
-          channelEventId: 'event-1' as ChannelEventId,
+          channelEventId: ChannelEventIdSchema.parse('evt_1'),
           inserted: true,
-          checkpointCommitted: true,
         })
       },
     }
     const bridge: QQInboundBridge = {
       ensureTarget: () => Promise.resolve(channelId),
-      ensureMember: ({ openId }) => Promise.resolve(`member-${openId}` as ChannelMemberId),
+      ensureMember: ({ openId }) => Promise.resolve(ChannelMemberIdSchema.parse(`mbr_${openId.replaceAll('-', '')}`)),
       importAttachment: ({ fileName, mediaType }) =>
         Promise.resolve({
-          assetId: `asset-${fileName ?? 'unknown'}` as AssetId,
+          assetId: AssetIdSchema.parse(`ast_${(fileName ?? 'unknown').replaceAll('.', '')}`),
           mediaType: mediaType ?? 'application/octet-stream',
           ...(fileName === undefined ? {} : { fileName }),
         }),
-      resolveQuote: () => Promise.resolve({ messageId: 'logical-quoted' as LogicalMessageId, authoredByAgent: true }),
+      resolveQuote: () =>
+        Promise.resolve({ messageId: LogicalMessageIdSchema.parse('msg_quoted'), authoredByAgent: true }),
     }
     const adapter = new QQOpenClawConnection(
       inboundContext,
@@ -405,25 +451,27 @@ describe('QQ OpenClaw Adapter', () => {
         platformReference: 'ref-1',
         platformSequence: 8,
         platformTimestamp: 400,
-        checkpoint: { sequence: 8 },
       }),
-    ).resolves.toMatchObject({ inserted: true, checkpointCommitted: true })
+    ).resolves.toMatchObject({ inserted: true })
     expect(accepted).toEqual([
       expect.objectContaining({
         channelId,
         platformEventId: 'GROUP_AT_MESSAGE_CREATE:qq-inbound-1',
         platformMessageId: 'qq-inbound-1',
-        senderMemberId: 'member-sender-openid',
+        senderMemberId: 'mbr_senderopenid',
         parts: [
           { type: 'text', text: '请看' },
-          { type: 'mention', memberId: 'member-other-openid' },
-          { type: 'image', assetId: 'asset-image.png', alt: 'image.png' },
-          { type: 'file', assetId: 'asset-movie.mp4', name: 'movie.mp4' },
-          { type: 'quote', messageId: 'logical-quoted' },
+          { type: 'mention', memberId: 'mbr_otheropenid' },
+          { type: 'image', assetId: 'ast_imagepng', alt: 'image.png' },
+          { type: 'file', assetId: 'ast_moviemp4', name: 'movie.mp4' },
+          { type: 'quote', messageId: 'msg_quoted' },
         ],
         dedupeKey: 'qq-openclaw:GROUP_AT_MESSAGE_CREATE:qq-inbound-1',
         facts: { mentionedBot: true, replyToBot: true, targetKind: 'group' },
-        checkpoint: { sequence: 8 },
+        assetOccurrences: [
+          { partIndex: 2, assetId: 'ast_imagepng' },
+          { partIndex: 3, assetId: 'ast_moviemp4' },
+        ],
       }),
     ])
     await adapter.stop()
@@ -438,9 +486,8 @@ describe('QQ OpenClaw Adapter', () => {
         acceptInbound: (event) => {
           accepted.push(event)
           return Promise.resolve({
-            channelEventId: 'event-ordinary' as ChannelEventId,
+            channelEventId: ChannelEventIdSchema.parse('evt_ordinary'),
             inserted: accepted.length === 1,
-            checkpointCommitted: true,
           })
         },
       },

@@ -9,8 +9,9 @@
   },
   "include": ["src/**/*.ts", "src/**/*.tsx"],
   "references": [
+    { "path": "../../packages/adapter-sdk" },
+    { "path": "../../packages/contracts" },
     { "path": "../../packages/dsh-compat" },
-    { "path": "../../packages/extension-runtime" },
     { "path": "../../packages/extension-sdk" }
   ]
 }

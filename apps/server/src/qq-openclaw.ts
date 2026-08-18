@@ -4,17 +4,8 @@ import type {
   QQInboundBridge,
   QQTarget,
 } from '@nekro-nxt/adapter-qq-openclaw'
-import type {
-  AssetId,
-  AssetOccurrenceId,
-  ChannelEventId,
-  ChannelId,
-  ChannelMemberId,
-  ConnectionId,
-  LogicalMessageId,
-} from '@nekro-nxt/contracts'
+import type { AssetId, ChannelId, ChannelMemberId, ConnectionId, LogicalMessageId } from '@nekro-nxt/contracts'
 import type { AssetService, CoreService } from '@nekro-nxt/core'
-import { createHash } from 'node:crypto'
 
 export interface QQInboundAssetImporter {
   import(
@@ -30,7 +21,6 @@ export interface QQInboundAssetImporter {
     readonly assetId: AssetId
     readonly mediaType: string
     readonly fileName?: string
-    readonly finalize?: (channelEventId: ChannelEventId) => Promise<void>
   }>
 }
 
@@ -83,28 +73,12 @@ export class QQRemoteAssetImporter implements QQInboundAssetImporter {
       input.mediaType ?? response.headers.get('content-type')?.split(';', 1)[0]?.trim() ?? undefined
     const prepared = await this.#assets.prepare({
       bytes,
-      receivedAt: input.receivedAt,
       ...(declaredMediaType === undefined ? {} : { declaredMediaType }),
     })
-    const occurrenceId = `aoc_${createHash('sha256')
-      .update(`${input.connectionId}\0${input.platformMessageId}\0${input.attachmentIndex}`)
-      .digest('hex')}` as AssetOccurrenceId
     return {
       assetId: prepared.asset.id,
       mediaType: prepared.asset.mediaType,
       ...(input.fileName === undefined ? {} : { fileName: input.fileName }),
-      finalize: async (channelEventId: ChannelEventId) => {
-        await prepared.commit({
-          id: occurrenceId,
-          channelEventId,
-          channelId: input.channelId,
-          connectionId: input.connectionId,
-          platformMessageId: input.platformMessageId,
-          receivedAt: input.receivedAt,
-          ...(input.fileName === undefined ? {} : { filename: input.fileName }),
-          ...(declaredMediaType === undefined ? {} : { declaredMediaType }),
-        })
-      },
     }
   }
 }

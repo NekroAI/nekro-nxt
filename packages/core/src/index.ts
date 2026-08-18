@@ -2,7 +2,7 @@ import type { AdapterInboundEvent } from '@nekro-nxt/adapter-sdk'
 import type {
   AgentId,
   AgentRevisionId,
-  BindingId,
+  AssetId,
   ChannelEventId,
   ChannelId,
   ChannelMemberId,
@@ -11,6 +11,16 @@ import type {
   LogicalMessageId,
   MessagePart,
   PlatformIdentityId,
+} from '@nekro-nxt/contracts'
+import {
+  AgentIdSchema,
+  AgentRevisionIdSchema,
+  ChannelEventIdSchema,
+  ChannelIdSchema,
+  ChannelMemberIdSchema,
+  ConnectionIdSchema,
+  LogicalMessageIdSchema,
+  PlatformIdentityIdSchema,
 } from '@nekro-nxt/contracts'
 import { createHash } from 'node:crypto'
 import { monotonicFactory } from 'ulid'
@@ -24,26 +34,11 @@ export interface AgentModelSelection {
   readonly reasoningEffort?: string
 }
 
-export interface AgentCapabilityGrants {
-  readonly subagents: boolean
-  readonly fileTools: boolean
-  readonly webSearch: boolean
-  readonly dynamicCreation: boolean
-  readonly developmentShell: boolean
-  readonly unrestrictedFileAccess: boolean
-}
-
-export interface AgentCapabilitiesEnvelopeV2 {
-  readonly version: 2
-  readonly grants: AgentCapabilityGrants
-}
-
 export interface AgentRevisionContent {
   readonly displayName: string
   readonly persona: string
   readonly model: AgentModelSelection
   readonly capabilities?: Partial<AgentCapabilityGrants>
-  readonly settings?: JsonValue
 }
 
 export interface AgentDefinitionRecord {
@@ -66,7 +61,6 @@ export interface ConnectionRecord {
   readonly adapterKey: string
   readonly config: JsonValue
   readonly credentialRefs: Readonly<Record<string, string>>
-  readonly status: 'configured' | 'active' | 'stopped' | 'failed'
   readonly createdAt: number
 }
 
@@ -84,9 +78,6 @@ export interface PlatformIdentityRecord {
   readonly connectionId: ConnectionId
   readonly platformUserId: string
   readonly displayName?: string
-  readonly firstSeenAt: number
-  readonly lastSeenAt: number
-  readonly seenCount: number
 }
 
 export interface ChannelMemberRecord {
@@ -94,39 +85,30 @@ export interface ChannelMemberRecord {
   readonly channelId: ChannelId
   readonly platformIdentityId: PlatformIdentityId
   readonly displayName?: string
-  readonly firstSeenAt: number
-  readonly lastSeenAt: number
-  readonly seenCount: number
 }
 
 export type BindingTriggerPolicy = 'always' | 'mentioned-or-replied' | 'command' | 'observe-only'
 
 export interface BindingRecord {
-  readonly id: BindingId
   readonly channelId: ChannelId
   readonly agentId: AgentId
   readonly triggerPolicy: BindingTriggerPolicy
-  readonly revision: number
-  readonly createdAt: number
+  readonly boundAt: number
 }
 
 export interface ChannelEventRecord {
   readonly id: ChannelEventId
   readonly logicalMessageId: LogicalMessageId
-  readonly connectionId: ConnectionId
   readonly channelId: ChannelId
-  readonly adapterKey: string
-  readonly platformEventId?: string
   readonly platformMessageId?: string
   readonly kind: AdapterInboundEvent['kind']
   readonly senderMemberId?: AdapterInboundEvent['senderMemberId']
   readonly parts: readonly MessagePart[]
-  readonly platformSequence?: number
-  readonly platformTimestamp: number
+  readonly sourceTimestamp: number
   readonly receivedAt: number
   readonly dedupeKey: string
   readonly facts?: Readonly<Record<string, JsonValue>>
-  readonly checkpoint?: JsonValue
+  readonly searchText: string
 }
 
 export interface PlatformMessageReferenceRecord {
@@ -139,15 +121,21 @@ export interface CreateAgentCommit {
   readonly revision: AgentRevisionRecord
 }
 
+export interface CreateAgentWithChannelCommit extends CreateAgentCommit {
+  readonly channel: ChannelRecord
+  readonly binding: BindingRecord
+}
+
 export interface AppendChannelEventCommit {
   readonly event: ChannelEventRecord
   readonly inserted: boolean
-  readonly checkpointCommitted: boolean
 }
 
 export interface CoreRepository {
   createAgent(commit: CreateAgentCommit): void
+  createAgentWithChannel(commit: CreateAgentWithChannelCommit): void
   getAgent(id: AgentId): CreateAgentCommit | undefined
+  listAgents(): readonly CreateAgentCommit[]
   getAgentRevision(id: AgentRevisionId): AgentRevisionRecord | undefined
   getAgentRevisionByDigest(agentId: AgentId, contentDigest: string): AgentRevisionRecord | undefined
   listAgentRevisions(agentId: AgentId): readonly AgentRevisionRecord[]
@@ -165,7 +153,6 @@ export interface CoreRepository {
   createConnection(record: ConnectionRecord): void
   getConnection(id: ConnectionId): ConnectionRecord | undefined
   listConnectionIdsByAdapter(adapterKey?: string): readonly ConnectionId[]
-  updateConnectionStatus(id: ConnectionId, status: ConnectionRecord['status']): void
   createChannel(record: ChannelRecord): void
   ensureChannel(record: ChannelRecord): ChannelRecord
   updateChannelDisplayName(id: ChannelId, displayName: string): void
@@ -181,9 +168,12 @@ export interface CoreRepository {
     platformIdentityId: PlatformIdentityId,
   ): ChannelMemberRecord | undefined
   replaceBinding(record: BindingRecord): BindingRecord
-  getBinding(channelId: ChannelId, agentId: AgentId): BindingRecord | undefined
+  getBinding(channelId: ChannelId): BindingRecord | undefined
   listBindings(channelId: ChannelId): readonly BindingRecord[]
-  appendChannelEvent(candidate: ChannelEventRecord): AppendChannelEventCommit
+  appendChannelEvent(
+    candidate: ChannelEventRecord,
+    assetOccurrences?: readonly { readonly partIndex: number; readonly assetId: AssetId }[],
+  ): AppendChannelEventCommit
   getChannelEvent(id: ChannelEventId): ChannelEventRecord | undefined
   listChannelEvents(
     channelId: ChannelId,
@@ -209,6 +199,27 @@ export interface CoreServiceOptions {
   readonly nextUlid?: () => string
 }
 
+export const AgentCapabilityGrantsSchema = z
+  .object({
+    subagents: z.boolean().default(false),
+    fileTools: z.boolean().default(false),
+    webSearch: z.boolean().default(false),
+    dynamicCreation: z.boolean().default(false),
+    developmentShell: z.boolean().default(false),
+    unrestrictedFileAccess: z.boolean().default(false),
+  })
+  .strict()
+  .default({
+    subagents: false,
+    fileTools: false,
+    webSearch: false,
+    dynamicCreation: false,
+    developmentShell: false,
+    unrestrictedFileAccess: false,
+  })
+
+export type AgentCapabilityGrants = z.infer<typeof AgentCapabilityGrantsSchema>
+
 const agentRevisionContentSchema = z
   .object({
     displayName: z.string().trim().min(1).max(80),
@@ -220,70 +231,16 @@ const agentRevisionContentSchema = z
         reasoningEffort: z.string().trim().min(1).optional(),
       })
       .strict(),
-    capabilities: z
-      .object({
-        subagents: z.boolean().default(false),
-        fileTools: z.boolean().default(false),
-        webSearch: z.boolean().default(false),
-        dynamicCreation: z.boolean().default(false),
-        developmentShell: z.boolean().default(false),
-        unrestrictedFileAccess: z.boolean().default(false),
-      })
-      .strict()
-      .default({
-        subagents: false,
-        fileTools: false,
-        webSearch: false,
-        dynamicCreation: false,
-        developmentShell: false,
-        unrestrictedFileAccess: false,
-      }),
-    settings: z.json().optional(),
-  })
-  .strict()
-
-const agentCapabilityGrantsSchema = agentRevisionContentSchema.shape.capabilities
-
-const storedAgentCapabilityGrantsV1Schema = z
-  .object({
-    dynamicCreation: z.boolean(),
-    developmentShell: z.boolean(),
-    fullFileAccess: z.boolean(),
-  })
-  .strict()
-
-const storedAgentCapabilitiesV2Schema = z
-  .object({
-    version: z.literal(2),
-    grants: agentCapabilityGrantsSchema,
+    capabilities: AgentCapabilityGrantsSchema,
   })
   .strict()
 
 export function parseAgentCapabilityGrants(input: unknown): AgentCapabilityGrants {
-  return agentCapabilityGrantsSchema.parse(input)
-}
-
-export function encodeAgentCapabilities(input: AgentCapabilityGrants): AgentCapabilitiesEnvelopeV2 {
-  return { version: 2, grants: agentCapabilityGrantsSchema.parse(input) }
+  return AgentCapabilityGrantsSchema.parse(input)
 }
 
 export function parseStoredAgentCapabilityGrants(input: unknown): AgentCapabilityGrants {
-  if (typeof input === 'object' && input !== null && !Array.isArray(input) && Object.hasOwn(input, 'version')) {
-    const version = (input as { readonly version?: unknown }).version
-    if (typeof version === 'number' && version > 2) {
-      throw new Error(`Unsupported Agent capabilities version: ${version}`)
-    }
-    return storedAgentCapabilitiesV2Schema.parse(input).grants
-  }
-  const legacy = storedAgentCapabilityGrantsV1Schema.parse(input)
-  return {
-    subagents: false,
-    fileTools: legacy.developmentShell || legacy.fullFileAccess,
-    webSearch: false,
-    dynamicCreation: legacy.dynamicCreation,
-    developmentShell: legacy.developmentShell,
-    unrestrictedFileAccess: legacy.fullFileAccess,
-  }
+  return AgentCapabilityGrantsSchema.parse(input)
 }
 
 const connectionInputSchema = z
@@ -365,6 +322,20 @@ type NormalizedAgentRevisionContent = Omit<AgentRevisionContent, 'capabilities'>
   readonly capabilities: AgentCapabilityGrants
 }
 
+const parseAgentRevisionContent = (input: AgentRevisionContent): NormalizedAgentRevisionContent => {
+  const parsed = agentRevisionContentSchema.parse(input)
+  return {
+    displayName: parsed.displayName,
+    persona: parsed.persona,
+    model: {
+      provider: parsed.model.provider,
+      model: parsed.model.model,
+      ...(parsed.model.reasoningEffort === undefined ? {} : { reasoningEffort: parsed.model.reasoningEffort }),
+    },
+    capabilities: parsed.capabilities,
+  }
+}
+
 const normalizedRevisionPayload = (content: NormalizedAgentRevisionContent): JsonValue => ({
   displayName: content.displayName,
   persona: content.persona,
@@ -373,8 +344,14 @@ const normalizedRevisionPayload = (content: NormalizedAgentRevisionContent): Jso
     model: content.model.model,
     reasoningEffort: content.model.reasoningEffort ?? null,
   },
-  capabilities: encodeAgentCapabilities(content.capabilities) as unknown as JsonValue,
-  settings: content.settings ?? null,
+  capabilities: {
+    subagents: content.capabilities.subagents,
+    fileTools: content.capabilities.fileTools,
+    webSearch: content.capabilities.webSearch,
+    dynamicCreation: content.capabilities.dynamicCreation,
+    developmentShell: content.capabilities.developmentShell,
+    unrestrictedFileAccess: content.capabilities.unrestrictedFileAccess,
+  },
 })
 
 const digestRevision = (content: NormalizedAgentRevisionContent): string =>
@@ -388,7 +365,6 @@ const revisionContent = (revision: AgentRevisionRecord): NormalizedAgentRevision
   persona: revision.persona,
   model: revision.model,
   capabilities: revision.capabilities,
-  ...(revision.settings === undefined ? {} : { settings: revision.settings }),
 })
 
 const equivalentRevisionContent = (
@@ -408,11 +384,15 @@ export class CoreService {
     this.#nextUlid = options.nextUlid ?? monotonicFactory()
   }
 
+  listAgents(): readonly CreateAgentCommit[] {
+    return this.#repository.listAgents()
+  }
+
   createAgent(input: AgentRevisionContent): CreateAgentCommit {
-    const content = agentRevisionContentSchema.parse(input) as NormalizedAgentRevisionContent
+    const content = parseAgentRevisionContent(input)
     const createdAt = this.#timestamp()
-    const agentId = this.#id<AgentId>('agt')
-    const revisionId = this.#id<AgentRevisionId>('arev')
+    const agentId = AgentIdSchema.parse(`agt_${this.#nextUlid()}`)
+    const revisionId = AgentRevisionIdSchema.parse(`arev_${this.#nextUlid()}`)
     const revision: AgentRevisionRecord = {
       ...content,
       id: revisionId,
@@ -427,13 +407,59 @@ export class CoreService {
     return commit
   }
 
+  createAgentWithChannel(
+    input: AgentRevisionContent,
+    channelInput: {
+      readonly connectionId: ConnectionId
+      readonly kind: ChannelRecord['kind']
+      readonly platformChannelId?: string
+      readonly displayName?: string
+      readonly triggerPolicy: BindingTriggerPolicy
+    },
+  ): CreateAgentWithChannelCommit {
+    if (!this.#repository.getConnection(channelInput.connectionId)) {
+      throw new Error(`Unknown connection: ${channelInput.connectionId}`)
+    }
+    const content = parseAgentRevisionContent(input)
+    const createdAt = this.#timestamp()
+    const agentId = AgentIdSchema.parse(`agt_${this.#nextUlid()}`)
+    const revisionId = AgentRevisionIdSchema.parse(`arev_${this.#nextUlid()}`)
+    const channelId = ChannelIdSchema.parse(`chn_${this.#nextUlid()}`)
+    const revision: AgentRevisionRecord = {
+      ...content,
+      id: revisionId,
+      agentId,
+      revision: 1,
+      contentDigest: digestRevision(content),
+      createdAt,
+    }
+    const definition: AgentDefinitionRecord = { id: agentId, currentRevisionId: revisionId, createdAt }
+    const channel: ChannelRecord = {
+      id: channelId,
+      connectionId: channelInput.connectionId,
+      platformChannelId: channelInput.platformChannelId ?? `web-${agentId}`,
+      kind: channelInput.kind,
+      ...(channelInput.displayName === undefined ? {} : { displayName: channelInput.displayName }),
+      createdAt,
+    }
+    const binding: BindingRecord = {
+      channelId,
+      agentId,
+      triggerPolicy: channelInput.triggerPolicy,
+      boundAt: createdAt,
+    }
+    const commit = { definition, revision, channel, binding }
+    this.#repository.createAgentWithChannel(commit)
+    return commit
+  }
+
   reviseAgent(agentId: AgentId, expectedCurrentRevisionId: AgentRevisionId, input: AgentRevisionContent) {
     const current = this.#repository.getAgent(agentId)
     if (!current) throw new Error(`Unknown agent: ${agentId}`)
     if (current.definition.currentRevisionId !== expectedCurrentRevisionId) {
       throw new Error(`Agent revision conflict: expected ${expectedCurrentRevisionId}.`)
     }
-    const content = agentRevisionContentSchema.parse(input) as NormalizedAgentRevisionContent
+    const content = parseAgentRevisionContent(input)
     if (equivalentRevisionContent(content, revisionContent(current.revision))) return current
     const digest = digestRevision(content)
     const existing =
@@ -448,7 +474,7 @@ export class CoreService {
     }
     const revision: AgentRevisionRecord = {
       ...content,
-      id: this.#id<AgentRevisionId>('arev'),
+      id: AgentRevisionIdSchema.parse(`arev_${this.#nextUlid()}`),
       agentId,
       revision: this.#repository.getNextAgentRevisionNumber(agentId),
       contentDigest: digest,
@@ -466,11 +492,10 @@ export class CoreService {
   }): ConnectionRecord {
     const parsed = connectionInputSchema.parse(input)
     const record: ConnectionRecord = {
-      id: this.#id<ConnectionId>('con'),
+      id: ConnectionIdSchema.parse(`con_${this.#nextUlid()}`),
       adapterKey: parsed.adapterKey,
       config: parsed.config,
       credentialRefs: parsed.credentialRefs,
-      status: 'configured',
       createdAt: this.#timestamp(),
     }
     this.#repository.createConnection(record)
@@ -491,13 +516,6 @@ export class CoreService {
     })
   }
 
-  updateConnectionStatus(id: ConnectionId, status: ConnectionRecord['status']): ConnectionRecord {
-    const current = this.#repository.getConnection(id)
-    if (!current) throw new Error(`Unknown connection: ${id}`)
-    this.#repository.updateConnectionStatus(id, status)
-    return { ...current, status }
-  }
-
   createChannel(input: {
     readonly connectionId: ConnectionId
     readonly platformChannelId: string
@@ -508,7 +526,7 @@ export class CoreService {
     if (!this.#repository.getConnection(input.connectionId))
       throw new Error(`Unknown connection: ${input.connectionId}`)
     const record: ChannelRecord = {
-      id: this.#id<ChannelId>('chn'),
+      id: ChannelIdSchema.parse(`chn_${this.#nextUlid()}`),
       connectionId: input.connectionId,
       platformChannelId: parsed.platformChannelId,
       kind: parsed.kind,
@@ -531,7 +549,7 @@ export class CoreService {
       throw new Error(`Unknown connection: ${input.connectionId}`)
     }
     return this.#repository.ensureChannel({
-      id: this.#id<ChannelId>('chn'),
+      id: ChannelIdSchema.parse(`chn_${this.#nextUlid()}`),
       connectionId: input.connectionId,
       platformChannelId: parsed.platformChannelId,
       kind: parsed.kind,
@@ -561,22 +579,16 @@ export class CoreService {
       throw new Error(`Channel ${input.channelId} does not belong to connection ${input.connectionId}.`)
     }
     const identity = this.#repository.ensurePlatformIdentity({
-      id: this.#id<PlatformIdentityId>('pid'),
+      id: PlatformIdentityIdSchema.parse(`pid_${this.#nextUlid()}`),
       connectionId: input.connectionId,
       platformUserId: parsed.platformUserId,
       ...(parsed.displayName === undefined ? {} : { displayName: parsed.displayName }),
-      firstSeenAt: parsed.observedAt,
-      lastSeenAt: parsed.observedAt,
-      seenCount: 1,
     })
     const member = this.#repository.ensureChannelMember({
-      id: this.#id<ChannelMemberId>('mbr'),
+      id: ChannelMemberIdSchema.parse(`mbr_${this.#nextUlid()}`),
       channelId: input.channelId,
       platformIdentityId: identity.id,
       ...(parsed.displayName === undefined ? {} : { displayName: parsed.displayName }),
-      firstSeenAt: parsed.observedAt,
-      lastSeenAt: parsed.observedAt,
-      seenCount: 1,
     })
     return { identity, member }
   }
@@ -633,17 +645,31 @@ export class CoreService {
     const parsed = bindingInputSchema.parse(input)
     if (!this.#repository.getChannel(input.channelId)) throw new Error(`Unknown channel: ${input.channelId}`)
     if (!this.#repository.getAgent(input.agentId)) throw new Error(`Unknown agent: ${input.agentId}`)
-    const existing = this.#repository.getBinding(input.channelId, input.agentId)
-    if (existing) throw new Error(`Binding already exists: ${existing.id}`)
+    const existing = this.#repository.getBinding(input.channelId)
+    if (existing) throw new Error(`Channel is already bound to ${existing.agentId}.`)
     const record: BindingRecord = {
-      id: this.#id<BindingId>('bnd'),
       channelId: input.channelId,
       agentId: input.agentId,
       triggerPolicy: parsed.triggerPolicy,
-      revision: 1,
-      createdAt: this.#timestamp(),
+      boundAt: this.#timestamp(),
     }
     return this.#repository.replaceBinding(record)
+  }
+
+  replaceBinding(input: {
+    readonly channelId: ChannelId
+    readonly agentId: AgentId
+    readonly triggerPolicy: BindingTriggerPolicy
+  }): BindingRecord {
+    const parsed = bindingInputSchema.parse(input)
+    if (!this.#repository.getChannel(input.channelId)) throw new Error(`Unknown channel: ${input.channelId}`)
+    if (!this.#repository.getAgent(input.agentId)) throw new Error(`Unknown agent: ${input.agentId}`)
+    return this.#repository.replaceBinding({
+      channelId: input.channelId,
+      agentId: input.agentId,
+      triggerPolicy: parsed.triggerPolicy,
+      boundAt: this.#timestamp(),
+    })
   }
 
   listBindings(channelId: ChannelId): readonly BindingRecord[] {
@@ -665,15 +691,29 @@ export class CoreService {
         throw new Error(`Inbound sender ${event.senderMemberId} does not belong to channel ${event.channelId}.`)
       }
     }
-    return this.#repository.appendChannelEvent({
-      id: this.#id<ChannelEventId>('evt'),
-      logicalMessageId: this.#id<LogicalMessageId>('msg'),
-      ...event,
-    })
-  }
-
-  #id<T extends string>(prefix: string): T {
-    return `${prefix}_${this.#nextUlid()}` as T
+    const searchText = event.parts.flatMap((part) => (part.type === 'text' ? [part.text] : [])).join('\n')
+    const record: ChannelEventRecord = {
+      id: ChannelEventIdSchema.parse(`evt_${this.#nextUlid()}`),
+      logicalMessageId: LogicalMessageIdSchema.parse(`msg_${this.#nextUlid()}`),
+      channelId: event.channelId,
+      ...(event.platformMessageId === undefined ? {} : { platformMessageId: event.platformMessageId }),
+      kind: event.kind,
+      ...(event.senderMemberId === undefined ? {} : { senderMemberId: event.senderMemberId }),
+      parts: event.parts,
+      sourceTimestamp: event.platformTimestamp,
+      receivedAt: event.receivedAt,
+      dedupeKey: event.dedupeKey,
+      ...(event.facts === undefined ? {} : { facts: event.facts }),
+      searchText,
+    }
+    const occurrences = event.assetOccurrences ?? []
+    for (const occurrence of occurrences) {
+      const part = record.parts[occurrence.partIndex]
+      if (part === undefined || !('assetId' in part) || part.assetId !== occurrence.assetId) {
+        throw new Error(`Asset occurrence does not match message part ${occurrence.partIndex}.`)
+      }
+    }
+    return this.#repository.appendChannelEvent(record, occurrences)
   }
 
   #timestamp(): number {

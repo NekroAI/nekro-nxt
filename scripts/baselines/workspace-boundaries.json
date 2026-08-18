@@ -1,0 +1,13 @@
+{
+  "version": 1,
+  "description": "workspace manifest/reference 历史不一致；按规则和文件计数只能下降。",
+  "counts": {
+    "manifest-reference-mismatch": {
+      "apps/web/tsconfig.json": 2
+    },
+    "undeclared-workspace-import": {
+      "apps/web/src/dsh-extension-settings.tsx": 1,
+      "apps/web/src/http-host.ts": 1
+    }
+  }
+}

@@ -1,5 +1,4 @@
 import type {
-  AdapterConnectionDescriptor,
   AdapterConnectionContext,
   AdapterConnectionRuntime,
   AdapterDeliveryReceipt,
@@ -7,17 +6,23 @@ import type {
   InboundCommitResult,
   PhysicalDeliveryRequest,
 } from '@nekro-nxt/adapter-sdk'
+import { AdapterEmptyObjectSchema, defineAdapterConnection } from '@nekro-nxt/adapter-sdk'
 import type { ChannelId, ChannelMemberId, ConnectionId, MessagePart } from '@nekro-nxt/contracts'
 
 export const WEB_ADAPTER_KEY = 'web'
 
-export const WEB_CONNECTION_DESCRIPTOR: AdapterConnectionDescriptor = {
+export const WEB_CONNECTION_DEFINITION = defineAdapterConnection({
   key: WEB_ADAPTER_KEY,
   displayName: '本地 Web',
   description: '由 NekroNxt 宿主管理的本地网页频道，不需要创建账号连接。',
   userCreatable: false,
+  configurationSchema: AdapterEmptyObjectSchema,
+  credentialsSchema: AdapterEmptyObjectSchema,
   configSchema: { schemaVersion: 1, type: 'object', required: [], properties: {} },
-}
+  create: () => undefined,
+})
+
+export const WEB_CONNECTION_DESCRIPTOR = WEB_CONNECTION_DEFINITION.descriptor
 
 export const WEB_ADAPTER_CAPABILITIES: AdapterOutboundCapabilities = {
   text: true,
@@ -88,12 +93,11 @@ export class WebAdapterConnection implements AdapterConnectionRuntime {
       platformMessageId: message.clientEventId,
       kind: 'message-created',
       ...(message.senderMemberId === undefined ? {} : { senderMemberId: message.senderMemberId }),
-      parts: message.parts,
+      parts: [...message.parts],
       platformTimestamp: receivedAt,
       receivedAt,
       dedupeKey: `web-event:${message.clientEventId}`,
       ...(message.replyToBot === undefined ? {} : { facts: { replyToBot: message.replyToBot } }),
-      checkpoint: { clientEventId: message.clientEventId },
     })
   }
 

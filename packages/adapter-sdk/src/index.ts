@@ -1,29 +1,20 @@
 import type {
   ChannelEventId,
   ChannelId,
-  ChannelMemberId,
   ConnectionId,
   JsonValue,
   LogicalMessageId,
   MessagePart,
   PhysicalDeliveryId,
 } from '@nekro-nxt/contracts'
-import { ChannelIdSchema, ChannelMemberIdSchema, ConnectionIdSchema, MessagePartSchema } from '@nekro-nxt/contracts'
+import {
+  AssetIdSchema,
+  ChannelIdSchema,
+  ChannelMemberIdSchema,
+  ConnectionIdSchema,
+  MessagePartSchema,
+} from '@nekro-nxt/contracts'
 import { z } from 'zod'
-
-export interface AdapterOutboundCapabilities {
-  readonly text: boolean
-  readonly mentions: boolean
-  readonly images: boolean
-  readonly files: boolean
-  readonly audio: boolean
-  readonly replies: boolean
-  readonly mixedContent: boolean
-  readonly proactiveSend: boolean
-  readonly maxTextLength?: number
-  readonly maxAssetBytes?: number
-  readonly acceptedMimeTypes?: readonly string[]
-}
 
 export const AdapterOutboundCapabilitiesSchema = z
   .object({
@@ -41,25 +32,10 @@ export const AdapterOutboundCapabilitiesSchema = z
   })
   .strict()
 
+export type AdapterOutboundCapabilities = z.infer<typeof AdapterOutboundCapabilitiesSchema>
+
 export type AdapterInboundEventKind =
   'message-created' | 'message-edited' | 'message-deleted' | 'member-updated' | 'reaction' | 'control'
-
-export interface AdapterInboundEvent {
-  readonly connectionId: ConnectionId
-  readonly channelId: ChannelId
-  readonly adapterKey: string
-  readonly platformEventId?: string
-  readonly platformMessageId?: string
-  readonly kind: AdapterInboundEventKind
-  readonly senderMemberId?: ChannelMemberId
-  readonly parts: readonly MessagePart[]
-  readonly platformSequence?: number
-  readonly platformTimestamp: number
-  readonly receivedAt: number
-  readonly dedupeKey: string
-  readonly facts?: Readonly<Record<string, JsonValue>>
-  readonly checkpoint?: JsonValue
-}
 
 export const AdapterInboundEventSchema = z
   .object({
@@ -76,19 +52,17 @@ export const AdapterInboundEventSchema = z
     receivedAt: z.number().int().safe().nonnegative(),
     dedupeKey: z.string().trim().min(1),
     facts: z.record(z.string(), z.json()).optional(),
-    checkpoint: z.json().optional(),
+    assetOccurrences: z
+      .array(z.object({ partIndex: z.number().int().nonnegative(), assetId: AssetIdSchema }).strict())
+      .optional(),
   })
   .strict()
-  .superRefine((event, context) => {
-    if ((event.kind === 'message-created' || event.kind === 'message-edited') && event.parts.length === 0) {
-      context.addIssue({ code: 'custom', path: ['parts'], message: 'Message events require at least one part.' })
-    }
-  })
+
+export type AdapterInboundEvent = z.infer<typeof AdapterInboundEventSchema>
 
 export interface InboundCommitResult {
   readonly channelEventId: ChannelEventId
   readonly inserted: boolean
-  readonly checkpointCommitted: boolean
 }
 
 export interface AdapterConnectionContext {
@@ -117,76 +91,192 @@ export type AdapterConfigurationProperty =
       readonly default?: number
     }
 
+type AdapterSchemaObject = z.ZodObject
+
+type RequiredKeys<T> = {
+  [Key in keyof T]-?: T extends Required<Pick<T, Key>> ? Key : never
+}[keyof T]
+
+type AdapterConfigurationPropertyFor<Value> = [Exclude<Value, undefined>] extends [string]
+  ? {
+      readonly type: 'string'
+      readonly title: string
+      readonly description?: string
+      readonly default?: string
+    }
+  : [Exclude<Value, undefined>] extends [boolean]
+    ? {
+        readonly type: 'boolean'
+        readonly title: string
+        readonly description?: string
+        readonly default?: boolean
+      }
+    : [Exclude<Value, undefined>] extends [number]
+      ? {
+          readonly type: 'number'
+          readonly title: string
+          readonly description?: string
+          readonly default?: number
+        }
+      : never
+
+type AdapterCredentialPropertyFor<Value> = [Exclude<Value, undefined>] extends [string]
+  ? {
+      readonly type: 'credential-reference'
+      readonly title: string
+      readonly description?: string
+    }
+  : never
+
+type AdapterConnectionWireSchema = {
+  readonly schemaVersion: number
+  readonly type: 'object'
+  readonly required: readonly string[]
+  readonly properties: Readonly<Record<string, AdapterConfigurationProperty>>
+}
+
+type AdapterConnectionProperties<
+  ConfigurationSchema extends AdapterSchemaObject,
+  CredentialsSchema extends AdapterSchemaObject,
+> = {
+  [Key in Extract<keyof z.output<ConfigurationSchema>, string>]: AdapterConfigurationPropertyFor<
+    z.output<ConfigurationSchema>[Key]
+  >
+} & {
+  [Key in Extract<keyof z.output<CredentialsSchema>, string>]: AdapterCredentialPropertyFor<
+    z.output<CredentialsSchema>[Key]
+  >
+}
+
+/** The serializable, product-facing setup metadata contributed by an Adapter. */
+export type AdapterConnectionUiSchema<
+  ConfigurationSchema extends AdapterSchemaObject,
+  CredentialsSchema extends AdapterSchemaObject,
+> = {
+  readonly schemaVersion: number
+  readonly type: 'object'
+  readonly required: readonly Extract<
+    RequiredKeys<z.input<ConfigurationSchema>> | RequiredKeys<z.input<CredentialsSchema>>,
+    string
+  >[]
+  readonly properties: AdapterConnectionProperties<ConfigurationSchema, CredentialsSchema>
+}
+
 /** Product-facing, versioned Connection setup metadata contributed by an Adapter. */
-export interface AdapterConnectionDescriptor {
+export type AdapterConnectionDescriptor<
+  ConfigurationSchema extends AdapterSchemaObject = never,
+  CredentialsSchema extends AdapterSchemaObject = never,
+> = {
   readonly key: string
   readonly displayName: string
   readonly description: string
   /** System-managed adapters remain visible for diagnostics but cannot be created by users. */
   readonly userCreatable: boolean
-  readonly configSchema: {
-    readonly schemaVersion: number
-    readonly type: 'object'
-    readonly required: readonly string[]
-    readonly properties: Readonly<Record<string, AdapterConfigurationProperty>>
+  readonly configSchema: [ConfigurationSchema] extends [never]
+    ? AdapterConnectionWireSchema
+    : [CredentialsSchema] extends [never]
+      ? AdapterConnectionWireSchema
+      : AdapterConnectionUiSchema<ConfigurationSchema, CredentialsSchema>
+}
+
+export type AdapterConnectionCreator<Configuration, Credentials, Created> = (
+  configuration: Configuration,
+  credentials: Credentials,
+) => Created
+
+export interface AdapterConnectionDefinition<
+  Key extends string = string,
+  ConfigurationSchema extends AdapterSchemaObject = AdapterSchemaObject,
+  CredentialsSchema extends AdapterSchemaObject = AdapterSchemaObject,
+  Created = unknown,
+> {
+  readonly descriptor: AdapterConnectionDescriptor<ConfigurationSchema, CredentialsSchema> & { readonly key: Key }
+  readonly configurationSchema: ConfigurationSchema
+  readonly credentialsSchema: CredentialsSchema
+  readonly create: AdapterConnectionCreator<z.output<ConfigurationSchema>, z.output<CredentialsSchema>, Created>
+}
+
+export function defineAdapterConnection<
+  const Key extends string,
+  const ConfigurationSchema extends AdapterSchemaObject,
+  const CredentialsSchema extends AdapterSchemaObject,
+  Created,
+>(input: {
+  readonly key: Key
+  readonly displayName: string
+  readonly description: string
+  readonly userCreatable: boolean
+  readonly configurationSchema: ConfigurationSchema
+  readonly credentialsSchema: CredentialsSchema
+  readonly configSchema: AdapterConnectionUiSchema<ConfigurationSchema, CredentialsSchema>
+  readonly create: AdapterConnectionCreator<z.output<ConfigurationSchema>, z.output<CredentialsSchema>, Created>
+}): AdapterConnectionDefinition<Key, ConfigurationSchema, CredentialsSchema, Created> {
+  return {
+    descriptor: {
+      key: input.key,
+      displayName: input.displayName,
+      description: input.description,
+      userCreatable: input.userCreatable,
+      configSchema: input.configSchema,
+    },
+    configurationSchema: input.configurationSchema,
+    credentialsSchema: input.credentialsSchema,
+    create: input.create,
   }
 }
 
-export interface ParsedAdapterConnectionConfiguration {
-  readonly configuration: Readonly<Record<string, string | number | boolean>>
-  readonly credentials: Readonly<Record<string, string>>
+export const AdapterEmptyObjectSchema = z.object({}).strict()
+
+export interface ParsedAdapterConnectionConfiguration<
+  ConfigurationSchema extends AdapterSchemaObject = AdapterSchemaObject,
+  CredentialsSchema extends AdapterSchemaObject = AdapterSchemaObject,
+> {
+  readonly configuration: z.output<ConfigurationSchema>
+  readonly credentials: z.output<CredentialsSchema>
 }
 
 /**
  * Validates the public schema subset before an Adapter-specific creator receives values.
  * Credential-reference fields accept write-only secret material separately from durable config.
  */
-export function parseAdapterConnectionConfiguration(
-  descriptor: AdapterConnectionDescriptor,
+export function parseAdapterConnectionConfiguration<
+  Key extends string,
+  ConfigurationSchema extends AdapterSchemaObject,
+  CredentialsSchema extends AdapterSchemaObject,
+  Created,
+>(
+  definition: AdapterConnectionDefinition<Key, ConfigurationSchema, CredentialsSchema, Created>,
   input: {
     readonly configuration?: Readonly<Record<string, unknown>>
     readonly credentials?: Readonly<Record<string, unknown>>
   },
-): ParsedAdapterConnectionConfiguration {
+): ParsedAdapterConnectionConfiguration<ConfigurationSchema, CredentialsSchema> {
   const configurationInput = input.configuration ?? {}
   const credentialInput = input.credentials ?? {}
-  const known = new Set(Object.keys(descriptor.configSchema.properties))
-  const unknownConfiguration = Object.keys(configurationInput).find((key) => !known.has(key))
-  const unknownCredential = Object.keys(credentialInput).find((key) => !known.has(key))
+  const unknownConfiguration = Object.keys(configurationInput).find(
+    (key) => !Object.hasOwn(definition.configurationSchema.shape, key),
+  )
+  const unknownCredential = Object.keys(credentialInput).find(
+    (key) => !Object.hasOwn(definition.credentialsSchema.shape, key),
+  )
   if (unknownConfiguration || unknownCredential) {
     throw new TypeError(`连接配置包含未知字段：${unknownConfiguration ?? unknownCredential}`)
   }
 
-  const configuration: Record<string, string | number | boolean> = {}
-  const credentials: Record<string, string> = {}
-  for (const [key, property] of Object.entries(descriptor.configSchema.properties)) {
-    const required = descriptor.configSchema.required.includes(key)
-    if (property.type === 'credential-reference') {
-      const value = credentialInput[key]
-      if (typeof value === 'string' && value.length > 0) credentials[key] = value
-      else if (required) throw new TypeError(`请填写${property.title}。`)
-      continue
-    }
-
-    const value = configurationInput[key] ?? property.default
-    if (value === undefined) {
-      if (required) throw new TypeError(`请填写${property.title}。`)
-      continue
-    }
-    if (property.type === 'string') {
-      if (typeof value !== 'string' || value.trim() === '') throw new TypeError(`${property.title} 必须是非空文本。`)
-      configuration[key] = value.trim()
-    } else if (property.type === 'boolean') {
-      if (typeof value !== 'boolean') throw new TypeError(`${property.title} 必须是布尔值。`)
-      configuration[key] = value
-    } else {
-      if (typeof value !== 'number' || !Number.isFinite(value) || value <= 0) {
-        throw new TypeError(`${property.title} 必须是正数。`)
-      }
-      configuration[key] = value
-    }
+  const uiSchema: AdapterConnectionWireSchema = definition.descriptor.configSchema
+  const missingCredential = Object.entries(uiSchema.properties).find(
+    ([key, property]) =>
+      property.type === 'credential-reference' &&
+      uiSchema.required.includes(key) &&
+      (typeof credentialInput[key] !== 'string' || credentialInput[key].trim().length === 0),
+  )
+  if (missingCredential) {
+    throw new TypeError(`请填写${missingCredential[1].title}。`)
   }
-  return { configuration, credentials }
+  return {
+    configuration: definition.configurationSchema.parse(configurationInput),
+    credentials: definition.credentialsSchema.parse(credentialInput),
+  }
 }
 
 /** Adapter-owned durable state, namespaced by Connection and an Adapter-defined key. */
@@ -203,27 +293,10 @@ export interface PhysicalDeliveryRequest {
   readonly channelId: ChannelId
   readonly parts: readonly MessagePart[]
   readonly replyTo?: string
-  readonly attempt: number
   readonly adapterContext?: JsonValue
 }
 
 export type AdapterFailureKind = 'transient' | 'permanent' | 'rate-limited' | 'authentication' | 'invalid'
-
-export type AdapterDeliveryReceipt =
-  | {
-      readonly status: 'sent'
-      readonly platformMessageId: string
-      readonly capabilityOutcomes?: Readonly<Record<string, JsonValue>>
-    }
-  | {
-      readonly status: 'failed'
-      readonly failure: {
-        readonly kind: AdapterFailureKind
-        readonly message: string
-        readonly retryAfterMs?: number
-      }
-    }
-  | { readonly status: 'unknown'; readonly message: string }
 
 export const AdapterDeliveryReceiptSchema = z.discriminatedUnion('status', [
   z
@@ -247,6 +320,8 @@ export const AdapterDeliveryReceiptSchema = z.discriminatedUnion('status', [
     .strict(),
   z.object({ status: z.literal('unknown'), message: z.string() }).strict(),
 ])
+
+export type AdapterDeliveryReceipt = z.infer<typeof AdapterDeliveryReceiptSchema>
 
 export interface AdapterConnectionRuntime {
   readonly capabilities: AdapterOutboundCapabilities
@@ -273,13 +348,13 @@ export interface AdapterContribution<Config = unknown> {
 }
 
 export function parseAdapterInboundEvent(input: unknown): AdapterInboundEvent {
-  return AdapterInboundEventSchema.parse(input) as AdapterInboundEvent
+  return AdapterInboundEventSchema.parse(input)
 }
 
 export function parseAdapterCapabilities(input: unknown): AdapterOutboundCapabilities {
-  return AdapterOutboundCapabilitiesSchema.parse(input) as AdapterOutboundCapabilities
+  return AdapterOutboundCapabilitiesSchema.parse(input)
 }
 
 export function parseAdapterDeliveryReceipt(input: unknown): AdapterDeliveryReceipt {
-  return AdapterDeliveryReceiptSchema.parse(input) as AdapterDeliveryReceipt
+  return AdapterDeliveryReceiptSchema.parse(input)
 }

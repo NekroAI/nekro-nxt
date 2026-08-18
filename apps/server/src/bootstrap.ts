@@ -1,5 +1,5 @@
 import type { Context } from '@deepseek-ai/cordis'
-import { createWebAdapterConnection, WEB_CONNECTION_DESCRIPTOR } from '@nekro-nxt/adapter-web'
+import { createWebAdapterConnection, WEB_CONNECTION_DEFINITION } from '@nekro-nxt/adapter-web'
 import type { WebAdapterConnection } from '@nekro-nxt/adapter-web'
 import {
   parseAdapterConnectionConfiguration,
@@ -10,12 +10,14 @@ import {
   createQQGatewayCheckpointStore,
   isQQTransportError,
   QQNodeWebSocketFactory,
+  QQOpenClawConfigSchema,
   QQOpenClawHttpTransport,
   QQOpenClawRuntime,
-  QQ_OPENCLAW_CONNECTION_DESCRIPTOR,
+  QQ_OPENCLAW_CONNECTION_DEFINITION,
   type QQGatewayClock,
   type QQGatewaySocketFactory,
   type QQGatewayStatus,
+  type QQOpenClawConnectionInput,
 } from '@nekro-nxt/adapter-qq-openclaw'
 import { ChannelRuntime } from '@nekro-nxt/channel-runtime'
 import { AssetService, CoreService } from '@nekro-nxt/core'
@@ -27,14 +29,16 @@ import {
   ExtensionService,
   ExtensionSourceStore,
 } from '@nekro-nxt/extension-runtime'
-import { openMigratedCoreDatabase, SqliteCoreRepository } from '@nekro-nxt/storage-sqlite'
-import type { DatabaseSync } from 'node:sqlite'
+import { openMigratedCoreDatabase, SqliteCoreRepository, type CoreDatabase } from '@nekro-nxt/storage-sqlite'
 import { readFile } from 'node:fs/promises'
 import path from 'node:path'
 import { monotonicFactory } from 'ulid'
 import { ChannelExtensionActivationHost, DshHostRuntime } from './index.js'
 import { LocalCredentialStore } from './credentials.js'
 import { QQCoreBridge, QQRemoteAssetImporter } from './qq-openclaw.js'
+
+const StoredQQConnectionConfigSchema = QQOpenClawConfigSchema.omit({ clientSecretCredentialRef: true })
+const ADAPTER_CONNECTION_DEFINITIONS = [WEB_CONNECTION_DEFINITION, QQ_OPENCLAW_CONNECTION_DEFINITION]
 
 /**
  * Single source of truth for the NekroNxt Server main assembly. Extracts the
@@ -139,7 +143,7 @@ export class NekroRuntime {
   readonly extensionService: ExtensionService
   readonly activation: ExtensionActivationCoordinator
   readonly credentials: LocalCredentialStore
-  readonly #database: DatabaseSync
+  readonly #database: CoreDatabase
   readonly #now: () => number
   readonly #qqOptions: NonNullable<NekroRuntimeOptions['qq']>
   readonly #qqRuntimes = new Map<ConnectionId, QQOpenClawRuntime>()
@@ -151,7 +155,7 @@ export class NekroRuntime {
   #disposed = false
 
   private constructor(input: {
-    readonly database: DatabaseSync
+    readonly database: CoreDatabase
     readonly repository: SqliteCoreRepository
     readonly assetService: AssetService
     readonly core: CoreService
@@ -247,7 +251,7 @@ export class NekroRuntime {
         extensionService,
         new ExtensionBuilder(options.extensionCacheRoot),
         new ChannelExtensionActivationHost(channels, host),
-        { now, nextUlid },
+        { now },
       )
       const credentials = new LocalCredentialStore(
         options.credentialRoot ?? path.join(path.dirname(options.coreDatabasePath), 'credentials'),
@@ -282,7 +286,6 @@ export class NekroRuntime {
     if (this.#started) throw new Error('NekroRuntime is already started.')
     this.#started = true
     await this.web.start()
-    this.core.updateConnectionStatus(this.webConnectionId, 'active')
   }
 
   /** Every deliberate Agent entity this Server owns, in creation order. */
@@ -294,19 +297,20 @@ export class NekroRuntime {
    * Closed-loop A primitive: create an intelligent-agent, ensure a Web Channel
    * for it, and bind them with `always` so every Web message triggers a reply.
    */
-  createAgentWithWebChannel(content: AgentRevisionContent): AgentEntity {
-    const agent = this.core.createAgent(content)
-    const channel = this.core.ensureChannel({
+  async createAgentWithWebChannel(content: AgentRevisionContent): Promise<AgentEntity> {
+    const models = await this.host.listAvailableLlmModels()
+    if (!models.some((model) => model.provider === content.model.provider && model.id === content.model.model)) {
+      throw new Error(`模型未在当前 DSH Provider 目录注册：${content.model.provider}/${content.model.model}`)
+    }
+    const agent = this.core.createAgentWithChannel(content, {
       connectionId: this.webConnectionId,
-      platformChannelId: `web-${agent.definition.id}`,
       kind: 'web',
-      displayName: `${agent.revision.displayName} 的网页频道`,
-      observedAt: this.#now(),
+      displayName: `${content.displayName.trim()} 的网页频道`,
+      triggerPolicy: 'always',
     })
-    this.core.createBinding({ channelId: channel.id, agentId: agent.definition.id, triggerPolicy: 'always' })
     const entity: AgentEntity = {
       agentId: agent.definition.id,
-      channelId: channel.id,
+      channelId: agent.channel.id,
       connectionId: this.webConnectionId,
       revisionId: agent.revision.id,
       createdAt: agent.definition.createdAt,
@@ -315,10 +319,8 @@ export class NekroRuntime {
     return entity
   }
 
-  /** Resume persisted Episodes/Admissions/Outbounds/Assets after a cold start. */
+  /** Resume persisted Episodes, Admissions, Outbounds and active Extensions after a cold start. */
   async recover(): Promise<void> {
-    await this.assetService.recover()
-    await this.extensionService.recoverSaves()
     await this.channels.recover()
     await this.activation.restore()
     for (const connection of this.core.listConnectionsByAdapter('qq-openclaw')) await this.#mountQQ(connection.id)
@@ -334,7 +336,7 @@ export class NekroRuntime {
   }
 
   listConnectionAdapters(): readonly AdapterConnectionDescriptor[] {
-    return [WEB_CONNECTION_DESCRIPTOR, QQ_OPENCLAW_CONNECTION_DESCRIPTOR]
+    return ADAPTER_CONNECTION_DEFINITIONS.map(({ descriptor }) => descriptor)
   }
 
   async createConnection(input: {
@@ -342,28 +344,16 @@ export class NekroRuntime {
     readonly configuration?: Readonly<Record<string, unknown>>
     readonly credentials?: Readonly<Record<string, unknown>>
   }) {
-    const descriptor = this.listConnectionAdapters().find((candidate) => candidate.key === input.adapterKey)
-    if (!descriptor?.userCreatable) throw new Error('该连接平台不可由用户创建。')
-    const parsed = parseAdapterConnectionConfiguration(descriptor, input)
-    if (descriptor.key !== 'qq-openclaw') throw new Error(`连接平台尚未实现创建流程：${descriptor.key}`)
-    return this.createQQConnection({
-      appId: String(parsed.configuration.appId),
-      clientSecret: parsed.credentials.clientSecretCredentialRef ?? '',
-      proactiveSend: parsed.configuration.proactiveSend === true,
-      markdown: parsed.configuration.markdown !== false,
-      maxTextLength: Number(parsed.configuration.maxTextLength),
-      maxTextBytes: Number(parsed.configuration.maxTextBytes),
-    })
+    const definition = ADAPTER_CONNECTION_DEFINITIONS.find((candidate) => candidate.descriptor.key === input.adapterKey)
+    if (!definition?.descriptor.userCreatable) throw new Error('该连接平台不可由用户创建。')
+    if (definition !== QQ_OPENCLAW_CONNECTION_DEFINITION) {
+      throw new Error(`连接平台尚未实现创建流程：${definition.descriptor.key}`)
+    }
+    const parsed = parseAdapterConnectionConfiguration(QQ_OPENCLAW_CONNECTION_DEFINITION, input)
+    return this.createQQConnection(QQ_OPENCLAW_CONNECTION_DEFINITION.create(parsed.configuration, parsed.credentials))
   }
 
-  async createQQConnection(input: {
-    readonly appId: string
-    readonly clientSecret: string
-    readonly proactiveSend?: boolean
-    readonly markdown?: boolean
-    readonly maxTextLength?: number
-    readonly maxTextBytes?: number
-  }) {
+  async createQQConnection(input: QQOpenClawConnectionInput) {
     if (!this.#started || this.#disposed) throw new Error('NekroRuntime is not accepting new Connections.')
     const credentialReference = await this.credentials.save(input.clientSecret)
     let connection
@@ -463,15 +453,9 @@ export class NekroRuntime {
     if (this.#qqRuntimes.has(connectionId)) return
     const connection = this.core.listConnections().find((candidate) => candidate.id === connectionId)
     if (!connection || connection.adapterKey !== 'qq-openclaw') throw new Error('QQ Connection does not exist.')
-    const config = connection.config as {
-      readonly appId?: unknown
-      readonly proactiveSend?: unknown
-      readonly markdown?: unknown
-      readonly maxTextLength?: unknown
-      readonly maxTextBytes?: unknown
-    }
-    const appId = typeof config.appId === 'string' ? config.appId : ''
-    const credentialReference = connection.credentialRefs.clientSecret
+    const config = StoredQQConnectionConfigSchema.parse(connection.config)
+    const appId = config.appId
+    const credentialReference = connection.credentialRefs['clientSecret']
     let credentialConfigured = false
     if (credentialReference) {
       try {
@@ -482,7 +466,6 @@ export class NekroRuntime {
       }
     }
     if (!appId || !credentialReference || !credentialConfigured) {
-      this.core.updateConnectionStatus(connectionId, 'failed')
       this.#setQQDiagnostic(connectionId, {
         gateway: { state: 'failed', lastError: 'QQ Connection 的 App ID 或 Client Secret 不可用。' },
         credentialConfigured: false,
@@ -509,7 +492,7 @@ export class NekroRuntime {
         now: this.#now,
         acceptInbound: async (event) => {
           const result = await this.channels.acceptInbound(event)
-          if (result.checkpointCommitted && event.platformMessageId) {
+          if (event.platformMessageId) {
             this.#setQQDiagnostic(connectionId, {
               gateway: this.#qqDiagnostics.get(connectionId)?.gateway ?? { state: 'connected' },
               credentialConfigured: true,
@@ -527,17 +510,17 @@ export class NekroRuntime {
       config: {
         appId,
         clientSecretCredentialRef: credentialReference,
-        proactiveSend: config.proactiveSend === true,
-        markdown: config.markdown !== false,
-        ...(typeof config.maxTextLength === 'number' ? { maxTextLength: config.maxTextLength } : {}),
-        ...(typeof config.maxTextBytes === 'number' ? { maxTextBytes: config.maxTextBytes } : {}),
+        proactiveSend: config.proactiveSend,
+        markdown: config.markdown,
+        maxTextLength: config.maxTextLength,
+        maxTextBytes: config.maxTextBytes,
       },
       directory: bridge,
       inbound: bridge,
       assets: {
         read: async (assetId) => {
           const asset = this.repository.getAssetById(assetId)
-          if (!asset || asset.blobState !== 'present') throw new Error('QQ outbound Asset is unavailable.')
+          if (!asset) throw new Error('QQ outbound Asset is unavailable.')
           return {
             bytes: new Uint8Array(await readFile(this.assetService.blobPath(asset))),
             mediaType: asset.mediaType,
@@ -551,16 +534,6 @@ export class NekroRuntime {
         checkpoints: createQQGatewayCheckpointStore(connectionId, this.repository),
         clock: this.#qqOptions.clock ?? systemGatewayClock(),
         onStatus: (gateway) => {
-          this.core.updateConnectionStatus(
-            connectionId,
-            gateway.state === 'connected'
-              ? 'active'
-              : gateway.state === 'stopped'
-                ? 'stopped'
-                : gateway.state === 'failed'
-                  ? 'failed'
-                  : 'configured',
-          )
           this.#setQQDiagnostic(connectionId, {
             ...this.#qqDiagnostics.get(connectionId),
             gateway,
@@ -582,7 +555,6 @@ export class NekroRuntime {
     } catch (error) {
       this.#qqRuntimes.delete(connectionId)
       this.#adapterRuntimes.delete(connectionId)
-      this.core.updateConnectionStatus(connectionId, 'failed')
       this.#setQQDiagnostic(connectionId, {
         gateway: { state: 'failed', lastError: error instanceof Error ? error.message : String(error) },
         credentialConfigured: true,

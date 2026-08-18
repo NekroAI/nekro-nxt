@@ -1,9 +1,17 @@
 import type { AdapterConnectionContext, AdapterInboundEvent } from '@nekro-nxt/adapter-sdk'
+import {
+  AgentIdSchema,
+  AssetIdSchema,
+  ChannelEventIdSchema,
+  ChannelIdSchema,
+  ChannelMemberIdSchema,
+  EpisodeIdSchema,
+  LogicalMessageIdSchema,
+} from '@nekro-nxt/contracts'
 import type {
   AdmissionId,
   AgentId,
   AgentRevisionId,
-  AssetId,
   ChannelEventId,
   ChannelId,
   ChannelMemberId,
@@ -24,6 +32,7 @@ import type {
   ConnectionRecord,
   CoreRepository,
   CreateAgentCommit,
+  CreateAgentWithChannelCommit,
   PlatformIdentityRecord,
 } from '@nekro-nxt/core'
 import { CoreService } from '@nekro-nxt/core'
@@ -42,7 +51,7 @@ import type {
   PhysicalDeliveryRecord,
   RuntimeRepository,
 } from '../src/index.ts'
-import { ChannelRuntime } from '../src/index.ts'
+import { ChannelRuntime, isTriggered } from '../src/index.ts'
 
 class MemoryCoreRepository implements CoreRepository {
   readonly agents = new Map<AgentId, CreateAgentCommit>()
@@ -58,8 +67,19 @@ class MemoryCoreRepository implements CoreRepository {
     this.agents.set(commit.definition.id, commit)
     this.revisions.set(commit.revision.id, commit.revision)
   }
+  createAgentWithChannel(commit: CreateAgentWithChannelCommit): void {
+    this.createAgent(commit)
+    this.createChannel(commit.channel)
+    this.replaceBinding(commit.binding)
+  }
   getAgent(id: AgentId) {
     return this.agents.get(id)
+  }
+  listAgents() {
+    return [...this.agents.values()].sort(
+      (left, right) =>
+        left.definition.createdAt - right.definition.createdAt || left.definition.id.localeCompare(right.definition.id),
+    )
   }
   getAgentRevision(id: AgentRevisionId) {
     return this.revisions.get(id)
@@ -113,11 +133,6 @@ class MemoryCoreRepository implements CoreRepository {
     return [...this.connections.values()]
       .filter((connection) => adapterKey === undefined || connection.adapterKey === adapterKey)
       .map((connection) => connection.id)
-  }
-  updateConnectionStatus(id: ConnectionId, status: ConnectionRecord['status']): void {
-    const current = this.connections.get(id)
-    if (!current) throw new Error(`Unknown connection: ${id}`)
-    this.connections.set(id, { ...current, status })
   }
   createChannel(record: ChannelRecord): void {
     this.channels.set(record.id, record)
@@ -173,23 +188,23 @@ class MemoryCoreRepository implements CoreRepository {
     )
   }
   replaceBinding(record: BindingRecord): BindingRecord {
-    const currentIndex = this.bindings.findIndex((binding) => binding.agentId === record.agentId)
+    const currentIndex = this.bindings.findIndex((binding) => binding.channelId === record.channelId)
     if (currentIndex >= 0) this.bindings.splice(currentIndex, 1)
     this.bindings.push(record)
     return record
   }
-  getBinding(channelId: ChannelId, agentId: AgentId) {
-    return this.bindings.find((binding) => binding.channelId === channelId && binding.agentId === agentId)
+  getBinding(channelId: ChannelId) {
+    return this.bindings.find((binding) => binding.channelId === channelId)
   }
   listBindings(channelId: ChannelId) {
     return this.bindings.filter((binding) => binding.channelId === channelId)
   }
   appendChannelEvent(candidate: ChannelEventRecord): AppendChannelEventCommit {
-    const key = `${candidate.connectionId}:${candidate.dedupeKey}`
+    const key = `${candidate.channelId}:${candidate.dedupeKey}`
     const existing = this.events.get(key)
-    if (existing) return { event: existing, inserted: false, checkpointCommitted: true }
+    if (existing) return { event: existing, inserted: false }
     this.events.set(key, candidate)
-    return { event: candidate, inserted: true, checkpointCommitted: true }
+    return { event: candidate, inserted: true }
   }
   getChannelEvent(id: ChannelEventId) {
     return [...this.events.values()].find((event) => event.id === id)
@@ -215,7 +230,7 @@ class MemoryCoreRepository implements CoreRepository {
   resolvePlatformMessage(connectionId: ConnectionId, channelId: ChannelId, platformMessageId: string) {
     const event = [...this.events.values()].find(
       (candidate) =>
-        candidate.connectionId === connectionId &&
+        this.channels.get(candidate.channelId)?.connectionId === connectionId &&
         candidate.channelId === channelId &&
         candidate.platformMessageId === platformMessageId,
     )
@@ -228,7 +243,7 @@ class MemoryCoreRepository implements CoreRepository {
   ) {
     return [...this.events.values()].find(
       (event) =>
-        event.connectionId === connectionId &&
+        this.channels.get(event.channelId)?.connectionId === connectionId &&
         event.channelId === channelId &&
         event.logicalMessageId === logicalMessageId,
     )?.platformMessageId
@@ -240,6 +255,8 @@ class MemoryRuntimeRepository implements RuntimeRepository {
   readonly admissions = new Map<AdmissionId, AdmissionRecord>()
   readonly outbounds = new Map<OutboundIntentId, OutboundSnapshot>()
   readonly handoffs: EpisodeHandoffRecord[] = []
+
+  constructor(readonly core: MemoryCoreRepository) {}
 
   getEpisode(id: EpisodeId) {
     return this.episodes.get(id)
@@ -279,16 +296,6 @@ class MemoryRuntimeRepository implements RuntimeRepository {
     this.episodes.set(id, updated)
     return updated
   }
-  beginEpisodeRollover(id: EpisodeId): EpisodeRecord {
-    const updated = { ...this.requiredEpisode(id), status: 'rolling-over' as const }
-    this.episodes.set(id, updated)
-    return updated
-  }
-  cancelEpisodeRollover(id: EpisodeId): EpisodeRecord {
-    const updated = { ...this.requiredEpisode(id), status: 'active' as const }
-    this.episodes.set(id, updated)
-    return updated
-  }
   closeEpisode(
     id: EpisodeId,
     reason: EpisodeCloseReason,
@@ -315,14 +322,6 @@ class MemoryRuntimeRepository implements RuntimeRepository {
   }): void {
     this.closeEpisode(input.fromEpisodeId, input.reason, input.closedAtEventId, input.closedAt)
     this.episodes.set(input.nextEpisode.id, input.nextEpisode)
-    for (const [id, admission] of this.admissions) {
-      if (
-        admission.episodeId === input.fromEpisodeId &&
-        (admission.state === 'pending' || admission.state === 'claimed')
-      ) {
-        this.admissions.set(id, { ...admission, episodeId: input.nextEpisode.id })
-      }
-    }
     this.handoffs.push(input.handoff)
   }
   failEpisode(id: EpisodeId): void {
@@ -337,31 +336,38 @@ class MemoryRuntimeRepository implements RuntimeRepository {
         admission.episodeId === episodeId && (admission.state === 'pending' || admission.state === 'claimed'),
     )
   }
-  listAdmittedEventIds(channelId: ChannelId, agentId: AgentId) {
+  listUnadmittedEvents(channelId: ChannelId, agentId: AgentId, boundAt: number) {
     const episodeIds = new Set(
       [...this.episodes.values()]
         .filter((episode) => episode.channelId === channelId && episode.agentId === agentId)
         .map(({ id }) => id),
     )
-    return [...this.admissions.values()]
-      .filter((admission) => episodeIds.has(admission.episodeId) && admission.state === 'logged-to-session')
-      .flatMap(({ channelEventIds }) => [...channelEventIds])
+    const admitted = new Set(
+      [...this.admissions.values()]
+        .filter((admission) => episodeIds.has(admission.episodeId))
+        .flatMap(({ eventIds }) => [...eventIds]),
+    )
+    return [...this.core.events.values()]
+      .filter((event) => event.channelId === channelId && event.receivedAt >= boundAt && !admitted.has(event.id))
+      .sort((left, right) => left.receivedAt - right.receivedAt || left.id.localeCompare(right.id))
   }
-  claimAdmission(id: AdmissionId, claimedAt: number): void {
+  claimAdmission(id: AdmissionId): void {
     const record = this.requiredAdmission(id)
-    this.admissions.set(id, { ...record, state: 'claimed', claimedAt })
+    this.admissions.set(id, { ...record, state: 'claimed' })
   }
-  completeAdmission(id: AdmissionId, dshMessageId: string, eventId: ChannelEventId, loggedAt: number): void {
+  completeAdmission(id: AdmissionId, dshMessageId: string, eventId: ChannelEventId): void {
     const record = this.requiredAdmission(id)
-    this.admissions.set(id, { ...record, state: 'logged-to-session', dshMessageId, loggedAt })
+    this.admissions.set(id, { ...record, state: 'logged-to-session', dshMessageId })
     const episode = this.requiredEpisode(record.episodeId)
     this.episodes.set(episode.id, { ...episode, lastAdmittedEventId: eventId })
   }
   findOutboundByClientRequest(agentId: AgentId, channelId: ChannelId, clientRequestId: string) {
-    return [...this.outbounds.values()].find(
-      ({ intent }) =>
-        intent.agentId === agentId && intent.channelId === channelId && intent.clientRequestId === clientRequestId,
-    )
+    return [...this.outbounds.values()].find(({ intent }) => {
+      const episode = this.episodes.get(intent.episodeId)
+      return (
+        episode?.agentId === agentId && episode.channelId === channelId && intent.clientRequestId === clientRequestId
+      )
+    })
   }
   createOutboundPlan(intent: OutboundIntentRecord, deliveries: readonly PhysicalDeliveryRecord[]): void {
     this.outbounds.set(intent.id, { intent, deliveries, receipts: [] })
@@ -369,16 +375,17 @@ class MemoryRuntimeRepository implements RuntimeRepository {
   markIntentSending(id: OutboundIntentId): void {
     this.updateIntent(id, 'sending')
   }
-  markDeliverySending(id: PhysicalDeliveryId, attempt: number): void {
-    this.updateDelivery(id, (delivery) => ({ ...delivery, state: 'sending', attemptCount: attempt }))
+  markDeliverySending(id: PhysicalDeliveryId): void {
+    this.updateDelivery(id, (delivery) => ({ ...delivery, state: 'sending' }))
   }
-  recordDeliveryReceipt(record: DeliveryReceiptRecord): void {
-    const outbound = this.outboundForDelivery(record.physicalDeliveryId)
-    const state = record.receipt.status
+  recordDeliveryReceipt(id: PhysicalDeliveryId, receipt: DeliveryReceiptRecord['receipt'], completedAt: number): void {
+    const outbound = this.outboundForDelivery(id)
+    const state = receipt.status
+    const record = { physicalDeliveryId: id, receipt, completedAt }
     this.outbounds.set(outbound.intent.id, {
       ...outbound,
       deliveries: outbound.deliveries.map((delivery) =>
-        delivery.id === record.physicalDeliveryId ? { ...delivery, state } : delivery,
+        delivery.id === id ? { ...delivery, state, receipt, completedAt } : delivery,
       ),
       receipts: [...outbound.receipts, record],
     })
@@ -430,9 +437,13 @@ class MemoryRuntimeRepository implements RuntimeRepository {
   }
 }
 
-const setup = async (mixedContent = true, idleRolloverMs?: number | false) => {
+const setup = async (
+  mixedContent = true,
+  idleRolloverMs?: number | false,
+  handoffSummary?: AgentSessionDriver['createHandoffSummary'],
+) => {
   const coreRepository = new MemoryCoreRepository()
-  const runtimeRepository = new MemoryRuntimeRepository()
+  const runtimeRepository = new MemoryRuntimeRepository(coreRepository)
   let coreId = 0
   let runtimeId = 0
   const core = new CoreService(coreRepository, { now: () => 100, nextUlid: () => `C${++coreId}` })
@@ -450,6 +461,7 @@ const setup = async (mixedContent = true, idleRolloverMs?: number | false) => {
   let activeAdmissions = 0
   let maxActiveAdmissions = 0
   const persistedAdmissionMessages = new Map<AdmissionId, string>()
+  const handoffInputs: Parameters<AgentSessionDriver['createHandoffSummary']>[0][] = []
   const sessionDriver: AgentSessionDriver = {
     createSession: ({ episodeId }) => {
       sessionCalls.push(`create:${episodeId}`)
@@ -461,8 +473,16 @@ const setup = async (mixedContent = true, idleRolloverMs?: number | false) => {
     },
     sessionStatus: () => sessionStatus,
     findAdmissionMessage: (_sessionId, admissionId) => persistedAdmissionMessages.get(admissionId),
-    createHandoffSummary: ({ revision }) =>
-      Promise.resolve({ summary: '既有对话交接摘要', provider: revision.model.provider, model: revision.model.model }),
+    createHandoffSummary: (input) => {
+      handoffInputs.push(input)
+      return handoffSummary
+        ? handoffSummary(input)
+        : Promise.resolve({
+            summary: '既有对话交接摘要',
+            provider: input.revision.model.provider,
+            model: input.revision.model.model,
+          })
+    },
     cancelSession: () => Promise.resolve(),
     admit: async ({ admissionId, events, mode }) => {
       activeAdmissions += 1
@@ -489,10 +509,13 @@ const setup = async (mixedContent = true, idleRolloverMs?: number | false) => {
   return {
     runtime,
     runtimeRepository,
+    coreRepository,
+    sessionDriver,
     adapter,
     connection,
     channel,
     sessionCalls,
+    handoffInputs,
     core,
     agent,
     setSessionStatus: (status: 'idle' | 'running') => {
@@ -551,7 +574,7 @@ describe('ChannelRuntime M1 lane', () => {
       episodeId: episode.id,
       parts: [
         { type: 'text' as const, text: '结果' },
-        { type: 'file' as const, assetId: 'asset-1' as AssetId, name: 'result.txt' },
+        { type: 'file' as const, assetId: AssetIdSchema.parse('ast_ASSET1'), name: 'result.txt' },
         { type: 'text' as const, text: '补充说明' },
       ],
       clientRequestId: 'request-1',
@@ -570,7 +593,7 @@ describe('ChannelRuntime M1 lane', () => {
     await context.runtime.acceptInbound(inbound(context.connection.id, context.channel.id, 'event-3', 103))
     const admissions = [...context.runtimeRepository.admissions.values()]
     expect(admissions).toHaveLength(2)
-    expect(admissions[1]?.channelEventIds).toHaveLength(2)
+    expect(admissions[1]?.eventIds).toHaveLength(2)
   })
 
   it('applies display-only revisions in place and rolls incompatible revisions into a handoff Session', async () => {
@@ -606,8 +629,37 @@ describe('ChannelRuntime M1 lane', () => {
     expect(active?.id).not.toBe(episode.id)
     expect(active?.dshSessionId).not.toBe(episode.dshSessionId)
     expect(context.runtimeRepository.handoffs).toHaveLength(1)
+    expect(context.runtimeRepository.handoffs[0]?.sourceEventIds).toHaveLength(2)
     expect(context.runtimeRepository.handoffs[0]?.recentEventIds).toHaveLength(2)
     expect(context.runtimeRepository.admissions).toHaveLength(3)
+
+    context.core.reviseAgent(context.agent.definition.id, incompatibleRevision.revision.id, {
+      displayName: '小奈·新名称',
+      persona: '这是第二次不兼容修改。',
+      model: { provider: 'deepseek', model: 'v4' },
+    })
+    await context.runtime.acceptInbound(inbound(context.connection.id, context.channel.id, 'event-4', 104))
+    expect(context.handoffInputs).toHaveLength(2)
+    expect(context.handoffInputs[1]?.previousHandoff?.id).toBe(context.runtimeRepository.handoffs[0]?.id)
+  })
+
+  it('continues rollover with a deterministic fallback when handoff generation throws', async () => {
+    const context = await setup(true, undefined, () => Promise.reject(new Error('summary unavailable')))
+    await context.runtime.acceptInbound(inbound(context.connection.id, context.channel.id))
+    const first = [...context.runtimeRepository.episodes.values()][0]!
+    context.core.reviseAgent(context.agent.definition.id, context.agent.revision.id, {
+      displayName: '小奈',
+      persona: '触发不兼容切换。',
+      model: { provider: 'deepseek', model: 'v4' },
+    })
+
+    await expect(
+      context.runtime.acceptInbound(inbound(context.connection.id, context.channel.id, 'event-2', 103)),
+    ).resolves.toMatchObject({ inserted: true })
+    expect(context.runtimeRepository.getEpisode(first.id)).toMatchObject({ status: 'closed' })
+    expect([...context.runtimeRepository.episodes.values()].filter(({ status }) => status === 'active')).toHaveLength(1)
+    expect(context.runtimeRepository.handoffs[0]?.summary).toContain('模型交接摘要不可用')
+    expect(context.runtimeRepository.handoffs[0]?.sourceEventIds).toHaveLength(1)
   })
 
   it('serializes one lane and injects ordinary messages that arrive while DSH is running', async () => {
@@ -622,9 +674,9 @@ describe('ChannelRuntime M1 lane', () => {
 
     expect(context.maxActiveAdmissions()).toBe(1)
     expect([...context.runtimeRepository.admissions.values()].slice(1)).toHaveLength(20)
-    expect(
-      [...context.runtimeRepository.admissions.values()].slice(1).every(({ reason }) => reason === 'running-injection'),
-    ).toBe(true)
+    expect([...context.runtimeRepository.admissions.values()].slice(1).every(({ mode }) => mode === 'inject')).toBe(
+      true,
+    )
     expect(context.sessionCalls.filter((call) => call.startsWith('admit:inject:'))).toHaveLength(20)
   })
 
@@ -636,11 +688,10 @@ describe('ChannelRuntime M1 lane', () => {
     context.runtimeRepository.admissions.set(admission.id, {
       id: admission.id,
       episodeId: admission.episodeId,
-      channelEventIds: admission.channelEventIds,
-      reason: admission.reason,
+      eventIds: admission.eventIds,
+      mode: admission.mode,
       state: 'claimed',
       createdAt: admission.createdAt,
-      ...(admission.claimedAt === undefined ? {} : { claimedAt: admission.claimedAt }),
     })
     context.markAdmissionPersisted(admission.id, 'dsh-existing-message')
 
@@ -684,6 +735,10 @@ describe('ChannelRuntime M1 lane', () => {
     await expect(
       context.runtime.sendMessage({ episodeId: episode.id, parts: [{ type: 'text', text: '不能再发送' }] }),
     ).rejects.toThrow('inactive Episode')
+    await context.runtime.acceptInbound(inbound(context.connection.id, context.channel.id, 'fresh-event', 103))
+    const fresh = [...context.runtimeRepository.episodes.values()].find(({ status }) => status === 'active')
+    expect(fresh?.id).not.toBe(episode.id)
+    expect(context.runtimeRepository.handoffs).toHaveLength(0)
   })
 
   it('rolls over after the configured idle gap but never because Session context merely grew', async () => {
@@ -723,5 +778,406 @@ describe('ChannelRuntime M1 lane', () => {
     })
     expect(next).toMatchObject({ status: 'active', agentId: context.agent.definition.id })
     expect(next?.dshSessionId).not.toBe(first.dshSessionId)
+  })
+
+  it('covers every trigger policy and admits a non-triggering event while the Session is running', async () => {
+    const event = (facts?: ChannelEventRecord['facts']): ChannelEventRecord => ({
+      id: ChannelEventIdSchema.parse('evt_trigger'),
+      logicalMessageId: LogicalMessageIdSchema.parse('msg_trigger'),
+      channelId: ChannelIdSchema.parse('chn_trigger'),
+      kind: 'message-created',
+      parts: [{ type: 'text', text: 'trigger' }],
+      sourceTimestamp: 1,
+      receivedAt: 1,
+      dedupeKey: 'trigger',
+      searchText: 'trigger',
+      ...(facts === undefined ? {} : { facts }),
+    })
+    const binding = (triggerPolicy: BindingRecord['triggerPolicy']): BindingRecord => ({
+      channelId: ChannelIdSchema.parse('chn_trigger'),
+      agentId: AgentIdSchema.parse('agt_trigger'),
+      triggerPolicy,
+      boundAt: 1,
+    })
+
+    expect(isTriggered(binding('always'), event())).toBe(true)
+    expect(isTriggered(binding('observe-only'), event())).toBe(false)
+    expect(isTriggered(binding('mentioned-or-replied'), event())).toBe(false)
+    expect(isTriggered(binding('mentioned-or-replied'), event({ mentionedBot: true }))).toBe(true)
+    expect(isTriggered(binding('mentioned-or-replied'), event({ replyToBot: true }))).toBe(true)
+    expect(isTriggered(binding('command'), event({ command: '' }))).toBe(false)
+    expect(isTriggered(binding('command'), event({ command: 123 }))).toBe(false)
+    expect(isTriggered(binding('command'), event({ command: '/help' }))).toBe(true)
+
+    const context = await setup()
+    await context.runtime.acceptInbound(inbound(context.connection.id, context.channel.id, 'initial'))
+    context.core.replaceBinding({
+      channelId: context.channel.id,
+      agentId: context.agent.definition.id,
+      triggerPolicy: 'observe-only',
+    })
+    context.setSessionStatus('running')
+    await context.runtime.acceptInbound(inbound(context.connection.id, context.channel.id, 'running-observe-only'))
+    expect([...context.runtimeRepository.admissions.values()]).toHaveLength(2)
+    expect([...context.runtimeRepository.admissions.values()][1]).toMatchObject({ mode: 'inject' })
+  })
+
+  it('publishes inbound and outbound facts while isolating and removing listeners', async () => {
+    const context = await setup()
+    const observed: string[] = []
+    const throwingUnsubscribe = context.runtime.subscribeFacts((fact) => {
+      observed.push(`${fact.kind}:${fact.sourceId}`)
+      throw new Error('projection failed')
+    })
+    const unsubscribe = context.runtime.subscribeFacts((fact) => {
+      observed.push(`${fact.kind}:${fact.sourceId}`)
+    })
+
+    await context.runtime.acceptInbound(inbound(context.connection.id, context.channel.id, 'facts-inbound'))
+    const episode = [...context.runtimeRepository.episodes.values()][0]!
+    await context.runtime.sendMessage({ episodeId: episode.id, parts: [{ type: 'text', text: 'facts-outbound' }] })
+    expect(observed.filter((fact) => fact.startsWith('inbound:'))).toHaveLength(2)
+    expect(observed.filter((fact) => fact.startsWith('outbound:'))).toHaveLength(4)
+
+    unsubscribe()
+    throwingUnsubscribe()
+    const before = observed.length
+    await context.runtime.sendMessage({ episodeId: episode.id, parts: [{ type: 'text', text: 'after-unsubscribe' }] })
+    expect(observed).toHaveLength(before)
+  })
+
+  it('rejects an invalid rollover option and allows rollover with idle detection disabled', async () => {
+    await expect(setup(true, 0)).rejects.toThrow('idleRolloverMs must be a positive integer or false')
+    const context = await setup(true, false)
+    await context.runtime.acceptInbound(inbound(context.connection.id, context.channel.id, 'no-idle-1', 100))
+    const first = [...context.runtimeRepository.episodes.values()][0]!
+    await context.runtime.acceptInbound(inbound(context.connection.id, context.channel.id, 'no-idle-2', 100_000))
+    expect(context.runtimeRepository.getEpisode(first.id)?.status).toBe('active')
+  })
+
+  it('recovers pending and claimed Admissions by checking the Session before re-admitting', async () => {
+    const pendingContext = await setup()
+    await pendingContext.runtime.acceptInbound(
+      inbound(pendingContext.connection.id, pendingContext.channel.id, 'pending'),
+    )
+    const pendingEpisode = [...pendingContext.runtimeRepository.episodes.values()][0]!
+    const pendingAdmission = [...pendingContext.runtimeRepository.admissions.values()][0]!
+    pendingContext.runtimeRepository.admissions.set(pendingAdmission.id, {
+      id: pendingAdmission.id,
+      episodeId: pendingAdmission.episodeId,
+      eventIds: pendingAdmission.eventIds,
+      mode: pendingAdmission.mode,
+      state: 'pending',
+      createdAt: pendingAdmission.createdAt,
+    })
+
+    await expect(pendingContext.runtime.recover()).resolves.toMatchObject({
+      resumedEpisodes: 1,
+      recoveredAdmissions: 1,
+    })
+    expect(pendingContext.runtimeRepository.getEpisode(pendingEpisode.id)).toMatchObject({
+      status: 'active',
+      lastAdmittedEventId: pendingAdmission.eventIds.at(-1),
+    })
+    expect(pendingContext.runtimeRepository.admissions.get(pendingAdmission.id)).toMatchObject({
+      state: 'logged-to-session',
+      dshMessageId: `dsh-message-${pendingAdmission.id}`,
+    })
+
+    const claimedContext = await setup()
+    await claimedContext.runtime.acceptInbound(
+      inbound(claimedContext.connection.id, claimedContext.channel.id, 'claimed'),
+    )
+    const claimedAdmission = [...claimedContext.runtimeRepository.admissions.values()][0]!
+    claimedContext.runtimeRepository.admissions.set(claimedAdmission.id, { ...claimedAdmission, state: 'claimed' })
+    await expect(claimedContext.runtime.recover()).resolves.toMatchObject({ recoveredAdmissions: 1 })
+    expect(claimedContext.runtimeRepository.admissions.get(claimedAdmission.id)).toMatchObject({
+      state: 'logged-to-session',
+    })
+  })
+
+  it('fails an opening Episode cleanly when Session creation fails, then permits a fresh retry', async () => {
+    const context = await setup()
+    context.sessionDriver.createSession = () => Promise.reject(new Error('Session unavailable'))
+
+    await expect(
+      context.runtime.acceptInbound(inbound(context.connection.id, context.channel.id, 'session-failure')),
+    ).rejects.toThrow('Session unavailable')
+    const failed = [...context.runtimeRepository.episodes.values()][0]!
+    expect(failed).toMatchObject({ status: 'failed' })
+    expect(context.runtimeRepository.admissions).toHaveLength(0)
+
+    context.sessionDriver.createSession = ({ episodeId }) => Promise.resolve(`dsh-${episodeId}`)
+    await expect(
+      context.runtime.acceptInbound(inbound(context.connection.id, context.channel.id, 'session-retry')),
+    ).resolves.toMatchObject({
+      inserted: true,
+    })
+    expect([...context.runtimeRepository.episodes.values()].filter(({ status }) => status === 'active')).toHaveLength(1)
+  })
+
+  it('leaves a claimed Admission recoverable after admission failure', async () => {
+    const context = await setup()
+    context.sessionDriver.admit = () => Promise.reject(new Error('DSH admission failed'))
+
+    await expect(
+      context.runtime.acceptInbound(inbound(context.connection.id, context.channel.id, 'admit-failure')),
+    ).rejects.toThrow('DSH admission failed')
+    const admission = [...context.runtimeRepository.admissions.values()][0]!
+    expect(admission).toMatchObject({ state: 'claimed' })
+
+    context.sessionDriver.admit = ({ admissionId }) => Promise.resolve({ dshMessageId: `dsh-message-${admissionId}` })
+    await expect(context.runtime.recover()).resolves.toMatchObject({ recoveredAdmissions: 1 })
+    expect(context.runtimeRepository.admissions.get(admission.id)).toMatchObject({ state: 'logged-to-session' })
+  })
+
+  it('closes the old Episode on binding replacement and creates a clean Episode for the new binding', async () => {
+    const context = await setup()
+    await context.runtime.acceptInbound(inbound(context.connection.id, context.channel.id, 'before-replace'))
+    const oldEpisode = [...context.runtimeRepository.episodes.values()][0]!
+    const replacement = context.core.createAgent({
+      displayName: '小新',
+      persona: '',
+      model: { provider: 'deepseek', model: 'v4' },
+    })
+
+    await expect(
+      context.runtime.replaceBinding({
+        channelId: context.channel.id,
+        agentId: replacement.definition.id,
+        triggerPolicy: 'always',
+      }),
+    ).resolves.toMatchObject({ agentId: replacement.definition.id })
+    expect(context.runtimeRepository.getEpisode(oldEpisode.id)).toMatchObject({
+      status: 'closed',
+      closeReason: 'binding-replaced',
+    })
+
+    await context.runtime.acceptInbound(inbound(context.connection.id, context.channel.id, 'after-replace'))
+    const active = [...context.runtimeRepository.episodes.values()].find(({ status }) => status === 'active')
+    expect(active).toMatchObject({ agentId: replacement.definition.id })
+    expect(context.runtimeRepository.handoffs).toHaveLength(0)
+  })
+
+  it('validates outbound targets and sends every structured part with reply metadata', async () => {
+    const context = await setup()
+    await context.runtime.acceptInbound(inbound(context.connection.id, context.channel.id, 'outbound-validation'))
+    const episode = [...context.runtimeRepository.episodes.values()][0]!
+
+    await expect(
+      context.runtime.sendMessage({
+        episodeId: EpisodeIdSchema.parse('eps_missing'),
+        parts: [{ type: 'text', text: 'x' }],
+      }),
+    ).rejects.toThrow('Unknown or inactive Episode')
+    await expect(context.runtime.sendMessage({ episodeId: episode.id, parts: [] })).rejects.toThrow(
+      'at least one content part',
+    )
+
+    const parts = [
+      { type: 'text' as const, text: 'text' },
+      { type: 'mention' as const, memberId: ChannelMemberIdSchema.parse('mbr_member') },
+      { type: 'image' as const, assetId: AssetIdSchema.parse('ast_image') },
+      { type: 'file' as const, assetId: AssetIdSchema.parse('ast_file'), name: 'file.txt' },
+      { type: 'audio' as const, assetId: AssetIdSchema.parse('ast_audio') },
+      { type: 'quote' as const, messageId: LogicalMessageIdSchema.parse('msg_previous') },
+    ]
+    const result = await context.runtime.sendMessage({
+      episodeId: episode.id,
+      parts,
+      replyTo: 'platform-parent',
+      sourceTurnId: 'turn-1',
+    })
+    expect(result.status).toBe('sent')
+    expect(context.adapter.deliveries.at(-1)).toMatchObject({
+      parts,
+      replyTo: 'platform-parent',
+    })
+
+    const aborted = new AbortController()
+    aborted.abort()
+    await expect(
+      context.runtime.sendMessage({
+        episodeId: episode.id,
+        parts: [{ type: 'text', text: 'cancelled' }],
+        signal: aborted.signal,
+      }),
+    ).resolves.toMatchObject({ status: 'failed' })
+  })
+
+  it('rejects unsupported parts and missing runtime resources before sending', async () => {
+    const limited = await setup()
+    await limited.runtime.acceptInbound(inbound(limited.connection.id, limited.channel.id, 'unsupported'))
+    const episode = [...limited.runtimeRepository.episodes.values()][0]!
+    Object.assign(limited.adapter.capabilities, { images: false })
+    await expect(
+      limited.runtime.sendMessage({
+        episodeId: episode.id,
+        parts: [{ type: 'image', assetId: AssetIdSchema.parse('ast_noimage') }],
+      }),
+    ).rejects.toThrow('does not support message part: image')
+
+    const noAdapter = new ChannelRuntime(
+      limited.core,
+      limited.coreRepository,
+      limited.runtimeRepository,
+      limited.sessionDriver,
+      {
+        resolveAdapter: () => undefined,
+      },
+    )
+    await expect(
+      noAdapter.sendMessage({ episodeId: episode.id, parts: [{ type: 'text', text: 'no adapter' }] }),
+    ).rejects.toThrow('Connection adapter is not running')
+
+    limited.coreRepository.channels.delete(limited.channel.id)
+    await expect(
+      limited.runtime.sendMessage({ episodeId: episode.id, parts: [{ type: 'text', text: 'no channel' }] }),
+    ).rejects.toThrow('Episode channel no longer exists')
+  })
+
+  it('checks planner output, adapter context, and over-limit planner results', async () => {
+    const context = await setup()
+    await context.runtime.acceptInbound(inbound(context.connection.id, context.channel.id, 'planner'))
+    const episode = [...context.runtimeRepository.episodes.values()][0]!
+    const setPlan = (plans: readonly { readonly parts: readonly object[]; readonly adapterContext?: object }[]) => {
+      Object.defineProperty(context.adapter, 'planOutbound', {
+        configurable: true,
+        writable: true,
+        value: () => Promise.resolve(plans),
+      })
+    }
+
+    setPlan([])
+    await expect(
+      context.runtime.sendMessage({ episodeId: episode.id, parts: [{ type: 'text', text: 'empty plans' }] }),
+    ).rejects.toThrow('empty PhysicalDelivery')
+
+    setPlan([{ parts: [] }])
+    await expect(
+      context.runtime.sendMessage({ episodeId: episode.id, parts: [{ type: 'text', text: 'empty delivery' }] }),
+    ).rejects.toThrow('empty PhysicalDelivery')
+
+    setPlan([{ parts: [{ type: 'text', text: 'planned' }], adapterContext: { route: 'special' } }])
+    const planned = await context.runtime.sendMessage({
+      episodeId: episode.id,
+      parts: [{ type: 'text', text: 'original' }],
+      replyTo: 'parent',
+    })
+    expect(planned.status).toBe('sent')
+    expect(context.adapter.deliveries.at(-1)).toMatchObject({ adapterContext: { route: 'special' }, replyTo: 'parent' })
+
+    Object.assign(context.adapter.capabilities, { images: false })
+    setPlan([{ parts: [{ type: 'image', assetId: AssetIdSchema.parse('ast_planned') }] }])
+    await expect(
+      context.runtime.sendMessage({ episodeId: episode.id, parts: [{ type: 'text', text: 'unsupported plan' }] }),
+    ).rejects.toThrow('planner produced an unsupported part')
+
+    Object.assign(context.adapter.capabilities, { images: true, maxTextLength: 2 })
+    setPlan([{ parts: [{ type: 'text', text: 'too long' }] }])
+    await expect(
+      context.runtime.sendMessage({ episodeId: episode.id, parts: [{ type: 'text', text: 'short' }] }),
+    ).rejects.toThrow('over-limit text')
+  })
+
+  it('records a failed delivery and turns a thrown adapter error into unknown', async () => {
+    const failedContext = await setup()
+    await failedContext.runtime.acceptInbound(
+      inbound(failedContext.connection.id, failedContext.channel.id, 'failed-delivery'),
+    )
+    const failedEpisode = [...failedContext.runtimeRepository.episodes.values()][0]!
+    failedContext.adapter.queueReceipt({ status: 'failed', failure: { kind: 'permanent', message: 'rejected' } })
+    await expect(
+      failedContext.runtime.sendMessage({ episodeId: failedEpisode.id, parts: [{ type: 'text', text: 'failed' }] }),
+    ).resolves.toMatchObject({ status: 'failed' })
+
+    const thrownContext = await setup()
+    await thrownContext.runtime.acceptInbound(
+      inbound(thrownContext.connection.id, thrownContext.channel.id, 'thrown-delivery'),
+    )
+    const thrownEpisode = [...thrownContext.runtimeRepository.episodes.values()][0]!
+    thrownContext.adapter.deliver = () => Promise.reject(new Error('transport broke'))
+    await expect(
+      thrownContext.runtime.sendMessage({ episodeId: thrownEpisode.id, parts: [{ type: 'text', text: 'unknown' }] }),
+    ).resolves.toMatchObject({ status: 'unknown' })
+    const outbound = [...thrownContext.runtimeRepository.outbounds.values()][0]!
+    const receipt = outbound.receipts[0]?.receipt
+    expect(receipt?.status).toBe('unknown')
+    if (receipt?.status === 'unknown') expect(receipt.message).toContain('transport broke')
+  })
+
+  it('recovers an Episode left opening when rollover Session creation crashes after commit', async () => {
+    const context = await setup()
+    await context.runtime.acceptInbound(inbound(context.connection.id, context.channel.id, 'rollover-before-crash'))
+    const first = [...context.runtimeRepository.episodes.values()][0]!
+    let failHandoffCreation = true
+    context.sessionDriver.createSession = (input) => {
+      if (input.handoff !== undefined && failHandoffCreation) {
+        failHandoffCreation = false
+        return Promise.reject(new Error('new Session crashed'))
+      }
+      return Promise.resolve(`dsh-${input.episodeId}`)
+    }
+    context.core.reviseAgent(context.agent.definition.id, context.agent.revision.id, {
+      displayName: '小奈',
+      persona: '需要新 Session。',
+      model: { provider: 'deepseek', model: 'v4' },
+    })
+
+    await expect(
+      context.runtime.acceptInbound(inbound(context.connection.id, context.channel.id, 'rollover-crash', 103)),
+    ).rejects.toThrow('new Session crashed')
+    const opening = [...context.runtimeRepository.episodes.values()].find(({ status }) => status === 'opening')
+    expect(context.runtimeRepository.getEpisode(first.id)).toMatchObject({
+      status: 'closed',
+      closeReason: 'incompatible-revision',
+    })
+    expect(opening).toBeDefined()
+    expect(context.runtimeRepository.handoffs).toHaveLength(1)
+
+    await expect(context.runtime.recover()).resolves.toMatchObject({ resumedEpisodes: 1 })
+    expect(context.runtimeRepository.getEpisode(opening!.id)).toMatchObject({ status: 'active' })
+    expect([...context.runtimeRepository.admissions.values()]).toHaveLength(2)
+  })
+
+  it('reports missing rollover anchors instead of fabricating a new Episode', async () => {
+    const missingAgent = await setup()
+    await missingAgent.runtime.acceptInbound(
+      inbound(missingAgent.connection.id, missingAgent.channel.id, 'missing-agent'),
+    )
+    const missingAgentEpisode = [...missingAgent.runtimeRepository.episodes.values()][0]!
+    missingAgent.coreRepository.agents.delete(missingAgent.agent.definition.id)
+    await expect(missingAgent.runtime.rolloverEpisode(missingAgentEpisode.id)).rejects.toThrow('agent no longer exists')
+
+    const missingRevision = await setup()
+    await missingRevision.runtime.acceptInbound(
+      inbound(missingRevision.connection.id, missingRevision.channel.id, 'missing-revision'),
+    )
+    const missingRevisionEpisode = [...missingRevision.runtimeRepository.episodes.values()][0]!
+    missingRevision.coreRepository.revisions.delete(missingRevisionEpisode.agentRevisionId)
+    await expect(missingRevision.runtime.rolloverEpisode(missingRevisionEpisode.id)).rejects.toThrow(
+      'Revision no longer exists',
+    )
+
+    const missingBinding = await setup()
+    await missingBinding.runtime.acceptInbound(
+      inbound(missingBinding.connection.id, missingBinding.channel.id, 'missing-binding'),
+    )
+    const missingBindingEpisode = [...missingBinding.runtimeRepository.episodes.values()][0]!
+    missingBinding.coreRepository.bindings.splice(0, 1)
+    await expect(missingBinding.runtime.rolloverEpisode(missingBindingEpisode.id)).rejects.toThrow(
+      'Binding no longer exists',
+    )
+  })
+
+  it('replays a triggered Channel Event that was persisted before recovery scanning', async () => {
+    const context = await setup()
+    await context.runtime.acceptInbound(inbound(context.connection.id, context.channel.id, 'backlog-first'))
+    context.core.appendInbound(inbound(context.connection.id, context.channel.id, 'backlog-persisted'))
+    expect(context.runtimeRepository.admissions).toHaveLength(1)
+
+    await expect(context.runtime.recover()).resolves.toMatchObject({ resumedEpisodes: 1 })
+    expect(context.runtimeRepository.admissions).toHaveLength(2)
+    expect([...context.runtimeRepository.admissions.values()][1]).toMatchObject({ state: 'logged-to-session' })
   })
 })

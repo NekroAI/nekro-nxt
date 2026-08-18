@@ -67,15 +67,14 @@ export class QQOpenClawRuntime implements AdapterConnectionRuntime {
       onDispatch: async (eventType, data, dispatch) => {
         const message = decodeQQInboundMessage(eventType, data, { now: options.context.now })
         if (!message) return true
-        const result = await this.#connection.receive(
+        await this.#connection.receive(
           {
             ...message,
             ...(dispatch.sequence === undefined ? {} : { platformSequence: dispatch.sequence }),
-            ...(dispatch.sequence === undefined ? {} : { checkpoint: { gatewaySequence: dispatch.sequence } }),
           },
           dispatch.signal,
         )
-        return result.checkpointCommitted
+        return true
       },
       ...(options.gateway.onStatus === undefined ? {} : { onStatus: options.gateway.onStatus }),
       ...(options.gateway.maxDispatchAttempts === undefined

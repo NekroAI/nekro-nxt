@@ -24,7 +24,7 @@ const navigation = [
   { to: '/connections', label: '连接', icon: Cable },
   { to: '/extensions', label: '扩展', icon: Boxes },
   { to: '/settings', label: '设置', icon: Settings },
-] as const
+]
 
 export const hostPresentation = (status: ProductHostStatus): { readonly label: string; readonly tone: StatusTone } => {
   if (status === 'initializing') return { label: '正在连接', tone: 'info' }
@@ -104,9 +104,9 @@ function ThemeEffects() {
   const reducedMotion = useProductStore((state) => state.reducedMotion)
 
   useEffect(() => {
-    if (theme === 'system') delete document.documentElement.dataset.theme
-    else document.documentElement.dataset.theme = theme
-    document.documentElement.dataset.reducedMotion = String(reducedMotion)
+    if (theme === 'system') delete document.documentElement.dataset['theme']
+    else document.documentElement.dataset['theme'] = theme
+    document.documentElement.dataset['reducedMotion'] = String(reducedMotion)
   }, [theme, reducedMotion])
   return null
 }
@@ -130,17 +130,17 @@ interface ProductErrorBoundaryState {
 }
 
 class ProductErrorBoundary extends Component<{ readonly children: ReactNode }, ProductErrorBoundaryState> {
-  state: ProductErrorBoundaryState = { failed: false }
+  override state: ProductErrorBoundaryState = { failed: false }
 
   static getDerivedStateFromError(): ProductErrorBoundaryState {
     return { failed: true }
   }
 
-  componentDidCatch(error: Error, info: ErrorInfo): void {
+  override componentDidCatch(error: Error, info: ErrorInfo): void {
     console.error('[nekro-nxt] 产品界面渲染失败', error, info)
   }
 
-  render(): ReactNode {
+  override render(): ReactNode {
     if (!this.state.failed) return this.props.children
     return (
       <div className={styles.centeredState} role="alert">

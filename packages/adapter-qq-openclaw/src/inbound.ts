@@ -6,8 +6,10 @@ export type QQMessageEventType = (typeof QQ_MESSAGE_EVENT_TYPES)[number]
 
 type UnknownRecord = Readonly<Record<string, unknown>>
 
-const record = (value: unknown): UnknownRecord =>
-  typeof value === 'object' && value !== null && !Array.isArray(value) ? (value as UnknownRecord) : {}
+const isRecord = (value: unknown): value is UnknownRecord =>
+  typeof value === 'object' && value !== null && !Array.isArray(value)
+
+const record = (value: unknown): UnknownRecord => (isRecord(value) ? value : {})
 
 const records = (value: unknown): readonly UnknownRecord[] =>
   Array.isArray(value) ? value.map(record).filter((item) => Object.keys(item).length > 0) : []
@@ -21,7 +23,7 @@ const text = (...values: readonly unknown[]): string | undefined => {
 }
 
 const displayName = (value: UnknownRecord): string | undefined =>
-  text(value.username, value.nickname, value.nick, value.name)
+  text(value['username'], value['nickname'], value['nick'], value['name'])
 
 const parseExt = (value: unknown): UnknownRecord => {
   if (typeof value === 'object' && value !== null && !Array.isArray(value)) return record(value)
@@ -70,11 +72,11 @@ const inferMediaType = (url: string, voiceUrl: string | undefined): string | und
 const parseAttachments = (value: unknown): readonly QQInboundAttachment[] => {
   const attachments: QQInboundAttachment[] = []
   for (const item of records(value)) {
-    const voiceUrl = text(item.voice_wav_url)
-    const url = text(item.url, voiceUrl)
+    const voiceUrl = text(item['voice_wav_url'])
+    const url = text(item['url'], voiceUrl)
     if (!url) continue
-    const mediaType = text(item.content_type) ?? inferMediaType(url, voiceUrl)
-    const fileName = text(item.filename)
+    const mediaType = text(item['content_type']) ?? inferMediaType(url, voiceUrl)
+    const fileName = text(item['filename'])
     attachments.push({
       url,
       ...(fileName === undefined ? {} : { fileName }),
@@ -85,13 +87,14 @@ const parseAttachments = (value: unknown): readonly QQInboundAttachment[] => {
 }
 
 const parseReference = (raw: UnknownRecord): { readonly messageId?: string; readonly reference?: string } => {
-  const scene = record(raw.message_scene)
-  const ext = parseExt(scene.ext)
-  const elements = records(raw.msg_elements)
-  const firstElementIndex = text(elements[0]?.msg_idx)
-  const messageId = text(ext.msg_idx, ext.msgIdx, firstElementIndex, raw.id)
-  const extReference = text(ext.ref_msg_idx, ext.refMsgIdx, ext.ref_idx, ext.refIdx)
-  const messageType = typeof raw.message_type === 'number' ? raw.message_type : Number(raw.message_type)
+  const scene = record(raw['message_scene'])
+  const ext = parseExt(scene['ext'])
+  const elements = records(raw['msg_elements'])
+  const firstElementIndex = text(elements[0]?.['msg_idx'])
+  const messageId = text(ext['msg_idx'], ext['msgIdx'], firstElementIndex, raw['id'])
+  const extReference = text(ext['ref_msg_idx'], ext['refMsgIdx'], ext['ref_idx'], ext['refIdx'])
+  const rawMessageType = raw['message_type']
+  const messageType = typeof rawMessageType === 'number' ? rawMessageType : Number(rawMessageType)
   const reference = messageType === 103 && firstElementIndex ? firstElementIndex : extReference
   return {
     ...(messageId === undefined ? {} : { messageId }),
@@ -135,18 +138,21 @@ export const decodeQQInboundMessage = (
   value: unknown,
   options: { readonly now?: () => number } = {},
 ): QQNormalizedInboundMessage | undefined => {
-  if (!QQ_MESSAGE_EVENT_TYPES.some((candidate) => candidate === eventType)) return undefined
-  const typedEvent = eventType as QQMessageEventType
+  const typedEvent = QQ_MESSAGE_EVENT_TYPES.find((candidate) => candidate === eventType)
+  if (typedEvent === undefined) return undefined
   const raw = record(value)
-  const author = record(raw.author)
+  const author = record(raw['author'])
   const reference = parseReference(raw)
-  const platformMessageId = required(text(raw.id, reference.messageId), 'message ID')
+  const platformMessageId = required(text(raw['id'], reference.messageId), 'message ID')
   const now = options.now?.() ?? Date.now()
 
   if (typedEvent === 'C2C_MESSAGE_CREATE') {
-    const senderOpenId = required(text(author.user_openid, author.id, author.union_openid), 'C2C sender OpenID')
+    const senderOpenId = required(
+      text(author['user_openid'], author['id'], author['union_openid']),
+      'C2C sender OpenID',
+    )
     const senderDisplayName = displayName(author)
-    const content = normalizeQQContent(raw.content)
+    const content = normalizeQQContent(raw['content'])
     return {
       eventType: typedEvent,
       platformMessageId,
@@ -154,29 +160,29 @@ export const decodeQQInboundMessage = (
       senderOpenId,
       ...(senderDisplayName === undefined ? {} : { senderDisplayName }),
       ...(content === undefined ? {} : { content }),
-      attachments: parseAttachments(raw.attachments),
+      attachments: parseAttachments(raw['attachments']),
       ...(reference.reference === undefined ? {} : { platformReference: reference.reference }),
-      platformTimestamp: parseTimestamp(raw.timestamp, now),
+      platformTimestamp: parseTimestamp(raw['timestamp'], now),
     }
   }
 
-  const groupOpenId = required(text(raw.group_openid, raw.group_id), 'group OpenID')
-  const senderOpenId = required(text(author.member_openid, author.id), 'group sender OpenID')
-  const mentions = records(raw.mentions)
+  const groupOpenId = required(text(raw['group_openid'], raw['group_id']), 'group OpenID')
+  const senderOpenId = required(text(author['member_openid'], author['id']), 'group sender OpenID')
+  const mentions = records(raw['mentions'])
     .map((mention) => {
-      const openId = text(mention.member_openid, mention.user_openid, mention.id)
+      const openId = text(mention['member_openid'], mention['user_openid'], mention['id'])
       if (!openId) return undefined
       const mentionDisplayName = displayName(mention)
       return {
         openId,
         ...(mentionDisplayName === undefined ? {} : { displayName: mentionDisplayName }),
-        ...(mention.bot === true ? { bot: true } : {}),
+        ...(mention['bot'] === true ? { bot: true } : {}),
       }
     })
     .filter((mention): mention is NonNullable<typeof mention> => mention !== undefined)
-  const targetDisplayName = text(raw.group_name, raw.group_nick, raw.group_title)
+  const targetDisplayName = text(raw['group_name'], raw['group_nick'], raw['group_title'])
   const senderDisplayName = displayName(author)
-  const content = stripStructuredMentions(normalizeQQContent(raw.content), mentions)
+  const content = stripStructuredMentions(normalizeQQContent(raw['content']), mentions)
   return {
     eventType: typedEvent,
     platformMessageId,
@@ -186,8 +192,8 @@ export const decodeQQInboundMessage = (
     ...(senderDisplayName === undefined ? {} : { senderDisplayName }),
     ...(content === undefined ? {} : { content }),
     mentions,
-    attachments: parseAttachments(raw.attachments),
+    attachments: parseAttachments(raw['attachments']),
     ...(reference.reference === undefined ? {} : { platformReference: reference.reference }),
-    platformTimestamp: parseTimestamp(raw.timestamp, now),
+    platformTimestamp: parseTimestamp(raw['timestamp'], now),
   }
 }

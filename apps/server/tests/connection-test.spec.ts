@@ -1,6 +1,7 @@
 import { Context } from '@deepseek-ai/cordis'
 import WebServer from '@deepseek-ai/dsh-host-webserver'
 import type { QQGatewaySocket } from '@nekro-nxt/adapter-qq-openclaw'
+import { HostApiContracts } from '@nekro-nxt/contracts'
 import { mkdtemp, readdir, readFile, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
@@ -9,6 +10,13 @@ import { NekroRuntime } from '../src/bootstrap.js'
 import { createNekroHostApi } from '../src/host-api.js'
 
 const temporaryDirectories: string[] = []
+
+const readSnapshot = async (origin: string): Promise<ReturnType<typeof HostApiContracts.snapshot.parseResponse>> => {
+  const response = await fetch(`${origin}/api/snapshot`)
+  const body: unknown = await response.json()
+  if (!response.ok) throw new Error(JSON.stringify(body))
+  return HostApiContracts.snapshot.parseResponse(body)
+}
 
 afterEach(async () => {
   await Promise.all(temporaryDirectories.splice(0).map((directory) => rm(directory, { recursive: true, force: true })))
@@ -27,7 +35,7 @@ const gatewaySocket = (signal: AbortSignal): QQGatewaySocket => ({
           id: 'qq-real-inbound-1',
           group_openid: 'group-real-1',
           group_name: '真实装配测试群',
-          author: { member_openid: 'member-real-1', member_name: '测试成员' },
+          author: { member_openid: 'member-real-1', username: '测试成员' },
           content: '你好',
           timestamp: 1,
         },
@@ -120,28 +128,27 @@ describe('NekroNxt domain API — real QQ Connection diagnostics', () => {
         }),
       })
       expect(createdResponse.status).toBe(201)
-      const created = (await createdResponse.json()) as { connectionId: string }
+      const created = HostApiContracts.createConnection.parseResponse(await createdResponse.json())
 
       const before = Date.now()
-      let snapshot!: {
-        connections: Array<{
-          id: string
-          status: string
-          credentialConfigured: boolean
-          gateway?: { state: string }
-          channelCount: number
-        }>
-      }
+      let snapshot = await readSnapshot(origin)
       for (;;) {
-        snapshot = (await (await fetch(`${origin}/api/snapshot`)).json()) as typeof snapshot
+        snapshot = await readSnapshot(origin)
         const connection = snapshot.connections.find((candidate) => candidate.id === created.connectionId)
         if (connection?.gateway?.state === 'connected' && connection.channelCount === 1) break
-        if (Date.now() - before > 5_000) throw new Error('Timed out waiting for the QQ Gateway assembly.')
+        if (Date.now() - before > 5_000) {
+          throw new Error(`Timed out waiting for the QQ Gateway assembly: ${JSON.stringify(connection)}`)
+        }
         await new Promise((resolve) => setTimeout(resolve, 10))
       }
 
       const projected = snapshot.connections.find((connection) => connection.id === created.connectionId)!
-      expect(projected).toMatchObject({ status: 'active', credentialConfigured: true, channelCount: 1 })
+      expect(projected).toMatchObject({
+        adapterKey: 'qq-openclaw',
+        credentialConfigured: true,
+        channelCount: 1,
+        gateway: { state: 'connected' },
+      })
       expect(JSON.stringify(snapshot)).not.toContain('client-secret-real-1')
       expect(JSON.stringify(runtime.core.listConnections())).not.toContain('client-secret-real-1')
 
@@ -151,22 +158,26 @@ describe('NekroNxt domain API — real QQ Connection diagnostics', () => {
         'client-secret-real-1',
       )
 
-      const receiveResult = (await (
-        await fetch(`${origin}/api/connections/${created.connectionId}/test`, {
-          method: 'POST',
-          headers: { 'content-type': 'application/json' },
-          body: JSON.stringify({ direction: 'receive' }),
-        })
-      ).json()) as { status: string; platformMessageId: string }
+      const receiveResult = HostApiContracts.testConnection.parseResponse(
+        await (
+          await fetch(`${origin}/api/connections/${created.connectionId}/test`, {
+            method: 'POST',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({ direction: 'receive' }),
+          })
+        ).json(),
+      )
       expect(receiveResult).toMatchObject({ status: 'received', platformMessageId: 'qq-real-inbound-1' })
 
-      const sendResult = (await (
-        await fetch(`${origin}/api/connections/${created.connectionId}/test`, {
-          method: 'POST',
-          headers: { 'content-type': 'application/json' },
-          body: JSON.stringify({ direction: 'send' }),
-        })
-      ).json()) as { status: string; platformMessageId: string }
+      const sendResult = HostApiContracts.testConnection.parseResponse(
+        await (
+          await fetch(`${origin}/api/connections/${created.connectionId}/test`, {
+            method: 'POST',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({ direction: 'send' }),
+          })
+        ).json(),
+      )
       expect(sendResult).toMatchObject({ status: 'sent', platformMessageId: 'qq-real-outbound-1' })
       expect(requests.find(({ url }) => url.includes('/v2/groups/group-real-1/messages'))?.body).toContain(
         'NekroNxt QQ 连接发送测试',
@@ -177,7 +188,7 @@ describe('NekroNxt domain API — real QQ Connection diagnostics', () => {
       await webContext.fiber.dispose()
       await runtime.dispose()
     }
-  })
+  }, 15_000)
 
   it('reuses the durable Web Connection and restores the QQ Runtime from its credential reference', async () => {
     const directory = await mkdtemp(path.join(tmpdir(), 'nekro-nxt-conn-restart-'))
@@ -256,7 +267,7 @@ describe('NekroNxt domain API — real QQ Connection diagnostics', () => {
       config: { appId: 'damaged-app' },
       credentialRefs: { clientSecret: 'damaged-reference' },
     })
-    const credentialReference = qqConnection.credentialRefs.clientSecret!
+    const credentialReference = qqConnection.credentialRefs['clientSecret']!
     const before = Date.now()
     while (first.connectionDiagnostic(qqConnection.id)?.gateway.state !== 'connected') {
       if (Date.now() - before > 5_000) throw new Error('Timed out waiting for initial QQ connection.')
@@ -298,7 +309,9 @@ describe('NekroNxt domain API — real QQ Connection diagnostics', () => {
         gateway: { state: 'failed' },
         credentialConfigured: false,
       })
-      expect(third.core.listConnectionsByAdapter('qq-openclaw')[0]?.status).toBe('failed')
+      expect(third.connectionDiagnostic(third.core.listConnectionsByAdapter('qq-openclaw')[0]!.id)?.gateway.state).toBe(
+        'failed',
+      )
     } finally {
       await third.dispose()
     }

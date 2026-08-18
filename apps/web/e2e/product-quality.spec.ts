@@ -1,6 +1,41 @@
 import { expect, test, type Page, type TestInfo } from '@playwright/test'
+import {
+  AgentIdSchema,
+  AgentRevisionIdSchema,
+  AssetIdSchema,
+  ChannelEventIdSchema,
+  ChannelIdSchema,
+  ChannelMemberIdSchema,
+  ConnectionIdSchema,
+  EpisodeIdSchema,
+  ExtensionIdSchema,
+  ExtensionRevisionIdSchema,
+  HostApiContracts,
+  OutboundIntentIdSchema,
+} from '@nekro-nxt/contracts'
 
-const productSnapshot = {
+const targetAgentId = AgentIdSchema.parse('agt_targetinternalid')
+const sourceAgentId = AgentIdSchema.parse('agt_sourceinternalid')
+const targetRevisionId = AgentRevisionIdSchema.parse('arev_targetinternal')
+const sourceRevisionId = AgentRevisionIdSchema.parse('arev_sourceinternal')
+const targetChannelId = ChannelIdSchema.parse('chn_target')
+const sourceChannelId = ChannelIdSchema.parse('chn_source')
+const qqChannelId = ChannelIdSchema.parse('chn_qq')
+const webConnectionId = ConnectionIdSchema.parse('con_web')
+const qqConnectionId = ConnectionIdSchema.parse('con_qq')
+const summaryExtensionId = ExtensionIdSchema.parse('ext_summary')
+const summaryRevisionId = ExtensionRevisionIdSchema.parse('xrv_summary')
+const targetEpisodeId = EpisodeIdSchema.parse('eps_target')
+const visibleEventId = ChannelEventIdSchema.parse('evt_visible')
+const qqEventId = ChannelEventIdSchema.parse('evt_qqvisible')
+const sentEventId = ChannelEventIdSchema.parse('evt_sent')
+const resourceIntentId = OutboundIntentIdSchema.parse('out_resources')
+const senderMemberId = ChannelMemberIdSchema.parse('mbr_sender')
+const targetMemberId = ChannelMemberIdSchema.parse('mbr_target')
+const imageAssetId = AssetIdSchema.parse('ast_image')
+const fileAssetId = AssetIdSchema.parse('ast_file')
+
+const productSnapshot = HostApiContracts.snapshot.response.parse({
   capabilityAvailability: {
     subagents: { available: true },
     webSearch: {
@@ -41,10 +76,11 @@ const productSnapshot = {
   models: [{ provider: 'deepseek', providerName: 'deepseek', id: 'deepseek-v4-flash', name: 'DeepSeek V4 Flash' }],
   agents: [
     {
-      id: 'agent-target-internal-id',
+      id: targetAgentId,
       displayName: '资料员',
       persona: '严谨、简洁',
-      currentRevisionId: 'revision-target-internal-id',
+      currentRevisionId: targetRevisionId,
+      createdAt: 1_725_000_000_000,
       runtimeStatus: 'running',
       model: { provider: 'deepseek', model: 'deepseek-v4-flash' },
       capabilities: {
@@ -55,13 +91,15 @@ const productSnapshot = {
         developmentShell: false,
         unrestrictedFileAccess: false,
       },
-      channels: ['channel-target'],
+      channels: [targetChannelId],
     },
     {
-      id: 'agent-source-internal-id',
+      id: sourceAgentId,
       displayName: '记录员',
       persona: '',
-      currentRevisionId: 'revision-source-internal-id',
+      currentRevisionId: sourceRevisionId,
+      createdAt: 1_725_000_000_100,
+      runtimeStatus: 'idle',
       model: { provider: 'deepseek', model: 'deepseek-v4-flash' },
       capabilities: {
         subagents: false,
@@ -71,31 +109,35 @@ const productSnapshot = {
         developmentShell: false,
         unrestrictedFileAccess: false,
       },
-      channels: ['channel-source'],
+      channels: [sourceChannelId],
     },
   ],
   channels: [
     {
-      id: 'channel-target',
-      connectionId: 'connection-web',
+      id: targetChannelId,
+      connectionId: webConnectionId,
       platformChannelId: 'platform-target',
       kind: 'web',
       displayName: '资料员的网页频道',
-      boundAgentId: 'agent-target-internal-id',
-      bindings: [{ id: 'binding-target', agentId: 'agent-target-internal-id', triggerPolicy: 'always' }],
+      boundAgentId: targetAgentId,
+      bindings: [
+        { channelId: targetChannelId, agentId: targetAgentId, triggerPolicy: 'always', boundAt: 1_725_000_000_000 },
+      ],
     },
     {
-      id: 'channel-source',
-      connectionId: 'connection-web',
+      id: sourceChannelId,
+      connectionId: webConnectionId,
       platformChannelId: 'platform-source',
       kind: 'web',
       displayName: '记录员的网页频道',
-      boundAgentId: 'agent-source-internal-id',
-      bindings: [{ id: 'binding-source', agentId: 'agent-source-internal-id', triggerPolicy: 'always' }],
+      boundAgentId: sourceAgentId,
+      bindings: [
+        { channelId: sourceChannelId, agentId: sourceAgentId, triggerPolicy: 'always', boundAt: 1_725_000_000_100 },
+      ],
     },
     {
-      id: 'channel-qq',
-      connectionId: 'connection-qq',
+      id: qqChannelId,
+      connectionId: qqConnectionId,
       platformChannelId: 'group:9CC4F6A7D6FE',
       kind: 'group',
       displayName: '产品讨论群',
@@ -105,84 +147,94 @@ const productSnapshot = {
   messages: [],
   connections: [
     {
-      id: 'connection-web',
+      id: webConnectionId,
       adapterKey: 'web',
-      status: 'active',
+      appId: '',
+      proactiveSend: false,
       credentialConfigured: true,
       channelCount: 2,
       knownChannels: [],
     },
     {
-      id: 'connection-qq',
+      id: qqConnectionId,
       adapterKey: 'qq-openclaw',
-      status: 'active',
       appId: '12345678',
       proactiveSend: false,
       credentialConfigured: true,
       channelCount: 1,
-      knownChannels: [{ id: 'channel-qq', name: 'group:9CC4F6A7D6FE', kind: 'group' }],
+      knownChannels: [{ id: qqChannelId, name: 'group:9CC4F6A7D6FE', kind: 'group' }],
       gateway: { state: 'connected' },
-      lastInbound: { receivedAt: 1_725_000_010_000 },
-      receiveTest: { status: 'received' },
-      sendTest: { status: 'sent' },
+      lastInbound: { channelId: qqChannelId, platformMessageId: 'qq-inbound', receivedAt: 1_725_000_010_000 },
+      receiveTest: { status: 'received', channelId: qqChannelId, platformMessageId: 'qq-inbound' },
+      sendTest: { status: 'sent', channelId: qqChannelId, platformMessageId: 'qq-outbound' },
     },
   ],
   extensions: [
     {
-      id: 'extension-summary',
+      id: summaryExtensionId,
       slug: 'group-summary',
       displayName: '群聊摘要',
       description: '把群聊讨论整理为可继续跟进的摘要。',
-      revisionNumber: 2,
-      revisionId: 'extension-revision-internal-id',
-      activation: 'active',
-      agentId: 'agent-target-internal-id',
+      createdByAgentId: targetAgentId,
+      revisions: [{ id: summaryRevisionId, revisionNumber: 2, createdAt: 1_725_000_000_000 }],
+      activations: [
+        {
+          agentId: targetAgentId,
+          extensionRevisionId: summaryRevisionId,
+          config: {},
+          activatedAt: 1_725_000_000_000,
+        },
+      ],
     },
   ],
   dynamic: [
     {
-      agentId: 'agent-target-internal-id',
+      agentId: targetAgentId,
+      episodeId: targetEpisodeId,
       pluginId: 'dynamic-plugin-internal-id',
       packageId: 'dynamic-package-internal-id',
       status: 'running',
     },
   ],
-} as const
+})
 
-const channelMessages = [
-  {
-    id: 'message-visible',
-    channelId: 'channel-target',
-    role: 'member',
-    parts: [{ type: 'text', text: '请复核今天的记录。' }],
-    occurredAt: 1_725_000_000_000,
-  },
-  {
-    id: 'message-qq-visible',
-    channelId: 'channel-qq',
-    role: 'member',
-    sender: { memberId: 'member-sender-internal-id', displayName: '成员甲' },
-    mentionedConnectionAccount: true,
-    parts: [
-      { type: 'text', text: '请和' },
-      { type: 'mention', memberId: 'member-target-internal-id', displayName: '成员乙' },
-      { type: 'text', text: '一起复核。' },
-    ],
-    occurredAt: 1_725_000_010_000,
-  },
-  {
-    id: 'message-resources',
-    channelId: 'channel-target',
-    role: 'agent',
-    parts: [
-      { type: 'text', text: '这是本次交付的资源。' },
-      { type: 'image', assetId: 'asset-image', alt: '界面预览图' },
-      { type: 'file', assetId: 'asset-file', name: '验收记录.txt' },
-    ],
-    occurredAt: 1_725_000_020_000,
-    deliveryState: 'sent',
-  },
-] as const
+const channelMessages = HostApiContracts.listChannelMessages.response.parse({
+  messages: [
+    {
+      id: visibleEventId,
+      channelId: targetChannelId,
+      role: 'member',
+      parts: [{ type: 'text', text: '请复核今天的记录。' }],
+      occurredAt: 1_725_000_000_000,
+    },
+    {
+      id: qqEventId,
+      channelId: qqChannelId,
+      role: 'member',
+      sender: { memberId: senderMemberId, displayName: '成员甲' },
+      mentionedConnectionAccount: true,
+      parts: [
+        { type: 'text', text: '请和' },
+        { type: 'mention', memberId: targetMemberId, displayName: '成员乙' },
+        { type: 'text', text: '一起复核。' },
+      ],
+      occurredAt: 1_725_000_010_000,
+    },
+    {
+      id: resourceIntentId,
+      channelId: targetChannelId,
+      role: 'agent',
+      parts: [
+        { type: 'text', text: '这是本次交付的资源。' },
+        { type: 'image', assetId: imageAssetId, alt: '界面预览图' },
+        { type: 'file', assetId: fileAssetId, name: '验收记录.txt' },
+      ],
+      occurredAt: 1_725_000_020_000,
+      deliveryState: 'sent',
+    },
+  ],
+  hasMore: false,
+}).messages
 
 const installRuntimeFailureGate = (page: Page): string[] => {
   const failures: string[] = []
@@ -209,7 +261,7 @@ const installProductRoutes = async (page: Page): Promise<void> => {
   await page.route('**/api/dynamic/*/inventory', (route) =>
     route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ rows: [] }) }),
   )
-  await page.route('**/api/channels/channel-target/assets/asset-image', (route) =>
+  await page.route(`**/api/channels/${targetChannelId}/assets/${imageAssetId}`, (route) =>
     route.fulfill({
       status: 200,
       contentType: 'image/svg+xml',
@@ -222,7 +274,7 @@ const installProductRoutes = async (page: Page): Promise<void> => {
       </svg>`,
     }),
   )
-  await page.route('**/api/channels/channel-target/assets/asset-file', (route) =>
+  await page.route(`**/api/channels/${targetChannelId}/assets/${fileAssetId}`, (route) =>
     route.fulfill({ status: 200, contentType: 'text/plain; charset=utf-8', body: '资源下载正常' }),
   )
 }
@@ -264,7 +316,7 @@ test('three desktop viewports remain usable in both themes and reduced motion', 
     for (const colorScheme of ['light', 'dark'] as const) {
       await page.setViewportSize(viewport)
       await page.emulateMedia({ colorScheme, reducedMotion: 'reduce' })
-      await page.goto('/channels/channel-target')
+      await page.goto(`/channels/${targetChannelId}`)
       await expect(page.getByRole('heading', { name: '资料员的网页频道' })).toBeVisible()
       await expect(page.getByText('请复核今天的记录。')).toBeVisible()
       await expect(page.getByRole('img', { name: '界面预览图' })).toBeVisible()
@@ -342,13 +394,13 @@ test('group conversations preserve sender and Mention semantics without exposing
   const failures = installRuntimeFailureGate(page)
   await installProductRoutes(page)
   await page.setViewportSize({ width: 1440, height: 900 })
-  await page.goto('/channels/channel-qq')
+  await page.goto(`/channels/${qqChannelId}`)
 
   await expect(page.getByText('成员甲', { exact: true })).toBeVisible()
   await expect(page.getByText('@机器人账号 请和 @成员乙 一起复核。', { exact: true })).toBeVisible()
   const visibleText = await page.locator('body').innerText()
-  expect(visibleText).not.toContain('member-sender-internal-id')
-  expect(visibleText).not.toContain('member-target-internal-id')
+  expect(visibleText).not.toContain(senderMemberId)
+  expect(visibleText).not.toContain(targetMemberId)
   expect(visibleText).not.toContain('group:9CC4F6A7D6FE')
   await assertViewportIntegrity(page)
   await capture(page, testInfo, 'qq-group-member-mentions')
@@ -363,7 +415,7 @@ test('redesigned relationship and lifecycle pages stay legible across representa
   const scenes = [
     { route: '/agents', text: '当前概览', width: 1440, height: 900, colorScheme: 'light' },
     {
-      route: '/agents/agent-target-internal-id?tab=capabilities',
+      route: `/agents/${targetAgentId}?tab=capabilities`,
       text: '完整文件访问',
       width: 1100,
       height: 720,
@@ -418,7 +470,8 @@ test('the product Client runtime approves, renders, and retracts a live DSH inte
   const calls: string[] = []
   const dynamicSummary = () => [
     {
-      agentId: 'agent-target-internal-id',
+      agentId: targetAgentId,
+      episodeId: targetEpisodeId,
       pluginId: 'client-probe-1',
       ...(phase === 'pending' ? { approvalRequestId: 'approval-1' } : { packageId: 'package-1' }),
       status: phase === 'pending' ? 'awaiting-approval' : phase === 'active' ? 'running' : 'stopped',
@@ -427,7 +480,7 @@ test('the product Client runtime approves, renders, and retracts a live DSH inte
   const inventoryRows = () => [
     {
       pluginId: 'client-probe-1',
-      agentId: 'agent-target-internal-id',
+      agentId: targetAgentId,
       packages: [
         {
           packageId: 'package-1',
@@ -443,6 +496,14 @@ test('the product Client runtime approves, renders, and retracts a live DSH inte
         packageId: 'package-1',
         mode: 'run',
         status: phase === 'pending' ? 'awaiting-approval' : phase === 'active' ? 'running' : 'stopped',
+        host: {
+          status: phase === 'pending' ? 'absent' : phase === 'active' ? 'running' : 'stopped',
+          waitingFor: [],
+        },
+        client: {
+          status: phase === 'pending' ? 'pending' : phase === 'active' ? 'running' : 'stopped',
+          waitingFor: [],
+        },
         ...(phase === 'pending' ? { approvalRequestId: 'approval-1', requiresApproval: true } : {}),
       },
     },
@@ -490,6 +551,7 @@ test('the product Client runtime approves, renders, and retracts a live DSH inte
         pluginId: 'client-probe-1',
         packageId: 'package-1',
         pluginRunId: 'run-1',
+        name: '即时界面探针',
         code: `return {
           inject: ['slots'],
           apply(ctx) {
@@ -530,7 +592,11 @@ test('the four-step creation wizard submits identity, model, and explicit capabi
     await route.fulfill({
       status: 201,
       contentType: 'application/json',
-      body: JSON.stringify({ agentId: 'created-agent', channelId: 'channel-target', connectionId: 'connection-web' }),
+      body: JSON.stringify({
+        agentId: AgentIdSchema.parse('agt_created'),
+        channelId: targetChannelId,
+        connectionId: webConnectionId,
+      }),
     })
   })
   await page.setViewportSize({ width: 1100, height: 720 })
@@ -548,7 +614,7 @@ test('the four-step creation wizard submits identity, model, and explicit capabi
   await expect(dialog.getByText('子智能体、动态创造、开发命令', { exact: true })).toBeVisible()
   await capture(page, testInfo, 'agent-create-confirmation')
   await dialog.getByRole('button', { name: '创建并打开频道' }).click()
-  await expect(page).toHaveURL(/\/channels\/channel-target$/u)
+  await expect(page).toHaveURL(new RegExp(`/channels/${targetChannelId}$`, 'u'))
   expect(submitted).toEqual({
     displayName: '研究员',
     persona: '先核对证据，再给出结论。',
@@ -623,7 +689,7 @@ test('dialog floating layers, Escape, focus return, and pending failure recovery
   await expect(dialog).toBeHidden()
   await expect(opener).toBeFocused()
 
-  await page.goto('/agents/agent-target-internal-id')
+  await page.goto(`/agents/${targetAgentId}`)
   await page.getByRole('tab', { name: '频道' }).click()
   await page.getByRole('button', { name: '绑定频道' }).click()
   const bindingDialog = page.getByRole('dialog')
@@ -635,10 +701,19 @@ test('dialog floating layers, Escape, focus return, and pending failure recovery
       return route.fulfill({
         status: 500,
         contentType: 'application/json',
-        body: JSON.stringify({ error: { message: '测试写入失败' } }),
+        body: JSON.stringify({ error: { code: 'binding-test-failure', message: '测试写入失败' } }),
       })
     }
-    return route.fulfill({ status: 201, contentType: 'application/json', body: '{}' })
+    return route.fulfill({
+      status: 201,
+      contentType: 'application/json',
+      body: JSON.stringify({
+        channelId: sourceChannelId,
+        agentId: targetAgentId,
+        triggerPolicy: 'always',
+        boundAt: 1_725_000_001_000,
+      }),
+    })
   })
 
   const confirm = bindingDialog.getByRole('button', { name: '绑定频道' })
@@ -672,6 +747,7 @@ test('model settings hide unconfigured providers behind the DSH-backed add flow'
             provider: 'configured-provider',
             displayName: '已配置供应商',
             settingsNs: 'llm-pi-ai',
+            settingsPath: ['providers', 'configured-provider'],
             settingsRevision: 3,
             declared: false,
             active: true,
@@ -683,6 +759,7 @@ test('model settings hide unconfigured providers behind the DSH-backed add flow'
             provider: 'catalog-candidate',
             displayName: '目录候选供应商',
             settingsNs: 'llm-pi-ai',
+            settingsPath: ['providers', 'catalog-candidate'],
             settingsRevision: 3,
             declared: false,
             active: false,
@@ -710,15 +787,18 @@ test('message composer sends with Enter and keeps Shift+Enter for a new line', a
   const failures = installRuntimeFailureGate(page)
   await installProductRoutes(page)
   const submitted: string[] = []
-  await page.route('**/api/channels/channel-target/messages', async (route) => {
-    const body = route.request().postDataJSON() as {
-      readonly parts?: readonly { readonly type?: string; readonly text?: string }[]
-    }
-    submitted.push(body.parts?.find((part) => part.type === 'text')?.text ?? '')
-    await route.fulfill({ status: 200, contentType: 'application/json', body: '{}' })
+  await page.route(`**/api/channels/${targetChannelId}/messages`, async (route) => {
+    const body = HostApiContracts.sendChannelMessage.request.parse(route.request().postDataJSON())
+    const textPart = body.parts.find((part) => part.type === 'text')
+    submitted.push(textPart?.text ?? '')
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({ channelEventId: sentEventId, inserted: true }),
+    })
   })
 
-  await page.goto('/channels/channel-target')
+  await page.goto(`/channels/${targetChannelId}`)
   const composer = page.getByLabel('消息内容')
   await composer.fill('第一行')
   await composer.press('Shift+Enter')

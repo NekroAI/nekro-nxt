@@ -181,27 +181,26 @@ export function CreatorPage() {
   const [saveError, setSaveError] = useState('')
   const [declinePending, setDeclinePending] = useState(false)
   const reviewItem = reviewIndex === null ? undefined : dynamic[reviewIndex]
+  const reviewApprovalRequestId = reviewItem?.approvalRequestId
   const selectedItem = dynamic[selectedIndex] ?? dynamic[0]
   const selectedAgent = selectedItem ? agents.find((agent) => agent.id === selectedItem.agentId) : undefined
   const eligibleAgents = agents.filter((agent) => agent.capabilities.dynamicCreation)
 
   const decline = async (): Promise<void> => {
-    if (!reviewItem?.approvalRequestId || declinePending) return
+    const item = reviewItem
+    const approvalRequestId = item?.approvalRequestId
+    if (!item || !approvalRequestId || declinePending) return
     setDeclinePending(true)
     try {
       await useProductStore.getState().resolveApproval({
-        requestId: reviewItem.approvalRequestId,
-        agentId: reviewItem.agentId,
+        requestId: approvalRequestId,
+        agentId: item.agentId,
         approved: false,
       })
       setReviewIndex(null)
-      notify('本次界面预览已拒绝。', 'success', `dynamic-approval:${reviewItem.approvalRequestId}`)
+      notify('本次界面预览已拒绝。', 'success', `dynamic-approval:${approvalRequestId}`)
     } catch (error) {
-      notify(
-        error instanceof Error ? error.message : String(error),
-        'error',
-        `dynamic-approval:${reviewItem.approvalRequestId}`,
-      )
+      notify(error instanceof Error ? error.message : String(error), 'error', `dynamic-approval:${approvalRequestId}`)
     } finally {
       setDeclinePending(false)
     }
@@ -427,7 +426,7 @@ export function CreatorPage() {
           {saveError ? <InlineFeedback tone="error">{saveError}</InlineFeedback> : null}
         </div>
       </ConfirmDialog>
-      {reviewItem?.approvalRequestId ? (
+      {reviewItem && reviewApprovalRequestId ? (
         <ConfirmDialog
           open={reviewIndex !== null}
           onOpenChange={(open) => {
@@ -439,17 +438,17 @@ export function CreatorPage() {
           onConfirm={async () => {
             try {
               await useProductStore.getState().resolveApproval({
-                requestId: reviewItem.approvalRequestId!,
+                requestId: reviewApprovalRequestId,
                 agentId: reviewItem.agentId,
                 approved: true,
               })
-              notify('本次界面预览已允许。', 'success', `dynamic-approval:${reviewItem.approvalRequestId}`)
+              notify('本次界面预览已允许。', 'success', `dynamic-approval:${reviewApprovalRequestId}`)
               return true
             } catch (error) {
               notify(
                 error instanceof Error ? error.message : String(error),
                 'error',
-                `dynamic-approval:${reviewItem.approvalRequestId}`,
+                `dynamic-approval:${reviewApprovalRequestId}`,
               )
               return false
             }

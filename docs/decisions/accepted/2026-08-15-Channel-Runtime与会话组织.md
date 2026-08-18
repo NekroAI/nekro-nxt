@@ -38,7 +38,7 @@ Connection
 
 OutboundMessageIntent
 └─ PhysicalDelivery[]
-   └─ DeliveryAttempt[] / DeliveryReceipt[]
+   └─ 当前最终回执
 ```
 
 建议最小字段：
@@ -46,31 +46,29 @@ OutboundMessageIntent
 #### `ChannelEvent`
 
 - `id`：NekroNxt 稳定 ID；
-- `channelId`、`connectionId`；
-- `adapterKey`、`platformEventId`、`platformMessageId`；
+- `channelId`、`logicalMessageId`、`platformMessageId?`；
 - `kind`：`message-created`、`message-edited`、`message-deleted`、`member-updated`、`reaction`、`control` 等可扩展联合；
 - `senderMemberId`；
 - `parts: MessagePart[]`；
-- `platformSequence?`、`platformTimestamp`、`receivedAt`；
+- `sourceTimestamp`、`receivedAt`；
 - `dedupeKey`；
-- `rawRef?`：受控诊断引用，不把不稳定原始对象当领域事实。
+- `facts?` 与派生 `searchText`；不把不稳定原始对象当领域事实。
 
 #### `AgentChannelEpisode`
 
 - `id`、`channelId`、`agentId`；
 - `agentRevisionId`；
-- `bindingRevisionId` 或 Binding 配置快照摘要；
 - `dshSessionId`；
-- `status`：`active`、`rolling-over`、`closed`、`failed`；
+- `status`：`opening`、`active`、`closed`、`failed`；摘要阶段不持久化 `rolling-over`；
 - `openedAtEventId`、`lastAdmittedEventId`、`closedAtEventId?`；
 - `closeReason?`：人工新会话、配置切换、长期空闲、恢复、错误等。
 
 #### `AdmissionBatch`
 
 - `id`、`episodeId`；
-- 有序 `channelEventIds`；
-- `reason`：触发、运行中注入、恢复补偿；
-- `state`：`pending`、`claimed`、`logged-to-session`、`rejected`；
+- 有序来源由 `admission_events` 关系表保存；
+- `mode`：`followup` 或 `inject`；
+- `state`：`pending`、`claimed`、`logged-to-session`；
 - 对应 DSH Message ID、Turn/Step 坐标；
 - `createdAt`、`claimedAt?`。
 
@@ -82,7 +80,6 @@ Admission 是连接 Channel Log 和 DSH Session Log 的证据，不复制整份�
 Adapter 事件
 → 规范化并验证
 → 按 dedupeKey 持久化 ChannelEvent
-→ 更新 Channel cursor/checkpoint
 → Binding Trigger Policy
 → 创建 AdmissionBatch
 → 空闲时 followup，运行中普通消息 inject
@@ -92,15 +89,15 @@ Adapter 事件
 
 #### 去重
 
-优先使用 `(connectionId, platformEventId)`；平台没有稳定事件 ID 时使用平台消息 ID、事件类型和稳定字段构造 Adapter 专属幂等键。哈希只能作为降级，不应用接收时间参与业务幂等键。
+Adapter 使用稳定字段构造 `dedupeKey`；平台没有稳定事件 ID 时可组合平台消息 ID、事件类型和稳定载荷字段。哈希只能作为降级，不应用接收时间参与业务幂等键。
 
 #### 顺序
 
-优先使用平台 sequence；否则按 `platformTimestamp + receivedAt + ChannelEventId` 建立确定性本地顺序。系统保留“平台顺序未知”的事实，不伪造强顺序保证。
+按 `sourceTimestamp + receivedAt + ChannelEventId` 建立确定性本地顺序。平台 sequence 只在 Adapter/Gateway 推进时使用，不作为重复的 Core Event 字段。
 
 #### 并发
 
-首期每个 Channel 只有一个活动智能体 Binding，对应一个 `(channelId, agentId)` Turn lane。一个智能体可以同时拥有多个频道 lane；多个事件可以并发入库，但每条 lane 的 Trigger、Admission claim 和 Episode rollover 串行化。频道换绑不会删除旧 Binding、Episode 或消息事实。
+首期每个 Channel 只有一个当前智能体 Binding，对应一个 `(channelId, agentId)` Turn lane。一个智能体可以同时拥有多个频道 lane；多个事件可以并发入库，但每条 lane 的 Trigger、Admission claim 和 Episode rollover 串行化。频道换绑只替换当前 Binding，旧 Episode、消息事实和 `binding-replaced` 关闭原因继续保留。
 
 ### 3. 工具执行期间的新消息
 
@@ -146,7 +143,7 @@ DSH 已有可直接使用的压缩能力，不需要 NekroNxt 重新实现第二
 切换步骤：
 
 ```text
-标记 rolling-over
+保持旧 Episode active，在 lane 内生成摘要与新 Session
 → 等待当前 Tool/Step 到安全间隙
 → flush DSH Session 与 Channel admission
 → 生成并持久化来源明确的 handoff summary/checkpoint

@@ -1,6 +1,7 @@
 import type { AdapterRuntimeStateStore } from '@nekro-nxt/adapter-sdk'
-import type { ConnectionId, JsonValue } from '@nekro-nxt/contracts'
+import { ConnectionIdSchema, type JsonValue } from '@nekro-nxt/contracts'
 import { describe, expect, it } from 'vitest'
+import { z } from 'zod'
 import {
   createQQGatewayCheckpointStore,
   QQGatewayClient,
@@ -9,6 +10,16 @@ import {
   type QQGatewayClock,
   type QQGatewaySocket,
 } from '../src/gateway.ts'
+
+const gatewayRequestSchema = z
+  .object({
+    op: z.number().int(),
+    d: z.record(z.string(), z.unknown()).optional(),
+  })
+  .passthrough()
+
+const parseGatewayRequest = (input: string): z.infer<typeof gatewayRequestSchema> =>
+  gatewayRequestSchema.parse(JSON.parse(input))
 
 const fakeClock = (now = 1_000): QQGatewayClock => ({
   now: () => now,
@@ -42,13 +53,15 @@ const socketFrom = (payloads: readonly unknown[], sent: string[]): QQGatewaySock
 
 describe('QQ Gateway resume and checkpoints', () => {
   it('persists a validated Connection-scoped resume checkpoint and clears corrupt state', async () => {
-    const connectionId = 'connection-qq' as ConnectionId
+    const connectionId = ConnectionIdSchema.parse('con_qq')
     let value: JsonValue | undefined
     let clears = 0
+    let saves = 0
     const states: AdapterRuntimeStateStore = {
       load: () => Promise.resolve(value),
       save: (_connectionId, _key, next) => {
         value = next
+        saves += 1
         return Promise.resolve()
       },
       clear: () => {
@@ -60,6 +73,16 @@ describe('QQ Gateway resume and checkpoints', () => {
     const store = createQQGatewayCheckpointStore(connectionId, states)
     await store.save({ appId: 'app', sessionId: 'session', sequence: 3, savedAt: 100 })
     await expect(store.load()).resolves.toEqual({ appId: 'app', sessionId: 'session', sequence: 3, savedAt: 100 })
+    await expect(store.save({ appId: 'app', sessionId: 'session', sequence: 4, savedAt: Number.NaN })).rejects.toThrow()
+    const invalidCheckpoint: QQGatewayCheckpoint & { readonly unexpected: boolean } = {
+      appId: 'app',
+      sessionId: 'session',
+      sequence: 4,
+      savedAt: 101,
+      unexpected: true,
+    }
+    await expect(store.save(invalidCheckpoint)).rejects.toThrow()
+    expect(saves).toBe(1)
     value = { appId: 'app', sequence: 'invalid' }
     await expect(store.load()).resolves.toBeUndefined()
     expect(clears).toBe(1)
@@ -106,13 +129,13 @@ describe('QQ Gateway resume and checkpoints', () => {
       checkpoints: store,
       clock: fakeClock(),
       onDispatch: (_type, data) => {
-        const id = String(data.id)
+        const id = String(data['id'])
         committed.push(id)
         return Promise.resolve(id === 'committed')
       },
     })
     await expect(first.connectOnce(new AbortController().signal)).resolves.toBe('reconnect')
-    expect(JSON.parse(firstSent[0]!)).toMatchObject({ op: 2, d: { token: 'QQBot token-1' } })
+    expect(parseGatewayRequest(firstSent[0]!)).toMatchObject({ op: 2, d: { token: 'QQBot token-1' } })
     expect(committed).toEqual(['not-committed'])
     expect(checkpoint).toEqual({ appId: 'app-1', sessionId: 'session-1', sequence: 1, savedAt: 1_000 })
 
@@ -132,7 +155,7 @@ describe('QQ Gateway resume and checkpoints', () => {
       onDispatch: () => Promise.resolve(true),
     })
     await resumed.connectOnce(new AbortController().signal)
-    expect(JSON.parse(resumeSent[0]!)).toEqual({
+    expect(parseGatewayRequest(resumeSent[0]!)).toEqual({
       op: 6,
       d: { token: 'QQBot token-2', session_id: 'session-1', seq: 1 },
     })
@@ -174,7 +197,7 @@ describe('QQ Gateway resume and checkpoints', () => {
       onDispatch: () => Promise.resolve(true),
     })
     await expect(client.connectOnce(new AbortController().signal)).resolves.toBe('invalid-session')
-    expect(JSON.parse(sent[0]!)).toMatchObject({ op: 2 })
+    expect(parseGatewayRequest(sent[0]!)).toMatchObject({ op: 2 })
     expect(clears).toBe(2)
     expect(checkpoint).toBeUndefined()
   })
@@ -215,7 +238,7 @@ describe('QQ Gateway resume and checkpoints', () => {
       },
       clock: fakeClock(),
       onDispatch: (_type, data) => {
-        dispatched.push(String(data.id))
+        dispatched.push(String(data['id']))
         return Promise.resolve(true)
       },
     })
