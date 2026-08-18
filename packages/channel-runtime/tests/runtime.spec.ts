@@ -194,6 +194,24 @@ class MemoryCoreRepository implements CoreRepository {
   getChannelEvent(id: ChannelEventId) {
     return [...this.events.values()].find((event) => event.id === id)
   }
+  listChannelEvents(
+    channelId: ChannelId,
+    options: {
+      readonly before?: { readonly receivedAt: number; readonly id: ChannelEventId }
+      readonly limit?: number
+    } = {},
+  ) {
+    return [...this.events.values()]
+      .filter(
+        (event) =>
+          event.channelId === channelId &&
+          (options.before === undefined ||
+            event.receivedAt < options.before.receivedAt ||
+            (event.receivedAt === options.before.receivedAt && event.id < options.before.id)),
+      )
+      .sort((left, right) => left.receivedAt - right.receivedAt || left.id.localeCompare(right.id))
+      .slice(-(options.limit ?? 12))
+  }
   resolvePlatformMessage(connectionId: ConnectionId, channelId: ChannelId, platformMessageId: string) {
     const event = [...this.events.values()].find(
       (candidate) =>
@@ -297,6 +315,14 @@ class MemoryRuntimeRepository implements RuntimeRepository {
   }): void {
     this.closeEpisode(input.fromEpisodeId, input.reason, input.closedAtEventId, input.closedAt)
     this.episodes.set(input.nextEpisode.id, input.nextEpisode)
+    for (const [id, admission] of this.admissions) {
+      if (
+        admission.episodeId === input.fromEpisodeId &&
+        (admission.state === 'pending' || admission.state === 'claimed')
+      ) {
+        this.admissions.set(id, { ...admission, episodeId: input.nextEpisode.id })
+      }
+    }
     this.handoffs.push(input.handoff)
   }
   failEpisode(id: EpisodeId): void {
@@ -310,6 +336,16 @@ class MemoryRuntimeRepository implements RuntimeRepository {
       (admission) =>
         admission.episodeId === episodeId && (admission.state === 'pending' || admission.state === 'claimed'),
     )
+  }
+  listAdmittedEventIds(channelId: ChannelId, agentId: AgentId) {
+    const episodeIds = new Set(
+      [...this.episodes.values()]
+        .filter((episode) => episode.channelId === channelId && episode.agentId === agentId)
+        .map(({ id }) => id),
+    )
+    return [...this.admissions.values()]
+      .filter((admission) => episodeIds.has(admission.episodeId) && admission.state === 'logged-to-session')
+      .flatMap(({ channelEventIds }) => [...channelEventIds])
   }
   claimAdmission(id: AdmissionId, claimedAt: number): void {
     const record = this.requiredAdmission(id)
@@ -527,6 +563,16 @@ describe('ChannelRuntime M1 lane', () => {
     expect(context.adapter.deliveries).toHaveLength(3)
   })
 
+  it('batches triggered Channel Events that were persisted before a runtime failure', async () => {
+    const context = await setup()
+    await context.runtime.acceptInbound(inbound(context.connection.id, context.channel.id, 'event-1', 101))
+    context.core.appendInbound(inbound(context.connection.id, context.channel.id, 'event-2', 102))
+    await context.runtime.acceptInbound(inbound(context.connection.id, context.channel.id, 'event-3', 103))
+    const admissions = [...context.runtimeRepository.admissions.values()]
+    expect(admissions).toHaveLength(2)
+    expect(admissions[1]?.channelEventIds).toHaveLength(2)
+  })
+
   it('applies display-only revisions in place and rolls incompatible revisions into a handoff Session', async () => {
     const context = await setup()
     await context.runtime.acceptInbound(inbound(context.connection.id, context.channel.id))
@@ -549,7 +595,7 @@ describe('ChannelRuntime M1 lane', () => {
       persona: '这一修改会改变模型输入。',
       model: { provider: 'deepseek', model: 'v4' },
     })
-    await context.runtime.acceptInbound(inbound(context.connection.id, context.channel.id, 'event-3'))
+    await context.runtime.acceptInbound(inbound(context.connection.id, context.channel.id, 'event-3', 103))
     expect(context.runtimeRepository.getEpisode(episode.id)).toMatchObject({
       status: 'closed',
       closeReason: 'incompatible-revision',
@@ -560,6 +606,7 @@ describe('ChannelRuntime M1 lane', () => {
     expect(active?.id).not.toBe(episode.id)
     expect(active?.dshSessionId).not.toBe(episode.dshSessionId)
     expect(context.runtimeRepository.handoffs).toHaveLength(1)
+    expect(context.runtimeRepository.handoffs[0]?.recentEventIds).toHaveLength(2)
     expect(context.runtimeRepository.admissions).toHaveLength(3)
   })
 

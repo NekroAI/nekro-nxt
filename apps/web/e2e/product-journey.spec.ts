@@ -48,6 +48,22 @@ test('settings exposes the provider editor and survives real navigation', async 
   expect(failures, failures.join('\n')).toEqual([])
 })
 
+test('DSH extension settings load the official native surface and generic fallback from the production bundle', async ({
+  page,
+}) => {
+  const failures = installRuntimeFailureGate(page)
+  await page.goto('/settings?tab=dsh-extensions')
+
+  await expect(page.getByText('DeepSeek 网页搜索', { exact: true }).first()).toBeVisible()
+  await expect(page.locator('[data-dsh-native-surface]')).toBeVisible()
+  await expect(page.locator('[data-dsh-native-surface]')).toContainText(/Web search|网页搜索/u)
+  await page.getByRole('tab', { name: '通用配置' }).click()
+  await expect(page.getByText('Namespace：web-search-deepseek', { exact: true })).toBeVisible()
+  await expect(page.getByLabel('新的凭据值')).toHaveAttribute('type', 'password')
+
+  expect(failures, failures.join('\n')).toEqual([])
+})
+
 test('settings saves a built-in provider credential without exposing it again', async ({ page }) => {
   const failures = installRuntimeFailureGate(page)
   await page.goto('/settings')

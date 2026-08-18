@@ -87,8 +87,12 @@ import {
   parseMessageParts,
   type AdmissionId,
   type AgentRevisionId,
+  type DshCredentialView,
+  type DshSettingsNamespaceView,
+  type DshSettingsPathOperation,
   type EpisodeId,
   type JsonValue,
+  type PluginSupportAssessment,
 } from '@nekro-nxt/contracts'
 import type {
   AgentRevisionRecord,
@@ -135,6 +139,7 @@ declare module '@deepseek-ai/dsh-llm' {
       readonly kind: 'nekro-nxt-handoff'
       readonly handoffId: string
       readonly fromEpisodeId: string
+      readonly recentEventIds: readonly string[]
       readonly form: 'recall'
     }
   }
@@ -188,6 +193,141 @@ const HOST_DSH_PACKAGE_VERSIONS = {
   '@deepseek-ai/dsh-web': '0.1.0-rc.6',
   '@deepseek-ai/dsh-web-search-deepseek': '0.1.0-rc.6',
 } as const
+
+interface DshRosterEntry {
+  readonly packageName: keyof typeof HOST_DSH_PACKAGE_VERSIONS
+  readonly settingsNamespaces?: readonly string[]
+  readonly facets: readonly ('settings' | 'tools' | 'providers' | 'scope-bundle-preset')[]
+  readonly externallyVerified: boolean
+  readonly nativeClientUi?: boolean
+}
+
+/** Explicit production composition; this is not a second plugin loader. */
+const DSH_CAPABILITY_ROSTER: readonly DshRosterEntry[] = [
+  {
+    packageName: '@deepseek-ai/dsh-llm-pi-ai',
+    settingsNamespaces: ['llm-pi-ai'],
+    facets: ['settings', 'providers'],
+    externallyVerified: true,
+  },
+  {
+    packageName: '@deepseek-ai/dsh-subagent',
+    facets: ['providers'],
+    externallyVerified: true,
+  },
+  {
+    packageName: '@deepseek-ai/dsh-subagent-spawn-in-process',
+    facets: ['providers'],
+    externallyVerified: true,
+  },
+  {
+    packageName: '@deepseek-ai/dsh-tool-subagent',
+    facets: ['tools', 'scope-bundle-preset'],
+    externallyVerified: true,
+  },
+  {
+    packageName: '@deepseek-ai/dsh-tool-subagent-control',
+    facets: ['tools', 'scope-bundle-preset'],
+    externallyVerified: true,
+  },
+  {
+    packageName: '@deepseek-ai/dsh-web',
+    facets: ['providers'],
+    externallyVerified: true,
+  },
+  {
+    packageName: '@deepseek-ai/dsh-web-search-deepseek',
+    settingsNamespaces: ['web-search-deepseek'],
+    facets: ['settings', 'providers'],
+    externallyVerified: true,
+    nativeClientUi: true,
+  },
+  {
+    packageName: '@deepseek-ai/dsh-tool-web',
+    facets: ['tools', 'scope-bundle-preset'],
+    externallyVerified: true,
+  },
+  {
+    packageName: '@deepseek-ai/dsh-compaction-tool-result-pruner',
+    facets: [],
+    externallyVerified: true,
+  },
+  {
+    packageName: '@deepseek-ai/dsh-llm-retry',
+    facets: [],
+    externallyVerified: true,
+  },
+  {
+    packageName: '@deepseek-ai/dsh-tool-call-timeout-policy',
+    facets: [],
+    externallyVerified: true,
+  },
+  {
+    packageName: '@deepseek-ai/dsh-spill-policy',
+    facets: ['tools'],
+    externallyVerified: true,
+  },
+  {
+    packageName: '@deepseek-ai/dsh-cordis-host-runner',
+    facets: ['tools', 'scope-bundle-preset'],
+    externallyVerified: true,
+  },
+] as const
+
+const DSH_SETTINGS_OWNER = new Map(
+  DSH_CAPABILITY_ROSTER.flatMap((entry) =>
+    (entry.settingsNamespaces ?? []).map((ns) => [ns, entry.packageName] as const),
+  ),
+)
+
+interface SerializedSchemaNode {
+  readonly type?: unknown
+  readonly meta?: { readonly role?: unknown; readonly default?: unknown }
+  readonly inner?: unknown
+  readonly dict?: Readonly<Record<string, unknown>>
+  readonly list?: readonly unknown[]
+}
+
+/**
+ * rc.6 redaction only walks object/dict/array containers and serialized
+ * schemas retain Secret defaults. Refuse descriptors whose Secret nodes can
+ * escape either rule instead of treating prompt/UI behavior as a wire bound.
+ */
+export function isDshSettingsSchemaWireSafe(serialized: unknown): boolean {
+  if (typeof serialized !== 'object' || serialized === null) return false
+  const envelope = serialized as { readonly uid?: unknown; readonly refs?: unknown }
+  if (typeof envelope.uid !== 'number' || typeof envelope.refs !== 'object' || envelope.refs === null) return false
+  const refs = envelope.refs as Readonly<Record<string, unknown>>
+  const resolveNode = (reference: unknown): SerializedSchemaNode | undefined => {
+    const candidate = typeof reference === 'number' ? refs[String(reference)] : reference
+    return typeof candidate === 'object' && candidate !== null ? candidate : undefined
+  }
+  const visited = new WeakMap<object, number>()
+  let safe = true
+  const visit = (reference: unknown, redactorCanReach: boolean): void => {
+    const node = resolveNode(reference)
+    if (!node || !safe) return
+    const bit = redactorCanReach ? 1 : 2
+    const previous = visited.get(node) ?? 0
+    if ((previous & bit) !== 0) return
+    visited.set(node, previous | bit)
+    if (node.meta?.role === 'secret') {
+      if (!redactorCanReach || Object.prototype.hasOwnProperty.call(node.meta, 'default')) safe = false
+    }
+    const type = typeof node.type === 'string' ? node.type : ''
+    if (node.dict) {
+      const supported = redactorCanReach && type === 'object'
+      for (const child of Object.values(node.dict)) visit(child, supported)
+    }
+    if (node.inner !== undefined) {
+      const supported = redactorCanReach && (type === 'dict' || type === 'array')
+      visit(node.inner, supported)
+    }
+    for (const child of node.list ?? []) visit(child, false)
+  }
+  visit(envelope.uid, true)
+  return safe
+}
 
 export function assertHostDshPackageVersions(): void {
   const require = createRequire(import.meta.url)
@@ -1057,6 +1197,216 @@ export class DshHostRuntime implements AgentSessionDriver, ExtensionActivationHo
     return { ...fallback, available: credentialConfigured, credentialConfigured, credentialReference }
   }
 
+  /** Project the explicit production roster and current public DSH registrations. */
+  listDshPluginSupport(): readonly PluginSupportAssessment[] {
+    this.#assertActive()
+    const liveNamespaces = new Set(
+      this.#hasLlmSettings
+        ? this.#context.settings
+            .describe({ redactSecrets: true })
+            .filter((descriptor) => isDshSettingsSchemaWireSafe(descriptor.schema))
+            .map((descriptor) => String(descriptor.ns))
+        : [],
+    )
+    const require = createRequire(import.meta.url)
+    return DSH_CAPABILITY_ROSTER.map((entry) => {
+      const manifest = require(`${entry.packageName}/package.json`) as {
+        readonly dsh?: { readonly client?: { readonly platform?: unknown; readonly inject?: unknown } }
+      }
+      const expectedNamespaces = entry.settingsNamespaces ?? []
+      const missingNamespaces = expectedNamespaces.filter((ns) => !liveNamespaces.has(ns))
+      const hasClient = entry.nativeClientUi === true || manifest.dsh?.client?.platform === 'web'
+      const facets: PluginSupportAssessment['facets'] = [
+        {
+          facet: 'host-load',
+          status: 'supported',
+          evidence: [
+            {
+              level: 'activation',
+              code: 'fixed-roster-active',
+              message: '该精确版本已由当前 Host 固定组装并完成启动。',
+            },
+          ],
+        },
+        {
+          facet: 'service-injection',
+          status: 'supported',
+          evidence: [
+            {
+              level: 'integration',
+              code: 'host-composition-satisfied',
+              message: '当前生产组合已满足插件公开 Service 注入。',
+            },
+          ],
+        },
+        {
+          facet: 'lifecycle',
+          status: 'supported',
+          evidence: [
+            {
+              level: 'lifecycle',
+              code: 'host-owned-fiber',
+              message: '插件 Fiber 由 DSH Host 根生命周期拥有并在关闭时等待 dispose。',
+            },
+          ],
+        },
+        ...(['settings', 'tools', 'providers', 'scope-bundle-preset'] as const).map((facet) => {
+          const declared = entry.facets.includes(facet)
+          const settingsFailed = facet === 'settings' && missingNamespaces.length > 0
+          return {
+            facet,
+            status: settingsFailed
+              ? ('failed' as const)
+              : declared
+                ? ('supported' as const)
+                : ('not-applicable' as const),
+            evidence: declared
+              ? [
+                  {
+                    level: entry.externallyVerified ? ('external-result' as const) : ('activation' as const),
+                    code: settingsFailed ? 'settings-registration-missing' : 'roster-capability-verified',
+                    message: settingsFailed
+                      ? `预期 Settings namespace 未注册：${missingNamespaces.join('、')}`
+                      : '当前锁定版本已通过对应能力面的真实组装测试。',
+                  },
+                ]
+              : [],
+          }
+        }),
+        {
+          facet: 'client-ui',
+          status: entry.nativeClientUi === true ? 'supported' : hasClient ? 'unsupported' : 'not-applicable',
+          evidence: hasClient
+            ? [
+                {
+                  level: entry.nativeClientUi === true ? 'integration' : 'metadata',
+                  code: entry.nativeClientUi === true ? 'native-settings-fixture' : 'client-runtime-not-mounted',
+                  message:
+                    entry.nativeClientUi === true
+                      ? '已通过官方 DSH 插件配置界面与 NekroNxt Client Bridge 的真实渲染测试。'
+                      : '包声明了 DSH Web Client，但当前 Host 尚未开放该 Client bundle。',
+                },
+              ]
+            : [],
+        },
+      ]
+      const failed = facets.some((facet) => facet.status === 'failed')
+      const partial = facets.some((facet) => facet.status === 'unsupported')
+      return {
+        packageName: entry.packageName,
+        packageVersion: HOST_DSH_PACKAGE_VERSIONS[entry.packageName],
+        dshVersion: '0.1.0-rc.6',
+        origin: 'builtin',
+        overall: failed
+          ? 'incompatible'
+          : partial
+            ? 'partial'
+            : entry.externallyVerified
+              ? 'verified'
+              : 'loadable-unverified',
+        facets,
+        settingsNamespaces: expectedNamespaces.filter((ns) => liveNamespaces.has(ns)),
+      }
+    })
+  }
+
+  /** Return every live DSH Settings namespace without exposing secret values. */
+  listDshSettings(): readonly DshSettingsNamespaceView[] {
+    this.#assertActive()
+    if (!this.#hasLlmSettings) return []
+    return this.#context.settings
+      .describe({ redactSecrets: true })
+      .filter((descriptor) => isDshSettingsSchemaWireSafe(descriptor.schema))
+      .map((descriptor) => this.#projectDshSettingsDescriptor(descriptor))
+  }
+
+  async mutateDshSettings(
+    ns: string,
+    expectedRevision: number,
+    ops: readonly DshSettingsPathOperation[],
+  ): Promise<DshSettingsNamespaceView> {
+    this.#assertActive()
+    if (!this.#hasLlmSettings) throw new Error('DSH 设置服务未启用。')
+    const branded = settingsNamespace(ns)
+    const before = this.#context.settings
+      .describe({ redactSecrets: true })
+      .find((candidate) => candidate.ns === branded)
+    if (!before) throw new Error(`DSH Settings namespace 不存在：${ns}`)
+    if (!isDshSettingsSchemaWireSafe(before.schema)) {
+      throw new Error(`DSH Settings namespace 含有 rc.6 无法安全脱敏的 Schema：${ns}`)
+    }
+    await this.#context.settings.mutate(branded, ops, expectedRevision)
+    const descriptor = this.#context.settings
+      .describe({ redactSecrets: true })
+      .find((candidate) => candidate.ns === branded)
+    if (!descriptor) throw new Error(`DSH Settings namespace 在保存后已卸载：${ns}`)
+    return this.#projectDshSettingsDescriptor(descriptor)
+  }
+
+  async describeDshCredentials(refs: readonly string[]): Promise<Readonly<Record<string, DshCredentialView>>> {
+    this.#assertActive()
+    if (!this.#hasLlmSettings) return {}
+    return Object.fromEntries(
+      await Promise.all(
+        refs.map(async (ref) => {
+          const info = await this.#context.credentials.describe(credentialRef(ref))
+          return [ref, info] as const
+        }),
+      ),
+    )
+  }
+
+  async setDshCredential(ref: string, value: string): Promise<DshCredentialView> {
+    this.#assertActive()
+    if (!this.#hasLlmSettings) throw new Error('DSH 凭据服务未启用。')
+    const branded = credentialRef(ref)
+    await this.#context.credentials.set(branded, value)
+    return await this.#context.credentials.describe(branded)
+  }
+
+  async unsetDshCredential(ref: string): Promise<DshCredentialView> {
+    this.#assertActive()
+    if (!this.#hasLlmSettings) throw new Error('DSH 凭据服务未启用。')
+    const branded = credentialRef(ref)
+    await this.#context.credentials.unset(branded)
+    return await this.#context.credentials.describe(branded)
+  }
+
+  onDshSettingsChanged(listener: (ns: string, revision: number) => void): () => void {
+    this.#assertActive()
+    return this.#context.on('settings/document-updated', (ns, revision) => {
+      listener(String(ns), revision)
+    })
+  }
+
+  onDshCredentialChanged(listener: (ref: string) => void): () => void {
+    this.#assertActive()
+    return this.#context.on('credentials/updated', (ref) => {
+      listener(String(ref))
+    })
+  }
+
+  #projectDshSettingsDescriptor(
+    descriptor: ReturnType<Context['settings']['describe']>[number],
+  ): DshSettingsNamespaceView {
+    const ns = String(descriptor.ns)
+    const owner = DSH_SETTINGS_OWNER.get(ns)
+    return {
+      ns,
+      schema: descriptor.schema,
+      resolved: descriptor.value,
+      ...(descriptor.base === undefined ? {} : { base: descriptor.base }),
+      ...(descriptor.user === undefined ? {} : { user: descriptor.user }),
+      applies: descriptor.applies,
+      secrets: (descriptor.secrets ?? []).map((secret) => ({ path: [...secret.path], set: secret.set })),
+      revision: descriptor.revision,
+      writable: this.#context.settings.writable,
+      ...(owner === undefined
+        ? {}
+        : { owner: { packageName: owner, packageVersion: HOST_DSH_PACKAGE_VERSIONS[owner] } }),
+    }
+  }
+
   /** Persist one DSH provider profile, then store a supplied key through the write-only credential seam. */
   async saveLlmProvider(input: SaveLlmProviderInput): Promise<LlmProviderSettingsView> {
     this.#assertActive()
@@ -1261,11 +1611,27 @@ export class DshHostRuntime implements AgentSessionDriver, ExtensionActivationHo
               type: 'text',
               text: `这是上一段连续对话的交接摘要。把它视为有来源的既有背景，并从新消息继续：\n\n${input.handoff.summary}`,
             },
+            {
+              type: 'text',
+              text:
+                input.handoff.recentEvents.length === 0
+                  ? '最近频道原文窗口：无。需要细节时，请使用 conversation_history_search 或 conversation_history_read 回查当前频道。'
+                  : '最近频道原文窗口如下。它们是当前频道的原始记录，不是摘要；如果需要更早内容，请使用 conversation_history_search 或 conversation_history_read 回查。',
+            },
+            ...(await input.handoff.recentEvents.reduce<Promise<ContentBlock[]>>(async (previous, event) => {
+              const blocks = await previous
+              return [
+                ...blocks,
+                { type: 'text', text: `[原文 ${event.id}]` },
+                ...(await this.#projectEvent(sessionId, event)),
+              ]
+            }, Promise.resolve([]))),
           ],
           source: {
             kind: 'nekro-nxt-handoff',
             handoffId: input.handoff.id,
             fromEpisodeId: input.handoff.fromEpisodeId,
+            recentEventIds: input.handoff.recentEvents.map(({ id }) => id),
             form: 'recall',
           },
         }),
@@ -1342,29 +1708,35 @@ export class DshHostRuntime implements AgentSessionDriver, ExtensionActivationHo
         content: [
           {
             type: 'text',
-            text: `请根据以下频道原文生成交接摘要。\n来源边界：${input.sourceEvents.map(({ id }) => id).join(' → ')}\n\n${transcript}`,
+            text: `请根据以下频道原文生成交接摘要。\n来源边界：${input.sourceEvents.map(({ id }) => id).join(' → ')}\n\n${transcript}\n\n要求：尽量压缩，只保留未完成目标、用户明确约束、关键决定和仍有效的资源引用。不要猜测缺失内容。新 Session 会收到最近原文窗口；如果仍缺少细节，请使用 conversation_history_search 或 conversation_history_read 回查当前频道。`,
           },
         ],
         source: { kind: 'plugin', plugin: 'nekro-nxt-channel-runtime', form: 'recall' },
       })
       let summary = ''
-      let finishKind: string | undefined
-      for await (const chunk of this.#context.llm.stream({
-        provider: input.revision.model.provider,
-        model: input.revision.model.model,
-        system:
-          '你是对话交接摘要器。只输出简洁中文摘要，保留未完成目标、用户明确约束、关键决定和仍有效的资源引用；不要声称发送消息，不要调用工具。',
-        messages: [message],
-        maxTokens: 1024,
-        signal,
-      })) {
-        if (chunk.type === 'text-delta') summary += chunk.text
-        if (chunk.type === 'finish') finishKind = chunk.reason.kind
+      try {
+        for await (const chunk of this.#context.llm.stream({
+          provider: input.revision.model.provider,
+          model: input.revision.model.model,
+          system:
+            '你是对话交接摘要器。尽量压缩交接内容，只保留未完成目标、用户明确约束、关键决定和仍有效的资源引用。不要猜测缺失内容，不要调用工具。若需要原文细节，提醒后续智能体使用当前频道历史工具回查。',
+          messages: [message],
+          signal: AbortSignal.any([signal, AbortSignal.timeout(180_000)]),
+        })) {
+          if (chunk.type === 'text-delta') summary += chunk.text
+        }
+      } catch {
+        // Handoff is advisory. A failed or incomplete summary must not block rollover.
       }
-      if (finishKind !== 'stop')
-        throw new Error(`Handoff summarization did not stop cleanly: ${finishKind ?? 'missing'}`)
       summary = summary.trim()
-      if (summary.length === 0) throw new Error('Handoff summarization returned no text.')
+      if (summary.length === 0) {
+        summary = [
+          '模型交接摘要不可用；不要假设旧上下文已经完整恢复。',
+          `旧 Episode：${input.episode.id}`,
+          `来源边界：${input.sourceEvents.map(({ id }) => id).join(' → ') || '无'}`,
+          '需要更早细节时，请使用 conversation_history_search 或 conversation_history_read 回查当前频道。',
+        ].join('\n')
+      }
       return {
         summary,
         provider: input.revision.model.provider,

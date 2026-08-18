@@ -266,10 +266,10 @@ describe('NekroNxt product shell', () => {
     expect(runtime).not.toContain('SQLite')
   })
 
-  it('does not expose implementation provenance in model settings', () => {
+  it('keeps model settings product-facing while exposing the separate DSH extension surface', () => {
     const markup = renderRoute('/settings')
     expect(markup).toContain('模型供应商')
-    expect(markup).not.toContain('DSH')
+    expect(markup).toContain('DSH 扩展')
     expect(markup).not.toContain('Provider ID')
     expect(markup).not.toContain('Revision')
   })
@@ -490,6 +490,267 @@ describe.sequential('NekroNxt browser projections', () => {
       await playwrightExpect(page.locator('body')).not.toContainText('approval-internal-id')
     })
   })
+
+  it('loads the official DSH settings surface through the shared Client Runtime and theme bridge', async () => {
+    const page = await browser.newPage({ viewport: { width: 1440, height: 900 } })
+    const runtimeErrors: string[] = []
+    page.on('pageerror', (error) => runtimeErrors.push(error.message))
+    page.on('console', (message) => {
+      if (message.type() === 'error' && !message.text().includes('status of 409')) runtimeErrors.push(message.text())
+    })
+    const schema = {
+      uid: 47,
+      refs: {
+        30: { type: 'string', meta: { role: 'secret' } },
+        33: { type: 'string', meta: { role: 'credential-ref', default: 'DEEPSEEK_API_KEY' } },
+        34: { type: 'string', meta: {} },
+        36: { type: 'string', meta: { default: 'deepseek-v4-flash' } },
+        38: { type: 'string', meta: { default: '2023-06-01' } },
+        42: { type: 'number', meta: { step: 1, min: 1, default: 1024 } },
+        46: { type: 'number', meta: { step: 1, min: 1, default: 2 } },
+        47: {
+          type: 'object',
+          meta: { default: {} },
+          dict: { apiKey: 30, apiKeyEnv: 33, baseURL: 34, model: 36, apiVersion: 38, maxTokens: 42, maxUses: 46 },
+        },
+      },
+    }
+    const namespace = {
+      ns: 'web-search-deepseek',
+      schema,
+      resolved: {
+        apiKeyEnv: 'DEEPSEEK_API_KEY',
+        baseURL: 'https://api.deepseek.com/anthropic/v1',
+        model: 'deepseek-v4-flash',
+        apiVersion: '2023-06-01',
+        maxTokens: 1024,
+        maxUses: 2,
+      },
+      base: {
+        apiKeyEnv: 'DEEPSEEK_API_KEY',
+        baseURL: 'https://api.deepseek.com/anthropic/v1',
+        model: 'deepseek-v4-flash',
+        apiVersion: '2023-06-01',
+        maxTokens: 1024,
+        maxUses: 2,
+      },
+      user: {},
+      applies: 'live',
+      secrets: [{ path: ['apiKey'], set: false }],
+      revision: 0,
+      writable: true,
+      owner: { packageName: '@deepseek-ai/dsh-web-search-deepseek', packageVersion: '0.1.0-rc.6' },
+    }
+    const mutations: unknown[] = []
+    const credentialWrites: unknown[] = []
+    await page.route('**/api/snapshot', (request) =>
+      request.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(browserSnapshot) }),
+    )
+    await page.route('**/api/events', (request) =>
+      request.fulfill({ status: 200, contentType: 'text/event-stream', body: '' }),
+    )
+    await page.route('**/api/dsh/plugins', (request) =>
+      request.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({
+          plugins: [
+            {
+              packageName: '@deepseek-ai/dsh-web-search-deepseek',
+              packageVersion: '0.1.0-rc.6',
+              dshVersion: '0.1.0-rc.6',
+              origin: 'builtin',
+              overall: 'verified',
+              settingsNamespaces: ['web-search-deepseek'],
+              facets: [
+                { facet: 'host-load', status: 'supported', evidence: [] },
+                { facet: 'settings', status: 'supported', evidence: [] },
+                { facet: 'client-ui', status: 'supported', evidence: [] },
+              ],
+            },
+          ],
+        }),
+      }),
+    )
+    await page.route('**/api/dsh/settings', (request) =>
+      request.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({ namespaces: [namespace] }),
+      }),
+    )
+    await page.route('**/api/dsh/credentials/describe', (request) =>
+      request.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({ credentials: { DEEPSEEK_API_KEY: { configured: false, writable: true } } }),
+      }),
+    )
+    await page.route('**/api/dsh/settings/web-search-deepseek/mutate', async (route) => {
+      const body = route.request().postDataJSON() as Record<string, unknown>
+      mutations.push(body)
+      if (mutations.length > 1) {
+        return route.fulfill({
+          status: 409,
+          contentType: 'application/json',
+          body: JSON.stringify({ error: { code: 'dsh-settings-conflict', message: '配置版本已变化。' } }),
+        })
+      }
+      return route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({
+          ...namespace,
+          revision: 1,
+          resolved: { ...namespace.resolved, maxUses: 4 },
+          user: { maxUses: 4 },
+        }),
+      })
+    })
+    await page.route('**/api/dsh/credentials/DEEPSEEK_API_KEY', async (route) => {
+      credentialWrites.push(route.request().postDataJSON())
+      return route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({ configured: true, source: 'file', writable: true }),
+      })
+    })
+    try {
+      await page.goto(`${baseUrl}/settings?tab=dsh-extensions`)
+      await playwrightExpect(page.getByText('DeepSeek 网页搜索', { exact: true }).first()).toBeVisible()
+      await playwrightExpect(page.getByText('DSH 原生界面', { exact: true }).first()).toBeVisible()
+      await playwrightExpect(page.locator('[data-dsh-native-surface]')).toBeVisible()
+      await playwrightExpect(page.locator('[data-dsh-native-surface]')).toContainText(/Web search|网页搜索/, {
+        timeout: 8_000,
+      })
+      const mappedColor = await page
+        .locator('[data-dsh-native-surface]')
+        .evaluate((element) => getComputedStyle(element).getPropertyValue('--dsw-alias-brand-primary').trim())
+      expect(mappedColor).not.toBe('')
+
+      await page.getByRole('tab', { name: '通用配置' }).click()
+      await page.getByLabel('maxUses').fill('4')
+      await page.getByRole('button', { name: '保存扩展配置' }).click()
+      await playwrightExpect.poll(() => mutations.length).toBe(1)
+      expect(mutations[0]).toMatchObject({
+        expectedRevision: 0,
+        ops: [{ op: 'set', path: ['maxUses'], value: 4 }],
+      })
+      await playwrightExpect(page.getByText('已保存并实时生效。')).toBeVisible()
+
+      const writeOnlyValue = 'browser-write-only-fixture'
+      await page.getByLabel('新的凭据值').fill(writeOnlyValue)
+      await page.getByRole('button', { name: '保存凭据' }).click()
+      await playwrightExpect.poll(() => credentialWrites.length).toBe(1)
+      expect(credentialWrites[0]).toEqual({ value: writeOnlyValue })
+      await playwrightExpect(page.getByLabel('新的凭据值')).toHaveValue('')
+      await playwrightExpect(page.locator('body')).not.toContainText(writeOnlyValue)
+
+      await page.getByLabel('maxTokens').fill('2048')
+      await page.getByRole('button', { name: '保存扩展配置' }).click()
+      await playwrightExpect(page.getByText('配置已在其他位置更新；草稿仍保留，请核对后重新保存。')).toBeVisible()
+      await playwrightExpect(page.getByLabel('maxTokens')).toHaveValue('2048')
+      expect(runtimeErrors).toEqual([])
+    } finally {
+      await page.close()
+    }
+  }, 20_000)
+
+  it('renders every safe generic Schema family for an unowned live Settings namespace', async () => {
+    const page = await browser.newPage({ viewport: { width: 1440, height: 900 } })
+    const runtimeErrors: string[] = []
+    page.on('pageerror', (error) => runtimeErrors.push(error.message))
+    page.on('console', (message) => {
+      if (message.type() === 'error') runtimeErrors.push(message.text())
+    })
+    const schema = {
+      uid: 20,
+      refs: {
+        1: { type: 'string', meta: { description: '普通字符串' } },
+        2: { type: 'number', meta: { min: 0, max: 10, step: 1 } },
+        3: { type: 'boolean', meta: {} },
+        4: { type: 'const', value: 'compact', meta: {} },
+        5: { type: 'const', value: 'comfortable', meta: {} },
+        6: { type: 'array', inner: 1, meta: {} },
+        7: { type: 'dict', inner: 2, meta: {} },
+        8: { type: 'tuple', list: [1, 3], meta: {} },
+        9: { type: 'union', list: [4, 5], meta: {} },
+        10: { type: 'object', dict: { left: 1 }, meta: {} },
+        11: { type: 'object', dict: { right: 2 }, meta: {} },
+        12: { type: 'intersect', list: [10, 11], meta: {} },
+        13: { type: 'custom-fixture', meta: {} },
+        14: { type: 'string', meta: { role: 'secret' } },
+        15: { type: 'transform', inner: 14, meta: {} },
+        20: {
+          type: 'object',
+          dict: {
+            title: 1,
+            count: 2,
+            enabled: 3,
+            rows: 6,
+            labels: 7,
+            pair: 8,
+            mode: 9,
+            merged: 12,
+            advanced: 13,
+            unsafe: 15,
+          },
+          meta: {},
+        },
+      },
+    }
+    const namespace = {
+      ns: 'runtime-extra',
+      schema,
+      resolved: {
+        title: '示例',
+        count: 2,
+        enabled: true,
+        rows: ['第一项'],
+        labels: { alpha: 1 },
+        pair: ['固定', false],
+        mode: 'compact',
+        merged: { left: 'A', right: 2 },
+        advanced: { raw: true },
+      },
+      base: {},
+      user: {},
+      applies: 'restart',
+      secrets: [],
+      revision: 3,
+      writable: true,
+    }
+    await page.route('**/api/snapshot', (route) =>
+      route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(browserSnapshot) }),
+    )
+    await page.route('**/api/events', (route) =>
+      route.fulfill({ status: 200, contentType: 'text/event-stream', body: '' }),
+    )
+    await page.route('**/api/dsh/plugins', (route) =>
+      route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ plugins: [] }) }),
+    )
+    await page.route('**/api/dsh/settings', (route) =>
+      route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({ namespaces: [namespace] }),
+      }),
+    )
+    try {
+      await page.goto(`${baseUrl}/settings?tab=dsh-extensions`)
+      await playwrightExpect(page.getByText('runtime-extra', { exact: true }).first()).toBeVisible()
+      await playwrightExpect(page.getByText(/尚未识别所属插件/)).toBeVisible()
+      await playwrightExpect(page.getByText('保存后需要重启')).toBeVisible()
+      await playwrightExpect(page.getByRole('button', { name: '添加一项' })).toBeVisible()
+      await playwrightExpect(page.getByRole('button', { name: '添加键值' })).toBeVisible()
+      await playwrightExpect(page.getByLabel('mode的配置类型')).toBeVisible()
+      await playwrightExpect(page.getByText(/Schema 类型“custom-fixture”使用高级 JSON 配置/)).toBeVisible()
+      await playwrightExpect(page.getByText(/包含只写 Secret/)).toBeVisible()
+      expect(runtimeErrors).toEqual([])
+    } finally {
+      await page.close()
+    }
+  }, 15_000)
 
   it('keeps the last successful data visible when the live connection becomes stale', async () => {
     const page = await browser.newPage({ viewport: { width: 1440, height: 900 } })

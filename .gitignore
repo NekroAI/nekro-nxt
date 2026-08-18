@@ -12,6 +12,7 @@ coverage/
 .env.*
 !.env.example
 /data/
+/apps/server/data/
 tmp/
 
 # Local-only research, operating notes, deployment details and AI context.

@@ -79,6 +79,10 @@
     "zod": "4.4.3"
   },
   "devDependencies": {
+    "@deepseek-ai/cordis-plugin-loader": "1.0.2",
+    "@deepseek-ai/dsh-app-boot": "0.1.0-rc.6",
+    "@deepseek-ai/dsh-client-modules": "0.1.0-rc.6",
+    "@deepseek-ai/dsh-host-plugin-inventory": "0.1.0-rc.6",
     "tsx": "4.22.4",
     "vitest": "4.1.8"
   }

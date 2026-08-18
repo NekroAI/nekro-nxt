@@ -203,6 +203,8 @@ interface QQReplyContext {
 
 ## 前端配置与 DSH 插件通用性
 
+> 后续兼容说明：本节要求 `AdapterContribution` 的范围仅限把聊天平台接入 NekroNxt 的 Connection、Channel 与 Binding 领域，不代表普通 DSH 能力插件必须专门适配 NekroNxt。能力插件的零适配优先原则与支持识别见 `2026-08-18-DSH能力插件优先兼容与支持识别.md`。
+
 DSH 社区插件兼容和 NekroNxt 产品级 Adapter 体验采用渐进层级，不创建第二套插件系统：
 
 ### 层级 1：普通 DSH/Cordis 插件

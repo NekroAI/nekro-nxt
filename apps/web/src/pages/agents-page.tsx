@@ -302,10 +302,9 @@ export function AgentsPage() {
                 description={
                   capabilityAvailability.webSearch.available
                     ? '通过 DeepSeek 官方搜索扩展信息范围；每次搜索会产生额外模型费用。'
-                    : '需要先在模型设置中配置 DeepSeek API 凭据；每次搜索会产生额外模型费用。'
+                    : '可以先授权；配置 DeepSeek API 凭据后自动可用，每次搜索会产生额外模型费用。'
                 }
                 checked={newCapabilities.webSearch}
-                disabled={!capabilityAvailability.webSearch.available}
                 onCheckedChange={(enabled) => setNewCapabilities((current) => ({ ...current, webSearch: enabled }))}
               />
               <SwitchField
@@ -679,7 +678,9 @@ export function AgentManagePage() {
             </InlineFeedback>
             {!capabilityAvailability.webSearch.available ? (
               <InlineFeedback tone="info">
-                网页搜索当前不可用。请先在设置中配置 DeepSeek API 凭据；搜索会产生额外模型费用。
+                {agent.capabilities.webSearch ? '网页搜索已授权，正在等待全局配置。' : '网页搜索当前尚未配置。'}
+                请前往 <Link to="/settings?tab=dsh-extensions">设置 → DSH 扩展</Link> 保存 DeepSeek API
+                凭据；搜索会产生额外模型费用。
               </InlineFeedback>
             ) : null}
             <div className={styles.switchList}>
@@ -693,12 +694,7 @@ export function AgentManagePage() {
                   }
                   description={item.description}
                   checked={agent.capabilities[item.key]}
-                  disabled={
-                    capabilityPending !== null ||
-                    (item.key === 'webSearch' &&
-                      !capabilityAvailability.webSearch.available &&
-                      !agent.capabilities.webSearch)
-                  }
+                  disabled={capabilityPending !== null}
                   onCheckedChange={(enabled) => void updateCapability(item.key, enabled)}
                 />
               ))}

@@ -739,7 +739,16 @@ describe('DSH Host and Web Channel vertical slice', () => {
           .get(episode.dsh_session_id),
       ).toEqual({ status: 'closed', close_reason: 'incompatible-revision' })
       expect(database.prepare('SELECT COUNT(*) AS count FROM episode_handoffs').get()).toEqual({ count: 1 })
-      expect(JSON.stringify(host.sessionEvents(resumedEpisode.dsh_session_id))).toContain('nekro-nxt-handoff')
+      const handoffRow = database.prepare('SELECT recent_event_ids_json FROM episode_handoffs').get() as {
+        recent_event_ids_json: string
+      }
+      const recentEventIds = JSON.parse(handoffRow.recent_event_ids_json) as string[]
+      expect(Array.isArray(recentEventIds)).toBe(true)
+      expect(recentEventIds).toHaveLength(1)
+      expect(typeof recentEventIds[0]).toBe('string')
+      const resumedEvents = JSON.stringify(host.sessionEvents(resumedEpisode.dsh_session_id))
+      expect(resumedEvents).toContain('nekro-nxt-handoff')
+      expect(resumedEvents).toContain('你好，请回复我。')
       expect(model.calls.some(({ system }) => system?.startsWith('你是对话交接摘要器'))).toBe(true)
       expect(observed).toEqual(['这是通信工具确认发送的回复。', '这是通信工具确认发送的回复。'])
 

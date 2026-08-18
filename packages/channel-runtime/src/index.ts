@@ -64,6 +64,8 @@ export interface EpisodeHandoffRecord {
   readonly fromEpisodeId: EpisodeId
   readonly toEpisodeId: EpisodeId
   readonly sourceEventIds: readonly ChannelEventId[]
+  /** A deterministic verbatim tail carried across Episode boundaries. */
+  readonly recentEventIds: readonly ChannelEventId[]
   readonly summary: string
   readonly provider: string
   readonly model: string
@@ -200,6 +202,7 @@ export interface RuntimeRepository {
   failEpisode(id: EpisodeId): void
   createAdmission(record: AdmissionRecord): void
   listRecoverableAdmissions(episodeId: EpisodeId): readonly AdmissionRecord[]
+  listAdmittedEventIds(channelId: ChannelId, agentId: AgentId): readonly ChannelEventId[]
   claimAdmission(id: AdmissionId, claimedAt: number): void
   completeAdmission(id: AdmissionId, dshMessageId: string, eventId: ChannelEventId, loggedAt: number): void
   findOutboundByClientRequest(
@@ -226,6 +229,7 @@ export interface AgentSessionDriver {
       readonly id: EpisodeHandoffId
       readonly fromEpisodeId: EpisodeId
       readonly summary: string
+      readonly recentEvents: readonly ChannelEventRecord[]
     }
   }): Promise<string>
   applyCompatibleRevision(input: {
@@ -241,6 +245,7 @@ export interface AgentSessionDriver {
     readonly episode: EpisodeRecord
     readonly revision: AgentRevisionRecord
     readonly sourceEvents: readonly ChannelEventRecord[]
+    readonly recentEvents: readonly ChannelEventRecord[]
   }): Promise<{ readonly summary: string; readonly provider: string; readonly model: string }>
   cancelSession(dshSessionId: string, reason: EpisodeCloseReason): Promise<void>
   admit(input: {
@@ -257,6 +262,8 @@ export interface ChannelRuntimeOptions {
   readonly resolveAdapter: (connectionId: ConnectionId) => AdapterConnectionRuntime | undefined
   readonly idleRolloverMs?: number | false
 }
+
+const HANDOFF_RECENT_EVENT_LIMIT = 12
 
 export interface SendMessageInput {
   readonly episodeId: EpisodeId
@@ -459,7 +466,12 @@ export class ChannelRuntime {
       await this.#withLane(recoverable.channelId, recoverable.agentId, async () => {
         let episode = recoverable
         const handoff = this.#runtimeRepository.getEpisodeHandoffTo(episode.id)
-        const dshSessionId = await this.#sessionDriver.createSession({
+        const recoverableAdmissions = this.#runtimeRepository.listRecoverableAdmissions(episode.id)
+        const recentEvents =
+          handoff?.recentEventIds
+            .map((eventId) => this.#coreRepository.getChannelEvent(eventId))
+            .filter((event): event is ChannelEventRecord => event !== undefined) ?? []
+        let dshSessionId = await this.#sessionDriver.createSession({
           episodeId: episode.id,
           channelId: episode.channelId,
           agentId: episode.agentId,
@@ -471,6 +483,7 @@ export class ChannelRuntime {
                   id: handoff.id,
                   fromEpisodeId: handoff.fromEpisodeId,
                   summary: handoff.summary,
+                  recentEvents,
                 },
               }),
         })
@@ -478,9 +491,18 @@ export class ChannelRuntime {
         else if (episode.dshSessionId !== dshSessionId) {
           throw new Error(`Recovered DSH Session identity changed for Episode ${episode.id}.`)
         }
+        const current = this.#coreRepository.getAgent(episode.agentId)
+        if (current && episode.agentRevisionId !== current.revision.id && recoverableAdmissions.length > 0) {
+          const binding = this.#coreRepository.getBinding(episode.channelId, episode.agentId)
+          const anchorId = episode.lastAdmittedEventId ?? episode.openedAtEventId
+          const anchor = this.#coreRepository.getChannelEvent(anchorId)
+          if (!binding || !anchor) throw new Error(`Cannot recover Episode rollover prerequisites: ${episode.id}`)
+          episode = await this.#rolloverIfNeeded(binding, episode, anchor)
+          dshSessionId = episode.dshSessionId!
+        }
         report.resumedEpisodes += 1
 
-        for (const admission of this.#runtimeRepository.listRecoverableAdmissions(episode.id)) {
+        for (const admission of recoverableAdmissions) {
           if (admission.state === 'pending') this.#runtimeRepository.claimAdmission(admission.id, this.#timestamp())
           const existing = this.#sessionDriver.findAdmissionMessage(dshSessionId, admission.id)
           const lastEventId = admission.channelEventIds.at(-1)
@@ -505,6 +527,7 @@ export class ChannelRuntime {
           this.#runtimeRepository.completeAdmission(admission.id, result.dshMessageId, lastEventId, this.#timestamp())
           report.recoveredAdmissions += 1
         }
+        await this.#recoverTriggeredBacklog(episode.channelId, episode.agentId)
       })
     }
 
@@ -601,28 +624,73 @@ export class ChannelRuntime {
     if (episode.status !== 'active' || episode.dshSessionId === undefined) {
       throw new Error(`Episode is not ready for admission: ${episode.id}`)
     }
+    const candidateEvents = this.#candidateTriggeredEvents(binding, episode, event)
+    const existingAdmission = this.#runtimeRepository
+      .listRecoverableAdmissions(episode.id)
+      .find((candidate) => candidate.channelEventIds.includes(event.id))
+    const admissionId = existingAdmission?.id ?? this.#id<AdmissionId>('adm')
+    if (existingAdmission === undefined) {
+      this.#runtimeRepository.createAdmission({
+        id: admissionId,
+        episodeId: episode.id,
+        channelEventIds: candidateEvents.map(({ id }) => id),
+        reason: this.#sessionDriver.sessionStatus(episode.dshSessionId) === 'running' ? 'running-injection' : 'trigger',
+        state: 'pending',
+        createdAt: this.#timestamp(),
+      })
+    }
     episode = await this.#rolloverIfNeeded(binding, episode, event)
     episode = await this.#applyCurrentCompatibleRevision(episode)
     const dshSessionId = episode.dshSessionId
     if (dshSessionId === undefined) throw new Error(`Episode has no DSH Session after revision switch: ${episode.id}`)
-
-    const admission: AdmissionRecord = {
-      id: this.#id<AdmissionId>('adm'),
-      episodeId: episode.id,
-      channelEventIds: [event.id],
-      reason: this.#sessionDriver.sessionStatus(dshSessionId) === 'running' ? 'running-injection' : 'trigger',
-      state: 'pending',
-      createdAt: this.#timestamp(),
-    }
-    this.#runtimeRepository.createAdmission(admission)
+    const admission = this.#runtimeRepository
+      .listRecoverableAdmissions(episode.id)
+      .find((candidate) => candidate.id === admissionId)
+    if (!admission) throw new Error(`Admission was not carried into target Episode: ${admissionId}`)
     this.#runtimeRepository.claimAdmission(admission.id, this.#timestamp())
     const result = await this.#sessionDriver.admit({
       dshSessionId,
       admissionId: admission.id,
-      events: [event],
+      events: admission.channelEventIds.map((eventId) => {
+        const candidate = this.#coreRepository.getChannelEvent(eventId)
+        if (!candidate) throw new Error(`Admission references a missing Channel Event: ${eventId}`)
+        return candidate
+      }),
       mode: admission.reason === 'running-injection' ? 'inject' : 'followup',
     })
-    this.#runtimeRepository.completeAdmission(admission.id, result.dshMessageId, event.id, this.#timestamp())
+    this.#runtimeRepository.completeAdmission(
+      admission.id,
+      result.dshMessageId,
+      admission.channelEventIds.at(-1)!,
+      this.#timestamp(),
+    )
+  }
+
+  #candidateTriggeredEvents(
+    binding: BindingRecord,
+    episode: EpisodeRecord,
+    current: ChannelEventRecord,
+  ): readonly ChannelEventRecord[] {
+    const events = this.#coreRepository.listChannelEvents(binding.channelId, { limit: 100 })
+    const admitted = new Set(this.#runtimeRepository.listAdmittedEventIds(binding.channelId, binding.agentId))
+    const candidates = events.filter(
+      (candidate) =>
+        candidate.receivedAt >= binding.createdAt && !admitted.has(candidate.id) && isTriggered(binding, candidate),
+    )
+    return candidates.some(({ id }) => id === current.id) ? candidates : [...candidates, current]
+  }
+
+  async #recoverTriggeredBacklog(channelId: ChannelId, agentId: AgentId): Promise<void> {
+    const binding = this.#coreRepository.getBinding(channelId, agentId)
+    const episode = this.#runtimeRepository.getActiveEpisode(channelId, agentId)
+    if (!binding || !episode) return
+    const events = this.#coreRepository.listChannelEvents(channelId, { limit: 100 })
+    for (const event of events) {
+      const admitted = new Set(this.#runtimeRepository.listAdmittedEventIds(channelId, agentId))
+      if (event.receivedAt >= binding.createdAt && !admitted.has(event.id) && isTriggered(binding, event)) {
+        await this.#admit(binding, event)
+      }
+    }
   }
 
   async #rolloverIfNeeded(
@@ -654,6 +722,10 @@ export class ChannelRuntime {
         ? undefined
         : this.#coreRepository.getChannelEvent(episode.lastAdmittedEventId),
     ].filter((sourceEvent): sourceEvent is ChannelEventRecord => sourceEvent !== undefined)
+    const recentEvents = this.#coreRepository.listChannelEvents(episode.channelId, {
+      before: { receivedAt: event.receivedAt, id: event.id },
+      limit: HANDOFF_RECENT_EVENT_LIMIT,
+    })
     let summary: Awaited<ReturnType<AgentSessionDriver['createHandoffSummary']>>
     try {
       summary = await this.#sessionDriver.createHandoffSummary({
@@ -661,6 +733,7 @@ export class ChannelRuntime {
         episode,
         revision: previousRevision,
         sourceEvents,
+        recentEvents,
       })
     } catch (error) {
       this.#runtimeRepository.cancelEpisodeRollover(episode.id)
@@ -683,6 +756,7 @@ export class ChannelRuntime {
       fromEpisodeId: episode.id,
       toEpisodeId: nextEpisode.id,
       sourceEventIds: sourceEvents.map(({ id }) => id),
+      recentEventIds: recentEvents.map(({ id }) => id),
       summary: summary.summary,
       provider: summary.provider,
       model: summary.model,
@@ -707,6 +781,7 @@ export class ChannelRuntime {
         id: handoff.id,
         fromEpisodeId: handoff.fromEpisodeId,
         summary: handoff.summary,
+        recentEvents,
       },
     })
     return this.#runtimeRepository.activateEpisode(nextEpisode.id, dshSessionId)

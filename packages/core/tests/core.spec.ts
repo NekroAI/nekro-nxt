@@ -231,6 +231,25 @@ class MemoryRepository implements CoreRepository {
     return [...this.events.values()].find((event) => event.id === id)
   }
 
+  listChannelEvents(
+    channelId: ChannelId,
+    options: {
+      readonly before?: { readonly receivedAt: number; readonly id: ChannelEventRecord['id'] }
+      readonly limit?: number
+    } = {},
+  ) {
+    const rows = [...this.events.values()]
+      .filter((event) => event.channelId === channelId)
+      .filter(
+        (event) =>
+          options.before === undefined ||
+          event.receivedAt < options.before.receivedAt ||
+          (event.receivedAt === options.before.receivedAt && event.id < options.before.id),
+      )
+      .sort((left, right) => right.receivedAt - left.receivedAt || right.id.localeCompare(left.id))
+    return rows.slice(0, options.limit ?? 12).toReversed()
+  }
+
   resolvePlatformMessage(connectionId: ConnectionId, channelId: ChannelId, platformMessageId: string) {
     const event = [...this.events.values()].find(
       (candidate) =>

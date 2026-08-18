@@ -228,6 +228,7 @@ export const episodeHandoffs = sqliteTable('episode_handoffs', {
     .notNull()
     .references(() => episodes.id),
   sourceEventIdsJson: text('source_event_ids_json').notNull(),
+  recentEventIdsJson: text('recent_event_ids_json').notNull(),
   summary: text('summary').notNull(),
   provider: text('provider').notNull(),
   model: text('model').notNull(),

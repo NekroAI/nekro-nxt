@@ -68,6 +68,82 @@ export function parseJsonValue(input: unknown): JsonValue {
   return JsonValueSchema.parse(input)
 }
 
+/** Current-environment support conclusion for one DSH capability package. */
+export type DshPluginSupportStatus = 'verified' | 'loadable-unverified' | 'partial' | 'incompatible' | 'unassessed'
+
+export type DshSupportFacet =
+  | 'host-load'
+  | 'service-injection'
+  | 'lifecycle'
+  | 'settings'
+  | 'tools'
+  | 'providers'
+  | 'scope-bundle-preset'
+  | 'client-ui'
+
+export type DshFacetStatus = 'supported' | 'unverified' | 'unsupported' | 'failed' | 'not-applicable'
+
+export type DshSupportEvidenceLevel = 'metadata' | 'activation' | 'lifecycle' | 'integration' | 'external-result'
+
+export interface DshClientModuleDescriptor {
+  readonly packageName: string
+  readonly packageVersion: string
+  readonly moduleId: string
+  readonly platform: 'web'
+  readonly inject: readonly string[]
+  readonly bundleDigest: string
+  readonly bundleUrl: string
+  readonly compatibility: 'ready' | 'missing-dependency' | 'version-conflict' | 'unsupported-remote'
+  readonly reasons: readonly string[]
+}
+
+export interface PluginSupportAssessment {
+  readonly packageName: string
+  readonly packageVersion: string
+  readonly dshVersion: string
+  readonly origin: 'builtin' | 'profile' | 'dynamic'
+  readonly overall: DshPluginSupportStatus
+  readonly facets: readonly {
+    readonly facet: DshSupportFacet
+    readonly status: DshFacetStatus
+    readonly evidence: readonly {
+      readonly level: DshSupportEvidenceLevel
+      readonly code: string
+      readonly message: string
+    }[]
+  }[]
+  readonly settingsNamespaces: readonly string[]
+  readonly clientModule?: DshClientModuleDescriptor
+}
+
+export interface DshSettingsNamespaceView {
+  readonly ns: string
+  readonly schema: unknown
+  readonly resolved: unknown
+  readonly base?: unknown
+  readonly user?: unknown
+  readonly applies: 'live' | 'restart'
+  readonly secrets: readonly { readonly path: readonly string[]; readonly set: boolean }[]
+  readonly revision: number
+  readonly writable: boolean
+  readonly owner?: { readonly packageName: string; readonly packageVersion: string }
+}
+
+export type DshSettingsPathOperation =
+  | { readonly op: 'set'; readonly path: readonly string[]; readonly value: unknown }
+  | { readonly op: 'unset'; readonly path: readonly string[] }
+
+export interface DshSettingsMutationRequest {
+  readonly expectedRevision: number
+  readonly ops: readonly DshSettingsPathOperation[]
+}
+
+export interface DshCredentialView {
+  readonly configured: boolean
+  readonly source?: string
+  readonly writable: boolean
+}
+
 export type MessagePart =
   | { readonly type: 'text'; readonly text: string }
   | { readonly type: 'mention'; readonly memberId: ChannelMemberId }

@@ -93,6 +93,36 @@ const testLlmProviderSchema = z
   })
   .strict()
 
+const dshSettingsPathSchema = z.array(z.string().min(1).max(200)).min(1).max(32)
+const dshSettingsMutationSchema = z
+  .object({
+    expectedRevision: z.number().int().nonnegative(),
+    ops: z
+      .array(
+        z.discriminatedUnion('op', [
+          z.object({ op: z.literal('set'), path: dshSettingsPathSchema, value: z.unknown() }).strict(),
+          z.object({ op: z.literal('unset'), path: dshSettingsPathSchema }).strict(),
+        ]),
+      )
+      .min(1)
+      .max(128),
+  })
+  .strict()
+
+const credentialRefSchema = z
+  .string()
+  .regex(/^[A-Za-z_][A-Za-z0-9_]*$/u)
+  .max(200)
+const dshCredentialsDescribeSchema = z.object({ refs: z.array(credentialRefSchema).max(64) }).strict()
+const dshCredentialSetSchema = z
+  .object({
+    value: z
+      .string()
+      .min(1)
+      .max(64 * 1024),
+  })
+  .strict()
+
 const messageBodySchema = z
   .object({
     parts: z
@@ -176,6 +206,11 @@ type SseEvent =
       readonly data: { readonly channelId: ChannelId; readonly message: SnapshotMessage }
     }
   | { readonly event: 'extensions-changed'; readonly data: { readonly changed: true } }
+  | {
+      readonly event: 'dsh-settings-changed'
+      readonly data: { readonly namespace: string; readonly revision: number }
+    }
+  | { readonly event: 'dsh-credentials-changed'; readonly data: { readonly ref: string } }
   | { readonly event: 'status'; readonly data: { readonly ok: boolean; readonly message: string } }
 
 const renderSse = (payload: SseEvent): string => `event: ${payload.event}\ndata: ${JSON.stringify(payload.data)}\n\n`
@@ -406,6 +441,16 @@ export const createNekroHostApi = (webServer: WebServer, runtime: NekroRuntime):
       }
     }
   }
+  const broadcast = (event: SseEvent): void => {
+    const frame = renderSse(event)
+    for (const client of sseClients) {
+      try {
+        client.write(frame)
+      } catch {
+        // Connection already closed; the next close handler removes it.
+      }
+    }
+  }
 
   const buildSnapshot = async (): Promise<unknown> => {
     // Enumerate channels durably from the Core repository so the snapshot
@@ -545,6 +590,106 @@ export const createNekroHostApi = (webServer: WebServer, runtime: NekroRuntime):
         writeJson(res, 201, binding)
       } catch (error) {
         writeError(res, 400, 'binding-failed', error instanceof Error ? error.message : String(error))
+      }
+    },
+  })
+
+  // Generic DSH capability/configuration plane. The live DSH services remain authoritative.
+  registerRoute({
+    kind: 'exact',
+    path: '/api/dsh/plugins',
+    handler: (req, res) => {
+      if (req.method !== 'GET') {
+        writeError(res, 405, 'method-not-allowed', '只支持 GET。')
+        return
+      }
+      writeJson(res, 200, { plugins: runtime.host.listDshPluginSupport() })
+    },
+  })
+
+  registerRoute({
+    kind: 'exact',
+    path: '/api/dsh/settings',
+    handler: (req, res) => {
+      if (req.method !== 'GET') {
+        writeError(res, 405, 'method-not-allowed', '只支持 GET。')
+        return
+      }
+      writeJson(res, 200, { namespaces: runtime.host.listDshSettings() })
+    },
+  })
+
+  registerRoute({
+    kind: 'prefix',
+    path: '/api/dsh/settings',
+    handler: async (req, res) => {
+      const url = new URL(req.url ?? '/', 'http://localhost')
+      const match = /^\/api\/dsh\/settings\/([^/]+)\/mutate$/u.exec(url.pathname)
+      if (!match) {
+        writeError(res, 404, 'not-found', `未定义路由：${req.method} ${url.pathname}。`)
+        return
+      }
+      if (req.method !== 'POST') {
+        writeError(res, 405, 'method-not-allowed', '只支持 POST。')
+        return
+      }
+      try {
+        const namespace = decodeURIComponent(match[1]!)
+        const input = dshSettingsMutationSchema.parse(await readJsonBody(req))
+        writeJson(res, 200, await runtime.host.mutateDshSettings(namespace, input.expectedRevision, input.ops))
+      } catch (error) {
+        const conflict = error instanceof Error && 'code' in error && error.code === 'SETTINGS_CONFLICT'
+        writeError(
+          res,
+          conflict ? 409 : 400,
+          conflict ? 'dsh-settings-conflict' : 'dsh-settings-rejected',
+          error instanceof Error ? error.message : String(error),
+        )
+      }
+    },
+  })
+
+  registerRoute({
+    kind: 'exact',
+    path: '/api/dsh/credentials/describe',
+    handler: async (req, res) => {
+      if (req.method !== 'POST') {
+        writeError(res, 405, 'method-not-allowed', '只支持 POST。')
+        return
+      }
+      try {
+        const input = dshCredentialsDescribeSchema.parse(await readJsonBody(req))
+        writeJson(res, 200, { credentials: await runtime.host.describeDshCredentials(input.refs) })
+      } catch (error) {
+        writeError(res, 400, 'dsh-credentials-rejected', error instanceof Error ? error.message : String(error))
+      }
+    },
+  })
+
+  registerRoute({
+    kind: 'prefix',
+    path: '/api/dsh/credentials',
+    handler: async (req, res) => {
+      const url = new URL(req.url ?? '/', 'http://localhost')
+      const match = /^\/api\/dsh\/credentials\/([^/]+)$/u.exec(url.pathname)
+      if (!match) {
+        writeError(res, 404, 'not-found', `未定义路由：${req.method} ${url.pathname}。`)
+        return
+      }
+      try {
+        const ref = credentialRefSchema.parse(decodeURIComponent(match[1]!))
+        if (req.method === 'PUT') {
+          const input = dshCredentialSetSchema.parse(await readJsonBody(req))
+          writeJson(res, 200, await runtime.host.setDshCredential(ref, input.value))
+          return
+        }
+        if (req.method === 'DELETE') {
+          writeJson(res, 200, await runtime.host.unsetDshCredential(ref))
+          return
+        }
+        writeError(res, 405, 'method-not-allowed', '只支持 PUT/DELETE。')
+      } catch (error) {
+        writeError(res, 400, 'dsh-credentials-rejected', error instanceof Error ? error.message : String(error))
       }
     },
   })
@@ -1049,6 +1194,12 @@ export const createNekroHostApi = (webServer: WebServer, runtime: NekroRuntime):
       }
     }
   })
+  const unsubscribeDshSettings = runtime.host.onDshSettingsChanged((namespace, revision) => {
+    broadcast({ event: 'dsh-settings-changed', data: { namespace, revision } })
+  })
+  const unsubscribeDshCredentials = runtime.host.onDshCredentialChanged((ref) => {
+    broadcast({ event: 'dsh-credentials-changed', data: { ref } })
+  })
 
   // POST /api/dynamic/:agentId/{approve|decline|invoke|report-render-failure} →
   // browser dynamic client circuit (creator workbench): resolve approvals and
@@ -1342,6 +1493,8 @@ export const createNekroHostApi = (webServer: WebServer, runtime: NekroRuntime):
     dispose() {
       unsubscribeConnectionChanges()
       unsubscribeRuntimeStatus()
+      unsubscribeDshSettings()
+      unsubscribeDshCredentials()
       for (const disposer of disposers.splice(0)) disposer()
     },
   }

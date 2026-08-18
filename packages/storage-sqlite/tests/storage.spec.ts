@@ -90,7 +90,7 @@ describe('Core SQLite capabilities', () => {
     }
   })
 
-  it('raises schema 15 to 16 without rewriting historical capability JSON or digests', async () => {
+  it('raises schema 16 to 17 without rewriting historical capability JSON or digests', async () => {
     const directory = await temporaryDirectory()
     const database = await openMigratedCoreDatabase(path.join(directory, 'core.sqlite'))
     try {
@@ -106,11 +106,11 @@ describe('Core SQLite capabilities', () => {
       database
         .prepare('UPDATE agent_revisions SET capabilities_json = ?, content_digest = ? WHERE id = ?')
         .run(legacyJson, 'historical-digest', created.revision.id)
-      database.exec('PRAGMA user_version = 15')
+      database.exec('PRAGMA user_version = 16')
 
       await migrateCoreDatabase(database)
 
-      expect(database.prepare('PRAGMA user_version').get()).toEqual({ user_version: 16 })
+      expect(database.prepare('PRAGMA user_version').get()).toEqual({ user_version: 17 })
       expect(
         database
           .prepare('SELECT capabilities_json, content_digest FROM agent_revisions WHERE id = ?')

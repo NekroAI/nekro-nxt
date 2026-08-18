@@ -185,6 +185,13 @@ export interface CoreRepository {
   listBindings(channelId: ChannelId): readonly BindingRecord[]
   appendChannelEvent(candidate: ChannelEventRecord): AppendChannelEventCommit
   getChannelEvent(id: ChannelEventId): ChannelEventRecord | undefined
+  listChannelEvents(
+    channelId: ChannelId,
+    options?: {
+      readonly before?: { readonly receivedAt: number; readonly id: ChannelEventId }
+      readonly limit?: number
+    },
+  ): readonly ChannelEventRecord[]
   resolvePlatformMessage(
     connectionId: ConnectionId,
     channelId: ChannelId,

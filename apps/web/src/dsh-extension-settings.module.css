@@ -1,0 +1,308 @@
+.catalog {
+  display: grid;
+  grid-template-columns: minmax(220px, 280px) minmax(0, 1fr);
+  min-height: 520px;
+  overflow: hidden;
+  border: 1px solid var(--nxt-border-subtle);
+  border-radius: var(--nxt-radius-md);
+  background: var(--nxt-bg-surface);
+}
+
+.pluginList {
+  display: flex;
+  flex-direction: column;
+  gap: var(--nxt-space-1);
+  min-width: 0;
+  padding: var(--nxt-space-3);
+  overflow: auto;
+  border-right: 1px solid var(--nxt-border-subtle);
+  background: var(--nxt-bg-subtle);
+}
+
+.listHeading {
+  padding: var(--nxt-space-2);
+  color: var(--nxt-text-muted);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.pluginButton {
+  justify-content: space-between;
+  min-height: 54px;
+  height: auto;
+  text-align: left;
+}
+
+.pluginButton > span:first-child {
+  display: grid;
+  min-width: 0;
+}
+
+.pluginButton strong,
+.pluginButton small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.pluginButton small {
+  color: var(--nxt-text-muted);
+  font-size: 11px;
+}
+
+.pluginButtonActive {
+  background: var(--nxt-accent-soft);
+  box-shadow: inset 2px 0 var(--nxt-accent);
+}
+
+.detail {
+  display: flex;
+  flex-direction: column;
+  gap: var(--nxt-space-4);
+  min-width: 0;
+  padding: var(--nxt-space-5);
+  overflow: auto;
+}
+
+.detailHeader,
+.credentialHeading,
+.editorFooter {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--nxt-space-3);
+}
+
+.nativeNotice {
+  display: flex;
+  align-items: center;
+  gap: var(--nxt-space-2);
+  margin-bottom: var(--nxt-space-3);
+  color: var(--nxt-text-muted);
+  font-size: 12px;
+}
+
+.nxtDshNativeSurface {
+  --dsw-alias-bg-layer-2: var(--nxt-bg-subtle);
+  --dsw-alias-bg-layer-3: var(--nxt-bg-surface);
+  --dsw-alias-bg-module-platform: var(--nxt-accent-soft);
+  --dsw-alias-border-l2: var(--nxt-border-default);
+  --dsw-alias-brand-primary: var(--nxt-focus-ring);
+  --dsw-alias-interactive-bg-hover: var(--nxt-bg-hover);
+  --dsw-alias-label-dimmed: var(--nxt-border-strong);
+  --dsw-alias-label-error: var(--nxt-danger);
+  --dsw-alias-label-primary: var(--nxt-text-primary);
+  --dsw-alias-label-primary-inverted: var(--nxt-accent-foreground);
+  --dsw-alias-label-secondary: var(--nxt-text-secondary);
+  --dsw-alias-label-tertiary: var(--nxt-text-muted);
+  --dsw-alias-state-business-primary: var(--nxt-accent);
+  --dsw-alias-state-error-primary: var(--nxt-danger);
+  --dsw-alias-state-error-secondary: var(--nxt-danger-soft);
+  --dsw-alias-state-success-primary: var(--nxt-success);
+  --dsw-alias-state-success-secondary: var(--nxt-success-soft);
+  --dsw-alias-state-warn-primary: var(--nxt-warning);
+  --dsw-alias-state-warn-secondary: var(--nxt-warning-soft);
+  --dsw-static-blue-400: var(--nxt-accent);
+  --dsw-font-family: var(--nxt-font-sans);
+  --dsw-font-mono: var(--nxt-font-mono);
+  --dsw-shadow-lv1: var(--nxt-shadow-float);
+
+  max-width: 820px;
+  padding: var(--nxt-space-4);
+  border: 1px solid var(--nxt-border-subtle);
+  border-radius: var(--nxt-radius-md);
+  color: var(--nxt-text-primary);
+  background: var(--nxt-bg-subtle);
+  font-family: var(--nxt-font-sans);
+}
+
+.detailHeader h2,
+.detailHeader p {
+  margin: 0;
+}
+
+.detailHeader h2 {
+  color: var(--nxt-text-primary);
+  font-size: 16px;
+}
+
+.detailHeader p {
+  margin-top: var(--nxt-space-1);
+  color: var(--nxt-text-muted);
+  font-family: var(--nxt-font-mono);
+  font-size: 11px;
+}
+
+.facetList {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--nxt-space-2);
+}
+
+.facetList span {
+  padding: 2px 7px;
+  border-radius: var(--nxt-radius-round);
+  color: var(--nxt-text-secondary);
+  background: var(--nxt-bg-subtle);
+  font-size: 11px;
+}
+
+.facetList span[data-status='failed'],
+.facetList span[data-status='unsupported'] {
+  color: var(--nxt-danger);
+  background: var(--nxt-danger-soft);
+}
+
+.namespaceEditor {
+  display: flex;
+  flex-direction: column;
+  gap: var(--nxt-space-4);
+}
+
+.namespaceMeta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--nxt-space-3);
+  color: var(--nxt-text-muted);
+  font-size: 12px;
+}
+
+.fieldGroup {
+  display: flex;
+  flex-direction: column;
+  gap: var(--nxt-space-4);
+  min-width: 0;
+  margin: 0;
+  padding: var(--nxt-space-4);
+  border: 1px solid var(--nxt-border-subtle);
+  border-radius: var(--nxt-radius-md);
+  background: var(--nxt-bg-subtle);
+}
+
+.fieldGroup legend {
+  padding: 0 var(--nxt-space-2);
+  color: var(--nxt-text-primary);
+  font-weight: 600;
+}
+
+.fieldGroup summary {
+  cursor: pointer;
+  color: var(--nxt-text-primary);
+  font-weight: 600;
+}
+
+.collapsibleBody {
+  display: grid;
+  gap: var(--nxt-space-4);
+}
+
+.fieldGroup p {
+  margin: 0;
+  color: var(--nxt-text-muted);
+  font-size: 12px;
+}
+
+.inputWithReset {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: var(--nxt-space-2);
+}
+
+.jsonField,
+.unionField {
+  display: grid;
+  gap: var(--nxt-space-2);
+}
+
+.fieldHintMeta {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--nxt-space-2);
+}
+
+.fieldHintMeta a {
+  color: var(--nxt-accent);
+}
+
+.schemaBadge {
+  padding: 1px 6px;
+  border-radius: var(--nxt-radius-round);
+  color: var(--nxt-text-secondary);
+  background: var(--nxt-bg-hover);
+  font-size: 11px;
+}
+
+.dictAddRow {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: end;
+  gap: var(--nxt-space-2);
+}
+
+.collectionRow {
+  display: grid;
+  gap: var(--nxt-space-2);
+  padding-bottom: var(--nxt-space-3);
+  border-bottom: 1px solid var(--nxt-border-subtle);
+}
+
+.collectionActions,
+.inlineActions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: var(--nxt-space-2);
+}
+
+.credentialEditor {
+  display: grid;
+  gap: var(--nxt-space-3);
+  padding: var(--nxt-space-4);
+  border: 1px solid color-mix(in srgb, var(--nxt-accent) 30%, var(--nxt-border-default));
+  border-radius: var(--nxt-radius-md);
+  background: var(--nxt-accent-soft);
+}
+
+.credentialHeading {
+  justify-content: flex-start;
+}
+
+.credentialHeading > span:nth-child(2) {
+  display: grid;
+  flex: 1;
+}
+
+.credentialHeading small {
+  color: var(--nxt-text-muted);
+}
+
+.editorFooter {
+  position: sticky;
+  bottom: 0;
+  padding: var(--nxt-space-3) 0 0;
+  border-top: 1px solid var(--nxt-border-subtle);
+  color: var(--nxt-text-muted);
+  background: var(--nxt-bg-surface);
+  font-size: 12px;
+}
+
+@media (max-width: 1180px) {
+  .catalog {
+    grid-template-columns: 260px minmax(0, 1fr);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .catalog *,
+  .catalog *::before,
+  .catalog *::after {
+    animation-duration: 1ms !important;
+    transition-duration: 1ms !important;
+  }
+
+  .nxtDshNativeSurface {
+    --dsw-motion-fast: 1ms;
+    --dsw-motion-standard: 1ms;
+  }
+}

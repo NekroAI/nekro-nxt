@@ -307,6 +307,35 @@ test('three desktop viewports remain usable in both themes and reduced motion', 
   expect(failures, failures.join('\n')).toEqual([])
 })
 
+test('DSH native and generic settings remain legible across desktop themes and viewports', async ({
+  page,
+}, testInfo) => {
+  const failures = installRuntimeFailureGate(page)
+  for (const viewport of [
+    { width: 1100, height: 720 },
+    { width: 1440, height: 900 },
+    { width: 1920, height: 1080 },
+  ]) {
+    for (const colorScheme of ['light', 'dark'] as const) {
+      await page.setViewportSize(viewport)
+      await page.emulateMedia({ colorScheme, reducedMotion: 'reduce' })
+      await page.goto('/settings?tab=dsh-extensions')
+      await expect(page.getByText('DeepSeek 网页搜索', { exact: true }).first()).toBeVisible()
+      await expect(page.locator('[data-dsh-native-surface]')).toBeVisible()
+      await expect(page.locator('[data-dsh-native-surface]')).toContainText(/Web search|网页搜索/u)
+      await assertViewportIntegrity(page)
+      await capture(page, testInfo, `dsh-native-${viewport.width}x${viewport.height}-${colorScheme}`)
+
+      await page.getByRole('tab', { name: '通用配置' }).click()
+      await expect(page.getByText('Namespace：web-search-deepseek', { exact: true })).toBeVisible()
+      await expect(page.getByLabel('新的凭据值')).toBeVisible()
+      await assertViewportIntegrity(page)
+      await capture(page, testInfo, `dsh-generic-${viewport.width}x${viewport.height}-${colorScheme}`)
+    }
+  }
+  expect(failures, failures.join('\n')).toEqual([])
+})
+
 test('group conversations preserve sender and Mention semantics without exposing internal identities', async ({
   page,
 }, testInfo) => {

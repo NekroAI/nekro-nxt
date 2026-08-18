@@ -110,7 +110,7 @@ export {
 } from './schema.js'
 
 /** The Core schema version starts at one with the upgrade journal table. */
-export const CORE_SCHEMA_VERSION = 16
+export const CORE_SCHEMA_VERSION = 17
 const CORE_MIGRATION_FILES = [
   '0000_red_darkstar.sql',
   '0001_broad_taskmaster.sql',
@@ -128,6 +128,7 @@ const CORE_MIGRATION_FILES = [
   '0013_single_active_agent_binding.sql',
   '0014_single_active_channel_binding.sql',
   '0015_agent_capabilities_v2.sql',
+  '0016_episode_handoff_recent_window.sql',
 ] as const
 
 /** Opens an owned Core database with the durability and integrity settings shared by both Hosts. */
@@ -154,6 +155,33 @@ export async function migrateCoreDatabase(database: DatabaseSync): Promise<void>
     database.exec('BEGIN IMMEDIATE')
     try {
       database.exec(sql)
+      if (filename === '0016_episode_handoff_recent_window.sql') {
+        const table = database
+          .prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'episode_handoffs'")
+          .get() as { readonly name?: unknown } | undefined
+        if (table?.name === undefined) {
+          database.exec(`
+            CREATE TABLE episode_handoffs (
+              id TEXT PRIMARY KEY NOT NULL,
+              from_episode_id TEXT NOT NULL,
+              to_episode_id TEXT NOT NULL,
+              source_event_ids_json TEXT NOT NULL,
+              recent_event_ids_json TEXT NOT NULL DEFAULT '[]',
+              summary TEXT NOT NULL,
+              provider TEXT NOT NULL,
+              model TEXT NOT NULL,
+              created_at INTEGER NOT NULL
+            )
+          `)
+        } else {
+          const columns = database.prepare('PRAGMA table_info(episode_handoffs)').all() as readonly {
+            readonly name?: unknown
+          }[]
+          if (!columns.some((column) => column.name === 'recent_event_ids_json')) {
+            database.exec("ALTER TABLE episode_handoffs ADD COLUMN recent_event_ids_json TEXT NOT NULL DEFAULT '[]'")
+          }
+        }
+      }
       database.exec(`PRAGMA user_version = ${index + 1}`)
       database.exec('COMMIT')
     } catch (error) {
@@ -740,6 +768,44 @@ export class SqliteCoreRepository
     return row ? this.#channelEvent(row) : undefined
   }
 
+  listChannelEvents(
+    channelId: ChannelId,
+    options: {
+      readonly before?: { readonly receivedAt: number; readonly id: ChannelEventId }
+      readonly limit?: number
+    } = {},
+  ): readonly ChannelEventRecord[] {
+    const limit = options.limit ?? 12
+    if (!Number.isSafeInteger(limit) || limit <= 0 || limit > 100) {
+      throw new TypeError('Channel event history limit must be an integer between 1 and 100.')
+    }
+    const rows = options.before
+      ? (this.#database
+          .prepare(
+            `SELECT * FROM channel_events
+             WHERE channel_id = ?
+               AND (received_at < ? OR (received_at = ? AND id < ?))
+             ORDER BY received_at DESC, id DESC
+             LIMIT ?`,
+          )
+          .all(
+            channelId,
+            options.before.receivedAt,
+            options.before.receivedAt,
+            options.before.id,
+            limit,
+          ) as SqliteRow[])
+      : (this.#database
+          .prepare(
+            `SELECT * FROM channel_events
+             WHERE channel_id = ?
+             ORDER BY received_at DESC, id DESC
+             LIMIT ?`,
+          )
+          .all(channelId, limit) as SqliteRow[])
+    return rows.toReversed().map((row) => this.#channelEvent(row))
+  }
+
   resolvePlatformMessage(
     connectionId: ConnectionId,
     channelId: ChannelId,
@@ -881,11 +947,16 @@ export class SqliteCoreRepository
     if (!Array.isArray(sourceEventIds) || sourceEventIds.some((id) => typeof id !== 'string')) {
       throw new Error('Core database handoff source_event_ids_json must be a string array.')
     }
+    const recentEventIds = parseStoredJson(requiredString(row, 'recent_event_ids_json'), 'recent_event_ids_json')
+    if (!Array.isArray(recentEventIds) || recentEventIds.some((id) => typeof id !== 'string')) {
+      throw new Error('Core database handoff recent_event_ids_json must be a string array.')
+    }
     return {
       id: requiredString(row, 'id') as EpisodeHandoffId,
       fromEpisodeId: requiredString(row, 'from_episode_id') as EpisodeId,
       toEpisodeId: requiredString(row, 'to_episode_id') as EpisodeId,
       sourceEventIds: sourceEventIds as ChannelEventId[],
+      recentEventIds: recentEventIds as ChannelEventId[],
       summary: requiredString(row, 'summary'),
       provider: requiredString(row, 'provider'),
       model: requiredString(row, 'model'),
@@ -1011,18 +1082,26 @@ export class SqliteCoreRepository
           next.closeReason ?? null,
           next.createdAt,
         )
+      this.#database
+        .prepare(
+          `UPDATE admissions
+              SET episode_id = ?
+            WHERE episode_id = ? AND state IN ('pending', 'claimed')`,
+        )
+        .run(next.id, input.fromEpisodeId)
       const handoff = input.handoff
       this.#database
         .prepare(
           `INSERT INTO episode_handoffs
-            (id, from_episode_id, to_episode_id, source_event_ids_json, summary, provider, model, created_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+            (id, from_episode_id, to_episode_id, source_event_ids_json, recent_event_ids_json, summary, provider, model, created_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         )
         .run(
           handoff.id,
           handoff.fromEpisodeId,
           handoff.toEpisodeId,
           JSON.stringify(handoff.sourceEventIds),
+          JSON.stringify(handoff.recentEventIds),
           handoff.summary,
           handoff.provider,
           handoff.model,
@@ -1066,6 +1145,27 @@ export class SqliteCoreRepository
       )
       .all(episodeId) as SqliteRow[]
     return rows.map((row) => this.#admission(row))
+  }
+
+  listAdmittedEventIds(channelId: ChannelId, agentId: AgentId): readonly ChannelEventId[] {
+    const rows = this.#database
+      .prepare(
+        `SELECT a.channel_event_ids_json
+           FROM admissions a
+           JOIN episodes e ON e.id = a.episode_id
+          WHERE e.channel_id = ? AND e.agent_id = ? AND a.state = 'logged-to-session'
+          ORDER BY a.created_at, a.id`,
+      )
+      .all(channelId, agentId) as SqliteRow[]
+    const ids: ChannelEventId[] = []
+    for (const row of rows) {
+      const value = parseStoredJson(requiredString(row, 'channel_event_ids_json'), 'channel_event_ids_json')
+      if (!Array.isArray(value) || value.some((id) => typeof id !== 'string')) {
+        throw new Error('Core database channel_event_ids_json must be a string array.')
+      }
+      ids.push(...(value as ChannelEventId[]))
+    }
+    return ids
   }
 
   claimAdmission(id: AdmissionId, claimedAt: number): void {

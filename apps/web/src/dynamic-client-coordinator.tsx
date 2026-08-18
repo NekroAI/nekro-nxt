@@ -81,6 +81,8 @@ class DynamicClientCoordinator {
   #queue: Promise<void> = Promise.resolve()
   #disposed = false
   #failure = ''
+  #nativeFailure = ''
+  #nativeReady = false
 
   subscribe = (listener: () => void): (() => void) => {
     this.#listeners.add(listener)
@@ -120,6 +122,36 @@ class DynamicClientCoordinator {
   renderRoot(): ReactNode | undefined {
     if (!this.#runtime || this.#runtime.loaded().length === 0) return undefined
     return this.#runtime.renderRoot()
+  }
+
+  loadNativeSettings(): Promise<void> {
+    return this.#enqueue(async () => {
+      try {
+        const runtime = await this.#ensureRuntime()
+        await runtime.loadNativeSettings()
+        this.#nativeReady = true
+        this.#nativeFailure = ''
+      } catch (error) {
+        this.#nativeReady = false
+        this.#nativeFailure = error instanceof Error ? error.message : String(error)
+      }
+      this.#publish()
+    })
+  }
+
+  renderNativeSettings(): ReactNode | undefined {
+    if (!this.#runtime || !this.#nativeReady) return undefined
+    try {
+      return this.#runtime.renderNativeSettings()
+    } catch (error) {
+      this.#nativeReady = false
+      this.#nativeFailure = error instanceof Error ? error.message : String(error)
+      return undefined
+    }
+  }
+
+  nativeFailure(): string {
+    return this.#nativeFailure
   }
 
   failure(): string {
@@ -213,4 +245,20 @@ export function DynamicClientSlots({ agentId }: { readonly agentId: string }) {
   if (failure) return <div role="alert">即时界面加载失败：{failure}</div>
   const root = coordinator.renderRoot()
   return root === undefined ? null : <div data-dynamic-client-slots="">{root}</div>
+}
+
+export function DshNativeSettingsSlots({ onFailure }: { readonly onFailure?: (message: string) => void }) {
+  const coordinator = useContext(DynamicClientContext)
+  if (!coordinator) throw new Error('DSH 原生界面缺少产品级 Client Runtime。')
+  useSyncExternalStore(coordinator.subscribe, coordinator.getVersion, coordinator.getVersion)
+  useEffect(() => {
+    void coordinator.loadNativeSettings()
+  }, [coordinator])
+  const failure = coordinator.nativeFailure()
+  useEffect(() => {
+    if (failure) onFailure?.(failure)
+  }, [failure, onFailure])
+  if (failure) return <div role="alert">DSH 原生界面加载失败：{failure}</div>
+  const content = coordinator.renderNativeSettings()
+  return content === undefined ? <div>正在加载 DSH 原生界面…</div> : <>{content}</>
 }

@@ -586,6 +586,99 @@ describe('NekroNxt Server domain API (WebServer seam)', () => {
         }),
       })
       expect(editedResponse.ok).toBe(true)
+
+      const pluginResponse = await fetch(`http://127.0.0.1:${firstApi.port}/api/dsh/plugins`)
+      expect(pluginResponse.ok).toBe(true)
+      const pluginCatalog = (await pluginResponse.json()) as {
+        plugins: Array<{ packageName: string; overall: string; settingsNamespaces: string[] }>
+      }
+      expect(pluginCatalog.plugins).toContainEqual(
+        expect.objectContaining({
+          packageName: '@deepseek-ai/dsh-web-search-deepseek',
+          overall: 'verified',
+          settingsNamespaces: ['web-search-deepseek'],
+        }),
+      )
+
+      const settingsResponse = await fetch(`http://127.0.0.1:${firstApi.port}/api/dsh/settings`)
+      expect(settingsResponse.ok).toBe(true)
+      const settingsText = await settingsResponse.text()
+      expect(settingsText).not.toContain('write-only-test-key')
+      expect(settingsText).not.toContain('custom-write-only-test-key')
+      const settings = JSON.parse(settingsText) as {
+        namespaces: Array<{ ns: string; revision: number; resolved: Record<string, unknown>; secrets: unknown[] }>
+      }
+      const webSearch = settings.namespaces.find((namespace) => namespace.ns === 'web-search-deepseek')!
+      expect(webSearch.resolved).toMatchObject({ apiKeyEnv: 'DEEPSEEK_API_KEY', maxTokens: 1024, maxUses: 2 })
+      expect(webSearch.secrets).toEqual(
+        expect.arrayContaining([expect.objectContaining({ path: ['apiKey'], set: false })]),
+      )
+
+      const mutateResponse = await fetch(
+        `http://127.0.0.1:${firstApi.port}/api/dsh/settings/web-search-deepseek/mutate`,
+        {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({
+            expectedRevision: webSearch.revision,
+            ops: [{ op: 'set', path: ['maxUses'], value: 3 }],
+          }),
+        },
+      )
+      expect(mutateResponse.ok).toBe(true)
+      const mutated = (await mutateResponse.json()) as { revision: number; resolved: { maxUses: number } }
+      expect(mutated).toMatchObject({ resolved: { maxUses: 3 } })
+      const conflictResponse = await fetch(
+        `http://127.0.0.1:${firstApi.port}/api/dsh/settings/web-search-deepseek/mutate`,
+        {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({
+            expectedRevision: webSearch.revision,
+            ops: [{ op: 'set', path: ['maxUses'], value: 4 }],
+          }),
+        },
+      )
+      expect(conflictResponse.status).toBe(409)
+      const unsetResponse = await fetch(
+        `http://127.0.0.1:${firstApi.port}/api/dsh/settings/web-search-deepseek/mutate`,
+        {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({
+            expectedRevision: mutated.revision,
+            ops: [{ op: 'unset', path: ['maxUses'] }],
+          }),
+        },
+      )
+      expect(unsetResponse.ok).toBe(true)
+      expect(await unsetResponse.json()).toMatchObject({ resolved: { maxUses: 2 } })
+
+      const credentialSet = await fetch(`http://127.0.0.1:${firstApi.port}/api/dsh/credentials/DEEPSEEK_API_KEY`, {
+        method: 'PUT',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ value: 'generic-write-only-key' }),
+      })
+      expect(credentialSet.ok).toBe(true)
+      expect(await credentialSet.text()).not.toContain('generic-write-only-key')
+      const credentialDescribe = await fetch(`http://127.0.0.1:${firstApi.port}/api/dsh/credentials/describe`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ refs: ['DEEPSEEK_API_KEY'] }),
+      })
+      expect(await credentialDescribe.json()).toEqual({
+        credentials: { DEEPSEEK_API_KEY: { configured: true, source: 'file', writable: true } },
+      })
+      const invalidCredentialRef = await fetch(`http://127.0.0.1:${firstApi.port}/api/dsh/credentials/describe`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ refs: ['invalid/ref'] }),
+      })
+      expect(invalidCredentialRef.status).toBe(400)
+      const credentialUnset = await fetch(`http://127.0.0.1:${firstApi.port}/api/dsh/credentials/DEEPSEEK_API_KEY`, {
+        method: 'DELETE',
+      })
+      expect(await credentialUnset.json()).toEqual({ configured: false, writable: true })
     } finally {
       firstApi.dispose()
       await firstWeb.fiber.dispose()
