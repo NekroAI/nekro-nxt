@@ -45,6 +45,7 @@ jobs:
           node-version: ${{ matrix.node }}
           cache: pnpm
       - run: pnpm install --frozen-lockfile
+      - run: pnpm exec playwright install --with-deps chromium
       - run: pnpm smoke:better-sqlite3
       - run: pnpm check:drizzle
       - run: pnpm --filter @nekro-nxt/storage-sqlite test
