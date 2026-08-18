@@ -20,6 +20,18 @@ const renderRoute = (route: string): string =>
   )
 
 const browserSnapshot = {
+  capabilityAvailability: {
+    subagents: { available: true },
+    webSearch: {
+      provider: 'deepseek-official',
+      available: false,
+      credentialConfigured: false,
+      credentialReference: 'DEEPSEEK_API_KEY',
+      maxUsesPerCall: 2,
+      maxResultsPerCall: 5,
+      timeoutMs: 60_000,
+    },
+  },
   connectionAdapters: [
     {
       key: 'web',
@@ -297,6 +309,7 @@ describe('NekroNxt product shell', () => {
     let snapshot: ProductSnapshot = {
       host: state.host,
       connectionAdapters: state.connectionAdapters,
+      capabilityAvailability: state.capabilityAvailability,
       models: state.models,
       agents: state.agents,
       channels: state.channels,
@@ -335,6 +348,7 @@ describe('NekroNxt product shell', () => {
         return {
           host: state.host,
           connectionAdapters: state.connectionAdapters,
+          capabilityAvailability: state.capabilityAvailability,
           models: state.models,
           agents: state.agents,
           channels: state.channels,

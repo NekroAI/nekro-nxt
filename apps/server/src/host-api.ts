@@ -485,8 +485,13 @@ export const createNekroHostApi = (webServer: WebServer, runtime: NekroRuntime):
             }),
       }
     })
+    const webSearch = await runtime.host.getWebSearchCapabilityStatus()
     return {
       models: await runtime.host.listAvailableLlmModels(),
+      capabilityAvailability: {
+        subagents: { available: true },
+        webSearch,
+      },
       connectionAdapters: runtime.listConnectionAdapters(),
       agents,
       channels: channelProjection,
@@ -522,9 +527,13 @@ export const createNekroHostApi = (webServer: WebServer, runtime: NekroRuntime):
         const channelId = parsed.channelId as ChannelId
         if (!runtime.repository.getAgent(agentId)) throw new Error('智能体不存在。')
         if (!runtime.repository.getChannel(channelId)) throw new Error('频道不存在。')
-        const previousEpisodes = runtime.repository
-          .listActiveEpisodesForAgent(agentId)
-          .filter((episode) => episode.channelId !== channelId)
+        const previousAgentId = runtime.core.listBindings(channelId)[0]?.agentId
+        const previousEpisodes =
+          previousAgentId === undefined || previousAgentId === agentId
+            ? []
+            : runtime.repository
+                .listActiveEpisodesForAgent(previousAgentId)
+                .filter((episode) => episode.channelId === channelId)
         for (const episode of previousEpisodes) {
           await runtime.channels.stopEpisode(episode.id, 'permission-revoked')
         }
@@ -696,6 +705,17 @@ export const createNekroHostApi = (webServer: WebServer, runtime: NekroRuntime):
         writeError(res, 400, 'invalid-request', error instanceof Error ? error.message : String(error))
         return
       }
+      const defaultCapabilities =
+        parsed.capabilities === undefined
+          ? {
+              subagents: true,
+              fileTools: false,
+              webSearch: (await runtime.host.getWebSearchCapabilityStatus()).available,
+              dynamicCreation: false,
+              developmentShell: false,
+              unrestrictedFileAccess: false,
+            }
+          : parsed.capabilities
       const content: AgentRevisionContent = {
         displayName: parsed.displayName,
         persona: parsed.persona,
@@ -704,7 +724,7 @@ export const createNekroHostApi = (webServer: WebServer, runtime: NekroRuntime):
           model: parsed.model.model,
           ...(parsed.model.reasoningEffort === undefined ? {} : { reasoningEffort: parsed.model.reasoningEffort }),
         },
-        ...(parsed.capabilities === undefined ? {} : { capabilities: parsed.capabilities }),
+        capabilities: defaultCapabilities,
       }
       const entity = runtime.createAgentWithWebChannel(content)
       writeJson(res, 201, {

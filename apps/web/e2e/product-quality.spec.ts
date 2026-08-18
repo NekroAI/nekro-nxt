@@ -1,6 +1,18 @@
 import { expect, test, type Page, type TestInfo } from '@playwright/test'
 
 const productSnapshot = {
+  capabilityAvailability: {
+    subagents: { available: true },
+    webSearch: {
+      provider: 'deepseek-official',
+      available: false,
+      credentialConfigured: false,
+      credentialReference: 'DEEPSEEK_API_KEY',
+      maxUsesPerCall: 2,
+      maxResultsPerCall: 5,
+      timeoutMs: 60_000,
+    },
+  },
   connectionAdapters: [
     {
       key: 'web',
@@ -504,7 +516,7 @@ test('the four-step creation wizard submits identity, model, and explicit capabi
   await dialog.getByRole('switch', { name: '动态创造' }).click()
   await dialog.getByRole('switch', { name: '开发命令' }).click()
   await dialog.getByRole('button', { name: '下一步' }).click()
-  await expect(dialog.getByText('动态创造、开发命令', { exact: true })).toBeVisible()
+  await expect(dialog.getByText('子智能体、动态创造、开发命令', { exact: true })).toBeVisible()
   await capture(page, testInfo, 'agent-create-confirmation')
   await dialog.getByRole('button', { name: '创建并打开频道' }).click()
   await expect(page).toHaveURL(/\/channels\/channel-target$/u)
@@ -513,7 +525,7 @@ test('the four-step creation wizard submits identity, model, and explicit capabi
     persona: '先核对证据，再给出结论。',
     model: { provider: 'deepseek', model: 'deepseek-v4-flash' },
     capabilities: {
-      subagents: false,
+      subagents: true,
       fileTools: false,
       webSearch: false,
       dynamicCreation: true,

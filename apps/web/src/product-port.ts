@@ -1,5 +1,6 @@
 import type {
   AgentSummary,
+  CapabilityAvailability,
   ChannelSummary,
   ConnectionSummary,
   ConversationMessage,
@@ -14,6 +15,7 @@ import { useProductStore } from './product-store.js'
 export interface ProductSnapshot {
   readonly host: ProductHostState
   readonly connectionAdapters: readonly AdapterConnectionDescriptor[]
+  readonly capabilityAvailability: CapabilityAvailability
   readonly models: readonly ModelSummary[]
   readonly agents: readonly AgentSummary[]
   readonly channels: readonly ChannelSummary[]
@@ -71,6 +73,7 @@ export class ProductHostCoordinator implements ProductHostPort {
       useProductStore.setState({
         host: snapshot.host,
         connectionAdapters: snapshot.connectionAdapters,
+        capabilityAvailability: snapshot.capabilityAvailability,
         models: snapshot.models,
         agents: snapshot.agents,
         channels: snapshot.channels,

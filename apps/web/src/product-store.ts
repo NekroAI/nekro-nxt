@@ -143,6 +143,19 @@ export interface ProductHostState {
   readonly lastSuccessfulAt: number | null
 }
 
+export interface CapabilityAvailability {
+  readonly subagents: { readonly available: boolean }
+  readonly webSearch: {
+    readonly provider: string
+    readonly available: boolean
+    readonly credentialConfigured: boolean
+    readonly credentialReference: string
+    readonly maxUsesPerCall: number
+    readonly maxResultsPerCall: number
+    readonly timeoutMs: number
+  }
+}
+
 export type ProductActionErrorCode = 'host-unavailable' | 'invalid-input' | 'missing-prerequisite'
 
 export class ProductActionError extends Error {
@@ -158,6 +171,7 @@ export class ProductActionError extends Error {
 export interface ProductState {
   readonly host: ProductHostState
   readonly connectionAdapters: readonly AdapterConnectionDescriptor[]
+  readonly capabilityAvailability: CapabilityAvailability
   readonly models: readonly ModelSummary[]
   readonly agents: readonly AgentSummary[]
   readonly channels: readonly ChannelSummary[]
@@ -233,6 +247,18 @@ const requireValue = (value: string, message: string, code: ProductActionErrorCo
 export const useProductStore = create<ProductState>(() => ({
   host: { status: 'initializing', error: null, lastSuccessfulAt: null },
   connectionAdapters: [],
+  capabilityAvailability: {
+    subagents: { available: true },
+    webSearch: {
+      provider: 'deepseek-official',
+      available: false,
+      credentialConfigured: false,
+      credentialReference: 'DEEPSEEK_API_KEY',
+      maxUsesPerCall: 2,
+      maxResultsPerCall: 5,
+      timeoutMs: 60_000,
+    },
+  },
   models: [],
   agents: [],
   channels: [],

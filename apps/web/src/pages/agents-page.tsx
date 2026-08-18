@@ -36,6 +36,7 @@ export function AgentsPage() {
   const host = useProductStore((state) => state.host)
   const agents = useProductStore((state) => state.agents)
   const models = useProductStore((state) => state.models)
+  const capabilityAvailability = useProductStore((state) => state.capabilityAvailability)
   const channels = useProductStore((state) => state.channels)
   const messages = useProductStore((state) => state.messages)
   const navigate = useNavigate()
@@ -45,7 +46,7 @@ export function AgentsPage() {
   const [newPersona, setNewPersona] = useState('')
   const [selectedModelKey, setSelectedModelKey] = useState('')
   const [newCapabilities, setNewCapabilities] = useState<AgentSummary['capabilities']>({
-    subagents: false,
+    subagents: true,
     fileTools: false,
     webSearch: false,
     dynamicCreation: false,
@@ -66,9 +67,9 @@ export function AgentsPage() {
     setNewName('')
     setNewPersona('')
     setNewCapabilities({
-      subagents: false,
+      subagents: true,
       fileTools: false,
-      webSearch: false,
+      webSearch: capabilityAvailability.webSearch.available,
       dynamicCreation: false,
       developmentShell: false,
       unrestrictedFileAccess: false,
@@ -287,7 +288,26 @@ export function AgentsPage() {
           ) : null}
           {createStep === 2 ? (
             <div className={styles.capabilityChoices}>
-              <InlineFeedback tone="info">默认不授予开发能力；需要时也可在智能体管理中单独开启。</InlineFeedback>
+              <InlineFeedback tone="info">
+                默认开启子智能体；文件与开发能力由你明确授权，高风险能力不会因频道类型被强制关闭。
+              </InlineFeedback>
+              <SwitchField
+                label="子智能体"
+                description="允许在后台委派独立任务；主智能体仍可继续接收和回应频道消息。"
+                checked={newCapabilities.subagents}
+                onCheckedChange={(enabled) => setNewCapabilities((current) => ({ ...current, subagents: enabled }))}
+              />
+              <SwitchField
+                label="网页搜索"
+                description={
+                  capabilityAvailability.webSearch.available
+                    ? '通过 DeepSeek 官方搜索扩展信息范围；每次搜索会产生额外模型费用。'
+                    : '需要先在模型设置中配置 DeepSeek API 凭据；每次搜索会产生额外模型费用。'
+                }
+                checked={newCapabilities.webSearch}
+                disabled={!capabilityAvailability.webSearch.available}
+                onCheckedChange={(enabled) => setNewCapabilities((current) => ({ ...current, webSearch: enabled }))}
+              />
               <SwitchField
                 label="动态创造"
                 description="允许创建和试运行临时扩展。"
@@ -342,6 +362,8 @@ export function AgentsPage() {
                 <span>初始能力</span>
                 <strong>
                   {[
+                    newCapabilities.subagents ? '子智能体' : '',
+                    newCapabilities.webSearch ? '网页搜索' : '',
                     newCapabilities.dynamicCreation ? '动态创造' : '',
                     newCapabilities.fileTools ? '文件工具' : '',
                     newCapabilities.developmentShell ? '开发命令' : '',
@@ -371,6 +393,18 @@ const capabilityCopy: readonly {
   readonly description: string
   readonly risk: { readonly label: string; readonly tone: StatusTone }
 }[] = [
+  {
+    key: 'subagents',
+    label: '子智能体',
+    description: '允许在后台委派独立任务，主智能体可同时继续处理频道消息。',
+    risk: { label: '低风险', tone: 'info' },
+  },
+  {
+    key: 'webSearch',
+    label: '网页搜索',
+    description: '通过已配置的 DeepSeek Web Provider 搜索外部信息；搜索内容不可信且会产生额外费用。',
+    risk: { label: '外部服务', tone: 'warning' },
+  },
   {
     key: 'dynamicCreation',
     label: '动态创造',
@@ -402,6 +436,7 @@ export function AgentManagePage() {
   const [searchParams, setSearchParams] = useSearchParams()
   const navigate = useNavigate()
   const host = useProductStore((state) => state.host)
+  const capabilityAvailability = useProductStore((state) => state.capabilityAvailability)
   const agent = useProductStore((state) => state.agents.find((candidate) => candidate.id === agentId))
   const models = useProductStore((state) => state.models)
   const channels = useProductStore((state) => state.channels)
@@ -639,8 +674,14 @@ export function AgentManagePage() {
               <ShieldAlert size={18} aria-hidden="true" />
             </div>
             <InlineFeedback tone="warning">
-              开发命令和完整文件访问相互独立。完整文件访问不会自动开启命令执行。
+              文件工具可读取 Server
+              进程有权读取的宿主文件；开发命令与不受限文件访问不会因频道类型被强制关闭，请按实际用途授权。
             </InlineFeedback>
+            {!capabilityAvailability.webSearch.available ? (
+              <InlineFeedback tone="info">
+                网页搜索当前不可用。请先在设置中配置 DeepSeek API 凭据；搜索会产生额外模型费用。
+              </InlineFeedback>
+            ) : null}
             <div className={styles.switchList}>
               {capabilityCopy.map((item) => (
                 <SwitchField
@@ -652,7 +693,12 @@ export function AgentManagePage() {
                   }
                   description={item.description}
                   checked={agent.capabilities[item.key]}
-                  disabled={capabilityPending !== null}
+                  disabled={
+                    capabilityPending !== null ||
+                    (item.key === 'webSearch' &&
+                      !capabilityAvailability.webSearch.available &&
+                      !agent.capabilities.webSearch)
+                  }
                   onCheckedChange={(enabled) => void updateCapability(item.key, enabled)}
                 />
               ))}

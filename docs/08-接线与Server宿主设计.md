@@ -56,7 +56,7 @@ Web 端不复制一份业务事实到 Zustand。`ProductHostPort.getSnapshot()` 
 | 启用扩展 | `POST /api/extensions/:id/activation` | AgentActivation 启用（body `{agentId, revisionId}`） | ✅ |
 | 停用扩展 | `DELETE /api/extensions/:id/activation` | 停用当前 Activation（安全间隙后完成） | ✅ |
 | 创建智能体引导跑动 | —— | —— | —— |
-| 修改能力 | `POST /api/agents/:id/capabilities` | 按当前 Revision 生成或复用不可变 AgentRevision，更新 subagents/fileTools/webSearch/dynamicCreation/developmentShell/unrestrictedFileAccess | ✅ V2 codec、Server+Web 命令+store 委托；新能力运行时按阶段开放 |
+| 修改能力 | `POST /api/agents/:id/capabilities` | 按当前 Revision 生成或复用不可变 AgentRevision，更新 subagents/fileTools/webSearch/dynamicCreation/developmentShell/unrestrictedFileAccess | ✅ V2 codec、Server+Web 命令+store 委托、Revision Scope 运行时 |
 | 修改智能体配置 | `POST /api/agents/:id/revision` | 携带 expectedCurrentRevisionId 保存名称、人设与 DSH provider/model 为新不可变 AgentRevision；冲突要求刷新 | ✅ Server+Web 管理页 |
 | 模型供应商目录 | `GET /api/llm/providers` | 投影 DSH 可配置供应商、脱敏 settings 层、凭据状态和活动模型 | ✅ |
 | 保存模型供应商 | `POST /api/llm/providers/:id` | 用 DSH settings mutate 保存 profile，API Key 经 DSH credentials 只写保存 | ✅ |
@@ -66,7 +66,7 @@ Web 端不复制一份业务事实到 Zustand。`ProductHostPort.getSnapshot()` 
 | 保存动态包 | `POST /api/extensions/save-from-dynamic` | 把活动会话中的运行动态 Package 保存为本地 Extension Revision（不自动启用） | ✅ |
 | 动态审批/调用 | `POST /api/dynamic/:agentId/{inventory\|approve\|decline\|invoke\|run-host-half\|get-client-code\|settle-user-run\|report-render-failure}` | 解析智能体活动会话并调用 DshHostRuntime 动态方法（清单、审批解析、Host half 启动、Client 源码获取、Host 方法调用、用户 run 结算、渲染失败上报） | ✅ 服务端、Web Host 与生产浏览器 Slot 旅程 |
 
-`GET /api/snapshot` 现在投影：DSH 实时注册的 provider/model 目录和 `idle/running` 状态、已安装 Adapter 的连接配置描述、全部 `Connection`（不返回 Secret 或 credential reference）、Gateway 状态、凭据是否已配置、收发测试、已绑定智能体、频道、全部已保存本地扩展（含当前 AgentActivation 状态）、各智能体活动会话中运行的动态 Package。它不再附带每个频道的近期消息，避免进入任意页面都扫描全部历史；发送者、Mention、资源和回执由频道历史端点按需投影。成员与平台内部 ID 只用于关联，不作为 UI 文案。
+`GET /api/snapshot` 现在投影：DSH 实时注册的 provider/model 目录和 `idle/running` 状态、子智能体与 Web 搜索可用状态、已安装 Adapter 的连接配置描述、全部 `Connection`（不返回 Secret）、Gateway 状态、凭据是否已配置、收发测试、已绑定智能体、频道、全部已保存本地扩展（含当前 AgentActivation 状态）、各智能体活动会话中运行的动态 Package。Web 搜索状态通过 DSH settings/credentials 接缝计算，未配置 Provider 凭据时不可用，不以环境变量名称存在推断可用。快照不附带每个频道的近期消息；发送者、Mention、资源和回执由频道历史端点按需投影。
 
 ### 3.2 Web 侧
 

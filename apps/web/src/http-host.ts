@@ -83,6 +83,18 @@ export const renderConversationBody = (
 const emptySnapshot = (): ProductSnapshot => ({
   host: { status: 'initializing', error: null, lastSuccessfulAt: null },
   connectionAdapters: [],
+  capabilityAvailability: {
+    subagents: { available: true },
+    webSearch: {
+      provider: 'deepseek-official',
+      available: false,
+      credentialConfigured: false,
+      credentialReference: 'DEEPSEEK_API_KEY',
+      maxUsesPerCall: 2,
+      maxResultsPerCall: 5,
+      timeoutMs: 60_000,
+    },
+  },
   models: [],
   agents: [],
   channels: [],
@@ -189,6 +201,7 @@ interface SnapshotDynamicItemJson {
 
 interface SnapshotJson {
   readonly connectionAdapters: readonly AdapterConnectionDescriptor[]
+  readonly capabilityAvailability: ProductSnapshot['capabilityAvailability']
   readonly models?: readonly SnapshotModelJson[]
   readonly agents: readonly SnapshotAgentJson[]
   readonly channels: readonly SnapshotChannelJson[]
@@ -214,6 +227,22 @@ const isSnapshotJson = (value: unknown): value is SnapshotJson => {
   const arrays = ['connectionAdapters', 'agents', 'channels', 'messages', 'connections', 'extensions', 'dynamic']
   if (!arrays.every((key) => Array.isArray(value[key]))) return false
   if (value.models !== undefined && !Array.isArray(value.models)) return false
+  if (!isRecord(value.capabilityAvailability)) return false
+  if (!isRecord(value.capabilityAvailability.subagents)) return false
+  if (typeof value.capabilityAvailability.subagents.available !== 'boolean') return false
+  if (!isRecord(value.capabilityAvailability.webSearch)) return false
+  const webSearch = value.capabilityAvailability.webSearch
+  if (
+    !hasString(webSearch, 'provider') ||
+    typeof webSearch.available !== 'boolean' ||
+    typeof webSearch.credentialConfigured !== 'boolean' ||
+    !hasString(webSearch, 'credentialReference') ||
+    !['maxUsesPerCall', 'maxResultsPerCall', 'timeoutMs'].every(
+      (key) => typeof webSearch[key] === 'number' && Number.isFinite(webSearch[key]),
+    )
+  ) {
+    return false
+  }
 
   const adaptersValid = (value.connectionAdapters as unknown[]).every(
     (item) => isRecord(item) && hasString(item, 'key') && hasString(item, 'displayName'),
@@ -553,6 +582,7 @@ const projectSnapshot = (json: SnapshotJson, successfulAt: number): ProductSnaps
   return {
     host: { status: 'ready', error: null, lastSuccessfulAt: successfulAt },
     connectionAdapters: json.connectionAdapters,
+    capabilityAvailability: json.capabilityAvailability,
     models,
     agents,
     channels,

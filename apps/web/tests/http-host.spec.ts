@@ -36,6 +36,18 @@ const stubResponse = (status: number, body: unknown) => ({
 })
 
 const snapshotBody = () => ({
+  capabilityAvailability: {
+    subagents: { available: true },
+    webSearch: {
+      provider: 'deepseek-official',
+      available: false,
+      credentialConfigured: false,
+      credentialReference: 'DEEPSEEK_API_KEY',
+      maxUsesPerCall: 2,
+      maxResultsPerCall: 5,
+      timeoutMs: 60_000,
+    },
+  },
   connectionAdapters: [
     {
       key: 'web',

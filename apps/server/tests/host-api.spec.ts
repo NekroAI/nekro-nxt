@@ -1,7 +1,8 @@
 import { LlmAdapter, CallId, type GenerateOptions, type StreamChunk } from '@deepseek-ai/dsh-llm'
+import { credentialRef } from '@deepseek-ai/dsh-credentials'
 import { Context } from '@deepseek-ai/cordis'
 import WebServer from '@deepseek-ai/dsh-host-webserver'
-import { mkdtemp, rm, stat } from 'node:fs/promises'
+import { mkdir, mkdtemp, rm, stat } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
@@ -135,6 +136,11 @@ describe('NekroNxt Server domain API (WebServer seam)', () => {
       const created = (await createdResponse.json()) as { agentId: string; channelId: string; connectionId: string }
       expect(created.agentId.length).toBeGreaterThan(0)
       expect(created.channelId.length).toBeGreaterThan(0)
+      expect(runtime.repository.getAgent(created.agentId as never)?.revision.capabilities).toMatchObject({
+        subagents: true,
+        fileTools: false,
+        webSearch: false,
+      })
 
       const sender = runtime.core.observeChannelMember({
         connectionId: created.connectionId as never,
@@ -409,6 +415,51 @@ describe('NekroNxt Server domain API (WebServer seam)', () => {
       }
       expect(restored.currentRevisionId).toBe(before.revision.id)
       expect(restored.capabilities.dynamicCreation).toBe(false)
+    } finally {
+      api.dispose()
+      await webContext.fiber.dispose()
+      await runtime.dispose()
+    }
+  })
+
+  it('defaults Web Search on only when the DSH Provider credential is ready', async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), 'nekro-nxt-cap-default-api-'))
+    temporaryDirectories.push(directory)
+    const dshRoot = path.join(directory, 'dsh')
+    await mkdir(dshRoot, { recursive: true })
+    const runtime = await NekroRuntime.create({
+      coreDatabasePath: path.join(directory, 'core.sqlite'),
+      sessionDatabasePath: path.join(directory, 'sessions.sqlite'),
+      assetRoot: path.join(directory, 'assets'),
+      extensionDataRoot: path.join(directory, 'extension-data'),
+      extensionCacheRoot: path.join(directory, 'extension-cache'),
+      llmSettingsPath: path.join(dshRoot, 'settings.yaml'),
+      llmCredentialPath: path.join(dshRoot, 'credentials.yaml'),
+      configureLlm: async (context: Context) => {
+        await context.credentials.set(credentialRef('DEEPSEEK_API_KEY'), 'configured-test-key')
+      },
+    })
+    const webContext = new Context()
+    await webContext.plugin(WebServer, { host: '127.0.0.1', port: 0 })
+    const api = createNekroHostApi(webContext.webServer, runtime)
+    const origin = `http://127.0.0.1:${api.port}`
+    try {
+      const response = await fetch(`${origin}/api/agents`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          displayName: '搜索默认智能体',
+          persona: '',
+          model: { provider: 'test-provider', model: 'chat-model' },
+        }),
+      })
+      expect(response.status).toBe(201)
+      const created = (await response.json()) as { readonly agentId: string }
+      expect(runtime.repository.getAgent(created.agentId as never)?.revision.capabilities).toMatchObject({
+        subagents: true,
+        fileTools: false,
+        webSearch: true,
+      })
     } finally {
       api.dispose()
       await webContext.fiber.dispose()
