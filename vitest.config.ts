@@ -1,29 +1,10 @@
 import { defineConfig } from 'vitest/config'
-import { fileURLToPath } from 'node:url'
+
+import { workspaceSourceAliases } from './scripts/workspace-source-aliases.mjs'
 
 export default defineConfig({
   resolve: {
-    alias: {
-      '@nekro-nxt/dsh-compat/client': fileURLToPath(new URL('./packages/dsh-compat/src/client.ts', import.meta.url)),
-      '@nekro-nxt/dsh-compat': fileURLToPath(new URL('./packages/dsh-compat/src/index.ts', import.meta.url)),
-      '@nekro-nxt/adapter-sdk': fileURLToPath(new URL('./packages/adapter-sdk/src/index.ts', import.meta.url)),
-      '@nekro-nxt/adapter-qq-openclaw': fileURLToPath(
-        new URL('./packages/adapter-qq-openclaw/src/index.ts', import.meta.url),
-      ),
-      '@nekro-nxt/adapter-web': fileURLToPath(new URL('./packages/adapter-web/src/index.ts', import.meta.url)),
-      '@nekro-nxt/client-migrations': fileURLToPath(
-        new URL('./packages/client-migrations/src/index.ts', import.meta.url),
-      ),
-      '@nekro-nxt/contracts': fileURLToPath(new URL('./packages/contracts/src/index.ts', import.meta.url)),
-      '@nekro-nxt/core': fileURLToPath(new URL('./packages/core/src/index.ts', import.meta.url)),
-      '@nekro-nxt/extension-sdk': fileURLToPath(new URL('./packages/extension-sdk/src/index.ts', import.meta.url)),
-      '@nekro-nxt/extension-runtime': fileURLToPath(
-        new URL('./packages/extension-runtime/src/index.ts', import.meta.url),
-      ),
-      '@nekro-nxt/channel-runtime': fileURLToPath(new URL('./packages/channel-runtime/src/index.ts', import.meta.url)),
-      '@nekro-nxt/storage-sqlite': fileURLToPath(new URL('./packages/storage-sqlite/src/index.ts', import.meta.url)),
-      '@nekro-nxt/test-harness': fileURLToPath(new URL('./packages/test-harness/src/index.ts', import.meta.url)),
-    },
+    alias: workspaceSourceAliases,
   },
   test: {
     include: ['apps/*/tests/**/*.spec.{ts,tsx}', 'packages/*/tests/**/*.spec.{ts,tsx}', 'scripts/**/*.spec.{ts,tsx}'],

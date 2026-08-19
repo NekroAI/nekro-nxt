@@ -22,7 +22,7 @@ jobs:
           node-version: 22.23.2
           cache: pnpm
       - run: pnpm install --frozen-lockfile
-      - run: pnpm exec playwright install --with-deps chromium
+      - run: pnpm exec playwright install --with-deps chromium chromium-headless-shell
       - run: pnpm check
       - run: pnpm test
       - run: pnpm test:coverage
@@ -48,7 +48,7 @@ jobs:
       - run: pnpm smoke:better-sqlite3
       - run: pnpm check:drizzle
       - run: pnpm --filter @nekro-nxt/storage-sqlite test
-      - run: pnpm test
+      - run: pnpm exec vitest run --exclude apps/web/tests/app.spec.tsx --exclude apps/web/tests/ui-kit-browser.spec.tsx
 
   all-checks-passed:
     if: always()
