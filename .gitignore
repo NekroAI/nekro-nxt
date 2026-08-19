@@ -2,7 +2,9 @@ node_modules/
 .pnpm-store/
 dist/
 build/
-lib/
+/lib/
+apps/*/lib/
+packages/*/lib/
 coverage/
 .turbo/
 .tsbuildinfo
