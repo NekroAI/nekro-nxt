@@ -7,6 +7,8 @@ export default tseslint.config(
       '.local/**',
       'assets/**',
       'coverage/**',
+      'data/**',
+      'apps/*/data/**',
       '**/dist/**',
       'apps/*/lib/**',
       'packages/*/lib/**',

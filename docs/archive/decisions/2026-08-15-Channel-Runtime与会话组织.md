@@ -1,5 +1,7 @@
 # 决策：Channel Runtime 与会话组织
 
+> 归档日期：2026-08-19。设计长文，已冻结，不是现行规范。现行契约见 `docs/decisions/implemented/2026-08-15-Channel-Runtime与会话组织.md`。
+
 状态：accepted
 
 ## 问题
@@ -159,7 +161,7 @@ handoff 至少包含：未完成目标、用户近期明确约束、关键决定
 
 handoff summary 首期确定使用当前对话模型生成，以保持对当前人设、语言和任务语义的理解；摘要请求使用独立的确定性模板并记录模型、输入边界和来源 ID。未来出现明确成本或质量需求时，可以配置独立 summarizer，不改变 handoff 数据格式。
 
-历史检索首期确定使用 Core SQLite FTS5：先按当前 Channel 与获授权 Episode lineage 过滤，再返回命中摘要和稳定来源 ID，最终通过精确回读展示原始消息。首期不引入 embedding 或向量数据库。
+历史检索按当前 Channel 分页读取规范化 `search_text`，在 TypeScript 中做字面子串匹配，再精确回读来源消息。不引入 embedding 或向量数据库。
 
 ### 6. 出站 Outbox
 
@@ -207,7 +209,7 @@ Adapter 不负责：
 
 ## 已确认范围与延后项
 
-- Core 使用 `node:sqlite + Drizzle`，只支持 SQLite；M0 负责验证 Drizzle、FTS5、WAL 和备份能力；
+- Core 使用 `better-sqlite3 + Drizzle`，只支持 SQLite；WAL 与在线备份由存储测试覆盖；
 - Channel Event 联合类型保留 reaction/member，QQ 首期只实现消息、引用和触发所需的成员更新；
 - `unknown` 不自动重试；手工重试 UI 延后到出站诊断页面实现，重试必须创建新 attempt 并提示可能重复。
 
@@ -224,7 +226,7 @@ Adapter 不负责：
 
 ## 未来方向检查
 
-关联方向：更多 Adapter、智能体多频道、长期记忆、长期 Job、多媒体消息。
+关联方向：更多 Adapter、频道解绑与批量管理、长期记忆、长期 Job、多媒体消息。
 
 保留接缝：稳定 ID、Binding 与 Channel 分离、显式 `agentId`、Episode、Admission、MessagePart、Adapter capability、逻辑消息与物理发送分离。
 

@@ -10,7 +10,8 @@
 - `dsh-compat`：DSH 精确版本断言和公开 API 兼容探针；
 - `extension-sdk`：本地扩展唯一允许导入的版本化 Host/Client 契约；
 - `extension-runtime`：动态 Package 捕获、源码 Revision、构建缓存和 Activation 状态机；
-- `storage-sqlite`：Core/Runtime/Asset 的 SQLite 持久化、FTS5、WAL 与备份；
+- `storage-sqlite`：Core/Runtime/Asset 的 SQLite 持久化、WAL 与备份；频道历史按分页后的字面子串检索；
+- `adapter-qq-openclaw`：首个外部 Adapter，QQ 开放平台 WebSocket Gateway 与 HTTP 发送；
 - `test-harness`：Virtual Clock 等确定性场景基础设施。
 
-QQ Adapter 和完整产品 UI 包只在对应垂直切片进入时创建。没有当前消费者和验证价值的目录不提前建立。
+没有当前消费者和验证价值的目录不提前建立。Desktop 在 M7 进入。

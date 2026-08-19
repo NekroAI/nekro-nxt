@@ -1,5 +1,7 @@
 # 已实施：M5 QQ OpenClaw Adapter 离线实现
 
+> 归档日期：2026-08-19。过程日记，已冻结，不是现行规范。
+
 状态：implemented
 
 ## 结论

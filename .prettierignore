@@ -1,6 +1,8 @@
 .local/
 assets/
 coverage/
+data/
+apps/*/data/
 dist/
 docs/
 node_modules/

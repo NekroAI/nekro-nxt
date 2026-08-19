@@ -8,6 +8,6 @@
 
 迁移目录只保留 Drizzle Kit 生成的 `0000_initial`。空数据库应用该基线；已有当前基线可直接打开；任何不含 Drizzle migration 元数据的旧实验数据库都会被明确拒绝并要求重置。本项目不维护 0000–0016 的升级兼容，也不允许人工编辑迁移 SQL。
 
-频道历史搜索保存规范化 `search_text`，按频道分页后在 TypeScript 中执行字面子串匹配。因此 `%`、`_` 和中文短文本都保持字面语义，同时不再维护 FTS5 virtual table、trigger、`MATCH` 或 `bm25` 手写查询。
+频道历史搜索保存规范化 `search_text`，按频道分页后在 TypeScript 中执行字面子串匹配。`%`、`_` 和中文短文本都保持字面语义。
 
 Binding 只表达每个频道的当前归属，以 `channel_id` 为主键；历史消息和 Episode 不依赖历史 Binding 行。Agent Revision 继续不可变，当前 Revision 指针由独立表和复合外键保证归属。Asset Occurrence 以 `(channel_event_id, part_index)` 记录授权来源；Extension Activation 以 `(agent_id, extension_id)` 保存每个智能体当前启用版本。

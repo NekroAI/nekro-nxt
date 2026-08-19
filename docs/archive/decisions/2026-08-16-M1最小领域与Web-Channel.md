@@ -1,5 +1,7 @@
 # 已实施：M1 最小领域与 Web Channel
 
+> 归档日期：2026-08-19。过程日记，已冻结，不是现行规范。
+
 状态：implemented
 
 > 后续命名说明：本记录保留 M1 实施当时的 `send_message` 历史名称。为避免与 DSH 子智能体控制工具冲突，当前频道通信工具已更名为 `send_channel_message`。

@@ -416,7 +416,9 @@ describe.sequential('NekroNxt browser projections', () => {
       configFile: fileURLToPath(new URL('../vite.config.ts', import.meta.url)),
       cacheDir: cacheDirectory,
       logLevel: 'silent',
-      server: { host: '127.0.0.1', port: 0 },
+      // Vite treats `port: 0` as unset and falls back to 5173; inherit the product
+      // config's `strictPort: true` would then fail when another local Vite is up.
+      server: { host: '127.0.0.1', strictPort: false },
     })
     await server.listen()
     const address = server.httpServer?.address()
