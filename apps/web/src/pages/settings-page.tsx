@@ -28,7 +28,7 @@ export function SettingsPage() {
           setSearchParams(next, { replace: true })
         }}
       >
-        <Tabs.List aria-label="设置分类">
+        <Tabs.List aria-label="设置分类" hidden>
           <Tabs.Trigger value="models">模型供应商</Tabs.Trigger>
           <Tabs.Trigger value="dsh-extensions">DSH 扩展</Tabs.Trigger>
           <Tabs.Trigger value="appearance">外观</Tabs.Trigger>

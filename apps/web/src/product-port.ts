@@ -1,6 +1,7 @@
 import type {
   AgentSummary,
   CapabilityAvailability,
+  ChannelRuntimeView,
   ChannelSummary,
   ConnectionSummary,
   ConversationMessage,
@@ -20,6 +21,7 @@ export interface ProductSnapshot {
   readonly agents: readonly AgentSummary[]
   readonly channels: readonly ChannelSummary[]
   readonly messages: readonly ConversationMessage[]
+  readonly channelRuntimes: Readonly<Record<string, ChannelRuntimeView>>
   readonly connections: readonly ConnectionSummary[]
   readonly extensions: readonly LocalExtensionSummary[]
   readonly approvals: readonly DynamicApproval[]
@@ -78,6 +80,7 @@ export class ProductHostCoordinator implements ProductHostPort {
         agents: snapshot.agents,
         channels: snapshot.channels,
         messages: snapshot.messages,
+        channelRuntimes: snapshot.channelRuntimes,
         connections: snapshot.connections,
         extensions: snapshot.extensions,
         approvals: snapshot.approvals,

@@ -107,6 +107,11 @@
   font-size: 12px;
 }
 
+.hostNotice strong {
+  flex: 0 0 auto;
+  font-weight: 650;
+}
+
 .hostNotice span {
   min-width: 0;
   flex: 1;

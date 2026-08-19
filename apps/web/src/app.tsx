@@ -1,9 +1,9 @@
-import { Bot, Boxes, Cable, MessageSquare, RefreshCw, Settings } from 'lucide-react'
+import { Boxes, Cable, MessageSquare, RefreshCw, Settings } from 'lucide-react'
 import { Component, useEffect, useMemo, useState, type ErrorInfo, type ReactNode } from 'react'
 import { Navigate, NavLink, Outlet, Route, Routes, useLocation } from 'react-router-dom'
 import styles from './app.module.css'
 import { NotificationCenter, notify } from './components/notifications.js'
-import { HostNotice, runHostRefresh } from './components/product-feedback.js'
+import { EmptyState, HostNotice, runHostRefresh } from './components/product-feedback.js'
 import { DynamicClientProvider } from './dynamic-client-coordinator.js'
 import {
   AgentManagePage,
@@ -12,19 +12,19 @@ import {
   ConnectionsPage,
   CreatorPage,
   ExtensionsPage,
-  RuntimePage,
   SettingsPage,
 } from './pages/product-pages.js'
 import { useProductStore, type ProductHostStatus } from './product-store.js'
-import { Button, StatusBadge, Tooltip, type StatusTone } from './ui-kit/index.js'
+import { isWorkPath, workHomePath } from './shell/last-channel.js'
+import { ObjectPane } from './shell/object-pane.js'
+import { Button, Tooltip, type StatusTone } from './ui-kit/index.js'
 
-const navigation = [
-  { to: '/agents', label: '智能体', icon: Bot },
-  { to: '/channels', label: '消息', icon: MessageSquare },
-  { to: '/connections', label: '连接', icon: Cable },
-  { to: '/extensions', label: '扩展', icon: Boxes },
-  { to: '/settings', label: '设置', icon: Settings },
-]
+const modes = [
+  { to: '/channels', label: '工作', icon: MessageSquare, work: true },
+  { to: '/connections', label: '连接', icon: Cable, work: false },
+  { to: '/extensions', label: '扩展', icon: Boxes, work: false },
+  { to: '/settings', label: '设置', icon: Settings, work: false },
+] as const
 
 export const hostPresentation = (status: ProductHostStatus): { readonly label: string; readonly tone: StatusTone } => {
   if (status === 'initializing') return { label: '正在连接', tone: 'info' }
@@ -33,11 +33,42 @@ export const hostPresentation = (status: ProductHostStatus): { readonly label: s
   return { label: '无法连接', tone: 'error' }
 }
 
+function HomeIndex() {
+  const host = useProductStore((state) => state.host)
+  const channels = useProductStore((state) => state.channels)
+  const agents = useProductStore((state) => state.agents)
+  if (host.status === 'initializing' && channels.length === 0 && agents.length === 0) {
+    return (
+      <div className={styles.centeredState}>
+        <EmptyState loading title="正在读取" description="连接完成后会打开最近使用的频道。" />
+      </div>
+    )
+  }
+  return <Navigate to={workHomePath({ channels, agents })} replace />
+}
+
+function RuntimeRedirect() {
+  const host = useProductStore((state) => state.host)
+  const channels = useProductStore((state) => state.channels)
+  const agents = useProductStore((state) => state.agents)
+  if (host.status === 'initializing' && channels.length === 0 && agents.length === 0) {
+    return (
+      <div className={styles.centeredState}>
+        <EmptyState loading title="正在读取" description="连接完成后会打开最近使用的频道。" />
+      </div>
+    )
+  }
+  return <Navigate to={workHomePath({ channels, agents })} replace />
+}
+
 function AppShell() {
   const location = useLocation()
   const host = useProductStore((state) => state.host)
+  const channels = useProductStore((state) => state.channels)
+  const agents = useProductStore((state) => state.agents)
   const status = hostPresentation(host.status)
   const [refreshPending, setRefreshPending] = useState(false)
+  const workTo = workHomePath({ channels, agents })
   const reconnect = async (): Promise<void> => {
     if (refreshPending) return
     await runHostRefresh(
@@ -51,47 +82,52 @@ function AppShell() {
 
   return (
     <div className={styles.shell}>
-      <aside className={styles.sidebar}>
-        <div className={styles.brand}>
-          <div className={styles.mark} aria-hidden="true" />
-          <span className={styles.brandName}>NekroNxt</span>
-        </div>
-        <nav className={styles.nav} aria-label="主导航">
-          {navigation.map(({ to, label, icon: Icon }) => (
+      <aside className={styles.rail} aria-label="模式">
+        <div className={styles.mark} aria-hidden="true" />
+        <nav aria-label="主导航">
+          {modes.map(({ to, label, icon: Icon, work }) => (
             <NavLink
-              to={to}
-              className={({ isActive }) =>
-                [styles.navLink, isActive ? styles.navLinkActive : ''].filter(Boolean).join(' ')
+              to={work ? workTo : to}
+              aria-label={label}
+              title={label}
+              className={() => {
+                const active = work ? isWorkPath(location.pathname) : location.pathname.startsWith(to)
+                return [styles.railBtn, active ? styles.railBtnActive : ''].filter(Boolean).join(' ')
+              }}
+              aria-current={
+                (work ? isWorkPath(location.pathname) : location.pathname.startsWith(to)) ? 'page' : undefined
               }
-              key={to}
+              key={label}
             >
-              <Icon size={16} strokeWidth={1.8} aria-hidden="true" />
-              <span>{label}</span>
+              <Icon size={18} strokeWidth={1.8} aria-hidden="true" />
             </NavLink>
           ))}
         </nav>
-        <div className={styles.sidebarFooter}>
-          <div className={styles.hostStatus}>
-            <StatusBadge tone={status.tone}>{status.label}</StatusBadge>
-            {host.status === 'stale' || host.status === 'error' ? (
-              <Button
-                size="small"
-                variant="ghost"
-                aria-label="重新连接"
-                loading={refreshPending}
-                loadingLabel="连接中…"
-                onClick={() => void reconnect()}
-              >
-                <RefreshCw size={14} aria-hidden="true" />
-              </Button>
-            ) : null}
-          </div>
+        <div className={styles.railSpacer} />
+        <div className={styles.railHost}>
+          {host.status === 'stale' || host.status === 'error' ? (
+            <Button
+              size="small"
+              variant="ghost"
+              aria-label={`重新连接（${status.label}）`}
+              loading={refreshPending}
+              loadingLabel="连接中…"
+              onClick={() => void reconnect()}
+            >
+              <RefreshCw size={14} aria-hidden="true" />
+            </Button>
+          ) : (
+            <span className={styles.railHostDot} data-tone={status.tone} title={status.label} />
+          )}
         </div>
       </aside>
-      <main className={styles.main}>
+      <aside className={styles.tree}>
+        <ObjectPane />
+      </aside>
+      <main className={styles.stage}>
         <NotificationCenter />
         <HostNotice />
-        <div className={styles.routeView} key={location.pathname.split('/')[1]}>
+        <div className={styles.stageView}>
           <Outlet />
         </div>
       </main>
@@ -117,8 +153,8 @@ function NotFoundPage() {
       <div>
         <h1>页面不存在</h1>
         <p>这个入口已被移除，或对应内容不再可用。</p>
-        <Button variant="primary" onClick={() => window.location.assign('/agents')}>
-          返回智能体
+        <Button variant="primary" onClick={() => window.location.assign('/')}>
+          返回工作台
         </Button>
       </div>
     </div>
@@ -165,15 +201,17 @@ export function NekroNxtApp() {
           <ThemeEffects />
           <Routes>
             <Route element={<AppShell />}>
-              <Route index element={<Navigate to="/agents" replace />} />
+              <Route index element={<HomeIndex />} />
               <Route path="agents" element={<AgentsPage />} />
               <Route path="agents/:agentId" element={<AgentManagePage />} />
               <Route path="channels" element={<ChannelConversationPage />} />
               <Route path="channels/:channelId" element={<ChannelConversationPage />} />
               <Route path="connections" element={<ConnectionsPage />} />
+              <Route path="connections/:connectionId" element={<ConnectionsPage />} />
               <Route path="extensions" element={<ExtensionsPage />} />
+              <Route path="extensions/:extensionId" element={<ExtensionsPage />} />
               <Route path="creator" element={<CreatorPage />} />
-              <Route path="runtime" element={<RuntimePage />} />
+              <Route path="runtime" element={<RuntimeRedirect />} />
               <Route path="settings" element={<SettingsPage />} />
               <Route path="*" element={<NotFoundPage />} />
             </Route>

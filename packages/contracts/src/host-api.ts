@@ -106,6 +106,62 @@ export const ChannelFactSseDataSchema = z
   })
   .strict()
 
+export const ChannelRuntimePhaseSchema = z.enum(['idle', 'thinking', 'using-tool', 'waiting-input', 'unavailable'])
+
+export const ChannelRuntimeToolSchema = z
+  .object({
+    callId: NonEmptyStringSchema,
+    name: NonEmptyStringSchema,
+    displayName: NonEmptyStringSchema,
+    state: z.enum(['running', 'succeeded', 'failed']),
+    inputPreview: z.string().optional(),
+    resultPreview: z.string().optional(),
+    wroteToChannel: z.boolean().optional(),
+  })
+  .strict()
+
+export const ChannelRuntimeStepSchema = z
+  .object({
+    step: z.number().int().nonnegative(),
+    tools: z.array(ChannelRuntimeToolSchema),
+    internalOutput: z
+      .object({
+        kind: z.literal('internal-output'),
+        text: z.string().optional(),
+        reasoning: z.string().optional(),
+      })
+      .strict()
+      .optional(),
+  })
+  .strict()
+
+export const ChannelRuntimeTurnSchema = z
+  .object({
+    turn: z.number().int().nonnegative(),
+    state: z.enum(['in-progress', 'completed', 'aborted', 'error', 'max-tokens', 'interrupted']),
+    producedReply: z.boolean(),
+    error: z.object({ code: NonEmptyStringSchema, message: z.string() }).strict().optional(),
+    steps: z.array(ChannelRuntimeStepSchema),
+  })
+  .strict()
+
+export const ChannelRuntimeProjectionSchema = z
+  .object({
+    channelId: ChannelIdSchema,
+    agentId: AgentIdSchema.optional(),
+    episodeId: EpisodeIdSchema.optional(),
+    phase: ChannelRuntimePhaseSchema,
+    summary: z.string(),
+    pendingInjectCount: z.number().int().nonnegative(),
+    turns: z.array(ChannelRuntimeTurnSchema),
+  })
+  .strict()
+
+export const ChannelRuntimeSseDataSchema = z.object({ channelId: ChannelIdSchema }).strict()
+
+export type ChannelRuntimePhase = z.output<typeof ChannelRuntimePhaseSchema>
+export type ChannelRuntimeProjection = z.output<typeof ChannelRuntimeProjectionSchema>
+
 const AdapterConfigurationPropertySchema = z.discriminatedUnion('type', [
   z
     .object({
@@ -191,6 +247,7 @@ export const HostSnapshotSchema = z
           capabilities: AgentCapabilitiesSchema,
           currentRevisionId: AgentRevisionIdSchema,
           runtimeStatus: z.enum(['idle', 'running']),
+          runtimePhase: ChannelRuntimePhaseSchema.default('idle'),
           createdAt: z.number().finite(),
           channels: z.array(ChannelIdSchema),
         })
@@ -205,6 +262,7 @@ export const HostSnapshotSchema = z
           kind: z.enum(['web', 'group', 'direct']),
           displayName: z.string().optional(),
           boundAgentId: AgentIdSchema.optional(),
+          runtimePhase: ChannelRuntimePhaseSchema.default('idle'),
           bindings: z.array(
             z
               .object({
@@ -535,6 +593,7 @@ export const DshCredentialsChangedSseDataSchema = z.object({ ref: DshCredentialR
 
 export const HostSseEventSchema = z.discriminatedUnion('event', [
   z.object({ event: z.literal('channel-fact'), data: ChannelFactSseDataSchema }).strict(),
+  z.object({ event: z.literal('runtime'), data: ChannelRuntimeSseDataSchema }).strict(),
   z.object({ event: z.literal('extensions-changed'), data: z.object({ changed: z.literal(true) }).strict() }).strict(),
   z.object({ event: z.literal('dsh-settings-changed'), data: DshSettingsChangedSseDataSchema }).strict(),
   z.object({ event: z.literal('dsh-credentials-changed'), data: DshCredentialsChangedSseDataSchema }).strict(),
@@ -754,6 +813,14 @@ export const HostApiContracts = {
     params: channelParam,
     request: z.object({ displayName: z.string().trim().min(1).max(120) }).strict(),
     response: z.object({ channelId: ChannelIdSchema, displayName: z.string().trim().min(1).max(120) }).strict(),
+    error: HostApiErrorSchema,
+  }),
+  getChannelRuntime: defineContract({
+    method: 'GET',
+    path: '/api/channels/:channelId/runtime',
+    params: channelParam,
+    request: NoRequestBodySchema,
+    response: ChannelRuntimeProjectionSchema,
     error: HostApiErrorSchema,
   }),
   createConnection: defineContract({

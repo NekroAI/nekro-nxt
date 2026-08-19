@@ -1,5 +1,11 @@
 import { expect, test, type Page } from '@playwright/test'
-import { AgentIdSchema, AgentRevisionIdSchema, ChannelIdSchema, HostApiContracts } from '@nekro-nxt/contracts'
+import {
+  AgentIdSchema,
+  AgentRevisionIdSchema,
+  ChannelIdSchema,
+  ConnectionIdSchema,
+  HostApiContracts,
+} from '@nekro-nxt/contracts'
 
 type HostSnapshot = ReturnType<typeof HostApiContracts.snapshot.response.parse>
 
@@ -54,19 +60,19 @@ const installRuntimeFailureGate = (page: Page): string[] => {
 test('production bundle keeps every primary route usable without runtime errors', async ({ page }) => {
   const failures = installRuntimeFailureGate(page)
   const routes = [
-    ['/', '智能体'],
-    ['/agents', '智能体'],
-    ['/channels', '按智能体查看'],
+    ['/', '工作'],
+    ['/agents', '工作'],
+    ['/channels', '工作'],
     ['/connections', '连接'],
     ['/extensions', '扩展'],
-    ['/creator', '创造'],
-    ['/runtime', '运行'],
+    ['/creator', '工作'],
+    ['/runtime', '工作'],
     ['/settings', '设置'],
   ] as const
 
   for (const [route, visibleText] of routes) {
     await page.goto(route)
-    await expect(page.getByText(visibleText, { exact: true }).first()).toBeVisible()
+    await expect(page.getByRole('link', { name: visibleText }).first()).toBeVisible()
     await expect(page.locator('#root')).not.toBeEmpty()
   }
 
@@ -83,8 +89,8 @@ test('settings exposes the provider editor and survives real navigation', async 
   await expect(page.getByLabel('API 密钥')).toHaveAttribute('type', 'password')
   await expect(page.getByText(/不会.*回显/u)).toBeVisible()
 
-  await page.getByRole('link', { name: '智能体' }).click()
-  await expect(page.getByRole('heading', { name: '智能体', exact: true })).toBeVisible()
+  await page.getByRole('link', { name: '工作' }).click()
+  await expect(page.getByRole('link', { name: '工作' })).toBeVisible()
   await page.getByRole('link', { name: '设置' }).click()
   await expect(page.getByRole('heading', { name: '模型供应商' })).toBeVisible()
 
@@ -131,7 +137,7 @@ test('adding a connection selects a platform before showing its fields', async (
   await page.goto('/connections')
 
   await page
-    .getByRole('button', { name: /网页聊天/u })
+    .getByRole('link', { name: /网页聊天/u })
     .first()
     .click()
   await expect(page.getByText('网页聊天由当前设备管理，不需要配置账号凭据。')).toBeVisible()
@@ -195,6 +201,22 @@ test("an intelligent-agent can add another channel while replacing that channel'
   await page.route('**/api/snapshot', (route) =>
     route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(snapshot) }),
   )
+  await page.route('**/api/channels/*/runtime', (route) => {
+    const channelId = new URL(route.request().url()).pathname.split('/')[3]
+    const channel = snapshot.channels.find((item) => item.id === channelId)
+    return route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({
+        channelId,
+        ...(channel?.boundAgentId === undefined ? {} : { agentId: channel.boundAgentId }),
+        phase: channel?.runtimePhase ?? 'idle',
+        summary: channel?.boundAgentId ? '智能体当前空闲。' : '尚未绑定智能体。',
+        pendingInjectCount: 0,
+        turns: [],
+      }),
+    })
+  })
   await page.route('**/api/agents', async (route) => {
     if (route.request().method() !== 'POST') return route.continue()
     const plan = plans[created]
@@ -209,6 +231,7 @@ test("an intelligent-agent can add another channel while replacing that channel'
       currentRevisionId: plan.revisionId,
       createdAt: 1_725_000_000_000 + created * 100,
       runtimeStatus: 'idle',
+      runtimePhase: 'idle',
       model: input.model,
       capabilities: input.capabilities ?? {
         subagents: true,
@@ -227,6 +250,7 @@ test("an intelligent-agent can add another channel while replacing that channel'
       kind: 'web',
       displayName: `${plan.displayName} 的网页频道`,
       boundAgentId: plan.agentId,
+      runtimePhase: 'idle',
       bindings: [
         {
           channelId: plan.channelId,
@@ -302,7 +326,6 @@ test("an intelligent-agent can add another channel while replacing that channel'
   const target = await createAgent(targetName)
 
   await page.goto(`/agents/${target.agentId}`)
-  await page.getByRole('tab', { name: '频道' }).click()
   await page.getByRole('button', { name: '绑定频道' }).click()
   const dialog = page.getByRole('dialog')
   await expect(dialog.getByRole('heading', { name: '新增频道绑定' })).toBeVisible()
@@ -313,7 +336,7 @@ test("an intelligent-agent can add another channel while replacing that channel'
   await dialog.getByRole('button', { name: '绑定频道' }).click()
 
   await expect(page.getByText('频道已绑定。')).toBeVisible()
-  await expect(page.getByText(`${sourceName} 的网页频道`, { exact: true })).toBeVisible()
+  await expect(page.getByText(`${sourceName} 的网页频道`, { exact: true }).first()).toBeVisible()
   const currentResponse = await page.evaluate(async () => {
     const response = await fetch('/api/snapshot')
     const body: unknown = await response.json()
@@ -331,5 +354,107 @@ test("an intelligent-agent can add another channel while replacing that channel'
   expect(currentSnapshot.channels.find((channel) => channel.id === source.channelId)?.bindings).toEqual([
     expect.objectContaining({ agentId: target.agentId, triggerPolicy: 'observe-only' }),
   ])
+  expect(failures, failures.join('\n')).toEqual([])
+})
+
+test('connection workbench binds an intelligent-agent without visiting the manage page', async ({ page, request }) => {
+  const failures = installRuntimeFailureGate(page)
+  const baseResponse = await request.get('/api/snapshot')
+  expect(baseResponse.ok()).toBe(true)
+  const baseSnapshot = HostApiContracts.snapshot.response.parse(await baseResponse.json())
+  const agent =
+    baseSnapshot.agents[0] ??
+    ({
+      id: AgentIdSchema.parse('agt_journeybind'),
+      displayName: '绑定工作台',
+      persona: '',
+      currentRevisionId: AgentRevisionIdSchema.parse('arev_journeybind'),
+      createdAt: 1_725_000_000_000,
+      runtimeStatus: 'idle',
+      model: { provider: 'deepseek', model: 'deepseek-v4-flash' },
+      capabilities: {
+        subagents: true,
+        fileTools: false,
+        webSearch: false,
+        dynamicCreation: false,
+        developmentShell: false,
+        unrestrictedFileAccess: false,
+      },
+      channels: [],
+    } as const)
+  const connectionId = ConnectionIdSchema.parse('con_journeyqq')
+  const channelId = ChannelIdSchema.parse('chn_journeyqq')
+  const qqChannel = {
+    id: channelId,
+    connectionId,
+    platformChannelId: 'group:journey-qq',
+    kind: 'group' as const,
+    displayName: '绑定工作台群',
+    bindings: [],
+  }
+  let snapshot: HostSnapshot = HostApiContracts.snapshot.response.parse({
+    ...baseSnapshot,
+    agents: baseSnapshot.agents.some((item) => item.id === agent.id)
+      ? baseSnapshot.agents
+      : [...baseSnapshot.agents, agent],
+    connectionAdapters: baseSnapshot.connectionAdapters.some((item) => item.key === 'qq-openclaw')
+      ? baseSnapshot.connectionAdapters
+      : [
+          ...baseSnapshot.connectionAdapters,
+          {
+            key: 'qq-openclaw',
+            displayName: 'QQ 官方机器人',
+            description: '连接 QQ 机器人账号',
+            userCreatable: true,
+            configSchema: { schemaVersion: 1, type: 'object' as const, required: [], properties: {} },
+          },
+        ],
+    connections: [
+      ...baseSnapshot.connections.filter((item) => item.id !== connectionId),
+      {
+        id: connectionId,
+        adapterKey: 'qq-openclaw',
+        appId: '1000000000',
+        proactiveSend: false,
+        credentialConfigured: true,
+        channelCount: 1,
+        knownChannels: [{ id: channelId, name: '绑定工作台群', kind: 'group' }],
+        gateway: { state: 'connected' },
+        receiveTest: { status: 'received', channelId, platformMessageId: 'qq-received' },
+        sendTest: { status: 'sent', channelId, platformMessageId: 'qq-sent' },
+      },
+    ],
+    channels: [...baseSnapshot.channels.filter((item) => item.id !== channelId), qqChannel],
+  })
+  await page.route('**/api/snapshot', (route) =>
+    route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(snapshot) }),
+  )
+  await page.route('**/api/bindings', async (route) => {
+    const rawRequest: unknown = route.request().postDataJSON()
+    const input = HostApiContracts.createBinding.request.parse(rawRequest)
+    const binding = HostApiContracts.createBinding.response.parse({
+      channelId: input.channelId,
+      agentId: input.agentId,
+      triggerPolicy: input.triggerPolicy,
+      boundAt: 1_725_000_001_000,
+    })
+    snapshot = {
+      ...snapshot,
+      channels: snapshot.channels.map((item) =>
+        item.id === input.channelId ? { ...item, boundAgentId: input.agentId, bindings: [binding] } : item,
+      ),
+    }
+    return route.fulfill({ status: 201, contentType: 'application/json', body: JSON.stringify(binding) })
+  })
+
+  await page.goto('/connections')
+  await page.getByRole('link', { name: /QQ 机器人账号/u }).click()
+  await page.getByRole('button', { name: '绑定智能体' }).click()
+  const dialog = page.getByRole('dialog')
+  await expect(dialog.getByRole('heading', { name: '绑定智能体' })).toBeVisible()
+  await dialog.getByRole('button', { name: '绑定频道' }).click()
+  await expect(page.getByText('频道已绑定。')).toBeVisible()
+  await expect(page).toHaveURL(/\/connections(?:\/|$)/u)
+  await expect(page.getByRole('heading', { name: '连接' })).toBeVisible()
   expect(failures, failures.join('\n')).toEqual([])
 })

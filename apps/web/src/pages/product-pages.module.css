@@ -1,5 +1,8 @@
 .page {
   width: min(1400px, calc(100% - 48px));
+  min-height: 0;
+  flex: 1;
+  overflow: auto;
   margin: 0 auto;
   padding: 28px 0 48px;
 }
@@ -308,7 +311,8 @@
   gap: 20px;
 }
 
-.revisionNotice {
+.revisionNotice,
+.workbenchStatus {
   min-height: 60px;
   border: 1px solid var(--nxt-border-subtle);
   border-radius: var(--nxt-radius-md);
@@ -316,7 +320,86 @@
   padding: 10px 16px;
   color: var(--nxt-text-secondary);
   background: var(--nxt-bg-surface);
-  font-size: 11px;
+  font-size: 12px;
+  line-height: 18px;
+}
+
+.workbenchStatus {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px 20px;
+}
+
+.workbenchStatus > div:first-child {
+  display: grid;
+  gap: 2px;
+}
+
+.workbenchStatus strong {
+  color: var(--nxt-text-primary);
+}
+
+.workbenchStatus small {
+  color: var(--nxt-text-muted);
+}
+
+.agentBlockers {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.boundChannelList {
+  display: grid;
+  gap: 4px;
+}
+
+.boundChannelRow {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(220px, 0.9fr);
+  gap: 16px;
+  align-items: end;
+  border-bottom: 1px solid var(--nxt-border-subtle);
+  padding: 8px 0 16px;
+}
+
+.boundChannelName {
+  display: grid;
+  min-width: 0;
+  gap: 2px;
+  color: inherit;
+  text-decoration: none;
+}
+
+.boundChannelName strong {
+  color: var(--nxt-text-primary);
+  font-size: 13px;
+  line-height: 18px;
+}
+
+.boundChannelName small {
+  color: var(--nxt-text-muted);
+  font-size: 12px;
+  line-height: 16px;
+}
+
+.overviewBlockers {
+  display: grid;
+  gap: 4px;
+}
+
+.overviewBlocker {
+  width: 100%;
+  min-height: 48px;
+  justify-content: flex-start;
+  text-align: left;
+}
+
+.overviewBlocker strong,
+.overviewBlocker small {
+  display: block;
 }
 
 .revisionNotice > span:first-child,
@@ -896,17 +979,22 @@
 
 .conversationPage {
   display: grid;
-  grid-template-columns: 260px minmax(480px, 1fr) 304px;
+  grid-template-columns: minmax(0, 1fr) 360px;
   height: 100%;
-  min-height: 720px;
+  min-height: 0;
+  flex: 1;
   background: var(--nxt-bg-surface);
+}
+
+.conversationPage:has(.inspectorExpanded) {
+  grid-template-columns: minmax(0, 1fr) minmax(320px, 0.36fr);
 }
 
 .channelDirectory,
 .inspector {
   min-height: 0;
   overflow: auto;
-  background: var(--nxt-bg-subtle);
+  background: var(--nxt-bg-sidebar);
 }
 
 .channelDirectory {
@@ -914,11 +1002,15 @@
   padding: 16px 8px;
 }
 
+.conversationMain {
+  background: var(--nxt-bg-surface);
+}
+
 .railHeading {
   padding: 0 8px 8px;
   color: var(--nxt-text-muted);
-  font-size: 11px;
-  font-weight: 700;
+  font-size: 12px;
+  font-weight: 650;
 }
 
 .railEmpty {
@@ -958,6 +1050,19 @@
   align-items: center;
   gap: 8px;
   padding: 4px 8px 6px;
+  border-radius: var(--nxt-radius-md);
+  color: inherit;
+  text-decoration: none;
+}
+
+.channelGroupHeader:hover {
+  background: var(--nxt-bg-hover);
+}
+
+.channelGroupHeaderActive {
+  color: var(--nxt-text-primary);
+  background: var(--nxt-bg-surface);
+  box-shadow: inset 2px 0 var(--nxt-accent);
 }
 
 .channelGroupHeader > span:nth-child(2),
@@ -969,7 +1074,8 @@
 .channelGroupHeader strong,
 .channelLink strong {
   overflow: hidden;
-  font-size: 12px;
+  font-size: 13px;
+  line-height: 18px;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -978,7 +1084,8 @@
 .channelLink small {
   overflow: hidden;
   color: var(--nxt-text-muted);
-  font-size: 10px;
+  font-size: 12px;
+  line-height: 16px;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -1050,7 +1157,7 @@
 }
 
 .conversationEmpty {
-  grid-column: 2 / -1;
+  grid-column: 1 / -1;
   padding: 24px;
 }
 
@@ -1079,8 +1186,9 @@
 
 .conversationHeader p {
   margin: 2px 0 0;
-  color: var(--nxt-text-muted);
-  font-size: 11px;
+  color: var(--nxt-text-secondary);
+  font-size: 13px;
+  line-height: 20px;
 }
 
 .conversationHeaderActions {
@@ -1101,7 +1209,8 @@
 .historyNotice {
   padding: 6px 0 14px 44px;
   color: var(--nxt-text-muted);
-  font-size: 11px;
+  font-size: 12px;
+  line-height: 18px;
   text-align: center;
 }
 
@@ -1146,6 +1255,129 @@
   font-size: 11px;
 }
 
+.runtimeTail {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 8px;
+  padding: 8px 12px 8px 44px;
+  color: var(--nxt-text-secondary);
+  font-size: 12px;
+}
+
+.runtimeTail svg {
+  color: var(--nxt-accent);
+}
+
+.trajectoryHeader {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 10px;
+}
+
+.trajectoryHeader h2 {
+  margin: 0 0 2px;
+}
+
+.trajectoryHeader p {
+  margin: 0;
+  color: var(--nxt-text-muted);
+  font-size: 12px;
+  line-height: 18px;
+}
+
+.trajectorySummary {
+  margin: 10px 0 0;
+  color: var(--nxt-text-secondary);
+  font-size: 13px;
+  line-height: 20px;
+}
+
+.trajectoryTools,
+.trajectorySteps {
+  display: grid;
+  gap: 8px;
+  margin: 0 0 12px;
+  padding: 0;
+  list-style: none;
+}
+
+.trajectoryTools li,
+.trajectorySteps li,
+.trajectoryIdleRow {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: start;
+  gap: 8px;
+  border: 1px solid var(--nxt-border-subtle);
+  border-radius: var(--nxt-radius-md);
+  padding: 8px;
+  background: var(--nxt-bg-surface);
+}
+
+.trajectoryTools strong,
+.trajectorySteps strong {
+  display: block;
+  font-size: 13px;
+  line-height: 18px;
+}
+
+.trajectoryTools small,
+.trajectorySteps small {
+  display: block;
+  color: var(--nxt-text-muted);
+  font-size: 12px;
+  line-height: 16px;
+}
+
+.trajectoryIdleRow {
+  grid-template-columns: auto minmax(0, 1fr);
+  color: var(--nxt-text-secondary);
+  font-size: 12px;
+}
+
+.trajectoryStepMark {
+  width: 8px;
+  height: 8px;
+  margin-top: 5px;
+  border-radius: var(--nxt-radius-round);
+  background: var(--nxt-accent);
+}
+
+.trajectoryStepMark[data-state='failed'] {
+  background: var(--nxt-danger, #c4473a);
+}
+
+.trajectoryStepMark[data-state='succeeded'] {
+  background: var(--nxt-text-muted);
+}
+
+.trajectoryExpandHint {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  border: 1px dashed var(--nxt-border-default);
+  border-radius: var(--nxt-radius-md);
+  padding: 8px;
+  color: var(--nxt-text-secondary);
+  background: transparent;
+  font: inherit;
+  font-size: 12px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.inspectorCollapsed {
+  padding: 16px 12px;
+}
+
+.inspectorExpanded {
+  padding: 16px 16px 20px;
+}
+
 .message {
   display: grid;
   grid-template-columns: 32px minmax(0, 1fr);
@@ -1166,12 +1398,14 @@
   flex-wrap: wrap;
   gap: 8px;
   min-height: 22px;
-  font-size: 12px;
+  font-size: 13px;
+  line-height: 20px;
 }
 
 .messageHeader time {
   color: var(--nxt-text-muted);
-  font-size: 10px;
+  font-size: 11px;
+  line-height: 16px;
   font-variant-numeric: tabular-nums;
 }
 
@@ -1273,7 +1507,8 @@
 
 .composerTarget {
   color: var(--nxt-text-muted);
-  font-size: 11px;
+  font-size: 12px;
+  line-height: 18px;
 }
 
 .composerRow {
@@ -1303,24 +1538,72 @@
 .inspector h2 {
   margin: 0 0 12px;
   font-size: 12px;
+  line-height: 18px;
+  font-weight: 650;
 }
 
 .inspectorActions {
   display: grid;
   gap: 8px;
+  margin-top: 12px;
+}
+
+.channelDetails {
+  margin-top: 16px;
+  color: var(--nxt-text-secondary);
+  font-size: 12px;
+  line-height: 18px;
+}
+
+.channelDetails summary {
+  cursor: pointer;
+  color: var(--nxt-text-muted);
+}
+
+.channelDetails[open] summary {
+  margin-bottom: 8px;
 }
 
 .inspectorActions > * {
   width: 100%;
 }
 
-@media (width < 1380px) {
-  .conversationPage {
-    grid-template-columns: 220px minmax(0, 1fr);
+.workbenchPage {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 360px;
+  height: 100%;
+  min-height: 0;
+  flex: 1;
+  background: var(--nxt-bg-surface);
+}
+
+.workbenchDoc {
+  min-width: 0;
+  min-height: 0;
+  overflow: auto;
+  padding: 8px 28px 56px;
+}
+
+.workbenchSection {
+  max-width: 760px;
+  margin-top: 28px;
+  scroll-margin-top: 16px;
+}
+
+.workbenchInspector {
+  min-height: 0;
+  overflow: auto;
+}
+
+@media (width < 1440px) {
+  .conversationPage,
+  .conversationPage:has(.inspectorExpanded),
+  .workbenchPage {
+    grid-template-columns: minmax(0, 1fr) 240px;
   }
 
-  .inspector {
-    display: none;
+  .inspectorExpanded {
+    padding: 12px;
   }
 }
 

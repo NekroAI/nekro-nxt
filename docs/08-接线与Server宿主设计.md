@@ -13,11 +13,12 @@
 
 | 方法 | 路由 | 语义 |
 |---|---|---|
-| 快照 | `GET /api/snapshot` | models、connectionAdapters、agents、channels、connections、extensions、dynamic；历史按频道读取 |
-| 订阅 | `GET /api/events` | SSE：`channel-fact` 与 `status` |
+| 快照 | `GET /api/snapshot` | models、connectionAdapters、agents、channels、connections、extensions、dynamic；频道与智能体带 `runtimePhase`；历史按频道读取 |
+| 订阅 | `GET /api/events` | SSE：`channel-fact`、`runtime` 与 `status` |
 | 创建智能体 | `POST /api/agents` | 创建智能体、Web Channel 与默认 Binding |
 | 发送消息 | `POST /api/channels/:channelId/messages` | 仅网页频道入站 |
 | 频道历史 | `GET /api/channels/:channelId/messages` | `(occurredAt, sourceId)` 游标分页 |
+| 频道运行轨迹 | `GET /api/channels/:channelId/runtime` | 按频道投影 phase、当前工具、待注入和最近 Turn |
 | 频道资源 | `GET /api/channels/:channelId/assets/:assetId` | 校验频道访问权后同源读取 |
 | 频道本地名称 | `POST /api/channels/:channelId/display-name` | 只改展示名 |
 | 创建连接 | `POST /api/connections` | 按已安装 Adapter schema 创建 |

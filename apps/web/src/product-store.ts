@@ -1,4 +1,5 @@
 import type { AdapterConnectionDescriptor } from '@nekro-nxt/adapter-sdk'
+import type { HostApiResponse } from '@nekro-nxt/contracts'
 import { create } from 'zustand'
 import type { DynamicPackageSummary, ProductHostPort } from './product-port.js'
 import { approveDynamicClientRequest, declineDynamicClientRequest } from './dynamic-client-bridge.js'
@@ -12,6 +13,15 @@ export const setActiveProductHost = (host: ProductHostPort | null): void => {
 export const getActiveProductHost = (): ProductHostPort | null => activeHost
 
 export type AgentRuntimeState = '空闲' | '思考中' | '使用工具' | '等待输入' | '已暂停' | '不可用'
+
+export const runtimePhaseToState = (phase: string | undefined, fallbackStatus?: string): AgentRuntimeState => {
+  if (phase === 'using-tool') return '使用工具'
+  if (phase === 'thinking') return '思考中'
+  if (phase === 'waiting-input') return '等待输入'
+  if (phase === 'unavailable') return '不可用'
+  if (phase === 'idle') return '空闲'
+  return fallbackStatus === 'running' ? '思考中' : '空闲'
+}
 export type DeliveryState = '已发送' | '发送中' | '部分发送' | '失败' | '结果未知'
 export type ConnectionState = '已连接' | '正在连接' | '认证过期' | '已配置' | '已断开' | '异常'
 
@@ -56,12 +66,33 @@ export interface ChannelSummary {
   readonly connectionName: string
   readonly agentId: string
   readonly trigger: string
+  readonly runtimePhase: AgentRuntimeState
   readonly bindings: readonly {
     readonly id: string
     readonly agentId: string
     readonly triggerPolicy: 'always' | 'mentioned-or-replied' | 'command' | 'observe-only'
   }[]
   readonly unread: number
+}
+
+export interface ChannelRuntimeToolView {
+  readonly callId: string
+  readonly name: string
+  readonly displayName: string
+  readonly state: 'running' | 'succeeded' | 'failed'
+  readonly inputPreview?: string
+  readonly resultPreview?: string
+  readonly wroteToChannel?: boolean
+}
+
+export interface ChannelRuntimeView {
+  readonly channelId: string
+  readonly agentId?: string
+  readonly episodeId?: string
+  readonly phase: AgentRuntimeState
+  readonly summary: string
+  readonly pendingInjectCount: number
+  readonly turns: HostApiResponse<'getChannelRuntime'>['turns']
 }
 
 export interface ConversationMessage {
@@ -177,6 +208,7 @@ export interface ProductState {
   readonly channels: readonly ChannelSummary[]
   readonly messages: readonly ConversationMessage[]
   readonly channelHistory: Readonly<Record<string, ChannelHistoryState>>
+  readonly channelRuntimes: Readonly<Record<string, ChannelRuntimeView>>
   readonly connections: readonly ConnectionSummary[]
   readonly extensions: readonly LocalExtensionSummary[]
   readonly approvals: readonly DynamicApproval[]
@@ -211,6 +243,7 @@ export interface ProductState {
   }): Promise<void>
   sendMessage(channelId: string, body: string): Promise<void>
   loadChannelMessages(channelId: string, mode?: 'initial' | 'older' | 'latest'): Promise<void>
+  loadChannelRuntime(channelId: string): Promise<void>
   renameChannel(channelId: string, displayName: string): Promise<void>
   setCapability(agentId: string, capability: keyof AgentSummary['capabilities'], enabled: boolean): Promise<void>
   runConnectionTest(id: string, direction: 'receive' | 'send', channelId?: string): Promise<void>
@@ -247,6 +280,14 @@ const requireValue = (value: string, message: string, code: ProductActionErrorCo
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === 'object' && value !== null && !Array.isArray(value)
 
+const isChannelRuntimeView = (value: unknown): value is ChannelRuntimeView =>
+  isRecord(value) &&
+  typeof value['channelId'] === 'string' &&
+  typeof value['summary'] === 'string' &&
+  typeof value['phase'] === 'string' &&
+  typeof value['pendingInjectCount'] === 'number' &&
+  Array.isArray(value['turns'])
+
 export const useProductStore = create<ProductState>(() => ({
   host: { status: 'initializing', error: null, lastSuccessfulAt: null },
   connectionAdapters: [],
@@ -267,6 +308,7 @@ export const useProductStore = create<ProductState>(() => ({
   channels: [],
   messages: [],
   channelHistory: {},
+  channelRuntimes: {},
   connections: [],
   extensions: [],
   approvals: [],
@@ -382,6 +424,19 @@ export const useProductStore = create<ProductState>(() => ({
       }))
       throw error
     }
+  },
+  loadChannelRuntime: async (channelId) => {
+    const normalizedChannelId = requireValue(channelId, '缺少目标频道，请刷新页面后重试。')
+    const result = await requireHost().execute('channels.getRuntime', { channelId: normalizedChannelId })
+    if (!isChannelRuntimeView(result) || result.channelId !== normalizedChannelId) {
+      throw new ProductActionError('invalid-input', '频道运行状态返回结果无效，请重新加载。')
+    }
+    useProductStore.setState((state) => ({
+      channelRuntimes: {
+        ...state.channelRuntimes,
+        [normalizedChannelId]: result,
+      },
+    }))
   },
   renameChannel: async (channelId, displayName) => {
     await requireHost().execute('channels.rename', {

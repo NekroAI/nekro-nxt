@@ -1,33 +1,28 @@
 .shell {
   display: grid;
-  grid-template-columns: 216px minmax(0, 1fr);
+  grid-template-columns: 56px 240px minmax(0, 1fr);
   width: 100%;
   height: 100%;
   min-height: 720px;
   background: var(--nxt-bg-canvas);
 }
 
-.sidebar {
+.rail {
   display: flex;
   min-height: 0;
   flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  padding: 10px 0 12px;
   border-right: 1px solid var(--nxt-border-subtle);
   background: var(--nxt-bg-sidebar);
 }
 
-.brand {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  height: 56px;
-  padding: 0 16px;
-  border-bottom: 1px solid var(--nxt-border-subtle);
-}
-
 .mark {
   position: relative;
-  width: 26px;
-  height: 26px;
+  width: 28px;
+  height: 28px;
+  margin-bottom: 10px;
   border-radius: var(--nxt-radius-md);
   background: linear-gradient(145deg, var(--nxt-cyan-300), #168bd2);
 }
@@ -42,79 +37,124 @@
   transform: rotate(-35deg);
 }
 
-.brandName {
-  font-size: 15px;
-  font-weight: 730;
-}
-
-.nav {
+.railBtn {
   display: grid;
-  min-height: 0;
-  align-content: start;
-  gap: 2px;
-  overflow-y: auto;
-  padding: 12px 8px;
-}
-
-.navLink {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  min-height: 36px;
+  width: 40px;
+  height: 40px;
+  place-items: center;
   border-radius: var(--nxt-radius-md);
-  padding: 0 10px;
-  color: var(--nxt-text-secondary);
-  font-size: 13px;
-  font-weight: 580;
-  text-decoration: none;
+  color: var(--nxt-text-muted);
 }
 
-.navLink:hover {
+.railBtn:hover {
   color: var(--nxt-text-primary);
   background: var(--nxt-bg-hover);
 }
 
-.navLinkActive {
+.railBtnActive {
   color: var(--nxt-accent);
   background: var(--nxt-accent-soft);
   box-shadow: inset 2px 0 var(--nxt-accent);
 }
 
-.sidebarFooter {
-  margin-top: auto;
-  padding: 12px;
+.railSpacer {
+  flex: 1;
 }
 
-.hostStatus {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  min-height: 40px;
-  border-top: 1px solid var(--nxt-border-subtle);
-  padding-top: 12px;
+.railHost {
+  display: grid;
+  width: 28px;
+  height: 28px;
+  place-items: center;
 }
 
-.main {
+.railHostDot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--nxt-text-disabled);
+}
+
+.railHostDot[data-tone='success'] {
+  background: var(--nxt-success, #157347);
+}
+
+.railHostDot[data-tone='warning'] {
+  background: var(--nxt-warning, #9a5b00);
+}
+
+.railHostDot[data-tone='error'] {
+  background: var(--nxt-danger, #b4232d);
+}
+
+.railHostDot[data-tone='info'] {
+  background: var(--nxt-accent);
+}
+
+.tree {
   display: flex;
   min-width: 0;
   min-height: 0;
   flex-direction: column;
-  overflow: auto;
+  border-right: 1px solid var(--nxt-border-subtle);
+  background: var(--nxt-bg-sidebar);
 }
 
-.routeView {
+.treeHead {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  min-height: 44px;
+  padding: 0 12px;
+  color: var(--nxt-text-muted);
+  font-size: 12px;
+  font-weight: 650;
+}
+
+.treeAdd {
+  display: grid;
+  width: 28px;
+  height: 28px;
+  place-items: center;
+  border-radius: var(--nxt-radius-md);
+  color: var(--nxt-text-secondary);
+  text-decoration: none;
+}
+
+.treeAdd:hover {
+  color: var(--nxt-text-primary);
+  background: var(--nxt-bg-hover);
+}
+
+.treeBody {
   min-height: 0;
   flex: 1;
-  animation: route-in var(--nxt-motion-standard) var(--nxt-ease-enter);
+  overflow: auto;
+  padding: 0 8px 16px;
+}
+
+.stage {
+  display: flex;
+  min-width: 0;
+  min-height: 0;
+  flex-direction: column;
+  background: var(--nxt-bg-surface);
+}
+
+.stageView {
+  display: flex;
+  min-height: 0;
+  flex: 1;
+  flex-direction: column;
+  overflow: hidden;
 }
 
 .centeredState {
   display: grid;
-  min-height: 100vh;
+  min-height: 100%;
   place-items: center;
   padding: 32px;
   color: var(--nxt-text-secondary);
-  background: var(--nxt-bg-canvas);
   text-align: center;
 }
 
@@ -128,25 +168,8 @@
   margin: 8px 0 20px;
 }
 
-@keyframes route-in {
-  from {
-    opacity: 0;
-    transform: translateY(2px);
-  }
-}
-
 @media (width < 1180px) {
   .shell {
-    grid-template-columns: 196px minmax(0, 1fr);
+    grid-template-columns: 56px 200px minmax(0, 1fr);
   }
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .routeView {
-    animation: none;
-  }
-}
-
-:global([data-reduced-motion='true']) .routeView {
-  animation: none;
 }

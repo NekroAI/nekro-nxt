@@ -82,6 +82,7 @@ const productSnapshot = HostApiContracts.snapshot.response.parse({
       currentRevisionId: targetRevisionId,
       createdAt: 1_725_000_000_000,
       runtimeStatus: 'running',
+      runtimePhase: 'thinking',
       model: { provider: 'deepseek', model: 'deepseek-v4-flash' },
       capabilities: {
         subagents: false,
@@ -249,6 +250,22 @@ const installProductRoutes = async (page: Page): Promise<void> => {
   await page.route('**/api/snapshot', (route) =>
     route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(productSnapshot) }),
   )
+  await page.route('**/api/channels/*/runtime', (route) => {
+    const channelId = new URL(route.request().url()).pathname.split('/')[3]
+    const channel = productSnapshot.channels.find((item) => item.id === channelId)
+    return route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({
+        channelId,
+        ...(channel?.boundAgentId === undefined ? {} : { agentId: channel.boundAgentId }),
+        phase: channel?.runtimePhase ?? 'idle',
+        summary: channel?.boundAgentId ? '智能体当前空闲。' : '尚未绑定智能体。',
+        pendingInjectCount: 0,
+        turns: [],
+      }),
+    })
+  })
   await page.route('**/api/channels/*/messages?*', (route) => {
     const channelId = new URL(route.request().url()).pathname.split('/').at(-2)
     const messages = channelMessages.filter((message) => message.channelId === channelId)
@@ -413,7 +430,7 @@ test('redesigned relationship and lifecycle pages stay legible across representa
   const failures = installRuntimeFailureGate(page)
   await installProductRoutes(page)
   const scenes = [
-    { route: '/agents', text: '当前概览', width: 1440, height: 900, colorScheme: 'light' },
+    { route: '/agents', text: '资料员', width: 1440, height: 900, colorScheme: 'light' },
     {
       route: `/agents/${targetAgentId}?tab=capabilities`,
       text: '完整文件访问',
@@ -447,7 +464,7 @@ test('redesigned relationship and lifecycle pages stay legible across representa
 
   await page.goto('/connections')
   await page
-    .getByRole('button', { name: /QQ 机器人账号/u })
+    .getByRole('link', { name: /QQ 机器人账号/u })
     .first()
     .click()
   await expect(page.getByText('QQ 群聊（尾号 D6FE）')).toBeVisible()
@@ -527,6 +544,20 @@ test('the product Client runtime approves, renders, and retracts a live DSH inte
   await page.route('**/api/dynamic/*/inventory', (route) =>
     route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ rows: inventoryRows() }) }),
   )
+  await page.route('**/api/channels/*/runtime', (route) => {
+    const channelId = new URL(route.request().url()).pathname.split('/')[3]
+    return route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({
+        channelId,
+        phase: 'idle',
+        summary: '智能体当前空闲。',
+        pendingInjectCount: 0,
+        turns: [],
+      }),
+    })
+  })
   await page.route('**/api/dynamic/*/run-host-half', (route) => {
     calls.push('run-host-half')
     return route.fulfill({
@@ -600,8 +631,7 @@ test('the four-step creation wizard submits identity, model, and explicit capabi
     })
   })
   await page.setViewportSize({ width: 1100, height: 720 })
-  await page.goto('/agents')
-  await page.getByRole('button', { name: '创建智能体' }).click()
+  await page.goto('/agents?create=1')
   const dialog = page.getByRole('dialog')
   await dialog.getByLabel('名称').fill('研究员')
   await dialog.getByLabel('人设').fill('先核对证据，再给出结论。')
@@ -644,13 +674,34 @@ test('an initial Host failure is explicit and can recover without reloading', as
     }
     return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(productSnapshot) })
   })
+  await page.route('**/api/channels/*/runtime', (route) => {
+    const channelId = new URL(route.request().url()).pathname.split('/')[3]
+    return route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({
+        channelId,
+        phase: 'idle',
+        summary: '智能体当前空闲。',
+        pendingInjectCount: 0,
+        turns: [],
+      }),
+    })
+  })
+  await page.route('**/api/channels/*/messages?*', (route) =>
+    route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({ messages: [], hasMore: false }),
+    }),
+  )
   await page.goto('/agents')
   await expect(page.getByText('无法连接', { exact: true }).first()).toBeVisible()
-  await expect(page.getByText('还没有智能体', { exact: true })).toBeVisible()
+  await expect(page.getByText('还没有智能体', { exact: true }).first()).toBeVisible()
   healthy = true
   await page.getByRole('button', { name: '重新连接' }).last().click()
-  await expect(page.getByText('运行正常', { exact: true })).toBeVisible()
-  await expect(page.getByText('资料员', { exact: true })).toBeVisible()
+  await expect(page.getByTitle('运行正常')).toBeVisible()
+  await expect(page.getByRole('link', { name: /资料员/u }).first()).toBeVisible()
   expect(
     failures.filter((failure) => !failure.includes('503 (Service Unavailable)')),
     failures.join('\n'),
@@ -690,7 +741,6 @@ test('dialog floating layers, Escape, focus return, and pending failure recovery
   await expect(opener).toBeFocused()
 
   await page.goto(`/agents/${targetAgentId}`)
-  await page.getByRole('tab', { name: '频道' }).click()
   await page.getByRole('button', { name: '绑定频道' }).click()
   const bindingDialog = page.getByRole('dialog')
   let attempts = 0

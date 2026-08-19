@@ -102,7 +102,8 @@ export function HostNotice() {
     return (
       <div className={[styles.hostNotice, styles.hostConnecting].join(' ')} role="status">
         <LoaderCircle className={styles.spinner} size={15} aria-hidden="true" />
-        正在连接，页面会在数据就绪后自动更新。
+        <strong>正在连接</strong>
+        <span>页面会在数据就绪后自动更新。</span>
       </div>
     )
   }
@@ -111,7 +112,8 @@ export function HostNotice() {
   return (
     <div className={[styles.hostNotice, stale ? styles.hostStale : styles.hostError].join(' ')} role="alert">
       <WifiOff size={15} aria-hidden="true" />
-      <span>{stale ? '连接不稳定，当前仍显示最近一次同步的数据。' : '无法连接，当前内容可能为空或不是最新状态。'}</span>
+      <strong>{stale ? '连接不稳定' : '无法连接'}</strong>
+      <span>{stale ? '当前仍显示最近一次同步的数据。' : '当前内容可能为空或不是最新状态。'}</span>
       <Button size="small" variant="ghost" loading={pending} loadingLabel="连接中…" onClick={() => void reconnect()}>
         <RefreshCw size={14} aria-hidden="true" /> 重新连接
       </Button>

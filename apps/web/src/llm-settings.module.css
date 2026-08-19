@@ -13,6 +13,16 @@
   gap: 12px;
 }
 
+.compactForm,
+.compactActions {
+  display: grid;
+  gap: 12px;
+}
+
+.compactActions {
+  justify-items: start;
+}
+
 .toolbar h2,
 .editorHeading h3 {
   margin: 0;

@@ -1,5 +1,5 @@
 import { Plus, RefreshCw } from 'lucide-react'
-import { useEffect, useMemo, useState, type FormEvent } from 'react'
+import { useEffect, useMemo, useState, type FormEvent, type ReactNode } from 'react'
 import {
   HostApiContracts,
   HostApiErrorSchema,
@@ -508,6 +508,136 @@ export function LlmProviderSettings(): React.ReactNode {
           ]}
         />
       </Dialog>
+    </div>
+  )
+}
+
+export function AddModelProviderForm({ onSaved }: { readonly onSaved?: () => void }): ReactNode {
+  const [settings, setSettings] = useState<ProviderSettingsView | null>(null)
+  const [providerId, setProviderId] = useState('')
+  const [apiKey, setApiKey] = useState('')
+  const [pending, setPending] = useState<'load' | 'save' | null>('load')
+  const [error, setError] = useState('')
+
+  const load = async (): Promise<void> => {
+    setPending('load')
+    setError('')
+    try {
+      const next = await requestHostApi(
+        HostApiContracts.llmProviders,
+        HostApiContracts.llmProviders.response,
+        {},
+        undefined,
+      )
+      setSettings(next)
+      setProviderId((current) => {
+        if (next.providers.some((provider) => provider.provider === current)) return current
+        return next.providers.find((provider) => !provider.configured)?.provider ?? next.providers[0]?.provider ?? ''
+      })
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : String(cause))
+    } finally {
+      setPending(null)
+    }
+  }
+
+  useEffect(() => {
+    void load()
+  }, [])
+
+  const selected = settings?.providers.find((provider) => provider.provider === providerId)
+
+  const save = async (): Promise<void> => {
+    if (!settings || !selected || pending) return
+    if (!apiKey.trim() && !selected.credential?.configured) {
+      setError('请输入 API 密钥。')
+      return
+    }
+    setPending('save')
+    setError('')
+    try {
+      await requestHostApi(
+        HostApiContracts.llmSaveProvider,
+        HostApiContracts.llmSaveProvider.response,
+        { provider: selected.provider },
+        {
+          expectedRevision: selected.settingsRevision,
+          ...(apiKey.trim() ? { apiKey: apiKey.trim() } : {}),
+        },
+      )
+      setApiKey('')
+      try {
+        await useProductStore.getState().refreshHost()
+        notify('供应商配置已保存。API 密钥只写入本机凭据存储。', 'success', `llm-provider-save:${selected.provider}`)
+        onSaved?.()
+      } catch (refreshError) {
+        notify(
+          `配置已保存，但页面数据刷新失败：${refreshError instanceof Error ? refreshError.message : String(refreshError)}`,
+          'warning',
+          `llm-provider-save:${selected.provider}`,
+        )
+      }
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : String(cause))
+    } finally {
+      setPending(null)
+    }
+  }
+
+  if (!settings && pending === 'load') {
+    return <EmptyState loading title="正在读取模型供应商" description="加载完成后可在此保存凭据。" />
+  }
+
+  if (!settings) {
+    return (
+      <EmptyState
+        title="无法读取模型供应商"
+        description={error || '请检查连接后重试。'}
+        action={
+          <Button onClick={() => void load()}>
+            <RefreshCw size={14} aria-hidden="true" /> 重新加载
+          </Button>
+        }
+      />
+    )
+  }
+
+  if (settings.providers.length === 0) {
+    return <EmptyState title="当前没有可配置的供应商" description="完整目录和自定义供应商仍在设置中管理。" />
+  }
+
+  const providerSelected = providerId.length > 0
+
+  return (
+    <div className={styles.compactForm}>
+      <SelectField
+        label="模型供应商"
+        value={providerId}
+        onValueChange={setProviderId}
+        options={settings.providers.map((provider) => ({
+          value: provider.provider,
+          label: providerDisplayName(provider.provider, provider.displayName),
+        }))}
+      />
+      <Field label="API 密钥" hint="保存后不会在页面中回显。" error={error || undefined}>
+        <Input
+          type="password"
+          autoComplete="new-password"
+          value={apiKey}
+          onChange={(event) => setApiKey(event.target.value)}
+        />
+      </Field>
+      <div className={styles.compactActions}>
+        <Button
+          variant="primary"
+          loading={pending === 'save'}
+          loadingLabel="保存中…"
+          disabled={pending !== null || settings.writable !== true || !providerSelected}
+          onClick={() => void save()}
+        >
+          保存供应商
+        </Button>
+      </div>
     </div>
   )
 }

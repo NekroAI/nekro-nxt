@@ -24,6 +24,7 @@ const resetBusinessFacts = (): void => {
     agents: [],
     channels: [],
     messages: [],
+    channelRuntimes: {},
     connections: [],
     extensions: [],
     approvals: [],

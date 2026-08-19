@@ -259,6 +259,18 @@ describe('NekroNxt Server domain API (WebServer seam)', () => {
       expect(snapshot.agents.some((agent) => agent.id === created.agentId)).toBe(true)
       expect(snapshot.agents.find((agent) => agent.id === created.agentId)?.displayName).toBe('网页智能体')
       expect(snapshot.agents.find((agent) => agent.id === created.agentId)?.runtimeStatus).toBe('idle')
+      expect(snapshot.agents.find((agent) => agent.id === created.agentId)?.runtimePhase).toBe('idle')
+      expect(snapshot.channels.find((channel) => channel.id === created.channelId)?.runtimePhase).toBe('idle')
+      const idleRuntime = HostApiContracts.getChannelRuntime.parseResponse(
+        await (await fetch(`${origin}/api/channels/${created.channelId}/runtime`)).json(),
+      )
+      expect(idleRuntime).toMatchObject({
+        channelId: created.channelId,
+        agentId: created.agentId,
+        phase: 'idle',
+        pendingInjectCount: 0,
+        turns: [],
+      })
       expect(snapshot.channels.some((channel) => channel.id === created.channelId)).toBe(true)
       expect(snapshot.channels.find((channel) => channel.id === created.channelId)?.boundAgentId).toBe(created.agentId)
       expect(snapshot.messages).toEqual([])

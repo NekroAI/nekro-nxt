@@ -1,6 +1,7 @@
 declare const styles: {
   readonly agentActivity: string
   readonly agentAvatar: string
+  readonly agentBlockers: string
   readonly agentCard: string
   readonly agentCardActions: string
   readonly agentCardGrid: string
@@ -15,10 +16,15 @@ declare const styles: {
   readonly avatar: string
   readonly avatarLarge: string
   readonly bindingNextStep: string
+  readonly boundChannelList: string
+  readonly boundChannelName: string
+  readonly boundChannelRow: string
   readonly capabilityChoices: string
+  readonly channelDetails: string
   readonly channelDirectory: string
   readonly channelGroup: string
   readonly channelGroupHeader: string
+  readonly channelGroupHeaderActive: string
   readonly channelGroups: string
   readonly channelLink: string
   readonly channelLinkActive: string
@@ -53,6 +59,8 @@ declare const styles: {
   readonly identityCell: string
   readonly inspector: string
   readonly inspectorActions: string
+  readonly inspectorCollapsed: string
+  readonly inspectorExpanded: string
   readonly lifecycleSteps: string
   readonly lifecycleStepsCompact: string
   readonly linkRow: string
@@ -73,6 +81,8 @@ declare const styles: {
   readonly newMessageAction: string
   readonly objectList: string
   readonly objectName: string
+  readonly overviewBlocker: string
+  readonly overviewBlockers: string
   readonly overviewFacts: string
   readonly overviewHint: string
   readonly overviewSummary: string
@@ -85,6 +95,7 @@ declare const styles: {
   readonly runtimeCard: string
   readonly runtimeCardIcon: string
   readonly runtimeColumns: string
+  readonly runtimeTail: string
   readonly secondaryText: string
   readonly section: string
   readonly sectionActionRow: string
@@ -98,12 +109,24 @@ declare const styles: {
   readonly tagList: string
   readonly testRow: string
   readonly testRows: string
+  readonly trajectoryExpandHint: string
+  readonly trajectoryHeader: string
+  readonly trajectoryIdleRow: string
+  readonly trajectoryStepMark: string
+  readonly trajectorySteps: string
+  readonly trajectorySummary: string
+  readonly trajectoryTools: string
   readonly truncate: string
   readonly unread: string
   readonly wizardBody: string
   readonly wizardStepActive: string
   readonly wizardStepDone: string
   readonly wizardSteps: string
+  readonly workbenchDoc: string
+  readonly workbenchInspector: string
+  readonly workbenchPage: string
+  readonly workbenchSection: string
+  readonly workbenchStatus: string
 }
 
 export default styles

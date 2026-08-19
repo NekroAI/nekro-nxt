@@ -1,17 +1,21 @@
-import type {
-  AgentSummary,
-  ChannelSummary,
-  ConnectionSummary,
-  ConversationMessage,
-  DeliveryState,
-  ModelSummary,
-  ProductHostError,
+import {
+  runtimePhaseToState,
+  type AgentRuntimeState,
+  type AgentSummary,
+  type ChannelRuntimeView,
+  type ChannelSummary,
+  type ConnectionSummary,
+  type ConversationMessage,
+  type DeliveryState,
+  type ModelSummary,
+  type ProductHostError,
 } from './product-store.js'
 import type { AdapterConnectionDescriptor, AdapterConfigurationProperty } from '@nekro-nxt/adapter-sdk'
 import {
   HostApiContracts,
   HostApiErrorSchema,
   ChannelFactSseDataSchema,
+  ChannelRuntimeSseDataSchema,
   buildHostApiContractPath,
   type HostApiContract,
   type HostApiContractParams,
@@ -56,6 +60,26 @@ const deliveryStateToUi = (state: string | undefined): DeliveryState | undefined
     default:
       return undefined
   }
+}
+
+const agentStateRank = (state: AgentRuntimeState): number => {
+  if (state === '不可用') return 4
+  if (state === '使用工具') return 3
+  if (state === '思考中') return 2
+  if (state === '等待输入') return 1
+  return 0
+}
+
+const worstAgentState = (states: readonly AgentRuntimeState[]): AgentRuntimeState =>
+  states.reduce<AgentRuntimeState>(
+    (current, state) => (agentStateRank(state) > agentStateRank(current) ? state : current),
+    '空闲',
+  )
+
+const sseEventData = (event: unknown): string | undefined => {
+  if (event instanceof MessageEvent && typeof event.data === 'string') return event.data
+  if (event && typeof event === 'object' && 'data' in event && typeof event.data === 'string') return event.data
+  return undefined
 }
 
 const formatTime = (occurredAt: number): string =>
@@ -110,6 +134,7 @@ const emptySnapshot = (): ProductSnapshot => ({
   agents: [],
   channels: [],
   messages: [],
+  channelRuntimes: {},
   connections: [],
   extensions: [],
   approvals: [],
@@ -243,7 +268,7 @@ const projectSnapshot = (json: SnapshotJson, successfulAt: number): ProductSnaps
     id: agent.id,
     name: nonEmptyLabel(agent.displayName, '未命名智能体'),
     description: '',
-    state: agent.runtimeStatus === 'running' ? '思考中' : '空闲',
+    state: runtimePhaseToState(agent.runtimePhase, agent.runtimeStatus),
     model:
       models.find((model) => model['provider'] === agent.model['provider'] && model.id === agent.model['model'])
         ?.name ?? '未命名模型',
@@ -283,6 +308,7 @@ const projectSnapshot = (json: SnapshotJson, successfulAt: number): ProductSnaps
     kind: channel.kind === 'group' ? 'qq-group' : channel.kind === 'direct' ? 'qq-direct' : 'web',
     connectionName: connectionNameById.get(channel.connectionId) ?? '未命名连接',
     agentId: channel.boundAgentId ?? '',
+    runtimePhase: runtimePhaseToState(channel.runtimePhase),
     trigger:
       channel.bindings[0]?.triggerPolicy === 'mentioned-or-replied'
         ? '被提及或回复时'
@@ -388,6 +414,7 @@ const projectSnapshot = (json: SnapshotJson, successfulAt: number): ProductSnaps
     agents,
     channels,
     messages,
+    channelRuntimes: {},
     connections,
     extensions: extensionsLocal,
     approvals: [],
@@ -407,6 +434,7 @@ export class HttpProductHost implements ProductHostPort {
   #hostSnapshot: SnapshotJson | undefined
   #listener: (() => void) | undefined
   readonly #loadedChannels = new Set<string>()
+  readonly #runtimeRefreshTimers = new Map<string, ReturnType<typeof setTimeout>>()
 
   getSnapshot(): ProductSnapshot {
     return this.#snapshot
@@ -423,8 +451,8 @@ export class HttpProductHost implements ProductHostPort {
         void this.#refreshAndNotify()
       })
       source.addEventListener('channel-fact', (event) => {
-        const rawData: unknown = event instanceof MessageEvent ? event.data : undefined
-        if (typeof rawData !== 'string') {
+        const rawData = sseEventData(event)
+        if (rawData === undefined) {
           void this.#refreshAndNotify()
           return
         }
@@ -437,8 +465,21 @@ export class HttpProductHost implements ProductHostPort {
         }
         if (data.success && this.#loadedChannels.has(data.data.channelId)) {
           void this.#loadChannelMessages(data.data.channelId, 'latest', 40)
+          if (this.#snapshot.channelRuntimes[data.data.channelId]) {
+            this.#scheduleChannelRuntimeLoad(data.data.channelId)
+          }
         } else {
           void this.#refreshAndNotify()
+        }
+      })
+      source.addEventListener('runtime', (event) => {
+        const rawData = sseEventData(event)
+        if (rawData === undefined) return
+        try {
+          const parsed = ChannelRuntimeSseDataSchema.safeParse(JSON.parse(rawData))
+          if (parsed.success) this.#scheduleChannelRuntimeLoad(parsed.data.channelId)
+        } catch {
+          // Ignore malformed runtime frames; do not refetch the global snapshot.
         }
       })
       source.addEventListener('extensions-changed', () => {
@@ -455,6 +496,8 @@ export class HttpProductHost implements ProductHostPort {
     }
     return () => {
       this.#listener = undefined
+      for (const timer of this.#runtimeRefreshTimers.values()) clearTimeout(timer)
+      this.#runtimeRefreshTimers.clear()
       source?.close()
     }
   }
@@ -529,6 +572,11 @@ export class HttpProductHost implements ProductHostPort {
       const beforeOccurredAt = typeof input?.['beforeOccurredAt'] === 'number' ? input['beforeOccurredAt'] : undefined
       const beforeSourceId = typeof input?.['beforeSourceId'] === 'string' ? input['beforeSourceId'] : undefined
       return await this.#loadChannelMessages(channelId, mode, limit, beforeOccurredAt, beforeSourceId)
+    }
+    if (command === 'channels.getRuntime') {
+      const channelId = typeof input?.['channelId'] === 'string' ? input['channelId'] : ''
+      if (!channelId.trim()) throw new Error('缺少目标频道，请刷新页面后重试。')
+      return await this.#loadChannelRuntime(channelId)
     }
     if (command === 'channels.rename') {
       const channelId = typeof input?.['channelId'] === 'string' ? input['channelId'] : ''
@@ -712,6 +760,47 @@ export class HttpProductHost implements ProductHostPort {
     return { messages: projected, hasMore: raw.hasMore }
   }
 
+  #scheduleChannelRuntimeLoad(channelId: string): void {
+    if (this.#runtimeRefreshTimers.has(channelId)) return
+    this.#runtimeRefreshTimers.set(
+      channelId,
+      setTimeout(() => {
+        this.#runtimeRefreshTimers.delete(channelId)
+        void this.#loadChannelRuntime(channelId)
+      }, 200),
+    )
+  }
+
+  async #loadChannelRuntime(channelId: string): Promise<ChannelRuntimeView> {
+    const raw = await this.#call(HostApiContracts.getChannelRuntime, { channelId }, undefined)
+    const view: ChannelRuntimeView = {
+      channelId: raw.channelId,
+      ...(raw.agentId === undefined ? {} : { agentId: raw.agentId }),
+      ...(raw.episodeId === undefined ? {} : { episodeId: raw.episodeId }),
+      phase: runtimePhaseToState(raw.phase),
+      summary: raw.summary,
+      pendingInjectCount: raw.pendingInjectCount,
+      turns: raw.turns,
+    }
+    this.#snapshot = {
+      ...this.#snapshot,
+      channelRuntimes: { ...this.#snapshot.channelRuntimes, [channelId]: view },
+      channels: this.#snapshot.channels.map((channel) =>
+        channel.id === channelId ? { ...channel, runtimePhase: view.phase } : channel,
+      ),
+      agents: this.#snapshot.agents.map((agent) => {
+        if (agent.id !== view.agentId) return agent
+        const phases = this.#snapshot.channels
+          .filter((channel) => channel.agentId === agent.id)
+          .map((channel) => (channel.id === channelId ? view.phase : channel.runtimePhase))
+        const state = worstAgentState(phases)
+        return { ...agent, state }
+      }),
+    }
+    this.#listener?.()
+    return view
+  }
+
   async #observeRequest<Result>(request: () => Promise<Result>): Promise<Result> {
     try {
       return await request()
@@ -745,6 +834,7 @@ export class HttpProductHost implements ProductHostPort {
     this.#snapshot = {
       ...projected,
       messages: this.#loadedChannels.size > 0 ? this.#snapshot.messages : projected.messages,
+      channelRuntimes: this.#snapshot.channelRuntimes,
     }
     this.#listener?.()
     return null

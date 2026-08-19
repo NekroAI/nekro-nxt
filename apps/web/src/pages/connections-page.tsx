@@ -1,9 +1,10 @@
-import { ArrowRight, Cable, Check, Circle, Plus, Radio, Send } from 'lucide-react'
+import { ArrowRight, Check, Circle, Plus, Radio, Send } from 'lucide-react'
 import { useEffect, useMemo, useState } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { Navigate, useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import { notify } from '../components/notifications.js'
 import { EmptyState, InlineFeedback, PageHeader } from '../components/product-feedback.js'
 import { useProductStore, type ConnectionState } from '../product-store.js'
+import { BindingTaskDialog } from './binding-task.js'
 import {
   Button,
   ConfirmDialog,
@@ -47,6 +48,8 @@ export const friendlyKnownChannelLabel = (channel: { readonly name: string; read
 }
 
 export function ConnectionsPage() {
+  const { connectionId = '' } = useParams()
+  const [searchParams, setSearchParams] = useSearchParams()
   const host = useProductStore((state) => state.host)
   const connections = useProductStore((state) => state.connections)
   const descriptors = useProductStore((state) => state.connectionAdapters)
@@ -54,8 +57,8 @@ export function ConnectionsPage() {
   const channels = useProductStore((state) => state.channels)
   const navigate = useNavigate()
   const creatablePlatforms = useMemo(() => descriptors.filter((descriptor) => descriptor.userCreatable), [descriptors])
-  const [selectedId, setSelectedId] = useState(connections[0]?.id ?? '')
-  const [createOpen, setCreateOpen] = useState(false)
+  const selectedId = connectionId || connections[0]?.id || ''
+  const [createOpen, setCreateOpen] = useState(searchParams.get('create') === '1')
   const [createStage, setCreateStage] = useState<'platform' | 'configuration'>('platform')
   const [selectedPlatformKey, setSelectedPlatformKey] = useState('')
   const [configuration, setConfiguration] = useState<Record<string, string | number | boolean>>({})
@@ -63,17 +66,15 @@ export function ConnectionsPage() {
   const [createError, setCreateError] = useState('')
   const [testPending, setTestPending] = useState<'receive' | 'send' | null>(null)
   const [testChannelByConnection, setTestChannelByConnection] = useState<Record<string, string>>({})
-  const [bindingAgentId, setBindingAgentId] = useState(agents[0]?.id ?? '')
+  const [bindingOpen, setBindingOpen] = useState(false)
 
   useEffect(() => {
-    if (!connections.some((connection) => connection.id === selectedId)) {
-      setSelectedId(connections[0]?.id ?? '')
-    }
-  }, [connections, selectedId])
+    if (searchParams.get('create') === '1') setCreateOpen(true)
+  }, [searchParams])
 
-  useEffect(() => {
-    if (!agents.some((agent) => agent.id === bindingAgentId)) setBindingAgentId(agents[0]?.id ?? '')
-  }, [agents, bindingAgentId])
+  if (!connectionId && connections[0]) {
+    return <Navigate to={`/connections/${connections[0].id}`} replace />
+  }
 
   const selected = connections.find((connection) => connection.id === selectedId) ?? connections[0]
   const selectedPlatform = creatablePlatforms.find((platform) => platform.key === selectedPlatformKey)
@@ -83,6 +84,7 @@ export function ConnectionsPage() {
   const sendTargetAvailable = selectedTestChannelId.length > 0
   const selectedChannels = selected ? channels.filter((channel) => channel.connectionId === selected.id) : []
   const bindingCount = selectedChannels.reduce((count, channel) => count + channel.bindings.length, 0)
+  const firstBoundChannel = selectedChannels.find((channel) => channel.bindings.length > 0)
 
   const openCreate = (): void => {
     setCreateStage('platform')
@@ -150,175 +152,156 @@ export function ConnectionsPage() {
             ) : undefined
           }
         />
-      ) : (
-        <div className={styles.masterDetail}>
-          <div className={styles.masterList} role="list" aria-label="平台账号">
-            {connections.map((connection) => (
-              <Button
-                className={[styles.masterButton, selected?.id === connection.id ? styles.masterButtonActive : '']
-                  .filter(Boolean)
-                  .join(' ')}
-                variant="ghost"
-                onClick={() => setSelectedId(connection.id)}
-                key={connection.id}
-              >
-                <Cable size={16} aria-hidden="true" />
-                <span className={styles.masterCopy}>
-                  <strong>{connectionLabel(connection.adapterKey, connection.name)}</strong>
-                  <small>
-                    {connectionLabel(connection.adapterKey, connection.adapter)} · {connection.channels} 个频道
-                  </small>
-                </span>
-                <StatusBadge tone={connectionTone(connection.state)}>{connection.state}</StatusBadge>
-              </Button>
-            ))}
+      ) : selected ? (
+        <section className={styles.detailSection}>
+          <div className={styles.sectionBar}>
+            <div>
+              <div className={styles.sectionHeading}>{connectionLabel(selected.adapterKey, selected.name)}</div>
+              <div className={styles.secondaryText}>{connectionLabel(selected.adapterKey, selected.adapter)}</div>
+            </div>
+            <StatusBadge tone={connectionTone(selected.state)}>{selected.state}</StatusBadge>
           </div>
 
-          {selected ? (
-            <section className={styles.detailSection}>
+          {selected.adapterKey !== 'web' ? (
+            <ol className={styles.connectionProgress} aria-label="连接完成进度">
+              {[
+                { label: '连接账号', done: selected.state === '已连接' || selected.state === '已配置' },
+                { label: '发现频道', done: selected.knownChannels.length > 0 },
+                { label: '测试接收', done: selected.receiveTest === '通过' },
+                { label: '测试发送', done: selected.sendTest === '通过' },
+                { label: '绑定智能体', done: bindingCount > 0 },
+              ].map((step, index) => (
+                <li data-done={step.done ? '' : undefined} key={step.label}>
+                  <span>
+                    {step.done ? <Check size={12} aria-hidden="true" /> : <Circle size={10} aria-hidden="true" />}
+                  </span>
+                  <small>{step.label}</small>
+                  {index < 4 ? <i aria-hidden="true" /> : null}
+                </li>
+              ))}
+            </ol>
+          ) : null}
+
+          {selected.lastError ? <InlineFeedback tone="error">{selected.lastError}</InlineFeedback> : null}
+
+          <dl className={styles.facts}>
+            <dt>最近收到消息</dt>
+            <dd>{selected.lastEvent}</dd>
+            <dt>已发现频道</dt>
+            <dd>{selected.channels} 个</dd>
+            {selected.adapterKey !== 'web' ? (
+              <>
+                <dt>应用账号</dt>
+                <dd>{maskedAccount(selected.appId)}</dd>
+                <dt>凭据</dt>
+                <dd>{selected.credentialConfigured ? '已保存' : '未配置'}</dd>
+                <dt>主动发言</dt>
+                <dd>{selected.proactiveSend ? '允许' : '不允许'}</dd>
+              </>
+            ) : null}
+          </dl>
+
+          {selected.adapterKey === 'web' ? (
+            <InlineFeedback tone="info">网页聊天由当前设备管理，不需要配置账号凭据。</InlineFeedback>
+          ) : (
+            <>
+              <div className={styles.sectionDivider} />
+              <div className={styles.sectionHeading}>连接测试</div>
+              {selected.knownChannels.length > 0 ? (
+                <SelectField
+                  label="测试消息发送到"
+                  value={selectedTestChannelId}
+                  onValueChange={(channelId) =>
+                    setTestChannelByConnection((current) => ({ ...current, [selected.id]: channelId }))
+                  }
+                  options={selected.knownChannels.map((channel) => {
+                    const label = friendlyKnownChannelLabel(channel)
+                    return {
+                      value: channel.id,
+                      label: /^QQ (?:群聊|私聊)/u.test(label)
+                        ? label
+                        : `${label} · ${channel.kind === 'group' ? '群聊' : '私聊'}`,
+                    }
+                  })}
+                />
+              ) : (
+                <InlineFeedback tone="warning">
+                  还没有发现频道。请先在 QQ 群或私聊中向机器人账号发送一条消息。
+                </InlineFeedback>
+              )}
+              <div className={styles.testRows}>
+                <div className={styles.testRow}>
+                  <span>
+                    <strong>接收消息</strong>
+                    <small>{testResultLabel(selected.receiveTest)}</small>
+                  </span>
+                  <Button
+                    size="small"
+                    loading={testPending === 'receive'}
+                    loadingLabel="测试中…"
+                    disabled={testPending !== null}
+                    onClick={() => void runTest('receive')}
+                  >
+                    <Radio size={14} aria-hidden="true" /> 测试接收
+                  </Button>
+                </div>
+                <div className={styles.testRow}>
+                  <span>
+                    <strong>发送消息</strong>
+                    <small>{testResultLabel(selected.sendTest)}</small>
+                  </span>
+                  <Button
+                    size="small"
+                    loading={testPending === 'send'}
+                    loadingLabel="发送中…"
+                    disabled={testPending !== null || !sendTargetAvailable}
+                    onClick={() => void runTest('send')}
+                  >
+                    <Send size={14} aria-hidden="true" /> 发送测试消息
+                  </Button>
+                </div>
+              </div>
+              <div className={styles.sectionDivider} />
               <div className={styles.sectionBar}>
                 <div>
-                  <div className={styles.sectionHeading}>{connectionLabel(selected.adapterKey, selected.name)}</div>
-                  <div className={styles.secondaryText}>{connectionLabel(selected.adapterKey, selected.adapter)}</div>
+                  <div className={styles.sectionHeading}>绑定智能体</div>
+                  <div className={styles.secondaryText}>
+                    {bindingCount > 0 ? `已有 ${bindingCount} 个频道绑定。` : '收发确认后，为频道选择响应的智能体。'}
+                  </div>
                 </div>
-                <StatusBadge tone={connectionTone(selected.state)}>{selected.state}</StatusBadge>
+                {bindingCount > 0 ? <StatusBadge tone="success">已完成</StatusBadge> : null}
               </div>
-
-              {selected.adapterKey !== 'web' ? (
-                <ol className={styles.connectionProgress} aria-label="连接完成进度">
-                  {[
-                    { label: '连接账号', done: selected.state === '已连接' || selected.state === '已配置' },
-                    { label: '发现频道', done: selected.knownChannels.length > 0 },
-                    { label: '测试接收', done: selected.receiveTest === '通过' },
-                    { label: '测试发送', done: selected.sendTest === '通过' },
-                    { label: '绑定智能体', done: bindingCount > 0 },
-                  ].map((step, index) => (
-                    <li data-done={step.done ? '' : undefined} key={step.label}>
-                      <span>
-                        {step.done ? <Check size={12} aria-hidden="true" /> : <Circle size={10} aria-hidden="true" />}
-                      </span>
-                      <small>{step.label}</small>
-                      {index < 4 ? <i aria-hidden="true" /> : null}
-                    </li>
-                  ))}
-                </ol>
-              ) : null}
-
-              {selected.lastError ? <InlineFeedback tone="error">{selected.lastError}</InlineFeedback> : null}
-
-              <dl className={styles.facts}>
-                <dt>最近收到消息</dt>
-                <dd>{selected.lastEvent}</dd>
-                <dt>已发现频道</dt>
-                <dd>{selected.channels} 个</dd>
-                {selected.adapterKey !== 'web' ? (
-                  <>
-                    <dt>应用账号</dt>
-                    <dd>{maskedAccount(selected.appId)}</dd>
-                    <dt>凭据</dt>
-                    <dd>{selected.credentialConfigured ? '已保存' : '未配置'}</dd>
-                    <dt>主动发言</dt>
-                    <dd>{selected.proactiveSend ? '允许' : '不允许'}</dd>
-                  </>
-                ) : null}
-              </dl>
-
-              {selected.adapterKey === 'web' ? (
-                <InlineFeedback tone="info">网页聊天由当前设备管理，不需要配置账号凭据。</InlineFeedback>
+              {agents.length > 0 ? (
+                <div className={styles.bindingNextStep}>
+                  <Button
+                    variant="primary"
+                    disabled={selectedChannels.length === 0 && selected.knownChannels.length === 0}
+                    onClick={() => setBindingOpen(true)}
+                  >
+                    绑定智能体
+                  </Button>
+                  {firstBoundChannel ? (
+                    <Button variant="ghost" onClick={() => void navigate(`/channels/${firstBoundChannel.id}`)}>
+                      打开已绑定频道 <ArrowRight size={14} aria-hidden="true" />
+                    </Button>
+                  ) : null}
+                </div>
               ) : (
-                <>
-                  <div className={styles.sectionDivider} />
-                  <div className={styles.sectionHeading}>连接测试</div>
-                  {selected.knownChannels.length > 0 ? (
-                    <SelectField
-                      label="测试消息发送到"
-                      value={selectedTestChannelId}
-                      onValueChange={(channelId) =>
-                        setTestChannelByConnection((current) => ({ ...current, [selected.id]: channelId }))
-                      }
-                      options={selected.knownChannels.map((channel) => {
-                        const label = friendlyKnownChannelLabel(channel)
-                        return {
-                          value: channel.id,
-                          label: /^QQ (?:群聊|私聊)/u.test(label)
-                            ? label
-                            : `${label} · ${channel.kind === 'group' ? '群聊' : '私聊'}`,
-                        }
-                      })}
-                    />
-                  ) : (
-                    <InlineFeedback tone="warning">
-                      还没有发现频道。请先在 QQ 群或私聊中向机器人账号发送一条消息。
-                    </InlineFeedback>
-                  )}
-                  <div className={styles.testRows}>
-                    <div className={styles.testRow}>
-                      <span>
-                        <strong>接收消息</strong>
-                        <small>{testResultLabel(selected.receiveTest)}</small>
-                      </span>
-                      <Button
-                        size="small"
-                        loading={testPending === 'receive'}
-                        loadingLabel="测试中…"
-                        disabled={testPending !== null}
-                        onClick={() => void runTest('receive')}
-                      >
-                        <Radio size={14} aria-hidden="true" /> 测试接收
-                      </Button>
-                    </div>
-                    <div className={styles.testRow}>
-                      <span>
-                        <strong>发送消息</strong>
-                        <small>{testResultLabel(selected.sendTest)}</small>
-                      </span>
-                      <Button
-                        size="small"
-                        loading={testPending === 'send'}
-                        loadingLabel="发送中…"
-                        disabled={testPending !== null || !sendTargetAvailable}
-                        onClick={() => void runTest('send')}
-                      >
-                        <Send size={14} aria-hidden="true" /> 发送测试消息
-                      </Button>
-                    </div>
-                  </div>
-                  <div className={styles.sectionDivider} />
-                  <div className={styles.sectionBar}>
-                    <div>
-                      <div className={styles.sectionHeading}>绑定智能体</div>
-                      <div className={styles.secondaryText}>
-                        {bindingCount > 0
-                          ? `已有 ${bindingCount} 个频道绑定。`
-                          : '收发确认后，为频道选择响应的智能体。'}
-                      </div>
-                    </div>
-                    {bindingCount > 0 ? <StatusBadge tone="success">已完成</StatusBadge> : null}
-                  </div>
-                  {agents.length > 0 ? (
-                    <div className={styles.bindingNextStep}>
-                      <SelectField
-                        label="要配置的智能体"
-                        value={bindingAgentId}
-                        onValueChange={setBindingAgentId}
-                        options={agents.map((agent) => ({ value: agent.id, label: agent.name }))}
-                      />
-                      <Button
-                        disabled={!bindingAgentId || selected.knownChannels.length === 0}
-                        onClick={() => void navigate(`/agents/${bindingAgentId}?tab=channels`)}
-                      >
-                        前往绑定频道 <ArrowRight size={14} aria-hidden="true" />
-                      </Button>
-                    </div>
-                  ) : (
-                    <InlineFeedback tone="warning">请先创建智能体，再绑定已发现的频道。</InlineFeedback>
-                  )}
-                </>
+                <InlineFeedback tone="warning">请先创建智能体，再绑定已发现的频道。</InlineFeedback>
               )}
-            </section>
-          ) : null}
-        </div>
-      )}
+            </>
+          )}
+        </section>
+      ) : null}
+      {selected ? (
+        <BindingTaskDialog
+          open={bindingOpen}
+          onOpenChange={setBindingOpen}
+          connectionId={selected.id}
+          title="绑定智能体"
+          description="为这个连接下的频道选择响应智能体和触发方式。完成后仍留在连接页。"
+        />
+      ) : null}
 
       <ConfirmDialog
         open={createOpen}
@@ -327,6 +310,11 @@ export function ConnectionsPage() {
           if (!open) {
             setCreateStage('platform')
             setCreateError('')
+            if (searchParams.get('create') === '1') {
+              const next = new URLSearchParams(searchParams)
+              next.delete('create')
+              setSearchParams(next, { replace: true })
+            }
           }
         }}
         title={createStage === 'platform' ? '选择平台' : `配置${selectedPlatform?.displayName ?? ''}`}

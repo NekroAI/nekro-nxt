@@ -3,6 +3,8 @@ declare const styles: {
   readonly addProvider: string
   readonly advanced: string
   readonly advancedFields: string
+  readonly compactActions: string
+  readonly compactForm: string
   readonly editor: string
   readonly editorHeading: string
   readonly fieldLabel: string

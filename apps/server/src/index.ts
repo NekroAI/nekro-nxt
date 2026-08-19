@@ -47,7 +47,7 @@ import * as FsObservationPolicy from '@deepseek-ai/dsh-fs-observation-policy'
 import SandboxedFileSystem from '@deepseek-ai/dsh-fs-sandbox'
 import LocalSandboxProvider from '@deepseek-ai/dsh-sandbox-local'
 import SandboxPolicyService from '@deepseek-ai/dsh-sandbox-policy'
-import { SessionId, SessionStore } from '@deepseek-ai/dsh-session'
+import { SessionId, SessionStore, type SessionEvent } from '@deepseek-ai/dsh-session'
 import SessionProjectionRegistry from '@deepseek-ai/dsh-session-projection'
 import { scopeOf } from '@deepseek-ai/dsh-scope'
 import * as SessionCheckpointPolicy from '@deepseek-ai/dsh-session-checkpoint-policy'
@@ -110,6 +110,7 @@ import type {
   Revision,
   MountedExtension,
 } from '@nekro-nxt/extension-runtime'
+import { shouldBroadcastChannelRuntime } from './channel-runtime-events.js'
 import type {
   ExtensionHostEnvironment,
   ExtensionJsonValue,
@@ -1149,6 +1150,7 @@ export class DshHostRuntime implements AgentSessionDriver, ExtensionActivationHo
     { readonly context: Context; readonly runner: DynamicCordisRunnerService }
   >()
   readonly #productAgentBySession = new Map<string, AgentRevisionRecord['agentId']>()
+  readonly #channelBySession = new Map<string, ChannelId>()
   readonly #persistentExtensions = new Map<string, PersistentExtensionRegistration>()
   #disposed = false
 
@@ -1679,7 +1681,11 @@ export class DshHostRuntime implements AgentSessionDriver, ExtensionActivationHo
     const setup = async (agentContext: Context): Promise<void> => {
       agentContext.effect(() => {
         this.#productAgentBySession.set(sessionId, revision.agentId)
-        return () => this.#productAgentBySession.delete(sessionId)
+        this.#channelBySession.set(sessionId, input.channelId)
+        return () => {
+          this.#productAgentBySession.delete(sessionId)
+          this.#channelBySession.delete(sessionId)
+        }
       }, 'nekro-nxt: product Agent ownership')
       agentContext.systemPrompt.section({
         name: PERSONA_SECTION,
@@ -1987,6 +1993,7 @@ export class DshHostRuntime implements AgentSessionDriver, ExtensionActivationHo
       this.#imageInputSessions.delete(sessionId)
       this.#dynamicSessions.delete(sessionId)
       this.#productAgentBySession.delete(sessionId)
+      this.#channelBySession.delete(sessionId)
     }
     if (drainError !== undefined && disposeError !== undefined) {
       throw new AggregateError([drainError, disposeError], `DSH Session teardown failed: ${dshSessionId}`)
@@ -2033,6 +2040,48 @@ export class DshHostRuntime implements AgentSessionDriver, ExtensionActivationHo
       if (agentId === undefined) return
       listener({ agentId, status: this.runtimeStatus(agentId) })
     })
+  }
+
+  tryLiveSession(
+    dshSessionId: string,
+  ): { readonly status: AgentStatus; readonly events: readonly SessionEvent[] } | undefined {
+    this.#assertActive()
+    const agent = this.#context.agents.get(SessionId(dshSessionId))
+    if (!agent) return undefined
+    return { status: agent.status, events: agent.session.events }
+  }
+
+  subscribeChannelRuntime(listener: (channelId: ChannelId) => void): () => void {
+    this.#assertActive()
+    const offStatus = this.#context.on('agent/status', ({ agent }) => {
+      const channelId = this.#channelBySession.get(String(agent.id))
+      if (channelId !== undefined) notify(channelId)
+    })
+    const pending = new Set<ChannelId>()
+    let timer: ReturnType<typeof setTimeout> | undefined
+    const flush = (): void => {
+      timer = undefined
+      const channelIds = [...pending]
+      pending.clear()
+      for (const channelId of channelIds) listener(channelId)
+    }
+    const notify = (channelId: ChannelId): void => {
+      pending.add(channelId)
+      timer ??= setTimeout(flush, 100)
+    }
+    const offEvent = this.#context.on(
+      'session/event',
+      (session: { readonly id: string }, event?: { readonly type?: string }) => {
+        if (!shouldBroadcastChannelRuntime(event?.type)) return
+        const channelId = this.#channelBySession.get(String(session.id))
+        if (channelId !== undefined) notify(channelId)
+      },
+    )
+    return () => {
+      if (timer !== undefined) clearTimeout(timer)
+      offStatus()
+      offEvent()
+    }
   }
 
   sessionEvents(dshSessionId: string) {
@@ -2307,6 +2356,7 @@ export class DshHostRuntime implements AgentSessionDriver, ExtensionActivationHo
     this.#imageInputSessions.clear()
     this.#dynamicSessions.clear()
     this.#productAgentBySession.clear()
+    this.#channelBySession.clear()
     this.#persistentExtensions.clear()
     try {
       await this.#context.fiber.dispose()

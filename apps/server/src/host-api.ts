@@ -16,12 +16,19 @@ import {
   type ChannelId,
   type HostApiContract,
   type HostSnapshotMessage,
+  type ChannelRuntimeProjection,
   type HostSseEvent,
 } from '@nekro-nxt/contracts'
 import { readFile } from 'node:fs/promises'
 import type { IncomingMessage, ServerResponse } from 'node:http'
 import { z } from 'zod'
 import type { NekroRuntime } from './bootstrap.js'
+import { normalizeSessionEvents } from './channel-runtime-events.js'
+import {
+  emptyChannelRuntimeProjection,
+  projectChannelRuntime,
+  worstChannelRuntimePhase,
+} from './channel-runtime-projection.js'
 
 /**
  * The NekroNxt domain API, wired directly onto the DSH WebServer seam. It is
@@ -61,6 +68,25 @@ const readJsonBody = (req: IncomingMessage): Promise<unknown> =>
     })
     req.on('error', reject)
   })
+
+const assembleChannelRuntime = (runtime: NekroRuntime, channelId: ChannelId): ChannelRuntimeProjection => {
+  if (!runtime.repository.getChannel(channelId)) {
+    throw new Error(`Unknown Channel: ${channelId}`)
+  }
+  const binding = runtime.core.listBindings(channelId)[0]
+  if (!binding) return emptyChannelRuntimeProjection(channelId)
+  const episode = runtime.repository.getActiveEpisode(channelId, binding.agentId)
+  const pendingInjectCount = episode === undefined ? 0 : runtime.repository.listRecoverableAdmissions(episode.id).length
+  const live = episode?.dshSessionId === undefined ? undefined : runtime.host.tryLiveSession(episode.dshSessionId)
+  return projectChannelRuntime({
+    channelId,
+    agentId: binding.agentId,
+    ...(episode === undefined ? {} : { episodeId: episode.id }),
+    sessionStatus: live?.status ?? 'missing',
+    pendingInjectCount,
+    events: live === undefined ? [] : normalizeSessionEvents(live.events),
+  })
+}
 
 const writeJson = (res: ServerResponse, status: number, body: unknown): void => {
   res.writeHead(status, {
@@ -315,11 +341,17 @@ export const createNekroHostApi = (webServer: WebServer, runtime: NekroRuntime):
     const bindingsByChannel = new Map(channels.map((channel) => [channel.id, runtime.core.listBindings(channel.id)]))
     const agentCommits = runtime.core.listAgents()
     const agentIds = new Set(agentCommits.map((commit) => commit.definition.id))
+    const runtimeByChannel = new Map(
+      channels.map((channel) => [channel.id, assembleChannelRuntime(runtime, channel.id)] as const),
+    )
     const agents = agentCommits.map((commit) => {
       const agentId = commit.definition.id
       const ownedChannels = channels
         .filter((channel) => bindingsByChannel.get(channel.id)?.some((binding) => binding.agentId === agentId))
         .map((channel) => channel.id)
+      const runtimePhase = worstChannelRuntimePhase(
+        ownedChannels.map((channelId) => runtimeByChannel.get(channelId)?.phase ?? 'idle'),
+      )
       return {
         id: agentId,
         displayName: commit.revision.displayName,
@@ -327,7 +359,8 @@ export const createNekroHostApi = (webServer: WebServer, runtime: NekroRuntime):
         model: commit.revision.model,
         capabilities: commit.revision.capabilities,
         currentRevisionId: commit.revision.id,
-        runtimeStatus: runtime.host.runtimeStatus(commit.definition.id),
+        runtimeStatus: runtimePhase === 'thinking' || runtimePhase === 'using-tool' ? 'running' : 'idle',
+        runtimePhase,
         createdAt: commit.revision.createdAt,
         channels: ownedChannels,
       }
@@ -342,6 +375,7 @@ export const createNekroHostApi = (webServer: WebServer, runtime: NekroRuntime):
         kind: channel.kind,
         ...(channel.displayName === undefined ? {} : { displayName: channel.displayName }),
         ...(boundAgentId === undefined ? {} : { boundAgentId }),
+        runtimePhase: runtimeByChannel.get(channel.id)?.phase ?? 'idle',
         bindings: bindings.map((binding) => ({
           channelId: binding.channelId,
           agentId: binding.agentId,
@@ -950,8 +984,9 @@ export const createNekroHostApi = (webServer: WebServer, runtime: NekroRuntime):
       const url = new URL(req.url ?? '/', 'http://localhost')
       const messageMatch = /^\/api\/channels\/([^/]+)\/messages$/.exec(url.pathname)
       const nameMatch = /^\/api\/channels\/([^/]+)\/display-name$/.exec(url.pathname)
+      const runtimeMatch = /^\/api\/channels\/([^/]+)\/runtime$/.exec(url.pathname)
       const assetMatch = /^\/api\/channels\/([^/]+)\/assets\/([^/]+)$/.exec(url.pathname)
-      const rawChannelId = messageMatch?.[1] ?? nameMatch?.[1] ?? assetMatch?.[1]
+      const rawChannelId = messageMatch?.[1] ?? nameMatch?.[1] ?? runtimeMatch?.[1] ?? assetMatch?.[1]
       if (!rawChannelId) {
         writeError(res, 404, 'not-found', `未定义路由：${req.method} ${url.pathname}。`)
         return
@@ -961,6 +996,24 @@ export const createNekroHostApi = (webServer: WebServer, runtime: NekroRuntime):
         typedChannelId = ChannelIdSchema.parse(decodeURIComponent(rawChannelId))
       } catch {
         writeError(res, 400, 'invalid-channel', '无效的频道 ID。')
+        return
+      }
+
+      if (runtimeMatch) {
+        if (req.method !== 'GET') {
+          writeError(res, 405, 'method-not-allowed', '只支持 GET。')
+          return
+        }
+        try {
+          writeContractJson(
+            res,
+            200,
+            HostApiContracts.getChannelRuntime,
+            assembleChannelRuntime(runtime, typedChannelId),
+          )
+        } catch (error) {
+          writeError(res, 404, 'channel-runtime-missing', error instanceof Error ? error.message : String(error))
+        }
         return
       }
 
@@ -1219,6 +1272,9 @@ export const createNekroHostApi = (webServer: WebServer, runtime: NekroRuntime):
       }
     }
   })
+  const unsubscribeChannelRuntime = runtime.host.subscribeChannelRuntime((channelId) => {
+    broadcast({ event: 'runtime', data: { channelId } })
+  })
   const unsubscribeDshSettings = runtime.host.onDshSettingsChanged((namespace, revision) => {
     broadcast({
       event: 'dsh-settings-changed',
@@ -1458,6 +1514,7 @@ export const createNekroHostApi = (webServer: WebServer, runtime: NekroRuntime):
     dispose() {
       unsubscribeConnectionChanges()
       unsubscribeRuntimeStatus()
+      unsubscribeChannelRuntime()
       unsubscribeDshSettings()
       unsubscribeDshCredentials()
       for (const disposer of disposers.splice(0)) disposer()

@@ -127,6 +127,7 @@ const snapshotBody = () =>
         persona: '谨慎复核证据。',
         currentRevisionId: webAgentRevisionId,
         runtimeStatus: 'running',
+        runtimePhase: 'thinking',
         createdAt: 1_700_000_000_000,
         model: { provider: 'deepseek', model: 'deepseek-chat', reasoningEffort: 'high' },
         capabilities: {
@@ -859,6 +860,42 @@ describe('HttpProductHost', () => {
     expect(listener).toHaveBeenCalledTimes(2)
     expect(host.getSnapshot().messages).toHaveLength(3)
     expect(host.getSnapshot().messages.at(-1)).toMatchObject({ role: 'agent', body: '第二条回复。' })
+    unsubscribe()
+  })
+
+  it('does not refetch the global snapshot when runtime frames arrive in a burst', async () => {
+    const requests: string[] = []
+    fetchMock = vi.fn((input: string) => {
+      requests.push(input)
+      if (input === '/api/snapshot') return Promise.resolve(stubResponse(200, snapshotBody()))
+      if (input.startsWith(`/api/channels/${webChannelId}/runtime`)) {
+        return Promise.resolve(
+          stubResponse(200, {
+            channelId: webChannelId,
+            agentId: webAgentId,
+            phase: 'thinking',
+            summary: '智能体正在处理当前消息。',
+            pendingInjectCount: 0,
+            turns: [],
+          }),
+        )
+      }
+      return Promise.resolve(stubResponse(404, { error: { code: 'not-found', message: 'x' } }))
+    })
+    vi.stubGlobal('fetch', fetchMock)
+    vi.stubGlobal('EventSource', FakeEventSource)
+
+    const host = new HttpProductHost()
+    const unsubscribe = host.subscribe(() => undefined)
+    await flush()
+    const snapshotCallsAfterSubscribe = requests.filter((url) => url === '/api/snapshot').length
+    const source = FakeEventSource.instances[0]
+    for (let index = 0; index < 40; index += 1) {
+      source?.emit('runtime', { channelId: webChannelId })
+    }
+    await new Promise((resolve) => setTimeout(resolve, 250))
+    expect(requests.filter((url) => url === '/api/snapshot')).toHaveLength(snapshotCallsAfterSubscribe)
+    expect(requests.filter((url) => url.startsWith(`/api/channels/${webChannelId}/runtime`)).length).toBe(1)
     unsubscribe()
   })
 
