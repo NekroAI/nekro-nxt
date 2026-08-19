@@ -3,7 +3,9 @@ import type { CoreRepository } from '@nekro-nxt/core'
 import type { AssetRepository } from '@nekro-nxt/core'
 import type { ChannelHistoryRepository, RuntimeRepository } from '@nekro-nxt/channel-runtime'
 import type { ExtensionRepository } from '@nekro-nxt/extension-runtime'
+import { eq } from 'drizzle-orm'
 import type { CoreDatabase } from './database.js'
+import { workTreeOrder } from './schema.js'
 import { createAgentsRepository } from './repositories/agents.js'
 import { createChannelsRepository } from './repositories/channels.js'
 import { createOutboxRepository } from './repositories/outbox.js'
@@ -24,7 +26,20 @@ type CurrentRepository = CoreRepository &
   AssetRepository
 
 /** Typed Drizzle façade. Domain implementations stay separate and share one immediate-transaction database. */
+export type WorkTreeOrderRecord = {
+  readonly agentIds: readonly string[]
+  readonly channelIdsByAgent: Readonly<Record<string, readonly string[]>>
+  readonly unboundChannelIds: readonly string[]
+}
+
+const emptyWorkTreeOrder = (): WorkTreeOrderRecord => ({
+  agentIds: [],
+  channelIdsByAgent: {},
+  unboundChannelIds: [],
+})
+
 export class SqliteCoreRepository implements CurrentRepository {
+  readonly #db
   readonly #agents
   readonly #channels
   readonly #runtime
@@ -33,12 +48,44 @@ export class SqliteCoreRepository implements CurrentRepository {
   readonly #assets
 
   constructor(database: CoreDatabase) {
+    this.#db = database.db
     this.#agents = createAgentsRepository(database.db)
     this.#channels = createChannelsRepository(database.db)
     this.#runtime = createRuntimeRepository(database.db)
     this.#outbox = createOutboxRepository(database.db)
     this.#extensions = createExtensionsRepository(database.db)
     this.#assets = createAssetsRepository(database.db)
+  }
+
+  getWorkTreeOrder(): WorkTreeOrderRecord {
+    const row = this.#db.select().from(workTreeOrder).where(eq(workTreeOrder.id, 1)).get()
+    if (!row) return emptyWorkTreeOrder()
+    return {
+      agentIds: row.agentIds,
+      channelIdsByAgent: row.channelIdsByAgent,
+      unboundChannelIds: row.unboundChannelIds,
+    }
+  }
+
+  putWorkTreeOrder(order: WorkTreeOrderRecord): WorkTreeOrderRecord {
+    this.#db
+      .insert(workTreeOrder)
+      .values({
+        id: 1,
+        agentIds: order.agentIds,
+        channelIdsByAgent: order.channelIdsByAgent,
+        unboundChannelIds: order.unboundChannelIds,
+      })
+      .onConflictDoUpdate({
+        target: workTreeOrder.id,
+        set: {
+          agentIds: order.agentIds,
+          channelIdsByAgent: order.channelIdsByAgent,
+          unboundChannelIds: order.unboundChannelIds,
+        },
+      })
+      .run()
+    return order
   }
 
   readonly createAgent = (...args: Parameters<CoreRepository['createAgent']>) => this.#agents.createAgent(...args)
@@ -88,6 +135,7 @@ export class SqliteCoreRepository implements CurrentRepository {
     this.#channels.getChannelMemberByIdentity(...args)
   readonly replaceBinding = (...args: Parameters<CoreRepository['replaceBinding']>) =>
     this.#channels.replaceBinding(...args)
+  readonly clearBinding = (...args: Parameters<CoreRepository['clearBinding']>) => this.#channels.clearBinding(...args)
   readonly getBinding = (...args: Parameters<CoreRepository['getBinding']>) => this.#channels.getBinding(...args)
   readonly listBindings = (...args: Parameters<CoreRepository['listBindings']>) => this.#channels.listBindings(...args)
   readonly appendChannelEvent = (...args: Parameters<CoreRepository['appendChannelEvent']>) =>

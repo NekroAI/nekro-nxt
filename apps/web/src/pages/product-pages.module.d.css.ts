@@ -19,6 +19,7 @@ declare const styles: {
   readonly boundChannelList: string
   readonly boundChannelName: string
   readonly boundChannelRow: string
+  readonly canvasStage: string
   readonly capabilityChoices: string
   readonly channelDetails: string
   readonly channelDirectory: string
@@ -35,6 +36,7 @@ declare const styles: {
   readonly composerRow: string
   readonly composerTarget: string
   readonly connectionProgress: string
+  readonly contentLine: string
   readonly conversationEmpty: string
   readonly conversationHeader: string
   readonly conversationHeaderActions: string
@@ -48,8 +50,10 @@ declare const styles: {
   readonly creatorWorkspace: string
   readonly detailSection: string
   readonly dialogChoice: string
+  readonly dropTarget: string
   readonly dynamicSlotSurface: string
   readonly emptyState: string
+  readonly eventInner: string
   readonly extensionHeader: string
   readonly extensionRow: string
   readonly facts: string
@@ -61,6 +65,12 @@ declare const styles: {
   readonly inspectorActions: string
   readonly inspectorCollapsed: string
   readonly inspectorExpanded: string
+  readonly inspectorRegion: string
+  readonly inspectorRegionBody: string
+  readonly jumpBottom: string
+  readonly kindMessage: string
+  readonly kindTag: string
+  readonly kindTool: string
   readonly lifecycleSteps: string
   readonly lifecycleStepsCompact: string
   readonly linkRow: string
@@ -78,7 +88,7 @@ declare const styles: {
   readonly messageImage: string
   readonly messageImageLink: string
   readonly messageList: string
-  readonly newMessageAction: string
+  readonly messageListInner: string
   readonly objectList: string
   readonly objectName: string
   readonly overviewBlocker: string
@@ -87,6 +97,15 @@ declare const styles: {
   readonly overviewHint: string
   readonly overviewSummary: string
   readonly page: string
+  readonly plot: string
+  readonly plotLabels: string
+  readonly plotSeg: string
+  readonly plotSegInternal: string
+  readonly plotSegSelected: string
+  readonly plotSegSend: string
+  readonly plotSegTool: string
+  readonly plotTrack: string
+  readonly plotTurn: string
   readonly railEmpty: string
   readonly railHeading: string
   readonly revisionNotice: string
@@ -102,13 +121,37 @@ declare const styles: {
   readonly sectionBar: string
   readonly sectionDivider: string
   readonly sectionHeading: string
+  readonly selRail: string
   readonly settingsSection: string
   readonly staticRow: string
   readonly switchList: string
+  readonly sysLine: string
   readonly systemMessage: string
   readonly tagList: string
   readonly testRow: string
   readonly testRows: string
+  readonly thinkBody: string
+  readonly thinkRow: string
+  readonly toolArgs: string
+  readonly toolArrow: string
+  readonly toolCard: string
+  readonly toolLine: string
+  readonly toolName: string
+  readonly toolOut: string
+  readonly toolRow: string
+  readonly toolsMore: string
+  readonly traj: string
+  readonly trajBar: string
+  readonly trajContent: string
+  readonly trajDetailHead: string
+  readonly trajEmpty: string
+  readonly trajEvent: string
+  readonly trajEventCell: string
+  readonly trajSearch: string
+  readonly trajTable: string
+  readonly trajTableWrap: string
+  readonly trajTime: string
+  readonly trajTimeCell: string
   readonly trajectoryExpandHint: string
   readonly trajectoryHeader: string
   readonly trajectoryIdleRow: string
@@ -117,11 +160,20 @@ declare const styles: {
   readonly trajectorySummary: string
   readonly trajectoryTools: string
   readonly truncate: string
+  readonly turnChip: string
+  readonly turnRail: string
   readonly unread: string
+  readonly viewSwitch: string
   readonly wizardBody: string
   readonly wizardStepActive: string
   readonly wizardStepDone: string
   readonly wizardSteps: string
+  readonly workDot: string
+  readonly workDotFail: string
+  readonly workDotOk: string
+  readonly workDotRun: string
+  readonly workRow: string
+  readonly workStream: string
   readonly workbenchDoc: string
   readonly workbenchInspector: string
   readonly workbenchPage: string

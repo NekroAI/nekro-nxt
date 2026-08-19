@@ -168,6 +168,7 @@ export interface CoreRepository {
     platformIdentityId: PlatformIdentityId,
   ): ChannelMemberRecord | undefined
   replaceBinding(record: BindingRecord): BindingRecord
+  clearBinding(channelId: ChannelId): void
   getBinding(channelId: ChannelId): BindingRecord | undefined
   listBindings(channelId: ChannelId): readonly BindingRecord[]
   appendChannelEvent(
@@ -670,6 +671,11 @@ export class CoreService {
       triggerPolicy: parsed.triggerPolicy,
       boundAt: this.#timestamp(),
     })
+  }
+
+  clearBinding(channelId: ChannelId): void {
+    if (!this.#repository.getChannel(channelId)) throw new Error(`Unknown channel: ${channelId}`)
+    this.#repository.clearBinding(channelId)
   }
 
   listBindings(channelId: ChannelId): readonly BindingRecord[] {

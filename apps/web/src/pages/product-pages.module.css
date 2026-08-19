@@ -1059,6 +1059,12 @@
   background: var(--nxt-bg-hover);
 }
 
+.dropTarget {
+  outline: 1px dashed var(--nxt-accent);
+  outline-offset: -1px;
+  background: var(--nxt-accent-soft);
+}
+
 .channelGroupHeaderActive {
   color: var(--nxt-text-primary);
   background: var(--nxt-bg-surface);
@@ -1197,13 +1203,495 @@
   gap: 6px;
 }
 
+.viewSwitch {
+  display: flex;
+  padding: 3px;
+  border: 1px solid var(--nxt-border-default);
+  border-radius: 10px;
+  background: var(--nxt-bg-subtle);
+}
+
+.viewSwitch button {
+  min-height: 28px;
+  border: 0;
+  border-radius: 8px;
+  padding: 0 12px;
+  color: var(--nxt-text-secondary);
+  background: transparent;
+  font-size: 13px;
+}
+
+.viewSwitch button[data-active] {
+  color: var(--nxt-text-primary);
+  background: var(--nxt-bg-surface);
+  box-shadow: 0 1px 2px rgb(25 48 61 / 8%);
+}
+
+.workStream {
+  margin: 8px 0 16px 44px;
+  max-width: 720px;
+}
+
+.sysLine {
+  margin: 0 0 10px;
+  color: var(--nxt-text-muted);
+  font-size: 12px;
+  line-height: 18px;
+}
+
+.thinkRow,
+.toolRow,
+.toolsMore {
+  display: grid;
+  width: 100%;
+  gap: 6px;
+  padding: 7px 0;
+  color: inherit;
+  text-align: left;
+  background: transparent;
+  border: 0;
+}
+
+.toolsMore {
+  color: var(--nxt-text-muted);
+  font-size: 12px;
+  padding-left: 24px;
+}
+
+.workRow {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 8px;
+}
+
+.workRow strong {
+  flex: none;
+  font-size: 13px;
+}
+
+.workRow em {
+  overflow: hidden;
+  min-width: 0;
+  color: var(--nxt-text-muted);
+  font-style: normal;
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.workDot {
+  width: 7px;
+  height: 7px;
+  flex: none;
+  border-radius: 50%;
+  background: var(--nxt-text-muted);
+}
+
+.workDotRun {
+  background: var(--nxt-accent);
+  box-shadow: 0 0 0 4px color-mix(in srgb, var(--nxt-accent) 20%, transparent);
+}
+
+.workDotOk {
+  background: var(--nxt-success);
+}
+
+.workDotFail {
+  background: var(--nxt-danger);
+}
+
+.thinkBody {
+  margin-left: 24px;
+  max-height: 160px;
+  overflow: auto;
+  color: var(--nxt-text-secondary);
+  font-size: 13px;
+  line-height: 20px;
+  white-space: pre-wrap;
+}
+
+.toolCard {
+  margin-left: 24px;
+  border: 1px solid var(--nxt-border-subtle);
+  border-radius: 10px;
+  background: var(--nxt-bg-subtle);
+  overflow: hidden;
+}
+
+.toolCard pre {
+  margin: 0;
+  padding: 8px 10px;
+  border-top: 1px solid var(--nxt-border-subtle);
+  background: var(--nxt-bg-surface);
+  font-family: var(--nxt-font-mono);
+  font-size: 12px;
+  line-height: 18px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.traj {
+  display: flex;
+  min-height: 0;
+  flex: 1;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.trajBar {
+  display: flex;
+  align-items: center;
+  height: 32px;
+  border-bottom: 1px solid var(--nxt-border-subtle);
+  padding: 0 8px;
+}
+
+.trajSearch {
+  height: 22px;
+  margin-left: auto;
+  width: 180px;
+  border: 1px solid var(--nxt-border-subtle);
+  border-radius: 4px;
+  padding: 0 8px;
+  background: var(--nxt-bg-subtle);
+  color: var(--nxt-text-secondary);
+  font-size: 12px;
+}
+
+.plot {
+  display: grid;
+  grid-template-columns: 44px minmax(0, 1fr);
+  height: 50px;
+  border-bottom: 1px solid var(--nxt-border-subtle);
+  background: var(--nxt-bg-subtle);
+}
+
+.plotLabels {
+  position: relative;
+  border-right: 1px solid var(--nxt-border-subtle);
+  color: var(--nxt-text-disabled);
+  font-size: 10px;
+}
+
+.plotLabels span {
+  position: absolute;
+  right: 4px;
+  line-height: 1;
+}
+
+.plotLabels span:nth-child(1) {
+  top: 8px;
+}
+
+.plotLabels span:nth-child(2) {
+  top: 22px;
+}
+
+.plotLabels span:nth-child(3) {
+  top: 36px;
+}
+
+.plotTrack {
+  position: relative;
+  overflow: hidden;
+}
+
+.plotSeg {
+  position: absolute;
+  top: 7px;
+  height: 8px;
+  min-width: 4px;
+  border: 0;
+  border-radius: 1px;
+  padding: 0;
+  cursor: pointer;
+  background: color-mix(in srgb, var(--nxt-accent) 45%, transparent);
+}
+
+.plotSegInternal {
+  top: 7px;
+}
+
+.plotSegTool {
+  top: 21px;
+  background: color-mix(in srgb, #c47b16 50%, transparent);
+}
+
+.plotSegSend {
+  top: 35px;
+  background: color-mix(in srgb, var(--nxt-accent) 30%, transparent);
+}
+
+.plotSeg:hover,
+.plotSegSelected {
+  outline: 1px solid var(--nxt-accent);
+  outline-offset: 1px;
+}
+
+.plotTurn {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  z-index: 1;
+  width: 2px;
+  border: 0;
+  padding: 0;
+  margin: 0;
+  transform: translateX(-1px);
+  cursor: pointer;
+  background: var(--nxt-border-default);
+}
+
+.trajTableWrap {
+  min-height: 0;
+  flex: 1;
+  overflow: auto;
+}
+
+.trajTable {
+  width: 100%;
+  min-width: 560px;
+  border-collapse: collapse;
+  table-layout: fixed;
+  font-size: 12px;
+}
+
+.trajTable th {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  height: 30px;
+  padding: 0 8px;
+  border-bottom: 1px solid var(--nxt-border-default);
+  color: var(--nxt-text-muted);
+  background: var(--nxt-bg-sidebar);
+  font-weight: 500;
+  text-align: left;
+}
+
+.trajEvent {
+  width: 132px;
+  padding-right: 4px;
+  text-align: right;
+}
+
+.trajTime {
+  width: 72px;
+  text-align: right;
+}
+
+.trajTable td {
+  height: 30px;
+  padding: 0 8px;
+  border-bottom: 1px solid var(--nxt-border-subtle);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  vertical-align: middle;
+}
+
+.trajTable tbody tr {
+  cursor: default;
+}
+
+.trajTable tbody tr:hover td {
+  background: var(--nxt-bg-hover);
+}
+
+.trajTable tbody tr[data-selected] td {
+  background: var(--nxt-accent-soft);
+}
+
+.trajTable tbody tr[data-turn-start] td {
+  position: relative;
+}
+
+.trajTable tbody tr[data-turn-start]:not(:first-child) td::before {
+  position: absolute;
+  top: 0;
+  right: 0;
+  left: 0;
+  height: 2px;
+  background: var(--nxt-border-default);
+  content: '';
+  transform: translateY(-50%);
+}
+
+.trajEventCell {
+  position: relative;
+  overflow: visible;
+  padding-left: 36px;
+  padding-right: 4px;
+}
+
+.turnChip {
+  position: absolute;
+  top: 0;
+  left: 0;
+  z-index: 1;
+  padding: 1px 5px;
+  border-radius: 0 0 2px;
+  color: var(--nxt-text-muted);
+  background: var(--nxt-bg-subtle);
+  font-family: var(--nxt-font-mono);
+  font-size: 8px;
+  line-height: 10px;
+}
+
+.turnRail {
+  position: absolute;
+  top: -1px;
+  bottom: -1px;
+  left: 0;
+  width: 2px;
+  background: color-mix(in srgb, #3b82f6 22%, var(--nxt-bg-surface));
+  pointer-events: none;
+}
+
+.selRail {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  width: 3px;
+  background: var(--nxt-accent);
+}
+
+.eventInner {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  height: 100%;
+}
+
+.kindTag {
+  display: inline-flex;
+  align-items: center;
+  height: 19px;
+  border-radius: 4px;
+  padding: 0 5px;
+  font-size: 10px;
+  font-weight: 650;
+  letter-spacing: 0.035em;
+}
+
+.kindMessage {
+  color: #7c5cbf;
+  background: color-mix(in srgb, #7c5cbf 14%, var(--nxt-bg-surface));
+}
+
+.kindTool {
+  color: #9a5b00;
+  background: var(--nxt-warning-soft);
+}
+
+.trajContent {
+  padding-left: 4px;
+}
+
+.contentLine,
+.toolLine {
+  overflow: hidden;
+  min-width: 0;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.toolLine {
+  display: flex;
+  align-items: baseline;
+  font-family: var(--nxt-font-mono);
+  font-size: 12px;
+}
+
+.toolName {
+  flex: none;
+  margin-right: 7px;
+}
+
+.toolArgs,
+.toolOut {
+  overflow: hidden;
+  color: var(--nxt-text-muted);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.toolArrow {
+  flex: none;
+  margin: 0 8px;
+  color: var(--nxt-text-disabled);
+}
+
+.trajTimeCell {
+  color: var(--nxt-text-muted);
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+}
+
+.trajEmpty {
+  padding: 24px;
+  color: var(--nxt-text-muted);
+  font-size: 13px;
+}
+
+.trajDetailHead {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.inspectorRegion {
+  display: flex;
+  min-height: 0;
+  flex-direction: column;
+  margin-bottom: 16px;
+  padding-bottom: 16px;
+}
+
+.inspectorRegionBody {
+  margin: 0;
+  max-height: min(280px, 32vh);
+  overflow: auto;
+  padding: 10px;
+  border-radius: 8px;
+  background: var(--nxt-bg-subtle);
+  font-family: var(--nxt-font-mono);
+  font-size: 12px;
+  line-height: 19px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.canvasStage {
+  position: relative;
+  display: flex;
+  min-height: 0;
+  flex-direction: column;
+}
+
+.jumpBottom {
+  position: absolute;
+  left: 50%;
+  bottom: 16px;
+  z-index: 4;
+  transform: translateX(-50%);
+  box-shadow: var(--nxt-shadow-float);
+}
+
 .messageList {
   position: relative;
   min-height: 0;
+  flex: 1;
   overflow: auto;
   overflow-anchor: none;
   scroll-behavior: auto;
   padding: 24px clamp(24px, 5vw, 80px) 32px;
+}
+
+.messageListInner {
+  min-height: min-content;
 }
 
 .historyNotice {
@@ -1485,19 +1973,6 @@
   font-size: 11px;
 }
 
-.newMessageAction {
-  position: sticky;
-  bottom: 0;
-  display: flex;
-  justify-content: center;
-  pointer-events: none;
-}
-
-.newMessageAction > * {
-  box-shadow: var(--nxt-shadow-float);
-  pointer-events: auto;
-}
-
 .composer {
   display: grid;
   gap: 8px;
@@ -1525,6 +2000,8 @@
 }
 
 .inspector {
+  display: flex;
+  flex-direction: column;
   border-left: 1px solid var(--nxt-border-subtle);
   padding: 20px;
 }
@@ -1604,6 +2081,10 @@
 
   .inspectorExpanded {
     padding: 12px;
+  }
+
+  .inspectorRegionBody {
+    max-height: min(200px, 28vh);
   }
 }
 

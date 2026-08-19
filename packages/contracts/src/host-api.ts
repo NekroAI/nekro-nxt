@@ -72,6 +72,16 @@ const UpdateAgentCapabilitiesRequestSchema = AgentCapabilitiesSchema.partial()
 
 const TriggerPolicySchema = z.enum(['always', 'mentioned-or-replied', 'command', 'observe-only'])
 
+export const WorkTreeOrderSchema = z
+  .object({
+    agentIds: z.array(AgentIdSchema),
+    channelIdsByAgent: z.record(AgentIdSchema, z.array(ChannelIdSchema)),
+    unboundChannelIds: z.array(ChannelIdSchema),
+  })
+  .strict()
+
+export type WorkTreeOrder = z.output<typeof WorkTreeOrderSchema>
+
 const SnapshotMessagePartSchema = z.discriminatedUnion('type', [
   z.object({ type: z.literal('text'), text: z.string() }).strict(),
   z
@@ -276,6 +286,11 @@ export const HostSnapshotSchema = z
         })
         .strict(),
     ),
+    workTreeOrder: WorkTreeOrderSchema.default({
+      agentIds: [],
+      channelIdsByAgent: {},
+      unboundChannelIds: [],
+    }),
     messages: z.array(HostSnapshotMessageSchema),
     connections: z.array(
       z
@@ -598,6 +613,21 @@ export const HostSseEventSchema = z.discriminatedUnion('event', [
   z.object({ event: z.literal('dsh-settings-changed'), data: DshSettingsChangedSseDataSchema }).strict(),
   z.object({ event: z.literal('dsh-credentials-changed'), data: DshCredentialsChangedSseDataSchema }).strict(),
   z.object({ event: z.literal('status'), data: z.object({ ok: z.boolean(), message: z.string() }).strict() }).strict(),
+  z
+    .object({
+      event: z.literal('binding-change'),
+      data: z
+        .object({
+          operationId: NonEmptyStringSchema,
+          channelId: ChannelIdSchema,
+          kind: z.enum(['bind', 'replace', 'clear']),
+          step: NonEmptyStringSchema,
+          status: z.enum(['running', 'skipped', 'done', 'failed']),
+          message: z.string(),
+        })
+        .strict(),
+    })
+    .strict(),
 ])
 
 export type HostSseEvent = z.output<typeof HostSseEventSchema>
@@ -763,6 +793,14 @@ export const HostApiContracts = {
     response: z.object({ currentRevisionId: AgentRevisionIdSchema, capabilities: AgentCapabilitiesSchema }).strict(),
     error: HostApiErrorSchema,
   }),
+  createWebChannel: defineContract({
+    method: 'POST',
+    path: '/api/channels',
+    params: EmptyParamsSchema,
+    request: z.object({ displayName: z.string().trim().min(1).max(120) }).strict(),
+    response: z.object({ channelId: ChannelIdSchema, connectionId: ConnectionIdSchema }).strict(),
+    error: HostApiErrorSchema,
+  }),
   createBinding: defineContract({
     method: 'POST',
     path: '/api/bindings',
@@ -778,6 +816,22 @@ export const HostApiContracts = {
         boundAt: z.number().int().safe().nonnegative(),
       })
       .strict(),
+    error: HostApiErrorSchema,
+  }),
+  clearBinding: defineContract({
+    method: 'DELETE',
+    path: '/api/bindings/:channelId',
+    params: channelParam,
+    request: NoRequestBodySchema,
+    response: z.object({ channelId: ChannelIdSchema, cleared: z.literal(true) }).strict(),
+    error: HostApiErrorSchema,
+  }),
+  putWorkTreeOrder: defineContract({
+    method: 'PUT',
+    path: '/api/work-tree-order',
+    params: EmptyParamsSchema,
+    request: WorkTreeOrderSchema,
+    response: WorkTreeOrderSchema,
     error: HostApiErrorSchema,
   }),
   listChannelMessages: defineContract({

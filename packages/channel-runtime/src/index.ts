@@ -441,6 +441,24 @@ export class ChannelRuntime {
     })
   }
 
+  async clearBinding(channelId: ChannelId): Promise<void> {
+    const current = this.#coreRepository.getBinding(channelId)
+    if (!current) return
+    await this.#withLane(channelId, current.agentId, async () => {
+      const episode = this.#runtimeRepository.getActiveEpisode(channelId, current.agentId)
+      if (episode?.status === 'active' && episode.dshSessionId !== undefined) {
+        await this.#sessionDriver.cancelSession(episode.dshSessionId, 'stopped')
+        this.#runtimeRepository.closeEpisode(
+          episode.id,
+          'stopped',
+          episode.lastAdmittedEventId ?? episode.openedAtEventId,
+          this.#timestamp(),
+        )
+      }
+      this.#core.clearBinding(channelId)
+    })
+  }
+
   async sendMessage(input: SendMessageInput): Promise<SendMessageResult> {
     const episode = this.#runtimeRepository.getEpisode(input.episodeId)
     if (!episode || episode.status !== 'active') throw new Error(`Unknown or inactive Episode: ${input.episodeId}`)

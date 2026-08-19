@@ -3,7 +3,9 @@
   "description": "Drizzle 生成物 SHA-256；任何 migration/meta 改动必须先通过重新生成一致性检查。",
   "files": {
     "0000_initial.sql": "260bf1dd26a6ab0b4d4e1199ce0c7e65b0bfb7362ff74b7a34642ea78b5acb9d",
+    "0001_work_tree_order.sql": "842f8eb61661d537b04e443b6b402cf6d26ac857dbab68f8cfdc273d3e12d90e",
     "meta/0000_snapshot.json": "03573ed4ecfb276bfad4bd1d6041564c11d3c52e1fcb35fc3dd278da7b55448d",
-    "meta/_journal.json": "e698fddf7b90c3aec981681fd4c407791d97c391964a25d8f26266ab68f26822"
+    "meta/0001_snapshot.json": "48b7a1cd91c44d75a394c94af554fc85621fe5fda2dd680d4bc25b68679d4ee5",
+    "meta/_journal.json": "3d4e357046c1b218f8c3f8f013312e4ba31151b5527da84f63ca7fe62bdd65c2"
   }
 }

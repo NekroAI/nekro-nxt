@@ -13,16 +13,19 @@
 
 | 方法 | 路由 | 语义 |
 |---|---|---|
-| 快照 | `GET /api/snapshot` | models、connectionAdapters、agents、channels、connections、extensions、dynamic；频道与智能体带 `runtimePhase`；历史按频道读取 |
-| 订阅 | `GET /api/events` | SSE：`channel-fact`、`runtime` 与 `status` |
+| 快照 | `GET /api/snapshot` | models、connectionAdapters、agents、channels、connections、extensions、dynamic、workTreeOrder；频道与智能体带 `runtimePhase`；历史按频道读取 |
+| 订阅 | `GET /api/events` | SSE：`channel-fact`、`runtime`、`status`、`binding-change` |
 | 创建智能体 | `POST /api/agents` | 创建智能体、Web Channel 与默认 Binding |
+| 新建网页频道 | `POST /api/channels` | 在系统托管网页连接上创建未绑定网页频道 |
 | 发送消息 | `POST /api/channels/:channelId/messages` | 仅网页频道入站 |
 | 频道历史 | `GET /api/channels/:channelId/messages` | `(occurredAt, sourceId)` 游标分页 |
-| 频道运行轨迹 | `GET /api/channels/:channelId/runtime` | 按频道投影 phase、当前工具、待注入和最近 Turn |
+| 频道工作轨迹 | `GET /api/channels/:channelId/runtime` | 按频道投影 phase、当前工具、待注入和最近多轮 Turn |
 | 频道资源 | `GET /api/channels/:channelId/assets/:assetId` | 校验频道访问权后同源读取 |
 | 频道本地名称 | `POST /api/channels/:channelId/display-name` | 只改展示名 |
 | 创建连接 | `POST /api/connections` | 按已安装 Adapter schema 创建 |
-| 创建绑定 | `POST /api/bindings` | 智能体可多频道；一频道一个当前智能体 |
+| 创建绑定 | `POST /api/bindings` | 智能体可多频道；一频道一个当前智能体；已绑定时为换绑 |
+| 解除绑定 | `DELETE /api/bindings/:channelId` | 若该频道有活动工作则先 `stopEpisode`，再删除 Binding |
+| 工作树顺序 | `PUT /api/work-tree-order` | 智能体 / 频道展示序，未知 id 丢弃，新对象追加 |
 | 启用扩展 | `POST /api/agents/:agentId/extensions/:extensionId/activation` | AgentActivation |
 | 停用扩展 | `DELETE /api/agents/:agentId/extensions/:extensionId/activation` | 去掉该智能体的启用关系 |
 | 修改能力 | `POST /api/agents/:id/capabilities` | 六字段授权 |

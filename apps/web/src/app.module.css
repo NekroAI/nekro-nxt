@@ -116,9 +116,12 @@
   width: 28px;
   height: 28px;
   place-items: center;
+  border: 0;
   border-radius: var(--nxt-radius-md);
   color: var(--nxt-text-secondary);
+  background: transparent;
   text-decoration: none;
+  cursor: pointer;
 }
 
 .treeAdd:hover {

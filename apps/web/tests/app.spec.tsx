@@ -354,6 +354,7 @@ describe('NekroNxt product shell', () => {
       approvals: state.approvals,
       dynamic: state.dynamic,
       diagnosticNote: 'projection-v1',
+      workTreeOrder: state.workTreeOrder,
     }
     let listener: (() => void) | undefined
     const coordinator = new ProductHostCoordinator({
@@ -394,6 +395,7 @@ describe('NekroNxt product shell', () => {
           approvals: state.approvals,
           dynamic: state.dynamic,
           diagnosticNote: state.diagnosticNote,
+          workTreeOrder: state.workTreeOrder,
         }
       },
       subscribe: () => () => undefined,
@@ -464,7 +466,41 @@ describe.sequential('NekroNxt browser projections', { timeout: 30_000 }, () => {
           phase: channel?.runtimePhase ?? 'idle',
           summary: channel?.boundAgentId ? '智能体当前空闲。' : '尚未绑定智能体。',
           pendingInjectCount: 0,
-          turns: [],
+          turns:
+            channelId === browserChannelId
+              ? [
+                  {
+                    turn: 1,
+                    state: 'completed',
+                    producedReply: true,
+                    steps: [
+                      {
+                        step: 1,
+                        internalOutput: { kind: 'internal-output', text: '先核对公告。' },
+                        tools: [
+                          {
+                            callId: 'call_read',
+                            name: 'read_file',
+                            displayName: '读取文件',
+                            state: 'succeeded',
+                            inputPreview: '活动公告.docx',
+                            resultPreview: '19:30',
+                          },
+                          {
+                            callId: 'call_send',
+                            name: 'send_channel_message',
+                            displayName: '发送频道消息',
+                            state: 'succeeded',
+                            wroteToChannel: true,
+                            inputPreview: '活动改到 19:30。',
+                            resultPreview: 'sent',
+                          },
+                        ],
+                      },
+                    ],
+                  },
+                ]
+              : [],
         }),
       })
     })
@@ -590,9 +626,26 @@ describe.sequential('NekroNxt browser projections', { timeout: 30_000 }, () => {
       await playwrightExpect(page.getByText('发送给：资料员', { exact: true })).toBeVisible()
       await playwrightExpect(page.getByText('智能体当前空闲。', { exact: true })).toBeVisible()
       await playwrightExpect(page.getByRole('link', { name: /资料员/u }).first()).toBeVisible()
-      await page.getByLabel('展开运行轨迹').click()
+      await playwrightExpect(page.getByRole('button', { name: '会话' })).toBeVisible()
+      await playwrightExpect(page.getByRole('button', { name: '工作轨迹' })).toBeVisible()
       await playwrightExpect(page.getByLabel('响应方式')).toBeVisible()
       await playwrightExpect(page.getByRole('button', { name: '改由其他智能体响应' })).toBeVisible()
+      await playwrightExpect(page.getByLabel('工作轨迹时间轴')).toHaveCount(0)
+      await page.getByRole('button', { name: '工作轨迹' }).click()
+      await playwrightExpect(page.getByRole('button', { name: '工作轨迹' })).toBeVisible()
+      await playwrightExpect(page.getByRole('columnheader', { name: '事件' })).toBeVisible()
+      await playwrightExpect(page.getByLabel('工作轨迹时间轴')).toBeVisible()
+      await playwrightExpect(page.getByLabel('工作轨迹时间轴')).toContainText('内部')
+      await playwrightExpect(page.getByLabel('工作轨迹时间轴')).toContainText('发送')
+      await page.getByRole('button', { name: /发送频道消息/u }).click()
+      await playwrightExpect(
+        page.getByLabel('工作轨迹', { exact: true }).getByRole('heading', { name: '发出的内容' }),
+      ).toBeVisible()
+      await playwrightExpect(page.getByLabel('工作轨迹', { exact: true }).getByText('活动改到 19:30。')).toBeVisible()
+      await playwrightExpect(page.getByRole('button', { name: '摘要' })).toHaveCount(0)
+      await page.getByRole('button', { name: '会话' }).click()
+      await playwrightExpect(page.getByLabel('工作轨迹时间轴')).toHaveCount(0)
+      await playwrightExpect(page.getByLabel('响应方式')).toBeVisible()
       await playwrightExpect(page.locator('body')).not.toContainText('管理绑定')
       await playwrightExpect(page.locator('body')).not.toContainText('编辑频道绑定')
       await playwrightExpect(page.locator('body')).not.toContainText('正在使用工具')

@@ -127,8 +127,8 @@ const appendTextEvent = (
   }).event
 
 describe('Core SQLite baseline', () => {
-  it('accepts better-sqlite3 table_list metadata and migrates a clean 22-table database', async () => {
-    expect(Object.keys(coreSchema)).toHaveLength(22)
+  it('accepts better-sqlite3 table_list metadata and migrates a clean 23-table database', async () => {
+    expect(Object.keys(coreSchema)).toHaveLength(23)
     expect(channelEvents.logicalMessageId.name).toBe('logical_message_id')
     expect('logicalMessageId' in channels).toBe(false)
 
@@ -275,6 +275,12 @@ describe('Core SQLite baseline', () => {
       core.replaceBinding({ channelId: first.id, agentId: secondAgent.definition.id, triggerPolicy: 'observe-only' })
       expect(repository.getBinding(first.id)).toMatchObject({ agentId: secondAgent.definition.id })
       expect(repository.getBinding(second.id)).toMatchObject({ agentId: firstAgent.definition.id })
+      core.clearBinding(first.id)
+      expect(repository.getBinding(first.id)).toBeUndefined()
+      expect(repository.getBinding(second.id)).toMatchObject({ agentId: firstAgent.definition.id })
+      const order = { agentIds: [firstAgent.definition.id], channelIdsByAgent: {}, unboundChannelIds: [first.id] }
+      expect(repository.putWorkTreeOrder(order)).toEqual(order)
+      expect(repository.getWorkTreeOrder()).toEqual(order)
     } finally {
       database.close()
     }

@@ -417,6 +417,30 @@ describe('NekroNxt Server domain API (WebServer seam)', () => {
       expect(reboundSnapshot.channels.find((channel) => channel.id === created.channelId)?.bindings).toEqual([
         expect.objectContaining({ agentId: observer.agentId, triggerPolicy: 'observe-only' }),
       ])
+
+      const extraChannelResponse = await fetch(`${origin}/api/channels`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ displayName: '独立网页台' }),
+      })
+      expect(extraChannelResponse.status).toBe(201)
+      const extraChannel = HostApiContracts.createWebChannel.parseResponse(await extraChannelResponse.json())
+      const extraSnapshot = HostApiContracts.snapshot.parseResponse(
+        await (await fetch(`${origin}/api/snapshot`)).json(),
+      )
+      expect(extraSnapshot.channels.find((channel) => channel.id === extraChannel.channelId)).toMatchObject({
+        displayName: '独立网页台',
+        kind: 'web',
+        bindings: [],
+      })
+
+      const clearResponse = await fetch(`${origin}/api/bindings/${created.channelId}`, { method: 'DELETE' })
+      expect(clearResponse.status).toBe(200)
+      const clearedSnapshot = HostApiContracts.snapshot.parseResponse(
+        await (await fetch(`${origin}/api/snapshot`)).json(),
+      )
+      expect(clearedSnapshot.channels.find((channel) => channel.id === created.channelId)?.boundAgentId).toBeUndefined()
+      expect(clearedSnapshot.channels.find((channel) => channel.id === created.channelId)?.bindings).toEqual([])
     } finally {
       api.dispose()
       await webContext.fiber.dispose()

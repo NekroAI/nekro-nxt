@@ -3,27 +3,33 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <meta name="description" content="NekroNxt 工作台外壳布局原型" />
-    <title>NekroNxt · 工作台布局原型</title>
+    <meta name="description" content="NekroNxt 对象语言原型" />
+    <title>NekroNxt · 原型</title>
     <link rel="stylesheet" href="./styles.css" />
   </head>
   <body>
     <div class="proto-bar">
-      <strong>布局原型</strong>
+      <strong>原型</strong>
       <label>
         场景
         <select id="sceneSelect" aria-label="选择演示场景">
-          <option value="channel">工作 · 频道会话</option>
-          <option value="agent">工作 · 智能体工作台</option>
+          <option value="running">进行中</option>
+          <option value="done">已完成</option>
+          <option value="work">工作轨迹</option>
+          <option value="web">网页频道</option>
+          <option value="unbound">未绑定</option>
+          <option value="first">第一次</option>
+          <option value="create">创建</option>
+          <option value="workbench">智能体</option>
           <option value="connect">连接</option>
-          <option value="extensions">扩展</option>
-          <option value="settings">设置</option>
+          <option value="bind">绑定</option>
           <option value="creator">创造</option>
-          <option value="empty">空态 · 创建智能体</option>
+          <option value="creator-empty">创造空态</option>
+          <option value="extension">扩展</option>
+          <option value="settings">设置</option>
         </select>
       </label>
       <button type="button" id="themeToggle">深色</button>
-      <span class="proto-hint">本地演示，不连接 Host，不写入真实配置。目标几何：图标轨 + 对象列 + 画布 + 检查器。</span>
     </div>
 
     <div class="shell" id="shell">
@@ -33,8 +39,8 @@
       <aside class="inspector" id="inspector" aria-label="检查器"></aside>
     </div>
 
+    <div id="overlay" class="overlay" hidden></div>
     <div id="toastRegion" class="toast-region" aria-live="polite"></div>
-    <div id="modalRoot"></div>
     <script src="./app.js"></script>
   </body>
 </html>

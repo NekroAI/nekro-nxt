@@ -4,4 +4,4 @@
 
 `CoreRepository` 是存储所有者必须实现的窄提交边界；领域服务只在 Repository 成功后返回已发布事实。首个实现位于 `storage-sqlite`。Channel Runtime、Asset Service 和 Extension 生命周期在各自垂直切片进入时复用这些稳定身份，不在 Core 中写平台特例。
 
-智能体配置使用内容摘要去重的不可变 Revision；切换回历史内容时只重设当前 Revision 指针，不重复插入。一个智能体可以同时拥有多个有效 Binding；一个频道同一时间只有一个当前 Binding。换绑原子替换该频道的当前关系，不删除该频道已有消息。
+智能体配置使用内容摘要去重的不可变 Revision；切换回历史内容时只重设当前 Revision 指针，不重复插入。一个智能体可以同时拥有多个有效 Binding；一个频道同一时间只有一个当前 Binding。换绑原子替换该频道的当前关系，不删除该频道已有消息。解绑先停止该频道活动 Episode（若有），再删除当前 Binding。

@@ -1,0 +1,258 @@
+import { expect, test, type Locator, type Page } from '@playwright/test'
+import {
+  AgentIdSchema,
+  AgentRevisionIdSchema,
+  ChannelIdSchema,
+  ConnectionIdSchema,
+  HostApiContracts,
+} from '@nekro-nxt/contracts'
+
+type HostSnapshot = ReturnType<typeof HostApiContracts.snapshot.response.parse>
+
+const mapleId = AgentIdSchema.parse('agt_dragmaple')
+const clerkId = AgentIdSchema.parse('agt_dragclerk')
+const mapleChannelId = ChannelIdSchema.parse('chn_dragmaple')
+const clerkChannelId = ChannelIdSchema.parse('chn_dragclerk')
+const extraChannelId = ChannelIdSchema.parse('chn_dragextra')
+const webConnectionId = ConnectionIdSchema.parse('con_dragweb')
+
+const dragTo = async (page: Page, source: Locator, target: Locator): Promise<void> => {
+  const from = await source.boundingBox()
+  const to = await target.boundingBox()
+  if (!from || !to) throw new Error('拖拽目标没有几何尺寸。')
+  await page.mouse.move(from.x + from.width / 2, from.y + from.height / 2)
+  await page.mouse.down()
+  await page.mouse.move(from.x + from.width / 2 + 12, from.y + from.height / 2 + 8, { steps: 6 })
+  await page.mouse.move(to.x + to.width / 2, to.y + to.height / 2, { steps: 12 })
+  await page.mouse.up()
+}
+
+test('work tree can create a web channel and confirm bind, rebind, and unbind', async ({ page, request }) => {
+  const failures: string[] = []
+  page.on('pageerror', (error) => failures.push(`pageerror: ${error.message}`))
+  page.on('console', (message) => {
+    if (message.type() === 'error') failures.push(`console.error: ${message.text()}`)
+  })
+
+  const baseResponse = await request.get('/api/snapshot')
+  expect(baseResponse.ok()).toBe(true)
+  const baseSnapshot = HostApiContracts.snapshot.response.parse(await baseResponse.json())
+  const webConnection = baseSnapshot.connections.find((connection) => connection.adapterKey === 'web')
+  if (!webConnection) throw new Error('测试快照缺少网页连接。')
+
+  let snapshot: HostSnapshot = {
+    ...baseSnapshot,
+    connections: baseSnapshot.connections.map((connection) =>
+      connection.id === webConnection.id ? { ...connection, id: webConnectionId, channelCount: 2 } : connection,
+    ),
+    agents: [
+      {
+        id: mapleId,
+        displayName: '浅枫',
+        persona: '',
+        currentRevisionId: AgentRevisionIdSchema.parse('arev_dragmaple'),
+        createdAt: 1,
+        runtimeStatus: 'idle',
+        runtimePhase: 'idle',
+        model: { provider: 'openai', model: 'gpt-5' },
+        capabilities: {
+          subagents: true,
+          fileTools: false,
+          webSearch: false,
+          dynamicCreation: false,
+          developmentShell: false,
+          unrestrictedFileAccess: false,
+        },
+        channels: [mapleChannelId],
+      },
+      {
+        id: clerkId,
+        displayName: '资料员',
+        persona: '',
+        currentRevisionId: AgentRevisionIdSchema.parse('arev_dragclerk'),
+        createdAt: 2,
+        runtimeStatus: 'idle',
+        runtimePhase: 'idle',
+        model: { provider: 'openai', model: 'gpt-5' },
+        capabilities: {
+          subagents: true,
+          fileTools: false,
+          webSearch: false,
+          dynamicCreation: false,
+          developmentShell: false,
+          unrestrictedFileAccess: false,
+        },
+        channels: [clerkChannelId],
+      },
+    ],
+    channels: [
+      {
+        id: mapleChannelId,
+        connectionId: webConnectionId,
+        platformChannelId: 'web-maple',
+        kind: 'web',
+        displayName: '浅枫的网页频道',
+        boundAgentId: mapleId,
+        runtimePhase: 'idle',
+        bindings: [{ channelId: mapleChannelId, agentId: mapleId, triggerPolicy: 'always', boundAt: 1 }],
+      },
+      {
+        id: clerkChannelId,
+        connectionId: webConnectionId,
+        platformChannelId: 'web-clerk',
+        kind: 'web',
+        displayName: '资料员的网页频道',
+        boundAgentId: clerkId,
+        runtimePhase: 'idle',
+        bindings: [{ channelId: clerkChannelId, agentId: clerkId, triggerPolicy: 'always', boundAt: 2 }],
+      },
+    ],
+  }
+
+  await page.route('**/api/snapshot', (route) =>
+    route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(snapshot) }),
+  )
+  await page.route('**/api/events', (route) =>
+    route.fulfill({ status: 200, contentType: 'text/event-stream', body: '' }),
+  )
+  await page.route('**/api/channels/*/runtime', (route) => {
+    const channelId = new URL(route.request().url()).pathname.split('/')[3]
+    return route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({
+        channelId,
+        phase: 'idle',
+        summary: '智能体当前空闲。',
+        pendingInjectCount: 0,
+        turns: [],
+      }),
+    })
+  })
+  await page.route('**/api/channels/*/messages?*', (route) =>
+    route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({ messages: [], hasMore: false }),
+    }),
+  )
+  await page.route('**/api/channels', async (route) => {
+    if (route.request().method() !== 'POST') return route.continue()
+    const input = HostApiContracts.createWebChannel.request.parse(route.request().postDataJSON())
+    snapshot = {
+      ...snapshot,
+      channels: [
+        ...snapshot.channels,
+        {
+          id: extraChannelId,
+          connectionId: webConnectionId,
+          platformChannelId: 'web-extra',
+          kind: 'web',
+          displayName: input.displayName,
+          runtimePhase: 'idle',
+          bindings: [],
+        },
+      ],
+    }
+    return route.fulfill({
+      status: 201,
+      contentType: 'application/json',
+      body: JSON.stringify({ channelId: extraChannelId, connectionId: webConnectionId }),
+    })
+  })
+  await page.route('**/api/bindings', async (route) => {
+    if (route.request().method() !== 'POST') return route.continue()
+    const input = HostApiContracts.createBinding.request.parse(route.request().postDataJSON())
+    const binding = {
+      channelId: input.channelId,
+      agentId: input.agentId,
+      triggerPolicy: input.triggerPolicy,
+      boundAt: 3,
+    }
+    snapshot = {
+      ...snapshot,
+      agents: snapshot.agents.map((agent) =>
+        agent.id === input.agentId && !agent.channels.includes(input.channelId)
+          ? { ...agent, channels: [...agent.channels, input.channelId] }
+          : agent.id !== input.agentId
+            ? { ...agent, channels: agent.channels.filter((id) => id !== input.channelId) }
+            : agent,
+      ),
+      channels: snapshot.channels.map((channel) =>
+        channel.id === input.channelId ? { ...channel, boundAgentId: input.agentId, bindings: [binding] } : channel,
+      ),
+    }
+    return route.fulfill({ status: 201, contentType: 'application/json', body: JSON.stringify(binding) })
+  })
+  await page.route('**/api/bindings/*', async (route) => {
+    if (route.request().method() !== 'DELETE') return route.continue()
+    const channelId = new URL(route.request().url()).pathname.split('/')[3]
+    snapshot = {
+      ...snapshot,
+      agents: snapshot.agents.map((agent) => ({
+        ...agent,
+        channels: agent.channels.filter((id) => id !== channelId),
+      })),
+      channels: snapshot.channels.map((channel) =>
+        channel.id === channelId ? { ...channel, bindings: [], runtimePhase: 'idle' } : channel,
+      ),
+    }
+    return route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({ channelId, cleared: true }),
+    })
+  })
+  await page.route('**/api/work-tree-order', async (route) => {
+    if (route.request().method() !== 'PUT') return route.continue()
+    const order = HostApiContracts.putWorkTreeOrder.request.parse(route.request().postDataJSON())
+    snapshot = { ...snapshot, workTreeOrder: order }
+    return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(order) })
+  })
+
+  await page.goto('/')
+  await expect(page.getByRole('link', { name: /浅枫/u }).first()).toBeVisible()
+  await expect(page.getByRole('link', { name: /资料员/u }).first()).toBeVisible()
+
+  await page.getByRole('button', { name: '新建网页频道' }).click()
+  const createDialog = page.getByRole('dialog')
+  await expect(createDialog.getByRole('heading', { name: '新建网页频道' })).toBeVisible()
+  await createDialog.getByLabel('频道名称').fill('临时网页台')
+  await createDialog.getByRole('button', { name: '创建网页频道' }).click()
+  await expect(page.getByRole('link', { name: /临时网页台/u })).toBeVisible()
+
+  await dragTo(
+    page,
+    page.getByRole('link', { name: /临时网页台/u }),
+    page.getByRole('link', { name: /资料员\s+\d+ 个频道/u }),
+  )
+  const bindDialog = page.getByRole('dialog')
+  await expect(bindDialog.getByRole('heading', { name: '交给智能体响应' })).toBeVisible()
+  await expect(bindDialog.getByText(/将「临时网页台」交给「资料员」响应/u)).toBeVisible()
+  await bindDialog.getByRole('button', { name: '交给该智能体响应' }).click()
+  await expect(bindDialog).toHaveCount(0)
+
+  await dragTo(
+    page,
+    page.getByRole('link', { name: /浅枫的网页频道/u }),
+    page.getByRole('link', { name: /资料员\s+\d+ 个频道/u }),
+  )
+  const rebindDialog = page.getByRole('dialog')
+  await expect(rebindDialog.getByRole('heading', { name: '改由其他智能体响应' })).toBeVisible()
+  await expect(rebindDialog.getByText(/将「浅枫的网页频道」改由「资料员」响应/u)).toBeVisible()
+  await rebindDialog.getByRole('button', { name: '改由该智能体响应' }).click()
+  await expect(rebindDialog).toHaveCount(0)
+
+  await dragTo(
+    page,
+    page.getByRole('link', { name: /资料员的网页频道/u }),
+    page.getByText('未绑定频道', { exact: true }),
+  )
+  const unbindDialog = page.getByRole('dialog')
+  await expect(unbindDialog.getByRole('heading', { name: '解除频道绑定' })).toBeVisible()
+  await expect(unbindDialog.getByText(/先停止「资料员」在「资料员的网页频道」中的当前工作/u)).toBeVisible()
+  await unbindDialog.getByRole('button', { name: '停止并解除绑定' }).click()
+  await expect(unbindDialog).toHaveCount(0)
+
+  expect(failures, failures.join('\n')).toEqual([])
+})

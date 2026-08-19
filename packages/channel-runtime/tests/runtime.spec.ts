@@ -193,6 +193,11 @@ class MemoryCoreRepository implements CoreRepository {
     this.bindings.push(record)
     return record
   }
+  clearBinding(channelId: ChannelId): void {
+    for (let index = this.bindings.length - 1; index >= 0; index -= 1) {
+      if (this.bindings[index]?.channelId === channelId) this.bindings.splice(index, 1)
+    }
+  }
   getBinding(channelId: ChannelId) {
     return this.bindings.find((binding) => binding.channelId === channelId)
   }
@@ -957,6 +962,18 @@ describe('ChannelRuntime M1 lane', () => {
     const active = [...context.runtimeRepository.episodes.values()].find(({ status }) => status === 'active')
     expect(active).toMatchObject({ agentId: replacement.definition.id })
     expect(context.runtimeRepository.handoffs).toHaveLength(0)
+  })
+
+  it('stops an active Episode before clearing a Binding', async () => {
+    const context = await setup()
+    await context.runtime.acceptInbound(inbound(context.connection.id, context.channel.id, 'before-clear'))
+    const oldEpisode = [...context.runtimeRepository.episodes.values()][0]!
+    await expect(context.runtime.clearBinding(context.channel.id)).resolves.toBeUndefined()
+    expect(context.runtimeRepository.getEpisode(oldEpisode.id)).toMatchObject({
+      status: 'closed',
+      closeReason: 'stopped',
+    })
+    expect(context.coreRepository.getBinding(context.channel.id)).toBeUndefined()
   })
 
   it('validates outbound targets and sends every structured part with reply metadata', async () => {

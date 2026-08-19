@@ -140,6 +140,7 @@ const emptySnapshot = (): ProductSnapshot => ({
   approvals: [],
   dynamic: [],
   diagnosticNote: '正在连接 NekroNxt 服务…',
+  workTreeOrder: { agentIds: [], channelIdsByAgent: {}, unboundChannelIds: [] },
 })
 
 type SnapshotJson = HostApiResponse<'snapshot'>
@@ -416,6 +417,7 @@ const projectSnapshot = (json: SnapshotJson, successfulAt: number): ProductSnaps
     messages,
     channelRuntimes: {},
     connections,
+    workTreeOrder: json.workTreeOrder,
     extensions: extensionsLocal,
     approvals: [],
     dynamic: json.dynamic.map((item) => ({
@@ -622,6 +624,13 @@ export class HttpProductHost implements ProductHostPort {
       await this.#refreshAndNotify()
       return result
     }
+    if (command === 'channels.createWeb') {
+      const displayName = typeof input?.['displayName'] === 'string' ? input['displayName'] : ''
+      if (!displayName.trim()) throw new Error('请输入频道名称。')
+      const result = await this.#call(HostApiContracts.createWebChannel, {}, { displayName: displayName.trim() })
+      await this.#refreshAndNotify()
+      return result
+    }
     if (command === 'bindings.create') {
       const agentId = typeof input?.['agentId'] === 'string' ? input['agentId'] : ''
       const channelId = typeof input?.['channelId'] === 'string' ? input['channelId'] : ''
@@ -632,6 +641,33 @@ export class HttpProductHost implements ProductHostPort {
         throw new Error('频道触发策略无效，请重新选择。')
       }
       const result = await this.#call(HostApiContracts.createBinding, {}, { agentId, channelId, triggerPolicy })
+      await this.#refreshAndNotify()
+      return result
+    }
+    if (command === 'bindings.clear') {
+      const channelId = typeof input?.['channelId'] === 'string' ? input['channelId'] : ''
+      if (!channelId.trim()) throw new Error('请选择要解除绑定的频道。')
+      const result = await this.#call(HostApiContracts.clearBinding, { channelId }, undefined)
+      await this.#refreshAndNotify()
+      return result
+    }
+    if (command === 'workTreeOrder.put') {
+      const agentIds = Array.isArray(input?.['agentIds'])
+        ? input['agentIds'].filter((id) => typeof id === 'string')
+        : []
+      const unboundChannelIds = Array.isArray(input?.['unboundChannelIds'])
+        ? input['unboundChannelIds'].filter((id) => typeof id === 'string')
+        : []
+      const rawByAgent = isRecord(input?.['channelIdsByAgent']) ? input['channelIdsByAgent'] : {}
+      const channelIdsByAgent: Record<string, string[]> = {}
+      for (const [agentId, value] of Object.entries(rawByAgent)) {
+        if (Array.isArray(value)) channelIdsByAgent[agentId] = value.filter((id) => typeof id === 'string')
+      }
+      const result = await this.#call(
+        HostApiContracts.putWorkTreeOrder,
+        {},
+        { agentIds, channelIdsByAgent, unboundChannelIds },
+      )
       await this.#refreshAndNotify()
       return result
     }

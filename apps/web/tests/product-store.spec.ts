@@ -30,6 +30,7 @@ const resetBusinessFacts = (): void => {
     approvals: [],
     dynamic: [],
     diagnosticNote: '正在连接 NekroNxt Host…',
+    workTreeOrder: { agentIds: [], channelIdsByAgent: {}, unboundChannelIds: [] },
   })
 }
 

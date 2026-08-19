@@ -155,4 +155,24 @@ describe('channel runtime projection', () => {
     expect(preview?.endsWith('…')).toBe(true)
     expect(preview && preview.length <= 160).toBe(true)
   })
+
+  it('keeps unknown tool names readable instead of collapsing them to 工具', () => {
+    const projection = projectChannelRuntime({
+      channelId,
+      agentId,
+      sessionStatus: 'running',
+      pendingInjectCount: 0,
+      events: [
+        {
+          type: 'tool/call',
+          turn: 1,
+          step: 1,
+          callId: 'call_custom',
+          name: 'asset_inspect',
+          arguments: '{"assetId":"ast_1"}',
+        },
+      ],
+    })
+    expect(projection.turns[0]?.steps[0]?.tools[0]?.displayName).toBe('asset inspect')
+  })
 })

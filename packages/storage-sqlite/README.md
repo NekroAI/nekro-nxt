@@ -4,7 +4,7 @@
 
 当前基线使用 `better-sqlite3 13.x + drizzle-orm 0.45.x`。`CoreDatabase` 只公开 typed Drizzle DB、迁移、事务、pragma、backup 和 close；领域代码不得获得原生连接，也不得调用 `.prepare()`、`.exec()`、`sql.raw()` 或拼接 SQL。WAL、foreign keys、busy timeout 与在线备份分别使用驱动的 `pragma()` 和 `backup()` API。
 
-数据库由 22 张领域表组成，按 agents、channels、runtime、outbox、assets、extensions 六个 Repository 文件维护。所有持久 JSON 读出后均经过 `drizzle-zod` 行 Schema 和领域 Schema；ID 使用带格式校验的 Zod brand。
+数据库由 23 张领域表组成，按 agents、channels、runtime、outbox、assets、extensions 六个 Repository 文件维护，另含 Host 工作树顺序单行表。所有持久 JSON 读出后均经过 `drizzle-zod` 行 Schema 和领域 Schema；ID 使用带格式校验的 Zod brand。
 
 迁移目录只保留 Drizzle Kit 生成的 `0000_initial`。空数据库应用该基线；已有当前基线可直接打开；任何不含 Drizzle migration 元数据的旧实验数据库都会被明确拒绝并要求重置。本项目不维护 0000–0016 的升级兼容，也不允许人工编辑迁移 SQL。
 

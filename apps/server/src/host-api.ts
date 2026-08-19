@@ -190,7 +190,13 @@ const projectExtensions = (runtime: NekroRuntime) => {
 const projectDynamicInventory = (
   runtime: NekroRuntime,
   agentId: AgentId,
-): Array<{ pluginId: string; packageId?: string; approvalRequestId?: string; status: string }> => {
+): Array<{
+  episodeId: string
+  pluginId: string
+  packageId?: string
+  approvalRequestId?: string
+  status: string
+}> => {
   const episode = runtime.repository
     .listActiveEpisodesForAgent(agentId)
     .find((candidate) => candidate.dshSessionId !== undefined)
@@ -204,6 +210,7 @@ const projectDynamicInventory = (
           : 'stopped'
       return [
         {
+          episodeId: episode.id,
           pluginId: row.pluginId,
           ...(row.currentPackageId === undefined ? {} : { packageId: row.currentPackageId }),
           ...(row.latestRun?.approvalRequestId === undefined
@@ -429,6 +436,7 @@ export const createNekroHostApi = (webServer: WebServer, runtime: NekroRuntime):
       messages,
       connections,
       extensions: projectExtensions(runtime),
+      workTreeOrder: runtime.repository.getWorkTreeOrder(),
       dynamic: [...agentIds].flatMap((agentId) =>
         projectDynamicInventory(runtime, agentId).map((plugin) => ({ agentId, ...plugin })),
       ),
@@ -449,26 +457,109 @@ export const createNekroHostApi = (webServer: WebServer, runtime: NekroRuntime):
   })
 
   registerRoute({
-    kind: 'exact',
+    kind: 'prefix',
     path: '/api/bindings',
     handler: async (req, res) => {
-      if (req.method !== 'POST') {
-        writeError(res, 405, 'method-not-allowed', '只支持 POST。')
+      const url = new URL(req.url ?? '/', 'http://localhost')
+      if (url.pathname === '/api/bindings') {
+        if (req.method !== 'POST') {
+          writeError(res, 405, 'method-not-allowed', '只支持 POST。')
+          return
+        }
+        try {
+          const parsed = HostApiContracts.createBinding.parseRequest(await readJsonBody(req))
+          const { agentId, channelId } = parsed
+          if (!runtime.repository.getAgent(agentId)) throw new Error('智能体不存在。')
+          if (!runtime.repository.getChannel(channelId)) throw new Error('频道不存在。')
+          const current = runtime.repository.getBinding(channelId)
+          const kind = current === undefined ? 'bind' : 'replace'
+          const operationId = `bop_${Date.now()}`
+          const emit = (step: string, status: 'running' | 'skipped' | 'done' | 'failed', message: string): void => {
+            broadcast({
+              event: 'binding-change',
+              data: { operationId, channelId, kind, step, status, message },
+            })
+          }
+          emit(
+            kind === 'replace' ? 'stop-agent' : 'bind',
+            'running',
+            kind === 'replace' ? '正在停止当前工作。' : '正在绑定频道。',
+          )
+          const binding = await runtime.channels.replaceBinding({
+            agentId,
+            channelId,
+            triggerPolicy: parsed.triggerPolicy,
+          })
+          emit('write-binding', 'done', kind === 'replace' ? '已改由新智能体响应。' : '频道已绑定。')
+          writeJson(res, 201, HostApiContracts.createBinding.parseResponse(binding))
+        } catch (error) {
+          writeError(res, 400, 'binding-failed', error instanceof Error ? error.message : String(error))
+        }
+        return
+      }
+      const match = /^\/api\/bindings\/([^/]+)$/.exec(url.pathname)
+      if (!match?.[1] || req.method !== 'DELETE') {
+        writeError(res, 404, 'not-found', `未定义路由：${req.method} ${url.pathname}。`)
         return
       }
       try {
-        const parsed = HostApiContracts.createBinding.parseRequest(await readJsonBody(req))
-        const { agentId, channelId } = parsed
-        if (!runtime.repository.getAgent(agentId)) throw new Error('智能体不存在。')
-        if (!runtime.repository.getChannel(channelId)) throw new Error('频道不存在。')
-        const binding = await runtime.channels.replaceBinding({
-          agentId,
-          channelId,
-          triggerPolicy: parsed.triggerPolicy,
+        const { channelId } = HostApiContracts.clearBinding.parseParams({
+          channelId: decodeURIComponent(match[1]),
         })
-        writeJson(res, 201, HostApiContracts.createBinding.parseResponse(binding))
+        if (!runtime.repository.getChannel(channelId)) throw new Error('频道不存在。')
+        const operationId = `bop_${Date.now()}`
+        const emit = (step: string, status: 'running' | 'skipped' | 'done' | 'failed', message: string): void => {
+          broadcast({
+            event: 'binding-change',
+            data: { operationId, channelId, kind: 'clear', step, status, message },
+          })
+        }
+        const current = runtime.repository.getBinding(channelId)
+        const episode =
+          current === undefined ? undefined : runtime.repository.getActiveEpisode(channelId, current.agentId)
+        emit(
+          'stop-agent',
+          episode?.dshSessionId === undefined ? 'skipped' : 'running',
+          episode?.dshSessionId === undefined ? '当前没有正在进行的工作。' : '正在停止当前工作。',
+        )
+        await runtime.channels.clearBinding(channelId)
+        emit('clear-binding', 'done', '已解除绑定。')
+        writeJson(res, 200, HostApiContracts.clearBinding.parseResponse({ channelId, cleared: true }))
       } catch (error) {
         writeError(res, 400, 'binding-failed', error instanceof Error ? error.message : String(error))
+      }
+    },
+  })
+
+  registerRoute({
+    kind: 'exact',
+    path: '/api/work-tree-order',
+    handler: async (req, res) => {
+      if (req.method !== 'PUT') {
+        writeError(res, 405, 'method-not-allowed', '只支持 PUT。')
+        return
+      }
+      try {
+        const parsed = HostApiContracts.putWorkTreeOrder.parseRequest(await readJsonBody(req))
+        const knownAgents = new Set(runtime.core.listAgents().map((commit) => commit.definition.id))
+        const knownChannels = new Set(
+          runtime.core
+            .listConnections()
+            .flatMap((connection) => runtime.core.listChannelsByConnection(connection.id).map((channel) => channel.id)),
+        )
+        const agentIds = [...parsed.agentIds.filter((id) => knownAgents.has(id))]
+        for (const id of knownAgents) if (!agentIds.includes(id)) agentIds.push(id)
+        const channelIdsByAgent: Record<string, typeof parsed.unboundChannelIds> = {}
+        for (const [rawAgentId, channelIds] of Object.entries(parsed.channelIdsByAgent)) {
+          const parsedAgentId = AgentIdSchema.safeParse(rawAgentId)
+          if (!parsedAgentId.success || !knownAgents.has(parsedAgentId.data)) continue
+          channelIdsByAgent[parsedAgentId.data] = channelIds.filter((id) => knownChannels.has(id))
+        }
+        const unboundChannelIds = parsed.unboundChannelIds.filter((id) => knownChannels.has(id))
+        const saved = runtime.repository.putWorkTreeOrder({ agentIds, channelIdsByAgent, unboundChannelIds })
+        writeJson(res, 200, HostApiContracts.putWorkTreeOrder.parseResponse(saved))
+      } catch (error) {
+        writeError(res, 400, 'work-tree-order-failed', error instanceof Error ? error.message : String(error))
       }
     },
   })
@@ -982,6 +1073,32 @@ export const createNekroHostApi = (webServer: WebServer, runtime: NekroRuntime):
     path: '/api/channels',
     handler: async (req, res) => {
       const url = new URL(req.url ?? '/', 'http://localhost')
+      if (url.pathname === '/api/channels') {
+        if (req.method !== 'POST') {
+          writeError(res, 405, 'method-not-allowed', '只支持 POST。')
+          return
+        }
+        try {
+          const parsed = HostApiContracts.createWebChannel.parseRequest(await readJsonBody(req))
+          const channel = runtime.core.createChannel({
+            connectionId: runtime.webConnectionId,
+            platformChannelId: `web-channel-${crypto.randomUUID()}`,
+            kind: 'web',
+            displayName: parsed.displayName,
+          })
+          writeJson(
+            res,
+            201,
+            HostApiContracts.createWebChannel.parseResponse({
+              channelId: channel.id,
+              connectionId: channel.connectionId,
+            }),
+          )
+        } catch (error) {
+          writeError(res, 400, 'channel-create-failed', error instanceof Error ? error.message : String(error))
+        }
+        return
+      }
       const messageMatch = /^\/api\/channels\/([^/]+)\/messages$/.exec(url.pathname)
       const nameMatch = /^\/api\/channels\/([^/]+)\/display-name$/.exec(url.pathname)
       const runtimeMatch = /^\/api\/channels\/([^/]+)\/runtime$/.exec(url.pathname)

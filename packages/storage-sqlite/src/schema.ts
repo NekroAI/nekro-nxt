@@ -514,6 +514,17 @@ export const agentActivations = sqliteTable(
   ],
 )
 
+export const workTreeOrder = sqliteTable(
+  'work_tree_order',
+  {
+    id: integer().primaryKey(),
+    agentIds: jsonText<readonly string[]>('agent_ids').notNull(),
+    channelIdsByAgent: jsonText<Readonly<Record<string, readonly string[]>>>('channel_ids_by_agent').notNull(),
+    unboundChannelIds: jsonText<readonly string[]>('unbound_channel_ids').notNull(),
+  },
+  (table) => [check('work_tree_order_singleton_ck', sql`${table.id} = 1`)],
+)
+
 export const coreSchema = {
   agentDefinitions,
   agentRevisions,
@@ -537,4 +548,5 @@ export const coreSchema = {
   localExtensions,
   extensionRevisions,
   agentActivations,
+  workTreeOrder,
 } as const

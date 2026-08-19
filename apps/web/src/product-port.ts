@@ -28,6 +28,11 @@ export interface ProductSnapshot {
   /** Running dynamic Packages by intelligent-agent (from the creator runtime). */
   readonly dynamic: readonly DynamicPackageSummary[]
   readonly diagnosticNote: string
+  readonly workTreeOrder: {
+    readonly agentIds: readonly string[]
+    readonly channelIdsByAgent: Readonly<Record<string, readonly string[]>>
+    readonly unboundChannelIds: readonly string[]
+  }
 }
 
 export interface DynamicPackageSummary {
@@ -86,6 +91,7 @@ export class ProductHostCoordinator implements ProductHostPort {
         approvals: snapshot.approvals,
         dynamic: snapshot.dynamic,
         diagnosticNote: snapshot.diagnosticNote,
+        workTreeOrder: snapshot.workTreeOrder,
       })
     }
     apply()

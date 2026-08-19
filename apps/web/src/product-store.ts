@@ -236,11 +236,19 @@ export interface ProductState {
     readonly configuration: Readonly<Record<string, string | number | boolean>>
     readonly credentials: Readonly<Record<string, string>>
   }): Promise<void>
+  workTreeOrder: {
+    readonly agentIds: readonly string[]
+    readonly channelIdsByAgent: Readonly<Record<string, readonly string[]>>
+    readonly unboundChannelIds: readonly string[]
+  }
+  createWebChannel(input: { readonly displayName: string }): Promise<{ readonly channelId: string }>
   createBinding(input: {
     readonly agentId: string
     readonly channelId: string
     readonly triggerPolicy: 'always' | 'mentioned-or-replied' | 'command' | 'observe-only'
   }): Promise<void>
+  clearBinding(channelId: string): Promise<void>
+  putWorkTreeOrder(order: ProductState['workTreeOrder']): Promise<void>
   sendMessage(channelId: string, body: string): Promise<void>
   loadChannelMessages(channelId: string, mode?: 'initial' | 'older' | 'latest'): Promise<void>
   loadChannelRuntime(channelId: string): Promise<void>
@@ -316,6 +324,7 @@ export const useProductStore = create<ProductState>(() => ({
   theme: initialTheme(),
   reducedMotion: false,
   diagnosticNote: '正在连接 NekroNxt Host…',
+  workTreeOrder: { agentIds: [], channelIdsByAgent: {}, unboundChannelIds: [] },
   refreshHost: async () => {
     await requireHost().execute('host.refresh')
   },
@@ -351,11 +360,34 @@ export const useProductStore = create<ProductState>(() => ({
       credentials,
     })
   },
+  createWebChannel: async ({ displayName }) => {
+    const result = await requireHost().execute('channels.createWeb', {
+      displayName: requireValue(displayName, '请输入频道名称。'),
+    })
+    if (!isRecord(result) || typeof result['channelId'] !== 'string') {
+      throw new ProductActionError('invalid-input', '网页频道创建结果无效，请重新加载。')
+    }
+    return { channelId: result['channelId'] }
+  },
   createBinding: async ({ agentId, channelId, triggerPolicy }) => {
     await requireHost().execute('bindings.create', {
       agentId: requireValue(agentId, '缺少智能体标识，请刷新页面后重试。'),
       channelId: requireValue(channelId, '请选择要绑定的频道。'),
       triggerPolicy,
+    })
+  },
+  clearBinding: async (channelId) => {
+    await requireHost().execute('bindings.clear', {
+      channelId: requireValue(channelId, '请选择要解除绑定的频道。'),
+    })
+  },
+  putWorkTreeOrder: async (order) => {
+    await requireHost().execute('workTreeOrder.put', {
+      agentIds: [...order.agentIds],
+      channelIdsByAgent: Object.fromEntries(
+        Object.entries(order.channelIdsByAgent).map(([agentId, channelIds]) => [agentId, [...channelIds]]),
+      ),
+      unboundChannelIds: [...order.unboundChannelIds],
     })
   },
   sendMessage: async (channelId, body) => {

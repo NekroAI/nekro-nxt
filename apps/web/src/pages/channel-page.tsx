@@ -1,5 +1,15 @@
-import { Activity, Download, File, Headphones, Image as ImageIcon, Send, Settings2, Wrench } from 'lucide-react'
-import { useEffect, useLayoutEffect, useMemo, useRef, useState, type FormEvent } from 'react'
+import {
+  Activity,
+  ArrowDown,
+  Download,
+  File,
+  Headphones,
+  Image as ImageIcon,
+  Send,
+  Settings2,
+  Wrench,
+} from 'lucide-react'
+import { useEffect, useMemo, useState, type FormEvent } from 'react'
 import { Navigate, useNavigate, useParams } from 'react-router-dom'
 import { notify } from '../components/notifications.js'
 import { EmptyState, InlineFeedback } from '../components/product-feedback.js'
@@ -7,7 +17,18 @@ import { workHomePath, writeLastChannelId } from '../shell/last-channel.js'
 import { useProductStore, type AgentRuntimeState, type DeliveryState } from '../product-store.js'
 import { Button, StatusBadge, Textarea, type StatusTone } from '../ui-kit/index.js'
 import { BindingTaskDialog } from './binding-task.js'
-import { ChannelTrajectoryPane } from './channel-trajectory.js'
+import { useStickToBottom } from './channel-scroll.js'
+import {
+  ChannelSessionInspector,
+  ChannelTrajectoryInspector,
+  ChannelTrajectoryLedger,
+  ChannelViewSwitch,
+  ChannelWorkStream,
+  flattenRuntimeRecords,
+  readChannelCanvasView,
+  writeChannelCanvasView,
+  type ChannelCanvasView,
+} from './channel-trajectory.js'
 import styles from './product-pages.module.css'
 
 const deliveryTone = (state: DeliveryState): StatusTone => {
@@ -55,14 +76,18 @@ export function ChannelConversationPage() {
   const [draft, setDraft] = useState('')
   const [bindingOpen, setBindingOpen] = useState(false)
   const [sendPending, setSendPending] = useState(false)
-  const [hasNewMessages, setHasNewMessages] = useState(false)
-  const messageListRef = useRef<HTMLDivElement | null>(null)
-  const followLatestRef = useRef(true)
-  const previousCountRef = useRef(0)
-  const previousChannelRef = useRef('')
-  const previousOldestRef = useRef('')
-  const scrollMemoryRef = useRef(new Map<string, { top: number; atBottom: boolean }>())
-  const prependAnchorRef = useRef<{ channelId: string; height: number; top: number } | null>(null)
+  const [canvasView, setCanvasView] = useState<ChannelCanvasView>(readChannelCanvasView)
+  const [trajectorySearch, setTrajectorySearch] = useState('')
+  const [selectedRecordId, setSelectedRecordId] = useState('')
+  const chatScroll = useStickToBottom(`${channel?.id ?? ''}:chat`, Boolean(channel) && canvasView === 'chat')
+  const trajScroll = useStickToBottom(
+    `${channel?.id ?? ''}:trajectory`,
+    Boolean(channel) && canvasView === 'trajectory',
+  )
+
+  const records = useMemo(() => flattenRuntimeRecords(runtime), [runtime])
+  const selectedRecord = records.find((record) => record.id === selectedRecordId) ?? records.at(-1)
+  const scrollAway = canvasView === 'chat' ? chatScroll.away : trajScroll.away
 
   useEffect(() => {
     if (!channel) return
@@ -71,57 +96,27 @@ export function ChannelConversationPage() {
       .getState()
       .loadChannelMessages(channel.id)
       .catch(() => undefined)
+    void useProductStore
+      .getState()
+      .loadChannelRuntime(channel.id)
+      .catch(() => undefined)
   }, [channel?.id])
 
-  useLayoutEffect(() => {
-    const list = messageListRef.current
-    if (!list || !channel) return
-    const changedChannel = previousChannelRef.current !== channel.id
-    const added = messages.length > previousCountRef.current
-    const prepended = added && previousOldestRef.current !== '' && messages[0]?.id !== previousOldestRef.current
-    const anchor = prependAnchorRef.current
-    if (anchor?.channelId === channel.id) {
-      list.scrollTop = anchor.top + (list.scrollHeight - anchor.height)
-      prependAnchorRef.current = null
-      previousChannelRef.current = channel.id
-      previousCountRef.current = messages.length
-      previousOldestRef.current = messages[0]?.id ?? ''
-      return
-    }
-    if (changedChannel) {
-      const remembered = scrollMemoryRef.current.get(channel.id)
-      followLatestRef.current = remembered?.atBottom ?? true
-      setHasNewMessages(false)
-      list.scrollTop = remembered && !remembered.atBottom ? remembered.top : list.scrollHeight
-    } else if (added && !prepended && followLatestRef.current) {
-      list.scrollTop = list.scrollHeight
-      setHasNewMessages(false)
-    } else if (added && !prepended) {
-      setHasNewMessages(true)
-    }
-    previousChannelRef.current = channel.id
-    previousCountRef.current = messages.length
-    previousOldestRef.current = messages[0]?.id ?? ''
-  }, [channel?.id, history?.loaded, messages.length, messages[0]?.id])
+  useEffect(() => {
+    const lastId = records.at(-1)?.id ?? ''
+    setSelectedRecordId((current) => (records.some((record) => record.id === current) ? current : lastId))
+  }, [channel?.id, records])
 
   const loadOlder = (): void => {
-    const list = messageListRef.current
+    const list = chatScroll.ref.current
     if (!channel || !list || history?.loadingMore || history?.hasMore === false) return
-    prependAnchorRef.current = { channelId: channel.id, height: list.scrollHeight, top: list.scrollTop }
+    chatScroll.markPrepend()
     void useProductStore
       .getState()
       .loadChannelMessages(channel.id, 'older')
       .catch(() => {
-        prependAnchorRef.current = null
+        chatScroll.clearPrepend()
       })
-  }
-
-  const jumpToLatest = (): void => {
-    const list = messageListRef.current
-    if (!list) return
-    list.scrollTop = list.scrollHeight
-    followLatestRef.current = true
-    setHasNewMessages(false)
   }
 
   if (!channelId && (channels.length > 0 || agents.length > 0)) {
@@ -171,6 +166,13 @@ export function ChannelConversationPage() {
                   <p>{agent ? `由“${agent.name}”响应 · ${channel.trigger}` : '尚未绑定智能体'}</p>
                 </div>
                 <div className={styles.conversationHeaderActions}>
+                  <ChannelViewSwitch
+                    view={canvasView}
+                    onViewChange={(view) => {
+                      setCanvasView(view)
+                      writeChannelCanvasView(view)
+                    }}
+                  />
                   {agent ? <StatusBadge tone={agentTone(livePhase)}>{livePhase}</StatusBadge> : null}
                   {agent ? (
                     <Button size="small" variant="ghost" onClick={() => void navigate(`/agents/${agent.id}`)}>
@@ -184,102 +186,118 @@ export function ChannelConversationPage() {
                 </div>
               </header>
 
-              <div
-                className={styles.messageList}
-                ref={messageListRef}
-                onScroll={(event) => {
-                  const element = event.currentTarget
-                  const atBottom = element.scrollHeight - element.scrollTop - element.clientHeight <= 32
-                  followLatestRef.current = atBottom
-                  if (channel) scrollMemoryRef.current.set(channel.id, { top: element.scrollTop, atBottom })
-                  if (atBottom) setHasNewMessages(false)
-                  if (element.scrollTop <= 80) loadOlder()
-                }}
-              >
-                {history?.loading ? <div className={styles.historyNotice}>正在读取最近消息…</div> : null}
-                {history?.loadingMore ? <div className={styles.historyNotice}>正在加载更早消息…</div> : null}
-                {history?.error ? (
-                  <InlineFeedback tone="error">历史消息加载失败：{history.error}</InlineFeedback>
-                ) : null}
-                {messages.length === 0 && !history?.loading ? (
-                  <EmptyState title="还没有消息" description="从下方发送第一条消息，或等待平台频道收到新消息。" />
+              <div className={styles.canvasStage}>
+                {canvasView === 'trajectory' ? (
+                  <ChannelTrajectoryLedger
+                    records={records}
+                    selectedId={selectedRecord?.id ?? ''}
+                    onSelect={setSelectedRecordId}
+                    search={trajectorySearch}
+                    onSearchChange={setTrajectorySearch}
+                    scrollRef={trajScroll.ref}
+                    onScroll={trajScroll.onScroll}
+                  />
                 ) : (
-                  messages.map((message) =>
-                    message.role === 'system' ? (
-                      <div className={styles.systemMessage} key={message.id}>
-                        {message.body}
-                      </div>
-                    ) : (
-                      <article className={styles.message} key={message.id}>
-                        <div className={styles.messageAvatar}>{message.author.slice(0, 1)}</div>
-                        <div className={styles.messageContent}>
-                          <div className={styles.messageHeader}>
-                            <strong>{message.author}</strong>
-                            <time>{message.time}</time>
-                            {message.delivery ? (
-                              <StatusBadge tone={deliveryTone(message.delivery)}>{message.delivery}</StatusBadge>
-                            ) : null}
-                          </div>
-                          {message.body ? <div className={styles.messageBody}>{message.body}</div> : null}
-                          {(message.resources ?? []).map((resource) =>
-                            resource.kind === 'image' ? (
-                              <a
-                                className={styles.messageImageLink}
-                                href={resource.url}
-                                target="_blank"
-                                rel="noreferrer"
-                                key={resource.assetId}
-                              >
-                                <img
-                                  className={styles.messageImage}
-                                  src={resource.url}
-                                  alt={resource.name}
-                                  loading="lazy"
-                                />
-                                <span>
-                                  <ImageIcon size={14} aria-hidden="true" /> {resource.name}
-                                </span>
-                              </a>
-                            ) : resource.kind === 'audio' ? (
-                              <div className={styles.attachment} key={resource.assetId}>
-                                <Headphones size={15} aria-hidden="true" />
-                                <audio controls preload="none" src={resource.url}>
-                                  你的浏览器不支持音频播放。
-                                </audio>
+                  <div
+                    className={styles.messageList}
+                    ref={chatScroll.ref}
+                    aria-label="频道消息"
+                    onScroll={() => {
+                      chatScroll.onScroll()
+                      if ((chatScroll.ref.current?.scrollTop ?? 0) <= 80) loadOlder()
+                    }}
+                  >
+                    <div className={styles.messageListInner}>
+                      {history?.loading ? <div className={styles.historyNotice}>正在读取最近消息…</div> : null}
+                      {history?.loadingMore ? <div className={styles.historyNotice}>正在加载更早消息…</div> : null}
+                      {history?.error ? (
+                        <InlineFeedback tone="error">历史消息加载失败：{history.error}</InlineFeedback>
+                      ) : null}
+                      {messages.length === 0 && !history?.loading ? (
+                        <EmptyState title="还没有消息" description="从下方发送第一条消息，或等待平台频道收到新消息。" />
+                      ) : (
+                        messages.map((message) =>
+                          message.role === 'system' ? (
+                            <div className={styles.systemMessage} key={message.id}>
+                              {message.body}
+                            </div>
+                          ) : (
+                            <article className={styles.message} key={message.id}>
+                              <div className={styles.messageAvatar}>{message.author.slice(0, 1)}</div>
+                              <div className={styles.messageContent}>
+                                <div className={styles.messageHeader}>
+                                  <strong>{message.author}</strong>
+                                  <time>{message.time}</time>
+                                  {message.delivery ? (
+                                    <StatusBadge tone={deliveryTone(message.delivery)}>{message.delivery}</StatusBadge>
+                                  ) : null}
+                                </div>
+                                {message.body ? <div className={styles.messageBody}>{message.body}</div> : null}
+                                {(message.resources ?? []).map((resource) =>
+                                  resource.kind === 'image' ? (
+                                    <a
+                                      className={styles.messageImageLink}
+                                      href={resource.url}
+                                      target="_blank"
+                                      rel="noreferrer"
+                                      key={resource.assetId}
+                                    >
+                                      <img
+                                        className={styles.messageImage}
+                                        src={resource.url}
+                                        alt={resource.name}
+                                        loading="lazy"
+                                      />
+                                      <span>
+                                        <ImageIcon size={14} aria-hidden="true" /> {resource.name}
+                                      </span>
+                                    </a>
+                                  ) : resource.kind === 'audio' ? (
+                                    <div className={styles.attachment} key={resource.assetId}>
+                                      <Headphones size={15} aria-hidden="true" />
+                                      <audio controls preload="none" src={resource.url}>
+                                        你的浏览器不支持音频播放。
+                                      </audio>
+                                    </div>
+                                  ) : (
+                                    <a
+                                      className={styles.attachment}
+                                      href={resource.url}
+                                      download={resource.name}
+                                      key={resource.assetId}
+                                    >
+                                      <File size={15} aria-hidden="true" /> {resource.name}
+                                      <Download size={14} aria-hidden="true" />
+                                    </a>
+                                  ),
+                                )}
                               </div>
-                            ) : (
-                              <a
-                                className={styles.attachment}
-                                href={resource.url}
-                                download={resource.name}
-                                key={resource.assetId}
-                              >
-                                <File size={15} aria-hidden="true" /> {resource.name}
-                                <Download size={14} aria-hidden="true" />
-                              </a>
-                            ),
+                            </article>
+                          ),
+                        )
+                      )}
+                      <ChannelWorkStream runtime={runtime} />
+                      {agent && livePhase !== '空闲' ? (
+                        <div className={styles.runtimeTail}>
+                          {livePhase === '使用工具' ? (
+                            <Wrench size={14} aria-hidden="true" />
+                          ) : (
+                            <Activity size={14} aria-hidden="true" />
                           )}
+                          <span>{runtime?.summary ?? runtimeDescription(livePhase)}</span>
                         </div>
-                      </article>
-                    ),
-                  )
+                      ) : null}
+                    </div>
+                  </div>
                 )}
-                {hasNewMessages ? (
-                  <div className={styles.newMessageAction}>
-                    <Button size="small" onClick={jumpToLatest}>
-                      查看新消息
-                    </Button>
-                  </div>
-                ) : null}
-                {agent && livePhase !== '空闲' ? (
-                  <div className={styles.runtimeTail}>
-                    {livePhase === '使用工具' ? (
-                      <Wrench size={14} aria-hidden="true" />
-                    ) : (
-                      <Activity size={14} aria-hidden="true" />
-                    )}
-                    <span>{runtime?.summary ?? runtimeDescription(livePhase)}</span>
-                  </div>
+                {scrollAway ? (
+                  <Button
+                    size="small"
+                    className={styles.jumpBottom}
+                    onClick={() => (canvasView === 'chat' ? chatScroll : trajScroll).jumpToBottom()}
+                  >
+                    <ArrowDown size={14} aria-hidden="true" /> 回到底部
+                  </Button>
                 ) : null}
               </div>
 
@@ -320,12 +338,17 @@ export function ChannelConversationPage() {
               </form>
             </div>
 
-            <ChannelTrajectoryPane
-              channel={channel}
-              agent={agent}
-              onBind={() => setBindingOpen(true)}
-              onReassign={() => setBindingOpen(true)}
-            />
+            {canvasView === 'trajectory' ? (
+              <ChannelTrajectoryInspector record={selectedRecord} />
+            ) : (
+              <ChannelSessionInspector
+                channel={channel}
+                agent={agent}
+                runtime={runtime}
+                onBind={() => setBindingOpen(true)}
+                onReassign={() => setBindingOpen(true)}
+              />
+            )}
           </>
         )}
       </div>

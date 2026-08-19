@@ -109,6 +109,17 @@ describe('NekroNxt domain API — save a running dynamic Package as a local Exte
     const api = createNekroHostApi(webContext.webServer, runtime)
     const origin = `http://127.0.0.1:${api.port}`
     try {
+      const snapshot = HostApiContracts.snapshot.parseResponse(await (await fetch(`${origin}/api/snapshot`)).json())
+      expect(snapshot.dynamic).toEqual([
+        expect.objectContaining({
+          agentId: entity.agentId,
+          episodeId: episode!.id,
+          pluginId: defined.pluginId,
+          packageId: defined.packageId,
+          status: 'running',
+        }),
+      ])
+
       const saveResponse = await fetch(`${origin}/api/extensions/save-from-dynamic`, {
         method: 'POST',
         headers: { 'content-type': 'application/json' },

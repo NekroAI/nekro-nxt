@@ -50,6 +50,7 @@ type ChannelRepository = Pick<
   | 'getChannelMember'
   | 'getChannelMemberByIdentity'
   | 'replaceBinding'
+  | 'clearBinding'
   | 'getBinding'
   | 'listBindings'
   | 'appendChannelEvent'
@@ -288,6 +289,9 @@ export function createChannelsRepository(database: DrizzleCoreDatabase): Channel
         })
         .run()
       return record
+    },
+    clearBinding(channelId): void {
+      database.delete(channelBindings).where(eq(channelBindings.channelId, channelId)).run()
     },
     getBinding,
     listBindings(channelId): readonly BindingRecord[] {

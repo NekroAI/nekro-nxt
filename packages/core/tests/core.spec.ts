@@ -228,6 +228,12 @@ class MemoryRepository implements CoreRepository {
     return record
   }
 
+  clearBinding(channelId: ChannelId): void {
+    for (let index = this.bindings.length - 1; index >= 0; index -= 1) {
+      if (this.bindings[index]?.channelId === channelId) this.bindings.splice(index, 1)
+    }
+  }
+
   getBinding(channelId: ChannelId) {
     return this.bindings.find((binding) => binding.channelId === channelId)
   }
@@ -454,6 +460,10 @@ describe('CoreService', () => {
     expect(core.listBindings(second.id)).toEqual([
       expect.objectContaining({ agentId: agent.definition.id, triggerPolicy: 'command' }),
     ])
+
+    core.clearBinding(first.id)
+    expect(core.listBindings(first.id)).toEqual([])
+    expect(core.listBindings(second.id)).toHaveLength(1)
   })
 
   it('scopes platform identities to a Connection and keeps stable Channel members', () => {

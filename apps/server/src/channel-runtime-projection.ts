@@ -1,7 +1,10 @@
 import type { AgentId, ChannelId, ChannelRuntimePhase, ChannelRuntimeProjection, EpisodeId } from '@nekro-nxt/contracts'
+import { z } from 'zod'
+
+const ToolArgumentObjectSchema = z.record(z.string(), z.unknown())
 
 const PREVIEW_LIMIT = 160
-const TURN_LIMIT = 2
+const TURN_LIMIT = 24
 const SECRET_KEY = /secret|token|password|authorization|api[_-]?key|credential/iu
 
 const TOOL_DISPLAY_NAMES: Readonly<Record<string, string>> = {
@@ -106,7 +109,7 @@ export const worstChannelRuntimePhase = (phases: readonly ChannelRuntimePhase[])
     'idle',
   )
 
-export const toolDisplayName = (name: string): string => TOOL_DISPLAY_NAMES[name] ?? '工具'
+export const toolDisplayName = (name: string): string => TOOL_DISPLAY_NAMES[name] ?? name.replaceAll('_', ' ')
 
 export const previewText = (value: string): string => {
   const normalized = value.replace(/\s+/gu, ' ').trim()
@@ -118,10 +121,10 @@ export const previewToolArguments = (raw: string): string | undefined => {
   const trimmed = raw.trim()
   if (!trimmed) return undefined
   try {
-    const parsed: unknown = JSON.parse(trimmed)
-    if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+    const parsed = ToolArgumentObjectSchema.safeParse(JSON.parse(trimmed))
+    if (parsed.success) {
       const redacted = Object.fromEntries(
-        Object.entries(parsed).map(([key, value]) => [key, SECRET_KEY.test(key) ? '***' : value]),
+        Object.entries(parsed.data).map(([key, value]) => [key, SECRET_KEY.test(key) ? '***' : value]),
       )
       return previewText(JSON.stringify(redacted))
     }
