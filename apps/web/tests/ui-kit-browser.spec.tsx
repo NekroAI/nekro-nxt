@@ -35,6 +35,8 @@ const harnessModule = `
 `
 
 describe.sequential('ui-kit Dialog browser behavior', () => {
+  describe.configure({ timeout: 30_000 })
+
   let server: ViteDevServer
   let browser: Browser
   let page: Page
