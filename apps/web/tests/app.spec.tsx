@@ -403,9 +403,7 @@ describe('NekroNxt product shell', () => {
   })
 })
 
-describe.sequential('NekroNxt browser projections', () => {
-  describe.configure({ timeout: 30_000 })
-
+describe.sequential('NekroNxt browser projections', { timeout: 30_000 }, () => {
   let server: ViteDevServer
   let browser: Browser
   let baseUrl: string

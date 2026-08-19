@@ -34,9 +34,7 @@ const harnessModule = `
   createRoot(document.querySelector('#root')).render(<Harness />)
 `
 
-describe.sequential('ui-kit Dialog browser behavior', () => {
-  describe.configure({ timeout: 30_000 })
-
+describe.sequential('ui-kit Dialog browser behavior', { timeout: 30_000 }, () => {
   let server: ViteDevServer
   let browser: Browser
   let page: Page
