@@ -1025,6 +1025,10 @@
   gap: 4px;
 }
 
+.sortableOrigin {
+  opacity: 0.4;
+}
+
 .channelGroups {
   gap: 14px;
 }
@@ -1053,6 +1057,7 @@
   border-radius: var(--nxt-radius-md);
   color: inherit;
   text-decoration: none;
+  touch-action: none;
 }
 
 .channelGroupHeader:hover {
@@ -1123,6 +1128,7 @@
   color: var(--nxt-text-secondary);
   font-size: 12px;
   text-decoration: none;
+  touch-action: none;
 }
 
 .channelLink::before {
@@ -1150,6 +1156,15 @@
   color: var(--nxt-text-primary);
   background: var(--nxt-bg-surface);
   box-shadow: inset 2px 0 var(--nxt-accent);
+}
+
+.dragOverlay {
+  cursor: grabbing;
+  width: 216px;
+  margin-left: 0;
+  box-shadow: var(--nxt-shadow-float);
+  background: var(--nxt-bg-surface);
+  pointer-events: none;
 }
 
 .unread {

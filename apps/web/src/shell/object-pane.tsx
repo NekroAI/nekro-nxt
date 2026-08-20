@@ -1,32 +1,41 @@
 import {
   DndContext,
+  DragOverlay,
   PointerSensor,
-  closestCorners,
+  closestCenter,
+  pointerWithin,
   useDroppable,
   useSensor,
   useSensors,
+  type CollisionDetection,
   type DragEndEvent,
+  type Modifier,
 } from '@dnd-kit/core'
-import { SortableContext, arrayMove, useSortable, verticalListSortingStrategy } from '@dnd-kit/sortable'
-import { CSS } from '@dnd-kit/utilities'
+import { SortableContext, useSortable, verticalListSortingStrategy } from '@dnd-kit/sortable'
+import { CSS, type Transform } from '@dnd-kit/utilities'
 import { MessageSquare, Plus, UsersRound } from 'lucide-react'
-import { useState, type CSSProperties, type ReactNode } from 'react'
+import { useMemo, useRef, useState, type CSSProperties, type MouseEvent } from 'react'
 import { Link, NavLink, useLocation, useParams } from 'react-router-dom'
 import { BindingChangeDialog, type BindingChangeIntent } from '../pages/binding-change.js'
 import { notify } from '../components/notifications.js'
-import { useProductStore, type AgentRuntimeState, type ChannelSummary } from '../product-store.js'
+import { useProductStore, type AgentRuntimeState, type AgentSummary, type ChannelSummary } from '../product-store.js'
 import { ConfirmDialog, Field, IconButton, Input, StatusBadge, type StatusTone } from '../ui-kit/index.js'
 import styles from '../pages/product-pages.module.css'
 import shell from '../app.module.css'
-import { orderByIds } from './work-tree-order.js'
+import {
+  AGENT_SORT_PREFIX,
+  CHANNEL_SORT_PREFIX,
+  UNBOUND_DROP_ID,
+  agentSortId,
+  applyWorkTreeDragResolution,
+  buildWorkTree,
+  channelSortId,
+  parsePrefixedId,
+  pickWorkTreeCollision,
+  resolveWorkTreeDragEnd,
+} from './work-tree-order.js'
 
-const agentSortId = (id: string): string => `agent:${id}`
-const channelSortId = (id: string): string => `channel:${id}`
-const agentDropId = (id: string): string => `drop:${id}`
-const UNBOUND_DROP = 'drop:unbound'
-
-const parsePrefixedId = (value: string, prefix: string): string | undefined =>
-  value.startsWith(prefix) ? value.slice(prefix.length) : undefined
+const restrictToVerticalAxis: Modifier = ({ transform }) => ({ ...transform, x: 0 })
 
 const agentTone = (state: AgentRuntimeState): StatusTone => {
   if (state === '思考中' || state === '使用工具') return 'info'
@@ -38,95 +47,186 @@ const agentTone = (state: AgentRuntimeState): StatusTone => {
 const connectionLabel = (adapterKey: string, value: string): string =>
   adapterKey === 'web' || value === '本地 Web' ? '网页聊天' : value
 
-function SortableChannelLink({ item, active }: { readonly item: ChannelSummary; readonly active: boolean }) {
+const sortableStyle = (
+  transform: Transform | null,
+  transition: string | undefined,
+  dragging: boolean,
+): CSSProperties => ({
+  transform: CSS.Translate.toString(dragging ? null : transform),
+  transition: dragging ? undefined : transition,
+})
+
+const ChannelRowBody = ({ item }: { readonly item: ChannelSummary }) => (
+  <>
+    {item.kind === 'web' ? <MessageSquare size={15} aria-hidden="true" /> : <UsersRound size={15} aria-hidden="true" />}
+    <span>
+      <strong>{item.name}</strong>
+      <small>{item.connectionName}</small>
+    </span>
+    {item.runtimePhase !== '空闲' ? (
+      <StatusBadge tone={agentTone(item.runtimePhase)}>{item.runtimePhase}</StatusBadge>
+    ) : item.unread > 0 ? (
+      <span className={styles.unread}>{item.unread}</span>
+    ) : null}
+  </>
+)
+
+const AgentHeaderBody = ({
+  agent,
+  hint,
+}: {
+  readonly agent: Pick<AgentSummary, 'name' | 'state'>
+  readonly hint: string
+}) => (
+  <>
+    <span className={styles.agentAvatar}>{agent.name.slice(0, 1)}</span>
+    <span>
+      <strong>{agent.name}</strong>
+      <small>{hint}</small>
+    </span>
+    {agent.state !== '空闲' ? <StatusBadge tone={agentTone(agent.state)}>{agent.state}</StatusBadge> : null}
+  </>
+)
+
+function SortableChannelLink({
+  item,
+  active,
+  onGuardedClick,
+}: {
+  readonly item: ChannelSummary
+  readonly active: boolean
+  readonly onGuardedClick: (event: MouseEvent<HTMLAnchorElement>) => void
+}) {
   const { listeners, setNodeRef, transform, transition, isDragging } = useSortable({
     id: channelSortId(item.id),
+    animateLayoutChanges: () => false,
+    data: { type: 'channel', channelId: item.id },
   })
-  const style: CSSProperties = {
-    transform: CSS.Transform.toString(transform),
-    transition,
-    opacity: isDragging ? 0.6 : 1,
-  }
   return (
     <Link
       ref={setNodeRef}
-      style={style}
+      style={sortableStyle(transform, transition, isDragging)}
       to={`/channels/${item.id}`}
-      className={[styles.channelLink, active ? styles.channelLinkActive : ''].filter(Boolean).join(' ')}
+      className={[styles.channelLink, active ? styles.channelLinkActive : '', isDragging ? styles.sortableOrigin : '']
+        .filter(Boolean)
+        .join(' ')}
+      onClick={onGuardedClick}
       {...listeners}
     >
-      {item.kind === 'web' ? (
-        <MessageSquare size={15} aria-hidden="true" />
-      ) : (
-        <UsersRound size={15} aria-hidden="true" />
-      )}
-      <span>
-        <strong>{item.name}</strong>
-        <small>{item.connectionName}</small>
-      </span>
-      {item.runtimePhase !== '空闲' ? (
-        <StatusBadge tone={agentTone(item.runtimePhase)}>{item.runtimePhase}</StatusBadge>
-      ) : item.unread > 0 ? (
-        <span className={styles.unread}>{item.unread}</span>
-      ) : null}
+      <ChannelRowBody item={item} />
     </Link>
   )
 }
 
-function SortableAgentHeader({
+function SortableAgentSection({
+  agent,
+  channels,
   to,
   active,
   dropActive,
-  children,
-  sortableId,
+  channelActiveId,
+  onGuardedClick,
 }: {
+  readonly agent: AgentSummary
+  readonly channels: readonly ChannelSummary[]
   readonly to: string
   readonly active: boolean
   readonly dropActive: boolean
-  readonly children: ReactNode
-  readonly sortableId: string
+  readonly channelActiveId: string | undefined
+  readonly onGuardedClick: (event: MouseEvent<HTMLAnchorElement>) => void
 }) {
-  const { listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id: sortableId })
-  const style: CSSProperties = {
-    transform: CSS.Transform.toString(transform),
-    transition,
-    opacity: isDragging ? 0.6 : 1,
-  }
+  const { listeners, setNodeRef, setActivatorNodeRef, transform, transition, isDragging } = useSortable({
+    id: agentSortId(agent.id),
+    animateLayoutChanges: () => false,
+    data: { type: 'agent', agentId: agent.id },
+  })
+  const channelIds = channels.map((item) => channelSortId(item.id))
   return (
-    <Link
+    <section
       ref={setNodeRef}
-      style={style}
-      to={to}
-      className={[
-        styles.channelGroupHeader,
-        active ? styles.channelGroupHeaderActive : '',
-        dropActive ? styles.dropTarget : '',
-      ]
+      style={sortableStyle(transform, transition, isDragging)}
+      className={[styles.channelGroup, dropActive ? styles.dropTarget : '', isDragging ? styles.sortableOrigin : '']
         .filter(Boolean)
         .join(' ')}
-      {...listeners}
     >
-      {children}
-    </Link>
+      <Link
+        ref={setActivatorNodeRef}
+        to={to}
+        className={[
+          styles.channelGroupHeader,
+          active ? styles.channelGroupHeaderActive : '',
+          dropActive ? styles.dropTarget : '',
+        ]
+          .filter(Boolean)
+          .join(' ')}
+        onClick={onGuardedClick}
+        {...listeners}
+      >
+        <AgentHeaderBody agent={agent} hint={channels.length > 0 ? `${channels.length} 个频道` : '还没有绑定频道'} />
+      </Link>
+      {channelIds.length > 0 ? (
+        <SortableContext items={channelIds} strategy={verticalListSortingStrategy}>
+          {channels.map((item) => (
+            <SortableChannelLink
+              key={`${agent.id}-${item.id}`}
+              item={item}
+              active={item.id === channelActiveId}
+              onGuardedClick={onGuardedClick}
+            />
+          ))}
+        </SortableContext>
+      ) : null}
+    </section>
   )
 }
 
-function DroppableSection({
-  id,
+function UnboundSection({
   active,
-  children,
+  channels,
+  channelActiveId,
+  onGuardedClick,
+  onCreate,
 }: {
-  readonly id: string
   readonly active: boolean
-  readonly children: ReactNode
+  readonly channels: readonly ChannelSummary[]
+  readonly channelActiveId: string | undefined
+  readonly onGuardedClick: (event: MouseEvent<HTMLAnchorElement>) => void
+  readonly onCreate: () => void
 }) {
-  const { setNodeRef } = useDroppable({ id })
+  const { setNodeRef } = useDroppable({ id: UNBOUND_DROP_ID })
+  const channelIds = channels.map((item) => channelSortId(item.id))
   return (
     <section
       ref={setNodeRef}
       className={[styles.channelGroup, active ? styles.dropTarget : ''].filter(Boolean).join(' ')}
     >
-      {children}
+      <div className={[styles.channelGroupHeader, active ? styles.dropTarget : ''].filter(Boolean).join(' ')}>
+        <span className={styles.agentAvatar}>?</span>
+        <span>
+          <strong>未绑定频道</strong>
+          <small>{channels.length > 0 ? `${channels.length} 个频道` : '把频道拖到这里以解除绑定'}</small>
+        </span>
+        <IconButton
+          label="新建网页频道"
+          className={shell.treeAdd}
+          onPointerDown={(event) => event.stopPropagation()}
+          onClick={onCreate}
+        >
+          <Plus size={14} aria-hidden="true" />
+        </IconButton>
+      </div>
+      {channelIds.length > 0 ? (
+        <SortableContext items={channelIds} strategy={verticalListSortingStrategy}>
+          {channels.map((item) => (
+            <SortableChannelLink
+              key={item.id}
+              item={item}
+              active={item.id === channelActiveId}
+              onGuardedClick={onGuardedClick}
+            />
+          ))}
+        </SortableContext>
+      ) : null}
     </section>
   )
 }
@@ -139,125 +239,139 @@ function WorkTree() {
   const channels = useProductStore((state) => state.channels)
   const workTreeOrder = useProductStore((state) => state.workTreeOrder)
   const [overId, setOverId] = useState('')
+  const [activeId, setActiveId] = useState('')
   const [intent, setIntent] = useState<BindingChangeIntent>()
   const [createWebOpen, setCreateWebOpen] = useState(false)
   const [webChannelName, setWebChannelName] = useState('网页频道')
-  const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 6 } }))
-  const orderedAgents = orderByIds(agents, workTreeOrder.agentIds)
-  const channelGroups = (() => {
-    const boundIds = new Set<string>()
-    const groups = orderedAgents.flatMap((agent) => {
-      const items = orderByIds(
-        channels.filter((item) => item.bindings.some((binding) => binding.agentId === agent.id)),
-        workTreeOrder.channelIdsByAgent[agent.id] ?? [],
+  const treeBodyRef = useRef<HTMLDivElement>(null)
+  const suppressClickRef = useRef(false)
+  const channelOwnerRef = useRef<Readonly<Record<string, string>>>({})
+  const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 8 } }))
+  const tree = buildWorkTree(agents, channels, workTreeOrder)
+  const channelOwnerById = Object.fromEntries(channels.map((item) => [item.id, item.agentId]))
+  channelOwnerRef.current = channelOwnerById
+  const dragLists = {
+    agentIds: tree.agents.map((group) => group.agent.id),
+    channelIdsByAgent: Object.fromEntries(
+      tree.agents.map((group) => [group.agent.id, group.channels.map((item) => item.id)]),
+    ),
+    unboundChannelIds: tree.unbound.map((item) => item.id),
+    channelAgentId: channelOwnerById,
+  }
+  const collisionDetection = useMemo<CollisionDetection>(
+    () => (args) => {
+      const active = String(args.active.id)
+      const pointerHits = pointerWithin(args)
+      const picked = pickWorkTreeCollision({
+        activeId: active,
+        pointerHits: pointerHits.map((hit) => String(hit.id)),
+        channelOwnerById: channelOwnerRef.current,
+      })
+      if (parsePrefixedId(active, AGENT_SORT_PREFIX)) {
+        if (picked) {
+          const hit = pointerHits.find((candidate) => String(candidate.id) === picked)
+          if (hit) return [hit]
+        }
+        return closestCenter({
+          ...args,
+          droppableContainers: args.droppableContainers.filter((container) =>
+            String(container.id).startsWith(AGENT_SORT_PREFIX),
+          ),
+        })
+      }
+      if (picked) {
+        const hit = pointerHits.find((candidate) => String(candidate.id) === picked)
+        if (hit) return [hit]
+        const container = args.droppableContainers.find((candidate) => String(candidate.id) === picked)
+        return container ? [{ id: container.id }] : []
+      }
+      const sourceChannelId = parsePrefixedId(active, CHANNEL_SORT_PREFIX)
+      if (!sourceChannelId) return []
+      const sourceOwner = channelOwnerRef.current[sourceChannelId] ?? ''
+      const sourceGroupId = sourceOwner ? agentSortId(sourceOwner) : UNBOUND_DROP_ID
+      const sourceGroup = args.droppableContainers.find((container) => String(container.id) === sourceGroupId)
+      const pointer = args.pointerCoordinates
+      const sourceRect = sourceGroup?.rect.current
+      const inSourceGroup = Boolean(
+        sourceRect && pointer && pointer.y >= sourceRect.top && pointer.y <= sourceRect.bottom,
       )
-      for (const item of items) boundIds.add(item.id)
-      return items.length > 0 ? [{ agent, channels: items }] : []
-    })
-    const unbound = orderByIds(
-      channels.filter((item) => !boundIds.has(item.id)),
-      workTreeOrder.unboundChannelIds,
-    )
-    const idle = orderedAgents.filter((agent) => !groups.some((group) => group.agent.id === agent.id))
-    return { groups, unbound, idle }
-  })()
+      if (inSourceGroup) {
+        return closestCenter({
+          ...args,
+          droppableContainers: args.droppableContainers.filter((container) => {
+            const channelId = parsePrefixedId(String(container.id), CHANNEL_SORT_PREFIX)
+            return channelId !== undefined && (channelOwnerRef.current[channelId] ?? '') === sourceOwner
+          }),
+        })
+      }
+      return closestCenter({
+        ...args,
+        droppableContainers: args.droppableContainers.filter(
+          (container) => String(container.id).startsWith(AGENT_SORT_PREFIX) || String(container.id) === UNBOUND_DROP_ID,
+        ),
+      })
+    },
+    [],
+  )
   const onAgent = location.pathname.startsWith('/agents/')
   const onCreator = location.pathname.startsWith('/creator')
-  const persistOrder = (
-    nextAgents: readonly { readonly id: string }[],
-    nextGroups: readonly { readonly agent: { readonly id: string }; readonly channels: readonly ChannelSummary[] }[],
-    nextUnbound: readonly ChannelSummary[],
-  ): void => {
-    void useProductStore.getState().putWorkTreeOrder({
-      agentIds: nextAgents.map((item) => item.id),
-      channelIdsByAgent: Object.fromEntries(
-        nextGroups.map((group) => [group.agent.id, group.channels.map((item) => item.id)]),
-      ),
-      unboundChannelIds: nextUnbound.map((item) => item.id),
-    })
+  const channelActiveId = onAgent || onCreator ? undefined : channelId
+  const activeChannel = parsePrefixedId(activeId, CHANNEL_SORT_PREFIX)
+    ? channels.find((item) => item.id === parsePrefixedId(activeId, CHANNEL_SORT_PREFIX))
+    : undefined
+  const activeAgent = parsePrefixedId(activeId, AGENT_SORT_PREFIX)
+    ? tree.agents.find((group) => group.agent.id === parsePrefixedId(activeId, AGENT_SORT_PREFIX))
+    : undefined
+  const overAgentId = parsePrefixedId(overId, AGENT_SORT_PREFIX)
+  const dropActiveAgentId =
+    activeChannel && overAgentId && overAgentId !== (channelOwnerById[activeChannel.id] ?? '') ? overAgentId : ''
+  const dropUnbound = Boolean(activeChannel && overId === UNBOUND_DROP_ID && activeChannel.agentId)
+  const persistOrder = (next: typeof workTreeOrder): void => {
+    void useProductStore
+      .getState()
+      .putWorkTreeOrder(next)
+      .catch((error: unknown) => {
+        notify(error instanceof Error ? error.message : String(error), 'error', 'work-tree-order')
+      })
   }
-  const proposeChannelOnAgent = (channel: ChannelSummary, targetAgentId: string): void => {
-    if (!channel.agentId) {
-      setIntent({ kind: 'bind', channelId: channel.id, agentId: targetAgentId })
-      return
-    }
-    if (channel.agentId !== targetAgentId) {
-      setIntent({ kind: 'replace', channelId: channel.id, agentId: targetAgentId })
-    }
+  const guardClick = (event: MouseEvent<HTMLAnchorElement>): void => {
+    if (!suppressClickRef.current) return
+    event.preventDefault()
+    suppressClickRef.current = false
   }
   const onDragEnd = (event: DragEndEvent): void => {
+    const nextActiveId = String(event.active.id)
+    const nextOverId = event.over ? String(event.over.id) : ''
     setOverId('')
-    const activeId = String(event.active.id)
-    const overIdValue = event.over ? String(event.over.id) : ''
-    if (!overIdValue || activeId === overIdValue) return
-    const activeAgent = parsePrefixedId(activeId, 'agent:')
-    const overAgent = parsePrefixedId(overIdValue, 'agent:')
-    if (activeAgent && overAgent) {
-      const ids = orderedAgents.map((item) => item.id)
-      persistOrder(
-        arrayMove(ids, ids.indexOf(activeAgent), ids.indexOf(overAgent)).map((id) => ({ id })),
-        channelGroups.groups,
-        channelGroups.unbound,
-      )
+    setActiveId('')
+    const resolution = resolveWorkTreeDragEnd({
+      activeId: nextActiveId,
+      overId: nextOverId,
+      lists: dragLists,
+    })
+    if (resolution.kind === 'bind' || resolution.kind === 'replace') {
+      setIntent({ kind: resolution.kind, channelId: resolution.channelId, agentId: resolution.agentId })
       return
     }
-    const activeChannelId = parsePrefixedId(activeId, 'channel:')
-    if (!activeChannelId) return
-    const channel = channels.find((item) => item.id === activeChannelId)
-    if (!channel) return
-    const dropTarget = parsePrefixedId(overIdValue, 'drop:')
-    if (dropTarget === 'unbound') {
-      if (channel.agentId) setIntent({ kind: 'clear', channelId: channel.id })
+    if (resolution.kind === 'unbind') {
+      setIntent({ kind: 'clear', channelId: resolution.channelId })
       return
     }
-    if (dropTarget) {
-      proposeChannelOnAgent(channel, dropTarget)
-      return
-    }
-    if (overAgent) {
-      proposeChannelOnAgent(channel, overAgent)
-      return
-    }
-    const overChannelId = parsePrefixedId(overIdValue, 'channel:')
-    if (!overChannelId) return
-    const overChannel = channels.find((item) => item.id === overChannelId)
-    if (!overChannel) return
-    if (channel.agentId && overChannel.agentId && channel.agentId === overChannel.agentId) {
-      const group = channelGroups.groups.find((item) => item.agent.id === channel.agentId)
-      if (!group) return
-      const ids = group.channels.map((item) => item.id)
-      persistOrder(
-        orderedAgents,
-        channelGroups.groups.map((item) =>
-          item.agent.id === group.agent.id
-            ? {
-                ...item,
-                channels: arrayMove(ids, ids.indexOf(channel.id), ids.indexOf(overChannel.id)).flatMap((id) =>
-                  item.channels.filter((entry) => entry.id === id),
-                ),
-              }
-            : item,
-        ),
-        channelGroups.unbound,
-      )
-      return
-    }
-    if (!channel.agentId && !overChannel.agentId) {
-      const ids = channelGroups.unbound.map((item) => item.id)
-      persistOrder(
-        orderedAgents,
-        channelGroups.groups,
-        arrayMove(ids, ids.indexOf(channel.id), ids.indexOf(overChannel.id)).flatMap((id) =>
-          channelGroups.unbound.filter((entry) => entry.id === id),
-        ),
-      )
-      return
-    }
-    if (overChannel.agentId) proposeChannelOnAgent(channel, overChannel.agentId)
+    const nextOrder = applyWorkTreeDragResolution(
+      {
+        agentIds: dragLists.agentIds,
+        channelIdsByAgent: { ...workTreeOrder.channelIdsByAgent, ...dragLists.channelIdsByAgent },
+        unboundChannelIds: dragLists.unboundChannelIds,
+      },
+      resolution,
+    )
+    if (nextOrder) persistOrder(nextOrder)
+    window.setTimeout(() => {
+      suppressClickRef.current = false
+    }, 0)
   }
 
-  const agentIds = orderedAgents.map((item) => agentSortId(item.id))
-  const overDrop = parsePrefixedId(overId, 'drop:')
+  const agentIds = tree.agents.map((group) => agentSortId(group.agent.id))
 
   return (
     <>
@@ -267,108 +381,78 @@ function WorkTree() {
           <Plus size={14} aria-hidden="true" />
         </Link>
       </div>
-      <div className={shell.treeBody}>
+      <div className={shell.treeBody} ref={treeBodyRef}>
         {channels.length === 0 && agents.length === 0 ? (
           <div className={styles.railEmpty}>{host.status === 'initializing' ? '正在读取…' : '还没有智能体'}</div>
         ) : (
           <DndContext
             sensors={sensors}
-            collisionDetection={closestCorners}
-            onDragOver={(event) => setOverId(event.over ? String(event.over.id) : '')}
-            onDragCancel={() => setOverId('')}
+            collisionDetection={collisionDetection}
+            modifiers={[restrictToVerticalAxis]}
+            autoScroll={{
+              canScroll: (element) => element === treeBodyRef.current,
+              layoutShiftCompensation: false,
+            }}
+            onDragStart={(event) => {
+              suppressClickRef.current = true
+              setActiveId(String(event.active.id))
+            }}
+            onDragOver={(event) => {
+              const current = event.over ? String(event.over.id) : ''
+              const bindTarget =
+                parsePrefixedId(String(event.active.id), CHANNEL_SORT_PREFIX) &&
+                (current.startsWith(AGENT_SORT_PREFIX) || current === UNBOUND_DROP_ID)
+              setOverId(bindTarget ? current : '')
+            }}
+            onDragCancel={() => {
+              setOverId('')
+              setActiveId('')
+              window.setTimeout(() => {
+                suppressClickRef.current = false
+              }, 0)
+            }}
             onDragEnd={onDragEnd}
           >
             <div className={styles.channelGroups}>
               <SortableContext items={agentIds} strategy={verticalListSortingStrategy}>
-                {channelGroups.groups.map((group) => (
-                  <DroppableSection
+                {tree.agents.map((group) => (
+                  <SortableAgentSection
                     key={group.agent.id}
-                    id={agentDropId(group.agent.id)}
-                    active={overDrop === group.agent.id}
-                  >
-                    <SortableAgentHeader
-                      sortableId={agentSortId(group.agent.id)}
-                      to={`/agents/${group.agent.id}`}
-                      active={onAgent && agentId === group.agent.id}
-                      dropActive={overDrop === group.agent.id}
-                    >
-                      <span className={styles.agentAvatar}>{group.agent.name.slice(0, 1)}</span>
-                      <span>
-                        <strong>{group.agent.name}</strong>
-                        <small>{group.channels.length} 个频道</small>
-                      </span>
-                      {group.agent.state !== '空闲' ? (
-                        <StatusBadge tone={agentTone(group.agent.state)}>{group.agent.state}</StatusBadge>
-                      ) : null}
-                    </SortableAgentHeader>
-                    <SortableContext
-                      items={group.channels.map((item) => channelSortId(item.id))}
-                      strategy={verticalListSortingStrategy}
-                    >
-                      {group.channels.map((item) => (
-                        <SortableChannelLink
-                          key={`${group.agent.id}-${item.id}`}
-                          item={item}
-                          active={!onAgent && !onCreator && item.id === channelId}
-                        />
-                      ))}
-                    </SortableContext>
-                  </DroppableSection>
-                ))}
-                {channelGroups.idle.map((agent) => (
-                  <DroppableSection key={agent.id} id={agentDropId(agent.id)} active={overDrop === agent.id}>
-                    <SortableAgentHeader
-                      sortableId={agentSortId(agent.id)}
-                      to={`/agents/${agent.id}`}
-                      active={onAgent && agentId === agent.id}
-                      dropActive={overDrop === agent.id}
-                    >
-                      <span className={styles.agentAvatar}>{agent.name.slice(0, 1)}</span>
-                      <span>
-                        <strong>{agent.name}</strong>
-                        <small>还没有绑定频道</small>
-                      </span>
-                    </SortableAgentHeader>
-                  </DroppableSection>
+                    agent={group.agent}
+                    channels={group.channels}
+                    to={`/agents/${group.agent.id}`}
+                    active={onAgent && agentId === group.agent.id}
+                    dropActive={dropActiveAgentId === group.agent.id}
+                    channelActiveId={channelActiveId}
+                    onGuardedClick={guardClick}
+                  />
                 ))}
               </SortableContext>
-              <DroppableSection id={UNBOUND_DROP} active={overDrop === 'unbound'}>
-                <div
-                  className={[styles.channelGroupHeader, overDrop === 'unbound' ? styles.dropTarget : '']
-                    .filter(Boolean)
-                    .join(' ')}
-                >
-                  <span className={styles.agentAvatar}>?</span>
-                  <span>
-                    <strong>未绑定频道</strong>
-                    <small>
-                      {channelGroups.unbound.length > 0
-                        ? `${channelGroups.unbound.length} 个频道`
-                        : '把频道拖到这里以解除绑定'}
-                    </small>
-                  </span>
-                  <IconButton
-                    label="新建网页频道"
-                    className={shell.treeAdd}
-                    onPointerDown={(event) => event.stopPropagation()}
-                    onClick={() => {
-                      setWebChannelName('网页频道')
-                      setCreateWebOpen(true)
-                    }}
-                  >
-                    <Plus size={14} aria-hidden="true" />
-                  </IconButton>
-                </div>
-                <SortableContext
-                  items={channelGroups.unbound.map((item) => channelSortId(item.id))}
-                  strategy={verticalListSortingStrategy}
-                >
-                  {channelGroups.unbound.map((item) => (
-                    <SortableChannelLink key={item.id} item={item} active={!onAgent && item.id === channelId} />
-                  ))}
-                </SortableContext>
-              </DroppableSection>
+              <UnboundSection
+                active={dropUnbound}
+                channels={tree.unbound}
+                channelActiveId={channelActiveId}
+                onGuardedClick={guardClick}
+                onCreate={() => {
+                  setWebChannelName('网页频道')
+                  setCreateWebOpen(true)
+                }}
+              />
             </div>
+            <DragOverlay dropAnimation={null}>
+              {activeAgent ? (
+                <div className={[styles.channelGroupHeader, styles.dragOverlay].join(' ')}>
+                  <AgentHeaderBody
+                    agent={activeAgent.agent}
+                    hint={activeAgent.channels.length > 0 ? `${activeAgent.channels.length} 个频道` : '还没有绑定频道'}
+                  />
+                </div>
+              ) : activeChannel ? (
+                <div className={[styles.channelLink, styles.dragOverlay].join(' ')}>
+                  <ChannelRowBody item={activeChannel} />
+                </div>
+              ) : null}
+            </DragOverlay>
           </DndContext>
         )}
       </div>

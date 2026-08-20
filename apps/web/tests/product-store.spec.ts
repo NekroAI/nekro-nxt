@@ -191,4 +191,33 @@ describe('product store Host mutations', () => {
     ).rejects.toThrow('缺少批准请求')
     expect(execute).not.toHaveBeenCalled()
   })
+
+  it('applies work tree order immediately and restores it when Host rejects', async () => {
+    let rejectHost: ((error: Error) => void) | undefined
+    const execute = vi.fn(
+      () =>
+        new Promise((_resolve, reject) => {
+          rejectHost = reject
+        }),
+    )
+    setActiveProductHost({
+      getSnapshot: () => useProductStore.getState(),
+      subscribe: () => () => undefined,
+      execute,
+    })
+    const next = {
+      agentIds: [agentId],
+      channelIdsByAgent: { [agentId]: ['chn_a'] },
+      unboundChannelIds: ['chn_free'],
+    }
+    const pending = useProductStore.getState().putWorkTreeOrder(next)
+    expect(useProductStore.getState().workTreeOrder).toEqual(next)
+    rejectHost?.(new Error('保存工作树顺序失败'))
+    await expect(pending).rejects.toThrow('保存工作树顺序失败')
+    expect(useProductStore.getState().workTreeOrder).toEqual({
+      agentIds: [],
+      channelIdsByAgent: {},
+      unboundChannelIds: [],
+    })
+  })
 })

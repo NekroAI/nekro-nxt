@@ -382,13 +382,21 @@ export const useProductStore = create<ProductState>(() => ({
     })
   },
   putWorkTreeOrder: async (order) => {
-    await requireHost().execute('workTreeOrder.put', {
+    const previous = useProductStore.getState().workTreeOrder
+    const next = {
       agentIds: [...order.agentIds],
       channelIdsByAgent: Object.fromEntries(
         Object.entries(order.channelIdsByAgent).map(([agentId, channelIds]) => [agentId, [...channelIds]]),
       ),
       unboundChannelIds: [...order.unboundChannelIds],
-    })
+    }
+    useProductStore.setState({ workTreeOrder: next })
+    try {
+      await requireHost().execute('workTreeOrder.put', next)
+    } catch (error) {
+      useProductStore.setState({ workTreeOrder: previous })
+      throw error
+    }
   },
   sendMessage: async (channelId, body) => {
     await requireHost().execute('channels.sendMessage', {

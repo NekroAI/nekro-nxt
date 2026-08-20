@@ -12,6 +12,7 @@ type HostSnapshot = ReturnType<typeof HostApiContracts.snapshot.response.parse>
 const mapleId = AgentIdSchema.parse('agt_dragmaple')
 const clerkId = AgentIdSchema.parse('agt_dragclerk')
 const mapleChannelId = ChannelIdSchema.parse('chn_dragmaple')
+const mapleSpareChannelId = ChannelIdSchema.parse('chn_dragmaplespare')
 const clerkChannelId = ChannelIdSchema.parse('chn_dragclerk')
 const extraChannelId = ChannelIdSchema.parse('chn_dragextra')
 const webConnectionId = ConnectionIdSchema.parse('con_dragweb')
@@ -25,6 +26,7 @@ const dragTo = async (page: Page, source: Locator, target: Locator): Promise<voi
   await page.mouse.move(from.x + from.width / 2 + 12, from.y + from.height / 2 + 8, { steps: 6 })
   await page.mouse.move(to.x + to.width / 2, to.y + to.height / 2, { steps: 12 })
   await page.mouse.up()
+  await page.mouse.move(8, 8)
 }
 
 test('work tree can create a web channel and confirm bind, rebind, and unbind', async ({ page, request }) => {
@@ -43,7 +45,7 @@ test('work tree can create a web channel and confirm bind, rebind, and unbind', 
   let snapshot: HostSnapshot = {
     ...baseSnapshot,
     connections: baseSnapshot.connections.map((connection) =>
-      connection.id === webConnection.id ? { ...connection, id: webConnectionId, channelCount: 2 } : connection,
+      connection.id === webConnection.id ? { ...connection, id: webConnectionId, channelCount: 3 } : connection,
     ),
     agents: [
       {
@@ -63,7 +65,7 @@ test('work tree can create a web channel and confirm bind, rebind, and unbind', 
           developmentShell: false,
           unrestrictedFileAccess: false,
         },
-        channels: [mapleChannelId],
+        channels: [mapleChannelId, mapleSpareChannelId],
       },
       {
         id: clerkId,
@@ -95,6 +97,16 @@ test('work tree can create a web channel and confirm bind, rebind, and unbind', 
         boundAgentId: mapleId,
         runtimePhase: 'idle',
         bindings: [{ channelId: mapleChannelId, agentId: mapleId, triggerPolicy: 'always', boundAt: 1 }],
+      },
+      {
+        id: mapleSpareChannelId,
+        connectionId: webConnectionId,
+        platformChannelId: 'web-maple-spare',
+        kind: 'web',
+        displayName: '浅枫的备用地',
+        boundAgentId: mapleId,
+        runtimePhase: 'idle',
+        bindings: [{ channelId: mapleSpareChannelId, agentId: mapleId, triggerPolicy: 'always', boundAt: 1 }],
       },
       {
         id: clerkChannelId,
@@ -214,12 +226,34 @@ test('work tree can create a web channel and confirm bind, rebind, and unbind', 
   await expect(page.getByRole('link', { name: /浅枫/u }).first()).toBeVisible()
   await expect(page.getByRole('link', { name: /资料员/u }).first()).toBeVisible()
 
+  const mapleChannel = page.getByRole('link', { name: /浅枫的网页频道/u })
+  const mapleSpare = page.getByRole('link', { name: /浅枫的备用地/u })
+  const mapleHeader = page.getByRole('link', { name: /浅枫\s+\d+ 个频道/u })
+  const clerkHeader = page.getByRole('link', { name: /资料员\s+\d+ 个频道/u })
+  const top = async (locator: Locator): Promise<number> => {
+    const box = await locator.boundingBox()
+    if (!box) throw new Error('排序目标没有几何尺寸。')
+    return box.y
+  }
+
   await page.getByRole('button', { name: '新建网页频道' }).click()
   const createDialog = page.getByRole('dialog')
   await expect(createDialog.getByRole('heading', { name: '新建网页频道' })).toBeVisible()
   await createDialog.getByLabel('频道名称').fill('临时网页台')
   await createDialog.getByRole('button', { name: '创建网页频道' }).click()
   await expect(page.getByRole('link', { name: /临时网页台/u })).toBeVisible()
+
+  expect(await top(mapleChannel)).toBeLessThan(await top(mapleSpare))
+  await dragTo(page, mapleChannel, mapleSpare)
+  await expect(page.getByRole('dialog')).toHaveCount(0)
+  await expect.poll(async () => (await top(mapleSpare)) < (await top(mapleChannel))).toBe(true)
+  await dragTo(page, mapleSpare, mapleHeader)
+  await expect(page.getByRole('dialog')).toHaveCount(0)
+  expect(await top(mapleSpare)).toBeLessThan(await top(mapleChannel))
+  expect(await top(mapleHeader)).toBeLessThan(await top(clerkHeader))
+  await dragTo(page, mapleHeader, clerkHeader)
+  await expect(page.getByRole('dialog')).toHaveCount(0)
+  await expect.poll(async () => (await top(clerkHeader)) < (await top(mapleHeader))).toBe(true)
 
   await dragTo(
     page,

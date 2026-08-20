@@ -50,6 +50,7 @@ declare const styles: {
   readonly creatorWorkspace: string
   readonly detailSection: string
   readonly dialogChoice: string
+  readonly dragOverlay: string
   readonly dropTarget: string
   readonly dynamicSlotSurface: string
   readonly emptyState: string
@@ -123,6 +124,7 @@ declare const styles: {
   readonly sectionHeading: string
   readonly selRail: string
   readonly settingsSection: string
+  readonly sortableOrigin: string
   readonly staticRow: string
   readonly switchList: string
   readonly sysLine: string
