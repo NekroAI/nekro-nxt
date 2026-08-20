@@ -7,15 +7,17 @@ import { createServer, type ViteDevServer } from 'vite'
 const harnessModule = `
   import React, { useState } from 'react'
   import { createRoot } from 'react-dom/client'
-  import { Button, Dialog } from '/src/ui-kit/index.tsx'
+  import { Button, Dialog, IconButton, Tooltip } from '/src/ui-kit/index.tsx'
   import '/src/ui-kit/tokens.css'
 
   function Harness() {
     const [open, setOpen] = useState(false)
     const [pending, setPending] = useState(false)
     const [longContent, setLongContent] = useState(true)
-    return <main>
+    return <Tooltip.Provider>
+      <main>
       <Button id="dialog-trigger" onClick={() => { setLongContent(true); setPending(false); setOpen(true) }}>打开对话框</Button>
+      <IconButton id="icon-button" label="新建网页频道"><span>+</span></IconButton>
       <Button id="short-dialog-trigger" onClick={() => { setLongContent(false); setPending(false); setOpen(true) }}>打开短对话框</Button>
       <Button id="pending-trigger" onClick={() => { setLongContent(true); setPending(true); setOpen(true) }}>打开待处理对话框</Button>
       <Dialog
@@ -29,6 +31,7 @@ const harnessModule = `
         <div style={{ height: longContent ? 1200 : 20 }}>{longContent ? '可滚动内容' : '短内容'}</div>
       </Dialog>
     </main>
+    </Tooltip.Provider>
   }
 
   createRoot(document.querySelector('#root')).render(<Harness />)
@@ -82,7 +85,7 @@ describe.sequential('ui-kit Dialog browser behavior', { timeout: 30_000 }, () =>
     page = await browser.newPage()
     page.on('pageerror', (error) => browserErrors.push(error.message))
     page.on('console', (message) => {
-      if (message.type() === 'error') browserErrors.push(message.text())
+      if (message.type() === 'error' || message.type() === 'warning') browserErrors.push(message.text())
     })
   }, 30_000)
 
@@ -143,5 +146,13 @@ describe.sequential('ui-kit Dialog browser behavior', { timeout: 30_000 }, () =>
     await page.keyboard.press('Escape')
     await expectPage(dialog).toBeVisible()
     await expectPage(dialog.getByRole('button', { name: '关闭对话框' })).toBeDisabled()
+  }, 20_000)
+
+  it('forwards the tooltip content ref so IconButton hover does not warn', async () => {
+    await page.goto(`${baseUrl}/__ui-kit_harness__`, { waitUntil: 'domcontentloaded' })
+    const trigger = page.locator('#icon-button')
+    await trigger.hover()
+    await expectPage(page.getByRole('tooltip', { name: '新建网页频道' })).toBeVisible()
+    expect(browserErrors.filter((message) => message.includes('Function components cannot be given refs'))).toEqual([])
   }, 20_000)
 })

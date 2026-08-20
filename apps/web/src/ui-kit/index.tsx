@@ -7,6 +7,7 @@ import { Check, ChevronDown, LoaderCircle, X } from 'lucide-react'
 import {
   cloneElement,
   createContext,
+  forwardRef,
   isValidElement,
   useContext,
   useEffect,
@@ -17,6 +18,7 @@ import {
   type ButtonHTMLAttributes,
   type ComponentPropsWithoutRef,
   type CSSProperties,
+  type ElementRef,
   type InputHTMLAttributes,
   type ReactElement,
   type ReactNode,
@@ -673,17 +675,21 @@ export const Tabs = {
 
 type TooltipContentProps = ComponentPropsWithoutRef<typeof RadixTooltip.Content>
 
-function TooltipContent({ className, style, ...props }: TooltipContentProps) {
+const TooltipContent = forwardRef<ElementRef<typeof RadixTooltip.Content>, TooltipContentProps>(function TooltipContent(
+  { className, style, ...props },
+  ref,
+) {
   const floatingLayer = useFloatingLayer()
   return (
     <RadixTooltip.Content
+      ref={ref}
       className={[styles.tooltipContent, className].filter(Boolean).join(' ')}
       style={{ ...style, zIndex: floatingLayer }}
       data-nxt-floating-layer={floatingLayer}
       {...props}
     />
   )
-}
+})
 
 export const Tooltip = {
   Provider: RadixTooltip.Provider,
