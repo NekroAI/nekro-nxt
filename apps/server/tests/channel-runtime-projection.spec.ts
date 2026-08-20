@@ -4,6 +4,7 @@ import { shouldBroadcastChannelRuntime } from '../src/channel-runtime-events.ts'
 import {
   previewToolArguments,
   projectChannelRuntime,
+  projectSessionOccupancy,
   worstChannelRuntimePhase,
 } from '../src/channel-runtime-projection.ts'
 
@@ -143,6 +144,81 @@ describe('channel runtime projection', () => {
     expect(shouldBroadcastChannelRuntime(undefined)).toBe(false)
     expect(shouldBroadcastChannelRuntime('tool/call')).toBe(true)
     expect(shouldBroadcastChannelRuntime('turn/end')).toBe(true)
+    expect(shouldBroadcastChannelRuntime('request/context')).toBe(true)
+    expect(shouldBroadcastChannelRuntime('user/message')).toBe(true)
+  })
+
+  it('omits occupancy until both projected tokens and a context window exist', () => {
+    expect(projectSessionOccupancy({ projectedTokens: 800, cacheReadTokens: 12 })).toBeUndefined()
+    expect(projectSessionOccupancy({ contextWindow: 128_000 })).toBeUndefined()
+    expect(
+      projectSessionOccupancy({
+        projectedTokens: 3200,
+        contextWindow: 128_000,
+        cacheReadTokens: 1800,
+        systemTokens: 400,
+        toolsTokens: 900,
+        messageTokens: 1900,
+      }),
+    ).toEqual({
+      projectedTokens: 3200,
+      contextWindow: 128_000,
+      cacheReadTokens: 1800,
+      breakdown: { systemTokens: 400, toolsTokens: 900, messageTokens: 1900 },
+    })
+  })
+
+  it('records closed-interval durations, first-token latency and step usage without emitting chunks', () => {
+    const projection = projectChannelRuntime({
+      channelId,
+      agentId,
+      sessionStatus: 'idle',
+      pendingInjectCount: 0,
+      occupancy: { projectedTokens: 3200, contextWindow: 128_000 },
+      events: [
+        { type: 'turn/start', turn: 1, at: 1000 },
+        { type: 'step/start', turn: 1, step: 1, at: 1010 },
+        { type: 'assistant/first-token', turn: 1, step: 1, at: 1430 },
+        {
+          type: 'assistant/message',
+          turn: 1,
+          step: 1,
+          at: 1800,
+          text: '先核对。',
+          usage: { inputTokens: 800, outputTokens: 40, cacheReadTokens: 200 },
+        },
+        {
+          type: 'tool/call',
+          turn: 1,
+          step: 1,
+          callId: 'call_send',
+          name: 'send_channel_message',
+          arguments: '{"parts":[{"type":"text","text":"好"}]}',
+          at: 1810,
+        },
+        {
+          type: 'tool/result',
+          turn: 1,
+          step: 1,
+          callId: 'call_send',
+          failed: false,
+          resultPreview: 'sent',
+          at: 1900,
+        },
+        { type: 'step/end', turn: 1, step: 1, at: 1910 },
+        { type: 'turn/end', turn: 1, reasonKind: 'completed', at: 1920 },
+      ],
+    })
+    expect(projection.occupancy).toEqual({ projectedTokens: 3200, contextWindow: 128_000 })
+    expect(projection.turns[0]?.durationMs).toBe(920)
+    expect(projection.turns[0]?.steps[0]?.durationMs).toBe(900)
+    expect(projection.turns[0]?.steps[0]?.firstTokenMs).toBe(420)
+    expect(projection.turns[0]?.steps[0]?.usage).toEqual({
+      inputTokens: 800,
+      outputTokens: 40,
+      cacheReadTokens: 200,
+    })
+    expect(projection.turns[0]?.steps[0]?.tools[0]?.durationMs).toBe(90)
   })
 
   it('ranks unavailable above using-tool when summarizing an intelligent-agent', () => {

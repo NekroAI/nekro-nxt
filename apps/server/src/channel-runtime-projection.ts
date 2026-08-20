@@ -1,4 +1,12 @@
-import type { AgentId, ChannelId, ChannelRuntimePhase, ChannelRuntimeProjection, EpisodeId } from '@nekro-nxt/contracts'
+import type {
+  AgentId,
+  ChannelId,
+  ChannelRuntimeOccupancy,
+  ChannelRuntimePhase,
+  ChannelRuntimeProjection,
+  ChannelRuntimeUsage,
+  EpisodeId,
+} from '@nekro-nxt/contracts'
 import { z } from 'zod'
 
 const ToolArgumentObjectSchema = z.record(z.string(), z.unknown())
@@ -27,16 +35,17 @@ const TOOL_DISPLAY_NAMES: Readonly<Record<string, string>> = {
 export type RuntimeSessionStatus = 'idle' | 'running' | 'missing'
 
 export type RuntimeProjectionEvent =
-  | { readonly type: 'turn/start'; readonly turn: number }
+  | { readonly type: 'turn/start'; readonly turn: number; readonly at?: number }
   | {
       readonly type: 'turn/end'
       readonly turn: number
       readonly reasonKind: string
+      readonly at?: number
       readonly errorCode?: string
       readonly errorMessage?: string
     }
-  | { readonly type: 'step/start'; readonly turn: number; readonly step: number }
-  | { readonly type: 'step/end'; readonly turn: number; readonly step: number }
+  | { readonly type: 'step/start'; readonly turn: number; readonly step: number; readonly at?: number }
+  | { readonly type: 'step/end'; readonly turn: number; readonly step: number; readonly at?: number }
   | {
       readonly type: 'tool/call'
       readonly turn: number
@@ -44,6 +53,7 @@ export type RuntimeProjectionEvent =
       readonly callId: string
       readonly name: string
       readonly arguments: string
+      readonly at?: number
     }
   | {
       readonly type: 'tool/result'
@@ -51,14 +61,23 @@ export type RuntimeProjectionEvent =
       readonly step: number
       readonly callId: string
       readonly failed: boolean
+      readonly at?: number
       readonly resultPreview?: string
+    }
+  | {
+      readonly type: 'assistant/first-token'
+      readonly turn: number
+      readonly step: number
+      readonly at?: number
     }
   | {
       readonly type: 'assistant/message'
       readonly turn: number
       readonly step: number
+      readonly at?: number
       readonly text?: string
       readonly reasoning?: string
+      readonly usage?: ChannelRuntimeUsage
     }
 
 export interface ChannelRuntimeProjectionInput {
@@ -67,6 +86,7 @@ export interface ChannelRuntimeProjectionInput {
   readonly episodeId?: EpisodeId
   readonly sessionStatus: RuntimeSessionStatus
   readonly pendingInjectCount: number
+  readonly occupancy?: ChannelRuntimeOccupancy
   readonly events: readonly RuntimeProjectionEvent[]
 }
 
@@ -78,6 +98,8 @@ type ProjectedTool = {
   inputPreview?: string
   resultPreview?: string
   wroteToChannel?: boolean
+  startedAt?: number
+  durationMs?: number
 }
 
 type ProjectedStep = {
@@ -85,6 +107,10 @@ type ProjectedStep = {
   tools: Map<string, ProjectedTool>
   text?: string
   reasoning?: string
+  startedAt?: number
+  endedAt?: number
+  firstTokenAt?: number
+  usage?: ChannelRuntimeUsage
 }
 
 type ProjectedTurn = {
@@ -92,7 +118,41 @@ type ProjectedTurn = {
   state: ChannelRuntimeProjection['turns'][number]['state']
   producedReply: boolean
   error?: { code: string; message: string }
+  startedAt?: number
+  endedAt?: number
   steps: Map<number, ProjectedStep>
+}
+
+const elapsedMs = (start: number | undefined, end: number | undefined): number | undefined =>
+  start !== undefined && end !== undefined && end >= start ? end - start : undefined
+
+export const projectSessionOccupancy = (input: {
+  readonly projectedTokens?: number | undefined
+  readonly contextWindow?: number | undefined
+  readonly cacheReadTokens?: number | undefined
+  readonly systemTokens?: number | undefined
+  readonly toolsTokens?: number | undefined
+  readonly messageTokens?: number | undefined
+}): ChannelRuntimeOccupancy | undefined => {
+  const projectedTokens = input.projectedTokens
+  const contextWindow = input.contextWindow
+  if (projectedTokens === undefined || contextWindow === undefined || contextWindow <= 0) return undefined
+  const cacheReadTokens = input.cacheReadTokens
+  const hasBreakdown = (input.systemTokens ?? 0) > 0 || (input.toolsTokens ?? 0) > 0 || (input.messageTokens ?? 0) > 0
+  return {
+    projectedTokens,
+    contextWindow,
+    ...(cacheReadTokens !== undefined && cacheReadTokens > 0 ? { cacheReadTokens } : {}),
+    ...(hasBreakdown
+      ? {
+          breakdown: {
+            systemTokens: input.systemTokens ?? 0,
+            toolsTokens: input.toolsTokens ?? 0,
+            messageTokens: input.messageTokens ?? 0,
+          },
+        }
+      : {}),
+  }
 }
 
 const phaseRank = (phase: ChannelRuntimePhase): number => {
@@ -185,12 +245,14 @@ export const projectChannelRuntime = (input: ChannelRuntimeProjectionInput): Cha
 
   for (const event of input.events) {
     if (event.type === 'turn/start') {
-      ensureTurn(event.turn)
+      const record = ensureTurn(event.turn)
+      if (event.at !== undefined) record.startedAt = event.at
       continue
     }
     if (event.type === 'turn/end') {
       const record = ensureTurn(event.turn)
       record.state = turnStateFromReason(event.reasonKind)
+      if (event.at !== undefined) record.endedAt = event.at
       if (event.reasonKind === 'error') {
         record.error = {
           code: event.errorCode?.trim() || 'UNKNOWN',
@@ -199,8 +261,14 @@ export const projectChannelRuntime = (input: ChannelRuntimeProjectionInput): Cha
       }
       continue
     }
-    if (event.type === 'step/start' || event.type === 'step/end') {
-      ensureStep(event.turn, event.step)
+    if (event.type === 'step/start') {
+      const step = ensureStep(event.turn, event.step)
+      if (event.at !== undefined) step.startedAt = event.at
+      continue
+    }
+    if (event.type === 'step/end') {
+      const step = ensureStep(event.turn, event.step)
+      if (event.at !== undefined) step.endedAt = event.at
       continue
     }
     if (event.type === 'tool/call') {
@@ -213,6 +281,7 @@ export const projectChannelRuntime = (input: ChannelRuntimeProjectionInput): Cha
         state: 'running',
         ...(inputPreview === undefined ? {} : { inputPreview }),
         ...(event.name === 'send_channel_message' ? { wroteToChannel: false } : {}),
+        ...(event.at === undefined ? {} : { startedAt: event.at }),
       })
       continue
     }
@@ -220,6 +289,7 @@ export const projectChannelRuntime = (input: ChannelRuntimeProjectionInput): Cha
       const step = ensureStep(event.turn, event.step)
       const current = step.tools.get(event.callId)
       const name = current?.name ?? 'tool'
+      const durationMs = elapsedMs(current?.startedAt, event.at)
       step.tools.set(event.callId, {
         callId: event.callId,
         name,
@@ -228,13 +298,21 @@ export const projectChannelRuntime = (input: ChannelRuntimeProjectionInput): Cha
         ...(current?.inputPreview === undefined ? {} : { inputPreview: current.inputPreview }),
         ...(event.resultPreview === undefined ? {} : { resultPreview: previewText(event.resultPreview) }),
         ...(name === 'send_channel_message' ? { wroteToChannel: !event.failed } : {}),
+        ...(current?.startedAt === undefined ? {} : { startedAt: current.startedAt }),
+        ...(durationMs === undefined ? {} : { durationMs }),
       })
       if (!event.failed && name === 'send_channel_message') ensureTurn(event.turn).producedReply = true
+      continue
+    }
+    if (event.type === 'assistant/first-token') {
+      const step = ensureStep(event.turn, event.step)
+      if (event.at !== undefined && step.firstTokenAt === undefined) step.firstTokenAt = event.at
       continue
     }
     const step = ensureStep(event.turn, event.step)
     if (event.text?.trim()) step.text = event.text
     if (event.reasoning?.trim()) step.reasoning = event.reasoning
+    if (event.usage) step.usage = event.usage
   }
 
   const orderedTurns = [...turns.values()]
@@ -245,21 +323,40 @@ export const projectChannelRuntime = (input: ChannelRuntimeProjectionInput): Cha
       state: record.state,
       producedReply: record.producedReply,
       ...(record.error === undefined ? {} : { error: record.error }),
+      ...(elapsedMs(record.startedAt, record.endedAt) === undefined
+        ? {}
+        : { durationMs: elapsedMs(record.startedAt, record.endedAt) }),
       steps: [...record.steps.values()]
         .sort((left, right) => left.step - right.step)
-        .map((step) => ({
-          step: step.step,
-          tools: [...step.tools.values()],
-          ...(step.text || step.reasoning
-            ? {
-                internalOutput: {
-                  kind: 'internal-output' as const,
-                  ...(step.text === undefined ? {} : { text: step.text }),
-                  ...(step.reasoning === undefined ? {} : { reasoning: step.reasoning }),
-                },
-              }
-            : {}),
-        })),
+        .map((step) => {
+          const durationMs = elapsedMs(step.startedAt, step.endedAt)
+          const firstTokenMs = elapsedMs(step.startedAt, step.firstTokenAt)
+          return {
+            step: step.step,
+            tools: [...step.tools.values()].map((tool) => ({
+              callId: tool.callId,
+              name: tool.name,
+              displayName: tool.displayName,
+              state: tool.state,
+              ...(tool.inputPreview === undefined ? {} : { inputPreview: tool.inputPreview }),
+              ...(tool.resultPreview === undefined ? {} : { resultPreview: tool.resultPreview }),
+              ...(tool.wroteToChannel === undefined ? {} : { wroteToChannel: tool.wroteToChannel }),
+              ...(tool.durationMs === undefined ? {} : { durationMs: tool.durationMs }),
+            })),
+            ...(step.text || step.reasoning
+              ? {
+                  internalOutput: {
+                    kind: 'internal-output' as const,
+                    ...(step.text === undefined ? {} : { text: step.text }),
+                    ...(step.reasoning === undefined ? {} : { reasoning: step.reasoning }),
+                  },
+                }
+              : {}),
+            ...(durationMs === undefined ? {} : { durationMs }),
+            ...(firstTokenMs === undefined ? {} : { firstTokenMs }),
+            ...(step.usage === undefined ? {} : { usage: step.usage }),
+          }
+        }),
     }))
 
   const latest = orderedTurns.at(-1)
@@ -291,6 +388,7 @@ export const projectChannelRuntime = (input: ChannelRuntimeProjectionInput): Cha
     phase,
     summary,
     pendingInjectCount: input.pendingInjectCount,
+    ...(input.occupancy === undefined ? {} : { occupancy: input.occupancy }),
     turns: orderedTurns,
   }
 }

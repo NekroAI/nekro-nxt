@@ -1,5 +1,11 @@
 import { describe, expect, it } from 'vitest'
-import { flattenRuntimeRecords, plotTurnStarts, recordLane } from '../src/pages/channel-trajectory.js'
+import {
+  flattenRuntimeRecords,
+  formatDurationMs,
+  formatTokenCount,
+  plotTurnStarts,
+  recordLane,
+} from '../src/pages/channel-trajectory.js'
 import type { ChannelRuntimeView } from '../src/product-store.js'
 
 describe('flattenRuntimeRecords', () => {
@@ -52,5 +58,14 @@ describe('flattenRuntimeRecords', () => {
   it('marks plot turn boundaries on visible turn changes, skipping the first row', () => {
     expect(plotTurnStarts([{ turn: 1 }, { turn: 1 }, { turn: 2 }, { turn: 2 }, { turn: 4 }])).toEqual([2, 4])
     expect(plotTurnStarts([{ turn: 3 }])).toEqual([])
+  })
+
+  it('formats occupancy and duration for the inspector, not as a dashboard', () => {
+    expect(formatTokenCount(420)).toBe('420')
+    expect(formatTokenCount(3200)).toBe('3.2k')
+    expect(formatTokenCount(32_000)).toBe('32k')
+    expect(formatDurationMs(420)).toBe('420ms')
+    expect(formatDurationMs(1200)).toBe('1.2s')
+    expect(formatDurationMs(65_000)).toBe('1:05')
   })
 })

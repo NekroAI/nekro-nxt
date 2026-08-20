@@ -466,6 +466,15 @@ describe.sequential('NekroNxt browser projections', { timeout: 30_000 }, () => {
           phase: channel?.runtimePhase ?? 'idle',
           summary: channel?.boundAgentId ? '智能体当前空闲。' : '尚未绑定智能体。',
           pendingInjectCount: 0,
+          occupancy:
+            channelId === browserChannelId
+              ? {
+                  projectedTokens: 3200,
+                  contextWindow: 128_000,
+                  cacheReadTokens: 1800,
+                  breakdown: { systemTokens: 400, toolsTokens: 900, messageTokens: 1900 },
+                }
+              : undefined,
           turns:
             channelId === browserChannelId
               ? [
@@ -637,6 +646,9 @@ describe.sequential('NekroNxt browser projections', { timeout: 30_000 }, () => {
       await playwrightExpect(page.locator('body')).not.toContainText('不能混入当前频道')
       await playwrightExpect(page.getByText('发送给：资料员', { exact: true })).toBeVisible()
       await playwrightExpect(page.getByText('智能体当前空闲。', { exact: true })).toBeVisible()
+      await playwrightExpect(page.getByText('约 3.2k / 128k', { exact: true })).toBeVisible()
+      await playwrightExpect(page.getByText('缓存读取', { exact: true })).toBeVisible()
+      await playwrightExpect(page.getByLabel('频道').getByText('1.8k', { exact: true })).toBeVisible()
       await playwrightExpect(page.getByRole('link', { name: /资料员/u }).first()).toBeVisible()
       await playwrightExpect(page.getByRole('button', { name: '会话' })).toBeVisible()
       await playwrightExpect(page.getByRole('button', { name: '工作轨迹' })).toBeVisible()

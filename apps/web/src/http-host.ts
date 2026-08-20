@@ -876,7 +876,7 @@ export class HttpProductHost implements ProductHostPort {
   #runtimeViewFromProjection(
     raw: Pick<
       ChannelRuntimeSseData,
-      'channelId' | 'agentId' | 'episodeId' | 'phase' | 'summary' | 'pendingInjectCount' | 'turns'
+      'channelId' | 'agentId' | 'episodeId' | 'phase' | 'summary' | 'pendingInjectCount' | 'occupancy' | 'turns'
     >,
   ): ChannelRuntimeView {
     return {
@@ -886,6 +886,7 @@ export class HttpProductHost implements ProductHostPort {
       phase: runtimePhaseToState(raw.phase),
       summary: raw.summary,
       pendingInjectCount: raw.pendingInjectCount,
+      ...(raw.occupancy === undefined ? {} : { occupancy: raw.occupancy }),
       turns: raw.turns,
     }
   }

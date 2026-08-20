@@ -89,6 +89,7 @@ import {
   type AdmissionId,
   type AgentRevisionId,
   type ChannelId,
+  type ChannelRuntimeOccupancy,
   type ConnectionId,
   type DshCredentialView,
   type DshSettingsNamespaceView,
@@ -111,6 +112,7 @@ import type {
   MountedExtension,
 } from '@nekro-nxt/extension-runtime'
 import { shouldBroadcastChannelRuntime } from './channel-runtime-events.js'
+import { projectSessionOccupancy } from './channel-runtime-projection.js'
 import type {
   ExtensionHostEnvironment,
   ExtensionJsonValue,
@@ -2051,6 +2053,21 @@ export class DshHostRuntime implements AgentSessionDriver, ExtensionActivationHo
     return { status: agent.status, events: agent.session.events }
   }
 
+  sessionOccupancy(dshSessionId: string): ChannelRuntimeOccupancy | undefined {
+    this.#assertActive()
+    const agent = this.#context.agents.get(SessionId(dshSessionId))
+    if (!agent) return undefined
+    const snapshot = this.#context.sessionProjections.snapshot(agent.session)
+    return projectSessionOccupancy({
+      projectedTokens: snapshot.values.contextPressure?.projectedTokens,
+      contextWindow: snapshot.values.contextPressure?.contextWindow,
+      cacheReadTokens: snapshot.values.tokenUsage?.cacheReadTokens,
+      systemTokens: snapshot.values.contextBreakdown?.systemTokens,
+      toolsTokens: snapshot.values.contextBreakdown?.toolsTokens,
+      messageTokens: snapshot.values.contextBreakdown?.messageTokens,
+    })
+  }
+
   subscribeChannelRuntime(listener: (channelId: ChannelId) => void): () => void {
     this.#assertActive()
     const offStatus = this.#context.on('agent/status', ({ agent }) => {
@@ -2077,10 +2094,16 @@ export class DshHostRuntime implements AgentSessionDriver, ExtensionActivationHo
         if (channelId !== undefined) notify(channelId)
       },
     )
+    const offOccupancy = this.#context.sessionProjections.onChanged((session, key) => {
+      if (key !== 'tokenUsage' && key !== 'contextPressure' && key !== 'contextBreakdown') return
+      const channelId = this.#channelBySession.get(String(session.id))
+      if (channelId !== undefined) notify(channelId)
+    })
     return () => {
       if (timer !== undefined) clearTimeout(timer)
       offStatus()
       offEvent()
+      offOccupancy()
     }
   }
 

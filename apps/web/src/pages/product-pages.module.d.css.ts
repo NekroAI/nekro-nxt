@@ -92,6 +92,9 @@ declare const styles: {
   readonly messageListInner: string
   readonly objectList: string
   readonly objectName: string
+  readonly occupancy: string
+  readonly occupancyFill: string
+  readonly occupancyTrack: string
   readonly overviewBlocker: string
   readonly overviewBlockers: string
   readonly overviewFacts: string

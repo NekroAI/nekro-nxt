@@ -76,12 +76,15 @@ const assembleChannelRuntime = (runtime: NekroRuntime, channelId: ChannelId): Ch
   const episode = runtime.repository.getActiveEpisode(channelId, binding.agentId)
   const pendingInjectCount = episode === undefined ? 0 : runtime.repository.listRecoverableAdmissions(episode.id).length
   const live = episode?.dshSessionId === undefined ? undefined : runtime.host.tryLiveSession(episode.dshSessionId)
+  const occupancy =
+    episode?.dshSessionId === undefined ? undefined : runtime.host.sessionOccupancy(episode.dshSessionId)
   return projectChannelRuntime({
     channelId,
     agentId: binding.agentId,
     ...(episode === undefined ? {} : { episodeId: episode.id }),
     sessionStatus: live?.status ?? 'missing',
     pendingInjectCount,
+    ...(occupancy === undefined ? {} : { occupancy }),
     events: live === undefined ? [] : normalizeSessionEvents(live.events),
   })
 }

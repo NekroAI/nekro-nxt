@@ -693,6 +693,24 @@
   overflow-wrap: anywhere;
 }
 
+.occupancy {
+  display: grid;
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.occupancyTrack {
+  height: 2px;
+  overflow: hidden;
+  background: var(--nxt-border-subtle);
+}
+
+.occupancyFill {
+  display: block;
+  height: 2px;
+  background: var(--nxt-accent);
+}
+
 .sectionDivider {
   height: 1px;
   background: var(--nxt-border-subtle);

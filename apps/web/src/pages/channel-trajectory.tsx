@@ -34,6 +34,9 @@ export interface TrajectoryRecord {
   readonly output?: string
   readonly state?: RuntimeTool['state']
   readonly wroteToChannel?: boolean
+  readonly durationMs?: number
+  readonly firstTokenMs?: number
+  readonly usage?: NonNullable<RuntimeTurn['steps'][number]['usage']>
 }
 
 export const recordLane = (record: TrajectoryRecord): TrajectoryLane => {
@@ -42,11 +45,35 @@ export const recordLane = (record: TrajectoryRecord): TrajectoryLane => {
   return 'tool'
 }
 
+export const formatTokenCount = (value: number): string => {
+  if (value < 1000) return String(value)
+  if (value < 10_000) return `${(value / 1000).toFixed(1).replace(/\.0$/u, '')}k`
+  if (value < 1_000_000) return `${Math.round(value / 1000)}k`
+  return `${(value / 1_000_000).toFixed(1).replace(/\.0$/u, '')}M`
+}
+
+export const formatDurationMs = (value: number): string => {
+  if (value < 1000) return `${value}ms`
+  if (value < 60_000) return `${(value / 1000).toFixed(value < 10_000 ? 1 : 0).replace(/\.0$/u, '')}s`
+  const minutes = Math.floor(value / 60_000)
+  const seconds = Math.round((value % 60_000) / 1000)
+  return `${minutes}:${String(seconds).padStart(2, '0')}`
+}
+
 const recordStateLabel = (record: TrajectoryRecord): string => {
-  if (record.state === 'running') return '进行中'
-  if (record.state === 'failed') return '失败'
-  if (record.state) return '完成'
-  return ''
+  const duration = record.durationMs === undefined ? '' : formatDurationMs(record.durationMs)
+  if (record.state === 'running') return duration ? `进行中 · ${duration}` : '进行中'
+  if (record.state === 'failed') return duration ? `失败 · ${duration}` : '失败'
+  if (record.state) return duration ? `完成 · ${duration}` : '完成'
+  return duration
+}
+
+const usageCaption = (usage: NonNullable<TrajectoryRecord['usage']>): string => {
+  const parts = [`输入 ${formatTokenCount(usage.inputTokens)}`, `输出 ${formatTokenCount(usage.outputTokens)}`]
+  if (usage.cacheReadTokens !== undefined && usage.cacheReadTokens > 0) {
+    parts.push(`缓存读取 ${formatTokenCount(usage.cacheReadTokens)}`)
+  }
+  return `本步 ${parts.join(' · ')}`
 }
 
 const agentTone = (state: AgentRuntimeState): StatusTone => {
@@ -84,6 +111,9 @@ export const flattenRuntimeRecords = (runtime: ChannelRuntimeView | undefined): 
           name: '内部输出',
           summary: text.split('\n')[0] ?? text,
           output: text,
+          ...(step.durationMs === undefined ? {} : { durationMs: step.durationMs }),
+          ...(step.firstTokenMs === undefined ? {} : { firstTokenMs: step.firstTokenMs }),
+          ...(step.usage === undefined ? {} : { usage: step.usage }),
         })
         turnStart = false
       }
@@ -100,6 +130,7 @@ export const flattenRuntimeRecords = (runtime: ChannelRuntimeView | undefined): 
           ...(tool.resultPreview === undefined ? {} : { output: tool.resultPreview }),
           state: tool.state,
           ...(tool.wroteToChannel === undefined ? {} : { wroteToChannel: tool.wroteToChannel }),
+          ...(tool.durationMs === undefined ? {} : { durationMs: tool.durationMs }),
         })
         turnStart = false
       }
@@ -478,6 +509,38 @@ export function ChannelSessionInspector({
         {runtime && runtime.pendingInjectCount > 0 ? (
           <InlineFeedback tone="info">{runtime.pendingInjectCount} 条新消息已收录。</InlineFeedback>
         ) : null}
+        {runtime?.occupancy ? (
+          <div className={styles.occupancy}>
+            <div className={styles.occupancyTrack} aria-hidden="true">
+              <span
+                className={styles.occupancyFill}
+                style={{
+                  width: `${Math.min(100, Math.round((runtime.occupancy.projectedTokens / runtime.occupancy.contextWindow) * 100))}%`,
+                }}
+              />
+            </div>
+            <dl className={styles.facts}>
+              <dt>上下文</dt>
+              <dd>
+                约 {formatTokenCount(runtime.occupancy.projectedTokens)} /{' '}
+                {formatTokenCount(runtime.occupancy.contextWindow)}
+              </dd>
+              {runtime.occupancy.cacheReadTokens !== undefined ? (
+                <>
+                  <dt>缓存读取</dt>
+                  <dd>{formatTokenCount(runtime.occupancy.cacheReadTokens)}</dd>
+                </>
+              ) : null}
+            </dl>
+            {runtime.occupancy.breakdown ? (
+              <p className={styles.secondaryText}>
+                系统约 {formatTokenCount(runtime.occupancy.breakdown.systemTokens)} · 工具约{' '}
+                {formatTokenCount(runtime.occupancy.breakdown.toolsTokens)} · 对话约{' '}
+                {formatTokenCount(runtime.occupancy.breakdown.messageTokens)}
+              </p>
+            ) : null}
+          </div>
+        ) : null}
       </section>
       <section>
         <h2>绑定</h2>
@@ -572,6 +635,10 @@ export function ChannelTrajectoryInspector({ record }: { readonly record: Trajec
               Turn {record.turn}
               {recordStateLabel(record) ? ` · ${recordStateLabel(record)}` : ''}
             </p>
+            {record.firstTokenMs !== undefined ? (
+              <p className={styles.secondaryText}>首字 {formatDurationMs(record.firstTokenMs)}</p>
+            ) : null}
+            {record.usage ? <p className={styles.secondaryText}>{usageCaption(record.usage)}</p> : null}
           </section>
           {lane === 'internal' && (output || record.summary) ? (
             <InspectorRegion label="内部输出" text={output || record.summary} />

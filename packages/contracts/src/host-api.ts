@@ -126,6 +126,16 @@ export const ChannelFactSseDataSchema = z
 
 export const ChannelRuntimePhaseSchema = z.enum(['idle', 'thinking', 'using-tool', 'waiting-input', 'unavailable'])
 
+export const ChannelRuntimeUsageSchema = z
+  .object({
+    inputTokens: z.number().int().nonnegative(),
+    outputTokens: z.number().int().nonnegative(),
+    cacheReadTokens: z.number().int().nonnegative().optional(),
+    cacheWriteTokens: z.number().int().nonnegative().optional(),
+    reasoningTokens: z.number().int().nonnegative().optional(),
+  })
+  .strict()
+
 export const ChannelRuntimeToolSchema = z
   .object({
     callId: NonEmptyStringSchema,
@@ -135,6 +145,7 @@ export const ChannelRuntimeToolSchema = z
     inputPreview: z.string().optional(),
     resultPreview: z.string().optional(),
     wroteToChannel: z.boolean().optional(),
+    durationMs: z.number().int().nonnegative().optional(),
   })
   .strict()
 
@@ -150,6 +161,9 @@ export const ChannelRuntimeStepSchema = z
       })
       .strict()
       .optional(),
+    durationMs: z.number().int().nonnegative().optional(),
+    firstTokenMs: z.number().int().nonnegative().optional(),
+    usage: ChannelRuntimeUsageSchema.optional(),
   })
   .strict()
 
@@ -160,6 +174,23 @@ export const ChannelRuntimeTurnSchema = z
     producedReply: z.boolean(),
     error: z.object({ code: NonEmptyStringSchema, message: z.string() }).strict().optional(),
     steps: z.array(ChannelRuntimeStepSchema),
+    durationMs: z.number().int().nonnegative().optional(),
+  })
+  .strict()
+
+export const ChannelRuntimeOccupancySchema = z
+  .object({
+    projectedTokens: z.number().int().nonnegative(),
+    contextWindow: z.number().int().positive(),
+    cacheReadTokens: z.number().int().nonnegative().optional(),
+    breakdown: z
+      .object({
+        systemTokens: z.number().int().nonnegative(),
+        toolsTokens: z.number().int().nonnegative(),
+        messageTokens: z.number().int().nonnegative(),
+      })
+      .strict()
+      .optional(),
   })
   .strict()
 
@@ -171,6 +202,7 @@ export const ChannelRuntimeProjectionSchema = z
     phase: ChannelRuntimePhaseSchema,
     summary: z.string(),
     pendingInjectCount: z.number().int().nonnegative(),
+    occupancy: ChannelRuntimeOccupancySchema.optional(),
     turns: z.array(ChannelRuntimeTurnSchema),
   })
   .strict()
@@ -181,6 +213,8 @@ export const ChannelRuntimeSseDataSchema = ChannelRuntimeProjectionSchema.extend
 }).strict()
 
 export type ChannelRuntimePhase = z.output<typeof ChannelRuntimePhaseSchema>
+export type ChannelRuntimeUsage = z.output<typeof ChannelRuntimeUsageSchema>
+export type ChannelRuntimeOccupancy = z.output<typeof ChannelRuntimeOccupancySchema>
 export type ChannelRuntimeProjection = z.output<typeof ChannelRuntimeProjectionSchema>
 export type ChannelRuntimeSseData = z.output<typeof ChannelRuntimeSseDataSchema>
 export type ChannelFactSseData = z.output<typeof ChannelFactSseDataSchema>

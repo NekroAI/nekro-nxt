@@ -92,6 +92,7 @@ export interface ChannelRuntimeView {
   readonly phase: AgentRuntimeState
   readonly summary: string
   readonly pendingInjectCount: number
+  readonly occupancy?: HostApiResponse<'getChannelRuntime'>['occupancy']
   readonly turns: HostApiResponse<'getChannelRuntime'>['turns']
 }
 

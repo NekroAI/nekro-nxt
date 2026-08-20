@@ -10,6 +10,9 @@ export const CHANNEL_RUNTIME_SSE_EVENT_TYPES = new Set([
   'tool/call',
   'tool/result',
   'assistant/message',
+  'user/message',
+  'request/header',
+  'request/context',
 ])
 
 export const shouldBroadcastChannelRuntime = (eventType: string | undefined): boolean =>
@@ -37,9 +40,11 @@ const reasoningFromBlocks = (
 
 export const normalizeSessionEvents = (events: readonly SessionEvent[]): RuntimeProjectionEvent[] => {
   const result: RuntimeProjectionEvent[] = []
+  const firstTokenKeys = new Set<string>()
   for (const event of events) {
+    const at = event.time
     if (event.type === 'turn/start') {
-      result.push({ type: 'turn/start', turn: event.data.turn })
+      result.push({ type: 'turn/start', turn: event.data.turn, at })
       continue
     }
     if (event.type === 'turn/end') {
@@ -48,12 +53,13 @@ export const normalizeSessionEvents = (events: readonly SessionEvent[]): Runtime
         type: 'turn/end',
         turn: event.data.turn,
         reasonKind: reason.kind,
+        at,
         ...(reason.kind === 'error' ? { errorCode: reason.error.code, errorMessage: reason.error.message } : {}),
       })
       continue
     }
     if (event.type === 'step/start' || event.type === 'step/end') {
-      result.push({ type: event.type, turn: event.data.turn, step: event.data.step })
+      result.push({ type: event.type, turn: event.data.turn, step: event.data.step, at })
       continue
     }
     if (event.type === 'tool/call') {
@@ -64,6 +70,7 @@ export const normalizeSessionEvents = (events: readonly SessionEvent[]): Runtime
         callId: String(event.data.callId),
         name: event.data.name,
         arguments: event.data.arguments,
+        at,
       })
       continue
     }
@@ -79,7 +86,20 @@ export const normalizeSessionEvents = (events: readonly SessionEvent[]): Runtime
         step: event.data.step,
         callId,
         failed: event.data.error !== undefined || (block.type === 'tool-result' && block.isError === true),
+        at,
         ...(resultPreview === undefined ? {} : { resultPreview }),
+      })
+      continue
+    }
+    if (event.type === 'assistant/chunk') {
+      const key = `${event.data.turn}:${event.data.step}`
+      if (firstTokenKeys.has(key)) continue
+      firstTokenKeys.add(key)
+      result.push({
+        type: 'assistant/first-token',
+        turn: event.data.turn,
+        step: event.data.step,
+        at,
       })
       continue
     }
@@ -87,13 +107,16 @@ export const normalizeSessionEvents = (events: readonly SessionEvent[]): Runtime
       const blocks = event.data.message.content
       const text = textFromBlocks(blocks)
       const reasoning = reasoningFromBlocks(blocks)
-      if (text === undefined && reasoning === undefined) continue
+      const usage = event.data.usage
+      if (text === undefined && reasoning === undefined && usage === undefined) continue
       result.push({
         type: 'assistant/message',
         turn: event.data.turn,
         step: event.data.step,
+        at,
         ...(text === undefined ? {} : { text }),
         ...(reasoning === undefined ? {} : { reasoning }),
+        ...(usage === undefined ? {} : { usage }),
       })
     }
   }
