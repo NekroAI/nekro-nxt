@@ -16,7 +16,10 @@ import {
   HostApiErrorSchema,
   ChannelFactSseDataSchema,
   ChannelRuntimeSseDataSchema,
+  HostSseStatusDataSchema,
   buildHostApiContractPath,
+  type ChannelFactSseData,
+  type ChannelRuntimeSseData,
   type HostApiContract,
   type HostApiContractParams,
   type HostApiContractRequest,
@@ -28,14 +31,13 @@ import type { ProductHostPort, ProductSnapshot } from './product-port.js'
 
 /**
  * Real Host port for the Web product: consumes the NekroNxt domain API exposed
- * by `apps/server` through the DSH WebServer seam (design docs/08). All read
- * traffic is one authoritative projection (`GET /api/snapshot`), live updates
- * ride a single SSE stream (`GET /api/events`), and every mutating product
- * action is a POST through `execute`.
+ * by `apps/server` through the DSH WebServer seam (design docs/08). The shell
+ * snapshot is `GET /api/snapshot`. Live messages and work-trajectory updates
+ * arrive as payloads on the single `GET /api/events` stream; REST remains the
+ * first-load, paging, and reconnect-resync path. Mutations go through `execute`.
  *
  * The `ProductHostPort` contract is synchronous (`getSnapshot`), so this class
- * keeps the latest fetched projection as a cached snapshot; `subscribe` starts
- * the SSE stream and refreshes the cache on each event. Transient network
+ * keeps the latest fetched projection as a cached snapshot. Transient network
  * failures while reading degrade to the last good snapshot. Mutations reject
  * with the Server's user-facing error so the initiating UI can show the real
  * outcome instead of presenting a false success.
@@ -436,7 +438,10 @@ export class HttpProductHost implements ProductHostPort {
   #hostSnapshot: SnapshotJson | undefined
   #listener: (() => void) | undefined
   readonly #loadedChannels = new Set<string>()
-  readonly #runtimeRefreshTimers = new Map<string, ReturnType<typeof setTimeout>>()
+  readonly #loadedRuntimes = new Set<string>()
+  readonly #messageRevision = new Map<string, number>()
+  readonly #runtimeRevision = new Map<string, number>()
+  readonly #reconciling = new Set<string>()
 
   getSnapshot(): ProductSnapshot {
     return this.#snapshot
@@ -458,28 +463,25 @@ export class HttpProductHost implements ProductHostPort {
           void this.#refreshAndNotify()
           return
         }
-        let data: ReturnType<typeof ChannelFactSseDataSchema.safeParse>
+        let parsed: ReturnType<typeof ChannelFactSseDataSchema.safeParse>
         try {
-          data = ChannelFactSseDataSchema.safeParse(JSON.parse(rawData))
+          parsed = ChannelFactSseDataSchema.safeParse(JSON.parse(rawData))
         } catch {
           void this.#refreshAndNotify()
           return
         }
-        if (data.success && this.#loadedChannels.has(data.data.channelId)) {
-          void this.#loadChannelMessages(data.data.channelId, 'latest', 40)
-          if (this.#snapshot.channelRuntimes[data.data.channelId]) {
-            this.#scheduleChannelRuntimeLoad(data.data.channelId)
-          }
-        } else {
+        if (!parsed.success) {
           void this.#refreshAndNotify()
+          return
         }
+        this.#applyChannelFact(parsed.data)
       })
       source.addEventListener('runtime', (event) => {
         const rawData = sseEventData(event)
         if (rawData === undefined) return
         try {
           const parsed = ChannelRuntimeSseDataSchema.safeParse(JSON.parse(rawData))
-          if (parsed.success) this.#scheduleChannelRuntimeLoad(parsed.data.channelId)
+          if (parsed.success) this.#applyRuntimeFrame(parsed.data)
         } catch {
           // Ignore malformed runtime frames; do not refetch the global snapshot.
         }
@@ -487,7 +489,22 @@ export class HttpProductHost implements ProductHostPort {
       source.addEventListener('extensions-changed', () => {
         void this.#refreshAndNotify()
       })
-      source.addEventListener('status', () => {
+      source.addEventListener('status', (event) => {
+        const rawData = sseEventData(event)
+        if (rawData === undefined) {
+          void this.#refreshAndNotify()
+          return
+        }
+        try {
+          const parsed = HostSseStatusDataSchema.safeParse(JSON.parse(rawData))
+          if (parsed.success && parsed.data.replay === 'complete') return
+          if (parsed.success && parsed.data.replay === 'expired') {
+            void this.#reconcileLoaded()
+            return
+          }
+        } catch {
+          // Fall through to a snapshot refresh for unparseable status frames.
+        }
         void this.#refreshAndNotify()
       })
       source.onerror = () => {
@@ -498,8 +515,6 @@ export class HttpProductHost implements ProductHostPort {
     }
     return () => {
       this.#listener = undefined
-      for (const timer of this.#runtimeRefreshTimers.values()) clearTimeout(timer)
-      this.#runtimeRefreshTimers.clear()
       source?.close()
     }
   }
@@ -770,46 +785,101 @@ export class HttpProductHost implements ProductHostPort {
     beforeOccurredAt?: number,
     beforeSourceId?: string,
   ): Promise<{ readonly messages: readonly ConversationMessage[]; readonly hasMore: boolean }> {
-    const raw = await this.#call(
-      HostApiContracts.listChannelMessages,
-      {
-        channelId,
-        limit,
-        ...(beforeOccurredAt === undefined ? {} : { beforeOccurredAt }),
-        ...(beforeSourceId === undefined ? {} : { beforeSourceId }),
-      },
-      undefined,
-    )
-    const projected = raw.messages.map((message) =>
-      projectConversationMessage(message, this.#snapshot.channels, this.#snapshot.agents),
-    )
-    const other = this.#snapshot.messages.filter((message) => message.channelId !== channelId)
-    const current = this.#snapshot.messages.filter((message) => message.channelId === channelId)
-    const combined =
-      mode === 'older' ? [...projected, ...current] : mode === 'latest' ? [...current, ...projected] : projected
-    const deduplicated = [...new Map(combined.map((message) => [message.id, message])).values()].sort(
-      (left, right) => (left.occurredAt ?? 0) - (right.occurredAt ?? 0),
-    )
-    this.#loadedChannels.add(channelId)
-    this.#snapshot = { ...this.#snapshot, messages: [...other, ...deduplicated] }
-    this.#listener?.()
-    return { messages: projected, hasMore: raw.hasMore }
-  }
-
-  #scheduleChannelRuntimeLoad(channelId: string): void {
-    if (this.#runtimeRefreshTimers.has(channelId)) return
-    this.#runtimeRefreshTimers.set(
-      channelId,
-      setTimeout(() => {
-        this.#runtimeRefreshTimers.delete(channelId)
-        void this.#loadChannelRuntime(channelId)
-      }, 200),
-    )
+    this.#reconciling.add(channelId)
+    try {
+      const raw = await this.#call(
+        HostApiContracts.listChannelMessages,
+        {
+          channelId,
+          limit,
+          ...(beforeOccurredAt === undefined ? {} : { beforeOccurredAt }),
+          ...(beforeSourceId === undefined ? {} : { beforeSourceId }),
+        },
+        undefined,
+      )
+      const projected = raw.messages.map((message) =>
+        projectConversationMessage(message, this.#snapshot.channels, this.#snapshot.agents),
+      )
+      const other = this.#snapshot.messages.filter((message) => message.channelId !== channelId)
+      const current = this.#snapshot.messages.filter((message) => message.channelId === channelId)
+      const combined =
+        mode === 'older' ? [...projected, ...current] : mode === 'latest' ? [...current, ...projected] : projected
+      const deduplicated = [...new Map(combined.map((message) => [message.id, message])).values()].sort(
+        (left, right) => (left.occurredAt ?? 0) - (right.occurredAt ?? 0),
+      )
+      this.#loadedChannels.add(channelId)
+      this.#messageRevision.delete(channelId)
+      this.#snapshot = { ...this.#snapshot, messages: [...other, ...deduplicated] }
+      this.#listener?.()
+      return { messages: projected, hasMore: raw.hasMore }
+    } finally {
+      this.#reconciling.delete(channelId)
+    }
   }
 
   async #loadChannelRuntime(channelId: string): Promise<ChannelRuntimeView> {
-    const raw = await this.#call(HostApiContracts.getChannelRuntime, { channelId }, undefined)
-    const view: ChannelRuntimeView = {
+    this.#reconciling.add(`runtime:${channelId}`)
+    try {
+      const raw = await this.#call(HostApiContracts.getChannelRuntime, { channelId }, undefined)
+      const view = this.#runtimeViewFromProjection(raw)
+      this.#loadedRuntimes.add(channelId)
+      this.#runtimeRevision.delete(channelId)
+      this.#writeRuntimeView(view, { includeTurns: true })
+      return view
+    } finally {
+      this.#reconciling.delete(`runtime:${channelId}`)
+    }
+  }
+
+  #applyChannelFact(data: ChannelFactSseData): void {
+    if (
+      !this.#loadedChannels.has(data.channelId) &&
+      !this.#snapshot.messages.some((message) => message.channelId === data.channelId)
+    ) {
+      return
+    }
+    this.#loadedChannels.add(data.channelId)
+    if (this.#reconciling.has(data.channelId)) return
+    const last = this.#messageRevision.get(data.channelId)
+    if (last !== undefined && data.revision !== last + 1) {
+      void this.#loadChannelMessages(data.channelId, 'latest', 40)
+      return
+    }
+    const projected = data.items.map((item) =>
+      projectConversationMessage(item.message, this.#snapshot.channels, this.#snapshot.agents),
+    )
+    const other = this.#snapshot.messages.filter((message) => message.channelId !== data.channelId)
+    const current = this.#snapshot.messages.filter((message) => message.channelId === data.channelId)
+    const combined = [...current, ...projected]
+    const deduplicated = [...new Map(combined.map((message) => [message.id, message])).values()].sort(
+      (left, right) => (left.occurredAt ?? 0) - (right.occurredAt ?? 0),
+    )
+    this.#messageRevision.set(data.channelId, data.revision)
+    this.#snapshot = { ...this.#snapshot, messages: [...other, ...deduplicated] }
+    this.#listener?.()
+  }
+
+  #applyRuntimeFrame(data: ChannelRuntimeSseData): void {
+    const view = this.#runtimeViewFromProjection(data)
+    this.#writeRuntimeView(view, { includeTurns: false })
+    if (!this.#loadedRuntimes.has(data.channelId)) return
+    if (this.#reconciling.has(`runtime:${data.channelId}`)) return
+    const last = this.#runtimeRevision.get(data.channelId)
+    if (data.truncated === true || (last !== undefined && data.revision !== last + 1)) {
+      void this.#loadChannelRuntime(data.channelId)
+      return
+    }
+    this.#runtimeRevision.set(data.channelId, data.revision)
+    this.#writeRuntimeView(view, { includeTurns: true })
+  }
+
+  #runtimeViewFromProjection(
+    raw: Pick<
+      ChannelRuntimeSseData,
+      'channelId' | 'agentId' | 'episodeId' | 'phase' | 'summary' | 'pendingInjectCount' | 'turns'
+    >,
+  ): ChannelRuntimeView {
+    return {
       channelId: raw.channelId,
       ...(raw.agentId === undefined ? {} : { agentId: raw.agentId }),
       ...(raw.episodeId === undefined ? {} : { episodeId: raw.episodeId }),
@@ -818,9 +888,15 @@ export class HttpProductHost implements ProductHostPort {
       pendingInjectCount: raw.pendingInjectCount,
       turns: raw.turns,
     }
+  }
+
+  #writeRuntimeView(view: ChannelRuntimeView, options: { readonly includeTurns: boolean }): void {
+    const channelId = view.channelId
+    const nextRuntimes = { ...this.#snapshot.channelRuntimes }
+    if (options.includeTurns) nextRuntimes[channelId] = view
     this.#snapshot = {
       ...this.#snapshot,
-      channelRuntimes: { ...this.#snapshot.channelRuntimes, [channelId]: view },
+      channelRuntimes: nextRuntimes,
       channels: this.#snapshot.channels.map((channel) =>
         channel.id === channelId ? { ...channel, runtimePhase: view.phase } : channel,
       ),
@@ -829,12 +905,18 @@ export class HttpProductHost implements ProductHostPort {
         const phases = this.#snapshot.channels
           .filter((channel) => channel.agentId === agent.id)
           .map((channel) => (channel.id === channelId ? view.phase : channel.runtimePhase))
-        const state = worstAgentState(phases)
-        return { ...agent, state }
+        return { ...agent, state: worstAgentState(phases) }
       }),
     }
     this.#listener?.()
-    return view
+  }
+
+  async #reconcileLoaded(): Promise<void> {
+    await this.#refreshAndNotify()
+    await Promise.all([
+      ...[...this.#loadedChannels].map((channelId) => this.#loadChannelMessages(channelId, 'latest', 40)),
+      ...[...this.#loadedRuntimes].map((channelId) => this.#loadChannelRuntime(channelId)),
+    ])
   }
 
   async #observeRequest<Result>(request: () => Promise<Result>): Promise<Result> {
@@ -872,6 +954,7 @@ export class HttpProductHost implements ProductHostPort {
       messages: this.#loadedChannels.size > 0 ? this.#snapshot.messages : projected.messages,
       channelRuntimes: this.#snapshot.channelRuntimes,
     }
+    for (const message of this.#snapshot.messages) this.#loadedChannels.add(message.channelId)
     this.#listener?.()
     return null
   }

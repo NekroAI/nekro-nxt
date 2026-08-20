@@ -804,32 +804,11 @@ describe('HttpProductHost', () => {
     unsubscribe()
   })
 
-  it('refreshes the projection when a channel-fact SSE event arrives', async () => {
-    let snapshotCalls = 0
+  it('applies a channel-fact SSE payload without pulling latest messages', async () => {
+    const requests: string[] = []
     fetchMock = vi.fn((input: string) => {
-      if (input === '/api/snapshot') {
-        snapshotCalls += 1
-        // 第二次快照（SSE 事件后刷新）携带新的 agent 回复。
-        if (snapshotCalls >= 2) {
-          return Promise.resolve(
-            stubResponse(200, {
-              ...snapshotBody(),
-              messages: [
-                ...snapshotBody().messages,
-                {
-                  id: secondReplyIntentId,
-                  channelId: webChannelId,
-                  role: 'agent',
-                  parts: [{ type: 'text', text: '第二条回复。' }],
-                  occurredAt: 1_700_000_002_000,
-                  deliveryState: 'sent',
-                },
-              ],
-            }),
-          )
-        }
-        return Promise.resolve(stubResponse(200, snapshotBody()))
-      }
+      requests.push(String(input))
+      if (input === '/api/snapshot') return Promise.resolve(stubResponse(200, snapshotBody()))
       return Promise.resolve(stubResponse(404, { error: { code: 'not-found', message: 'x' } }))
     })
     vi.stubGlobal('fetch', fetchMock)
@@ -846,24 +825,87 @@ describe('HttpProductHost', () => {
     expect(source).toBeDefined()
     source?.emit('channel-fact', {
       channelId: webChannelId,
-      message: {
-        id: secondReplyIntentId,
-        channelId: webChannelId,
-        role: 'agent',
-        parts: [{ type: 'text', text: '第二条回复。' }],
-        occurredAt: 1_700_000_002_000,
-        deliveryState: 'sent',
-      },
+      revision: 1,
+      items: [
+        {
+          kind: 'outbound',
+          sourceId: secondReplyIntentId,
+          message: {
+            id: secondReplyIntentId,
+            channelId: webChannelId,
+            role: 'agent',
+            parts: [{ type: 'text', text: '第二条回复。' }],
+            occurredAt: 1_700_000_002_000,
+            deliveryState: 'sent',
+          },
+        },
+      ],
     })
     await flush()
 
     expect(listener).toHaveBeenCalledTimes(2)
     expect(host.getSnapshot().messages).toHaveLength(3)
     expect(host.getSnapshot().messages.at(-1)).toMatchObject({ role: 'agent', body: '第二条回复。' })
+    expect(requests.filter((url) => url.includes('/messages'))).toEqual([])
     unsubscribe()
   })
 
-  it('does not refetch the global snapshot when runtime frames arrive in a burst', async () => {
+  it('updates delivery state when the same outbound fact is pushed again', async () => {
+    fetchMock = vi.fn((input: string) => {
+      if (input === '/api/snapshot') return Promise.resolve(stubResponse(200, snapshotBody()))
+      return Promise.resolve(stubResponse(404, { error: { code: 'not-found', message: 'x' } }))
+    })
+    vi.stubGlobal('fetch', fetchMock)
+    vi.stubGlobal('EventSource', FakeEventSource)
+
+    const host = new HttpProductHost()
+    const unsubscribe = host.subscribe(() => undefined)
+    await flush()
+    const source = FakeEventSource.instances[0]
+    source?.emit('channel-fact', {
+      channelId: webChannelId,
+      revision: 1,
+      items: [
+        {
+          kind: 'outbound',
+          sourceId: secondReplyIntentId,
+          message: {
+            id: secondReplyIntentId,
+            channelId: webChannelId,
+            role: 'agent',
+            parts: [{ type: 'text', text: '发送中的回复。' }],
+            occurredAt: 1_700_000_002_000,
+            deliveryState: 'planned',
+          },
+        },
+      ],
+    })
+    source?.emit('channel-fact', {
+      channelId: webChannelId,
+      revision: 2,
+      items: [
+        {
+          kind: 'outbound',
+          sourceId: secondReplyIntentId,
+          message: {
+            id: secondReplyIntentId,
+            channelId: webChannelId,
+            role: 'agent',
+            parts: [{ type: 'text', text: '发送中的回复。' }],
+            occurredAt: 1_700_000_002_000,
+            deliveryState: 'sent',
+          },
+        },
+      ],
+    })
+    await flush()
+    const pushed = host.getSnapshot().messages.filter((message) => message.id === secondReplyIntentId)
+    expect(pushed).toHaveLength(1)
+    expect(pushed[0]?.delivery).toBe('已发送')
+    unsubscribe()
+  })
+
+  it('does not refetch runtime or snapshot when runtime frames arrive in a burst', async () => {
     const requests: string[] = []
     fetchMock = vi.fn((input: string) => {
       requests.push(input)
@@ -891,11 +933,105 @@ describe('HttpProductHost', () => {
     const snapshotCallsAfterSubscribe = requests.filter((url) => url === '/api/snapshot').length
     const source = FakeEventSource.instances[0]
     for (let index = 0; index < 40; index += 1) {
-      source?.emit('runtime', { channelId: webChannelId })
+      source?.emit('runtime', {
+        channelId: webChannelId,
+        agentId: webAgentId,
+        phase: index % 2 === 0 ? 'thinking' : 'using-tool',
+        summary: index % 2 === 0 ? '智能体正在处理当前消息。' : '智能体正在使用发送频道消息。',
+        pendingInjectCount: 0,
+        turns: [],
+        revision: index + 1,
+      })
     }
-    await new Promise((resolve) => setTimeout(resolve, 250))
+    await flush()
     expect(requests.filter((url) => url === '/api/snapshot')).toHaveLength(snapshotCallsAfterSubscribe)
-    expect(requests.filter((url) => url.startsWith(`/api/channels/${webChannelId}/runtime`)).length).toBe(1)
+    expect(requests.filter((url) => url.startsWith(`/api/channels/${webChannelId}/runtime`))).toEqual([])
+    expect(host.getSnapshot().channels.find((channel) => channel.id === webChannelId)?.runtimePhase).toBe('使用工具')
+    unsubscribe()
+  })
+
+  it('replaces loaded trajectory turns from a runtime SSE frame', async () => {
+    const requests: string[] = []
+    fetchMock = vi.fn((input: string) => {
+      requests.push(String(input))
+      if (input === '/api/snapshot') return Promise.resolve(stubResponse(200, snapshotBody()))
+      if (String(input).startsWith(`/api/channels/${webChannelId}/runtime`)) {
+        return Promise.resolve(
+          stubResponse(200, {
+            channelId: webChannelId,
+            agentId: webAgentId,
+            phase: 'thinking',
+            summary: '智能体正在处理当前消息。',
+            pendingInjectCount: 0,
+            turns: [],
+          }),
+        )
+      }
+      return Promise.resolve(stubResponse(404, { error: { code: 'not-found', message: 'x' } }))
+    })
+    vi.stubGlobal('fetch', fetchMock)
+    vi.stubGlobal('EventSource', FakeEventSource)
+
+    const host = new HttpProductHost()
+    const unsubscribe = host.subscribe(() => undefined)
+    await flush()
+    await host.execute('channels.getRuntime', { channelId: webChannelId })
+    const runtimeCallsAfterLoad = requests.filter((url) => String(url).includes('/runtime')).length
+    FakeEventSource.instances[0]?.emit('runtime', {
+      channelId: webChannelId,
+      agentId: webAgentId,
+      phase: 'using-tool',
+      summary: '智能体正在使用发送频道消息。',
+      pendingInjectCount: 0,
+      revision: 1,
+      turns: [
+        {
+          turn: 1,
+          state: 'in-progress',
+          producedReply: false,
+          steps: [
+            {
+              step: 1,
+              tools: [
+                {
+                  callId: 'call_send',
+                  name: 'send_channel_message',
+                  displayName: '发送频道消息',
+                  state: 'running',
+                  wroteToChannel: false,
+                },
+              ],
+            },
+          ],
+        },
+      ],
+    })
+    await flush()
+    expect(requests.filter((url) => String(url).includes('/runtime'))).toHaveLength(runtimeCallsAfterLoad)
+    expect(host.getSnapshot().channelRuntimes[webChannelId]?.turns).toHaveLength(1)
+    expect(host.getSnapshot().channels.find((channel) => channel.id === webChannelId)?.runtimePhase).toBe('使用工具')
+    unsubscribe()
+  })
+
+  it('reconciles loaded messages when SSE reports an expired replay', async () => {
+    const requests: string[] = []
+    fetchMock = vi.fn((input: string) => {
+      requests.push(String(input))
+      if (input === '/api/snapshot') return Promise.resolve(stubResponse(200, snapshotBody()))
+      if (String(input).startsWith(`/api/channels/${webChannelId}/messages`)) {
+        return Promise.resolve(stubResponse(200, { messages: snapshotBody().messages, hasMore: false }))
+      }
+      return Promise.resolve(stubResponse(404, { error: { code: 'not-found', message: 'x' } }))
+    })
+    vi.stubGlobal('fetch', fetchMock)
+    vi.stubGlobal('EventSource', FakeEventSource)
+
+    const host = new HttpProductHost()
+    const unsubscribe = host.subscribe(() => undefined)
+    await flush()
+    FakeEventSource.instances[0]?.emit('status', { ok: true, message: '已连接', replay: 'expired' })
+    await flush()
+    expect(requests.some((url) => url.includes(`/api/channels/${webChannelId}/messages`))).toBe(true)
     unsubscribe()
   })
 

@@ -14,12 +14,12 @@
 | 方法 | 路由 | 语义 |
 |---|---|---|
 | 快照 | `GET /api/snapshot` | models、connectionAdapters、agents、channels、connections、extensions、dynamic、workTreeOrder；频道与智能体带 `runtimePhase`；历史按频道读取 |
-| 订阅 | `GET /api/events` | SSE：`channel-fact`、`runtime`、`status`、`binding-change` |
+| 订阅 | `GET /api/events` | SSE 数据面：`channel-fact` 带消息、`runtime` 带裁剪投影；`status` / `binding-change` / 扩展与 DSH 设置仍是信号 |
 | 创建智能体 | `POST /api/agents` | 创建智能体、Web Channel 与默认 Binding |
 | 新建网页频道 | `POST /api/channels` | 在系统托管网页连接上创建未绑定网页频道 |
 | 发送消息 | `POST /api/channels/:channelId/messages` | 仅网页频道入站 |
-| 频道历史 | `GET /api/channels/:channelId/messages` | `(occurredAt, sourceId)` 游标分页 |
-| 频道工作轨迹 | `GET /api/channels/:channelId/runtime` | 按频道投影 phase、当前工具、待注入和最近多轮 Turn |
+| 频道历史 | `GET /api/channels/:channelId/messages` | `(occurredAt, sourceId)` 游标分页；首载、翻页、重连对账 |
+| 频道工作轨迹 | `GET /api/channels/:channelId/runtime` | 按频道投影 phase、当前工具、待注入和最近多轮 Turn；首载与重连对账 |
 | 频道资源 | `GET /api/channels/:channelId/assets/:assetId` | 校验频道访问权后同源读取 |
 | 频道本地名称 | `POST /api/channels/:channelId/display-name` | 只改展示名 |
 | 创建连接 | `POST /api/connections` | 按已安装 Adapter schema 创建 |
@@ -36,6 +36,14 @@
 | 动态回路 | `POST /api/dynamic/:agentId/...` | 审批、Host half、Client 源码、结算 |
 
 快照含 DSH 模型目录、能力可用状态、Adapter 目录、Connection（无 Secret）、Gateway、已绑定频道和动态 Package。Web 搜索是否可用看 DSH 凭据，不靠环境变量名推断。
+
+全局只有一条 `GET /api/events`。消息和工作轨迹不再用「通知后再拉 REST」作为热路径。
+
+- `channel-fact` 携带该频道一批已投影的 `HostSnapshotMessage`（与历史接口同一形状）和该频道消息面 `revision`。同一 `sourceId` 先 planned 再 sent 时按 id 覆盖投递态。Host 对同一频道约 80ms 合并写入。
+- `runtime` 携带与 `GET /runtime` 相同的裁剪投影（工具预览 160 字、最近 24 轮）和该频道轨迹面 `revision`。服务端在 100ms 合并后再组装。序列化超过约 48KB 时只推 `phase` / `summary` 并标 `truncated`，前端对已打开的工作轨迹回退一次 REST。
+- 可回放事件带 SSE `id:`。浏览器重连自动带 `Last-Event-ID`。Host 在内存里保留最近 512 帧；窗口内补发，窗口外 `status.replay = expired`，前端对已加载频道拉一次历史或轨迹。权威事实仍是频道 Event Log 和当前 Session 投影，不是这份环形缓冲。
+- `status` / `extensions-changed` / `binding-change` / DSH 设置与凭据变更仍是信号，前端刷新对应快照或进度。
+- 不按频道再建 SSE，不把 `assistant/chunk` 或资源二进制推进帧。
 
 ## 3. Web 与 Server
 

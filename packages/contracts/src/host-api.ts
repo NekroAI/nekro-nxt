@@ -108,11 +108,19 @@ export const HostSnapshotMessageSchema = z
 
 export type HostSnapshotMessage = z.output<typeof HostSnapshotMessageSchema>
 
+export const ChannelFactSseItemSchema = z
+  .object({
+    kind: z.enum(['inbound', 'outbound']),
+    sourceId: z.union([ChannelEventIdSchema, OutboundIntentIdSchema]),
+    message: HostSnapshotMessageSchema,
+  })
+  .strict()
+
 export const ChannelFactSseDataSchema = z
   .object({
     channelId: ChannelIdSchema,
-    kind: z.enum(['inbound', 'outbound']),
-    sourceId: z.union([ChannelEventIdSchema, OutboundIntentIdSchema]),
+    revision: z.number().int().positive(),
+    items: z.array(ChannelFactSseItemSchema).min(1),
   })
   .strict()
 
@@ -167,10 +175,15 @@ export const ChannelRuntimeProjectionSchema = z
   })
   .strict()
 
-export const ChannelRuntimeSseDataSchema = z.object({ channelId: ChannelIdSchema }).strict()
+export const ChannelRuntimeSseDataSchema = ChannelRuntimeProjectionSchema.extend({
+  revision: z.number().int().positive(),
+  truncated: z.boolean().optional(),
+}).strict()
 
 export type ChannelRuntimePhase = z.output<typeof ChannelRuntimePhaseSchema>
 export type ChannelRuntimeProjection = z.output<typeof ChannelRuntimeProjectionSchema>
+export type ChannelRuntimeSseData = z.output<typeof ChannelRuntimeSseDataSchema>
+export type ChannelFactSseData = z.output<typeof ChannelFactSseDataSchema>
 
 const AdapterConfigurationPropertySchema = z.discriminatedUnion('type', [
   z
@@ -606,13 +619,21 @@ export const DshSettingsChangedSseDataSchema = z
 
 export const DshCredentialsChangedSseDataSchema = z.object({ ref: DshCredentialRefSchema }).strict()
 
+export const HostSseStatusDataSchema = z
+  .object({
+    ok: z.boolean(),
+    message: z.string(),
+    replay: z.enum(['none', 'complete', 'expired']).optional(),
+  })
+  .strict()
+
 export const HostSseEventSchema = z.discriminatedUnion('event', [
   z.object({ event: z.literal('channel-fact'), data: ChannelFactSseDataSchema }).strict(),
   z.object({ event: z.literal('runtime'), data: ChannelRuntimeSseDataSchema }).strict(),
   z.object({ event: z.literal('extensions-changed'), data: z.object({ changed: z.literal(true) }).strict() }).strict(),
   z.object({ event: z.literal('dsh-settings-changed'), data: DshSettingsChangedSseDataSchema }).strict(),
   z.object({ event: z.literal('dsh-credentials-changed'), data: DshCredentialsChangedSseDataSchema }).strict(),
-  z.object({ event: z.literal('status'), data: z.object({ ok: z.boolean(), message: z.string() }).strict() }).strict(),
+  z.object({ event: z.literal('status'), data: HostSseStatusDataSchema }).strict(),
   z
     .object({
       event: z.literal('binding-change'),

@@ -791,4 +791,135 @@ describe('NekroNxt Server domain API (WebServer seam)', () => {
       await second.dispose()
     }
   })
+
+  it('pushes channel-fact payloads over SSE and replays them via Last-Event-ID', async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), 'nekro-nxt-host-sse-'))
+    temporaryDirectories.push(directory)
+    const runtime = await NekroRuntime.create({
+      coreDatabasePath: path.join(directory, 'core.sqlite'),
+      sessionDatabasePath: path.join(directory, 'sessions.sqlite'),
+      assetRoot: path.join(directory, 'assets'),
+      extensionDataRoot: path.join(directory, 'extension-data'),
+      extensionCacheRoot: path.join(directory, 'extension-cache'),
+      configureLlm: (context: Context) => {
+        context.llm.registerAdapter(['test-provider'], new ScriptedCommunicationModel())
+      },
+    })
+    await runtime.start()
+    await runtime.recover()
+    const webContext = new Context()
+    await webContext.plugin(WebServer, { host: '127.0.0.1', port: 0 })
+    const api = createNekroHostApi(webContext.webServer, runtime)
+    const origin = `http://127.0.0.1:${api.port}`
+    try {
+      const created = HostApiContracts.createAgent.parseResponse(
+        await (
+          await fetch(`${origin}/api/agents`, {
+            method: 'POST',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({
+              displayName: '推送智能体',
+              persona: '',
+              model: { provider: 'test-provider', model: 'chat-model' },
+            }),
+          })
+        ).json(),
+      )
+      const live = await fetch(`${origin}/api/events`)
+      expect(live.headers.get('content-type')).toContain('text/event-stream')
+      const admitted = await fetch(`${origin}/api/channels/${created.channelId}/messages`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ parts: [{ type: 'text', text: 'SSE 直接推送。' }], clientEventId: 'sse-1' }),
+      })
+      expect(admitted.status).toBe(200)
+      const liveEvents = await readSseEvents(live, (events) =>
+        events.some((event) => event.name === 'channel-fact' && JSON.stringify(event.data).includes('SSE 直接推送。')),
+      )
+      const hello = liveEvents.find((event) => event.name === 'status')
+      expect(hello?.data).toMatchObject({ ok: true, replay: 'none' })
+      const fact = liveEvents.find((event) => event.name === 'channel-fact')
+      expect(fact?.id).toMatch(/^[1-9]\d*$/u)
+      expect(fact?.data).toMatchObject({ channelId: created.channelId, revision: 1 })
+      const items = z
+        .object({
+          items: z.array(
+            z.object({
+              kind: z.enum(['inbound', 'outbound']),
+              message: z.object({ role: z.string(), parts: z.array(z.unknown()) }).passthrough(),
+            }),
+          ),
+        })
+        .parse(fact?.data).items
+      expect(
+        items.some((item) => item.kind === 'inbound' && JSON.stringify(item.message).includes('SSE 直接推送。')),
+      ).toBe(true)
+
+      const replay = await fetch(`${origin}/api/events`, {
+        headers: { 'Last-Event-ID': String(fact?.id) },
+      })
+      const replayEvents = await readSseEvents(replay, (events) => events.some((event) => event.name === 'status'))
+      expect(replayEvents.find((event) => event.name === 'status')?.data).toMatchObject({ replay: 'complete' })
+      expect(
+        replayEvents.filter((event) => event.name === 'channel-fact').every((event) => event.id !== fact?.id),
+      ).toBe(true)
+    } finally {
+      api.dispose()
+      await webContext.fiber.dispose()
+      await runtime.dispose()
+    }
+  })
 })
+
+type ParsedSseEvent = {
+  readonly id?: string
+  readonly name: string
+  readonly data: unknown
+}
+
+const readSseEvents = async (
+  response: Response,
+  ready: (events: readonly ParsedSseEvent[]) => boolean,
+  timeoutMs = 4_000,
+): Promise<readonly ParsedSseEvent[]> => {
+  const reader = response.body?.getReader()
+  if (!reader) throw new Error('SSE response has no body.')
+  const decoder = new TextDecoder()
+  let buffer = ''
+  const events: ParsedSseEvent[] = []
+  const deadline = Date.now() + timeoutMs
+  try {
+    while (Date.now() < deadline) {
+      const remaining = Math.max(1, deadline - Date.now())
+      const chunk = await Promise.race([
+        reader.read(),
+        new Promise<{ readonly timeout: true }>((resolve) => setTimeout(() => resolve({ timeout: true }), remaining)),
+      ])
+      if ('timeout' in chunk) break
+      if (chunk.done) break
+      buffer += decoder.decode(chunk.value, { stream: true })
+      const blocks = buffer.split('\n\n')
+      buffer = blocks.pop() ?? ''
+      for (const block of blocks) {
+        if (!block.trim() || block.startsWith(':')) continue
+        let id: string | undefined
+        let name = 'message'
+        let data: string | undefined
+        for (const line of block.split('\n')) {
+          if (line.startsWith('id: ')) id = line.slice(4)
+          else if (line.startsWith('event: ')) name = line.slice(7)
+          else if (line.startsWith('data: ')) data = line.slice(6)
+        }
+        events.push({
+          ...(id === undefined ? {} : { id }),
+          name,
+          data: data === undefined ? undefined : JSON.parse(data),
+        })
+      }
+      if (ready(events)) return events
+    }
+    throw new Error(`Timed out waiting for SSE events. seen=${events.map((event) => event.name).join(',')}`)
+  } finally {
+    await reader.cancel().catch(() => undefined)
+  }
+}

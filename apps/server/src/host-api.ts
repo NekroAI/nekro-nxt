@@ -1,16 +1,18 @@
 import type { WebServer, WebRoute } from '@deepseek-ai/dsh-host-webserver'
+import type { ChannelFact, ChannelHistoryEntry } from '@nekro-nxt/channel-runtime'
 import type { AgentRevisionContent } from '@nekro-nxt/core'
 import {
   AgentIdSchema,
   AssetIdSchema,
+  ChannelEventIdSchema,
   ChannelIdSchema,
   ConnectionIdSchema,
   ExtensionIdSchema,
+  OutboundIntentIdSchema,
   DshCredentialsChangedSseDataSchema,
   DshSettingsChangedSseDataSchema,
   HostApiErrorSchema,
   HostApiContracts,
-  HostSseEventSchema,
   parseJsonValue,
   type AgentId,
   type ChannelId,
@@ -29,6 +31,7 @@ import {
   projectChannelRuntime,
   worstChannelRuntimePhase,
 } from './channel-runtime-projection.js'
+import { HostSseHub, parseLastEventId, renderSse, SSE_FACT_COALESCE_MS, SSE_RUNTIME_FRAME_BUDGET } from './sse-hub.js'
 
 /**
  * The NekroNxt domain API, wired directly onto the DSH WebServer seam. It is
@@ -43,11 +46,6 @@ export interface NekroHostApi {
   /** The actual listening port (OS-assigned when configured as 0). */
   readonly port: number
   dispose(): void
-}
-
-const renderSse = (payload: HostSseEvent): string => {
-  const parsed = HostSseEventSchema.parse(payload)
-  return `event: ${parsed.event}\ndata: ${JSON.stringify(parsed.data)}\n\n`
 }
 
 const readJsonBody = (req: IncomingMessage): Promise<unknown> =>
@@ -111,6 +109,82 @@ export const parseMessagePartsRequestBody = (
 ): ReturnType<typeof HostApiContracts.sendChannelMessage.parseRequest> =>
   HostApiContracts.sendChannelMessage.parseRequest(input)
 
+const decorateMessageParts = (
+  runtime: NekroRuntime,
+  parts: ChannelHistoryEntry['parts'],
+): HostSnapshotMessage['parts'] =>
+  parts.map((part) => {
+    if (part.type !== 'mention') return part
+    const displayName = runtime.repository.getChannelMember(part.memberId)?.displayName
+    return { ...part, ...(displayName === undefined ? {} : { displayName }) }
+  })
+
+export const projectHistoryEntry = (runtime: NekroRuntime, entry: ChannelHistoryEntry): HostSnapshotMessage => {
+  const parts = decorateMessageParts(runtime, entry.parts)
+  if (entry.source === 'channel-event') {
+    const sender =
+      entry.senderMemberId === undefined ? undefined : runtime.repository.getChannelMember(entry.senderMemberId)
+    return {
+      id: entry.sourceId,
+      channelId: entry.channelId,
+      role: 'member',
+      parts,
+      ...(entry.senderMemberId === undefined
+        ? {}
+        : {
+            sender: {
+              memberId: entry.senderMemberId,
+              ...(sender?.displayName === undefined ? {} : { displayName: sender.displayName }),
+            },
+          }),
+      ...(entry.facts?.['mentionedBot'] === true ? { mentionedConnectionAccount: true } : {}),
+      occurredAt: entry.occurredAt,
+    }
+  }
+  return {
+    id: entry.sourceId,
+    channelId: entry.channelId,
+    role: 'agent',
+    parts,
+    occurredAt: entry.occurredAt,
+    deliveryState: entry.state,
+  }
+}
+
+export const projectChannelFact = (runtime: NekroRuntime, fact: ChannelFact): HostSnapshotMessage | undefined => {
+  if (fact.kind === 'inbound') {
+    const parsed = ChannelEventIdSchema.safeParse(fact.sourceId)
+    if (!parsed.success) return undefined
+    const event = runtime.repository.getChannelEvent(parsed.data)
+    if (event === undefined) return undefined
+    return projectHistoryEntry(runtime, {
+      source: 'channel-event',
+      sourceId: event.id,
+      channelId: event.channelId,
+      occurredAt: event.receivedAt,
+      ...(event.senderMemberId === undefined ? {} : { senderMemberId: event.senderMemberId }),
+      parts: event.parts,
+      ...(event.facts === undefined ? {} : { facts: event.facts }),
+    })
+  }
+  const parsed = OutboundIntentIdSchema.safeParse(fact.sourceId)
+  if (!parsed.success) return undefined
+  try {
+    const outbound = runtime.repository.getOutbound(parsed.data)
+    return projectHistoryEntry(runtime, {
+      source: 'outbound-intent',
+      sourceId: outbound.intent.id,
+      logicalMessageId: outbound.intent.logicalMessageId,
+      channelId: fact.channelId,
+      occurredAt: outbound.intent.createdAt,
+      parts: outbound.intent.parts,
+      state: outbound.intent.state,
+    })
+  } catch {
+    return undefined
+  }
+}
+
 /** Build the authoritative projection snapshot from the assembled services only. */
 export const buildSnapshotMessage = (
   runtime: NekroRuntime,
@@ -120,43 +194,9 @@ export const buildSnapshotMessage = (
     readonly before?: { readonly occurredAt: number; readonly sourceId: string }
   } = {},
 ): readonly HostSnapshotMessage[] => {
-  const out: HostSnapshotMessage[] = []
-  for (const entry of runtime.repository.listChannelHistory(channelId, options)) {
-    const parts = entry.parts.map((part) => {
-      if (part.type !== 'mention') return part
-      const displayName = runtime.repository.getChannelMember(part.memberId)?.displayName
-      return { ...part, ...(displayName === undefined ? {} : { displayName }) }
-    })
-    if (entry.source === 'channel-event') {
-      const sender =
-        entry.senderMemberId === undefined ? undefined : runtime.repository.getChannelMember(entry.senderMemberId)
-      out.push({
-        id: entry.sourceId,
-        channelId: entry.channelId,
-        role: 'member',
-        parts,
-        ...(entry.senderMemberId === undefined
-          ? {}
-          : {
-              sender: {
-                memberId: entry.senderMemberId,
-                ...(sender?.displayName === undefined ? {} : { displayName: sender.displayName }),
-              },
-            }),
-        ...(entry.facts?.['mentionedBot'] === true ? { mentionedConnectionAccount: true } : {}),
-        occurredAt: entry.occurredAt,
-      })
-    } else if (entry.source === 'outbound-intent') {
-      out.push({
-        id: entry.sourceId,
-        channelId: entry.channelId,
-        role: 'agent',
-        parts,
-        occurredAt: entry.occurredAt,
-        deliveryState: entry.state,
-      })
-    }
-  }
+  const out = runtime.repository
+    .listChannelHistory(channelId, options)
+    .map((entry) => projectHistoryEntry(runtime, entry))
   // History is newest-first for pagination; expose oldest-first for the Web.
   return out.toReversed()
 }
@@ -310,32 +350,52 @@ export const createNekroHostApi = (webServer: WebServer, runtime: NekroRuntime):
     disposers.push(webServer.register(route))
   }
 
-  // Active SSE clients, so a single domain change (e.g. an AgentActivation
-  // transition) can be broadcast for live projection refresh on all open tabs.
-  const sseClients = new Set<ServerResponse>()
-  const broadcastExtensionsChanged = (): void => {
-    const frame = renderSse({ event: 'extensions-changed', data: { changed: true } })
-    for (const client of sseClients) {
-      try {
-        client.write(frame)
-      } catch {
-        // Connection already closed; the next close handler removes it.
-      }
-    }
+  // One global SSE hub: live clients plus a short in-memory replay window
+  // keyed by Last-Event-ID. Domain facts stay in Channel / Session stores.
+  const hub = new HostSseHub()
+  const messageRevision = new Map<ChannelId, number>()
+  const runtimeRevision = new Map<ChannelId, number>()
+  const pendingFacts = new Map<ChannelId, ChannelFact[]>()
+  let factTimer: ReturnType<typeof setTimeout> | undefined
+  const nextRevision = (store: Map<ChannelId, number>, channelId: ChannelId): number => {
+    const value = (store.get(channelId) ?? 0) + 1
+    store.set(channelId, value)
+    return value
   }
   const broadcast = (event: HostSseEvent): void => {
-    const frame = renderSse(event)
-    for (const client of sseClients) {
-      try {
-        client.write(frame)
-      } catch {
-        // Connection already closed; the next close handler removes it.
+    hub.publish(event)
+  }
+  const broadcastExtensionsChanged = (): void => {
+    broadcast({ event: 'extensions-changed', data: { changed: true } })
+  }
+  const flushPendingFacts = (): void => {
+    factTimer = undefined
+    const batches = [...pendingFacts.entries()]
+    pendingFacts.clear()
+    for (const [channelId, facts] of batches) {
+      const itemsBySource = new Map<
+        string,
+        { kind: ChannelFact['kind']; sourceId: ChannelFact['sourceId']; message: HostSnapshotMessage }
+      >()
+      for (const fact of facts) {
+        const message = projectChannelFact(runtime, fact)
+        if (message === undefined) continue
+        itemsBySource.set(fact.sourceId, { kind: fact.kind, sourceId: fact.sourceId, message })
       }
+      const items = [...itemsBySource.values()]
+      if (items.length === 0) continue
+      broadcast({
+        event: 'channel-fact',
+        data: { channelId, revision: nextRevision(messageRevision, channelId), items },
+      })
     }
   }
   disposers.push(
     runtime.channels.subscribeFacts((fact) => {
-      broadcast({ event: 'channel-fact', data: fact })
+      const queued = pendingFacts.get(fact.channelId) ?? []
+      queued.push(fact)
+      pendingFacts.set(fact.channelId, queued)
+      factTimer ??= setTimeout(flushPendingFacts, SSE_FACT_COALESCE_MS)
     }),
   )
 
@@ -833,23 +893,25 @@ export const createNekroHostApi = (webServer: WebServer, runtime: NekroRuntime):
     },
   })
 
-  // GET /api/events (SSE) — subscribe to channel facts / agent replies.
+  // GET /api/events (SSE) — live data plane for messages and work trajectory.
   registerRoute({
     kind: 'exact',
     path: '/api/events',
-    handler: (_req, res) => {
+    handler: (req, res) => {
       res.writeHead(200, {
         'content-type': 'text/event-stream; charset=utf-8',
         'cache-control': 'no-store',
         connection: 'keep-alive',
         'x-accel-buffering': 'no',
       })
-      res.write(renderSse({ event: 'status', data: { ok: true, message: '已连接' } }))
-      sseClients.add(res)
+      const replay = hub.replaySince(parseLastEventId(req.headers['last-event-id']))
+      for (const frame of replay.frames) hub.write(res, frame)
+      hub.write(res, renderSse({ event: 'status', data: { ok: true, message: '已连接', replay: replay.status } }))
+      hub.add(res)
 
-      const heartbeat = setInterval(() => res.write(`: heartbeat\n\n`), 15_000)
+      const heartbeat = setInterval(() => hub.write(res, `: heartbeat\n\n`), 15_000)
       const onClose = (): void => {
-        sseClients.delete(res)
+        hub.remove(res)
         clearInterval(heartbeat)
         res.end()
       }
@@ -1370,27 +1432,22 @@ export const createNekroHostApi = (webServer: WebServer, runtime: NekroRuntime):
   })
 
   const unsubscribeConnectionChanges = runtime.subscribeConnectionChanges(() => {
-    const frame = renderSse({ event: 'status', data: { ok: true, message: '连接状态已更新' } })
-    for (const client of sseClients) {
-      try {
-        client.write(frame)
-      } catch {
-        // Closed clients are removed by their close handler.
-      }
-    }
+    broadcast({ event: 'status', data: { ok: true, message: '连接状态已更新' } })
   })
   const unsubscribeRuntimeStatus = runtime.host.subscribeRuntimeStatus(() => {
-    const frame = renderSse({ event: 'status', data: { ok: true, message: '智能体运行状态已更新' } })
-    for (const client of sseClients) {
-      try {
-        client.write(frame)
-      } catch {
-        // Closed clients are removed by their close handler.
-      }
-    }
+    broadcast({ event: 'status', data: { ok: true, message: '智能体运行状态已更新' } })
   })
   const unsubscribeChannelRuntime = runtime.host.subscribeChannelRuntime((channelId) => {
-    broadcast({ event: 'runtime', data: { channelId } })
+    const projection = assembleChannelRuntime(runtime, channelId)
+    const revision = nextRevision(runtimeRevision, channelId)
+    const data = { ...projection, revision }
+    broadcast({
+      event: 'runtime',
+      data:
+        JSON.stringify(data).length > SSE_RUNTIME_FRAME_BUDGET
+          ? { ...projection, turns: [], revision, truncated: true }
+          : data,
+    })
   })
   const unsubscribeDshSettings = runtime.host.onDshSettingsChanged((namespace, revision) => {
     broadcast({
@@ -1629,6 +1686,8 @@ export const createNekroHostApi = (webServer: WebServer, runtime: NekroRuntime):
       return webServer.port
     },
     dispose() {
+      if (factTimer !== undefined) clearTimeout(factTimer)
+      pendingFacts.clear()
       unsubscribeConnectionChanges()
       unsubscribeRuntimeStatus()
       unsubscribeChannelRuntime()
