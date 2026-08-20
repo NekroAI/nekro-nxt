@@ -1,4 +1,5 @@
 :root {
+  interpolate-size: allow-keywords;
   color-scheme: light;
   --nxt-cyan-50: #ecfbff;
   --nxt-cyan-100: #d1f5ff;
@@ -116,6 +117,32 @@
   --nxt-shadow-control: 0 1px 2px rgb(0 0 0 / 18%);
   --nxt-shadow-popover: 0 20px 52px rgb(0 0 0 / 44%), 0 2px 10px rgb(0 0 0 / 25%);
   --nxt-shadow-dialog: 0 32px 88px rgb(0 0 0 / 58%), 0 4px 16px rgb(0 0 0 / 30%);
+}
+
+:root[data-theme-changing] *,
+:root[data-theme-changing] *::before,
+:root[data-theme-changing] *::after {
+  transition:
+    color var(--nxt-motion-standard) var(--nxt-ease-standard),
+    background-color var(--nxt-motion-standard) var(--nxt-ease-standard),
+    border-color var(--nxt-motion-standard) var(--nxt-ease-standard),
+    box-shadow var(--nxt-motion-standard) var(--nxt-ease-standard),
+    fill var(--nxt-motion-standard) var(--nxt-ease-standard),
+    stroke var(--nxt-motion-standard) var(--nxt-ease-standard);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  :root[data-theme-changing] *,
+  :root[data-theme-changing] *::before,
+  :root[data-theme-changing] *::after {
+    transition: none;
+  }
+}
+
+:root[data-reduced-motion='true'][data-theme-changing] *,
+:root[data-reduced-motion='true'][data-theme-changing] *::before,
+:root[data-reduced-motion='true'][data-theme-changing] *::after {
+  transition: none;
 }
 
 @media (prefers-color-scheme: dark) {

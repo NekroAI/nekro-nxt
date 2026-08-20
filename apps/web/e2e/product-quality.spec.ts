@@ -388,7 +388,17 @@ test('three desktop viewports remain usable in both themes and reduced motion', 
       expect(composerFrame.inputBorder).toBe(0)
       expect(composerFrame.inputBackground).toBe('rgba(0, 0, 0, 0)')
       await expect(page.getByText('发给智能体', { exact: true })).toHaveCount(1)
-      expect(await page.getByRole('button', { name: '发送给智能体' }).innerText()).toBe('')
+      const sendButton = page.getByRole('button', { name: '发送给智能体' })
+      expect(await sendButton.innerText()).toBe('')
+      const composerBox = await page.locator('[data-channel-composer]').boundingBox()
+      const infoBox = await page.getByRole('img', { name: '发送方式说明' }).boundingBox()
+      const modeBox = await page.getByText('发给智能体', { exact: true }).boundingBox()
+      const sendBox = await sendButton.boundingBox()
+      expect(infoBox?.x ?? Number.POSITIVE_INFINITY).toBeLessThan(modeBox?.x ?? 0)
+      expect(sendBox?.width ?? Number.POSITIVE_INFINITY).toBeLessThanOrEqual(30.5)
+      expect(
+        (composerBox?.x ?? 0) + (composerBox?.width ?? 0) - ((sendBox?.x ?? 0) + (sendBox?.width ?? 0)),
+      ).toBeLessThanOrEqual(16)
       const memberContent = page
         .locator('article[data-side="right"]')
         .filter({ hasText: '请复核今天的记录。' })
@@ -442,19 +452,22 @@ test('three desktop viewports remain usable in both themes and reduced motion', 
         const ring = page.locator('figure[aria-label="上下文占用"] svg')
         const ringBox = await ring.boundingBox()
         if (!ringBox) throw new Error('上下文环图没有几何尺寸。')
-        await page.mouse.move(ringBox.x + 85, ringBox.y + 27)
-        const chartTooltip = page.locator('figure[aria-label="上下文占用"] .recharts-tooltip-wrapper')
+        await page.mouse.move(ringBox.x + 76, ringBox.y + 21)
+        const chartTooltip = page.locator('figure[aria-label="上下文占用"] [role="tooltip"]')
         await expect(chartTooltip).toBeVisible()
         await expect(chartTooltip).toContainText(/36%|64%/u)
-        const chartSurface = await chartTooltip
-          .locator(':scope > *')
-          .first()
-          .evaluate((element) => {
-            const style = getComputedStyle(element)
-            return { background: style.backgroundColor, radius: Number.parseFloat(style.borderRadius) }
-          })
+        await expect(chartTooltip).toHaveAttribute('data-pointer-x', '76')
+        await page.mouse.move(ringBox.x + 94, ringBox.y + 40)
+        await expect(chartTooltip).toHaveAttribute('data-pointer-x', '94')
+        await expect(chartTooltip).toHaveCSS('left', '94px')
+        const chartSurface = await chartTooltip.evaluate((element) => {
+          const style = getComputedStyle(element)
+          return { background: style.backgroundColor, radius: Number.parseFloat(style.borderRadius) }
+        })
         expect(chartSurface.background).not.toBe('rgb(255, 255, 255)')
         expect(chartSurface.radius).toBeGreaterThanOrEqual(8)
+        await expect(page.locator('figure[aria-label="上下文占用"] [class*="contextSectorActive"]')).toHaveCount(1)
+        expect(await ring.evaluate((element) => getComputedStyle(element).outlineStyle)).toBe('none')
       }
       await capture(page, testInfo, `channel-${viewport.width}x${viewport.height}-${colorScheme}`)
     }
@@ -523,7 +536,11 @@ test('channel tabs, running tools, and trajectory rows remain keyboard operable'
   await page.setViewportSize({ width: 1100, height: 720 })
   await page.goto(`/work/channels/${targetChannelId}`)
 
-  const runningTool = page.getByRole('button', { name: /核对发布资料/u })
+  const streamSummary = page.getByRole('button', { name: /内部输出.*核对发布资料.*2 个工具/u })
+  await expect(streamSummary).toHaveAttribute('aria-expanded', 'false')
+  await streamSummary.click()
+  await expect(streamSummary).toHaveAttribute('aria-expanded', 'true')
+  const runningTool = page.getByRole('button', { name: /^核对发布资料/u })
   await expect(runningTool).toHaveAttribute('aria-expanded', 'true')
   const controlledId = await runningTool.getAttribute('aria-controls')
   expect(controlledId).toBeTruthy()
@@ -540,6 +557,9 @@ test('channel tabs, running tools, and trajectory rows remain keyboard operable'
   await runningTool.click()
   await expect(runningTool).toHaveAttribute('aria-expanded', 'false')
   await expect(controlledRegion).toHaveCount(0)
+  await streamSummary.click()
+  await expect(streamSummary).toHaveAttribute('aria-expanded', 'false')
+  await expect(runningTool).toBeHidden()
 
   const chatTab = page.getByRole('tab', { name: '会话' })
   const trajectoryTab = page.getByRole('tab', { name: '工作轨迹' })
@@ -547,6 +567,7 @@ test('channel tabs, running tools, and trajectory rows remain keyboard operable'
   await page.keyboard.press('ArrowRight')
   await expect(trajectoryTab).toHaveAttribute('aria-selected', 'true')
   await expect(page.getByLabel('工作轨迹记录')).toBeVisible()
+  await expect(page.getByLabel('消息内容')).toHaveCount(0)
   const trajectoryGeometry = await page.evaluate(() => {
     const canvas = document.querySelector('[data-channel-canvas-stage]')!
     const ledger = document.querySelector('[aria-label="工作轨迹记录"]')!
@@ -607,7 +628,8 @@ test('desktop splitters and appearance preferences persist and recover defaults'
   await page.getByRole('separator', { name: '调整检查器宽度' }).dblclick()
   await expect(page.getByRole('separator', { name: '调整检查器宽度' })).toHaveAttribute('aria-valuenow', '360')
   await page.getByRole('button', { name: '收起检查器' }).click()
-  await expect(page.getByRole('complementary', { name: '频道' })).toHaveCount(0)
+  await expect(page.locator('[class*="inspectorPane"]')).toHaveAttribute('aria-hidden', 'true')
+  await expect(page.getByRole('complementary', { name: '频道', includeHidden: true })).toBeHidden()
   await page.reload()
   await expect(page.getByRole('button', { name: '展开检查器' })).toBeVisible()
   await page.getByRole('button', { name: '展开检查器' }).click()
@@ -990,6 +1012,15 @@ test('desktop shell keeps a 48px top bar and a permanently available object pane
   await expect(pane).toBeVisible()
   await expect(page.getByRole('button', { name: /收起对象列|展开对象列/u })).toHaveCount(0)
   await expect(page.getByRole('separator', { name: '调整对象列宽度' })).toBeVisible()
+  const themeButton = page.getByRole('button', { name: /^主题：/u })
+  await expect(themeButton).toBeVisible()
+  await themeButton.click()
+  await expect(page.locator('html')).toHaveAttribute('data-theme', 'light')
+  await themeButton.click()
+  await expect(page.locator('html')).toHaveAttribute('data-theme', 'dark')
+  await themeButton.click()
+  await expect(page.locator('html')).not.toHaveAttribute('data-theme')
+  await expect(page.locator('[class*="railHostDot"]')).toHaveCount(0)
   await capture(page, testInfo, 'desktop-object-pane-stable')
 
   expect(failures, failures.join('\n')).toEqual([])
@@ -1034,7 +1065,7 @@ test('an initial Host failure is explicit and can recover without reloading', as
   await expect(page.getByText('还没有智能体', { exact: true }).first()).toBeVisible()
   healthy = true
   await page.getByRole('button', { name: '重新连接' }).last().click()
-  await expect(page.getByTitle('运行正常')).toBeVisible()
+  await expect(page.getByText('无法连接', { exact: true }).first()).toBeHidden()
   await expect(page.getByRole('link', { name: /资料员/u }).first()).toBeVisible()
   expect(
     failures.filter((failure) => !failure.includes('503 (Service Unavailable)')),

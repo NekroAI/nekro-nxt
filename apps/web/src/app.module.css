@@ -126,34 +126,24 @@
   flex: 1;
 }
 
-.railHost {
+.railTheme {
+  width: 32px;
+  min-width: 32px;
+  height: 32px;
+  min-height: 32px;
+  color: var(--nxt-text-muted);
+}
+
+.railTheme:hover,
+.railTheme:focus-visible {
+  color: var(--nxt-accent);
+  background: var(--nxt-bg-hover);
+}
+
+.themeIcon {
   display: grid;
-  width: 28px;
-  height: 28px;
   place-items: center;
-}
-
-.railHostDot {
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
-  background: var(--nxt-text-disabled);
-}
-
-.railHostDot[data-tone='success'] {
-  background: var(--nxt-success, #157347);
-}
-
-.railHostDot[data-tone='warning'] {
-  background: var(--nxt-warning, #9a5b00);
-}
-
-.railHostDot[data-tone='error'] {
-  background: var(--nxt-danger, #b4232d);
-}
-
-.railHostDot[data-tone='info'] {
-  background: var(--nxt-accent);
+  animation: theme-icon-enter var(--nxt-motion-standard) var(--nxt-ease-enter) both;
 }
 
 .tree {
@@ -224,7 +214,8 @@
   min-height: 0;
   flex: 1;
   flex-direction: column;
-  animation: route-enter var(--nxt-motion-standard) var(--nxt-ease-enter) both;
+  transform-origin: 50% 20%;
+  animation: route-enter var(--nxt-motion-spatial) var(--nxt-ease-enter) both;
 }
 
 .centeredState {
@@ -249,12 +240,26 @@
 @keyframes route-enter {
   from {
     opacity: 0;
-    transform: translateY(4px);
+    filter: blur(2px);
+    transform: translateY(7px) scale(0.997);
   }
 
   to {
     opacity: 1;
-    transform: translateY(0);
+    filter: blur(0);
+    transform: translateY(0) scale(1);
+  }
+}
+
+@keyframes theme-icon-enter {
+  from {
+    opacity: 0;
+    transform: rotate(-35deg) scale(0.72);
+  }
+
+  to {
+    opacity: 1;
+    transform: rotate(0) scale(1);
   }
 }
 
@@ -262,8 +267,16 @@
   .routeView {
     animation: none;
   }
+
+  .themeIcon {
+    animation: none;
+  }
 }
 
 :global([data-reduced-motion='true']) .routeView {
+  animation: none;
+}
+
+:global([data-reduced-motion='true']) .themeIcon {
   animation: none;
 }

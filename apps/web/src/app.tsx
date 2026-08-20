@@ -1,9 +1,9 @@
-import { Boxes, Cable, MessageSquare, RefreshCw, Settings } from 'lucide-react'
+import { Boxes, Cable, MessageSquare, Monitor, Moon, Settings, Sun } from 'lucide-react'
 import { Component, useEffect, useMemo, useState, type CSSProperties, type ErrorInfo, type ReactNode } from 'react'
 import { Navigate, NavLink, Outlet, Route, Routes, useLocation, useParams } from 'react-router-dom'
 import styles from './app.module.css'
-import { NotificationCenter, notify } from './components/notifications.js'
-import { EmptyState, HostNotice, runHostRefresh } from './components/product-feedback.js'
+import { NotificationCenter } from './components/notifications.js'
+import { EmptyState, HostNotice } from './components/product-feedback.js'
 import { DynamicClientProvider } from './dynamic-client-coordinator.js'
 import {
   AgentManagePage,
@@ -17,7 +17,7 @@ import {
 import { useProductStore, type ProductHostStatus } from './product-store.js'
 import { isWorkPath, workHomePath } from './shell/last-channel.js'
 import { ObjectPane } from './shell/object-pane.js'
-import { Button, ResizeHandle, Tooltip, type StatusTone } from './ui-kit/index.js'
+import { Button, IconButton, ResizeHandle, Tooltip, type StatusTone } from './ui-kit/index.js'
 import { OBJECT_PANE_WIDTH, useUiPreferences } from './ui-preferences.js'
 
 const modes = [
@@ -84,9 +84,8 @@ function RuntimeRedirect() {
 
 function DesktopShell() {
   const location = useLocation()
-  const host = useProductStore((state) => state.host)
-  const status = hostPresentation(host.status)
-  const [refreshPending, setRefreshPending] = useState(false)
+  const theme = useProductStore((state) => state.theme)
+  const reducedMotion = useProductStore((state) => state.reducedMotion)
   const savedObjectPaneWidth = useUiPreferences((state) => state.layout.objectPaneWidth)
   const [objectPaneWidth, setObjectPaneWidth] = useState(savedObjectPaneWidth)
   const shellStyle: CSSProperties & {
@@ -95,15 +94,15 @@ function DesktopShell() {
     '--nxt-object-pane-width': `${objectPaneWidth}px`,
   }
   useEffect(() => setObjectPaneWidth(savedObjectPaneWidth), [savedObjectPaneWidth])
-  const reconnect = async (): Promise<void> => {
-    if (refreshPending) return
-    await runHostRefresh(
-      () => useProductStore.getState().refreshHost(),
-      setRefreshPending,
-      (message) => {
-        if (message) notify(`重新连接失败：${message}`, 'error', 'host-reconnect')
-      },
-    )
+  const nextTheme = theme === 'system' ? 'light' : theme === 'light' ? 'dark' : 'system'
+  const themeLabel = theme === 'system' ? '跟随系统' : theme === 'light' ? '浅色' : '深色'
+  const nextThemeLabel = nextTheme === 'system' ? '跟随系统' : nextTheme === 'light' ? '浅色' : '深色'
+  const ThemeIcon = theme === 'system' ? Monitor : theme === 'light' ? Sun : Moon
+  const cycleTheme = (): void => {
+    const root = document.documentElement
+    if (!reducedMotion) root.dataset['themeChanging'] = ''
+    useProductStore.getState().setTheme(nextTheme)
+    if (!reducedMotion) window.setTimeout(() => delete root.dataset['themeChanging'], 240)
   }
 
   return (
@@ -142,22 +141,15 @@ function DesktopShell() {
             ))}
           </nav>
           <div className={styles.railSpacer} />
-          <div className={styles.railHost}>
-            {host.status === 'stale' || host.status === 'error' ? (
-              <Button
-                size="small"
-                variant="ghost"
-                aria-label={`重新连接（${status.label}）`}
-                loading={refreshPending}
-                loadingLabel="连接中…"
-                onClick={() => void reconnect()}
-              >
-                <RefreshCw size={14} aria-hidden="true" />
-              </Button>
-            ) : (
-              <span className={styles.railHostDot} data-tone={status.tone} title={status.label} />
-            )}
-          </div>
+          <IconButton
+            label={`主题：${themeLabel}；切换为${nextThemeLabel}`}
+            className={styles.railTheme}
+            onClick={cycleTheme}
+          >
+            <span className={styles.themeIcon} key={theme}>
+              <ThemeIcon size={16} strokeWidth={1.8} aria-hidden="true" />
+            </span>
+          </IconButton>
         </aside>
         <aside className={styles.tree} aria-label="对象列">
           <ObjectPane />

@@ -114,6 +114,7 @@ export function ResizeHandle({
   defaultValue,
   className,
   side = 'before',
+  disabled = false,
   onChange,
   onCommit,
 }: {
@@ -124,6 +125,7 @@ export function ResizeHandle({
   readonly defaultValue: number
   readonly className?: string
   readonly side?: 'before' | 'after'
+  readonly disabled?: boolean
   readonly onChange: (value: number) => void
   readonly onCommit: (value: number) => void
 }) {
@@ -143,6 +145,7 @@ export function ResizeHandle({
     onCommit(clamped)
   }
   const onKeyDown = (event: ReactKeyboardEvent<HTMLDivElement>): void => {
+    if (disabled) return
     const step = event.shiftKey ? 10 : 1
     const direction = side === 'before' ? 1 : -1
     if (event.key === 'ArrowLeft') change(value - step * direction)
@@ -165,7 +168,9 @@ export function ResizeHandle({
     <div
       className={[styles.resizeHandle, className].filter(Boolean).join(' ')}
       role="separator"
-      tabIndex={0}
+      tabIndex={disabled ? -1 : 0}
+      aria-hidden={disabled || undefined}
+      data-disabled={disabled ? '' : undefined}
       aria-label={label}
       aria-orientation="vertical"
       aria-valuemin={min}
@@ -174,7 +179,7 @@ export function ResizeHandle({
       onKeyDown={onKeyDown}
       onDoubleClick={() => commit(defaultValue)}
       onPointerDown={(event) => {
-        if (event.button !== 0) return
+        if (disabled || event.button !== 0) return
         dragStart.current = { x: event.clientX, value }
         currentValue.current = value
         event.currentTarget.setPointerCapture(event.pointerId)

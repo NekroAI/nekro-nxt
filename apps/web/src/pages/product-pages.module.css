@@ -697,6 +697,48 @@
   place-items: center;
 }
 
+.contextRing svg {
+  outline: none;
+}
+
+.contextSector {
+  transform-box: fill-box;
+  transform-origin: center;
+  transition:
+    transform var(--nxt-motion-fast) var(--nxt-ease-enter),
+    filter var(--nxt-motion-fast) var(--nxt-ease-standard);
+}
+
+.contextSectorActive {
+  filter: brightness(1.08) drop-shadow(0 2px 3px rgb(0 0 0 / 18%));
+  transform: scale(1.045);
+}
+
+.contextTooltip {
+  position: absolute;
+  z-index: var(--nxt-layer-floating);
+  width: max-content;
+  max-width: 180px;
+  border: 1px solid var(--nxt-border-default);
+  border-radius: var(--nxt-radius-popover);
+  padding: 7px 9px;
+  color: var(--nxt-text-primary);
+  background: var(--nxt-bg-elevated);
+  box-shadow: var(--nxt-shadow-popover);
+  font-size: 11px;
+  line-height: 16px;
+  pointer-events: none;
+  animation: context-tooltip-fade var(--nxt-motion-standard) linear both;
+}
+
+.contextTooltip[data-side='right'] {
+  transform: translate(10px, 8px);
+}
+
+.contextTooltip[data-side='left'] {
+  transform: translate(calc(-100% - 10px), 8px);
+}
+
 .contextRing > strong {
   position: absolute;
   font-size: 13px;
@@ -823,6 +865,23 @@
 .optionalTests {
   border-top: 1px solid var(--nxt-border-subtle);
   padding-top: 14px;
+}
+
+.optionalTests::details-content,
+.channelDetails::details-content {
+  overflow: hidden;
+  block-size: 0;
+  opacity: 0;
+  transition:
+    block-size var(--nxt-motion-spatial) var(--nxt-ease-standard),
+    opacity var(--nxt-motion-standard) var(--nxt-ease-standard),
+    content-visibility var(--nxt-motion-spatial) allow-discrete;
+}
+
+.optionalTests[open]::details-content,
+.channelDetails[open]::details-content {
+  block-size: auto;
+  opacity: 1;
 }
 
 .optionalTests summary {
@@ -1062,11 +1121,17 @@
   height: 100%;
   min-height: 0;
   flex: 1;
+  overflow: hidden;
   background: var(--nxt-bg-surface);
 }
 
 .conversationPage[data-inspector-collapsed] {
-  grid-template-columns: minmax(0, 1fr);
+  grid-template-columns: minmax(0, 1fr) 0 0;
+}
+
+.conversationPage[data-inspector-transitioning],
+.workbenchPage[data-inspector-transitioning] {
+  transition: grid-template-columns var(--nxt-motion-spatial) var(--nxt-ease-standard);
 }
 
 .channelDirectory,
@@ -1517,6 +1582,10 @@
   color: var(--nxt-text-secondary);
   background: transparent;
   font-size: 13px;
+  transition:
+    color var(--nxt-motion-fast) var(--nxt-ease-standard),
+    background var(--nxt-motion-fast) var(--nxt-ease-standard),
+    box-shadow var(--nxt-motion-fast) var(--nxt-ease-standard);
 }
 
 .viewSwitch button[data-state='active'] {
@@ -1541,7 +1610,7 @@
   line-height: 18px;
 }
 
-.thinkRow,
+.workStreamSummary,
 .toolRow {
   display: grid;
   width: fit-content;
@@ -1556,12 +1625,16 @@
   border: 0;
 }
 
-.toolsMore {
-  width: fit-content;
-  max-width: 100%;
-  color: var(--nxt-text-muted);
-  font-size: 12px;
-  padding: 4px 8px 4px 24px;
+.workStreamSummary {
+  padding: 7px 8px;
+  transition:
+    color var(--nxt-motion-fast) var(--nxt-ease-standard),
+    background var(--nxt-motion-fast) var(--nxt-ease-standard);
+}
+
+.workStreamSummary:hover,
+.workStreamSummary:focus-visible {
+  background: var(--nxt-bg-hover);
 }
 
 .workRow {
@@ -1587,6 +1660,57 @@
   font-size: 12px;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.workSummaryRow {
+  grid-template-columns: 7px max-content minmax(80px, 1fr) max-content 14px;
+}
+
+.workToolCount {
+  color: var(--nxt-text-muted);
+  font-size: 11px;
+  white-space: nowrap;
+}
+
+.workStreamChevron {
+  color: var(--nxt-text-muted);
+  transform: rotate(0);
+  transition: transform var(--nxt-motion-standard) var(--nxt-ease-standard);
+}
+
+.workStreamChevron[data-open] {
+  transform: rotate(180deg);
+}
+
+.workStreamDisclosure {
+  display: grid;
+  width: 100%;
+  grid-template-rows: 0fr;
+  opacity: 0;
+  visibility: hidden;
+  transition:
+    grid-template-rows var(--nxt-motion-spatial) var(--nxt-ease-standard),
+    opacity var(--nxt-motion-standard) var(--nxt-ease-standard),
+    visibility 0s var(--nxt-motion-spatial);
+}
+
+.workStreamDisclosure[data-open] {
+  grid-template-rows: 1fr;
+  opacity: 1;
+  visibility: visible;
+  transition-delay: 0s;
+}
+
+.workStreamDisclosure > div {
+  min-height: 0;
+  overflow: hidden;
+}
+
+.workStreamDetails {
+  display: grid;
+  justify-items: start;
+  gap: 2px;
+  padding-top: 4px;
 }
 
 .workDot {
@@ -1618,7 +1742,6 @@
   font-size: 13px;
   line-height: 20px;
   white-space: pre-wrap;
-  animation: disclosure-enter var(--nxt-motion-fast) var(--nxt-ease-enter) both;
 }
 
 .toolCard {
@@ -2074,6 +2197,10 @@
   box-shadow: var(--nxt-shadow-float);
 }
 
+.canvasStage[data-view='trajectory'] .jumpBottom {
+  bottom: 24px;
+}
+
 .messageList {
   position: relative;
   min-height: 0;
@@ -2492,6 +2619,7 @@
   transition:
     border-color var(--nxt-motion-fast) var(--nxt-ease-standard),
     box-shadow var(--nxt-motion-fast) var(--nxt-ease-standard);
+  animation: composer-enter var(--nxt-motion-spatial) var(--nxt-ease-enter) both;
 }
 
 .composer:focus-within {
@@ -2509,9 +2637,14 @@
   display: flex;
   min-width: 0;
   align-items: center;
-  gap: 4px;
+  gap: 6px;
   min-height: 30px;
-  padding: 0 2px;
+  padding: 0 6px;
+}
+
+.composerModeSpacer {
+  min-width: 8px;
+  flex: 1;
 }
 
 .composerMode {
@@ -2540,7 +2673,7 @@
 }
 
 .composerWebAction {
-  margin-left: auto;
+  flex: none;
 }
 
 .composer .composerInput {
@@ -2562,7 +2695,12 @@
 }
 
 .composerSend {
-  margin-left: 4px;
+  width: 30px;
+  min-width: 30px;
+  height: 30px;
+  min-height: 30px;
+  flex: none;
+  margin-left: 2px;
   border-radius: var(--nxt-radius-round);
   color: var(--nxt-accent-foreground);
   background: var(--nxt-accent);
@@ -2622,12 +2760,63 @@
   box-shadow: 0 0 0 2px var(--nxt-focus-ring);
 }
 
-.inspectorActions {
+.bindingInspector {
+  display: grid;
+  gap: 12px;
+}
+
+.bindingAgentRow {
   display: flex;
+  min-width: 0;
   align-items: center;
-  flex-wrap: wrap;
-  gap: 8px;
-  margin-top: 12px;
+  justify-content: space-between;
+  gap: 10px;
+  border: 1px solid var(--nxt-border-subtle);
+  border-radius: var(--nxt-radius-md);
+  padding: 10px;
+  background: var(--nxt-bg-subtle);
+}
+
+.bindingAgentIdentity {
+  display: grid;
+  min-width: 0;
+  gap: 2px;
+}
+
+.bindingAgentIdentity span,
+.bindingSourceRow span {
+  color: var(--nxt-text-muted);
+  font-size: 11px;
+}
+
+.bindingAgentIdentity strong,
+.bindingSourceRow strong {
+  overflow: hidden;
+  color: var(--nxt-text-primary);
+  font-size: 13px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.bindingAgentActions {
+  display: flex;
+  flex: none;
+  gap: 4px;
+}
+
+.bindingSourceRow {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 0 2px;
+}
+
+.bindingEmpty {
+  display: grid;
+  justify-items: start;
+  gap: 10px;
 }
 
 .channelDetails {
@@ -2652,11 +2841,12 @@
   height: 100%;
   min-height: 0;
   flex: 1;
+  overflow: hidden;
   background: var(--nxt-bg-surface);
 }
 
 .workbenchPage[data-inspector-collapsed] {
-  grid-template-columns: minmax(0, 1fr);
+  grid-template-columns: minmax(0, 1fr) 0 0;
 }
 
 .agentCreatePage {
@@ -2665,6 +2855,41 @@
 
 .inspectorSplitter {
   background: var(--nxt-bg-sidebar);
+  opacity: 1;
+  transition: opacity var(--nxt-motion-fast) var(--nxt-ease-standard);
+}
+
+[data-inspector-collapsed] > .inspectorSplitter {
+  opacity: 0;
+}
+
+.inspectorPane {
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+  opacity: 1;
+  transform: translateX(0);
+  transition:
+    opacity var(--nxt-motion-fast) var(--nxt-ease-standard),
+    transform var(--nxt-motion-spatial) var(--nxt-ease-standard),
+    visibility 0s linear;
+}
+
+.inspectorPane[data-collapsed] {
+  visibility: hidden;
+  opacity: 0;
+  transform: translateX(10px);
+  transition:
+    opacity var(--nxt-motion-fast) var(--nxt-ease-exit),
+    transform var(--nxt-motion-standard) var(--nxt-ease-exit),
+    visibility 0s linear var(--nxt-motion-standard);
+}
+
+.inspectorPane > .inspector {
+  box-sizing: border-box;
+  width: var(--nxt-inspector-width, 360px);
+  height: 100%;
+  animation: inspector-view-enter var(--nxt-motion-standard) var(--nxt-ease-enter) both;
 }
 
 .workbenchDoc {
@@ -2772,6 +2997,26 @@
   }
 
   .composer {
+    animation: none;
+    transition: none;
+  }
+
+  .conversationPage,
+  .workbenchPage,
+  .inspectorPane,
+  .inspectorSplitter {
+    transition: none;
+  }
+
+  .inspectorPane > .inspector {
+    animation: none;
+  }
+
+  .optionalTests::details-content,
+  .channelDetails::details-content,
+  .workStreamDisclosure,
+  .workStreamChevron,
+  .contextSector {
     transition: none;
   }
 
@@ -2787,6 +3032,26 @@
 }
 
 :global([data-reduced-motion='true']) .composer {
+  animation: none;
+  transition: none;
+}
+
+:global([data-reduced-motion='true']) .conversationPage,
+:global([data-reduced-motion='true']) .workbenchPage,
+:global([data-reduced-motion='true']) .inspectorPane,
+:global([data-reduced-motion='true']) .inspectorSplitter {
+  transition: none;
+}
+
+:global([data-reduced-motion='true']) .inspectorPane > .inspector {
+  animation: none;
+}
+
+:global([data-reduced-motion='true']) .optionalTests::details-content,
+:global([data-reduced-motion='true']) .channelDetails::details-content,
+:global([data-reduced-motion='true']) .workStreamDisclosure,
+:global([data-reduced-motion='true']) .workStreamChevron,
+:global([data-reduced-motion='true']) .contextSector {
   transition: none;
 }
 
@@ -2815,5 +3080,39 @@
   to {
     opacity: 1;
     transform: translateY(0);
+  }
+}
+
+@keyframes composer-enter {
+  from {
+    opacity: 0;
+    transform: translateY(10px) scale(0.99);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+@keyframes context-tooltip-fade {
+  from {
+    opacity: 0;
+  }
+
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes inspector-view-enter {
+  from {
+    opacity: 0;
+    transform: translateX(6px);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateX(0);
   }
 }

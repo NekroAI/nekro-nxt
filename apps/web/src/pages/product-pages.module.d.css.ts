@@ -17,7 +17,13 @@ declare const styles: {
   readonly attachment: string
   readonly avatar: string
   readonly avatarLarge: string
+  readonly bindingAgentActions: string
+  readonly bindingAgentIdentity: string
+  readonly bindingAgentRow: string
+  readonly bindingEmpty: string
+  readonly bindingInspector: string
   readonly bindingNextStep: string
+  readonly bindingSourceRow: string
   readonly boundChannelList: string
   readonly boundChannelName: string
   readonly boundChannelRow: string
@@ -40,6 +46,7 @@ declare const styles: {
   readonly composerInput: string
   readonly composerMode: string
   readonly composerModeRow: string
+  readonly composerModeSpacer: string
   readonly composerSend: string
   readonly composerWebAction: string
   readonly connectionAliasEditor: string
@@ -52,6 +59,9 @@ declare const styles: {
   readonly contextCharts: string
   readonly contextFigure: string
   readonly contextRing: string
+  readonly contextSector: string
+  readonly contextSectorActive: string
+  readonly contextTooltip: string
   readonly contextUsageCard: string
   readonly conversationEmpty: string
   readonly conversationHeader: string
@@ -85,9 +95,9 @@ declare const styles: {
   readonly inlineFieldAction: string
   readonly inlineFieldHint: string
   readonly inspector: string
-  readonly inspectorActions: string
   readonly inspectorCollapsed: string
   readonly inspectorExpanded: string
+  readonly inspectorPane: string
   readonly inspectorRegion: string
   readonly inspectorRegionBody: string
   readonly inspectorSectionHead: string
@@ -169,7 +179,6 @@ declare const styles: {
   readonly testRow: string
   readonly testRows: string
   readonly thinkBody: string
-  readonly thinkRow: string
   readonly toolArgs: string
   readonly toolArrow: string
   readonly toolCard: string
@@ -177,7 +186,6 @@ declare const styles: {
   readonly toolName: string
   readonly toolOut: string
   readonly toolRow: string
-  readonly toolsMore: string
   readonly traj: string
   readonly trajBar: string
   readonly trajContent: string
@@ -209,6 +217,12 @@ declare const styles: {
   readonly workDotRun: string
   readonly workRow: string
   readonly workStream: string
+  readonly workStreamChevron: string
+  readonly workStreamDetails: string
+  readonly workStreamDisclosure: string
+  readonly workStreamSummary: string
+  readonly workSummaryRow: string
+  readonly workToolCount: string
   readonly workbenchDoc: string
   readonly workbenchInspector: string
   readonly workbenchPage: string

@@ -1,6 +1,7 @@
 import { useEffect, useId, useLayoutEffect, useMemo, useState, type KeyboardEvent, type RefObject } from 'react'
+import { ChevronDown } from 'lucide-react'
 import { useNavigate } from 'react-router-dom'
-import { Cell, Pie, PieChart, Tooltip as ChartTooltip } from 'recharts'
+import { Cell, Pie, PieChart } from 'recharts'
 import { notify } from '../components/notifications.js'
 import { InlineFeedback } from '../components/product-feedback.js'
 import {
@@ -114,10 +115,35 @@ function ContextRing({
   readonly data: readonly { readonly name: string; readonly value: number; readonly color: string }[]
 }) {
   const total = data.reduce((sum, item) => sum + item.value, 0)
+  const [hover, setHover] = useState<{ readonly index: number; readonly x: number; readonly y: number }>()
+  const active = hover ? data[hover.index] : undefined
+  const activeRatio = active && total > 0 ? Math.round((active.value / total) * 100) : 0
   return (
-    <figure className={styles.contextFigure} tabIndex={0} aria-label={label}>
-      <div className={styles.contextRing}>
-        <PieChart width={112} height={112} accessibilityLayer>
+    <figure
+      className={styles.contextFigure}
+      tabIndex={0}
+      aria-label={label}
+      onFocus={() => setHover((current) => current ?? { index: 0, x: 82, y: 20 })}
+      onBlur={(event) => {
+        if (!event.currentTarget.contains(event.relatedTarget)) setHover(undefined)
+      }}
+    >
+      <div
+        className={styles.contextRing}
+        onPointerMove={(event) => {
+          const path =
+            event.target instanceof Element ? event.target.closest<SVGPathElement>('[data-recharts-item-index]') : null
+          const index = Number(path?.dataset['rechartsItemIndex'])
+          if (!Number.isInteger(index) || index < 0 || index >= data.length) {
+            setHover(undefined)
+            return
+          }
+          const rect = event.currentTarget.getBoundingClientRect()
+          setHover({ index, x: event.clientX - rect.left, y: event.clientY - rect.top })
+        }}
+        onPointerLeave={() => setHover(undefined)}
+      >
+        <PieChart width={112} height={112}>
           <Pie
             data={data}
             dataKey="value"
@@ -127,32 +153,31 @@ function ContextRing({
             stroke="none"
             isAnimationActive={false}
           >
-            {data.map((item) => (
-              <Cell key={item.name} fill={item.color} stroke="none" />
+            {data.map((item, index) => (
+              <Cell
+                key={item.name}
+                className={[styles.contextSector, hover?.index === index ? styles.contextSectorActive : '']
+                  .filter(Boolean)
+                  .join(' ')}
+                fill={item.color}
+                stroke="none"
+              />
             ))}
           </Pie>
-          <ChartTooltip
-            formatter={(value, name) => {
-              const numericValue = Number(value)
-              const ratio = total > 0 ? Math.round((numericValue / total) * 100) : 0
-              return [`${formatTokenCount(numericValue)} · ${ratio}%`, name]
-            }}
-            cursor={false}
-            animationDuration={120}
-            wrapperStyle={{ zIndex: 'var(--nxt-layer-floating)', pointerEvents: 'none' }}
-            contentStyle={{
-              border: '1px solid var(--nxt-border-default)',
-              borderRadius: 'var(--nxt-radius-lg)',
-              padding: '7px 9px',
-              color: 'var(--nxt-text-primary)',
-              background: 'var(--nxt-bg-elevated)',
-              boxShadow: 'var(--nxt-shadow-popover)',
-              fontSize: 12,
-            }}
-            itemStyle={{ color: 'var(--nxt-text-primary)' }}
-          />
         </PieChart>
         <strong>{center}</strong>
+        {active && hover ? (
+          <div
+            className={styles.contextTooltip}
+            data-pointer-x={Math.round(hover.x)}
+            data-pointer-y={Math.round(hover.y)}
+            data-side={hover.x > 56 ? 'left' : 'right'}
+            role="tooltip"
+            style={{ left: hover.x, top: hover.y }}
+          >
+            {active.name} · {formatTokenCount(active.value)} · {activeRatio}%
+          </div>
+        ) : null}
       </div>
       <figcaption>{label}</figcaption>
       <ul>
@@ -299,19 +324,18 @@ export function ChannelWorkStream({ runtime }: { readonly runtime: ChannelRuntim
   const turn = latestTurn(runtime)
   const tools = workTools(turn)
   const text = internalText(turn)
-  const [thinkOpen, setThinkOpen] = useState(false)
-  const [toolsOpen, setToolsOpen] = useState(false)
+  const [expanded, setExpanded] = useState(false)
   const [openId, setOpenId] = useState<string | null>(null)
   const running = turn?.state === 'in-progress'
-  const completed = tools.filter((tool) => tool.state !== 'running')
   const current = tools.find((tool) => tool.state === 'running')
-  const compact = !running && !toolsOpen && tools.length > 2
-  const preview = running && !toolsOpen && completed.length > 2 ? completed.slice(-2) : completed
-  const currentOpen = current !== undefined && openId === current.callId
+  const latest = current ?? tools.at(-1)
+  const liveSummary = latest
+    ? `${latest.displayName}${latest.inputPreview ? ` · ${latest.inputPreview}` : ''}`
+    : (text.split('\n')[0] ?? runtime?.summary ?? '')
+  const hasDetails = Boolean(text || tools.length > 0)
 
   useEffect(() => {
-    setThinkOpen(false)
-    setToolsOpen(false)
+    setExpanded(false)
     setOpenId(current?.callId ?? null)
   }, [runtime?.channelId, current?.callId])
 
@@ -322,47 +346,53 @@ export function ChannelWorkStream({ runtime }: { readonly runtime: ChannelRuntim
       {runtime && runtime.pendingInjectCount > 0 ? (
         <div className={styles.sysLine}>{runtime.pendingInjectCount} 条新消息已收录，将在安全间隙进入后续处理。</div>
       ) : null}
-      {text ? (
-        <Button className={styles.thinkRow} type="button" onClick={() => setThinkOpen((open) => !open)}>
-          <span className={styles.workRow}>
-            <span
-              className={[styles.workDot, running ? styles.workDotRun : styles.workDotOk].join(' ')}
-              data-work-status-dot
-            />
-            <strong>内部输出</strong>
-            {thinkOpen ? null : <em>{text.split('\n')[0]}</em>}
-          </span>
-          {thinkOpen ? <div className={styles.thinkBody}>{text}</div> : null}
-        </Button>
-      ) : null}
-      {compact ? (
-        <Button className={styles.toolsMore} type="button" onClick={() => setToolsOpen(true)}>
-          {tools.length} 个工具
-        </Button>
-      ) : (
+      {hasDetails ? (
         <>
-          {running && completed.length > 2 && !toolsOpen ? (
-            <Button className={styles.toolsMore} type="button" onClick={() => setToolsOpen(true)}>
-              {completed.length - 2} 个工具
-            </Button>
-          ) : null}
-          {preview.map((tool) => (
-            <WorkToolRow
-              key={tool.callId}
-              tool={tool}
-              open={openId === tool.callId}
-              onToggle={() => setOpenId((currentId) => (currentId === tool.callId ? null : tool.callId))}
-            />
-          ))}
-          {current ? (
-            <WorkToolRow
-              tool={current}
-              open={currentOpen}
-              onToggle={() => setOpenId((currentId) => (currentId === current.callId ? null : current.callId))}
-            />
-          ) : null}
+          <Button
+            className={styles.workStreamSummary}
+            type="button"
+            aria-expanded={expanded}
+            onClick={() => setExpanded((open) => !open)}
+          >
+            <span className={[styles.workRow, styles.workSummaryRow].join(' ')}>
+              <span
+                className={[styles.workDot, running ? styles.workDotRun : styles.workDotOk].join(' ')}
+                data-work-status-dot
+              />
+              <strong>内部输出</strong>
+              <em>{liveSummary}</em>
+              <span className={styles.workToolCount}>{tools.length} 个工具</span>
+              <ChevronDown
+                className={styles.workStreamChevron}
+                data-open={expanded ? '' : undefined}
+                size={14}
+                aria-hidden="true"
+              />
+            </span>
+          </Button>
+          <div aria-hidden={!expanded} className={styles.workStreamDisclosure} data-open={expanded ? '' : undefined}>
+            <div>
+              <div className={styles.workStreamDetails}>
+                {text ? <div className={styles.thinkBody}>{text}</div> : null}
+                {tools.map((tool) => (
+                  <WorkToolRow
+                    key={tool.callId}
+                    tool={tool}
+                    open={openId === tool.callId}
+                    onToggle={() => setOpenId((currentId) => (currentId === tool.callId ? null : tool.callId))}
+                  />
+                ))}
+              </div>
+            </div>
+          </div>
         </>
-      )}
+      ) : current ? (
+        <WorkToolRow
+          tool={current}
+          open={openId === current.callId}
+          onToggle={() => setOpenId((currentId) => (currentId === current.callId ? null : current.callId))}
+        />
+      ) : null}
     </div>
   )
 }
@@ -695,41 +725,44 @@ export function ChannelSessionInspector({
         <div className={styles.inspectorSectionHead}>
           <h2>绑定</h2>
         </div>
-        <dl className={styles.facts}>
-          <dt>智能体</dt>
-          <dd>{agent?.name ?? '未绑定'}</dd>
-          <dt>来源</dt>
-          <dd>{channel.kind === 'web' ? '网页聊天' : channel.connectionName}</dd>
-        </dl>
         {agent ? (
-          <SelectField
-            label="响应方式"
-            value={currentTrigger}
-            disabled={triggerPending}
-            onValueChange={(value) => {
-              if (isTriggerPolicy(value)) void updateTrigger(value)
-            }}
-            options={TRIGGER_POLICY_OPTIONS.map((option) => ({ value: option.value, label: option.label }))}
-          />
+          <div className={styles.bindingInspector}>
+            <div className={styles.bindingAgentRow}>
+              <div className={styles.bindingAgentIdentity}>
+                <span>智能体</span>
+                <strong>{agent.name}</strong>
+              </div>
+              <div className={styles.bindingAgentActions}>
+                <Button size="small" onClick={onReassign}>
+                  更换
+                </Button>
+                <Button size="small" variant="ghost" onClick={() => void navigate(`/work/agents/${agent.id}`)}>
+                  管理
+                </Button>
+              </div>
+            </div>
+            <div className={styles.bindingSourceRow}>
+              <span>频道来源</span>
+              <strong>{channel.kind === 'web' ? '网页聊天' : channel.connectionName}</strong>
+            </div>
+            <SelectField
+              label="响应方式"
+              value={currentTrigger}
+              disabled={triggerPending}
+              onValueChange={(value) => {
+                if (isTriggerPolicy(value)) void updateTrigger(value)
+              }}
+              options={TRIGGER_POLICY_OPTIONS.map((option) => ({ value: option.value, label: option.label }))}
+            />
+          </div>
         ) : (
-          <InlineFeedback tone="warning">绑定智能体后才能自动响应这个频道的消息。</InlineFeedback>
-        )}
-        <div className={styles.inspectorActions}>
-          {agent ? (
-            <>
-              <Button size="small" onClick={onReassign}>
-                改由其他智能体响应
-              </Button>
-              <Button size="small" variant="ghost" onClick={() => void navigate(`/work/agents/${agent.id}`)}>
-                管理智能体
-              </Button>
-            </>
-          ) : (
+          <div className={styles.bindingEmpty}>
+            <InlineFeedback tone="warning">绑定智能体后才能自动响应这个频道的消息。</InlineFeedback>
             <Button size="small" variant="primary" onClick={onBind}>
               绑定智能体
             </Button>
-          )}
-        </div>
+          </div>
+        )}
         <details className={styles.channelDetails}>
           <summary>频道显示名称</summary>
           <div className={styles.channelRename}>

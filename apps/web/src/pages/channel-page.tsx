@@ -79,12 +79,14 @@ export function ChannelConversationPage() {
   const [bindingOpen, setBindingOpen] = useState(false)
   const [sendPending, setSendPending] = useState(false)
   const composerRef = useRef<HTMLFormElement>(null)
+  const inspectorPaneRef = useRef<HTMLDivElement>(null)
   const [composerHeight, setComposerHeight] = useState(96)
   const [canvasView, setCanvasView] = useState<ChannelCanvasView>(readChannelCanvasView)
   const [trajectorySearch, setTrajectorySearch] = useState('')
   const [selectedRecordId, setSelectedRecordId] = useState('')
   const savedInspectorWidth = useUiPreferences((state) => state.layout.inspectorWidth)
   const inspectorCollapsed = useUiPreferences((state) => state.layout.inspectorCollapsed)
+  const [inspectorTransitioning, setInspectorTransitioning] = useState(false)
   const [inspectorWidth, setInspectorWidth] = useState(savedInspectorWidth)
   const chatScroll = useStickToBottom(`${channel?.id ?? ''}:chat`, Boolean(channel) && canvasView === 'chat')
   const trajScroll = useStickToBottom(
@@ -99,6 +101,11 @@ export function ChannelConversationPage() {
   const connection = channel ? connections.find((item) => item.id === channel.connectionId) : undefined
   const canSendOnWeb = channel?.kind === 'web' && Boolean(agent)
   const canSendAsRobot = Boolean(channel && channel.kind !== 'web' && agent && connection?.proactiveSend)
+  const toggleInspector = (): void => {
+    setInspectorTransitioning(true)
+    useUiPreferences.getState().setInspectorCollapsed(!inspectorCollapsed)
+    window.setTimeout(() => setInspectorTransitioning(false), 260)
+  }
 
   useEffect(() => {
     if (!channel) return
@@ -120,6 +127,13 @@ export function ChannelConversationPage() {
 
   useEffect(() => setInspectorWidth(savedInspectorWidth), [savedInspectorWidth])
 
+  useEffect(() => {
+    const pane = inspectorPaneRef.current
+    if (!pane) return
+    if (inspectorCollapsed) pane.setAttribute('inert', '')
+    else pane.removeAttribute('inert')
+  }, [inspectorCollapsed])
+
   useLayoutEffect(() => {
     const composer = composerRef.current
     if (!composer) return
@@ -128,7 +142,7 @@ export function ChannelConversationPage() {
     const observer = new ResizeObserver(update)
     observer.observe(composer)
     return () => observer.disconnect()
-  }, [channel?.id])
+  }, [canvasView, channel?.id])
 
   const loadOlder = (): void => {
     const list = chatScroll.ref.current
@@ -197,6 +211,7 @@ export function ChannelConversationPage() {
       <div
         className={styles.conversationPage}
         data-inspector-collapsed={inspectorCollapsed ? '' : undefined}
+        data-inspector-transitioning={inspectorTransitioning ? '' : undefined}
         style={conversationStyle}
       >
         {!channel ? (
@@ -233,7 +248,7 @@ export function ChannelConversationPage() {
                   <IconButton
                     label={inspectorCollapsed ? '展开检查器' : '收起检查器'}
                     className={styles.inspectorToggle}
-                    onClick={() => useUiPreferences.getState().setInspectorCollapsed(!inspectorCollapsed)}
+                    onClick={toggleInspector}
                   >
                     {inspectorCollapsed ? (
                       <PanelRightOpen size={14} aria-hidden="true" />
@@ -249,7 +264,7 @@ export function ChannelConversationPage() {
                 </div>
               </header>
 
-              <div className={styles.canvasStage} data-channel-canvas-stage>
+              <div className={styles.canvasStage} data-channel-canvas-stage data-view={canvasView}>
                 <Tabs.Content className={styles.canvasTab} value="trajectory">
                   <ChannelTrajectoryLedger
                     records={records}
@@ -336,107 +351,114 @@ export function ChannelConversationPage() {
                 ) : null}
               </div>
 
-              <form
-                ref={composerRef}
-                className={styles.composer}
-                data-channel-composer
-                data-mode={channel.kind === 'web' ? 'web' : 'platform'}
-                onSubmit={(event) => void submit(event)}
-              >
-                <Textarea
-                  className={styles.composerInput}
-                  value={draft}
-                  onChange={(event) => {
-                    setDraft(event.target.value)
-                  }}
-                  onKeyDown={(event) => {
-                    if (event.key !== 'Enter' || event.shiftKey || event.nativeEvent.isComposing) return
-                    event.preventDefault()
-                    if (draft.trim() && !sendPending) event.currentTarget.form?.requestSubmit()
-                  }}
-                  aria-label="消息内容"
-                  aria-describedby="channel-composer-mode"
-                  rows={1}
-                  placeholder={
-                    channel.kind === 'web'
-                      ? agent
-                        ? '输入消息'
-                        : '请先绑定智能体'
-                      : canSendAsRobot
-                        ? '输入消息'
-                        : !agent
-                          ? '请先绑定智能体'
-                          : '当前连接不允许主动发言'
-                  }
-                  disabled={sendPending || (channel.kind === 'web' ? !canSendOnWeb : !canSendAsRobot)}
-                />
-                <div className={styles.composerModeRow}>
-                  <span className={styles.composerMode}>{composerMode}</span>
-                  <Tooltip.Root>
-                    <Tooltip.Trigger asChild>
-                      <span className={styles.composerInfo} tabIndex={0} role="img" aria-label="发送方式说明">
-                        <Info size={14} aria-hidden="true" />
-                      </span>
-                    </Tooltip.Trigger>
-                    <Tooltip.Portal>
-                      <Tooltip.Content side="top" align="start" sideOffset={8} collisionPadding={12}>
-                        {composerExplanation}
-                      </Tooltip.Content>
-                    </Tooltip.Portal>
-                  </Tooltip.Root>
-                  {channel.kind !== 'web' && webChannel ? (
-                    <Button
-                      variant="ghost"
-                      size="small"
-                      className={styles.composerWebAction}
-                      onClick={() => void navigate(`/work/channels/${webChannel.id}`)}
+              {canvasView === 'chat' ? (
+                <form
+                  ref={composerRef}
+                  className={styles.composer}
+                  data-channel-composer
+                  data-mode={channel.kind === 'web' ? 'web' : 'platform'}
+                  onSubmit={(event) => void submit(event)}
+                >
+                  <Textarea
+                    className={styles.composerInput}
+                    value={draft}
+                    onChange={(event) => {
+                      setDraft(event.target.value)
+                    }}
+                    onKeyDown={(event) => {
+                      if (event.key !== 'Enter' || event.shiftKey || event.nativeEvent.isComposing) return
+                      event.preventDefault()
+                      if (draft.trim() && !sendPending) event.currentTarget.form?.requestSubmit()
+                    }}
+                    aria-label="消息内容"
+                    aria-describedby="channel-composer-mode"
+                    rows={1}
+                    placeholder={
+                      channel.kind === 'web'
+                        ? agent
+                          ? '输入消息'
+                          : '请先绑定智能体'
+                        : canSendAsRobot
+                          ? '输入消息'
+                          : !agent
+                            ? '请先绑定智能体'
+                            : '当前连接不允许主动发言'
+                    }
+                    disabled={sendPending || (channel.kind === 'web' ? !canSendOnWeb : !canSendAsRobot)}
+                  />
+                  <div className={styles.composerModeRow}>
+                    <Tooltip.Root>
+                      <Tooltip.Trigger asChild>
+                        <span className={styles.composerInfo} tabIndex={0} role="img" aria-label="发送方式说明">
+                          <Info size={14} aria-hidden="true" />
+                        </span>
+                      </Tooltip.Trigger>
+                      <Tooltip.Portal>
+                        <Tooltip.Content side="top" align="start" sideOffset={8} collisionPadding={12}>
+                          {composerExplanation}
+                        </Tooltip.Content>
+                      </Tooltip.Portal>
+                    </Tooltip.Root>
+                    <span className={styles.composerMode}>{composerMode}</span>
+                    <span className={styles.composerModeSpacer} aria-hidden="true" />
+                    {channel.kind !== 'web' && webChannel ? (
+                      <Button
+                        variant="ghost"
+                        size="small"
+                        className={styles.composerWebAction}
+                        onClick={() => void navigate(`/work/channels/${webChannel.id}`)}
+                      >
+                        去网页频道
+                      </Button>
+                    ) : null}
+                    <IconButton
+                      label={channel.kind === 'web' ? '发送给智能体' : '发到频道'}
+                      className={styles.composerSend}
+                      type="submit"
+                      loading={sendPending}
+                      loadingLabel="发送中…"
+                      disabled={!draft.trim() || (channel.kind === 'web' ? !canSendOnWeb : !canSendAsRobot)}
                     >
-                      去网页频道
-                    </Button>
-                  ) : null}
-                  <IconButton
-                    label={channel.kind === 'web' ? '发送给智能体' : '发到频道'}
-                    className={styles.composerSend}
-                    type="submit"
-                    loading={sendPending}
-                    loadingLabel="发送中…"
-                    disabled={!draft.trim() || (channel.kind === 'web' ? !canSendOnWeb : !canSendAsRobot)}
-                  >
-                    <Send size={15} aria-hidden="true" />
-                  </IconButton>
-                </div>
-                <span className={styles.srOnly} id="channel-composer-mode">
-                  {composerExplanation}
-                </span>
-              </form>
+                      <Send size={14} aria-hidden="true" />
+                    </IconButton>
+                  </div>
+                  <span className={styles.srOnly} id="channel-composer-mode">
+                    {composerExplanation}
+                  </span>
+                </form>
+              ) : null}
             </Tabs.Root>
 
-            {!inspectorCollapsed ? (
-              <>
-                <ResizeHandle
-                  className={styles.inspectorSplitter}
-                  label="调整检查器宽度"
-                  value={inspectorWidth}
-                  min={INSPECTOR_WIDTH.min}
-                  max={INSPECTOR_WIDTH.max}
-                  defaultValue={INSPECTOR_WIDTH.default}
-                  side="after"
-                  onChange={setInspectorWidth}
-                  onCommit={(value) => useUiPreferences.getState().setInspectorWidth(value)}
+            <ResizeHandle
+              className={styles.inspectorSplitter}
+              label="调整检查器宽度"
+              value={inspectorWidth}
+              min={INSPECTOR_WIDTH.min}
+              max={INSPECTOR_WIDTH.max}
+              defaultValue={INSPECTOR_WIDTH.default}
+              side="after"
+              disabled={inspectorCollapsed}
+              onChange={setInspectorWidth}
+              onCommit={(value) => useUiPreferences.getState().setInspectorWidth(value)}
+            />
+            <div
+              ref={inspectorPaneRef}
+              className={styles.inspectorPane}
+              data-collapsed={inspectorCollapsed ? '' : undefined}
+              aria-hidden={inspectorCollapsed || undefined}
+            >
+              {canvasView === 'trajectory' ? (
+                <ChannelTrajectoryInspector record={selectedRecord} />
+              ) : (
+                <ChannelSessionInspector
+                  channel={channel}
+                  agent={agent}
+                  runtime={runtime}
+                  onBind={() => setBindingOpen(true)}
+                  onReassign={() => setBindingOpen(true)}
                 />
-                {canvasView === 'trajectory' ? (
-                  <ChannelTrajectoryInspector record={selectedRecord} />
-                ) : (
-                  <ChannelSessionInspector
-                    channel={channel}
-                    agent={agent}
-                    runtime={runtime}
-                    onBind={() => setBindingOpen(true)}
-                    onReassign={() => setBindingOpen(true)}
-                  />
-                )}
-              </>
-            ) : null}
+              )}
+            </div>
           </>
         )}
       </div>

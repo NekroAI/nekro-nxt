@@ -560,6 +560,14 @@
   background: var(--nxt-accent);
 }
 
+.resizeHandle[data-disabled] {
+  pointer-events: none;
+}
+
+.resizeHandle[data-disabled]::after {
+  opacity: 0;
+}
+
 @keyframes fadeIn {
   from {
     opacity: 0;

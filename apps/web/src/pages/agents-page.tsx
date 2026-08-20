@@ -1,5 +1,5 @@
 import { PanelRightClose, PanelRightOpen, Plus, Save, ShieldAlert } from 'lucide-react'
-import { useEffect, useLayoutEffect, useMemo, useState, type CSSProperties } from 'react'
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties } from 'react'
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import { notify } from '../components/notifications.js'
 import { EmptyState, InlineFeedback, PageHeader } from '../components/product-feedback.js'
@@ -336,6 +336,8 @@ export function AgentManagePage() {
   const [extensionPendingId, setExtensionPendingId] = useState<string | null>(null)
   const savedInspectorWidth = useUiPreferences((state) => state.layout.inspectorWidth)
   const inspectorCollapsed = useUiPreferences((state) => state.layout.inspectorCollapsed)
+  const [inspectorTransitioning, setInspectorTransitioning] = useState(false)
+  const inspectorPaneRef = useRef<HTMLDivElement>(null)
   const [inspectorWidth, setInspectorWidth] = useState(savedInspectorWidth)
 
   useEffect(() => {
@@ -345,6 +347,12 @@ export function AgentManagePage() {
     setSelectedModelKey(modelValueForAgent(agent))
   }, [agent])
   useEffect(() => setInspectorWidth(savedInspectorWidth), [savedInspectorWidth])
+  useEffect(() => {
+    const pane = inspectorPaneRef.current
+    if (!pane) return
+    if (inspectorCollapsed) pane.setAttribute('inert', '')
+    else pane.removeAttribute('inert')
+  }, [inspectorCollapsed])
 
   const selectedModel = models.find((model) => modelKey(model) === selectedModelKey)
   const boundChannels = useMemo(
@@ -478,11 +486,17 @@ export function AgentManagePage() {
   const workbenchStyle: CSSProperties & { '--nxt-inspector-width': string } = {
     '--nxt-inspector-width': `${inspectorWidth}px`,
   }
+  const toggleInspector = (): void => {
+    setInspectorTransitioning(true)
+    useUiPreferences.getState().setInspectorCollapsed(!inspectorCollapsed)
+    window.setTimeout(() => setInspectorTransitioning(false), 260)
+  }
 
   return (
     <div
       className={styles.workbenchPage}
       data-inspector-collapsed={inspectorCollapsed ? '' : undefined}
+      data-inspector-transitioning={inspectorTransitioning ? '' : undefined}
       style={workbenchStyle}
     >
       <div className={styles.workbenchDoc}>
@@ -511,10 +525,7 @@ export function AgentManagePage() {
               >
                 <Save size={15} aria-hidden="true" /> 保存新配置
               </Button>
-              <IconButton
-                label={inspectorCollapsed ? '展开检查器' : '收起检查器'}
-                onClick={() => useUiPreferences.getState().setInspectorCollapsed(!inspectorCollapsed)}
-              >
+              <IconButton label={inspectorCollapsed ? '展开检查器' : '收起检查器'} onClick={toggleInspector}>
                 {inspectorCollapsed ? (
                   <PanelRightOpen size={15} aria-hidden="true" />
                 ) : (
@@ -731,20 +742,24 @@ export function AgentManagePage() {
         />
       </div>
 
-      {!inspectorCollapsed ? (
-        <ResizeHandle
-          className={styles.inspectorSplitter}
-          label="调整检查器宽度"
-          value={inspectorWidth}
-          min={INSPECTOR_WIDTH.min}
-          max={INSPECTOR_WIDTH.max}
-          defaultValue={INSPECTOR_WIDTH.default}
-          side="after"
-          onChange={setInspectorWidth}
-          onCommit={(value) => useUiPreferences.getState().setInspectorWidth(value)}
-        />
-      ) : null}
-      {!inspectorCollapsed ? (
+      <ResizeHandle
+        className={styles.inspectorSplitter}
+        label="调整检查器宽度"
+        value={inspectorWidth}
+        min={INSPECTOR_WIDTH.min}
+        max={INSPECTOR_WIDTH.max}
+        defaultValue={INSPECTOR_WIDTH.default}
+        side="after"
+        disabled={inspectorCollapsed}
+        onChange={setInspectorWidth}
+        onCommit={(value) => useUiPreferences.getState().setInspectorWidth(value)}
+      />
+      <div
+        ref={inspectorPaneRef}
+        className={styles.inspectorPane}
+        data-collapsed={inspectorCollapsed ? '' : undefined}
+        aria-hidden={inspectorCollapsed || undefined}
+      >
         <aside className={[styles.inspector, styles.workbenchInspector].join(' ')} aria-label="这个智能体">
           <section>
             <h2>这个智能体</h2>
@@ -790,7 +805,7 @@ export function AgentManagePage() {
             )}
           </section>
         </aside>
-      ) : null}
+      </div>
     </div>
   )
 }
