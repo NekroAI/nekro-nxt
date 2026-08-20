@@ -142,7 +142,7 @@ export function ConnectionsPage() {
   }
 
   return (
-    <div className={styles.page}>
+    <div className={styles.page} data-connection-page-scroll-root>
       <PageHeader
         title="连接"
         meta={connections.length > 0 ? `${connections.length} 个平台账号` : undefined}
@@ -186,8 +186,6 @@ export function ConnectionsPage() {
               {[
                 { label: '连接账号', done: selected.state === '已连接' || selected.state === '已配置' },
                 { label: '发现频道', done: selected.knownChannels.length > 0 },
-                { label: '测试接收', done: selected.receiveTest === '通过' },
-                { label: '测试发送', done: selected.sendTest === '通过' },
                 { label: '绑定智能体', done: bindingCount > 0 },
               ].map((step, index) => (
                 <li data-done={step.done ? '' : undefined} key={step.label}>
@@ -195,7 +193,7 @@ export function ConnectionsPage() {
                     {step.done ? <Check size={12} aria-hidden="true" /> : <Circle size={10} aria-hidden="true" />}
                   </span>
                   <small>{step.label}</small>
-                  {index < 4 ? <i aria-hidden="true" /> : null}
+                  {index < 2 ? <i aria-hidden="true" /> : null}
                 </li>
               ))}
             </ol>
@@ -223,17 +221,17 @@ export function ConnectionsPage() {
           {selected.adapterKey !== 'web' ? (
             <>
               <div className={styles.sectionDivider} />
-              <div className={styles.sectionHeading}>连接别名</div>
-              <div className={styles.formStack}>
-                <Field label="辨识名" hint="可选，仅用于区分这个连接；平台身份仍显示在下方。">
-                  <Input
-                    value={aliasDraft}
-                    maxLength={80}
-                    onChange={(event) => setAliasDraft(event.target.value)}
-                    disabled={aliasPending}
-                  />
-                </Field>
-                <div className={styles.bindingNextStep}>
+              <div className={styles.connectionAliasEditor}>
+                <div className={styles.sectionHeading}>连接别名</div>
+                <div className={styles.inlineFieldAction}>
+                  <Field label="辨识名">
+                    <Input
+                      value={aliasDraft}
+                      maxLength={80}
+                      onChange={(event) => setAliasDraft(event.target.value)}
+                      disabled={aliasPending}
+                    />
+                  </Field>
                   <Button
                     size="small"
                     loading={aliasPending}
@@ -241,7 +239,7 @@ export function ConnectionsPage() {
                     disabled={aliasPending || aliasDraft.trim() === (selected.alias ?? '')}
                     onClick={() => void saveAlias(aliasDraft)}
                   >
-                    保存连接别名
+                    保存别名
                   </Button>
                   <Button
                     size="small"
@@ -252,9 +250,10 @@ export function ConnectionsPage() {
                       void saveAlias('')
                     }}
                   >
-                    清除别名
+                    清除
                   </Button>
                 </div>
+                <small className={styles.inlineFieldHint}>可选，仅用于区分这个连接；平台身份仍显示在下方。</small>
               </div>
             </>
           ) : null}
@@ -263,68 +262,70 @@ export function ConnectionsPage() {
             <InlineFeedback tone="info">网页聊天由当前设备管理，不需要配置账号凭据。</InlineFeedback>
           ) : (
             <>
-              <div className={styles.sectionDivider} />
-              <div className={styles.sectionHeading}>连接测试</div>
-              {selected.knownChannels.length > 0 ? (
-                <SelectField
-                  label="测试消息发送到"
-                  value={selectedTestChannelId}
-                  onValueChange={(channelId) =>
-                    setTestChannelByConnection((current) => ({ ...current, [selected.id]: channelId }))
-                  }
-                  options={selected.knownChannels.map((channel) => {
-                    const label = friendlyKnownChannelLabel(channel)
-                    return {
-                      value: channel.id,
-                      label: /^(?:群聊|私聊)/u.test(label)
-                        ? label
-                        : `${label} · ${channel.kind === 'group' ? '群聊' : '私聊'}`,
+              <details className={styles.optionalTests}>
+                <summary>可选收发测试</summary>
+                <p>需要排查平台权限时可各执行一次，不影响绑定和日常使用。</p>
+                {selected.knownChannels.length > 0 ? (
+                  <SelectField
+                    label="测试消息发送到"
+                    value={selectedTestChannelId}
+                    onValueChange={(channelId) =>
+                      setTestChannelByConnection((current) => ({ ...current, [selected.id]: channelId }))
                     }
-                  })}
-                />
-              ) : (
-                <InlineFeedback tone="warning">
-                  还没有发现频道。请先在已连接的平台向机器人账号发送一条消息。
-                </InlineFeedback>
-              )}
-              <div className={styles.testRows}>
-                <div className={styles.testRow}>
-                  <span>
-                    <strong>接收消息</strong>
-                    <small>{testResultLabel(selected.receiveTest)}</small>
-                  </span>
-                  <Button
-                    size="small"
-                    loading={testPending === 'receive'}
-                    loadingLabel="测试中…"
-                    disabled={testPending !== null}
-                    onClick={() => void runTest('receive')}
-                  >
-                    <Radio size={14} aria-hidden="true" /> 测试接收
-                  </Button>
+                    options={selected.knownChannels.map((channel) => {
+                      const label = friendlyKnownChannelLabel(channel)
+                      return {
+                        value: channel.id,
+                        label: /^(?:群聊|私聊)/u.test(label)
+                          ? label
+                          : `${label} · ${channel.kind === 'group' ? '群聊' : '私聊'}`,
+                      }
+                    })}
+                  />
+                ) : (
+                  <InlineFeedback tone="warning">
+                    还没有发现频道。请先在已连接的平台向机器人账号发送一条消息。
+                  </InlineFeedback>
+                )}
+                <div className={styles.testRows}>
+                  <div className={styles.testRow}>
+                    <span>
+                      <strong>接收消息</strong>
+                      <small>{testResultLabel(selected.receiveTest)}</small>
+                    </span>
+                    <Button
+                      size="small"
+                      loading={testPending === 'receive'}
+                      loadingLabel="测试中…"
+                      disabled={testPending !== null}
+                      onClick={() => void runTest('receive')}
+                    >
+                      <Radio size={14} aria-hidden="true" /> 测试接收
+                    </Button>
+                  </div>
+                  <div className={styles.testRow}>
+                    <span>
+                      <strong>发送消息</strong>
+                      <small>{testResultLabel(selected.sendTest)}</small>
+                    </span>
+                    <Button
+                      size="small"
+                      loading={testPending === 'send'}
+                      loadingLabel="发送中…"
+                      disabled={testPending !== null || !sendTargetAvailable}
+                      onClick={() => void runTest('send')}
+                    >
+                      <Send size={14} aria-hidden="true" /> 发送测试消息
+                    </Button>
+                  </div>
                 </div>
-                <div className={styles.testRow}>
-                  <span>
-                    <strong>发送消息</strong>
-                    <small>{testResultLabel(selected.sendTest)}</small>
-                  </span>
-                  <Button
-                    size="small"
-                    loading={testPending === 'send'}
-                    loadingLabel="发送中…"
-                    disabled={testPending !== null || !sendTargetAvailable}
-                    onClick={() => void runTest('send')}
-                  >
-                    <Send size={14} aria-hidden="true" /> 发送测试消息
-                  </Button>
-                </div>
-              </div>
+              </details>
               <div className={styles.sectionDivider} />
               <div className={styles.sectionBar}>
                 <div>
                   <div className={styles.sectionHeading}>绑定智能体</div>
                   <div className={styles.secondaryText}>
-                    {bindingCount > 0 ? `已有 ${bindingCount} 个频道绑定。` : '收发确认后，为频道选择响应的智能体。'}
+                    {bindingCount > 0 ? `已有 ${bindingCount} 个频道绑定。` : '为已发现频道选择响应的智能体。'}
                   </div>
                 </div>
                 {bindingCount > 0 ? <StatusBadge tone="success">已完成</StatusBadge> : null}

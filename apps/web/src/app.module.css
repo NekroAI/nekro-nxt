@@ -11,19 +11,16 @@
 .shellBody {
   display: grid;
   min-width: 0;
-  grid-template-columns:
-    56px var(--nxt-object-pane-width, 240px) var(--nxt-object-pane-splitter-width, 5px)
-    minmax(0, 1fr);
+  grid-template-columns: 56px var(--nxt-object-pane-width, 240px) 5px minmax(0, 1fr);
 }
 
 .windowTopBar {
   position: relative;
-  z-index: 4;
+  z-index: var(--nxt-layer-sticky);
   min-height: 48px;
   border-bottom: 1px solid var(--nxt-border-subtle);
   background: color-mix(in srgb, var(--nxt-bg-sidebar) 94%, transparent);
   -webkit-app-region: drag;
-  transition: grid-template-columns var(--nxt-motion-spatial) var(--nxt-ease-standard);
 }
 
 .windowBrand {
@@ -58,22 +55,9 @@
   font-size: 12px;
 }
 
-.windowControl {
-  width: 28px;
-  min-width: 28px;
-  height: 28px;
-  min-height: 28px;
-  -webkit-app-region: no-drag;
-}
-
 .shellBody {
   min-height: 0;
   grid-row: 2;
-  transition: grid-template-columns var(--nxt-motion-spatial) var(--nxt-ease-standard);
-}
-
-.shell[data-object-pane-collapsed] .windowObjectTitle {
-  opacity: 0;
 }
 
 .shellSplitter {
@@ -121,6 +105,10 @@
   place-items: center;
   border-radius: var(--nxt-radius-md);
   color: var(--nxt-text-muted);
+  transition:
+    color var(--nxt-motion-fast) var(--nxt-ease-standard),
+    background var(--nxt-motion-fast) var(--nxt-ease-standard),
+    box-shadow var(--nxt-motion-fast) var(--nxt-ease-standard);
 }
 
 .railBtn:hover {
@@ -176,11 +164,6 @@
   border-right: 1px solid var(--nxt-border-subtle);
   background: var(--nxt-bg-sidebar);
   overflow: hidden;
-  transition: opacity var(--nxt-motion-fast) var(--nxt-ease-standard);
-}
-
-.shell[data-object-pane-collapsed] .tree {
-  opacity: 0;
 }
 
 .treeHead {
@@ -235,6 +218,15 @@
   overflow: hidden;
 }
 
+.routeView {
+  display: flex;
+  min-width: 0;
+  min-height: 0;
+  flex: 1;
+  flex-direction: column;
+  animation: route-enter var(--nxt-motion-standard) var(--nxt-ease-enter) both;
+}
+
 .centeredState {
   display: grid;
   min-height: 100%;
@@ -252,4 +244,26 @@
 
 .centeredState p {
   margin: 8px 0 20px;
+}
+
+@keyframes route-enter {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .routeView {
+    animation: none;
+  }
+}
+
+:global([data-reduced-motion='true']) .routeView {
+  animation: none;
 }

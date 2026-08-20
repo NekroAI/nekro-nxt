@@ -40,8 +40,12 @@ declare const styles: {
   readonly composerInput: string
   readonly composerMode: string
   readonly composerModeRow: string
-  readonly composerRow: string
+  readonly composerSend: string
   readonly composerWebAction: string
+  readonly connectionAliasEditor: string
+  readonly connectionNavItem: string
+  readonly connectionNavItemActive: string
+  readonly connectionNavList: string
   readonly connectionProgress: string
   readonly connectionWorkspace: string
   readonly contentLine: string
@@ -67,6 +71,9 @@ declare const styles: {
   readonly emptyState: string
   readonly eventInner: string
   readonly extensionHeader: string
+  readonly extensionNavItem: string
+  readonly extensionNavItemActive: string
+  readonly extensionNavList: string
   readonly extensionRow: string
   readonly extensionWorkspace: string
   readonly facts: string
@@ -75,13 +82,18 @@ declare const styles: {
   readonly headerActionLabel: string
   readonly historyNotice: string
   readonly identityCell: string
+  readonly inlineFieldAction: string
+  readonly inlineFieldHint: string
   readonly inspector: string
   readonly inspectorActions: string
   readonly inspectorCollapsed: string
   readonly inspectorExpanded: string
   readonly inspectorRegion: string
   readonly inspectorRegionBody: string
+  readonly inspectorSectionHead: string
   readonly inspectorSplitter: string
+  readonly inspectorStatusTrigger: string
+  readonly inspectorToggle: string
   readonly jumpBottom: string
   readonly kindMessage: string
   readonly kindTag: string
@@ -110,6 +122,7 @@ declare const styles: {
   readonly messageUnsupported: string
   readonly objectList: string
   readonly objectName: string
+  readonly optionalTests: string
   readonly overviewBlocker: string
   readonly overviewBlockers: string
   readonly overviewFacts: string
@@ -142,6 +155,9 @@ declare const styles: {
   readonly sectionHeading: string
   readonly selRail: string
   readonly settingsGroup: string
+  readonly settingsNav: string
+  readonly settingsNavItem: string
+  readonly settingsNavItemActive: string
   readonly settingsSection: string
   readonly sortableOrigin: string
   readonly srOnly: string

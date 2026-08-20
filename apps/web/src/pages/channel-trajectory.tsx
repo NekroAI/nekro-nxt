@@ -10,7 +10,17 @@ import {
   type ChannelRuntimeView,
   type ChannelSummary,
 } from '../product-store.js'
-import { Button, Field, IconButton, Input, SelectField, StatusBadge, Tabs, type StatusTone } from '../ui-kit/index.js'
+import {
+  Button,
+  Field,
+  IconButton,
+  Input,
+  SelectField,
+  StatusBadge,
+  Tabs,
+  Tooltip,
+  type StatusTone,
+} from '../ui-kit/index.js'
 import { isTriggerPolicy, TRIGGER_POLICY_OPTIONS } from './binding-task.js'
 import styles from './product-pages.module.css'
 
@@ -103,16 +113,44 @@ function ContextRing({
   readonly center: string
   readonly data: readonly { readonly name: string; readonly value: number; readonly color: string }[]
 }) {
+  const total = data.reduce((sum, item) => sum + item.value, 0)
   return (
     <figure className={styles.contextFigure} tabIndex={0} aria-label={label}>
       <div className={styles.contextRing}>
         <PieChart width={112} height={112} accessibilityLayer>
-          <Pie data={data} dataKey="value" nameKey="name" innerRadius={34} outerRadius={48} isAnimationActive={false}>
+          <Pie
+            data={data}
+            dataKey="value"
+            nameKey="name"
+            innerRadius={34}
+            outerRadius={48}
+            stroke="none"
+            isAnimationActive={false}
+          >
             {data.map((item) => (
-              <Cell key={item.name} fill={item.color} />
+              <Cell key={item.name} fill={item.color} stroke="none" />
             ))}
           </Pie>
-          <ChartTooltip formatter={(value) => formatTokenCount(Number(value))} />
+          <ChartTooltip
+            formatter={(value, name) => {
+              const numericValue = Number(value)
+              const ratio = total > 0 ? Math.round((numericValue / total) * 100) : 0
+              return [`${formatTokenCount(numericValue)} · ${ratio}%`, name]
+            }}
+            cursor={false}
+            animationDuration={120}
+            wrapperStyle={{ zIndex: 'var(--nxt-layer-floating)', pointerEvents: 'none' }}
+            contentStyle={{
+              border: '1px solid var(--nxt-border-default)',
+              borderRadius: 'var(--nxt-radius-lg)',
+              padding: '7px 9px',
+              color: 'var(--nxt-text-primary)',
+              background: 'var(--nxt-bg-elevated)',
+              boxShadow: 'var(--nxt-shadow-popover)',
+              fontSize: 12,
+            }}
+            itemStyle={{ color: 'var(--nxt-text-primary)' }}
+          />
         </PieChart>
         <strong>{center}</strong>
       </div>
@@ -586,6 +624,8 @@ export function ChannelSessionInspector({
   const [channelName, setChannelName] = useState(channel.name)
   const currentTrigger = channel.bindings[0]?.triggerPolicy ?? 'mentioned-or-replied'
   const currentTool = workTools(latestTurn(runtime)).find((tool) => tool.state === 'running')
+  const phaseExplanation =
+    runtime?.summary ?? (phase === '空闲' ? '智能体当前没有正在处理的任务。' : `智能体当前状态：${phase}。`)
 
   useEffect(() => {
     setChannelName(channel.name)
@@ -624,11 +664,22 @@ export function ChannelSessionInspector({
   return (
     <aside className={styles.inspector} aria-label="频道">
       <section>
-        <h2>运行</h2>
-        {agent ? <StatusBadge tone={agentTone(phase)}>{phase}</StatusBadge> : null}
-        <p className={styles.trajectorySummary}>
-          {runtime?.summary ?? (agent ? '智能体当前空闲。' : '绑定智能体后才能自动响应消息。')}
-        </p>
+        <div className={styles.inspectorSectionHead}>
+          <h2>运行</h2>
+          {agent ? (
+            <Tooltip.Root>
+              <Tooltip.Trigger asChild>
+                <span className={styles.inspectorStatusTrigger} tabIndex={0} aria-label={`${phase}状态说明`}>
+                  <StatusBadge tone={agentTone(phase)}>{phase}</StatusBadge>
+                </span>
+              </Tooltip.Trigger>
+              <Tooltip.Portal>
+                <Tooltip.Content side="left">{phaseExplanation}</Tooltip.Content>
+              </Tooltip.Portal>
+            </Tooltip.Root>
+          ) : null}
+        </div>
+        {runtime?.summary && phase !== '空闲' ? <p className={styles.trajectorySummary}>{runtime.summary}</p> : null}
         {currentTool ? (
           <p className={styles.secondaryText}>
             {currentTool.displayName}
@@ -641,7 +692,9 @@ export function ChannelSessionInspector({
         {runtime?.occupancy ? <ContextUsageCard occupancy={runtime.occupancy} /> : null}
       </section>
       <section>
-        <h2>绑定</h2>
+        <div className={styles.inspectorSectionHead}>
+          <h2>绑定</h2>
+        </div>
         <dl className={styles.facts}>
           <dt>智能体</dt>
           <dd>{agent?.name ?? '未绑定'}</dd>

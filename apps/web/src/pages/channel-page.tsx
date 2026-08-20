@@ -1,11 +1,20 @@
-import { Activity, ArrowDown, Info, Send, Settings2, PanelRightClose, PanelRightOpen, Wrench } from 'lucide-react'
+import { Activity, ArrowDown, Info, PanelRightClose, PanelRightOpen, Send, Wrench } from 'lucide-react'
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type FormEvent } from 'react'
 import { Navigate, useNavigate, useParams } from 'react-router-dom'
 import { notify } from '../components/notifications.js'
 import { EmptyState, InlineFeedback } from '../components/product-feedback.js'
 import { workHomePath, writeLastChannelId } from '../shell/last-channel.js'
 import { useProductStore, type AgentRuntimeState, type DeliveryState } from '../product-store.js'
-import { Button, ResizeHandle, StatusBadge, Tabs, Textarea, Tooltip, type StatusTone } from '../ui-kit/index.js'
+import {
+  Button,
+  IconButton,
+  ResizeHandle,
+  StatusBadge,
+  Tabs,
+  Textarea,
+  Tooltip,
+  type StatusTone,
+} from '../ui-kit/index.js'
 import { INSPECTOR_WIDTH, useUiPreferences } from '../ui-preferences.js'
 import { BindingTaskDialog } from './binding-task.js'
 import { useStickToBottom } from './channel-scroll.js'
@@ -221,10 +230,9 @@ export function ChannelConversationPage() {
                 <div className={styles.conversationHeaderActions} data-conversation-header-actions>
                   <ChannelViewSwitch />
                   {agent ? <StatusBadge tone={agentTone(livePhase)}>{livePhase}</StatusBadge> : null}
-                  <Button
-                    size="small"
-                    variant="ghost"
-                    aria-label={inspectorCollapsed ? '展开检查器' : '收起检查器'}
+                  <IconButton
+                    label={inspectorCollapsed ? '展开检查器' : '收起检查器'}
+                    className={styles.inspectorToggle}
                     onClick={() => useUiPreferences.getState().setInspectorCollapsed(!inspectorCollapsed)}
                   >
                     {inspectorCollapsed ? (
@@ -232,27 +240,16 @@ export function ChannelConversationPage() {
                     ) : (
                       <PanelRightClose size={14} aria-hidden="true" />
                     )}
-                    <span className={styles.headerActionLabel}>{inspectorCollapsed ? '展开检查器' : '收起检查器'}</span>
-                  </Button>
-                  {agent ? (
-                    <Button
-                      size="small"
-                      variant="ghost"
-                      aria-label="管理智能体"
-                      onClick={() => void navigate(`/work/agents/${agent.id}`)}
-                    >
-                      <Settings2 size={14} aria-hidden="true" />
-                      <span className={styles.headerActionLabel}>管理智能体</span>
-                    </Button>
-                  ) : (
+                  </IconButton>
+                  {!agent ? (
                     <Button size="small" variant="primary" onClick={() => setBindingOpen(true)}>
                       绑定智能体
                     </Button>
-                  )}
+                  ) : null}
                 </div>
               </header>
 
-              <div className={styles.canvasStage}>
+              <div className={styles.canvasStage} data-channel-canvas-stage>
                 <Tabs.Content className={styles.canvasTab} value="trajectory">
                   <ChannelTrajectoryLedger
                     records={records}
@@ -267,6 +264,7 @@ export function ChannelConversationPage() {
                 <Tabs.Content className={styles.canvasTab} value="chat">
                   <div
                     className={styles.messageList}
+                    data-channel-message-list
                     ref={chatScroll.ref}
                     aria-label="频道消息"
                     onScroll={() => {
@@ -341,9 +339,37 @@ export function ChannelConversationPage() {
               <form
                 ref={composerRef}
                 className={styles.composer}
+                data-channel-composer
                 data-mode={channel.kind === 'web' ? 'web' : 'platform'}
                 onSubmit={(event) => void submit(event)}
               >
+                <Textarea
+                  className={styles.composerInput}
+                  value={draft}
+                  onChange={(event) => {
+                    setDraft(event.target.value)
+                  }}
+                  onKeyDown={(event) => {
+                    if (event.key !== 'Enter' || event.shiftKey || event.nativeEvent.isComposing) return
+                    event.preventDefault()
+                    if (draft.trim() && !sendPending) event.currentTarget.form?.requestSubmit()
+                  }}
+                  aria-label="消息内容"
+                  aria-describedby="channel-composer-mode"
+                  rows={1}
+                  placeholder={
+                    channel.kind === 'web'
+                      ? agent
+                        ? '输入消息'
+                        : '请先绑定智能体'
+                      : canSendAsRobot
+                        ? '输入消息'
+                        : !agent
+                          ? '请先绑定智能体'
+                          : '当前连接不允许主动发言'
+                  }
+                  disabled={sendPending || (channel.kind === 'web' ? !canSendOnWeb : !canSendAsRobot)}
+                />
                 <div className={styles.composerModeRow}>
                   <span className={styles.composerMode}>{composerMode}</span>
                   <Tooltip.Root>
@@ -352,7 +378,11 @@ export function ChannelConversationPage() {
                         <Info size={14} aria-hidden="true" />
                       </span>
                     </Tooltip.Trigger>
-                    <Tooltip.Content>{composerExplanation}</Tooltip.Content>
+                    <Tooltip.Portal>
+                      <Tooltip.Content side="top" align="start" sideOffset={8} collisionPadding={12}>
+                        {composerExplanation}
+                      </Tooltip.Content>
+                    </Tooltip.Portal>
                   </Tooltip.Root>
                   {channel.kind !== 'web' && webChannel ? (
                     <Button
@@ -364,45 +394,16 @@ export function ChannelConversationPage() {
                       去网页频道
                     </Button>
                   ) : null}
-                </div>
-                <div className={styles.composerRow}>
-                  <Textarea
-                    className={styles.composerInput}
-                    value={draft}
-                    onChange={(event) => {
-                      setDraft(event.target.value)
-                    }}
-                    onKeyDown={(event) => {
-                      if (event.key !== 'Enter' || event.shiftKey || event.nativeEvent.isComposing) return
-                      event.preventDefault()
-                      if (draft.trim() && !sendPending) event.currentTarget.form?.requestSubmit()
-                    }}
-                    aria-label="消息内容"
-                    aria-describedby="channel-composer-mode"
-                    rows={1}
-                    placeholder={
-                      channel.kind === 'web'
-                        ? agent
-                          ? '输入要发给智能体的消息'
-                          : '请先绑定智能体'
-                        : canSendAsRobot
-                          ? '输入要发到频道的公告或说明'
-                          : !agent
-                            ? '请先绑定智能体'
-                            : '当前连接不允许主动发言'
-                    }
-                    disabled={sendPending || (channel.kind === 'web' ? !canSendOnWeb : !canSendAsRobot)}
-                  />
-                  <Button
-                    variant="primary"
+                  <IconButton
+                    label={channel.kind === 'web' ? '发送给智能体' : '发到频道'}
+                    className={styles.composerSend}
                     type="submit"
                     loading={sendPending}
                     loadingLabel="发送中…"
                     disabled={!draft.trim() || (channel.kind === 'web' ? !canSendOnWeb : !canSendAsRobot)}
                   >
                     <Send size={15} aria-hidden="true" />
-                    {channel.kind === 'web' ? '发送给智能体' : '发到频道'}
-                  </Button>
+                  </IconButton>
                 </div>
                 <span className={styles.srOnly} id="channel-composer-mode">
                   {composerExplanation}
@@ -419,6 +420,7 @@ export function ChannelConversationPage() {
                   min={INSPECTOR_WIDTH.min}
                   max={INSPECTOR_WIDTH.max}
                   defaultValue={INSPECTOR_WIDTH.default}
+                  side="after"
                   onChange={setInspectorWidth}
                   onCommit={(value) => useUiPreferences.getState().setInspectorWidth(value)}
                 />

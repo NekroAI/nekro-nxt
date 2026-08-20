@@ -1,14 +1,5 @@
-import { Boxes, Cable, MessageSquare, PanelLeftClose, PanelLeftOpen, RefreshCw, Settings } from 'lucide-react'
-import {
-  Component,
-  useEffect,
-  useMemo,
-  useRef,
-  useState,
-  type CSSProperties,
-  type ErrorInfo,
-  type ReactNode,
-} from 'react'
+import { Boxes, Cable, MessageSquare, RefreshCw, Settings } from 'lucide-react'
+import { Component, useEffect, useMemo, useState, type CSSProperties, type ErrorInfo, type ReactNode } from 'react'
 import { Navigate, NavLink, Outlet, Route, Routes, useLocation, useParams } from 'react-router-dom'
 import styles from './app.module.css'
 import { NotificationCenter, notify } from './components/notifications.js'
@@ -96,22 +87,14 @@ function DesktopShell() {
   const host = useProductStore((state) => state.host)
   const status = hostPresentation(host.status)
   const [refreshPending, setRefreshPending] = useState(false)
-  const objectPaneRef = useRef<HTMLElement>(null)
   const savedObjectPaneWidth = useUiPreferences((state) => state.layout.objectPaneWidth)
-  const objectPaneCollapsed = useUiPreferences((state) => state.layout.objectPaneCollapsed)
   const [objectPaneWidth, setObjectPaneWidth] = useState(savedObjectPaneWidth)
   const shellStyle: CSSProperties & {
     '--nxt-object-pane-width': string
-    '--nxt-object-pane-splitter-width': string
   } = {
-    '--nxt-object-pane-width': objectPaneCollapsed ? '0px' : `${objectPaneWidth}px`,
-    '--nxt-object-pane-splitter-width': objectPaneCollapsed ? '0px' : '5px',
+    '--nxt-object-pane-width': `${objectPaneWidth}px`,
   }
   useEffect(() => setObjectPaneWidth(savedObjectPaneWidth), [savedObjectPaneWidth])
-  useEffect(() => {
-    const pane = objectPaneRef.current
-    if (pane) pane.inert = objectPaneCollapsed
-  }, [objectPaneCollapsed])
   const reconnect = async (): Promise<void> => {
     if (refreshPending) return
     await runHostRefresh(
@@ -124,28 +107,13 @@ function DesktopShell() {
   }
 
   return (
-    <div className={styles.shell} style={shellStyle} data-object-pane-collapsed={objectPaneCollapsed ? '' : undefined}>
+    <div className={styles.shell} style={shellStyle}>
       <header className={styles.windowTopBar} data-window-top-bar>
         <div className={styles.windowBrand} aria-label="NekroNxt">
           <span className={styles.mark} aria-hidden="true" />
         </div>
         <div className={styles.windowObjectTitle}>NekroNxt</div>
         <div className={styles.windowStageBar}>
-          <Button
-            size="small"
-            variant="ghost"
-            className={styles.windowControl}
-            aria-label={objectPaneCollapsed ? '展开对象列' : '收起对象列'}
-            aria-pressed={objectPaneCollapsed}
-            title={objectPaneCollapsed ? '展开对象列' : '收起对象列'}
-            onClick={() => useUiPreferences.getState().setObjectPaneCollapsed(!objectPaneCollapsed)}
-          >
-            {objectPaneCollapsed ? (
-              <PanelLeftOpen size={16} aria-hidden="true" />
-            ) : (
-              <PanelLeftClose size={16} aria-hidden="true" />
-            )}
-          </Button>
           <span>
             {modes.find(({ work, to }) => (work ? isWorkPath(location.pathname) : location.pathname.startsWith(to)))
               ?.label ?? 'NekroNxt'}
@@ -191,26 +159,26 @@ function DesktopShell() {
             )}
           </div>
         </aside>
-        <aside ref={objectPaneRef} className={styles.tree} aria-label="对象列" aria-hidden={objectPaneCollapsed}>
+        <aside className={styles.tree} aria-label="对象列">
           <ObjectPane />
         </aside>
-        {objectPaneCollapsed ? null : (
-          <ResizeHandle
-            className={styles.shellSplitter}
-            label="调整对象列宽度"
-            value={objectPaneWidth}
-            min={OBJECT_PANE_WIDTH.min}
-            max={OBJECT_PANE_WIDTH.max}
-            defaultValue={OBJECT_PANE_WIDTH.default}
-            onChange={setObjectPaneWidth}
-            onCommit={(value) => useUiPreferences.getState().setObjectPaneWidth(value)}
-          />
-        )}
+        <ResizeHandle
+          className={styles.shellSplitter}
+          label="调整对象列宽度"
+          value={objectPaneWidth}
+          min={OBJECT_PANE_WIDTH.min}
+          max={OBJECT_PANE_WIDTH.max}
+          defaultValue={OBJECT_PANE_WIDTH.default}
+          onChange={setObjectPaneWidth}
+          onCommit={(value) => useUiPreferences.getState().setObjectPaneWidth(value)}
+        />
         <main className={styles.stage}>
           <NotificationCenter />
           <HostNotice />
           <div className={styles.stageView}>
-            <Outlet />
+            <div className={styles.routeView} key={location.pathname}>
+              <Outlet />
+            </div>
           </div>
         </main>
       </div>

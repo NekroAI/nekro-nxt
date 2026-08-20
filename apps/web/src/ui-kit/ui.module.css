@@ -467,6 +467,10 @@
   font-size: 13px;
   font-weight: 620;
   cursor: pointer;
+  transition:
+    color var(--nxt-motion-fast) var(--nxt-ease-standard),
+    border-color var(--nxt-motion-fast) var(--nxt-ease-standard),
+    background var(--nxt-motion-fast) var(--nxt-ease-standard);
 }
 
 .tabsTrigger[data-state='active'] {
@@ -485,6 +489,10 @@
 
 .tabsContent {
   margin-top: var(--nxt-space-4);
+}
+
+.tabsContent[data-state='active'] {
+  animation: content-enter var(--nxt-motion-standard) var(--nxt-ease-enter) both;
 }
 
 .dropdownMenuContent {
@@ -568,6 +576,13 @@
   from {
     opacity: 0;
     transform: translateY(2px);
+  }
+}
+
+@keyframes content-enter {
+  from {
+    opacity: 0;
+    transform: translateY(3px);
   }
 }
 

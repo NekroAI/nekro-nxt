@@ -15,6 +15,7 @@ import {
 import {
   Button,
   Field,
+  IconButton,
   Input,
   ResizeHandle,
   SelectField,
@@ -436,12 +437,6 @@ export function AgentManagePage() {
   const undiscoveredConnections = connections.filter(
     (connection) => connection.adapterKey !== 'web' && connection.knownChannels.length === 0,
   )
-  const untestedConnections = connections.filter(
-    (connection) =>
-      connection.adapterKey !== 'web' &&
-      connection.knownChannels.length > 0 &&
-      (connection.receiveTest !== '通过' || connection.sendTest !== '通过'),
-  )
   const openTab = (tab: AgentSettingsTab): void => {
     const next = new URLSearchParams(searchParams)
     if (tab === 'profile') next.delete('tab')
@@ -516,9 +511,8 @@ export function AgentManagePage() {
               >
                 <Save size={15} aria-hidden="true" /> 保存新配置
               </Button>
-              <Button
-                variant="ghost"
-                aria-label={inspectorCollapsed ? '展开检查器' : '收起检查器'}
+              <IconButton
+                label={inspectorCollapsed ? '展开检查器' : '收起检查器'}
                 onClick={() => useUiPreferences.getState().setInspectorCollapsed(!inspectorCollapsed)}
               >
                 {inspectorCollapsed ? (
@@ -526,8 +520,7 @@ export function AgentManagePage() {
                 ) : (
                   <PanelRightClose size={15} aria-hidden="true" />
                 )}
-                {inspectorCollapsed ? '展开检查器' : '收起检查器'}
-              </Button>
+              </IconButton>
             </>
           }
         />
@@ -542,38 +535,36 @@ export function AgentManagePage() {
         </p>
 
         <section className={styles.workbenchSection} id="agent-profile">
-          <div className={styles.formLayout}>
-            <div className={styles.section}>
-              <div className={styles.sectionHeading}>人设与模型</div>
-              <div className={styles.formStack}>
-                <Field label="名称" error={!displayName.trim() ? '请输入智能体名称。' : undefined}>
-                  <Input value={displayName} onChange={(event) => setDisplayName(event.target.value)} />
-                </Field>
-                <Field label="人设" hint="描述它的身份、表达方式和工作边界。">
-                  <Textarea value={persona} onChange={(event) => setPersona(event.target.value)} />
-                </Field>
-                {models.length > 0 ? (
-                  <SelectField
-                    label="默认模型"
-                    value={selectedModelKey}
-                    onValueChange={setSelectedModelKey}
-                    options={models.map((model) => ({
-                      value: modelKey(model),
-                      label: `${model.providerName} · ${model.name}`,
-                    }))}
+          <div className={styles.section}>
+            <div className={styles.sectionHeading}>人设与模型</div>
+            <div className={styles.formStack}>
+              <Field label="名称" error={!displayName.trim() ? '请输入智能体名称。' : undefined}>
+                <Input value={displayName} onChange={(event) => setDisplayName(event.target.value)} />
+              </Field>
+              <Field label="人设" hint="描述它的身份、表达方式和工作边界。">
+                <Textarea value={persona} onChange={(event) => setPersona(event.target.value)} />
+              </Field>
+              {models.length > 0 ? (
+                <SelectField
+                  label="默认模型"
+                  value={selectedModelKey}
+                  onValueChange={setSelectedModelKey}
+                  options={models.map((model) => ({
+                    value: modelKey(model),
+                    label: `${model.providerName} · ${model.name}`,
+                  }))}
+                />
+              ) : (
+                <>
+                  <InlineFeedback tone="warning">当前没有可用模型。保存一个供应商后即可选择默认模型。</InlineFeedback>
+                  <AddModelProviderForm
+                    onSaved={() => {
+                      const first = useProductStore.getState().models[0]
+                      if (first) setSelectedModelKey(modelKey(first))
+                    }}
                   />
-                ) : (
-                  <>
-                    <InlineFeedback tone="warning">当前没有可用模型。保存一个供应商后即可选择默认模型。</InlineFeedback>
-                    <AddModelProviderForm
-                      onSaved={() => {
-                        const first = useProductStore.getState().models[0]
-                        if (first) setSelectedModelKey(modelKey(first))
-                      }}
-                    />
-                  </>
-                )}
-              </div>
+                </>
+              )}
             </div>
           </div>
         </section>
@@ -621,11 +612,6 @@ export function AgentManagePage() {
             {undiscoveredConnections.map((connection) => (
               <InlineFeedback key={connection.id} tone="info">
                 {connectionDisplayName(connection)} 尚未发现频道。请先向机器人账号发送一条消息，发现后可在本页绑定。
-              </InlineFeedback>
-            ))}
-            {untestedConnections.map((connection) => (
-              <InlineFeedback key={`${connection.id}-test`} tone="info">
-                {connectionDisplayName(connection)} 尚未完成收发测试。可以先绑定，测试仍可稍后进行。
               </InlineFeedback>
             ))}
           </div>
@@ -753,6 +739,7 @@ export function AgentManagePage() {
           min={INSPECTOR_WIDTH.min}
           max={INSPECTOR_WIDTH.max}
           defaultValue={INSPECTOR_WIDTH.default}
+          side="after"
           onChange={setInspectorWidth}
           onCommit={(value) => useUiPreferences.getState().setInspectorWidth(value)}
         />

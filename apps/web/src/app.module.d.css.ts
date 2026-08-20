@@ -7,6 +7,7 @@ declare const styles: {
   readonly railHost: string
   readonly railHostDot: string
   readonly railSpacer: string
+  readonly routeView: string
   readonly shell: string
   readonly shellBody: string
   readonly shellSplitter: string
@@ -17,7 +18,6 @@ declare const styles: {
   readonly treeBody: string
   readonly treeHead: string
   readonly windowBrand: string
-  readonly windowControl: string
   readonly windowObjectTitle: string
   readonly windowStageBar: string
   readonly windowTopBar: string

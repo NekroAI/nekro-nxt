@@ -29,7 +29,7 @@ const dragTo = async (page: Page, source: Locator, target: Locator): Promise<voi
   await page.mouse.move(8, 8)
 }
 
-test('work tree keeps titles stable while pointer and keyboard handles cover ordering and binding', async ({
+test('work tree keeps titles stable while full rows and keyboard handles cover ordering and binding', async ({
   page,
   request,
 }, testInfo) => {
@@ -248,8 +248,6 @@ test('work tree keeps titles stable while pointer and keyboard handles cover ord
   const mapleHeader = page.getByRole('link', { name: /浅枫\s+\d+ 个频道/u })
   const clerkHeader = page.getByRole('link', { name: /资料员\s+\d+ 个频道/u })
   const mapleChannelHandle = page.getByRole('button', { name: '拖动“浅枫的网页频道”排序' })
-  const mapleSpareHandle = page.getByRole('button', { name: '拖动“浅枫的备用地”排序' })
-  const mapleAgentHandle = page.getByRole('button', { name: '拖动“浅枫”及其频道排序' })
   const top = async (locator: Locator): Promise<number> => {
     const box = await locator.boundingBox()
     if (!box) throw new Error('排序目标没有几何尺寸。')
@@ -286,27 +284,27 @@ test('work tree keeps titles stable while pointer and keyboard handles cover ord
   const rejectedSpareTop = await top(mapleSpare)
   rejectNextOrder = true
   allowOrderFailureConsole = true
-  await dragTo(page, mapleChannelHandle, mapleSpare)
+  await dragTo(page, mapleChannel, mapleSpare)
   await expect.poll(() => rejectedOrderRequests).toBe(1)
   await expect(page.getByText('测试拒绝保存顺序。')).toBeVisible()
   await expect.poll(async () => Math.abs((await top(mapleChannel)) - rejectedChannelTop) < 1).toBe(true)
   await expect.poll(async () => Math.abs((await top(mapleSpare)) - rejectedSpareTop) < 1).toBe(true)
   allowOrderFailureConsole = false
 
-  await dragTo(page, mapleChannelHandle, mapleSpare)
+  await dragTo(page, mapleChannel, mapleSpare)
   await expect(page.getByRole('dialog')).toHaveCount(0)
   await expect.poll(async () => (await top(mapleChannel)) < (await top(mapleSpare))).toBe(true)
-  await dragTo(page, mapleSpareHandle, mapleChannel)
+  await dragTo(page, mapleSpare, mapleChannel)
   await expect(page.getByRole('dialog')).toHaveCount(0)
   expect(await top(mapleSpare)).toBeLessThan(await top(mapleChannel))
   expect(await top(mapleHeader)).toBeLessThan(await top(clerkHeader))
-  await dragTo(page, mapleAgentHandle, clerkHeader)
+  await dragTo(page, mapleHeader, clerkHeader)
   await expect(page.getByRole('dialog')).toHaveCount(0)
   await expect.poll(async () => (await top(clerkHeader)) < (await top(mapleHeader))).toBe(true)
 
   await dragTo(
     page,
-    page.getByRole('button', { name: '拖动“临时网页台”排序' }),
+    page.getByRole('link', { name: /临时网页台/u }),
     page.getByRole('link', { name: /资料员\s+\d+ 个频道/u }),
   )
   const bindDialog = page.getByRole('dialog')
@@ -315,7 +313,7 @@ test('work tree keeps titles stable while pointer and keyboard handles cover ord
   await bindDialog.getByRole('button', { name: '交给该智能体响应' }).click()
   await expect(bindDialog).toHaveCount(0)
 
-  await dragTo(page, mapleChannelHandle, clerkHeader)
+  await dragTo(page, mapleChannel, clerkHeader)
   const rebindDialog = page.getByRole('dialog')
   await expect(rebindDialog.getByRole('heading', { name: '改由其他智能体响应' })).toBeVisible()
   await expect(rebindDialog.getByText(/将「浅枫的网页频道」改由「资料员」响应/u)).toBeVisible()
@@ -324,7 +322,11 @@ test('work tree keeps titles stable while pointer and keyboard handles cover ord
   await expect(mapleChannelHandle).toBeFocused()
 
   const clerkChannelHandle = page.getByRole('button', { name: '拖动“资料员的网页频道”排序' })
-  await dragTo(page, clerkChannelHandle, page.getByText('未绑定频道', { exact: true }))
+  await dragTo(
+    page,
+    page.getByRole('link', { name: /资料员的网页频道/u }),
+    page.getByText('未绑定频道', { exact: true }),
+  )
   const unbindDialog = page.getByRole('dialog')
   await expect(unbindDialog.getByRole('heading', { name: '解除频道绑定' })).toBeVisible()
   await expect(unbindDialog.getByText(/先停止「资料员」在「资料员的网页频道」中的当前工作/u)).toBeVisible()

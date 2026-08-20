@@ -10,7 +10,6 @@ export interface UiPreferencesSnapshot {
   readonly version: 1
   readonly layout: {
     readonly objectPaneWidth: number
-    readonly objectPaneCollapsed: boolean
     readonly inspectorWidth: number
     readonly inspectorCollapsed: boolean
   }
@@ -24,7 +23,6 @@ const defaults: UiPreferencesSnapshot = {
   version: 1,
   layout: {
     objectPaneWidth: OBJECT_PANE_WIDTH.default,
-    objectPaneCollapsed: false,
     inspectorWidth: INSPECTOR_WIDTH.default,
     inspectorCollapsed: false,
   },
@@ -50,7 +48,6 @@ export const parseUiPreferences = (value: unknown): UiPreferencesSnapshot => {
     version: 1,
     layout: {
       objectPaneWidth: clampUiWidth(layout['objectPaneWidth'], OBJECT_PANE_WIDTH, OBJECT_PANE_WIDTH.default),
-      objectPaneCollapsed: layout['objectPaneCollapsed'] === true,
       inspectorWidth: clampUiWidth(layout['inspectorWidth'], INSPECTOR_WIDTH, INSPECTOR_WIDTH.default),
       inspectorCollapsed: layout['inspectorCollapsed'] === true,
     },
@@ -74,7 +71,6 @@ const readPreferences = (): UiPreferencesSnapshot => {
 
 interface UiPreferencesState extends UiPreferencesSnapshot {
   setObjectPaneWidth(value: number): void
-  setObjectPaneCollapsed(value: boolean): void
   setInspectorWidth(value: number): void
   setInspectorCollapsed(value: boolean): void
   setReducedTransparency(value: boolean): void
@@ -105,12 +101,6 @@ export const useUiPreferences = create<UiPreferencesState>((set) => ({
           objectPaneWidth: clampUiWidth(value, OBJECT_PANE_WIDTH, OBJECT_PANE_WIDTH.default),
         },
       }
-      persist(snapshotFromState(next))
-      return next
-    }),
-  setObjectPaneCollapsed: (value) =>
-    set((state) => {
-      const next = { ...state, layout: { ...state.layout, objectPaneCollapsed: value } }
       persist(snapshotFromState(next))
       return next
     }),

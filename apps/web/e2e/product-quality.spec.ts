@@ -1,4 +1,4 @@
-import { expect, test, type Page, type TestInfo } from '@playwright/test'
+import { expect, test, type Locator, type Page, type TestInfo } from '@playwright/test'
 import {
   AgentIdSchema,
   AgentRevisionIdSchema,
@@ -262,6 +262,16 @@ const installProductRoutes = async (page: Page): Promise<void> => {
         phase: channel?.runtimePhase ?? 'idle',
         summary: channel?.boundAgentId ? '智能体当前空闲。' : '尚未绑定智能体。',
         pendingInjectCount: 0,
+        ...(channelId === targetChannelId
+          ? {
+              occupancy: {
+                projectedTokens: 46_320,
+                contextWindow: 128_000,
+                cacheReadTokens: 12_400,
+                breakdown: { systemTokens: 8_200, toolsTokens: 12_120, messageTokens: 26_000 },
+              },
+            }
+          : {}),
         turns: [],
       }),
     })
@@ -324,6 +334,17 @@ const capture = async (page: Page, testInfo: TestInfo, name: string): Promise<vo
   await testInfo.attach(name, { path, contentType: 'image/png' })
 }
 
+const dragHorizontally = async (page: Page, handle: Locator, deltaX: number): Promise<void> => {
+  const box = await handle.boundingBox()
+  if (!box) throw new Error('分隔条没有几何尺寸。')
+  const x = box.x + box.width / 2
+  const y = box.y + box.height / 2
+  await page.mouse.move(x, y)
+  await page.mouse.down()
+  await page.mouse.move(x + deltaX, y, { steps: 8 })
+  await page.mouse.up()
+}
+
 test('three desktop viewports remain usable in both themes and reduced motion', async ({ page }, testInfo) => {
   const failures = installRuntimeFailureGate(page)
   await installProductRoutes(page)
@@ -349,6 +370,25 @@ test('three desktop viewports remain usable in both themes and reduced motion', 
         .toBeGreaterThan(0)
       await expect(page.getByRole('link', { name: /验收记录\.txt/u })).toBeVisible()
       await expect(page.getByLabel('消息内容')).toBeVisible()
+      await expect(page.locator('[role="tabpanel"][data-state="inactive"]')).toHaveCSS('display', 'none')
+      const canvasBox = await page.locator('[data-channel-canvas-stage]').boundingBox()
+      const messageListBox = await page.locator('[data-channel-message-list]').boundingBox()
+      expect(Math.abs((canvasBox?.y ?? 0) - (messageListBox?.y ?? Number.POSITIVE_INFINITY))).toBeLessThanOrEqual(1)
+      const composerFrame = await page.locator('[data-channel-composer]').evaluate((element) => {
+        const formStyle = getComputedStyle(element)
+        const inputStyle = getComputedStyle(element.querySelector('textarea')!)
+        return {
+          formBorder: Number.parseFloat(formStyle.borderTopWidth),
+          inputBorder: Number.parseFloat(inputStyle.borderTopWidth),
+          inputBackground: inputStyle.backgroundColor,
+          formBackground: formStyle.backgroundColor,
+        }
+      })
+      expect(composerFrame.formBorder).toBeGreaterThan(0)
+      expect(composerFrame.inputBorder).toBe(0)
+      expect(composerFrame.inputBackground).toBe('rgba(0, 0, 0, 0)')
+      await expect(page.getByText('发给智能体', { exact: true })).toHaveCount(1)
+      expect(await page.getByRole('button', { name: '发送给智能体' }).innerText()).toBe('')
       const memberContent = page
         .locator('article[data-side="right"]')
         .filter({ hasText: '请复核今天的记录。' })
@@ -388,6 +428,33 @@ test('three desktop viewports remain usable in both themes and reduced motion', 
           }
         })
         expect(semanticTokens).toEqual({ warning: '#332711', success: '#112d22', danger: '#35191c' })
+      }
+      if (viewport.width === 1440 && colorScheme === 'dark') {
+        await page.getByRole('img', { name: '发送方式说明' }).hover()
+        const composerTooltip = page.getByRole('tooltip')
+        await expect(composerTooltip).toBeVisible()
+        const floatingLayers = await page.evaluate(() => ({
+          composer: Number(getComputedStyle(document.querySelector('[data-channel-composer]')!).zIndex),
+          tooltip: Number(getComputedStyle(document.querySelector('[role="tooltip"]')!).zIndex),
+        }))
+        expect(floatingLayers.tooltip).toBeGreaterThan(floatingLayers.composer)
+
+        const ring = page.locator('figure[aria-label="上下文占用"] svg')
+        const ringBox = await ring.boundingBox()
+        if (!ringBox) throw new Error('上下文环图没有几何尺寸。')
+        await page.mouse.move(ringBox.x + 85, ringBox.y + 27)
+        const chartTooltip = page.locator('figure[aria-label="上下文占用"] .recharts-tooltip-wrapper')
+        await expect(chartTooltip).toBeVisible()
+        await expect(chartTooltip).toContainText(/36%|64%/u)
+        const chartSurface = await chartTooltip
+          .locator(':scope > *')
+          .first()
+          .evaluate((element) => {
+            const style = getComputedStyle(element)
+            return { background: style.backgroundColor, radius: Number.parseFloat(style.borderRadius) }
+          })
+        expect(chartSurface.background).not.toBe('rgb(255, 255, 255)')
+        expect(chartSurface.radius).toBeGreaterThanOrEqual(8)
       }
       await capture(page, testInfo, `channel-${viewport.width}x${viewport.height}-${colorScheme}`)
     }
@@ -480,6 +547,18 @@ test('channel tabs, running tools, and trajectory rows remain keyboard operable'
   await page.keyboard.press('ArrowRight')
   await expect(trajectoryTab).toHaveAttribute('aria-selected', 'true')
   await expect(page.getByLabel('工作轨迹记录')).toBeVisible()
+  const trajectoryGeometry = await page.evaluate(() => {
+    const canvas = document.querySelector('[data-channel-canvas-stage]')!
+    const ledger = document.querySelector('[aria-label="工作轨迹记录"]')!
+    return {
+      canvasRight: canvas.getBoundingClientRect().right,
+      ledgerRight: ledger.getBoundingClientRect().right,
+      scrollWidth: ledger.scrollWidth,
+      clientWidth: ledger.clientWidth,
+    }
+  })
+  expect(trajectoryGeometry.ledgerRight).toBeLessThanOrEqual(trajectoryGeometry.canvasRight + 1)
+  expect(trajectoryGeometry.scrollWidth).toBeGreaterThan(trajectoryGeometry.clientWidth)
 
   const readRow = page.getByRole('row').filter({ hasText: '读取发布记录' })
   await readRow.focus()
@@ -509,8 +588,16 @@ test('desktop splitters and appearance preferences persist and recover defaults'
 
   const inspectorSplitter = page.getByRole('separator', { name: '调整检查器宽度' })
   await expect(inspectorSplitter).toHaveAttribute('aria-valuenow', '360')
+  await dragHorizontally(page, inspectorSplitter, -40)
+  await expect(inspectorSplitter).toHaveAttribute('aria-valuenow', '400')
+  await dragHorizontally(page, inspectorSplitter, 60)
+  await expect(inspectorSplitter).toHaveAttribute('aria-valuenow', '340')
   await inspectorSplitter.focus()
   await page.keyboard.press('Home')
+  await expect(inspectorSplitter).toHaveAttribute('aria-valuenow', '320')
+  await page.keyboard.press('ArrowLeft')
+  await expect(inspectorSplitter).toHaveAttribute('aria-valuenow', '321')
+  await page.keyboard.press('ArrowRight')
   await expect(inspectorSplitter).toHaveAttribute('aria-valuenow', '320')
   await page.reload()
   await expect(page.getByRole('separator', { name: '调整对象列宽度' })).toHaveAttribute('aria-valuenow', '304')
@@ -616,6 +703,10 @@ test('group conversations preserve sender and Mention semantics without exposing
   await expect(page.getByText('@机器人账号', { exact: true })).toBeVisible()
   await expect(page.getByText('@成员乙', { exact: true })).toBeVisible()
   await expect(page.locator('article[data-side="left"]')).toContainText('请和')
+  await expect(page.getByText('请先绑定智能体', { exact: true })).toHaveCount(1)
+  const sendButton = page.getByRole('button', { name: '发到频道' })
+  await expect(sendButton).toBeVisible()
+  expect(await sendButton.innerText()).toBe('')
   const visibleText = await page.locator('body').innerText()
   expect(visibleText).not.toContain(senderMemberId)
   expect(visibleText).not.toContain(targetMemberId)
@@ -655,6 +746,12 @@ test('redesigned relationship and lifecycle pages stay legible across representa
     await page.emulateMedia({ colorScheme: scene.colorScheme, reducedMotion: 'reduce' })
     await page.goto(scene.route)
     await expect(page.getByText(scene.text).first()).toBeVisible()
+    if (scene.route.startsWith('/work/agents/')) {
+      const sectionWidths = await page
+        .locator('section[id^="agent-"]')
+        .evaluateAll((sections) => sections.map((section) => section.getBoundingClientRect().width))
+      expect(Math.max(...sectionWidths) - Math.min(...sectionWidths)).toBeLessThanOrEqual(1)
+    }
     await assertViewportIntegrity(page)
     await capture(
       page,
@@ -668,6 +765,29 @@ test('redesigned relationship and lifecycle pages stay legible across representa
     .getByRole('link', { name: /QQ 官方机器人/u })
     .first()
     .click()
+  const optionalTests = page.locator('details').filter({ hasText: '可选收发测试' })
+  await expect(optionalTests).not.toHaveAttribute('open', '')
+  const aliasInput = page.getByLabel('辨识名')
+  const saveAliasButton = page.getByRole('button', { name: '保存别名' })
+  const aliasBox = await aliasInput.boundingBox()
+  const saveAliasBox = await saveAliasButton.boundingBox()
+  expect(
+    Math.abs((aliasBox?.y ?? 0) + (aliasBox?.height ?? 0) - ((saveAliasBox?.y ?? 0) + (saveAliasBox?.height ?? 0))),
+  ).toBeLessThanOrEqual(1)
+  expect(saveAliasBox?.width ?? Number.POSITIVE_INFINITY).toBeLessThan(180)
+  const scrollGeometry = await page.evaluate(() => {
+    const root = document.querySelector('[data-connection-page-scroll-root]')!
+    const stage = document.querySelector('main')!
+    return {
+      rootRight: root.getBoundingClientRect().right,
+      stageRight: stage.getBoundingClientRect().right,
+      overflowY: getComputedStyle(root).overflowY,
+    }
+  })
+  expect(Math.abs(scrollGeometry.rootRight - scrollGeometry.stageRight)).toBeLessThanOrEqual(1)
+  expect(scrollGeometry.overflowY).toBe('auto')
+  await capture(page, testInfo, 'redesign-connection-qq-tests-collapsed-light')
+  await optionalTests.locator('summary').click()
   await expect(page.getByText('群聊（尾号 D6FE）')).toBeVisible()
   const connectionText = await page.locator('body').innerText()
   expect(connectionText).not.toContain('group:9CC4F6A7D6FE')
@@ -858,9 +978,7 @@ test('the creation page reuses the editor structure and submits explicit capabil
   expect(failures, failures.join('\n')).toEqual([])
 })
 
-test('desktop shell keeps a 48px top bar and persists object pane collapse without unmounting it', async ({
-  page,
-}, testInfo) => {
+test('desktop shell keeps a 48px top bar and a permanently available object pane', async ({ page }, testInfo) => {
   const failures = installRuntimeFailureGate(page)
   await installProductRoutes(page)
   await page.setViewportSize({ width: 1100, height: 720 })
@@ -869,22 +987,10 @@ test('desktop shell keeps a 48px top bar and persists object pane collapse witho
   const topBar = page.locator('[data-window-top-bar]')
   const pane = page.locator('aside[aria-label="对象列"]')
   expect((await topBar.boundingBox())?.height).toBe(48)
-  await expect(pane).toHaveAttribute('aria-hidden', 'false')
-
-  await page.getByRole('button', { name: '收起对象列' }).click()
-  await expect(pane).toHaveAttribute('aria-hidden', 'true')
-  await expect(page.getByRole('separator', { name: '调整对象列宽度' })).toHaveCount(0)
-  expect(await page.evaluate(() => localStorage.getItem('nekro-nxt.ui-preferences') ?? '')).toContain(
-    '"objectPaneCollapsed":true',
-  )
-
-  await page.reload()
-  await expect(page.getByRole('button', { name: '展开对象列' })).toBeVisible()
-  await expect(pane).toHaveAttribute('aria-hidden', 'true')
-  await page.getByRole('button', { name: '展开对象列' }).click()
-  await expect(pane).toHaveAttribute('aria-hidden', 'false')
+  await expect(pane).toBeVisible()
+  await expect(page.getByRole('button', { name: /收起对象列|展开对象列/u })).toHaveCount(0)
   await expect(page.getByRole('separator', { name: '调整对象列宽度' })).toBeVisible()
-  await capture(page, testInfo, 'desktop-object-pane-expanded')
+  await capture(page, testInfo, 'desktop-object-pane-stable')
 
   expect(failures, failures.join('\n')).toEqual([])
 })

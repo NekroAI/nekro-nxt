@@ -72,8 +72,8 @@ export function SettingsPage() {
           <div className={styles.settingsGroup}>
             <div className={styles.sectionHeading}>工作区布局</div>
             <SwitchField
-              label="默认收起检查器"
-              description="频道和智能体工作台只显示主画布；可随时从页面标题栏重新展开。"
+              label="默认隐藏检查器"
+              description="打开频道或智能体工作台时优先显示主画布；页头右侧图标可随时重新展开。"
               checked={inspectorCollapsed}
               onCheckedChange={(enabled) => useUiPreferences.getState().setInspectorCollapsed(enabled)}
             />

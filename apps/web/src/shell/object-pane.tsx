@@ -15,7 +15,7 @@ import {
 } from '@dnd-kit/core'
 import { SortableContext, useSortable, verticalListSortingStrategy } from '@dnd-kit/sortable'
 import { CSS, type Transform } from '@dnd-kit/utilities'
-import { GripVertical, MessageSquare, Plus, UsersRound } from 'lucide-react'
+import { Cable, Cpu, MessageSquare, Move, PackageOpen, Palette, Plus, Puzzle, UsersRound } from 'lucide-react'
 import { useMemo, useRef, useState, type CSSProperties, type MouseEvent } from 'react'
 import { Link, NavLink, useLocation, useParams } from 'react-router-dom'
 import { BindingChangeDialog, type BindingChangeIntent } from '../pages/binding-change.js'
@@ -140,17 +140,20 @@ function SortableChannelLink({
   readonly active: boolean
   readonly onGuardedClick: (event: MouseEvent<HTMLAnchorElement>) => void
 }) {
-  const { attributes, listeners, setNodeRef, setActivatorNodeRef, transform, transition, isDragging } = useSortable({
+  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
     id: channelSortId(item.id),
     animateLayoutChanges: () => false,
     data: { type: 'channel', channelId: item.id },
   })
-  const { onKeyDown: onSortableKeyDown, ...sortableListeners } = listeners ?? {}
+  const { onKeyDown: onSortableKeyDown, onPointerDown: onSortablePointerDown } = listeners ?? {}
   return (
     <div
       ref={setNodeRef}
       style={sortableStyle(transform, transition, isDragging)}
       className={[styles.channelRow, isDragging ? styles.sortableOrigin : ''].filter(Boolean).join(' ')}
+      onPointerDown={(event) => {
+        onSortablePointerDown?.(event)
+      }}
     >
       <Link
         to={`/work/channels/${item.id}`}
@@ -161,17 +164,15 @@ function SortableChannelLink({
         <ChannelRowBody item={item} />
       </Link>
       <IconButton
-        ref={setActivatorNodeRef}
         label={`拖动“${item.name}”排序`}
         className={styles.treeRowDragHandle}
         data-work-tree-drag={`channel:${item.id}`}
         {...attributes}
-        {...sortableListeners}
         onKeyDown={(event) => {
           if (!event.defaultPrevented) onSortableKeyDown?.(event)
         }}
       >
-        <GripVertical size={14} aria-hidden="true" />
+        <Move size={14} aria-hidden="true" />
       </IconButton>
     </div>
   )
@@ -194,12 +195,12 @@ function SortableAgentSection({
   readonly channelActiveId: string | undefined
   readonly onGuardedClick: (event: MouseEvent<HTMLAnchorElement>) => void
 }) {
-  const { attributes, listeners, setNodeRef, setActivatorNodeRef, transform, transition, isDragging } = useSortable({
+  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
     id: agentSortId(agent.id),
     animateLayoutChanges: () => false,
     data: { type: 'agent', agentId: agent.id },
   })
-  const { onKeyDown: onSortableKeyDown, ...sortableListeners } = listeners ?? {}
+  const { onKeyDown: onSortableKeyDown, onPointerDown: onSortablePointerDown } = listeners ?? {}
   const channelIds = channels.map((item) => channelSortId(item.id))
   return (
     <section
@@ -209,7 +210,12 @@ function SortableAgentSection({
         .filter(Boolean)
         .join(' ')}
     >
-      <div className={styles.agentHeaderRow}>
+      <div
+        className={styles.agentHeaderRow}
+        onPointerDown={(event) => {
+          onSortablePointerDown?.(event)
+        }}
+      >
         <Link
           to={to}
           className={[
@@ -225,16 +231,14 @@ function SortableAgentSection({
           <AgentHeaderBody agent={agent} hint={channels.length > 0 ? `${channels.length} 个频道` : '还没有绑定频道'} />
         </Link>
         <IconButton
-          ref={setActivatorNodeRef}
           label={`拖动“${agent.name}”及其频道排序`}
           className={styles.treeRowDragHandle}
           {...attributes}
-          {...sortableListeners}
           onKeyDown={(event) => {
             if (!event.defaultPrevented) onSortableKeyDown?.(event)
           }}
         >
-          <GripVertical size={14} aria-hidden="true" />
+          <Move size={14} aria-hidden="true" />
         </IconButton>
       </div>
       {channelIds.length > 0 ? (
@@ -631,28 +635,31 @@ function ConnectionTree() {
         {connections.length === 0 ? (
           <div className={styles.railEmpty}>{host.status === 'initializing' ? '正在读取…' : '还没有连接'}</div>
         ) : (
-          connections.map((connection) => (
-            <NavLink
-              key={connection.id}
-              to={`/connections/${connection.id}`}
-              className={({ isActive }) =>
-                [
-                  styles.channelGroupHeader,
-                  isActive || connectionId === connection.id ? styles.channelGroupHeaderActive : '',
-                ]
-                  .filter(Boolean)
-                  .join(' ')
-              }
-            >
-              <span className={styles.agentAvatar}>{connectionDisplayName(connection).slice(0, 1)}</span>
-              <span>
-                <strong>{connectionDisplayName(connection)}</strong>
-                <small>
-                  {connection.state} · {connection.channels} 个频道
-                </small>
-              </span>
-            </NavLink>
-          ))
+          <div className={styles.connectionNavList}>
+            {connections.map((connection) => (
+              <NavLink
+                key={connection.id}
+                to={`/connections/${connection.id}`}
+                className={({ isActive }) =>
+                  [
+                    styles.connectionNavItem,
+                    isActive || connectionId === connection.id ? styles.connectionNavItemActive : '',
+                  ]
+                    .filter(Boolean)
+                    .join(' ')
+                }
+              >
+                <Cable size={16} aria-hidden="true" />
+                <span>
+                  <strong>{connectionDisplayName(connection)}</strong>
+                  <small>
+                    {connection.state} · {connection.channels} 个频道
+                  </small>
+                </span>
+                <i data-tone={connection.state === '已连接' ? 'success' : 'neutral'} aria-hidden="true" />
+              </NavLink>
+            ))}
+          </div>
         )}
       </div>
     </>
@@ -672,28 +679,29 @@ function ExtensionTree() {
         {extensions.length === 0 ? (
           <div className={styles.railEmpty}>{host.status === 'initializing' ? '正在读取…' : '还没有本地扩展'}</div>
         ) : (
-          extensions.map((extension) => (
-            <NavLink
-              key={extension.id}
-              to={`/extensions/${extension.id}`}
-              className={({ isActive }) =>
-                [
-                  styles.channelGroupHeader,
-                  isActive || extensionId === extension.id ? styles.channelGroupHeaderActive : '',
-                ]
-                  .filter(Boolean)
-                  .join(' ')
-              }
-            >
-              <span className={styles.agentAvatar}>{extension.name.slice(0, 1)}</span>
-              <span>
-                <strong>{extension.name}</strong>
-                <small>
-                  版本 {extension.revision} · {extension.activation === '已激活' ? '已启用' : '未启用'}
-                </small>
-              </span>
-            </NavLink>
-          ))
+          <div className={styles.extensionNavList}>
+            {extensions.map((extension) => (
+              <NavLink
+                key={extension.id}
+                to={`/extensions/${extension.id}`}
+                className={({ isActive }) =>
+                  [
+                    styles.extensionNavItem,
+                    isActive || extensionId === extension.id ? styles.extensionNavItemActive : '',
+                  ]
+                    .filter(Boolean)
+                    .join(' ')
+                }
+              >
+                <PackageOpen size={17} aria-hidden="true" />
+                <span>
+                  <strong>{extension.name}</strong>
+                  <small>版本 {extension.revision}</small>
+                </span>
+                <em>{extension.activation === '已激活' ? '已启用' : '未启用'}</em>
+              </NavLink>
+            ))}
+          </div>
         )}
       </div>
     </>
@@ -704,9 +712,9 @@ function SettingsTree() {
   const location = useLocation()
   const tab = new URLSearchParams(location.search).get('tab')
   const items = [
-    { to: '/settings', id: 'models', label: '模型供应商', hint: '密钥与可用模型' },
-    { to: '/settings?tab=dsh-extensions', id: 'dsh-extensions', label: 'DSH 扩展', hint: '扩展配置' },
-    { to: '/settings?tab=appearance', id: 'appearance', label: '外观', hint: '主题与动效' },
+    { to: '/settings', id: 'models', label: '模型供应商', hint: '密钥与可用模型', icon: Cpu },
+    { to: '/settings?tab=dsh-extensions', id: 'dsh-extensions', label: 'DSH 扩展', hint: '扩展配置', icon: Puzzle },
+    { to: '/settings?tab=appearance', id: 'appearance', label: '外观', hint: '主题与动效', icon: Palette },
   ]
   const active = tab === 'appearance' || tab === 'dsh-extensions' ? tab : 'models'
   return (
@@ -715,23 +723,28 @@ function SettingsTree() {
         <span>设置</span>
       </div>
       <div className={shell.treeBody}>
-        {items.map((item) => (
-          <NavLink
-            key={item.id}
-            to={item.to}
-            className={() =>
-              [styles.channelGroupHeader, active === item.id ? styles.channelGroupHeaderActive : '']
-                .filter(Boolean)
-                .join(' ')
-            }
-          >
-            <span className={styles.agentAvatar}>{item.label.slice(0, 1)}</span>
-            <span>
-              <strong>{item.label}</strong>
-              <small>{item.hint}</small>
-            </span>
-          </NavLink>
-        ))}
+        <nav className={styles.settingsNav} aria-label="设置分类">
+          {items.map((item) => {
+            const Icon = item.icon
+            return (
+              <NavLink
+                key={item.id}
+                to={item.to}
+                className={() =>
+                  [styles.settingsNavItem, active === item.id ? styles.settingsNavItemActive : '']
+                    .filter(Boolean)
+                    .join(' ')
+                }
+              >
+                <Icon size={17} aria-hidden="true" />
+                <span>
+                  <strong>{item.label}</strong>
+                  <small>{item.hint}</small>
+                </span>
+              </NavLink>
+            )
+          })}
+        </nav>
       </div>
     </>
   )

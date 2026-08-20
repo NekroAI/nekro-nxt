@@ -10,7 +10,6 @@ describe('UI preferences', () => {
         version: 1,
         layout: {
           objectPaneWidth: 280.4,
-          objectPaneCollapsed: true,
           inspectorWidth: 'bad',
           inspectorCollapsed: true,
         },
@@ -18,14 +17,14 @@ describe('UI preferences', () => {
       }),
     ).toEqual({
       version: 1,
-      layout: { objectPaneWidth: 280, objectPaneCollapsed: true, inspectorWidth: 360, inspectorCollapsed: true },
+      layout: { objectPaneWidth: 280, inspectorWidth: 360, inspectorCollapsed: true },
       appearance: { reducedTransparency: true, contrast: 'more' },
     })
   })
 
   it('falls back safely for invalid JSON projections and unknown versions', () => {
     expect(parseUiPreferences(null).layout.objectPaneWidth).toBe(OBJECT_PANE_WIDTH.default)
-    expect(parseUiPreferences({ version: 1, layout: {} }).layout.objectPaneCollapsed).toBe(false)
+    expect(parseUiPreferences({ version: 1, layout: {} }).layout.objectPaneWidth).toBe(OBJECT_PANE_WIDTH.default)
     expect(parseUiPreferences({ version: 2 }).appearance.contrast).toBe('system')
   })
 })

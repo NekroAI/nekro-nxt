@@ -113,6 +113,7 @@ export function ResizeHandle({
   max,
   defaultValue,
   className,
+  side = 'before',
   onChange,
   onCommit,
 }: {
@@ -122,6 +123,7 @@ export function ResizeHandle({
   readonly max: number
   readonly defaultValue: number
   readonly className?: string
+  readonly side?: 'before' | 'after'
   readonly onChange: (value: number) => void
   readonly onCommit: (value: number) => void
 }) {
@@ -142,8 +144,9 @@ export function ResizeHandle({
   }
   const onKeyDown = (event: ReactKeyboardEvent<HTMLDivElement>): void => {
     const step = event.shiftKey ? 10 : 1
-    if (event.key === 'ArrowLeft') change(value - step)
-    else if (event.key === 'ArrowRight') change(value + step)
+    const direction = side === 'before' ? 1 : -1
+    if (event.key === 'ArrowLeft') change(value - step * direction)
+    else if (event.key === 'ArrowRight') change(value + step * direction)
     else if (event.key === 'Home') change(min)
     else if (event.key === 'End') change(max)
     else if (event.key === 'Enter' || event.key === ' ') commit(defaultValue)
@@ -179,7 +182,8 @@ export function ResizeHandle({
       }}
       onPointerMove={(event) => {
         if (!dragStart.current || !event.currentTarget.hasPointerCapture(event.pointerId)) return
-        change(dragStart.current.value + event.clientX - dragStart.current.x)
+        const direction = side === 'before' ? 1 : -1
+        change(dragStart.current.value + (event.clientX - dragStart.current.x) * direction)
       }}
       onPointerUp={finishPointer}
       onLostPointerCapture={() => {
