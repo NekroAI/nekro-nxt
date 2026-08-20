@@ -439,7 +439,7 @@ describe('QQ OpenClaw Adapter', () => {
         platformMessageId: 'qq-inbound-1',
         target: { kind: 'group', openId: 'group-openid' },
         senderOpenId: 'sender-openid',
-        content: '请看',
+        content: '<@bot-openid> 请和 @成员乙 一起看',
         mentions: [
           { openId: 'bot-openid', bot: true },
           { openId: 'other-openid', displayName: '成员乙' },
@@ -460,8 +460,10 @@ describe('QQ OpenClaw Adapter', () => {
         platformMessageId: 'qq-inbound-1',
         senderMemberId: 'mbr_senderopenid',
         parts: [
-          { type: 'text', text: '请看' },
+          { type: 'mention', memberId: 'mbr_botopenid' },
+          { type: 'text', text: ' 请和 ' },
           { type: 'mention', memberId: 'mbr_otheropenid' },
+          { type: 'text', text: ' 一起看' },
           { type: 'image', assetId: 'ast_imagepng', alt: 'image.png' },
           { type: 'file', assetId: 'ast_moviemp4', name: 'movie.mp4' },
           { type: 'quote', messageId: 'msg_quoted' },
@@ -469,8 +471,8 @@ describe('QQ OpenClaw Adapter', () => {
         dedupeKey: 'qq-openclaw:GROUP_AT_MESSAGE_CREATE:qq-inbound-1',
         facts: { mentionedBot: true, replyToBot: true, targetKind: 'group' },
         assetOccurrences: [
-          { partIndex: 2, assetId: 'ast_imagepng' },
-          { partIndex: 3, assetId: 'ast_moviemp4' },
+          { partIndex: 4, assetId: 'ast_imagepng' },
+          { partIndex: 5, assetId: 'ast_moviemp4' },
         ],
       }),
     ])

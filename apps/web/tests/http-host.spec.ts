@@ -315,6 +315,7 @@ describe('HttpProductHost', () => {
           sender: { memberId: senderMemberId, displayName: '成员甲' },
           mentionedConnectionAccount: true,
           parts: [
+            { type: 'mention', memberId: ChannelMemberIdSchema.parse('mbr_bot'), displayName: '机器人账号' },
             { type: 'text', text: '<faceType=6,faceId="0",ext="encoded"> 请看' },
             { type: 'mention', memberId: targetMemberId, displayName: '成员乙' },
           ],

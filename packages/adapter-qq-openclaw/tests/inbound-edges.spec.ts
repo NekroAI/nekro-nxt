@@ -1,10 +1,10 @@
 import { describe, expect, it } from 'vitest'
-import { decodeQQInboundMessage } from '../src/inbound.ts'
+import { decodeQQInboundMessage, splitQQContentAtoms } from '../src/inbound.ts'
 
 const c2c = (value: Record<string, unknown>) => decodeQQInboundMessage('C2C_MESSAGE_CREATE', value, { now: () => 999 })
 
 describe('QQ inbound malformed and media boundaries', () => {
-  it('normalizes every supported attachment suffix and strips structured mentions', () => {
+  it('normalizes every supported attachment suffix and keeps mention tokens in content', () => {
     const decoded = decodeQQInboundMessage(
       'GROUP_MESSAGE_CREATE',
       {
@@ -48,7 +48,7 @@ describe('QQ inbound malformed and media boundaries', () => {
       targetDisplayName: '测试群',
       senderOpenId: 'sender',
       senderDisplayName: '发送者',
-      content: '请看',
+      content: '<@!bot-openid> @成员甲 请看',
       mentions: [
         { openId: 'bot-openid', displayName: 'NekroNxt', bot: true },
         { openId: 'member-openid', displayName: '成员甲' },
@@ -119,5 +119,44 @@ describe('QQ inbound malformed and media boundaries', () => {
         attachments: 'not-an-array',
       }),
     ).toMatchObject({ mentions: [], attachments: [] })
+  })
+})
+
+describe('QQ inbound mention splitting', () => {
+  it('keeps Mention atoms at the original offsets and prepends unused bot mentions', () => {
+    expect(
+      splitQQContentAtoms('@NekroNxt 你好 @成员乙', [
+        { openId: 'bot-openid', displayName: 'NekroNxt', bot: true },
+        { openId: 'member-openid', displayName: '成员乙' },
+      ]),
+    ).toEqual([
+      { kind: 'mention', openId: 'bot-openid', displayName: 'NekroNxt', bot: true },
+      { kind: 'text', value: ' 你好 ' },
+      { kind: 'mention', openId: 'member-openid', displayName: '成员乙' },
+    ])
+    expect(
+      splitQQContentAtoms('<@!bot-openid> @成员甲 请看', [
+        { openId: 'bot-openid', displayName: 'NekroNxt', bot: true },
+        { openId: 'member-openid', displayName: '成员甲' },
+      ]),
+    ).toEqual([
+      { kind: 'mention', openId: 'bot-openid', displayName: 'NekroNxt', bot: true },
+      { kind: 'text', value: ' ' },
+      { kind: 'mention', openId: 'member-openid', displayName: '成员甲' },
+      { kind: 'text', value: ' 请看' },
+    ])
+    expect(
+      splitQQContentAtoms('请看', [
+        { openId: 'bot-openid', bot: true },
+        { openId: 'member-openid', displayName: '成员乙' },
+      ]),
+    ).toEqual([
+      { kind: 'mention', openId: 'bot-openid', displayName: '机器人账号', bot: true },
+      { kind: 'text', value: '请看' },
+      { kind: 'mention', openId: 'member-openid', displayName: '成员乙' },
+    ])
+    expect(splitQQContentAtoms(undefined, [{ openId: 'bot-openid', bot: true }])).toEqual([
+      { kind: 'mention', openId: 'bot-openid', displayName: '机器人账号', bot: true },
+    ])
   })
 })

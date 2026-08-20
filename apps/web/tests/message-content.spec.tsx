@@ -35,7 +35,6 @@ describe('MessageContent', () => {
             type: 'text',
             text: '# 标题\n\n- 项目\n\n| 名称 | 值 |\n| --- | --- |\n| A | 1 |\n\n[外链](https://example.com)',
           },
-          { type: 'mention', memberId: 'member_b', displayName: '成员乙' },
           { type: 'image', assetId: 'ast_image', alt: '示意图', url: '/api/channels/chn_markdown/assets/ast_image' },
           { type: 'text', text: '**结束**\n\n<script>alert(1)</script>' },
         ])}
@@ -48,8 +47,30 @@ describe('MessageContent', () => {
     expect(markup).toContain('rel="noopener noreferrer"')
     expect(markup).not.toContain('<script>')
     expect(markup).not.toContain('alert(1)')
-    expect(markup.indexOf('成员乙')).toBeLessThan(markup.indexOf('示意图'))
     expect(markup.indexOf('示意图')).toBeLessThan(markup.indexOf('<strong>结束</strong>'))
+  })
+
+  it('renders Mention chips inline with surrounding text and does not prefix the connection account', () => {
+    const markup = renderToStaticMarkup(
+      <MessageContent
+        message={{
+          ...message([
+            { type: 'mention', memberId: 'mbr_bot', displayName: '机器人账号' },
+            { type: 'text', text: '请和' },
+            { type: 'mention', memberId: 'member_b', displayName: '成员乙' },
+            { type: 'text', text: '一起复核。' },
+            { type: 'image', assetId: 'ast_image', alt: '示意图', url: '/api/channels/chn_markdown/assets/ast_image' },
+          ]),
+          mentionedConnectionAccount: true,
+        }}
+      />,
+    )
+
+    expect(markup.split('机器人账号')).toHaveLength(2)
+    expect(markup.indexOf('机器人账号')).toBeLessThan(markup.indexOf('请和'))
+    expect(markup.indexOf('请和')).toBeLessThan(markup.indexOf('成员乙'))
+    expect(markup.indexOf('成员乙')).toBeLessThan(markup.indexOf('一起复核'))
+    expect(markup.indexOf('一起复核')).toBeLessThan(markup.indexOf('示意图'))
   })
 
   it('drops unsafe Markdown link protocols', () => {

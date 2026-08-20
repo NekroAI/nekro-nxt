@@ -1,0 +1,16 @@
+.inlineRun {
+  display: block;
+  overflow-wrap: anywhere;
+}
+
+.inlineMarkdown {
+  display: inline;
+}
+
+.inlineMarkdown > :first-child {
+  margin-top: 0;
+}
+
+.inlineMarkdown > :last-child {
+  margin-bottom: 0;
+}

@@ -7,7 +7,7 @@
 ## 现行契约
 
 - 支持 C2C 与群频道；文本、结构化 Mention、图片、文件、音频和引用入库；视频作为普通 file；
-- Mention 只接受 `memberId`。Adapter 解析同一 Connection 的 OpenID，Markdown 输出 `<@openid>`，不把 `@昵称` 当发送协议；
+- Mention 只接受 `memberId`。Adapter 解析同一 Connection 的 OpenID，Markdown 输出 `<@openid>`，不把 `@昵称` 当发送协议；入站按原文位置把 `<@openid>` / `@展示名` 切成 `mention` part，机器人账号 Mention 同样入库，并继续报告 `mentionedBot`；
 - 身份拆成 Connection 范围内的 `PlatformIdentity` 与频道内 `ChannelMember`；
 - Adapter 只报告 `mentionedBot`、`replyToBot` 等平台事实；是否触发由 Binding 策略决定：`always`、`mentioned-or-replied`、`command`、`observe-only`；
 - 有有效被动回复额度时优先被动回复，否则按 Connection 配置降级主动发送；部分成功与未知结果不能标成已发送；

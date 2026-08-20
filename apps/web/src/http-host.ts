@@ -104,18 +104,15 @@ export const renderConversationBody = (
     alt?: string | undefined
     name?: string | undefined
   }[],
-  mentionedConnectionAccount = false,
 ): string =>
-  [
-    ...(mentionedConnectionAccount ? ['@机器人账号'] : []),
-    ...parts.map((part) => {
+  parts
+    .map((part) => {
       if (part.type === 'text') return visibleText(part.text ?? '')
       if (part.type === 'mention') return `@${nonEmptyLabel(part.displayName, '群成员')}`
       if (part.type === 'image' || part.type === 'file' || part.type === 'audio') return ''
       if (part.type === 'quote') return '[引用消息]'
       return '[暂不支持显示的消息内容]'
-    }),
-  ]
+    })
     .filter((token) => token.trim().length > 0)
     .join(' ')
 
@@ -261,7 +258,7 @@ const projectConversationMessage = (
           : sourceChannel?.kind === 'web'
             ? '你'
             : '群成员',
-    body: renderConversationBody(message.parts, message.mentionedConnectionAccount),
+    body: renderConversationBody(message.parts),
     parts,
     mentionedConnectionAccount: message.mentionedConnectionAccount === true,
     time: formatTime(message.occurredAt),

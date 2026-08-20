@@ -64,7 +64,7 @@ describe('QQ inbound event decoder', () => {
       targetDisplayName: '研发群',
       senderOpenId: 'sender-openid',
       senderDisplayName: '成员甲',
-      content: '你好',
+      content: '@NekroNxt 你好 @成员乙',
       mentions: [
         { openId: 'bot-openid', displayName: 'NekroNxt', bot: true },
         { openId: 'member-openid', displayName: '成员乙' },

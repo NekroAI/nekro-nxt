@@ -19,6 +19,7 @@ import type {
 } from '@nekro-nxt/contracts'
 import { LogicalMessageIdSchema } from '@nekro-nxt/contracts'
 import { z } from 'zod'
+import { splitQQContentAtoms } from './inbound.js'
 import { isQQTransportError } from './transport-error.js'
 
 export * from './gateway.js'
@@ -495,18 +496,18 @@ export class QQOpenClawConnection implements AdapterConnectionRuntime {
     const parts: MessagePart[] = []
     const assetOccurrences: { readonly partIndex: number; readonly assetId: AssetId }[] = []
     let replyToBot = false
-    if (message.content) parts.push({ type: 'text', text: message.content })
     let mentionedBot = message.eventType === 'GROUP_AT_MESSAGE_CREATE'
-    for (const mention of message.mentions ?? []) {
-      if (mention.bot) {
-        mentionedBot = true
+    for (const atom of splitQQContentAtoms(message.content, message.mentions ?? [])) {
+      if (atom.kind === 'text') {
+        if (atom.value) parts.push({ type: 'text', text: atom.value })
         continue
       }
+      if (atom.bot) mentionedBot = true
       const memberId = await this.#inbound.ensureMember({
         connectionId: this.#context.connectionId,
         channelId,
-        openId: mention.openId,
-        ...(mention.displayName === undefined ? {} : { displayName: mention.displayName }),
+        openId: atom.openId,
+        ...(atom.displayName === undefined ? {} : { displayName: atom.displayName }),
         observedAt: receivedAt,
       })
       parts.push({ type: 'mention', memberId })

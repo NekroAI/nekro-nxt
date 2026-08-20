@@ -1183,7 +1183,7 @@ const projectEvent = (event: ChannelEventRecord, history: ProductChannelHistoryR
           const member = memberSummary(history, part.memberId)
           blocks.push({
             type: 'text',
-            text: `提及频道成员：${member.displayName ?? '未知成员'}（成员标识 ${member.memberId}）`,
+            text: `@${member.displayName ?? '未知成员'}（成员标识 ${member.memberId}）`,
           })
         }
         break

@@ -254,6 +254,7 @@ describe('QQ OpenClaw connection boundaries', () => {
     })
     expect(accepted[0]).toMatchObject({
       parts: [
+        { type: 'mention', memberId: 'mbr_bot' },
         { type: 'mention', memberId: 'mbr_member' },
         { type: 'image', assetId: 'ast_image', alt: 'image.png' },
         { type: 'audio', assetId: 'ast_audio' },
@@ -261,9 +262,9 @@ describe('QQ OpenClaw connection boundaries', () => {
       ],
       facts: { mentionedBot: true, replyToBot: false, targetKind: 'c2c' },
       assetOccurrences: [
-        { partIndex: 1, assetId: 'ast_image' },
-        { partIndex: 2, assetId: 'ast_audio' },
-        { partIndex: 3, assetId: 'ast_file' },
+        { partIndex: 2, assetId: 'ast_image' },
+        { partIndex: 3, assetId: 'ast_audio' },
+        { partIndex: 4, assetId: 'ast_file' },
       ],
     })
 
@@ -283,7 +284,7 @@ describe('QQ OpenClaw connection boundaries', () => {
       platformTimestamp: 400,
     })
     expect(accepted[1]?.parts).toEqual([{ type: 'text', text: '该 QQ 消息包含暂不支持显示的内容。' }])
-    expect(accepted[2]?.parts).toEqual([{ type: 'text', text: '（未包含其他可显示内容）' }])
+    expect(accepted[2]?.parts).toEqual([{ type: 'mention', memberId: 'mbr_bot' }])
     await adapter.stop()
   })
 

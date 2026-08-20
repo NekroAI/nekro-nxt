@@ -3,6 +3,7 @@ import ReactMarkdown, { defaultUrlTransform } from 'react-markdown'
 import rehypeSanitize from 'rehype-sanitize'
 import remarkGfm from 'remark-gfm'
 import type { ChannelSummary, ConversationMessage, ConversationPart } from '../product-store.js'
+import contentStyles from './message-content.module.css'
 import styles from './product-pages.module.css'
 
 export type MessageSide = 'left' | 'right' | 'system'
@@ -44,8 +45,34 @@ function MarkdownText({ text }: { readonly text: string }) {
   )
 }
 
-function StructuredPart({ part }: { readonly part: Exclude<ConversationPart, { readonly type: 'text' }> }) {
-  if (part.type === 'mention') return <span className={styles.messageMention}>@{part.displayName}</span>
+function InlineMarkdownText({ text }: { readonly text: string }) {
+  return (
+    <span className={contentStyles.inlineMarkdown}>
+      <ReactMarkdown
+        remarkPlugins={[remarkGfm]}
+        rehypePlugins={[rehypeSanitize]}
+        skipHtml
+        urlTransform={markdownUrlTransform}
+        components={{
+          a: ({ children, ...props }) => (
+            <a {...props} target="_blank" rel="noopener noreferrer">
+              {children}
+            </a>
+          ),
+          p: ({ children }) => <span>{children}</span>,
+        }}
+      >
+        {text}
+      </ReactMarkdown>
+    </span>
+  )
+}
+
+function MentionChip({ displayName }: { readonly displayName: string }) {
+  return <span className={styles.messageMention}>@{displayName}</span>
+}
+
+function StructuredPart({ part }: { readonly part: Exclude<ConversationPart, { readonly type: 'text' | 'mention' }> }) {
   if (part.type === 'image') {
     return (
       <a className={styles.messageImageLink} href={part.url} target="_blank" rel="noreferrer">
@@ -84,17 +111,50 @@ function StructuredPart({ part }: { readonly part: Exclude<ConversationPart, { r
   return <span className={styles.messageUnsupported}>{part.label}</span>
 }
 
+type InlinePart = Extract<ConversationPart, { readonly type: 'text' | 'mention' }>
+type MessageRun =
+  | { readonly kind: 'inline'; readonly parts: readonly InlinePart[] }
+  | { readonly kind: 'block'; readonly part: Exclude<ConversationPart, InlinePart> }
+
+const groupMessageRuns = (parts: readonly ConversationPart[]): readonly MessageRun[] => {
+  const runs: Array<
+    { kind: 'inline'; parts: InlinePart[] } | { kind: 'block'; part: Exclude<ConversationPart, InlinePart> }
+  > = []
+  for (const part of parts) {
+    if (part.type === 'text' || part.type === 'mention') {
+      const last = runs.at(-1)
+      if (last?.kind === 'inline') last.parts.push(part)
+      else runs.push({ kind: 'inline', parts: [part] })
+      continue
+    }
+    runs.push({ kind: 'block', part })
+  }
+  return runs
+}
+
 export function MessageContent({ message }: { readonly message: ConversationMessage }) {
   return (
     <div className={styles.messageBody}>
-      {message.mentionedConnectionAccount ? <span className={styles.messageMention}>@机器人账号</span> : null}
-      {message.parts.map((part, index) =>
-        part.type === 'text' ? (
-          <MarkdownText key={`${index}:text`} text={part.text} />
-        ) : (
-          <StructuredPart key={`${index}:${part.type}`} part={part} />
-        ),
-      )}
+      {groupMessageRuns(message.parts).map((run, runIndex) => {
+        if (run.kind === 'block') {
+          return <StructuredPart key={`${runIndex}:${run.part.type}`} part={run.part} />
+        }
+        const [only] = run.parts
+        if (run.parts.length === 1 && only?.type === 'text') {
+          return <MarkdownText key={`${runIndex}:text`} text={only.text} />
+        }
+        return (
+          <span className={contentStyles.inlineRun} key={`${runIndex}:inline`}>
+            {run.parts.map((part, partIndex) =>
+              part.type === 'text' ? (
+                <InlineMarkdownText key={`${partIndex}:text`} text={part.text} />
+              ) : (
+                <MentionChip key={`${partIndex}:mention`} displayName={part.displayName} />
+              ),
+            )}
+          </span>
+        )
+      })}
     </div>
   )
 }

@@ -826,7 +826,7 @@ describe('DSH Host and Web Channel vertical slice', () => {
       expect(eventText).toContain('nekro-nxt-channel')
       expect(eventText).toContain('这是通信工具确认发送的回复。')
       expect(eventText).toContain('发送成员：成员甲')
-      expect(eventText).toContain('提及频道成员：成员乙')
+      expect(eventText).toContain('@成员乙')
       expect(eventText).toContain('该消息提及了当前智能体关联的机器人账号')
       expect(eventText).toContain('当前频道身份（Host 权威运行时事实）')
       expect(eventText).toContain(channel.id)

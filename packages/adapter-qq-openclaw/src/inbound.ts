@@ -116,20 +116,105 @@ const normalizeQQContent = (value: unknown): string | undefined => {
   return normalized || undefined
 }
 
-const stripStructuredMentions = (
-  content: string | undefined,
-  mentions: readonly { readonly openId: string; readonly displayName?: string }[],
-): string | undefined => {
-  if (!content) return undefined
-  let normalized = content
-  for (const mention of mentions) {
-    normalized = normalized.replace(new RegExp(`<@!?${regexEscape(mention.openId)}>`, 'gu'), '')
-    if (mention.displayName) {
-      normalized = normalized.replace(new RegExp(`@${regexEscape(mention.displayName)}`, 'gu'), '')
+type QQDecodedMention = {
+  readonly openId: string
+  readonly displayName?: string
+  readonly bot?: boolean
+}
+
+export type QQContentAtom =
+  | { readonly kind: 'text'; readonly value: string }
+  | {
+      readonly kind: 'mention'
+      readonly openId: string
+      readonly displayName?: string
+      readonly bot?: boolean
     }
+
+const parseMentions = (value: unknown): readonly QQDecodedMention[] =>
+  records(value)
+    .map((mention) => {
+      const openId = text(mention['member_openid'], mention['user_openid'], mention['id'])
+      if (!openId) return undefined
+      const mentionDisplayName = displayName(mention)
+      return {
+        openId,
+        ...(mentionDisplayName === undefined ? {} : { displayName: mentionDisplayName }),
+        ...(mention['bot'] === true ? { bot: true } : {}),
+      }
+    })
+    .filter((mention): mention is QQDecodedMention => mention !== undefined)
+
+const mentionAtom = (mention: QQDecodedMention): QQContentAtom => {
+  const displayName = mention.displayName ?? (mention.bot ? '机器人账号' : undefined)
+  return {
+    kind: 'mention',
+    openId: mention.openId,
+    ...(displayName === undefined ? {} : { displayName }),
+    ...(mention.bot ? { bot: true } : {}),
   }
-  const trimmed = normalized.trim()
-  return trimmed || undefined
+}
+
+/** Split QQ text so Mention tokens keep their original offsets in the `parts` array. */
+export const splitQQContentAtoms = (
+  content: string | undefined,
+  mentions: readonly QQDecodedMention[],
+): readonly QQContentAtom[] => {
+  type Span = { readonly start: number; readonly end: number; readonly mention: QQDecodedMention }
+  const spans: Span[] = []
+  if (content) {
+    for (const mention of mentions) {
+      const token = new RegExp(`<@!?${regexEscape(mention.openId)}>`, 'gu')
+      for (const match of content.matchAll(token)) {
+        spans.push({ start: match.index, end: match.index + match[0].length, mention })
+      }
+      if (!mention.displayName) continue
+      const name = new RegExp(`@${regexEscape(mention.displayName)}`, 'gu')
+      for (const match of content.matchAll(name)) {
+        spans.push({ start: match.index, end: match.index + match[0].length, mention })
+      }
+    }
+    spans.sort((left, right) => left.start - right.start || right.end - right.start - (left.end - left.start))
+  }
+
+  const selected: Span[] = []
+  let cursor = 0
+  for (const span of spans) {
+    if (span.start < cursor) continue
+    selected.push(span)
+    cursor = span.end
+  }
+
+  const usedInContent = new Set(selected.map((span) => span.mention.openId))
+  const atoms: QQContentAtom[] = []
+  const emitted = new Set<string>()
+  for (const mention of mentions) {
+    if (!mention.bot || usedInContent.has(mention.openId) || emitted.has(mention.openId)) continue
+    atoms.push(mentionAtom(mention))
+    emitted.add(mention.openId)
+  }
+
+  let offset = 0
+  for (const span of selected) {
+    if (content && span.start > offset) {
+      const value = content.slice(offset, span.start)
+      if (value) atoms.push({ kind: 'text', value })
+    }
+    atoms.push(mentionAtom(span.mention))
+    emitted.add(span.mention.openId)
+    offset = span.end
+  }
+  if (content && offset < content.length) {
+    const value = content.slice(offset)
+    if (value) atoms.push({ kind: 'text', value })
+  }
+
+  for (const mention of mentions) {
+    if (emitted.has(mention.openId)) continue
+    atoms.push(mentionAtom(mention))
+    emitted.add(mention.openId)
+  }
+  return atoms
 }
 
 /** Converts the three supported QQ Gateway message events into the Adapter's platform-neutral inbound shape. */
@@ -153,6 +238,7 @@ export const decodeQQInboundMessage = (
     )
     const senderDisplayName = displayName(author)
     const content = normalizeQQContent(raw['content'])
+    const mentions = parseMentions(raw['mentions'])
     return {
       eventType: typedEvent,
       platformMessageId,
@@ -160,6 +246,7 @@ export const decodeQQInboundMessage = (
       senderOpenId,
       ...(senderDisplayName === undefined ? {} : { senderDisplayName }),
       ...(content === undefined ? {} : { content }),
+      ...(mentions.length === 0 ? {} : { mentions }),
       attachments: parseAttachments(raw['attachments']),
       ...(reference.reference === undefined ? {} : { platformReference: reference.reference }),
       platformTimestamp: parseTimestamp(raw['timestamp'], now),
@@ -168,21 +255,10 @@ export const decodeQQInboundMessage = (
 
   const groupOpenId = required(text(raw['group_openid'], raw['group_id']), 'group OpenID')
   const senderOpenId = required(text(author['member_openid'], author['id']), 'group sender OpenID')
-  const mentions = records(raw['mentions'])
-    .map((mention) => {
-      const openId = text(mention['member_openid'], mention['user_openid'], mention['id'])
-      if (!openId) return undefined
-      const mentionDisplayName = displayName(mention)
-      return {
-        openId,
-        ...(mentionDisplayName === undefined ? {} : { displayName: mentionDisplayName }),
-        ...(mention['bot'] === true ? { bot: true } : {}),
-      }
-    })
-    .filter((mention): mention is NonNullable<typeof mention> => mention !== undefined)
+  const mentions = parseMentions(raw['mentions'])
   const targetDisplayName = text(raw['group_name'], raw['group_nick'], raw['group_title'])
   const senderDisplayName = displayName(author)
-  const content = stripStructuredMentions(normalizeQQContent(raw['content']), mentions)
+  const content = normalizeQQContent(raw['content'])
   return {
     eventType: typedEvent,
     platformMessageId,
