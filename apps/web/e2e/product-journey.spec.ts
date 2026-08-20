@@ -61,11 +61,11 @@ test('production bundle keeps every primary route usable without runtime errors'
   const failures = installRuntimeFailureGate(page)
   const routes = [
     ['/', '工作'],
-    ['/agents', '工作'],
-    ['/channels', '工作'],
+    ['/work', '工作'],
+    ['/work/agents/new', '工作'],
     ['/connections', '连接'],
     ['/extensions', '扩展'],
-    ['/creator', '工作'],
+    ['/work/creator', '工作'],
     ['/runtime', '工作'],
     ['/settings', '设置'],
   ] as const
@@ -79,12 +79,28 @@ test('production bundle keeps every primary route usable without runtime errors'
   expect(failures, failures.join('\n')).toEqual([])
 })
 
+test('legacy work links replace into /work without dropping query or hash', async ({ page }) => {
+  const failures = installRuntimeFailureGate(page)
+
+  await page.goto('/agents?create=1#draft')
+  await expect(page).toHaveURL(/\/work\/agents\/new#draft$/u)
+  await expect(page.getByRole('heading', { name: '创建智能体' })).toBeVisible()
+
+  await page.goto('/creator?agent=agt_compat#preview')
+  await expect(page).toHaveURL(/\/work\/creator\?agent=agt_compat#preview$/u)
+
+  await page.goto('/channels')
+  await expect(page).toHaveURL(/\/work(?:\/|$)/u)
+
+  expect(failures, failures.join('\n')).toEqual([])
+})
+
 test('settings exposes the provider editor and survives real navigation', async ({ page }) => {
   const failures = installRuntimeFailureGate(page)
   await installDeepSeekProviderRoutes(page, true)
   await page.goto('/settings')
 
-  await expect(page.getByRole('heading', { name: '模型供应商' })).toBeVisible()
+  await expect(page.getByRole('heading', { name: '模型供应商', level: 1 })).toBeVisible()
   await page.getByRole('button', { name: /DeepSeek/u }).click()
   await expect(page.getByLabel('API 密钥')).toHaveAttribute('type', 'password')
   await expect(page.getByText(/不会.*回显/u)).toBeVisible()
@@ -92,7 +108,7 @@ test('settings exposes the provider editor and survives real navigation', async 
   await page.getByRole('link', { name: '工作' }).click()
   await expect(page.getByRole('link', { name: '工作' })).toBeVisible()
   await page.getByRole('link', { name: '设置' }).click()
-  await expect(page.getByRole('heading', { name: '模型供应商' })).toBeVisible()
+  await expect(page.getByRole('heading', { name: '模型供应商', level: 1 })).toBeVisible()
 
   expect(failures, failures.join('\n')).toEqual([])
 })
@@ -153,7 +169,9 @@ test('adding a connection selects a platform before showing its fields', async (
   await expect(dialog.getByLabel('App ID')).toHaveCount(0)
 
   await dialog.getByRole('button', { name: '继续配置' }).click()
-  await expect(dialog.getByRole('heading', { name: '配置QQ 官方机器人' })).toBeVisible()
+  await expect(dialog.getByRole('heading', { name: '配置 QQ 官方机器人' })).toBeVisible()
+  await expect(dialog.getByLabel('连接别名')).toBeVisible()
+  await dialog.getByLabel('连接别名').fill('旅程测试连接')
   await expect(dialog.getByLabel('App ID')).toBeVisible()
   await expect(dialog.getByLabel('Client Secret')).toHaveAttribute('type', 'password')
   await expect(dialog.getByText('使用 Markdown')).toBeVisible()
@@ -300,7 +318,7 @@ test("an intelligent-agent can add another channel while replacing that channel'
     return route.fulfill({ status: 201, contentType: 'application/json', body: JSON.stringify(binding) })
   })
 
-  await page.goto('/agents')
+  await page.goto('/work')
   const createAgent = async (displayName: string): Promise<{ agentId: string; channelId: string }> => {
     const result = await page.evaluate(
       async (input) => {
@@ -325,7 +343,7 @@ test("an intelligent-agent can add another channel while replacing that channel'
   const source = await createAgent(sourceName)
   const target = await createAgent(targetName)
 
-  await page.goto(`/agents/${target.agentId}`)
+  await page.goto(`/work/agents/${target.agentId}`)
   await page.getByRole('button', { name: '绑定频道' }).click()
   const dialog = page.getByRole('dialog')
   await expect(dialog.getByRole('heading', { name: '新增频道绑定' })).toBeVisible()
@@ -448,7 +466,7 @@ test('connection workbench binds an intelligent-agent without visiting the manag
   })
 
   await page.goto('/connections')
-  await page.getByRole('link', { name: /QQ 机器人账号/u }).click()
+  await page.getByRole('link', { name: /QQ 官方机器人/u }).click()
   await page.getByRole('button', { name: '绑定智能体' }).click()
   const dialog = page.getByRole('dialog')
   await expect(dialog.getByRole('heading', { name: '绑定智能体' })).toBeVisible()

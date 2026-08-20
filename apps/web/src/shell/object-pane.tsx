@@ -1,6 +1,7 @@
 import {
   DndContext,
   DragOverlay,
+  KeyboardSensor,
   PointerSensor,
   closestCenter,
   pointerWithin,
@@ -9,16 +10,23 @@ import {
   useSensors,
   type CollisionDetection,
   type DragEndEvent,
+  type KeyboardCoordinateGetter,
   type Modifier,
 } from '@dnd-kit/core'
 import { SortableContext, useSortable, verticalListSortingStrategy } from '@dnd-kit/sortable'
 import { CSS, type Transform } from '@dnd-kit/utilities'
-import { MessageSquare, Plus, UsersRound } from 'lucide-react'
+import { GripVertical, MessageSquare, Plus, UsersRound } from 'lucide-react'
 import { useMemo, useRef, useState, type CSSProperties, type MouseEvent } from 'react'
 import { Link, NavLink, useLocation, useParams } from 'react-router-dom'
 import { BindingChangeDialog, type BindingChangeIntent } from '../pages/binding-change.js'
 import { notify } from '../components/notifications.js'
-import { useProductStore, type AgentRuntimeState, type AgentSummary, type ChannelSummary } from '../product-store.js'
+import {
+  connectionDisplayName,
+  useProductStore,
+  type AgentRuntimeState,
+  type AgentSummary,
+  type ChannelSummary,
+} from '../product-store.js'
 import { ConfirmDialog, Field, IconButton, Input, StatusBadge, type StatusTone } from '../ui-kit/index.js'
 import styles from '../pages/product-pages.module.css'
 import shell from '../app.module.css'
@@ -37,15 +45,50 @@ import {
 
 const restrictToVerticalAxis: Modifier = ({ transform }) => ({ ...transform, x: 0 })
 
+const isRecord = (value: unknown): value is Record<string, unknown> =>
+  typeof value === 'object' && value !== null && !Array.isArray(value)
+
+const sortableContainerId = (value: unknown): string => {
+  if (!isRecord(value)) return ''
+  const sortable = value['sortable']
+  if (!isRecord(sortable)) return ''
+  const containerId = sortable['containerId']
+  return typeof containerId === 'string' ? containerId : ''
+}
+
+const workTreeKeyboardCoordinates: KeyboardCoordinateGetter = (event, { active, currentCoordinates, context }) => {
+  if (event.code !== 'ArrowDown' && event.code !== 'ArrowUp') return undefined
+  const collisionRect = context.collisionRect
+  const activeContainer = context.droppableContainers.get(active)
+  const containerId = sortableContainerId(activeContainer?.data.current)
+  if (!collisionRect || !containerId) return undefined
+
+  event.preventDefault()
+  const candidates = context.droppableContainers
+    .getEnabled()
+    .flatMap((container) => {
+      if (container.id === active || sortableContainerId(container.data.current) !== containerId) return []
+      const rect = context.droppableRects.get(container.id)
+      if (!rect) return []
+      if (event.code === 'ArrowDown' && rect.top <= collisionRect.top) return []
+      if (event.code === 'ArrowUp' && rect.top >= collisionRect.top) return []
+      return [{ rect, distance: Math.abs(rect.top - collisionRect.top) }]
+    })
+    .sort((left, right) => left.distance - right.distance)
+  const next = candidates[0]?.rect
+  if (!next) return currentCoordinates
+  return {
+    x: currentCoordinates.x,
+    y: currentCoordinates.y + next.top - collisionRect.top,
+  }
+}
+
 const agentTone = (state: AgentRuntimeState): StatusTone => {
   if (state === '思考中' || state === '使用工具') return 'info'
   if (state === '等待输入') return 'warning'
   if (state === '不可用') return 'error'
   return 'neutral'
 }
-
-const connectionLabel = (adapterKey: string, value: string): string =>
-  adapterKey === 'web' || value === '本地 Web' ? '网页聊天' : value
 
 const sortableStyle = (
   transform: Transform | null,
@@ -97,24 +140,40 @@ function SortableChannelLink({
   readonly active: boolean
   readonly onGuardedClick: (event: MouseEvent<HTMLAnchorElement>) => void
 }) {
-  const { listeners, setNodeRef, transform, transition, isDragging } = useSortable({
+  const { attributes, listeners, setNodeRef, setActivatorNodeRef, transform, transition, isDragging } = useSortable({
     id: channelSortId(item.id),
     animateLayoutChanges: () => false,
     data: { type: 'channel', channelId: item.id },
   })
+  const { onKeyDown: onSortableKeyDown, ...sortableListeners } = listeners ?? {}
   return (
-    <Link
+    <div
       ref={setNodeRef}
       style={sortableStyle(transform, transition, isDragging)}
-      to={`/channels/${item.id}`}
-      className={[styles.channelLink, active ? styles.channelLinkActive : '', isDragging ? styles.sortableOrigin : '']
-        .filter(Boolean)
-        .join(' ')}
-      onClick={onGuardedClick}
-      {...listeners}
+      className={[styles.channelRow, isDragging ? styles.sortableOrigin : ''].filter(Boolean).join(' ')}
     >
-      <ChannelRowBody item={item} />
-    </Link>
+      <Link
+        to={`/work/channels/${item.id}`}
+        className={[styles.channelLink, active ? styles.channelLinkActive : ''].filter(Boolean).join(' ')}
+        aria-current={active ? 'page' : undefined}
+        onClick={onGuardedClick}
+      >
+        <ChannelRowBody item={item} />
+      </Link>
+      <IconButton
+        ref={setActivatorNodeRef}
+        label={`拖动“${item.name}”排序`}
+        className={styles.treeRowDragHandle}
+        data-work-tree-drag={`channel:${item.id}`}
+        {...attributes}
+        {...sortableListeners}
+        onKeyDown={(event) => {
+          if (!event.defaultPrevented) onSortableKeyDown?.(event)
+        }}
+      >
+        <GripVertical size={14} aria-hidden="true" />
+      </IconButton>
+    </div>
   )
 }
 
@@ -135,11 +194,12 @@ function SortableAgentSection({
   readonly channelActiveId: string | undefined
   readonly onGuardedClick: (event: MouseEvent<HTMLAnchorElement>) => void
 }) {
-  const { listeners, setNodeRef, setActivatorNodeRef, transform, transition, isDragging } = useSortable({
+  const { attributes, listeners, setNodeRef, setActivatorNodeRef, transform, transition, isDragging } = useSortable({
     id: agentSortId(agent.id),
     animateLayoutChanges: () => false,
     data: { type: 'agent', agentId: agent.id },
   })
+  const { onKeyDown: onSortableKeyDown, ...sortableListeners } = listeners ?? {}
   const channelIds = channels.map((item) => channelSortId(item.id))
   return (
     <section
@@ -149,21 +209,34 @@ function SortableAgentSection({
         .filter(Boolean)
         .join(' ')}
     >
-      <Link
-        ref={setActivatorNodeRef}
-        to={to}
-        className={[
-          styles.channelGroupHeader,
-          active ? styles.channelGroupHeaderActive : '',
-          dropActive ? styles.dropTarget : '',
-        ]
-          .filter(Boolean)
-          .join(' ')}
-        onClick={onGuardedClick}
-        {...listeners}
-      >
-        <AgentHeaderBody agent={agent} hint={channels.length > 0 ? `${channels.length} 个频道` : '还没有绑定频道'} />
-      </Link>
+      <div className={styles.agentHeaderRow}>
+        <Link
+          to={to}
+          className={[
+            styles.channelGroupHeader,
+            active ? styles.channelGroupHeaderActive : '',
+            dropActive ? styles.dropTarget : '',
+          ]
+            .filter(Boolean)
+            .join(' ')}
+          aria-current={active ? 'page' : undefined}
+          onClick={onGuardedClick}
+        >
+          <AgentHeaderBody agent={agent} hint={channels.length > 0 ? `${channels.length} 个频道` : '还没有绑定频道'} />
+        </Link>
+        <IconButton
+          ref={setActivatorNodeRef}
+          label={`拖动“${agent.name}”及其频道排序`}
+          className={styles.treeRowDragHandle}
+          {...attributes}
+          {...sortableListeners}
+          onKeyDown={(event) => {
+            if (!event.defaultPrevented) onSortableKeyDown?.(event)
+          }}
+        >
+          <GripVertical size={14} aria-hidden="true" />
+        </IconButton>
+      </div>
       {channelIds.length > 0 ? (
         <SortableContext items={channelIds} strategy={verticalListSortingStrategy}>
           {channels.map((item) => (
@@ -245,8 +318,13 @@ function WorkTree() {
   const [webChannelName, setWebChannelName] = useState('网页频道')
   const treeBodyRef = useRef<HTMLDivElement>(null)
   const suppressClickRef = useRef(false)
+  const keyboardDragRef = useRef(false)
   const channelOwnerRef = useRef<Readonly<Record<string, string>>>({})
-  const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 8 } }))
+  const focusChannelAfterDialogRef = useRef('')
+  const sensors = useSensors(
+    useSensor(PointerSensor, { activationConstraint: { distance: 8 } }),
+    useSensor(KeyboardSensor, { coordinateGetter: workTreeKeyboardCoordinates }),
+  )
   const tree = buildWorkTree(agents, channels, workTreeOrder)
   const channelOwnerById = Object.fromEntries(channels.map((item) => [item.id, item.agentId]))
   channelOwnerRef.current = channelOwnerById
@@ -274,8 +352,10 @@ function WorkTree() {
         }
         return closestCenter({
           ...args,
-          droppableContainers: args.droppableContainers.filter((container) =>
-            String(container.id).startsWith(AGENT_SORT_PREFIX),
+          droppableContainers: args.droppableContainers.filter(
+            (container) =>
+              String(container.id).startsWith(AGENT_SORT_PREFIX) &&
+              (!keyboardDragRef.current || String(container.id) !== active),
           ),
         })
       }
@@ -288,6 +368,19 @@ function WorkTree() {
       const sourceChannelId = parsePrefixedId(active, CHANNEL_SORT_PREFIX)
       if (!sourceChannelId) return []
       const sourceOwner = channelOwnerRef.current[sourceChannelId] ?? ''
+      if (keyboardDragRef.current) {
+        return closestCenter({
+          ...args,
+          droppableContainers: args.droppableContainers.filter((container) => {
+            const channelId = parsePrefixedId(String(container.id), CHANNEL_SORT_PREFIX)
+            return (
+              channelId !== undefined &&
+              String(container.id) !== active &&
+              (channelOwnerRef.current[channelId] ?? '') === sourceOwner
+            )
+          }),
+        })
+      }
       const sourceGroupId = sourceOwner ? agentSortId(sourceOwner) : UNBOUND_DROP_ID
       const sourceGroup = args.droppableContainers.find((container) => String(container.id) === sourceGroupId)
       const pointer = args.pointerCoordinates
@@ -313,8 +406,8 @@ function WorkTree() {
     },
     [],
   )
-  const onAgent = location.pathname.startsWith('/agents/')
-  const onCreator = location.pathname.startsWith('/creator')
+  const onAgent = location.pathname.startsWith('/work/agents/')
+  const onCreator = location.pathname.startsWith('/work/creator')
   const channelActiveId = onAgent || onCreator ? undefined : channelId
   const activeChannel = parsePrefixedId(activeId, CHANNEL_SORT_PREFIX)
     ? channels.find((item) => item.id === parsePrefixedId(activeId, CHANNEL_SORT_PREFIX))
@@ -334,6 +427,18 @@ function WorkTree() {
         notify(error instanceof Error ? error.message : String(error), 'error', 'work-tree-order')
       })
   }
+  const openBindingIntent = (nextIntent: BindingChangeIntent): void => {
+    focusChannelAfterDialogRef.current = nextIntent.channelId
+    setIntent(nextIntent)
+  }
+  const restoreChannelActionFocus = (): void => {
+    const channelId = focusChannelAfterDialogRef.current
+    focusChannelAfterDialogRef.current = ''
+    if (!channelId) return
+    window.setTimeout(() => {
+      treeBodyRef.current?.querySelector<HTMLButtonElement>(`[data-work-tree-drag="channel:${channelId}"]`)?.focus()
+    }, 0)
+  }
   const guardClick = (event: MouseEvent<HTMLAnchorElement>): void => {
     if (!suppressClickRef.current) return
     event.preventDefault()
@@ -344,17 +449,24 @@ function WorkTree() {
     const nextOverId = event.over ? String(event.over.id) : ''
     setOverId('')
     setActiveId('')
+    keyboardDragRef.current = false
     const resolution = resolveWorkTreeDragEnd({
       activeId: nextActiveId,
       overId: nextOverId,
       lists: dragLists,
     })
     if (resolution.kind === 'bind' || resolution.kind === 'replace') {
-      setIntent({ kind: resolution.kind, channelId: resolution.channelId, agentId: resolution.agentId })
+      openBindingIntent({ kind: resolution.kind, channelId: resolution.channelId, agentId: resolution.agentId })
+      window.setTimeout(() => {
+        suppressClickRef.current = false
+      }, 0)
       return
     }
     if (resolution.kind === 'unbind') {
-      setIntent({ kind: 'clear', channelId: resolution.channelId })
+      openBindingIntent({ kind: 'clear', channelId: resolution.channelId })
+      window.setTimeout(() => {
+        suppressClickRef.current = false
+      }, 0)
       return
     }
     const nextOrder = applyWorkTreeDragResolution(
@@ -377,7 +489,7 @@ function WorkTree() {
     <>
       <div className={shell.treeHead}>
         <span>工作</span>
-        <Link className={shell.treeAdd} to="/agents?create=1" aria-label="创建智能体">
+        <Link className={shell.treeAdd} to="/work/agents/new" aria-label="创建智能体">
           <Plus size={14} aria-hidden="true" />
         </Link>
       </div>
@@ -389,12 +501,19 @@ function WorkTree() {
             sensors={sensors}
             collisionDetection={collisionDetection}
             modifiers={[restrictToVerticalAxis]}
+            accessibility={{
+              screenReaderInstructions: {
+                draggable:
+                  '按空格开始排序，使用上、下方向键移动；再次按空格放下，按 Escape 取消。绑定、换绑和解绑也可在频道或智能体管理页面完成。',
+              },
+            }}
             autoScroll={{
               canScroll: (element) => element === treeBodyRef.current,
               layoutShiftCompensation: false,
             }}
             onDragStart={(event) => {
               suppressClickRef.current = true
+              keyboardDragRef.current = event.activatorEvent instanceof KeyboardEvent
               setActiveId(String(event.active.id))
             }}
             onDragOver={(event) => {
@@ -407,6 +526,7 @@ function WorkTree() {
             onDragCancel={() => {
               setOverId('')
               setActiveId('')
+              keyboardDragRef.current = false
               window.setTimeout(() => {
                 suppressClickRef.current = false
               }, 0)
@@ -420,7 +540,7 @@ function WorkTree() {
                     key={group.agent.id}
                     agent={group.agent}
                     channels={group.channels}
-                    to={`/agents/${group.agent.id}`}
+                    to={`/work/agents/${group.agent.id}`}
                     active={onAgent && agentId === group.agent.id}
                     dropActive={dropActiveAgentId === group.agent.id}
                     channelActiveId={channelActiveId}
@@ -456,7 +576,14 @@ function WorkTree() {
           </DndContext>
         )}
       </div>
-      <BindingChangeDialog intent={intent} onClose={() => setIntent(undefined)} />
+      <BindingChangeDialog
+        intent={intent}
+        onClose={() => {
+          setIntent(undefined)
+          restoreChannelActionFocus()
+        }}
+        onCloseAutoFocus={(event) => event.preventDefault()}
+      />
       <ConfirmDialog
         open={createWebOpen}
         onOpenChange={setCreateWebOpen}
@@ -517,11 +644,9 @@ function ConnectionTree() {
                   .join(' ')
               }
             >
-              <span className={styles.agentAvatar}>
-                {connectionLabel(connection.adapterKey, connection.name).slice(0, 1)}
-              </span>
+              <span className={styles.agentAvatar}>{connectionDisplayName(connection).slice(0, 1)}</span>
               <span>
-                <strong>{connectionLabel(connection.adapterKey, connection.name)}</strong>
+                <strong>{connectionDisplayName(connection)}</strong>
                 <small>
                   {connection.state} · {connection.channels} 个频道
                 </small>
@@ -580,7 +705,7 @@ function SettingsTree() {
   const tab = new URLSearchParams(location.search).get('tab')
   const items = [
     { to: '/settings', id: 'models', label: '模型供应商', hint: '密钥与可用模型' },
-    { to: '/settings?tab=dsh-extensions', id: 'dsh-extensions', label: 'DSH 扩展', hint: '能力插件配置' },
+    { to: '/settings?tab=dsh-extensions', id: 'dsh-extensions', label: 'DSH 扩展', hint: '扩展配置' },
     { to: '/settings?tab=appearance', id: 'appearance', label: '外观', hint: '主题与动效' },
   ]
   const active = tab === 'appearance' || tab === 'dsh-extensions' ? tab : 'models'

@@ -59,6 +59,8 @@ export interface AgentRevisionRecord extends Omit<AgentRevisionContent, 'capabil
 export interface ConnectionRecord {
   readonly id: ConnectionId
   readonly adapterKey: string
+  /** Optional user-facing identifier; the Adapter still owns platform identity. */
+  readonly alias?: string
   readonly config: JsonValue
   readonly credentialRefs: Readonly<Record<string, string>>
   readonly createdAt: number
@@ -151,6 +153,7 @@ export interface CoreRepository {
     expectedCurrentRevisionId: AgentRevisionId,
   ): void
   createConnection(record: ConnectionRecord): void
+  updateConnectionAlias(id: ConnectionId, alias?: string): void
   getConnection(id: ConnectionId): ConnectionRecord | undefined
   listConnectionIdsByAdapter(adapterKey?: string): readonly ConnectionId[]
   createChannel(record: ChannelRecord): void
@@ -221,6 +224,16 @@ export const AgentCapabilityGrantsSchema = z
 
 export type AgentCapabilityGrants = z.infer<typeof AgentCapabilityGrantsSchema>
 
+export const ConnectionAliasSchema = z
+  .string()
+  .trim()
+  .max(80)
+  .transform((value) => value || undefined)
+
+export function normalizeConnectionAlias(alias: string | undefined): string | undefined {
+  return alias === undefined ? undefined : ConnectionAliasSchema.parse(alias)
+}
+
 const agentRevisionContentSchema = z
   .object({
     displayName: z.string().trim().min(1).max(80),
@@ -252,6 +265,7 @@ const connectionInputSchema = z
       .regex(/^[a-z0-9][a-z0-9-]*$/),
     config: z.json(),
     credentialRefs: z.record(z.string().min(1), z.string().trim().min(1)).default({}),
+    alias: ConnectionAliasSchema.optional(),
   })
   .strict()
 
@@ -490,6 +504,7 @@ export class CoreService {
     readonly adapterKey: string
     readonly config: JsonValue
     readonly credentialRefs?: Readonly<Record<string, string>>
+    readonly alias?: string
   }): ConnectionRecord {
     const parsed = connectionInputSchema.parse(input)
     const record: ConnectionRecord = {
@@ -498,9 +513,27 @@ export class CoreService {
       config: parsed.config,
       credentialRefs: parsed.credentialRefs,
       createdAt: this.#timestamp(),
+      ...(parsed.alias === undefined ? {} : { alias: parsed.alias }),
     }
     this.#repository.createConnection(record)
     return record
+  }
+
+  updateConnectionAlias(connectionId: ConnectionId, alias?: string): ConnectionRecord {
+    const current = this.#repository.getConnection(connectionId)
+    if (!current) throw new Error(`Unknown connection: ${connectionId}`)
+    const normalizedAlias = normalizeConnectionAlias(alias)
+    this.#repository.updateConnectionAlias(connectionId, normalizedAlias)
+    if (normalizedAlias === undefined) {
+      return {
+        id: current.id,
+        adapterKey: current.adapterKey,
+        config: current.config,
+        credentialRefs: current.credentialRefs,
+        createdAt: current.createdAt,
+      }
+    }
+    return { ...current, alias: normalizedAlias }
   }
 
   listConnections(): readonly ConnectionRecord[] {
@@ -508,6 +541,10 @@ export class CoreService {
       const connection = this.#repository.getConnection(id)
       return connection ? [connection] : []
     })
+  }
+
+  getConnection(connectionId: ConnectionId): ConnectionRecord | undefined {
+    return this.#repository.getConnection(connectionId)
   }
 
   listConnectionsByAdapter(adapterKey: string): readonly ConnectionRecord[] {

@@ -2,15 +2,16 @@ import { and, asc, eq, inArray } from 'drizzle-orm'
 import type { AdapterDeliveryReceipt } from '@nekro-nxt/adapter-sdk'
 import { AdapterDeliveryReceiptSchema } from '@nekro-nxt/adapter-sdk'
 import type { AgentId, ChannelId, OutboundIntentId, PhysicalDeliveryId } from '@nekro-nxt/contracts'
-import type {
-  ChannelHistoryEntry,
-  ChannelHistoryRepository,
-  DeliveryReceiptRecord,
-  OutboundIntentRecord,
-  OutboundSnapshot,
-  OutboundState,
-  PhysicalDeliveryRecord,
-  RuntimeRepository,
+import {
+  isConsoleAnchorHistory,
+  type ChannelHistoryEntry,
+  type ChannelHistoryRepository,
+  type DeliveryReceiptRecord,
+  type OutboundIntentRecord,
+  type OutboundSnapshot,
+  type OutboundState,
+  type PhysicalDeliveryRecord,
+  type RuntimeRepository,
 } from '@nekro-nxt/channel-runtime'
 import type { DrizzleCoreDatabase } from '../database.js'
 import { admissionEvents, admissions, channelEvents, episodes, outboundIntents, physicalDeliveries } from '../schema.js'
@@ -259,6 +260,7 @@ export function createOutboxRepository(database: DrizzleCoreDatabase): OutboxSli
             ...(row.facts === null ? {} : { facts: row.facts }),
           }
         })
+        .filter((entry) => !isConsoleAnchorHistory(entry))
       const outbound = database
         .select({ intent: outboundIntents, channelId: episodes.channelId })
         .from(outboundIntents)
@@ -275,6 +277,7 @@ export function createOutboxRepository(database: DrizzleCoreDatabase): OutboxSli
             occurredAt: intent.createdAt,
             parts: intent.parts,
             state: intent.state,
+            ...(intent.sourceTurnId === null ? {} : { sourceTurnId: intent.sourceTurnId }),
           }
         })
       return [...inbound, ...outbound]
@@ -319,6 +322,7 @@ export function createOutboxRepository(database: DrizzleCoreDatabase): OutboxSli
                   ...(row.facts === null ? {} : { facts: row.facts }),
                 }
               })
+              .filter((entry) => !isConsoleAnchorHistory(entry))
       const outbound = database
         .select()
         .from(outboundIntents)
@@ -334,6 +338,7 @@ export function createOutboxRepository(database: DrizzleCoreDatabase): OutboxSli
             occurredAt: row.createdAt,
             parts: row.parts,
             state: row.state,
+            ...(row.sourceTurnId === null ? {} : { sourceTurnId: row.sourceTurnId }),
           }
         })
       return [...inbound, ...outbound]

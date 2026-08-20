@@ -1,6 +1,15 @@
-import { Boxes, Cable, MessageSquare, RefreshCw, Settings } from 'lucide-react'
-import { Component, useEffect, useMemo, useState, type ErrorInfo, type ReactNode } from 'react'
-import { Navigate, NavLink, Outlet, Route, Routes, useLocation } from 'react-router-dom'
+import { Boxes, Cable, MessageSquare, PanelLeftClose, PanelLeftOpen, RefreshCw, Settings } from 'lucide-react'
+import {
+  Component,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type CSSProperties,
+  type ErrorInfo,
+  type ReactNode,
+} from 'react'
+import { Navigate, NavLink, Outlet, Route, Routes, useLocation, useParams } from 'react-router-dom'
 import styles from './app.module.css'
 import { NotificationCenter, notify } from './components/notifications.js'
 import { EmptyState, HostNotice, runHostRefresh } from './components/product-feedback.js'
@@ -17,10 +26,11 @@ import {
 import { useProductStore, type ProductHostStatus } from './product-store.js'
 import { isWorkPath, workHomePath } from './shell/last-channel.js'
 import { ObjectPane } from './shell/object-pane.js'
-import { Button, Tooltip, type StatusTone } from './ui-kit/index.js'
+import { Button, ResizeHandle, Tooltip, type StatusTone } from './ui-kit/index.js'
+import { OBJECT_PANE_WIDTH, useUiPreferences } from './ui-preferences.js'
 
 const modes = [
-  { to: '/channels', label: '工作', icon: MessageSquare, work: true },
+  { to: '/work', label: '工作', icon: MessageSquare, work: true },
   { to: '/connections', label: '连接', icon: Cable, work: false },
   { to: '/extensions', label: '扩展', icon: Boxes, work: false },
   { to: '/settings', label: '设置', icon: Settings, work: false },
@@ -33,11 +43,11 @@ export const hostPresentation = (status: ProductHostStatus): { readonly label: s
   return { label: '无法连接', tone: 'error' }
 }
 
-function HomeIndex() {
+function WorkIndex() {
   const host = useProductStore((state) => state.host)
   const channels = useProductStore((state) => state.channels)
   const agents = useProductStore((state) => state.agents)
-  if (host.status === 'initializing' && channels.length === 0 && agents.length === 0) {
+  if (host.lastSuccessfulAt === null && channels.length === 0 && agents.length === 0) {
     return (
       <div className={styles.centeredState}>
         <EmptyState loading title="正在读取" description="连接完成后会打开最近使用的频道。" />
@@ -45,13 +55,33 @@ function HomeIndex() {
     )
   }
   return <Navigate to={workHomePath({ channels, agents })} replace />
+}
+
+function RootRedirect() {
+  return <Navigate to="/work" replace />
+}
+
+function LegacyWorkRedirect({ kind }: { readonly kind: 'agents' | 'agent' | 'channels' | 'channel' | 'creator' }) {
+  const location = useLocation()
+  const { agentId, channelId } = useParams()
+  const suffix = `${location.search}${location.hash}`
+  if (kind === 'agent' && agentId)
+    return <Navigate to={`/work/agents/${encodeURIComponent(agentId)}${suffix}`} replace />
+  if (kind === 'channel' && channelId) {
+    return <Navigate to={`/work/channels/${encodeURIComponent(channelId)}${suffix}`} replace />
+  }
+  if (kind === 'agents' && new URLSearchParams(location.search).get('create') === '1') {
+    return <Navigate to={`/work/agents/new${location.hash}`} replace />
+  }
+  if (kind === 'creator') return <Navigate to={`/work/creator${suffix}`} replace />
+  return <Navigate to="/work" replace />
 }
 
 function RuntimeRedirect() {
   const host = useProductStore((state) => state.host)
   const channels = useProductStore((state) => state.channels)
   const agents = useProductStore((state) => state.agents)
-  if (host.status === 'initializing' && channels.length === 0 && agents.length === 0) {
+  if (host.lastSuccessfulAt === null && channels.length === 0 && agents.length === 0) {
     return (
       <div className={styles.centeredState}>
         <EmptyState loading title="正在读取" description="连接完成后会打开最近使用的频道。" />
@@ -61,14 +91,27 @@ function RuntimeRedirect() {
   return <Navigate to={workHomePath({ channels, agents })} replace />
 }
 
-function AppShell() {
+function DesktopShell() {
   const location = useLocation()
   const host = useProductStore((state) => state.host)
-  const channels = useProductStore((state) => state.channels)
-  const agents = useProductStore((state) => state.agents)
   const status = hostPresentation(host.status)
   const [refreshPending, setRefreshPending] = useState(false)
-  const workTo = workHomePath({ channels, agents })
+  const objectPaneRef = useRef<HTMLElement>(null)
+  const savedObjectPaneWidth = useUiPreferences((state) => state.layout.objectPaneWidth)
+  const objectPaneCollapsed = useUiPreferences((state) => state.layout.objectPaneCollapsed)
+  const [objectPaneWidth, setObjectPaneWidth] = useState(savedObjectPaneWidth)
+  const shellStyle: CSSProperties & {
+    '--nxt-object-pane-width': string
+    '--nxt-object-pane-splitter-width': string
+  } = {
+    '--nxt-object-pane-width': objectPaneCollapsed ? '0px' : `${objectPaneWidth}px`,
+    '--nxt-object-pane-splitter-width': objectPaneCollapsed ? '0px' : '5px',
+  }
+  useEffect(() => setObjectPaneWidth(savedObjectPaneWidth), [savedObjectPaneWidth])
+  useEffect(() => {
+    const pane = objectPaneRef.current
+    if (pane) pane.inert = objectPaneCollapsed
+  }, [objectPaneCollapsed])
   const reconnect = async (): Promise<void> => {
     if (refreshPending) return
     await runHostRefresh(
@@ -81,56 +124,96 @@ function AppShell() {
   }
 
   return (
-    <div className={styles.shell}>
-      <aside className={styles.rail} aria-label="模式">
-        <div className={styles.mark} aria-hidden="true" />
-        <nav aria-label="主导航">
-          {modes.map(({ to, label, icon: Icon, work }) => (
-            <NavLink
-              to={work ? workTo : to}
-              aria-label={label}
-              title={label}
-              className={() => {
-                const active = work ? isWorkPath(location.pathname) : location.pathname.startsWith(to)
-                return [styles.railBtn, active ? styles.railBtnActive : ''].filter(Boolean).join(' ')
-              }}
-              aria-current={
-                (work ? isWorkPath(location.pathname) : location.pathname.startsWith(to)) ? 'page' : undefined
-              }
-              key={label}
-            >
-              <Icon size={18} strokeWidth={1.8} aria-hidden="true" />
-            </NavLink>
-          ))}
-        </nav>
-        <div className={styles.railSpacer} />
-        <div className={styles.railHost}>
-          {host.status === 'stale' || host.status === 'error' ? (
-            <Button
-              size="small"
-              variant="ghost"
-              aria-label={`重新连接（${status.label}）`}
-              loading={refreshPending}
-              loadingLabel="连接中…"
-              onClick={() => void reconnect()}
-            >
-              <RefreshCw size={14} aria-hidden="true" />
-            </Button>
-          ) : (
-            <span className={styles.railHostDot} data-tone={status.tone} title={status.label} />
-          )}
+    <div className={styles.shell} style={shellStyle} data-object-pane-collapsed={objectPaneCollapsed ? '' : undefined}>
+      <header className={styles.windowTopBar} data-window-top-bar>
+        <div className={styles.windowBrand} aria-label="NekroNxt">
+          <span className={styles.mark} aria-hidden="true" />
         </div>
-      </aside>
-      <aside className={styles.tree}>
-        <ObjectPane />
-      </aside>
-      <main className={styles.stage}>
-        <NotificationCenter />
-        <HostNotice />
-        <div className={styles.stageView}>
-          <Outlet />
+        <div className={styles.windowObjectTitle}>NekroNxt</div>
+        <div className={styles.windowStageBar}>
+          <Button
+            size="small"
+            variant="ghost"
+            className={styles.windowControl}
+            aria-label={objectPaneCollapsed ? '展开对象列' : '收起对象列'}
+            aria-pressed={objectPaneCollapsed}
+            title={objectPaneCollapsed ? '展开对象列' : '收起对象列'}
+            onClick={() => useUiPreferences.getState().setObjectPaneCollapsed(!objectPaneCollapsed)}
+          >
+            {objectPaneCollapsed ? (
+              <PanelLeftOpen size={16} aria-hidden="true" />
+            ) : (
+              <PanelLeftClose size={16} aria-hidden="true" />
+            )}
+          </Button>
+          <span>
+            {modes.find(({ work, to }) => (work ? isWorkPath(location.pathname) : location.pathname.startsWith(to)))
+              ?.label ?? 'NekroNxt'}
+          </span>
         </div>
-      </main>
+      </header>
+      <div className={styles.shellBody} data-shell-body>
+        <aside className={styles.rail} aria-label="模式">
+          <nav aria-label="主导航">
+            {modes.map(({ to, label, icon: Icon, work }) => (
+              <NavLink
+                to={to}
+                aria-label={label}
+                title={label}
+                className={() => {
+                  const active = work ? isWorkPath(location.pathname) : location.pathname.startsWith(to)
+                  return [styles.railBtn, active ? styles.railBtnActive : ''].filter(Boolean).join(' ')
+                }}
+                aria-current={
+                  (work ? isWorkPath(location.pathname) : location.pathname.startsWith(to)) ? 'page' : undefined
+                }
+                key={label}
+              >
+                <Icon size={18} strokeWidth={1.8} aria-hidden="true" />
+              </NavLink>
+            ))}
+          </nav>
+          <div className={styles.railSpacer} />
+          <div className={styles.railHost}>
+            {host.status === 'stale' || host.status === 'error' ? (
+              <Button
+                size="small"
+                variant="ghost"
+                aria-label={`重新连接（${status.label}）`}
+                loading={refreshPending}
+                loadingLabel="连接中…"
+                onClick={() => void reconnect()}
+              >
+                <RefreshCw size={14} aria-hidden="true" />
+              </Button>
+            ) : (
+              <span className={styles.railHostDot} data-tone={status.tone} title={status.label} />
+            )}
+          </div>
+        </aside>
+        <aside ref={objectPaneRef} className={styles.tree} aria-label="对象列" aria-hidden={objectPaneCollapsed}>
+          <ObjectPane />
+        </aside>
+        {objectPaneCollapsed ? null : (
+          <ResizeHandle
+            className={styles.shellSplitter}
+            label="调整对象列宽度"
+            value={objectPaneWidth}
+            min={OBJECT_PANE_WIDTH.min}
+            max={OBJECT_PANE_WIDTH.max}
+            defaultValue={OBJECT_PANE_WIDTH.default}
+            onChange={setObjectPaneWidth}
+            onCommit={(value) => useUiPreferences.getState().setObjectPaneWidth(value)}
+          />
+        )}
+        <main className={styles.stage}>
+          <NotificationCenter />
+          <HostNotice />
+          <div className={styles.stageView}>
+            <Outlet />
+          </div>
+        </main>
+      </div>
     </div>
   )
 }
@@ -138,12 +221,16 @@ function AppShell() {
 function ThemeEffects() {
   const theme = useProductStore((state) => state.theme)
   const reducedMotion = useProductStore((state) => state.reducedMotion)
+  const reducedTransparency = useUiPreferences((state) => state.appearance.reducedTransparency)
+  const contrast = useUiPreferences((state) => state.appearance.contrast)
 
   useEffect(() => {
     if (theme === 'system') delete document.documentElement.dataset['theme']
     else document.documentElement.dataset['theme'] = theme
     document.documentElement.dataset['reducedMotion'] = String(reducedMotion)
-  }, [theme, reducedMotion])
+    document.documentElement.dataset['reducedTransparency'] = String(reducedTransparency)
+    document.documentElement.dataset['contrast'] = contrast
+  }, [theme, reducedMotion, reducedTransparency, contrast])
   return null
 }
 
@@ -200,17 +287,23 @@ export function NekroNxtApp() {
         <Tooltip.Provider {...tooltipProps}>
           <ThemeEffects />
           <Routes>
-            <Route element={<AppShell />}>
-              <Route index element={<HomeIndex />} />
-              <Route path="agents" element={<AgentsPage />} />
-              <Route path="agents/:agentId" element={<AgentManagePage />} />
-              <Route path="channels" element={<ChannelConversationPage />} />
-              <Route path="channels/:channelId" element={<ChannelConversationPage />} />
+            <Route element={<DesktopShell />}>
+              <Route index element={<RootRedirect />} />
+              <Route path="work" element={<WorkIndex />} />
+              <Route path="work/agents/new" element={<AgentsPage />} />
+              <Route path="work/agents/:agentId" element={<AgentManagePage />} />
+              <Route path="work/channels" element={<Navigate to="/work" replace />} />
+              <Route path="work/channels/:channelId" element={<ChannelConversationPage />} />
+              <Route path="work/creator" element={<CreatorPage />} />
+              <Route path="agents" element={<LegacyWorkRedirect kind="agents" />} />
+              <Route path="agents/:agentId" element={<LegacyWorkRedirect kind="agent" />} />
+              <Route path="channels" element={<LegacyWorkRedirect kind="channels" />} />
+              <Route path="channels/:channelId" element={<LegacyWorkRedirect kind="channel" />} />
               <Route path="connections" element={<ConnectionsPage />} />
               <Route path="connections/:connectionId" element={<ConnectionsPage />} />
               <Route path="extensions" element={<ExtensionsPage />} />
               <Route path="extensions/:extensionId" element={<ExtensionsPage />} />
-              <Route path="creator" element={<CreatorPage />} />
+              <Route path="creator" element={<LegacyWorkRedirect kind="creator" />} />
               <Route path="runtime" element={<RuntimeRedirect />} />
               <Route path="settings" element={<SettingsPage />} />
               <Route path="*" element={<NotFoundPage />} />

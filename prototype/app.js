@@ -80,10 +80,10 @@ const models = [
 
 const channels = {
   web: { id: 'web', agentId: 'maple', name: 'Web 控制台', connectionName: '网页聊天', kind: 'web', trigger: 'always', unread: 0 },
-  library: { id: 'library', agentId: 'maple', name: 'NekroAI(伪)大图书馆', connectionName: 'QQ 机器人账号', kind: 'qq', trigger: 'mention', unread: 2 },
-  game: { id: 'game', agentId: 'maple', name: 'NekroGame研究所！', connectionName: 'QQ 机器人账号', kind: 'qq', trigger: 'mention', unread: 0 },
-  lab: { id: 'lab', agentId: 'safe', name: 'NekroAI(伪)智能研究所', connectionName: 'QQ 机器人账号', kind: 'qq', trigger: 'always', unread: 0 },
-  ops: { id: 'ops', agentId: '', name: '运营群', connectionName: 'QQ 机器人账号', kind: 'qq', trigger: 'mention', unread: 0 },
+  library: { id: 'library', agentId: 'maple', name: 'NekroAI(伪)大图书馆', connectionName: '公司机器人', kind: 'qq', trigger: 'mention', unread: 2 },
+  game: { id: 'game', agentId: 'maple', name: 'NekroGame研究所！', connectionName: '公司机器人', kind: 'qq', trigger: 'mention', unread: 0 },
+  lab: { id: 'lab', agentId: 'safe', name: 'NekroAI(伪)智能研究所', connectionName: '公司机器人', kind: 'qq', trigger: 'always', unread: 0 },
+  ops: { id: 'ops', agentId: '', name: '运营群', connectionName: '公司机器人', kind: 'qq', trigger: 'mention', unread: 0 },
 }
 
 const connections = {
@@ -102,7 +102,7 @@ const connections = {
   qq: {
     id: 'qq',
     name: '公司机器人',
-    adapter: 'QQ',
+    adapter: '官方机器人',
     kind: 'qq',
     state: '已连接',
     lastEvent: '18:42',
@@ -689,19 +689,38 @@ function renderConversation() {
       </div>
     </header>
     ${state.view === 'chat' ? renderChat() : renderLog()}
-    <form class="composer">
+    <form class="composer" data-mode="${item.kind === 'web' ? 'web' : 'platform'}">
+      <div class="composer-eyebrow">${item.kind === 'web' ? '发给智能体' : '以机器人账号发到频道'}</div>
       <div class="composer-target">${
         item.kind === 'web'
           ? agent
             ? `发送给：${esc(agent.name)}`
             : '当前频道尚未绑定智能体'
-          : `发送到：${esc(item.name)}（通过 QQ 机器人账号）`
+          : agent
+            ? `群里会看到「${esc(item.connectionName)}」发出的消息。${esc(agent.name)} 会知道这是管理员从网页发出的，不是它自己说的。`
+            : `此频道来自「${esc(item.connectionName)}」。绑定智能体后，才能以机器人账号发言。`
       }</div>
       <div class="composer-row">
-        <textarea aria-label="消息内容" placeholder="${agent || item.kind !== 'web' ? '输入消息' : '请先绑定智能体'}" ${!agent && item.kind === 'web' ? 'disabled' : ''}></textarea>
-        <button class="btn primary" type="submit" ${!agent && item.kind === 'web' ? 'disabled' : ''}>发送</button>
+        <textarea aria-label="消息内容" placeholder="${
+          item.kind === 'web'
+            ? agent
+              ? '输入要发给智能体的消息'
+              : '请先绑定智能体'
+            : agent
+              ? '输入要发到频道的公告或说明'
+              : '请先绑定智能体'
+        }" ${agent ? '' : 'disabled'}></textarea>
+        <button class="btn primary" type="submit" ${agent ? '' : 'disabled'}>${
+          item.kind === 'web' ? '发送给智能体' : '发到频道'
+        }</button>
       </div>
-    </form>`
+      ${
+        item.kind !== 'web' && agent
+          ? `<div><button class="btn ghost small" data-action="open-channel" data-id="web" type="button">去网页频道和智能体对话</button></div>`
+          : ''
+      }
+    </form>
+  `
 }
 
 function renderChat() {
@@ -1297,7 +1316,7 @@ function renderInspector() {
       <h2>绑定</h2>
       <dl class="facts">
         <dt>智能体</dt><dd>${agent ? esc(agent.name) : '未绑定'}</dd>
-        <dt>来源</dt><dd>${item.kind === 'web' ? '网页聊天' : 'QQ 机器人账号'}</dd>
+        <dt>来源</dt><dd>${item.kind === 'web' ? '网页聊天' : esc(item.connectionName)}</dd>
       </dl>
       ${
         agent
@@ -1321,7 +1340,7 @@ function renderInspector() {
         <div class="field" style="margin-top:8px">
           <label>频道名称</label>
           <input value="${esc(item.name)}" />
-          <span class="hint">${item.kind === 'web' ? '用于消息列表显示。' : 'QQ 不提供群名称时，可在此设置本地名称。'}</span>
+          <span class="hint">${item.kind === 'web' ? '用于消息列表显示。' : '平台未提供频道名称时，可在此设置本地名称。'}</span>
         </div>
       </details>
     </section>`

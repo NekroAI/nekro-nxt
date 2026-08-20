@@ -127,6 +127,22 @@ class MemoryRepository implements CoreRepository {
     this.connections.set(record.id, record)
   }
 
+  updateConnectionAlias(id: ConnectionId, alias?: string): void {
+    const current = this.connections.get(id)
+    if (!current) throw new Error(`Unknown connection: ${id}`)
+    if (alias === undefined) {
+      this.connections.set(id, {
+        id: current.id,
+        adapterKey: current.adapterKey,
+        config: current.config,
+        credentialRefs: current.credentialRefs,
+        createdAt: current.createdAt,
+      })
+    } else {
+      this.connections.set(id, { ...current, alias })
+    }
+  }
+
   getConnection(id: ConnectionId) {
     return this.connections.get(id)
   }
@@ -425,6 +441,25 @@ describe('CoreService', () => {
     const replay = core.appendInbound(event)
     expect(replay.inserted).toBe(false)
     expect(repository.events).toHaveLength(1)
+  })
+
+  it('normalizes Connection aliases on create, update, and clear', () => {
+    const repository = new MemoryRepository()
+    let id = 0
+    const core = new CoreService(repository, { now: () => 100, nextUlid: () => `ID${++id}` })
+
+    const created = core.createConnection({ adapterKey: 'qq-openclaw', config: {}, alias: '  工作群账号  ' })
+    expect(created.alias).toBe('工作群账号')
+    expect(core.getConnection(created.id)?.alias).toBe('工作群账号')
+
+    const updated = core.updateConnectionAlias(created.id, '  备用账号  ')
+    expect(updated.alias).toBe('备用账号')
+    expect(core.getConnection(created.id)?.alias).toBe('备用账号')
+
+    expect(core.updateConnectionAlias(created.id, '   ')).not.toHaveProperty('alias')
+    expect(core.getConnection(created.id)).not.toHaveProperty('alias')
+    expect(() => core.createConnection({ adapterKey: 'qq-openclaw', config: {}, alias: 'a'.repeat(81) })).toThrow()
+    expect(() => core.updateConnectionAlias(created.id, 'a'.repeat(81))).toThrow()
   })
 
   it('allows one agent to bind multiple channels while each channel keeps one agent', () => {

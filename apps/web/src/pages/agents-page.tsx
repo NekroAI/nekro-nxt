@@ -1,31 +1,32 @@
-import { Check, Plus, Save, ShieldAlert } from 'lucide-react'
-import { useEffect, useLayoutEffect, useMemo, useState } from 'react'
-import { Link, Navigate, useNavigate, useParams, useSearchParams } from 'react-router-dom'
+import { PanelRightClose, PanelRightOpen, Plus, Save, ShieldAlert } from 'lucide-react'
+import { useEffect, useLayoutEffect, useMemo, useState, type CSSProperties } from 'react'
+import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import { notify } from '../components/notifications.js'
 import { EmptyState, InlineFeedback, PageHeader } from '../components/product-feedback.js'
 import { AddModelProviderForm } from '../llm-settings.js'
 import { WebSearchCredentialForm } from '../web-search-credential.js'
 import {
+  connectionDisplayName,
   useProductStore,
   type AgentRuntimeState,
   type AgentSummary,
   type LocalExtensionSummary,
-  type ModelSummary,
 } from '../product-store.js'
 import {
   Button,
-  ConfirmDialog,
   Field,
   Input,
+  ResizeHandle,
   SelectField,
   StatusBadge,
   SwitchField,
   Textarea,
   type StatusTone,
 } from '../ui-kit/index.js'
+import { INSPECTOR_WIDTH, useUiPreferences } from '../ui-preferences.js'
 import { agentWorkbenchHref, listAgentBlockers } from './agent-workbench.js'
-import { workHomePath } from '../shell/last-channel.js'
 import { BindingTaskDialog, isTriggerPolicy, listBindingChannels, TRIGGER_POLICY_OPTIONS } from './binding-task.js'
+import { agentModelKey, createAgentDraft } from './agent-create-draft.js'
 import styles from './product-pages.module.css'
 
 const agentTone = (state: AgentRuntimeState): StatusTone => {
@@ -36,8 +37,7 @@ const agentTone = (state: AgentRuntimeState): StatusTone => {
   return 'neutral'
 }
 
-const modelKey = (model: Pick<ModelSummary, 'provider' | 'id'>): string =>
-  `${encodeURIComponent(model.provider)}/${encodeURIComponent(model.id)}`
+const modelKey = agentModelKey
 
 const modelValueForAgent = (agent: AgentSummary): string =>
   agent.modelRef ? modelKey({ provider: agent.modelRef.provider, id: agent.modelRef.model }) : ''
@@ -49,27 +49,16 @@ const isAgentSettingsTab = (value: string | null): value is AgentSettingsTab =>
 
 export function AgentsPage() {
   const host = useProductStore((state) => state.host)
-  const agents = useProductStore((state) => state.agents)
   const models = useProductStore((state) => state.models)
   const capabilityAvailability = useProductStore((state) => state.capabilityAvailability)
-  const channels = useProductStore((state) => state.channels)
   const navigate = useNavigate()
-  const [searchParams] = useSearchParams()
-  const creating = searchParams.get('create') === '1'
-  const [createOpen, setCreateOpen] = useState(false)
-  const [createStep, setCreateStep] = useState(0)
-  const [newName, setNewName] = useState('')
-  const [newPersona, setNewPersona] = useState('')
-  const [selectedModelKey, setSelectedModelKey] = useState('')
-  const [newCapabilities, setNewCapabilities] = useState<AgentSummary['capabilities']>({
-    subagents: true,
-    fileTools: false,
-    webSearch: false,
-    dynamicCreation: false,
-    developmentShell: false,
-    unrestrictedFileAccess: false,
-  })
+  const initialCreateDraft = createAgentDraft(models, capabilityAvailability.webSearch.available)
+  const [newName, setNewName] = useState(initialCreateDraft.name)
+  const [newPersona, setNewPersona] = useState(initialCreateDraft.persona)
+  const [selectedModelKey, setSelectedModelKey] = useState(initialCreateDraft.selectedModelKey)
+  const [newCapabilities, setNewCapabilities] = useState<AgentSummary['capabilities']>(initialCreateDraft.capabilities)
   const [createError, setCreateError] = useState('')
+  const [createPending, setCreatePending] = useState(false)
 
   useEffect(() => {
     const firstModel = models[0]
@@ -79,133 +68,77 @@ export function AgentsPage() {
   }, [models, selectedModelKey])
 
   useEffect(() => {
-    if (creating) setCreateOpen(true)
-  }, [creating])
+    setNewCapabilities((current) => ({
+      ...current,
+      webSearch: capabilityAvailability.webSearch.available,
+    }))
+  }, [capabilityAvailability.webSearch.available])
 
   const selectedModel = models.find((model) => modelKey(model) === selectedModelKey)
-  const resetCreate = (): void => {
-    setCreateStep(0)
-    setNewName('')
-    setNewPersona('')
-    setNewCapabilities({
-      subagents: true,
-      fileTools: false,
-      webSearch: capabilityAvailability.webSearch.available,
-      dynamicCreation: false,
-      developmentShell: false,
-      unrestrictedFileAccess: false,
-    })
-    setCreateError('')
-  }
-  const closeCreate = (): void => {
-    setCreateOpen(false)
-    resetCreate()
-    if (searchParams.get('create') === '1') {
-      void navigate(agents.length > 0 ? workHomePath({ channels, agents }) : '/agents', { replace: true })
+  const create = async (): Promise<void> => {
+    const name = newName.trim()
+    if (!name) {
+      setCreateError('请输入智能体名称。')
+      return
     }
-  }
-  const openCreate = (): void => {
-    resetCreate()
-    setCreateOpen(true)
-  }
-  const wizardSteps = ['身份', '模型', '工作方式', '确认']
-
-  if (agents.length > 0 && !creating && !createOpen) {
-    return <Navigate to={workHomePath({ channels, agents })} replace />
+    if (!selectedModel) {
+      setCreateError('请先保存并选择一个模型供应商。')
+      return
+    }
+    if (createPending) return
+    setCreatePending(true)
+    setCreateError('')
+    try {
+      const created = await useProductStore.getState().createAgent({
+        name,
+        persona: newPersona,
+        model: selectedModel,
+        capabilities: newCapabilities,
+      })
+      void navigate(`/work/channels/${created.channelId}`)
+    } catch (error) {
+      setCreateError(error instanceof Error ? error.message : String(error))
+    } finally {
+      setCreatePending(false)
+    }
   }
 
   return (
-    <div className={styles.page}>
-      <PageHeader
-        title="智能体"
-        meta={agents.length > 0 ? '查看当前工作，或从最近使用的频道继续。' : undefined}
-        actions={
-          <Button variant="primary" onClick={openCreate}>
-            <Plus size={15} aria-hidden="true" /> 创建智能体
-          </Button>
-        }
-      />
-
-      {agents.length === 0 ? (
-        <EmptyState
-          loading={host.status === 'initializing'}
-          title={host.status === 'initializing' ? '正在读取智能体' : '还没有智能体'}
-          description={
-            host.status === 'initializing'
-              ? '连接完成后会显示已保存的智能体。'
-              : host.status === 'error'
-                ? '当前无法读取智能体，请重新连接后再试。'
-                : '创建一个智能体并选择模型，随后可在网页频道中开始对话。'
-          }
-          action={host.status === 'ready' ? <Button onClick={openCreate}>创建第一个智能体</Button> : undefined}
-        />
-      ) : null}
-
-      <ConfirmDialog
-        open={createOpen}
-        onOpenChange={(open) => {
-          if (open) setCreateOpen(true)
-          else closeCreate()
-        }}
-        title="创建智能体"
-        description="分步确定身份、模型和初始工作方式，最后一次性创建。"
-        confirmLabel={createStep === wizardSteps.length - 1 ? '创建并打开频道' : '下一步'}
-        backLabel={createStep > 0 ? '上一步' : undefined}
-        onBack={
-          createStep > 0
-            ? () => {
-                setCreateStep((step) => step - 1)
-                setCreateError('')
-              }
-            : undefined
-        }
-        onConfirm={async () => {
-          const name = newName.trim()
-          if (createStep === 0 && !name) {
-            setCreateError('请输入智能体名称。')
-            return false
-          }
-          if (createStep === 1 && !selectedModel) {
-            setCreateError('请先保存一个模型供应商，再继续创建。')
-            return false
-          }
-          if (createStep < wizardSteps.length - 1) {
-            setCreateStep((step) => step + 1)
-            setCreateError('')
-            return false
-          }
-          if (!selectedModel) return false
-          setCreateError('')
-          try {
-            const created = await useProductStore.getState().createAgent({
-              name,
-              persona: newPersona,
-              model: selectedModel,
-              capabilities: newCapabilities,
-            })
-            void navigate(`/channels/${created.channelId}`)
-            return true
-          } catch (error) {
-            setCreateError(error instanceof Error ? error.message : String(error))
-            return false
-          }
-        }}
-      >
-        <div className={styles.wizardBody}>
-          <ol className={styles.wizardSteps} aria-label="创建进度">
-            {wizardSteps.map((step, index) => (
-              <li
-                className={
-                  index === createStep ? styles.wizardStepActive : index < createStep ? styles.wizardStepDone : ''
-                }
-                key={step}
+    <div className={[styles.workbenchPage, styles.agentCreatePage].join(' ')}>
+      <div className={styles.workbenchDoc}>
+        <PageHeader
+          title="创建智能体"
+          meta={<StatusBadge tone="info">新智能体草稿</StatusBadge>}
+          actions={
+            <>
+              <Button variant="ghost" disabled={createPending} onClick={() => void navigate('/work')}>
+                取消创建
+              </Button>
+              <Button
+                variant="primary"
+                loading={createPending}
+                loadingLabel="正在创建…"
+                disabled={!newName.trim() || !selectedModel || host.status === 'initializing'}
+                aria-describedby="agent-create-reason"
+                onClick={() => void create()}
               >
-                <span>{index < createStep ? <Check size={13} aria-hidden="true" /> : index + 1}</span>
-                {step}
-              </li>
-            ))}
-          </ol>
-          {createStep === 0 ? (
+                创建智能体
+              </Button>
+            </>
+          }
+        />
+        <p className={styles.secondaryText} id="agent-create-reason">
+          {!newName.trim()
+            ? '请输入智能体名称后才能创建。'
+            : !selectedModel
+              ? '保存并选择模型后才能创建。'
+              : '创建会原子保存智能体、首个配置版本和网页频道。'}
+        </p>
+        {createError ? <InlineFeedback tone="error">{createError}</InlineFeedback> : null}
+
+        <section className={styles.workbenchSection}>
+          <div className={styles.section}>
+            <div className={styles.sectionHeading}>人设与模型</div>
             <div className={styles.formStack}>
               <Field label="名称" error={!newName.trim() && createError ? '请输入智能体名称。' : undefined}>
                 <Input value={newName} onChange={(event) => setNewName(event.target.value)} autoFocus />
@@ -213,33 +146,35 @@ export function AgentsPage() {
               <Field label="人设" hint="描述它的身份、表达方式和工作边界，之后仍可修改。">
                 <Textarea value={newPersona} onChange={(event) => setNewPersona(event.target.value)} />
               </Field>
-            </div>
-          ) : null}
-          {createStep === 1 ? (
-            models.length > 0 ? (
-              <SelectField
-                label="默认模型"
-                value={selectedModelKey}
-                onValueChange={setSelectedModelKey}
-                options={models.map((model) => ({
-                  value: modelKey(model),
-                  label: `${model.providerName} · ${model.name}`,
-                }))}
-                helper="新频道会使用这个模型开始对话。"
-              />
-            ) : (
-              <div className={styles.formStack}>
+              {models.length > 0 ? (
+                <SelectField
+                  label="默认模型"
+                  value={selectedModelKey}
+                  onValueChange={setSelectedModelKey}
+                  options={models.map((model) => ({
+                    value: modelKey(model),
+                    label: `${model.providerName} · ${model.name}`,
+                  }))}
+                  helper="自动创建的网页频道会使用这个模型开始对话。"
+                />
+              ) : (
                 <InlineFeedback tone="warning">当前没有可用模型。保存一个供应商后即可继续创建。</InlineFeedback>
+              )}
+              {models.length === 0 ? (
                 <AddModelProviderForm
                   onSaved={() => {
                     const first = useProductStore.getState().models[0]
                     if (first) setSelectedModelKey(modelKey(first))
                   }}
                 />
-              </div>
-            )
-          ) : null}
-          {createStep === 2 ? (
+              ) : null}
+            </div>
+          </div>
+        </section>
+
+        <section className={styles.workbenchSection}>
+          <div className={styles.section}>
+            <div className={styles.sectionHeading}>初始能力</div>
             <div className={styles.capabilityChoices}>
               <InlineFeedback tone="info">
                 默认开启子智能体；文件与开发能力由你明确授权，高风险能力不会因频道类型被强制关闭。
@@ -295,44 +230,39 @@ export function AgentsPage() {
                 }
               />
             </div>
-          ) : null}
-          {createStep === 3 ? (
-            <div className={styles.createSummary}>
-              <div>
-                <span>智能体</span>
-                <strong>{newName.trim()}</strong>
-              </div>
-              <div>
-                <span>人设</span>
-                <strong>{newPersona.trim() || '稍后设置'}</strong>
-              </div>
-              <div>
-                <span>模型</span>
-                <strong>{selectedModel ? `${selectedModel.providerName} · ${selectedModel.name}` : '未选择'}</strong>
-              </div>
-              <div>
-                <span>初始能力</span>
-                <strong>
-                  {[
-                    newCapabilities.subagents ? '子智能体' : '',
-                    newCapabilities.webSearch ? '网页搜索' : '',
-                    newCapabilities.dynamicCreation ? '动态创造' : '',
-                    newCapabilities.fileTools ? '文件工具' : '',
-                    newCapabilities.developmentShell ? '开发命令' : '',
-                    newCapabilities.unrestrictedFileAccess ? '完整文件访问' : '',
-                  ]
-                    .filter(Boolean)
-                    .join('、') || '不授予开发能力'}
-                </strong>
-              </div>
-              <InlineFeedback tone="success">创建后会自动建立网页聊天频道，并直接打开它。</InlineFeedback>
+          </div>
+        </section>
+      </div>
+
+      <aside className={[styles.inspector, styles.workbenchInspector].join(' ')} aria-label="创建结果预览">
+        <section>
+          <h2>创建结果</h2>
+          <div className={styles.createSummary}>
+            <div>
+              <span>智能体</span>
+              <strong>{newName.trim() || '尚未命名'}</strong>
             </div>
-          ) : null}
-          {createError && (createStep !== 0 || newName.trim()) ? (
-            <InlineFeedback tone="error">{createError}</InlineFeedback>
-          ) : null}
-        </div>
-      </ConfirmDialog>
+            <div>
+              <span>模型</span>
+              <strong>{selectedModel ? `${selectedModel.providerName} · ${selectedModel.name}` : '尚未选择'}</strong>
+            </div>
+            <div>
+              <span>网页频道</span>
+              <strong>创建后自动建立</strong>
+            </div>
+          </div>
+        </section>
+        <section>
+          <h2>初始授权</h2>
+          <p className={styles.secondaryText}>
+            {capabilityCopy
+              .filter((item) => newCapabilities[item.key])
+              .map((item) => item.label)
+              .join('、') || '不授予额外能力'}
+          </p>
+          <InlineFeedback tone="info">创建前不会写入正式智能体、频道或扩展关系。</InlineFeedback>
+        </section>
+      </aside>
     </div>
   )
 }
@@ -403,6 +333,9 @@ export function AgentManagePage() {
   const [bindingOpen, setBindingOpen] = useState(false)
   const [triggerPendingId, setTriggerPendingId] = useState<string | null>(null)
   const [extensionPendingId, setExtensionPendingId] = useState<string | null>(null)
+  const savedInspectorWidth = useUiPreferences((state) => state.layout.inspectorWidth)
+  const inspectorCollapsed = useUiPreferences((state) => state.layout.inspectorCollapsed)
+  const [inspectorWidth, setInspectorWidth] = useState(savedInspectorWidth)
 
   useEffect(() => {
     if (!agent) return
@@ -410,6 +343,7 @@ export function AgentManagePage() {
     setPersona(agent.persona ?? '')
     setSelectedModelKey(modelValueForAgent(agent))
   }, [agent])
+  useEffect(() => setInspectorWidth(savedInspectorWidth), [savedInspectorWidth])
 
   const selectedModel = models.find((model) => modelKey(model) === selectedModelKey)
   const boundChannels = useMemo(
@@ -432,7 +366,7 @@ export function AgentManagePage() {
           loading={host.status === 'initializing'}
           title={host.status === 'initializing' ? '正在读取智能体' : '找不到这个智能体'}
           description="它可能已被移除，或当前连接尚未同步完成。"
-          action={<Button onClick={() => window.location.assign('/agents')}>返回智能体</Button>}
+          action={<Button onClick={() => window.location.assign('/work')}>返回智能体</Button>}
         />
       </div>
     )
@@ -546,9 +480,16 @@ export function AgentManagePage() {
       setExtensionPendingId(null)
     }
   }
+  const workbenchStyle: CSSProperties & { '--nxt-inspector-width': string } = {
+    '--nxt-inspector-width': `${inspectorWidth}px`,
+  }
 
   return (
-    <div className={styles.workbenchPage}>
+    <div
+      className={styles.workbenchPage}
+      data-inspector-collapsed={inspectorCollapsed ? '' : undefined}
+      style={workbenchStyle}
+    >
       <div className={styles.workbenchDoc}>
         <PageHeader
           title={agent.name}
@@ -556,7 +497,7 @@ export function AgentManagePage() {
           actions={
             <>
               {recentChannel ? (
-                <Button variant="ghost" onClick={() => void navigate(`/channels/${recentChannel.id}`)}>
+                <Button variant="ghost" onClick={() => void navigate(`/work/channels/${recentChannel.id}`)}>
                   打开最近频道
                 </Button>
               ) : null}
@@ -570,13 +511,35 @@ export function AgentManagePage() {
                 loading={savePending}
                 loadingLabel="正在保存…"
                 disabled={!isDirty || !displayName.trim() || !selectedModel}
+                aria-describedby="agent-save-reason"
                 onClick={() => void save()}
               >
                 <Save size={15} aria-hidden="true" /> 保存新配置
               </Button>
+              <Button
+                variant="ghost"
+                aria-label={inspectorCollapsed ? '展开检查器' : '收起检查器'}
+                onClick={() => useUiPreferences.getState().setInspectorCollapsed(!inspectorCollapsed)}
+              >
+                {inspectorCollapsed ? (
+                  <PanelRightOpen size={15} aria-hidden="true" />
+                ) : (
+                  <PanelRightClose size={15} aria-hidden="true" />
+                )}
+                {inspectorCollapsed ? '展开检查器' : '收起检查器'}
+              </Button>
             </>
           }
         />
+        <p className={styles.secondaryText} id="agent-save-reason">
+          {!displayName.trim()
+            ? '请输入智能体名称后才能保存。'
+            : !selectedModel
+              ? '选择默认模型后才能保存。'
+              : !isDirty
+                ? '修改人设、名称或模型后才能保存新配置。'
+                : '保存会创建新的不可变配置版本。'}
+        </p>
 
         <section className={styles.workbenchSection} id="agent-profile">
           <div className={styles.formLayout}>
@@ -632,7 +595,7 @@ export function AgentManagePage() {
               <div className={styles.boundChannelList}>
                 {boundChannels.map((channel) => (
                   <div className={styles.boundChannelRow} key={channel.id}>
-                    <Link className={styles.boundChannelName} to={`/channels/${channel.id}`}>
+                    <Link className={styles.boundChannelName} to={`/work/channels/${channel.id}`}>
                       <strong>{channel.name}</strong>
                       <small>{channel.connectionName}</small>
                     </Link>
@@ -657,12 +620,12 @@ export function AgentManagePage() {
             ) : null}
             {undiscoveredConnections.map((connection) => (
               <InlineFeedback key={connection.id} tone="info">
-                {connection.name} 尚未发现频道。请先向机器人账号发送一条消息，发现后可在本页绑定。
+                {connectionDisplayName(connection)} 尚未发现频道。请先向机器人账号发送一条消息，发现后可在本页绑定。
               </InlineFeedback>
             ))}
             {untestedConnections.map((connection) => (
               <InlineFeedback key={`${connection.id}-test`} tone="info">
-                {connection.name} 尚未完成收发测试。可以先绑定，测试仍可稍后进行。
+                {connectionDisplayName(connection)} 尚未完成收发测试。可以先绑定，测试仍可稍后进行。
               </InlineFeedback>
             ))}
           </div>
@@ -714,7 +677,7 @@ export function AgentManagePage() {
               <div className={styles.sectionActionRow}>
                 <span>
                   <strong>动态创造已授权</strong>
-                  <small>
+                  <small id="dynamic-creation-channel-reason">
                     {recentChannel
                       ? '在这个智能体的频道里描述需求；保存和启用仍是独立动作。'
                       : '绑定频道后，才能在对话中描述需求。'}
@@ -724,11 +687,12 @@ export function AgentManagePage() {
                   <Button
                     variant="primary"
                     disabled={!recentChannel}
-                    onClick={() => recentChannel && void navigate(`/channels/${recentChannel.id}`)}
+                    aria-describedby="dynamic-creation-channel-reason"
+                    onClick={() => recentChannel && void navigate(`/work/channels/${recentChannel.id}`)}
                   >
                     打开频道去描述需求
                   </Button>
-                  <Button variant="ghost" onClick={() => void navigate(`/creator?agent=${agent.id}`)}>
+                  <Button variant="ghost" onClick={() => void navigate(`/work/creator?agent=${agent.id}`)}>
                     查看创造运行
                   </Button>
                 </span>
@@ -781,51 +745,65 @@ export function AgentManagePage() {
         />
       </div>
 
-      <aside className={[styles.inspector, styles.workbenchInspector].join(' ')} aria-label="这个智能体">
-        <section>
-          <h2>这个智能体</h2>
-          <div className={styles.workbenchStatus}>
-            <div>
-              <strong>{recentChannel ? `最近频道：${recentChannel.name}` : '还没有最近使用的频道'}</strong>
-              <small>人设与模型保存后会创建新配置；能力授权每次修改都会独立保存。</small>
+      {!inspectorCollapsed ? (
+        <ResizeHandle
+          className={styles.inspectorSplitter}
+          label="调整检查器宽度"
+          value={inspectorWidth}
+          min={INSPECTOR_WIDTH.min}
+          max={INSPECTOR_WIDTH.max}
+          defaultValue={INSPECTOR_WIDTH.default}
+          onChange={setInspectorWidth}
+          onCommit={(value) => useUiPreferences.getState().setInspectorWidth(value)}
+        />
+      ) : null}
+      {!inspectorCollapsed ? (
+        <aside className={[styles.inspector, styles.workbenchInspector].join(' ')} aria-label="这个智能体">
+          <section>
+            <h2>这个智能体</h2>
+            <div className={styles.workbenchStatus}>
+              <div>
+                <strong>{recentChannel ? `最近频道：${recentChannel.name}` : '还没有最近使用的频道'}</strong>
+                <small>人设与模型保存后会创建新配置；能力授权每次修改都会独立保存。</small>
+              </div>
             </div>
-          </div>
-          {blockers.length > 0 ? (
-            <div className={styles.agentBlockers}>
-              {blockers.map((blocker) => (
-                <Button
-                  key={blocker.kind}
-                  size="small"
-                  variant="ghost"
-                  onClick={() => {
-                    if (blocker.tab === 'creator') void navigate(agentWorkbenchHref(agent.id, blocker.tab))
-                    else openTab(blocker.tab)
-                  }}
-                >
-                  {blocker.label}
-                </Button>
-              ))}
-            </div>
-          ) : (
-            <p className={styles.secondaryText}>运行中的任务会在安全间隙使用兼容的新配置。</p>
-          )}
-        </section>
-        <section>
-          <h2>频道</h2>
-          {boundChannels.length > 0 ? (
-            <div className={styles.compactList}>
-              {boundChannels.map((channel) => (
-                <Link className={styles.boundChannelName} key={channel.id} to={`/channels/${channel.id}`}>
-                  <strong>{channel.name}</strong>
-                  <small>{channel.trigger}</small>
-                </Link>
-              ))}
-            </div>
-          ) : (
-            <p className={styles.secondaryText}>绑定后才会出现在工作树里。</p>
-          )}
-        </section>
-      </aside>
+            {blockers.length > 0 ? (
+              <div className={styles.agentBlockers}>
+                {blockers.map((blocker) => (
+                  <Button
+                    key={blocker.kind}
+                    size="small"
+                    variant="ghost"
+                    onClick={() => {
+                      if (blocker.tab === 'creator') void navigate(agentWorkbenchHref(agent.id, blocker.tab))
+                      else openTab(blocker.tab)
+                    }}
+                  >
+                    {blocker.label}
+                  </Button>
+                ))}
+              </div>
+            ) : (
+              <p className={styles.secondaryText}>运行中的任务会在安全间隙使用兼容的新配置。</p>
+            )}
+          </section>
+          <section>
+            <h2>频道</h2>
+            {boundChannels.length > 0 ? (
+              <div className={styles.compactList}>
+                {boundChannels.map((channel) => (
+                  <Link className={styles.boundChannelName} key={channel.id} to={`/work/channels/${channel.id}`}>
+                    <strong>{channel.name}</strong>
+                    <small>{channel.trigger}</small>
+                  </Link>
+                ))}
+              </div>
+            ) : (
+              <p className={styles.secondaryText}>绑定后才会出现在工作树里。</p>
+            )}
+          </section>
+        </aside>
+      ) : null}
     </div>
   )
 }

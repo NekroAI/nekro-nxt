@@ -1,7 +1,12 @@
 import { useEffect, useMemo, useState } from 'react'
 import { notify } from '../components/notifications.js'
 import { InlineFeedback } from '../components/product-feedback.js'
-import { useProductStore, type ChannelSummary, type ConnectionSummary } from '../product-store.js'
+import {
+  connectionDisplayName,
+  useProductStore,
+  type ChannelSummary,
+  type ConnectionSummary,
+} from '../product-store.js'
 import { ConfirmDialog, SelectField } from '../ui-kit/index.js'
 import styles from './product-pages.module.css'
 
@@ -155,7 +160,7 @@ export function BindingTaskDialog({
         ) : (
           <InlineFeedback tone="warning">
             {selectedConnection
-              ? `${selectedConnection.name} 还没有可绑定的频道。请先向机器人账号发送一条消息。`
+              ? `${connectionDisplayName(selectedConnection)} 还没有可绑定的频道。请先向机器人账号发送一条消息。`
               : '当前没有可绑定的频道。'}
           </InlineFeedback>
         )}
@@ -171,7 +176,7 @@ export function BindingTaskDialog({
         ) : null}
         {undiscovered.map((connection) => (
           <InlineFeedback key={connection.id} tone="info">
-            {connection.name} 尚未发现频道。请先向机器人账号发送一条消息。
+            {connectionDisplayName(connection)} 尚未发现频道。请先向机器人账号发送一条消息。
           </InlineFeedback>
         ))}
         {error ? <InlineFeedback tone="error">{error}</InlineFeedback> : null}

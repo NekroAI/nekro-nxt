@@ -15,17 +15,10 @@ export const workHomePath = (input: {
   readonly agents: readonly { readonly id: string }[]
 }): string => {
   const last = readLastChannelId()
-  if (last && input.channels.some((channel) => channel.id === last)) return `/channels/${last}`
-  if (input.channels[0]) return `/channels/${input.channels[0].id}`
-  if (input.agents[0]) return `/agents/${input.agents[0].id}`
-  return '/agents'
+  if (last && input.channels.some((channel) => channel.id === last)) return `/work/channels/${last}`
+  if (input.channels[0]) return `/work/channels/${input.channels[0].id}`
+  if (input.agents[0]) return `/work/agents/${input.agents[0].id}`
+  return '/work/agents/new'
 }
 
-export const isWorkPath = (pathname: string): boolean =>
-  pathname === '/' ||
-  pathname === '/agents' ||
-  pathname.startsWith('/agents/') ||
-  pathname === '/channels' ||
-  pathname.startsWith('/channels/') ||
-  pathname === '/creator' ||
-  pathname.startsWith('/creator')
+export const isWorkPath = (pathname: string): boolean => pathname === '/work' || pathname.startsWith('/work/')

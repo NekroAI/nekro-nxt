@@ -100,6 +100,7 @@ import {
 } from '@nekro-nxt/contracts'
 import type {
   AgentRevisionRecord,
+  AssetChannelGrant,
   AssetRecord,
   AssetService,
   ChannelEventRecord,
@@ -119,6 +120,7 @@ import type {
   ExtensionPluginDefinition,
   ExtensionPluginFactory,
 } from '@nekro-nxt/extension-sdk'
+import { Buffer } from 'node:buffer'
 import { createHash } from 'node:crypto'
 import { mkdir, readFile } from 'node:fs/promises'
 import { createRequire } from 'node:module'
@@ -129,9 +131,10 @@ import { z } from 'zod'
 import { defineDshToolFromUnknown, parseDshImageAttachmentRef, parseDshToolDefinition } from './dsh-interop/unsafe.js'
 import { QuotaLocalSpillStore } from './dsh-spill.js'
 
-interface AssetAccessRepository {
+export interface AssetAccessRepository {
   getAssetById(id: AssetRecord['id']): AssetRecord | undefined
   canAccessAsset(assetId: AssetRecord['id'], channelId: ChannelId): boolean
+  grantAssetAccess(grant: AssetChannelGrant): AssetChannelGrant
 }
 
 export * from './qq-openclaw.js'
@@ -742,6 +745,122 @@ const requireNekroAssetAttachmentStore = (store: AttachmentStore): NekroAssetAtt
 
 const CHANNEL_MESSAGE_POLICY = `你正在参与 NekroNxt 频道对话。任何用户可见发言都必须调用 send_channel_message；普通模型文字只会记录为内部输出，不会发送到频道。需要回复时请明确调用工具，不要声称已经发送但不调用工具。send_message 专用于给可继续子智能体安排下一轮任务，绝不会向频道发言。`
 
+/** Model-created Assets use a deliberately smaller budget than the Host AssetService hard limit. */
+export const MODEL_ASSET_MAX_BYTES = 8 * 1024 * 1024
+const MODEL_ASSET_MAX_BASE64_CHARACTERS = Math.ceil(MODEL_ASSET_MAX_BYTES / 3) * 4
+
+const invalidBase64Content = (): Error =>
+  new Error('asset_create base64 content is invalid; use standard base64 with no whitespace.')
+
+const decodeRestrictedBase64 = (content: string): Uint8Array => {
+  if (content.length > MODEL_ASSET_MAX_BASE64_CHARACTERS) {
+    throw new Error(
+      `asset_create base64 content exceeds ${MODEL_ASSET_MAX_BYTES} decoded bytes; reduce the encoded content.`,
+    )
+  }
+  if (!/^[A-Za-z0-9+/]*={0,2}$/u.test(content)) throw invalidBase64Content()
+  const unpadded = content.replace(/=+$/u, '')
+  if (unpadded.length % 4 === 1) throw invalidBase64Content()
+  const canonical = `${unpadded}${'='.repeat((4 - (unpadded.length % 4)) % 4)}`
+  if (content !== unpadded && content !== canonical) throw invalidBase64Content()
+  const decoded = Buffer.from(canonical, 'base64')
+  if (decoded.toString('base64') !== canonical) throw invalidBase64Content()
+  if (decoded.byteLength > MODEL_ASSET_MAX_BYTES) {
+    throw new Error(`asset_create decoded base64 content exceeds ${MODEL_ASSET_MAX_BYTES} bytes.`)
+  }
+  return new Uint8Array(decoded)
+}
+
+const decodeModelAssetContent = (encoding: string, content: string): Uint8Array => {
+  if (encoding === 'utf8') {
+    const bytes = new TextEncoder().encode(content)
+    if (bytes.byteLength > MODEL_ASSET_MAX_BYTES) {
+      throw new Error(`asset_create UTF-8 content exceeds ${MODEL_ASSET_MAX_BYTES} bytes.`)
+    }
+    return bytes
+  }
+  if (encoding === 'base64') return decodeRestrictedBase64(content)
+  throw new Error('asset_create encoding must be "utf8" or "base64".')
+}
+
+export const createChannelAsset = async (input: {
+  readonly channelId: ChannelId
+  readonly encoding: string
+  readonly content: string
+  readonly assets: AssetAccessRepository
+  readonly assetService: AssetService
+  readonly grantedAt?: number
+}): Promise<{ readonly assetId: AssetRecord['id']; readonly byteSize: number; readonly mediaType: string }> => {
+  const grantAt = input.grantedAt ?? Date.now()
+  if (!Number.isSafeInteger(grantAt) || grantAt < 0) {
+    throw new TypeError('asset_create grant clock must return a non-negative integer.')
+  }
+  const bytes = decodeModelAssetContent(input.encoding, input.content)
+  const prepared = await input.assetService.prepare({ bytes })
+  const grant = input.assets.grantAssetAccess({
+    assetId: prepared.asset.id,
+    channelId: input.channelId,
+    source: 'agent-tool',
+    grantedAt: grantAt,
+  })
+  if (grant.assetId !== prepared.asset.id || grant.channelId !== input.channelId) {
+    throw new Error(`asset_create did not persist the current Channel grant for ${prepared.asset.id}.`)
+  }
+  return {
+    assetId: prepared.asset.id,
+    byteSize: prepared.asset.byteSize,
+    mediaType: prepared.asset.mediaType,
+  }
+}
+
+export const assetCreateTool = (
+  channelId: ChannelId,
+  assets: AssetAccessRepository,
+  assetService: AssetService,
+  options: { readonly now?: () => number } = {},
+) =>
+  defineTool({
+    name: 'asset_create',
+    description:
+      '把你生成的 UTF-8 文本或受限标准 base64 字节保存为当前频道专属 Asset；成功返回 assetId、byteSize 和检测到的 mediaType。只接受内容，不接受路径或 URL；解码后最多 8 MiB。',
+    parameters: {
+      encoding: {
+        type: 'string',
+        enum: ['utf8', 'base64'],
+        required: true,
+        description: 'utf8 表示直接编码文本；base64 表示标准 base64 字节（可省略末尾填充）。',
+      },
+      content: { type: 'string', required: true, description: '要保存的文本或 base64 内容。' },
+    },
+    output: {
+      schema: {
+        type: 'object',
+        additionalProperties: false,
+        properties: {
+          assetId: { type: 'string', required: true },
+          byteSize: { type: 'integer', required: true },
+          mediaType: { type: 'string', required: true },
+        },
+      },
+      render: (_arguments, value) => [
+        {
+          type: 'text',
+          text: `已准备当前频道资源 ${value.assetId}（${value.byteSize} bytes，${value.mediaType}）。`,
+        },
+      ],
+    },
+    async execute(args) {
+      return createChannelAsset({
+        channelId,
+        encoding: args.encoding,
+        content: args.content,
+        assets,
+        assetService,
+        ...(options.now === undefined ? {} : { grantedAt: options.now() }),
+      })
+    },
+  })
+
 const channelContextTool = (
   episodeId: EpisodeId,
   channelId: Parameters<CoreRepository['getChannel']>[0],
@@ -781,7 +900,26 @@ const ChannelMessageResultSchema = z
   })
   .strict()
 
-const channelCommunicationTool = (episodeId: EpisodeId, communication: AgentCommunicationPort) =>
+export const assertChannelAssetAccess = (
+  parts: readonly ReturnType<typeof parseMessageParts>[number][],
+  channelId: ChannelId,
+  assets: Pick<AssetAccessRepository, 'canAccessAsset'>,
+): void => {
+  const inaccessible = parts.flatMap((part, partIndex) => {
+    if (part.type !== 'image' && part.type !== 'file' && part.type !== 'audio') return []
+    return assets.canAccessAsset(part.assetId, channelId) ? [] : [`part ${partIndex}: ${part.assetId}`]
+  })
+  if (inaccessible.length > 0) {
+    throw new Error(`send_channel_message cannot use Asset(s) from the current Channel: ${inaccessible.join(', ')}.`)
+  }
+}
+
+export const channelCommunicationTool = (
+  episodeId: EpisodeId,
+  channelId: ChannelId,
+  assets: Pick<AssetAccessRepository, 'canAccessAsset'>,
+  communication: AgentCommunicationPort,
+) =>
   defineTool({
     name: 'send_channel_message',
     description: '向触发当前对话的频道发送一条用户可见消息。普通模型文字不会自动发送。',
@@ -879,6 +1017,7 @@ const channelCommunicationTool = (episodeId: EpisodeId, communication: AgentComm
     async execute(args, exec) {
       if (!exec.agent) throw new Error('send_channel_message requires a live DSH Agent execution.')
       const parts = parseMessageParts(args.parts)
+      assertChannelAssetAccess(parts, channelId, assets)
       const result = await communication.sendMessage({
         episodeId,
         parts,
@@ -1142,6 +1281,7 @@ export class DshHostRuntime implements AgentSessionDriver, ExtensionActivationHo
   readonly #communication: AgentCommunicationPort
   readonly #history: ProductChannelHistoryRepository
   readonly #assets: AssetAccessRepository
+  readonly #assetService: AssetService
   readonly #resolveAgentRevision: DshHostRuntimeOptions['resolveAgentRevision']
   readonly #developmentWorkspaceRoot: string | undefined
   readonly #hasLlmSettings: boolean
@@ -1161,6 +1301,7 @@ export class DshHostRuntime implements AgentSessionDriver, ExtensionActivationHo
     this.#communication = options.communication
     this.#history = options.history
     this.#assets = options.assets
+    this.#assetService = options.assetService
     this.#resolveAgentRevision = options.resolveAgentRevision
     this.#developmentWorkspaceRoot = options.developmentWorkspaceRoot
     this.#hasLlmSettings = options.llmSettingsPath !== undefined
@@ -1705,7 +1846,10 @@ export class DshHostRuntime implements AgentSessionDriver, ExtensionActivationHo
         text: CHANNEL_MESSAGE_POLICY,
       })
       agentContext.tools.register(channelContextTool(input.episodeId, input.channelId, this.#history))
-      agentContext.tools.register(channelCommunicationTool(input.episodeId, this.#communication))
+      agentContext.tools.register(assetCreateTool(input.channelId, this.#assets, this.#assetService))
+      agentContext.tools.register(
+        channelCommunicationTool(input.episodeId, input.channelId, this.#assets, this.#communication),
+      )
       for (const tool of historyTools(input.channelId, this.#history)) agentContext.tools.register(tool)
       agentContext.tools.register(assetInspectTool(input.channelId, this.#assets))
       if (supportsImage) {
@@ -1856,6 +2000,53 @@ export class DshHostRuntime implements AgentSessionDriver, ExtensionActivationHo
     else agent.followup(message)
     await this.#context.sessions.flush(agent.session)
     return { dshMessageId }
+  }
+
+  async notifyConsoleOutbound(input: Parameters<AgentSessionDriver['notifyConsoleOutbound']>[0]): Promise<void> {
+    this.#assertActive()
+    const sessionId = SessionId(input.dshSessionId)
+    const agent = this.#context.agents.get(sessionId)
+    if (!agent) throw new Error(`DSH Agent Session is not live: ${input.dshSessionId}`)
+    const textParts = input.parts.flatMap((part) => (part.type === 'text' ? [part.text] : []))
+    const otherParts = input.parts.filter((part) => part.type !== 'text')
+    const content: ContentBlock[] = [
+      {
+        type: 'text',
+        text: [
+          '管理员刚刚通过网页，以本频道绑定智能体关联的机器人账号发送了以下内容。',
+          '这不是你调用 send_channel_message 产生的，也不是群成员发来的消息。',
+          '频道里会看到机器人账号发出的这条发言。不要把它当成自己说过的话，也不要无故重复播报，除非管理员明确要求你跟进。',
+          '',
+          textParts.length > 0 ? textParts.join('\n') : '（无文字内容）',
+          ...otherParts.map((part) =>
+            part.type === 'mention'
+              ? `提及成员 ${part.memberId}`
+              : part.type === 'image'
+                ? `图片 ${part.assetId}`
+                : part.type === 'file'
+                  ? `文件 ${part.assetId}`
+                  : part.type === 'audio'
+                    ? `音频 ${part.assetId}`
+                    : part.type === 'quote'
+                      ? `引用 ${part.messageId}`
+                      : '其他内容',
+          ),
+        ].join('\n'),
+      },
+    ]
+    agent.inject(
+      freezeMessage({
+        id: MessageId(`nxt-console-${input.logicalMessageId}`),
+        role: 'user',
+        content,
+        source: {
+          kind: 'nekro-nxt-channel',
+          admissionId: `console:${input.logicalMessageId}`,
+          channelEventIds: [],
+        },
+      }) satisfies UserMessage,
+    )
+    await this.#context.sessions.flush(agent.session)
   }
 
   sessionStatus(dshSessionId: string): 'idle' | 'running' {

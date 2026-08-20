@@ -2,46 +2,36 @@ import { LlmProviderSettings } from '../llm-settings.js'
 import { DshExtensionSettings } from '../dsh-extension-settings.js'
 import { PageHeader } from '../components/product-feedback.js'
 import { useProductStore, type ThemeChoice } from '../product-store.js'
-import { SelectField, SwitchField, Tabs } from '../ui-kit/index.js'
+import { Button, SelectField, SwitchField } from '../ui-kit/index.js'
+import { useUiPreferences, type ContrastChoice } from '../ui-preferences.js'
 import { useSearchParams } from 'react-router-dom'
 import styles from './product-pages.module.css'
 
 const isThemeChoice = (value: string): value is ThemeChoice =>
   value === 'system' || value === 'light' || value === 'dark'
+const isContrastChoice = (value: string): value is ContrastChoice =>
+  value === 'system' || value === 'standard' || value === 'more'
 
 export function SettingsPage() {
-  const [searchParams, setSearchParams] = useSearchParams()
+  const [searchParams] = useSearchParams()
   const theme = useProductStore((state) => state.theme)
   const reducedMotion = useProductStore((state) => state.reducedMotion)
+  const reducedTransparency = useUiPreferences((state) => state.appearance.reducedTransparency)
+  const contrast = useUiPreferences((state) => state.appearance.contrast)
+  const inspectorCollapsed = useUiPreferences((state) => state.layout.inspectorCollapsed)
   const requestedTab = searchParams.get('tab')
   const activeTab = requestedTab === 'appearance' || requestedTab === 'dsh-extensions' ? requestedTab : 'models'
+  const title = activeTab === 'appearance' ? '外观' : activeTab === 'dsh-extensions' ? 'DSH 扩展' : '模型供应商'
 
   return (
     <div className={styles.page}>
-      <PageHeader title="设置" />
-      <Tabs.Root
-        value={activeTab}
-        onValueChange={(value) => {
-          const next = new URLSearchParams(searchParams)
-          if (value === 'models') next.delete('tab')
-          else next.set('tab', value)
-          setSearchParams(next, { replace: true })
-        }}
-      >
-        <Tabs.List aria-label="设置分类" hidden>
-          <Tabs.Trigger value="models">模型供应商</Tabs.Trigger>
-          <Tabs.Trigger value="dsh-extensions">DSH 扩展</Tabs.Trigger>
-          <Tabs.Trigger value="appearance">外观</Tabs.Trigger>
-        </Tabs.List>
-        <Tabs.Content value="models">
-          <LlmProviderSettings />
-        </Tabs.Content>
-        <Tabs.Content value="dsh-extensions">
-          <DshExtensionSettings />
-        </Tabs.Content>
-        <Tabs.Content value="appearance">
-          <section className={styles.settingsSection}>
-            <div className={styles.sectionHeading}>外观</div>
+      <PageHeader title={title} />
+      {activeTab === 'models' ? <LlmProviderSettings /> : null}
+      {activeTab === 'dsh-extensions' ? <DshExtensionSettings /> : null}
+      {activeTab === 'appearance' ? (
+        <section className={styles.settingsSection}>
+          <div className={styles.settingsGroup}>
+            <div className={styles.sectionHeading}>主题与可读性</div>
             <SelectField
               label="主题"
               value={theme}
@@ -60,9 +50,37 @@ export function SettingsPage() {
               checked={reducedMotion}
               onCheckedChange={(enabled) => useProductStore.getState().setReducedMotion(enabled)}
             />
-          </section>
-        </Tabs.Content>
-      </Tabs.Root>
+            <SwitchField
+              label="减少透明效果"
+              description="将浮层、侧栏和状态背景改为更明确的实色与边框。"
+              checked={reducedTransparency}
+              onCheckedChange={(enabled) => useUiPreferences.getState().setReducedTransparency(enabled)}
+            />
+            <SelectField
+              label="对比度"
+              value={contrast}
+              onValueChange={(value) => {
+                if (isContrastChoice(value)) useUiPreferences.getState().setContrast(value)
+              }}
+              options={[
+                { value: 'system', label: '跟随系统' },
+                { value: 'standard', label: '标准' },
+                { value: 'more', label: '更高对比度' },
+              ]}
+            />
+          </div>
+          <div className={styles.settingsGroup}>
+            <div className={styles.sectionHeading}>工作区布局</div>
+            <SwitchField
+              label="默认收起检查器"
+              description="频道和智能体工作台只显示主画布；可随时从页面标题栏重新展开。"
+              checked={inspectorCollapsed}
+              onCheckedChange={(enabled) => useUiPreferences.getState().setInspectorCollapsed(enabled)}
+            />
+            <Button onClick={() => useUiPreferences.getState().resetLayout()}>恢复默认分栏</Button>
+          </div>
+        </section>
+      ) : null}
     </div>
   )
 }

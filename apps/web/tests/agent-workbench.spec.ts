@@ -79,7 +79,7 @@ describe('listAgentBlockers', () => {
       dynamic: [{ agentId }],
     })
     expect(blockers.map((item) => item.kind)).toEqual(['search-pending', 'creation-running'])
-    expect(agentWorkbenchHref(agentId, 'creator')).toBe(`/creator?agent=${agentId}`)
-    expect(agentWorkbenchHref(agentId, 'capabilities')).toBe(`/agents/${agentId}?tab=capabilities`)
+    expect(agentWorkbenchHref(agentId, 'creator')).toBe(`/work/creator?agent=${agentId}`)
+    expect(agentWorkbenchHref(agentId, 'capabilities')).toBe(`/work/agents/${agentId}?tab=capabilities`)
   })
 })

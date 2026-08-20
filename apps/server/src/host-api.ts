@@ -1,5 +1,5 @@
 import type { WebServer, WebRoute } from '@deepseek-ai/dsh-host-webserver'
-import type { ChannelFact, ChannelHistoryEntry } from '@nekro-nxt/channel-runtime'
+import { isAdminConsoleOutbound, type ChannelFact, type ChannelHistoryEntry } from '@nekro-nxt/channel-runtime'
 import type { AgentRevisionContent } from '@nekro-nxt/core'
 import {
   AgentIdSchema,
@@ -31,7 +31,14 @@ import {
   projectChannelRuntime,
   worstChannelRuntimePhase,
 } from './channel-runtime-projection.js'
-import { HostSseHub, parseLastEventId, renderSse, SSE_FACT_COALESCE_MS, SSE_RUNTIME_FRAME_BUDGET } from './sse-hub.js'
+import {
+  HostSseHub,
+  parseLastEventId,
+  renderSse,
+  SSE_FACT_COALESCE_MS,
+  SSE_FACT_FRAME_BUDGET,
+  SSE_RUNTIME_FRAME_BUDGET,
+} from './sse-hub.js'
 
 /**
  * The NekroNxt domain API, wired directly onto the DSH WebServer seam. It is
@@ -151,6 +158,7 @@ export const projectHistoryEntry = (runtime: NekroRuntime, entry: ChannelHistory
     parts,
     occurredAt: entry.occurredAt,
     deliveryState: entry.state,
+    ...(isAdminConsoleOutbound(entry.sourceTurnId) ? { origin: 'admin-console' as const } : {}),
   }
 }
 
@@ -182,6 +190,7 @@ export const projectChannelFact = (runtime: NekroRuntime, fact: ChannelFact): Ho
       occurredAt: outbound.intent.createdAt,
       parts: outbound.intent.parts,
       state: outbound.intent.state,
+      ...(outbound.intent.sourceTurnId === undefined ? {} : { sourceTurnId: outbound.intent.sourceTurnId }),
     })
   } catch {
     return undefined
@@ -387,10 +396,28 @@ export const createNekroHostApi = (webServer: WebServer, runtime: NekroRuntime):
       }
       const items = [...itemsBySource.values()]
       if (items.length === 0) continue
-      broadcast({
-        event: 'channel-fact',
-        data: { channelId, revision: nextRevision(messageRevision, channelId), items },
-      })
+      const chunks: (typeof items)[] = []
+      let chunk: typeof items = []
+      for (const item of items) {
+        const candidate = [...chunk, item]
+        const candidateBytes = Buffer.byteLength(
+          JSON.stringify({ channelId, revision: Number.MAX_SAFE_INTEGER, items: candidate }),
+          'utf8',
+        )
+        if (chunk.length > 0 && candidateBytes > SSE_FACT_FRAME_BUDGET) {
+          chunks.push(chunk)
+          chunk = [item]
+        } else {
+          chunk = candidate
+        }
+      }
+      if (chunk.length > 0) chunks.push(chunk)
+      for (const batch of chunks) {
+        broadcast({
+          event: 'channel-fact',
+          data: { channelId, revision: nextRevision(messageRevision, channelId), items: batch },
+        })
+      }
     }
   }
   disposers.push(
@@ -467,6 +494,7 @@ export const createNekroHostApi = (webServer: WebServer, runtime: NekroRuntime):
       return {
         id: connection.id,
         adapterKey: connection.adapterKey,
+        ...(connection.alias === undefined ? {} : { alias: connection.alias }),
         appId: config.success ? (config.data.appId ?? '') : '',
         proactiveSend: config.success && config.data.proactiveSend === true,
         credentialConfigured: connection.adapterKey === 'web' ? true : (diagnostic?.credentialConfigured ?? false),
@@ -907,10 +935,10 @@ export const createNekroHostApi = (webServer: WebServer, runtime: NekroRuntime):
         connection: 'keep-alive',
         'x-accel-buffering': 'no',
       })
+      hub.add(res)
       const replay = hub.replaySince(parseLastEventId(req.headers['last-event-id']))
       for (const frame of replay.frames) hub.write(res, frame)
       hub.write(res, renderSse({ event: 'status', data: { ok: true, message: '已连接', replay: replay.status } }))
-      hub.add(res)
 
       const heartbeat = setInterval(() => hub.write(res, `: heartbeat\n\n`), 15_000)
       const onClose = (): void => {
@@ -1300,26 +1328,55 @@ export const createNekroHostApi = (webServer: WebServer, runtime: NekroRuntime):
       }
       try {
         const channel = runtime.repository.getChannel(typedChannelId)
-        if (channel?.kind !== 'web') {
-          writeError(res, 400, 'external-channel-read-only', '外部平台频道暂不支持从网页主动发言。')
+        if (!channel) {
+          writeError(res, 404, 'not-found', '频道不存在。')
           return
         }
-        const result = await runtime.web.postMessage({
+        if (channel.kind === 'web') {
+          const result = await runtime.web.postMessage({
+            channelId: typedChannelId,
+            clientEventId: parsed.clientEventId ?? `http-${Date.now()}`,
+            parts: parsed.parts,
+            ...(parsed.senderMemberId === undefined ? {} : { senderMemberId: parsed.senderMemberId }),
+          })
+          writeJson(
+            res,
+            200,
+            HostApiContracts.sendChannelMessage.parseResponse({
+              channelEventId: result.channelEventId,
+              inserted: result.inserted,
+            }),
+          )
+          return
+        }
+        const binding = runtime.repository.getBinding(typedChannelId)
+        if (!binding) {
+          writeError(res, 400, 'unbound-channel', '这个频道尚未绑定智能体，无法确定由谁的机器人账号发言。')
+          return
+        }
+        const connection = runtime.repository.getConnection(channel.connectionId)
+        const connectionConfig = z
+          .object({ proactiveSend: z.boolean().optional() })
+          .passthrough()
+          .safeParse(connection?.config)
+        if (connection?.adapterKey !== 'web' && connectionConfig.data?.proactiveSend !== true) {
+          writeError(res, 400, 'proactive-send-disabled', '这个平台连接不允许主动发言。请在连接配置中打开主动发送。')
+          return
+        }
+        await runtime.channels.sendAdminConsoleMessage({
           channelId: typedChannelId,
-          clientEventId: parsed.clientEventId ?? `http-${Date.now()}`,
           parts: parsed.parts,
-          ...(parsed.senderMemberId === undefined ? {} : { senderMemberId: parsed.senderMemberId }),
+          ...(parsed.clientEventId === undefined ? {} : { clientRequestId: parsed.clientEventId }),
         })
         writeJson(
           res,
           200,
           HostApiContracts.sendChannelMessage.parseResponse({
-            channelEventId: result.channelEventId,
-            inserted: result.inserted,
+            inserted: true,
           }),
         )
       } catch (error) {
-        writeError(res, 400, 'inbound-failed', error instanceof Error ? error.message : String(error))
+        writeError(res, 400, 'send-failed', error instanceof Error ? error.message : String(error))
       }
     },
   })
@@ -1363,6 +1420,37 @@ export const createNekroHostApi = (webServer: WebServer, runtime: NekroRuntime):
     path: '/api/connections',
     handler: async (req, res) => {
       const url = new URL(req.url ?? '/', 'http://localhost')
+      const aliasMatch = /^\/api\/connections\/([^/]+)\/alias$/.exec(url.pathname)
+      if (aliasMatch) {
+        if (req.method !== 'POST') {
+          writeError(res, 405, 'method-not-allowed', '只支持 POST。')
+          return
+        }
+        const encodedConnectionId = aliasMatch[1]
+        if (encodedConnectionId === undefined) {
+          writeError(res, 404, 'not-found', `未定义路由：${req.method} ${url.pathname}。`)
+          return
+        }
+        let connectionId: ReturnType<typeof ConnectionIdSchema.parse>
+        try {
+          connectionId = ConnectionIdSchema.parse(decodeURIComponent(encodedConnectionId))
+        } catch {
+          writeError(res, 400, 'invalid-connection', '无效的连接 ID。')
+          return
+        }
+        try {
+          const params = HostApiContracts.updateConnectionAlias.parseParams({ connectionId })
+          const body = HostApiContracts.updateConnectionAlias.parseRequest(await readJsonBody(req))
+          const updated = runtime.updateConnectionAlias(params.connectionId, body.alias)
+          writeContractJson(res, 200, HostApiContracts.updateConnectionAlias, {
+            connectionId: updated.id,
+            ...(updated.alias === undefined ? {} : { alias: updated.alias }),
+          })
+        } catch (error) {
+          writeError(res, 400, 'connection-alias-failed', error instanceof Error ? error.message : String(error))
+        }
+        return
+      }
       const match = /^\/api\/connections\/([^/]+)\/test$/.exec(url.pathname)
       if (!match) {
         writeError(res, 404, 'not-found', `未定义路由：${req.method} ${url.pathname}。`)
@@ -1447,7 +1535,7 @@ export const createNekroHostApi = (webServer: WebServer, runtime: NekroRuntime):
     broadcast({
       event: 'runtime',
       data:
-        JSON.stringify(data).length > SSE_RUNTIME_FRAME_BUDGET
+        Buffer.byteLength(JSON.stringify(data), 'utf8') > SSE_RUNTIME_FRAME_BUDGET
           ? { ...projection, turns: [], revision, truncated: true }
           : data,
     })

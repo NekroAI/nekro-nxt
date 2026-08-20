@@ -287,6 +287,29 @@ describe('NekroNxt Server domain API (WebServer seam)', () => {
         displayName: '本地识别名称',
         platformChannelId: `web-${created.agentId}`,
       })
+      const externalConnection = runtime.core.createConnection({ adapterKey: 'qq-openclaw', config: {} })
+      const aliasResponse = await fetch(`${origin}/api/connections/${externalConnection.id}/alias`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ alias: '  外部机器人  ' }),
+      })
+      expect(aliasResponse.status).toBe(200)
+      expect(HostApiContracts.updateConnectionAlias.parseResponse(await aliasResponse.json())).toEqual({
+        connectionId: externalConnection.id,
+        alias: '外部机器人',
+      })
+      const aliasedSnapshot = HostApiContracts.snapshot.parseResponse(
+        await (await fetch(`${origin}/api/snapshot`)).json(),
+      )
+      expect(aliasedSnapshot.connections.find((connection) => connection.id === externalConnection.id)).toMatchObject({
+        alias: '外部机器人',
+      })
+      const systemAliasResponse = await fetch(`${origin}/api/connections/${created.connectionId}/alias`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ alias: '不应修改' }),
+      })
+      expect(systemAliasResponse.status).toBe(400)
       const initialHistory = HostApiContracts.listChannelMessages.parseResponse(
         await (await fetch(`${origin}/api/channels/${created.channelId}/messages?limit=40`)).json(),
       )
@@ -839,7 +862,7 @@ describe('NekroNxt Server domain API (WebServer seam)', () => {
       const hello = liveEvents.find((event) => event.name === 'status')
       expect(hello?.data).toMatchObject({ ok: true, replay: 'none' })
       const fact = liveEvents.find((event) => event.name === 'channel-fact')
-      expect(fact?.id).toMatch(/^[1-9]\d*$/u)
+      expect(fact?.id).toMatch(/^[a-zA-Z0-9_-]{1,100}:[1-9]\d*$/u)
       expect(fact?.data).toMatchObject({ channelId: created.channelId, revision: 1 })
       const items = z
         .object({

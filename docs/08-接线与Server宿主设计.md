@@ -22,7 +22,8 @@
 | 频道工作轨迹 | `GET /api/channels/:channelId/runtime` | 按频道投影 phase、当前工具、待注入、上下文占用和最近多轮 Turn（含耗时与本步用量）；首载与重连对账 |
 | 频道资源 | `GET /api/channels/:channelId/assets/:assetId` | 校验频道访问权后同源读取 |
 | 频道本地名称 | `POST /api/channels/:channelId/display-name` | 只改展示名 |
-| 创建连接 | `POST /api/connections` | 按已安装 Adapter schema 创建 |
+| 创建连接 | `POST /api/connections` | 按已安装 Adapter schema 创建，可选保存 80 字符以内的连接别名 |
+| 修改连接别名 | `POST /api/connections/:connectionId/alias` | trim 后保存或清除非系统托管连接的别名；系统托管 Web 连接拒绝编辑 |
 | 创建绑定 | `POST /api/bindings` | 智能体可多频道；一频道一个当前智能体；已绑定时为换绑 |
 | 解除绑定 | `DELETE /api/bindings/:channelId` | 若该频道有活动工作则先 `stopEpisode`，再删除 Binding |
 | 工作树顺序 | `PUT /api/work-tree-order` | 智能体 / 频道展示序，未知 id 丢弃，新对象追加 |
@@ -35,21 +36,21 @@
 | 保存动态包 | `POST /api/extensions/save-from-dynamic` | 不自动启用 |
 | 动态回路 | `POST /api/dynamic/:agentId/...` | 审批、Host half、Client 源码、结算 |
 
-快照含 DSH 模型目录、能力可用状态、Adapter 目录、Connection（无 Secret）、Gateway、已绑定频道和动态 Package。Web 搜索是否可用看 DSH 凭据，不靠环境变量名推断。
+快照含 DSH 模型目录、能力可用状态、Adapter 目录、Connection（无 Secret，含可选 alias）、Gateway、已绑定频道和动态 Package。Web 侧只用 `alias ?? Adapter displayName` 作为连接主辨识名，Adapter displayName 仍作为平台身份的次要信息；频道、对象列、连接详情、智能体频道列表和绑定选择器共享同一投影。Web 搜索是否可用看 DSH 凭据，不靠环境变量名推断。
 
 全局只有一条 `GET /api/events`。消息和工作轨迹不再用「通知后再拉 REST」作为热路径。
 
-- `channel-fact` 携带该频道一批已投影的 `HostSnapshotMessage`（与历史接口同一形状）和该频道消息面 `revision`。同一 `sourceId` 先 planned 再 sent 时按 id 覆盖投递态。Host 对同一频道约 80ms 合并写入。
-- `runtime` 携带与 `GET /runtime` 相同的裁剪投影（工具预览 160 字、最近 24 轮、可选 occupancy、步骤耗时与用量）和该频道轨迹面 `revision`。占用从 DSH `sessionProjections` 的 `contextPressure` / `tokenUsage` / `contextBreakdown` 投影；缺少窗口或用量样本时省略。服务端在 100ms 合并后再组装。序列化超过约 48KB 时只推 `phase` / `summary` / `occupancy` 并标 `truncated`，前端对已打开的工作轨迹回退一次 REST。
-- 可回放事件带 SSE `id:`。浏览器重连自动带 `Last-Event-ID`。Host 在内存里保留最近 512 帧；窗口内补发，窗口外 `status.replay = expired`，前端对已加载频道拉一次历史或轨迹。权威事实仍是频道 Event Log 和当前 Session 投影，不是这份环形缓冲。
+- `channel-fact` 携带该频道一批已投影的 `HostSnapshotMessage`（与历史接口同一形状）和该频道消息面 `revision`。同一 `sourceId` 先 planned 再 sent 时按 id 覆盖投递态。Host 对同一频道约 80ms 合并写入，并按 UTF-8 约 48 KiB 预算拆分消息批；单条消息保持原子。
+- `runtime` 携带与 `GET /runtime` 相同的裁剪投影（工具预览 160 字、最近 24 轮、可选 occupancy、步骤耗时与用量）和该频道轨迹面 `revision`。占用从 DSH `sessionProjections` 的 `contextPressure` / `tokenUsage` / `contextBreakdown` 投影；缺少窗口或用量样本时省略。服务端在 100ms 合并后再组装。UTF-8 序列化超过约 48 KiB 时只推 `phase` / `summary` / `occupancy` 并标 `truncated`，前端对已打开的工作轨迹回退一次 REST。
+- 可回放事件带 `Host epoch:序号` 形式的 SSE `id:`。浏览器重连自动带 `Last-Event-ID`。Host 在内存里保留最近 512 帧；同一 epoch 的窗口内帧补发，窗口外、Host 重启和未来游标都返回 `status.replay = expired`，前端对已加载频道拉一次历史或轨迹。慢客户端最多排队 512 KiB，超过预算就断开并依赖重连对账。权威事实仍是频道 Event Log 和当前 Session 投影，不是这份环形缓冲。
 - `status` / `extensions-changed` / `binding-change` / DSH 设置与凭据变更仍是信号，前端刷新对应快照或进度。
 - 不按频道再建 SSE，不把 `assistant/chunk` 或资源二进制推进帧。
 
 ## 3. Web 与 Server
 
-- `apps/web/src/http-host.ts` 实现 `ProductHostPort`。`execute` 覆盖创建智能体、发消息、改能力、扩展启停、从动态保存、创建/测试连接、动态审批。
+- `apps/web/src/http-host.ts` 实现 `ProductHostPort`。`execute` 覆盖创建智能体、发消息、改能力、扩展启停、从动态保存、创建/测试连接、修改连接别名和动态审批；连接别名更新成功后重新读取权威快照，失败不发布前端成功状态。
 - 添加连接先选用户可创建的平台，再按版本化 schema 渲染表单；系统托管 Web 不出现在创建目录。
-- 外部频道未发现时说明先向机器人账号发一条消息。网页 Composer 只作为网页频道入站；外部频道不能从网页发言。
+- 外部频道未发现时说明先向机器人账号发一条消息。`POST /api/channels/:id/messages`：网页频道入站交给智能体；外部频道在已绑定且允许主动发送时，以机器人账号出站，并注入管理员来源的系统事实。
 - `apps/server/src/main.ts` 使用 `NEKRO_DATA`、`NEKRO_PORT`（默认 4960）。开发工作区为 `<dataRoot>/workspaces/<agentId>/`。
 - 启动恢复持久 Web Connection、Extension Activation 和 QQ Connection 的凭据引用；单个 Connection 故障不阻断其他恢复。
 

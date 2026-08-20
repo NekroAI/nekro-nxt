@@ -89,6 +89,6 @@ describe('QQ inbound event decoder', () => {
         author: { user_openid: 'user-openid', nickname: '小青' },
         content: '<faceType=6,faceId="0",ext="eyJ0ZXh0IjoiIn0=">',
       }),
-    ).toMatchObject({ content: '[QQ 表情]' })
+    ).toMatchObject({ content: '[表情]' })
   })
 })

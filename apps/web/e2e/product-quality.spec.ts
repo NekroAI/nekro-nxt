@@ -300,18 +300,21 @@ const assertViewportIntegrity = async (page: Page): Promise<void> => {
   const geometry = await page.evaluate(() => {
     const sidebar = document.querySelector('aside')?.getBoundingClientRect()
     const main = document.querySelector('main')?.getBoundingClientRect()
+    const topBar = document.querySelector('[data-window-top-bar]')?.getBoundingClientRect()
     return {
       viewportWidth: window.innerWidth,
       viewportHeight: window.innerHeight,
       documentWidth: document.documentElement.scrollWidth,
       bodyWidth: document.body.scrollWidth,
       mainHeight: main?.height ?? 0,
+      topBarHeight: topBar?.height ?? 0,
       overlaps: sidebar && main ? sidebar.right > main.left + 1 : false,
     }
   })
   expect(geometry.documentWidth).toBeLessThanOrEqual(geometry.viewportWidth)
   expect(geometry.bodyWidth).toBeLessThanOrEqual(geometry.viewportWidth)
-  expect(geometry.mainHeight).toBeGreaterThanOrEqual(geometry.viewportHeight - 1)
+  expect(geometry.topBarHeight).toBe(48)
+  expect(geometry.mainHeight + geometry.topBarHeight).toBeGreaterThanOrEqual(geometry.viewportHeight - 1)
   expect(geometry.overlaps).toBe(false)
 }
 
@@ -333,8 +336,10 @@ test('three desktop viewports remain usable in both themes and reduced motion', 
     for (const colorScheme of ['light', 'dark'] as const) {
       await page.setViewportSize(viewport)
       await page.emulateMedia({ colorScheme, reducedMotion: 'reduce' })
-      await page.goto(`/channels/${targetChannelId}`)
+      await page.goto(`/work/channels/${targetChannelId}`)
       await expect(page.getByRole('heading', { name: '资料员的网页频道' })).toBeVisible()
+      const headerActionsBox = await page.locator('[data-conversation-header-actions]').boundingBox()
+      expect(headerActionsBox?.height ?? Number.POSITIVE_INFINITY).toBeLessThanOrEqual(36)
       await expect(page.getByText('请复核今天的记录。')).toBeVisible()
       await expect(page.getByRole('img', { name: '界面预览图' })).toBeVisible()
       await expect
@@ -344,11 +349,26 @@ test('three desktop viewports remain usable in both themes and reduced motion', 
         .toBeGreaterThan(0)
       await expect(page.getByRole('link', { name: /验收记录\.txt/u })).toBeVisible()
       await expect(page.getByLabel('消息内容')).toBeVisible()
+      const memberContent = page
+        .locator('article[data-side="right"]')
+        .filter({ hasText: '请复核今天的记录。' })
+        .locator(':scope > div')
+        .last()
+      const agentContent = page
+        .locator('article[data-side="left"]')
+        .filter({ hasText: '这是本次交付的资源。' })
+        .locator(':scope > div')
+        .last()
+      expect((await memberContent.boundingBox())?.x).toBeGreaterThan((await agentContent.boundingBox())?.x ?? 0)
+      const lastMessage = page.locator('article').last()
+      const composer = page.locator('form').filter({ has: page.getByLabel('消息内容') })
+      await lastMessage.scrollIntoViewIfNeeded()
+      expect((await lastMessage.boundingBox())?.y ?? 0).toBeLessThan((await composer.boundingBox())?.y ?? 0)
       const hierarchy = await page.evaluate(() => {
         const parentName = [...document.querySelectorAll('strong')].find((node) => node.textContent === '资料员')
         const parent = parentName?.parentElement?.parentElement
         const child = [...document.querySelectorAll('a')].find((node) => node.textContent?.includes('资料员的网页频道'))
-        const group = parent?.parentElement
+        const group = child?.closest('section')
         return {
           parentLeft: parent?.getBoundingClientRect().left ?? 0,
           childLeft: child?.getBoundingClientRect().left ?? 0,
@@ -373,6 +393,157 @@ test('three desktop viewports remain usable in both themes and reduced motion', 
     }
   }
 
+  expect(failures, failures.join('\n')).toEqual([])
+})
+
+test('channel tabs, running tools, and trajectory rows remain keyboard operable', async ({ page }, testInfo) => {
+  const failures = installRuntimeFailureGate(page)
+  await installProductRoutes(page)
+  await page.unroute('**/api/channels/*/runtime')
+  await page.route('**/api/channels/*/runtime', (route) =>
+    route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({
+        channelId: targetChannelId,
+        agentId: targetAgentId,
+        phase: 'using-tool',
+        summary: '智能体正在核对发布资料。',
+        pendingInjectCount: 0,
+        turns: [
+          {
+            turn: 1,
+            state: 'in-progress',
+            producedReply: false,
+            steps: [
+              {
+                step: 1,
+                internalOutput: { kind: 'internal-output', text: '先核对版本，再检查发布记录。' },
+                tools: [
+                  {
+                    callId: 'call_read_release',
+                    name: 'read_file',
+                    displayName: '读取发布记录',
+                    state: 'succeeded',
+                    inputPreview: '发布记录.md',
+                    resultPreview: '版本 0.8.0',
+                  },
+                  {
+                    callId: 'call_verify_release',
+                    name: 'verify_release',
+                    displayName: '核对发布资料',
+                    state: 'running',
+                    inputPreview: '版本 0.8.0 · 生产构建',
+                  },
+                  {
+                    callId: 'call_send_release',
+                    name: 'send_channel_message',
+                    displayName: '发送频道消息',
+                    state: 'succeeded',
+                    wroteToChannel: true,
+                    inputPreview: '发布资料已核对。',
+                    resultPreview: 'sent',
+                  },
+                ],
+              },
+            ],
+          },
+        ],
+      }),
+    }),
+  )
+
+  await page.setViewportSize({ width: 1100, height: 720 })
+  await page.goto(`/work/channels/${targetChannelId}`)
+
+  const runningTool = page.getByRole('button', { name: /核对发布资料/u })
+  await expect(runningTool).toHaveAttribute('aria-expanded', 'true')
+  const controlledId = await runningTool.getAttribute('aria-controls')
+  expect(controlledId).toBeTruthy()
+  const controlledRegion = page.locator(`[id="${controlledId}"]`)
+  await expect(controlledRegion).toBeVisible()
+  const dotPositions = await page
+    .locator('[data-work-status-dot]')
+    .evaluateAll((dots) => dots.map((dot) => dot.getBoundingClientRect().left))
+  expect(Math.max(...dotPositions) - Math.min(...dotPositions)).toBeLessThanOrEqual(1)
+  const runningBox = await runningTool.boundingBox()
+  const streamBox = await page.locator('[data-work-stream]').boundingBox()
+  expect(runningBox?.width ?? 0).toBeLessThan(streamBox?.width ?? Number.POSITIVE_INFINITY)
+  await capture(page, testInfo, 'channel-running-tool-expanded')
+  await runningTool.click()
+  await expect(runningTool).toHaveAttribute('aria-expanded', 'false')
+  await expect(controlledRegion).toHaveCount(0)
+
+  const chatTab = page.getByRole('tab', { name: '会话' })
+  const trajectoryTab = page.getByRole('tab', { name: '工作轨迹' })
+  await chatTab.focus()
+  await page.keyboard.press('ArrowRight')
+  await expect(trajectoryTab).toHaveAttribute('aria-selected', 'true')
+  await expect(page.getByLabel('工作轨迹记录')).toBeVisible()
+
+  const readRow = page.getByRole('row').filter({ hasText: '读取发布记录' })
+  await readRow.focus()
+  await page.keyboard.press('Enter')
+  await expect(readRow).toHaveAttribute('aria-current', 'true')
+  await page.keyboard.press('ArrowDown')
+  const runningRow = page.getByRole('row').filter({ hasText: '核对发布资料' })
+  await expect(runningRow).toBeFocused()
+  await expect(runningRow).toHaveAttribute('aria-current', 'true')
+  await expect(page.locator('aside[aria-label="工作轨迹"]').getByRole('heading', { name: '输入' })).toBeVisible()
+  await capture(page, testInfo, 'channel-trajectory-keyboard-selection')
+
+  expect(failures, failures.join('\n')).toEqual([])
+})
+
+test('desktop splitters and appearance preferences persist and recover defaults', async ({ page }, testInfo) => {
+  const failures = installRuntimeFailureGate(page)
+  await installProductRoutes(page)
+  await page.setViewportSize({ width: 1440, height: 900 })
+  await page.goto(`/work/channels/${targetChannelId}`)
+
+  const objectSplitter = page.getByRole('separator', { name: '调整对象列宽度' })
+  await expect(objectSplitter).toHaveAttribute('aria-valuenow', '240')
+  await objectSplitter.focus()
+  await page.keyboard.press('End')
+  await expect(objectSplitter).toHaveAttribute('aria-valuenow', '304')
+
+  const inspectorSplitter = page.getByRole('separator', { name: '调整检查器宽度' })
+  await expect(inspectorSplitter).toHaveAttribute('aria-valuenow', '360')
+  await inspectorSplitter.focus()
+  await page.keyboard.press('Home')
+  await expect(inspectorSplitter).toHaveAttribute('aria-valuenow', '320')
+  await page.reload()
+  await expect(page.getByRole('separator', { name: '调整对象列宽度' })).toHaveAttribute('aria-valuenow', '304')
+  await expect(page.getByRole('separator', { name: '调整检查器宽度' })).toHaveAttribute('aria-valuenow', '320')
+  await capture(page, testInfo, 'desktop-splitters-persisted')
+
+  await page.getByRole('separator', { name: '调整检查器宽度' }).dblclick()
+  await expect(page.getByRole('separator', { name: '调整检查器宽度' })).toHaveAttribute('aria-valuenow', '360')
+  await page.getByRole('button', { name: '收起检查器' }).click()
+  await expect(page.getByRole('complementary', { name: '频道' })).toHaveCount(0)
+  await page.reload()
+  await expect(page.getByRole('button', { name: '展开检查器' })).toBeVisible()
+  await page.getByRole('button', { name: '展开检查器' }).click()
+  await expect(page.getByRole('complementary', { name: '频道' })).toBeVisible()
+
+  await page.goto('/settings?tab=appearance')
+  await page.getByRole('switch', { name: '减少动态效果' }).click()
+  await page.getByRole('switch', { name: '减少透明效果' }).click()
+  await page.getByLabel('对比度').click()
+  await page.getByRole('option', { name: '更高对比度' }).click()
+  await expect(page.locator('html')).toHaveAttribute('data-reduced-motion', 'true')
+  await expect(page.locator('html')).toHaveAttribute('data-reduced-transparency', 'true')
+  await expect(page.locator('html')).toHaveAttribute('data-contrast', 'more')
+  await page.reload()
+  await expect(page.getByRole('switch', { name: '减少动态效果' })).toBeChecked()
+  await expect(page.getByRole('switch', { name: '减少透明效果' })).toBeChecked()
+  await expect(page.getByLabel('对比度')).toContainText('更高对比度')
+  await capture(page, testInfo, 'appearance-reduced-transparency-high-contrast')
+
+  await page.getByRole('button', { name: '恢复默认分栏' }).click()
+  await page.goto(`/work/channels/${targetChannelId}`)
+  await expect(page.getByRole('separator', { name: '调整对象列宽度' })).toHaveAttribute('aria-valuenow', '240')
+  await expect(page.getByRole('separator', { name: '调整检查器宽度' })).toHaveAttribute('aria-valuenow', '360')
   expect(failures, failures.join('\n')).toEqual([])
 })
 
@@ -405,16 +576,46 @@ test('DSH native and generic settings remain legible across desktop themes and v
   expect(failures, failures.join('\n')).toEqual([])
 })
 
+test('clearing a DSH credential requires an explicit dangerous confirmation', async ({ page }, testInfo) => {
+  const failures = installRuntimeFailureGate(page)
+  await page.route('**/api/dsh/credentials/describe', (route) =>
+    route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({ credentials: { DEEPSEEK_API_KEY: { configured: true, source: 'file', writable: true } } }),
+    }),
+  )
+  await page.setViewportSize({ width: 1100, height: 720 })
+  await page.goto('/settings?tab=dsh-extensions')
+  await page.getByRole('tab', { name: '通用配置' }).click()
+
+  const trigger = page.getByRole('button', { name: '清除凭据' })
+  await trigger.click()
+  const dialog = page.getByRole('alertdialog')
+  await expect(dialog.getByRole('heading', { name: '清除“DEEPSEEK_API_KEY”' })).toBeVisible()
+  await expect(dialog.getByText(/已保存值无法从浏览器恢复/u)).toBeVisible()
+  await expect(dialog.getByRole('button', { name: '保留凭据' })).toBeVisible()
+  await expect(dialog.getByRole('button', { name: '清除该凭据' })).toBeVisible()
+  await capture(page, testInfo, 'dsh-credential-clear-confirmation')
+
+  await dialog.getByRole('button', { name: '保留凭据' }).click()
+  await expect(dialog).toBeHidden()
+  await expect(trigger).toBeFocused()
+  expect(failures, failures.join('\n')).toEqual([])
+})
+
 test('group conversations preserve sender and Mention semantics without exposing internal identities', async ({
   page,
 }, testInfo) => {
   const failures = installRuntimeFailureGate(page)
   await installProductRoutes(page)
   await page.setViewportSize({ width: 1440, height: 900 })
-  await page.goto(`/channels/${qqChannelId}`)
+  await page.goto(`/work/channels/${qqChannelId}`)
 
   await expect(page.getByText('成员甲', { exact: true })).toBeVisible()
-  await expect(page.getByText('@机器人账号 请和 @成员乙 一起复核。', { exact: true })).toBeVisible()
+  await expect(page.getByText('@机器人账号', { exact: true })).toBeVisible()
+  await expect(page.getByText('@成员乙', { exact: true })).toBeVisible()
+  await expect(page.locator('article[data-side="left"]')).toContainText('请和')
   const visibleText = await page.locator('body').innerText()
   expect(visibleText).not.toContain(senderMemberId)
   expect(visibleText).not.toContain(targetMemberId)
@@ -430,9 +631,9 @@ test('redesigned relationship and lifecycle pages stay legible across representa
   const failures = installRuntimeFailureGate(page)
   await installProductRoutes(page)
   const scenes = [
-    { route: '/agents', text: '资料员', width: 1440, height: 900, colorScheme: 'light' },
+    { route: '/work', text: '资料员', width: 1440, height: 900, colorScheme: 'light' },
     {
-      route: `/agents/${targetAgentId}?tab=capabilities`,
+      route: `/work/agents/${targetAgentId}?tab=capabilities`,
       text: '完整文件访问',
       width: 1100,
       height: 720,
@@ -445,7 +646,7 @@ test('redesigned relationship and lifecycle pages stay legible across representa
       height: 900,
       colorScheme: 'light',
     },
-    { route: '/creator', text: '与资料员协作创造', width: 1920, height: 1080, colorScheme: 'dark' },
+    { route: '/work/creator', text: '与资料员协作创造', width: 1920, height: 1080, colorScheme: 'dark' },
     { route: '/extensions', text: '贡献能力', width: 1920, height: 1080, colorScheme: 'light' },
   ] as const
 
@@ -464,13 +665,13 @@ test('redesigned relationship and lifecycle pages stay legible across representa
 
   await page.goto('/connections')
   await page
-    .getByRole('link', { name: /QQ 机器人账号/u })
+    .getByRole('link', { name: /QQ 官方机器人/u })
     .first()
     .click()
-  await expect(page.getByText('QQ 群聊（尾号 D6FE）')).toBeVisible()
+  await expect(page.getByText('群聊（尾号 D6FE）')).toBeVisible()
   const connectionText = await page.locator('body').innerText()
   expect(connectionText).not.toContain('group:9CC4F6A7D6FE')
-  expect(connectionText).not.toContain('QQ 群聊（尾号 D6FE） · 群聊')
+  expect(connectionText).not.toContain('群聊（尾号 D6FE） · 群聊')
   await capture(page, testInfo, 'redesign-connection-qq-light')
   expect(failures, failures.join('\n')).toEqual([])
 })
@@ -601,7 +802,7 @@ test('the product Client runtime approves, renders, and retracts a live DSH inte
     return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ accepted: true }) })
   })
 
-  await page.goto('/creator')
+  await page.goto('/work/creator')
   await page.getByRole('button', { name: '审查界面预览' }).click()
   await page.getByRole('dialog').getByRole('button', { name: '允许本次预览' }).click()
   await expect(page.getByText('即时界面已真实加载')).toBeVisible()
@@ -614,7 +815,7 @@ test('the product Client runtime approves, renders, and retracts a live DSH inte
   expect(failures, failures.join('\n')).toEqual([])
 })
 
-test('the four-step creation wizard submits identity, model, and explicit capabilities', async ({ page }, testInfo) => {
+test('the creation page reuses the editor structure and submits explicit capabilities', async ({ page }, testInfo) => {
   const failures = installRuntimeFailureGate(page)
   await installProductRoutes(page)
   let submitted: unknown
@@ -631,20 +832,16 @@ test('the four-step creation wizard submits identity, model, and explicit capabi
     })
   })
   await page.setViewportSize({ width: 1100, height: 720 })
-  await page.goto('/agents?create=1')
-  const dialog = page.getByRole('dialog')
-  await dialog.getByLabel('名称').fill('研究员')
-  await dialog.getByLabel('人设').fill('先核对证据，再给出结论。')
-  await dialog.getByRole('button', { name: '下一步' }).click()
-  await expect(dialog.getByText('DeepSeek V4 Flash')).toBeVisible()
-  await dialog.getByRole('button', { name: '下一步' }).click()
-  await dialog.getByRole('switch', { name: '动态创造' }).click()
-  await dialog.getByRole('switch', { name: '开发命令' }).click()
-  await dialog.getByRole('button', { name: '下一步' }).click()
-  await expect(dialog.getByText('子智能体、动态创造、开发命令', { exact: true })).toBeVisible()
+  await page.goto('/work/agents/new')
+  await expect(page.getByRole('dialog')).toHaveCount(0)
+  await page.getByLabel('名称').fill('研究员')
+  await page.getByLabel('人设').fill('先核对证据，再给出结论。')
+  await expect(page.getByRole('combobox', { name: '默认模型' })).toContainText('DeepSeek V4 Flash')
+  await page.getByRole('switch', { name: '动态创造' }).click()
+  await page.getByRole('switch', { name: '开发命令' }).click()
   await capture(page, testInfo, 'agent-create-confirmation')
-  await dialog.getByRole('button', { name: '创建并打开频道' }).click()
-  await expect(page).toHaveURL(new RegExp(`/channels/${targetChannelId}$`, 'u'))
+  await page.getByRole('button', { name: '创建智能体' }).click()
+  await expect(page).toHaveURL(new RegExp(`/work/channels/${targetChannelId}$`, 'u'))
   expect(submitted).toEqual({
     displayName: '研究员',
     persona: '先核对证据，再给出结论。',
@@ -658,6 +855,37 @@ test('the four-step creation wizard submits identity, model, and explicit capabi
       unrestrictedFileAccess: false,
     },
   })
+  expect(failures, failures.join('\n')).toEqual([])
+})
+
+test('desktop shell keeps a 48px top bar and persists object pane collapse without unmounting it', async ({
+  page,
+}, testInfo) => {
+  const failures = installRuntimeFailureGate(page)
+  await installProductRoutes(page)
+  await page.setViewportSize({ width: 1100, height: 720 })
+  await page.goto('/work')
+
+  const topBar = page.locator('[data-window-top-bar]')
+  const pane = page.locator('aside[aria-label="对象列"]')
+  expect((await topBar.boundingBox())?.height).toBe(48)
+  await expect(pane).toHaveAttribute('aria-hidden', 'false')
+
+  await page.getByRole('button', { name: '收起对象列' }).click()
+  await expect(pane).toHaveAttribute('aria-hidden', 'true')
+  await expect(page.getByRole('separator', { name: '调整对象列宽度' })).toHaveCount(0)
+  expect(await page.evaluate(() => localStorage.getItem('nekro-nxt.ui-preferences') ?? '')).toContain(
+    '"objectPaneCollapsed":true',
+  )
+
+  await page.reload()
+  await expect(page.getByRole('button', { name: '展开对象列' })).toBeVisible()
+  await expect(pane).toHaveAttribute('aria-hidden', 'true')
+  await page.getByRole('button', { name: '展开对象列' }).click()
+  await expect(pane).toHaveAttribute('aria-hidden', 'false')
+  await expect(page.getByRole('separator', { name: '调整对象列宽度' })).toBeVisible()
+  await capture(page, testInfo, 'desktop-object-pane-expanded')
+
   expect(failures, failures.join('\n')).toEqual([])
 })
 
@@ -695,7 +923,7 @@ test('an initial Host failure is explicit and can recover without reloading', as
       body: JSON.stringify({ messages: [], hasMore: false }),
     }),
   )
-  await page.goto('/agents')
+  await page.goto('/work')
   await expect(page.getByText('无法连接', { exact: true }).first()).toBeVisible()
   await expect(page.getByText('还没有智能体', { exact: true }).first()).toBeVisible()
   healthy = true
@@ -740,7 +968,7 @@ test('dialog floating layers, Escape, focus return, and pending failure recovery
   await expect(dialog).toBeHidden()
   await expect(opener).toBeFocused()
 
-  await page.goto(`/agents/${targetAgentId}`)
+  await page.goto(`/work/agents/${targetAgentId}`)
   await page.getByRole('button', { name: '绑定频道' }).click()
   const bindingDialog = page.getByRole('dialog')
   let attempts = 0
@@ -848,7 +1076,7 @@ test('message composer sends with Enter and keeps Shift+Enter for a new line', a
     })
   })
 
-  await page.goto(`/channels/${targetChannelId}`)
+  await page.goto(`/work/channels/${targetChannelId}`)
   const composer = page.getByLabel('消息内容')
   await composer.fill('第一行')
   await composer.press('Shift+Enter')

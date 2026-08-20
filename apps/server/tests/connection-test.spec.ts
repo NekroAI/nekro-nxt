@@ -123,6 +123,7 @@ describe('NekroNxt domain API — real QQ Connection diagnostics', () => {
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify({
           adapterKey: 'qq-openclaw',
+          alias: '测试机器人',
           configuration: { appId: 'app-real-1', proactiveSend: true },
           credentials: { clientSecretCredentialRef: 'client-secret-real-1' },
         }),
@@ -145,6 +146,7 @@ describe('NekroNxt domain API — real QQ Connection diagnostics', () => {
       const projected = snapshot.connections.find((connection) => connection.id === created.connectionId)!
       expect(projected).toMatchObject({
         adapterKey: 'qq-openclaw',
+        alias: '测试机器人',
         credentialConfigured: true,
         channelCount: 1,
         gateway: { state: 'connected' },

@@ -261,7 +261,7 @@ describe('NekroNxt product shell', () => {
   })
 
   it('uses the product navigation order and keeps creator and runtime out of primary navigation', () => {
-    const markup = renderRoute('/agents')
+    const markup = renderRoute('/work/agents/new')
     const navigation = markup.slice(markup.indexOf('<nav'), markup.indexOf('</nav>'))
     expect(navigation.indexOf('工作')).toBeLessThan(navigation.indexOf('连接'))
     expect(navigation.indexOf('连接')).toBeLessThan(navigation.indexOf('扩展'))
@@ -275,8 +275,9 @@ describe('NekroNxt product shell', () => {
   })
 
   it('renders the initial intelligent-agent loading state without demo identities or hard-coded health', () => {
-    const markup = renderRoute('/agents')
-    expect(markup).toContain('正在读取智能体')
+    const markup = renderRoute('/work/agents/new')
+    expect(markup).toContain('创建智能体')
+    expect(markup).toContain('新智能体草稿')
     expect(markup).toContain('正在连接')
     expect(markup).not.toContain('小奈')
     expect(markup).not.toContain('Local Node')
@@ -284,14 +285,14 @@ describe('NekroNxt product shell', () => {
   })
 
   it('distinguishes loading across the priority product routes', () => {
-    expect(renderRoute('/channels')).toContain('正在读取频道')
+    expect(renderRoute('/work/channels/chn_loading')).toContain('正在读取频道')
     expect(renderRoute('/connections')).toContain('正在读取连接')
     expect(renderRoute('/extensions')).toContain('正在读取扩展')
     expect(renderRoute('/settings')).toContain('正在读取模型供应商')
   })
 
   it('keeps direct creator and runtime routes honest when no snapshot data is available', () => {
-    const creator = renderRoute('/creator')
+    const creator = renderRoute('/work/creator')
     const runtime = renderRoute('/runtime')
     expect(creator).toContain('正在读取动态状态')
     expect(runtime).toContain('正在读取')
@@ -440,6 +441,7 @@ describe.sequential('NekroNxt browser projections', { timeout: 30_000 }, () => {
     route: string,
     verify: (page: Page) => Promise<void>,
     snapshot: unknown = browserSnapshot,
+    setup?: (page: Page) => Promise<void>,
   ): Promise<void> => {
     const page = await browser.newPage({ viewport: { width: 1440, height: 900 } })
     const runtimeErrors: string[] = []
@@ -537,6 +539,7 @@ describe.sequential('NekroNxt browser projections', { timeout: 30_000 }, () => {
     await page.route('**/api/dynamic/*/inventory', (request) =>
       request.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ rows: [] }) }),
     )
+    await setup?.(page)
     try {
       await page.goto(`${baseUrl}${route}`)
       await page.locator('#root').waitFor({ state: 'visible' })
@@ -547,13 +550,24 @@ describe.sequential('NekroNxt browser projections', { timeout: 30_000 }, () => {
     }
   }
 
-  it('keeps model provider setup inside the create wizard when no models exist', async () => {
+  it('keeps model provider setup inside the create page when no models exist', async () => {
     const snapshot = {
       ...browserSnapshot,
       models: [],
     }
     await withProductPage(
-      '/agents?create=1',
+      '/work/agents/new',
+      async (page) => {
+        await playwrightExpect(page.getByRole('dialog')).toHaveCount(0)
+        await playwrightExpect(page.getByRole('heading', { name: '创建智能体' })).toBeVisible()
+        await page.getByLabel('名称').fill('临时智能体')
+        await playwrightExpect(
+          page.getByText('当前没有可用模型。保存一个供应商后即可继续创建。', { exact: true }),
+        ).toBeVisible()
+        await playwrightExpect(page.getByRole('button', { name: '保存供应商' })).toBeVisible()
+        await playwrightExpect(page.locator('body')).not.toContainText('请先在设置中配置模型供应商')
+      },
+      snapshot,
       async (page) => {
         await page.route('**/api/llm/providers', (request) =>
           request.fulfill({
@@ -579,21 +593,12 @@ describe.sequential('NekroNxt browser projections', { timeout: 30_000 }, () => {
             }),
           }),
         )
-        await playwrightExpect(page.getByRole('dialog')).toBeVisible()
-        await page.getByLabel('名称').fill('临时智能体')
-        await page.getByRole('button', { name: '下一步' }).click()
-        await playwrightExpect(
-          page.getByText('当前没有可用模型。保存一个供应商后即可继续创建。', { exact: true }),
-        ).toBeVisible()
-        await playwrightExpect(page.getByRole('button', { name: '保存供应商' })).toBeVisible()
-        await playwrightExpect(page.locator('body')).not.toContainText('请先在设置中配置模型供应商')
       },
-      snapshot,
     )
   })
 
   it('renders authoritative intelligent-agent and extension data without technical identifiers', async () => {
-    await withProductPage('/agents', async (page) => {
+    await withProductPage('/work', async (page) => {
       await playwrightExpect(page.getByRole('link', { name: /资料员/u }).first()).toBeVisible()
       await playwrightExpect(page.getByRole('link', { name: '工作' })).toBeVisible()
       await playwrightExpect(page.locator('body')).not.toContainText(browserAgentId)
@@ -609,19 +614,19 @@ describe.sequential('NekroNxt browser projections', { timeout: 30_000 }, () => {
   })
 
   it('keeps intelligent-agent configuration on the workbench instead of sending users away', async () => {
-    await withProductPage(`/agents/${browserAgentId}?tab=capabilities`, async (page) => {
+    await withProductPage(`/work/agents/${browserAgentId}?tab=capabilities`, async (page) => {
       await playwrightExpect(page.getByRole('button', { name: '保存凭据' })).toBeVisible()
       await playwrightExpect(page.getByRole('button', { name: '打开频道去描述需求' })).toBeVisible()
       await playwrightExpect(page.getByRole('button', { name: '查看创造运行' })).toBeVisible()
       await playwrightExpect(page.locator('body')).not.toContainText('设置 → DSH 扩展')
     })
 
-    await withProductPage(`/agents/${browserAgentId}?tab=channels`, async (page) => {
+    await withProductPage(`/work/agents/${browserAgentId}?tab=channels`, async (page) => {
       await playwrightExpect(page.getByLabel('响应方式').first()).toBeVisible()
       await playwrightExpect(page.getByRole('button', { name: '绑定频道' })).toBeVisible()
     })
 
-    await withProductPage(`/agents/${browserAgentId}?tab=extensions`, async (page) => {
+    await withProductPage(`/work/agents/${browserAgentId}?tab=extensions`, async (page) => {
       await playwrightExpect(page.getByRole('button', { name: '停用扩展' })).toBeVisible()
       await playwrightExpect(page.locator('body')).not.toContainText('可在扩展页面查看已保存的扩展和启用状态。')
     })
@@ -629,7 +634,7 @@ describe.sequential('NekroNxt browser projections', { timeout: 30_000 }, () => {
 
   it('renders platform accounts with product labels and binds without leaving the connection page', async () => {
     await withProductPage('/connections', async (page) => {
-      await page.getByRole('link', { name: /QQ 机器人账号/u }).click()
+      await page.getByRole('link', { name: /QQ 开放平台/u }).click()
       await playwrightExpect(page.getByText('尾号 7890', { exact: true })).toBeVisible()
       await playwrightExpect(page.locator('body')).toContainText('网页聊天')
       await playwrightExpect(page.getByRole('button', { name: '绑定智能体' })).toBeVisible()
@@ -640,23 +645,91 @@ describe.sequential('NekroNxt browser projections', { timeout: 30_000 }, () => {
     })
   })
 
+  it('creates a Connection with an alias and edits the alias without changing platform identity', async () => {
+    let createRequestBody: unknown
+    await withProductPage(`/connections/${browserConnectionId}?create=1`, async (page) => {
+      await page.route('**/api/connections', async (request) => {
+        createRequestBody = request.request().postDataJSON()
+        await request.fulfill({
+          status: 201,
+          contentType: 'application/json',
+          body: JSON.stringify({ connectionId: qqConnectionId, adapterKey: 'qq-openclaw' }),
+        })
+      })
+      const dialog = page.getByRole('dialog')
+      await dialog.getByLabel('平台').click()
+      await page.getByRole('option', { name: 'QQ 开放平台' }).click()
+      await page.getByRole('button', { name: '继续配置' }).click()
+      await page.getByLabel('连接别名').fill('项目机器人')
+      await page.getByRole('button', { name: '创建连接' }).click()
+      await playwrightExpect(page.getByRole('dialog')).toBeHidden()
+    })
+    expect(createRequestBody).toMatchObject({ alias: '项目机器人', adapterKey: 'qq-openclaw' })
+
+    const aliasedSnapshot = {
+      ...browserSnapshot,
+      connections: browserSnapshot.connections.map((connection) =>
+        connection.id === qqConnectionId ? { ...connection, alias: '项目机器人' } : connection,
+      ),
+    }
+    let currentAlias = '项目机器人'
+    await withProductPage(
+      `/connections/${qqConnectionId}`,
+      async (page) => {
+        await page.route('**/api/snapshot', async (request) => {
+          await request.fulfill({
+            status: 200,
+            contentType: 'application/json',
+            body: JSON.stringify({
+              ...aliasedSnapshot,
+              connections: aliasedSnapshot.connections.map((connection) =>
+                connection.id === qqConnectionId ? { ...connection, alias: currentAlias } : connection,
+              ),
+            }),
+          })
+        })
+        await page.route(`**/api/connections/${qqConnectionId}/alias`, async (request) => {
+          currentAlias = HostApiContracts.updateConnectionAlias.parseRequest(request.request().postDataJSON()).alias
+          await request.fulfill({
+            status: 200,
+            contentType: 'application/json',
+            body: JSON.stringify({ connectionId: qqConnectionId, ...(currentAlias ? { alias: currentAlias } : {}) }),
+          })
+        })
+        await playwrightExpect(page.getByText('项目机器人', { exact: true }).first()).toBeVisible()
+        await page.getByLabel('辨识名').fill('研发机器人')
+        await page.getByRole('button', { name: '保存连接别名' }).click()
+        await playwrightExpect(page.getByText('研发机器人', { exact: true }).first()).toBeVisible()
+        await page.getByRole('button', { name: '清除别名' }).click()
+        await playwrightExpect(page.getByText('QQ 开放平台', { exact: true }).first()).toBeVisible()
+        await playwrightExpect(page.getByLabel('辨识名')).toHaveValue('')
+      },
+      aliasedSnapshot,
+    )
+  })
+
   it('isolates Channel messages, renders a true empty state, and names the send target', async () => {
-    await withProductPage(`/channels/${browserChannelId}`, async (page) => {
+    await withProductPage(`/work/channels/${browserChannelId}`, async (page) => {
       await playwrightExpect(page.getByText('只属于当前频道', { exact: true })).toBeVisible()
       await playwrightExpect(page.locator('body')).not.toContainText('不能混入当前频道')
-      await playwrightExpect(page.getByText('发送给：资料员', { exact: true })).toBeVisible()
+      await playwrightExpect(page.getByText('发给智能体', { exact: true })).toBeVisible()
       await playwrightExpect(page.getByText('智能体当前空闲。', { exact: true })).toBeVisible()
-      await playwrightExpect(page.getByText('约 3.2k / 128k', { exact: true })).toBeVisible()
+      await playwrightExpect(page.getByLabel('上下文占用')).toContainText('已用 3.2k')
+      await playwrightExpect(page.getByLabel('上下文组成')).toContainText('对话 1.9k')
       await playwrightExpect(page.getByText('缓存读取', { exact: true })).toBeVisible()
       await playwrightExpect(page.getByLabel('频道').getByText('1.8k', { exact: true })).toBeVisible()
       await playwrightExpect(page.getByRole('link', { name: /资料员/u }).first()).toBeVisible()
-      await playwrightExpect(page.getByRole('button', { name: '会话' })).toBeVisible()
-      await playwrightExpect(page.getByRole('button', { name: '工作轨迹' })).toBeVisible()
+      const chatTab = page.getByRole('tab', { name: '会话' })
+      const trajectoryTab = page.getByRole('tab', { name: '工作轨迹' })
+      await playwrightExpect(chatTab).toBeVisible()
+      await playwrightExpect(trajectoryTab).toBeVisible()
+      await playwrightExpect(chatTab).toHaveAttribute('aria-selected', 'true')
       await playwrightExpect(page.getByLabel('响应方式')).toBeVisible()
       await playwrightExpect(page.getByRole('button', { name: '改由其他智能体响应' })).toBeVisible()
       await playwrightExpect(page.getByLabel('工作轨迹时间轴')).toHaveCount(0)
-      await page.getByRole('button', { name: '工作轨迹' }).click()
-      await playwrightExpect(page.getByRole('button', { name: '工作轨迹' })).toBeVisible()
+      await chatTab.focus()
+      await page.keyboard.press('ArrowRight')
+      await playwrightExpect(trajectoryTab).toHaveAttribute('aria-selected', 'true')
       await playwrightExpect(page.getByRole('columnheader', { name: '事件' })).toBeVisible()
       await playwrightExpect(page.getByLabel('工作轨迹时间轴')).toBeVisible()
       await playwrightExpect(page.getByLabel('工作轨迹时间轴')).toContainText('内部')
@@ -670,12 +743,21 @@ describe.sequential('NekroNxt browser projections', { timeout: 30_000 }, () => {
       const sendBox = await sendMark.boundingBox()
       expect(sendBox?.height).toBeLessThanOrEqual(12)
       await sendMark.click()
-      await playwrightExpect(
-        page.getByLabel('工作轨迹', { exact: true }).getByRole('heading', { name: '发出的内容' }),
-      ).toBeVisible()
-      await playwrightExpect(page.getByLabel('工作轨迹', { exact: true }).getByText('活动改到 19:30。')).toBeVisible()
+      const trajectoryInspector = page.locator('aside[aria-label="工作轨迹"]')
+      await playwrightExpect(trajectoryInspector.getByRole('heading', { name: '发出的内容' })).toBeVisible()
+      await playwrightExpect(trajectoryInspector.getByText('活动改到 19:30。')).toBeVisible()
+      const readRow = page.getByRole('row').filter({ hasText: '读取文件' })
+      await readRow.focus()
+      await page.keyboard.press('Enter')
+      await playwrightExpect(readRow).toHaveAttribute('aria-current', 'true')
+      await page.keyboard.press('ArrowDown')
+      const sendRow = page.getByRole('row').filter({ hasText: '发送频道消息' })
+      await playwrightExpect(sendRow).toBeFocused()
+      await playwrightExpect(sendRow).toHaveAttribute('aria-current', 'true')
       await playwrightExpect(page.getByRole('button', { name: '摘要' })).toHaveCount(0)
-      await page.getByRole('button', { name: '会话' }).click()
+      await trajectoryTab.focus()
+      await page.keyboard.press('ArrowLeft')
+      await playwrightExpect(chatTab).toHaveAttribute('aria-selected', 'true')
       await playwrightExpect(page.getByLabel('工作轨迹时间轴')).toHaveCount(0)
       await playwrightExpect(page.getByLabel('响应方式')).toBeVisible()
       await playwrightExpect(page.locator('body')).not.toContainText('管理绑定')
@@ -683,14 +765,14 @@ describe.sequential('NekroNxt browser projections', { timeout: 30_000 }, () => {
       await playwrightExpect(page.locator('body')).not.toContainText('正在使用工具')
     })
 
-    await withProductPage(`/channels/${emptyChannelId}`, async (page) => {
+    await withProductPage(`/work/channels/${emptyChannelId}`, async (page) => {
       await playwrightExpect(page.getByText('还没有消息', { exact: true })).toBeVisible()
-      await playwrightExpect(page.getByText('发送给：资料员', { exact: true })).toBeVisible()
+      await playwrightExpect(page.getByText('发给智能体', { exact: true })).toBeVisible()
     })
   })
 
   it('shows real dynamic state without displaying package or approval identifiers', async () => {
-    await withProductPage('/creator', async (page) => {
+    await withProductPage('/work/creator', async (page) => {
       await playwrightExpect(page.getByRole('button', { name: /资料员的临时扩展/u })).toBeVisible()
       await playwrightExpect(page.getByText('等待确认', { exact: true }).first()).toBeVisible()
       await playwrightExpect(page.locator('body')).not.toContainText('technical-plugin-id')
@@ -751,6 +833,11 @@ describe.sequential('NekroNxt browser projections', { timeout: 30_000 }, () => {
     }
     const mutations: unknown[] = []
     const credentialWrites: unknown[] = []
+    let credentialDeleteAttempts = 0
+    let releaseFirstCredentialDelete: (() => void) | undefined
+    const firstCredentialDelete = new Promise<void>((resolve) => {
+      releaseFirstCredentialDelete = resolve
+    })
     await page.route('**/api/snapshot', (request) =>
       request.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(browserSnapshot) }),
     )
@@ -819,6 +906,22 @@ describe.sequential('NekroNxt browser projections', { timeout: 30_000 }, () => {
       })
     })
     await page.route('**/api/dsh/credentials/DEEPSEEK_API_KEY', async (route) => {
+      if (route.request().method() === 'DELETE') {
+        credentialDeleteAttempts += 1
+        if (credentialDeleteAttempts === 1) {
+          await firstCredentialDelete
+          return route.fulfill({
+            status: 500,
+            contentType: 'application/json',
+            body: JSON.stringify({ error: { code: 'credential-delete-failed', message: '凭据存储暂时不可用。' } }),
+          })
+        }
+        return route.fulfill({
+          status: 200,
+          contentType: 'application/json',
+          body: JSON.stringify({ configured: false, writable: true }),
+        })
+      }
       const body: unknown = route.request().postDataJSON()
       credentialWrites.push(body)
       return route.fulfill({
@@ -857,12 +960,39 @@ describe.sequential('NekroNxt browser projections', { timeout: 30_000 }, () => {
       expect(credentialWrites[0]).toEqual({ value: writeOnlyValue })
       await playwrightExpect(page.getByLabel('新的凭据值')).toHaveValue('')
       await playwrightExpect(page.locator('body')).not.toContainText(writeOnlyValue)
+      await page.getByLabel('新的凭据值').fill('unsaved-replacement')
+
+      const clearTrigger = page.getByRole('button', { name: '清除凭据' })
+      await clearTrigger.click()
+      const clearDialog = page.getByRole('alertdialog')
+      await playwrightExpect(clearDialog.getByRole('heading', { name: '清除“DEEPSEEK_API_KEY”' })).toBeVisible()
+      expect(credentialDeleteAttempts).toBe(0)
+      await clearDialog.getByRole('button', { name: '保留凭据' }).click()
+      await playwrightExpect(clearDialog).toBeHidden()
+      await playwrightExpect(clearTrigger).toBeFocused()
+      expect(credentialDeleteAttempts).toBe(0)
+
+      await clearTrigger.click()
+      await clearDialog.getByRole('button', { name: '清除该凭据' }).click()
+      await playwrightExpect.poll(() => credentialDeleteAttempts).toBe(1)
+      await playwrightExpect(clearDialog.getByRole('button', { name: '正在清除…' })).toBeDisabled()
+      await page.keyboard.press('Escape')
+      await playwrightExpect(clearDialog).toBeVisible()
+      expect(credentialDeleteAttempts).toBe(1)
+      releaseFirstCredentialDelete?.()
+      await playwrightExpect(clearDialog.getByText('清除失败：凭据存储暂时不可用。')).toBeVisible()
+      await clearDialog.getByRole('button', { name: '清除该凭据' }).click()
+      await playwrightExpect.poll(() => credentialDeleteAttempts).toBe(2)
+      await playwrightExpect(clearDialog).toBeHidden()
+      await playwrightExpect(page.getByText('凭据已清除。', { exact: true })).toBeVisible()
+      await playwrightExpect(page.getByLabel('新的凭据值')).toHaveValue('')
+      await playwrightExpect(page.getByLabel('新的凭据值')).toBeFocused()
 
       await page.getByLabel('maxTokens').fill('2048')
       await page.getByRole('button', { name: '保存扩展配置' }).click()
       await playwrightExpect(page.getByText('配置已在其他位置更新；草稿仍保留，请核对后重新保存。')).toBeVisible()
       await playwrightExpect(page.getByLabel('maxTokens')).toHaveValue('2048')
-      expect(runtimeErrors).toEqual([])
+      expect(runtimeErrors.filter((message) => !message.includes('status of 500'))).toEqual([])
     } finally {
       await page.close()
     }
@@ -984,7 +1114,7 @@ describe.sequential('NekroNxt browser projections', { timeout: 30_000 }, () => {
       request.fulfill({ status: 200, contentType: 'text/event-stream', body: '' }),
     )
     try {
-      await page.goto(`${baseUrl}/agents`)
+      await page.goto(`${baseUrl}/work`)
       await playwrightExpect(page.getByRole('link', { name: /资料员/u }).first()).toBeVisible()
       await playwrightExpect(page.getByText('连接不稳定', { exact: true }).first()).toBeVisible({ timeout: 8_000 })
       await playwrightExpect(page.getByText('当前仍显示最近一次同步的数据。', { exact: true })).toBeVisible()
@@ -997,19 +1127,19 @@ describe.sequential('NekroNxt browser projections', { timeout: 30_000 }, () => {
 
   it('keeps priority layouts within the desktop viewport at 1100, 1440, and 1920 pixels', async () => {
     const cases = [
-      { width: 1100, height: 720, route: '/connections', name: 'connections-1100', marker: 'QQ 机器人账号' },
+      { width: 1100, height: 720, route: '/connections', name: 'connections-1100', marker: 'QQ 开放平台' },
       {
         width: 1440,
         height: 900,
-        route: `/channels/${browserChannelId}`,
+        route: `/work/channels/${browserChannelId}`,
         name: 'channel-1440',
         marker: '只属于当前频道',
       },
-      { width: 1920, height: 1080, route: '/agents', name: 'agents-1920', marker: '资料员' },
+      { width: 1920, height: 1080, route: '/work', name: 'agents-1920', marker: '资料员' },
       {
         width: 1440,
         height: 900,
-        route: '/agents',
+        route: '/work',
         name: 'agents-dark-reduced-motion-1440',
         marker: '资料员',
         colorScheme: 'dark',

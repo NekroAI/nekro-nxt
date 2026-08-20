@@ -32,6 +32,7 @@ const forbiddenTerms = [
   ['Adapter', /\bAdapter\b/iu],
   ['Gateway', /\bGateway\b/iu],
   ['Session', /\bSession\b/iu],
+  ['QQ', /QQ/u],
 ]
 const technicalIdName = /(?:^id$|Id$|ID$|Key$|Ns$)/u
 
@@ -209,6 +210,7 @@ const events = [['Gateway resume', 'ok']]
 const mapping = { label: 'Client UI' }
 export function Fixture({ model }) {
   return <section className="Agent"><h2>Extension Draft</h2>
+    <p>通过 QQ 发言</p>
     <Field hint="new Revision" />
     <span>{model.name ?? model.id}</span>
     {events.map(([title]) => <div>{title}</div>)}
@@ -221,8 +223,9 @@ export function Fixture({ model }) {
       [4, 'term:Gateway'],
       [5, 'term:Client UI'],
       [7, 'term:Extension Draft'],
-      [8, 'term:Revision'],
-      [9, 'technical-id-fallback'],
+      [8, 'term:QQ'],
+      [9, 'term:Revision'],
+      [10, 'technical-id-fallback'],
     ],
   )
   assert.equal(

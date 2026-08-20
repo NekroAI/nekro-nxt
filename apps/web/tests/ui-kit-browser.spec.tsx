@@ -7,6 +7,7 @@ import { createServer, type ViteDevServer } from 'vite'
 const harnessModule = `
   import React, { useState } from 'react'
   import { createRoot } from 'react-dom/client'
+  import { NotificationCenter, notify } from '/src/components/notifications.tsx'
   import { Button, Dialog, IconButton, Tooltip } from '/src/ui-kit/index.tsx'
   import '/src/ui-kit/tokens.css'
 
@@ -14,12 +15,19 @@ const harnessModule = `
     const [open, setOpen] = useState(false)
     const [pending, setPending] = useState(false)
     const [longContent, setLongContent] = useState(true)
+    const [notificationSequence, setNotificationSequence] = useState(0)
     return <Tooltip.Provider>
       <main>
       <Button id="dialog-trigger" onClick={() => { setLongContent(true); setPending(false); setOpen(true) }}>打开对话框</Button>
       <IconButton id="icon-button" label="新建网页频道"><span>+</span></IconButton>
       <Button id="short-dialog-trigger" onClick={() => { setLongContent(false); setPending(false); setOpen(true) }}>打开短对话框</Button>
       <Button id="pending-trigger" onClick={() => { setLongContent(true); setPending(true); setOpen(true) }}>打开待处理对话框</Button>
+      <Button id="grouped-notification" onClick={() => {
+        const next = notificationSequence + 1
+        setNotificationSequence(next)
+        notify('同步结果 ' + next, 'success', 'sync-result')
+      }}>显示分组通知</Button>
+      <Button id="error-notification" onClick={() => notify('保存失败', 'error', 'save-error')}>显示错误通知</Button>
       <Dialog
         open={open}
         onOpenChange={setOpen}
@@ -30,6 +38,7 @@ const harnessModule = `
       >
         <div style={{ height: longContent ? 1200 : 20 }}>{longContent ? '可滚动内容' : '短内容'}</div>
       </Dialog>
+      <NotificationCenter />
     </main>
     </Tooltip.Provider>
   }
@@ -154,5 +163,30 @@ describe.sequential('ui-kit Dialog browser behavior', { timeout: 30_000 }, () =>
     await trigger.hover()
     await expectPage(page.getByRole('tooltip', { name: '新建网页频道' })).toBeVisible()
     expect(browserErrors.filter((message) => message.includes('Function components cannot be given refs'))).toEqual([])
+  }, 20_000)
+
+  it('groups repeated notifications, exposes live semantics, and supports manual dismissal', async () => {
+    await page.goto(`${baseUrl}/__ui-kit_harness__`, { waitUntil: 'domcontentloaded' })
+    const grouped = page.locator('#grouped-notification')
+    await grouped.click()
+    await grouped.click()
+
+    const status = page.getByRole('status')
+    await expectPage(status).toHaveCount(1)
+    await expectPage(status).toContainText('同步结果 2')
+    await expectPage(status).not.toContainText('同步结果 1')
+
+    await page.locator('#error-notification').click()
+    const alert = page.getByRole('alert')
+    await expectPage(alert).toContainText('保存失败')
+    await alert.getByRole('button', { name: '关闭通知' }).click()
+    await expectPage(alert).toHaveCount(0)
+    expect(browserErrors).toEqual([])
+  }, 20_000)
+
+  it('automatically dismisses transient success notifications', async () => {
+    await page.locator('#grouped-notification').click()
+    await expectPage(page.getByRole('status')).toBeVisible()
+    await expectPage(page.getByRole('status')).toHaveCount(0, { timeout: 5_000 })
   }, 20_000)
 })

@@ -44,7 +44,7 @@ export const listAgentBlockers = (input: {
 }
 
 export const agentWorkbenchHref = (agentId: string, tab: AgentWorkbenchTab): string => {
-  if (tab === 'creator') return `/creator?agent=${encodeURIComponent(agentId)}`
-  if (tab === 'profile') return `/agents/${agentId}`
-  return `/agents/${agentId}?tab=${tab}`
+  if (tab === 'creator') return `/work/creator?agent=${encodeURIComponent(agentId)}`
+  if (tab === 'profile') return `/work/agents/${agentId}`
+  return `/work/agents/${agentId}?tab=${tab}`
 }

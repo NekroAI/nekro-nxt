@@ -1,5 +1,5 @@
 import { and, asc, desc, eq, lt, or } from 'drizzle-orm'
-import type { CoreRepository } from '@nekro-nxt/core'
+import { normalizeConnectionAlias, type CoreRepository } from '@nekro-nxt/core'
 import type {
   AppendChannelEventCommit,
   BindingRecord,
@@ -36,6 +36,7 @@ import {
 type ChannelRepository = Pick<
   CoreRepository,
   | 'createConnection'
+  | 'updateConnectionAlias'
   | 'getConnection'
   | 'listConnectionIdsByAdapter'
   | 'createChannel'
@@ -65,6 +66,7 @@ const toConnection = (input: typeof connections.$inferSelect): ConnectionRecord 
   return {
     id: row.id,
     adapterKey: row.adapterKey,
+    ...(row.alias?.trim() ? { alias: row.alias.trim() } : {}),
     config: row.config,
     credentialRefs: row.credentialRefs,
     createdAt: row.createdAt,
@@ -159,7 +161,21 @@ export function createChannelsRepository(database: DrizzleCoreDatabase): Channel
 
   return {
     createConnection(record): void {
-      database.insert(connections).values(record).run()
+      database
+        .insert(connections)
+        .values({ ...record, alias: normalizeConnectionAlias(record.alias) ?? null })
+        .run()
+    },
+    updateConnectionAlias(id, alias): void {
+      if (
+        database
+          .update(connections)
+          .set({ alias: normalizeConnectionAlias(alias) ?? null })
+          .where(eq(connections.id, id))
+          .run().changes !== 1
+      ) {
+        throw new Error(`Unknown connection: ${id}`)
+      }
     },
     getConnection,
     listConnectionIdsByAdapter(adapterKey?: string): readonly ConnectionId[] {

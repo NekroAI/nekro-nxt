@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, type ComponentProps } from 'react'
 import { notify } from '../components/notifications.js'
 import { useProductStore } from '../product-store.js'
 import { ConfirmDialog, SelectField } from '../ui-kit/index.js'
@@ -12,9 +12,11 @@ export type BindingChangeIntent =
 export function BindingChangeDialog({
   intent,
   onClose,
+  onCloseAutoFocus,
 }: {
   readonly intent: BindingChangeIntent | undefined
   readonly onClose: () => void
+  readonly onCloseAutoFocus?: ComponentProps<typeof ConfirmDialog>['onCloseAutoFocus']
 }) {
   const agents = useProductStore((state) => state.agents)
   const channels = useProductStore((state) => state.channels)
@@ -40,6 +42,7 @@ export function BindingChangeDialog({
       }}
       title={title}
       description={description}
+      onCloseAutoFocus={onCloseAutoFocus}
       confirmLabel={
         intent?.kind === 'clear'
           ? '停止并解除绑定'

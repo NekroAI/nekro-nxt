@@ -1,4 +1,4 @@
-import { AssetIdSchema, type AssetId } from '@nekro-nxt/contracts'
+import { AssetIdSchema, type AssetId, type ChannelId } from '@nekro-nxt/contracts'
 import { createHash, randomUUID } from 'node:crypto'
 import { createReadStream } from 'node:fs'
 import { link, mkdir, open, rename, unlink } from 'node:fs/promises'
@@ -16,6 +16,21 @@ export interface AssetRecord {
 
 export interface AssetRepository {
   ensureAsset(candidate: AssetRecord): AssetRecord
+}
+
+/** A durable grant that authorizes one Channel to use an Asset without creating a message fact. */
+export interface AssetChannelGrant {
+  readonly assetId: AssetId
+  readonly channelId: ChannelId
+  /** The product operation that owns this grant. This is intentionally not a user/member identity. */
+  readonly source: 'agent-tool'
+  readonly grantedAt: number
+}
+
+/** Channel-scoped Asset access seam. Occurrences and explicit grants are separate authorization facts. */
+export interface AssetAccessRepository extends AssetRepository {
+  grantAssetAccess(grant: AssetChannelGrant): AssetChannelGrant
+  canAccessAsset(assetId: AssetId, channelId: ChannelId): boolean
 }
 
 export type AssetByteSource = Uint8Array | AsyncIterable<Uint8Array>

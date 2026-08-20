@@ -1,10 +1,83 @@
 .shell {
   display: grid;
-  grid-template-columns: 56px 240px minmax(0, 1fr);
+  grid-template-rows: 48px minmax(0, 1fr);
   width: 100%;
   height: 100%;
   min-height: 720px;
   background: var(--nxt-bg-canvas);
+}
+
+.windowTopBar,
+.shellBody {
+  display: grid;
+  min-width: 0;
+  grid-template-columns:
+    56px var(--nxt-object-pane-width, 240px) var(--nxt-object-pane-splitter-width, 5px)
+    minmax(0, 1fr);
+}
+
+.windowTopBar {
+  position: relative;
+  z-index: 4;
+  min-height: 48px;
+  border-bottom: 1px solid var(--nxt-border-subtle);
+  background: color-mix(in srgb, var(--nxt-bg-sidebar) 94%, transparent);
+  -webkit-app-region: drag;
+  transition: grid-template-columns var(--nxt-motion-spatial) var(--nxt-ease-standard);
+}
+
+.windowBrand {
+  display: grid;
+  grid-column: 1;
+  place-items: center;
+  border-right: 1px solid var(--nxt-border-subtle);
+}
+
+.windowObjectTitle {
+  display: flex;
+  min-width: 0;
+  grid-column: 2;
+  align-items: center;
+  overflow: hidden;
+  padding: 0 12px;
+  color: var(--nxt-text-secondary);
+  font-size: 12px;
+  font-weight: 650;
+  white-space: nowrap;
+  transition: opacity var(--nxt-motion-fast) var(--nxt-ease-standard);
+}
+
+.windowStageBar {
+  display: flex;
+  min-width: 0;
+  grid-column: 4;
+  align-items: center;
+  gap: 8px;
+  padding: 0 12px;
+  color: var(--nxt-text-muted);
+  font-size: 12px;
+}
+
+.windowControl {
+  width: 28px;
+  min-width: 28px;
+  height: 28px;
+  min-height: 28px;
+  -webkit-app-region: no-drag;
+}
+
+.shellBody {
+  min-height: 0;
+  grid-row: 2;
+  transition: grid-template-columns var(--nxt-motion-spatial) var(--nxt-ease-standard);
+}
+
+.shell[data-object-pane-collapsed] .windowObjectTitle {
+  opacity: 0;
+}
+
+.shellSplitter {
+  background: var(--nxt-bg-sidebar);
 }
 
 .rail {
@@ -12,17 +85,21 @@
   min-height: 0;
   flex-direction: column;
   align-items: center;
-  gap: 4px;
-  padding: 10px 0 12px;
+  padding: 12px 0;
   border-right: 1px solid var(--nxt-border-subtle);
   background: var(--nxt-bg-sidebar);
 }
 
+.rail nav {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
 .mark {
   position: relative;
-  width: 28px;
-  height: 28px;
-  margin-bottom: 10px;
+  width: 24px;
+  height: 24px;
   border-radius: var(--nxt-radius-md);
   background: linear-gradient(145deg, var(--nxt-cyan-300), #168bd2);
 }
@@ -98,6 +175,12 @@
   flex-direction: column;
   border-right: 1px solid var(--nxt-border-subtle);
   background: var(--nxt-bg-sidebar);
+  overflow: hidden;
+  transition: opacity var(--nxt-motion-fast) var(--nxt-ease-standard);
+}
+
+.shell[data-object-pane-collapsed] .tree {
+  opacity: 0;
 }
 
 .treeHead {
@@ -169,10 +252,4 @@
 
 .centeredState p {
   margin: 8px 0 20px;
-}
-
-@media (width < 1180px) {
-  .shell {
-    grid-template-columns: 56px 200px minmax(0, 1fr);
-  }
 }

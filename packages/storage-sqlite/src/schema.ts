@@ -82,6 +82,7 @@ export const connections = sqliteTable(
   {
     id: text().$type<ConnectionId>().primaryKey(),
     adapterKey: text('adapter_key').notNull(),
+    alias: text('alias'),
     config: jsonText<JsonValue>('config').notNull(),
     credentialRefs: jsonText<Readonly<Record<string, string>>>('credential_refs').notNull(),
     createdAt: integer('created_at').notNull(),
@@ -457,6 +458,29 @@ export const assetOccurrences = sqliteTable(
   ],
 )
 
+/** Channel-scoped access created by product operations that do not have a Channel Event occurrence. */
+export const assetChannelGrants = sqliteTable(
+  'asset_channel_grants',
+  {
+    assetId: text('asset_id')
+      .$type<AssetId>()
+      .notNull()
+      .references(() => assets.id, { onDelete: 'cascade' }),
+    channelId: text('channel_id')
+      .$type<ChannelId>()
+      .notNull()
+      .references(() => channels.id, { onDelete: 'restrict' }),
+    source: text('source', { enum: ['agent-tool'] }).notNull(),
+    grantedAt: integer('granted_at').notNull(),
+  },
+  (table) => [
+    primaryKey({ columns: [table.assetId, table.channelId] }),
+    index('asset_channel_grants_channel_idx').on(table.channelId, table.grantedAt),
+    check('asset_channel_grants_source_ck', sql`${table.source} = 'agent-tool'`),
+    check('asset_channel_grants_granted_at_ck', sql`${table.grantedAt} >= 0`),
+  ],
+)
+
 export const localExtensions = sqliteTable('local_extensions', {
   id: text().$type<ExtensionId>().primaryKey(),
   slug: text().notNull().unique(),
@@ -545,6 +569,7 @@ export const coreSchema = {
   physicalDeliveries,
   assets,
   assetOccurrences,
+  assetChannelGrants,
   localExtensions,
   extensionRevisions,
   agentActivations,

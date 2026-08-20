@@ -92,6 +92,11 @@ export interface AdmissionRecord {
 
 export type OutboundState = 'planned' | 'sending' | 'sent' | 'partially-sent' | 'failed' | 'unknown'
 
+export const ADMIN_CONSOLE_SOURCE_TURN = 'admin-console'
+
+export const isAdminConsoleOutbound = (sourceTurnId: string | undefined): boolean =>
+  sourceTurnId === ADMIN_CONSOLE_SOURCE_TURN
+
 export interface ChannelFact {
   readonly channelId: ChannelId
   readonly kind: 'inbound' | 'outbound'
@@ -157,7 +162,11 @@ export type ChannelHistoryEntry =
       readonly occurredAt: number
       readonly parts: readonly MessagePart[]
       readonly state: OutboundState
+      readonly sourceTurnId?: string
     }
+
+export const isConsoleAnchorHistory = (entry: ChannelHistoryEntry): boolean =>
+  entry.source === 'channel-event' && entry.facts?.['consoleAnchor'] === true
 
 export interface ChannelHistorySearchHit {
   readonly entry: ChannelHistoryEntry
@@ -266,6 +275,12 @@ export interface AgentSessionDriver {
     readonly events: readonly ChannelEventRecord[]
     readonly mode: 'followup' | 'inject'
   }): Promise<{ readonly dshMessageId: string }>
+  notifyConsoleOutbound(input: {
+    readonly dshSessionId: string
+    readonly channelId: ChannelId
+    readonly logicalMessageId: LogicalMessageId
+    readonly parts: readonly MessagePart[]
+  }): Promise<void>
 }
 
 export interface ChannelRuntimeOptions {
@@ -315,6 +330,7 @@ export interface RuntimeRecoveryReport {
 }
 
 const isTriggered = (binding: BindingRecord, event: ChannelEventRecord): boolean => {
+  if (event.facts?.['consoleAnchor'] === true) return false
   switch (binding.triggerPolicy) {
     case 'always':
       return true
@@ -533,6 +549,49 @@ export class ChannelRuntime {
     return this.#sendResult(settled.snapshot)
   }
 
+  async sendAdminConsoleMessage(input: {
+    readonly channelId: ChannelId
+    readonly parts: readonly MessagePart[]
+    readonly clientRequestId?: string
+    readonly signal?: AbortSignal
+  }): Promise<SendMessageResult> {
+    const channel = this.#coreRepository.getChannel(input.channelId)
+    if (!channel) throw new Error(`Unknown channel: ${input.channelId}`)
+    if (channel.kind === 'web') {
+      throw new Error('Web channels accept inbound conversation, not robot-account delivery.')
+    }
+    const binding = this.#coreRepository.getBinding(channel.id)
+    if (!binding) throw new Error('Channel has no Binding.')
+    const adapter = this.#resolveAdapter(channel.connectionId)
+    if (!adapter) throw new Error(`Connection adapter is not running: ${channel.connectionId}`)
+    if (!adapter.capabilities.proactiveSend) {
+      throw new Error('Adapter does not allow proactive send.')
+    }
+    return this.#withLane(channel.id, binding.agentId, async () => {
+      const openedAt = this.#consoleOpenedAtEvent(channel)
+      const episode = await this.#ensureActiveEpisode(binding, openedAt)
+      const result = await this.sendMessage({
+        episodeId: episode.id,
+        parts: input.parts,
+        sourceTurnId: ADMIN_CONSOLE_SOURCE_TURN,
+        ...(input.clientRequestId === undefined ? {} : { clientRequestId: input.clientRequestId }),
+        ...(input.signal === undefined ? {} : { signal: input.signal }),
+      })
+      if (
+        episode.dshSessionId &&
+        (result.status === 'sent' || result.status === 'partially-sent' || result.status === 'unknown')
+      ) {
+        await this.#sessionDriver.notifyConsoleOutbound({
+          dshSessionId: episode.dshSessionId,
+          channelId: channel.id,
+          logicalMessageId: result.logicalMessageId,
+          parts: input.parts,
+        })
+      }
+      return result
+    })
+  }
+
   async recover(): Promise<RuntimeRecoveryReport> {
     const report = {
       resumedEpisodes: 0,
@@ -669,34 +728,59 @@ export class ChannelRuntime {
     })
   }
 
-  async #admit(binding: BindingRecord, event: ChannelEventRecord): Promise<void> {
-    let episode = this.#runtimeRepository.getActiveEpisode(binding.channelId, binding.agentId)
-    if (!episode) {
-      const agent = this.#coreRepository.getAgent(binding.agentId)
-      if (!agent) throw new Error(`Binding agent no longer exists: ${binding.agentId}`)
-      const opening: EpisodeRecord = {
-        id: EpisodeIdSchema.parse(`eps_${this.#nextUlid()}`),
-        channelId: binding.channelId,
-        agentId: binding.agentId,
-        agentRevisionId: agent.revision.id,
-        status: 'opening',
-        openedAtEventId: event.id,
-        createdAt: this.#timestamp(),
-      }
-      this.#runtimeRepository.createEpisode(opening)
-      try {
-        const dshSessionId = await this.#sessionDriver.createSession({
-          episodeId: opening.id,
-          channelId: opening.channelId,
-          agentId: opening.agentId,
-          agentRevisionId: opening.agentRevisionId,
-        })
-        episode = this.#runtimeRepository.activateEpisode(opening.id, dshSessionId)
-      } catch (error) {
-        this.#runtimeRepository.failEpisode(opening.id)
-        throw error
-      }
+  #consoleOpenedAtEvent(channel: { readonly id: ChannelId; readonly connectionId: ConnectionId }): ChannelEventRecord {
+    const latest = this.#coreRepository.listChannelEvents(channel.id, { limit: 1 })[0]
+    if (latest) return latest
+    const connection = this.#coreRepository.getConnection(channel.connectionId)
+    if (!connection) throw new Error(`Channel connection no longer exists: ${channel.connectionId}`)
+    const now = this.#timestamp()
+    return this.#core.appendInbound({
+      connectionId: channel.connectionId,
+      channelId: channel.id,
+      adapterKey: connection.adapterKey,
+      kind: 'control',
+      parts: [],
+      platformTimestamp: now,
+      receivedAt: now,
+      dedupeKey: `console-anchor:${channel.id}:${now}`,
+      facts: { consoleAnchor: true },
+    }).event
+  }
+
+  async #ensureActiveEpisode(binding: BindingRecord, openedAtEvent: ChannelEventRecord): Promise<EpisodeRecord> {
+    const current = this.#runtimeRepository.getActiveEpisode(binding.channelId, binding.agentId)
+    if (current) {
+      if (current.status === 'active' && current.dshSessionId !== undefined) return current
+      throw new Error(`Episode is not ready: ${current.id}`)
     }
+    const agent = this.#coreRepository.getAgent(binding.agentId)
+    if (!agent) throw new Error(`Binding agent no longer exists: ${binding.agentId}`)
+    const opening: EpisodeRecord = {
+      id: EpisodeIdSchema.parse(`eps_${this.#nextUlid()}`),
+      channelId: binding.channelId,
+      agentId: binding.agentId,
+      agentRevisionId: agent.revision.id,
+      status: 'opening',
+      openedAtEventId: openedAtEvent.id,
+      createdAt: this.#timestamp(),
+    }
+    this.#runtimeRepository.createEpisode(opening)
+    try {
+      const dshSessionId = await this.#sessionDriver.createSession({
+        episodeId: opening.id,
+        channelId: opening.channelId,
+        agentId: opening.agentId,
+        agentRevisionId: opening.agentRevisionId,
+      })
+      return this.#runtimeRepository.activateEpisode(opening.id, dshSessionId)
+    } catch (error) {
+      this.#runtimeRepository.failEpisode(opening.id)
+      throw error
+    }
+  }
+
+  async #admit(binding: BindingRecord, event: ChannelEventRecord): Promise<void> {
+    let episode = await this.#ensureActiveEpisode(binding, event)
     if (episode.status !== 'active' || episode.dshSessionId === undefined) {
       throw new Error(`Episode is not ready for admission: ${episode.id}`)
     }

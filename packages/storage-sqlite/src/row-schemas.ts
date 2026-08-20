@@ -28,6 +28,7 @@ import {
   agentCurrentRevisions,
   agentDefinitions,
   agentRevisions,
+  assetChannelGrants,
   assetOccurrences,
   assets,
   channelBindings,
@@ -63,6 +64,7 @@ export const ConnectionRowSchema = createSelectSchema(connections, {
   id: ConnectionIdSchema,
   config: JsonValueSchema,
   credentialRefs: credentialRefsSchema,
+  alias: z.string().max(80).nullable(),
 })
 export const ConnectionStateRowSchema = createSelectSchema(connectionState, {
   connectionId: ConnectionIdSchema,
@@ -138,6 +140,10 @@ export const AssetOccurrenceRowSchema = createSelectSchema(assetOccurrences, {
   channelEventId: ChannelEventIdSchema,
   assetId: AssetIdSchema,
 })
+export const AssetChannelGrantRowSchema = createSelectSchema(assetChannelGrants, {
+  assetId: AssetIdSchema,
+  channelId: ChannelIdSchema,
+})
 export const LocalExtensionRowSchema = createSelectSchema(localExtensions, {
   id: ExtensionIdSchema,
   createdByAgentId: AgentIdSchema.nullable(),
@@ -173,6 +179,7 @@ export const CoreRowSchemas = {
   physicalDeliveries: PhysicalDeliveryRowSchema,
   assets: AssetRowSchema,
   assetOccurrences: AssetOccurrenceRowSchema,
+  assetChannelGrants: AssetChannelGrantRowSchema,
   localExtensions: LocalExtensionRowSchema,
   extensionRevisions: ExtensionRevisionRowSchema,
   agentActivations: AgentActivationRowSchema,

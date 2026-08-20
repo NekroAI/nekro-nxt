@@ -11,6 +11,8 @@ declare const styles: {
   readonly dialogHeading: string
   readonly dialogOverlay: string
   readonly dialogTitle: string
+  readonly dropdownMenuContent: string
+  readonly dropdownMenuItem: string
   readonly error: string
   readonly field: string
   readonly fieldError: string
@@ -23,6 +25,7 @@ declare const styles: {
   readonly loadingSpinner: string
   readonly panel: string
   readonly primary: string
+  readonly resizeHandle: string
   readonly secondary: string
   readonly selectContent: string
   readonly selectItem: string

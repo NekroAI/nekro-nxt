@@ -4,6 +4,7 @@ import {
   formatDurationMs,
   formatTokenCount,
   plotTurnStarts,
+  projectContextUsage,
   recordLane,
 } from '../src/pages/channel-trajectory.js'
 import type { ChannelRuntimeView } from '../src/product-store.js'
@@ -60,12 +61,42 @@ describe('flattenRuntimeRecords', () => {
     expect(plotTurnStarts([{ turn: 3 }])).toEqual([])
   })
 
-  it('formats occupancy and duration for the inspector, not as a dashboard', () => {
+  it('formats occupancy and duration for the inspector', () => {
     expect(formatTokenCount(420)).toBe('420')
     expect(formatTokenCount(3200)).toBe('3.2k')
     expect(formatTokenCount(32_000)).toBe('32k')
     expect(formatDurationMs(420)).toBe('420ms')
     expect(formatDurationMs(1200)).toBe('1.2s')
     expect(formatDurationMs(65_000)).toBe('1:05')
+  })
+
+  it('projects bounded occupancy and a non-negative composition', () => {
+    expect(
+      projectContextUsage({
+        projectedTokens: 150,
+        contextWindow: 100,
+        cacheReadTokens: 40,
+        breakdown: { systemTokens: 20, toolsTokens: 30, messageTokens: 25 },
+      }),
+    ).toMatchObject({
+      used: 100,
+      remaining: 0,
+      usedPercent: 100,
+      estimated: false,
+      composition: [
+        { name: '系统', value: 20 },
+        { name: '工具', value: 30 },
+        { name: '对话', value: 25 },
+        { name: '其他', value: 25 },
+      ],
+    })
+
+    const estimated = projectContextUsage({
+      projectedTokens: 50,
+      contextWindow: 100,
+      breakdown: { systemTokens: 30, toolsTokens: 30, messageTokens: 20 },
+    })
+    expect(estimated.estimated).toBe(true)
+    expect(estimated.composition.every((item) => item.value >= 0)).toBe(true)
   })
 })

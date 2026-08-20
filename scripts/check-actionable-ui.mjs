@@ -6,6 +6,7 @@ import ts from 'typescript'
 const root = process.cwd()
 const productRoot = 'apps/web/src'
 const actionableTags = new Set(['Button', 'IconButton', 'button'])
+const semanticTriggerTags = new Set(['DropdownMenu.Trigger'])
 
 const attribute = (attributes, name) =>
   attributes.properties.find(
@@ -34,8 +35,8 @@ const permanentlyDisabled = (attributes) => {
   return expressionAttribute(attributes, 'disabled')?.kind === ts.SyntaxKind.TrueKeyword
 }
 
-const meaningfulClickHandler = (attributes) => {
-  const handler = expressionAttribute(attributes, 'onClick')
+const meaningfulHandler = (attributes, name) => {
+  const handler = expressionAttribute(attributes, name)
   if (!handler || handler.kind === ts.SyntaxKind.NullKeyword || handler.kind === ts.SyntaxKind.FalseKeyword)
     return false
   if (ts.isIdentifier(handler) && handler.text === 'undefined') return false
@@ -46,6 +47,14 @@ const meaningfulClickHandler = (attributes) => {
     if (ts.isIdentifier(handler.body) && handler.body.text === 'undefined') return false
   }
   return true
+}
+
+const wrappedBySemanticTrigger = (node, file) => {
+  const candidates = [node.parent, node.parent?.parent]
+  return candidates.some(
+    (candidate) =>
+      ts.isJsxElement(candidate) && semanticTriggerTags.has(candidate.openingElement.tagName.getText(file)),
+  )
 }
 
 async function filesUnder(relativeDirectory) {
@@ -67,14 +76,21 @@ function inspectSource(relativePath, source) {
     if (ts.isJsxOpeningElement(node) || ts.isJsxSelfClosingElement(node)) {
       const tagName = node.tagName.getText(file)
       if (actionableTags.has(tagName)) {
-        const hasHandler = meaningfulClickHandler(node.attributes)
+        const hasHandler = ['onClick', 'onPointerDown', 'onKeyDown'].some((name) =>
+          meaningfulHandler(node.attributes, name),
+        )
         const submitsForm = literalAttribute(node.attributes, 'type', 'submit')
-        if (!hasHandler && !submitsForm && !permanentlyDisabled(node.attributes)) {
+        if (
+          !hasHandler &&
+          !submitsForm &&
+          !permanentlyDisabled(node.attributes) &&
+          !wrappedBySemanticTrigger(node, file)
+        ) {
           const position = file.getLineAndCharacterOfPosition(node.getStart(file))
           failures.push({
             file: relativePath,
             line: position.line + 1,
-            message: `<${tagName}> 没有有效 onClick、submit 语义或永久禁用；条件 disabled 不能替代操作。`,
+            message: `<${tagName}> 没有有效点击、指针、键盘、语义触发器、submit 或永久禁用；条件 disabled 不能替代操作。`,
           })
         }
       }
@@ -95,6 +111,8 @@ export function Fixture({ pending }) {
     <Button disabled={pending} />
     <button onClick={() => {}} />
     <Button onClick={() => undefined} />
+    <Button onKeyDown={() => doWork()} />
+    <DropdownMenu.Trigger><IconButton /></DropdownMenu.Trigger>
   </>
 }`
   const failures = inspectSource('fixtures/actionable.tsx', fixture)

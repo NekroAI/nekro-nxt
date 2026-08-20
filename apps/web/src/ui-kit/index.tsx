@@ -1,4 +1,5 @@
 import * as RadixDialog from '@radix-ui/react-dialog'
+import * as RadixDropdownMenu from '@radix-ui/react-dropdown-menu'
 import * as Select from '@radix-ui/react-select'
 import * as Switch from '@radix-ui/react-switch'
 import * as RadixTabs from '@radix-ui/react-tabs'
@@ -20,6 +21,8 @@ import {
   type CSSProperties,
   type ElementRef,
   type InputHTMLAttributes,
+  type KeyboardEvent as ReactKeyboardEvent,
+  type PointerEvent as ReactPointerEvent,
   type ReactElement,
   type ReactNode,
   type TextareaHTMLAttributes,
@@ -65,26 +68,24 @@ export function Button({
   )
 }
 
-export function IconButton({
-  label,
-  loadingLabel,
-  loading = false,
-  type = 'button',
-  className,
-  disabled,
-  children,
-  ...props
-}: ButtonHTMLAttributes<HTMLButtonElement> & {
-  readonly label: string
-  readonly loading?: boolean
-  readonly loadingLabel?: string
-  readonly children: ReactNode
-}) {
+export const IconButton = forwardRef<
+  HTMLButtonElement,
+  ButtonHTMLAttributes<HTMLButtonElement> & {
+    readonly label: string
+    readonly loading?: boolean
+    readonly loadingLabel?: string
+    readonly children: ReactNode
+  }
+>(function IconButton(
+  { label, loadingLabel, loading = false, type = 'button', className, disabled, children, ...props },
+  ref,
+) {
   const accessibleLabel = loading ? (loadingLabel ?? `${label}，处理中`) : label
   return (
     <Tooltip.Root>
       <Tooltip.Trigger asChild>
         <button
+          ref={ref}
           type={type}
           className={[styles.iconButton, className].filter(Boolean).join(' ')}
           aria-label={accessibleLabel}
@@ -102,6 +103,91 @@ export function IconButton({
         </Tooltip.Content>
       </Tooltip.Portal>
     </Tooltip.Root>
+  )
+})
+
+export function ResizeHandle({
+  label,
+  value,
+  min,
+  max,
+  defaultValue,
+  className,
+  onChange,
+  onCommit,
+}: {
+  readonly label: string
+  readonly value: number
+  readonly min: number
+  readonly max: number
+  readonly defaultValue: number
+  readonly className?: string
+  readonly onChange: (value: number) => void
+  readonly onCommit: (value: number) => void
+}) {
+  const dragStart = useRef<{ readonly x: number; readonly value: number }>()
+  const currentValue = useRef(value)
+  currentValue.current = value
+  const clamp = (next: number): number => Math.min(max, Math.max(min, Math.round(next)))
+  const change = (next: number): void => {
+    const clamped = clamp(next)
+    currentValue.current = clamped
+    onChange(clamped)
+  }
+  const commit = (next: number): void => {
+    const clamped = clamp(next)
+    currentValue.current = clamped
+    onChange(clamped)
+    onCommit(clamped)
+  }
+  const onKeyDown = (event: ReactKeyboardEvent<HTMLDivElement>): void => {
+    const step = event.shiftKey ? 10 : 1
+    if (event.key === 'ArrowLeft') change(value - step)
+    else if (event.key === 'ArrowRight') change(value + step)
+    else if (event.key === 'Home') change(min)
+    else if (event.key === 'End') change(max)
+    else if (event.key === 'Enter' || event.key === ' ') commit(defaultValue)
+    else return
+    event.preventDefault()
+    if (event.key !== 'Enter' && event.key !== ' ') onCommit(currentValue.current)
+  }
+  const finishPointer = (event: ReactPointerEvent<HTMLDivElement>): void => {
+    if (!dragStart.current) return
+    dragStart.current = undefined
+    if (event.currentTarget.hasPointerCapture(event.pointerId))
+      event.currentTarget.releasePointerCapture(event.pointerId)
+    onCommit(currentValue.current)
+  }
+  return (
+    <div
+      className={[styles.resizeHandle, className].filter(Boolean).join(' ')}
+      role="separator"
+      tabIndex={0}
+      aria-label={label}
+      aria-orientation="vertical"
+      aria-valuemin={min}
+      aria-valuemax={max}
+      aria-valuenow={value}
+      onKeyDown={onKeyDown}
+      onDoubleClick={() => commit(defaultValue)}
+      onPointerDown={(event) => {
+        if (event.button !== 0) return
+        dragStart.current = { x: event.clientX, value }
+        currentValue.current = value
+        event.currentTarget.setPointerCapture(event.pointerId)
+        event.preventDefault()
+      }}
+      onPointerMove={(event) => {
+        if (!dragStart.current || !event.currentTarget.hasPointerCapture(event.pointerId)) return
+        change(dragStart.current.value + event.clientX - dragStart.current.x)
+      }}
+      onPointerUp={finishPointer}
+      onLostPointerCapture={() => {
+        if (!dragStart.current) return
+        dragStart.current = undefined
+        onCommit(currentValue.current)
+      }}
+    />
   )
 }
 
@@ -231,7 +317,10 @@ function useFieldA11y({
   }
 }
 
-export function Input({ className, id, ...props }: InputHTMLAttributes<HTMLInputElement>) {
+export const Input = forwardRef<HTMLInputElement, InputHTMLAttributes<HTMLInputElement>>(function Input(
+  { className, id, ...props },
+  ref,
+) {
   const a11y = useFieldA11y({
     id,
     labelledBy: props['aria-labelledby'],
@@ -241,6 +330,7 @@ export function Input({ className, id, ...props }: InputHTMLAttributes<HTMLInput
   })
   return (
     <input
+      ref={ref}
       {...props}
       id={a11y.id}
       className={[styles.input, className].filter(Boolean).join(' ')}
@@ -250,7 +340,7 @@ export function Input({ className, id, ...props }: InputHTMLAttributes<HTMLInput
       aria-invalid={a11y.invalid}
     />
   )
-}
+})
 
 export function Textarea({ className, id, ...props }: TextareaHTMLAttributes<HTMLTextAreaElement>) {
   const a11y = useFieldA11y({
@@ -402,7 +492,7 @@ export interface DialogLayoutProps {
   readonly title: ReactNode
   readonly description?: ReactNode | undefined
   readonly closeButton: ReactNode
-  readonly children: ReactNode
+  readonly children?: ReactNode | undefined
   readonly footer?: ReactNode | undefined
 }
 
@@ -471,7 +561,7 @@ export function DialogLayout({ title, description, closeButton, children, footer
         </div>
         {closeButton}
       </header>
-      <DialogBody>{children}</DialogBody>
+      {children === undefined || children === null ? null : <DialogBody>{children}</DialogBody>}
       {footer ? (
         <footer className={styles.dialogFooter} data-nxt-dialog-region="footer">
           {footer}
@@ -493,6 +583,7 @@ export interface DialogProps {
   readonly className?: string
   readonly onOpenAutoFocus?: DialogContentProps['onOpenAutoFocus']
   readonly onCloseAutoFocus?: DialogContentProps['onCloseAutoFocus']
+  readonly dialogRole?: 'dialog' | 'alertdialog'
 }
 
 export function Dialog({
@@ -507,6 +598,7 @@ export function Dialog({
   className,
   onOpenAutoFocus,
   onCloseAutoFocus,
+  dialogRole = 'dialog',
 }: DialogProps) {
   const layer = useModalLayer(open)
   const closeReason = useRef<DialogCloseReason>('close-button')
@@ -536,6 +628,7 @@ export function Dialog({
           data-nxt-modal-order={layer.order}
         />
         <RadixDialog.Content
+          role={dialogRole}
           className={[styles.dialogContent, className].filter(Boolean).join(' ')}
           style={layerVariables}
           data-nxt-modal-order={layer.order}
@@ -600,6 +693,10 @@ export function ConfirmDialog({
   onConfirm,
   backLabel,
   onBack,
+  cancelLabel = '取消',
+  confirmVariant = 'primary',
+  confirmLoadingLabel = '处理中…',
+  onCloseAutoFocus,
   children,
 }: {
   readonly open: boolean
@@ -610,6 +707,10 @@ export function ConfirmDialog({
   readonly onConfirm: () => boolean | void | Promise<boolean | void>
   readonly backLabel?: string | undefined
   readonly onBack?: (() => void) | undefined
+  readonly cancelLabel?: string
+  readonly confirmVariant?: 'primary' | 'danger'
+  readonly confirmLoadingLabel?: string
+  readonly onCloseAutoFocus?: DialogProps['onCloseAutoFocus']
   readonly children?: ReactNode
 }) {
   const [pending, setPending] = useState(false)
@@ -629,17 +730,24 @@ export function ConfirmDialog({
       title={title}
       description={description}
       pending={pending}
+      dialogRole={confirmVariant === 'danger' ? 'alertdialog' : 'dialog'}
+      onCloseAutoFocus={onCloseAutoFocus}
       footer={
         <>
           <Button variant="ghost" disabled={pending} onClick={() => onOpenChange(false)}>
-            取消
+            {cancelLabel}
           </Button>
           {backLabel && onBack ? (
             <Button variant="secondary" disabled={pending} onClick={onBack}>
               {backLabel}
             </Button>
           ) : null}
-          <Button variant="primary" loading={pending} loadingLabel="处理中…" onClick={() => void confirm()}>
+          <Button
+            variant={confirmVariant}
+            loading={pending}
+            loadingLabel={confirmLoadingLabel}
+            onClick={() => void confirm()}
+          >
             {confirmLabel}
           </Button>
         </>
@@ -671,6 +779,47 @@ export const Tabs = {
   List: TabsList,
   Trigger: TabsTrigger,
   Content: TabsContent,
+}
+
+type DropdownMenuContentProps = ComponentPropsWithoutRef<typeof RadixDropdownMenu.Content>
+type DropdownMenuItemProps = ComponentPropsWithoutRef<typeof RadixDropdownMenu.Item>
+
+const DropdownMenuContent = forwardRef<ElementRef<typeof RadixDropdownMenu.Content>, DropdownMenuContentProps>(
+  function DropdownMenuContent({ className, sideOffset = 6, ...props }, ref) {
+    const floatingLayer = useFloatingLayer()
+    return (
+      <RadixDropdownMenu.Portal>
+        <RadixDropdownMenu.Content
+          ref={ref}
+          className={[styles.dropdownMenuContent, className].filter(Boolean).join(' ')}
+          sideOffset={sideOffset}
+          style={{ zIndex: floatingLayer }}
+          {...props}
+        />
+      </RadixDropdownMenu.Portal>
+    )
+  },
+)
+
+const DropdownMenuItem = forwardRef<ElementRef<typeof RadixDropdownMenu.Item>, DropdownMenuItemProps>(
+  function DropdownMenuItem({ className, ...props }, ref) {
+    return (
+      <RadixDropdownMenu.Item
+        ref={ref}
+        className={[styles.dropdownMenuItem, className].filter(Boolean).join(' ')}
+        {...props}
+      />
+    )
+  },
+)
+
+export const DropdownMenu = {
+  Root: RadixDropdownMenu.Root,
+  Trigger: RadixDropdownMenu.Trigger,
+  Content: DropdownMenuContent,
+  Item: DropdownMenuItem,
+  Label: RadixDropdownMenu.Label,
+  Separator: RadixDropdownMenu.Separator,
 }
 
 type TooltipContentProps = ComponentPropsWithoutRef<typeof RadixTooltip.Content>

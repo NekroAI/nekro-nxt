@@ -1,4 +1,5 @@
 import {
+  connectionDisplayName,
   runtimePhaseToState,
   type AgentRuntimeState,
   type AgentSummary,
@@ -89,8 +90,9 @@ const formatTime = (occurredAt: number): string =>
 
 const visibleText = (text: string): string =>
   text
-    .replaceAll('[QQ 消息不包含可处理内容]', '该 QQ 消息包含暂不支持显示的内容。')
-    .replace(/<faceType=\d+,faceId="[^"]*",ext="[^"]*">/gu, '[QQ 表情]')
+    .replaceAll('[QQ 消息不包含可处理内容]', '该消息包含暂不支持显示的内容。')
+    .replaceAll('[QQ 表情]', '[表情]')
+    .replace(/<faceType=\d+,faceId="[^"]*",ext="[^"]*">/gu, '[表情]')
 
 export const renderConversationBody = (
   parts: readonly {
@@ -206,10 +208,10 @@ const projectAdapterDescriptor = (
   },
 })
 
-const qqChannelLabel = (platformChannelId: string, kind: 'group' | 'direct' = 'group'): string => {
+const platformChannelLabel = (platformChannelId: string, kind: 'group' | 'direct' = 'group'): string => {
   const suffix = platformChannelId.trim().match(/([\p{L}\p{N}]{4})$/u)?.[1]
   const type = kind === 'group' ? '群聊' : '私聊'
-  return suffix ? `QQ ${type}（尾号 ${suffix}）` : `未命名 QQ ${type}`
+  return suffix ? `${type}（尾号 ${suffix}）` : `未命名${type}`
 }
 
 const projectConversationMessage = (
@@ -220,19 +222,32 @@ const projectConversationMessage = (
   const delivery = deliveryStateToUi(message.deliveryState)
   const sourceChannel = channels.find((channel) => channel.id === message.channelId)
   const sourceAgent = agents.find((agent) => agent.id === sourceChannel?.agentId)
-  const resources = message.parts.flatMap((part) => {
-    if (part.type !== 'image' && part.type !== 'file' && part.type !== 'audio') return []
+  const parts: ConversationMessage['parts'] = message.parts.map((part) => {
+    if (part.type === 'text') return { type: 'text', text: visibleText(part.text) }
+    if (part.type === 'mention') {
+      return {
+        type: 'mention',
+        memberId: part.memberId,
+        displayName: nonEmptyLabel(part.displayName, '群成员'),
+      }
+    }
+    if (part.type === 'quote') return { type: 'quote', messageId: part.messageId }
+    if (part.type !== 'image' && part.type !== 'file' && part.type !== 'audio') {
+      return { type: 'unsupported', label: '暂不支持显示的消息内容' }
+    }
     const kind = part.type
     const fallback = kind === 'image' ? '图片' : kind === 'audio' ? '语音' : '文件'
     const label = part.type === 'image' ? part.alt : part.type === 'file' ? part.name : undefined
-    return [
-      {
-        assetId: part.assetId,
-        kind,
-        name: nonEmptyLabel(label, fallback),
-        url: `/api/channels/${encodeURIComponent(message.channelId)}/assets/${encodeURIComponent(part.assetId)}`,
-      },
-    ]
+    const url = `/api/channels/${encodeURIComponent(message.channelId)}/assets/${encodeURIComponent(part.assetId)}`
+    if (kind === 'image') return { type: 'image', assetId: part.assetId, alt: nonEmptyLabel(label, fallback), url }
+    if (kind === 'file') return { type: 'file', assetId: part.assetId, name: nonEmptyLabel(label, fallback), url }
+    return { type: 'audio', assetId: part.assetId, url }
+  })
+  const resources = parts.flatMap<ConversationMessage['resources'][number]>((part) => {
+    if (part.type === 'image') return [{ assetId: part.assetId, kind: part.type, name: part.alt, url: part.url }]
+    if (part.type === 'file') return [{ assetId: part.assetId, kind: part.type, name: part.name, url: part.url }]
+    if (part.type === 'audio') return [{ assetId: part.assetId, kind: part.type, name: '语音', url: part.url }]
+    return []
   })
   return {
     id: message.id,
@@ -247,10 +262,13 @@ const projectConversationMessage = (
             ? '你'
             : '群成员',
     body: renderConversationBody(message.parts, message.mentionedConnectionAccount),
+    parts,
+    mentionedConnectionAccount: message.mentionedConnectionAccount === true,
     time: formatTime(message.occurredAt),
     occurredAt: message.occurredAt,
     resources,
     ...(delivery === undefined ? {} : { delivery }),
+    ...(message.origin === 'admin-console' ? { origin: 'admin-console' as const } : {}),
   }
 }
 
@@ -288,15 +306,26 @@ const projectSnapshot = (json: SnapshotJson, successfulAt: number): ProductSnaps
     ).length,
     capabilities: { ...agent.capabilities },
   }))
+  const connectionAdapterName = (connection: SnapshotJson['connections'][number]): string =>
+    connection.adapterKey === 'web'
+      ? '网页聊天'
+      : nonEmptyLabel(
+          json.connectionAdapters.find((adapter) => adapter.key === connection.adapterKey)?.displayName,
+          '未命名连接平台',
+        )
   const connectionNameById = new Map(
     json.connections.map((connection) => [
       connection.id,
-      connection.adapterKey === 'web'
-        ? '网页聊天'
-        : nonEmptyLabel(
-            json.connectionAdapters.find((adapter) => adapter.key === connection.adapterKey)?.displayName,
-            '未命名连接',
-          ),
+      connectionDisplayName({
+        name:
+          connection.adapterKey === 'web'
+            ? '网页聊天'
+            : nonEmptyLabel(
+                json.connectionAdapters.find((adapter) => adapter.key === connection.adapterKey)?.displayName,
+                '未命名连接',
+              ),
+        ...(connection.alias === undefined ? {} : { alias: connection.alias }),
+      }),
     ]),
   )
   const channels: ChannelSummary[] = json.channels.map((channel) => ({
@@ -306,7 +335,7 @@ const projectSnapshot = (json: SnapshotJson, successfulAt: number): ProductSnaps
       channel.displayName,
       channel.kind === 'web'
         ? '未命名 Web 频道'
-        : qqChannelLabel(channel.platformChannelId, channel.kind === 'group' ? 'group' : 'direct'),
+        : platformChannelLabel(channel.platformChannelId, channel.kind === 'group' ? 'group' : 'direct'),
     ),
     kind: channel.kind === 'group' ? 'qq-group' : channel.kind === 'direct' ? 'qq-direct' : 'web',
     connectionName: connectionNameById.get(channel.connectionId) ?? '未命名连接',
@@ -338,22 +367,12 @@ const projectSnapshot = (json: SnapshotJson, successfulAt: number): ProductSnaps
     return result.message ?? result.status
   }
   const connections: ConnectionSummary[] = json.connections.map((connection) => {
-    const adapterName =
-      connection.adapterKey === 'web'
-        ? '网页聊天'
-        : nonEmptyLabel(
-            json.connectionAdapters.find((adapter) => adapter.key === connection.adapterKey)?.displayName,
-            '未命名连接平台',
-          )
+    const adapterName = connectionAdapterName(connection)
     const gatewayState = connection.gateway?.state ?? (connection.adapterKey === 'web' ? 'connected' : 'disconnected')
     return {
       id: connection.id,
-      name:
-        connection.adapterKey === 'web'
-          ? '网页聊天'
-          : connection.adapterKey === 'qq-openclaw'
-            ? 'QQ 机器人账号'
-            : adapterName,
+      ...(connection.alias === undefined ? {} : { alias: connection.alias }),
+      name: adapterName,
       adapter: adapterName,
       adapterKey: connection.adapterKey,
       state:
@@ -374,10 +393,10 @@ const projectSnapshot = (json: SnapshotJson, successfulAt: number): ProductSnaps
         ...channel,
         name:
           channel.kind === 'group' && /^(?:group|guild):/u.test(channel.name)
-            ? qqChannelLabel(channel.name)
+            ? platformChannelLabel(channel.name)
             : channel.kind !== 'group' && /^(?:private|c2c):/u.test(channel.name)
-              ? qqChannelLabel(channel.name, 'direct')
-              : nonEmptyLabel(channel.name, channel.kind === 'group' ? '未命名 QQ 群聊' : '未命名频道'),
+              ? platformChannelLabel(channel.name, 'direct')
+              : nonEmptyLabel(channel.name, channel.kind === 'group' ? '未命名群聊' : '未命名频道'),
       })),
       lastEvent:
         connection.lastInbound === undefined
@@ -629,13 +648,27 @@ export class HttpProductHost implements ProductHostPort {
     }
     if (command === 'connections.create') {
       const adapterKey = typeof input?.['adapterKey'] === 'string' ? input['adapterKey'] : ''
+      const alias = typeof input?.['alias'] === 'string' ? input['alias'] : undefined
       const configuration = isRecord(input?.['configuration'])
         ? HostApiContracts.createConnection.request.shape.configuration.parse(input['configuration'])
         : undefined
       const credentials = isStringRecord(input?.['credentials']) ? input['credentials'] : undefined
       if (!adapterKey.trim()) throw new Error('请选择连接平台。')
       if (configuration === undefined || credentials === undefined) throw new Error('连接配置格式无效，请重新填写。')
-      const result = await this.#call(HostApiContracts.createConnection, {}, { adapterKey, configuration, credentials })
+      const result = await this.#call(
+        HostApiContracts.createConnection,
+        {},
+        { adapterKey, ...(alias === undefined ? {} : { alias }), configuration, credentials },
+      )
+      await this.#refreshAndNotify()
+      return result
+    }
+    if (command === 'connections.updateAlias') {
+      const connectionId = typeof input?.['connectionId'] === 'string' ? input['connectionId'] : ''
+      const alias = typeof input?.['alias'] === 'string' ? input['alias'] : undefined
+      if (!connectionId.trim()) throw new Error('缺少连接标识，请刷新页面后重试。')
+      if (alias === undefined) throw new Error('连接别名格式无效，请重新填写。')
+      const result = await this.#call(HostApiContracts.updateConnectionAlias, { connectionId }, { alias })
       await this.#refreshAndNotify()
       return result
     }

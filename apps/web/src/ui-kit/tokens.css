@@ -155,6 +155,32 @@
   }
 }
 
+:root[data-reduced-transparency='true'] {
+  --nxt-bg-elevated: var(--nxt-bg-surface);
+  --nxt-shadow-control: none;
+  --nxt-shadow-popover: 0 0 0 1px var(--nxt-border-strong);
+  --nxt-shadow-dialog: 0 0 0 1px var(--nxt-border-strong);
+  --nxt-shadow-float: var(--nxt-shadow-popover);
+}
+
+:root[data-contrast='more'] {
+  --nxt-border-subtle: var(--nxt-border-default);
+  --nxt-border-default: var(--nxt-border-strong);
+  --nxt-text-muted: var(--nxt-text-secondary);
+  --nxt-text-disabled: var(--nxt-text-secondary);
+  --nxt-focus-ring: var(--nxt-accent);
+}
+
+@media (prefers-contrast: more) {
+  :root[data-contrast='system'] {
+    --nxt-border-subtle: var(--nxt-border-default);
+    --nxt-border-default: var(--nxt-border-strong);
+    --nxt-text-muted: var(--nxt-text-secondary);
+    --nxt-text-disabled: var(--nxt-text-secondary);
+    --nxt-focus-ring: var(--nxt-accent);
+  }
+}
+
 * {
   box-sizing: border-box;
 }

@@ -28,6 +28,12 @@
   opacity: 0.66;
 }
 
+:global(:root[data-contrast='more']) .button:disabled,
+:global(:root[data-contrast='more']) .iconButton:disabled {
+  opacity: 1;
+  border-color: var(--nxt-border-strong);
+}
+
 .button[data-loading],
 .iconButton[data-loading] {
   cursor: wait;
@@ -479,6 +485,71 @@
 
 .tabsContent {
   margin-top: var(--nxt-space-4);
+}
+
+.dropdownMenuContent {
+  min-width: 196px;
+  max-width: min(320px, calc(100vw - 24px));
+  overflow: hidden;
+  border: 1px solid var(--nxt-border-default);
+  border-radius: var(--nxt-radius-md);
+  padding: var(--nxt-space-1);
+  color: var(--nxt-text-primary);
+  background: var(--nxt-bg-elevated);
+  box-shadow: var(--nxt-shadow-float);
+  transform-origin: var(--radix-dropdown-menu-content-transform-origin);
+  animation: fadeIn 120ms ease-out;
+}
+
+.dropdownMenuItem {
+  display: flex;
+  min-height: 32px;
+  align-items: center;
+  gap: var(--nxt-space-2);
+  border-radius: var(--nxt-radius-sm);
+  padding: 0 var(--nxt-space-3);
+  font-size: 13px;
+  line-height: 20px;
+  outline: none;
+  cursor: default;
+  user-select: none;
+}
+
+.dropdownMenuItem[data-highlighted] {
+  background: var(--nxt-bg-hover);
+}
+
+.dropdownMenuItem[data-disabled] {
+  color: var(--nxt-text-disabled);
+}
+
+.dropdownMenuContent > [role='separator'] {
+  height: 1px;
+  margin: var(--nxt-space-1) var(--nxt-space-2);
+  background: var(--nxt-border-subtle);
+}
+
+.resizeHandle {
+  position: relative;
+  min-width: 5px;
+  min-height: 0;
+  cursor: col-resize;
+  touch-action: none;
+}
+
+.resizeHandle::after {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 2px;
+  width: 1px;
+  background: var(--nxt-border-subtle);
+  content: '';
+}
+
+.resizeHandle:hover::after,
+.resizeHandle:focus-visible::after {
+  background: var(--nxt-accent);
 }
 
 @keyframes fadeIn {

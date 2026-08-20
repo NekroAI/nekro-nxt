@@ -3,7 +3,7 @@ import { useEffect, useMemo, useState } from 'react'
 import { Navigate, useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import { notify } from '../components/notifications.js'
 import { EmptyState, InlineFeedback, PageHeader } from '../components/product-feedback.js'
-import { useProductStore, type ConnectionState } from '../product-store.js'
+import { connectionDisplayName, useProductStore, type ConnectionState } from '../product-store.js'
 import { BindingTaskDialog } from './binding-task.js'
 import {
   Button,
@@ -25,9 +25,6 @@ const connectionTone = (state: ConnectionState): StatusTone => {
   return 'neutral'
 }
 
-const connectionLabel = (adapterKey: string, value: string): string =>
-  adapterKey === 'web' || value === '本地 Web' ? '网页聊天' : value
-
 const testResultLabel = (value: string): string => {
   if (value === '通过') return '通过'
   if (value === '未测试') return '未测试'
@@ -43,8 +40,8 @@ const maskedAccount = (value: string): string => {
 export const friendlyKnownChannelLabel = (channel: { readonly name: string; readonly kind: string }): string => {
   if (!/^(?:group|guild|private|c2c):/u.test(channel.name)) return channel.name
   const suffix = channel.name.match(/([\p{L}\p{N}]{4})$/u)?.[1]
-  if (channel.kind === 'group') return suffix ? `QQ 群聊（尾号 ${suffix}）` : 'QQ 群聊'
-  return suffix ? `QQ 私聊（尾号 ${suffix}）` : 'QQ 私聊'
+  if (channel.kind === 'group') return suffix ? `群聊（尾号 ${suffix}）` : '群聊'
+  return suffix ? `私聊（尾号 ${suffix}）` : '私聊'
 }
 
 export function ConnectionsPage() {
@@ -63,20 +60,28 @@ export function ConnectionsPage() {
   const [selectedPlatformKey, setSelectedPlatformKey] = useState('')
   const [configuration, setConfiguration] = useState<Record<string, string | number | boolean>>({})
   const [credentials, setCredentials] = useState<Record<string, string>>({})
+  const [createAlias, setCreateAlias] = useState('')
   const [createError, setCreateError] = useState('')
   const [testPending, setTestPending] = useState<'receive' | 'send' | null>(null)
   const [testChannelByConnection, setTestChannelByConnection] = useState<Record<string, string>>({})
   const [bindingOpen, setBindingOpen] = useState(false)
+  const [aliasDraft, setAliasDraft] = useState('')
+  const [aliasPending, setAliasPending] = useState(false)
 
   useEffect(() => {
     if (searchParams.get('create') === '1') setCreateOpen(true)
   }, [searchParams])
 
+  const selected = connections.find((connection) => connection.id === selectedId) ?? connections[0]
+
+  useEffect(() => {
+    setAliasDraft(selected?.alias ?? '')
+  }, [selected?.alias, selected?.id])
+
   if (!connectionId && connections[0]) {
     return <Navigate to={`/connections/${connections[0].id}`} replace />
   }
 
-  const selected = connections.find((connection) => connection.id === selectedId) ?? connections[0]
   const selectedPlatform = creatablePlatforms.find((platform) => platform.key === selectedPlatformKey)
   const selectedTestChannelId = selected
     ? (testChannelByConnection[selected.id] ?? selected.knownChannels[0]?.id ?? '')
@@ -86,11 +91,25 @@ export function ConnectionsPage() {
   const bindingCount = selectedChannels.reduce((count, channel) => count + channel.bindings.length, 0)
   const firstBoundChannel = selectedChannels.find((channel) => channel.bindings.length > 0)
 
+  const saveAlias = async (alias: string): Promise<void> => {
+    if (!selected || aliasPending) return
+    setAliasPending(true)
+    try {
+      await useProductStore.getState().updateConnectionAlias(selected.id, alias)
+      notify(alias.trim() ? '连接别名已保存。' : '连接别名已清除。', 'success', `connection-alias:${selected.id}`)
+    } catch (error) {
+      notify(error instanceof Error ? error.message : String(error), 'error', `connection-alias:${selected.id}`)
+    } finally {
+      setAliasPending(false)
+    }
+  }
+
   const openCreate = (): void => {
     setCreateStage('platform')
     setSelectedPlatformKey(creatablePlatforms[0]?.key ?? '')
     setConfiguration({})
     setCredentials({})
+    setCreateAlias('')
     setCreateError('')
     setCreateOpen(true)
   }
@@ -153,11 +172,11 @@ export function ConnectionsPage() {
           }
         />
       ) : selected ? (
-        <section className={styles.detailSection}>
+        <section className={styles.connectionWorkspace}>
           <div className={styles.sectionBar}>
             <div>
-              <div className={styles.sectionHeading}>{connectionLabel(selected.adapterKey, selected.name)}</div>
-              <div className={styles.secondaryText}>{connectionLabel(selected.adapterKey, selected.adapter)}</div>
+              <div className={styles.sectionHeading}>{connectionDisplayName(selected)}</div>
+              <div className={styles.secondaryText}>{selected.adapter}</div>
             </div>
             <StatusBadge tone={connectionTone(selected.state)}>{selected.state}</StatusBadge>
           </div>
@@ -201,6 +220,45 @@ export function ConnectionsPage() {
             ) : null}
           </dl>
 
+          {selected.adapterKey !== 'web' ? (
+            <>
+              <div className={styles.sectionDivider} />
+              <div className={styles.sectionHeading}>连接别名</div>
+              <div className={styles.formStack}>
+                <Field label="辨识名" hint="可选，仅用于区分这个连接；平台身份仍显示在下方。">
+                  <Input
+                    value={aliasDraft}
+                    maxLength={80}
+                    onChange={(event) => setAliasDraft(event.target.value)}
+                    disabled={aliasPending}
+                  />
+                </Field>
+                <div className={styles.bindingNextStep}>
+                  <Button
+                    size="small"
+                    loading={aliasPending}
+                    loadingLabel="保存中…"
+                    disabled={aliasPending || aliasDraft.trim() === (selected.alias ?? '')}
+                    onClick={() => void saveAlias(aliasDraft)}
+                  >
+                    保存连接别名
+                  </Button>
+                  <Button
+                    size="small"
+                    variant="ghost"
+                    disabled={aliasPending || !selected.alias}
+                    onClick={() => {
+                      setAliasDraft('')
+                      void saveAlias('')
+                    }}
+                  >
+                    清除别名
+                  </Button>
+                </div>
+              </div>
+            </>
+          ) : null}
+
           {selected.adapterKey === 'web' ? (
             <InlineFeedback tone="info">网页聊天由当前设备管理，不需要配置账号凭据。</InlineFeedback>
           ) : (
@@ -218,7 +276,7 @@ export function ConnectionsPage() {
                     const label = friendlyKnownChannelLabel(channel)
                     return {
                       value: channel.id,
-                      label: /^QQ (?:群聊|私聊)/u.test(label)
+                      label: /^(?:群聊|私聊)/u.test(label)
                         ? label
                         : `${label} · ${channel.kind === 'group' ? '群聊' : '私聊'}`,
                     }
@@ -226,7 +284,7 @@ export function ConnectionsPage() {
                 />
               ) : (
                 <InlineFeedback tone="warning">
-                  还没有发现频道。请先在 QQ 群或私聊中向机器人账号发送一条消息。
+                  还没有发现频道。请先在已连接的平台向机器人账号发送一条消息。
                 </InlineFeedback>
               )}
               <div className={styles.testRows}>
@@ -281,7 +339,7 @@ export function ConnectionsPage() {
                     绑定智能体
                   </Button>
                   {firstBoundChannel ? (
-                    <Button variant="ghost" onClick={() => void navigate(`/channels/${firstBoundChannel.id}`)}>
+                    <Button variant="ghost" onClick={() => void navigate(`/work/channels/${firstBoundChannel.id}`)}>
                       打开已绑定频道 <ArrowRight size={14} aria-hidden="true" />
                     </Button>
                   ) : null}
@@ -309,6 +367,7 @@ export function ConnectionsPage() {
           setCreateOpen(open)
           if (!open) {
             setCreateStage('platform')
+            setCreateAlias('')
             setCreateError('')
             if (searchParams.get('create') === '1') {
               const next = new URLSearchParams(searchParams)
@@ -317,7 +376,7 @@ export function ConnectionsPage() {
             }
           }
         }}
-        title={createStage === 'platform' ? '选择平台' : `配置${selectedPlatform?.displayName ?? ''}`}
+        title={createStage === 'platform' ? '选择平台' : `配置 ${selectedPlatform?.displayName ?? ''}`.trim()}
         description={
           createStage === 'platform'
             ? '选择要连接的平台账号。'
@@ -346,12 +405,14 @@ export function ConnectionsPage() {
           try {
             await useProductStore.getState().createConnection({
               adapterKey: selectedPlatform.key,
+              alias: createAlias,
               configuration,
               credentials,
             })
             notify(`${selectedPlatform.displayName}连接已创建。`, 'success', 'connection-create')
             setConfiguration({})
             setCredentials({})
+            setCreateAlias('')
             setCreateStage('platform')
             return true
           } catch (error) {
@@ -379,6 +440,9 @@ export function ConnectionsPage() {
               <Button type="button" size="small" variant="ghost" onClick={() => setCreateStage('platform')}>
                 返回选择平台
               </Button>
+              <Field label="连接别名" hint="可选，保存后用于区分这个连接；平台名称仍会作为次要信息显示。">
+                <Input value={createAlias} maxLength={80} onChange={(event) => setCreateAlias(event.target.value)} />
+              </Field>
               {Object.entries(selectedPlatform?.configSchema.properties ?? {}).map(([key, property]) => {
                 if (property.type === 'boolean') {
                   return (

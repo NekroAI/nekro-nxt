@@ -14,6 +14,7 @@ import {
   OutboundIntentIdSchema,
 } from '@nekro-nxt/contracts'
 import { HttpProductHost, renderConversationBody } from '../src/http-host.ts'
+import { connectionDisplayName } from '../src/product-store.ts'
 
 /** Minimal EventSource stand-in: captures registered listeners and lets tests emit events. */
 class FakeEventSource {
@@ -324,6 +325,7 @@ describe('HttpProductHost', () => {
         {
           id: qqConnectionId,
           adapterKey: 'qq-openclaw',
+          alias: '项目机器人',
           appId: '12345678',
           proactiveSend: false,
           credentialConfigured: true,
@@ -350,10 +352,12 @@ describe('HttpProductHost', () => {
 
     expect(host.getSnapshot().messages[0]).toMatchObject({
       author: '成员甲',
-      body: '@机器人账号 [QQ 表情] 请看 @成员乙',
+      body: '@机器人账号 [表情] 请看 @成员乙',
     })
     expect(host.getSnapshot().messages[0]?.body).not.toContain('mbr_')
     expect(host.getSnapshot().messages[0]?.body).not.toContain('faceType')
+    expect(host.getSnapshot().channels[0]?.connectionName).toBe('项目机器人')
+    expect(connectionDisplayName(host.getSnapshot().connections[0]!)).toBe('项目机器人')
     unsubscribe()
   })
 
@@ -589,6 +593,9 @@ describe('HttpProductHost', () => {
       if (input === '/api/connections' && init?.method === 'POST') {
         return Promise.resolve(stubResponse(201, { connectionId: qqConnectionId, adapterKey: 'qq-openclaw' }))
       }
+      if (input === `/api/connections/${qqConnectionId}/alias` && init?.method === 'POST') {
+        return Promise.resolve(stubResponse(200, { connectionId: qqConnectionId, alias: '新主群机器人' }))
+      }
       return Promise.resolve(stubResponse(404, { error: { code: 'not-found', message: 'x' } }))
     })
     vi.stubGlobal('fetch', fetchMock)
@@ -600,6 +607,7 @@ describe('HttpProductHost', () => {
 
     await host.execute('connections.create', {
       adapterKey: 'qq-openclaw',
+      alias: '主群机器人',
       configuration: { appId: 'app-1', proactiveSend: true },
       credentials: { clientSecretCredentialRef: 'secret-qq-1' },
     })
@@ -609,8 +617,19 @@ describe('HttpProductHost', () => {
     if (typeof createBody !== 'string') throw new TypeError('connection request body must be JSON text.')
     expect(HostApiContracts.createConnection.request.parse(JSON.parse(createBody))).toEqual({
       adapterKey: 'qq-openclaw',
+      alias: '主群机器人',
       configuration: { appId: 'app-1', proactiveSend: true },
       credentials: { clientSecretCredentialRef: 'secret-qq-1' },
+    })
+    await host.execute('connections.updateAlias', { connectionId: qqConnectionId, alias: '新主群机器人' })
+    const aliasCall = requests.find(
+      (request) => request.url === `/api/connections/${qqConnectionId}/alias` && request.init?.method === 'POST',
+    )
+    expect(aliasCall?.init?.method).toBe('POST')
+    const aliasBody = aliasCall?.init?.body
+    if (typeof aliasBody !== 'string') throw new TypeError('connection alias request body must be JSON text.')
+    expect(HostApiContracts.updateConnectionAlias.request.parse(JSON.parse(aliasBody))).toEqual({
+      alias: '新主群机器人',
     })
     unsubscribe()
   })
@@ -1233,7 +1252,7 @@ describe('HttpProductHost', () => {
     expect(snapshot.agents[0]?.model).toBe('未命名模型')
     expect(snapshot.messages.find((message) => message.role === 'agent')?.author).toBe('未命名智能体')
     expect(snapshot.channels[0]).toMatchObject({
-      name: 'QQ 群聊（尾号 9876）',
+      name: '群聊（尾号 9876）',
       connectionName: '未命名连接',
     })
     expect(snapshot.connections[0]).toMatchObject({
@@ -1288,8 +1307,8 @@ describe('HttpProductHost', () => {
     const unsubscribe = host.subscribe(() => undefined)
     await flush()
 
-    expect(host.getSnapshot().channels[0]).toMatchObject({ kind: 'qq-direct', name: 'QQ 私聊（尾号 4321）' })
-    expect(host.getSnapshot().connections[0]?.knownChannels[0]?.name).toBe('QQ 私聊（尾号 4321）')
+    expect(host.getSnapshot().channels[0]).toMatchObject({ kind: 'qq-direct', name: '私聊（尾号 4321）' })
+    expect(host.getSnapshot().connections[0]?.knownChannels[0]?.name).toBe('私聊（尾号 4321）')
     unsubscribe()
   })
 

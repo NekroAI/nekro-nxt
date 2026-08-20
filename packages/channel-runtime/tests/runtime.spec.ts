@@ -126,6 +126,21 @@ class MemoryCoreRepository implements CoreRepository {
   createConnection(record: ConnectionRecord): void {
     this.connections.set(record.id, record)
   }
+  updateConnectionAlias(id: ConnectionId, alias?: string): void {
+    const current = this.connections.get(id)
+    if (!current) throw new Error(`Unknown connection: ${id}`)
+    if (alias === undefined) {
+      this.connections.set(id, {
+        id: current.id,
+        adapterKey: current.adapterKey,
+        config: current.config,
+        credentialRefs: current.credentialRefs,
+        createdAt: current.createdAt,
+      })
+    } else {
+      this.connections.set(id, { ...current, alias })
+    }
+  }
   getConnection(id: ConnectionId) {
     return this.connections.get(id)
   }
@@ -489,6 +504,10 @@ const setup = async (
           })
     },
     cancelSession: () => Promise.resolve(),
+    notifyConsoleOutbound: ({ logicalMessageId }) => {
+      sessionCalls.push(`console-outbound:${logicalMessageId}`)
+      return Promise.resolve()
+    },
     admit: async ({ admissionId, events, mode }) => {
       activeAdmissions += 1
       maxActiveAdmissions = Math.max(maxActiveAdmissions, activeAdmissions)
@@ -563,6 +582,23 @@ describe('ChannelRuntime M1 lane', () => {
     expect(context.runtimeRepository.admissions).toHaveLength(1)
     expect(context.sessionCalls.filter((call) => call.startsWith('create:'))).toHaveLength(1)
     expect([...context.runtimeRepository.admissions.values()][0]).toMatchObject({ state: 'logged-to-session' })
+  })
+
+  it('sends admin console outbound as the robot account and notifies the session without a model turn', async () => {
+    const context = await setup()
+    context.adapter.queueReceipt({ status: 'sent', platformMessageId: 'console-1' })
+    const result = await context.runtime.sendAdminConsoleMessage({
+      channelId: context.channel.id,
+      parts: [{ type: 'text', text: '今晚维护' }],
+    })
+    expect(result).toMatchObject({ status: 'sent' })
+    expect(context.adapter.deliveries).toHaveLength(1)
+    expect(context.adapter.deliveries[0]?.parts).toEqual([{ type: 'text', text: '今晚维护' }])
+    const outbound = [...context.runtimeRepository.outbounds.values()][0]
+    expect(outbound?.intent.sourceTurnId).toBe('admin-console')
+    expect(context.sessionCalls.some((call) => call.startsWith('create:'))).toBe(true)
+    expect(context.sessionCalls.some((call) => call.startsWith('console-outbound:'))).toBe(true)
+    expect(context.sessionCalls.some((call) => call.startsWith('admit:'))).toBe(false)
   })
 
   it('splits non-mixed delivery, preserves partial success and deduplicates clientRequestId', async () => {

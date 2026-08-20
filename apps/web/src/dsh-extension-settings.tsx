@@ -19,10 +19,21 @@ import {
   parseJsonValue,
 } from '@nekro-nxt/contracts'
 import { ChevronDown, ChevronUp, KeyRound, RotateCcw, ShieldAlert } from 'lucide-react'
-import { Component, useCallback, useEffect, useMemo, useState, type ReactNode } from 'react'
+import { Component, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
+import { notify } from './components/notifications.js'
 import { InlineFeedback } from './components/product-feedback.js'
 import { DshNativeSettingsSlots } from './dynamic-client-coordinator.js'
-import { Button, Field, Input, SelectField, StatusBadge, SwitchField, Tabs, Textarea } from './ui-kit/index.js'
+import {
+  Button,
+  ConfirmDialog,
+  Field,
+  Input,
+  SelectField,
+  StatusBadge,
+  SwitchField,
+  Tabs,
+  Textarea,
+} from './ui-kit/index.js'
 import styles from './dsh-extension-settings.module.css'
 
 type PluginSupportAssessment = HostApiResponse<'dshPlugins'>['plugins'][number]
@@ -656,6 +667,10 @@ function CredentialEditor({ refName, onChanged }: { readonly refName: string; re
   const [value, setValue] = useState('')
   const [pending, setPending] = useState(false)
   const [error, setError] = useState('')
+  const [clearOpen, setClearOpen] = useState(false)
+  const [clearError, setClearError] = useState('')
+  const credentialInputRef = useRef<HTMLInputElement>(null)
+  const clearedRef = useRef(false)
   const load = useCallback(async () => {
     const result = await requestHostApi(
       HostApiContracts.dshCredentialsDescribe,
@@ -703,6 +718,7 @@ function CredentialEditor({ refName, onChanged }: { readonly refName: string; re
       </div>
       <Field label="新的凭据值" hint="只写保存；已保存值不会返回浏览器。" error={error || undefined}>
         <Input
+          ref={credentialInputRef}
           type="password"
           value={value}
           autoComplete="new-password"
@@ -723,26 +739,54 @@ function CredentialEditor({ refName, onChanged }: { readonly refName: string; re
           variant="danger"
           disabled={pending || !info?.configured || info.writable === false}
           onClick={() => {
-            if (pending) return
-            setPending(true)
-            setError('')
-            void requestHostApi(
-              HostApiContracts.dshCredentialUnset,
-              HostApiContracts.dshCredentialUnset.response,
-              { ref: refName },
-              undefined,
-            )
-              .then((next) => {
-                setInfo(next)
-                onChanged()
-              })
-              .catch((cause: unknown) => setError(cause instanceof Error ? cause.message : String(cause)))
-              .finally(() => setPending(false))
+            clearedRef.current = false
+            setClearError('')
+            setClearOpen(true)
           }}
         >
           清除凭据
         </Button>
       </div>
+      <ConfirmDialog
+        open={clearOpen}
+        onOpenChange={(open) => {
+          setClearOpen(open)
+          if (!open) setClearError('')
+        }}
+        title={`清除“${refName}”`}
+        description="清除后，依赖这个凭据的功能将不可用；已保存值无法从浏览器恢复。"
+        cancelLabel="保留凭据"
+        confirmLabel="清除该凭据"
+        confirmVariant="danger"
+        confirmLoadingLabel="正在清除…"
+        onCloseAutoFocus={(event) => {
+          if (!clearedRef.current || !credentialInputRef.current) return
+          event.preventDefault()
+          credentialInputRef.current.focus()
+        }}
+        onConfirm={async () => {
+          setClearError('')
+          try {
+            const next = await requestHostApi(
+              HostApiContracts.dshCredentialUnset,
+              HostApiContracts.dshCredentialUnset.response,
+              { ref: refName },
+              undefined,
+            )
+            clearedRef.current = true
+            setInfo(next)
+            setValue('')
+            onChanged()
+            notify('凭据已清除。', 'success', `dsh-credential-clear:${refName}`)
+            return true
+          } catch (cause) {
+            setClearError(cause instanceof Error ? cause.message : String(cause))
+            return false
+          }
+        }}
+      >
+        {clearError ? <InlineFeedback tone="error">清除失败：{clearError}</InlineFeedback> : null}
+      </ConfirmDialog>
     </div>
   )
 }

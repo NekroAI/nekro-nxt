@@ -21,7 +21,7 @@ import {
 } from '@nekro-nxt/adapter-qq-openclaw'
 import { ChannelRuntime } from '@nekro-nxt/channel-runtime'
 import { AssetService, CoreService } from '@nekro-nxt/core'
-import type { AgentRevisionContent } from '@nekro-nxt/core'
+import type { AgentRevisionContent, ConnectionRecord } from '@nekro-nxt/core'
 import type { AgentId, ChannelId, ConnectionId } from '@nekro-nxt/contracts'
 import {
   ExtensionActivationCoordinator,
@@ -341,6 +341,7 @@ export class NekroRuntime {
 
   async createConnection(input: {
     readonly adapterKey: string
+    readonly alias?: string | undefined
     readonly configuration?: Readonly<Record<string, unknown>>
     readonly credentials?: Readonly<Record<string, unknown>>
   }) {
@@ -350,16 +351,20 @@ export class NekroRuntime {
       throw new Error(`连接平台尚未实现创建流程：${definition.descriptor.key}`)
     }
     const parsed = parseAdapterConnectionConfiguration(QQ_OPENCLAW_CONNECTION_DEFINITION, input)
-    return this.createQQConnection(QQ_OPENCLAW_CONNECTION_DEFINITION.create(parsed.configuration, parsed.credentials))
+    return this.createQQConnection(
+      QQ_OPENCLAW_CONNECTION_DEFINITION.create(parsed.configuration, parsed.credentials),
+      input.alias,
+    )
   }
 
-  async createQQConnection(input: QQOpenClawConnectionInput) {
+  async createQQConnection(input: QQOpenClawConnectionInput, alias?: string) {
     if (!this.#started || this.#disposed) throw new Error('NekroRuntime is not accepting new Connections.')
     const credentialReference = await this.credentials.save(input.clientSecret)
     let connection
     try {
       connection = this.core.createConnection({
         adapterKey: 'qq-openclaw',
+        ...(alias === undefined ? {} : { alias }),
         config: {
           appId: input.appId,
           proactiveSend: input.proactiveSend ?? false,
@@ -377,6 +382,16 @@ export class NekroRuntime {
     return this.core.listConnections().find((candidate) => candidate.id === connection.id)!
   }
 
+  updateConnectionAlias(connectionId: ConnectionId, alias?: string): ConnectionRecord {
+    if (this.#disposed) throw new Error('NekroRuntime is disposed.')
+    const connection = this.core.getConnection(connectionId)
+    if (!connection) throw new Error('连接不存在。')
+    if (connection.adapterKey === 'web') throw new Error('系统托管网页连接不需要编辑别名。')
+    const updated = this.core.updateConnectionAlias(connectionId, alias)
+    this.#notifyConnectionChanges()
+    return updated
+  }
+
   async testConnection(
     connectionId: ConnectionId,
     direction: 'send' | 'receive',
@@ -387,7 +402,7 @@ export class NekroRuntime {
     const diagnostic = this.#qqDiagnostics.get(connectionId)
     let result: ConnectionTestResult
     if (!diagnostic || diagnostic.gateway.state !== 'connected') {
-      result = { status: 'not-connected', message: 'QQ Gateway 尚未连接；请先检查 App ID、Client Secret 和网络。' }
+      result = { status: 'not-connected', message: '尚未连接到该平台；请先检查凭据和网络。' }
       this.#recordConnectionTest(connectionId, direction, result)
       return result
     }
@@ -410,7 +425,7 @@ export class NekroRuntime {
     if (!channelId) {
       result =
         diagnostic.knownChannelIds.length === 0
-          ? { status: 'needs-channel', message: '尚未发现 QQ 频道；请先向机器人账号发送一条群聊或私聊消息。' }
+          ? { status: 'needs-channel', message: '尚未发现频道；请先向机器人账号发送一条消息。' }
           : { status: 'needs-target', message: '该连接发现了多个频道，请明确选择发送测试的目标频道。' }
       this.#recordConnectionTest(connectionId, direction, result)
       return result
@@ -467,7 +482,7 @@ export class NekroRuntime {
     }
     if (!appId || !credentialReference || !credentialConfigured) {
       this.#setQQDiagnostic(connectionId, {
-        gateway: { state: 'failed', lastError: 'QQ Connection 的 App ID 或 Client Secret 不可用。' },
+        gateway: { state: 'failed', lastError: '这个连接的凭据不可用。' },
         credentialConfigured: false,
         knownChannelIds: this.core.listChannelsByConnection(connectionId).map((channel) => channel.id),
       })
@@ -565,6 +580,10 @@ export class NekroRuntime {
 
   #setQQDiagnostic(connectionId: ConnectionId, diagnostic: QQConnectionDiagnostic): void {
     this.#qqDiagnostics.set(connectionId, diagnostic)
+    this.#notifyConnectionChanges()
+  }
+
+  #notifyConnectionChanges(): void {
     for (const listener of this.#connectionListeners) {
       try {
         listener()

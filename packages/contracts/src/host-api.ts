@@ -19,6 +19,12 @@ const EmptyParamsSchema = z.object({}).strict()
 const NoRequestBodySchema = z.undefined()
 const NonEmptyStringSchema = z.string().trim().min(1)
 const DynamicIdSchema = NonEmptyStringSchema
+const ConnectionAliasInputSchema = z
+  .string()
+  .trim()
+  .max(80)
+  .transform((value) => value || undefined)
+const ConnectionAliasOutputSchema = z.string().trim().min(1).max(80)
 
 export const HostApiErrorSchema = z
   .object({
@@ -103,6 +109,7 @@ export const HostSnapshotMessageSchema = z
     mentionedConnectionAccount: z.boolean().optional(),
     occurredAt: z.number().finite(),
     deliveryState: z.enum(['planned', 'sending', 'sent', 'partially-sent', 'failed', 'unknown']).optional(),
+    origin: z.enum(['admin-console']).optional(),
   })
   .strict()
 
@@ -344,6 +351,7 @@ export const HostSnapshotSchema = z
         .object({
           id: ConnectionIdSchema,
           adapterKey: NonEmptyStringSchema,
+          alias: ConnectionAliasOutputSchema.optional(),
           appId: z.string(),
           proactiveSend: z.boolean(),
           credentialConfigured: z.boolean(),
@@ -913,7 +921,13 @@ export const HostApiContracts = {
     path: '/api/channels/:channelId/messages',
     params: channelParam,
     request: SendChannelMessageRequestSchema,
-    response: z.object({ channelEventId: ChannelEventIdSchema, inserted: z.boolean() }).strict(),
+    response: z
+      .object({
+        inserted: z.boolean(),
+        channelEventId: ChannelEventIdSchema.optional(),
+        outboundIntentId: OutboundIntentIdSchema.optional(),
+      })
+      .strict(),
     error: HostApiErrorSchema,
   }),
   renameChannel: defineContract({
@@ -939,11 +953,25 @@ export const HostApiContracts = {
     request: z
       .object({
         adapterKey: NonEmptyStringSchema,
+        alias: ConnectionAliasInputSchema.optional(),
         configuration: z.record(z.string(), JsonValueSchema).default({}),
         credentials: z.record(z.string(), z.string().max(16 * 1024)).default({}),
       })
       .strict(),
     response: z.object({ connectionId: ConnectionIdSchema, adapterKey: NonEmptyStringSchema }).strict(),
+    error: HostApiErrorSchema,
+  }),
+  updateConnectionAlias: defineContract({
+    method: 'POST',
+    path: '/api/connections/:connectionId/alias',
+    params: connectionParam,
+    request: z.object({ alias: z.string().trim().max(80) }).strict(),
+    response: z
+      .object({
+        connectionId: ConnectionIdSchema,
+        alias: ConnectionAliasOutputSchema.optional(),
+      })
+      .strict(),
     error: HostApiErrorSchema,
   }),
   dshPlugins: defineContract({

@@ -29,11 +29,17 @@ const dragTo = async (page: Page, source: Locator, target: Locator): Promise<voi
   await page.mouse.move(8, 8)
 }
 
-test('work tree can create a web channel and confirm bind, rebind, and unbind', async ({ page, request }) => {
+test('work tree keeps titles stable while pointer and keyboard handles cover ordering and binding', async ({
+  page,
+  request,
+}, testInfo) => {
   const failures: string[] = []
+  let allowOrderFailureConsole = false
   page.on('pageerror', (error) => failures.push(`pageerror: ${error.message}`))
   page.on('console', (message) => {
-    if (message.type() === 'error') failures.push(`console.error: ${message.text()}`)
+    if (message.type() === 'error' && !(allowOrderFailureConsole && message.text().includes('409'))) {
+      failures.push(`console.error: ${message.text()}`)
+    }
   })
 
   const baseResponse = await request.get('/api/snapshot')
@@ -215,14 +221,25 @@ test('work tree can create a web channel and confirm bind, rebind, and unbind', 
       body: JSON.stringify({ channelId, cleared: true }),
     })
   })
+  let rejectNextOrder = false
+  let rejectedOrderRequests = 0
   await page.route('**/api/work-tree-order', async (route) => {
     if (route.request().method() !== 'PUT') return route.continue()
+    if (rejectNextOrder) {
+      rejectNextOrder = false
+      rejectedOrderRequests += 1
+      return route.fulfill({
+        status: 409,
+        contentType: 'application/json',
+        body: JSON.stringify({ error: { code: 'order-conflict', message: '测试拒绝保存顺序。' } }),
+      })
+    }
     const order = HostApiContracts.putWorkTreeOrder.request.parse(route.request().postDataJSON())
     snapshot = { ...snapshot, workTreeOrder: order }
     return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(order) })
   })
 
-  await page.goto('/')
+  await page.goto('/work')
   await expect(page.getByRole('link', { name: /浅枫/u }).first()).toBeVisible()
   await expect(page.getByRole('link', { name: /资料员/u }).first()).toBeVisible()
 
@@ -230,11 +247,23 @@ test('work tree can create a web channel and confirm bind, rebind, and unbind', 
   const mapleSpare = page.getByRole('link', { name: /浅枫的备用地/u })
   const mapleHeader = page.getByRole('link', { name: /浅枫\s+\d+ 个频道/u })
   const clerkHeader = page.getByRole('link', { name: /资料员\s+\d+ 个频道/u })
+  const mapleChannelHandle = page.getByRole('button', { name: '拖动“浅枫的网页频道”排序' })
+  const mapleSpareHandle = page.getByRole('button', { name: '拖动“浅枫的备用地”排序' })
+  const mapleAgentHandle = page.getByRole('button', { name: '拖动“浅枫”及其频道排序' })
   const top = async (locator: Locator): Promise<number> => {
     const box = await locator.boundingBox()
     if (!box) throw new Error('排序目标没有几何尺寸。')
     return box.y
   }
+
+  const widthBeforeHover = (await mapleChannel.boundingBox())?.width
+  await mapleChannel.hover()
+  const widthAfterHover = (await mapleChannel.boundingBox())?.width
+  expect(widthBeforeHover).toBeDefined()
+  expect(widthAfterHover).toBeDefined()
+  expect(Math.abs((widthAfterHover ?? 0) - (widthBeforeHover ?? 0))).toBeLessThanOrEqual(0.5)
+  await expect(page.getByRole('button', { name: /频道操作/u })).toHaveCount(0)
+  await expect(page.getByRole('button', { name: /智能体操作/u })).toHaveCount(0)
 
   await page.getByRole('button', { name: '新建网页频道' }).click()
   const createDialog = page.getByRole('dialog')
@@ -244,20 +273,40 @@ test('work tree can create a web channel and confirm bind, rebind, and unbind', 
   await expect(page.getByRole('link', { name: /临时网页台/u })).toBeVisible()
 
   expect(await top(mapleChannel)).toBeLessThan(await top(mapleSpare))
-  await dragTo(page, mapleChannel, mapleSpare)
-  await expect(page.getByRole('dialog')).toHaveCount(0)
+  await mapleChannelHandle.focus()
+  await page.keyboard.press('Space')
+  await expect(mapleChannelHandle).toHaveAttribute('aria-pressed', 'true')
+  await page.keyboard.press('ArrowDown')
+  await expect(page.locator('[id^="DndLiveRegion"]')).toContainText('channel:chn_dragmaplespare')
+  await page.keyboard.press('Space')
+  await expect(mapleChannelHandle).not.toHaveAttribute('aria-pressed', 'true')
   await expect.poll(async () => (await top(mapleSpare)) < (await top(mapleChannel))).toBe(true)
-  await dragTo(page, mapleSpare, mapleHeader)
+
+  const rejectedChannelTop = await top(mapleChannel)
+  const rejectedSpareTop = await top(mapleSpare)
+  rejectNextOrder = true
+  allowOrderFailureConsole = true
+  await dragTo(page, mapleChannelHandle, mapleSpare)
+  await expect.poll(() => rejectedOrderRequests).toBe(1)
+  await expect(page.getByText('测试拒绝保存顺序。')).toBeVisible()
+  await expect.poll(async () => Math.abs((await top(mapleChannel)) - rejectedChannelTop) < 1).toBe(true)
+  await expect.poll(async () => Math.abs((await top(mapleSpare)) - rejectedSpareTop) < 1).toBe(true)
+  allowOrderFailureConsole = false
+
+  await dragTo(page, mapleChannelHandle, mapleSpare)
+  await expect(page.getByRole('dialog')).toHaveCount(0)
+  await expect.poll(async () => (await top(mapleChannel)) < (await top(mapleSpare))).toBe(true)
+  await dragTo(page, mapleSpareHandle, mapleChannel)
   await expect(page.getByRole('dialog')).toHaveCount(0)
   expect(await top(mapleSpare)).toBeLessThan(await top(mapleChannel))
   expect(await top(mapleHeader)).toBeLessThan(await top(clerkHeader))
-  await dragTo(page, mapleHeader, clerkHeader)
+  await dragTo(page, mapleAgentHandle, clerkHeader)
   await expect(page.getByRole('dialog')).toHaveCount(0)
   await expect.poll(async () => (await top(clerkHeader)) < (await top(mapleHeader))).toBe(true)
 
   await dragTo(
     page,
-    page.getByRole('link', { name: /临时网页台/u }),
+    page.getByRole('button', { name: '拖动“临时网页台”排序' }),
     page.getByRole('link', { name: /资料员\s+\d+ 个频道/u }),
   )
   const bindDialog = page.getByRole('dialog')
@@ -266,27 +315,33 @@ test('work tree can create a web channel and confirm bind, rebind, and unbind', 
   await bindDialog.getByRole('button', { name: '交给该智能体响应' }).click()
   await expect(bindDialog).toHaveCount(0)
 
-  await dragTo(
-    page,
-    page.getByRole('link', { name: /浅枫的网页频道/u }),
-    page.getByRole('link', { name: /资料员\s+\d+ 个频道/u }),
-  )
+  await dragTo(page, mapleChannelHandle, clerkHeader)
   const rebindDialog = page.getByRole('dialog')
   await expect(rebindDialog.getByRole('heading', { name: '改由其他智能体响应' })).toBeVisible()
   await expect(rebindDialog.getByText(/将「浅枫的网页频道」改由「资料员」响应/u)).toBeVisible()
   await rebindDialog.getByRole('button', { name: '改由该智能体响应' }).click()
   await expect(rebindDialog).toHaveCount(0)
+  await expect(mapleChannelHandle).toBeFocused()
 
-  await dragTo(
-    page,
-    page.getByRole('link', { name: /资料员的网页频道/u }),
-    page.getByText('未绑定频道', { exact: true }),
-  )
+  const clerkChannelHandle = page.getByRole('button', { name: '拖动“资料员的网页频道”排序' })
+  await dragTo(page, clerkChannelHandle, page.getByText('未绑定频道', { exact: true }))
   const unbindDialog = page.getByRole('dialog')
   await expect(unbindDialog.getByRole('heading', { name: '解除频道绑定' })).toBeVisible()
   await expect(unbindDialog.getByText(/先停止「资料员」在「资料员的网页频道」中的当前工作/u)).toBeVisible()
   await unbindDialog.getByRole('button', { name: '停止并解除绑定' }).click()
   await expect(unbindDialog).toHaveCount(0)
+  await expect(clerkChannelHandle).toBeFocused()
+
+  const closeNotifications = page.getByRole('button', { name: '关闭通知' })
+  while ((await closeNotifications.count()) > 0) {
+    await closeNotifications.first().click()
+  }
+  await page.getByRole('link', { name: /临时网页台/u }).click({ button: 'right' })
+  await expect(page.getByRole('menu')).toHaveCount(0)
+  await page.getByRole('link', { name: /临时网页台/u }).hover()
+  const screenshot = testInfo.outputPath('work-tree-hover-drag-handle.png')
+  await page.screenshot({ path: screenshot, animations: 'disabled' })
+  await testInfo.attach('work-tree-hover-drag-handle', { path: screenshot, contentType: 'image/png' })
 
   expect(failures, failures.join('\n')).toEqual([])
 })

@@ -132,6 +132,11 @@ describe('ui-kit control semantics', () => {
     expect(markup).toContain('data-nxt-dialog-region="body"')
     expect(markup).not.toContain('tabindex="0"')
     expect(markup).toContain('data-nxt-dialog-region="footer"')
+
+    const compact = renderToStaticMarkup(
+      <DialogLayout title={<h2>危险确认</h2>} closeButton={<button type="button">关闭</button>} footer="底部操作" />,
+    )
+    expect(compact).not.toContain('data-nxt-dialog-region="body"')
   })
 })
 

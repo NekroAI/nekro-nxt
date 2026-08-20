@@ -25,7 +25,7 @@ describe('workHomePath', () => {
       writeLastChannelId('chn_library')
       expect(readLastChannelId()).toBe('chn_library')
       expect(workHomePath({ channels: [{ id: 'chn_web' }, { id: 'chn_library' }], agents: [{ id: 'agt_a' }] })).toBe(
-        '/channels/chn_library',
+        '/work/channels/chn_library',
       )
     } finally {
       if (previous === undefined) Reflect.deleteProperty(globalThis, 'window')
@@ -34,16 +34,17 @@ describe('workHomePath', () => {
   })
 
   it('falls back to the first channel, then the first agent, then the empty create state', () => {
-    expect(workHomePath({ channels: [{ id: 'chn_web' }], agents: [{ id: 'agt_a' }] })).toBe('/channels/chn_web')
-    expect(workHomePath({ channels: [], agents: [{ id: 'agt_a' }] })).toBe('/agents/agt_a')
-    expect(workHomePath({ channels: [], agents: [] })).toBe('/agents')
+    expect(workHomePath({ channels: [{ id: 'chn_web' }], agents: [{ id: 'agt_a' }] })).toBe('/work/channels/chn_web')
+    expect(workHomePath({ channels: [], agents: [{ id: 'agt_a' }] })).toBe('/work/agents/agt_a')
+    expect(workHomePath({ channels: [], agents: [] })).toBe('/work/agents/new')
   })
 
-  it('treats agent, channel and creator routes as the work mode', () => {
-    expect(isWorkPath('/')).toBe(true)
-    expect(isWorkPath('/channels/chn_web')).toBe(true)
-    expect(isWorkPath('/agents/agt_a')).toBe(true)
-    expect(isWorkPath('/creator')).toBe(true)
+  it('only treats the /work route family as the work mode', () => {
+    expect(isWorkPath('/work')).toBe(true)
+    expect(isWorkPath('/work/channels/chn_web')).toBe(true)
+    expect(isWorkPath('/work/agents/agt_a')).toBe(true)
+    expect(isWorkPath('/work/creator')).toBe(true)
+    expect(isWorkPath('/channels/chn_web')).toBe(false)
     expect(isWorkPath('/connections')).toBe(false)
     expect(isWorkPath('/settings')).toBe(false)
   })

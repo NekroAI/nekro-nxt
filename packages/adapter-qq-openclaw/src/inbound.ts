@@ -112,7 +112,7 @@ const regexEscape = (value: string): string => value.replace(/[.*+?^${}()|[\]\\]
 const normalizeQQContent = (value: unknown): string | undefined => {
   const content = text(value)
   if (!content) return undefined
-  const normalized = content.replace(/<faceType=\d+,faceId="[^"]*",ext="[^"]*">/gu, '[QQ 表情]').trim()
+  const normalized = content.replace(/<faceType=\d+,faceId="[^"]*",ext="[^"]*">/gu, '[表情]').trim()
   return normalized || undefined
 }
 

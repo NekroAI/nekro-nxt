@@ -1,6 +1,6 @@
 import type { AdapterRuntimeStateStore } from '@nekro-nxt/adapter-sdk'
 import type { CoreRepository } from '@nekro-nxt/core'
-import type { AssetRepository } from '@nekro-nxt/core'
+import type { AssetAccessRepository } from '@nekro-nxt/core'
 import type { ChannelHistoryRepository, RuntimeRepository } from '@nekro-nxt/channel-runtime'
 import type { ExtensionRepository } from '@nekro-nxt/extension-runtime'
 import { eq } from 'drizzle-orm'
@@ -23,7 +23,7 @@ type CurrentRepository = CoreRepository &
   ChannelHistoryRepository &
   AdapterRuntimeStateStore &
   ExtensionRepository &
-  AssetRepository
+  AssetAccessRepository
 
 /** Typed Drizzle façade. Domain implementations stay separate and share one immediate-transaction database. */
 export type WorkTreeOrderRecord = {
@@ -108,6 +108,8 @@ export class SqliteCoreRepository implements CurrentRepository {
 
   readonly createConnection = (...args: Parameters<CoreRepository['createConnection']>) =>
     this.#channels.createConnection(...args)
+  readonly updateConnectionAlias = (...args: Parameters<CoreRepository['updateConnectionAlias']>) =>
+    this.#channels.updateConnectionAlias(...args)
   readonly getConnection = (...args: Parameters<CoreRepository['getConnection']>) =>
     this.#channels.getConnection(...args)
   readonly listConnectionIdsByAdapter = (...args: Parameters<CoreRepository['listConnectionIdsByAdapter']>) =>
@@ -229,7 +231,10 @@ export class SqliteCoreRepository implements CurrentRepository {
   readonly deleteActivation = (...args: Parameters<ExtensionRepository['deleteActivation']>) =>
     this.#extensions.deleteActivation(...args)
 
-  readonly ensureAsset = (...args: Parameters<AssetRepository['ensureAsset']>) => this.#assets.ensureAsset(...args)
+  readonly ensureAsset = (...args: Parameters<AssetAccessRepository['ensureAsset']>) =>
+    this.#assets.ensureAsset(...args)
+  readonly grantAssetAccess = (...args: Parameters<AssetAccessRepository['grantAssetAccess']>) =>
+    this.#assets.grantAssetAccess(...args)
   readonly getAssetById = (...args: Parameters<ReturnType<typeof createAssetsRepository>['getAssetById']>) =>
     this.#assets.getAssetById(...args)
   readonly canAccessAsset = (...args: Parameters<ReturnType<typeof createAssetsRepository>['canAccessAsset']>) =>

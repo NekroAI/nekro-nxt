@@ -3,7 +3,7 @@ import type { Context } from '@deepseek-ai/cordis'
 import { createWebAdapterConnection } from '@nekro-nxt/adapter-web'
 import { ChannelRuntime } from '@nekro-nxt/channel-runtime'
 import { AssetService, CoreService } from '@nekro-nxt/core'
-import { EpisodeIdSchema } from '@nekro-nxt/contracts'
+import { AdmissionIdSchema, EpisodeIdSchema } from '@nekro-nxt/contracts'
 import {
   ExtensionActivationCoordinator,
   ExtensionBuilder,
@@ -129,6 +129,19 @@ class ScriptedCommunicationModel extends LlmAdapter {
       block: { type: 'text', text: '工具完成后的原始结束文字也不会发送。' },
     }
     yield { type: 'usage', usage: { inputTokens: 48, outputTokens: 8 } }
+    yield { type: 'finish', reason: { kind: 'stop' } }
+  }
+}
+
+class ToolSchemaProbeModel extends ScriptedCommunicationModel {
+  override async *stream(options: GenerateOptions): AsyncIterable<StreamChunk> {
+    await Promise.resolve()
+    this.calls.push(options)
+    const text = '工具 schema 回归探针。'
+    yield { type: 'block-start', index: 0, blockType: 'text' }
+    yield { type: 'text-delta', index: 0, text }
+    yield { type: 'block-end', index: 0, block: { type: 'text', text } }
+    yield { type: 'usage', usage: { inputTokens: 8, outputTokens: 4 } }
     yield { type: 'finish', reason: { kind: 'stop' } }
   }
 }
@@ -268,6 +281,7 @@ describe('DSH Host and Web Channel vertical slice', () => {
       platformChannelId: 'creation-denied',
       kind: 'web',
     })
+    const model = new ToolSchemaProbeModel()
     const host = await DshHostRuntime.create({
       sessionDatabasePath: path.join(directory, 'sessions.sqlite'),
       communication: { sendMessage: () => Promise.reject(new Error('not used')) },
@@ -276,7 +290,7 @@ describe('DSH Host and Web Channel vertical slice', () => {
       assetService,
       resolveAgentRevision: (revisionId) => repository.getAgentRevision(revisionId),
       configureLlm: (context) => {
-        context.llm.registerAdapter(['test-provider'], new ScriptedCommunicationModel())
+        context.llm.registerAdapter(['test-provider'], model)
       },
     })
     const enabledEpisode = EpisodeIdSchema.parse('eps_DYNAMICENABLED')
@@ -295,6 +309,39 @@ describe('DSH Host and Web Channel vertical slice', () => {
         agentRevisionId: denied.revision.id,
       })
 
+      let modelEventId = 0
+      const appendModelEvent = (channelId: typeof enabledChannel.id, text: string) =>
+        core.appendInbound({
+          connectionId: connection.id,
+          channelId,
+          adapterKey: 'web',
+          platformEventId: `dynamic-model-${++modelEventId}`,
+          kind: 'message-created',
+          parts: [{ type: 'text', text }],
+          platformTimestamp: 500 + modelEventId,
+          receivedAt: 500 + modelEventId,
+          dedupeKey: `dynamic-model:${modelEventId}:${channelId}`,
+        }).event
+      const modelToolNamesAfter = async (
+        dshSessionId: string,
+        channelId: typeof enabledChannel.id,
+        admissionId: string,
+        text: string,
+      ): Promise<readonly string[]> => {
+        const previousCallCount = model.calls.length
+        await host.admit({
+          dshSessionId,
+          admissionId: AdmissionIdSchema.parse(admissionId),
+          events: [appendModelEvent(channelId, text)],
+          mode: 'followup',
+        })
+        await host.whenIdle(dshSessionId)
+        expect(model.calls.length).toBeGreaterThan(previousCallCount)
+        const request = model.calls.at(-1)
+        expect(request?.tools).toBeDefined()
+        return request?.tools?.map(({ name }) => name) ?? []
+      }
+
       expect(host.dynamicToolNames(enabledSession)).toEqual(
         expect.arrayContaining([
           'cordis_inspect_list',
@@ -306,6 +353,8 @@ describe('DSH Host and Web Channel vertical slice', () => {
           'cordis_undefine',
         ]),
       )
+      expect(host.toolNames(enabledSession)).toContain('asset_create')
+      expect(host.toolNames(deniedSession)).toContain('asset_create')
       expect(() => host.dynamicToolNames(deniedSession)).toThrow('not granted')
       expect(await host.queryNekroNxtInspect(enabledSession, 'currentContext')).toMatchObject({
         agent: {
@@ -423,6 +472,12 @@ describe('DSH Host and Web Channel vertical slice', () => {
         host.runDynamicPackage(enabledSession, first.pluginId, first.packageId, 'run'),
       ).resolves.toMatchObject({ ok: true, status: 'running' })
       expect(host.dynamicToolNames(enabledSession)).toContain('dynamic_probe')
+      expect(
+        await modelToolNamesAfter(enabledSession, enabledChannel.id, 'adm_DYNAMICMODELENABLED', '动态工具应可见。'),
+      ).toContain('dynamic_probe')
+      expect(
+        await modelToolNamesAfter(deniedSession, deniedChannel.id, 'adm_DYNAMICMODELDENIED', '无授权会话不应看见。'),
+      ).not.toContain('dynamic_probe')
 
       const second = host.defineDynamicPackage(enabledSession, {
         plugin: { kind: 'existing', pluginId: first.pluginId },
@@ -438,6 +493,9 @@ describe('DSH Host and Web Channel vertical slice', () => {
       )
       await expect(host.stopDynamicPlugin(enabledSession, first.pluginId)).resolves.toEqual({ ok: true })
       expect(host.dynamicToolNames(enabledSession)).not.toContain('dynamic_probe')
+      expect(
+        await modelToolNamesAfter(enabledSession, enabledChannel.id, 'adm_DYNAMICMODELSTOPPED', '动态工具已停止。'),
+      ).not.toContain('dynamic_probe')
       expect(host.dynamicInventory(enabledSession)[0]).not.toHaveProperty('activeRun')
       expect(host.dynamicInventory(enabledSession)[0]?.latestRun).toMatchObject({ status: 'stopped' })
 
@@ -480,9 +538,15 @@ describe('DSH Host and Web Channel vertical slice', () => {
       })
       expect(host.toolNames(enabledSession)).toContain('dynamic_probe')
       expect(host.toolNames(deniedSession)).not.toContain('dynamic_probe')
+      expect(
+        await modelToolNamesAfter(enabledSession, enabledChannel.id, 'adm_DYNAMICMODELACTIVATED', '持久扩展已启用。'),
+      ).toContain('dynamic_probe')
 
       await coordinator.dispose()
       expect(host.toolNames(enabledSession)).not.toContain('dynamic_probe')
+      expect(
+        await modelToolNamesAfter(enabledSession, enabledChannel.id, 'adm_DYNAMICMODELUNLOADED', '持久扩展已卸载。'),
+      ).not.toContain('dynamic_probe')
       await rm(cacheRoot, { recursive: true, force: true })
       const restored = new ExtensionActivationCoordinator(
         repository,
@@ -747,6 +811,7 @@ describe('DSH Host and Web Channel vertical slice', () => {
       expect(typeof outboundHistory[0]?.occurredAt).toBe('number')
       expect(model.calls).toHaveLength(2)
       expect(model.calls[0]?.tools?.map(({ name }) => name)).toEqual([
+        'asset_create',
         'asset_inspect',
         'conversation_history_read',
         'conversation_history_search',

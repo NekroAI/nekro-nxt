@@ -1,5 +1,6 @@
-import { useEffect, useLayoutEffect, useMemo, useState, type RefObject } from 'react'
+import { useEffect, useId, useLayoutEffect, useMemo, useState, type KeyboardEvent, type RefObject } from 'react'
 import { useNavigate } from 'react-router-dom'
+import { Cell, Pie, PieChart, Tooltip as ChartTooltip } from 'recharts'
 import { notify } from '../components/notifications.js'
 import { InlineFeedback } from '../components/product-feedback.js'
 import {
@@ -9,7 +10,7 @@ import {
   type ChannelRuntimeView,
   type ChannelSummary,
 } from '../product-store.js'
-import { Button, Field, IconButton, Input, SelectField, StatusBadge, type StatusTone } from '../ui-kit/index.js'
+import { Button, Field, IconButton, Input, SelectField, StatusBadge, Tabs, type StatusTone } from '../ui-kit/index.js'
 import { isTriggerPolicy, TRIGGER_POLICY_OPTIONS } from './binding-task.js'
 import styles from './product-pages.module.css'
 
@@ -58,6 +59,102 @@ export const formatDurationMs = (value: number): string => {
   const minutes = Math.floor(value / 60_000)
   const seconds = Math.round((value % 60_000) / 1000)
   return `${minutes}:${String(seconds).padStart(2, '0')}`
+}
+
+export interface ContextUsageProjection {
+  readonly used: number
+  readonly remaining: number
+  readonly usedPercent: number
+  readonly composition: readonly { readonly name: string; readonly value: number; readonly color: string }[]
+  readonly estimated: boolean
+}
+
+export const projectContextUsage = (
+  occupancy: NonNullable<ChannelRuntimeView['occupancy']>,
+): ContextUsageProjection => {
+  const used = Math.min(occupancy.projectedTokens, occupancy.contextWindow)
+  const remaining = Math.max(occupancy.contextWindow - used, 0)
+  const system = occupancy.breakdown?.systemTokens ?? 0
+  const tools = occupancy.breakdown?.toolsTokens ?? 0
+  const messages = occupancy.breakdown?.messageTokens ?? 0
+  const known = system + tools + messages
+  const estimated = known > used
+  const other = Math.max((estimated ? known : used) - known, 0)
+  return {
+    used,
+    remaining,
+    usedPercent: occupancy.contextWindow > 0 ? Math.min(100, Math.round((used / occupancy.contextWindow) * 100)) : 0,
+    composition: [
+      { name: '系统', value: system, color: 'var(--nxt-accent)' },
+      { name: '工具', value: tools, color: 'var(--nxt-warning)' },
+      { name: '对话', value: messages, color: 'var(--nxt-success)' },
+      { name: '其他', value: other, color: 'var(--nxt-text-disabled)' },
+    ].filter((item) => item.value > 0),
+    estimated,
+  }
+}
+
+function ContextRing({
+  label,
+  center,
+  data,
+}: {
+  readonly label: string
+  readonly center: string
+  readonly data: readonly { readonly name: string; readonly value: number; readonly color: string }[]
+}) {
+  return (
+    <figure className={styles.contextFigure} tabIndex={0} aria-label={label}>
+      <div className={styles.contextRing}>
+        <PieChart width={112} height={112} accessibilityLayer>
+          <Pie data={data} dataKey="value" nameKey="name" innerRadius={34} outerRadius={48} isAnimationActive={false}>
+            {data.map((item) => (
+              <Cell key={item.name} fill={item.color} />
+            ))}
+          </Pie>
+          <ChartTooltip formatter={(value) => formatTokenCount(Number(value))} />
+        </PieChart>
+        <strong>{center}</strong>
+      </div>
+      <figcaption>{label}</figcaption>
+      <ul>
+        {data.map((item) => (
+          <li key={item.name}>
+            <span style={{ background: item.color }} />
+            {item.name} {formatTokenCount(item.value)}
+          </li>
+        ))}
+      </ul>
+    </figure>
+  )
+}
+
+function ContextUsageCard({ occupancy }: { readonly occupancy: NonNullable<ChannelRuntimeView['occupancy']> }) {
+  const projected = projectContextUsage(occupancy)
+  const occupancyData = [
+    { name: '已用', value: projected.used, color: 'var(--nxt-accent)' },
+    { name: '剩余', value: projected.remaining, color: 'var(--nxt-border-default)' },
+  ].filter((item) => item.value > 0)
+  return (
+    <div className={styles.contextUsageCard}>
+      <div className={styles.contextCharts}>
+        <ContextRing label="上下文占用" center={`${projected.usedPercent}%`} data={occupancyData} />
+        {projected.composition.length > 0 ? (
+          <ContextRing
+            label={projected.estimated ? '估算组成' : '上下文组成'}
+            center={formatTokenCount(projected.used)}
+            data={projected.composition}
+          />
+        ) : null}
+      </div>
+      {occupancy.cacheReadTokens !== undefined ? (
+        <dl className={styles.facts}>
+          <dt>缓存读取</dt>
+          <dd>{formatTokenCount(occupancy.cacheReadTokens)}</dd>
+        </dl>
+      ) : null}
+    </div>
+  )
 }
 
 const recordStateLabel = (record: TrajectoryRecord): string => {
@@ -151,26 +248,12 @@ const internalText = (turn: RuntimeTurn | undefined): string =>
     .join('\n')
     .trim() ?? ''
 
-export function ChannelViewSwitch({
-  view,
-  onViewChange,
-}: {
-  readonly view: ChannelCanvasView
-  readonly onViewChange: (view: ChannelCanvasView) => void
-}) {
+export function ChannelViewSwitch() {
   return (
-    <div className={styles.viewSwitch} role="tablist" aria-label="频道视图">
-      <Button type="button" data-active={view === 'chat' ? '' : undefined} onClick={() => onViewChange('chat')}>
-        会话
-      </Button>
-      <Button
-        type="button"
-        data-active={view === 'trajectory' ? '' : undefined}
-        onClick={() => onViewChange('trajectory')}
-      >
-        工作轨迹
-      </Button>
-    </div>
+    <Tabs.List className={styles.viewSwitch} aria-label="频道视图">
+      <Tabs.Trigger value="chat">会话</Tabs.Trigger>
+      <Tabs.Trigger value="trajectory">工作轨迹</Tabs.Trigger>
+    </Tabs.List>
   )
 }
 
@@ -186,7 +269,7 @@ export function ChannelWorkStream({ runtime }: { readonly runtime: ChannelRuntim
   const current = tools.find((tool) => tool.state === 'running')
   const compact = !running && !toolsOpen && tools.length > 2
   const preview = running && !toolsOpen && completed.length > 2 ? completed.slice(-2) : completed
-  const currentOpen = current !== undefined && (openId === null ? true : openId === current.callId)
+  const currentOpen = current !== undefined && openId === current.callId
 
   useEffect(() => {
     setThinkOpen(false)
@@ -197,14 +280,17 @@ export function ChannelWorkStream({ runtime }: { readonly runtime: ChannelRuntim
   if (!turn || (tools.length === 0 && !text && (runtime?.pendingInjectCount ?? 0) === 0)) return null
 
   return (
-    <div className={styles.workStream}>
+    <div className={styles.workStream} data-work-stream>
       {runtime && runtime.pendingInjectCount > 0 ? (
         <div className={styles.sysLine}>{runtime.pendingInjectCount} 条新消息已收录，将在安全间隙进入后续处理。</div>
       ) : null}
       {text ? (
         <Button className={styles.thinkRow} type="button" onClick={() => setThinkOpen((open) => !open)}>
           <span className={styles.workRow}>
-            <span className={[styles.workDot, running ? styles.workDotRun : styles.workDotOk].join(' ')} />
+            <span
+              className={[styles.workDot, running ? styles.workDotRun : styles.workDotOk].join(' ')}
+              data-work-status-dot
+            />
             <strong>内部输出</strong>
             {thinkOpen ? null : <em>{text.split('\n')[0]}</em>}
           </span>
@@ -230,7 +316,13 @@ export function ChannelWorkStream({ runtime }: { readonly runtime: ChannelRuntim
               onToggle={() => setOpenId((currentId) => (currentId === tool.callId ? null : tool.callId))}
             />
           ))}
-          {current ? <WorkToolRow tool={current} open={currentOpen} onToggle={() => undefined} /> : null}
+          {current ? (
+            <WorkToolRow
+              tool={current}
+              open={currentOpen}
+              onToggle={() => setOpenId((currentId) => (currentId === current.callId ? null : current.callId))}
+            />
+          ) : null}
         </>
       )}
     </div>
@@ -246,27 +338,38 @@ function WorkToolRow({
   readonly open: boolean
   readonly onToggle: () => void
 }) {
+  const detailId = useId()
+  const hasDetails = Boolean(tool.inputPreview || tool.resultPreview)
+  const row = (
+    <span className={styles.workRow}>
+      <span
+        className={[
+          styles.workDot,
+          tool.state === 'running'
+            ? styles.workDotRun
+            : tool.state === 'failed'
+              ? styles.workDotFail
+              : styles.workDotOk,
+        ].join(' ')}
+        data-work-status-dot
+      />
+      <strong>{tool.displayName}</strong>
+      <em>{tool.inputPreview ?? tool.resultPreview ?? ''}</em>
+      <StatusBadge tone={tool.state === 'running' ? 'info' : tool.state === 'failed' ? 'error' : 'neutral'}>
+        {tool.state === 'running' ? '进行中' : tool.state === 'failed' ? '失败' : '完成'}
+      </StatusBadge>
+    </span>
+  )
+
+  if (!hasDetails) {
+    return <div className={styles.toolRow}>{row}</div>
+  }
+
   return (
-    <Button className={styles.toolRow} type="button" onClick={onToggle}>
-      <span className={styles.workRow}>
-        <span
-          className={[
-            styles.workDot,
-            tool.state === 'running'
-              ? styles.workDotRun
-              : tool.state === 'failed'
-                ? styles.workDotFail
-                : styles.workDotOk,
-          ].join(' ')}
-        />
-        <strong>{tool.displayName}</strong>
-        <em>{tool.inputPreview ?? tool.resultPreview ?? ''}</em>
-        <StatusBadge tone={tool.state === 'running' ? 'info' : tool.state === 'failed' ? 'error' : 'neutral'}>
-          {tool.state === 'running' ? '进行中' : tool.state === 'failed' ? '失败' : '完成'}
-        </StatusBadge>
-      </span>
-      {open && (tool.inputPreview || tool.resultPreview) ? (
-        <div className={styles.toolCard}>
+    <Button className={styles.toolRow} type="button" aria-expanded={open} aria-controls={detailId} onClick={onToggle}>
+      {row}
+      {open ? (
+        <div className={styles.toolCard} id={detailId}>
           {tool.inputPreview ? <pre>{tool.inputPreview}</pre> : null}
           {tool.resultPreview ? <pre>{tool.resultPreview}</pre> : null}
         </div>
@@ -317,6 +420,29 @@ export function ChannelTrajectoryLedger({
     )
   }, [records, search])
   const count = Math.max(visible.length, 1)
+  const focusableId = visible.some((record) => record.id === selectedId) ? selectedId : (visible[0]?.id ?? '')
+
+  const selectFromKeyboard = (event: KeyboardEvent<HTMLTableRowElement>, record: TrajectoryRecord): void => {
+    const currentIndex = visible.findIndex((item) => item.id === record.id)
+    let nextIndex = currentIndex
+    if (event.key === 'ArrowDown') nextIndex = Math.min(currentIndex + 1, visible.length - 1)
+    else if (event.key === 'ArrowUp') nextIndex = Math.max(currentIndex - 1, 0)
+    else if (event.key === 'Home') nextIndex = 0
+    else if (event.key === 'End') nextIndex = visible.length - 1
+    else if (event.key === 'Enter' || event.key === ' ') {
+      event.preventDefault()
+      onSelect(record.id)
+      return
+    } else return
+
+    event.preventDefault()
+    const next = visible[nextIndex]
+    if (!next) return
+    onSelect(next.id)
+    requestAnimationFrame(() => {
+      scrollRef.current?.querySelector<HTMLTableRowElement>(`[data-record-id="${CSS.escape(next.id)}"]`)?.focus()
+    })
+  }
 
   useLayoutEffect(() => {
     const wrap = scrollRef.current
@@ -392,7 +518,10 @@ export function ChannelTrajectoryLedger({
                   data-record-id={record.id}
                   data-selected={selectedId === record.id ? '' : undefined}
                   data-turn-start={record.turnStart ? '' : undefined}
+                  tabIndex={focusableId === record.id ? 0 : -1}
+                  aria-current={selectedId === record.id ? 'true' : undefined}
                   onClick={() => onSelect(record.id)}
+                  onKeyDown={(event) => selectFromKeyboard(event, record)}
                 >
                   <td className={styles.trajEventCell}>
                     <span className={styles.turnRail} />
@@ -509,38 +638,7 @@ export function ChannelSessionInspector({
         {runtime && runtime.pendingInjectCount > 0 ? (
           <InlineFeedback tone="info">{runtime.pendingInjectCount} 条新消息已收录。</InlineFeedback>
         ) : null}
-        {runtime?.occupancy ? (
-          <div className={styles.occupancy}>
-            <div className={styles.occupancyTrack} aria-hidden="true">
-              <span
-                className={styles.occupancyFill}
-                style={{
-                  width: `${Math.min(100, Math.round((runtime.occupancy.projectedTokens / runtime.occupancy.contextWindow) * 100))}%`,
-                }}
-              />
-            </div>
-            <dl className={styles.facts}>
-              <dt>上下文</dt>
-              <dd>
-                约 {formatTokenCount(runtime.occupancy.projectedTokens)} /{' '}
-                {formatTokenCount(runtime.occupancy.contextWindow)}
-              </dd>
-              {runtime.occupancy.cacheReadTokens !== undefined ? (
-                <>
-                  <dt>缓存读取</dt>
-                  <dd>{formatTokenCount(runtime.occupancy.cacheReadTokens)}</dd>
-                </>
-              ) : null}
-            </dl>
-            {runtime.occupancy.breakdown ? (
-              <p className={styles.secondaryText}>
-                系统约 {formatTokenCount(runtime.occupancy.breakdown.systemTokens)} · 工具约{' '}
-                {formatTokenCount(runtime.occupancy.breakdown.toolsTokens)} · 对话约{' '}
-                {formatTokenCount(runtime.occupancy.breakdown.messageTokens)}
-              </p>
-            ) : null}
-          </div>
-        ) : null}
+        {runtime?.occupancy ? <ContextUsageCard occupancy={runtime.occupancy} /> : null}
       </section>
       <section>
         <h2>绑定</h2>
@@ -548,7 +646,7 @@ export function ChannelSessionInspector({
           <dt>智能体</dt>
           <dd>{agent?.name ?? '未绑定'}</dd>
           <dt>来源</dt>
-          <dd>{channel.kind === 'web' ? '网页聊天' : 'QQ 机器人账号'}</dd>
+          <dd>{channel.kind === 'web' ? '网页聊天' : channel.connectionName}</dd>
         </dl>
         {agent ? (
           <SelectField
@@ -569,7 +667,7 @@ export function ChannelSessionInspector({
               <Button size="small" onClick={onReassign}>
                 改由其他智能体响应
               </Button>
-              <Button size="small" variant="ghost" onClick={() => void navigate(`/agents/${agent.id}`)}>
+              <Button size="small" variant="ghost" onClick={() => void navigate(`/work/agents/${agent.id}`)}>
                 管理智能体
               </Button>
             </>
@@ -584,15 +682,23 @@ export function ChannelSessionInspector({
           <div className={styles.channelRename}>
             <Field
               label="频道名称"
-              hint={channel.kind === 'web' ? '用于消息列表显示。' : 'QQ 不提供群名称时，可在此设置本地名称。'}
+              hint={channel.kind === 'web' ? '用于消息列表显示。' : '平台未提供频道名称时，可在此设置本地名称。'}
             >
               <Input value={channelName} onChange={(event) => setChannelName(event.target.value)} maxLength={120} />
             </Field>
+            <p className={styles.secondaryText} id="channel-name-save-reason">
+              {!channelName.trim()
+                ? '请输入频道名称后才能保存。'
+                : channelName.trim() === channel.name
+                  ? '修改频道名称后才能保存。'
+                  : '保存后只改变本地显示名称。'}
+            </p>
             <Button
               size="small"
               loading={renamePending}
               loadingLabel="保存中…"
               disabled={!channelName.trim() || channelName.trim() === channel.name}
+              aria-describedby="channel-name-save-reason"
               onClick={() => void rename()}
             >
               保存名称

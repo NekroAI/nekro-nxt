@@ -96,15 +96,27 @@ export interface ChannelRuntimeView {
   readonly turns: HostApiResponse<'getChannelRuntime'>['turns']
 }
 
+export type ConversationPart =
+  | { readonly type: 'text'; readonly text: string }
+  | { readonly type: 'mention'; readonly memberId: string; readonly displayName: string }
+  | { readonly type: 'image'; readonly assetId: string; readonly alt: string; readonly url: string }
+  | { readonly type: 'file'; readonly assetId: string; readonly name: string; readonly url: string }
+  | { readonly type: 'audio'; readonly assetId: string; readonly url: string }
+  | { readonly type: 'quote'; readonly messageId: string }
+  | { readonly type: 'unsupported'; readonly label: string }
+
 export interface ConversationMessage {
   readonly id: string
   readonly channelId: string
   readonly author: string
   readonly role: 'member' | 'agent' | 'system'
   readonly body: string
+  readonly parts: readonly ConversationPart[]
+  readonly mentionedConnectionAccount: boolean
   readonly time: string
   readonly occurredAt?: number
   readonly delivery?: DeliveryState
+  readonly origin?: 'admin-console'
   readonly resources: readonly {
     readonly assetId: string
     readonly name: string
@@ -123,6 +135,8 @@ export interface ChannelHistoryState {
 
 export interface ConnectionSummary {
   readonly id: string
+  /** Optional user-facing name; the Adapter name remains the platform identity. */
+  readonly alias?: string
   readonly name: string
   /** User-facing Adapter name. The stable key remains available only for internal branching. */
   readonly adapter: string
@@ -236,7 +250,9 @@ export interface ProductState {
     readonly adapterKey: string
     readonly configuration: Readonly<Record<string, string | number | boolean>>
     readonly credentials: Readonly<Record<string, string>>
+    readonly alias?: string
   }): Promise<void>
+  updateConnectionAlias(connectionId: string, alias: string): Promise<void>
   workTreeOrder: {
     readonly agentIds: readonly string[]
     readonly channelIdsByAgent: Readonly<Record<string, readonly string[]>>
@@ -274,6 +290,9 @@ const initialTheme = (): ThemeChoice => {
   return stored === 'light' || stored === 'dark' ? stored : 'system'
 }
 
+const initialReducedMotion = (): boolean =>
+  typeof window !== 'undefined' && window.localStorage.getItem('nekro-nxt.reduced-motion') === 'true'
+
 const requireHost = (): ProductHostPort => {
   if (activeHost === null)
     throw new ProductActionError('host-unavailable', '当前未连接 NekroNxt Host，无法执行此操作。')
@@ -285,6 +304,10 @@ const requireValue = (value: string, message: string, code: ProductActionErrorCo
   if (!normalized) throw new ProductActionError(code, message)
   return normalized
 }
+
+/** The one product projection for a Connection's primary user-facing label. */
+export const connectionDisplayName = (connection: Pick<ConnectionSummary, 'alias' | 'name'>): string =>
+  connection.alias?.trim() || connection.name
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === 'object' && value !== null && !Array.isArray(value)
@@ -323,7 +346,7 @@ export const useProductStore = create<ProductState>(() => ({
   approvals: [],
   dynamic: [],
   theme: initialTheme(),
-  reducedMotion: false,
+  reducedMotion: initialReducedMotion(),
   diagnosticNote: '正在连接 NekroNxt Host…',
   workTreeOrder: { agentIds: [], channelIdsByAgent: {}, unboundChannelIds: [] },
   refreshHost: async () => {
@@ -354,11 +377,18 @@ export const useProductStore = create<ProductState>(() => ({
       model: { provider: model.provider, model: model.id, ...(reasoningEffort ? { reasoningEffort } : {}) },
     })
   },
-  createConnection: async ({ adapterKey, configuration, credentials }) => {
+  createConnection: async ({ adapterKey, alias, configuration, credentials }) => {
     await requireHost().execute('connections.create', {
       adapterKey: requireValue(adapterKey, '请选择连接平台。'),
+      ...(alias === undefined ? {} : { alias: alias.trim() }),
       configuration,
       credentials,
+    })
+  },
+  updateConnectionAlias: async (connectionId, alias) => {
+    await requireHost().execute('connections.updateAlias', {
+      connectionId: requireValue(connectionId, '缺少连接标识，请刷新页面后重试。'),
+      alias: alias.trim(),
     })
   },
   createWebChannel: async ({ displayName }) => {
@@ -553,5 +583,8 @@ export const useProductStore = create<ProductState>(() => ({
     }
     useProductStore.setState({ theme })
   },
-  setReducedMotion: (reducedMotion) => useProductStore.setState({ reducedMotion }),
+  setReducedMotion: (reducedMotion) => {
+    if (typeof window !== 'undefined') window.localStorage.setItem('nekro-nxt.reduced-motion', String(reducedMotion))
+    useProductStore.setState({ reducedMotion })
+  },
 }))

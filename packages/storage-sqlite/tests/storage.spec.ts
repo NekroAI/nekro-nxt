@@ -36,6 +36,7 @@ import {
   assetOccurrences,
   channelEvents,
   channels,
+  connections,
   physicalDeliveries,
 } from '../src/index.ts'
 
@@ -127,8 +128,8 @@ const appendTextEvent = (
   }).event
 
 describe('Core SQLite baseline', () => {
-  it('accepts better-sqlite3 table_list metadata and migrates a clean 23-table database', async () => {
-    expect(Object.keys(coreSchema)).toHaveLength(23)
+  it('accepts better-sqlite3 table_list metadata and migrates a clean 24-table database', async () => {
+    expect(Object.keys(coreSchema)).toHaveLength(24)
     expect(channelEvents.logicalMessageId.name).toBe('logical_message_id')
     expect('logicalMessageId' in channels).toBe(false)
 
@@ -139,6 +140,33 @@ describe('Core SQLite baseline', () => {
       expect(core.listConnections()).toHaveLength(1)
     } finally {
       database.close()
+    }
+  })
+
+  it('persists, reloads, updates, and clears a normalized Connection alias', async () => {
+    const { directory, database, core, connection } = await createFixture()
+    const filename = path.join(directory, 'core.sqlite')
+    let databaseClosed = false
+    try {
+      const named = core.updateConnectionAlias(connection.id, '  备用账号  ')
+      expect(named.alias).toBe('备用账号')
+      expect(database.db.select({ alias: connections.alias }).from(connections).get()?.alias).toBe('备用账号')
+      database.close()
+      databaseClosed = true
+
+      const reopened = await openMigratedCoreDatabase(filename)
+      try {
+        const reopenedRepository = new SqliteCoreRepository(reopened)
+        expect(reopenedRepository.getConnection(connection.id)?.alias).toBe('备用账号')
+        const reopenedCore = new CoreService(reopenedRepository, { now: () => 2000, nextUlid: () => 'REOPENED' })
+        expect(reopenedCore.updateConnectionAlias(connection.id, '   ')).not.toHaveProperty('alias')
+        expect(reopenedRepository.getConnection(connection.id)).not.toHaveProperty('alias')
+        expect(() => reopenedCore.updateConnectionAlias(connection.id, 'x'.repeat(81))).toThrow()
+      } finally {
+        reopened.close()
+      }
+    } finally {
+      if (!databaseClosed) database.close()
     }
   })
 

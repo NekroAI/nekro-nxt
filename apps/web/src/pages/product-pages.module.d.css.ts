@@ -9,6 +9,8 @@ declare const styles: {
   readonly agentCardIdentity: string
   readonly agentCardMeta: string
   readonly agentCardTitle: string
+  readonly agentCreatePage: string
+  readonly agentHeaderRow: string
   readonly agentModel: string
   readonly agentOverview: string
   readonly agentRow: string
@@ -20,6 +22,7 @@ declare const styles: {
   readonly boundChannelName: string
   readonly boundChannelRow: string
   readonly canvasStage: string
+  readonly canvasTab: string
   readonly capabilityChoices: string
   readonly channelDetails: string
   readonly channelDirectory: string
@@ -30,13 +33,22 @@ declare const styles: {
   readonly channelLink: string
   readonly channelLinkActive: string
   readonly channelRename: string
+  readonly channelRow: string
   readonly compactList: string
   readonly composer: string
+  readonly composerInfo: string
   readonly composerInput: string
+  readonly composerMode: string
+  readonly composerModeRow: string
   readonly composerRow: string
-  readonly composerTarget: string
+  readonly composerWebAction: string
   readonly connectionProgress: string
+  readonly connectionWorkspace: string
   readonly contentLine: string
+  readonly contextCharts: string
+  readonly contextFigure: string
+  readonly contextRing: string
+  readonly contextUsageCard: string
   readonly conversationEmpty: string
   readonly conversationHeader: string
   readonly conversationHeaderActions: string
@@ -48,7 +60,6 @@ declare const styles: {
   readonly creatorIntro: string
   readonly creatorStartGrid: string
   readonly creatorWorkspace: string
-  readonly detailSection: string
   readonly dialogChoice: string
   readonly dragOverlay: string
   readonly dropTarget: string
@@ -57,9 +68,11 @@ declare const styles: {
   readonly eventInner: string
   readonly extensionHeader: string
   readonly extensionRow: string
+  readonly extensionWorkspace: string
   readonly facts: string
   readonly formLayout: string
   readonly formStack: string
+  readonly headerActionLabel: string
   readonly historyNotice: string
   readonly identityCell: string
   readonly inspector: string
@@ -68,6 +81,7 @@ declare const styles: {
   readonly inspectorExpanded: string
   readonly inspectorRegion: string
   readonly inspectorRegionBody: string
+  readonly inspectorSplitter: string
   readonly jumpBottom: string
   readonly kindMessage: string
   readonly kindTag: string
@@ -76,6 +90,7 @@ declare const styles: {
   readonly lifecycleStepsCompact: string
   readonly linkRow: string
   readonly listHeader: string
+  readonly markdownPart: string
   readonly masterButton: string
   readonly masterButtonActive: string
   readonly masterCopy: string
@@ -90,11 +105,11 @@ declare const styles: {
   readonly messageImageLink: string
   readonly messageList: string
   readonly messageListInner: string
+  readonly messageMention: string
+  readonly messageQuote: string
+  readonly messageUnsupported: string
   readonly objectList: string
   readonly objectName: string
-  readonly occupancy: string
-  readonly occupancyFill: string
-  readonly occupancyTrack: string
   readonly overviewBlocker: string
   readonly overviewBlockers: string
   readonly overviewFacts: string
@@ -126,8 +141,10 @@ declare const styles: {
   readonly sectionDivider: string
   readonly sectionHeading: string
   readonly selRail: string
+  readonly settingsGroup: string
   readonly settingsSection: string
   readonly sortableOrigin: string
+  readonly srOnly: string
   readonly staticRow: string
   readonly switchList: string
   readonly sysLine: string
@@ -164,15 +181,12 @@ declare const styles: {
   readonly trajectorySteps: string
   readonly trajectorySummary: string
   readonly trajectoryTools: string
+  readonly treeRowDragHandle: string
   readonly truncate: string
   readonly turnChip: string
   readonly turnRail: string
   readonly unread: string
   readonly viewSwitch: string
-  readonly wizardBody: string
-  readonly wizardStepActive: string
-  readonly wizardStepDone: string
-  readonly wizardSteps: string
   readonly workDot: string
   readonly workDotFail: string
   readonly workDotOk: string

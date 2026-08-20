@@ -522,13 +522,24 @@ button:focus-visible, select:focus-visible, input:focus-visible, textarea:focus-
 }
 
 .composer {
+  display: grid;
+  gap: 6px;
   border-top: 1px solid var(--nxt-border-subtle);
   padding: 10px 16px 14px;
 }
+.composer[data-mode='platform'] {
+  border-top-color: var(--nxt-accent);
+  background: var(--nxt-bg-subtle);
+}
+.composer-eyebrow {
+  color: var(--nxt-accent);
+  font-size: 11px;
+  font-weight: 650;
+}
+.composer[data-mode='web'] .composer-eyebrow { color: var(--nxt-text-secondary); }
 .composer-target {
-  margin-bottom: 6px;
-  color: var(--nxt-text-muted);
-  font-size: 12px;
+  color: var(--nxt-text-primary);
+  font-size: 13px;
 }
 .composer-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 8px; align-items: end; }
 .composer textarea {

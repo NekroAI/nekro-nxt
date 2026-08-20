@@ -61,7 +61,7 @@ export function ExtensionsPage() {
           }
         />
       ) : selected ? (
-        <section className={styles.detailSection}>
+        <section className={styles.extensionWorkspace}>
           <div className={styles.sectionBar}>
             <div>
               <div className={styles.sectionHeading}>{selected.name}</div>
@@ -105,7 +105,7 @@ export function ExtensionsPage() {
                 ))}
               </div>
             ) : (
-              <p className={styles.secondaryText}>当前快照尚未提供可展示的 Contribution 明细。</p>
+              <p className={styles.secondaryText}>当前快照尚未提供可展示的贡献内容。</p>
             )}
           </div>
           <div className={styles.sectionActionRow}>
@@ -198,7 +198,7 @@ export function CreatorPage() {
                 <div className={styles.sectionHeading}>
                   {host.status === 'initializing' ? '正在读取动态状态' : '从智能体的频道开始创造'}
                 </div>
-                <p>向已授权动态创造的智能体描述需求。它开始运行动态 Package 后，这里会显示真实状态和保存入口。</p>
+                <p>向已授权动态创造的智能体描述需求。它开始运行动态包后，这里会显示真实状态和保存入口。</p>
               </div>
             </div>
             <ol className={styles.creatorGuide}>
@@ -213,7 +213,7 @@ export function CreatorPage() {
                 <span>2</span>
                 <div>
                   <strong>运行与验证</strong>
-                  <small>动态 Package 先临时运行，不会自动保存。</small>
+                  <small>动态包先临时运行，不会自动保存。</small>
                 </div>
               </li>
               <li>
@@ -246,7 +246,7 @@ export function CreatorPage() {
                     <Button
                       size="small"
                       disabled={!agent.channels[0]}
-                      onClick={() => agent.channels[0] && void navigate(`/channels/${agent.channels[0]}`)}
+                      onClick={() => agent.channels[0] && void navigate(`/work/channels/${agent.channels[0]}`)}
                     >
                       打开频道 <ArrowRight size={14} aria-hidden="true" />
                     </Button>
