@@ -215,6 +215,7 @@ const channelMessages = HostApiContracts.listChannelMessages.response.parse({
       sender: { memberId: senderMemberId, displayName: '成员甲' },
       mentionedConnectionAccount: true,
       parts: [
+        { type: 'mention', memberId: ChannelMemberIdSchema.parse('mbr_bot'), displayName: '机器人账号' },
         { type: 'text', text: '请和' },
         { type: 'mention', memberId: targetMemberId, displayName: '成员乙' },
         { type: 'text', text: '一起复核。' },
@@ -768,6 +769,16 @@ test('redesigned relationship and lifecycle pages stay legible across representa
     await page.emulateMedia({ colorScheme: scene.colorScheme, reducedMotion: 'reduce' })
     await page.goto(scene.route)
     await expect(page.getByText(scene.text).first()).toBeVisible()
+    if (scene.route === '/connections') {
+      await expect(page.getByText('平台账号', { exact: true })).toBeVisible()
+      await expect(page.getByRole('heading', { name: '网页聊天' })).toBeVisible()
+      await expect(page.getByText('连接', { exact: true })).toHaveCount(0)
+    }
+    if (scene.route === '/extensions') {
+      await expect(page.getByText('本地扩展', { exact: true })).toBeVisible()
+      await expect(page.getByRole('heading', { name: '群聊摘要' })).toBeVisible()
+      await expect(page.getByText('扩展', { exact: true })).toHaveCount(0)
+    }
     if (scene.route.startsWith('/work/agents/')) {
       const sectionWidths = await page
         .locator('section[id^="agent-"]')
@@ -815,6 +826,23 @@ test('redesigned relationship and lifecycle pages stay legible across representa
   expect(connectionText).not.toContain('group:9CC4F6A7D6FE')
   expect(connectionText).not.toContain('群聊（尾号 D6FE） · 群聊')
   await capture(page, testInfo, 'redesign-connection-qq-light')
+
+  await page.unroute('**/api/snapshot')
+  await page.route('**/api/snapshot', (route) =>
+    route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({ ...productSnapshot, extensions: [] }),
+    }),
+  )
+  await page.emulateMedia({ colorScheme: 'dark', reducedMotion: 'reduce' })
+  await page.goto('/extensions')
+  await expect(page.getByText('本地扩展', { exact: true })).toBeVisible()
+  await expect(page.getByRole('heading', { name: '扩展库' })).toBeVisible()
+  await expect(page.getByText('从一次动态运行开始')).toBeVisible()
+  await expect(page.getByText('还没有本地扩展', { exact: true })).toHaveCount(0)
+  await expect(page.getByRole('button', { name: '打开创造工作台' })).toBeVisible()
+  await capture(page, testInfo, 'redesign-extension-empty-dark')
   expect(failures, failures.join('\n')).toEqual([])
 })
 
@@ -1009,6 +1037,7 @@ test('desktop shell keeps a 48px top bar and a permanently available object pane
   const topBar = page.locator('[data-window-top-bar]')
   const pane = page.locator('aside[aria-label="对象列"]')
   expect((await topBar.boundingBox())?.height).toBe(48)
+  await expect(topBar).toHaveText('NekroNxt')
   await expect(pane).toBeVisible()
   await expect(page.getByRole('button', { name: /收起对象列|展开对象列/u })).toHaveCount(0)
   await expect(page.getByRole('separator', { name: '调整对象列宽度' })).toBeVisible()

@@ -492,7 +492,7 @@ function WorkTree() {
   return (
     <>
       <div className={shell.treeHead}>
-        <span>工作</span>
+        <span>频道与智能体</span>
         <Link className={shell.treeAdd} to="/work/agents/new" aria-label="创建智能体">
           <Plus size={14} aria-hidden="true" />
         </Link>
@@ -624,7 +624,7 @@ function ConnectionTree() {
   return (
     <>
       <div className={shell.treeHead}>
-        <span>连接</span>
+        <span>平台账号</span>
         {canCreate ? (
           <Link className={shell.treeAdd} to="/connections?create=1" aria-label="添加连接">
             <Plus size={14} aria-hidden="true" />
@@ -633,7 +633,9 @@ function ConnectionTree() {
       </div>
       <div className={shell.treeBody}>
         {connections.length === 0 ? (
-          <div className={styles.railEmpty}>{host.status === 'initializing' ? '正在读取…' : '还没有连接'}</div>
+          host.status === 'initializing' ? (
+            <div className={styles.railEmpty}>正在读取…</div>
+          ) : null
         ) : (
           <div className={styles.connectionNavList}>
             {connections.map((connection) => (
@@ -673,11 +675,13 @@ function ExtensionTree() {
   return (
     <>
       <div className={shell.treeHead}>
-        <span>扩展</span>
+        <span>本地扩展</span>
       </div>
       <div className={shell.treeBody}>
         {extensions.length === 0 ? (
-          <div className={styles.railEmpty}>{host.status === 'initializing' ? '正在读取…' : '还没有本地扩展'}</div>
+          host.status === 'initializing' ? (
+            <div className={styles.railEmpty}>正在读取…</div>
+          ) : null
         ) : (
           <div className={styles.extensionNavList}>
             {extensions.map((extension) => (
@@ -720,7 +724,7 @@ function SettingsTree() {
   return (
     <>
       <div className={shell.treeHead}>
-        <span>设置</span>
+        <span>设置分类</span>
       </div>
       <div className={shell.treeBody}>
         <nav className={styles.settingsNav} aria-label="设置分类">

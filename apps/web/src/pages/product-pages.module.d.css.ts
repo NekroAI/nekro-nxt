@@ -228,6 +228,7 @@ declare const styles: {
   readonly workbenchPage: string
   readonly workbenchSection: string
   readonly workbenchStatus: string
+  readonly workspaceLead: string
 }
 
 export default styles

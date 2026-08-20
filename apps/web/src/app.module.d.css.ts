@@ -19,7 +19,6 @@ declare const styles: {
   readonly treeHead: string
   readonly windowBrand: string
   readonly windowObjectTitle: string
-  readonly windowStageBar: string
   readonly windowTopBar: string
 }
 

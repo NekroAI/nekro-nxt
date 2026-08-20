@@ -286,7 +286,7 @@ describe('NekroNxt product shell', () => {
 
   it('distinguishes loading across the priority product routes', () => {
     expect(renderRoute('/work/channels/chn_loading')).toContain('正在读取频道')
-    expect(renderRoute('/connections')).toContain('正在读取连接')
+    expect(renderRoute('/connections')).toContain('正在读取账号')
     expect(renderRoute('/extensions')).toContain('正在读取扩展')
     expect(renderRoute('/settings')).toContain('正在读取模型供应商')
   })

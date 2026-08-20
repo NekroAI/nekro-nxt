@@ -24,6 +24,7 @@ const extensionTone = (activation: LocalExtensionSummary['activation']): StatusT
 
 export function ExtensionsPage() {
   const { extensionId = '' } = useParams()
+  const navigate = useNavigate()
   const host = useProductStore((state) => state.host)
   const extensions = useProductStore((state) => state.extensions)
   const [pendingId, setPendingId] = useState<string | null>(null)
@@ -49,26 +50,35 @@ export function ExtensionsPage() {
 
   return (
     <div className={styles.page}>
-      <PageHeader title="扩展" meta={extensions.length > 0 ? `${extensions.length} 个本地扩展` : undefined} />
+      <PageHeader
+        title={selected?.name ?? '扩展库'}
+        meta={selected ? `版本 ${selected.revision} · ${extensions.length} 个本地扩展` : undefined}
+        actions={
+          selected ? (
+            <StatusBadge tone={extensionTone(selected.activation)}>{extensionLabel(selected.activation)}</StatusBadge>
+          ) : undefined
+        }
+      />
       {extensions.length === 0 ? (
         <EmptyState
           loading={host.status === 'initializing'}
-          title={host.status === 'initializing' ? '正在读取扩展' : '还没有本地扩展'}
+          title={host.status === 'initializing' ? '正在读取扩展' : '从一次动态运行开始'}
           description={
             host.status === 'error'
               ? '当前无法读取扩展，请重新连接后再试。'
-              : '保存后的扩展会显示在这里。动态运行中的内容不会自动保存。'
+              : '在创造工作台验证运行结果后，可将它保存为可追踪的本地扩展。'
+          }
+          action={
+            host.status === 'ready' ? (
+              <Button onClick={() => void navigate('/work/creator')}>
+                打开创造工作台 <ArrowRight size={14} aria-hidden="true" />
+              </Button>
+            ) : undefined
           }
         />
       ) : selected ? (
         <section className={styles.extensionWorkspace}>
-          <div className={styles.sectionBar}>
-            <div>
-              <div className={styles.sectionHeading}>{selected.name}</div>
-              <div className={styles.secondaryText}>{selected.description || '没有补充说明。'}</div>
-            </div>
-            <StatusBadge tone={extensionTone(selected.activation)}>{extensionLabel(selected.activation)}</StatusBadge>
-          </div>
+          <p className={styles.workspaceLead}>{selected.description || '没有补充说明。'}</p>
           <ol className={[styles.lifecycleSteps, styles.lifecycleStepsCompact].join(' ')} aria-label="扩展生命周期">
             <li data-done="">
               <span>

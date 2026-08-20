@@ -473,6 +473,6 @@ test('connection workbench binds an intelligent-agent without visiting the manag
   await dialog.getByRole('button', { name: '绑定频道' }).click()
   await expect(page.getByText('频道已绑定。')).toBeVisible()
   await expect(page).toHaveURL(/\/connections(?:\/|$)/u)
-  await expect(page.getByRole('heading', { name: '连接' })).toBeVisible()
+  await expect(page.getByRole('heading', { name: 'QQ 官方机器人' })).toBeVisible()
   expect(failures, failures.join('\n')).toEqual([])
 })

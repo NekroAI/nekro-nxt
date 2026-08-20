@@ -518,6 +518,14 @@
   gap: 20px;
 }
 
+.workspaceLead {
+  max-width: 720px;
+  margin: 0;
+  color: var(--nxt-text-secondary);
+  font-size: 13px;
+  line-height: 20px;
+}
+
 .connectionWorkspace {
   border-left: 3px solid var(--nxt-accent);
   padding: 8px 0 24px 20px;

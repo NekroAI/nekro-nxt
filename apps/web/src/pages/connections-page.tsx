@@ -144,20 +144,33 @@ export function ConnectionsPage() {
   return (
     <div className={styles.page} data-connection-page-scroll-root>
       <PageHeader
-        title="连接"
-        meta={connections.length > 0 ? `${connections.length} 个平台账号` : undefined}
+        title={selected ? connectionDisplayName(selected) : '接入聊天平台'}
+        meta={
+          selected ? (
+            <>
+              <span>{selected.adapterKey === 'web' ? '当前设备托管' : selected.adapter}</span>
+              <span aria-hidden="true"> · </span>
+              <span>{connections.length} 个账号</span>
+            </>
+          ) : undefined
+        }
         actions={
-          creatablePlatforms.length > 0 ? (
-            <Button variant="primary" onClick={openCreate}>
-              <Plus size={15} aria-hidden="true" /> 添加连接
-            </Button>
+          selected || creatablePlatforms.length > 0 ? (
+            <>
+              {selected ? <StatusBadge tone={connectionTone(selected.state)}>{selected.state}</StatusBadge> : null}
+              {creatablePlatforms.length > 0 ? (
+                <Button variant="primary" onClick={openCreate}>
+                  <Plus size={15} aria-hidden="true" /> 添加连接
+                </Button>
+              ) : null}
+            </>
           ) : undefined
         }
       />
       {connections.length === 0 ? (
         <EmptyState
           loading={host.status === 'initializing'}
-          title={host.status === 'initializing' ? '正在读取连接' : '还没有可用连接'}
+          title={host.status === 'initializing' ? '正在读取账号' : '添加第一个平台账号'}
           description={
             host.status === 'error'
               ? '当前无法读取平台账号，请重新连接后再试。'
@@ -173,14 +186,6 @@ export function ConnectionsPage() {
         />
       ) : selected ? (
         <section className={styles.connectionWorkspace}>
-          <div className={styles.sectionBar}>
-            <div>
-              <div className={styles.sectionHeading}>{connectionDisplayName(selected)}</div>
-              <div className={styles.secondaryText}>{selected.adapter}</div>
-            </div>
-            <StatusBadge tone={connectionTone(selected.state)}>{selected.state}</StatusBadge>
-          </div>
-
           {selected.adapterKey !== 'web' ? (
             <ol className={styles.connectionProgress} aria-label="连接完成进度">
               {[

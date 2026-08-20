@@ -44,17 +44,6 @@
   transition: opacity var(--nxt-motion-fast) var(--nxt-ease-standard);
 }
 
-.windowStageBar {
-  display: flex;
-  min-width: 0;
-  grid-column: 4;
-  align-items: center;
-  gap: 8px;
-  padding: 0 12px;
-  color: var(--nxt-text-muted);
-  font-size: 12px;
-}
-
 .shellBody {
   min-height: 0;
   grid-row: 2;

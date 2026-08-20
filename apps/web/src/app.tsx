@@ -112,12 +112,6 @@ function DesktopShell() {
           <span className={styles.mark} aria-hidden="true" />
         </div>
         <div className={styles.windowObjectTitle}>NekroNxt</div>
-        <div className={styles.windowStageBar}>
-          <span>
-            {modes.find(({ work, to }) => (work ? isWorkPath(location.pathname) : location.pathname.startsWith(to)))
-              ?.label ?? 'NekroNxt'}
-          </span>
-        </div>
       </header>
       <div className={styles.shellBody} data-shell-body>
         <aside className={styles.rail} aria-label="模式">
