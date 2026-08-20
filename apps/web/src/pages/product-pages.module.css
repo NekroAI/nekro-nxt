@@ -1417,6 +1417,7 @@
   top: 7px;
   height: 8px;
   min-width: 4px;
+  min-height: 0;
   border: 0;
   border-radius: 1px;
   padding: 0;
@@ -1439,9 +1440,25 @@
 }
 
 .plotSeg:hover,
+.plotSeg:not(:disabled):hover,
 .plotSegSelected {
   outline: 1px solid var(--nxt-accent);
   outline-offset: 1px;
+}
+
+.plotSegInternal:not(:disabled):hover,
+.plotSegInternal.plotSegSelected {
+  background: color-mix(in srgb, var(--nxt-accent) 45%, transparent);
+}
+
+.plotSegTool:not(:disabled):hover,
+.plotSegTool.plotSegSelected {
+  background: color-mix(in srgb, #c47b16 50%, transparent);
+}
+
+.plotSegSend:not(:disabled):hover,
+.plotSegSend.plotSegSelected {
+  background: color-mix(in srgb, var(--nxt-accent) 30%, transparent);
 }
 
 .plotTurn {
@@ -1449,13 +1466,36 @@
   top: 0;
   bottom: 0;
   z-index: 1;
-  width: 2px;
+  display: block;
+  width: 10px;
+  min-width: 0;
+  min-height: 0;
   border: 0;
+  border-radius: 0;
   padding: 0;
   margin: 0;
-  transform: translateX(-1px);
+  transform: translateX(-5px);
   cursor: pointer;
+  background: transparent;
+}
+
+.plotTurn::before {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 4px;
+  width: 2px;
   background: var(--nxt-border-default);
+  content: '';
+  pointer-events: none;
+}
+
+.plotTurn:not(:disabled):hover {
+  background: transparent;
+}
+
+.plotTurn:not(:disabled):hover::before {
+  background: var(--nxt-text-muted);
 }
 
 .trajTableWrap {

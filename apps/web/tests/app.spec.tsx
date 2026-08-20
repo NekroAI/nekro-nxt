@@ -499,6 +499,18 @@ describe.sequential('NekroNxt browser projections', { timeout: 30_000 }, () => {
                       },
                     ],
                   },
+                  {
+                    turn: 2,
+                    state: 'completed',
+                    producedReply: false,
+                    steps: [
+                      {
+                        step: 1,
+                        internalOutput: { kind: 'internal-output', text: '继续核对下一则公告。' },
+                        tools: [],
+                      },
+                    ],
+                  },
                 ]
               : [],
         }),
@@ -637,7 +649,15 @@ describe.sequential('NekroNxt browser projections', { timeout: 30_000 }, () => {
       await playwrightExpect(page.getByLabel('工作轨迹时间轴')).toBeVisible()
       await playwrightExpect(page.getByLabel('工作轨迹时间轴')).toContainText('内部')
       await playwrightExpect(page.getByLabel('工作轨迹时间轴')).toContainText('发送')
-      await page.getByRole('button', { name: /发送频道消息/u }).click()
+      const turnBoundary = page.getByRole('button', { name: 'Turn 2', exact: true })
+      await playwrightExpect(turnBoundary).toBeVisible()
+      const turnBox = await turnBoundary.boundingBox()
+      expect(turnBox?.width).toBeLessThanOrEqual(12)
+      expect(turnBox?.height).toBeGreaterThanOrEqual(40)
+      const sendMark = page.getByRole('button', { name: /发送频道消息/u })
+      const sendBox = await sendMark.boundingBox()
+      expect(sendBox?.height).toBeLessThanOrEqual(12)
+      await sendMark.click()
       await playwrightExpect(
         page.getByLabel('工作轨迹', { exact: true }).getByRole('heading', { name: '发出的内容' }),
       ).toBeVisible()
