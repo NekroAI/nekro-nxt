@@ -52,6 +52,8 @@
 - 添加平台连接先选用户可创建的平台，再按版本化 schema 渲染表单；从某适配器详情「再添加一个账号」可跳过选平台。系统托管 Web 不出现在创建目录。
 - 外部频道未发现时说明先向机器人账号发一条消息。`POST /api/channels/:id/messages`：网页频道入站交给智能体；外部频道在已绑定且允许主动发送时，以机器人账号出站，并注入管理员来源的系统事实。
 - `apps/server/src/main.ts` 使用 `NEKRO_DATA`、`NEKRO_PORT`（默认 4960）。开发工作区为 `<dataRoot>/workspaces/<agentId>/`。
+- 生产 CLI 由构建后的 `dist/main.mjs` 直接启动；`NEKRO_HOST` 默认 `127.0.0.1`，容器显式使用 `0.0.0.0`。Desktop 与 Docker 向同一入口注入不可变 `NEKRO_RELEASE_ID`；`GET /health/live` 与 `GET /health/ready` 只返回状态和 Release 身份，不返回业务数据。Desktop 只在 readiness 与安装包清单一致后加载该 Host 同包托管的 Web dist。
+- Runtime 打开双 SQLite 前，生产入口在 `backups/release-<releaseId digest>/` 为已有数据库创建一次 Release 恢复点；失败拒绝启动。该实验恢复点不覆盖数据根文件目录，完整升级协调仍以 Client migration Decision 为准。
 - 启动恢复持久 Web Connection、Extension Activation 和 QQ Connection 的凭据引用；单个 Connection 故障不阻断其他恢复。
 
 一期缺口见 `04-一期开发计划与决策清单.md`。技术栈见 `decisions/accepted/2026-08-16-一期技术栈与UI基础设施.md`。

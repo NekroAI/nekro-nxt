@@ -10,6 +10,7 @@ export default tseslint.config(
       'data/**',
       'apps/*/data/**',
       '**/dist/**',
+      '**/release/**',
       'apps/*/lib/**',
       'packages/*/lib/**',
       'node_modules/**',

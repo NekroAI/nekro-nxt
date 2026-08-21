@@ -11,5 +11,6 @@
     "noEmit": true,
     "sourceMap": false
   },
-  "include": ["apps/**/*.ts", "apps/**/*.tsx", "packages/**/*.ts", "playwright.config.ts", "vitest.config.ts"]
+  "include": ["apps/**/*.ts", "apps/**/*.tsx", "packages/**/*.ts", "playwright.config.ts", "vitest.config.ts"],
+  "exclude": ["apps/desktop/dist/**", "apps/desktop/release/**"]
 }

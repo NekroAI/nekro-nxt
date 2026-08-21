@@ -11,6 +11,8 @@ allowBuilds:
   '@deepseek-ai/dsh-subprocess-local': true
   '@google/genai': false
   better-sqlite3: true
+  electron: true
+  electron-winstaller: true
   esbuild: true
   koffi: true
   node-pty: true

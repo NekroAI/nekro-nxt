@@ -45,7 +45,7 @@ async function workspaceProjects() {
 async function sourceFiles(directory) {
   const result = []
   for (const entry of await readdir(directory, { withFileTypes: true })) {
-    if (['dist', 'lib', 'node_modules'].includes(entry.name)) continue
+    if (['dist', 'lib', 'node_modules', 'release'].includes(entry.name)) continue
     const target = path.join(directory, entry.name)
     if (entry.isDirectory()) result.push(...(await sourceFiles(target)))
     else if (/\.(?:cts|mts|ts|tsx)$/u.test(entry.name)) result.push(target)

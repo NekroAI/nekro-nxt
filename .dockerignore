@@ -1,0 +1,13 @@
+.git
+.gitignore
+.local
+.turbo
+**/node_modules
+**/dist
+**/lib
+**/*.tsbuildinfo
+apps/*/data
+coverage
+data
+playwright-report
+test-results
