@@ -458,7 +458,7 @@ export function CreatorPage() {
           }
           setSaveError('')
           try {
-            await useProductStore.getState().saveDynamicExtension({
+            const saved = await useProductStore.getState().saveDynamicExtension({
               agentId: selectedItem.agentId,
               episodeId: selectedItem.episodeId,
               pluginId: selectedItem.pluginId,
@@ -468,6 +468,7 @@ export function CreatorPage() {
               description: extensionDescription,
             })
             notify('动态运行已保存为本地扩展；是否启用仍由你决定。', 'success', 'dynamic-extension-save')
+            navigate(`/extensions/${saved.extensionId}`)
             return true
           } catch (error) {
             notify(error instanceof Error ? error.message : String(error), 'error', 'dynamic-extension-save')

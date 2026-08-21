@@ -237,6 +237,11 @@ export interface ProductHostState {
   readonly lastSuccessfulAt: number | null
 }
 
+export interface SavedDynamicExtension {
+  readonly extensionId: string
+  readonly revisionId: string
+}
+
 export interface CapabilityAvailability {
   readonly subagents: { readonly available: boolean }
   readonly webSearch: {
@@ -329,7 +334,7 @@ export interface ProductState {
     readonly name: string
     readonly slug: string
     readonly description: string
-  }): Promise<void>
+  }): Promise<SavedDynamicExtension>
   setExtensionActive(id: string, enabled: boolean): Promise<void>
   callExtensionClient(input: {
     readonly agentId: string
@@ -614,7 +619,7 @@ export const useProductStore = create<ProductState>(() => ({
     await requireHost().execute('host.refresh')
   },
   saveDynamicExtension: async ({ agentId, episodeId, pluginId, packageId, name, slug, description }) => {
-    await requireHost().execute('extensions.saveFromDynamic', {
+    const result = await requireHost().execute('extensions.saveFromDynamic', {
       agentId: requireValue(agentId, '缺少智能体标识，请刷新页面后重试。'),
       episodeId: requireValue(episodeId, '缺少 Episode 标识，请刷新页面后重试。'),
       pluginId: requireValue(pluginId, '缺少 Plugin 标识，请刷新页面后重试。'),
@@ -623,6 +628,16 @@ export const useProductStore = create<ProductState>(() => ({
       slug: requireValue(slug, '请输入本地扩展标识。'),
       description,
     })
+    if (
+      !isRecord(result) ||
+      typeof result['extensionId'] !== 'string' ||
+      !result['extensionId'].trim() ||
+      typeof result['revisionId'] !== 'string' ||
+      !result['revisionId'].trim()
+    ) {
+      throw new ProductActionError('invalid-input', '扩展保存结果缺少扩展或版本标识。')
+    }
+    return { extensionId: result['extensionId'], revisionId: result['revisionId'] }
   },
   setExtensionActive: async (id, enabled) => {
     const extensionId = requireValue(id, '缺少本地扩展标识，请刷新页面后重试。')

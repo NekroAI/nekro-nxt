@@ -158,7 +158,7 @@ Adapter 是 Extension 提供的接入贡献；Connection 是登录账号；Chann
 
 ![创造工作台 V2](../assets/product-concepts/creator-workbench-v2.png)
 
-需求在已授权智能体的频道里描述。创造页按 Episode 展示正在运行的 Plugin 与 Package 历史、Client 预览审批和“保存为本地扩展”。动态 Client 与保存后的 Client 使用同一组 NekroNxt 产品 Slot 和合成 Props；DSH 官方 WebUI Slot 不进入产品能力面。系统不为创造另建智能体。保存不自动启用；启用在扩展页完成。
+需求在已授权智能体的频道里描述。创造页按 Episode 展示正在运行的 Plugin 与 Package 历史、Client 预览审批和“保存为本地扩展”。保存请求携带当前 Episode、Plugin 和 Package 的精确归属，成功后直接进入新扩展详情并保持该扩展选中。动态 Client 与保存后的 Client 使用同一组 NekroNxt 产品 Slot 和合成 Props；DSH 官方 WebUI Slot 不进入产品能力面。系统不为创造另建智能体。保存不自动启用；启用在扩展页完成。
 
 ### 4.7 本地扩展详情：统一体系、按智能体独立激活
 
