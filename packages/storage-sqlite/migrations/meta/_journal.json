@@ -29,6 +29,13 @@
       "when": 1787306433814,
       "tag": "0003_dsh_session_storage_reason",
       "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "6",
+      "when": 1787310477649,
+      "tag": "0004_extension_revision_verifications",
+      "breakpoints": true
     }
   ]
 }

@@ -12,7 +12,7 @@ import { build, type Plugin } from 'esbuild'
 import { z } from 'zod'
 import type { ExtensionBuildArtifact } from './types.js'
 
-const BUILDER_VERSION = 'nekro-nxt-esbuild-v1'
+const BUILDER_VERSION = 'nekro-nxt-esbuild-v2'
 
 const getNodeErrorCode = (error: unknown): string | undefined => {
   if (!(error instanceof Error) || !('code' in error) || typeof error.code !== 'string') return undefined
@@ -37,13 +37,34 @@ const extensionEntrypointsSchema = z.union([
   z.object({ client: z.literal('source/client.ts') }).strict(),
 ])
 
-const extensionManifestSchema = z
+const extensionManifestV1Schema = z
   .object({
     extensionId: ExtensionIdSchema,
     revisionId: ExtensionRevisionIdSchema,
     entrypoints: extensionEntrypointsSchema,
   })
   .strict()
+
+const extensionManifestSchema = z.union([
+  extensionManifestV1Schema,
+  extensionManifestV1Schema
+    .extend({
+      schemaVersion: z.literal(2),
+      contributions: z.array(
+        z.discriminatedUnion('kind', [
+          z.object({ kind: z.literal('tool'), name: z.string(), description: z.string() }).strict(),
+          z.object({ kind: z.literal('rpc'), method: z.string() }).strict(),
+          z
+            .object({
+              kind: z.literal('client-slot'),
+              name: z.enum(['agent.workbench.sections', 'extension.details.panels']),
+            })
+            .strict(),
+        ]),
+      ),
+    })
+    .strict(),
+])
 
 const importPolicy: Plugin = {
   name: 'nekro-nxt-extension-import-policy',

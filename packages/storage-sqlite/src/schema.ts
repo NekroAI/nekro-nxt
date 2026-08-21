@@ -20,6 +20,7 @@ import type {
   PlatformIdentityId,
 } from '@nekro-nxt/contracts'
 import type { AgentCapabilityGrants } from '@nekro-nxt/core'
+import type { ExtensionRevisionVerification } from '@nekro-nxt/extension-runtime'
 import { sql } from 'drizzle-orm'
 import { check, foreignKey, index, integer, primaryKey, sqliteTable, text, uniqueIndex } from 'drizzle-orm/sqlite-core'
 
@@ -513,6 +514,15 @@ export const extensionRevisions = sqliteTable(
   ],
 )
 
+export const extensionRevisionVerifications = sqliteTable('extension_revision_verifications', {
+  revisionId: text('revision_id')
+    .$type<ExtensionRevisionId>()
+    .primaryKey()
+    .references(() => extensionRevisions.id, { onDelete: 'cascade' }),
+  verifiedAt: integer('verified_at').notNull(),
+  evidence: jsonText<ExtensionRevisionVerification>('evidence').notNull(),
+})
+
 export const agentActivations = sqliteTable(
   'agent_activations',
   {
@@ -573,6 +583,7 @@ export const coreSchema = {
   assetChannelGrants,
   localExtensions,
   extensionRevisions,
+  extensionRevisionVerifications,
   agentActivations,
   workTreeOrder,
 } as const

@@ -24,6 +24,20 @@ const inputSchema = z
           .string()
           .max(1024 * 1024)
           .optional(),
+        contributions: z
+          .array(
+            z.discriminatedUnion('kind', [
+              z.object({ kind: z.literal('tool'), name: z.string(), description: z.string() }).strict(),
+              z.object({ kind: z.literal('rpc'), method: z.string() }).strict(),
+              z
+                .object({
+                  kind: z.literal('client-slot'),
+                  name: z.enum(['agent.workbench.sections', 'extension.details.panels']),
+                })
+                .strict(),
+            ]),
+          )
+          .default([]),
       })
       .strict()
       .refine(({ hostCode, clientCode }) => hostCode !== undefined || clientCode !== undefined, {
@@ -48,9 +62,11 @@ const extensionEntrypointsSchema = z.union([
 
 const extensionManifestSchema = z
   .object({
+    schemaVersion: z.literal(2),
     extensionId: ExtensionIdSchema,
     revisionId: ExtensionRevisionIdSchema,
     entrypoints: extensionEntrypointsSchema,
+    contributions: inputSchema.shape.snapshot.shape.contributions,
   })
   .strict()
 
@@ -97,12 +113,14 @@ export function materializeDynamicPackage(input: {
     ...(parsed.snapshot.clientCode === undefined ? {} : { client: wrapClient(parsed.snapshot.clientCode) }),
   })
   const manifest = extensionManifestSchema.parse({
+    schemaVersion: 2,
     extensionId: input.extensionId,
     revisionId: input.revisionId,
     entrypoints: {
       ...('host' in sources ? { host: 'source/host.ts' } : {}),
       ...('client' in sources ? { client: 'source/client.ts' } : {}),
     },
+    contributions: parsed.snapshot.contributions,
   })
   const digestInput = canonicalJson(JsonValueSchema.parse(digestInputSchema.parse({ manifest, sources })))
   return {

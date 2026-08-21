@@ -23,6 +23,7 @@ import {
   type ExtensionActivationHost,
   type ExtensionBuildArtifact,
   type ExtensionRepository,
+  type ExtensionRevisionVerification,
   type LocalExtension,
   type MountedExtension,
   type Revision,
@@ -40,6 +41,7 @@ const revisionId = (value: string): ExtensionRevisionId => ExtensionRevisionIdSc
 
 const manifestRevisionSchema = z
   .object({
+    schemaVersion: z.literal(2),
     extensionId: ExtensionIdSchema,
     revisionId: ExtensionRevisionIdSchema,
     entrypoints: z
@@ -47,6 +49,7 @@ const manifestRevisionSchema = z
       .strict()
       .or(z.object({ host: z.literal('source/host.ts') }).strict())
       .or(z.object({ client: z.literal('source/client.ts') }).strict()),
+    contributions: z.array(z.unknown()),
   })
   .strict()
 const buildCacheSchema = z
@@ -61,6 +64,7 @@ const buildCacheSchema = z
 class MemoryExtensionRepository implements ExtensionRepository {
   readonly extensions = new Map<ExtensionId, LocalExtension>()
   readonly revisions = new Map<ExtensionRevisionId, Revision>()
+  readonly verifications = new Map<ExtensionRevisionId, ExtensionRevisionVerification>()
   readonly activations = new Map<string, Activation>()
   beforeSave?: (input: { readonly extension: LocalExtension; readonly revision: Revision }) => void
   failActivationUpsert = false
@@ -95,11 +99,20 @@ class MemoryExtensionRepository implements ExtensionRepository {
     )
   }
 
-  saveExtensionRevision(input: { readonly extension: LocalExtension; readonly revision: Revision }): void {
+  saveExtensionRevision(input: {
+    readonly extension: LocalExtension
+    readonly revision: Revision
+    readonly verification?: ExtensionRevisionVerification
+  }): void {
     this.beforeSave?.(input)
     if (this.revisions.has(input.revision.id)) throw new Error('Revision already exists.')
     this.extensions.set(input.extension.id, input.extension)
     this.revisions.set(input.revision.id, input.revision)
+    if (input.verification) this.verifications.set(input.revision.id, input.verification)
+  }
+
+  getExtensionRevisionVerification(id: ExtensionRevisionId): ExtensionRevisionVerification | undefined {
+    return this.verifications.get(id)
   }
 
   getActivation(agent: AgentId, extension: ExtensionId): Activation | undefined {
@@ -257,9 +270,11 @@ describe('Extension save', () => {
     const sourceDirectory = service.revisionSourceDirectory(saved.revision)
     expect(manifest.revisionId).toBe(saved.revision.id)
     expect(manifest).toEqual({
+      schemaVersion: 2,
       extensionId: saved.extension.id,
       revisionId: saved.revision.id,
       entrypoints: { host: 'source/host.ts' },
+      contributions: [],
     })
     expect(existsSync(path.join(sourceDirectory, 'source-input.json'))).toBe(false)
     expect((await readdir(sourceDirectory)).sort()).toEqual(['content.sha256', 'manifest.json', 'source'])
@@ -716,9 +731,11 @@ describe('Extension materialization and build policy', () => {
     expect(first.contentDigest).toBe(second.contentDigest)
     expect(first.sources.host).toContain("from '@nekro-nxt/extension-sdk'")
     expect(first.manifest).toEqual({
+      schemaVersion: 2,
       extensionId: extensionId('test'),
       revisionId: revisionId('test'),
       entrypoints: { host: 'source/host.ts' },
+      contributions: [],
     })
     expect(first).not.toHaveProperty('sourceInput')
   })

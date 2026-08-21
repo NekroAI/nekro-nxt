@@ -38,6 +38,7 @@ type CordisDynamicPackageIdType = ReturnType<typeof CordisDynamicPackageId>
 type CordisDynamicPluginIdType = ReturnType<typeof CordisDynamicPluginId>
 type ApprovalRequestIdType = ReturnType<typeof ApprovalRequestId>
 import {
+  CallId,
   createUserMessage,
   freezeMessage,
   MessageId,
@@ -741,6 +742,13 @@ const normalizeDynamicFailure = (phase: string, message: string): string =>
 /** DSH public Runner with NekroNxt's per-Episode authoring budget. */
 class NekroNxtDynamicCordisRunner extends DynamicCordisRunnerService {
   private state: DynamicAuthoringPolicyState | undefined
+  private readonly runtimeContext: Context
+  private readonly toolNamesByPackage = new Map<string, readonly string[]>()
+
+  constructor(context: Context, config: { readonly vmTimeoutMs?: number }) {
+    super(context, config)
+    this.runtimeContext = context
+  }
 
   bindEpisode(episodeId: EpisodeId): void {
     if (this.state && this.state.episodeId !== episodeId) throw new Error('Dynamic Runner crossed Episode ownership.')
@@ -794,8 +802,20 @@ class NekroNxtDynamicCordisRunner extends DynamicCordisRunnerService {
     signal?: AbortSignal,
   ): Promise<DynamicCordisRunResponse> {
     this.assertWritable('run')
+    const tools = this.runtimeContext.get('tools')
+    const before =
+      tools instanceof ToolRuntime ? new Set(tools.schemas(scopeOf(agent.ctx)).map(({ name }) => name)) : new Set()
     const result = await super.run(agent, pluginId, packageId, mode, signal)
     if (result.ok && result.status === 'running') {
+      if (tools instanceof ToolRuntime) {
+        this.toolNamesByPackage.set(
+          packageId,
+          tools
+            .schemas(scopeOf(agent.ctx))
+            .map(({ name }) => name)
+            .filter((name) => !before.has(name)),
+        )
+      }
       const privateServices = result.waitingFor.filter((service) => EXTENSION_PRIVATE_SERVICE_KEY_SET.has(service))
       if (privateServices.length > 0) {
         this.recordFailure(
@@ -807,6 +827,24 @@ class NekroNxtDynamicCordisRunner extends DynamicCordisRunnerService {
       }
     } else if (!result.ok) this.recordFailure(result.reason, result.message)
     return result
+  }
+
+  verificationSnapshot(
+    agent: Agent,
+    pluginId: string,
+    packageId: string,
+  ): {
+    readonly pluginRunId: string
+    readonly toolNames: readonly string[]
+    readonly rpcMethods: readonly string[]
+  } {
+    const row = this.snapshot(agent).find((candidate) => candidate.pluginId === pluginId)
+    if (row?.activeRun?.packageId !== packageId) throw new Error('Dynamic Package is not the active verified Run.')
+    return {
+      pluginRunId: row.activeRun.pluginRunId,
+      toolNames: this.toolNamesByPackage.get(packageId) ?? [],
+      rpcMethods: row.activeRun.handlers,
+    }
   }
 
   override async runHostHalf(
@@ -2597,6 +2635,47 @@ export class DshHostRuntime implements AgentSessionDriver, ExtensionActivationHo
     return runner.inspectPackage(agent, CordisDynamicPluginId(pluginId), CordisDynamicPackageId(packageId))
   }
 
+  async verifyDynamicPackage(dshSessionId: string, pluginId: string, packageId: string) {
+    const { agent, runner } = this.#dynamicRuntime(dshSessionId)
+    const evidence = runner.verificationSnapshot(agent, pluginId, packageId)
+    const visibleTools = this.#context.tools.schemas(scopeOf(agent.ctx))
+    const toolInvocations = [] as Array<{ readonly name: string; readonly succeeded: boolean }>
+    const contributions = [] as Array<
+      | { readonly kind: 'tool'; readonly name: string; readonly description: string }
+      | { readonly kind: 'rpc'; readonly method: string }
+    >
+    for (const name of evidence.toolNames) {
+      const schema = visibleTools.find((candidate) => candidate.name === name)
+      if (!schema) throw new Error(`Dynamic Tool disappeared before verification: ${name}`)
+      const result = await this.#context.tools.execute({
+        callId: CallId(`verify-${packageId}-${name}`),
+        name,
+        arguments: {},
+        agent,
+        signal: new AbortController().signal,
+      })
+      if (result.isError)
+        throw new Error(`Dynamic Tool synthetic verification failed: ${name}: ${result.error.message}`)
+      if (JSON.stringify(result.value).length > 16 * 1024)
+        throw new Error(`Dynamic Tool verification exceeded 16 KiB: ${name}`)
+      toolInvocations.push({ name, succeeded: true })
+      contributions.push({ kind: 'tool', name, description: schema.description })
+    }
+    for (const method of evidence.rpcMethods) {
+      const result = await runner.invoke(
+        CordisDynamicPluginId(pluginId),
+        CordisDynamicPluginRunId(evidence.pluginRunId),
+        method,
+        null,
+      )
+      if (!result.ok) throw new Error(`Dynamic RPC synthetic verification failed: ${method}: ${result.message}`)
+      if (JSON.stringify(result.value).length > 16 * 1024)
+        throw new Error(`Dynamic RPC verification exceeded 16 KiB: ${method}`)
+      contributions.push({ kind: 'rpc', method })
+    }
+    return { ...evidence, contributions, toolInvocations }
+  }
+
   dynamicInventory(dshSessionId: string): readonly DynamicCordisInventoryRow[] {
     const { agent, runner } = this.#dynamicRuntime(dshSessionId)
     return runner.inventory().filter(({ agentId }) => agentId === agent.id)
@@ -2884,8 +2963,10 @@ export class DshHostRuntime implements AgentSessionDriver, ExtensionActivationHo
             // Dynamic source cannot preserve DSH's const-generic input type; validate it at the Host boundary.
             defineTool: <Args extends Record<string, ExtensionJsonValue>, Output extends ExtensionJsonValue>(
               options: ExtensionToolDefinition<Args, Output>,
-            ): ExtensionToolDefinition<Args, Output> =>
-              defineDshToolFromUnknown(options) as unknown as ExtensionToolDefinition<Args, Output>,
+            ): ExtensionToolDefinition<Args, Output> => {
+              const definition = defineDshToolFromUnknown(options)
+              return Object.assign(options, definition)
+            },
             registerTool: (context: ExtensionHostContext, tool: ExtensionToolDefinition) =>
               context.tools.register(tool),
             handle: (

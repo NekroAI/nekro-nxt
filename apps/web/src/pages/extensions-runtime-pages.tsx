@@ -129,6 +129,26 @@ export function ExtensionsPage() {
                 <p className={styles.secondaryText}>当前快照尚未提供可展示的贡献内容。</p>
               )}
             </div>
+            <div className={styles.sectionDivider} />
+            <div>
+              <div className={styles.sectionHeading}>验证证据</div>
+              {selected.verification ? (
+                <dl className={styles.facts}>
+                  <dt>契约</dt>
+                  <dd>{selected.verification.contractVersion}</dd>
+                  <dt>核心引擎</dt>
+                  <dd>{selected.verification.dshVersion}</dd>
+                  <dt>Host 构建</dt>
+                  <dd>{selected.verification.hostBuilt ? '已通过' : '不适用'}</dd>
+                  <dt>Client 构建</dt>
+                  <dd>{selected.verification.clientBuilt ? '已通过' : '不适用'}</dd>
+                  <dt>工具调用</dt>
+                  <dd>{selected.verification.toolInvocationCount} 次成功</dd>
+                </dl>
+              ) : (
+                <p className={styles.secondaryText}>这个旧版本没有持久验证记录。</p>
+              )}
+            </div>
             <div className={styles.sectionActionRow}>
               <span>
                 <strong>

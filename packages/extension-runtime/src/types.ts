@@ -32,15 +32,49 @@ export interface DynamicPackageSnapshot {
   readonly purpose: string
   readonly hostCode?: string
   readonly clientCode?: string
+  readonly contributions?: readonly ExtensionContribution[]
 }
 
-export interface ExtensionManifest {
+export type ExtensionContribution =
+  | { readonly kind: 'tool'; readonly name: string; readonly description: string }
+  | { readonly kind: 'rpc'; readonly method: string }
+  | {
+      readonly kind: 'client-slot'
+      readonly name: 'agent.workbench.sections' | 'extension.details.panels'
+    }
+
+export interface ExtensionManifestV1 {
   readonly extensionId: ExtensionId
   readonly revisionId: ExtensionRevisionId
   readonly entrypoints:
     | { readonly host: 'source/host.ts'; readonly client: 'source/client.ts' }
     | { readonly host: 'source/host.ts' }
     | { readonly client: 'source/client.ts' }
+}
+
+export interface ExtensionManifestV2 extends ExtensionManifestV1 {
+  readonly schemaVersion: 2
+  readonly contributions: readonly ExtensionContribution[]
+}
+
+export type ExtensionManifest = ExtensionManifestV1 | ExtensionManifestV2
+
+export interface ExtensionRevisionVerification {
+  readonly revisionId: ExtensionRevisionId
+  readonly dshVersion: '0.1.1-rc.1'
+  readonly contractVersion: 'nekro-nxt-extension-v1'
+  readonly origin: {
+    readonly episodeId: string
+    readonly pluginId: string
+    readonly packageId: string
+    readonly pluginRunId: string
+  }
+  readonly verifiedAt: number
+  readonly hostBuild: { readonly built: boolean; readonly buildKey: string }
+  readonly clientBuild: { readonly built: boolean; readonly buildKey: string }
+  readonly toolInvocations: readonly { readonly name: string; readonly succeeded: boolean }[]
+  readonly rpcMethods: readonly string[]
+  readonly renderedSlots: readonly ('agent.workbench.sections' | 'extension.details.panels')[]
 }
 
 export interface MaterializedExtensionRevision {
@@ -66,7 +100,12 @@ export interface ExtensionRepository {
   nextExtensionRevisionNumber(extensionId: ExtensionId): number
 
   /** Atomically inserts a new immutable Revision and its LocalExtension when it is new. */
-  saveExtensionRevision(input: { readonly extension: LocalExtension; readonly revision: Revision }): void
+  saveExtensionRevision(input: {
+    readonly extension: LocalExtension
+    readonly revision: Revision
+    readonly verification?: ExtensionRevisionVerification
+  }): void
+  getExtensionRevisionVerification(revisionId: ExtensionRevisionId): ExtensionRevisionVerification | undefined
 
   getActivation(agentId: AgentId, extensionId: ExtensionId): Activation | undefined
   listActivations(agentId?: AgentId): readonly Activation[]

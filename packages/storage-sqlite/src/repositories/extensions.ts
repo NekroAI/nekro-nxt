@@ -1,8 +1,20 @@
 import { and, asc, eq } from 'drizzle-orm'
-import type { AgentId, ExtensionId, ExtensionRevisionId } from '@nekro-nxt/contracts'
-import type { Activation, ExtensionRepository, LocalExtension, Revision } from '@nekro-nxt/extension-runtime'
+import {
+  ExtensionRevisionIdSchema,
+  type AgentId,
+  type ExtensionId,
+  type ExtensionRevisionId,
+} from '@nekro-nxt/contracts'
+import type {
+  Activation,
+  ExtensionRepository,
+  ExtensionRevisionVerification,
+  LocalExtension,
+  Revision,
+} from '@nekro-nxt/extension-runtime'
+import { z } from 'zod'
 import type { DrizzleCoreDatabase } from '../database.js'
-import { agentActivations, extensionRevisions, localExtensions } from '../schema.js'
+import { agentActivations, extensionRevisions, extensionRevisionVerifications, localExtensions } from '../schema.js'
 import { AgentActivationRowSchema, ExtensionRevisionRowSchema, LocalExtensionRowSchema } from '../row-schemas.js'
 
 const toExtension = (input: typeof localExtensions.$inferSelect): LocalExtension => {
@@ -38,6 +50,19 @@ const toActivation = (input: typeof agentActivations.$inferSelect): Activation =
     activatedAt: row.activatedAt,
   }
 }
+
+const ExtensionRevisionVerificationSchema = z.object({
+  revisionId: ExtensionRevisionIdSchema,
+  dshVersion: z.literal('0.1.1-rc.1'),
+  contractVersion: z.literal('nekro-nxt-extension-v1'),
+  origin: z.object({ episodeId: z.string(), pluginId: z.string(), packageId: z.string(), pluginRunId: z.string() }),
+  verifiedAt: z.number().int().nonnegative(),
+  hostBuild: z.object({ built: z.boolean(), buildKey: z.string() }),
+  clientBuild: z.object({ built: z.boolean(), buildKey: z.string() }),
+  toolInvocations: z.array(z.object({ name: z.string(), succeeded: z.boolean() })),
+  rpcMethods: z.array(z.string()),
+  renderedSlots: z.array(z.enum(['agent.workbench.sections', 'extension.details.panels'])),
+})
 
 export function createExtensionsRepository(database: DrizzleCoreDatabase): ExtensionRepository {
   return {
@@ -77,14 +102,27 @@ export function createExtensionsRepository(database: DrizzleCoreDatabase): Exten
         .all()
       return (rows.at(-1)?.revisionNumber ?? 0) + 1
     },
-    saveExtensionRevision({ extension, revision }): void {
+    saveExtensionRevision({ extension, revision, verification }): void {
       database.transaction(
         (tx) => {
           tx.insert(localExtensions).values(extension).onConflictDoNothing({ target: localExtensions.id }).run()
           tx.insert(extensionRevisions).values(revision).run()
+          if (verification) {
+            tx.insert(extensionRevisionVerifications)
+              .values({ revisionId: revision.id, verifiedAt: verification.verifiedAt, evidence: verification })
+              .run()
+          }
         },
         { behavior: 'immediate' },
       )
+    },
+    getExtensionRevisionVerification(revisionId): ExtensionRevisionVerification | undefined {
+      const row = database
+        .select()
+        .from(extensionRevisionVerifications)
+        .where(eq(extensionRevisionVerifications.revisionId, revisionId))
+        .get()
+      return row === undefined ? undefined : ExtensionRevisionVerificationSchema.parse(row.evidence)
     },
     getActivation(agentId: AgentId, extensionId: ExtensionId): Activation | undefined {
       const row = database

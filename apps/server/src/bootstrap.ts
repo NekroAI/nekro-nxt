@@ -268,11 +268,16 @@ export class NekroRuntime {
       settled.current = channels
 
       const sourceStore = new ExtensionSourceStore(options.extensionDataRoot)
-      const extensionService = new ExtensionService(repository, sourceStore, { now, nextUlid })
+      const extensionBuilder = new ExtensionBuilder(options.extensionCacheRoot)
+      const extensionService = new ExtensionService(repository, sourceStore, {
+        now,
+        nextUlid,
+        builder: extensionBuilder,
+      })
       const activation = new ExtensionActivationCoordinator(
         repository,
         extensionService,
-        new ExtensionBuilder(options.extensionCacheRoot),
+        extensionBuilder,
         new ChannelExtensionActivationHost(channels, host),
         { now },
       )

@@ -41,6 +41,7 @@ import {
   episodeHandoffs,
   episodes,
   extensionRevisions,
+  extensionRevisionVerifications,
   localExtensions,
   outboundIntents,
   physicalDeliveries,
@@ -152,6 +153,10 @@ export const ExtensionRevisionRowSchema = createSelectSchema(extensionRevisions,
   id: ExtensionRevisionIdSchema,
   extensionId: ExtensionIdSchema,
 })
+export const ExtensionRevisionVerificationRowSchema = createSelectSchema(extensionRevisionVerifications, {
+  revisionId: ExtensionRevisionIdSchema,
+  evidence: JsonValueSchema,
+})
 export const AgentActivationRowSchema = createSelectSchema(agentActivations, {
   agentId: AgentIdSchema,
   extensionId: ExtensionIdSchema,
@@ -182,5 +187,6 @@ export const CoreRowSchemas = {
   assetChannelGrants: AssetChannelGrantRowSchema,
   localExtensions: LocalExtensionRowSchema,
   extensionRevisions: ExtensionRevisionRowSchema,
+  extensionRevisionVerifications: ExtensionRevisionVerificationRowSchema,
   agentActivations: AgentActivationRowSchema,
 } as const

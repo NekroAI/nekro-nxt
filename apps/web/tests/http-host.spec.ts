@@ -198,7 +198,7 @@ const snapshotBodyWithExtension = () =>
         displayName: '频道摘要',
         description: '生成结构化阶段摘要。',
         createdByAgentId: webAgentId,
-        revisions: [{ id: summaryRevisionId, revisionNumber: 1, createdAt: 1_700_000_000_000 }],
+        revisions: [{ id: summaryRevisionId, revisionNumber: 1, createdAt: 1_700_000_000_000, contributions: [] }],
         activations: [
           { agentId: webAgentId, extensionRevisionId: summaryRevisionId, config: {}, activatedAt: 1_700_000_000_000 },
         ],

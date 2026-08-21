@@ -222,11 +222,36 @@ const projectExtensions = (runtime: NekroRuntime) => {
     displayName: extension.displayName,
     description: extension.description,
     ...(extension.createdByAgentId === undefined ? {} : { createdByAgentId: extension.createdByAgentId }),
-    revisions: runtime.repository.listExtensionRevisions(extension.id).map((revision) => ({
-      id: revision.id,
-      revisionNumber: revision.revisionNumber,
-      createdAt: revision.createdAt,
-    })),
+    revisions: runtime.repository.listExtensionRevisions(extension.id).map((revision) => {
+      const verification = runtime.repository.getExtensionRevisionVerification(revision.id)
+      return {
+        id: revision.id,
+        revisionNumber: revision.revisionNumber,
+        createdAt: revision.createdAt,
+        contributions:
+          verification === undefined
+            ? []
+            : [
+                ...verification.toolInvocations.map(({ name }) => `工具：${name}`),
+                ...verification.rpcMethods.map((method) => `RPC：${method}`),
+                ...verification.renderedSlots.map((slot) => `界面：${slot}`),
+              ],
+        ...(verification === undefined
+          ? {}
+          : {
+              verification: {
+                verifiedAt: verification.verifiedAt,
+                dshVersion: verification.dshVersion,
+                contractVersion: verification.contractVersion,
+                hostBuilt: verification.hostBuild.built,
+                clientBuilt: verification.clientBuild.built,
+                toolInvocationCount: verification.toolInvocations.length,
+                rpcMethods: verification.rpcMethods,
+                renderedSlots: verification.renderedSlots,
+              },
+            }),
+      }
+    }),
     activations: activations
       .filter((activation) => activation.extensionId === extension.id)
       .map((activation) => ({
@@ -359,17 +384,32 @@ const saveActiveDynamicPackage = async (
     throw new Error('只能保存当前已真实运行成功、且没有审批或版本切换中的精确 Package。')
   }
   const inspection = runtime.host.inspectDynamicPackage(episode.dshSessionId, input.pluginId, input.packageId)
+  const verified = await runtime.host.verifyDynamicPackage(episode.dshSessionId, input.pluginId, input.packageId)
   return runtime.extensionService.saveDynamicPackage({
     snapshot: {
       name: inspection.name,
       purpose: inspection.purpose,
       ...(inspection.code.host === undefined ? {} : { hostCode: inspection.code.host }),
       ...(inspection.code.client === undefined ? {} : { clientCode: inspection.code.client }),
+      contributions: verified.contributions,
     },
     slug: input.slug,
     displayName: input.displayName,
     description: input.description,
     createdByAgentId: input.agentId,
+    verification: {
+      dshVersion: '0.1.1-rc.1',
+      contractVersion: 'nekro-nxt-extension-v1',
+      origin: {
+        episodeId: input.episodeId,
+        pluginId: input.pluginId,
+        packageId: input.packageId,
+        pluginRunId: verified.pluginRunId,
+      },
+      toolInvocations: verified.toolInvocations,
+      rpcMethods: verified.rpcMethods,
+      renderedSlots: [],
+    },
   })
 }
 

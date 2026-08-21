@@ -2,8 +2,15 @@ import { ExtensionIdSchema, ExtensionRevisionIdSchema, type AgentId, type Extens
 import { monotonicFactory } from 'ulid'
 import { z } from 'zod'
 import { materializeDynamicPackage } from './materializer.js'
+import type { ExtensionBuilder } from './builder.js'
 import type { ExtensionSourceStore } from './source-store.js'
-import type { DynamicPackageSnapshot, ExtensionRepository, LocalExtension, Revision } from './types.js'
+import type {
+  DynamicPackageSnapshot,
+  ExtensionRepository,
+  ExtensionRevisionVerification,
+  LocalExtension,
+  Revision,
+} from './types.js'
 
 const slugSchema = z
   .string()
@@ -20,16 +27,22 @@ export class ExtensionService {
   readonly #sources: ExtensionSourceStore
   readonly #now: () => number
   readonly #nextUlid: () => string
+  readonly #builder: ExtensionBuilder | undefined
 
   constructor(
     repository: ExtensionRepository,
     sources: ExtensionSourceStore,
-    options: { readonly now?: () => number; readonly nextUlid?: () => string } = {},
+    options: {
+      readonly now?: () => number
+      readonly nextUlid?: () => string
+      readonly builder?: ExtensionBuilder
+    } = {},
   ) {
     this.#repository = repository
     this.#sources = sources
     this.#now = options.now ?? Date.now
     this.#nextUlid = options.nextUlid ?? monotonicFactory()
+    this.#builder = options.builder
   }
 
   async saveDynamicPackage(input: {
@@ -39,6 +52,10 @@ export class ExtensionService {
     readonly description: string
     readonly extensionId?: ExtensionId
     readonly createdByAgentId?: AgentId
+    readonly verification?: Omit<
+      ExtensionRevisionVerification,
+      'revisionId' | 'verifiedAt' | 'hostBuild' | 'clientBuild'
+    >
   }): Promise<{ readonly extension: LocalExtension; readonly revision: Revision }> {
     const slug = slugSchema.parse(input.slug)
     const metadata = textSchema.parse({ displayName: input.displayName, description: input.description })
@@ -76,7 +93,33 @@ export class ExtensionService {
     // Filesystem and SQLite cannot share a transaction. Publish the immutable source first so the
     // repository can never expose a Revision whose source directory is only partially written.
     await this.#sources.publish(extensionId, revisionId, materialized)
-    this.#repository.saveExtensionRevision({ extension, revision })
+    const artifact =
+      this.#builder === undefined
+        ? undefined
+        : await this.#builder.build({
+            extensionId,
+            revisionId,
+            contentDigest: revision.contentDigest,
+            sourceDirectory: this.#sources.revisionSourceDirectory(extensionId, revisionId),
+          })
+    if (input.verification && artifact === undefined) {
+      throw new Error('Extension verification requires a configured Builder.')
+    }
+    const verification =
+      input.verification === undefined || artifact === undefined
+        ? undefined
+        : {
+            ...input.verification,
+            revisionId,
+            verifiedAt: now,
+            hostBuild: { built: artifact.hostEntry !== undefined, buildKey: artifact.buildKey },
+            clientBuild: { built: artifact.clientEntry !== undefined, buildKey: artifact.buildKey },
+          }
+    this.#repository.saveExtensionRevision({
+      extension,
+      revision,
+      ...(verification === undefined ? {} : { verification }),
+    })
     return { extension, revision }
   }
 

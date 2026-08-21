@@ -476,7 +476,19 @@ const projectSnapshot = (json: SnapshotJson, successfulAt: number): ProductSnaps
       revision: latestRevision?.revisionNumber ?? 0,
       activation: activation === undefined ? ('未激活' as const) : ('已激活' as const),
       targetAgent,
-      contributions: [],
+      contributions: latestRevision?.contributions ?? [],
+      ...(latestRevision?.verification === undefined
+        ? {}
+        : {
+            verification: {
+              verifiedAt: latestRevision.verification.verifiedAt,
+              dshVersion: latestRevision.verification.dshVersion,
+              contractVersion: latestRevision.verification.contractVersion,
+              hostBuilt: latestRevision.verification.hostBuilt,
+              clientBuilt: latestRevision.verification.clientBuilt,
+              toolInvocationCount: latestRevision.verification.toolInvocationCount,
+            },
+          }),
       ...(latestRevision === undefined ? {} : { revisionId: latestRevision.id }),
       ...(targetAgentId === undefined ? {} : { agentId: targetAgentId }),
     }

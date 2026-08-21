@@ -129,7 +129,7 @@ const appendTextEvent = (
 
 describe('Core SQLite baseline', () => {
   it('accepts better-sqlite3 table_list metadata and migrates a clean 24-table database', async () => {
-    expect(Object.keys(coreSchema)).toHaveLength(24)
+    expect(Object.keys(coreSchema)).toHaveLength(25)
     expect(channelEvents.logicalMessageId.name).toBe('logical_message_id')
     expect('logicalMessageId' in channels).toBe(false)
 

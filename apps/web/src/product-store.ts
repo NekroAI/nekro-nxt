@@ -186,6 +186,14 @@ export interface LocalExtensionSummary {
   readonly activation: '已激活' | '等待安全切换' | '未激活' | '激活失败'
   readonly targetAgent: string
   readonly contributions: readonly string[]
+  readonly verification?: {
+    readonly verifiedAt: number
+    readonly dshVersion: string
+    readonly contractVersion: string
+    readonly hostBuilt: boolean
+    readonly clientBuilt: boolean
+    readonly toolInvocationCount: number
+  }
   /** Saved Revision id + owning intelligent-agent id; not intended for display. */
   readonly revisionId?: string
   readonly agentId?: string

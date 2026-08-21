@@ -379,18 +379,19 @@ describe('DSH Host and Web Channel vertical slice', () => {
         clientSlots: ['agent.workbench.sections', 'extension.details.panels'],
         dshNativeWebUi: false,
       })
-      await expect(host.queryNekroNxtInspect(enabledSession, 'developmentExample')).resolves.toMatchObject({
-        hostTool: expect.stringContaining("name: 'project_status'"),
-        hostRpcAndClientSlot: expect.stringContaining("name: 'agent.workbench.sections'"),
-      })
+      const developmentExample = await host.queryNekroNxtInspect(enabledSession, 'developmentExample')
+      if (typeof developmentExample !== 'object' || developmentExample === null || Array.isArray(developmentExample)) {
+        throw new TypeError('developmentExample must be an object.')
+      }
+      expect(developmentExample['hostTool']).toContain("name: 'project_status'")
+      expect(developmentExample['hostRpcAndClientSlot']).toContain("name: 'agent.workbench.sections'")
       await expect(host.queryNekroNxtInspect(enabledSession, 'extensionLifecycle')).resolves.toMatchObject({
         dynamicRun: { lifetime: 'current-dsh-session' },
         save: { createsImmutableSourceRevision: true, activatesAutomatically: false },
       })
-      await expect(host.loadNekroNxtExtensionSkill(enabledSession)).resolves.toMatchObject({
-        provider: 'nekro-nxt-runtime',
-        content: expect.stringContaining('宿主是 NekroNxt'),
-      })
+      const extensionSkill = await host.loadNekroNxtExtensionSkill(enabledSession)
+      expect(extensionSkill.provider).toBe('nekro-nxt-runtime')
+      expect(extensionSkill.content).toContain('宿主是 NekroNxt')
       await expect(host.loadNekroNxtExtensionSkill(deniedSession)).rejects.toThrow('not granted')
 
       const privateServiceProbe = host.defineDynamicPackage(enabledSession, {
@@ -439,11 +440,12 @@ describe('DSH Host and Web Channel vertical slice', () => {
       await expect(
         host.runDynamicPackage(enabledSession, repeatedPrivateProbe.pluginId, repeatedPrivateProbe.packageId, 'update'),
       ).resolves.toMatchObject({ ok: false, reason: 'host-half-failed' })
-      expect(host.dynamicAuthoringPolicy(enabledSession)).toMatchObject({
+      const blockedPolicy = host.dynamicAuthoringPolicy(enabledSession)
+      expect(blockedPolicy).toMatchObject({
         consecutiveFailures: 2,
         repeatedFingerprintCount: 2,
-        blockedReason: expect.stringContaining('相同动态扩展错误'),
       })
+      expect(blockedPolicy.blockedReason).toContain('相同动态扩展错误')
       expect(() =>
         host.defineDynamicPackage(enabledSession, {
           plugin: { kind: 'existing', pluginId: privateServiceProbe.pluginId },

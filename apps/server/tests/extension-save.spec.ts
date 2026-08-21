@@ -146,6 +146,18 @@ describe('NekroNxt domain API — save a running dynamic Package as a local Exte
         id: saved.revisionId,
         extensionId: saved.extensionId,
       })
+      expect(runtime.repository.getExtensionRevisionVerification(saved.revisionId)).toMatchObject({
+        dshVersion: '0.1.1-rc.1',
+        contractVersion: 'nekro-nxt-extension-v1',
+        origin: {
+          episodeId: episode!.id,
+          pluginId: defined.pluginId,
+          packageId: defined.packageId,
+        },
+        hostBuild: { built: true },
+        clientBuild: { built: false },
+        toolInvocations: [{ name: 'saved_probe', succeeded: true }],
+      })
       expect(runtime.repository.listActivations(entity.agentId)).toEqual([])
 
       // Saving does not stop or replace the running creator-workbench Package.

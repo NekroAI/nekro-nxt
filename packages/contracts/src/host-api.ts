@@ -409,6 +409,20 @@ export const HostSnapshotSchema = z
                 id: ExtensionRevisionIdSchema,
                 revisionNumber: z.number().int().positive(),
                 createdAt: z.number().int().safe().nonnegative(),
+                contributions: z.array(z.string()),
+                verification: z
+                  .object({
+                    verifiedAt: z.number().int().nonnegative(),
+                    dshVersion: z.string(),
+                    contractVersion: z.string(),
+                    hostBuilt: z.boolean(),
+                    clientBuilt: z.boolean(),
+                    toolInvocationCount: z.number().int().nonnegative(),
+                    rpcMethods: z.array(z.string()),
+                    renderedSlots: z.array(z.string()),
+                  })
+                  .strict()
+                  .optional(),
               })
               .strict(),
           ),

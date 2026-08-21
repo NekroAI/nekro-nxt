@@ -187,7 +187,24 @@ const browserSnapshot = HostApiContracts.snapshot.response.parse({
       displayName: '文档复核',
       description: '检查文档中的遗漏',
       createdByAgentId: browserAgentId,
-      revisions: [{ id: browserExtensionRevisionId, revisionNumber: 3, createdAt: 1_725_000_000_000 }],
+      revisions: [
+        {
+          id: browserExtensionRevisionId,
+          revisionNumber: 3,
+          createdAt: 1_725_000_000_000,
+          contributions: ['工具：document_review'],
+          verification: {
+            verifiedAt: 1_725_000_000_000,
+            dshVersion: '0.1.1-rc.1',
+            contractVersion: 'nekro-nxt-extension-v1',
+            hostBuilt: true,
+            clientBuilt: false,
+            toolInvocationCount: 1,
+            rpcMethods: [],
+            renderedSlots: [],
+          },
+        },
+      ],
       activations: [
         {
           agentId: browserAgentId,
