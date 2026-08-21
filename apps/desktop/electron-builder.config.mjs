@@ -30,7 +30,7 @@ const config = {
     notarize: false,
     // server-runtime 同时携带 darwin-x64/arm64 N-API prebuild，并在运行时按
     // process.arch 选择；它们不应由 Universal 合并器再次执行 lipo。
-    x64ArchFiles: 'Contents/Resources/server-runtime/**',
+    x64ArchFiles: 'Contents/Resources/server-runtime/node_modules/.pnpm/**',
     artifactName: `${distribution.artifactSlug}-mac-universal-v\${version}.\${ext}`,
     target: [{ target: 'dmg', arch: ['universal'] }],
   },
