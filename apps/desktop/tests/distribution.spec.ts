@@ -14,12 +14,12 @@ describe('Desktop product distribution', () => {
     const stable = getDesktopDistribution('stable')
     const preview = getDesktopDistribution('preview')
     expect(stable).toMatchObject({
-      appId: 'ai.nekro.nekronxt',
+      appId: 'ai.nekro.nxt',
       appUserDataName: 'NekroNxt',
       productName: 'NekroNxt',
     })
     expect(preview).toMatchObject({
-      appId: 'ai.nekro.nekronxt.preview',
+      appId: 'ai.nekro.nxt.preview',
       appUserDataName: 'NekroNxt Preview',
       productName: 'NekroNxt Preview',
     })
