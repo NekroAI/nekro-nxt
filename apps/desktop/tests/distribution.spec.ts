@@ -1,3 +1,6 @@
+import { readFileSync } from 'node:fs'
+import { createRequire } from 'node:module'
+import path from 'node:path'
 import { describe, expect, it } from 'vitest'
 import {
   desktopDataRoot,
@@ -10,6 +13,20 @@ import {
 } from '../src/distribution.ts'
 
 describe('Desktop product distribution', () => {
+  it('uses a memory-safe NSIS per-user installation path lookup', () => {
+    const require = createRequire(import.meta.url)
+    const electronBuilderPackagePath = require.resolve('electron-builder/package.json')
+    const electronBuilderRequire = createRequire(electronBuilderPackagePath)
+    const appBuilderLibPackagePath = electronBuilderRequire.resolve('app-builder-lib/package.json')
+    const multiUserTemplate = readFileSync(
+      path.join(path.dirname(appBuilderLibPackagePath), 'templates/nsis/multiUser.nsh'),
+      'utf8',
+    )
+
+    expect(multiUserTemplate).toContain('KERNEL32::lstrcpynW')
+    expect(multiUserTemplate).not.toContain('*$2(&w${NSIS_MAX_STRLEN} .s)')
+  })
+
   it('keeps one stable product identity and one data root outside the installation', () => {
     const stable = getDesktopDistribution('stable')
     const preview = getDesktopDistribution('preview')
