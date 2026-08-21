@@ -74,7 +74,7 @@ type QQResolvedOpenClawConfig = z.output<typeof QQOpenClawConfigSchema>
 export const QQ_OPENCLAW_CONNECTION_DEFINITION = defineAdapterConnection({
   key: QQ_OPENCLAW_ADAPTER_KEY,
   displayName: 'QQ 官方机器人',
-  description: '连接 QQ 官方机器人账号，接收群聊与私聊消息，并按平台能力发送内容。',
+  description: '连接 QQ 官方机器人账号，支持收发群聊消息',
   userCreatable: true,
   configurationSchema: QQOpenClawConnectionConfigurationSchema,
   credentialsSchema: QQOpenClawCredentialsSchema,
@@ -194,6 +194,28 @@ export interface QQNormalizedInboundMessage {
   readonly senderOpenId: string
   readonly senderDisplayName?: string
   readonly content?: string
+  readonly rich?: {
+    readonly kind: string
+    readonly summary: string
+    readonly title?: string
+    readonly source?: string
+    readonly previewUrl?: string
+    readonly items?: readonly {
+      readonly sender?: string
+      readonly text?: string
+      readonly card?: {
+        readonly kind: string
+        readonly summary: string
+        readonly title?: string
+        readonly source?: string
+        readonly previewUrl?: string
+      }
+      readonly attachmentUrl?: string
+      readonly attachmentName?: string
+      readonly attachmentMediaType?: string
+    }[]
+    readonly extension?: Readonly<Record<string, string>>
+  }
   readonly mentions?: readonly {
     readonly openId: string
     readonly displayName?: string
@@ -477,16 +499,17 @@ export class QQOpenClawConnection implements AdapterConnectionRuntime {
     signal: AbortSignal = new AbortController().signal,
   ): Promise<InboundCommitResult> {
     if (!this.#running) throw new Error('QQ OpenClaw Connection is not running.')
-    if (!this.#inbound) throw new Error('QQ inbound bridge is not configured.')
+    const inbound = this.#inbound
+    if (!inbound) throw new Error('QQ inbound bridge is not configured.')
     if (!message.platformMessageId.trim()) throw new Error('QQ inbound message ID is required.')
     const receivedAt = message.receivedAt ?? this.#context.now()
-    const channelId = await this.#inbound.ensureTarget({
+    const channelId = await inbound.ensureTarget({
       connectionId: this.#context.connectionId,
       target: message.target,
       ...(message.targetDisplayName === undefined ? {} : { displayName: message.targetDisplayName }),
       observedAt: receivedAt,
     })
-    const senderMemberId = await this.#inbound.ensureMember({
+    const senderMemberId = await inbound.ensureMember({
       connectionId: this.#context.connectionId,
       channelId,
       openId: message.senderOpenId,
@@ -503,7 +526,7 @@ export class QQOpenClawConnection implements AdapterConnectionRuntime {
         continue
       }
       if (atom.bot) mentionedBot = true
-      const memberId = await this.#inbound.ensureMember({
+      const memberId = await inbound.ensureMember({
         connectionId: this.#context.connectionId,
         channelId,
         openId: atom.openId,
@@ -512,8 +535,81 @@ export class QQOpenClawConnection implements AdapterConnectionRuntime {
       })
       parts.push({ type: 'mention', memberId })
     }
+    if (message.rich) {
+      let previewAssetId: AssetId | undefined
+      let nextAttachmentIndex = (message.attachments?.length ?? 0) + 1_000
+      const importUrl = async (url: string, fileName: string | undefined, mediaType: string | undefined) => {
+        try {
+          const imported = await inbound.importAttachment({
+            url,
+            ...(fileName === undefined ? {} : { fileName }),
+            mediaType: mediaType ?? 'image/jpeg',
+            connectionId: this.#context.connectionId,
+            channelId,
+            platformMessageId: message.platformMessageId,
+            receivedAt,
+            attachmentIndex: nextAttachmentIndex,
+            signal,
+          })
+          nextAttachmentIndex += 1
+          return imported
+        } catch {
+          return undefined
+        }
+      }
+      if (message.rich.previewUrl) {
+        const imported = await importUrl(message.rich.previewUrl, 'preview', 'image/jpeg')
+        previewAssetId = imported?.assetId
+      }
+      const richPartIndex = parts.length
+      if (previewAssetId) assetOccurrences.push({ partIndex: richPartIndex, assetId: previewAssetId })
+      const items = []
+      for (const item of message.rich.items ?? []) {
+        let cardPreviewId: AssetId | undefined
+        if (item.card?.previewUrl) {
+          const imported = await importUrl(item.card.previewUrl, 'card-preview', 'image/jpeg')
+          cardPreviewId = imported?.assetId
+          if (cardPreviewId) assetOccurrences.push({ partIndex: richPartIndex, assetId: cardPreviewId })
+        }
+        let imageAssetId: AssetId | undefined
+        if (item.attachmentUrl) {
+          const imported = await importUrl(item.attachmentUrl, item.attachmentName, item.attachmentMediaType)
+          imageAssetId = imported?.assetId
+          if (imageAssetId) assetOccurrences.push({ partIndex: richPartIndex, assetId: imageAssetId })
+        }
+        items.push({
+          ...(item.sender === undefined ? {} : { sender: item.sender }),
+          ...(item.text === undefined ? {} : { text: item.text }),
+          ...(item.card === undefined
+            ? {}
+            : {
+                card: {
+                  kind: item.card.kind,
+                  summary: item.card.summary,
+                  ...(item.card.title === undefined ? {} : { title: item.card.title }),
+                  ...(item.card.source === undefined ? {} : { source: item.card.source }),
+                  ...(cardPreviewId === undefined ? {} : { previewAssetId: cardPreviewId }),
+                },
+              }),
+          ...(imageAssetId === undefined ? {} : { imageAssetId }),
+          ...(item.attachmentName === undefined ? {} : { imageName: item.attachmentName }),
+        })
+      }
+      const extension =
+        items.length > 0 ? { items } : message.rich.extension === undefined ? undefined : { ...message.rich.extension }
+      parts.push({
+        type: 'rich',
+        adapterKey: QQ_OPENCLAW_ADAPTER_KEY,
+        kind: message.rich.kind,
+        summary: message.rich.summary,
+        ...(message.rich.title === undefined ? {} : { title: message.rich.title }),
+        ...(message.rich.source === undefined ? {} : { source: message.rich.source }),
+        ...(previewAssetId === undefined ? {} : { previewAssetId }),
+        ...(extension === undefined ? {} : { extension }),
+      })
+    }
     for (const [attachmentIndex, attachment] of (message.attachments ?? []).entries()) {
-      const imported = await this.#inbound.importAttachment({
+      const imported = await inbound.importAttachment({
         ...attachment,
         connectionId: this.#context.connectionId,
         channelId,
@@ -540,7 +636,7 @@ export class QQOpenClawConnection implements AdapterConnectionRuntime {
       }
     }
     if (message.platformReference) {
-      const quote = await this.#inbound.resolveQuote({
+      const quote = await inbound.resolveQuote({
         connectionId: this.#context.connectionId,
         target: message.target,
         platformReference: message.platformReference,
@@ -553,7 +649,7 @@ export class QQOpenClawConnection implements AdapterConnectionRuntime {
     if (parts.length === 0) {
       parts.push({
         type: 'text',
-        text: mentionedBot ? '（未包含其他可显示内容）' : '该 QQ 消息包含暂不支持显示的内容。',
+        text: mentionedBot ? '（未包含其他可显示内容）' : '该消息包含暂不支持显示的内容。',
       })
     }
     this.observeReplyContext(message.platformMessageId, {

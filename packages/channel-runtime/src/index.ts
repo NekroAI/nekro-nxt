@@ -357,6 +357,8 @@ const supportsPart = (adapter: AdapterConnectionRuntime, part: MessagePart): boo
       return adapter.capabilities.audio
     case 'quote':
       return adapter.capabilities.replies
+    case 'rich':
+      return false
   }
 }
 

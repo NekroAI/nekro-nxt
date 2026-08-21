@@ -9,8 +9,9 @@
 - `QQOpenClawRuntime`：组合 Connection、Gateway 与可靠停机；
 - `QQOpenClawHttpTransport`：Credential Reference、Token、REST 与上传；
 - `QQNodeWebSocketFactory`：Desktop/Server 共用的 Node WebSocket；
-- `decodeQQInboundMessage`：三类 QQ 消息 dispatch 的确定性规范化，保留正文中的 Mention token；
+- `decodeQQInboundMessage`：三类 QQ 消息 dispatch 的确定性规范化，保留正文中的 Mention token，并把卡片/小程序/转发编成 `rich`；
 - `splitQQContentAtoms`：按原文位置把 Mention 切成有序 content atom，供入站 `parts` 使用；
+- `parseQQCardDump` / `parseQQChatRecordDump` / `parseQQRichPayload`：把 `[卡片消息]` 倾倒、`[群聊的聊天记录] === 消息 N ===` 拍扁转发、embed 和 ark 编成可兜底的 rich 载荷；
 - `createQQGatewayCheckpointStore`：Connection 作用域 resume 状态。
 
 产品 Host 通过 `QQCoreBridge` 接入 Core 身份、Quote 和两阶段 Asset，并通过 Host-owned Credential Resolver 提供 Secret。无密钥测试覆盖真实生产组合根但替换外部网络边界；通知高亮、平台额度和真实 CDN/上传仍必须使用专用 QQ 账号验收。

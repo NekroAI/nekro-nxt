@@ -20,6 +20,8 @@ import {
   ChannelMemberIdSchema,
   ConnectionIdSchema,
   LogicalMessageIdSchema,
+  messagePartAssetIds,
+  messagePartsSearchText,
   PlatformIdentityIdSchema,
 } from '@nekro-nxt/contracts'
 import { createHash } from 'node:crypto'
@@ -734,7 +736,7 @@ export class CoreService {
         throw new Error(`Inbound sender ${event.senderMemberId} does not belong to channel ${event.channelId}.`)
       }
     }
-    const searchText = event.parts.flatMap((part) => (part.type === 'text' ? [part.text] : [])).join('\n')
+    const searchText = messagePartsSearchText(event.parts)
     const record: ChannelEventRecord = {
       id: ChannelEventIdSchema.parse(`evt_${this.#nextUlid()}`),
       logicalMessageId: LogicalMessageIdSchema.parse(`msg_${this.#nextUlid()}`),
@@ -752,7 +754,7 @@ export class CoreService {
     const occurrences = event.assetOccurrences ?? []
     for (const occurrence of occurrences) {
       const part = record.parts[occurrence.partIndex]
-      if (part === undefined || !('assetId' in part) || part.assetId !== occurrence.assetId) {
+      if (part === undefined || !messagePartAssetIds(part).includes(occurrence.assetId)) {
         throw new Error(`Asset occurrence does not match message part ${occurrence.partIndex}.`)
       }
     }

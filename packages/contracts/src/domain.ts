@@ -124,6 +124,15 @@ export interface DshCredentialView {
   readonly writable: boolean
 }
 
+const utf8ByteLength = (value: string): number => new TextEncoder().encode(value).byteLength
+
+export const RICH_EXTENSION_MAX_BYTES = 32 * 1024
+
+export const RichExtensionSchema = JsonValueSchema.refine(
+  (value) => utf8ByteLength(JSON.stringify(value)) <= RICH_EXTENSION_MAX_BYTES,
+  `rich extension must not exceed ${RICH_EXTENSION_MAX_BYTES} bytes.`,
+)
+
 export const MessagePartSchema = z.discriminatedUnion('type', [
   z.object({ type: z.literal('text'), text: z.string() }).strict(),
   z.object({ type: z.literal('mention'), memberId: ChannelMemberIdSchema }).strict(),
@@ -131,6 +140,18 @@ export const MessagePartSchema = z.discriminatedUnion('type', [
   z.object({ type: z.literal('file'), assetId: AssetIdSchema, name: z.string().optional() }).strict(),
   z.object({ type: z.literal('audio'), assetId: AssetIdSchema }).strict(),
   z.object({ type: z.literal('quote'), messageId: LogicalMessageIdSchema }).strict(),
+  z
+    .object({
+      type: z.literal('rich'),
+      adapterKey: z.string().trim().min(1).max(64),
+      kind: z.string().trim().min(1).max(64),
+      summary: z.string().trim().min(1).max(500),
+      title: z.string().trim().min(1).max(200).optional(),
+      source: z.string().trim().min(1).max(80).optional(),
+      previewAssetId: AssetIdSchema.optional(),
+      extension: RichExtensionSchema.optional(),
+    })
+    .strict(),
 ])
 
 export type MessagePart = z.infer<typeof MessagePartSchema>
@@ -141,3 +162,80 @@ export const NonEmptyMessagePartsSchema = MessagePartsSchema.min(1)
 export function parseMessageParts(input: unknown): MessagePart[] {
   return MessagePartsSchema.parse(input)
 }
+
+const collectRichAssetIds = (value: JsonValue | undefined, into: AssetId[]): void => {
+  if (value === null || value === undefined || typeof value === 'boolean' || typeof value === 'number') return
+  if (typeof value === 'string') return
+  if (Array.isArray(value)) {
+    for (const item of value) collectRichAssetIds(item, into)
+    return
+  }
+  for (const [key, child] of Object.entries(value)) {
+    if ((key === 'imageAssetId' || key === 'previewAssetId') && typeof child === 'string') {
+      const parsed = AssetIdSchema.safeParse(child)
+      if (parsed.success) into.push(parsed.data)
+    } else {
+      collectRichAssetIds(child, into)
+    }
+  }
+}
+
+export const messagePartAssetIds = (part: MessagePart): readonly AssetId[] => {
+  if (part.type === 'image' || part.type === 'file' || part.type === 'audio') return [part.assetId]
+  if (part.type !== 'rich') return []
+  const ids: AssetId[] = []
+  if (part.previewAssetId) ids.push(part.previewAssetId)
+  collectRichAssetIds(part.extension, ids)
+  return ids
+}
+
+export const messagePartAssetId = (part: MessagePart): AssetId | undefined => messagePartAssetIds(part)[0]
+
+const asJsonRecord = (value: JsonValue | undefined): Readonly<Record<string, JsonValue>> | undefined =>
+  value !== null && typeof value === 'object' && !Array.isArray(value) ? value : undefined
+
+const richItemLine = (value: JsonValue): string | undefined => {
+  const item = asJsonRecord(value)
+  if (!item) return undefined
+  const sender = typeof item['sender'] === 'string' ? item['sender'] : undefined
+  const text = typeof item['text'] === 'string' ? item['text'] : undefined
+  const card = asJsonRecord(item['card'])
+  const cardSummary =
+    typeof card?.['summary'] === 'string'
+      ? card['summary']
+      : typeof card?.['title'] === 'string'
+        ? card['title']
+        : undefined
+  const imageName = typeof item['imageName'] === 'string' ? item['imageName'] : undefined
+  const imageText = typeof item['imageAssetId'] === 'string' ? `[图片${imageName ? ` ${imageName}` : ''}]` : undefined
+  const body = [text, cardSummary ? `[卡片] ${cardSummary}` : undefined, imageText]
+    .filter((part): part is string => Boolean(part && part.length > 0))
+    .join(' ')
+  if (!sender && !body) return undefined
+  return sender ? `${sender}：${body}` : body
+}
+
+/** Flatten a rich part for search and model context. */
+export const richPartContextText = (part: Extract<MessagePart, { type: 'rich' }>): string => {
+  const header = [part.summary, part.title, part.source].filter(
+    (value, index, all): value is string =>
+      typeof value === 'string' && value.length > 0 && all.indexOf(value) === index,
+  )
+  const items = asJsonRecord(part.extension)?.['items']
+  const itemLines = Array.isArray(items)
+    ? items.flatMap((item) => {
+        const line = richItemLine(item)
+        return line === undefined ? [] : [line]
+      })
+    : []
+  return [...header, ...itemLines].join('\n')
+}
+
+export const messagePartsSearchText = (parts: readonly MessagePart[]): string =>
+  parts
+    .flatMap((part) => {
+      if (part.type === 'text') return [part.text]
+      if (part.type === 'rich') return [richPartContextText(part)]
+      return []
+    })
+    .join('\n')

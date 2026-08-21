@@ -84,10 +84,13 @@ import type {
 import {
   AssetIdSchema,
   JsonValueSchema,
+  messagePartAssetIds,
   parseJsonValue,
   parseMessageParts,
+  richPartContextText,
   type AdmissionId,
   type AgentRevisionId,
+  type AssetId,
   type ChannelId,
   type ChannelRuntimeOccupancy,
   type ConnectionId,
@@ -1198,6 +1201,16 @@ const projectEvent = (event: ChannelEventRecord, history: ProductChannelHistoryR
         break
       case 'quote':
         blocks.push({ type: 'text', text: `引用频道消息 ${part.messageId}` })
+        break
+      case 'rich':
+        {
+          const context = richPartContextText(part)
+          const label = part.kind === 'forward' ? '收到转发' : '收到卡片'
+          blocks.push({
+            type: 'text',
+            text: `${label}：${context.includes('\n') ? `\n${context}` : context}`,
+          })
+        }
         break
     }
   }
@@ -2715,29 +2728,34 @@ export class DshHostRuntime implements AgentSessionDriver, ExtensionActivationHo
           event.parts.some((part) => part.type === 'image' && block.text.startsWith(`收到图片资源 ${part.assetId}`))
         ),
     )
-    for (const part of event.parts) {
-      if (part.type !== 'image') continue
-      if (!this.#assets.canAccessAsset(part.assetId, event.channelId)) {
-        blocks.push({ type: 'text', text: `图片资源 ${part.assetId} 当前不可访问。` })
-        continue
+    const seen = new Set<string>()
+    const attachImage = async (assetId: AssetId, alt?: string): Promise<void> => {
+      if (seen.has(assetId)) return
+      seen.add(assetId)
+      if (!this.#assets.canAccessAsset(assetId, event.channelId)) {
+        blocks.push({ type: 'text', text: `图片资源 ${assetId} 当前不可访问。` })
+        return
       }
-      const asset = this.#assets.getAssetById(part.assetId)
+      const asset = this.#assets.getAssetById(assetId)
       if (!asset) {
-        blocks.push({ type: 'text', text: `图片资源 ${part.assetId} 的元数据不可用。` })
-        continue
+        blocks.push({ type: 'text', text: `图片资源 ${assetId} 的元数据不可用。` })
+        return
       }
       if (this.#imageInputSessions.has(sessionId)) {
-        const attachment = await requireNekroAssetAttachmentStore(this.#context.attachments).refForAsset(
-          asset,
-          part.alt,
-        )
+        const attachment = await requireNekroAssetAttachmentStore(this.#context.attachments).refForAsset(asset, alt)
         blocks.push({ type: 'image', attachment })
-        continue
+        return
       }
       blocks.push({
         type: 'text',
         text: `图片资源 ${asset.id} 已收到，但当前模型不支持图片输入。`,
       })
+    }
+    for (const part of event.parts) {
+      if (part.type === 'image') await attachImage(part.assetId, part.alt)
+      if (part.type === 'rich') {
+        for (const assetId of messagePartAssetIds(part)) await attachImage(assetId)
+      }
     }
     return blocks
   }

@@ -1,7 +1,13 @@
 import { and, asc, eq, inArray } from 'drizzle-orm'
 import type { AdapterDeliveryReceipt } from '@nekro-nxt/adapter-sdk'
 import { AdapterDeliveryReceiptSchema } from '@nekro-nxt/adapter-sdk'
-import type { AgentId, ChannelId, OutboundIntentId, PhysicalDeliveryId } from '@nekro-nxt/contracts'
+import {
+  messagePartsSearchText,
+  type AgentId,
+  type ChannelId,
+  type OutboundIntentId,
+  type PhysicalDeliveryId,
+} from '@nekro-nxt/contracts'
 import {
   isConsoleAnchorHistory,
   type ChannelHistoryEntry,
@@ -150,7 +156,7 @@ export function createOutboxRepository(database: DrizzleCoreDatabase): OutboxSli
           tx.insert(outboundIntents)
             .values({
               ...intent,
-              searchText: intent.parts.flatMap((part) => (part.type === 'text' ? [part.text] : [])).join('\n'),
+              searchText: messagePartsSearchText(intent.parts),
             })
             .run()
           if (deliveries.length > 0) {

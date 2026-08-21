@@ -22,6 +22,8 @@ export const runtimePhaseToState = (phase: string | undefined, fallbackStatus?: 
   if (phase === 'idle') return '空闲'
   return fallbackStatus === 'running' ? '思考中' : '空闲'
 }
+export const CHANNEL_MESSAGE_INITIAL_PAGE_SIZE = 16
+export const CHANNEL_MESSAGE_PAGE_SIZE = 24
 export type DeliveryState = '已发送' | '发送中' | '部分发送' | '失败' | '结果未知'
 export type ConnectionState = '已连接' | '正在连接' | '认证过期' | '已配置' | '已断开' | '异常'
 
@@ -103,6 +105,28 @@ export type ConversationPart =
   | { readonly type: 'file'; readonly assetId: string; readonly name: string; readonly url: string }
   | { readonly type: 'audio'; readonly assetId: string; readonly url: string }
   | { readonly type: 'quote'; readonly messageId: string }
+  | {
+      readonly type: 'rich'
+      readonly adapterKey: string
+      readonly kind: string
+      readonly summary: string
+      readonly title?: string
+      readonly source?: string
+      readonly previewUrl?: string
+      readonly preview?: string
+      readonly items?: readonly {
+        readonly sender?: string
+        readonly text?: string
+        readonly card?: {
+          readonly summary: string
+          readonly title?: string
+          readonly source?: string
+          readonly previewUrl?: string
+        }
+        readonly imageUrl?: string
+        readonly imageName?: string
+      }[]
+    }
   | { readonly type: 'unsupported'; readonly label: string }
 
 export interface ConversationMessage {
@@ -459,7 +483,7 @@ export const useProductStore = create<ProductState>(() => ({
       const result = await requireHost().execute('channels.listMessages', {
         channelId: normalizedChannelId,
         mode,
-        limit: 40,
+        limit: mode === 'initial' ? CHANNEL_MESSAGE_INITIAL_PAGE_SIZE : CHANNEL_MESSAGE_PAGE_SIZE,
         ...(mode === 'older' && oldest?.occurredAt !== undefined
           ? { beforeOccurredAt: oldest.occurredAt, beforeSourceId: oldest.id }
           : {}),

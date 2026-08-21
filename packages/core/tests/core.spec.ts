@@ -706,6 +706,33 @@ describe('CoreService', () => {
       assetOccurrences: [{ partIndex: 1, assetId }],
     }
     expect(core.appendInbound(event)).toMatchObject({ inserted: true })
+    const previewId = AssetIdSchema.parse('ast_preview1')
+    expect(
+      core.appendInbound({
+        connectionId: connection.id,
+        channelId: channel.id,
+        adapterKey: 'web',
+        kind: 'message-created',
+        senderMemberId: member.member.id,
+        parts: [
+          {
+            type: 'rich',
+            adapterKey: 'web',
+            kind: 'card',
+            summary: '分享摘要',
+            title: '分享标题',
+            previewAssetId: previewId,
+          },
+        ],
+        platformTimestamp: 100,
+        receivedAt: 102,
+        dedupeKey: 'rich-event',
+        assetOccurrences: [{ partIndex: 0, assetId: previewId }],
+      }),
+    ).toMatchObject({ inserted: true })
+    expect([...repository.events.values()].at(-1)).toMatchObject({
+      searchText: '分享摘要\n分享标题',
+    })
     expect(core.resolvePlatformMessage(connection.id, channel.id, 'platform-asset')).toMatchObject({
       authoredByAgent: false,
     })

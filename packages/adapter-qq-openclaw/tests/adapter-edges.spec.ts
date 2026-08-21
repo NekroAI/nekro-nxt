@@ -283,8 +283,157 @@ describe('QQ OpenClaw connection boundaries', () => {
       mentions: [{ openId: 'bot', bot: true }],
       platformTimestamp: 400,
     })
-    expect(accepted[1]?.parts).toEqual([{ type: 'text', text: '该 QQ 消息包含暂不支持显示的内容。' }])
+    expect(accepted[1]?.parts).toEqual([{ type: 'text', text: '该消息包含暂不支持显示的内容。' }])
     expect(accepted[2]?.parts).toEqual([{ type: 'mention', memberId: 'mbr_bot' }])
+    await adapter.stop()
+  })
+
+  it('commits miniapp cards as rich parts and imports the preview into Asset', async () => {
+    const accepted: AdapterInboundEvent[] = []
+    const inbound: QQInboundBridge = {
+      ensureTarget: () => Promise.resolve(channelId),
+      ensureMember: () => Promise.resolve(memberId),
+      importAttachment: () =>
+        Promise.resolve({ assetId: AssetIdSchema.parse('ast_preview'), mediaType: 'image/jpeg', fileName: 'preview' }),
+      resolveQuote: () => Promise.resolve(undefined),
+    }
+    const adapter = makeAdapter({
+      context: makeContext({
+        acceptInbound: (event) => {
+          accepted.push(event)
+          return Promise.resolve({
+            channelEventId: ChannelEventIdSchema.parse('evt_rich1'),
+            inserted: true,
+          })
+        },
+      }),
+      inbound,
+    })
+    await adapter.start()
+    await adapter.receive({
+      eventType: 'GROUP_MESSAGE_CREATE',
+      platformMessageId: 'card-1',
+      target: { kind: 'group', openId: 'group' },
+      senderOpenId: 'sender',
+      rich: {
+        kind: 'miniapp',
+        summary: '示例来源 · 示例分享',
+        title: '示例分享',
+        source: '示例来源',
+        previewUrl: 'https://cdn.test/preview.jpg',
+        extension: { preview: 'https://cdn.test/preview.jpg' },
+      },
+      platformTimestamp: 400,
+    })
+    expect(accepted[0]).toMatchObject({
+      parts: [
+        {
+          type: 'rich',
+          adapterKey: 'qq-openclaw',
+          kind: 'miniapp',
+          summary: '示例来源 · 示例分享',
+          title: '示例分享',
+          source: '示例来源',
+          previewAssetId: 'ast_preview',
+        },
+      ],
+      assetOccurrences: [{ partIndex: 0, assetId: 'ast_preview' }],
+    })
+    await adapter.stop()
+  })
+
+  it('commits flattened chat-record dumps as rich forwards and imports nested media', async () => {
+    const accepted: AdapterInboundEvent[] = []
+    const imported: string[] = []
+    const inbound: QQInboundBridge = {
+      ensureTarget: () => Promise.resolve(channelId),
+      ensureMember: () => Promise.resolve(memberId),
+      importAttachment: ({ url, fileName }) => {
+        imported.push(url)
+        const assetId =
+          fileName === 'card-preview' ? 'ast_cardpreview' : fileName === 'photo.png' ? 'ast_nestedimg' : 'ast_other'
+        return Promise.resolve({
+          assetId: AssetIdSchema.parse(assetId),
+          mediaType: 'image/png',
+          ...(fileName === undefined ? {} : { fileName }),
+        })
+      },
+      resolveQuote: () => Promise.resolve(undefined),
+    }
+    const adapter = makeAdapter({
+      context: makeContext({
+        acceptInbound: (event) => {
+          accepted.push(event)
+          return Promise.resolve({
+            channelEventId: ChannelEventIdSchema.parse('evt_forward1'),
+            inserted: true,
+          })
+        },
+      }),
+      inbound,
+    })
+    await adapter.start()
+    await adapter.receive({
+      eventType: 'GROUP_MESSAGE_CREATE',
+      platformMessageId: 'forward-1',
+      target: { kind: 'group', openId: 'group' },
+      senderOpenId: 'sender',
+      rich: {
+        kind: 'forward',
+        summary: '群聊的聊天记录（3 条）',
+        title: '群聊的聊天记录',
+        items: [
+          { sender: '成员甲', text: '你好' },
+          {
+            sender: '成员甲',
+            card: {
+              kind: 'miniapp',
+              summary: '示例来源 · 示例分享',
+              title: '示例分享',
+              source: '示例来源',
+              previewUrl: 'https://cdn.test/preview.jpg',
+            },
+          },
+          {
+            sender: '成员甲',
+            attachmentUrl: 'https://cdn.test/download?fileid=abc',
+            attachmentName: 'photo.png',
+            attachmentMediaType: 'image/png',
+          },
+        ],
+      },
+      platformTimestamp: 400,
+    })
+    expect(imported).toEqual(['https://cdn.test/preview.jpg', 'https://cdn.test/download?fileid=abc'])
+    expect(accepted[0]?.parts).toEqual([
+      {
+        type: 'rich',
+        adapterKey: 'qq-openclaw',
+        kind: 'forward',
+        summary: '群聊的聊天记录（3 条）',
+        title: '群聊的聊天记录',
+        extension: {
+          items: [
+            { sender: '成员甲', text: '你好' },
+            {
+              sender: '成员甲',
+              card: {
+                kind: 'miniapp',
+                summary: '示例来源 · 示例分享',
+                title: '示例分享',
+                source: '示例来源',
+                previewAssetId: 'ast_cardpreview',
+              },
+            },
+            { sender: '成员甲', imageAssetId: 'ast_nestedimg', imageName: 'photo.png' },
+          ],
+        },
+      },
+    ])
+    expect(accepted[0]?.assetOccurrences).toEqual([
+      { partIndex: 0, assetId: 'ast_cardpreview' },
+      { partIndex: 0, assetId: 'ast_nestedimg' },
+    ])
     await adapter.stop()
   })
 

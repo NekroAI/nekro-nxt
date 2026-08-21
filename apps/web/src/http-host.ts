@@ -1,4 +1,6 @@
 import {
+  CHANNEL_MESSAGE_INITIAL_PAGE_SIZE,
+  CHANNEL_MESSAGE_PAGE_SIZE,
   connectionDisplayName,
   runtimePhaseToState,
   type AgentRuntimeState,
@@ -103,6 +105,8 @@ export const renderConversationBody = (
     assetId?: string | undefined
     alt?: string | undefined
     name?: string | undefined
+    title?: string | undefined
+    summary?: string | undefined
   }[],
 ): string =>
   parts
@@ -111,6 +115,7 @@ export const renderConversationBody = (
       if (part.type === 'mention') return `@${nonEmptyLabel(part.displayName, '群成员')}`
       if (part.type === 'image' || part.type === 'file' || part.type === 'audio') return ''
       if (part.type === 'quote') return '[引用消息]'
+      if (part.type === 'rich') return part.title || part.summary || '[卡片]'
       return '[暂不支持显示的消息内容]'
     })
     .filter((token) => token.trim().length > 0)
@@ -229,6 +234,57 @@ const projectConversationMessage = (
       }
     }
     if (part.type === 'quote') return { type: 'quote', messageId: part.messageId }
+    if (part.type === 'rich') {
+      const extension = part.extension
+      const isRecord = (value: unknown): value is Readonly<Record<string, unknown>> =>
+        typeof value === 'object' && value !== null && !Array.isArray(value)
+      const record = isRecord(extension) ? extension : undefined
+      const previewText = typeof record?.['preview'] === 'string' ? record['preview'] : undefined
+      const rawItems = Array.isArray(record?.['items']) ? record['items'] : []
+      const assetUrl = (assetId: string) =>
+        `/api/channels/${encodeURIComponent(message.channelId)}/assets/${encodeURIComponent(assetId)}`
+      const items = rawItems.flatMap((entry) => {
+        if (!isRecord(entry)) return []
+        const item = entry
+        const cardRaw = item['card']
+        const card = isRecord(cardRaw) ? cardRaw : undefined
+        const imageAssetId = typeof item['imageAssetId'] === 'string' ? item['imageAssetId'] : undefined
+        const cardPreviewId = typeof card?.['previewAssetId'] === 'string' ? card['previewAssetId'] : undefined
+        return [
+          {
+            ...(typeof item['sender'] === 'string' ? { sender: item['sender'] } : {}),
+            ...(typeof item['text'] === 'string' ? { text: item['text'] } : {}),
+            ...(card && typeof card['summary'] === 'string'
+              ? {
+                  card: {
+                    summary: card['summary'],
+                    ...(typeof card['title'] === 'string' ? { title: card['title'] } : {}),
+                    ...(typeof card['source'] === 'string' ? { source: card['source'] } : {}),
+                    ...(cardPreviewId === undefined ? {} : { previewUrl: assetUrl(cardPreviewId) }),
+                  },
+                }
+              : {}),
+            ...(imageAssetId === undefined
+              ? {}
+              : {
+                  imageUrl: assetUrl(imageAssetId),
+                  imageName: typeof item['imageName'] === 'string' ? item['imageName'] : '图片',
+                }),
+          },
+        ]
+      })
+      return {
+        type: 'rich',
+        adapterKey: part.adapterKey,
+        kind: part.kind,
+        summary: part.summary,
+        ...(part.title === undefined ? {} : { title: part.title }),
+        ...(part.source === undefined ? {} : { source: part.source }),
+        ...(previewText === undefined ? {} : { preview: previewText }),
+        ...(items.length === 0 ? {} : { items }),
+        ...(part.previewAssetId === undefined ? {} : { previewUrl: assetUrl(part.previewAssetId) }),
+      }
+    }
     if (part.type !== 'image' && part.type !== 'file' && part.type !== 'audio') {
       return { type: 'unsupported', label: '暂不支持显示的消息内容' }
     }
@@ -600,7 +656,12 @@ export class HttpProductHost implements ProductHostPort {
     if (command === 'channels.listMessages') {
       const channelId = typeof input?.['channelId'] === 'string' ? input['channelId'] : ''
       const mode = input?.['mode'] === 'older' || input?.['mode'] === 'latest' ? input['mode'] : 'initial'
-      const limit = typeof input?.['limit'] === 'number' ? Math.min(Math.max(Math.trunc(input['limit']), 1), 100) : 40
+      const limit =
+        typeof input?.['limit'] === 'number'
+          ? Math.min(Math.max(Math.trunc(input['limit']), 1), 100)
+          : mode === 'initial'
+            ? CHANNEL_MESSAGE_INITIAL_PAGE_SIZE
+            : CHANNEL_MESSAGE_PAGE_SIZE
       if (!channelId.trim()) throw new Error('缺少目标频道，请刷新页面后重试。')
       const beforeOccurredAt = typeof input?.['beforeOccurredAt'] === 'number' ? input['beforeOccurredAt'] : undefined
       const beforeSourceId = typeof input?.['beforeSourceId'] === 'string' ? input['beforeSourceId'] : undefined
@@ -872,7 +933,7 @@ export class HttpProductHost implements ProductHostPort {
     if (this.#reconciling.has(data.channelId)) return
     const last = this.#messageRevision.get(data.channelId)
     if (last !== undefined && data.revision !== last + 1) {
-      void this.#loadChannelMessages(data.channelId, 'latest', 40)
+      void this.#loadChannelMessages(data.channelId, 'latest', CHANNEL_MESSAGE_PAGE_SIZE)
       return
     }
     const projected = data.items.map((item) =>
@@ -925,27 +986,47 @@ export class HttpProductHost implements ProductHostPort {
     const channelId = view.channelId
     const nextRuntimes = { ...this.#snapshot.channelRuntimes }
     if (options.includeTurns) nextRuntimes[channelId] = view
-    this.#snapshot = {
-      ...this.#snapshot,
-      channelRuntimes: nextRuntimes,
-      channels: this.#snapshot.channels.map((channel) =>
+
+    // Keep the channels/agents array references stable across runtime frames
+    // that do not actually change the effective phase. Live phase is
+    // represented authoritatively in channelRuntimes, so narrow selectors and
+    // memoized consumers are not forced to re-render on every summary/turn
+    // tick — the arrays are only re-cloned when the phase truly flips.
+    const currentChannel = this.#snapshot.channels.find((channel) => channel.id === channelId)
+    const phaseChanged = currentChannel?.runtimePhase !== view.phase
+    let nextChannels = this.#snapshot.channels
+    if (phaseChanged && currentChannel !== undefined) {
+      nextChannels = this.#snapshot.channels.map((channel) =>
         channel.id === channelId ? { ...channel, runtimePhase: view.phase } : channel,
-      ),
-      agents: this.#snapshot.agents.map((agent) => {
-        if (agent.id !== view.agentId) return agent
-        const phases = this.#snapshot.channels
-          .filter((channel) => channel.agentId === agent.id)
-          .map((channel) => (channel.id === channelId ? view.phase : channel.runtimePhase))
-        return { ...agent, state: worstAgentState(phases) }
-      }),
+      )
     }
+
+    let nextAgents = this.#snapshot.agents
+    if (view.agentId !== undefined) {
+      const agent = this.#snapshot.agents.find((candidate) => candidate.id === view.agentId)
+      if (agent !== undefined) {
+        const phases = (phaseChanged ? nextChannels : this.#snapshot.channels)
+          .filter((channel) => channel.agentId === agent.id)
+          .map((channel) => channel.runtimePhase)
+        const nextState = worstAgentState(phases)
+        if (nextState !== agent.state) {
+          nextAgents = this.#snapshot.agents.map((candidate) =>
+            candidate.id === agent.id ? { ...candidate, state: nextState } : candidate,
+          )
+        }
+      }
+    }
+
+    this.#snapshot = { ...this.#snapshot, channelRuntimes: nextRuntimes, channels: nextChannels, agents: nextAgents }
     this.#listener?.()
   }
 
   async #reconcileLoaded(): Promise<void> {
     await this.#refreshAndNotify()
     await Promise.all([
-      ...[...this.#loadedChannels].map((channelId) => this.#loadChannelMessages(channelId, 'latest', 40)),
+      ...[...this.#loadedChannels].map((channelId) =>
+        this.#loadChannelMessages(channelId, 'latest', CHANNEL_MESSAGE_PAGE_SIZE),
+      ),
       ...[...this.#loadedRuntimes].map((channelId) => this.#loadChannelRuntime(channelId)),
     ])
   }

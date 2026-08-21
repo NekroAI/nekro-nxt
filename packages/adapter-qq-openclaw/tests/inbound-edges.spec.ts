@@ -1,5 +1,11 @@
 import { describe, expect, it } from 'vitest'
-import { decodeQQInboundMessage, splitQQContentAtoms } from '../src/inbound.ts'
+import {
+  decodeQQInboundMessage,
+  parseQQCardDump,
+  parseQQChatRecordDump,
+  parseQQRichPayload,
+  splitQQContentAtoms,
+} from '../src/inbound.ts'
 
 const c2c = (value: Record<string, unknown>) => decodeQQInboundMessage('C2C_MESSAGE_CREATE', value, { now: () => 999 })
 
@@ -158,5 +164,127 @@ describe('QQ inbound mention splitting', () => {
     expect(splitQQContentAtoms(undefined, [{ openId: 'bot-openid', bot: true }])).toEqual([
       { kind: 'mention', openId: 'bot-openid', displayName: '机器人账号', bot: true },
     ])
+  })
+})
+
+describe('QQ inbound rich payload', () => {
+  it('parses flattened card dumps, embeds, ark kv and forward markers', () => {
+    expect(
+      parseQQCardDump(
+        '[卡片消息] 小程序 摘要: [QQ小程序]示例分享 title: 示例分享 preview: https://cdn.test/preview.jpg source: 示例来源 source_logo: https://cdn.test/logo.jpg',
+      ),
+    ).toMatchObject({
+      kind: 'miniapp',
+      summary: '示例来源 · 示例分享',
+      title: '示例分享',
+      source: '示例来源',
+      previewUrl: 'https://cdn.test/preview.jpg',
+    })
+    expect(
+      parseQQRichPayload(
+        { embed: { title: '分享标题', description: '说明', thumbnail: { url: 'https://cdn.test/thumb.png' } } },
+        undefined,
+      ).rich,
+    ).toMatchObject({ kind: 'card', title: '分享标题', summary: '说明', previewUrl: 'https://cdn.test/thumb.png' })
+    expect(
+      parseQQRichPayload(
+        {
+          ark: {
+            kv: [
+              { key: '#TITLE#', value: '模板标题' },
+              { key: '#DESC#', value: '模板摘要' },
+            ],
+          },
+        },
+        undefined,
+      ).rich,
+    ).toMatchObject({ kind: 'ark', title: '模板标题', summary: '模板摘要' })
+    expect(parseQQRichPayload({}, '转发的聊天记录')).toEqual({
+      rich: { kind: 'forward', summary: '转发的聊天记录', title: '转发的聊天记录' },
+    })
+    expect(parseQQRichPayload({}, '[转发的聊天记录]\n成员甲：你好\n成员乙：收到')).toMatchObject({
+      rich: {
+        kind: 'forward',
+        summary: '转发的聊天记录',
+        extension: { preview: '成员甲：你好\n成员乙：收到' },
+      },
+    })
+    expect(parseQQRichPayload({}, '[转发的聊天记录]\n成员甲：你好\n成员乙：收到')).not.toHaveProperty('content')
+    const record = parseQQChatRecordDump(
+      '[群聊的聊天记录] === 消息 1 === [消息内容] 你好 [发送者] 成员甲\n\n=== 消息 2 === [消息内容] [卡片消息] 小程序 摘要: [QQ小程序]示例分享 preview: https://cdn.test/preview.jpg source: 示例来源 source_logo: https://cdn.test/logo.jpg title: 示例分享 [发送者] 成员甲 [消息类型] 卡片消息\n\n=== 消息 3 === [发送者] 成员甲 [附件1] 类型:图片 文件名:photo.png 尺寸:100x100 大小:12.0KB URL:https://cdn.test/download?fileid=abc',
+    )
+    expect(record).toMatchObject({
+      kind: 'forward',
+      title: '群聊的聊天记录',
+      summary: '群聊的聊天记录（3 条）',
+    })
+    expect(record?.items).toEqual([
+      { sender: '成员甲', text: '你好' },
+      {
+        sender: '成员甲',
+        card: {
+          kind: 'miniapp',
+          summary: '示例来源 · 示例分享',
+          title: '示例分享',
+          source: '示例来源',
+          previewUrl: 'https://cdn.test/preview.jpg',
+        },
+      },
+      {
+        sender: '成员甲',
+        attachmentUrl: 'https://cdn.test/download?fileid=abc',
+        attachmentName: 'photo.png',
+        attachmentMediaType: 'image/png',
+      },
+    ])
+  })
+
+  it('decodes the official-bot flattened chat-record dump without leaving raw text', () => {
+    const dump =
+      '[群聊的聊天记录] === 消息 1 === [消息内容] 你好 [发送者] 成员甲\n\n=== 消息 2 === [消息内容] [卡片消息] 小程序 摘要: [QQ小程序]示例分享 preview: https://cdn.test/preview.jpg source: 示例来源 source_logo: https://cdn.test/logo.jpg title: 示例分享 [发送者] 成员甲 [消息类型] 卡片消息 [卡片消息] 小程序 摘要:[QQ小程序]示例分享 title:示例分享 preview:https://cdn.test/preview.jpg source:示例来源 source_logo:https://cdn.test/logo.jpg\n\n=== 消息 3 === [发送者] 成员甲 [附件1] 类型:图片 文件名:photo.png 尺寸:100x100 大小:12.0KB URL:https://cdn.test/download?fileid=abc&rkey=test'
+    const decoded = decodeQQInboundMessage('GROUP_MESSAGE_CREATE', {
+      id: 'qq-forward-dump',
+      group_openid: 'group-openid',
+      author: { member_openid: 'sender-openid', username: '成员甲' },
+      content: dump,
+    })
+    expect(decoded).not.toHaveProperty('content')
+    expect(decoded?.rich).toMatchObject({
+      kind: 'forward',
+      title: '群聊的聊天记录',
+      summary: '群聊的聊天记录（3 条）',
+    })
+    expect(decoded?.rich?.items).toHaveLength(3)
+    expect(decoded?.rich?.items?.[0]).toEqual({ sender: '成员甲', text: '你好' })
+    expect(decoded?.rich?.items?.[1]?.card).toMatchObject({
+      kind: 'miniapp',
+      source: '示例来源',
+      title: '示例分享',
+    })
+    expect(decoded?.rich?.items?.[2]).toMatchObject({
+      sender: '成员甲',
+      attachmentName: 'photo.png',
+      attachmentMediaType: 'image/png',
+    })
+  })
+
+  it('replaces card dumps in decoded group content with a rich payload', () => {
+    const decoded = decodeQQInboundMessage('GROUP_MESSAGE_CREATE', {
+      id: 'qq-card-1',
+      group_openid: 'group-openid',
+      author: { member_openid: 'sender-openid', username: '成员甲' },
+      content:
+        '[卡片消息] 小程序 摘要: [QQ小程序]示例分享 title: 示例分享 preview: https://cdn.test/preview.jpg source: 示例来源',
+    })
+    expect(decoded).not.toHaveProperty('content')
+    expect(decoded).toMatchObject({
+      rich: {
+        kind: 'miniapp',
+        summary: '示例来源 · 示例分享',
+        title: '示例分享',
+        source: '示例来源',
+        previewUrl: 'https://cdn.test/preview.jpg',
+      },
+    })
   })
 })

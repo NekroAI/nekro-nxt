@@ -364,12 +364,15 @@ describe('HttpProductHost', () => {
 
   it('renders a safe fallback for unresolved Mention labels', () => {
     expect(renderConversationBody([{ type: 'mention', memberId: targetMemberId }])).toBe('@群成员')
+    expect(renderConversationBody([{ type: 'rich', title: '示例分享', summary: '示例来源 · 示例分享' }])).toBe(
+      '示例分享',
+    )
   })
 
   it('loads one Channel history page on demand and projects controlled media URLs', async () => {
     fetchMock = vi.fn((input: string, init?: RequestInit) => {
       if (input === '/api/snapshot') return Promise.resolve(stubResponse(200, { ...snapshotBody(), messages: [] }))
-      if (input === `/api/channels/${webChannelId}/messages?limit=40` && init?.method === 'GET') {
+      if (input === `/api/channels/${webChannelId}/messages?limit=24` && init?.method === 'GET') {
         return Promise.resolve(
           stubResponse(200, {
             hasMore: true,
@@ -397,7 +400,7 @@ describe('HttpProductHost', () => {
     const unsubscribe = host.subscribe(() => undefined)
     await flush()
 
-    const page = await host.execute('channels.listMessages', { channelId: webChannelId, mode: 'initial', limit: 40 })
+    const page = await host.execute('channels.listMessages', { channelId: webChannelId, mode: 'initial', limit: 24 })
     expect(page).toMatchObject({ hasMore: true })
     expect(host.getSnapshot().messages[0]).toMatchObject({
       body: '附件如下',
@@ -1030,6 +1033,86 @@ describe('HttpProductHost', () => {
     expect(requests.filter((url) => String(url).includes('/runtime'))).toHaveLength(runtimeCallsAfterLoad)
     expect(host.getSnapshot().channelRuntimes[webChannelId]?.turns).toHaveLength(1)
     expect(host.getSnapshot().channels.find((channel) => channel.id === webChannelId)?.runtimePhase).toBe('使用工具')
+    unsubscribe()
+  })
+  it('keeps channels and agents projections stable across phase-constant runtime frames', async () => {
+    const requests: string[] = []
+    fetchMock = vi.fn((input: string) => {
+      requests.push(String(input))
+      if (input === '/api/snapshot') return Promise.resolve(stubResponse(200, snapshotBody()))
+      if (String(input).startsWith(`/api/channels/${webChannelId}/runtime`)) {
+        return Promise.resolve(
+          stubResponse(200, {
+            channelId: webChannelId,
+            agentId: webAgentId,
+            phase: 'thinking',
+            summary: '智能体正在处理当前消息。',
+            pendingInjectCount: 0,
+            turns: [],
+          }),
+        )
+      }
+      return Promise.resolve(stubResponse(404, { error: { code: 'not-found', message: 'x' } }))
+    })
+    vi.stubGlobal('fetch', fetchMock)
+    vi.stubGlobal('EventSource', FakeEventSource)
+
+    const host = new HttpProductHost()
+    const unsubscribe = host.subscribe(() => undefined)
+    await flush()
+    await host.execute('channels.getRuntime', { channelId: webChannelId })
+    const runtimeCallsAfterLoad = requests.filter((url) => String(url).includes('/runtime')).length
+    const source = FakeEventSource.instances[0]
+    // The first frame flips the projected phase onto the channel/agent arrays.
+    source?.emit('runtime', {
+      channelId: webChannelId,
+      agentId: webAgentId,
+      phase: 'using-tool',
+      summary: '智能体正在使用发送频道消息。',
+      pendingInjectCount: 0,
+      revision: 1,
+      turns: [],
+    })
+    await flush()
+    const phaseStableChannels = host.getSnapshot().channels
+    const phaseStableAgents = host.getSnapshot().agents
+    expect(host.getSnapshot().channels.find((channel) => channel.id === webChannelId)?.runtimePhase).toBe('使用工具')
+
+    // Phase-constant frames keep the whole channels/agents array references
+    // stable, so narrow selectors / memoized consumers are not re-cloned on
+    // every summary/turn tick.
+    for (let index = 0; index < 25; index += 1) {
+      source?.emit('runtime', {
+        channelId: webChannelId,
+        agentId: webAgentId,
+        phase: 'using-tool',
+        summary: `摘要更新 ${index + 2}`,
+        pendingInjectCount: index,
+        revision: index + 2,
+        turns: [],
+      })
+    }
+    await flush()
+    expect(host.getSnapshot().channels).toBe(phaseStableChannels)
+    expect(host.getSnapshot().agents).toBe(phaseStableAgents)
+    expect(host.getSnapshot().channelRuntimes[webChannelId]?.phase).toBe('使用工具')
+    expect(host.getSnapshot().channelRuntimes[webChannelId]?.summary).toBe('摘要更新 26')
+    expect(requests.filter((url) => String(url).includes('/runtime'))).toHaveLength(runtimeCallsAfterLoad)
+
+    // A real phase flip still re-projects both slices.
+    source?.emit('runtime', {
+      channelId: webChannelId,
+      agentId: webAgentId,
+      phase: 'thinking',
+      summary: '智能体正在处理当前消息。',
+      pendingInjectCount: 0,
+      revision: 27,
+      turns: [],
+    })
+    await flush()
+    expect(host.getSnapshot().channels).not.toBe(phaseStableChannels)
+    expect(host.getSnapshot().agents).not.toBe(phaseStableAgents)
+    expect(host.getSnapshot().channels.find((channel) => channel.id === webChannelId)?.runtimePhase).toBe('思考中')
     unsubscribe()
   })
 

@@ -1294,7 +1294,7 @@ export const createNekroHostApi = (webServer: WebServer, runtime: NekroRuntime):
           const beforeSourceId = url.searchParams.get('beforeSourceId')
           params = HostApiContracts.listChannelMessages.parseParams({
             channelId: typedChannelId,
-            limit: Number(url.searchParams.get('limit') ?? 40),
+            limit: Number(url.searchParams.get('limit') ?? 16),
             ...(beforeOccurredAt === null ? {} : { beforeOccurredAt: Number(beforeOccurredAt) }),
             ...(beforeSourceId === null ? {} : { beforeSourceId }),
           })

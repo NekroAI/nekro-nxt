@@ -12,6 +12,7 @@ import {
   EpisodeIdSchema,
   JsonValueSchema,
   LogicalMessageIdSchema,
+  RichExtensionSchema,
   OutboundIntentIdSchema,
 } from './domain.js'
 
@@ -97,6 +98,18 @@ const SnapshotMessagePartSchema = z.discriminatedUnion('type', [
   z.object({ type: z.literal('file'), assetId: AssetIdSchema, name: z.string().optional() }).strict(),
   z.object({ type: z.literal('audio'), assetId: AssetIdSchema }).strict(),
   z.object({ type: z.literal('quote'), messageId: LogicalMessageIdSchema }).strict(),
+  z
+    .object({
+      type: z.literal('rich'),
+      adapterKey: z.string().trim().min(1).max(64),
+      kind: z.string().trim().min(1).max(64),
+      summary: z.string().trim().min(1).max(500),
+      title: z.string().trim().min(1).max(200).optional(),
+      source: z.string().trim().min(1).max(80).optional(),
+      previewAssetId: AssetIdSchema.optional(),
+      extension: RichExtensionSchema.optional(),
+    })
+    .strict(),
 ])
 
 export const HostSnapshotMessageSchema = z

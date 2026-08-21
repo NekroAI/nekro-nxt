@@ -109,6 +109,232 @@ const required = (value: string | undefined, description: string): string => {
 
 const regexEscape = (value: string): string => value.replace(/[.*+?^${}()|[\]\\]/gu, '\\$&')
 
+export type QQForwardItem = {
+  readonly sender?: string
+  readonly text?: string
+  readonly card?: {
+    readonly kind: string
+    readonly summary: string
+    readonly title?: string
+    readonly source?: string
+    readonly previewUrl?: string
+  }
+  readonly attachmentUrl?: string
+  readonly attachmentName?: string
+  readonly attachmentMediaType?: string
+}
+
+export type QQDecodedRich = {
+  readonly kind: string
+  readonly summary: string
+  readonly title?: string
+  readonly source?: string
+  readonly previewUrl?: string
+  readonly items?: readonly QQForwardItem[]
+  readonly extension?: Readonly<Record<string, string>>
+}
+
+const CARD_DUMP_KEYS = ['摘要', 'title', 'preview', 'source_logo', 'source'] as const
+
+const compactExtension = (fields: Readonly<Record<string, string>>): Readonly<Record<string, string>> | undefined => {
+  const entries = Object.entries(fields).filter(([, value]) => value.trim().length > 0)
+  return entries.length === 0 ? undefined : Object.fromEntries(entries)
+}
+
+const richFromFields = (kind: string, fields: Readonly<Record<string, string>>): QQDecodedRich | undefined => {
+  const title = fields['title']?.trim()
+  const source = fields['source']?.trim()
+  const previewUrl = fields['preview']?.trim()
+  const dumpSummary = fields['摘要']?.replace(/^\[QQ小程序\]/u, '').trim()
+  if (kind === 'forward') {
+    const preview = dumpSummary || title
+    return {
+      kind,
+      summary: '转发的聊天记录',
+      title: '转发的聊天记录',
+      ...(preview ? { extension: { preview: preview.slice(0, 4000) } } : {}),
+    }
+  }
+  const summary = [source, dumpSummary || title].filter(Boolean).join(' · ') || title
+  if (!summary) return undefined
+  const extension = compactExtension(fields)
+  return {
+    kind,
+    summary,
+    ...(title ? { title } : {}),
+    ...(source ? { source } : {}),
+    ...(previewUrl ? { previewUrl } : {}),
+    ...(extension === undefined ? {} : { extension }),
+  }
+}
+
+/** Parse the flattened `[卡片消息]` dump some QQ clients put in `content`. */
+export const parseQQCardDump = (content: string): QQDecodedRich | undefined => {
+  const header = content.match(/^\[卡片消息\](?:\s+(\S+))?/u)
+  if (!header) return undefined
+  const rest = content.slice(header[0].length).trim()
+  const kindToken = header[1]
+  const kind =
+    kindToken === '小程序' ? 'miniapp' : kindToken === '转发' || kindToken === '聊天记录' ? 'forward' : 'card'
+  const fields: Record<string, string> = {}
+  const keyPattern = new RegExp(`(${CARD_DUMP_KEYS.join('|')}):`, 'gu')
+  const matches = [...rest.matchAll(keyPattern)]
+  if (matches.length === 0) {
+    if (rest) fields['摘要'] = rest
+    return richFromFields(kind, fields)
+  }
+  for (const [index, match] of matches.entries()) {
+    const key = match[1]
+    if (!key || match.index === undefined) continue
+    const start = match.index + match[0].length
+    const end = matches[index + 1]?.index ?? rest.length
+    fields[key] = rest.slice(start, end).trim()
+  }
+  return richFromFields(kind, fields)
+}
+
+const parseQQArk = (value: unknown): QQDecodedRich | undefined => {
+  const ark = record(value)
+  if (Object.keys(ark).length === 0) return undefined
+  const fields: Record<string, string> = {}
+  for (const item of records(ark['kv'])) {
+    const key = text(item['key'])?.replaceAll('#', '')
+    const valueText = text(item['value'])
+    if (key && valueText) fields[key.toLowerCase()] = valueText
+  }
+  const title = text(ark['title'], fields['title'], fields['prompt'])
+  const summary = text(fields['desc'], fields['metadesc'], ark['prompt'], title)
+  if (title) fields['title'] = title
+  if (summary) fields['摘要'] = summary
+  const preview = text(fields['preview'], fields['img'], fields['image'])
+  if (preview) fields['preview'] = preview
+  return richFromFields('ark', fields)
+}
+
+const parseQQEmbed = (value: unknown): QQDecodedRich | undefined => {
+  const embed = record(value)
+  if (Object.keys(embed).length === 0) return undefined
+  const thumbnail = record(embed['thumbnail'])
+  const fields: Record<string, string> = {}
+  const title = text(embed['title'])
+  const summary = text(embed['description'], embed['prompt'], title)
+  const preview = text(thumbnail['url'], embed['url'])
+  const source = text(embed['source'], record(embed['provider'])['name'])
+  if (title) fields['title'] = title
+  if (summary) fields['摘要'] = summary
+  if (preview) fields['preview'] = preview
+  if (source) fields['source'] = source
+  return richFromFields('card', fields)
+}
+
+const parseAttachmentDump = (
+  value: string,
+): Pick<QQForwardItem, 'attachmentUrl' | 'attachmentName' | 'attachmentMediaType'> | undefined => {
+  const url = value.match(/\bURL:\s*(\S+)/u)?.[1]
+  if (!url) return undefined
+  const fileName = value.match(/文件名:\s*(\S+)/u)?.[1]
+  const kind = value.match(/类型:\s*(\S+)/u)?.[1]
+  const voiceUrl = kind === '语音' || kind === '音频' ? url : undefined
+  const mediaType = inferMediaType(fileName ?? url, voiceUrl) ?? (kind === '图片' ? 'image/jpeg' : undefined)
+  return {
+    attachmentUrl: url,
+    ...(fileName === undefined ? {} : { attachmentName: fileName }),
+    ...(mediaType === undefined ? {} : { attachmentMediaType: mediaType }),
+  }
+}
+
+const parseForwardSegment = (segment: string): QQForwardItem | undefined => {
+  const fields: Record<string, string> = {}
+  const markers = [...segment.matchAll(/\[(消息内容|发送者|消息类型|附件\d+)\]/gu)]
+  if (markers.length === 0) {
+    const trimmed = segment.trim()
+    return trimmed ? { text: trimmed } : undefined
+  }
+  for (const [index, match] of markers.entries()) {
+    const key = match[1]
+    if (!key || match.index === undefined) continue
+    const start = match.index + match[0].length
+    const end = markers[index + 1]?.index ?? segment.length
+    fields[key] = segment.slice(start, end).trim()
+  }
+  const sender = fields['发送者']
+  const rawContent = fields['消息内容']
+  const card = rawContent ? parseQQCardDump(rawContent) : undefined
+  const text = card ? undefined : rawContent
+  const attachmentField = Object.entries(fields).find(([key]) => key.startsWith('附件'))?.[1]
+  const attachment = attachmentField ? parseAttachmentDump(attachmentField) : undefined
+  if (!sender && !text && !card && !attachment) return undefined
+  return {
+    ...(sender === undefined ? {} : { sender }),
+    ...(text === undefined || text.length === 0 ? {} : { text }),
+    ...(card === undefined
+      ? {}
+      : {
+          card: {
+            kind: card.kind,
+            summary: card.summary,
+            ...(card.title === undefined ? {} : { title: card.title }),
+            ...(card.source === undefined ? {} : { source: card.source }),
+            ...(card.previewUrl === undefined ? {} : { previewUrl: card.previewUrl }),
+          },
+        }),
+    ...(attachment ?? {}),
+  }
+}
+
+/** Parse flattened `[群聊的聊天记录] === 消息 1 === ...` dumps from QQ inbound text. */
+export const parseQQChatRecordDump = (content: string): QQDecodedRich | undefined => {
+  const header = content.trim().match(/^\[([^[\]]*聊天记录)\]/u)
+  if (!header?.[1]) return undefined
+  const title = header[1]
+  const body = content.trim().slice(header[0].length)
+  if (!/===\s*消息\s*\d+\s*===/u.test(body) && title !== '群聊的聊天记录' && title !== '好友的聊天记录') {
+    return undefined
+  }
+  const items = body
+    .split(/===\s*消息\s*\d+\s*===/u)
+    .map((segment) => parseForwardSegment(segment))
+    .filter((item): item is QQForwardItem => item !== undefined)
+  const summary = items.length > 0 ? `${title}（${items.length} 条）` : title
+  return {
+    kind: 'forward',
+    summary,
+    title,
+    ...(items.length === 0 ? {} : { items }),
+  }
+}
+
+const parseQQForward = (content: string | undefined): QQDecodedRich | undefined => {
+  if (!content) return undefined
+  const recordDump = parseQQChatRecordDump(content)
+  if (recordDump) return recordDump
+  const trimmed = content.trim()
+  const head = trimmed.match(/^(?:\[(?:转发(?:的)?聊天记录|聊天记录|转发消息)\]|转发(?:的)?聊天记录)/u)
+  if (!head && !/转发(?:的)?聊天记录/.test(trimmed)) return undefined
+  const rest = (head ? trimmed.slice(head[0].length) : trimmed).replace(/^\s*\n/u, '').trim()
+  return {
+    kind: 'forward',
+    summary: '转发的聊天记录',
+    title: '转发的聊天记录',
+    ...(rest.length === 0 ? {} : { extension: { preview: rest.slice(0, 4000) } }),
+  }
+}
+
+export const parseQQRichPayload = (
+  raw: unknown,
+  content: string | undefined,
+): { readonly rich?: QQDecodedRich; readonly content?: string } => {
+  const payload = record(raw)
+  const dump = content ? parseQQCardDump(content) : undefined
+  const rich = dump ?? parseQQEmbed(payload['embed']) ?? parseQQArk(payload['ark']) ?? parseQQForward(content)
+  if (!rich) return content === undefined ? {} : { content }
+  const stripContent = dump !== undefined || rich.kind === 'forward'
+  return {
+    rich,
+    ...(stripContent || content === undefined ? {} : { content }),
+  }
+}
+
 const normalizeQQContent = (value: unknown): string | undefined => {
   const content = text(value)
   if (!content) return undefined
@@ -237,15 +463,16 @@ export const decodeQQInboundMessage = (
       'C2C sender OpenID',
     )
     const senderDisplayName = displayName(author)
-    const content = normalizeQQContent(raw['content'])
     const mentions = parseMentions(raw['mentions'])
+    const richPayload = parseQQRichPayload(raw, normalizeQQContent(raw['content']))
     return {
       eventType: typedEvent,
       platformMessageId,
       target: { kind: 'c2c', openId: senderOpenId },
       senderOpenId,
       ...(senderDisplayName === undefined ? {} : { senderDisplayName }),
-      ...(content === undefined ? {} : { content }),
+      ...(richPayload.content === undefined ? {} : { content: richPayload.content }),
+      ...(richPayload.rich === undefined ? {} : { rich: richPayload.rich }),
       ...(mentions.length === 0 ? {} : { mentions }),
       attachments: parseAttachments(raw['attachments']),
       ...(reference.reference === undefined ? {} : { platformReference: reference.reference }),
@@ -258,7 +485,7 @@ export const decodeQQInboundMessage = (
   const mentions = parseMentions(raw['mentions'])
   const targetDisplayName = text(raw['group_name'], raw['group_nick'], raw['group_title'])
   const senderDisplayName = displayName(author)
-  const content = normalizeQQContent(raw['content'])
+  const richPayload = parseQQRichPayload(raw, normalizeQQContent(raw['content']))
   return {
     eventType: typedEvent,
     platformMessageId,
@@ -266,7 +493,8 @@ export const decodeQQInboundMessage = (
     ...(targetDisplayName === undefined ? {} : { targetDisplayName }),
     senderOpenId,
     ...(senderDisplayName === undefined ? {} : { senderDisplayName }),
-    ...(content === undefined ? {} : { content }),
+    ...(richPayload.content === undefined ? {} : { content: richPayload.content }),
+    ...(richPayload.rich === undefined ? {} : { rich: richPayload.rich }),
     mentions,
     attachments: parseAttachments(raw['attachments']),
     ...(reference.reference === undefined ? {} : { platformReference: reference.reference }),
