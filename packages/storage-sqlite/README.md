@@ -6,7 +6,7 @@
 
 数据库按 agents、channels、runtime、outbox、assets、extensions 六个 Repository 文件维护，另含 Host 工作树顺序单行表。Connection 的可选 `alias` 与其他字段一起经过行 Schema 读取；所有持久 JSON 读出后均经过 `drizzle-zod` 行 Schema 和领域 Schema；ID 使用带格式校验的 Zod brand。
 
-迁移目录保留 Drizzle Kit 生成的 `0000_initial`、`0001_work_tree_order` 和当前增量迁移。空数据库按完整序列应用；已有带当前迁移元数据的数据库顺序应用新增迁移；任何不含 Drizzle migration 元数据的旧实验数据库都会被明确拒绝并要求重置。本项目不维护 0000–0016 的升级兼容，也不允许人工编辑迁移 SQL。
+迁移目录保留 Drizzle Kit 生成的 `0000_initial` 至当前增量迁移。空数据库按完整序列应用；已有带当前迁移元数据的数据库顺序应用新增迁移；任何不含 Drizzle migration 元数据的旧实验数据库都会被明确拒绝并要求重置。Drizzle 在事务内执行 SQLite 表重建，而 SQLite 不允许在事务内切换 `foreign_keys`，因此 `CoreDatabase` 在迁移事务开始前暂停外键执行，迁移完成后先运行全库 `foreign_key_check`，再恢复外键；发现任何违规都拒绝启动。测试必须覆盖已有子表引用数据的真实表重建。本项目不维护 0000–0016 的升级兼容，也不允许人工编辑迁移 SQL。
 
 频道历史搜索保存规范化 `search_text`，按频道分页后在 TypeScript 中执行字面子串匹配。`%`、`_` 和中文短文本都保持字面语义。
 

@@ -1,8 +1,10 @@
 import BetterSqlite3 from 'better-sqlite3'
 import { count, eq } from 'drizzle-orm'
+import { createHash } from 'node:crypto'
 import { mkdtemp, readFile, rm } from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
+import { fileURLToPath } from 'node:url'
 import { afterEach, describe, expect, it } from 'vitest'
 import { z } from 'zod'
 import {
@@ -29,6 +31,7 @@ import {
   backupCoreDatabase,
   coreSchema,
   createSqliteBackupSet,
+  openCoreDatabase,
   openMigratedCoreDatabase,
   SqliteBackupManifestSchema,
   SqliteCoreRepository,
@@ -41,6 +44,7 @@ import {
 } from '../src/index.ts'
 
 const directories: string[] = []
+const migrationsDirectory = fileURLToPath(new URL('../migrations/', import.meta.url))
 const temporaryDirectory = async (): Promise<string> => {
   const directory = await mkdtemp(path.join(os.tmpdir(), 'nekro-nxt-storage-'))
   directories.push(directory)
@@ -68,6 +72,36 @@ const createFixture = async () => {
   const core = new CoreService(repository, { now: () => 1000 + sequence, nextUlid: () => `T${++sequence}` })
   const connection = core.createConnection({ adapterKey: 'web', config: {} })
   return { directory, database, repository, core, connection }
+}
+
+const createDatabaseAtMigration = async (filename: string, lastMigration: 0 | 1 | 2): Promise<void> => {
+  const native = new BetterSqlite3(filename)
+  try {
+    native.exec(`CREATE TABLE IF NOT EXISTS "__drizzle_migrations" (
+      id SERIAL PRIMARY KEY,
+      hash text NOT NULL,
+      created_at numeric
+    )`)
+    const journal = z
+      .object({
+        entries: z.array(z.object({ idx: z.number().int(), when: z.number(), tag: z.string() }).passthrough()),
+      })
+      .parse(JSON.parse(await readFile(path.join(migrationsDirectory, 'meta', '_journal.json'), 'utf8')))
+    for (const entry of journal.entries.filter(({ idx }) => idx <= lastMigration)) {
+      const source = await readFile(path.join(migrationsDirectory, `${entry.tag}.sql`), 'utf8')
+      for (const statement of source
+        .split('--> statement-breakpoint')
+        .map((value) => value.trim())
+        .filter(Boolean)) {
+        native.exec(statement)
+      }
+      native
+        .prepare('INSERT INTO __drizzle_migrations (hash, created_at) VALUES (?, ?)')
+        .run(createHash('sha256').update(source).digest('hex'), entry.when)
+    }
+  } finally {
+    native.close()
+  }
 }
 
 const createAgent = (core: CoreService) =>
@@ -140,6 +174,58 @@ describe('Core SQLite baseline', () => {
       expect(core.listConnections()).toHaveLength(1)
     } finally {
       database.close()
+    }
+  })
+
+  it('rebuilds a populated referenced Episode table while migrating from schema 0002', async () => {
+    const directory = await temporaryDirectory()
+    const filename = path.join(directory, 'core.sqlite')
+    await createDatabaseAtMigration(filename, 2)
+    const oldDatabase = openCoreDatabase(filename)
+    const oldRepository = new SqliteCoreRepository(oldDatabase)
+    const oldCore = new CoreService(oldRepository, { now: () => 1000, nextUlid: () => 'MIGRATION' })
+    const connection = oldCore.createConnection({ adapterKey: 'web', config: {} })
+    const agent = createAgent(oldCore)
+    const channel = oldCore.createChannel({
+      connectionId: connection.id,
+      platformChannelId: 'migration-channel',
+      kind: 'web',
+    })
+    const event = appendTextEvent(oldCore, connection.id, channel.id, 'migration-event', 'migration', 1)
+    const episodeId = EpisodeIdSchema.parse('eps_MIGRATION')
+    oldRepository.createEpisode({
+      id: episodeId,
+      channelId: channel.id,
+      agentId: agent.definition.id,
+      agentRevisionId: agent.revision.id,
+      status: 'opening',
+      openedAtEventId: event.id,
+      createdAt: 2,
+    })
+    oldRepository.createAdmission({
+      id: AdmissionIdSchema.parse('adm_MIGRATION'),
+      episodeId,
+      eventIds: [event.id],
+      mode: 'followup',
+      state: 'pending',
+      createdAt: 3,
+    })
+    oldDatabase.close()
+
+    const migrated = await openMigratedCoreDatabase(filename)
+    try {
+      const repository = new SqliteCoreRepository(migrated)
+      expect(migrated.pragma('foreign_keys')).toBe(1)
+      expect(repository.getEpisode(episodeId)).toMatchObject({ id: episodeId, status: 'opening' })
+      expect(repository.listRecoverableAdmissions(episodeId)).toHaveLength(1)
+    } finally {
+      migrated.close()
+    }
+    const native = new BetterSqlite3(filename)
+    try {
+      expect(native.pragma('foreign_key_check')).toEqual([])
+    } finally {
+      native.close()
     }
   })
 
