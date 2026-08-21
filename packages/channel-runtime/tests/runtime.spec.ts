@@ -570,6 +570,20 @@ const inbound = (
 })
 
 describe('ChannelRuntime M1 lane', () => {
+  it('creates a binding through the runtime after the channel becomes unbound', async () => {
+    const context = await setup()
+    await context.runtime.clearBinding(context.channel.id)
+    expect(context.coreRepository.getBinding(context.channel.id)).toBeUndefined()
+
+    await expect(
+      context.runtime.replaceBinding({
+        channelId: context.channel.id,
+        agentId: context.agent.definition.id,
+        triggerPolicy: 'always',
+      }),
+    ).resolves.toMatchObject({ channelId: context.channel.id, agentId: context.agent.definition.id })
+  })
+
   it('creates one Episode and Admission for a replayed inbound event', async () => {
     const context = await setup()
     expect((await context.runtime.acceptInbound(inbound(context.connection.id, context.channel.id))).inserted).toBe(

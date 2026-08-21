@@ -1,5 +1,13 @@
+import { z } from 'zod'
 import { describe, expect, it } from 'vitest'
-import { AgentIdSchema, AssetIdSchema, ChannelIdSchema, HostApiContracts, MessagePartSchema } from '../src/index.ts'
+import {
+  AgentIdSchema,
+  AssetIdSchema,
+  buildHostApiContractPath,
+  ChannelIdSchema,
+  HostApiContracts,
+  MessagePartSchema,
+} from '../src/index.ts'
 
 describe('public ID boundaries', () => {
   it('keeps brands separated by their runtime prefixes', () => {
@@ -20,5 +28,36 @@ describe('public ID boundaries', () => {
         triggerPolicy: 'always',
       }),
     ).toThrow()
+  })
+
+  it('validates path and scalar query parameters before building a transport URL', () => {
+    const contract = {
+      path: '/api/example/:id',
+      params: z
+        .object({
+          id: z.unknown(),
+          text: z.string().optional(),
+          count: z.number().optional(),
+          enabled: z.boolean().optional(),
+          extra: z.unknown().optional(),
+        })
+        .strict(),
+    }
+    expect(
+      buildHostApiContractPath(contract, {
+        id: 'value/with spaces',
+        text: 'hello',
+        count: 2,
+        enabled: true,
+      }),
+    ).toBe('/api/example/value%2Fwith%20spaces?text=hello&count=2&enabled=true')
+    expect(() => buildHostApiContractPath(contract, { id: 1 })).toThrow('path parameter id')
+    expect(() => buildHostApiContractPath(contract, { id: 'valid', extra: [] })).toThrow('query parameter extra')
+    expect(
+      HostApiContracts.createConnection.parseRequest({
+        adapterKey: 'fake',
+        alias: '   ',
+      }),
+    ).toEqual({ adapterKey: 'fake', alias: undefined, configuration: {}, credentials: {} })
   })
 })

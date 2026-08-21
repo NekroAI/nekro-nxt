@@ -1,5 +1,15 @@
 import { describe, expect, it } from 'vitest'
-import { messagePartsSearchText, NonEmptyMessagePartsSchema, parseMessageParts } from '../src/index.ts'
+import {
+  AssetIdSchema,
+  ChannelMemberIdSchema,
+  LogicalMessageIdSchema,
+  messagePartAssetId,
+  messagePartAssetIds,
+  messagePartsSearchText,
+  NonEmptyMessagePartsSchema,
+  parseMessageParts,
+  richPartContextText,
+} from '../src/index.ts'
 
 describe('MessagePart boundary', () => {
   it('preserves ordered structured content', () => {
@@ -86,5 +96,43 @@ describe('MessagePart boundary', () => {
         },
       ]),
     ).toBe('群聊的聊天记录（2 条）\n群聊的聊天记录\n成员甲：你好\n成员甲：[图片 photo.png]')
+  })
+
+  it('collects nested rich assets and flattens every supported rich item shape', () => {
+    const [part] = parseMessageParts([
+      {
+        type: 'rich',
+        adapterKey: 'qq-openclaw',
+        kind: 'forward',
+        summary: '合成转发',
+        extension: {
+          imageAssetId: 'ast_root',
+          ignoredAssetId: 'ast_ignored',
+          invalid: { previewAssetId: 'not-an-asset' },
+          values: [null, true, 1, 'plain', { previewAssetId: 'ast_nested' }],
+          items: [
+            null,
+            {},
+            { text: '无发送者文本' },
+            { sender: '成员乙', card: { summary: '卡片摘要' } },
+            { sender: '成员丙', card: { title: '卡片标题' } },
+            { imageAssetId: 'ast_image' },
+          ],
+        },
+      },
+    ])
+    if (part?.type !== 'rich') throw new Error('Expected one rich message part.')
+
+    expect(messagePartAssetIds(part)).toEqual(['ast_root', 'ast_nested', 'ast_image'])
+    expect(messagePartAssetId(part)).toBe('ast_root')
+    expect(richPartContextText(part)).toBe(
+      ['合成转发', '无发送者文本', '成员乙：[卡片] 卡片摘要', '成员丙：[卡片] 卡片标题', '[图片]'].join('\n'),
+    )
+    expect(messagePartAssetId({ type: 'text', text: 'plain' })).toBeUndefined()
+    expect(messagePartAssetIds({ type: 'image', assetId: AssetIdSchema.parse('ast_image') })).toEqual(['ast_image'])
+    expect(messagePartAssetIds({ type: 'file', assetId: AssetIdSchema.parse('ast_file') })).toEqual(['ast_file'])
+    expect(messagePartAssetIds({ type: 'audio', assetId: AssetIdSchema.parse('ast_audio') })).toEqual(['ast_audio'])
+    expect(messagePartAssetIds({ type: 'mention', memberId: ChannelMemberIdSchema.parse('mbr_member') })).toEqual([])
+    expect(messagePartAssetIds({ type: 'quote', messageId: LogicalMessageIdSchema.parse('msg_quote') })).toEqual([])
   })
 })
