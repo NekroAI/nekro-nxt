@@ -60,6 +60,7 @@ export type EpisodeCloseReason =
   | 'idle-timeout'
   | 'incompatible-revision'
   | 'incompatible-activation'
+  | 'incompatible-session-storage'
   | 'unrecoverable-session'
   | 'permission-revoked'
   | 'binding-replaced'

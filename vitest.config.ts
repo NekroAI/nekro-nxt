@@ -8,6 +8,14 @@ export default defineConfig({
   },
   test: {
     include: ['apps/*/tests/**/*.spec.{ts,tsx}', 'packages/*/tests/**/*.spec.{ts,tsx}', 'scripts/**/*.spec.{ts,tsx}'],
+    server: {
+      deps: {
+        // DSH rc.1 UI primitives publish CSS-module imports from the package
+        // entry. Keep the package in Vite's transform pipeline during browser
+        // runtime tests instead of handing those imports to bare Node ESM.
+        inline: ['@deepseek-ai/dsh-client-ui-primitives'],
+      },
+    },
     coverage: {
       provider: 'v8',
       include: ['packages/*/src/**/*.ts'],

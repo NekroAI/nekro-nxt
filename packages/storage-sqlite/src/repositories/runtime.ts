@@ -56,6 +56,15 @@ type RuntimeSlice = Pick<
   | 'completeAdmission'
 >
 
+export interface DshSessionStorageRetirementReport {
+  readonly episodesClosed: number
+  readonly admissionsReleased: number
+}
+
+export interface DshSessionStorageMaintenance {
+  retireDshSessionEpisodes(closedAt: number): DshSessionStorageRetirementReport
+}
+
 const toEpisode = (input: typeof episodes.$inferSelect): EpisodeRecord => {
   const row = EpisodeRowSchema.parse(input)
   return {
@@ -107,7 +116,9 @@ const episodeInsert = (record: EpisodeRecord): typeof episodes.$inferInsert => (
   createdAt: record.createdAt,
 })
 
-export function createRuntimeRepository(database: DrizzleCoreDatabase): RuntimeSlice & AdapterRuntimeStateStore {
+export function createRuntimeRepository(
+  database: DrizzleCoreDatabase,
+): RuntimeSlice & AdapterRuntimeStateStore & DshSessionStorageMaintenance {
   const getEpisode = (id: EpisodeId): EpisodeRecord | undefined => {
     const row = database.select().from(episodes).where(eq(episodes.id, id)).get()
     return row === undefined ? undefined : toEpisode(row)
@@ -167,6 +178,48 @@ export function createRuntimeRepository(database: DrizzleCoreDatabase): RuntimeS
         .orderBy(asc(episodes.createdAt), asc(episodes.id))
         .all()
         .map(toEpisode)
+    },
+    retireDshSessionEpisodes(closedAt): DshSessionStorageRetirementReport {
+      if (!Number.isSafeInteger(closedAt) || closedAt < 0)
+        throw new TypeError('Episode close time must be non-negative.')
+      return database.transaction(
+        (tx) => {
+          const live = tx
+            .select()
+            .from(episodes)
+            .where(inArray(episodes.status, ['opening', 'active']))
+            .orderBy(asc(episodes.createdAt), asc(episodes.id))
+            .all()
+            .map(toEpisode)
+          if (live.length === 0) return { episodesClosed: 0, admissionsReleased: 0 }
+          const episodeIds = live.map(({ id }) => id)
+          const unresolved = tx
+            .select({ id: admissions.id })
+            .from(admissions)
+            .where(and(inArray(admissions.episodeId, episodeIds), inArray(admissions.state, ['pending', 'claimed'])))
+            .all()
+          const admissionIds = unresolved.map(({ id }) => id)
+          if (admissionIds.length > 0) {
+            tx.delete(admissionEvents).where(inArray(admissionEvents.admissionId, admissionIds)).run()
+            tx.delete(admissions).where(inArray(admissions.id, admissionIds)).run()
+          }
+          for (const episode of live) {
+            const changed = tx
+              .update(episodes)
+              .set({
+                status: 'closed',
+                closeReason: 'incompatible-session-storage',
+                closedAtEventId: episode.lastAdmittedEventId ?? episode.openedAtEventId,
+                closedAt,
+              })
+              .where(and(eq(episodes.id, episode.id), inArray(episodes.status, ['opening', 'active'])))
+              .run().changes
+            if (changed !== 1) throw new Error(`Episode storage-reset conflict: ${episode.id}`)
+          }
+          return { episodesClosed: live.length, admissionsReleased: admissionIds.length }
+        },
+        { behavior: 'immediate' },
+      )
     },
     getEpisodeHandoffTo(episodeId: EpisodeId): EpisodeHandoffRecord | undefined {
       const candidate = database.select().from(episodeHandoffs).where(eq(episodeHandoffs.toEpisodeId, episodeId)).get()

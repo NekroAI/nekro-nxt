@@ -11,7 +11,13 @@ const sourceRoots = ['apps', 'packages']
 const sourcePattern = /\.(?:cts|mts|ts|tsx)$/u
 const sqlStart =
   /^\s*(?:SELECT\b[\s\S]*\bFROM\b|INSERT\s+INTO\b|UPDATE\s+[A-Za-z_][\w$]*\s+SET\b|DELETE\s+FROM\b|CREATE\s+(?:(?:UNIQUE|VIRTUAL)\s+)?(?:INDEX|TABLE|TRIGGER|VIEW)\b|ALTER\s+TABLE\b|DROP\s+(?:INDEX|TABLE|TRIGGER|VIEW)\b|PRAGMA\s+[A-Za-z_]|BEGIN(?:\s+(?:DEFERRED|EXCLUSIVE|IMMEDIATE|TRANSACTION))?\s*;?\s*$|COMMIT\s*;?\s*$|ROLLBACK\s*;?\s*$|WITH\b[\s\S]*\b(?:DELETE|INSERT|SELECT|UPDATE)\b)/iu
-const exemptFiles = new Set(['packages/storage-sqlite/src/schema.ts'])
+const exemptFiles = new Set([
+  'packages/storage-sqlite/src/schema.ts',
+  // This adapter owns the foreign DSH SQLite identity/backup protocol. It
+  // deliberately cannot use the Core Drizzle schema because NekroNxt must not
+  // import or model DSH's private tables.
+  'packages/storage-sqlite/src/dsh-session-storage.ts',
+])
 
 async function sourceFiles(directory) {
   const files = []

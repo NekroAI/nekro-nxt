@@ -15,6 +15,7 @@ import { createAssetsRepository } from './repositories/assets.js'
 
 export * from './backup.js'
 export * from './database.js'
+export * from './dsh-session-storage.js'
 export * from './schema.js'
 export * from './row-schemas.js'
 
@@ -158,6 +159,7 @@ export class SqliteCoreRepository implements CurrentRepository {
     this.#runtime.listRecoverableEpisodes(...args)
   readonly listActiveEpisodesForAgent = (...args: Parameters<RuntimeRepository['listActiveEpisodesForAgent']>) =>
     this.#runtime.listActiveEpisodesForAgent(...args)
+  readonly retireDshSessionEpisodes = (closedAt: number) => this.#runtime.retireDshSessionEpisodes(closedAt)
   readonly getEpisodeHandoffTo = (...args: Parameters<RuntimeRepository['getEpisodeHandoffTo']>) =>
     this.#runtime.getEpisodeHandoffTo(...args)
   readonly createEpisode = (...args: Parameters<RuntimeRepository['createEpisode']>) =>

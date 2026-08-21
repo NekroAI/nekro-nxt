@@ -42,8 +42,14 @@ import {
 
 interface ClientModuleSystemFace {
   import(specifier: string): Promise<unknown>
-  registerStatic(id: string, module: unknown): void
+  prefetch(id: string): Promise<void>
   invalidate(id: string): void
+}
+
+interface ClientModuleRegistrationTarget {
+  mode: 'queue' | 'live'
+  pendingQueue: ClientPluginHandoff[]
+  load(registration: unknown): void
 }
 
 interface BrowserDynamicLoaderEntry {
@@ -100,8 +106,17 @@ class BrowserDynamicLoader implements BrowserDynamicLoaderFace {
 
 interface ClientModuleSystemConstructor {
   new (options: {
-    readonly modules: readonly unknown[]
+    readonly manifest: {
+      readonly rev: string
+      readonly modules: readonly unknown[]
+      readonly plugins: readonly unknown[]
+    }
     readonly staticModules: Readonly<Record<string, unknown>>
+    readonly registrationTarget: ClientModuleRegistrationTarget
+    readonly bootstrapModule: {
+      readonly id: string
+      readonly exports: Record<string, unknown>
+    }
     readonly loadBundle: (url: string) => Promise<void>
   }): ClientModuleSystemFace
 }
@@ -152,9 +167,13 @@ const staticObservable = <T>(snapshot: T) => ({
 
 /** Minimal object-layer feeds required by the official Slot renderer host. */
 const installSlotRendererShellFeeds = (context: Context): void => {
+  const provideInfo = staticObservable({ sessionId: undefined, hooks: {}, props: {} })
   context.reflect.provide('sessions', {
     list: staticObservable({ phase: 'ready', ids: [], byId: {}, current: undefined }),
-    currentProvideInfo: staticObservable({ sessionId: undefined, hooks: {}, props: {} }),
+    currentProvideInfo: provideInfo,
+    // rc.1 runtime calls this feed currentProvideInfo while the retained rc.7
+    // React renderer consumes the public renderer-host alias provideInfo.
+    provideInfo,
   })
   context.reflect.provide('workspaces', {
     list: staticObservable({
@@ -371,7 +390,7 @@ const captureBootstrapModule = (
   source: string,
   moduleWindow: Record<string, unknown>,
   documentValue: unknown,
-): Record<string, unknown> => {
+): { readonly handoff: ClientPluginHandoff; readonly exports: Record<string, unknown> } => {
   let captured: ClientPluginHandoff | undefined
   moduleWindow['__ModuleLoader__'] = {
     load: (handoff: unknown) => {
@@ -381,9 +400,25 @@ const captureBootstrapModule = (
   }
   evaluateClientBundle(source, moduleWindow, documentValue)
   if (!captured) throw new Error('DSH bootstrap bundle did not register its module.')
-  return captured.factory((specifier: string) => {
+  const handoff = captured
+  const exports = handoff.factory((specifier: string) => {
     throw new Error(`DSH bootstrap module unexpectedly required: ${specifier}`)
   })
+  return { handoff, exports }
+}
+
+const createRegistrationTarget = (): ClientModuleRegistrationTarget => {
+  const target: ClientModuleRegistrationTarget = {
+    mode: 'queue',
+    pendingQueue: [],
+    load(registration: unknown) {
+      if (target.mode !== 'queue') {
+        throw new Error('DSH Client registration target did not install its live loader.')
+      }
+      target.pendingQueue.push(requireClientPluginHandoff(registration))
+    },
+  }
+  return target
 }
 
 const loadDynamicClientModules = async (
@@ -397,21 +432,25 @@ const loadDynamicClientModules = async (
     throw new Error('A DSH Client module loader is already installed in this page.')
   }
   const bootstrap = captureBootstrapModule(clientModulesBundle, moduleWindow, documentValue)
-  delete moduleWindow['__ModuleLoader__']
-  const ClientModuleSystem = requireConstructorExport<ClientModuleSystemConstructor>(bootstrap, 'ClientModuleSystem', [
-    'import',
-    'registerStatic',
-    'invalidate',
-  ])
+  const ClientModuleSystem = requireConstructorExport<ClientModuleSystemConstructor>(
+    bootstrap.exports,
+    'ClientModuleSystem',
+    ['import', 'prefetch', 'invalidate'],
+  )
+  const registrationTarget = createRegistrationTarget()
+  moduleWindow['__ModuleLoader__'] = registrationTarget
   const moduleSystem = new ClientModuleSystem({
-    modules: [],
+    manifest: { rev: 'nekro-nxt-dynamic-client', modules: [], plugins: [] },
     staticModules: {
       react: React,
       'react/jsx-runtime': ReactJsxRuntime,
       '@deepseek-ai/cordis': Cordis,
       '@deepseek-ai/dsh-client-schema-form': SchemaFormModule,
+      '@deepseek-ai/dsh-client-ui-primitives': await import('@deepseek-ai/dsh-client-ui-primitives'),
       '@deepseek-ai/dsh-client-ui-slots': SlotModule,
     },
+    registrationTarget,
+    bootstrapModule: { id: bootstrap.handoff.id, exports: bootstrap.exports },
     loadBundle: () => Promise.reject(new Error('Unexpected external DSH Client bundle load.')),
   })
   evaluateClientBundle(clientRuntimeBundle, moduleWindow, documentValue)
@@ -458,10 +497,8 @@ export class DshClientRuntime {
   readonly #runner: DynamicPackageRunnerFace
   readonly #orchestrator: RunOrchestratorFace
   readonly #nativeLoader: BrowserDynamicLoader
-  readonly #moduleSystem: ClientModuleSystemFace
   readonly #eventSource: EventSource | undefined
   readonly #nativeEntries: string[] = []
-  #nativeStaticReady = false
   #nativeSettingsReady = false
   #disposed = false
 
@@ -473,7 +510,6 @@ export class DshClientRuntime {
     runner: DynamicPackageRunnerFace,
     orchestrator: RunOrchestratorFace,
     nativeLoader: BrowserDynamicLoader,
-    moduleSystem: ClientModuleSystemFace,
     eventSource: EventSource | undefined,
   ) {
     this.#dynamicContext = dynamicContext
@@ -483,7 +519,6 @@ export class DshClientRuntime {
     this.#runner = runner
     this.#orchestrator = orchestrator
     this.#nativeLoader = nativeLoader
-    this.#moduleSystem = moduleSystem
     this.#eventSource = eventSource
   }
 
@@ -553,7 +588,6 @@ export class DshClientRuntime {
         runner,
         orchestrator,
         nativeLoader,
-        moduleSystem,
         eventSource,
       )
     } catch (error) {
@@ -611,13 +645,6 @@ export class DshClientRuntime {
     if (this.#nativeSettingsReady) return
     const created: string[] = []
     try {
-      if (!this.#nativeStaticReady) {
-        this.#moduleSystem.registerStatic(
-          '@deepseek-ai/dsh-client-ui-primitives',
-          await import('@deepseek-ai/dsh-client-ui-primitives'),
-        )
-        this.#nativeStaticReady = true
-      }
       for (const name of [
         '@deepseek-ai/dsh-client-ui-settings',
         '@deepseek-ai/dsh-client-locale',

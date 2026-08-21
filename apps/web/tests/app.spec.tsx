@@ -835,7 +835,7 @@ describe.sequential('NekroNxt browser projections', { timeout: 30_000 }, () => {
       secrets: [{ path: ['apiKey'], set: false }],
       revision: 0,
       writable: true,
-      owner: { packageName: '@deepseek-ai/dsh-web-search-deepseek', packageVersion: '0.1.0-rc.6' },
+      owner: { packageName: '@deepseek-ai/dsh-web-search-deepseek', packageVersion: '0.1.1-rc.1' },
     }
     const mutations: unknown[] = []
     const credentialWrites: unknown[] = []
@@ -858,8 +858,8 @@ describe.sequential('NekroNxt browser projections', { timeout: 30_000 }, () => {
           plugins: [
             {
               packageName: '@deepseek-ai/dsh-web-search-deepseek',
-              packageVersion: '0.1.0-rc.6',
-              dshVersion: '0.1.0-rc.6',
+              packageVersion: '0.1.1-rc.1',
+              dshVersion: '0.1.1-rc.1',
               origin: 'builtin',
               overall: 'verified',
               settingsNamespaces: ['web-search-deepseek'],

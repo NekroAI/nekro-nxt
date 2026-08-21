@@ -233,6 +233,7 @@ export const episodes = sqliteTable(
         'idle-timeout',
         'incompatible-revision',
         'incompatible-activation',
+        'incompatible-session-storage',
         'unrecoverable-session',
         'permission-revoked',
         'binding-replaced',
@@ -256,7 +257,7 @@ export const episodes = sqliteTable(
     check('episodes_status_ck', sql`${table.status} IN ('opening', 'active', 'closed', 'failed')`),
     check(
       'episodes_close_reason_ck',
-      sql`${table.closeReason} IS NULL OR ${table.closeReason} IN ('manual', 'idle-timeout', 'incompatible-revision', 'incompatible-activation', 'unrecoverable-session', 'permission-revoked', 'binding-replaced', 'stopped')`,
+      sql`${table.closeReason} IS NULL OR ${table.closeReason} IN ('manual', 'idle-timeout', 'incompatible-revision', 'incompatible-activation', 'incompatible-session-storage', 'unrecoverable-session', 'permission-revoked', 'binding-replaced', 'stopped')`,
     ),
     foreignKey({
       name: 'episodes_revision_fk',

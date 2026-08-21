@@ -1364,6 +1364,80 @@ describe('Extension and backup', () => {
     ).toEqual(manifest)
   })
 
+  it('retires every live Episode and releases unresolved Admissions after DSH storage replacement', async () => {
+    const { database, repository, core, connection } = await createFixture()
+    try {
+      const firstAgent = createAgent(core)
+      const firstChannel = core.createChannel({
+        connectionId: connection.id,
+        platformChannelId: 'storage-reset-first',
+        kind: 'web',
+      })
+      const firstEvent = appendTextEvent(core, connection.id, firstChannel.id, 'storage-reset-first', 'first', 1)
+      const firstEpisodeId = EpisodeIdSchema.parse('eps_STORAGERESET1')
+      repository.createEpisode({
+        id: firstEpisodeId,
+        channelId: firstChannel.id,
+        agentId: firstAgent.definition.id,
+        agentRevisionId: firstAgent.revision.id,
+        status: 'opening',
+        openedAtEventId: firstEvent.id,
+        createdAt: 2,
+      })
+      const admissionId = AdmissionIdSchema.parse('adm_STORAGERESET1')
+      repository.createAdmission({
+        id: admissionId,
+        episodeId: firstEpisodeId,
+        mode: 'followup',
+        state: 'pending',
+        eventIds: [firstEvent.id],
+        createdAt: 3,
+      })
+      repository.claimAdmission(admissionId)
+
+      const secondAgent = createAgent(core)
+      const secondChannel = core.createChannel({
+        connectionId: connection.id,
+        platformChannelId: 'storage-reset-second',
+        kind: 'web',
+      })
+      const secondEvent = appendTextEvent(core, connection.id, secondChannel.id, 'storage-reset-second', 'second', 4)
+      const secondEpisodeId = EpisodeIdSchema.parse('eps_STORAGERESET2')
+      repository.createEpisode({
+        id: secondEpisodeId,
+        channelId: secondChannel.id,
+        agentId: secondAgent.definition.id,
+        agentRevisionId: secondAgent.revision.id,
+        status: 'opening',
+        openedAtEventId: secondEvent.id,
+        createdAt: 5,
+      })
+      repository.activateEpisode(secondEpisodeId, 'synthetic-old-session')
+
+      expect(repository.retireDshSessionEpisodes(6)).toEqual({ episodesClosed: 2, admissionsReleased: 1 })
+      expect(repository.getEpisode(firstEpisodeId)).toMatchObject({
+        status: 'closed',
+        closeReason: 'incompatible-session-storage',
+        closedAtEventId: firstEvent.id,
+        closedAt: 6,
+      })
+      expect(repository.getEpisode(secondEpisodeId)).toMatchObject({
+        status: 'closed',
+        closeReason: 'incompatible-session-storage',
+        closedAtEventId: secondEvent.id,
+        closedAt: 6,
+      })
+      expect(repository.listRecoverableEpisodes()).toEqual([])
+      expect(repository.listRecoverableAdmissions(firstEpisodeId)).toEqual([])
+      expect(repository.listUnadmittedEvents(firstChannel.id, firstAgent.definition.id, 0).map(({ id }) => id)).toEqual(
+        [firstEvent.id],
+      )
+      expect(repository.retireDshSessionEpisodes(7)).toEqual({ episodesClosed: 0, admissionsReleased: 0 })
+    } finally {
+      database.close()
+    }
+  })
+
   it('reports backup destination, source, staging, and manifest errors', async () => {
     const { directory, database } = await createFixture()
     const source = path.join(directory, 'core.sqlite')

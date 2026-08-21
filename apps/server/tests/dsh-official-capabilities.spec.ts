@@ -148,14 +148,14 @@ class WebSearchModel extends LlmAdapter {
       message.content.some((block) => block.type === 'tool-result'),
     )
     if (!hasToolResult) {
-      yield* toolCallChunks('web_search', 'web-search-call', { query: 'NekroNxt test' })
+      yield* toolCallChunks('web_search', 'web-search-call', { queries: ['NekroNxt test'] })
       return
     }
     yield* textChunks('搜索结果已作为外部资料处理。')
   }
 }
 
-describe('DSH rc.6 official capability composition', () => {
+describe('DSH 0.1.1-rc.1 official capability composition', () => {
   it('caps DeepSeek search cost and results while keeping external text inside the tool result', async () => {
     const directory = await mkdtemp(path.join(tmpdir(), 'nekro-nxt-dsh-web-search-'))
     temporaryDirectories.push(directory)

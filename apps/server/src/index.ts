@@ -172,51 +172,53 @@ declare module '@deepseek-ai/dsh-llm' {
 
 const HOST_DSH_PACKAGE_VERSIONS = {
   '@deepseek-ai/cordis': '4.0.1',
-  '@deepseek-ai/dsh-agent': '0.1.0-rc.6',
-  '@deepseek-ai/dsh-agent-loop': '0.1.0-rc.6',
-  '@deepseek-ai/dsh-attachment': '0.1.0-rc.6',
-  '@deepseek-ai/dsh-bash-sandbox': '0.1.0-rc.6',
-  '@deepseek-ai/dsh-compaction-basic': '0.1.0-rc.6',
-  '@deepseek-ai/dsh-compaction-tool-result-pruner': '0.1.0-rc.6',
-  '@deepseek-ai/dsh-cordis-host-runner': '0.1.0-rc.6',
-  '@deepseek-ai/dsh-credentials': '0.1.0-rc.6',
-  '@deepseek-ai/dsh-credentials-local': '0.1.0-rc.6',
-  '@deepseek-ai/dsh-launch-environment': '0.1.0-rc.6',
-  '@deepseek-ai/dsh-llm': '0.1.0-rc.6',
-  '@deepseek-ai/dsh-llm-pi-ai': '0.1.0-rc.6',
-  '@deepseek-ai/dsh-llm-retry': '0.1.0-rc.6',
-  '@deepseek-ai/dsh-output-retention': '0.1.0-rc.6',
-  '@deepseek-ai/dsh-fs-observation-policy': '0.1.0-rc.6',
-  '@deepseek-ai/dsh-fs-sandbox': '0.1.0-rc.6',
-  '@deepseek-ai/dsh-sandbox-local': '0.1.0-rc.6',
-  '@deepseek-ai/dsh-sandbox-policy': '0.1.0-rc.6',
-  '@deepseek-ai/dsh-scope': '0.1.0-rc.6',
-  '@deepseek-ai/dsh-session': '0.1.0-rc.6',
-  '@deepseek-ai/dsh-session-checkpoint-policy': '0.1.0-rc.6',
-  '@deepseek-ai/dsh-session-persistence-sqlite': '0.1.0-rc.6',
-  '@deepseek-ai/dsh-session-projection': '0.1.0-rc.6',
-  '@deepseek-ai/dsh-settings': '0.1.0-rc.6',
-  '@deepseek-ai/dsh-settings-file': '0.1.0-rc.6',
-  '@deepseek-ai/dsh-system-prompt': '0.1.0-rc.6',
-  '@deepseek-ai/dsh-shell-env': '0.1.0-rc.6',
-  '@deepseek-ai/dsh-subprocess-local': '0.1.0-rc.6',
-  '@deepseek-ai/dsh-token-meter': '0.1.0-rc.6',
-  '@deepseek-ai/dsh-spill': '0.1.0-rc.6',
-  '@deepseek-ai/dsh-spill-local': '0.1.0-rc.6',
-  '@deepseek-ai/dsh-spill-policy': '0.1.0-rc.6',
-  '@deepseek-ai/dsh-subagent': '0.1.0-rc.6',
-  '@deepseek-ai/dsh-subagent-spawn-in-process': '0.1.0-rc.6',
-  '@deepseek-ai/dsh-tool-bash': '0.1.0-rc.6',
-  '@deepseek-ai/dsh-tool-call-timeout-policy': '0.1.0-rc.6',
-  '@deepseek-ai/dsh-tool-cordis': '0.1.0-rc.6',
-  '@deepseek-ai/dsh-tool-fs': '0.1.0-rc.6',
-  '@deepseek-ai/dsh-tool-subagent': '0.1.0-rc.6',
-  '@deepseek-ai/dsh-tool-subagent-control': '0.1.0-rc.6',
-  '@deepseek-ai/dsh-tool-subagent-report': '0.1.0-rc.6',
-  '@deepseek-ai/dsh-tool-web': '0.1.0-rc.6',
-  '@deepseek-ai/dsh-tools': '0.1.0-rc.6',
-  '@deepseek-ai/dsh-web': '0.1.0-rc.6',
-  '@deepseek-ai/dsh-web-search-deepseek': '0.1.0-rc.6',
+  '@deepseek-ai/dsh-agent': '0.1.1-rc.1',
+  '@deepseek-ai/dsh-agent-loop': '0.1.1-rc.1',
+  '@deepseek-ai/dsh-attachment': '0.1.1-rc.1',
+  '@deepseek-ai/dsh-bash-sandbox': '0.1.1-rc.1',
+  '@deepseek-ai/dsh-compaction-basic': '0.1.1-rc.1',
+  '@deepseek-ai/dsh-compaction-tool-result-pruner': '0.1.1-rc.1',
+  '@deepseek-ai/dsh-cordis-host-runner': '0.1.1-rc.1',
+  '@deepseek-ai/dsh-credentials': '0.1.1-rc.1',
+  '@deepseek-ai/dsh-credentials-local': '0.1.1-rc.1',
+  '@deepseek-ai/dsh-launch-environment': '0.1.1-rc.1',
+  '@deepseek-ai/dsh-llm': '0.1.1-rc.1',
+  '@deepseek-ai/dsh-llm-pi-ai': '0.1.1-rc.1',
+  '@deepseek-ai/dsh-llm-retry': '0.1.1-rc.1',
+  '@deepseek-ai/dsh-output-retention': '0.1.1-rc.1',
+  '@deepseek-ai/dsh-fs-observation-policy': '0.1.1-rc.1',
+  '@deepseek-ai/dsh-fs-sandbox': '0.1.1-rc.1',
+  '@deepseek-ai/dsh-sandbox-local': '0.1.1-rc.1',
+  '@deepseek-ai/dsh-sandbox-policy': '0.1.1-rc.1',
+  '@deepseek-ai/dsh-scope': '0.1.1-rc.1',
+  '@deepseek-ai/dsh-session': '0.1.1-rc.1',
+  '@deepseek-ai/dsh-session-checkpoint-policy': '0.1.1-rc.1',
+  '@deepseek-ai/dsh-session-persistence-sqlite': '0.1.1-rc.1',
+  '@deepseek-ai/dsh-session-projection': '0.1.1-rc.1',
+  '@deepseek-ai/dsh-settings': '0.1.1-rc.1',
+  '@deepseek-ai/dsh-settings-file': '0.1.1-rc.1',
+  '@deepseek-ai/dsh-skill': '0.1.1-rc.1',
+  '@deepseek-ai/dsh-system-prompt': '0.1.1-rc.1',
+  '@deepseek-ai/dsh-shell-env': '0.1.1-rc.1',
+  '@deepseek-ai/dsh-subprocess-local': '0.1.1-rc.1',
+  '@deepseek-ai/dsh-token-meter': '0.1.1-rc.1',
+  '@deepseek-ai/dsh-spill': '0.1.1-rc.1',
+  '@deepseek-ai/dsh-spill-local': '0.1.1-rc.1',
+  '@deepseek-ai/dsh-spill-policy': '0.1.1-rc.1',
+  '@deepseek-ai/dsh-subagent': '0.1.1-rc.1',
+  '@deepseek-ai/dsh-subagent-spawn-in-process': '0.1.1-rc.1',
+  '@deepseek-ai/dsh-tool-bash': '0.1.1-rc.1',
+  '@deepseek-ai/dsh-tool-call-timeout-policy': '0.1.1-rc.1',
+  '@deepseek-ai/dsh-tool-cordis': '0.1.1-rc.1',
+  '@deepseek-ai/dsh-tool-fs': '0.1.1-rc.1',
+  '@deepseek-ai/dsh-tool-skill': '0.1.1-rc.1',
+  '@deepseek-ai/dsh-tool-subagent': '0.1.1-rc.1',
+  '@deepseek-ai/dsh-tool-subagent-control': '0.1.1-rc.1',
+  '@deepseek-ai/dsh-tool-subagent-report': '0.1.1-rc.1',
+  '@deepseek-ai/dsh-tool-web': '0.1.1-rc.1',
+  '@deepseek-ai/dsh-tools': '0.1.1-rc.1',
+  '@deepseek-ai/dsh-web': '0.1.1-rc.1',
+  '@deepseek-ai/dsh-web-search-deepseek': '0.1.1-rc.1',
 } as const
 
 interface DshRosterEntry {
@@ -334,7 +336,7 @@ const PackageManifestSchema = z
   .passthrough()
 
 /**
- * rc.6 redaction only walks object/dict/array containers and serialized
+ * 0.1.1-rc.1 redaction only walks object/dict/array containers and serialized
  * schemas retain Secret defaults. Refuse descriptors whose Secret nodes can
  * escape either rule instead of treating prompt/UI behavior as a wire bound.
  */
@@ -690,6 +692,7 @@ class NekroAssetAttachmentStore extends AttachmentStore {
     maxImagesPerMessage: 20,
     maxMessageImageBytes: 256 * 1024 * 1024,
     maxImagePixels: 100_000_000,
+    maxImageDimension: 32_768,
     mediaTypes: DSH_IMAGE_MEDIA_TYPES,
   }
   readonly assets: AssetAccessRepository
@@ -703,7 +706,13 @@ class NekroAssetAttachmentStore extends AttachmentStore {
 
   async validateImage(input: SaveImageAttachment): Promise<void> {
     const metadata = await sharp(input.data).metadata()
-    if (!metadata.width || !metadata.height || metadata.width * metadata.height > this.imageLimits.maxImagePixels) {
+    if (
+      !metadata.width ||
+      !metadata.height ||
+      metadata.width > this.imageLimits.maxImageDimension ||
+      metadata.height > this.imageLimits.maxImageDimension ||
+      metadata.width * metadata.height > this.imageLimits.maxImagePixels
+    ) {
       throw new Error('Image dimensions are unavailable or exceed the configured limit.')
     }
   }
@@ -1360,7 +1369,7 @@ export class DshHostRuntime implements AgentSessionDriver, ExtensionActivationHo
       await context.plugin(AgentRegistry)
       await context.plugin(SubagentRuntime)
       await context.plugin(SubagentSpawnInProcess, { providerName: 'spawn' })
-      await context.plugin(ToolSubagentReport, { reportDelivery: 'wakeup' })
+      await context.plugin(ToolSubagentReport, { reportDelivery: 'next-step' })
       context.effect(
         () =>
           context.subagents.registerContinuableSetup((childContext) => {
@@ -1611,7 +1620,7 @@ export class DshHostRuntime implements AgentSessionDriver, ExtensionActivationHo
       return {
         packageName: entry.packageName,
         packageVersion: HOST_DSH_PACKAGE_VERSIONS[entry.packageName],
-        dshVersion: '0.1.0-rc.6',
+        dshVersion: '0.1.1-rc.1',
         origin: 'builtin',
         overall: failed
           ? 'incompatible'
@@ -1649,7 +1658,7 @@ export class DshHostRuntime implements AgentSessionDriver, ExtensionActivationHo
       .find((candidate) => candidate.ns === branded)
     if (!before) throw new Error(`DSH Settings namespace 不存在：${ns}`)
     if (!isDshSettingsSchemaWireSafe(before.schema)) {
-      throw new Error(`DSH Settings namespace 含有 rc.6 无法安全脱敏的 Schema：${ns}`)
+      throw new Error(`DSH Settings namespace 含有 0.1.1-rc.1 无法安全脱敏的 Schema：${ns}`)
     }
     await this.#context.settings.mutate(branded, ops, expectedRevision)
     const descriptor = this.#context.settings
@@ -1697,7 +1706,7 @@ export class DshHostRuntime implements AgentSessionDriver, ExtensionActivationHo
 
   onDshCredentialChanged(listener: (ref: string) => void): () => void {
     this.#assertActive()
-    return this.#context.on('credentials/updated', (ref) => {
+    return this.#context.on('credentials/reference-updated', (ref) => {
       listener(String(ref))
     })
   }

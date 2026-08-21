@@ -29,7 +29,14 @@ import {
   ExtensionService,
   ExtensionSourceStore,
 } from '@nekro-nxt/extension-runtime'
-import { openMigratedCoreDatabase, SqliteCoreRepository, type CoreDatabase } from '@nekro-nxt/storage-sqlite'
+import {
+  completeDshSessionStoragePreparation,
+  openMigratedCoreDatabase,
+  prepareDshSessionStorage,
+  SqliteCoreRepository,
+  type CoreDatabase,
+  type DshSessionStoragePreparation,
+} from '@nekro-nxt/storage-sqlite'
 import { readFile } from 'node:fs/promises'
 import path from 'node:path'
 import { monotonicFactory } from 'ulid'
@@ -143,6 +150,9 @@ export class NekroRuntime {
   readonly extensionService: ExtensionService
   readonly activation: ExtensionActivationCoordinator
   readonly credentials: LocalCredentialStore
+  readonly sessionStoragePreparation: DshSessionStoragePreparation
+  readonly sessionStorageRetirement:
+    { readonly episodesClosed: number; readonly admissionsReleased: number } | undefined
   readonly #database: CoreDatabase
   readonly #now: () => number
   readonly #qqOptions: NonNullable<NekroRuntimeOptions['qq']>
@@ -166,6 +176,8 @@ export class NekroRuntime {
     readonly extensionService: ExtensionService
     readonly activation: ExtensionActivationCoordinator
     readonly credentials: LocalCredentialStore
+    readonly sessionStoragePreparation: DshSessionStoragePreparation
+    readonly sessionStorageRetirement?: { readonly episodesClosed: number; readonly admissionsReleased: number }
     readonly now: () => number
     readonly qqOptions: NonNullable<NekroRuntimeOptions['qq']>
     readonly adapterRuntimes: Map<ConnectionId, AdapterConnectionRuntime>
@@ -181,6 +193,8 @@ export class NekroRuntime {
     this.extensionService = input.extensionService
     this.activation = input.activation
     this.credentials = input.credentials
+    this.sessionStoragePreparation = input.sessionStoragePreparation
+    this.sessionStorageRetirement = input.sessionStorageRetirement
     this.#now = input.now
     this.#qqOptions = input.qqOptions
     this.#adapterRuntimes = input.adapterRuntimes
@@ -193,6 +207,15 @@ export class NekroRuntime {
     const database = await openMigratedCoreDatabase(options.coreDatabasePath)
     const repository = new SqliteCoreRepository(database)
     try {
+      const sessionStoragePreparation = await prepareDshSessionStorage({
+        databasePath: options.sessionDatabasePath,
+        now: () => new Date(now()),
+      })
+      const sessionStorageRetirement =
+        sessionStoragePreparation.kind === 'archived' ? repository.retireDshSessionEpisodes(now()) : undefined
+      if (sessionStoragePreparation.kind === 'archived') {
+        await completeDshSessionStoragePreparation(options.sessionDatabasePath)
+      }
       const assetService = new AssetService(repository, options.assetRoot)
       const core = new CoreService(repository, { now, nextUlid })
       const webConnection =
@@ -269,6 +292,8 @@ export class NekroRuntime {
         extensionService,
         activation,
         credentials,
+        sessionStoragePreparation,
+        ...(sessionStorageRetirement === undefined ? {} : { sessionStorageRetirement }),
         now,
         qqOptions: options.qq ?? {},
         adapterRuntimes,
