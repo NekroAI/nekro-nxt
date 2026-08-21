@@ -334,9 +334,11 @@ test('work tree keeps titles stable while full rows and keyboard handles cover o
   await expect(unbindDialog).toHaveCount(0)
   await expect(clerkChannelHandle).toBeFocused()
 
-  const closeNotifications = page.getByRole('button', { name: '关闭通知' })
+  const closeNotifications = page.getByRole('button', { name: '关闭通知' }).filter({ visible: true })
   for (let attempt = 0; attempt < 8 && (await closeNotifications.count()) > 0; attempt += 1) {
-    await closeNotifications.first().click({ force: true })
+    const closeNotification = closeNotifications.first()
+    await closeNotification.click()
+    await expect(closeNotification).toBeHidden()
   }
   await page.getByRole('link', { name: /临时网页台/u }).click({ button: 'right' })
   await expect(page.getByRole('menu')).toHaveCount(0)
