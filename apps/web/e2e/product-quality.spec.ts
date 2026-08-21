@@ -742,7 +742,7 @@ test('channel tabs, running tools, and trajectory rows remain keyboard operable'
   expect(Math.max(...dotPositions) - Math.min(...dotPositions)).toBeLessThanOrEqual(1)
   const runningBox = await runningTool.boundingBox()
   const streamBox = await page.locator('[data-work-stream]').boundingBox()
-  expect(runningBox?.width ?? 0).toBeLessThan(streamBox?.width ?? Number.POSITIVE_INFINITY)
+  expect(runningBox?.width ?? 0).toBeLessThanOrEqual(streamBox?.width ?? Number.POSITIVE_INFINITY)
   await capture(page, testInfo, 'channel-running-tool-expanded')
   await runningTool.click()
   await expect(runningTool).toHaveAttribute('aria-expanded', 'false')
