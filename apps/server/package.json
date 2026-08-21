@@ -7,12 +7,16 @@
     ".": {
       "types": "./lib/types/index.d.ts",
       "import": "./dist/index.mjs"
+    },
+    "./main": {
+      "types": "./lib/types/main.d.ts",
+      "import": "./dist/main.mjs"
     }
   },
   "scripts": {
     "build": "tsdown",
     "dev": "tsx watch --clear-screen=false --include '../../packages/*/dist/*.mjs' src/main.ts",
-    "start": "tsx src/main.ts",
+    "start": "node dist/main.mjs",
     "test": "vitest run --root ../.. apps/server/tests",
     "typecheck": "tsc --noEmit"
   },

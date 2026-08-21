@@ -2,6 +2,10 @@ packages:
   - 'apps/*'
   - 'packages/*'
 
+# legacy deploy 生成独立 production staging；禁止 pnpm 在运行根脚本前把其状态
+# 误应用到 workspace node_modules 并裁掉开发依赖。
+verifyDepsBeforeRun: false
+
 overrides:
   '@aws-sdk/credential-provider-ini': 3.973.13
   '@deepseek-ai/dsh-anonymous-user-id': 0.1.1-rc.1
@@ -28,6 +32,8 @@ allowBuilds:
   '@deepseek-ai/dsh-subprocess-local': true
   '@google/genai': false
   better-sqlite3: true
+  electron: true
+  electron-winstaller: true
   esbuild: true
   koffi: true
   node-pty: true
@@ -213,3 +219,15 @@ minimumReleaseAgeExclude:
   - '@deepseek-ai/dsh-subagent-in-process-driver@0.1.1-rc.1'
   - '@deepseek-ai/dsh-timeout@0.1.1-rc.1'
   - '@deepseek-ai/dsh-workflow@0.1.1-rc.1'
+
+# Desktop Release 在一个原子包中保留三端预编译原生依赖；运行时按 platform/arch 选择。
+supportedArchitectures:
+  os:
+    - darwin
+    - linux
+    - win32
+  cpu:
+    - arm64
+    - x64
+  libc:
+    - glibc

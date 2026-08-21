@@ -1,7 +1,8 @@
 import { defineConfig } from 'tsdown'
 
 export default defineConfig({
-  entry: ['src/index.ts', 'src/main.ts'],
+  entry: ['src/main.ts'],
+  deps: { neverBundle: ['electron'] },
   format: ['esm'],
   clean: true,
   dts: false,

@@ -13,7 +13,7 @@ nekro-nxt/
 ├─ docs/                     # 可公开的当前设计、协议与决策
 ├─ prototype/                # 无依赖、可交互的需求确认原型
 ├─ assets/product-concepts/  # 早期概念图，仅作视觉参考
-├─ apps/                     # Server Host 与共享 Web UI
+├─ apps/                     # Desktop、Server Host 与共享 Web UI
 └─ packages/                 # 核心、运行时、Adapter 与共享基础包
 ```
 
@@ -41,3 +41,12 @@ nekro-nxt/
 - Desktop 与 Server 复用同一核心，Server 目标为单容器与单主要数据目录。
 
 `prototype/` 与概念图只作视觉参考，实现以 `apps/web` 和现行文档为准。
+
+## 完整产品分发实验
+
+- `pnpm desktop:preview --platform mac|win|linux|all`：构建可与正式版并装的未签名预览版；
+- `pnpm desktop:stable --platform mac|win|linux|all`：构建未签名正式版；
+- `pnpm dist:server`：用当前产品版本和 commit 生成同一 Release 身份的完整 Server 镜像；
+- `docker compose up --build`：以单容器和单 `/data` 启动本地 Server 交付形态。
+
+macOS 产物固定为 Universal DMG，Windows 与 Linux 当前固定为 x64。版本只修改根 `package.json#version`：正式版为 `X.Y.Z`，预览版自动派生为 `X.Y.Z-preview.<commit Unix 秒>`，没有 beta 通道。当前实验不提供 UI 独立更新、平台签名、公证、整包自动替换或完整数据根恢复。边界见 [`原子产品 Release 与双宿主分发`](docs/decisions/accepted/2026-08-21-原子产品Release与双宿主分发.md)。
