@@ -1,6 +1,6 @@
 {
   "stable": {
-    "appId": "io.github.nekroai.nekronxt",
+    "appId": "ai.nekro.nekronxt",
     "appUserDataName": "NekroNxt",
     "artifactSlug": "nekro-nxt",
     "executableName": "NekroNxt",
@@ -9,7 +9,7 @@
     "productName": "NekroNxt"
   },
   "preview": {
-    "appId": "io.github.nekroai.nekronxt.preview",
+    "appId": "ai.nekro.nekronxt.preview",
     "appUserDataName": "NekroNxt Preview",
     "artifactSlug": "nekro-nxt-preview",
     "executableName": "NekroNxtPreview",
