@@ -1,4 +1,5 @@
-import { createContext, useContext, useEffect, useMemo, useRef, useSyncExternalStore, type ReactNode } from 'react'
+import type { NekroNxtClientSlotName, NekroNxtClientSlotPropsMap } from '@nekro-nxt/extension-sdk'
+import { Component, createContext, useContext, useEffect, useMemo, useSyncExternalStore, type ReactNode } from 'react'
 import { setDynamicClientApprovalBridge } from './dynamic-client-bridge.js'
 import { DshDynamicClientRuntime, type DynamicClientHostPort, type DynamicInventoryRow } from './dsh-dynamic-client.js'
 import { HttpDynamicClientHost } from './http-dynamic-host.js'
@@ -157,13 +158,19 @@ class DynamicClientCoordinator {
     return this.#resolve(agentId, requestId, false)
   }
 
-  renderRoot(agentId: string, displayName: string): ReactNode | undefined {
-    if (!this.#runtime || this.#runtime.loaded().length === 0) return undefined
-    return this.#runtime.renderRoot(agentId, displayName)
+  entries<Name extends NekroNxtClientSlotName>(name: Name) {
+    return this.#runtime?.entries(name) ?? []
+  }
+
+  reportSlotFailure(agentId: string, error: unknown): void {
+    this.#failure = error instanceof Error ? error.message : String(error)
+    void this.#runtime?.reportRenderFailure(agentId, error).catch(() => undefined)
+    this.#publish()
   }
 
   reportRendered(agentId: string): Promise<void> {
     return this.#enqueue(async () => {
+      if (this.#failure) return
       const runtime = this.#runtime
       if (!runtime) return
       for (const loaded of runtime.loaded()) {
@@ -267,22 +274,99 @@ class DynamicClientCoordinator {
   }
 }
 
+class DynamicSlotBoundary extends Component<
+  { readonly entryId: string; readonly onFailure: (error: unknown) => void; readonly children: ReactNode },
+  { readonly failed: boolean }
+> {
+  override state = { failed: false }
+
+  static getDerivedStateFromError(): { readonly failed: boolean } {
+    return { failed: true }
+  }
+
+  override componentDidCatch(error: Error): void {
+    this.props.onFailure(error)
+  }
+
+  override render(): ReactNode {
+    if (!this.state.failed) return this.props.children
+    return <div role="alert">即时界面渲染失败；临时 Host 能力已停止保存验证。</div>
+  }
+}
+
+function DynamicRuntimeSlot<Name extends NekroNxtClientSlotName>({
+  coordinator,
+  agentId,
+  name,
+  props,
+}: {
+  readonly coordinator: DynamicClientCoordinator
+  readonly agentId: string
+  readonly name: Name
+  readonly props: NekroNxtClientSlotPropsMap[Name]
+}) {
+  return (
+    <>
+      {coordinator.entries(name).map((entry) => {
+        const Entry = entry.component
+        return (
+          <DynamicSlotBoundary
+            entryId={entry.id}
+            key={`${name}:${entry.id}`}
+            onFailure={(error) => coordinator.reportSlotFailure(agentId, error)}
+          >
+            <Entry {...props} />
+          </DynamicSlotBoundary>
+        )
+      })}
+    </>
+  )
+}
+
 const DynamicClientContext = createContext<DynamicClientCoordinator | null>(null)
+let sharedCoordinator: DynamicClientCoordinator | undefined
+let sharedCoordinatorConsumers = 0
+let sharedDisposeTimer: number | undefined
+
+const browserDynamicClientCoordinator = (): DynamicClientCoordinator => {
+  sharedCoordinator ??= new DynamicClientCoordinator()
+  return sharedCoordinator
+}
 
 export function DynamicClientProvider({ children }: { readonly children: ReactNode }) {
-  const coordinator = useMemo(() => new DynamicClientCoordinator(), [])
-  const disposeTimer = useRef<number | undefined>(undefined)
+  const coordinator = useMemo(browserDynamicClientCoordinator, [])
 
   useEffect(() => {
-    if (disposeTimer.current !== undefined) window.clearTimeout(disposeTimer.current)
+    sharedCoordinatorConsumers += 1
+    if (sharedDisposeTimer !== undefined) window.clearTimeout(sharedDisposeTimer)
+    sharedDisposeTimer = undefined
     setDynamicClientApprovalBridge(coordinator)
     return () => {
+      sharedCoordinatorConsumers -= 1
+      if (sharedCoordinatorConsumers > 0) return
       setDynamicClientApprovalBridge(null)
-      disposeTimer.current = window.setTimeout(() => void coordinator.dispose(), 0)
+      sharedDisposeTimer = window.setTimeout(() => {
+        sharedDisposeTimer = undefined
+        if (sharedCoordinatorConsumers > 0 || sharedCoordinator !== coordinator) return
+        sharedCoordinator = undefined
+        void coordinator.dispose()
+      }, 0)
     }
   }, [coordinator])
 
   return <DynamicClientContext.Provider value={coordinator}>{children}</DynamicClientContext.Provider>
+}
+
+if (import.meta.hot) {
+  import.meta.hot.dispose(() => {
+    if (sharedDisposeTimer !== undefined) window.clearTimeout(sharedDisposeTimer)
+    sharedDisposeTimer = undefined
+    sharedCoordinatorConsumers = 0
+    setDynamicClientApprovalBridge(null)
+    const coordinator = sharedCoordinator
+    sharedCoordinator = undefined
+    if (coordinator) void coordinator.dispose()
+  })
 }
 
 export function DynamicClientSlots({ agentId, episodeId }: { readonly agentId: string; readonly episodeId: string }) {
@@ -306,12 +390,34 @@ export function DynamicClientSlots({ agentId, episodeId }: { readonly agentId: s
     }
   }, [agentId, coordinator, episodeId])
   const failure = coordinator.failure()
-  if (failure) return <div role="alert">即时界面加载失败：{failure}</div>
-  const root = coordinator.renderRoot(agentId, displayName)
+  const rendered =
+    coordinator.entries('agent.workbench.sections').length > 0 ||
+    coordinator.entries('extension.details.panels').length > 0
   useEffect(() => {
-    if (root !== undefined) void coordinator.reportRendered(agentId).catch((error) => coordinator.reportFailure(error))
-  }, [agentId, coordinator, inventoryVersion, root])
-  return root === undefined ? null : <div data-dynamic-client-slots="">{root}</div>
+    if (rendered) void coordinator.reportRendered(agentId).catch((error) => coordinator.reportFailure(error))
+  }, [agentId, coordinator, inventoryVersion, rendered])
+  if (failure) return <div role="alert">即时界面加载失败：{failure}</div>
+  return rendered ? (
+    <div data-dynamic-client-slots="">
+      <DynamicRuntimeSlot
+        coordinator={coordinator}
+        agentId={agentId}
+        name="agent.workbench.sections"
+        props={{ agentId, displayName }}
+      />
+      <DynamicRuntimeSlot
+        coordinator={coordinator}
+        agentId={agentId}
+        name="extension.details.panels"
+        props={{
+          agentId,
+          extensionId: 'dynamic-preview',
+          revisionId: 'dynamic-preview',
+          activation: 'active',
+        }}
+      />
+    </div>
+  ) : null
 }
 
 export function DshNativeSettingsSlots({ onFailure }: { readonly onFailure?: (message: string) => void }) {

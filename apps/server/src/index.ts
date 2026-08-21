@@ -991,8 +991,23 @@ class NekroNxtDynamicCordisRunner extends DynamicCordisRunnerService {
     approveFutureVersions: boolean,
   ): Promise<DynamicCordisHostHalfResult> {
     this.assertWritable('run-host-half')
+    const tools = this.runtimeContext.get('tools')
+    const before =
+      tools instanceof ToolRuntime ? new Set(tools.schemas(scopeOf(agent.ctx)).map(({ name }) => name)) : new Set()
     const result = await super.runHostHalf(agent, pluginId, packageId, mode, requestId, approveFutureVersions)
-    if (!result.ok) this.recordFailure('host-half', result.message)
+    if (!result.ok) {
+      this.recordFailure('host-half', result.message)
+      return result
+    }
+    if (tools instanceof ToolRuntime && result.startedHere) {
+      this.toolNamesByPackage.set(
+        packageId,
+        tools
+          .schemas(scopeOf(agent.ctx))
+          .map(({ name }) => name)
+          .filter((name) => !before.has(name)),
+      )
+    }
     return result
   }
 

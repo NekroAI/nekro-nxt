@@ -160,8 +160,8 @@ export class HttpDynamicClientHost implements DynamicClientHostPort {
     }
   }
 
-  invoke(pluginId: string, pluginRunId: string, method: string, args: unknown): Promise<unknown> {
-    return this.#post(
+  async invoke(pluginId: string, pluginRunId: string, method: string, args: unknown): Promise<unknown> {
+    const result = await this.#post(
       HostApiContracts.dynamicInvoke,
       { agentId: this.#agentId },
       {
@@ -172,6 +172,8 @@ export class HttpDynamicClientHost implements DynamicClientHostPort {
         ...(args === undefined ? {} : { args: parseJsonValue(args) }),
       },
     )
+    if (!result.ok) throw new Error(result.message)
+    return result.value
   }
 
   async reportRenderFailure(agentId: string, pluginId: string, pluginRunId: string, failure: unknown): Promise<void> {

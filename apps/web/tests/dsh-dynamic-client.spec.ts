@@ -1,4 +1,4 @@
-import { isValidElement } from 'react'
+import { createElement, isValidElement } from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { AgentIdSchema, EpisodeIdSchema, HostApiContracts } from '@nekro-nxt/contracts'
 import { afterEach, describe, expect, it, vi } from 'vitest'
@@ -49,7 +49,10 @@ describe('DSH Dynamic Client Runtime', () => {
             apply(ctx) {
               ctx.slots.register(
                 { name: 'agent.workbench.sections', id: 'main' },
-                () => React.createElement('section', { 'data-dynamic': 'probe' }, '动态界面已加载')
+                () => {
+                  const [label] = React.useState('动态界面已加载')
+                  return React.createElement('section', { 'data-dynamic': 'probe' }, label)
+                }
               )
             }
           }`,
@@ -97,16 +100,16 @@ describe('DSH Dynamic Client Runtime', () => {
       await runtime.approve('approval-1')
       expect(resolutions).toEqual([{ episodeId, requestId: 'approval-1', pluginRunId: 'run-1' }])
       expect(runtime.loaded()).toHaveLength(1)
-      const [entry] = runtime.slots.entriesOfSlot('agent.workbench.sections')
+      const [entry] = runtime.entries('agent.workbench.sections')
       if (typeof entry?.component !== 'function') throw new TypeError('Dynamic product Slot must be callable.')
-      const rendered: unknown = Reflect.apply(entry.component, undefined, [{ agentId, displayName: '动态测试智能体' }])
+      const rendered: unknown = createElement(entry.component, { agentId, displayName: '动态测试智能体' })
       if (!isValidElement(rendered)) throw new TypeError('Dynamic product Slot must return a React element.')
       expect(renderToStaticMarkup(rendered)).toBe('<section data-dynamic="probe">动态界面已加载</section>')
 
       await runtime.reconcile([{ ...pending, activeRun: { pluginRunId: 'run-1', packageId: 'package-1' } }])
       await runtime.reconcile([])
       expect(runtime.loaded()).toEqual([])
-      expect(runtime.slots.entriesOfSlot('agent.workbench.sections')).toHaveLength(0)
+      expect(runtime.entries('agent.workbench.sections')).toHaveLength(0)
 
       const declined = {
         ...pending,

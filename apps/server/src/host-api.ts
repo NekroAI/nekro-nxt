@@ -1908,7 +1908,9 @@ export const createNekroHostApi = (webServer: WebServer, runtime: NekroRuntime):
             200,
             HostApiContracts.dynamicGetClientCode.parseResponse({
               pluginId: client.pluginId,
+              packageId: client.packageId,
               pluginRunId: client.pluginRunId,
+              name: client.name,
               code: client.code,
             }),
           )

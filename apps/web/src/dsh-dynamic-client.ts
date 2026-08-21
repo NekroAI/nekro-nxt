@@ -26,6 +26,7 @@ import {
   type HostApiContract,
   type HostApiResponse,
 } from '@nekro-nxt/contracts'
+import type { NekroNxtClientSlotName, NekroNxtClientSlotPropsMap } from '@nekro-nxt/extension-sdk'
 import * as React from 'react'
 import * as ReactJsxRuntime from 'react/jsx-runtime'
 import type { ReactNode } from 'react'
@@ -35,6 +36,7 @@ import {
   requireConstructorExport,
   requireCordisPlugin,
   requireModuleRecord,
+  requireProductSlotComponent,
   requireSlotRegistry,
   type ClientPluginHandoff,
   type SlotRegistryFace,
@@ -452,65 +454,72 @@ const loadDynamicClientModules = async (
 ): Promise<{
   readonly modules: DynamicClientModules
   readonly moduleSystem: ClientModuleSystemFace
+  readonly moduleLoader: ClientModuleRegistrationTarget
 }> => {
   const moduleWindow = requireModuleRecord(globalThis, 'DSH Client global')
   if (moduleWindow['__ModuleLoader__']) {
     throw new Error('A DSH Client module loader is already installed in this page.')
   }
-  const bootstrap = captureBootstrapModule(clientModulesBundle, moduleWindow, documentValue)
-  const ClientModuleSystem = requireConstructorExport<ClientModuleSystemConstructor>(
-    bootstrap.exports,
-    'ClientModuleSystem',
-    ['import', 'prefetch', 'invalidate'],
-  )
-  const registrationTarget = createRegistrationTarget()
-  moduleWindow['__ModuleLoader__'] = registrationTarget
-  const moduleSystem = new ClientModuleSystem({
-    manifest: { rev: 'nekro-nxt-dynamic-client', modules: [], plugins: [] },
-    staticModules: {
-      react: React,
-      'react/jsx-runtime': ReactJsxRuntime,
-      '@deepseek-ai/cordis': Cordis,
-      '@deepseek-ai/dsh-client-schema-form': SchemaFormModule,
-      '@deepseek-ai/dsh-client-ui-primitives': await import('@deepseek-ai/dsh-client-ui-primitives'),
-      '@deepseek-ai/dsh-client-ui-slots': SlotModule,
-    },
-    registrationTarget,
-    bootstrapModule: { id: bootstrap.handoff.id, exports: bootstrap.exports },
-    loadBundle: () => Promise.reject(new Error('Unexpected external DSH Client bundle load.')),
-  })
-  evaluateClientBundle(clientRuntimeBundle, moduleWindow, documentValue)
-  evaluateClientBundle(clientRunnerBundle, moduleWindow, documentValue)
-  evaluateClientBundle(clientSettingsBundle, moduleWindow, documentValue)
-  evaluateClientBundle(clientLocaleBundle, moduleWindow, documentValue)
-  evaluateClientBundle(clientSettingsPluginsBundle, moduleWindow, documentValue)
-  const runtime = requireModuleRecord(
-    await moduleSystem.import('@deepseek-ai/dsh-client-runtime'),
-    'DSH Client Runtime module',
-  )
-  const runner = requireModuleRecord(
-    await moduleSystem.import('@deepseek-ai/dsh-cordis-client-runner'),
-    'DSH Cordis Client Runner module',
-  )
-  const SlotRegistry = requireConstructorExport<SlotRegistryConstructor>(runtime, 'SlotRegistry', [
-    'entriesOfSlot',
-    'register',
-    'install',
-    'renderSlot',
-  ])
-  const DynamicCordisPackageRunner = requireConstructorExport<DynamicPackageRunnerConstructor>(
-    runner,
-    'DynamicCordisPackageRunner',
-    ['load', 'retract', 'subscribe', 'getSnapshot', 'isLoaded', 'dispose'],
-  )
-  const CordisRunOrchestrator = requireConstructorExport<RunOrchestratorConstructor>(runner, 'CordisRunOrchestrator', [
-    'reconcileApprovals',
-    'approve',
-    'decline',
-  ])
-  return {
-    moduleSystem,
-    modules: { ClientModuleSystem, SlotRegistry, DynamicCordisPackageRunner, CordisRunOrchestrator },
+  try {
+    const bootstrap = captureBootstrapModule(clientModulesBundle, moduleWindow, documentValue)
+    const ClientModuleSystem = requireConstructorExport<ClientModuleSystemConstructor>(
+      bootstrap.exports,
+      'ClientModuleSystem',
+      ['import', 'prefetch', 'invalidate'],
+    )
+    const registrationTarget = createRegistrationTarget()
+    moduleWindow['__ModuleLoader__'] = registrationTarget
+    const moduleSystem = new ClientModuleSystem({
+      manifest: { rev: 'nekro-nxt-dynamic-client', modules: [], plugins: [] },
+      staticModules: {
+        react: React,
+        'react/jsx-runtime': ReactJsxRuntime,
+        '@deepseek-ai/cordis': Cordis,
+        '@deepseek-ai/dsh-client-schema-form': SchemaFormModule,
+        '@deepseek-ai/dsh-client-ui-primitives': await import('@deepseek-ai/dsh-client-ui-primitives'),
+        '@deepseek-ai/dsh-client-ui-slots': SlotModule,
+      },
+      registrationTarget,
+      bootstrapModule: { id: bootstrap.handoff.id, exports: bootstrap.exports },
+      loadBundle: () => Promise.reject(new Error('Unexpected external DSH Client bundle load.')),
+    })
+    evaluateClientBundle(clientRuntimeBundle, moduleWindow, documentValue)
+    evaluateClientBundle(clientRunnerBundle, moduleWindow, documentValue)
+    evaluateClientBundle(clientSettingsBundle, moduleWindow, documentValue)
+    evaluateClientBundle(clientLocaleBundle, moduleWindow, documentValue)
+    evaluateClientBundle(clientSettingsPluginsBundle, moduleWindow, documentValue)
+    const runtime = requireModuleRecord(
+      await moduleSystem.import('@deepseek-ai/dsh-client-runtime'),
+      'DSH Client Runtime module',
+    )
+    const runner = requireModuleRecord(
+      await moduleSystem.import('@deepseek-ai/dsh-cordis-client-runner'),
+      'DSH Cordis Client Runner module',
+    )
+    const SlotRegistry = requireConstructorExport<SlotRegistryConstructor>(runtime, 'SlotRegistry', [
+      'entriesOfSlot',
+      'register',
+      'install',
+      'renderSlot',
+    ])
+    const DynamicCordisPackageRunner = requireConstructorExport<DynamicPackageRunnerConstructor>(
+      runner,
+      'DynamicCordisPackageRunner',
+      ['load', 'retract', 'subscribe', 'getSnapshot', 'isLoaded', 'dispose'],
+    )
+    const CordisRunOrchestrator = requireConstructorExport<RunOrchestratorConstructor>(
+      runner,
+      'CordisRunOrchestrator',
+      ['reconcileApprovals', 'approve', 'decline'],
+    )
+    return {
+      moduleSystem,
+      moduleLoader: registrationTarget,
+      modules: { ClientModuleSystem, SlotRegistry, DynamicCordisPackageRunner, CordisRunOrchestrator },
+    }
+  } catch (error) {
+    Reflect.deleteProperty(moduleWindow, '__ModuleLoader__')
+    throw error
   }
 }
 
@@ -525,6 +534,7 @@ export class DshClientRuntime {
   readonly #nativeLoader: BrowserDynamicLoader
   readonly #eventSource: EventSource | undefined
   readonly #host: DynamicClientHostPort
+  readonly #moduleLoader: ClientModuleRegistrationTarget
   readonly #agentByPlugin = new Map<string, string>()
   readonly #nativeEntries: string[] = []
   #nativeSettingsReady = false
@@ -540,6 +550,7 @@ export class DshClientRuntime {
     nativeLoader: BrowserDynamicLoader,
     eventSource: EventSource | undefined,
     host: DynamicClientHostPort,
+    moduleLoader: ClientModuleRegistrationTarget,
   ) {
     this.#dynamicContext = dynamicContext
     this.#nativeContext = nativeContext
@@ -550,10 +561,11 @@ export class DshClientRuntime {
     this.#nativeLoader = nativeLoader
     this.#eventSource = eventSource
     this.#host = host
+    this.#moduleLoader = moduleLoader
   }
 
   static async create(host: DynamicClientHostPort, documentValue: unknown = document): Promise<DshClientRuntime> {
-    const { modules, moduleSystem } = await loadDynamicClientModules(documentValue)
+    const { modules, moduleSystem, moduleLoader } = await loadDynamicClientModules(documentValue)
     const dynamicContext = new Context()
     const nativeContext = new Context()
     try {
@@ -630,9 +642,13 @@ export class DshClientRuntime {
         nativeLoader,
         eventSource,
         host,
+        moduleLoader,
       )
     } catch (error) {
       await Promise.all([dynamicContext.fiber.dispose(), nativeContext.fiber.dispose()])
+      if (Reflect.get(globalThis, '__ModuleLoader__') === moduleLoader) {
+        Reflect.deleteProperty(globalThis, '__ModuleLoader__')
+      }
       throw error
     }
   }
@@ -680,6 +696,32 @@ export class DshClientRuntime {
     return this.#runner.getSnapshot()
   }
 
+  entries<Name extends NekroNxtClientSlotName>(
+    name: Name,
+  ): readonly {
+    readonly id: string
+    readonly component: (props: NekroNxtClientSlotPropsMap[Name]) => ReactNode
+  }[] {
+    this.#assertActive()
+    return this.slots.entriesOfSlot(name).map((entry, index) => ({
+      id: entry.options.id ?? entry.registrant ?? `${name}:${index}`,
+      component: requireProductSlotComponent<NekroNxtClientSlotPropsMap[Name]>(
+        entry.component,
+        `Dynamic Client slot ${name}`,
+      ),
+    }))
+  }
+
+  async reportRenderFailure(agentId: string, failure: unknown): Promise<void> {
+    this.#assertActive()
+    await Promise.all(
+      this.#runner
+        .getSnapshot()
+        .filter((loaded) => this.#agentByPlugin.get(loaded.pluginId) === agentId)
+        .map((loaded) => this.#host.reportRenderFailure(agentId, loaded.pluginId, loaded.pluginRunId, failure)),
+    )
+  }
+
   renderRoot(agentId: string, displayName: string): ReactNode {
     this.#assertActive()
     return this.slots.renderSlot('root', { agentId, displayName })
@@ -716,6 +758,9 @@ export class DshClientRuntime {
     if (this.#disposed) return
     this.#disposed = true
     this.#eventSource?.close()
+    if (Reflect.get(globalThis, '__ModuleLoader__') === this.#moduleLoader) {
+      Reflect.deleteProperty(globalThis, '__ModuleLoader__')
+    }
     for (const id of this.#nativeEntries.splice(0).reverse()) await this.#nativeLoader.remove(id)
     await this.#runner.dispose()
     await Promise.all([this.#dynamicContext.fiber.dispose(), this.#nativeContext.fiber.dispose()])

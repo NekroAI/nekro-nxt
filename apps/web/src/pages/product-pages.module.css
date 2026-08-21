@@ -595,6 +595,15 @@
   white-space: nowrap;
 }
 
+.masterCopy small {
+  display: -webkit-box;
+  overflow: hidden;
+  line-height: 15px;
+  overflow-wrap: anywhere;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
+
 .facts {
   display: grid;
   grid-template-columns: minmax(112px, auto) minmax(0, 1fr);

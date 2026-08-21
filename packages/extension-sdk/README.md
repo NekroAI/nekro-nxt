@@ -30,3 +30,5 @@ harness.registerTool(ctx, tool)
 const disposeTool = harness.registerTool(ctx, tool)
 ctx.effect(() => disposeTool()) // 错误：effect 现在执行，Tool 随即被注销
 ```
+
+Client Slot 遵循同一规则：按 Authoring Reference 直接调用 `ctx.slots.register(...)`。Host RPC 则属于 Activation，必须在 factory 返回 per-Session Plugin 之前调用 `harness.handle(...)`。浏览器 RPC 请求不处于 DSH Agent Loop initiator 中，handler 不得依赖 `ctx.agents.currentInitiator()` 获取产品智能体身份；生成期稳定数据写入不可变 Revision 源码，需要运行期变化的数据通过明确的 SDK 契约或配置传入。

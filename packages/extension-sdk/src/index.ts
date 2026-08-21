@@ -193,6 +193,8 @@ export const NEKRO_NXT_EXTENSION_AUTHORING_REFERENCE: NekroNxtExtensionAuthoring
   recoveryRules: [
     '一个 Episode 同时只维护一个动态 Plugin；修复必须向同一 Plugin 追加 kind:existing Package。',
     'define、run、保存和启用是四个独立提交点；不得把动态运行声称为已保存或已启用。',
+    'ctx.effect 的回调会立即执行；Tool 和 Slot 按示例直接注册，禁止在 effect 回调中立即调用注册返回的 disposer。自管资源必须由 effect 回调返回 teardown。',
+    'Host RPC 必须在 Activation factory 注册；浏览器 RPC 没有 Agent Loop initiator，禁止依赖 currentInitiator 读取产品智能体身份。需要的稳定生成期数据应写入当前 Revision 源码或显式配置。',
     'Host 或 Client 失败后先读取 Inspect 诊断，再修复同一 Plugin；不要静默新建替代 Plugin。',
     '只使用 NekroNxt Inspect 公布的 Contribution 和 Slot；禁止注册 root 或 DSH 官方 WebUI Slot。',
   ],

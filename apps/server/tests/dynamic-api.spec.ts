@@ -88,12 +88,28 @@ describe('NekroNxt domain API — browser dynamic client circuit', () => {
       .listActiveEpisodesForAgent(other.agentId)
       .find((candidate) => candidate.dshSessionId !== undefined)!
 
-    // Define + run a client-half dynamic Package → pending approval request.
+    // Define + run a dual-half dynamic Package → pending approval request.
     const defined = runtime.host.defineDynamicPackage(dshSessionId, {
       plugin: { kind: 'new', idPrefix: 'client' },
       name: '动态客户端',
       purpose: '验证浏览器审批。',
       code: {
+        host: `return {
+          inject: ['tools'],
+          apply(ctx) {
+            const tool = harness.defineTool({
+              name: 'dynamic_client_probe',
+              description: '验证带 Client 半边的动态 Tool 证据。',
+              parameters: {},
+              output: {
+                schema: { type: 'string' },
+                render(_args, value) { return [{ type: 'text', text: value }] }
+              },
+              execute() { return 'dynamic-client-ok' }
+            })
+            harness.registerTool(ctx, tool)
+          }
+        }`,
         client: `return {
           inject: ['slots'],
           apply(ctx) {
@@ -143,6 +159,25 @@ describe('NekroNxt domain API — browser dynamic client circuit', () => {
       expect(inventoryResponse.ok).toBe(true)
       expect(HostApiContracts.dynamicInventory.parseResponse(await inventoryResponse.json()).rows).toHaveLength(1)
 
+      const clientCodeResponse = await fetch(`${origin}/api/dynamic/${entity.agentId}/get-client-code`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          episodeId: episode!.id,
+          pluginId: defined.pluginId,
+          pluginRunId,
+        }),
+      })
+      expect(clientCodeResponse.ok, await clientCodeResponse.clone().text()).toBe(true)
+      const parsedClientCode = HostApiContracts.dynamicGetClientCode.parseResponse(await clientCodeResponse.json())
+      expect(parsedClientCode).toMatchObject({
+        pluginId: defined.pluginId,
+        packageId: defined.packageId,
+        pluginRunId,
+        name: '动态客户端',
+      })
+      expect(parsedClientCode.code).toContain('apply')
+
       const approveResponse = await fetch(`${origin}/api/dynamic/${entity.agentId}/approve`, {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
@@ -167,9 +202,17 @@ describe('NekroNxt domain API — browser dynamic client circuit', () => {
         },
       )
       expect(clientVerificationResponse.ok).toBe(true)
-      await expect(
-        runtime.host.verifyDynamicPackage(dshSessionId, defined.pluginId, defined.packageId),
-      ).resolves.toMatchObject({ renderedSlots: ['agent.workbench.sections'] })
+      const verification = await runtime.host.verifyDynamicPackage(dshSessionId, defined.pluginId, defined.packageId)
+      expect(verification).toMatchObject({
+        toolNames: ['dynamic_client_probe'],
+        toolInvocations: [{ name: 'dynamic_client_probe', succeeded: true }],
+        renderedSlots: ['agent.workbench.sections'],
+      })
+      expect(
+        verification.contributions.some(
+          (contribution) => contribution.kind === 'tool' && contribution.name === 'dynamic_client_probe',
+        ),
+      ).toBe(true)
 
       // The run resolves and client code is now available to load in the browser.
       const clientCode = runtime.host.getDynamicClientCode(dshSessionId, defined.pluginId, pluginRunId)

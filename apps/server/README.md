@@ -14,7 +14,7 @@
 
 每个根 Session 通过常驻系统提示和 `nekro_nxt_channel_context` 获得 Host 权威的 Channel/Episode 身份；发送、历史、Asset 与该只读工具都绑定当前频道。Episode handoff 只总结该 Episode 已准入的 Channel Event 与自身 Outbound，上一份派生 handoff、频道原文和智能体旧出站分区标注；最近 12 条频道原文仍作为独立恢复窗口注入。摘要请求不设置 `maxTokens`、使用 180 秒边界，任何摘要失败都降级且不阻断 rollover，DSH 原生 Compaction 默认行为不变。
 
-模型供应商直接复用 DSH `dsh-llm-pi-ai`、`dsh-settings-file` 与 `dsh-credentials-local`：Web 设置页从 DSH 可配置供应商目录读取候选，通过 DSH settings 保存 profile，通过 DSH credentials 只写保存 API Key，并可调用 DSH 模型发现。设置和凭据持久化在主要数据目录的 `dsh/` 下，Server 重启后自动恢复；API 快照继续从实时 `ctx.llm` registry 投影模型列表，NekroNxt 不维护第二份供应商或模型目录。环境变量仅保留为无页面部署的可选组合层，不是本地产品的日常配置入口。
+模型供应商直接复用 DSH `dsh-llm-pi-ai`、`dsh-settings-file` 与 `dsh-credentials-local`：Web 设置页从 DSH 可配置供应商目录读取候选，通过 DSH settings 保存 profile，通过 DSH credentials 只写保存 API Key，并可调用 DSH 模型发现。设置页“测试连接”把当前未保存的 Key、Base URL、协议与模型 Draft 交给 Server；Server 在隔离 Cordis Context 中挂载一次性 `LlmRuntime + dsh-llm-pi-ai` 和只读内存凭据 Provider，执行最小请求后完整 dispose，不修改 Settings、Credential 或实时 Adapter registry。页面未填写新 Key 时只在 Server 内回退当前 Credential Reference。设置和凭据持久化在主要数据目录的 `dsh/` 下，Server 重启后自动恢复；API 快照继续从实时 `ctx.llm` registry 投影模型列表，NekroNxt 不维护第二份供应商或模型目录。环境变量仅保留为无页面部署的可选组合层，不是本地产品的日常配置入口。
 
 `GET /api/events` 直接推送频道消息和裁剪后的工作轨迹；历史与轨迹 REST 只用于首载、翻页和重连对账。可回放帧带 `id:`，内存窗口响应 `Last-Event-ID`，过期则让前端 REST 对账。接线见 `docs/08-接线与Server宿主设计.md`。
 
@@ -30,4 +30,4 @@ Loader/Profile Spike 已验证 0.1.1-rc.1 Loader 的 create/update/remove、失�
 
 Spill 由 Server 自有的 DSH `SpillStore` 实现写入 `dataRoot/dsh/spill/`，单 artifact 8 MiB、单 Session 64 MiB、Host 总量 2 GiB；每次写入串行核算，重启后重新扫描现有文件。该目录是持久备份数据，不是 Asset 或 Adapter 路径身份。关闭文件工具后已有 locator 仍有效，但智能体不能自行回读，界面与模型提示会要求先重新授权文件工具。
 
-本地开发统一运行根命令 `pnpm dev`：Web 固定监听 `http://127.0.0.1:4961` 并代理 `127.0.0.1:4960` 的 Server；端口被占用时直接失败，不静默落到另一个地址。默认数据根固定为仓库根的 `data/`，不会随 pnpm 的 package cwd 在 `apps/server/data/` 生成平行数据。workspace 库用 `tsdown --watch --no-clean` 重建，避免并行启动时暂时删除 Server 需要的包入口；Server 用 `tsx watch` 监听自身源码和各库的 `dist/*.mjs`，依赖实现变化后会优雅重启。不要分别启动一个长期不重载的 Server 进程，否则可能出现前端/路由已更新而进程内 Core 类仍是旧版本的“半新半旧”状态。改完会触发重载的代码后，必须确认 Web 与 Server 快照仍可访问，不能只看 watch 进程还在；规则见 `docs/06-开发与测试规范.md` §6.1。
+本地开发统一运行根命令 `pnpm dev`：Web 固定监听 `http://127.0.0.1:4961` 并代理 `127.0.0.1:4960` 的 Server；端口被占用时直接失败，不静默落到另一个地址。默认数据根固定为仓库根的 `data/`，不会随 pnpm 的 package cwd 在 `apps/server/data/` 生成平行数据。workspace 库用 `tsdown --watch --no-clean` 重建，避免并行启动时暂时删除 Server 需要的包入口；Server 用 `tsx watch` 监听自身源码和各库的 `dist/*.mjs`，依赖实现变化后会优雅重启。不要分别启动一个长期不重载的 Server 进程，否则可能出现前端/路由已更新而进程内 Core 类仍是旧版本的“半新半旧”状态。`pnpm install` 或 DSH 版本族升级后必须完整重启 Web 与 Server；Vite 对 `?raw` Client bundle 的解析路径会跨普通 HMR 保留，长期进程可能继续从 pnpm store 的旧物理目录加载已不在 lockfile 中的 DSH bundle。改完会触发重载的代码后，必须确认 Web 与 Server 快照仍可访问，不能只看 watch 进程还在；规则见 `docs/06-开发与测试规范.md` §6.1。
