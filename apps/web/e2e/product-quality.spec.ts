@@ -179,7 +179,7 @@ const productSnapshot = HostApiContracts.snapshot.response.parse({
       displayName: '群聊摘要',
       description: '把群聊讨论整理为可继续跟进的摘要。',
       createdByAgentId: targetAgentId,
-      revisions: [{ id: summaryRevisionId, revisionNumber: 2, createdAt: 1_725_000_000_000 }],
+      revisions: [{ id: summaryRevisionId, revisionNumber: 2, createdAt: 1_725_000_000_000, contributions: [] }],
       activations: [
         {
           agentId: targetAgentId,
@@ -188,6 +188,7 @@ const productSnapshot = HostApiContracts.snapshot.response.parse({
           activatedAt: 1_725_000_000_000,
         },
       ],
+      clientDiagnostics: [],
     },
   ],
   dynamic: [
@@ -197,6 +198,16 @@ const productSnapshot = HostApiContracts.snapshot.response.parse({
       pluginId: 'dynamic-plugin-internal-id',
       packageId: 'dynamic-package-internal-id',
       status: 'running',
+      packages: [
+        {
+          packageId: 'dynamic-package-internal-id',
+          name: '动态摘要',
+          purpose: '整理当前频道摘要。',
+          hasHostHalf: true,
+          hasClientHalf: false,
+        },
+      ],
+      policy: { turn: 1, consecutiveFailures: 0, repeatedFingerprintCount: 0 },
     },
   ],
 })
@@ -1050,6 +1061,16 @@ test('the product Client runtime approves, renders, and retracts a live DSH inte
       pluginId: 'client-probe-1',
       ...(phase === 'pending' ? { approvalRequestId: 'approval-1' } : { packageId: 'package-1' }),
       status: phase === 'pending' ? 'awaiting-approval' : phase === 'active' ? 'running' : 'stopped',
+      packages: [
+        {
+          packageId: 'package-1',
+          name: '即时界面探针',
+          purpose: '验证产品中的 DSH Client 装卸链路。',
+          hasHostHalf: false,
+          hasClientHalf: true,
+        },
+      ],
+      policy: { turn: 1, consecutiveFailures: 0, repeatedFingerprintCount: 0 },
     },
   ]
   const inventoryRows = () => [
@@ -1145,7 +1166,7 @@ test('the product Client runtime approves, renders, and retracts a live DSH inte
           inject: ['slots'],
           apply(ctx) {
             ctx.slots.register(
-              { name: 'root' },
+              { name: 'agent.workbench.sections', id: 'main' },
               () => React.createElement('section', { 'data-live-client': 'probe' }, '即时界面已真实加载')
             )
           }
@@ -1158,17 +1179,438 @@ test('the product Client runtime approves, renders, and retracts a live DSH inte
     phase = 'active'
     return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ accepted: true }) })
   })
+  await page.route('**/api/dynamic/*/report-client-verification', (route) => {
+    calls.push('report-client-verification')
+    return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ ok: true }) })
+  })
 
   await page.goto('/work/creator')
   await page.getByRole('button', { name: '审查界面预览' }).click()
   await page.getByRole('dialog').getByRole('button', { name: '允许本次预览' }).click()
   await expect(page.getByText('即时界面已真实加载')).toBeVisible()
-  expect(calls).toEqual(['run-host-half', 'get-client-code', 'approve'])
+  await expect.poll(() => calls).toContain('report-client-verification')
+  expect(calls).toEqual(['run-host-half', 'get-client-code', 'approve', 'report-client-verification'])
 
   phase = 'stopped'
   releaseStatus()
   await expect(page.getByText('即时界面已真实加载')).toBeHidden()
   await expect(page.getByText('已停止', { exact: true }).first()).toBeVisible()
+  expect(failures, failures.join('\n')).toEqual([])
+})
+
+test('the creator saves the exact running Package and selects the resulting extension', async ({ page }) => {
+  const failures = installRuntimeFailureGate(page)
+  const savedExtensionId = ExtensionIdSchema.parse('ext_savedprobe')
+  const savedRevisionId = ExtensionRevisionIdSchema.parse('xrv_savedprobe')
+  let saved = false
+  let saveRequest: unknown
+  let clientCodeRequests = 0
+  page.on('request', (request) => {
+    if (request.url().includes('/get-client-code')) clientCodeRequests += 1
+  })
+  const dynamic = [
+    {
+      agentId: targetAgentId,
+      episodeId: targetEpisodeId,
+      pluginId: 'plugin-save-probe',
+      packageId: 'package-save-probe',
+      currentPackageId: 'package-save-probe',
+      status: 'running',
+      packages: [
+        {
+          packageId: 'package-save-probe',
+          name: '待保存摘要工具',
+          purpose: '验证创造工作台的精确保存。',
+          hasHostHalf: true,
+          hasClientHalf: false,
+        },
+      ],
+      policy: { turn: 1, consecutiveFailures: 0, repeatedFingerprintCount: 0 },
+    },
+  ]
+  const snapshot = () =>
+    HostApiContracts.snapshot.response.parse({
+      ...productSnapshot,
+      dynamic,
+      extensions: saved
+        ? [
+            ...productSnapshot.extensions,
+            {
+              id: savedExtensionId,
+              slug: 'saved-summary-probe',
+              displayName: '持久摘要探针',
+              description: '验证创造工作台保存结果。',
+              createdByAgentId: targetAgentId,
+              revisions: [
+                {
+                  id: savedRevisionId,
+                  revisionNumber: 1,
+                  createdAt: 1_725_000_000_500,
+                  contributions: ['工具：saved_summary_probe'],
+                  verification: {
+                    verifiedAt: 1_725_000_000_500,
+                    dshVersion: '0.1.1-rc.1',
+                    contractVersion: 'nekro-nxt-extension-v1',
+                    hostBuilt: true,
+                    clientBuilt: false,
+                    buildKey: 'e'.repeat(64),
+                    toolInvocationCount: 1,
+                    rpcMethods: [],
+                    renderedSlots: [],
+                  },
+                },
+              ],
+              activations: [],
+              clientDiagnostics: [],
+            },
+          ]
+        : productSnapshot.extensions,
+    })
+
+  await page.route('**/api/snapshot', (route) =>
+    route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(snapshot()) }),
+  )
+  await page.route('**/api/dynamic/*/inventory', (route) =>
+    route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({
+        rows: [
+          {
+            pluginId: 'plugin-save-probe',
+            agentId: targetAgentId,
+            packages: dynamic[0]!.packages,
+            activeRun: { pluginRunId: 'run-save-probe', packageId: 'package-save-probe' },
+            latestRun: {
+              pluginRunId: 'run-save-probe',
+              packageId: 'package-save-probe',
+              mode: 'run',
+              status: 'running',
+              host: { status: 'running', waitingFor: [] },
+              client: { status: 'absent', waitingFor: [] },
+            },
+          },
+        ],
+      }),
+    }),
+  )
+  await page.route('**/api/extensions/save-from-dynamic', async (route) => {
+    saveRequest = route.request().postDataJSON()
+    saved = true
+    return route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({ extensionId: savedExtensionId, revisionId: savedRevisionId, activation: 'inactive' }),
+    })
+  })
+
+  await page.goto('/work/creator')
+  await page.getByRole('button', { name: '保存为本地扩展', exact: true }).click()
+  const dialog = page.getByRole('dialog')
+  await dialog.getByLabel('扩展名称').fill('持久摘要探针')
+  await dialog.getByLabel('本地标识').fill('saved-summary-probe')
+  await dialog.getByLabel('说明').fill('验证创造工作台保存结果。')
+  await dialog.getByRole('button', { name: '保存本地版本', exact: true }).click()
+
+  await expect(page).toHaveURL(new RegExp(`/extensions/${savedExtensionId}$`, 'u'))
+  await expect(page.getByRole('heading', { name: '持久摘要探针' })).toBeVisible()
+  await expect(page.getByText('工具：saved_summary_probe', { exact: true })).toBeVisible()
+  expect(HostApiContracts.saveExtensionFromDynamic.request.parse(saveRequest)).toEqual({
+    agentId: targetAgentId,
+    episodeId: targetEpisodeId,
+    pluginId: 'plugin-save-probe',
+    packageId: 'package-save-probe',
+    displayName: '持久摘要探针',
+    slug: 'saved-summary-probe',
+    description: '验证创造工作台保存结果。',
+  })
+  expect(clientCodeRequests).toBe(0)
+  expect(failures, failures.join('\n')).toEqual([])
+})
+
+test('a verified Client extension restores across product pages and retracts when disabled', async ({
+  page,
+}, testInfo) => {
+  const failures = installRuntimeFailureGate(page)
+  const buildKey = 'f'.repeat(64)
+  let active = true
+  let artifactLoads = 0
+  const rpcCalls: unknown[] = []
+  const diagnostics: unknown[] = []
+  const snapshot = () =>
+    HostApiContracts.snapshot.response.parse({
+      ...productSnapshot,
+      dynamic: [],
+      extensions: [
+        {
+          ...productSnapshot.extensions[0],
+          revisions: [
+            {
+              id: summaryRevisionId,
+              revisionNumber: 2,
+              createdAt: 1_725_000_000_000,
+              contributions: ['工具：summary_tool', 'RPC：summary.status', '界面：智能体工作台', '界面：扩展详情'],
+              verification: {
+                verifiedAt: 1_725_000_000_000,
+                dshVersion: '0.1.1-rc.1',
+                contractVersion: 'nekro-nxt-extension-v1',
+                hostBuilt: true,
+                clientBuilt: true,
+                buildKey,
+                toolInvocationCount: 1,
+                rpcMethods: ['summary.status'],
+                renderedSlots: ['agent.workbench.sections', 'extension.details.panels'],
+              },
+            },
+          ],
+          activations: active
+            ? [
+                {
+                  agentId: targetAgentId,
+                  extensionRevisionId: summaryRevisionId,
+                  config: {},
+                  activatedAt: 1_725_000_000_000,
+                },
+              ]
+            : [],
+          clientDiagnostics: [],
+        },
+      ],
+    })
+
+  await page.route('**/api/snapshot', (route) =>
+    route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(snapshot()) }),
+  )
+  await page.route('**/api/channels/*/runtime', (route) => {
+    const channelId = new URL(route.request().url()).pathname.split('/')[3]
+    return route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({
+        channelId,
+        agentId: targetAgentId,
+        phase: 'idle',
+        summary: '智能体当前空闲。',
+        pendingInjectCount: 0,
+        turns: [],
+      }),
+    })
+  })
+  await page.route(`**/api/extensions/${summaryExtensionId}/revisions/${summaryRevisionId}/client/*.mjs*`, (route) => {
+    artifactLoads += 1
+    return route.fulfill({
+      status: 200,
+      contentType: 'text/javascript; charset=utf-8',
+      body: `export default ({ React, host, styles }) => ({
+          inject: ['slots'],
+          apply(ctx) {
+            ctx.slots.register(
+              { name: 'agent.workbench.sections', id: 'workbench' },
+              function SummaryWorkbench(props) {
+                const [status, setStatus] = React.useState('正在调用持久 RPC')
+                React.useEffect(() => {
+                  let mounted = true
+                  host.call('summary.status', { agentId: props.agentId }).then((value) => {
+                    if (mounted) setStatus(value.label)
+                  }, (error) => {
+                    if (mounted) setStatus(error instanceof Error ? error.message : String(error))
+                  })
+                  return () => { mounted = false }
+                }, [props.agentId])
+                return React.createElement('section', { className: styles.section, 'data-persistent-client': 'agent' },
+                  React.createElement('h3', { className: styles.sectionHeading }, '智能体摘要面板'),
+                  React.createElement('p', { className: styles.secondaryText }, props.displayName + ' · ' + status)
+                )
+              }
+            )
+            ctx.slots.register(
+              { name: 'extension.details.panels', id: 'details' },
+              (props) => React.createElement('section', { className: styles.section, 'data-persistent-client': 'details' },
+                React.createElement('h3', { className: styles.sectionHeading }, '扩展验证面板'),
+                React.createElement('span', { className: styles.badge }, props.activation === 'active' ? '已接入产品 Slot' : '未启用')
+              )
+            )
+          }
+        })`,
+    })
+  })
+  await page.route(`**/api/extensions/${summaryExtensionId}/revisions/${summaryRevisionId}/call`, async (route) => {
+    rpcCalls.push(route.request().postDataJSON())
+    return route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({ value: { label: '持久 RPC 已调用' } }),
+    })
+  })
+  await page.route(
+    `**/api/extensions/${summaryExtensionId}/revisions/${summaryRevisionId}/client-diagnostic`,
+    async (route) => {
+      diagnostics.push(route.request().postDataJSON())
+      return route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({ accepted: true }),
+      })
+    },
+  )
+  await page.route(`**/api/agents/${targetAgentId}/extensions/${summaryExtensionId}/activation`, (route) => {
+    expect(route.request().method()).toBe('DELETE')
+    active = false
+    return route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({ disabled: true }),
+    })
+  })
+
+  await page.setViewportSize({ width: 1440, height: 900 })
+  await page.emulateMedia({ colorScheme: 'light', reducedMotion: 'reduce' })
+  await page.goto(`/extensions/${summaryExtensionId}`)
+  await expect(page.getByText('RPC：summary.status', { exact: true })).toBeVisible()
+  await expect(page.getByText('核心引擎').locator('..')).toContainText('0.1.1-rc.1')
+  await expect(page.getByText('扩展验证面板', { exact: true })).toBeVisible()
+  await expect(page.getByText('已接入产品 Slot', { exact: true })).toBeVisible()
+  await expect.poll(() => diagnostics.length).toBeGreaterThanOrEqual(1)
+  expect(diagnostics[0]).toEqual({ agentId: targetAgentId, status: 'loaded' })
+  await assertViewportIntegrity(page)
+  await capture(page, testInfo, 'persistent-extension-details-light-1440')
+
+  await page.setViewportSize({ width: 1280, height: 800 })
+  await page.emulateMedia({ colorScheme: 'dark', reducedMotion: 'reduce' })
+  await page.goto(`/work/agents/${targetAgentId}`)
+  await expect(page.getByText('智能体摘要面板', { exact: true })).toBeVisible()
+  await expect(page.getByText('资料员 · 持久 RPC 已调用', { exact: true })).toBeVisible()
+  expect(rpcCalls[0]).toEqual({
+    agentId: targetAgentId,
+    method: 'summary.status',
+    input: { agentId: targetAgentId },
+  })
+  await assertViewportIntegrity(page)
+  await page.locator('[data-persistent-client="agent"]').scrollIntoViewIfNeeded()
+  await capture(page, testInfo, 'persistent-agent-panel-dark-1280')
+
+  await page.reload()
+  await expect(page.getByText('资料员 · 持久 RPC 已调用', { exact: true })).toBeVisible()
+  await expect.poll(() => artifactLoads).toBeGreaterThanOrEqual(2)
+  await expect.poll(() => rpcCalls.length).toBeGreaterThanOrEqual(2)
+
+  await page.goto(`/extensions/${summaryExtensionId}`)
+  await page.getByRole('button', { name: '停用扩展', exact: true }).click()
+  await expect(page.getByText('扩展验证面板', { exact: true })).toBeHidden()
+  await expect(page.getByRole('button', { name: '启用给智能体', exact: true })).toBeVisible()
+  const loadsAfterDisable = artifactLoads
+  await page.goto(`/work/agents/${targetAgentId}`)
+  await expect(page.getByText('智能体摘要面板', { exact: true })).toBeHidden()
+  expect(artifactLoads).toBe(loadsAfterDisable)
+  expect(failures, failures.join('\n')).toEqual([])
+})
+
+test('a failed Client factory stays isolated and can be reloaded without disabling Host activation', async ({
+  page,
+}) => {
+  const failures = installRuntimeFailureGate(page)
+  const buildKey = 'd'.repeat(64)
+  let failedDiagnostic = false
+  let artifactLoads = 0
+  let deactivationRequests = 0
+  const diagnostics: unknown[] = []
+  const snapshot = () =>
+    HostApiContracts.snapshot.response.parse({
+      ...productSnapshot,
+      dynamic: [],
+      extensions: [
+        {
+          ...productSnapshot.extensions[0],
+          revisions: [
+            {
+              id: summaryRevisionId,
+              revisionNumber: 2,
+              createdAt: 1_725_000_000_000,
+              contributions: ['工具：summary_tool', '界面：扩展详情'],
+              verification: {
+                verifiedAt: 1_725_000_000_000,
+                dshVersion: '0.1.1-rc.1',
+                contractVersion: 'nekro-nxt-extension-v1',
+                hostBuilt: true,
+                clientBuilt: true,
+                buildKey,
+                toolInvocationCount: 1,
+                rpcMethods: [],
+                renderedSlots: ['extension.details.panels'],
+              },
+            },
+          ],
+          clientDiagnostics: failedDiagnostic
+            ? [
+                {
+                  agentId: targetAgentId,
+                  revisionId: summaryRevisionId,
+                  status: 'failed',
+                  message: '合成 Client factory 失败',
+                  observedAt: 1_725_000_000_900,
+                },
+              ]
+            : [],
+        },
+      ],
+    })
+
+  await page.route('**/api/snapshot', (route) =>
+    route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(snapshot()) }),
+  )
+  await page.route(`**/api/extensions/${summaryExtensionId}/revisions/${summaryRevisionId}/client/*.mjs*`, (route) => {
+    artifactLoads += 1
+    return route.fulfill({
+      status: 200,
+      contentType: 'text/javascript; charset=utf-8',
+      body: `export default () => { throw new Error('合成 Client factory 失败') }`,
+    })
+  })
+  await page.route(
+    `**/api/extensions/${summaryExtensionId}/revisions/${summaryRevisionId}/client-diagnostic`,
+    async (route) => {
+      const body: unknown = route.request().postDataJSON()
+      diagnostics.push(body)
+      if (
+        typeof body === 'object' &&
+        body !== null &&
+        !Array.isArray(body) &&
+        'status' in body &&
+        body.status === 'failed'
+      ) {
+        failedDiagnostic = true
+      }
+      return route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({ accepted: true }),
+      })
+    },
+  )
+  await page.route(`**/api/agents/${targetAgentId}/extensions/${summaryExtensionId}/activation`, (route) => {
+    deactivationRequests += 1
+    return route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({ disabled: true }),
+    })
+  })
+
+  await page.goto(`/extensions/${summaryExtensionId}`)
+  await expect.poll(() => diagnostics.length).toBeGreaterThanOrEqual(1)
+  expect(diagnostics[0]).toEqual({
+    agentId: targetAgentId,
+    status: 'failed',
+    message: '合成 Client factory 失败',
+  })
+
+  await page.reload()
+  await expect(page.getByText('最近一次 Client 加载失败', { exact: true })).toBeVisible()
+  await expect(page.getByText('合成 Client factory 失败', { exact: true })).toBeVisible()
+  await expect(page.getByRole('button', { name: '停用扩展', exact: true })).toBeVisible()
+  await page.getByRole('button', { name: '重新加载界面', exact: true }).click()
+  await expect.poll(() => artifactLoads).toBeGreaterThanOrEqual(3)
+  expect(deactivationRequests).toBe(0)
   expect(failures, failures.join('\n')).toEqual([])
 })
 
