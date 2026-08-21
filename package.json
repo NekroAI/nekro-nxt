@@ -35,10 +35,11 @@
     "typecheck": "tsc -b && tsc -p tsconfig.lint.json && tsc -p tsconfig.scripts.json"
   },
   "devDependencies": {
+    "@axe-core/playwright": "^4.13.0",
     "@eslint/js": "9.39.5",
     "@playwright/test": "^1.62.1",
-    "@types/node": "22.20.0",
     "@types/better-sqlite3": "9.6.0",
+    "@types/node": "22.20.0",
     "@vitest/coverage-v8": "4.1.8",
     "eslint": "9.39.5",
     "prettier": "3.9.6",

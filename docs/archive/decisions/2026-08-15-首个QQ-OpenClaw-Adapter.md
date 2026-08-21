@@ -15,7 +15,7 @@ NekroNxt 首期需要一个真实外部平台验证 Connection、Channel、Bindi
 首个外部 Adapter 选择 QQ 官方机器人 OpenClaw 渠道，参考：
 
 - Nekro Agent 当前 `qqbot_openclaw` 实现；
-- `KroMiose/nekro-agent#321` 的 Markdown Mention 问题；
+- 历史 Nekro Agent 的 Markdown Mention 问题；
 - 腾讯 `openclaw-qqbot` v2.0.1 的平台行为与工程经验。
 
 代码使用纯 TypeScript，按 NekroNxt `AdapterContribution`、Connection、Channel 和统一消息协议重新设计，不迁移 Python 接口或旧 chat key。

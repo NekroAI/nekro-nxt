@@ -68,6 +68,12 @@ function inspectSource(relativePath, source) {
     if (!isUiKit && moduleSpecifier?.startsWith('@radix-ui/')) {
       addFinding(node, 'radix-import', `业务代码不得直接导入 ${moduleSpecifier}；请由 ui-kit 封装。`)
     }
+    if (
+      !isUiKit &&
+      (moduleSpecifier === 'motion' || moduleSpecifier === 'framer-motion' || moduleSpecifier?.startsWith('motion/'))
+    ) {
+      addFinding(node, 'motion-import', `业务代码不得直接导入 ${moduleSpecifier}；请由 ui-kit 封装。`)
+    }
     if (!isUiKit && (ts.isJsxOpeningElement(node) || ts.isJsxSelfClosingElement(node))) {
       const tagName = node.tagName.getText(file)
       if (nativeControlTags.has(tagName) && !hiddenSubmit(tagName, node.attributes)) {
@@ -83,21 +89,23 @@ function inspectSource(relativePath, source) {
 function runSelfTest() {
   const business = `
 import * as Dialog from '@radix-ui/react-dialog'
+import { motion } from 'motion/react'
 export function Fixture() {
   return <><button /><select /><input type="submit" hidden /></>
 }`
-  const uiKit = `import * as Dialog from '@radix-ui/react-dialog'; export const Control = () => <button />`
+  const uiKit = `import * as Dialog from '@radix-ui/react-dialog'; import { motion } from 'motion/react'; export const Control = () => <button />`
   const findings = inspectSource('apps/web/src/fixture.tsx', business)
   assert.deepEqual(
     findings.map(({ line, rule }) => [line, rule]),
     [
       [2, 'radix-import'],
-      [4, 'native-control:button'],
-      [4, 'native-control:select'],
+      [3, 'motion-import'],
+      [5, 'native-control:button'],
+      [5, 'native-control:select'],
     ],
   )
   assert.deepEqual(inspectSource('apps/web/src/ui-kit/fixture.tsx', uiKit), [])
-  console.log('UI boundary self-test passed (Radix/native controls rejected; ui-kit and hidden submit allowed).')
+  console.log('UI boundary self-test passed (Radix/Motion/native controls rejected; ui-kit and hidden submit allowed).')
 }
 
 if (process.argv.includes('--self-test')) {

@@ -34,6 +34,10 @@ const genericPatterns = [
   { name: 'AWS access key', pattern: /AKIA[0-9A-Z]{16}/g },
   { name: 'OpenAI-style secret', pattern: /sk-[A-Za-z0-9_-]{20,}/g },
   { name: 'raw IPv4 address', pattern: /\b(?:\d{1,3}\.){3}\d{1,3}\b/g },
+  {
+    name: 'QQ user-content CDN host',
+    pattern: /(?:pic\.ugcimg\.cn|multimedia\.nt\.qq\.com\.cn|miniapp\.gtimg\.cn)/giu,
+  },
 ]
 
 /**

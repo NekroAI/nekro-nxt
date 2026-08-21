@@ -1,4 +1,5 @@
 import { expect, test, type Locator, type Page, type TestInfo } from '@playwright/test'
+import { AxeBuilder } from '@axe-core/playwright'
 import {
   AgentIdSchema,
   AgentRevisionIdSchema,
@@ -28,6 +29,7 @@ const summaryRevisionId = ExtensionRevisionIdSchema.parse('xrv_summary')
 const targetEpisodeId = EpisodeIdSchema.parse('eps_target')
 const visibleEventId = ChannelEventIdSchema.parse('evt_visible')
 const qqEventId = ChannelEventIdSchema.parse('evt_qqvisible')
+const qqCardEventId = ChannelEventIdSchema.parse('evt_qqcardmsg')
 const sentEventId = ChannelEventIdSchema.parse('evt_sent')
 const resourceIntentId = OutboundIntentIdSchema.parse('out_resources')
 const senderMemberId = ChannelMemberIdSchema.parse('mbr_sender')
@@ -139,7 +141,7 @@ const productSnapshot = HostApiContracts.snapshot.response.parse({
     {
       id: qqChannelId,
       connectionId: qqConnectionId,
-      platformChannelId: 'group:9CC4F6A7D6FE',
+      platformChannelId: 'group:opaqueidab12',
       kind: 'group',
       displayName: '产品讨论群',
       bindings: [],
@@ -163,7 +165,7 @@ const productSnapshot = HostApiContracts.snapshot.response.parse({
       proactiveSend: false,
       credentialConfigured: true,
       channelCount: 1,
-      knownChannels: [{ id: qqChannelId, name: 'group:9CC4F6A7D6FE', kind: 'group' }],
+      knownChannels: [{ id: qqChannelId, name: 'group:opaqueidab12', kind: 'group' }],
       gateway: { state: 'connected' },
       lastInbound: { channelId: qqChannelId, platformMessageId: 'qq-inbound', receivedAt: 1_725_000_010_000 },
       receiveTest: { status: 'received', channelId: qqChannelId, platformMessageId: 'qq-inbound' },
@@ -221,6 +223,23 @@ const channelMessages = HostApiContracts.listChannelMessages.response.parse({
         { type: 'text', text: '一起复核。' },
       ],
       occurredAt: 1_725_000_010_000,
+    },
+    {
+      id: qqCardEventId,
+      channelId: qqChannelId,
+      role: 'member',
+      sender: { memberId: senderMemberId, displayName: '成员甲' },
+      parts: [
+        {
+          type: 'rich',
+          adapterKey: 'qq-openclaw',
+          kind: 'miniapp',
+          summary: '示例来源 · 示例分享',
+          title: '示例分享',
+          source: '示例来源',
+        },
+      ],
+      occurredAt: 1_725_000_015_000,
     },
     {
       id: resourceIntentId,
@@ -369,29 +388,38 @@ test('three desktop viewports remain usable in both themes and reduced motion', 
           page.getByRole('img', { name: '界面预览图' }).evaluate((image: HTMLImageElement) => image.naturalWidth),
         )
         .toBeGreaterThan(0)
-      await expect(page.getByRole('link', { name: /验收记录\.txt/u })).toBeVisible()
+      await expect(page.getByText('验收记录.txt', { exact: true })).toBeVisible()
       await expect(page.getByLabel('消息内容')).toBeVisible()
-      await expect(page.locator('[role="tabpanel"][data-state="inactive"]')).toHaveCSS('display', 'none')
-      const canvasBox = await page.locator('[data-channel-canvas-stage]').boundingBox()
-      const messageListBox = await page.locator('[data-channel-message-list]').boundingBox()
-      expect(Math.abs((canvasBox?.y ?? 0) - (messageListBox?.y ?? Number.POSITIVE_INFINITY))).toBeLessThanOrEqual(1)
-      const composerFrame = await page.locator('[data-channel-composer]').evaluate((element) => {
-        const formStyle = getComputedStyle(element)
-        const inputStyle = getComputedStyle(element.querySelector('textarea')!)
-        return {
-          formBorder: Number.parseFloat(formStyle.borderTopWidth),
-          inputBorder: Number.parseFloat(inputStyle.borderTopWidth),
-          inputBackground: inputStyle.backgroundColor,
-          formBackground: formStyle.backgroundColor,
-        }
-      })
+      await expect(page.locator('[role="tabpanel"][data-state="inactive"]')).toHaveCount(0)
+      await expect(page.locator('[data-stage-layer="out"]')).toHaveCount(0)
+      await expect(page.locator('[data-stage-layer="in"]').last()).toHaveCSS('opacity', '1')
+      await expect
+        .poll(async () => {
+          const canvasBox = await page.locator('[data-channel-canvas-stage]').boundingBox()
+          const messageListBox = await page.locator('[data-channel-message-list]').boundingBox()
+          return Math.abs((canvasBox?.y ?? 0) - (messageListBox?.y ?? Number.POSITIVE_INFINITY))
+        })
+        .toBeLessThanOrEqual(1)
+      const composerFrame = await page
+        .locator('[data-channel-composer]')
+        .first()
+        .evaluate((element) => {
+          const formStyle = getComputedStyle(element)
+          const inputStyle = getComputedStyle(element.querySelector('textarea')!)
+          return {
+            formBorder: Number.parseFloat(formStyle.borderTopWidth),
+            inputBorder: Number.parseFloat(inputStyle.borderTopWidth),
+            inputBackground: inputStyle.backgroundColor,
+            formBackground: formStyle.backgroundColor,
+          }
+        })
       expect(composerFrame.formBorder).toBeGreaterThan(0)
       expect(composerFrame.inputBorder).toBe(0)
       expect(composerFrame.inputBackground).toBe('rgba(0, 0, 0, 0)')
       await expect(page.getByText('发给智能体', { exact: true })).toHaveCount(1)
       const sendButton = page.getByRole('button', { name: '发送给智能体' })
       expect(await sendButton.innerText()).toBe('')
-      const composerBox = await page.locator('[data-channel-composer]').boundingBox()
+      const composerBox = await page.locator('[data-channel-composer]').first().boundingBox()
       const infoBox = await page.getByRole('img', { name: '发送方式说明' }).boundingBox()
       const modeBox = await page.getByText('发给智能体', { exact: true }).boundingBox()
       const sendBox = await sendButton.boundingBox()
@@ -412,9 +440,13 @@ test('three desktop viewports remain usable in both themes and reduced motion', 
         .last()
       expect((await memberContent.boundingBox())?.x).toBeGreaterThan((await agentContent.boundingBox())?.x ?? 0)
       const lastMessage = page.locator('article').last()
-      const composer = page.locator('form').filter({ has: page.getByLabel('消息内容') })
+      const composer = page.locator('[data-channel-composer]').first()
       await lastMessage.scrollIntoViewIfNeeded()
-      expect((await lastMessage.boundingBox())?.y ?? 0).toBeLessThan((await composer.boundingBox())?.y ?? 0)
+      const lastMessageBox = await lastMessage.boundingBox()
+      const composerBoxAfterScroll = await composer.boundingBox()
+      expect((lastMessageBox?.y ?? 0) + (lastMessageBox?.height ?? 0)).toBeLessThanOrEqual(
+        (composerBoxAfterScroll?.y ?? 0) - 24,
+      )
       const hierarchy = await page.evaluate(() => {
         const parentName = [...document.querySelectorAll('strong')].find((node) => node.textContent === '资料员')
         const parent = parentName?.parentElement?.parentElement
@@ -474,6 +506,152 @@ test('three desktop viewports remain usable in both themes and reduced motion', 
     }
   }
 
+  expect(failures, failures.join('\n')).toEqual([])
+})
+
+test('representative product surfaces match committed visual baselines', async ({ page }, testInfo) => {
+  const failures = installRuntimeFailureGate(page)
+  await installProductRoutes(page)
+  await page.unroute('**/api/snapshot')
+  await page.route('**/api/snapshot', (route) =>
+    route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({
+        ...productSnapshot,
+        agents: productSnapshot.agents.map((agent) => {
+          if (agent.id === sourceAgentId) {
+            return { ...agent, runtimeStatus: 'running' as const, runtimePhase: 'thinking' as const }
+          }
+          if (agent.id === targetAgentId) {
+            return { ...agent, runtimeStatus: 'idle' as const, runtimePhase: 'idle' as const }
+          }
+          return agent
+        }),
+      }),
+    }),
+  )
+  await page.setViewportSize({ width: 1440, height: 900 })
+  await page.emulateMedia({ colorScheme: 'light', reducedMotion: 'no-preference' })
+  await page.addInitScript(() => window.localStorage.setItem('nekro-nxt.reduced-motion', 'true'))
+  const runtimeReady = page.waitForResponse((response) => {
+    const url = new URL(response.url())
+    return url.pathname === `/api/channels/${targetChannelId}/runtime` && response.ok()
+  })
+  await page.goto(`/work/channels/${targetChannelId}`)
+  await runtimeReady
+  await expect(page.getByRole('heading', { name: '资料员的网页频道' })).toBeVisible()
+  await expect(page.locator('[data-conversation-header-actions]').getByText('空闲', { exact: true })).toBeVisible()
+  const objectPane = page.getByLabel('对象列')
+  const targetAgentLink = objectPane.locator(`a[href="/work/agents/${targetAgentId}"]`)
+  const sourceAgentLink = objectPane.locator(`a[href="/work/agents/${sourceAgentId}"]`)
+  await expect(targetAgentLink.locator('[data-tree-state-indicator]')).toHaveCount(0)
+  await expect(objectPane.getByText('思考中', { exact: true })).toHaveCount(0)
+  await expect(sourceAgentLink.locator('[aria-label="运行状态：思考中"]')).toBeVisible()
+  await expect(page).toHaveScreenshot('channel-conversation-light-1440.png', {
+    animations: 'disabled',
+    maxDiffPixelRatio: 0.005,
+  })
+  const dragHandle = page.getByRole('button', { name: '拖动“记录员”及其频道排序' })
+  const stateIndicator = sourceAgentLink.locator('[data-tree-state-indicator]')
+  await expect(stateIndicator).toHaveCSS('opacity', '1')
+  await sourceAgentLink.hover()
+  await expect(stateIndicator).toHaveCSS('opacity', '0')
+  await dragHandle.hover()
+  await expect(dragHandle).toHaveCSS('background-color', 'rgba(0, 0, 0, 0)')
+  await capture(page, testInfo, 'channel-tree-drag-hover')
+  await page.mouse.move(700, 700)
+
+  await page.emulateMedia({ colorScheme: 'dark', reducedMotion: 'no-preference' })
+  await page.goto('/settings?tab=appearance')
+  await expect(page.getByRole('heading', { name: '外观' })).toBeVisible()
+  await expect(page).toHaveScreenshot('appearance-settings-dark-1440.png', {
+    animations: 'disabled',
+    maxDiffPixelRatio: 0.005,
+  })
+  expect(failures, failures.join('\n')).toEqual([])
+})
+
+test('representative pages and the command palette have no serious accessibility violations', async ({ page }) => {
+  const failures = installRuntimeFailureGate(page)
+  await installProductRoutes(page)
+  for (const route of [`/work/channels/${targetChannelId}`, '/connections', '/settings?tab=appearance']) {
+    await page.goto(route)
+    await expect(page.locator('main')).toBeVisible()
+    await expect(page.getByText('正在连接', { exact: true })).toHaveCount(0)
+    const result = await new AxeBuilder({ page }).withTags(['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa']).analyze()
+    expect(
+      result.violations.filter((violation) => violation.impact === 'critical' || violation.impact === 'serious'),
+      `${route} 存在严重无障碍问题`,
+    ).toEqual([])
+  }
+
+  await page.keyboard.press('Control+K')
+  await expect(page.getByRole('dialog', { name: '命令面板' })).toBeVisible()
+  const paletteResult = await new AxeBuilder({ page })
+    .include('[role="dialog"]')
+    .withTags(['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa'])
+    .analyze()
+  expect(
+    paletteResult.violations.filter((violation) => violation.impact === 'critical' || violation.impact === 'serious'),
+  ).toEqual([])
+  expect(failures, failures.join('\n')).toEqual([])
+})
+
+test('minimum desktop window remains reachable at 125% and 150% effective zoom', async ({ page }) => {
+  const failures = installRuntimeFailureGate(page)
+  await installProductRoutes(page)
+  for (const effectiveViewport of [
+    { width: 880, height: 576, zoom: '125%' },
+    { width: 733, height: 480, zoom: '150%' },
+  ]) {
+    await page.setViewportSize(effectiveViewport)
+    await page.goto(`/work/channels/${targetChannelId}`)
+    await expect(page.getByRole('heading', { name: '资料员的网页频道' })).toBeVisible()
+    const geometry = await page.evaluate(() => ({
+      viewportWidth: window.innerWidth,
+      viewportHeight: window.innerHeight,
+      scrollWidth: document.documentElement.scrollWidth,
+      scrollHeight: document.documentElement.scrollHeight,
+      bodyOverflow: getComputedStyle(document.body).overflow,
+    }))
+    expect(geometry.scrollWidth, `${effectiveViewport.zoom} 必须保留横向到达路径`).toBeGreaterThanOrEqual(1100)
+    expect(geometry.scrollHeight, `${effectiveViewport.zoom} 必须保留纵向到达路径`).toBeGreaterThanOrEqual(720)
+    expect(geometry.bodyOverflow).toBe('auto')
+    await page.evaluate(() =>
+      window.scrollTo(document.documentElement.scrollWidth, document.documentElement.scrollHeight),
+    )
+    expect(await page.evaluate(() => window.scrollX > 0 && window.scrollY > 0)).toBe(true)
+  }
+  expect(failures, failures.join('\n')).toEqual([])
+})
+
+test('English and long object names keep the desktop header on one line', async ({ page }) => {
+  const failures = installRuntimeFailureGate(page)
+  await installProductRoutes(page)
+  const longChannelName = 'Documentation & Research Coordination Channel — International Release Readiness Review'
+  await page.unroute('**/api/snapshot')
+  await page.route('**/api/snapshot', (route) =>
+    route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({
+        ...productSnapshot,
+        channels: productSnapshot.channels.map((channel) =>
+          channel.id === targetChannelId ? { ...channel, displayName: longChannelName } : channel,
+        ),
+      }),
+    }),
+  )
+  await page.setViewportSize({ width: 1100, height: 720 })
+  await page.goto(`/work/channels/${targetChannelId}`)
+  const heading = page.getByRole('heading', { name: longChannelName })
+  await expect(heading).toBeVisible()
+  const headingBox = await heading.boundingBox()
+  expect(headingBox?.height).toBeLessThanOrEqual(24)
+  const actionsBox = await page.locator('[data-conversation-header-actions]').boundingBox()
+  expect(actionsBox?.height).toBeLessThanOrEqual(36)
+  await assertViewportIntegrity(page)
   expect(failures, failures.join('\n')).toEqual([])
 })
 
@@ -722,10 +900,12 @@ test('group conversations preserve sender and Mention semantics without exposing
   await page.setViewportSize({ width: 1440, height: 900 })
   await page.goto(`/work/channels/${qqChannelId}`)
 
-  await expect(page.getByText('成员甲', { exact: true })).toBeVisible()
+  await expect(page.getByText('成员甲', { exact: true }).first()).toBeVisible()
   await expect(page.getByText('@机器人账号', { exact: true })).toBeVisible()
   await expect(page.getByText('@成员乙', { exact: true })).toBeVisible()
-  await expect(page.locator('article[data-side="left"]')).toContainText('请和')
+  await expect(page.getByText('示例来源', { exact: true })).toBeVisible()
+  await expect(page.getByText('示例分享', { exact: true })).toBeVisible()
+  await expect(page.locator('article[data-side="left"]').first()).toContainText('请和')
   await expect(page.getByText('请先绑定智能体', { exact: true })).toHaveCount(1)
   const sendButton = page.getByRole('button', { name: '发到频道' })
   await expect(sendButton).toBeVisible()
@@ -733,7 +913,7 @@ test('group conversations preserve sender and Mention semantics without exposing
   const visibleText = await page.locator('body').innerText()
   expect(visibleText).not.toContain(senderMemberId)
   expect(visibleText).not.toContain(targetMemberId)
-  expect(visibleText).not.toContain('group:9CC4F6A7D6FE')
+  expect(visibleText).not.toContain('group:opaqueidab12')
   await assertViewportIntegrity(page)
   await capture(page, testInfo, 'qq-group-member-mentions')
   expect(failures, failures.join('\n')).toEqual([])
@@ -798,15 +978,22 @@ test('redesigned relationship and lifecycle pages stay legible across representa
     .getByRole('link', { name: /QQ 官方机器人/u })
     .first()
     .click()
-  const optionalTests = page.locator('details').filter({ hasText: '可选收发测试' })
-  await expect(optionalTests).not.toHaveAttribute('open', '')
+  await expect(page.locator('[data-stage-layer="out"]')).toHaveCount(0)
+  await expect(page.locator('[data-stage-layer="in"]').last()).toHaveCSS('opacity', '1')
+  const optionalTests = page.getByRole('button', { name: '收发测试' })
+  await expect(optionalTests).toHaveAttribute('aria-expanded', 'false')
   const aliasInput = page.getByLabel('辨识名')
   const saveAliasButton = page.getByRole('button', { name: '保存别名' })
-  const aliasBox = await aliasInput.boundingBox()
+  await expect
+    .poll(async () => {
+      const aliasBox = await aliasInput.boundingBox()
+      const saveAliasBox = await saveAliasButton.boundingBox()
+      return Math.abs(
+        (aliasBox?.y ?? 0) + (aliasBox?.height ?? 0) - ((saveAliasBox?.y ?? 0) + (saveAliasBox?.height ?? 0)),
+      )
+    })
+    .toBeLessThanOrEqual(1)
   const saveAliasBox = await saveAliasButton.boundingBox()
-  expect(
-    Math.abs((aliasBox?.y ?? 0) + (aliasBox?.height ?? 0) - ((saveAliasBox?.y ?? 0) + (saveAliasBox?.height ?? 0))),
-  ).toBeLessThanOrEqual(1)
   expect(saveAliasBox?.width ?? Number.POSITIVE_INFINITY).toBeLessThan(180)
   const scrollGeometry = await page.evaluate(() => {
     const root = document.querySelector('[data-connection-page-scroll-root]')!
@@ -820,11 +1007,11 @@ test('redesigned relationship and lifecycle pages stay legible across representa
   expect(Math.abs(scrollGeometry.rootRight - scrollGeometry.stageRight)).toBeLessThanOrEqual(1)
   expect(scrollGeometry.overflowY).toBe('auto')
   await capture(page, testInfo, 'redesign-connection-qq-tests-collapsed-light')
-  await optionalTests.locator('summary').click()
-  await expect(page.getByText('群聊（尾号 D6FE）')).toBeVisible()
+  await optionalTests.click()
+  await expect(page.getByText('群聊（尾号 ab12）')).toBeVisible()
   const connectionText = await page.locator('body').innerText()
-  expect(connectionText).not.toContain('group:9CC4F6A7D6FE')
-  expect(connectionText).not.toContain('群聊（尾号 D6FE） · 群聊')
+  expect(connectionText).not.toContain('group:opaqueidab12')
+  expect(connectionText).not.toContain('群聊（尾号 ab12） · 群聊')
   await capture(page, testInfo, 'redesign-connection-qq-light')
 
   await page.unroute('**/api/snapshot')
@@ -1055,6 +1242,31 @@ test('desktop shell keeps a 48px top bar and a permanently available object pane
   expect(failures, failures.join('\n')).toEqual([])
 })
 
+test('global command palette supports keyboard search and navigation', async ({ page }, testInfo) => {
+  const failures = installRuntimeFailureGate(page)
+  await installProductRoutes(page)
+  await page.goto('/work')
+
+  await page.keyboard.press('Control+K')
+  const palette = page.getByRole('dialog', { name: '命令面板' })
+  await expect(palette).toBeVisible()
+  const search = palette.getByLabel('搜索命令')
+  await expect(search).toBeFocused()
+  await search.fill('外观')
+  await expect(palette.getByRole('button', { name: /打开设置/u })).toBeVisible()
+  await capture(page, testInfo, 'global-command-palette')
+  await search.press('Enter')
+  await expect(page).toHaveURL(/\/settings$/u)
+
+  await page.keyboard.press('Control+K')
+  await palette.getByLabel('搜索命令').fill('资料员的网页频道')
+  await palette.getByLabel('搜索命令').press('ArrowDown')
+  await expect(palette.getByRole('button', { name: /资料员的网页频道/u })).toBeFocused()
+  await page.keyboard.press('Enter')
+  await expect(page).toHaveURL(new RegExp(`/work/channels/${targetChannelId}$`, 'u'))
+  expect(failures, failures.join('\n')).toEqual([])
+})
+
 test('an initial Host failure is explicit and can recover without reloading', async ({ page }) => {
   const failures = installRuntimeFailureGate(page)
   let healthy = false
@@ -1110,7 +1322,7 @@ test('dialog floating layers, Escape, focus return, and pending failure recovery
   await page.setViewportSize({ width: 1100, height: 720 })
   await page.goto('/connections')
 
-  const opener = page.getByRole('button', { name: '添加连接' }).first()
+  const opener = page.getByRole('link', { name: '添加平台连接' })
   await opener.click()
   const dialog = page.getByRole('dialog')
   await expect(dialog).toBeVisible()
@@ -1252,5 +1464,134 @@ test('message composer sends with Enter and keeps Shift+Enter for a new line', a
   await composer.press('Enter')
   await expect.poll(() => submitted).toEqual(['第一行\n第二行'])
   await expect(composer).toHaveValue('')
+  expect(failures, failures.join('\n')).toEqual([])
+})
+
+test('long message history stays above a growing multiline composer', async ({ page }, testInfo) => {
+  const failures = installRuntimeFailureGate(page)
+  await installProductRoutes(page)
+  const longMessages = HostApiContracts.listChannelMessages.response.parse({
+    messages: Array.from({ length: 32 }, (_, index) => ({
+      id: ChannelEventIdSchema.parse(`evt_longhistory${String(index).padStart(2, '0')}`),
+      channelId: targetChannelId,
+      role: index % 2 === 0 ? ('member' as const) : ('agent' as const),
+      parts: [
+        {
+          type: 'text' as const,
+          text:
+            index === 30
+              ? '长记录 31：这是一段较长的后台用户消息，用于检查右侧消息面在连续中文、多行换行和较宽桌面画布中仍然贴合内容，不会扩成横贯画布的大卡片。'
+              : `长记录 ${index + 1}：用于验证消息列表底部不会被输入框遮挡。`,
+        },
+      ],
+      occurredAt: 1_725_001_000_000 + index * 1_000,
+      ...(index % 2 === 0 ? {} : { deliveryState: 'sent' as const }),
+    })),
+    hasMore: false,
+  }).messages
+  const requestedLimits: number[] = []
+  await page.unroute('**/api/channels/*/messages?*')
+  await page.route('**/api/channels/*/messages?*', (route) => {
+    const url = new URL(route.request().url())
+    const channelId = url.pathname.split('/').at(-2)
+    const limit = Number(url.searchParams.get('limit'))
+    requestedLimits.push(limit)
+    const available = channelId === targetChannelId ? longMessages : []
+    const messages = available.slice(-limit)
+    return route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({ messages, hasMore: available.length > messages.length }),
+    })
+  })
+  await page.setViewportSize({ width: 1100, height: 720 })
+  await page.goto(`/work/channels/${targetChannelId}`)
+  await expect(page.getByText(/长记录 32/u)).toBeVisible()
+
+  const composer = page.locator('[data-channel-composer]').first()
+  const messageList = page.locator('[data-channel-message-list]')
+  const input = page.getByLabel('消息内容')
+  await expect(page.locator('article[data-side]')).toHaveCount(16)
+  expect(requestedLimits[0]).toBe(16)
+  await expect(page.getByRole('button', { name: '回到底部' })).toHaveCount(0)
+
+  await messageList.evaluate((element) => {
+    element.scrollTop = Math.max(120, element.scrollHeight / 3)
+  })
+  await expect(page.getByRole('button', { name: '回到底部' })).toBeVisible()
+  await page.getByRole('button', { name: '回到底部' }).click()
+  await expect
+    .poll(() => messageList.evaluate((element) => element.scrollHeight - element.clientHeight - element.scrollTop))
+    .toBeLessThanOrEqual(1)
+  await expect(page.getByRole('button', { name: '回到底部' })).toHaveCount(0)
+  await messageList.evaluate((element) => {
+    element.scrollTop = Math.max(120, element.scrollHeight / 3)
+  })
+  await expect(page.getByRole('button', { name: '回到底部' })).toBeVisible()
+  const rememberedAwayTop = await messageList.evaluate((element) => element.scrollTop)
+  await page.getByRole('link', { name: /记录员的网页频道/u }).click()
+  await expect(page.getByRole('heading', { name: '记录员的网页频道' })).toBeVisible()
+  await expect(page.locator('[data-stage-layer="out"]')).toHaveCount(0)
+  await expect(page.getByRole('button', { name: '回到底部' })).toHaveCount(0)
+  await page.getByRole('link', { name: /资料员的网页频道/u }).click()
+  await expect(page.getByRole('heading', { name: '资料员的网页频道' })).toBeVisible()
+  await expect(page.locator('[data-stage-layer="out"]')).toHaveCount(0)
+  await expect(page.getByRole('button', { name: '回到底部' })).toBeVisible()
+  expect(
+    await page.getByRole('button', { name: '回到底部' }).evaluate((element) => Boolean(element.closest('[inert]'))),
+  ).toBe(false)
+  expect(
+    await page
+      .getByRole('button', { name: '回到底部' })
+      .evaluate((element) =>
+        Boolean(element.closest('[data-channel-canvas-stage]')?.querySelector('[data-channel-message-list]')),
+      ),
+  ).toBe(true)
+  expect(requestedLimits).toEqual([16, 16])
+  await expect.poll(() => messageList.evaluate((element) => element.scrollTop)).toBeCloseTo(rememberedAwayTop, 0)
+  await page.getByRole('button', { name: '回到底部' }).click()
+  await expect
+    .poll(() => messageList.evaluate((element) => element.scrollHeight - element.clientHeight - element.scrollTop))
+    .toBeLessThanOrEqual(1)
+  await expect(page.getByRole('button', { name: '回到底部' })).toHaveCount(0)
+
+  const initialComposerHeight = (await composer.boundingBox())?.height ?? 0
+  await input.fill(Array.from({ length: 5 }, (_, index) => `输入内容第 ${index + 1} 行`).join('\n'))
+  await expect.poll(async () => (await composer.boundingBox())?.height ?? 0).toBeGreaterThan(initialComposerHeight + 60)
+
+  const geometry = await page.evaluate(() => {
+    const list = document.querySelector<HTMLElement>('[data-channel-message-list]')!
+    const composer = document.querySelector<HTMLElement>('[data-channel-composer]')!
+    const messages = list.querySelectorAll<HTMLElement>('article[data-side]')
+    const lastMessage = messages.item(messages.length - 1)
+    const lastRect = lastMessage.getBoundingClientRect()
+    const composerRect = composer.getBoundingClientRect()
+    const listStyle = getComputedStyle(list)
+    return {
+      lastBottom: lastRect.bottom,
+      listBottom: list.getBoundingClientRect().bottom,
+      composerTop: composerRect.top,
+      composerHeight: composerRect.height,
+      paddingBottom: Number.parseFloat(listStyle.paddingBottom),
+      scrollTop: list.scrollTop,
+      maxScrollTop: list.scrollHeight - list.clientHeight,
+    }
+  })
+  expect(geometry.paddingBottom).toBeGreaterThanOrEqual(24)
+  expect(geometry.listBottom).toBeLessThanOrEqual(geometry.composerTop)
+  expect(geometry.maxScrollTop - geometry.scrollTop).toBeLessThanOrEqual(1)
+  expect(geometry.lastBottom).toBeLessThanOrEqual(geometry.composerTop - 24)
+  await capture(page, testInfo, 'channel-long-history-multiline-composer')
+
+  await messageList.evaluate((element) => {
+    element.scrollTop = Math.max(120, element.scrollHeight / 3)
+  })
+  await expect(page.getByRole('button', { name: '回到底部' })).toBeVisible()
+  const awayTop = await messageList.evaluate((element) => element.scrollTop)
+  await input.fill(Array.from({ length: 12 }, (_, index) => `继续输入第 ${index + 1} 行`).join('\n'))
+  await expect.poll(() => messageList.evaluate((element) => element.scrollTop)).toBeCloseTo(awayTop, 0)
+  const jumpBox = await page.getByRole('button', { name: '回到底部' }).boundingBox()
+  const grownComposerBox = await composer.boundingBox()
+  expect((jumpBox?.y ?? 0) + (jumpBox?.height ?? 0)).toBeLessThan(grownComposerBox?.y ?? 0)
   expect(failures, failures.join('\n')).toEqual([])
 })
