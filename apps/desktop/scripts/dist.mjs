@@ -47,6 +47,7 @@ runPnpm(['--filter', '@nekro-nxt/server...', 'run', 'build'])
 runPnpm(['--filter', '@nekro-nxt/desktop', 'build'])
 const builderCli = fileURLToPath(new URL('../node_modules/electron-builder/out/cli/cli.js', import.meta.url))
 const builderEnvironment = { ...buildEnvironment, CSC_IDENTITY_AUTO_DISCOVERY: 'false' }
+const linuxBuildImage = 'node:22-bookworm@sha256:0557ac14e0d45d02ed563067b82856ca5e7aa3437fa28d98d4350ea9c3d9494a'
 delete builderEnvironment['npm_execpath']
 delete builderEnvironment['npm_config_user_agent']
 
@@ -78,9 +79,13 @@ const prepareRuntime = (platform) => {
       'PNPM_CONFIG_STORE_DIR=/tmp/nekro-nxt-pnpm-store',
       '-v',
       `${repositoryRoot}:/project`,
+      '-v',
+      'nekro-nxt-pnpm-store-v11:/tmp/nekro-nxt-pnpm-store',
+      '-v',
+      'nekro-nxt-corepack-cache:/root/.cache/node/corepack',
       '-w',
       '/project/apps/desktop',
-      'node:22-bookworm',
+      linuxBuildImage,
       'bash',
       '-lc',
       'corepack enable && node scripts/prepare-server-runtime.mjs --platform linux',
