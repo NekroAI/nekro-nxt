@@ -12,7 +12,7 @@ Desktop 只接受原子的 `nxt.product-release`。UI、Host、DSH Client/Host �
 
 产品版本的唯一手工来源是仓库根 `package.json#version`。正式版使用原值 `X.Y.Z`；预览版确定性派生为 `X.Y.Z-preview.<commit Unix 秒>`，不建立 beta 通道。两类安装包都写入当前 commit、`releaseId` 和 SHA-256 receipt。正式发布 `X.Y.Z` 时，公开仓库的 `vX.Y.Z` tag 必须指向 receipt 中的 commit；构建脚本本身不上传或发布产物。
 
-在 macOS 维护机上可以一次生成三端产物；Windows 交叉打包使用隔离 Wine 容器，macOS 仍必须由 macOS 构建：
+在 macOS 维护机上可以一次生成三端产物；macOS 仍必须由 macOS 构建。未签名 Windows 包关闭依赖 Wine 的 EXE 资源编辑，保留 NSIS 安装身份和完整应用内容；获得签名证书后恢复 EXE 资源编辑与签名：
 
 ```sh
 pnpm desktop:preview --platform mac

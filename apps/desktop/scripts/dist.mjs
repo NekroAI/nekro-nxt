@@ -60,38 +60,6 @@ const packageLocally = (platform) => {
   )
 }
 
-const packageWindowsWithDocker = () => {
-  run(
-    'docker',
-    [
-      'run',
-      '--rm',
-      '--platform',
-      'linux/amd64',
-      '-e',
-      `NEKRO_DESKTOP_CHANNEL=${channel}`,
-      '-e',
-      'CSC_IDENTITY_AUTO_DISCOVERY=false',
-      '-v',
-      `${repositoryRoot}:/project`,
-      '-w',
-      '/project/apps/desktop',
-      'electronuserland/builder:wine',
-      'npx',
-      '--yes',
-      'electron-builder@26.8.1',
-      '--config',
-      'electron-builder.config.mjs',
-      '--win',
-      '--x64',
-      '--publish',
-      'never',
-    ],
-    appRoot,
-    builderEnvironment,
-  )
-}
-
 const prepareRuntime = (platform) => {
   if (platform !== 'linux' || process.platform === 'linux') {
     run(process.execPath, ['scripts/prepare-server-runtime.mjs', '--platform', platform], appRoot, buildEnvironment)
@@ -125,8 +93,7 @@ const prepareRuntime = (platform) => {
 const platforms = target === 'all' ? ['mac', 'win', 'linux'] : [target]
 for (const platform of platforms) {
   prepareRuntime(platform)
-  if (platform === 'win' && process.platform !== 'win32') packageWindowsWithDocker()
-  else packageLocally(platform)
+  packageLocally(platform)
   run(
     process.execPath,
     ['scripts/write-artifact-receipt.mjs', '--channel', channel, '--platform', platform],

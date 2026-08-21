@@ -37,6 +37,8 @@ const config = {
   win: {
     executableName: distribution.executableName,
     artifactName: `${distribution.artifactSlug}-win-x64-v\${version}-setup.\${ext}`,
+    // 未签名阶段跳过依赖 Wine 的 rcedit/sign；NSIS GUID 与安装身份仍完整保留。
+    signAndEditExecutable: false,
     target: [{ target: 'nsis', arch: ['x64'] }],
   },
   nsis: {
