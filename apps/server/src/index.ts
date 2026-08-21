@@ -54,6 +54,7 @@ import * as SessionCheckpointPolicy from '@deepseek-ai/dsh-session-checkpoint-po
 import { SqliteSessionPersistence } from '@deepseek-ai/dsh-session-persistence-sqlite'
 import { settingsNamespace, type SettingsPathOp } from '@deepseek-ai/dsh-settings'
 import FileSettingsProvider from '@deepseek-ai/dsh-settings-file'
+import SkillRegistry from '@deepseek-ai/dsh-skill'
 import { PERSONA_ORDER, PERSONA_SECTION, SystemPrompt } from '@deepseek-ai/dsh-system-prompt'
 import TokenMeter from '@deepseek-ai/dsh-token-meter'
 import SubagentRuntime, { type SubagentListEntry } from '@deepseek-ai/dsh-subagent'
@@ -62,6 +63,7 @@ import * as CordisTool from '@deepseek-ai/dsh-tool-cordis'
 import * as BashTool from '@deepseek-ai/dsh-tool-bash'
 import * as ToolCallTimeoutPolicy from '@deepseek-ai/dsh-tool-call-timeout-policy'
 import * as FsTool from '@deepseek-ai/dsh-tool-fs'
+import * as SkillTool from '@deepseek-ai/dsh-tool-skill'
 import * as ToolSubagent from '@deepseek-ai/dsh-tool-subagent'
 import * as ToolSubagentControl from '@deepseek-ai/dsh-tool-subagent-control'
 import * as ToolSubagentListAgents from '@deepseek-ai/dsh-tool-subagent-control/list-agents'
@@ -117,11 +119,15 @@ import type {
 } from '@nekro-nxt/extension-runtime'
 import { shouldBroadcastChannelRuntime } from './channel-runtime-events.js'
 import { projectSessionOccupancy } from './channel-runtime-projection.js'
-import type {
-  ExtensionHostEnvironment,
-  ExtensionJsonValue,
-  ExtensionPluginDefinition,
-  ExtensionPluginFactory,
+import {
+  NEKRO_NXT_EXTENSION_AUTHORING_REFERENCE,
+  renderNekroNxtExtensionDevelopmentSkill,
+  type ExtensionHostContext,
+  type ExtensionHostEnvironment,
+  type ExtensionJsonValue,
+  type ExtensionPluginDefinition,
+  type ExtensionPluginFactory,
+  type ExtensionToolDefinition,
 } from '@nekro-nxt/extension-sdk'
 import { Buffer } from 'node:buffer'
 import { createHash } from 'node:crypto'
@@ -557,6 +563,7 @@ const EXTENSION_PRIVATE_SERVICE_KEYS = [
   'sessions',
   'shell',
   'shellEnv',
+  'skills',
   'subprocess',
   'subagents',
   'spillStore',
@@ -570,13 +577,14 @@ const PERSISTENT_EXTENSION_HOST_SERVICES = new Set(['tools'])
 const isolatePrivateExtensionServices = (context: Context): Context =>
   EXTENSION_PRIVATE_SERVICE_KEYS.reduce((isolated, key) => isolated.isolate(key), context)
 
-interface PersistentExtensionContext {
-  readonly tools: ToolRuntime
+interface PersistentExtensionContext extends ExtensionHostContext {
   get(service: string): ToolRuntime | undefined
 }
 
 const persistentExtensionContext = (context: Context): PersistentExtensionContext => ({
-  tools: context.tools,
+  tools: {
+    register: (tool) => context.tools.register(parseDshToolDefinition(tool)),
+  },
   get: (service: string) => (service === 'tools' ? context.tools : undefined),
 })
 
@@ -598,8 +606,20 @@ const nekroNxtInspectProvider = (input: {
         outputSchema: jsonObjectSchema,
       },
       {
-        name: 'extensionRules',
-        description: '读取动态运行、保存本地扩展和启用给智能体之间的稳定边界。',
+        name: 'supportedContributions',
+        description: '读取 NekroNxt 当前允许的 Host Tool、Host RPC 与产品 Client Slot。',
+        inputSchema: noFieldsSchema,
+        outputSchema: jsonObjectSchema,
+      },
+      {
+        name: 'developmentExample',
+        description: '读取与当前契约同源的 Host Tool、RPC 和产品 Client Slot 完整示例。',
+        inputSchema: noFieldsSchema,
+        outputSchema: jsonObjectSchema,
+      },
+      {
+        name: 'extensionLifecycle',
+        description: '读取动态运行、验证、保存不可变 Revision 和启用之间的稳定边界。',
         inputSchema: noFieldsSchema,
         outputSchema: jsonObjectSchema,
       },
@@ -634,7 +654,19 @@ const nekroNxtInspectProvider = (input: {
         ),
       )
     }
-    if (method === 'extensionRules') {
+    if (method === 'supportedContributions') {
+      return Promise.resolve(
+        JsonValueSchema.parse({
+          contractVersion: NEKRO_NXT_EXTENSION_AUTHORING_REFERENCE.contractVersion,
+          dshVersion: NEKRO_NXT_EXTENSION_AUTHORING_REFERENCE.dshVersion,
+          ...NEKRO_NXT_EXTENSION_AUTHORING_REFERENCE.supportedContributions,
+        }),
+      )
+    }
+    if (method === 'developmentExample') {
+      return Promise.resolve(JsonValueSchema.parse(NEKRO_NXT_EXTENSION_AUTHORING_REFERENCE.examples))
+    }
+    if (method === 'extensionLifecycle') {
       return Promise.resolve(
         JsonValueSchema.parse({
           dynamicRun: {
@@ -644,6 +676,7 @@ const nekroNxtInspectProvider = (input: {
           },
           save: { createsImmutableSourceRevision: true, activatesAutomatically: false },
           activation: { target: 'one-agent', safeSwitchRequired: true },
+          recoveryRules: NEKRO_NXT_EXTENSION_AUTHORING_REFERENCE.recoveryRules,
           forbidden: ['host-path-as-identity', 'direct-core-database-access', 'implicit-shell-or-file-grant'],
         }),
       )
@@ -681,8 +714,6 @@ const ExtensionPluginDefinitionSchema = z
     ),
   })
   .passthrough()
-const ExtensionToolRegistrationContextSchema = z.object({ tools: z.instanceof(ToolRuntime) }).passthrough()
-
 const DSH_IMAGE_MEDIA_TYPES = ['image/png', 'image/jpeg', 'image/webp', 'image/gif'] as const
 const DshImageMediaTypeSchema = z.enum(DSH_IMAGE_MEDIA_TYPES)
 
@@ -1366,6 +1397,7 @@ export class DshHostRuntime implements AgentSessionDriver, ExtensionActivationHo
       await context.plugin(SessionProjectionRegistry)
       await context.plugin(SystemPrompt, { persona: '' })
       await context.plugin(ToolRuntime, { mode: 'native' })
+      await context.plugin(SkillRegistry)
       await context.plugin(AgentRegistry)
       await context.plugin(SubagentRuntime)
       await context.plugin(SubagentSpawnInProcess, { providerName: 'spawn' })
@@ -1884,6 +1916,22 @@ export class DshHostRuntime implements AgentSessionDriver, ExtensionActivationHo
         )
       }
       if (revision.capabilities.dynamicCreation) {
+        const skills = agentContext.get('skills')
+        if (!(skills instanceof SkillRegistry)) throw new Error('DSH Skill registry is unavailable.')
+        agentContext.effect(
+          () =>
+            skills.register({
+              name: 'cordis-plugin-development',
+              provider: 'nekro-nxt-runtime',
+              source: 'bundled',
+              description: '开发、修复并验证 NekroNxt Host Tool、Host RPC 与产品 Client Slot 扩展。',
+              metadata: { title: 'NekroNxt Extension Development' },
+              invocation: { modelInvocable: true, userInvocable: true },
+              content: renderNekroNxtExtensionDevelopmentSkill(),
+            }),
+          'nekro-nxt: extension development skill',
+        )
+        await agentContext.plugin(SkillTool)
         const dynamicContext = isolatePrivateExtensionServices(agentContext)
           .isolate('dynamicCordisRunner')
           .isolate('cordisInspect')
@@ -2509,11 +2557,24 @@ export class DshHostRuntime implements AgentSessionDriver, ExtensionActivationHo
     return parseJsonValue(JSON.parse(JSON.stringify(await handler(input))))
   }
 
-  queryNekroNxtInspect(dshSessionId: string, method: 'currentContext' | 'extensionRules'): Promise<JsonValue> {
+  queryNekroNxtInspect(
+    dshSessionId: string,
+    method: 'currentContext' | 'supportedContributions' | 'developmentExample' | 'extensionLifecycle',
+  ): Promise<JsonValue> {
     const { agent, context } = this.#dynamicRuntime(dshSessionId)
     const registry = context.get('cordisInspect')
     if (!registry) throw new Error('Cordis Inspect registry is unavailable in this DSH Session.')
     return registry.query('host', 'nekro-nxt-runtime', method, {}, agent, new AbortController().signal)
+  }
+
+  async loadNekroNxtExtensionSkill(dshSessionId: string): Promise<{
+    readonly provider: string
+    readonly content: string
+  }> {
+    const { agent } = this.#dynamicRuntime(dshSessionId)
+    const skill = await this.#context.skills.get('cordis-plugin-development', { scope: agent })
+    if (!skill) throw new Error('NekroNxt extension development skill is unavailable in this DSH Session.')
+    return { provider: skill.provider, content: skill.content }
   }
 
   async waitUntilSafe(agentId: AgentRevisionRecord['agentId']): Promise<void> {
@@ -2654,11 +2715,12 @@ export class DshHostRuntime implements AgentSessionDriver, ExtensionActivationHo
         await loaded.default({
           harness: {
             // Dynamic source cannot preserve DSH's const-generic input type; validate it at the Host boundary.
-            defineTool: defineDshToolFromUnknown,
-            registerTool: (context: unknown, tool: unknown) => {
-              const extensionContext = ExtensionToolRegistrationContextSchema.parse(context)
-              return extensionContext.tools.register(parseDshToolDefinition(tool))
-            },
+            defineTool: <Args extends Record<string, ExtensionJsonValue>, Output extends ExtensionJsonValue>(
+              options: ExtensionToolDefinition<Args, Output>,
+            ): ExtensionToolDefinition<Args, Output> =>
+              defineDshToolFromUnknown(options) as unknown as ExtensionToolDefinition<Args, Output>,
+            registerTool: (context: ExtensionHostContext, tool: ExtensionToolDefinition) =>
+              context.tools.register(tool),
             handle: (
               method: string,
               handler: (input: ExtensionJsonValue) => ExtensionJsonValue | Promise<ExtensionJsonValue>,

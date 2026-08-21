@@ -351,6 +351,7 @@ describe('DSH Host and Web Channel vertical slice', () => {
           'cordis_run',
           'cordis_stop',
           'cordis_undefine',
+          'skill',
         ]),
       )
       expect(host.toolNames(enabledSession)).toContain('asset_create')
@@ -370,6 +371,27 @@ describe('DSH Host and Web Channel vertical slice', () => {
         },
         channel: { channelId: enabledChannel.id, episodeId: enabledEpisode },
       })
+      await expect(host.queryNekroNxtInspect(enabledSession, 'supportedContributions')).resolves.toEqual({
+        contractVersion: 'nekro-nxt-extension-v1',
+        dshVersion: '0.1.1-rc.1',
+        hostTool: true,
+        hostRpc: true,
+        clientSlots: ['agent.workbench.sections', 'extension.details.panels'],
+        dshNativeWebUi: false,
+      })
+      await expect(host.queryNekroNxtInspect(enabledSession, 'developmentExample')).resolves.toMatchObject({
+        hostTool: expect.stringContaining("name: 'project_status'"),
+        hostRpcAndClientSlot: expect.stringContaining("name: 'agent.workbench.sections'"),
+      })
+      await expect(host.queryNekroNxtInspect(enabledSession, 'extensionLifecycle')).resolves.toMatchObject({
+        dynamicRun: { lifetime: 'current-dsh-session' },
+        save: { createsImmutableSourceRevision: true, activatesAutomatically: false },
+      })
+      await expect(host.loadNekroNxtExtensionSkill(enabledSession)).resolves.toMatchObject({
+        provider: 'nekro-nxt-runtime',
+        content: expect.stringContaining('宿主是 NekroNxt'),
+      })
+      await expect(host.loadNekroNxtExtensionSkill(deniedSession)).rejects.toThrow('not granted')
 
       const privateServiceProbe = host.defineDynamicPackage(enabledSession, {
         plugin: { kind: 'new', idPrefix: 'priv' },
@@ -377,7 +399,7 @@ describe('DSH Host and Web Channel vertical slice', () => {
         purpose: '证明动态扩展不能触达 Agent、子智能体、网页和 Spill 私有服务。',
         code: {
           host: `return {
-            inject: ['agents', 'subagents', 'web', 'spillStore'],
+            inject: ['agents', 'subagents', 'web', 'spillStore', 'skills'],
             apply(ctx) { throw new Error('private Host Service leaked') }
           }`,
         },
@@ -394,6 +416,7 @@ describe('DSH Host and Web Channel vertical slice', () => {
       expect(blockedPrivateRun.message).toContain('subagents')
       expect(blockedPrivateRun.message).toContain('web')
       expect(blockedPrivateRun.message).toContain('spillStore')
+      expect(blockedPrivateRun.message).toContain('skills')
       await expect(host.undefineDynamicPlugin(enabledSession, privateServiceProbe.pluginId)).resolves.toMatchObject({
         ok: true,
       })

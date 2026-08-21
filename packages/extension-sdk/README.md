@@ -4,6 +4,8 @@
 
 运行时能力通过 Activation Host 注入；新增 SDK 面必须有已实现 Extension 消费者、兼容版本和卸载测试。
 
+当前公开契约为 `nekro-nxt-extension-v1`，对应 DSH `0.1.1-rc.1`。Host 暴露类型化 Tool 注册和 JSON RPC；Client 只允许注册 `agent.workbench.sections` 与 `extension.details.panels`，并只接收 `section`、`sectionHeading`、`secondaryText`、`actionRow`、`button`、`badge` 六个稳定样式键。`NEKRO_NXT_EXTENSION_AUTHORING_REFERENCE` 是 Skill、Inspect 和测试共同消费的唯一开发参考，禁止在各入口复制另一套示例。
+
 ## Host 工具注册与 `ctx.effect`
 
 `ctx.effect` 的回调会立即执行；回调返回值才是 Fiber 销毁时调用的 disposer。需要自行管理的资源应在回调中创建，并返回清理函数：

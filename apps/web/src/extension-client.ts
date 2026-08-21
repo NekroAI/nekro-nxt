@@ -1,6 +1,6 @@
 import { Context, Service, type Fiber } from '@deepseek-ai/cordis'
 import { SlotCore } from '@nekro-nxt/dsh-compat/client'
-import type { ExtensionJsonValue } from '@nekro-nxt/extension-sdk'
+import type { ExtensionClientStyles, ExtensionJsonValue } from '@nekro-nxt/extension-sdk'
 import * as React from 'react'
 import {
   registerDynamicSlot,
@@ -33,6 +33,15 @@ export interface MountedClientExtension {
   dispose(): Promise<void>
 }
 
+const DEFAULT_EXTENSION_CLIENT_STYLES: ExtensionClientStyles = {
+  section: 'nxt-extension-section',
+  sectionHeading: 'nxt-extension-section-heading',
+  secondaryText: 'nxt-extension-secondary-text',
+  actionRow: 'nxt-extension-action-row',
+  button: 'nxt-extension-button',
+  badge: 'nxt-extension-badge',
+}
+
 /** Owns Client Extension fibers over the same SlotCore rendered by the NekroNxt Shell. */
 export class ExtensionClientRuntime {
   readonly slots = new SlotCore()
@@ -48,7 +57,7 @@ export class ExtensionClientRuntime {
   async mount(
     moduleUrl: string,
     host: ExtensionClientHostPort,
-    styles: Readonly<Record<string, string>> = {},
+    styles: ExtensionClientStyles = DEFAULT_EXTENSION_CLIENT_STYLES,
   ): Promise<MountedClientExtension> {
     if (this.#disposed) throw new Error('Extension Client Runtime is disposed.')
     await this.#ready
@@ -99,7 +108,7 @@ export interface ClientActivationDescriptor {
   readonly activationId: string
   readonly moduleUrl: string
   readonly host: ExtensionClientHostPort
-  readonly styles?: Readonly<Record<string, string>>
+  readonly styles?: ExtensionClientStyles
 }
 
 export interface ClientActivationSource {
@@ -111,7 +120,7 @@ interface ClientExtensionRuntimeFace {
   mount(
     moduleUrl: string,
     host: ExtensionClientHostPort,
-    styles?: Readonly<Record<string, string>>,
+    styles?: ExtensionClientStyles,
   ): Promise<MountedClientExtension>
 }
 
@@ -174,7 +183,7 @@ export class ExtensionClientActivationCoordinator {
     for (const descriptor of desired.values()) {
       if (this.#mounted.has(descriptor.activationId)) continue
       try {
-        const handle = await this.#runtime.mount(descriptor.moduleUrl, descriptor.host, descriptor.styles ?? {})
+        const handle = await this.#runtime.mount(descriptor.moduleUrl, descriptor.host, descriptor.styles)
         if (
           this.#disposed ||
           this.#source.getSnapshot().every(({ activationId }) => activationId !== descriptor.activationId)
