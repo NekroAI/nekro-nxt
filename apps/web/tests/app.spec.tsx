@@ -206,6 +206,16 @@ const browserSnapshot = HostApiContracts.snapshot.response.parse({
       packageId: 'technical-package-id',
       approvalRequestId: 'approval-internal-id',
       status: 'awaiting-approval',
+      packages: [
+        {
+          packageId: 'technical-package-id',
+          name: '技术探针',
+          purpose: '验证动态界面审批。',
+          hasHostHalf: false,
+          hasClientHalf: true,
+        },
+      ],
+      policy: { turn: 1, consecutiveFailures: 0, repeatedFingerprintCount: 0 },
     },
   ],
 })
@@ -779,7 +789,7 @@ describe.sequential('NekroNxt browser projections', { timeout: 30_000 }, () => {
 
   it('shows real dynamic state without displaying package or approval identifiers', async () => {
     await withProductPage('/work/creator', async (page) => {
-      await playwrightExpect(page.getByRole('button', { name: /资料员的临时扩展/u })).toBeVisible()
+      await playwrightExpect(page.getByRole('button', { name: /技术探针/u })).toBeVisible()
       await playwrightExpect(page.getByText('等待确认', { exact: true }).first()).toBeVisible()
       await playwrightExpect(page.locator('body')).not.toContainText('technical-plugin-id')
       await playwrightExpect(page.locator('body')).not.toContainText('technical-package-id')

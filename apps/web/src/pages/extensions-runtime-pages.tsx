@@ -169,7 +169,7 @@ export function CreatorPage() {
   const [searchParams] = useSearchParams()
   const requestedAgentId = searchParams.get('agent') ?? ''
   const [reviewIndex, setReviewIndex] = useState<number | null>(null)
-  const [selectedIndex, setSelectedIndex] = useState(0)
+  const [selectedKey, setSelectedKey] = useState('')
   const [saveOpen, setSaveOpen] = useState(false)
   const [extensionName, setExtensionName] = useState('')
   const [extensionSlug, setExtensionSlug] = useState('')
@@ -178,14 +178,17 @@ export function CreatorPage() {
   const [declinePending, setDeclinePending] = useState(false)
   const reviewItem = reviewIndex === null ? undefined : dynamic[reviewIndex]
   const reviewApprovalRequestId = reviewItem?.approvalRequestId
-  const selectedItem = dynamic[selectedIndex] ?? dynamic[0]
+  const selectedItem =
+    dynamic.find((item) => `${item.episodeId}:${item.pluginId}:${item.packageId ?? ''}` === selectedKey) ?? dynamic[0]
+  const selectedIndex = selectedItem === undefined ? -1 : dynamic.indexOf(selectedItem)
   const selectedAgent = selectedItem ? agents.find((agent) => agent.id === selectedItem.agentId) : undefined
   const eligibleAgents = agents.filter((agent) => agent.capabilities.dynamicCreation)
   const requestedAgent = agents.find((agent) => agent.id === requestedAgentId)
 
   useEffect(() => {
     const index = dynamic.findIndex((item) => item.agentId === requestedAgentId)
-    if (index >= 0) setSelectedIndex(index)
+    const item = dynamic[index]
+    if (item) setSelectedKey(`${item.episodeId}:${item.pluginId}:${item.packageId ?? ''}`)
   }, [dynamic, requestedAgentId])
 
   const decline = async (): Promise<void> => {
@@ -288,17 +291,22 @@ export function CreatorPage() {
               const agentName = agents.find((agent) => agent.id === item.agentId)?.name ?? '未命名智能体'
               return (
                 <Button
-                  className={[styles.masterButton, index === selectedIndex ? styles.masterButtonActive : '']
+                  className={[styles.masterButton, item === selectedItem ? styles.masterButtonActive : '']
                     .filter(Boolean)
                     .join(' ')}
                   variant="ghost"
-                  onClick={() => setSelectedIndex(index)}
-                  key={`${item.agentId}-${item.pluginId}`}
+                  onClick={() => setSelectedKey(`${item.episodeId}:${item.pluginId}:${item.packageId ?? ''}`)}
+                  key={`${item.episodeId}:${item.pluginId}:${item.packageId ?? ''}`}
                 >
                   <Sparkles size={16} aria-hidden="true" />
                   <span className={styles.masterCopy}>
-                    <strong>{agentName}的临时扩展</strong>
-                    <small>动态运行 {index + 1}</small>
+                    <strong>
+                      {item.packages.find((pkg) => pkg.packageId === item.packageId)?.name ?? `${agentName}的临时扩展`}
+                    </strong>
+                    <small>
+                      {item.packages.find((pkg) => pkg.packageId === item.packageId)?.purpose ??
+                        `动态运行 ${index + 1}`}
+                    </small>
                   </span>
                   <StatusBadge tone={presentation.tone}>{presentation.label}</StatusBadge>
                 </Button>
@@ -371,12 +379,12 @@ export function CreatorPage() {
                   <small>确认运行结果后保存为可追踪的本地扩展版本。</small>
                 </span>
                 <span className={styles.rowActions}>
-                  {selectedItem.approvalRequestId ? (
+                  {selectedItem.approvalRequestId && selectedIndex >= 0 ? (
                     <Button onClick={() => setReviewIndex(selectedIndex)}>审查界面预览</Button>
                   ) : null}
                   <Button
                     variant="primary"
-                    disabled={selectedItem.status !== 'running'}
+                    disabled={selectedItem.status !== 'running' || selectedItem.packageId === undefined}
                     onClick={() => {
                       setExtensionName(`${selectedAgent?.name ?? '智能体'}的新扩展`)
                       setExtensionSlug(`local-extension-${Date.now().toString(36)}`)
@@ -403,7 +411,7 @@ export function CreatorPage() {
         description="保存会创建可追踪的本地版本，但不会自动启用给智能体。"
         confirmLabel="保存本地版本"
         onConfirm={async () => {
-          if (!selectedItem || !extensionName.trim() || !extensionSlug.trim()) {
+          if (!selectedItem || !selectedItem.packageId || !extensionName.trim() || !extensionSlug.trim()) {
             setSaveError('请填写扩展名称和本地标识。')
             return false
           }
@@ -411,6 +419,9 @@ export function CreatorPage() {
           try {
             await useProductStore.getState().saveDynamicExtension({
               agentId: selectedItem.agentId,
+              episodeId: selectedItem.episodeId,
+              pluginId: selectedItem.pluginId,
+              packageId: selectedItem.packageId,
               name: extensionName,
               slug: extensionSlug,
               description: extensionDescription,

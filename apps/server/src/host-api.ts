@@ -239,43 +239,53 @@ const projectExtensions = (runtime: NekroRuntime) => {
 }
 
 /** Running dynamic Packages owned by an intelligent-agent's active Session. */
-const projectDynamicInventory = (
-  runtime: NekroRuntime,
-  agentId: AgentId,
-): Array<{
-  episodeId: string
-  pluginId: string
-  packageId?: string
-  approvalRequestId?: string
-  status: string
-}> => {
-  const episode = runtime.repository
-    .listActiveEpisodesForAgent(agentId)
-    .find((candidate) => candidate.dshSessionId !== undefined)
-  if (!episode?.dshSessionId) return []
-  try {
-    return runtime.host.dynamicInventory(episode.dshSessionId).flatMap((row) => {
-      const status = row.activeRun
-        ? 'running'
-        : row.latestRun?.status === 'awaiting-approval'
-          ? 'awaiting-approval'
-          : 'stopped'
-      return [
-        {
-          episodeId: episode.id,
-          pluginId: row.pluginId,
-          ...(row.currentPackageId === undefined ? {} : { packageId: row.currentPackageId }),
-          ...(row.latestRun?.approvalRequestId === undefined
-            ? {}
-            : { approvalRequestId: row.latestRun.approvalRequestId }),
-          status,
+const projectDynamicInventory = (runtime: NekroRuntime, agentId: AgentId) =>
+  runtime.repository.listActiveEpisodesForAgent(agentId).flatMap((episode) => {
+    if (!episode.dshSessionId) return []
+    try {
+      const policy = runtime.host.dynamicAuthoringPolicy(episode.dshSessionId)
+      return runtime.host.dynamicInventory(episode.dshSessionId).map((row) => ({
+        agentId,
+        episodeId: episode.id,
+        pluginId: row.pluginId,
+        ...(row.currentPackageId === undefined ? {} : { packageId: row.currentPackageId }),
+        ...(row.currentPackageId === undefined ? {} : { currentPackageId: row.currentPackageId }),
+        ...(row.nextPackageId === undefined ? {} : { nextPackageId: row.nextPackageId }),
+        ...(row.latestRun?.approvalRequestId === undefined
+          ? {}
+          : { approvalRequestId: row.latestRun.approvalRequestId }),
+        status: row.activeRun ? 'running' : (row.latestRun?.status ?? 'stopped'),
+        ...(row.activeRun === undefined
+          ? {}
+          : {
+              activeRun: {
+                pluginRunId: row.activeRun.pluginRunId,
+                packageId: row.activeRun.packageId,
+              },
+            }),
+        ...(row.latestRun === undefined
+          ? {}
+          : {
+              latestRun: {
+                pluginRunId: row.latestRun.pluginRunId,
+                packageId: row.latestRun.packageId,
+                status: row.latestRun.status,
+              },
+            }),
+        packages: row.packages,
+        policy: {
+          turn: policy.turn,
+          ...(policy.primaryPluginId === undefined ? {} : { primaryPluginId: policy.primaryPluginId }),
+          consecutiveFailures: policy.consecutiveFailures,
+          repeatedFingerprintCount: policy.repeatedFingerprintCount,
+          ...(policy.lastErrorFingerprint === undefined ? {} : { lastErrorFingerprint: policy.lastErrorFingerprint }),
+          ...(policy.blockedReason === undefined ? {} : { blockedReason: policy.blockedReason }),
         },
-      ]
-    })
-  } catch {
-    return []
-  }
-}
+      }))
+    } catch {
+      return []
+    }
+  })
 
 /** Resolve the dshSessionId of an intelligent-agent's active Episode, or throw. */
 const resolveActiveSession = (runtime: NekroRuntime, agentId: AgentId): string => {
@@ -339,6 +349,14 @@ const saveActiveDynamicPackage = async (
   const row = inventory.find((candidate) => candidate.pluginId === input.pluginId)
   if (!row?.packages.some((candidate) => candidate.packageId === input.packageId)) {
     throw new Error('指定动态 Package 不属于该智能体的活动会话。')
+  }
+  if (
+    row.currentPackageId !== input.packageId ||
+    row.activeRun?.packageId !== input.packageId ||
+    row.latestRun?.packageId !== input.packageId ||
+    row.latestRun.status !== 'running'
+  ) {
+    throw new Error('只能保存当前已真实运行成功、且没有审批或版本切换中的精确 Package。')
   }
   const inspection = runtime.host.inspectDynamicPackage(episode.dshSessionId, input.pluginId, input.packageId)
   return runtime.extensionService.saveDynamicPackage({
@@ -528,9 +546,7 @@ export const createNekroHostApi = (webServer: WebServer, runtime: NekroRuntime):
       connections,
       extensions: projectExtensions(runtime),
       workTreeOrder: runtime.repository.getWorkTreeOrder(),
-      dynamic: [...agentIds].flatMap((agentId) =>
-        projectDynamicInventory(runtime, agentId).map((plugin) => ({ agentId, ...plugin })),
-      ),
+      dynamic: [...agentIds].flatMap((agentId) => projectDynamicInventory(runtime, agentId)),
     })
   }
 

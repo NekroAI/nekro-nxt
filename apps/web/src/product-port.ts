@@ -37,10 +37,26 @@ export interface ProductSnapshot {
 
 export interface DynamicPackageSummary {
   readonly agentId: string
+  readonly episodeId: string
   readonly pluginId: string
   readonly packageId?: string
+  readonly currentPackageId?: string
+  readonly nextPackageId?: string
   readonly approvalRequestId?: string
   readonly status: string
+  readonly packages: readonly {
+    readonly packageId: string
+    readonly name: string
+    readonly purpose: string
+    readonly hasHostHalf: boolean
+    readonly hasClientHalf: boolean
+  }[]
+  readonly policy: {
+    readonly turn: number
+    readonly consecutiveFailures: number
+    readonly repeatedFingerprintCount: number
+    readonly blockedReason?: string
+  }
 }
 
 export interface ProductHostPort {

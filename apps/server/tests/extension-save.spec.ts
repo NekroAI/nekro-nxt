@@ -128,7 +128,6 @@ describe('NekroNxt domain API — save a running dynamic Package as a local Exte
           episodeId: episode!.id,
           pluginId: defined.pluginId,
           packageId: defined.packageId,
-          name: '保存探针',
           displayName: '保存探针（已保存）',
           slug: 'saved-probe',
           description: '从创造工作台保存的动态 Package。',

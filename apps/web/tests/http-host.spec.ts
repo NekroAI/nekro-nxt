@@ -216,6 +216,16 @@ const snapshotBodyWithDynamic = () =>
         pluginId: 'plugin-save',
         packageId: 'package-save',
         status: 'running',
+        packages: [
+          {
+            packageId: 'package-save',
+            name: '保存探针',
+            purpose: '验证精确保存。',
+            hasHostHalf: true,
+            hasClientHalf: false,
+          },
+        ],
+        policy: { turn: 1, consecutiveFailures: 0, repeatedFingerprintCount: 0 },
       },
     ],
   })
@@ -810,6 +820,9 @@ describe('HttpProductHost', () => {
 
     const result = await host.execute('extensions.saveFromDynamic', {
       agentId: webAgentId,
+      episodeId: webEpisodeId,
+      pluginId: 'plugin-save',
+      packageId: 'package-save',
       name: '保存探针',
       slug: 'saved-probe',
     })
@@ -822,6 +835,9 @@ describe('HttpProductHost', () => {
     if (typeof saveBody !== 'string') throw new TypeError('save extension request body must be JSON text.')
     const body = HostApiContracts.saveExtensionFromDynamic.request.parse(JSON.parse(saveBody))
     expect(body.agentId).toBe(webAgentId)
+    expect(body.episodeId).toBe(webEpisodeId)
+    expect(body.pluginId).toBe('plugin-save')
+    expect(body.packageId).toBe('package-save')
     expect(body.slug).toBe('saved-probe')
     expect(body.displayName).toBe('保存探针')
     unsubscribe()

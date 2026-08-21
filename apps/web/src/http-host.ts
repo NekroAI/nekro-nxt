@@ -496,10 +496,20 @@ const projectSnapshot = (json: SnapshotJson, successfulAt: number): ProductSnaps
     approvals: [],
     dynamic: json.dynamic.map((item) => ({
       agentId: item.agentId,
+      episodeId: item.episodeId,
       pluginId: item.pluginId,
       ...(item.packageId === undefined ? {} : { packageId: item.packageId }),
+      ...(item.currentPackageId === undefined ? {} : { currentPackageId: item.currentPackageId }),
+      ...(item.nextPackageId === undefined ? {} : { nextPackageId: item.nextPackageId }),
       ...(item.approvalRequestId === undefined ? {} : { approvalRequestId: item.approvalRequestId }),
       status: item.status,
+      packages: item.packages,
+      policy: {
+        turn: item.policy.turn,
+        consecutiveFailures: item.policy.consecutiveFailures,
+        repeatedFingerprintCount: item.policy.repeatedFingerprintCount,
+        ...(item.policy.blockedReason === undefined ? {} : { blockedReason: item.policy.blockedReason }),
+      },
     })),
     diagnosticNote: `服务连接正常（${agents.length} 个智能体 · ${channels.length} 个频道 · ${extensionsLocal.length} 个本地扩展）。`,
   }
@@ -507,7 +517,6 @@ const projectSnapshot = (json: SnapshotJson, successfulAt: number): ProductSnaps
 
 export class HttpProductHost implements ProductHostPort {
   #snapshot: ProductSnapshot = emptySnapshot()
-  #hostSnapshot: SnapshotJson | undefined
   #listener: (() => void) | undefined
   readonly #loadedChannels = new Set<string>()
   readonly #loadedRuntimes = new Set<string>()
@@ -831,25 +840,26 @@ export class HttpProductHost implements ProductHostPort {
     }
     if (command === 'extensions.saveFromDynamic') {
       const agentId = typeof input?.['agentId'] === 'string' ? input['agentId'] : ''
+      const episodeId = typeof input?.['episodeId'] === 'string' ? input['episodeId'] : ''
+      const pluginId = typeof input?.['pluginId'] === 'string' ? input['pluginId'] : ''
+      const packageId = typeof input?.['packageId'] === 'string' ? input['packageId'] : ''
       const name = typeof input?.['name'] === 'string' ? input['name'] : ''
       const slug = typeof input?.['slug'] === 'string' ? input['slug'] : ''
       const description = typeof input?.['description'] === 'string' ? input['description'] : ''
       if (!agentId.trim()) throw new Error('缺少智能体标识，请刷新页面后重试。')
+      if (!episodeId.trim() || !pluginId.trim() || !packageId.trim()) {
+        throw new Error('缺少精确的 Episode、Plugin 或 Package，请刷新页面后重试。')
+      }
       if (!name.trim()) throw new Error('请输入本地扩展名称。')
       if (!slug.trim()) throw new Error('缺少本地扩展标识，请重新生成后重试。')
-      const dynamicPackage = this.#hostSnapshot?.dynamic.find(
-        (item) => item.agentId === agentId && item.packageId !== undefined,
-      )
-      if (dynamicPackage?.packageId === undefined) throw new Error('该智能体当前没有可保存的动态包。')
       const result = await this.#call(
         HostApiContracts.saveExtensionFromDynamic,
         {},
         {
           agentId,
-          episodeId: dynamicPackage.episodeId,
-          pluginId: dynamicPackage.pluginId,
-          packageId: dynamicPackage.packageId,
-          name,
+          episodeId,
+          pluginId,
+          packageId,
           displayName: name,
           slug,
           description: description.trim() || '从创造工作台保存的动态 Package。',
@@ -1060,7 +1070,6 @@ export class HttpProductHost implements ProductHostPort {
       return failure
     }
     const projected = projectSnapshot(json, Date.now())
-    this.#hostSnapshot = json
     this.#snapshot = {
       ...projected,
       messages: this.#loadedChannels.size > 0 ? this.#snapshot.messages : projected.messages,

@@ -432,8 +432,36 @@ export const HostSnapshotSchema = z
           episodeId: EpisodeIdSchema,
           pluginId: DynamicIdSchema,
           packageId: DynamicIdSchema.optional(),
+          currentPackageId: DynamicIdSchema.optional(),
+          nextPackageId: DynamicIdSchema.optional(),
           approvalRequestId: DynamicIdSchema.optional(),
-          status: z.enum(['running', 'awaiting-approval', 'stopped']),
+          status: NonEmptyStringSchema,
+          activeRun: z.object({ pluginRunId: DynamicIdSchema, packageId: DynamicIdSchema }).strict().optional(),
+          latestRun: z
+            .object({ pluginRunId: DynamicIdSchema, packageId: DynamicIdSchema, status: NonEmptyStringSchema })
+            .strict()
+            .optional(),
+          packages: z.array(
+            z
+              .object({
+                packageId: DynamicIdSchema,
+                name: z.string(),
+                purpose: z.string(),
+                hasHostHalf: z.boolean(),
+                hasClientHalf: z.boolean(),
+              })
+              .strict(),
+          ),
+          policy: z
+            .object({
+              turn: z.number().int().nonnegative(),
+              primaryPluginId: DynamicIdSchema.optional(),
+              consecutiveFailures: z.number().int().nonnegative(),
+              repeatedFingerprintCount: z.number().int().nonnegative(),
+              lastErrorFingerprint: z.string().optional(),
+              blockedReason: z.string().optional(),
+            })
+            .strict(),
         })
         .strict(),
     ),
@@ -1221,7 +1249,6 @@ export const HostApiContracts = {
         episodeId: EpisodeIdSchema,
         pluginId: DynamicIdSchema,
         packageId: DynamicIdSchema,
-        name: z.string().trim().min(1).max(80),
         displayName: z.string().trim().min(1).max(80),
         slug: z
           .string()

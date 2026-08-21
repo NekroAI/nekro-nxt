@@ -404,6 +404,14 @@ describe('DSH Host and Web Channel vertical slice', () => {
           }`,
         },
       })
+      expect(() =>
+        host.defineDynamicPackage(enabledSession, {
+          plugin: { kind: 'new', idPrefix: 'other' },
+          name: '错误的新 Plugin',
+          purpose: '验证一个 Episode 只能维护一个 Plugin。',
+          code: { host: 'return { apply() {} }' },
+        }),
+      ).toThrow('修复必须使用 kind:existing')
       const blockedPrivateRun = await host.runDynamicPackage(
         enabledSession,
         privateServiceProbe.pluginId,
@@ -417,6 +425,39 @@ describe('DSH Host and Web Channel vertical slice', () => {
       expect(blockedPrivateRun.message).toContain('web')
       expect(blockedPrivateRun.message).toContain('spillStore')
       expect(blockedPrivateRun.message).toContain('skills')
+      const repeatedPrivateProbe = host.defineDynamicPackage(enabledSession, {
+        plugin: { kind: 'existing', pluginId: privateServiceProbe.pluginId },
+        name: '私有服务探针修复失败',
+        purpose: '验证相同错误两次后熔断。',
+        code: {
+          host: `return {
+            inject: ['agents', 'subagents', 'web', 'spillStore', 'skills'],
+            apply(ctx) { throw new Error('private Host Service leaked') }
+          }`,
+        },
+      })
+      await expect(
+        host.runDynamicPackage(enabledSession, repeatedPrivateProbe.pluginId, repeatedPrivateProbe.packageId, 'update'),
+      ).resolves.toMatchObject({ ok: false, reason: 'host-half-failed' })
+      expect(host.dynamicAuthoringPolicy(enabledSession)).toMatchObject({
+        consecutiveFailures: 2,
+        repeatedFingerprintCount: 2,
+        blockedReason: expect.stringContaining('相同动态扩展错误'),
+      })
+      expect(() =>
+        host.defineDynamicPackage(enabledSession, {
+          plugin: { kind: 'existing', pluginId: privateServiceProbe.pluginId },
+          name: '熔断后拒绝',
+          purpose: '熔断后不再增长库存。',
+          code: { host: 'return { apply() {} }' },
+        }),
+      ).toThrow('动态创造已熔断')
+      await modelToolNamesAfter(enabledSession, enabledChannel.id, 'adm_DYNAMICPOLICYRESET', '开始新的普通用户轮次。')
+      expect(host.dynamicAuthoringPolicy(enabledSession)).toMatchObject({
+        turn: 1,
+        consecutiveFailures: 0,
+        repeatedFingerprintCount: 0,
+      })
       await expect(host.undefineDynamicPlugin(enabledSession, privateServiceProbe.pluginId)).resolves.toMatchObject({
         ok: true,
       })

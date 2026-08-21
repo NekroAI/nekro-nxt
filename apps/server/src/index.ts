@@ -20,6 +20,7 @@ import DynamicCordisRunnerService, {
   type CordisDynamicRunMode,
   type CordisErrorDetails,
   type DynamicCordisClientSource,
+  type DynamicCordisDefineRequest,
   type DynamicCordisDefineReceipt,
   type DynamicCordisHostHalfResult,
   type DynamicCordisInventoryRow,
@@ -33,6 +34,9 @@ import DynamicCordisRunnerService, {
   type DynamicCordisUndefineReceipt,
   type HostCordisInspectProviderRegistration,
 } from '@deepseek-ai/dsh-cordis-host-runner'
+type CordisDynamicPackageIdType = ReturnType<typeof CordisDynamicPackageId>
+type CordisDynamicPluginIdType = ReturnType<typeof CordisDynamicPluginId>
+type ApprovalRequestIdType = ReturnType<typeof ApprovalRequestId>
 import {
   createUserMessage,
   freezeMessage,
@@ -717,6 +721,164 @@ const ExtensionPluginDefinitionSchema = z
 const DSH_IMAGE_MEDIA_TYPES = ['image/png', 'image/jpeg', 'image/webp', 'image/gif'] as const
 const DshImageMediaTypeSchema = z.enum(DSH_IMAGE_MEDIA_TYPES)
 
+export interface DynamicAuthoringPolicyState {
+  readonly episodeId: EpisodeId
+  readonly turn: number
+  readonly primaryPluginId?: string
+  readonly consecutiveFailures: number
+  readonly repeatedFingerprintCount: number
+  readonly lastErrorFingerprint?: string
+  readonly blockedReason?: string
+}
+
+const normalizeDynamicFailure = (phase: string, message: string): string =>
+  `${phase}:${message}`
+    .toLowerCase()
+    .replace(/[a-z]{3,6}-\d+|package-\d+|run-\d+/gu, '<id>')
+    .replace(/\s+/gu, ' ')
+    .trim()
+
+/** DSH public Runner with NekroNxt's per-Episode authoring budget. */
+class NekroNxtDynamicCordisRunner extends DynamicCordisRunnerService {
+  private state: DynamicAuthoringPolicyState | undefined
+
+  bindEpisode(episodeId: EpisodeId): void {
+    if (this.state && this.state.episodeId !== episodeId) throw new Error('Dynamic Runner crossed Episode ownership.')
+    this.state ??= {
+      episodeId,
+      turn: 0,
+      consecutiveFailures: 0,
+      repeatedFingerprintCount: 0,
+    }
+  }
+
+  beginOrdinaryTurn(): void {
+    const state = this.requireState()
+    this.state = {
+      episodeId: state.episodeId,
+      turn: state.turn + 1,
+      ...(state.primaryPluginId === undefined ? {} : { primaryPluginId: state.primaryPluginId }),
+      consecutiveFailures: 0,
+      repeatedFingerprintCount: 0,
+    }
+  }
+
+  policySnapshot(): DynamicAuthoringPolicyState {
+    return { ...this.requireState() }
+  }
+
+  override define(request: DynamicCordisDefineRequest): DynamicCordisDefineReceipt {
+    this.assertWritable('define')
+    const state = this.requireState()
+    if (request.plugin.kind === 'new' && state.primaryPluginId !== undefined) {
+      throw new Error(`当前 Episode 已拥有 Plugin ${state.primaryPluginId}；修复必须使用 kind:existing。`)
+    }
+    if (request.plugin.kind === 'existing' && request.plugin.pluginId !== state.primaryPluginId) {
+      throw new Error(`只能向当前 Episode 的 Plugin ${state.primaryPluginId ?? '（尚未创建）'} 追加 Package。`)
+    }
+    try {
+      const receipt = super.define(request)
+      if (request.plugin.kind === 'new') this.state = { ...state, primaryPluginId: receipt.pluginId }
+      return receipt
+    } catch (error) {
+      this.recordFailure('define', error instanceof Error ? error.message : String(error))
+      throw error
+    }
+  }
+
+  override async run(
+    agent: Agent,
+    pluginId: CordisDynamicPluginIdType,
+    packageId: CordisDynamicPackageIdType,
+    mode: CordisDynamicRunMode,
+    signal?: AbortSignal,
+  ): Promise<DynamicCordisRunResponse> {
+    this.assertWritable('run')
+    const result = await super.run(agent, pluginId, packageId, mode, signal)
+    if (result.ok && result.status === 'running') {
+      const privateServices = result.waitingFor.filter((service) => EXTENSION_PRIVATE_SERVICE_KEY_SET.has(service))
+      if (privateServices.length > 0) {
+        this.recordFailure(
+          'private-service',
+          `Dynamic Extension requested a private Host Service: ${privateServices.join(', ')}`,
+        )
+      } else {
+        this.clearFailures()
+      }
+    } else if (!result.ok) this.recordFailure(result.reason, result.message)
+    return result
+  }
+
+  override async runHostHalf(
+    agent: Agent,
+    pluginId: CordisDynamicPluginIdType,
+    packageId: CordisDynamicPackageIdType,
+    mode: CordisDynamicRunMode,
+    requestId: ApprovalRequestIdType | null,
+    approveFutureVersions: boolean,
+  ): Promise<DynamicCordisHostHalfResult> {
+    this.assertWritable('run-host-half')
+    const result = await super.runHostHalf(agent, pluginId, packageId, mode, requestId, approveFutureVersions)
+    if (!result.ok) this.recordFailure('host-half', result.message)
+    return result
+  }
+
+  override async undefine(agent: Agent, pluginId: CordisDynamicPluginIdType): Promise<DynamicCordisUndefineReceipt> {
+    const result = await super.undefine(agent, pluginId)
+    const state = this.requireState()
+    if (result.ok && state.primaryPluginId === pluginId) {
+      this.state = {
+        episodeId: state.episodeId,
+        turn: state.turn,
+        consecutiveFailures: 0,
+        repeatedFingerprintCount: 0,
+      }
+    }
+    return result
+  }
+
+  private recordFailure(phase: string, message: string): void {
+    const state = this.requireState()
+    const fingerprint = normalizeDynamicFailure(phase, message)
+    const repeated = state.lastErrorFingerprint === fingerprint ? state.repeatedFingerprintCount + 1 : 1
+    const consecutive = state.consecutiveFailures + 1
+    const blockedReason =
+      repeated >= 2
+        ? '相同动态扩展错误已连续出现两次，请停止修改并向用户报告诊断。'
+        : consecutive >= 3
+          ? '本轮动态扩展已连续失败三次，请停止修改并向用户报告诊断。'
+          : undefined
+    this.state = {
+      ...state,
+      consecutiveFailures: consecutive,
+      repeatedFingerprintCount: repeated,
+      lastErrorFingerprint: fingerprint,
+      ...(blockedReason === undefined ? {} : { blockedReason }),
+    }
+  }
+
+  private clearFailures(): void {
+    const state = this.requireState()
+    this.state = {
+      episodeId: state.episodeId,
+      turn: state.turn,
+      ...(state.primaryPluginId === undefined ? {} : { primaryPluginId: state.primaryPluginId }),
+      consecutiveFailures: 0,
+      repeatedFingerprintCount: 0,
+    }
+  }
+
+  private assertWritable(operation: string): void {
+    const blockedReason = this.requireState().blockedReason
+    if (blockedReason) throw new Error(`动态创造已熔断，拒绝 ${operation}：${blockedReason}`)
+  }
+
+  private requireState(): DynamicAuthoringPolicyState {
+    if (!this.state) throw new Error('Dynamic authoring policy is not bound to an Episode.')
+    return this.state
+  }
+}
+
 class NekroAssetAttachmentStore extends AttachmentStore {
   readonly imageLimits = {
     maxImageBytes: 128 * 1024 * 1024,
@@ -1342,7 +1504,7 @@ export class DshHostRuntime implements AgentSessionDriver, ExtensionActivationHo
   readonly #imageInputSessions = new Set<string>()
   readonly #dynamicSessions = new Map<
     string,
-    { readonly context: Context; readonly runner: DynamicCordisRunnerService }
+    { readonly context: Context; readonly runner: NekroNxtDynamicCordisRunner }
   >()
   readonly #productAgentBySession = new Map<string, AgentRevisionRecord['agentId']>()
   readonly #channelBySession = new Map<string, ChannelId>()
@@ -1918,28 +2080,25 @@ export class DshHostRuntime implements AgentSessionDriver, ExtensionActivationHo
       if (revision.capabilities.dynamicCreation) {
         const skills = agentContext.get('skills')
         if (!(skills instanceof SkillRegistry)) throw new Error('DSH Skill registry is unavailable.')
-        agentContext.effect(
-          () =>
-            skills.register({
-              name: 'cordis-plugin-development',
-              provider: 'nekro-nxt-runtime',
-              source: 'bundled',
-              description: '开发、修复并验证 NekroNxt Host Tool、Host RPC 与产品 Client Slot 扩展。',
-              metadata: { title: 'NekroNxt Extension Development' },
-              invocation: { modelInvocable: true, userInvocable: true },
-              content: renderNekroNxtExtensionDevelopmentSkill(),
-            }),
-          'nekro-nxt: extension development skill',
-        )
+        skills.register({
+          name: 'cordis-plugin-development',
+          provider: 'nekro-nxt-runtime',
+          source: 'bundled',
+          description: '开发、修复并验证 NekroNxt Host Tool、Host RPC 与产品 Client Slot 扩展。',
+          metadata: { title: 'NekroNxt Extension Development' },
+          invocation: { modelInvocable: true, userInvocable: true },
+          content: renderNekroNxtExtensionDevelopmentSkill(),
+        })
         await agentContext.plugin(SkillTool)
         const dynamicContext = isolatePrivateExtensionServices(agentContext)
           .isolate('dynamicCordisRunner')
           .isolate('cordisInspect')
-        await dynamicContext.plugin(DynamicCordisRunnerService, { vmTimeoutMs: 5000 })
+        await dynamicContext.plugin(NekroNxtDynamicCordisRunner, { vmTimeoutMs: 5000 })
         const runner = dynamicContext.get('dynamicCordisRunner')
-        if (!(runner instanceof DynamicCordisRunnerService)) {
+        if (!(runner instanceof NekroNxtDynamicCordisRunner)) {
           throw new Error('Dynamic Cordis runner did not publish its isolated Service.')
         }
+        runner.bindEpisode(input.episodeId)
         const inspectRegistry = dynamicContext.get('cordisInspect')
         if (!inspectRegistry) throw new Error('Dynamic Cordis runner did not provide its Inspect registry.')
         dynamicContext.effect(
@@ -2067,7 +2226,10 @@ export class DshHostRuntime implements AgentSessionDriver, ExtensionActivationHo
       },
     }) satisfies UserMessage
     if (input.mode === 'inject') agent.inject(message)
-    else agent.followup(message)
+    else {
+      this.#dynamicSessions.get(input.dshSessionId)?.runner.beginOrdinaryTurn()
+      agent.followup(message)
+    }
     await this.#context.sessions.flush(agent.session)
     return { dshMessageId }
   }
@@ -2409,10 +2571,11 @@ export class DshHostRuntime implements AgentSessionDriver, ExtensionActivationHo
       .then(async (result) => {
         if (result.ok && result.waitingFor.some((service) => EXTENSION_PRIVATE_SERVICE_KEY_SET.has(service))) {
           await runner.stop(agent, CordisDynamicPluginId(pluginId))
+          const message = `Dynamic Extension requested a private Host Service: ${result.waitingFor.join(', ')}`
           return {
             ok: false,
             reason: 'host-half-failed',
-            message: `Dynamic Extension requested a private Host Service: ${result.waitingFor.join(', ')}`,
+            message,
           }
         }
         return result
@@ -2437,6 +2600,10 @@ export class DshHostRuntime implements AgentSessionDriver, ExtensionActivationHo
   dynamicInventory(dshSessionId: string): readonly DynamicCordisInventoryRow[] {
     const { agent, runner } = this.#dynamicRuntime(dshSessionId)
     return runner.inventory().filter(({ agentId }) => agentId === agent.id)
+  }
+
+  dynamicAuthoringPolicy(dshSessionId: string): DynamicAuthoringPolicyState {
+    return this.#dynamicRuntime(dshSessionId).runner.policySnapshot()
   }
 
   runDynamicHostHalf(
@@ -2670,7 +2837,7 @@ export class DshHostRuntime implements AgentSessionDriver, ExtensionActivationHo
   #dynamicRuntime(dshSessionId: string): {
     readonly agent: Agent
     readonly context: Context
-    readonly runner: DynamicCordisRunnerService
+    readonly runner: NekroNxtDynamicCordisRunner
   } {
     this.#assertActive()
     const agent = this.#context.agents.get(SessionId(dshSessionId))

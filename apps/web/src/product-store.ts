@@ -299,6 +299,9 @@ export interface ProductState {
   resolveApproval(input: { requestId: string; agentId: string; approved: boolean }): Promise<void>
   saveDynamicExtension(input: {
     readonly agentId: string
+    readonly episodeId: string
+    readonly pluginId: string
+    readonly packageId: string
     readonly name: string
     readonly slug: string
     readonly description: string
@@ -566,9 +569,12 @@ export const useProductStore = create<ProductState>(() => ({
     }
     await requireHost().execute('host.refresh')
   },
-  saveDynamicExtension: async ({ agentId, name, slug, description }) => {
+  saveDynamicExtension: async ({ agentId, episodeId, pluginId, packageId, name, slug, description }) => {
     await requireHost().execute('extensions.saveFromDynamic', {
       agentId: requireValue(agentId, '缺少智能体标识，请刷新页面后重试。'),
+      episodeId: requireValue(episodeId, '缺少 Episode 标识，请刷新页面后重试。'),
+      pluginId: requireValue(pluginId, '缺少 Plugin 标识，请刷新页面后重试。'),
+      packageId: requireValue(packageId, '缺少 Package 标识，请刷新页面后重试。'),
       name: requireValue(name, '请输入本地扩展名称。'),
       slug: requireValue(slug, '请输入本地扩展标识。'),
       description,
