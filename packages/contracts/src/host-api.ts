@@ -417,6 +417,7 @@ export const HostSnapshotSchema = z
                     contractVersion: z.string(),
                     hostBuilt: z.boolean(),
                     clientBuilt: z.boolean(),
+                    buildKey: z.string(),
                     toolInvocationCount: z.number().int().nonnegative(),
                     rpcMethods: z.array(z.string()),
                     renderedSlots: z.array(z.string()),
@@ -433,6 +434,17 @@ export const HostSnapshotSchema = z
                 extensionRevisionId: ExtensionRevisionIdSchema,
                 config: JsonValueSchema,
                 activatedAt: z.number().int().safe().nonnegative(),
+              })
+              .strict(),
+          ),
+          clientDiagnostics: z.array(
+            z
+              .object({
+                agentId: AgentIdSchema,
+                revisionId: ExtensionRevisionIdSchema,
+                status: z.enum(['loaded', 'failed']),
+                message: z.string().optional(),
+                observedAt: z.number().int().nonnegative(),
               })
               .strict(),
           ),
@@ -872,6 +884,9 @@ const agentParam = z.object({ agentId: AgentIdSchema }).strict()
 const channelParam = z.object({ channelId: ChannelIdSchema }).strict()
 const connectionParam = z.object({ connectionId: ConnectionIdSchema }).strict()
 const agentExtensionParam = z.object({ agentId: AgentIdSchema, extensionId: ExtensionIdSchema }).strict()
+const extensionRevisionParam = z
+  .object({ extensionId: ExtensionIdSchema, revisionId: ExtensionRevisionIdSchema })
+  .strict()
 const dshSettingsParam = z.object({ namespace: NonEmptyStringSchema }).strict()
 const dshCredentialParam = z.object({ ref: DshCredentialRefSchema }).strict()
 const llmProviderParam = z.object({ provider: NonEmptyStringSchema }).strict()
@@ -1153,7 +1168,7 @@ export const HostApiContracts = {
     method: 'POST',
     path: '/api/dynamic/:agentId/inventory',
     params: agentParam,
-    request: z.object({}).strict(),
+    request: z.object({ episodeId: EpisodeIdSchema }).strict(),
     response: z.object({ rows: z.array(DynamicInventoryRowSchema) }).strict(),
     error: HostApiErrorSchema,
   }),
@@ -1161,7 +1176,9 @@ export const HostApiContracts = {
     method: 'POST',
     path: '/api/dynamic/:agentId/approve',
     params: agentParam,
-    request: z.object({ requestId: DynamicIdSchema, pluginRunId: DynamicIdSchema.optional() }).strict(),
+    request: z
+      .object({ episodeId: EpisodeIdSchema, requestId: DynamicIdSchema, pluginRunId: DynamicIdSchema.optional() })
+      .strict(),
     response: z.object({ accepted: z.boolean() }).strict(),
     error: HostApiErrorSchema,
   }),
@@ -1169,7 +1186,9 @@ export const HostApiContracts = {
     method: 'POST',
     path: '/api/dynamic/:agentId/decline',
     params: agentParam,
-    request: z.object({ requestId: DynamicIdSchema, pluginRunId: DynamicIdSchema.optional() }).strict(),
+    request: z
+      .object({ episodeId: EpisodeIdSchema, requestId: DynamicIdSchema, pluginRunId: DynamicIdSchema.optional() })
+      .strict(),
     response: z.object({ accepted: z.boolean() }).strict(),
     error: HostApiErrorSchema,
   }),
@@ -1179,6 +1198,7 @@ export const HostApiContracts = {
     params: agentParam,
     request: z
       .object({
+        episodeId: EpisodeIdSchema,
         pluginId: DynamicIdSchema,
         pluginRunId: DynamicIdSchema,
         method: NonEmptyStringSchema,
@@ -1197,6 +1217,7 @@ export const HostApiContracts = {
     params: agentParam,
     request: z
       .object({
+        episodeId: EpisodeIdSchema,
         pluginId: DynamicIdSchema,
         packageId: DynamicIdSchema,
         mode: z.enum(['run', 'update']),
@@ -1223,7 +1244,9 @@ export const HostApiContracts = {
     method: 'POST',
     path: '/api/dynamic/:agentId/settle-user-run',
     params: agentParam,
-    request: z.object({ pluginId: DynamicIdSchema, resolution: DynamicRunResolutionSchema }).strict(),
+    request: z
+      .object({ episodeId: EpisodeIdSchema, pluginId: DynamicIdSchema, resolution: DynamicRunResolutionSchema })
+      .strict(),
     response: DynamicRunResponseSchema,
     error: HostApiErrorSchema,
   }),
@@ -1231,7 +1254,7 @@ export const HostApiContracts = {
     method: 'POST',
     path: '/api/dynamic/:agentId/get-client-code',
     params: agentParam,
-    request: z.object({ pluginId: DynamicIdSchema, pluginRunId: DynamicIdSchema }).strict(),
+    request: z.object({ episodeId: EpisodeIdSchema, pluginId: DynamicIdSchema, pluginRunId: DynamicIdSchema }).strict(),
     response: z
       .object({
         code: z.string(),
@@ -1248,7 +1271,50 @@ export const HostApiContracts = {
     path: '/api/dynamic/:agentId/report-render-failure',
     params: agentParam,
     request: z
-      .object({ pluginId: DynamicIdSchema, pluginRunId: DynamicIdSchema, failure: DynamicRenderFailureSchema })
+      .object({
+        episodeId: EpisodeIdSchema,
+        pluginId: DynamicIdSchema,
+        pluginRunId: DynamicIdSchema,
+        failure: DynamicRenderFailureSchema,
+      })
+      .strict(),
+    response: z.object({ ok: z.literal(true) }).strict(),
+    error: HostApiErrorSchema,
+  }),
+  dynamicReportGuardFailure: defineContract({
+    method: 'POST',
+    path: '/api/dynamic/:agentId/report-guard-failure',
+    params: agentParam,
+    request: z
+      .object({
+        episodeId: EpisodeIdSchema,
+        pluginId: DynamicIdSchema,
+        pluginRunId: DynamicIdSchema,
+        message: z.string().min(1).max(4096),
+        stack: z
+          .string()
+          .max(16 * 1024)
+          .optional(),
+      })
+      .strict(),
+    response: z.object({ ok: z.literal(true) }).strict(),
+    error: HostApiErrorSchema,
+  }),
+  dynamicReportClientVerification: defineContract({
+    method: 'POST',
+    path: '/api/dynamic/:agentId/report-client-verification',
+    params: agentParam,
+    request: z
+      .object({
+        episodeId: EpisodeIdSchema,
+        pluginId: DynamicIdSchema,
+        packageId: DynamicIdSchema,
+        pluginRunId: DynamicIdSchema,
+        renderedSlots: z
+          .array(z.enum(['agent.workbench.sections', 'extension.details.panels']))
+          .min(1)
+          .max(2),
+      })
       .strict(),
     response: z.object({ ok: z.literal(true) }).strict(),
     error: HostApiErrorSchema,
@@ -1278,6 +1344,30 @@ export const HostApiContracts = {
         activation: z.literal('inactive'),
       })
       .strict(),
+    error: HostApiErrorSchema,
+  }),
+  extensionClientCall: defineContract({
+    method: 'POST',
+    path: '/api/extensions/:extensionId/revisions/:revisionId/call',
+    params: extensionRevisionParam,
+    request: z
+      .object({ agentId: AgentIdSchema, method: NonEmptyStringSchema, input: JsonValueSchema.optional() })
+      .strict(),
+    response: z.object({ value: JsonValueSchema }).strict(),
+    error: HostApiErrorSchema,
+  }),
+  extensionClientDiagnostic: defineContract({
+    method: 'POST',
+    path: '/api/extensions/:extensionId/revisions/:revisionId/client-diagnostic',
+    params: extensionRevisionParam,
+    request: z
+      .object({
+        agentId: AgentIdSchema,
+        status: z.enum(['loaded', 'failed']),
+        message: z.string().max(4096).optional(),
+      })
+      .strict(),
+    response: z.object({ accepted: z.literal(true) }).strict(),
     error: HostApiErrorSchema,
   }),
   activateExtension: defineContract({

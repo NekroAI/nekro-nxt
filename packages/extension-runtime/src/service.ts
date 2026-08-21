@@ -6,6 +6,7 @@ import type { ExtensionBuilder } from './builder.js'
 import type { ExtensionSourceStore } from './source-store.js'
 import type {
   DynamicPackageSnapshot,
+  ExtensionBuildArtifact,
   ExtensionRepository,
   ExtensionRevisionVerification,
   LocalExtension,
@@ -125,6 +126,16 @@ export class ExtensionService {
 
   revisionSourceDirectory(revision: Revision): string {
     return this.#sources.revisionSourceDirectory(revision.extensionId, revision.id)
+  }
+
+  async buildRevision(revision: Revision): Promise<ExtensionBuildArtifact> {
+    if (!this.#builder) throw new Error('Extension Builder is unavailable.')
+    return this.#builder.build({
+      extensionId: revision.extensionId,
+      revisionId: revision.id,
+      contentDigest: revision.contentDigest,
+      sourceDirectory: this.revisionSourceDirectory(revision),
+    })
   }
 
   #timestamp(): number {

@@ -77,6 +77,15 @@ export interface ExtensionRevisionVerification {
   readonly renderedSlots: readonly ('agent.workbench.sections' | 'extension.details.panels')[]
 }
 
+export interface ExtensionClientDiagnostic {
+  readonly agentId: AgentId
+  readonly extensionId: ExtensionId
+  readonly revisionId: ExtensionRevisionId
+  readonly status: 'loaded' | 'failed'
+  readonly message?: string
+  readonly observedAt: number
+}
+
 export interface MaterializedExtensionRevision {
   readonly manifest: ExtensionManifest
   readonly sources: { readonly host?: string; readonly client?: string }
@@ -106,6 +115,8 @@ export interface ExtensionRepository {
     readonly verification?: ExtensionRevisionVerification
   }): void
   getExtensionRevisionVerification(revisionId: ExtensionRevisionId): ExtensionRevisionVerification | undefined
+  getExtensionClientDiagnostic(agentId: AgentId, extensionId: ExtensionId): ExtensionClientDiagnostic | undefined
+  upsertExtensionClientDiagnostic(diagnostic: ExtensionClientDiagnostic): void
 
   getActivation(agentId: AgentId, extensionId: ExtensionId): Activation | undefined
   listActivations(agentId?: AgentId): readonly Activation[]

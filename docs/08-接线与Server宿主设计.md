@@ -34,7 +34,10 @@
 | 供应商 | `GET/POST /api/llm/providers`、`discover-models`、`test-provider` | DSH settings/credentials |
 | QQ 收发测试 | `POST /api/connections/:id/test` | 接收与发送分开 |
 | 保存动态包 | `POST /api/extensions/save-from-dynamic` | 不自动启用 |
-| 动态回路 | `POST /api/dynamic/:agentId/...` | 审批、Host half、Client 源码、结算 |
+| 动态回路 | `POST /api/dynamic/:agentId/...` | 每次请求携带精确 `episodeId`；审批、Host half、Client 源码、渲染证据、Guard 报告与结算不猜活动 Session |
+| Client Artifact | `GET /api/extensions/:extensionId/revisions/:revisionId/client/:buildKey.mjs` | 只向匹配当前 Agent Activation 的精确构建提供源码 |
+| Extension RPC | `POST /api/extensions/:extensionId/revisions/:revisionId/call` | 按 `agentId + revisionId + method` 调用 Activation handler |
+| Client 诊断 | `POST /api/extensions/:extensionId/revisions/:revisionId/client-diagnostic` | 保存当前 Activation 最近一次 loaded/failed；不回滚 Host |
 
 快照含 DSH 模型目录、能力可用状态、Adapter 目录、Connection（无 Secret，含可选 alias）、Gateway、已绑定频道和动态 Package。Web 侧只用 `alias ?? Adapter displayName` 作为连接主辨识名，Adapter displayName 仍作为平台身份的次要信息；频道、对象列、连接详情、智能体频道列表和绑定选择器共享同一投影。Web 搜索是否可用看 DSH 凭据，不靠环境变量名推断。
 
@@ -49,6 +52,7 @@
 ## 3. Web 与 Server
 
 - `apps/web/src/http-host.ts` 实现 `ProductHostPort`。`execute` 覆盖创建智能体、发消息、改能力、扩展启停、从动态保存、创建/测试连接、修改连接别名和动态审批；连接别名更新成功后重新读取权威快照，失败不发布前端成功状态。
+- 每个智能体使用独立产品 SlotCore。Snapshot/SSE 变化驱动 Client Activation 对账；Revision 更新先 dispose 后 mount，刷新与 Server 重启按权威 Activation 恢复。只有含 Client 构建证据的 Revision 请求 Artifact，Host-only Activation 全程没有 Client 请求。
 - 添加平台连接先选用户可创建的平台，再按版本化 schema 渲染表单；从某适配器详情「再添加一个账号」可跳过选平台。系统托管 Web 不出现在创建目录。
 - 外部频道未发现时说明先向机器人账号发一条消息。`POST /api/channels/:id/messages`：网页频道入站交给智能体；外部频道在已绑定且允许主动发送时，以机器人账号出站，并注入管理员来源的系统事实。
 - `apps/server/src/main.ts` 使用 `NEKRO_DATA`、`NEKRO_PORT`（默认 4960）。开发工作区为 `<dataRoot>/workspaces/<agentId>/`。

@@ -190,6 +190,25 @@ const installSlotRendererShellFeeds = (context: Context): void => {
 
 type NativeSettingsRootProps = PropsRenderSlots<'settings.section'>
 
+interface DynamicProductRootProps {
+  readonly agentId: string
+  readonly displayName: string
+  readonly renderSlot: (name: string, props: object) => ReactNode
+}
+
+const DynamicProductRoot = ({ renderSlot, agentId, displayName }: DynamicProductRootProps): ReactNode =>
+  React.createElement(
+    React.Fragment,
+    null,
+    renderSlot('agent.workbench.sections', { agentId, displayName }),
+    renderSlot('extension.details.panels', {
+      agentId,
+      extensionId: 'dynamic-preview',
+      revisionId: 'dynamic-preview',
+      activation: 'active',
+    }),
+  )
+
 /**
  * Public Slot composition only permits the Host to render `root`. This small
  * product shell owns the settings child declaration and delegates the actual
@@ -376,6 +395,13 @@ export interface DynamicClientHostPort extends CordisRunHostSeam {
   invoke(pluginId: string, pluginRunId: string, method: string, args: unknown): Promise<unknown>
   reportRenderFailure(agentId: string, pluginId: string, pluginRunId: string, failure: unknown): Promise<void>
   reportGuardFailure(agentId: string, pluginId: string, pluginRunId: string, failure: unknown): Promise<void>
+  reportClientVerification(
+    agentId: string,
+    pluginId: string,
+    packageId: string,
+    pluginRunId: string,
+    renderedSlots: readonly ('agent.workbench.sections' | 'extension.details.panels')[],
+  ): Promise<void>
 }
 
 const evaluateClientBundle = (source: string, moduleWindow: Record<string, unknown>, documentValue: unknown): void => {
@@ -498,6 +524,8 @@ export class DshClientRuntime {
   readonly #orchestrator: RunOrchestratorFace
   readonly #nativeLoader: BrowserDynamicLoader
   readonly #eventSource: EventSource | undefined
+  readonly #host: DynamicClientHostPort
+  readonly #agentByPlugin = new Map<string, string>()
   readonly #nativeEntries: string[] = []
   #nativeSettingsReady = false
   #disposed = false
@@ -511,6 +539,7 @@ export class DshClientRuntime {
     orchestrator: RunOrchestratorFace,
     nativeLoader: BrowserDynamicLoader,
     eventSource: EventSource | undefined,
+    host: DynamicClientHostPort,
   ) {
     this.#dynamicContext = dynamicContext
     this.#nativeContext = nativeContext
@@ -520,6 +549,7 @@ export class DshClientRuntime {
     this.#orchestrator = orchestrator
     this.#nativeLoader = nativeLoader
     this.#eventSource = eventSource
+    this.#host = host
   }
 
   static async create(host: DynamicClientHostPort, documentValue: unknown = document): Promise<DshClientRuntime> {
@@ -545,7 +575,17 @@ export class DshClientRuntime {
       // Dynamic root entries receive negative priorities and temporarily win;
       // this null shell entry prevents a transient empty-root crash while a
       // retraction notification propagates through React.
-      slots.register({ name: 'root', priority: 0 }, () => null)
+      slots.register(
+        {
+          name: 'root',
+          priority: 0,
+          children: {
+            'agent.workbench.sections': { kind: 'list', scope: 'root' },
+            'extension.details.panels': { kind: 'list', scope: 'root' },
+          },
+        },
+        DynamicProductRoot,
+      )
       nativeSlots.install(createSlotRenderer())
       nativeSlots.register(
         {
@@ -589,6 +629,7 @@ export class DshClientRuntime {
         orchestrator,
         nativeLoader,
         eventSource,
+        host,
       )
     } catch (error) {
       await Promise.all([dynamicContext.fiber.dispose(), nativeContext.fiber.dispose()])
@@ -598,6 +639,8 @@ export class DshClientRuntime {
 
   async reconcile(rows: readonly DynamicInventoryRow[]): Promise<void> {
     this.#assertActive()
+    this.#agentByPlugin.clear()
+    for (const row of rows) this.#agentByPlugin.set(row.pluginId, row.agentId)
     this.#orchestrator.reconcileApprovals(rows)
     const activeRuns = new Map(
       rows.flatMap((row) => (row.activeRun ? [[row.pluginId, row.activeRun.pluginRunId]] : [])),
@@ -618,11 +661,13 @@ export class DshClientRuntime {
       }
     }
     await Promise.all(retractions)
+    await this.#rejectUnsupportedSlots()
   }
 
-  approve(requestId: string, approveFutureVersions = false): Promise<void> {
+  async approve(requestId: string, approveFutureVersions = false): Promise<void> {
     this.#assertActive()
-    return this.#orchestrator.approve(requireApprovalRequestId(requestId), approveFutureVersions)
+    await this.#orchestrator.approve(requireApprovalRequestId(requestId), approveFutureVersions)
+    await this.#rejectUnsupportedSlots()
   }
 
   decline(requestId: string): Promise<void> {
@@ -635,9 +680,9 @@ export class DshClientRuntime {
     return this.#runner.getSnapshot()
   }
 
-  renderRoot(): ReactNode {
+  renderRoot(agentId: string, displayName: string): ReactNode {
     this.#assertActive()
-    return this.slots.renderSlot('root', {})
+    return this.slots.renderSlot('root', { agentId, displayName })
   }
 
   async loadNativeSettings(): Promise<void> {
@@ -678,6 +723,37 @@ export class DshClientRuntime {
 
   #assertActive(): void {
     if (this.#disposed) throw new Error('DSH Client Runtime is disposed.')
+  }
+
+  async #rejectUnsupportedSlots(): Promise<void> {
+    const allowed = new Set(['agent.workbench.sections', 'extension.details.panels'])
+    for (const loaded of this.#runner.getSnapshot()) {
+      const unsupported = loaded.slots.filter((slot) => !allowed.has(slot))
+      if (loaded.slots.length > 0 && unsupported.length === 0) continue
+      const message =
+        loaded.slots.length === 0
+          ? 'Client half did not register a NekroNxt product Slot.'
+          : `Client half registered unsupported Slots: ${unsupported.join(', ')}`
+      const agentId = this.#agentByPlugin.get(loaded.pluginId)
+      if (agentId) {
+        await this.#host
+          .reportGuardFailure(agentId, loaded.pluginId, loaded.pluginRunId, {
+            phase: 'client-slot',
+            message,
+          })
+          .catch(() => undefined)
+      }
+      const retracted = new Promise<void>((resolve) => {
+        const unsubscribe = this.#runner.subscribe(() => {
+          if (this.#runner.isLoaded(loaded.pluginId)) return
+          unsubscribe()
+          resolve()
+        })
+      })
+      this.#runner.retract(loaded.pluginId, loaded.pluginRunId)
+      await retracted
+      throw new Error(message)
+    }
   }
 }
 

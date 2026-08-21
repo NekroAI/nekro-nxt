@@ -42,6 +42,7 @@ import {
   episodes,
   extensionRevisions,
   extensionRevisionVerifications,
+  extensionClientDiagnostics,
   localExtensions,
   outboundIntents,
   physicalDeliveries,
@@ -163,6 +164,11 @@ export const AgentActivationRowSchema = createSelectSchema(agentActivations, {
   extensionRevisionId: ExtensionRevisionIdSchema,
   config: JsonValueSchema,
 })
+export const ExtensionClientDiagnosticRowSchema = createSelectSchema(extensionClientDiagnostics, {
+  agentId: AgentIdSchema,
+  extensionId: ExtensionIdSchema,
+  revisionId: ExtensionRevisionIdSchema,
+})
 
 export const CoreRowSchemas = {
   agentDefinitions: AgentDefinitionRowSchema,
@@ -189,4 +195,5 @@ export const CoreRowSchemas = {
   extensionRevisions: ExtensionRevisionRowSchema,
   extensionRevisionVerifications: ExtensionRevisionVerificationRowSchema,
   agentActivations: AgentActivationRowSchema,
+  extensionClientDiagnostics: ExtensionClientDiagnosticRowSchema,
 } as const

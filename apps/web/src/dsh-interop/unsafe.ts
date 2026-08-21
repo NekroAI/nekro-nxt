@@ -143,19 +143,63 @@ interface DynamicSlotCoreFace {
   register(options: unknown, component: unknown): unknown
 }
 
+export interface ProductSlotCoreFace {
+  register(options: unknown, component: unknown): () => void
+  entriesOfSlot(name: string): readonly {
+    readonly component: unknown
+    readonly options: { readonly id?: string }
+    readonly registrant?: string
+  }[]
+  subscribe(name: string, listener: () => void): () => void
+  getVersion(name: string): number
+}
+
+export const requireProductSlotCore = (value: unknown): ProductSlotCoreFace =>
+  requireObjectWithMethods<ProductSlotCoreFace>(value, 'NekroNxt product SlotCore', [
+    'register',
+    'entriesOfSlot',
+    'subscribe',
+    'getVersion',
+  ])
+
+export const requireProductSlotComponent = <Props extends object>(
+  value: unknown,
+  label: string,
+): ((props: Props) => ReactNode) => {
+  if (typeof value !== 'function') throw new TypeError(`${label} must be a function.`)
+  return value as (props: Props) => ReactNode
+}
+
+const NEKRO_NXT_CLIENT_SLOT_NAMES = new Set(['agent.workbench.sections', 'extension.details.panels'])
+
 /**
  * Bridge the intentionally open Extension SDK registration into DSH's declaration-merged SlotCore.
  * SlotCore performs its own full slot-kind validation after these minimum shape checks.
  */
-export const registerDynamicSlot = (core: unknown, options: unknown, component: unknown): (() => void) => {
+export const registerDynamicSlot = (
+  core: unknown,
+  options: unknown,
+  component: unknown,
+  registrationId: string,
+): (() => void) => {
   const coreFace = requireObjectWithMethods<DynamicSlotCoreFace>(core, 'DSH SlotCore', ['register'])
   const registration = requireRecord(options, 'Extension Client slot options')
   const name = registration['name']
-  if (typeof name !== 'string' || name.length === 0) {
-    throw new TypeError('Extension Client slot options.name must be a non-empty string.')
+  if (typeof name !== 'string' || !NEKRO_NXT_CLIENT_SLOT_NAMES.has(name)) {
+    throw new TypeError(`Extension Client slot is not supported by NekroNxt: ${String(name)}`)
+  }
+  if (Object.keys(registration).some((key) => key !== 'name' && key !== 'id')) {
+    throw new TypeError('Extension Client slot options may only contain the NekroNxt slot name and stable id.')
+  }
+  const requestedId = registration['id']
+  if (requestedId !== undefined && (typeof requestedId !== 'string' || !requestedId.trim())) {
+    throw new TypeError('Extension Client slot options.id must be a non-empty string when provided.')
   }
   if (typeof component !== 'function') throw new TypeError('Extension Client slot component must be a function.')
-  const dispose = coreFace.register(registration, component)
+  const dispose = coreFace.register(
+    { name, id: `${registrationId}:${requestedId ?? 'entry'}`, registrant: registrationId },
+    component,
+  )
   if (typeof dispose !== 'function') throw new TypeError('DSH SlotCore.register() must return a disposer.')
   return () => {
     Reflect.apply(dispose, undefined, [])

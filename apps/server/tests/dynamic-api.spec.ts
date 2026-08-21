@@ -73,13 +73,34 @@ describe('NekroNxt domain API — browser dynamic client circuit', () => {
       .listActiveEpisodesForAgent(entity.agentId)
       .find((candidate) => candidate.dshSessionId !== undefined)
     const dshSessionId = episode!.dshSessionId!
+    const other = await runtime.createAgentWithWebChannel({
+      displayName: '另一个创造智能体',
+      persona: '',
+      model: { provider: 'test-provider', model: 'chat-model' },
+      capabilities: { dynamicCreation: true },
+    })
+    await runtime.web.postMessage({
+      channelId: other.channelId,
+      clientEventId: 'seed-other-session',
+      parts: [{ type: 'text', text: '建立另一条活动会话。' }],
+    })
+    const otherEpisode = runtime.repository
+      .listActiveEpisodesForAgent(other.agentId)
+      .find((candidate) => candidate.dshSessionId !== undefined)!
 
     // Define + run a client-half dynamic Package → pending approval request.
     const defined = runtime.host.defineDynamicPackage(dshSessionId, {
       plugin: { kind: 'new', idPrefix: 'client' },
       name: '动态客户端',
       purpose: '验证浏览器审批。',
-      code: { client: 'return { apply() {} }' },
+      code: {
+        client: `return {
+          inject: ['slots'],
+          apply(ctx) {
+            ctx.slots.register({ name: 'agent.workbench.sections', id: 'main' }, () => React.createElement('div'))
+          }
+        }`,
+      },
     })
     const ran = runtime.host.runDynamicPackage(dshSessionId, defined.pluginId, defined.packageId, 'run')
     await Promise.resolve()
@@ -107,14 +128,48 @@ describe('NekroNxt domain API — browser dynamic client circuit', () => {
     const api = createNekroHostApi(webContext.webServer, runtime)
     const origin = `http://127.0.0.1:${api.port}`
     try {
+      const crossedEpisodeResponse = await fetch(`${origin}/api/dynamic/${entity.agentId}/inventory`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ episodeId: otherEpisode.id }),
+      })
+      expect(crossedEpisodeResponse.status).toBe(400)
+
+      const inventoryResponse = await fetch(`${origin}/api/dynamic/${entity.agentId}/inventory`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ episodeId: episode!.id }),
+      })
+      expect(inventoryResponse.ok).toBe(true)
+      expect(HostApiContracts.dynamicInventory.parseResponse(await inventoryResponse.json()).rows).toHaveLength(1)
+
       const approveResponse = await fetch(`${origin}/api/dynamic/${entity.agentId}/approve`, {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ requestId: approval, pluginRunId }),
+        body: JSON.stringify({ episodeId: episode!.id, requestId: approval, pluginRunId }),
       })
       expect(approveResponse.ok).toBe(true)
       const ack = HostApiContracts.dynamicApprove.parseResponse(await approveResponse.json())
       expect(ack.accepted).toBe(true)
+
+      const clientVerificationResponse = await fetch(
+        `${origin}/api/dynamic/${entity.agentId}/report-client-verification`,
+        {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({
+            episodeId: episode!.id,
+            pluginId: defined.pluginId,
+            packageId: defined.packageId,
+            pluginRunId,
+            renderedSlots: ['agent.workbench.sections'],
+          }),
+        },
+      )
+      expect(clientVerificationResponse.ok).toBe(true)
+      await expect(
+        runtime.host.verifyDynamicPackage(dshSessionId, defined.pluginId, defined.packageId),
+      ).resolves.toMatchObject({ renderedSlots: ['agent.workbench.sections'] })
 
       // The run resolves and client code is now available to load in the browser.
       const clientCode = runtime.host.getDynamicClientCode(dshSessionId, defined.pluginId, pluginRunId)

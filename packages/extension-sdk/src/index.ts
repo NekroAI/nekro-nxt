@@ -97,7 +97,7 @@ export interface ExtensionClientHost {
 
 export interface ExtensionClientSlotRegistry {
   register<Name extends NekroNxtClientSlotName>(
-    options: { readonly name: Name },
+    options: { readonly name: Name; readonly id?: string },
     component: (props: NekroNxtClientSlotPropsMap[Name]) => unknown,
   ): () => void
 }
@@ -152,10 +152,10 @@ const HOST_TOOL_EXAMPLE = `return {
 }`
 
 const HOST_RPC_AND_CLIENT_SLOT_EXAMPLE = `// Host half
+// RPC belongs to the Activation, so register it in the factory before returning the per-Session plugin.
+harness.handle('summary', () => ({ text: 'Synthetic extension summary' }))
 return {
-  apply() {
-    harness.handle('summary', () => ({ text: 'Synthetic extension summary' }))
-  }
+  apply() {}
 }
 
 // Client half: use only a Slot returned by NekroNxt Inspect.
@@ -163,7 +163,7 @@ return {
   inject: ['slots'],
   apply(ctx) {
     ctx.slots.register(
-      { name: 'agent.workbench.sections' },
+      { name: 'agent.workbench.sections', id: 'main' },
       (props) => React.createElement(
         'section',
         { className: styles.section },

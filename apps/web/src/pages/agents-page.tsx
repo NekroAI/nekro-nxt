@@ -6,6 +6,7 @@ import { notify } from '../components/notifications.js'
 import { EmptyState, InlineFeedback, PageHeader } from '../components/product-feedback.js'
 import { AddModelProviderForm } from '../llm-settings.js'
 import { WebSearchCredentialForm } from '../web-search-credential.js'
+import { AgentWorkbenchExtensionSlots } from '../persistent-extension-client.js'
 import {
   connectionDisplayName,
   useProductStore,
@@ -736,6 +737,7 @@ export function AgentManagePage() {
               )}
             </div>
           </section>
+          <AgentWorkbenchExtensionSlots agentId={agent.id} displayName={agent.name} />
           <BindingTaskDialog
             open={bindingOpen}
             onOpenChange={setBindingOpen}

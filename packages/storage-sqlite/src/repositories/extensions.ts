@@ -8,13 +8,20 @@ import {
 import type {
   Activation,
   ExtensionRepository,
+  ExtensionClientDiagnostic,
   ExtensionRevisionVerification,
   LocalExtension,
   Revision,
 } from '@nekro-nxt/extension-runtime'
 import { z } from 'zod'
 import type { DrizzleCoreDatabase } from '../database.js'
-import { agentActivations, extensionRevisions, extensionRevisionVerifications, localExtensions } from '../schema.js'
+import {
+  agentActivations,
+  extensionClientDiagnostics,
+  extensionRevisions,
+  extensionRevisionVerifications,
+  localExtensions,
+} from '../schema.js'
 import { AgentActivationRowSchema, ExtensionRevisionRowSchema, LocalExtensionRowSchema } from '../row-schemas.js'
 
 const toExtension = (input: typeof localExtensions.$inferSelect): LocalExtension => {
@@ -123,6 +130,39 @@ export function createExtensionsRepository(database: DrizzleCoreDatabase): Exten
         .where(eq(extensionRevisionVerifications.revisionId, revisionId))
         .get()
       return row === undefined ? undefined : ExtensionRevisionVerificationSchema.parse(row.evidence)
+    },
+    getExtensionClientDiagnostic(agentId, extensionId): ExtensionClientDiagnostic | undefined {
+      const row = database
+        .select()
+        .from(extensionClientDiagnostics)
+        .where(
+          and(eq(extensionClientDiagnostics.agentId, agentId), eq(extensionClientDiagnostics.extensionId, extensionId)),
+        )
+        .get()
+      if (!row) return undefined
+      return {
+        agentId: row.agentId,
+        extensionId: row.extensionId,
+        revisionId: row.revisionId,
+        status: row.status,
+        ...(row.message === null ? {} : { message: row.message }),
+        observedAt: row.observedAt,
+      }
+    },
+    upsertExtensionClientDiagnostic(diagnostic): void {
+      database
+        .insert(extensionClientDiagnostics)
+        .values({ ...diagnostic, message: diagnostic.message ?? null })
+        .onConflictDoUpdate({
+          target: [extensionClientDiagnostics.agentId, extensionClientDiagnostics.extensionId],
+          set: {
+            revisionId: diagnostic.revisionId,
+            status: diagnostic.status,
+            message: diagnostic.message ?? null,
+            observedAt: diagnostic.observedAt,
+          },
+        })
+        .run()
     },
     getActivation(agentId: AgentId, extensionId: ExtensionId): Activation | undefined {
       const row = database

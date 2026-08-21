@@ -486,9 +486,30 @@ const projectSnapshot = (json: SnapshotJson, successfulAt: number): ProductSnaps
               contractVersion: latestRevision.verification.contractVersion,
               hostBuilt: latestRevision.verification.hostBuilt,
               clientBuilt: latestRevision.verification.clientBuilt,
+              buildKey: latestRevision.verification.buildKey,
               toolInvocationCount: latestRevision.verification.toolInvocationCount,
+              rpcMethods: latestRevision.verification.rpcMethods,
+              renderedSlots: latestRevision.verification.renderedSlots,
             },
           }),
+      clientActivations: extension.activations.flatMap((candidate) => {
+        const activeRevision = extension.revisions.find((revision) => revision.id === candidate.extensionRevisionId)
+        if (!activeRevision?.verification?.clientBuilt) return []
+        return [
+          {
+            agentId: candidate.agentId,
+            revisionId: candidate.extensionRevisionId,
+            buildKey: activeRevision.verification.buildKey,
+          },
+        ]
+      }),
+      clientDiagnostics: extension.clientDiagnostics.map((diagnostic) => ({
+        agentId: diagnostic.agentId,
+        revisionId: diagnostic.revisionId,
+        status: diagnostic.status,
+        ...(diagnostic.message === undefined ? {} : { message: diagnostic.message }),
+        observedAt: diagnostic.observedAt,
+      })),
       ...(latestRevision === undefined ? {} : { revisionId: latestRevision.id }),
       ...(targetAgentId === undefined ? {} : { agentId: targetAgentId }),
     }
@@ -818,14 +839,16 @@ export class HttpProductHost implements ProductHostPort {
     }
     if (command === 'dynamic.approve' || command === 'dynamic.decline') {
       const agentId = typeof input?.['agentId'] === 'string' ? input['agentId'] : ''
+      const episodeId = typeof input?.['episodeId'] === 'string' ? input['episodeId'] : ''
       const requestId = typeof input?.['requestId'] === 'string' ? input['requestId'] : ''
       const pluginRunId = typeof input?.['pluginRunId'] === 'string' ? input['pluginRunId'] : ''
       if (!agentId.trim()) throw new Error('缺少智能体标识，请刷新页面后重试。')
+      if (!episodeId.trim()) throw new Error('缺少 Episode 标识，请刷新页面后重试。')
       if (!requestId.trim()) throw new Error('缺少批准请求，请刷新页面后重试。')
       const result = await this.#call(
         command === 'dynamic.approve' ? HostApiContracts.dynamicApprove : HostApiContracts.dynamicDecline,
         { agentId },
-        { requestId, ...(pluginRunId.trim() ? { pluginRunId } : {}) },
+        { episodeId, requestId, ...(pluginRunId.trim() ? { pluginRunId } : {}) },
       )
       await this.#refreshAndNotify()
       return result
@@ -879,6 +902,39 @@ export class HttpProductHost implements ProductHostPort {
       )
       await this.#refreshAndNotify()
       return result
+    }
+    if (command === 'extensions.clientCall') {
+      const extensionId = typeof input?.['extensionId'] === 'string' ? input['extensionId'] : ''
+      const revisionId = typeof input?.['revisionId'] === 'string' ? input['revisionId'] : ''
+      const agentId = typeof input?.['agentId'] === 'string' ? input['agentId'] : ''
+      const method = typeof input?.['method'] === 'string' ? input['method'] : ''
+      if (!extensionId.trim() || !revisionId.trim() || !agentId.trim() || !method.trim()) {
+        throw new Error('扩展 RPC 请求缺少精确的智能体、扩展、版本或方法。')
+      }
+      const value =
+        'value' in (input ?? {})
+          ? HostApiContracts.extensionClientCall.request.shape.input.parse(input?.['value'])
+          : undefined
+      return await this.#call(
+        HostApiContracts.extensionClientCall,
+        { extensionId, revisionId },
+        { agentId, method, ...(value === undefined ? {} : { input: value }) },
+      )
+    }
+    if (command === 'extensions.clientDiagnostic') {
+      const extensionId = typeof input?.['extensionId'] === 'string' ? input['extensionId'] : ''
+      const revisionId = typeof input?.['revisionId'] === 'string' ? input['revisionId'] : ''
+      const agentId = typeof input?.['agentId'] === 'string' ? input['agentId'] : ''
+      const status = input?.['status'] === 'loaded' || input?.['status'] === 'failed' ? input['status'] : undefined
+      const message = typeof input?.['message'] === 'string' ? input['message'] : undefined
+      if (!extensionId.trim() || !revisionId.trim() || !agentId.trim() || status === undefined) {
+        throw new Error('Client 诊断缺少精确的智能体、扩展、版本或状态。')
+      }
+      return await this.#call(
+        HostApiContracts.extensionClientDiagnostic,
+        { extensionId, revisionId },
+        { agentId, status, ...(message === undefined ? {} : { message }) },
+      )
     }
     throw new Error(`当前 Web Host 不支持操作“${command}”。`)
   }

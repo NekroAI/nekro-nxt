@@ -8,6 +8,8 @@
 
 SQLite 实现位于 `storage-sqlite`，DSH/Cordis 挂载位于 Server 组合根；本包不读取其他包数据库，也不依赖 Electron。动态运行、保存 Revision 和给智能体启用仍是三个独立动作。源码 Revision 是持久事实，构建缓存可删除重建。
 
-Revision 目录只保存 `manifest.json`、`source/` 和用于并发发布校验的 `content.sha256`。Manifest 只包含 `extensionId`、`revisionId` 和当前存在的 `source/host.ts` / `source/client.ts` entrypoint；没有独立的 API/兼容/能力/贡献声明，也不再写出重复的 `source-input.json`。Builder 读取并严格校验 Manifest 后，按 entrypoint 构建当前 Host/Client。
+Revision 目录只保存 `manifest.json`、`source/` 和用于并发发布校验的 `content.sha256`。新 Revision 使用 Manifest V2，包含 `schemaVersion: 2`、稳定身份、当前 Host/Client entrypoint，以及由真实运行时记录的 Tool、RPC 和 NekroNxt 产品 Slot Contribution；旧 V1 继续只读并规范化为没有 Contribution，既不重写旧目录也不采信模型或 Web 自报。Builder 读取并严格校验 Manifest 后，按 entrypoint 构建当前 Host/Client。
 
 `build.json` 是可丢弃缓存清单，只保存 `revisionId`、由固定 Builder/Node ABI/Revision digest 计算的 `buildKey` 和相对产物名；缓存目录和绝对产物路径由 Builder 推导，并在命中前检查产物文件仍存在。损坏的 Manifest 会拒绝构建，损坏或不完整的缓存会重新构建。
+
+Host factory 每个 Activation 只执行一次，RPC handler 也归 Activation 所有；返回的 Cordis Plugin 才按该智能体的每个 DSH Session 挂载 Tool Fiber。Session dispose 不能撤销 RPC，停用或切换 Activation 会同时撤销所有 Tool Fiber、RPC 和 Client Artifact 授权。Client 只运行在 `agent.workbench.sections` 与 `extension.details.panels`，每个智能体拥有独立 SlotCore；加载失败只写诊断并保留 Host Activation。

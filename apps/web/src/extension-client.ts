@@ -1,9 +1,16 @@
-import { Context, Service, type Fiber } from '@deepseek-ai/cordis'
+import { Context, Service } from '@deepseek-ai/cordis'
 import { SlotCore } from '@nekro-nxt/dsh-compat/client'
-import type { ExtensionClientStyles, ExtensionJsonValue } from '@nekro-nxt/extension-sdk'
+import type {
+  ExtensionClientStyles,
+  ExtensionJsonValue,
+  NekroNxtClientSlotName,
+  NekroNxtClientSlotPropsMap,
+} from '@nekro-nxt/extension-sdk'
 import * as React from 'react'
 import {
   registerDynamicSlot,
+  requireProductSlotComponent,
+  requireProductSlotCore,
   requireCordisPlugin,
   requireExtensionPluginFactory,
   requireModuleRecord,
@@ -11,14 +18,18 @@ import {
 
 class SlotsService extends Service {
   readonly core: SlotCore
+  readonly registrationId: string
+  nextEntry = 0
 
-  constructor(context: Context, config: { readonly core: SlotCore }) {
+  constructor(context: Context, config: { readonly core: SlotCore; readonly registrationId: string }) {
     super(context, 'slots')
     this.core = config.core
+    this.registrationId = config.registrationId
   }
 
   register(options: unknown, component: unknown): () => void {
-    const dispose = registerDynamicSlot(this.core, options, component)
+    this.nextEntry += 1
+    const dispose = registerDynamicSlot(this.core, options, component, `${this.registrationId}:${this.nextEntry}`)
     this.ctx.effect(() => dispose, 'nekro-nxt: Client Extension Slot')
     return dispose
   }
@@ -33,6 +44,11 @@ export interface MountedClientExtension {
   dispose(): Promise<void>
 }
 
+export interface ProductClientSlotEntry<Props extends object> {
+  readonly id: string
+  readonly component: (props: Props) => React.ReactNode
+}
+
 const DEFAULT_EXTENSION_CLIENT_STYLES: ExtensionClientStyles = {
   section: 'nxt-extension-section',
   sectionHeading: 'nxt-extension-section-heading',
@@ -45,22 +61,32 @@ const DEFAULT_EXTENSION_CLIENT_STYLES: ExtensionClientStyles = {
 /** Owns Client Extension fibers over the same SlotCore rendered by the NekroNxt Shell. */
 export class ExtensionClientRuntime {
   readonly slots = new SlotCore()
-  readonly #context = new Context()
-  readonly #fibers = new Set<Fiber>()
-  readonly #ready: Promise<void>
+  readonly #slotCore = requireProductSlotCore(this.slots)
+  readonly #contexts = new Set<Context>()
+  readonly #rootDispose: () => void
   #disposed = false
 
   constructor() {
-    this.#ready = Promise.resolve(this.#context.plugin(SlotsService, { core: this.slots })).then(() => undefined)
+    this.#rootDispose = this.#slotCore.register(
+      {
+        name: 'root',
+        children: {
+          'agent.workbench.sections': { kind: 'list', scope: 'root' },
+          'extension.details.panels': { kind: 'list', scope: 'root' },
+        },
+        registrant: 'nekro-nxt-product-shell',
+      },
+      () => null,
+    )
   }
 
   async mount(
     moduleUrl: string,
     host: ExtensionClientHostPort,
     styles: ExtensionClientStyles = DEFAULT_EXTENSION_CLIENT_STYLES,
+    registrationId: string = moduleUrl,
   ): Promise<MountedClientExtension> {
     if (this.#disposed) throw new Error('Extension Client Runtime is disposed.')
-    await this.#ready
     const loaded = requireModuleRecord(
       await import(`${moduleUrl}${moduleUrl.includes('?') ? '&' : '?'}nxt=${Date.now()}`),
       'Extension Client module',
@@ -70,37 +96,63 @@ export class ExtensionClientRuntime {
     if ((typeof plugin !== 'object' || plugin === null) && typeof plugin !== 'function') {
       throw new TypeError('Extension Client factory must return a Cordis Plugin.')
     }
-    const fiber = this.#context.plugin(requireCordisPlugin(plugin, 'Extension Client factory result'))
+    const context = new Context()
+    this.#contexts.add(context)
     try {
+      await context.plugin(SlotsService, { core: this.slots, registrationId })
+      const fiber = context.plugin(requireCordisPlugin(plugin, 'Extension Client factory result'))
       await fiber
     } catch (error) {
-      await fiber.dispose()
+      this.#contexts.delete(context)
+      await context.fiber.dispose()
       throw error
     }
     if (this.#disposed) {
-      await fiber.dispose()
+      this.#contexts.delete(context)
+      await context.fiber.dispose()
       throw new Error('Extension Client Runtime was disposed during mount.')
     }
-    this.#fibers.add(fiber)
     let active = true
     return {
       moduleUrl,
       dispose: async () => {
         if (!active) return
         active = false
-        this.#fibers.delete(fiber)
-        await fiber.dispose()
+        this.#contexts.delete(context)
+        await context.fiber.dispose()
       },
     }
+  }
+
+  subscribe<Name extends NekroNxtClientSlotName>(name: Name, listener: () => void): () => void {
+    return this.#slotCore.subscribe(name, listener)
+  }
+
+  slotVersion<Name extends NekroNxtClientSlotName>(name: Name): number {
+    return this.#slotCore.getVersion(name)
+  }
+
+  entries<Name extends NekroNxtClientSlotName>(
+    name: Name,
+  ): readonly ProductClientSlotEntry<NekroNxtClientSlotPropsMap[Name]>[] {
+    return this.#slotCore.entriesOfSlot(name).map((entry, index) => {
+      return {
+        id: entry.options.id ?? entry.registrant ?? `${name}:${index}`,
+        component: requireProductSlotComponent<NekroNxtClientSlotPropsMap[Name]>(
+          entry.component,
+          `Extension Client slot ${name}`,
+        ),
+      }
+    })
   }
 
   async dispose(): Promise<void> {
     if (this.#disposed) return
     this.#disposed = true
-    const fibers = [...this.#fibers]
-    this.#fibers.clear()
-    await Promise.allSettled(fibers.map((fiber) => fiber.dispose()))
-    await this.#context.fiber.dispose()
+    const contexts = [...this.#contexts]
+    this.#contexts.clear()
+    await Promise.allSettled(contexts.map((context) => context.fiber.dispose()))
+    this.#rootDispose()
   }
 }
 
@@ -121,6 +173,7 @@ interface ClientExtensionRuntimeFace {
     moduleUrl: string,
     host: ExtensionClientHostPort,
     styles?: ExtensionClientStyles,
+    registrationId?: string,
   ): Promise<MountedClientExtension>
 }
 
@@ -129,6 +182,7 @@ export class ExtensionClientActivationCoordinator {
   readonly #runtime: ClientExtensionRuntimeFace
   readonly #source: ClientActivationSource
   readonly #onFailure: (activationId: string, error: unknown) => void
+  readonly #onMounted: (activationId: string) => void
   readonly #mounted = new Map<string, { readonly moduleUrl: string; readonly handle: MountedClientExtension }>()
   #unsubscribe: (() => void) | undefined
   #queue: Promise<void> = Promise.resolve()
@@ -138,10 +192,12 @@ export class ExtensionClientActivationCoordinator {
     runtime: ClientExtensionRuntimeFace,
     source: ClientActivationSource,
     onFailure: (activationId: string, error: unknown) => void = () => undefined,
+    onMounted: (activationId: string) => void = () => undefined,
   ) {
     this.#runtime = runtime
     this.#source = source
     this.#onFailure = onFailure
+    this.#onMounted = onMounted
   }
 
   async start(): Promise<void> {
@@ -183,7 +239,12 @@ export class ExtensionClientActivationCoordinator {
     for (const descriptor of desired.values()) {
       if (this.#mounted.has(descriptor.activationId)) continue
       try {
-        const handle = await this.#runtime.mount(descriptor.moduleUrl, descriptor.host, descriptor.styles)
+        const handle = await this.#runtime.mount(
+          descriptor.moduleUrl,
+          descriptor.host,
+          descriptor.styles,
+          descriptor.activationId,
+        )
         if (
           this.#disposed ||
           this.#source.getSnapshot().every(({ activationId }) => activationId !== descriptor.activationId)
@@ -192,6 +253,7 @@ export class ExtensionClientActivationCoordinator {
           continue
         }
         this.#mounted.set(descriptor.activationId, { moduleUrl: descriptor.moduleUrl, handle })
+        this.#onMounted(descriptor.activationId)
       } catch (error) {
         this.#onFailure(descriptor.activationId, error)
       }

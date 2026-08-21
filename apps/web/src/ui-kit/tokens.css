@@ -87,6 +87,63 @@
   text-rendering: optimizeLegibility;
 }
 
+.nxt-extension-section {
+  display: grid;
+  gap: var(--nxt-space-3);
+  margin-block: var(--nxt-space-4);
+  padding: var(--nxt-space-4);
+  border: 1px solid var(--nxt-border-subtle);
+  border-radius: var(--nxt-radius-lg);
+  background: var(--nxt-bg-subtle);
+}
+
+.nxt-extension-section-heading {
+  margin: 0;
+  color: var(--nxt-text-primary);
+  font-size: 0.95rem;
+  font-weight: 650;
+}
+
+.nxt-extension-secondary-text {
+  margin: 0;
+  color: var(--nxt-text-secondary);
+  font-size: 0.85rem;
+  line-height: 1.55;
+}
+
+.nxt-extension-action-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--nxt-space-2);
+}
+
+.nxt-extension-button {
+  min-height: 32px;
+  padding: 0 var(--nxt-space-3);
+  border: 1px solid var(--nxt-border-strong);
+  border-radius: var(--nxt-radius-md);
+  color: var(--nxt-text-primary);
+  background: var(--nxt-bg-surface);
+  font: inherit;
+  cursor: pointer;
+}
+
+.nxt-extension-button:hover {
+  background: var(--nxt-bg-hover);
+}
+
+.nxt-extension-badge {
+  display: inline-flex;
+  align-items: center;
+  min-height: 22px;
+  padding-inline: var(--nxt-space-2);
+  border-radius: 999px;
+  color: var(--nxt-text-secondary);
+  background: var(--nxt-bg-hover);
+  font-size: 0.75rem;
+}
+
 :root[data-theme='dark'] {
   color-scheme: dark;
   --nxt-bg-canvas: #0b1117;

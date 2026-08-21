@@ -696,12 +696,10 @@ interface PersistentExtensionRegistration {
   readonly revision: Revision
   readonly artifact: ExtensionBuildArtifact
   readonly config: JsonValue
+  readonly plugin?: ExtensionPluginDefinition
   readonly fibers: Map<string, Fiber>
   readonly mounting: Map<string, Promise<void>>
-  readonly handlers: Map<
-    string,
-    Map<string, (input: ExtensionJsonValue) => ExtensionJsonValue | Promise<ExtensionJsonValue>>
-  >
+  readonly handlers: Map<string, (input: ExtensionJsonValue) => ExtensionJsonValue | Promise<ExtensionJsonValue>>
   active: boolean
 }
 
@@ -744,6 +742,17 @@ class NekroNxtDynamicCordisRunner extends DynamicCordisRunnerService {
   private state: DynamicAuthoringPolicyState | undefined
   private readonly runtimeContext: Context
   private readonly toolNamesByPackage = new Map<string, readonly string[]>()
+  private readonly clientEvidenceByPackage = new Map<
+    string,
+    {
+      readonly pluginRunId: string
+      readonly renderedSlots: readonly ('agent.workbench.sections' | 'extension.details.panels')[]
+    }
+  >()
+  private readonly clientRpcMethodsByPackage = new Map<
+    string,
+    { readonly pluginRunId: string; readonly methods: Set<string> }
+  >()
 
   constructor(context: Context, config: { readonly vmTimeoutMs?: number }) {
     super(context, config)
@@ -837,14 +846,57 @@ class NekroNxtDynamicCordisRunner extends DynamicCordisRunnerService {
     readonly pluginRunId: string
     readonly toolNames: readonly string[]
     readonly rpcMethods: readonly string[]
+    readonly renderedSlots: readonly ('agent.workbench.sections' | 'extension.details.panels')[]
   } {
     const row = this.snapshot(agent).find((candidate) => candidate.pluginId === pluginId)
     if (row?.activeRun?.packageId !== packageId) throw new Error('Dynamic Package is not the active verified Run.')
+    const pkg = row.packages.find((candidate) => candidate.packageId === packageId)
+    const clientEvidence = this.clientEvidenceByPackage.get(packageId)
+    if (pkg?.hasClientHalf && clientEvidence?.pluginRunId !== row.activeRun.pluginRunId) {
+      throw new Error('Dynamic Client half has not rendered in a NekroNxt product Slot for this Run.')
+    }
+    const clientRpcEvidence = this.clientRpcMethodsByPackage.get(packageId)
+    const clientRpcMethods =
+      clientRpcEvidence?.pluginRunId === row.activeRun.pluginRunId ? clientRpcEvidence.methods : new Set<string>()
+    if (pkg?.hasClientHalf && row.activeRun.handlers.some((method) => !clientRpcMethods.has(method))) {
+      throw new Error('Dynamic Client preview has not called every registered Host RPC for this Run.')
+    }
     return {
       pluginRunId: row.activeRun.pluginRunId,
       toolNames: this.toolNamesByPackage.get(packageId) ?? [],
       rpcMethods: row.activeRun.handlers,
+      renderedSlots: clientEvidence?.renderedSlots ?? [],
     }
+  }
+
+  recordClientVerification(
+    agent: Agent,
+    pluginId: string,
+    packageId: string,
+    pluginRunId: string,
+    renderedSlots: readonly ('agent.workbench.sections' | 'extension.details.panels')[],
+  ): void {
+    const row = this.snapshot(agent).find((candidate) => candidate.pluginId === pluginId)
+    if (row?.activeRun?.packageId !== packageId || row.activeRun.pluginRunId !== pluginRunId) {
+      throw new Error('Dynamic Client verification does not match the active Package Run.')
+    }
+    const pkg = row.packages.find((candidate) => candidate.packageId === packageId)
+    if (!pkg?.hasClientHalf) throw new Error('Host-only Package cannot report Client verification.')
+    if (renderedSlots.length === 0) throw new Error('Dynamic Client verification must contain a product Slot.')
+    this.clientEvidenceByPackage.set(packageId, {
+      pluginRunId,
+      renderedSlots: [...new Set(renderedSlots)],
+    })
+  }
+
+  recordClientRpcInvocation(agent: Agent, pluginId: string, pluginRunId: string, method: string): void {
+    const row = this.snapshot(agent).find((candidate) => candidate.pluginId === pluginId)
+    if (!row?.activeRun || row.activeRun.pluginRunId !== pluginRunId || !row.activeRun.handlers.includes(method)) {
+      throw new Error('Dynamic Client RPC evidence does not match the active Package Run.')
+    }
+    const current = this.clientRpcMethodsByPackage.get(row.activeRun.packageId)
+    if (current?.pluginRunId === pluginRunId) current.methods.add(method)
+    else this.clientRpcMethodsByPackage.set(row.activeRun.packageId, { pluginRunId, methods: new Set([method]) })
   }
 
   override async runHostHalf(
@@ -862,7 +914,15 @@ class NekroNxtDynamicCordisRunner extends DynamicCordisRunnerService {
   }
 
   override async undefine(agent: Agent, pluginId: CordisDynamicPluginIdType): Promise<DynamicCordisUndefineReceipt> {
+    const packages = this.snapshot(agent).find((candidate) => candidate.pluginId === pluginId)?.packages ?? []
     const result = await super.undefine(agent, pluginId)
+    if (result.ok) {
+      for (const pkg of packages) {
+        this.toolNamesByPackage.delete(pkg.packageId)
+        this.clientEvidenceByPackage.delete(pkg.packageId)
+        this.clientRpcMethodsByPackage.delete(pkg.packageId)
+      }
+    }
     const state = this.requireState()
     if (result.ok && state.primaryPluginId === pluginId) {
       this.state = {
@@ -2643,6 +2703,7 @@ export class DshHostRuntime implements AgentSessionDriver, ExtensionActivationHo
     const contributions = [] as Array<
       | { readonly kind: 'tool'; readonly name: string; readonly description: string }
       | { readonly kind: 'rpc'; readonly method: string }
+      | { readonly kind: 'client-slot'; readonly name: 'agent.workbench.sections' | 'extension.details.panels' }
     >
     for (const name of evidence.toolNames) {
       const schema = visibleTools.find((candidate) => candidate.name === name)
@@ -2673,6 +2734,7 @@ export class DshHostRuntime implements AgentSessionDriver, ExtensionActivationHo
         throw new Error(`Dynamic RPC verification exceeded 16 KiB: ${method}`)
       contributions.push({ kind: 'rpc', method })
     }
+    for (const name of evidence.renderedSlots) contributions.push({ kind: 'client-slot', name })
     return { ...evidence, contributions, toolInvocations }
   }
 
@@ -2741,7 +2803,12 @@ export class DshHostRuntime implements AgentSessionDriver, ExtensionActivationHo
     const { agent, runner } = this.#dynamicRuntime(dshSessionId)
     const owned = runner.inventory().some((row) => row.agentId === agent.id && row.pluginId === pluginId)
     if (!owned) throw new Error('Dynamic Extension is not owned by this DSH Session.')
-    return runner.invoke(CordisDynamicPluginId(pluginId), CordisDynamicPluginRunId(pluginRunId), method, input)
+    return runner
+      .invoke(CordisDynamicPluginId(pluginId), CordisDynamicPluginRunId(pluginRunId), method, input)
+      .then((result) => {
+        if (result.ok) runner.recordClientRpcInvocation(agent, pluginId, pluginRunId, method)
+        return result
+      })
   }
 
   reportDynamicRenderFailure(
@@ -2757,6 +2824,17 @@ export class DshHostRuntime implements AgentSessionDriver, ExtensionActivationHo
       CordisDynamicPluginRunId(pluginRunId),
       failure,
     )
+  }
+
+  recordDynamicClientVerification(
+    dshSessionId: string,
+    pluginId: string,
+    packageId: string,
+    pluginRunId: string,
+    renderedSlots: readonly ('agent.workbench.sections' | 'extension.details.panels')[],
+  ): void {
+    const { agent, runner } = this.#dynamicRuntime(dshSessionId)
+    runner.recordClientVerification(agent, pluginId, packageId, pluginRunId, renderedSlots)
   }
 
   reportDynamicGuardFailure(
@@ -2798,7 +2876,22 @@ export class DshHostRuntime implements AgentSessionDriver, ExtensionActivationHo
     const registration = [...this.#persistentExtensions.values()].find(
       (candidate) => candidate.agentId === agentId && candidate.revision.id === extensionRevisionId,
     )
-    const handler = registration?.handlers.get(dshSessionId)?.get(method)
+    const handler = registration?.handlers.get(method)
+    if (!handler) throw new Error(`Extension Host method is unavailable: ${method}`)
+    return parseJsonValue(JSON.parse(JSON.stringify(await handler(input))))
+  }
+
+  async invokeExtensionActivation(
+    agentId: AgentRevisionRecord['agentId'],
+    extensionRevisionId: string,
+    method: string,
+    input: JsonValue = null,
+  ): Promise<JsonValue> {
+    this.#assertActive()
+    const registration = [...this.#persistentExtensions.values()].find(
+      (candidate) => candidate.agentId === agentId && candidate.revision.id === extensionRevisionId && candidate.active,
+    )
+    const handler = registration?.handlers.get(method)
     if (!handler) throw new Error(`Extension Host method is unavailable: ${method}`)
     return parseJsonValue(JSON.parse(JSON.stringify(await handler(input))))
   }
@@ -2841,15 +2934,68 @@ export class DshHostRuntime implements AgentSessionDriver, ExtensionActivationHo
     this.#assertActive()
     const key = `${agentId}\0${revision.extensionId}\0${revision.id}`
     if (this.#persistentExtensions.has(key)) throw new Error('Extension Revision is already mounted for this Agent.')
+    const handlers = new Map<string, (input: ExtensionJsonValue) => ExtensionJsonValue | Promise<ExtensionJsonValue>>()
+    let plugin: ExtensionPluginDefinition | undefined
+    if (artifact.hostEntry) {
+      let factoryOpen = true
+      const loaded = ExtensionHostModuleSchema.parse(
+        await import(`${pathToFileURL(artifact.hostEntry).href}?build=${artifact.buildKey}`),
+      )
+      let factoryResult: unknown
+      try {
+        factoryResult = await loaded.default({
+          harness: {
+            defineTool: <Args extends Record<string, ExtensionJsonValue>, Output extends ExtensionJsonValue>(
+              options: ExtensionToolDefinition<Args, Output>,
+            ): ExtensionToolDefinition<Args, Output> => {
+              const definition = defineDshToolFromUnknown(options)
+              return Object.assign(options, definition)
+            },
+            registerTool: (context: ExtensionHostContext, tool: ExtensionToolDefinition) =>
+              context.tools.register(tool),
+            handle: (
+              method: string,
+              handler: (input: ExtensionJsonValue) => ExtensionJsonValue | Promise<ExtensionJsonValue>,
+            ) => {
+              if (!factoryOpen) {
+                throw new Error('Extension Host RPC must be registered by the Activation factory, not per Session.')
+              }
+              if (!method.trim() || typeof handler !== 'function') {
+                throw new TypeError('Invalid Extension Host handler.')
+              }
+              if (handlers.has(method)) throw new Error(`Extension Host handler is already registered: ${method}`)
+              handlers.set(method, handler)
+              // The Activation owns the handler. A Session fiber cannot retract it.
+              return () => undefined
+            },
+          },
+          config,
+        })
+      } finally {
+        factoryOpen = false
+      }
+      const parsedPlugin = ExtensionPluginDefinitionSchema.parse(factoryResult)
+      plugin = {
+        ...(parsedPlugin.inject === undefined ? {} : { inject: parsedPlugin.inject }),
+        apply: parsedPlugin.apply,
+      }
+      const forbiddenServices = parsedPlugin.inject?.filter(
+        (service) => !PERSISTENT_EXTENSION_HOST_SERVICES.has(service),
+      )
+      if (forbiddenServices && forbiddenServices.length > 0) {
+        throw new Error(`Extension Host requested unavailable Services: ${forbiddenServices.join(', ')}`)
+      }
+    }
     const registration: PersistentExtensionRegistration = {
       key,
       agentId,
       revision,
       artifact,
       config,
+      ...(plugin === undefined ? {} : { plugin }),
       fibers: new Map(),
       mounting: new Map(),
-      handlers: new Map(),
+      handlers,
       active: true,
     }
     this.#persistentExtensions.set(key, registration)
@@ -2949,55 +3095,14 @@ export class DshHostRuntime implements AgentSessionDriver, ExtensionActivationHo
     const inFlight = registration.mounting.get(sessionId)
     if (inFlight) return inFlight
     const mounting = (async () => {
-      if (!registration.artifact.hostEntry) return
-      const loaded = ExtensionHostModuleSchema.parse(
-        await import(`${pathToFileURL(registration.artifact.hostEntry).href}?build=${registration.artifact.buildKey}`),
-      )
-      const handlers = new Map<
-        string,
-        (input: ExtensionJsonValue) => ExtensionJsonValue | Promise<ExtensionJsonValue>
-      >()
-      const plugin = ExtensionPluginDefinitionSchema.parse(
-        await loaded.default({
-          harness: {
-            // Dynamic source cannot preserve DSH's const-generic input type; validate it at the Host boundary.
-            defineTool: <Args extends Record<string, ExtensionJsonValue>, Output extends ExtensionJsonValue>(
-              options: ExtensionToolDefinition<Args, Output>,
-            ): ExtensionToolDefinition<Args, Output> => {
-              const definition = defineDshToolFromUnknown(options)
-              return Object.assign(options, definition)
-            },
-            registerTool: (context: ExtensionHostContext, tool: ExtensionToolDefinition) =>
-              context.tools.register(tool),
-            handle: (
-              method: string,
-              handler: (input: ExtensionJsonValue) => ExtensionJsonValue | Promise<ExtensionJsonValue>,
-            ) => {
-              if (!method.trim() || typeof handler !== 'function')
-                throw new TypeError('Invalid Extension Host handler.')
-              if (handlers.has(method)) throw new Error(`Extension Host handler is already registered: ${method}`)
-              handlers.set(method, handler)
-              let active = true
-              const dispose = () => {
-                if (!active) return
-                active = false
-                if (handlers.get(method) === handler) handlers.delete(method)
-              }
-              return dispose
-            },
-          },
-          config: registration.config,
-        }),
-      )
-      const forbiddenServices = plugin.inject?.filter((service) => !PERSISTENT_EXTENSION_HOST_SERVICES.has(service))
-      if (forbiddenServices && forbiddenServices.length > 0) {
-        throw new Error(`Extension Host requested unavailable Services: ${forbiddenServices.join(', ')}`)
-      }
+      const plugin = registration.plugin
+      if (plugin === undefined) return
+      const apply = plugin.apply.bind(plugin)
       const extensionContext = isolatePrivateExtensionServices(agentContext)
       const extensionPlugin = {
         ...(plugin.inject === undefined ? {} : { inject: [...plugin.inject] }),
         apply: async (context: Context) => {
-          await plugin.apply(persistentExtensionContext(context))
+          await apply(persistentExtensionContext(context))
         },
       }
       const fiber = extensionContext.plugin(extensionPlugin)
@@ -3012,11 +3117,8 @@ export class DshHostRuntime implements AgentSessionDriver, ExtensionActivationHo
         return
       }
       registration.fibers.set(sessionId, fiber)
-      registration.handlers.set(sessionId, handlers)
       fiber.ctx.effect(
         () => () => {
-          handlers.clear()
-          registration.handlers.delete(sessionId)
           registration.fibers.delete(sessionId)
         },
         'nekro-nxt: Extension session mount',

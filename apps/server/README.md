@@ -6,6 +6,10 @@
 
 `DshHostRuntime` 继续只拥有 DSH Agent handle、Episode handoff、图片投影和智能体作用域扩展；Adapter 和 Core 不能通过 DSH Context 互相读取数据库。
 
+动态创造的所有浏览器修改操作都显式携带 `episodeId`，Server 校验 Agent、Episode 和 DSH Session 的精确归属，不按智能体猜“第一个活动会话”。动态 Client 与持久 Client 只接受 NekroNxt 的 `agent.workbench.sections`、`extension.details.panels`；DSH 官方 WebUI Slot 和 `root` 会在浏览器 Guard 阶段撤回并报告给原动态 Run。含 Client 半边的 Package 必须先在产品 Slot 提交渲染证据才能保存。
+
+持久 Extension Host factory 每个 Activation 执行一次并拥有 RPC；返回的 Cordis Plugin 只负责向该智能体的每个 Session 挂载 Tool Fiber。Client Artifact、Activation RPC 和最近一次加载诊断分别通过 Revision 精确路由；stale build、错误智能体和已停用 Revision 都被拒绝，Client 失败不回滚 Host Tool。
+
 `NekroRuntime.create()` 在挂载 DSH Session Provider 前验证 `sessions.sqlite` 所有权。schema 17 正常使用；DSH 0.1.0-rc.6 的 schema 15 先以 SQLite backup 归档到 `dsh/session-archives/<UTC>-schema15/`，再以 `incompatible-session-storage` 关闭旧 Episode 并释放未完成 Admission，由 rc.1 创建全新 schema 17 会话。归档含 SHA-256、版本与原路径，未知或外部数据库拒绝启动，NekroNxt 不修改 DSH 私有表也不自动删除归档。
 
 每个根 Session 通过常驻系统提示和 `nekro_nxt_channel_context` 获得 Host 权威的 Channel/Episode 身份；发送、历史、Asset 与该只读工具都绑定当前频道。Episode handoff 只总结该 Episode 已准入的 Channel Event 与自身 Outbound，上一份派生 handoff、频道原文和智能体旧出站分区标注；最近 12 条频道原文仍作为独立恢复窗口注入。摘要请求不设置 `maxTokens`、使用 180 秒边界，任何摘要失败都降级且不阻断 rollover，DSH 原生 Compaction 默认行为不变。

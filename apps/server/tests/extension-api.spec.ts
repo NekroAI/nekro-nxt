@@ -40,7 +40,8 @@ describe('NekroNxt domain API — local Extension lifecycle (M4 slice)', () => {
       snapshot: {
         name: '频道摘要',
         purpose: '生成结构化阶段摘要。',
-        hostCode: `return {
+        hostCode: `harness.handle('summary', (input) => ({ echoed: input }))
+      return {
         inject: ['tools'],
         apply(ctx) {
           harness.registerTool(ctx, harness.defineTool({
@@ -50,6 +51,15 @@ describe('NekroNxt domain API — local Extension lifecycle (M4 slice)', () => {
             output: { schema: { type: 'string' }, render(_a, v) { return [{ type: 'text', text: v }] } },
             execute() { return 'ok' }
           }))
+        }
+      }`,
+        clientCode: `return {
+        inject: ['slots'],
+        apply(ctx) {
+          ctx.slots.register(
+            { name: 'extension.details.panels', id: 'summary-panel' },
+            (props) => React.createElement('section', { 'data-extension-panel': props.extensionId }, '摘要面板')
+          )
         }
       }`,
       },
@@ -91,10 +101,49 @@ describe('NekroNxt domain API — local Extension lifecycle (M4 slice)', () => {
         extensionRevisionId: saved.revision.id,
       })
 
+      const artifact = await runtime.extensionService.buildRevision(saved.revision)
+      expect(artifact.clientEntry).toBeDefined()
+      const staleArtifactResponse = await fetch(
+        `${origin}/api/extensions/${saved.extension.id}/revisions/${saved.revision.id}/client/${'0'.repeat(64)}.mjs?agentId=${agent.definition.id}`,
+      )
+      expect(staleArtifactResponse.status).toBe(409)
+      const artifactResponse = await fetch(
+        `${origin}/api/extensions/${saved.extension.id}/revisions/${saved.revision.id}/client/${artifact.buildKey}.mjs?agentId=${agent.definition.id}`,
+      )
+      expect(artifactResponse.ok).toBe(true)
+      expect(artifactResponse.headers.get('content-type')).toContain('text/javascript')
+      expect(await artifactResponse.text()).toContain('summary-panel')
+
+      const rpcResponse = await fetch(
+        `${origin}/api/extensions/${saved.extension.id}/revisions/${saved.revision.id}/call`,
+        {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ agentId: agent.definition.id, method: 'summary', input: { value: 'synthetic' } }),
+        },
+      )
+      expect(rpcResponse.ok).toBe(true)
+      expect(HostApiContracts.extensionClientCall.parseResponse(await rpcResponse.json())).toEqual({
+        value: { echoed: { value: 'synthetic' } },
+      })
+
+      const diagnosticResponse = await fetch(
+        `${origin}/api/extensions/${saved.extension.id}/revisions/${saved.revision.id}/client-diagnostic`,
+        {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ agentId: agent.definition.id, status: 'loaded' }),
+        },
+      )
+      expect(diagnosticResponse.ok).toBe(true)
+
       // The snapshot now reports the Extension as active for that agent.
       snapshot = HostApiContracts.snapshot.parseResponse(await (await fetch(`${origin}/api/snapshot`)).json())
       expect(snapshot.extensions.find((extension) => extension.id === saved.extension.id)?.activations).toEqual([
         expect.objectContaining({ agentId: agent.definition.id, extensionRevisionId: saved.revision.id }),
+      ])
+      expect(snapshot.extensions.find((extension) => extension.id === saved.extension.id)?.clientDiagnostics).toEqual([
+        expect.objectContaining({ agentId: agent.definition.id, revisionId: saved.revision.id, status: 'loaded' }),
       ])
 
       // Disable it through the API.
@@ -104,8 +153,21 @@ describe('NekroNxt domain API — local Extension lifecycle (M4 slice)', () => {
       )
       expect(disableResponse.ok).toBe(true)
 
+      const inactiveRpc = await fetch(
+        `${origin}/api/extensions/${saved.extension.id}/revisions/${saved.revision.id}/call`,
+        {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ agentId: agent.definition.id, method: 'summary' }),
+        },
+      )
+      expect(inactiveRpc.ok).toBe(false)
+
       snapshot = HostApiContracts.snapshot.parseResponse(await (await fetch(`${origin}/api/snapshot`)).json())
       expect(snapshot.extensions.find((extension) => extension.id === saved.extension.id)?.activations).toEqual([])
+      expect(snapshot.extensions.find((extension) => extension.id === saved.extension.id)?.clientDiagnostics).toEqual(
+        [],
+      )
     } finally {
       api.dispose()
       await webContext.fiber.dispose()

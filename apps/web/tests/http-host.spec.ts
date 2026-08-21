@@ -202,6 +202,7 @@ const snapshotBodyWithExtension = () =>
         activations: [
           { agentId: webAgentId, extensionRevisionId: summaryRevisionId, config: {}, activatedAt: 1_700_000_000_000 },
         ],
+        clientDiagnostics: [],
       },
     ],
   })
@@ -782,6 +783,7 @@ describe('HttpProductHost', () => {
 
     const result = await host.execute('dynamic.approve', {
       agentId: webAgentId,
+      episodeId: webEpisodeId,
       requestId: 'approval-1',
       pluginRunId: 'run-1',
     })
@@ -793,6 +795,7 @@ describe('HttpProductHost', () => {
     const approveBody = approveCall?.init?.body
     if (typeof approveBody !== 'string') throw new TypeError('dynamic approval request body must be JSON text.')
     expect(HostApiContracts.dynamicApprove.request.parse(JSON.parse(approveBody))).toEqual({
+      episodeId: webEpisodeId,
       requestId: 'approval-1',
       pluginRunId: 'run-1',
     })

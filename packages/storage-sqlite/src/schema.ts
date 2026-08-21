@@ -549,6 +549,31 @@ export const agentActivations = sqliteTable(
   ],
 )
 
+export const extensionClientDiagnostics = sqliteTable(
+  'extension_client_diagnostics',
+  {
+    agentId: text('agent_id').$type<AgentId>().notNull(),
+    extensionId: text('extension_id').$type<ExtensionId>().notNull(),
+    revisionId: text('revision_id').$type<ExtensionRevisionId>().notNull(),
+    status: text({ enum: ['loaded', 'failed'] }).notNull(),
+    message: text(),
+    observedAt: integer('observed_at').notNull(),
+  },
+  (table) => [
+    primaryKey({ columns: [table.agentId, table.extensionId] }),
+    foreignKey({
+      name: 'extension_client_diagnostics_activation_fk',
+      columns: [table.agentId, table.extensionId],
+      foreignColumns: [agentActivations.agentId, agentActivations.extensionId],
+    }).onDelete('cascade'),
+    foreignKey({
+      name: 'extension_client_diagnostics_revision_fk',
+      columns: [table.revisionId, table.extensionId],
+      foreignColumns: [extensionRevisions.id, extensionRevisions.extensionId],
+    }).onDelete('cascade'),
+  ],
+)
+
 export const workTreeOrder = sqliteTable(
   'work_tree_order',
   {
@@ -585,5 +610,6 @@ export const coreSchema = {
   extensionRevisions,
   extensionRevisionVerifications,
   agentActivations,
+  extensionClientDiagnostics,
   workTreeOrder,
 } as const

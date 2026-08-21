@@ -10,13 +10,15 @@ class MultiplexDynamicClientHost implements DynamicClientHostPort {
   readonly #requestOwner = new Map<string, string>()
   readonly #pluginOwner = new Map<string, string>()
 
-  async inventory(agentId: string): Promise<readonly DynamicInventoryRow[]> {
-    const rows = await this.#host(agentId).inventory()
-    this.#requestOwner.clear()
-    this.#pluginOwner.clear()
+  async inventory(agentId: string, episodeId: string): Promise<readonly DynamicInventoryRow[]> {
+    const owner = this.#owner(agentId, episodeId)
+    const rows = await this.#host(agentId, episodeId).inventory()
+    for (const [requestId, candidate] of this.#requestOwner)
+      if (candidate === owner) this.#requestOwner.delete(requestId)
+    for (const [pluginId, candidate] of this.#pluginOwner) if (candidate === owner) this.#pluginOwner.delete(pluginId)
     for (const row of rows) {
-      this.#pluginOwner.set(row.pluginId, agentId)
-      if (row.latestRun?.approvalRequestId) this.#requestOwner.set(row.latestRun.approvalRequestId, agentId)
+      this.#pluginOwner.set(row.pluginId, owner)
+      if (row.latestRun?.approvalRequestId) this.#requestOwner.set(row.latestRun.approvalRequestId, owner)
     }
     return rows
   }
@@ -29,46 +31,78 @@ class MultiplexDynamicClientHost implements DynamicClientHostPort {
     requestId: string | null,
     approveFutureVersions: boolean,
   ) {
-    this.#pluginOwner.set(pluginId, agentId)
-    if (requestId) this.#requestOwner.set(requestId, agentId)
-    return this.#host(agentId).runHostHalf(agentId, pluginId, packageId, mode, requestId, approveFutureVersions)
+    const owner = this.#pluginOwner.get(pluginId)
+    if (!owner) return Promise.reject(new Error('找不到动态扩展所属的 Episode。'))
+    if (requestId) this.#requestOwner.set(requestId, owner)
+    return this.#ownedHost(owner).runHostHalf(agentId, pluginId, packageId, mode, requestId, approveFutureVersions)
   }
 
   getClientCode(agentId: string, pluginId: string, pluginRunId: string) {
-    return this.#host(agentId).getClientCode(agentId, pluginId, pluginRunId)
+    const owner = this.#pluginOwner.get(pluginId)
+    if (!owner) return Promise.reject(new Error('找不到动态扩展所属的 Episode。'))
+    return this.#ownedHost(owner).getClientCode(agentId, pluginId, pluginRunId)
   }
 
   resolveRequestRun(requestId: string, resolution: Parameters<DynamicClientHostPort['resolveRequestRun']>[1]) {
-    const agentId = this.#requestOwner.get(requestId)
-    if (!agentId) return Promise.reject(new Error('找不到动态审批所属的智能体。'))
-    return this.#host(agentId).resolveRequestRun(requestId, resolution)
+    const owner = this.#requestOwner.get(requestId)
+    if (!owner) return Promise.reject(new Error('找不到动态审批所属的 Episode。'))
+    return this.#ownedHost(owner).resolveRequestRun(requestId, resolution)
   }
 
   settleUserRun(agentId: string, pluginId: string, resolution: Parameters<DynamicClientHostPort['settleUserRun']>[2]) {
-    return this.#host(agentId).settleUserRun(agentId, pluginId, resolution)
+    const owner = this.#pluginOwner.get(pluginId)
+    if (!owner) return Promise.reject(new Error('找不到动态扩展所属的 Episode。'))
+    return this.#ownedHost(owner).settleUserRun(agentId, pluginId, resolution)
   }
 
   invoke(pluginId: string, pluginRunId: string, method: string, args: unknown): Promise<unknown> {
-    const agentId = this.#pluginOwner.get(pluginId)
-    if (!agentId) return Promise.reject(new Error('找不到动态扩展所属的智能体。'))
-    return this.#host(agentId).invoke(pluginId, pluginRunId, method, args)
+    const owner = this.#pluginOwner.get(pluginId)
+    if (!owner) return Promise.reject(new Error('找不到动态扩展所属的 Episode。'))
+    return this.#ownedHost(owner).invoke(pluginId, pluginRunId, method, args)
   }
 
   reportRenderFailure(agentId: string, pluginId: string, pluginRunId: string, failure: unknown): Promise<void> {
-    return this.#host(agentId).reportRenderFailure(agentId, pluginId, pluginRunId, failure)
+    const owner = this.#pluginOwner.get(pluginId)
+    if (!owner) return Promise.reject(new Error('找不到动态扩展所属的 Episode。'))
+    return this.#ownedHost(owner).reportRenderFailure(agentId, pluginId, pluginRunId, failure)
   }
 
   reportGuardFailure(agentId: string, pluginId: string, pluginRunId: string, failure: unknown): Promise<void> {
-    return this.#host(agentId).reportGuardFailure(agentId, pluginId, pluginRunId, failure)
+    const owner = this.#pluginOwner.get(pluginId)
+    if (!owner) return Promise.reject(new Error('找不到动态扩展所属的 Episode。'))
+    return this.#ownedHost(owner).reportGuardFailure(agentId, pluginId, pluginRunId, failure)
   }
 
-  #host(agentId: string): HttpDynamicClientHost {
-    let host = this.#hosts.get(agentId)
+  reportClientVerification(
+    agentId: string,
+    pluginId: string,
+    packageId: string,
+    pluginRunId: string,
+    renderedSlots: readonly ('agent.workbench.sections' | 'extension.details.panels')[],
+  ): Promise<void> {
+    const owner = this.#pluginOwner.get(pluginId)
+    if (!owner) return Promise.reject(new Error('找不到动态扩展所属的 Episode。'))
+    return this.#ownedHost(owner).reportClientVerification(agentId, pluginId, packageId, pluginRunId, renderedSlots)
+  }
+
+  #host(agentId: string, episodeId: string): HttpDynamicClientHost {
+    const owner = this.#owner(agentId, episodeId)
+    let host = this.#hosts.get(owner)
     if (!host) {
-      host = new HttpDynamicClientHost(agentId)
-      this.#hosts.set(agentId, host)
+      host = new HttpDynamicClientHost(agentId, episodeId)
+      this.#hosts.set(owner, host)
     }
     return host
+  }
+
+  #ownedHost(owner: string): HttpDynamicClientHost {
+    const host = this.#hosts.get(owner)
+    if (!host) throw new Error('找不到动态扩展所属的 Episode Host。')
+    return host
+  }
+
+  #owner(agentId: string, episodeId: string): string {
+    return `${agentId}\0${episodeId}`
   }
 }
 
@@ -77,12 +111,14 @@ class DynamicClientCoordinator {
   readonly #listeners = new Set<() => void>()
   #runtime: DshDynamicClientRuntime | undefined
   #activeAgentId: string | undefined
+  #activeEpisodeId: string | undefined
   #version = 0
   #queue: Promise<void> = Promise.resolve()
   #disposed = false
   #failure = ''
   #nativeFailure = ''
   #nativeReady = false
+  readonly #reportedClientRuns = new Set<string>()
 
   subscribe = (listener: () => void): (() => void) => {
     this.#listeners.add(listener)
@@ -91,20 +127,22 @@ class DynamicClientCoordinator {
 
   getVersion = (): number => this.#version
 
-  sync(agentId: string): Promise<void> {
+  sync(agentId: string, episodeId: string): Promise<void> {
     return this.#enqueue(async () => {
       this.#activeAgentId = agentId
+      this.#activeEpisodeId = episodeId
       const runtime = await this.#ensureRuntime()
-      await runtime.reconcile(await this.#host.inventory(agentId))
+      await runtime.reconcile(await this.#host.inventory(agentId, episodeId))
       this.#failure = ''
       this.#publish()
     })
   }
 
-  clear(agentId: string): Promise<void> {
+  clear(agentId: string, episodeId: string): Promise<void> {
     return this.#enqueue(async () => {
-      if (this.#activeAgentId !== agentId) return
+      if (this.#activeAgentId !== agentId || this.#activeEpisodeId !== episodeId) return
       this.#activeAgentId = undefined
+      this.#activeEpisodeId = undefined
       await this.#runtime?.reconcile([])
       this.#failure = ''
       this.#publish()
@@ -119,9 +157,33 @@ class DynamicClientCoordinator {
     return this.#resolve(agentId, requestId, false)
   }
 
-  renderRoot(): ReactNode | undefined {
+  renderRoot(agentId: string, displayName: string): ReactNode | undefined {
     if (!this.#runtime || this.#runtime.loaded().length === 0) return undefined
-    return this.#runtime.renderRoot()
+    return this.#runtime.renderRoot(agentId, displayName)
+  }
+
+  reportRendered(agentId: string): Promise<void> {
+    return this.#enqueue(async () => {
+      const runtime = this.#runtime
+      if (!runtime) return
+      for (const loaded of runtime.loaded()) {
+        const key = `${loaded.pluginId}:${loaded.pluginRunId}`
+        if (this.#reportedClientRuns.has(key)) continue
+        const renderedSlots = loaded.slots.filter(
+          (slot): slot is 'agent.workbench.sections' | 'extension.details.panels' =>
+            slot === 'agent.workbench.sections' || slot === 'extension.details.panels',
+        )
+        if (renderedSlots.length === 0) continue
+        await this.#host.reportClientVerification(
+          agentId,
+          loaded.pluginId,
+          loaded.packageId,
+          loaded.pluginRunId,
+          renderedSlots,
+        )
+        this.#reportedClientRuns.add(key)
+      }
+    })
   }
 
   loadNativeSettings(): Promise<void> {
@@ -175,11 +237,12 @@ class DynamicClientCoordinator {
   #resolve(agentId: string, requestId: string, approved: boolean): Promise<void> {
     return this.#enqueue(async () => {
       const runtime = await this.#ensureRuntime()
-      this.#activeAgentId = agentId
-      await runtime.reconcile(await this.#host.inventory(agentId))
+      const episodeId = this.#activeAgentId === agentId ? this.#activeEpisodeId : undefined
+      if (!episodeId) throw new Error('请先打开这个动态运行所属的 Episode。')
+      await runtime.reconcile(await this.#host.inventory(agentId, episodeId))
       if (approved) await runtime.approve(requestId)
       else await runtime.decline(requestId)
-      await runtime.reconcile(await this.#host.inventory(agentId))
+      await runtime.reconcile(await this.#host.inventory(agentId, episodeId))
       this.#failure = ''
       this.#publish()
     })
@@ -222,7 +285,7 @@ export function DynamicClientProvider({ children }: { readonly children: ReactNo
   return <DynamicClientContext.Provider value={coordinator}>{children}</DynamicClientContext.Provider>
 }
 
-export function DynamicClientSlots({ agentId }: { readonly agentId: string }) {
+export function DynamicClientSlots({ agentId, episodeId }: { readonly agentId: string; readonly episodeId: string }) {
   const coordinator = useContext(DynamicClientContext)
   if (!coordinator) throw new Error('动态 Client Slot 缺少产品级运行时。')
   const inventoryVersion = useProductStore((state) =>
@@ -232,18 +295,22 @@ export function DynamicClientSlots({ agentId }: { readonly agentId: string }) {
       .sort()
       .join('|'),
   )
+  const displayName = useProductStore((state) => state.agents.find((agent) => agent.id === agentId)?.name ?? '智能体')
   useSyncExternalStore(coordinator.subscribe, coordinator.getVersion, coordinator.getVersion)
   useEffect(() => {
-    void coordinator.sync(agentId).catch((error: unknown) => coordinator.reportFailure(error))
-  }, [agentId, coordinator, inventoryVersion])
+    void coordinator.sync(agentId, episodeId).catch((error: unknown) => coordinator.reportFailure(error))
+  }, [agentId, coordinator, episodeId, inventoryVersion])
   useEffect(() => {
     return () => {
-      void coordinator.clear(agentId).catch((error: unknown) => coordinator.reportFailure(error))
+      void coordinator.clear(agentId, episodeId).catch((error: unknown) => coordinator.reportFailure(error))
     }
-  }, [agentId, coordinator])
+  }, [agentId, coordinator, episodeId])
   const failure = coordinator.failure()
   if (failure) return <div role="alert">即时界面加载失败：{failure}</div>
-  const root = coordinator.renderRoot()
+  const root = coordinator.renderRoot(agentId, displayName)
+  useEffect(() => {
+    if (root !== undefined) void coordinator.reportRendered(agentId).catch((error) => coordinator.reportFailure(error))
+  }, [agentId, coordinator, inventoryVersion, root])
   return root === undefined ? null : <div data-dynamic-client-slots="">{root}</div>
 }
 

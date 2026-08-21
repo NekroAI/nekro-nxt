@@ -8,6 +8,8 @@ import {
   ChannelIdSchema,
   ConnectionIdSchema,
   ExtensionIdSchema,
+  ExtensionRevisionIdSchema,
+  EpisodeIdSchema,
   OutboundIntentIdSchema,
   DshCredentialsChangedSseDataSchema,
   DshSettingsChangedSseDataSchema,
@@ -245,6 +247,7 @@ const projectExtensions = (runtime: NekroRuntime) => {
                 contractVersion: verification.contractVersion,
                 hostBuilt: verification.hostBuild.built,
                 clientBuilt: verification.clientBuild.built,
+                buildKey: verification.hostBuild.buildKey,
                 toolInvocationCount: verification.toolInvocations.length,
                 rpcMethods: verification.rpcMethods,
                 renderedSlots: verification.renderedSlots,
@@ -260,6 +263,21 @@ const projectExtensions = (runtime: NekroRuntime) => {
         config: activation.config,
         activatedAt: activation.activatedAt,
       })),
+    clientDiagnostics: activations
+      .filter((activation) => activation.extensionId === extension.id)
+      .flatMap((activation) => {
+        const diagnostic = runtime.repository.getExtensionClientDiagnostic(activation.agentId, extension.id)
+        if (!diagnostic) return []
+        return [
+          {
+            agentId: diagnostic.agentId,
+            revisionId: diagnostic.revisionId,
+            status: diagnostic.status,
+            ...(diagnostic.message === undefined ? {} : { message: diagnostic.message }),
+            observedAt: diagnostic.observedAt,
+          },
+        ]
+      }),
   }))
 }
 
@@ -313,12 +331,14 @@ const projectDynamicInventory = (runtime: NekroRuntime, agentId: AgentId) =>
   })
 
 /** Resolve the dshSessionId of an intelligent-agent's active Episode, or throw. */
-const resolveActiveSession = (runtime: NekroRuntime, agentId: AgentId): string => {
-  const episode = runtime.repository
-    .listActiveEpisodesForAgent(agentId)
-    .find((candidate) => candidate.dshSessionId !== undefined)
-  if (!episode?.dshSessionId) {
-    throw new Error('该智能体没有活动会话。')
+const resolveEpisodeSession = (
+  runtime: NekroRuntime,
+  agentId: AgentId,
+  episodeId: z.output<typeof EpisodeIdSchema>,
+): string => {
+  const episode = runtime.repository.getEpisode(episodeId)
+  if (episode?.agentId !== agentId || episode.status !== 'active' || episode.dshSessionId === undefined) {
+    throw new Error('指定 Episode 不是该智能体的活动会话。')
   }
   return episode.dshSessionId
 }
@@ -408,7 +428,7 @@ const saveActiveDynamicPackage = async (
       },
       toolInvocations: verified.toolInvocations,
       rpcMethods: verified.rpcMethods,
-      renderedSlots: [],
+      renderedSlots: verified.renderedSlots,
     },
   })
 }
@@ -599,6 +619,117 @@ export const createNekroHostApi = (webServer: WebServer, runtime: NekroRuntime):
         writeJson(res, 200, await buildSnapshot())
       } catch (error) {
         writeError(res, 500, 'snapshot-failed', error instanceof Error ? error.message : String(error))
+      }
+    },
+  })
+
+  // Persistent Extension Client artifact, Activation RPC, and diagnostics.
+  registerRoute({
+    kind: 'prefix',
+    path: '/api/extensions',
+    handler: async (req, res) => {
+      const url = new URL(req.url ?? '/', 'http://localhost')
+      const match =
+        /^\/api\/extensions\/([^/]+)\/revisions\/([^/]+)\/(call|client-diagnostic|client\/([a-f0-9]{64})\.mjs)$/u.exec(
+          url.pathname,
+        )
+      if (!match) {
+        writeError(res, 404, 'not-found', `未定义路由：${req.method} ${url.pathname}。`)
+        return
+      }
+      let extensionId: z.output<typeof ExtensionIdSchema>
+      let revisionId: z.output<typeof ExtensionRevisionIdSchema>
+      try {
+        extensionId = ExtensionIdSchema.parse(decodeURIComponent(match[1] ?? ''))
+        revisionId = ExtensionRevisionIdSchema.parse(decodeURIComponent(match[2] ?? ''))
+      } catch {
+        writeError(res, 400, 'invalid-extension-client-target', '无效的扩展或 Revision ID。')
+        return
+      }
+      const revision = runtime.repository.getExtensionRevision(revisionId)
+      if (!revision || revision.extensionId !== extensionId) {
+        writeError(res, 404, 'extension-revision-missing', '找不到指定的扩展 Revision。')
+        return
+      }
+      const action = match[3]
+      if (action?.startsWith('client/')) {
+        if (req.method !== 'GET') {
+          writeError(res, 405, 'method-not-allowed', 'Client Artifact 只支持 GET。')
+          return
+        }
+        let agentId: AgentId
+        try {
+          agentId = AgentIdSchema.parse(url.searchParams.get('agentId'))
+        } catch {
+          writeError(res, 400, 'invalid-agent', 'Client Artifact 缺少有效的智能体 ID。')
+          return
+        }
+        const activation = runtime.repository.getActivation(agentId, extensionId)
+        if (activation?.extensionRevisionId !== revisionId) {
+          writeError(res, 409, 'stale-client-build', '该 Revision 不是此智能体当前启用的版本。')
+          return
+        }
+        try {
+          const artifact = await runtime.extensionService.buildRevision(revision)
+          if (!artifact.clientEntry || artifact.buildKey !== match[4]) {
+            throw new Error('Client buildKey 已过期或该 Revision 没有 Client Artifact。')
+          }
+          const source = await readFile(artifact.clientEntry, 'utf8')
+          res.writeHead(200, {
+            'content-type': 'text/javascript; charset=utf-8',
+            'cache-control': 'private, no-cache',
+          })
+          res.end(source)
+        } catch (error) {
+          writeError(res, 409, 'client-artifact-unavailable', error instanceof Error ? error.message : String(error))
+        }
+        return
+      }
+      if (req.method !== 'POST') {
+        writeError(res, 405, 'method-not-allowed', '只支持 POST。')
+        return
+      }
+      if (action === 'call') {
+        try {
+          const parsed = HostApiContracts.extensionClientCall.parseRequest(await readJsonBody(req))
+          const activation = runtime.repository.getActivation(parsed.agentId, extensionId)
+          if (activation?.extensionRevisionId !== revisionId) throw new Error('该 Revision 不是当前 Activation。')
+          const value = await runtime.host.invokeExtensionActivation(
+            parsed.agentId,
+            revisionId,
+            parsed.method,
+            parsed.input,
+          )
+          writeJson(res, 200, HostApiContracts.extensionClientCall.parseResponse({ value }))
+        } catch (error) {
+          writeError(res, 400, 'extension-client-call-failed', error instanceof Error ? error.message : String(error))
+        }
+        return
+      }
+      if (action === 'client-diagnostic') {
+        try {
+          const parsed = HostApiContracts.extensionClientDiagnostic.parseRequest(await readJsonBody(req))
+          const activation = runtime.repository.getActivation(parsed.agentId, extensionId)
+          if (activation?.extensionRevisionId !== revisionId) throw new Error('该 Revision 不是当前 Activation。')
+          runtime.repository.upsertExtensionClientDiagnostic({
+            agentId: parsed.agentId,
+            extensionId,
+            revisionId,
+            status: parsed.status,
+            ...(parsed.message === undefined ? {} : { message: parsed.message }),
+            observedAt: Date.now(),
+          })
+          writeJson(res, 200, HostApiContracts.extensionClientDiagnostic.parseResponse({ accepted: true }))
+          broadcastExtensionsChanged()
+        } catch (error) {
+          writeError(
+            res,
+            400,
+            'extension-client-diagnostic-failed',
+            error instanceof Error ? error.message : String(error),
+          )
+        }
+        return
       }
     },
   })
@@ -1618,7 +1749,7 @@ export const createNekroHostApi = (webServer: WebServer, runtime: NekroRuntime):
     handler: async (req, res) => {
       const url = new URL(req.url ?? '/', 'http://localhost')
       const match =
-        /^\/api\/dynamic\/([^/]+)\/(inventory|approve|decline|invoke|get-client-code|report-render-failure|run-host-half|settle-user-run)$/.exec(
+        /^\/api\/dynamic\/([^/]+)\/(inventory|approve|decline|invoke|get-client-code|report-render-failure|report-guard-failure|report-client-verification|run-host-half|settle-user-run)$/.exec(
           url.pathname,
         )
       if (!match) {
@@ -1651,7 +1782,12 @@ export const createNekroHostApi = (webServer: WebServer, runtime: NekroRuntime):
       }
       let dshSessionId: string
       try {
-        dshSessionId = resolveActiveSession(runtime, agentId)
+        const episodeId = EpisodeIdSchema.parse(
+          typeof body === 'object' && body !== null && !Array.isArray(body)
+            ? Reflect.get(body, 'episodeId')
+            : undefined,
+        )
+        dshSessionId = resolveEpisodeSession(runtime, agentId, episodeId)
       } catch (error) {
         writeError(res, 400, 'no-session', error instanceof Error ? error.message : String(error))
         return
@@ -1776,6 +1912,35 @@ export const createNekroHostApi = (webServer: WebServer, runtime: NekroRuntime):
           writeJson(res, 200, HostApiContracts.dynamicReportRenderFailure.parseResponse({ ok: true }))
         } catch (error) {
           writeError(res, 400, 'dynamic-render-failure', error instanceof Error ? error.message : String(error))
+        }
+        return
+      }
+      if (action === 'report-client-verification') {
+        const parsed = HostApiContracts.dynamicReportClientVerification.parseRequest(body)
+        try {
+          runtime.host.recordDynamicClientVerification(
+            dshSessionId,
+            parsed.pluginId,
+            parsed.packageId,
+            parsed.pluginRunId,
+            parsed.renderedSlots,
+          )
+          writeJson(res, 200, HostApiContracts.dynamicReportClientVerification.parseResponse({ ok: true }))
+        } catch (error) {
+          writeError(res, 400, 'dynamic-client-verification', error instanceof Error ? error.message : String(error))
+        }
+        return
+      }
+      if (action === 'report-guard-failure') {
+        const parsed = HostApiContracts.dynamicReportGuardFailure.parseRequest(body)
+        try {
+          await runtime.host.reportDynamicGuardFailure(dshSessionId, parsed.pluginId, parsed.pluginRunId, {
+            message: parsed.message,
+            ...(parsed.stack === undefined ? {} : { stack: parsed.stack }),
+          })
+          writeJson(res, 200, HostApiContracts.dynamicReportGuardFailure.parseResponse({ ok: true }))
+        } catch (error) {
+          writeError(res, 400, 'dynamic-guard-failure', error instanceof Error ? error.message : String(error))
         }
         return
       }

@@ -34,7 +34,7 @@ describe('Extension Client Runtime', () => {
         clientCode: `return {
           inject: ['slots'],
           apply(ctx) {
-            ctx.slots.register({ name: 'root' }, () => React.createElement('section', { 'data-extension': 'client-probe' }, '扩展界面已渲染'))
+            ctx.slots.register({ name: 'agent.workbench.sections' }, () => React.createElement('section', { 'data-extension': 'client-probe' }, '扩展界面已渲染'))
           }
         }`,
       },
@@ -54,14 +54,16 @@ describe('Extension Client Runtime', () => {
       const mounted = await runtime.mount(pathToFileURL(artifact.clientEntry!).href, {
         call: () => Promise.reject(new Error('not used')),
       })
-      const [entry] = runtime.slots.entriesOfSlot('root')
+      const [entry] = runtime.entries('agent.workbench.sections')
       expect(entry).toBeDefined()
       if (typeof entry?.component !== 'function') throw new TypeError('Client Slot component must be callable.')
-      const rendered: unknown = Reflect.apply(entry.component, undefined, [{}])
+      const rendered: unknown = Reflect.apply(entry.component, undefined, [
+        { agentId: 'agt_client', displayName: '测试智能体' },
+      ])
       if (!isValidElement(rendered)) throw new TypeError('Client Slot component must return a React element.')
       expect(renderToStaticMarkup(rendered)).toBe('<section data-extension="client-probe">扩展界面已渲染</section>')
       await mounted.dispose()
-      expect(runtime.slots.entriesOfSlot('root')).toEqual([])
+      expect(runtime.entries('agent.workbench.sections')).toEqual([])
     } finally {
       await runtime.dispose()
     }

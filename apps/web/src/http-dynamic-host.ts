@@ -18,6 +18,8 @@ type ClientSource = Awaited<ReturnType<Host['getClientCode']>>
 type ResolveAck = Awaited<ReturnType<Host['resolveRequestRun']>>
 type RunResolution = Parameters<Host['settleUserRun']>[2]
 type RunResponse = Awaited<ReturnType<Host['settleUserRun']>>
+const isRecord = (value: unknown): value is Record<string, unknown> =>
+  typeof value === 'object' && value !== null && !Array.isArray(value)
 /**
  * Real `DynamicClientHostPort` that drives the browser dynamic Client circuit
  * against the NekroNxt Server domain API (design docs/08). The agentId scopes
@@ -26,13 +28,19 @@ type RunResponse = Awaited<ReturnType<Host['settleUserRun']>>
  */
 export class HttpDynamicClientHost implements DynamicClientHostPort {
   readonly #agentId: string
+  readonly #episodeId: string
 
-  constructor(agentId: string) {
+  constructor(agentId: string, episodeId: string) {
     this.#agentId = agentId
+    this.#episodeId = episodeId
   }
 
   async inventory(): Promise<readonly DynamicInventoryRow[]> {
-    const result = await this.#post(HostApiContracts.dynamicInventory, { agentId: this.#agentId }, {})
+    const result = await this.#post(
+      HostApiContracts.dynamicInventory,
+      { agentId: this.#agentId },
+      { episodeId: this.#episodeId },
+    )
     return result.rows.map((row) => ({
       pluginId: row.pluginId,
       agentId: row.agentId,
@@ -69,7 +77,7 @@ export class HttpDynamicClientHost implements DynamicClientHostPort {
     const result = await this.#post(
       HostApiContracts.dynamicRunHostHalf,
       { agentId: this.#agentId },
-      { pluginId, packageId, mode, requestId, approveFutureVersions },
+      { episodeId: this.#episodeId, pluginId, packageId, mode, requestId, approveFutureVersions },
     )
     return result.ok
       ? {
@@ -86,7 +94,7 @@ export class HttpDynamicClientHost implements DynamicClientHostPort {
     const source = await this.#post(
       HostApiContracts.dynamicGetClientCode,
       { agentId: this.#agentId },
-      { pluginId, pluginRunId },
+      { episodeId: this.#episodeId, pluginId, pluginRunId },
     )
     return {
       ...source,
@@ -101,7 +109,7 @@ export class HttpDynamicClientHost implements DynamicClientHostPort {
       typeof resolution === 'object' && resolution !== null && 'pluginRunId' in resolution
         ? extractPluginRunId(resolution.pluginRunId)
         : ''
-    const body = { requestId, ...(pluginRunId.trim() ? { pluginRunId } : {}) }
+    const body = { episodeId: this.#episodeId, requestId, ...(pluginRunId.trim() ? { pluginRunId } : {}) }
     return resolutionAccepted(resolution)
       ? this.#post(HostApiContracts.dynamicApprove, { agentId: this.#agentId }, body)
       : this.#post(HostApiContracts.dynamicDecline, { agentId: this.#agentId }, body)
@@ -126,7 +134,7 @@ export class HttpDynamicClientHost implements DynamicClientHostPort {
     const result = await this.#post(
       HostApiContracts.dynamicSettleUserRun,
       { agentId: this.#agentId },
-      { pluginId, resolution: normalizedResolution },
+      { episodeId: this.#episodeId, pluginId, resolution: normalizedResolution },
     )
     if (!result.ok) {
       return {
@@ -156,22 +164,64 @@ export class HttpDynamicClientHost implements DynamicClientHostPort {
     return this.#post(
       HostApiContracts.dynamicInvoke,
       { agentId: this.#agentId },
-      { pluginId, pluginRunId, method, ...(args === undefined ? {} : { args: parseJsonValue(args) }) },
+      {
+        episodeId: this.#episodeId,
+        pluginId,
+        pluginRunId,
+        method,
+        ...(args === undefined ? {} : { args: parseJsonValue(args) }),
+      },
     )
   }
 
   async reportRenderFailure(agentId: string, pluginId: string, pluginRunId: string, failure: unknown): Promise<void> {
     void agentId
-    const body = HostApiContracts.dynamicReportRenderFailure.parseRequest({ pluginId, pluginRunId, failure })
+    const body = HostApiContracts.dynamicReportRenderFailure.parseRequest({
+      episodeId: this.#episodeId,
+      pluginId,
+      pluginRunId,
+      failure,
+    })
     await this.#post(HostApiContracts.dynamicReportRenderFailure, { agentId: this.#agentId }, body)
   }
 
-  reportGuardFailure(agentId: string, pluginId: string, pluginRunId: string, failure: unknown): Promise<void> {
+  async reportGuardFailure(agentId: string, pluginId: string, pluginRunId: string, failure: unknown): Promise<void> {
     void agentId
-    void pluginId
-    void pluginRunId
-    void failure
-    return Promise.resolve()
+    const record = isRecord(failure) ? failure : {}
+    const message = typeof record['message'] === 'string' ? record['message'] : String(failure)
+    const stack = typeof record['stack'] === 'string' ? record['stack'] : undefined
+    await this.#post(
+      HostApiContracts.dynamicReportGuardFailure,
+      { agentId: this.#agentId },
+      {
+        episodeId: this.#episodeId,
+        pluginId,
+        pluginRunId,
+        message,
+        ...(stack === undefined ? {} : { stack }),
+      },
+    )
+  }
+
+  async reportClientVerification(
+    agentId: string,
+    pluginId: string,
+    packageId: string,
+    pluginRunId: string,
+    renderedSlots: readonly ('agent.workbench.sections' | 'extension.details.panels')[],
+  ): Promise<void> {
+    void agentId
+    await this.#post(
+      HostApiContracts.dynamicReportClientVerification,
+      { agentId: this.#agentId },
+      {
+        episodeId: this.#episodeId,
+        pluginId,
+        packageId,
+        pluginRunId,
+        renderedSlots: [...renderedSlots],
+      },
+    )
   }
 
   async #post<Contract extends HostApiContract, Output>(

@@ -1,6 +1,6 @@
 import { isValidElement } from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
-import { AgentIdSchema, HostApiContracts } from '@nekro-nxt/contracts'
+import { AgentIdSchema, EpisodeIdSchema, HostApiContracts } from '@nekro-nxt/contracts'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { DshDynamicClientRuntime, type DynamicInventoryRow } from '../src/dsh-dynamic-client.ts'
 import { HttpDynamicClientHost } from '../src/http-dynamic-host.ts'
@@ -13,6 +13,7 @@ const stubResponse = (status: number, body: unknown) => ({
 
 describe('HttpDynamicClientHost (browser dynamic Client circuit)', () => {
   const agentId = AgentIdSchema.parse('agt_dynamicbrowser')
+  const episodeId = EpisodeIdSchema.parse('eps_dynamicbrowser')
   let fetchMock: (input: string, init?: RequestInit) => Promise<unknown>
 
   afterEach(() => {
@@ -54,7 +55,7 @@ describe('HttpDynamicClientHost (browser dynamic Client circuit)', () => {
     })
     vi.stubGlobal('fetch', fetchMock)
 
-    const host = new HttpDynamicClientHost(agentId)
+    const host = new HttpDynamicClientHost(agentId, episodeId)
 
     const hostHalf = await host.runHostHalf(agentId, 'plugin-1', 'package-1', 'run', 'approval-1', false)
     expect(hostHalf.ok).toBe(true)
@@ -64,6 +65,7 @@ describe('HttpDynamicClientHost (browser dynamic Client circuit)', () => {
     const hostHalfBody = hostHalfCall?.init?.body
     if (typeof hostHalfBody !== 'string') throw new TypeError('run-host-half request body must be JSON text.')
     expect(HostApiContracts.dynamicRunHostHalf.request.parse(JSON.parse(hostHalfBody))).toMatchObject({
+      episodeId,
       pluginId: 'plugin-1',
       packageId: 'package-1',
       mode: 'run',
@@ -76,6 +78,7 @@ describe('HttpDynamicClientHost (browser dynamic Client circuit)', () => {
     const approveBody = approveCall?.init?.body
     if (typeof approveBody !== 'string') throw new TypeError('approve request body must be JSON text.')
     expect(HostApiContracts.dynamicApprove.request.parse(JSON.parse(approveBody))).toEqual({
+      episodeId,
       requestId: 'approval-1',
       pluginRunId: 'run-7',
     })
@@ -89,6 +92,7 @@ describe('HttpDynamicClientHost (browser dynamic Client circuit)', () => {
     const invokeBody = invokeCall?.init?.body
     if (typeof invokeBody !== 'string') throw new TypeError('invoke request body must be JSON text.')
     expect(HostApiContracts.dynamicInvoke.request.parse(JSON.parse(invokeBody))).toEqual({
+      episodeId,
       pluginId: 'plugin-1',
       pluginRunId: 'run-7',
       method: 'run',
@@ -123,7 +127,7 @@ describe('HttpDynamicClientHost (browser dynamic Client circuit)', () => {
               inject: ['slots'],
               apply(ctx) {
                 ctx.slots.register(
-                  { name: 'root' },
+                  { name: 'agent.workbench.sections', id: 'main' },
                   () => React.createElement('section', { 'data-dynamic': 'probe' }, '动态界面已加载')
                 )
               }
@@ -136,7 +140,7 @@ describe('HttpDynamicClientHost (browser dynamic Client circuit)', () => {
     })
     vi.stubGlobal('fetch', fetchMock)
 
-    const host = new HttpDynamicClientHost(agentId)
+    const host = new HttpDynamicClientHost(agentId, episodeId)
     const runtime = await DshDynamicClientRuntime.create(host, { querySelectorAll: () => [] })
     const pending: DynamicInventoryRow = {
       pluginId: 'plugin-1',
@@ -163,11 +167,10 @@ describe('HttpDynamicClientHost (browser dynamic Client circuit)', () => {
       await runtime.reconcile([pending])
       await runtime.approve('approval-1')
       expect(runtime.loaded()).toHaveLength(1)
-      const [entry] = runtime.slots.entriesOfSlot('root')
-      expect(entry).toBeDefined()
-      if (typeof entry?.component !== 'function') throw new TypeError('Dynamic Slot component must be callable.')
-      const rendered: unknown = Reflect.apply(entry.component, undefined, [{}])
-      if (!isValidElement(rendered)) throw new TypeError('Dynamic Slot component must return a React element.')
+      const [entry] = runtime.slots.entriesOfSlot('agent.workbench.sections')
+      if (typeof entry?.component !== 'function') throw new TypeError('Dynamic product Slot must be callable.')
+      const rendered: unknown = Reflect.apply(entry.component, undefined, [{ agentId, displayName: '动态测试智能体' }])
+      if (!isValidElement(rendered)) throw new TypeError('Dynamic product Slot must return a React element.')
       expect(renderToStaticMarkup(rendered)).toBe('<section data-dynamic="probe">动态界面已加载</section>')
     } finally {
       await runtime.dispose()

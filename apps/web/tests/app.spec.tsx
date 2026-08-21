@@ -199,6 +199,7 @@ const browserSnapshot = HostApiContracts.snapshot.response.parse({
             contractVersion: 'nekro-nxt-extension-v1',
             hostBuilt: true,
             clientBuilt: false,
+            buildKey: 'a'.repeat(64),
             toolInvocationCount: 1,
             rpcMethods: [],
             renderedSlots: [],
@@ -213,6 +214,7 @@ const browserSnapshot = HostApiContracts.snapshot.response.parse({
           activatedAt: 1_725_000_000_000,
         },
       ],
+      clientDiagnostics: [],
     },
   ],
   dynamic: [

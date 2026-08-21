@@ -22,6 +22,7 @@ import {
   type Activation,
   type ExtensionActivationHost,
   type ExtensionBuildArtifact,
+  type ExtensionClientDiagnostic,
   type ExtensionRepository,
   type ExtensionRevisionVerification,
   type LocalExtension,
@@ -66,6 +67,7 @@ class MemoryExtensionRepository implements ExtensionRepository {
   readonly revisions = new Map<ExtensionRevisionId, Revision>()
   readonly verifications = new Map<ExtensionRevisionId, ExtensionRevisionVerification>()
   readonly activations = new Map<string, Activation>()
+  readonly clientDiagnostics = new Map<string, ExtensionClientDiagnostic>()
   beforeSave?: (input: { readonly extension: LocalExtension; readonly revision: Revision }) => void
   failActivationUpsert = false
   failActivationDelete = false
@@ -115,6 +117,14 @@ class MemoryExtensionRepository implements ExtensionRepository {
     return this.verifications.get(id)
   }
 
+  getExtensionClientDiagnostic(agent: AgentId, extension: ExtensionId): ExtensionClientDiagnostic | undefined {
+    return this.clientDiagnostics.get(this.#key(agent, extension))
+  }
+
+  upsertExtensionClientDiagnostic(diagnostic: ExtensionClientDiagnostic): void {
+    this.clientDiagnostics.set(this.#key(diagnostic.agentId, diagnostic.extensionId), diagnostic)
+  }
+
   getActivation(agent: AgentId, extension: ExtensionId): Activation | undefined {
     return this.activations.get(this.#key(agent, extension))
   }
@@ -131,6 +141,7 @@ class MemoryExtensionRepository implements ExtensionRepository {
   deleteActivation(agent: AgentId, extension: ExtensionId): void {
     if (this.failActivationDelete) throw new Error('Activation delete failed.')
     if (!this.activations.delete(this.#key(agent, extension))) throw new Error('Activation does not exist.')
+    this.clientDiagnostics.delete(this.#key(agent, extension))
   }
 
   #key(agent: AgentId, extension: ExtensionId): string {

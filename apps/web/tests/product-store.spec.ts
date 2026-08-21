@@ -125,6 +125,8 @@ describe('product store Host mutations', () => {
           activation: '未激活',
           targetAgent: '测试智能体',
           contributions: [],
+          clientActivations: [],
+          clientDiagnostics: [],
           revisionId: extensionRevisionId,
           agentId,
         },
@@ -136,6 +138,18 @@ describe('product store Host mutations', () => {
           purpose: '',
           packageName: 'test-package',
           state: '等待批准',
+        },
+      ],
+      dynamic: [
+        {
+          agentId,
+          episodeId: 'eps_productstore',
+          pluginId: 'plugin-productstore',
+          packageId: 'package-productstore',
+          approvalRequestId: 'request-1',
+          status: 'awaiting-approval',
+          packages: [],
+          policy: { turn: 1, consecutiveFailures: 0, repeatedFingerprintCount: 0 },
         },
       ],
     })
@@ -177,6 +191,8 @@ describe('product store Host mutations', () => {
           activation: '未激活',
           targetAgent: '',
           contributions: [],
+          clientActivations: [],
+          clientDiagnostics: [],
         },
       ],
     })

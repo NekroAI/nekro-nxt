@@ -1,5 +1,6 @@
 import type { AdapterConnectionDescriptor } from '@nekro-nxt/adapter-sdk'
-import type { HostApiResponse } from '@nekro-nxt/contracts'
+import { parseJsonValue, type HostApiResponse } from '@nekro-nxt/contracts'
+import type { ExtensionJsonValue } from '@nekro-nxt/extension-sdk'
 import { create } from 'zustand'
 import type { DynamicPackageSummary, ProductHostPort } from './product-port.js'
 import { approveDynamicClientRequest, declineDynamicClientRequest } from './dynamic-client-bridge.js'
@@ -192,8 +193,23 @@ export interface LocalExtensionSummary {
     readonly contractVersion: string
     readonly hostBuilt: boolean
     readonly clientBuilt: boolean
+    readonly buildKey: string
     readonly toolInvocationCount: number
+    readonly rpcMethods: readonly string[]
+    readonly renderedSlots: readonly string[]
   }
+  readonly clientActivations: readonly {
+    readonly agentId: string
+    readonly revisionId: string
+    readonly buildKey: string
+  }[]
+  readonly clientDiagnostics: readonly {
+    readonly agentId: string
+    readonly revisionId: string
+    readonly status: 'loaded' | 'failed'
+    readonly message?: string
+    readonly observedAt: number
+  }[]
   /** Saved Revision id + owning intelligent-agent id; not intended for display. */
   readonly revisionId?: string
   readonly agentId?: string
@@ -315,6 +331,20 @@ export interface ProductState {
     readonly description: string
   }): Promise<void>
   setExtensionActive(id: string, enabled: boolean): Promise<void>
+  callExtensionClient(input: {
+    readonly agentId: string
+    readonly extensionId: string
+    readonly revisionId: string
+    readonly method: string
+    readonly value?: ExtensionJsonValue
+  }): Promise<ExtensionJsonValue>
+  reportExtensionClientDiagnostic(input: {
+    readonly agentId: string
+    readonly extensionId: string
+    readonly revisionId: string
+    readonly status: 'loaded' | 'failed'
+    readonly message?: string
+  }): Promise<void>
   setTheme(theme: ThemeChoice): void
   setReducedMotion(enabled: boolean): void
 }
@@ -570,9 +600,15 @@ export const useProductStore = create<ProductState>(() => ({
       ? await approveDynamicClientRequest(normalizedAgentId, normalizedRequestId)
       : await declineDynamicClientRequest(normalizedAgentId, normalizedRequestId)
     if (!handled) {
+      const episodeId = useProductStore
+        .getState()
+        .dynamic.find(
+          (item) => item.agentId === normalizedAgentId && item.approvalRequestId === normalizedRequestId,
+        )?.episodeId
       await requireHost().execute(approved ? 'dynamic.approve' : 'dynamic.decline', {
         requestId: normalizedRequestId,
         agentId: normalizedAgentId,
+        episodeId: requireValue(episodeId ?? '', '找不到批准请求所属的 Episode，请刷新页面后重试。'),
       })
     }
     await requireHost().execute('host.refresh')
@@ -612,6 +648,28 @@ export const useProductStore = create<ProductState>(() => ({
     await requireHost().execute('extensions.deactivate', {
       extensionId,
       agentId: requireValue(extension.agentId ?? '', '此本地扩展缺少目标智能体，无法停用。'),
+    })
+  },
+  callExtensionClient: async ({ agentId, extensionId, revisionId, method, value }) => {
+    const result = await requireHost().execute('extensions.clientCall', {
+      agentId: requireValue(agentId, '缺少智能体标识，请刷新页面后重试。'),
+      extensionId: requireValue(extensionId, '缺少扩展标识，请刷新页面后重试。'),
+      revisionId: requireValue(revisionId, '缺少扩展版本，请刷新页面后重试。'),
+      method: requireValue(method, '缺少 RPC 方法，请刷新页面后重试。'),
+      ...(value === undefined ? {} : { value }),
+    })
+    if (!isRecord(result) || !('value' in result)) {
+      throw new ProductActionError('invalid-input', '扩展 RPC 返回结果无效。')
+    }
+    return parseJsonValue(result['value'])
+  },
+  reportExtensionClientDiagnostic: async ({ agentId, extensionId, revisionId, status, message }) => {
+    await requireHost().execute('extensions.clientDiagnostic', {
+      agentId: requireValue(agentId, '缺少智能体标识，请刷新页面后重试。'),
+      extensionId: requireValue(extensionId, '缺少扩展标识，请刷新页面后重试。'),
+      revisionId: requireValue(revisionId, '缺少扩展版本，请刷新页面后重试。'),
+      status,
+      ...(message === undefined ? {} : { message }),
     })
   },
   setTheme: (theme) => {

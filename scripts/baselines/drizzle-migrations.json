@@ -7,11 +7,13 @@
     "0002_connection_alias_asset_grants.sql": "99bdf15592ee27c2c89cb0f143bd392d41bc618c05c53ca28a834c50d44f4c0c",
     "0003_dsh_session_storage_reason.sql": "bed088be24728f69e491aedde9f488b4cce99a19023496e4c33ad1e5f60ed51c",
     "0004_extension_revision_verifications.sql": "0303eeee57e2ffaedbd4f304a9fdca2e6220fbfc606e821ac5ccc65f2d06758f",
+    "0005_extension_client_diagnostics.sql": "89b5d911993fc7c252c4be6595e0540e36b8efefa4cefa6fd4f0c82f57a26fb5",
     "meta/0000_snapshot.json": "03573ed4ecfb276bfad4bd1d6041564c11d3c52e1fcb35fc3dd278da7b55448d",
     "meta/0001_snapshot.json": "48b7a1cd91c44d75a394c94af554fc85621fe5fda2dd680d4bc25b68679d4ee5",
     "meta/0002_snapshot.json": "aa0ed0d69885976c1ce596d468657ac121e8cae5ac9e09aa9843be0b3b3127c9",
     "meta/0003_snapshot.json": "138ef3243de7467b3aac5b6ba3cdc7d87359cf693359664237c5ca5aad11e186",
     "meta/0004_snapshot.json": "3762499c9e617f8af484e9ec2154cef1a1193bef6ff9530b0070e9e9ff696609",
-    "meta/_journal.json": "f21bad2f1b7a4fce1c7d3e9f11d70b77c8176edad133cae78b415b2ac6dfa501"
+    "meta/0005_snapshot.json": "0b31fe38de42327665450b5a8614db66a329afda65ae27c863ad93346996782b",
+    "meta/_journal.json": "18da166d3ba5fe11b8e9d6b99c9c2d8a21dc57a247276220ac5adf402f883e25"
   }
 }

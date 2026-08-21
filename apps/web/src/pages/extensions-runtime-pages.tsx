@@ -17,6 +17,7 @@ import {
 } from '../ui-kit/index.js'
 import styles from './product-pages.module.css'
 import { DynamicClientSlots } from '../dynamic-client-coordinator.js'
+import { ExtensionDetailsExtensionSlots } from '../persistent-extension-client.js'
 
 const extensionLabel = (activation: LocalExtensionSummary['activation']): string => {
   if (activation === '已激活') return '已启用'
@@ -54,6 +55,9 @@ export function ExtensionsPage() {
     }
   }
   const selected = extensions.find((extension) => extension.id === selectedId) ?? extensions[0]
+  const selectedClientDiagnostic = selected?.clientDiagnostics.find(
+    (diagnostic) => diagnostic.agentId === selected.agentId && diagnostic.revisionId === selected.revisionId,
+  )
   if (!extensionId && extensions[0]) {
     return <Navigate to={`/extensions/${extensions[0].id}`} replace />
   }
@@ -144,6 +148,14 @@ export function ExtensionsPage() {
                   <dd>{selected.verification.clientBuilt ? '已通过' : '不适用'}</dd>
                   <dt>工具调用</dt>
                   <dd>{selected.verification.toolInvocationCount} 次成功</dd>
+                  <dt>最近一次 Client 加载</dt>
+                  <dd>
+                    {selectedClientDiagnostic === undefined
+                      ? '尚无记录'
+                      : selectedClientDiagnostic.status === 'loaded'
+                        ? `已加载 · ${new Date(selectedClientDiagnostic.observedAt).toLocaleString('zh-CN')}`
+                        : `失败 · ${new Date(selectedClientDiagnostic.observedAt).toLocaleString('zh-CN')}`}
+                  </dd>
                 </dl>
               ) : (
                 <p className={styles.secondaryText}>这个旧版本没有持久验证记录。</p>
@@ -166,6 +178,14 @@ export function ExtensionsPage() {
                 {selected.activation === '已激活' ? '停用扩展' : '启用给智能体'}
               </Button>
             </div>
+            {selected.agentId && selected.revisionId ? (
+              <ExtensionDetailsExtensionSlots
+                agentId={selected.agentId}
+                extensionId={selected.id}
+                revisionId={selected.revisionId}
+                activation={selected.activation === '已激活' ? 'active' : 'inactive'}
+              />
+            ) : null}
           </section>
         ) : null}
       </StageCrossfade>
@@ -202,6 +222,7 @@ export function CreatorPage() {
     dynamic.find((item) => `${item.episodeId}:${item.pluginId}:${item.packageId ?? ''}` === selectedKey) ?? dynamic[0]
   const selectedIndex = selectedItem === undefined ? -1 : dynamic.indexOf(selectedItem)
   const selectedAgent = selectedItem ? agents.find((agent) => agent.id === selectedItem.agentId) : undefined
+  const selectedPackageAvailable = selectedItem?.packageId !== undefined
   const eligibleAgents = agents.filter((agent) => agent.capabilities.dynamicCreation)
   const requestedAgent = agents.find((agent) => agent.id === requestedAgentId)
 
@@ -386,7 +407,7 @@ export function CreatorPage() {
               </div>
               <div className={styles.dynamicSlotSurface}>
                 <div className={styles.sectionHeading}>即时界面</div>
-                <DynamicClientSlots agentId={selectedItem.agentId} />
+                <DynamicClientSlots agentId={selectedItem.agentId} episodeId={selectedItem.episodeId} />
               </div>
               {selectedItem.status === 'awaiting-approval' && selectedItem.approvalRequestId ? (
                 <InlineFeedback tone="warning">这次动态运行正在等待界面预览确认。</InlineFeedback>
@@ -404,7 +425,7 @@ export function CreatorPage() {
                   ) : null}
                   <Button
                     variant="primary"
-                    disabled={selectedItem.status !== 'running' || selectedItem.packageId === undefined}
+                    disabled={selectedItem.status !== 'running' || !selectedPackageAvailable}
                     onClick={() => {
                       setExtensionName(`${selectedAgent?.name ?? '智能体'}的新扩展`)
                       setExtensionSlug(`local-extension-${Date.now().toString(36)}`)
