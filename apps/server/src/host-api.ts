@@ -1051,7 +1051,24 @@ export const createNekroHostApi = (webServer: WebServer, runtime: NekroRuntime):
           res,
           200,
           HostApiContracts.llmTestProvider,
-          await runtime.host.testLlmProvider(parsed.provider, parsed.model),
+          await runtime.host.testLlmProvider({
+            provider: parsed.provider,
+            model: parsed.model,
+            ...(parsed.settingsNs === undefined ? {} : { settingsNs: parsed.settingsNs }),
+            ...(parsed.apiKey === undefined ? {} : { apiKey: parsed.apiKey }),
+            ...(parsed.baseURL === undefined ? {} : { baseURL: parsed.baseURL }),
+            ...(parsed.api === undefined ? {} : { api: parsed.api }),
+            ...(parsed.models === undefined
+              ? {}
+              : {
+                  models: parsed.models.map((entry) => ({
+                    id: entry.id,
+                    ...(entry.name === undefined ? {} : { name: entry.name }),
+                    ...(entry.contextWindow === undefined ? {} : { contextWindow: entry.contextWindow }),
+                    ...(entry.maxTokens === undefined ? {} : { maxTokens: entry.maxTokens }),
+                  })),
+                }),
+          }),
         )
       } catch (error) {
         writeError(res, 400, 'llm-provider-test-failed', error instanceof Error ? error.message : String(error))

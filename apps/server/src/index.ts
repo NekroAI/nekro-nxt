@@ -10,7 +10,16 @@ import SandboxBashExecutor from '@deepseek-ai/dsh-bash-sandbox'
 import { BasicCompactionEngine } from '@deepseek-ai/dsh-compaction-basic'
 import ToolResultPruner from '@deepseek-ai/dsh-compaction-tool-result-pruner'
 import { Context, type Fiber } from '@deepseek-ai/cordis'
-import { credentialRef } from '@deepseek-ai/dsh-credentials'
+import CredentialProvider, {
+  credentialRef,
+  type CredentialInfo,
+  type CredentialKey,
+  type CredentialRecord,
+  type CredentialRecordEntry,
+  type CredentialRecordInfo,
+  type CredentialRef,
+  type ResolvedCredential,
+} from '@deepseek-ai/dsh-credentials'
 import LocalCredentialProvider from '@deepseek-ai/dsh-credentials-local'
 import DynamicCordisRunnerService, {
   ApprovalRequestId,
@@ -41,12 +50,13 @@ import {
   CallId,
   createUserMessage,
   freezeMessage,
+  LlmRuntime,
   MessageId,
   type ContentBlock,
   type LlmAdapter,
   type UserMessage,
 } from '@deepseek-ai/dsh-llm'
-import { supportedProtocols as piAiSupportedProtocols } from '@deepseek-ai/dsh-llm-pi-ai'
+import * as LlmPiAi from '@deepseek-ai/dsh-llm-pi-ai'
 import * as LlmRetry from '@deepseek-ai/dsh-llm-retry'
 import * as FsObservationPolicy from '@deepseek-ai/dsh-fs-observation-policy'
 import SandboxedFileSystem from '@deepseek-ai/dsh-fs-sandbox'
@@ -472,6 +482,79 @@ export interface SaveLlmProviderInput {
     readonly contextWindow?: number
     readonly maxTokens?: number
   }[]
+}
+
+export interface TestLlmProviderInput {
+  readonly provider: string
+  readonly model: string
+  readonly settingsNs?: string
+  readonly apiKey?: string
+  readonly baseURL?: string
+  readonly api?: string
+  readonly models?: SaveLlmProviderInput['models']
+}
+
+const DRAFT_LLM_CREDENTIAL_REF = 'NEKRO_NXT_DRAFT_API_KEY'
+
+class DraftLlmCredentialProvider extends CredentialProvider {
+  readonly apiKey: string | undefined
+
+  constructor(context: Context, config: { readonly apiKey?: string }) {
+    super(context)
+    this.apiKey = config.apiKey
+  }
+
+  async resolve(ref: CredentialRef): Promise<ResolvedCredential | undefined> {
+    await Promise.resolve()
+    return ref === DRAFT_LLM_CREDENTIAL_REF && this.apiKey
+      ? { value: this.apiKey, source: 'nekro-nxt-draft' }
+      : undefined
+  }
+
+  async describe(ref: CredentialRef): Promise<CredentialInfo> {
+    await Promise.resolve()
+    return {
+      configured: ref === DRAFT_LLM_CREDENTIAL_REF && Boolean(this.apiKey),
+      source: 'nekro-nxt-draft',
+      writable: false,
+    }
+  }
+
+  set(): Promise<void> {
+    return Promise.reject(new Error('连接测试的临时凭据只读。'))
+  }
+
+  unset(): Promise<void> {
+    return Promise.reject(new Error('连接测试的临时凭据只读。'))
+  }
+
+  async readRecord(): Promise<CredentialRecord | undefined> {
+    await Promise.resolve()
+    return undefined
+  }
+
+  async describeRecord(): Promise<CredentialRecordInfo> {
+    await Promise.resolve()
+    return { configured: false, writable: false }
+  }
+
+  async listRecords(): Promise<readonly CredentialRecordEntry[]> {
+    await Promise.resolve()
+    return []
+  }
+
+  modifyRecord(
+    key: CredentialKey,
+    mutate: (current: CredentialRecord | undefined) => Promise<CredentialRecord | undefined>,
+  ): Promise<CredentialRecord | undefined> {
+    void key
+    void mutate
+    return Promise.reject(new Error('连接测试的临时凭据不支持授权记录写入。'))
+  }
+
+  async deleteRecord(): Promise<void> {
+    await Promise.resolve()
+  }
 }
 
 const ConfiguredLlmModelSchema = z
@@ -1647,7 +1730,7 @@ export class DshHostRuntime implements AgentSessionDriver, ExtensionActivationHo
         await context.plugin(FileSettingsProvider, { path: options.llmSettingsPath })
         await context.plugin(LocalCredentialProvider, { path: options.llmCredentialPath })
       }
-      await context.plugin((await import('@deepseek-ai/dsh-llm')).LlmRuntime)
+      await context.plugin(LlmRuntime)
       await options.configureLlm?.(context)
       await context.plugin(SessionStore)
       await context.plugin(SqliteSessionPersistence, {
@@ -1786,7 +1869,7 @@ export class DshHostRuntime implements AgentSessionDriver, ExtensionActivationHo
         }
       }),
     )
-    return { writable: this.#context.settings.writable, protocols: [...piAiSupportedProtocols()], providers }
+    return { writable: this.#context.settings.writable, protocols: [...LlmPiAi.supportedProtocols()], providers }
   }
 
   /** Project Web Provider readiness through the same DSH settings/credentials seams used at execution time. */
@@ -2088,14 +2171,69 @@ export class DshHostRuntime implements AgentSessionDriver, ExtensionActivationHo
     return this.#context.llm.discoverModels(settingsNs, input)
   }
 
-  /** Make one minimal provider request and return no generated content. */
-  async testLlmProvider(
-    provider: string,
-    model: string,
-  ): Promise<{ readonly provider: string; readonly model: string }> {
+  /** Make one minimal provider request from either the live registry or an isolated page-draft adapter. */
+  async testLlmProvider(input: TestLlmProviderInput): Promise<{ readonly provider: string; readonly model: string }> {
     this.#assertActive()
+    const hasDraft =
+      input.settingsNs !== undefined ||
+      input.apiKey !== undefined ||
+      input.baseURL !== undefined ||
+      input.api !== undefined ||
+      input.models !== undefined
+    if (!hasDraft) {
+      await this.#runLlmConnectionProbe(this.#context.llm, input.provider, input.model)
+      return { provider: input.provider, model: input.model }
+    }
+    if (!this.#hasLlmSettings) throw new Error('DSH 模型设置服务未启用。')
+    const directoryEntry = this.#context.llm
+      .listConfigurableProviders()
+      .find((candidate) => candidate.provider === input.provider)
+    const settingsNs = input.settingsNs ?? directoryEntry?.settingsNs ?? 'llm-pi-ai'
+    if (settingsNs !== 'llm-pi-ai') throw new Error(`当前不支持测试此模型适配器：${settingsNs}`)
+    const descriptor = this.#context.settings
+      .describe({ redactSecrets: true })
+      .find((candidate) => candidate.ns === settingsNamespace(settingsNs))
+    if (!descriptor) throw new Error(`DSH 模型设置 namespace 未注册：${settingsNs}`)
+    const settingsPath = directoryEntry?.settingsPath ?? ['providers', input.provider]
+    const rawCurrent = readObjectPath(descriptor.value, settingsPath)
+    const current = rawCurrent === undefined ? {} : LlmProviderProfileSchema.parse(rawCurrent)
+    const profile: Record<string, unknown> = { ...current }
+    if (input.baseURL !== undefined) profile['baseURL'] = input.baseURL
+    if (input.api !== undefined) profile['api'] = input.api
+    if (input.models !== undefined) profile['models'] = input.models.map((model) => ({ ...model }))
+
+    const storedRef = typeof current['apiKeyEnv'] === 'string' ? current['apiKeyEnv'] : undefined
+    const storedApiKey =
+      input.apiKey === undefined && storedRef !== undefined
+        ? (await this.#context.credentials.resolve(credentialRef(storedRef)))?.value
+        : undefined
+    const draftApiKey = input.apiKey ?? storedApiKey
+    if (input.apiKey !== undefined || storedRef !== undefined) profile['apiKeyEnv'] = DRAFT_LLM_CREDENTIAL_REF
+
+    const draftContext = new Context()
+    try {
+      await draftContext.plugin(DraftLlmCredentialProvider, {
+        ...(draftApiKey === undefined ? {} : { apiKey: draftApiKey }),
+      })
+      await draftContext.plugin(LlmRuntime)
+      await draftContext.plugin(LlmPiAi, {
+        // The saved section was already validated by DSH; this isolated plugin validates the merged draft again.
+        providers: { [input.provider]: profile },
+      })
+      await this.#runLlmConnectionProbe(draftContext.llm, input.provider, input.model)
+    } catch (cause) {
+      const message = cause instanceof Error ? cause.message : String(cause)
+      if (draftApiKey && message.includes(draftApiKey)) throw new Error('模型供应商连接测试失败。')
+      throw cause
+    } finally {
+      await draftContext.fiber.dispose()
+    }
+    return { provider: input.provider, model: input.model }
+  }
+
+  async #runLlmConnectionProbe(llm: Pick<LlmRuntime, 'stream'>, provider: string, model: string): Promise<void> {
     let finished = false
-    for await (const chunk of this.#context.llm.stream({
+    for await (const chunk of llm.stream({
       provider,
       model,
       system: '这是一次连接测试。请只回复 OK。',
@@ -2109,11 +2247,10 @@ export class DshHostRuntime implements AgentSessionDriver, ExtensionActivationHo
         if (code === 'AUTH' || code === 'MISSING_CREDENTIAL') throw new Error('认证失败，请更新 API 密钥。')
         if (code === 'QUOTA') throw new Error('供应商额度不足或订阅限制。')
         if (code === 'RATE_LIMIT') throw new Error('供应商限流，请稍后再试。')
-        throw new Error(`模型请求失败（${code}）。`)
+        throw new Error(`模型请求失败（${code}）：${chunk.reason.failure.message}`)
       }
     }
     if (!finished) throw new Error('供应商没有返回完整结果。')
-    return { provider, model }
   }
 
   async createSession(input: Parameters<AgentSessionDriver['createSession']>[0]): Promise<string> {

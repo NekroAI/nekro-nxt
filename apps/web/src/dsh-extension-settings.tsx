@@ -28,6 +28,7 @@ import {
   ConfirmDialog,
   Field,
   Input,
+  SecretInput,
   SelectField,
   StatusBadge,
   SwitchField,
@@ -717,13 +718,7 @@ function CredentialEditor({ refName, onChanged }: { readonly refName: string; re
         </StatusBadge>
       </div>
       <Field label="新的凭据值" hint="只写保存；已保存值不会返回浏览器。" error={error || undefined}>
-        <Input
-          ref={credentialInputRef}
-          type="password"
-          value={value}
-          autoComplete="new-password"
-          onChange={(event) => setValue(event.currentTarget.value)}
-        />
+        <SecretInput ref={credentialInputRef} value={value} onChange={(event) => setValue(event.currentTarget.value)} />
       </Field>
       <div className={styles.inlineActions}>
         <Button

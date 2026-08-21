@@ -80,12 +80,13 @@ export function NotificationCenter(): React.ReactNode {
       <Presence>
         {items.map((item) => {
           const Icon = iconForTone(item.tone)
+          const notificationKey = item.group ?? item.id
           return (
             <Enter
               kind="toast"
               className={[styles.notification, classForTone(item.tone)].filter(Boolean).join(' ')}
               role={item.tone === 'error' ? 'alert' : 'status'}
-              key={item.id}
+              key={notificationKey}
             >
               <Icon size={16} aria-hidden="true" />
               <span>{item.message}</span>

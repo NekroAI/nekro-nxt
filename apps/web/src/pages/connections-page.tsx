@@ -12,6 +12,7 @@ import {
   Disclosure,
   Field,
   Input,
+  SecretInput,
   SelectField,
   StageCrossfade,
   StatusBadge,
@@ -529,9 +530,7 @@ export function ConnectionsPage() {
                 if (property.type === 'credential-reference') {
                   return (
                     <Field key={key} label={property.title} hint="凭据保存后不会在页面中回显。">
-                      <Input
-                        type="password"
-                        autoComplete="new-password"
+                      <SecretInput
                         value={credentials[key] ?? ''}
                         onChange={(event) => setCredentials((current) => ({ ...current, [key]: event.target.value }))}
                       />

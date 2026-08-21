@@ -4,6 +4,7 @@ import { Context } from '@deepseek-ai/cordis'
 import WebServer from '@deepseek-ai/dsh-host-webserver'
 import { HostApiContracts } from '@nekro-nxt/contracts'
 import { mkdir, mkdtemp, rm, stat } from 'node:fs/promises'
+import { createServer } from 'node:http'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
@@ -574,6 +575,108 @@ describe('NekroNxt Server domain API (WebServer seam)', () => {
       api.dispose()
       await webContext.fiber.dispose()
       await runtime.dispose()
+    }
+  })
+
+  it('tests the current provider draft without mutating saved settings or credentials', async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), 'nekro-nxt-llm-draft-test-'))
+    temporaryDirectories.push(directory)
+    const upstreamRequests: Array<{ readonly authorization?: string; readonly url?: string; readonly body: string }> =
+      []
+    const upstream = createServer((request, response) => {
+      const chunks: Buffer[] = []
+      request.on('data', (chunk: Buffer) => chunks.push(chunk))
+      request.on('end', () => {
+        upstreamRequests.push({
+          ...(request.headers.authorization === undefined ? {} : { authorization: request.headers.authorization }),
+          ...(request.url === undefined ? {} : { url: request.url }),
+          body: Buffer.concat(chunks).toString('utf8'),
+        })
+        response.writeHead(401, { 'content-type': 'application/json' })
+        response.end(JSON.stringify({ error: { message: 'synthetic rejected credential' } }))
+      })
+    })
+    await new Promise<void>((resolve) => upstream.listen(0, '127.0.0.1', resolve))
+    const address = upstream.address()
+    if (address === null || typeof address === 'string')
+      throw new TypeError('Draft upstream did not expose a TCP port.')
+    const dshRoot = path.join(directory, 'dsh')
+    const runtime = await NekroRuntime.create({
+      coreDatabasePath: path.join(directory, 'core.sqlite'),
+      sessionDatabasePath: path.join(directory, 'sessions.sqlite'),
+      assetRoot: path.join(directory, 'assets'),
+      extensionDataRoot: path.join(directory, 'extension-data'),
+      extensionCacheRoot: path.join(directory, 'extension-cache'),
+      llmSettingsPath: path.join(dshRoot, 'settings.yaml'),
+      llmCredentialPath: path.join(dshRoot, 'credentials.yaml'),
+      configureLlm: configureDshLlmProviders([]),
+    })
+    const webContext = new Context()
+    await webContext.plugin(WebServer, { host: '127.0.0.1', port: 0 })
+    const api = createNekroHostApi(webContext.webServer, runtime)
+    const origin = `http://127.0.0.1:${api.port}`
+    try {
+      const directoryView = await runtime.host.getLlmProviderSettings()
+      const settingsRevision = directoryView.providers[0]?.settingsRevision
+      if (settingsRevision === undefined) throw new TypeError('Missing draft-test settings revision.')
+      await runtime.host.saveLlmProvider({
+        provider: 'draft-gateway',
+        expectedRevision: settingsRevision,
+        apiKey: 'saved-provider-key',
+        displayName: 'Saved gateway',
+        baseURL: 'https://saved.example.test/v1',
+        api: 'openai-completions',
+        models: [{ id: 'saved-model' }],
+      })
+      const before = await runtime.host.getLlmProviderSettings()
+      const beforeProvider = before.providers.find((provider) => provider.provider === 'draft-gateway')
+      if (!beforeProvider) throw new TypeError('Saved draft-test provider is missing.')
+
+      const draftKey = 'synthetic-draft-key'
+      const response = await fetch(`${origin}/api/llm/test-provider`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          provider: 'draft-gateway',
+          model: 'draft-model',
+          settingsNs: 'llm-pi-ai',
+          apiKey: draftKey,
+          baseURL: `http://127.0.0.1:${address.port}/v1`,
+          api: 'openai-completions',
+          models: [{ id: 'draft-model' }],
+        }),
+      })
+      expect(response.status).toBe(400)
+      const responseText = await response.text()
+      expect(responseText).toContain('认证失败')
+      expect(responseText).not.toContain(draftKey)
+      expect(responseText).not.toContain('saved-provider-key')
+      expect(upstreamRequests).toHaveLength(1)
+      expect(upstreamRequests[0]).toMatchObject({
+        authorization: `Bearer ${draftKey}`,
+        url: '/v1/chat/completions',
+      })
+      expect(JSON.parse(upstreamRequests[0]!.body)).toMatchObject({ model: 'draft-model' })
+
+      const after = await runtime.host.getLlmProviderSettings()
+      const afterProvider = after.providers.find((provider) => provider.provider === 'draft-gateway')
+      expect(afterProvider).toMatchObject({
+        settingsRevision: beforeProvider.settingsRevision,
+        baseURL: 'https://saved.example.test/v1',
+        api: 'openai-completions',
+        models: [{ id: 'saved-model', name: 'saved-model' }],
+        credential: { configured: true },
+      })
+    } finally {
+      api.dispose()
+      await webContext.fiber.dispose()
+      await runtime.dispose()
+      await new Promise<void>((resolve, reject) =>
+        upstream.close((error) => {
+          if (error) reject(error)
+          else resolve()
+        }),
+      )
     }
   })
 

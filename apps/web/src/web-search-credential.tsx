@@ -8,7 +8,7 @@ import {
 import { notify } from './components/notifications.js'
 import { InlineFeedback } from './components/product-feedback.js'
 import { useProductStore } from './product-store.js'
-import { Button, Field, Input } from './ui-kit/index.js'
+import { Button, Field, SecretInput } from './ui-kit/index.js'
 import styles from './llm-settings.module.css'
 
 const requestHostApi = async <Output,>(
@@ -83,12 +83,7 @@ export function WebSearchCredentialForm({ onSaved }: { readonly onSaved?: () => 
         <InlineFeedback tone="warning">网页搜索需要 DeepSeek API 密钥；每次搜索会产生额外模型费用。</InlineFeedback>
       )}
       <Field label="DeepSeek API 密钥" hint="只写保存，已保存值不会回显。" error={error || undefined}>
-        <Input
-          type="password"
-          autoComplete="new-password"
-          value={value}
-          onChange={(event) => setValue(event.currentTarget.value)}
-        />
+        <SecretInput value={value} onChange={(event) => setValue(event.currentTarget.value)} />
       </Field>
       <div className={styles.compactActions}>
         <Button

@@ -12,8 +12,12 @@ type HostSnapshot = ReturnType<typeof HostApiContracts.snapshot.response.parse>
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === 'object' && value !== null && !Array.isArray(value)
 
-const installDeepSeekProviderRoutes = async (page: Page, initiallySaved = false): Promise<void> => {
+const installDeepSeekProviderRoutes = async (
+  page: Page,
+  initiallySaved = false,
+): Promise<{ readonly saveRequests: unknown[] }> => {
   let saved = initiallySaved
+  const saveRequests: unknown[] = []
   const responseBody = (): Record<string, unknown> => ({
     writable: true,
     protocols: ['openai-completions', 'openai-responses', 'anthropic-messages'],
@@ -40,12 +44,14 @@ const installDeepSeekProviderRoutes = async (page: Page, initiallySaved = false)
   await page.route('**/api/llm/providers/deepseek', async (route) => {
     if (route.request().method() !== 'POST') return route.continue()
     const payload: unknown = route.request().postDataJSON()
+    saveRequests.push(payload)
     if (!isRecord(payload) || typeof payload['expectedRevision'] !== 'number') {
       throw new TypeError('模型供应商保存请求缺少 expectedRevision。')
     }
     saved = true
     return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(responseBody()) })
   })
+  return { saveRequests }
 }
 
 const installRuntimeFailureGate = (page: Page): string[] => {
@@ -103,6 +109,8 @@ test('settings exposes the provider editor and survives real navigation', async 
   await expect(page.getByRole('heading', { name: '模型供应商', level: 1 })).toBeVisible()
   await page.getByRole('button', { name: /DeepSeek/u }).click()
   await expect(page.getByLabel('API 密钥')).toHaveAttribute('type', 'password')
+  await expect(page.getByLabel('API 密钥')).toHaveAttribute('autocomplete', 'off')
+  await expect(page.getByLabel('API 密钥')).toHaveAttribute('data-1p-ignore', 'true')
   await expect(page.getByText(/不会.*回显/u)).toBeVisible()
 
   await page.getByRole('link', { name: '工作' }).click()
@@ -110,6 +118,48 @@ test('settings exposes the provider editor and survives real navigation', async 
   await page.getByRole('link', { name: '设置' }).click()
   await expect(page.getByRole('heading', { name: '模型供应商', level: 1 })).toBeVisible()
 
+  expect(failures, failures.join('\n')).toEqual([])
+})
+
+test('provider connection test uses the unsaved page draft without saving it', async ({ page }) => {
+  const failures = installRuntimeFailureGate(page)
+  const { saveRequests } = await installDeepSeekProviderRoutes(page, true)
+  const testRequests: unknown[] = []
+  await page.route('**/api/llm/test-provider', async (route) => {
+    const payload = HostApiContracts.llmTestProvider.request.parse(route.request().postDataJSON())
+    testRequests.push(payload)
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({ provider: payload.provider, model: payload.model }),
+    })
+  })
+  await page.goto('/settings')
+  await page.getByRole('button', { name: '添加供应商' }).first().click()
+  await page.getByRole('dialog').getByRole('button', { name: '开始配置' }).click()
+  await page.getByLabel('供应商名称').fill('Draft Gateway')
+  await page.getByLabel('API 密钥').fill('unsaved-draft-key')
+  await page.getByLabel('API 地址').fill('https://draft.example.test/v1')
+  await page.getByLabel('API 协议').click()
+  await page.getByRole('option', { name: 'openai-completions' }).click()
+  await page.getByLabel('模型').fill('draft-model')
+  await page.getByRole('button', { name: '测试连接' }).click()
+
+  await expect(page.getByText('当前页面配置测试通过，可使用 draft-model。', { exact: true })).toBeVisible()
+  expect(testRequests).toEqual([
+    {
+      provider: 'draft-gateway',
+      model: 'draft-model',
+      settingsNs: 'llm-pi-ai',
+      apiKey: 'unsaved-draft-key',
+      baseURL: 'https://draft.example.test/v1',
+      api: 'openai-completions',
+      models: [{ id: 'draft-model' }],
+    },
+  ])
+  expect(saveRequests).toEqual([])
+  await expect(page.getByLabel('API 密钥')).toHaveValue('unsaved-draft-key')
+  await expect(page.getByLabel('模型')).toHaveValue('draft-model')
   expect(failures, failures.join('\n')).toEqual([])
 })
 
@@ -125,6 +175,7 @@ test('DSH extension settings load the official native surface and generic fallba
   await page.getByRole('tab', { name: '通用配置' }).click()
   await expect(page.getByText('Namespace：web-search-deepseek', { exact: true })).toBeVisible()
   await expect(page.getByLabel('新的凭据值')).toHaveAttribute('type', 'password')
+  await expect(page.getByLabel('新的凭据值')).toHaveAttribute('autocomplete', 'off')
 
   expect(failures, failures.join('\n')).toEqual([])
 })
@@ -174,6 +225,7 @@ test('adding a connection selects a platform before showing its fields', async (
   await dialog.getByLabel('连接别名').fill('旅程测试连接')
   await expect(dialog.getByLabel('App ID')).toBeVisible()
   await expect(dialog.getByLabel('Client Secret')).toHaveAttribute('type', 'password')
+  await expect(dialog.getByLabel('Client Secret')).toHaveAttribute('autocomplete', 'off')
   await expect(dialog.getByText('使用 Markdown')).toBeVisible()
   await expect(dialog.getByLabel('平台')).toHaveCount(0)
   expect(failures, failures.join('\n')).toEqual([])

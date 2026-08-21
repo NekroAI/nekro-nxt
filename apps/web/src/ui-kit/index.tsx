@@ -382,6 +382,29 @@ export const Input = forwardRef<HTMLInputElement, InputHTMLAttributes<HTMLInputE
   )
 })
 
+type SecretInputProps = Omit<InputHTMLAttributes<HTMLInputElement>, 'type' | 'autoComplete' | 'spellCheck'>
+
+/**
+ * Write-only API keys and tokens are secrets, but they are not account passwords.
+ * Keep native masking while opting out of browser and common password-manager credential heuristics.
+ */
+export const SecretInput = forwardRef<HTMLInputElement, SecretInputProps>(function SecretInput(props, ref) {
+  return (
+    <Input
+      ref={ref}
+      {...props}
+      type="password"
+      autoComplete="off"
+      spellCheck={false}
+      autoCapitalize="none"
+      data-1p-ignore="true"
+      data-lpignore="true"
+      data-bwignore="true"
+      data-protonpass-ignore="true"
+    />
+  )
+})
+
 export function Textarea({ className, id, ...props }: TextareaHTMLAttributes<HTMLTextAreaElement>) {
   const a11y = useFieldA11y({
     id,

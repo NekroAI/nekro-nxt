@@ -11,7 +11,7 @@ import { notify } from './components/notifications.js'
 import { EmptyState } from './components/product-feedback.js'
 import { useProductStore } from './product-store.js'
 import { providerDisplayName } from './provider-labels.js'
-import { Button, Dialog, Field, Input, SelectField, StatusBadge, Textarea } from './ui-kit/index.js'
+import { Button, Dialog, Field, Input, SecretInput, SelectField, StatusBadge, Textarea } from './ui-kit/index.js'
 import styles from './llm-settings.module.css'
 
 type ProviderSettingsView = HostApiResponse<'llmProviders'>
@@ -91,6 +91,9 @@ export function LlmProviderSettings(): React.ReactNode {
     .map((id) => id.trim())
     .filter(Boolean)
     .map((id) => ({ id }))
+  const testModels = customEditor ? parsedModels : selected?.models.length ? selected.models : discovered
+  const testModel = testModels[0]
+  const testModelName = testModel && 'name' in testModel ? (testModel.name ?? testModel.id) : testModel?.id
 
   const load = async (): Promise<void> => {
     if (pending === 'load' && settings) return
@@ -231,8 +234,7 @@ export function LlmProviderSettings(): React.ReactNode {
   }
 
   const testConnection = async (): Promise<void> => {
-    const model = selected?.models[0]
-    if (!selected?.active || !model || pending) return
+    if (!providerId || !testModel || pending) return
     setPending('test')
     setError('')
     try {
@@ -240,11 +242,19 @@ export function LlmProviderSettings(): React.ReactNode {
         HostApiContracts.llmTestProvider,
         HostApiContracts.llmTestProvider.response,
         {},
-        { provider: selected.provider, model: model.id },
+        {
+          provider: providerId,
+          model: testModel.id,
+          settingsNs: selected?.settingsNs ?? 'llm-pi-ai',
+          ...(apiKey.trim() ? { apiKey: apiKey.trim() } : {}),
+          ...(baseURL.trim() ? { baseURL: baseURL.trim() } : {}),
+          ...(api ? { api } : {}),
+          models: testModels.map((model) => ({ ...model })),
+        },
       )
-      notify(`连接测试通过，可使用 ${model.name}。`, 'success', `llm-provider-test:${selected.provider}`)
+      notify(`当前页面配置测试通过，可使用 ${testModelName}。`, 'success', `llm-provider-test:${providerId}`)
     } catch (cause) {
-      notify(cause instanceof Error ? cause.message : String(cause), 'error', `llm-provider-test:${selected.provider}`)
+      notify(cause instanceof Error ? cause.message : String(cause), 'error', `llm-provider-test:${providerId}`)
     } finally {
       setPending(null)
     }
@@ -258,6 +268,8 @@ export function LlmProviderSettings(): React.ReactNode {
     settings?.writable === true &&
     Boolean(providerId) &&
     (!customEditor || Boolean(displayName.trim() && baseURL.trim() && api && parsedModels.length > 0))
+  const canTest =
+    Boolean(providerId && testModel) && (!customEditor || Boolean(baseURL.trim() && api && parsedModels.length > 0))
 
   if (!settings && pending === 'load') {
     return <EmptyState loading title="正在读取模型供应商" description="加载完成后可管理 API 密钥和模型。" />
@@ -331,7 +343,7 @@ export function LlmProviderSettings(): React.ReactNode {
         </aside>
 
         {selected || customMode ? (
-          <form className={styles.editor} onSubmit={(event) => void save(event)}>
+          <form className={styles.editor} autoComplete="off" onSubmit={(event) => void save(event)}>
             <div className={styles.editorHeading}>
               <div>
                 <h3>{customMode ? '自定义供应商' : (selectedDisplayName ?? '选择供应商')}</h3>
@@ -357,12 +369,7 @@ export function LlmProviderSettings(): React.ReactNode {
                   : '保存后不会在页面中回显。'
               }
             >
-              <Input
-                type="password"
-                autoComplete="new-password"
-                value={apiKey}
-                onChange={(event) => setApiKey(event.target.value)}
-              />
+              <SecretInput value={apiKey} onChange={(event) => setApiKey(event.target.value)} />
             </Field>
 
             {selected?.models.length ? (
@@ -433,7 +440,7 @@ export function LlmProviderSettings(): React.ReactNode {
                   onClick={() => void testConnection()}
                   loading={pending === 'test'}
                   loadingLabel="测试中…"
-                  disabled={!selected?.active || selected.models.length === 0 || pending !== null || customMode}
+                  disabled={!canTest || pending !== null}
                 >
                   测试连接
                 </Button>
@@ -620,12 +627,7 @@ export function AddModelProviderForm({ onSaved }: { readonly onSaved?: () => voi
         }))}
       />
       <Field label="API 密钥" hint="保存后不会在页面中回显。" error={error || undefined}>
-        <Input
-          type="password"
-          autoComplete="new-password"
-          value={apiKey}
-          onChange={(event) => setApiKey(event.target.value)}
-        />
+        <SecretInput value={apiKey} onChange={(event) => setApiKey(event.target.value)} />
       </Field>
       <div className={styles.compactActions}>
         <Button

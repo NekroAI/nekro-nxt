@@ -1131,7 +1131,21 @@ export const HostApiContracts = {
     method: 'POST',
     path: '/api/llm/test-provider',
     params: EmptyParamsSchema,
-    request: z.object({ provider: NonEmptyStringSchema, model: NonEmptyStringSchema }).strict(),
+    request: z
+      .object({
+        provider: NonEmptyStringSchema,
+        model: NonEmptyStringSchema,
+        settingsNs: NonEmptyStringSchema.optional(),
+        apiKey: z
+          .string()
+          .min(1)
+          .max(64 * 1024)
+          .optional(),
+        baseURL: z.url().optional(),
+        api: NonEmptyStringSchema.optional(),
+        models: z.array(LlmDiscoveredModelSchema).optional(),
+      })
+      .strict(),
     response: z.object({ provider: NonEmptyStringSchema, model: NonEmptyStringSchema }).strict(),
     error: HostApiErrorSchema,
   }),
