@@ -18,6 +18,8 @@
 
 `GET /api/events` 直接推送频道消息和裁剪后的工作轨迹；历史与轨迹 REST 只用于首载、翻页和重连对账。可回放帧带 `id:`，内存窗口响应 `Last-Event-ID`，过期则让前端 REST 对账。接线见 `docs/08-接线与Server宿主设计.md`。
 
+DSH 0.1.1-rc.1 的 `frontend-static` 只服务真实文件和明确的 index 路径，未知路径返回 404。Server 因此为 NekroNxt 的产品页面前缀显式注册 SPA index 路由；`/api` 和不存在的 Asset 仍保持各自的 JSON/404 语义，不能用全局 index 回退掩盖错误路径。
+
 通用 DSH 配置面直接投影当前 Host：`GET /api/dsh/plugins` 返回固定生产 roster 的分能力面支持诊断，`GET /api/dsh/settings` 返回所有可安全上线的脱敏 Settings descriptor；路径级修改走 `POST /api/dsh/settings/:namespace/mutate` 并强制 `expectedRevision`，凭据只通过 `describe`、`PUT` 和 `DELETE` 端点读状态或写入/清除，响应和日志不返回值。Settings/Credentials 提交事件通过同一 SSE 通知普通表单和 DSH 原生界面失效刷新。
 
 DSH 0.1.1-rc.1 的 `redactSecrets` 尚不能证明 union、intersect、transform、lazy 中 Secret 的线安全，序列化 schema 也可能携带 Secret default。因此 Server 在 descriptor 离开 Host 前做 fail-closed 检查：发现不受 0.1.1-rc.1 redactor 覆盖的 Secret 或 Secret default 时，不向 Web 暴露该 namespace，也拒绝通用 mutation；这不是提示词或表单层防护。待上游提供完备 `describeForWire()` 后再通过兼容 fixture 收敛此包装边界。

@@ -5,7 +5,7 @@
 
 ## 1. 边界
 
-- HTTP、SSE 和静态托管复用 DSH WebServer / frontend-static，不引入第二套 HTTP 框架；
+- HTTP、SSE 和静态托管复用 DSH WebServer / frontend-static，不引入第二套 HTTP 框架；NekroNxt 在同一 WebServer 上显式注册产品 SPA 页面前缀，因为 DSH 0.1.1-rc.1 的静态 fallback 对未知路径返回 404；
 - 领域 API 由 `NekroHostApi` 定义，只经过 Core、Channel Runtime、Asset 和 Extension 公开服务，不把数据库或 DSH `Context` 暴露到 wire；
 - Web 不复制业务事实。`ProductHostPort.getSnapshot()` / `subscribe()` / `execute()` 消费 Server 权威投影；Zustand 只保留主题、减少动效和草稿。
 
@@ -56,6 +56,7 @@
 - 添加平台连接先选用户可创建的平台，再按版本化 schema 渲染表单；从某适配器详情「再添加一个账号」可跳过选平台。系统托管 Web 不出现在创建目录。
 - 外部频道未发现时说明先向机器人账号发一条消息。`POST /api/channels/:id/messages`：网页频道入站交给智能体；外部频道在已绑定且允许主动发送时，以机器人账号出站，并注入管理员来源的系统事实。
 - `apps/server/src/main.ts` 使用 `NEKRO_DATA`、`NEKRO_PORT`（默认 4960）。开发工作区为 `<dataRoot>/workspaces/<agentId>/`。
+- 产品 SPA 深链只覆盖 `/work`、`/agents`、`/channels`、`/creator`、`/runtime`、`/settings`、`/connections`、`/extensions` 及其子路径；GET/HEAD 返回经过 DSH index injection 的产品入口，其他方法 405。`/api` 和不存在的静态资源不进入 SPA 回退。
 - 启动恢复持久 Web Connection、Extension Activation 和 QQ Connection 的凭据引用；单个 Connection 故障不阻断其他恢复。
 
 一期缺口见 `04-一期开发计划与决策清单.md`。技术栈见 `decisions/accepted/2026-08-16-一期技术栈与UI基础设施.md`。

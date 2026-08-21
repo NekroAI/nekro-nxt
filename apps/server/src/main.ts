@@ -1,7 +1,8 @@
 /**
  * NekroNxt Server executable entry — assembles the domain runtime (NekroRuntime),
  * mounts the DSH WebServer seam as the single HTTP/SSE host, and serves the Web
- * product dist through the frontend-static fallback. Design: docs/08.
+ * product dist through the frontend-static fallback plus explicit product SPA
+ * routes. Design: docs/08.
  *
  * Data and dist roots are explicit — never inferred from the current directory
  * silently (docs/06): resolveRoot returns absolute paths under cwd unless the
@@ -17,7 +18,7 @@ import WebServer from '@deepseek-ai/dsh-host-webserver'
 import * as LlmPiAi from '@deepseek-ai/dsh-llm-pi-ai'
 import type { Context as LlmContext } from '@deepseek-ai/cordis'
 import { existsSync } from 'node:fs'
-import { mkdir } from 'node:fs/promises'
+import { mkdir, readFile } from 'node:fs/promises'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { NekroRuntime } from './bootstrap.js'
@@ -55,6 +56,54 @@ export const configureDshLlmProviders =
 
 export const defaultWebDistIndex = (): string => fileURLToPath(new URL('../../web/dist/index.html', import.meta.url))
 export const defaultDataRoot = (): string => fileURLToPath(new URL('../../../data', import.meta.url))
+
+/** Product-owned client routes. DSH's rc.1 static fallback intentionally returns 404 for unknown paths. */
+export const NEKRO_SPA_ROUTE_PREFIXES = [
+  '/work',
+  '/agents',
+  '/channels',
+  '/creator',
+  '/runtime',
+  '/settings',
+  '/connections',
+  '/extensions',
+] as const
+
+/** Register the product SPA surface without turning missing assets or API paths into index responses. */
+export const registerNekroSpaRoutes = (webServer: WebServer, distIndex: string): (() => void) => {
+  const resolvedDistIndex = resolveRoot(distIndex)
+  const disposers: Array<() => void> = []
+  const renderIndex = async (): Promise<string> => webServer.renderIndex(await readFile(resolvedDistIndex, 'utf8'))
+  try {
+    for (const routePath of NEKRO_SPA_ROUTE_PREFIXES) {
+      disposers.push(
+        webServer.register({
+          kind: 'prefix',
+          path: routePath,
+          handler: async (req, res) => {
+            if (req.method !== 'GET' && req.method !== 'HEAD') {
+              res.writeHead(405, { allow: 'GET, HEAD' })
+              res.end()
+              return
+            }
+            const html = await renderIndex()
+            res.writeHead(200, {
+              'content-type': 'text/html; charset=utf-8',
+              'cache-control': 'no-cache',
+            })
+            res.end(req.method === 'HEAD' ? undefined : html)
+          },
+        }),
+      )
+    }
+  } catch (error) {
+    for (const dispose of disposers.reverse()) dispose()
+    throw error
+  }
+  return () => {
+    for (const dispose of disposers.reverse()) dispose()
+  }
+}
 
 export interface StartServerOptions {
   /** Root of the durable data directory (core.sqlite / sessions.sqlite / assets / extension-*). */
@@ -105,11 +154,14 @@ export const startNekroServer = async (options: StartServerOptions): Promise<Nek
   const webContext = new Context()
   await webContext.plugin(WebServer, { host, port })
   // Function-style Cordis plugin that claims the webserver fallback seat and
-  // serves the built dist with SPA fallback to index.html.
+  // serves real dist files. Since DSH rc.1 intentionally 404s unknown paths,
+  // NekroNxt separately owns its known SPA route prefixes.
+  const distIndex = resolveRoot(options.distIndex)
   await webContext.plugin(
     { name: frontendStaticName, inject: frontendStaticInject, apply: frontendStaticApply },
-    { distIndex: resolveRoot(options.distIndex) },
+    { distIndex },
   )
+  const disposeSpaRoutes = registerNekroSpaRoutes(webContext.webServer, distIndex)
   const api = createNekroHostApi(webContext.webServer, runtime)
 
   let stopped = false
@@ -117,6 +169,7 @@ export const startNekroServer = async (options: StartServerOptions): Promise<Nek
     if (stopped) return
     stopped = true
     api.dispose()
+    disposeSpaRoutes()
     await webContext.fiber.dispose()
     await runtime.dispose()
   }

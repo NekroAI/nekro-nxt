@@ -111,6 +111,45 @@ describe('Server executable defaults', () => {
     expect(() => parseLlmProviderRoutes('opencode-go,../forged')).toThrow('无效路由')
   })
 
+  it('serves only the declared NekroNxt SPA routes as index documents', async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), 'nekro-nxt-main-spa-'))
+    temporaryDirectories.push(directory)
+    const dataRoot = path.join(directory, 'data')
+    const distRoot = path.join(directory, 'dist')
+    const distIndex = path.join(distRoot, 'index.html')
+    await mkdir(distRoot, { recursive: true })
+    await writeFile(distIndex, '<div id="root">NekroNxt</div>', 'utf8')
+    const handle = await startNekroServer({ dataRoot, distIndex })
+    const origin = `http://127.0.0.1:${handle.port}`
+    try {
+      for (const pathname of ['/work', '/settings?tab=appearance', '/extensions/ext_test']) {
+        const response = await fetch(`${origin}${pathname}`)
+        expect(response.status).toBe(200)
+        expect(response.headers.get('content-type')).toBe('text/html; charset=utf-8')
+        expect(response.headers.get('cache-control')).toBe('no-cache')
+        expect(await response.text()).toContain('NekroNxt')
+      }
+
+      const headResponse = await fetch(`${origin}/agents/agent_test`, { method: 'HEAD' })
+      expect(headResponse.status).toBe(200)
+      expect(await headResponse.text()).toBe('')
+
+      const missingAsset = await fetch(`${origin}/assets/missing.js`)
+      expect(missingAsset.status).toBe(404)
+
+      const rejectedMethod = await fetch(`${origin}/work`, { method: 'POST' })
+      expect(rejectedMethod.status).toBe(405)
+      expect(rejectedMethod.headers.get('allow')).toBe('GET, HEAD')
+
+      const snapshot = await fetch(`${origin}/api/snapshot`)
+      expect(snapshot.status).toBe(200)
+      expect(snapshot.headers.get('content-type')).toContain('application/json')
+      HostApiContracts.snapshot.response.parse(await snapshot.json())
+    } finally {
+      await handle.stop()
+    }
+  })
+
   it('creates an isolated intelligent-agent workspace under the unified data root by default', async () => {
     const { dataRoot, workspace } = await exerciseDevelopmentWorkspace()
     expect(workspace.startsWith(path.join(dataRoot, 'workspaces') + path.sep)).toBe(true)
