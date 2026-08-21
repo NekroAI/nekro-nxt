@@ -1,9 +1,10 @@
 import { spawnSync } from 'node:child_process'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { readProductRelease } from './product-release.mjs'
+import { assertCleanWorktree, readProductRelease } from './product-release.mjs'
 
 const repositoryRoot = path.resolve(fileURLToPath(new URL('..', import.meta.url)))
+assertCleanWorktree(repositoryRoot)
 const release = await readProductRelease(repositoryRoot)
 const image = process.env['NEKRO_IMAGE'] ?? `nekro-nxt:${release.version}`
 const result = spawnSync(

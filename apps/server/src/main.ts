@@ -20,7 +20,7 @@ import type { Context as LlmContext } from '@deepseek-ai/cordis'
 import { createSqliteBackupSet, type SqliteBackupSource } from '@nekro-nxt/storage-sqlite'
 import { createHash } from 'node:crypto'
 import { existsSync } from 'node:fs'
-import { mkdir, readFile, stat, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, rename, rm, stat, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { NekroRuntime } from './bootstrap.js'
@@ -204,11 +204,6 @@ export const ensureReleaseSqliteBackup = async (
   }
 
   const sources = await existingSqliteSources(dataRoot)
-  if (sources.length === 0) {
-    await mkdir(destination, { mode: 0o700 })
-  } else {
-    await createSqliteBackupSet(sources, destination)
-  }
   const record: ReleaseSqliteBackupRecord = {
     format: 'nxt.server-release-sqlite-backup',
     version: 1,
@@ -216,12 +211,24 @@ export const ensureReleaseSqliteBackup = async (
     backupId,
     databases: sources.map((source) => source.name),
   }
-  await writeFile(releaseRecordPath, `${JSON.stringify(record, null, 2)}\n`, {
-    encoding: 'utf8',
-    mode: 0o600,
-    flag: 'wx',
-  })
-  return record
+  const stagingRoot = await mkdtemp(`${destination}.staging-`)
+  const stagingDestination = path.join(stagingRoot, 'backup')
+  try {
+    if (sources.length === 0) {
+      await mkdir(stagingDestination, { mode: 0o700 })
+    } else {
+      await createSqliteBackupSet(sources, stagingDestination)
+    }
+    await writeFile(path.join(stagingDestination, 'release.json'), `${JSON.stringify(record, null, 2)}\n`, {
+      encoding: 'utf8',
+      mode: 0o600,
+      flag: 'wx',
+    })
+    await rename(stagingDestination, destination)
+    return record
+  } finally {
+    await rm(stagingRoot, { recursive: true, force: true })
+  }
 }
 
 export interface StartServerOptions {

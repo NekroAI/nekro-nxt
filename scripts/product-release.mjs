@@ -7,6 +7,20 @@ const readPackage = async (repositoryRoot, relativePath) =>
 
 const BASE_VERSION_PATTERN = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/u
 
+export function assertCleanGitStatus(status) {
+  if (typeof status !== 'string' || status.trim() !== '') {
+    throw new Error('Product Release 构建要求 Git worktree 干净，确保 releaseId 对应准确源码。')
+  }
+}
+
+export function assertCleanWorktree(repositoryRoot) {
+  const status = execFileSync('git', ['status', '--porcelain'], {
+    cwd: repositoryRoot,
+    encoding: 'utf8',
+  })
+  assertCleanGitStatus(status)
+}
+
 export function parseReleaseChannel(input) {
   if (input === 'preview' || input === 'stable') return input
   throw new Error(`Desktop Release channel 无效：${input ?? 'undefined'}`)

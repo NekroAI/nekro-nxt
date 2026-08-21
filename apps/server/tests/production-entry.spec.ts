@@ -97,4 +97,21 @@ describe('Server production entry', () => {
     expect(await readFile(path.join(destination, 'manifest.json'), 'utf8')).toBe(manifestBefore)
     expect(JSON.parse(await readFile(path.join(destination, 'release.json'), 'utf8'))).toEqual(first)
   })
+
+  it('ignores an interrupted staging directory and atomically publishes a complete release backup', async () => {
+    const dataRoot = path.join(await createTemporaryRoot(), 'data')
+    const backupRoot = path.join(dataRoot, 'backups')
+    await mkdir(path.join(backupRoot, 'release-interrupted.staging-orphan', 'backup'), { recursive: true })
+    await writeFile(
+      path.join(backupRoot, 'release-interrupted.staging-orphan', 'backup', 'partial.sqlite'),
+      'partial',
+      'utf8',
+    )
+
+    const result = await ensureReleaseSqliteBackup(dataRoot, 'release-after-interruption')
+    const destination = path.join(backupRoot, result.backupId)
+    expect(result.databases).toEqual([])
+    await expect(stat(destination)).resolves.toMatchObject({})
+    expect(JSON.parse(await readFile(path.join(destination, 'release.json'), 'utf8'))).toEqual(result)
+  })
 })
