@@ -1,5 +1,10 @@
 declare const styles: {
   readonly centeredState: string
+  readonly commandEmpty: string
+  readonly commandPalette: string
+  readonly commandResult: string
+  readonly commandResults: string
+  readonly commandSearch: string
   readonly mark: string
   readonly rail: string
   readonly railBtn: string
@@ -16,6 +21,7 @@ declare const styles: {
   readonly tree: string
   readonly treeAdd: string
   readonly treeBody: string
+  readonly treeFill: string
   readonly treeHead: string
   readonly windowBrand: string
   readonly windowObjectTitle: string

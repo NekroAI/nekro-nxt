@@ -1,6 +1,6 @@
 import { AlertCircle, CheckCircle2, Info, TriangleAlert, X } from 'lucide-react'
 import { useEffect, useRef, useState } from 'react'
-import { IconButton } from '../ui-kit/index.js'
+import { Enter, IconButton, Presence } from '../ui-kit/index.js'
 import styles from './notifications.module.css'
 
 export type NotificationTone = 'info' | 'success' | 'warning' | 'error'
@@ -76,23 +76,26 @@ export function NotificationCenter(): React.ReactNode {
   }, [])
 
   return (
-    <div className={styles.viewport} aria-label="操作通知">
-      {items.map((item) => {
-        const Icon = iconForTone(item.tone)
-        return (
-          <div
-            className={[styles.notification, classForTone(item.tone)].filter(Boolean).join(' ')}
-            role={item.tone === 'error' ? 'alert' : 'status'}
-            key={item.id}
-          >
-            <Icon size={16} aria-hidden="true" />
-            <span>{item.message}</span>
-            <IconButton className={styles.closeButton} label="关闭通知" onClick={() => dismiss(item.id)}>
-              <X size={15} aria-hidden="true" />
-            </IconButton>
-          </div>
-        )
-      })}
+    <div className={styles.viewport} role="region" aria-label="操作通知">
+      <Presence>
+        {items.map((item) => {
+          const Icon = iconForTone(item.tone)
+          return (
+            <Enter
+              kind="toast"
+              className={[styles.notification, classForTone(item.tone)].filter(Boolean).join(' ')}
+              role={item.tone === 'error' ? 'alert' : 'status'}
+              key={item.id}
+            >
+              <Icon size={16} aria-hidden="true" />
+              <span>{item.message}</span>
+              <IconButton className={styles.closeButton} label="关闭通知" onClick={() => dismiss(item.id)}>
+                <X size={15} aria-hidden="true" />
+              </IconButton>
+            </Enter>
+          )
+        })}
+      </Presence>
     </div>
   )
 }

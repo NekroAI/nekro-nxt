@@ -45,26 +45,6 @@
   border-color: var(--nxt-border-default);
 }
 
-.agentCardHeader {
-  display: flex;
-  gap: 14px;
-  align-items: flex-start;
-}
-
-.avatarLarge {
-  display: grid;
-  width: 52px;
-  height: 52px;
-  flex: 0 0 auto;
-  place-items: center;
-  border: 1px solid color-mix(in srgb, var(--nxt-accent) 30%, var(--nxt-border-default));
-  border-radius: 15px;
-  color: var(--nxt-accent);
-  background: var(--nxt-accent-soft);
-  font-size: 19px;
-  font-weight: 740;
-}
-
 .agentCardIdentity {
   min-width: 0;
   flex: 1;
@@ -142,20 +122,6 @@
   gap: 5px;
 }
 
-.agentModel {
-  margin-left: auto;
-  color: var(--nxt-text-muted);
-}
-
-.agentCardActions {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 8px;
-  border-top: 1px solid var(--nxt-border-subtle);
-  padding-top: 14px;
-}
-
 .overviewSummary {
   position: sticky;
   top: 24px;
@@ -187,15 +153,6 @@
   margin: 0;
   font-size: 18px;
   font-weight: 720;
-}
-
-.overviewHint {
-  display: flex;
-  align-items: flex-start;
-  gap: 8px;
-  color: var(--nxt-text-muted);
-  font-size: 11px;
-  line-height: 17px;
 }
 
 .capabilityChoices {
@@ -305,7 +262,7 @@
   display: grid;
   grid-template-columns: minmax(0, 1fr) minmax(220px, 0.9fr);
   gap: 16px;
-  align-items: end;
+  align-items: center;
   border-bottom: 1px solid var(--nxt-border-subtle);
   padding: 8px 0 16px;
 }
@@ -328,11 +285,6 @@
   color: var(--nxt-text-muted);
   font-size: 12px;
   line-height: 16px;
-}
-
-.overviewBlockers {
-  display: grid;
-  gap: 4px;
 }
 
 .overviewBlocker {
@@ -370,7 +322,6 @@
   padding-top: 16px;
 }
 
-.objectList,
 .masterList,
 .compactList {
   border-top: 1px solid var(--nxt-border-default);
@@ -429,7 +380,7 @@
   flex: 0 0 auto;
   place-items: center;
   border: 1px solid color-mix(in srgb, var(--nxt-accent) 24%, var(--nxt-border-default));
-  color: var(--nxt-accent);
+  color: var(--nxt-info);
   background: var(--nxt-accent-soft);
   font-weight: 720;
 }
@@ -445,15 +396,6 @@
 .masterCopy,
 .messageContent {
   min-width: 0;
-}
-
-.objectName {
-  overflow: hidden;
-  color: var(--nxt-text-primary);
-  font-size: 14px;
-  font-weight: 680;
-  text-overflow: ellipsis;
-  white-space: nowrap;
 }
 
 .secondaryText {
@@ -736,7 +678,6 @@
   font-size: 11px;
   line-height: 16px;
   pointer-events: none;
-  animation: context-tooltip-fade var(--nxt-motion-standard) linear both;
 }
 
 .contextTooltip[data-side='right'] {
@@ -875,24 +816,8 @@
   padding-top: 14px;
 }
 
-.optionalTests::details-content,
-.channelDetails::details-content {
-  overflow: hidden;
-  block-size: 0;
-  opacity: 0;
-  transition:
-    block-size var(--nxt-motion-spatial) var(--nxt-ease-standard),
-    opacity var(--nxt-motion-standard) var(--nxt-ease-standard),
-    content-visibility var(--nxt-motion-spatial) allow-discrete;
-}
-
-.optionalTests[open]::details-content,
-.channelDetails[open]::details-content {
-  block-size: auto;
-  opacity: 1;
-}
-
-.optionalTests summary {
+.optionalTests summary,
+.optionalTests > button {
   width: fit-content;
   color: var(--nxt-text-secondary);
   font-size: 12px;
@@ -1023,7 +948,7 @@
   height: 26px;
   place-items: center;
   border-radius: 50%;
-  color: var(--nxt-accent);
+  color: var(--nxt-info);
   background: var(--nxt-accent-soft);
   font-size: 11px;
   font-weight: 700;
@@ -1107,12 +1032,6 @@
   gap: 16px;
 }
 
-.runtimeColumns {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 20px;
-}
-
 .dialogChoice {
   display: grid;
   justify-items: start;
@@ -1125,21 +1044,12 @@
 
 .conversationPage {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 5px var(--nxt-inspector-width, 360px);
+  grid-template-columns: minmax(0, 1fr) 5px auto;
   height: 100%;
   min-height: 0;
   flex: 1;
   overflow: hidden;
   background: var(--nxt-bg-surface);
-}
-
-.conversationPage[data-inspector-collapsed] {
-  grid-template-columns: minmax(0, 1fr) 0 0;
-}
-
-.conversationPage[data-inspector-transitioning],
-.workbenchPage[data-inspector-transitioning] {
-  transition: grid-template-columns var(--nxt-motion-spatial) var(--nxt-ease-standard);
 }
 
 .channelDirectory,
@@ -1156,15 +1066,11 @@
 
 .conversationMain {
   position: relative;
-  grid-template-rows: auto minmax(0, 1fr);
+  display: flex;
+  min-width: 0;
+  min-height: 0;
+  flex-direction: column;
   background: var(--nxt-bg-surface);
-}
-
-.railHeading {
-  padding: 0 8px 8px;
-  color: var(--nxt-text-muted);
-  font-size: 12px;
-  font-weight: 650;
 }
 
 .railEmpty {
@@ -1214,6 +1120,7 @@
 }
 
 .channelGroupHeader {
+  position: relative;
   display: grid;
   grid-template-columns: auto minmax(0, 1fr) auto;
   align-items: center;
@@ -1226,25 +1133,36 @@
 }
 
 .channelGroupHeader:hover {
-  background: var(--nxt-bg-hover);
+  color: var(--nxt-text-primary);
 }
 
 .dropTarget {
   outline: 1px dashed var(--nxt-accent);
   outline-offset: -1px;
   background: var(--nxt-accent-soft);
+  transition:
+    background var(--nxt-motion-instant) var(--nxt-ease-standard),
+    outline-color var(--nxt-motion-instant) var(--nxt-ease-standard);
 }
 
 .channelGroupHeaderActive {
   color: var(--nxt-text-primary);
-  background: var(--nxt-bg-surface);
-  box-shadow: inset 2px 0 var(--nxt-accent);
 }
 
-.channelGroupHeader > span:nth-child(2),
-.channelLink > span:nth-child(2) {
+.treeCopy {
   display: grid;
   min-width: 0;
+  overflow: hidden;
+}
+
+.treeStateIndicator {
+  display: grid;
+  width: 20px;
+  height: 28px;
+  place-items: center;
+  opacity: 1;
+  pointer-events: none;
+  transition: opacity var(--nxt-motion-instant) var(--nxt-ease-standard);
 }
 
 .channelGroupHeader strong,
@@ -1273,7 +1191,7 @@
   place-items: center;
   border: 1px solid color-mix(in srgb, var(--nxt-accent) 38%, var(--nxt-border-default));
   border-radius: var(--nxt-radius-md);
-  color: var(--nxt-accent);
+  color: var(--nxt-info);
   background: var(--nxt-accent-soft);
   font-size: 11px;
   font-weight: 700;
@@ -1314,7 +1232,7 @@
 
 .treeRowDragHandle {
   position: absolute;
-  z-index: 1;
+  z-index: 2;
   top: 50%;
   right: 4px;
   width: 20px;
@@ -1336,13 +1254,20 @@
   touch-action: none;
 }
 
-.treeRowDragHandle:hover,
-.treeRowDragHandle:focus-visible {
+.agentHeaderRow .treeRowDragHandle:not(:disabled):hover,
+.agentHeaderRow .treeRowDragHandle:not(:disabled):focus-visible,
+.channelRow .treeRowDragHandle:not(:disabled):hover,
+.channelRow .treeRowDragHandle:not(:disabled):focus-visible {
   color: var(--nxt-accent);
   background: transparent;
+  box-shadow: none;
 }
 
-.treeRowDragHandle:active {
+.agentHeaderRow .treeRowDragHandle:not(:disabled):active,
+.channelRow .treeRowDragHandle:not(:disabled):active {
+  border-color: transparent;
+  background: transparent;
+  box-shadow: none;
   cursor: grabbing;
 }
 
@@ -1356,20 +1281,20 @@
   pointer-events: auto;
 }
 
-.channelLink span:nth-child(2) {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+.agentHeaderRow:hover .treeStateIndicator,
+.agentHeaderRow:focus-within .treeStateIndicator,
+.channelRow:hover .treeStateIndicator,
+.channelRow:focus-within .treeStateIndicator,
+.sortableOrigin .treeStateIndicator {
+  opacity: 0;
 }
 
 .channelLink:hover {
-  background: var(--nxt-bg-hover);
+  color: var(--nxt-text-primary);
 }
 
 .channelLinkActive {
   color: var(--nxt-text-primary);
-  background: var(--nxt-bg-surface);
-  box-shadow: inset 2px 0 var(--nxt-accent);
 }
 
 .connectionNavList,
@@ -1394,6 +1319,7 @@
 }
 
 .connectionNavItem {
+  position: relative;
   grid-template-columns: 18px minmax(0, 1fr) 8px;
   gap: 9px;
   min-height: 52px;
@@ -1404,13 +1330,10 @@
 .connectionNavItem:hover,
 .settingsNavItem:hover {
   color: var(--nxt-text-primary);
-  background: var(--nxt-bg-hover);
 }
 
 .connectionNavItemActive {
-  border-left-color: var(--nxt-accent);
   color: var(--nxt-text-primary);
-  background: color-mix(in srgb, var(--nxt-accent-soft) 64%, transparent);
 }
 
 .connectionNavItem > i {
@@ -1425,6 +1348,7 @@
 }
 
 .extensionNavItem {
+  position: relative;
   grid-template-columns: 20px minmax(0, 1fr) auto;
   gap: 9px;
   min-height: 58px;
@@ -1442,7 +1366,6 @@
 .extensionNavItemActive {
   border-color: color-mix(in srgb, var(--nxt-accent) 52%, var(--nxt-border-default));
   color: var(--nxt-text-primary);
-  background: var(--nxt-accent-soft);
 }
 
 .extensionNavItem em {
@@ -1452,6 +1375,7 @@
 }
 
 .settingsNavItem {
+  position: relative;
   grid-template-columns: 22px minmax(0, 1fr);
   gap: 10px;
   min-height: 50px;
@@ -1460,16 +1384,22 @@
 }
 
 .settingsNavItemActive {
-  color: var(--nxt-accent);
-  background: var(--nxt-accent-soft);
-  box-shadow: inset 0 -2px var(--nxt-accent);
+  position: relative;
+  color: var(--nxt-info);
 }
 
-.connectionNavItem > span,
-.extensionNavItem > span,
-.settingsNavItem > span {
+.navCopy {
   display: grid;
   min-width: 0;
+}
+
+.channelLink > :not([data-nav-mark]),
+.channelGroupHeader > :not([data-nav-mark]),
+.connectionNavItem > :not([data-nav-mark]),
+.extensionNavItem > :not([data-nav-mark]),
+.settingsNavItem > :not([data-nav-mark]) {
+  position: relative;
+  z-index: 1;
 }
 
 .connectionNavItem strong,
@@ -1523,10 +1453,9 @@
 }
 
 .conversationMain {
-  display: grid;
   min-width: 0;
   min-height: 0;
-  grid-template-rows: auto minmax(0, 1fr);
+  height: 100%;
 }
 
 .conversationHeader {
@@ -1537,6 +1466,11 @@
   min-height: 68px;
   border-bottom: 1px solid var(--nxt-border-subtle);
   padding: 0 20px;
+}
+
+.conversationHeader > :first-child {
+  min-width: 0;
+  flex: 1;
 }
 
 .conversationHeader > div:first-child {
@@ -1690,30 +1624,6 @@
   transform: rotate(180deg);
 }
 
-.workStreamDisclosure {
-  display: grid;
-  width: 100%;
-  grid-template-rows: 0fr;
-  opacity: 0;
-  visibility: hidden;
-  transition:
-    grid-template-rows var(--nxt-motion-spatial) var(--nxt-ease-standard),
-    opacity var(--nxt-motion-standard) var(--nxt-ease-standard),
-    visibility 0s var(--nxt-motion-spatial);
-}
-
-.workStreamDisclosure[data-open] {
-  grid-template-rows: 1fr;
-  opacity: 1;
-  visibility: visible;
-  transition-delay: 0s;
-}
-
-.workStreamDisclosure > div {
-  min-height: 0;
-  overflow: hidden;
-}
-
 .workStreamDetails {
   display: grid;
   justify-items: start;
@@ -1759,7 +1669,6 @@
   border-radius: 10px;
   background: var(--nxt-bg-subtle);
   overflow: hidden;
-  animation: disclosure-enter var(--nxt-motion-fast) var(--nxt-ease-enter) both;
 }
 
 .toolCard pre {
@@ -1807,9 +1716,11 @@
 .plot {
   display: grid;
   grid-template-columns: 44px minmax(0, 1fr);
-  height: 50px;
+  height: 86px;
+  flex-shrink: 0;
   border-bottom: 1px solid var(--nxt-border-subtle);
   background: var(--nxt-bg-subtle);
+  z-index: 1;
 }
 
 .plotLabels {
@@ -1826,15 +1737,15 @@
 }
 
 .plotLabels span:nth-child(1) {
-  top: 8px;
+  top: 11px;
 }
 
 .plotLabels span:nth-child(2) {
-  top: 22px;
+  top: 39px;
 }
 
 .plotLabels span:nth-child(3) {
-  top: 36px;
+  top: 67px;
 }
 
 .plotTrack {
@@ -1844,50 +1755,60 @@
 
 .plotSeg {
   position: absolute;
-  top: 7px;
-  height: 8px;
-  min-width: 4px;
-  min-height: 0;
+  top: 0;
+  height: 28px;
+  min-width: 28px;
+  min-height: 28px;
   border: 0;
-  border-radius: 1px;
   padding: 0;
   cursor: pointer;
+  background: transparent;
+}
+
+.plotSeg > span {
+  position: absolute;
+  top: 10px;
+  right: 0;
+  left: 0;
+  height: 8px;
+  border-radius: 1px;
   background: color-mix(in srgb, var(--nxt-accent) 45%, transparent);
 }
 
 .plotSegInternal {
-  top: 7px;
+  top: 0;
 }
 
 .plotSegTool {
-  top: 21px;
-  background: color-mix(in srgb, #c47b16 50%, transparent);
+  top: 28px;
 }
 
 .plotSegSend {
-  top: 35px;
-  background: color-mix(in srgb, var(--nxt-accent) 30%, transparent);
+  top: 56px;
 }
 
-.plotSeg:hover,
-.plotSeg:not(:disabled):hover,
-.plotSegSelected {
+.plotSeg:hover > span,
+.plotSeg:not(:disabled):hover > span,
+.plotSegSelected > span {
   outline: 1px solid var(--nxt-accent);
   outline-offset: 1px;
 }
 
-.plotSegInternal:not(:disabled):hover,
-.plotSegInternal.plotSegSelected {
+.plotSegInternal > span,
+.plotSegInternal:not(:disabled):hover > span,
+.plotSegInternal.plotSegSelected > span {
   background: color-mix(in srgb, var(--nxt-accent) 45%, transparent);
 }
 
-.plotSegTool:not(:disabled):hover,
-.plotSegTool.plotSegSelected {
+.plotSegTool > span,
+.plotSegTool:not(:disabled):hover > span,
+.plotSegTool.plotSegSelected > span {
   background: color-mix(in srgb, #c47b16 50%, transparent);
 }
 
-.plotSegSend:not(:disabled):hover,
-.plotSegSend.plotSegSelected {
+.plotSegSend > span,
+.plotSegSend:not(:disabled):hover > span,
+.plotSegSend.plotSegSelected > span {
   background: color-mix(in srgb, var(--nxt-accent) 30%, transparent);
 }
 
@@ -1897,14 +1818,14 @@
   bottom: 0;
   z-index: 1;
   display: block;
-  width: 10px;
+  width: 28px;
   min-width: 0;
   min-height: 0;
   border: 0;
   border-radius: 0;
   padding: 0;
   margin: 0;
-  transform: translateX(-5px);
+  transform: translateX(-14px);
   cursor: pointer;
   background: transparent;
 }
@@ -1913,7 +1834,7 @@
   position: absolute;
   top: 0;
   bottom: 0;
-  left: 4px;
+  left: 13px;
   width: 2px;
   background: var(--nxt-border-default);
   content: '';
@@ -1933,6 +1854,7 @@
   min-width: 0;
   min-height: 0;
   flex: 1;
+  isolation: isolate;
   overflow: auto;
 }
 
@@ -1944,15 +1866,19 @@
   font-size: 12px;
 }
 
-.trajTable th {
+.trajTable thead {
   position: sticky;
   top: 0;
-  z-index: 2;
+  z-index: 3;
+}
+
+.trajTable th {
   height: 30px;
   padding: 0 8px;
   border-bottom: 1px solid var(--nxt-border-default);
   color: var(--nxt-text-muted);
-  background: var(--nxt-bg-sidebar);
+  background: var(--nxt-bg-surface);
+  box-shadow: 0 1px 0 var(--nxt-border-default);
   font-weight: 500;
   text-align: left;
 }
@@ -2180,11 +2106,22 @@
   display: flex;
   min-width: 0;
   min-height: 0;
+  flex: 1;
   flex-direction: column;
+}
+
+.canvasStageInner {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  grid-template-rows: minmax(0, 1fr) auto;
+  min-width: 0;
+  min-height: 0;
+  flex: 1;
 }
 
 .canvasTab {
   display: flex;
+  grid-area: 1 / 1;
   min-width: 0;
   min-height: 0;
   flex: 1;
@@ -2197,16 +2134,19 @@
 }
 
 .jumpBottom {
-  position: absolute;
-  left: 50%;
-  bottom: calc(var(--nxt-composer-height, 96px) + 24px);
+  position: relative;
   z-index: calc(var(--nxt-layer-sticky) + 1);
-  transform: translateX(-50%);
-  box-shadow: var(--nxt-shadow-float);
+  display: flex;
+  grid-area: 1 / 1;
+  align-self: end;
+  justify-content: center;
+  margin-bottom: 24px;
+  pointer-events: none;
 }
 
-.canvasStage[data-view='trajectory'] .jumpBottom {
-  bottom: 24px;
+.jumpBottom > * {
+  pointer-events: auto;
+  box-shadow: var(--nxt-shadow-float);
 }
 
 .messageList {
@@ -2216,7 +2156,7 @@
   overflow: auto;
   overflow-anchor: none;
   scroll-behavior: auto;
-  padding: 24px clamp(20px, 4vw, 64px) calc(var(--nxt-composer-height, 96px) + 32px);
+  padding: 24px clamp(20px, 4vw, 64px);
 }
 
 .messageListInner {
@@ -2250,16 +2190,6 @@
   margin: 0 0 24px 44px;
   padding: 12px;
   background: var(--nxt-accent-soft);
-}
-
-.runtimeCardIcon {
-  display: grid;
-  width: 34px;
-  height: 34px;
-  place-items: center;
-  border-radius: var(--nxt-radius-md);
-  color: var(--nxt-accent);
-  background: var(--nxt-bg-surface);
 }
 
 .runtimeCard > span {
@@ -2375,26 +2305,6 @@
   background: var(--nxt-text-muted);
 }
 
-.trajectoryExpandHint {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  width: 100%;
-  border: 1px dashed var(--nxt-border-default);
-  border-radius: var(--nxt-radius-md);
-  padding: 8px;
-  color: var(--nxt-text-secondary);
-  background: transparent;
-  font: inherit;
-  font-size: 12px;
-  text-align: left;
-  cursor: pointer;
-}
-
-.inspectorCollapsed {
-  padding: 16px 12px;
-}
-
 .inspectorExpanded {
   padding: 16px 16px 20px;
 }
@@ -2405,7 +2315,6 @@
   grid-template-columns: 32px minmax(0, 1fr);
   gap: 12px;
   margin-bottom: 24px;
-  animation: message-enter var(--nxt-motion-standard) var(--nxt-ease-enter) both;
 }
 
 .message[data-side='right'] {
@@ -2421,10 +2330,19 @@
   grid-column: 1;
   grid-row: 1;
   justify-self: end;
+  max-width: min(100%, 920px);
 }
 
 .message[data-side='right'] .messageHeader {
   justify-content: flex-end;
+}
+
+.message[data-side='right'] .messageBody {
+  margin-top: 6px;
+  border: 1px solid color-mix(in srgb, var(--nxt-accent) 18%, var(--nxt-border-subtle));
+  border-radius: var(--nxt-radius-lg) var(--nxt-radius-sm) var(--nxt-radius-lg) var(--nxt-radius-lg);
+  padding: 8px 12px 9px;
+  background: color-mix(in srgb, var(--nxt-accent-soft) 72%, var(--nxt-bg-surface));
 }
 
 .messageAvatar {
@@ -2588,8 +2506,8 @@
 
 .messageImage {
   display: block;
-  max-width: 100%;
-  max-height: 460px;
+  max-width: min(100%, 420px);
+  max-height: 220px;
   border: 1px solid var(--nxt-border-subtle);
   border-radius: var(--nxt-radius-md);
   background: var(--nxt-bg-subtle);
@@ -2611,23 +2529,25 @@
   font-size: 11px;
 }
 
+.composer > form {
+  display: contents;
+}
+
 .composer {
-  position: absolute;
+  position: relative;
   z-index: var(--nxt-layer-sticky);
-  right: 16px;
-  bottom: 14px;
-  left: 16px;
   display: grid;
+  grid-area: 2 / 1;
   gap: 2px;
   border: 1px solid var(--nxt-border-default);
   border-radius: var(--nxt-radius-lg);
   padding: 6px 8px;
   background: var(--nxt-bg-elevated);
   box-shadow: var(--nxt-shadow-float);
+  margin: 0 16px 14px;
   transition:
     border-color var(--nxt-motion-fast) var(--nxt-ease-standard),
     box-shadow var(--nxt-motion-fast) var(--nxt-ease-standard);
-  animation: composer-enter var(--nxt-motion-spatial) var(--nxt-ease-enter) both;
 }
 
 .composer:focus-within {
@@ -2828,10 +2748,28 @@
 }
 
 .channelDetails {
+  display: grid;
+  gap: 8px;
   margin-top: 16px;
   color: var(--nxt-text-secondary);
   font-size: 12px;
   line-height: 18px;
+}
+
+.channelDetailRow {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px;
+}
+
+.channelDetailRow strong {
+  overflow: hidden;
+  color: var(--nxt-text-primary);
+  font-size: 13px;
+  line-height: 18px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .channelDetails summary {
@@ -2845,16 +2783,12 @@
 
 .workbenchPage {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 5px var(--nxt-inspector-width, 360px);
+  grid-template-columns: minmax(0, 1fr) 5px auto;
   height: 100%;
   min-height: 0;
   flex: 1;
   overflow: hidden;
   background: var(--nxt-bg-surface);
-}
-
-.workbenchPage[data-inspector-collapsed] {
-  grid-template-columns: minmax(0, 1fr) 0 0;
 }
 
 .agentCreatePage {
@@ -2863,41 +2797,16 @@
 
 .inspectorSplitter {
   background: var(--nxt-bg-sidebar);
-  opacity: 1;
-  transition: opacity var(--nxt-motion-fast) var(--nxt-ease-standard);
-}
-
-[data-inspector-collapsed] > .inspectorSplitter {
-  opacity: 0;
 }
 
 .inspectorPane {
   min-width: 0;
   min-height: 0;
-  overflow: hidden;
-  opacity: 1;
-  transform: translateX(0);
-  transition:
-    opacity var(--nxt-motion-fast) var(--nxt-ease-standard),
-    transform var(--nxt-motion-spatial) var(--nxt-ease-standard),
-    visibility 0s linear;
 }
 
-.inspectorPane[data-collapsed] {
-  visibility: hidden;
-  opacity: 0;
-  transform: translateX(10px);
-  transition:
-    opacity var(--nxt-motion-fast) var(--nxt-ease-exit),
-    transform var(--nxt-motion-standard) var(--nxt-ease-exit),
-    visibility 0s linear var(--nxt-motion-standard);
-}
-
-.inspectorPane > .inspector {
+.inspectorPane .inspector {
   box-sizing: border-box;
-  width: var(--nxt-inspector-width, 360px);
   height: 100%;
-  animation: inspector-view-enter var(--nxt-motion-standard) var(--nxt-ease-enter) both;
 }
 
 .workbenchDoc {
@@ -2998,31 +2907,6 @@
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .message,
-  .thinkBody,
-  .toolCard {
-    animation: none;
-  }
-
-  .composer {
-    animation: none;
-    transition: none;
-  }
-
-  .conversationPage,
-  .workbenchPage,
-  .inspectorPane,
-  .inspectorSplitter {
-    transition: none;
-  }
-
-  .inspectorPane > .inspector {
-    animation: none;
-  }
-
-  .optionalTests::details-content,
-  .channelDetails::details-content,
-  .workStreamDisclosure,
   .workStreamChevron,
   .contextSector {
     transition: none;
@@ -3033,31 +2917,6 @@
   }
 }
 
-:global([data-reduced-motion='true']) .message,
-:global([data-reduced-motion='true']) .thinkBody,
-:global([data-reduced-motion='true']) .toolCard {
-  animation: none;
-}
-
-:global([data-reduced-motion='true']) .composer {
-  animation: none;
-  transition: none;
-}
-
-:global([data-reduced-motion='true']) .conversationPage,
-:global([data-reduced-motion='true']) .workbenchPage,
-:global([data-reduced-motion='true']) .inspectorPane,
-:global([data-reduced-motion='true']) .inspectorSplitter {
-  transition: none;
-}
-
-:global([data-reduced-motion='true']) .inspectorPane > .inspector {
-  animation: none;
-}
-
-:global([data-reduced-motion='true']) .optionalTests::details-content,
-:global([data-reduced-motion='true']) .channelDetails::details-content,
-:global([data-reduced-motion='true']) .workStreamDisclosure,
 :global([data-reduced-motion='true']) .workStreamChevron,
 :global([data-reduced-motion='true']) .contextSector {
   transition: none;
@@ -3065,62 +2924,4 @@
 
 :global([data-reduced-motion='true']) .messageList {
   scroll-behavior: auto;
-}
-
-@keyframes message-enter {
-  from {
-    opacity: 0;
-    transform: translateY(4px);
-  }
-
-  to {
-    opacity: 1;
-    transform: translateY(0);
-  }
-}
-
-@keyframes disclosure-enter {
-  from {
-    opacity: 0;
-    transform: translateY(-2px);
-  }
-
-  to {
-    opacity: 1;
-    transform: translateY(0);
-  }
-}
-
-@keyframes composer-enter {
-  from {
-    opacity: 0;
-    transform: translateY(10px) scale(0.99);
-  }
-
-  to {
-    opacity: 1;
-    transform: translateY(0) scale(1);
-  }
-}
-
-@keyframes context-tooltip-fade {
-  from {
-    opacity: 0;
-  }
-
-  to {
-    opacity: 1;
-  }
-}
-
-@keyframes inspector-view-enter {
-  from {
-    opacity: 0;
-    transform: translateX(6px);
-  }
-
-  to {
-    opacity: 1;
-    transform: translateX(0);
-  }
 }

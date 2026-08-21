@@ -1,7 +1,7 @@
-import { AlertCircle, Inbox, LoaderCircle, RefreshCw, WifiOff } from 'lucide-react'
+import { AlertCircle, Inbox, RefreshCw, WifiOff } from 'lucide-react'
 import { useState, type ReactNode } from 'react'
 import { useProductStore } from '../product-store.js'
-import { Button } from '../ui-kit/index.js'
+import { Button, Enter, Presence, Spinner } from '../ui-kit/index.js'
 import { notify } from './notifications.js'
 import styles from './product-feedback.module.css'
 
@@ -51,10 +51,14 @@ export function InlineFeedback({
   readonly role?: 'alert' | 'status'
 }) {
   return (
-    <div className={[styles.feedback, styles[tone]].join(' ')} role={role ?? (tone === 'error' ? 'alert' : 'status')}>
+    <Enter
+      kind="fade"
+      className={[styles.feedback, styles[tone]].join(' ')}
+      role={role ?? (tone === 'error' ? 'alert' : 'status')}
+    >
       {tone === 'error' ? <AlertCircle size={15} aria-hidden="true" /> : null}
       <div>{children}</div>
-    </div>
+    </Enter>
   )
 }
 
@@ -71,11 +75,7 @@ export function EmptyState({
 }) {
   return (
     <div className={styles.emptyState}>
-      {loading ? (
-        <LoaderCircle className={styles.spinner} size={22} aria-hidden="true" />
-      ) : (
-        <Inbox size={24} aria-hidden="true" />
-      )}
+      {loading ? <Spinner size={22} /> : <Inbox size={24} aria-hidden="true" />}
       <div className={styles.emptyTitle}>{title}</div>
       <p>{description}</p>
       {action}
@@ -97,26 +97,40 @@ export function HostNotice() {
     )
   }
 
-  if (host.status === 'ready') return null
-  if (host.status === 'initializing') {
-    return (
-      <div className={[styles.hostNotice, styles.hostConnecting].join(' ')} role="status">
-        <LoaderCircle className={styles.spinner} size={15} aria-hidden="true" />
-        <strong>正在连接</strong>
-        <span>页面会在数据就绪后自动更新。</span>
-      </div>
-    )
-  }
-
-  const stale = host.status === 'stale'
   return (
-    <div className={[styles.hostNotice, stale ? styles.hostStale : styles.hostError].join(' ')} role="alert">
-      <WifiOff size={15} aria-hidden="true" />
-      <strong>{stale ? '连接不稳定' : '无法连接'}</strong>
-      <span>{stale ? '当前仍显示最近一次同步的数据。' : '当前内容可能为空或不是最新状态。'}</span>
-      <Button size="small" variant="ghost" loading={pending} loadingLabel="连接中…" onClick={() => void reconnect()}>
-        <RefreshCw size={14} aria-hidden="true" /> 重新连接
-      </Button>
-    </div>
+    <Presence>
+      {host.status === 'ready' ? null : host.status === 'initializing' ? (
+        <Enter
+          kind="fade"
+          key="initializing"
+          className={[styles.hostNotice, styles.hostConnecting].join(' ')}
+          role="status"
+        >
+          <Spinner delayMs={300} size={15} />
+          <strong>正在连接</strong>
+          <span>页面会在数据就绪后自动更新。</span>
+        </Enter>
+      ) : (
+        <Enter
+          kind="fade"
+          key={host.status}
+          className={[styles.hostNotice, host.status === 'stale' ? styles.hostStale : styles.hostError].join(' ')}
+          role="alert"
+        >
+          <WifiOff size={15} aria-hidden="true" />
+          <strong>{host.status === 'stale' ? '连接不稳定' : '无法连接'}</strong>
+          <span>{host.status === 'stale' ? '当前仍显示最近一次同步的数据。' : '当前内容可能为空或不是最新状态。'}</span>
+          <Button
+            size="small"
+            variant="ghost"
+            loading={pending}
+            loadingLabel="连接中…"
+            onClick={() => void reconnect()}
+          >
+            <RefreshCw size={14} aria-hidden="true" /> 重新连接
+          </Button>
+        </Enter>
+      )}
+    </Presence>
   )
 }

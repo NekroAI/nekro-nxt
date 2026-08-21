@@ -18,7 +18,8 @@
     color var(--nxt-motion-fast) var(--nxt-ease-standard),
     background var(--nxt-motion-fast) var(--nxt-ease-standard),
     border-color var(--nxt-motion-fast) var(--nxt-ease-standard),
-    opacity var(--nxt-motion-fast) var(--nxt-ease-standard);
+    opacity var(--nxt-motion-fast) var(--nxt-ease-standard),
+    transform var(--nxt-motion-instant) var(--nxt-ease-standard);
 }
 
 .button:disabled,
@@ -51,6 +52,12 @@
 
 .primary:not(:disabled):hover {
   background: var(--nxt-accent-hover);
+}
+
+.primary:not(:disabled):active,
+.secondary:not(:disabled):active,
+.danger:not(:disabled):active {
+  transform: scale(0.985);
 }
 
 .secondary {
@@ -130,7 +137,7 @@
 }
 
 .info {
-  color: var(--nxt-accent);
+  color: var(--nxt-info);
   background: var(--nxt-accent-soft);
 }
 
@@ -302,6 +309,7 @@
   max-height: min(320px, var(--radix-select-content-available-height));
   overflow: hidden;
   padding: 5px;
+  transform-origin: var(--radix-select-content-transform-origin);
 }
 
 .selectViewport {
@@ -333,7 +341,6 @@
   max-width: 260px;
   padding: 6px 8px;
   font-size: 11px;
-  animation: tooltipIn var(--nxt-motion-fast) var(--nxt-ease-enter);
 }
 
 .dialogOverlay {
@@ -346,34 +353,18 @@
 .dialogContent {
   position: fixed;
   z-index: var(--nxt-dialog-content-layer, calc(var(--nxt-layer-modal-base) + 1));
-  top: 50%;
-  left: 50%;
+  inset: 0;
   display: grid;
   grid-template-rows: auto minmax(0, 1fr) auto;
   width: min(520px, calc(100vw - 48px));
   max-height: min(720px, calc(100dvh - var(--nxt-space-16)));
+  height: max-content;
+  margin: auto;
   overflow: hidden;
   border: 1px solid var(--nxt-border-default);
   border-radius: var(--nxt-radius-dialog);
   background: var(--nxt-bg-elevated);
   box-shadow: var(--nxt-shadow-dialog);
-  transform: translate(-50%, -50%);
-}
-
-.dialogOverlay[data-state='open'] {
-  animation: fadeIn var(--nxt-motion-standard) var(--nxt-ease-enter);
-}
-
-.dialogOverlay[data-state='closed'] {
-  animation: fadeOut var(--nxt-motion-fast) var(--nxt-ease-exit);
-}
-
-.dialogContent[data-state='open'] {
-  animation: dialogIn var(--nxt-motion-standard) var(--nxt-ease-enter);
-}
-
-.dialogContent[data-state='closed'] {
-  animation: dialogOut var(--nxt-motion-fast) var(--nxt-ease-exit);
 }
 
 .dialogHeader {
@@ -491,10 +482,6 @@
   margin-top: var(--nxt-space-4);
 }
 
-.tabsContent[data-state='active'] {
-  animation: content-enter var(--nxt-motion-standard) var(--nxt-ease-enter) both;
-}
-
 .dropdownMenuContent {
   min-width: 196px;
   max-width: min(320px, calc(100vw - 24px));
@@ -506,7 +493,6 @@
   background: var(--nxt-bg-elevated);
   box-shadow: var(--nxt-shadow-float);
   transform-origin: var(--radix-dropdown-menu-content-transform-origin);
-  animation: fadeIn 120ms ease-out;
 }
 
 .dropdownMenuItem {
@@ -568,44 +554,122 @@
   opacity: 0;
 }
 
-@keyframes fadeIn {
-  from {
-    opacity: 0;
-  }
+.themeIcon {
+  display: grid;
+  place-items: center;
 }
 
-@keyframes fadeOut {
-  to {
-    opacity: 0;
-  }
+.fill {
+  display: flex;
+  min-width: 0;
+  min-height: 0;
+  flex: 1;
+  flex-direction: column;
 }
 
-@keyframes tooltipIn {
-  from {
-    opacity: 0;
-    transform: translateY(2px);
-  }
+.stageWrap {
+  position: relative;
+  display: grid;
+  grid-template-rows: minmax(0, 1fr);
+  grid-template-columns: minmax(0, 1fr);
+  width: 100%;
+  min-width: 0;
+  min-height: 0;
+  flex: 1;
+  isolation: isolate;
+  overflow: hidden;
 }
 
-@keyframes content-enter {
-  from {
-    opacity: 0;
-    transform: translateY(3px);
-  }
+.stageLayer {
+  grid-area: 1 / 1;
+  display: flex;
+  width: 100%;
+  height: 100%;
+  min-width: 0;
+  min-height: 0;
+  flex-direction: column;
+  background: var(--nxt-bg-surface);
 }
 
-@keyframes dialogIn {
-  from {
-    opacity: 0;
-    transform: translate(-50%, calc(-50% + 5px)) scale(0.985);
-  }
+.stageLayer[data-stage-layer='in'] {
+  position: relative;
+  z-index: 1;
 }
 
-@keyframes dialogOut {
-  to {
-    opacity: 0;
-    transform: translate(-50%, calc(-50% + 3px)) scale(0.99);
-  }
+.stageLayer[data-stage-layer='out'] {
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  pointer-events: none;
+}
+
+.navTrack {
+  position: relative;
+  isolation: isolate;
+}
+
+.navTrack > :not([data-nav-mark]) {
+  position: relative;
+  z-index: 1;
+}
+
+.navTrack a:hover,
+.navTrack a:focus-visible {
+  background-color: transparent;
+}
+
+.navMark {
+  position: absolute;
+  top: 0;
+  left: 0;
+  z-index: 0;
+  border-radius: 10px;
+  background: var(--nxt-accent-soft);
+  box-shadow: inset 2px 0 var(--nxt-accent);
+  pointer-events: none;
+}
+
+.navMarkProbe {
+  display: none;
+}
+
+.navGlyph {
+  display: grid;
+  place-items: center;
+  z-index: 1;
+}
+
+.navGlyph[data-active] {
+  color: inherit;
+}
+
+.stateRing {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  flex: 0 0 auto;
+  border: 1.5px solid currentcolor;
+  border-radius: 50%;
+}
+
+.ringNeutral {
+  color: var(--nxt-text-muted);
+  background: var(--nxt-text-muted);
+}
+
+.ringInfo {
+  color: var(--nxt-accent);
+  background: transparent;
+}
+
+.ringWarning {
+  color: var(--nxt-warning);
+  background: transparent;
+}
+
+.ringDanger {
+  color: var(--nxt-danger);
+  background: var(--nxt-danger);
 }
 
 @keyframes loadingSpin {

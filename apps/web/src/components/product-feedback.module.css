@@ -132,26 +132,6 @@
   background: var(--nxt-danger-soft);
 }
 
-.spinner {
-  animation: spin 900ms linear infinite;
-}
-
-@keyframes spin {
-  to {
-    transform: rotate(360deg);
-  }
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .spinner {
-    animation: none;
-  }
-}
-
-:global([data-reduced-motion='true']) .spinner {
-  animation: none;
-}
-
 @media (width < 1180px) {
   .pageHeader {
     gap: 16px;

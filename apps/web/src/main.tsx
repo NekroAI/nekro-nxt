@@ -7,6 +7,14 @@ import { ProductHostCoordinator } from './product-port.js'
 import { setActiveProductHost } from './product-store.js'
 import './ui-kit/tokens.css'
 
+const reducedMotion = window.localStorage.getItem('nekro-nxt.reduced-motion') === 'true'
+const persistedTheme = window.localStorage.getItem('nekro-nxt.theme')
+if (persistedTheme === 'light' || persistedTheme === 'dark') {
+  document.documentElement.dataset['theme'] = persistedTheme
+}
+document.documentElement.dataset['reducedMotion'] = String(reducedMotion)
+document.documentElement.dataset['nxtMotion'] = reducedMotion ? 'off' : 'on'
+
 const root = document.querySelector('#root')
 if (!root) throw new Error('NekroNxt Web root element is missing.')
 

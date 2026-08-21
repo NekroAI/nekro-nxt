@@ -1,10 +1,20 @@
-import { ArrowRight, Check, RefreshCw, Save, Sparkles } from 'lucide-react'
+import { ArrowRight, Check, Save, Sparkles } from 'lucide-react'
 import { useEffect, useState } from 'react'
-import { Navigate, useNavigate, useParams, useSearchParams } from 'react-router-dom'
+import { Navigate, useParams, useSearchParams } from 'react-router-dom'
+import { useNxtNavigate } from '../shell/nxt-link.js'
 import { notify } from '../components/notifications.js'
 import { EmptyState, InlineFeedback, PageHeader } from '../components/product-feedback.js'
 import { useProductStore, type LocalExtensionSummary } from '../product-store.js'
-import { Button, ConfirmDialog, Field, Input, StatusBadge, Textarea, type StatusTone } from '../ui-kit/index.js'
+import {
+  Button,
+  ConfirmDialog,
+  Field,
+  Input,
+  StageCrossfade,
+  StatusBadge,
+  Textarea,
+  type StatusTone,
+} from '../ui-kit/index.js'
 import styles from './product-pages.module.css'
 import { DynamicClientSlots } from '../dynamic-client-coordinator.js'
 
@@ -24,7 +34,7 @@ const extensionTone = (activation: LocalExtensionSummary['activation']): StatusT
 
 export function ExtensionsPage() {
   const { extensionId = '' } = useParams()
-  const navigate = useNavigate()
+  const navigate = useNxtNavigate()
   const host = useProductStore((state) => state.host)
   const extensions = useProductStore((state) => state.extensions)
   const [pendingId, setPendingId] = useState<string | null>(null)
@@ -50,93 +60,95 @@ export function ExtensionsPage() {
 
   return (
     <div className={styles.page}>
-      <PageHeader
-        title={selected?.name ?? '扩展库'}
-        meta={selected ? `版本 ${selected.revision} · ${extensions.length} 个本地扩展` : undefined}
-        actions={
-          selected ? (
-            <StatusBadge tone={extensionTone(selected.activation)}>{extensionLabel(selected.activation)}</StatusBadge>
-          ) : undefined
-        }
-      />
-      {extensions.length === 0 ? (
-        <EmptyState
-          loading={host.status === 'initializing'}
-          title={host.status === 'initializing' ? '正在读取扩展' : '从一次动态运行开始'}
-          description={
-            host.status === 'error'
-              ? '当前无法读取扩展，请重新连接后再试。'
-              : '在创造工作台验证运行结果后，可将它保存为可追踪的本地扩展。'
-          }
-          action={
-            host.status === 'ready' ? (
-              <Button onClick={() => void navigate('/work/creator')}>
-                打开创造工作台 <ArrowRight size={14} aria-hidden="true" />
-              </Button>
+      <StageCrossfade swapKey={selected?.id ?? 'empty'}>
+        <PageHeader
+          title={selected?.name ?? '扩展库'}
+          meta={selected ? `版本 ${selected.revision} · ${extensions.length} 个本地扩展` : undefined}
+          actions={
+            selected ? (
+              <StatusBadge tone={extensionTone(selected.activation)}>{extensionLabel(selected.activation)}</StatusBadge>
             ) : undefined
           }
         />
-      ) : selected ? (
-        <section className={styles.extensionWorkspace}>
-          <p className={styles.workspaceLead}>{selected.description || '没有补充说明。'}</p>
-          <ol className={[styles.lifecycleSteps, styles.lifecycleStepsCompact].join(' ')} aria-label="扩展生命周期">
-            <li data-done="">
+        {extensions.length === 0 ? (
+          <EmptyState
+            loading={host.status === 'initializing'}
+            title={host.status === 'initializing' ? '正在读取扩展' : '从一次动态运行开始'}
+            description={
+              host.status === 'error'
+                ? '当前无法读取扩展，请重新连接后再试。'
+                : '在创造工作台验证运行结果后，可将它保存为可追踪的本地扩展。'
+            }
+            action={
+              host.status === 'ready' ? (
+                <Button onClick={() => void navigate('/work/creator')}>
+                  打开创造工作台 <ArrowRight size={14} aria-hidden="true" />
+                </Button>
+              ) : undefined
+            }
+          />
+        ) : selected ? (
+          <section className={styles.extensionWorkspace}>
+            <p className={styles.workspaceLead}>{selected.description || '没有补充说明。'}</p>
+            <ol className={[styles.lifecycleSteps, styles.lifecycleStepsCompact].join(' ')} aria-label="扩展生命周期">
+              <li data-done="">
+                <span>
+                  <Check size={12} aria-hidden="true" />
+                </span>
+                <small>动态运行</small>
+              </li>
+              <li data-done="">
+                <span>
+                  <Check size={12} aria-hidden="true" />
+                </span>
+                <small>保存版本</small>
+              </li>
+              <li data-done={selected.activation === '已激活' ? '' : undefined}>
+                <span>{selected.activation === '已激活' ? <Check size={12} aria-hidden="true" /> : '3'}</span>
+                <small>启用给智能体</small>
+              </li>
+            </ol>
+            <dl className={styles.facts}>
+              <dt>当前保存版本</dt>
+              <dd>版本 {selected.revision}</dd>
+              <dt>目标智能体</dt>
+              <dd>{selected.targetAgent || '尚未指定'}</dd>
+              <dt>启用状态</dt>
+              <dd>{extensionLabel(selected.activation)}</dd>
+            </dl>
+            <div className={styles.sectionDivider} />
+            <div>
+              <div className={styles.sectionHeading}>贡献能力</div>
+              {selected.contributions.length > 0 ? (
+                <div className={styles.tagList}>
+                  {selected.contributions.map((item) => (
+                    <span key={item}>{item}</span>
+                  ))}
+                </div>
+              ) : (
+                <p className={styles.secondaryText}>当前快照尚未提供可展示的贡献内容。</p>
+              )}
+            </div>
+            <div className={styles.sectionActionRow}>
               <span>
-                <Check size={12} aria-hidden="true" />
+                <strong>
+                  {selected.activation === '已激活' ? '这个智能体正在使用该版本' : '保存不会自动扩大作用范围'}
+                </strong>
+                <small>启用与停用是独立操作。</small>
               </span>
-              <small>动态运行</small>
-            </li>
-            <li data-done="">
-              <span>
-                <Check size={12} aria-hidden="true" />
-              </span>
-              <small>保存版本</small>
-            </li>
-            <li data-done={selected.activation === '已激活' ? '' : undefined}>
-              <span>{selected.activation === '已激活' ? <Check size={12} aria-hidden="true" /> : '3'}</span>
-              <small>启用给智能体</small>
-            </li>
-          </ol>
-          <dl className={styles.facts}>
-            <dt>当前保存版本</dt>
-            <dd>版本 {selected.revision}</dd>
-            <dt>目标智能体</dt>
-            <dd>{selected.targetAgent || '尚未指定'}</dd>
-            <dt>启用状态</dt>
-            <dd>{extensionLabel(selected.activation)}</dd>
-          </dl>
-          <div className={styles.sectionDivider} />
-          <div>
-            <div className={styles.sectionHeading}>贡献能力</div>
-            {selected.contributions.length > 0 ? (
-              <div className={styles.tagList}>
-                {selected.contributions.map((item) => (
-                  <span key={item}>{item}</span>
-                ))}
-              </div>
-            ) : (
-              <p className={styles.secondaryText}>当前快照尚未提供可展示的贡献内容。</p>
-            )}
-          </div>
-          <div className={styles.sectionActionRow}>
-            <span>
-              <strong>
-                {selected.activation === '已激活' ? '这个智能体正在使用该版本' : '保存不会自动扩大作用范围'}
-              </strong>
-              <small>启用与停用是独立操作。</small>
-            </span>
-            <Button
-              variant={selected.activation === '已激活' ? 'danger' : 'primary'}
-              loading={pendingId === selected.id}
-              loadingLabel="处理中…"
-              disabled={pendingId !== null}
-              onClick={() => void changeActivation(selected)}
-            >
-              {selected.activation === '已激活' ? '停用扩展' : '启用给智能体'}
-            </Button>
-          </div>
-        </section>
-      ) : null}
+              <Button
+                variant={selected.activation === '已激活' ? 'danger' : 'primary'}
+                loading={pendingId === selected.id}
+                loadingLabel="处理中…"
+                disabled={pendingId !== null}
+                onClick={() => void changeActivation(selected)}
+              >
+                {selected.activation === '已激活' ? '停用扩展' : '启用给智能体'}
+              </Button>
+            </div>
+          </section>
+        ) : null}
+      </StageCrossfade>
     </div>
   )
 }
@@ -153,7 +165,7 @@ export function CreatorPage() {
   const host = useProductStore((state) => state.host)
   const dynamic = useProductStore((state) => state.dynamic)
   const agents = useProductStore((state) => state.agents)
-  const navigate = useNavigate()
+  const navigate = useNxtNavigate()
   const [searchParams] = useSearchParams()
   const requestedAgentId = searchParams.get('agent') ?? ''
   const [reviewIndex, setReviewIndex] = useState<number | null>(null)
@@ -460,90 +472,6 @@ export function CreatorPage() {
           </div>
         </ConfirmDialog>
       ) : null}
-    </div>
-  )
-}
-
-export function RuntimePage() {
-  const host = useProductStore((state) => state.host)
-  const agents = useProductStore((state) => state.agents)
-  const dynamic = useProductStore((state) => state.dynamic)
-  const activeAgents = agents.filter((agent) => agent.state !== '空闲')
-  const [refreshPending, setRefreshPending] = useState(false)
-
-  const refresh = async (): Promise<void> => {
-    if (refreshPending) return
-    setRefreshPending(true)
-    try {
-      await useProductStore.getState().refreshHost()
-    } catch (error) {
-      notify(`刷新失败：${error instanceof Error ? error.message : String(error)}`, 'error', 'runtime-refresh')
-    } finally {
-      setRefreshPending(false)
-    }
-  }
-
-  return (
-    <div className={styles.page}>
-      <PageHeader
-        title="运行"
-        meta={activeAgents.length > 0 || dynamic.length > 0 ? '来自当前快照' : undefined}
-        actions={
-          <Button loading={refreshPending} loadingLabel="刷新中…" onClick={() => void refresh()}>
-            <RefreshCw size={14} aria-hidden="true" /> 刷新状态
-          </Button>
-        }
-      />
-      {activeAgents.length === 0 && dynamic.length === 0 ? (
-        <EmptyState
-          loading={host.status === 'initializing'}
-          title={host.status === 'initializing' ? '正在读取运行状态' : '当前没有活跃任务'}
-          description="智能体开始处理消息或动态创造后，状态会显示在这里。"
-        />
-      ) : (
-        <div className={styles.runtimeColumns}>
-          <section className={styles.section}>
-            <div className={styles.sectionHeading}>智能体状态</div>
-            {activeAgents.length === 0 ? (
-              <InlineFeedback tone="info">当前没有智能体正在处理任务。</InlineFeedback>
-            ) : (
-              <div className={styles.compactList}>
-                {activeAgents.map((agent) => (
-                  <div className={styles.staticRow} key={agent.id}>
-                    <span>
-                      <strong>{agent.name}</strong>
-                      <small>{agent.channels.length} 个频道</small>
-                    </span>
-                    <StatusBadge tone={agent.state === '不可用' ? 'error' : 'info'}>{agent.state}</StatusBadge>
-                  </div>
-                ))}
-              </div>
-            )}
-          </section>
-          <section className={styles.section}>
-            <div className={styles.sectionHeading}>动态创造</div>
-            {dynamic.length === 0 ? (
-              <InlineFeedback tone="info">当前没有动态创造任务。</InlineFeedback>
-            ) : (
-              <div className={styles.compactList}>
-                {dynamic.map((item, index) => {
-                  const state = dynamicStatus(item.status)
-                  const agentName = agents.find((agent) => agent.id === item.agentId)?.name ?? '未命名智能体'
-                  return (
-                    <div className={styles.staticRow} key={`${item.agentId}-${index}`}>
-                      <span>
-                        <strong>{agentName}</strong>
-                        <small>动态运行 {index + 1}</small>
-                      </span>
-                      <StatusBadge tone={state.tone}>{state.label}</StatusBadge>
-                    </div>
-                  )
-                })}
-              </div>
-            )}
-          </section>
-        </div>
-      )}
     </div>
   )
 }

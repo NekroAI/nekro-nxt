@@ -39,8 +39,8 @@ const capabilities = [
 const agents = {
   maple: {
     id: 'maple',
-    name: '浅枫',
-    glyph: '浅',
+    name: '小奈',
+    glyph: '奈',
     tone: 'a',
     persona: '群里的值班编辑。先核对事实，再给一版能直接发出去的稿。',
     model: 'deepseek',
@@ -56,7 +56,7 @@ const agents = {
   },
   safe: {
     id: 'safe',
-    name: '浅枫安全版',
+    name: '小奈安全版',
     glyph: '安',
     tone: 'b',
     persona: '只做核对，不改群公告，不跑命令。',
@@ -123,7 +123,7 @@ const extensions = {
     name: '网页摘要',
     description: '读取网页并输出带引用的摘要。',
     revision: 3,
-    targetAgent: '浅枫',
+    targetAgent: '小奈',
     agentId: 'maple',
     activation: '已启用',
     contributions: ['网页读取', '摘要'],
@@ -302,8 +302,8 @@ const turn2 = [
     summary: '值班表.csv',
     path: '值班表.csv',
     input: '{\n  "path": "值班表.csv"\n}',
-    lines: [['4', '今日值班：浅枫']],
-    output: '今日值班：浅枫',
+    lines: [['4', '今日值班：小奈']],
+    output: '今日值班：小奈',
     duration: '0.33s',
     state: 'ok',
   },
@@ -745,8 +745,8 @@ function renderChat() {
       <div class="day">今天</div>
       ${msg('c', '观察员', '16:08', '今日值班表核对过了吗？')}
       ${agentMsg('16:08', '今日值班已核对。')}
-      ${msg('m', '米栗', '18:41', '<span class="mention">@浅枫</span> 帮看一下今晚活动公告该怎么改。')}
-      ${msg('c', '阿和', '18:42', '顺便把时间改到 20:00。')}
+      ${msg('m', '成员甲', '18:41', '<span class="mention">@小奈</span> 帮看一下今晚活动公告该怎么改。')}
+      ${msg('c', '成员乙', '18:42', '顺便把时间改到 20:00。')}
       ${running() ? '<div class="sys">2 条新消息已收录，将在当前工具结束后进入后续处理。</div>' : ''}
       <div class="work">
         ${renderThink()}
@@ -786,7 +786,7 @@ function agentMsg(time, body, id) {
     <article class="msg" ${id ? `id="${id}"` : ''}>
       ${agentMark(agents.maple, { live: false, size: 'lg' })}
       <div>
-        <div class="msg-meta"><strong>浅枫</strong><time>${time}</time><span class="badge success">已发送</span></div>
+        <div class="msg-meta"><strong>小奈</strong><time>${time}</time><span class="badge success">已发送</span></div>
         <div class="msg-body">${esc(body)}</div>
       </div>
     </article>`
@@ -848,7 +848,7 @@ function ledger() {
   const rows = [
     { id: 't2-user', turn: 2, turnStart: true, kind: 'user', kindLabel: 'USER', name: '观察员', text: '今日值班表核对过了吗？', ms: '—' },
     ...turn2.map((tool, index) => ledgerTool(tool, 2, index === 0)),
-    { id: 't3-user', turn: 3, turnStart: true, kind: 'user', kindLabel: 'USER', name: '米栗', text: '@浅枫 帮看一下今晚活动公告该怎么改。', ms: '—' },
+    { id: 't3-user', turn: 3, turnStart: true, kind: 'user', kindLabel: 'USER', name: '成员甲', text: '@小奈 帮看一下今晚活动公告该怎么改。', ms: '—' },
     { ...think, turn: 3, turnStart: false, kind: 'message', kindLabel: 'MESSAGE', text: think.body.replaceAll('\n', ' '), ms: '1204ms' },
     ...liveTools().map((tool) => ledgerTool(tool, 3, false)),
   ]
@@ -1594,7 +1594,7 @@ const handleAction = (action, button) => {
   }
   if (action === 'pin') {
     extensions.summary.agentId = 'maple'
-    extensions.summary.targetAgent = '浅枫'
+    extensions.summary.targetAgent = '小奈'
     extensions.summary.activation = '已启用'
     toast('网页摘要已启用。')
     return true

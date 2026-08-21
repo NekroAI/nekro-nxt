@@ -5,6 +5,7 @@ import * as Switch from '@radix-ui/react-switch'
 import * as RadixTabs from '@radix-ui/react-tabs'
 import * as RadixTooltip from '@radix-ui/react-tooltip'
 import { Check, ChevronDown, LoaderCircle, X } from 'lucide-react'
+import { AnimatePresence, motion } from 'motion/react'
 import {
   cloneElement,
   createContext,
@@ -29,7 +30,33 @@ import {
 } from 'react'
 import { canCloseDialog, type DialogCloseReason } from './dialog-policy.js'
 import { useFloatingLayer, useModalLayer } from './layers.js'
+import { dialogVariants, overlayVariants, popoverVariants, tooltipVariants } from './motion.js'
+import { useNxtReducedMotion } from './presence.js'
 import styles from './ui.module.css'
+
+const MotionDialogOverlay = motion.create(RadixDialog.Overlay)
+const MotionDialogContent = motion.create(RadixDialog.Content)
+const MotionTooltipContent = motion.create(RadixTooltip.Content)
+const MotionSelectContent = motion.create(Select.Content)
+
+export {
+  AgentStateRing,
+  Disclosure,
+  Enter,
+  NavGlyph,
+  NavMark,
+  NavMarkGroup,
+  NxtMotionProvider,
+  Presence,
+  RouteTransition,
+  SidePane,
+  Spinner,
+  StageCrossfade,
+  ThemeIconSwap,
+  useNxtReducedMotion,
+  type AgentVisualState,
+  type EnterKind,
+} from './presence.js'
 
 export type StatusTone = 'neutral' | 'success' | 'warning' | 'error' | 'info' | 'unknown'
 
@@ -40,19 +67,23 @@ type ButtonProps = ButtonHTMLAttributes<HTMLButtonElement> & {
   readonly loadingLabel?: string
 }
 
-export function Button({
-  variant = 'secondary',
-  size = 'normal',
-  type = 'button',
-  className,
-  disabled,
-  loading = false,
-  loadingLabel,
-  children,
-  ...props
-}: ButtonProps) {
+export const Button = forwardRef<HTMLButtonElement, ButtonProps>(function Button(
+  {
+    variant = 'secondary',
+    size = 'normal',
+    type = 'button',
+    className,
+    disabled,
+    loading = false,
+    loadingLabel,
+    children,
+    ...props
+  },
+  ref,
+) {
   return (
     <button
+      ref={ref}
       type={type}
       className={[styles.button, styles[variant], size === 'small' ? styles.small : '', className]
         .filter(Boolean)
@@ -66,7 +97,7 @@ export function Button({
       {loading ? (loadingLabel ?? children) : children}
     </button>
   )
-}
+})
 
 export const IconButton = forwardRef<
   HTMLButtonElement,
@@ -435,10 +466,18 @@ function SelectControl({
   disabled,
   placeholder,
 }: Omit<SelectFieldProps, 'id' | 'label' | 'helper' | 'error'>) {
+  const reduce = useNxtReducedMotion()
   const field = useFieldA11y({})
   const floatingLayer = useFloatingLayer()
+  const [open, setOpen] = useState(false)
   return (
-    <Select.Root value={value} onValueChange={onValueChange} disabled={disabled ?? false}>
+    <Select.Root
+      value={value}
+      onValueChange={onValueChange}
+      disabled={disabled ?? false}
+      open={open}
+      onOpenChange={setOpen}
+    >
       <Select.Trigger
         id={field.id}
         className={styles.selectTrigger}
@@ -447,36 +486,47 @@ function SelectControl({
         aria-errormessage={field.errorMessage}
         aria-invalid={field.invalid}
       >
-        <Select.Value placeholder={placeholder} />
+        <Select.Value placeholder={placeholder}>
+          {options.find((option) => option.value === value)?.label ?? placeholder}
+        </Select.Value>
         <Select.Icon>
           <ChevronDown size={14} aria-hidden="true" />
         </Select.Icon>
       </Select.Trigger>
-      <Select.Portal>
-        <Select.Content
-          className={styles.selectContent}
-          position="popper"
-          sideOffset={5}
-          style={{ zIndex: floatingLayer }}
-          data-nxt-floating-layer={floatingLayer}
-        >
-          <Select.Viewport className={styles.selectViewport}>
-            {options.map((option) => (
-              <Select.Item
-                className={styles.selectItem}
-                value={option.value}
-                key={option.value}
-                disabled={option.disabled ?? false}
-              >
-                <Select.ItemText>{option.label}</Select.ItemText>
-                <Select.ItemIndicator>
-                  <Check size={13} aria-hidden="true" />
-                </Select.ItemIndicator>
-              </Select.Item>
-            ))}
-          </Select.Viewport>
-        </Select.Content>
-      </Select.Portal>
+      <AnimatePresence>
+        {open ? (
+          <Select.Portal forceMount key="select">
+            <MotionSelectContent
+              className={styles.selectContent}
+              position="popper"
+              sideOffset={5}
+              style={{ zIndex: floatingLayer }}
+              data-nxt-floating-layer={floatingLayer}
+              forceMount
+              variants={popoverVariants}
+              initial={reduce ? false : 'hidden'}
+              animate="visible"
+              exit={reduce ? { opacity: 1, scale: 1, transition: { duration: 0 } } : 'exit'}
+            >
+              <Select.Viewport className={styles.selectViewport}>
+                {options.map((option) => (
+                  <Select.Item
+                    className={styles.selectItem}
+                    value={option.value}
+                    key={option.value}
+                    disabled={option.disabled ?? false}
+                  >
+                    <Select.ItemText>{option.label}</Select.ItemText>
+                    <Select.ItemIndicator>
+                      <Check size={13} aria-hidden="true" />
+                    </Select.ItemIndicator>
+                  </Select.Item>
+                ))}
+              </Select.Viewport>
+            </MotionSelectContent>
+          </Select.Portal>
+        ) : null}
+      </AnimatePresence>
     </Select.Root>
   )
 }
@@ -609,6 +659,7 @@ export function Dialog({
   onCloseAutoFocus,
   dialogRole = 'dialog',
 }: DialogProps) {
+  const reduce = useNxtReducedMotion()
   const layer = useModalLayer(open)
   const closeReason = useRef<DialogCloseReason>('close-button')
   const previouslyFocused = useRef<HTMLElement | null>(null)
@@ -630,65 +681,81 @@ export function Dialog({
         else requestClose(closeReason.current)
       }}
     >
-      <RadixDialog.Portal>
-        <RadixDialog.Overlay
-          className={styles.dialogOverlay}
-          style={layerVariables}
-          data-nxt-modal-order={layer.order}
-        />
-        <RadixDialog.Content
-          role={dialogRole}
-          className={[styles.dialogContent, className].filter(Boolean).join(' ')}
-          style={layerVariables}
-          data-nxt-modal-order={layer.order}
-          onEscapeKeyDown={(event) => {
-            closeReason.current = 'escape'
-            if (!canCloseDialog(pending, 'escape')) event.preventDefault()
-          }}
-          onPointerDownOutside={(event) => {
-            closeReason.current = 'outside'
-            if (!canCloseDialog(pending, 'outside')) event.preventDefault()
-          }}
-          onOpenAutoFocus={(event) => {
-            previouslyFocused.current = document.activeElement instanceof HTMLElement ? document.activeElement : null
-            onOpenAutoFocus?.(event)
-          }}
-          onCloseAutoFocus={(event) => {
-            onCloseAutoFocus?.(event)
-            if (!event.defaultPrevented && previouslyFocused.current?.isConnected) {
-              event.preventDefault()
-              previouslyFocused.current.focus()
-            }
-          }}
-        >
-          <DialogLayout
-            title={<RadixDialog.Title className={styles.dialogTitle}>{title}</RadixDialog.Title>}
-            description={
-              description ? (
-                <RadixDialog.Description className={styles.dialogDescription}>{description}</RadixDialog.Description>
-              ) : undefined
-            }
-            closeButton={
-              <RadixDialog.Close asChild>
-                <button
-                  type="button"
-                  className={styles.dialogClose}
-                  aria-label={closeLabel}
-                  disabled={pending}
-                  onClick={() => {
-                    closeReason.current = 'close-button'
-                  }}
+      <AnimatePresence>
+        {open ? (
+          <RadixDialog.Portal forceMount key="dialog">
+            <div style={layerVariables}>
+              <MotionDialogOverlay
+                className={styles.dialogOverlay}
+                data-nxt-modal-order={layer.order}
+                variants={overlayVariants}
+                initial={reduce ? false : 'hidden'}
+                animate="visible"
+                exit={reduce ? { opacity: 1, transition: { duration: 0 } } : 'exit'}
+              />
+              <MotionDialogContent
+                forceMount
+                role={dialogRole}
+                className={[styles.dialogContent, className].filter(Boolean).join(' ')}
+                data-nxt-modal-order={layer.order}
+                variants={dialogVariants}
+                initial={reduce ? false : 'hidden'}
+                animate="visible"
+                exit={reduce ? { opacity: 1, scale: 1, transition: { duration: 0 } } : 'exit'}
+                onEscapeKeyDown={(event) => {
+                  closeReason.current = 'escape'
+                  if (!canCloseDialog(pending, 'escape')) event.preventDefault()
+                }}
+                onPointerDownOutside={(event) => {
+                  closeReason.current = 'outside'
+                  if (!canCloseDialog(pending, 'outside')) event.preventDefault()
+                }}
+                onOpenAutoFocus={(event) => {
+                  previouslyFocused.current =
+                    document.activeElement instanceof HTMLElement ? document.activeElement : null
+                  onOpenAutoFocus?.(event)
+                }}
+                onCloseAutoFocus={(event) => {
+                  onCloseAutoFocus?.(event)
+                  if (!event.defaultPrevented && previouslyFocused.current?.isConnected) {
+                    event.preventDefault()
+                    previouslyFocused.current.focus()
+                  }
+                }}
+              >
+                <DialogLayout
+                  title={<RadixDialog.Title className={styles.dialogTitle}>{title}</RadixDialog.Title>}
+                  description={
+                    description ? (
+                      <RadixDialog.Description className={styles.dialogDescription}>
+                        {description}
+                      </RadixDialog.Description>
+                    ) : undefined
+                  }
+                  closeButton={
+                    <RadixDialog.Close asChild>
+                      <button
+                        type="button"
+                        className={styles.dialogClose}
+                        aria-label={closeLabel}
+                        disabled={pending}
+                        onClick={() => {
+                          closeReason.current = 'close-button'
+                        }}
+                      >
+                        <X size={17} aria-hidden="true" />
+                      </button>
+                    </RadixDialog.Close>
+                  }
+                  footer={footer}
                 >
-                  <X size={17} aria-hidden="true" />
-                </button>
-              </RadixDialog.Close>
-            }
-            footer={footer}
-          >
-            {children}
-          </DialogLayout>
-        </RadixDialog.Content>
-      </RadixDialog.Portal>
+                  {children}
+                </DialogLayout>
+              </MotionDialogContent>
+            </div>
+          </RadixDialog.Portal>
+        ) : null}
+      </AnimatePresence>
     </RadixDialog.Root>
   )
 }
@@ -790,22 +857,60 @@ export const Tabs = {
   Content: TabsContent,
 }
 
+type DropdownMenuRootProps = ComponentPropsWithoutRef<typeof RadixDropdownMenu.Root>
 type DropdownMenuContentProps = ComponentPropsWithoutRef<typeof RadixDropdownMenu.Content>
 type DropdownMenuItemProps = ComponentPropsWithoutRef<typeof RadixDropdownMenu.Item>
 
+const MenuOpenContext = createContext(false)
+
+function DropdownMenuRoot(props: DropdownMenuRootProps) {
+  const { children, open: openProp, defaultOpen = false, ...rest } = props
+  const [uncontrolled, setUncontrolled] = useState(defaultOpen)
+  const open = openProp ?? uncontrolled
+  return (
+    <RadixDropdownMenu.Root
+      {...rest}
+      open={open}
+      onOpenChange={(next) => {
+        if (openProp === undefined) setUncontrolled(next)
+        props.onOpenChange?.(next)
+      }}
+    >
+      <MenuOpenContext.Provider value={open}>{children}</MenuOpenContext.Provider>
+    </RadixDropdownMenu.Root>
+  )
+}
+
 const DropdownMenuContent = forwardRef<ElementRef<typeof RadixDropdownMenu.Content>, DropdownMenuContentProps>(
-  function DropdownMenuContent({ className, sideOffset = 6, ...props }, ref) {
+  function DropdownMenuContent({ className, sideOffset = 6, children, ...props }, ref) {
+    const reduce = useNxtReducedMotion()
+    const open = useContext(MenuOpenContext)
     const floatingLayer = useFloatingLayer()
     return (
-      <RadixDropdownMenu.Portal>
-        <RadixDropdownMenu.Content
-          ref={ref}
-          className={[styles.dropdownMenuContent, className].filter(Boolean).join(' ')}
-          sideOffset={sideOffset}
-          style={{ zIndex: floatingLayer }}
-          {...props}
-        />
-      </RadixDropdownMenu.Portal>
+      <AnimatePresence>
+        {open ? (
+          <RadixDropdownMenu.Portal forceMount key="menu">
+            <RadixDropdownMenu.Content
+              ref={ref}
+              forceMount
+              className={[styles.dropdownMenuContent, className].filter(Boolean).join(' ')}
+              sideOffset={sideOffset}
+              style={{ zIndex: floatingLayer }}
+              {...props}
+            >
+              <motion.div
+                variants={popoverVariants}
+                initial={reduce ? false : 'hidden'}
+                animate="visible"
+                exit={reduce ? { opacity: 1, scale: 1, transition: { duration: 0 } } : 'exit'}
+                style={{ transformOrigin: 'inherit' }}
+              >
+                {children}
+              </motion.div>
+            </RadixDropdownMenu.Content>
+          </RadixDropdownMenu.Portal>
+        ) : null}
+      </AnimatePresence>
     )
   },
 )
@@ -823,7 +928,7 @@ const DropdownMenuItem = forwardRef<ElementRef<typeof RadixDropdownMenu.Item>, D
 )
 
 export const DropdownMenu = {
-  Root: RadixDropdownMenu.Root,
+  Root: DropdownMenuRoot,
   Trigger: RadixDropdownMenu.Trigger,
   Content: DropdownMenuContent,
   Item: DropdownMenuItem,
@@ -831,29 +936,76 @@ export const DropdownMenu = {
   Separator: RadixDropdownMenu.Separator,
 }
 
+type TooltipRootProps = ComponentPropsWithoutRef<typeof RadixTooltip.Root>
 type TooltipContentProps = ComponentPropsWithoutRef<typeof RadixTooltip.Content>
+type TooltipPortalProps = ComponentPropsWithoutRef<typeof RadixTooltip.Portal>
+
+const TooltipOpenContext = createContext(false)
+
+function TooltipRoot(props: TooltipRootProps) {
+  const { children, open: openProp, defaultOpen = false, ...rest } = props
+  const [uncontrolled, setUncontrolled] = useState(defaultOpen)
+  const open = openProp ?? uncontrolled
+  return (
+    <RadixTooltip.Root
+      {...rest}
+      open={open}
+      onOpenChange={(next) => {
+        if (openProp === undefined) setUncontrolled(next)
+        props.onOpenChange?.(next)
+      }}
+    >
+      <TooltipOpenContext.Provider value={open}>{children}</TooltipOpenContext.Provider>
+    </RadixTooltip.Root>
+  )
+}
+
+function TooltipPortal({ children, ...props }: TooltipPortalProps) {
+  const open = useContext(TooltipOpenContext)
+  return (
+    <AnimatePresence>
+      {open ? (
+        <RadixTooltip.Portal forceMount key="tooltip" {...props}>
+          {children}
+        </RadixTooltip.Portal>
+      ) : null}
+    </AnimatePresence>
+  )
+}
 
 const TooltipContent = forwardRef<ElementRef<typeof RadixTooltip.Content>, TooltipContentProps>(function TooltipContent(
-  { className, style, ...props },
+  { className, children, sideOffset = 6, side = 'top', align = 'center', alignOffset, collisionPadding },
   ref,
 ) {
+  const reduce = useNxtReducedMotion()
   const floatingLayer = useFloatingLayer()
   return (
-    <RadixTooltip.Content
+    <MotionTooltipContent
       ref={ref}
+      forceMount
+      side={side}
+      align={align}
+      {...(alignOffset === undefined ? {} : { alignOffset })}
+      {...(collisionPadding === undefined ? {} : { collisionPadding })}
+      sideOffset={sideOffset}
       className={[styles.tooltipContent, className].filter(Boolean).join(' ')}
-      style={{ ...style, zIndex: floatingLayer }}
       data-nxt-floating-layer={floatingLayer}
-      {...props}
-    />
+      variants={tooltipVariants}
+      initial={reduce ? false : 'hidden'}
+      animate="visible"
+      exit={reduce ? { opacity: 1, y: 0, transition: { duration: 0 } } : 'exit'}
+      style={{ zIndex: floatingLayer }}
+    >
+      {children}
+    </MotionTooltipContent>
   )
 })
 
 export const Tooltip = {
   Provider: RadixTooltip.Provider,
-  Root: RadixTooltip.Root,
+  Root: TooltipRoot,
   Trigger: RadixTooltip.Trigger,
-  Portal: RadixTooltip.Portal,
+  Portal: TooltipPortal,
   Content: TooltipContent,
   Arrow: RadixTooltip.Arrow,
 }

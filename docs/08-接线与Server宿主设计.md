@@ -49,7 +49,7 @@
 ## 3. Web 与 Server
 
 - `apps/web/src/http-host.ts` 实现 `ProductHostPort`。`execute` 覆盖创建智能体、发消息、改能力、扩展启停、从动态保存、创建/测试连接、修改连接别名和动态审批；连接别名更新成功后重新读取权威快照，失败不发布前端成功状态。
-- 添加连接先选用户可创建的平台，再按版本化 schema 渲染表单；系统托管 Web 不出现在创建目录。
+- 添加平台连接先选用户可创建的平台，再按版本化 schema 渲染表单；从某适配器详情「再添加一个账号」可跳过选平台。系统托管 Web 不出现在创建目录。
 - 外部频道未发现时说明先向机器人账号发一条消息。`POST /api/channels/:id/messages`：网页频道入站交给智能体；外部频道在已绑定且允许主动发送时，以机器人账号出站，并注入管理员来源的系统事实。
 - `apps/server/src/main.ts` 使用 `NEKRO_DATA`、`NEKRO_PORT`（默认 4960）。开发工作区为 `<dataRoot>/workspaces/<agentId>/`。
 - 启动恢复持久 Web Connection、Extension Activation 和 QQ Connection 的凭据引用；单个 Connection 故障不阻断其他恢复。

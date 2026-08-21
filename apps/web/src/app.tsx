@@ -1,6 +1,6 @@
 import { Boxes, Cable, MessageSquare, Monitor, Moon, Settings, Sun } from 'lucide-react'
 import { Component, useEffect, useMemo, useState, type CSSProperties, type ErrorInfo, type ReactNode } from 'react'
-import { Navigate, NavLink, Outlet, Route, Routes, useLocation, useParams } from 'react-router-dom'
+import { Navigate, Outlet, Route, Routes, useLocation, useParams } from 'react-router-dom'
 import styles from './app.module.css'
 import { NotificationCenter } from './components/notifications.js'
 import { EmptyState, HostNotice } from './components/product-feedback.js'
@@ -16,8 +16,22 @@ import {
 } from './pages/product-pages.js'
 import { useProductStore, type ProductHostStatus } from './product-store.js'
 import { isWorkPath, workHomePath } from './shell/last-channel.js'
+import { CommandPalette } from './shell/command-palette.js'
+import { NxtNavLink } from './shell/nxt-link.js'
 import { ObjectPane } from './shell/object-pane.js'
-import { Button, IconButton, ResizeHandle, Tooltip, type StatusTone } from './ui-kit/index.js'
+import { canvasKind } from './shell/route-kind.js'
+import {
+  Button,
+  IconButton,
+  NavGlyph,
+  NavMarkGroup,
+  NxtMotionProvider,
+  ResizeHandle,
+  RouteTransition,
+  ThemeIconSwap,
+  Tooltip,
+  type StatusTone,
+} from './ui-kit/index.js'
 import { OBJECT_PANE_WIDTH, useUiPreferences } from './ui-preferences.js'
 
 const modes = [
@@ -108,41 +122,44 @@ function DesktopShell() {
   return (
     <div className={styles.shell} style={shellStyle}>
       <header className={styles.windowTopBar} data-window-top-bar>
-        <div className={styles.windowBrand} aria-label="NekroNxt">
+        <div className={styles.windowBrand}>
           <span className={styles.mark} aria-hidden="true" />
         </div>
         <div className={styles.windowObjectTitle}>NekroNxt</div>
       </header>
       <div className={styles.shellBody} data-shell-body>
         <aside className={styles.rail} aria-label="模式">
-          <nav aria-label="主导航">
-            {modes.map(({ to, label, icon: Icon, work }) => (
-              <NavLink
-                to={to}
-                aria-label={label}
-                title={label}
-                className={() => {
-                  const active = work ? isWorkPath(location.pathname) : location.pathname.startsWith(to)
-                  return [styles.railBtn, active ? styles.railBtnActive : ''].filter(Boolean).join(' ')
-                }}
-                aria-current={
-                  (work ? isWorkPath(location.pathname) : location.pathname.startsWith(to)) ? 'page' : undefined
-                }
-                key={label}
-              >
-                <Icon size={18} strokeWidth={1.8} aria-hidden="true" />
-              </NavLink>
-            ))}
-          </nav>
+          <NavMarkGroup id="rail">
+            <nav aria-label="主导航">
+              {modes.map(({ to, label, icon: Icon, work }) => {
+                const active = work ? isWorkPath(location.pathname) : location.pathname.startsWith(to)
+                return (
+                  <NxtNavLink
+                    to={to}
+                    aria-label={label}
+                    title={label}
+                    className={() => [styles.railBtn, active ? styles.railBtnActive : ''].filter(Boolean).join(' ')}
+                    aria-current={active ? 'page' : undefined}
+                    data-nav-active={active ? '' : undefined}
+                    key={label}
+                  >
+                    <NavGlyph active={active}>
+                      <Icon size={18} strokeWidth={1.8} aria-hidden="true" />
+                    </NavGlyph>
+                  </NxtNavLink>
+                )
+              })}
+            </nav>
+          </NavMarkGroup>
           <div className={styles.railSpacer} />
           <IconButton
             label={`主题：${themeLabel}；切换为${nextThemeLabel}`}
             className={styles.railTheme}
             onClick={cycleTheme}
           >
-            <span className={styles.themeIcon} key={theme}>
+            <ThemeIconSwap swapKey={theme}>
               <ThemeIcon size={16} strokeWidth={1.8} aria-hidden="true" />
-            </span>
+            </ThemeIconSwap>
           </IconButton>
         </aside>
         <aside className={styles.tree} aria-label="对象列">
@@ -159,12 +176,17 @@ function DesktopShell() {
           onCommit={(value) => useUiPreferences.getState().setObjectPaneWidth(value)}
         />
         <main className={styles.stage}>
+          <CommandPalette />
           <NotificationCenter />
           <HostNotice />
           <div className={styles.stageView}>
-            <div className={styles.routeView} key={location.pathname}>
+            <RouteTransition
+              className={styles.routeView}
+              modeKey={canvasKind(location.pathname)}
+              objectKey={location.pathname}
+            >
               <Outlet />
-            </div>
+            </RouteTransition>
           </div>
         </main>
       </div>
@@ -233,38 +255,45 @@ class ProductErrorBoundary extends Component<{ readonly children: ReactNode }, P
   }
 }
 
+function MotionRoot({ children }: { readonly children: ReactNode }) {
+  const reducedMotion = useProductStore((state) => state.reducedMotion)
+  return <NxtMotionProvider reducedMotion={reducedMotion}>{children}</NxtMotionProvider>
+}
+
 export function NekroNxtApp() {
   const tooltipProps = useMemo(() => ({ delayDuration: 450 }), [])
   return (
     <ProductErrorBoundary>
-      <DynamicClientProvider>
-        <Tooltip.Provider {...tooltipProps}>
-          <ThemeEffects />
-          <Routes>
-            <Route element={<DesktopShell />}>
-              <Route index element={<RootRedirect />} />
-              <Route path="work" element={<WorkIndex />} />
-              <Route path="work/agents/new" element={<AgentsPage />} />
-              <Route path="work/agents/:agentId" element={<AgentManagePage />} />
-              <Route path="work/channels" element={<Navigate to="/work" replace />} />
-              <Route path="work/channels/:channelId" element={<ChannelConversationPage />} />
-              <Route path="work/creator" element={<CreatorPage />} />
-              <Route path="agents" element={<LegacyWorkRedirect kind="agents" />} />
-              <Route path="agents/:agentId" element={<LegacyWorkRedirect kind="agent" />} />
-              <Route path="channels" element={<LegacyWorkRedirect kind="channels" />} />
-              <Route path="channels/:channelId" element={<LegacyWorkRedirect kind="channel" />} />
-              <Route path="connections" element={<ConnectionsPage />} />
-              <Route path="connections/:connectionId" element={<ConnectionsPage />} />
-              <Route path="extensions" element={<ExtensionsPage />} />
-              <Route path="extensions/:extensionId" element={<ExtensionsPage />} />
-              <Route path="creator" element={<LegacyWorkRedirect kind="creator" />} />
-              <Route path="runtime" element={<RuntimeRedirect />} />
-              <Route path="settings" element={<SettingsPage />} />
-              <Route path="*" element={<NotFoundPage />} />
-            </Route>
-          </Routes>
-        </Tooltip.Provider>
-      </DynamicClientProvider>
+      <MotionRoot>
+        <DynamicClientProvider>
+          <Tooltip.Provider {...tooltipProps}>
+            <ThemeEffects />
+            <Routes>
+              <Route element={<DesktopShell />}>
+                <Route index element={<RootRedirect />} />
+                <Route path="work" element={<WorkIndex />} />
+                <Route path="work/agents/new" element={<AgentsPage />} />
+                <Route path="work/agents/:agentId" element={<AgentManagePage />} />
+                <Route path="work/channels" element={<Navigate to="/work" replace />} />
+                <Route path="work/channels/:channelId" element={<ChannelConversationPage />} />
+                <Route path="work/creator" element={<CreatorPage />} />
+                <Route path="agents" element={<LegacyWorkRedirect kind="agents" />} />
+                <Route path="agents/:agentId" element={<LegacyWorkRedirect kind="agent" />} />
+                <Route path="channels" element={<LegacyWorkRedirect kind="channels" />} />
+                <Route path="channels/:channelId" element={<LegacyWorkRedirect kind="channel" />} />
+                <Route path="connections" element={<ConnectionsPage />} />
+                <Route path="connections/:connectionId" element={<ConnectionsPage />} />
+                <Route path="extensions" element={<ExtensionsPage />} />
+                <Route path="extensions/:extensionId" element={<ExtensionsPage />} />
+                <Route path="creator" element={<LegacyWorkRedirect kind="creator" />} />
+                <Route path="runtime" element={<RuntimeRedirect />} />
+                <Route path="settings" element={<SettingsPage />} />
+                <Route path="*" element={<NotFoundPage />} />
+              </Route>
+            </Routes>
+          </Tooltip.Provider>
+        </DynamicClientProvider>
+      </MotionRoot>
     </ProductErrorBoundary>
   )
 }

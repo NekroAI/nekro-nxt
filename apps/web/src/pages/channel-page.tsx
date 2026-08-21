@@ -1,14 +1,28 @@
 import { Activity, ArrowDown, Info, PanelRightClose, PanelRightOpen, Send, Wrench } from 'lucide-react'
-import { useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type FormEvent } from 'react'
-import { Navigate, useNavigate, useParams } from 'react-router-dom'
+import { memo, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type FormEvent } from 'react'
+import { Navigate, useParams } from 'react-router-dom'
+import { useNxtNavigate } from '../shell/nxt-link.js'
 import { notify } from '../components/notifications.js'
 import { EmptyState, InlineFeedback } from '../components/product-feedback.js'
 import { workHomePath, writeLastChannelId } from '../shell/last-channel.js'
-import { useProductStore, type AgentRuntimeState, type DeliveryState } from '../product-store.js'
 import {
+  useProductStore,
+  type AgentRuntimeState,
+  type ChannelHistoryState,
+  type ConversationMessage,
+  type DeliveryState,
+  type ChannelSummary,
+} from '../product-store.js'
+import {
+  AgentStateRing,
   Button,
+  Enter,
   IconButton,
+  Presence,
   ResizeHandle,
+  SidePane,
+  Spinner,
+  StageCrossfade,
   StatusBadge,
   Tabs,
   Textarea,
@@ -18,7 +32,7 @@ import {
 import { INSPECTOR_WIDTH, useUiPreferences } from '../ui-preferences.js'
 import { BindingTaskDialog } from './binding-task.js'
 import { useStickToBottom } from './channel-scroll.js'
-import { MessageContent, resolveMessageSide } from './message-content.js'
+import { MessageContent, resolveMessageSide, type MessageSide } from './message-content.js'
 import {
   ChannelSessionInspector,
   ChannelTrajectoryInspector,
@@ -41,8 +55,7 @@ const deliveryTone = (state: DeliveryState): StatusTone => {
 }
 
 const agentTone = (state: AgentRuntimeState): StatusTone => {
-  if (state === '思考中' || state === '使用工具') return 'info'
-  if (state === '等待输入') return 'warning'
+  if (state === '思考中' || state === '使用工具' || state === '等待输入') return 'info'
   if (state === '不可用') return 'error'
   return 'neutral'
 }
@@ -56,37 +69,158 @@ const runtimeDescription = (state: AgentRuntimeState): string => {
   return '智能体当前空闲。'
 }
 
+/**
+ * One rendered message row. Wrapped in React.memo so that when only a newer
+ * message is appended (or a pure runtime frame refreshes phase/summary),
+ * existing rows whose message/side/incoming props did not change are not
+ * re-rendered — per-frame work stays proportional to changed messages.
+ */
+function MessageRowBase({
+  message,
+  side,
+  incoming,
+}: {
+  readonly message: ConversationMessage
+  readonly side: MessageSide
+  readonly incoming: boolean
+}) {
+  const body =
+    side === 'system' ? (
+      <div className={styles.systemMessage}>
+        <MessageContent message={message} />
+      </div>
+    ) : (
+      <article className={styles.message} data-side={side}>
+        <div className={styles.messageAvatar}>{message.author.slice(0, 1)}</div>
+        <div className={styles.messageContent}>
+          <div className={styles.messageHeader}>
+            <strong>{message.author}</strong>
+            <time>{message.time}</time>
+            {message.origin === 'admin-console' ? <StatusBadge tone="warning">管理员从网页发出</StatusBadge> : null}
+            {message.delivery ? (
+              <StatusBadge tone={deliveryTone(message.delivery)}>{message.delivery}</StatusBadge>
+            ) : null}
+          </div>
+          <MessageContent message={message} />
+        </div>
+      </article>
+    )
+  return incoming ? <Enter kind="object">{body}</Enter> : body
+}
+
+export const MessageRow = memo(MessageRowBase)
+
+export const appendedMessageIds = (
+  messages: readonly Pick<ConversationMessage, 'id'>[],
+  knownIds: ReadonlySet<string>,
+): ReadonlySet<string> => {
+  let lastKnownIndex = -1
+  for (let index = messages.length - 1; index >= 0; index -= 1) {
+    if (!knownIds.has(messages[index]!.id)) continue
+    lastKnownIndex = index
+    break
+  }
+  if (lastKnownIndex < 0) return new Set()
+  return new Set(
+    messages
+      .slice(lastKnownIndex + 1)
+      .filter((message) => !knownIds.has(message.id))
+      .map((message) => message.id),
+  )
+}
+
+/**
+ * The static message list for the active channel. Memoized so it only
+ * re-renders when this channel's projection actually changes — a runtime frame
+ * that refreshes phase/summary leaves messages and history references stable,
+ * so the whole historical list (and the markdown messages inside it) is
+ * skipped instead of being re-created on every stream tick.
+ */
+function ChannelMessageListBase({
+  messages,
+  channelId,
+  channelKind,
+  history,
+}: {
+  readonly messages: readonly ConversationMessage[]
+  readonly channelId: string
+  readonly channelKind: ChannelSummary['kind']
+  readonly history: ChannelHistoryState | undefined
+}) {
+  const knownChannelRef = useRef<string | undefined>(undefined)
+  const knownIdsRef = useRef<Set<string> | null>(null)
+  if (knownChannelRef.current !== channelId) {
+    knownChannelRef.current = channelId
+    knownIdsRef.current = new Set(messages.map((message) => message.id))
+  }
+  const knownIds = knownIdsRef.current ?? new Set<string>()
+  const arriving = appendedMessageIds(messages, knownIds)
+  for (const message of messages) {
+    knownIds.add(message.id)
+  }
+  knownIdsRef.current = knownIds
+
+  return (
+    <>
+      {history?.loading ? (
+        <Enter kind="fade" className={styles.historyNotice}>
+          <Spinner size={14} /> 正在读取最近消息…
+        </Enter>
+      ) : null}
+      {history?.loadingMore ? (
+        <Enter kind="fade" className={styles.historyNotice}>
+          <Spinner size={14} /> 正在加载更早消息…
+        </Enter>
+      ) : null}
+      {history?.error ? <InlineFeedback tone="error">历史消息加载失败：{history.error}</InlineFeedback> : null}
+      {messages.length === 0 && !history?.loading ? (
+        <EmptyState title="还没有消息" description="从下方发送第一条消息，或等待平台频道收到新消息。" />
+      ) : (
+        messages.map((message) => {
+          const side = resolveMessageSide({
+            channelKind,
+            role: message.role,
+            ...(message.origin === undefined ? {} : { origin: message.origin }),
+          })
+          return <MessageRow key={message.id} message={message} side={side} incoming={arriving.has(message.id)} />
+        })
+      )}
+    </>
+  )
+}
+
+export const ChannelMessageList = memo(ChannelMessageListBase)
+
 export function ChannelConversationPage() {
   const { channelId } = useParams()
-  const navigate = useNavigate()
+  const navigate = useNxtNavigate()
   const host = useProductStore((state) => state.host)
   const channels = useProductStore((state) => state.channels)
   const agents = useProductStore((state) => state.agents)
   const allMessages = useProductStore((state) => state.messages)
   const channelHistory = useProductStore((state) => state.channelHistory)
-  const channelRuntimes = useProductStore((state) => state.channelRuntimes)
   const connections = useProductStore((state) => state.connections)
-  const channel = channels.find((item) => item.id === channelId) ?? (channelId ? undefined : channels[0])
-  const agent = channel ? agents.find((item) => item.id === channel.agentId) : undefined
-  const runtime = channel ? channelRuntimes[channel.id] : undefined
-  const livePhase = runtime?.phase ?? channel?.runtimePhase ?? agent?.state ?? '空闲'
-  const messages = useMemo(
-    () => (channel ? allMessages.filter((message) => message.channelId === channel.id) : []),
-    [allMessages, channel],
+  const channel = useProductStore((state) =>
+    channelId ? state.channels.find((item) => item.id === channelId) : state.channels[0],
   )
-  const history = channel ? channelHistory[channel.id] : undefined
+  const agent = channel ? agents.find((item) => item.id === channel.agentId) : undefined
+  const runtime = useProductStore((state) => (channel ? state.channelRuntimes[channel.id] : undefined))
+  const livePhase = runtime?.phase ?? channel?.runtimePhase ?? agent?.state ?? '空闲'
+  const activeChannelId = channel?.id
+  const messages = useMemo(
+    () => (activeChannelId ? allMessages.filter((message) => message.channelId === activeChannelId) : []),
+    [allMessages, activeChannelId],
+  )
+  const history = activeChannelId ? channelHistory[activeChannelId] : undefined
   const [draft, setDraft] = useState('')
   const [bindingOpen, setBindingOpen] = useState(false)
   const [sendPending, setSendPending] = useState(false)
-  const composerRef = useRef<HTMLFormElement>(null)
   const inspectorPaneRef = useRef<HTMLDivElement>(null)
-  const [composerHeight, setComposerHeight] = useState(96)
   const [canvasView, setCanvasView] = useState<ChannelCanvasView>(readChannelCanvasView)
   const [trajectorySearch, setTrajectorySearch] = useState('')
   const [selectedRecordId, setSelectedRecordId] = useState('')
   const savedInspectorWidth = useUiPreferences((state) => state.layout.inspectorWidth)
   const inspectorCollapsed = useUiPreferences((state) => state.layout.inspectorCollapsed)
-  const [inspectorTransitioning, setInspectorTransitioning] = useState(false)
   const [inspectorWidth, setInspectorWidth] = useState(savedInspectorWidth)
   const chatScroll = useStickToBottom(`${channel?.id ?? ''}:chat`, Boolean(channel) && canvasView === 'chat')
   const trajScroll = useStickToBottom(
@@ -102,9 +236,7 @@ export function ChannelConversationPage() {
   const canSendOnWeb = channel?.kind === 'web' && Boolean(agent)
   const canSendAsRobot = Boolean(channel && channel.kind !== 'web' && agent && connection?.proactiveSend)
   const toggleInspector = (): void => {
-    setInspectorTransitioning(true)
     useUiPreferences.getState().setInspectorCollapsed(!inspectorCollapsed)
-    window.setTimeout(() => setInspectorTransitioning(false), 260)
   }
 
   useEffect(() => {
@@ -135,25 +267,22 @@ export function ChannelConversationPage() {
   }, [inspectorCollapsed])
 
   useLayoutEffect(() => {
-    const composer = composerRef.current
-    if (!composer) return
-    const update = (): void => setComposerHeight(Math.ceil(composer.getBoundingClientRect().height))
-    update()
-    const observer = new ResizeObserver(update)
-    observer.observe(composer)
-    return () => observer.disconnect()
-  }, [canvasView, channel?.id])
+    if (history?.loadingMore === false) chatScroll.clearPrepend()
+  }, [history?.loadingMore, messages[0]?.id, chatScroll.clearPrepend])
+
+  useLayoutEffect(() => {
+    if (canvasView === 'chat') chatScroll.reconcileLayout()
+  }, [canvasView, draft, chatScroll.reconcileLayout])
 
   const loadOlder = (): void => {
     const list = chatScroll.ref.current
-    if (!channel || !list || history?.loadingMore || history?.hasMore === false) return
+    if (!channel || !list || !history?.loaded || history.loading || history.loadingMore || history.hasMore === false)
+      return
     chatScroll.markPrepend()
     void useProductStore
       .getState()
       .loadChannelMessages(channel.id, 'older')
-      .catch(() => {
-        chatScroll.clearPrepend()
-      })
+      .catch(() => undefined)
   }
 
   if (!channelId && (channels.length > 0 || agents.length > 0)) {
@@ -180,10 +309,8 @@ export function ChannelConversationPage() {
   }
   const conversationStyle: CSSProperties & {
     '--nxt-inspector-width': string
-    '--nxt-composer-height': string
   } = {
     '--nxt-inspector-width': `${inspectorWidth}px`,
-    '--nxt-composer-height': `${composerHeight}px`,
   }
   const composerMode =
     channel?.kind === 'web'
@@ -208,12 +335,7 @@ export function ChannelConversationPage() {
 
   return (
     <>
-      <div
-        className={styles.conversationPage}
-        data-inspector-collapsed={inspectorCollapsed ? '' : undefined}
-        data-inspector-transitioning={inspectorTransitioning ? '' : undefined}
-        style={conversationStyle}
-      >
+      <div className={styles.conversationPage} style={conversationStyle}>
         {!channel ? (
           <div className={styles.conversationEmpty}>
             <EmptyState
@@ -238,13 +360,20 @@ export function ChannelConversationPage() {
               }}
             >
               <header className={styles.conversationHeader}>
-                <div>
-                  <h1>{channel.name}</h1>
-                  <p>{agent ? `由“${agent.name}”响应 · ${channel.trigger}` : '尚未绑定智能体'}</p>
-                </div>
+                <StageCrossfade swapKey={channel.id}>
+                  <div>
+                    <h1>{channel.name}</h1>
+                    <p>{agent ? `由“${agent.name}”响应 · ${channel.trigger}` : '尚未绑定智能体'}</p>
+                  </div>
+                </StageCrossfade>
                 <div className={styles.conversationHeaderActions} data-conversation-header-actions>
                   <ChannelViewSwitch />
-                  {agent ? <StatusBadge tone={agentTone(livePhase)}>{livePhase}</StatusBadge> : null}
+                  {agent ? (
+                    <>
+                      {livePhase !== '空闲' ? <AgentStateRing state={livePhase} label={livePhase} /> : null}
+                      <StatusBadge tone={agentTone(livePhase)}>{livePhase}</StatusBadge>
+                    </>
+                  ) : null}
                   <IconButton
                     label={inspectorCollapsed ? '展开检查器' : '收起检查器'}
                     className={styles.inspectorToggle}
@@ -263,170 +392,142 @@ export function ChannelConversationPage() {
                   ) : null}
                 </div>
               </header>
-
-              <div className={styles.canvasStage} data-channel-canvas-stage data-view={canvasView}>
-                <Tabs.Content className={styles.canvasTab} value="trajectory">
-                  <ChannelTrajectoryLedger
-                    records={records}
-                    selectedId={selectedRecord?.id ?? ''}
-                    onSelect={setSelectedRecordId}
-                    search={trajectorySearch}
-                    onSearchChange={setTrajectorySearch}
-                    scrollRef={trajScroll.ref}
-                    onScroll={trajScroll.onScroll}
-                  />
-                </Tabs.Content>
-                <Tabs.Content className={styles.canvasTab} value="chat">
-                  <div
-                    className={styles.messageList}
-                    data-channel-message-list
-                    ref={chatScroll.ref}
-                    aria-label="频道消息"
-                    onScroll={() => {
-                      chatScroll.onScroll()
-                      if ((chatScroll.ref.current?.scrollTop ?? 0) <= 80) loadOlder()
-                    }}
-                  >
-                    <div className={styles.messageListInner}>
-                      {history?.loading ? <div className={styles.historyNotice}>正在读取最近消息…</div> : null}
-                      {history?.loadingMore ? <div className={styles.historyNotice}>正在加载更早消息…</div> : null}
-                      {history?.error ? (
-                        <InlineFeedback tone="error">历史消息加载失败：{history.error}</InlineFeedback>
-                      ) : null}
-                      {messages.length === 0 && !history?.loading ? (
-                        <EmptyState title="还没有消息" description="从下方发送第一条消息，或等待平台频道收到新消息。" />
-                      ) : (
-                        messages.map((message) => {
-                          const side = resolveMessageSide({
-                            channelKind: channel.kind,
-                            role: message.role,
-                            ...(message.origin === undefined ? {} : { origin: message.origin }),
-                          })
-                          return side === 'system' ? (
-                            <div className={styles.systemMessage} key={message.id}>
-                              <MessageContent message={message} />
-                            </div>
-                          ) : (
-                            <article className={styles.message} data-side={side} key={message.id}>
-                              <div className={styles.messageAvatar}>{message.author.slice(0, 1)}</div>
-                              <div className={styles.messageContent}>
-                                <div className={styles.messageHeader}>
-                                  <strong>{message.author}</strong>
-                                  <time>{message.time}</time>
-                                  {message.origin === 'admin-console' ? (
-                                    <StatusBadge tone="warning">管理员从网页发出</StatusBadge>
-                                  ) : null}
-                                  {message.delivery ? (
-                                    <StatusBadge tone={deliveryTone(message.delivery)}>{message.delivery}</StatusBadge>
-                                  ) : null}
-                                </div>
-                                <MessageContent message={message} />
-                              </div>
-                            </article>
-                          )
-                        })
-                      )}
-                      <ChannelWorkStream runtime={runtime} />
-                      {agent && livePhase !== '空闲' ? (
-                        <div className={styles.runtimeTail}>
-                          {livePhase === '使用工具' ? (
-                            <Wrench size={14} aria-hidden="true" />
-                          ) : (
-                            <Activity size={14} aria-hidden="true" />
-                          )}
-                          <span>{runtime?.summary ?? runtimeDescription(livePhase)}</span>
-                        </div>
-                      ) : null}
-                    </div>
-                  </div>
-                </Tabs.Content>
-                {scrollAway ? (
-                  <Button
-                    size="small"
-                    className={styles.jumpBottom}
-                    onClick={() => (canvasView === 'chat' ? chatScroll : trajScroll).jumpToBottom()}
-                  >
-                    <ArrowDown size={14} aria-hidden="true" /> 回到底部
-                  </Button>
-                ) : null}
-              </div>
-
-              {canvasView === 'chat' ? (
-                <form
-                  ref={composerRef}
-                  className={styles.composer}
-                  data-channel-composer
-                  data-mode={channel.kind === 'web' ? 'web' : 'platform'}
-                  onSubmit={(event) => void submit(event)}
-                >
-                  <Textarea
-                    className={styles.composerInput}
-                    value={draft}
-                    onChange={(event) => {
-                      setDraft(event.target.value)
-                    }}
-                    onKeyDown={(event) => {
-                      if (event.key !== 'Enter' || event.shiftKey || event.nativeEvent.isComposing) return
-                      event.preventDefault()
-                      if (draft.trim() && !sendPending) event.currentTarget.form?.requestSubmit()
-                    }}
-                    aria-label="消息内容"
-                    aria-describedby="channel-composer-mode"
-                    rows={1}
-                    placeholder={
-                      channel.kind === 'web'
-                        ? agent
-                          ? '输入消息'
-                          : '请先绑定智能体'
-                        : canSendAsRobot
-                          ? '输入消息'
-                          : !agent
-                            ? '请先绑定智能体'
-                            : '当前连接不允许主动发言'
-                    }
-                    disabled={sendPending || (channel.kind === 'web' ? !canSendOnWeb : !canSendAsRobot)}
-                  />
-                  <div className={styles.composerModeRow}>
-                    <Tooltip.Root>
-                      <Tooltip.Trigger asChild>
-                        <span className={styles.composerInfo} tabIndex={0} role="img" aria-label="发送方式说明">
-                          <Info size={14} aria-hidden="true" />
-                        </span>
-                      </Tooltip.Trigger>
-                      <Tooltip.Portal>
-                        <Tooltip.Content side="top" align="start" sideOffset={8} collisionPadding={12}>
-                          {composerExplanation}
-                        </Tooltip.Content>
-                      </Tooltip.Portal>
-                    </Tooltip.Root>
-                    <span className={styles.composerMode}>{composerMode}</span>
-                    <span className={styles.composerModeSpacer} aria-hidden="true" />
-                    {channel.kind !== 'web' && webChannel ? (
-                      <Button
-                        variant="ghost"
-                        size="small"
-                        className={styles.composerWebAction}
-                        onClick={() => void navigate(`/work/channels/${webChannel.id}`)}
+              <StageCrossfade swapKey={canvasView} className={styles.canvasStage}>
+                <div className={styles.canvasStageInner} data-channel-canvas-stage data-view={canvasView}>
+                  {canvasView === 'trajectory' ? (
+                    <Tabs.Content className={styles.canvasTab} value="trajectory">
+                      <ChannelTrajectoryLedger
+                        records={records}
+                        selectedId={selectedRecord?.id ?? ''}
+                        onSelect={setSelectedRecordId}
+                        search={trajectorySearch}
+                        onSearchChange={setTrajectorySearch}
+                        scrollRef={trajScroll.ref}
+                        onScroll={trajScroll.onScroll}
+                      />
+                    </Tabs.Content>
+                  ) : (
+                    <Tabs.Content className={styles.canvasTab} value="chat">
+                      <div
+                        className={styles.messageList}
+                        data-channel-message-list
+                        ref={chatScroll.ref}
+                        aria-label="频道消息"
+                        onScroll={() => {
+                          chatScroll.onScroll()
+                          if ((chatScroll.ref.current?.scrollTop ?? 0) <= 80) loadOlder()
+                        }}
                       >
-                        去网页频道
+                        <div className={styles.messageListInner}>
+                          <ChannelMessageList
+                            messages={messages}
+                            channelId={activeChannelId ?? ''}
+                            channelKind={channel.kind}
+                            history={history}
+                          />
+                          <ChannelWorkStream runtime={runtime} />
+                          {agent && livePhase !== '空闲' ? (
+                            <Enter kind="fade" className={styles.runtimeTail} key={livePhase}>
+                              {livePhase === '使用工具' ? (
+                                <Wrench size={14} aria-hidden="true" />
+                              ) : (
+                                <Activity size={14} aria-hidden="true" />
+                              )}
+                              <span>{runtime?.summary ?? runtimeDescription(livePhase)}</span>
+                            </Enter>
+                          ) : null}
+                        </div>
+                      </div>
+                    </Tabs.Content>
+                  )}
+                  {scrollAway ? (
+                    <div className={styles.jumpBottom}>
+                      <Button
+                        size="small"
+                        onClick={() => (canvasView === 'chat' ? chatScroll : trajScroll).jumpToBottom()}
+                      >
+                        <ArrowDown size={14} aria-hidden="true" /> 回到底部
                       </Button>
-                    ) : null}
-                    <IconButton
-                      label={channel.kind === 'web' ? '发送给智能体' : '发到频道'}
-                      className={styles.composerSend}
-                      type="submit"
-                      loading={sendPending}
-                      loadingLabel="发送中…"
-                      disabled={!draft.trim() || (channel.kind === 'web' ? !canSendOnWeb : !canSendAsRobot)}
+                    </div>
+                  ) : null}
+                  {canvasView === 'chat' ? (
+                    <div
+                      className={styles.composer}
+                      data-channel-composer
+                      data-mode={channel.kind === 'web' ? 'web' : 'platform'}
                     >
-                      <Send size={14} aria-hidden="true" />
-                    </IconButton>
-                  </div>
-                  <span className={styles.srOnly} id="channel-composer-mode">
-                    {composerExplanation}
-                  </span>
-                </form>
-              ) : null}
+                      <form onSubmit={(event) => void submit(event)}>
+                        <Textarea
+                          className={styles.composerInput}
+                          value={draft}
+                          onChange={(event) => {
+                            setDraft(event.target.value)
+                          }}
+                          onKeyDown={(event) => {
+                            if (event.key !== 'Enter' || event.shiftKey || event.nativeEvent.isComposing) return
+                            event.preventDefault()
+                            if (draft.trim() && !sendPending) event.currentTarget.form?.requestSubmit()
+                          }}
+                          aria-label="消息内容"
+                          aria-describedby="channel-composer-mode"
+                          rows={1}
+                          placeholder={
+                            channel.kind === 'web'
+                              ? agent
+                                ? '输入消息'
+                                : '请先绑定智能体'
+                              : canSendAsRobot
+                                ? '输入消息'
+                                : !agent
+                                  ? '请先绑定智能体'
+                                  : '当前连接不允许主动发言'
+                          }
+                          disabled={sendPending || (channel.kind === 'web' ? !canSendOnWeb : !canSendAsRobot)}
+                        />
+                        <div className={styles.composerModeRow}>
+                          <Tooltip.Root>
+                            <Tooltip.Trigger asChild>
+                              <span className={styles.composerInfo} tabIndex={0} role="img" aria-label="发送方式说明">
+                                <Info size={14} aria-hidden="true" />
+                              </span>
+                            </Tooltip.Trigger>
+                            <Tooltip.Portal>
+                              <Tooltip.Content side="top" align="start" sideOffset={8} collisionPadding={12}>
+                                {composerExplanation}
+                              </Tooltip.Content>
+                            </Tooltip.Portal>
+                          </Tooltip.Root>
+                          <span className={styles.composerMode}>{composerMode}</span>
+                          <span className={styles.composerModeSpacer} aria-hidden="true" />
+                          {channel.kind !== 'web' && webChannel ? (
+                            <Button
+                              variant="ghost"
+                              size="small"
+                              className={styles.composerWebAction}
+                              onClick={() => void navigate(`/work/channels/${webChannel.id}`)}
+                            >
+                              去网页频道
+                            </Button>
+                          ) : null}
+                          <IconButton
+                            label={channel.kind === 'web' ? '发送给智能体' : '发到频道'}
+                            className={styles.composerSend}
+                            type="submit"
+                            loading={sendPending}
+                            loadingLabel="发送中…"
+                            disabled={!draft.trim() || (channel.kind === 'web' ? !canSendOnWeb : !canSendAsRobot)}
+                          >
+                            <Send size={14} aria-hidden="true" />
+                          </IconButton>
+                        </div>
+                        <span className={styles.srOnly} id="channel-composer-mode">
+                          {composerExplanation}
+                        </span>
+                      </form>
+                    </div>
+                  ) : null}
+                </div>
+              </StageCrossfade>
             </Tabs.Root>
 
             <ResizeHandle
@@ -441,24 +542,25 @@ export function ChannelConversationPage() {
               onChange={setInspectorWidth}
               onCommit={(value) => useUiPreferences.getState().setInspectorWidth(value)}
             />
-            <div
-              ref={inspectorPaneRef}
-              className={styles.inspectorPane}
-              data-collapsed={inspectorCollapsed ? '' : undefined}
-              aria-hidden={inspectorCollapsed || undefined}
-            >
-              {canvasView === 'trajectory' ? (
-                <ChannelTrajectoryInspector record={selectedRecord} />
-              ) : (
-                <ChannelSessionInspector
-                  channel={channel}
-                  agent={agent}
-                  runtime={runtime}
-                  onBind={() => setBindingOpen(true)}
-                  onReassign={() => setBindingOpen(true)}
-                />
-              )}
-            </div>
+            <SidePane collapsed={inspectorCollapsed} width={inspectorWidth} className={styles.inspectorPane}>
+              <div ref={inspectorPaneRef} style={{ height: '100%', minHeight: 0 }}>
+                <Presence initial={false}>
+                  <Enter kind="fade" key={`${channel.id}:${canvasView}`} style={{ height: '100%', minHeight: 0 }}>
+                    {canvasView === 'trajectory' ? (
+                      <ChannelTrajectoryInspector record={selectedRecord} />
+                    ) : (
+                      <ChannelSessionInspector
+                        channel={channel}
+                        agent={agent}
+                        runtime={runtime}
+                        onBind={() => setBindingOpen(true)}
+                        onReassign={() => setBindingOpen(true)}
+                      />
+                    )}
+                  </Enter>
+                </Presence>
+              </div>
+            </SidePane>
           </>
         )}
       </div>

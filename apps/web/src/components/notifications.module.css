@@ -25,7 +25,6 @@
   font-size: 12px;
   line-height: 18px;
   pointer-events: auto;
-  animation: notificationIn var(--nxt-motion-standard) var(--nxt-ease-enter);
 }
 
 .notification > svg {
@@ -46,21 +45,4 @@
   min-width: 28px;
   height: 28px;
   min-height: 28px;
-}
-
-@keyframes notificationIn {
-  from {
-    opacity: 0;
-    transform: translateY(-8px) scale(0.985);
-  }
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .notification {
-    animation: none;
-  }
-}
-
-:global([data-reduced-motion='true']) .notification {
-  animation: none;
 }

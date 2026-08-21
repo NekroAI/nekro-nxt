@@ -17,17 +17,21 @@ import { SortableContext, useSortable, verticalListSortingStrategy } from '@dnd-
 import { CSS, type Transform } from '@dnd-kit/utilities'
 import { Cable, Cpu, MessageSquare, Move, PackageOpen, Palette, Plus, Puzzle, UsersRound } from 'lucide-react'
 import { useMemo, useRef, useState, type CSSProperties, type MouseEvent } from 'react'
-import { Link, NavLink, useLocation, useParams } from 'react-router-dom'
+import { useLocation, useParams } from 'react-router-dom'
 import { BindingChangeDialog, type BindingChangeIntent } from '../pages/binding-change.js'
 import { notify } from '../components/notifications.js'
+import { connectionDisplayName, useProductStore, type AgentSummary, type ChannelSummary } from '../product-store.js'
+import { NxtLink, NxtNavLink } from './nxt-link.js'
 import {
-  connectionDisplayName,
-  useProductStore,
-  type AgentRuntimeState,
-  type AgentSummary,
-  type ChannelSummary,
-} from '../product-store.js'
-import { ConfirmDialog, Field, IconButton, Input, StatusBadge, type StatusTone } from '../ui-kit/index.js'
+  AgentStateRing,
+  ConfirmDialog,
+  Field,
+  IconButton,
+  Input,
+  NavGlyph,
+  NavMarkGroup,
+  Tooltip,
+} from '../ui-kit/index.js'
 import styles from '../pages/product-pages.module.css'
 import shell from '../app.module.css'
 import {
@@ -83,13 +87,6 @@ const workTreeKeyboardCoordinates: KeyboardCoordinateGetter = (event, { active, 
   }
 }
 
-const agentTone = (state: AgentRuntimeState): StatusTone => {
-  if (state === '思考中' || state === '使用工具') return 'info'
-  if (state === '等待输入') return 'warning'
-  if (state === '不可用') return 'error'
-  return 'neutral'
-}
-
 const sortableStyle = (
   transform: Transform | null,
   transition: string | undefined,
@@ -99,15 +96,17 @@ const sortableStyle = (
   transition: dragging ? undefined : transition,
 })
 
-const ChannelRowBody = ({ item }: { readonly item: ChannelSummary }) => (
+const ChannelRowBody = ({ item }: { readonly item: ChannelSummary; readonly active?: boolean }) => (
   <>
     {item.kind === 'web' ? <MessageSquare size={15} aria-hidden="true" /> : <UsersRound size={15} aria-hidden="true" />}
-    <span>
+    <span className={styles.treeCopy}>
       <strong>{item.name}</strong>
       <small>{item.connectionName}</small>
     </span>
     {item.runtimePhase !== '空闲' ? (
-      <StatusBadge tone={agentTone(item.runtimePhase)}>{item.runtimePhase}</StatusBadge>
+      <span className={styles.treeStateIndicator} data-tree-state-indicator>
+        <AgentStateRing state={item.runtimePhase} label={`运行状态：${item.runtimePhase}`} />
+      </span>
     ) : item.unread > 0 ? (
       <span className={styles.unread}>{item.unread}</span>
     ) : null}
@@ -120,14 +119,19 @@ const AgentHeaderBody = ({
 }: {
   readonly agent: Pick<AgentSummary, 'name' | 'state'>
   readonly hint: string
+  readonly active?: boolean
 }) => (
   <>
     <span className={styles.agentAvatar}>{agent.name.slice(0, 1)}</span>
-    <span>
+    <span className={styles.treeCopy}>
       <strong>{agent.name}</strong>
       <small>{hint}</small>
     </span>
-    {agent.state !== '空闲' ? <StatusBadge tone={agentTone(agent.state)}>{agent.state}</StatusBadge> : null}
+    {agent.state !== '空闲' ? (
+      <span className={styles.treeStateIndicator} data-tree-state-indicator>
+        <AgentStateRing state={agent.state} label={`运行状态：${agent.state}`} />
+      </span>
+    ) : null}
   </>
 )
 
@@ -155,14 +159,15 @@ function SortableChannelLink({
         onSortablePointerDown?.(event)
       }}
     >
-      <Link
+      <NxtLink
         to={`/work/channels/${item.id}`}
         className={[styles.channelLink, active ? styles.channelLinkActive : ''].filter(Boolean).join(' ')}
         aria-current={active ? 'page' : undefined}
+        data-nav-active={active ? '' : undefined}
         onClick={onGuardedClick}
       >
-        <ChannelRowBody item={item} />
-      </Link>
+        <ChannelRowBody item={item} active={active} />
+      </NxtLink>
       <IconButton
         label={`拖动“${item.name}”排序`}
         className={styles.treeRowDragHandle}
@@ -216,7 +221,7 @@ function SortableAgentSection({
           onSortablePointerDown?.(event)
         }}
       >
-        <Link
+        <NxtLink
           to={to}
           className={[
             styles.channelGroupHeader,
@@ -226,10 +231,15 @@ function SortableAgentSection({
             .filter(Boolean)
             .join(' ')}
           aria-current={active ? 'page' : undefined}
+          data-nav-active={active ? '' : undefined}
           onClick={onGuardedClick}
         >
-          <AgentHeaderBody agent={agent} hint={channels.length > 0 ? `${channels.length} 个频道` : '还没有绑定频道'} />
-        </Link>
+          <AgentHeaderBody
+            agent={agent}
+            hint={channels.length > 0 ? `${channels.length} 个频道` : '还没有绑定频道'}
+            active={active}
+          />
+        </NxtLink>
         <IconButton
           label={`拖动“${agent.name}”及其频道排序`}
           className={styles.treeRowDragHandle}
@@ -279,7 +289,7 @@ function UnboundSection({
     >
       <div className={[styles.channelGroupHeader, active ? styles.dropTarget : ''].filter(Boolean).join(' ')}>
         <span className={styles.agentAvatar}>?</span>
-        <span>
+        <span className={styles.treeCopy}>
           <strong>未绑定频道</strong>
           <small>{channels.length > 0 ? `${channels.length} 个频道` : '把频道拖到这里以解除绑定'}</small>
         </span>
@@ -493,91 +503,95 @@ function WorkTree() {
     <>
       <div className={shell.treeHead}>
         <span>频道与智能体</span>
-        <Link className={shell.treeAdd} to="/work/agents/new" aria-label="创建智能体">
+        <NxtLink className={shell.treeAdd} to="/work/agents/new" aria-label="创建智能体">
           <Plus size={14} aria-hidden="true" />
-        </Link>
+        </NxtLink>
       </div>
       <div className={shell.treeBody} ref={treeBodyRef}>
         {channels.length === 0 && agents.length === 0 ? (
           <div className={styles.railEmpty}>{host.status === 'initializing' ? '正在读取…' : '还没有智能体'}</div>
         ) : (
-          <DndContext
-            sensors={sensors}
-            collisionDetection={collisionDetection}
-            modifiers={[restrictToVerticalAxis]}
-            accessibility={{
-              screenReaderInstructions: {
-                draggable:
-                  '按空格开始排序，使用上、下方向键移动；再次按空格放下，按 Escape 取消。绑定、换绑和解绑也可在频道或智能体管理页面完成。',
-              },
-            }}
-            autoScroll={{
-              canScroll: (element) => element === treeBodyRef.current,
-              layoutShiftCompensation: false,
-            }}
-            onDragStart={(event) => {
-              suppressClickRef.current = true
-              keyboardDragRef.current = event.activatorEvent instanceof KeyboardEvent
-              setActiveId(String(event.active.id))
-            }}
-            onDragOver={(event) => {
-              const current = event.over ? String(event.over.id) : ''
-              const bindTarget =
-                parsePrefixedId(String(event.active.id), CHANNEL_SORT_PREFIX) &&
-                (current.startsWith(AGENT_SORT_PREFIX) || current === UNBOUND_DROP_ID)
-              setOverId(bindTarget ? current : '')
-            }}
-            onDragCancel={() => {
-              setOverId('')
-              setActiveId('')
-              keyboardDragRef.current = false
-              window.setTimeout(() => {
-                suppressClickRef.current = false
-              }, 0)
-            }}
-            onDragEnd={onDragEnd}
-          >
-            <div className={styles.channelGroups}>
-              <SortableContext items={agentIds} strategy={verticalListSortingStrategy}>
-                {tree.agents.map((group) => (
-                  <SortableAgentSection
-                    key={group.agent.id}
-                    agent={group.agent}
-                    channels={group.channels}
-                    to={`/work/agents/${group.agent.id}`}
-                    active={onAgent && agentId === group.agent.id}
-                    dropActive={dropActiveAgentId === group.agent.id}
-                    channelActiveId={channelActiveId}
-                    onGuardedClick={guardClick}
-                  />
-                ))}
-              </SortableContext>
-              <UnboundSection
-                active={dropUnbound}
-                channels={tree.unbound}
-                channelActiveId={channelActiveId}
-                onGuardedClick={guardClick}
-                onCreate={() => {
-                  setWebChannelName('网页频道')
-                  setCreateWebOpen(true)
-                }}
-              />
-            </div>
-            <DragOverlay dropAnimation={null}>
-              {activeAgent ? (
-                <div className={[styles.channelGroupHeader, styles.dragOverlay].join(' ')}>
-                  <AgentHeaderBody
-                    agent={activeAgent.agent}
-                    hint={activeAgent.channels.length > 0 ? `${activeAgent.channels.length} 个频道` : '还没有绑定频道'}
-                  />
-                </div>
-              ) : activeChannel ? (
-                <div className={[styles.channelLink, styles.dragOverlay].join(' ')}>
-                  <ChannelRowBody item={activeChannel} />
-                </div>
-              ) : null}
-            </DragOverlay>
-          </DndContext>
+          <NavMarkGroup id="work-nav">
+            <DndContext
+              sensors={sensors}
+              collisionDetection={collisionDetection}
+              modifiers={[restrictToVerticalAxis]}
+              accessibility={{
+                screenReaderInstructions: {
+                  draggable:
+                    '按空格开始排序，使用上、下方向键移动；再次按空格放下，按 Escape 取消。绑定、换绑和解绑也可在频道或智能体管理页面完成。',
+                },
+              }}
+              autoScroll={{
+                canScroll: (element) => element === treeBodyRef.current,
+                layoutShiftCompensation: false,
+              }}
+              onDragStart={(event) => {
+                suppressClickRef.current = true
+                keyboardDragRef.current = event.activatorEvent instanceof KeyboardEvent
+                setActiveId(String(event.active.id))
+              }}
+              onDragOver={(event) => {
+                const current = event.over ? String(event.over.id) : ''
+                const bindTarget =
+                  parsePrefixedId(String(event.active.id), CHANNEL_SORT_PREFIX) &&
+                  (current.startsWith(AGENT_SORT_PREFIX) || current === UNBOUND_DROP_ID)
+                setOverId(bindTarget ? current : '')
+              }}
+              onDragCancel={() => {
+                setOverId('')
+                setActiveId('')
+                keyboardDragRef.current = false
+                window.setTimeout(() => {
+                  suppressClickRef.current = false
+                }, 0)
+              }}
+              onDragEnd={onDragEnd}
+            >
+              <div className={styles.channelGroups}>
+                <SortableContext items={agentIds} strategy={verticalListSortingStrategy}>
+                  {tree.agents.map((group) => (
+                    <SortableAgentSection
+                      key={group.agent.id}
+                      agent={group.agent}
+                      channels={group.channels}
+                      to={`/work/agents/${group.agent.id}`}
+                      active={onAgent && agentId === group.agent.id}
+                      dropActive={dropActiveAgentId === group.agent.id}
+                      channelActiveId={channelActiveId}
+                      onGuardedClick={guardClick}
+                    />
+                  ))}
+                </SortableContext>
+                <UnboundSection
+                  active={dropUnbound}
+                  channels={tree.unbound}
+                  channelActiveId={channelActiveId}
+                  onGuardedClick={guardClick}
+                  onCreate={() => {
+                    setWebChannelName('网页频道')
+                    setCreateWebOpen(true)
+                  }}
+                />
+              </div>
+              <DragOverlay dropAnimation={null}>
+                {activeAgent ? (
+                  <div className={[styles.channelGroupHeader, styles.dragOverlay].join(' ')}>
+                    <AgentHeaderBody
+                      agent={activeAgent.agent}
+                      hint={
+                        activeAgent.channels.length > 0 ? `${activeAgent.channels.length} 个频道` : '还没有绑定频道'
+                      }
+                    />
+                  </div>
+                ) : activeChannel ? (
+                  <div className={[styles.channelLink, styles.dragOverlay].join(' ')}>
+                    <ChannelRowBody item={activeChannel} />
+                  </div>
+                ) : null}
+              </DragOverlay>
+            </DndContext>
+          </NavMarkGroup>
         )}
       </div>
       <BindingChangeDialog
@@ -626,9 +640,16 @@ function ConnectionTree() {
       <div className={shell.treeHead}>
         <span>平台账号</span>
         {canCreate ? (
-          <Link className={shell.treeAdd} to="/connections?create=1" aria-label="添加连接">
-            <Plus size={14} aria-hidden="true" />
-          </Link>
+          <Tooltip.Root>
+            <Tooltip.Trigger asChild>
+              <NxtLink className={shell.treeAdd} to="/connections?create=1" aria-label="添加平台连接">
+                <Plus size={14} aria-hidden="true" />
+              </NxtLink>
+            </Tooltip.Trigger>
+            <Tooltip.Portal>
+              <Tooltip.Content sideOffset={6}>添加平台连接</Tooltip.Content>
+            </Tooltip.Portal>
+          </Tooltip.Root>
         ) : null}
       </div>
       <div className={shell.treeBody}>
@@ -637,31 +658,34 @@ function ConnectionTree() {
             <div className={styles.railEmpty}>正在读取…</div>
           ) : null
         ) : (
-          <div className={styles.connectionNavList}>
-            {connections.map((connection) => (
-              <NavLink
-                key={connection.id}
-                to={`/connections/${connection.id}`}
-                className={({ isActive }) =>
-                  [
-                    styles.connectionNavItem,
-                    isActive || connectionId === connection.id ? styles.connectionNavItemActive : '',
-                  ]
-                    .filter(Boolean)
-                    .join(' ')
-                }
-              >
-                <Cable size={16} aria-hidden="true" />
-                <span>
-                  <strong>{connectionDisplayName(connection)}</strong>
-                  <small>
-                    {connection.state} · {connection.channels} 个频道
-                  </small>
-                </span>
-                <i data-tone={connection.state === '已连接' ? 'success' : 'neutral'} aria-hidden="true" />
-              </NavLink>
-            ))}
-          </div>
+          <NavMarkGroup id="connection-nav">
+            <div className={styles.connectionNavList}>
+              {connections.map((connection) => {
+                const active = connectionId === connection.id
+                return (
+                  <NxtNavLink
+                    key={connection.id}
+                    to={`/connections/${connection.id}`}
+                    className={() =>
+                      [styles.connectionNavItem, active ? styles.connectionNavItemActive : ''].filter(Boolean).join(' ')
+                    }
+                    data-nav-active={active ? '' : undefined}
+                  >
+                    <NavGlyph active={active}>
+                      <Cable size={16} aria-hidden="true" />
+                    </NavGlyph>
+                    <span className={styles.navCopy}>
+                      <strong>{connectionDisplayName(connection)}</strong>
+                      <small>
+                        {connection.state} · {connection.channels} 个频道
+                      </small>
+                    </span>
+                    <i data-tone={connection.state === '已连接' ? 'success' : 'neutral'} aria-hidden="true" />
+                  </NxtNavLink>
+                )
+              })}
+            </div>
+          </NavMarkGroup>
         )}
       </div>
     </>
@@ -683,29 +707,32 @@ function ExtensionTree() {
             <div className={styles.railEmpty}>正在读取…</div>
           ) : null
         ) : (
-          <div className={styles.extensionNavList}>
-            {extensions.map((extension) => (
-              <NavLink
-                key={extension.id}
-                to={`/extensions/${extension.id}`}
-                className={({ isActive }) =>
-                  [
-                    styles.extensionNavItem,
-                    isActive || extensionId === extension.id ? styles.extensionNavItemActive : '',
-                  ]
-                    .filter(Boolean)
-                    .join(' ')
-                }
-              >
-                <PackageOpen size={17} aria-hidden="true" />
-                <span>
-                  <strong>{extension.name}</strong>
-                  <small>版本 {extension.revision}</small>
-                </span>
-                <em>{extension.activation === '已激活' ? '已启用' : '未启用'}</em>
-              </NavLink>
-            ))}
-          </div>
+          <NavMarkGroup id="extension-nav">
+            <div className={styles.extensionNavList}>
+              {extensions.map((extension) => {
+                const active = extensionId === extension.id
+                return (
+                  <NxtNavLink
+                    key={extension.id}
+                    to={`/extensions/${extension.id}`}
+                    className={() =>
+                      [styles.extensionNavItem, active ? styles.extensionNavItemActive : ''].filter(Boolean).join(' ')
+                    }
+                    data-nav-active={active ? '' : undefined}
+                  >
+                    <NavGlyph active={active}>
+                      <PackageOpen size={17} aria-hidden="true" />
+                    </NavGlyph>
+                    <span className={styles.navCopy}>
+                      <strong>{extension.name}</strong>
+                      <small>版本 {extension.revision}</small>
+                    </span>
+                    <em>{extension.activation === '已激活' ? '已启用' : '未启用'}</em>
+                  </NxtNavLink>
+                )
+              })}
+            </div>
+          </NavMarkGroup>
         )}
       </div>
     </>
@@ -717,38 +744,56 @@ function SettingsTree() {
   const tab = new URLSearchParams(location.search).get('tab')
   const items = [
     { to: '/settings', id: 'models', label: '模型供应商', hint: '密钥与可用模型', icon: Cpu },
-    { to: '/settings?tab=dsh-extensions', id: 'dsh-extensions', label: 'DSH 扩展', hint: '扩展配置', icon: Puzzle },
+    {
+      to: '/settings?tab=system-extensions',
+      id: 'system-extensions',
+      label: '系统扩展',
+      hint: '适配器与内置能力',
+      icon: Cable,
+    },
+    {
+      to: '/settings?tab=dsh-extensions',
+      id: 'dsh-extensions',
+      label: 'DSH 扩展',
+      hint: '模型侧能力配置',
+      icon: Puzzle,
+    },
     { to: '/settings?tab=appearance', id: 'appearance', label: '外观', hint: '主题与动效', icon: Palette },
   ]
-  const active = tab === 'appearance' || tab === 'dsh-extensions' ? tab : 'models'
+  const active = tab === 'appearance' || tab === 'dsh-extensions' || tab === 'system-extensions' ? tab : 'models'
   return (
     <>
       <div className={shell.treeHead}>
         <span>设置分类</span>
       </div>
       <div className={shell.treeBody}>
-        <nav className={styles.settingsNav} aria-label="设置分类">
-          {items.map((item) => {
-            const Icon = item.icon
-            return (
-              <NavLink
-                key={item.id}
-                to={item.to}
-                className={() =>
-                  [styles.settingsNavItem, active === item.id ? styles.settingsNavItemActive : '']
-                    .filter(Boolean)
-                    .join(' ')
-                }
-              >
-                <Icon size={17} aria-hidden="true" />
-                <span>
-                  <strong>{item.label}</strong>
-                  <small>{item.hint}</small>
-                </span>
-              </NavLink>
-            )
-          })}
-        </nav>
+        <NavMarkGroup id="settings-nav">
+          <nav className={styles.settingsNav} aria-label="设置分类">
+            {items.map((item) => {
+              const Icon = item.icon
+              return (
+                <NxtNavLink
+                  key={item.id}
+                  to={item.to}
+                  className={() =>
+                    [styles.settingsNavItem, active === item.id ? styles.settingsNavItemActive : '']
+                      .filter(Boolean)
+                      .join(' ')
+                  }
+                  data-nav-active={active === item.id ? '' : undefined}
+                >
+                  <NavGlyph active={active === item.id}>
+                    <Icon size={17} aria-hidden="true" />
+                  </NavGlyph>
+                  <span className={styles.navCopy}>
+                    <strong>{item.label}</strong>
+                    <small>{item.hint}</small>
+                  </span>
+                </NxtNavLink>
+              )
+            })}
+          </nav>
+        </NavMarkGroup>
       </div>
     </>
   )
@@ -756,8 +801,22 @@ function SettingsTree() {
 
 export function ObjectPane() {
   const location = useLocation()
-  if (location.pathname.startsWith('/connections')) return <ConnectionTree />
-  if (location.pathname.startsWith('/extensions')) return <ExtensionTree />
-  if (location.pathname.startsWith('/settings')) return <SettingsTree />
-  return <WorkTree />
+  const mode = location.pathname.startsWith('/connections')
+    ? 'connections'
+    : location.pathname.startsWith('/extensions')
+      ? 'extensions'
+      : location.pathname.startsWith('/settings')
+        ? 'settings'
+        : 'work'
+  const tree =
+    mode === 'connections' ? (
+      <ConnectionTree />
+    ) : mode === 'extensions' ? (
+      <ExtensionTree />
+    ) : mode === 'settings' ? (
+      <SettingsTree />
+    ) : (
+      <WorkTree />
+    )
+  return <div className={shell.treeFill}>{tree}</div>
 }

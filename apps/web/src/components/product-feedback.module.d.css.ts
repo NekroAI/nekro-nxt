@@ -12,7 +12,6 @@ declare const styles: {
   readonly pageHeader: string
   readonly pageMeta: string
   readonly pageTitle: string
-  readonly spinner: string
   readonly success: string
   readonly warning: string
 }

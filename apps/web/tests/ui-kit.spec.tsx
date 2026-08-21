@@ -6,6 +6,7 @@ import {
   Field,
   IconButton,
   Input,
+  NxtMotionProvider,
   SelectField,
   SwitchField,
   Tabs,
@@ -18,17 +19,19 @@ import { ModalLayerRegistry } from '../src/ui-kit/layers.ts'
 describe('ui-kit control semantics', () => {
   it('keeps ordinary buttons out of surrounding form submission by default', () => {
     const markup = renderToStaticMarkup(
-      <Tooltip.Provider>
-        <Button>普通操作</Button>
-        <Button type="submit">提交</Button>
-        <IconButton label="更多操作">
-          <span>+</span>
-        </IconButton>
-        <Button loading loadingLabel="正在保存">
-          保存
-        </Button>
-        <Button loadingLabel="不应显示">保留正文</Button>
-      </Tooltip.Provider>,
+      <NxtMotionProvider reducedMotion>
+        <Tooltip.Provider>
+          <Button>普通操作</Button>
+          <Button type="submit">提交</Button>
+          <IconButton label="更多操作">
+            <span>+</span>
+          </IconButton>
+          <Button loading loadingLabel="正在保存">
+            保存
+          </Button>
+          <Button loadingLabel="不应显示">保留正文</Button>
+        </Tooltip.Provider>
+      </NxtMotionProvider>,
     )
 
     expect(markup).toContain('<button type="button"')

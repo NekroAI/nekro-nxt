@@ -1,6 +1,6 @@
 import { useEffect, useId, useLayoutEffect, useMemo, useState, type KeyboardEvent, type RefObject } from 'react'
 import { ChevronDown } from 'lucide-react'
-import { useNavigate } from 'react-router-dom'
+import { useNxtNavigate } from '../shell/nxt-link.js'
 import { Cell, Pie, PieChart } from 'recharts'
 import { notify } from '../components/notifications.js'
 import { InlineFeedback } from '../components/product-feedback.js'
@@ -12,10 +12,14 @@ import {
   type ChannelSummary,
 } from '../product-store.js'
 import {
+  AgentStateRing,
   Button,
+  Disclosure,
+  Enter,
   Field,
   IconButton,
   Input,
+  Presence,
   SelectField,
   StatusBadge,
   Tabs,
@@ -166,18 +170,21 @@ function ContextRing({
           </Pie>
         </PieChart>
         <strong>{center}</strong>
-        {active && hover ? (
-          <div
-            className={styles.contextTooltip}
-            data-pointer-x={Math.round(hover.x)}
-            data-pointer-y={Math.round(hover.y)}
-            data-side={hover.x > 56 ? 'left' : 'right'}
-            role="tooltip"
-            style={{ left: hover.x, top: hover.y }}
-          >
-            {active.name} · {formatTokenCount(active.value)} · {activeRatio}%
-          </div>
-        ) : null}
+        <Presence>
+          {active && hover ? (
+            <Enter
+              kind="fade"
+              className={styles.contextTooltip}
+              data-side={hover.x > 56 ? 'left' : 'right'}
+              data-pointer-x={Math.round(hover.x)}
+              data-pointer-y={Math.round(hover.y)}
+              role="tooltip"
+              style={{ left: hover.x, top: hover.y }}
+            >
+              {active.name} · {formatTokenCount(active.value)} · {activeRatio}%
+            </Enter>
+          ) : null}
+        </Presence>
       </div>
       <figcaption>{label}</figcaption>
       <ul>
@@ -238,7 +245,7 @@ const usageCaption = (usage: NonNullable<TrajectoryRecord['usage']>): string => 
 
 const agentTone = (state: AgentRuntimeState): StatusTone => {
   if (state === '思考中' || state === '使用工具') return 'info'
-  if (state === '等待输入') return 'warning'
+  if (state === '等待输入') return 'info'
   if (state === '不可用') return 'error'
   return 'neutral'
 }
@@ -370,21 +377,19 @@ export function ChannelWorkStream({ runtime }: { readonly runtime: ChannelRuntim
               />
             </span>
           </Button>
-          <div aria-hidden={!expanded} className={styles.workStreamDisclosure} data-open={expanded ? '' : undefined}>
-            <div>
-              <div className={styles.workStreamDetails}>
-                {text ? <div className={styles.thinkBody}>{text}</div> : null}
-                {tools.map((tool) => (
-                  <WorkToolRow
-                    key={tool.callId}
-                    tool={tool}
-                    open={openId === tool.callId}
-                    onToggle={() => setOpenId((currentId) => (currentId === tool.callId ? null : tool.callId))}
-                  />
-                ))}
-              </div>
+          <Disclosure open={expanded}>
+            <div className={styles.workStreamDetails}>
+              {text ? <div className={styles.thinkBody}>{text}</div> : null}
+              {tools.map((tool) => (
+                <WorkToolRow
+                  key={tool.callId}
+                  tool={tool}
+                  open={openId === tool.callId}
+                  onToggle={() => setOpenId((currentId) => (currentId === tool.callId ? null : tool.callId))}
+                />
+              ))}
             </div>
-          </div>
+          </Disclosure>
         </>
       ) : current ? (
         <WorkToolRow
@@ -436,12 +441,12 @@ function WorkToolRow({
   return (
     <Button className={styles.toolRow} type="button" aria-expanded={open} aria-controls={detailId} onClick={onToggle}>
       {row}
-      {open ? (
+      <Disclosure open={open}>
         <div className={styles.toolCard} id={detailId}>
           {tool.inputPreview ? <pre>{tool.inputPreview}</pre> : null}
           {tool.resultPreview ? <pre>{tool.resultPreview}</pre> : null}
         </div>
-      ) : null}
+      </Disclosure>
     </Button>
   )
 }
@@ -647,10 +652,11 @@ export function ChannelSessionInspector({
   readonly onBind: () => void
   readonly onReassign: () => void
 }) {
-  const navigate = useNavigate()
+  const navigate = useNxtNavigate()
   const phase = runtime?.phase ?? channel.runtimePhase
   const [renamePending, setRenamePending] = useState(false)
   const [triggerPending, setTriggerPending] = useState(false)
+  const [renameOpen, setRenameOpen] = useState(false)
   const [channelName, setChannelName] = useState(channel.name)
   const currentTrigger = channel.bindings[0]?.triggerPolicy ?? 'mentioned-or-replied'
   const currentTool = workTools(latestTurn(runtime)).find((tool) => tool.state === 'running')
@@ -700,6 +706,7 @@ export function ChannelSessionInspector({
             <Tooltip.Root>
               <Tooltip.Trigger asChild>
                 <span className={styles.inspectorStatusTrigger} tabIndex={0} aria-label={`${phase}状态说明`}>
+                  {phase !== '空闲' ? <AgentStateRing state={phase} label={phase} /> : null}
                   <StatusBadge tone={agentTone(phase)}>{phase}</StatusBadge>
                 </span>
               </Tooltip.Trigger>
@@ -763,34 +770,49 @@ export function ChannelSessionInspector({
             </Button>
           </div>
         )}
-        <details className={styles.channelDetails}>
-          <summary>频道显示名称</summary>
-          <div className={styles.channelRename}>
-            <Field
-              label="频道名称"
-              hint={channel.kind === 'web' ? '用于消息列表显示。' : '平台未提供频道名称时，可在此设置本地名称。'}
-            >
-              <Input value={channelName} onChange={(event) => setChannelName(event.target.value)} maxLength={120} />
-            </Field>
-            <p className={styles.secondaryText} id="channel-name-save-reason">
-              {!channelName.trim()
-                ? '请输入频道名称后才能保存。'
-                : channelName.trim() === channel.name
-                  ? '修改频道名称后才能保存。'
-                  : '保存后只改变本地显示名称。'}
-            </p>
+        <div className={styles.channelDetails}>
+          <div className={styles.channelDetailRow}>
+            <div>
+              <div className={styles.secondaryText}>频道显示名称</div>
+              <strong>{channel.name}</strong>
+            </div>
             <Button
+              variant="ghost"
               size="small"
-              loading={renamePending}
-              loadingLabel="保存中…"
-              disabled={!channelName.trim() || channelName.trim() === channel.name}
-              aria-describedby="channel-name-save-reason"
-              onClick={() => void rename()}
+              aria-expanded={renameOpen}
+              onClick={() => setRenameOpen((open) => !open)}
             >
-              保存名称
+              {renameOpen ? '收起' : '修改'}
             </Button>
           </div>
-        </details>
+          <Disclosure open={renameOpen}>
+            <div className={styles.channelRename}>
+              <Field
+                label="频道名称"
+                hint={channel.kind === 'web' ? '用于消息列表显示。' : '平台未提供频道名称时，可在此设置本地名称。'}
+              >
+                <Input value={channelName} onChange={(event) => setChannelName(event.target.value)} maxLength={120} />
+              </Field>
+              <p className={styles.secondaryText} id="channel-name-save-reason">
+                {!channelName.trim()
+                  ? '请输入频道名称后才能保存。'
+                  : channelName.trim() === channel.name
+                    ? '修改频道名称后才能保存。'
+                    : '保存后只改变本地显示名称。'}
+              </p>
+              <Button
+                size="small"
+                loading={renamePending}
+                loadingLabel="保存中…"
+                disabled={!channelName.trim() || channelName.trim() === channel.name}
+                aria-describedby="channel-name-save-reason"
+                onClick={() => void rename()}
+              >
+                保存名称
+              </Button>
+            </div>
+          </Disclosure>
+        </div>
       </section>
     </aside>
   )
@@ -812,40 +834,44 @@ export function ChannelTrajectoryInspector({ record }: { readonly record: Trajec
 
   return (
     <aside className={styles.inspector} aria-label="工作轨迹">
-      {record ? (
-        <>
-          <section>
-            <div className={styles.trajDetailHead}>
-              <span
-                className={[styles.kindTag, record.kind === 'message' ? styles.kindMessage : styles.kindTool].join(' ')}
-              >
-                {record.kindLabel}
-              </span>
-              <strong>{record.name}</strong>
-            </div>
-            <p className={styles.secondaryText}>
-              Turn {record.turn}
-              {recordStateLabel(record) ? ` · ${recordStateLabel(record)}` : ''}
-            </p>
-            {record.firstTokenMs !== undefined ? (
-              <p className={styles.secondaryText}>首字 {formatDurationMs(record.firstTokenMs)}</p>
+      <Enter kind="fade" key={record?.id ?? 'empty'}>
+        {record ? (
+          <>
+            <section>
+              <div className={styles.trajDetailHead}>
+                <span
+                  className={[styles.kindTag, record.kind === 'message' ? styles.kindMessage : styles.kindTool].join(
+                    ' ',
+                  )}
+                >
+                  {record.kindLabel}
+                </span>
+                <strong>{record.name}</strong>
+              </div>
+              <p className={styles.secondaryText}>
+                Turn {record.turn}
+                {recordStateLabel(record) ? ` · ${recordStateLabel(record)}` : ''}
+              </p>
+              {record.firstTokenMs !== undefined ? (
+                <p className={styles.secondaryText}>首字 {formatDurationMs(record.firstTokenMs)}</p>
+              ) : null}
+              {record.usage ? <p className={styles.secondaryText}>{usageCaption(record.usage)}</p> : null}
+            </section>
+            {lane === 'internal' && (output || record.summary) ? (
+              <InspectorRegion label="内部输出" text={output || record.summary} />
             ) : null}
-            {record.usage ? <p className={styles.secondaryText}>{usageCaption(record.usage)}</p> : null}
+            {lane === 'send' && sent ? <InspectorRegion label="发出的内容" text={sent} /> : null}
+            {lane === 'send' && output && output !== sent ? <InspectorRegion label="发送结果" text={output} /> : null}
+            {lane === 'tool' && record.input ? <InspectorRegion label="输入" text={record.input} /> : null}
+            {lane === 'tool' && output ? <InspectorRegion label="输出" text={output} /> : null}
+          </>
+        ) : (
+          <section>
+            <h2>工作轨迹</h2>
+            <p className={styles.secondaryText}>选择一条记录查看这条工作过程的详情。</p>
           </section>
-          {lane === 'internal' && (output || record.summary) ? (
-            <InspectorRegion label="内部输出" text={output || record.summary} />
-          ) : null}
-          {lane === 'send' && sent ? <InspectorRegion label="发出的内容" text={sent} /> : null}
-          {lane === 'send' && output && output !== sent ? <InspectorRegion label="发送结果" text={output} /> : null}
-          {lane === 'tool' && record.input ? <InspectorRegion label="输入" text={record.input} /> : null}
-          {lane === 'tool' && output ? <InspectorRegion label="输出" text={output} /> : null}
-        </>
-      ) : (
-        <section>
-          <h2>工作轨迹</h2>
-          <p className={styles.secondaryText}>选择一条记录查看这条工作过程的详情。</p>
-        </section>
-      )}
+        )}
+      </Enter>
     </aside>
   )
 }

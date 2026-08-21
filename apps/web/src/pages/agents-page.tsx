@@ -1,6 +1,7 @@
 import { PanelRightClose, PanelRightOpen, Plus, Save, ShieldAlert } from 'lucide-react'
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties } from 'react'
-import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom'
+import { useParams, useSearchParams } from 'react-router-dom'
+import { NxtLink, useNxtNavigate } from '../shell/nxt-link.js'
 import { notify } from '../components/notifications.js'
 import { EmptyState, InlineFeedback, PageHeader } from '../components/product-feedback.js'
 import { AddModelProviderForm } from '../llm-settings.js'
@@ -13,12 +14,15 @@ import {
   type LocalExtensionSummary,
 } from '../product-store.js'
 import {
+  AgentStateRing,
   Button,
   Field,
   IconButton,
   Input,
   ResizeHandle,
   SelectField,
+  SidePane,
+  StageCrossfade,
   StatusBadge,
   SwitchField,
   Textarea,
@@ -33,7 +37,7 @@ import styles from './product-pages.module.css'
 const agentTone = (state: AgentRuntimeState): StatusTone => {
   if (state === '空闲') return 'neutral'
   if (state === '思考中' || state === '使用工具') return 'info'
-  if (state === '等待输入') return 'warning'
+  if (state === '等待输入') return 'info'
   if (state === '不可用') return 'error'
   return 'neutral'
 }
@@ -52,7 +56,7 @@ export function AgentsPage() {
   const host = useProductStore((state) => state.host)
   const models = useProductStore((state) => state.models)
   const capabilityAvailability = useProductStore((state) => state.capabilityAvailability)
-  const navigate = useNavigate()
+  const navigate = useNxtNavigate()
   const initialCreateDraft = createAgentDraft(models, capabilityAvailability.webSearch.available)
   const [newName, setNewName] = useState(initialCreateDraft.name)
   const [newPersona, setNewPersona] = useState(initialCreateDraft.persona)
@@ -317,7 +321,7 @@ const capabilityCopy: readonly {
 export function AgentManagePage() {
   const { agentId = '' } = useParams()
   const [searchParams, setSearchParams] = useSearchParams()
-  const navigate = useNavigate()
+  const navigate = useNxtNavigate()
   const host = useProductStore((state) => state.host)
   const capabilityAvailability = useProductStore((state) => state.capabilityAvailability)
   const agent = useProductStore((state) => state.agents.find((candidate) => candidate.id === agentId))
@@ -336,7 +340,6 @@ export function AgentManagePage() {
   const [extensionPendingId, setExtensionPendingId] = useState<string | null>(null)
   const savedInspectorWidth = useUiPreferences((state) => state.layout.inspectorWidth)
   const inspectorCollapsed = useUiPreferences((state) => state.layout.inspectorCollapsed)
-  const [inspectorTransitioning, setInspectorTransitioning] = useState(false)
   const inspectorPaneRef = useRef<HTMLDivElement>(null)
   const [inspectorWidth, setInspectorWidth] = useState(savedInspectorWidth)
 
@@ -487,325 +490,322 @@ export function AgentManagePage() {
     '--nxt-inspector-width': `${inspectorWidth}px`,
   }
   const toggleInspector = (): void => {
-    setInspectorTransitioning(true)
     useUiPreferences.getState().setInspectorCollapsed(!inspectorCollapsed)
-    window.setTimeout(() => setInspectorTransitioning(false), 260)
   }
 
   return (
-    <div
-      className={styles.workbenchPage}
-      data-inspector-collapsed={inspectorCollapsed ? '' : undefined}
-      data-inspector-transitioning={inspectorTransitioning ? '' : undefined}
-      style={workbenchStyle}
-    >
-      <div className={styles.workbenchDoc}>
-        <PageHeader
-          title={agent.name}
-          meta={<StatusBadge tone={agentTone(agent.state)}>{agent.state}</StatusBadge>}
-          actions={
-            <>
-              {recentChannel ? (
-                <Button variant="ghost" onClick={() => void navigate(`/work/channels/${recentChannel.id}`)}>
-                  打开最近频道
+    <StageCrossfade swapKey={agent.id}>
+      <div className={styles.workbenchPage} style={workbenchStyle}>
+        <div className={styles.workbenchDoc}>
+          <PageHeader
+            title={agent.name}
+            meta={
+              <>
+                {agent.state !== '空闲' ? <AgentStateRing state={agent.state} label={agent.state} /> : null}
+                <StatusBadge tone={agentTone(agent.state)}>{agent.state}</StatusBadge>
+              </>
+            }
+            actions={
+              <>
+                {recentChannel ? (
+                  <Button variant="ghost" onClick={() => void navigate(`/work/channels/${recentChannel.id}`)}>
+                    打开最近频道
+                  </Button>
+                ) : null}
+                {isDirty ? (
+                  <Button variant="ghost" disabled={savePending} onClick={reset}>
+                    放弃更改
+                  </Button>
+                ) : null}
+                <Button
+                  variant="primary"
+                  loading={savePending}
+                  loadingLabel="正在保存…"
+                  disabled={!isDirty || !displayName.trim() || !selectedModel}
+                  aria-describedby="agent-save-reason"
+                  onClick={() => void save()}
+                >
+                  <Save size={15} aria-hidden="true" /> 保存新配置
                 </Button>
-              ) : null}
-              {isDirty ? (
-                <Button variant="ghost" disabled={savePending} onClick={reset}>
-                  放弃更改
-                </Button>
-              ) : null}
-              <Button
-                variant="primary"
-                loading={savePending}
-                loadingLabel="正在保存…"
-                disabled={!isDirty || !displayName.trim() || !selectedModel}
-                aria-describedby="agent-save-reason"
-                onClick={() => void save()}
-              >
-                <Save size={15} aria-hidden="true" /> 保存新配置
-              </Button>
-              <IconButton label={inspectorCollapsed ? '展开检查器' : '收起检查器'} onClick={toggleInspector}>
-                {inspectorCollapsed ? (
-                  <PanelRightOpen size={15} aria-hidden="true" />
-                ) : (
-                  <PanelRightClose size={15} aria-hidden="true" />
-                )}
-              </IconButton>
-            </>
-          }
-        />
-        <p className={styles.secondaryText} id="agent-save-reason">
-          {!displayName.trim()
-            ? '请输入智能体名称后才能保存。'
-            : !selectedModel
-              ? '选择默认模型后才能保存。'
-              : !isDirty
-                ? '修改人设、名称或模型后才能保存新配置。'
-                : '保存会创建新的不可变配置版本。'}
-        </p>
+                <IconButton label={inspectorCollapsed ? '展开检查器' : '收起检查器'} onClick={toggleInspector}>
+                  {inspectorCollapsed ? (
+                    <PanelRightOpen size={15} aria-hidden="true" />
+                  ) : (
+                    <PanelRightClose size={15} aria-hidden="true" />
+                  )}
+                </IconButton>
+              </>
+            }
+          />
+          <p className={styles.secondaryText} id="agent-save-reason">
+            {!displayName.trim()
+              ? '请输入智能体名称后才能保存。'
+              : !selectedModel
+                ? '选择默认模型后才能保存。'
+                : !isDirty
+                  ? '修改人设、名称或模型后才能保存新配置。'
+                  : '保存会创建新的不可变配置版本。'}
+          </p>
 
-        <section className={styles.workbenchSection} id="agent-profile">
-          <div className={styles.section}>
-            <div className={styles.sectionHeading}>人设与模型</div>
-            <div className={styles.formStack}>
-              <Field label="名称" error={!displayName.trim() ? '请输入智能体名称。' : undefined}>
-                <Input value={displayName} onChange={(event) => setDisplayName(event.target.value)} />
-              </Field>
-              <Field label="人设" hint="描述它的身份、表达方式和工作边界。">
-                <Textarea value={persona} onChange={(event) => setPersona(event.target.value)} />
-              </Field>
-              {models.length > 0 ? (
-                <SelectField
-                  label="默认模型"
-                  value={selectedModelKey}
-                  onValueChange={setSelectedModelKey}
-                  options={models.map((model) => ({
-                    value: modelKey(model),
-                    label: `${model.providerName} · ${model.name}`,
-                  }))}
-                />
-              ) : (
-                <>
-                  <InlineFeedback tone="warning">当前没有可用模型。保存一个供应商后即可选择默认模型。</InlineFeedback>
-                  <AddModelProviderForm
-                    onSaved={() => {
-                      const first = useProductStore.getState().models[0]
-                      if (first) setSelectedModelKey(modelKey(first))
-                    }}
-                  />
-                </>
-              )}
-            </div>
-          </div>
-        </section>
-
-        <section className={styles.workbenchSection} id="agent-channels">
-          <div className={styles.section}>
-            <div className={styles.sectionBar}>
-              <div>
-                <div className={styles.sectionHeading}>已绑定频道</div>
-                <div className={styles.secondaryText}>每个频道保留独立的消息记录。</div>
-              </div>
-              <Button onClick={() => setBindingOpen(true)}>
-                <Plus size={14} aria-hidden="true" /> 绑定频道
-              </Button>
-            </div>
-            {boundChannels.length === 0 ? (
-              <EmptyState title="还没有绑定频道" description="绑定频道后，这个智能体才能接收对应消息。" />
-            ) : (
-              <div className={styles.boundChannelList}>
-                {boundChannels.map((channel) => (
-                  <div className={styles.boundChannelRow} key={channel.id}>
-                    <Link className={styles.boundChannelName} to={`/work/channels/${channel.id}`}>
-                      <strong>{channel.name}</strong>
-                      <small>{channel.connectionName}</small>
-                    </Link>
-                    <SelectField
-                      label="响应方式"
-                      value={
-                        channel.bindings.find((binding) => binding.agentId === agent.id)?.triggerPolicy ??
-                        'mentioned-or-replied'
-                      }
-                      disabled={triggerPendingId !== null}
-                      onValueChange={(value) => {
-                        if (isTriggerPolicy(value)) void updateTrigger(channel.id, value)
-                      }}
-                      options={TRIGGER_POLICY_OPTIONS.map((option) => ({ value: option.value, label: option.label }))}
-                    />
-                  </div>
-                ))}
-              </div>
-            )}
-            {bindableChannels.length > 0 ? (
-              <InlineFeedback tone="info">还有 {bindableChannels.length} 个频道可以绑定给这个智能体。</InlineFeedback>
-            ) : null}
-            {undiscoveredConnections.map((connection) => (
-              <InlineFeedback key={connection.id} tone="info">
-                {connectionDisplayName(connection)} 尚未发现频道。请先向机器人账号发送一条消息，发现后可在本页绑定。
-              </InlineFeedback>
-            ))}
-          </div>
-        </section>
-
-        <section className={styles.workbenchSection} id="agent-capabilities">
-          <div className={styles.section}>
-            <div className={styles.sectionBar}>
-              <div>
-                <div className={styles.sectionHeading}>授权能力</div>
-                <div className={styles.secondaryText}>每个开关都是一次立即保存的授权变更。</div>
-              </div>
-              <ShieldAlert size={18} aria-hidden="true" />
-            </div>
-            <InlineFeedback tone="warning">
-              文件工具可读取 Server
-              进程有权读取的宿主文件；开发命令与不受限文件访问不会因频道类型被强制关闭，请按实际用途授权。
-            </InlineFeedback>
-            {!capabilityAvailability.webSearch.available ? (
+          <section className={styles.workbenchSection} id="agent-profile">
+            <div className={styles.section}>
+              <div className={styles.sectionHeading}>人设与模型</div>
               <div className={styles.formStack}>
-                <InlineFeedback tone="warning">
-                  {agent.capabilities.webSearch
-                    ? '网页搜索已授权，还需要保存凭据后才能使用。'
-                    : '可以先保存凭据，再打开网页搜索。'}
-                </InlineFeedback>
-                <WebSearchCredentialForm />
-                <Link className={styles.secondaryText} to="/settings?tab=dsh-extensions">
-                  打开完整扩展设置
-                </Link>
+                <Field label="名称" error={!displayName.trim() ? '请输入智能体名称。' : undefined}>
+                  <Input value={displayName} onChange={(event) => setDisplayName(event.target.value)} />
+                </Field>
+                <Field label="人设" hint="描述它的身份、表达方式和工作边界。">
+                  <Textarea value={persona} onChange={(event) => setPersona(event.target.value)} />
+                </Field>
+                {models.length > 0 ? (
+                  <SelectField
+                    label="默认模型"
+                    value={selectedModelKey}
+                    onValueChange={setSelectedModelKey}
+                    options={models.map((model) => ({
+                      value: modelKey(model),
+                      label: `${model.providerName} · ${model.name}`,
+                    }))}
+                  />
+                ) : (
+                  <>
+                    <InlineFeedback tone="warning">当前没有可用模型。保存一个供应商后即可选择默认模型。</InlineFeedback>
+                    <AddModelProviderForm
+                      onSaved={() => {
+                        const first = useProductStore.getState().models[0]
+                        if (first) setSelectedModelKey(modelKey(first))
+                      }}
+                    />
+                  </>
+                )}
               </div>
-            ) : null}
-            <div className={styles.switchList}>
-              {capabilityCopy.map((item) => (
-                <SwitchField
-                  key={item.key}
-                  label={
-                    <span className={styles.riskLabel}>
-                      {item.label} <StatusBadge tone={item.risk.tone}>{item.risk.label}</StatusBadge>
-                    </span>
-                  }
-                  description={item.description}
-                  checked={agent.capabilities[item.key]}
-                  disabled={capabilityPending !== null}
-                  onCheckedChange={(enabled) => void updateCapability(item.key, enabled)}
-                />
+            </div>
+          </section>
+
+          <section className={styles.workbenchSection} id="agent-channels">
+            <div className={styles.section}>
+              <div className={styles.sectionBar}>
+                <div>
+                  <div className={styles.sectionHeading}>已绑定频道</div>
+                  <div className={styles.secondaryText}>每个频道保留独立的消息记录。</div>
+                </div>
+                <Button onClick={() => setBindingOpen(true)}>
+                  <Plus size={14} aria-hidden="true" /> 绑定频道
+                </Button>
+              </div>
+              {boundChannels.length === 0 ? (
+                <EmptyState title="还没有绑定频道" description="绑定频道后，这个智能体才能接收对应消息。" />
+              ) : (
+                <div className={styles.boundChannelList}>
+                  {boundChannels.map((channel) => (
+                    <div className={styles.boundChannelRow} key={channel.id}>
+                      <NxtLink className={styles.boundChannelName} to={`/work/channels/${channel.id}`}>
+                        <strong>{channel.name}</strong>
+                        <small>{channel.connectionName}</small>
+                      </NxtLink>
+                      <SelectField
+                        label="响应方式"
+                        value={
+                          channel.bindings.find((binding) => binding.agentId === agent.id)?.triggerPolicy ??
+                          'mentioned-or-replied'
+                        }
+                        disabled={triggerPendingId !== null}
+                        onValueChange={(value) => {
+                          if (isTriggerPolicy(value)) void updateTrigger(channel.id, value)
+                        }}
+                        options={TRIGGER_POLICY_OPTIONS.map((option) => ({ value: option.value, label: option.label }))}
+                      />
+                    </div>
+                  ))}
+                </div>
+              )}
+              {bindableChannels.length > 0 ? (
+                <InlineFeedback tone="info">还有 {bindableChannels.length} 个频道可以绑定给这个智能体。</InlineFeedback>
+              ) : null}
+              {undiscoveredConnections.map((connection) => (
+                <InlineFeedback key={connection.id} tone="info">
+                  {connectionDisplayName(connection)} 尚未发现频道。请先向机器人账号发送一条消息，发现后可在本页绑定。
+                </InlineFeedback>
               ))}
             </div>
-            {agent.capabilities.dynamicCreation ? (
-              <div className={styles.sectionActionRow}>
-                <span>
-                  <strong>动态创造已授权</strong>
-                  <small id="dynamic-creation-channel-reason">
-                    {recentChannel
-                      ? '在这个智能体的频道里描述需求；保存和启用仍是独立动作。'
-                      : '绑定频道后，才能在对话中描述需求。'}
-                  </small>
-                </span>
-                <span className={styles.rowActions}>
-                  <Button
-                    variant="primary"
-                    disabled={!recentChannel}
-                    aria-describedby="dynamic-creation-channel-reason"
-                    onClick={() => recentChannel && void navigate(`/work/channels/${recentChannel.id}`)}
-                  >
-                    打开频道去描述需求
-                  </Button>
-                  <Button variant="ghost" onClick={() => void navigate(`/work/creator?agent=${agent.id}`)}>
-                    查看创造运行
-                  </Button>
-                </span>
-              </div>
-            ) : null}
-          </div>
-        </section>
+          </section>
 
-        <section className={styles.workbenchSection} id="agent-extensions">
-          <div className={styles.section}>
-            <div className={styles.sectionHeading}>已关联扩展</div>
-            {agentExtensions.length === 0 ? (
-              <EmptyState
-                title={extensions.length === 0 ? '还没有本地扩展' : '还没有给这个智能体启用扩展'}
-                description={
-                  extensions.length === 0
-                    ? '在创造工作台保存后，扩展会出现在这里。动态运行中的内容不会自动保存。'
-                    : '已有保存版本。启用后，这个智能体才能使用对应能力。'
-                }
-              />
-            ) : (
-              <div className={styles.compactList}>
-                {agentExtensions.map((extension) => (
-                  <div className={styles.staticRow} key={extension.id}>
-                    <span>
-                      <strong>{extension.name}</strong>
-                      <small>{extension.description || '没有补充说明。'}</small>
-                    </span>
+          <section className={styles.workbenchSection} id="agent-capabilities">
+            <div className={styles.section}>
+              <div className={styles.sectionBar}>
+                <div>
+                  <div className={styles.sectionHeading}>授权能力</div>
+                  <div className={styles.secondaryText}>每个开关都是一次立即保存的授权变更。</div>
+                </div>
+                <ShieldAlert size={18} aria-hidden="true" />
+              </div>
+              <InlineFeedback tone="warning">
+                文件工具可读取 Server
+                进程有权读取的宿主文件；开发命令与不受限文件访问不会因频道类型被强制关闭，请按实际用途授权。
+              </InlineFeedback>
+              {!capabilityAvailability.webSearch.available ? (
+                <div className={styles.formStack}>
+                  <InlineFeedback tone="warning">
+                    {agent.capabilities.webSearch
+                      ? '网页搜索已授权，还需要保存凭据后才能使用。'
+                      : '可以先保存凭据，再打开网页搜索。'}
+                  </InlineFeedback>
+                  <WebSearchCredentialForm />
+                  <NxtLink className={styles.secondaryText} to="/settings?tab=dsh-extensions">
+                    打开完整扩展设置
+                  </NxtLink>
+                </div>
+              ) : null}
+              <div className={styles.switchList}>
+                {capabilityCopy.map((item) => (
+                  <SwitchField
+                    key={item.key}
+                    label={
+                      <span className={styles.riskLabel}>
+                        {item.label} <StatusBadge tone={item.risk.tone}>{item.risk.label}</StatusBadge>
+                      </span>
+                    }
+                    description={item.description}
+                    checked={agent.capabilities[item.key]}
+                    disabled={capabilityPending !== null}
+                    onCheckedChange={(enabled) => void updateCapability(item.key, enabled)}
+                  />
+                ))}
+              </div>
+              {agent.capabilities.dynamicCreation ? (
+                <div className={styles.sectionActionRow}>
+                  <span>
+                    <strong>动态创造已授权</strong>
+                    <small id="dynamic-creation-channel-reason">
+                      {recentChannel
+                        ? '在这个智能体的频道里描述需求；保存和启用仍是独立动作。'
+                        : '绑定频道后，才能在对话中描述需求。'}
+                    </small>
+                  </span>
+                  <span className={styles.rowActions}>
                     <Button
-                      size="small"
-                      variant={extension.activation === '已激活' ? 'danger' : 'primary'}
-                      loading={extensionPendingId === extension.id}
-                      loadingLabel="处理中…"
-                      disabled={extensionPendingId !== null}
-                      onClick={() => void changeExtensionActivation(extension)}
+                      variant="primary"
+                      disabled={!recentChannel}
+                      aria-describedby="dynamic-creation-channel-reason"
+                      onClick={() => recentChannel && void navigate(`/work/channels/${recentChannel.id}`)}
                     >
-                      {extension.activation === '已激活' ? '停用扩展' : '启用给智能体'}
+                      打开频道去描述需求
                     </Button>
-                  </div>
-                ))}
-              </div>
-            )}
-          </div>
-        </section>
-        <BindingTaskDialog
-          open={bindingOpen}
-          onOpenChange={setBindingOpen}
-          agentId={agent.id}
-          excludeBoundToAgentId={agent.id}
-        />
-      </div>
-
-      <ResizeHandle
-        className={styles.inspectorSplitter}
-        label="调整检查器宽度"
-        value={inspectorWidth}
-        min={INSPECTOR_WIDTH.min}
-        max={INSPECTOR_WIDTH.max}
-        defaultValue={INSPECTOR_WIDTH.default}
-        side="after"
-        disabled={inspectorCollapsed}
-        onChange={setInspectorWidth}
-        onCommit={(value) => useUiPreferences.getState().setInspectorWidth(value)}
-      />
-      <div
-        ref={inspectorPaneRef}
-        className={styles.inspectorPane}
-        data-collapsed={inspectorCollapsed ? '' : undefined}
-        aria-hidden={inspectorCollapsed || undefined}
-      >
-        <aside className={[styles.inspector, styles.workbenchInspector].join(' ')} aria-label="这个智能体">
-          <section>
-            <h2>这个智能体</h2>
-            <div className={styles.workbenchStatus}>
-              <div>
-                <strong>{recentChannel ? `最近频道：${recentChannel.name}` : '还没有最近使用的频道'}</strong>
-                <small>人设与模型保存后会创建新配置；能力授权每次修改都会独立保存。</small>
-              </div>
+                    <Button variant="ghost" onClick={() => void navigate(`/work/creator?agent=${agent.id}`)}>
+                      查看创造运行
+                    </Button>
+                  </span>
+                </div>
+              ) : null}
             </div>
-            {blockers.length > 0 ? (
-              <div className={styles.agentBlockers}>
-                {blockers.map((blocker) => (
-                  <Button
-                    key={blocker.kind}
-                    size="small"
-                    variant="ghost"
-                    onClick={() => {
-                      if (blocker.tab === 'creator') void navigate(agentWorkbenchHref(agent.id, blocker.tab))
-                      else openTab(blocker.tab)
-                    }}
-                  >
-                    {blocker.label}
-                  </Button>
-                ))}
-              </div>
-            ) : (
-              <p className={styles.secondaryText}>运行中的任务会在安全间隙使用兼容的新配置。</p>
-            )}
           </section>
-          <section>
-            <h2>频道</h2>
-            {boundChannels.length > 0 ? (
-              <div className={styles.compactList}>
-                {boundChannels.map((channel) => (
-                  <Link className={styles.boundChannelName} key={channel.id} to={`/work/channels/${channel.id}`}>
-                    <strong>{channel.name}</strong>
-                    <small>{channel.trigger}</small>
-                  </Link>
-                ))}
-              </div>
-            ) : (
-              <p className={styles.secondaryText}>绑定后才会出现在工作树里。</p>
-            )}
+
+          <section className={styles.workbenchSection} id="agent-extensions">
+            <div className={styles.section}>
+              <div className={styles.sectionHeading}>已关联扩展</div>
+              {agentExtensions.length === 0 ? (
+                <EmptyState
+                  title={extensions.length === 0 ? '还没有本地扩展' : '还没有给这个智能体启用扩展'}
+                  description={
+                    extensions.length === 0
+                      ? '在创造工作台保存后，扩展会出现在这里。动态运行中的内容不会自动保存。'
+                      : '已有保存版本。启用后，这个智能体才能使用对应能力。'
+                  }
+                />
+              ) : (
+                <div className={styles.compactList}>
+                  {agentExtensions.map((extension) => (
+                    <div className={styles.staticRow} key={extension.id}>
+                      <span>
+                        <strong>{extension.name}</strong>
+                        <small>{extension.description || '没有补充说明。'}</small>
+                      </span>
+                      <Button
+                        size="small"
+                        variant={extension.activation === '已激活' ? 'danger' : 'primary'}
+                        loading={extensionPendingId === extension.id}
+                        loadingLabel="处理中…"
+                        disabled={extensionPendingId !== null}
+                        onClick={() => void changeExtensionActivation(extension)}
+                      >
+                        {extension.activation === '已激活' ? '停用扩展' : '启用给智能体'}
+                      </Button>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
           </section>
-        </aside>
+          <BindingTaskDialog
+            open={bindingOpen}
+            onOpenChange={setBindingOpen}
+            agentId={agent.id}
+            excludeBoundToAgentId={agent.id}
+          />
+        </div>
+
+        <ResizeHandle
+          className={styles.inspectorSplitter}
+          label="调整检查器宽度"
+          value={inspectorWidth}
+          min={INSPECTOR_WIDTH.min}
+          max={INSPECTOR_WIDTH.max}
+          defaultValue={INSPECTOR_WIDTH.default}
+          side="after"
+          disabled={inspectorCollapsed}
+          onChange={setInspectorWidth}
+          onCommit={(value) => useUiPreferences.getState().setInspectorWidth(value)}
+        />
+        <SidePane collapsed={inspectorCollapsed} width={inspectorWidth} className={styles.inspectorPane}>
+          <div ref={inspectorPaneRef} style={{ height: '100%', minHeight: 0 }}>
+            <aside className={[styles.inspector, styles.workbenchInspector].join(' ')} aria-label="这个智能体">
+              <section>
+                <h2>这个智能体</h2>
+                <div className={styles.workbenchStatus}>
+                  <div>
+                    <strong>{recentChannel ? `最近频道：${recentChannel.name}` : '还没有最近使用的频道'}</strong>
+                    <small>人设与模型保存后会创建新配置；能力授权每次修改都会独立保存。</small>
+                  </div>
+                </div>
+                {blockers.length > 0 ? (
+                  <div className={styles.agentBlockers}>
+                    {blockers.map((blocker) => (
+                      <Button
+                        key={blocker.kind}
+                        size="small"
+                        variant="ghost"
+                        onClick={() => {
+                          if (blocker.tab === 'creator') void navigate(agentWorkbenchHref(agent.id, blocker.tab))
+                          else openTab(blocker.tab)
+                        }}
+                      >
+                        {blocker.label}
+                      </Button>
+                    ))}
+                  </div>
+                ) : (
+                  <p className={styles.secondaryText}>运行中的任务会在安全间隙使用兼容的新配置。</p>
+                )}
+              </section>
+              <section>
+                <h2>频道</h2>
+                {boundChannels.length > 0 ? (
+                  <div className={styles.compactList}>
+                    {boundChannels.map((channel) => (
+                      <NxtLink className={styles.boundChannelName} key={channel.id} to={`/work/channels/${channel.id}`}>
+                        <strong>{channel.name}</strong>
+                        <small>{channel.trigger}</small>
+                      </NxtLink>
+                    ))}
+                  </div>
+                ) : (
+                  <p className={styles.secondaryText}>绑定后才会出现在工作树里。</p>
+                )}
+              </section>
+            </aside>
+          </div>
+        </SidePane>
       </div>
-    </div>
+    </StageCrossfade>
   )
 }

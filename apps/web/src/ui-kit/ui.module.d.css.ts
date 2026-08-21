@@ -18,20 +18,32 @@ declare const styles: {
   readonly fieldError: string
   readonly fieldHint: string
   readonly fieldLabel: string
+  readonly fill: string
   readonly ghost: string
   readonly iconButton: string
   readonly info: string
   readonly input: string
   readonly loadingSpinner: string
+  readonly navGlyph: string
+  readonly navMark: string
+  readonly navMarkProbe: string
+  readonly navTrack: string
   readonly panel: string
   readonly primary: string
   readonly resizeHandle: string
+  readonly ringDanger: string
+  readonly ringInfo: string
+  readonly ringNeutral: string
+  readonly ringWarning: string
   readonly secondary: string
   readonly selectContent: string
   readonly selectItem: string
   readonly selectTrigger: string
   readonly selectViewport: string
   readonly small: string
+  readonly stageLayer: string
+  readonly stageWrap: string
+  readonly stateRing: string
   readonly success: string
   readonly switchCopy: string
   readonly switchDescription: string
@@ -43,6 +55,7 @@ declare const styles: {
   readonly tabsList: string
   readonly tabsTrigger: string
   readonly textarea: string
+  readonly themeIcon: string
   readonly tooltipContent: string
   readonly unknown: string
   readonly warning: string

@@ -159,7 +159,7 @@ test('adding a connection selects a platform before showing its fields', async (
   await expect(page.getByText('网页聊天由当前设备管理，不需要配置账号凭据。')).toBeVisible()
   await expect(page.getByLabel('Client Secret')).toHaveCount(0)
 
-  await page.getByRole('button', { name: '添加连接' }).click()
+  await page.getByRole('link', { name: '添加平台连接' }).click()
   const dialog = page.getByRole('dialog')
   await expect(dialog.getByRole('heading', { name: '选择平台' })).toBeVisible()
   await expect(dialog.getByText('选择要连接的平台账号。')).toBeVisible()

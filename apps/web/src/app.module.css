@@ -41,7 +41,6 @@
   font-size: 12px;
   font-weight: 650;
   white-space: nowrap;
-  transition: opacity var(--nxt-motion-fast) var(--nxt-ease-standard);
 }
 
 .shellBody {
@@ -64,6 +63,7 @@
 }
 
 .rail nav {
+  position: relative;
   display: flex;
   flex-direction: column;
   gap: 8px;
@@ -88,6 +88,7 @@
 }
 
 .railBtn {
+  position: relative;
   display: grid;
   width: 40px;
   height: 40px;
@@ -102,13 +103,16 @@
 
 .railBtn:hover {
   color: var(--nxt-text-primary);
-  background: var(--nxt-bg-hover);
+}
+
+.railBtn > :not([data-nav-mark]) {
+  position: relative;
+  z-index: 1;
 }
 
 .railBtnActive {
+  position: relative;
   color: var(--nxt-accent);
-  background: var(--nxt-accent-soft);
-  box-shadow: inset 2px 0 var(--nxt-accent);
 }
 
 .railSpacer {
@@ -132,7 +136,6 @@
 .themeIcon {
   display: grid;
   place-items: center;
-  animation: theme-icon-enter var(--nxt-motion-standard) var(--nxt-ease-enter) both;
 }
 
 .tree {
@@ -143,6 +146,7 @@
   border-right: 1px solid var(--nxt-border-subtle);
   background: var(--nxt-bg-sidebar);
   overflow: hidden;
+  view-transition-name: nxt-tree;
 }
 
 .treeHead {
@@ -174,6 +178,14 @@
   background: var(--nxt-bg-hover);
 }
 
+.treeFill {
+  display: flex;
+  min-width: 0;
+  min-height: 0;
+  flex: 1;
+  flex-direction: column;
+}
+
 .treeBody {
   min-height: 0;
   flex: 1;
@@ -195,6 +207,7 @@
   flex: 1;
   flex-direction: column;
   overflow: hidden;
+  view-transition-name: nxt-stage;
 }
 
 .routeView {
@@ -203,8 +216,6 @@
   min-height: 0;
   flex: 1;
   flex-direction: column;
-  transform-origin: 50% 20%;
-  animation: route-enter var(--nxt-motion-spatial) var(--nxt-ease-enter) both;
 }
 
 .centeredState {
@@ -226,46 +237,83 @@
   margin: 8px 0 20px;
 }
 
-@keyframes route-enter {
-  from {
-    opacity: 0;
-    filter: blur(2px);
-    transform: translateY(7px) scale(0.997);
-  }
-
-  to {
-    opacity: 1;
-    filter: blur(0);
-    transform: translateY(0) scale(1);
-  }
+.commandPalette {
+  width: min(620px, calc(100vw - 48px));
+  max-height: min(640px, calc(100dvh - 64px));
 }
 
-@keyframes theme-icon-enter {
-  from {
-    opacity: 0;
-    transform: rotate(-35deg) scale(0.72);
-  }
-
-  to {
-    opacity: 1;
-    transform: rotate(0) scale(1);
-  }
+.commandSearch {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px;
+  border: 1px solid var(--nxt-border-default);
+  border-radius: var(--nxt-radius-control);
+  padding: 0 10px;
+  color: var(--nxt-text-muted);
+  background: var(--nxt-bg-subtle);
 }
 
-@media (prefers-reduced-motion: reduce) {
-  .routeView {
-    animation: none;
-  }
-
-  .themeIcon {
-    animation: none;
-  }
+.commandSearch input {
+  border: 0;
+  padding-inline: 0;
+  background: transparent;
+  box-shadow: none;
 }
 
-:global([data-reduced-motion='true']) .routeView {
-  animation: none;
+.commandSearch input:focus-visible {
+  outline: 0;
 }
 
-:global([data-reduced-motion='true']) .themeIcon {
-  animation: none;
+.commandSearch kbd {
+  border: 1px solid var(--nxt-border-default);
+  border-radius: var(--nxt-radius-sm);
+  padding: 1px 5px;
+  color: var(--nxt-text-secondary);
+  background: var(--nxt-bg-surface);
+  font: 11px/16px var(--nxt-font-mono);
+}
+
+.commandResults {
+  display: grid;
+  gap: 4px;
+  margin-top: 10px;
+}
+
+.commandResult {
+  display: grid;
+  width: 100%;
+  height: auto;
+  min-height: 48px;
+  justify-items: start;
+  gap: 1px;
+  border-color: transparent;
+  padding: 6px 10px;
+  text-align: left;
+}
+
+.commandResult span,
+.commandResult small {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.commandResult small {
+  color: var(--nxt-text-secondary);
+  font-size: 11px;
+  font-weight: 450;
+}
+
+.commandResult:hover,
+.commandResult:focus-visible {
+  border-color: var(--nxt-border-default);
+  background: var(--nxt-bg-hover);
+}
+
+.commandEmpty {
+  margin: 24px 0;
+  color: var(--nxt-text-muted);
+  text-align: center;
 }

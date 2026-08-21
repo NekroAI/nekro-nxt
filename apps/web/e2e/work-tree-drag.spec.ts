@@ -56,7 +56,7 @@ test('work tree keeps titles stable while full rows and keyboard handles cover o
     agents: [
       {
         id: mapleId,
-        displayName: '浅枫',
+        displayName: '规划员',
         persona: '',
         currentRevisionId: AgentRevisionIdSchema.parse('arev_dragmaple'),
         createdAt: 1,
@@ -99,7 +99,7 @@ test('work tree keeps titles stable while full rows and keyboard handles cover o
         connectionId: webConnectionId,
         platformChannelId: 'web-maple',
         kind: 'web',
-        displayName: '浅枫的网页频道',
+        displayName: '规划员的网页频道',
         boundAgentId: mapleId,
         runtimePhase: 'idle',
         bindings: [{ channelId: mapleChannelId, agentId: mapleId, triggerPolicy: 'always', boundAt: 1 }],
@@ -109,7 +109,7 @@ test('work tree keeps titles stable while full rows and keyboard handles cover o
         connectionId: webConnectionId,
         platformChannelId: 'web-maple-spare',
         kind: 'web',
-        displayName: '浅枫的备用地',
+        displayName: '规划员的备用地',
         boundAgentId: mapleId,
         runtimePhase: 'idle',
         bindings: [{ channelId: mapleSpareChannelId, agentId: mapleId, triggerPolicy: 'always', boundAt: 1 }],
@@ -240,14 +240,14 @@ test('work tree keeps titles stable while full rows and keyboard handles cover o
   })
 
   await page.goto('/work')
-  await expect(page.getByRole('link', { name: /浅枫/u }).first()).toBeVisible()
+  await expect(page.getByRole('link', { name: /规划员/u }).first()).toBeVisible()
   await expect(page.getByRole('link', { name: /资料员/u }).first()).toBeVisible()
 
-  const mapleChannel = page.getByRole('link', { name: /浅枫的网页频道/u })
-  const mapleSpare = page.getByRole('link', { name: /浅枫的备用地/u })
-  const mapleHeader = page.getByRole('link', { name: /浅枫\s+\d+ 个频道/u })
+  const mapleChannel = page.getByRole('link', { name: /规划员的网页频道/u })
+  const mapleSpare = page.getByRole('link', { name: /规划员的备用地/u })
+  const mapleHeader = page.getByRole('link', { name: /规划员\s+\d+ 个频道/u })
   const clerkHeader = page.getByRole('link', { name: /资料员\s+\d+ 个频道/u })
-  const mapleChannelHandle = page.getByRole('button', { name: '拖动“浅枫的网页频道”排序' })
+  const mapleChannelHandle = page.getByRole('button', { name: '拖动“规划员的网页频道”排序' })
   const top = async (locator: Locator): Promise<number> => {
     const box = await locator.boundingBox()
     if (!box) throw new Error('排序目标没有几何尺寸。')
@@ -316,7 +316,7 @@ test('work tree keeps titles stable while full rows and keyboard handles cover o
   await dragTo(page, mapleChannel, clerkHeader)
   const rebindDialog = page.getByRole('dialog')
   await expect(rebindDialog.getByRole('heading', { name: '改由其他智能体响应' })).toBeVisible()
-  await expect(rebindDialog.getByText(/将「浅枫的网页频道」改由「资料员」响应/u)).toBeVisible()
+  await expect(rebindDialog.getByText(/将「规划员的网页频道」改由「资料员」响应/u)).toBeVisible()
   await rebindDialog.getByRole('button', { name: '改由该智能体响应' }).click()
   await expect(rebindDialog).toHaveCount(0)
   await expect(mapleChannelHandle).toBeFocused()
@@ -335,8 +335,8 @@ test('work tree keeps titles stable while full rows and keyboard handles cover o
   await expect(clerkChannelHandle).toBeFocused()
 
   const closeNotifications = page.getByRole('button', { name: '关闭通知' })
-  while ((await closeNotifications.count()) > 0) {
-    await closeNotifications.first().click()
+  for (let attempt = 0; attempt < 8 && (await closeNotifications.count()) > 0; attempt += 1) {
+    await closeNotifications.first().click({ force: true })
   }
   await page.getByRole('link', { name: /临时网页台/u }).click({ button: 'right' })
   await expect(page.getByRole('menu')).toHaveCount(0)

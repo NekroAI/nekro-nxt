@@ -306,3 +306,15 @@
     --dsw-motion-standard: 1ms;
   }
 }
+
+:global([data-reduced-motion='true']) .catalog *,
+:global([data-reduced-motion='true']) .catalog *::before,
+:global([data-reduced-motion='true']) .catalog *::after {
+  animation-duration: 1ms !important;
+  transition-duration: 1ms !important;
+}
+
+:global([data-reduced-motion='true']) .nxtDshNativeSurface {
+  --dsw-motion-fast: 1ms;
+  --dsw-motion-standard: 1ms;
+}

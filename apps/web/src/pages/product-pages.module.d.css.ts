@@ -3,20 +3,16 @@ declare const styles: {
   readonly agentAvatar: string
   readonly agentBlockers: string
   readonly agentCard: string
-  readonly agentCardActions: string
   readonly agentCardGrid: string
-  readonly agentCardHeader: string
   readonly agentCardIdentity: string
   readonly agentCardMeta: string
   readonly agentCardTitle: string
   readonly agentCreatePage: string
   readonly agentHeaderRow: string
-  readonly agentModel: string
   readonly agentOverview: string
   readonly agentRow: string
   readonly attachment: string
   readonly avatar: string
-  readonly avatarLarge: string
   readonly bindingAgentActions: string
   readonly bindingAgentIdentity: string
   readonly bindingAgentRow: string
@@ -28,8 +24,10 @@ declare const styles: {
   readonly boundChannelName: string
   readonly boundChannelRow: string
   readonly canvasStage: string
+  readonly canvasStageInner: string
   readonly canvasTab: string
   readonly capabilityChoices: string
+  readonly channelDetailRow: string
   readonly channelDetails: string
   readonly channelDirectory: string
   readonly channelGroup: string
@@ -95,7 +93,6 @@ declare const styles: {
   readonly inlineFieldAction: string
   readonly inlineFieldHint: string
   readonly inspector: string
-  readonly inspectorCollapsed: string
   readonly inspectorExpanded: string
   readonly inspectorPane: string
   readonly inspectorRegion: string
@@ -130,13 +127,10 @@ declare const styles: {
   readonly messageMention: string
   readonly messageQuote: string
   readonly messageUnsupported: string
-  readonly objectList: string
-  readonly objectName: string
+  readonly navCopy: string
   readonly optionalTests: string
   readonly overviewBlocker: string
-  readonly overviewBlockers: string
   readonly overviewFacts: string
-  readonly overviewHint: string
   readonly overviewSummary: string
   readonly page: string
   readonly plot: string
@@ -149,13 +143,10 @@ declare const styles: {
   readonly plotTrack: string
   readonly plotTurn: string
   readonly railEmpty: string
-  readonly railHeading: string
   readonly revisionNotice: string
   readonly riskLabel: string
   readonly rowActions: string
   readonly runtimeCard: string
-  readonly runtimeCardIcon: string
-  readonly runtimeColumns: string
   readonly runtimeTail: string
   readonly secondaryText: string
   readonly section: string
@@ -198,14 +189,15 @@ declare const styles: {
   readonly trajTableWrap: string
   readonly trajTime: string
   readonly trajTimeCell: string
-  readonly trajectoryExpandHint: string
   readonly trajectoryHeader: string
   readonly trajectoryIdleRow: string
   readonly trajectoryStepMark: string
   readonly trajectorySteps: string
   readonly trajectorySummary: string
   readonly trajectoryTools: string
+  readonly treeCopy: string
   readonly treeRowDragHandle: string
+  readonly treeStateIndicator: string
   readonly truncate: string
   readonly turnChip: string
   readonly turnRail: string
@@ -219,7 +211,6 @@ declare const styles: {
   readonly workStream: string
   readonly workStreamChevron: string
   readonly workStreamDetails: string
-  readonly workStreamDisclosure: string
   readonly workStreamSummary: string
   readonly workSummaryRow: string
   readonly workToolCount: string
