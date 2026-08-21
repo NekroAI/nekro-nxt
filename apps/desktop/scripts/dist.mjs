@@ -3,11 +3,14 @@ import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 const args = process.argv.slice(2)
-const directoryOnly = args.includes('--dir')
-const targetIndex = args.indexOf('--target')
-const archIndex = args.indexOf('--arch')
-const target = targetIndex >= 0 ? args[targetIndex + 1] : undefined
-const arch = archIndex >= 0 ? args[archIndex + 1] : undefined
+const option = (name) => {
+  const index = args.indexOf(name)
+  return index >= 0 ? args[index + 1] : undefined
+}
+const target = option('--target')
+const channel = option('--channel')
+if (!['mac', 'win', 'linux', 'all'].includes(target)) throw new Error(`Desktop target 无效：${target ?? 'undefined'}`)
+if (channel !== 'preview' && channel !== 'stable') throw new Error(`Desktop channel 无效：${channel ?? 'undefined'}`)
 
 const run = (command, commandArgs, cwd, environment = process.env) => {
   const result = spawnSync(command, commandArgs, {
@@ -24,23 +27,110 @@ const run = (command, commandArgs, cwd, environment = process.env) => {
 }
 
 const appRoot = fileURLToPath(new URL('..', import.meta.url))
+const repositoryRoot = path.resolve(appRoot, '../..')
 const pnpmCli = process.env['npm_execpath']
 if (!pnpmCli) throw new Error('Desktop 分发必须通过 pnpm script 启动。')
+const buildEnvironment = { ...process.env, CI: 'true', NEKRO_DESKTOP_CHANNEL: channel }
 const runPnpm = (commandArgs) =>
-  run(process.execPath, [pnpmCli, '--config.verify-deps-before-run=false', ...commandArgs], appRoot)
+  run(process.execPath, [pnpmCli, '--config.verify-deps-before-run=false', ...commandArgs], appRoot, buildEnvironment)
+
+const gitStatus = spawnSync('git', ['status', '--porcelain'], { cwd: repositoryRoot, encoding: 'utf8' })
+if (gitStatus.status !== 0 || gitStatus.stdout.trim() !== '') {
+  throw new Error('Desktop Release 构建要求 Git worktree 干净，确保版本与 receipt 对应准确源码。')
+}
+if ((target === 'mac' || target === 'all') && process.platform !== 'darwin') {
+  throw new Error('macOS Universal DMG 必须在 macOS 上构建；--target all 因此也必须从 macOS 启动。')
+}
 
 runPnpm(['--filter', '@nekro-nxt/web', 'build'])
 runPnpm(['--filter', '@nekro-nxt/server...', 'run', 'build'])
 runPnpm(['--filter', '@nekro-nxt/desktop', 'build'])
-run(process.execPath, ['scripts/prepare-server-runtime.mjs'], appRoot)
-run(process.execPath, ['scripts/rebuild-server-runtime.mjs', ...(arch === undefined ? [] : ['--arch', arch])], appRoot)
-
 const builderCli = fileURLToPath(new URL('../node_modules/electron-builder/out/cli/cli.js', import.meta.url))
-const builderArgs = ['--config', 'electron-builder.config.mjs', '--publish', 'never']
-if (directoryOnly) builderArgs.push('--dir')
-if (target !== undefined) builderArgs.push(`--${target}`)
-if (arch !== undefined) builderArgs.push(`--${arch}`)
-const builderEnvironment = { ...process.env }
+const builderEnvironment = { ...buildEnvironment, CSC_IDENTITY_AUTO_DISCOVERY: 'false' }
 delete builderEnvironment['npm_execpath']
 delete builderEnvironment['npm_config_user_agent']
-run(process.execPath, [builderCli, ...builderArgs], appRoot, builderEnvironment)
+
+const packageLocally = (platform) => {
+  const architecture = platform === 'mac' ? 'universal' : 'x64'
+  run(
+    process.execPath,
+    [builderCli, '--config', 'electron-builder.config.mjs', `--${platform}`, `--${architecture}`, '--publish', 'never'],
+    appRoot,
+    builderEnvironment,
+  )
+}
+
+const packageWindowsWithDocker = () => {
+  run(
+    'docker',
+    [
+      'run',
+      '--rm',
+      '--platform',
+      'linux/amd64',
+      '-e',
+      `NEKRO_DESKTOP_CHANNEL=${channel}`,
+      '-e',
+      'CSC_IDENTITY_AUTO_DISCOVERY=false',
+      '-v',
+      `${repositoryRoot}:/project`,
+      '-w',
+      '/project/apps/desktop',
+      'electronuserland/builder:wine',
+      'npx',
+      '--yes',
+      'electron-builder@26.8.1',
+      '--config',
+      'electron-builder.config.mjs',
+      '--win',
+      '--x64',
+      '--publish',
+      'never',
+    ],
+    appRoot,
+    builderEnvironment,
+  )
+}
+
+const prepareRuntime = (platform) => {
+  if (platform !== 'linux' || process.platform === 'linux') {
+    run(process.execPath, ['scripts/prepare-server-runtime.mjs', '--platform', platform], appRoot, buildEnvironment)
+    return
+  }
+  run(
+    'docker',
+    [
+      'run',
+      '--rm',
+      '--platform',
+      'linux/amd64',
+      '-e',
+      'CI=true',
+      '-e',
+      'PNPM_CONFIG_STORE_DIR=/tmp/nekro-nxt-pnpm-store',
+      '-v',
+      `${repositoryRoot}:/project`,
+      '-w',
+      '/project/apps/desktop',
+      'node:22-bookworm',
+      'bash',
+      '-lc',
+      'corepack enable && node scripts/prepare-server-runtime.mjs --platform linux',
+    ],
+    appRoot,
+    builderEnvironment,
+  )
+}
+
+const platforms = target === 'all' ? ['mac', 'win', 'linux'] : [target]
+for (const platform of platforms) {
+  prepareRuntime(platform)
+  if (platform === 'win' && process.platform !== 'win32') packageWindowsWithDocker()
+  else packageLocally(platform)
+  run(
+    process.execPath,
+    ['scripts/write-artifact-receipt.mjs', '--channel', channel, '--platform', platform],
+    appRoot,
+    buildEnvironment,
+  )
+}

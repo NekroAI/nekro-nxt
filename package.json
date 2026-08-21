@@ -10,8 +10,8 @@
   },
   "scripts": {
     "dev": "pnpm -r --parallel --if-present run dev",
-    "dist:desktop": "pnpm --filter @nekro-nxt/desktop dist",
-    "dist:desktop:dir": "pnpm --filter @nekro-nxt/desktop dist:dir",
+    "desktop:preview": "node scripts/release-desktop.mjs preview",
+    "desktop:stable": "node scripts/release-desktop.mjs stable",
     "dist:server": "node scripts/build-server-image.mjs",
     "build": "tsc -b && pnpm -r --if-present run build && node scripts/check-built-exports.mjs",
     "check": "pnpm check:format && pnpm typecheck && pnpm lint && pnpm check:static && pnpm check:drizzle && pnpm check:css-types && pnpm check:docs && pnpm check:public && pnpm check:workspace && pnpm check:ui-boundary && pnpm check:ui-actions && pnpm check:gates",

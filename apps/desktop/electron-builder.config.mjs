@@ -1,13 +1,20 @@
-const appId = 'io.github.nekroai.nekronxt'
+import desktopDistributions from './distributions.json' with { type: 'json' }
+
+const channel = process.env['NEKRO_DESKTOP_CHANNEL']
+if (channel !== 'preview' && channel !== 'stable') {
+  throw new Error(`NEKRO_DESKTOP_CHANNEL 无效：${channel ?? 'undefined'}`)
+}
+const distribution = desktopDistributions[channel]
 
 /** @type {import('electron-builder').Configuration} */
 const config = {
-  appId,
-  productName: 'NekroNxt',
-  artifactName: `nekro-nxt-\${os}-\${arch}-v\${version}.\${ext}`,
+  appId: distribution.appId,
+  productName: distribution.productName,
+  artifactName: `${distribution.artifactSlug}-\${os}-\${arch}-v\${version}.\${ext}`,
+  extraMetadata: { name: distribution.artifactSlug },
   directories: {
     app: 'dist',
-    output: 'release',
+    output: `release/${channel}`,
   },
   files: ['main.mjs', 'main.mjs.map', 'product-release.json', 'package.json'],
   extraResources: [
@@ -21,26 +28,29 @@ const config = {
     category: 'public.app-category.productivity',
     identity: null,
     notarize: false,
-    target: [{ target: 'dmg', arch: ['arm64', 'x64'] }],
+    artifactName: `${distribution.artifactSlug}-mac-universal-v\${version}.\${ext}`,
+    target: [{ target: 'dmg', arch: ['universal'] }],
   },
   win: {
-    executableName: 'NekroNxt',
+    executableName: distribution.executableName,
+    artifactName: `${distribution.artifactSlug}-win-x64-v\${version}-setup.\${ext}`,
     target: [{ target: 'nsis', arch: ['x64'] }],
   },
   nsis: {
-    guid: '2BED256D-E4EA-4EA9-B730-6B63FF416CE8',
+    guid: distribution.nsisGuid,
     oneClick: false,
     perMachine: false,
     allowToChangeInstallationDirectory: true,
     createDesktopShortcut: true,
     createStartMenuShortcut: true,
-    shortcutName: 'NekroNxt',
+    shortcutName: distribution.productName,
     deleteAppDataOnUninstall: false,
   },
   linux: {
     category: 'Utility',
-    executableName: 'nekro-nxt',
-    target: ['AppImage'],
+    executableName: distribution.linuxExecutableName,
+    artifactName: `${distribution.artifactSlug}-linux-x64-v\${version}.\${ext}`,
+    target: [{ target: 'AppImage', arch: ['x64'] }],
   },
   publish: null,
 }

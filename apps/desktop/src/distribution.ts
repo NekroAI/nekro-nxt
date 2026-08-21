@@ -1,20 +1,27 @@
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
+import desktopDistributions from '../distributions.json' with { type: 'json' }
+
+export type DesktopReleaseChannel = 'preview' | 'stable'
 
 export interface DesktopDistribution {
   readonly appId: string
   readonly appUserDataName: string
+  readonly artifactSlug: string
+  readonly executableName: string
+  readonly linuxExecutableName: string
+  readonly nsisGuid: string
   readonly productName: string
 }
 
-export const DESKTOP_DISTRIBUTION: DesktopDistribution = {
-  appId: 'io.github.nekroai.nekronxt',
-  appUserDataName: 'NekroNxt',
-  productName: 'NekroNxt',
-}
+const distributions: Readonly<Record<DesktopReleaseChannel, DesktopDistribution>> = desktopDistributions
+
+export const getDesktopDistribution = (channel: DesktopReleaseChannel): DesktopDistribution => distributions[channel]
 
 export interface ProductRelease {
   readonly format: 'nxt.product-release'
+  readonly channel: DesktopReleaseChannel
+  readonly baseVersion: string
   readonly version: string
   readonly commit: string
   readonly releaseId: string
@@ -29,11 +36,14 @@ export const parseProductRelease = (value: unknown): ProductRelease => {
   if (
     !isRecord(value) ||
     value['format'] !== 'nxt.product-release' ||
+    (value['channel'] !== 'preview' && value['channel'] !== 'stable') ||
+    typeof value['baseVersion'] !== 'string' ||
     typeof value['version'] !== 'string' ||
     typeof releaseCommit !== 'string' ||
     typeof value['releaseId'] !== 'string' ||
     typeof value['dshVersion'] !== 'string' ||
     value['version'].length === 0 ||
+    value['baseVersion'].length === 0 ||
     !/^[a-f0-9]{40}$/u.test(releaseCommit) ||
     value['releaseId'].length === 0 ||
     value['dshVersion'].length === 0
@@ -42,6 +52,8 @@ export const parseProductRelease = (value: unknown): ProductRelease => {
   }
   return {
     format: value['format'],
+    channel: value['channel'],
+    baseVersion: value['baseVersion'],
     version: value['version'],
     commit: releaseCommit,
     releaseId: value['releaseId'],
@@ -54,9 +66,12 @@ export const desktopDataRoot = (userDataRoot: string): string => path.join(userD
 export const resolveProductReleasePath = (desktopMainModuleUrl: string): string =>
   fileURLToPath(new URL('./product-release.json', desktopMainModuleUrl))
 
-export const desktopUserDataRoot = (appDataRoot: string, override: string | undefined): string => {
-  if (override === undefined || override.trim() === '')
-    return path.join(appDataRoot, DESKTOP_DISTRIBUTION.appUserDataName)
+export const desktopUserDataRoot = (
+  appDataRoot: string,
+  distribution: DesktopDistribution,
+  override: string | undefined,
+): string => {
+  if (override === undefined || override.trim() === '') return path.join(appDataRoot, distribution.appUserDataName)
   if (!path.isAbsolute(override)) throw new Error('NEKRO_DESKTOP_USER_DATA 必须是绝对路径。')
   return override
 }

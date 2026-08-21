@@ -1,8 +1,8 @@
 import { describe, expect, it } from 'vitest'
 import {
-  DESKTOP_DISTRIBUTION,
   desktopDataRoot,
   desktopUserDataRoot,
+  getDesktopDistribution,
   isAllowedExternalUrl,
   isSameApplicationOrigin,
   parseProductRelease,
@@ -11,15 +11,24 @@ import {
 
 describe('Desktop product distribution', () => {
   it('keeps one stable product identity and one data root outside the installation', () => {
-    expect(DESKTOP_DISTRIBUTION).toEqual({
+    const stable = getDesktopDistribution('stable')
+    const preview = getDesktopDistribution('preview')
+    expect(stable).toMatchObject({
       appId: 'io.github.nekroai.nekronxt',
       appUserDataName: 'NekroNxt',
       productName: 'NekroNxt',
     })
+    expect(preview).toMatchObject({
+      appId: 'io.github.nekroai.nekronxt.preview',
+      appUserDataName: 'NekroNxt Preview',
+      productName: 'NekroNxt Preview',
+    })
+    expect(preview.nsisGuid).not.toBe(stable.nsisGuid)
     expect(desktopDataRoot('/application-data/NekroNxt')).toBe('/application-data/NekroNxt/data')
-    expect(desktopUserDataRoot('/application-data', undefined)).toBe('/application-data/NekroNxt')
-    expect(desktopUserDataRoot('/application-data', '/isolated/NekroNxt')).toBe('/isolated/NekroNxt')
-    expect(() => desktopUserDataRoot('/application-data', 'relative-data')).toThrow('绝对路径')
+    expect(desktopUserDataRoot('/application-data', stable, undefined)).toBe('/application-data/NekroNxt')
+    expect(desktopUserDataRoot('/application-data', preview, undefined)).toBe('/application-data/NekroNxt Preview')
+    expect(desktopUserDataRoot('/application-data', stable, '/isolated/NekroNxt')).toBe('/isolated/NekroNxt')
+    expect(() => desktopUserDataRoot('/application-data', stable, 'relative-data')).toThrow('绝对路径')
     expect(resolveProductReleasePath('file:///Applications/NekroNxt.app/Contents/Resources/app.asar/main.mjs')).toBe(
       '/Applications/NekroNxt.app/Contents/Resources/app.asar/product-release.json',
     )
@@ -29,6 +38,8 @@ describe('Desktop product distribution', () => {
     expect(
       parseProductRelease({
         format: 'nxt.product-release',
+        channel: 'stable',
+        baseVersion: '0.1.0',
         version: '0.1.0',
         commit: 'a'.repeat(40),
         releaseId: '0.1.0+aaaaaaaaaaaa',

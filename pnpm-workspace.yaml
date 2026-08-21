@@ -2,6 +2,10 @@ packages:
   - 'apps/*'
   - 'packages/*'
 
+# legacy deploy 生成独立 production staging；禁止 pnpm 在运行根脚本前把其状态
+# 误应用到 workspace node_modules 并裁掉开发依赖。
+verifyDepsBeforeRun: false
+
 overrides:
   '@aws-sdk/credential-provider-ini': 3.973.13
   react: 18.3.1
@@ -17,3 +21,15 @@ allowBuilds:
   koffi: true
   node-pty: true
   protobufjs: false
+
+# Desktop Release 在一个原子包中保留三端预编译原生依赖；运行时按 platform/arch 选择。
+supportedArchitectures:
+  os:
+    - darwin
+    - linux
+    - win32
+  cpu:
+    - arm64
+    - x64
+  libc:
+    - glibc

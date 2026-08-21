@@ -5,6 +5,7 @@
     "rootDir": "src",
     "outDir": "lib/types",
     "emitDeclarationOnly": true,
+    "resolveJsonModule": true,
     "tsBuildInfoFile": "lib/types.tsbuildinfo",
     "types": ["node", "electron"]
   },

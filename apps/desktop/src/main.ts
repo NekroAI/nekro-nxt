@@ -1,12 +1,12 @@
 import { app, BrowserWindow, dialog, shell, utilityProcess, type UtilityProcess } from 'electron'
 import { createServer } from 'node:net'
-import { readFile } from 'node:fs/promises'
+import { readFileSync } from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import {
-  DESKTOP_DISTRIBUTION,
   desktopDataRoot,
   desktopUserDataRoot,
+  getDesktopDistribution,
   isAllowedExternalUrl,
   isSameApplicationOrigin,
   parseProductRelease,
@@ -25,8 +25,8 @@ let stopping = false
 
 const productReleasePath = (): string => resolveProductReleasePath(import.meta.url)
 
-const readProductRelease = async (): Promise<ProductRelease> =>
-  parseProductRelease(JSON.parse(await readFile(productReleasePath(), 'utf8')))
+const readProductRelease = (): ProductRelease =>
+  parseProductRelease(JSON.parse(readFileSync(productReleasePath(), 'utf8')))
 
 const webDistIndex = (): string =>
   app.isPackaged
@@ -142,8 +142,13 @@ const stopProductHost = async (): Promise<void> => {
   if (exited !== undefined) await exited
 }
 
-app.setName(DESKTOP_DISTRIBUTION.productName)
-app.setPath('userData', desktopUserDataRoot(app.getPath('appData'), process.env['NEKRO_DESKTOP_USER_DATA']))
+const productRelease = readProductRelease()
+const desktopDistribution = getDesktopDistribution(productRelease.channel)
+app.setName(desktopDistribution.productName)
+app.setPath(
+  'userData',
+  desktopUserDataRoot(app.getPath('appData'), desktopDistribution, process.env['NEKRO_DESKTOP_USER_DATA']),
+)
 
 const gotLock = app.requestSingleInstanceLock()
 if (!gotLock) app.quit()
@@ -155,10 +160,9 @@ app.on('second-instance', () => {
 })
 
 void app.whenReady().then(async () => {
-  app.setAppUserModelId(DESKTOP_DISTRIBUTION.appId)
+  app.setAppUserModelId(desktopDistribution.appId)
   try {
-    const release = await readProductRelease()
-    const origin = await startProductHost(release)
+    const origin = await startProductHost(productRelease)
     mainWindow = await createMainWindow(origin)
     mainWindow.on('closed', () => {
       mainWindow = undefined
