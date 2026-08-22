@@ -185,32 +185,73 @@ describe('Core SQLite baseline', () => {
     const oldRepository = new SqliteCoreRepository(oldDatabase)
     const oldCore = new CoreService(oldRepository, { now: () => 1000, nextUlid: () => 'MIGRATION' })
     const connection = oldCore.createConnection({ adapterKey: 'web', config: {} })
-    const agent = createAgent(oldCore)
-    const channel = oldCore.createChannel({
-      connectionId: connection.id,
-      platformChannelId: 'migration-channel',
-      kind: 'web',
-    })
-    const event = appendTextEvent(oldCore, connection.id, channel.id, 'migration-event', 'migration', 1)
-    const episodeId = EpisodeIdSchema.parse('eps_MIGRATION')
-    oldRepository.createEpisode({
-      id: episodeId,
-      channelId: channel.id,
-      agentId: agent.definition.id,
-      agentRevisionId: agent.revision.id,
-      status: 'opening',
-      openedAtEventId: event.id,
-      createdAt: 2,
-    })
-    oldRepository.createAdmission({
-      id: AdmissionIdSchema.parse('adm_MIGRATION'),
-      episodeId,
-      eventIds: [event.id],
-      mode: 'followup',
-      state: 'pending',
-      createdAt: 3,
-    })
     oldDatabase.close()
+    const legacy = new BetterSqlite3(filename)
+    const agentId = AgentIdSchema.parse('agt_MIGRATION')
+    const agentRevisionId = AgentRevisionIdSchema.parse('arev_MIGRATION')
+    legacy.prepare('INSERT INTO agent_definitions (id, created_at) VALUES (?, ?)').run(agentId, 1)
+    legacy
+      .prepare(
+        'INSERT INTO agent_revisions (id, agent_id, revision, display_name, persona, model_provider, model_id, reasoning_effort, capabilities, content_digest, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+      )
+      .run(
+        agentRevisionId,
+        agentId,
+        1,
+        '迁移测试智能体',
+        '',
+        'test',
+        'model',
+        null,
+        JSON.stringify(capabilities),
+        'v2:legacy-migration',
+        1,
+      )
+    legacy
+      .prepare('INSERT INTO agent_current_revisions (agent_id, revision_id) VALUES (?, ?)')
+      .run(agentId, agentRevisionId)
+    const channelId = ChannelIdSchema.parse('chn_MIGRATION')
+    const eventId = ChannelEventIdSchema.parse('evt_MIGRATION')
+    const logicalMessageId = LogicalMessageIdSchema.parse('msg_MIGRATION')
+    const episodeId = EpisodeIdSchema.parse('eps_MIGRATION')
+    const admissionId = AdmissionIdSchema.parse('adm_MIGRATION')
+    legacy
+      .prepare(
+        'INSERT INTO channels (id, connection_id, platform_channel_id, kind, display_name, created_at) VALUES (?, ?, ?, ?, ?, ?)',
+      )
+      .run(channelId, connection.id, 'migration-channel', 'web', null, 1)
+    legacy
+      .prepare(
+        'INSERT INTO channel_events (id, logical_message_id, channel_id, platform_message_id, kind, sender_member_id, parts, source_timestamp, received_at, dedupe_key, facts, search_text) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+      )
+      .run(
+        eventId,
+        logicalMessageId,
+        channelId,
+        null,
+        'message-created',
+        null,
+        JSON.stringify([{ type: 'text', text: 'migration' }]),
+        1,
+        1,
+        'migration-event',
+        null,
+        'migration',
+      )
+    legacy
+      .prepare(
+        'INSERT INTO episodes (id, channel_id, agent_id, agent_revision_id, dsh_session_id, status, opened_at_event_id, last_admitted_event_id, closed_at_event_id, closed_at, close_reason, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+      )
+      .run(episodeId, channelId, agentId, agentRevisionId, null, 'opening', eventId, null, null, null, null, 2)
+    legacy
+      .prepare(
+        'INSERT INTO admissions (id, episode_id, mode, state, dsh_message_id, created_at) VALUES (?, ?, ?, ?, ?, ?)',
+      )
+      .run(admissionId, episodeId, 'followup', 'pending', null, 3)
+    legacy
+      .prepare('INSERT INTO admission_events (admission_id, event_id, position) VALUES (?, ?, ?)')
+      .run(admissionId, eventId, 0)
+    legacy.close()
 
     const migrated = await openMigratedCoreDatabase(filename)
     try {
@@ -218,6 +259,35 @@ describe('Core SQLite baseline', () => {
       expect(migrated.pragma('foreign_keys')).toBe(1)
       expect(repository.getEpisode(episodeId)).toMatchObject({ id: episodeId, status: 'opening' })
       expect(repository.listRecoverableAdmissions(episodeId)).toHaveLength(1)
+      expect(
+        migrated.db
+          .select({ deletedAt: agentDefinitions.deletedAt })
+          .from(agentDefinitions)
+          .where(eq(agentDefinitions.id, agentId))
+          .get(),
+      ).toEqual({ deletedAt: null })
+      expect(repository.getAgentRevision(agentRevisionId)).toMatchObject({
+        contentDigest: 'v2:legacy-migration',
+        imagePolicy: {
+          history: {
+            mode: 'persistent-distinct',
+            detail: 'auto',
+            restoreAfterCompaction: { recentMessages: 32, maxImages: 20 },
+          },
+          textModel: { mode: 'disabled' },
+        },
+      })
+      expect(
+        migrated.db
+          .select({ autoCreatedForAgentId: channels.autoCreatedForAgentId, deletedAt: channels.deletedAt })
+          .from(channels)
+          .where(eq(channels.id, channelId))
+          .get(),
+      ).toEqual({ autoCreatedForAgentId: null, deletedAt: null })
+      expect(repository.closeEpisode(episodeId, 'context-cleared', eventId, 4)).toMatchObject({
+        status: 'closed',
+        closeReason: 'context-cleared',
+      })
     } finally {
       migrated.close()
     }
@@ -372,6 +442,121 @@ describe('Core SQLite baseline', () => {
         ),
       ).toThrow()
       expect(database.db.select({ value: count() }).from(agentDefinitions).get()?.value).toBe(1)
+    } finally {
+      database.close()
+    }
+  })
+
+  it('tombstones an intelligent-agent while preserving its immutable history and channel facts', async () => {
+    const { database, repository, core, connection } = await createFixture()
+    try {
+      const committed = core.createAgentWithChannel(
+        {
+          displayName: '待删除智能体',
+          persona: '',
+          model: { provider: 'test', model: 'model' },
+          capabilities,
+        },
+        {
+          connectionId: connection.id,
+          kind: 'web',
+          platformChannelId: 'tombstone-channel',
+          triggerPolicy: 'always',
+        },
+      )
+      const event = appendTextEvent(core, connection.id, committed.channel.id, 'tombstone-event', '保留的频道事实', 10)
+      const episodeId = EpisodeIdSchema.parse('eps_TOMBSTONE')
+      repository.createEpisode({
+        id: episodeId,
+        channelId: committed.channel.id,
+        agentId: committed.definition.id,
+        agentRevisionId: committed.revision.id,
+        status: 'opening',
+        openedAtEventId: event.id,
+        createdAt: 11,
+      })
+      repository.closeEpisode(episodeId, 'context-cleared', event.id, 12)
+      repository.putWorkTreeOrder({
+        agentIds: [committed.definition.id],
+        channelIdsByAgent: { [committed.definition.id]: [committed.channel.id] },
+        unboundChannelIds: [],
+      })
+
+      core.deleteAgent(committed.definition.id)
+
+      expect(repository.getAgent(committed.definition.id)).toBeUndefined()
+      expect(repository.listAgents()).toEqual([])
+      expect(repository.getAgentRevision(committed.revision.id)).toEqual(committed.revision)
+      expect(repository.getEpisode(episodeId)).toMatchObject({
+        closeReason: 'context-cleared',
+        status: 'closed',
+      })
+      expect(repository.getChannel(committed.channel.id)).toEqual(committed.channel)
+      expect(repository.getChannelEvent(event.id)?.searchText).toBe('保留的频道事实')
+      expect(repository.getBinding(committed.channel.id)).toBeUndefined()
+      expect(repository.getWorkTreeOrder()).toEqual({
+        agentIds: [],
+        channelIdsByAgent: {},
+        unboundChannelIds: [committed.channel.id],
+      })
+      expect(
+        database.db
+          .select({ deletedAt: agentDefinitions.deletedAt })
+          .from(agentDefinitions)
+          .where(eq(agentDefinitions.id, committed.definition.id))
+          .get()?.deletedAt,
+      ).toBeGreaterThanOrEqual(1000)
+    } finally {
+      database.close()
+    }
+  })
+
+  it('tombstones a channel while preserving history and revives an externally rediscovered channel', async () => {
+    const { database, repository, core, connection } = await createFixture()
+    try {
+      const agent = createAgent(core)
+      const channel = core.ensureChannel({
+        connectionId: connection.id,
+        platformChannelId: 'rediscovered-channel',
+        kind: 'group',
+        displayName: '外部频道',
+        observedAt: 10,
+      })
+      core.createBinding({ channelId: channel.id, agentId: agent.definition.id, triggerPolicy: 'always' })
+      const event = appendTextEvent(core, connection.id, channel.id, 'channel-delete-event', '应保留的历史', 11)
+      repository.putWorkTreeOrder({
+        agentIds: [agent.definition.id],
+        channelIdsByAgent: { [agent.definition.id]: [channel.id] },
+        unboundChannelIds: [channel.id],
+      })
+
+      core.deleteChannel(channel.id)
+
+      expect(repository.getChannel(channel.id)).toBeUndefined()
+      expect(repository.getChannelByPlatformId(connection.id, 'rediscovered-channel')).toBeUndefined()
+      expect(repository.listChannelIdsByConnection(connection.id)).toEqual([])
+      expect(repository.getBinding(channel.id)).toBeUndefined()
+      expect(repository.getChannelEvent(event.id)?.searchText).toBe('应保留的历史')
+      expect(repository.getWorkTreeOrder()).toEqual({
+        agentIds: [agent.definition.id],
+        channelIdsByAgent: { [agent.definition.id]: [] },
+        unboundChannelIds: [],
+      })
+      expect(
+        database.db.select({ deletedAt: channels.deletedAt }).from(channels).where(eq(channels.id, channel.id)).get()
+          ?.deletedAt,
+      ).toBeGreaterThanOrEqual(1000)
+
+      const revived = core.ensureChannel({
+        connectionId: connection.id,
+        platformChannelId: 'rediscovered-channel',
+        kind: 'group',
+        displayName: '重新发现的外部频道',
+        observedAt: 20,
+      })
+      expect(revived).toMatchObject({ id: channel.id, displayName: '重新发现的外部频道' })
+      expect(repository.listChannelIdsByConnection(connection.id)).toEqual([channel.id])
+      expect(repository.getChannelEvent(event.id)?.searchText).toBe('应保留的历史')
     } finally {
       database.close()
     }
@@ -550,6 +735,70 @@ describe('Core SQLite baseline', () => {
       }
       Object.defineProperty(invalidBinding, 'triggerPolicy', { value: 'invalid' })
       expect(() => repository.replaceBinding(invalidBinding)).toThrow()
+    } finally {
+      database.close()
+    }
+  })
+
+  it('lists platform identities once per Connection and retains historical-only users', async () => {
+    const { database, repository, core, connection } = await createFixture()
+    try {
+      const secondConnection = core.createConnection({ adapterKey: 'web', config: {} })
+      const firstChannel = core.createChannel({
+        connectionId: connection.id,
+        platformChannelId: 'group-one',
+        kind: 'group',
+        displayName: '第一讨论组',
+      })
+      const secondChannel = core.createChannel({
+        connectionId: connection.id,
+        platformChannelId: 'group-two',
+        kind: 'group',
+        displayName: '第二讨论组',
+      })
+      const otherChannel = core.createChannel({
+        connectionId: secondConnection.id,
+        platformChannelId: 'group-three',
+        kind: 'group',
+      })
+      const first = core.observeChannelMember({
+        connectionId: connection.id,
+        channelId: firstChannel.id,
+        platformUserId: 'same-account',
+        displayName: '成员甲',
+        observedAt: 10,
+      })
+      const sameConnection = core.observeChannelMember({
+        connectionId: connection.id,
+        channelId: secondChannel.id,
+        platformUserId: 'same-account',
+        displayName: '成员甲',
+        observedAt: 11,
+      })
+      const differentConnection = core.observeChannelMember({
+        connectionId: secondConnection.id,
+        channelId: otherChannel.id,
+        platformUserId: 'same-account',
+        displayName: '成员甲',
+        observedAt: 12,
+      })
+      expect(sameConnection.identity.id).toBe(first.identity.id)
+      expect(differentConnection.identity.id).not.toBe(first.identity.id)
+      const users = repository.listPlatformUsers()
+      const sameConnectionUser = users.find((user) => user.identityId === first.identity.id)
+      expect(sameConnectionUser?.historicalOnly).toBe(false)
+      expect(sameConnectionUser?.activeChannels.map((channel) => channel.id)).toEqual(
+        expect.arrayContaining([firstChannel.id, secondChannel.id]),
+      )
+      expect(users.find((user) => user.identityId === differentConnection.identity.id)?.historicalOnly).toBe(false)
+      core.deleteChannel(otherChannel.id)
+      expect(repository.listPlatformUsers()).toContainEqual(
+        expect.objectContaining({
+          identityId: differentConnection.identity.id,
+          activeChannels: [],
+          historicalOnly: true,
+        }),
+      )
     } finally {
       database.close()
     }
@@ -1238,6 +1487,48 @@ describe('relations, admissions and outbox', () => {
 })
 
 describe('Extension and backup', () => {
+  it('keeps historical Extension verification evidence readable after a DSH upgrade', async () => {
+    const { database, repository } = await createFixture()
+    try {
+      const extensionId = ExtensionIdSchema.parse('ext_HISTORICAL')
+      const revisionId = ExtensionRevisionIdSchema.parse('xrv_HISTORICAL')
+      repository.saveExtensionRevision({
+        extension: {
+          id: extensionId,
+          slug: 'historical-extension',
+          displayName: '历史验证扩展',
+          description: '',
+          createdAt: 1,
+        },
+        revision: { id: revisionId, extensionId, revisionNumber: 1, contentDigest: 'sha256:historical', createdAt: 1 },
+        verification: {
+          revisionId,
+          dshVersion: '0.1.1-rc.1',
+          contractVersion: 'nekro-nxt-extension-v1',
+          origin: {
+            episodeId: 'eps_history',
+            pluginId: 'plugin_history',
+            packageId: 'pkg_history',
+            pluginRunId: 'run_history',
+          },
+          verifiedAt: 1,
+          hostBuild: { built: true, buildKey: 'host-history' },
+          clientBuild: { built: false, buildKey: 'client-history' },
+          toolInvocations: [],
+          rpcMethods: [],
+          renderedSlots: [],
+        },
+      })
+
+      expect(repository.getExtensionRevisionVerification(revisionId)).toMatchObject({
+        revisionId,
+        dshVersion: '0.1.1-rc.1',
+      })
+    } finally {
+      database.close()
+    }
+  })
+
   it('stores one current Activation per Agent and Extension without transitional rows', async () => {
     const { database, repository, core } = await createFixture()
     try {

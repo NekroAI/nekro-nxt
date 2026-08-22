@@ -11,6 +11,7 @@ import type {
   LogicalMessageId,
   MessagePart,
   PlatformIdentityId,
+  PromptDocumentV1,
 } from '@nekro-nxt/contracts'
 import {
   AgentIdSchema,
@@ -23,6 +24,10 @@ import {
   messagePartAssetIds,
   messagePartsSearchText,
   PlatformIdentityIdSchema,
+  normalizePromptDocument,
+  promptDocumentFromText,
+  promptDocumentPlainText,
+  PromptDocumentV1Schema,
 } from '@nekro-nxt/contracts'
 import { createHash } from 'node:crypto'
 import { monotonicFactory } from 'ulid'
@@ -33,14 +38,36 @@ export * from './assets.js'
 export interface AgentModelSelection {
   readonly provider: string
   readonly model: string
-  readonly reasoningEffort?: string
+  readonly reasoningEffort?: string | undefined
+}
+
+export type ImageDetail = 'low' | 'auto' | 'high'
+
+export interface ImageUnderstandingPolicy {
+  readonly history: {
+    readonly mode: 'persistent-distinct'
+    readonly detail: ImageDetail
+    readonly restoreAfterCompaction: {
+      readonly recentMessages: number
+      readonly maxImages: number
+    }
+  }
+  readonly textModel:
+    | { readonly mode: 'disabled' }
+    | {
+        readonly mode: 'auxiliary'
+        readonly model: AgentModelSelection
+        readonly maxTokens: number
+      }
 }
 
 export interface AgentRevisionContent {
   readonly displayName: string
   readonly persona: string
+  readonly personaDocument?: PromptDocumentV1
   readonly model: AgentModelSelection
   readonly capabilities?: Partial<AgentCapabilityGrants>
+  readonly imagePolicy?: ImageUnderstandingPolicy
 }
 
 export interface AgentDefinitionRecord {
@@ -49,11 +76,16 @@ export interface AgentDefinitionRecord {
   readonly createdAt: number
 }
 
-export interface AgentRevisionRecord extends Omit<AgentRevisionContent, 'capabilities'> {
+export interface AgentRevisionRecord extends Omit<
+  AgentRevisionContent,
+  'capabilities' | 'imagePolicy' | 'personaDocument'
+> {
   readonly id: AgentRevisionId
   readonly agentId: AgentId
   readonly revision: number
   readonly capabilities: AgentCapabilityGrants
+  readonly imagePolicy: ImageUnderstandingPolicy
+  readonly personaDocument: PromptDocumentV1
   readonly contentDigest: string
   readonly createdAt: number
 }
@@ -74,7 +106,15 @@ export interface ChannelRecord {
   readonly platformChannelId: string
   readonly kind: 'web' | 'direct' | 'group'
   readonly displayName?: string
+  /** Set only for the built-in Channel atomically created with this intelligent-agent. */
+  readonly autoCreatedForAgentId?: AgentId
   readonly createdAt: number
+}
+
+/** A channel lookup used by stable references, including tombstoned rows. */
+export interface ChannelReferenceRecord {
+  readonly channel: ChannelRecord
+  readonly removed: boolean
 }
 
 export interface PlatformIdentityRecord {
@@ -89,6 +129,23 @@ export interface ChannelMemberRecord {
   readonly channelId: ChannelId
   readonly platformIdentityId: PlatformIdentityId
   readonly displayName?: string
+}
+
+export interface PlatformUserDirectoryRecord {
+  readonly identityId: PlatformIdentityId
+  readonly displayName?: string
+  readonly connection: {
+    readonly id: ConnectionId
+    readonly adapterKey: string
+    readonly alias?: string
+    readonly createdAt: number
+  }
+  readonly activeChannels: readonly {
+    readonly id: ChannelId
+    readonly kind: ChannelRecord['kind']
+    readonly displayName?: string
+  }[]
+  readonly historicalOnly: boolean
 }
 
 export type BindingTriggerPolicy = 'always' | 'mentioned-or-replied' | 'command' | 'observe-only'
@@ -138,6 +195,7 @@ export interface AppendChannelEventCommit {
 export interface CoreRepository {
   createAgent(commit: CreateAgentCommit): void
   createAgentWithChannel(commit: CreateAgentWithChannelCommit): void
+  tombstoneAgent(id: AgentId, deletedAt: number): void
   getAgent(id: AgentId): CreateAgentCommit | undefined
   listAgents(): readonly CreateAgentCommit[]
   getAgentRevision(id: AgentRevisionId): AgentRevisionRecord | undefined
@@ -160,12 +218,14 @@ export interface CoreRepository {
   listConnectionIdsByAdapter(adapterKey?: string): readonly ConnectionId[]
   createChannel(record: ChannelRecord): void
   ensureChannel(record: ChannelRecord): ChannelRecord
+  tombstoneChannel(id: ChannelId, deletedAt: number): void
   updateChannelDisplayName(id: ChannelId, displayName: string): void
   getChannel(id: ChannelId): ChannelRecord | undefined
   getChannelByPlatformId(connectionId: ConnectionId, platformChannelId: string): ChannelRecord | undefined
   listChannelIdsByConnection(connectionId: ConnectionId): readonly ChannelId[]
   ensurePlatformIdentity(record: PlatformIdentityRecord): PlatformIdentityRecord
   getPlatformIdentity(id: PlatformIdentityId): PlatformIdentityRecord | undefined
+  listPlatformUsers(): readonly PlatformUserDirectoryRecord[]
   ensureChannelMember(record: ChannelMemberRecord): ChannelMemberRecord
   getChannelMember(id: ChannelMemberId): ChannelMemberRecord | undefined
   getChannelMemberByIdentity(
@@ -226,6 +286,64 @@ export const AgentCapabilityGrantsSchema = z
 
 export type AgentCapabilityGrants = z.infer<typeof AgentCapabilityGrantsSchema>
 
+const AgentModelSelectionSchema = z
+  .object({
+    provider: z.string().trim().min(1),
+    model: z.string().trim().min(1),
+    reasoningEffort: z.string().trim().min(1).optional(),
+  })
+  .strict()
+
+export const ImageUnderstandingPolicySchema = z
+  .object({
+    history: z
+      .object({
+        mode: z.literal('persistent-distinct').default('persistent-distinct'),
+        detail: z.enum(['low', 'auto', 'high']).default('auto'),
+        restoreAfterCompaction: z
+          .object({
+            recentMessages: z.number().int().min(1).max(100).default(32),
+            maxImages: z.number().int().min(1).max(50).default(20),
+          })
+          .strict()
+          .default({ recentMessages: 32, maxImages: 20 }),
+      })
+      .strict()
+      .default({
+        mode: 'persistent-distinct',
+        detail: 'auto',
+        restoreAfterCompaction: { recentMessages: 32, maxImages: 20 },
+      }),
+    textModel: z
+      .discriminatedUnion('mode', [
+        z.object({ mode: z.literal('disabled') }).strict(),
+        z
+          .object({
+            mode: z.literal('auxiliary'),
+            model: AgentModelSelectionSchema,
+            maxTokens: z.number().int().min(256).max(8192).default(2048),
+          })
+          .strict(),
+      ])
+      .default({ mode: 'disabled' }),
+  })
+  .strict()
+  .default({
+    history: {
+      mode: 'persistent-distinct',
+      detail: 'auto',
+      restoreAfterCompaction: { recentMessages: 32, maxImages: 20 },
+    },
+    textModel: { mode: 'disabled' },
+  })
+
+export const DEFAULT_IMAGE_UNDERSTANDING_POLICY: ImageUnderstandingPolicy =
+  ImageUnderstandingPolicySchema.parse(undefined)
+
+export function parseImageUnderstandingPolicy(input: unknown): ImageUnderstandingPolicy {
+  return ImageUnderstandingPolicySchema.parse(input)
+}
+
 export const ConnectionAliasSchema = z
   .string()
   .trim()
@@ -240,14 +358,10 @@ const agentRevisionContentSchema = z
   .object({
     displayName: z.string().trim().min(1).max(80),
     persona: z.string().max(64 * 1024),
-    model: z
-      .object({
-        provider: z.string().trim().min(1),
-        model: z.string().trim().min(1),
-        reasoningEffort: z.string().trim().min(1).optional(),
-      })
-      .strict(),
+    personaDocument: PromptDocumentV1Schema.optional(),
+    model: AgentModelSelectionSchema,
     capabilities: AgentCapabilityGrantsSchema,
+    imagePolicy: ImageUnderstandingPolicySchema,
   })
   .strict()
 
@@ -335,27 +449,36 @@ const canonicalJson = (value: JsonValue): string => {
   return output
 }
 
-type NormalizedAgentRevisionContent = Omit<AgentRevisionContent, 'capabilities'> & {
+type NormalizedAgentRevisionContent = Omit<AgentRevisionContent, 'capabilities' | 'imagePolicy' | 'personaDocument'> & {
   readonly capabilities: AgentCapabilityGrants
+  readonly imagePolicy: ImageUnderstandingPolicy
+  readonly personaDocument: PromptDocumentV1
 }
 
 const parseAgentRevisionContent = (input: AgentRevisionContent): NormalizedAgentRevisionContent => {
   const parsed = agentRevisionContentSchema.parse(input)
+  const personaDocument = normalizePromptDocument(parsed.personaDocument ?? promptDocumentFromText(parsed.persona))
+  const persona = promptDocumentPlainText(personaDocument)
+  if (parsed.personaDocument !== undefined && persona !== parsed.persona) {
+    throw new Error('Agent persona must match the plain-text projection of personaDocument.')
+  }
   return {
     displayName: parsed.displayName,
-    persona: parsed.persona,
+    persona,
+    personaDocument,
     model: {
       provider: parsed.model.provider,
       model: parsed.model.model,
       ...(parsed.model.reasoningEffort === undefined ? {} : { reasoningEffort: parsed.model.reasoningEffort }),
     },
     capabilities: parsed.capabilities,
+    imagePolicy: parsed.imagePolicy,
   }
 }
 
 const normalizedRevisionPayload = (content: NormalizedAgentRevisionContent): JsonValue => ({
   displayName: content.displayName,
-  persona: content.persona,
+  personaDocument: content.personaDocument,
   model: {
     provider: content.model.provider,
     model: content.model.model,
@@ -369,19 +492,45 @@ const normalizedRevisionPayload = (content: NormalizedAgentRevisionContent): Jso
     developmentShell: content.capabilities.developmentShell,
     unrestrictedFileAccess: content.capabilities.unrestrictedFileAccess,
   },
+  imagePolicy: {
+    history: {
+      mode: content.imagePolicy.history.mode,
+      detail: content.imagePolicy.history.detail,
+      restoreAfterCompaction: {
+        recentMessages: content.imagePolicy.history.restoreAfterCompaction.recentMessages,
+        maxImages: content.imagePolicy.history.restoreAfterCompaction.maxImages,
+      },
+    },
+    textModel:
+      content.imagePolicy.textModel.mode === 'disabled'
+        ? { mode: 'disabled' }
+        : {
+            mode: 'auxiliary',
+            model: {
+              provider: content.imagePolicy.textModel.model.provider,
+              model: content.imagePolicy.textModel.model.model,
+              reasoningEffort: content.imagePolicy.textModel.model.reasoningEffort ?? null,
+            },
+            maxTokens: content.imagePolicy.textModel.maxTokens,
+          },
+  },
 })
 
-const digestRevision = (content: NormalizedAgentRevisionContent): string =>
-  `v2:sha256:${createHash('sha256')
-    .update('nekro-nxt.agent-revision.v2\0')
+const digestRevision = (input: AgentRevisionContent): string => {
+  const content = parseAgentRevisionContent(input)
+  return `v4:sha256:${createHash('sha256')
+    .update('nekro-nxt.agent-revision.v4\0')
     .update(canonicalJson(normalizedRevisionPayload(content)))
     .digest('hex')}`
+}
 
 const revisionContent = (revision: AgentRevisionRecord): NormalizedAgentRevisionContent => ({
   displayName: revision.displayName,
   persona: revision.persona,
+  personaDocument: revision.personaDocument,
   model: revision.model,
   capabilities: revision.capabilities,
+  imagePolicy: revision.imagePolicy,
 })
 
 const equivalentRevisionContent = (
@@ -457,6 +606,7 @@ export class CoreService {
       platformChannelId: channelInput.platformChannelId ?? `web-${agentId}`,
       kind: channelInput.kind,
       ...(channelInput.displayName === undefined ? {} : { displayName: channelInput.displayName }),
+      autoCreatedForAgentId: agentId,
       createdAt,
     }
     const binding: BindingRecord = {
@@ -500,6 +650,12 @@ export class CoreService {
     const definition = { ...current.definition, currentRevisionId: revision.id }
     this.#repository.appendAgentRevision(definition, revision, expectedCurrentRevisionId)
     return { definition, revision }
+  }
+
+  /** Removes an intelligent-agent from active product state while preserving immutable history. */
+  deleteAgent(agentId: AgentId): void {
+    if (!this.#repository.getAgent(agentId)) throw new Error(`Unknown agent: ${agentId}`)
+    this.#repository.tombstoneAgent(agentId, this.#timestamp())
   }
 
   createConnection(input: {
@@ -575,6 +731,12 @@ export class CoreService {
     }
     this.#repository.createChannel(record)
     return record
+  }
+
+  /** Removes a Channel from active product state while preserving its immutable facts. */
+  deleteChannel(channelId: ChannelId): void {
+    if (!this.#repository.getChannel(channelId)) throw new Error(`Unknown channel: ${channelId}`)
+    this.#repository.tombstoneChannel(channelId, this.#timestamp())
   }
 
   ensureChannel(input: {
@@ -659,6 +821,10 @@ export class CoreService {
       const channel = this.#repository.getChannel(id)
       return channel ? [channel] : []
     })
+  }
+
+  listPlatformUsers(): readonly PlatformUserDirectoryRecord[] {
+    return this.#repository.listPlatformUsers()
   }
 
   resolvePlatformMessage(

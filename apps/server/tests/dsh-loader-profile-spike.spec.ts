@@ -30,7 +30,7 @@ interface PluginInventoryService {
 const isPluginInventoryService = (value: unknown): value is PluginInventoryService =>
   typeof value === 'object' && value !== null && 'list' in value && typeof value.list === 'function'
 
-describe('DSH 0.1.1-rc.1 Loader/Profile compatibility spike', () => {
+describe('DSH 0.1.1-rc.2 Loader/Profile compatibility spike', () => {
   it('loads, updates, inventories, removes, and fully retracts a public Cordis plugin entry', async () => {
     const context = new Context()
     await context.plugin(Loader, { baseUrl: import.meta.url })
@@ -80,7 +80,7 @@ describe('DSH 0.1.1-rc.1 Loader/Profile compatibility spike', () => {
       await expect(context.loader.create({ name })).rejects.toThrow('intentional loader spike failure')
       await context.loader.await()
       expect(context.get('nxtFailedSpike')).toBeUndefined()
-      // 0.1.1-rc.1 create() retracts the failed provisional entry as part of the
+      // 0.1.1-rc.2 create() retracts the failed provisional entry as part of the
       // rejected activation; callers do not receive an id to clean up.
       expect([...context.loader.entries()]).toEqual([])
     } finally {

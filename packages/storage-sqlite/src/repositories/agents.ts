@@ -1,4 +1,4 @@
-import { and, asc, eq, max } from 'drizzle-orm'
+import { and, asc, eq, isNull, max } from 'drizzle-orm'
 import type {
   AgentDefinitionRecord,
   AgentRevisionRecord,
@@ -6,16 +6,25 @@ import type {
   CreateAgentCommit,
   CreateAgentWithChannelCommit,
 } from '@nekro-nxt/core'
-import { parseAgentCapabilityGrants } from '@nekro-nxt/core'
+import { parseAgentCapabilityGrants, parseImageUnderstandingPolicy } from '@nekro-nxt/core'
+import { normalizePromptDocument, promptDocumentFromText } from '@nekro-nxt/contracts'
 import type { AgentId, AgentRevisionId } from '@nekro-nxt/contracts'
 import type { DrizzleCoreDatabase } from '../database.js'
-import { agentCurrentRevisions, agentDefinitions, agentRevisions, channelBindings, channels } from '../schema.js'
+import {
+  agentCurrentRevisions,
+  agentDefinitions,
+  agentRevisions,
+  channelBindings,
+  channels,
+  workTreeOrder,
+} from '../schema.js'
 import { AgentDefinitionRowSchema, AgentRevisionRowSchema } from '../row-schemas.js'
 
 type AgentRepository = Pick<
   CoreRepository,
   | 'createAgent'
   | 'createAgentWithChannel'
+  | 'tombstoneAgent'
   | 'getAgent'
   | 'listAgents'
   | 'getAgentRevision'
@@ -34,12 +43,14 @@ const toRevision = (input: typeof agentRevisions.$inferSelect): AgentRevisionRec
     revision: row.revision,
     displayName: row.displayName,
     persona: row.persona,
+    personaDocument: normalizePromptDocument(row.personaDocument ?? promptDocumentFromText(row.persona)),
     model: {
       provider: row.modelProvider,
       model: row.modelId,
       ...(row.reasoningEffort === null ? {} : { reasoningEffort: row.reasoningEffort }),
     },
     capabilities: parseAgentCapabilityGrants(row.capabilities),
+    imagePolicy: parseImageUnderstandingPolicy(row.imagePolicy),
     contentDigest: row.contentDigest,
     createdAt: row.createdAt,
   }
@@ -66,10 +77,12 @@ const revisionInsert = (record: AgentRevisionRecord): typeof agentRevisions.$inf
   revision: record.revision,
   displayName: record.displayName,
   persona: record.persona,
+  personaDocument: record.personaDocument,
   modelProvider: record.model.provider,
   modelId: record.model.model,
   ...(record.model.reasoningEffort === undefined ? {} : { reasoningEffort: record.model.reasoningEffort }),
   capabilities: record.capabilities,
+  imagePolicy: record.imagePolicy,
   contentDigest: record.contentDigest,
   createdAt: record.createdAt,
 })
@@ -109,13 +122,49 @@ export function createAgentsRepository(database: DrizzleCoreDatabase): AgentRepo
       )
     },
 
+    tombstoneAgent(id, deletedAt): void {
+      if (!Number.isSafeInteger(deletedAt) || deletedAt < 0)
+        throw new TypeError('Agent delete time must be non-negative.')
+      database.transaction(
+        (tx) => {
+          const boundChannelIds = tx
+            .select({ channelId: channelBindings.channelId })
+            .from(channelBindings)
+            .where(eq(channelBindings.agentId, id))
+            .all()
+            .map(({ channelId }) => channelId)
+          tx.delete(channelBindings).where(eq(channelBindings.agentId, id)).run()
+          const changed = tx
+            .update(agentDefinitions)
+            .set({ deletedAt })
+            .where(and(eq(agentDefinitions.id, id), isNull(agentDefinitions.deletedAt)))
+            .run().changes
+          if (changed !== 1) throw new Error(`Unknown or deleted agent: ${id}`)
+          const order = tx.select().from(workTreeOrder).where(eq(workTreeOrder.id, 1)).get()
+          if (order) {
+            const channelIdsByAgent = { ...order.channelIdsByAgent }
+            delete channelIdsByAgent[id]
+            tx.update(workTreeOrder)
+              .set({
+                agentIds: order.agentIds.filter((agentId) => agentId !== id),
+                channelIdsByAgent,
+                unboundChannelIds: [...new Set([...order.unboundChannelIds, ...boundChannelIds])],
+              })
+              .where(eq(workTreeOrder.id, 1))
+              .run()
+          }
+        },
+        { behavior: 'immediate' },
+      )
+    },
+
     getAgent(id: AgentId): CreateAgentCommit | undefined {
       const row = database
         .select({ definition: agentDefinitions, revision: agentRevisions })
         .from(agentDefinitions)
         .innerJoin(agentCurrentRevisions, eq(agentCurrentRevisions.agentId, agentDefinitions.id))
         .innerJoin(agentRevisions, eq(agentRevisions.id, agentCurrentRevisions.revisionId))
-        .where(eq(agentDefinitions.id, id))
+        .where(and(eq(agentDefinitions.id, id), isNull(agentDefinitions.deletedAt)))
         .get()
       return row === undefined ? undefined : toAgentCommit(row)
     },
@@ -126,6 +175,7 @@ export function createAgentsRepository(database: DrizzleCoreDatabase): AgentRepo
         .from(agentDefinitions)
         .innerJoin(agentCurrentRevisions, eq(agentCurrentRevisions.agentId, agentDefinitions.id))
         .innerJoin(agentRevisions, eq(agentRevisions.id, agentCurrentRevisions.revisionId))
+        .where(isNull(agentDefinitions.deletedAt))
         .orderBy(asc(agentDefinitions.createdAt), asc(agentDefinitions.id))
         .all()
         .map(toAgentCommit)

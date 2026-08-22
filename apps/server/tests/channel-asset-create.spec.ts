@@ -7,7 +7,12 @@ import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
-import { MODEL_ASSET_MAX_BYTES, assertChannelAssetAccess, createChannelAsset } from '../src/index.ts'
+import {
+  MODEL_ASSET_MAX_BYTES,
+  assertChannelAssetAccess,
+  createChannelAsset,
+  normalizeChannelMessageParts,
+} from '../src/index.ts'
 
 const directories: string[] = []
 
@@ -54,6 +59,18 @@ const executeAssetCreate = async (
   })
 
 describe('model-created channel Assets', () => {
+  it('normalizes only the unambiguous text shorthand and keeps the MessagePart contract strict', () => {
+    expect(normalizeChannelMessageParts([{ text: '你好' }])).toEqual([{ type: 'text', text: '你好' }])
+    expect(normalizeChannelMessageParts([{ type: 'text', text: '已声明类型' }])).toEqual([
+      { type: 'text', text: '已声明类型' },
+    ])
+    expect(() => normalizeChannelMessageParts([{ assetId: 'ast_MEDIAONLY' }])).toThrow('omits type')
+    expect(() => normalizeChannelMessageParts([{ text: '含歧义字段', assetId: 'ast_AMBIGUOUS' }])).toThrow(
+      'only the unambiguous',
+    )
+    expect(() => normalizeChannelMessageParts([{}])).toThrow('omits type')
+  })
+
   it('creates UTF-8 and base64 Assets, returns detected metadata, and grants only the current Channel', async () => {
     const fixture = await createFixture()
     try {

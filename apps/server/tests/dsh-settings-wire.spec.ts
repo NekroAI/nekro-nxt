@@ -7,7 +7,7 @@ const envelope = (root: Record<string, unknown>, extra: Record<number, Record<st
 })
 
 describe('DSH Settings wire safety', () => {
-  it('accepts Secrets reached through containers supported by 0.1.1-rc.1 redaction', () => {
+  it('accepts Secrets reached through containers supported by 0.1.1-rc.2 redaction', () => {
     expect(
       isDshSettingsSchemaWireSafe(
         envelope(

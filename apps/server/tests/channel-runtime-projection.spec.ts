@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest'
 import { shouldBroadcastChannelRuntime } from '../src/channel-runtime-events.ts'
 import {
   previewToolArguments,
+  projectCacheUsage,
   projectChannelRuntime,
   projectSessionOccupancy,
   worstChannelRuntimePhase,
@@ -139,6 +140,26 @@ describe('channel runtime projection', () => {
     })
   })
 
+  it('keeps a missing channel reply distinct from a normally completed turn', () => {
+    const projection = projectChannelRuntime({
+      channelId,
+      agentId,
+      episodeId,
+      sessionStatus: 'idle',
+      pendingInjectCount: 0,
+      events: [
+        { type: 'turn/start', turn: 4, at: 1000 },
+        { type: 'step/start', turn: 4, step: 1, at: 1010 },
+        { type: 'assistant/message', turn: 4, step: 1, text: '这不是频道回复。', at: 1100 },
+        { type: 'channel/reply-missing', turn: 4, at: 1200 },
+        { type: 'turn/end', turn: 4, reasonKind: 'completed', at: 1210 },
+      ],
+    })
+    expect(projection.phase).toBe('idle')
+    expect(projection.summary).toBe('智能体本轮未产生频道回复。')
+    expect(projection.turns[0]).toMatchObject({ state: 'unreplied', producedReply: false })
+  })
+
   it('does not broadcast runtime frames for streaming chunks', () => {
     expect(shouldBroadcastChannelRuntime('assistant/chunk')).toBe(false)
     expect(shouldBroadcastChannelRuntime(undefined)).toBe(false)
@@ -149,13 +170,12 @@ describe('channel runtime projection', () => {
   })
 
   it('omits occupancy until both projected tokens and a context window exist', () => {
-    expect(projectSessionOccupancy({ projectedTokens: 800, cacheReadTokens: 12 })).toBeUndefined()
+    expect(projectSessionOccupancy({ projectedTokens: 800 })).toBeUndefined()
     expect(projectSessionOccupancy({ contextWindow: 128_000 })).toBeUndefined()
     expect(
       projectSessionOccupancy({
         projectedTokens: 3200,
         contextWindow: 128_000,
-        cacheReadTokens: 1800,
         systemTokens: 400,
         toolsTokens: 900,
         messageTokens: 1900,
@@ -163,8 +183,55 @@ describe('channel runtime projection', () => {
     ).toEqual({
       projectedTokens: 3200,
       contextWindow: 128_000,
-      cacheReadTokens: 1800,
       breakdown: { systemTokens: 400, toolsTokens: 900, messageTokens: 1900 },
+    })
+  })
+
+  it('separates cache telemetry coverage, weighted totals, per-request average and recent requests', () => {
+    const cache = projectCacheUsage([
+      {
+        type: 'assistant/message',
+        turn: 1,
+        step: 1,
+        at: 1000,
+        usage: { inputTokens: 200, outputTokens: 20, cacheReadTokens: 800 },
+      },
+      {
+        type: 'assistant/message',
+        turn: 2,
+        step: 1,
+        at: 2000,
+        usage: { inputTokens: 400, outputTokens: 30, cacheReadTokens: 0, cacheWriteTokens: 100 },
+      },
+      {
+        type: 'assistant/message',
+        turn: 3,
+        step: 1,
+        at: 3000,
+        usage: { inputTokens: 600, outputTokens: 40 },
+      },
+    ])
+
+    expect(cache).toMatchObject({
+      scope: 'episode',
+      aggregate: {
+        usageRequestCount: 3,
+        observedRequestCount: 2,
+        shareRequestCount: 2,
+        hitRequestCount: 1,
+        uncachedInputTokens: 600,
+        cacheReadTokens: 800,
+        cacheWriteTokens: 100,
+        averageRequestReadShare: 0.4,
+      },
+      recent: {
+        windowSize: 12,
+        samples: [
+          { turn: 1, step: 1, uncachedInputTokens: 200, cacheReadTokens: 800 },
+          { turn: 2, step: 1, uncachedInputTokens: 400, cacheReadTokens: 0, cacheWriteTokens: 100 },
+          { turn: 3, step: 1, uncachedInputTokens: 600 },
+        ],
+      },
     })
   })
 

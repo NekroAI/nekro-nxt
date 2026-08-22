@@ -15,6 +15,9 @@ import {
   RichExtensionSchema,
   RichTargetUrlSchema,
   OutboundIntentIdSchema,
+  PlatformIdentityIdSchema,
+  PromptDocumentV1Schema,
+  promptDocumentPlainText,
 } from './domain.js'
 
 const EmptyParamsSchema = z.object({}).strict()
@@ -47,6 +50,33 @@ const AgentModelSchema = z
   })
   .strict()
 
+export const ImageUnderstandingPolicyApiSchema = z
+  .object({
+    history: z
+      .object({
+        mode: z.literal('persistent-distinct'),
+        detail: z.enum(['low', 'auto', 'high']),
+        restoreAfterCompaction: z
+          .object({
+            recentMessages: z.number().int().min(1).max(100),
+            maxImages: z.number().int().min(1).max(50),
+          })
+          .strict(),
+      })
+      .strict(),
+    textModel: z.discriminatedUnion('mode', [
+      z.object({ mode: z.literal('disabled') }).strict(),
+      z
+        .object({
+          mode: z.literal('auxiliary'),
+          model: AgentModelSchema,
+          maxTokens: z.number().int().min(256).max(8192),
+        })
+        .strict(),
+    ]),
+  })
+  .strict()
+
 const AgentCapabilitiesSchema = z
   .object({
     subagents: z.boolean(),
@@ -58,20 +88,43 @@ const AgentCapabilitiesSchema = z
   })
   .strict()
 
-const CreateAgentRequestSchema = z
+const AgentRevisionRequestContentSchema = z
   .object({
     displayName: z.string().trim().min(1).max(80),
     persona: z
       .string()
       .max(64 * 1024)
       .default(''),
+    personaDocument: PromptDocumentV1Schema.optional(),
     model: AgentModelSchema,
-    capabilities: AgentCapabilitiesSchema.optional(),
+    imagePolicy: ImageUnderstandingPolicyApiSchema.optional(),
   })
   .strict()
 
-const ReviseAgentRequestSchema = CreateAgentRequestSchema.omit({ capabilities: true }).extend({
+const validatePersonaDocumentProjection = (
+  value: z.output<typeof AgentRevisionRequestContentSchema>,
+  context: z.core.$RefinementCtx<z.output<typeof AgentRevisionRequestContentSchema>>,
+): void => {
+  if (value.personaDocument !== undefined && promptDocumentPlainText(value.personaDocument) !== value.persona) {
+    context.addIssue({
+      code: 'custom',
+      message: '人设文本必须与结构化人设文档一致。',
+      path: ['personaDocument'],
+      input: value,
+    })
+  }
+}
+
+const CreateAgentRequestSchema = AgentRevisionRequestContentSchema.extend({
+  capabilities: AgentCapabilitiesSchema.optional(),
+}).superRefine((value, context) => {
+  validatePersonaDocumentProjection(value, context)
+})
+
+const ReviseAgentRequestSchema = AgentRevisionRequestContentSchema.extend({
   expectedCurrentRevisionId: AgentRevisionIdSchema,
+}).superRefine((value, context) => {
+  validatePersonaDocumentProjection(value, context)
 })
 
 const UpdateAgentCapabilitiesRequestSchema = AgentCapabilitiesSchema.partial()
@@ -129,6 +182,55 @@ export const HostSnapshotMessageSchema = z
   .strict()
 
 export type HostSnapshotMessage = z.output<typeof HostSnapshotMessageSchema>
+
+const PlatformUserChannelPreviewSchema = z
+  .object({
+    id: ChannelIdSchema,
+    displayName: z.string().trim().min(1).max(120).optional(),
+    kind: z.enum(['web', 'direct', 'group']),
+  })
+  .strict()
+
+const PlatformUserFacetAdapterSchema = z
+  .object({ key: NonEmptyStringSchema, displayName: NonEmptyStringSchema, userCount: z.number().int().nonnegative() })
+  .strict()
+
+const PlatformUserFacetConnectionSchema = z
+  .object({
+    id: ConnectionIdSchema,
+    adapterKey: NonEmptyStringSchema,
+    displayName: NonEmptyStringSchema,
+    userCount: z.number().int().nonnegative(),
+  })
+  .strict()
+
+export const PlatformUserListResponseSchema = z
+  .object({
+    total: z.number().int().nonnegative(),
+    items: z.array(
+      z
+        .object({
+          identityId: PlatformIdentityIdSchema,
+          displayName: z.string().trim().min(1).max(120).optional(),
+          adapter: z.object({ key: NonEmptyStringSchema, displayName: NonEmptyStringSchema }).strict(),
+          connection: z.object({ id: ConnectionIdSchema, displayName: NonEmptyStringSchema }).strict(),
+          activeChannelCount: z.number().int().nonnegative(),
+          channelPreview: z.array(PlatformUserChannelPreviewSchema).max(3),
+          historicalOnly: z.boolean(),
+        })
+        .strict(),
+    ),
+    facets: z
+      .object({
+        adapters: z.array(PlatformUserFacetAdapterSchema),
+        connections: z.array(PlatformUserFacetConnectionSchema),
+      })
+      .strict(),
+    nextCursor: PlatformIdentityIdSchema.optional(),
+  })
+  .strict()
+
+export type PlatformUserListResponse = z.output<typeof PlatformUserListResponseSchema>
 
 export const ChannelFactSseItemSchema = z
   .object({
@@ -192,7 +294,7 @@ export const ChannelRuntimeStepSchema = z
 export const ChannelRuntimeTurnSchema = z
   .object({
     turn: z.number().int().nonnegative(),
-    state: z.enum(['in-progress', 'completed', 'aborted', 'error', 'max-tokens', 'interrupted']),
+    state: z.enum(['in-progress', 'completed', 'unreplied', 'aborted', 'error', 'max-tokens', 'interrupted']),
     producedReply: z.boolean(),
     error: z.object({ code: NonEmptyStringSchema, message: z.string() }).strict().optional(),
     steps: z.array(ChannelRuntimeStepSchema),
@@ -204,7 +306,6 @@ export const ChannelRuntimeOccupancySchema = z
   .object({
     projectedTokens: z.number().int().nonnegative(),
     contextWindow: z.number().int().positive(),
-    cacheReadTokens: z.number().int().nonnegative().optional(),
     breakdown: z
       .object({
         systemTokens: z.number().int().nonnegative(),
@@ -213,6 +314,41 @@ export const ChannelRuntimeOccupancySchema = z
       })
       .strict()
       .optional(),
+  })
+  .strict()
+
+export const ChannelRuntimeCacheSampleSchema = z
+  .object({
+    turn: z.number().int().nonnegative(),
+    step: z.number().int().nonnegative(),
+    at: z.number().nonnegative().optional(),
+    uncachedInputTokens: z.number().int().nonnegative(),
+    cacheReadTokens: z.number().int().nonnegative().optional(),
+    cacheWriteTokens: z.number().int().nonnegative().optional(),
+  })
+  .strict()
+
+export const ChannelRuntimeCacheSchema = z
+  .object({
+    scope: z.literal('episode'),
+    aggregate: z
+      .object({
+        usageRequestCount: z.number().int().nonnegative(),
+        observedRequestCount: z.number().int().nonnegative(),
+        shareRequestCount: z.number().int().nonnegative(),
+        hitRequestCount: z.number().int().nonnegative(),
+        uncachedInputTokens: z.number().int().nonnegative(),
+        cacheReadTokens: z.number().int().nonnegative(),
+        cacheWriteTokens: z.number().int().nonnegative(),
+        averageRequestReadShare: z.number().min(0).max(1).optional(),
+      })
+      .strict(),
+    recent: z
+      .object({
+        windowSize: z.number().int().positive(),
+        samples: z.array(ChannelRuntimeCacheSampleSchema),
+      })
+      .strict(),
   })
   .strict()
 
@@ -225,6 +361,7 @@ export const ChannelRuntimeProjectionSchema = z
     summary: z.string(),
     pendingInjectCount: z.number().int().nonnegative(),
     occupancy: ChannelRuntimeOccupancySchema.optional(),
+    cache: ChannelRuntimeCacheSchema.optional(),
     turns: z.array(ChannelRuntimeTurnSchema),
   })
   .strict()
@@ -237,6 +374,8 @@ export const ChannelRuntimeSseDataSchema = ChannelRuntimeProjectionSchema.extend
 export type ChannelRuntimePhase = z.output<typeof ChannelRuntimePhaseSchema>
 export type ChannelRuntimeUsage = z.output<typeof ChannelRuntimeUsageSchema>
 export type ChannelRuntimeOccupancy = z.output<typeof ChannelRuntimeOccupancySchema>
+export type ChannelRuntimeCacheSample = z.output<typeof ChannelRuntimeCacheSampleSchema>
+export type ChannelRuntimeCache = z.output<typeof ChannelRuntimeCacheSchema>
 export type ChannelRuntimeProjection = z.output<typeof ChannelRuntimeProjectionSchema>
 export type ChannelRuntimeSseData = z.output<typeof ChannelRuntimeSseDataSchema>
 export type ChannelFactSseData = z.output<typeof ChannelFactSseDataSchema>
@@ -322,8 +461,56 @@ export const HostSnapshotSchema = z
           id: AgentIdSchema,
           displayName: z.string(),
           persona: z.string(),
+          personaDocument: PromptDocumentV1Schema,
           model: AgentModelSchema,
           capabilities: AgentCapabilitiesSchema,
+          imagePolicy: ImageUnderstandingPolicyApiSchema,
+          imageDiagnostics: z
+            .object({
+              route: z
+                .object({
+                  mode: z.enum(['direct', 'delegated', 'unavailable']),
+                  provider: z.string().optional(),
+                  model: z.string().optional(),
+                })
+                .strict(),
+              activeSessions: z.number().int().nonnegative(),
+              residentImages: z.number().int().nonnegative(),
+              duplicateImagesSkipped: z.number().int().nonnegative(),
+              lastInspection: z
+                .object({
+                  mode: z.enum(['direct', 'delegated']),
+                  imageCount: z.number().int().nonnegative(),
+                  provider: z.string().optional(),
+                  model: z.string().optional(),
+                  cacheHit: z.boolean(),
+                  usage: z
+                    .object({
+                      inputTokens: z.number().int().nonnegative(),
+                      outputTokens: z.number().int().nonnegative(),
+                      cacheReadTokens: z.number().int().nonnegative().optional(),
+                      cacheWriteTokens: z.number().int().nonnegative().optional(),
+                      reasoningTokens: z.number().int().nonnegative().optional(),
+                    })
+                    .strict()
+                    .optional(),
+                  errorCode: z.string().optional(),
+                })
+                .strict()
+                .optional(),
+              lastRestoration: z
+                .object({
+                  compactionId: z.string(),
+                  candidateCount: z.number().int().nonnegative(),
+                  restoredCount: z.number().int().nonnegative(),
+                  skippedCount: z.number().int().nonnegative(),
+                  error: z.string().optional(),
+                })
+                .strict()
+                .optional(),
+              blockers: z.array(z.string()),
+            })
+            .strict(),
           currentRevisionId: AgentRevisionIdSchema,
           runtimeStatus: z.enum(['idle', 'running']),
           runtimePhase: ChannelRuntimePhaseSchema.default('idle'),
@@ -902,6 +1089,22 @@ export const HostApiContracts = {
     response: HostSnapshotSchema,
     error: HostApiErrorSchema,
   }),
+  listPlatformUsers: defineContract({
+    method: 'GET',
+    path: '/api/platform-users',
+    params: z
+      .object({
+        query: z.string().trim().max(80).optional(),
+        adapterKey: z.string().trim().min(1).max(120).optional(),
+        connectionId: ConnectionIdSchema.optional(),
+        cursor: PlatformIdentityIdSchema.optional(),
+        limit: z.number().int().min(1).max(100).default(50),
+      })
+      .strict(),
+    request: NoRequestBodySchema,
+    response: PlatformUserListResponseSchema,
+    error: HostApiErrorSchema,
+  }),
   createAgent: defineContract({
     method: 'POST',
     path: '/api/agents',
@@ -928,12 +1131,41 @@ export const HostApiContracts = {
     response: z.object({ currentRevisionId: AgentRevisionIdSchema, capabilities: AgentCapabilitiesSchema }).strict(),
     error: HostApiErrorSchema,
   }),
+  deleteAgent: defineContract({
+    method: 'DELETE',
+    path: '/api/agents/:agentId',
+    params: agentParam,
+    request: z
+      .object({
+        expectedCurrentRevisionId: AgentRevisionIdSchema,
+        confirmationName: z.string().min(1).max(80),
+        deleteAutoCreatedBuiltInChannels: z.boolean().default(true),
+      })
+      .strict(),
+    response: z
+      .object({
+        agentId: AgentIdSchema,
+        deleted: z.literal(true),
+        unboundChannelIds: z.array(ChannelIdSchema),
+        deletedChannelIds: z.array(ChannelIdSchema),
+      })
+      .strict(),
+    error: HostApiErrorSchema,
+  }),
   createWebChannel: defineContract({
     method: 'POST',
     path: '/api/channels',
     params: EmptyParamsSchema,
     request: z.object({ displayName: z.string().trim().min(1).max(120) }).strict(),
     response: z.object({ channelId: ChannelIdSchema, connectionId: ConnectionIdSchema }).strict(),
+    error: HostApiErrorSchema,
+  }),
+  deleteChannel: defineContract({
+    method: 'DELETE',
+    path: '/api/channels/:channelId',
+    params: channelParam,
+    request: z.object({ expectedBoundAgentId: AgentIdSchema.nullable() }).strict(),
+    response: z.object({ channelId: ChannelIdSchema, deleted: z.literal(true) }).strict(),
     error: HostApiErrorSchema,
   }),
   createBinding: defineContract({
@@ -1016,6 +1248,25 @@ export const HostApiContracts = {
     params: channelParam,
     request: NoRequestBodySchema,
     response: ChannelRuntimeProjectionSchema,
+    error: HostApiErrorSchema,
+  }),
+  resetChannelContext: defineContract({
+    method: 'POST',
+    path: '/api/channels/:channelId/context-reset',
+    params: channelParam,
+    request: z
+      .object({
+        mode: z.enum(['clear', 'compact']),
+        expectedEpisodeId: EpisodeIdSchema,
+      })
+      .strict(),
+    response: z
+      .object({
+        mode: z.enum(['clear', 'compact']),
+        closedEpisodeId: EpisodeIdSchema,
+        nextEpisodeId: EpisodeIdSchema.optional(),
+      })
+      .strict(),
     error: HostApiErrorSchema,
   }),
   createConnection: defineContract({

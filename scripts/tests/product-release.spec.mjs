@@ -14,7 +14,7 @@ test('stable product Release binds Desktop, Host and DSH to the root version and
   assert.equal(release.version, release.baseVersion)
   assert.match(release.commit, /^[a-f0-9]{40}$/u)
   assert.equal(release.releaseId, `${release.version}+${release.commit.slice(0, 12)}`)
-  assert.equal(release.dshVersion, '0.1.1-rc.1')
+  assert.equal(release.dshVersion, '0.1.1-rc.2')
 })
 
 test('preview version is deterministic, derived from the root version and newer than its earlier preview', () => {

@@ -19,8 +19,9 @@ import {
   OutboundIntentIdSchema,
   PhysicalDeliveryIdSchema,
   PlatformIdentityIdSchema,
+  PromptDocumentV1Schema,
 } from '@nekro-nxt/contracts'
-import { AgentCapabilityGrantsSchema } from '@nekro-nxt/core'
+import { AgentCapabilityGrantsSchema, ImageUnderstandingPolicySchema } from '@nekro-nxt/core'
 import {
   admissionEvents,
   admissions,
@@ -57,6 +58,8 @@ export const AgentRevisionRowSchema = createSelectSchema(agentRevisions, {
   id: AgentRevisionIdSchema,
   agentId: AgentIdSchema,
   capabilities: AgentCapabilityGrantsSchema,
+  imagePolicy: ImageUnderstandingPolicySchema,
+  personaDocument: PromptDocumentV1Schema.nullable(),
 })
 export const AgentCurrentRevisionRowSchema = createSelectSchema(agentCurrentRevisions, {
   agentId: AgentIdSchema,
@@ -75,6 +78,7 @@ export const ConnectionStateRowSchema = createSelectSchema(connectionState, {
 export const ChannelRowSchema = createSelectSchema(channels, {
   id: ChannelIdSchema,
   connectionId: ConnectionIdSchema,
+  autoCreatedForAgentId: AgentIdSchema.nullable(),
 })
 export const PlatformIdentityRowSchema = createSelectSchema(platformIdentities, {
   id: PlatformIdentityIdSchema,

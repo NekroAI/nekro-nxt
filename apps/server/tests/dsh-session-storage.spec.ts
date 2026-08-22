@@ -33,7 +33,7 @@ const createDatabase = (
 }
 
 describe('DSH Session storage preparation', () => {
-  it('leaves an absent database for the rc.1 provider to initialize', async () => {
+  it('leaves an absent database for the rc.2 provider to initialize', async () => {
     const directory = await mkdtemp(path.join(tmpdir(), 'nekro-nxt-dsh-session-new-'))
     temporaryDirectories.push(directory)
     const databasePath = path.join(directory, 'sessions.sqlite')
@@ -54,6 +54,34 @@ describe('DSH Session storage preparation', () => {
       kind: 'compatible',
       schemaVersion: DSH_SESSION_SCHEMA_CURRENT,
     })
+  })
+
+  it('marks downstream visual audit events ignorable before DSH restores the Session', async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), 'nekro-nxt-dsh-session-audit-'))
+    temporaryDirectories.push(directory)
+    const databasePath = path.join(directory, 'sessions.sqlite')
+    const database = createDatabase(databasePath, {
+      schema: DSH_SESSION_SCHEMA_CURRENT,
+      applicationId: DSH_SESSION_APPLICATION_ID,
+    })
+    database.exec('CREATE TABLE events (type TEXT NOT NULL, ignorable INTEGER);')
+    const insert = database.prepare('INSERT INTO events (type, ignorable) VALUES (?, ?)')
+    insert.run('nekro-nxt/image-admission', null)
+    insert.run('nekro-nxt/image-inspection', null)
+    insert.run('user/message', null)
+    database.close()
+
+    await expect(prepareDshSessionStorage({ databasePath })).resolves.toEqual({
+      kind: 'compatible',
+      schemaVersion: DSH_SESSION_SCHEMA_CURRENT,
+    })
+    const reopened = new DatabaseSync(databasePath, { readOnly: true })
+    expect(reopened.prepare('SELECT type, ignorable FROM events ORDER BY type').all()).toEqual([
+      { type: 'nekro-nxt/image-admission', ignorable: 1 },
+      { type: 'nekro-nxt/image-inspection', ignorable: 1 },
+      { type: 'user/message', ignorable: null },
+    ])
+    reopened.close()
   })
 
   it('publishes one verified schema 15 archive before retiring the source and is restart-idempotent', async () => {
@@ -77,7 +105,7 @@ describe('DSH Session storage preparation', () => {
       originalSchema: 15,
       targetSchema: 17,
       originalDshVersion: '0.1.0-rc.6',
-      targetDshVersion: '0.1.1-rc.1',
+      targetDshVersion: '0.1.1-rc.2',
     })
     expect(result.manifest.databaseSha256).toMatch(/^[a-f0-9]{64}$/u)
     expect(result.manifest.sourceSha256).toMatch(/^[a-f0-9]{64}$/u)

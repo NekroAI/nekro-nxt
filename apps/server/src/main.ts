@@ -15,6 +15,7 @@ import {
   name as frontendStaticName,
 } from '@deepseek-ai/dsh-host-frontend-static'
 import WebServer from '@deepseek-ai/dsh-host-webserver'
+import * as LlmDeepSeek from '@deepseek-ai/dsh-llm-deepseek'
 import * as LlmPiAi from '@deepseek-ai/dsh-llm-pi-ai'
 import type { Context as LlmContext } from '@deepseek-ai/cordis'
 import { createSqliteBackupSet, type SqliteBackupSource } from '@nekro-nxt/storage-sqlite'
@@ -70,15 +71,16 @@ export const configureDshLlmProviders =
   (routes: readonly string[]): NonNullable<StartServerOptions['configureLlm']> =>
   async (context) => {
     const providers: Record<string, LlmPiAi.PiAiProviderProfile> = Object.fromEntries(
-      routes.map((route) => [route, {}]),
+      routes.filter((route) => route !== 'deepseek-official').map((route) => [route, {}]),
     )
     await context.plugin(LlmPiAi, { providers })
+    await context.plugin(LlmDeepSeek, {})
   }
 
 export const defaultWebDistIndex = (): string => fileURLToPath(new URL('../../web/dist/index.html', import.meta.url))
 export const defaultDataRoot = (): string => fileURLToPath(new URL('../../../data', import.meta.url))
 
-/** Product-owned client routes. DSH's rc.1 static fallback intentionally returns 404 for unknown paths. */
+/** Product-owned client routes. DSH's rc.2 static fallback intentionally returns 404 for unknown paths. */
 export const NEKRO_SPA_ROUTE_PREFIXES = [
   '/work',
   '/agents',
@@ -87,6 +89,7 @@ export const NEKRO_SPA_ROUTE_PREFIXES = [
   '/runtime',
   '/settings',
   '/connections',
+  '/users',
   '/extensions',
 ] as const
 
@@ -284,7 +287,7 @@ export const startNekroServer = async (options: StartServerOptions): Promise<Nek
   const webContext = new Context()
   await webContext.plugin(WebServer, { host, port })
   // Function-style Cordis plugin that claims the webserver fallback seat and
-  // serves real dist files. Since DSH rc.1 intentionally 404s unknown paths,
+  // serves real dist files. Since DSH rc.2 intentionally 404s unknown paths,
   // NekroNxt separately owns its known SPA route prefixes.
   const distIndex = resolveRoot(options.distIndex)
   await webContext.plugin(

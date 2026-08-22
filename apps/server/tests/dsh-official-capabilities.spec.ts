@@ -155,7 +155,7 @@ class WebSearchModel extends LlmAdapter {
   }
 }
 
-describe('DSH 0.1.1-rc.1 official capability composition', () => {
+describe('DSH 0.1.1-rc.2 official capability composition', () => {
   it('caps DeepSeek search cost and results while keeping external text inside the tool result', async () => {
     const directory = await mkdtemp(path.join(tmpdir(), 'nekro-nxt-dsh-web-search-'))
     temporaryDirectories.push(directory)

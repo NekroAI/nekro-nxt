@@ -31,10 +31,12 @@ import type {
 } from '../src/index.ts'
 import {
   CoreService,
+  DEFAULT_IMAGE_UNDERSTANDING_POLICY,
   canonicalJson,
   digestRevision,
   parseAgentCapabilityGrants,
   parseStoredAgentCapabilityGrants,
+  parseImageUnderstandingPolicy,
 } from '../src/index.ts'
 
 const deniedCapabilities = {
@@ -65,6 +67,13 @@ class MemoryRepository implements CoreRepository {
     this.createAgent(commit)
     this.createChannel(commit.channel)
     this.replaceBinding(commit.binding)
+  }
+
+  tombstoneAgent(id: AgentId): void {
+    if (!this.agents.delete(id)) throw new Error(`Unknown or deleted agent: ${id}`)
+    for (let index = this.bindings.length - 1; index >= 0; index -= 1) {
+      if (this.bindings[index]?.agentId === id) this.bindings.splice(index, 1)
+    }
   }
 
   getAgent(id: AgentId) {
@@ -171,6 +180,13 @@ class MemoryRepository implements CoreRepository {
     return record
   }
 
+  tombstoneChannel(id: ChannelId): void {
+    if (!this.channels.delete(id)) throw new Error(`Unknown or deleted channel: ${id}`)
+    for (let index = this.bindings.length - 1; index >= 0; index -= 1) {
+      if (this.bindings[index]?.channelId === id) this.bindings.splice(index, 1)
+    }
+  }
+
   updateChannelDisplayName(id: ChannelId, displayName: string): void {
     const current = this.channels.get(id)
     if (!current) throw new Error(`Unknown channel: ${id}`)
@@ -209,6 +225,10 @@ class MemoryRepository implements CoreRepository {
 
   getPlatformIdentity(id: PlatformIdentityId) {
     return this.identities.get(id)
+  }
+
+  listPlatformUsers() {
+    return []
   }
 
   ensureChannelMember(record: ChannelMemberRecord): ChannelMemberRecord {
@@ -364,15 +384,45 @@ describe('CoreService', () => {
       persona: '',
       model: { provider: 'deepseek', model: 'v4' },
       capabilities: deniedCapabilities,
+      imagePolicy: DEFAULT_IMAGE_UNDERSTANDING_POLICY,
     })
     const second = digestRevision({
       persona: '',
       displayName: '小奈',
       model: { model: 'v4', provider: 'deepseek' },
       capabilities: { ...deniedCapabilities },
+      imagePolicy: DEFAULT_IMAGE_UNDERSTANDING_POLICY,
     })
     expect(first).toBe(second)
-    expect(first).toMatch(/^v2:sha256:[a-f0-9]{64}$/u)
+    expect(first).toMatch(/^v4:sha256:[a-f0-9]{64}$/u)
+  })
+
+  it('normalizes and validates immutable image understanding policy', () => {
+    expect(parseImageUnderstandingPolicy(undefined)).toEqual(DEFAULT_IMAGE_UNDERSTANDING_POLICY)
+    expect(
+      parseImageUnderstandingPolicy({
+        history: {
+          mode: 'persistent-distinct',
+          detail: 'high',
+          restoreAfterCompaction: { recentMessages: 100, maxImages: 50 },
+        },
+        textModel: {
+          mode: 'auxiliary',
+          model: { provider: 'vision', model: 'multi-image' },
+          maxTokens: 8192,
+        },
+      }),
+    ).toMatchObject({ history: { detail: 'high' }, textModel: { mode: 'auxiliary', maxTokens: 8192 } })
+    expect(() =>
+      parseImageUnderstandingPolicy({
+        history: {
+          mode: 'persistent-distinct',
+          detail: 'auto',
+          restoreAfterCompaction: { recentMessages: 101, maxImages: 20 },
+        },
+        textModel: { mode: 'disabled' },
+      }),
+    ).toThrow()
   })
 
   it('accepts only the current strict capability object', () => {
@@ -570,11 +620,46 @@ describe('CoreService', () => {
       connectionId: connection.id,
       platformChannelId: `web-${commit.definition.id}`,
       kind: 'web',
+      autoCreatedForAgentId: commit.definition.id,
     })
     expect(core.getChannel(commit.channel.id)).toEqual(commit.channel)
     expect(core.getChannelByPlatformId(connection.id, commit.channel.platformChannelId)).toEqual(commit.channel)
     expect(core.listChannelsByConnection(connection.id)).toEqual([commit.channel])
     expect(core.listBindings(commit.channel.id)).toEqual([commit.binding])
+  })
+
+  it('removes a channel from active state while preserving its durable facts', () => {
+    const repository = new MemoryRepository()
+    let id = 0
+    const core = new CoreService(repository, { now: () => 100, nextUlid: () => `DEL${++id}` })
+    const connection = core.createConnection({ adapterKey: 'web', config: {} })
+    const agent = core.createAgent({
+      displayName: '测试智能体',
+      persona: '',
+      model: { provider: 'test', model: 'model' },
+    })
+    const channel = core.createChannel({
+      connectionId: connection.id,
+      platformChannelId: 'delete-channel',
+      kind: 'web',
+    })
+    core.createBinding({ channelId: channel.id, agentId: agent.definition.id, triggerPolicy: 'always' })
+    const event = core.appendInbound({
+      connectionId: connection.id,
+      channelId: channel.id,
+      adapterKey: 'web',
+      kind: 'message-created',
+      parts: [{ type: 'text', text: '保留事实' }],
+      platformTimestamp: 100,
+      receivedAt: 100,
+      dedupeKey: 'delete-channel-event',
+    }).event
+
+    core.deleteChannel(channel.id)
+
+    expect(repository.getChannel(channel.id)).toBeUndefined()
+    expect(repository.getBinding(channel.id)).toBeUndefined()
+    expect(repository.getChannelEvent(event.id)).toEqual(event)
   })
 
   it('rejects invalid inputs and unknown domain references before committing', () => {

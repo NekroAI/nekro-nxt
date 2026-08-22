@@ -1,9 +1,25 @@
 import { LlmAdapter, CallId, type GenerateOptions, type StreamChunk } from '@deepseek-ai/dsh-llm'
-import type { Context } from '@deepseek-ai/cordis'
+import { getOrCreateAnonymousUserId } from '@deepseek-ai/dsh-anonymous-user-id'
+import {
+  DeepSeekAdapter,
+  DeepSeekFileStore,
+  DeepSeekUploadIndex,
+  resolveAdapterOptions,
+} from '@deepseek-ai/dsh-llm-deepseek'
+import { Context } from '@deepseek-ai/cordis'
+import { AttachmentId } from '@deepseek-ai/dsh-attachment'
+import ToolResultPruner from '@deepseek-ai/dsh-compaction-tool-result-pruner'
+import TokenMeter from '@deepseek-ai/dsh-token-meter'
 import { createWebAdapterConnection } from '@nekro-nxt/adapter-web'
 import { ChannelRuntime } from '@nekro-nxt/channel-runtime'
-import { AssetService, CoreService } from '@nekro-nxt/core'
-import { AdmissionIdSchema, EpisodeHandoffIdSchema, EpisodeIdSchema } from '@nekro-nxt/contracts'
+import { AssetService, CoreService, type AssetRecord } from '@nekro-nxt/core'
+import {
+  AdmissionIdSchema,
+  AssetIdSchema,
+  EpisodeHandoffIdSchema,
+  EpisodeIdSchema,
+  LogicalMessageIdSchema,
+} from '@nekro-nxt/contracts'
 import {
   ExtensionActivationCoordinator,
   ExtensionBuilder,
@@ -12,12 +28,26 @@ import {
 } from '@nekro-nxt/extension-runtime'
 import { admissions, openMigratedCoreDatabase, SqliteCoreRepository } from '@nekro-nxt/storage-sqlite'
 import { access, mkdtemp, rm, stat } from 'node:fs/promises'
+import { createServer } from 'node:http'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
+import sharp from 'sharp'
 import { afterEach, describe, expect, it } from 'vitest'
+import { z } from 'zod'
 import { assertHostDshPackageVersions, ChannelExtensionActivationHost, DshHostRuntime } from '../src/index.ts'
+import { normalizeSessionEvents } from '../src/channel-runtime-events.ts'
+import { projectChannelRuntime } from '../src/channel-runtime-projection.ts'
 
 const temporaryDirectories: string[] = []
+
+const DeepSeekWireRequestSchema = z.object({
+  messages: z.array(z.object({ role: z.string(), content: z.unknown().optional() })),
+})
+
+const isDeepSeekWireImagePart = (part: unknown): boolean => {
+  if (typeof part !== 'object' || part === null || !('type' in part)) return false
+  return part.type === 'file' || part.type === 'image_url'
+}
 
 afterEach(async () => {
   await Promise.all(temporaryDirectories.splice(0).map((directory) => rm(directory, { recursive: true, force: true })))
@@ -58,6 +88,18 @@ class ScriptedCommunicationModel extends LlmAdapter {
   override async *stream(options: GenerateOptions): AsyncIterable<StreamChunk> {
     await Promise.resolve()
     this.calls.push(options)
+    if (options.purpose === 'compaction') {
+      yield { type: 'block-start', index: 0, blockType: 'text' }
+      yield { type: 'text-delta', index: 0, text: '保留频道任务、图片引用和最近结论。' }
+      yield {
+        type: 'block-end',
+        index: 0,
+        block: { type: 'text', text: '保留频道任务、图片引用和最近结论。' },
+      }
+      yield { type: 'usage', usage: { inputTokens: 64, outputTokens: 12 } }
+      yield { type: 'finish', reason: { kind: 'stop' } }
+      return
+    }
     if (options.system?.startsWith('你是对话交接摘要器')) {
       yield { type: 'block-start', index: 0, blockType: 'text' }
       yield { type: 'text-delta', index: 0, text: '用户希望继续当前频道任务，并保持简洁准确。' }
@@ -88,7 +130,7 @@ class ScriptedCommunicationModel extends LlmAdapter {
         name: 'send_channel_message',
         arguments: JSON.stringify({
           target: { type: 'current' },
-          parts: [{ type: 'text', text: '这是通信工具确认发送的回复。' }],
+          parts: [{ text: '这是通信工具确认发送的回复。' }],
         }),
       }
       yield { type: 'block-start', index: 0, blockType: 'text' }
@@ -146,7 +188,395 @@ class ToolSchemaProbeModel extends ScriptedCommunicationModel {
   }
 }
 
+class ReplyGuardThenSendModel extends ScriptedCommunicationModel {
+  override async *stream(options: GenerateOptions): AsyncIterable<StreamChunk> {
+    await Promise.resolve()
+    this.calls.push(options)
+    const hasGuardReminder = options.messages.some((message) => message.source.kind === 'nekro-nxt-channel-reply-guard')
+    const hasSendResult = options.messages.some((message) =>
+      message.content.some(
+        (block) => block.type === 'tool-result' && block.toolCallId === CallId('guard-recovery-send'),
+      ),
+    )
+    if (hasGuardReminder && !hasSendResult) {
+      const callId = CallId('guard-recovery-send')
+      const toolCall = {
+        type: 'tool-call' as const,
+        id: callId,
+        name: 'send_channel_message',
+        arguments: JSON.stringify({ target: { type: 'current' }, parts: [{ text: '守卫提醒后的真实回复。' }] }),
+      }
+      yield { type: 'block-start', index: 0, blockType: 'tool-call' }
+      yield {
+        type: 'tool-call-delta',
+        index: 0,
+        id: callId,
+        name: toolCall.name,
+        argumentsDelta: toolCall.arguments,
+      }
+      yield { type: 'block-end', index: 0, block: toolCall }
+      yield { type: 'finish', reason: { kind: 'tool-calls' } }
+      return
+    }
+    const text = hasSendResult ? '发送后的内部结束文字。' : '第一次只输出普通模型文字。'
+    yield { type: 'block-start', index: 0, blockType: 'text' }
+    yield { type: 'text-delta', index: 0, text }
+    yield { type: 'block-end', index: 0, block: { type: 'text', text } }
+    yield { type: 'finish', reason: { kind: 'stop' } }
+  }
+}
+
+class ReplyGuardNeverSendModel extends ScriptedCommunicationModel {
+  override async *stream(options: GenerateOptions): AsyncIterable<StreamChunk> {
+    await Promise.resolve()
+    this.calls.push(options)
+    const text = `第 ${this.calls.length} 次仍只输出普通模型文字。`
+    yield { type: 'block-start', index: 0, blockType: 'text' }
+    yield { type: 'text-delta', index: 0, text }
+    yield { type: 'block-end', index: 0, block: { type: 'text', text } }
+    yield { type: 'finish', reason: { kind: 'stop' } }
+  }
+}
+
+class ImageInspectionProbeModel extends ScriptedCommunicationModel {
+  constructor(private readonly assetIds: readonly string[]) {
+    super(true)
+  }
+
+  override async *stream(options: GenerateOptions): AsyncIterable<StreamChunk> {
+    await Promise.resolve()
+    this.calls.push(options)
+    const hasInspectionResult = options.messages.some((message) =>
+      message.content.some(
+        (block) =>
+          block.type === 'tool-result' &&
+          block.content.some((child) => child.type === 'text' && child.text.includes('批量图片问题')),
+      ),
+    )
+    if (!hasInspectionResult) {
+      const callId = CallId('scripted-image-inspection')
+      const toolCall = {
+        type: 'tool-call' as const,
+        id: callId,
+        name: 'asset_inspect_images',
+        arguments: JSON.stringify({
+          images: [
+            { assetId: this.assetIds[0], focus: '确认是否已驻留' },
+            { assetId: this.assetIds[1], focus: '读取新图片' },
+          ],
+          question: '比较两张图片',
+          detail: 'high',
+        }),
+      }
+      yield { type: 'block-start', index: 0, blockType: 'tool-call' }
+      yield {
+        type: 'tool-call-delta',
+        index: 0,
+        id: callId,
+        name: toolCall.name,
+        argumentsDelta: toolCall.arguments,
+      }
+      yield { type: 'block-end', index: 0, block: toolCall }
+      yield { type: 'finish', reason: { kind: 'tool-calls' } }
+      return
+    }
+    yield { type: 'block-start', index: 0, blockType: 'text' }
+    yield { type: 'text-delta', index: 0, text: '图片检查完成。' }
+    yield { type: 'block-end', index: 0, block: { type: 'text', text: '图片检查完成。' } }
+    yield { type: 'finish', reason: { kind: 'stop' } }
+  }
+}
+
+class TextInspectionProbeModel extends ScriptedCommunicationModel {
+  constructor(private readonly assetId: string) {
+    super(false)
+  }
+
+  override async *stream(options: GenerateOptions): AsyncIterable<StreamChunk> {
+    await Promise.resolve()
+    this.calls.push(options)
+    if (this.calls.length % 2 === 1) {
+      const callId = CallId('scripted-delegated-image-inspection')
+      const toolCall = {
+        type: 'tool-call' as const,
+        id: callId,
+        name: 'asset_inspect_images',
+        arguments: JSON.stringify({
+          images: [{ assetId: this.assetId, focus: '读取文字' }],
+          question: '图片写了什么？',
+        }),
+      }
+      yield { type: 'block-start', index: 0, blockType: 'tool-call' }
+      yield {
+        type: 'tool-call-delta',
+        index: 0,
+        id: callId,
+        name: toolCall.name,
+        argumentsDelta: toolCall.arguments,
+      }
+      yield { type: 'block-end', index: 0, block: toolCall }
+      yield { type: 'finish', reason: { kind: 'tool-calls' } }
+      return
+    }
+    yield { type: 'block-start', index: 0, blockType: 'text' }
+    yield { type: 'text-delta', index: 0, text: '已收到结构化图片证据。' }
+    yield { type: 'block-end', index: 0, block: { type: 'text', text: '已收到结构化图片证据。' } }
+    yield { type: 'finish', reason: { kind: 'stop' } }
+  }
+}
+
+class AuxiliaryVisionEvidenceModel extends ScriptedCommunicationModel {
+  constructor(private readonly assetId: string) {
+    super(true)
+  }
+
+  override async *stream(options: GenerateOptions): AsyncIterable<StreamChunk> {
+    await Promise.resolve()
+    this.calls.push(options)
+    const evidence = JSON.stringify({
+      answer: '图片中可见一个测试像素。',
+      images: [
+        {
+          index: 0,
+          assetId: this.assetId,
+          focus: '读取文字',
+          answer: '没有可辨认文字。',
+          observations: ['可见单个像素图像'],
+          uncertainty: ['分辨率过低'],
+        },
+      ],
+      comparisons: [],
+      uncertainty: ['无法从单像素判断更多内容'],
+    })
+    yield { type: 'block-start', index: 0, blockType: 'text' }
+    yield { type: 'text-delta', index: 0, text: evidence }
+    yield { type: 'block-end', index: 0, block: { type: 'text', text: evidence } }
+    yield { type: 'usage', usage: { inputTokens: 20, outputTokens: 20 } }
+    yield { type: 'finish', reason: { kind: 'stop' } }
+  }
+}
+
+class InvalidImageInspectionProbeModel extends ScriptedCommunicationModel {
+  constructor(private readonly argumentSets: readonly unknown[]) {
+    super(true)
+  }
+
+  override async *stream(options: GenerateOptions): AsyncIterable<StreamChunk> {
+    await Promise.resolve()
+    this.calls.push(options)
+    if (this.calls.length % 2 === 1) {
+      const invocation = Math.floor((this.calls.length - 1) / 2)
+      const callId = CallId(`invalid-image-inspection-${invocation}`)
+      const toolCall = {
+        type: 'tool-call' as const,
+        id: callId,
+        name: 'asset_inspect_images',
+        arguments: JSON.stringify(this.argumentSets[invocation]),
+      }
+      yield { type: 'block-start', index: 0, blockType: 'tool-call' }
+      yield {
+        type: 'tool-call-delta',
+        index: 0,
+        id: callId,
+        name: toolCall.name,
+        argumentsDelta: toolCall.arguments,
+      }
+      yield { type: 'block-end', index: 0, block: toolCall }
+      yield { type: 'finish', reason: { kind: 'tool-calls' } }
+      return
+    }
+    yield { type: 'block-start', index: 0, blockType: 'text' }
+    yield { type: 'text-delta', index: 0, text: '已收到确定性图片检查错误。' }
+    yield { type: 'block-end', index: 0, block: { type: 'text', text: '已收到确定性图片检查错误。' } }
+    yield { type: 'finish', reason: { kind: 'stop' } }
+  }
+}
+
 describe('DSH Host and Web Channel vertical slice', () => {
+  it('steers one reply reminder, accepts recovery sending, and persists an unreplied outcome after a second miss', async () => {
+    const runScenario = async (model: ReplyGuardThenSendModel | ReplyGuardNeverSendModel, suffix: string) => {
+      const directory = await mkdtemp(path.join(tmpdir(), `nekro-nxt-reply-guard-${suffix}-`))
+      temporaryDirectories.push(directory)
+      const database = await openMigratedCoreDatabase(path.join(directory, 'core.sqlite'))
+      const repository = new SqliteCoreRepository(database)
+      const assetService = new AssetService(repository, path.join(directory, 'assets'))
+      let sequence = 0
+      const core = new CoreService(repository, { now: () => 700, nextUlid: () => `G${++sequence}` })
+      const definition = core.createAgent({
+        displayName: '回复守卫测试智能体',
+        persona: '回复频道消息。',
+        model: { provider: 'test-provider', model: 'chat-model' },
+      })
+      const connection = core.createConnection({ adapterKey: 'web', config: {} })
+      const channel = core.createChannel({
+        connectionId: connection.id,
+        platformChannelId: `reply-guard-${suffix}`,
+        kind: 'web',
+      })
+      const inbound = core.appendInbound({
+        connectionId: connection.id,
+        channelId: channel.id,
+        adapterKey: 'web',
+        platformEventId: `reply-guard-${suffix}`,
+        kind: 'message-created',
+        parts: [{ type: 'text', text: '请回复这条测试消息。' }],
+        platformTimestamp: 700,
+        receivedAt: 700,
+        dedupeKey: `reply-guard:${suffix}`,
+      }).event
+      const sentParts: unknown[] = []
+      const host = await DshHostRuntime.create({
+        sessionDatabasePath: path.join(directory, 'sessions.sqlite'),
+        communication: {
+          sendMessage: (input) => {
+            sentParts.push(input.parts)
+            return Promise.resolve({
+              logicalMessageId: LogicalMessageIdSchema.parse(`msg_GUARD${suffix.toUpperCase()}`),
+              status: 'sent',
+              receipts: [],
+            })
+          },
+        },
+        history: repository,
+        assets: repository,
+        assetService,
+        resolveAgentRevision: (revisionId) => repository.getAgentRevision(revisionId),
+        configureLlm: (context) => {
+          context.llm.registerAdapter(['test-provider'], model)
+        },
+      })
+      const episodeId = EpisodeIdSchema.parse(`eps_GUARD${suffix.toUpperCase()}`)
+      const sessionId = await host.createSession({
+        episodeId,
+        channelId: channel.id,
+        agentId: definition.definition.id,
+        agentRevisionId: definition.revision.id,
+      })
+      await host.admit({
+        dshSessionId: sessionId,
+        admissionId: AdmissionIdSchema.parse(`adm_GUARD${suffix.toUpperCase()}`),
+        events: [inbound],
+        mode: 'followup',
+      })
+      await host.whenIdle(sessionId)
+      const events = host.sessionEvents(sessionId)
+      const projection = projectChannelRuntime({
+        channelId: channel.id,
+        agentId: definition.definition.id,
+        episodeId,
+        sessionStatus: host.sessionStatus(sessionId),
+        pendingInjectCount: 0,
+        events: normalizeSessionEvents(events),
+      })
+      return {
+        assetService,
+        channel,
+        database,
+        definition,
+        directory,
+        episodeId,
+        events,
+        host,
+        projection,
+        repository,
+        sentParts,
+        sessionId,
+      }
+    }
+
+    const recovered = await runScenario(new ReplyGuardThenSendModel(), 'RECOVERED')
+    try {
+      expect(recovered.sentParts).toEqual([[{ type: 'text', text: '守卫提醒后的真实回复。' }]])
+      expect(
+        recovered.events.filter(
+          (event) => event.type === 'user/message' && event.data.source.kind === 'nekro-nxt-channel-reply-guard',
+        ),
+      ).toHaveLength(1)
+      expect(recovered.projection.turns[0]).toMatchObject({ state: 'completed', producedReply: true })
+      expect(JSON.stringify(recovered.events)).toContain('发送后的内部结束文字。')
+    } finally {
+      await recovered.host.dispose()
+      recovered.database.close()
+    }
+
+    const missed = await runScenario(new ReplyGuardNeverSendModel(), 'MISSED')
+    let missedHostDisposed = false
+    try {
+      expect(missed.sentParts).toEqual([])
+      expect(
+        missed.events.filter(
+          (event) => event.type === 'user/message' && event.data.source.kind === 'nekro-nxt-channel-reply-guard',
+        ),
+      ).toHaveLength(1)
+      expect(missed.projection.turns[0]).toMatchObject({ state: 'unreplied', producedReply: false })
+      expect(missed.projection.summary).toBe('智能体本轮未产生频道回复。')
+      await missed.host.dispose()
+      missedHostDisposed = true
+      const resumed = await DshHostRuntime.create({
+        sessionDatabasePath: path.join(missed.directory, 'sessions.sqlite'),
+        communication: { sendMessage: () => Promise.reject(new Error('Unexpected resumed communication call.')) },
+        history: missed.repository,
+        assets: missed.repository,
+        assetService: missed.assetService,
+        resolveAgentRevision: (revisionId) => missed.repository.getAgentRevision(revisionId),
+        configureLlm: (context) => {
+          context.llm.registerAdapter(['test-provider'], new ReplyGuardNeverSendModel())
+        },
+      })
+      try {
+        await expect(
+          resumed.createSession({
+            episodeId: missed.episodeId,
+            channelId: missed.channel.id,
+            agentId: missed.definition.definition.id,
+            agentRevisionId: missed.definition.revision.id,
+          }),
+        ).resolves.toBe(missed.sessionId)
+        const resumedProjection = projectChannelRuntime({
+          channelId: missed.channel.id,
+          agentId: missed.definition.definition.id,
+          episodeId: missed.episodeId,
+          sessionStatus: resumed.sessionStatus(missed.sessionId),
+          pendingInjectCount: 0,
+          events: normalizeSessionEvents(resumed.sessionEvents(missed.sessionId)),
+        })
+        expect(resumedProjection.turns[0]).toMatchObject({ state: 'unreplied', producedReply: false })
+      } finally {
+        await resumed.dispose()
+      }
+    } finally {
+      if (!missedHostDisposed) await missed.host.dispose()
+      missed.database.close()
+    }
+  })
+
+  it('keeps ImageBlock entries when the rc.2 tool-result pruner trims long text', async () => {
+    const context = new Context()
+    try {
+      await context.plugin(TokenMeter)
+      await context.plugin(ToolResultPruner, { thresholdChars: 120, headChars: 30, tailChars: 30 })
+      const image = {
+        type: 'image' as const,
+        attachment: {
+          attachmentId: AttachmentId('ast_synthetic_pruner_image'),
+          mediaType: 'image/png' as const,
+          bytes: 68,
+          width: 1,
+          height: 1,
+        },
+      }
+      const pruned = context.toolResultPruner.pruneContent([
+        { type: 'text', text: '头'.repeat(300) },
+        image,
+        { type: 'text', text: '尾'.repeat(300) },
+      ])
+      expect(pruned).not.toBeNull()
+      expect(pruned?.filter((block) => block.type === 'image')).toEqual([image])
+    } finally {
+      await context.fiber.dispose()
+    }
+  })
+
   it('resumes persisted pending handoff and Admission messages without inserting duplicate identities', async () => {
     const directory = await mkdtemp(path.join(tmpdir(), 'nekro-nxt-dsh-pending-resume-'))
     temporaryDirectories.push(directory)
@@ -451,7 +881,7 @@ describe('DSH Host and Web Channel vertical slice', () => {
       })
       await expect(host.queryNekroNxtInspect(enabledSession, 'supportedContributions')).resolves.toEqual({
         contractVersion: 'nekro-nxt-extension-v1',
-        dshVersion: '0.1.1-rc.1',
+        dshVersion: '0.1.1-rc.2',
         hostTool: true,
         hostRpc: true,
         clientSlots: ['agent.workbench.sections', 'extension.details.panels'],
@@ -995,7 +1425,7 @@ describe('DSH Host and Web Channel vertical slice', () => {
       const handoff = repository.getEpisodeHandoffTo(resumedEpisode.id)!
       expect(handoff.sourceEventIds).toHaveLength(1)
       const recentEventIds = handoff.recentEventIds
-      expect(recentEventIds).toHaveLength(2)
+      expect(recentEventIds).toHaveLength(1)
       expect(typeof recentEventIds[0]).toBe('string')
       const summaryCall = model.calls.find(({ system }) => system?.startsWith('你是对话交接摘要器'))
       const summaryInput = JSON.stringify(summaryCall?.messages)
@@ -1043,7 +1473,7 @@ describe('DSH Host and Web Channel vertical slice', () => {
     }
   })
 
-  it('projects an authorized image natively and exposes asset_view_image only to an image-capable model', async () => {
+  it('projects authorized images in message order and exposes only the batch inspection protocol', async () => {
     const directory = await mkdtemp(path.join(tmpdir(), 'nekro-nxt-dsh-image-'))
     temporaryDirectories.push(directory)
     const database = await openMigratedCoreDatabase(path.join(directory, 'core.sqlite'))
@@ -1055,6 +1485,14 @@ describe('DSH Host and Web Channel vertical slice', () => {
       displayName: '识图智能体',
       persona: '',
       model: { provider: 'vision-provider', model: 'vision-model' },
+      imagePolicy: {
+        history: {
+          mode: 'persistent-distinct',
+          detail: 'low',
+          restoreAfterCompaction: { recentMessages: 32, maxImages: 20 },
+        },
+        textModel: { mode: 'disabled' },
+      },
     })
     const connection = core.createConnection({ adapterKey: 'web', config: {} })
     const channel = core.createChannel({ connectionId: connection.id, platformChannelId: 'images', kind: 'web' })
@@ -1068,21 +1506,30 @@ describe('DSH Host and Web Channel vertical slice', () => {
       ),
       declaredMediaType: 'image/png',
     })
-    core.appendInbound({
-      connectionId: connection.id,
+    const secondImageAsset = await assetService.prepare({
+      bytes: new Uint8Array(
+        Buffer.from(
+          'iVBORw0KGgoAAAANSUhEUgAAAAIAAAABCAQAAABeK7cBAAAADUlEQVR42mNk+M/wHwAFAgIACwL9WQAAAABJRU5ErkJggg==',
+          'base64',
+        ),
+      ),
+      declaredMediaType: 'image/png',
+    })
+    repository.grantAssetAccess({
+      assetId: imageAsset.asset.id,
       channelId: channel.id,
-      adapterKey: 'web',
-      platformEventId: 'asset-source',
-      kind: 'message-created',
-      parts: [{ type: 'image', assetId: imageAsset.asset.id, alt: '图片资源来源' }],
-      platformTimestamp: 2000,
-      receivedAt: 2000,
-      dedupeKey: 'event:asset-source',
-      assetOccurrences: [{ partIndex: 0, assetId: imageAsset.asset.id }],
+      source: 'agent-tool',
+      grantedAt: 2000,
+    })
+    repository.grantAssetAccess({
+      assetId: secondImageAsset.asset.id,
+      channelId: channel.id,
+      source: 'agent-tool',
+      grantedAt: 2000,
     })
     core.createBinding({ channelId: channel.id, agentId: agent.definition.id, triggerPolicy: 'always' })
 
-    const model = new ScriptedCommunicationModel(true)
+    const model = new ImageInspectionProbeModel([imageAsset.asset.id, secondImageAsset.asset.id])
     const runtimeRef: { current?: ChannelRuntime } = {}
     const web = createWebAdapterConnection(connection.id, (event) => runtimeRef.current!.acceptInbound(event))
     const host = await DshHostRuntime.create({
@@ -1107,14 +1554,615 @@ describe('DSH Host and Web Channel vertical slice', () => {
       await web.postMessage({
         channelId: channel.id,
         clientEventId: 'image-message',
-        parts: [{ type: 'image', assetId: imageAsset.asset.id, alt: '一个像素' }],
+        parts: [
+          { type: 'text', text: '图片之前' },
+          { type: 'image', assetId: imageAsset.asset.id, alt: '一个像素' },
+          { type: 'text', text: '图片之后' },
+          { type: 'image', assetId: imageAsset.asset.id, alt: '重复图片' },
+        ],
       })
       const episode = repository.getActiveEpisode(channel.id, agent.definition.id)!
       await host.whenIdle(episode.dshSessionId!)
-      expect(model.calls[0]?.messages.some((message) => message.content.some((block) => block.type === 'image'))).toBe(
-        true,
+      const imageMessage = model.calls[0]?.messages.find((message) =>
+        message.content.some((block) => block.type === 'image'),
       )
-      expect(model.calls[0]?.tools?.map(({ name }) => name)).toContain('asset_view_image')
+      expect(imageMessage?.content.filter((block) => block.type === 'image')).toHaveLength(1)
+      const before =
+        imageMessage?.content.findIndex((block) => block.type === 'text' && block.text === '图片之前') ?? -1
+      const image = imageMessage?.content.findIndex((block) => block.type === 'image') ?? -1
+      const after = imageMessage?.content.findIndex((block) => block.type === 'text' && block.text === '图片之后') ?? -1
+      expect(before).toBeGreaterThanOrEqual(0)
+      expect(image).toBeGreaterThan(before)
+      expect(after).toBeGreaterThan(image)
+      expect(model.calls[0]?.tools?.map(({ name }) => name)).toContain('asset_inspect_images')
+      expect(model.calls[0]?.tools?.map(({ name }) => name)).not.toContain('asset_view_image')
+      const inspectionResult = model.calls[1]?.messages
+        .flatMap((message) => message.content)
+        .find((block) => block.type === 'tool-result')
+      expect(inspectionResult?.type).toBe('tool-result')
+      if (inspectionResult?.type === 'tool-result') {
+        expect(inspectionResult.content.filter((block) => block.type === 'image')).toHaveLength(2)
+        expect(inspectionResult.content.map((block) => block.type)).toEqual(['text', 'text', 'image', 'text', 'image'])
+        expect(inspectionResult.content[0]).toMatchObject({ type: 'text', text: '批量图片问题：比较两张图片' })
+        expect(inspectionResult.content[1]).toMatchObject({ type: 'text' })
+        expect(inspectionResult.content[1]?.type === 'text' ? inspectionResult.content[1].text : '').toContain(
+          'detail-upgraded',
+        )
+      }
+      await expect(host.getAgentImageDiagnostics(agent.revision)).resolves.toMatchObject({
+        route: { mode: 'direct', provider: 'vision-provider', model: 'vision-model' },
+        residentImages: 2,
+        duplicateImagesSkipped: 1,
+        lastInspection: { mode: 'direct', imageCount: 2, cacheHit: false },
+      })
+    } finally {
+      await web.stop()
+      await host.dispose()
+      database.close()
+    }
+  })
+
+  it('delivers ordered multi-image user and tool-result blocks through the rc.2 DeepSeek wire adapter', async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), 'nekro-nxt-deepseek-image-wire-'))
+    temporaryDirectories.push(directory)
+    const database = await openMigratedCoreDatabase(path.join(directory, 'core.sqlite'))
+    const repository = new SqliteCoreRepository(database)
+    let coreId = 0
+    let runtimeId = 0
+    const core = new CoreService(repository, { now: () => 2400, nextUlid: () => `DW${++coreId}` })
+    const agent = core.createAgent({
+      displayName: 'DeepSeek 多图协议智能体',
+      persona: '',
+      model: { provider: 'deepseek-official', model: 'vision-model' },
+    })
+    const connection = core.createConnection({ adapterKey: 'web', config: {} })
+    const channel = core.createChannel({ connectionId: connection.id, platformChannelId: 'deepseek-wire', kind: 'web' })
+    const assetService = new AssetService(repository, path.join(directory, 'assets'))
+    const prepared: AssetRecord[] = []
+    for (const index of [1, 2, 3, 4]) {
+      const bytes = await sharp({
+        create: {
+          width: index,
+          height: 1,
+          channels: 4,
+          background: { r: index * 30, g: 40, b: 90, alpha: 1 },
+        },
+      })
+        .png()
+        .toBuffer()
+      const asset = await assetService.prepare({ bytes: new Uint8Array(bytes), declaredMediaType: 'image/png' })
+      repository.grantAssetAccess({
+        assetId: asset.asset.id,
+        channelId: channel.id,
+        source: 'agent-tool',
+        grantedAt: 2400,
+      })
+      prepared.push(asset.asset)
+    }
+    core.createBinding({ channelId: channel.id, agentId: agent.definition.id, triggerPolicy: 'always' })
+
+    const chatBodies: Array<{ messages: Array<{ role: string; content?: unknown }> }> = []
+    const requestPaths: string[] = []
+    const upstream = createServer((request, response) => {
+      void (async () => {
+        requestPaths.push(request.url ?? '')
+        const chunks: Buffer[] = []
+        await new Promise<void>((resolve, reject) => {
+          request.on('data', (chunk: Buffer) => chunks.push(chunk))
+          request.once('end', resolve)
+          request.once('error', reject)
+        })
+        if (request.url === '/files') {
+          response.writeHead(500, { 'content-type': 'application/json' })
+          response.end(JSON.stringify({ error: { message: 'synthetic Files API fallback' } }))
+          return
+        }
+        if (request.url !== '/chat/completions') {
+          response.writeHead(404)
+          response.end()
+          return
+        }
+        const body = DeepSeekWireRequestSchema.parse(JSON.parse(Buffer.concat(chunks).toString('utf8')))
+        chatBodies.push(body)
+        const payloads =
+          chatBodies.length === 1
+            ? [
+                {
+                  choices: [
+                    {
+                      delta: {
+                        tool_calls: [
+                          {
+                            index: 0,
+                            id: 'deepseek-image-call',
+                            type: 'function',
+                            function: {
+                              name: 'asset_inspect_images',
+                              arguments: JSON.stringify({
+                                images: prepared.map((asset, index) => ({
+                                  assetId: asset.id,
+                                  focus: `关注第 ${index + 1} 张`,
+                                })),
+                                question: '比较四张图片',
+                              }),
+                            },
+                          },
+                        ],
+                      },
+                      finish_reason: null,
+                    },
+                  ],
+                },
+                {
+                  choices: [{ delta: {}, finish_reason: 'tool_calls' }],
+                  usage: { prompt_tokens: 32, completion_tokens: 8 },
+                },
+              ]
+            : [
+                { choices: [{ delta: { content: '多图协议检查完成。' }, finish_reason: null }] },
+                {
+                  choices: [{ delta: {}, finish_reason: 'stop' }],
+                  usage: { prompt_tokens: 48, completion_tokens: 8 },
+                },
+              ]
+        response.writeHead(200, { 'content-type': 'text/event-stream' })
+        response.end(`${payloads.map((payload) => `data: ${JSON.stringify(payload)}\n\n`).join('')}data: [DONE]\n\n`)
+      })().catch((cause: unknown) => {
+        response.destroy(cause instanceof Error ? cause : new Error(String(cause)))
+      })
+    })
+    await new Promise<void>((resolve, reject) => {
+      upstream.once('error', reject)
+      upstream.listen(0, '127.0.0.1', () => resolve())
+    })
+    const address = upstream.address()
+    if (address === null || typeof address === 'string') throw new Error('DeepSeek test upstream did not bind TCP.')
+    const upstreamOrigin = `http://127.0.0.1:${address.port}`
+    const runtimeRef: { current?: ChannelRuntime } = {}
+    const web = createWebAdapterConnection(connection.id, (event) => runtimeRef.current!.acceptInbound(event))
+    const host = await DshHostRuntime.create({
+      sessionDatabasePath: path.join(directory, 'sessions.sqlite'),
+      communication: { sendMessage: (input) => runtimeRef.current!.sendMessage(input) },
+      history: repository,
+      assets: repository,
+      assetService,
+      resolveAgentRevision: (revisionId) => repository.getAgentRevision(revisionId),
+      configureLlm: (context) => {
+        const resolved = resolveAdapterOptions({
+          baseURL: upstreamOrigin,
+          thinking: 'disabled',
+          retryPolicy: { mode: 'normal', maxRetries: 0 },
+          models: [
+            {
+              id: 'vision-model',
+              name: 'Vision Model',
+              inputModalities: ['text', 'image'],
+              contextWindow: 128_000,
+            },
+          ],
+        })
+        const adapter = new DeepSeekAdapter({
+          options: () => resolved,
+          resolveApiKey: () => Promise.resolve('sk-synthetic-api-key'),
+          resolveUserId: () => getOrCreateAnonymousUserId({ env: { DSH_HOME: directory } }),
+          resolveAttachments: () => context.attachments,
+          resolveFiles: () =>
+            new DeepSeekFileStore({
+              index: new DeepSeekUploadIndex(path.join(directory, 'deepseek-files.json')),
+            }),
+        })
+        context.llm.registerAdapter(['deepseek-official'], adapter)
+      },
+    })
+    const runtime = new ChannelRuntime(core, repository, repository, host, {
+      now: () => 2401,
+      nextUlid: () => `DWR${++runtimeId}`,
+      resolveAdapter: () => web,
+    })
+    runtimeRef.current = runtime
+    try {
+      await web.start()
+      await web.postMessage({
+        channelId: channel.id,
+        clientEventId: 'deepseek-image-wire',
+        parts: [
+          { type: 'text', text: '前置文字' },
+          { type: 'image', assetId: prepared[0]!.id, alt: '第一张' },
+          { type: 'text', text: '中间文字' },
+          { type: 'image', assetId: prepared[1]!.id, alt: '第二张' },
+          { type: 'text', text: '后置文字' },
+        ],
+      })
+      const episode = repository.getActiveEpisode(channel.id, agent.definition.id)!
+      await host.whenIdle(episode.dshSessionId!)
+      if (chatBodies.length !== 3) {
+        throw new Error(JSON.stringify({ requestPaths, tail: host.sessionEvents(episode.dshSessionId!).slice(-8) }))
+      }
+      expect(chatBodies).toHaveLength(3)
+      const firstMultimodal = chatBodies[0]!.messages.find(
+        (message) => Array.isArray(message.content) && message.content.some(isDeepSeekWireImagePart),
+      )
+      expect(
+        Array.isArray(firstMultimodal?.content) ? firstMultimodal.content.filter(isDeepSeekWireImagePart) : [],
+      ).toHaveLength(2)
+      const toolIndex = chatBodies[1]!.messages.findIndex((message) => message.role === 'tool')
+      expect(toolIndex).toBeGreaterThanOrEqual(0)
+      const toolImages = chatBodies[1]!.messages
+        .slice(toolIndex + 1)
+        .find((message) => Array.isArray(message.content) && message.content.some(isDeepSeekWireImagePart))
+      expect(Array.isArray(toolImages?.content) ? toolImages.content.filter(isDeepSeekWireImagePart) : []).toHaveLength(
+        2,
+      )
+      expect(JSON.stringify(chatBodies[2])).toContain('本轮尚未成功调用 send_channel_message')
+      expect(
+        projectChannelRuntime({
+          channelId: channel.id,
+          agentId: agent.definition.id,
+          episodeId: episode.id,
+          sessionStatus: host.sessionStatus(episode.dshSessionId!),
+          pendingInjectCount: 0,
+          events: normalizeSessionEvents(host.sessionEvents(episode.dshSessionId!)),
+        }).turns[0]?.state,
+      ).toBe('unreplied')
+    } finally {
+      await web.stop()
+      await host.dispose()
+      database.close()
+      await new Promise<void>((resolve, reject) =>
+        upstream.close((error) => {
+          if (error) reject(error)
+          else resolve()
+        }),
+      )
+    }
+  }, 20_000)
+
+  it('rejects invalid or inaccessible image batches atomically with stable terminal audit codes', async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), 'nekro-nxt-dsh-invalid-image-batch-'))
+    temporaryDirectories.push(directory)
+    const database = await openMigratedCoreDatabase(path.join(directory, 'core.sqlite'))
+    const repository = new SqliteCoreRepository(database)
+    let coreId = 0
+    let runtimeId = 0
+    const core = new CoreService(repository, { now: () => 2500, nextUlid: () => `IV${++coreId}` })
+    const agent = core.createAgent({
+      displayName: '图片批次校验智能体',
+      persona: '',
+      model: { provider: 'vision-provider', model: 'vision-model' },
+    })
+    const connection = core.createConnection({ adapterKey: 'web', config: {} })
+    const channel = core.createChannel({
+      connectionId: connection.id,
+      platformChannelId: 'invalid-images',
+      kind: 'web',
+    })
+    const assetService = new AssetService(repository, path.join(directory, 'assets'))
+    const validImage = await assetService.prepare({
+      bytes: new Uint8Array(
+        Buffer.from(
+          'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Wl6ZQAAAABJRU5ErkJggg==',
+          'base64',
+        ),
+      ),
+      declaredMediaType: 'image/png',
+    })
+    const forbiddenImage = await assetService.prepare({
+      bytes: new Uint8Array(
+        Buffer.from(
+          'iVBORw0KGgoAAAANSUhEUgAAAAIAAAABCAQAAABeK7cBAAAADUlEQVR42mNk+M/wHwAFAgIACwL9WQAAAABJRU5ErkJggg==',
+          'base64',
+        ),
+      ),
+      declaredMediaType: 'image/png',
+    })
+    const textAsset = await assetService.prepare({
+      bytes: new TextEncoder().encode('synthetic non-image fixture'),
+      declaredMediaType: 'text/plain',
+    })
+    for (const assetId of [validImage.asset.id, textAsset.asset.id]) {
+      repository.grantAssetAccess({
+        assetId,
+        channelId: channel.id,
+        source: 'agent-tool',
+        grantedAt: 2500,
+      })
+    }
+    core.createBinding({ channelId: channel.id, agentId: agent.definition.id, triggerPolicy: 'always' })
+    const argumentSets = [
+      { images: [] },
+      { images: Array.from({ length: 21 }, () => ({ assetId: validImage.asset.id })) },
+      { images: [{ assetId: validImage.asset.id }], question: '问'.repeat(4001) },
+      { images: [{ assetId: validImage.asset.id, focus: '点'.repeat(1001) }] },
+      { images: [{ assetId: forbiddenImage.asset.id }] },
+      { images: [{ assetId: AssetIdSchema.parse('ast_missing') }] },
+      { images: [{ assetId: validImage.asset.id }, { assetId: textAsset.asset.id }] },
+    ]
+    const model = new InvalidImageInspectionProbeModel(argumentSets)
+    const runtimeRef: { current?: ChannelRuntime } = {}
+    const web = createWebAdapterConnection(connection.id, (event) => runtimeRef.current!.acceptInbound(event))
+    const host = await DshHostRuntime.create({
+      sessionDatabasePath: path.join(directory, 'sessions.sqlite'),
+      communication: { sendMessage: (input) => runtimeRef.current!.sendMessage(input) },
+      history: repository,
+      assets: repository,
+      assetService,
+      resolveAgentRevision: (revisionId) => repository.getAgentRevision(revisionId),
+      configureLlm: (context) => {
+        context.llm.registerAdapter(['vision-provider'], model)
+      },
+    })
+    const runtime = new ChannelRuntime(core, repository, repository, host, {
+      now: () => 2501,
+      nextUlid: () => `IVR${++runtimeId}`,
+      resolveAdapter: () => web,
+    })
+    runtimeRef.current = runtime
+    try {
+      await web.start()
+      let sessionId: string | undefined
+      for (const index of argumentSets.keys()) {
+        await web.postMessage({
+          channelId: channel.id,
+          clientEventId: `invalid-image-batch-${index}`,
+          parts: [{ type: 'text', text: `执行第 ${index + 1} 个图片批次校验。` }],
+        })
+        const episode = repository.getActiveEpisode(channel.id, agent.definition.id)!
+        sessionId = episode.dshSessionId
+        await host.whenIdle(episode.dshSessionId!)
+      }
+      const events = host.sessionEvents(sessionId!)
+      const audits = events.filter((event) => event.type === 'nekro-nxt/image-inspection')
+      expect(audits).toHaveLength(7)
+      expect(
+        audits.map((event) => (event.type === 'nekro-nxt/image-inspection' ? event.data.errorCode : null)),
+      ).toEqual([
+        'invalid-input',
+        'invalid-input',
+        'invalid-input',
+        'invalid-input',
+        'asset-forbidden',
+        'asset-forbidden',
+        'asset-not-image',
+      ])
+      const errorResults = events.filter(
+        (event) => event.type === 'tool/result' && event.data.message.content[0]?.type === 'tool-result',
+      )
+      expect(errorResults).toHaveLength(7)
+      expect(
+        errorResults.every(
+          (event) =>
+            event.type === 'tool/result' &&
+            event.data.message.content[0]?.type === 'tool-result' &&
+            event.data.message.content[0].isError === true &&
+            event.data.message.content[0].content.every((block) => block.type !== 'image'),
+        ),
+      ).toBe(true)
+    } finally {
+      await web.stop()
+      await host.dispose()
+      database.close()
+    }
+  })
+
+  it('delegates one ordered image batch for a text-only primary model and returns text evidence only', async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), 'nekro-nxt-dsh-delegated-image-'))
+    temporaryDirectories.push(directory)
+    const database = await openMigratedCoreDatabase(path.join(directory, 'core.sqlite'))
+    const repository = new SqliteCoreRepository(database)
+    let coreId = 0
+    let runtimeId = 0
+    const core = new CoreService(repository, { now: () => 3000, nextUlid: () => `D${++coreId}` })
+    const connection = core.createConnection({ adapterKey: 'web', config: {} })
+    const channel = core.createChannel({ connectionId: connection.id, platformChannelId: 'delegated', kind: 'web' })
+    const assetService = new AssetService(repository, path.join(directory, 'assets'))
+    const imageAsset = await assetService.prepare({
+      bytes: new Uint8Array(
+        Buffer.from(
+          'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Wl6ZQAAAABJRU5ErkJggg==',
+          'base64',
+        ),
+      ),
+      declaredMediaType: 'image/png',
+    })
+    repository.grantAssetAccess({
+      assetId: imageAsset.asset.id,
+      channelId: channel.id,
+      source: 'agent-tool',
+      grantedAt: 3000,
+    })
+    const agent = core.createAgent({
+      displayName: '文本智能体',
+      persona: '',
+      model: { provider: 'text-provider', model: 'text-model' },
+      imagePolicy: {
+        history: {
+          mode: 'persistent-distinct',
+          detail: 'auto',
+          restoreAfterCompaction: { recentMessages: 32, maxImages: 20 },
+        },
+        textModel: {
+          mode: 'auxiliary',
+          model: { provider: 'vision-provider', model: 'vision-model' },
+          maxTokens: 2048,
+        },
+      },
+    })
+    core.createBinding({ channelId: channel.id, agentId: agent.definition.id, triggerPolicy: 'always' })
+    const primary = new TextInspectionProbeModel(imageAsset.asset.id)
+    const auxiliary = new AuxiliaryVisionEvidenceModel(imageAsset.asset.id)
+    const runtimeRef: { current?: ChannelRuntime } = {}
+    const web = createWebAdapterConnection(connection.id, (event) => runtimeRef.current!.acceptInbound(event))
+    const host = await DshHostRuntime.create({
+      sessionDatabasePath: path.join(directory, 'sessions.sqlite'),
+      communication: { sendMessage: (input) => runtimeRef.current!.sendMessage(input) },
+      history: repository,
+      assets: repository,
+      assetService,
+      resolveAgentRevision: (revisionId) => repository.getAgentRevision(revisionId),
+      configureLlm: (context) => {
+        context.llm.registerAdapter(['text-provider'], primary)
+        context.llm.registerAdapter(['vision-provider'], auxiliary)
+      },
+    })
+    const runtime = new ChannelRuntime(core, repository, repository, host, {
+      now: () => 3001,
+      nextUlid: () => `DR${++runtimeId}`,
+      resolveAdapter: () => web,
+    })
+    runtimeRef.current = runtime
+    try {
+      await web.start()
+      await web.postMessage({
+        channelId: channel.id,
+        clientEventId: 'delegated-image-message',
+        parts: [{ type: 'image', assetId: imageAsset.asset.id, alt: '单像素' }],
+      })
+      const episode = repository.getActiveEpisode(channel.id, agent.definition.id)!
+      await host.whenIdle(episode.dshSessionId!)
+      expect(
+        primary.calls[0]?.messages.some((message) => message.content.some((block) => block.type === 'image')),
+      ).toBe(false)
+      expect(auxiliary.calls).toHaveLength(1)
+      expect(
+        auxiliary.calls[0]?.messages.flatMap((message) => message.content).filter((block) => block.type === 'image'),
+      ).toHaveLength(1)
+      const result = primary.calls[1]?.messages
+        .flatMap((message) => message.content)
+        .find((block) => block.type === 'tool-result')
+      expect(result?.type).toBe('tool-result')
+      if (result?.type === 'tool-result') {
+        expect(result.content.every((block) => block.type === 'text')).toBe(true)
+        expect(result.content[0]).toMatchObject({ type: 'text' })
+        expect(result.content[0]?.type === 'text' ? JSON.parse(result.content[0].text) : null).toMatchObject({
+          mode: 'delegated',
+          answer: '图片中可见一个测试像素。',
+          cacheHit: false,
+        })
+      }
+      await web.postMessage({
+        channelId: channel.id,
+        clientEventId: 'delegated-image-cache',
+        parts: [{ type: 'text', text: '请按同一关注点再检查一次。' }],
+      })
+      await host.whenIdle(episode.dshSessionId!)
+      expect(auxiliary.calls).toHaveLength(1)
+      const cachedResult = primary.calls[3]?.messages
+        .flatMap((message) => message.content)
+        .filter((block) => block.type === 'tool-result')
+        .at(-1)
+      expect(cachedResult?.type).toBe('tool-result')
+      if (cachedResult?.type === 'tool-result') {
+        const text = cachedResult.content.find((block) => block.type === 'text')
+        expect(text?.type === 'text' ? JSON.parse(text.text) : null).toMatchObject({
+          mode: 'delegated',
+          cacheHit: true,
+        })
+      }
+      await expect(host.getAgentImageDiagnostics(agent.revision)).resolves.toMatchObject({
+        route: { mode: 'delegated', provider: 'vision-provider', model: 'vision-model' },
+        residentImages: 0,
+        lastInspection: { mode: 'delegated', imageCount: 1, cacheHit: true },
+      })
+    } finally {
+      await web.stop()
+      await host.dispose()
+      database.close()
+    }
+  })
+
+  it('restores recent channel images after a committed DSH compaction without creating channel facts', async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), 'nekro-nxt-dsh-image-restore-'))
+    temporaryDirectories.push(directory)
+    const database = await openMigratedCoreDatabase(path.join(directory, 'core.sqlite'))
+    const repository = new SqliteCoreRepository(database)
+    let coreId = 0
+    let runtimeId = 0
+    const core = new CoreService(repository, { now: () => 4000, nextUlid: () => `C${++coreId}` })
+    const agent = core.createAgent({
+      displayName: '压缩识图智能体',
+      persona: '',
+      model: { provider: 'vision-provider', model: 'vision-model' },
+      imagePolicy: {
+        history: {
+          mode: 'persistent-distinct',
+          detail: 'auto',
+          restoreAfterCompaction: { recentMessages: 32, maxImages: 20 },
+        },
+        textModel: { mode: 'disabled' },
+      },
+    })
+    const connection = core.createConnection({ adapterKey: 'web', config: {} })
+    const channel = core.createChannel({ connectionId: connection.id, platformChannelId: 'restore', kind: 'web' })
+    const assetService = new AssetService(repository, path.join(directory, 'assets'))
+    const imageAsset = await assetService.prepare({
+      bytes: new Uint8Array(
+        Buffer.from(
+          'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Wl6ZQAAAABJRU5ErkJggg==',
+          'base64',
+        ),
+      ),
+      declaredMediaType: 'image/png',
+    })
+    repository.grantAssetAccess({
+      assetId: imageAsset.asset.id,
+      channelId: channel.id,
+      source: 'agent-tool',
+      grantedAt: 4000,
+    })
+    core.createBinding({ channelId: channel.id, agentId: agent.definition.id, triggerPolicy: 'always' })
+    const model = new ScriptedCommunicationModel(true)
+    const runtimeRef: { current?: ChannelRuntime } = {}
+    const web = createWebAdapterConnection(connection.id, (event) => runtimeRef.current!.acceptInbound(event))
+    const host = await DshHostRuntime.create({
+      sessionDatabasePath: path.join(directory, 'sessions.sqlite'),
+      communication: { sendMessage: (input) => runtimeRef.current!.sendMessage(input) },
+      history: repository,
+      assets: repository,
+      assetService,
+      resolveAgentRevision: (revisionId) => repository.getAgentRevision(revisionId),
+      configureLlm: (context) => {
+        context.llm.registerAdapter(['vision-provider'], model)
+      },
+    })
+    const runtime = new ChannelRuntime(core, repository, repository, host, {
+      now: () => 4001 + runtimeId,
+      nextUlid: () => `CR${++runtimeId}`,
+      resolveAdapter: () => web,
+    })
+    runtimeRef.current = runtime
+    try {
+      await web.start()
+      await web.postMessage({
+        channelId: channel.id,
+        clientEventId: 'restore-image',
+        parts: [{ type: 'image', assetId: imageAsset.asset.id, alt: '需要恢复的图片' }],
+      })
+      const episode = repository.getActiveEpisode(channel.id, agent.definition.id)!
+      await host.whenIdle(episode.dshSessionId!)
+      for (let index = 0; index < 5; index += 1) {
+        await web.postMessage({
+          channelId: channel.id,
+          clientEventId: `restore-text-${index}`,
+          parts: [{ type: 'text', text: `后续消息 ${index}` }],
+        })
+        await host.whenIdle(episode.dshSessionId!)
+      }
+      const beforeHistory = repository.listChannelHistory(channel.id, { limit: 100 }).length
+      expect(await host.compactSessionNow(episode.dshSessionId!)).toBe(true)
+      const events = host.sessionEvents(episode.dshSessionId!)
+      const restoration = events.find(
+        (event) => event.type === 'user/message' && event.data.source.kind === 'nekro-nxt-visual-restore',
+      )
+      expect(restoration?.type).toBe('user/message')
+      if (restoration?.type === 'user/message') {
+        expect(restoration.data.content.filter((block) => block.type === 'image')).toHaveLength(1)
+        expect(restoration.data.source).toMatchObject({
+          kind: 'nekro-nxt-visual-restore',
+          policyVersion: 1,
+        })
+      }
+      expect(repository.listChannelHistory(channel.id, { limit: 100 })).toHaveLength(beforeHistory)
+      expect(events.filter((event) => event.type === 'nekro-nxt/image-restoration')).toHaveLength(1)
     } finally {
       await web.stop()
       await host.dispose()

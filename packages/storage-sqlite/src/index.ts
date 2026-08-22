@@ -1,5 +1,6 @@
 import type { AdapterRuntimeStateStore } from '@nekro-nxt/adapter-sdk'
-import type { CoreRepository } from '@nekro-nxt/core'
+import type { ChannelReferenceRecord, CoreRepository } from '@nekro-nxt/core'
+import type { ChannelId } from '@nekro-nxt/contracts'
 import type { AssetAccessRepository } from '@nekro-nxt/core'
 import type { ChannelHistoryRepository, RuntimeRepository } from '@nekro-nxt/channel-runtime'
 import type { ExtensionRepository } from '@nekro-nxt/extension-runtime'
@@ -92,6 +93,8 @@ export class SqliteCoreRepository implements CurrentRepository {
   readonly createAgent = (...args: Parameters<CoreRepository['createAgent']>) => this.#agents.createAgent(...args)
   readonly createAgentWithChannel = (...args: Parameters<CoreRepository['createAgentWithChannel']>) =>
     this.#agents.createAgentWithChannel(...args)
+  readonly tombstoneAgent = (...args: Parameters<CoreRepository['tombstoneAgent']>) =>
+    this.#agents.tombstoneAgent(...args)
   readonly getAgent = (...args: Parameters<CoreRepository['getAgent']>) => this.#agents.getAgent(...args)
   readonly listAgents = (...args: Parameters<CoreRepository['listAgents']>) => this.#agents.listAgents(...args)
   readonly getAgentRevision = (...args: Parameters<CoreRepository['getAgentRevision']>) =>
@@ -119,9 +122,13 @@ export class SqliteCoreRepository implements CurrentRepository {
     this.#channels.createChannel(...args)
   readonly ensureChannel = (...args: Parameters<CoreRepository['ensureChannel']>) =>
     this.#channels.ensureChannel(...args)
+  readonly tombstoneChannel = (...args: Parameters<CoreRepository['tombstoneChannel']>) =>
+    this.#channels.tombstoneChannel(...args)
   readonly updateChannelDisplayName = (...args: Parameters<CoreRepository['updateChannelDisplayName']>) =>
     this.#channels.updateChannelDisplayName(...args)
   readonly getChannel = (...args: Parameters<CoreRepository['getChannel']>) => this.#channels.getChannel(...args)
+  readonly getChannelReference = (id: ChannelId): ChannelReferenceRecord | undefined =>
+    this.#channels.getChannelReference(id)
   readonly getChannelByPlatformId = (...args: Parameters<CoreRepository['getChannelByPlatformId']>) =>
     this.#channels.getChannelByPlatformId(...args)
   readonly listChannelIdsByConnection = (...args: Parameters<CoreRepository['listChannelIdsByConnection']>) =>
@@ -130,6 +137,8 @@ export class SqliteCoreRepository implements CurrentRepository {
     this.#channels.ensurePlatformIdentity(...args)
   readonly getPlatformIdentity = (...args: Parameters<CoreRepository['getPlatformIdentity']>) =>
     this.#channels.getPlatformIdentity(...args)
+  readonly listPlatformUsers = (...args: Parameters<CoreRepository['listPlatformUsers']>) =>
+    this.#channels.listPlatformUsers(...args)
   readonly ensureChannelMember = (...args: Parameters<CoreRepository['ensureChannelMember']>) =>
     this.#channels.ensureChannelMember(...args)
   readonly getChannelMember = (...args: Parameters<CoreRepository['getChannelMember']>) =>
@@ -177,6 +186,8 @@ export class SqliteCoreRepository implements CurrentRepository {
     this.#runtime.createAdmission(...args)
   readonly listRecoverableAdmissions = (...args: Parameters<RuntimeRepository['listRecoverableAdmissions']>) =>
     this.#runtime.listRecoverableAdmissions(...args)
+  readonly listAdmittedEvents = (...args: Parameters<RuntimeRepository['listAdmittedEvents']>) =>
+    this.#runtime.listAdmittedEvents(...args)
   readonly listUnadmittedEvents = (...args: Parameters<RuntimeRepository['listUnadmittedEvents']>) =>
     this.#runtime.listUnadmittedEvents(...args)
   readonly claimAdmission = (...args: Parameters<RuntimeRepository['claimAdmission']>) =>

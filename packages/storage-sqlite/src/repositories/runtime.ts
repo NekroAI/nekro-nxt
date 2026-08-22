@@ -1,4 +1,4 @@
-import { and, asc, eq, gt, gte, inArray, notExists, or, sql } from 'drizzle-orm'
+import { and, asc, desc, eq, gt, gte, inArray, notExists, or, sql } from 'drizzle-orm'
 import type { AdapterRuntimeStateStore } from '@nekro-nxt/adapter-sdk'
 import type { ChannelEventRecord } from '@nekro-nxt/core'
 import type {
@@ -51,6 +51,7 @@ type RuntimeSlice = Pick<
   | 'failEpisode'
   | 'createAdmission'
   | 'listRecoverableAdmissions'
+  | 'listAdmittedEvents'
   | 'listUnadmittedEvents'
   | 'claimAdmission'
   | 'completeAdmission'
@@ -370,6 +371,20 @@ export function createRuntimeRepository(
           const record = admission(id)
           return record === undefined ? [] : [record]
         })
+    },
+    listAdmittedEvents(episodeId, limit): readonly ChannelEventRecord[] {
+      if (!Number.isSafeInteger(limit) || limit < 1 || limit > 1000) throw new TypeError('Invalid Episode Event limit.')
+      return database
+        .select({ event: channelEvents })
+        .from(admissionEvents)
+        .innerJoin(admissions, eq(admissions.id, admissionEvents.admissionId))
+        .innerJoin(channelEvents, eq(channelEvents.id, admissionEvents.eventId))
+        .where(eq(admissions.episodeId, episodeId))
+        .orderBy(desc(channelEvents.receivedAt), desc(channelEvents.id))
+        .limit(limit)
+        .all()
+        .reverse()
+        .map(({ event }) => toChannelEvent(event))
     },
     listUnadmittedEvents(channelId, agentId, boundAt): readonly ChannelEventRecord[] {
       const pageSize = 200

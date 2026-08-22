@@ -1,0 +1,1 @@
+ALTER TABLE `agent_revisions` ADD `image_policy` text NOT NULL DEFAULT '{"history":{"mode":"persistent-distinct","detail":"auto","restoreAfterCompaction":{"recentMessages":32,"maxImages":20}},"textModel":{"mode":"disabled"}}';

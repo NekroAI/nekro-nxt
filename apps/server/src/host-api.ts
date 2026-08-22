@@ -1,6 +1,6 @@
 import type { WebServer, WebRoute } from '@deepseek-ai/dsh-host-webserver'
 import { isAdminConsoleOutbound, type ChannelFact, type ChannelHistoryEntry } from '@nekro-nxt/channel-runtime'
-import type { AgentRevisionContent } from '@nekro-nxt/core'
+import type { AgentRevisionContent, ImageUnderstandingPolicy } from '@nekro-nxt/core'
 import {
   AgentIdSchema,
   AssetIdSchema,
@@ -108,6 +108,21 @@ const writeJson = (res: ServerResponse, status: number, body: unknown): void => 
 
 const writeError = (res: ServerResponse, status: number, code: string, message: string): void =>
   writeJson(res, status, HostApiErrorSchema.parse({ error: { code, message } }))
+
+const assertAuxiliaryImageModel = async (
+  runtime: NekroRuntime,
+  policy: ImageUnderstandingPolicy | undefined,
+): Promise<void> => {
+  if (policy?.textModel.mode !== 'auxiliary') return
+  const auxiliary = policy.textModel
+  const models = await runtime.host.listAvailableLlmModels()
+  const selected = models.find(
+    (model) => model.provider === auxiliary.model.provider && model.id === auxiliary.model.model,
+  )
+  if (!selected?.inputModalities?.includes('image')) {
+    throw new Error('辅助图片理解模型必须明确声明支持图片输入。')
+  }
+}
 
 const writeContractJson = <Contract extends HostApiContract>(
   res: ServerResponse,
@@ -418,7 +433,7 @@ const saveActiveDynamicPackage = async (
     description: input.description,
     createdByAgentId: input.agentId,
     verification: {
-      dshVersion: '0.1.1-rc.1',
+      dshVersion: '0.1.1-rc.2',
       contractVersion: 'nekro-nxt-extension-v1',
       origin: {
         episodeId: input.episodeId,
@@ -519,27 +534,32 @@ export const createNekroHostApi = (webServer: WebServer, runtime: NekroRuntime):
     const runtimeByChannel = new Map(
       channels.map((channel) => [channel.id, assembleChannelRuntime(runtime, channel.id)] as const),
     )
-    const agents = agentCommits.map((commit) => {
-      const agentId = commit.definition.id
-      const ownedChannels = channels
-        .filter((channel) => bindingsByChannel.get(channel.id)?.some((binding) => binding.agentId === agentId))
-        .map((channel) => channel.id)
-      const runtimePhase = worstChannelRuntimePhase(
-        ownedChannels.map((channelId) => runtimeByChannel.get(channelId)?.phase ?? 'idle'),
-      )
-      return {
-        id: agentId,
-        displayName: commit.revision.displayName,
-        persona: commit.revision.persona,
-        model: commit.revision.model,
-        capabilities: commit.revision.capabilities,
-        currentRevisionId: commit.revision.id,
-        runtimeStatus: runtimePhase === 'thinking' || runtimePhase === 'using-tool' ? 'running' : 'idle',
-        runtimePhase,
-        createdAt: commit.revision.createdAt,
-        channels: ownedChannels,
-      }
-    })
+    const agents = await Promise.all(
+      agentCommits.map(async (commit) => {
+        const agentId = commit.definition.id
+        const ownedChannels = channels
+          .filter((channel) => bindingsByChannel.get(channel.id)?.some((binding) => binding.agentId === agentId))
+          .map((channel) => channel.id)
+        const runtimePhase = worstChannelRuntimePhase(
+          ownedChannels.map((channelId) => runtimeByChannel.get(channelId)?.phase ?? 'idle'),
+        )
+        return {
+          id: agentId,
+          displayName: commit.revision.displayName,
+          persona: commit.revision.persona,
+          personaDocument: commit.revision.personaDocument,
+          model: commit.revision.model,
+          capabilities: commit.revision.capabilities,
+          imagePolicy: commit.revision.imagePolicy,
+          imageDiagnostics: await runtime.host.getAgentImageDiagnostics(commit.revision),
+          currentRevisionId: commit.revision.id,
+          runtimeStatus: runtimePhase === 'thinking' || runtimePhase === 'using-tool' ? 'running' : 'idle',
+          runtimePhase,
+          createdAt: commit.revision.createdAt,
+          channels: ownedChannels,
+        }
+      }),
+    )
     const channelProjection = channels.map((channel) => {
       const bindings = bindingsByChannel.get(channel.id) ?? []
       const boundAgentId = bindings[0]?.agentId
@@ -619,6 +639,111 @@ export const createNekroHostApi = (webServer: WebServer, runtime: NekroRuntime):
         writeJson(res, 200, await buildSnapshot())
       } catch (error) {
         writeError(res, 500, 'snapshot-failed', error instanceof Error ? error.message : String(error))
+      }
+    },
+  })
+
+  // GET /api/platform-users — the paged directory intentionally stays out of
+  // the global snapshot because installations can accumulate many identities.
+  registerRoute({
+    kind: 'exact',
+    path: '/api/platform-users',
+    handler: (req, res) => {
+      if (req.method !== 'GET') {
+        writeError(res, 405, 'method-not-allowed', '平台用户目录只支持 GET。')
+        return
+      }
+      try {
+        const url = new URL(req.url ?? '/', 'http://localhost')
+        const rawLimit = url.searchParams.get('limit')
+        const params = HostApiContracts.listPlatformUsers.parseParams({
+          ...(url.searchParams.has('query') ? { query: url.searchParams.get('query') } : {}),
+          ...(url.searchParams.has('adapterKey') ? { adapterKey: url.searchParams.get('adapterKey') } : {}),
+          ...(url.searchParams.has('connectionId') ? { connectionId: url.searchParams.get('connectionId') } : {}),
+          ...(url.searchParams.has('cursor') ? { cursor: url.searchParams.get('cursor') } : {}),
+          ...(rawLimit === null ? {} : { limit: Number(rawLimit) }),
+        })
+        const adapters = new Map(runtime.listConnectionAdapters().map((adapter) => [adapter.key, adapter.displayName]))
+        const adapterDisplayName = (adapterKey: string): string => adapters.get(adapterKey) ?? '已移除的适配器'
+        const directoryLabel = (value: string | undefined): string | undefined => {
+          const normalized = value?.trim()
+          return normalized ? normalized.slice(0, 120) : undefined
+        }
+        const records = [...runtime.core.listPlatformUsers()].sort((left, right) =>
+          left.identityId.localeCompare(right.identityId),
+        )
+        const adapterCounts = new Map<string, number>()
+        const connectionCounts = new Map<
+          string,
+          {
+            id: (typeof records)[number]['connection']['id']
+            adapterKey: string
+            displayName: string
+            userCount: number
+          }
+        >()
+        for (const record of records) {
+          adapterCounts.set(record.connection.adapterKey, (adapterCounts.get(record.connection.adapterKey) ?? 0) + 1)
+          const connectionDisplayName = record.connection.alias ?? adapterDisplayName(record.connection.adapterKey)
+          const facet = connectionCounts.get(record.connection.id)
+          connectionCounts.set(record.connection.id, {
+            id: record.connection.id,
+            adapterKey: record.connection.adapterKey,
+            displayName: connectionDisplayName,
+            userCount: (facet?.userCount ?? 0) + 1,
+          })
+        }
+        const normalizedQuery = params.query?.toLocaleLowerCase()
+        const matching = records.filter((record) => {
+          if (params.adapterKey !== undefined && record.connection.adapterKey !== params.adapterKey) return false
+          if (params.connectionId !== undefined && record.connection.id !== params.connectionId) return false
+          if (normalizedQuery && !(record.displayName ?? '').toLocaleLowerCase().includes(normalizedQuery)) return false
+          return true
+        })
+        const filtered = matching.filter(
+          (record) => params.cursor === undefined || record.identityId.localeCompare(params.cursor) > 0,
+        )
+        const page = filtered.slice(0, params.limit)
+        const items = page.map((record) => ({
+          identityId: record.identityId,
+          ...(directoryLabel(record.displayName) === undefined
+            ? {}
+            : { displayName: directoryLabel(record.displayName) }),
+          adapter: {
+            key: record.connection.adapterKey,
+            displayName: adapterDisplayName(record.connection.adapterKey),
+          },
+          connection: {
+            id: record.connection.id,
+            displayName: record.connection.alias ?? adapterDisplayName(record.connection.adapterKey),
+          },
+          activeChannelCount: record.activeChannels.length,
+          channelPreview: record.activeChannels.slice(0, 3).map((channel) => ({
+            id: channel.id,
+            ...(directoryLabel(channel.displayName) === undefined
+              ? {}
+              : { displayName: directoryLabel(channel.displayName) }),
+            kind: channel.kind,
+          })),
+          historicalOnly: record.historicalOnly,
+        }))
+        writeContractJson(res, 200, HostApiContracts.listPlatformUsers, {
+          total: matching.length,
+          items,
+          facets: {
+            adapters: [...adapterCounts.entries()]
+              .map(([key, userCount]) => ({ key, displayName: adapterDisplayName(key), userCount }))
+              .sort((left, right) => left.displayName.localeCompare(right.displayName, 'zh-CN')),
+            connections: [...connectionCounts.values()].sort((left, right) =>
+              left.displayName.localeCompare(right.displayName, 'zh-CN'),
+            ),
+          },
+          ...(filtered.length > params.limit && page.at(-1) !== undefined
+            ? { nextCursor: page.at(-1)?.identityId }
+            : {}),
+        })
+      } catch (error) {
+        writeError(res, 400, 'invalid-platform-user-query', error instanceof Error ? error.message : String(error))
       }
     },
   })
@@ -1243,15 +1368,18 @@ export const createNekroHostApi = (webServer: WebServer, runtime: NekroRuntime):
               unrestrictedFileAccess: false,
             }
           : parsed.capabilities
+      await assertAuxiliaryImageModel(runtime, parsed.imagePolicy)
       const content: AgentRevisionContent = {
         displayName: parsed.displayName,
         persona: parsed.persona,
+        ...(parsed.personaDocument === undefined ? {} : { personaDocument: parsed.personaDocument }),
         model: {
           provider: parsed.model.provider,
           model: parsed.model.model,
           ...(parsed.model.reasoningEffort === undefined ? {} : { reasoningEffort: parsed.model.reasoningEffort }),
         },
         capabilities: defaultCapabilities,
+        ...(parsed.imagePolicy === undefined ? {} : { imagePolicy: parsed.imagePolicy }),
       }
       const entity = await runtime.createAgentWithWebChannel(content)
       writeJson(
@@ -1274,6 +1402,49 @@ export const createNekroHostApi = (webServer: WebServer, runtime: NekroRuntime):
       const url = new URL(req.url ?? '/', 'http://localhost')
       if (/^\/api\/agents\/[^/]+\/extensions\/[^/]+\/activation$/u.test(url.pathname)) {
         await handleExtensionActivationRoute(req, res)
+        return
+      }
+      const deleteMatch = /^\/api\/agents\/([^/]+)$/.exec(url.pathname)
+      if (deleteMatch) {
+        if (req.method !== 'DELETE') {
+          writeError(res, 405, 'method-not-allowed', '删除智能体只支持 DELETE。')
+          return
+        }
+        let agentId: AgentId
+        try {
+          agentId = AgentIdSchema.parse(decodeURIComponent(deleteMatch[1] ?? ''))
+        } catch {
+          writeError(res, 400, 'invalid-agent', '无效的智能体 ID。')
+          return
+        }
+        try {
+          const parsed = HostApiContracts.deleteAgent.parseRequest(await readJsonBody(req))
+          const current = runtime.repository.getAgent(agentId)
+          if (!current) {
+            writeError(res, 404, 'not-found', '智能体不存在或已被删除。')
+            return
+          }
+          if (parsed.expectedCurrentRevisionId !== current.revision.id) {
+            writeError(res, 409, 'revision-conflict', '智能体配置已在其他位置更新，请刷新后重试。')
+            return
+          }
+          if (parsed.confirmationName !== current.revision.displayName) {
+            writeError(res, 400, 'confirmation-mismatch', '输入的智能体名称不匹配。')
+            return
+          }
+          const { unboundChannelIds, deletedChannelIds } = await runtime.deleteAgent(agentId, {
+            deleteAutoCreatedBuiltInChannels: parsed.deleteAutoCreatedBuiltInChannels,
+          })
+          writeContractJson(res, 200, HostApiContracts.deleteAgent, {
+            agentId,
+            deleted: true,
+            unboundChannelIds,
+            deletedChannelIds,
+          })
+          broadcastExtensionsChanged()
+        } catch (error) {
+          writeError(res, 400, 'agent-delete-failed', error instanceof Error ? error.message : String(error))
+        }
         return
       }
       const match = /^\/api\/agents\/([^/]+)\/(capabilities|revision)$/.exec(url.pathname)
@@ -1315,15 +1486,18 @@ export const createNekroHostApi = (webServer: WebServer, runtime: NekroRuntime):
             writeError(res, 409, 'revision-conflict', '智能体配置已在其他位置更新，请刷新后重试。')
             return
           }
+          await assertAuxiliaryImageModel(runtime, parsed.imagePolicy)
           const updated = runtime.core.reviseAgent(agentId, revision.id, {
             displayName: parsed.displayName,
             persona: parsed.persona,
+            ...(parsed.personaDocument === undefined ? {} : { personaDocument: parsed.personaDocument }),
             model: {
               provider: parsed.model.provider,
               model: parsed.model.model,
               ...(parsed.model.reasoningEffort === undefined ? {} : { reasoningEffort: parsed.model.reasoningEffort }),
             },
             capabilities: revision.capabilities,
+            imagePolicy: parsed.imagePolicy ?? revision.imagePolicy,
           })
           writeJson(res, 200, HostApiContracts.reviseAgent.parseResponse({ currentRevisionId: updated.revision.id }))
           return
@@ -1347,8 +1521,10 @@ export const createNekroHostApi = (webServer: WebServer, runtime: NekroRuntime):
         const updated = runtime.core.reviseAgent(agentId, revision.id, {
           displayName: revision.displayName,
           persona: revision.persona,
+          personaDocument: revision.personaDocument,
           model: revision.model,
           capabilities,
+          imagePolicy: revision.imagePolicy,
         })
         writeJson(
           res,
@@ -1399,17 +1575,51 @@ export const createNekroHostApi = (webServer: WebServer, runtime: NekroRuntime):
       const messageMatch = /^\/api\/channels\/([^/]+)\/messages$/.exec(url.pathname)
       const nameMatch = /^\/api\/channels\/([^/]+)\/display-name$/.exec(url.pathname)
       const runtimeMatch = /^\/api\/channels\/([^/]+)\/runtime$/.exec(url.pathname)
+      const contextResetMatch = /^\/api\/channels\/([^/]+)\/context-reset$/.exec(url.pathname)
       const assetMatch = /^\/api\/channels\/([^/]+)\/assets\/([^/]+)$/.exec(url.pathname)
-      const rawChannelId = messageMatch?.[1] ?? nameMatch?.[1] ?? runtimeMatch?.[1] ?? assetMatch?.[1]
+      const channelMatch = /^\/api\/channels\/([^/]+)$/.exec(url.pathname)
+      const rawChannelId =
+        messageMatch?.[1] ??
+        nameMatch?.[1] ??
+        runtimeMatch?.[1] ??
+        contextResetMatch?.[1] ??
+        assetMatch?.[1] ??
+        channelMatch?.[1]
       if (!rawChannelId) {
         writeError(res, 404, 'not-found', `未定义路由：${req.method} ${url.pathname}。`)
         return
       }
+
       let typedChannelId: ChannelId
       try {
         typedChannelId = ChannelIdSchema.parse(decodeURIComponent(rawChannelId))
       } catch {
         writeError(res, 400, 'invalid-channel', '无效的频道 ID。')
+        return
+      }
+
+      if (channelMatch) {
+        if (req.method !== 'DELETE') {
+          writeError(res, 405, 'method-not-allowed', '删除频道只支持 DELETE。')
+          return
+        }
+        try {
+          const parsed = HostApiContracts.deleteChannel.parseRequest(await readJsonBody(req))
+          const channel = runtime.repository.getChannel(typedChannelId)
+          if (!channel) {
+            writeError(res, 404, 'not-found', '频道不存在或已被删除。')
+            return
+          }
+          const actualBoundAgentId = runtime.repository.getBinding(typedChannelId)?.agentId ?? null
+          if (parsed.expectedBoundAgentId !== actualBoundAgentId) {
+            writeError(res, 409, 'binding-conflict', '频道绑定已发生变化，请刷新后重试。')
+            return
+          }
+          await runtime.channels.deleteChannel(typedChannelId)
+          writeContractJson(res, 200, HostApiContracts.deleteChannel, { channelId: typedChannelId, deleted: true })
+        } catch (error) {
+          writeError(res, 400, 'channel-delete-failed', error instanceof Error ? error.message : String(error))
+        }
         return
       }
 
@@ -1427,6 +1637,39 @@ export const createNekroHostApi = (webServer: WebServer, runtime: NekroRuntime):
           )
         } catch (error) {
           writeError(res, 404, 'channel-runtime-missing', error instanceof Error ? error.message : String(error))
+        }
+        return
+      }
+
+      if (contextResetMatch) {
+        if (req.method !== 'POST') {
+          writeError(res, 405, 'method-not-allowed', '上下文操作只支持 POST。')
+          return
+        }
+        try {
+          const parsed = HostApiContracts.resetChannelContext.parseRequest(await readJsonBody(req))
+          const binding = runtime.repository.getBinding(typedChannelId)
+          if (!binding) {
+            writeError(res, 409, 'channel-unbound', '频道尚未绑定智能体，无法重置上下文。')
+            return
+          }
+          const episode = runtime.repository.getActiveEpisode(typedChannelId, binding.agentId)
+          if (!episode) {
+            writeError(res, 409, 'episode-missing', '频道当前没有可重置的上下文。')
+            return
+          }
+          if (parsed.expectedEpisodeId !== episode.id) {
+            writeError(res, 409, 'episode-conflict', '频道上下文已发生变化，请刷新后重试。')
+            return
+          }
+          const result = await runtime.channels.resetEpisode(episode.id, parsed.mode)
+          writeContractJson(res, 200, HostApiContracts.resetChannelContext, {
+            mode: result.mode,
+            closedEpisodeId: result.closedEpisode.id,
+            ...(result.nextEpisode === undefined ? {} : { nextEpisodeId: result.nextEpisode.id }),
+          })
+        } catch (error) {
+          writeError(res, 400, 'context-reset-failed', error instanceof Error ? error.message : String(error))
         }
         return
       }
@@ -1515,7 +1758,9 @@ export const createNekroHostApi = (webServer: WebServer, runtime: NekroRuntime):
           ...(before === undefined ? {} : { before }),
         })
         const hasMore = page.length > params.limit
-        const messages = hasMore ? page.slice(0, params.limit) : page
+        // buildSnapshotMessage exposes oldest-first. The extra row is therefore
+        // the oldest candidate, not the newest message at the end of the page.
+        const messages = hasMore ? page.slice(-params.limit) : page
         writeContractJson(res, 200, HostApiContracts.listChannelMessages, { messages, hasMore })
         return
       }
@@ -1733,6 +1978,7 @@ export const createNekroHostApi = (webServer: WebServer, runtime: NekroRuntime):
     broadcast({ event: 'status', data: { ok: true, message: '智能体运行状态已更新' } })
   })
   const unsubscribeChannelRuntime = runtime.host.subscribeChannelRuntime((channelId) => {
+    if (!runtime.repository.getChannel(channelId)) return
     const projection = assembleChannelRuntime(runtime, channelId)
     const revision = nextRevision(runtimeRevision, channelId)
     const data = { ...projection, revision }

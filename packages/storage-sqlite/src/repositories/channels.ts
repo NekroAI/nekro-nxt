@@ -1,4 +1,4 @@
-import { and, asc, desc, eq, lt, or } from 'drizzle-orm'
+import { and, asc, desc, eq, isNull, lt, or } from 'drizzle-orm'
 import { normalizeConnectionAlias, type CoreRepository } from '@nekro-nxt/core'
 import type {
   AppendChannelEventCommit,
@@ -6,8 +6,10 @@ import type {
   ChannelEventRecord,
   ChannelMemberRecord,
   ChannelRecord,
+  ChannelReferenceRecord,
   ConnectionRecord,
   PlatformIdentityRecord,
+  PlatformUserDirectoryRecord,
   PlatformMessageReferenceRecord,
 } from '@nekro-nxt/core'
 import type { ChannelEventId, ChannelId, ChannelMemberId, ConnectionId, PlatformIdentityId } from '@nekro-nxt/contracts'
@@ -23,6 +25,7 @@ import {
   outboundIntents,
   physicalDeliveries,
   platformIdentities,
+  workTreeOrder,
 } from '../schema.js'
 import {
   ChannelBindingRowSchema,
@@ -41,12 +44,14 @@ type ChannelRepository = Pick<
   | 'listConnectionIdsByAdapter'
   | 'createChannel'
   | 'ensureChannel'
+  | 'tombstoneChannel'
   | 'updateChannelDisplayName'
   | 'getChannel'
   | 'getChannelByPlatformId'
   | 'listChannelIdsByConnection'
   | 'ensurePlatformIdentity'
   | 'getPlatformIdentity'
+  | 'listPlatformUsers'
   | 'ensureChannelMember'
   | 'getChannelMember'
   | 'getChannelMemberByIdentity'
@@ -59,7 +64,9 @@ type ChannelRepository = Pick<
   | 'listChannelEvents'
   | 'resolvePlatformMessage'
   | 'resolveLogicalMessagePlatformId'
->
+> & {
+  getChannelReference(id: ChannelId): ChannelReferenceRecord | undefined
+}
 
 const toConnection = (input: typeof connections.$inferSelect): ConnectionRecord => {
   const row = ConnectionRowSchema.parse(input)
@@ -81,6 +88,7 @@ const toChannel = (input: typeof channels.$inferSelect): ChannelRecord => {
     platformChannelId: row.platformChannelId,
     kind: row.kind,
     ...(row.displayName === null ? {} : { displayName: row.displayName }),
+    ...(row.autoCreatedForAgentId === null ? {} : { autoCreatedForAgentId: row.autoCreatedForAgentId }),
     createdAt: row.createdAt,
   }
 }
@@ -139,8 +147,16 @@ export function createChannelsRepository(database: DrizzleCoreDatabase): Channel
     return row === undefined ? undefined : toConnection(row)
   }
   const getChannel = (id: ChannelId): ChannelRecord | undefined => {
-    const row = database.select().from(channels).where(eq(channels.id, id)).get()
+    const row = database
+      .select()
+      .from(channels)
+      .where(and(eq(channels.id, id), isNull(channels.deletedAt)))
+      .get()
     return row === undefined ? undefined : toChannel(row)
+  }
+  const getChannelReference = (id: ChannelId): ChannelReferenceRecord | undefined => {
+    const row = database.select().from(channels).where(eq(channels.id, id)).get()
+    return row === undefined ? undefined : { channel: toChannel(row), removed: row.deletedAt !== null }
   }
   const getPlatformIdentity = (id: PlatformIdentityId): PlatformIdentityRecord | undefined => {
     const row = database.select().from(platformIdentities).where(eq(platformIdentities.id, id)).get()
@@ -196,8 +212,8 @@ export function createChannelsRepository(database: DrizzleCoreDatabase): Channel
           target: [channels.connectionId, channels.platformChannelId],
           set:
             record.displayName === undefined
-              ? { kind: record.kind }
-              : { kind: record.kind, displayName: record.displayName },
+              ? { kind: record.kind, deletedAt: null }
+              : { kind: record.kind, displayName: record.displayName, deletedAt: null },
         })
         .run()
       const stored = database
@@ -210,17 +226,63 @@ export function createChannelsRepository(database: DrizzleCoreDatabase): Channel
       if (stored === undefined) throw new Error('Channel upsert did not produce a row.')
       return toChannel(stored)
     },
+    tombstoneChannel(id, deletedAt): void {
+      if (!Number.isSafeInteger(deletedAt) || deletedAt < 0) {
+        throw new TypeError('Channel delete time must be non-negative.')
+      }
+      database.transaction(
+        (tx) => {
+          tx.delete(channelBindings).where(eq(channelBindings.channelId, id)).run()
+          const changed = tx
+            .update(channels)
+            .set({ deletedAt })
+            .where(and(eq(channels.id, id), isNull(channels.deletedAt)))
+            .run().changes
+          if (changed !== 1) throw new Error(`Unknown or deleted channel: ${id}`)
+          const order = tx.select().from(workTreeOrder).where(eq(workTreeOrder.id, 1)).get()
+          if (order) {
+            const channelIdsByAgent = Object.fromEntries(
+              Object.entries(order.channelIdsByAgent).map(([agentId, channelIds]) => [
+                agentId,
+                channelIds.filter((channelId) => channelId !== id),
+              ]),
+            )
+            tx.update(workTreeOrder)
+              .set({
+                channelIdsByAgent,
+                unboundChannelIds: order.unboundChannelIds.filter((channelId) => channelId !== id),
+              })
+              .where(eq(workTreeOrder.id, 1))
+              .run()
+          }
+        },
+        { behavior: 'immediate' },
+      )
+    },
     updateChannelDisplayName(id, displayName): void {
-      if (database.update(channels).set({ displayName }).where(eq(channels.id, id)).run().changes !== 1) {
+      if (
+        database
+          .update(channels)
+          .set({ displayName })
+          .where(and(eq(channels.id, id), isNull(channels.deletedAt)))
+          .run().changes !== 1
+      ) {
         throw new Error(`Unknown channel: ${id}`)
       }
     },
     getChannel,
+    getChannelReference,
     getChannelByPlatformId(connectionId, platformChannelId): ChannelRecord | undefined {
       const row = database
         .select()
         .from(channels)
-        .where(and(eq(channels.connectionId, connectionId), eq(channels.platformChannelId, platformChannelId)))
+        .where(
+          and(
+            eq(channels.connectionId, connectionId),
+            eq(channels.platformChannelId, platformChannelId),
+            isNull(channels.deletedAt),
+          ),
+        )
         .get()
       return row === undefined ? undefined : toChannel(row)
     },
@@ -228,7 +290,7 @@ export function createChannelsRepository(database: DrizzleCoreDatabase): Channel
       return database
         .select({ id: channels.id })
         .from(channels)
-        .where(eq(channels.connectionId, connectionId))
+        .where(and(eq(channels.connectionId, connectionId), isNull(channels.deletedAt)))
         .orderBy(asc(channels.createdAt), asc(channels.id))
         .all()
         .map(({ id }) => id)
@@ -261,6 +323,51 @@ export function createChannelsRepository(database: DrizzleCoreDatabase): Channel
       return toIdentity(row)
     },
     getPlatformIdentity,
+    listPlatformUsers(): readonly PlatformUserDirectoryRecord[] {
+      const rows = database
+        .select({ identity: platformIdentities, connection: connections, member: channelMembers, channel: channels })
+        .from(platformIdentities)
+        .innerJoin(connections, eq(connections.id, platformIdentities.connectionId))
+        .leftJoin(channelMembers, eq(channelMembers.platformIdentityId, platformIdentities.id))
+        .leftJoin(channels, eq(channels.id, channelMembers.channelId))
+        .orderBy(asc(platformIdentities.id), asc(channels.id))
+        .all()
+      const directory = new Map<PlatformIdentityId, PlatformUserDirectoryRecord>()
+      for (const row of rows) {
+        const current = directory.get(row.identity.id)
+        const activeChannel =
+          row.channel === null || row.channel.deletedAt !== null
+            ? undefined
+            : {
+                id: row.channel.id,
+                kind: row.channel.kind,
+                ...(row.channel.displayName === null ? {} : { displayName: row.channel.displayName }),
+              }
+        if (current) {
+          if (activeChannel && !current.activeChannels.some(({ id }) => id === activeChannel.id)) {
+            directory.set(row.identity.id, {
+              ...current,
+              activeChannels: [...current.activeChannels, activeChannel],
+              historicalOnly: false,
+            })
+          }
+          continue
+        }
+        directory.set(row.identity.id, {
+          identityId: row.identity.id,
+          ...(row.identity.displayName === null ? {} : { displayName: row.identity.displayName }),
+          connection: {
+            id: row.connection.id,
+            adapterKey: row.connection.adapterKey,
+            ...(row.connection.alias === null ? {} : { alias: row.connection.alias }),
+            createdAt: row.connection.createdAt,
+          },
+          activeChannels: activeChannel ? [activeChannel] : [],
+          historicalOnly: activeChannel === undefined,
+        })
+      }
+      return [...directory.values()]
+    },
     ensureChannelMember(record): ChannelMemberRecord {
       const insert = database.insert(channelMembers).values(record)
       if (record.displayName === undefined) {

@@ -18,8 +18,9 @@ import type {
   OutboundIntentId,
   PhysicalDeliveryId,
   PlatformIdentityId,
+  PromptDocumentV1,
 } from '@nekro-nxt/contracts'
-import type { AgentCapabilityGrants } from '@nekro-nxt/core'
+import type { AgentCapabilityGrants, ImageUnderstandingPolicy } from '@nekro-nxt/core'
 import type { ExtensionRevisionVerification } from '@nekro-nxt/extension-runtime'
 import { sql } from 'drizzle-orm'
 import { check, foreignKey, index, integer, primaryKey, sqliteTable, text, uniqueIndex } from 'drizzle-orm/sqlite-core'
@@ -29,6 +30,7 @@ const jsonText = <T>(name: string) => text(name, { mode: 'json' }).$type<T>()
 export const agentDefinitions = sqliteTable('agent_definitions', {
   id: text().$type<AgentId>().primaryKey(),
   createdAt: integer('created_at').notNull(),
+  deletedAt: integer('deleted_at'),
 })
 
 export const agentRevisions = sqliteTable(
@@ -42,10 +44,12 @@ export const agentRevisions = sqliteTable(
     revision: integer().notNull(),
     displayName: text('display_name').notNull(),
     persona: text().notNull(),
+    personaDocument: jsonText<PromptDocumentV1>('persona_document'),
     modelProvider: text('model_provider').notNull(),
     modelId: text('model_id').notNull(),
     reasoningEffort: text('reasoning_effort'),
     capabilities: jsonText<AgentCapabilityGrants>('capabilities').notNull(),
+    imagePolicy: jsonText<ImageUnderstandingPolicy>('image_policy').notNull(),
     contentDigest: text('content_digest').notNull(),
     createdAt: integer('created_at').notNull(),
   },
@@ -111,11 +115,18 @@ export const channels = sqliteTable(
     platformChannelId: text('platform_channel_id').notNull(),
     kind: text({ enum: ['web', 'direct', 'group'] }).notNull(),
     displayName: text('display_name'),
+    autoCreatedForAgentId: text('auto_created_for_agent_id').$type<AgentId>(),
     createdAt: integer('created_at').notNull(),
+    deletedAt: integer('deleted_at'),
   },
   (table) => [
     uniqueIndex('channels_connection_platform_uq').on(table.connectionId, table.platformChannelId),
     check('channels_kind_ck', sql`${table.kind} IN ('web', 'direct', 'group')`),
+    foreignKey({
+      name: 'channels_auto_created_agent_fk',
+      columns: [table.autoCreatedForAgentId],
+      foreignColumns: [agentDefinitions.id],
+    }).onDelete('restrict'),
   ],
 )
 
@@ -231,6 +242,8 @@ export const episodes = sqliteTable(
     closeReason: text('close_reason', {
       enum: [
         'manual',
+        'context-cleared',
+        'context-compacted',
         'idle-timeout',
         'incompatible-revision',
         'incompatible-activation',
@@ -238,6 +251,7 @@ export const episodes = sqliteTable(
         'unrecoverable-session',
         'permission-revoked',
         'binding-replaced',
+        'channel-deleted',
         'stopped',
       ],
     }),
@@ -258,7 +272,7 @@ export const episodes = sqliteTable(
     check('episodes_status_ck', sql`${table.status} IN ('opening', 'active', 'closed', 'failed')`),
     check(
       'episodes_close_reason_ck',
-      sql`${table.closeReason} IS NULL OR ${table.closeReason} IN ('manual', 'idle-timeout', 'incompatible-revision', 'incompatible-activation', 'incompatible-session-storage', 'unrecoverable-session', 'permission-revoked', 'binding-replaced', 'stopped')`,
+      sql`${table.closeReason} IS NULL OR ${table.closeReason} IN ('manual', 'context-cleared', 'context-compacted', 'idle-timeout', 'incompatible-revision', 'incompatible-activation', 'incompatible-session-storage', 'unrecoverable-session', 'permission-revoked', 'binding-replaced', 'channel-deleted', 'stopped')`,
     ),
     foreignKey({
       name: 'episodes_revision_fk',

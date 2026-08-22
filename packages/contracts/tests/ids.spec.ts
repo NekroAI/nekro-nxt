@@ -5,6 +5,7 @@ import {
   AssetIdSchema,
   buildHostApiContractPath,
   ChannelIdSchema,
+  ChannelRuntimeTurnSchema,
   HostApiContracts,
   MessagePartSchema,
 } from '../src/index.ts'
@@ -28,6 +29,17 @@ describe('public ID boundaries', () => {
         triggerPolicy: 'always',
       }),
     ).toThrow()
+  })
+
+  it('exposes an unreplied Turn without treating it as a normal completion', () => {
+    expect(
+      ChannelRuntimeTurnSchema.parse({
+        turn: 1,
+        state: 'unreplied',
+        producedReply: false,
+        steps: [],
+      }),
+    ).toMatchObject({ state: 'unreplied', producedReply: false })
   })
 
   it('validates path and scalar query parameters before building a transport URL', () => {

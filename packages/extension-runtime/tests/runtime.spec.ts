@@ -868,7 +868,7 @@ describe('Extension materialization and build policy', () => {
         ...materialized.manifest,
         schemaVersion: 1,
         apiVersion: '1',
-        compatible: { nekroNxt: '^0.1.0', dsh: '^0.1.1-rc.1' },
+        compatible: { nekroNxt: '^0.1.0', dsh: '^0.1.1-rc.2' },
         requestedCapabilities: [],
         contributions: [],
         name: '过早预留',

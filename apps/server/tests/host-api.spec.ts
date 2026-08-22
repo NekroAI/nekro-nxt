@@ -261,6 +261,19 @@ describe('NekroNxt Server domain API (WebServer seam)', () => {
       expect(snapshot.agents.find((agent) => agent.id === created.agentId)?.displayName).toBe('网页智能体')
       expect(snapshot.agents.find((agent) => agent.id === created.agentId)?.runtimeStatus).toBe('idle')
       expect(snapshot.agents.find((agent) => agent.id === created.agentId)?.runtimePhase).toBe('idle')
+      expect(snapshot.agents.find((agent) => agent.id === created.agentId)?.imagePolicy).toEqual({
+        history: {
+          mode: 'persistent-distinct',
+          detail: 'auto',
+          restoreAfterCompaction: { recentMessages: 32, maxImages: 20 },
+        },
+        textModel: { mode: 'disabled' },
+      })
+      expect(snapshot.agents.find((agent) => agent.id === created.agentId)?.imageDiagnostics).toMatchObject({
+        route: { mode: 'unavailable' },
+        residentImages: 0,
+        duplicateImagesSkipped: 0,
+      })
       expect(snapshot.channels.find((channel) => channel.id === created.channelId)?.runtimePhase).toBe('idle')
       const idleRuntime = HostApiContracts.getChannelRuntime.parseResponse(
         await (await fetch(`${origin}/api/channels/${created.channelId}/runtime`)).json(),
@@ -305,6 +318,22 @@ describe('NekroNxt Server domain API (WebServer seam)', () => {
       expect(aliasedSnapshot.connections.find((connection) => connection.id === externalConnection.id)).toMatchObject({
         alias: '外部机器人',
       })
+      const firstUsersResponse = await fetch(`${origin}/api/platform-users?adapterKey=web&limit=1`)
+      expect(firstUsersResponse.status).toBe(200)
+      const firstUsers = HostApiContracts.listPlatformUsers.parseResponse(await firstUsersResponse.json())
+      expect(firstUsers).toMatchObject({
+        total: 2,
+        items: [
+          expect.objectContaining({
+            adapter: { key: 'web', displayName: '内置频道' },
+            activeChannelCount: 1,
+            historicalOnly: false,
+          }),
+        ],
+      })
+      expect(firstUsers.nextCursor).toBeDefined()
+      expect(JSON.stringify(firstUsers)).not.toContain('sender-openid')
+      expect(JSON.stringify(firstUsers)).not.toContain('mentioned-openid')
       const systemAliasResponse = await fetch(`${origin}/api/connections/${created.connectionId}/alias`, {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
@@ -401,6 +430,7 @@ describe('NekroNxt Server domain API (WebServer seam)', () => {
       )
       expect(firstPage.messages).toHaveLength(1)
       expect(firstPage.hasMore).toBe(true)
+      expect(firstPage.messages[0]?.id).toBe(finalSnapshot.messages.at(-1)?.id)
       const cursor = firstPage.messages[0]!
       const olderPage = HostApiContracts.listChannelMessages.parseResponse(
         await (
@@ -410,7 +440,7 @@ describe('NekroNxt Server domain API (WebServer seam)', () => {
         ).json(),
       )
       expect(olderPage.messages).toHaveLength(1)
-      expect(olderPage.messages[0]?.id).not.toBe(cursor.id)
+      expect(olderPage.messages[0]?.id).toBe(finalSnapshot.messages.at(-2)?.id)
 
       const observerResponse = await fetch(`${origin}/api/agents`, {
         method: 'POST',
@@ -525,6 +555,233 @@ describe('NekroNxt Server domain API (WebServer seam)', () => {
       const restored = HostApiContracts.updateAgentCapabilities.parseResponse(await restoredResponse.json())
       expect(restored.currentRevisionId).toBe(before.revision.id)
       expect(restored.capabilities.dynamicCreation).toBe(false)
+    } finally {
+      api.dispose()
+      await webContext.fiber.dispose()
+      await runtime.dispose()
+    }
+  })
+
+  it('resets channel context with optimistic concurrency and tombstones an intelligent-agent', async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), 'nekro-nxt-context-api-'))
+    temporaryDirectories.push(directory)
+    const runtime = await NekroRuntime.create({
+      coreDatabasePath: path.join(directory, 'core.sqlite'),
+      sessionDatabasePath: path.join(directory, 'sessions.sqlite'),
+      assetRoot: path.join(directory, 'assets'),
+      extensionDataRoot: path.join(directory, 'extension-data'),
+      extensionCacheRoot: path.join(directory, 'extension-cache'),
+      configureLlm: (context: Context) => {
+        context.llm.registerAdapter(['test-provider'], new ScriptedCommunicationModel())
+      },
+    })
+    const seeded = runtime.core.createAgentWithChannel(
+      {
+        displayName: '上下文测试智能体',
+        persona: '',
+        model: { provider: 'test-provider', model: 'chat-model' },
+      },
+      {
+        connectionId: runtime.webConnectionId,
+        kind: 'web',
+        triggerPolicy: 'always',
+      },
+    )
+    await runtime.start()
+    await runtime.recover()
+    const webContext = new Context()
+    await webContext.plugin(WebServer, { host: '127.0.0.1', port: 0 })
+    const api = createNekroHostApi(webContext.webServer, runtime)
+    const origin = `http://127.0.0.1:${api.port}`
+    const admit = (dedupeKey: string) =>
+      runtime.channels.acceptInbound({
+        connectionId: runtime.webConnectionId,
+        channelId: seeded.channel.id,
+        adapterKey: 'web',
+        kind: 'message-created',
+        parts: [{ type: 'text', text: dedupeKey }],
+        platformTimestamp: Date.now(),
+        receivedAt: Date.now(),
+        dedupeKey,
+      })
+
+    try {
+      await admit('context-before-compact')
+      const first = runtime.repository.getActiveEpisode(seeded.channel.id, seeded.definition.id)!
+      const stale = await fetch(`${origin}/api/channels/${seeded.channel.id}/context-reset`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ mode: 'compact', expectedEpisodeId: 'eps_STALE' }),
+      })
+      expect(stale.status).toBe(409)
+
+      const compactResponse = await fetch(`${origin}/api/channels/${seeded.channel.id}/context-reset`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ mode: 'compact', expectedEpisodeId: first.id }),
+      })
+      expect(compactResponse.status, await compactResponse.clone().text()).toBe(200)
+      const compacted = HostApiContracts.resetChannelContext.parseResponse(await compactResponse.json())
+      expect(compacted).toMatchObject({ mode: 'compact', closedEpisodeId: first.id })
+      expect(compacted.nextEpisodeId).toBeDefined()
+      expect(runtime.repository.getEpisode(first.id)).toMatchObject({ closeReason: 'context-compacted' })
+
+      const clearResponse = await fetch(`${origin}/api/channels/${seeded.channel.id}/context-reset`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ mode: 'clear', expectedEpisodeId: compacted.nextEpisodeId }),
+      })
+      expect(clearResponse.status, await clearResponse.clone().text()).toBe(200)
+      const cleared = HostApiContracts.resetChannelContext.parseResponse(await clearResponse.json())
+      expect(cleared).toEqual({ mode: 'clear', closedEpisodeId: compacted.nextEpisodeId })
+      expect(runtime.repository.getActiveEpisode(seeded.channel.id, seeded.definition.id)).toBeUndefined()
+
+      const removableChannel = runtime.core.createChannel({
+        connectionId: runtime.webConnectionId,
+        platformChannelId: 'manual-removable-channel',
+        kind: 'web',
+        displayName: '可删除内置频道',
+      })
+      runtime.core.createBinding({
+        channelId: removableChannel.id,
+        agentId: seeded.definition.id,
+        triggerPolicy: 'always',
+      })
+      const removableEvent = await runtime.channels.acceptInbound({
+        connectionId: runtime.webConnectionId,
+        channelId: removableChannel.id,
+        adapterKey: 'web',
+        kind: 'message-created',
+        parts: [{ type: 'text', text: '频道删除前的历史' }],
+        platformTimestamp: Date.now(),
+        receivedAt: Date.now(),
+        dedupeKey: 'channel-before-delete',
+      })
+      const staleChannelDelete = await fetch(`${origin}/api/channels/${removableChannel.id}`, {
+        method: 'DELETE',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ expectedBoundAgentId: null }),
+      })
+      expect(staleChannelDelete.status).toBe(409)
+      const channelDelete = await fetch(`${origin}/api/channels/${removableChannel.id}`, {
+        method: 'DELETE',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ expectedBoundAgentId: seeded.definition.id }),
+      })
+      expect(channelDelete.status, await channelDelete.clone().text()).toBe(200)
+      expect(HostApiContracts.deleteChannel.parseResponse(await channelDelete.json())).toEqual({
+        channelId: removableChannel.id,
+        deleted: true,
+      })
+      expect(runtime.repository.getChannel(removableChannel.id)).toBeUndefined()
+      expect(runtime.repository.getChannelEvent(removableEvent.channelEventId)).toBeDefined()
+
+      await admit('context-before-delete')
+      const wrongConfirmation = await fetch(`${origin}/api/agents/${seeded.definition.id}`, {
+        method: 'DELETE',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          expectedCurrentRevisionId: seeded.revision.id,
+          confirmationName: '名称不匹配',
+        }),
+      })
+      expect(wrongConfirmation.status).toBe(400)
+
+      const deleteResponse = await fetch(`${origin}/api/agents/${seeded.definition.id}`, {
+        method: 'DELETE',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          expectedCurrentRevisionId: seeded.revision.id,
+          confirmationName: seeded.revision.displayName,
+        }),
+      })
+      expect(deleteResponse.status, await deleteResponse.clone().text()).toBe(200)
+      expect(HostApiContracts.deleteAgent.parseResponse(await deleteResponse.json())).toEqual({
+        agentId: seeded.definition.id,
+        deleted: true,
+        unboundChannelIds: [],
+        deletedChannelIds: [seeded.channel.id],
+      })
+      expect(runtime.repository.getAgent(seeded.definition.id)).toBeUndefined()
+      expect(runtime.repository.getAgentRevision(seeded.revision.id)).toEqual(seeded.revision)
+      expect(runtime.repository.getChannel(seeded.channel.id)).toBeUndefined()
+      expect(runtime.repository.getBinding(seeded.channel.id)).toBeUndefined()
+      const snapshot = HostApiContracts.snapshot.parseResponse(await (await fetch(`${origin}/api/snapshot`)).json())
+      expect(snapshot.agents.some((agent) => agent.id === seeded.definition.id)).toBe(false)
+      expect(snapshot.channels.some((channel) => channel.id === seeded.channel.id)).toBe(false)
+
+      const mixed = runtime.core.createAgentWithChannel(
+        {
+          displayName: '混合频道智能体',
+          persona: '',
+          model: { provider: 'test-provider', model: 'chat-model' },
+        },
+        { connectionId: runtime.webConnectionId, kind: 'web', triggerPolicy: 'always' },
+      )
+      const manualBuiltIn = runtime.core.createChannel({
+        connectionId: runtime.webConnectionId,
+        platformChannelId: 'manual-built-in-kept',
+        kind: 'web',
+      })
+      const external = runtime.core.createChannel({
+        connectionId: runtime.webConnectionId,
+        platformChannelId: 'external-kept',
+        kind: 'group',
+      })
+      runtime.core.createBinding({
+        channelId: manualBuiltIn.id,
+        agentId: mixed.definition.id,
+        triggerPolicy: 'always',
+      })
+      runtime.core.createBinding({ channelId: external.id, agentId: mixed.definition.id, triggerPolicy: 'always' })
+      const mixedDelete = await fetch(`${origin}/api/agents/${mixed.definition.id}`, {
+        method: 'DELETE',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          expectedCurrentRevisionId: mixed.revision.id,
+          confirmationName: mixed.revision.displayName,
+          deleteAutoCreatedBuiltInChannels: true,
+        }),
+      })
+      expect(mixedDelete.status, await mixedDelete.clone().text()).toBe(200)
+      expect(HostApiContracts.deleteAgent.parseResponse(await mixedDelete.json())).toEqual({
+        agentId: mixed.definition.id,
+        deleted: true,
+        unboundChannelIds: [manualBuiltIn.id, external.id],
+        deletedChannelIds: [mixed.channel.id],
+      })
+      expect(runtime.repository.getChannel(mixed.channel.id)).toBeUndefined()
+      expect(runtime.repository.getChannel(manualBuiltIn.id)).toBeDefined()
+      expect(runtime.repository.getChannel(external.id)).toBeDefined()
+      expect(runtime.repository.getBinding(manualBuiltIn.id)).toBeUndefined()
+      expect(runtime.repository.getBinding(external.id)).toBeUndefined()
+
+      const kept = runtime.core.createAgentWithChannel(
+        {
+          displayName: '保留频道智能体',
+          persona: '',
+          model: { provider: 'test-provider', model: 'chat-model' },
+        },
+        { connectionId: runtime.webConnectionId, kind: 'web', triggerPolicy: 'always' },
+      )
+      const keptDelete = await fetch(`${origin}/api/agents/${kept.definition.id}`, {
+        method: 'DELETE',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          expectedCurrentRevisionId: kept.revision.id,
+          confirmationName: kept.revision.displayName,
+          deleteAutoCreatedBuiltInChannels: false,
+        }),
+      })
+      expect(keptDelete.status, await keptDelete.clone().text()).toBe(200)
+      expect(HostApiContracts.deleteAgent.parseResponse(await keptDelete.json())).toEqual({
+        agentId: kept.definition.id,
+        deleted: true,
+        unboundChannelIds: [kept.channel.id],
+        deletedChannelIds: [],
+      })
+      expect(runtime.repository.getChannel(kept.channel.id)).toBeDefined()
+      expect(runtime.repository.getBinding(kept.channel.id)).toBeUndefined()
     } finally {
       api.dispose()
       await webContext.fiber.dispose()
@@ -677,6 +934,94 @@ describe('NekroNxt Server domain API (WebServer seam)', () => {
           else resolve()
         }),
       )
+    }
+  })
+
+  it('round-trips image policy and only accepts an explicitly visual auxiliary model', async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), 'nekro-nxt-image-policy-api-'))
+    temporaryDirectories.push(directory)
+    const runtime = await NekroRuntime.create({
+      coreDatabasePath: path.join(directory, 'core.sqlite'),
+      sessionDatabasePath: path.join(directory, 'sessions.sqlite'),
+      assetRoot: path.join(directory, 'assets'),
+      extensionDataRoot: path.join(directory, 'extension-data'),
+      extensionCacheRoot: path.join(directory, 'extension-cache'),
+      configureLlm: (context: Context) => {
+        context.llm.registerAdapter(['text-provider'], new ScriptedCommunicationModel(false))
+        context.llm.registerAdapter(['vision-provider'], new ScriptedCommunicationModel(true))
+      },
+    })
+    const webContext = new Context()
+    await webContext.plugin(WebServer, { host: '127.0.0.1', port: 0 })
+    const api = createNekroHostApi(webContext.webServer, runtime)
+    const origin = `http://127.0.0.1:${api.port}`
+    const base = {
+      displayName: '图片策略智能体',
+      persona: '只报告可见证据。',
+      model: { provider: 'text-provider', model: 'chat-model' },
+    }
+    const policy = {
+      history: {
+        mode: 'persistent-distinct' as const,
+        detail: 'high' as const,
+        restoreAfterCompaction: { recentMessages: 12, maxImages: 4 },
+      },
+      textModel: {
+        mode: 'auxiliary' as const,
+        model: { provider: 'vision-provider', model: 'chat-model' },
+        maxTokens: 4096,
+      },
+    }
+    try {
+      for (const model of [
+        { provider: 'text-provider', model: 'chat-model' },
+        { provider: 'missing-provider', model: 'unknown-model' },
+      ]) {
+        const rejected = await fetch(`${origin}/api/agents`, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({
+            ...base,
+            imagePolicy: { ...policy, textModel: { ...policy.textModel, model } },
+          }),
+        })
+        expect(rejected.status).toBe(400)
+      }
+
+      const response = await fetch(`${origin}/api/agents`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ ...base, imagePolicy: policy }),
+      })
+      expect(response.status).toBe(201)
+      const created = HostApiContracts.createAgent.parseResponse(await response.json())
+      let snapshot = HostApiContracts.snapshot.parseResponse(await (await fetch(`${origin}/api/snapshot`)).json())
+      const initial = snapshot.agents.find((agent) => agent.id === created.agentId)!
+      expect(initial.imagePolicy).toEqual(policy)
+      expect(initial.imageDiagnostics).toMatchObject({
+        route: { mode: 'delegated', provider: 'vision-provider', model: 'chat-model' },
+        blockers: [],
+      })
+
+      const disabledPolicy = { ...policy, textModel: { mode: 'disabled' as const } }
+      const revised = await fetch(`${origin}/api/agents/${created.agentId}/revision`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          expectedCurrentRevisionId: initial.currentRevisionId,
+          ...base,
+          imagePolicy: disabledPolicy,
+        }),
+      })
+      expect(revised.status).toBe(200)
+      snapshot = HostApiContracts.snapshot.parseResponse(await (await fetch(`${origin}/api/snapshot`)).json())
+      const updated = snapshot.agents.find((agent) => agent.id === created.agentId)!
+      expect(updated.imagePolicy).toEqual(disabledPolicy)
+      expect(runtime.repository.getAgent(created.agentId)?.revision.contentDigest).toMatch(/^v4:sha256:/u)
+    } finally {
+      api.dispose()
+      await webContext.fiber.dispose()
+      await runtime.dispose()
     }
   })
 

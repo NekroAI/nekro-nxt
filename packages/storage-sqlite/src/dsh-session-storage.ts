@@ -21,7 +21,7 @@ export const DSH_SESSION_APPLICATION_ID = 1_146_308_688
 export const DSH_SESSION_SCHEMA_PREVIOUS = 15
 export const DSH_SESSION_SCHEMA_CURRENT = 17
 export const DSH_VERSION_PREVIOUS = '0.1.0-rc.6'
-export const DSH_VERSION_CURRENT = '0.1.1-rc.1'
+export const DSH_VERSION_CURRENT = '0.1.1-rc.2'
 
 export const DshSessionArchiveManifestSchema = z
   .object({
@@ -99,6 +99,36 @@ const integerField = (row: unknown, key: string): number => {
     throw new Error(`DSH Session storage identity ${key} is not an integer.`)
   }
   return value
+}
+
+const NEKRO_NXT_IGNORABLE_SESSION_EVENTS = [
+  'nekro-nxt/image-inspection',
+  'nekro-nxt/image-admission',
+  'nekro-nxt/image-restoration',
+] as const
+
+/**
+ * DSH rc.2 accepts an ignorable envelope on read but its public append API has
+ * no downstream-event registration or envelope option. Mark NekroNxt's purely
+ * informational audit rows at the owned storage-preparation boundary so an
+ * older or restarted harness can safely skip them instead of refusing the
+ * whole Session. This never changes model-visible surface events.
+ */
+const markNekroNxtAuditEventsIgnorable = (database: DatabaseSync): void => {
+  const eventsTable = integerField(
+    database.prepare("SELECT count(*) AS count FROM sqlite_schema WHERE type = 'table' AND name = 'events'").get(),
+    'count',
+  )
+  if (eventsTable === 0) return
+  const columns = database.prepare('PRAGMA table_info(events)').all()
+  const columnNames = new Set(
+    columns.flatMap((column) => (isRecord(column) && typeof column['name'] === 'string' ? [column['name']] : [])),
+  )
+  if (!columnNames.has('type') || !columnNames.has('ignorable')) return
+  const placeholders = NEKRO_NXT_IGNORABLE_SESSION_EVENTS.map(() => '?').join(', ')
+  database
+    .prepare(`UPDATE events SET ignorable = 1 WHERE ignorable IS NULL AND type IN (${placeholders})`)
+    .run(...NEKRO_NXT_IGNORABLE_SESSION_EVENTS)
 }
 
 const verifyArchiveSnapshot = (snapshotPath: string): void => {
@@ -234,7 +264,7 @@ export const completeDshSessionStoragePreparation = async (databasePath: string)
 }
 
 /**
- * Validate the DSH-owned SQLite file before rc.1 mounts its persistence
+ * Validate the DSH-owned SQLite file before rc.2 mounts its persistence
  * provider. Schema 15 is snapshotted and moved aside; unknown ownership is
  * never guessed or rewritten.
  */
@@ -299,6 +329,7 @@ export const prepareDshSessionStorage = async (
             manifest: pendingReset.manifest,
           }
         }
+        markNekroNxtAuditEventsIgnorable(database)
         return { kind: 'compatible', schemaVersion: DSH_SESSION_SCHEMA_CURRENT }
       }
       if (userVersion === 0) {

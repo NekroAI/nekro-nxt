@@ -61,7 +61,8 @@ export type ExtensionManifest = ExtensionManifestV1 | ExtensionManifestV2
 
 export interface ExtensionRevisionVerification {
   readonly revisionId: ExtensionRevisionId
-  readonly dshVersion: '0.1.1-rc.1'
+  /** Exact DSH release used when this immutable verification evidence was produced. */
+  readonly dshVersion: string
   readonly contractVersion: 'nekro-nxt-extension-v1'
   readonly origin: {
     readonly episodeId: string

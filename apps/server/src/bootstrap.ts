@@ -250,6 +250,9 @@ export class NekroRuntime {
           },
         },
         history: repository,
+        resolveAdapterDisplayName: (adapterKey) =>
+          ADAPTER_CONNECTION_DEFINITIONS.find((definition) => definition.descriptor.key === adapterKey)?.descriptor
+            .displayName,
         assets: repository,
         assetService,
         resolveAgentRevision: (revisionId) => repository.getAgentRevision(revisionId),
@@ -335,7 +338,7 @@ export class NekroRuntime {
     const agent = this.core.createAgentWithChannel(content, {
       connectionId: this.webConnectionId,
       kind: 'web',
-      displayName: `${content.displayName.trim()} 的网页频道`,
+      displayName: `${content.displayName.trim()} 的内置频道`,
       triggerPolicy: 'always',
     })
     const entity: AgentEntity = {
@@ -347,6 +350,39 @@ export class NekroRuntime {
     }
     this.#agents.set(entity.agentId, entity)
     return entity
+  }
+
+  /**
+   * Stops every live channel lane and extension owned by an intelligent-agent,
+   * then removes it from active product state without deleting durable history.
+   */
+  async deleteAgent(
+    agentId: AgentId,
+    options: { readonly deleteAutoCreatedBuiltInChannels: boolean },
+  ): Promise<{ readonly unboundChannelIds: readonly ChannelId[]; readonly deletedChannelIds: readonly ChannelId[] }> {
+    if (this.#disposed) throw new Error('NekroRuntime is disposed.')
+    if (!this.repository.getAgent(agentId)) throw new Error('智能体不存在。')
+    const boundChannels = this.core
+      .listConnections()
+      .flatMap((connection) => this.core.listChannelsByConnection(connection.id))
+      .filter((channel) => this.repository.getBinding(channel.id)?.agentId === agentId)
+    const channelsToDelete = options.deleteAutoCreatedBuiltInChannels
+      ? boundChannels.filter((channel) => channel.kind === 'web' && channel.autoCreatedForAgentId === agentId)
+      : []
+    const deletedChannelIds = channelsToDelete.map((channel) => channel.id)
+    const deletedChannelIdSet = new Set(deletedChannelIds)
+    const unboundChannelIds = boundChannels
+      .filter((channel) => !deletedChannelIdSet.has(channel.id))
+      .map((channel) => channel.id)
+
+    for (const channelId of deletedChannelIds) await this.channels.deleteChannel(channelId)
+    for (const channelId of unboundChannelIds) await this.channels.clearBinding(channelId)
+    for (const activation of this.repository.listActivations(agentId)) {
+      await this.activation.disable(agentId, activation.extensionId)
+    }
+    this.core.deleteAgent(agentId)
+    this.#agents.delete(agentId)
+    return { unboundChannelIds, deletedChannelIds }
   }
 
   /** Resume persisted Episodes, Admissions, Outbounds and active Extensions after a cold start. */

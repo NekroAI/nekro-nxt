@@ -40,6 +40,95 @@ export type EpisodeHandoffId = z.infer<typeof EpisodeHandoffIdSchema>
 export type ExtensionId = z.infer<typeof ExtensionIdSchema>
 export type ExtensionRevisionId = z.infer<typeof ExtensionRevisionIdSchema>
 
+const PromptTextSegmentSchema = z.object({ type: z.literal('text'), text: z.string() }).strict()
+
+const PromptReferenceLabelSchema = z.string().trim().min(1).max(120)
+
+const PromptReferenceSegmentSchema = z.discriminatedUnion('kind', [
+  z
+    .object({
+      type: z.literal('reference'),
+      kind: z.literal('platform-user'),
+      targetId: PlatformIdentityIdSchema,
+      labelSnapshot: PromptReferenceLabelSchema,
+    })
+    .strict(),
+  z
+    .object({
+      type: z.literal('reference'),
+      kind: z.literal('channel'),
+      targetId: ChannelIdSchema,
+      labelSnapshot: PromptReferenceLabelSchema,
+    })
+    .strict(),
+  z
+    .object({
+      type: z.literal('reference'),
+      kind: z.literal('extension'),
+      targetId: ExtensionIdSchema,
+      labelSnapshot: PromptReferenceLabelSchema,
+    })
+    .strict(),
+])
+
+export const PromptSegmentSchema = z.union([PromptTextSegmentSchema, PromptReferenceSegmentSchema])
+
+export const PROMPT_DOCUMENT_MAX_REFERENCES = 128
+export const PROMPT_DOCUMENT_MAX_PLAIN_TEXT_LENGTH = 64 * 1024
+
+export const PromptDocumentV1Schema = z
+  .object({ version: z.literal(1), segments: z.array(PromptSegmentSchema) })
+  .strict()
+  .superRefine((document, context) => {
+    const referenceCount = document.segments.filter((segment) => segment.type === 'reference').length
+    if (referenceCount > PROMPT_DOCUMENT_MAX_REFERENCES) {
+      context.addIssue({
+        code: 'custom',
+        message: `Prompt document must not contain more than ${PROMPT_DOCUMENT_MAX_REFERENCES} references.`,
+        path: ['segments'],
+      })
+    }
+    const plainTextLength = document.segments.reduce(
+      (length, segment) => length + (segment.type === 'text' ? segment.text.length : segment.labelSnapshot.length + 1),
+      0,
+    )
+    if (plainTextLength > PROMPT_DOCUMENT_MAX_PLAIN_TEXT_LENGTH) {
+      context.addIssue({
+        code: 'custom',
+        message: `Prompt document plain-text projection must not exceed ${PROMPT_DOCUMENT_MAX_PLAIN_TEXT_LENGTH} characters.`,
+        path: ['segments'],
+      })
+    }
+  })
+
+export type PromptSegment = z.output<typeof PromptSegmentSchema>
+export type PromptDocumentV1 = z.output<typeof PromptDocumentV1Schema>
+
+export const promptDocumentFromText = (text: string): PromptDocumentV1 =>
+  normalizePromptDocument({ version: 1, segments: text.length === 0 ? [] : [{ type: 'text', text }] })
+
+export const promptDocumentPlainText = (document: PromptDocumentV1): string =>
+  document.segments.map((segment) => (segment.type === 'text' ? segment.text : `@${segment.labelSnapshot}`)).join('')
+
+export const normalizePromptDocument = (input: unknown): PromptDocumentV1 => {
+  const parsed = PromptDocumentV1Schema.parse(input)
+  const segments: PromptSegment[] = []
+  for (const segment of parsed.segments) {
+    if (segment.type === 'text') {
+      if (segment.text.length === 0) continue
+      const previous = segments.at(-1)
+      if (previous?.type === 'text') {
+        segments[segments.length - 1] = { type: 'text', text: `${previous.text}${segment.text}` }
+      } else {
+        segments.push(segment)
+      }
+      continue
+    }
+    segments.push(segment)
+  }
+  return PromptDocumentV1Schema.parse({ version: 1, segments })
+}
+
 export type JsonValue = null | boolean | number | string | JsonValue[] | { readonly [key: string]: JsonValue }
 
 export const JsonValueSchema = z.json()

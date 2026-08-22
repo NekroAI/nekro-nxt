@@ -60,7 +60,7 @@ const toActivation = (input: typeof agentActivations.$inferSelect): Activation =
 
 const ExtensionRevisionVerificationSchema = z.object({
   revisionId: ExtensionRevisionIdSchema,
-  dshVersion: z.literal('0.1.1-rc.1'),
+  dshVersion: z.string().trim().min(1),
   contractVersion: z.literal('nekro-nxt-extension-v1'),
   origin: z.object({ episodeId: z.string(), pluginId: z.string(), packageId: z.string(), pluginRunId: z.string() }),
   verifiedAt: z.number().int().nonnegative(),

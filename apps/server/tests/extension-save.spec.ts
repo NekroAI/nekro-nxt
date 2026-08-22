@@ -147,7 +147,7 @@ describe('NekroNxt domain API — save a running dynamic Package as a local Exte
         extensionId: saved.extensionId,
       })
       expect(runtime.repository.getExtensionRevisionVerification(saved.revisionId)).toMatchObject({
-        dshVersion: '0.1.1-rc.1',
+        dshVersion: '0.1.1-rc.2',
         contractVersion: 'nekro-nxt-extension-v1',
         origin: {
           episodeId: episode!.id,

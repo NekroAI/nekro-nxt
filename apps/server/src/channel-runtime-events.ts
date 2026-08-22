@@ -1,4 +1,5 @@
 import type { SessionEvent } from '@deepseek-ai/dsh-session'
+import { turnIsUnreplied } from './channel-reply-guard.js'
 import type { RuntimeProjectionEvent } from './channel-runtime-projection.js'
 
 /** Session log types that change the product runtime projection. Streaming chunks do not. */
@@ -56,6 +57,9 @@ export const normalizeSessionEvents = (events: readonly SessionEvent[]): Runtime
         at,
         ...(reason.kind === 'error' ? { errorCode: reason.error.code, errorMessage: reason.error.message } : {}),
       })
+      if (turnIsUnreplied(events, event.data.turn)) {
+        result.push({ type: 'channel/reply-missing', turn: event.data.turn, at })
+      }
       continue
     }
     if (event.type === 'step/start' || event.type === 'step/end') {

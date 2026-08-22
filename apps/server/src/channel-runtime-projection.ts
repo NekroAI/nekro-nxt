@@ -1,6 +1,8 @@
 import type {
   AgentId,
   ChannelId,
+  ChannelRuntimeCache,
+  ChannelRuntimeCacheSample,
   ChannelRuntimeOccupancy,
   ChannelRuntimePhase,
   ChannelRuntimeProjection,
@@ -13,6 +15,7 @@ const ToolArgumentObjectSchema = z.record(z.string(), z.unknown())
 
 const PREVIEW_LIMIT = 160
 const TURN_LIMIT = 24
+const CACHE_RECENT_LIMIT = 12
 const SECRET_KEY = /secret|token|password|authorization|api[_-]?key|credential/iu
 
 const TOOL_DISPLAY_NAMES: Readonly<Record<string, string>> = {
@@ -36,6 +39,7 @@ export type RuntimeSessionStatus = 'idle' | 'running' | 'missing'
 
 export type RuntimeProjectionEvent =
   | { readonly type: 'turn/start'; readonly turn: number; readonly at?: number }
+  | { readonly type: 'channel/reply-missing'; readonly turn: number; readonly at?: number }
   | {
       readonly type: 'turn/end'
       readonly turn: number
@@ -129,7 +133,6 @@ const elapsedMs = (start: number | undefined, end: number | undefined): number |
 export const projectSessionOccupancy = (input: {
   readonly projectedTokens?: number | undefined
   readonly contextWindow?: number | undefined
-  readonly cacheReadTokens?: number | undefined
   readonly systemTokens?: number | undefined
   readonly toolsTokens?: number | undefined
   readonly messageTokens?: number | undefined
@@ -137,12 +140,10 @@ export const projectSessionOccupancy = (input: {
   const projectedTokens = input.projectedTokens
   const contextWindow = input.contextWindow
   if (projectedTokens === undefined || contextWindow === undefined || contextWindow <= 0) return undefined
-  const cacheReadTokens = input.cacheReadTokens
   const hasBreakdown = (input.systemTokens ?? 0) > 0 || (input.toolsTokens ?? 0) > 0 || (input.messageTokens ?? 0) > 0
   return {
     projectedTokens,
     contextWindow,
-    ...(cacheReadTokens !== undefined && cacheReadTokens > 0 ? { cacheReadTokens } : {}),
     ...(hasBreakdown
       ? {
           breakdown: {
@@ -152,6 +153,70 @@ export const projectSessionOccupancy = (input: {
           },
         }
       : {}),
+  }
+}
+
+const hasCacheObservation = (usage: ChannelRuntimeUsage): boolean =>
+  usage.cacheReadTokens !== undefined || usage.cacheWriteTokens !== undefined
+
+const cacheInputTokens = (sample: ChannelRuntimeCacheSample): number =>
+  sample.uncachedInputTokens + (sample.cacheReadTokens ?? 0) + (sample.cacheWriteTokens ?? 0)
+
+/** Fold finalized model-request usage across the Episode before truncating the visible turn window. */
+export const projectCacheUsage = (events: readonly RuntimeProjectionEvent[]): ChannelRuntimeCache | undefined => {
+  const samples: ChannelRuntimeCacheSample[] = []
+  let usageRequestCount = 0
+  let observedRequestCount = 0
+  let shareRequestCount = 0
+  let hitRequestCount = 0
+  let uncachedInputTokens = 0
+  let cacheReadTokens = 0
+  let cacheWriteTokens = 0
+  let requestReadShareTotal = 0
+
+  for (const event of events) {
+    if (event.type !== 'assistant/message' || event.usage === undefined) continue
+    usageRequestCount += 1
+    const sample: ChannelRuntimeCacheSample = {
+      turn: event.turn,
+      step: event.step,
+      ...(event.at === undefined ? {} : { at: event.at }),
+      uncachedInputTokens: event.usage.inputTokens,
+      ...(event.usage.cacheReadTokens === undefined ? {} : { cacheReadTokens: event.usage.cacheReadTokens }),
+      ...(event.usage.cacheWriteTokens === undefined ? {} : { cacheWriteTokens: event.usage.cacheWriteTokens }),
+    }
+    samples.push(sample)
+    if (!hasCacheObservation(event.usage)) continue
+
+    observedRequestCount += 1
+    uncachedInputTokens += sample.uncachedInputTokens
+    cacheReadTokens += sample.cacheReadTokens ?? 0
+    cacheWriteTokens += sample.cacheWriteTokens ?? 0
+    if ((sample.cacheReadTokens ?? 0) > 0) hitRequestCount += 1
+    const inputTokens = cacheInputTokens(sample)
+    if (inputTokens > 0) {
+      shareRequestCount += 1
+      requestReadShareTotal += (sample.cacheReadTokens ?? 0) / inputTokens
+    }
+  }
+
+  if (usageRequestCount === 0) return undefined
+  return {
+    scope: 'episode',
+    aggregate: {
+      usageRequestCount,
+      observedRequestCount,
+      shareRequestCount,
+      hitRequestCount,
+      uncachedInputTokens,
+      cacheReadTokens,
+      cacheWriteTokens,
+      ...(shareRequestCount === 0 ? {} : { averageRequestReadShare: requestReadShareTotal / shareRequestCount }),
+    },
+    recent: {
+      windowSize: CACHE_RECENT_LIMIT,
+      samples: samples.slice(-CACHE_RECENT_LIMIT),
+    },
   }
 }
 
@@ -225,6 +290,7 @@ export const emptyChannelRuntimeProjection = (
 
 export const projectChannelRuntime = (input: ChannelRuntimeProjectionInput): ChannelRuntimeProjection => {
   const turns = new Map<number, ProjectedTurn>()
+  const cache = projectCacheUsage(input.events)
 
   const ensureTurn = (turn: number): ProjectedTurn => {
     const existing = turns.get(turn)
@@ -251,7 +317,8 @@ export const projectChannelRuntime = (input: ChannelRuntimeProjectionInput): Cha
     }
     if (event.type === 'turn/end') {
       const record = ensureTurn(event.turn)
-      record.state = turnStateFromReason(event.reasonKind)
+      const nextState = turnStateFromReason(event.reasonKind)
+      if (record.state !== 'unreplied' || nextState !== 'completed') record.state = nextState
       if (event.at !== undefined) record.endedAt = event.at
       if (event.reasonKind === 'error') {
         record.error = {
@@ -259,6 +326,13 @@ export const projectChannelRuntime = (input: ChannelRuntimeProjectionInput): Cha
           message: event.errorMessage?.trim() || '本轮执行失败。',
         }
       }
+      continue
+    }
+    if (event.type === 'channel/reply-missing') {
+      const record = ensureTurn(event.turn)
+      record.state = 'unreplied'
+      record.producedReply = false
+      if (event.at !== undefined) record.endedAt = event.at
       continue
     }
     if (event.type === 'step/start') {
@@ -362,6 +436,7 @@ export const projectChannelRuntime = (input: ChannelRuntimeProjectionInput): Cha
   const latest = orderedTurns.at(-1)
   const runningTools = latest?.steps.flatMap((step) => step.tools.filter((tool) => tool.state === 'running')) ?? []
   const failedTurn = latest?.state === 'error' ? latest : undefined
+  const unrepliedTurn = latest?.state === 'unreplied' ? latest : undefined
   let phase: ChannelRuntimePhase = 'idle'
   if (failedTurn && input.sessionStatus !== 'running') phase = 'unavailable'
   else if (input.sessionStatus === 'running' && runningTools.length > 0) phase = 'using-tool'
@@ -379,7 +454,9 @@ export const projectChannelRuntime = (input: ChannelRuntimeProjectionInput): Cha
             ? failedTurn?.error?.message
               ? `智能体本轮失败：${failedTurn.error.message}`
               : '智能体当前不可用，请检查模型和连接设置。'
-            : '智能体当前空闲。'
+            : unrepliedTurn
+              ? '智能体本轮未产生频道回复。'
+              : '智能体当前空闲。'
 
   return {
     channelId: input.channelId,
@@ -389,6 +466,7 @@ export const projectChannelRuntime = (input: ChannelRuntimeProjectionInput): Cha
     summary,
     pendingInjectCount: input.pendingInjectCount,
     ...(input.occupancy === undefined ? {} : { occupancy: input.occupancy }),
+    ...(cache === undefined ? {} : { cache }),
     turns: orderedTurns,
   }
 }

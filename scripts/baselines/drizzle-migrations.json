@@ -8,12 +8,20 @@
     "0003_dsh_session_storage_reason.sql": "bed088be24728f69e491aedde9f488b4cce99a19023496e4c33ad1e5f60ed51c",
     "0004_extension_revision_verifications.sql": "0303eeee57e2ffaedbd4f304a9fdca2e6220fbfc606e821ac5ccc65f2d06758f",
     "0005_extension_client_diagnostics.sql": "89b5d911993fc7c252c4be6595e0540e36b8efefa4cefa6fd4f0c82f57a26fb5",
+    "0006_agent_image_policy.sql": "1fde525766586d18c30387b684c0a68d1bc403a4f79d9ede18ab426b88310669",
+    "0007_agent_context_reset_and_tombstone.sql": "5042a3ef3ddaa473c1776e045f902a5c575ea438d4d8277eefddbdb84655a923",
+    "0008_channel_tombstone_and_builtin_origin.sql": "109082c08692407e862441310b7ee33494ba663579eba748ccdf476b250f9a08",
+    "0009_boring_penance.sql": "1b33b567e7b337cd3c9b4e9eca0dca1de84c72608caf99e4c106fe773efff7ad",
     "meta/0000_snapshot.json": "03573ed4ecfb276bfad4bd1d6041564c11d3c52e1fcb35fc3dd278da7b55448d",
     "meta/0001_snapshot.json": "48b7a1cd91c44d75a394c94af554fc85621fe5fda2dd680d4bc25b68679d4ee5",
     "meta/0002_snapshot.json": "aa0ed0d69885976c1ce596d468657ac121e8cae5ac9e09aa9843be0b3b3127c9",
     "meta/0003_snapshot.json": "138ef3243de7467b3aac5b6ba3cdc7d87359cf693359664237c5ca5aad11e186",
     "meta/0004_snapshot.json": "3762499c9e617f8af484e9ec2154cef1a1193bef6ff9530b0070e9e9ff696609",
     "meta/0005_snapshot.json": "0b31fe38de42327665450b5a8614db66a329afda65ae27c863ad93346996782b",
-    "meta/_journal.json": "18da166d3ba5fe11b8e9d6b99c9c2d8a21dc57a247276220ac5adf402f883e25"
+    "meta/0006_snapshot.json": "0e81edd79e0763b0ba207e4ffb146c7401db8d873ff396228d3b28b1a75ad7ee",
+    "meta/0007_snapshot.json": "7ff20a57b82fdfdce70911985358168a8847712f1d1f46d68ea86204d4f3bf6f",
+    "meta/0008_snapshot.json": "5bf2994d45b4f86208154f21179c2f5c0327e2a10f022a76c1d7892431c17308",
+    "meta/0009_snapshot.json": "69a755586b0dc71aba1cb7001b5f9923de16de04b5f2f4e10e98653b5c631003",
+    "meta/_journal.json": "97976c67b4c562a5bd92651bf5fd6c40f0c10d30e1613b03263f4357af29094e"
   }
 }

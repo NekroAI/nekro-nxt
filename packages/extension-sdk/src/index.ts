@@ -120,7 +120,7 @@ export type ExtensionPluginFactory<Environment, Context = ExtensionHostContext> 
 
 export interface NekroNxtExtensionAuthoringReference {
   readonly contractVersion: 'nekro-nxt-extension-v1'
-  readonly dshVersion: '0.1.1-rc.1'
+  readonly dshVersion: '0.1.1-rc.2'
   readonly supportedContributions: {
     readonly hostTool: true
     readonly hostRpc: true
@@ -179,7 +179,7 @@ return {
 
 export const NEKRO_NXT_EXTENSION_AUTHORING_REFERENCE: NekroNxtExtensionAuthoringReference = {
   contractVersion: 'nekro-nxt-extension-v1',
-  dshVersion: '0.1.1-rc.1',
+  dshVersion: '0.1.1-rc.2',
   supportedContributions: {
     hostTool: true,
     hostRpc: true,

@@ -2,7 +2,7 @@ import { createRequire } from 'node:module'
 
 /** Exact DSH packages imported by the current production Client facade. */
 export const DSH_PACKAGE_VERSIONS = {
-  '@deepseek-ai/dsh-client-ui-slots': '0.1.1-rc.1',
+  '@deepseek-ai/dsh-client-ui-slots': '0.1.1-rc.2',
 } as const
 
 export type DshPackageName = keyof typeof DSH_PACKAGE_VERSIONS

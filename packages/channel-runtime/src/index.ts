@@ -57,6 +57,8 @@ export interface EpisodeRecord {
 
 export type EpisodeCloseReason =
   | 'manual'
+  | 'context-cleared'
+  | 'context-compacted'
   | 'idle-timeout'
   | 'incompatible-revision'
   | 'incompatible-activation'
@@ -64,6 +66,7 @@ export type EpisodeCloseReason =
   | 'unrecoverable-session'
   | 'permission-revoked'
   | 'binding-replaced'
+  | 'channel-deleted'
   | 'stopped'
 
 export interface EpisodeHandoffRecord {
@@ -219,6 +222,8 @@ export interface RuntimeRepository {
   failEpisode(id: EpisodeId): void
   createAdmission(record: AdmissionRecord): void
   listRecoverableAdmissions(episodeId: EpisodeId): readonly AdmissionRecord[]
+  /** Admitted inbound facts for one Episode, oldest-first within the recent limit. */
+  listAdmittedEvents(episodeId: EpisodeId, limit: number): readonly ChannelEventRecord[]
   listUnadmittedEvents(channelId: ChannelId, agentId: AgentId, boundAt: number): readonly ChannelEventRecord[]
   claimAdmission(id: AdmissionId): void
   completeAdmission(id: AdmissionId, dshMessageId: string, eventId: ChannelEventId): void
@@ -289,6 +294,14 @@ export interface ChannelRuntimeOptions {
   readonly nextUlid?: () => string
   readonly resolveAdapter: (connectionId: ConnectionId) => AdapterConnectionRuntime | undefined
   readonly idleRolloverMs?: number | false
+}
+
+export type ContextResetMode = 'clear' | 'compact'
+
+export interface ContextResetResult {
+  readonly mode: ContextResetMode
+  readonly closedEpisode: EpisodeRecord
+  readonly nextEpisode?: EpisodeRecord
 }
 
 const HANDOFF_RECENT_EVENT_LIMIT = 12
@@ -475,6 +488,31 @@ export class ChannelRuntime {
         )
       }
       this.#core.clearBinding(channelId)
+    })
+  }
+
+  /** Stops the live lane before removing a Channel from active product state. */
+  async deleteChannel(channelId: ChannelId): Promise<void> {
+    if (!this.#coreRepository.getChannel(channelId)) throw new Error(`Unknown channel: ${channelId}`)
+    const current = this.#coreRepository.getBinding(channelId)
+    if (!current) {
+      this.#core.deleteChannel(channelId)
+      return
+    }
+    await this.#withLane(channelId, current.agentId, async () => {
+      const episode = this.#runtimeRepository.getActiveEpisode(channelId, current.agentId)
+      if (episode?.dshSessionId !== undefined) {
+        await this.#sessionDriver.cancelSession(episode.dshSessionId, 'channel-deleted')
+      }
+      if (episode !== undefined) {
+        this.#runtimeRepository.closeEpisode(
+          episode.id,
+          'channel-deleted',
+          episode.lastAdmittedEventId ?? episode.openedAtEventId,
+          this.#timestamp(),
+        )
+      }
+      this.#core.deleteChannel(channelId)
     })
   }
 
@@ -704,6 +742,120 @@ export class ChannelRuntime {
     return this.#rolloverEpisodeWithReason(episodeId, 'manual')
   }
 
+  /**
+   * Immediately cancels the current run, then either closes without handoff or
+   * opens a compacted handoff Episode. Channel facts remain durable and future
+   * admissions wait behind this lane boundary.
+   */
+  async resetEpisode(episodeId: EpisodeId, mode: ContextResetMode): Promise<ContextResetResult> {
+    const initial = this.#runtimeRepository.getEpisode(episodeId)
+    if (!initial) throw new Error(`Unknown Episode: ${episodeId}`)
+    return this.#withLane(initial.channelId, initial.agentId, async () => {
+      const episode = this.#runtimeRepository.getEpisode(episodeId)
+      if (!episode || episode.status !== 'active' || !episode.dshSessionId) {
+        throw new Error(`Episode is not active: ${episodeId}`)
+      }
+      const binding = this.#coreRepository.getBinding(episode.channelId)
+      if (!binding || binding.agentId !== episode.agentId) throw new Error('Episode Binding no longer exists.')
+      const anchorId = episode.lastAdmittedEventId ?? episode.openedAtEventId
+      const anchor = this.#coreRepository.getChannelEvent(anchorId)
+      if (!anchor) throw new Error(`Episode anchor Event no longer exists: ${anchorId}`)
+      const reason = mode === 'clear' ? 'context-cleared' : 'context-compacted'
+
+      await this.#sessionDriver.cancelSession(episode.dshSessionId, reason)
+      if (mode === 'clear') {
+        return {
+          mode,
+          closedEpisode: this.#runtimeRepository.closeEpisode(episode.id, reason, anchorId, this.#timestamp()),
+        }
+      }
+
+      const sourceEvents = [
+        ...new Map(
+          [
+            this.#coreRepository.getChannelEvent(episode.openedAtEventId),
+            episode.lastAdmittedEventId === undefined
+              ? undefined
+              : this.#coreRepository.getChannelEvent(episode.lastAdmittedEventId),
+          ]
+            .filter((sourceEvent): sourceEvent is ChannelEventRecord => sourceEvent !== undefined)
+            .map((sourceEvent) => [sourceEvent.id, sourceEvent]),
+        ).values(),
+      ]
+      const recentEvents = this.#runtimeRepository.listAdmittedEvents(episode.id, HANDOFF_RECENT_EVENT_LIMIT)
+      const previousHandoff = this.#runtimeRepository.getEpisodeHandoffTo(episode.id)
+      const handoffCreatedAt = this.#timestamp()
+      const previousRevision = this.#coreRepository.getAgentRevision(episode.agentRevisionId)
+      if (!previousRevision) throw new Error(`Episode Agent Revision no longer exists: ${episode.agentRevisionId}`)
+      let summary = deterministicHandoffFallback(episode, previousRevision, sourceEvents)
+      try {
+        summary = await this.#sessionDriver.createHandoffSummary({
+          dshSessionId: episode.dshSessionId,
+          episode,
+          revision: previousRevision,
+          sourceEvents,
+          ...(previousHandoff === undefined ? {} : { previousHandoff }),
+          generatedAt: handoffCreatedAt,
+        })
+      } catch {
+        // Reset must recover even when the independent summary request fails.
+      }
+      const current = this.#coreRepository.getAgent(episode.agentId)
+      if (!current) throw new Error(`Episode agent no longer exists: ${episode.agentId}`)
+      const nextEpisode: EpisodeRecord = {
+        id: EpisodeIdSchema.parse(`eps_${this.#nextUlid()}`),
+        channelId: episode.channelId,
+        agentId: episode.agentId,
+        agentRevisionId: current.revision.id,
+        status: 'opening',
+        openedAtEventId: anchorId,
+        createdAt: this.#timestamp(),
+      }
+      const handoff: EpisodeHandoffRecord = {
+        id: EpisodeHandoffIdSchema.parse(`hof_${this.#nextUlid()}`),
+        fromEpisodeId: episode.id,
+        toEpisodeId: nextEpisode.id,
+        sourceEventIds: sourceEvents.map(({ id }) => id),
+        recentEventIds: recentEvents.map(({ id }) => id),
+        summary: summary.summary,
+        provider: summary.provider,
+        model: summary.model,
+        createdAt: handoffCreatedAt,
+      }
+      this.#runtimeRepository.commitEpisodeRollover({
+        fromEpisodeId: episode.id,
+        reason,
+        closedAtEventId: anchorId,
+        closedAt: this.#timestamp(),
+        nextEpisode,
+        handoff,
+      })
+      const dshSessionId = await this.#sessionDriver.createSession({
+        episodeId: nextEpisode.id,
+        channelId: nextEpisode.channelId,
+        agentId: nextEpisode.agentId,
+        agentRevisionId: nextEpisode.agentRevisionId,
+        handoff: {
+          id: handoff.id,
+          fromEpisodeId: handoff.fromEpisodeId,
+          sourceEventIds: handoff.sourceEventIds,
+          createdAt: handoff.createdAt,
+          provider: handoff.provider,
+          model: handoff.model,
+          summary: handoff.summary,
+          recentEvents,
+        },
+      })
+      const closedEpisode = this.#runtimeRepository.getEpisode(episode.id)
+      if (!closedEpisode) throw new Error(`Closed Episode no longer exists: ${episode.id}`)
+      return {
+        mode,
+        closedEpisode,
+        nextEpisode: this.#runtimeRepository.activateEpisode(nextEpisode.id, dshSessionId),
+      }
+    })
+  }
+
   async rolloverAgentActivations(agentId: AgentId): Promise<readonly EpisodeRecord[]> {
     const episodeIds = this.#runtimeRepository.listActiveEpisodesForAgent(agentId).map(({ id }) => id)
     return Promise.all(
@@ -876,10 +1028,7 @@ export class ChannelRuntime {
           .map((sourceEvent) => [sourceEvent.id, sourceEvent]),
       ).values(),
     ]
-    const recentEvents = this.#coreRepository.listChannelEvents(episode.channelId, {
-      before: { receivedAt: event.receivedAt, id: event.id },
-      limit: HANDOFF_RECENT_EVENT_LIMIT,
-    })
+    const recentEvents = this.#runtimeRepository.listAdmittedEvents(episode.id, HANDOFF_RECENT_EVENT_LIMIT)
     const previousHandoff = this.#runtimeRepository.getEpisodeHandoffTo(episode.id)
     const handoffCreatedAt = this.#timestamp()
     let summary = deterministicHandoffFallback(episode, previousRevision, sourceEvents)

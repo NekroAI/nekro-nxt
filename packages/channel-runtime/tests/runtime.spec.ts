@@ -72,6 +72,12 @@ class MemoryCoreRepository implements CoreRepository {
     this.createChannel(commit.channel)
     this.replaceBinding(commit.binding)
   }
+  tombstoneAgent(id: AgentId): void {
+    if (!this.agents.delete(id)) throw new Error(`Unknown or deleted agent: ${id}`)
+    for (let index = this.bindings.length - 1; index >= 0; index -= 1) {
+      if (this.bindings[index]?.agentId === id) this.bindings.splice(index, 1)
+    }
+  }
   getAgent(id: AgentId) {
     return this.agents.get(id)
   }
@@ -158,6 +164,12 @@ class MemoryCoreRepository implements CoreRepository {
     this.channels.set(record.id, record)
     return record
   }
+  tombstoneChannel(id: ChannelId): void {
+    if (!this.channels.delete(id)) throw new Error(`Unknown or deleted channel: ${id}`)
+    for (let index = this.bindings.length - 1; index >= 0; index -= 1) {
+      if (this.bindings[index]?.channelId === id) this.bindings.splice(index, 1)
+    }
+  }
 
   updateChannelDisplayName(id: ChannelId, displayName: string): void {
     const current = this.channels.get(id)
@@ -187,6 +199,9 @@ class MemoryCoreRepository implements CoreRepository {
   }
   getPlatformIdentity(id: PlatformIdentityId) {
     return this.identities.get(id)
+  }
+  listPlatformUsers() {
+    return []
   }
   ensureChannelMember(record: ChannelMemberRecord): ChannelMemberRecord {
     const existing = this.getChannelMemberByIdentity(record.channelId, record.platformIdentityId)
@@ -355,6 +370,17 @@ class MemoryRuntimeRepository implements RuntimeRepository {
       (admission) =>
         admission.episodeId === episodeId && (admission.state === 'pending' || admission.state === 'claimed'),
     )
+  }
+  listAdmittedEvents(episodeId: EpisodeId, limit: number) {
+    const eventIds = new Set(
+      [...this.admissions.values()]
+        .filter((admission) => admission.episodeId === episodeId)
+        .flatMap((admission) => admission.eventIds),
+    )
+    return [...this.core.events.values()]
+      .filter((event) => eventIds.has(event.id))
+      .sort((left, right) => left.receivedAt - right.receivedAt || left.id.localeCompare(right.id))
+      .slice(-limit)
   }
   listUnadmittedEvents(channelId: ChannelId, agentId: AgentId, boundAt: number) {
     const episodeIds = new Set(
@@ -1024,6 +1050,83 @@ describe('ChannelRuntime M1 lane', () => {
       closeReason: 'stopped',
     })
     expect(context.coreRepository.getBinding(context.channel.id)).toBeUndefined()
+  })
+
+  it('cancels without handoff before tombstoning a channel', async () => {
+    const context = await setup()
+    await context.runtime.acceptInbound(inbound(context.connection.id, context.channel.id, 'before-channel-delete'))
+    const episode = [...context.runtimeRepository.episodes.values()][0]!
+    const event = context.coreRepository.listChannelEvents(context.channel.id, { limit: 1 })[0]!
+    const cancellations: string[] = []
+    context.sessionDriver.cancelSession = (sessionId, reason) => {
+      cancellations.push(`${sessionId}:${reason}`)
+      return Promise.resolve()
+    }
+
+    await expect(context.runtime.deleteChannel(context.channel.id)).resolves.toBeUndefined()
+
+    expect(cancellations).toEqual([`dsh-${episode.id}:channel-deleted`])
+    expect(context.runtimeRepository.getEpisode(episode.id)).toMatchObject({
+      status: 'closed',
+      closeReason: 'channel-deleted',
+    })
+    expect(context.coreRepository.getChannel(context.channel.id)).toBeUndefined()
+    expect(context.coreRepository.getBinding(context.channel.id)).toBeUndefined()
+    expect(context.coreRepository.getChannelEvent(event.id)).toEqual(event)
+    expect(context.runtimeRepository.handoffs).toHaveLength(0)
+  })
+
+  it('clears an active context immediately without a handoff and starts clean on the next message', async () => {
+    const context = await setup()
+    await context.runtime.acceptInbound(inbound(context.connection.id, context.channel.id, 'before-context-clear'))
+    const episode = [...context.runtimeRepository.episodes.values()][0]!
+    const cancellations: string[] = []
+    context.sessionDriver.cancelSession = (sessionId, reason) => {
+      cancellations.push(`${sessionId}:${reason}`)
+      return Promise.resolve()
+    }
+
+    await expect(context.runtime.resetEpisode(episode.id, 'clear')).resolves.toMatchObject({ mode: 'clear' })
+    expect(cancellations).toEqual([`dsh-${episode.id}:context-cleared`])
+    expect(context.runtimeRepository.getEpisode(episode.id)).toMatchObject({
+      status: 'closed',
+      closeReason: 'context-cleared',
+    })
+    expect(context.runtimeRepository.handoffs).toHaveLength(0)
+    expect([...context.runtimeRepository.episodes.values()]).toHaveLength(1)
+
+    await context.runtime.acceptInbound(inbound(context.connection.id, context.channel.id, 'after-context-clear'))
+    const active = [...context.runtimeRepository.episodes.values()].find(({ status }) => status === 'active')
+    expect(active?.id).not.toBe(episode.id)
+    expect(context.runtimeRepository.handoffs).toHaveLength(0)
+    if (!active) throw new Error('Expected a post-clear active Episode.')
+    await context.runtime.resetEpisode(active.id, 'compact')
+    const postClearEvent = [...context.coreRepository.events.values()].find(
+      ({ dedupeKey }) => dedupeKey === 'event:after-context-clear',
+    )
+    expect(context.runtimeRepository.handoffs[0]?.recentEventIds).toEqual([postClearEvent?.id])
+  })
+
+  it('compacts an active context after cancellation and falls back deterministically when summary generation fails', async () => {
+    const context = await setup(true, undefined, () => Promise.reject(new Error('summary unavailable')))
+    await context.runtime.acceptInbound(inbound(context.connection.id, context.channel.id, 'before-context-compact'))
+    const episode = [...context.runtimeRepository.episodes.values()][0]!
+    const cancellations: string[] = []
+    context.sessionDriver.cancelSession = (sessionId, reason) => {
+      cancellations.push(`${sessionId}:${reason}`)
+      return Promise.resolve()
+    }
+
+    const result = await context.runtime.resetEpisode(episode.id, 'compact')
+    expect(cancellations).toEqual([`dsh-${episode.id}:context-compacted`])
+    expect(result).toMatchObject({
+      mode: 'compact',
+      closedEpisode: { id: episode.id, status: 'closed', closeReason: 'context-compacted' },
+      nextEpisode: { status: 'active' },
+    })
+    expect(context.runtimeRepository.handoffs).toHaveLength(1)
+    expect(context.runtimeRepository.handoffs[0]?.summary).toContain('模型交接摘要不可用')
+    expect(context.handoffInputs).toHaveLength(1)
   })
 
   it('validates outbound targets and sends every structured part with reply metadata', async () => {
