@@ -3,6 +3,7 @@ import {
   agentAccessCapabilities,
   agentAccessPresentation,
   agentAccessPreset,
+  nearestAgentAccessLevel,
   type AgentAccessLevel,
 } from '../src/agent-access-level.js'
 import type { AgentSummary } from '../src/product-store.js'
@@ -57,5 +58,16 @@ describe('agent system access presets', () => {
     for (const level of [0, 1, 2, 3] as const) {
       expect(agentAccessCapabilities(level)).toEqual(expected[level])
     }
+  })
+
+  it('previews and snaps continuous drag positions to the nearest preset', () => {
+    expect(nearestAgentAccessLevel(Number.NaN)).toBe(0)
+    expect(nearestAgentAccessLevel(-1)).toBe(0)
+    expect(nearestAgentAccessLevel(0.49)).toBe(0)
+    expect(nearestAgentAccessLevel(0.5)).toBe(1)
+    expect(nearestAgentAccessLevel(1.49)).toBe(1)
+    expect(nearestAgentAccessLevel(1.5)).toBe(2)
+    expect(nearestAgentAccessLevel(2.5)).toBe(3)
+    expect(nearestAgentAccessLevel(4)).toBe(3)
   })
 })

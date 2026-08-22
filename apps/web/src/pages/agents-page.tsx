@@ -1,5 +1,5 @@
 import { ChevronDown, ChevronUp, PanelRightClose, PanelRightOpen, Plus, Save, ShieldAlert } from 'lucide-react'
-import { useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties } from 'react'
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type KeyboardEvent } from 'react'
 import { useParams, useSearchParams } from 'react-router-dom'
 import { NxtLink, useNxtNavigate } from '../shell/nxt-link.js'
 import { notify } from '../components/notifications.js'
@@ -13,7 +13,7 @@ import {
   agentAccessLevelOption,
   agentAccessPresentation,
   agentAccessPreset,
-  isAgentAccessLevel,
+  nearestAgentAccessLevel,
   type AgentAccessLevel,
 } from '../agent-access-level.js'
 import {
@@ -60,6 +60,8 @@ const modelKey = agentModelKey
 const modelValueForAgent = (agent: AgentSummary): string =>
   agent.modelRef ? modelKey({ provider: agent.modelRef.provider, id: agent.modelRef.model }) : ''
 
+type AccessLevelStyle = CSSProperties & { '--access-progress': string }
+
 function AccessLevelControl({
   capabilities,
   disabled = false,
@@ -76,30 +78,77 @@ function AccessLevelControl({
 }) {
   const preset = agentAccessPreset(capabilities)
   const committedValue = preset === 'custom' ? 0 : preset
-  const [draft, setDraft] = useState(committedValue)
+  const [position, setPosition] = useState<number>(committedValue)
+  const [previewLevel, setPreviewLevel] = useState<AgentAccessLevel>(committedValue)
   const [customDraft, setCustomDraft] = useState(preset === 'custom')
+  const [dragging, setDragging] = useState(false)
   const [expanded, setExpanded] = useState(false)
-  const draftRef = useRef<AgentAccessLevel>(committedValue)
+  const positionRef = useRef<number>(committedValue)
   const committedRef = useRef(committedValue)
+  const interactedRef = useRef(false)
   useEffect(() => {
-    setDraft(committedValue)
+    setPosition(committedValue)
+    setPreviewLevel(committedValue)
     setCustomDraft(preset === 'custom')
-    draftRef.current = committedValue
+    setDragging(false)
+    positionRef.current = committedValue
     committedRef.current = committedValue
+    interactedRef.current = false
   }, [committedValue, preset])
   const commit = (): void => {
-    const next = draftRef.current
-    if (disabled || (!customDraft && next === committedRef.current)) return
+    if (disabled || !interactedRef.current) return
+    const next = nearestAgentAccessLevel(positionRef.current)
+    interactedRef.current = false
+    positionRef.current = next
+    setPosition(next)
+    setPreviewLevel(next)
+    setDragging(false)
+    if (!customDraft && next === committedRef.current) return
     committedRef.current = next
     setCustomDraft(false)
     onPresetCommit(next)
   }
-  const option = customDraft ? agentAccessPresentation(capabilities) : agentAccessLevelOption(draft)
+  const cancelDrag = (): void => {
+    positionRef.current = committedRef.current
+    setPosition(committedRef.current)
+    setPreviewLevel(committedRef.current)
+    setCustomDraft(preset === 'custom')
+    setDragging(false)
+    interactedRef.current = false
+  }
+  const updatePosition = (nextPosition: number): void => {
+    const next = Math.min(3, Math.max(0, nextPosition))
+    const target = nearestAgentAccessLevel(next)
+    positionRef.current = next
+    setPosition(next)
+    setPreviewLevel(target)
+    setCustomDraft(false)
+    interactedRef.current = true
+  }
+  const handleRangeKeyDown = (event: KeyboardEvent<HTMLInputElement>): void => {
+    let next: AgentAccessLevel | undefined
+    if (event.key === 'ArrowLeft' || event.key === 'ArrowDown' || event.key === 'PageDown') {
+      next = nearestAgentAccessLevel(previewLevel - 1)
+    } else if (event.key === 'ArrowRight' || event.key === 'ArrowUp' || event.key === 'PageUp') {
+      next = nearestAgentAccessLevel(previewLevel + 1)
+    } else if (event.key === 'Home') {
+      next = 0
+    } else if (event.key === 'End') {
+      next = 3
+    }
+    if (next === undefined) return
+    event.preventDefault()
+    updatePosition(next)
+  }
+  const option = customDraft ? agentAccessPresentation(capabilities) : agentAccessLevelOption(previewLevel)
+  const accessLevelStyle: AccessLevelStyle = { '--access-progress': `${(position / 3) * 100}%` }
   return (
     <div
       className={styles.accessLevelControl}
-      data-level={customDraft ? 'custom' : draft}
+      data-level={customDraft ? 'custom' : previewLevel}
       data-disabled={disabled ? '' : undefined}
+      data-dragging={dragging ? '' : undefined}
+      style={accessLevelStyle}
     >
       <div className={styles.accessLevelHeading}>
         <div>
@@ -108,32 +157,52 @@ function AccessLevelControl({
         </div>
         <StatusBadge tone={option.tone}>{option.risk}</StatusBadge>
       </div>
-      <RangeInput
-        className={styles.accessLevelRange}
-        min={0}
-        max={3}
-        step={1}
-        value={draft}
-        disabled={disabled}
-        aria-label="系统访问等级"
-        aria-valuetext={`${option.label}（${option.code}）：${option.description}`}
-        onChange={(event) => {
-          const next = event.currentTarget.valueAsNumber
-          if (!isAgentAccessLevel(next)) return
-          draftRef.current = next
-          setCustomDraft(false)
-          setDraft(next)
-        }}
-        onPointerUp={commit}
-        onKeyUp={commit}
-        onBlur={commit}
-      />
-      <div className={styles.accessLevelScale} aria-hidden="true">
-        {AGENT_ACCESS_LEVELS.map((item) => (
-          <span key={item.level} data-active={!customDraft && item.level === draft ? '' : undefined}>
-            {item.label}（{item.code}）
-          </span>
-        ))}
+      <div className={styles.accessLevelSlider}>
+        <div className={styles.accessLevelTrack} aria-hidden="true" />
+        <div className={styles.accessLevelStops} aria-hidden="true">
+          {AGENT_ACCESS_LEVELS.map((item) => (
+            <span
+              key={item.level}
+              style={{ gridColumn: item.level + 2 }}
+              data-access-level-stop={item.level}
+              data-snap-target={!customDraft && item.level === previewLevel ? '' : undefined}
+            />
+          ))}
+        </div>
+        <RangeInput
+          className={styles.accessLevelRange}
+          min={0}
+          max={3}
+          step={0.001}
+          value={position}
+          disabled={disabled}
+          aria-label="系统访问等级"
+          aria-valuetext={`${dragging ? '预计吸附到' : ''}${option.label}（${option.code}）：${option.description}`}
+          onPointerDown={() => {
+            if (disabled) return
+            interactedRef.current = true
+            setDragging(true)
+            setCustomDraft(false)
+          }}
+          onChange={(event) => updatePosition(event.currentTarget.valueAsNumber)}
+          onPointerUp={commit}
+          onPointerCancel={cancelDrag}
+          onKeyDown={handleRangeKeyDown}
+          onKeyUp={commit}
+          onBlur={commit}
+        />
+        <div className={styles.accessLevelScale} aria-hidden="true">
+          {AGENT_ACCESS_LEVELS.map((item) => (
+            <span
+              key={item.level}
+              style={{ gridColumn: item.level + 2 }}
+              data-access-level-label={item.level}
+              data-active={!customDraft && item.level === previewLevel ? '' : undefined}
+            >
+              {item.label}（{item.code}）
+            </span>
+          ))}
+        </div>
       </div>
       <p className={styles.accessLevelDescription}>
         <strong>

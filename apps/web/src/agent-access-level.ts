@@ -89,5 +89,9 @@ export const agentAccessCapabilities = (
   unrestrictedFileAccess: level >= 3,
 })
 
-export const isAgentAccessLevel = (value: number): value is AgentAccessLevel =>
-  value === 0 || value === 1 || value === 2 || value === 3
+export const nearestAgentAccessLevel = (position: number): AgentAccessLevel => {
+  if (!Number.isFinite(position) || position < 0.5) return 0
+  if (position < 1.5) return 1
+  if (position < 2.5) return 2
+  return 3
+}

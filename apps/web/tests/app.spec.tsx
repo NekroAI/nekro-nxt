@@ -661,6 +661,107 @@ describe.sequential('NekroNxt browser projections', { timeout: 30_000 }, () => {
     })
   })
 
+  it('tracks system-access dragging continuously and previews the nearest snap stop before commit', async () => {
+    const capabilityRequests: unknown[] = []
+    await withProductPage(
+      `/work/agents/${browserAgentId}?tab=capabilities`,
+      async (page) => {
+        const range = page.getByLabel('系统访问等级')
+        await playwrightExpect(range).toBeVisible()
+        const geometry = await page.locator('[data-access-level-stop]').evaluateAll((stops) => {
+          const track = stops[0]?.parentElement?.previousElementSibling?.getBoundingClientRect()
+          const stopRects = stops.map((stop) => stop.getBoundingClientRect())
+          const labels = stops[0]?.parentElement?.parentElement?.querySelectorAll('[data-access-level-label]') ?? []
+          const labelRects = Array.from(labels).map((label) => label.getBoundingClientRect())
+          return {
+            trackCenterY: track ? track.top + track.height / 2 : 0,
+            trackLeft: track?.left ?? 0,
+            trackWidth: track?.width ?? 0,
+            stopCentersY: stopRects.map((rect) => rect.top + rect.height / 2),
+            stopCentersX: stopRects.map((rect) => rect.left + rect.width / 2),
+            labelTops: labelRects.map((rect) => rect.top),
+            labelLeft: labelRects[0]?.left ?? 0,
+            middleLabelCentersX: labelRects.slice(1, 3).map((rect) => rect.left + rect.width / 2),
+            labelRight: labelRects[3]?.right ?? 0,
+          }
+        })
+        const stopOffsets = geometry.stopCentersY.map((center) => center - geometry.trackCenterY)
+        expect(
+          stopOffsets.every((offset) => Math.abs(offset) < 0.75),
+          JSON.stringify(stopOffsets),
+        ).toBe(true)
+        const expectedStopCenters = Array.from(
+          { length: 4 },
+          (_, index) => geometry.trackLeft + (geometry.trackWidth * index) / 3,
+        )
+        expect(
+          geometry.stopCentersX.every((center, index) => Math.abs(center - expectedStopCenters[index]!) < 0.75),
+        ).toBe(true)
+        expect(Math.abs(geometry.labelLeft - geometry.stopCentersX[0]!) < 0.75).toBe(true)
+        expect(Math.abs(geometry.middleLabelCentersX[0]! - geometry.stopCentersX[1]!) < 0.75).toBe(true)
+        expect(Math.abs(geometry.middleLabelCentersX[1]! - geometry.stopCentersX[2]!) < 0.75).toBe(true)
+        expect(Math.abs(geometry.labelRight - geometry.stopCentersX[3]!) < 0.75).toBe(true)
+        expect(Math.max(...geometry.labelTops) - Math.min(...geometry.labelTops)).toBeLessThan(0.75)
+
+        await range.scrollIntoViewIfNeeded()
+        const box = await range.boundingBox()
+        if (!box) throw new Error('系统访问等级滑块没有可用几何尺寸。')
+        const y = box.y + box.height / 2
+        const hitTarget = await page.evaluate(
+          ({ x, y: targetY }) => {
+            const element = document.elementFromPoint(x, targetY)
+            return {
+              tag: element?.tagName,
+              type: element instanceof HTMLInputElement ? element.type : undefined,
+              disabled: element instanceof HTMLInputElement ? element.disabled : undefined,
+              pointerEvents: element ? getComputedStyle(element).pointerEvents : undefined,
+            }
+          },
+          { x: box.x + box.width * 0.54, y },
+        )
+        expect(hitTarget).toMatchObject({ tag: 'INPUT', type: 'range', disabled: false, pointerEvents: 'auto' })
+        await page.mouse.move(box.x + box.width * 0.54, y)
+        await page.mouse.down()
+        await page.mouse.move(box.x + box.width * 0.58, y, { steps: 8 })
+
+        const continuousValue = Number(await range.inputValue())
+        expect(continuousValue).toBeGreaterThan(1.5)
+        expect(continuousValue).toBeLessThan(2)
+        await playwrightExpect(page.locator('[data-access-level-stop="2"]')).toHaveAttribute('data-snap-target', '')
+        expect(capabilityRequests).toHaveLength(0)
+
+        await page.mouse.up()
+        await playwrightExpect.poll(() => capabilityRequests.length).toBe(1)
+        expect(capabilityRequests[0]).toMatchObject({
+          fileTools: true,
+          developmentShell: true,
+          unrestrictedFileAccess: false,
+        })
+      },
+      browserSnapshot,
+      async (page) => {
+        await page.route('**/api/agents/*/capabilities', async (request) => {
+          capabilityRequests.push(request.request().postDataJSON())
+          await request.fulfill({
+            status: 200,
+            contentType: 'application/json',
+            body: JSON.stringify({
+              currentRevisionId: browserRevisionId,
+              capabilities: {
+                subagents: false,
+                fileTools: true,
+                webSearch: false,
+                dynamicCreation: true,
+                developmentShell: true,
+                unrestrictedFileAccess: false,
+              },
+            }),
+          })
+        })
+      },
+    )
+  })
+
   it('renders platform accounts with product labels and binds without leaving the connection page', async () => {
     await withProductPage('/connections', async (page) => {
       await page.getByRole('link', { name: /QQ 开放平台/u }).click()

@@ -7,6 +7,9 @@ declare const styles: {
   readonly accessLevelHeading: string
   readonly accessLevelRange: string
   readonly accessLevelScale: string
+  readonly accessLevelSlider: string
+  readonly accessLevelStops: string
+  readonly accessLevelTrack: string
   readonly agentActivity: string
   readonly agentAvatar: string
   readonly agentBlockers: string
