@@ -114,7 +114,7 @@ describe('QQ OpenClaw Adapter', () => {
       resolvePlatformMessageId: () => Promise.resolve(undefined),
     }
     const assets: QQAssetSource = {
-      read: () => Promise.resolve({ bytes: new Uint8Array([1, 2, 3]), mediaType: 'video/mp4', fileName: 'clip.mp4' }),
+      read: () => Promise.resolve({ bytes: new Uint8Array([1, 2, 3]), mediaType: 'video/mp4' }),
     }
     const transport: QQOpenClawTransport = {
       start: () => Promise.resolve(),
@@ -124,7 +124,7 @@ describe('QQ OpenClaw Adapter', () => {
         return Promise.resolve({ platformMessageId: 'qq-text-1' })
       },
       upload: (input) => {
-        sent.push({ upload: input.mediaType })
+        sent.push({ upload: input.mediaType, fileName: input.fileName })
         return Promise.resolve({ fileInfo: 'file-info' })
       },
       sendMedia: (input) => {
@@ -185,7 +185,7 @@ describe('QQ OpenClaw Adapter', () => {
         replyMessageId: 'inbound-1',
         messageSequence: 1,
       }),
-      { upload: 'video/mp4' },
+      { upload: 'video/mp4', fileName: 'clip.mp4' },
       expect.objectContaining({ fileInfo: 'file-info', replyMessageId: 'inbound-1', messageSequence: 2 }),
     ])
     await expect(adapter.deliver(request(planned[0]!, 3), new AbortController().signal)).resolves.toMatchObject({

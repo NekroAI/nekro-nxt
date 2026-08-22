@@ -777,7 +777,14 @@ export class QQOpenClawConnection implements AdapterConnectionRuntime {
     const source = await this.#assets.read(part.assetId)
     if (source.bytes.byteLength > this.#config.maxAssetBytes)
       throw new Error('QQ media exceeds the configured size limit.')
-    const uploaded = await this.#transport.upload({ target, ...source, signal })
+    const fileName = part.type === 'file' ? (part.name ?? source.fileName) : source.fileName
+    const uploaded = await this.#transport.upload({
+      target,
+      bytes: source.bytes,
+      mediaType: source.mediaType,
+      ...(fileName === undefined ? {} : { fileName }),
+      signal,
+    })
     return this.#transport.sendMedia({
       target,
       fileInfo: uploaded.fileInfo,
