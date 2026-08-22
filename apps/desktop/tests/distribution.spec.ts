@@ -20,6 +20,27 @@ import {
   desktopWindowChrome,
 } from '../src/window-chrome.ts'
 
+const readPngMetrics = (file: string): { width: number; height: number; pixelsPerMeter?: [number, number] } => {
+  const png = readFileSync(file)
+  expect(png.subarray(0, 8)).toEqual(Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]))
+  let width = 0
+  let height = 0
+  let pixelsPerMeter: [number, number] | undefined
+  for (let offset = 8; offset + 12 <= png.length;) {
+    const length = png.readUInt32BE(offset)
+    const type = png.toString('ascii', offset + 4, offset + 8)
+    const data = offset + 8
+    if (type === 'IHDR') {
+      width = png.readUInt32BE(data)
+      height = png.readUInt32BE(data + 4)
+    } else if (type === 'pHYs' && length === 9 && png.readUInt8(data + 8) === 1) {
+      pixelsPerMeter = [png.readUInt32BE(data), png.readUInt32BE(data + 4)]
+    }
+    offset += length + 12
+  }
+  return { width, height, pixelsPerMeter }
+}
+
 describe('Desktop product distribution', () => {
   it('uses one custom title bar coordinate system with platform control clearances', () => {
     expect(desktopWindowChrome('darwin')).toMatchObject({
@@ -36,6 +57,7 @@ describe('Desktop product distribution', () => {
     expect(desktopWindowChrome('linux')).toEqual(desktopWindowChrome('win32'))
     expect(desktopTitleBarCss('darwin')).toContain(`--nxt-window-controls-left:${MACOS_TRAFFIC_LIGHT_CLEARANCE}px`)
     expect(desktopTitleBarCss('win32')).toContain(`--nxt-window-controls-right:${WINDOW_CONTROLS_OVERLAY_CLEARANCE}px`)
+    expect(desktopTitleBarCss('darwin')).toContain('!important')
   })
 
   it('uses a memory-safe NSIS per-user installation path lookup', () => {
@@ -72,6 +94,12 @@ describe('Desktop product distribution', () => {
       }
       const ico = readFileSync(path.join(buildRoot, 'icon.ico'))
       expect(ico.readUInt16LE(4)).toBe(9)
+      const dmgBackground = readPngMetrics(path.join(buildRoot, 'dmg-background.png'))
+      expect(dmgBackground).toMatchObject({ width: 660, height: 420 })
+      expect(dmgBackground.pixelsPerMeter?.[0]).toBeGreaterThanOrEqual(2834)
+      expect(dmgBackground.pixelsPerMeter?.[0]).toBeLessThanOrEqual(2836)
+      expect(dmgBackground.pixelsPerMeter?.[1]).toBeGreaterThanOrEqual(2834)
+      expect(dmgBackground.pixelsPerMeter?.[1]).toBeLessThanOrEqual(2836)
       const sidebar = readFileSync(path.join(buildRoot, 'installerSidebar.bmp'))
       expect([sidebar.readInt32LE(18), sidebar.readInt32LE(22), sidebar.readUInt16LE(28)]).toEqual([164, 314, 24])
     }

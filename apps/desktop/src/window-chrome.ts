@@ -32,5 +32,5 @@ export const desktopWindowChrome = (
 export const desktopTitleBarCss = (platform: NodeJS.Platform): string => {
   const left = platform === 'darwin' ? MACOS_TRAFFIC_LIGHT_CLEARANCE : 0
   const right = platform === 'darwin' ? 0 : WINDOW_CONTROLS_OVERLAY_CLEARANCE
-  return `:root{--nxt-window-controls-left:${left}px;--nxt-window-controls-right:${right}px}`
+  return `:root{--nxt-window-controls-left:${left}px!important;--nxt-window-controls-right:${right}px!important}`
 }
