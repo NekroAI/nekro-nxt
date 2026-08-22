@@ -4,6 +4,8 @@
 
 Desktop 只接受原子的 `nxt.product-release`。UI、Host、DSH Client/Host 组合、Extension Bridge 与 migration 代码使用同一个 `releaseId`，不提供独立 UI 发布或远程 UI 资源更新。Electron 在 Host `/health/ready` 返回相同 `releaseId` 后才加载页面。
 
+每次 Desktop 运行只分配一次 loopback 端口，BrowserWindow 在整个运行期保持同一个 Origin。Host 就绪后若异常退出，主进程按 `500ms → 1s → 2s → 5s → 5s` 有界退避在同一端口启动替代进程；60 秒滚动窗口内最多发起 5 次恢复，继续失败时停止循环并显示持久错误。应用退出会取消尚未完成的退避和就绪探测，终止当前 Host，并等待子进程退出后再结束主进程。
+
 分发脚本用 `pnpm deploy --prod --legacy` 把 Server 及其 workspace/外部生产依赖生成到 Desktop staging。`better-sqlite3` 与 `node-pty` 使用包内 N-API prebuild，Sharp、Koffi 和其他平台可选包按 `supportedArchitectures` 同时安装；准备脚本会拒绝缺少 macOS Universal、Windows x64 或 Linux x64 原生文件的 runtime。Server runtime 和 Web dist 都作为安装包的 `extraResources` 放在应用代码之外。
 
 生产数据固定在 Electron `userData/data/`，安装包替换不得删除该目录。Server 和 Desktop 使用同一个 Server 入口、数据根布局与升级门禁；Electron 只拥有窗口、单实例、外部链接和 Host 子进程生命周期。

@@ -1,4 +1,4 @@
-import { app, BrowserWindow, dialog, shell, utilityProcess, type UtilityProcess } from 'electron'
+import { app, BrowserWindow, dialog, shell, utilityProcess } from 'electron'
 import { createServer } from 'node:net'
 import { readFileSync } from 'node:fs'
 import path from 'node:path'
@@ -13,6 +13,7 @@ import {
   resolveProductReleasePath,
   type ProductRelease,
 } from './distribution.js'
+import { HostSupervisor, abortableDelay } from './host-supervisor.js'
 import { desktopTitleBarCss, desktopWindowChrome } from './window-chrome.js'
 
 const LOOPBACK_HOST = '127.0.0.1'
@@ -20,9 +21,7 @@ const HOST_READY_TIMEOUT_MS = 60_000
 const HOST_READY_INTERVAL_MS = 200
 
 let mainWindow: BrowserWindow | undefined
-let hostProcess: UtilityProcess | undefined
-let hostExit: Promise<void> | undefined
-let stopping = false
+let hostSupervisor: HostSupervisor | undefined
 
 const productReleasePath = (): string => resolveProductReleasePath(import.meta.url)
 
@@ -58,19 +57,22 @@ const reserveLoopbackPort = (): Promise<number> =>
 
 const isRecord = (value: unknown): value is Record<string, unknown> => typeof value === 'object' && value !== null
 
-const waitForHostReady = async (origin: string, releaseId: string): Promise<void> => {
+const waitForHostReady = async (origin: string, releaseId: string, signal: AbortSignal): Promise<void> => {
   const deadline = Date.now() + HOST_READY_TIMEOUT_MS
   let lastError: unknown
   while (Date.now() < deadline) {
     try {
-      const response = await fetch(`${origin}/health/ready`, { signal: AbortSignal.timeout(2_000) })
+      const response = await fetch(`${origin}/health/ready`, {
+        signal: AbortSignal.any([signal, AbortSignal.timeout(2_000)]),
+      })
       const body: unknown = response.ok ? await response.json() : undefined
       if (isRecord(body) && body['status'] === 'ready' && body['releaseId'] === releaseId) return
       lastError = new Error(`Host 就绪响应与产品 Release 不一致：${response.status}`)
     } catch (error) {
+      if (signal.aborted) throw signal.reason
       lastError = error
     }
-    await new Promise((resolve) => setTimeout(resolve, HOST_READY_INTERVAL_MS))
+    await abortableDelay(HOST_READY_INTERVAL_MS, signal)
   }
   throw new Error('NekroNxt Host 未能在限定时间内完成启动。', { cause: lastError })
 }
@@ -78,30 +80,42 @@ const waitForHostReady = async (origin: string, releaseId: string): Promise<void
 const startProductHost = async (release: ProductRelease): Promise<string> => {
   const port = await reserveLoopbackPort()
   const origin = `http://${LOOPBACK_HOST}:${port}`
-  const child = utilityProcess.fork(serverEntry(), [], {
-    serviceName: 'NekroNxt Host',
-    stdio: 'pipe',
-    env: {
-      ...process.env,
-      NEKRO_DATA: desktopDataRoot(app.getPath('userData')),
-      NEKRO_DIST_INDEX: webDistIndex(),
-      NEKRO_HOST: LOOPBACK_HOST,
-      NEKRO_PORT: String(port),
-      NEKRO_RELEASE_ID: release.releaseId,
+  const supervisor = new HostSupervisor({
+    origin,
+    spawnHost: () => {
+      const child = utilityProcess.fork(serverEntry(), [], {
+        serviceName: 'NekroNxt Host',
+        stdio: 'pipe',
+        env: {
+          ...process.env,
+          NEKRO_DATA: desktopDataRoot(app.getPath('userData')),
+          NEKRO_DIST_INDEX: webDistIndex(),
+          NEKRO_HOST: LOOPBACK_HOST,
+          NEKRO_PORT: String(port),
+          NEKRO_RELEASE_ID: release.releaseId,
+        },
+      })
+      child.stdout?.on('data', (chunk: Uint8Array) => process.stdout.write(chunk))
+      child.stderr?.on('data', (chunk: Uint8Array) => process.stderr.write(chunk))
+      return child
+    },
+    waitUntilReady: (hostOrigin, signal) => waitForHostReady(hostOrigin, release.releaseId, signal),
+    onRestarting: ({ attempt, delayMs, cause }) => {
+      console.warn(`[desktop] 本地 Host 已停止，将在 ${delayMs}ms 后进行第 ${attempt} 次恢复：${cause.message}`)
+    },
+    onRecovered: (attempt) => {
+      console.info(`[desktop] 本地 Host 已在同一地址恢复（第 ${attempt} 次尝试）。`)
+    },
+    onFatal: (error) => {
+      console.error('[desktop] 本地 Host 自动恢复已停止。', error)
+      dialog.showErrorBox(
+        'NekroNxt Host 无法恢复',
+        '本地 Host 在短时间内多次异常退出，已停止自动恢复。请重启 NekroNxt；若问题持续出现，请查看诊断日志。',
+      )
     },
   })
-  hostProcess = child
-  child.stdout?.on('data', (chunk: Uint8Array) => process.stdout.write(chunk))
-  child.stderr?.on('data', (chunk: Uint8Array) => process.stderr.write(chunk))
-  hostExit = new Promise((resolve) => {
-    child.once('exit', (code) => {
-      if (!stopping && code !== 0) {
-        void dialog.showErrorBox('NekroNxt Host 已停止', `本地 Host 意外退出，退出码：${code ?? 'unknown'}`)
-      }
-      resolve()
-    })
-  })
-  await waitForHostReady(origin, release.releaseId)
+  hostSupervisor = supervisor
+  await supervisor.start()
   return origin
 }
 
@@ -138,13 +152,9 @@ const createMainWindow = async (origin: string): Promise<BrowserWindow> => {
 }
 
 const stopProductHost = async (): Promise<void> => {
-  stopping = true
-  const child = hostProcess
-  const exited = hostExit
-  hostProcess = undefined
-  hostExit = undefined
-  if (child !== undefined && child.pid !== undefined) child.kill()
-  if (exited !== undefined) await exited
+  const supervisor = hostSupervisor
+  hostSupervisor = undefined
+  await supervisor?.stop()
 }
 
 const productRelease = readProductRelease()
@@ -192,7 +202,7 @@ app.on('window-all-closed', () => {
 })
 
 app.on('before-quit', (event) => {
-  if (stopping || hostProcess === undefined) return
+  if (hostSupervisor === undefined) return
   event.preventDefault()
   void stopProductHost().finally(() => app.quit())
 })

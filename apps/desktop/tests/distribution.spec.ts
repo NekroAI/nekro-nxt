@@ -38,7 +38,7 @@ const readPngMetrics = (file: string): { width: number; height: number; pixelsPe
     }
     offset += length + 12
   }
-  return { width, height, pixelsPerMeter }
+  return pixelsPerMeter === undefined ? { width, height } : { width, height, pixelsPerMeter }
 }
 
 describe('Desktop product distribution', () => {
@@ -138,9 +138,9 @@ describe('Desktop product distribution', () => {
         version: '0.1.0',
         commit: 'a'.repeat(40),
         releaseId: '0.1.0+aaaaaaaaaaaa',
-        dshVersion: '0.1.1-rc.1',
+        dshVersion: '0.1.1-rc.2',
       }),
-    ).toMatchObject({ releaseId: '0.1.0+aaaaaaaaaaaa', dshVersion: '0.1.1-rc.1' })
+    ).toMatchObject({ releaseId: '0.1.0+aaaaaaaaaaaa', dshVersion: '0.1.1-rc.2' })
     expect(() => parseProductRelease({ format: 'nxt.product-release', version: '0.1.0' })).toThrow()
   })
 
