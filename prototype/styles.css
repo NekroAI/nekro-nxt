@@ -1,28 +1,32 @@
 :root {
   color-scheme: light;
-  --nxt-cyan-300: #6fddf5;
-  --nxt-cyan-400: #39c5f0;
-  --nxt-cyan-600: #007fa6;
-  --nxt-cyan-700: #086b8a;
-  --nxt-bg-canvas: #f4f8fa;
-  --nxt-bg-sidebar: #edf3f6;
-  --nxt-bg-surface: #fff;
-  --nxt-bg-subtle: #f7fafb;
-  --nxt-bg-hover: #eaf2f5;
-  --nxt-bg-pressed: #dfecef;
-  --nxt-bg-elevated: #fff;
-  --nxt-border-subtle: #e2eaee;
-  --nxt-border-default: #d2dde3;
-  --nxt-border-strong: #afbec7;
-  --nxt-text-primary: #13212b;
-  --nxt-text-secondary: #44545f;
-  --nxt-text-muted: #5d6d78;
-  --nxt-text-disabled: #87959e;
-  --nxt-accent: var(--nxt-cyan-600);
-  --nxt-accent-hover: var(--nxt-cyan-700);
-  --nxt-accent-soft: #dff6fc;
+  --nxt-moon-300: #96afd8;
+  --nxt-moon-600: #466394;
+  --nxt-moon-700: #375079;
+  --nxt-moon-800: #253857;
+  --nxt-moon-900: #172a45;
+  --nxt-lumen-300: #6bc3f4;
+  --nxt-lumen-400: #3fb1ea;
+  --nxt-brass-500: #b98c4a;
+  --nxt-bg-canvas: #f5f2ee;
+  --nxt-bg-sidebar: #edeff4;
+  --nxt-bg-surface: #fffdf9;
+  --nxt-bg-subtle: #f5f6f8;
+  --nxt-bg-hover: #e8ecf3;
+  --nxt-bg-pressed: #dce3ee;
+  --nxt-bg-elevated: #fffdf9;
+  --nxt-border-subtle: #e0e3e8;
+  --nxt-border-default: #cdd3dd;
+  --nxt-border-strong: #a7b0bf;
+  --nxt-text-primary: #172a45;
+  --nxt-text-secondary: #46556c;
+  --nxt-text-muted: #5a6679;
+  --nxt-text-disabled: #9099a9;
+  --nxt-accent: var(--nxt-moon-600);
+  --nxt-accent-hover: var(--nxt-moon-700);
+  --nxt-accent-soft: #e2e8f2;
   --nxt-accent-foreground: #fff;
-  --nxt-focus-ring: #008db8;
+  --nxt-focus-ring: #0b73b4;
   --nxt-success: #157347;
   --nxt-success-soft: #e7f6ee;
   --nxt-warning: #9a5b00;
@@ -41,25 +45,25 @@
 
 :root[data-theme='dark'] {
   color-scheme: dark;
-  --nxt-bg-canvas: #0b1117;
-  --nxt-bg-sidebar: #0e161d;
-  --nxt-bg-surface: #111a22;
-  --nxt-bg-subtle: #152029;
-  --nxt-bg-hover: #1c2a34;
-  --nxt-bg-pressed: #22333e;
-  --nxt-bg-elevated: #192630;
-  --nxt-border-subtle: #1d2a34;
-  --nxt-border-default: #2a3944;
-  --nxt-border-strong: #40515d;
-  --nxt-text-primary: #eaf2f7;
-  --nxt-text-secondary: #c1cdd5;
-  --nxt-text-muted: #a6b4be;
-  --nxt-text-disabled: #6e7c86;
-  --nxt-accent: var(--nxt-cyan-400);
-  --nxt-accent-hover: var(--nxt-cyan-300);
-  --nxt-accent-soft: #102f3b;
-  --nxt-accent-foreground: #061921;
-  --nxt-focus-ring: #58d4f3;
+  --nxt-bg-canvas: #0f1a2c;
+  --nxt-bg-sidebar: #12233a;
+  --nxt-bg-surface: #182d4a;
+  --nxt-bg-subtle: #203653;
+  --nxt-bg-hover: #2c4666;
+  --nxt-bg-pressed: #365473;
+  --nxt-bg-elevated: #29425f;
+  --nxt-border-subtle: #2a4160;
+  --nxt-border-default: #3d5878;
+  --nxt-border-strong: #607895;
+  --nxt-text-primary: #f2f4f7;
+  --nxt-text-secondary: #d0d7e2;
+  --nxt-text-muted: #a9b4c4;
+  --nxt-text-disabled: #7b899e;
+  --nxt-accent: var(--nxt-moon-300);
+  --nxt-accent-hover: #bdcfec;
+  --nxt-accent-soft: var(--nxt-moon-800);
+  --nxt-accent-foreground: #0a121f;
+  --nxt-focus-ring: var(--nxt-lumen-300);
   --nxt-success: #6fd3a0;
   --nxt-success-soft: #112d22;
   --nxt-warning: #f1bb5d;
@@ -120,12 +124,19 @@ button:focus-visible, select:focus-visible, input:focus-visible, textarea:focus-
 
 .rail, .tree, .inspector { min-height: 0; background: var(--nxt-bg-sidebar); }
 .rail {
+  --nxt-text-muted: #a9b4c4;
+  --nxt-text-primary: #f2f4f7;
+  --nxt-bg-hover: #253857;
+  --nxt-accent: #6bc3f4;
+  --nxt-accent-soft: #253857;
   display: flex;
   flex-direction: column;
   align-items: center;
   gap: 4px;
   padding: 10px 0 12px;
-  border-right: 1px solid var(--nxt-border-subtle);
+  border-right: 1px solid color-mix(in srgb, var(--nxt-moon-300) 14%, transparent);
+  color: #a9b4c4;
+  background: var(--nxt-moon-900);
 }
 .rail-mark {
   position: relative;
@@ -133,7 +144,7 @@ button:focus-visible, select:focus-visible, input:focus-visible, textarea:focus-
   height: 28px;
   margin-bottom: 10px;
   border-radius: 8px;
-  background: linear-gradient(145deg, var(--nxt-cyan-300), #168bd2);
+  background: linear-gradient(145deg, var(--nxt-moon-600), var(--nxt-lumen-400));
 }
 .rail-mark::after {
   position: absolute;

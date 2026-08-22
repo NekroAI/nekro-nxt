@@ -1,6 +1,7 @@
-import { readFileSync } from 'node:fs'
+import { existsSync, readFileSync } from 'node:fs'
 import { createRequire } from 'node:module'
 import path from 'node:path'
+import { fileURLToPath } from 'node:url'
 import { describe, expect, it } from 'vitest'
 import {
   desktopDataRoot,
@@ -11,8 +12,32 @@ import {
   parseProductRelease,
   resolveProductReleasePath,
 } from '../src/distribution.ts'
+import {
+  MACOS_TRAFFIC_LIGHT_CLEARANCE,
+  TITLE_BAR_HEIGHT,
+  WINDOW_CONTROLS_OVERLAY_CLEARANCE,
+  desktopTitleBarCss,
+  desktopWindowChrome,
+} from '../src/window-chrome.ts'
 
 describe('Desktop product distribution', () => {
+  it('uses one custom title bar coordinate system with platform control clearances', () => {
+    expect(desktopWindowChrome('darwin')).toMatchObject({
+      autoHideMenuBar: true,
+      titleBarStyle: 'hiddenInset',
+      trafficLightPosition: { x: 16, y: 16 },
+    })
+    expect(desktopWindowChrome('win32')).toMatchObject({
+      autoHideMenuBar: true,
+      frame: false,
+      titleBarStyle: 'hidden',
+      titleBarOverlay: { height: TITLE_BAR_HEIGHT, color: '#00000000', symbolColor: '#FFFDF9' },
+    })
+    expect(desktopWindowChrome('linux')).toEqual(desktopWindowChrome('win32'))
+    expect(desktopTitleBarCss('darwin')).toContain(`--nxt-window-controls-left:${MACOS_TRAFFIC_LIGHT_CLEARANCE}px`)
+    expect(desktopTitleBarCss('win32')).toContain(`--nxt-window-controls-right:${WINDOW_CONTROLS_OVERLAY_CLEARANCE}px`)
+  })
+
   it('uses a memory-safe NSIS per-user installation path lookup', () => {
     const require = createRequire(import.meta.url)
     const electronBuilderPackagePath = require.resolve('electron-builder/package.json')
@@ -25,6 +50,31 @@ describe('Desktop product distribution', () => {
 
     expect(multiUserTemplate).toContain('KERNEL32::lstrcpynW')
     expect(multiUserTemplate).not.toContain('*$2(&w${NSIS_MAX_STRLEN} .s)')
+  })
+
+  it('ships complete branded build resources for stable and preview', () => {
+    const desktopRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
+    for (const channel of ['stable', 'preview']) {
+      const buildRoot = path.join(desktopRoot, 'resources', channel)
+      for (const file of [
+        'icon.icns',
+        'icon.ico',
+        'dmg-background.png',
+        'installerIcon.ico',
+        'uninstallerIcon.ico',
+        'installerSidebar.bmp',
+        'uninstallerSidebar.bmp',
+        'installerHeader.bmp',
+        'icons/16x16.png',
+        'icons/512x512.png',
+      ]) {
+        expect(existsSync(path.join(buildRoot, file)), `${channel}/${file}`).toBe(true)
+      }
+      const ico = readFileSync(path.join(buildRoot, 'icon.ico'))
+      expect(ico.readUInt16LE(4)).toBe(9)
+      const sidebar = readFileSync(path.join(buildRoot, 'installerSidebar.bmp'))
+      expect([sidebar.readInt32LE(18), sidebar.readInt32LE(22), sidebar.readUInt16LE(28)]).toEqual([164, 314, 24])
+    }
   })
 
   it('keeps one stable product identity and one data root outside the installation', () => {

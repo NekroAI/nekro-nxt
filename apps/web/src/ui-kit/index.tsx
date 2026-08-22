@@ -382,6 +382,12 @@ export const Input = forwardRef<HTMLInputElement, InputHTMLAttributes<HTMLInputE
   )
 })
 
+export const RangeInput = forwardRef<HTMLInputElement, Omit<InputHTMLAttributes<HTMLInputElement>, 'type'>>(
+  function RangeInput(props, ref) {
+    return <input ref={ref} {...props} type="range" />
+  },
+)
+
 type SecretInputProps = Omit<InputHTMLAttributes<HTMLInputElement>, 'type' | 'autoComplete' | 'spellCheck'>
 
 /**
@@ -467,6 +473,30 @@ export function SwitchField({
         <Switch.Thumb className={styles.switchThumb} />
       </Switch.Root>
     </div>
+  )
+}
+
+export function SwitchControl({
+  label,
+  checked,
+  onCheckedChange,
+  disabled = false,
+}: {
+  readonly label: string
+  readonly checked: boolean
+  readonly onCheckedChange: (checked: boolean) => void
+  readonly disabled?: boolean
+}) {
+  return (
+    <Switch.Root
+      className={styles.switchRoot}
+      checked={checked}
+      onCheckedChange={onCheckedChange}
+      disabled={disabled}
+      aria-label={label}
+    >
+      <Switch.Thumb className={styles.switchThumb} />
+    </Switch.Root>
   )
 }
 

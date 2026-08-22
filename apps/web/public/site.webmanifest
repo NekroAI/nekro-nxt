@@ -1,0 +1,15 @@
+{
+  "name": "NekroNxt",
+  "short_name": "NekroNxt",
+  "description": "以 DSH 为核心引擎的高扩展聊天系统",
+  "lang": "zh-CN",
+  "start_url": "/work",
+  "display": "standalone",
+  "background_color": "#172A45",
+  "theme_color": "#172A45",
+  "icons": [
+    { "src": "/pwa-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "/pwa-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
+    { "src": "/pwa-maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ]
+}

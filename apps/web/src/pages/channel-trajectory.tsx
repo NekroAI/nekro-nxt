@@ -527,6 +527,10 @@ export function ChannelTrajectoryLedger({
   return (
     <div className={styles.traj}>
       <div className={styles.trajBar}>
+        <div className={styles.trajBarCopy}>
+          <strong>事件记录</strong>
+          <small>{visible.length} 个事件</small>
+        </div>
         <Input
           className={styles.trajSearch}
           value={search}

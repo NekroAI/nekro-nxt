@@ -13,9 +13,11 @@ export const runNxtNavigation = (go: () => void, morph: boolean): void => {
       flushSync(go)
     })
     activeViewTransition = transition
-    void transition.finished.finally(() => {
-      if (activeViewTransition === transition) activeViewTransition = null
-    })
+    void transition.finished
+      .catch(() => undefined)
+      .finally(() => {
+        if (activeViewTransition === transition) activeViewTransition = null
+      })
   } catch {
     go()
   }

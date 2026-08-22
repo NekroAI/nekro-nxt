@@ -1,0 +1,63 @@
+.chip {
+  display: inline-flex;
+  min-width: 0;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 4px;
+  border-radius: var(--nxt-radius-round);
+  padding: 1px 6px;
+  color: var(--nxt-text-muted);
+  background: var(--nxt-bg-hover);
+  font-size: 9px;
+  font-weight: 650;
+  line-height: 14px;
+  outline: none;
+}
+
+.chip i {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: currentcolor;
+}
+
+.chip[data-level='1'] {
+  color: var(--nxt-info);
+  background: var(--nxt-info-soft);
+}
+
+.chip[data-level='2'] {
+  color: var(--nxt-warning);
+  background: var(--nxt-warning-soft);
+}
+
+.chip[data-level='3'] {
+  color: var(--nxt-danger);
+  background: var(--nxt-danger-soft);
+}
+
+.chip[data-level='custom'] {
+  color: var(--nxt-warning);
+  background: var(--nxt-warning-soft);
+}
+
+.chip:focus-visible {
+  box-shadow: 0 0 0 2px var(--nxt-focus-ring);
+}
+
+.tooltipCopy {
+  display: grid;
+  max-width: 280px;
+  gap: 3px;
+}
+
+.tooltipCopy strong {
+  color: inherit;
+  font-size: 12px;
+}
+
+.tooltipCopy span {
+  opacity: 0.86;
+  font-size: 11px;
+  line-height: 17px;
+}

@@ -13,6 +13,7 @@ import {
   JsonValueSchema,
   LogicalMessageIdSchema,
   RichExtensionSchema,
+  RichTargetUrlSchema,
   OutboundIntentIdSchema,
 } from './domain.js'
 
@@ -106,6 +107,7 @@ const SnapshotMessagePartSchema = z.discriminatedUnion('type', [
       summary: z.string().trim().min(1).max(500),
       title: z.string().trim().min(1).max(200).optional(),
       source: z.string().trim().min(1).max(80).optional(),
+      targetUrl: RichTargetUrlSchema.optional(),
       previewAssetId: AssetIdSchema.optional(),
       extension: RichExtensionSchema.optional(),
     })

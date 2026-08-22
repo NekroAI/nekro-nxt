@@ -1,4 +1,5 @@
 declare const styles: {
+  readonly contentRun: string
   readonly fileTrigger: string
   readonly forwardItem: string
   readonly forwardPreview: string

@@ -245,8 +245,8 @@ test('work tree keeps titles stable while full rows and keyboard handles cover o
 
   const mapleChannel = page.getByRole('link', { name: /规划员的网页频道/u })
   const mapleSpare = page.getByRole('link', { name: /规划员的备用地/u })
-  const mapleHeader = page.getByRole('link', { name: /规划员\s+\d+ 个频道/u })
-  const clerkHeader = page.getByRole('link', { name: /资料员\s+\d+ 个频道/u })
+  const mapleHeader = page.getByRole('link', { name: /规划员.*\d+ 个频道/u })
+  const clerkHeader = page.getByRole('link', { name: /资料员.*\d+ 个频道/u })
   const mapleChannelHandle = page.getByRole('button', { name: '拖动“规划员的网页频道”排序' })
   const top = async (locator: Locator): Promise<number> => {
     const box = await locator.boundingBox()
@@ -305,7 +305,7 @@ test('work tree keeps titles stable while full rows and keyboard handles cover o
   await dragTo(
     page,
     page.getByRole('link', { name: /临时网页台/u }),
-    page.getByRole('link', { name: /资料员\s+\d+ 个频道/u }),
+    page.getByRole('link', { name: /资料员.*\d+ 个频道/u }),
   )
   const bindDialog = page.getByRole('dialog')
   await expect(bindDialog.getByRole('heading', { name: '交给智能体响应' })).toBeVisible()

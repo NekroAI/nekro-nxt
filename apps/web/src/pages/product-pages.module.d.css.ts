@@ -1,4 +1,12 @@
 declare const styles: {
+  readonly accessLevelControl: string
+  readonly accessLevelDescription: string
+  readonly accessLevelExpand: string
+  readonly accessLevelGranular: string
+  readonly accessLevelGranularDisclosure: string
+  readonly accessLevelHeading: string
+  readonly accessLevelRange: string
+  readonly accessLevelScale: string
   readonly agentActivity: string
   readonly agentAvatar: string
   readonly agentBlockers: string
@@ -9,8 +17,11 @@ declare const styles: {
   readonly agentCardTitle: string
   readonly agentCreatePage: string
   readonly agentHeaderRow: string
+  readonly agentNameLine: string
   readonly agentOverview: string
   readonly agentRow: string
+  readonly appearanceSignature: string
+  readonly appearanceSwatches: string
   readonly attachment: string
   readonly avatar: string
   readonly bindingAgentActions: string
@@ -27,6 +38,8 @@ declare const styles: {
   readonly canvasStageInner: string
   readonly canvasTab: string
   readonly capabilityChoices: string
+  readonly capabilitySubsection: string
+  readonly capabilitySubsectionHeader: string
   readonly channelDetailRow: string
   readonly channelDetails: string
   readonly channelDirectory: string
@@ -38,6 +51,7 @@ declare const styles: {
   readonly channelLinkActive: string
   readonly channelRename: string
   readonly channelRow: string
+  readonly collapsedInspectorDock: string
   readonly compactList: string
   readonly composer: string
   readonly composerInfo: string
@@ -64,24 +78,32 @@ declare const styles: {
   readonly conversationEmpty: string
   readonly conversationHeader: string
   readonly conversationHeaderActions: string
+  readonly conversationInspectorDock: string
   readonly conversationMain: string
   readonly conversationPage: string
   readonly createSummary: string
   readonly creatorEvidence: string
   readonly creatorGuide: string
   readonly creatorIntro: string
+  readonly creatorLaunchPanel: string
+  readonly creatorPage: string
   readonly creatorStartGrid: string
+  readonly creatorStartPanel: string
   readonly creatorWorkspace: string
+  readonly detailPage: string
   readonly dialogChoice: string
   readonly dragOverlay: string
   readonly dropTarget: string
   readonly dynamicSlotSurface: string
   readonly emptyState: string
   readonly eventInner: string
+  readonly extensionActionPanel: string
+  readonly extensionDetailGrid: string
   readonly extensionHeader: string
   readonly extensionNavItem: string
   readonly extensionNavItemActive: string
   readonly extensionNavList: string
+  readonly extensionOverview: string
   readonly extensionRow: string
   readonly extensionWorkspace: string
   readonly facts: string
@@ -93,7 +115,11 @@ declare const styles: {
   readonly inlineFieldAction: string
   readonly inlineFieldHint: string
   readonly inspector: string
+  readonly inspectorChrome: string
+  readonly inspectorChromeBody: string
+  readonly inspectorChromeHeader: string
   readonly inspectorExpanded: string
+  readonly inspectorFacts: string
   readonly inspectorPane: string
   readonly inspectorRegion: string
   readonly inspectorRegionBody: string
@@ -127,6 +153,7 @@ declare const styles: {
   readonly messageMention: string
   readonly messageQuote: string
   readonly messageUnsupported: string
+  readonly moreCapabilities: string
   readonly navCopy: string
   readonly optionalTests: string
   readonly overviewBlocker: string
@@ -159,12 +186,16 @@ declare const styles: {
   readonly settingsNav: string
   readonly settingsNavItem: string
   readonly settingsNavItemActive: string
+  readonly settingsPage: string
   readonly settingsSection: string
   readonly sortableOrigin: string
   readonly srOnly: string
   readonly staticRow: string
   readonly switchList: string
   readonly sysLine: string
+  readonly systemAdapterCard: string
+  readonly systemAdapterGrid: string
+  readonly systemAdapterIntro: string
   readonly systemMessage: string
   readonly tagList: string
   readonly testRow: string
@@ -179,6 +210,7 @@ declare const styles: {
   readonly toolRow: string
   readonly traj: string
   readonly trajBar: string
+  readonly trajBarCopy: string
   readonly trajContent: string
   readonly trajDetailHead: string
   readonly trajEmpty: string
@@ -203,6 +235,7 @@ declare const styles: {
   readonly turnRail: string
   readonly unread: string
   readonly viewSwitch: string
+  readonly webSearchSetup: string
   readonly workDot: string
   readonly workDotFail: string
   readonly workDotOk: string

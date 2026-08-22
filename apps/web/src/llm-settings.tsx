@@ -293,7 +293,7 @@ export function LlmProviderSettings(): React.ReactNode {
     <div className={styles.providerSettings}>
       <div className={styles.toolbar}>
         <div>
-          <h2>模型供应商</h2>
+          <h2>供应商配置</h2>
           <p>管理模型访问凭据和可用模型。</p>
         </div>
         <Button

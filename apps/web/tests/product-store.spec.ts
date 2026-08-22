@@ -88,6 +88,29 @@ describe('product store Host mutations', () => {
     coordinator.dispose()
   })
 
+  it('updates a system-access preset in one Host mutation', async () => {
+    const execute = vi.fn(() => Promise.resolve(null))
+    setActiveProductHost({
+      getSnapshot: () => useProductStore.getState(),
+      subscribe: () => () => undefined,
+      execute,
+    })
+
+    await useProductStore.getState().setCapabilities(agentId, {
+      fileTools: true,
+      developmentShell: true,
+      unrestrictedFileAccess: false,
+    })
+
+    expect(execute).toHaveBeenCalledOnce()
+    expect(execute).toHaveBeenCalledWith('agents.updateCapabilities', {
+      agentId,
+      fileTools: true,
+      developmentShell: true,
+      unrestrictedFileAccess: false,
+    })
+  })
+
   it('returns rejected Promises from capability, approval and Extension mutations', async () => {
     const failure = new Error('Host 拒绝了本次修改。')
     const execute = vi.fn(() => Promise.reject(failure))

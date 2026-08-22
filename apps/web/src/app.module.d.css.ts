@@ -1,11 +1,12 @@
 declare const styles: {
+  readonly brandCopy: string
+  readonly brandMark: string
   readonly centeredState: string
   readonly commandEmpty: string
   readonly commandPalette: string
   readonly commandResult: string
   readonly commandResults: string
   readonly commandSearch: string
-  readonly mark: string
   readonly rail: string
   readonly railBtn: string
   readonly railBtnActive: string

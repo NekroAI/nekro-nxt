@@ -1,6 +1,6 @@
-import { File, Headphones, Image as ImageIcon, Quote } from 'lucide-react'
+import { File, Headphones, Quote } from 'lucide-react'
 import { useState } from 'react'
-import ReactMarkdown, { defaultUrlTransform } from 'react-markdown'
+import ReactMarkdown, { defaultUrlTransform, type Components } from 'react-markdown'
 import rehypeSanitize from 'rehype-sanitize'
 import remarkGfm from 'remark-gfm'
 import type { ChannelSummary, ConversationMessage, ConversationPart } from '../product-store.js'
@@ -26,49 +26,43 @@ const markdownUrlTransform = (url: string): string => {
   return /^(https?:|mailto:)/iu.test(transformed) ? transformed : ''
 }
 
-function MarkdownText({ text }: { readonly text: string }) {
-  return (
-    <div className={styles.markdownPart}>
-      <ReactMarkdown
-        remarkPlugins={[remarkGfm]}
-        rehypePlugins={[rehypeSanitize]}
-        skipHtml
-        urlTransform={markdownUrlTransform}
-        components={{
-          a: ({ children, ...props }) => (
-            <a {...props} target="_blank" rel="noopener noreferrer">
-              {children}
-            </a>
-          ),
-        }}
-      >
-        {text}
-      </ReactMarkdown>
-    </div>
-  )
+const safeExternalTargetUrl = (value: string | undefined): string | undefined => {
+  if (!value) return undefined
+  try {
+    const parsed = new URL(value)
+    return parsed.protocol === 'http:' || parsed.protocol === 'https:' ? parsed.href : undefined
+  } catch {
+    return undefined
+  }
 }
 
-function InlineMarkdownText({ text }: { readonly text: string }) {
-  return (
-    <span className={contentStyles.inlineMarkdown}>
-      <ReactMarkdown
-        remarkPlugins={[remarkGfm]}
-        rehypePlugins={[rehypeSanitize]}
-        skipHtml
-        urlTransform={markdownUrlTransform}
-        components={{
-          a: ({ children, ...props }) => (
-            <a {...props} target="_blank" rel="noopener noreferrer">
-              {children}
-            </a>
-          ),
-          p: ({ children }) => <span>{children}</span>,
-        }}
-      >
-        {text}
-      </ReactMarkdown>
-    </span>
+const markdownComponents: Components = {
+  a: ({ children, ...props }) => (
+    <a {...props} target="_blank" rel="noopener noreferrer">
+      {children}
+    </a>
+  ),
+}
+
+const inlineMarkdownComponents: Components = {
+  ...markdownComponents,
+  p: ({ children }) => <span>{children}</span>,
+}
+
+function SafeMarkdown({ text, inline = false }: { readonly text: string; readonly inline?: boolean }) {
+  const markdown = (
+    <ReactMarkdown
+      remarkPlugins={[remarkGfm]}
+      rehypePlugins={[rehypeSanitize]}
+      skipHtml
+      urlTransform={markdownUrlTransform}
+      components={inline ? inlineMarkdownComponents : markdownComponents}
+    >
+      {text}
+    </ReactMarkdown>
   )
+  if (!inline) return <div className={styles.markdownPart}>{markdown}</div>
+  return <span className={contentStyles.inlineMarkdown}>{markdown}</span>
 }
 
 function MentionChip({ displayName }: { readonly displayName: string }) {
@@ -87,8 +81,8 @@ function HostRichCard({
   const showSummary = part.summary !== heading && part.summary !== composed
   const items = part.items ?? []
   const previewLines = part.kind === 'forward' && items.length === 0 ? part.preview?.trim() : undefined
-  return (
-    <article className={contentStyles.richCard} data-kind={part.kind}>
+  const cardContent = (
+    <>
       {part.kind === 'forward' ? (
         <p className={contentStyles.richSource}>
           {part.title ?? '聊天记录'}
@@ -104,33 +98,38 @@ function HostRichCard({
         <div className={contentStyles.forwardItem} key={index}>
           {item.sender ? <p className={contentStyles.forwardSender}>{item.sender}</p> : null}
           {item.text ? <p className={contentStyles.richSummary}>{item.text}</p> : null}
-          {item.card ? (
-            <div className={contentStyles.nestedCard}>
-              {item.card.source ? <p className={contentStyles.richSource}>{item.card.source}</p> : null}
-              <p className={contentStyles.richTitle}>{item.card.title ?? item.card.summary}</p>
-              {item.card.previewUrl ? (
-                <Button
-                  variant="ghost"
-                  type="button"
-                  className={contentStyles.previewTrigger}
-                  onClick={() =>
-                    onPreview({
-                      name: item.card?.title ?? item.card?.summary ?? '卡片预览',
-                      url: item.card!.previewUrl!,
-                      kind: 'image',
-                    })
-                  }
-                >
-                  <img
-                    className={styles.messageImage}
-                    src={item.card.previewUrl}
-                    alt={item.card.title ?? item.card.summary}
-                    loading="lazy"
-                  />
-                </Button>
-              ) : null}
-            </div>
-          ) : null}
+          {item.card
+            ? (() => {
+                const nestedContent = (
+                  <>
+                    {item.card.source ? <p className={contentStyles.richSource}>{item.card.source}</p> : null}
+                    <p className={contentStyles.richTitle}>{item.card.title ?? item.card.summary}</p>
+                    {item.card.previewUrl ? (
+                      <img
+                        className={styles.messageImage}
+                        src={item.card.previewUrl}
+                        alt={item.card.title ?? item.card.summary}
+                        loading="lazy"
+                      />
+                    ) : null}
+                  </>
+                )
+                const targetUrl = safeExternalTargetUrl(item.card.targetUrl)
+                return targetUrl ? (
+                  <a
+                    className={contentStyles.nestedCard}
+                    href={targetUrl}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    aria-label={`打开卡片：${item.card.title ?? item.card.summary}`}
+                  >
+                    {nestedContent}
+                  </a>
+                ) : (
+                  <div className={contentStyles.nestedCard}>{nestedContent}</div>
+                )
+              })()
+            : null}
           {item.imageUrl ? (
             <Button
               variant="ghost"
@@ -145,15 +144,25 @@ function HostRichCard({
       ))}
       {previewLines ? <pre className={contentStyles.forwardPreview}>{previewLines}</pre> : null}
       {part.previewUrl ? (
-        <Button
-          variant="ghost"
-          type="button"
-          className={contentStyles.previewTrigger}
-          onClick={() => onPreview({ name: heading, url: part.previewUrl!, kind: 'image' })}
-        >
-          <img className={styles.messageImage} src={part.previewUrl} alt={heading} loading="lazy" />
-        </Button>
+        <img className={styles.messageImage} src={part.previewUrl} alt={heading} loading="lazy" />
       ) : null}
+    </>
+  )
+  const targetUrl = items.length === 0 ? safeExternalTargetUrl(part.targetUrl) : undefined
+  return targetUrl ? (
+    <a
+      className={contentStyles.richCard}
+      data-kind={part.kind}
+      href={targetUrl}
+      target="_blank"
+      rel="noopener noreferrer"
+      aria-label={`打开卡片：${heading}`}
+    >
+      {cardContent}
+    </a>
+  ) : (
+    <article className={contentStyles.richCard} data-kind={part.kind}>
+      {cardContent}
     </article>
   )
 }
@@ -175,9 +184,6 @@ function StructuredPart({
         onClick={() => onPreview({ name: part.alt, url: part.url, kind: 'image' })}
       >
         <img className={styles.messageImage} src={part.url} alt={part.alt} loading="lazy" />
-        <span>
-          <ImageIcon size={14} aria-hidden="true" /> {part.alt}
-        </span>
       </Button>
     )
   }
@@ -237,25 +243,35 @@ const groupMessageRuns = (parts: readonly ConversationPart[]): readonly MessageR
 export function MessageContent({ message }: { readonly message: ConversationMessage }) {
   const [preview, setPreview] = useState<PreviewResource | null>(null)
   return (
-    <div className={styles.messageBody}>
+    <div className={styles.messageBody} data-message-bubble>
       {groupMessageRuns(message.parts).map((run, runIndex) => {
         if (run.kind === 'block') {
-          return <StructuredPart key={`${runIndex}:${run.part.type}`} part={run.part} onPreview={setPreview} />
+          return (
+            <div className={contentStyles.contentRun} key={`${runIndex}:${run.part.type}`}>
+              <StructuredPart part={run.part} onPreview={setPreview} />
+            </div>
+          )
         }
         const [only] = run.parts
         if (run.parts.length === 1 && only?.type === 'text') {
-          return <MarkdownText key={`${runIndex}:text`} text={only.text} />
+          return (
+            <div className={contentStyles.contentRun} key={`${runIndex}:text`}>
+              <SafeMarkdown text={only.text} />
+            </div>
+          )
         }
         return (
-          <span className={contentStyles.inlineRun} key={`${runIndex}:inline`}>
-            {run.parts.map((part, partIndex) =>
-              part.type === 'text' ? (
-                <InlineMarkdownText key={`${partIndex}:text`} text={part.text} />
-              ) : (
-                <MentionChip key={`${partIndex}:mention`} displayName={part.displayName} />
-              ),
-            )}
-          </span>
+          <div className={contentStyles.contentRun} key={`${runIndex}:inline`}>
+            <span className={contentStyles.inlineRun}>
+              {run.parts.map((part, partIndex) =>
+                part.type === 'text' ? (
+                  <SafeMarkdown key={`${partIndex}:text`} text={part.text} inline />
+                ) : (
+                  <MentionChip key={`${partIndex}:mention`} displayName={part.displayName} />
+                ),
+              )}
+            </span>
+          </div>
         )
       })}
       <ResourcePreviewDialog

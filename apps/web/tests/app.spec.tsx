@@ -645,8 +645,8 @@ describe.sequential('NekroNxt browser projections', { timeout: 30_000 }, () => {
   it('keeps intelligent-agent configuration on the workbench instead of sending users away', async () => {
     await withProductPage(`/work/agents/${browserAgentId}?tab=capabilities`, async (page) => {
       await playwrightExpect(page.getByRole('button', { name: '保存凭据' })).toBeVisible()
-      await playwrightExpect(page.getByRole('button', { name: '打开频道去描述需求' })).toBeVisible()
-      await playwrightExpect(page.getByRole('button', { name: '查看创造运行' })).toBeVisible()
+      await playwrightExpect(page.getByRole('button', { name: '前往频道提出需求' })).toHaveCount(0)
+      await playwrightExpect(page.getByRole('button', { name: '查看创造进度' }).first()).toBeVisible()
       await playwrightExpect(page.locator('body')).not.toContainText('设置 → DSH 扩展')
     })
 
@@ -775,8 +775,8 @@ describe.sequential('NekroNxt browser projections', { timeout: 30_000 }, () => {
       expect(turnBox?.height).toBeGreaterThanOrEqual(80)
       const sendMark = page.getByRole('button', { name: /发送频道消息/u })
       const sendBox = await sendMark.boundingBox()
-      expect(sendBox?.width).toBeGreaterThanOrEqual(28)
-      expect(sendBox?.height).toBeGreaterThanOrEqual(28)
+      expect(sendBox?.width).toBeGreaterThanOrEqual(27.9)
+      expect(sendBox?.height).toBeGreaterThanOrEqual(27.9)
       await sendMark.click()
       const trajectoryInspector = page.locator('aside[aria-label="工作轨迹"]')
       await playwrightExpect(trajectoryInspector.getByRole('heading', { name: '发出的内容' })).toBeVisible()

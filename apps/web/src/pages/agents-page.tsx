@@ -1,4 +1,4 @@
-import { PanelRightClose, PanelRightOpen, Plus, Save, ShieldAlert } from 'lucide-react'
+import { ChevronDown, ChevronUp, PanelRightClose, PanelRightOpen, Plus, Save, ShieldAlert } from 'lucide-react'
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties } from 'react'
 import { useParams, useSearchParams } from 'react-router-dom'
 import { NxtLink, useNxtNavigate } from '../shell/nxt-link.js'
@@ -7,6 +7,15 @@ import { EmptyState, InlineFeedback, PageHeader } from '../components/product-fe
 import { AddModelProviderForm } from '../llm-settings.js'
 import { WebSearchCredentialForm } from '../web-search-credential.js'
 import { AgentWorkbenchExtensionSlots } from '../persistent-extension-client.js'
+import {
+  AGENT_ACCESS_LEVELS,
+  agentAccessCapabilities,
+  agentAccessLevelOption,
+  agentAccessPresentation,
+  agentAccessPreset,
+  isAgentAccessLevel,
+  type AgentAccessLevel,
+} from '../agent-access-level.js'
 import {
   connectionDisplayName,
   useProductStore,
@@ -17,14 +26,17 @@ import {
 import {
   AgentStateRing,
   Button,
+  Disclosure,
   Field,
   IconButton,
   Input,
+  RangeInput,
   ResizeHandle,
   SelectField,
   SidePane,
   StageCrossfade,
   StatusBadge,
+  SwitchControl,
   SwitchField,
   Textarea,
   type StatusTone,
@@ -47,6 +59,126 @@ const modelKey = agentModelKey
 
 const modelValueForAgent = (agent: AgentSummary): string =>
   agent.modelRef ? modelKey({ provider: agent.modelRef.provider, id: agent.modelRef.model }) : ''
+
+function AccessLevelControl({
+  capabilities,
+  disabled = false,
+  onPresetCommit,
+  onCapabilityChange,
+}: {
+  readonly capabilities: AgentSummary['capabilities']
+  readonly disabled?: boolean
+  readonly onPresetCommit: (level: AgentAccessLevel) => void
+  readonly onCapabilityChange: (
+    capability: 'fileTools' | 'developmentShell' | 'unrestrictedFileAccess',
+    enabled: boolean,
+  ) => void
+}) {
+  const preset = agentAccessPreset(capabilities)
+  const committedValue = preset === 'custom' ? 0 : preset
+  const [draft, setDraft] = useState(committedValue)
+  const [customDraft, setCustomDraft] = useState(preset === 'custom')
+  const [expanded, setExpanded] = useState(false)
+  const draftRef = useRef<AgentAccessLevel>(committedValue)
+  const committedRef = useRef(committedValue)
+  useEffect(() => {
+    setDraft(committedValue)
+    setCustomDraft(preset === 'custom')
+    draftRef.current = committedValue
+    committedRef.current = committedValue
+  }, [committedValue, preset])
+  const commit = (): void => {
+    const next = draftRef.current
+    if (disabled || (!customDraft && next === committedRef.current)) return
+    committedRef.current = next
+    setCustomDraft(false)
+    onPresetCommit(next)
+  }
+  const option = customDraft ? agentAccessPresentation(capabilities) : agentAccessLevelOption(draft)
+  return (
+    <div
+      className={styles.accessLevelControl}
+      data-level={customDraft ? 'custom' : draft}
+      data-disabled={disabled ? '' : undefined}
+    >
+      <div className={styles.accessLevelHeading}>
+        <div>
+          <strong>系统访问等级（Lv.0–Lv.3）</strong>
+          <small>向右提高等级时，会依次包含左侧等级的权限。</small>
+        </div>
+        <StatusBadge tone={option.tone}>{option.risk}</StatusBadge>
+      </div>
+      <RangeInput
+        className={styles.accessLevelRange}
+        min={0}
+        max={3}
+        step={1}
+        value={draft}
+        disabled={disabled}
+        aria-label="系统访问等级"
+        aria-valuetext={`${option.label}（${option.code}）：${option.description}`}
+        onChange={(event) => {
+          const next = event.currentTarget.valueAsNumber
+          if (!isAgentAccessLevel(next)) return
+          draftRef.current = next
+          setCustomDraft(false)
+          setDraft(next)
+        }}
+        onPointerUp={commit}
+        onKeyUp={commit}
+        onBlur={commit}
+      />
+      <div className={styles.accessLevelScale} aria-hidden="true">
+        {AGENT_ACCESS_LEVELS.map((item) => (
+          <span key={item.level} data-active={!customDraft && item.level === draft ? '' : undefined}>
+            {item.label}（{item.code}）
+          </span>
+        ))}
+      </div>
+      <p className={styles.accessLevelDescription}>
+        <strong>
+          {option.label}（{option.code}）
+        </strong>
+        <span>{option.description}</span>
+      </p>
+      <Button
+        className={styles.accessLevelExpand}
+        size="small"
+        variant="ghost"
+        aria-expanded={expanded}
+        onClick={() => setExpanded((current) => !current)}
+      >
+        {expanded ? <ChevronUp size={14} aria-hidden="true" /> : <ChevronDown size={14} aria-hidden="true" />}
+        {expanded ? '收起逐项设置' : '展开逐项设置'}
+      </Button>
+      <Disclosure open={expanded} className={styles.accessLevelGranularDisclosure}>
+        <div className={styles.accessLevelGranular} data-access-granular>
+          <SwitchField
+            label="文件读写"
+            description="读取文件，并在智能体工作区内写入文件。"
+            checked={capabilities.fileTools}
+            disabled={disabled}
+            onCheckedChange={(enabled) => onCapabilityChange('fileTools', enabled)}
+          />
+          <SwitchField
+            label="运行命令"
+            description="在智能体工作区中运行命令。"
+            checked={capabilities.developmentShell}
+            disabled={disabled}
+            onCheckedChange={(enabled) => onCapabilityChange('developmentShell', enabled)}
+          />
+          <SwitchField
+            label="完整访问"
+            description="扩大到宿主进程被允许访问的系统范围。"
+            checked={capabilities.unrestrictedFileAccess}
+            disabled={disabled}
+            onCheckedChange={(enabled) => onCapabilityChange('unrestrictedFileAccess', enabled)}
+          />
+        </div>
+      </Disclosure>
+    </div>
+  )
+}
 
 type AgentSettingsTab = 'profile' | 'channels' | 'capabilities' | 'extensions'
 
@@ -180,61 +312,54 @@ export function AgentsPage() {
 
         <section className={styles.workbenchSection}>
           <div className={styles.section}>
-            <div className={styles.sectionHeading}>初始能力</div>
+            <div className={styles.sectionHeading}>初始授权</div>
             <div className={styles.capabilityChoices}>
-              <InlineFeedback tone="info">
-                默认开启子智能体；文件与开发能力由你明确授权，高风险能力不会因频道类型被强制关闭。
-              </InlineFeedback>
-              <SwitchField
-                label="子智能体"
-                description="允许在后台委派独立任务；主智能体仍可继续接收和回应频道消息。"
-                checked={newCapabilities.subagents}
-                onCheckedChange={(enabled) => setNewCapabilities((current) => ({ ...current, subagents: enabled }))}
-              />
-              <SwitchField
-                label="网页搜索"
-                description={
-                  capabilityAvailability.webSearch.available
-                    ? '通过 DeepSeek 官方搜索扩展信息范围；每次搜索会产生额外模型费用。'
-                    : '可以先授权；配置 DeepSeek API 凭据后自动可用，每次搜索会产生额外模型费用。'
+              <AccessLevelControl
+                capabilities={newCapabilities}
+                onPresetCommit={(level) =>
+                  setNewCapabilities((current) => ({ ...current, ...agentAccessCapabilities(level) }))
                 }
-                checked={newCapabilities.webSearch}
-                onCheckedChange={(enabled) => setNewCapabilities((current) => ({ ...current, webSearch: enabled }))}
-              />
-              <SwitchField
-                label="动态创造"
-                description="允许创建和试运行临时扩展。"
-                checked={newCapabilities.dynamicCreation}
-                onCheckedChange={(enabled) =>
-                  setNewCapabilities((current) => ({ ...current, dynamicCreation: enabled }))
+                onCapabilityChange={(capability, enabled) =>
+                  setNewCapabilities((current) => ({ ...current, [capability]: enabled }))
                 }
               />
-              <SwitchField
-                label="文件工具"
-                description="允许读取文件，并在智能体开发工作区中写入文件。读取范围取决于宿主进程权限。"
-                checked={newCapabilities.fileTools}
-                onCheckedChange={(enabled) => setNewCapabilities((current) => ({ ...current, fileTools: enabled }))}
-              />
-              <SwitchField
-                label="开发命令"
-                description="允许在这个智能体的独立开发工作区中运行命令。"
-                checked={newCapabilities.developmentShell}
-                onCheckedChange={(enabled) =>
-                  setNewCapabilities((current) => ({ ...current, developmentShell: enabled }))
-                }
-              />
-              <SwitchField
-                label={
-                  <span className={styles.riskLabel}>
-                    完整文件访问 <StatusBadge tone="error">高风险</StatusBadge>
-                  </span>
-                }
-                description="扩大文件访问范围；不会自动开启开发命令。"
-                checked={newCapabilities.unrestrictedFileAccess}
-                onCheckedChange={(enabled) =>
-                  setNewCapabilities((current) => ({ ...current, unrestrictedFileAccess: enabled }))
-                }
-              />
+              <div className={styles.capabilitySubsection}>
+                <div className={styles.capabilitySubsectionHeader}>
+                  <div>
+                    <strong>动态创造</strong>
+                    <small>允许智能体根据对话需求创建并试用扩展。</small>
+                  </div>
+                  <SwitchControl
+                    label="允许动态创造"
+                    checked={newCapabilities.dynamicCreation}
+                    onCheckedChange={(enabled) =>
+                      setNewCapabilities((current) => ({ ...current, dynamicCreation: enabled }))
+                    }
+                  />
+                </div>
+              </div>
+              <div className={styles.moreCapabilities}>
+                <div>
+                  <strong>更多能力</strong>
+                  <small>这些能力互不依赖，可以分别开启。</small>
+                </div>
+                <SwitchField
+                  label="子智能体"
+                  description="允许把独立任务交给后台智能体处理。"
+                  checked={newCapabilities.subagents}
+                  onCheckedChange={(enabled) => setNewCapabilities((current) => ({ ...current, subagents: enabled }))}
+                />
+                <SwitchField
+                  label="网页搜索"
+                  description={
+                    capabilityAvailability.webSearch.available
+                      ? '允许查询公开网页；搜索可能产生额外费用。'
+                      : '可先授权；保存搜索服务凭据后即可使用。'
+                  }
+                  checked={newCapabilities.webSearch}
+                  onCheckedChange={(enabled) => setNewCapabilities((current) => ({ ...current, webSearch: enabled }))}
+                />
+              </div>
             </div>
           </div>
         </section>
@@ -260,12 +385,7 @@ export function AgentsPage() {
         </section>
         <section>
           <h2>初始授权</h2>
-          <p className={styles.secondaryText}>
-            {capabilityCopy
-              .filter((item) => newCapabilities[item.key])
-              .map((item) => item.label)
-              .join('、') || '不授予额外能力'}
-          </p>
+          <p className={styles.secondaryText}>{capabilitySummary(newCapabilities).join('、')}</p>
           <InlineFeedback tone="info">创建前不会写入正式智能体、频道或扩展关系。</InlineFeedback>
         </section>
       </aside>
@@ -275,7 +395,7 @@ export function AgentsPage() {
 
 type Capability = keyof AgentSummary['capabilities']
 
-const capabilityCopy: readonly {
+const moreCapabilityCopy: readonly {
   readonly key: Capability
   readonly label: string
   readonly description: string
@@ -290,34 +410,32 @@ const capabilityCopy: readonly {
   {
     key: 'webSearch',
     label: '网页搜索',
-    description: '通过已配置的 DeepSeek Web Provider 搜索外部信息；搜索内容不可信且会产生额外费用。',
+    description: '允许查询公开网页；搜索结果来自外部服务，可能产生额外费用。',
     risk: { label: '外部服务', tone: 'warning' },
   },
-  {
-    key: 'dynamicCreation',
-    label: '动态创造',
-    description: '允许这个智能体创建并试运行临时扩展。',
-    risk: { label: '中风险', tone: 'warning' },
-  },
-  {
-    key: 'fileTools',
-    label: '文件工具',
-    description: '允许读取文件，并在智能体开发工作区中写入文件；读取范围取决于宿主进程权限。',
-    risk: { label: '高风险', tone: 'warning' },
-  },
-  {
-    key: 'developmentShell',
-    label: '开发命令',
-    description: '允许在明确授权的开发工作区中运行命令。',
-    risk: { label: '高风险', tone: 'warning' },
-  },
-  {
-    key: 'unrestrictedFileAccess',
-    label: '完整文件访问',
-    description: '扩大已授权文件能力的可访问范围，不会自动开启开发命令。',
-    risk: { label: '极高风险', tone: 'error' },
-  },
 ]
+
+const capabilitySummary = (capabilities: AgentSummary['capabilities']): string[] => [
+  `${agentAccessPresentation(capabilities).label}（${agentAccessPresentation(capabilities).code}）`,
+  ...(capabilities.dynamicCreation ? ['动态创造'] : []),
+  ...moreCapabilityCopy.filter((item) => capabilities[item.key]).map((item) => item.label),
+]
+
+const capabilityLabel = (capability: Capability): string => {
+  if (capability === 'fileTools') return '文件读写'
+  if (capability === 'developmentShell') return '运行命令'
+  if (capability === 'unrestrictedFileAccess') return '完整访问'
+  if (capability === 'dynamicCreation') return '动态创造'
+  return moreCapabilityCopy.find((item) => item.key === capability)?.label ?? '此项能力'
+}
+
+const dynamicRunLabel = (status: string): string => {
+  if (status === 'running') return '正在运行'
+  if (status === 'awaiting-approval') return '等待确认'
+  if (status === 'failed') return '运行失败'
+  if (status === 'stopped') return '已停止'
+  return '状态待确认'
+}
 
 export function AgentManagePage() {
   const { agentId = '' } = useParams()
@@ -335,8 +453,9 @@ export function AgentManagePage() {
   const [persona, setPersona] = useState(agent?.persona ?? '')
   const [selectedModelKey, setSelectedModelKey] = useState(agent ? modelValueForAgent(agent) : '')
   const [savePending, setSavePending] = useState(false)
-  const [capabilityPending, setCapabilityPending] = useState<Capability | null>(null)
+  const [capabilityPending, setCapabilityPending] = useState<Capability | 'accessLevel' | null>(null)
   const [bindingOpen, setBindingOpen] = useState(false)
+  const [creatorChannelId, setCreatorChannelId] = useState('')
   const [triggerPendingId, setTriggerPendingId] = useState<string | null>(null)
   const [extensionPendingId, setExtensionPendingId] = useState<string | null>(null)
   const savedInspectorWidth = useUiPreferences((state) => state.layout.inspectorWidth)
@@ -363,6 +482,12 @@ export function AgentManagePage() {
     () => (agent ? channels.filter((channel) => channel.bindings.some((binding) => binding.agentId === agent.id)) : []),
     [agent, channels],
   )
+  const activeDynamic = dynamic.find((item) => item.agentId === agent?.id)
+  useEffect(() => {
+    setCreatorChannelId((current) =>
+      boundChannels.some((channel) => channel.id === current) ? current : (boundChannels[0]?.id ?? ''),
+    )
+  }, [boundChannels])
   const requestedTab = searchParams.get('tab')
   const activeTab: AgentSettingsTab = isAgentSettingsTab(requestedTab) ? requestedTab : 'profile'
 
@@ -419,7 +544,7 @@ export function AgentManagePage() {
     try {
       await useProductStore.getState().setCapability(agent.id, capability, enabled)
       notify(
-        `${enabled ? '已开启' : '已关闭'}${capabilityCopy.find((item) => item.key === capability)?.label ?? '此能力'}。`,
+        `${enabled ? '已开启' : '已关闭'}${capabilityLabel(capability)}。`,
         'success',
         `agent-capability:${agent.id}:${capability}`,
       )
@@ -429,6 +554,18 @@ export function AgentManagePage() {
         'error',
         `agent-capability:${agent.id}:${capability}`,
       )
+    } finally {
+      setCapabilityPending(null)
+    }
+  }
+  const updateAccessLevel = async (level: AgentAccessLevel): Promise<void> => {
+    if (capabilityPending) return
+    setCapabilityPending('accessLevel')
+    try {
+      await useProductStore.getState().setCapabilities(agent.id, agentAccessCapabilities(level))
+      notify(`系统访问已调整为“${agentAccessLevelOption(level).label}”。`, 'success', `agent-access-level:${agent.id}`)
+    } catch (error) {
+      notify(error instanceof Error ? error.message : String(error), 'error', `agent-access-level:${agent.id}`)
     } finally {
       setCapabilityPending(null)
     }
@@ -444,7 +581,7 @@ export function AgentManagePage() {
     capabilityAvailability,
     dynamic,
   })
-  const recentChannel = boundChannels[0]
+  const actionableBlockers = blockers.filter((blocker) => blocker.kind !== 'creation-running')
   const bindableChannels = listBindingChannels({ channels, excludeBoundToAgentId: agent.id })
   const undiscoveredConnections = connections.filter(
     (connection) => connection.adapterKey !== 'web' && connection.knownChannels.length === 0,
@@ -498,6 +635,13 @@ export function AgentManagePage() {
     <StageCrossfade swapKey={agent.id}>
       <div className={styles.workbenchPage} style={workbenchStyle}>
         <div className={styles.workbenchDoc}>
+          {inspectorCollapsed ? (
+            <div className={styles.collapsedInspectorDock}>
+              <IconButton label="展开智能体检查器" onClick={toggleInspector}>
+                <PanelRightOpen size={15} aria-hidden="true" />
+              </IconButton>
+            </div>
+          ) : null}
           <PageHeader
             title={agent.name}
             meta={
@@ -508,11 +652,6 @@ export function AgentManagePage() {
             }
             actions={
               <>
-                {recentChannel ? (
-                  <Button variant="ghost" onClick={() => void navigate(`/work/channels/${recentChannel.id}`)}>
-                    打开最近频道
-                  </Button>
-                ) : null}
                 {isDirty ? (
                   <Button variant="ghost" disabled={savePending} onClick={reset}>
                     放弃更改
@@ -528,13 +667,6 @@ export function AgentManagePage() {
                 >
                   <Save size={15} aria-hidden="true" /> 保存新配置
                 </Button>
-                <IconButton label={inspectorCollapsed ? '展开检查器' : '收起检查器'} onClick={toggleInspector}>
-                  {inspectorCollapsed ? (
-                    <PanelRightOpen size={15} aria-hidden="true" />
-                  ) : (
-                    <PanelRightClose size={15} aria-hidden="true" />
-                  )}
-                </IconButton>
               </>
             }
           />
@@ -636,29 +768,70 @@ export function AgentManagePage() {
               <div className={styles.sectionBar}>
                 <div>
                   <div className={styles.sectionHeading}>授权能力</div>
-                  <div className={styles.secondaryText}>每个开关都是一次立即保存的授权变更。</div>
+                  <div className={styles.secondaryText}>控制系统访问、扩展创造和可独立启用的附加能力。</div>
                 </div>
                 <ShieldAlert size={18} aria-hidden="true" />
               </div>
-              <InlineFeedback tone="warning">
-                文件工具可读取 Server
-                进程有权读取的宿主文件；开发命令与不受限文件访问不会因频道类型被强制关闭，请按实际用途授权。
-              </InlineFeedback>
-              {!capabilityAvailability.webSearch.available ? (
-                <div className={styles.formStack}>
-                  <InlineFeedback tone="warning">
-                    {agent.capabilities.webSearch
-                      ? '网页搜索已授权，还需要保存凭据后才能使用。'
-                      : '可以先保存凭据，再打开网页搜索。'}
-                  </InlineFeedback>
-                  <WebSearchCredentialForm />
-                  <NxtLink className={styles.secondaryText} to="/settings?tab=dsh-extensions">
-                    打开完整扩展设置
-                  </NxtLink>
+              <AccessLevelControl
+                capabilities={agent.capabilities}
+                disabled={capabilityPending !== null}
+                onPresetCommit={(level) => void updateAccessLevel(level)}
+                onCapabilityChange={(capability, enabled) => void updateCapability(capability, enabled)}
+              />
+
+              <div className={styles.capabilitySubsection} id="agent-creator">
+                <div className={styles.capabilitySubsectionHeader}>
+                  <div>
+                    <strong>动态创造</strong>
+                    <small>让智能体根据对话中的需求创建并试用扩展。</small>
+                  </div>
+                  <SwitchControl
+                    label="允许动态创造"
+                    checked={agent.capabilities.dynamicCreation}
+                    disabled={capabilityPending !== null}
+                    onCheckedChange={(enabled) => void updateCapability('dynamicCreation', enabled)}
+                  />
                 </div>
-              ) : null}
-              <div className={styles.switchList}>
-                {capabilityCopy.map((item) => (
+                {agent.capabilities.dynamicCreation ? (
+                  activeDynamic ? (
+                    <div className={styles.creatorLaunchPanel}>
+                      <span>
+                        <strong>{dynamicRunLabel(activeDynamic.status)}</strong>
+                        <small>当前有 {activeDynamic.packages.length} 个临时扩展，可在创造工作台查看进度和结果。</small>
+                      </span>
+                      <Button variant="primary" onClick={() => void navigate(`/work/creator?agent=${agent.id}`)}>
+                        查看创造进度
+                      </Button>
+                    </div>
+                  ) : boundChannels.length > 0 ? (
+                    <div className={styles.creatorStartPanel}>
+                      <SelectField
+                        label="沟通频道"
+                        value={creatorChannelId}
+                        onValueChange={setCreatorChannelId}
+                        options={boundChannels.map((channel) => ({ value: channel.id, label: channel.name }))}
+                        helper="选择后进入该频道，继续和智能体讨论要新增的功能。"
+                      />
+                      <Button
+                        variant="primary"
+                        disabled={!creatorChannelId}
+                        onClick={() => void navigate(`/work/channels/${creatorChannelId}`)}
+                      >
+                        前往频道提出需求
+                      </Button>
+                    </div>
+                  ) : (
+                    <InlineFeedback tone="warning">绑定一个频道后，才能和这个智能体讨论要新增的功能。</InlineFeedback>
+                  )
+                ) : null}
+              </div>
+
+              <div className={styles.moreCapabilities}>
+                <div>
+                  <strong>更多能力</strong>
+                  <small>这些能力互不依赖，可以分别开启。</small>
+                </div>
+                {moreCapabilityCopy.map((item) => (
                   <SwitchField
                     key={item.key}
                     label={
@@ -672,32 +845,20 @@ export function AgentManagePage() {
                     onCheckedChange={(enabled) => void updateCapability(item.key, enabled)}
                   />
                 ))}
+                {!capabilityAvailability.webSearch.available ? (
+                  <div className={styles.webSearchSetup}>
+                    <InlineFeedback tone={agent.capabilities.webSearch ? 'warning' : 'info'}>
+                      {agent.capabilities.webSearch
+                        ? '网页搜索已开启，保存搜索服务凭据后即可使用。'
+                        : '需要网页搜索时，可先保存搜索服务凭据。'}
+                    </InlineFeedback>
+                    <WebSearchCredentialForm />
+                    <NxtLink className={styles.secondaryText} to="/settings?tab=dsh-extensions">
+                      打开搜索服务设置
+                    </NxtLink>
+                  </div>
+                ) : null}
               </div>
-              {agent.capabilities.dynamicCreation ? (
-                <div className={styles.sectionActionRow}>
-                  <span>
-                    <strong>动态创造已授权</strong>
-                    <small id="dynamic-creation-channel-reason">
-                      {recentChannel
-                        ? '在这个智能体的频道里描述需求；保存和启用仍是独立动作。'
-                        : '绑定频道后，才能在对话中描述需求。'}
-                    </small>
-                  </span>
-                  <span className={styles.rowActions}>
-                    <Button
-                      variant="primary"
-                      disabled={!recentChannel}
-                      aria-describedby="dynamic-creation-channel-reason"
-                      onClick={() => recentChannel && void navigate(`/work/channels/${recentChannel.id}`)}
-                    >
-                      打开频道去描述需求
-                    </Button>
-                    <Button variant="ghost" onClick={() => void navigate(`/work/creator?agent=${agent.id}`)}>
-                      查看创造运行
-                    </Button>
-                  </span>
-                </div>
-              ) : null}
             </div>
           </section>
 
@@ -761,17 +922,66 @@ export function AgentManagePage() {
         <SidePane collapsed={inspectorCollapsed} width={inspectorWidth} className={styles.inspectorPane}>
           <div ref={inspectorPaneRef} style={{ height: '100%', minHeight: 0 }}>
             <aside className={[styles.inspector, styles.workbenchInspector].join(' ')} aria-label="这个智能体">
+              <header className={styles.inspectorChromeHeader}>
+                <div>
+                  <span>智能体检查器</span>
+                  <strong>{agent.name}</strong>
+                </div>
+                <IconButton label="收起智能体检查器" onClick={toggleInspector}>
+                  <PanelRightClose size={15} aria-hidden="true" />
+                </IconButton>
+              </header>
               <section>
-                <h2>这个智能体</h2>
+                <h2>运行概况</h2>
                 <div className={styles.workbenchStatus}>
                   <div>
-                    <strong>{recentChannel ? `最近频道：${recentChannel.name}` : '还没有最近使用的频道'}</strong>
-                    <small>人设与模型保存后会创建新配置；能力授权每次修改都会独立保存。</small>
+                    <strong>{agent.state}</strong>
+                    <small>
+                      {agent.state === '空闲'
+                        ? '当前没有正在执行的智能体任务。'
+                        : '运行中的任务会在安全间隙使用兼容的新配置。'}
+                    </small>
                   </div>
                 </div>
-                {blockers.length > 0 ? (
+              </section>
+              <section>
+                <h2>配置摘要</h2>
+                <dl className={styles.inspectorFacts}>
+                  <div>
+                    <dt>默认模型</dt>
+                    <dd>{selectedModel ? `${selectedModel.providerName} · ${selectedModel.name}` : '未配置'}</dd>
+                  </div>
+                  <div>
+                    <dt>系统访问</dt>
+                    <dd>
+                      {agentAccessPresentation(agent.capabilities).label}（
+                      {agentAccessPresentation(agent.capabilities).code}）
+                    </dd>
+                  </div>
+                  <div>
+                    <dt>附加能力</dt>
+                    <dd>
+                      {
+                        [
+                          agent.capabilities.dynamicCreation,
+                          agent.capabilities.subagents,
+                          agent.capabilities.webSearch,
+                        ].filter(Boolean).length
+                      }{' '}
+                      项
+                    </dd>
+                  </div>
+                  <div>
+                    <dt>已关联扩展</dt>
+                    <dd>{agentExtensions.length} 个</dd>
+                  </div>
+                </dl>
+              </section>
+              <section>
+                <h2>需要处理</h2>
+                {actionableBlockers.length > 0 ? (
                   <div className={styles.agentBlockers}>
-                    {blockers.map((blocker) => (
+                    {actionableBlockers.map((blocker) => (
                       <Button
                         key={blocker.kind}
                         size="small"
@@ -786,24 +996,20 @@ export function AgentManagePage() {
                     ))}
                   </div>
                 ) : (
-                  <p className={styles.secondaryText}>运行中的任务会在安全间隙使用兼容的新配置。</p>
+                  <p className={styles.secondaryText}>当前配置没有待处理项。</p>
                 )}
               </section>
-              <section>
-                <h2>频道</h2>
-                {boundChannels.length > 0 ? (
-                  <div className={styles.compactList}>
-                    {boundChannels.map((channel) => (
-                      <NxtLink className={styles.boundChannelName} key={channel.id} to={`/work/channels/${channel.id}`}>
-                        <strong>{channel.name}</strong>
-                        <small>{channel.trigger}</small>
-                      </NxtLink>
-                    ))}
-                  </div>
-                ) : (
-                  <p className={styles.secondaryText}>绑定后才会出现在工作树里。</p>
-                )}
-              </section>
+              {activeDynamic ? (
+                <section>
+                  <h2>创造运行</h2>
+                  <p className={styles.secondaryText}>
+                    {activeDynamic.status} · {activeDynamic.packages.length} 个临时包
+                  </p>
+                  <Button size="small" variant="ghost" onClick={() => void navigate(`/work/creator?agent=${agent.id}`)}>
+                    打开创造工作台
+                  </Button>
+                </section>
+              ) : null}
             </aside>
           </div>
         </SidePane>

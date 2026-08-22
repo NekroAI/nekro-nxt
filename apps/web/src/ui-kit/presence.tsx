@@ -315,6 +315,8 @@ export function SidePane({
         width: collapsed ? 0 : width,
         opacity: collapsed ? 0 : 1,
         x: collapsed ? 12 : 0,
+        visibility: 'visible',
+        ...(collapsed ? { transitionEnd: { visibility: 'hidden' } } : {}),
       }}
       transition={
         reduce
@@ -327,11 +329,10 @@ export function SidePane({
         overflow: 'hidden',
         pointerEvents: collapsed ? 'none' : 'auto',
         flexShrink: 0,
-        visibility: collapsed ? 'hidden' : 'visible',
       }}
       aria-hidden={collapsed}
     >
-      <div style={{ width: collapsed ? 0 : width, height: '100%', minHeight: 0 }}>{children}</div>
+      <div style={{ width, height: '100%', minHeight: 0 }}>{children}</div>
     </motion.div>
   )
 }

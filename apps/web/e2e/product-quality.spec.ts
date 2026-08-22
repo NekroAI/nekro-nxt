@@ -30,6 +30,7 @@ const targetEpisodeId = EpisodeIdSchema.parse('eps_target')
 const visibleEventId = ChannelEventIdSchema.parse('evt_visible')
 const qqEventId = ChannelEventIdSchema.parse('evt_qqvisible')
 const qqCardEventId = ChannelEventIdSchema.parse('evt_qqcardmsg')
+const qqImageEventId = ChannelEventIdSchema.parse('evt_qqimagemsg')
 const sentEventId = ChannelEventIdSchema.parse('evt_sent')
 const resourceIntentId = OutboundIntentIdSchema.parse('out_resources')
 const senderMemberId = ChannelMemberIdSchema.parse('mbr_sender')
@@ -248,9 +249,19 @@ const channelMessages = HostApiContracts.listChannelMessages.response.parse({
           summary: '示例来源 · 示例分享',
           title: '示例分享',
           source: '示例来源',
+          targetUrl: 'https://example.test/share/qq-card',
+          previewAssetId: imageAssetId,
         },
       ],
       occurredAt: 1_725_000_015_000,
+    },
+    {
+      id: qqImageEventId,
+      channelId: qqChannelId,
+      role: 'member',
+      sender: { memberId: senderMemberId, displayName: '成员甲' },
+      parts: [{ type: 'image', assetId: imageAssetId, alt: '讨论截图' }],
+      occurredAt: 1_725_000_016_000,
     },
     {
       id: resourceIntentId,
@@ -319,20 +330,20 @@ const installProductRoutes = async (page: Page): Promise<void> => {
   await page.route('**/api/dynamic/*/inventory', (route) =>
     route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ rows: [] }) }),
   )
-  await page.route(`**/api/channels/${targetChannelId}/assets/${imageAssetId}`, (route) =>
+  await page.route(`**/api/channels/*/assets/${imageAssetId}`, (route) =>
     route.fulfill({
       status: 200,
       contentType: 'image/svg+xml',
       body: `<svg xmlns="http://www.w3.org/2000/svg" width="360" height="180" viewBox="0 0 360 180">
-        <rect width="360" height="180" rx="16" fill="#dff6fc"/>
-        <rect x="24" y="24" width="312" height="32" rx="8" fill="#0cadd8" opacity=".22"/>
-        <rect x="24" y="76" width="196" height="16" rx="8" fill="#007fa6" opacity=".42"/>
-        <rect x="24" y="108" width="268" height="12" rx="6" fill="#007fa6" opacity=".2"/>
-        <rect x="24" y="136" width="232" height="12" rx="6" fill="#007fa6" opacity=".2"/>
+        <rect width="360" height="180" rx="16" fill="#e2e8f2"/>
+        <rect x="24" y="24" width="312" height="32" rx="8" fill="#3fb1ea" opacity=".22"/>
+        <rect x="24" y="76" width="196" height="16" rx="8" fill="#466394" opacity=".42"/>
+        <rect x="24" y="108" width="268" height="12" rx="6" fill="#466394" opacity=".2"/>
+        <rect x="24" y="136" width="232" height="12" rx="6" fill="#b98c4a" opacity=".24"/>
       </svg>`,
     }),
   )
-  await page.route(`**/api/channels/${targetChannelId}/assets/${fileAssetId}`, (route) =>
+  await page.route(`**/api/channels/*/assets/${fileAssetId}`, (route) =>
     route.fulfill({ status: 200, contentType: 'text/plain; charset=utf-8', body: '资源下载正常' }),
   )
 }
@@ -392,8 +403,10 @@ test('three desktop viewports remain usable in both themes and reduced motion', 
       await expect(page.getByRole('heading', { name: '资料员的网页频道' })).toBeVisible()
       const headerActionsBox = await page.locator('[data-conversation-header-actions]').boundingBox()
       expect(headerActionsBox?.height ?? Number.POSITIVE_INFINITY).toBeLessThanOrEqual(36)
+      await expect(page.locator('[data-conversation-header-actions] > *').last()).toContainText('会话')
       await expect(page.getByText('请复核今天的记录。')).toBeVisible()
       await expect(page.getByRole('img', { name: '界面预览图' })).toBeVisible()
+      await expect(page.getByText('界面预览图', { exact: true })).toHaveCount(0)
       await expect
         .poll(() =>
           page.getByRole('img', { name: '界面预览图' }).evaluate((image: HTMLImageElement) => image.naturalWidth),
@@ -450,6 +463,23 @@ test('three desktop viewports remain usable in both themes and reduced motion', 
         .locator(':scope > div')
         .last()
       expect((await memberContent.boundingBox())?.x).toBeGreaterThan((await agentContent.boundingBox())?.x ?? 0)
+      const bubbleSurfaces = await Promise.all(
+        [memberContent, agentContent].map((content) =>
+          content.locator('[data-message-bubble]').evaluate((element) => {
+            const style = getComputedStyle(element)
+            return {
+              background: style.backgroundColor,
+              border: style.borderTopColor,
+              radius: style.borderRadius,
+              padding: style.padding,
+              marginTop: style.marginTop,
+              fontSize: style.fontSize,
+              lineHeight: style.lineHeight,
+            }
+          }),
+        ),
+      )
+      expect(bubbleSurfaces[0]).toEqual(bubbleSurfaces[1])
       const lastMessage = page.locator('article').last()
       const composer = page.locator('[data-channel-composer]').first()
       await lastMessage.scrollIntoViewIfNeeded()
@@ -460,7 +490,7 @@ test('three desktop viewports remain usable in both themes and reduced motion', 
       )
       const hierarchy = await page.evaluate(() => {
         const parentName = [...document.querySelectorAll('strong')].find((node) => node.textContent === '资料员')
-        const parent = parentName?.parentElement?.parentElement
+        const parent = parentName?.closest('a')
         const child = [...document.querySelectorAll('a')].find((node) => node.textContent?.includes('资料员的网页频道'))
         const group = child?.closest('section')
         return {
@@ -817,12 +847,12 @@ test('desktop splitters and appearance preferences persist and recover defaults'
 
   await page.getByRole('separator', { name: '调整检查器宽度' }).dblclick()
   await expect(page.getByRole('separator', { name: '调整检查器宽度' })).toHaveAttribute('aria-valuenow', '360')
-  await page.getByRole('button', { name: '收起检查器' }).click()
+  await page.getByRole('button', { name: '收起频道检查器' }).click()
   await expect(page.locator('[class*="inspectorPane"]')).toHaveAttribute('aria-hidden', 'true')
   await expect(page.getByRole('complementary', { name: '频道', includeHidden: true })).toBeHidden()
   await page.reload()
-  await expect(page.getByRole('button', { name: '展开检查器' })).toBeVisible()
-  await page.getByRole('button', { name: '展开检查器' }).click()
+  await expect(page.getByRole('button', { name: '展开频道检查器' })).toBeVisible()
+  await page.getByRole('button', { name: '展开频道检查器' }).click()
   await expect(page.getByRole('complementary', { name: '频道' })).toBeVisible()
 
   await page.goto('/settings?tab=appearance')
@@ -916,7 +946,21 @@ test('group conversations preserve sender and Mention semantics without exposing
   await expect(page.getByText('@成员乙', { exact: true })).toBeVisible()
   await expect(page.getByText('示例来源', { exact: true })).toBeVisible()
   await expect(page.getByText('示例分享', { exact: true })).toBeVisible()
-  await expect(page.locator('article[data-side="left"]').first()).toContainText('请和')
+  const mentionMessage = page.locator('article[data-side="left"]').filter({ hasText: '请和' })
+  const richMessage = page.locator('article[data-side="left"]').filter({ hasText: '示例分享' })
+  const richCardLink = richMessage.getByRole('link', { name: '打开卡片：示例分享' })
+  const imageMessage = page
+    .locator('article[data-side="left"]')
+    .filter({ has: page.getByRole('img', { name: '讨论截图' }) })
+  await expect(mentionMessage).not.toHaveAttribute('data-bubbleless', '')
+  await expect(richMessage).toHaveAttribute('data-bubbleless', '')
+  await expect(richCardLink).toHaveAttribute('href', 'https://example.test/share/qq-card')
+  await expect(richCardLink).toHaveAttribute('target', '_blank')
+  await expect(richCardLink.getByRole('img', { name: '示例分享' })).toBeVisible()
+  await expect(richMessage.getByRole('button')).toHaveCount(0)
+  await expect(page.getByRole('dialog', { name: '示例分享' })).toHaveCount(0)
+  await expect(imageMessage).toHaveAttribute('data-bubbleless', '')
+  await expect(mentionMessage).toContainText('请和')
   await expect(page.getByText('请先绑定智能体', { exact: true })).toHaveCount(1)
   const sendButton = page.getByRole('button', { name: '发到频道' })
   await expect(sendButton).toBeVisible()
@@ -939,7 +983,7 @@ test('redesigned relationship and lifecycle pages stay legible across representa
     { route: '/work', text: '资料员', width: 1440, height: 900, colorScheme: 'light' },
     {
       route: `/work/agents/${targetAgentId}?tab=capabilities`,
-      text: '完整文件访问',
+      text: '系统访问等级',
       width: 1100,
       height: 720,
       colorScheme: 'dark',
@@ -953,6 +997,25 @@ test('redesigned relationship and lifecycle pages stay legible across representa
     },
     { route: '/work/creator', text: '与资料员协作创造', width: 1920, height: 1080, colorScheme: 'dark' },
     { route: '/extensions', text: '贡献能力', width: 1920, height: 1080, colorScheme: 'light' },
+    { route: '/extensions', text: '贡献能力', width: 1920, height: 900, colorScheme: 'dark' },
+    { route: '/settings?tab=models', text: '供应商配置', width: 1440, height: 900, colorScheme: 'light' },
+    { route: '/settings?tab=models', text: '供应商配置', width: 1920, height: 900, colorScheme: 'dark' },
+    {
+      route: '/connections',
+      text: '网页聊天由当前设备管理，不需要配置账号凭据。',
+      width: 1920,
+      height: 900,
+      colorScheme: 'dark',
+    },
+    {
+      route: '/settings?tab=system-extensions',
+      text: '已安装适配器',
+      width: 1440,
+      height: 900,
+      colorScheme: 'dark',
+    },
+    { route: '/settings?tab=appearance', text: '月潮观测所', width: 1440, height: 900, colorScheme: 'light' },
+    { route: '/work/agents/new', text: '创建智能体', width: 1440, height: 900, colorScheme: 'dark' },
   ] as const
 
   for (const scene of scenes) {
@@ -960,6 +1023,17 @@ test('redesigned relationship and lifecycle pages stay legible across representa
     await page.emulateMedia({ colorScheme: scene.colorScheme, reducedMotion: 'reduce' })
     await page.goto(scene.route)
     await expect(page.getByText(scene.text).first()).toBeVisible()
+    if (scene.route === '/connections' || scene.route === '/extensions' || scene.route === '/settings?tab=models') {
+      await expect(page.locator('[data-stage-layer="in"]').last()).toHaveCSS('background-color', 'rgba(0, 0, 0, 0)')
+    }
+    if (scene.route === '/work') {
+      const accessChip = page.locator('[aria-label="系统访问：Lv.0，基础权限"]').first()
+      await expect(accessChip).toBeVisible()
+      await expect(accessChip).toHaveText('Lv.0')
+      await accessChip.hover()
+      await expect(page.getByRole('tooltip').getByText('Lv.0 · 基础权限')).toBeVisible()
+      await expect(page.getByRole('tooltip').getByText('不授予文件读写、命令运行或完整访问。')).toBeVisible()
+    }
     if (scene.route === '/connections') {
       await expect(page.getByText('平台账号', { exact: true })).toBeVisible()
       await expect(page.getByRole('heading', { name: '网页聊天' })).toBeVisible()
@@ -975,6 +1049,9 @@ test('redesigned relationship and lifecycle pages stay legible across representa
         .locator('section[id^="agent-"]')
         .evaluateAll((sections) => sections.map((section) => section.getBoundingClientRect().width))
       expect(Math.max(...sectionWidths) - Math.min(...sectionWidths)).toBeLessThanOrEqual(1)
+      if (scene.route.includes('tab=capabilities')) {
+        await page.locator('#agent-capabilities').scrollIntoViewIfNeeded()
+      }
     }
     await assertViewportIntegrity(page)
     await capture(
@@ -983,6 +1060,29 @@ test('redesigned relationship and lifecycle pages stay legible across representa
       `redesign-${scene.route.split(/[/?]/u).filter(Boolean).join('-')}-${scene.colorScheme}`,
     )
   }
+
+  await page.unroute('**/api/snapshot')
+  await page.route('**/api/snapshot', (route) =>
+    route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({ ...productSnapshot, dynamic: [] }),
+    }),
+  )
+  await page.setViewportSize({ width: 1440, height: 900 })
+  await page.emulateMedia({ colorScheme: 'dark', reducedMotion: 'reduce' })
+  await page.goto(`/work/agents/${targetAgentId}?tab=capabilities`)
+  const creatorSection = page.locator('#agent-creator')
+  await creatorSection.scrollIntoViewIfNeeded()
+  const creatorChannel = page.getByRole('combobox', { name: '沟通频道' })
+  const creatorAction = page.getByRole('button', { name: '前往频道提出需求' })
+  await expect(creatorChannel).toBeVisible()
+  await expect(creatorAction).toBeVisible()
+  const creatorAlignment = await Promise.all([creatorChannel.boundingBox(), creatorAction.boundingBox()])
+  expect(
+    Math.abs((creatorAlignment[0]?.y ?? 0) - (creatorAlignment[1]?.y ?? Number.POSITIVE_INFINITY)),
+  ).toBeLessThanOrEqual(2)
+  await capture(page, testInfo, 'redesign-agent-capabilities-no-run-dark')
 
   await page.goto('/connections')
   await page
@@ -1636,8 +1736,18 @@ test('the creation page reuses the editor structure and submits explicit capabil
   await page.getByLabel('名称').fill('研究员')
   await page.getByLabel('人设').fill('先核对证据，再给出结论。')
   await expect(page.getByRole('combobox', { name: '默认模型' })).toContainText('DeepSeek V4 Flash')
-  await page.getByRole('switch', { name: '动态创造' }).click()
-  await page.getByRole('switch', { name: '开发命令' }).click()
+  await page.getByRole('switch', { name: '允许动态创造' }).click()
+  await page.getByRole('button', { name: '展开逐项设置' }).click()
+  await page.getByRole('switch', { name: '运行命令' }).click()
+  await expect
+    .poll(() =>
+      page
+        .locator('[data-access-granular]')
+        .evaluate((element) => element.parentElement?.getBoundingClientRect().height ?? 0),
+    )
+    .toBeGreaterThan(170)
+  await expect(page.getByRole('slider', { name: '系统访问等级' })).toHaveValue('0')
+  await expect(page.getByText('自定义权限（Lv.C）', { exact: true })).toBeVisible()
   await capture(page, testInfo, 'agent-create-confirmation')
   await page.getByRole('button', { name: '创建智能体' }).click()
   await expect(page).toHaveURL(new RegExp(`/work/channels/${targetChannelId}$`, 'u'))
@@ -1666,7 +1776,9 @@ test('desktop shell keeps a 48px top bar and a permanently available object pane
   const topBar = page.locator('[data-window-top-bar]')
   const pane = page.locator('aside[aria-label="对象列"]')
   expect((await topBar.boundingBox())?.height).toBe(48)
-  await expect(topBar).toHaveText('NekroNxt')
+  await expect(topBar.getByText('NekroNxt', { exact: true })).toBeVisible()
+  await expect(topBar.getByText('月潮观测所', { exact: true })).toBeVisible()
+  await expect(topBar.getByText('CALM · PRECISE · ALIVE', { exact: true })).toBeVisible()
   await expect(pane).toBeVisible()
   await expect(page.getByRole('button', { name: /收起对象列|展开对象列/u })).toHaveCount(0)
   await expect(page.getByRole('separator', { name: '调整对象列宽度' })).toBeVisible()
@@ -1912,6 +2024,24 @@ test('message composer sends with Enter and keeps Shift+Enter for a new line', a
 test('long message history stays above a growing multiline composer', async ({ page }, testInfo) => {
   const failures = installRuntimeFailureGate(page)
   await installProductRoutes(page)
+  const unbroken = 'NekroNxtOverflowGuard'.repeat(80)
+  const overflowProbe = [
+    `长记录 31：${unbroken}`,
+    '',
+    `超长路径：/data/workspaces/agt_example/${'nested-directory/'.repeat(40)}artifact.json`,
+    '',
+    `行内代码：\`${unbroken}\``,
+    '',
+    `长链接：[查看记录](https://example.test/${'very-long-path/'.repeat(45)}detail)`,
+    '',
+    '| 项目 | 内容 |',
+    '| --- | --- |',
+    `| 宽表格 | ${unbroken} |`,
+    '',
+    '```text',
+    unbroken,
+    '```',
+  ].join('\n')
   const longMessages = HostApiContracts.listChannelMessages.response.parse({
     messages: Array.from({ length: 32 }, (_, index) => ({
       id: ChannelEventIdSchema.parse(`evt_longhistory${String(index).padStart(2, '0')}`),
@@ -1920,10 +2050,7 @@ test('long message history stays above a growing multiline composer', async ({ p
       parts: [
         {
           type: 'text' as const,
-          text:
-            index === 30
-              ? '长记录 31：这是一段较长的后台用户消息，用于检查右侧消息面在连续中文、多行换行和较宽桌面画布中仍然贴合内容，不会扩成横贯画布的大卡片。'
-              : `长记录 ${index + 1}：用于验证消息列表底部不会被输入框遮挡。`,
+          text: index === 30 ? overflowProbe : `长记录 ${index + 1}：用于验证消息列表底部不会被输入框遮挡。`,
         },
       ],
       occurredAt: 1_725_001_000_000 + index * 1_000,
@@ -1956,6 +2083,21 @@ test('long message history stays above a growing multiline composer', async ({ p
   await expect(page.locator('article[data-side]')).toHaveCount(16)
   expect(requestedLimits[0]).toBe(16)
   await expect(page.getByRole('button', { name: '回到底部' })).toHaveCount(0)
+
+  const overflowGeometry = await page.evaluate(() => {
+    const list = document.querySelector<HTMLElement>('[data-channel-message-list]')!
+    return {
+      listClientWidth: list.clientWidth,
+      listScrollWidth: list.scrollWidth,
+      documentClientWidth: document.documentElement.clientWidth,
+      documentScrollWidth: document.documentElement.scrollWidth,
+      bodyClientWidth: document.body.clientWidth,
+      bodyScrollWidth: document.body.scrollWidth,
+    }
+  })
+  expect(overflowGeometry.listScrollWidth).toBeLessThanOrEqual(overflowGeometry.listClientWidth)
+  expect(overflowGeometry.documentScrollWidth).toBeLessThanOrEqual(overflowGeometry.documentClientWidth)
+  expect(overflowGeometry.bodyScrollWidth).toBeLessThanOrEqual(overflowGeometry.bodyClientWidth)
 
   await messageList.evaluate((element) => {
     element.scrollTop = Math.max(120, element.scrollHeight / 3)

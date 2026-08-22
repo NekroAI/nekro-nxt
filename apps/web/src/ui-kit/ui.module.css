@@ -4,10 +4,10 @@
   align-items: center;
   justify-content: center;
   gap: 7px;
-  min-height: 34px;
+  min-height: 36px;
   border: 1px solid transparent;
-  border-radius: 7px;
-  padding: 0 13px;
+  border-radius: var(--nxt-radius-control);
+  padding: 0 14px;
   color: var(--nxt-text-primary);
   background: transparent;
   font-size: 13px;
@@ -48,6 +48,9 @@
 .primary {
   color: var(--nxt-accent-foreground);
   background: var(--nxt-accent);
+  box-shadow:
+    inset 0 1px rgb(255 255 255 / 14%),
+    0 1px 2px rgb(23 42 69 / 18%);
 }
 
 .primary:not(:disabled):hover {
@@ -63,6 +66,7 @@
 .secondary {
   border-color: var(--nxt-border-default);
   background: var(--nxt-bg-surface);
+  box-shadow: var(--nxt-shadow-control);
 }
 
 .secondary:not(:disabled):hover,
@@ -82,21 +86,22 @@
 }
 
 .small {
-  min-height: 28px;
-  padding: 0 9px;
+  min-height: 30px;
+  padding: 0 10px;
   font-size: 12px;
 }
 
 .iconButton {
-  width: 34px;
-  min-width: 34px;
+  width: 36px;
+  min-width: 36px;
   padding: 0;
 }
 
 .panel {
   border: 1px solid var(--nxt-border-subtle);
-  border-radius: 10px;
+  border-radius: var(--nxt-radius-panel);
   background: var(--nxt-bg-surface);
+  box-shadow: var(--nxt-shadow-control);
 }
 
 .badge {
@@ -173,10 +178,10 @@
 .textarea,
 .selectTrigger {
   width: 100%;
-  min-height: 36px;
+  min-height: 40px;
   border: 1px solid var(--nxt-border-default);
-  border-radius: 7px;
-  padding: 7px 10px;
+  border-radius: var(--nxt-radius-control);
+  padding: 8px 11px;
   color: var(--nxt-text-primary);
   background: var(--nxt-bg-surface);
   transition:
@@ -248,8 +253,8 @@
 .switchRoot {
   position: relative;
   display: flex;
-  width: 34px;
-  height: 19px;
+  width: 38px;
+  height: 22px;
   flex: 0 0 auto;
   align-items: center;
   border: 0;
@@ -271,8 +276,8 @@
 
 .switchThumb {
   display: block;
-  width: 15px;
-  height: 15px;
+  width: 18px;
+  height: 18px;
   border-radius: 50%;
   background: #fff;
   box-shadow: 0 1px 3px rgb(0 0 0 / 22%);
@@ -281,7 +286,7 @@
 }
 
 .switchRoot[data-state='checked'] .switchThumb {
-  transform: translateX(17px);
+  transform: translateX(18px);
 }
 
 .selectTrigger {
@@ -347,7 +352,8 @@
   position: fixed;
   z-index: var(--nxt-dialog-overlay-layer, var(--nxt-layer-modal-base));
   inset: 0;
-  background: rgb(3 11 17 / 42%);
+  background: rgb(6 16 30 / 54%);
+  backdrop-filter: blur(2px);
 }
 
 .dialogContent {
@@ -367,12 +373,25 @@
   box-shadow: var(--nxt-shadow-dialog);
 }
 
+.dialogContent::before {
+  position: absolute;
+  z-index: 1;
+  top: 0;
+  right: 0;
+  left: 0;
+  height: 2px;
+  background: linear-gradient(90deg, var(--nxt-brand-brass), var(--nxt-brand-lumen), transparent 72%);
+  content: '';
+  pointer-events: none;
+}
+
 .dialogHeader {
   display: flex;
   align-items: flex-start;
   gap: var(--nxt-space-4);
   padding: var(--nxt-space-5) var(--nxt-space-5) var(--nxt-space-4);
   border-bottom: 1px solid var(--nxt-border-subtle);
+  background: color-mix(in srgb, var(--nxt-bg-subtle) 42%, var(--nxt-bg-elevated));
 }
 
 .dialogHeading {
@@ -388,7 +407,7 @@
 
 .dialogDescription {
   margin: 8px 0 0;
-  color: var(--nxt-text-secondary);
+  color: color-mix(in srgb, var(--nxt-text-primary) 84%, var(--nxt-text-secondary));
   font-size: 13px;
 }
 
@@ -439,7 +458,7 @@
   gap: var(--nxt-space-2);
   padding: var(--nxt-space-4) var(--nxt-space-5);
   border-top: 1px solid var(--nxt-border-subtle);
-  background: var(--nxt-bg-elevated);
+  background: color-mix(in srgb, var(--nxt-bg-subtle) 48%, var(--nxt-bg-elevated));
 }
 
 .tabsList {
@@ -487,7 +506,7 @@
   max-width: min(320px, calc(100vw - 24px));
   overflow: hidden;
   border: 1px solid var(--nxt-border-default);
-  border-radius: var(--nxt-radius-md);
+  border-radius: var(--nxt-radius-popover);
   padding: var(--nxt-space-1);
   color: var(--nxt-text-primary);
   background: var(--nxt-bg-elevated);
@@ -588,7 +607,7 @@
   min-width: 0;
   min-height: 0;
   flex-direction: column;
-  background: var(--nxt-bg-surface);
+  background: transparent;
 }
 
 .stageLayer[data-stage-layer='in'] {

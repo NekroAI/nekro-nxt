@@ -7,7 +7,6 @@
   background: var(--nxt-bg-canvas);
 }
 
-.windowTopBar,
 .shellBody {
   display: grid;
   min-width: 0;
@@ -17,30 +16,50 @@
 .windowTopBar {
   position: relative;
   z-index: var(--nxt-layer-sticky);
+  display: flex;
+  align-items: center;
+  gap: 18px;
   min-height: 48px;
-  border-bottom: 1px solid var(--nxt-border-subtle);
-  background: color-mix(in srgb, var(--nxt-bg-sidebar) 94%, transparent);
+  padding-right: calc(var(--nxt-window-controls-right) + 14px);
+  padding-left: calc(var(--nxt-window-controls-left) + 14px);
+  color: var(--nxt-rail-text-strong);
+  background:
+    radial-gradient(circle at 26% -90%, rgb(107 195 244 / 16%), transparent 46%),
+    linear-gradient(100deg, var(--nxt-moon-900), #13233a 62%, var(--nxt-moon-950));
   -webkit-app-region: drag;
 }
 
+.windowTopBar::after {
+  position: absolute;
+  right: var(--nxt-window-controls-right);
+  bottom: 0;
+  left: var(--nxt-window-controls-left);
+  height: 1px;
+  background: linear-gradient(90deg, var(--nxt-brand-brass), var(--nxt-brand-lumen) 22%, transparent 58%);
+  content: '';
+  opacity: 0.68;
+}
+
 .windowBrand {
-  display: grid;
-  grid-column: 1;
-  place-items: center;
-  border-right: 1px solid var(--nxt-border-subtle);
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 10px;
+  min-width: 154px;
 }
 
 .windowObjectTitle {
   display: flex;
   min-width: 0;
-  grid-column: 2;
+  flex: 1;
   align-items: center;
   overflow: hidden;
-  padding: 0 12px;
-  color: var(--nxt-text-secondary);
-  font-size: 12px;
-  font-weight: 650;
+  color: var(--nxt-moon-300);
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.22em;
   white-space: nowrap;
+  opacity: 0.72;
 }
 
 .shellBody {
@@ -53,13 +72,19 @@
 }
 
 .rail {
+  --nxt-accent: var(--nxt-lumen-300);
+  --nxt-accent-soft: var(--nxt-rail-hover);
+  --nxt-text-muted: var(--nxt-rail-text);
+  --nxt-text-primary: var(--nxt-rail-text-strong);
   display: flex;
   min-height: 0;
   flex-direction: column;
   align-items: center;
   padding: 12px 0;
-  border-right: 1px solid var(--nxt-border-subtle);
-  background: var(--nxt-bg-sidebar);
+  border-right: 1px solid color-mix(in srgb, var(--nxt-moon-300) 14%, transparent);
+  background:
+    linear-gradient(180deg, color-mix(in srgb, var(--nxt-moon-800) 62%, transparent), transparent 46%),
+    var(--nxt-rail-bg);
 }
 
 .rail nav {
@@ -69,22 +94,32 @@
   gap: 8px;
 }
 
-.mark {
-  position: relative;
-  width: 24px;
-  height: 24px;
-  border-radius: var(--nxt-radius-md);
-  background: linear-gradient(145deg, var(--nxt-cyan-300), #168bd2);
+.brandMark {
+  display: block;
+  width: 28px;
+  height: 28px;
+  flex: 0 0 auto;
 }
 
-.mark::after {
-  position: absolute;
-  inset: 6px;
-  border: 2px solid rgb(255 255 255 / 88%);
-  border-left-color: transparent;
-  border-radius: 50%;
-  content: '';
-  transform: rotate(-35deg);
+.brandCopy {
+  display: grid;
+  gap: 0;
+  line-height: 1;
+}
+
+.brandCopy strong {
+  color: var(--nxt-rail-text-strong);
+  font-size: 13px;
+  font-weight: 750;
+  letter-spacing: -0.01em;
+}
+
+.brandCopy small {
+  margin-top: 4px;
+  color: var(--nxt-moon-300);
+  font-size: 8px;
+  font-weight: 650;
+  letter-spacing: 0.12em;
 }
 
 .railBtn {
@@ -103,6 +138,7 @@
 
 .railBtn:hover {
   color: var(--nxt-text-primary);
+  background: var(--nxt-rail-hover);
 }
 
 .railBtn > :not([data-nav-mark]) {
@@ -127,10 +163,10 @@
   color: var(--nxt-text-muted);
 }
 
-.railTheme:hover,
-.railTheme:focus-visible {
-  color: var(--nxt-accent);
-  background: var(--nxt-bg-hover);
+.rail .railTheme:not(:disabled):hover,
+.rail .railTheme:not(:disabled):focus-visible {
+  color: var(--nxt-lumen-300);
+  background: var(--nxt-rail-hover);
 }
 
 .themeIcon {
@@ -225,6 +261,25 @@
   padding: 32px;
   color: var(--nxt-text-secondary);
   text-align: center;
+  background:
+    radial-gradient(circle at 78% 28%, color-mix(in srgb, var(--nxt-brand-lumen) 6%, transparent), transparent 30%),
+    var(--nxt-bg-canvas);
+}
+
+.centeredState > div {
+  width: min(520px, 100%);
+  border: 1px solid var(--nxt-border-subtle);
+  border-radius: var(--nxt-radius-panel);
+  padding: 40px 32px;
+  background:
+    radial-gradient(
+      circle at calc(100% - 48px) 48px,
+      transparent 24px,
+      var(--nxt-brand-line) 25px 26px,
+      transparent 27px
+    ),
+    var(--nxt-bg-surface);
+  box-shadow: var(--nxt-shadow-popover);
 }
 
 .centeredState h1 {

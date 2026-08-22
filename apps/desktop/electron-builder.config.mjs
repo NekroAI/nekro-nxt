@@ -14,6 +14,7 @@ const config = {
   extraMetadata: { name: distribution.artifactSlug },
   directories: {
     app: 'dist',
+    buildResources: `resources/${channel}`,
     output: `release/${channel}`,
   },
   files: ['main.mjs', 'main.mjs.map', 'product-release.json', 'package.json'],
@@ -26,6 +27,7 @@ const config = {
   npmRebuild: false,
   mac: {
     category: 'public.app-category.productivity',
+    icon: 'icon.icns',
     identity: null,
     notarize: false,
     // server-runtime 同时携带 darwin-x64/arm64 N-API prebuild，并在运行时按
@@ -36,6 +38,7 @@ const config = {
   },
   win: {
     executableName: distribution.executableName,
+    icon: 'icon.ico',
     artifactName: `${distribution.artifactSlug}-win-x64-v\${version}-setup.\${ext}`,
     // 未签名阶段跳过依赖 Wine 的 rcedit/sign；NSIS GUID 与安装身份仍完整保留。
     signAndEditExecutable: false,
@@ -50,10 +53,25 @@ const config = {
     createStartMenuShortcut: true,
     shortcutName: distribution.productName,
     deleteAppDataOnUninstall: false,
+    installerIcon: 'installerIcon.ico',
+    uninstallerIcon: 'uninstallerIcon.ico',
+    installerSidebar: 'installerSidebar.bmp',
+    uninstallerSidebar: 'uninstallerSidebar.bmp',
+    installerHeader: 'installerHeader.bmp',
+  },
+  dmg: {
+    background: 'dmg-background.png',
+    iconSize: 108,
+    window: { width: 660, height: 420 },
+    contents: [
+      { x: 190, y: 220, type: 'file' },
+      { x: 470, y: 220, type: 'link', path: '/Applications' },
+    ],
   },
   linux: {
     category: 'Utility',
     executableName: distribution.linuxExecutableName,
+    icon: 'icons',
     artifactName: `${distribution.artifactSlug}-linux-x64-v\${version}.\${ext}`,
     target: [{ target: 'AppImage', arch: ['x64'] }],
   },

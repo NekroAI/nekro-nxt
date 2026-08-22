@@ -182,10 +182,23 @@ describe('QQ inbound rich payload', () => {
     })
     expect(
       parseQQRichPayload(
-        { embed: { title: '分享标题', description: '说明', thumbnail: { url: 'https://cdn.test/thumb.png' } } },
+        {
+          embed: {
+            title: '分享标题',
+            description: '说明',
+            url: 'https://example.test/watch/1',
+            thumbnail: { url: 'https://cdn.test/thumb.png' },
+          },
+        },
         undefined,
       ).rich,
-    ).toMatchObject({ kind: 'card', title: '分享标题', summary: '说明', previewUrl: 'https://cdn.test/thumb.png' })
+    ).toMatchObject({
+      kind: 'card',
+      title: '分享标题',
+      summary: '说明',
+      targetUrl: 'https://example.test/watch/1',
+      previewUrl: 'https://cdn.test/thumb.png',
+    })
     expect(
       parseQQRichPayload(
         {
@@ -211,7 +224,7 @@ describe('QQ inbound rich payload', () => {
     })
     expect(parseQQRichPayload({}, '[转发的聊天记录]\n成员甲：你好\n成员乙：收到')).not.toHaveProperty('content')
     const record = parseQQChatRecordDump(
-      '[群聊的聊天记录] === 消息 1 === [消息内容] 你好 [发送者] 成员甲\n\n=== 消息 2 === [消息内容] [卡片消息] 小程序 摘要: [QQ小程序]示例分享 preview: https://cdn.test/preview.jpg source: 示例来源 source_logo: https://cdn.test/logo.jpg title: 示例分享 [发送者] 成员甲 [消息类型] 卡片消息\n\n=== 消息 3 === [发送者] 成员甲 [附件1] 类型:图片 文件名:photo.png 尺寸:100x100 大小:12.0KB URL:https://cdn.test/download?fileid=abc',
+      '[群聊的聊天记录] === 消息 1 === [消息内容] 你好 [发送者] 成员甲\n\n=== 消息 2 === [消息内容] [卡片消息] 小程序 摘要: [QQ小程序]示例分享 preview: https://cdn.test/preview.jpg url: https://example.test/share/1 source: 示例来源 source_logo: https://cdn.test/logo.jpg title: 示例分享 [发送者] 成员甲 [消息类型] 卡片消息\n\n=== 消息 3 === [发送者] 成员甲 [附件1] 类型:图片 文件名:photo.png 尺寸:100x100 大小:12.0KB URL:https://cdn.test/download?fileid=abc',
     )
     expect(record).toMatchObject({
       kind: 'forward',
@@ -227,6 +240,7 @@ describe('QQ inbound rich payload', () => {
           summary: '示例来源 · 示例分享',
           title: '示例分享',
           source: '示例来源',
+          targetUrl: 'https://example.test/share/1',
           previewUrl: 'https://cdn.test/preview.jpg',
         },
       },
@@ -274,7 +288,7 @@ describe('QQ inbound rich payload', () => {
       group_openid: 'group-openid',
       author: { member_openid: 'sender-openid', username: '成员甲' },
       content:
-        '[卡片消息] 小程序 摘要: [QQ小程序]示例分享 title: 示例分享 preview: https://cdn.test/preview.jpg source: 示例来源',
+        '[卡片消息] 小程序 摘要: [QQ小程序]示例分享 title: 示例分享 preview: https://cdn.test/preview.jpg jump_url: https://example.test/share/2 source: 示例来源',
     })
     expect(decoded).not.toHaveProperty('content')
     expect(decoded).toMatchObject({
@@ -283,6 +297,7 @@ describe('QQ inbound rich payload', () => {
         summary: '示例来源 · 示例分享',
         title: '示例分享',
         source: '示例来源',
+        targetUrl: 'https://example.test/share/2',
         previewUrl: 'https://cdn.test/preview.jpg',
       },
     })

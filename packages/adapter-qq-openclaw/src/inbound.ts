@@ -117,6 +117,7 @@ export type QQForwardItem = {
     readonly summary: string
     readonly title?: string
     readonly source?: string
+    readonly targetUrl?: string
     readonly previewUrl?: string
   }
   readonly attachmentUrl?: string
@@ -129,12 +130,24 @@ export type QQDecodedRich = {
   readonly summary: string
   readonly title?: string
   readonly source?: string
+  readonly targetUrl?: string
   readonly previewUrl?: string
   readonly items?: readonly QQForwardItem[]
   readonly extension?: Readonly<Record<string, string>>
 }
 
-const CARD_DUMP_KEYS = ['摘要', 'title', 'preview', 'source_logo', 'source'] as const
+const CARD_DUMP_KEYS = ['jump_url', 'source_logo', '摘要', 'title', 'preview', 'source', 'url', '链接', '跳转'] as const
+
+const httpTargetUrl = (...values: readonly unknown[]): string | undefined => {
+  const candidate = text(...values)
+  if (!candidate || candidate.length > 2048) return undefined
+  try {
+    const parsed = new URL(candidate)
+    return parsed.protocol === 'http:' || parsed.protocol === 'https:' ? parsed.href : undefined
+  } catch {
+    return undefined
+  }
+}
 
 const compactExtension = (fields: Readonly<Record<string, string>>): Readonly<Record<string, string>> | undefined => {
   const entries = Object.entries(fields).filter(([, value]) => value.trim().length > 0)
@@ -145,6 +158,7 @@ const richFromFields = (kind: string, fields: Readonly<Record<string, string>>):
   const title = fields['title']?.trim()
   const source = fields['source']?.trim()
   const previewUrl = fields['preview']?.trim()
+  const targetUrl = httpTargetUrl(fields['jump_url'], fields['url'], fields['链接'], fields['跳转'])
   const dumpSummary = fields['摘要']?.replace(/^\[QQ小程序\]/u, '').trim()
   if (kind === 'forward') {
     const preview = dumpSummary || title
@@ -163,6 +177,7 @@ const richFromFields = (kind: string, fields: Readonly<Record<string, string>>):
     summary,
     ...(title ? { title } : {}),
     ...(source ? { source } : {}),
+    ...(targetUrl ? { targetUrl } : {}),
     ...(previewUrl ? { previewUrl } : {}),
     ...(extension === undefined ? {} : { extension }),
   }
@@ -207,7 +222,9 @@ const parseQQArk = (value: unknown): QQDecodedRich | undefined => {
   if (title) fields['title'] = title
   if (summary) fields['摘要'] = summary
   const preview = text(fields['preview'], fields['img'], fields['image'])
+  const targetUrl = httpTargetUrl(fields['jump_url'], fields['url'], fields['link'])
   if (preview) fields['preview'] = preview
+  if (targetUrl) fields['url'] = targetUrl
   return richFromFields('ark', fields)
 }
 
@@ -218,11 +235,13 @@ const parseQQEmbed = (value: unknown): QQDecodedRich | undefined => {
   const fields: Record<string, string> = {}
   const title = text(embed['title'])
   const summary = text(embed['description'], embed['prompt'], title)
-  const preview = text(thumbnail['url'], embed['url'])
+  const preview = text(thumbnail['url'])
+  const targetUrl = httpTargetUrl(embed['url'])
   const source = text(embed['source'], record(embed['provider'])['name'])
   if (title) fields['title'] = title
   if (summary) fields['摘要'] = summary
   if (preview) fields['preview'] = preview
+  if (targetUrl) fields['url'] = targetUrl
   if (source) fields['source'] = source
   return richFromFields('card', fields)
 }
@@ -275,6 +294,7 @@ const parseForwardSegment = (segment: string): QQForwardItem | undefined => {
             summary: card.summary,
             ...(card.title === undefined ? {} : { title: card.title }),
             ...(card.source === undefined ? {} : { source: card.source }),
+            ...(card.targetUrl === undefined ? {} : { targetUrl: card.targetUrl }),
             ...(card.previewUrl === undefined ? {} : { previewUrl: card.previewUrl }),
           },
         }),

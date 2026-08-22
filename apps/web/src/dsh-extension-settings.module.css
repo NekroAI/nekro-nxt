@@ -2,10 +2,9 @@
   display: grid;
   grid-template-columns: minmax(220px, 280px) minmax(0, 1fr);
   min-height: 520px;
-  overflow: hidden;
-  border: 1px solid var(--nxt-border-subtle);
-  border-radius: var(--nxt-radius-md);
-  background: var(--nxt-bg-surface);
+  gap: var(--nxt-space-5);
+  overflow: visible;
+  background: transparent;
 }
 
 .pluginList {
@@ -13,10 +12,9 @@
   flex-direction: column;
   gap: var(--nxt-space-1);
   min-width: 0;
-  padding: var(--nxt-space-3);
+  padding: 0;
   overflow: auto;
-  border-right: 1px solid var(--nxt-border-subtle);
-  background: var(--nxt-bg-subtle);
+  background: transparent;
 }
 
 .listHeading {
@@ -62,6 +60,9 @@
   min-width: 0;
   padding: var(--nxt-space-5);
   overflow: auto;
+  border-radius: var(--nxt-radius-panel);
+  background: var(--nxt-bg-surface);
+  box-shadow: var(--nxt-shadow-control);
 }
 
 .detailHeader,
@@ -174,7 +175,7 @@
   min-width: 0;
   margin: 0;
   padding: var(--nxt-space-4);
-  border: 1px solid var(--nxt-border-subtle);
+  border: 0;
   border-radius: var(--nxt-radius-md);
   background: var(--nxt-bg-subtle);
 }
@@ -243,8 +244,9 @@
 .collectionRow {
   display: grid;
   gap: var(--nxt-space-2);
-  padding-bottom: var(--nxt-space-3);
-  border-bottom: 1px solid var(--nxt-border-subtle);
+  padding: var(--nxt-space-3);
+  border-radius: var(--nxt-radius-sm);
+  background: var(--nxt-bg-subtle);
 }
 
 .collectionActions,
@@ -281,7 +283,7 @@
   position: sticky;
   bottom: 0;
   padding: var(--nxt-space-3) 0 0;
-  border-top: 1px solid var(--nxt-border-subtle);
+  border-top: 0;
   color: var(--nxt-text-muted);
   background: var(--nxt-bg-surface);
   font-size: 12px;

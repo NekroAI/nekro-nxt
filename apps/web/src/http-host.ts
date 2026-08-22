@@ -163,6 +163,16 @@ const isTriggerPolicy = (value: unknown): value is 'always' | 'mentioned-or-repl
 
 const nonEmptyLabel = (value: string | undefined, fallback: string): string => value?.trim() || fallback
 
+const safeExternalTargetUrl = (value: unknown): string | undefined => {
+  if (typeof value !== 'string' || value.length > 2048) return undefined
+  try {
+    const parsed = new URL(value)
+    return parsed.protocol === 'http:' || parsed.protocol === 'https:' ? parsed.href : undefined
+  } catch {
+    return undefined
+  }
+}
+
 const projectAdapterProperty = (
   property: SnapshotJson['connectionAdapters'][number]['configSchema']['properties'][string],
 ): AdapterConfigurationProperty => {
@@ -250,6 +260,7 @@ const projectConversationMessage = (
         const card = isRecord(cardRaw) ? cardRaw : undefined
         const imageAssetId = typeof item['imageAssetId'] === 'string' ? item['imageAssetId'] : undefined
         const cardPreviewId = typeof card?.['previewAssetId'] === 'string' ? card['previewAssetId'] : undefined
+        const cardTargetUrl = safeExternalTargetUrl(card?.['targetUrl'])
         return [
           {
             ...(typeof item['sender'] === 'string' ? { sender: item['sender'] } : {}),
@@ -260,6 +271,7 @@ const projectConversationMessage = (
                     summary: card['summary'],
                     ...(typeof card['title'] === 'string' ? { title: card['title'] } : {}),
                     ...(typeof card['source'] === 'string' ? { source: card['source'] } : {}),
+                    ...(cardTargetUrl === undefined ? {} : { targetUrl: cardTargetUrl }),
                     ...(cardPreviewId === undefined ? {} : { previewUrl: assetUrl(cardPreviewId) }),
                   },
                 }
@@ -280,6 +292,7 @@ const projectConversationMessage = (
         summary: part.summary,
         ...(part.title === undefined ? {} : { title: part.title }),
         ...(part.source === undefined ? {} : { source: part.source }),
+        ...(part.targetUrl === undefined ? {} : { targetUrl: part.targetUrl }),
         ...(previewText === undefined ? {} : { preview: previewText }),
         ...(items.length === 0 ? {} : { items }),
         ...(part.previewAssetId === undefined ? {} : { previewUrl: assetUrl(part.previewAssetId) }),

@@ -113,6 +113,7 @@ export type ConversationPart =
       readonly summary: string
       readonly title?: string
       readonly source?: string
+      readonly targetUrl?: string
       readonly previewUrl?: string
       readonly preview?: string
       readonly items?: readonly {
@@ -122,6 +123,7 @@ export type ConversationPart =
           readonly summary: string
           readonly title?: string
           readonly source?: string
+          readonly targetUrl?: string
           readonly previewUrl?: string
         }
         readonly imageUrl?: string
@@ -324,6 +326,7 @@ export interface ProductState {
   loadChannelRuntime(channelId: string): Promise<void>
   renameChannel(channelId: string, displayName: string): Promise<void>
   setCapability(agentId: string, capability: keyof AgentSummary['capabilities'], enabled: boolean): Promise<void>
+  setCapabilities(agentId: string, capabilities: Partial<AgentSummary['capabilities']>): Promise<void>
   runConnectionTest(id: string, direction: 'receive' | 'send', channelId?: string): Promise<void>
   resolveApproval(input: { requestId: string; agentId: string; approved: boolean }): Promise<void>
   saveDynamicExtension(input: {
@@ -589,6 +592,12 @@ export const useProductStore = create<ProductState>(() => ({
     await requireHost().execute('agents.updateCapabilities', {
       agentId: requireValue(agentId, '缺少智能体标识，请刷新页面后重试。'),
       [capability]: enabled,
+    })
+  },
+  setCapabilities: async (agentId, capabilities) => {
+    await requireHost().execute('agents.updateCapabilities', {
+      agentId: requireValue(agentId, '缺少智能体标识，请刷新页面后重试。'),
+      ...capabilities,
     })
   },
   runConnectionTest: async (id, direction, channelId) => {

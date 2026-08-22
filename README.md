@@ -1,5 +1,11 @@
 # NekroNxt
 
+<p align="center">
+  <img src="apps/web/public/brand/mark.svg" width="96" height="96" alt="NekroNxt Logo" />
+</p>
+
+<p align="center"><strong>月潮观测所</strong> · 冷静、精密、有生命感</p>
+
 > 包名：`nekro-nxt`  
 > 进度见 [`docs/04-一期开发计划与决策清单.md`](docs/04-一期开发计划与决策清单.md)
 

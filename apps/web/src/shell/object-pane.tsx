@@ -20,6 +20,7 @@ import { useMemo, useRef, useState, type CSSProperties, type MouseEvent } from '
 import { useLocation, useParams } from 'react-router-dom'
 import { BindingChangeDialog, type BindingChangeIntent } from '../pages/binding-change.js'
 import { notify } from '../components/notifications.js'
+import { AgentAccessChip } from '../components/agent-access-chip.js'
 import { connectionDisplayName, useProductStore, type AgentSummary, type ChannelSummary } from '../product-store.js'
 import { NxtLink, NxtNavLink } from './nxt-link.js'
 import {
@@ -117,14 +118,17 @@ const AgentHeaderBody = ({
   agent,
   hint,
 }: {
-  readonly agent: Pick<AgentSummary, 'name' | 'state'>
+  readonly agent: Pick<AgentSummary, 'name' | 'state' | 'capabilities'>
   readonly hint: string
   readonly active?: boolean
 }) => (
   <>
     <span className={styles.agentAvatar}>{agent.name.slice(0, 1)}</span>
     <span className={styles.treeCopy}>
-      <strong>{agent.name}</strong>
+      <span className={styles.agentNameLine}>
+        <strong>{agent.name}</strong>
+        <AgentAccessChip capabilities={agent.capabilities} />
+      </span>
       <small>{hint}</small>
     </span>
     {agent.state !== '空闲' ? (

@@ -8,7 +8,11 @@ Desktop 只接受原子的 `nxt.product-release`。UI、Host、DSH Client/Host �
 
 生产数据固定在 Electron `userData/data/`，安装包替换不得删除该目录。Server 和 Desktop 使用同一个 Server 入口、数据根布局与升级门禁；Electron 只拥有窗口、单实例、外部链接和 Host 子进程生命周期。
 
+Desktop 使用 Renderer 自绘的统一 48px 品牌顶栏，不显示系统标题栏。macOS 采用 `hiddenInset` 并为左侧 traffic lights 预留 84px；Windows/Linux 采用 `frame: false + titleBarOverlay` 并为右侧窗口控件预留 138px。主进程只注入根级安全区 CSS 变量，Renderer 顶栏负责拖动区域和业务内容，Web 保持同一几何但不伪造窗口按钮。
+
 当前分发实验使用未签名完整安装包：Windows x64 NSIS、macOS Universal DMG、Linux x64 AppImage。`stable` 与 `preview` 使用不同 appId、NSIS GUID、产品名、可执行文件名和 `userData`，可以同时安装，也不会让预览版迁移正式版数据库。身份的唯一源是 `distributions.json`。
+
+平台品牌资源位于 `resources/stable/` 与 `resources/preview/`。两端分别提供 ICNS、ICO、Linux PNG 图标组、DMG 背景和 NSIS assisted installer 图；Preview 通过黄铜三节点校准胶囊与 Stable 区分，不建立 beta 品牌身份。electron-builder 按当前 channel 选择对应 `buildResources`，这些文件不进入应用运行资源。
 
 产品版本的唯一手工来源是仓库根 `package.json#version`。正式版使用原值 `X.Y.Z`；预览版确定性派生为 `X.Y.Z-preview.<commit Unix 秒>`，不建立 beta 通道。两类安装包都写入当前 commit、`releaseId` 和 SHA-256 receipt。正式发布 `X.Y.Z` 时，公开仓库的 `vX.Y.Z` tag 必须指向 receipt 中的 commit；构建脚本本身不上传或发布产物。
 

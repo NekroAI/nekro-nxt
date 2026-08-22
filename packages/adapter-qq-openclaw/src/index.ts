@@ -199,6 +199,7 @@ export interface QQNormalizedInboundMessage {
     readonly summary: string
     readonly title?: string
     readonly source?: string
+    readonly targetUrl?: string
     readonly previewUrl?: string
     readonly items?: readonly {
       readonly sender?: string
@@ -208,6 +209,7 @@ export interface QQNormalizedInboundMessage {
         readonly summary: string
         readonly title?: string
         readonly source?: string
+        readonly targetUrl?: string
         readonly previewUrl?: string
       }
       readonly attachmentUrl?: string
@@ -588,6 +590,7 @@ export class QQOpenClawConnection implements AdapterConnectionRuntime {
                   summary: item.card.summary,
                   ...(item.card.title === undefined ? {} : { title: item.card.title }),
                   ...(item.card.source === undefined ? {} : { source: item.card.source }),
+                  ...(item.card.targetUrl === undefined ? {} : { targetUrl: item.card.targetUrl }),
                   ...(cardPreviewId === undefined ? {} : { previewAssetId: cardPreviewId }),
                 },
               }),
@@ -604,6 +607,7 @@ export class QQOpenClawConnection implements AdapterConnectionRuntime {
         summary: message.rich.summary,
         ...(message.rich.title === undefined ? {} : { title: message.rich.title }),
         ...(message.rich.source === undefined ? {} : { source: message.rich.source }),
+        ...(message.rich.targetUrl === undefined ? {} : { targetUrl: message.rich.targetUrl }),
         ...(previewAssetId === undefined ? {} : { previewAssetId }),
         ...(extension === undefined ? {} : { extension }),
       })

@@ -193,7 +193,7 @@ export function ConnectionsPage() {
   }
 
   return (
-    <div className={styles.page} data-connection-page-scroll-root>
+    <div className={[styles.page, styles.detailPage].join(' ')} data-connection-page-scroll-root>
       <StageCrossfade swapKey={selected?.id ?? 'empty'}>
         <PageHeader
           title={selected ? connectionDisplayName(selected) : '接入聊天平台'}

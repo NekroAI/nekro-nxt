@@ -46,6 +46,7 @@ describe('MessagePart boundary', () => {
           summary: '示例来源 · 示例分享',
           title: '示例分享',
           source: '示例来源',
+          targetUrl: 'https://example.test/share?id=1',
           previewAssetId: 'ast_preview1',
           extension: { preview: 'https://example.test/preview' },
         },
@@ -58,6 +59,7 @@ describe('MessagePart boundary', () => {
         summary: '示例来源 · 示例分享',
         title: '示例分享',
         source: '示例来源',
+        targetUrl: 'https://example.test/share?id=1',
         previewAssetId: 'ast_preview1',
         extension: { preview: 'https://example.test/preview' },
       },
@@ -73,6 +75,17 @@ describe('MessagePart boundary', () => {
         },
       ]),
     ).toThrow(/32768 bytes/u)
+    expect(() =>
+      parseMessageParts([
+        {
+          type: 'rich',
+          adapterKey: 'qq-openclaw',
+          kind: 'miniapp',
+          summary: '摘要',
+          targetUrl: 'javascript:alert(1)',
+        },
+      ]),
+    ).toThrow(/HTTP or HTTPS/u)
     expect(
       messagePartsSearchText([
         { type: 'text', text: '你好' },

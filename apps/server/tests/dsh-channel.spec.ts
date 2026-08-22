@@ -3,7 +3,7 @@ import type { Context } from '@deepseek-ai/cordis'
 import { createWebAdapterConnection } from '@nekro-nxt/adapter-web'
 import { ChannelRuntime } from '@nekro-nxt/channel-runtime'
 import { AssetService, CoreService } from '@nekro-nxt/core'
-import { AdmissionIdSchema, EpisodeIdSchema } from '@nekro-nxt/contracts'
+import { AdmissionIdSchema, EpisodeHandoffIdSchema, EpisodeIdSchema } from '@nekro-nxt/contracts'
 import {
   ExtensionActivationCoordinator,
   ExtensionBuilder,
@@ -147,6 +147,84 @@ class ToolSchemaProbeModel extends ScriptedCommunicationModel {
 }
 
 describe('DSH Host and Web Channel vertical slice', () => {
+  it('resumes persisted pending handoff and Admission messages without inserting duplicate identities', async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), 'nekro-nxt-dsh-pending-resume-'))
+    temporaryDirectories.push(directory)
+    const database = await openMigratedCoreDatabase(path.join(directory, 'core.sqlite'))
+    const repository = new SqliteCoreRepository(database)
+    const assetService = new AssetService(repository, path.join(directory, 'assets'))
+    let coreId = 0
+    const core = new CoreService(repository, { now: () => 100, nextUlid: () => `P${++coreId}` })
+    const agent = core.createAgent({
+      displayName: '恢复测试智能体',
+      persona: '',
+      model: { provider: 'test-provider', model: 'chat-model' },
+    })
+    const connection = core.createConnection({ adapterKey: 'web', config: {} })
+    const channel = core.createChannel({ connectionId: connection.id, platformChannelId: 'pending', kind: 'web' })
+    const event = core.appendInbound({
+      connectionId: connection.id,
+      channelId: channel.id,
+      adapterKey: 'web',
+      platformEventId: 'pending-event',
+      kind: 'message-created',
+      parts: [{ type: 'text', text: '待恢复消息' }],
+      platformTimestamp: 100,
+      receivedAt: 100,
+      dedupeKey: 'web:pending-event',
+    }).event
+    const createHost = () =>
+      DshHostRuntime.create({
+        sessionDatabasePath: path.join(directory, 'sessions.sqlite'),
+        communication: { sendMessage: () => Promise.reject(new Error('Unexpected communication call.')) },
+        history: repository,
+        assets: repository,
+        assetService,
+        resolveAgentRevision: (revisionId) => repository.getAgentRevision(revisionId),
+        configureLlm: (context: Context) => {
+          context.llm.registerAdapter(['test-provider'], new ScriptedCommunicationModel())
+        },
+      })
+    const hosts: DshHostRuntime[] = []
+    const sessionInput = {
+      episodeId: EpisodeIdSchema.parse('eps_PENDINGRESUME'),
+      channelId: channel.id,
+      agentId: agent.definition.id,
+      agentRevisionId: agent.revision.id,
+      handoff: {
+        id: EpisodeHandoffIdSchema.parse('hof_PENDINGRESUME'),
+        fromEpisodeId: EpisodeIdSchema.parse('eps_PENDINGPREVIOUS'),
+        sourceEventIds: [],
+        createdAt: 100,
+        provider: 'test-provider',
+        model: 'chat-model',
+        summary: '待恢复的交接摘要。',
+        recentEvents: [],
+      },
+    } as const
+
+    try {
+      const firstHost = await createHost()
+      hosts.push(firstHost)
+      const sessionId = await firstHost.createSession(sessionInput)
+
+      const resumedHost = await createHost()
+      hosts.push(resumedHost)
+      await expect(resumedHost.createSession(sessionInput)).resolves.toBe(sessionId)
+      const admissionId = AdmissionIdSchema.parse('adm_PENDINGRESUME')
+      await resumedHost.admit({ dshSessionId: sessionId, admissionId, events: [event], mode: 'inject' })
+      expect(resumedHost.findAdmissionMessage(sessionId, admissionId)).toBe(`nxt-${admissionId}`)
+
+      const secondResume = await createHost()
+      hosts.push(secondResume)
+      await expect(secondResume.createSession(sessionInput)).resolves.toBe(sessionId)
+      expect(secondResume.findAdmissionMessage(sessionId, admissionId)).toBe(`nxt-${admissionId}`)
+    } finally {
+      await Promise.allSettled(hosts.map((host) => host.dispose()))
+      database.close()
+    }
+  })
+
   it('switches a persisted Activation through Episode handoff before mounting its Tool', async () => {
     const directory = await mkdtemp(path.join(tmpdir(), 'nekro-nxt-dsh-activation-'))
     temporaryDirectories.push(directory)

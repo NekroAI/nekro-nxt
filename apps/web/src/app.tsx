@@ -124,9 +124,15 @@ function DesktopShell() {
     <div className={styles.shell} style={shellStyle}>
       <header className={styles.windowTopBar} data-window-top-bar>
         <div className={styles.windowBrand}>
-          <span className={styles.mark} aria-hidden="true" />
+          <img className={styles.brandMark} src="/brand/mark.svg" alt="" aria-hidden="true" />
+          <span className={styles.brandCopy}>
+            <strong>NekroNxt</strong>
+            <small>月潮观测所</small>
+          </span>
         </div>
-        <div className={styles.windowObjectTitle}>NekroNxt</div>
+        <div className={styles.windowObjectTitle} aria-hidden="true">
+          CALM · PRECISE · ALIVE
+        </div>
       </header>
       <div className={styles.shellBody} data-shell-body>
         <aside className={styles.rail} aria-label="模式">

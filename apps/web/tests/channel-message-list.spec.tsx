@@ -1,6 +1,6 @@
 import { renderToStaticMarkup } from 'react-dom/server'
 import { describe, expect, it } from 'vitest'
-import { appendedMessageIds, ChannelMessageList, MessageRow } from '../src/pages/channel-page.js'
+import { appendedMessageIds, ChannelMessageList, isBubblelessMessage, MessageRow } from '../src/pages/channel-page.js'
 import type { ChannelHistoryState, ConversationMessage } from '../src/product-store.js'
 
 const message = (overrides: Partial<ConversationMessage> = {}): ConversationMessage => ({
@@ -38,7 +38,7 @@ describe('channel message memoization boundary', () => {
     expect((ChannelMessageList as { $$typeof: symbol }).$$typeof).toBe(memoType)
   })
 
-  it('MessageRow renders one message with its perspective and delivery', () => {
+  it('MessageRow renders perspective without a redundant sent confirmation', () => {
     const markup = renderToStaticMarkup(
       <MessageRow
         message={message({ id: 'msg_a', role: 'agent', author: '小奈', delivery: '已发送' })}
@@ -48,7 +48,50 @@ describe('channel message memoization boundary', () => {
     )
     expect(markup).toContain('data-side="left"')
     expect(markup).toContain('<strong>小奈</strong>')
-    expect(markup).toContain('已发送')
+    expect(markup).not.toContain('已发送')
+  })
+
+  it('uses the same safe Markdown renderer for left and right message text', () => {
+    const left = renderToStaticMarkup(
+      <MessageRow
+        message={message({ id: 'msg_left', parts: [{ type: 'text', text: '**统一 Markdown**' }] })}
+        side="left"
+        incoming={false}
+      />,
+    )
+    const right = renderToStaticMarkup(
+      <MessageRow
+        message={message({ id: 'msg_right', parts: [{ type: 'text', text: '**统一 Markdown**' }] })}
+        side="right"
+        incoming={false}
+      />,
+    )
+    expect(left).toContain('<strong>统一 Markdown</strong>')
+    expect(right).toContain('<strong>统一 Markdown</strong>')
+  })
+
+  it('removes the outer bubble only for one standalone rendered block', () => {
+    expect(
+      isBubblelessMessage(message({ parts: [{ type: 'image', assetId: 'asset_a', alt: '图片', url: '/a.png' }] })),
+    ).toBe(true)
+    expect(
+      isBubblelessMessage(
+        message({ parts: [{ type: 'rich', adapterKey: 'sample', kind: 'card', summary: '卡片摘要' }] }),
+      ),
+    ).toBe(true)
+    expect(
+      isBubblelessMessage(message({ parts: [{ type: 'mention', memberId: 'member_a', displayName: '成员甲' }] })),
+    ).toBe(false)
+    expect(
+      isBubblelessMessage(
+        message({
+          parts: [
+            { type: 'text', text: '请看' },
+            { type: 'image', assetId: 'asset_a', alt: '图片', url: '/a.png' },
+          ],
+        }),
+      ),
+    ).toBe(false)
   })
 
   it('ChannelMessageList renders channel messages in order without history notices', () => {

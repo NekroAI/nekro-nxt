@@ -1,6 +1,6 @@
 .providerSettings {
   display: grid;
-  gap: 16px;
+  gap: 20px;
 }
 
 .toolbar,
@@ -40,14 +40,19 @@
 .layout {
   display: grid;
   grid-template-columns: minmax(260px, 0.68fr) minmax(440px, 1.32fr);
-  gap: 20px;
+  gap: 18px;
   align-items: start;
 }
 
 .providerList {
   display: grid;
-  border-top: 1px solid var(--nxt-border-default);
+  gap: 4px;
+  border: 1px solid var(--nxt-border-subtle);
+  border-radius: var(--nxt-radius-panel);
+  padding: 8px;
   background: var(--nxt-bg-surface);
+  box-shadow: var(--nxt-shadow-control);
+  overflow: hidden;
 }
 
 .providerButton {
@@ -55,9 +60,9 @@
   min-height: 60px;
   justify-content: space-between;
   border: 0;
-  border-bottom: 1px solid var(--nxt-border-subtle);
-  border-radius: 0;
-  padding: 8px 12px;
+  border: 1px solid transparent;
+  border-radius: var(--nxt-radius-control);
+  padding: 8px 10px;
   text-align: left;
 }
 
@@ -80,13 +85,14 @@
 }
 
 .providerButtonActive {
+  border-color: color-mix(in srgb, var(--nxt-accent) 34%, var(--nxt-border-subtle));
   background: var(--nxt-accent-soft);
   box-shadow: inset 2px 0 var(--nxt-accent);
 }
 
 .addProvider {
   justify-content: flex-start;
-  margin-top: 12px;
+  margin-top: 6px;
 }
 
 .listEmpty {
@@ -96,12 +102,19 @@
 }
 
 .editor {
+  position: relative;
   display: grid;
   gap: 16px;
   border: 1px solid var(--nxt-border-subtle);
-  border-radius: var(--nxt-radius-md);
-  padding: 20px;
+  border-radius: var(--nxt-radius-panel);
+  padding: 22px;
   background: var(--nxt-bg-surface);
+  box-shadow: var(--nxt-shadow-control);
+  overflow: hidden;
+}
+
+.editor::before {
+  display: none;
 }
 
 .modelSection {
@@ -131,9 +144,9 @@
 }
 
 .advanced {
-  border-top: 1px solid var(--nxt-border-subtle);
-  border-bottom: 1px solid var(--nxt-border-subtle);
-  padding: 12px 0;
+  border-radius: var(--nxt-radius-md);
+  padding: 12px 14px;
+  background: var(--nxt-bg-subtle);
 }
 
 .advanced summary {

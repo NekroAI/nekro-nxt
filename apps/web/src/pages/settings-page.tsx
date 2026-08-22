@@ -2,7 +2,7 @@ import { LlmProviderSettings } from '../llm-settings.js'
 import { DshExtensionSettings } from '../dsh-extension-settings.js'
 import { PageHeader } from '../components/product-feedback.js'
 import { useProductStore, type ThemeChoice } from '../product-store.js'
-import { Button, SelectField, StageCrossfade, SwitchField } from '../ui-kit/index.js'
+import { Button, SelectField, StageCrossfade, StatusBadge, SwitchField } from '../ui-kit/index.js'
 import { useUiPreferences, type ContrastChoice } from '../ui-preferences.js'
 import { useSearchParams } from 'react-router-dom'
 import { useNxtNavigate } from '../shell/nxt-link.js'
@@ -13,19 +13,24 @@ function SystemExtensionsPanel() {
   const navigate = useNxtNavigate()
   return (
     <section className={styles.settingsSection}>
-      <div className={styles.settingsGroup}>
+      <div className={styles.systemAdapterIntro}>
         <div className={styles.sectionHeading}>已安装适配器</div>
         <p className={styles.secondaryText}>接入聊天平台。到「连接」添加账号。</p>
+      </div>
+      <div className={styles.systemAdapterGrid}>
         {adapters.map((adapter) => (
-          <article className={styles.settingsGroup} key={adapter.key}>
-            <div className={styles.sectionHeading}>{adapter.displayName}</div>
+          <article className={styles.systemAdapterCard} key={adapter.key}>
+            <header>
+              <div className={styles.sectionHeading}>{adapter.displayName}</div>
+              <StatusBadge tone="success">已安装</StatusBadge>
+            </header>
             <p className={styles.secondaryText}>{adapter.description}</p>
             {adapter.userCreatable ? (
               <Button onClick={() => void navigate(`/connections?create=1&adapter=${encodeURIComponent(adapter.key)}`)}>
                 添加账号
               </Button>
             ) : (
-              <p className={styles.secondaryText}>当前设备托管</p>
+              <StatusBadge tone="info">当前设备托管</StatusBadge>
             )}
           </article>
         ))}
@@ -61,14 +66,26 @@ export function SettingsPage() {
           : '模型供应商'
 
   return (
-    <div className={styles.page}>
+    <div className={[styles.page, styles.settingsPage].join(' ')}>
       <StageCrossfade swapKey={activeTab}>
-        <PageHeader title={title} />
+        <PageHeader title={title} quiet />
         {activeTab === 'models' ? <LlmProviderSettings /> : null}
         {activeTab === 'dsh-extensions' ? <DshExtensionSettings /> : null}
         {activeTab === 'system-extensions' ? <SystemExtensionsPanel /> : null}
         {activeTab === 'appearance' ? (
           <section className={styles.settingsSection}>
+            <div className={styles.appearanceSignature} aria-label="月潮观测所品牌主题">
+              <img src="/brand/mark.svg" alt="" aria-hidden="true" />
+              <div>
+                <strong>月潮观测所</strong>
+                <small>月潮靛构成稳定工作面，流明蓝标记焦点，黄铜节点标记校准。</small>
+              </div>
+              <span className={styles.appearanceSwatches} aria-hidden="true">
+                <i data-tone="moon" />
+                <i data-tone="lumen" />
+                <i data-tone="brass" />
+              </span>
+            </div>
             <div className={styles.settingsGroup}>
               <div className={styles.sectionHeading}>主题与可读性</div>
               <SelectField
@@ -112,7 +129,7 @@ export function SettingsPage() {
               <div className={styles.sectionHeading}>工作区布局</div>
               <SwitchField
                 label="默认隐藏检查器"
-                description="打开频道或智能体工作台时优先显示主画布；页头右侧图标可随时重新展开。"
+                description="打开频道或智能体工作台时优先显示主画布；主画布右边缘的检查器按钮可随时重新展开。"
                 checked={inspectorCollapsed}
                 onCheckedChange={(enabled) => useUiPreferences.getState().setInspectorCollapsed(enabled)}
               />

@@ -47,11 +47,16 @@ import {
 import styles from './product-pages.module.css'
 
 const deliveryTone = (state: DeliveryState): StatusTone => {
-  if (state === '已发送') return 'success'
   if (state === '发送中') return 'info'
   if (state === '部分发送') return 'warning'
   if (state === '失败') return 'error'
   return 'unknown'
+}
+
+export const isBubblelessMessage = (message: Pick<ConversationMessage, 'parts'>): boolean => {
+  if (message.parts.length !== 1) return false
+  const [part] = message.parts
+  return part?.type !== 'text' && part?.type !== 'mention'
 }
 
 const agentTone = (state: AgentRuntimeState): StatusTone => {
@@ -90,14 +95,18 @@ function MessageRowBase({
         <MessageContent message={message} />
       </div>
     ) : (
-      <article className={styles.message} data-side={side}>
+      <article
+        className={styles.message}
+        data-side={side}
+        data-bubbleless={isBubblelessMessage(message) ? '' : undefined}
+      >
         <div className={styles.messageAvatar}>{message.author.slice(0, 1)}</div>
         <div className={styles.messageContent}>
           <div className={styles.messageHeader}>
             <strong>{message.author}</strong>
             <time>{message.time}</time>
             {message.origin === 'admin-console' ? <StatusBadge tone="warning">管理员从网页发出</StatusBadge> : null}
-            {message.delivery ? (
+            {message.delivery && message.delivery !== '已发送' ? (
               <StatusBadge tone={deliveryTone(message.delivery)}>{message.delivery}</StatusBadge>
             ) : null}
           </div>
@@ -367,31 +376,27 @@ export function ChannelConversationPage() {
                   </div>
                 </StageCrossfade>
                 <div className={styles.conversationHeaderActions} data-conversation-header-actions>
-                  <ChannelViewSwitch />
                   {agent ? (
                     <>
                       {livePhase !== '空闲' ? <AgentStateRing state={livePhase} label={livePhase} /> : null}
                       <StatusBadge tone={agentTone(livePhase)}>{livePhase}</StatusBadge>
                     </>
                   ) : null}
-                  <IconButton
-                    label={inspectorCollapsed ? '展开检查器' : '收起检查器'}
-                    className={styles.inspectorToggle}
-                    onClick={toggleInspector}
-                  >
-                    {inspectorCollapsed ? (
-                      <PanelRightOpen size={14} aria-hidden="true" />
-                    ) : (
-                      <PanelRightClose size={14} aria-hidden="true" />
-                    )}
-                  </IconButton>
                   {!agent ? (
                     <Button size="small" variant="primary" onClick={() => setBindingOpen(true)}>
                       绑定智能体
                     </Button>
                   ) : null}
+                  <ChannelViewSwitch />
                 </div>
               </header>
+              {inspectorCollapsed ? (
+                <div className={styles.conversationInspectorDock}>
+                  <IconButton label="展开频道检查器" onClick={toggleInspector}>
+                    <PanelRightOpen size={14} aria-hidden="true" />
+                  </IconButton>
+                </div>
+              ) : null}
               <StageCrossfade swapKey={canvasView} className={styles.canvasStage}>
                 <div className={styles.canvasStageInner} data-channel-canvas-stage data-view={canvasView}>
                   {canvasView === 'trajectory' ? (
@@ -543,22 +548,33 @@ export function ChannelConversationPage() {
               onCommit={(value) => useUiPreferences.getState().setInspectorWidth(value)}
             />
             <SidePane collapsed={inspectorCollapsed} width={inspectorWidth} className={styles.inspectorPane}>
-              <div ref={inspectorPaneRef} style={{ height: '100%', minHeight: 0 }}>
-                <Presence initial={false}>
-                  <Enter kind="fade" key={`${channel.id}:${canvasView}`} style={{ height: '100%', minHeight: 0 }}>
-                    {canvasView === 'trajectory' ? (
-                      <ChannelTrajectoryInspector record={selectedRecord} />
-                    ) : (
-                      <ChannelSessionInspector
-                        channel={channel}
-                        agent={agent}
-                        runtime={runtime}
-                        onBind={() => setBindingOpen(true)}
-                        onReassign={() => setBindingOpen(true)}
-                      />
-                    )}
-                  </Enter>
-                </Presence>
+              <div ref={inspectorPaneRef} className={styles.inspectorChrome}>
+                <header className={styles.inspectorChromeHeader}>
+                  <div>
+                    <span>频道检查器</span>
+                    <strong>{canvasView === 'trajectory' ? '工作轨迹' : channel.name}</strong>
+                  </div>
+                  <IconButton label="收起频道检查器" onClick={toggleInspector}>
+                    <PanelRightClose size={14} aria-hidden="true" />
+                  </IconButton>
+                </header>
+                <div className={styles.inspectorChromeBody}>
+                  <Presence initial={false}>
+                    <Enter kind="fade" key={`${channel.id}:${canvasView}`} style={{ height: '100%', minHeight: 0 }}>
+                      {canvasView === 'trajectory' ? (
+                        <ChannelTrajectoryInspector record={selectedRecord} />
+                      ) : (
+                        <ChannelSessionInspector
+                          channel={channel}
+                          agent={agent}
+                          runtime={runtime}
+                          onBind={() => setBindingOpen(true)}
+                          onReassign={() => setBindingOpen(true)}
+                        />
+                      )}
+                    </Enter>
+                  </Presence>
+                </div>
               </div>
             </SidePane>
           </>

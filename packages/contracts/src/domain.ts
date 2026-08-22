@@ -133,6 +133,14 @@ export const RichExtensionSchema = JsonValueSchema.refine(
   `rich extension must not exceed ${RICH_EXTENSION_MAX_BYTES} bytes.`,
 )
 
+export const RichTargetUrlSchema = z
+  .url()
+  .max(2048)
+  .refine((value) => {
+    const protocol = new URL(value).protocol
+    return protocol === 'http:' || protocol === 'https:'
+  }, 'rich target URL must use HTTP or HTTPS.')
+
 export const MessagePartSchema = z.discriminatedUnion('type', [
   z.object({ type: z.literal('text'), text: z.string() }).strict(),
   z.object({ type: z.literal('mention'), memberId: ChannelMemberIdSchema }).strict(),
@@ -148,6 +156,7 @@ export const MessagePartSchema = z.discriminatedUnion('type', [
       summary: z.string().trim().min(1).max(500),
       title: z.string().trim().min(1).max(200).optional(),
       source: z.string().trim().min(1).max(80).optional(),
+      targetUrl: RichTargetUrlSchema.optional(),
       previewAssetId: AssetIdSchema.optional(),
       extension: RichExtensionSchema.optional(),
     })

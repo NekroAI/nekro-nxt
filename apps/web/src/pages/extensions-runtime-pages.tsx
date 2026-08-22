@@ -63,11 +63,12 @@ export function ExtensionsPage() {
   }
 
   return (
-    <div className={styles.page}>
+    <div className={[styles.page, styles.detailPage].join(' ')}>
       <StageCrossfade swapKey={selected?.id ?? 'empty'}>
         <PageHeader
           title={selected?.name ?? '扩展库'}
           meta={selected ? `版本 ${selected.revision} · ${extensions.length} 个本地扩展` : undefined}
+          quiet
           actions={
             selected ? (
               <StatusBadge tone={extensionTone(selected.activation)}>{extensionLabel(selected.activation)}</StatusBadge>
@@ -94,74 +95,85 @@ export function ExtensionsPage() {
         ) : selected ? (
           <section className={styles.extensionWorkspace}>
             <p className={styles.workspaceLead}>{selected.description || '没有补充说明。'}</p>
-            <ol className={[styles.lifecycleSteps, styles.lifecycleStepsCompact].join(' ')} aria-label="扩展生命周期">
-              <li data-done="">
-                <span>
-                  <Check size={12} aria-hidden="true" />
-                </span>
-                <small>动态运行</small>
-              </li>
-              <li data-done="">
-                <span>
-                  <Check size={12} aria-hidden="true" />
-                </span>
-                <small>保存版本</small>
-              </li>
-              <li data-done={selected.activation === '已激活' ? '' : undefined}>
-                <span>{selected.activation === '已激活' ? <Check size={12} aria-hidden="true" /> : '3'}</span>
-                <small>启用给智能体</small>
-              </li>
-            </ol>
-            <dl className={styles.facts}>
-              <dt>当前保存版本</dt>
-              <dd>版本 {selected.revision}</dd>
-              <dt>目标智能体</dt>
-              <dd>{selected.targetAgent || '尚未指定'}</dd>
-              <dt>启用状态</dt>
-              <dd>{extensionLabel(selected.activation)}</dd>
-            </dl>
-            <div className={styles.sectionDivider} />
-            <div>
-              <div className={styles.sectionHeading}>贡献能力</div>
-              {selected.contributions.length > 0 ? (
-                <div className={styles.tagList}>
-                  {selected.contributions.map((item) => (
-                    <span key={item}>{item}</span>
-                  ))}
-                </div>
-              ) : (
-                <p className={styles.secondaryText}>当前快照尚未提供可展示的贡献内容。</p>
-              )}
-            </div>
-            <div className={styles.sectionDivider} />
-            <div>
-              <div className={styles.sectionHeading}>验证证据</div>
-              {selected.verification ? (
+            <div className={styles.extensionOverview}>
+              <section>
+                <div className={styles.sectionHeading}>生命周期</div>
+                <ol
+                  className={[styles.lifecycleSteps, styles.lifecycleStepsCompact].join(' ')}
+                  aria-label="扩展生命周期"
+                >
+                  <li data-done="">
+                    <span>
+                      <Check size={12} aria-hidden="true" />
+                    </span>
+                    <small>动态运行</small>
+                  </li>
+                  <li data-done="">
+                    <span>
+                      <Check size={12} aria-hidden="true" />
+                    </span>
+                    <small>保存版本</small>
+                  </li>
+                  <li data-done={selected.activation === '已激活' ? '' : undefined}>
+                    <span>{selected.activation === '已激活' ? <Check size={12} aria-hidden="true" /> : '3'}</span>
+                    <small>启用给智能体</small>
+                  </li>
+                </ol>
+              </section>
+              <section>
+                <div className={styles.sectionHeading}>版本事实</div>
                 <dl className={styles.facts}>
-                  <dt>契约</dt>
-                  <dd>{selected.verification.contractVersion}</dd>
-                  <dt>核心引擎</dt>
-                  <dd>{selected.verification.dshVersion}</dd>
-                  <dt>Host 构建</dt>
-                  <dd>{selected.verification.hostBuilt ? '已通过' : '不适用'}</dd>
-                  <dt>Client 构建</dt>
-                  <dd>{selected.verification.clientBuilt ? '已通过' : '不适用'}</dd>
-                  <dt>工具调用</dt>
-                  <dd>{selected.verification.toolInvocationCount} 次成功</dd>
-                  <dt>最近一次 Client 加载</dt>
-                  <dd>
-                    {selectedClientDiagnostic === undefined
-                      ? '尚无记录'
-                      : selectedClientDiagnostic.status === 'loaded'
-                        ? `已加载 · ${new Date(selectedClientDiagnostic.observedAt).toLocaleString('zh-CN')}`
-                        : `失败 · ${new Date(selectedClientDiagnostic.observedAt).toLocaleString('zh-CN')}`}
-                  </dd>
+                  <dt>当前保存版本</dt>
+                  <dd>版本 {selected.revision}</dd>
+                  <dt>目标智能体</dt>
+                  <dd>{selected.targetAgent || '尚未指定'}</dd>
+                  <dt>启用状态</dt>
+                  <dd>{extensionLabel(selected.activation)}</dd>
                 </dl>
-              ) : (
-                <p className={styles.secondaryText}>这个旧版本没有持久验证记录。</p>
-              )}
+              </section>
             </div>
-            <div className={styles.sectionActionRow}>
+            <div className={styles.extensionDetailGrid}>
+              <section>
+                <div className={styles.sectionHeading}>贡献能力</div>
+                {selected.contributions.length > 0 ? (
+                  <div className={styles.tagList}>
+                    {selected.contributions.map((item) => (
+                      <span key={item}>{item}</span>
+                    ))}
+                  </div>
+                ) : (
+                  <p className={styles.secondaryText}>当前快照尚未提供可展示的贡献内容。</p>
+                )}
+              </section>
+              <section>
+                <div className={styles.sectionHeading}>验证证据</div>
+                {selected.verification ? (
+                  <dl className={styles.facts}>
+                    <dt>契约</dt>
+                    <dd>{selected.verification.contractVersion}</dd>
+                    <dt>核心引擎</dt>
+                    <dd>{selected.verification.dshVersion}</dd>
+                    <dt>Host 构建</dt>
+                    <dd>{selected.verification.hostBuilt ? '已通过' : '不适用'}</dd>
+                    <dt>Client 构建</dt>
+                    <dd>{selected.verification.clientBuilt ? '已通过' : '不适用'}</dd>
+                    <dt>工具调用</dt>
+                    <dd>{selected.verification.toolInvocationCount} 次成功</dd>
+                    <dt>最近一次 Client 加载</dt>
+                    <dd>
+                      {selectedClientDiagnostic === undefined
+                        ? '尚无记录'
+                        : selectedClientDiagnostic.status === 'loaded'
+                          ? `已加载 · ${new Date(selectedClientDiagnostic.observedAt).toLocaleString('zh-CN')}`
+                          : `失败 · ${new Date(selectedClientDiagnostic.observedAt).toLocaleString('zh-CN')}`}
+                    </dd>
+                  </dl>
+                ) : (
+                  <p className={styles.secondaryText}>这个旧版本没有持久验证记录。</p>
+                )}
+              </section>
+            </div>
+            <div className={styles.extensionActionPanel}>
               <span>
                 <strong>
                   {selected.activation === '已激活' ? '这个智能体正在使用该版本' : '保存不会自动扩大作用范围'}
@@ -253,7 +265,7 @@ export function CreatorPage() {
   }
 
   return (
-    <div className={styles.page}>
+    <div className={[styles.page, styles.creatorPage].join(' ')}>
       <PageHeader title="创造" meta="动态运行、保存为本地扩展和启用给智能体是三个独立动作。" />
       {dynamic.length === 0 ? (
         <div className={styles.creatorStartGrid}>

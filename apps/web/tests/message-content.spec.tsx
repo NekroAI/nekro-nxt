@@ -83,6 +83,8 @@ describe('MessageContent', () => {
     )
     expect(markup).toContain('type="button"')
     expect(markup).toContain('示意图')
+    expect(markup).not.toContain('<span')
+    expect(markup).not.toContain('<svg')
     expect(markup).not.toContain('target="_blank"')
   })
 
@@ -126,6 +128,7 @@ describe('MessageContent', () => {
             summary: '示例来源 · 示例分享',
             title: '示例分享',
             source: '示例来源',
+            targetUrl: 'https://example.test/share/1',
             previewUrl: '/api/channels/chn_markdown/assets/ast_preview',
           },
         ])}
@@ -134,8 +137,10 @@ describe('MessageContent', () => {
     expect(markup).toContain('示例来源')
     expect(markup).toContain('示例分享')
     expect(markup).toContain('/api/channels/chn_markdown/assets/ast_preview')
+    expect(markup).toContain('href="https://example.test/share/1"')
+    expect(markup).toContain('aria-label="打开卡片：示例分享"')
+    expect(markup).not.toContain('<button')
     expect(markup).not.toContain('source_logo')
-    expect(markup).not.toContain('https://')
   })
 
   it('drops unsafe Markdown link protocols', () => {
@@ -156,6 +161,7 @@ describe('MessageContent', () => {
             summary: '示例来源 · 示例分享',
             title: '示例分享',
             source: '示例来源',
+            targetUrl: 'https://example.test/share/1',
             previewUrl: '/api/channels/chn_markdown/assets/ast_preview',
           },
           { type: 'image', assetId: 'ast_pic', alt: '现场照片', url: '/api/channels/chn_markdown/assets/ast_pic' },
@@ -165,7 +171,8 @@ describe('MessageContent', () => {
     )
 
     const buttons = markup.split('<button').length - 1
-    expect(buttons).toBe(3)
+    expect(buttons).toBe(2)
+    expect(markup).toContain('href="https://example.test/share/1"')
     expect(markup).toContain('type="button"')
     expect(markup).toContain('<button')
     expect(markup).toContain('现场照片')

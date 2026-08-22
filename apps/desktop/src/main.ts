@@ -13,6 +13,7 @@ import {
   resolveProductReleasePath,
   type ProductRelease,
 } from './distribution.js'
+import { desktopTitleBarCss, desktopWindowChrome } from './window-chrome.js'
 
 const LOOPBACK_HOST = '127.0.0.1'
 const HOST_READY_TIMEOUT_MS = 60_000
@@ -111,12 +112,16 @@ const createMainWindow = async (origin: string): Promise<BrowserWindow> => {
     minWidth: 980,
     minHeight: 680,
     show: false,
-    backgroundColor: '#111318',
+    backgroundColor: '#172A45',
+    ...desktopWindowChrome(process.platform),
     webPreferences: {
       contextIsolation: true,
       nodeIntegration: false,
       sandbox: true,
     },
+  })
+  window.webContents.on('dom-ready', () => {
+    void window.webContents.insertCSS(desktopTitleBarCss(process.platform))
   })
   window.once('ready-to-show', () => window.show())
   window.webContents.setWindowOpenHandler(({ url }) => {

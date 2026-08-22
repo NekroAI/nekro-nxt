@@ -2395,15 +2395,18 @@ export class DshHostRuntime implements AgentSessionDriver, ExtensionActivationHo
         })
     this.#handles.set(sessionId, handle)
     if (supportsImage) this.#imageInputSessions.add(sessionId)
-    if (
+    const hasHandoffMessage =
       input.handoff !== undefined &&
-      !handle.agent.session.events.some(
+      (handle.agent.session.events.some(
         (event) =>
           event.type === 'user/message' &&
           event.data.source.kind === 'nekro-nxt-handoff' &&
           event.data.source.handoffId === input.handoff?.id,
-      )
-    ) {
+      ) ||
+        [...handle.agent.inbox.nextStep, ...handle.agent.inbox.nextTurn].some(
+          (message) => message.source.kind === 'nekro-nxt-handoff' && message.source.handoffId === input.handoff?.id,
+        ))
+    if (input.handoff !== undefined && !hasHandoffMessage) {
       handle.agent.inject(
         freezeMessage({
           id: MessageId(`nxt-${input.handoff.id}`),
@@ -2549,6 +2552,11 @@ export class DshHostRuntime implements AgentSessionDriver, ExtensionActivationHo
         event.data.source.admissionId === admissionId
       ) {
         return event.data.id
+      }
+    }
+    for (const message of [...agent.inbox.nextStep, ...agent.inbox.nextTurn]) {
+      if (message.source.kind === 'nekro-nxt-channel' && message.source.admissionId === admissionId) {
+        return message.id
       }
     }
     return undefined

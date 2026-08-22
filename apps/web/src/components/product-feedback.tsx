@@ -25,13 +25,15 @@ export function PageHeader({
   title,
   meta,
   actions,
+  quiet = false,
 }: {
   readonly title: string
   readonly meta?: ReactNode
   readonly actions?: ReactNode
+  readonly quiet?: boolean
 }) {
   return (
-    <header className={styles.pageHeader}>
+    <header className={styles.pageHeader} data-quiet={quiet ? '' : undefined}>
       <div>
         <h1 className={styles.pageTitle}>{title}</h1>
         {meta ? <div className={styles.pageMeta}>{meta}</div> : null}
