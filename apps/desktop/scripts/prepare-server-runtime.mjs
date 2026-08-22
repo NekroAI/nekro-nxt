@@ -50,14 +50,11 @@ const requireFile = async (filename) => {
 }
 
 const nodePtyRoot = findPackageDirectory('node-pty', 'node-pty')
-const nodePtyPrebuilds = targetPlatform === 'mac' ? ['darwin-arm64', 'darwin-x64'] : []
-if (targetPlatform === 'linux') {
-  await requireFile(path.join(nodePtyRoot, 'build', 'Release', 'pty.node'))
-} else {
-  // node-pty 优先读取 build/Release。部署时生成的宿主二进制会遮蔽包内 N-API
-  // prebuild，必须移除，才能让目标平台选择正确文件。
-  await rm(path.join(nodePtyRoot, 'build'), { recursive: true, force: true })
-}
+const nodePtyPrebuilds =
+  targetPlatform === 'mac' ? ['darwin-arm64', 'darwin-x64'] : targetPlatform === 'linux' ? ['linux-x64'] : []
+// node-pty 优先读取 build/Release。部署时生成的宿主二进制会遮蔽包内 N-API
+// prebuild，必须移除，才能让目标平台选择正确文件。
+await rm(path.join(nodePtyRoot, 'build'), { recursive: true, force: true })
 for (const platformArch of nodePtyPrebuilds) {
   await requireFile(path.join(nodePtyRoot, 'prebuilds', platformArch, 'pty.node'))
 }
