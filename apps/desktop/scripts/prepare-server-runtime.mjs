@@ -50,8 +50,7 @@ const requireFile = async (filename) => {
 }
 
 const nodePtyRoot = findPackageDirectory('node-pty', 'node-pty')
-const nodePtyPrebuilds =
-  targetPlatform === 'mac' ? ['darwin-arm64', 'darwin-x64'] : targetPlatform === 'win' ? ['win32-x64'] : []
+const nodePtyPrebuilds = targetPlatform === 'mac' ? ['darwin-arm64', 'darwin-x64'] : []
 if (targetPlatform === 'linux') {
   await requireFile(path.join(nodePtyRoot, 'build', 'Release', 'pty.node'))
 } else {
@@ -61,6 +60,10 @@ if (targetPlatform === 'linux') {
 }
 for (const platformArch of nodePtyPrebuilds) {
   await requireFile(path.join(nodePtyRoot, 'prebuilds', platformArch, 'pty.node'))
+}
+if (targetPlatform === 'win') {
+  await requireFile(path.join(nodePtyRoot, 'prebuilds', 'win32-x64', 'conpty.node'))
+  await requireFile(path.join(nodePtyRoot, 'prebuilds', 'win32-x64', 'conpty_console_list.node'))
 }
 
 const betterSqliteRoot = findPackageDirectory('better-sqlite3', 'better-sqlite3')
