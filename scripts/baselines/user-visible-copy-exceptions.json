@@ -1,0 +1,11 @@
+{
+  "description": "用户可见术语与文案检查的精确例外。只有文案在具体位置确有必要时才添加；每条例外必须匹配文件、规则和完整文案，并说明保留理由。",
+  "exceptions": [
+    {
+      "file": "apps/web/src/shell/object-pane.tsx",
+      "rule": "term:Adapter",
+      "text": "/users?adapter=",
+      "reason": "这是已锁定的内部 URL 查询参数，不会作为界面文案显示；用户页需要用它持久化平台分类筛选。"
+    }
+  ]
+}

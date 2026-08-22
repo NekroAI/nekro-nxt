@@ -13,8 +13,8 @@ export const WEB_ADAPTER_KEY = 'web'
 
 export const WEB_CONNECTION_DEFINITION = defineAdapterConnection({
   key: WEB_ADAPTER_KEY,
-  displayName: '本地 Web',
-  description: '由 NekroNxt 宿主管理的本地网页频道，不需要创建账号连接。',
+  displayName: '内置频道',
+  description: '由 NekroNxt 直接提供，用于应用内对话。',
   userCreatable: false,
   configurationSchema: AdapterEmptyObjectSchema,
   credentialsSchema: AdapterEmptyObjectSchema,
