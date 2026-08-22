@@ -78,11 +78,11 @@ export function WebSearchCredentialForm({ onSaved }: { readonly onSaved?: () => 
   return (
     <div className={styles.compactForm}>
       {configured ? (
-        <InlineFeedback tone="info">凭据已保存。若搜索仍不可用，可重新保存后再试。</InlineFeedback>
+        <InlineFeedback tone="info">凭据已保存。搜索失败时，请输入新凭据后重试。</InlineFeedback>
       ) : (
         <InlineFeedback tone="warning">网页搜索需要 DeepSeek API 密钥；每次搜索会产生额外模型费用。</InlineFeedback>
       )}
-      <Field label="DeepSeek API 密钥" hint="只写保存，已保存值不会回显。" error={error || undefined}>
+      <Field label="DeepSeek API 密钥" hint="凭据仅可覆盖，无法查看已保存值。" error={error || undefined}>
         <SecretInput value={value} onChange={(event) => setValue(event.currentTarget.value)} />
       </Field>
       <div className={styles.compactActions}>

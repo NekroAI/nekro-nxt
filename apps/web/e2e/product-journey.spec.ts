@@ -4,13 +4,114 @@ import {
   AgentRevisionIdSchema,
   ChannelIdSchema,
   ConnectionIdSchema,
+  EpisodeIdSchema,
   HostApiContracts,
 } from '@nekro-nxt/contracts'
+import { spawn, type ChildProcess } from 'node:child_process'
+import { mkdtemp, rm } from 'node:fs/promises'
+import { createServer } from 'node:net'
+import { tmpdir } from 'node:os'
+import path from 'node:path'
 
 type HostSnapshot = ReturnType<typeof HostApiContracts.snapshot.response.parse>
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === 'object' && value !== null && !Array.isArray(value)
+
+interface JourneyServer {
+  readonly child: ChildProcess
+  readonly exited: Promise<void>
+  diagnostics(): string
+}
+
+const reserveJourneyPort = (): Promise<number> =>
+  new Promise((resolve, reject) => {
+    const server = createServer()
+    server.once('error', reject)
+    server.listen({ host: '127.0.0.1', port: 0, exclusive: true }, () => {
+      const address = server.address()
+      if (address === null || typeof address === 'string') {
+        server.close(() => reject(new Error('无法为 Host 恢复旅程分配端口。')))
+        return
+      }
+      server.close((error) => {
+        if (error) reject(error)
+        else resolve(address.port)
+      })
+    })
+  })
+
+const spawnJourneyServer = (port: number, dataRoot: string): JourneyServer => {
+  const repositoryRoot = path.resolve(import.meta.dirname, '../../..')
+  const child = spawn(process.execPath, [path.join(repositoryRoot, 'apps/server/dist/main.mjs')], {
+    cwd: repositoryRoot,
+    env: {
+      ...process.env,
+      NEKRO_DATA: dataRoot,
+      NEKRO_DIST_INDEX: path.join(repositoryRoot, 'apps/web/dist/index.html'),
+      NEKRO_HOST: '127.0.0.1',
+      NEKRO_LLM_PROVIDERS: '',
+      NEKRO_PORT: String(port),
+      NEKRO_RELEASE_ID: 'journey-host-restart',
+    },
+    stdio: ['ignore', 'pipe', 'pipe'],
+  })
+  let output = ''
+  child.stdout?.on('data', (chunk: Buffer) => {
+    output += chunk.toString('utf8')
+  })
+  child.stderr?.on('data', (chunk: Buffer) => {
+    output += chunk.toString('utf8')
+  })
+  const exited = new Promise<void>((resolve, reject) => {
+    child.once('error', reject)
+    child.once('exit', () => resolve())
+  })
+  return { child, exited, diagnostics: () => output }
+}
+
+const waitForJourneyServerReady = async (origin: string, server: JourneyServer): Promise<void> => {
+  const deadline = Date.now() + 60_000
+  let lastError: unknown
+  while (Date.now() < deadline) {
+    if (server.child.exitCode !== null || server.child.signalCode !== null) {
+      throw new Error(`Host 在就绪前退出。\n${server.diagnostics()}`)
+    }
+    try {
+      const response = await fetch(`${origin}/health/ready`, { signal: AbortSignal.timeout(1_000) })
+      const body: unknown = response.ok ? await response.json() : undefined
+      if (isRecord(body) && body['status'] === 'ready' && body['releaseId'] === 'journey-host-restart') return
+      lastError = new Error(`Host readiness 返回 ${response.status}。`)
+    } catch (error) {
+      lastError = error
+    }
+    await new Promise((resolve) => setTimeout(resolve, 100))
+  }
+  throw new Error(`Host 未能在产品旅程时限内就绪。\n${server.diagnostics()}`, { cause: lastError })
+}
+
+const stopJourneyServer = async (server: JourneyServer): Promise<void> => {
+  if (server.child.exitCode !== null || server.child.signalCode !== null) {
+    await server.exited
+    return
+  }
+  server.child.kill('SIGTERM')
+  let timeout: NodeJS.Timeout | undefined
+  try {
+    await Promise.race([
+      server.exited,
+      new Promise<never>((_resolve, reject) => {
+        timeout = setTimeout(() => reject(new Error(`Host 未能及时退出。\n${server.diagnostics()}`)), 20_000)
+      }),
+    ])
+  } catch (error) {
+    if (server.child.exitCode === null && server.child.signalCode === null) server.child.kill('SIGKILL')
+    await server.exited.catch(() => undefined)
+    throw error
+  } finally {
+    if (timeout !== undefined) clearTimeout(timeout)
+  }
+}
 
 const installDeepSeekProviderRoutes = async (
   page: Page,
@@ -70,6 +171,7 @@ test('production bundle keeps every primary route usable without runtime errors'
     ['/work', '工作'],
     ['/work/agents/new', '工作'],
     ['/connections', '连接'],
+    ['/users', '用户'],
     ['/extensions', '扩展'],
     ['/work/creator', '工作'],
     ['/runtime', '工作'],
@@ -83,6 +185,48 @@ test('production bundle keeps every primary route usable without runtime errors'
   }
 
   expect(failures, failures.join('\n')).toEqual([])
+})
+
+test('the open page reconnects after the real Host restarts on the same origin', async ({ page }) => {
+  test.setTimeout(120_000)
+  const port = await reserveJourneyPort()
+  const origin = `http://127.0.0.1:${port}`
+  const dataRoot = await mkdtemp(path.join(tmpdir(), 'nekro-nxt-host-restart-'))
+  const pageErrors: string[] = []
+  page.on('pageerror', (error) => pageErrors.push(error.message))
+  let firstServer: JourneyServer | undefined
+  let recoveredServer: JourneyServer | undefined
+
+  try {
+    firstServer = spawnJourneyServer(port, dataRoot)
+    await waitForJourneyServerReady(origin, firstServer)
+    await page.goto(`${origin}/settings`)
+    await expect(page.getByRole('heading', { name: '模型供应商', level: 1 })).toBeVisible()
+    await expect(page.getByRole('alert').filter({ hasText: '连接不稳定' })).toHaveCount(0)
+
+    const marker = 'same-document-host-recovery'
+    await page.evaluate((value) => {
+      document.documentElement.dataset['hostRestartJourney'] = value
+    }, marker)
+    const urlBeforeRestart = page.url()
+
+    await stopJourneyServer(firstServer)
+    firstServer = undefined
+    await expect(page.getByRole('alert').filter({ hasText: '连接不稳定' })).toBeVisible({ timeout: 15_000 })
+
+    recoveredServer = spawnJourneyServer(port, dataRoot)
+    await waitForJourneyServerReady(origin, recoveredServer)
+    await expect(page.getByRole('alert').filter({ hasText: '连接不稳定' })).toHaveCount(0, { timeout: 20_000 })
+
+    expect(page.url()).toBe(urlBeforeRestart)
+    await expect.poll(() => page.evaluate(() => document.documentElement.dataset['hostRestartJourney'])).toBe(marker)
+    await expect(page.getByRole('heading', { name: '模型供应商', level: 1 })).toBeVisible()
+    expect(pageErrors, pageErrors.join('\n')).toEqual([])
+  } finally {
+    if (recoveredServer !== undefined) await stopJourneyServer(recoveredServer)
+    if (firstServer !== undefined) await stopJourneyServer(firstServer)
+    await rm(dataRoot, { recursive: true, force: true })
+  }
 })
 
 test('legacy work links replace into /work without dropping query or hash', async ({ page }) => {
@@ -111,7 +255,15 @@ test('settings exposes the provider editor and survives real navigation', async 
   await expect(page.getByLabel('API 密钥')).toHaveAttribute('type', 'password')
   await expect(page.getByLabel('API 密钥')).toHaveAttribute('autocomplete', 'off')
   await expect(page.getByLabel('API 密钥')).toHaveAttribute('data-1p-ignore', 'true')
-  await expect(page.getByText(/不会.*回显/u)).toBeVisible()
+  await expect(page.getByText(/已保存密钥无法查看/u)).toBeVisible()
+
+  await page.getByRole('link', { name: /系统扩展/u }).click()
+  await expect(page.getByRole('heading', { name: '系统扩展', level: 1 })).toBeVisible()
+  await expect(page.getByRole('heading', { name: '模型供应商', level: 1 })).toHaveCount(0)
+  await expect(page.locator('[data-stage-layer="out"]')).toHaveCount(0)
+  await expect(page.locator('[data-stage-layer="in"]')).toHaveCSS('opacity', '1')
+  await expect(page.getByText('接入聊天平台。前往「连接」添加账号。', { exact: true })).toBeVisible()
+  await expect(page.getByText('由 NekroNxt 直接提供，用于应用内对话。', { exact: true })).toBeVisible()
 
   await page.getByRole('link', { name: '工作' }).click()
   await expect(page.getByRole('link', { name: '工作' })).toBeVisible()
@@ -204,10 +356,10 @@ test('adding a connection selects a platform before showing its fields', async (
   await page.goto('/connections')
 
   await page
-    .getByRole('link', { name: /网页聊天/u })
+    .getByRole('link', { name: /内置频道/u })
     .first()
     .click()
-  await expect(page.getByText('网页聊天由当前设备管理，不需要配置账号凭据。')).toBeVisible()
+  await expect(page.getByText('内置频道由 NekroNxt 直接提供。')).toBeVisible()
   await expect(page.getByLabel('Client Secret')).toHaveCount(0)
 
   await page.getByRole('link', { name: '添加平台连接' }).click()
@@ -219,7 +371,7 @@ test('adding a connection selects a platform before showing its fields', async (
   await page.getByRole('option', { name: 'QQ 官方机器人' }).click()
   await expect(dialog.getByLabel('App ID')).toHaveCount(0)
 
-  await dialog.getByRole('button', { name: '继续配置' }).click()
+  await dialog.getByRole('button', { name: '填写连接信息' }).click()
   await expect(dialog.getByRole('heading', { name: '配置 QQ 官方机器人' })).toBeVisible()
   await expect(dialog.getByLabel('连接别名')).toBeVisible()
   await dialog.getByLabel('连接别名').fill('旅程测试连接')
@@ -298,11 +450,30 @@ test("an intelligent-agent can add another channel while replacing that channel'
       id: plan.agentId,
       displayName: input.displayName,
       persona: input.persona,
+      personaDocument: input.personaDocument ?? {
+        version: 1,
+        segments: input.persona ? [{ type: 'text', text: input.persona }] : [],
+      },
       currentRevisionId: plan.revisionId,
       createdAt: 1_725_000_000_000 + created * 100,
       runtimeStatus: 'idle',
       runtimePhase: 'idle',
       model: input.model,
+      imagePolicy: input.imagePolicy ?? {
+        history: {
+          mode: 'persistent-distinct',
+          detail: 'auto',
+          restoreAfterCompaction: { recentMessages: 32, maxImages: 20 },
+        },
+        textModel: { mode: 'disabled' },
+      },
+      imageDiagnostics: {
+        route: { mode: 'unavailable' },
+        activeSessions: 0,
+        residentImages: 0,
+        duplicateImagesSkipped: 0,
+        blockers: ['主模型没有声明图片输入能力，且未配置辅助视觉模型。'],
+      },
       capabilities: input.capabilities ?? {
         subagents: true,
         fileTools: false,
@@ -318,7 +489,7 @@ test("an intelligent-agent can add another channel while replacing that channel'
       connectionId: webConnection.id,
       platformChannelId: `journey-${created}`,
       kind: 'web',
-      displayName: `${plan.displayName} 的网页频道`,
+      displayName: `${plan.displayName} 的内置频道`,
       boundAgentId: plan.agentId,
       runtimePhase: 'idle',
       bindings: [
@@ -400,13 +571,13 @@ test("an intelligent-agent can add another channel while replacing that channel'
   const dialog = page.getByRole('dialog')
   await expect(dialog.getByRole('heading', { name: '新增频道绑定' })).toBeVisible()
   await dialog.getByLabel('频道').click()
-  await page.getByRole('option', { name: `网页聊天 · ${sourceName} 的网页频道`, exact: true }).click()
+  await page.getByRole('option', { name: `内置频道 · ${sourceName} 的内置频道`, exact: true }).click()
   await dialog.getByLabel('响应方式').click()
   await page.getByRole('option', { name: '仅观察' }).click()
   await dialog.getByRole('button', { name: '绑定频道' }).click()
 
   await expect(page.getByText('频道已绑定。')).toBeVisible()
-  await expect(page.getByText(`${sourceName} 的网页频道`, { exact: true }).first()).toBeVisible()
+  await expect(page.getByText(`${sourceName} 的内置频道`, { exact: true }).first()).toBeVisible()
   const currentResponse = await page.evaluate(async () => {
     const response = await fetch('/api/snapshot')
     const body: unknown = await response.json()
@@ -438,10 +609,26 @@ test('connection workbench binds an intelligent-agent without visiting the manag
       id: AgentIdSchema.parse('agt_journeybind'),
       displayName: '绑定工作台',
       persona: '',
+      personaDocument: { version: 1, segments: [] },
       currentRevisionId: AgentRevisionIdSchema.parse('arev_journeybind'),
       createdAt: 1_725_000_000_000,
       runtimeStatus: 'idle',
       model: { provider: 'deepseek', model: 'deepseek-v4-flash' },
+      imagePolicy: {
+        history: {
+          mode: 'persistent-distinct',
+          detail: 'auto',
+          restoreAfterCompaction: { recentMessages: 32, maxImages: 20 },
+        },
+        textModel: { mode: 'disabled' },
+      },
+      imageDiagnostics: {
+        route: { mode: 'unavailable' },
+        activeSessions: 0,
+        residentImages: 0,
+        duplicateImagesSkipped: 0,
+        blockers: ['主模型没有声明图片输入能力，且未配置辅助视觉模型。'],
+      },
       capabilities: {
         subagents: true,
         fileTools: false,
@@ -522,9 +709,240 @@ test('connection workbench binds an intelligent-agent without visiting the manag
   await page.getByRole('button', { name: '绑定智能体' }).click()
   const dialog = page.getByRole('dialog')
   await expect(dialog.getByRole('heading', { name: '绑定智能体' })).toBeVisible()
+  await expect(dialog).toContainText('选择响应这个频道的智能体和触发方式。保存后立即更新频道绑定。')
   await dialog.getByRole('button', { name: '绑定频道' }).click()
   await expect(page.getByText('频道已绑定。')).toBeVisible()
   await expect(page).toHaveURL(/\/connections(?:\/|$)/u)
   await expect(page.getByRole('heading', { name: 'QQ 官方机器人' })).toBeVisible()
+  expect(failures, failures.join('\n')).toEqual([])
+})
+
+test('channel context controls and intelligent-agent deletion are guarded and remain usable while running', async ({
+  page,
+  request,
+}) => {
+  const failures = installRuntimeFailureGate(page)
+  const baseResponse = await request.get('/api/snapshot')
+  expect(baseResponse.ok()).toBe(true)
+  const baseSnapshot = HostApiContracts.snapshot.response.parse(await baseResponse.json())
+  const connection = baseSnapshot.connections.find((item) => item.adapterKey === 'web')
+  if (!connection) throw new Error('测试快照缺少 Web 连接。')
+  const agentId = AgentIdSchema.parse('agt_contextjourney')
+  const revisionId = AgentRevisionIdSchema.parse('arev_contextjourney')
+  const channelId = ChannelIdSchema.parse('chn_contextjourney')
+  const externalChannelId = ChannelIdSchema.parse('chn_externalremovejourney')
+  let episodeId = EpisodeIdSchema.parse('eps_contextjourney')
+  const agentName = '上下文旅程智能体'
+  let snapshot: HostSnapshot = HostApiContracts.snapshot.response.parse({
+    ...baseSnapshot,
+    agents: [
+      ...baseSnapshot.agents.filter((item) => item.id !== agentId),
+      {
+        id: agentId,
+        displayName: agentName,
+        persona: '',
+        personaDocument: { version: 1, segments: [] },
+        currentRevisionId: revisionId,
+        createdAt: 1_725_000_000_000,
+        runtimeStatus: 'running',
+        runtimePhase: 'using-tool',
+        model: { provider: 'deepseek', model: 'deepseek-v4-flash' },
+        imagePolicy: {
+          history: {
+            mode: 'persistent-distinct',
+            detail: 'auto',
+            restoreAfterCompaction: { recentMessages: 32, maxImages: 20 },
+          },
+          textModel: { mode: 'disabled' },
+        },
+        imageDiagnostics: {
+          route: { mode: 'unavailable' },
+          activeSessions: 1,
+          residentImages: 0,
+          duplicateImagesSkipped: 0,
+          blockers: [],
+        },
+        capabilities: {
+          subagents: true,
+          fileTools: false,
+          webSearch: false,
+          dynamicCreation: false,
+          developmentShell: false,
+          unrestrictedFileAccess: false,
+        },
+        channels: [channelId],
+      },
+    ],
+    channels: [
+      ...baseSnapshot.channels.filter((item) => item.id !== channelId),
+      {
+        id: channelId,
+        connectionId: connection.id,
+        platformChannelId: 'journey-context',
+        kind: 'web',
+        displayName: '上下文旅程频道',
+        boundAgentId: agentId,
+        runtimePhase: 'using-tool',
+        bindings: [
+          {
+            channelId,
+            agentId,
+            triggerPolicy: 'always',
+            boundAt: 1_725_000_000_000,
+          },
+        ],
+      },
+      {
+        id: externalChannelId,
+        connectionId: connection.id,
+        platformChannelId: 'journey-external-remove',
+        kind: 'group',
+        displayName: '待移除的外部频道',
+        runtimePhase: 'idle',
+        bindings: [],
+      },
+    ],
+    workTreeOrder: {
+      agentIds: [agentId],
+      channelIdsByAgent: { [agentId]: [channelId] },
+      unboundChannelIds: [externalChannelId],
+    },
+  })
+  const resetRequests: unknown[] = []
+  const deleteRequests: unknown[] = []
+  const channelDeleteRequests: unknown[] = []
+
+  await page.route('**/api/snapshot', (route) =>
+    route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(snapshot) }),
+  )
+  await page.route(`**/api/channels/${channelId}/messages**`, (route) =>
+    route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({ messages: [], hasMore: false }),
+    }),
+  )
+  await page.route(`**/api/channels/${channelId}/runtime`, (route) =>
+    route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({
+        channelId,
+        agentId,
+        episodeId,
+        phase: 'using-tool',
+        summary: '智能体正在使用工具。',
+        pendingInjectCount: 0,
+        turns: [],
+      }),
+    }),
+  )
+  await page.route(`**/api/channels/${externalChannelId}/messages**`, (route) =>
+    route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({ messages: [], hasMore: false }),
+    }),
+  )
+  await page.route(`**/api/channels/${externalChannelId}/runtime`, (route) =>
+    route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({
+        channelId: externalChannelId,
+        phase: 'idle',
+        pendingInjectCount: 0,
+        turns: [],
+      }),
+    }),
+  )
+  await page.route(`**/api/channels/${externalChannelId}`, async (route) => {
+    const input = HostApiContracts.deleteChannel.request.parse(route.request().postDataJSON())
+    channelDeleteRequests.push(input)
+    snapshot = HostApiContracts.snapshot.response.parse({
+      ...snapshot,
+      channels: snapshot.channels.filter((item) => item.id !== externalChannelId),
+      workTreeOrder: { ...snapshot.workTreeOrder, unboundChannelIds: [] },
+    })
+    return route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({ channelId: externalChannelId, deleted: true }),
+    })
+  })
+  await page.route(`**/api/channels/${channelId}/context-reset`, async (route) => {
+    const input = HostApiContracts.resetChannelContext.request.parse(route.request().postDataJSON())
+    resetRequests.push(input)
+    const closedEpisodeId = episodeId
+    episodeId = EpisodeIdSchema.parse('eps_contextjourneynext')
+    return route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({ mode: input.mode, closedEpisodeId, nextEpisodeId: episodeId }),
+    })
+  })
+  await page.route(`**/api/agents/${agentId}`, async (route) => {
+    const input = HostApiContracts.deleteAgent.request.parse(route.request().postDataJSON())
+    deleteRequests.push(input)
+    snapshot = HostApiContracts.snapshot.response.parse({
+      ...snapshot,
+      agents: snapshot.agents.filter((item) => item.id !== agentId),
+      channels: snapshot.channels.filter((item) => item.id !== channelId),
+      workTreeOrder: { agentIds: [], channelIdsByAgent: {}, unboundChannelIds: [] },
+    })
+    return route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({ agentId, deleted: true, unboundChannelIds: [], deletedChannelIds: [channelId] }),
+    })
+  })
+
+  await page.goto(`/work/channels/${externalChannelId}`)
+  const channelHeaderActions = page.locator('[data-conversation-header-actions]')
+  await expect(channelHeaderActions.getByRole('button', { name: '绑定智能体' })).toHaveCount(0)
+  await expect(channelHeaderActions.getByRole('button', { name: '频道操作' })).toHaveCount(0)
+  const channelInspector = page.getByLabel('频道')
+  await expect(channelInspector.getByText('尚未绑定智能体', { exact: true })).toBeVisible()
+  await channelInspector.getByRole('button', { name: '移除' }).click()
+  const channelDeleteDialog = page.getByRole('alertdialog')
+  await expect(channelDeleteDialog.getByRole('heading', { name: '从 NekroNxt 移除此频道？' })).toBeVisible()
+  await expect(channelDeleteDialog.getByText(/频道会解除绑定并从列表中移除/u)).toBeVisible()
+  await channelDeleteDialog.getByRole('button', { name: '从 NekroNxt 移除' }).click()
+  await expect(page).toHaveURL(/\/work(?:\/|$)/u)
+  expect(channelDeleteRequests).toEqual([{ expectedBoundAgentId: null }])
+
+  await page.goto(`/work/channels/${channelId}`)
+  await page.getByRole('button', { name: '上下文操作' }).click()
+  await page.getByRole('menuitem', { name: '压缩上下文' }).click()
+  const compactDialog = page.getByRole('dialog')
+  await expect(compactDialog.getByRole('heading', { name: '压缩当前上下文？' })).toBeVisible()
+  await expect(compactDialog.getByText(/立即中止/u)).toBeVisible()
+  await expect(compactDialog.getByText(/以摘要开始新上下文/u)).toBeVisible()
+  await compactDialog.getByRole('button', { name: '压缩上下文' }).click()
+  await expect(page.getByText('当前上下文已压缩并完成交接。')).toBeVisible()
+  expect(resetRequests).toEqual([{ expectedEpisodeId: 'eps_contextjourney', mode: 'compact' }])
+
+  await page.goto(`/work/agents/${agentId}`)
+  await expect(page.getByRole('heading', { name: agentName, level: 1 })).toBeVisible()
+  await expect(page.getByText(/删除智能体会停止所有频道运行/u)).toBeVisible()
+  await page.getByRole('button', { name: '删除智能体' }).click()
+  const deleteDialog = page.getByRole('alertdialog')
+  const deleteButton = deleteDialog.getByRole('button', { name: '删除智能体' })
+  await expect(deleteDialog.getByText(/历史配置、消息和审计记录用于追溯/u)).toBeVisible()
+  await expect(deleteDialog.getByRole('switch', { name: '同时删除自动创建的内置频道' })).toBeChecked()
+  await expect(deleteButton).toBeDisabled()
+  await deleteDialog.getByLabel(`输入“${agentName}”以确认`).fill('错误名称')
+  await expect(deleteButton).toBeDisabled()
+  await deleteDialog.getByLabel(`输入“${agentName}”以确认`).fill(agentName)
+  await expect(deleteButton).toBeEnabled()
+  await deleteButton.click()
+  await expect(page).toHaveURL(/\/work(?:\/|$)/u)
+  expect(deleteRequests).toEqual([
+    {
+      expectedCurrentRevisionId: revisionId,
+      confirmationName: agentName,
+      deleteAutoCreatedBuiltInChannels: true,
+    },
+  ])
   expect(failures, failures.join('\n')).toEqual([])
 })

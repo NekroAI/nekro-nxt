@@ -2,7 +2,7 @@ import { create } from 'zustand'
 
 export const UI_PREFERENCES_KEY = 'nekro-nxt.ui-preferences'
 export const OBJECT_PANE_WIDTH = { min: 200, default: 240, max: 304 } as const
-export const INSPECTOR_WIDTH = { min: 320, default: 360, max: 520 } as const
+export const INSPECTOR_WIDTH = { min: 320, default: 344, max: 520 } as const
 
 export type ContrastChoice = 'system' | 'standard' | 'more'
 

@@ -143,6 +143,7 @@ const emptySnapshot = (): ProductSnapshot => ({
   channelRuntimes: {},
   connections: [],
   extensions: [],
+  platformUsersRevision: 0,
   approvals: [],
   dynamic: [],
   diagnosticNote: '正在连接 NekroNxt 服务…',
@@ -350,6 +351,7 @@ const projectSnapshot = (json: SnapshotJson, successfulAt: number): ProductSnaps
     id: model.id,
     name: nonEmptyLabel(model.name, '未命名模型'),
     ...(model.description === undefined ? {} : { description: model.description }),
+    ...(model.inputModalities === undefined ? {} : { inputModalities: [...model.inputModalities] }),
   }))
   const agents: AgentSummary[] = json.agents.map((agent) => ({
     id: agent.id,
@@ -365,16 +367,19 @@ const projectSnapshot = (json: SnapshotJson, successfulAt: number): ProductSnaps
       ...(agent.model['reasoningEffort'] === undefined ? {} : { reasoningEffort: agent.model['reasoningEffort'] }),
     },
     persona: agent.persona ?? '',
+    personaDocument: agent.personaDocument,
     ...(agent.currentRevisionId === undefined ? {} : { currentRevisionId: agent.currentRevisionId }),
     channels: [...agent.channels],
     extensionCount: json.extensions.filter((extension) =>
       extension.activations.some((activation) => activation.agentId === agent.id),
     ).length,
     capabilities: { ...agent.capabilities },
+    imagePolicy: agent.imagePolicy,
+    imageDiagnostics: agent.imageDiagnostics,
   }))
   const connectionAdapterName = (connection: SnapshotJson['connections'][number]): string =>
     connection.adapterKey === 'web'
-      ? '网页聊天'
+      ? '内置频道'
       : nonEmptyLabel(
           json.connectionAdapters.find((adapter) => adapter.key === connection.adapterKey)?.displayName,
           '未命名连接平台',
@@ -385,7 +390,7 @@ const projectSnapshot = (json: SnapshotJson, successfulAt: number): ProductSnaps
       connectionDisplayName({
         name:
           connection.adapterKey === 'web'
-            ? '网页聊天'
+            ? '内置频道'
             : nonEmptyLabel(
                 json.connectionAdapters.find((adapter) => adapter.key === connection.adapterKey)?.displayName,
                 '未命名连接',
@@ -400,7 +405,7 @@ const projectSnapshot = (json: SnapshotJson, successfulAt: number): ProductSnaps
     name: nonEmptyLabel(
       channel.displayName,
       channel.kind === 'web'
-        ? '未命名 Web 频道'
+        ? '未命名内置频道'
         : platformChannelLabel(channel.platformChannelId, channel.kind === 'group' ? 'group' : 'direct'),
     ),
     kind: channel.kind === 'group' ? 'qq-group' : channel.kind === 'direct' ? 'qq-direct' : 'web',
@@ -473,22 +478,33 @@ const projectSnapshot = (json: SnapshotJson, successfulAt: number): ProductSnaps
     }
   })
   const extensionsLocal = json.extensions.map((extension) => {
-    const targetAgentId = extension.createdByAgentId
-    const activation =
-      targetAgentId === undefined
-        ? undefined
-        : extension.activations.find((candidate) => candidate.agentId === targetAgentId)
     const latestRevision = extension.revisions.at(-1)
-    const targetAgent = targetAgentId
-      ? nonEmptyLabel(json.agents.find((agent) => agent.id === targetAgentId)?.displayName, '未命名智能体')
-      : ''
     return {
       id: extension.id,
       name: extension.displayName,
       description: extension.description,
       revision: latestRevision?.revisionNumber ?? 0,
-      activation: activation === undefined ? ('未激活' as const) : ('已激活' as const),
-      targetAgent,
+      ...(extension.createdByAgentId === undefined ? {} : { createdByAgentId: extension.createdByAgentId }),
+      createdByAgent:
+        extension.createdByAgentId === undefined
+          ? ''
+          : nonEmptyLabel(
+              json.agents.find((agent) => agent.id === extension.createdByAgentId)?.displayName,
+              '已删除的智能体',
+            ),
+      activations: extension.activations.map((candidate) => {
+        const activeRevision = extension.revisions.find((revision) => revision.id === candidate.extensionRevisionId)
+        return {
+          agentId: candidate.agentId,
+          agentName: nonEmptyLabel(
+            json.agents.find((agent) => agent.id === candidate.agentId)?.displayName,
+            '未命名智能体',
+          ),
+          revisionId: candidate.extensionRevisionId,
+          revision: activeRevision?.revisionNumber ?? 0,
+          activatedAt: candidate.activatedAt,
+        }
+      }),
       contributions: latestRevision?.contributions ?? [],
       ...(latestRevision?.verification === undefined
         ? {}
@@ -524,7 +540,6 @@ const projectSnapshot = (json: SnapshotJson, successfulAt: number): ProductSnaps
         observedAt: diagnostic.observedAt,
       })),
       ...(latestRevision === undefined ? {} : { revisionId: latestRevision.id }),
-      ...(targetAgentId === undefined ? {} : { agentId: targetAgentId }),
     }
   })
   return {
@@ -539,6 +554,7 @@ const projectSnapshot = (json: SnapshotJson, successfulAt: number): ProductSnaps
     connections,
     workTreeOrder: json.workTreeOrder,
     extensions: extensionsLocal,
+    platformUsersRevision: 0,
     approvals: [],
     dynamic: json.dynamic.map((item) => ({
       agentId: item.agentId,
@@ -569,6 +585,8 @@ export class HttpProductHost implements ProductHostPort {
   readonly #messageRevision = new Map<string, number>()
   readonly #runtimeRevision = new Map<string, number>()
   readonly #reconciling = new Set<string>()
+  readonly #messageReconcileDepth = new Map<string, number>()
+  readonly #pendingChannelFacts = new Map<string, ChannelFactSseData[]>()
 
   getSnapshot(): ProductSnapshot {
     return this.#snapshot
@@ -601,6 +619,7 @@ export class HttpProductHost implements ProductHostPort {
           void this.#refreshAndNotify()
           return
         }
+        this.#snapshot = { ...this.#snapshot, platformUsersRevision: this.#snapshot.platformUsersRevision + 1 }
         this.#applyChannelFact(parsed.data)
       })
       source.addEventListener('runtime', (event) => {
@@ -652,6 +671,19 @@ export class HttpProductHost implements ProductHostPort {
       if (failure !== null) throw failure
       return null
     }
+    if (command === 'platformUsers.list') {
+      return await this.#call(
+        HostApiContracts.listPlatformUsers,
+        {
+          ...(typeof input?.['query'] === 'string' ? { query: input['query'] } : {}),
+          ...(typeof input?.['adapterKey'] === 'string' ? { adapterKey: input['adapterKey'] } : {}),
+          ...(typeof input?.['connectionId'] === 'string' ? { connectionId: input['connectionId'] } : {}),
+          ...(typeof input?.['cursor'] === 'string' ? { cursor: input['cursor'] } : {}),
+          limit: typeof input?.['limit'] === 'number' ? input['limit'] : 50,
+        },
+        undefined,
+      )
+    }
     if (command === 'agents.create') {
       const body = createAgentRequestBody(input)
       const result = await this.#call(HostApiContracts.createAgent, {}, body)
@@ -664,7 +696,9 @@ export class HttpProductHost implements ProductHostPort {
         typeof input?.['expectedCurrentRevisionId'] === 'string' ? input['expectedCurrentRevisionId'] : ''
       const displayName = typeof input?.['displayName'] === 'string' ? input['displayName'] : ''
       const persona = typeof input?.['persona'] === 'string' ? input['persona'] : ''
+      const personaDocument = input?.['personaDocument']
       const model = isRecord(input?.['model']) ? input['model'] : {}
+      const imagePolicy = input?.['imagePolicy']
       if (
         !agentId.trim() ||
         !expectedCurrentRevisionId.trim() ||
@@ -676,20 +710,37 @@ export class HttpProductHost implements ProductHostPort {
       ) {
         throw new Error('智能体配置不完整，请刷新页面后重试。')
       }
-      const result = await this.#call(
-        HostApiContracts.reviseAgent,
-        { agentId },
-        {
-          expectedCurrentRevisionId,
-          displayName,
-          persona,
-          model: {
-            provider: model['provider'],
-            model: model['model'],
-            ...(typeof model['reasoningEffort'] === 'string' ? { reasoningEffort: model['reasoningEffort'] } : {}),
-          },
+      const body = HostApiContracts.reviseAgent.parseRequest({
+        expectedCurrentRevisionId,
+        displayName,
+        persona,
+        ...(personaDocument === undefined ? {} : { personaDocument }),
+        model: {
+          provider: model['provider'],
+          model: model['model'],
+          ...(typeof model['reasoningEffort'] === 'string' ? { reasoningEffort: model['reasoningEffort'] } : {}),
         },
-      )
+        ...(imagePolicy === undefined ? {} : { imagePolicy }),
+      })
+      const result = await this.#call(HostApiContracts.reviseAgent, { agentId }, body)
+      await this.#refreshAndNotify()
+      return result
+    }
+    if (command === 'agents.delete') {
+      const agentId = typeof input?.['agentId'] === 'string' ? input['agentId'] : ''
+      const expectedCurrentRevisionId =
+        typeof input?.['expectedCurrentRevisionId'] === 'string' ? input['expectedCurrentRevisionId'] : ''
+      const confirmationName = typeof input?.['confirmationName'] === 'string' ? input['confirmationName'] : ''
+      const deleteAutoCreatedBuiltInChannels = input?.['deleteAutoCreatedBuiltInChannels'] !== false
+      if (!agentId.trim() || !expectedCurrentRevisionId.trim()) {
+        throw new Error('智能体删除信息不完整，请刷新页面后重试。')
+      }
+      const body = HostApiContracts.deleteAgent.parseRequest({
+        expectedCurrentRevisionId,
+        confirmationName,
+        deleteAutoCreatedBuiltInChannels,
+      })
+      const result = await this.#call(HostApiContracts.deleteAgent, { agentId }, body)
       await this.#refreshAndNotify()
       return result
     }
@@ -726,6 +777,32 @@ export class HttpProductHost implements ProductHostPort {
       const channelId = typeof input?.['channelId'] === 'string' ? input['channelId'] : ''
       if (!channelId.trim()) throw new Error('缺少目标频道，请刷新页面后重试。')
       return await this.#loadChannelRuntime(channelId)
+    }
+    if (command === 'channels.resetContext') {
+      const channelId = typeof input?.['channelId'] === 'string' ? input['channelId'] : ''
+      const expectedEpisodeId = typeof input?.['expectedEpisodeId'] === 'string' ? input['expectedEpisodeId'] : ''
+      const mode = input?.['mode'] === 'clear' || input?.['mode'] === 'compact' ? input['mode'] : undefined
+      if (!channelId.trim() || !expectedEpisodeId.trim() || mode === undefined) {
+        throw new Error('频道上下文操作信息不完整，请刷新页面后重试。')
+      }
+      const result = await this.#call(HostApiContracts.resetChannelContext, { channelId }, { expectedEpisodeId, mode })
+      await this.#refreshAndNotify()
+      return result
+    }
+    if (command === 'channels.delete') {
+      const channelId = typeof input?.['channelId'] === 'string' ? input['channelId'] : ''
+      const expectedBoundAgentId =
+        input?.['expectedBoundAgentId'] === null
+          ? null
+          : typeof input?.['expectedBoundAgentId'] === 'string'
+            ? input['expectedBoundAgentId']
+            : undefined
+      if (!channelId.trim() || expectedBoundAgentId === undefined) {
+        throw new Error('频道删除信息不完整，请刷新页面后重试。')
+      }
+      const result = await this.#call(HostApiContracts.deleteChannel, { channelId }, { expectedBoundAgentId })
+      await this.#refreshAndNotify()
+      return result
     }
     if (command === 'channels.rename') {
       const channelId = typeof input?.['channelId'] === 'string' ? input['channelId'] : ''
@@ -967,7 +1044,7 @@ export class HttpProductHost implements ProductHostPort {
     beforeOccurredAt?: number,
     beforeSourceId?: string,
   ): Promise<{ readonly messages: readonly ConversationMessage[]; readonly hasMore: boolean }> {
-    this.#reconciling.add(channelId)
+    this.#messageReconcileDepth.set(channelId, (this.#messageReconcileDepth.get(channelId) ?? 0) + 1)
     try {
       const raw = await this.#call(
         HostApiContracts.listChannelMessages,
@@ -995,7 +1072,15 @@ export class HttpProductHost implements ProductHostPort {
       this.#listener?.()
       return { messages: projected, hasMore: raw.hasMore }
     } finally {
-      this.#reconciling.delete(channelId)
+      const remaining = (this.#messageReconcileDepth.get(channelId) ?? 1) - 1
+      if (remaining > 0) {
+        this.#messageReconcileDepth.set(channelId, remaining)
+      } else {
+        this.#messageReconcileDepth.delete(channelId)
+        const pending = this.#pendingChannelFacts.get(channelId) ?? []
+        this.#pendingChannelFacts.delete(channelId)
+        for (const fact of pending) this.#applyChannelFact(fact)
+      }
     }
   }
 
@@ -1014,14 +1099,20 @@ export class HttpProductHost implements ProductHostPort {
   }
 
   #applyChannelFact(data: ChannelFactSseData): void {
+    if ((this.#messageReconcileDepth.get(data.channelId) ?? 0) > 0) {
+      const pending = this.#pendingChannelFacts.get(data.channelId) ?? []
+      pending.push(data)
+      this.#pendingChannelFacts.set(data.channelId, pending)
+      return
+    }
     if (
       !this.#loadedChannels.has(data.channelId) &&
       !this.#snapshot.messages.some((message) => message.channelId === data.channelId)
     ) {
+      this.#listener?.()
       return
     }
     this.#loadedChannels.add(data.channelId)
-    if (this.#reconciling.has(data.channelId)) return
     const last = this.#messageRevision.get(data.channelId)
     if (last !== undefined && data.revision !== last + 1) {
       void this.#loadChannelMessages(data.channelId, 'latest', CHANNEL_MESSAGE_PAGE_SIZE)
@@ -1058,7 +1149,15 @@ export class HttpProductHost implements ProductHostPort {
   #runtimeViewFromProjection(
     raw: Pick<
       ChannelRuntimeSseData,
-      'channelId' | 'agentId' | 'episodeId' | 'phase' | 'summary' | 'pendingInjectCount' | 'occupancy' | 'turns'
+      | 'channelId'
+      | 'agentId'
+      | 'episodeId'
+      | 'phase'
+      | 'summary'
+      | 'pendingInjectCount'
+      | 'occupancy'
+      | 'cache'
+      | 'turns'
     >,
   ): ChannelRuntimeView {
     return {
@@ -1069,6 +1168,7 @@ export class HttpProductHost implements ProductHostPort {
       summary: raw.summary,
       pendingInjectCount: raw.pendingInjectCount,
       ...(raw.occupancy === undefined ? {} : { occupancy: raw.occupancy }),
+      ...(raw.cache === undefined ? {} : { cache: raw.cache }),
       turns: raw.turns,
     }
   }
@@ -1155,6 +1255,7 @@ export class HttpProductHost implements ProductHostPort {
       ...projected,
       messages: this.#loadedChannels.size > 0 ? this.#snapshot.messages : projected.messages,
       channelRuntimes: this.#snapshot.channelRuntimes,
+      platformUsersRevision: this.#snapshot.platformUsersRevision,
     }
     for (const message of this.#snapshot.messages) this.#loadedChannels.add(message.channelId)
     this.#listener?.()
@@ -1184,12 +1285,15 @@ const createAgentRequestBody = (input?: Readonly<Record<string, unknown>>): Host
   const provider = typeof model?.['provider'] === 'string' ? model['provider'].trim() : ''
   const modelId = typeof model?.['model'] === 'string' ? model['model'].trim() : ''
   const persona = typeof input?.['persona'] === 'string' ? input['persona'] : ''
+  const personaDocument = input?.['personaDocument']
   const rawCapabilities = isRecord(input?.['capabilities']) ? input['capabilities'] : {}
+  const imagePolicy = input?.['imagePolicy']
   if (!displayName.trim()) throw new Error('请输入智能体名称。')
   if (!provider || !modelId) throw new Error('请选择当前可用的模型。')
-  return {
+  return HostApiContracts.createAgent.parseRequest({
     displayName: displayName.trim(),
     persona,
+    ...(personaDocument === undefined ? {} : { personaDocument }),
     model: { provider, model: modelId },
     capabilities: {
       subagents: rawCapabilities['subagents'] === true,
@@ -1199,7 +1303,8 @@ const createAgentRequestBody = (input?: Readonly<Record<string, unknown>>): Host
       developmentShell: rawCapabilities['developmentShell'] === true,
       unrestrictedFileAccess: rawCapabilities['unrestrictedFileAccess'] === true,
     },
-  }
+    ...(imagePolicy === undefined ? {} : { imagePolicy }),
+  })
 }
 
 const errorMessage = (cause: unknown, fallback: string): string =>

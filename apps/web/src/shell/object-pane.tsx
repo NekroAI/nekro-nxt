@@ -298,7 +298,7 @@ function UnboundSection({
           <small>{channels.length > 0 ? `${channels.length} 个频道` : '把频道拖到这里以解除绑定'}</small>
         </span>
         <IconButton
-          label="新建网页频道"
+          label="新建内置频道"
           className={shell.treeAdd}
           onPointerDown={(event) => event.stopPropagation()}
           onClick={onCreate}
@@ -333,7 +333,7 @@ function WorkTree() {
   const [activeId, setActiveId] = useState('')
   const [intent, setIntent] = useState<BindingChangeIntent>()
   const [createWebOpen, setCreateWebOpen] = useState(false)
-  const [webChannelName, setWebChannelName] = useState('网页频道')
+  const [webChannelName, setWebChannelName] = useState('内置频道')
   const treeBodyRef = useRef<HTMLDivElement>(null)
   const suppressClickRef = useRef(false)
   const keyboardDragRef = useRef(false)
@@ -573,7 +573,7 @@ function WorkTree() {
                   channelActiveId={channelActiveId}
                   onGuardedClick={guardClick}
                   onCreate={() => {
-                    setWebChannelName('网页频道')
+                    setWebChannelName('内置频道')
                     setCreateWebOpen(true)
                   }}
                 />
@@ -609,15 +609,15 @@ function WorkTree() {
       <ConfirmDialog
         open={createWebOpen}
         onOpenChange={setCreateWebOpen}
-        title="新建网页频道"
-        description="在本机网页聊天下新建一个未绑定频道，再拖到智能体上交给它响应。"
-        confirmLabel="创建网页频道"
+        title="新建内置频道"
+        description="在 NekroNxt 中新建一个未绑定的内置频道，再拖到智能体上交给它响应。"
+        confirmLabel="创建内置频道"
         onConfirm={async () => {
           const name = webChannelName.trim()
           if (!name) return false
           try {
             await useProductStore.getState().createWebChannel({ displayName: name })
-            notify('网页频道已创建。', 'success', 'web-channel-create')
+            notify('内置频道已创建。', 'success', 'web-channel-create')
             return true
           } catch (error) {
             notify(error instanceof Error ? error.message : String(error), 'error', 'web-channel-create')
@@ -731,7 +731,7 @@ function ExtensionTree() {
                       <strong>{extension.name}</strong>
                       <small>版本 {extension.revision}</small>
                     </span>
-                    <em>{extension.activation === '已激活' ? '已启用' : '未启用'}</em>
+                    <em>{extension.activations.length > 0 ? `${extension.activations.length} 个智能体` : '未启用'}</em>
                   </NxtNavLink>
                 )
               })}
@@ -803,18 +803,71 @@ function SettingsTree() {
   )
 }
 
+function UsersTree() {
+  const location = useLocation()
+  const selectedAdapter = new URLSearchParams(location.search).get('adapter') ?? ''
+  const facets = useProductStore((state) => state.platformUserFacets)
+  const total = facets.adapters.reduce((sum, adapter) => sum + adapter.userCount, 0)
+  const items = [
+    { key: '', label: '全部用户', count: total },
+    ...facets.adapters.map((adapter) => ({
+      key: adapter.key,
+      label: adapter.displayName,
+      count: adapter.userCount,
+    })),
+  ]
+  return (
+    <>
+      <div className={shell.treeHead}>
+        <span>平台用户</span>
+      </div>
+      <div className={shell.treeBody}>
+        <NavMarkGroup id="platform-user-nav">
+          <nav className={styles.settingsNav} aria-label="平台用户分类">
+            {items.map((item) => {
+              const active = selectedAdapter === item.key
+              return (
+                <NxtNavLink
+                  key={item.key || 'all'}
+                  to={item.key ? `/users?adapter=${encodeURIComponent(item.key)}` : '/users'}
+                  className={() =>
+                    [styles.settingsNavItem, active ? styles.settingsNavItemActive : ''].filter(Boolean).join(' ')
+                  }
+                  data-nav-active={active ? '' : undefined}
+                >
+                  <NavGlyph active={active}>
+                    <UsersRound size={17} aria-hidden="true" />
+                  </NavGlyph>
+                  <span className={styles.navCopy}>
+                    <strong>{item.label}</strong>
+                    <small>{item.count} 位用户</small>
+                  </span>
+                </NxtNavLink>
+              )
+            })}
+          </nav>
+        </NavMarkGroup>
+      </div>
+    </>
+  )
+}
+
 export function ObjectPane() {
   const location = useLocation()
   const mode = location.pathname.startsWith('/connections')
     ? 'connections'
-    : location.pathname.startsWith('/extensions')
-      ? 'extensions'
-      : location.pathname.startsWith('/settings')
-        ? 'settings'
-        : 'work'
+    : location.pathname.startsWith('/users')
+      ? 'users'
+      : location.pathname.startsWith('/extensions')
+        ? 'extensions'
+        : location.pathname.startsWith('/settings')
+          ? 'settings'
+          : 'work'
   const tree =
     mode === 'connections' ? (
       <ConnectionTree />
+    ) : mode === 'users' ? (
+      <UsersTree />
     ) : mode === 'extensions' ? (
       <ExtensionTree />
     ) : mode === 'settings' ? (

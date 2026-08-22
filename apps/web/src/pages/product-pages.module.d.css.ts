@@ -10,6 +10,14 @@ declare const styles: {
   readonly accessLevelSlider: string
   readonly accessLevelStops: string
   readonly accessLevelTrack: string
+  readonly activationCard: string
+  readonly activationCopy: string
+  readonly activationCount: string
+  readonly activationDescription: string
+  readonly activationGlyph: string
+  readonly activationGrid: string
+  readonly activationMeta: string
+  readonly activationSection: string
   readonly agentActivity: string
   readonly agentAvatar: string
   readonly agentBlockers: string
@@ -31,18 +39,37 @@ declare const styles: {
   readonly bindingAgentIdentity: string
   readonly bindingAgentRow: string
   readonly bindingEmpty: string
+  readonly bindingEmptyIcon: string
   readonly bindingInspector: string
   readonly bindingNextStep: string
+  readonly bindingSettings: string
   readonly bindingSourceRow: string
   readonly boundChannelList: string
   readonly boundChannelName: string
   readonly boundChannelRow: string
+  readonly cacheComposition: string
+  readonly cacheCompositionTrack: string
+  readonly cacheCoverage: string
+  readonly cacheHeader: string
+  readonly cacheLatest: string
+  readonly cacheMetrics: string
+  readonly cacheSegmentMiss: string
+  readonly cacheSegmentRead: string
+  readonly cacheSegmentWrite: string
+  readonly cacheTotals: string
+  readonly cacheTrend: string
+  readonly cacheTrendBar: string
+  readonly cacheTrendBarActive: string
+  readonly cacheTrendBarUnknown: string
+  readonly cacheTrendPlot: string
+  readonly cacheUsageCard: string
   readonly canvasStage: string
   readonly canvasStageInner: string
   readonly canvasTab: string
   readonly capabilityChoices: string
   readonly capabilitySubsection: string
   readonly capabilitySubsectionHeader: string
+  readonly channelDangerRow: string
   readonly channelDetailRow: string
   readonly channelDetails: string
   readonly channelDirectory: string
@@ -54,6 +81,7 @@ declare const styles: {
   readonly channelLinkActive: string
   readonly channelRename: string
   readonly channelRow: string
+  readonly channelSessionInspector: string
   readonly collapsedInspectorDock: string
   readonly compactList: string
   readonly composer: string
@@ -93,6 +121,7 @@ declare const styles: {
   readonly creatorStartGrid: string
   readonly creatorStartPanel: string
   readonly creatorWorkspace: string
+  readonly dangerSection: string
   readonly detailPage: string
   readonly dialogChoice: string
   readonly dragOverlay: string
@@ -124,6 +153,7 @@ declare const styles: {
   readonly inspectorExpanded: string
   readonly inspectorFacts: string
   readonly inspectorPane: string
+  readonly inspectorPanel: string
   readonly inspectorRegion: string
   readonly inspectorRegionBody: string
   readonly inspectorSectionHead: string
@@ -177,6 +207,8 @@ declare const styles: {
   readonly riskLabel: string
   readonly rowActions: string
   readonly runtimeCard: string
+  readonly runtimeEmpty: string
+  readonly runtimeEmptyIcon: string
   readonly runtimeTail: string
   readonly secondaryText: string
   readonly section: string
@@ -237,6 +269,15 @@ declare const styles: {
   readonly turnChip: string
   readonly turnRail: string
   readonly unread: string
+  readonly userAvatar: string
+  readonly userChannels: string
+  readonly userGroup: string
+  readonly userGroups: string
+  readonly userIdentity: string
+  readonly userLoadMore: string
+  readonly userRow: string
+  readonly userRows: string
+  readonly userToolbar: string
   readonly viewSwitch: string
   readonly webSearchSetup: string
   readonly workDot: string

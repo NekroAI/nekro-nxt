@@ -58,11 +58,27 @@ test('work tree keeps titles stable while full rows and keyboard handles cover o
         id: mapleId,
         displayName: '规划员',
         persona: '',
+        personaDocument: { version: 1, segments: [] },
         currentRevisionId: AgentRevisionIdSchema.parse('arev_dragmaple'),
         createdAt: 1,
         runtimeStatus: 'idle',
         runtimePhase: 'idle',
         model: { provider: 'openai', model: 'gpt-5' },
+        imagePolicy: {
+          history: {
+            mode: 'persistent-distinct',
+            detail: 'auto',
+            restoreAfterCompaction: { recentMessages: 32, maxImages: 20 },
+          },
+          textModel: { mode: 'disabled' },
+        },
+        imageDiagnostics: {
+          route: { mode: 'unavailable' },
+          activeSessions: 0,
+          residentImages: 0,
+          duplicateImagesSkipped: 0,
+          blockers: ['主模型没有声明图片输入能力，且未配置辅助视觉模型。'],
+        },
         capabilities: {
           subagents: true,
           fileTools: false,
@@ -77,11 +93,27 @@ test('work tree keeps titles stable while full rows and keyboard handles cover o
         id: clerkId,
         displayName: '资料员',
         persona: '',
+        personaDocument: { version: 1, segments: [] },
         currentRevisionId: AgentRevisionIdSchema.parse('arev_dragclerk'),
         createdAt: 2,
         runtimeStatus: 'idle',
         runtimePhase: 'idle',
         model: { provider: 'openai', model: 'gpt-5' },
+        imagePolicy: {
+          history: {
+            mode: 'persistent-distinct',
+            detail: 'auto',
+            restoreAfterCompaction: { recentMessages: 32, maxImages: 20 },
+          },
+          textModel: { mode: 'disabled' },
+        },
+        imageDiagnostics: {
+          route: { mode: 'unavailable' },
+          activeSessions: 0,
+          residentImages: 0,
+          duplicateImagesSkipped: 0,
+          blockers: ['主模型没有声明图片输入能力，且未配置辅助视觉模型。'],
+        },
         capabilities: {
           subagents: true,
           fileTools: false,
@@ -99,7 +131,7 @@ test('work tree keeps titles stable while full rows and keyboard handles cover o
         connectionId: webConnectionId,
         platformChannelId: 'web-maple',
         kind: 'web',
-        displayName: '规划员的网页频道',
+        displayName: '规划员的内置频道',
         boundAgentId: mapleId,
         runtimePhase: 'idle',
         bindings: [{ channelId: mapleChannelId, agentId: mapleId, triggerPolicy: 'always', boundAt: 1 }],
@@ -119,7 +151,7 @@ test('work tree keeps titles stable while full rows and keyboard handles cover o
         connectionId: webConnectionId,
         platformChannelId: 'web-clerk',
         kind: 'web',
-        displayName: '资料员的网页频道',
+        displayName: '资料员的内置频道',
         boundAgentId: clerkId,
         runtimePhase: 'idle',
         bindings: [{ channelId: clerkChannelId, agentId: clerkId, triggerPolicy: 'always', boundAt: 2 }],
@@ -243,11 +275,11 @@ test('work tree keeps titles stable while full rows and keyboard handles cover o
   await expect(page.getByRole('link', { name: /规划员/u }).first()).toBeVisible()
   await expect(page.getByRole('link', { name: /资料员/u }).first()).toBeVisible()
 
-  const mapleChannel = page.getByRole('link', { name: /规划员的网页频道/u })
+  const mapleChannel = page.getByRole('link', { name: /规划员的内置频道/u })
   const mapleSpare = page.getByRole('link', { name: /规划员的备用地/u })
   const mapleHeader = page.getByRole('link', { name: /规划员.*\d+ 个频道/u })
   const clerkHeader = page.getByRole('link', { name: /资料员.*\d+ 个频道/u })
-  const mapleChannelHandle = page.getByRole('button', { name: '拖动“规划员的网页频道”排序' })
+  const mapleChannelHandle = page.getByRole('button', { name: '拖动“规划员的内置频道”排序' })
   const top = async (locator: Locator): Promise<number> => {
     const box = await locator.boundingBox()
     if (!box) throw new Error('排序目标没有几何尺寸。')
@@ -260,14 +292,15 @@ test('work tree keeps titles stable while full rows and keyboard handles cover o
   expect(widthBeforeHover).toBeDefined()
   expect(widthAfterHover).toBeDefined()
   expect(Math.abs((widthAfterHover ?? 0) - (widthBeforeHover ?? 0))).toBeLessThanOrEqual(0.5)
-  await expect(page.getByRole('button', { name: /频道操作/u })).toHaveCount(0)
-  await expect(page.getByRole('button', { name: /智能体操作/u })).toHaveCount(0)
+  const objectPane = page.getByLabel('对象列')
+  await expect(objectPane.getByRole('button', { name: /频道操作/u })).toHaveCount(0)
+  await expect(objectPane.getByRole('button', { name: /智能体操作/u })).toHaveCount(0)
 
-  await page.getByRole('button', { name: '新建网页频道' }).click()
+  await page.getByRole('button', { name: '新建内置频道' }).click()
   const createDialog = page.getByRole('dialog')
-  await expect(createDialog.getByRole('heading', { name: '新建网页频道' })).toBeVisible()
+  await expect(createDialog.getByRole('heading', { name: '新建内置频道' })).toBeVisible()
   await createDialog.getByLabel('频道名称').fill('临时网页台')
-  await createDialog.getByRole('button', { name: '创建网页频道' }).click()
+  await createDialog.getByRole('button', { name: '创建内置频道' }).click()
   await expect(page.getByRole('link', { name: /临时网页台/u })).toBeVisible()
 
   expect(await top(mapleChannel)).toBeLessThan(await top(mapleSpare))
@@ -316,20 +349,20 @@ test('work tree keeps titles stable while full rows and keyboard handles cover o
   await dragTo(page, mapleChannel, clerkHeader)
   const rebindDialog = page.getByRole('dialog')
   await expect(rebindDialog.getByRole('heading', { name: '改由其他智能体响应' })).toBeVisible()
-  await expect(rebindDialog.getByText(/将「规划员的网页频道」改由「资料员」响应/u)).toBeVisible()
+  await expect(rebindDialog.getByText(/将「规划员的内置频道」改由「资料员」响应/u)).toBeVisible()
   await rebindDialog.getByRole('button', { name: '改由该智能体响应' }).click()
   await expect(rebindDialog).toHaveCount(0)
   await expect(mapleChannelHandle).toBeFocused()
 
-  const clerkChannelHandle = page.getByRole('button', { name: '拖动“资料员的网页频道”排序' })
+  const clerkChannelHandle = page.getByRole('button', { name: '拖动“资料员的内置频道”排序' })
   await dragTo(
     page,
-    page.getByRole('link', { name: /资料员的网页频道/u }),
+    page.getByRole('link', { name: /资料员的内置频道/u }),
     page.getByText('未绑定频道', { exact: true }),
   )
   const unbindDialog = page.getByRole('dialog')
   await expect(unbindDialog.getByRole('heading', { name: '解除频道绑定' })).toBeVisible()
-  await expect(unbindDialog.getByText(/先停止「资料员」在「资料员的网页频道」中的当前工作/u)).toBeVisible()
+  await expect(unbindDialog.getByText(/先停止「资料员」在「资料员的内置频道」中的当前工作/u)).toBeVisible()
   await unbindDialog.getByRole('button', { name: '停止并解除绑定' }).click()
   await expect(unbindDialog).toHaveCount(0)
   await expect(clerkChannelHandle).toBeFocused()

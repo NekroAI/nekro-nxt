@@ -825,6 +825,7 @@ export function ConfirmDialog({
   cancelLabel = '取消',
   confirmVariant = 'primary',
   confirmLoadingLabel = '处理中…',
+  confirmDisabled = false,
   onCloseAutoFocus,
   children,
 }: {
@@ -839,6 +840,7 @@ export function ConfirmDialog({
   readonly cancelLabel?: string
   readonly confirmVariant?: 'primary' | 'danger'
   readonly confirmLoadingLabel?: string
+  readonly confirmDisabled?: boolean
   readonly onCloseAutoFocus?: DialogProps['onCloseAutoFocus']
   readonly children?: ReactNode
 }) {
@@ -875,6 +877,7 @@ export function ConfirmDialog({
             variant={confirmVariant}
             loading={pending}
             loadingLabel={confirmLoadingLabel}
+            disabled={confirmDisabled}
             onClick={() => void confirm()}
           >
             {confirmLabel}

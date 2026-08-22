@@ -282,7 +282,7 @@ class SlotBoundary extends Component<SlotBoundaryProps, { readonly failed: boole
     return (
       <section className="nxt-extension-section" role="alert">
         <h3 className="nxt-extension-section-heading">扩展界面加载失败</h3>
-        <p className="nxt-extension-secondary-text">Host 能力仍保持启用，可以单独重新加载界面。</p>
+        <p className="nxt-extension-secondary-text">界面加载失败不影响智能体工具和数据接口。可单独重新加载界面。</p>
         <div className="nxt-extension-action-row">
           <Button size="small" onClick={this.props.onReload}>
             重新加载界面
@@ -378,7 +378,7 @@ export function ExtensionDetailsExtensionSlots(props: ExtensionDetailsSlotProps)
   if (diagnostic?.status === 'failed') {
     return (
       <section className="nxt-extension-section" role="alert">
-        <h3 className="nxt-extension-section-heading">最近一次 Client 加载失败</h3>
+        <h3 className="nxt-extension-section-heading">扩展界面加载失败</h3>
         <p className="nxt-extension-secondary-text">{diagnostic.message ?? '没有可用的错误详情。'}</p>
         <div className="nxt-extension-action-row">
           <Button size="small" onClick={() => void coordinator.reload(props.agentId)}>

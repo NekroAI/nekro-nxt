@@ -12,6 +12,7 @@ import {
   Input,
   StageCrossfade,
   StatusBadge,
+  SwitchControl,
   Textarea,
   type StatusTone,
 } from '../ui-kit/index.js'
@@ -19,44 +20,77 @@ import styles from './product-pages.module.css'
 import { DynamicClientSlots } from '../dynamic-client-coordinator.js'
 import { ExtensionDetailsExtensionSlots } from '../persistent-extension-client.js'
 
-const extensionLabel = (activation: LocalExtensionSummary['activation']): string => {
-  if (activation === '已激活') return '已启用'
-  if (activation === '等待安全切换') return '等待切换'
-  if (activation === '激活失败') return '启用失败'
-  return '未启用'
+const extensionLabel = (activeAgentCount: number): string =>
+  activeAgentCount > 0 ? `${activeAgentCount} 个智能体正在使用` : '尚未启用'
+
+const extensionTone = (activeAgentCount: number): StatusTone => (activeAgentCount > 0 ? 'success' : 'neutral')
+
+export const extensionDescription = (description: string): string =>
+  description
+    .replace(/^由官方\s+/u, '由 ')
+    .replaceAll('Host Tool', '智能体工具')
+    .replace(/\bRPC\b/gu, '界面数据接口')
+    .replaceAll('产品 Slot', '产品界面')
+    .replace(/\bClient\b/gu, '界面')
+    .replace(/\bHost\b/gu, '服务端')
+    .replaceAll('已验证 智能体工具', '已验证智能体工具')
+    .replace(/([\p{Script=Han}])\s+([与和及、，。；])/gu, '$1$2')
+
+export const contributionLabel = (contribution: string): string => {
+  const match = /^(工具|RPC|界面)[：:]\s*(.+)$/u.exec(contribution)
+  if (!match) return contribution
+  const [, kind, name = ''] = match
+  if (kind === '工具') return `智能体工具 · ${name}`
+  if (kind === 'RPC') return `界面数据接口 · ${name}`
+  if (name === 'agent.workbench.sections' || name === '智能体工作台') return '智能体工作台面板'
+  if (name === 'extension.details.panels' || name === '扩展详情') return '扩展详情面板'
+  return `产品界面 · ${name}`
 }
 
-const extensionTone = (activation: LocalExtensionSummary['activation']): StatusTone => {
-  if (activation === '已激活') return 'success'
-  if (activation === '等待安全切换') return 'warning'
-  if (activation === '激活失败') return 'error'
-  return 'neutral'
-}
+export const contractVersionLabel = (version: string): string =>
+  version === 'nekro-nxt-extension-v1' ? 'NekroNxt 扩展 v1' : version
 
 export function ExtensionsPage() {
   const { extensionId = '' } = useParams()
   const navigate = useNxtNavigate()
   const host = useProductStore((state) => state.host)
+  const agents = useProductStore((state) => state.agents)
   const extensions = useProductStore((state) => state.extensions)
-  const [pendingId, setPendingId] = useState<string | null>(null)
+  const [pendingAgentId, setPendingAgentId] = useState<string | null>(null)
   const selectedId = extensionId || extensions[0]?.id || ''
 
-  const changeActivation = async (extension: LocalExtensionSummary): Promise<void> => {
-    if (pendingId) return
-    const enable = extension.activation !== '已激活'
-    setPendingId(extension.id)
+  const changeActivation = async (
+    extension: LocalExtensionSummary,
+    agentId: string,
+    agentName: string,
+    enabled: boolean,
+  ): Promise<void> => {
+    if (pendingAgentId) return
+    setPendingAgentId(agentId)
     try {
-      await useProductStore.getState().setExtensionActive(extension.id, enable)
-      notify(`${extension.name}${enable ? '已启用' : '已停用'}。`, 'success', `extension-activation:${extension.id}`)
+      await useProductStore.getState().setExtensionActive(extension.id, agentId, enabled)
+      notify(
+        `${enabled ? '已为' : '已停止让'}${agentName}${enabled ? '启用' : '使用'}“${extension.name}”。`,
+        'success',
+        `extension-activation:${extension.id}:${agentId}`,
+      )
     } catch (error) {
-      notify(error instanceof Error ? error.message : String(error), 'error', `extension-activation:${extension.id}`)
+      notify(
+        error instanceof Error ? error.message : String(error),
+        'error',
+        `extension-activation:${extension.id}:${agentId}`,
+      )
     } finally {
-      setPendingId(null)
+      setPendingAgentId(null)
     }
   }
   const selected = extensions.find((extension) => extension.id === selectedId) ?? extensions[0]
+  const detailsActivation =
+    selected?.activations.find((activation) => activation.agentId === selected.createdByAgentId) ??
+    selected?.activations[0]
   const selectedClientDiagnostic = selected?.clientDiagnostics.find(
-    (diagnostic) => diagnostic.agentId === selected.agentId && diagnostic.revisionId === selected.revisionId,
+    (diagnostic) =>
+      diagnostic.agentId === detailsActivation?.agentId && diagnostic.revisionId === detailsActivation.revisionId,
   )
   if (!extensionId && extensions[0]) {
     return <Navigate to={`/extensions/${extensions[0].id}`} replace />
@@ -71,7 +105,9 @@ export function ExtensionsPage() {
           quiet
           actions={
             selected ? (
-              <StatusBadge tone={extensionTone(selected.activation)}>{extensionLabel(selected.activation)}</StatusBadge>
+              <StatusBadge tone={extensionTone(selected.activations.length)}>
+                {extensionLabel(selected.activations.length)}
+              </StatusBadge>
             ) : undefined
           }
         />
@@ -94,108 +130,149 @@ export function ExtensionsPage() {
           />
         ) : selected ? (
           <section className={styles.extensionWorkspace}>
-            <p className={styles.workspaceLead}>{selected.description || '没有补充说明。'}</p>
+            <p className={styles.workspaceLead}>
+              {selected.description ? extensionDescription(selected.description) : '还没有说明这个扩展是做什么的。'}
+            </p>
             <div className={styles.extensionOverview}>
               <section>
-                <div className={styles.sectionHeading}>生命周期</div>
+                <div className={styles.sectionHeading}>使用进度</div>
                 <ol
                   className={[styles.lifecycleSteps, styles.lifecycleStepsCompact].join(' ')}
-                  aria-label="扩展生命周期"
+                  aria-label="扩展使用进度"
                 >
                   <li data-done="">
                     <span>
                       <Check size={12} aria-hidden="true" />
                     </span>
-                    <small>动态运行</small>
+                    <small>试运行</small>
                   </li>
                   <li data-done="">
                     <span>
                       <Check size={12} aria-hidden="true" />
                     </span>
-                    <small>保存版本</small>
+                    <small>保存为扩展</small>
                   </li>
-                  <li data-done={selected.activation === '已激活' ? '' : undefined}>
-                    <span>{selected.activation === '已激活' ? <Check size={12} aria-hidden="true" /> : '3'}</span>
+                  <li data-done={selected.activations.length > 0 ? '' : undefined}>
+                    <span>{selected.activations.length > 0 ? <Check size={12} aria-hidden="true" /> : '3'}</span>
                     <small>启用给智能体</small>
                   </li>
                 </ol>
               </section>
               <section>
-                <div className={styles.sectionHeading}>版本事实</div>
+                <div className={styles.sectionHeading}>当前版本</div>
                 <dl className={styles.facts}>
-                  <dt>当前保存版本</dt>
+                  <dt>版本</dt>
                   <dd>版本 {selected.revision}</dd>
-                  <dt>目标智能体</dt>
-                  <dd>{selected.targetAgent || '尚未指定'}</dd>
-                  <dt>启用状态</dt>
-                  <dd>{extensionLabel(selected.activation)}</dd>
+                  <dt>创建来源</dt>
+                  <dd>{selected.createdByAgent || '未记录'}</dd>
+                  <dt>正在使用</dt>
+                  <dd>{selected.activations.length > 0 ? `${selected.activations.length} 个智能体` : '暂无'}</dd>
+                  <dt>当前状态</dt>
+                  <dd>{selected.activations.length > 0 ? '已启用' : '尚未启用'}</dd>
                 </dl>
               </section>
             </div>
             <div className={styles.extensionDetailGrid}>
               <section>
-                <div className={styles.sectionHeading}>贡献能力</div>
+                <div className={styles.sectionHeading}>包含内容</div>
                 {selected.contributions.length > 0 ? (
                   <div className={styles.tagList}>
                     {selected.contributions.map((item) => (
-                      <span key={item}>{item}</span>
+                      <span key={item} title={item}>
+                        {contributionLabel(item)}
+                      </span>
                     ))}
                   </div>
                 ) : (
-                  <p className={styles.secondaryText}>当前快照尚未提供可展示的贡献内容。</p>
+                  <p className={styles.secondaryText}>这个版本没有可展示的工具或界面。</p>
                 )}
               </section>
               <section>
-                <div className={styles.sectionHeading}>验证证据</div>
+                <div className={styles.sectionHeading}>检查结果</div>
                 {selected.verification ? (
                   <dl className={styles.facts}>
-                    <dt>契约</dt>
-                    <dd>{selected.verification.contractVersion}</dd>
-                    <dt>核心引擎</dt>
+                    <dt>扩展格式</dt>
+                    <dd>{contractVersionLabel(selected.verification.contractVersion)}</dd>
+                    <dt>DSH 版本</dt>
                     <dd>{selected.verification.dshVersion}</dd>
-                    <dt>Host 构建</dt>
-                    <dd>{selected.verification.hostBuilt ? '已通过' : '不适用'}</dd>
-                    <dt>Client 构建</dt>
-                    <dd>{selected.verification.clientBuilt ? '已通过' : '不适用'}</dd>
-                    <dt>工具调用</dt>
-                    <dd>{selected.verification.toolInvocationCount} 次成功</dd>
-                    <dt>最近一次 Client 加载</dt>
+                    <dt>服务端功能</dt>
+                    <dd>{selected.verification.hostBuilt ? '检查通过' : '未包含'}</dd>
+                    <dt>界面功能</dt>
+                    <dd>{selected.verification.clientBuilt ? '检查通过' : '未包含'}</dd>
+                    <dt>工具测试</dt>
                     <dd>
-                      {selectedClientDiagnostic === undefined
-                        ? '尚无记录'
-                        : selectedClientDiagnostic.status === 'loaded'
-                          ? `已加载 · ${new Date(selectedClientDiagnostic.observedAt).toLocaleString('zh-CN')}`
-                          : `失败 · ${new Date(selectedClientDiagnostic.observedAt).toLocaleString('zh-CN')}`}
+                      {selected.verification.toolInvocationCount > 0
+                        ? `${selected.verification.toolInvocationCount} 次通过`
+                        : '未包含'}
+                    </dd>
+                    <dt>最近界面加载</dt>
+                    <dd>
+                      {!selected.verification.clientBuilt
+                        ? '未包含界面功能'
+                        : selectedClientDiagnostic === undefined
+                          ? '还没有加载记录'
+                          : selectedClientDiagnostic.status === 'loaded'
+                            ? `已加载 · ${new Date(selectedClientDiagnostic.observedAt).toLocaleString('zh-CN')}`
+                            : `失败 · ${new Date(selectedClientDiagnostic.observedAt).toLocaleString('zh-CN')}`}
                     </dd>
                   </dl>
                 ) : (
-                  <p className={styles.secondaryText}>这个旧版本没有持久验证记录。</p>
+                  <p className={styles.secondaryText}>这个版本保存时还没有记录检查结果。</p>
                 )}
               </section>
             </div>
-            <div className={styles.extensionActionPanel}>
-              <span>
-                <strong>
-                  {selected.activation === '已激活' ? '这个智能体正在使用该版本' : '保存不会自动扩大作用范围'}
-                </strong>
-                <small>启用与停用是独立操作。</small>
-              </span>
-              <Button
-                variant={selected.activation === '已激活' ? 'danger' : 'primary'}
-                loading={pendingId === selected.id}
-                loadingLabel="处理中…"
-                disabled={pendingId !== null}
-                onClick={() => void changeActivation(selected)}
-              >
-                {selected.activation === '已激活' ? '停用扩展' : '启用给智能体'}
-              </Button>
-            </div>
-            {selected.agentId && selected.revisionId ? (
+            <section className={styles.activationSection}>
+              <div className={styles.sectionBar}>
+                <div>
+                  <div className={styles.sectionHeading}>使用范围</div>
+                  <div className={styles.secondaryText}>选择使用这个扩展的智能体。</div>
+                </div>
+                <span className={styles.activationCount}>
+                  {selected.activations.length}/{agents.length} 已启用
+                </span>
+              </div>
+              {agents.length > 0 ? (
+                <div className={styles.activationGrid} role="list" aria-label="智能体使用范围">
+                  {agents.map((agent) => {
+                    const activation = selected.activations.find((candidate) => candidate.agentId === agent.id)
+                    return (
+                      <div
+                        className={styles.activationCard}
+                        data-active={activation ? '' : undefined}
+                        key={agent.id}
+                        role="listitem"
+                      >
+                        <span className={styles.activationGlyph} aria-hidden="true">
+                          {agent.name.trim().slice(0, 1) || '智'}
+                        </span>
+                        <span className={styles.activationCopy}>
+                          <strong>{agent.name}</strong>
+                          <small className={styles.activationMeta}>
+                            {activation
+                              ? `正在使用 · 版本 ${activation.revision || selected.revision}`
+                              : `尚未启用 · 可用版本 ${selected.revision}`}
+                          </small>
+                        </span>
+                        <SwitchControl
+                          label={`${activation ? '停止让' : '允许'}${agent.name}使用“${selected.name}”`}
+                          checked={activation !== undefined}
+                          disabled={pendingAgentId !== null}
+                          onCheckedChange={(enabled) => void changeActivation(selected, agent.id, agent.name, enabled)}
+                        />
+                      </div>
+                    )
+                  })}
+                </div>
+              ) : (
+                <p className={styles.secondaryText}>请先创建智能体，再为它启用这个扩展。</p>
+              )}
+            </section>
+            {detailsActivation ? (
               <ExtensionDetailsExtensionSlots
-                agentId={selected.agentId}
+                agentId={detailsActivation.agentId}
                 extensionId={selected.id}
-                revisionId={selected.revisionId}
-                activation={selected.activation === '已激活' ? 'active' : 'inactive'}
+                revisionId={detailsActivation.revisionId}
+                activation="active"
               />
             ) : null}
           </section>
@@ -291,7 +368,7 @@ export function CreatorPage() {
                 <span>2</span>
                 <div>
                   <strong>运行与验证</strong>
-                  <small>动态包先临时运行，不会自动保存。</small>
+                  <small>动态包用于临时运行；保存会创建本地扩展。</small>
                 </div>
               </li>
               <li>
@@ -306,7 +383,7 @@ export function CreatorPage() {
           <section className={styles.section}>
             <div className={styles.sectionHeading}>可开始创造的智能体</div>
             {requestedAgent ? (
-              <InlineFeedback tone="info">当前从“{requestedAgent.name}”进入。需求仍在它的频道里描述。</InlineFeedback>
+              <InlineFeedback tone="info">请在“{requestedAgent.name}”的频道中描述需求。</InlineFeedback>
             ) : null}
             {eligibleAgents.length > 0 ? (
               <div className={styles.compactList}>
@@ -371,7 +448,7 @@ export function CreatorPage() {
               <div className={styles.sectionBar}>
                 <div>
                   <div className={styles.sectionHeading}>与{selectedAgent?.name ?? '智能体'}协作创造</div>
-                  <div className={styles.secondaryText}>当前内容仍是临时动态运行，尚未成为本地扩展。</div>
+                  <div className={styles.secondaryText}>当前内容属于临时动态运行，尚未成为本地扩展。</div>
                 </div>
                 <StatusBadge tone={dynamicStatus(selectedItem.status).tone}>
                   {dynamicStatus(selectedItem.status).label}
@@ -424,7 +501,7 @@ export function CreatorPage() {
               {selectedItem.status === 'awaiting-approval' && selectedItem.approvalRequestId ? (
                 <InlineFeedback tone="warning">这次动态运行正在等待界面预览确认。</InlineFeedback>
               ) : (
-                <InlineFeedback tone="info">只有真实运行中的 Package 才能保存；保存后不会自动启用。</InlineFeedback>
+                <InlineFeedback tone="info">只有正在运行的动态包可以保存；保存后再选择使用它的智能体。</InlineFeedback>
               )}
               <div className={styles.sectionActionRow}>
                 <span>
@@ -461,7 +538,7 @@ export function CreatorPage() {
           if (!open) setSaveError('')
         }}
         title="保存为本地扩展"
-        description="保存会创建可追踪的本地版本，但不会自动启用给智能体。"
+        description="保存会创建可追踪的本地版本；使用它的智能体单独选择。"
         confirmLabel="保存本地版本"
         onConfirm={async () => {
           if (!selectedItem || !selectedItem.packageId || !extensionName.trim() || !extensionSlug.trim()) {
@@ -479,7 +556,7 @@ export function CreatorPage() {
               slug: extensionSlug,
               description: extensionDescription,
             })
-            notify('动态运行已保存为本地扩展；是否启用仍由你决定。', 'success', 'dynamic-extension-save')
+            notify('动态运行已保存为本地扩展。', 'success', 'dynamic-extension-save')
             navigate(`/extensions/${saved.extensionId}`)
             return true
           } catch (error) {
@@ -508,7 +585,7 @@ export function CreatorPage() {
             if (!open && !declinePending) setReviewIndex(null)
           }}
           title="允许界面预览"
-          description="允许后，这次动态运行可以在当前浏览器中显示界面。不会自动保存扩展。"
+          description="允许后，本次动态运行会在当前浏览器中显示界面；保存扩展是独立操作。"
           confirmLabel="允许本次预览"
           onConfirm={async () => {
             try {

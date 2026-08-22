@@ -1,5 +1,5 @@
 import { useEffect, useId, useLayoutEffect, useMemo, useState, type KeyboardEvent, type RefObject } from 'react'
-import { ChevronDown } from 'lucide-react'
+import { Activity, ChevronDown, Link2, Trash2 } from 'lucide-react'
 import { useNxtNavigate } from '../shell/nxt-link.js'
 import { Cell, Pie, PieChart } from 'recharts'
 import { notify } from '../components/notifications.js'
@@ -35,6 +35,8 @@ export type ChannelCanvasView = 'chat' | 'trajectory'
 
 type RuntimeTurn = ChannelRuntimeView['turns'][number]
 type RuntimeTool = RuntimeTurn['steps'][number]['tools'][number]
+type RuntimeCache = NonNullable<ChannelRuntimeView['cache']>
+type RuntimeCacheSample = RuntimeCache['recent']['samples'][number]
 
 export type TrajectoryLane = 'internal' | 'tool' | 'send'
 
@@ -108,6 +110,32 @@ export const projectContextUsage = (
     estimated,
   }
 }
+
+const cacheSampleObserved = (sample: RuntimeCacheSample): boolean =>
+  sample.cacheReadTokens !== undefined || sample.cacheWriteTokens !== undefined
+
+export const cacheInputTokens = (sample: RuntimeCacheSample): number =>
+  sample.uncachedInputTokens + (sample.cacheReadTokens ?? 0) + (sample.cacheWriteTokens ?? 0)
+
+export const cacheReadShare = (sample: RuntimeCacheSample): number | undefined => {
+  if (!cacheSampleObserved(sample)) return undefined
+  const inputTokens = cacheInputTokens(sample)
+  return inputTokens > 0 ? (sample.cacheReadTokens ?? 0) / inputTokens : undefined
+}
+
+export const weightedCacheReadShare = (samples: readonly RuntimeCacheSample[]): number | undefined => {
+  let inputTokens = 0
+  let cacheReadTokens = 0
+  for (const sample of samples) {
+    if (!cacheSampleObserved(sample)) continue
+    inputTokens += cacheInputTokens(sample)
+    cacheReadTokens += sample.cacheReadTokens ?? 0
+  }
+  return inputTokens > 0 ? cacheReadTokens / inputTokens : undefined
+}
+
+const formatShare = (share: number | undefined): string =>
+  share === undefined ? '暂无' : `${Math.min(100, Math.round(share * 100))}%`
 
 function ContextRing({
   label,
@@ -217,13 +245,144 @@ function ContextUsageCard({ occupancy }: { readonly occupancy: NonNullable<Chann
           />
         ) : null}
       </div>
-      {occupancy.cacheReadTokens !== undefined ? (
-        <dl className={styles.facts}>
-          <dt>缓存读取</dt>
-          <dd>{formatTokenCount(occupancy.cacheReadTokens)}</dd>
-        </dl>
-      ) : null}
     </div>
+  )
+}
+
+function CacheTrend({ samples }: { readonly samples: readonly RuntimeCacheSample[] }) {
+  const [activeIndex, setActiveIndex] = useState(Math.max(0, samples.length - 1))
+  const active = samples[Math.min(activeIndex, samples.length - 1)]
+  const activeShare = active === undefined ? undefined : cacheReadShare(active)
+  return (
+    <figure className={styles.cacheTrend} aria-label={`最近 ${samples.length} 次模型请求的缓存读取趋势`}>
+      <figcaption>
+        <span>最近请求</span>
+        {active ? (
+          <span>
+            第 {active.turn} 轮 · 第 {active.step} 步 · {formatShare(activeShare)}
+          </span>
+        ) : null}
+      </figcaption>
+      <div className={styles.cacheTrendPlot}>
+        {samples.map((sample, index) => {
+          const share = cacheReadShare(sample)
+          const label =
+            share === undefined
+              ? `第 ${sample.turn} 轮第 ${sample.step} 步，模型未报告缓存统计`
+              : `第 ${sample.turn} 轮第 ${sample.step} 步，缓存读取占输入 ${formatShare(share)}`
+          return (
+            <span
+              key={`${sample.turn}:${sample.step}:${sample.at ?? index}`}
+              className={[
+                styles.cacheTrendBar,
+                share === undefined ? styles.cacheTrendBarUnknown : '',
+                index === activeIndex ? styles.cacheTrendBarActive : '',
+              ]
+                .filter(Boolean)
+                .join(' ')}
+              style={{ height: `${share === undefined ? 8 : Math.max(8, share * 100)}%` }}
+              tabIndex={0}
+              aria-label={label}
+              onPointerEnter={() => setActiveIndex(index)}
+              onFocus={() => setActiveIndex(index)}
+            />
+          )
+        })}
+      </div>
+    </figure>
+  )
+}
+
+function CacheUsageCard({ cache }: { readonly cache: RuntimeCache }) {
+  const recentSamples = cache.recent.samples.slice(-8)
+  const latest = cache.recent.samples.at(-1)
+  const latestShare = latest === undefined ? undefined : cacheReadShare(latest)
+  const latestInput = latest === undefined ? 0 : cacheInputTokens(latest)
+  const recentShare = weightedCacheReadShare(recentSamples)
+  const aggregate = cache.aggregate
+  const aggregateInput = aggregate.uncachedInputTokens + aggregate.cacheReadTokens + aggregate.cacheWriteTokens
+  const aggregateShare = aggregateInput > 0 ? aggregate.cacheReadTokens / aggregateInput : undefined
+  const requestHitShare =
+    aggregate.observedRequestCount > 0 ? aggregate.hitRequestCount / aggregate.observedRequestCount : undefined
+  const coverageShare =
+    aggregate.usageRequestCount > 0 ? aggregate.observedRequestCount / aggregate.usageRequestCount : undefined
+  const latestObserved = latest !== undefined && cacheSampleObserved(latest)
+  const latestSegments = latestObserved
+    ? [
+        { name: '缓存读取', value: latest.cacheReadTokens ?? 0, className: styles.cacheSegmentRead },
+        { name: '未缓存', value: latest.uncachedInputTokens, className: styles.cacheSegmentMiss },
+        { name: '缓存写入', value: latest.cacheWriteTokens ?? 0, className: styles.cacheSegmentWrite },
+      ].filter((segment) => segment.value > 0)
+    : []
+
+  return (
+    <section className={styles.cacheUsageCard} aria-label="缓存分析">
+      <header className={styles.cacheHeader}>
+        <h3>缓存</h3>
+        <span>本次会话</span>
+      </header>
+      <div className={styles.cacheLatest}>
+        <strong data-known={latestShare !== undefined}>{formatShare(latestShare)}</strong>
+        <span>{latestObserved ? '最近一次输入缓存覆盖' : '最近一次未报告缓存统计'}</span>
+        {latest ? (
+          <small>
+            第 {latest.turn} 轮 · 第 {latest.step} 步
+            {latestObserved
+              ? ` · 缓存读取 ${formatTokenCount(latest.cacheReadTokens ?? 0)} / 输入 ${formatTokenCount(latestInput)}`
+              : ''}
+          </small>
+        ) : null}
+      </div>
+      {latestSegments.length > 0 && latestInput > 0 ? (
+        <div className={styles.cacheComposition}>
+          <div className={styles.cacheCompositionTrack} aria-label="最近一次模型请求的输入组成">
+            {latestSegments.map((segment) => (
+              <span
+                key={segment.name}
+                className={segment.className}
+                style={{ width: `${(segment.value / latestInput) * 100}%` }}
+                title={`${segment.name} ${formatTokenCount(segment.value)}`}
+              />
+            ))}
+          </div>
+          <ul>
+            {latestSegments.map((segment) => (
+              <li key={segment.name}>
+                <span className={segment.className} />
+                {segment.name} {formatTokenCount(segment.value)}
+              </li>
+            ))}
+          </ul>
+        </div>
+      ) : null}
+      <div className={styles.cacheMetrics}>
+        <div>
+          <span>最近 {recentSamples.length} 次</span>
+          <strong>{formatShare(recentShare)}</strong>
+        </div>
+        <div>
+          <span>会话加权覆盖</span>
+          <strong>{formatShare(aggregateShare)}</strong>
+        </div>
+        <div>
+          <span>每请求平均</span>
+          <strong>{formatShare(aggregate.averageRequestReadShare)}</strong>
+        </div>
+        <div>
+          <span>请求命中</span>
+          <strong>{formatShare(requestHitShare)}</strong>
+        </div>
+      </div>
+      {recentSamples.length > 1 ? <CacheTrend samples={recentSamples} /> : null}
+      <p className={styles.cacheTotals}>
+        累计读取 {formatTokenCount(aggregate.cacheReadTokens)} · 未缓存输入{' '}
+        {formatTokenCount(aggregate.uncachedInputTokens)}
+        {aggregate.cacheWriteTokens > 0 ? ` · 缓存写入 ${formatTokenCount(aggregate.cacheWriteTokens)}` : ''}
+      </p>
+      <p className={styles.cacheCoverage}>
+        数据覆盖 {aggregate.observedRequestCount}/{aggregate.usageRequestCount} 次请求 · {formatShare(coverageShare)}
+      </p>
+    </section>
   )
 }
 
@@ -649,12 +808,14 @@ export function ChannelSessionInspector({
   runtime,
   onBind,
   onReassign,
+  onDelete,
 }: {
   readonly channel: ChannelSummary
   readonly agent: AgentSummary | undefined
   readonly runtime: ChannelRuntimeView | undefined
   readonly onBind: () => void
   readonly onReassign: () => void
+  readonly onDelete: () => void
 }) {
   const navigate = useNxtNavigate()
   const phase = runtime?.phase ?? channel.runtimePhase
@@ -666,6 +827,23 @@ export function ChannelSessionInspector({
   const currentTool = workTools(latestTurn(runtime)).find((tool) => tool.state === 'running')
   const phaseExplanation =
     runtime?.summary ?? (phase === '空闲' ? '智能体当前没有正在处理的任务。' : `智能体当前状态：${phase}。`)
+  const hasRuntimeDetails = Boolean(
+    phase !== '空闲' || currentTool || (runtime?.pendingInjectCount ?? 0) > 0 || runtime?.occupancy || runtime?.cache,
+  )
+  const runtimeEmpty = !agent
+    ? {
+        title: '尚未绑定智能体',
+        description: '绑定后，这里会显示运行状态、上下文占用和缓存情况。',
+      }
+    : runtime?.episodeId
+      ? {
+          title: '当前没有运行中的任务',
+          description: '收到新消息或开始处理后，运行数据会在这里更新。',
+        }
+      : {
+          title: '等待首次对话',
+          description: '发送第一条消息后，这里会开始记录当前会话的运行数据。',
+        }
 
   useEffect(() => {
     setChannelName(channel.name)
@@ -702,8 +880,8 @@ export function ChannelSessionInspector({
   }
 
   return (
-    <aside className={styles.inspector} aria-label="频道">
-      <section>
+    <aside className={[styles.inspector, styles.channelSessionInspector].join(' ')} aria-label="频道">
+      <section className={styles.inspectorPanel}>
         <div className={styles.inspectorSectionHead}>
           <h2>运行</h2>
           {agent ? (
@@ -731,10 +909,23 @@ export function ChannelSessionInspector({
           <InlineFeedback tone="info">{runtime.pendingInjectCount} 条新消息已收录。</InlineFeedback>
         ) : null}
         {runtime?.occupancy ? <ContextUsageCard occupancy={runtime.occupancy} /> : null}
+        {runtime?.cache ? <CacheUsageCard cache={runtime.cache} /> : null}
+        {!hasRuntimeDetails ? (
+          <div className={styles.runtimeEmpty}>
+            <span className={styles.runtimeEmptyIcon} aria-hidden="true">
+              <Activity size={17} />
+            </span>
+            <span>
+              <strong>{runtimeEmpty.title}</strong>
+              <small>{runtimeEmpty.description}</small>
+            </span>
+          </div>
+        ) : null}
       </section>
-      <section>
+      <section className={styles.inspectorPanel}>
         <div className={styles.inspectorSectionHead}>
           <h2>绑定</h2>
+          <StatusBadge tone={agent ? 'success' : 'warning'}>{agent ? '已绑定' : '未绑定'}</StatusBadge>
         </div>
         {agent ? (
           <div className={styles.bindingInspector}>
@@ -752,23 +943,31 @@ export function ChannelSessionInspector({
                 </Button>
               </div>
             </div>
-            <div className={styles.bindingSourceRow}>
-              <span>频道来源</span>
-              <strong>{channel.kind === 'web' ? '网页聊天' : channel.connectionName}</strong>
+            <div className={styles.bindingSettings}>
+              <div className={styles.bindingSourceRow}>
+                <span>频道来源</span>
+                <strong>{channel.kind === 'web' ? '内置频道' : channel.connectionName}</strong>
+              </div>
+              <SelectField
+                label="响应方式"
+                value={currentTrigger}
+                disabled={triggerPending}
+                onValueChange={(value) => {
+                  if (isTriggerPolicy(value)) void updateTrigger(value)
+                }}
+                options={TRIGGER_POLICY_OPTIONS.map((option) => ({ value: option.value, label: option.label }))}
+              />
             </div>
-            <SelectField
-              label="响应方式"
-              value={currentTrigger}
-              disabled={triggerPending}
-              onValueChange={(value) => {
-                if (isTriggerPolicy(value)) void updateTrigger(value)
-              }}
-              options={TRIGGER_POLICY_OPTIONS.map((option) => ({ value: option.value, label: option.label }))}
-            />
           </div>
         ) : (
           <div className={styles.bindingEmpty}>
-            <InlineFeedback tone="warning">绑定智能体后才能自动响应这个频道的消息。</InlineFeedback>
+            <span className={styles.bindingEmptyIcon} aria-hidden="true">
+              <Link2 size={17} />
+            </span>
+            <div>
+              <strong>选择响应这个频道的智能体</strong>
+              <small>绑定后，频道消息可触发智能体处理。</small>
+            </div>
             <Button size="small" variant="primary" onClick={onBind}>
               绑定智能体
             </Button>
@@ -799,9 +998,9 @@ export function ChannelSessionInspector({
               </Field>
               <p className={styles.secondaryText} id="channel-name-save-reason">
                 {!channelName.trim()
-                  ? '请输入频道名称后才能保存。'
+                  ? '请输入频道名称。'
                   : channelName.trim() === channel.name
-                    ? '修改频道名称后才能保存。'
+                    ? '当前名称没有改动。'
                     : '保存后只改变本地显示名称。'}
               </p>
               <Button
@@ -816,6 +1015,19 @@ export function ChannelSessionInspector({
               </Button>
             </div>
           </Disclosure>
+        </div>
+        <div className={styles.channelDangerRow}>
+          <div>
+            <strong>{channel.kind === 'web' ? '删除内置频道' : '从 NekroNxt 移除'}</strong>
+            <span>
+              {channel.kind === 'web'
+                ? '解除绑定并移出频道列表；历史记录可在审计中查询。'
+                : '解除绑定并移出 NekroNxt 频道列表。'}
+            </span>
+          </div>
+          <Button size="small" variant="danger" onClick={onDelete}>
+            <Trash2 size={13} aria-hidden="true" /> {channel.kind === 'web' ? '删除' : '移除'}
+          </Button>
         </div>
       </section>
     </aside>

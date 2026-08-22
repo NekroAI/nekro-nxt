@@ -173,7 +173,7 @@ const installSlotRendererShellFeeds = (context: Context): void => {
   context.reflect.provide('sessions', {
     list: staticObservable({ phase: 'ready', ids: [], byId: {}, current: undefined }),
     currentProvideInfo: provideInfo,
-    // rc.1 runtime calls this feed currentProvideInfo while the retained rc.7
+    // rc.2 runtime calls this feed currentProvideInfo while the retained rc.7
     // React renderer consumes the public renderer-host alias provideInfo.
     provideInfo,
   })

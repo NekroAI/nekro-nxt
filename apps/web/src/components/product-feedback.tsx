@@ -121,7 +121,7 @@ export function HostNotice() {
         >
           <WifiOff size={15} aria-hidden="true" />
           <strong>{host.status === 'stale' ? '连接不稳定' : '无法连接'}</strong>
-          <span>{host.status === 'stale' ? '当前仍显示最近一次同步的数据。' : '当前内容可能为空或不是最新状态。'}</span>
+          <span>{host.status === 'stale' ? '当前显示最近一次同步的数据。' : '当前内容可能为空或不是最新状态。'}</span>
           <Button
             size="small"
             variant="ghost"

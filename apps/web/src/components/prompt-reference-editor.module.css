@@ -1,0 +1,193 @@
+.field {
+  display: grid;
+  gap: 7px;
+}
+
+.field > label {
+  color: var(--nxt-text-primary);
+  font-size: 12px;
+  font-weight: 650;
+  line-height: 18px;
+}
+
+.field > p {
+  margin: -2px 0 1px;
+  color: var(--nxt-text-muted);
+  font-size: 12px;
+  line-height: 18px;
+}
+
+.editorFrame {
+  position: relative;
+  border: 1px solid var(--nxt-border-default);
+  border-radius: var(--nxt-radius-md);
+  background: var(--nxt-bg-surface);
+  transition:
+    border-color var(--nxt-motion-fast) var(--nxt-ease-standard),
+    box-shadow var(--nxt-motion-fast) var(--nxt-ease-standard);
+}
+
+.editorFrame:focus-within {
+  border-color: var(--nxt-focus-ring);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--nxt-focus-ring) 22%, transparent);
+}
+
+.editor {
+  box-sizing: border-box;
+  min-height: calc(10 * 22px + 24px);
+  max-height: calc(20 * 22px + 24px);
+  overflow: auto;
+  padding: 12px 13px;
+  color: var(--nxt-text-primary);
+  font: inherit;
+  font-size: 14px;
+  line-height: 22px;
+  outline: none;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.editor:focus-visible {
+  outline: none;
+  outline-offset: 0;
+}
+
+.paragraph {
+  min-height: 22px;
+  margin: 0;
+}
+
+.placeholder {
+  position: absolute;
+  top: 12px;
+  left: 13px;
+  pointer-events: none;
+  color: var(--nxt-text-disabled);
+  font-size: 14px;
+  line-height: 22px;
+}
+
+.referenceNode {
+  display: inline;
+}
+
+.referenceChip {
+  box-sizing: border-box;
+  display: inline-flex;
+  align-items: center;
+  height: 18px;
+  max-width: min(260px, 70vw);
+  border: 1px solid color-mix(in srgb, var(--nxt-accent) 34%, var(--nxt-border-default));
+  border-radius: var(--nxt-radius-round);
+  margin: 0 1px;
+  padding: 0 6px;
+  color: var(--nxt-accent);
+  background: var(--nxt-accent-soft);
+  font-size: 12px;
+  font-weight: 620;
+  line-height: 16px;
+  vertical-align: baseline;
+  white-space: nowrap;
+}
+
+.referenceChip[data-invalid] {
+  border-color: color-mix(in srgb, var(--nxt-warning) 55%, var(--nxt-border-default));
+  color: var(--nxt-warning);
+  background: var(--nxt-warning-soft);
+}
+
+.referenceMenu {
+  position: absolute;
+  z-index: var(--nxt-layer-floating, 40);
+  width: min(360px, calc(100% - 16px));
+  overflow: hidden;
+  border: 1px solid var(--nxt-border-default);
+  border-radius: var(--nxt-radius-lg);
+  background: var(--nxt-bg-elevated);
+  box-shadow: var(--nxt-shadow-float);
+}
+
+.referenceCategories {
+  display: flex;
+  gap: 3px;
+  border-bottom: 1px solid var(--nxt-border-subtle);
+  padding: 7px;
+}
+
+.referenceCategories button {
+  min-height: 26px;
+  border: 0;
+  border-radius: var(--nxt-radius-sm);
+  padding: 0 9px;
+  color: var(--nxt-text-secondary);
+  background: transparent;
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.referenceCategories button:hover,
+.referenceCategories button[data-active] {
+  color: var(--nxt-text-primary);
+  background: var(--nxt-bg-hover);
+}
+
+.referenceOptions {
+  max-height: 280px;
+  overflow: auto;
+  padding: 5px;
+}
+
+.referenceOptions > button {
+  display: grid;
+  grid-template-columns: 18px minmax(0, 1fr);
+  gap: 8px;
+  align-items: center;
+  width: 100%;
+  min-height: 48px;
+  border: 0;
+  border-radius: var(--nxt-radius-md);
+  padding: 6px 9px;
+  color: var(--nxt-text-secondary);
+  text-align: left;
+  background: transparent;
+  cursor: pointer;
+}
+
+.referenceOptions > button:hover,
+.referenceOptions > button[data-active] {
+  color: var(--nxt-text-primary);
+  background: var(--nxt-bg-hover);
+}
+
+.referenceOptions span {
+  display: grid;
+  min-width: 0;
+  gap: 1px;
+}
+
+.referenceOptions strong,
+.referenceOptions small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.referenceOptions strong {
+  font-size: 13px;
+  line-height: 19px;
+}
+
+.referenceOptions small {
+  color: var(--nxt-text-muted);
+  font-size: 11px;
+  line-height: 17px;
+}
+
+.referenceOptions p {
+  margin: 0;
+  padding: 22px 12px;
+  color: var(--nxt-text-muted);
+  text-align: center;
+  font-size: 12px;
+}

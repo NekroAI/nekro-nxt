@@ -1,8 +1,10 @@
-import { ChevronDown, ChevronUp, PanelRightClose, PanelRightOpen, Plus, Save, ShieldAlert } from 'lucide-react'
+import { ChevronDown, ChevronUp, PanelRightClose, PanelRightOpen, Plus, Save, ShieldAlert, Trash2 } from 'lucide-react'
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type KeyboardEvent } from 'react'
 import { useParams, useSearchParams } from 'react-router-dom'
+import { promptDocumentFromText, type PromptDocumentV1 } from '@nekro-nxt/contracts'
 import { NxtLink, useNxtNavigate } from '../shell/nxt-link.js'
 import { notify } from '../components/notifications.js'
+import { PromptReferenceEditor } from '../components/prompt-reference-editor.js'
 import { EmptyState, InlineFeedback, PageHeader } from '../components/product-feedback.js'
 import { AddModelProviderForm } from '../llm-settings.js'
 import { WebSearchCredentialForm } from '../web-search-credential.js'
@@ -18,14 +20,18 @@ import {
 } from '../agent-access-level.js'
 import {
   connectionDisplayName,
+  defaultImageUnderstandingPolicy,
   useProductStore,
   type AgentRuntimeState,
   type AgentSummary,
+  type ImageUnderstandingPolicy,
   type LocalExtensionSummary,
+  type ModelSummary,
 } from '../product-store.js'
 import {
   AgentStateRing,
   Button,
+  ConfirmDialog,
   Disclosure,
   Field,
   IconButton,
@@ -38,7 +44,6 @@ import {
   StatusBadge,
   SwitchControl,
   SwitchField,
-  Textarea,
   type StatusTone,
 } from '../ui-kit/index.js'
 import { INSPECTOR_WIDTH, useUiPreferences } from '../ui-preferences.js'
@@ -59,6 +64,120 @@ const modelKey = agentModelKey
 
 const modelValueForAgent = (agent: AgentSummary): string =>
   agent.modelRef ? modelKey({ provider: agent.modelRef.provider, id: agent.modelRef.model }) : ''
+
+const modelImageCapability = (model: ModelSummary | undefined): 'vision' | 'text' | 'unknown' => {
+  if (model?.inputModalities === undefined) return 'unknown'
+  return model.inputModalities.includes('image') ? 'vision' : 'text'
+}
+
+function ImagePolicyFields({
+  policy,
+  selectedModel,
+  models,
+  onChange,
+}: {
+  readonly policy: ImageUnderstandingPolicy
+  readonly selectedModel: ModelSummary | undefined
+  readonly models: readonly ModelSummary[]
+  readonly onChange: (policy: ImageUnderstandingPolicy) => void
+}) {
+  const capability = modelImageCapability(selectedModel)
+  const visionModels = models.filter((model) => model.inputModalities?.includes('image'))
+  const auxiliaryValue =
+    policy.textModel.mode === 'auxiliary'
+      ? modelKey({ provider: policy.textModel.model.provider, id: policy.textModel.model.model })
+      : 'disabled'
+  const updateRestore = (field: 'recentMessages' | 'maxImages', raw: number): void => {
+    const bounds = field === 'recentMessages' ? [1, 100] : [1, 50]
+    const value = Math.min(bounds[1]!, Math.max(bounds[0]!, Number.isFinite(raw) ? Math.round(raw) : bounds[0]!))
+    onChange({
+      ...policy,
+      history: {
+        ...policy.history,
+        restoreAfterCompaction: { ...policy.history.restoreAfterCompaction, [field]: value },
+      },
+    })
+  }
+  return (
+    <div className={styles.formStack}>
+      {capability === 'vision' ? (
+        <InlineFeedback tone="success">
+          当前模型支持图片输入。频道原图会按消息顺序进入上下文，重复内容只注入一次，并支持批量主动重看。
+        </InlineFeedback>
+      ) : capability === 'text' ? (
+        <InlineFeedback tone={policy.textModel.mode === 'auxiliary' ? 'info' : 'warning'}>
+          {policy.textModel.mode === 'auxiliary'
+            ? '当前主模型仅接收文本；图片会由配置的辅助视觉模型批量理解。'
+            : '图片会被保存，但当前智能体尚不能理解图片。请选择辅助视觉模型。'}
+        </InlineFeedback>
+      ) : (
+        <InlineFeedback tone={policy.textModel.mode === 'auxiliary' ? 'info' : 'warning'}>
+          当前模型没有声明图片输入能力，按文本模型处理。
+        </InlineFeedback>
+      )}
+      {capability !== 'vision' ? (
+        <SelectField
+          label="辅助视觉模型"
+          value={auxiliaryValue}
+          onValueChange={(value) => {
+            if (value === 'disabled') {
+              onChange({ ...policy, textModel: { mode: 'disabled' } })
+              return
+            }
+            const model = visionModels.find((candidate) => modelKey(candidate) === value)
+            if (!model) return
+            onChange({
+              ...policy,
+              textModel: {
+                mode: 'auxiliary',
+                model: { provider: model.provider, model: model.id },
+                maxTokens: 2048,
+              },
+            })
+          }}
+          options={[
+            { value: 'disabled', label: '不启用图片理解' },
+            ...visionModels.map((model) => ({
+              value: modelKey(model),
+              label: `${model.providerName} · ${model.name}`,
+            })),
+          ]}
+        />
+      ) : null}
+      <SelectField
+        label="图片细节等级"
+        value={policy.history.detail}
+        onValueChange={(detail) => {
+          if (detail !== 'low' && detail !== 'auto' && detail !== 'high') return
+          onChange({ ...policy, history: { ...policy.history, detail } })
+        }}
+        options={[
+          { value: 'low', label: '低（节省视觉 Token）' },
+          { value: 'auto', label: '自动' },
+          { value: 'high', label: '高（按模型最高可用等级）' },
+        ]}
+      />
+      <Field label="压缩后回看消息数" hint="从最近频道事实中恢复原图，范围 1–100。">
+        <Input
+          type="number"
+          min={1}
+          max={100}
+          value={policy.history.restoreAfterCompaction.recentMessages}
+          onChange={(event) => updateRestore('recentMessages', event.currentTarget.valueAsNumber)}
+        />
+      </Field>
+      <Field label="压缩后最多恢复图片" hint="按内容去重后选择最新图片，范围 1–50。">
+        <Input
+          type="number"
+          min={1}
+          max={50}
+          value={policy.history.restoreAfterCompaction.maxImages}
+          onChange={(event) => updateRestore('maxImages', event.currentTarget.valueAsNumber)}
+        />
+      </Field>
+    </div>
+  )
+}
 
 type AccessLevelStyle = CSSProperties & { '--access-progress': string }
 
@@ -262,8 +381,12 @@ export function AgentsPage() {
   const initialCreateDraft = createAgentDraft(models, capabilityAvailability.webSearch.available)
   const [newName, setNewName] = useState(initialCreateDraft.name)
   const [newPersona, setNewPersona] = useState(initialCreateDraft.persona)
+  const [newPersonaDocument, setNewPersonaDocument] = useState<PromptDocumentV1>(() =>
+    promptDocumentFromText(initialCreateDraft.persona),
+  )
   const [selectedModelKey, setSelectedModelKey] = useState(initialCreateDraft.selectedModelKey)
   const [newCapabilities, setNewCapabilities] = useState<AgentSummary['capabilities']>(initialCreateDraft.capabilities)
+  const [newImagePolicy, setNewImagePolicy] = useState<ImageUnderstandingPolicy>(defaultImageUnderstandingPolicy())
   const [createError, setCreateError] = useState('')
   const [createPending, setCreatePending] = useState(false)
 
@@ -299,8 +422,10 @@ export function AgentsPage() {
       const created = await useProductStore.getState().createAgent({
         name,
         persona: newPersona,
+        personaDocument: newPersonaDocument,
         model: selectedModel,
         capabilities: newCapabilities,
+        imagePolicy: newImagePolicy,
       })
       void navigate(`/work/channels/${created.channelId}`)
     } catch (error) {
@@ -336,10 +461,10 @@ export function AgentsPage() {
         />
         <p className={styles.secondaryText} id="agent-create-reason">
           {!newName.trim()
-            ? '请输入智能体名称后才能创建。'
+            ? '请输入智能体名称。'
             : !selectedModel
-              ? '保存并选择模型后才能创建。'
-              : '创建会原子保存智能体、首个配置版本和网页频道。'}
+              ? '请保存并选择模型。'
+              : '创建会原子保存智能体、首个配置版本和内置频道。'}
         </p>
         {createError ? <InlineFeedback tone="error">{createError}</InlineFeedback> : null}
 
@@ -350,9 +475,14 @@ export function AgentsPage() {
               <Field label="名称" error={!newName.trim() && createError ? '请输入智能体名称。' : undefined}>
                 <Input value={newName} onChange={(event) => setNewName(event.target.value)} autoFocus />
               </Field>
-              <Field label="人设" hint="描述它的身份、表达方式和工作边界，之后仍可修改。">
-                <Textarea value={newPersona} onChange={(event) => setNewPersona(event.target.value)} />
-              </Field>
+              <PromptReferenceEditor
+                value={newPersonaDocument}
+                onChange={(document, plainText) => {
+                  setNewPersonaDocument(document)
+                  setNewPersona(plainText)
+                }}
+                description="描述它的身份、表达方式和工作边界。输入 @ 可引用用户、频道或扩展。"
+              />
               {models.length > 0 ? (
                 <SelectField
                   label="默认模型"
@@ -362,10 +492,10 @@ export function AgentsPage() {
                     value: modelKey(model),
                     label: `${model.providerName} · ${model.name}`,
                   }))}
-                  helper="自动创建的网页频道会使用这个模型开始对话。"
+                  helper="自动创建的内置频道会使用这个模型开始对话。"
                 />
               ) : (
-                <InlineFeedback tone="warning">当前没有可用模型。保存一个供应商后即可继续创建。</InlineFeedback>
+                <InlineFeedback tone="warning">当前没有可用模型。请先保存一个供应商。</InlineFeedback>
               )}
               {models.length === 0 ? (
                 <AddModelProviderForm
@@ -375,6 +505,13 @@ export function AgentsPage() {
                   }}
                 />
               ) : null}
+              <div className={styles.sectionHeading}>图片理解</div>
+              <ImagePolicyFields
+                policy={newImagePolicy}
+                selectedModel={selectedModel}
+                models={models}
+                onChange={setNewImagePolicy}
+              />
             </div>
           </div>
         </section>
@@ -447,7 +584,7 @@ export function AgentsPage() {
               <strong>{selectedModel ? `${selectedModel.providerName} · ${selectedModel.name}` : '尚未选择'}</strong>
             </div>
             <div>
-              <span>网页频道</span>
+              <span>内置频道</span>
               <strong>创建后自动建立</strong>
             </div>
           </div>
@@ -455,7 +592,7 @@ export function AgentsPage() {
         <section>
           <h2>初始授权</h2>
           <p className={styles.secondaryText}>{capabilitySummary(newCapabilities).join('、')}</p>
-          <InlineFeedback tone="info">创建前不会写入正式智能体、频道或扩展关系。</InlineFeedback>
+          <InlineFeedback tone="info">正式配置在点击“创建智能体”时写入。</InlineFeedback>
         </section>
       </aside>
     </div>
@@ -473,7 +610,7 @@ const moreCapabilityCopy: readonly {
   {
     key: 'subagents',
     label: '子智能体',
-    description: '允许在后台委派独立任务，主智能体可同时继续处理频道消息。',
+    description: '允许在后台委派独立任务，主智能体可同时处理频道消息。',
     risk: { label: '低风险', tone: 'info' },
   },
   {
@@ -520,13 +657,22 @@ export function AgentManagePage() {
   const dynamic = useProductStore((state) => state.dynamic)
   const [displayName, setDisplayName] = useState(agent?.name ?? '')
   const [persona, setPersona] = useState(agent?.persona ?? '')
+  const [personaDocument, setPersonaDocument] = useState<PromptDocumentV1>(
+    agent?.personaDocument ?? promptDocumentFromText(agent?.persona ?? ''),
+  )
   const [selectedModelKey, setSelectedModelKey] = useState(agent ? modelValueForAgent(agent) : '')
+  const [imagePolicy, setImagePolicy] = useState<ImageUnderstandingPolicy>(
+    agent?.imagePolicy ?? defaultImageUnderstandingPolicy(),
+  )
   const [savePending, setSavePending] = useState(false)
   const [capabilityPending, setCapabilityPending] = useState<Capability | 'accessLevel' | null>(null)
   const [bindingOpen, setBindingOpen] = useState(false)
   const [creatorChannelId, setCreatorChannelId] = useState('')
   const [triggerPendingId, setTriggerPendingId] = useState<string | null>(null)
   const [extensionPendingId, setExtensionPendingId] = useState<string | null>(null)
+  const [deleteOpen, setDeleteOpen] = useState(false)
+  const [deleteConfirmation, setDeleteConfirmation] = useState('')
+  const [deleteAutoCreatedBuiltInChannels, setDeleteAutoCreatedBuiltInChannels] = useState(true)
   const savedInspectorWidth = useUiPreferences((state) => state.layout.inspectorWidth)
   const inspectorCollapsed = useUiPreferences((state) => state.layout.inspectorCollapsed)
   const inspectorPaneRef = useRef<HTMLDivElement>(null)
@@ -536,7 +682,9 @@ export function AgentManagePage() {
     if (!agent) return
     setDisplayName(agent.name)
     setPersona(agent.persona ?? '')
+    setPersonaDocument(agent.personaDocument)
     setSelectedModelKey(modelValueForAgent(agent))
+    setImagePolicy(agent.imagePolicy)
   }, [agent])
   useEffect(() => setInspectorWidth(savedInspectorWidth), [savedInspectorWidth])
   useEffect(() => {
@@ -580,11 +728,17 @@ export function AgentManagePage() {
   }
 
   const isDirty =
-    displayName !== agent.name || persona !== (agent.persona ?? '') || selectedModelKey !== modelValueForAgent(agent)
+    displayName !== agent.name ||
+    persona !== (agent.persona ?? '') ||
+    JSON.stringify(personaDocument) !== JSON.stringify(agent.personaDocument) ||
+    selectedModelKey !== modelValueForAgent(agent) ||
+    JSON.stringify(imagePolicy) !== JSON.stringify(agent.imagePolicy)
   const reset = (): void => {
     setDisplayName(agent.name)
     setPersona(agent.persona ?? '')
+    setPersonaDocument(agent.personaDocument)
     setSelectedModelKey(modelValueForAgent(agent))
+    setImagePolicy(agent.imagePolicy)
   }
   const save = async (): Promise<void> => {
     if (!displayName.trim() || !selectedModel || savePending) return
@@ -595,7 +749,9 @@ export function AgentManagePage() {
         ...(agent.currentRevisionId ? { expectedCurrentRevisionId: agent.currentRevisionId } : {}),
         displayName: displayName.trim(),
         persona,
+        personaDocument,
         model: selectedModel,
+        imagePolicy,
         ...(agent.modelRef?.provider === selectedModel.provider && agent.modelRef.model === selectedModel.id
           ? { reasoningEffort: agent.modelRef.reasoningEffort }
           : {}),
@@ -640,9 +796,6 @@ export function AgentManagePage() {
     }
   }
 
-  const agentExtensions = extensions.filter(
-    (extension) => extension.agentId === agent.id || extension.targetAgent === agent.name,
-  )
   const blockers = listAgentBlockers({
     agent,
     models,
@@ -680,22 +833,48 @@ export function AgentManagePage() {
       setTriggerPendingId(null)
     }
   }
-  const changeExtensionActivation = async (extension: LocalExtensionSummary): Promise<void> => {
+  const changeExtensionActivation = async (extension: LocalExtensionSummary, enabled: boolean): Promise<void> => {
     if (extensionPendingId) return
-    const enable = extension.activation !== '已激活'
     setExtensionPendingId(extension.id)
     try {
-      await useProductStore.getState().setExtensionActive(extension.id, enable)
-      notify(`${extension.name}${enable ? '已启用' : '已停用'}。`, 'success', `agent-extension:${extension.id}`)
+      await useProductStore.getState().setExtensionActive(extension.id, agent.id, enabled)
+      notify(
+        `${enabled ? '已启用' : '已停用'}“${extension.name}”。`,
+        'success',
+        `agent-extension:${agent.id}:${extension.id}`,
+      )
     } catch (error) {
-      notify(error instanceof Error ? error.message : String(error), 'error', `agent-extension:${extension.id}`)
+      notify(
+        error instanceof Error ? error.message : String(error),
+        'error',
+        `agent-extension:${agent.id}:${extension.id}`,
+      )
     } finally {
       setExtensionPendingId(null)
+    }
+  }
+  const deleteAgent = async (): Promise<boolean> => {
+    if (!agent.currentRevisionId || deleteConfirmation !== agent.name) return false
+    try {
+      await useProductStore
+        .getState()
+        .deleteAgent(agent.id, agent.currentRevisionId, deleteConfirmation, deleteAutoCreatedBuiltInChannels)
+      notify(
+        deleteAutoCreatedBuiltInChannels ? '智能体及其自动创建的内置频道已删除。' : '智能体已删除；频道已解除绑定。',
+        'success',
+        `agent-delete:${agent.id}`,
+      )
+      void navigate('/work')
+      return true
+    } catch (error) {
+      notify(error instanceof Error ? error.message : String(error), 'error', `agent-delete:${agent.id}`)
+      return false
     }
   }
   const workbenchStyle: CSSProperties & { '--nxt-inspector-width': string } = {
     '--nxt-inspector-width': `${inspectorWidth}px`,
   }
+  const canConfirmDelete = deleteConfirmation === agent.name && Boolean(agent.currentRevisionId)
   const toggleInspector = (): void => {
     useUiPreferences.getState().setInspectorCollapsed(!inspectorCollapsed)
   }
@@ -741,11 +920,11 @@ export function AgentManagePage() {
           />
           <p className={styles.secondaryText} id="agent-save-reason">
             {!displayName.trim()
-              ? '请输入智能体名称后才能保存。'
+              ? '请输入智能体名称。'
               : !selectedModel
-                ? '选择默认模型后才能保存。'
+                ? '请选择默认模型。'
                 : !isDirty
-                  ? '修改人设、名称或模型后才能保存新配置。'
+                  ? '当前配置没有改动。'
                   : '保存会创建新的不可变配置版本。'}
           </p>
 
@@ -756,9 +935,15 @@ export function AgentManagePage() {
                 <Field label="名称" error={!displayName.trim() ? '请输入智能体名称。' : undefined}>
                   <Input value={displayName} onChange={(event) => setDisplayName(event.target.value)} />
                 </Field>
-                <Field label="人设" hint="描述它的身份、表达方式和工作边界。">
-                  <Textarea value={persona} onChange={(event) => setPersona(event.target.value)} />
-                </Field>
+                <PromptReferenceEditor
+                  value={personaDocument}
+                  currentAgentId={agent.id}
+                  onChange={(document, plainText) => {
+                    setPersonaDocument(document)
+                    setPersona(plainText)
+                  }}
+                  description="描述它的身份、表达方式和工作边界。输入 @ 可引用用户、频道或扩展。"
+                />
                 {models.length > 0 ? (
                   <SelectField
                     label="默认模型"
@@ -780,6 +965,13 @@ export function AgentManagePage() {
                     />
                   </>
                 )}
+                <div className={styles.sectionHeading}>图片理解</div>
+                <ImagePolicyFields
+                  policy={imagePolicy}
+                  selectedModel={selectedModel}
+                  models={models}
+                  onChange={setImagePolicy}
+                />
               </div>
             </div>
           </section>
@@ -796,7 +988,7 @@ export function AgentManagePage() {
                 </Button>
               </div>
               {boundChannels.length === 0 ? (
-                <EmptyState title="还没有绑定频道" description="绑定频道后，这个智能体才能接收对应消息。" />
+                <EmptyState title="还没有绑定频道" description="绑定频道后，智能体可接收对应消息。" />
               ) : (
                 <div className={styles.boundChannelList}>
                   {boundChannels.map((channel) => (
@@ -826,7 +1018,8 @@ export function AgentManagePage() {
               ) : null}
               {undiscoveredConnections.map((connection) => (
                 <InlineFeedback key={connection.id} tone="info">
-                  {connectionDisplayName(connection)} 尚未发现频道。请先向机器人账号发送一条消息，发现后可在本页绑定。
+                  {connectionDisplayName(connection)}{' '}
+                  尚未发现频道。请先向机器人账号发送一条消息；发现后即可绑定给这个智能体。
                 </InlineFeedback>
               ))}
             </div>
@@ -879,7 +1072,7 @@ export function AgentManagePage() {
                         value={creatorChannelId}
                         onValueChange={setCreatorChannelId}
                         options={boundChannels.map((channel) => ({ value: channel.id, label: channel.name }))}
-                        helper="选择后进入该频道，继续和智能体讨论要新增的功能。"
+                        helper="选择频道并打开，与智能体讨论要新增的功能。"
                       />
                       <Button
                         variant="primary"
@@ -890,7 +1083,7 @@ export function AgentManagePage() {
                       </Button>
                     </div>
                   ) : (
-                    <InlineFeedback tone="warning">绑定一个频道后，才能和这个智能体讨论要新增的功能。</InlineFeedback>
+                    <InlineFeedback tone="warning">请先绑定频道，再与这个智能体讨论要新增的功能。</InlineFeedback>
                   )
                 ) : null}
               </div>
@@ -933,38 +1126,72 @@ export function AgentManagePage() {
 
           <section className={styles.workbenchSection} id="agent-extensions">
             <div className={styles.section}>
-              <div className={styles.sectionHeading}>已关联扩展</div>
-              {agentExtensions.length === 0 ? (
-                <EmptyState
-                  title={extensions.length === 0 ? '还没有本地扩展' : '还没有给这个智能体启用扩展'}
-                  description={
-                    extensions.length === 0
-                      ? '在创造工作台保存后，扩展会出现在这里。动态运行中的内容不会自动保存。'
-                      : '已有保存版本。启用后，这个智能体才能使用对应能力。'
-                  }
-                />
+              <div className={styles.sectionBar}>
+                <div>
+                  <div className={styles.sectionHeading}>可用扩展</div>
+                  <div className={styles.secondaryText}>选择这个智能体可以使用的扩展。</div>
+                </div>
+              </div>
+              {extensions.length === 0 ? (
+                <EmptyState title="还没有本地扩展" description="在创造工作台保存的本地扩展会出现在这里。" />
               ) : (
-                <div className={styles.compactList}>
-                  {agentExtensions.map((extension) => (
-                    <div className={styles.staticRow} key={extension.id}>
-                      <span>
-                        <strong>{extension.name}</strong>
-                        <small>{extension.description || '没有补充说明。'}</small>
-                      </span>
-                      <Button
-                        size="small"
-                        variant={extension.activation === '已激活' ? 'danger' : 'primary'}
-                        loading={extensionPendingId === extension.id}
-                        loadingLabel="处理中…"
-                        disabled={extensionPendingId !== null}
-                        onClick={() => void changeExtensionActivation(extension)}
+                <div className={styles.activationGrid} role="list" aria-label={`${agent.name}的可用扩展`}>
+                  {extensions.map((extension) => {
+                    const activation = extension.activations.find((candidate) => candidate.agentId === agent.id)
+                    return (
+                      <div
+                        className={styles.activationCard}
+                        data-active={activation ? '' : undefined}
+                        key={extension.id}
+                        role="listitem"
                       >
-                        {extension.activation === '已激活' ? '停用扩展' : '启用给智能体'}
-                      </Button>
-                    </div>
-                  ))}
+                        <span className={styles.activationGlyph} aria-hidden="true">
+                          {extension.name.trim().slice(0, 1) || '扩'}
+                        </span>
+                        <span className={styles.activationCopy}>
+                          <strong>{extension.name}</strong>
+                          <small className={styles.activationDescription}>
+                            {extension.description || '还没有补充说明。'}
+                          </small>
+                          <small className={styles.activationMeta}>
+                            {activation
+                              ? `正在使用 · 版本 ${activation.revision || extension.revision}`
+                              : `尚未启用 · 可用版本 ${extension.revision}`}
+                          </small>
+                        </span>
+                        <SwitchControl
+                          label={`${activation ? '停用' : '启用'}“${extension.name}”`}
+                          checked={activation !== undefined}
+                          disabled={extensionPendingId !== null}
+                          onCheckedChange={(enabled) => void changeExtensionActivation(extension, enabled)}
+                        />
+                      </div>
+                    )
+                  })}
                 </div>
               )}
+            </div>
+          </section>
+          <section className={[styles.workbenchSection, styles.dangerSection].join(' ')}>
+            <div className={styles.section}>
+              <div className={styles.sectionBar}>
+                <div>
+                  <div className={styles.sectionHeading}>危险操作</div>
+                  <div className={styles.secondaryText}>
+                    删除智能体会停止所有频道运行。可同时删除创建智能体时自动生成的内置频道；其他频道将解除绑定。
+                  </div>
+                </div>
+                <Button
+                  variant="danger"
+                  onClick={() => {
+                    setDeleteConfirmation('')
+                    setDeleteAutoCreatedBuiltInChannels(true)
+                    setDeleteOpen(true)
+                  }}
+                >
+                  <Trash2 size={14} aria-hidden="true" /> 删除智能体
+                </Button>
+              </div>
             </div>
           </section>
           <AgentWorkbenchExtensionSlots agentId={agent.id} displayName={agent.name} />
@@ -974,6 +1201,39 @@ export function AgentManagePage() {
             agentId={agent.id}
             excludeBoundToAgentId={agent.id}
           />
+          <ConfirmDialog
+            open={deleteOpen}
+            onOpenChange={(open) => {
+              setDeleteOpen(open)
+              if (!open) setDeleteConfirmation('')
+            }}
+            title={`删除“${agent.name}”？`}
+            description="智能体将从列表中移除，所有频道中的当前生成和工具调用会立即中止。历史配置、消息和审计记录用于追溯；扩展、图片和工作区文件归原位置管理。"
+            confirmLabel="删除智能体"
+            confirmVariant="danger"
+            confirmLoadingLabel="正在删除…"
+            confirmDisabled={!canConfirmDelete}
+            onConfirm={deleteAgent}
+          >
+            <div className={styles.formStack}>
+              <Field label={`输入“${agent.name}”以确认`}>
+                <Input
+                  value={deleteConfirmation}
+                  autoComplete="off"
+                  onChange={(event) => setDeleteConfirmation(event.target.value)}
+                />
+              </Field>
+              <SwitchField
+                label="同时删除自动创建的内置频道"
+                description="范围限于当前绑定给这个智能体、并在创建智能体时自动生成的内置频道；已换绑频道、手工创建的内置频道和外部频道不在此范围。"
+                checked={deleteAutoCreatedBuiltInChannels}
+                onCheckedChange={setDeleteAutoCreatedBuiltInChannels}
+              />
+              {deleteConfirmation && deleteConfirmation !== agent.name ? (
+                <InlineFeedback tone="error">名称不匹配。</InlineFeedback>
+              ) : null}
+            </div>
+          </ConfirmDialog>
         </div>
 
         <ResizeHandle
@@ -1021,6 +1281,39 @@ export function AgentManagePage() {
                     <dd>{selectedModel ? `${selectedModel.providerName} · ${selectedModel.name}` : '未配置'}</dd>
                   </div>
                   <div>
+                    <dt>图片路由</dt>
+                    <dd>
+                      {agent.imageDiagnostics.route.mode === 'direct'
+                        ? '主模型原生视觉'
+                        : agent.imageDiagnostics.route.mode === 'delegated'
+                          ? `辅助视觉模型 · ${agent.imageDiagnostics.route.provider}/${agent.imageDiagnostics.route.model}`
+                          : '图片理解不可用'}
+                    </dd>
+                  </div>
+                  <div>
+                    <dt>视觉驻留</dt>
+                    <dd>
+                      {agent.imageDiagnostics.residentImages} 张，已跳过 {agent.imageDiagnostics.duplicateImagesSkipped}{' '}
+                      次重复注入
+                    </dd>
+                  </div>
+                  <div>
+                    <dt>最近图片检查</dt>
+                    <dd>
+                      {agent.imageDiagnostics.lastInspection
+                        ? `${agent.imageDiagnostics.lastInspection.mode === 'direct' ? '直接注入' : '辅助理解'} · ${agent.imageDiagnostics.lastInspection.imageCount} 张 · ${agent.imageDiagnostics.lastInspection.cacheHit ? '缓存命中' : '实时调用'}${agent.imageDiagnostics.lastInspection.usage ? ` · ${agent.imageDiagnostics.lastInspection.usage.inputTokens + agent.imageDiagnostics.lastInspection.usage.outputTokens} Token` : ''}`
+                        : '暂无记录'}
+                    </dd>
+                  </div>
+                  <div>
+                    <dt>视觉恢复</dt>
+                    <dd>
+                      {agent.imageDiagnostics.lastRestoration
+                        ? `${agent.imageDiagnostics.lastRestoration.compactionId} · 候选 ${agent.imageDiagnostics.lastRestoration.candidateCount} · 恢复 ${agent.imageDiagnostics.lastRestoration.restoredCount} · 跳过 ${agent.imageDiagnostics.lastRestoration.skippedCount}`
+                        : `最近 ${agent.imagePolicy.history.restoreAfterCompaction.recentMessages} 条消息，最多 ${agent.imagePolicy.history.restoreAfterCompaction.maxImages} 张图`}
+                    </dd>
+                  </div>
+                  <div>
                     <dt>系统访问</dt>
                     <dd>
                       {agentAccessPresentation(agent.capabilities).label}（
@@ -1041,10 +1334,22 @@ export function AgentManagePage() {
                     </dd>
                   </div>
                   <div>
-                    <dt>已关联扩展</dt>
-                    <dd>{agentExtensions.length} 个</dd>
+                    <dt>已启用扩展</dt>
+                    <dd>
+                      {
+                        extensions.filter((extension) =>
+                          extension.activations.some((activation) => activation.agentId === agent.id),
+                        ).length
+                      }{' '}
+                      个
+                    </dd>
                   </div>
                 </dl>
+                {agent.imageDiagnostics.blockers.map((blocker) => (
+                  <InlineFeedback key={blocker} tone="warning">
+                    {blocker}
+                  </InlineFeedback>
+                ))}
               </section>
               <section>
                 <h2>需要处理</h2>

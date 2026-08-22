@@ -1,4 +1,4 @@
-import { Activity, ArrowDown, Info, PanelRightClose, PanelRightOpen, Send, Wrench } from 'lucide-react'
+import { Activity, ArrowDown, Info, MoreHorizontal, PanelRightClose, PanelRightOpen, Send, Wrench } from 'lucide-react'
 import { memo, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type FormEvent } from 'react'
 import { Navigate, useParams } from 'react-router-dom'
 import { useNxtNavigate } from '../shell/nxt-link.js'
@@ -16,6 +16,8 @@ import {
 import {
   AgentStateRing,
   Button,
+  ConfirmDialog,
+  DropdownMenu,
   Enter,
   IconButton,
   Presence,
@@ -105,7 +107,7 @@ function MessageRowBase({
           <div className={styles.messageHeader}>
             <strong>{message.author}</strong>
             <time>{message.time}</time>
-            {message.origin === 'admin-console' ? <StatusBadge tone="warning">管理员从网页发出</StatusBadge> : null}
+            {message.origin === 'admin-console' ? <StatusBadge tone="warning">管理员从客户端发出</StatusBadge> : null}
             {message.delivery && message.delivery !== '已发送' ? (
               <StatusBadge tone={deliveryTone(message.delivery)}>{message.delivery}</StatusBadge>
             ) : null}
@@ -223,6 +225,8 @@ export function ChannelConversationPage() {
   const history = activeChannelId ? channelHistory[activeChannelId] : undefined
   const [draft, setDraft] = useState('')
   const [bindingOpen, setBindingOpen] = useState(false)
+  const [contextResetMode, setContextResetMode] = useState<'clear' | 'compact' | null>(null)
+  const [channelDeleteOpen, setChannelDeleteOpen] = useState(false)
   const [sendPending, setSendPending] = useState(false)
   const inspectorPaneRef = useRef<HTMLDivElement>(null)
   const [canvasView, setCanvasView] = useState<ChannelCanvasView>(readChannelCanvasView)
@@ -316,6 +320,37 @@ export function ChannelConversationPage() {
       setSendPending(false)
     }
   }
+  const resetContext = async (mode: 'clear' | 'compact'): Promise<boolean> => {
+    if (!channel || !runtime?.episodeId) return false
+    try {
+      await useProductStore.getState().resetChannelContext(channel.id, runtime.episodeId, mode)
+      notify(
+        mode === 'clear' ? '当前上下文已清空；下一条消息会从干净上下文开始。' : '当前上下文已压缩并完成交接。',
+        'success',
+        `channel-context-reset:${channel.id}`,
+      )
+      return true
+    } catch (error) {
+      notify(error instanceof Error ? error.message : String(error), 'error', `channel-context-reset:${channel.id}`)
+      return false
+    }
+  }
+  const deleteChannel = async (): Promise<boolean> => {
+    if (!channel) return false
+    try {
+      await useProductStore.getState().deleteChannel(channel.id, channel.agentId || null)
+      notify(
+        channel.kind === 'web' ? '内置频道已删除；历史记录可在审计中查询。' : '频道已从 NekroNxt 移除。',
+        'success',
+        `channel-delete:${channel.id}`,
+      )
+      void navigate('/work')
+      return true
+    } catch (error) {
+      notify(error instanceof Error ? error.message : String(error), 'error', `channel-delete:${channel.id}`)
+      return false
+    }
+  }
   const conversationStyle: CSSProperties & {
     '--nxt-inspector-width': string
   } = {
@@ -334,12 +369,12 @@ export function ChannelConversationPage() {
   const composerExplanation =
     channel?.kind === 'web'
       ? agent
-        ? `内容会作为当前网页频道的入站消息交给“${agent.name}”。`
-        : '绑定智能体后，输入才会作为当前网页频道的入站消息。'
+        ? `内容会作为当前内置频道的入站消息交给“${agent.name}”。`
+        : '请先绑定智能体，再将输入内容作为当前内置频道的入站消息。'
       : !agent
-        ? `此频道来自“${channel?.connectionName ?? '当前连接'}”；绑定智能体后才能以机器人账号发言。`
+        ? `此频道来自“${channel?.connectionName ?? '当前连接'}”；请先绑定智能体，再以机器人账号发言。`
         : connection?.proactiveSend
-          ? `“${channel?.connectionName ?? '当前连接'}”会向平台频道发出内容，并标记为管理员从网页发出。`
+          ? `“${channel?.connectionName ?? '当前连接'}”会向平台频道发出内容，并标记为管理员从客户端发出。`
           : `“${channel?.connectionName ?? '当前连接'}”尚未允许主动发送。`
 
   return (
@@ -353,7 +388,7 @@ export function ChannelConversationPage() {
               description={
                 host.status === 'error'
                   ? '当前无法读取频道，请重新连接后再试。'
-                  : '创建智能体会自动建立网页聊天频道；外部平台频道会在收到消息后出现。'
+                  : '创建智能体会自动建立内置频道；外部平台频道会在收到消息后出现。'
               }
             />
           </div>
@@ -382,10 +417,21 @@ export function ChannelConversationPage() {
                       <StatusBadge tone={agentTone(livePhase)}>{livePhase}</StatusBadge>
                     </>
                   ) : null}
-                  {!agent ? (
-                    <Button size="small" variant="primary" onClick={() => setBindingOpen(true)}>
-                      绑定智能体
-                    </Button>
+                  {agent && runtime?.episodeId ? (
+                    <DropdownMenu.Root>
+                      <DropdownMenu.Trigger asChild>
+                        <IconButton label="上下文操作">
+                          <MoreHorizontal size={15} aria-hidden="true" />
+                        </IconButton>
+                      </DropdownMenu.Trigger>
+                      <DropdownMenu.Content align="end">
+                        <DropdownMenu.Label>上下文操作</DropdownMenu.Label>
+                        <DropdownMenu.Item onSelect={() => setContextResetMode('compact')}>
+                          压缩上下文
+                        </DropdownMenu.Item>
+                        <DropdownMenu.Item onSelect={() => setContextResetMode('clear')}>清空上下文</DropdownMenu.Item>
+                      </DropdownMenu.Content>
+                    </DropdownMenu.Root>
                   ) : null}
                   <ChannelViewSwitch />
                 </div>
@@ -511,7 +557,7 @@ export function ChannelConversationPage() {
                               className={styles.composerWebAction}
                               onClick={() => void navigate(`/work/channels/${webChannel.id}`)}
                             >
-                              去网页频道
+                              去内置频道
                             </Button>
                           ) : null}
                           <IconButton
@@ -570,6 +616,7 @@ export function ChannelConversationPage() {
                           runtime={runtime}
                           onBind={() => setBindingOpen(true)}
                           onReassign={() => setBindingOpen(true)}
+                          onDelete={() => setChannelDeleteOpen(true)}
                         />
                       )}
                     </Enter>
@@ -593,6 +640,38 @@ export function ChannelConversationPage() {
           }
         />
       ) : null}
+      <ConfirmDialog
+        open={contextResetMode !== null}
+        onOpenChange={(open) => {
+          if (!open) setContextResetMode(null)
+        }}
+        title={contextResetMode === 'clear' ? '清空当前上下文？' : '压缩当前上下文？'}
+        description={
+          contextResetMode === 'clear'
+            ? '当前生成或工具调用会立即中止，并开始空白上下文。频道消息可通过历史查询工具查找；已完成的外部操作保留既有结果。'
+            : '当前生成或工具调用会立即中止，系统会把有效历史整理成交接摘要，并以摘要开始新上下文。已完成的外部操作保留既有结果。'
+        }
+        confirmLabel={contextResetMode === 'clear' ? '清空上下文' : '压缩上下文'}
+        confirmVariant={contextResetMode === 'clear' ? 'danger' : 'primary'}
+        confirmLoadingLabel={contextResetMode === 'clear' ? '正在清空…' : '正在压缩…'}
+        confirmDisabled={!runtime?.episodeId}
+        onConfirm={() => (contextResetMode === null ? false : resetContext(contextResetMode))}
+      />
+      <ConfirmDialog
+        open={channelDeleteOpen}
+        onOpenChange={setChannelDeleteOpen}
+        title={channel?.kind === 'web' ? '删除内置频道？' : '从 NekroNxt 移除此频道？'}
+        description={
+          channel?.kind === 'web'
+            ? '当前生成或工具调用会立即中止，频道会解除绑定并从列表中移除。历史消息、资源和审计事实可在记录中查询。'
+            : '当前生成或工具调用会立即中止，频道会解除绑定并从列表中移除。再次收到消息时，频道会重新出现在列表中。'
+        }
+        confirmLabel={channel?.kind === 'web' ? '删除内置频道' : '从 NekroNxt 移除'}
+        confirmVariant="danger"
+        confirmLoadingLabel="正在移除…"
+        confirmDisabled={!channel}
+        onConfirm={deleteChannel}
+      />
     </>
   )
 }

@@ -320,7 +320,7 @@ export function ConnectionsPage() {
             ) : null}
 
             {selected.adapterKey === 'web' ? (
-              <InlineFeedback tone="info">网页聊天由当前设备管理，不需要配置账号凭据。</InlineFeedback>
+              <InlineFeedback tone="info">内置频道由 NekroNxt 直接提供。</InlineFeedback>
             ) : (
               <>
                 <div className={styles.optionalTests}>
@@ -428,7 +428,7 @@ export function ConnectionsPage() {
           onOpenChange={setBindingOpen}
           connectionId={selected.id}
           title="绑定智能体"
-          description="为这个连接下的频道选择响应智能体和触发方式。完成后仍留在连接页。"
+          description="选择响应这个频道的智能体和触发方式。保存后立即更新频道绑定。"
         />
       ) : null}
 
@@ -454,7 +454,7 @@ export function ConnectionsPage() {
             ? '选择要连接的平台账号。'
             : (selectedPlatform?.description ?? '填写平台账号需要的配置。')
         }
-        confirmLabel={createStage === 'platform' ? '继续配置' : '创建连接'}
+        confirmLabel={createStage === 'platform' ? '填写连接信息' : '创建连接'}
         onConfirm={async () => {
           if (!selectedPlatform) {
             setCreateError('请选择连接平台。')
@@ -512,7 +512,7 @@ export function ConnectionsPage() {
               <Button type="button" size="small" variant="ghost" onClick={() => setCreateStage('platform')}>
                 返回选择平台
               </Button>
-              <Field label="连接别名" hint="可选，保存后用于区分这个连接；平台名称仍会作为次要信息显示。">
+              <Field label="连接别名" hint="可选，用于区分这个连接；平台名称显示为次要信息。">
                 <Input value={createAlias} maxLength={80} onChange={(event) => setCreateAlias(event.target.value)} />
               </Field>
               {Object.entries(selectedPlatform?.configSchema.properties ?? {}).map(([key, property]) => {
@@ -529,7 +529,7 @@ export function ConnectionsPage() {
                 }
                 if (property.type === 'credential-reference') {
                   return (
-                    <Field key={key} label={property.title} hint="凭据保存后不会在页面中回显。">
+                    <Field key={key} label={property.title} hint="凭据仅可覆盖，无法查看已保存值。">
                       <SecretInput
                         value={credentials[key] ?? ''}
                         onChange={(event) => setCredentials((current) => ({ ...current, [key]: event.target.value }))}

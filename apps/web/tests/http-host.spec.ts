@@ -92,7 +92,7 @@ const snapshotBody = () =>
     connectionAdapters: [
       {
         key: 'web',
-        displayName: '本地 Web',
+        displayName: '内置频道',
         description: '系统托管',
         userCreatable: false,
         configSchema: { schemaVersion: 1, type: 'object', required: [], properties: {} },
@@ -126,11 +126,27 @@ const snapshotBody = () =>
         id: webAgentId,
         displayName: '小奈',
         persona: '谨慎复核证据。',
+        personaDocument: { version: 1, segments: [{ type: 'text', text: '谨慎复核证据。' }] },
         currentRevisionId: webAgentRevisionId,
         runtimeStatus: 'running',
         runtimePhase: 'thinking',
         createdAt: 1_700_000_000_000,
         model: { provider: 'deepseek', model: 'deepseek-chat', reasoningEffort: 'high' },
+        imagePolicy: {
+          history: {
+            mode: 'persistent-distinct',
+            detail: 'auto',
+            restoreAfterCompaction: { recentMessages: 32, maxImages: 20 },
+          },
+          textModel: { mode: 'disabled' },
+        },
+        imageDiagnostics: {
+          route: { mode: 'unavailable' },
+          activeSessions: 0,
+          residentImages: 0,
+          duplicateImagesSkipped: 0,
+          blockers: ['主模型没有声明图片输入能力，且未配置辅助视觉模型。'],
+        },
         capabilities: {
           subagents: false,
           fileTools: false,
@@ -148,7 +164,7 @@ const snapshotBody = () =>
         connectionId: webConnectionId,
         platformChannelId: 'web-agent-1',
         kind: 'web',
-        displayName: '小奈的网页频道',
+        displayName: '小奈的内置频道',
         boundAgentId: webAgentId,
         bindings: [
           { channelId: webChannelId, agentId: webAgentId, triggerPolicy: 'always', boundAt: 1_700_000_000_000 },
@@ -188,9 +204,24 @@ const snapshotBody = () =>
     dynamic: [],
   })
 
-const snapshotBodyWithExtension = () =>
-  HostApiContracts.snapshot.response.parse({
-    ...snapshotBody(),
+const snapshotBodyWithExtension = () => {
+  const base = snapshotBody()
+  const sourceAgent = base.agents[0]
+  if (!sourceAgent) throw new Error('测试快照缺少基础智能体。')
+  return HostApiContracts.snapshot.response.parse({
+    ...base,
+    agents: [
+      ...base.agents,
+      {
+        ...sourceAgent,
+        id: createdAgentId,
+        displayName: '资料员',
+        currentRevisionId: nextAgentRevisionId,
+        createdAt: 1_700_000_000_100,
+        runtimeStatus: 'idle',
+        channels: [],
+      },
+    ],
     extensions: [
       {
         id: summaryExtensionId,
@@ -201,11 +232,18 @@ const snapshotBodyWithExtension = () =>
         revisions: [{ id: summaryRevisionId, revisionNumber: 1, createdAt: 1_700_000_000_000, contributions: [] }],
         activations: [
           { agentId: webAgentId, extensionRevisionId: summaryRevisionId, config: {}, activatedAt: 1_700_000_000_000 },
+          {
+            agentId: createdAgentId,
+            extensionRevisionId: summaryRevisionId,
+            config: {},
+            activatedAt: 1_700_000_000_100,
+          },
         ],
         clientDiagnostics: [],
       },
     ],
   })
+}
 
 const snapshotBodyWithDynamic = () =>
   HostApiContracts.snapshot.response.parse({
@@ -281,9 +319,9 @@ describe('HttpProductHost', () => {
     })
     expect(snapshot.channels[0]).toMatchObject({
       id: webChannelId,
-      name: '小奈的网页频道',
+      name: '小奈的内置频道',
       kind: 'web',
-      connectionName: '网页聊天',
+      connectionName: '内置频道',
       agentId: webAgentId,
       trigger: '始终响应',
     })
@@ -297,7 +335,7 @@ describe('HttpProductHost', () => {
     })
     expect(snapshot.connections[0]).toMatchObject({
       id: webConnectionId,
-      adapter: '网页聊天',
+      adapter: '内置频道',
       adapterKey: 'web',
       state: '已连接',
     })
@@ -431,6 +469,66 @@ describe('HttpProductHost', () => {
     unsubscribe()
   })
 
+  it('merges channel facts that arrive while the initial history request is in flight', async () => {
+    let releaseHistory: (() => void) | undefined
+    const historyGate = new Promise<void>((resolve) => {
+      releaseHistory = resolve
+    })
+    fetchMock = vi.fn((input: string, init?: RequestInit) => {
+      if (input === '/api/snapshot') return Promise.resolve(stubResponse(200, { ...snapshotBody(), messages: [] }))
+      if (input === `/api/channels/${webChannelId}/messages?limit=24` && init?.method === 'GET') {
+        return historyGate.then(() =>
+          stubResponse(200, {
+            hasMore: false,
+            messages: [
+              {
+                id: initialEventId,
+                channelId: webChannelId,
+                role: 'member',
+                parts: [{ type: 'text', text: '请求开始前的消息。' }],
+                occurredAt: 1_700_000_000_000,
+              },
+            ],
+          }),
+        )
+      }
+      return Promise.resolve(stubResponse(404, { error: { code: 'not-found', message: 'x' } }))
+    })
+    vi.stubGlobal('fetch', fetchMock)
+    vi.stubGlobal('EventSource', FakeEventSource)
+    const host = new HttpProductHost()
+    const unsubscribe = host.subscribe(() => undefined)
+    await flush()
+
+    const loading = host.execute('channels.listMessages', { channelId: webChannelId, mode: 'initial', limit: 24 })
+    await flush()
+    FakeEventSource.instances[0]?.emit('channel-fact', {
+      channelId: webChannelId,
+      revision: 1,
+      items: [
+        {
+          kind: 'outbound',
+          sourceId: secondReplyIntentId,
+          message: {
+            id: secondReplyIntentId,
+            channelId: webChannelId,
+            role: 'agent',
+            parts: [{ type: 'text', text: '请求期间发送的回复。' }],
+            occurredAt: 1_700_000_001_000,
+            deliveryState: 'sent',
+          },
+        },
+      ],
+    })
+    releaseHistory?.()
+    await loading
+    await flush()
+
+    expect(host.getSnapshot().messages.map((message) => message.id)).toEqual([initialEventId, secondReplyIntentId])
+    expect(host.getSnapshot().messages.at(-1)).toMatchObject({ body: '请求期间发送的回复。', delivery: '已发送' })
+    unsubscribe()
+  })
+
   it('routes a local Channel display name without changing the platform identity', async () => {
     const requests: Array<{ url: string; init?: RequestInit }> = []
     fetchMock = vi.fn((input: string, init?: RequestInit) => {
@@ -533,6 +631,81 @@ describe('HttpProductHost', () => {
       displayName: '新小奈',
       persona: '新人设',
       model: { provider: 'test-provider', model: 'chat-model' },
+    })
+    unsubscribe()
+  })
+
+  it('routes context reset and intelligent-agent deletion through their guarded contracts', async () => {
+    const requests: Array<{ url: string; init?: RequestInit }> = []
+    fetchMock = vi.fn((input: string, init?: RequestInit) => {
+      requests.push({ url: input, ...(init === undefined ? {} : { init }) })
+      if (input === `/api/channels/${webChannelId}/context-reset` && init?.method === 'POST') {
+        return Promise.resolve(
+          stubResponse(200, {
+            mode: 'compact',
+            closedEpisodeId: webEpisodeId,
+            nextEpisodeId: EpisodeIdSchema.parse('eps_nextsession'),
+          }),
+        )
+      }
+      if (input === `/api/agents/${webAgentId}` && init?.method === 'DELETE') {
+        return Promise.resolve(
+          stubResponse(200, {
+            agentId: webAgentId,
+            deleted: true,
+            unboundChannelIds: [],
+            deletedChannelIds: [webChannelId],
+          }),
+        )
+      }
+      if (input === `/api/channels/${webChannelId}` && init?.method === 'DELETE') {
+        return Promise.resolve(stubResponse(200, { channelId: webChannelId, deleted: true }))
+      }
+      if (input === '/api/snapshot') return Promise.resolve(stubResponse(200, snapshotBody()))
+      return Promise.resolve(stubResponse(404, { error: { code: 'not-found', message: 'x' } }))
+    })
+    vi.stubGlobal('fetch', fetchMock)
+    vi.stubGlobal('EventSource', FakeEventSource)
+
+    const host = new HttpProductHost()
+    const unsubscribe = host.subscribe(() => undefined)
+    await flush()
+    await host.execute('channels.resetContext', {
+      channelId: webChannelId,
+      expectedEpisodeId: webEpisodeId,
+      mode: 'compact',
+    })
+    await host.execute('agents.delete', {
+      agentId: webAgentId,
+      expectedCurrentRevisionId: webAgentRevisionId,
+      confirmationName: '小奈',
+    })
+    await host.execute('channels.delete', {
+      channelId: webChannelId,
+      expectedBoundAgentId: webAgentId,
+    })
+
+    const resetCall = requests.find((request) => request.url === `/api/channels/${webChannelId}/context-reset`)
+    expect(resetCall?.init?.method).toBe('POST')
+    if (typeof resetCall?.init?.body !== 'string') throw new TypeError('context reset body must be JSON text.')
+    expect(HostApiContracts.resetChannelContext.parseRequest(JSON.parse(resetCall.init.body))).toEqual({
+      expectedEpisodeId: webEpisodeId,
+      mode: 'compact',
+    })
+    const deleteCall = requests.find((request) => request.url === `/api/agents/${webAgentId}`)
+    expect(deleteCall?.init?.method).toBe('DELETE')
+    if (typeof deleteCall?.init?.body !== 'string') throw new TypeError('agent delete body must be JSON text.')
+    expect(HostApiContracts.deleteAgent.parseRequest(JSON.parse(deleteCall.init.body))).toEqual({
+      expectedCurrentRevisionId: webAgentRevisionId,
+      confirmationName: '小奈',
+      deleteAutoCreatedBuiltInChannels: true,
+    })
+    const channelDeleteCall = requests.find(
+      (request) => request.url === `/api/channels/${webChannelId}` && request.init?.method === 'DELETE',
+    )
+    if (typeof channelDeleteCall?.init?.body !== 'string') throw new TypeError('channel delete body must be JSON text.')
+    expect(HostApiContracts.deleteChannel.parseRequest(JSON.parse(channelDeleteCall.init.body))).toEqual({
+      expectedBoundAgentId: webAgentId,
     })
     unsubscribe()
   })
@@ -1186,8 +1359,22 @@ describe('HttpProductHost', () => {
     expect(extension).toMatchObject({
       name: '频道摘要',
       revision: 1,
-      activation: '已激活',
-      targetAgent: '小奈',
+      createdByAgentId: webAgentId,
+      createdByAgent: '小奈',
+      activations: [
+        {
+          agentId: webAgentId,
+          agentName: '小奈',
+          revisionId: summaryRevisionId,
+          revision: 1,
+        },
+        {
+          agentId: createdAgentId,
+          agentName: '资料员',
+          revisionId: summaryRevisionId,
+          revision: 1,
+        },
+      ],
     })
     unsubscribe()
   })

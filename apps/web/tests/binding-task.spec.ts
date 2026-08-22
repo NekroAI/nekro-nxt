@@ -16,7 +16,7 @@ const channel = (
   connectionId: ConnectionIdSchema.parse(connectionId),
   name: id,
   kind: connectionId === webConnection ? 'web' : 'qq-group',
-  connectionName: connectionId === webConnection ? '网页聊天' : '官方机器人',
+  connectionName: connectionId === webConnection ? '内置频道' : '官方机器人',
   agentId,
   trigger: triggerPolicy === 'always' ? '始终响应' : '被提及或回复时',
   runtimePhase: '空闲',

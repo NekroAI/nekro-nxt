@@ -107,7 +107,7 @@ export function BindingTaskDialog({
     description ??
     (agentIsPreset && !channelIsPreset
       ? '一个智能体可以绑定多个频道；如果所选频道已绑定其他智能体，保存后该频道将改由当前智能体负责。'
-      : '选择响应这个频道的智能体和触发方式。保存后不必离开当前页面。')
+      : '选择响应这个频道的智能体和触发方式。保存后立即更新频道绑定。')
 
   return (
     <ConfirmDialog

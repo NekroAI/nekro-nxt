@@ -24,6 +24,7 @@ export interface ProductSnapshot {
   readonly channelRuntimes: Readonly<Record<string, ChannelRuntimeView>>
   readonly connections: readonly ConnectionSummary[]
   readonly extensions: readonly LocalExtensionSummary[]
+  readonly platformUsersRevision: number
   readonly approvals: readonly DynamicApproval[]
   /** Running dynamic Packages by intelligent-agent (from the creator runtime). */
   readonly dynamic: readonly DynamicPackageSummary[]
@@ -104,6 +105,7 @@ export class ProductHostCoordinator implements ProductHostPort {
         channelRuntimes: snapshot.channelRuntimes,
         connections: snapshot.connections,
         extensions: snapshot.extensions,
+        platformUsersRevision: snapshot.platformUsersRevision,
         approvals: snapshot.approvals,
         dynamic: snapshot.dynamic,
         diagnosticNote: snapshot.diagnosticNote,

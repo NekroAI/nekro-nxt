@@ -1,7 +1,12 @@
 import { describe, expect, it } from 'vitest'
 import { AgentIdSchema, ChannelIdSchema, ConnectionIdSchema } from '@nekro-nxt/contracts'
 import { agentWorkbenchHref, listAgentBlockers } from '../src/pages/agent-workbench.js'
-import type { AgentSummary, CapabilityAvailability, ChannelSummary } from '../src/product-store.js'
+import {
+  defaultImageUnderstandingPolicy,
+  type AgentSummary,
+  type CapabilityAvailability,
+  type ChannelSummary,
+} from '../src/product-store.js'
 
 const agentId = AgentIdSchema.parse('agt_workbench')
 const availability = (available: boolean): CapabilityAvailability => ({
@@ -23,6 +28,7 @@ const agent = (overrides: Partial<AgentSummary> = {}): AgentSummary => ({
   description: '',
   state: '空闲',
   model: 'GPT-5',
+  personaDocument: { version: 1, segments: [] },
   channels: [],
   extensionCount: 0,
   capabilities: {
@@ -33,15 +39,23 @@ const agent = (overrides: Partial<AgentSummary> = {}): AgentSummary => ({
     developmentShell: false,
     unrestrictedFileAccess: false,
   },
+  imagePolicy: defaultImageUnderstandingPolicy(),
+  imageDiagnostics: {
+    route: { mode: 'unavailable' },
+    activeSessions: 0,
+    residentImages: 0,
+    duplicateImagesSkipped: 0,
+    blockers: ['主模型没有声明图片输入能力，且未配置辅助视觉模型。'],
+  },
   ...overrides,
 })
 
 const channel = (bound: boolean): ChannelSummary => ({
   id: ChannelIdSchema.parse('chn_workbench'),
   connectionId: ConnectionIdSchema.parse('con_workbench'),
-  name: '网页频道',
+  name: '内置频道',
   kind: 'web',
-  connectionName: '网页聊天',
+  connectionName: '内置频道',
   agentId: bound ? agentId : '',
   trigger: '始终响应',
   runtimePhase: '空闲',

@@ -1,11 +1,14 @@
 import { describe, expect, it } from 'vitest'
 import {
+  cacheInputTokens,
+  cacheReadShare,
   flattenRuntimeRecords,
   formatDurationMs,
   formatTokenCount,
   plotTurnStarts,
   projectContextUsage,
   recordLane,
+  weightedCacheReadShare,
 } from '../src/pages/channel-trajectory.js'
 import type { ChannelRuntimeView } from '../src/product-store.js'
 
@@ -75,7 +78,6 @@ describe('flattenRuntimeRecords', () => {
       projectContextUsage({
         projectedTokens: 150,
         contextWindow: 100,
-        cacheReadTokens: 40,
         breakdown: { systemTokens: 20, toolsTokens: 30, messageTokens: 25 },
       }),
     ).toMatchObject({
@@ -98,5 +100,17 @@ describe('flattenRuntimeRecords', () => {
     })
     expect(estimated.estimated).toBe(true)
     expect(estimated.composition.every((item) => item.value >= 0)).toBe(true)
+  })
+
+  it('distinguishes missing cache telemetry from a reported miss and computes token-weighted coverage', () => {
+    const hit = { turn: 1, step: 1, uncachedInputTokens: 200, cacheReadTokens: 800 }
+    const miss = { turn: 2, step: 1, uncachedInputTokens: 500, cacheReadTokens: 0, cacheWriteTokens: 100 }
+    const unknown = { turn: 3, step: 1, uncachedInputTokens: 900 }
+
+    expect(cacheInputTokens(hit)).toBe(1000)
+    expect(cacheReadShare(hit)).toBe(0.8)
+    expect(cacheReadShare(miss)).toBe(0)
+    expect(cacheReadShare(unknown)).toBeUndefined()
+    expect(weightedCacheReadShare([hit, miss, unknown])).toBe(0.5)
   })
 })

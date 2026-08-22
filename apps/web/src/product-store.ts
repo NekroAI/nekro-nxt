@@ -1,5 +1,10 @@
 import type { AdapterConnectionDescriptor } from '@nekro-nxt/adapter-sdk'
-import { parseJsonValue, type HostApiResponse } from '@nekro-nxt/contracts'
+import {
+  PlatformUserListResponseSchema,
+  parseJsonValue,
+  type HostApiResponse,
+  type PromptDocumentV1,
+} from '@nekro-nxt/contracts'
 import type { ExtensionJsonValue } from '@nekro-nxt/extension-sdk'
 import { create } from 'zustand'
 import type { DynamicPackageSummary, ProductHostPort } from './product-port.js'
@@ -28,6 +33,37 @@ export const CHANNEL_MESSAGE_PAGE_SIZE = 24
 export type DeliveryState = '已发送' | '发送中' | '部分发送' | '失败' | '结果未知'
 export type ConnectionState = '已连接' | '正在连接' | '认证过期' | '已配置' | '已断开' | '异常'
 
+export interface ImageUnderstandingPolicy {
+  readonly history: {
+    readonly mode: 'persistent-distinct'
+    readonly detail: 'low' | 'auto' | 'high'
+    readonly restoreAfterCompaction: {
+      readonly recentMessages: number
+      readonly maxImages: number
+    }
+  }
+  readonly textModel:
+    | { readonly mode: 'disabled' }
+    | {
+        readonly mode: 'auxiliary'
+        readonly model: {
+          readonly provider: string
+          readonly model: string
+          readonly reasoningEffort?: string | undefined
+        }
+        readonly maxTokens: number
+      }
+}
+
+export const defaultImageUnderstandingPolicy = (): ImageUnderstandingPolicy => ({
+  history: {
+    mode: 'persistent-distinct',
+    detail: 'auto',
+    restoreAfterCompaction: { recentMessages: 32, maxImages: 20 },
+  },
+  textModel: { mode: 'disabled' },
+})
+
 export interface AgentSummary {
   readonly id: string
   readonly name: string
@@ -40,6 +76,7 @@ export interface AgentSummary {
     readonly reasoningEffort?: string
   }
   readonly persona?: string
+  readonly personaDocument: PromptDocumentV1
   readonly currentRevisionId?: string
   readonly channels: readonly string[]
   readonly extensionCount: number
@@ -51,6 +88,8 @@ export interface AgentSummary {
     readonly developmentShell: boolean
     readonly unrestrictedFileAccess: boolean
   }
+  readonly imagePolicy: ImageUnderstandingPolicy
+  readonly imageDiagnostics: HostApiResponse<'snapshot'>['agents'][number]['imageDiagnostics']
 }
 
 export interface ModelSummary {
@@ -59,6 +98,7 @@ export interface ModelSummary {
   readonly id: string
   readonly name: string
   readonly description?: string
+  readonly inputModalities?: readonly string[]
 }
 
 export interface ChannelSummary {
@@ -96,6 +136,7 @@ export interface ChannelRuntimeView {
   readonly summary: string
   readonly pendingInjectCount: number
   readonly occupancy?: HostApiResponse<'getChannelRuntime'>['occupancy']
+  readonly cache?: HostApiResponse<'getChannelRuntime'>['cache']
   readonly turns: HostApiResponse<'getChannelRuntime'>['turns']
 }
 
@@ -186,8 +227,15 @@ export interface LocalExtensionSummary {
   readonly name: string
   readonly description: string
   readonly revision: number
-  readonly activation: '已激活' | '等待安全切换' | '未激活' | '激活失败'
-  readonly targetAgent: string
+  readonly createdByAgentId?: string
+  readonly createdByAgent: string
+  readonly activations: readonly {
+    readonly agentId: string
+    readonly agentName: string
+    readonly revisionId: string
+    readonly revision: number
+    readonly activatedAt: number
+  }[]
   readonly contributions: readonly string[]
   readonly verification?: {
     readonly verifiedAt: number
@@ -212,9 +260,8 @@ export interface LocalExtensionSummary {
     readonly message?: string
     readonly observedAt: number
   }[]
-  /** Saved Revision id + owning intelligent-agent id; not intended for display. */
+  /** Latest saved Revision id; not intended for display. */
   readonly revisionId?: string
-  readonly agentId?: string
 }
 
 export interface DynamicApproval {
@@ -281,6 +328,8 @@ export interface ProductState {
   readonly channelRuntimes: Readonly<Record<string, ChannelRuntimeView>>
   readonly connections: readonly ConnectionSummary[]
   readonly extensions: readonly LocalExtensionSummary[]
+  readonly platformUserFacets: HostApiResponse<'listPlatformUsers'>['facets']
+  readonly platformUsersRevision: number
   readonly approvals: readonly DynamicApproval[]
   readonly dynamic: readonly DynamicPackageSummary[]
   readonly theme: ThemeChoice
@@ -290,17 +339,27 @@ export interface ProductState {
   createAgent(input: {
     readonly name: string
     readonly persona: string
+    readonly personaDocument: PromptDocumentV1
     readonly model: ModelSummary
     readonly capabilities: AgentSummary['capabilities']
+    readonly imagePolicy?: ImageUnderstandingPolicy
   }): Promise<{ readonly agentId: string; readonly channelId: string }>
   reviseAgent(input: {
     readonly agentId: string
     readonly expectedCurrentRevisionId?: string
     readonly displayName: string
     readonly persona: string
+    readonly personaDocument: PromptDocumentV1
     readonly model: ModelSummary
     readonly reasoningEffort?: string
+    readonly imagePolicy: ImageUnderstandingPolicy
   }): Promise<void>
+  deleteAgent(
+    agentId: string,
+    expectedCurrentRevisionId: string,
+    confirmationName: string,
+    deleteAutoCreatedBuiltInChannels: boolean,
+  ): Promise<void>
   createConnection(input: {
     readonly adapterKey: string
     readonly configuration: Readonly<Record<string, string | number | boolean>>
@@ -320,6 +379,8 @@ export interface ProductState {
     readonly triggerPolicy: 'always' | 'mentioned-or-replied' | 'command' | 'observe-only'
   }): Promise<void>
   clearBinding(channelId: string): Promise<void>
+  deleteChannel(channelId: string, expectedBoundAgentId: string | null): Promise<void>
+  resetChannelContext(channelId: string, episodeId: string, mode: 'clear' | 'compact'): Promise<void>
   putWorkTreeOrder(order: ProductState['workTreeOrder']): Promise<void>
   sendMessage(channelId: string, body: string): Promise<void>
   loadChannelMessages(channelId: string, mode?: 'initial' | 'older' | 'latest'): Promise<void>
@@ -338,7 +399,7 @@ export interface ProductState {
     readonly slug: string
     readonly description: string
   }): Promise<SavedDynamicExtension>
-  setExtensionActive(id: string, enabled: boolean): Promise<void>
+  setExtensionActive(id: string, agentId: string, enabled: boolean): Promise<void>
   callExtensionClient(input: {
     readonly agentId: string
     readonly extensionId: string
@@ -353,6 +414,13 @@ export interface ProductState {
     readonly status: 'loaded' | 'failed'
     readonly message?: string
   }): Promise<void>
+  listPlatformUsers(input?: {
+    readonly query?: string
+    readonly adapterKey?: string
+    readonly connectionId?: string
+    readonly cursor?: string
+    readonly limit?: number
+  }): Promise<HostApiResponse<'listPlatformUsers'>>
   setTheme(theme: ThemeChoice): void
   setReducedMotion(enabled: boolean): void
 }
@@ -393,7 +461,7 @@ const isChannelRuntimeView = (value: unknown): value is ChannelRuntimeView =>
   typeof value['pendingInjectCount'] === 'number' &&
   Array.isArray(value['turns'])
 
-export const useProductStore = create<ProductState>(() => ({
+export const useProductStore = create<ProductState>((set) => ({
   host: { status: 'initializing', error: null, lastSuccessfulAt: null },
   connectionAdapters: [],
   capabilityAvailability: {
@@ -416,6 +484,8 @@ export const useProductStore = create<ProductState>(() => ({
   channelRuntimes: {},
   connections: [],
   extensions: [],
+  platformUserFacets: { adapters: [], connections: [] },
+  platformUsersRevision: 0,
   approvals: [],
   dynamic: [],
   theme: initialTheme(),
@@ -425,19 +495,30 @@ export const useProductStore = create<ProductState>(() => ({
   refreshHost: async () => {
     await requireHost().execute('host.refresh')
   },
-  createAgent: async ({ name, persona, model, capabilities }) => {
+  createAgent: async ({ name, persona, personaDocument, model, capabilities, imagePolicy }) => {
     const result = await requireHost().execute('agents.create', {
       displayName: requireValue(name, '请输入智能体名称。'),
       persona,
+      personaDocument,
       model: { provider: model.provider, model: model.id },
       capabilities,
+      imagePolicy: imagePolicy ?? defaultImageUnderstandingPolicy(),
     })
     if (!isRecord(result) || typeof result['agentId'] !== 'string' || typeof result['channelId'] !== 'string') {
       throw new ProductActionError('invalid-input', '智能体已创建，但返回结果不完整，请刷新页面。')
     }
     return { agentId: result['agentId'], channelId: result['channelId'] }
   },
-  reviseAgent: async ({ agentId, expectedCurrentRevisionId, displayName, persona, model, reasoningEffort }) => {
+  reviseAgent: async ({
+    agentId,
+    expectedCurrentRevisionId,
+    displayName,
+    persona,
+    personaDocument,
+    model,
+    reasoningEffort,
+    imagePolicy,
+  }) => {
     await requireHost().execute('agents.revise', {
       agentId: requireValue(agentId, '缺少智能体标识，请刷新页面后重试。'),
       expectedCurrentRevisionId: requireValue(
@@ -447,7 +528,21 @@ export const useProductStore = create<ProductState>(() => ({
       ),
       displayName: requireValue(displayName, '请输入智能体名称。'),
       persona,
+      personaDocument,
       model: { provider: model.provider, model: model.id, ...(reasoningEffort ? { reasoningEffort } : {}) },
+      imagePolicy,
+    })
+  },
+  deleteAgent: async (agentId, expectedCurrentRevisionId, confirmationName, deleteAutoCreatedBuiltInChannels) => {
+    await requireHost().execute('agents.delete', {
+      agentId: requireValue(agentId, '缺少智能体标识，请刷新页面后重试。'),
+      expectedCurrentRevisionId: requireValue(
+        expectedCurrentRevisionId,
+        '缺少当前智能体配置版本，请刷新页面后重试。',
+        'missing-prerequisite',
+      ),
+      confirmationName,
+      deleteAutoCreatedBuiltInChannels,
     })
   },
   createConnection: async ({ adapterKey, alias, configuration, credentials }) => {
@@ -469,7 +564,7 @@ export const useProductStore = create<ProductState>(() => ({
       displayName: requireValue(displayName, '请输入频道名称。'),
     })
     if (!isRecord(result) || typeof result['channelId'] !== 'string') {
-      throw new ProductActionError('invalid-input', '网页频道创建结果无效，请重新加载。')
+      throw new ProductActionError('invalid-input', '内置频道创建结果无效，请重新加载。')
     }
     return { channelId: result['channelId'] }
   },
@@ -483,6 +578,19 @@ export const useProductStore = create<ProductState>(() => ({
   clearBinding: async (channelId) => {
     await requireHost().execute('bindings.clear', {
       channelId: requireValue(channelId, '请选择要解除绑定的频道。'),
+    })
+  },
+  deleteChannel: async (channelId, expectedBoundAgentId) => {
+    await requireHost().execute('channels.delete', {
+      channelId: requireValue(channelId, '缺少目标频道，请刷新页面后重试。'),
+      expectedBoundAgentId,
+    })
+  },
+  resetChannelContext: async (channelId, episodeId, mode) => {
+    await requireHost().execute('channels.resetContext', {
+      channelId: requireValue(channelId, '缺少目标频道，请刷新页面后重试。'),
+      expectedEpisodeId: requireValue(episodeId, '频道当前没有可重置的上下文。', 'missing-prerequisite'),
+      mode,
     })
   },
   putWorkTreeOrder: async (order) => {
@@ -648,30 +756,26 @@ export const useProductStore = create<ProductState>(() => ({
     }
     return { extensionId: result['extensionId'], revisionId: result['revisionId'] }
   },
-  setExtensionActive: async (id, enabled) => {
+  setExtensionActive: async (id, agentId, enabled) => {
     const extensionId = requireValue(id, '缺少本地扩展标识，请刷新页面后重试。')
+    const targetAgentId = requireValue(agentId, '缺少目标智能体，请刷新页面后重试。')
     const extension = useProductStore.getState().extensions.find((candidate) => candidate.id === extensionId)
     if (extension === undefined) {
       throw new ProductActionError('missing-prerequisite', '找不到要更新的本地扩展，请刷新页面后重试。')
     }
 
     if (enabled) {
-      const agentId = requireValue(
-        extension.agentId ?? '',
-        '此本地扩展缺少目标智能体，无法启用。',
-        'missing-prerequisite',
-      )
       const revisionId = requireValue(
         extension.revisionId ?? '',
         '此本地扩展缺少可启用版本，请重新保存后重试。',
         'missing-prerequisite',
       )
-      await requireHost().execute('extensions.activate', { extensionId, agentId, revisionId })
+      await requireHost().execute('extensions.activate', { extensionId, agentId: targetAgentId, revisionId })
       return
     }
     await requireHost().execute('extensions.deactivate', {
       extensionId,
-      agentId: requireValue(extension.agentId ?? '', '此本地扩展缺少目标智能体，无法停用。'),
+      agentId: targetAgentId,
     })
   },
   callExtensionClient: async ({ agentId, extensionId, revisionId, method, value }) => {
@@ -695,6 +799,11 @@ export const useProductStore = create<ProductState>(() => ({
       status,
       ...(message === undefined ? {} : { message }),
     })
+  },
+  listPlatformUsers: async (input = {}) => {
+    const result = PlatformUserListResponseSchema.parse(await requireHost().execute('platformUsers.list', input))
+    set({ platformUserFacets: result.facets })
+    return result
   },
   setTheme: (theme) => {
     if (typeof window !== 'undefined') {

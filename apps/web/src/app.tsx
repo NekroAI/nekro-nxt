@@ -1,4 +1,4 @@
-import { Boxes, Cable, MessageSquare, Monitor, Moon, Settings, Sun } from 'lucide-react'
+import { Boxes, Cable, MessageSquare, Monitor, Moon, Settings, Sun, UsersRound } from 'lucide-react'
 import { Component, useEffect, useMemo, useState, type CSSProperties, type ErrorInfo, type ReactNode } from 'react'
 import { Navigate, Outlet, Route, Routes, useLocation, useParams } from 'react-router-dom'
 import styles from './app.module.css'
@@ -14,6 +14,7 @@ import {
   CreatorPage,
   ExtensionsPage,
   SettingsPage,
+  UsersPage,
 } from './pages/product-pages.js'
 import { useProductStore, type ProductHostStatus } from './product-store.js'
 import { isWorkPath, workHomePath } from './shell/last-channel.js'
@@ -38,6 +39,7 @@ import { OBJECT_PANE_WIDTH, useUiPreferences } from './ui-preferences.js'
 const modes = [
   { to: '/work', label: '工作', icon: MessageSquare, work: true },
   { to: '/connections', label: '连接', icon: Cable, work: false },
+  { to: '/users', label: '用户', icon: UsersRound, work: false },
   { to: '/extensions', label: '扩展', icon: Boxes, work: false },
   { to: '/settings', label: '设置', icon: Settings, work: false },
 ] as const
@@ -252,7 +254,7 @@ class ProductErrorBoundary extends Component<{ readonly children: ReactNode }, P
       <div className={styles.centeredState} role="alert">
         <div>
           <h1>页面运行失败</h1>
-          <p>界面遇到未预期错误。重新加载不会清除已保存的数据。</p>
+          <p>界面遇到未预期错误。重新加载可恢复已保存数据。</p>
           <Button variant="primary" onClick={() => window.location.reload()}>
             重新加载
           </Button>
@@ -291,6 +293,7 @@ export function NekroNxtApp() {
                   <Route path="channels/:channelId" element={<LegacyWorkRedirect kind="channel" />} />
                   <Route path="connections" element={<ConnectionsPage />} />
                   <Route path="connections/:connectionId" element={<ConnectionsPage />} />
+                  <Route path="users" element={<UsersPage />} />
                   <Route path="extensions" element={<ExtensionsPage />} />
                   <Route path="extensions/:extensionId" element={<ExtensionsPage />} />
                   <Route path="creator" element={<LegacyWorkRedirect kind="creator" />} />

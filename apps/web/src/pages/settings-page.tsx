@@ -15,7 +15,7 @@ function SystemExtensionsPanel() {
     <section className={styles.settingsSection}>
       <div className={styles.systemAdapterIntro}>
         <div className={styles.sectionHeading}>已安装适配器</div>
-        <p className={styles.secondaryText}>接入聊天平台。到「连接」添加账号。</p>
+        <p className={styles.secondaryText}>接入聊天平台。前往「连接」添加账号。</p>
       </div>
       <div className={styles.systemAdapterGrid}>
         {adapters.map((adapter) => (

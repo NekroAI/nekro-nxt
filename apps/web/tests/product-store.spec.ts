@@ -1,7 +1,12 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { AgentIdSchema, ExtensionIdSchema, ExtensionRevisionIdSchema } from '@nekro-nxt/contracts'
 import { ProductHostCoordinator } from '../src/product-port.ts'
-import { ProductActionError, setActiveProductHost, useProductStore } from '../src/product-store.ts'
+import {
+  defaultImageUnderstandingPolicy,
+  ProductActionError,
+  setActiveProductHost,
+  useProductStore,
+} from '../src/product-store.ts'
 
 const resetBusinessFacts = (): void => {
   setActiveProductHost(null)
@@ -44,6 +49,7 @@ const captureRejection = async (promise: Promise<unknown>): Promise<unknown> => 
 }
 
 const agentId = AgentIdSchema.parse('agt_store')
+const otherAgentId = AgentIdSchema.parse('agt_storeother')
 const extensionId = ExtensionIdSchema.parse('ext_store')
 const extensionRevisionId = ExtensionRevisionIdSchema.parse('xrv_store')
 
@@ -127,6 +133,7 @@ describe('product store Host mutations', () => {
           description: '',
           state: '空闲',
           model: '测试模型',
+          personaDocument: { version: 1, segments: [] },
           channels: [],
           extensionCount: 1,
           capabilities: {
@@ -137,6 +144,14 @@ describe('product store Host mutations', () => {
             developmentShell: false,
             unrestrictedFileAccess: false,
           },
+          imagePolicy: defaultImageUnderstandingPolicy(),
+          imageDiagnostics: {
+            route: { mode: 'unavailable' },
+            activeSessions: 0,
+            residentImages: 0,
+            duplicateImagesSkipped: 0,
+            blockers: ['主模型没有声明图片输入能力，且未配置辅助视觉模型。'],
+          },
         },
       ],
       extensions: [
@@ -145,13 +160,13 @@ describe('product store Host mutations', () => {
           name: '测试扩展',
           description: '',
           revision: 1,
-          activation: '未激活',
-          targetAgent: '测试智能体',
+          createdByAgentId: agentId,
+          createdByAgent: '测试智能体',
+          activations: [],
           contributions: [],
           clientActivations: [],
           clientDiagnostics: [],
           revisionId: extensionRevisionId,
-          agentId,
         },
       ],
       approvals: [
@@ -181,11 +196,50 @@ describe('product store Host mutations', () => {
     await expect(
       useProductStore.getState().resolveApproval({ requestId: 'request-1', agentId, approved: true }),
     ).rejects.toBe(failure)
-    await expect(useProductStore.getState().setExtensionActive(extensionId, true)).rejects.toBe(failure)
+    await expect(useProductStore.getState().setExtensionActive(extensionId, agentId, true)).rejects.toBe(failure)
     expect(execute).toHaveBeenCalledTimes(3)
     expect(useProductStore.getState().agents[0]?.capabilities.dynamicCreation).toBe(false)
     expect(useProductStore.getState().approvals[0]?.state).toBe('等待批准')
-    expect(useProductStore.getState().extensions[0]?.activation).toBe('未激活')
+    expect(useProductStore.getState().extensions[0]?.activations).toEqual([])
+  })
+
+  it('sends Extension activation changes to the explicitly selected intelligent-agent', async () => {
+    const execute = vi.fn(() => Promise.resolve(null))
+    setActiveProductHost({
+      getSnapshot: () => useProductStore.getState(),
+      subscribe: () => () => undefined,
+      execute,
+    })
+    useProductStore.setState({
+      extensions: [
+        {
+          id: extensionId,
+          name: '共享扩展',
+          description: '',
+          revision: 2,
+          createdByAgentId: agentId,
+          createdByAgent: '创建者',
+          activations: [],
+          contributions: [],
+          clientActivations: [],
+          clientDiagnostics: [],
+          revisionId: extensionRevisionId,
+        },
+      ],
+    })
+
+    await useProductStore.getState().setExtensionActive(extensionId, otherAgentId, true)
+    await useProductStore.getState().setExtensionActive(extensionId, otherAgentId, false)
+
+    expect(execute).toHaveBeenNthCalledWith(1, 'extensions.activate', {
+      extensionId,
+      agentId: otherAgentId,
+      revisionId: extensionRevisionId,
+    })
+    expect(execute).toHaveBeenNthCalledWith(2, 'extensions.deactivate', {
+      extensionId,
+      agentId: otherAgentId,
+    })
   })
 
   it('rejects missing Host and Extension activation prerequisites instead of mutating locally', async () => {
@@ -211,8 +265,8 @@ describe('product store Host mutations', () => {
           name: '缺少版本的扩展',
           description: '',
           revision: 1,
-          activation: '未激活',
-          targetAgent: '',
+          createdByAgent: '',
+          activations: [],
           contributions: [],
           clientActivations: [],
           clientDiagnostics: [],
@@ -220,11 +274,19 @@ describe('product store Host mutations', () => {
       ],
     })
 
-    const missingPrerequisite = await captureRejection(useProductStore.getState().setExtensionActive(extensionId, true))
+    const missingTarget = await captureRejection(useProductStore.getState().setExtensionActive(extensionId, '', true))
+    expect(missingTarget).toBeInstanceOf(ProductActionError)
+    if (!(missingTarget instanceof ProductActionError)) throw new Error('Expected ProductActionError')
+    expect(missingTarget.code).toBe('invalid-input')
+    expect(missingTarget.message).toContain('缺少目标智能体')
+
+    const missingPrerequisite = await captureRejection(
+      useProductStore.getState().setExtensionActive(extensionId, agentId, true),
+    )
     expect(missingPrerequisite).toBeInstanceOf(ProductActionError)
     if (!(missingPrerequisite instanceof ProductActionError)) throw new Error('Expected ProductActionError')
     expect(missingPrerequisite.code).toBe('missing-prerequisite')
-    expect(missingPrerequisite.message).toContain('缺少目标智能体')
+    expect(missingPrerequisite.message).toContain('缺少可启用版本')
     await expect(
       useProductStore.getState().resolveApproval({ requestId: '', agentId, approved: true }),
     ).rejects.toThrow('缺少批准请求')
@@ -257,6 +319,30 @@ describe('product store Host mutations', () => {
       agentIds: [],
       channelIdsByAgent: {},
       unboundChannelIds: [],
+    })
+  })
+
+  it('forwards context reset and intelligent-agent deletion with concurrency guards', async () => {
+    const execute = vi.fn(() => Promise.resolve(null))
+    setActiveProductHost({
+      getSnapshot: () => useProductStore.getState(),
+      subscribe: () => () => undefined,
+      execute,
+    })
+
+    await useProductStore.getState().resetChannelContext('chn_context', 'eps_context', 'compact')
+    await useProductStore.getState().deleteAgent(agentId, 'arev_context', '测试智能体', true)
+
+    expect(execute).toHaveBeenNthCalledWith(1, 'channels.resetContext', {
+      channelId: 'chn_context',
+      expectedEpisodeId: 'eps_context',
+      mode: 'compact',
+    })
+    expect(execute).toHaveBeenNthCalledWith(2, 'agents.delete', {
+      agentId,
+      expectedCurrentRevisionId: 'arev_context',
+      confirmationName: '测试智能体',
+      deleteAutoCreatedBuiltInChannels: true,
     })
   })
 })

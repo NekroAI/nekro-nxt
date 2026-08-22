@@ -452,7 +452,7 @@ function GenericField(props: GenericFieldProps): ReactNode {
             <Input
               type={role === 'secret' ? 'password' : 'text'}
               value={typeof value === 'string' ? value : ''}
-              placeholder={role === 'secret' ? '输入新值；已保存值不会回显' : undefined}
+              placeholder={role === 'secret' ? '输入新值；已保存值无法查看' : undefined}
               pattern={node.meta?.pattern?.source}
               required={node.meta?.required}
               disabled={locked}
@@ -717,7 +717,7 @@ function CredentialEditor({ refName, onChanged }: { readonly refName: string; re
           {info?.configured ? '已保存' : '待配置'}
         </StatusBadge>
       </div>
-      <Field label="新的凭据值" hint="只写保存；已保存值不会返回浏览器。" error={error || undefined}>
+      <Field label="新的凭据值" hint="凭据仅可覆盖，无法查看已保存值。" error={error || undefined}>
         <SecretInput ref={credentialInputRef} value={value} onChange={(event) => setValue(event.currentTarget.value)} />
       </Field>
       <div className={styles.inlineActions}>
@@ -949,7 +949,7 @@ function NamespaceEditor({
         <CredentialEditor refName={refName} onChanged={onSaved} key={refName} />
       ))}
       {conflict ? (
-        <InlineFeedback tone="warning">配置已在其他位置更新；草稿仍保留，请核对后重新保存。</InlineFeedback>
+        <InlineFeedback tone="warning">配置已在其他位置更新；当前草稿已保留，请核对后重新保存。</InlineFeedback>
       ) : null}
       {notice ? <InlineFeedback tone="success">{notice}</InlineFeedback> : null}
       {error ? <InlineFeedback tone="error">{error}</InlineFeedback> : null}
@@ -1118,7 +1118,7 @@ export function DshExtensionSettings() {
               </div>
             ) : (
               <InlineFeedback tone="info">
-                此 namespace 已由当前 DSH Host 注册，但尚未识别所属插件；基础 Schema 配置仍然可用。
+                此 namespace 已由当前 DSH Host 注册，但尚未识别所属插件；可以使用基础 Schema 配置。
               </InlineFeedback>
             )}
             {selected && (selectedOverall === 'partial' || selectedOverall === 'incompatible') ? (
@@ -1155,7 +1155,7 @@ export function DshExtensionSettings() {
                 <Tabs.Content value="native">
                   <div className={styles.nativeNotice}>
                     <StatusBadge tone="info">DSH 原生界面</StatusBadge>
-                    <span>内部保留上游术语和交互；配置仍写入同一 DSH Settings/Credentials。</span>
+                    <span>内部采用上游术语和交互；配置写入同一 DSH Settings/Credentials。</span>
                   </div>
                   {nativeFailure ? null : (
                     <NativeSettingsBoundary onFailure={reportNativeFailure}>

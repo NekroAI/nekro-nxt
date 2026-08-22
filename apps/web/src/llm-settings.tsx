@@ -364,9 +364,7 @@ export function LlmProviderSettings(): React.ReactNode {
             <Field
               label="API 密钥"
               hint={
-                selected?.credential?.configured
-                  ? '留空会保留当前密钥。页面不会读取或回显已保存的密钥。'
-                  : '保存后不会在页面中回显。'
+                selected?.credential?.configured ? '留空表示沿用当前密钥；已保存密钥无法查看。' : '保存的密钥无法查看。'
               }
             >
               <SecretInput value={apiKey} onChange={(event) => setApiKey(event.target.value)} />
@@ -610,7 +608,7 @@ export function AddModelProviderForm({ onSaved }: { readonly onSaved?: () => voi
   }
 
   if (settings.providers.length === 0) {
-    return <EmptyState title="当前没有可配置的供应商" description="完整目录和自定义供应商仍在设置中管理。" />
+    return <EmptyState title="当前没有可配置的供应商" description="完整目录和自定义供应商位于设置。" />
   }
 
   const providerSelected = providerId.length > 0
@@ -626,7 +624,7 @@ export function AddModelProviderForm({ onSaved }: { readonly onSaved?: () => voi
           label: providerDisplayName(provider.provider, provider.displayName),
         }))}
       />
-      <Field label="API 密钥" hint="保存后不会在页面中回显。" error={error || undefined}>
+      <Field label="API 密钥" hint="保存的密钥无法查看。" error={error || undefined}>
         <SecretInput value={apiKey} onChange={(event) => setApiKey(event.target.value)} />
       </Field>
       <div className={styles.compactActions}>

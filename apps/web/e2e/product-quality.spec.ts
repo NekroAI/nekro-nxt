@@ -36,6 +36,33 @@ const resourceIntentId = OutboundIntentIdSchema.parse('out_resources')
 const senderMemberId = ChannelMemberIdSchema.parse('mbr_sender')
 const targetMemberId = ChannelMemberIdSchema.parse('mbr_target')
 const imageAssetId = AssetIdSchema.parse('ast_image')
+const imagePolicy = {
+  history: {
+    mode: 'persistent-distinct' as const,
+    detail: 'auto' as const,
+    restoreAfterCompaction: { recentMessages: 32, maxImages: 20 },
+  },
+  textModel: { mode: 'disabled' as const },
+}
+const imageDiagnostics = {
+  route: { mode: 'direct' as const, provider: 'deepseek', model: 'deepseek-v4-flash' },
+  activeSessions: 1,
+  residentImages: 6,
+  duplicateImagesSkipped: 4,
+  lastInspection: {
+    mode: 'direct' as const,
+    imageCount: 3,
+    cacheHit: false,
+    usage: { inputTokens: 1280, outputTokens: 220 },
+  },
+  lastRestoration: {
+    compactionId: 'cmp_visual_demo',
+    candidateCount: 9,
+    restoredCount: 6,
+    skippedCount: 3,
+  },
+  blockers: [],
+}
 const fileAssetId = AssetIdSchema.parse('ast_file')
 
 const productSnapshot = HostApiContracts.snapshot.response.parse({
@@ -54,8 +81,8 @@ const productSnapshot = HostApiContracts.snapshot.response.parse({
   connectionAdapters: [
     {
       key: 'web',
-      displayName: '网页聊天',
-      description: '网页聊天',
+      displayName: '内置频道',
+      description: '内置频道',
       userCreatable: false,
       configSchema: { schemaVersion: 1, type: 'object', required: [], properties: {} },
     },
@@ -76,17 +103,41 @@ const productSnapshot = HostApiContracts.snapshot.response.parse({
       },
     },
   ],
-  models: [{ provider: 'deepseek', providerName: 'deepseek', id: 'deepseek-v4-flash', name: 'DeepSeek V4 Flash' }],
+  models: [
+    {
+      provider: 'deepseek',
+      providerName: 'deepseek',
+      id: 'deepseek-v4-flash',
+      name: 'DeepSeek V4 Flash',
+      inputModalities: ['text', 'image'],
+    },
+    {
+      provider: 'test-provider',
+      providerName: '测试供应商',
+      id: 'text-model',
+      name: '纯文本模型',
+      inputModalities: ['text'],
+    },
+    {
+      provider: 'unknown-provider',
+      providerName: '能力未声明供应商',
+      id: 'unknown-model',
+      name: '能力未声明模型',
+    },
+  ],
   agents: [
     {
       id: targetAgentId,
       displayName: '资料员',
       persona: '严谨、简洁',
+      personaDocument: { version: 1, segments: [{ type: 'text', text: '严谨、简洁' }] },
       currentRevisionId: targetRevisionId,
       createdAt: 1_725_000_000_000,
       runtimeStatus: 'running',
       runtimePhase: 'thinking',
       model: { provider: 'deepseek', model: 'deepseek-v4-flash' },
+      imagePolicy,
+      imageDiagnostics,
       capabilities: {
         subagents: false,
         fileTools: false,
@@ -101,10 +152,13 @@ const productSnapshot = HostApiContracts.snapshot.response.parse({
       id: sourceAgentId,
       displayName: '记录员',
       persona: '',
+      personaDocument: { version: 1, segments: [] },
       currentRevisionId: sourceRevisionId,
       createdAt: 1_725_000_000_100,
       runtimeStatus: 'idle',
       model: { provider: 'deepseek', model: 'deepseek-v4-flash' },
+      imagePolicy,
+      imageDiagnostics,
       capabilities: {
         subagents: false,
         fileTools: false,
@@ -122,7 +176,7 @@ const productSnapshot = HostApiContracts.snapshot.response.parse({
       connectionId: webConnectionId,
       platformChannelId: 'platform-target',
       kind: 'web',
-      displayName: '资料员的网页频道',
+      displayName: '资料员的内置频道',
       boundAgentId: targetAgentId,
       bindings: [
         { channelId: targetChannelId, agentId: targetAgentId, triggerPolicy: 'always', boundAt: 1_725_000_000_000 },
@@ -133,7 +187,7 @@ const productSnapshot = HostApiContracts.snapshot.response.parse({
       connectionId: webConnectionId,
       platformChannelId: 'platform-source',
       kind: 'web',
-      displayName: '记录员的网页频道',
+      displayName: '记录员的内置频道',
       boundAgentId: sourceAgentId,
       bindings: [
         { channelId: sourceChannelId, agentId: sourceAgentId, triggerPolicy: 'always', boundAt: 1_725_000_000_100 },
@@ -309,8 +363,29 @@ const installProductRoutes = async (page: Page): Promise<void> => {
               occupancy: {
                 projectedTokens: 46_320,
                 contextWindow: 128_000,
-                cacheReadTokens: 12_400,
                 breakdown: { systemTokens: 8_200, toolsTokens: 12_120, messageTokens: 26_000 },
+              },
+              cache: {
+                scope: 'episode',
+                aggregate: {
+                  usageRequestCount: 4,
+                  observedRequestCount: 4,
+                  shareRequestCount: 4,
+                  hitRequestCount: 3,
+                  uncachedInputTokens: 16_600,
+                  cacheReadTokens: 46_400,
+                  cacheWriteTokens: 1_000,
+                  averageRequestReadShare: 0.68,
+                },
+                recent: {
+                  windowSize: 12,
+                  samples: [
+                    { turn: 1, step: 1, uncachedInputTokens: 4_000, cacheReadTokens: 6_000 },
+                    { turn: 2, step: 1, uncachedInputTokens: 2_400, cacheReadTokens: 12_400 },
+                    { turn: 3, step: 1, uncachedInputTokens: 9_000, cacheReadTokens: 0, cacheWriteTokens: 1_000 },
+                    { turn: 4, step: 1, uncachedInputTokens: 1_200, cacheReadTokens: 28_000 },
+                  ],
+                },
               },
             }
           : {}),
@@ -330,6 +405,60 @@ const installProductRoutes = async (page: Page): Promise<void> => {
   await page.route('**/api/dynamic/*/inventory', (route) =>
     route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ rows: [] }) }),
   )
+  await page.route('**/api/platform-users*', (route) => {
+    const url = new URL(route.request().url())
+    const query = (url.searchParams.get('query') ?? '').toLocaleLowerCase('zh-CN')
+    const adapterKey = url.searchParams.get('adapterKey') ?? ''
+    const connectionId = url.searchParams.get('connectionId') ?? ''
+    const allItems = Array.from({ length: 12 }, (_, index) => ({
+      identityId: `pid_visualmember${index + 1}`,
+      displayName:
+        index === 0 ? '成员甲' : index === 1 ? '一位名称很长但仍需要保持行布局稳定的平台成员' : `示例成员 ${index + 1}`,
+      adapter: {
+        key: index < 9 ? 'qq-openclaw' : 'web',
+        displayName: index < 9 ? 'QQ 官方机器人' : '内置频道',
+      },
+      connection: {
+        id: index < 9 ? qqConnectionId : webConnectionId,
+        displayName: index < 9 ? '社群运营账号' : '当前设备',
+      },
+      activeChannelCount: index === 11 ? 0 : (index % 4) + 1,
+      channelPreview:
+        index === 11
+          ? []
+          : [
+              { id: qqChannelId, displayName: '产品讨论群', kind: 'group' as const },
+              ...(index % 2 === 0
+                ? [{ id: targetChannelId, displayName: '资料员的内置频道', kind: 'web' as const }]
+                : []),
+            ],
+      historicalOnly: index === 11,
+    }))
+    const items = allItems.filter(
+      (item) =>
+        (!query || item.displayName.toLocaleLowerCase('zh-CN').includes(query)) &&
+        (!adapterKey || item.adapter.key === adapterKey) &&
+        (!connectionId || item.connection.id === connectionId),
+    )
+    return route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({
+        total: items.length,
+        items,
+        facets: {
+          adapters: [
+            { key: 'qq-openclaw', displayName: 'QQ 官方机器人', userCount: 9 },
+            { key: 'web', displayName: '内置频道', userCount: 3 },
+          ],
+          connections: [
+            { id: qqConnectionId, adapterKey: 'qq-openclaw', displayName: '社群运营账号', userCount: 9 },
+            { id: webConnectionId, adapterKey: 'web', displayName: '当前设备', userCount: 3 },
+          ],
+        },
+      }),
+    })
+  })
   await page.route(`**/api/channels/*/assets/${imageAssetId}`, (route) =>
     route.fulfill({
       status: 200,
@@ -377,6 +506,12 @@ const capture = async (page: Page, testInfo: TestInfo, name: string): Promise<vo
 }
 
 const dragHorizontally = async (page: Page, handle: Locator, deltaX: number): Promise<void> => {
+  await handle.evaluate(
+    () =>
+      new Promise<void>((resolve) => {
+        requestAnimationFrame(() => requestAnimationFrame(() => resolve()))
+      }),
+  )
   const box = await handle.boundingBox()
   if (!box) throw new Error('分隔条没有几何尺寸。')
   const x = box.x + box.width / 2
@@ -400,7 +535,7 @@ test('three desktop viewports remain usable in both themes and reduced motion', 
       await page.setViewportSize(viewport)
       await page.emulateMedia({ colorScheme, reducedMotion: 'reduce' })
       await page.goto(`/work/channels/${targetChannelId}`)
-      await expect(page.getByRole('heading', { name: '资料员的网页频道' })).toBeVisible()
+      await expect(page.getByRole('heading', { name: '资料员的内置频道' })).toBeVisible()
       const headerActionsBox = await page.locator('[data-conversation-header-actions]').boundingBox()
       expect(headerActionsBox?.height ?? Number.POSITIVE_INFINITY).toBeLessThanOrEqual(36)
       await expect(page.locator('[data-conversation-header-actions] > *').last()).toContainText('会话')
@@ -491,7 +626,7 @@ test('three desktop viewports remain usable in both themes and reduced motion', 
       const hierarchy = await page.evaluate(() => {
         const parentName = [...document.querySelectorAll('strong')].find((node) => node.textContent === '资料员')
         const parent = parentName?.closest('a')
-        const child = [...document.querySelectorAll('a')].find((node) => node.textContent?.includes('资料员的网页频道'))
+        const child = [...document.querySelectorAll('a')].find((node) => node.textContent?.includes('资料员的内置频道'))
         const group = child?.closest('section')
         return {
           parentLeft: parent?.getBoundingClientRect().left ?? 0,
@@ -501,6 +636,13 @@ test('three desktop viewports remain usable in both themes and reduced motion', 
       })
       expect(hierarchy.childLeft).toBeGreaterThan(hierarchy.parentLeft)
       expect(hierarchy.guide).not.toBe('none')
+      const cacheAnalysis = page.getByLabel('缓存分析')
+      await expect(cacheAnalysis).toBeVisible()
+      await expect(cacheAnalysis).toContainText('最近一次输入缓存覆盖')
+      await expect(cacheAnalysis).toContainText('96%')
+      await expect(cacheAnalysis).toContainText('会话加权覆盖')
+      await expect(cacheAnalysis).toContainText('数据覆盖 4/4 次请求')
+      await expect(page.getByLabel('最近 4 次模型请求的缓存读取趋势')).toBeVisible()
       await assertViewportIntegrity(page)
       if (colorScheme === 'dark') {
         const semanticTokens = await page.evaluate(() => {
@@ -550,6 +692,120 @@ test('three desktop viewports remain usable in both themes and reduced motion', 
   expect(failures, failures.join('\n')).toEqual([])
 })
 
+test('platform-user directory and persona references remain legible across desktop states', async ({
+  page,
+}, testInfo) => {
+  const failures = installRuntimeFailureGate(page)
+  await installProductRoutes(page)
+  await page.addInitScript(() => window.localStorage.setItem('nekro-nxt.reduced-motion', 'true'))
+  for (const viewport of [
+    { width: 1100, height: 720 },
+    { width: 1440, height: 900 },
+    { width: 1920, height: 1080 },
+  ]) {
+    for (const colorScheme of ['light', 'dark'] as const) {
+      await page.setViewportSize(viewport)
+      await page.emulateMedia({ colorScheme, reducedMotion: 'reduce' })
+      await page.goto('/users')
+      await expect(page.getByRole('heading', { name: '全部用户' })).toBeVisible()
+      await expect(page.getByText('成员甲', { exact: true })).toBeVisible()
+      await assertViewportIntegrity(page)
+      await capture(page, testInfo, `platform-users-${viewport.width}x${viewport.height}-${colorScheme}`)
+    }
+  }
+
+  await page.setViewportSize({ width: 1440, height: 900 })
+  await page.emulateMedia({ colorScheme: 'light', reducedMotion: 'reduce' })
+  await page.goto(`/work/agents/${targetAgentId}`)
+  const editor = page.getByRole('textbox', { name: '人设' })
+  await editor.focus()
+  const editorFocusMetrics = await editor.evaluate((element) => ({
+    editorOutline: getComputedStyle(element).outlineStyle,
+    frameShadow: element.parentElement ? getComputedStyle(element.parentElement).boxShadow : 'none',
+  }))
+  expect(editorFocusMetrics.editorOutline).toBe('none')
+  expect(editorFocusMetrics.frameShadow).not.toBe('none')
+  await editor.fill(`${Array.from({ length: 19 }, (_, index) => `工作边界 ${index + 1}`).join('\n')}\n引用 @成员`)
+  const referenceMenu = page.getByRole('listbox', { name: '可引用对象' })
+  await expect(referenceMenu).toBeVisible()
+  await expect(referenceMenu).toHaveAttribute('data-reference-menu-placement', 'above')
+  expect(await referenceMenu.evaluate((element) => getComputedStyle(element).transformOrigin)).toMatch(
+    /px\s+\d+(?:\.\d+)?px$/u,
+  )
+  await expect(page.getByRole('option', { name: /成员甲/u })).toBeVisible()
+  await capture(page, testInfo, 'persona-reference-candidates-20-lines-light')
+  await page.getByRole('option', { name: /成员甲/u }).click()
+  const referenceChip = editor.getByText('@成员甲')
+  await expect(referenceChip).toBeVisible()
+  const chipLineMetrics = await referenceChip.evaluate((element) => {
+    const paragraph = element.closest('p')
+    const editorElement = element.closest('[role="textbox"]')
+    return {
+      chipHeight: element.getBoundingClientRect().height,
+      paragraphHeight: paragraph?.getBoundingClientRect().height ?? 0,
+      lineHeight: editorElement ? Number.parseFloat(getComputedStyle(editorElement).lineHeight) : 0,
+    }
+  })
+  expect(chipLineMetrics.chipHeight).toBeLessThanOrEqual(chipLineMetrics.lineHeight)
+  expect(chipLineMetrics.paragraphHeight).toBe(chipLineMetrics.lineHeight * 20)
+  await assertViewportIntegrity(page)
+  await capture(page, testInfo, 'persona-reference-editor-20-lines-light')
+  await page.emulateMedia({ colorScheme: 'dark', reducedMotion: 'reduce' })
+  await capture(page, testInfo, 'persona-reference-editor-20-lines-dark')
+  expect(failures, failures.join('\n')).toEqual([])
+})
+
+test('platform-user and persona-reference transitions use the shared motion system', async ({ page }) => {
+  const failures = installRuntimeFailureGate(page)
+  await installProductRoutes(page)
+  await page.setViewportSize({ width: 1440, height: 900 })
+  await page.goto('/users')
+  await expect(page.getByRole('heading', { name: '全部用户' })).toBeVisible()
+
+  await page.getByRole('link', { name: /QQ 官方机器人/u }).click()
+  const stageSamples: number[] = []
+  let stageOverlap = false
+  for (let step = 0; step < 20; step += 1) {
+    await page.waitForTimeout(12)
+    const layers = await page.locator('[data-stage-layer]').evaluateAll((nodes) =>
+      nodes.map((node) => ({
+        phase: node.getAttribute('data-stage-layer'),
+        opacity: Number(getComputedStyle(node).opacity),
+      })),
+    )
+    stageSamples.push(...layers.map((layer) => layer.opacity))
+    if (layers.some((layer) => layer.phase === 'in') && layers.some((layer) => layer.phase === 'out'))
+      stageOverlap = true
+  }
+  await expect(page.getByRole('heading', { name: 'QQ 官方机器人' })).toBeVisible()
+  expect(stageOverlap, 'expected the user category layers to overlap').toBe(true)
+  expect(stageSamples.some((opacity) => opacity > 0.02 && opacity < 0.98)).toBe(true)
+
+  await page.goto(`/work/agents/${targetAgentId}`)
+  const editor = page.getByRole('textbox', { name: '人设' })
+  await editor.fill('引用 ')
+  await editor.press('End')
+  await editor.type('@')
+  const menu = page.getByRole('listbox', { name: '可引用对象' })
+  const menuSamples: number[] = []
+  for (let step = 0; step < 16; step += 1) {
+    await page.waitForTimeout(8)
+    menuSamples.push(await menu.evaluate((element) => Number(getComputedStyle(element).opacity)))
+  }
+  await expect(menu).toHaveAttribute('data-reference-menu-placement', 'below')
+  expect(menuSamples.some((opacity) => opacity > 0.02 && opacity < 0.98)).toBe(true)
+
+  await page.evaluate(() => window.localStorage.setItem('nekro-nxt.reduced-motion', 'true'))
+  await page.reload()
+  await expect(page.locator('html')).toHaveAttribute('data-nxt-motion', 'off')
+  const reducedEditor = page.getByRole('textbox', { name: '人设' })
+  await reducedEditor.fill('引用 @')
+  const reducedMenu = page.getByRole('listbox', { name: '可引用对象' })
+  await expect(reducedMenu).toBeVisible()
+  expect(await reducedMenu.evaluate((element) => getComputedStyle(element).opacity)).toBe('1')
+  expect(failures, failures.join('\n')).toEqual([])
+})
+
 test('representative product surfaces match committed visual baselines', async ({ page }, testInfo) => {
   const failures = installRuntimeFailureGate(page)
   await installProductRoutes(page)
@@ -581,7 +837,7 @@ test('representative product surfaces match committed visual baselines', async (
   })
   await page.goto(`/work/channels/${targetChannelId}`)
   await runtimeReady
-  await expect(page.getByRole('heading', { name: '资料员的网页频道' })).toBeVisible()
+  await expect(page.getByRole('heading', { name: '资料员的内置频道' })).toBeVisible()
   await expect(page.locator('[data-conversation-header-actions]').getByText('空闲', { exact: true })).toBeVisible()
   const objectPane = page.getByLabel('对象列')
   const targetAgentLink = objectPane.locator(`a[href="/work/agents/${targetAgentId}"]`)
@@ -648,7 +904,7 @@ test('minimum desktop window remains reachable at 125% and 150% effective zoom',
   ]) {
     await page.setViewportSize(effectiveViewport)
     await page.goto(`/work/channels/${targetChannelId}`)
-    await expect(page.getByRole('heading', { name: '资料员的网页频道' })).toBeVisible()
+    await expect(page.getByRole('heading', { name: '资料员的内置频道' })).toBeVisible()
     const geometry = await page.evaluate(() => ({
       viewportWidth: window.innerWidth,
       viewportHeight: window.innerHeight,
@@ -828,11 +1084,11 @@ test('desktop splitters and appearance preferences persist and recover defaults'
   await expect(objectSplitter).toHaveAttribute('aria-valuenow', '304')
 
   const inspectorSplitter = page.getByRole('separator', { name: '调整检查器宽度' })
-  await expect(inspectorSplitter).toHaveAttribute('aria-valuenow', '360')
+  await expect(inspectorSplitter).toHaveAttribute('aria-valuenow', '344')
   await dragHorizontally(page, inspectorSplitter, -40)
-  await expect(inspectorSplitter).toHaveAttribute('aria-valuenow', '400')
+  await expect(inspectorSplitter).toHaveAttribute('aria-valuenow', '384')
   await dragHorizontally(page, inspectorSplitter, 60)
-  await expect(inspectorSplitter).toHaveAttribute('aria-valuenow', '340')
+  await expect(inspectorSplitter).toHaveAttribute('aria-valuenow', '324')
   await inspectorSplitter.focus()
   await page.keyboard.press('Home')
   await expect(inspectorSplitter).toHaveAttribute('aria-valuenow', '320')
@@ -846,7 +1102,7 @@ test('desktop splitters and appearance preferences persist and recover defaults'
   await capture(page, testInfo, 'desktop-splitters-persisted')
 
   await page.getByRole('separator', { name: '调整检查器宽度' }).dblclick()
-  await expect(page.getByRole('separator', { name: '调整检查器宽度' })).toHaveAttribute('aria-valuenow', '360')
+  await expect(page.getByRole('separator', { name: '调整检查器宽度' })).toHaveAttribute('aria-valuenow', '344')
   await page.getByRole('button', { name: '收起频道检查器' }).click()
   await expect(page.locator('[class*="inspectorPane"]')).toHaveAttribute('aria-hidden', 'true')
   await expect(page.getByRole('complementary', { name: '频道', includeHidden: true })).toBeHidden()
@@ -872,7 +1128,7 @@ test('desktop splitters and appearance preferences persist and recover defaults'
   await page.getByRole('button', { name: '恢复默认分栏' }).click()
   await page.goto(`/work/channels/${targetChannelId}`)
   await expect(page.getByRole('separator', { name: '调整对象列宽度' })).toHaveAttribute('aria-valuenow', '240')
-  await expect(page.getByRole('separator', { name: '调整检查器宽度' })).toHaveAttribute('aria-valuenow', '360')
+  await expect(page.getByRole('separator', { name: '调整检查器宽度' })).toHaveAttribute('aria-valuenow', '344')
   expect(failures, failures.join('\n')).toEqual([])
 })
 
@@ -990,19 +1246,19 @@ test('redesigned relationship and lifecycle pages stay legible across representa
     },
     {
       route: '/connections',
-      text: '网页聊天由当前设备管理，不需要配置账号凭据。',
+      text: '内置频道由 NekroNxt 直接提供。',
       width: 1440,
       height: 900,
       colorScheme: 'light',
     },
     { route: '/work/creator', text: '与资料员协作创造', width: 1920, height: 1080, colorScheme: 'dark' },
-    { route: '/extensions', text: '贡献能力', width: 1920, height: 1080, colorScheme: 'light' },
-    { route: '/extensions', text: '贡献能力', width: 1920, height: 900, colorScheme: 'dark' },
+    { route: '/extensions', text: '包含内容', width: 1920, height: 1080, colorScheme: 'light' },
+    { route: '/extensions', text: '包含内容', width: 1920, height: 900, colorScheme: 'dark' },
     { route: '/settings?tab=models', text: '供应商配置', width: 1440, height: 900, colorScheme: 'light' },
     { route: '/settings?tab=models', text: '供应商配置', width: 1920, height: 900, colorScheme: 'dark' },
     {
       route: '/connections',
-      text: '网页聊天由当前设备管理，不需要配置账号凭据。',
+      text: '内置频道由 NekroNxt 直接提供。',
       width: 1920,
       height: 900,
       colorScheme: 'dark',
@@ -1016,6 +1272,13 @@ test('redesigned relationship and lifecycle pages stay legible across representa
     },
     { route: '/settings?tab=appearance', text: '月潮观测所', width: 1440, height: 900, colorScheme: 'light' },
     { route: '/work/agents/new', text: '创建智能体', width: 1440, height: 900, colorScheme: 'dark' },
+    {
+      route: `/work/agents/${targetAgentId}`,
+      text: '主模型原生视觉',
+      width: 1920,
+      height: 1080,
+      colorScheme: 'light',
+    },
   ] as const
 
   for (const scene of scenes) {
@@ -1036,7 +1299,7 @@ test('redesigned relationship and lifecycle pages stay legible across representa
     }
     if (scene.route === '/connections') {
       await expect(page.getByText('平台账号', { exact: true })).toBeVisible()
-      await expect(page.getByRole('heading', { name: '网页聊天' })).toBeVisible()
+      await expect(page.getByRole('heading', { name: '内置频道' })).toBeVisible()
       await expect(page.getByText('连接', { exact: true })).toHaveCount(0)
     }
     if (scene.route === '/extensions') {
@@ -1349,7 +1612,7 @@ test('the creator saves the exact running Package and selects the resulting exte
                   contributions: ['工具：saved_summary_probe'],
                   verification: {
                     verifiedAt: 1_725_000_000_500,
-                    dshVersion: '0.1.1-rc.1',
+                    dshVersion: '0.1.1-rc.2',
                     contractVersion: 'nekro-nxt-extension-v1',
                     hostBuilt: true,
                     clientBuilt: false,
@@ -1433,7 +1696,7 @@ test('a verified Client extension restores across product pages and retracts whe
 }, testInfo) => {
   const failures = installRuntimeFailureGate(page)
   const buildKey = 'f'.repeat(64)
-  let active = true
+  const activeAgentIds = new Set<string>([targetAgentId])
   let artifactLoads = 0
   const rpcCalls: unknown[] = []
   const diagnostics: unknown[] = []
@@ -1452,7 +1715,7 @@ test('a verified Client extension restores across product pages and retracts whe
               contributions: ['工具：summary_tool', 'RPC：summary.status', '界面：智能体工作台', '界面：扩展详情'],
               verification: {
                 verifiedAt: 1_725_000_000_000,
-                dshVersion: '0.1.1-rc.1',
+                dshVersion: '0.1.1-rc.2',
                 contractVersion: 'nekro-nxt-extension-v1',
                 hostBuilt: true,
                 clientBuilt: true,
@@ -1463,16 +1726,12 @@ test('a verified Client extension restores across product pages and retracts whe
               },
             },
           ],
-          activations: active
-            ? [
-                {
-                  agentId: targetAgentId,
-                  extensionRevisionId: summaryRevisionId,
-                  config: {},
-                  activatedAt: 1_725_000_000_000,
-                },
-              ]
-            : [],
+          activations: [...activeAgentIds].map((agentId) => ({
+            agentId,
+            extensionRevisionId: summaryRevisionId,
+            config: {},
+            activatedAt: 1_725_000_000_000,
+          })),
           clientDiagnostics: [],
         },
       ],
@@ -1553,9 +1812,27 @@ test('a verified Client extension restores across product pages and retracts whe
       })
     },
   )
-  await page.route(`**/api/agents/${targetAgentId}/extensions/${summaryExtensionId}/activation`, (route) => {
+  await page.route(`**/api/agents/*/extensions/${summaryExtensionId}/activation`, (route) => {
+    const agentId = new URL(route.request().url()).pathname.split('/')[3]
+    if (!agentId) throw new Error('启用请求缺少智能体 ID。')
+    if (route.request().method() === 'POST') {
+      activeAgentIds.add(agentId)
+      return route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({
+          activation: {
+            agentId,
+            extensionId: summaryExtensionId,
+            extensionRevisionId: summaryRevisionId,
+            config: {},
+            activatedAt: 1_725_000_000_000,
+          },
+        }),
+      })
+    }
     expect(route.request().method()).toBe('DELETE')
-    active = false
+    activeAgentIds.delete(agentId)
     return route.fulfill({
       status: 200,
       contentType: 'application/json',
@@ -1566,10 +1843,13 @@ test('a verified Client extension restores across product pages and retracts whe
   await page.setViewportSize({ width: 1440, height: 900 })
   await page.emulateMedia({ colorScheme: 'light', reducedMotion: 'reduce' })
   await page.goto(`/extensions/${summaryExtensionId}`)
-  await expect(page.getByText('RPC：summary.status', { exact: true })).toBeVisible()
-  await expect(page.getByText('核心引擎').locator('..')).toContainText('0.1.1-rc.1')
+  await expect(page.getByText('选择使用这个扩展的智能体。', { exact: true })).toBeVisible()
+  await expect(page.getByText('界面数据接口 · summary.status', { exact: true })).toBeVisible()
+  await expect(page.getByText('DSH 版本').locator('..')).toContainText('0.1.1-rc.2')
   await expect(page.getByText('扩展验证面板', { exact: true })).toBeVisible()
   await expect(page.getByText('已接入产品 Slot', { exact: true })).toBeVisible()
+  await expect(page.getByRole('switch', { name: '停止让资料员使用“群聊摘要”', exact: true })).toBeChecked()
+  await expect(page.getByRole('switch', { name: '允许记录员使用“群聊摘要”', exact: true })).not.toBeChecked()
   await expect.poll(() => diagnostics.length).toBeGreaterThanOrEqual(1)
   expect(diagnostics[0]).toEqual({ agentId: targetAgentId, status: 'loaded' })
   await assertViewportIntegrity(page)
@@ -1577,6 +1857,22 @@ test('a verified Client extension restores across product pages and retracts whe
 
   await page.setViewportSize({ width: 1280, height: 800 })
   await page.emulateMedia({ colorScheme: 'dark', reducedMotion: 'reduce' })
+  await expect(page.getByText('包含内容', { exact: true })).toBeVisible()
+  await assertViewportIntegrity(page)
+  await capture(page, testInfo, 'persistent-extension-details-dark-1280')
+
+  await page.setViewportSize({ width: 1100, height: 720 })
+  await page.getByText('使用范围', { exact: true }).scrollIntoViewIfNeeded()
+  await assertViewportIntegrity(page)
+  await capture(page, testInfo, 'persistent-extension-usage-dark-1100')
+
+  await page.setViewportSize({ width: 1920, height: 1080 })
+  await page.getByRole('heading', { name: '群聊摘要', exact: true }).scrollIntoViewIfNeeded()
+  await assertViewportIntegrity(page)
+  await capture(page, testInfo, 'persistent-extension-details-dark-1920')
+
+  await page.setViewportSize({ width: 1280, height: 800 })
+
   await page.goto(`/work/agents/${targetAgentId}`)
   await expect(page.getByText('智能体摘要面板', { exact: true })).toBeVisible()
   await expect(page.getByText('资料员 · 持久 RPC 已调用', { exact: true })).toBeVisible()
@@ -1595,9 +1891,26 @@ test('a verified Client extension restores across product pages and retracts whe
   await expect.poll(() => rpcCalls.length).toBeGreaterThanOrEqual(2)
 
   await page.goto(`/extensions/${summaryExtensionId}`)
-  await page.getByRole('button', { name: '停用扩展', exact: true }).click()
+  await page.getByRole('switch', { name: '允许记录员使用“群聊摘要”', exact: true }).click()
+  await expect(page.getByRole('switch', { name: '停止让记录员使用“群聊摘要”', exact: true })).toBeChecked()
+  await expect(page.getByText('2 个智能体正在使用', { exact: true })).toBeVisible()
+
+  await page.goto(`/work/agents/${sourceAgentId}`)
+  await expect(page.getByText('选择这个智能体可以使用的扩展。', { exact: true })).toBeVisible()
+  await expect(page.locator('body')).not.toContainText('不需要逐个进入扩展详情')
+  const sourceExtensionSwitch = page.getByRole('switch', { name: '停用“群聊摘要”', exact: true })
+  await expect(sourceExtensionSwitch).toBeChecked()
+  await page.setViewportSize({ width: 1100, height: 720 })
+  await sourceExtensionSwitch.scrollIntoViewIfNeeded()
+  await assertViewportIntegrity(page)
+  await capture(page, testInfo, 'persistent-agent-extensions-dark-1100')
+  await sourceExtensionSwitch.click()
+  await expect(page.getByRole('switch', { name: '启用“群聊摘要”', exact: true })).not.toBeChecked()
+
+  await page.goto(`/extensions/${summaryExtensionId}`)
+  await page.getByRole('switch', { name: '停止让资料员使用“群聊摘要”', exact: true }).click()
   await expect(page.getByText('扩展验证面板', { exact: true })).toBeHidden()
-  await expect(page.getByRole('button', { name: '启用给智能体', exact: true })).toBeVisible()
+  await expect(page.getByRole('switch', { name: '允许资料员使用“群聊摘要”', exact: true })).not.toBeChecked()
   const loadsAfterDisable = artifactLoads
   await page.goto(`/work/agents/${targetAgentId}`)
   await expect(page.getByText('智能体摘要面板', { exact: true })).toBeHidden()
@@ -1629,7 +1942,7 @@ test('a failed Client factory stays isolated and can be reloaded without disabli
               contributions: ['工具：summary_tool', '界面：扩展详情'],
               verification: {
                 verifiedAt: 1_725_000_000_000,
-                dshVersion: '0.1.1-rc.1',
+                dshVersion: '0.1.1-rc.2',
                 contractVersion: 'nekro-nxt-extension-v1',
                 hostBuilt: true,
                 clientBuilt: true,
@@ -1705,9 +2018,9 @@ test('a failed Client factory stays isolated and can be reloaded without disabli
   })
 
   await page.reload()
-  await expect(page.getByText('最近一次 Client 加载失败', { exact: true })).toBeVisible()
+  await expect(page.getByText('扩展界面加载失败', { exact: true })).toBeVisible()
   await expect(page.getByText('合成 Client factory 失败', { exact: true })).toBeVisible()
-  await expect(page.getByRole('button', { name: '停用扩展', exact: true })).toBeVisible()
+  await expect(page.getByRole('switch', { name: '停止让资料员使用“群聊摘要”', exact: true })).toBeChecked()
   await page.getByRole('button', { name: '重新加载界面', exact: true }).click()
   await expect.poll(() => artifactLoads).toBeGreaterThanOrEqual(3)
   expect(deactivationRequests).toBe(0)
@@ -1736,6 +2049,33 @@ test('the creation page reuses the editor structure and submits explicit capabil
   await page.getByLabel('名称').fill('研究员')
   await page.getByLabel('人设').fill('先核对证据，再给出结论。')
   await expect(page.getByRole('combobox', { name: '默认模型' })).toContainText('DeepSeek V4 Flash')
+  await expect(
+    page.getByText('当前模型支持图片输入。频道原图会按消息顺序进入上下文，重复内容只注入一次，并支持批量主动重看。'),
+  ).toBeVisible()
+  await page.getByText('图片理解', { exact: true }).scrollIntoViewIfNeeded()
+  await capture(page, testInfo, 'agent-create-image-policy-direct')
+  await page.getByRole('combobox', { name: '默认模型' }).click()
+  await page.getByRole('option', { name: '测试供应商 · 纯文本模型' }).click()
+  await expect(page.getByRole('option')).toHaveCount(0)
+  await expect(page.getByText('图片会被保存，但当前智能体尚不能理解图片。请选择辅助视觉模型。')).toBeVisible()
+  await page.getByText('图片理解', { exact: true }).scrollIntoViewIfNeeded()
+  await capture(page, testInfo, 'agent-create-image-policy-text-unavailable')
+  await page.getByRole('combobox', { name: '辅助视觉模型' }).click()
+  await page.getByRole('option', { name: 'deepseek · DeepSeek V4 Flash' }).click()
+  await expect(page.getByRole('option')).toHaveCount(0)
+  await expect(page.getByText('当前主模型仅接收文本；图片会由配置的辅助视觉模型批量理解。')).toBeVisible()
+  await page.getByText('图片理解', { exact: true }).scrollIntoViewIfNeeded()
+  await capture(page, testInfo, 'agent-create-image-policy-delegated')
+  await page.getByRole('combobox', { name: '默认模型' }).click()
+  await page.getByRole('option', { name: '能力未声明供应商 · 能力未声明模型' }).click()
+  await expect(page.getByRole('option')).toHaveCount(0)
+  await expect(page.getByText('当前模型没有声明图片输入能力，按文本模型处理。')).toBeVisible()
+  await page.getByText('图片理解', { exact: true }).scrollIntoViewIfNeeded()
+  await capture(page, testInfo, 'agent-create-image-policy-unknown')
+  await page.getByRole('combobox', { name: '辅助视觉模型' }).click()
+  await page.getByRole('option', { name: '不启用图片理解' }).click()
+  await page.getByRole('combobox', { name: '默认模型' }).click()
+  await page.getByRole('option', { name: 'deepseek · DeepSeek V4 Flash' }).click()
   await page.getByRole('switch', { name: '允许动态创造' }).click()
   await page.getByRole('button', { name: '展开逐项设置' }).click()
   await page.getByRole('switch', { name: '运行命令' }).click()
@@ -1754,7 +2094,9 @@ test('the creation page reuses the editor structure and submits explicit capabil
   expect(submitted).toEqual({
     displayName: '研究员',
     persona: '先核对证据，再给出结论。',
+    personaDocument: { version: 1, segments: [{ type: 'text', text: '先核对证据，再给出结论。' }] },
     model: { provider: 'deepseek', model: 'deepseek-v4-flash' },
+    imagePolicy,
     capabilities: {
       subagents: true,
       fileTools: false,
@@ -1813,9 +2155,9 @@ test('global command palette supports keyboard search and navigation', async ({ 
   await expect(page).toHaveURL(/\/settings$/u)
 
   await page.keyboard.press('Control+K')
-  await palette.getByLabel('搜索命令').fill('资料员的网页频道')
+  await palette.getByLabel('搜索命令').fill('资料员的内置频道')
   await palette.getByLabel('搜索命令').press('ArrowDown')
-  await expect(palette.getByRole('button', { name: /资料员的网页频道/u })).toBeFocused()
+  await expect(palette.getByRole('button', { name: /资料员的内置频道/u })).toBeFocused()
   await page.keyboard.press('Enter')
   await expect(page).toHaveURL(new RegExp(`/work/channels/${targetChannelId}$`, 'u'))
   expect(failures, failures.join('\n')).toEqual([])
@@ -2113,12 +2455,12 @@ test('long message history stays above a growing multiline composer', async ({ p
   })
   await expect(page.getByRole('button', { name: '回到底部' })).toBeVisible()
   const rememberedAwayTop = await messageList.evaluate((element) => element.scrollTop)
-  await page.getByRole('link', { name: /记录员的网页频道/u }).click()
-  await expect(page.getByRole('heading', { name: '记录员的网页频道' })).toBeVisible()
+  await page.getByRole('link', { name: /记录员的内置频道/u }).click()
+  await expect(page.getByRole('heading', { name: '记录员的内置频道' })).toBeVisible()
   await expect(page.locator('[data-stage-layer="out"]')).toHaveCount(0)
   await expect(page.getByRole('button', { name: '回到底部' })).toHaveCount(0)
-  await page.getByRole('link', { name: /资料员的网页频道/u }).click()
-  await expect(page.getByRole('heading', { name: '资料员的网页频道' })).toBeVisible()
+  await page.getByRole('link', { name: /资料员的内置频道/u }).click()
+  await expect(page.getByRole('heading', { name: '资料员的内置频道' })).toBeVisible()
   await expect(page.locator('[data-stage-layer="out"]')).toHaveCount(0)
   await expect(page.getByRole('button', { name: '回到底部' })).toBeVisible()
   expect(

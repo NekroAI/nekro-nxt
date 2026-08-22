@@ -1,5 +1,6 @@
 export const canvasKind = (pathname: string): string => {
   if (pathname.startsWith('/connections')) return 'connections'
+  if (pathname.startsWith('/users')) return 'users'
   if (pathname.startsWith('/extensions')) return 'extensions'
   if (pathname.startsWith('/settings')) return 'settings'
   if (pathname.includes('/work/channels')) return 'work-channel'

@@ -43,6 +43,13 @@ const fixedCommands: readonly CommandItem[] = [
     to: '/extensions',
     keywords: '扩展 版本 启用',
   },
+  {
+    id: 'users',
+    label: '查看平台用户',
+    description: '浏览已观测的平台身份',
+    to: '/users',
+    keywords: '用户 成员 平台 身份',
+  },
   { id: 'settings', label: '打开设置', description: '模型、扩展与外观', to: '/settings', keywords: '设置 模型 外观' },
 ]
 

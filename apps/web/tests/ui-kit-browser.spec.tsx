@@ -19,7 +19,7 @@ const harnessModule = `
     return <Tooltip.Provider>
       <main>
       <Button id="dialog-trigger" onClick={() => { setLongContent(true); setPending(false); setOpen(true) }}>打开对话框</Button>
-      <IconButton id="icon-button" label="新建网页频道"><span>+</span></IconButton>
+      <IconButton id="icon-button" label="新建内置频道"><span>+</span></IconButton>
       <Button id="short-dialog-trigger" onClick={() => { setLongContent(false); setPending(false); setOpen(true) }}>打开短对话框</Button>
       <Button id="pending-trigger" onClick={() => { setLongContent(true); setPending(true); setOpen(true) }}>打开待处理对话框</Button>
       <Button id="grouped-notification" onClick={() => {
@@ -240,7 +240,7 @@ describe.sequential('ui-kit Dialog browser behavior', { timeout: 30_000 }, () =>
     await page.goto(`${baseUrl}/__ui-kit_harness__`, { waitUntil: 'domcontentloaded' })
     const trigger = page.locator('#icon-button')
     await trigger.hover()
-    await expectPage(page.getByRole('tooltip', { name: '新建网页频道' })).toBeVisible()
+    await expectPage(page.getByRole('tooltip', { name: '新建内置频道' })).toBeVisible()
     expect(browserErrors.filter((message) => message.includes('Function components cannot be given refs'))).toEqual([])
   }, 20_000)
 

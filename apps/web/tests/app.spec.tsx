@@ -58,8 +58,8 @@ const browserSnapshot = HostApiContracts.snapshot.response.parse({
   connectionAdapters: [
     {
       key: 'web',
-      displayName: '网页聊天',
-      description: '网页聊天',
+      displayName: '内置频道',
+      description: '内置频道',
       userCreatable: false,
       configSchema: { schemaVersion: 1, type: 'object', required: [], properties: {} },
     },
@@ -77,10 +77,26 @@ const browserSnapshot = HostApiContracts.snapshot.response.parse({
       id: browserAgentId,
       displayName: '资料员',
       persona: '严谨、简洁',
+      personaDocument: { version: 1, segments: [{ type: 'text', text: '严谨、简洁' }] },
       currentRevisionId: browserRevisionId,
       createdAt: 1_725_000_000_000,
       runtimeStatus: 'idle',
       model: { provider: 'openai', model: 'gpt-5' },
+      imagePolicy: {
+        history: {
+          mode: 'persistent-distinct',
+          detail: 'auto',
+          restoreAfterCompaction: { recentMessages: 32, maxImages: 20 },
+        },
+        textModel: { mode: 'disabled' },
+      },
+      imageDiagnostics: {
+        route: { mode: 'unavailable' },
+        activeSessions: 0,
+        residentImages: 0,
+        duplicateImagesSkipped: 0,
+        blockers: ['主模型没有声明图片输入能力，且未配置辅助视觉模型。'],
+      },
       capabilities: {
         subagents: false,
         fileTools: false,
@@ -195,7 +211,7 @@ const browserSnapshot = HostApiContracts.snapshot.response.parse({
           contributions: ['工具：document_review'],
           verification: {
             verifiedAt: 1_725_000_000_000,
-            dshVersion: '0.1.1-rc.1',
+            dshVersion: '0.1.1-rc.2',
             contractVersion: 'nekro-nxt-extension-v1',
             hostBuilt: true,
             clientBuilt: false,
@@ -381,6 +397,7 @@ describe('NekroNxt product shell', () => {
       channelRuntimes: state.channelRuntimes,
       connections: state.connections,
       extensions: state.extensions,
+      platformUsersRevision: state.platformUsersRevision,
       approvals: state.approvals,
       dynamic: state.dynamic,
       diagnosticNote: 'projection-v1',
@@ -422,6 +439,7 @@ describe('NekroNxt product shell', () => {
           channelRuntimes: state.channelRuntimes,
           connections: state.connections,
           extensions: state.extensions,
+          platformUsersRevision: state.platformUsersRevision,
           approvals: state.approvals,
           dynamic: state.dynamic,
           diagnosticNote: state.diagnosticNote,
@@ -502,8 +520,30 @@ describe.sequential('NekroNxt browser projections', { timeout: 30_000 }, () => {
               ? {
                   projectedTokens: 3200,
                   contextWindow: 128_000,
-                  cacheReadTokens: 1800,
                   breakdown: { systemTokens: 400, toolsTokens: 900, messageTokens: 1900 },
+                }
+              : undefined,
+          cache:
+            channelId === browserChannelId
+              ? {
+                  scope: 'episode',
+                  aggregate: {
+                    usageRequestCount: 2,
+                    observedRequestCount: 2,
+                    shareRequestCount: 2,
+                    hitRequestCount: 2,
+                    uncachedInputTokens: 1400,
+                    cacheReadTokens: 1800,
+                    cacheWriteTokens: 0,
+                    averageRequestReadShare: 0.55,
+                  },
+                  recent: {
+                    windowSize: 12,
+                    samples: [
+                      { turn: 1, step: 0, uncachedInputTokens: 800, cacheReadTokens: 800 },
+                      { turn: 1, step: 1, uncachedInputTokens: 600, cacheReadTokens: 1000 },
+                    ],
+                  },
                 }
               : undefined,
           turns:
@@ -590,9 +630,7 @@ describe.sequential('NekroNxt browser projections', { timeout: 30_000 }, () => {
         await playwrightExpect(page.getByRole('dialog')).toHaveCount(0)
         await playwrightExpect(page.getByRole('heading', { name: '创建智能体' })).toBeVisible()
         await page.getByLabel('名称').fill('临时智能体')
-        await playwrightExpect(
-          page.getByText('当前没有可用模型。保存一个供应商后即可继续创建。', { exact: true }),
-        ).toBeVisible()
+        await playwrightExpect(page.getByText('当前没有可用模型。请先保存一个供应商。', { exact: true })).toBeVisible()
         await playwrightExpect(page.getByRole('button', { name: '保存供应商' })).toBeVisible()
         await playwrightExpect(page.locator('body')).not.toContainText('请先在设置中配置模型供应商')
       },
@@ -626,6 +664,62 @@ describe.sequential('NekroNxt browser projections', { timeout: 30_000 }, () => {
     )
   })
 
+  it('edits structured persona references with keyboard-safe chips and a 10–20 line viewport', async () => {
+    await withProductPage(
+      '/work/agents/new',
+      async (page) => {
+        const editor = page.getByRole('textbox', { name: '人设' })
+        await playwrightExpect(editor).toBeVisible()
+        const initialHeight = await editor.evaluate((element) => element.getBoundingClientRect().height)
+        expect(initialHeight).toBeGreaterThanOrEqual(240)
+
+        await editor.fill('优先参考 @成员')
+        const member = page.getByRole('option', { name: /成员甲/u })
+        await playwrightExpect(member).toBeVisible()
+        await member.click()
+        await playwrightExpect(editor.getByText('@成员甲')).toBeVisible()
+
+        await editor.press('Backspace')
+        await editor.press('Backspace')
+        await playwrightExpect(editor.getByText('@成员甲')).toHaveCount(0)
+
+        await editor.fill(Array.from({ length: 25 }, (_, index) => `第 ${index + 1} 行`).join('\n'))
+        const cappedHeight = await editor.evaluate((element) => element.getBoundingClientRect().height)
+        expect(cappedHeight).toBeGreaterThan(initialHeight)
+        expect(cappedHeight).toBeLessThanOrEqual(466)
+      },
+      browserSnapshot,
+      async (page) => {
+        await page.route('**/api/platform-users*', (request) =>
+          request.fulfill({
+            status: 200,
+            contentType: 'application/json',
+            body: JSON.stringify({
+              total: 1,
+              items: [
+                {
+                  identityId: 'pid_membera',
+                  displayName: '成员甲',
+                  adapter: { key: 'qq-openclaw', displayName: 'QQ 开放平台' },
+                  connection: { id: browserConnectionId, displayName: '测试账号' },
+                  activeChannelCount: 1,
+                  channelPreview: [{ id: browserChannelId, displayName: '资料讨论组', kind: 'group' }],
+                  historicalOnly: false,
+                },
+              ],
+              facets: {
+                adapters: [{ key: 'qq-openclaw', displayName: 'QQ 开放平台', userCount: 1 }],
+                connections: [
+                  { id: browserConnectionId, adapterKey: 'qq-openclaw', displayName: '测试账号', userCount: 1 },
+                ],
+              },
+            }),
+          }),
+        )
+      },
+    )
+  })
+
   it('renders authoritative intelligent-agent and extension data without technical identifiers', async () => {
     await withProductPage('/work', async (page) => {
       await playwrightExpect(page.getByRole('link', { name: /资料员/u }).first()).toBeVisible()
@@ -642,6 +736,50 @@ describe.sequential('NekroNxt browser projections', { timeout: 30_000 }, () => {
     })
   })
 
+  it('shows the platform-user directory and keeps filters in the URL', async () => {
+    await withProductPage(
+      '/users',
+      async (page) => {
+        await playwrightExpect(page.getByRole('heading', { name: '全部用户' })).toBeVisible()
+        await playwrightExpect(page.getByText('成员甲', { exact: true })).toBeVisible()
+        await playwrightExpect(page.locator('body')).not.toContainText('pid_membera')
+        await page.getByLabel('搜索名称').fill('成员甲')
+        await playwrightExpect(page).toHaveURL(/\/users\?query=/u)
+        await page.getByRole('button', { name: '清除筛选' }).click()
+        await playwrightExpect(page).toHaveURL(/\/users$/u)
+      },
+      browserSnapshot,
+      async (page) => {
+        await page.route('**/api/platform-users*', (request) =>
+          request.fulfill({
+            status: 200,
+            contentType: 'application/json',
+            body: JSON.stringify({
+              total: 1,
+              items: [
+                {
+                  identityId: 'pid_membera',
+                  displayName: '成员甲',
+                  adapter: { key: 'qq-openclaw', displayName: 'QQ 开放平台' },
+                  connection: { id: browserConnectionId, displayName: '测试账号' },
+                  activeChannelCount: 1,
+                  channelPreview: [{ id: browserChannelId, displayName: '资料讨论组', kind: 'group' }],
+                  historicalOnly: false,
+                },
+              ],
+              facets: {
+                adapters: [{ key: 'qq-openclaw', displayName: 'QQ 开放平台', userCount: 1 }],
+                connections: [
+                  { id: browserConnectionId, adapterKey: 'qq-openclaw', displayName: '测试账号', userCount: 1 },
+                ],
+              },
+            }),
+          }),
+        )
+      },
+    )
+  })
+
   it('keeps intelligent-agent configuration on the workbench instead of sending users away', async () => {
     await withProductPage(`/work/agents/${browserAgentId}?tab=capabilities`, async (page) => {
       await playwrightExpect(page.getByRole('button', { name: '保存凭据' })).toBeVisible()
@@ -656,7 +794,7 @@ describe.sequential('NekroNxt browser projections', { timeout: 30_000 }, () => {
     })
 
     await withProductPage(`/work/agents/${browserAgentId}?tab=extensions`, async (page) => {
-      await playwrightExpect(page.getByRole('button', { name: '停用扩展' })).toBeVisible()
+      await playwrightExpect(page.getByRole('switch', { name: '停用“文档复核”' })).toBeChecked()
       await playwrightExpect(page.locator('body')).not.toContainText('可在扩展页面查看已保存的扩展和启用状态。')
     })
   })
@@ -766,7 +904,7 @@ describe.sequential('NekroNxt browser projections', { timeout: 30_000 }, () => {
     await withProductPage('/connections', async (page) => {
       await page.getByRole('link', { name: /QQ 开放平台/u }).click()
       await playwrightExpect(page.getByText('尾号 7890', { exact: true })).toBeVisible()
-      await playwrightExpect(page.locator('body')).toContainText('网页聊天')
+      await playwrightExpect(page.locator('body')).toContainText('内置频道')
       await playwrightExpect(page.getByRole('button', { name: '绑定智能体' })).toBeVisible()
       await playwrightExpect(page.locator('body')).not.toContainText('前往绑定频道')
       await playwrightExpect(page.locator('body')).not.toContainText('1234567890')
@@ -789,7 +927,7 @@ describe.sequential('NekroNxt browser projections', { timeout: 30_000 }, () => {
       const dialog = page.getByRole('dialog')
       await dialog.getByLabel('平台').click()
       await page.getByRole('option', { name: 'QQ 开放平台' }).click()
-      await page.getByRole('button', { name: '继续配置' }).click()
+      await page.getByRole('button', { name: '填写连接信息' }).click()
       await page.getByLabel('连接别名').fill('项目机器人')
       await page.getByRole('button', { name: '创建连接' }).click()
       await playwrightExpect(page.getByRole('dialog')).toBeHidden()
@@ -849,8 +987,11 @@ describe.sequential('NekroNxt browser projections', { timeout: 30_000 }, () => {
       await playwrightExpect(page.getByRole('tooltip')).toContainText('智能体当前空闲。')
       await playwrightExpect(page.getByLabel('上下文占用')).toContainText('已用 3.2k')
       await playwrightExpect(page.getByLabel('上下文组成')).toContainText('对话 1.9k')
-      await playwrightExpect(page.getByText('缓存读取', { exact: true })).toBeVisible()
-      await playwrightExpect(page.getByLabel('频道').getByText('1.8k', { exact: true })).toBeVisible()
+      const cacheAnalysis = page.getByLabel('缓存分析')
+      await playwrightExpect(cacheAnalysis).toContainText('最近一次输入缓存覆盖')
+      await playwrightExpect(cacheAnalysis).toContainText('会话加权覆盖')
+      await playwrightExpect(cacheAnalysis).toContainText('累计读取 1.8k')
+      await playwrightExpect(cacheAnalysis).toContainText('数据覆盖 2/2 次请求')
       await playwrightExpect(page.getByRole('link', { name: /资料员/u }).first()).toBeVisible()
       const chatTab = page.getByRole('tab', { name: '会话' })
       const trajectoryTab = page.getByRole('tab', { name: '工作轨迹' })
@@ -965,7 +1106,7 @@ describe.sequential('NekroNxt browser projections', { timeout: 30_000 }, () => {
       secrets: [{ path: ['apiKey'], set: false }],
       revision: 0,
       writable: true,
-      owner: { packageName: '@deepseek-ai/dsh-web-search-deepseek', packageVersion: '0.1.1-rc.1' },
+      owner: { packageName: '@deepseek-ai/dsh-web-search-deepseek', packageVersion: '0.1.1-rc.2' },
     }
     const mutations: unknown[] = []
     const credentialWrites: unknown[] = []
@@ -988,8 +1129,8 @@ describe.sequential('NekroNxt browser projections', { timeout: 30_000 }, () => {
           plugins: [
             {
               packageName: '@deepseek-ai/dsh-web-search-deepseek',
-              packageVersion: '0.1.1-rc.1',
-              dshVersion: '0.1.1-rc.1',
+              packageVersion: '0.1.1-rc.2',
+              dshVersion: '0.1.1-rc.2',
               origin: 'builtin',
               overall: 'verified',
               settingsNamespaces: ['web-search-deepseek'],
@@ -1126,7 +1267,7 @@ describe.sequential('NekroNxt browser projections', { timeout: 30_000 }, () => {
 
       await page.getByLabel('maxTokens').fill('2048')
       await page.getByRole('button', { name: '保存扩展配置' }).click()
-      await playwrightExpect(page.getByText('配置已在其他位置更新；草稿仍保留，请核对后重新保存。')).toBeVisible()
+      await playwrightExpect(page.getByText('配置已在其他位置更新；当前草稿已保留，请核对后重新保存。')).toBeVisible()
       await playwrightExpect(page.getByLabel('maxTokens')).toHaveValue('2048')
       expect(runtimeErrors.filter((message) => !message.includes('status of 500'))).toEqual([])
     } finally {
@@ -1253,7 +1394,7 @@ describe.sequential('NekroNxt browser projections', { timeout: 30_000 }, () => {
       await page.goto(`${baseUrl}/work`)
       await playwrightExpect(page.getByRole('link', { name: /资料员/u }).first()).toBeVisible()
       await playwrightExpect(page.getByText('连接不稳定', { exact: true }).first()).toBeVisible({ timeout: 8_000 })
-      await playwrightExpect(page.getByText('当前仍显示最近一次同步的数据。', { exact: true })).toBeVisible()
+      await playwrightExpect(page.getByText('当前显示最近一次同步的数据。', { exact: true })).toBeVisible()
       await playwrightExpect(page.getByRole('link', { name: /资料员/u }).first()).toBeVisible()
       expect(pageErrors).toEqual([])
     } finally {

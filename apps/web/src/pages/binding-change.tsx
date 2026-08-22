@@ -29,9 +29,9 @@ export function BindingChangeDialog({
     intent?.kind === 'bind' ? '交给智能体响应' : intent?.kind === 'replace' ? '改由其他智能体响应' : '解除频道绑定'
   const description =
     intent?.kind === 'bind'
-      ? `将「${channel?.name ?? '频道'}」交给「${target?.name ?? '智能体'}」响应。消息记录保留；该智能体将按所选方式回复之后的新消息。`
+      ? `将「${channel?.name ?? '频道'}」交给「${target?.name ?? '智能体'}」响应。该智能体将按所选方式响应后续消息；已有消息记录保留。`
       : intent?.kind === 'replace'
-        ? `将「${channel?.name ?? '频道'}」改由「${target?.name ?? '智能体'}」响应。${busy ? '将中断当前思考和工具。' : '进行中的思考和工具会停止。'}消息记录保留。${target?.name ?? '新智能体'}不会接过上一智能体的工作记忆，将在之后的新消息上重新开始。`
+        ? `将「${channel?.name ?? '频道'}」改由「${target?.name ?? '智能体'}」响应。${busy ? '将中断当前思考和工具。' : '进行中的思考和工具会停止。'}后续消息由${target?.name ?? '新智能体'}响应；上一智能体的工作记忆保存在原会话。`
         : `先停止「${current?.name ?? '智能体'}」在「${channel?.name ?? '频道'}」中的当前工作（如果有），再解除绑定。这个频道暂时没有智能体自动回复；消息记录保留。`
 
   return (
