@@ -15,7 +15,18 @@ import {
 } from '@dnd-kit/core'
 import { SortableContext, useSortable, verticalListSortingStrategy } from '@dnd-kit/sortable'
 import { CSS, type Transform } from '@dnd-kit/utilities'
-import { Cable, Cpu, MessageSquare, Move, PackageOpen, Palette, Plus, Puzzle, UsersRound } from 'lucide-react'
+import {
+  Cable,
+  CircleHelp,
+  Cpu,
+  MessageSquare,
+  Move,
+  PackageOpen,
+  Palette,
+  Plus,
+  Puzzle,
+  UsersRound,
+} from 'lucide-react'
 import { useMemo, useRef, useState, type CSSProperties, type MouseEvent } from 'react'
 import { useLocation, useParams } from 'react-router-dom'
 import { BindingChangeDialog, type BindingChangeIntent } from '../pages/binding-change.js'
@@ -610,7 +621,7 @@ function WorkTree() {
         open={createWebOpen}
         onOpenChange={setCreateWebOpen}
         title="新建内置频道"
-        description="在 NekroNxt 中新建一个未绑定的内置频道，再拖到智能体上交给它响应。"
+        description="在 NekroNXT 中新建一个未绑定的内置频道，再拖到智能体上交给它响应。"
         confirmLabel="创建内置频道"
         onConfirm={async () => {
           const name = webChannelName.trim()
@@ -763,8 +774,10 @@ function SettingsTree() {
       icon: Puzzle,
     },
     { to: '/settings?tab=appearance', id: 'appearance', label: '外观', hint: '主题与动效', icon: Palette },
+    { to: '/settings?tab=about', id: 'about', label: '关于', hint: '版本、仓库与版权', icon: CircleHelp },
   ]
-  const active = tab === 'appearance' || tab === 'dsh-extensions' || tab === 'system-extensions' ? tab : 'models'
+  const active =
+    tab === 'appearance' || tab === 'dsh-extensions' || tab === 'system-extensions' || tab === 'about' ? tab : 'models'
   return (
     <>
       <div className={shell.treeHead}>

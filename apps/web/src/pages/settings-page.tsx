@@ -6,6 +6,7 @@ import { Button, SelectField, StageCrossfade, StatusBadge, SwitchField } from '.
 import { useUiPreferences, type ContrastChoice } from '../ui-preferences.js'
 import { useSearchParams } from 'react-router-dom'
 import { useNxtNavigate } from '../shell/nxt-link.js'
+import { AboutPage } from './about-page.js'
 import styles from './product-pages.module.css'
 
 function SystemExtensionsPanel() {
@@ -45,6 +46,7 @@ const isContrastChoice = (value: string): value is ContrastChoice =>
   value === 'system' || value === 'standard' || value === 'more'
 
 export function SettingsPage() {
+  const productMetadata = useProductStore((state) => state.productMetadata)
   const [searchParams] = useSearchParams()
   const theme = useProductStore((state) => state.theme)
   const reducedMotion = useProductStore((state) => state.reducedMotion)
@@ -53,7 +55,10 @@ export function SettingsPage() {
   const inspectorCollapsed = useUiPreferences((state) => state.layout.inspectorCollapsed)
   const requestedTab = searchParams.get('tab')
   const activeTab =
-    requestedTab === 'appearance' || requestedTab === 'dsh-extensions' || requestedTab === 'system-extensions'
+    requestedTab === 'appearance' ||
+    requestedTab === 'dsh-extensions' ||
+    requestedTab === 'system-extensions' ||
+    requestedTab === 'about'
       ? requestedTab
       : 'models'
   const title =
@@ -63,7 +68,9 @@ export function SettingsPage() {
         ? 'DSH 扩展'
         : activeTab === 'system-extensions'
           ? '系统扩展'
-          : '模型供应商'
+          : activeTab === 'about'
+            ? '关于'
+            : '模型供应商'
 
   return (
     <div className={[styles.page, styles.settingsPage].join(' ')}>
@@ -72,6 +79,7 @@ export function SettingsPage() {
         {activeTab === 'models' ? <LlmProviderSettings /> : null}
         {activeTab === 'dsh-extensions' ? <DshExtensionSettings /> : null}
         {activeTab === 'system-extensions' ? <SystemExtensionsPanel /> : null}
+        {activeTab === 'about' ? <AboutPage metadata={productMetadata} /> : null}
         {activeTab === 'appearance' ? (
           <section className={styles.settingsSection}>
             <div className={styles.appearanceSignature} aria-label="月潮观测所品牌主题">

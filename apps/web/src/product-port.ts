@@ -8,6 +8,7 @@ import type {
   DynamicApproval,
   LocalExtensionSummary,
   ModelSummary,
+  ProductMetadataView,
   ProductHostState,
 } from './product-store.js'
 import type { AdapterConnectionDescriptor } from '@nekro-nxt/adapter-sdk'
@@ -15,6 +16,7 @@ import { useProductStore } from './product-store.js'
 
 export interface ProductSnapshot {
   readonly host: ProductHostState
+  readonly productMetadata?: ProductMetadataView | undefined
   readonly connectionAdapters: readonly AdapterConnectionDescriptor[]
   readonly capabilityAvailability: CapabilityAvailability
   readonly models: readonly ModelSummary[]
@@ -96,6 +98,7 @@ export class ProductHostCoordinator implements ProductHostPort {
       const snapshot = this.#host.getSnapshot()
       useProductStore.setState({
         host: snapshot.host,
+        productMetadata: snapshot.productMetadata,
         connectionAdapters: snapshot.connectionAdapters,
         capabilityAvailability: snapshot.capabilityAvailability,
         models: snapshot.models,

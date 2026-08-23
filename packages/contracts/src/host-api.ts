@@ -426,6 +426,17 @@ const AdapterConnectionDescriptorSchema = z
 
 export const HostSnapshotSchema = z
   .object({
+    productMetadata: z
+      .object({
+        displayName: NonEmptyStringSchema,
+        organizationName: NonEmptyStringSchema,
+        version: NonEmptyStringSchema,
+        releaseId: NonEmptyStringSchema,
+        repositoryUrl: z.url(),
+        licenseSpdx: NonEmptyStringSchema.nullable(),
+      })
+      .strict()
+      .optional(),
     models: z.array(
       z
         .object({

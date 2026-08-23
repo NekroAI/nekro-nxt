@@ -448,7 +448,25 @@ const saveActiveDynamicPackage = async (
   })
 }
 
-export const createNekroHostApi = (webServer: WebServer, runtime: NekroRuntime): NekroHostApi => {
+export const createNekroHostApi = (
+  webServer: WebServer,
+  runtime: NekroRuntime,
+  productMetadata: {
+    readonly displayName: string
+    readonly organizationName: string
+    readonly version: string
+    readonly releaseId: string
+    readonly repositoryUrl: string
+    readonly licenseSpdx: string | null
+  } = {
+    displayName: 'NekroNXT',
+    organizationName: 'NekroAI',
+    version: '0.0.0',
+    releaseId: '@nekro-nxt/server@0.0.0',
+    repositoryUrl: 'https://github.com/NekroAI/nekro-nxt',
+    licenseSpdx: null,
+  },
+): NekroHostApi => {
   const disposers: Array<() => void> = []
 
   const registerRoute = (route: WebRoute): void => {
@@ -614,6 +632,7 @@ export const createNekroHostApi = (webServer: WebServer, runtime: NekroRuntime):
     })
     const webSearch = await runtime.host.getWebSearchCapabilityStatus()
     return HostApiContracts.snapshot.parseResponse({
+      productMetadata,
       models: await runtime.host.listAvailableLlmModels(),
       capabilityAvailability: {
         subagents: { available: true },

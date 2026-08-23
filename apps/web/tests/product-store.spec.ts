@@ -249,7 +249,7 @@ describe('product store Host mutations', () => {
     expect(unavailable).toBeInstanceOf(ProductActionError)
     if (!(unavailable instanceof ProductActionError)) throw new Error('Expected ProductActionError')
     expect(unavailable.code).toBe('host-unavailable')
-    expect(unavailable.message).toContain('未连接 NekroNxt Host')
+    expect(unavailable.message).toContain('未连接 NekroNXT Host')
     expect(useProductStore.getState().agents).toEqual([])
 
     const execute = vi.fn(() => Promise.resolve(null))

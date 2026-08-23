@@ -312,7 +312,14 @@ export const startNekroServer = async (options: StartServerOptions): Promise<Nek
     { distIndex },
   )
   const disposeSpaRoutes = registerNekroSpaRoutes(webContext.webServer, distIndex)
-  const api = createNekroHostApi(webContext.webServer, runtime)
+  const api = createNekroHostApi(webContext.webServer, runtime, {
+    displayName: 'NekroNXT',
+    organizationName: 'NekroAI',
+    version: SERVER_PACKAGE_VERSION,
+    releaseId,
+    repositoryUrl: 'https://github.com/NekroAI/nekro-nxt',
+    licenseSpdx: null,
+  })
   const registerHealthRoute = (routePath: '/health/live' | '/health/ready', status: 'live' | 'ready'): (() => void) =>
     webContext.webServer.register({
       kind: 'exact',

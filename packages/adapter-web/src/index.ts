@@ -14,7 +14,7 @@ export const WEB_ADAPTER_KEY = 'web'
 export const WEB_CONNECTION_DEFINITION = defineAdapterConnection({
   key: WEB_ADAPTER_KEY,
   displayName: '内置频道',
-  description: '由 NekroNxt 直接提供，用于应用内对话。',
+  description: '由 NekroNXT 直接提供，用于应用内对话。',
   userCreatable: false,
   configurationSchema: AdapterEmptyObjectSchema,
   credentialsSchema: AdapterEmptyObjectSchema,

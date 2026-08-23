@@ -189,6 +189,14 @@ describe('NekroNxt Server domain API (WebServer seam)', () => {
       const importedSnapshot = HostApiContracts.snapshot.parseResponse(
         await (await fetch(`${origin}/api/snapshot`)).json(),
       )
+      expect(importedSnapshot.productMetadata).toEqual({
+        displayName: 'NekroNXT',
+        organizationName: 'NekroAI',
+        version: '0.0.0',
+        releaseId: '@nekro-nxt/server@0.0.0',
+        repositoryUrl: 'https://github.com/NekroAI/nekro-nxt',
+        licenseSpdx: null,
+      })
       expect(importedSnapshot.agents).toEqual([
         expect.objectContaining({ id: importedAgent.definition.id, channels: [] }),
       ])

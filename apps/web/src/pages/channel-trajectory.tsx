@@ -1019,11 +1019,11 @@ export function ChannelSessionInspector({
         </div>
         <div className={styles.channelDangerRow}>
           <div>
-            <strong>{channel.kind === 'web' ? '删除内置频道' : '从 NekroNxt 移除'}</strong>
+            <strong>{channel.kind === 'web' ? '删除内置频道' : '从 NekroNXT 移除'}</strong>
             <span>
               {channel.kind === 'web'
                 ? '解除绑定并移出频道列表；历史记录可在审计中查询。'
-                : '解除绑定并移出 NekroNxt 频道列表。'}
+                : '解除绑定并移出 NekroNXT 频道列表。'}
             </span>
           </div>
           <Button size="small" variant="danger" onClick={onDelete}>

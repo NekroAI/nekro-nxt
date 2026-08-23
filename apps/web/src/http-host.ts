@@ -146,7 +146,7 @@ const emptySnapshot = (): ProductSnapshot => ({
   platformUsersRevision: 0,
   approvals: [],
   dynamic: [],
-  diagnosticNote: '正在连接 NekroNxt 服务…',
+  diagnosticNote: '正在连接 NekroNXT 服务…',
   workTreeOrder: { agentIds: [], channelIdsByAgent: {}, unboundChannelIds: [] },
 })
 
@@ -544,6 +544,7 @@ const projectSnapshot = (json: SnapshotJson, successfulAt: number): ProductSnaps
   })
   return {
     host: { status: 'ready', error: null, lastSuccessfulAt: successfulAt },
+    ...(json.productMetadata === undefined ? {} : { productMetadata: json.productMetadata }),
     connectionAdapters: json.connectionAdapters.map(projectAdapterDescriptor),
     capabilityAvailability: json.capabilityAvailability,
     models,
@@ -654,10 +655,10 @@ export class HttpProductHost implements ProductHostPort {
         void this.#refreshAndNotify()
       })
       source.onerror = () => {
-        this.#publishFailure({ code: 'sse', message: '与 NekroNxt Host 的实时连接已中断，正在尝试恢复。' })
+        this.#publishFailure({ code: 'sse', message: '与 NekroNXT Host 的实时连接已中断，正在尝试恢复。' })
       }
     } catch (cause) {
-      this.#publishFailure({ code: 'sse', message: errorMessage(cause, '无法建立 NekroNxt Host 实时连接。') })
+      this.#publishFailure({ code: 'sse', message: errorMessage(cause, '无法建立 NekroNXT Host 实时连接。') })
     }
     return () => {
       this.#listener = undefined
@@ -1238,7 +1239,7 @@ export class HttpProductHost implements ProductHostPort {
     try {
       json = await callHostApi(HostApiContracts.snapshot, {}, undefined)
     } catch (cause) {
-      const failure = cause instanceof Error ? cause : new Error(errorMessage(cause, '无法连接 NekroNxt Host。'))
+      const failure = cause instanceof Error ? cause : new Error(errorMessage(cause, '无法连接 NekroNXT Host。'))
       const code =
         cause instanceof HostRequestError
           ? cause.kind === 'network'
@@ -1338,7 +1339,7 @@ const callHostApi = async <Contract extends HostApiContract, Output>(
       ...(requestBody === undefined ? {} : { body: JSON.stringify(requestBody) }),
     })
   } catch (cause) {
-    throw new HostRequestError('network', errorMessage(cause, '无法连接 NekroNxt Host。'))
+    throw new HostRequestError('network', errorMessage(cause, '无法连接 NekroNXT Host。'))
   }
   const json: unknown = await response.json().catch(() => null)
   if (!response.ok) {
@@ -1354,7 +1355,7 @@ const callHostApi = async <Contract extends HostApiContract, Output>(
   } catch (cause) {
     throw new HostRequestError(
       'invalid-response',
-      `NekroNxt Host 返回的数据格式无效：${cause instanceof Error ? cause.message : String(cause)}`,
+      `NekroNXT Host 返回的数据格式无效：${cause instanceof Error ? cause.message : String(cause)}`,
     )
   }
 }

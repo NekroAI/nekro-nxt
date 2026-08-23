@@ -286,6 +286,15 @@ export interface ProductHostState {
   readonly lastSuccessfulAt: number | null
 }
 
+export interface ProductMetadataView {
+  readonly displayName: string
+  readonly organizationName: string
+  readonly version: string
+  readonly releaseId: string
+  readonly repositoryUrl: string
+  readonly licenseSpdx: string | null
+}
+
 export interface SavedDynamicExtension {
   readonly extensionId: string
   readonly revisionId: string
@@ -318,6 +327,7 @@ export class ProductActionError extends Error {
 
 export interface ProductState {
   readonly host: ProductHostState
+  readonly productMetadata: ProductMetadataView | undefined
   readonly connectionAdapters: readonly AdapterConnectionDescriptor[]
   readonly capabilityAvailability: CapabilityAvailability
   readonly models: readonly ModelSummary[]
@@ -436,7 +446,7 @@ const initialReducedMotion = (): boolean =>
 
 const requireHost = (): ProductHostPort => {
   if (activeHost === null)
-    throw new ProductActionError('host-unavailable', '当前未连接 NekroNxt Host，无法执行此操作。')
+    throw new ProductActionError('host-unavailable', '当前未连接 NekroNXT Host，无法执行此操作。')
   return activeHost
 }
 
@@ -463,6 +473,7 @@ const isChannelRuntimeView = (value: unknown): value is ChannelRuntimeView =>
 
 export const useProductStore = create<ProductState>((set) => ({
   host: { status: 'initializing', error: null, lastSuccessfulAt: null },
+  productMetadata: undefined,
   connectionAdapters: [],
   capabilityAvailability: {
     subagents: { available: true },
@@ -490,7 +501,7 @@ export const useProductStore = create<ProductState>((set) => ({
   dynamic: [],
   theme: initialTheme(),
   reducedMotion: initialReducedMotion(),
-  diagnosticNote: '正在连接 NekroNxt Host…',
+  diagnosticNote: '正在连接 NekroNXT Host…',
   workTreeOrder: { agentIds: [], channelIdsByAgent: {}, unboundChannelIds: [] },
   refreshHost: async () => {
     await requireHost().execute('host.refresh')
