@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 164 314" role="img" aria-label="NekroNXT Preview 安装侧栏">
+  <rect width="164" height="314" fill="#fffdf9"/>
+  <path d="M0 257.47999999999996 Q 54.120000000000005 163.28 108.24000000000001 257.47999999999996 T 164 219.79999999999998" fill="none" stroke="#466394" stroke-opacity=".16" stroke-width="2"/>
+  <path d="M0 288.88 Q 45.92 213.52 98.39999999999999 282.6 T 164 263.76" fill="none" stroke="#b98c4a" stroke-opacity=".45" stroke-width="2"/>
+  <g transform="translate(9.84 25.12) scale(0.10379746835443038)"><defs><clipPath id="mark-circle"><circle cx="512" cy="512" r="500"/></clipPath></defs>
+  <image href="../../sources/logo/shuiyue-ying-avatar-source.png" width="1024" height="1024" preserveAspectRatio="xMidYMid slice" clip-path="url(#mark-circle)"/></g>
+
+  <g transform="translate(111.52000000000001 25.12)"><circle cx="0" cy="0" r="5" fill="#d0a66c"/><circle cx="18" cy="0" r="5" fill="#3fb1ea"/><circle cx="36" cy="0" r="5" fill="#d0a66c"/></g>
+</svg>

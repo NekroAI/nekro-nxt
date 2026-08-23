@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" role="img" aria-labelledby="title desc">
+  <title id="title">NekroNXT Preview 应用图标</title>
+  <desc id="desc">水月荧头像章，右下角带三节点 Preview 校准标记。</desc>
+  <defs><clipPath id="app-shape"><rect x="42" y="42" width="940" height="940" rx="224"/></clipPath></defs>
+  <g clip-path="url(#app-shape)"><defs><clipPath id="mark-circle"><circle cx="512" cy="512" r="500"/></clipPath></defs>
+  <image href="../../sources/logo/shuiyue-ying-avatar-source.png" width="1024" height="1024" preserveAspectRatio="xMidYMid slice" clip-path="url(#mark-circle)"/></g>
+  <rect x="42" y="42" width="940" height="940" rx="224" fill="none" stroke="#d0a66c" stroke-width="24"/>
+  <g transform="translate(704 734)"><rect width="238" height="132" rx="66" fill="#fffdf9" stroke="#172a45" stroke-width="18"/><path d="M54 66h130" stroke="#b98c4a" stroke-width="14" stroke-linecap="round"/><circle cx="54" cy="66" r="22" fill="#d0a66c"/><circle cx="119" cy="66" r="22" fill="#3fb1ea"/><circle cx="184" cy="66" r="22" fill="#d0a66c"/></g>
+</svg>

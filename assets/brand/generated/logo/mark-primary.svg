@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" role="img" aria-labelledby="title desc">
+  <title id="title">NekroNXT Logo</title>
+  <desc id="desc">水月荧侧脸头像、深蓝帽饰、圆框眼镜、金色圆环与水母头饰组成的项目标志。</desc>
+  <defs><clipPath id="mark-circle"><circle cx="512" cy="512" r="500"/></clipPath></defs>
+  <image href="../../sources/logo/shuiyue-ying-avatar-source.png" width="1024" height="1024" preserveAspectRatio="xMidYMid slice" clip-path="url(#mark-circle)"/>
+</svg>

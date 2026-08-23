@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1520 420" role="img" aria-labelledby="title desc">
+  <title id="title">NekroNXT 横向组合标</title>
+  <desc id="desc">水月荧头像章与 NekroNXT 字标。</desc>
+  <g transform="translate(24 10) scale(.39)"><defs><clipPath id="mark-circle"><circle cx="512" cy="512" r="500"/></clipPath></defs>
+  <image href="../../sources/logo/shuiyue-ying-avatar-source.png" width="1024" height="1024" preserveAspectRatio="xMidYMid slice" clip-path="url(#mark-circle)"/></g>
+  <text x="456" y="246" fill="#172a45" font-family="Inter, ui-sans-serif, system-ui, sans-serif" font-size="172" font-weight="700" letter-spacing="-5">NekroNXT</text>
+  <text x="466" y="320" fill="#466394" font-family="Inter, ui-sans-serif, system-ui, sans-serif" font-size="38" font-weight="600" letter-spacing="6">NEKROAI · NXT</text>
+</svg>

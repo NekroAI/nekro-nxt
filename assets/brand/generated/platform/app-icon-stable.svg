@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" role="img" aria-labelledby="title desc">
+  <title id="title">NekroNXT 应用图标</title>
+  <desc id="desc">水月荧头像章。</desc>
+  <defs><clipPath id="app-shape"><rect x="42" y="42" width="940" height="940" rx="224"/></clipPath></defs>
+  <g clip-path="url(#app-shape)"><defs><clipPath id="mark-circle"><circle cx="512" cy="512" r="500"/></clipPath></defs>
+  <image href="../../sources/logo/shuiyue-ying-avatar-source.png" width="1024" height="1024" preserveAspectRatio="xMidYMid slice" clip-path="url(#mark-circle)"/></g>
+  <rect x="42" y="42" width="940" height="940" rx="224" fill="none" stroke="#d0a66c" stroke-width="24"/>
+
+</svg>

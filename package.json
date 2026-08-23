@@ -2,7 +2,7 @@
   "name": "nekro-nxt",
   "version": "0.0.0",
   "private": true,
-  "description": "NekroAI 下一代智能体平台",
+  "description": "以 DSH 为核心引擎，原生面向群聊与动态扩展的智能体聊天系统",
   "type": "module",
   "packageManager": "pnpm@11.7.0",
   "engines": {
@@ -14,11 +14,13 @@
     "desktop:preview": "node scripts/release-desktop.mjs preview",
     "desktop:stable": "node scripts/release-desktop.mjs stable",
     "dist:server": "node scripts/build-server-image.mjs",
+    "brand:export": "node scripts/export-brand-assets.mjs",
+    "brand:check": "node scripts/check-brand-assets.mjs",
     "build": "tsc -b && pnpm -r --if-present run build && node scripts/check-built-exports.mjs",
-    "check": "pnpm check:format && pnpm typecheck && pnpm lint && pnpm check:static && pnpm check:drizzle && pnpm check:css-types && pnpm check:docs && pnpm check:public && pnpm check:workspace && pnpm check:dsh-family && pnpm check:ui-boundary && pnpm check:ui-actions && pnpm check:gates",
+    "check": "pnpm check:format && pnpm typecheck && pnpm lint && pnpm check:static && pnpm check:drizzle && pnpm check:css-types && pnpm check:docs && pnpm check:public && pnpm brand:check && pnpm check:workspace && pnpm check:dsh-family && pnpm check:ui-boundary && pnpm check:ui-actions && pnpm check:gates",
     "check:css-types": "node scripts/check-css-module-types.mjs",
     "check:format": "prettier --check .",
-    "check:docs": "node scripts/check-doc-links.mjs && node scripts/check-decision-status.mjs && node scripts/check-terminology.mjs",
+    "check:docs": "node scripts/check-doc-links.mjs && node scripts/check-decision-status.mjs && node scripts/check-terminology.mjs && node scripts/check-brand-name.mjs",
     "check:drizzle": "node scripts/check-drizzle-migrations.mjs",
     "check:dsh-family": "node scripts/check-dsh-family.mjs",
     "check:gates": "node --test scripts/tests/*.spec.mjs",
@@ -47,6 +49,7 @@
     "@types/node": "22.20.0",
     "@vitest/coverage-v8": "4.1.8",
     "eslint": "9.39.5",
+    "imagetracerjs": "^1.2.6",
     "prettier": "3.9.6",
     "tsdown": "0.22.2",
     "tsx": "4.22.4",
@@ -54,5 +57,15 @@
     "typescript-eslint": "8.67.0",
     "unrun": "0.3.1",
     "vitest": "4.1.8"
+  },
+  "author": "NekroAI contributors",
+  "homepage": "https://github.com/NekroAI/nekro-nxt#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/NekroAI/nekro-nxt.git",
+    "directory": "."
+  },
+  "bugs": {
+    "url": "https://github.com/NekroAI/nekro-nxt/issues"
   }
 }
