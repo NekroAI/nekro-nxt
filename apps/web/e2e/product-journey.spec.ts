@@ -263,7 +263,7 @@ test('settings exposes the provider editor and survives real navigation', async 
   await expect(page.locator('[data-stage-layer="out"]')).toHaveCount(0)
   await expect(page.locator('[data-stage-layer="in"]')).toHaveCSS('opacity', '1')
   await expect(page.getByText('接入聊天平台。前往「连接」添加账号。', { exact: true })).toBeVisible()
-  await expect(page.getByText('由 NekroNxt 直接提供，用于应用内对话。', { exact: true })).toBeVisible()
+  await expect(page.getByText('由 NekroNXT 直接提供，用于应用内对话。', { exact: true })).toBeVisible()
 
   await page.getByRole('link', { name: '工作' }).click()
   await expect(page.getByRole('link', { name: '工作' })).toBeVisible()
@@ -359,7 +359,7 @@ test('adding a connection selects a platform before showing its fields', async (
     .getByRole('link', { name: /内置频道/u })
     .first()
     .click()
-  await expect(page.getByText('内置频道由 NekroNxt 直接提供。')).toBeVisible()
+  await expect(page.getByText('内置频道由 NekroNXT 直接提供。')).toBeVisible()
   await expect(page.getByLabel('Client Secret')).toHaveCount(0)
 
   await page.getByRole('link', { name: '添加平台连接' }).click()
@@ -905,9 +905,9 @@ test('channel context controls and intelligent-agent deletion are guarded and re
   await expect(channelInspector.getByText('尚未绑定智能体', { exact: true })).toBeVisible()
   await channelInspector.getByRole('button', { name: '移除' }).click()
   const channelDeleteDialog = page.getByRole('alertdialog')
-  await expect(channelDeleteDialog.getByRole('heading', { name: '从 NekroNxt 移除此频道？' })).toBeVisible()
+  await expect(channelDeleteDialog.getByRole('heading', { name: '从 NekroNXT 移除此频道？' })).toBeVisible()
   await expect(channelDeleteDialog.getByText(/频道会解除绑定并从列表中移除/u)).toBeVisible()
-  await channelDeleteDialog.getByRole('button', { name: '从 NekroNxt 移除' }).click()
+  await channelDeleteDialog.getByRole('button', { name: '从 NekroNXT 移除' }).click()
   await expect(page).toHaveURL(/\/work(?:\/|$)/u)
   expect(channelDeleteRequests).toEqual([{ expectedBoundAgentId: null }])
 

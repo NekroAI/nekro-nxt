@@ -66,6 +66,14 @@ const imageDiagnostics = {
 const fileAssetId = AssetIdSchema.parse('ast_file')
 
 const productSnapshot = HostApiContracts.snapshot.response.parse({
+  productMetadata: {
+    displayName: 'NekroNXT Preview',
+    organizationName: 'NekroAI',
+    version: '0.0.0-preview',
+    releaseId: '0.0.0-visual-review',
+    repositoryUrl: 'https://github.com/NekroAI/nekro-nxt',
+    licenseSpdx: null,
+  },
   capabilityAvailability: {
     subagents: { available: true },
     webSearch: {
@@ -504,6 +512,65 @@ const capture = async (page: Page, testInfo: TestInfo, name: string): Promise<vo
   await page.screenshot({ path, animations: 'disabled' })
   await testInfo.attach(name, { path, contentType: 'image/png' })
 }
+
+test('writes the four public product screenshots from fictional production data', async ({ page }) => {
+  const outputDirectory = process.env['NEKRO_BRAND_SCREENSHOT_DIR']
+  test.skip(!outputDirectory, 'Only runs when refreshing committed public screenshots.')
+  const failures = installRuntimeFailureGate(page)
+  await installProductRoutes(page)
+  await page.emulateMedia({ colorScheme: 'light', reducedMotion: 'reduce' })
+
+  await page.setViewportSize({ width: 1440, height: 900 })
+  await page.goto(`/work/channels/${targetChannelId}`)
+  await expect(page.getByRole('heading', { name: '资料员的内置频道' })).toBeVisible()
+  await page.screenshot({ path: `${outputDirectory}/channel-conversation.png`, animations: 'disabled' })
+
+  await page.setViewportSize({ width: 1600, height: 900 })
+  await page.goto(`/work/agents/${targetAgentId}`)
+  await expect(page.getByText('主模型原生视觉', { exact: true })).toBeVisible()
+  await page.screenshot({ path: `${outputDirectory}/agent-workbench.png`, animations: 'disabled' })
+
+  await page.goto('/connections')
+  await page
+    .getByRole('link', { name: /QQ 官方机器人/u })
+    .first()
+    .click()
+  await expect(page).toHaveURL(new RegExp(`/connections/${qqConnectionId}$`, 'u'))
+  await expect(page.locator('[data-stage-layer="out"]')).toHaveCount(0)
+  await expect(page.locator('[data-stage-layer="in"]').last()).toHaveCSS('opacity', '1')
+  await expect(page.locator('main').getByRole('heading', { name: 'QQ 官方机器人' })).toBeVisible()
+  await page.screenshot({ path: `${outputDirectory}/connections.png`, animations: 'disabled' })
+
+  await page.goto('/work/creator')
+  await expect(page.getByText('与资料员协作创造', { exact: true })).toBeVisible()
+  await page.screenshot({ path: `${outputDirectory}/creator-workbench.png`, animations: 'disabled' })
+  expect(failures, failures.join('\n')).toEqual([])
+})
+
+test('about identity stays readable across supported desktop sizes and themes', async ({ page }, testInfo) => {
+  const failures = installRuntimeFailureGate(page)
+  await installProductRoutes(page)
+  for (const viewport of [
+    { width: 1100, height: 720 },
+    { width: 1440, height: 900 },
+    { width: 1920, height: 1080 },
+  ]) {
+    for (const colorScheme of ['light', 'dark'] as const) {
+      await page.setViewportSize(viewport)
+      await page.emulateMedia({ colorScheme, reducedMotion: 'reduce' })
+      await page.goto('/settings?tab=about')
+      await expect(page.getByRole('heading', { name: 'NekroNXT Preview' })).toBeVisible()
+      await expect(page.getByText('0.0.0-visual-review', { exact: true })).toBeVisible()
+      await expect(page.getByText('待项目所有者补充', { exact: true })).toBeVisible()
+      const logo = page.getByRole('img', { name: 'NekroNXT Logo' })
+      await expect(logo).toBeVisible()
+      await expect.poll(() => logo.evaluate((image: HTMLImageElement) => image.naturalWidth)).toBeGreaterThan(0)
+      await assertViewportIntegrity(page)
+      await capture(page, testInfo, `about-${viewport.width}x${viewport.height}-${colorScheme}`)
+    }
+  }
+  expect(failures, failures.join('\n')).toEqual([])
+})
 
 const dragHorizontally = async (page: Page, handle: Locator, deltaX: number): Promise<void> => {
   await handle.evaluate(
@@ -1259,7 +1326,7 @@ test('redesigned relationship and lifecycle pages stay legible across representa
     },
     {
       route: '/connections',
-      text: '内置频道由 NekroNxt 直接提供。',
+      text: '内置频道由 NekroNXT 直接提供。',
       width: 1440,
       height: 900,
       colorScheme: 'light',
@@ -1271,7 +1338,7 @@ test('redesigned relationship and lifecycle pages stay legible across representa
     { route: '/settings?tab=models', text: '供应商配置', width: 1920, height: 900, colorScheme: 'dark' },
     {
       route: '/connections',
-      text: '内置频道由 NekroNxt 直接提供。',
+      text: '内置频道由 NekroNXT 直接提供。',
       width: 1920,
       height: 900,
       colorScheme: 'dark',
@@ -1284,6 +1351,7 @@ test('redesigned relationship and lifecycle pages stay legible across representa
       colorScheme: 'dark',
     },
     { route: '/settings?tab=appearance', text: '月潮观测所', width: 1440, height: 900, colorScheme: 'light' },
+    { route: '/settings?tab=about', text: '版权与品牌', width: 1440, height: 900, colorScheme: 'dark' },
     { route: '/work/agents/new', text: '创建智能体', width: 1440, height: 900, colorScheme: 'dark' },
     {
       route: `/work/agents/${targetAgentId}`,
@@ -2131,7 +2199,7 @@ test('desktop shell keeps a 48px top bar and a permanently available object pane
   const topBar = page.locator('[data-window-top-bar]')
   const pane = page.locator('aside[aria-label="对象列"]')
   expect((await topBar.boundingBox())?.height).toBe(48)
-  await expect(topBar.getByText('NekroNxt', { exact: true })).toBeVisible()
+  await expect(topBar.getByText('NekroNXT', { exact: true })).toBeVisible()
   await expect(topBar.getByText('月潮观测所', { exact: true })).toBeVisible()
   await expect(topBar.getByText('CALM · PRECISE · ALIVE', { exact: true })).toBeVisible()
   await page.locator('html').evaluate((root) => root.style.setProperty('--nxt-window-controls-left', '84px'))
@@ -2183,9 +2251,11 @@ test('global command palette supports keyboard search and navigation', async ({ 
   expect(failures, failures.join('\n')).toEqual([])
 })
 
-test('an initial Host failure is explicit and can recover without reloading', async ({ page }) => {
+test('an initial Host failure is explicit and can recover without reloading', async ({ page }, testInfo) => {
   const failures = installRuntimeFailureGate(page)
   let healthy = false
+  await page.setViewportSize({ width: 1100, height: 720 })
+  await page.emulateMedia({ colorScheme: 'dark', reducedMotion: 'reduce' })
   await page.route('**/api/snapshot', (route) => {
     if (!healthy) {
       return route.fulfill({
@@ -2217,13 +2287,18 @@ test('an initial Host failure is explicit and can recover without reloading', as
       body: JSON.stringify({ messages: [], hasMore: false }),
     }),
   )
-  await page.goto('/work')
+  await page.goto('/connections')
   await expect(page.getByText('无法连接', { exact: true }).first()).toBeVisible()
-  await expect(page.getByText('还没有智能体', { exact: true }).first()).toBeVisible()
+  await expect(page.getByText('添加第一个平台连接', { exact: true }).first()).toBeVisible()
+  const hostIllustration = page.locator('img[src$="/brand/illustrations/host-unreachable.svg"]')
+  await expect(hostIllustration).toBeVisible()
+  await expect.poll(() => hostIllustration.evaluate((image: HTMLImageElement) => image.naturalWidth)).toBeGreaterThan(0)
+  await assertViewportIntegrity(page)
+  await capture(page, testInfo, 'brand-host-unreachable-dark-1100')
   healthy = true
   await page.getByRole('button', { name: '重新连接' }).last().click()
   await expect(page.getByText('无法连接', { exact: true }).first()).toBeHidden()
-  await expect(page.getByRole('link', { name: /资料员/u }).first()).toBeVisible()
+  await expect(page.getByRole('link', { name: /QQ 官方机器人/u }).first()).toBeVisible()
   expect(
     failures.filter((failure) => !failure.includes('503 (Service Unavailable)')),
     failures.join('\n'),
