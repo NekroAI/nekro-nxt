@@ -52,7 +52,7 @@ test('rolling Preview accepts only receipts for the same commit and platform art
 })
 
 test('rolling Preview copy identifies its moving channel and immutable Product Release', () => {
-  assert.equal(previewReleaseTitle(release), `NekroNxt Preview ${release.version}`)
+  assert.equal(previewReleaseTitle(release), `NekroNXT Preview ${release.version}`)
   const body = previewReleaseBody(release, 'NekroAI/nekro-nxt')
   assert.match(body, /滚动预览版/u)
   assert.match(body, new RegExp(release.releaseId.replaceAll('+', '\\+'), 'u'))

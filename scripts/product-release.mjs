@@ -55,7 +55,7 @@ export async function readProductRelease(
   )
   const dshVersion = serverPackage.dependencies?.['@deepseek-ai/dsh-session-persistence-sqlite']
   if (typeof rootPackage.version !== 'string' || typeof dshVersion !== 'string' || !/^[a-f0-9]{40}$/u.test(commit)) {
-    throw new Error('无法生成 NekroNxt 产品 Release 清单。')
+    throw new Error('无法生成 NekroNXT 产品 Release 清单。')
   }
   const baseVersion = rootPackage.version
   const version = releaseVersionForChannel(baseVersion, channel, commitTimestamp)

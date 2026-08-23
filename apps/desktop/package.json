@@ -16,5 +16,16 @@
   "devDependencies": {
     "electron": "42.0.1",
     "electron-builder": "26.15.3"
+  },
+  "description": "NekroNXT 可安装 Desktop 宿主",
+  "author": "NekroAI contributors",
+  "homepage": "https://github.com/NekroAI/nekro-nxt#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/NekroAI/nekro-nxt.git",
+    "directory": "apps/desktop"
+  },
+  "bugs": {
+    "url": "https://github.com/NekroAI/nekro-nxt/issues"
   }
 }

@@ -42,7 +42,7 @@ export function assertPreviewReceipt(receipt, release, platform, artifactName) {
 }
 
 export function previewReleaseTitle(release) {
-  return `NekroNxt Preview ${release.version}`
+  return `NekroNXT Preview ${release.version}`
 }
 
 export function previewReleaseBody(release, repository) {

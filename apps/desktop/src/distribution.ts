@@ -48,7 +48,7 @@ export const parseProductRelease = (value: unknown): ProductRelease => {
     value['releaseId'].length === 0 ||
     value['dshVersion'].length === 0
   ) {
-    throw new Error('NekroNxt 产品 Release 清单无效。')
+    throw new Error('NekroNXT 产品 Release 清单无效。')
   }
   return {
     format: value['format'],

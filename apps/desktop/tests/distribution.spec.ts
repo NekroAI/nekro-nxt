@@ -111,12 +111,12 @@ describe('Desktop product distribution', () => {
     expect(stable).toMatchObject({
       appId: 'ai.nekro.nxt',
       appUserDataName: 'NekroNxt',
-      productName: 'NekroNxt',
+      productName: 'NekroNXT',
     })
     expect(preview).toMatchObject({
       appId: 'ai.nekro.nxt.preview',
       appUserDataName: 'NekroNxt Preview',
-      productName: 'NekroNxt Preview',
+      productName: 'NekroNXT Preview',
     })
     expect(preview.nsisGuid).not.toBe(stable.nsisGuid)
     expect(desktopDataRoot('/application-data/NekroNxt')).toBe('/application-data/NekroNxt/data')

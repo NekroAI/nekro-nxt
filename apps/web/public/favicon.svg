@@ -1,7 +1,2 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-labelledby="title">
-  <title id="title">NekroNxt</title>
-  <rect width="64" height="64" rx="15" fill="#172A45"/>
-  <path d="M45.5 16.5A21.5 21.5 0 1 0 51.5 41" fill="none" stroke="#3FB1EA" stroke-width="4.5" stroke-linecap="round"/>
-  <circle cx="45.5" cy="16.5" r="4" fill="#B98C4A"/>
-  <path d="M20 28v18M20 28l24 18M44 28v18" fill="none" stroke="#FFFDF9" stroke-width="5" stroke-linecap="round" stroke-linejoin="round"/>
-</svg>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" role="img" aria-label="NekroNXT favicon"><defs><clipPath id="c"><circle cx="512" cy="512" r="480"/></clipPath></defs><g clip-path="url(#c)"><defs><clipPath id="mark-circle"><circle cx="512" cy="512" r="500"/></clipPath></defs>
+  <image href="../../sources/logo/shuiyue-ying-avatar-source.png" width="1024" height="1024" preserveAspectRatio="xMidYMid slice" clip-path="url(#mark-circle)"/></g></svg>

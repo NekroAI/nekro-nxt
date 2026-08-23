@@ -6,7 +6,7 @@
     "executableName": "NekroNxt",
     "linuxExecutableName": "nekro-nxt",
     "nsisGuid": "2BED256D-E4EA-4EA9-B730-6B63FF416CE8",
-    "productName": "NekroNxt"
+    "productName": "NekroNXT"
   },
   "preview": {
     "appId": "ai.nekro.nxt.preview",
@@ -15,6 +15,6 @@
     "executableName": "NekroNxtPreview",
     "linuxExecutableName": "nekro-nxt-preview",
     "nsisGuid": "D4FFCCE1-474A-47FC-819B-DA8E5BF5378C",
-    "productName": "NekroNxt Preview"
+    "productName": "NekroNXT Preview"
   }
 }

@@ -153,7 +153,7 @@ export class DesktopInstanceManager {
     this.#destroyProductView()
     this.#showFallback(`正在连接「${profile.displayName}」`, '正在读取该实例的工作区…', [])
     this.#emitSnapshot()
-    this.#window.setTitle(`NekroNxt — ${profile.displayName}`)
+    this.#window.setTitle(`NekroNXT — ${profile.displayName}`)
     try {
       const partitionSession = session.fromPartition(profile.partition)
       this.#configureSession(profile, partitionSession)
@@ -459,7 +459,7 @@ export class DesktopInstanceManager {
     const observedSpki = await observeRemoteSpki(profile.origin)
     if (observedSpki !== profile.pinnedSpkiSha256) throw new Error('服务器证书已经变化，请使用管理密钥重新认证。')
     const descriptorResponse = await profileSession.fetch(`${profile.origin}/.well-known/nekro-nxt`)
-    if (!descriptorResponse.ok) throw new Error('该地址不是可识别的 NekroNxt 服务实例。')
+    if (!descriptorResponse.ok) throw new Error('该地址不是可识别的 NekroNXT 服务实例。')
     const descriptor = InstanceDescriptorSchema.parse(await descriptorResponse.json())
     if (descriptor.managementProtocol !== 1 || descriptor.desktopChromeProtocol !== 1) {
       throw new Error('服务实例版本不兼容。')
@@ -656,7 +656,7 @@ export class DesktopInstanceManager {
                   notified.add(requestId)
                   if (Notification.isSupported()) {
                     const notice = new Notification({
-                      title: `NekroNxt · ${profile.displayName}`,
+                      title: `NekroNXT · ${profile.displayName}`,
                       body: '智能体正在等待你确认动态扩展操作。',
                     })
                     notice.on('click', () => {
@@ -682,7 +682,7 @@ export class DesktopInstanceManager {
             if (last === undefined || last === available) return
             if (Notification.isSupported()) {
               const notice = new Notification({
-                title: `NekroNxt · ${profile.displayName}`,
+                title: `NekroNXT · ${profile.displayName}`,
                 body: available ? '服务实例已经恢复连接。' : '服务实例持续无法连接。',
               })
               notice.on('click', () => {

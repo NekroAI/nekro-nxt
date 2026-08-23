@@ -73,7 +73,7 @@ const waitForHostReady = async (origin: string, releaseId: string, signal: Abort
     }
     await abortableDelay(HOST_READY_INTERVAL_MS, signal)
   }
-  throw new Error('NekroNxt Host 未能在限定时间内完成启动。', { cause: lastError })
+  throw new Error('NekroNXT Host 未能在限定时间内完成启动。', { cause: lastError })
 }
 
 const startProductHost = async (release: ProductRelease): Promise<string> => {
@@ -83,7 +83,7 @@ const startProductHost = async (release: ProductRelease): Promise<string> => {
     origin,
     spawnHost: () => {
       const child = utilityProcess.fork(serverEntry(), [], {
-        serviceName: 'NekroNxt Host',
+        serviceName: 'NekroNXT Host',
         stdio: 'pipe',
         env: {
           ...process.env,
@@ -108,8 +108,8 @@ const startProductHost = async (release: ProductRelease): Promise<string> => {
     onFatal: (error) => {
       console.error('[desktop] 本地 Host 自动恢复已停止。', error)
       dialog.showErrorBox(
-        'NekroNxt Host 无法恢复',
-        '本地 Host 在短时间内多次异常退出，已停止自动恢复。请重启 NekroNxt；若问题持续出现，请查看诊断日志。',
+        'NekroNXT Host 无法恢复',
+        '本地 Host 在短时间内多次异常退出，已停止自动恢复。请重启 NekroNXT；若问题持续出现，请查看诊断日志。',
       )
     },
   })
@@ -152,7 +152,7 @@ void app.whenReady().then(async () => {
       instanceManager = undefined
     })
   } catch (error) {
-    dialog.showErrorBox('NekroNxt 启动失败', error instanceof Error ? error.message : String(error))
+    dialog.showErrorBox('NekroNXT 启动失败', error instanceof Error ? error.message : String(error))
     await stopProductHost()
     app.quit()
   }
