@@ -32,6 +32,7 @@ import {
   type StatusTone,
 } from '../ui-kit/index.js'
 import { INSPECTOR_WIDTH, useUiPreferences } from '../ui-preferences.js'
+import { useUnsavedDraft } from '../unsaved-drafts.js'
 import { BindingTaskDialog } from './binding-task.js'
 import { useStickToBottom } from './channel-scroll.js'
 import { MessageContent, resolveMessageSide, type MessageSide } from './message-content.js'
@@ -224,6 +225,7 @@ export function ChannelConversationPage() {
   )
   const history = activeChannelId ? channelHistory[activeChannelId] : undefined
   const [draft, setDraft] = useState('')
+  useUnsavedDraft(`channel-composer:${channel?.id ?? 'none'}`, draft.trim().length > 0)
   const [bindingOpen, setBindingOpen] = useState(false)
   const [contextResetMode, setContextResetMode] = useState<'clear' | 'compact' | null>(null)
   const [channelDeleteOpen, setChannelDeleteOpen] = useState(false)

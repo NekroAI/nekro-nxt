@@ -14,10 +14,12 @@ secrets
 docs-private
 *.local.md
 .turbo
+.pnpm-store
 **/node_modules
 **/dist
 **/lib
 **/*.tsbuildinfo
+apps/desktop/release
 apps/*/data
 coverage
 data

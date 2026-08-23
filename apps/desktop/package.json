@@ -4,8 +4,11 @@
   "private": true,
   "type": "module",
   "main": "dist/main.mjs",
+  "dependencies": {
+    "@nekro-nxt/contracts": "workspace:*"
+  },
   "scripts": {
-    "build": "node scripts/clean-server-runtime.mjs && tsdown && node scripts/write-product-release.mjs",
+    "build": "node scripts/clean-server-runtime.mjs && tsdown && node scripts/copy-renderer-assets.mjs && node scripts/write-product-release.mjs",
     "dist": "node scripts/dist.mjs",
     "test": "vitest run --root ../.. apps/desktop/tests",
     "typecheck": "tsc --noEmit"

@@ -9,5 +9,6 @@
     "tsBuildInfoFile": "lib/types.tsbuildinfo",
     "types": ["node", "electron"]
   },
-  "include": ["src/**/*.ts"]
+  "include": ["src/**/*.ts"],
+  "references": [{ "path": "../../packages/contracts" }]
 }

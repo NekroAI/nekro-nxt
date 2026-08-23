@@ -24,6 +24,8 @@ Compaction 使用 `NekroNxtCompactionEngine` 继承 DSH `BasicCompactionEngine`�
 
 `GET /api/events` 直接推送频道消息和裁剪后的工作轨迹；历史与轨迹 REST 只用于首载、翻页和重连对账。可回放帧带 `id:`，内存窗口响应 `Last-Event-ID`，过期则让前端 REST 对账。接线见 `docs/08-接线与Server宿主设计.md`。
 
+公开容器入口使用自动 TLS 与设备鉴权。`NEKRO_HOST=0.0.0.0` 必须同时设置至少 32 个字符的 `NEKRO_MANAGEMENT_KEY`；证书写入 `/data/host/tls/`，实例身份和配对设备写入 Core SQLite。除健康、实例描述和配对/设备 Session 必要端点外，产品页面、API、SSE、Asset 与 Extension Client 默认要求设备 Session；Mutation 同时校验同源与 CSRF。管理密钥只参与 HMAC proof，轮换会撤销旧设备。协议见 [Desktop 多实例与设备鉴权](../../docs/decisions/implemented/2026-08-23-Desktop多实例与设备鉴权.md)。
+
 DSH 0.1.1-rc.2 的 `frontend-static` 只服务真实文件和明确的 index 路径，未知路径返回 404。Server 因此为 NekroNxt 的产品页面前缀显式注册 SPA index 路由；`/api` 和不存在的 Asset 仍保持各自的 JSON/404 语义，不能用全局 index 回退掩盖错误路径。
 
 通用 DSH 配置面直接投影当前 Host：`GET /api/dsh/plugins` 返回固定生产 roster 的分能力面支持诊断，`GET /api/dsh/settings` 返回所有可安全上线的脱敏 Settings descriptor；路径级修改走 `POST /api/dsh/settings/:namespace/mutate` 并强制 `expectedRevision`，凭据只通过 `describe`、`PUT` 和 `DELETE` 端点读状态或写入/清除，响应和日志不返回值。Settings/Credentials 提交事件通过同一 SSE 通知普通表单和 DSH 原生界面失效刷新。

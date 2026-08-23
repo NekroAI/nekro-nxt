@@ -14,11 +14,13 @@ import type {
   ExtensionRevisionId,
   JsonValue,
   LogicalMessageId,
+  ManagementDeviceId,
   MessagePart,
   OutboundIntentId,
   PhysicalDeliveryId,
   PlatformIdentityId,
   PromptDocumentV1,
+  ServerInstanceId,
 } from '@nekro-nxt/contracts'
 import type { AgentCapabilityGrants, ImageUnderstandingPolicy } from '@nekro-nxt/core'
 import type { ExtensionRevisionVerification } from '@nekro-nxt/extension-runtime'
@@ -588,6 +590,31 @@ export const extensionClientDiagnostics = sqliteTable(
   ],
 )
 
+export const hostSecurityMetadata = sqliteTable(
+  'host_security_metadata',
+  {
+    id: integer().primaryKey(),
+    instanceId: text('instance_id').$type<ServerInstanceId>().notNull().unique(),
+    managementKeyDigest: text('management_key_digest').notNull(),
+    createdAt: integer('created_at').notNull(),
+    updatedAt: integer('updated_at').notNull(),
+  },
+  (table) => [check('host_security_metadata_singleton_ck', sql`${table.id} = 1`)],
+)
+
+export const managementDevices = sqliteTable(
+  'management_devices',
+  {
+    id: text().$type<ManagementDeviceId>().primaryKey(),
+    label: text().notNull(),
+    secretDigest: text('secret_digest').notNull(),
+    createdAt: integer('created_at').notNull(),
+    lastUsedAt: integer('last_used_at'),
+    revokedAt: integer('revoked_at'),
+  },
+  (table) => [index('management_devices_active_idx').on(table.revokedAt, table.createdAt)],
+)
+
 export const workTreeOrder = sqliteTable(
   'work_tree_order',
   {
@@ -625,5 +652,7 @@ export const coreSchema = {
   extensionRevisionVerifications,
   agentActivations,
   extensionClientDiagnostics,
+  hostSecurityMetadata,
+  managementDevices,
   workTreeOrder,
 } as const

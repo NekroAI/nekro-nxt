@@ -23,6 +23,7 @@ import { Component, useCallback, useEffect, useMemo, useRef, useState, type Reac
 import { notify } from './components/notifications.js'
 import { InlineFeedback } from './components/product-feedback.js'
 import { DshNativeSettingsSlots } from './dynamic-client-coordinator.js'
+import { useUnsavedDraft } from './unsaved-drafts.js'
 import {
   Button,
   ConfirmDialog,
@@ -795,6 +796,7 @@ function NamespaceEditor({
 }) {
   const [authority, setAuthority] = useState(namespace)
   const [ops, setOps] = useState<ReadonlyMap<string, DshSettingsPathOperation>>(() => new Map())
+  useUnsavedDraft(`dsh-settings:${namespace.ns}`, ops.size > 0)
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
   const [notice, setNotice] = useState('')

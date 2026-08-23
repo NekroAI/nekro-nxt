@@ -10,23 +10,23 @@ import {
 
 const distribution = { artifactSlug: 'nekro-nxt-preview' }
 const release = {
-  version: '1.4.0-preview.1750000000',
-  releaseId: '1.4.0-preview.1750000000+0123456789ab',
+  version: '1.4.0-20250615-1506utc',
+  releaseId: '1.4.0-20250615-1506utc+0123456789ab',
   commit: '0123456789abcdef0123456789abcdef01234567',
 }
 
 test('rolling Preview derives the six public assets from the Product Release version', () => {
   assert.equal(
     previewArtifactName(distribution, release.version, 'mac'),
-    'nekro-nxt-preview-mac-universal-v1.4.0-preview.1750000000.dmg',
+    'nekro-nxt-preview-mac-universal-v1.4.0-20250615-1506utc.dmg',
   )
   assert.equal(
     previewArtifactName(distribution, release.version, 'win'),
-    'nekro-nxt-preview-win-x64-v1.4.0-preview.1750000000-setup.exe',
+    'nekro-nxt-preview-win-x64-v1.4.0-20250615-1506utc-setup.exe',
   )
   assert.equal(
     previewArtifactName(distribution, release.version, 'linux'),
-    'nekro-nxt-preview-linux-x64-v1.4.0-preview.1750000000.AppImage',
+    'nekro-nxt-preview-linux-x64-v1.4.0-20250615-1506utc.AppImage',
   )
   assert.equal(expectedPreviewAssets(distribution, release.version).length, 6)
 })

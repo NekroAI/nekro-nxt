@@ -17,6 +17,7 @@ import { createAssetsRepository } from './repositories/assets.js'
 export * from './backup.js'
 export * from './database.js'
 export * from './dsh-session-storage.js'
+export * from './host-security.js'
 export * from './schema.js'
 export * from './row-schemas.js'
 

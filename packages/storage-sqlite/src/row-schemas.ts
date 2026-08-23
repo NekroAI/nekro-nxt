@@ -15,11 +15,13 @@ import {
   ExtensionRevisionIdSchema,
   JsonValueSchema,
   LogicalMessageIdSchema,
+  ManagementDeviceIdSchema,
   MessagePartsSchema,
   OutboundIntentIdSchema,
   PhysicalDeliveryIdSchema,
   PlatformIdentityIdSchema,
   PromptDocumentV1Schema,
+  ServerInstanceIdSchema,
 } from '@nekro-nxt/contracts'
 import { AgentCapabilityGrantsSchema, ImageUnderstandingPolicySchema } from '@nekro-nxt/core'
 import {
@@ -44,7 +46,9 @@ import {
   extensionRevisions,
   extensionRevisionVerifications,
   extensionClientDiagnostics,
+  hostSecurityMetadata,
   localExtensions,
+  managementDevices,
   outboundIntents,
   physicalDeliveries,
   platformIdentities,
@@ -173,6 +177,15 @@ export const ExtensionClientDiagnosticRowSchema = createSelectSchema(extensionCl
   extensionId: ExtensionIdSchema,
   revisionId: ExtensionRevisionIdSchema,
 })
+export const HostSecurityMetadataRowSchema = createSelectSchema(hostSecurityMetadata, {
+  instanceId: ServerInstanceIdSchema,
+  managementKeyDigest: z.string().min(1),
+})
+export const ManagementDeviceRowSchema = createSelectSchema(managementDevices, {
+  id: ManagementDeviceIdSchema,
+  label: z.string().min(1).max(80),
+  secretDigest: z.string().min(1),
+})
 
 export const CoreRowSchemas = {
   agentDefinitions: AgentDefinitionRowSchema,
@@ -200,4 +213,6 @@ export const CoreRowSchemas = {
   extensionRevisionVerifications: ExtensionRevisionVerificationRowSchema,
   agentActivations: AgentActivationRowSchema,
   extensionClientDiagnostics: ExtensionClientDiagnosticRowSchema,
+  hostSecurityMetadata: HostSecurityMetadataRowSchema,
+  managementDevices: ManagementDeviceRowSchema,
 } as const

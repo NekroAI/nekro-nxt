@@ -34,7 +34,10 @@ export function releaseVersionForChannel(baseVersion, channel, commitTimestamp) 
   if (!Number.isInteger(commitTimestamp) || commitTimestamp <= 0) {
     throw new Error(`Git commit 时间无效：${commitTimestamp}`)
   }
-  return `${baseVersion}-preview.${commitTimestamp}`
+  const date = new Date(commitTimestamp * 1_000)
+  const digits = (value) => String(value).padStart(2, '0')
+  const readableBuildTime = `${date.getUTCFullYear()}${digits(date.getUTCMonth() + 1)}${digits(date.getUTCDate())}-${digits(date.getUTCHours())}${digits(date.getUTCMinutes())}utc`
+  return `${baseVersion}-${readableBuildTime}`
 }
 
 export async function readProductRelease(

@@ -39,6 +39,6 @@ USER nekro
 EXPOSE 4960
 VOLUME ["/data"]
 HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
-  CMD ["node", "-e", "fetch('http://127.0.0.1:4960/health/ready').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))"]
+  CMD ["node", "-e", "require('node:https').get({hostname:'127.0.0.1',port:4960,path:'/health/ready',rejectUnauthorized:false},r=>{const ok=r.statusCode===200;r.resume();r.on('end',()=>process.exit(ok?0:1))}).on('error',()=>process.exit(1))"]
 ENTRYPOINT ["/usr/bin/tini", "--"]
 CMD ["node", "/opt/nekro/server/dist/main.mjs"]

@@ -7,6 +7,7 @@ import {
   defaultReleaseId,
   ensureReleaseSqliteBackup,
   parseListenHost,
+  parseManagementKey,
   parseReleaseId,
   startNekroServer,
 } from '../src/main.js'
@@ -28,6 +29,10 @@ describe('Server production entry', () => {
     expect(parseListenHost(undefined)).toBe('127.0.0.1')
     expect(parseListenHost('0.0.0.0')).toBe('0.0.0.0')
     expect(() => parseListenHost('localhost')).toThrow('NEKRO_HOST 无效')
+    expect(parseManagementKey(undefined)).toBeUndefined()
+    expect(() => parseManagementKey(undefined, true)).toThrow('NEKRO_MANAGEMENT_KEY')
+    expect(() => parseManagementKey('short')).toThrow('至少需要 32 个字符')
+    expect(parseManagementKey('a'.repeat(32), true)).toBe('a'.repeat(32))
   })
 
   it('uses the package identity by default and validates an injected release identity', async () => {

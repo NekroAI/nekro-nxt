@@ -47,6 +47,7 @@ import {
   type StatusTone,
 } from '../ui-kit/index.js'
 import { INSPECTOR_WIDTH, useUiPreferences } from '../ui-preferences.js'
+import { useUnsavedDraft } from '../unsaved-drafts.js'
 import { agentWorkbenchHref, listAgentBlockers } from './agent-workbench.js'
 import { BindingTaskDialog, isTriggerPolicy, listBindingChannels, TRIGGER_POLICY_OPTIONS } from './binding-task.js'
 import { agentModelKey, createAgentDraft } from './agent-create-draft.js'
@@ -714,6 +715,15 @@ export function AgentManagePage() {
     target?.scrollIntoView({ block: 'start' })
   }, [agentId, activeTab])
 
+  const isDirty =
+    agent !== undefined &&
+    (displayName !== agent.name ||
+      persona !== (agent.persona ?? '') ||
+      JSON.stringify(personaDocument) !== JSON.stringify(agent.personaDocument) ||
+      selectedModelKey !== modelValueForAgent(agent) ||
+      JSON.stringify(imagePolicy) !== JSON.stringify(agent.imagePolicy))
+  useUnsavedDraft(`agent-settings:${agentId}`, isDirty)
+
   if (!agent) {
     return (
       <div className={styles.page}>
@@ -727,12 +737,6 @@ export function AgentManagePage() {
     )
   }
 
-  const isDirty =
-    displayName !== agent.name ||
-    persona !== (agent.persona ?? '') ||
-    JSON.stringify(personaDocument) !== JSON.stringify(agent.personaDocument) ||
-    selectedModelKey !== modelValueForAgent(agent) ||
-    JSON.stringify(imagePolicy) !== JSON.stringify(agent.imagePolicy)
   const reset = (): void => {
     setDisplayName(agent.name)
     setPersona(agent.persona ?? '')

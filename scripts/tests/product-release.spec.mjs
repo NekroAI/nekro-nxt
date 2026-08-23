@@ -19,7 +19,7 @@ test('stable product Release binds Desktop, Host and DSH to the root version and
 
 test('preview version is deterministic, derived from the root version and newer than its earlier preview', () => {
   assert.equal(releaseVersionForChannel('1.4.0', 'stable', 1_750_000_000), '1.4.0')
-  assert.equal(releaseVersionForChannel('1.4.0', 'preview', 1_750_000_000), '1.4.0-preview.1750000000')
+  assert.equal(releaseVersionForChannel('1.4.0', 'preview', 1_750_000_000), '1.4.0-20250615-1506utc')
   assert.throws(() => releaseVersionForChannel('1.4.0-rc.1', 'preview', 1_750_000_000), /SemVer/u)
 })
 

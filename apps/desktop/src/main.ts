@@ -1,4 +1,4 @@
-import { app, BrowserWindow, dialog, shell, utilityProcess } from 'electron'
+import { app, dialog, utilityProcess, type BrowserWindow } from 'electron'
 import { createServer } from 'node:net'
 import { readFileSync } from 'node:fs'
 import path from 'node:path'
@@ -7,14 +7,12 @@ import {
   desktopDataRoot,
   desktopUserDataRoot,
   getDesktopDistribution,
-  isAllowedExternalUrl,
-  isSameApplicationOrigin,
   parseProductRelease,
   resolveProductReleasePath,
   type ProductRelease,
 } from './distribution.js'
 import { HostSupervisor, abortableDelay } from './host-supervisor.js'
-import { desktopTitleBarCss, desktopWindowChrome } from './window-chrome.js'
+import { DesktopInstanceManager } from './instance-manager.js'
 
 const LOOPBACK_HOST = '127.0.0.1'
 const HOST_READY_TIMEOUT_MS = 60_000
@@ -22,6 +20,7 @@ const HOST_READY_INTERVAL_MS = 200
 
 let mainWindow: BrowserWindow | undefined
 let hostSupervisor: HostSupervisor | undefined
+let instanceManager: DesktopInstanceManager | undefined
 
 const productReleasePath = (): string => resolveProductReleasePath(import.meta.url)
 
@@ -36,7 +35,7 @@ const webDistIndex = (): string =>
 const serverEntry = (): string =>
   app.isPackaged
     ? path.join(process.resourcesPath, 'server-runtime', 'dist', 'main.mjs')
-    : fileURLToPath(new URL('../runtime/dist/main.mjs', import.meta.url))
+    : fileURLToPath(new URL('./runtime/dist/main.mjs', import.meta.url))
 
 const reserveLoopbackPort = (): Promise<number> =>
   new Promise((resolve, reject) => {
@@ -119,38 +118,6 @@ const startProductHost = async (release: ProductRelease): Promise<string> => {
   return origin
 }
 
-const createMainWindow = async (origin: string): Promise<BrowserWindow> => {
-  const window = new BrowserWindow({
-    width: 1360,
-    height: 880,
-    minWidth: 980,
-    minHeight: 680,
-    show: false,
-    backgroundColor: '#172A45',
-    ...desktopWindowChrome(process.platform),
-    webPreferences: {
-      contextIsolation: true,
-      nodeIntegration: false,
-      sandbox: true,
-    },
-  })
-  window.webContents.on('dom-ready', () => {
-    void window.webContents.insertCSS(desktopTitleBarCss(process.platform))
-  })
-  window.once('ready-to-show', () => window.show())
-  window.webContents.setWindowOpenHandler(({ url }) => {
-    if (isAllowedExternalUrl(url)) void shell.openExternal(url)
-    return { action: 'deny' }
-  })
-  window.webContents.on('will-navigate', (event, target) => {
-    if (isSameApplicationOrigin(origin, target)) return
-    event.preventDefault()
-    if (isAllowedExternalUrl(target)) void shell.openExternal(target)
-  })
-  await window.loadURL(origin)
-  return window
-}
-
 const stopProductHost = async (): Promise<void> => {
   const supervisor = hostSupervisor
   hostSupervisor = undefined
@@ -178,9 +145,11 @@ void app.whenReady().then(async () => {
   app.setAppUserModelId(desktopDistribution.appId)
   try {
     const origin = await startProductHost(productRelease)
-    mainWindow = await createMainWindow(origin)
+    instanceManager = await DesktopInstanceManager.create({ localOrigin: origin, release: productRelease })
+    mainWindow = instanceManager.window
     mainWindow.on('closed', () => {
       mainWindow = undefined
+      instanceManager = undefined
     })
   } catch (error) {
     dialog.showErrorBox('NekroNxt 启动失败', error instanceof Error ? error.message : String(error))
@@ -204,5 +173,6 @@ app.on('window-all-closed', () => {
 app.on('before-quit', (event) => {
   if (hostSupervisor === undefined) return
   event.preventDefault()
+  instanceManager?.dispose()
   void stopProductHost().finally(() => app.quit())
 })

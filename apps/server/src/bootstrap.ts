@@ -34,6 +34,7 @@ import {
   openMigratedCoreDatabase,
   prepareDshSessionStorage,
   SqliteCoreRepository,
+  SqliteHostSecurityRepository,
   type CoreDatabase,
   type DshSessionStoragePreparation,
 } from '@nekro-nxt/storage-sqlite'
@@ -141,6 +142,7 @@ export interface AgentEntity {
 
 export class NekroRuntime {
   readonly repository: SqliteCoreRepository
+  readonly hostSecurity: SqliteHostSecurityRepository
   readonly assetService: AssetService
   readonly core: CoreService
   readonly host: DshHostRuntime
@@ -167,6 +169,7 @@ export class NekroRuntime {
   private constructor(input: {
     readonly database: CoreDatabase
     readonly repository: SqliteCoreRepository
+    readonly hostSecurity: SqliteHostSecurityRepository
     readonly assetService: AssetService
     readonly core: CoreService
     readonly host: DshHostRuntime
@@ -184,6 +187,7 @@ export class NekroRuntime {
   }) {
     this.#database = input.database
     this.repository = input.repository
+    this.hostSecurity = input.hostSecurity
     this.assetService = input.assetService
     this.core = input.core
     this.host = input.host
@@ -206,6 +210,7 @@ export class NekroRuntime {
 
     const database = await openMigratedCoreDatabase(options.coreDatabasePath)
     const repository = new SqliteCoreRepository(database)
+    const hostSecurity = new SqliteHostSecurityRepository(database)
     try {
       const sessionStoragePreparation = await prepareDshSessionStorage({
         databasePath: options.sessionDatabasePath,
@@ -291,6 +296,7 @@ export class NekroRuntime {
       const runtime = new NekroRuntime({
         database,
         repository,
+        hostSecurity,
         assetService,
         core,
         host,

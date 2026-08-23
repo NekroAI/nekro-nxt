@@ -71,6 +71,13 @@
       "when": 1787421561920,
       "tag": "0009_boring_penance",
       "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "6",
+      "when": 1787480329762,
+      "tag": "0010_elite_eternity",
+      "breakpoints": true
     }
   ]
 }

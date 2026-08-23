@@ -26,6 +26,7 @@ import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { NekroRuntime } from './bootstrap.js'
 import { createNekroHostApi } from './host-api.js'
+import { startManagementEdge, type ManagementEdgeHandle } from './management-edge.js'
 
 const resolveRoot = (input: string): string => (path.isAbsolute(input) ? input : path.resolve(process.cwd(), input))
 
@@ -48,6 +49,15 @@ export const parseListenHost = (input: string | undefined): '127.0.0.1' | '0.0.0
   if (input === undefined || input.trim() === '') return '127.0.0.1'
   if (input === '127.0.0.1' || input === '0.0.0.0') return input
   throw new TypeError(`NEKRO_HOST 无效：${input}`)
+}
+
+export const parseManagementKey = (input: string | undefined, required = false): string | undefined => {
+  if (input === undefined || input.trim() === '') {
+    if (required) throw new TypeError('容器或公开监听必须设置 NEKRO_MANAGEMENT_KEY。')
+    return undefined
+  }
+  if (input.length < 32) throw new TypeError('NEKRO_MANAGEMENT_KEY 至少需要 32 个字符。')
+  return input
 }
 
 /** Parse the Host-owned provider route allowlist; DSH still owns each route's catalog and protocol. */
@@ -248,18 +258,22 @@ export interface StartServerOptions {
   readonly port?: number
   /** Non-secret immutable image/application release identity exposed by readiness. */
   readonly releaseId?: string
+  /** Enables the automatic TLS edge and device authentication. Never persisted. */
+  readonly managementKey?: string
   /** Optional real LLM adapter wiring for a non-test server. */
   readonly configureLlm?: (context: LlmContext) => Promise<void> | void
 }
 
 export interface NekroServerHandle {
   readonly port: number
+  readonly secure: boolean
   stop(): Promise<void>
 }
 
 export const startNekroServer = async (options: StartServerOptions): Promise<NekroServerHandle> => {
   const host = options.host ?? '127.0.0.1'
   const port = options.port ?? 0
+  const managementKey = parseManagementKey(options.managementKey, host === '0.0.0.0')
   const releaseId = parseReleaseId(options.releaseId)
   const dataRoot = resolveRoot(options.dataRoot)
   const developmentWorkspaceRoot = resolveRoot(options.developmentWorkspaceRoot ?? path.join(dataRoot, 'workspaces'))
@@ -285,7 +299,10 @@ export const startNekroServer = async (options: StartServerOptions): Promise<Nek
   // The HTTP/SSE host owns a narrow Cordis Context with the WebServer seam and
   // the static dist fallback. The DSH Session runtime stays inside NekroRuntime.
   const webContext = new Context()
-  await webContext.plugin(WebServer, { host, port })
+  await webContext.plugin(WebServer, {
+    host: managementKey === undefined ? host : '127.0.0.1',
+    port: managementKey === undefined ? port : 0,
+  })
   // Function-style Cordis plugin that claims the webserver fallback seat and
   // serves real dist files. Since DSH rc.2 intentionally 404s unknown paths,
   // NekroNxt separately owns its known SPA route prefixes.
@@ -318,10 +335,35 @@ export const startNekroServer = async (options: StartServerOptions): Promise<Nek
   const disposeLive = registerHealthRoute('/health/live', 'live')
   const disposeReady = registerHealthRoute('/health/ready', 'ready')
 
+  let managementEdge: ManagementEdgeHandle | undefined
+  if (managementKey !== undefined) {
+    try {
+      managementEdge = await startManagementEdge({
+        host,
+        port,
+        internalPort: webContext.webServer.port,
+        dataRoot,
+        managementKey,
+        releaseId,
+        productVersion: SERVER_PACKAGE_VERSION,
+        repository: runtime.hostSecurity,
+      })
+    } catch (error) {
+      disposeReady()
+      disposeLive()
+      api.dispose()
+      disposeSpaRoutes()
+      await webContext.fiber.dispose()
+      await runtime.dispose()
+      throw error
+    }
+  }
+
   let stopped = false
   const stop = async (): Promise<void> => {
     if (stopped) return
     stopped = true
+    await managementEdge?.stop()
     disposeReady()
     disposeLive()
     api.dispose()
@@ -330,7 +372,7 @@ export const startNekroServer = async (options: StartServerOptions): Promise<Nek
     await runtime.dispose()
   }
 
-  return { port: webContext.webServer.port, stop }
+  return { port: managementEdge?.port ?? webContext.webServer.port, secure: managementEdge !== undefined, stop }
 }
 
 const isEntryPoint = (): boolean => {
@@ -351,6 +393,7 @@ if (isEntryPoint()) {
       const distIndexEnv = process.env['NEKRO_DIST_INDEX']
       const portEnv = process.env['NEKRO_PORT']
       const host = parseListenHost(process.env['NEKRO_HOST'])
+      const managementKey = parseManagementKey(process.env['NEKRO_MANAGEMENT_KEY'], host === '0.0.0.0')
       const releaseId = parseReleaseId(process.env['NEKRO_RELEASE_ID'])
       const llmProviderRoutes = parseLlmProviderRoutes(process.env['NEKRO_LLM_PROVIDERS'])
       const port = portEnv !== undefined && portEnv.trim() !== '' ? Number(portEnv) : 4960
@@ -369,12 +412,13 @@ if (isEntryPoint()) {
         host,
         port,
         releaseId,
+        ...(managementKey === undefined ? {} : { managementKey }),
         ...(developmentWorkspaceRoot === undefined || developmentWorkspaceRoot.trim() === ''
           ? {}
           : { developmentWorkspaceRoot }),
         configureLlm: configureDshLlmProviders(llmProviderRoutes),
       })
-      console.log(`[nekro-nxt] Server ${releaseId} 已监听 http://${host}:${handle.port}`)
+      console.log(`[nekro-nxt] Server ${releaseId} 已监听 ${handle.secure ? 'https' : 'http'}://${host}:${handle.port}`)
       if (llmProviderRoutes.length > 0) {
         console.log(`[nekro-nxt] DSH 模型供应商已启用：${llmProviderRoutes.join(', ')}`)
       }

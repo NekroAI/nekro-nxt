@@ -6,6 +6,7 @@ import { EmptyState, InlineFeedback, PageHeader } from '../components/product-fe
 import { connectionDisplayName, useProductStore, type ConnectionState } from '../product-store.js'
 import { BindingTaskDialog } from './binding-task.js'
 import { useNxtNavigate } from '../shell/nxt-link.js'
+import { useUnsavedDraft } from '../unsaved-drafts.js'
 import {
   Button,
   ConfirmDialog,
@@ -105,6 +106,14 @@ export function ConnectionsPage() {
   useEffect(() => {
     setAliasDraft(selected?.alias ?? '')
   }, [selected?.alias, selected?.id])
+  useUnsavedDraft(
+    `connection:${selected?.id ?? 'new'}`,
+    (selected !== undefined && aliasDraft.trim() !== (selected.alias ?? '')) ||
+      (createOpen &&
+        (createAlias.trim().length > 0 ||
+          Object.keys(configuration).length > 0 ||
+          Object.values(credentials).some((value) => value.length > 0))),
+  )
 
   if (!connectionId && connections[0]) {
     const query = searchParams.toString()

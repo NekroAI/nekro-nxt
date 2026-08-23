@@ -12,6 +12,7 @@
     "0007_agent_context_reset_and_tombstone.sql": "5042a3ef3ddaa473c1776e045f902a5c575ea438d4d8277eefddbdb84655a923",
     "0008_channel_tombstone_and_builtin_origin.sql": "109082c08692407e862441310b7ee33494ba663579eba748ccdf476b250f9a08",
     "0009_boring_penance.sql": "1b33b567e7b337cd3c9b4e9eca0dca1de84c72608caf99e4c106fe773efff7ad",
+    "0010_elite_eternity.sql": "3b82c5bc17f64da1a17d1bc5c4c8880e213ce9e85247262348da384b5d5a7465",
     "meta/0000_snapshot.json": "03573ed4ecfb276bfad4bd1d6041564c11d3c52e1fcb35fc3dd278da7b55448d",
     "meta/0001_snapshot.json": "48b7a1cd91c44d75a394c94af554fc85621fe5fda2dd680d4bc25b68679d4ee5",
     "meta/0002_snapshot.json": "aa0ed0d69885976c1ce596d468657ac121e8cae5ac9e09aa9843be0b3b3127c9",
@@ -22,6 +23,7 @@
     "meta/0007_snapshot.json": "7ff20a57b82fdfdce70911985358168a8847712f1d1f46d68ea86204d4f3bf6f",
     "meta/0008_snapshot.json": "5bf2994d45b4f86208154f21179c2f5c0327e2a10f022a76c1d7892431c17308",
     "meta/0009_snapshot.json": "69a755586b0dc71aba1cb7001b5f9923de16de04b5f2f4e10e98653b5c631003",
-    "meta/_journal.json": "97976c67b4c562a5bd92651bf5fd6c40f0c10d30e1613b03263f4357af29094e"
+    "meta/0010_snapshot.json": "a936a737ef59d5704d4803992ff27f22d2412679057f4fe1dacab97ccb2c689c",
+    "meta/_journal.json": "eaf61a16ff7631cd2618a395b1793b938168ec9bd9477b260c7622bf80a2aee4"
   }
 }

@@ -60,10 +60,10 @@
 - 添加平台连接先选用户可创建的平台，再按版本化 schema 渲染表单；从某适配器详情「再添加一个账号」可跳过选平台。系统托管内置 Adapter 不出现在创建目录。
 - `/api/snapshot` 只携带智能体的结构化人设文档，不承载平台用户全集。`/api/platform-users` 从持久身份与活动频道关系独立分页；Web 在 `channel-fact` 后使目录查询失效并防抖刷新。
 - 外部频道未发现时说明先向机器人账号发一条消息。`POST /api/channels/:id/messages`：内置频道入站交给智能体；外部频道在已绑定且允许主动发送时，以机器人账号出站，并注入管理员从客户端发出的系统事实。
-- `apps/server/src/main.ts` 使用 `NEKRO_DATA`、`NEKRO_PORT`（默认 4960）。开发工作区为 `<dataRoot>/workspaces/<agentId>/`。
+- `apps/server/src/main.ts` 使用 `NEKRO_DATA`、`NEKRO_PORT`（默认 4960）与可选 `NEKRO_MANAGEMENT_KEY`。开发工作区为 `<dataRoot>/workspaces/<agentId>/`。
 - 产品 SPA 深链只覆盖 `/work`、`/agents`、`/channels`、`/creator`、`/runtime`、`/settings`、`/connections`、`/extensions` 及其子路径；GET/HEAD 返回经过 DSH index injection 的产品入口，其他方法 405。`/api` 和不存在的静态资源不进入 SPA 回退。
-- 生产 CLI 由构建后的 `dist/main.mjs` 直接启动；`NEKRO_HOST` 默认 `127.0.0.1`，容器显式使用 `0.0.0.0`。Desktop 与 Docker 向同一入口注入不可变 `NEKRO_RELEASE_ID`；`GET /health/live` 与 `GET /health/ready` 只返回状态和 Release 身份，不返回业务数据。Desktop 只在 readiness 与安装包清单一致后加载该 Host 同包托管的 Web dist。
-- Desktop 每次运行只保留一个随机 loopback Origin。Host 首次就绪后若异常退出，主进程在同一端口按 `500ms → 1s → 2s → 5s → 5s` 退避启动替代进程；60 秒滚动窗口内最多发起 5 次恢复，超出预算后停止循环并提示用户。页面不重载，浏览器的 SSE 重连在新 Host epoch 上得到 `replay = expired` 后重新对账。Desktop 退出时取消退避与 readiness 探测，并等待当前 Host 子进程静止。
+- 生产 CLI 由构建后的 `dist/main.mjs` 直接启动；`NEKRO_HOST` 默认 `127.0.0.1`。公开监听 `0.0.0.0` 必须设置至少 32 个字符的 `NEKRO_MANAGEMENT_KEY`，并在外部 4960 启动自动 TLS 与设备鉴权入口；DSH WebServer 只监听随机 loopback。`GET /health/live` 与 `GET /health/ready` 保持匿名，只返回状态和 Release 身份。
+- Desktop 自带本地 Host 使用随机 loopback HTTP，并按 `500ms → 1s → 2s → 5s → 5s` 有界退避恢复。Desktop BrowserWindow 使用可替换 Product View：本地 Profile 指向自带 Host，远程 Profile 指向固定 SPKI 的 Server TLS 入口；每个 Profile 使用独立 partition 和最近路由。切换关闭旧 Product View，不重启任何 Host Runtime。详细安全与 View 边界见 [Desktop 多实例与设备鉴权](decisions/implemented/2026-08-23-Desktop多实例与设备鉴权.md)。
 - Runtime 打开双 SQLite 前，生产入口在 `backups/release-<releaseId digest>/` 为已有数据库创建一次 Release 恢复点；失败拒绝启动。该实验恢复点不覆盖数据根文件目录，完整升级协调仍以 Client migration Decision 为准。
 - 启动恢复持久 Web Connection、Extension Activation 和 QQ Connection 的凭据引用；单个 Connection 故障不阻断其他恢复。
 

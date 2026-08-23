@@ -2,9 +2,11 @@
 
 该应用是 NekroNxt 完整本地产品的 Electron 宿主。它不实现第二套领域逻辑，也不连接平台方维护的中心后端：Electron 主进程启动当前安装包内的 Server 生产入口，Server 装配同版本 DSH、Core、Extension Runtime，并托管当前安装包内的 `apps/web/dist`。
 
-Desktop 只接受原子的 `nxt.product-release`。UI、Host、DSH Client/Host 组合、Extension Bridge 与 migration 代码使用同一个 `releaseId`，不提供独立 UI 发布或远程 UI 资源更新。Electron 在 Host `/health/ready` 返回相同 `releaseId` 后才加载页面。
+Desktop 自带本地 `nxt.product-release`，并可保存多个远程服务实例。每个远程实例加载该 Server 同包 Web UI，通过 management/chrome protocol 版本门禁保持 UI、Host、DSH 与 Extension Bridge 匹配。Electron 在本地 Host `/health/ready` 返回相同 `releaseId` 后开放本地 Profile。
 
-每次 Desktop 运行只分配一次 loopback 端口，BrowserWindow 在整个运行期保持同一个 Origin。Host 就绪后若异常退出，主进程按 `500ms → 1s → 2s → 5s → 5s` 有界退避在同一端口启动替代进程；60 秒滚动窗口内最多发起 5 次恢复，继续失败时停止循环并显示持久错误。应用退出会取消尚未完成的退避和就绪探测，终止当前 Host，并等待子进程退出后再结束主进程。
+每次 Desktop 运行只为本地 Host 分配一次 loopback 端口。Host 就绪后若异常退出，主进程按 `500ms → 1s → 2s → 5s → 5s` 有界退避在同一端口启动替代进程；60 秒滚动窗口内最多发起 5 次恢复。应用退出会取消退避和就绪探测，终止当前 Host，并等待子进程退出。
+
+BrowserWindow 使用 Product、Instance Overlay 与 Trusted Fallback 三类 `WebContentsView`。本地与每个远程 Profile 使用独立持久 partition；切换关闭旧 Product View。远程页面只有当前实例展示和打开实例浮层的窄 Bridge。Profile 位于 Electron `userData`，设备 Secret 通过 `safeStorage` 加密并与 Profile 分离。窗口样式和系统通知由 Desktop 主进程拥有。
 
 分发脚本用 `pnpm deploy --prod --legacy` 把 Server 及其 workspace/外部生产依赖生成到 Desktop staging。`better-sqlite3` 与 `node-pty` 使用包内 N-API prebuild，Sharp、Koffi 和其他平台可选包按 `supportedArchitectures` 同时安装；准备脚本会拒绝缺少 macOS Universal、Windows x64 或 Linux x64 原生文件的 runtime。Server runtime 和 Web dist 都作为安装包的 `extraResources` 放在应用代码之外。
 
@@ -16,7 +18,7 @@ Desktop 使用 Renderer 自绘的统一 48px 品牌顶栏，不显示系统标�
 
 平台品牌资源位于 `resources/stable/` 与 `resources/preview/`。两端分别提供 ICNS、ICO、Linux PNG 图标组、DMG 背景和 NSIS assisted installer 图；Preview 通过黄铜三节点校准胶囊与 Stable 区分，不建立 beta 品牌身份。electron-builder 按当前 channel 选择对应 `buildResources`，这些文件不进入应用运行资源。
 
-产品版本的唯一手工来源是仓库根 `package.json#version`。正式版使用原值 `X.Y.Z`；预览版确定性派生为 `X.Y.Z-preview.<commit Unix 秒>`，不建立 beta 通道。两类安装包都写入当前 commit、`releaseId` 和 SHA-256 receipt。正式发布 `X.Y.Z` 时，公开仓库的 `vX.Y.Z` tag 必须指向 receipt 中的 commit；本地构建命令只生成文件，不隐式上传。
+产品版本的唯一手工来源是仓库根 `package.json#version`。正式版使用原值 `X.Y.Z`；预览版按 Git commit 时间确定性派生为可读的 `X.Y.Z-YYYYMMDD-HHmmutc`。Preview 只由产品名和产物前缀表达一次，版本号不再重复加入 `preview`。两类安装包都写入当前 commit、`releaseId` 和 SHA-256 receipt。正式发布 `X.Y.Z` 时，公开仓库的 `vX.Y.Z` tag 必须指向 receipt 中的 commit；本地构建命令只生成文件，不隐式上传。
 
 `main` 的 push 在完整 CI 通过后由三个原生 GitHub runner 构建 Preview，并直接更新固定 `preview` tag 对应的滚动 Prerelease，不使用 Actions Artifact 分发客户端。三端构建与 receipt 全部成功、且候选 commit 仍是远端 `main` 最新 HEAD 时才前移 `preview`；失败或已经过期的构建清理自己的候选附件并保留上一版完整 Preview。滚动页只保留最新一组三端安装包与 receipt，正式版 `vX.Y.Z` tag 不可移动。
 

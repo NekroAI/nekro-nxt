@@ -319,6 +319,12 @@ describe('NekroNxt product shell', () => {
     expect(navigation).not.toContain('href="/runtime"')
   })
 
+  it('keeps the local service-instance control out of an ordinary browser shell', () => {
+    const markup = renderRoute('/work/agents/new')
+    expect(markup).toContain('主题：跟随系统')
+    expect(markup).not.toContain('服务实例：')
+  })
+
   it('renders the initial intelligent-agent loading state without demo identities or hard-coded health', () => {
     const markup = renderRoute('/work/agents/new')
     expect(markup).toContain('创建智能体')

@@ -4,7 +4,7 @@
 
 当前基线使用 `better-sqlite3 13.x + drizzle-orm 0.45.x`。`CoreDatabase` 只公开 typed Drizzle DB、迁移、事务、pragma、backup 和 close；领域代码不得获得原生连接，也不得调用 `.prepare()`、`.exec()`、`sql.raw()` 或拼接 SQL。WAL、foreign keys、busy timeout 与在线备份分别使用驱动的 `pragma()` 和 `backup()` API。
 
-数据库按 agents、channels、runtime、outbox、assets、extensions 六个 Repository 文件维护，另含 Host 工作树顺序单行表。Connection 的可选 `alias` 与其他字段一起经过行 Schema 读取；所有持久 JSON 读出后均经过 `drizzle-zod` 行 Schema 和领域 Schema；ID 使用带格式校验的 Zod brand。
+数据库按 agents、channels、runtime、outbox、assets、extensions 六个 Repository 文件维护，另含 Host 工作树顺序单行表与独立 Host Security Repository。Host Security 保存单例实例身份、管理密钥摘要和配对设备 Secret 摘要，不保存管理密钥或设备 Secret。Connection 的可选 `alias` 与其他字段一起经过行 Schema 读取；所有持久 JSON 读出后均经过 `drizzle-zod` 行 Schema 和领域 Schema；ID 使用带格式校验的 Zod brand。
 
 迁移目录保留 Drizzle Kit 生成的 `0000_initial` 至当前增量迁移。空数据库按完整序列应用；已有带当前迁移元数据的数据库顺序应用新增迁移；任何不含 Drizzle migration 元数据的旧实验数据库都会被明确拒绝并要求重置。Drizzle 在事务内执行 SQLite 表重建，而 SQLite 不允许在事务内切换 `foreign_keys`，因此 `CoreDatabase` 在迁移事务开始前暂停外键执行，迁移完成后先运行全库 `foreign_key_check`，再恢复外键；发现任何违规都拒绝启动。测试必须覆盖已有子表引用数据的真实表重建。本项目不维护 0000–0016 的升级兼容，也不允许人工编辑迁移 SQL。
 

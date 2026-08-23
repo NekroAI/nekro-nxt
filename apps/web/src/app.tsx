@@ -1,10 +1,11 @@
-import { Boxes, Cable, MessageSquare, Monitor, Moon, Settings, Sun, UsersRound } from 'lucide-react'
+import { Boxes, Cable, MessageSquare, Monitor, Moon, Server, Settings, Sun, UsersRound } from 'lucide-react'
 import { Component, useEffect, useMemo, useState, type CSSProperties, type ErrorInfo, type ReactNode } from 'react'
 import { Navigate, Outlet, Route, Routes, useLocation, useParams } from 'react-router-dom'
 import styles from './app.module.css'
 import { NotificationCenter } from './components/notifications.js'
 import { EmptyState, HostNotice } from './components/product-feedback.js'
 import { DynamicClientProvider } from './dynamic-client-coordinator.js'
+import { useDesktopInstance } from './desktop-shell.js'
 import { PersistentExtensionClientProvider } from './persistent-extension-client.js'
 import {
   AgentManagePage,
@@ -105,6 +106,16 @@ function DesktopShell() {
   const reducedMotion = useProductStore((state) => state.reducedMotion)
   const savedObjectPaneWidth = useUiPreferences((state) => state.layout.objectPaneWidth)
   const [objectPaneWidth, setObjectPaneWidth] = useState(savedObjectPaneWidth)
+  const desktopInstance = useDesktopInstance()
+  const [instanceSwitcherOpen, setInstanceSwitcherOpen] = useState(false)
+  const instanceStatusClass = {
+    connecting: styles.instanceStatus_connecting,
+    ready: styles.instanceStatus_ready,
+    unstable: styles.instanceStatus_unstable,
+    offline: styles.instanceStatus_offline,
+    'authentication-required': styles.instanceStatus_authenticationRequired,
+    incompatible: styles.instanceStatus_incompatible,
+  }[desktopInstance.presentation.status]
   const shellStyle: CSSProperties & {
     '--nxt-object-pane-width': string
   } = {
@@ -170,6 +181,31 @@ function DesktopShell() {
               <ThemeIcon size={16} strokeWidth={1.8} aria-hidden="true" />
             </ThemeIconSwap>
           </IconButton>
+          {desktopInstance.enabled ? (
+            <IconButton
+              label={`服务实例：${desktopInstance.presentation.displayName} · ${
+                desktopInstance.presentation.status === 'ready'
+                  ? '运行正常'
+                  : desktopInstance.presentation.status === 'connecting'
+                    ? '正在连接'
+                    : desktopInstance.presentation.status === 'unstable'
+                      ? '连接不稳定'
+                      : desktopInstance.presentation.status === 'authentication-required'
+                        ? '需要重新认证'
+                        : desktopInstance.presentation.status === 'incompatible'
+                          ? '版本不兼容'
+                          : '无法连接'
+              }`}
+              className={`${styles.railInstance} ${instanceSwitcherOpen ? styles.railInstanceOpen : ''}`}
+              onClick={() => {
+                setInstanceSwitcherOpen(true)
+                void window.nekroDesktopShell?.openInstanceSwitcher().finally(() => setInstanceSwitcherOpen(false))
+              }}
+            >
+              <Server size={16} strokeWidth={1.8} aria-hidden="true" />
+              <span className={`${styles.instanceStatus} ${instanceStatusClass}`} aria-hidden="true" />
+            </IconButton>
+          ) : null}
         </aside>
         <aside className={styles.tree} aria-label="对象列">
           <ObjectPane />

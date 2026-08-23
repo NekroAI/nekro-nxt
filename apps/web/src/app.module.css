@@ -33,7 +33,7 @@
   position: absolute;
   right: var(--nxt-window-controls-right);
   bottom: 0;
-  left: var(--nxt-window-controls-left);
+  left: 0;
   height: 1px;
   background: linear-gradient(90deg, var(--nxt-brand-brass), var(--nxt-brand-lumen) 22%, transparent 58%);
   content: '';
@@ -161,6 +161,51 @@
   height: 32px;
   min-height: 32px;
   color: var(--nxt-text-muted);
+}
+
+.railInstance {
+  position: relative;
+  width: 32px;
+  min-width: 32px;
+  height: 32px;
+  min-height: 32px;
+  margin-top: 4px;
+  color: var(--nxt-text-muted);
+}
+
+.rail .railInstance:not(:disabled):hover,
+.rail .railInstance:not(:disabled):focus-visible,
+.railInstanceOpen {
+  color: var(--nxt-lumen-300);
+  background: var(--nxt-rail-hover);
+}
+
+.instanceStatus {
+  position: absolute;
+  right: 4px;
+  bottom: 4px;
+  width: 7px;
+  height: 7px;
+  border: 1px solid var(--nxt-rail-bg);
+  border-radius: var(--nxt-radius-round);
+  background: var(--nxt-text-disabled);
+}
+
+.instanceStatus_connecting {
+  background: var(--nxt-info);
+}
+.instanceStatus_ready {
+  background: var(--nxt-success);
+}
+.instanceStatus_unstable,
+.instanceStatus_authenticationRequired {
+  background: var(--nxt-warning);
+}
+.instanceStatus_offline {
+  background: var(--nxt-danger);
+}
+.instanceStatus_incompatible {
+  background: var(--nxt-text-disabled);
 }
 
 .rail .railTheme:not(:disabled):hover,

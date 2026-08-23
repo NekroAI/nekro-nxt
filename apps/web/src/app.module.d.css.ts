@@ -7,9 +7,18 @@ declare const styles: {
   readonly commandResult: string
   readonly commandResults: string
   readonly commandSearch: string
+  readonly instanceStatus: string
+  readonly instanceStatus_authenticationRequired: string
+  readonly instanceStatus_connecting: string
+  readonly instanceStatus_incompatible: string
+  readonly instanceStatus_offline: string
+  readonly instanceStatus_ready: string
+  readonly instanceStatus_unstable: string
   readonly rail: string
   readonly railBtn: string
   readonly railBtnActive: string
+  readonly railInstance: string
+  readonly railInstanceOpen: string
   readonly railSpacer: string
   readonly railTheme: string
   readonly routeView: string
