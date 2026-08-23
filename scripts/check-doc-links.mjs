@@ -1,20 +1,57 @@
+import { execFileSync } from 'node:child_process'
 import { readdir, readFile, stat } from 'node:fs/promises'
 import path from 'node:path'
 
 const root = process.cwd()
-const roots = ['README.md', 'AGENTS.md', 'docs']
+const rootDocument = 'AGENTS.md'
+const optionalLocalIndex = '.local/README.md'
 const errors = []
 
-async function collect(target) {
-  const absolute = path.join(root, target)
-  const info = await stat(absolute)
-  if (info.isFile()) return [absolute]
-  const names = await readdir(absolute, { withFileTypes: true })
+const toRepositoryPath = (file) => path.relative(root, file).split(path.sep).join('/')
+
+const exists = async (target) => {
+  try {
+    return await stat(target)
+  } catch {
+    return undefined
+  }
+}
+
+async function collectMarkdown(target) {
+  const info = await exists(target)
+  if (info === undefined) return []
+  if (info.isFile()) return target.endsWith('.md') ? [target] : []
+  const names = await readdir(target, { withFileTypes: true })
   const nested = await Promise.all(
-    names.filter((entry) => !entry.name.startsWith('.')).map((entry) => collect(path.join(target, entry.name))),
+    names
+      .filter((entry) => !entry.name.startsWith('.') || entry.name === '.local')
+      .map((entry) => collectMarkdown(path.join(target, entry.name))),
   )
   return nested.flat()
 }
+
+const isGeneratedLocalDocument = (relativePath) =>
+  relativePath.startsWith('.local/playwright-') || relativePath.startsWith('.local/coverage/')
+
+const trackedDocuments = execFileSync('git', ['ls-files', '-z', '--', '*.md'], {
+  cwd: root,
+  encoding: 'utf8',
+})
+  .split('\0')
+  .filter(Boolean)
+
+const ignoredDocumentCandidates = [
+  ...(await collectMarkdown(path.join(root, '.local'))),
+  ...(await collectMarkdown(path.join(root, 'docs-private'))),
+  ...(await readdir(root, { withFileTypes: true })).flatMap((entry) =>
+    entry.isFile() && entry.name.endsWith('.local.md') ? [path.join(root, entry.name)] : [],
+  ),
+]
+const localDocuments = [...new Set(ignoredDocumentCandidates.map(toRepositoryPath))]
+  .filter((file) => !trackedDocuments.includes(file) && !isGeneratedLocalDocument(file))
+  .sort()
+const documentPaths = new Set([...trackedDocuments, ...localDocuments])
+const graph = new Map([...documentPaths].map((file) => [file, new Set()]))
 
 function headingSlugs(markdown) {
   const counts = new Map()
@@ -35,50 +72,82 @@ function headingSlugs(markdown) {
   return slugs
 }
 
-const files = (await Promise.all(roots.map(collect))).flat().filter((file) => file.endsWith('.md'))
-
-for (const file of files) {
-  const content = await readFile(file, 'utf8')
-  const inlineDocumentPaths = content.matchAll(/`(docs\/[^`\n]+\.md)`/g)
-  for (const match of inlineDocumentPaths) {
-    const target = path.resolve(root, match[1])
-    try {
-      const info = await stat(target)
-      if (!info.isFile()) errors.push(`${path.relative(root, file)}: 行内文档路径不是文件 ${match[1]}`)
-    } catch {
-      errors.push(`${path.relative(root, file)}: 找不到行内文档路径 ${match[1]}`)
-    }
+const decodeTarget = (raw) => {
+  try {
+    return decodeURIComponent(raw)
+  } catch {
+    return raw
   }
-  const links = content.matchAll(/\[[^\]]*\]\(([^)]+)\)/g)
-  for (const match of links) {
+}
+
+const isOptionalMissingLocalIndex = (source, target) =>
+  source === rootDocument && toRepositoryPath(target) === optionalLocalIndex
+
+for (const source of documentPaths) {
+  const file = path.join(root, source)
+  const content = await readFile(file, 'utf8')
+
+  for (const match of content.matchAll(/\[[^\]]*\]\(([^)]+)\)/gu)) {
     const raw = match[1].trim().replace(/^<|>$/g, '')
-    if (/^(?:https?:|mailto:|data:)/.test(raw)) continue
+    if (/^(?:https?:|mailto:|data:)/u.test(raw)) continue
     const [targetPart, fragment] = raw.split('#', 2)
-    const target = targetPart ? path.resolve(path.dirname(file), decodeURIComponent(targetPart)) : file
-    let targetContent
-    try {
-      const info = await stat(target)
-      if (!info.isFile() && fragment) {
-        errors.push(`${path.relative(root, file)}: 目录链接不能带 fragment：${raw}`)
-        continue
-      }
-      if (info.isFile() && fragment) targetContent = await readFile(target, 'utf8')
-    } catch {
-      errors.push(`${path.relative(root, file)}: 找不到链接目标 ${raw}`)
+    const decodedTarget = decodeTarget(targetPart ?? '')
+    const target = decodedTarget ? path.resolve(path.dirname(file), decodedTarget) : file
+    const targetPath = toRepositoryPath(target)
+    const info = await exists(target)
+    if (info === undefined) {
+      if (!isOptionalMissingLocalIndex(source, target)) errors.push(`${source}: 找不到链接目标 ${raw}`)
       continue
     }
-    if (fragment && targetContent !== undefined) {
-      const wanted = decodeURIComponent(fragment).toLowerCase()
-      if (!headingSlugs(targetContent).has(wanted)) {
-        errors.push(`${path.relative(root, file)}: 找不到标题 #${fragment}（${raw}）`)
+    if (!info.isFile() && fragment) {
+      errors.push(`${source}: 目录链接不能带 fragment：${raw}`)
+      continue
+    }
+    if (info.isFile() && fragment) {
+      const targetContent = await readFile(target, 'utf8')
+      const wanted = decodeTarget(fragment).toLowerCase()
+      if (!headingSlugs(targetContent).has(wanted)) errors.push(`${source}: 找不到标题 #${fragment}（${raw}）`)
+    }
+    if (documentPaths.has(targetPath)) graph.get(source)?.add(targetPath)
+    if (trackedDocuments.includes(source) && targetPath.startsWith('.local/')) {
+      if (source !== rootDocument || targetPath !== optionalLocalIndex) {
+        errors.push(`${source}: 公开文档只能由根 AGENTS.md 链接本地私有索引，不能链接 ${targetPath}`)
       }
     }
   }
 }
 
+const reachable = new Set()
+const pending = [rootDocument]
+while (pending.length > 0) {
+  const source = pending.pop()
+  if (source === undefined || reachable.has(source)) continue
+  reachable.add(source)
+  for (const target of graph.get(source) ?? []) pending.push(target)
+}
+
+const unreachablePublic = trackedDocuments.filter((file) => !reachable.has(file))
+const unreachableLocal = localDocuments.filter((file) => !reachable.has(file))
+if (unreachablePublic.length > 0) {
+  errors.push(
+    ['以下公开文档无法从 AGENTS.md 沿引用链到达：', ...unreachablePublic.map((file) => `  - ${file}`)].join('\n'),
+  )
+}
+if (unreachableLocal.length > 0) {
+  errors.push(
+    [
+      '以下本地文档无法从 AGENTS.md 经 .local/README.md 沿引用链到达：',
+      ...unreachableLocal.map((file) => `  - ${file}`),
+    ].join('\n'),
+  )
+}
+
 if (errors.length > 0) {
   console.error(errors.join('\n'))
+  console.error('请把文档接入最近的领域索引；不要把全部文件平铺到 AGENTS.md。')
   process.exitCode = 1
 } else {
-  console.log(`Documentation link check passed (${files.length} files).`)
+  console.log(
+    `Documentation graph check passed (${trackedDocuments.length} public files, ${localDocuments.length} local files).`,
+  )
 }
