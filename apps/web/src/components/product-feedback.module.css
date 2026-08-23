@@ -120,6 +120,12 @@
   font-weight: 680;
 }
 
+.emptyIllustration {
+  width: min(240px, 72%);
+  max-height: 160px;
+  object-fit: contain;
+}
+
 .emptyState p {
   max-width: 440px;
   margin: 6px 0 16px;

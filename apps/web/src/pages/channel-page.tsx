@@ -342,7 +342,7 @@ export function ChannelConversationPage() {
     try {
       await useProductStore.getState().deleteChannel(channel.id, channel.agentId || null)
       notify(
-        channel.kind === 'web' ? '内置频道已删除；历史记录可在审计中查询。' : '频道已从 NekroNxt 移除。',
+        channel.kind === 'web' ? '内置频道已删除；历史记录可在审计中查询。' : '频道已从 NekroNXT 移除。',
         'success',
         `channel-delete:${channel.id}`,
       )
@@ -386,6 +386,13 @@ export function ChannelConversationPage() {
           <div className={styles.conversationEmpty}>
             <EmptyState
               loading={host.status === 'initializing'}
+              illustration={
+                host.status === 'error'
+                  ? { src: '/brand/illustrations/host-unreachable.svg' }
+                  : agents.length === 0
+                    ? { src: '/brand/illustrations/welcome.png', alt: '水月荧邀请创建第一个智能体' }
+                    : { src: '/brand/illustrations/no-connections.svg' }
+              }
               title={host.status === 'initializing' ? '正在读取频道' : '还没有频道'}
               description={
                 host.status === 'error'
@@ -662,13 +669,13 @@ export function ChannelConversationPage() {
       <ConfirmDialog
         open={channelDeleteOpen}
         onOpenChange={setChannelDeleteOpen}
-        title={channel?.kind === 'web' ? '删除内置频道？' : '从 NekroNxt 移除此频道？'}
+        title={channel?.kind === 'web' ? '删除内置频道？' : '从 NekroNXT 移除此频道？'}
         description={
           channel?.kind === 'web'
             ? '当前生成或工具调用会立即中止，频道会解除绑定并从列表中移除。历史消息、资源和审计事实可在记录中查询。'
             : '当前生成或工具调用会立即中止，频道会解除绑定并从列表中移除。再次收到消息时，频道会重新出现在列表中。'
         }
-        confirmLabel={channel?.kind === 'web' ? '删除内置频道' : '从 NekroNxt 移除'}
+        confirmLabel={channel?.kind === 'web' ? '删除内置频道' : '从 NekroNXT 移除'}
         confirmVariant="danger"
         confirmLoadingLabel="正在移除…"
         confirmDisabled={!channel}

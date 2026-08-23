@@ -69,15 +69,23 @@ export function EmptyState({
   description,
   action,
   loading = false,
+  illustration,
 }: {
   readonly title: string
   readonly description: string
   readonly action?: ReactNode
   readonly loading?: boolean
+  readonly illustration?: { readonly src: string; readonly alt?: string }
 }) {
   return (
     <div className={styles.emptyState}>
-      {loading ? <Spinner size={22} /> : <Inbox size={24} aria-hidden="true" />}
+      {loading ? (
+        <Spinner size={22} />
+      ) : illustration ? (
+        <img className={styles.emptyIllustration} src={illustration.src} alt={illustration.alt ?? ''} />
+      ) : (
+        <Inbox size={24} aria-hidden="true" />
+      )}
       <div className={styles.emptyTitle}>{title}</div>
       <p>{description}</p>
       {action}

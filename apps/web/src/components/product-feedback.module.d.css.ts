@@ -1,4 +1,5 @@
 declare const styles: {
+  readonly emptyIllustration: string
   readonly emptyState: string
   readonly emptyTitle: string
   readonly error: string

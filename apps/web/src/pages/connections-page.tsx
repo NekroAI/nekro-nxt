@@ -235,6 +235,11 @@ export function ConnectionsPage() {
         {connections.length === 0 ? (
           <EmptyState
             loading={host.status === 'initializing'}
+            illustration={
+              host.status === 'error'
+                ? { src: '/brand/illustrations/host-unreachable.svg' }
+                : { src: '/brand/illustrations/no-connections.svg' }
+            }
             title={host.status === 'initializing' ? '正在读取连接' : '添加第一个平台连接'}
             description={
               host.status === 'error'
@@ -329,7 +334,7 @@ export function ConnectionsPage() {
             ) : null}
 
             {selected.adapterKey === 'web' ? (
-              <InlineFeedback tone="info">内置频道由 NekroNxt 直接提供。</InlineFeedback>
+              <InlineFeedback tone="info">内置频道由 NekroNXT 直接提供。</InlineFeedback>
             ) : (
               <>
                 <div className={styles.optionalTests}>

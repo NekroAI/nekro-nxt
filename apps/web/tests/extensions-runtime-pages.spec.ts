@@ -10,6 +10,6 @@ describe('extension details product copy', () => {
     expect(contributionLabel('RPC：identity.current')).toBe('界面数据接口 · identity.current')
     expect(contributionLabel('界面：agent.workbench.sections')).toBe('智能体工作台面板')
     expect(contributionLabel('界面：extension.details.panels')).toBe('扩展详情面板')
-    expect(contractVersionLabel('nekro-nxt-extension-v1')).toBe('NekroNxt 扩展 v1')
+    expect(contractVersionLabel('nekro-nxt-extension-v1')).toBe('NekroNXT 扩展 v1')
   })
 })

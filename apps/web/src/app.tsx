@@ -139,7 +139,7 @@ function DesktopShell() {
         <div className={styles.windowBrand}>
           <img className={styles.brandMark} src="/brand/mark.svg" alt="" aria-hidden="true" />
           <span className={styles.brandCopy}>
-            <strong>NekroNxt</strong>
+            <strong>NekroNXT</strong>
             <small>月潮观测所</small>
           </span>
         </div>

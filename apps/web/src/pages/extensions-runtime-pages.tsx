@@ -48,7 +48,7 @@ export const contributionLabel = (contribution: string): string => {
 }
 
 export const contractVersionLabel = (version: string): string =>
-  version === 'nekro-nxt-extension-v1' ? 'NekroNxt 扩展 v1' : version
+  version === 'nekro-nxt-extension-v1' ? 'NekroNXT 扩展 v1' : version
 
 export function ExtensionsPage() {
   const { extensionId = '' } = useParams()
@@ -114,6 +114,11 @@ export function ExtensionsPage() {
         {extensions.length === 0 ? (
           <EmptyState
             loading={host.status === 'initializing'}
+            illustration={
+              host.status === 'error'
+                ? { src: '/brand/illustrations/host-unreachable.svg' }
+                : { src: '/brand/illustrations/no-extensions.svg' }
+            }
             title={host.status === 'initializing' ? '正在读取扩展' : '从一次动态运行开始'}
             description={
               host.status === 'error'
