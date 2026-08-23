@@ -95,11 +95,50 @@ function releaseEndpoint(repository) {
   return `/repos/${repository}/releases/tags/${ROLLING_PREVIEW_TAG}`
 }
 
+function moveRollingTag(repository, commit) {
+  const refPath = `tags/${ROLLING_PREVIEW_TAG}`
+  const existing = runGh(['api', `/repos/${repository}/git/ref/${refPath}`], { allowFailure: true })
+  if (existing.status === 0) {
+    runGh([
+      'api',
+      '--method',
+      'PATCH',
+      `/repos/${repository}/git/refs/${refPath}`,
+      '-f',
+      `sha=${commit}`,
+      '-F',
+      'force=true',
+    ])
+    return
+  }
+  const diagnostic = `${String(existing.stderr)}\n${String(existing.stdout)}`
+  if (!/HTTP 404|Not Found/iu.test(diagnostic)) {
+    throw new Error(`读取滚动预览版 tag 失败：${diagnostic.trim()}`)
+  }
+  runGh([
+    'api',
+    '--method',
+    'POST',
+    `/repos/${repository}/git/refs`,
+    '-f',
+    `ref=refs/tags/${ROLLING_PREVIEW_TAG}`,
+    '-f',
+    `sha=${commit}`,
+  ])
+}
+
 function readRollingRelease(repository) {
   const result = runGh(['api', releaseEndpoint(repository)], { allowFailure: true })
   if (result.status === 0) return JSON.parse(String(result.stdout))
   const diagnostic = `${String(result.stderr)}\n${String(result.stdout)}`
-  if (/HTTP 404|Not Found/iu.test(diagnostic)) return undefined
+  if (/HTTP 404|Not Found/iu.test(diagnostic)) {
+    // GitHub's release-by-tag endpoint omits Draft releases even for an
+    // authenticated caller. The list endpoint includes them, which is needed
+    // for the first rolling Preview before it becomes public.
+    const releases = ghJson(['api', `/repos/${repository}/releases?per_page=100`])
+    if (!Array.isArray(releases)) throw new Error('GitHub Release 列表响应无效。')
+    return releases.find((release) => release?.tag_name === ROLLING_PREVIEW_TAG)
+  }
   throw new Error(`读取滚动预览版失败：${diagnostic.trim()}`)
 }
 
@@ -232,16 +271,7 @@ async function finalizeRollingRelease() {
     return
   }
 
-  runGh([
-    'api',
-    '--method',
-    'PATCH',
-    `/repos/${repository}/git/refs/tags/${ROLLING_PREVIEW_TAG}`,
-    '-f',
-    `sha=${release.commit}`,
-    '-F',
-    'force=true',
-  ])
+  moveRollingTag(repository, release.commit)
   runGh([
     'api',
     '--method',
