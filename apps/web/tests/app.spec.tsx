@@ -608,6 +608,28 @@ describe.sequential('NekroNxt browser projections', { timeout: 30_000 }, () => {
     await page.route('**/api/dynamic/*/inventory', (request) =>
       request.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ rows: [] }) }),
     )
+    // Product pages can preload these directories even when a scenario does
+    // not interact with them. Keep the browser fixture self-contained instead
+    // of falling through to Vite's local-development proxy. Scenario routes
+    // registered by `setup` run first and can still override these defaults.
+    await page.route('**/api/llm/providers', (request) =>
+      request.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify(providerSettingsSnapshot),
+      }),
+    )
+    await page.route('**/api/platform-users*', (request) =>
+      request.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({
+          total: 0,
+          items: [],
+          facets: { adapters: [], connections: [] },
+        }),
+      }),
+    )
     await setup?.(page)
     try {
       await page.goto(`${baseUrl}${route}`)

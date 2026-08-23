@@ -627,18 +627,95 @@ describe('ChannelRuntime M1 lane', () => {
   it('sends admin console outbound as the robot account and notifies the session without a model turn', async () => {
     const context = await setup()
     context.adapter.queueReceipt({ status: 'sent', platformMessageId: 'console-1' })
+    const signal = new AbortController().signal
     const result = await context.runtime.sendAdminConsoleMessage({
       channelId: context.channel.id,
       parts: [{ type: 'text', text: '今晚维护' }],
+      clientRequestId: 'console-request-1',
+      signal,
     })
     expect(result).toMatchObject({ status: 'sent' })
     expect(context.adapter.deliveries).toHaveLength(1)
     expect(context.adapter.deliveries[0]?.parts).toEqual([{ type: 'text', text: '今晚维护' }])
     const outbound = [...context.runtimeRepository.outbounds.values()][0]
     expect(outbound?.intent.sourceTurnId).toBe('admin-console')
+    expect(outbound?.intent.clientRequestId).toBe('console-request-1')
     expect(context.sessionCalls.some((call) => call.startsWith('create:'))).toBe(true)
     expect(context.sessionCalls.some((call) => call.startsWith('console-outbound:'))).toBe(true)
     expect(context.sessionCalls.some((call) => call.startsWith('admit:'))).toBe(false)
+  })
+
+  it('validates admin console targets before proactive delivery', async () => {
+    const context = await setup()
+    const message = { parts: [{ type: 'text' as const, text: '维护通知' }] }
+
+    await expect(
+      context.runtime.sendAdminConsoleMessage({
+        channelId: ChannelIdSchema.parse('chn_missing'),
+        ...message,
+      }),
+    ).rejects.toThrow('Unknown channel')
+
+    const webChannel = context.core.createChannel({
+      connectionId: context.connection.id,
+      platformChannelId: 'web-console',
+      kind: 'web',
+    })
+    await expect(context.runtime.sendAdminConsoleMessage({ channelId: webChannel.id, ...message })).rejects.toThrow(
+      'Web channels accept inbound conversation',
+    )
+
+    const unboundChannel = context.core.createChannel({
+      connectionId: context.connection.id,
+      platformChannelId: 'unbound-console',
+      kind: 'group',
+    })
+    await expect(context.runtime.sendAdminConsoleMessage({ channelId: unboundChannel.id, ...message })).rejects.toThrow(
+      'Channel has no Binding',
+    )
+
+    const unavailableRuntime = new ChannelRuntime(
+      context.core,
+      context.coreRepository,
+      context.runtimeRepository,
+      context.sessionDriver,
+      { resolveAdapter: () => undefined },
+    )
+    await expect(
+      unavailableRuntime.sendAdminConsoleMessage({ channelId: context.channel.id, ...message }),
+    ).rejects.toThrow('Connection adapter is not running')
+
+    Object.assign(context.adapter.capabilities, { proactiveSend: false })
+    await expect(
+      context.runtime.sendAdminConsoleMessage({ channelId: context.channel.id, ...message }),
+    ).rejects.toThrow('Adapter does not allow proactive send')
+  })
+
+  it('notifies the session for partially sent and unknown admin console delivery', async () => {
+    const context = await setup(false)
+    context.adapter.queueReceipt({ status: 'sent', platformMessageId: 'console-partial-1' })
+    context.adapter.queueReceipt({
+      status: 'failed',
+      failure: { kind: 'permanent', message: 'attachment rejected' },
+    })
+    await expect(
+      context.runtime.sendAdminConsoleMessage({
+        channelId: context.channel.id,
+        parts: [
+          { type: 'text', text: '维护说明' },
+          { type: 'file', assetId: AssetIdSchema.parse('ast_console'), name: 'notice.txt' },
+        ],
+      }),
+    ).resolves.toMatchObject({ status: 'partially-sent' })
+
+    context.adapter.queueReceipt({ status: 'unknown', message: 'response lost after submit' })
+    await expect(
+      context.runtime.sendAdminConsoleMessage({
+        channelId: context.channel.id,
+        parts: [{ type: 'text', text: '补充说明' }],
+      }),
+    ).resolves.toMatchObject({ status: 'unknown' })
+    expect(context.sessionCalls.filter((call) => call.startsWith('console-outbound:'))).toHaveLength(2)
   })
 
   it('splits non-mixed delivery, preserves partial success and deduplicates clientRequestId', async () => {
@@ -889,6 +966,7 @@ describe('ChannelRuntime M1 lane', () => {
     expect(isTriggered(binding('command'), event({ command: '' }))).toBe(false)
     expect(isTriggered(binding('command'), event({ command: 123 }))).toBe(false)
     expect(isTriggered(binding('command'), event({ command: '/help' }))).toBe(true)
+    expect(isTriggered(binding('always'), event({ consoleAnchor: true }))).toBe(false)
 
     const context = await setup()
     await context.runtime.acceptInbound(inbound(context.connection.id, context.channel.id, 'initial'))
@@ -1186,6 +1264,12 @@ describe('ChannelRuntime M1 lane', () => {
         parts: [{ type: 'image', assetId: AssetIdSchema.parse('ast_noimage') }],
       }),
     ).rejects.toThrow('does not support message part: image')
+    await expect(
+      limited.runtime.sendMessage({
+        episodeId: episode.id,
+        parts: [{ type: 'rich', adapterKey: 'sample', kind: 'card', summary: '卡片摘要' }],
+      }),
+    ).rejects.toThrow('does not support message part: rich')
 
     const noAdapter = new ChannelRuntime(
       limited.core,

@@ -273,6 +273,7 @@ function CacheTrend({ samples }: { readonly samples: readonly RuntimeCacheSample
           return (
             <span
               key={`${sample.turn}:${sample.step}:${sample.at ?? index}`}
+              role="img"
               className={[
                 styles.cacheTrendBar,
                 share === undefined ? styles.cacheTrendBarUnknown : '',

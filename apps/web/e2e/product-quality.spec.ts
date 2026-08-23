@@ -1104,7 +1104,7 @@ test('desktop splitters and appearance preferences persist and recover defaults'
   await page.getByRole('separator', { name: '调整检查器宽度' }).dblclick()
   await expect(page.getByRole('separator', { name: '调整检查器宽度' })).toHaveAttribute('aria-valuenow', '344')
   await page.getByRole('button', { name: '收起频道检查器' }).click()
-  await expect(page.locator('[class*="inspectorPane"]')).toHaveAttribute('aria-hidden', 'true')
+  await expect(page.locator('div[class*="inspectorPane"]')).toHaveAttribute('aria-hidden', 'true')
   await expect(page.getByRole('complementary', { name: '频道', includeHidden: true })).toBeHidden()
   await page.reload()
   await expect(page.getByRole('button', { name: '展开频道检查器' })).toBeVisible()
@@ -1677,7 +1677,7 @@ test('the creator saves the exact running Package and selects the resulting exte
 
   await expect(page).toHaveURL(new RegExp(`/extensions/${savedExtensionId}$`, 'u'))
   await expect(page.getByRole('heading', { name: '持久摘要探针' })).toBeVisible()
-  await expect(page.getByText('工具：saved_summary_probe', { exact: true })).toBeVisible()
+  await expect(page.getByText('智能体工具 · saved_summary_probe', { exact: true })).toBeVisible()
   expect(HostApiContracts.saveExtensionFromDynamic.request.parse(saveRequest)).toEqual({
     agentId: targetAgentId,
     episodeId: targetEpisodeId,

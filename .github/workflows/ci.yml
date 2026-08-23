@@ -67,3 +67,77 @@ jobs:
         env:
           RESULTS: ${{ join(needs.*.result, ',') }}
         run: test "$RESULTS" = "success,success"
+
+  preview-prepare:
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: all-checks-passed
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22.23.2
+      - name: Ensure rolling Preview prerelease
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: node scripts/rolling-preview-release.mjs ensure
+
+  preview-desktop:
+    name: preview-desktop (${{ matrix.target }})
+    needs: preview-prepare
+    timeout-minutes: 90
+    permissions:
+      contents: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: mac
+            runner: macos-15
+          - target: win
+            runner: windows-2025
+          - target: linux
+            runner: ubuntu-24.04
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11.7.0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22.23.2
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: Build Desktop Preview
+        run: pnpm desktop:preview --platform ${{ matrix.target }}
+      - name: Upload platform assets to rolling Preview
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: node scripts/rolling-preview-release.mjs upload --platform ${{ matrix.target }}
+
+  preview-finalize:
+    if: always() && needs.preview-prepare.result == 'success'
+    needs: [preview-prepare, preview-desktop]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22.23.2
+      - name: Publish or clean rolling Preview
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: node scripts/rolling-preview-release.mjs finalize --build-result ${{ needs.preview-desktop.result }}

@@ -16,7 +16,9 @@ Desktop 使用 Renderer 自绘的统一 48px 品牌顶栏，不显示系统标�
 
 平台品牌资源位于 `resources/stable/` 与 `resources/preview/`。两端分别提供 ICNS、ICO、Linux PNG 图标组、DMG 背景和 NSIS assisted installer 图；Preview 通过黄铜三节点校准胶囊与 Stable 区分，不建立 beta 品牌身份。electron-builder 按当前 channel 选择对应 `buildResources`，这些文件不进入应用运行资源。
 
-产品版本的唯一手工来源是仓库根 `package.json#version`。正式版使用原值 `X.Y.Z`；预览版确定性派生为 `X.Y.Z-preview.<commit Unix 秒>`，不建立 beta 通道。两类安装包都写入当前 commit、`releaseId` 和 SHA-256 receipt。正式发布 `X.Y.Z` 时，公开仓库的 `vX.Y.Z` tag 必须指向 receipt 中的 commit；构建脚本本身不上传或发布产物。
+产品版本的唯一手工来源是仓库根 `package.json#version`。正式版使用原值 `X.Y.Z`；预览版确定性派生为 `X.Y.Z-preview.<commit Unix 秒>`，不建立 beta 通道。两类安装包都写入当前 commit、`releaseId` 和 SHA-256 receipt。正式发布 `X.Y.Z` 时，公开仓库的 `vX.Y.Z` tag 必须指向 receipt 中的 commit；本地构建命令只生成文件，不隐式上传。
+
+`main` 的 push 在完整 CI 通过后由三个原生 GitHub runner 构建 Preview，并直接更新固定 `preview` tag 对应的滚动 Prerelease，不使用 Actions Artifact 分发客户端。三端构建与 receipt 全部成功、且候选 commit 仍是远端 `main` 最新 HEAD 时才前移 `preview`；失败或已经过期的构建清理自己的候选附件并保留上一版完整 Preview。滚动页只保留最新一组三端安装包与 receipt，正式版 `vX.Y.Z` tag 不可移动。
 
 在 macOS 维护机上可以一次生成三端产物；macOS 仍必须由 macOS 构建。未签名 Windows 包关闭依赖 Wine 的 EXE 资源编辑，保留 NSIS 安装身份和完整应用内容。Windows 引导安装保留“仅当前用户/所有用户”两种范围；electron-builder 固定使用包含安全 `UserProgramFiles` 路径读取修复的 `26.15.3`，不得降级到仍会在当前用户路径解析阶段越界退出的版本。获得签名证书后恢复 EXE 资源编辑与签名：
 
