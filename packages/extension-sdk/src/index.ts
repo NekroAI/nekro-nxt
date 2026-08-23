@@ -158,7 +158,7 @@ return {
   apply() {}
 }
 
-// Client half: use only a Slot returned by NekroNxt Inspect.
+// Client half: use only a Slot returned by NekroNXT Inspect.
 return {
   inject: ['slots'],
   apply(ctx) {
@@ -196,19 +196,19 @@ export const NEKRO_NXT_EXTENSION_AUTHORING_REFERENCE: NekroNxtExtensionAuthoring
     'ctx.effect 的回调会立即执行；Tool 和 Slot 按示例直接注册，禁止在 effect 回调中立即调用注册返回的 disposer。自管资源必须由 effect 回调返回 teardown。',
     'Host RPC 必须在 Activation factory 注册；浏览器 RPC 没有 Agent Loop initiator，禁止依赖 currentInitiator 读取产品智能体身份。需要的稳定生成期数据应写入当前 Revision 源码或显式配置。',
     'Host 或 Client 失败后先读取 Inspect 诊断，再修复同一 Plugin；不要静默新建替代 Plugin。',
-    '只使用 NekroNxt Inspect 公布的 Contribution 和 Slot；禁止注册 root 或 DSH 官方 WebUI Slot。',
+    '只使用 NekroNXT Inspect 公布的 Contribution 和 Slot；禁止注册 root 或 DSH 官方 WebUI Slot。',
   ],
 }
 
 export const renderNekroNxtExtensionDevelopmentSkill = (
   reference: NekroNxtExtensionAuthoringReference = NEKRO_NXT_EXTENSION_AUTHORING_REFERENCE,
-): string => `# NekroNxt Extension Development
+): string => `# NekroNXT Extension Development
 
-宿主是 NekroNxt，DSH Cordis 只提供动态执行 ABI。你的目标是开发 NekroNxt 系统扩展，不是 DSH 官方 WebUI 插件。
+宿主是 NekroNXT，DSH Cordis 只提供动态执行 ABI。你的目标是开发 NekroNXT 系统扩展，不是 DSH 官方 WebUI 插件。
 
 ## 强制边界
 
-- 只能使用 cordis_inspect_list / cordis_inspect_query 公布的 NekroNxt Host Contribution 与 Client Slot。
+- 只能使用 cordis_inspect_list / cordis_inspect_query 公布的 NekroNXT Host Contribution 与 Client Slot。
 - Client 只允许：${reference.supportedContributions.clientSlots.map((slot) => `\`${slot}\``).join('、')}。
 - 禁止注册 root、DSH 官方页面 Slot、整页接管、Composer 或频道顶栏。
 - 动态运行、保存不可变扩展 Revision、给智能体启用扩展彼此独立；每一步都必须等待真实结果。
@@ -220,7 +220,7 @@ export const renderNekroNxtExtensionDevelopmentSkill = (
 ${reference.examples.hostTool}
 \`\`\`
 
-## Host RPC + NekroNxt Client Slot 示例
+## Host RPC + NekroNXT Client Slot 示例
 
 \`\`\`js
 ${reference.examples.hostRpcAndClientSlot}

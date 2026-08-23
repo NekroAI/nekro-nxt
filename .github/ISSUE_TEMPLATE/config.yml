@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: 安全漏洞
+    url: https://github.com/NekroAI/nekro-nxt/security/advisories/new
+    about: 请使用私密漏洞报告，不要创建公开 Issue。
+  - name: 使用文档
+    url: https://github.com/NekroAI/nekro-nxt/tree/main/docs
+    about: 快速开始、安装、配置、升级和排障。

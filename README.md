@@ -1,58 +1,132 @@
-# NekroNxt
-
 <p align="center">
-  <img src="apps/web/public/brand/mark.svg" width="96" height="96" alt="NekroNxt Logo" />
+  <img src="apps/web/public/brand/mark.svg" width="112" height="112" alt="NekroNXT Logo" />
 </p>
 
-<p align="center"><strong>月潮观测所</strong> · 冷静、精密、有生命感</p>
+<h1 align="center">NekroNXT</h1>
 
-> 包名：`nekro-nxt`  
-> 进度见 [`docs/04-一期开发计划与决策清单.md`](docs/04-一期开发计划与决策清单.md)
+<p align="center"><strong>让智能体进入真实群聊，也参与创造自己的扩展。</strong></p>
 
-NekroNxt 是 NekroAI 的下一代智能体产品：以 DSH 为核心智能体引擎，原生支持网页与多平台群聊，同时兼具娱乐性、生产力和可由智能体参与开发的动态扩展能力。
+<p align="center">
+  以 DSH 为核心引擎 · 原生频道隔离 · Desktop / Server 双宿主 · 动态扩展
+</p>
 
-## 当前目录
+<p align="center">
+  简体中文 · <a href="README.en.md">English summary</a> · <a href="docs/README.md">用户文档</a>
+</p>
 
-```text
-nekro-nxt/
-├─ AGENTS.md                 # AI 与开发者共同遵循的中文约束
-├─ docs/                     # 可公开的当前设计、协议与决策
-├─ prototype/                # 无依赖、可交互的需求确认原型
-├─ assets/product-concepts/  # 早期概念图，仅作视觉参考
-├─ apps/                     # Desktop、Server Host 与共享 Web UI
-└─ packages/                 # 核心、运行时、Adapter 与共享基础包
+![水月荧在月潮观测所展示 NekroNXT](assets/brand/raster/readme-hero.png)
+
+> [!IMPORTANT]
+> NekroNXT 目前处于早期预览阶段。核心 MVP 流程已经成形，但安装包尚未签名，升级恢复和平台连接仍在持续验证；请先使用测试数据体验。
+
+## NekroNXT 是什么
+
+NekroNXT 是 NekroAI 开发的高扩展智能体聊天系统。你可以创建具有独立人设、模型和能力的智能体，把内置频道或外部平台频道交给它响应，并让获得授权的智能体生成、试跑和保存本地扩展。
+
+- **以智能体为长期实体**：人设、模型、授权能力、频道和扩展都围绕同一个可管理对象组织；
+- **频道事实彼此隔离**：每个频道拥有自己的消息事实流和会话上下文，不把不同群聊直接混在一起；
+- **真实工具与投递证据**：智能体通过通信工具发言，模型原始输出不会自动冒充已发送消息；
+- **动态创造闭环**：描述需求、运行动态包、查看验证证据、保存为本地扩展，再明确选择使用它的智能体；
+- **同一产品，两种宿主**：Desktop 面向安装即用，Server 面向 7×24 小时运行，两者复用核心、数据模型、Web UI 和扩展体系。
+
+## 产品画面
+
+![NekroNXT 频道会话、消息与运行检查器](assets/brand/screenshots/channel-conversation.png)
+
+更多真实产品截图：[智能体工作台](assets/brand/screenshots/agent-workbench.png) · [平台连接](assets/brand/screenshots/connections.png) · [创造工作台](assets/brand/screenshots/creator-workbench.png)
+
+截图使用虚构智能体、频道和消息；具体平台名称来自已安装的适配器。
+
+## 安装与部署
+
+### Desktop：适合个人电脑
+
+Desktop 安装包自带 Server 与 Web UI，运行时不要求预装 Node、pnpm、Python 或 Docker。
+
+![Desktop 三步安装：下载、安装、完成首次配置](assets/brand/raster/install-desktop.webp)
+
+1. 从 [Preview Release](https://github.com/NekroAI/nekro-nxt/releases/tag/preview) 下载对应平台的安装包和 `receipt.json`；
+2. 安装 macOS Universal DMG、Windows x64 NSIS 或 Linux x64 AppImage；
+3. 打开 NekroNXT，在「设置」中配置模型供应商，再创建第一个智能体。
+
+当前安装包尚未签名。系统安全提示、Stable/Preview 并装和数据目录说明见[Desktop 安装指南](docs/guide/desktop.md)。
+
+### Server：适合长期运行
+
+Server 使用一个容器和一个主要 `/data`，并通过管理密钥、自动 TLS 与设备配对保护管理界面。
+
+![Server 三步部署：准备数据卷、启动服务、从 Desktop 连接](assets/brand/raster/install-server.webp)
+
+```bash
+git clone https://github.com/NekroAI/nekro-nxt.git
+cd nekro-nxt
+NEKRO_MANAGEMENT_KEY='请替换为至少32个字符的随机字符串' docker compose up --build -d
 ```
 
-## 从哪里开始
+默认只绑定 `127.0.0.1:4960`。开放远程访问、保存 `/data` 和配对 Desktop 前，请阅读 [Server 部署指南](docs/guide/server.md)。
 
-1. 阅读 [`AGENTS.md`](AGENTS.md) 与 [`docs/01-术语与文案规范.md`](docs/01-术语与文案规范.md)；
-2. 阅读 [`docs/NekroNxt项目共识.md`](docs/NekroNxt项目共识.md) 了解产品范围；
-3. 看一期进度读 [`docs/04-一期开发计划与决策清单.md`](docs/04-一期开发计划与决策清单.md)；
-4. 消息、频道或 Adapter 工作阅读 [`docs/03-消息内容与投递协议.md`](docs/03-消息内容与投递协议.md)；
-5. 改页面时阅读 [`docs/NekroNxt界面交互模型.md`](docs/NekroNxt界面交互模型.md) 和 [`docs/05-桌面UI与动效规范.md`](docs/05-桌面UI与动效规范.md)；
-6. 工程约束阅读 [`docs/06-开发与测试规范.md`](docs/06-开发与测试规范.md)；
-7. 引入外部机制或改公共契约时再读 [`docs/02-未来扩展方向.md`](docs/02-未来扩展方向.md) 与 [`docs/07-参考项目复用指南.md`](docs/07-参考项目复用指南.md)。
+## 十分钟完成首次使用
 
-`docs/archive/` 是冻结历史，不是现行规范。`prototype/` 与概念图只作视觉参考，不以它们为准实现产品。
+1. 在「设置 → 模型供应商」保存 API Key，并完成连接测试；
+2. 在「工作」中新建智能体，填写名称、人设并选择模型；
+3. 创建完成后打开自动生成的内置频道，发送第一条消息；
+4. 需要群聊接入时，在「连接」选择已安装的适配器并添加账号；
+5. 发现频道后绑定智能体与触发方式；
+6. 需要新能力时，为智能体开启创造权限，在创造工作台运行并保存本地扩展。
 
-## 当前最重要的产品约束
+完整步骤见[快速开始](docs/guide/getting-started.md)。
 
-- 产品名统一为 **NekroNxt**，包名统一为 `nekro-nxt`；
-- 面向用户只使用“智能体”，不混用 Agent、AI 成员、机器人或助手；
-- DSH 作为外部核心引擎集成，尽量不 Fork；
-- Adapter、工具、Preset、UI Slot 等能力位于同一扩展体系；
-- 所有用户可见消息经通信工具发送，模型原始输出只用于后台运行观察；
-- 首版先打通本地动态创造、运行、验证、保存和启用闭环；
-- 不迁移 Nekro Agent 的数据和资产，不承担兼容包袱；
-- Desktop 与 Server 复用同一核心，Server 目标为单容器与单主要数据目录。
+## 文档
 
-`prototype/` 与概念图只作视觉参考，实现以 `apps/web` 和现行文档为准。
+| 我想做什么           | 入口                                                                                   |
+| -------------------- | -------------------------------------------------------------------------------------- |
+| 安装并开始第一次对话 | [快速开始](docs/guide/getting-started.md)                                              |
+| 安装 Desktop         | [Desktop 安装](docs/guide/desktop.md)                                                  |
+| 部署长期运行的服务   | [Server 部署](docs/guide/server.md)                                                    |
+| 配置模型和 API Key   | [配置模型](docs/guide/models.md)                                                       |
+| 创建智能体、连接频道 | [创建智能体](docs/guide/agents.md) · [连接频道](docs/guide/connections.md)             |
+| 使用动态创造与扩展   | [使用扩展](docs/guide/extensions.md)                                                   |
+| 升级、备份或排障     | [升级与备份](docs/guide/upgrade-backup.md) · [常见问题](docs/guide/troubleshooting.md) |
+| 了解架构或参与开发   | [贡献者入口](docs/guide/contributors.md)                                               |
 
-## 完整产品分发实验
+## 项目状态
 
-- `pnpm desktop:preview --platform mac|win|linux|all`：构建可与正式版并装的未签名预览版；
-- `pnpm desktop:stable --platform mac|win|linux|all`：构建未签名正式版；
-- `pnpm dist:server`：用当前产品版本和 commit 生成同一 Release 身份的完整 Server 镜像；
-- `NEKRO_MANAGEMENT_KEY='<至少 32 个字符>' docker compose up --build`：以自动 TLS、设备鉴权、单容器和单 `/data` 启动 Server。
+- Stable 与 Preview 使用独立安装身份和数据目录，可以并装；
+- `main` 通过完整 CI 后生成滚动 Preview；正式 Stable Release 由版本 Tag 触发；
+- macOS 目标为 Universal DMG，Windows 与 Linux 当前目标为 x64；
+- 代码签名、公证、整包自动替换和社区扩展市场尚未开放；
+- 当前一期进度和已知缺口见[一期开发计划](docs/04-一期开发计划与决策清单.md)。
 
-macOS 产物固定为 Universal DMG，Windows 与 Linux 当前固定为 x64。版本只修改根 `package.json#version`：正式版为 `X.Y.Z`，预览版自动派生为可读 UTC 构建时间 `X.Y.Z-YYYYMMDD-HHmmutc`；Preview 只在产品名和安装包前缀出现一次，没有 beta 通道。当前实验不提供平台签名、公证、整包自动替换或完整数据根恢复。边界见 [`原子产品 Release 与双宿主分发`](docs/decisions/accepted/2026-08-21-原子产品Release与双宿主分发.md)与 [`Desktop 多实例与设备鉴权`](docs/decisions/implemented/2026-08-23-Desktop多实例与设备鉴权.md)。
+## 从源码运行
+
+源码开发需要 Node.js `^22.19.0 || >=24.0.0` 和 pnpm `11.7.0`：
+
+```bash
+pnpm install --frozen-lockfile
+pnpm dev
+```
+
+提交前运行：
+
+```bash
+pnpm check
+pnpm test
+pnpm build
+pnpm test:journey
+```
+
+工程约束、包职责和验证要求从 [`AGENTS.md`](AGENTS.md) 与[贡献者入口](docs/guide/contributors.md)进入。
+
+## 参与、支持与安全
+
+- 提交代码或文档前阅读 [`CONTRIBUTING.md`](CONTRIBUTING.md)；
+- Bug 与功能建议使用 [GitHub Issues](https://github.com/NekroAI/nekro-nxt/issues)；
+- 使用问题和支持边界见 [`SUPPORT.md`](SUPPORT.md)；
+- 安全漏洞请按 [`SECURITY.md`](SECURITY.md) 使用 GitHub 私密漏洞报告，不要创建公开 Issue；
+- 社区交流遵循 [`CODE_OF_CONDUCT.md`](CODE_OF_CONDUCT.md)。
+
+## 许可证与品牌
+
+项目所有者将在仓库公开前补充代码许可证；当前不存在隐含的软件授权。NekroNXT、NXT、水月荧、Logo、安装器图形和宣传素材不属于代码许可证，详见 [`BRAND.md`](BRAND.md) 与 [`NOTICE`](NOTICE)。
+
+Copyright © 2026 NekroAI contributors.

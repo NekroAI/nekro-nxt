@@ -21,5 +21,16 @@
     "file-type": "22.0.1",
     "ulid": "3.0.2",
     "zod": "4.4.3"
+  },
+  "description": "NekroNXT 核心领域模型与服务",
+  "author": "NekroAI contributors",
+  "homepage": "https://github.com/NekroAI/nekro-nxt#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/NekroAI/nekro-nxt.git",
+    "directory": "packages/core"
+  },
+  "bugs": {
+    "url": "https://github.com/NekroAI/nekro-nxt/issues"
   }
 }

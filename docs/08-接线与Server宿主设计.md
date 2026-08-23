@@ -1,11 +1,11 @@
-# NekroNxt 接线与 Server 宿主设计
+# NekroNXT 接线与 Server 宿主设计
 
 > 文档编号：08
 > 性质：现行 Server↔Web 接线
 
 ## 1. 边界
 
-- HTTP、SSE 和静态托管复用 DSH WebServer / frontend-static，不引入第二套 HTTP 框架；NekroNxt 在同一 WebServer 上显式注册产品 SPA 页面前缀，因为 DSH 0.1.1-rc.2 的静态 fallback 对未知路径返回 404；
+- HTTP、SSE 和静态托管复用 DSH WebServer / frontend-static，不引入第二套 HTTP 框架；NekroNXT 在同一 WebServer 上显式注册产品 SPA 页面前缀，因为 DSH 0.1.1-rc.2 的静态 fallback 对未知路径返回 404；
 - 领域 API 由 `NekroHostApi` 定义，只经过 Core、Channel Runtime、Asset 和 Extension 公开服务，不把数据库或 DSH `Context` 暴露到 wire；
 - Web 不复制业务事实。`ProductHostPort.getSnapshot()` / `subscribe()` / `execute()` 消费 Server 权威投影；Zustand 只保留主题、减少动效和草稿。
 

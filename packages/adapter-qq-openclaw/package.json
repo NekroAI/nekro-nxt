@@ -23,5 +23,16 @@
   },
   "devDependencies": {
     "@types/ws": "8.18.1"
+  },
+  "description": "@nekro-nxt/adapter-qq-openclaw workspace package",
+  "author": "NekroAI contributors",
+  "homepage": "https://github.com/NekroAI/nekro-nxt#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/NekroAI/nekro-nxt.git",
+    "directory": "packages/adapter-qq-openclaw"
+  },
+  "bugs": {
+    "url": "https://github.com/NekroAI/nekro-nxt/issues"
   }
 }

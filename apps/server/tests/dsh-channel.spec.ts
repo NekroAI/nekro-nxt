@@ -899,7 +899,7 @@ describe('DSH Host and Web Channel vertical slice', () => {
       })
       const extensionSkill = await host.loadNekroNxtExtensionSkill(enabledSession)
       expect(extensionSkill.provider).toBe('nekro-nxt-runtime')
-      expect(extensionSkill.content).toContain('宿主是 NekroNxt')
+      expect(extensionSkill.content).toContain('宿主是 NekroNXT')
       await expect(host.loadNekroNxtExtensionSkill(deniedSession)).rejects.toThrow('not granted')
 
       const privateServiceProbe = host.defineDynamicPackage(enabledSession, {

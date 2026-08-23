@@ -22,5 +22,16 @@
     "esbuild": "0.25.12",
     "ulid": "3.0.2",
     "zod": "4.4.3"
+  },
+  "description": "@nekro-nxt/extension-runtime workspace package",
+  "author": "NekroAI contributors",
+  "homepage": "https://github.com/NekroAI/nekro-nxt#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/NekroAI/nekro-nxt.git",
+    "directory": "packages/extension-runtime"
+  },
+  "bugs": {
+    "url": "https://github.com/NekroAI/nekro-nxt/issues"
   }
 }

@@ -30,5 +30,16 @@
     "@nekro-nxt/test-harness": "workspace:*",
     "@types/better-sqlite3": "9.6.0",
     "drizzle-kit": "0.31.10"
+  },
+  "description": "@nekro-nxt/storage-sqlite workspace package",
+  "author": "NekroAI contributors",
+  "homepage": "https://github.com/NekroAI/nekro-nxt#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/NekroAI/nekro-nxt.git",
+    "directory": "packages/storage-sqlite"
+  },
+  "bugs": {
+    "url": "https://github.com/NekroAI/nekro-nxt/issues"
   }
 }

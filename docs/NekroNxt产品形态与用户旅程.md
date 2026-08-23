@@ -1,4 +1,4 @@
-# NekroNxt 产品形态与用户旅程
+# NekroNXT 产品形态与用户旅程
 
 > 状态：V2 产品交互基线  
 > 更新日期：2026-08-15  
@@ -9,7 +9,7 @@
 
 ## 1. 产品究竟是什么
 
-NekroNxt 不是传统机器人后台，也不是把 IDE 包进聊天窗口。它是一个以智能体为长期实体、以 Channel 为对话事实边界、以 Extension 为能力单位的桌面与 Web 应用。
+NekroNXT 不是传统机器人后台，也不是把 IDE 包进聊天窗口。它是一个以智能体为长期实体、以 Channel 为对话事实边界、以 Extension 为能力单位的桌面与 Web 应用。
 
 ```text
 创建和管理智能体
@@ -65,6 +65,8 @@ Desktop 中每个服务实例都是独立工作区。切换实例只更换当前
 用户模式位于连接之后，路由为 `/users`。它是从平台消息事实积累出的身份目录，不是后台账号管理：同一 Connection 内跨频道出现的同一平台账号只显示一次，不同 Connection 不按昵称或裸平台 ID 合并；仅历史身份继续可见。
 
 工作模式的产品路由统一位于 `/work`：频道、智能体、新建智能体和创造分别使用 `/work/channels/:channelId`、`/work/agents/:agentId`、`/work/agents/new`、`/work/creator`。旧路径仅用于兼容重定向。
+
+设置对象列包含模型供应商、系统扩展、DSH 扩展、外观和关于。`/settings?tab=about` 展示 NekroNXT、NekroAI、产品版本、Release ID、代码仓库、软件许可证状态和品牌版权；旧 Server 缺少实时产品元数据时相应字段显示“暂无”，不阻断其他设置。
 
 避免使用一个“在线”绿点概括所有状态：
 
@@ -168,7 +170,7 @@ Adapter 是 Extension 提供的接入贡献；Connection 是登录账号；Chann
 
 ![创造工作台 V2](../assets/product-concepts/creator-workbench-v2.png)
 
-需求在已授权智能体的频道里描述。创造页按 Episode 展示正在运行的 Plugin 与 Package 历史、Client 预览审批和“保存为本地扩展”。保存请求携带当前 Episode、Plugin 和 Package 的精确归属，成功后直接进入新扩展详情并保持该扩展选中。动态 Client 与保存后的 Client 使用同一组 NekroNxt 产品 Slot 和合成 Props；DSH 官方 WebUI Slot 不进入产品能力面。系统不为创造另建智能体。保存不自动启用；启用在扩展详情或智能体工作台单独完成。
+需求在已授权智能体的频道里描述。创造页按 Episode 展示正在运行的 Plugin 与 Package 历史、Client 预览审批和“保存为本地扩展”。保存请求携带当前 Episode、Plugin 和 Package 的精确归属，成功后直接进入新扩展详情并保持该扩展选中。动态 Client 与保存后的 Client 使用同一组 NekroNXT 产品 Slot 和合成 Props；DSH 官方 WebUI Slot 不进入产品能力面。系统不为创造另建智能体。保存不自动启用；启用在扩展详情或智能体工作台单独完成。
 
 ### 4.7 平台用户目录：观察事实，不承担账号管理
 
@@ -180,7 +182,7 @@ Adapter 是 Extension 提供的接入贡献；Connection 是登录账号；Chann
 
 ![本地扩展详情 V2](../assets/product-concepts/local-extension-v2.png)
 
-所有 Extension 都在同一目录和生命周期中管理。`NekroNxt 扩展`、`Adapter`、`DSH 兼容`是贡献类型或兼容性标签，不构成互相割裂的插件系统。
+所有 Extension 都在同一目录和生命周期中管理。`NekroNXT 扩展`、`Adapter`、`DSH 兼容`是贡献类型或兼容性标签，不构成互相割裂的插件系统。
 
 页面呈现扩展名称、当前版本、创建来源、包含内容、检查结果、最近界面加载和使用范围。使用范围用紧凑对象卡片列出全部智能体，每张卡片显示身份、版本状态和独立开关；同一扩展可同时给多个智能体启用，创建它的智能体不拥有独占使用权。智能体工作台从相反视角用同一对象卡片语言列出全部本地扩展及当前智能体的启用状态，两处操作共享同一启用关系。包含产品界面的已启用版本可在扩展详情和智能体工作台显示面板；单个扩展界面加载失败时可“重新加载界面”，智能体工具和数据接口按已启用版本运行。版本回退、删除和新建修改会话尚未开放。
 

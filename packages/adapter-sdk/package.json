@@ -18,5 +18,16 @@
   "dependencies": {
     "@nekro-nxt/contracts": "workspace:*",
     "zod": "4.4.3"
+  },
+  "description": "NekroNXT 适配器开发 SDK",
+  "author": "NekroAI contributors",
+  "homepage": "https://github.com/NekroAI/nekro-nxt#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/NekroAI/nekro-nxt.git",
+    "directory": "packages/adapter-sdk"
+  },
+  "bugs": {
+    "url": "https://github.com/NekroAI/nekro-nxt/issues"
   }
 }

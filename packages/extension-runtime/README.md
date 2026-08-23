@@ -8,7 +8,7 @@
 
 SQLite 实现位于 `storage-sqlite`，DSH/Cordis 挂载位于 Server 组合根；本包不读取其他包数据库，也不依赖 Electron。动态运行、保存 Revision 和给智能体启用仍是三个独立动作。源码 Revision 是持久事实，构建缓存可删除重建。
 
-Revision 目录只保存 `manifest.json`、`source/` 和用于并发发布校验的 `content.sha256`。新 Revision 使用 Manifest V2，包含 `schemaVersion: 2`、稳定身份、当前 Host/Client entrypoint，以及由真实运行时记录的 Tool、RPC 和 NekroNxt 产品 Slot Contribution；旧 V1 继续只读并规范化为没有 Contribution，既不重写旧目录也不采信模型或 Web 自报。Builder 读取并严格校验 Manifest 后，按 entrypoint 构建当前 Host/Client。
+Revision 目录只保存 `manifest.json`、`source/` 和用于并发发布校验的 `content.sha256`。新 Revision 使用 Manifest V2，包含 `schemaVersion: 2`、稳定身份、当前 Host/Client entrypoint，以及由真实运行时记录的 Tool、RPC 和 NekroNXT 产品 Slot Contribution；旧 V1 继续只读并规范化为没有 Contribution，既不重写旧目录也不采信模型或 Web 自报。Builder 读取并严格校验 Manifest 后，按 entrypoint 构建当前 Host/Client。
 
 `build.json` 是可丢弃缓存清单，只保存 `revisionId`、由固定 Builder/Node ABI/Revision digest 计算的 `buildKey` 和相对产物名；缓存目录和绝对产物路径由 Builder 推导，并在命中前检查产物文件仍存在。损坏的 Manifest 会拒绝构建，损坏或不完整的缓存会重新构建。
 

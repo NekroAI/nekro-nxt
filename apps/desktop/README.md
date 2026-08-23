@@ -1,6 +1,6 @@
 # Desktop Host
 
-该应用是 NekroNxt 完整本地产品的 Electron 宿主。它不实现第二套领域逻辑，也不连接平台方维护的中心后端：Electron 主进程启动当前安装包内的 Server 生产入口，Server 装配同版本 DSH、Core、Extension Runtime，并托管当前安装包内的 `apps/web/dist`。
+该应用是 NekroNXT 完整本地产品的 Electron 宿主。它不实现第二套领域逻辑，也不连接平台方维护的中心后端：Electron 主进程启动当前安装包内的 Server 生产入口，Server 装配同版本 DSH、Core、Extension Runtime，并托管当前安装包内的 `apps/web/dist`。
 
 Desktop 自带本地 `nxt.product-release`，并可保存多个远程服务实例。每个远程实例加载该 Server 同包 Web UI，通过 management/chrome protocol 版本门禁保持 UI、Host、DSH 与 Extension Bridge 匹配。Electron 在本地 Host `/health/ready` 返回相同 `releaseId` 后开放本地 Profile。
 

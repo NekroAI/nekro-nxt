@@ -17,5 +17,16 @@
   },
   "dependencies": {
     "zod": "4.4.3"
+  },
+  "description": "NekroNXT 跨进程公共契约",
+  "author": "NekroAI contributors",
+  "homepage": "https://github.com/NekroAI/nekro-nxt#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/NekroAI/nekro-nxt.git",
+    "directory": "packages/contracts"
+  },
+  "bugs": {
+    "url": "https://github.com/NekroAI/nekro-nxt/issues"
   }
 }

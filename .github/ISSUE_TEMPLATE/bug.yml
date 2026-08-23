@@ -1,0 +1,55 @@
+name: Bug 报告
+description: 提交可复现的 NekroNXT 产品或构建问题
+title: '[Bug] '
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: 请先删除 API Key、真实聊天、账号、群标识、临时 URL 和本机路径。安全漏洞不要使用此模板。
+  - type: input
+    id: version
+    attributes:
+      label: 版本或 Release ID
+      placeholder: 例如 0.1.0-preview / release id / commit
+    validations:
+      required: true
+  - type: dropdown
+    id: host
+    attributes:
+      label: 宿主
+      options: [Desktop, Server, 源码开发环境]
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: 复现步骤
+      description: 使用虚构数据给出最小、连续的操作步骤。
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: 预期结果
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: 实际结果
+    validations:
+      required: true
+  - type: textarea
+    id: evidence
+    attributes:
+      label: 脱敏证据
+      description: 日志、截图、receipt 或已运行的检查；不要粘贴凭据和真实入站数据。
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: 提交确认
+      options:
+        - label: 我已经搜索现有 Issue。
+          required: true
+        - label: 这不是安全漏洞，内容已经脱敏。
+          required: true

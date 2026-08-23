@@ -14,5 +14,16 @@
     "dev": "tsdown --watch --no-clean",
     "test": "vitest run --root ../.. packages/client-migrations/tests",
     "typecheck": "tsc --noEmit"
+  },
+  "description": "@nekro-nxt/client-migrations workspace package",
+  "author": "NekroAI contributors",
+  "homepage": "https://github.com/NekroAI/nekro-nxt#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/NekroAI/nekro-nxt.git",
+    "directory": "packages/client-migrations"
+  },
+  "bugs": {
+    "url": "https://github.com/NekroAI/nekro-nxt/issues"
   }
 }

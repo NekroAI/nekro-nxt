@@ -18,5 +18,16 @@
   "dependencies": {
     "@nekro-nxt/adapter-sdk": "workspace:*",
     "@nekro-nxt/contracts": "workspace:*"
+  },
+  "description": "@nekro-nxt/adapter-web workspace package",
+  "author": "NekroAI contributors",
+  "homepage": "https://github.com/NekroAI/nekro-nxt#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/NekroAI/nekro-nxt.git",
+    "directory": "packages/adapter-web"
+  },
+  "bugs": {
+    "url": "https://github.com/NekroAI/nekro-nxt/issues"
   }
 }

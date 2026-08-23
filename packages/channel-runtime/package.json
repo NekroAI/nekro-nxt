@@ -23,5 +23,16 @@
   },
   "devDependencies": {
     "@nekro-nxt/test-harness": "workspace:*"
+  },
+  "description": "@nekro-nxt/channel-runtime workspace package",
+  "author": "NekroAI contributors",
+  "homepage": "https://github.com/NekroAI/nekro-nxt#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/NekroAI/nekro-nxt.git",
+    "directory": "packages/channel-runtime"
+  },
+  "bugs": {
+    "url": "https://github.com/NekroAI/nekro-nxt/issues"
   }
 }
