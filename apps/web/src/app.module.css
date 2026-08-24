@@ -345,6 +345,15 @@
   background: transparent;
 }
 
+:global(:root[data-glin-experiment]) .centeredState > div {
+  width: min(520px, 100%);
+  border: 0;
+  border-radius: 0;
+  padding: 32px;
+  background: transparent;
+  box-shadow: none;
+}
+
 :global(:root[data-glin-experiment]) .shell::before,
 :global(:root[data-glin-experiment]) .shell::after {
   position: fixed;

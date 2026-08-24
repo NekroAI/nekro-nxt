@@ -780,12 +780,99 @@ test('platform-user directory and persona references remain legible across deskt
       await page.setViewportSize(viewport)
       await page.emulateMedia({ colorScheme, reducedMotion: 'reduce' })
       await page.goto('/users')
-      await expect(page.getByRole('heading', { name: '全部用户' })).toBeVisible()
+      await expect(page.getByRole('heading', { name: '平台用户' })).toBeVisible()
       await expect(page.getByText('成员甲', { exact: true })).toBeVisible()
+      const workspaceGeometry = await page.evaluate(() => {
+        const stage = document.querySelector<HTMLElement>('main')
+        const root = document.querySelector<HTMLElement>('[data-product-page="users"]')
+        const toolbar = document.querySelector<HTMLElement>('[data-page-toolbar]')
+        const header = document.querySelector<HTMLElement>('[data-table-header]')
+        const body = document.querySelector<HTMLElement>('[data-table-scroll-region]')
+        const pagination = document.querySelector<HTMLElement>('[data-table-pagination]')
+        if (!stage || !root || !toolbar || !header || !body || !pagination) {
+          throw new Error('用户目录缺少桌面工作区结构。')
+        }
+        const stageRect = stage.getBoundingClientRect()
+        const rootRect = root.getBoundingClientRect()
+        const toolbarRect = toolbar.getBoundingClientRect()
+        const headerRect = header.getBoundingClientRect()
+        const paginationRect = pagination.getBoundingClientRect()
+        body.scrollTop = body.scrollHeight
+        return new Promise<{
+          rootWidthRatio: number
+          toolbarWidthRatio: number
+          bodyScrolled: boolean
+          paginationVisible: boolean
+          pageScrollTop: number
+          toolbarY: number
+          headerY: number
+          paginationY: number
+        }>((resolve) => {
+          requestAnimationFrame(() => {
+            const bodyScrolled = body.scrollTop > 0
+            body.scrollTop = 0
+            resolve({
+              rootWidthRatio: rootRect.width / stageRect.width,
+              toolbarWidthRatio: toolbarRect.width / rootRect.width,
+              bodyScrolled,
+              paginationVisible: paginationRect.top >= rootRect.top - 1 && paginationRect.bottom <= rootRect.bottom + 1,
+              pageScrollTop: root.scrollTop,
+              toolbarY: Math.abs(toolbar.getBoundingClientRect().y - toolbarRect.y),
+              headerY: Math.abs(header.getBoundingClientRect().y - headerRect.y),
+              paginationY: Math.abs(pagination.getBoundingClientRect().y - paginationRect.y),
+            })
+          })
+        })
+      })
+      expect(workspaceGeometry.rootWidthRatio).toBeGreaterThan(0.9)
+      expect(workspaceGeometry.toolbarWidthRatio).toBeGreaterThan(0.9)
+      if (viewport.height === 720) expect(workspaceGeometry.bodyScrolled).toBe(true)
+      expect(workspaceGeometry.paginationVisible).toBe(true)
+      expect(workspaceGeometry.pageScrollTop).toBe(0)
+      expect(workspaceGeometry.toolbarY).toBeLessThanOrEqual(1)
+      expect(workspaceGeometry.headerY).toBeLessThanOrEqual(1)
+      expect(workspaceGeometry.paginationY).toBeLessThanOrEqual(1)
       await assertViewportIntegrity(page)
       await capture(page, testInfo, `platform-users-${viewport.width}x${viewport.height}-${colorScheme}`)
     }
   }
+
+  await page.setViewportSize({ width: 1440, height: 900 })
+  await page.emulateMedia({ colorScheme: 'light', reducedMotion: 'reduce' })
+  await page.goto('/users')
+  await expect(page.getByText('成员甲', { exact: true })).toBeVisible()
+  await page.getByLabel('搜索名称').fill('不存在的成员')
+  const userEmpty = page.locator('[data-product-page="users"] [data-empty-state]')
+  await expect(userEmpty.getByText('当前筛选无结果', { exact: true })).toBeVisible()
+  const userEmptyGeometry = await userEmpty.evaluate((element) => {
+    const body = element.parentElement
+    if (!body) throw new Error('用户空态缺少表体区域。')
+    const style = getComputedStyle(element)
+    const bodyRect = body.getBoundingClientRect()
+    const emptyRect = element.getBoundingClientRect()
+    const bodyCenterX = bodyRect.left + body.clientLeft + body.clientWidth / 2
+    const bodyCenterY = bodyRect.top + body.clientTop + body.clientHeight / 2
+    return {
+      widthRatio: emptyRect.width / bodyRect.width,
+      heightRatio: emptyRect.height / bodyRect.height,
+      centerOffset: Math.hypot(
+        bodyCenterX - (emptyRect.left + emptyRect.width / 2),
+        bodyCenterY - (emptyRect.top + emptyRect.height / 2),
+      ),
+      background: style.backgroundColor,
+      borderWidth: style.borderTopWidth,
+      shadow: style.boxShadow,
+    }
+  })
+  expect(userEmptyGeometry.widthRatio).toBeGreaterThan(0.95)
+  expect(userEmptyGeometry.heightRatio).toBeGreaterThan(0.95)
+  expect(userEmptyGeometry.centerOffset).toBeLessThanOrEqual(1)
+  expect(userEmptyGeometry.background).toBe('rgba(0, 0, 0, 0)')
+  expect(userEmptyGeometry.borderWidth).toBe('0px')
+  expect(userEmptyGeometry.shadow).toBe('none')
+  await capture(page, testInfo, 'platform-users-empty-light')
+  await page.emulateMedia({ colorScheme: 'dark', reducedMotion: 'reduce' })
+  await capture(page, testInfo, 'platform-users-empty-dark')
 
   await page.setViewportSize({ width: 1440, height: 900 })
   await page.emulateMedia({ colorScheme: 'light', reducedMotion: 'reduce' })
@@ -828,31 +915,37 @@ test('platform-user directory and persona references remain legible across deskt
   expect(failures, failures.join('\n')).toEqual([])
 })
 
-test('platform-user and persona-reference transitions use the shared motion system', async ({ page }) => {
+test('platform-user updates stay local while persona references use the shared motion system', async ({ page }) => {
   const failures = installRuntimeFailureGate(page)
   await installProductRoutes(page)
   await page.setViewportSize({ width: 1440, height: 900 })
   await page.goto('/users')
-  await expect(page.getByRole('heading', { name: '全部用户' })).toBeVisible()
+  await expect(page.getByRole('heading', { name: '平台用户' })).toBeVisible()
+  await expect(page.getByText('成员甲', { exact: true })).toBeVisible()
+  await expect(page.getByText('正在连接', { exact: true })).toHaveCount(0)
 
+  const stableChromeBefore = await page.evaluate(() => {
+    const toolbar = document.querySelector<HTMLElement>('[data-page-toolbar]')!
+    const header = document.querySelector<HTMLElement>('[data-table-header]')!
+    const pagination = document.querySelector<HTMLElement>('[data-table-pagination]')!
+    return [toolbar, header, pagination].map((element) => {
+      const rect = element.getBoundingClientRect()
+      return { x: rect.x, y: rect.y, width: rect.width, height: rect.height }
+    })
+  })
   await page.getByRole('link', { name: /QQ 官方机器人/u }).click()
-  const stageSamples: number[] = []
-  let stageOverlap = false
-  for (let step = 0; step < 20; step += 1) {
-    await page.waitForTimeout(12)
-    const layers = await page.locator('[data-stage-layer]').evaluateAll((nodes) =>
-      nodes.map((node) => ({
-        phase: node.getAttribute('data-stage-layer'),
-        opacity: Number(getComputedStyle(node).opacity),
-      })),
-    )
-    stageSamples.push(...layers.map((layer) => layer.opacity))
-    if (layers.some((layer) => layer.phase === 'in') && layers.some((layer) => layer.phase === 'out'))
-      stageOverlap = true
-  }
-  await expect(page.getByRole('heading', { name: 'QQ 官方机器人' })).toBeVisible()
-  expect(stageOverlap, 'expected the user category layers to overlap').toBe(true)
-  expect(stageSamples.some((opacity) => opacity > 0.02 && opacity < 0.98)).toBe(true)
+  await expect(page.getByText('QQ 官方机器人 · 9 位用户', { exact: true })).toBeVisible()
+  await expect(page.locator('[data-product-page="users"] [data-stage-layer]')).toHaveCount(0)
+  const stableChromeAfter = await page.evaluate(() => {
+    const toolbar = document.querySelector<HTMLElement>('[data-page-toolbar]')!
+    const header = document.querySelector<HTMLElement>('[data-table-header]')!
+    const pagination = document.querySelector<HTMLElement>('[data-table-pagination]')!
+    return [toolbar, header, pagination].map((element) => {
+      const rect = element.getBoundingClientRect()
+      return { x: rect.x, y: rect.y, width: rect.width, height: rect.height }
+    })
+  })
+  expect(stableChromeAfter).toEqual(stableChromeBefore)
 
   await page.goto(`/work/agents/${targetAgentId}`)
   const editor = page.getByRole('textbox', { name: '人设' })
@@ -1234,12 +1327,13 @@ test('desktop splitters and appearance preferences persist and recover defaults'
   await expect(page.getByLabel('对比度')).toContainText('更高对比度')
   await expect(page.locator('[data-route-transition] > [data-stage-layer="in"]')).toHaveCount(1)
   const reducedMotionAlignment = await page.evaluate(() => {
-    const root = document.querySelector<HTMLElement>('[data-product-page="settings"]')
+    const stage = document.querySelector<HTMLElement>('[data-product-page="settings"] [data-stage-layer="in"]')
     const content = document.querySelector<HTMLElement>('[data-settings-content]')
-    if (!root || !content) throw new Error('减少动效后的设置页缺少内容中心轴。')
-    const rootRect = root.getBoundingClientRect()
+    if (!stage || !content) throw new Error('减少动效后的设置页缺少内容中心轴。')
+    const stageRect = stage.getBoundingClientRect()
     const contentRect = content.getBoundingClientRect()
-    return Math.abs(rootRect.left + rootRect.width / 2 - (contentRect.left + contentRect.width / 2))
+    const stageCenter = stageRect.left + stage.clientLeft + stage.clientWidth / 2
+    return Math.abs(stageCenter - (contentRect.left + contentRect.width / 2))
   })
   expect(reducedMotionAlignment).toBeLessThanOrEqual(1)
   await capture(page, testInfo, 'appearance-reduced-transparency-high-contrast')
@@ -1430,12 +1524,13 @@ test('redesigned relationship and lifecycle pages stay legible across representa
     }
     if (scene.route === '/settings?tab=appearance') {
       const alignment = await page.evaluate(() => {
-        const root = document.querySelector<HTMLElement>('[data-product-page="settings"]')
+        const stage = document.querySelector<HTMLElement>('[data-product-page="settings"] [data-stage-layer="in"]')
         const content = document.querySelector<HTMLElement>('[data-settings-content]')
-        if (!root || !content) throw new Error('设置页缺少内容中心轴。')
-        const rootRect = root.getBoundingClientRect()
+        if (!stage || !content) throw new Error('设置页缺少内容中心轴。')
+        const stageRect = stage.getBoundingClientRect()
         const contentRect = content.getBoundingClientRect()
-        return Math.abs(rootRect.left + rootRect.width / 2 - (contentRect.left + contentRect.width / 2))
+        const stageCenter = stageRect.left + stage.clientLeft + stage.clientWidth / 2
+        return Math.abs(stageCenter - (contentRect.left + contentRect.width / 2))
       })
       expect(alignment).toBeLessThanOrEqual(1)
     }
@@ -1538,35 +1633,35 @@ test('redesigned relationship and lifecycle pages stay legible across representa
   const emptySurfaceGeometry = await page.evaluate(() => {
     const root = document.querySelector<HTMLElement>('[data-product-page="extensions"]')
     const header = document.querySelector<HTMLElement>('[data-product-page="extensions"] [data-page-header]')
-    const card = document.querySelector<HTMLElement>('[data-product-page="extensions"] [data-empty-state]')
+    const empty = document.querySelector<HTMLElement>('[data-product-page="extensions"] [data-empty-state]')
     const transition = root?.querySelector<HTMLElement>(':scope > [data-route-transition]')
-    if (!root || !header || !card || !transition) throw new Error('扩展空态缺少必要表面。')
+    const stage = transition?.querySelector<HTMLElement>('[data-stage-layer="in"]')
+    if (!root || !header || !empty || !transition || !stage) throw new Error('扩展空态缺少必要区域。')
     const rootRect = root.getBoundingClientRect()
     const headerRect = header.getBoundingClientRect()
-    const cardRect = card.getBoundingClientRect()
-    const clips: string[] = []
-    let ancestor = card.parentElement
-    while (ancestor && ancestor !== root) {
-      const style = getComputedStyle(ancestor)
-      if ([style.overflowX, style.overflowY].some((value) => value === 'hidden' || value === 'clip')) {
-        clips.push(ancestor.getAttribute('data-route-transition') !== null ? 'transition' : ancestor.tagName)
-      }
-      ancestor = ancestor.parentElement
-    }
-    const center = rootRect.left + rootRect.width / 2
+    const emptyRect = empty.getBoundingClientRect()
+    const transitionRect = transition.getBoundingClientRect()
+    const stageRect = stage.getBoundingClientRect()
+    const emptyStyle = getComputedStyle(empty)
+    const rootCenter = rootRect.left + rootRect.width / 2
+    const stageCenter = stageRect.left + stage.clientLeft + stage.clientWidth / 2
     return {
-      cardCenterOffset: Math.abs(center - (cardRect.left + cardRect.width / 2)),
-      headerCenterOffset: Math.abs(center - (headerRect.left + headerRect.width / 2)),
+      emptyCenterOffset: Math.abs(stageCenter - (emptyRect.left + emptyRect.width / 2)),
+      emptyWidthRatio: emptyRect.width / transitionRect.width,
+      headerCenterOffset: Math.abs(rootCenter - (headerRect.left + headerRect.width / 2)),
       transitionOverflow: getComputedStyle(transition).overflow,
-      shadow: getComputedStyle(card).boxShadow,
-      clips,
+      background: emptyStyle.backgroundColor,
+      borderWidth: emptyStyle.borderTopWidth,
+      shadow: emptyStyle.boxShadow,
     }
   })
-  expect(emptySurfaceGeometry.cardCenterOffset).toBeLessThanOrEqual(1)
+  expect(emptySurfaceGeometry.emptyCenterOffset).toBeLessThanOrEqual(1)
+  expect(emptySurfaceGeometry.emptyWidthRatio).toBeGreaterThan(0.95)
   expect(emptySurfaceGeometry.headerCenterOffset).toBeLessThanOrEqual(1)
-  expect(emptySurfaceGeometry.transitionOverflow).toBe('visible')
-  expect(emptySurfaceGeometry.shadow).not.toBe('none')
-  expect(emptySurfaceGeometry.clips).toEqual([])
+  expect(emptySurfaceGeometry.transitionOverflow).toBe('hidden')
+  expect(emptySurfaceGeometry.background).toBe('rgba(0, 0, 0, 0)')
+  expect(emptySurfaceGeometry.borderWidth).toBe('0px')
+  expect(emptySurfaceGeometry.shadow).toBe('none')
   await capture(page, testInfo, 'redesign-extension-empty-light')
   await page.emulateMedia({ colorScheme: 'dark', reducedMotion: 'reduce' })
   await capture(page, testInfo, 'redesign-extension-empty-dark')
@@ -2465,6 +2560,29 @@ test('an initial Host failure is explicit and can recover without reloading', as
   await page.getByRole('button', { name: '重新连接' }).last().click()
   await expect(page.getByText('无法连接', { exact: true }).first()).toBeHidden()
   await expect(page.getByRole('link', { name: /QQ 官方机器人/u }).first()).toBeVisible()
+  await page.goto(`/work/channels/${targetChannelId}`)
+  const messageEmpty = page.locator('[data-empty-state]').filter({ hasText: '还没有消息' })
+  await expect(messageEmpty).toBeVisible()
+  const messageEmptySurface = await messageEmpty.evaluate((element) => {
+    const style = getComputedStyle(element)
+    const region = element.parentElement
+    if (!region) throw new Error('消息空态缺少滚动区域。')
+    const regionRect = region.getBoundingClientRect()
+    const emptyRect = element.getBoundingClientRect()
+    return {
+      widthRatio: emptyRect.width / regionRect.width,
+      centerOffset: Math.abs(regionRect.left + regionRect.width / 2 - (emptyRect.left + emptyRect.width / 2)),
+      background: style.backgroundColor,
+      borderWidth: style.borderTopWidth,
+      shadow: style.boxShadow,
+    }
+  })
+  expect(messageEmptySurface.widthRatio).toBeGreaterThan(0.95)
+  expect(messageEmptySurface.centerOffset).toBeLessThanOrEqual(1)
+  expect(messageEmptySurface.background).toBe('rgba(0, 0, 0, 0)')
+  expect(messageEmptySurface.borderWidth).toBe('0px')
+  expect(messageEmptySurface.shadow).toBe('none')
+  await capture(page, testInfo, 'channel-empty-dark-1100')
   expect(
     failures.filter((failure) => !failure.includes('503 (Service Unavailable)')),
     failures.join('\n'),

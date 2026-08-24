@@ -793,7 +793,7 @@ describe.sequential('NekroNxt browser projections', { timeout: 30_000 }, () => {
     await withProductPage(
       '/users',
       async (page) => {
-        await playwrightExpect(page.getByRole('heading', { name: '全部用户' })).toBeVisible()
+        await playwrightExpect(page.getByRole('heading', { name: '平台用户' })).toBeVisible()
         await playwrightExpect(page.getByText('成员甲', { exact: true })).toBeVisible()
         await playwrightExpect(page.locator('body')).not.toContainText('pid_membera')
         await page.getByLabel('搜索名称').fill('成员甲')

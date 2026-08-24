@@ -73,9 +73,9 @@ export function SettingsPage() {
             : '模型供应商'
 
   return (
-    <div className={[styles.page, styles.settingsPage].join(' ')} data-product-page="settings">
-      <StageCrossfade swapKey={activeTab}>
-        <PageHeader title={title} quiet />
+    <div className={[styles.page, styles.desktopPage, styles.settingsPage].join(' ')} data-product-page="settings">
+      <PageHeader title={title} quiet />
+      <StageCrossfade className={styles.desktopContentStage} swapKey={activeTab}>
         {activeTab === 'models' ? <LlmProviderSettings /> : null}
         {activeTab === 'dsh-extensions' ? <DshExtensionSettings /> : null}
         {activeTab === 'system-extensions' ? <SystemExtensionsPanel /> : null}

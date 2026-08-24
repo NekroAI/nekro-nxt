@@ -95,21 +95,13 @@
 
 .emptyState {
   display: grid;
-  min-height: 280px;
-  place-items: center;
+  width: 100%;
+  min-height: 180px;
   align-content: center;
-  border: 1px dashed var(--nxt-border-default);
-  border-radius: var(--nxt-radius-panel);
+  justify-items: center;
   padding: 32px;
   color: var(--nxt-text-muted);
-  background:
-    radial-gradient(
-      circle at calc(100% - 54px) 52px,
-      transparent 26px,
-      var(--nxt-brand-line) 27px 28px,
-      transparent 29px
-    ),
-    var(--nxt-bg-surface);
+  background: transparent;
   text-align: center;
 }
 
@@ -264,56 +256,31 @@
 }
 
 :global(:root[data-glin-experiment]) .emptyState {
-  position: relative;
-  width: min(640px, 100%);
-  min-height: 240px;
-  justify-self: center;
-  border: 1px solid var(--glass-border-strong);
-  border-top-color: var(--glass-refraction-top);
-  border-radius: var(--nxt-radius-dialog);
-  padding: 38px;
-  background:
-    radial-gradient(circle at 82% 18%, color-mix(in srgb, var(--nxt-brand-lumen) 13%, transparent), transparent 28%),
-    radial-gradient(circle at 18% 86%, color-mix(in srgb, var(--nxt-brand-brass) 8%, transparent), transparent 30%),
-    color-mix(in srgb, var(--nxt-bg-elevated) 78%, transparent);
-  box-shadow:
-    var(--shadow-glass-md),
-    inset 0 1px 0 rgb(255 255 255 / 22%);
-  overflow: hidden;
+  width: 100%;
+  min-height: 180px;
+  justify-self: stretch;
+  border: 0;
+  border-radius: 0;
+  padding: 40px 24px;
+  background: transparent;
+  box-shadow: none;
+  overflow: visible;
 }
 
 :global(:root[data-glin-experiment]) .emptyState::before,
 :global(:root[data-glin-experiment]) .emptyState::after {
-  position: absolute;
-  border: 1px solid color-mix(in srgb, var(--nxt-accent) 18%, transparent);
-  border-radius: 50%;
-  content: '';
-  pointer-events: none;
-}
-
-:global(:root[data-glin-experiment]) .emptyState::before {
-  top: 24px;
-  right: 28px;
-  width: 54px;
-  height: 54px;
-}
-
-:global(:root[data-glin-experiment]) .emptyState::after {
-  top: 39px;
-  right: 43px;
-  width: 24px;
-  height: 24px;
+  display: none;
 }
 
 :global(:root[data-glin-experiment]) .emptyState > svg {
-  width: 34px;
-  height: 34px;
-  padding: 7px;
-  border: 1px solid var(--glass-border-strong);
-  border-radius: 12px;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
   color: var(--nxt-accent);
-  background: color-mix(in srgb, var(--nxt-accent-soft) 72%, var(--nxt-bg-elevated));
-  box-shadow: var(--shadow-glass-sm);
+  background: transparent;
+  box-shadow: none;
 }
 
 :global(:root[data-glin-experiment]) .emptyTitle {
@@ -323,5 +290,5 @@
 }
 
 :global(:root[data-glin-experiment][data-reduced-transparency='true']) .emptyState {
-  background: var(--nxt-bg-elevated);
+  background: transparent;
 }

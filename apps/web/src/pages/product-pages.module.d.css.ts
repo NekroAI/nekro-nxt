@@ -123,6 +123,8 @@ declare const styles: {
   readonly creatorWorkspace: string
   readonly dangerSection: string
   readonly dark: string
+  readonly desktopContentStage: string
+  readonly desktopPage: string
   readonly detailPage: string
   readonly dialogChoice: string
   readonly dragOverlay: string
@@ -139,6 +141,7 @@ declare const styles: {
   readonly extensionOverview: string
   readonly extensionRow: string
   readonly extensionWorkspace: string
+  readonly extensionsPage: string
   readonly facts: string
   readonly formLayout: string
   readonly formStack: string
@@ -283,13 +286,23 @@ declare const styles: {
   readonly unread: string
   readonly userAvatar: string
   readonly userChannels: string
+  readonly userConnection: string
   readonly userGroup: string
   readonly userGroups: string
   readonly userIdentity: string
   readonly userLoadMore: string
+  readonly userNotices: string
+  readonly userPagination: string
   readonly userRow: string
   readonly userRows: string
+  readonly userTable: string
+  readonly userTableBody: string
+  readonly userTableHeader: string
   readonly userToolbar: string
+  readonly userToolbarActions: string
+  readonly userToolbarFields: string
+  readonly userWorkspace: string
+  readonly usersPage: string
   readonly viewSwitch: string
   readonly webSearchSetup: string
   readonly workDot: string

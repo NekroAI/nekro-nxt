@@ -4429,6 +4429,322 @@
   }
 }
 
+/* Desktop workspace pages keep chrome and controls stable while only their
+   data/detail region scrolls. */
+.desktopPage {
+  display: flex;
+  min-height: 0;
+  flex: 1 1 auto;
+  flex-direction: column;
+  overflow: hidden;
+  padding: 22px clamp(22px, 2.4vw, 38px) 0;
+}
+
+.desktopPage > :global([data-page-header]),
+.desktopPage > :global([data-route-transition]) {
+  width: 100%;
+  max-width: none;
+  flex: 0 0 auto;
+  margin-right: 0;
+  margin-left: 0;
+}
+
+.desktopPage > * {
+  width: 100%;
+  max-width: none;
+  margin-right: 0;
+  margin-left: 0;
+}
+
+.desktopPage > :global([data-page-header]) {
+  min-height: 62px;
+  margin-bottom: 0;
+  padding-top: 4px;
+  padding-bottom: 14px;
+}
+
+.desktopContentStage {
+  min-height: 0;
+  flex: 1 1 auto !important;
+  overflow: hidden !important;
+}
+
+.desktopContentStage > :global([data-stage-layer]) {
+  min-height: 0;
+  overflow-x: hidden;
+  overflow-y: auto;
+  padding: 20px 2px 36px;
+  scrollbar-gutter: stable;
+}
+
+.desktopContentStage > :global([data-stage-layer]) > :not(:global([data-page-header])) {
+  width: 100%;
+  max-width: none;
+  margin-right: 0;
+  margin-left: 0;
+}
+
+.desktopContentStage > :global([data-stage-layer]) > :global([data-empty-state]) {
+  min-height: 100%;
+  flex: 1 1 auto;
+}
+
+.usersPage > :global([data-page-header]) {
+  flex: 0 0 auto;
+}
+
+.userToolbar {
+  display: grid;
+  min-width: 0;
+  flex: 0 0 auto;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 16px;
+  align-items: end;
+  margin: 0;
+  border-bottom: 1px solid var(--nxt-border-subtle);
+  padding: 14px 0 16px;
+}
+
+.userToolbarFields {
+  display: grid;
+  min-width: 0;
+  grid-template-columns: minmax(180px, 1.25fr) minmax(150px, 0.8fr) minmax(170px, 0.95fr);
+  gap: 12px;
+}
+
+.userToolbarActions {
+  display: flex;
+  align-items: flex-end;
+  padding-bottom: 1px;
+}
+
+.userWorkspace {
+  display: grid;
+  min-width: 0;
+  min-height: 0;
+  flex: 1 1 0;
+  grid-template-rows: auto minmax(0, 1fr) auto;
+  overflow: hidden;
+}
+
+.userNotices {
+  display: grid;
+  grid-row: 1;
+  gap: 8px;
+}
+
+.userNotices:empty {
+  display: none;
+}
+
+.userTable {
+  display: grid;
+  min-width: 0;
+  min-height: 0;
+  grid-row: 2;
+  grid-template-rows: 38px minmax(0, 1fr);
+  overflow: hidden;
+  border-bottom: 1px solid var(--nxt-border-subtle);
+}
+
+.userTableHeader,
+.userRow {
+  display: grid;
+  grid-template-columns: 44px minmax(160px, 1fr) minmax(160px, 0.9fr) minmax(220px, 1.35fr);
+  gap: 12px;
+  align-items: center;
+  padding-right: 14px;
+  padding-left: 14px;
+}
+
+.userTableHeader {
+  border-bottom: 1px solid var(--nxt-border-subtle);
+  color: var(--nxt-text-muted);
+  background: color-mix(in srgb, var(--nxt-bg-subtle) 72%, transparent);
+  font-size: 11px;
+  font-weight: 680;
+}
+
+.userTableBody {
+  display: flex;
+  min-width: 0;
+  min-height: 0;
+  flex-direction: column;
+  overflow-x: hidden;
+  overflow-y: auto;
+  scrollbar-gutter: stable;
+}
+
+.userTableBody > :global([data-empty-state]) {
+  min-height: 100%;
+  flex: 1 1 0;
+}
+
+:global(:root[data-glin-experiment]) .userRows {
+  overflow: visible;
+  border: 0;
+  border-radius: 0;
+  padding: 0;
+  background: transparent;
+  box-shadow: none;
+}
+
+:global(:root[data-glin-experiment]) .userRow {
+  min-height: 62px;
+  border-bottom: 1px solid var(--nxt-border-subtle);
+  border-radius: 0;
+  padding-top: 9px;
+  padding-bottom: 9px;
+}
+
+:global(:root[data-glin-experiment]) .userRow + .userRow {
+  border-top: 0;
+}
+
+.userConnection,
+.userIdentity,
+.userChannels {
+  display: grid;
+  min-width: 0;
+  gap: 2px;
+}
+
+.userConnection strong,
+.userConnection small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.userConnection strong {
+  color: var(--nxt-text-primary);
+  font-size: 13px;
+}
+
+.userConnection small {
+  color: var(--nxt-text-muted);
+  font-size: 11px;
+}
+
+.userPagination {
+  display: flex;
+  min-height: 48px;
+  flex: 0 0 auto;
+  grid-row: 3;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  color: var(--nxt-text-muted);
+  font-size: 12px;
+}
+
+.extensionsPage .extensionWorkspace {
+  width: 100%;
+  max-width: none;
+  gap: 0;
+  padding: 0 0 36px;
+}
+
+.extensionsPage .workspaceLead {
+  max-width: none;
+  border-bottom: 1px solid var(--nxt-border-subtle);
+  padding: 0 0 20px;
+}
+
+.extensionsPage .extensionOverview,
+.extensionsPage .extensionDetailGrid {
+  width: 100%;
+  gap: clamp(24px, 3vw, 48px);
+}
+
+:global(:root[data-glin-experiment]) .extensionsPage .extensionOverview > section,
+:global(:root[data-glin-experiment]) .extensionsPage .extensionDetailGrid > section,
+:global(:root[data-glin-experiment]) .extensionsPage .activationSection {
+  gap: 16px;
+  border: 0;
+  border-bottom: 1px solid var(--nxt-border-subtle);
+  border-radius: 0;
+  padding: 24px 0;
+  background: transparent;
+  box-shadow: none;
+}
+
+:global(:root[data-glin-experiment]) .extensionsPage .activationSection {
+  padding-bottom: 28px;
+}
+
+.settingsPage .desktopContentStage > :global([data-stage-layer]) {
+  padding-top: 18px;
+}
+
+.settingsPage .settingsSection {
+  width: 100%;
+  max-width: none;
+  gap: 0;
+}
+
+:global(:root[data-glin-experiment]) .settingsPage .settingsGroup {
+  gap: 16px;
+  border: 0;
+  border-bottom: 1px solid var(--nxt-border-subtle);
+  border-radius: 0;
+  padding: 20px 0 26px;
+  background: transparent;
+  box-shadow: none;
+  overflow: visible;
+}
+
+:global(:root[data-glin-experiment]) .settingsPage .settingsGroup::after {
+  display: none;
+}
+
+:global(:root[data-glin-experiment]) .settingsPage .appearanceSignature {
+  margin: 0;
+  border: 0;
+  border-bottom: 1px solid var(--nxt-border-subtle);
+  border-radius: 0;
+  padding: 14px 0 18px;
+  background: transparent;
+  box-shadow: none;
+  overflow: visible;
+}
+
+.settingsPage .systemAdapterGrid {
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+}
+
+.messageListInner {
+  min-height: 100%;
+}
+
+.messageListInner > :global([data-empty-state]) {
+  min-height: 100%;
+  flex: 1 1 auto;
+}
+
+@media (width < 1280px) {
+  .desktopPage {
+    padding-right: 22px;
+    padding-left: 22px;
+  }
+
+  .userToolbarFields {
+    grid-template-columns: minmax(160px, 1fr) minmax(130px, 0.75fr) minmax(150px, 0.85fr);
+  }
+
+  .userTableHeader,
+  .userRow {
+    grid-template-columns: 40px minmax(140px, 1fr) minmax(140px, 0.9fr) minmax(180px, 1.2fr);
+  }
+
+  :global(:root[data-glin-experiment]) .extensionsPage .extensionOverview > section,
+  :global(:root[data-glin-experiment]) .extensionsPage .extensionDetailGrid > section,
+  :global(:root[data-glin-experiment]) .extensionsPage .activationSection {
+    padding-right: 0;
+    padding-left: 0;
+  }
+}
+
 /* -------------------------------------------------------------------------
    Glin UI experiment
    Material is concentrated on stable surfaces. Long message/list scroll
@@ -5324,4 +5640,18 @@
   :global(:root[data-glin-experiment]) .activationSection {
     padding: 16px;
   }
+}
+
+/* Keep the platform-user directory flat after the broader Glin surface pass
+   above. Rows belong to one data plane instead of becoming nested cards. */
+:global(:root[data-glin-experiment]) .usersPage .userRows {
+  padding: 0;
+  background: transparent;
+  box-shadow: none;
+}
+
+:global(:root[data-glin-experiment]) .usersPage .userRow {
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
 }

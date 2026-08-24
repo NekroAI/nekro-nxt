@@ -1,7 +1,6 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 480 320" role="img" aria-label="还没有连接或频道">
-  <rect width="480" height="320" rx="28" fill="#fffdf9"/>
-  <circle cx="240" cy="154" r="104" fill="#f0f5fd" stroke="#bdcfec" stroke-width="2"/>
+  <circle cx="240" cy="154" r="104" fill="#5575a9" fill-opacity=".10" stroke="#7390c0" stroke-width="2"/>
   <path d="M70 258Q180 210 280 262T430 238" fill="none" stroke="#b98c4a" stroke-opacity=".45" stroke-width="3"/>
   <path d="M46 278Q178 230 284 284T456 258" fill="none" stroke="#3fb1ea" stroke-opacity=".24" stroke-width="3"/>
-  <g fill="none" stroke="#172a45" stroke-width="7" stroke-linecap="round" stroke-linejoin="round"><circle cx="190" cy="138" r="24"/><circle cx="290" cy="138" r="24"/><path d="M214 138h20m12 0h20"/><path d="m232 122 16 32m0-32-16 32" stroke="#b4232d"/></g>
+  <g fill="none" stroke="#5575a9" stroke-width="7" stroke-linecap="round" stroke-linejoin="round"><circle cx="190" cy="138" r="24"/><circle cx="290" cy="138" r="24"/><path d="M214 138h20m12 0h20"/><path d="m232 122 16 32m0-32-16 32" stroke="#b4232d"/></g>
 </svg>

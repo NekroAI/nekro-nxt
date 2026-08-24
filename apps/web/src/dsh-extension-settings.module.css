@@ -320,3 +320,40 @@
   --dsw-motion-fast: 1ms;
   --dsw-motion-standard: 1ms;
 }
+
+:global(:root[data-glin-experiment]) .catalog {
+  height: 100%;
+  min-height: 0;
+  grid-template-columns: minmax(220px, 280px) minmax(0, 1fr);
+  gap: 0;
+  overflow: hidden;
+}
+
+:global(:root[data-glin-experiment]) .pluginList {
+  border-right: 1px solid var(--nxt-border-subtle);
+  padding: 0 14px 24px 0;
+  scrollbar-gutter: stable;
+}
+
+:global(:root[data-glin-experiment]) .detail {
+  overflow-x: hidden;
+  overflow-y: auto;
+  border-radius: 0;
+  padding: 0 0 36px 24px;
+  background: transparent;
+  box-shadow: none;
+  scrollbar-gutter: stable;
+}
+
+:global(:root[data-glin-experiment]) .detailHeader {
+  position: sticky;
+  z-index: var(--nxt-layer-sticky);
+  top: 0;
+  border-bottom: 1px solid var(--nxt-border-subtle);
+  padding: 0 0 var(--nxt-space-3);
+  background: var(--nxt-bg-canvas);
+}
+
+:global(:root[data-glin-experiment]) .nxtDshNativeSurface {
+  max-width: none;
+}

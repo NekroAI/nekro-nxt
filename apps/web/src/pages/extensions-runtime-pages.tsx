@@ -97,20 +97,20 @@ export function ExtensionsPage() {
   }
 
   return (
-    <div className={[styles.page, styles.detailPage].join(' ')} data-product-page="extensions">
-      <StageCrossfade swapKey={selected?.id ?? 'empty'}>
-        <PageHeader
-          title={selected?.name ?? '扩展库'}
-          meta={selected ? `版本 ${selected.revision} · ${extensions.length} 个本地扩展` : undefined}
-          quiet
-          actions={
-            selected ? (
-              <StatusBadge tone={extensionTone(selected.activations.length)}>
-                {extensionLabel(selected.activations.length)}
-              </StatusBadge>
-            ) : undefined
-          }
-        />
+    <div className={[styles.page, styles.desktopPage, styles.extensionsPage].join(' ')} data-product-page="extensions">
+      <PageHeader
+        title={selected?.name ?? '扩展库'}
+        meta={selected ? `版本 ${selected.revision} · ${extensions.length} 个本地扩展` : undefined}
+        quiet
+        actions={
+          selected ? (
+            <StatusBadge tone={extensionTone(selected.activations.length)}>
+              {extensionLabel(selected.activations.length)}
+            </StatusBadge>
+          ) : undefined
+        }
+      />
+      <StageCrossfade className={styles.desktopContentStage} swapKey={selected?.id ?? 'empty'}>
         {extensions.length === 0 ? (
           <EmptyState
             loading={host.status === 'initializing'}
