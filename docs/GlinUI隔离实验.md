@@ -10,6 +10,10 @@
 - 不使用 Glin 的 Canvas 液态折射 Hook，避免 ResizeObserver 与位移图生成进入高频聊天渲染路径；
 - `data-reduced-transparency`、`data-reduced-motion`、系统深浅主题和增强对比继续生效。
 
+## 客户端窗口衔接
+
+48px Renderer 顶栏是无系统标题栏窗口的连续上盖，最外层窗口圆角由 macOS、Windows 和 Linux 宿主负责。顶栏内的品牌与实验标识使用轻量玻璃胶囊；图标轨、对象列和主画布从顶栏下沿连续向下，顶部不重复收圆，只在窗口主体底部形成 18px 外轮廓。控件、列表选择、面板与 Dialog 分别使用 10px、12px、16px 与 20px 半径，避免相邻表面出现无意义的弧度跳变。
+
 ## 隔离运行
 
 实验入口固定使用独立端口和数据目录：

@@ -370,25 +370,49 @@
 }
 
 :global(:root[data-glin-experiment]) .windowTopBar {
-  border-bottom: 1px solid var(--glass-border);
+  border-bottom: 1px solid var(--nxt-border-subtle);
   color: var(--nxt-text-primary);
-  background: color-mix(in srgb, var(--nxt-bg-elevated) 62%, transparent);
+  background: color-mix(in srgb, var(--nxt-bg-elevated) 52%, transparent);
   backdrop-filter: var(--nxt-glass-filter-heavy);
   -webkit-backdrop-filter: var(--nxt-glass-filter-heavy);
-  box-shadow: inset 0 1px 0 rgb(255 255 255 / 30%);
+  box-shadow:
+    inset 0 1px 0 rgb(255 255 255 / 24%),
+    0 1px 0 rgb(255 255 255 / 8%);
 }
 
 :global(:root[data-glin-experiment]) .windowTopBar::after {
   right: var(--nxt-window-controls-right);
   left: 0;
-  background: linear-gradient(90deg, transparent, var(--nxt-brand-lumen), var(--nxt-brand-brass), transparent);
-  opacity: 0.38;
+  background: linear-gradient(
+    90deg,
+    transparent 0,
+    color-mix(in srgb, var(--nxt-brand-lumen) 52%, transparent) 24%,
+    color-mix(in srgb, var(--nxt-brand-brass) 38%, transparent) 48%,
+    transparent 76%
+  );
+  opacity: 0.28;
+}
+
+:global(:root[data-glin-experiment]) .windowBrand,
+:global(:root[data-glin-experiment]) .windowObjectTitle {
+  min-height: 34px;
+  border: 1px solid var(--glass-border);
+  border-top-color: var(--glass-refraction-top);
+  background: color-mix(in srgb, var(--nxt-bg-elevated) 52%, transparent);
+  box-shadow: inset 0 1px 0 rgb(255 255 255 / 18%);
+}
+
+:global(:root[data-glin-experiment]) .windowBrand {
+  gap: 9px;
+  min-width: 168px;
+  border-radius: 12px;
+  padding: 2px 11px 2px 3px;
 }
 
 :global(:root[data-glin-experiment]) .brandMark {
-  width: 30px;
-  height: 30px;
-  border-radius: 10px;
+  width: 28px;
+  height: 28px;
+  border-radius: 9px;
   filter: drop-shadow(0 7px 12px rgb(40 80 150 / 24%));
 }
 
@@ -403,7 +427,11 @@
 }
 
 :global(:root[data-glin-experiment]) .windowObjectTitle {
+  min-width: max-content;
+  flex: 0 1 auto;
   gap: 10px;
+  border-radius: 12px;
+  padding: 0 12px 0 8px;
   letter-spacing: 0.18em;
 }
 
@@ -443,7 +471,7 @@
   margin-right: 8px;
   padding: 10px 0;
   border-color: rgb(255 255 255 / 10%);
-  border-radius: 18px;
+  border-radius: 0 0 18px 18px;
   background: linear-gradient(180deg, rgb(255 255 255 / 8%), transparent 44%), var(--nxt-rail-bg);
 }
 
@@ -462,7 +490,7 @@
 }
 
 :global(:root[data-glin-experiment]) .tree {
-  border-radius: 18px 0 0 18px;
+  border-radius: 0 0 0 18px;
   background: var(--nxt-bg-sidebar);
 }
 
@@ -486,7 +514,7 @@
 
 :global(:root[data-glin-experiment]) .stage {
   overflow: hidden;
-  border-radius: 0 18px 18px 0;
+  border-radius: 0 0 18px 0;
   background: color-mix(in srgb, var(--nxt-bg-surface) 86%, transparent);
 }
 
@@ -498,7 +526,7 @@
 :global(:root[data-glin-experiment]) .centeredState > div {
   border-color: var(--glass-border-strong);
   border-top-color: var(--glass-refraction-top);
-  border-radius: var(--radius-2xl);
+  border-radius: var(--nxt-radius-dialog);
   background: var(--nxt-bg-elevated);
   backdrop-filter: var(--nxt-glass-filter-heavy);
   -webkit-backdrop-filter: var(--nxt-glass-filter-heavy);

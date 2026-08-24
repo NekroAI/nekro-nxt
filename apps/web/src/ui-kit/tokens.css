@@ -515,11 +515,13 @@ a {
   --nxt-danger-soft: rgb(190 64 83 / 12%);
   --nxt-unknown: #735f9f;
   --nxt-unknown-soft: rgb(115 95 159 / 12%);
-  --nxt-radius-control: var(--radius-md);
-  --nxt-radius-sm: var(--radius-sm);
-  --nxt-radius-panel: var(--radius-lg);
-  --nxt-radius-popover: var(--radius-lg);
-  --nxt-radius-dialog: var(--radius-2xl);
+  --nxt-radius-sm: 6px;
+  --nxt-radius-control: 10px;
+  --nxt-radius-md: 12px;
+  --nxt-radius-panel: 16px;
+  --nxt-radius-lg: 16px;
+  --nxt-radius-popover: 16px;
+  --nxt-radius-dialog: 20px;
   --nxt-shadow-control: var(--shadow-glass-sm), inset 0 1px 0 rgb(255 255 255 / 45%);
   --nxt-shadow-popover: var(--shadow-glass-md);
   --nxt-shadow-dialog: var(--shadow-glass-lg);

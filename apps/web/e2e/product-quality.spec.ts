@@ -2202,6 +2202,37 @@ test('desktop shell keeps a 48px top bar and a permanently available object pane
   await expect(topBar.getByText('NekroNXT', { exact: true })).toBeVisible()
   await expect(topBar.getByText('月潮观测所', { exact: true })).toBeVisible()
   await expect(topBar.getByText('CALM · PRECISE · ALIVE', { exact: true })).toBeVisible()
+  const chromeGeometry = await page.evaluate(() => {
+    const brand = document.querySelector<HTMLElement>('[data-window-brand]')
+    const dragTitle = document.querySelector<HTMLElement>('[data-window-drag-title]')
+    const rail = document.querySelector<HTMLElement>('aside[aria-label="模式"]')
+    const tree = document.querySelector<HTMLElement>('aside[aria-label="对象列"]')
+    const stage = document.querySelector<HTMLElement>('main')
+    if (!brand || !dragTitle || !rail || !tree || !stage) throw new Error('窗口外壳缺少必要表面。')
+    const brandStyle = getComputedStyle(brand)
+    const dragTitleStyle = getComputedStyle(dragTitle)
+    const railStyle = getComputedStyle(rail)
+    const treeStyle = getComputedStyle(tree)
+    const stageStyle = getComputedStyle(stage)
+    return {
+      brandRadius: Number.parseFloat(brandStyle.borderTopLeftRadius),
+      dragTitleRadius: Number.parseFloat(dragTitleStyle.borderTopLeftRadius),
+      railTop: Number.parseFloat(railStyle.borderTopLeftRadius),
+      railBottom: Number.parseFloat(railStyle.borderBottomLeftRadius),
+      treeTop: Number.parseFloat(treeStyle.borderTopLeftRadius),
+      treeBottom: Number.parseFloat(treeStyle.borderBottomLeftRadius),
+      stageTop: Number.parseFloat(stageStyle.borderTopRightRadius),
+      stageBottom: Number.parseFloat(stageStyle.borderBottomRightRadius),
+    }
+  })
+  expect(chromeGeometry.brandRadius).toBeGreaterThanOrEqual(10)
+  expect(chromeGeometry.dragTitleRadius).toBeGreaterThanOrEqual(10)
+  expect(chromeGeometry.railTop).toBe(0)
+  expect(chromeGeometry.treeTop).toBe(0)
+  expect(chromeGeometry.stageTop).toBe(0)
+  expect(chromeGeometry.railBottom).toBeGreaterThanOrEqual(16)
+  expect(chromeGeometry.treeBottom).toBeGreaterThanOrEqual(16)
+  expect(chromeGeometry.stageBottom).toBeGreaterThanOrEqual(16)
   await page.locator('html').evaluate((root) => root.style.setProperty('--nxt-window-controls-left', '84px'))
   expect(await topBar.evaluate((element) => getComputedStyle(element).paddingLeft)).toBe('98px')
   expect(await topBar.evaluate((element) => getComputedStyle(element, '::after').left)).toBe('0px')

@@ -701,7 +701,7 @@
    NekroNXT-owned; these rules translate them onto the Glin material scale. */
 :global(:root[data-glin-experiment]) .button,
 :global(:root[data-glin-experiment]) .iconButton {
-  border-radius: var(--radius-md);
+  border-radius: var(--nxt-radius-control);
   font-weight: 640;
   box-shadow: inset 0 1px 0 rgb(255 255 255 / 14%);
 }
@@ -823,7 +823,7 @@
 :global(:root[data-glin-experiment]) .dialogContent {
   border-color: var(--glass-border-strong);
   border-top-color: var(--glass-refraction-top);
-  border-radius: var(--radius-2xl);
+  border-radius: var(--nxt-radius-dialog);
   background: color-mix(in srgb, var(--nxt-bg-elevated) 90%, transparent);
   backdrop-filter: var(--nxt-glass-filter-heavy);
   -webkit-backdrop-filter: var(--nxt-glass-filter-heavy);

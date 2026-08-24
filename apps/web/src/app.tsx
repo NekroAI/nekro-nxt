@@ -136,14 +136,14 @@ function DesktopShell() {
   return (
     <div className={styles.shell} style={shellStyle}>
       <header className={styles.windowTopBar} data-window-top-bar>
-        <div className={styles.windowBrand}>
+        <div className={styles.windowBrand} data-window-brand>
           <img className={styles.brandMark} src="/brand/mark.svg" alt="" aria-hidden="true" />
           <span className={styles.brandCopy}>
             <strong>NekroNXT</strong>
             <small>月潮观测所</small>
           </span>
         </div>
-        <div className={styles.windowObjectTitle} aria-hidden="true">
+        <div className={styles.windowObjectTitle} data-window-drag-title aria-hidden="true">
           <span className={styles.experimentBadge}>LAB</span>
           <span>CALM · PRECISE · ALIVE</span>
         </div>
