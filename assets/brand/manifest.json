@@ -1415,8 +1415,8 @@
     {
       "path": "raster/readme-hero.png",
       "format": "png",
-      "bytes": 3713460,
-      "sha256": "20c27ae1f2cd797c43f01c56093def7ba848ad19ae9c1f4d049cbe5b1c160b84",
+      "bytes": 3524520,
+      "sha256": "472d42b1f9d3f26c65258967d3761efd1cacddcb19326b20bb988f5c19f7b394",
       "rightsCategory": "brand-reserved",
       "rights": "Copyright © 2026 NekroAI. All rights reserved.",
       "usage": "README, installation or product brand illustration",
