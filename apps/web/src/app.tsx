@@ -1,4 +1,4 @@
-import { Boxes, Cable, MessageSquare, Monitor, Moon, Server, Settings, Sun, UsersRound } from 'lucide-react'
+import { Boxes, Cable, MessageSquare, Moon, Server, Settings, Sun, UsersRound } from 'lucide-react'
 import { Component, useEffect, useMemo, useState, type CSSProperties, type ErrorInfo, type ReactNode } from 'react'
 import { Navigate, Outlet, Route, Routes, useLocation, useParams } from 'react-router-dom'
 import styles from './app.module.css'
@@ -36,6 +36,7 @@ import {
   type StatusTone,
 } from './ui-kit/index.js'
 import { OBJECT_PANE_WIDTH, useUiPreferences } from './ui-preferences.js'
+import { applyThemeChoice } from './theme-preference.js'
 
 const modes = [
   { to: '/work', label: '工作', icon: MessageSquare, work: true },
@@ -122,10 +123,10 @@ function DesktopShell() {
     '--nxt-object-pane-width': `${objectPaneWidth}px`,
   }
   useEffect(() => setObjectPaneWidth(savedObjectPaneWidth), [savedObjectPaneWidth])
-  const nextTheme = theme === 'system' ? 'light' : theme === 'light' ? 'dark' : 'system'
-  const themeLabel = theme === 'system' ? '跟随系统' : theme === 'light' ? '浅色' : '深色'
-  const nextThemeLabel = nextTheme === 'system' ? '跟随系统' : nextTheme === 'light' ? '浅色' : '深色'
-  const ThemeIcon = theme === 'system' ? Monitor : theme === 'light' ? Sun : Moon
+  const nextTheme = theme === 'light' ? 'dark' : 'light'
+  const themeLabel = theme === 'light' ? '浅色' : '深色'
+  const nextThemeLabel = nextTheme === 'light' ? '浅色' : '深色'
+  const ThemeIcon = theme === 'light' ? Sun : Moon
   const cycleTheme = (): void => {
     const root = document.documentElement
     if (!reducedMotion) root.dataset['themeChanging'] = ''
@@ -247,20 +248,11 @@ function ThemeEffects() {
   const contrast = useUiPreferences((state) => state.appearance.contrast)
 
   useEffect(() => {
-    const colorScheme = window.matchMedia('(prefers-color-scheme: dark)')
-    const syncGlinTheme = (): void => {
-      const dark = theme === 'dark' || (theme === 'system' && colorScheme.matches)
-      document.documentElement.classList.toggle('dark', dark)
-    }
-    if (theme === 'system') delete document.documentElement.dataset['theme']
-    else document.documentElement.dataset['theme'] = theme
+    applyThemeChoice(document.documentElement, theme)
     document.documentElement.dataset['glinExperiment'] = ''
     document.documentElement.dataset['reducedMotion'] = String(reducedMotion)
     document.documentElement.dataset['reducedTransparency'] = String(reducedTransparency)
     document.documentElement.dataset['contrast'] = contrast
-    syncGlinTheme()
-    colorScheme.addEventListener('change', syncGlinTheme)
-    return () => colorScheme.removeEventListener('change', syncGlinTheme)
   }, [theme, reducedMotion, reducedTransparency, contrast])
   return null
 }

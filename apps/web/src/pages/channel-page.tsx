@@ -14,7 +14,6 @@ import {
   type ChannelSummary,
 } from '../product-store.js'
 import {
-  AgentStateRing,
   Button,
   ConfirmDialog,
   DropdownMenu,
@@ -415,17 +414,14 @@ export function ChannelConversationPage() {
               <header className={styles.conversationHeader}>
                 <StageCrossfade swapKey={channel.id}>
                   <div>
-                    <h1>{channel.name}</h1>
+                    <div className={styles.conversationTitleRow} data-conversation-title>
+                      {agent ? <StatusBadge tone={agentTone(livePhase)}>{livePhase}</StatusBadge> : null}
+                      <h1>{channel.name}</h1>
+                    </div>
                     <p>{agent ? `由“${agent.name}”响应 · ${channel.trigger}` : '尚未绑定智能体'}</p>
                   </div>
                 </StageCrossfade>
                 <div className={styles.conversationHeaderActions} data-conversation-header-actions>
-                  {agent ? (
-                    <>
-                      {livePhase !== '空闲' ? <AgentStateRing state={livePhase} label={livePhase} /> : null}
-                      <StatusBadge tone={agentTone(livePhase)}>{livePhase}</StatusBadge>
-                    </>
-                  ) : null}
                   {agent && runtime?.episodeId ? (
                     <DropdownMenu.Root>
                       <DropdownMenu.Trigger asChild>

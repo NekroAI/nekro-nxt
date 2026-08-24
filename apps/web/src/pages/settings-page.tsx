@@ -40,8 +40,7 @@ function SystemExtensionsPanel() {
   )
 }
 
-const isThemeChoice = (value: string): value is ThemeChoice =>
-  value === 'system' || value === 'light' || value === 'dark'
+const isThemeChoice = (value: string): value is ThemeChoice => value === 'light' || value === 'dark'
 const isContrastChoice = (value: string): value is ContrastChoice =>
   value === 'system' || value === 'standard' || value === 'more'
 
@@ -103,7 +102,6 @@ export function SettingsPage() {
                   if (isThemeChoice(value)) useProductStore.getState().setTheme(value)
                 }}
                 options={[
-                  { value: 'system', label: '跟随系统' },
                   { value: 'light', label: '浅色' },
                   { value: 'dark', label: '深色' },
                 ]}

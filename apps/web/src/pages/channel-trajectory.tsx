@@ -4,15 +4,8 @@ import { useNxtNavigate } from '../shell/nxt-link.js'
 import { Cell, Pie, PieChart } from 'recharts'
 import { notify } from '../components/notifications.js'
 import { InlineFeedback } from '../components/product-feedback.js'
+import { useProductStore, type AgentSummary, type ChannelRuntimeView, type ChannelSummary } from '../product-store.js'
 import {
-  useProductStore,
-  type AgentRuntimeState,
-  type AgentSummary,
-  type ChannelRuntimeView,
-  type ChannelSummary,
-} from '../product-store.js'
-import {
-  AgentStateRing,
   Button,
   Disclosure,
   Enter,
@@ -23,8 +16,6 @@ import {
   SelectField,
   StatusBadge,
   Tabs,
-  Tooltip,
-  type StatusTone,
 } from '../ui-kit/index.js'
 import { isTriggerPolicy, TRIGGER_POLICY_OPTIONS } from './binding-task.js'
 import styles from './product-pages.module.css'
@@ -333,67 +324,69 @@ function CacheUsageCard({ cache }: { readonly cache: RuntimeCache }) {
         <h3>缓存</h3>
         <span>本次会话</span>
       </header>
-      <div className={styles.cacheLatest}>
-        <strong data-known={latestShare !== undefined}>{formatShare(latestShare)}</strong>
-        <span>{latestObserved ? '最近一次输入缓存覆盖' : '最近一次未报告缓存统计'}</span>
-        {latest ? (
-          <small>
-            第 {latest.turn} 轮 · 第 {latest.step} 步
-            {latestObserved
-              ? ` · 缓存读取 ${formatTokenCount(latest.cacheReadTokens ?? 0)} / 输入 ${formatTokenCount(latestInput)}`
-              : ''}
-          </small>
-        ) : null}
-      </div>
-      {latestSegments.length > 0 && latestInput > 0 ? (
-        <div className={styles.cacheComposition}>
-          <div className={styles.cacheCompositionTrack} aria-label="最近一次模型请求的输入组成">
-            {latestSegments.map((segment) => (
-              <span
-                key={segment.name}
-                className={segment.className}
-                style={{ width: `${(segment.value / latestInput) * 100}%` }}
-                title={`${segment.name} ${formatTokenCount(segment.value)}`}
-              />
-            ))}
+      <div className={styles.runtimeDataSurface} data-runtime-data-surface="cache">
+        <div className={styles.cacheLatest}>
+          <strong data-known={latestShare !== undefined}>{formatShare(latestShare)}</strong>
+          <span>{latestObserved ? '最近一次输入缓存覆盖' : '最近一次未报告缓存统计'}</span>
+          {latest ? (
+            <small>
+              第 {latest.turn} 轮 · 第 {latest.step} 步
+              {latestObserved
+                ? ` · 缓存读取 ${formatTokenCount(latest.cacheReadTokens ?? 0)} / 输入 ${formatTokenCount(latestInput)}`
+                : ''}
+            </small>
+          ) : null}
+        </div>
+        {latestSegments.length > 0 && latestInput > 0 ? (
+          <div className={styles.cacheComposition}>
+            <div className={styles.cacheCompositionTrack} aria-label="最近一次模型请求的输入组成">
+              {latestSegments.map((segment) => (
+                <span
+                  key={segment.name}
+                  className={segment.className}
+                  style={{ width: `${(segment.value / latestInput) * 100}%` }}
+                  title={`${segment.name} ${formatTokenCount(segment.value)}`}
+                />
+              ))}
+            </div>
+            <ul>
+              {latestSegments.map((segment) => (
+                <li key={segment.name}>
+                  <span className={segment.className} />
+                  {segment.name} {formatTokenCount(segment.value)}
+                </li>
+              ))}
+            </ul>
           </div>
-          <ul>
-            {latestSegments.map((segment) => (
-              <li key={segment.name}>
-                <span className={segment.className} />
-                {segment.name} {formatTokenCount(segment.value)}
-              </li>
-            ))}
-          </ul>
+        ) : null}
+        <div className={styles.cacheMetrics}>
+          <div>
+            <span>最近 {recentSamples.length} 次</span>
+            <strong>{formatShare(recentShare)}</strong>
+          </div>
+          <div>
+            <span>会话加权覆盖</span>
+            <strong>{formatShare(aggregateShare)}</strong>
+          </div>
+          <div>
+            <span>每请求平均</span>
+            <strong>{formatShare(aggregate.averageRequestReadShare)}</strong>
+          </div>
+          <div>
+            <span>请求命中</span>
+            <strong>{formatShare(requestHitShare)}</strong>
+          </div>
         </div>
-      ) : null}
-      <div className={styles.cacheMetrics}>
-        <div>
-          <span>最近 {recentSamples.length} 次</span>
-          <strong>{formatShare(recentShare)}</strong>
-        </div>
-        <div>
-          <span>会话加权覆盖</span>
-          <strong>{formatShare(aggregateShare)}</strong>
-        </div>
-        <div>
-          <span>每请求平均</span>
-          <strong>{formatShare(aggregate.averageRequestReadShare)}</strong>
-        </div>
-        <div>
-          <span>请求命中</span>
-          <strong>{formatShare(requestHitShare)}</strong>
-        </div>
+        {recentSamples.length > 1 ? <CacheTrend samples={recentSamples} /> : null}
+        <p className={styles.cacheTotals}>
+          累计读取 {formatTokenCount(aggregate.cacheReadTokens)} · 未缓存输入{' '}
+          {formatTokenCount(aggregate.uncachedInputTokens)}
+          {aggregate.cacheWriteTokens > 0 ? ` · 缓存写入 ${formatTokenCount(aggregate.cacheWriteTokens)}` : ''}
+        </p>
+        <p className={styles.cacheCoverage}>
+          数据覆盖 {aggregate.observedRequestCount}/{aggregate.usageRequestCount} 次请求 · {formatShare(coverageShare)}
+        </p>
       </div>
-      {recentSamples.length > 1 ? <CacheTrend samples={recentSamples} /> : null}
-      <p className={styles.cacheTotals}>
-        累计读取 {formatTokenCount(aggregate.cacheReadTokens)} · 未缓存输入{' '}
-        {formatTokenCount(aggregate.uncachedInputTokens)}
-        {aggregate.cacheWriteTokens > 0 ? ` · 缓存写入 ${formatTokenCount(aggregate.cacheWriteTokens)}` : ''}
-      </p>
-      <p className={styles.cacheCoverage}>
-        数据覆盖 {aggregate.observedRequestCount}/{aggregate.usageRequestCount} 次请求 · {formatShare(coverageShare)}
-      </p>
     </section>
   )
 }
@@ -459,49 +452,51 @@ function GenerationPerformanceCard({ performance }: { readonly performance: Runt
         <h3>生成表现</h3>
         <span>本次会话</span>
       </header>
-      <div className={styles.performancePrimary}>
-        <div>
-          <span>最近请求首 Token</span>
-          <strong data-known={latest?.firstTokenMs !== undefined}>
-            {latest?.firstTokenMs === undefined ? '暂无' : formatDurationMs(latest.firstTokenMs)}
-          </strong>
-          <small>{latest ? `第 ${latest.turn} 轮 · 第 ${latest.step} 步` : '暂无模型请求'}</small>
+      <div className={styles.runtimeDataSurface} data-runtime-data-surface="performance">
+        <div className={styles.performancePrimary}>
+          <div>
+            <span>最近请求首 Token</span>
+            <strong data-known={latest?.firstTokenMs !== undefined}>
+              {latest?.firstTokenMs === undefined ? '暂无' : formatDurationMs(latest.firstTokenMs)}
+            </strong>
+            <small>{latest ? `第 ${latest.turn} 轮 · 第 ${latest.step} 步` : '暂无模型请求'}</small>
+          </div>
+          <div>
+            <span>最近请求生成速度</span>
+            <strong data-known={latestRate !== undefined}>{formatTokenRate(latestRate)}</strong>
+            <small>{latestRate === undefined ? '暂无有效用量' : 'tok/s'}</small>
+          </div>
         </div>
-        <div>
-          <span>最近请求生成速度</span>
-          <strong data-known={latestRate !== undefined}>{formatTokenRate(latestRate)}</strong>
-          <small>{latestRate === undefined ? '暂无有效用量' : 'tok/s'}</small>
+        <div className={styles.performanceMetrics}>
+          <div>
+            <span>会话平均首 Token</span>
+            <strong>{averageFirstToken === undefined ? '暂无' : formatDurationMs(averageFirstToken)}</strong>
+          </div>
+          <div>
+            <span>会话加权速度</span>
+            <strong>
+              {formatTokenRate(weightedRate)}
+              {weightedRate === undefined ? '' : ' tok/s'}
+            </strong>
+          </div>
+          <div>
+            <span>模型处理累计</span>
+            <strong>{formatDurationMs(aggregate.llmMs)}</strong>
+          </div>
+          <div>
+            <span>工具调用累计</span>
+            <strong>{formatDurationMs(aggregate.toolMs)}</strong>
+          </div>
         </div>
+        {recentSamples.length > 1 ? <PerformanceTrend samples={recentSamples} /> : null}
+        <p className={styles.performanceTotals}>
+          重试 {aggregate.retryCount} 次
+          {aggregate.retryDelayMs > 0 ? ` · 等待 ${formatDurationMs(aggregate.retryDelayMs)}` : ''}
+        </p>
+        <p className={styles.performanceCoverage}>
+          数据覆盖 首 Token {aggregate.ttftSteps}/{aggregate.steps} · 生成速度 {aggregate.decodeSteps}/{aggregate.steps}
+        </p>
       </div>
-      <div className={styles.performanceMetrics}>
-        <div>
-          <span>会话平均首 Token</span>
-          <strong>{averageFirstToken === undefined ? '暂无' : formatDurationMs(averageFirstToken)}</strong>
-        </div>
-        <div>
-          <span>会话加权速度</span>
-          <strong>
-            {formatTokenRate(weightedRate)}
-            {weightedRate === undefined ? '' : ' tok/s'}
-          </strong>
-        </div>
-        <div>
-          <span>模型处理累计</span>
-          <strong>{formatDurationMs(aggregate.llmMs)}</strong>
-        </div>
-        <div>
-          <span>工具调用累计</span>
-          <strong>{formatDurationMs(aggregate.toolMs)}</strong>
-        </div>
-      </div>
-      {recentSamples.length > 1 ? <PerformanceTrend samples={recentSamples} /> : null}
-      <p className={styles.performanceTotals}>
-        重试 {aggregate.retryCount} 次
-        {aggregate.retryDelayMs > 0 ? ` · 等待 ${formatDurationMs(aggregate.retryDelayMs)}` : ''}
-      </p>
-      <p className={styles.performanceCoverage}>
-        数据覆盖 首 Token {aggregate.ttftSteps}/{aggregate.steps} · 生成速度 {aggregate.decodeSteps}/{aggregate.steps}
-      </p>
     </section>
   )
 }
@@ -520,13 +515,6 @@ const usageCaption = (usage: NonNullable<TrajectoryRecord['usage']>): string => 
     parts.push(`缓存读取 ${formatTokenCount(usage.cacheReadTokens)}`)
   }
   return `本步 ${parts.join(' · ')}`
-}
-
-const agentTone = (state: AgentRuntimeState): StatusTone => {
-  if (state === '思考中' || state === '使用工具') return 'info'
-  if (state === '等待输入') return 'info'
-  if (state === '不可用') return 'error'
-  return 'neutral'
 }
 
 export const readChannelCanvasView = (): ChannelCanvasView => {
@@ -945,8 +933,6 @@ export function ChannelSessionInspector({
   const [channelName, setChannelName] = useState(channel.name)
   const currentTrigger = channel.bindings[0]?.triggerPolicy ?? 'mentioned-or-replied'
   const currentTool = workTools(latestTurn(runtime)).find((tool) => tool.state === 'running')
-  const phaseExplanation =
-    runtime?.summary ?? (phase === '空闲' ? '智能体当前没有正在处理的任务。' : `智能体当前状态：${phase}。`)
   const hasRuntimeDetails = Boolean(
     phase !== '空闲' ||
     currentTool ||
@@ -1009,19 +995,6 @@ export function ChannelSessionInspector({
       <section className={styles.inspectorPanel}>
         <div className={styles.inspectorSectionHead}>
           <h2>运行</h2>
-          {agent ? (
-            <Tooltip.Root>
-              <Tooltip.Trigger asChild>
-                <span className={styles.inspectorStatusTrigger} tabIndex={0} aria-label={`${phase}状态说明`}>
-                  {phase !== '空闲' ? <AgentStateRing state={phase} label={phase} /> : null}
-                  <StatusBadge tone={agentTone(phase)}>{phase}</StatusBadge>
-                </span>
-              </Tooltip.Trigger>
-              <Tooltip.Portal>
-                <Tooltip.Content side="left">{phaseExplanation}</Tooltip.Content>
-              </Tooltip.Portal>
-            </Tooltip.Root>
-          ) : null}
         </div>
         {runtime?.summary && phase !== '空闲' ? <p className={styles.trajectorySummary}>{runtime.summary}</p> : null}
         {currentTool ? (

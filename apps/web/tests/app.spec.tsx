@@ -288,7 +288,7 @@ beforeEach(() => {
     approvals: [],
     dynamic: [],
     diagnosticNote: '',
-    theme: 'system',
+    theme: 'light',
     reducedMotion: false,
   })
 })
@@ -321,7 +321,7 @@ describe('NekroNxt product shell', () => {
 
   it('keeps the local service-instance control out of an ordinary browser shell', () => {
     const markup = renderRoute('/work/agents/new')
-    expect(markup).toContain('主题：跟随系统')
+    expect(markup).toContain('主题：浅色；切换为深色')
     expect(markup).not.toContain('服务实例：')
   })
 
@@ -1062,10 +1062,8 @@ describe.sequential('NekroNxt browser projections', { timeout: 30_000 }, () => {
       await playwrightExpect(page.getByText('只属于当前频道', { exact: true })).toBeVisible()
       await playwrightExpect(page.locator('body')).not.toContainText('不能混入当前频道')
       await playwrightExpect(page.getByText('发给智能体', { exact: true })).toBeVisible()
-      const idleStatus = page.getByLabel('空闲状态说明')
-      await playwrightExpect(idleStatus).toBeVisible()
-      await idleStatus.focus()
-      await playwrightExpect(page.getByRole('tooltip')).toContainText('智能体当前空闲。')
+      await playwrightExpect(page.locator('[data-conversation-title]').getByText('空闲', { exact: true })).toBeVisible()
+      await playwrightExpect(page.getByLabel('空闲状态说明')).toHaveCount(0)
       await playwrightExpect(page.getByLabel('上下文占用')).toContainText('已用 3.2k')
       await playwrightExpect(page.getByLabel('上下文组成')).toContainText('对话 1.9k')
       const generationPerformance = page.getByLabel('生成表现')
@@ -1075,6 +1073,16 @@ describe.sequential('NekroNxt browser projections', { timeout: 30_000 }, () => {
       await playwrightExpect(generationPerformance).toContainText('会话平均首 Token')
       await playwrightExpect(generationPerformance).toContainText('生成速度 2/2')
       const cacheAnalysis = page.getByLabel('缓存分析')
+      for (const kind of ['cache', 'performance']) {
+        const frame = page.locator(`[data-runtime-data-surface="${kind}"]`)
+        await playwrightExpect(frame).toBeVisible()
+        expect(
+          await frame.evaluate((element) => {
+            const style = getComputedStyle(element)
+            return [style.borderTopWidth, style.borderRightWidth, style.borderBottomWidth, style.borderLeftWidth]
+          }),
+        ).toEqual(['0px', '0px', '0px', '0px'])
+      }
       const cacheBox = await cacheAnalysis.boundingBox()
       const performanceBox = await generationPerformance.boundingBox()
       expect(cacheBox?.y).toBeLessThan(performanceBox?.y ?? 0)
@@ -1086,14 +1094,19 @@ describe.sequential('NekroNxt browser projections', { timeout: 30_000 }, () => {
       if (captureDirectory) {
         await mkdir(captureDirectory, { recursive: true })
         await page.screenshot({ path: join(captureDirectory, 'channel-runtime-light-1440.png'), fullPage: true })
-        await page.emulateMedia({ colorScheme: 'dark' })
+        await page.evaluate(() => window.localStorage.setItem('nekro-nxt.theme', 'dark'))
+        await page.reload()
         await page.screenshot({ path: join(captureDirectory, 'channel-runtime-dark-1440.png'), fullPage: true })
-        await page.emulateMedia({ colorScheme: 'light' })
+        await page.evaluate(() => window.localStorage.setItem('nekro-nxt.theme', 'light'))
+        await page.reload()
         await generationPerformance.scrollIntoViewIfNeeded()
         await page.screenshot({ path: join(captureDirectory, 'channel-performance-light-1440.png'), fullPage: true })
-        await page.emulateMedia({ colorScheme: 'dark' })
+        await page.evaluate(() => window.localStorage.setItem('nekro-nxt.theme', 'dark'))
+        await page.reload()
+        await generationPerformance.scrollIntoViewIfNeeded()
         await page.screenshot({ path: join(captureDirectory, 'channel-performance-dark-1440.png'), fullPage: true })
-        await page.emulateMedia({ colorScheme: 'light' })
+        await page.evaluate(() => window.localStorage.setItem('nekro-nxt.theme', 'light'))
+        await page.reload()
       }
       await playwrightExpect(page.getByRole('link', { name: /资料员/u }).first()).toBeVisible()
       const chatTab = page.getByRole('tab', { name: '会话' })

@@ -52,6 +52,8 @@ declare const styles: {
   readonly switchRow: string
   readonly switchThumb: string
   readonly tabsContent: string
+  readonly tabsIndicator: string
+  readonly tabsLabel: string
   readonly tabsList: string
   readonly tabsTrigger: string
   readonly textarea: string

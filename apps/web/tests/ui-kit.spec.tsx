@@ -121,6 +121,8 @@ describe('ui-kit control semantics', () => {
     expect(markup).toContain('role="tablist"')
     expect(markup).toContain('role="tab"')
     expect(markup).toContain('role="tabpanel"')
+    expect(markup).toContain('data-nxt-tabs-indicator=""')
+    expect(markup.match(/data-nxt-tabs-indicator/g)).toHaveLength(1)
     expect(markup).toContain('配置内容')
   })
 

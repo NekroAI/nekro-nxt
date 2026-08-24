@@ -160,7 +160,11 @@
   min-width: 32px;
   height: 32px;
   min-height: 32px;
-  color: var(--nxt-text-muted);
+}
+
+.shell .rail .railTheme:not(:disabled) {
+  color: var(--nxt-rail-text-strong);
+  background: color-mix(in srgb, var(--nxt-rail-hover) 72%, transparent);
 }
 
 .railInstance {

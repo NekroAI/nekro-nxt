@@ -14,6 +14,7 @@ import {
   useContext,
   useEffect,
   useId,
+  useLayoutEffect,
   useRef,
   useState,
   type AriaAttributes,
@@ -30,7 +31,15 @@ import {
 } from 'react'
 import { canCloseDialog, type DialogCloseReason } from './dialog-policy.js'
 import { useFloatingLayer, useModalLayer } from './layers.js'
-import { dialogVariants, overlayVariants, popoverVariants, tooltipVariants } from './motion.js'
+import {
+  dialogVariants,
+  nxtDuration,
+  nxtEase,
+  overlayVariants,
+  popoverVariants,
+  tooltipVariants,
+  tween,
+} from './motion.js'
 import { useNxtReducedMotion } from './presence.js'
 import styles from './ui.module.css'
 
@@ -890,16 +899,113 @@ export function ConfirmDialog({
   )
 }
 
+type TabsRootProps = ComponentPropsWithoutRef<typeof RadixTabs.Root>
 type TabsListProps = ComponentPropsWithoutRef<typeof RadixTabs.List>
 type TabsTriggerProps = ComponentPropsWithoutRef<typeof RadixTabs.Trigger>
 type TabsContentProps = ComponentPropsWithoutRef<typeof RadixTabs.Content>
 
-function TabsList({ className, ...props }: TabsListProps) {
-  return <RadixTabs.List className={[styles.tabsList, className].filter(Boolean).join(' ')} {...props} />
+const TabsValueContext = createContext<{
+  readonly activeValue: string | undefined
+  readonly orientation: 'horizontal' | 'vertical'
+}>({ activeValue: undefined, orientation: 'horizontal' })
+
+function TabsRoot({
+  value,
+  defaultValue,
+  onValueChange,
+  orientation = 'horizontal',
+  children,
+  ...props
+}: TabsRootProps) {
+  const [uncontrolledValue, setUncontrolledValue] = useState(defaultValue)
+  const activeValue = value ?? uncontrolledValue
+
+  return (
+    <TabsValueContext.Provider value={{ activeValue, orientation }}>
+      <RadixTabs.Root
+        {...props}
+        orientation={orientation}
+        {...(value === undefined ? (defaultValue === undefined ? {} : { defaultValue }) : { value })}
+        onValueChange={(nextValue) => {
+          if (value === undefined) setUncontrolledValue(nextValue)
+          onValueChange?.(nextValue)
+        }}
+      >
+        {children}
+      </RadixTabs.Root>
+    </TabsValueContext.Provider>
+  )
 }
 
-function TabsTrigger({ className, ...props }: TabsTriggerProps) {
-  return <RadixTabs.Trigger className={[styles.tabsTrigger, className].filter(Boolean).join(' ')} {...props} />
+function TabsList({ className, children, ...props }: TabsListProps) {
+  const { activeValue, orientation } = useContext(TabsValueContext)
+  const reduce = useNxtReducedMotion()
+  const listRef = useRef<HTMLDivElement>(null)
+  const [indicator, setIndicator] = useState({ offset: 0, size: 0, ready: false, shouldAnimate: false })
+
+  useLayoutEffect(() => {
+    const list = listRef.current
+    if (!list) return
+    const update = () => {
+      const activeTrigger =
+        Array.from(list.querySelectorAll<HTMLElement>('[role="tab"]')).find(
+          (trigger) => trigger.dataset['nxtTabsValue'] === activeValue,
+        ) ?? list.querySelector<HTMLElement>('[role="tab"][data-state="active"]')
+      if (!activeTrigger) {
+        setIndicator((current) => ({ ...current, ready: false, shouldAnimate: false }))
+        return
+      }
+      setIndicator((current) => ({
+        offset: orientation === 'vertical' ? activeTrigger.offsetTop : activeTrigger.offsetLeft,
+        size: orientation === 'vertical' ? activeTrigger.offsetHeight : activeTrigger.offsetWidth,
+        ready: true,
+        shouldAnimate: current.ready,
+      }))
+    }
+    update()
+    const resizeObserver = new ResizeObserver(update)
+    resizeObserver.observe(list)
+    for (const trigger of list.querySelectorAll('[role="tab"]')) resizeObserver.observe(trigger)
+    const stateObserver = new MutationObserver(update)
+    stateObserver.observe(list, { subtree: true, attributes: true, attributeFilter: ['data-state'] })
+    return () => {
+      resizeObserver.disconnect()
+      stateObserver.disconnect()
+    }
+  }, [activeValue, orientation])
+
+  return (
+    <RadixTabs.List ref={listRef} className={[styles.tabsList, className].filter(Boolean).join(' ')} {...props}>
+      <motion.span
+        key={reduce ? 'reduced-tabs-indicator' : 'animated-tabs-indicator'}
+        className={styles.tabsIndicator}
+        data-nxt-tabs-indicator=""
+        data-ready={indicator.ready ? '' : undefined}
+        initial={false}
+        animate={
+          orientation === 'vertical'
+            ? { y: indicator.offset, height: indicator.size, opacity: indicator.ready ? 1 : 0 }
+            : { x: indicator.offset, width: indicator.size, opacity: indicator.ready ? 1 : 0 }
+        }
+        transition={reduce || !indicator.shouldAnimate ? { duration: 0 } : tween(nxtDuration.spatial, nxtEase.standard)}
+        aria-hidden="true"
+      />
+      {children}
+    </RadixTabs.List>
+  )
+}
+
+function TabsTrigger({ className, children, value, ...props }: TabsTriggerProps) {
+  return (
+    <RadixTabs.Trigger
+      className={[styles.tabsTrigger, className].filter(Boolean).join(' ')}
+      value={value}
+      data-nxt-tabs-value={value}
+      {...props}
+    >
+      <span className={styles.tabsLabel}>{children}</span>
+    </RadixTabs.Trigger>
+  )
 }
 
 function TabsContent({ className, ...props }: TabsContentProps) {
@@ -907,7 +1013,7 @@ function TabsContent({ className, ...props }: TabsContentProps) {
 }
 
 export const Tabs = {
-  Root: RadixTabs.Root,
+  Root: TabsRoot,
   List: TabsList,
   Trigger: TabsTrigger,
   Content: TabsContent,

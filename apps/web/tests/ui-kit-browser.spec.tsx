@@ -57,7 +57,7 @@ const harnessModule = `
 const motionHarnessModule = `
   import React, { useEffect, useState } from 'react'
   import { createRoot } from 'react-dom/client'
-  import { Button, NxtMotionProvider, StageCrossfade } from '/src/ui-kit/index.tsx'
+  import { Button, NxtMotionProvider, StageCrossfade, Tabs } from '/src/ui-kit/index.tsx'
   import '/src/ui-kit/tokens.css'
 
   function TrackedPage({ page }) {
@@ -71,12 +71,21 @@ const motionHarnessModule = `
 
   function Harness() {
     const [page, setPage] = useState('a')
+    const [tab, setTab] = useState('profile')
     const [reduce, setReduce] = useState(false)
     return (
       <NxtMotionProvider reducedMotion={reduce}>
         <Button id="to-a" onClick={() => setPage('a')}>去A</Button>
         <Button id="to-b" onClick={() => setPage('b')}>去B</Button>
         <Button id="reduce" onClick={() => setReduce(true)}>减少动态</Button>
+        <Tabs.Root value={tab} onValueChange={setTab}>
+          <Tabs.List aria-label="测试页签">
+            <Tabs.Trigger value="profile">配置</Tabs.Trigger>
+            <Tabs.Trigger value="channels">频道与平台连接</Tabs.Trigger>
+          </Tabs.List>
+          <Tabs.Content value="profile">配置内容</Tabs.Content>
+          <Tabs.Content value="channels">频道内容</Tabs.Content>
+        </Tabs.Root>
         <div style={{ height: 240, overflow: 'hidden' }}>
           <StageCrossfade swapKey={page}>
             <TrackedPage page={page} />
@@ -301,6 +310,66 @@ describe.sequential('ui-kit Dialog browser behavior', { timeout: 30_000 }, () =>
       samples.some((value) => value > 0.02 && value < 0.97),
       `expected a mid-transition opacity, got ${samples.join(', ')}`,
     ).toBe(true)
+  }, 20_000)
+
+  it('slides one shared indicator between tabs instead of redrawing it at the destination', async () => {
+    await page.emulateMedia({ reducedMotion: 'no-preference' })
+    await page.goto(`${baseUrl}/__motion_harness__`, { waitUntil: 'domcontentloaded' })
+    const indicator = page.locator('[data-nxt-tabs-indicator]')
+    const destination = page.getByRole('tab', { name: '频道与平台连接' })
+    await expectPage(indicator).toHaveAttribute('data-ready', '')
+    await page.waitForFunction(() =>
+      Array.from(document.querySelectorAll('[data-nxt-tabs-indicator]')).every((element) =>
+        element.getAnimations().every((animation) => animation.playState !== 'running'),
+      ),
+    )
+    const [initialBox, destinationBox] = await Promise.all([indicator.boundingBox(), destination.boundingBox()])
+    if (!initialBox || !destinationBox) throw new Error('Tab harness did not render both indicator positions.')
+    const start = initialBox.x + initialBox.width / 2
+    const end = destinationBox.x + destinationBox.width / 2
+    await destination.click()
+    const samples = await page.evaluate(async () => {
+      const readCenter = (element: Element) => {
+        const rect = element.getBoundingClientRect()
+        return rect.left + rect.width / 2
+      }
+      const indicator = () => document.querySelector('[data-nxt-tabs-indicator]')
+      const samples: number[] = []
+      const startedAt = performance.now()
+      while (performance.now() - startedAt < 340) {
+        await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()))
+        const current = indicator()
+        if (current) samples.push(readCenter(current))
+      }
+      return samples
+    })
+
+    expect(await page.locator('[data-nxt-tabs-indicator]').count()).toBe(1)
+    expect(samples.some((position) => position > start + 2 && position < end - 2)).toBe(true)
+    expect(samples.at(-1)).toBeCloseTo(end, 0)
+    await expectPage(page.getByRole('tabpanel')).toContainText('频道内容')
+    expect(browserErrors).toEqual([])
+  }, 20_000)
+
+  it('moves the tab indicator immediately when Reduced Motion is enabled', async () => {
+    await page.goto(`${baseUrl}/__motion_harness__`, { waitUntil: 'domcontentloaded' })
+    await page.locator('#reduce').click()
+    await page.getByRole('tab', { name: '频道与平台连接' }).click()
+    const indicator = page.locator('[data-nxt-tabs-indicator]')
+    const destination = page.getByRole('tab', { name: '频道与平台连接' })
+    await expectPage(destination).toHaveAttribute('aria-selected', 'true')
+    const destinationBox = await destination.boundingBox()
+    expect(destinationBox).not.toBeNull()
+    const indicatorBox = await indicator.boundingBox()
+    expect((indicatorBox?.x ?? 0) + (indicatorBox?.width ?? 0) / 2).toBeCloseTo(
+      (destinationBox?.x ?? 0) + (destinationBox?.width ?? 0) / 2,
+      0,
+    )
+    expect(
+      await indicator.evaluate((element) =>
+        element.getAnimations().some((animation) => animation.playState === 'running'),
+      ),
+    ).toBe(false)
   }, 20_000)
 
   it('preserves the outgoing subtree and removes it from interaction and accessibility', async () => {

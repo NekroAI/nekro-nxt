@@ -9,6 +9,9 @@ import type { ExtensionJsonValue } from '@nekro-nxt/extension-sdk'
 import { create } from 'zustand'
 import type { DynamicPackageSummary, ProductHostPort } from './product-port.js'
 import { approveDynamicClientRequest, declineDynamicClientRequest } from './dynamic-client-bridge.js'
+import { readInitialThemeChoice, THEME_STORAGE_KEY, type ThemeChoice } from './theme-preference.js'
+
+export type { ThemeChoice } from './theme-preference.js'
 
 let activeHost: ProductHostPort | null = null
 
@@ -273,7 +276,6 @@ export interface DynamicApproval {
   readonly state: '等待批准' | '已批准' | '已拒绝'
 }
 
-export type ThemeChoice = 'system' | 'light' | 'dark'
 export type ProductHostStatus = 'initializing' | 'ready' | 'stale' | 'error'
 
 export interface ProductHostError {
@@ -436,12 +438,6 @@ export interface ProductState {
   setReducedMotion(enabled: boolean): void
 }
 
-const initialTheme = (): ThemeChoice => {
-  if (typeof window === 'undefined') return 'system'
-  const stored = window.localStorage.getItem('nekro-nxt.theme')
-  return stored === 'light' || stored === 'dark' ? stored : 'system'
-}
-
 const initialReducedMotion = (): boolean =>
   typeof window !== 'undefined' && window.localStorage.getItem('nekro-nxt.reduced-motion') === 'true'
 
@@ -500,7 +496,7 @@ export const useProductStore = create<ProductState>((set) => ({
   platformUsersRevision: 0,
   approvals: [],
   dynamic: [],
-  theme: initialTheme(),
+  theme: readInitialThemeChoice(),
   reducedMotion: initialReducedMotion(),
   diagnosticNote: '正在连接 NekroNXT Host…',
   workTreeOrder: { agentIds: [], channelIdsByAgent: {}, unboundChannelIds: [] },
@@ -818,10 +814,7 @@ export const useProductStore = create<ProductState>((set) => ({
     return result
   },
   setTheme: (theme) => {
-    if (typeof window !== 'undefined') {
-      if (theme === 'system') window.localStorage.removeItem('nekro-nxt.theme')
-      else window.localStorage.setItem('nekro-nxt.theme', theme)
-    }
+    if (typeof window !== 'undefined') window.localStorage.setItem(THEME_STORAGE_KEY, theme)
     useProductStore.setState({ theme })
   },
   setReducedMotion: (reducedMotion) => {

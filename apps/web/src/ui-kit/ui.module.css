@@ -462,15 +462,17 @@
 }
 
 .tabsList {
+  position: relative;
   display: flex;
   gap: var(--nxt-space-1);
   border-bottom: 1px solid var(--nxt-border-subtle);
 }
 
 .tabsTrigger {
+  position: relative;
+  z-index: 1;
   min-height: 36px;
   border: 0;
-  border-bottom: 2px solid transparent;
   padding: 0 var(--nxt-space-3);
   color: var(--nxt-text-secondary);
   background: transparent;
@@ -479,13 +481,42 @@
   cursor: pointer;
   transition:
     color var(--nxt-motion-fast) var(--nxt-ease-standard),
-    border-color var(--nxt-motion-fast) var(--nxt-ease-standard),
     background var(--nxt-motion-fast) var(--nxt-ease-standard);
 }
 
 .tabsTrigger[data-state='active'] {
-  border-bottom-color: var(--nxt-accent);
   color: var(--nxt-text-primary);
+}
+
+.tabsIndicator {
+  position: absolute;
+  z-index: 0;
+  bottom: -1px;
+  left: 0;
+  height: 2px;
+  border-radius: var(--nxt-radius-round);
+  background: var(--nxt-accent);
+  pointer-events: none;
+}
+
+.tabsLabel {
+  position: relative;
+  z-index: 1;
+}
+
+.tabsList[data-orientation='vertical'] {
+  flex-direction: column;
+  border-right: 1px solid var(--nxt-border-subtle);
+  border-bottom: 0;
+}
+
+.tabsList[data-orientation='vertical'] .tabsIndicator {
+  top: 0;
+  right: -1px;
+  bottom: auto;
+  left: auto;
+  width: 2px;
+  height: auto;
 }
 
 .tabsTrigger:disabled {
@@ -849,10 +880,30 @@
 }
 
 :global(:root[data-glin-experiment]) .tabsTrigger[data-state='active'] {
+  background: transparent;
+}
+
+:global(:root[data-glin-experiment]) .tabsIndicator {
+  top: 1px;
+  bottom: 1px;
+  height: auto;
   border: 1px solid var(--glass-border-strong);
   border-top-color: var(--glass-refraction-top);
+  border-radius: calc(var(--radius-md) - 1px);
   background: var(--nxt-bg-elevated);
   box-shadow: var(--shadow-glass-sm);
+}
+
+:global(:root[data-glin-experiment]) .tabsList[data-orientation='vertical'] .tabsIndicator {
+  top: 0;
+  right: -1px;
+  bottom: auto;
+  left: auto;
+  width: 2px;
+  min-height: 0;
+  border: 0;
+  background: var(--nxt-accent);
+  box-shadow: none;
 }
 
 :global(:root[data-glin-experiment]) .navMark {

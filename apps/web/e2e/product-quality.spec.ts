@@ -520,6 +520,30 @@ const expectProductMotionSettled = async (page: Page): Promise<void> => {
   if ((await activeLayer.count()) > 0) await expect(activeLayer).toHaveCSS('opacity', '1')
 }
 
+const expectTabsSettled = async (page: Page): Promise<void> => {
+  const indicator = page.locator('[data-nxt-tabs-indicator]').last()
+  await expect(indicator).toBeVisible()
+  await expect
+    .poll(() =>
+      indicator.evaluate((element) => element.getAnimations().some((animation) => animation.playState === 'running')),
+    )
+    .toBe(false)
+  await expect
+    .poll(() =>
+      indicator.evaluate((element) => {
+        const activeTab = element.parentElement?.querySelector<HTMLElement>('[role="tab"][aria-selected="true"]')
+        if (!activeTab) return Number.POSITIVE_INFINITY
+        const indicatorRect = element.getBoundingClientRect()
+        const activeRect = activeTab.getBoundingClientRect()
+        return Math.max(
+          Math.abs(indicatorRect.left - activeRect.left),
+          Math.abs(indicatorRect.right - activeRect.right),
+        )
+      }),
+    )
+    .toBeLessThanOrEqual(1)
+}
+
 test('writes the four public product screenshots from fictional production data', async ({ page }) => {
   const outputDirectory = process.env['NEKRO_BRAND_SCREENSHOT_DIR']
   test.skip(!outputDirectory, 'Only runs when refreshing committed public screenshots.')
@@ -598,6 +622,7 @@ const dragHorizontally = async (page: Page, handle: Locator, deltaX: number): Pr
 test('three desktop viewports remain usable in both themes and reduced motion', async ({ page }, testInfo) => {
   const failures = installRuntimeFailureGate(page)
   await installProductRoutes(page)
+  await page.goto('/work')
 
   for (const viewport of [
     { width: 1100, height: 720 },
@@ -605,10 +630,22 @@ test('three desktop viewports remain usable in both themes and reduced motion', 
     { width: 1920, height: 1080 },
   ]) {
     for (const colorScheme of ['light', 'dark'] as const) {
+      await page.evaluate((theme) => window.localStorage.setItem('nekro-nxt.theme', theme), colorScheme)
       await page.setViewportSize(viewport)
       await page.emulateMedia({ colorScheme, reducedMotion: 'reduce' })
       await page.goto(`/work/channels/${targetChannelId}`)
       await expect(page.getByRole('heading', { name: '资料员的内置频道' })).toBeVisible()
+      const titleStatusGeometry = await page.locator('[data-conversation-title]').evaluate((element) => {
+        const chip = element.firstElementChild
+        const heading = element.querySelector('h1')
+        return {
+          chipRight: chip?.getBoundingClientRect().right ?? Number.POSITIVE_INFINITY,
+          headingLeft: heading?.getBoundingClientRect().left ?? 0,
+        }
+      })
+      expect(titleStatusGeometry.chipRight).toBeLessThan(titleStatusGeometry.headingLeft)
+      await expect(page.locator('[data-conversation-header-actions]').getByText('空闲', { exact: true })).toHaveCount(0)
+      await expect(page.locator('aside[aria-label="频道"]').getByText('空闲', { exact: true })).toHaveCount(0)
       const headerActionsBox = await page.locator('[data-conversation-header-actions]').boundingBox()
       expect(headerActionsBox?.height ?? Number.POSITIVE_INFINITY).toBeLessThanOrEqual(36)
       await expect(page.locator('[data-conversation-header-actions] > *').last()).toContainText('会话')
@@ -716,6 +753,14 @@ test('three desktop viewports remain usable in both themes and reduced motion', 
       await expect(cacheAnalysis).toContainText('会话加权覆盖')
       await expect(cacheAnalysis).toContainText('数据覆盖 4/4 次请求')
       await expect(page.getByLabel('最近 4 次模型请求的缓存读取趋势')).toBeVisible()
+      const cacheFrame = page.locator('[data-runtime-data-surface="cache"]')
+      await expect(cacheFrame).toBeVisible()
+      expect(
+        await cacheFrame.evaluate((element) => {
+          const style = getComputedStyle(element)
+          return [style.borderTopWidth, style.borderRightWidth, style.borderBottomWidth, style.borderLeftWidth]
+        }),
+      ).toEqual(['0px', '0px', '0px', '0px'])
       await assertViewportIntegrity(page)
       if (colorScheme === 'dark') {
         const semanticTokens = await page.evaluate(() => {
@@ -771,12 +816,14 @@ test('platform-user directory and persona references remain legible across deskt
   const failures = installRuntimeFailureGate(page)
   await installProductRoutes(page)
   await page.addInitScript(() => window.localStorage.setItem('nekro-nxt.reduced-motion', 'true'))
+  await page.goto('/users')
   for (const viewport of [
     { width: 1100, height: 720 },
     { width: 1440, height: 900 },
     { width: 1920, height: 1080 },
   ]) {
     for (const colorScheme of ['light', 'dark'] as const) {
+      await page.evaluate((theme) => window.localStorage.setItem('nekro-nxt.theme', theme), colorScheme)
       await page.setViewportSize(viewport)
       await page.emulateMedia({ colorScheme, reducedMotion: 'reduce' })
       await page.goto('/users')
@@ -1009,7 +1056,10 @@ test('representative product surfaces match committed visual baselines', async (
   )
   await page.setViewportSize({ width: 1440, height: 900 })
   await page.emulateMedia({ colorScheme: 'light', reducedMotion: 'no-preference' })
-  await page.addInitScript(() => window.localStorage.setItem('nekro-nxt.reduced-motion', 'true'))
+  await page.addInitScript(() => {
+    window.localStorage.setItem('nekro-nxt.theme', 'light')
+    window.localStorage.setItem('nekro-nxt.reduced-motion', 'true')
+  })
   const runtimeReady = page.waitForResponse((response) => {
     const url = new URL(response.url())
     return url.pathname === `/api/channels/${targetChannelId}/runtime` && response.ok()
@@ -1017,7 +1067,7 @@ test('representative product surfaces match committed visual baselines', async (
   await page.goto(`/work/channels/${targetChannelId}`)
   await runtimeReady
   await expect(page.getByRole('heading', { name: '资料员的内置频道' })).toBeVisible()
-  await expect(page.locator('[data-conversation-header-actions]').getByText('空闲', { exact: true })).toBeVisible()
+  await expect(page.locator('[data-conversation-title]').getByText('空闲', { exact: true })).toBeVisible()
   const objectPane = page.getByLabel('对象列')
   const targetAgentLink = objectPane.locator(`a[href="/work/agents/${targetAgentId}"]`)
   const sourceAgentLink = objectPane.locator(`a[href="/work/agents/${sourceAgentId}"]`)
@@ -1031,6 +1081,13 @@ test('representative product surfaces match committed visual baselines', async (
   const dragHandle = page.getByRole('button', { name: '拖动“记录员”及其频道排序' })
   const stateIndicator = sourceAgentLink.locator('[data-tree-state-indicator]')
   await expect(stateIndicator).toHaveCSS('opacity', '1')
+  await page.locator('html').evaluate((root) => root.setAttribute('data-reduced-motion', 'false'))
+  expect(
+    await stateIndicator
+      .locator('[data-runtime-state="思考中"]')
+      .evaluate((element) => getComputedStyle(element, '::after').animationName),
+  ).toMatch(/treeActivityOrbit/u)
+  await page.locator('html').evaluate((root) => root.setAttribute('data-reduced-motion', 'true'))
   await sourceAgentLink.hover()
   await expect(stateIndicator).toHaveCSS('opacity', '0')
   await dragHandle.hover()
@@ -1039,6 +1096,7 @@ test('representative product surfaces match committed visual baselines', async (
   await page.mouse.move(700, 700)
 
   await page.emulateMedia({ colorScheme: 'dark', reducedMotion: 'no-preference' })
+  await page.evaluate(() => window.localStorage.setItem('nekro-nxt.theme', 'dark'))
   await page.goto('/settings?tab=appearance')
   await expect(page.getByRole('heading', { name: '外观' })).toBeVisible()
   await expect(page).toHaveScreenshot('appearance-settings-dark-1440.png', {
@@ -1358,6 +1416,8 @@ test('DSH native and generic settings remain legible across desktop themes and v
       await page.setViewportSize(viewport)
       await page.emulateMedia({ colorScheme, reducedMotion: 'reduce' })
       await page.goto('/settings?tab=dsh-extensions')
+      await page.evaluate((theme) => window.localStorage.setItem('nekro-nxt.theme', theme), colorScheme)
+      await page.reload()
       await expect(page.getByText('DeepSeek 网页搜索', { exact: true }).first()).toBeVisible()
       await expect(page.locator('[data-dsh-native-surface]')).toBeVisible()
       await expect(page.locator('[data-dsh-native-surface]')).toContainText(/Web search|网页搜索/u)
@@ -1367,6 +1427,7 @@ test('DSH native and generic settings remain legible across desktop themes and v
       await page.getByRole('tab', { name: '通用配置' }).click()
       await expect(page.getByText('Namespace：web-search-deepseek', { exact: true })).toBeVisible()
       await expect(page.getByLabel('新的凭据值')).toBeVisible()
+      await expectTabsSettled(page)
       await assertViewportIntegrity(page)
       await capture(page, testInfo, `dsh-generic-${viewport.width}x${viewport.height}-${colorScheme}`)
     }
@@ -1386,6 +1447,7 @@ test('clearing a DSH credential requires an explicit dangerous confirmation', as
   await page.setViewportSize({ width: 1100, height: 720 })
   await page.goto('/settings?tab=dsh-extensions')
   await page.getByRole('tab', { name: '通用配置' }).click()
+  await expectTabsSettled(page)
 
   const trigger = page.getByRole('button', { name: '清除凭据' })
   await trigger.click()
@@ -2372,6 +2434,8 @@ test('the creation page reuses the editor structure and submits explicit capabil
 
 test('desktop shell keeps a 48px top bar and a permanently available object pane', async ({ page }, testInfo) => {
   const failures = installRuntimeFailureGate(page)
+  await page.emulateMedia({ colorScheme: 'dark' })
+  await page.addInitScript(() => window.localStorage.removeItem('nekro-nxt.theme'))
   await installProductRoutes(page)
   await page.setViewportSize({ width: 1100, height: 720 })
   await page.goto('/work')
@@ -2466,23 +2530,38 @@ test('desktop shell keeps a 48px top bar and a permanently available object pane
   await page.locator('html').evaluate((root) => root.style.setProperty('--nxt-window-controls-left', '84px'))
   expect(await topBar.evaluate((element) => getComputedStyle(element).paddingLeft)).toBe('98px')
   expect(await topBar.evaluate((element) => getComputedStyle(element, '::after').left)).toBe('0px')
-  await page.locator('html').evaluate((root) => root.setAttribute('data-theme', 'dark'))
   await capture(page, testInfo, 'desktop-macos-titlebar-safe-area')
-  await page.locator('html').evaluate((root) => root.removeAttribute('data-theme'))
   await page.locator('html').evaluate((root) => root.style.removeProperty('--nxt-window-controls-left'))
   await expect(pane).toBeVisible()
   await expect(page.getByRole('button', { name: /收起对象列|展开对象列/u })).toHaveCount(0)
   await expect(page.getByRole('separator', { name: '调整对象列宽度' })).toBeVisible()
   const themeButton = page.getByRole('button', { name: /^主题：/u })
   await expect(themeButton).toBeVisible()
-  await themeButton.click()
-  await expect(page.locator('html')).toHaveAttribute('data-theme', 'light')
-  await themeButton.click()
+  await expect(themeButton).toHaveAccessibleName('主题：深色；切换为浅色')
+  await expect(page.locator('html')).toHaveAttribute('data-theme', 'dark')
+  expect(await page.evaluate(() => window.localStorage.getItem('nekro-nxt.theme'))).toBe('dark')
+  expect(await themeButton.evaluate((element) => getComputedStyle(element).color)).toBe('rgb(247, 250, 255)')
+  await page.emulateMedia({ colorScheme: 'light' })
   await expect(page.locator('html')).toHaveAttribute('data-theme', 'dark')
   await themeButton.click()
-  await expect(page.locator('html')).not.toHaveAttribute('data-theme')
+  await expect(page.locator('html')).toHaveAttribute('data-theme', 'light')
+  expect(await page.evaluate(() => window.localStorage.getItem('nekro-nxt.theme'))).toBe('light')
+  await expect(themeButton.locator('svg.lucide-sun')).toBeVisible()
+  await expect(themeButton.locator('span')).toHaveCSS('opacity', '1')
+  await capture(page, testInfo, 'desktop-theme-light')
+  await themeButton.click()
+  await expect(page.locator('html')).toHaveAttribute('data-theme', 'dark')
+  expect(await page.evaluate(() => window.localStorage.getItem('nekro-nxt.theme'))).toBe('dark')
+  await expect(themeButton.locator('svg.lucide-moon')).toBeVisible()
+  await expect(themeButton.locator('span')).toHaveCSS('opacity', '1')
   await expect(page.locator('[class*="railHostDot"]')).toHaveCount(0)
   await capture(page, testInfo, 'desktop-object-pane-stable')
+
+  await page.goto('/settings?tab=appearance')
+  await page.getByRole('combobox', { name: '主题' }).click()
+  await expect(page.getByRole('option', { name: '浅色' })).toBeVisible()
+  await expect(page.getByRole('option', { name: '深色' })).toBeVisible()
+  await expect(page.getByRole('option', { name: '跟随系统' })).toHaveCount(0)
 
   expect(failures, failures.join('\n')).toEqual([])
 })

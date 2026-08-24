@@ -1112,10 +1112,12 @@
 
 .performanceCard {
   display: grid;
-  gap: 11px;
+  gap: 8px;
   margin-top: 14px;
-  border-top: 1px solid var(--nxt-border-subtle);
-  padding-top: 14px;
+  border: 0;
+  padding: 0;
+  background: transparent;
+  box-shadow: none;
 }
 
 .performanceHeader {
@@ -1287,10 +1289,22 @@
 
 .cacheUsageCard {
   display: grid;
-  gap: 11px;
+  gap: 8px;
   margin-top: 14px;
-  border-top: 1px solid var(--nxt-border-subtle);
-  padding-top: 14px;
+  border: 0;
+  padding: 0;
+  background: transparent;
+  box-shadow: none;
+}
+
+.runtimeDataSurface {
+  display: grid;
+  gap: 11px;
+  border: 0;
+  border-radius: var(--nxt-radius-control);
+  padding: 12px;
+  background: var(--nxt-bg-surface);
+  box-shadow: var(--nxt-shadow-control);
 }
 
 .cacheHeader {
@@ -2066,6 +2080,69 @@
   transition: opacity var(--nxt-motion-instant) var(--nxt-ease-standard);
 }
 
+.treeActivityIndicator {
+  --nxt-tree-activity-color: var(--nxt-info);
+  position: relative;
+  display: block;
+  width: 14px;
+  height: 14px;
+  color: var(--nxt-tree-activity-color);
+  filter: drop-shadow(0 0 5px color-mix(in srgb, currentcolor 42%, transparent));
+}
+
+.treeActivityIndicator::before {
+  position: absolute;
+  inset: 5px;
+  border-radius: 50%;
+  background: currentcolor;
+  box-shadow: 0 0 7px currentcolor;
+  content: '';
+}
+
+.treeActivityIndicator::after {
+  position: absolute;
+  inset: 0;
+  border-radius: 50%;
+  background: conic-gradient(from 20deg, transparent 0 58%, currentcolor 78%, transparent 96%);
+  content: '';
+  mask: radial-gradient(circle, transparent 0 48%, #000 52% 66%, transparent 70%);
+  animation: treeActivityOrbit 1.45s linear infinite;
+}
+
+.treeActivityIndicator[data-runtime-state='使用工具']::after {
+  animation-duration: 1s;
+}
+
+.treeActivityIndicator[data-runtime-state='等待输入'] {
+  --nxt-tree-activity-color: var(--nxt-warning);
+}
+
+.treeActivityIndicator[data-runtime-state='不可用'] {
+  --nxt-tree-activity-color: var(--nxt-danger);
+}
+
+.treeActivityIndicator[data-runtime-state='已暂停'] {
+  --nxt-tree-activity-color: var(--nxt-text-muted);
+}
+
+@keyframes treeActivityOrbit {
+  to {
+    transform: rotate(1turn);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .treeActivityIndicator::after {
+    animation: none;
+    transform: rotate(35deg);
+  }
+}
+
+:global(:root[data-reduced-motion='true']) .treeActivityIndicator::after {
+  animation: none;
+  transform: rotate(35deg);
+}
+
 .channelGroupHeader strong,
 .channelLink strong {
   overflow: hidden;
@@ -2387,6 +2464,17 @@
   white-space: nowrap;
 }
 
+.conversationTitleRow {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 8px;
+}
+
+.conversationTitleRow h1 {
+  min-width: 0;
+}
+
 .conversationHeader p {
   overflow: hidden;
   margin: 2px 0 0;
@@ -2433,6 +2521,13 @@
 
 .viewSwitch button[data-state='active'] {
   color: var(--nxt-text-primary);
+}
+
+.viewSwitch [data-nxt-tabs-indicator] {
+  top: 3px;
+  bottom: 3px;
+  height: auto;
+  border-radius: 8px;
   background: var(--nxt-bg-surface);
   box-shadow: 0 1px 2px rgb(25 48 61 / 8%);
 }
@@ -3670,18 +3765,10 @@
 .channelSessionInspector .cacheUsageCard,
 .channelSessionInspector .performanceCard {
   margin-bottom: 0;
-  border-bottom: 0;
-  padding-bottom: 0;
-}
-
-.inspectorStatusTrigger {
-  display: inline-flex;
-  border-radius: var(--nxt-radius-round);
-  outline: none;
-}
-
-.inspectorStatusTrigger:focus-visible {
-  box-shadow: 0 0 0 2px var(--nxt-focus-ring);
+  border: 0;
+  padding: 0;
+  background: transparent;
+  box-shadow: none;
 }
 
 .runtimeEmpty {
@@ -4790,9 +4877,7 @@
 :global(:root[data-glin-experiment]) .userRows,
 :global(:root[data-glin-experiment]) .systemAdapterCard,
 :global(:root[data-glin-experiment]) .workbenchInspector section,
-:global(:root[data-glin-experiment]) .contextUsageCard,
-:global(:root[data-glin-experiment]) .cacheUsageCard,
-:global(:root[data-glin-experiment]) .performanceCard {
+:global(:root[data-glin-experiment]) .contextUsageCard {
   border-color: var(--glass-border-strong);
   border-top-color: var(--glass-refraction-top);
   border-radius: var(--radius-lg);
@@ -4889,10 +4974,6 @@
   background: linear-gradient(180deg, color-mix(in srgb, var(--nxt-accent) 30%, transparent), var(--nxt-border-subtle));
 }
 
-:global(:root[data-glin-experiment]) .treeStateIndicator {
-  filter: drop-shadow(0 0 5px color-mix(in srgb, var(--nxt-accent) 32%, transparent));
-}
-
 :global(:root[data-glin-experiment]) .conversationPage {
   grid-template-columns: minmax(0, 1fr) auto auto;
 }
@@ -4924,9 +5005,13 @@
   border-radius: 9px;
 }
 
-:global(:root[data-glin-experiment]) .viewSwitch button[data-state='active'] {
+:global(:root[data-glin-experiment]) .viewSwitch [data-nxt-tabs-indicator] {
+  top: 3px;
+  bottom: 3px;
+  min-height: 0;
   border: 1px solid var(--glass-border-strong);
   border-top-color: var(--glass-refraction-top);
+  border-radius: 9px;
   background: var(--nxt-bg-elevated);
   box-shadow: var(--shadow-glass-sm);
 }
@@ -5587,6 +5672,23 @@
   box-shadow:
     0 8px 20px rgb(34 56 88 / 6%),
     inset 0 1px 0 rgb(255 255 255 / 13%);
+}
+
+:global(:root[data-glin-experiment]) .channelSessionInspector .cacheUsageCard,
+:global(:root[data-glin-experiment]) .channelSessionInspector .performanceCard {
+  border: 0;
+  background: transparent;
+  box-shadow: none;
+}
+
+:global(:root[data-glin-experiment]) .runtimeDataSurface {
+  border-radius: 12px;
+  background:
+    linear-gradient(145deg, rgb(255 255 255 / 10%), transparent 44%),
+    color-mix(in srgb, var(--nxt-bg-surface) 84%, transparent);
+  box-shadow:
+    var(--shadow-glass-sm),
+    inset 0 1px 0 rgb(255 255 255 / 14%);
 }
 
 :global(:root[data-glin-experiment]) .bindingInspector,

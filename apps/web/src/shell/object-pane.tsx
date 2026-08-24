@@ -34,16 +34,7 @@ import { notify } from '../components/notifications.js'
 import { AgentAccessChip } from '../components/agent-access-chip.js'
 import { connectionDisplayName, useProductStore, type AgentSummary, type ChannelSummary } from '../product-store.js'
 import { NxtLink, NxtNavLink } from './nxt-link.js'
-import {
-  AgentStateRing,
-  ConfirmDialog,
-  Field,
-  IconButton,
-  Input,
-  NavGlyph,
-  NavMarkGroup,
-  Tooltip,
-} from '../ui-kit/index.js'
+import { ConfirmDialog, Field, IconButton, Input, NavGlyph, NavMarkGroup, Tooltip } from '../ui-kit/index.js'
 import styles from '../pages/product-pages.module.css'
 import shell from '../app.module.css'
 import {
@@ -108,6 +99,15 @@ const sortableStyle = (
   transition: dragging ? undefined : transition,
 })
 
+const TreeActivityIndicator = ({ state }: { readonly state: AgentSummary['state'] }) => (
+  <span
+    className={styles.treeActivityIndicator}
+    data-runtime-state={state}
+    role="img"
+    aria-label={`运行状态：${state}`}
+  />
+)
+
 const ChannelRowBody = ({ item }: { readonly item: ChannelSummary; readonly active?: boolean }) => (
   <>
     {item.kind === 'web' ? <MessageSquare size={15} aria-hidden="true" /> : <UsersRound size={15} aria-hidden="true" />}
@@ -117,7 +117,7 @@ const ChannelRowBody = ({ item }: { readonly item: ChannelSummary; readonly acti
     </span>
     {item.runtimePhase !== '空闲' ? (
       <span className={styles.treeStateIndicator} data-tree-state-indicator>
-        <AgentStateRing state={item.runtimePhase} label={`运行状态：${item.runtimePhase}`} />
+        <TreeActivityIndicator state={item.runtimePhase} />
       </span>
     ) : item.unread > 0 ? (
       <span className={styles.unread}>{item.unread}</span>
@@ -144,7 +144,7 @@ const AgentHeaderBody = ({
     </span>
     {agent.state !== '空闲' ? (
       <span className={styles.treeStateIndicator} data-tree-state-indicator>
-        <AgentStateRing state={agent.state} label={`运行状态：${agent.state}`} />
+        <TreeActivityIndicator state={agent.state} />
       </span>
     ) : null}
   </>

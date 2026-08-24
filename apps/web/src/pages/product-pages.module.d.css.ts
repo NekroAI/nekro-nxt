@@ -112,6 +112,7 @@ declare const styles: {
   readonly conversationInspectorDock: string
   readonly conversationMain: string
   readonly conversationPage: string
+  readonly conversationTitleRow: string
   readonly createSummary: string
   readonly creatorEvidence: string
   readonly creatorGuide: string
@@ -162,7 +163,6 @@ declare const styles: {
   readonly inspectorRegionBody: string
   readonly inspectorSectionHead: string
   readonly inspectorSplitter: string
-  readonly inspectorStatusTrigger: string
   readonly inspectorToggle: string
   readonly jumpBottom: string
   readonly kindMessage: string
@@ -222,6 +222,7 @@ declare const styles: {
   readonly riskLabel: string
   readonly rowActions: string
   readonly runtimeCard: string
+  readonly runtimeDataSurface: string
   readonly runtimeEmpty: string
   readonly runtimeEmptyIcon: string
   readonly runtimeTail: string
@@ -277,6 +278,7 @@ declare const styles: {
   readonly trajectorySteps: string
   readonly trajectorySummary: string
   readonly trajectoryTools: string
+  readonly treeActivityIndicator: string
   readonly treeCopy: string
   readonly treeRowDragHandle: string
   readonly treeStateIndicator: string

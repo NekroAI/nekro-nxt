@@ -5,19 +5,12 @@ import { NekroNxtApp } from './app.js'
 import { HttpProductHost } from './http-host.js'
 import { ProductHostCoordinator } from './product-port.js'
 import { setActiveProductHost } from './product-store.js'
+import { applyThemeChoice, readInitialThemeChoice } from './theme-preference.js'
 import '@glinui/tokens/theme.css'
 import './ui-kit/tokens.css'
 
 const reducedMotion = window.localStorage.getItem('nekro-nxt.reduced-motion') === 'true'
-const persistedTheme = window.localStorage.getItem('nekro-nxt.theme')
-if (persistedTheme === 'light' || persistedTheme === 'dark') {
-  document.documentElement.dataset['theme'] = persistedTheme
-}
-document.documentElement.classList.toggle(
-  'dark',
-  persistedTheme === 'dark' ||
-    (persistedTheme !== 'light' && window.matchMedia('(prefers-color-scheme: dark)').matches),
-)
+applyThemeChoice(document.documentElement, readInitialThemeChoice())
 document.documentElement.dataset['reducedMotion'] = String(reducedMotion)
 document.documentElement.dataset['nxtMotion'] = reducedMotion ? 'off' : 'on'
 
