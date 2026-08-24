@@ -6,7 +6,7 @@
 
 NekroNXT 是 NekroAI 开发的群聊智能体系统。它把智能体接入你正在使用的即时通信平台。智能体面对的是群聊里持续发生的多人对话，可以理解上下文、使用工具并参与协作。
 
-## 为真实群聊而设计
+## 💬 为真实群聊而设计
 
 ### 用一套方式连接不同即时通信平台
 
@@ -20,7 +20,7 @@ NekroNXT 是 NekroAI 开发的群聊智能体系统。它把智能体接入你�
 
 DSH 负责智能体的思考循环、工具执行、会话持久化、上下文压缩、模型接入和扩展运行。NekroNXT 负责即时通信接入、频道管理、消息投递记录和产品界面。
 
-## 还能做什么
+## ✨ 还能做什么
 
 - **长期管理智能体**：分别设置人设、模型、权限、频道和扩展；
 - **确认每次发送**：文字、提及、图片和文件都由通信工具投递，界面显示实际发送结果；
@@ -29,19 +29,23 @@ DSH 负责智能体的思考循环、工具执行、会话持久化、上下文�
 - **让智能体参与创造**：描述需求、运行新能力、查看验证结果、保存为本地扩展，再选择使用它的智能体；
 - **选择合适的运行方式**：桌面版适合个人电脑，服务端适合长期在线和远程管理。
 
-## 产品画面
+## 🖼️ 产品画面
 
 ![NekroNXT 中的多人频道会话、消息与运行过程](assets/brand/screenshots/channel-conversation.png)
 
-[智能体工作台](assets/brand/screenshots/agent-workbench.png) · [平台连接](assets/brand/screenshots/connections.png) · [扩展创造工作台](assets/brand/screenshots/creator-workbench.png)
+截图仅供界面示意参考。
 
-截图使用虚构智能体、频道和消息。实际可连接的平台由已安装的适配器决定。
-
-## 立即开始
+## 🚀 立即开始
 
 ### 桌面版：下载后直接使用
 
-桌面版已经带上运行环境。前往[预览版下载页](https://github.com/NekroAI/nekro-nxt/releases/tag/preview)，选择 macOS、Windows 或 Linux 安装包，打开应用后配置模型即可开始。
+桌面版已经带上运行环境。下载对应平台的安装包，打开应用后配置模型即可开始。
+
+| 支持平台 | 客户端下载                                                                         |
+| -------- | ---------------------------------------------------------------------------------- |
+| macOS    | [下载 NekroNXT Preview](https://github.com/NekroAI/nekro-nxt/releases/tag/preview) |
+| Windows  | [下载 NekroNXT Preview](https://github.com/NekroAI/nekro-nxt/releases/tag/preview) |
+| Linux    | [下载 NekroNXT Preview](https://github.com/NekroAI/nekro-nxt/releases/tag/preview) |
 
 [查看桌面版安装说明](docs/guide/desktop.md)
 
@@ -50,7 +54,13 @@ DSH 负责智能体的思考循环、工具执行、会话持久化、上下文�
 把 `<管理密钥>` 替换为至少 32 个字符的随机字符串，把 `<持久化目录>` 替换为宿主机上的数据目录：
 
 ```bash
-docker run -d --name nekro-nxt --restart unless-stopped -p 127.0.0.1:4960:4960 -e NEKRO_MANAGEMENT_KEY='<管理密钥>' -v '<持久化目录>:/data' ghcr.io/nekroai/nekro-nxt:preview
+docker run -d \
+  --name nekro-nxt \
+  --restart unless-stopped \
+  -p 127.0.0.1:4960:4960 \
+  -e NEKRO_MANAGEMENT_KEY='<管理密钥>' \
+  -v '<持久化目录>:/data' \
+  ghcr.io/nekroai/nekro-nxt:preview
 ```
 
 [查看公网访问、Docker Compose、设备配对与备份说明](docs/guide/server.md)
@@ -63,7 +73,7 @@ docker run -d --name nekro-nxt --restart unless-stopped -p 127.0.0.1:4960:4960 -
 
 完整步骤见[快速开始](docs/guide/getting-started.md)。
 
-## 文档与社区
+## 📚 文档与社区
 
 | 目标                   | 入口                                                                                                                        |
 | ---------------------- | --------------------------------------------------------------------------------------------------------------------------- |
@@ -73,6 +83,7 @@ docker run -d --name nekro-nxt --restart unless-stopped -p 127.0.0.1:4960:4960 -
 | 部署、升级、备份或排障 | [服务端部署](docs/guide/server.md) · [升级与备份](docs/guide/upgrade-backup.md) · [常见问题](docs/guide/troubleshooting.md) |
 | 参与开发               | [贡献指南](docs/CONTRIBUTING.md) · [贡献者文档](docs/guide/contributors.md)                                                 |
 | 反馈问题               | [支持说明](docs/SUPPORT.md) · [GitHub Issues](https://github.com/NekroAI/nekro-nxt/issues)                                  |
+| 社区交流               | NekroAI 官方 QQ 群 `636925153`                                                                                              |
 
 ## 当前状态
 

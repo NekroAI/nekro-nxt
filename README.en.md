@@ -18,18 +18,28 @@ Agents remain manageable over time, with separate personas, models, permissions,
 
 ![A multi-person channel conversation and runtime activity in NekroNXT](assets/brand/screenshots/channel-conversation.png)
 
-[Agent workbench](assets/brand/screenshots/agent-workbench.png) · [Messaging connections](assets/brand/screenshots/connections.png) · [Extension creator](assets/brand/screenshots/creator-workbench.png)
-
-All screenshots use fictional people, channels, and messages. Available messaging platforms depend on installed adapters.
+Screenshots are provided for interface reference only.
 
 ## Get started
 
-For a personal computer, download the macOS, Windows, or Linux package from the [rolling Preview release](https://github.com/NekroAI/nekro-nxt/releases/tag/preview). The desktop app includes the complete local runtime.
+The desktop app includes the complete local runtime. Choose the package for your platform:
+
+| Platform | Client download                                                                        |
+| -------- | -------------------------------------------------------------------------------------- |
+| macOS    | [Download NekroNXT Preview](https://github.com/NekroAI/nekro-nxt/releases/tag/preview) |
+| Windows  | [Download NekroNXT Preview](https://github.com/NekroAI/nekro-nxt/releases/tag/preview) |
+| Linux    | [Download NekroNXT Preview](https://github.com/NekroAI/nekro-nxt/releases/tag/preview) |
 
 For a long-running server, replace the two placeholders and run:
 
 ```bash
-docker run -d --name nekro-nxt --restart unless-stopped -p 127.0.0.1:4960:4960 -e NEKRO_MANAGEMENT_KEY='<management-key-at-least-32-characters>' -v '<persistent-data-directory>:/data' ghcr.io/nekroai/nekro-nxt:preview
+docker run -d \
+  --name nekro-nxt \
+  --restart unless-stopped \
+  -p 127.0.0.1:4960:4960 \
+  -e NEKRO_MANAGEMENT_KEY='<management-key-at-least-32-characters>' \
+  -v '<persistent-data-directory>:/data' \
+  ghcr.io/nekroai/nekro-nxt:preview
 ```
 
 The complete user documentation is currently maintained in Chinese: [Quick start](docs/guide/getting-started.md), [Desktop installation](docs/guide/desktop.md), [Server deployment](docs/guide/server.md), [Connect messaging channels](docs/guide/connections.md), and [Troubleshooting](docs/guide/troubleshooting.md).

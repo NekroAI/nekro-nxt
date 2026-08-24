@@ -2,12 +2,18 @@
 
 NekroNXT 服务端（Server）适合长期在线运行。一个容器保存全部程序，`/data` 保存需要持久化的数据。
 
-## 一行启动
+## 启动容器
 
 准备 Docker，把 `<管理密钥>` 替换为至少 32 个字符的随机字符串，把 `<持久化目录>` 替换为宿主机上的数据目录：
 
 ```bash
-docker run -d --name nekro-nxt --restart unless-stopped -p 127.0.0.1:4960:4960 -e NEKRO_MANAGEMENT_KEY='<管理密钥>' -v '<持久化目录>:/data' ghcr.io/nekroai/nekro-nxt:preview
+docker run -d \
+  --name nekro-nxt \
+  --restart unless-stopped \
+  -p 127.0.0.1:4960:4960 \
+  -e NEKRO_MANAGEMENT_KEY='<管理密钥>' \
+  -v '<持久化目录>:/data' \
+  ghcr.io/nekroai/nekro-nxt:preview
 ```
 
 启动后访问 `https://127.0.0.1:4960`。首次连接需要核对自动生成的证书指纹，并使用管理密钥完成设备配对。
@@ -55,4 +61,4 @@ docker stop nekro-nxt
 docker rm nekro-nxt
 ```
 
-随后重新执行“一行启动”中的命令，继续挂载原持久化目录。升级前先备份完整 `/data`；详细恢复原则见[升级、备份与恢复](upgrade-backup.md)。
+随后重新执行“启动容器”中的命令，继续挂载原持久化目录。升级前先备份完整 `/data`；详细恢复原则见[升级、备份与恢复](upgrade-backup.md)。
