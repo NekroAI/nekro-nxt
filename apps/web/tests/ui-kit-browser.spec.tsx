@@ -318,7 +318,9 @@ describe.sequential('ui-kit Dialog browser behavior', { timeout: 30_000 }, () =>
     await page.locator('#to-b').click()
     await expectPage(page.getByText('页面乙')).toBeVisible()
     await expectPage(page.getByText('页面甲')).toHaveCount(0)
-    await expectPage(page.locator('[data-stage-layer]')).toHaveCount(0)
+    await expectPage(page.locator('[data-stage-layer="in"]')).toHaveCount(1)
+    await expectPage(page.locator('[data-stage-layer="out"]')).toHaveCount(0)
+    await expectPage(page.locator('[data-stage-layer="in"]')).toHaveCSS('opacity', '1')
   }, 20_000)
 
   it('keeps the latest route mounted after rapid key changes', async () => {

@@ -97,200 +97,191 @@ export function ExtensionsPage() {
   }
 
   return (
-    <div className={[styles.page, styles.detailPage, styles.workspacePage].join(' ')}>
-      <StageCrossfade className={styles.workspaceStage} swapKey={selected?.id ?? 'empty'}>
-        <PageHeader
-          className={styles.workspaceHeader}
-          title={selected?.name ?? '扩展库'}
-          meta={selected ? `版本 ${selected.revision} · ${extensions.length} 个本地扩展` : undefined}
-          quiet
-          actions={
-            selected ? (
-              <StatusBadge tone={extensionTone(selected.activations.length)}>
-                {extensionLabel(selected.activations.length)}
-              </StatusBadge>
-            ) : undefined
-          }
-        />
-        <div
-          className={[styles.workspaceScroller, styles.extensionScroller].join(' ')}
-          data-workspace-scroll="扩展详情"
-        >
-          {extensions.length === 0 ? (
-            <EmptyState
-              fill
-              loading={host.status === 'initializing'}
-              illustration={
-                host.status === 'error'
-                  ? { src: '/brand/illustrations/host-unreachable.svg' }
-                  : { src: '/brand/illustrations/no-extensions.svg' }
-              }
-              title={host.status === 'initializing' ? '正在读取扩展' : '从一次动态运行开始'}
-              description={
-                host.status === 'error'
-                  ? '当前无法读取扩展，请重新连接后再试。'
-                  : '在创造工作台验证运行结果后，可将它保存为可追踪的本地扩展。'
-              }
-              action={
-                host.status === 'ready' ? (
-                  <Button onClick={() => void navigate('/work/creator')}>
-                    打开创造工作台 <ArrowRight size={14} aria-hidden="true" />
-                  </Button>
-                ) : undefined
-              }
-            />
-          ) : selected ? (
-            <section className={styles.extensionWorkspace}>
-              <p className={styles.workspaceLead}>
-                {selected.description ? extensionDescription(selected.description) : '还没有说明这个扩展是做什么的。'}
-              </p>
-              <div className={styles.extensionOverview}>
-                <section>
-                  <div className={styles.sectionHeading}>使用进度</div>
-                  <ol
-                    className={[styles.lifecycleSteps, styles.lifecycleStepsCompact].join(' ')}
-                    aria-label="扩展使用进度"
-                  >
-                    <li data-done="">
-                      <span>
-                        <Check size={12} aria-hidden="true" />
+    <div className={[styles.page, styles.desktopPage, styles.extensionsPage].join(' ')} data-product-page="extensions">
+      <PageHeader
+        title={selected?.name ?? '扩展库'}
+        meta={selected ? `版本 ${selected.revision} · ${extensions.length} 个本地扩展` : undefined}
+        quiet
+        actions={
+          selected ? (
+            <StatusBadge tone={extensionTone(selected.activations.length)}>
+              {extensionLabel(selected.activations.length)}
+            </StatusBadge>
+          ) : undefined
+        }
+      />
+      <StageCrossfade className={styles.desktopContentStage} swapKey={selected?.id ?? 'empty'}>
+        {extensions.length === 0 ? (
+          <EmptyState
+            loading={host.status === 'initializing'}
+            illustration={
+              host.status === 'error'
+                ? { src: '/brand/illustrations/host-unreachable.svg' }
+                : { src: '/brand/illustrations/no-extensions.svg' }
+            }
+            title={host.status === 'initializing' ? '正在读取扩展' : '从一次动态运行开始'}
+            description={
+              host.status === 'error'
+                ? '当前无法读取扩展，请重新连接后再试。'
+                : '在创造工作台验证运行结果后，可将它保存为可追踪的本地扩展。'
+            }
+            action={
+              host.status === 'ready' ? (
+                <Button onClick={() => void navigate('/work/creator')}>
+                  打开创造工作台 <ArrowRight size={14} aria-hidden="true" />
+                </Button>
+              ) : undefined
+            }
+          />
+        ) : selected ? (
+          <section className={styles.extensionWorkspace}>
+            <p className={styles.workspaceLead}>
+              {selected.description ? extensionDescription(selected.description) : '还没有说明这个扩展是做什么的。'}
+            </p>
+            <div className={styles.extensionOverview}>
+              <section>
+                <div className={styles.sectionHeading}>使用进度</div>
+                <ol
+                  className={[styles.lifecycleSteps, styles.lifecycleStepsCompact].join(' ')}
+                  aria-label="扩展使用进度"
+                >
+                  <li data-done="">
+                    <span>
+                      <Check size={12} aria-hidden="true" />
+                    </span>
+                    <small>试运行</small>
+                  </li>
+                  <li data-done="">
+                    <span>
+                      <Check size={12} aria-hidden="true" />
+                    </span>
+                    <small>保存为扩展</small>
+                  </li>
+                  <li data-done={selected.activations.length > 0 ? '' : undefined}>
+                    <span>{selected.activations.length > 0 ? <Check size={12} aria-hidden="true" /> : '3'}</span>
+                    <small>启用给智能体</small>
+                  </li>
+                </ol>
+              </section>
+              <section>
+                <div className={styles.sectionHeading}>当前版本</div>
+                <dl className={styles.facts}>
+                  <dt>版本</dt>
+                  <dd>版本 {selected.revision}</dd>
+                  <dt>创建来源</dt>
+                  <dd>{selected.createdByAgent || '未记录'}</dd>
+                  <dt>正在使用</dt>
+                  <dd>{selected.activations.length > 0 ? `${selected.activations.length} 个智能体` : '暂无'}</dd>
+                  <dt>当前状态</dt>
+                  <dd>{selected.activations.length > 0 ? '已启用' : '尚未启用'}</dd>
+                </dl>
+              </section>
+            </div>
+            <div className={styles.extensionDetailGrid}>
+              <section>
+                <div className={styles.sectionHeading}>包含内容</div>
+                {selected.contributions.length > 0 ? (
+                  <div className={styles.tagList}>
+                    {selected.contributions.map((item) => (
+                      <span key={item} title={item}>
+                        {contributionLabel(item)}
                       </span>
-                      <small>试运行</small>
-                    </li>
-                    <li data-done="">
-                      <span>
-                        <Check size={12} aria-hidden="true" />
-                      </span>
-                      <small>保存为扩展</small>
-                    </li>
-                    <li data-done={selected.activations.length > 0 ? '' : undefined}>
-                      <span>{selected.activations.length > 0 ? <Check size={12} aria-hidden="true" /> : '3'}</span>
-                      <small>启用给智能体</small>
-                    </li>
-                  </ol>
-                </section>
-                <section>
-                  <div className={styles.sectionHeading}>当前版本</div>
-                  <dl className={styles.facts}>
-                    <dt>版本</dt>
-                    <dd>版本 {selected.revision}</dd>
-                    <dt>创建来源</dt>
-                    <dd>{selected.createdByAgent || '未记录'}</dd>
-                    <dt>正在使用</dt>
-                    <dd>{selected.activations.length > 0 ? `${selected.activations.length} 个智能体` : '暂无'}</dd>
-                    <dt>当前状态</dt>
-                    <dd>{selected.activations.length > 0 ? '已启用' : '尚未启用'}</dd>
-                  </dl>
-                </section>
-              </div>
-              <div className={styles.extensionDetailGrid}>
-                <section>
-                  <div className={styles.sectionHeading}>包含内容</div>
-                  {selected.contributions.length > 0 ? (
-                    <div className={styles.tagList}>
-                      {selected.contributions.map((item) => (
-                        <span key={item} title={item}>
-                          {contributionLabel(item)}
-                        </span>
-                      ))}
-                    </div>
-                  ) : (
-                    <p className={styles.secondaryText}>这个版本没有可展示的工具或界面。</p>
-                  )}
-                </section>
-                <section>
-                  <div className={styles.sectionHeading}>检查结果</div>
-                  {selected.verification ? (
-                    <dl className={styles.facts}>
-                      <dt>扩展格式</dt>
-                      <dd>{contractVersionLabel(selected.verification.contractVersion)}</dd>
-                      <dt>DSH 版本</dt>
-                      <dd>{selected.verification.dshVersion}</dd>
-                      <dt>服务端功能</dt>
-                      <dd>{selected.verification.hostBuilt ? '检查通过' : '未包含'}</dd>
-                      <dt>界面功能</dt>
-                      <dd>{selected.verification.clientBuilt ? '检查通过' : '未包含'}</dd>
-                      <dt>工具测试</dt>
-                      <dd>
-                        {selected.verification.toolInvocationCount > 0
-                          ? `${selected.verification.toolInvocationCount} 次通过`
-                          : '未包含'}
-                      </dd>
-                      <dt>最近界面加载</dt>
-                      <dd>
-                        {!selected.verification.clientBuilt
-                          ? '未包含界面功能'
-                          : selectedClientDiagnostic === undefined
-                            ? '还没有加载记录'
-                            : selectedClientDiagnostic.status === 'loaded'
-                              ? `已加载 · ${new Date(selectedClientDiagnostic.observedAt).toLocaleString('zh-CN')}`
-                              : `失败 · ${new Date(selectedClientDiagnostic.observedAt).toLocaleString('zh-CN')}`}
-                      </dd>
-                    </dl>
-                  ) : (
-                    <p className={styles.secondaryText}>这个版本保存时还没有记录检查结果。</p>
-                  )}
-                </section>
-              </div>
-              <section className={styles.activationSection}>
-                <div className={styles.sectionBar}>
-                  <div>
-                    <div className={styles.sectionHeading}>使用范围</div>
-                    <div className={styles.secondaryText}>选择使用这个扩展的智能体。</div>
-                  </div>
-                  <span className={styles.activationCount}>
-                    {selected.activations.length}/{agents.length} 已启用
-                  </span>
-                </div>
-                {agents.length > 0 ? (
-                  <div className={styles.activationGrid} role="list" aria-label="智能体使用范围">
-                    {agents.map((agent) => {
-                      const activation = selected.activations.find((candidate) => candidate.agentId === agent.id)
-                      return (
-                        <div
-                          className={styles.activationCard}
-                          data-active={activation ? '' : undefined}
-                          key={agent.id}
-                          role="listitem"
-                        >
-                          <span className={styles.activationGlyph} aria-hidden="true">
-                            {agent.name.trim().slice(0, 1) || '智'}
-                          </span>
-                          <span className={styles.activationCopy}>
-                            <strong>{agent.name}</strong>
-                            <small className={styles.activationMeta}>
-                              {activation
-                                ? `正在使用 · 版本 ${activation.revision || selected.revision}`
-                                : `尚未启用 · 可用版本 ${selected.revision}`}
-                            </small>
-                          </span>
-                          <SwitchControl
-                            label={`${activation ? '停止让' : '允许'}${agent.name}使用“${selected.name}”`}
-                            checked={activation !== undefined}
-                            disabled={pendingAgentId !== null}
-                            onCheckedChange={(enabled) =>
-                              void changeActivation(selected, agent.id, agent.name, enabled)
-                            }
-                          />
-                        </div>
-                      )
-                    })}
+                    ))}
                   </div>
                 ) : (
-                  <p className={styles.secondaryText}>请先创建智能体，再为它启用这个扩展。</p>
+                  <p className={styles.secondaryText}>这个版本没有可展示的工具或界面。</p>
                 )}
               </section>
-              {detailsActivation ? (
-                <ExtensionDetailsExtensionSlots
-                  agentId={detailsActivation.agentId}
-                  extensionId={selected.id}
-                  revisionId={detailsActivation.revisionId}
-                  activation="active"
-                />
-              ) : null}
+              <section>
+                <div className={styles.sectionHeading}>检查结果</div>
+                {selected.verification ? (
+                  <dl className={styles.facts}>
+                    <dt>扩展格式</dt>
+                    <dd>{contractVersionLabel(selected.verification.contractVersion)}</dd>
+                    <dt>DSH 版本</dt>
+                    <dd>{selected.verification.dshVersion}</dd>
+                    <dt>服务端功能</dt>
+                    <dd>{selected.verification.hostBuilt ? '检查通过' : '未包含'}</dd>
+                    <dt>界面功能</dt>
+                    <dd>{selected.verification.clientBuilt ? '检查通过' : '未包含'}</dd>
+                    <dt>工具测试</dt>
+                    <dd>
+                      {selected.verification.toolInvocationCount > 0
+                        ? `${selected.verification.toolInvocationCount} 次通过`
+                        : '未包含'}
+                    </dd>
+                    <dt>最近界面加载</dt>
+                    <dd>
+                      {!selected.verification.clientBuilt
+                        ? '未包含界面功能'
+                        : selectedClientDiagnostic === undefined
+                          ? '还没有加载记录'
+                          : selectedClientDiagnostic.status === 'loaded'
+                            ? `已加载 · ${new Date(selectedClientDiagnostic.observedAt).toLocaleString('zh-CN')}`
+                            : `失败 · ${new Date(selectedClientDiagnostic.observedAt).toLocaleString('zh-CN')}`}
+                    </dd>
+                  </dl>
+                ) : (
+                  <p className={styles.secondaryText}>这个版本保存时还没有记录检查结果。</p>
+                )}
+              </section>
+            </div>
+            <section className={styles.activationSection}>
+              <div className={styles.sectionBar}>
+                <div>
+                  <div className={styles.sectionHeading}>使用范围</div>
+                  <div className={styles.secondaryText}>选择使用这个扩展的智能体。</div>
+                </div>
+                <span className={styles.activationCount}>
+                  {selected.activations.length}/{agents.length} 已启用
+                </span>
+              </div>
+              {agents.length > 0 ? (
+                <div className={styles.activationGrid} role="list" aria-label="智能体使用范围">
+                  {agents.map((agent) => {
+                    const activation = selected.activations.find((candidate) => candidate.agentId === agent.id)
+                    return (
+                      <div
+                        className={styles.activationCard}
+                        data-active={activation ? '' : undefined}
+                        key={agent.id}
+                        role="listitem"
+                      >
+                        <span className={styles.activationGlyph} aria-hidden="true">
+                          {agent.name.trim().slice(0, 1) || '智'}
+                        </span>
+                        <span className={styles.activationCopy}>
+                          <strong>{agent.name}</strong>
+                          <small className={styles.activationMeta}>
+                            {activation
+                              ? `正在使用 · 版本 ${activation.revision || selected.revision}`
+                              : `尚未启用 · 可用版本 ${selected.revision}`}
+                          </small>
+                        </span>
+                        <SwitchControl
+                          label={`${activation ? '停止让' : '允许'}${agent.name}使用“${selected.name}”`}
+                          checked={activation !== undefined}
+                          disabled={pendingAgentId !== null}
+                          onCheckedChange={(enabled) => void changeActivation(selected, agent.id, agent.name, enabled)}
+                        />
+                      </div>
+                    )
+                  })}
+                </div>
+              ) : (
+                <p className={styles.secondaryText}>请先创建智能体，再为它启用这个扩展。</p>
+              )}
             </section>
-          ) : null}
-        </div>
+            {detailsActivation ? (
+              <ExtensionDetailsExtensionSlots
+                agentId={detailsActivation.agentId}
+                extensionId={selected.id}
+                revisionId={detailsActivation.revisionId}
+                activation="active"
+              />
+            ) : null}
+          </section>
+        ) : null}
       </StageCrossfade>
     </div>
   )

@@ -513,6 +513,13 @@ const capture = async (page: Page, testInfo: TestInfo, name: string): Promise<vo
   await testInfo.attach(name, { path, contentType: 'image/png' })
 }
 
+const expectProductMotionSettled = async (page: Page): Promise<void> => {
+  await expect(page.locator('html[data-nxt-view-transition]')).toHaveCount(0)
+  await expect(page.locator('[data-stage-layer="out"]')).toHaveCount(0)
+  const activeLayer = page.locator('[data-stage-layer="in"]').last()
+  if ((await activeLayer.count()) > 0) await expect(activeLayer).toHaveCSS('opacity', '1')
+}
+
 test('writes the four public product screenshots from fictional production data', async ({ page }) => {
   const outputDirectory = process.env['NEKRO_BRAND_SCREENSHOT_DIR']
   test.skip(!outputDirectory, 'Only runs when refreshing committed public screenshots.')
@@ -536,8 +543,7 @@ test('writes the four public product screenshots from fictional production data'
     .first()
     .click()
   await expect(page).toHaveURL(new RegExp(`/connections/${qqConnectionId}$`, 'u'))
-  await expect(page.locator('[data-stage-layer="out"]')).toHaveCount(0)
-  await expect(page.locator('[data-stage-layer="in"]').last()).toHaveCSS('opacity', '1')
+  await expectProductMotionSettled(page)
   await expect(page.locator('main').getByRole('heading', { name: 'QQ 官方机器人' })).toBeVisible()
   await page.screenshot({ path: `${outputDirectory}/connections.png`, animations: 'disabled' })
 
@@ -774,12 +780,99 @@ test('platform-user directory and persona references remain legible across deskt
       await page.setViewportSize(viewport)
       await page.emulateMedia({ colorScheme, reducedMotion: 'reduce' })
       await page.goto('/users')
-      await expect(page.getByRole('heading', { name: '全部用户' })).toBeVisible()
+      await expect(page.getByRole('heading', { name: '平台用户' })).toBeVisible()
       await expect(page.getByText('成员甲', { exact: true })).toBeVisible()
+      const workspaceGeometry = await page.evaluate(() => {
+        const stage = document.querySelector<HTMLElement>('main')
+        const root = document.querySelector<HTMLElement>('[data-product-page="users"]')
+        const toolbar = document.querySelector<HTMLElement>('[data-page-toolbar]')
+        const header = document.querySelector<HTMLElement>('[data-table-header]')
+        const body = document.querySelector<HTMLElement>('[data-table-scroll-region]')
+        const pagination = document.querySelector<HTMLElement>('[data-table-pagination]')
+        if (!stage || !root || !toolbar || !header || !body || !pagination) {
+          throw new Error('用户目录缺少桌面工作区结构。')
+        }
+        const stageRect = stage.getBoundingClientRect()
+        const rootRect = root.getBoundingClientRect()
+        const toolbarRect = toolbar.getBoundingClientRect()
+        const headerRect = header.getBoundingClientRect()
+        const paginationRect = pagination.getBoundingClientRect()
+        body.scrollTop = body.scrollHeight
+        return new Promise<{
+          rootWidthRatio: number
+          toolbarWidthRatio: number
+          bodyScrolled: boolean
+          paginationVisible: boolean
+          pageScrollTop: number
+          toolbarY: number
+          headerY: number
+          paginationY: number
+        }>((resolve) => {
+          requestAnimationFrame(() => {
+            const bodyScrolled = body.scrollTop > 0
+            body.scrollTop = 0
+            resolve({
+              rootWidthRatio: rootRect.width / stageRect.width,
+              toolbarWidthRatio: toolbarRect.width / rootRect.width,
+              bodyScrolled,
+              paginationVisible: paginationRect.top >= rootRect.top - 1 && paginationRect.bottom <= rootRect.bottom + 1,
+              pageScrollTop: root.scrollTop,
+              toolbarY: Math.abs(toolbar.getBoundingClientRect().y - toolbarRect.y),
+              headerY: Math.abs(header.getBoundingClientRect().y - headerRect.y),
+              paginationY: Math.abs(pagination.getBoundingClientRect().y - paginationRect.y),
+            })
+          })
+        })
+      })
+      expect(workspaceGeometry.rootWidthRatio).toBeGreaterThan(0.9)
+      expect(workspaceGeometry.toolbarWidthRatio).toBeGreaterThan(0.9)
+      if (viewport.height === 720) expect(workspaceGeometry.bodyScrolled).toBe(true)
+      expect(workspaceGeometry.paginationVisible).toBe(true)
+      expect(workspaceGeometry.pageScrollTop).toBe(0)
+      expect(workspaceGeometry.toolbarY).toBeLessThanOrEqual(1)
+      expect(workspaceGeometry.headerY).toBeLessThanOrEqual(1)
+      expect(workspaceGeometry.paginationY).toBeLessThanOrEqual(1)
       await assertViewportIntegrity(page)
       await capture(page, testInfo, `platform-users-${viewport.width}x${viewport.height}-${colorScheme}`)
     }
   }
+
+  await page.setViewportSize({ width: 1440, height: 900 })
+  await page.emulateMedia({ colorScheme: 'light', reducedMotion: 'reduce' })
+  await page.goto('/users')
+  await expect(page.getByText('成员甲', { exact: true })).toBeVisible()
+  await page.getByLabel('搜索名称').fill('不存在的成员')
+  const userEmpty = page.locator('[data-product-page="users"] [data-empty-state]')
+  await expect(userEmpty.getByText('当前筛选无结果', { exact: true })).toBeVisible()
+  const userEmptyGeometry = await userEmpty.evaluate((element) => {
+    const body = element.parentElement
+    if (!body) throw new Error('用户空态缺少表体区域。')
+    const style = getComputedStyle(element)
+    const bodyRect = body.getBoundingClientRect()
+    const emptyRect = element.getBoundingClientRect()
+    const bodyCenterX = bodyRect.left + body.clientLeft + body.clientWidth / 2
+    const bodyCenterY = bodyRect.top + body.clientTop + body.clientHeight / 2
+    return {
+      widthRatio: emptyRect.width / bodyRect.width,
+      heightRatio: emptyRect.height / bodyRect.height,
+      centerOffset: Math.hypot(
+        bodyCenterX - (emptyRect.left + emptyRect.width / 2),
+        bodyCenterY - (emptyRect.top + emptyRect.height / 2),
+      ),
+      background: style.backgroundColor,
+      borderWidth: style.borderTopWidth,
+      shadow: style.boxShadow,
+    }
+  })
+  expect(userEmptyGeometry.widthRatio).toBeGreaterThan(0.95)
+  expect(userEmptyGeometry.heightRatio).toBeGreaterThan(0.95)
+  expect(userEmptyGeometry.centerOffset).toBeLessThanOrEqual(1)
+  expect(userEmptyGeometry.background).toBe('rgba(0, 0, 0, 0)')
+  expect(userEmptyGeometry.borderWidth).toBe('0px')
+  expect(userEmptyGeometry.shadow).toBe('none')
+  await capture(page, testInfo, 'platform-users-empty-light')
+  await page.emulateMedia({ colorScheme: 'dark', reducedMotion: 'reduce' })
+  await capture(page, testInfo, 'platform-users-empty-dark')
 
   await page.setViewportSize({ width: 1440, height: 900 })
   await page.emulateMedia({ colorScheme: 'light', reducedMotion: 'reduce' })
@@ -822,31 +915,37 @@ test('platform-user directory and persona references remain legible across deskt
   expect(failures, failures.join('\n')).toEqual([])
 })
 
-test('platform-user and persona-reference transitions use the shared motion system', async ({ page }) => {
+test('platform-user updates stay local while persona references use the shared motion system', async ({ page }) => {
   const failures = installRuntimeFailureGate(page)
   await installProductRoutes(page)
   await page.setViewportSize({ width: 1440, height: 900 })
   await page.goto('/users')
-  await expect(page.getByRole('heading', { name: '全部用户' })).toBeVisible()
+  await expect(page.getByRole('heading', { name: '平台用户' })).toBeVisible()
+  await expect(page.getByText('成员甲', { exact: true })).toBeVisible()
+  await expect(page.getByText('正在连接', { exact: true })).toHaveCount(0)
 
+  const stableChromeBefore = await page.evaluate(() => {
+    const toolbar = document.querySelector<HTMLElement>('[data-page-toolbar]')!
+    const header = document.querySelector<HTMLElement>('[data-table-header]')!
+    const pagination = document.querySelector<HTMLElement>('[data-table-pagination]')!
+    return [toolbar, header, pagination].map((element) => {
+      const rect = element.getBoundingClientRect()
+      return { x: rect.x, y: rect.y, width: rect.width, height: rect.height }
+    })
+  })
   await page.getByRole('link', { name: /QQ 官方机器人/u }).click()
-  const stageSamples: number[] = []
-  let stageOverlap = false
-  for (let step = 0; step < 20; step += 1) {
-    await page.waitForTimeout(12)
-    const layers = await page.locator('[data-stage-layer]').evaluateAll((nodes) =>
-      nodes.map((node) => ({
-        phase: node.getAttribute('data-stage-layer'),
-        opacity: Number(getComputedStyle(node).opacity),
-      })),
-    )
-    stageSamples.push(...layers.map((layer) => layer.opacity))
-    if (layers.some((layer) => layer.phase === 'in') && layers.some((layer) => layer.phase === 'out'))
-      stageOverlap = true
-  }
-  await expect(page.getByRole('heading', { name: 'QQ 官方机器人' })).toBeVisible()
-  expect(stageOverlap, 'expected the user category layers to overlap').toBe(true)
-  expect(stageSamples.some((opacity) => opacity > 0.02 && opacity < 0.98)).toBe(true)
+  await expect(page.getByText('QQ 官方机器人 · 9 位用户', { exact: true })).toBeVisible()
+  await expect(page.locator('[data-product-page="users"] [data-stage-layer]')).toHaveCount(0)
+  const stableChromeAfter = await page.evaluate(() => {
+    const toolbar = document.querySelector<HTMLElement>('[data-page-toolbar]')!
+    const header = document.querySelector<HTMLElement>('[data-table-header]')!
+    const pagination = document.querySelector<HTMLElement>('[data-table-pagination]')!
+    return [toolbar, header, pagination].map((element) => {
+      const rect = element.getBoundingClientRect()
+      return { x: rect.x, y: rect.y, width: rect.width, height: rect.height }
+    })
+  })
+  expect(stableChromeAfter).toEqual(stableChromeBefore)
 
   await page.goto(`/work/agents/${targetAgentId}`)
   const editor = page.getByRole('textbox', { name: '人设' })
@@ -1165,6 +1264,29 @@ test('desktop splitters and appearance preferences persist and recover defaults'
 
   const inspectorSplitter = page.getByRole('separator', { name: '调整检查器宽度' })
   await expect(inspectorSplitter).toHaveAttribute('aria-valuenow', '344')
+  const inspectorDividerGeometry = await inspectorSplitter.evaluate((element) => {
+    const previous = element.previousElementSibling
+    const next = element.nextElementSibling
+    if (!(previous instanceof HTMLElement) || !(next instanceof HTMLElement)) {
+      throw new Error('检查器分隔条缺少相邻画布。')
+    }
+    const previousRect = previous.getBoundingClientRect()
+    const nextRect = next.getBoundingClientRect()
+    const splitterRect = element.getBoundingClientRect()
+    const line = getComputedStyle(element, '::after')
+    return {
+      gap: nextRect.left - previousRect.right,
+      centerOffset: Math.abs(splitterRect.left + splitterRect.width / 2 - (previousRect.right + 0.5)),
+      hitWidth: splitterRect.width,
+      lineLeft: Number.parseFloat(line.left),
+      lineWidth: Number.parseFloat(line.width),
+    }
+  })
+  expect(inspectorDividerGeometry.gap).toBe(1)
+  expect(inspectorDividerGeometry.centerOffset).toBeLessThanOrEqual(0.5)
+  expect(inspectorDividerGeometry.hitWidth).toBe(9)
+  expect(inspectorDividerGeometry.lineLeft).toBe(4.5)
+  expect(inspectorDividerGeometry.lineWidth).toBe(1)
   await dragHorizontally(page, inspectorSplitter, -40)
   await expect(inspectorSplitter).toHaveAttribute('aria-valuenow', '384')
   await dragHorizontally(page, inspectorSplitter, 60)
@@ -1203,6 +1325,17 @@ test('desktop splitters and appearance preferences persist and recover defaults'
   await expect(page.getByRole('switch', { name: '减少动态效果' })).toBeChecked()
   await expect(page.getByRole('switch', { name: '减少透明效果' })).toBeChecked()
   await expect(page.getByLabel('对比度')).toContainText('更高对比度')
+  await expect(page.locator('[data-route-transition] > [data-stage-layer="in"]')).toHaveCount(1)
+  const reducedMotionAlignment = await page.evaluate(() => {
+    const stage = document.querySelector<HTMLElement>('[data-product-page="settings"] [data-stage-layer="in"]')
+    const content = document.querySelector<HTMLElement>('[data-settings-content]')
+    if (!stage || !content) throw new Error('减少动效后的设置页缺少内容中心轴。')
+    const stageRect = stage.getBoundingClientRect()
+    const contentRect = content.getBoundingClientRect()
+    const stageCenter = stageRect.left + stage.clientLeft + stage.clientWidth / 2
+    return Math.abs(stageCenter - (contentRect.left + contentRect.width / 2))
+  })
+  expect(reducedMotionAlignment).toBeLessThanOrEqual(1)
   await capture(page, testInfo, 'appearance-reduced-transparency-high-contrast')
 
   await page.getByRole('button', { name: '恢复默认分栏' }).click()
@@ -1351,6 +1484,7 @@ test('redesigned relationship and lifecycle pages stay legible across representa
       colorScheme: 'dark',
     },
     { route: '/settings?tab=appearance', text: '月潮观测所', width: 1440, height: 900, colorScheme: 'light' },
+    { route: '/settings?tab=appearance', text: '月潮观测所', width: 1440, height: 900, colorScheme: 'dark' },
     { route: '/settings?tab=about', text: '版权与品牌', width: 1440, height: 900, colorScheme: 'dark' },
     { route: '/work/agents/new', text: '创建智能体', width: 1440, height: 900, colorScheme: 'dark' },
     {
@@ -1387,6 +1521,18 @@ test('redesigned relationship and lifecycle pages stay legible across representa
       await expect(page.getByText('本地扩展', { exact: true })).toBeVisible()
       await expect(page.getByRole('heading', { name: '群聊摘要' })).toBeVisible()
       await expect(page.getByText('扩展', { exact: true })).toHaveCount(0)
+    }
+    if (scene.route === '/settings?tab=appearance') {
+      const alignment = await page.evaluate(() => {
+        const stage = document.querySelector<HTMLElement>('[data-product-page="settings"] [data-stage-layer="in"]')
+        const content = document.querySelector<HTMLElement>('[data-settings-content]')
+        if (!stage || !content) throw new Error('设置页缺少内容中心轴。')
+        const stageRect = stage.getBoundingClientRect()
+        const contentRect = content.getBoundingClientRect()
+        const stageCenter = stageRect.left + stage.clientLeft + stage.clientWidth / 2
+        return Math.abs(stageCenter - (contentRect.left + contentRect.width / 2))
+      })
+      expect(alignment).toBeLessThanOrEqual(1)
     }
     if (scene.route.startsWith('/work/agents/')) {
       const sectionWidths = await page
@@ -1477,13 +1623,47 @@ test('redesigned relationship and lifecycle pages stay legible across representa
       body: JSON.stringify({ ...productSnapshot, extensions: [] }),
     }),
   )
-  await page.emulateMedia({ colorScheme: 'dark', reducedMotion: 'reduce' })
+  await page.emulateMedia({ colorScheme: 'light', reducedMotion: 'reduce' })
   await page.goto('/extensions')
   await expect(page.getByText('本地扩展', { exact: true })).toBeVisible()
   await expect(page.getByRole('heading', { name: '扩展库' })).toBeVisible()
   await expect(page.getByText('从一次动态运行开始')).toBeVisible()
   await expect(page.getByText('还没有本地扩展', { exact: true })).toHaveCount(0)
   await expect(page.getByRole('button', { name: '打开创造工作台' })).toBeVisible()
+  const emptySurfaceGeometry = await page.evaluate(() => {
+    const root = document.querySelector<HTMLElement>('[data-product-page="extensions"]')
+    const header = document.querySelector<HTMLElement>('[data-product-page="extensions"] [data-page-header]')
+    const empty = document.querySelector<HTMLElement>('[data-product-page="extensions"] [data-empty-state]')
+    const transition = root?.querySelector<HTMLElement>(':scope > [data-route-transition]')
+    const stage = transition?.querySelector<HTMLElement>('[data-stage-layer="in"]')
+    if (!root || !header || !empty || !transition || !stage) throw new Error('扩展空态缺少必要区域。')
+    const rootRect = root.getBoundingClientRect()
+    const headerRect = header.getBoundingClientRect()
+    const emptyRect = empty.getBoundingClientRect()
+    const transitionRect = transition.getBoundingClientRect()
+    const stageRect = stage.getBoundingClientRect()
+    const emptyStyle = getComputedStyle(empty)
+    const rootCenter = rootRect.left + rootRect.width / 2
+    const stageCenter = stageRect.left + stage.clientLeft + stage.clientWidth / 2
+    return {
+      emptyCenterOffset: Math.abs(stageCenter - (emptyRect.left + emptyRect.width / 2)),
+      emptyWidthRatio: emptyRect.width / transitionRect.width,
+      headerCenterOffset: Math.abs(rootCenter - (headerRect.left + headerRect.width / 2)),
+      transitionOverflow: getComputedStyle(transition).overflow,
+      background: emptyStyle.backgroundColor,
+      borderWidth: emptyStyle.borderTopWidth,
+      shadow: emptyStyle.boxShadow,
+    }
+  })
+  expect(emptySurfaceGeometry.emptyCenterOffset).toBeLessThanOrEqual(1)
+  expect(emptySurfaceGeometry.emptyWidthRatio).toBeGreaterThan(0.95)
+  expect(emptySurfaceGeometry.headerCenterOffset).toBeLessThanOrEqual(1)
+  expect(emptySurfaceGeometry.transitionOverflow).toBe('hidden')
+  expect(emptySurfaceGeometry.background).toBe('rgba(0, 0, 0, 0)')
+  expect(emptySurfaceGeometry.borderWidth).toBe('0px')
+  expect(emptySurfaceGeometry.shadow).toBe('none')
+  await capture(page, testInfo, 'redesign-extension-empty-light')
+  await page.emulateMedia({ colorScheme: 'dark', reducedMotion: 'reduce' })
   await capture(page, testInfo, 'redesign-extension-empty-dark')
   expect(failures, failures.join('\n')).toEqual([])
 })
@@ -2202,6 +2382,87 @@ test('desktop shell keeps a 48px top bar and a permanently available object pane
   await expect(topBar.getByText('NekroNXT', { exact: true })).toBeVisible()
   await expect(topBar.getByText('月潮观测所', { exact: true })).toBeVisible()
   await expect(topBar.getByText('CALM · PRECISE · ALIVE', { exact: true })).toBeVisible()
+  const chromeGeometry = await page.evaluate(() => {
+    const brand = document.querySelector<HTMLElement>('[data-window-brand]')
+    const dragTitle = document.querySelector<HTMLElement>('[data-window-drag-title]')
+    const rail = document.querySelector<HTMLElement>('aside[aria-label="模式"]')
+    const tree = document.querySelector<HTMLElement>('aside[aria-label="对象列"]')
+    const stage = document.querySelector<HTMLElement>('main')
+    if (!brand || !dragTitle || !rail || !tree || !stage) throw new Error('窗口外壳缺少必要表面。')
+    const brandStyle = getComputedStyle(brand)
+    const dragTitleStyle = getComputedStyle(dragTitle)
+    const railStyle = getComputedStyle(rail)
+    const treeStyle = getComputedStyle(tree)
+    const stageStyle = getComputedStyle(stage)
+    return {
+      brandBackground: brandStyle.backgroundColor,
+      dragTitleBackground: dragTitleStyle.backgroundColor,
+      brandRadius: Number.parseFloat(brandStyle.borderTopLeftRadius),
+      dragTitleRadius: Number.parseFloat(dragTitleStyle.borderTopLeftRadius),
+      railTop: Number.parseFloat(railStyle.borderTopLeftRadius),
+      railBottom: Number.parseFloat(railStyle.borderBottomLeftRadius),
+      treeTop: Number.parseFloat(treeStyle.borderTopLeftRadius),
+      treeBottom: Number.parseFloat(treeStyle.borderBottomLeftRadius),
+      stageTop: Number.parseFloat(stageStyle.borderTopRightRadius),
+      stageBottom: Number.parseFloat(stageStyle.borderBottomRightRadius),
+    }
+  })
+  expect(chromeGeometry.brandRadius).toBeGreaterThanOrEqual(10)
+  expect(chromeGeometry.dragTitleRadius).toBeGreaterThanOrEqual(10)
+  expect(chromeGeometry.brandBackground).toBe('rgba(0, 0, 0, 0)')
+  expect(chromeGeometry.dragTitleBackground).toBe('rgba(0, 0, 0, 0)')
+  expect(chromeGeometry.railTop).toBe(0)
+  expect(chromeGeometry.treeTop).toBe(0)
+  expect(chromeGeometry.stageTop).toBe(0)
+  expect(chromeGeometry.railBottom).toBeGreaterThanOrEqual(16)
+  expect(chromeGeometry.treeBottom).toBeGreaterThanOrEqual(16)
+  expect(chromeGeometry.stageBottom).toBeGreaterThanOrEqual(16)
+  const shellEdges = await page.evaluate(() => {
+    const body = document.querySelector<HTMLElement>('[data-shell-body]')
+    const rail = document.querySelector<HTMLElement>('aside[aria-label="模式"]')
+    const tree = document.querySelector<HTMLElement>('aside[aria-label="对象列"]')
+    const splitter = document.querySelector<HTMLElement>('[role="separator"][aria-label="调整对象列宽度"]')
+    const stage = document.querySelector<HTMLElement>('main')
+    if (!body || !rail || !tree || !splitter || !stage) throw new Error('窗口主体缺少必要表面。')
+    const bodyRect = body.getBoundingClientRect()
+    const railRect = rail.getBoundingClientRect()
+    const treeRect = tree.getBoundingClientRect()
+    const splitterRect = splitter.getBoundingClientRect()
+    const stageRect = stage.getBoundingClientRect()
+    const splitterLine = getComputedStyle(splitter, '::after')
+    return {
+      bodyLeft: bodyRect.left,
+      bodyRight: bodyRect.right,
+      railLeft: railRect.left,
+      dividerGap: stageRect.left - treeRect.right,
+      dividerCenterOffset: Math.abs(splitterRect.left + splitterRect.width / 2 - (treeRect.right + 0.5)),
+      dividerHitWidth: splitterRect.width,
+      dividerLineLeft: Number.parseFloat(splitterLine.left),
+      dividerLineWidth: Number.parseFloat(splitterLine.width),
+      stageRight: stageRect.right,
+      viewportWidth: window.innerWidth,
+    }
+  })
+  expect(shellEdges.bodyLeft).toBe(0)
+  expect(shellEdges.railLeft).toBe(0)
+  expect(shellEdges.dividerGap).toBe(1)
+  expect(shellEdges.dividerCenterOffset).toBeLessThanOrEqual(0.5)
+  expect(shellEdges.dividerHitWidth).toBe(9)
+  expect(shellEdges.dividerLineLeft).toBe(4.5)
+  expect(shellEdges.dividerLineWidth).toBe(1)
+  expect(shellEdges.bodyRight).toBe(shellEdges.viewportWidth)
+  expect(shellEdges.stageRight).toBe(shellEdges.viewportWidth)
+  for (const selector of ['[data-window-brand]', '[data-window-drag-title]']) {
+    const chrome = await page.locator(selector).evaluate((element) => {
+      const style = getComputedStyle(element)
+      return {
+        borders: [style.borderTopWidth, style.borderRightWidth, style.borderBottomWidth, style.borderLeftWidth],
+        shadow: style.boxShadow,
+      }
+    })
+    expect(chrome.borders).toEqual(['0px', '0px', '0px', '0px'])
+    expect(chrome.shadow).toBe('none')
+  }
   await page.locator('html').evaluate((root) => root.style.setProperty('--nxt-window-controls-left', '84px'))
   expect(await topBar.evaluate((element) => getComputedStyle(element).paddingLeft)).toBe('98px')
   expect(await topBar.evaluate((element) => getComputedStyle(element, '::after').left)).toBe('0px')
@@ -2299,6 +2560,29 @@ test('an initial Host failure is explicit and can recover without reloading', as
   await page.getByRole('button', { name: '重新连接' }).last().click()
   await expect(page.getByText('无法连接', { exact: true }).first()).toBeHidden()
   await expect(page.getByRole('link', { name: /QQ 官方机器人/u }).first()).toBeVisible()
+  await page.goto(`/work/channels/${targetChannelId}`)
+  const messageEmpty = page.locator('[data-empty-state]').filter({ hasText: '还没有消息' })
+  await expect(messageEmpty).toBeVisible()
+  const messageEmptySurface = await messageEmpty.evaluate((element) => {
+    const style = getComputedStyle(element)
+    const region = element.parentElement
+    if (!region) throw new Error('消息空态缺少滚动区域。')
+    const regionRect = region.getBoundingClientRect()
+    const emptyRect = element.getBoundingClientRect()
+    return {
+      widthRatio: emptyRect.width / regionRect.width,
+      centerOffset: Math.abs(regionRect.left + regionRect.width / 2 - (emptyRect.left + emptyRect.width / 2)),
+      background: style.backgroundColor,
+      borderWidth: style.borderTopWidth,
+      shadow: style.boxShadow,
+    }
+  })
+  expect(messageEmptySurface.widthRatio).toBeGreaterThan(0.95)
+  expect(messageEmptySurface.centerOffset).toBeLessThanOrEqual(1)
+  expect(messageEmptySurface.background).toBe('rgba(0, 0, 0, 0)')
+  expect(messageEmptySurface.borderWidth).toBe('0px')
+  expect(messageEmptySurface.shadow).toBe('none')
+  await capture(page, testInfo, 'channel-empty-dark-1100')
   expect(
     failures.filter((failure) => !failure.includes('503 (Service Unavailable)')),
     failures.join('\n'),

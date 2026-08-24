@@ -94,21 +94,15 @@
 }
 
 .emptyState {
-  box-sizing: border-box;
   display: grid;
   width: 100%;
-  min-height: 280px;
-  place-items: center;
+  min-height: 180px;
   align-content: center;
+  justify-items: center;
   padding: 32px;
   color: var(--nxt-text-muted);
   background: transparent;
   text-align: center;
-}
-
-.emptyState[data-fill] {
-  height: 100%;
-  min-height: 0;
 }
 
 .emptyTitle {
@@ -173,4 +167,128 @@
   .pageHeader {
     gap: 16px;
   }
+}
+
+/* Glin structural pass: page identity and empty states are first-class
+   surfaces instead of legacy lines placed on a flat canvas. */
+:global(:root[data-glin-experiment]) .pageHeader {
+  min-height: 76px;
+  align-items: center;
+  margin-bottom: 28px;
+  border-bottom: 0;
+  padding: 8px 0 18px 56px;
+}
+
+:global(:root[data-glin-experiment]) .pageHeader::before {
+  top: 8px;
+  bottom: auto;
+  left: 0;
+  width: 40px;
+  height: 40px;
+  border: 1px solid color-mix(in srgb, var(--nxt-accent) 22%, var(--glass-border-strong));
+  border-top-color: color-mix(in srgb, var(--nxt-brand-lumen) 44%, var(--glass-refraction-top));
+  border-radius: 14px;
+  background:
+    radial-gradient(circle at 38% 34%, rgb(255 255 255 / 72%) 0 2px, transparent 3px),
+    radial-gradient(circle at 50% 50%, color-mix(in srgb, var(--nxt-accent) 24%, transparent), transparent 68%),
+    color-mix(in srgb, var(--nxt-bg-elevated) 74%, transparent);
+  box-shadow:
+    var(--shadow-glass-sm),
+    inset 0 1px 0 rgb(255 255 255 / 24%),
+    0 0 24px color-mix(in srgb, var(--nxt-accent) 10%, transparent);
+  content: '';
+}
+
+:global(:root[data-glin-experiment]) .pageHeader::after {
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  left: 56px;
+  height: 1px;
+  background: linear-gradient(90deg, color-mix(in srgb, var(--nxt-accent) 28%, transparent), transparent 72%);
+  content: '';
+}
+
+:global(:root[data-glin-experiment]) .pageHeader[data-quiet] {
+  min-height: 68px;
+  margin-bottom: 26px;
+  padding: 6px 0 16px 48px;
+}
+
+:global(:root[data-glin-experiment]) .pageHeader[data-quiet]::before {
+  display: block;
+  top: 6px;
+  width: 34px;
+  height: 34px;
+  border-radius: 12px;
+}
+
+:global(:root[data-glin-experiment]) .pageHeader[data-quiet]::after {
+  left: 48px;
+}
+
+:global(:root[data-glin-experiment]) .pageTitle {
+  font-size: 24px;
+  font-weight: 735;
+  letter-spacing: -0.028em;
+  line-height: 30px;
+}
+
+:global(:root[data-glin-experiment]) .pageMeta {
+  max-width: 720px;
+  margin-top: 5px;
+  color: var(--nxt-text-secondary);
+  font-size: 12px;
+  line-height: 19px;
+}
+
+:global(:root[data-glin-experiment]) .pageActions {
+  align-self: flex-start;
+  padding-top: 4px;
+}
+
+:global(:root[data-glin-experiment]) .feedback {
+  border-color: var(--glass-border-strong);
+  border-top-color: var(--glass-refraction-top);
+  border-radius: var(--nxt-radius-control);
+  background: color-mix(in srgb, var(--nxt-bg-elevated) 66%, var(--nxt-bg-subtle));
+  box-shadow: inset 0 1px 0 rgb(255 255 255 / 12%);
+}
+
+:global(:root[data-glin-experiment]) .emptyState {
+  width: 100%;
+  min-height: 180px;
+  justify-self: stretch;
+  border: 0;
+  border-radius: 0;
+  padding: 40px 24px;
+  background: transparent;
+  box-shadow: none;
+  overflow: visible;
+}
+
+:global(:root[data-glin-experiment]) .emptyState::before,
+:global(:root[data-glin-experiment]) .emptyState::after {
+  display: none;
+}
+
+:global(:root[data-glin-experiment]) .emptyState > svg {
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  color: var(--nxt-accent);
+  background: transparent;
+  box-shadow: none;
+}
+
+:global(:root[data-glin-experiment]) .emptyTitle {
+  margin-top: 15px;
+  font-size: 17px;
+  letter-spacing: -0.015em;
+}
+
+:global(:root[data-glin-experiment][data-reduced-transparency='true']) .emptyState {
+  background: transparent;
 }

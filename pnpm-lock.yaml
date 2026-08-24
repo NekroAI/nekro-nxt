@@ -356,6 +356,9 @@ importers:
       '@dnd-kit/utilities':
         specifier: 3.2.2
         version: 3.2.2(react@18.3.1)
+      '@glinui/tokens':
+        specifier: 0.1.1
+        version: 0.1.1
       '@lexical/react':
         specifier: 0.38.2
         version: 0.38.2(@types/react@18.3.31)(react-dom@18.3.1(react@18.3.1))(react@18.3.1)(yjs@13.6.32)
@@ -3390,6 +3393,9 @@ packages:
 
   '@floating-ui/utils@0.2.12':
     resolution: {integrity: sha512-HpCo8tmWzLVad5s2d19EhAz5zqrrQ6s69qd6moPMQvkOuSwDT1YgRfWSVuc4ennqrgv3OHppiOGMQ7oC13yIww==}
+
+  '@glinui/tokens@0.1.1':
+    resolution: {integrity: sha512-2VtZx7Yj6yPF3Tdrsa9VAa5pFaUi50l4WVEV7s2qGWF0P+J2BGkvcKRgDf6WooPfKw2P4hmqIGWxyBj0MQ/ouA==}
 
   '@google/genai@1.52.0':
     resolution: {integrity: sha512-gwSvbpiN/17O9TbsqSsE/OzZcpv5Fo4RQjdngGgogtuB9RsyJ8ZHhX5KjHj1bp5N9snN2eK8LDGXSaWW2hof8Q==}
@@ -10644,6 +10650,8 @@ snapshots:
       tabbable: 6.5.0
 
   '@floating-ui/utils@0.2.12': {}
+
+  '@glinui/tokens@0.1.1': {}
 
   '@google/genai@1.52.0':
     dependencies:

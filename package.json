@@ -10,6 +10,7 @@
   },
   "scripts": {
     "dev": "pnpm -r --parallel --if-present run dev",
+    "dev:glin": "NEKRO_DATA=../../.local/glin-experiment-data NEKRO_PORT=5960 NEKRO_API_PROXY=http://127.0.0.1:5960 NEKRO_WEB_PORT=5961 pnpm -r --parallel --if-present run dev",
     "dsh:check-update": "node scripts/check-dsh-update.mjs",
     "desktop:preview": "node scripts/release-desktop.mjs preview",
     "desktop:stable": "node scripts/release-desktop.mjs stable",

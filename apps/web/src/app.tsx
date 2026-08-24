@@ -136,15 +136,16 @@ function DesktopShell() {
   return (
     <div className={styles.shell} style={shellStyle}>
       <header className={styles.windowTopBar} data-window-top-bar>
-        <div className={styles.windowBrand}>
+        <div className={styles.windowBrand} data-window-brand>
           <img className={styles.brandMark} src="/brand/mark.svg" alt="" aria-hidden="true" />
           <span className={styles.brandCopy}>
             <strong>NekroNXT</strong>
             <small>月潮观测所</small>
           </span>
         </div>
-        <div className={styles.windowObjectTitle} aria-hidden="true">
-          CALM · PRECISE · ALIVE
+        <div className={styles.windowObjectTitle} data-window-drag-title aria-hidden="true">
+          <span className={styles.experimentBadge}>LAB</span>
+          <span>CALM · PRECISE · ALIVE</span>
         </div>
       </header>
       <div className={styles.shellBody} data-shell-body>
@@ -246,11 +247,20 @@ function ThemeEffects() {
   const contrast = useUiPreferences((state) => state.appearance.contrast)
 
   useEffect(() => {
+    const colorScheme = window.matchMedia('(prefers-color-scheme: dark)')
+    const syncGlinTheme = (): void => {
+      const dark = theme === 'dark' || (theme === 'system' && colorScheme.matches)
+      document.documentElement.classList.toggle('dark', dark)
+    }
     if (theme === 'system') delete document.documentElement.dataset['theme']
     else document.documentElement.dataset['theme'] = theme
+    document.documentElement.dataset['glinExperiment'] = ''
     document.documentElement.dataset['reducedMotion'] = String(reducedMotion)
     document.documentElement.dataset['reducedTransparency'] = String(reducedTransparency)
     document.documentElement.dataset['contrast'] = contrast
+    syncGlinTheme()
+    colorScheme.addEventListener('change', syncGlinTheme)
+    return () => colorScheme.removeEventListener('change', syncGlinTheme)
   }, [theme, reducedMotion, reducedTransparency, contrast])
   return null
 }

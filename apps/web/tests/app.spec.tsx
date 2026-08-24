@@ -342,19 +342,32 @@ describe('NekroNxt product shell', () => {
     expect(renderRoute('/settings')).toContain('正在读取模型供应商')
   })
 
-  it('keeps domain-page chrome outside the independently scrolling workspace', () => {
-    for (const [route, label] of [
-      ['/users', '用户目录'],
-      ['/extensions', '扩展详情'],
-      ['/settings', '设置内容'],
+  it('keeps domain-page chrome stable around local content regions', () => {
+    const users = renderRoute('/users')
+    const userMarkers = [
+      'data-page-header=""',
+      'data-page-toolbar=""',
+      'data-table-header=""',
+      'data-table-scroll-region=""',
+      'data-table-pagination=""',
+    ]
+    for (const marker of userMarkers) expect(users).toContain(marker)
+    for (let index = 1; index < userMarkers.length; index += 1) {
+      expect(users.indexOf(userMarkers[index - 1] ?? '')).toBeLessThan(users.indexOf(userMarkers[index] ?? ''))
+    }
+    expect(users).toContain('data-empty-state=""')
+
+    for (const [route, page] of [
+      ['/extensions', 'extensions'],
+      ['/settings', 'settings'],
     ] as const) {
       const markup = renderRoute(route)
-      const scrollMarker = `data-workspace-scroll="${label}"`
-      expect(markup).toContain(scrollMarker)
-      expect(markup.indexOf('<h1')).toBeLessThan(markup.indexOf(scrollMarker))
+      expect(markup).toContain(`data-product-page="${page}"`)
+      expect(markup).toContain('data-page-header=""')
+      expect(markup).toContain('data-route-transition=""')
+      expect(markup.indexOf('data-page-header=""')).toBeLessThan(markup.indexOf('data-route-transition=""'))
     }
-    expect(renderRoute('/users')).toContain('data-fill=""')
-    expect(renderRoute('/extensions')).toContain('data-fill=""')
+    expect(renderRoute('/extensions')).toContain('data-empty-state=""')
   })
 
   it('keeps direct creator and runtime routes honest when no snapshot data is available', () => {
@@ -808,7 +821,7 @@ describe.sequential('NekroNxt browser projections', { timeout: 30_000 }, () => {
     await withProductPage(
       '/users',
       async (page) => {
-        await playwrightExpect(page.getByRole('heading', { name: '全部用户' })).toBeVisible()
+        await playwrightExpect(page.getByRole('heading', { name: '平台用户' })).toBeVisible()
         await playwrightExpect(page.getByText('成员甲', { exact: true })).toBeVisible()
         await playwrightExpect(page.locator('body')).not.toContainText('pid_membera')
         await page.getByLabel('搜索名称').fill('成员甲')

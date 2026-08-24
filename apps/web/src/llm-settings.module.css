@@ -168,3 +168,57 @@
     gap: 16px;
   }
 }
+
+:global(:root[data-glin-experiment]) .providerSettings {
+  height: 100%;
+  min-height: 0;
+  grid-template-rows: auto minmax(0, 1fr);
+  gap: 0;
+}
+
+:global(:root[data-glin-experiment]) .toolbar {
+  flex: 0 0 auto;
+  border-bottom: 1px solid var(--nxt-border-subtle);
+  padding: 0 0 14px;
+}
+
+:global(:root[data-glin-experiment]) .layout {
+  min-height: 0;
+  grid-template-columns: minmax(230px, 0.56fr) minmax(420px, 1.44fr);
+  gap: 0;
+  align-items: stretch;
+  overflow: hidden;
+}
+
+:global(:root[data-glin-experiment]) .providerList {
+  align-content: start;
+  overflow-x: hidden;
+  overflow-y: auto;
+  border: 0;
+  border-right: 1px solid var(--nxt-border-subtle);
+  border-radius: 0;
+  padding: 12px 14px 24px 0;
+  background: transparent;
+  box-shadow: none;
+}
+
+:global(:root[data-glin-experiment]) .editor {
+  align-content: start;
+  overflow-x: hidden;
+  overflow-y: auto;
+  border: 0;
+  border-radius: 0;
+  padding: 18px 0 36px 24px;
+  background: transparent;
+  box-shadow: none;
+  scrollbar-gutter: stable;
+}
+
+:global(:root[data-glin-experiment]) .editorHeading {
+  position: sticky;
+  z-index: var(--nxt-layer-sticky);
+  top: -18px;
+  border-bottom: 1px solid var(--nxt-border-subtle);
+  padding: 18px 0 12px;
+  background: var(--nxt-bg-canvas);
+}

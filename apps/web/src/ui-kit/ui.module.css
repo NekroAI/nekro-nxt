@@ -547,6 +547,7 @@
   min-width: 5px;
   min-height: 0;
   cursor: col-resize;
+  outline: none;
   touch-action: none;
 }
 
@@ -554,10 +555,11 @@
   position: absolute;
   top: 0;
   bottom: 0;
-  left: 2px;
+  left: 50%;
   width: 1px;
   background: var(--nxt-border-subtle);
   content: '';
+  transform: translateX(-50%);
 }
 
 .resizeHandle:hover::after,
@@ -695,4 +697,181 @@
   to {
     transform: rotate(1turn);
   }
+}
+
+/* Glin UI experiment adapters. Component behavior and public props remain
+   NekroNXT-owned; these rules translate them onto the Glin material scale. */
+:global(:root[data-glin-experiment]) .button,
+:global(:root[data-glin-experiment]) .iconButton {
+  border-radius: var(--nxt-radius-control);
+  font-weight: 640;
+  box-shadow: inset 0 1px 0 rgb(255 255 255 / 14%);
+}
+
+:global(:root[data-glin-experiment]) .button:not(:disabled):hover,
+:global(:root[data-glin-experiment]) .iconButton:not(:disabled):hover {
+  transform: translateY(-1px);
+}
+
+:global(:root[data-glin-experiment]) .primary {
+  border-color: color-mix(in srgb, var(--nxt-accent) 68%, white 12%);
+  background: linear-gradient(180deg, color-mix(in srgb, var(--nxt-accent) 84%, white), var(--nxt-accent));
+  box-shadow:
+    inset 0 1px 0 rgb(255 255 255 / 28%),
+    0 7px 18px color-mix(in srgb, var(--nxt-accent) 24%, transparent);
+}
+
+:global(:root[data-glin-experiment]) .secondary {
+  border-color: var(--glass-border-strong);
+  border-top-color: var(--glass-refraction-top);
+  background: color-mix(in srgb, var(--nxt-bg-elevated) 80%, transparent);
+  backdrop-filter: saturate(var(--glass-saturate-subtle)) blur(var(--glass-1-blur));
+  -webkit-backdrop-filter: saturate(var(--glass-saturate-subtle)) blur(var(--glass-1-blur));
+  box-shadow:
+    var(--shadow-glass-sm),
+    inset 0 1px 0 rgb(255 255 255 / 20%);
+}
+
+:global(:root[data-glin-experiment]) .ghost,
+:global(:root[data-glin-experiment]) .iconButton {
+  color: var(--nxt-text-secondary);
+}
+
+:global(:root[data-glin-experiment]) .panel {
+  border-color: var(--glass-border-strong);
+  border-top-color: var(--glass-refraction-top);
+  border-radius: var(--radius-lg);
+  background: color-mix(in srgb, var(--nxt-bg-surface) 84%, transparent);
+  box-shadow:
+    var(--shadow-glass-sm),
+    inset 0 1px 0 rgb(255 255 255 / 18%);
+}
+
+:global(:root[data-glin-experiment]) .badge {
+  min-height: 24px;
+  border: 1px solid color-mix(in srgb, currentcolor 15%, transparent);
+  background: color-mix(in srgb, currentcolor 9%, var(--nxt-bg-elevated));
+  box-shadow: inset 0 1px 0 rgb(255 255 255 / 14%);
+}
+
+:global(:root[data-glin-experiment]) .input,
+:global(:root[data-glin-experiment]) .textarea,
+:global(:root[data-glin-experiment]) .selectTrigger {
+  border-color: var(--glass-border-strong);
+  border-top-color: var(--glass-refraction-top);
+  border-radius: var(--radius-md);
+  background: color-mix(in srgb, var(--nxt-bg-elevated) 76%, transparent);
+  box-shadow:
+    inset 0 1px 0 rgb(255 255 255 / 18%),
+    0 1px 2px rgb(20 35 60 / 5%);
+}
+
+:global(:root[data-glin-experiment]) .input:focus,
+:global(:root[data-glin-experiment]) .textarea:focus,
+:global(:root[data-glin-experiment]) .selectTrigger:focus {
+  box-shadow:
+    0 0 0 3px color-mix(in srgb, var(--nxt-focus-ring) 16%, transparent),
+    inset 0 1px 0 rgb(255 255 255 / 20%);
+}
+
+:global(:root[data-glin-experiment]) .switchRoot {
+  width: 42px;
+  height: 24px;
+  border: 1px solid var(--nxt-border-default);
+  background: color-mix(in srgb, var(--nxt-bg-pressed) 76%, transparent);
+  box-shadow: inset 0 1px 4px rgb(24 38 64 / 12%);
+}
+
+:global(:root[data-glin-experiment]) .switchRoot[data-state='checked'] {
+  border-color: color-mix(in srgb, var(--nxt-accent) 66%, transparent);
+  background: linear-gradient(135deg, var(--nxt-accent), color-mix(in srgb, var(--nxt-accent) 72%, #70d8f0));
+}
+
+:global(:root[data-glin-experiment]) .switchThumb {
+  width: 18px;
+  height: 18px;
+  box-shadow: 0 2px 6px rgb(19 32 56 / 28%);
+}
+
+:global(:root[data-glin-experiment]) .switchRoot[data-state='checked'] .switchThumb {
+  transform: translateX(18px);
+}
+
+:global(:root[data-glin-experiment]) .selectContent,
+:global(:root[data-glin-experiment]) .tooltipContent,
+:global(:root[data-glin-experiment]) .dropdownMenuContent {
+  border-color: var(--glass-border-strong);
+  border-top-color: var(--glass-refraction-top);
+  border-radius: var(--radius-lg);
+  background: color-mix(in srgb, var(--nxt-bg-elevated) 90%, transparent);
+  backdrop-filter: var(--nxt-glass-filter-heavy);
+  -webkit-backdrop-filter: var(--nxt-glass-filter-heavy);
+  box-shadow:
+    var(--shadow-glass-lg),
+    inset 0 1px 0 rgb(255 255 255 / 20%);
+}
+
+:global(:root[data-glin-experiment]) .selectItem,
+:global(:root[data-glin-experiment]) .dropdownMenuItem {
+  border-radius: var(--radius-sm);
+}
+
+:global(:root[data-glin-experiment]) .dialogOverlay {
+  background: radial-gradient(circle at 50% 32%, rgb(73 116 220 / 10%), transparent 32%), rgb(4 10 22 / 34%);
+  backdrop-filter: blur(10px) saturate(120%);
+  -webkit-backdrop-filter: blur(10px) saturate(120%);
+}
+
+:global(:root[data-glin-experiment]) .dialogContent {
+  border-color: var(--glass-border-strong);
+  border-top-color: var(--glass-refraction-top);
+  border-radius: var(--nxt-radius-dialog);
+  background: color-mix(in srgb, var(--nxt-bg-elevated) 90%, transparent);
+  backdrop-filter: var(--nxt-glass-filter-heavy);
+  -webkit-backdrop-filter: var(--nxt-glass-filter-heavy);
+  box-shadow:
+    var(--shadow-glass-lg),
+    inset 0 1px 0 rgb(255 255 255 / 22%);
+}
+
+:global(:root[data-glin-experiment]) .dialogContent::before {
+  right: 72px;
+  left: 72px;
+  width: auto;
+  background: linear-gradient(90deg, transparent, var(--nxt-brand-lumen), var(--nxt-brand-brass), transparent);
+  opacity: 0.52;
+}
+
+:global(:root[data-glin-experiment]) .tabsList {
+  border-radius: var(--radius-md);
+  background: color-mix(in srgb, var(--nxt-bg-subtle) 78%, transparent);
+  box-shadow: inset 0 1px 4px rgb(26 43 70 / 6%);
+}
+
+:global(:root[data-glin-experiment]) .tabsTrigger[data-state='active'] {
+  border: 1px solid var(--glass-border-strong);
+  border-top-color: var(--glass-refraction-top);
+  background: var(--nxt-bg-elevated);
+  box-shadow: var(--shadow-glass-sm);
+}
+
+:global(:root[data-glin-experiment]) .navMark {
+  border: 1px solid color-mix(in srgb, var(--nxt-accent) 18%, var(--glass-border));
+  border-top-color: color-mix(in srgb, var(--nxt-accent) 16%, var(--glass-refraction-top));
+  border-radius: var(--radius-md);
+  background:
+    linear-gradient(145deg, rgb(255 255 255 / 16%), transparent 42%),
+    linear-gradient(135deg, color-mix(in srgb, var(--nxt-accent) 17%, transparent), rgb(255 255 255 / 6%));
+  box-shadow:
+    inset 0 1px 0 rgb(255 255 255 / 18%),
+    0 7px 18px color-mix(in srgb, var(--nxt-accent) 12%, transparent);
+}
+
+:global(:root[data-glin-experiment][data-reduced-transparency='true']) .secondary,
+:global(:root[data-glin-experiment][data-reduced-transparency='true']) .selectContent,
+:global(:root[data-glin-experiment][data-reduced-transparency='true']) .tooltipContent,
+:global(:root[data-glin-experiment][data-reduced-transparency='true']) .dropdownMenuContent,
+:global(:root[data-glin-experiment][data-reduced-transparency='true']) .dialogContent {
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
 }

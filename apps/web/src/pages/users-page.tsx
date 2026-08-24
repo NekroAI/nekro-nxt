@@ -1,10 +1,10 @@
 import type { HostApiResponse } from '@nekro-nxt/contracts'
 import { History } from 'lucide-react'
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useState } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import { EmptyState, InlineFeedback, PageHeader } from '../components/product-feedback.js'
 import { useProductStore } from '../product-store.js'
-import { Button, Field, Input, SelectField, Spinner, StageCrossfade } from '../ui-kit/index.js'
+import { Button, Field, Input, SelectField, Spinner } from '../ui-kit/index.js'
 import styles from './product-pages.module.css'
 
 type PlatformUser = HostApiResponse<'listPlatformUsers'>['items'][number]
@@ -79,16 +79,6 @@ export function UsersPage() {
   const connectionOptions = facets.connections
     .filter((connection) => !adapterKey || connection.adapterKey === adapterKey)
     .map((connection) => ({ value: connection.id, label: `${connection.displayName}（${connection.userCount}）` }))
-  const groups = useMemo(() => {
-    if (adapterKey) return []
-    const grouped = new Map<string, { displayName: string; users: PlatformUser[] }>()
-    for (const user of items) {
-      const current = grouped.get(user.adapter.key) ?? { displayName: user.adapter.displayName, users: [] }
-      current.users.push(user)
-      grouped.set(user.adapter.key, current)
-    }
-    return [...grouped.entries()]
-  }, [adapterKey, items])
   const hasFilters = Boolean(adapterKey || connectionId || query)
   const historicalOnly = items.length > 0 && items.every((item) => item.historicalOnly)
 
@@ -123,19 +113,21 @@ export function UsersPage() {
   }
 
   const renderRows = (users: readonly PlatformUser[]) => (
-    <div className={styles.userRows}>
+    <div className={styles.userRows} role="rowgroup">
       {users.map((user) => (
-        <article className={styles.userRow} key={user.identityId}>
+        <article className={styles.userRow} key={user.identityId} role="row">
           <span className={styles.userAvatar} aria-hidden="true">
             {(user.displayName?.trim() || '用').slice(0, 1)}
           </span>
-          <span className={styles.userIdentity}>
+          <span className={styles.userIdentity} role="cell">
             <strong>{user.displayName?.trim() || '未命名用户'}</strong>
-            <small>
-              {user.adapter.displayName} · {user.connection.displayName}
-            </small>
+            <small>{user.historicalOnly ? '仅保留历史身份' : `${user.activeChannelCount} 个活动频道`}</small>
           </span>
-          <span className={styles.userChannels}>
+          <span className={styles.userConnection} role="cell">
+            <strong>{user.connection.displayName}</strong>
+            <small>{user.adapter.displayName}</small>
+          </span>
+          <span className={styles.userChannels} role="cell">
             {user.historicalOnly ? (
               <em>
                 <History size={13} aria-hidden="true" /> 仅历史记录
@@ -156,15 +148,19 @@ export function UsersPage() {
   )
 
   return (
-    <div className={[styles.page, styles.detailPage, styles.workspacePage].join(' ')}>
-      <StageCrossfade className={styles.workspaceStage} swapKey={adapterKey || 'all'}>
-        <PageHeader
-          className={styles.workspaceHeader}
-          quiet
-          title={selectedAdapter?.displayName ?? '全部用户'}
-          meta={<span>{loading ? '正在更新目录' : `${total} 位用户`}</span>}
-        />
-        <section className={styles.userToolbar} aria-label="用户筛选">
+    <div className={[styles.page, styles.desktopPage, styles.usersPage].join(' ')} data-product-page="users">
+      <PageHeader
+        quiet
+        title="平台用户"
+        meta={
+          <span>
+            {selectedAdapter ? `${selectedAdapter.displayName} · ` : ''}
+            {loading ? '正在更新目录' : `${total} 位用户`}
+          </span>
+        }
+      />
+      <section className={styles.userToolbar} aria-label="用户筛选" data-page-toolbar="">
+        <div className={styles.userToolbarFields}>
           <Field label="搜索名称">
             <Input
               value={queryDraft}
@@ -187,6 +183,8 @@ export function UsersPage() {
             onValueChange={(value) => updateFilter('connection', value === 'all' ? '' : value)}
             options={[{ value: 'all', label: '全部连接' }, ...connectionOptions]}
           />
+        </div>
+        <div className={styles.userToolbarActions}>
           <Button
             variant="ghost"
             disabled={!hasFilters}
@@ -197,52 +195,51 @@ export function UsersPage() {
           >
             清除筛选
           </Button>
-        </section>
-        {items.length > 0 ? (
-          <div className={styles.userTableHeader} aria-hidden="true" data-user-table-header="">
-            <span />
-            <span>用户与来源</span>
-            <span>频道状态</span>
-          </div>
-        ) : null}
-        <div className={styles.workspaceScroller} data-workspace-scroll="用户目录">
+        </div>
+      </section>
+      <section className={styles.userWorkspace} aria-label="用户目录">
+        <div className={styles.userNotices} aria-live="polite">
           {error ? <InlineFeedback tone="error">{error}</InlineFeedback> : null}
           {historicalOnly ? (
             <InlineFeedback tone="warning">当前结果仅包含历史记录；这些用户目前不在任何活动频道中。</InlineFeedback>
           ) : null}
-          {loading && items.length === 0 ? (
-            <EmptyState fill loading title="正在读取用户目录" description="正在汇总已持久化的平台身份。" />
-          ) : items.length === 0 ? (
-            <EmptyState
-              fill
-              title={hasFilters ? '当前筛选无结果' : '尚未观测到用户'}
-              description={hasFilters ? '调整名称、平台或连接筛选条件。' : '收到平台成员消息后，对应身份会出现在这里。'}
-            />
-          ) : adapterKey ? (
-            renderRows(items)
-          ) : (
-            <div className={styles.userGroups}>
-              {groups.map(([key, group]) => (
-                <section key={key} className={styles.userGroup}>
-                  <header>
-                    <h2>{group.displayName}</h2>
-                    <span>{group.users.length} 位</span>
-                  </header>
-                  {renderRows(group.users)}
-                </section>
-              ))}
-            </div>
-          )}
         </div>
-        {nextCursor ? (
-          <div className={styles.userLoadMore} data-workspace-footer="">
+        <div className={styles.userTable} role="table" aria-label="平台用户" aria-rowcount={total}>
+          <div className={styles.userTableHeader} role="row" data-table-header="">
+            <span aria-hidden="true" />
+            <span role="columnheader">用户</span>
+            <span role="columnheader">平台连接</span>
+            <span role="columnheader">活动范围</span>
+          </div>
+          <div className={styles.userTableBody} data-table-scroll-region="">
+            {loading && items.length === 0 ? (
+              <EmptyState loading title="正在读取用户目录" description="正在汇总已持久化的平台身份。" />
+            ) : items.length === 0 ? (
+              <EmptyState
+                title={hasFilters ? '当前筛选无结果' : '尚未观测到用户'}
+                description={
+                  hasFilters ? '调整名称、平台或连接筛选条件。' : '收到平台成员消息后，对应身份会出现在这里。'
+                }
+              />
+            ) : (
+              renderRows(items)
+            )}
+          </div>
+        </div>
+        <footer className={styles.userPagination} data-table-pagination="">
+          <span>
+            已显示 {items.length} / {total}
+          </span>
+          {nextCursor ? (
             <Button onClick={() => void loadMore()} disabled={loadingMore}>
               {loadingMore ? <Spinner /> : null}
               {loadingMore ? '正在加载' : '加载更多'}
             </Button>
-          </div>
-        ) : null}
-      </StageCrossfade>
+          ) : (
+            <span>已加载全部</span>
+          )}
+        </footer>
+      </section>
     </div>
   )
 }

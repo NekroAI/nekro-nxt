@@ -10,6 +10,7 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
+    "@glinui/tokens": "0.1.1",
     "@deepseek-ai/cordis": "4.0.1",
     "@deepseek-ai/dsh-client-locale": "0.1.1-rc.2",
     "@deepseek-ai/dsh-client-modules": "0.1.1-rc.2",

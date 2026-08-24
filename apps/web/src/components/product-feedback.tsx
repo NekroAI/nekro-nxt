@@ -26,16 +26,14 @@ export function PageHeader({
   meta,
   actions,
   quiet = false,
-  className,
 }: {
   readonly title: string
   readonly meta?: ReactNode
   readonly actions?: ReactNode
   readonly quiet?: boolean
-  readonly className?: string
 }) {
   return (
-    <header className={[styles.pageHeader, className].filter(Boolean).join(' ')} data-quiet={quiet ? '' : undefined}>
+    <header className={styles.pageHeader} data-page-header="" data-quiet={quiet ? '' : undefined}>
       <div>
         <h1 className={styles.pageTitle}>{title}</h1>
         {meta ? <div className={styles.pageMeta}>{meta}</div> : null}
@@ -72,17 +70,15 @@ export function EmptyState({
   action,
   loading = false,
   illustration,
-  fill = false,
 }: {
   readonly title: string
   readonly description: string
   readonly action?: ReactNode
   readonly loading?: boolean
   readonly illustration?: { readonly src: string; readonly alt?: string }
-  readonly fill?: boolean
 }) {
   return (
-    <div className={styles.emptyState} data-fill={fill ? '' : undefined}>
+    <div className={styles.emptyState} data-empty-state="">
       {loading ? (
         <Spinner size={22} />
       ) : illustration ? (
