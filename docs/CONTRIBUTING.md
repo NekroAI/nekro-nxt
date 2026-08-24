@@ -44,7 +44,7 @@ pnpm test:journey
 
 仓库会自动加载 [Pull Request 模板](../.github/PULL_REQUEST_TEMPLATE.md)；请保留其中的变更、验证和公开边界检查项。
 
-- 标题和提交说明使用中文，格式为 `类型: 动词短语`；
+- 标题和提交说明使用英文类型前缀和中文主题，格式为 `type(scope): 中文动词短语`；类型使用 `feat`、`fix`、`refactor`、`docs`、`test`、`merge`；
 - 说明用户可观察到的结果、验证命令和文档更新；
 - UI 改动附浅色/深色真实截图；
 - 不混入无关格式化、重命名或生成文件；
