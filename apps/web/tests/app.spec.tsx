@@ -322,7 +322,7 @@ describe('NekroNxt product shell', () => {
   it('keeps the local service-instance control out of an ordinary browser shell', () => {
     const markup = renderRoute('/work/agents/new')
     expect(markup).toContain('主题：浅色；切换为深色')
-    expect(markup).not.toContain('服务实例：')
+    expect(markup).not.toContain('管理并添加远程服务实例：')
   })
 
   it('renders the initial intelligent-agent loading state without demo identities or hard-coded health', () => {
@@ -699,6 +699,53 @@ describe.sequential('NekroNxt browser projections', { timeout: 30_000 }, () => {
       await page.close()
     }
   }
+
+  it('keeps the Desktop service-instance entry available across redirects and navigation when the bridge exists', async () => {
+    await withProductPage(
+      '/',
+      async (page) => {
+        const instanceButton = page.getByRole('button', { name: /^管理并添加远程服务实例：远程开发环境/u })
+        await playwrightExpect(page).toHaveURL(new RegExp(`/work/channels/${browserChannelId}$`, 'u'))
+        await playwrightExpect(instanceButton).toBeVisible()
+        await playwrightExpect(instanceButton).toHaveAccessibleName('管理并添加远程服务实例：远程开发环境 · 运行正常')
+
+        await page.getByRole('link', { name: '用户' }).click()
+        await playwrightExpect(page).toHaveURL(/\/users$/u)
+        await playwrightExpect(instanceButton).toBeVisible()
+
+        await page.getByRole('link', { name: '设置' }).click()
+        await playwrightExpect(page).toHaveURL(/\/settings$/u)
+        await playwrightExpect(instanceButton).toBeVisible()
+        await instanceButton.click()
+        await playwrightExpect
+          .poll(() =>
+            page.evaluate(
+              () => (window as Window & { __instanceSwitcherOpenCount?: number }).__instanceSwitcherOpenCount,
+            ),
+          )
+          .toBe(1)
+      },
+      browserSnapshot,
+      async (page) => {
+        await page.addInitScript(() => {
+          const testWindow = window as Window & { __instanceSwitcherOpenCount?: number }
+          testWindow.__instanceSwitcherOpenCount = 0
+          Object.defineProperty(window, 'nekroDesktopShell', {
+            configurable: true,
+            value: {
+              getCurrentInstancePresentation: () =>
+                Promise.resolve({ displayName: '远程开发环境', status: 'ready' as const }),
+              openInstanceSwitcher: () => {
+                testWindow.__instanceSwitcherOpenCount = (testWindow.__instanceSwitcherOpenCount ?? 0) + 1
+                return Promise.resolve()
+              },
+              subscribeCurrentInstanceStatus: () => () => undefined,
+            },
+          })
+        })
+      },
+    )
+  })
 
   it('keeps model provider setup inside the create page when no models exist', async () => {
     const snapshot = {

@@ -25,6 +25,7 @@ import {
   Palette,
   Plus,
   Puzzle,
+  Settings,
   UsersRound,
 } from 'lucide-react'
 import { useMemo, useRef, useState, type CSSProperties, type MouseEvent } from 'react'
@@ -517,7 +518,9 @@ function WorkTree() {
   return (
     <>
       <div className={shell.treeHead}>
-        <span>频道与智能体</span>
+        <span>
+          <MessageSquare size={14} aria-hidden="true" /> 频道与智能体
+        </span>
         <NxtLink className={shell.treeAdd} to="/work/agents/new" aria-label="创建智能体">
           <Plus size={14} aria-hidden="true" />
         </NxtLink>
@@ -653,7 +656,9 @@ function ConnectionTree() {
   return (
     <>
       <div className={shell.treeHead}>
-        <span>平台账号</span>
+        <span>
+          <Cable size={14} aria-hidden="true" /> 平台账号
+        </span>
         {canCreate ? (
           <Tooltip.Root>
             <Tooltip.Trigger asChild>
@@ -714,7 +719,9 @@ function ExtensionTree() {
   return (
     <>
       <div className={shell.treeHead}>
-        <span>本地扩展</span>
+        <span>
+          <PackageOpen size={14} aria-hidden="true" /> 本地扩展
+        </span>
       </div>
       <div className={shell.treeBody}>
         {extensions.length === 0 ? (
@@ -781,7 +788,9 @@ function SettingsTree() {
   return (
     <>
       <div className={shell.treeHead}>
-        <span>设置分类</span>
+        <span>
+          <Settings size={14} aria-hidden="true" /> 设置分类
+        </span>
       </div>
       <div className={shell.treeBody}>
         <NavMarkGroup id="settings-nav">
@@ -832,7 +841,9 @@ function UsersTree() {
   return (
     <>
       <div className={shell.treeHead}>
-        <span>平台用户</span>
+        <span>
+          <UsersRound size={14} aria-hidden="true" /> 平台用户
+        </span>
       </div>
       <div className={shell.treeBody}>
         <NavMarkGroup id="platform-user-nav">

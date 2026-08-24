@@ -1,4 +1,4 @@
-import { ArrowRight, Check, Circle, Plus, Radio, Send } from 'lucide-react'
+import { ArrowRight, Cable, Check, Circle, Plus, Radio, Send } from 'lucide-react'
 import { useEffect, useMemo, useState } from 'react'
 import { Navigate, useParams, useSearchParams } from 'react-router-dom'
 import { notify } from '../components/notifications.js'
@@ -205,6 +205,7 @@ export function ConnectionsPage() {
     <div className={[styles.page, styles.detailPage].join(' ')} data-connection-page-scroll-root>
       <StageCrossfade swapKey={selected?.id ?? 'empty'}>
         <PageHeader
+          icon={Cable}
           title={selected ? connectionDisplayName(selected) : '接入聊天平台'}
           meta={
             selected ? (

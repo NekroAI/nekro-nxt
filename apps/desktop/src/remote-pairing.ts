@@ -2,6 +2,7 @@ import {
   InstanceDescriptorSchema,
   ManagementChallengeResponseSchema,
   ManagementDeviceEnrollmentResponseSchema,
+  ManagementSessionResponseSchema,
   parseJsonValue,
   managementPairProofMessage,
   type InstanceDescriptor,
@@ -13,19 +14,25 @@ import { normalizeRemoteOrigin } from './instance-profiles.js'
 
 const MAX_RESPONSE_BYTES = 256 * 1_024
 
-export interface PairRemoteInput {
-  readonly address: string
-  readonly managementKey: string
-  readonly deviceLabel: string
-  readonly clientReleaseId: string
-}
-
 export interface PairRemoteResult {
   readonly origin: string
   readonly descriptor: InstanceDescriptor
   readonly spkiSha256: string
   readonly deviceId: string
   readonly deviceSecret: string
+}
+
+export interface RemoteInspection {
+  readonly origin: string
+  readonly descriptor: InstanceDescriptor
+  readonly spkiSha256: string
+}
+
+export interface EnrollRemoteInput {
+  readonly inspection: RemoteInspection
+  readonly managementKey: string
+  readonly deviceLabel: string
+  readonly clientReleaseId: string
 }
 
 const spkiFromCertificate = (certificate: string | Buffer): string => {
@@ -63,12 +70,13 @@ export const observeRemoteSpki = async (origin: string): Promise<string> => {
   })
 }
 
-const requestJson = async (
+const requestJsonResponse = async (
   origin: string,
   pathname: string,
-  method: 'GET' | 'POST',
+  method: 'GET' | 'POST' | 'DELETE',
   body?: unknown,
-): Promise<unknown> => {
+  extraHeaders: Readonly<Record<string, string>> = {},
+): Promise<{ readonly value: unknown; readonly setCookies: readonly string[] }> => {
   const url = new URL(pathname, origin)
   const encoded = body === undefined ? undefined : JSON.stringify(body)
   return new Promise((resolve, reject) => {
@@ -79,11 +87,12 @@ const requestJson = async (
         rejectUnauthorized: false,
         headers:
           encoded === undefined
-            ? { accept: 'application/json' }
+            ? { accept: 'application/json', ...extraHeaders }
             : {
                 accept: 'application/json',
                 'content-type': 'application/json',
                 'content-length': Buffer.byteLength(encoded),
+                ...extraHeaders,
               },
       },
       (response) => {
@@ -108,7 +117,7 @@ const requestJson = async (
               reject(new Error(message))
               return
             }
-            resolve(value)
+            resolve({ value, setCookies: response.headers['set-cookie'] ?? [] })
           } catch (error) {
             reject(new Error('服务器返回了无法识别的响应。', { cause: error }))
           }
@@ -122,14 +131,27 @@ const requestJson = async (
   })
 }
 
-export const pairRemoteInstance = async (input: PairRemoteInput): Promise<PairRemoteResult> => {
-  if (input.managementKey.length < 32) throw new Error('管理密钥至少需要 32 个字符。')
-  const origin = normalizeRemoteOrigin(input.address)
+const requestJson = async (
+  origin: string,
+  pathname: string,
+  method: 'GET' | 'POST' | 'DELETE',
+  body?: unknown,
+  extraHeaders?: Readonly<Record<string, string>>,
+): Promise<unknown> => (await requestJsonResponse(origin, pathname, method, body, extraHeaders)).value
+
+export const inspectRemoteInstance = async (address: string): Promise<RemoteInspection> => {
+  const origin = normalizeRemoteOrigin(address)
   const spkiSha256 = await observeRemoteSpki(origin)
   const descriptor = InstanceDescriptorSchema.parse(await requestJson(origin, '/.well-known/nekro-nxt', 'GET'))
   if (descriptor.managementProtocol !== 1 || descriptor.desktopChromeProtocol !== 1) {
     throw new Error('服务实例版本与当前 Desktop 不兼容。')
   }
+  return { origin, descriptor, spkiSha256 }
+}
+
+export const enrollRemoteDevice = async (input: EnrollRemoteInput): Promise<PairRemoteResult> => {
+  if (input.managementKey.length < 32) throw new Error('管理密钥至少需要 32 个字符。')
+  const { origin, descriptor, spkiSha256 } = input.inspection
   const challenge = ManagementChallengeResponseSchema.parse(
     await requestJson(origin, '/api/management/pairing/challenge', 'POST', {}),
   )
@@ -158,6 +180,29 @@ export const pairRemoteInstance = async (input: PairRemoteInput): Promise<PairRe
     }),
   )
   return { origin, descriptor, spkiSha256, deviceId: enrollment.deviceId, deviceSecret: enrollment.deviceSecret }
+}
+
+export const revokeRemoteDevice = async (paired: PairRemoteResult): Promise<void> => {
+  if ((await observeRemoteSpki(paired.origin)) !== paired.spkiSha256) {
+    throw new Error('服务器证书已经变化，无法撤销新设备。')
+  }
+  const sessionResponse = await requestJsonResponse(paired.origin, '/api/management/session', 'POST', {
+    deviceId: paired.deviceId,
+    deviceSecret: paired.deviceSecret,
+  })
+  const sessionState = ManagementSessionResponseSchema.parse(sessionResponse.value)
+  const cookie = sessionResponse.setCookies
+    .map((value) => value.split(';', 1)[0])
+    .filter((value): value is string => value !== undefined && value.length > 0)
+    .join('; ')
+  if (cookie.length === 0) throw new Error('服务器没有建立可撤销的设备会话。')
+  await requestJson(
+    paired.origin,
+    `/api/management/devices/${encodeURIComponent(paired.deviceId)}`,
+    'DELETE',
+    undefined,
+    { cookie, origin: paired.origin, 'x-nxt-csrf': sessionState.csrfToken },
+  )
 }
 
 export const certificateSpki = spkiFromCertificate

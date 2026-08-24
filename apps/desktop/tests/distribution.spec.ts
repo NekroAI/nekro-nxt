@@ -105,6 +105,46 @@ describe('Desktop product distribution', () => {
     }
   })
 
+  it('keeps the DMG window fixed and its essential artwork inside the initially visible height', async () => {
+    const desktopRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
+    const previousChannel = process.env['NEKRO_DESKTOP_CHANNEL']
+    process.env['NEKRO_DESKTOP_CHANNEL'] = 'stable'
+    try {
+      const configUrl = new URL('../electron-builder.config.mjs?distribution-spec', import.meta.url).href
+      const configModule: unknown = await import(configUrl)
+      if (typeof configModule !== 'object' || configModule === null || !('default' in configModule)) {
+        throw new TypeError('electron-builder 配置缺少默认导出')
+      }
+      const config = configModule.default
+      if (typeof config !== 'object' || config === null || !('dmg' in config)) {
+        throw new TypeError('electron-builder 配置缺少 DMG 设置')
+      }
+      expect(config.dmg).toMatchObject({
+        iconSize: 108,
+        window: { width: 660, height: 420 },
+        contents: [
+          { x: 190, y: 220, type: 'file' },
+          { x: 470, y: 220, type: 'link', path: '/Applications' },
+        ],
+      })
+    } finally {
+      if (previousChannel === undefined) delete process.env['NEKRO_DESKTOP_CHANNEL']
+      else process.env['NEKRO_DESKTOP_CHANNEL'] = previousChannel
+    }
+
+    for (const channel of ['stable', 'preview']) {
+      const svg = readFileSync(
+        path.resolve(desktopRoot, '../../assets/brand/generated/platform', `dmg-background-${channel}.svg`),
+        'utf8',
+      )
+      expect(svg).toContain('viewBox="0 0 660 420"')
+      expect(svg).toContain('data-initial-visible-safe-height="356"')
+      const essentialBottoms = [...svg.matchAll(/data-essential-bottom="(\d+)"/gu)].map((match) => Number(match[1]))
+      expect(essentialBottoms.length).toBeGreaterThan(0)
+      expect(Math.max(...essentialBottoms)).toBeLessThanOrEqual(356)
+    }
+  })
+
   it('keeps one stable product identity and one data root outside the installation', () => {
     const stable = getDesktopDistribution('stable')
     const preview = getDesktopDistribution('preview')

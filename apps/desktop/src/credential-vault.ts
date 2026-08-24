@@ -3,6 +3,7 @@ import { parseJsonValue } from '@nekro-nxt/contracts'
 import { randomUUID } from 'node:crypto'
 import { mkdir, readFile, rename, writeFile } from 'node:fs/promises'
 import path from 'node:path'
+import { SerialTaskQueue } from './serial-task-queue.js'
 
 interface VaultEnvelope {
   readonly format: 'nxt.desktop-credential-vault'
@@ -19,6 +20,7 @@ const isRecord = (value: unknown): value is Record<string, unknown> => typeof va
 
 export class CredentialVault {
   readonly #filePath: string
+  readonly #mutations = new SerialTaskQueue()
   #values: Record<string, string>
 
   private constructor(filePath: string, values: Record<string, string>) {
@@ -71,16 +73,37 @@ export class CredentialVault {
 
   async put(credential: DeviceCredential): Promise<string | undefined> {
     if (!this.canPersist()) return undefined
-    const reference = randomUUID()
-    this.#values[reference] = safeStorage.encryptString(JSON.stringify(credential)).toString('base64')
-    await this.#save()
-    return reference
+    return this.#mutations.run(async () => {
+      const reference = randomUUID()
+      const previous = this.#values
+      this.#values = {
+        ...previous,
+        [reference]: safeStorage.encryptString(JSON.stringify(credential)).toString('base64'),
+      }
+      try {
+        await this.#save()
+      } catch (error) {
+        this.#values = previous
+        throw error
+      }
+      return reference
+    })
   }
 
   async remove(reference: string): Promise<void> {
-    if (!(reference in this.#values)) return
-    delete this.#values[reference]
-    await this.#save()
+    await this.#mutations.run(async () => {
+      if (!(reference in this.#values)) return
+      const previous = this.#values
+      const next = { ...previous }
+      delete next[reference]
+      this.#values = next
+      try {
+        await this.#save()
+      } catch (error) {
+        this.#values = previous
+        throw error
+      }
+    })
   }
 
   async #save(): Promise<void> {

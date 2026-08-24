@@ -14,7 +14,7 @@
     "typecheck": "tsc --noEmit"
   },
   "devDependencies": {
-    "electron": "42.0.1",
+    "electron": "42.9.0",
     "electron-builder": "26.15.3"
   },
   "description": "NekroNXT 可安装 Desktop 宿主",

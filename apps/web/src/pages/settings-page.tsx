@@ -1,3 +1,4 @@
+import { Settings } from 'lucide-react'
 import { LlmProviderSettings } from '../llm-settings.js'
 import { DshExtensionSettings } from '../dsh-extension-settings.js'
 import { PageHeader } from '../components/product-feedback.js'
@@ -73,7 +74,7 @@ export function SettingsPage() {
 
   return (
     <div className={[styles.page, styles.desktopPage, styles.settingsPage].join(' ')} data-product-page="settings">
-      <PageHeader title={title} quiet />
+      <PageHeader icon={Settings} title={title} quiet />
       <StageCrossfade className={styles.desktopContentStage} swapKey={activeTab}>
         {activeTab === 'models' ? <LlmProviderSettings /> : null}
         {activeTab === 'dsh-extensions' ? <DshExtensionSettings /> : null}

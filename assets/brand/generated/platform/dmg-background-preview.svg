@@ -1,8 +1,7 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 660 420" role="img" aria-label="NekroNXT Preview DMG 背景">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 660 420" role="img" aria-label="NekroNXT Preview DMG 背景" data-initial-visible-safe-height="356">
   <rect width="660" height="420" fill="#fffdf9"/>
-  <path d="M0 344.4 Q 217.8 218.4 435.6 344.4 T 660 294" fill="none" stroke="#466394" stroke-opacity=".16" stroke-width="2"/>
-  <path d="M0 386.40000000000003 Q 184.8 285.6 396 378 T 660 352.8" fill="none" stroke="#b98c4a" stroke-opacity=".45" stroke-width="2"/>
+  <path d="M0 318 Q218 250 430 316 Q548 340 660 296" fill="none" stroke="#466394" stroke-opacity=".16" stroke-width="2" data-essential-bottom="341"/><path d="M0 352 Q200 294 420 346 Q552 354 660 334" fill="none" stroke="#b98c4a" stroke-opacity=".45" stroke-width="2" data-essential-bottom="355"/>
 
-  <text x="36" y="56" fill="#172a45" font-family="Inter, ui-sans-serif, system-ui, sans-serif" font-size="26" font-weight="700">NekroNXT Preview</text><text x="330" y="386" text-anchor="middle" fill="#466394" font-family="Inter, ui-sans-serif, system-ui, sans-serif" font-size="14">拖动 NekroNXT 到 Applications 完成安装</text>
-  <g transform="translate(448.8 33.6)"><circle cx="0" cy="0" r="5" fill="#d0a66c"/><circle cx="18" cy="0" r="5" fill="#3fb1ea"/><circle cx="36" cy="0" r="5" fill="#d0a66c"/></g>
+  <g data-essential-bottom="116"><text x="36" y="56" fill="#172a45" font-family="Inter, ui-sans-serif, system-ui, sans-serif" font-size="26" font-weight="700">NekroNXT Preview</text><text x="330" y="116" text-anchor="middle" fill="#466394" font-family="Inter, ui-sans-serif, system-ui, sans-serif" font-size="14">拖动 NekroNXT 到 Applications 完成安装</text></g>
+  <g transform="translate(448.8 33.6)" data-essential-bottom="39"><circle cx="0" cy="0" r="5" fill="#d0a66c"/><circle cx="18" cy="0" r="5" fill="#3fb1ea"/><circle cx="36" cy="0" r="5" fill="#d0a66c"/></g>
 </svg>

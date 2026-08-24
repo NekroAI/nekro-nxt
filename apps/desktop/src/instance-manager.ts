@@ -14,7 +14,9 @@ import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { CredentialVault, type DeviceCredential } from './credential-vault.js'
 import { InstanceProfileStore, type InstanceProfile, type InstanceStatus } from './instance-profiles.js'
-import { certificateSpki, observeRemoteSpki, pairRemoteInstance } from './remote-pairing.js'
+import { addRemoteProfile, reauthenticateRemoteProfile } from './remote-profile-enrollment.js'
+import { certificateSpki, observeRemoteSpki } from './remote-pairing.js'
+import { SerialTaskQueue } from './serial-task-queue.js'
 import { isAllowedExternalUrl, isSameApplicationOrigin, type ProductRelease } from './distribution.js'
 import { desktopTitleBarCss, desktopWindowChrome } from './window-chrome.js'
 
@@ -86,6 +88,7 @@ export class DesktopInstanceManager {
   readonly #memoryCredentials = new Map<string, DeviceCredential>()
   readonly #notifiedApprovals = new Map<string, Set<string>>()
   readonly #overlayWaiters = new Set<() => void>()
+  readonly #instanceMutations = new SerialTaskQueue()
   #productView: WebContentsView | undefined
   #overlayView: WebContentsView | undefined
   #fallbackView: WebContentsView | undefined
@@ -260,110 +263,93 @@ export class DesktopInstanceManager {
     })
     ipcMain.handle('nxt:instances:switch', async (event, value: unknown) => {
       this.#assertOverlaySender(event.sender.id)
-      await this.switchTo(requiredString(isRecord(value) ? value['profileId'] : undefined, '服务实例'))
+      await this.#instanceMutations.run(() =>
+        this.switchTo(requiredString(isRecord(value) ? value['profileId'] : undefined, '服务实例')),
+      )
     })
     ipcMain.handle('nxt:instances:retry', async (event, value: unknown) => {
       this.#assertOverlaySender(event.sender.id)
-      await this.switchTo(requiredString(isRecord(value) ? value['profileId'] : undefined, '服务实例'), true, true)
+      await this.#instanceMutations.run(() =>
+        this.switchTo(requiredString(isRecord(value) ? value['profileId'] : undefined, '服务实例'), true, true),
+      )
     })
     ipcMain.handle('nxt:instances:add', async (event, value: unknown) => {
       this.#assertOverlaySender(event.sender.id)
-      if (!isRecord(value)) throw new Error('添加实例参数无效。')
-      const address = requiredString(value['address'], '服务器地址')
-      const managementKey = requiredString(value['managementKey'], '管理密钥')
-      const displayName = typeof value['displayName'] === 'string' ? value['displayName'] : ''
-      const paired = await pairRemoteInstance({
-        address,
-        managementKey,
-        deviceLabel: `${app.getName()} · ${process.platform}`,
-        clientReleaseId: this.#release.releaseId,
+      await this.#instanceMutations.run(async () => {
+        if (!isRecord(value)) throw new Error('添加实例参数无效。')
+        const added = await addRemoteProfile({
+          profiles: this.#profiles,
+          credentials: this.#vault,
+          displayName: typeof value['displayName'] === 'string' ? value['displayName'] : '',
+          address: requiredString(value['address'], '服务器地址'),
+          managementKey: requiredString(value['managementKey'], '管理密钥'),
+          deviceLabel: `${app.getName()} · ${process.platform}`,
+          clientReleaseId: this.#release.releaseId,
+        })
+        this.#memoryCredentials.set(added.profile.id, added.credential)
+        this.#statuses.set(added.profile.id, 'connecting')
+        await this.switchTo(added.profile.id, false)
       })
-      if (
-        this.#profiles
-          .list()
-          .some(
-            (profile) =>
-              profile.origin === paired.origin || profile.observedInstanceId === paired.descriptor.instanceId,
-          )
-      ) {
-        throw new Error('该服务实例已经添加。')
-      }
-      const credential = { deviceId: paired.deviceId, deviceSecret: paired.deviceSecret }
-      const credentialRef = await this.#vault.put(credential)
-      const profile = await this.#profiles.addRemote({
-        displayName,
-        origin: paired.origin,
-        observedInstanceId: paired.descriptor.instanceId,
-        pinnedSpkiSha256: paired.spkiSha256,
-        ...(credentialRef === undefined ? {} : { credentialRef }),
-      })
-      this.#memoryCredentials.set(profile.id, credential)
-      this.#statuses.set(profile.id, 'connecting')
-      await this.switchTo(profile.id, false)
     })
     ipcMain.handle('nxt:instances:update', async (event, value: unknown) => {
       this.#assertOverlaySender(event.sender.id)
-      if (!isRecord(value)) throw new Error('实例修改参数无效。')
-      const profileId = requiredString(value['profileId'], '服务实例')
-      await this.#profiles.update(profileId, {
-        ...(typeof value['displayName'] === 'string' ? { displayName: value['displayName'].trim() } : {}),
-        ...(typeof value['origin'] === 'string' ? { origin: value['origin'] } : {}),
-        ...(typeof value['notificationsEnabled'] === 'boolean'
-          ? { notificationsEnabled: value['notificationsEnabled'] }
-          : {}),
+      await this.#instanceMutations.run(async () => {
+        if (!isRecord(value)) throw new Error('实例修改参数无效。')
+        if ('origin' in value) throw new Error('已保存服务实例的服务器地址不能修改，请添加新的服务实例。')
+        const profileId = requiredString(value['profileId'], '服务实例')
+        if (this.#profiles.get(profileId) === undefined) throw new Error('服务实例不存在。')
+        await this.#profiles.update(profileId, {
+          ...(typeof value['displayName'] === 'string' ? { displayName: value['displayName'].trim() } : {}),
+          ...(typeof value['notificationsEnabled'] === 'boolean'
+            ? { notificationsEnabled: value['notificationsEnabled'] }
+            : {}),
+        })
+        if (profileId === this.#currentProfileId && typeof value['displayName'] === 'string') {
+          await this.switchTo(profileId, false, true)
+        }
+        this.#emitSnapshot()
       })
-      if (
-        profileId === this.#currentProfileId &&
-        (typeof value['origin'] === 'string' || typeof value['displayName'] === 'string')
-      ) {
-        await this.switchTo(profileId, false, true)
-      }
-      this.#emitSnapshot()
     })
     ipcMain.handle('nxt:instances:reauthenticate', async (event, value: unknown) => {
       this.#assertOverlaySender(event.sender.id)
-      if (!isRecord(value)) throw new Error('重新认证参数无效。')
-      const profileId = requiredString(value['profileId'], '服务实例')
-      const profile = this.#profiles.get(profileId)
-      if (profile === undefined || profile.kind !== 'remote') throw new Error('远程服务实例不存在。')
-      const paired = await pairRemoteInstance({
-        address: profile.origin,
-        managementKey: requiredString(value['managementKey'], '管理密钥'),
-        deviceLabel: `${app.getName()} · ${process.platform}`,
-        clientReleaseId: this.#release.releaseId,
+      await this.#instanceMutations.run(async () => {
+        if (!isRecord(value)) throw new Error('重新认证参数无效。')
+        if ('address' in value || 'origin' in value) {
+          throw new Error('重新认证不能修改服务器地址，请添加新的服务实例。')
+        }
+        const profileId = requiredString(value['profileId'], '服务实例')
+        const authenticated = await reauthenticateRemoteProfile({
+          profiles: this.#profiles,
+          credentials: this.#vault,
+          profileId,
+          managementKey: requiredString(value['managementKey'], '管理密钥'),
+          deviceLabel: `${app.getName()} · ${process.platform}`,
+          clientReleaseId: this.#release.releaseId,
+        })
+        this.#memoryCredentials.set(authenticated.profile.id, authenticated.credential)
+        await this.switchTo(authenticated.profile.id, false, true)
       })
-      if (profile.observedInstanceId !== paired.descriptor.instanceId)
-        throw new Error('该地址对应的服务实例身份已经变化。')
-      const oldRef = profile.credentialRef
-      const credential = { deviceId: paired.deviceId, deviceSecret: paired.deviceSecret }
-      const credentialRef = await this.#vault.put(credential)
-      await this.#profiles.updateSecurity(profile.id, {
-        observedInstanceId: paired.descriptor.instanceId,
-        pinnedSpkiSha256: paired.spkiSha256,
-        ...(credentialRef === undefined ? {} : { credentialRef }),
-      })
-      if (oldRef !== undefined) await this.#vault.remove(oldRef)
-      this.#memoryCredentials.set(profile.id, credential)
-      await this.switchTo(profile.id, false, true)
     })
     ipcMain.handle('nxt:instances:remove', async (event, value: unknown) => {
       this.#assertOverlaySender(event.sender.id)
-      const profileId = requiredString(isRecord(value) ? value['profileId'] : undefined, '服务实例')
-      const profile = this.#profiles.get(profileId)
-      if (profile === undefined || profile.kind !== 'remote') throw new Error('远程服务实例不存在。')
-      if (profile.id === this.#currentProfileId) {
-        if (!(await this.#confirmDiscardDrafts())) return
-        await this.switchTo('local', true, false, true)
-      }
-      const profileSession = session.fromPartition(profile.partition)
-      await this.#tryRevokeDevice(profile, profileSession)
-      await profileSession.clearStorageData()
-      await profileSession.closeAllConnections()
-      if (profile.credentialRef !== undefined) await this.#vault.remove(profile.credentialRef)
-      this.#memoryCredentials.delete(profile.id)
-      await this.#profiles.remove(profile.id)
-      this.#statuses.delete(profile.id)
-      this.#emitSnapshot()
+      await this.#instanceMutations.run(async () => {
+        const profileId = requiredString(isRecord(value) ? value['profileId'] : undefined, '服务实例')
+        const profile = this.#profiles.get(profileId)
+        if (profile === undefined || profile.kind !== 'remote') throw new Error('远程服务实例不存在。')
+        if (profile.id === this.#currentProfileId) {
+          if (!(await this.#confirmDiscardDrafts())) return
+          await this.switchTo('local', true, false, true)
+        }
+        const profileSession = session.fromPartition(profile.partition)
+        await this.#tryRevokeDevice(profile, profileSession)
+        await profileSession.clearStorageData()
+        await profileSession.closeAllConnections()
+        if (profile.credentialRef !== undefined) await this.#vault.remove(profile.credentialRef)
+        this.#memoryCredentials.delete(profile.id)
+        await this.#profiles.remove(profile.id)
+        this.#statuses.delete(profile.id)
+        this.#emitSnapshot()
+      })
     })
   }
 

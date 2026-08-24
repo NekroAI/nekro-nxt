@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" role="img" aria-labelledby="title desc" data-platform="macos" data-logical-size="16">
+  <title id="title">NekroNXT Preview macOS 16px 微型应用图标</title>
+  <desc id="desc">低色阶、放大轮廓的水月荧头像章，使用适配小尺寸的三节点 Preview 校准标记。</desc>
+  <rect width="1024" height="1024" fill="#021a3e"/>
+  <path d="M112 650A430 430 0 0 1 778 176" fill="none" stroke="#f0be68" stroke-width="58" stroke-linecap="round"/>
+  <path d="M196 636C164 468 278 286 486 250C690 214 838 364 822 570C808 738 686 838 506 842C346 846 230 766 196 636Z" fill="#f5f1ed" stroke="#0b2348" stroke-width="38" stroke-linejoin="round"/>
+  <path d="M250 508C302 324 484 268 680 312C554 350 458 430 416 548C370 676 302 706 218 696C258 646 272 578 250 508Z" fill="#dfe8f2"/>
+  <circle cx="596" cy="560" r="150" fill="#fff0db" stroke="#0b2348" stroke-width="54"/>
+  <circle cx="622" cy="560" r="64" fill="#3fb1ea" stroke="#0b2348" stroke-width="32"/>
+  <circle cx="642" cy="536" r="20" fill="#fffdf9"/>
+  <path d="M448 556h-80" stroke="#0b2348" stroke-width="48" stroke-linecap="round"/>
+  <circle cx="764" cy="246" r="92" fill="#fffdf9" stroke="#f0be68" stroke-width="38"/>
+  <circle cx="736" cy="246" r="20" fill="#3fb1ea"/><circle cx="782" cy="246" r="20" fill="#3fb1ea"/>
+  <g transform="translate(596 718)"><rect width="400" height="216" rx="108" fill="#0b2348" stroke="#fffdf9" stroke-width="32"/><path d="M82 108h236" stroke="#fffdf9" stroke-width="24" stroke-linecap="round"/><circle cx="82" cy="108" r="46" fill="#d0a66c"/><circle cx="200" cy="108" r="46" fill="#3fb1ea"/><circle cx="318" cy="108" r="46" fill="#d0a66c"/></g>
+</svg>

@@ -115,6 +115,9 @@ const icoSizes = [16, 20, 24, 32, 40, 48, 64, 128, 256]
 const linuxSizes = [16, 24, 32, 48, 64, 128, 256, 512]
 for (const channel of channels) {
   const appSource = path.join(generatedRoot, `platform/app-icon-${channel}.svg`)
+  const macosAppSource = path.join(generatedRoot, `platform/app-icon-macos-${channel}.svg`)
+  const macosMicro16Source = path.join(generatedRoot, `platform/app-icon-macos-micro-16-${channel}.svg`)
+  const macosMicro32Source = path.join(generatedRoot, `platform/app-icon-macos-micro-32-${channel}.svg`)
   const faviconSource = path.join(generatedRoot, `platform/favicon${channel === 'preview' ? '-preview' : ''}.svg`)
   const channelExport = path.join(exportsRoot, channel)
   const desktopChannel = path.join(desktopRoot, channel)
@@ -139,20 +142,20 @@ for (const channel of channels) {
   }
 
   const iconset = path.join(channelExport, 'macos/icon.iconset')
-  /** @type {Array<[string, number]>} */
+  /** @type {Array<[string, number, string]>} */
   const macFrames = [
-    ['icon_16x16.png', 16],
-    ['icon_16x16@2x.png', 32],
-    ['icon_32x32.png', 32],
-    ['icon_32x32@2x.png', 64],
-    ['icon_128x128.png', 128],
-    ['icon_128x128@2x.png', 256],
-    ['icon_256x256.png', 256],
-    ['icon_256x256@2x.png', 512],
-    ['icon_512x512.png', 512],
-    ['icon_512x512@2x.png', 1024],
+    ['icon_16x16.png', 16, macosMicro16Source],
+    ['icon_16x16@2x.png', 32, macosMicro16Source],
+    ['icon_32x32.png', 32, macosMicro32Source],
+    ['icon_32x32@2x.png', 64, macosMicro32Source],
+    ['icon_128x128.png', 128, macosAppSource],
+    ['icon_128x128@2x.png', 256, macosAppSource],
+    ['icon_256x256.png', 256, macosAppSource],
+    ['icon_256x256@2x.png', 512, macosAppSource],
+    ['icon_512x512.png', 512, macosAppSource],
+    ['icon_512x512@2x.png', 1024, macosAppSource],
   ]
-  for (const [name, size] of macFrames) await render(appSource, path.join(iconset, name), size)
+  for (const [name, size, source] of macFrames) await render(source, path.join(iconset, name), size)
   if (process.platform === 'darwin') {
     const icns = path.join(channelExport, 'macos/icon.icns')
     await exec('/usr/bin/iconutil', ['-c', 'icns', iconset, '-o', icns])
@@ -229,20 +232,24 @@ await copy(
   path.join(webRoot, 'brand/illustrations/upgrade-complete.png'),
 )
 
-const stableIconData = (await embedSvgAssets(path.join(generatedRoot, 'platform/app-icon-stable.svg'))).toString(
-  'base64',
-)
-const previewIconData = (await embedSvgAssets(path.join(generatedRoot, 'platform/app-icon-preview.svg'))).toString(
-  'base64',
-)
+const reviewIconData = async (channel, size) => {
+  const variant = size === 16 ? 'macos-micro-16-' : size <= 64 ? 'macos-micro-32-' : 'macos-'
+  return (await embedSvgAssets(path.join(generatedRoot, `platform/app-icon-${variant}${channel}.svg`))).toString(
+    'base64',
+  )
+}
 const scaleSizes = [16, 24, 32, 48, 64, 128]
-const scaleItems = scaleSizes
-  .map((size, index) => {
-    const x = 72 + index * 184 + (128 - size) / 2
-    return `<image href="data:image/svg+xml;base64,${stableIconData}" x="${x}" y="96" width="${size}" height="${size}"/><image href="data:image/svg+xml;base64,${previewIconData}" x="${x}" y="326" width="${size}" height="${size}"/><text x="${72 + index * 184 + 64}" y="252" text-anchor="middle" fill="#46556c" font-family="system-ui, sans-serif" font-size="18">${size}px</text>`
-  })
-  .join('')
-const scaleBoard = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 560"><rect width="1200" height="280" fill="#fffdf9"/><rect y="280" width="1200" height="280" fill="#0a121f"/><text x="36" y="48" fill="#172a45" font-family="system-ui, sans-serif" font-size="22" font-weight="700">NekroNXT Stable · light surface</text><text x="36" y="318" fill="#f2f4f7" font-family="system-ui, sans-serif" font-size="22" font-weight="700">NekroNXT Preview · dark surface</text>${scaleItems}</svg>`
+const scaleItems = (
+  await Promise.all(
+    scaleSizes.map(async (size, index) => {
+      const stableIconData = await reviewIconData('stable', size)
+      const previewIconData = await reviewIconData('preview', size)
+      const x = 72 + index * 184 + (128 - size) / 2
+      return `<image href="data:image/svg+xml;base64,${stableIconData}" x="${x}" y="96" width="${size}" height="${size}"/><image href="data:image/svg+xml;base64,${previewIconData}" x="${x}" y="326" width="${size}" height="${size}"/><text x="${72 + index * 184 + 64}" y="252" text-anchor="middle" fill="#46556c" font-family="system-ui, sans-serif" font-size="18">${size}px</text>`
+    }),
+  )
+).join('')
+const scaleBoard = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 560"><rect width="1200" height="280" fill="#fffdf9"/><rect y="280" width="1200" height="280" fill="#0a121f"/><text x="36" y="48" fill="#172a45" font-family="system-ui, sans-serif" font-size="22" font-weight="700">NekroNXT Stable · macOS occupancy</text><text x="36" y="318" fill="#f2f4f7" font-family="system-ui, sans-serif" font-size="22" font-weight="700">NekroNXT Preview · macOS occupancy</text>${scaleItems}</svg>`
 await ensure(path.join(exportsRoot, 'review'))
 await sharp(Buffer.from(scaleBoard), { density: 192 })
   .resize(1200, 560)
@@ -302,6 +309,35 @@ const files = [
   ...(await collectFiles(path.join(brandRoot, 'screenshots'))),
 ].sort()
 const describeManifestItem = (relativePath) => {
+  const macosIconMatch = relativePath.match(/^exports\/(stable|preview)\/macos\/icon\.icns$/u)
+  if (macosIconMatch) {
+    const channel = macosIconMatch[1]
+    return {
+      usage: 'macOS application icon export',
+      source: `generated/platform/app-icon-macos-{micro-16-,micro-32-,}${channel}.svg + scripts/export-brand-assets.mjs`,
+      sourceRouting: {
+        'icon_16x16.png': `generated/platform/app-icon-macos-micro-16-${channel}.svg`,
+        'icon_16x16@2x.png': `generated/platform/app-icon-macos-micro-16-${channel}.svg`,
+        'icon_32x32.png': `generated/platform/app-icon-macos-micro-32-${channel}.svg`,
+        'icon_32x32@2x.png': `generated/platform/app-icon-macos-micro-32-${channel}.svg`,
+        'icon_128x128.png': `generated/platform/app-icon-macos-${channel}.svg`,
+        'icon_128x128@2x.png': `generated/platform/app-icon-macos-${channel}.svg`,
+        'icon_256x256.png': `generated/platform/app-icon-macos-${channel}.svg`,
+        'icon_256x256@2x.png': `generated/platform/app-icon-macos-${channel}.svg`,
+        'icon_512x512.png': `generated/platform/app-icon-macos-${channel}.svg`,
+        'icon_512x512@2x.png': `generated/platform/app-icon-macos-${channel}.svg`,
+      },
+    }
+  }
+  const channelIconMatch = relativePath.match(
+    /^exports\/(stable|preview)\/(?:app-icon-1024\.png|windows\/(?:icon\.ico|ico-frames\/)|linux\/icons\/)/u,
+  )
+  if (channelIconMatch) {
+    return {
+      usage: 'Windows or Linux application icon export',
+      source: `generated/platform/app-icon-${channelIconMatch[1]}.svg + scripts/export-brand-assets.mjs`,
+    }
+  }
   if (relativePath.startsWith('generated/logo/')) {
     return {
       usage: 'Logo system master',

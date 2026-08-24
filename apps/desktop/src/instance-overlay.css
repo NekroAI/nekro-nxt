@@ -90,15 +90,29 @@ input {
 }
 .list {
   min-height: 0;
+  margin: 0;
   overflow: auto;
   padding: 6px;
+  list-style: none;
 }
 .foot {
   border-top: 1px solid var(--border);
 }
 
-.instance {
+.instance-row {
   position: relative;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  border-radius: 8px;
+}
+.instance-row:hover {
+  background: var(--hover);
+}
+.instance-row.current {
+  background: var(--pressed);
+}
+.instance {
   display: grid;
   grid-template-columns: 12px minmax(0, 1fr) auto;
   gap: 9px;
@@ -114,10 +128,10 @@ input {
   cursor: pointer;
 }
 .instance:hover {
-  background: var(--hover);
+  background: transparent;
 }
 .instance.current {
-  background: var(--pressed);
+  background: transparent;
 }
 .instance:focus-visible,
 button:focus-visible,
@@ -166,11 +180,6 @@ input:focus-visible {
 .dot.incompatible {
   background: #8b91a3;
 }
-.row-actions {
-  display: flex;
-  align-items: center;
-  gap: 4px;
-}
 .check {
   color: var(--accent);
   font-size: 16px;
@@ -187,6 +196,9 @@ input:focus-visible {
   color: inherit;
   background: transparent;
   cursor: pointer;
+}
+.instance-row > .more {
+  margin-right: 9px;
 }
 .more:hover,
 .back:hover,

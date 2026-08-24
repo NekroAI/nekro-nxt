@@ -6,6 +6,7 @@ import {
   Field,
   IconButton,
   Input,
+  NavMarkGroup,
   NxtMotionProvider,
   SelectField,
   SwitchField,
@@ -15,6 +16,7 @@ import {
 } from '../src/ui-kit/index.tsx'
 import { canCloseDialog } from '../src/ui-kit/dialog-policy.ts'
 import { ModalLayerRegistry } from '../src/ui-kit/layers.ts'
+import { resolveMeasuredSelection, type MeasuredSelectionState } from '../src/ui-kit/measured-selection.ts'
 
 describe('ui-kit control semantics', () => {
   it('keeps ordinary buttons out of surrounding form submission by default', () => {
@@ -126,6 +128,19 @@ describe('ui-kit control semantics', () => {
     expect(markup).toContain('配置内容')
   })
 
+  it('renders one persistent NavMark before client geometry is available', () => {
+    const markup = renderToStaticMarkup(
+      <NavMarkGroup id="settings">
+        <button type="button" data-nav-active="">
+          常规
+        </button>
+      </NavMarkGroup>,
+    )
+
+    expect(markup.match(/data-nav-mark="settings"/g)).toHaveLength(1)
+    expect(markup).toContain('aria-hidden="true"')
+  })
+
   it('keeps dialog header, scroll body, and footer as independent regions', () => {
     const markup = renderToStaticMarkup(
       <DialogLayout title={<h2>确认操作</h2>} closeButton={<button type="button">关闭</button>} footer="底部操作">
@@ -142,6 +157,37 @@ describe('ui-kit control semantics', () => {
       <DialogLayout title={<h2>危险确认</h2>} closeButton={<button type="button">关闭</button>} footer="底部操作" />,
     )
     expect(compact).not.toContain('data-nxt-dialog-region="body"')
+  })
+})
+
+describe('measured selection state', () => {
+  const empty: MeasuredSelectionState = { box: null, ready: false, animate: false }
+  const first = { x: 0, y: 0, width: 80, height: 32 }
+  const second = { x: 96, y: 0, width: 120, height: 32 }
+
+  it('places initial geometry instantly and animates the first target change', () => {
+    const placed = resolveMeasuredSelection(empty, first, { hadValidGeometry: false, targetChanged: false })
+    const moved = resolveMeasuredSelection(placed, second, { hadValidGeometry: true, targetChanged: true })
+
+    expect(placed).toEqual({ box: first, ready: true, animate: false })
+    expect(moved).toEqual({ box: second, ready: true, animate: true })
+  })
+
+  it('preserves an active selection transition for duplicate observations and snaps same-key reflow', () => {
+    const moving: MeasuredSelectionState = { box: second, ready: true, animate: true }
+    const duplicate = resolveMeasuredSelection(moving, second, { hadValidGeometry: true, targetChanged: false })
+    const resized = resolveMeasuredSelection(
+      moving,
+      { ...second, width: 180 },
+      {
+        hadValidGeometry: true,
+        targetChanged: false,
+      },
+    )
+
+    expect(duplicate).toBe(moving)
+    expect(resized.animate).toBe(false)
+    expect(resized.box?.width).toBe(180)
   })
 })
 

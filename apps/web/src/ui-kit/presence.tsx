@@ -3,7 +3,6 @@ import { LoaderCircle } from 'lucide-react'
 import {
   createContext,
   forwardRef,
-  useCallback,
   useContext,
   useEffect,
   useLayoutEffect,
@@ -11,6 +10,7 @@ import {
   useState,
   type ReactNode,
 } from 'react'
+import { useMeasuredSelection, type MeasuredSelectionBox } from './measured-selection.js'
 import {
   dialogVariants,
   disclosureTransition,
@@ -179,82 +179,53 @@ export function RouteTransition({
   )
 }
 
-interface NavBox {
-  readonly x: number
-  readonly y: number
-  readonly w: number
-  readonly h: number
-}
-
 const pickNavAnchor = (root: HTMLElement): HTMLElement | null =>
   root.querySelector<HTMLElement>(':scope [data-nav-active]')
+
+const measureNavAnchor = (root: HTMLElement, anchor: HTMLElement): MeasuredSelectionBox => {
+  const rootRect = root.getBoundingClientRect()
+  const rect = anchor.getBoundingClientRect()
+  return {
+    x: rect.left - rootRect.left,
+    y: rect.top - rootRect.top,
+    width: rect.width,
+    height: rect.height,
+  }
+}
+
+const navMutationAttributes = ['data-nav-active'] as const
 
 export function NavMarkGroup({ id, children }: { readonly id: string; readonly children: ReactNode }) {
   const reduce = useNxtReducedMotion()
   const rootRef = useRef<HTMLDivElement>(null)
-  const placed = useRef(false)
-  const [box, setBox] = useState<NavBox | null>(null)
-
-  const measure = useCallback(() => {
-    const root = rootRef.current
-    const anchor = root ? pickNavAnchor(root) : null
-    if (!root || !anchor) {
-      setBox(null)
-      return
-    }
-    const rootRect = root.getBoundingClientRect()
-    const rect = anchor.getBoundingClientRect()
-    const next = {
-      x: rect.left - rootRect.left,
-      y: rect.top - rootRect.top,
-      w: rect.width,
-      h: rect.height,
-    }
-    setBox((current) =>
-      current && current.x === next.x && current.y === next.y && current.w === next.w && current.h === next.h
-        ? current
-        : next,
-    )
-  }, [])
-
-  useLayoutEffect(() => {
-    measure()
-    const root = rootRef.current
-    if (!root) return
-    const mutation = new MutationObserver(() => measure())
-    mutation.observe(root, {
-      subtree: true,
-      childList: true,
-      attributes: true,
-      attributeFilter: ['data-nav-active'],
-    })
-    const resize = new ResizeObserver(() => measure())
-    resize.observe(root)
-    const anchor = pickNavAnchor(root)
-    if (anchor) resize.observe(anchor)
-    return () => {
-      mutation.disconnect()
-      resize.disconnect()
-    }
-  }, [measure])
-
-  useLayoutEffect(() => {
-    if (box) placed.current = true
-  }, [box])
+  const selection = useMeasuredSelection({
+    rootRef,
+    candidateSelector: '[data-nav-active]',
+    mutationAttributeFilter: navMutationAttributes,
+    findAnchor: pickNavAnchor,
+    measure: measureNavAnchor,
+  })
+  const box = selection.box
 
   return (
     <div className={styles.navTrack} data-nav-track={id} ref={rootRef}>
-      {box ? (
-        <motion.span
-          className={styles.navMark}
-          data-nav-mark={id}
-          initial={false}
-          animate={{ x: box.x, y: box.y, width: box.w, height: box.h, opacity: 1 }}
-          transition={
-            reduce || !placed.current ? tween(0, nxtEase.standard) : tween(nxtDuration.spatial, nxtEase.standard)
-          }
-        />
-      ) : null}
+      <motion.span
+        className={styles.navMark}
+        data-nav-mark={id}
+        data-ready={selection.ready ? '' : undefined}
+        initial={false}
+        animate={{
+          x: box?.x ?? 0,
+          y: box?.y ?? 0,
+          width: box?.width ?? 0,
+          height: box?.height ?? 0,
+          opacity: selection.ready ? 1 : 0,
+        }}
+        transition={
+          reduce || !selection.animate ? tween(0, nxtEase.standard) : tween(nxtDuration.spatial, nxtEase.standard)
+        }
+        aria-hidden="true"
+      />
       {children}
     </div>
   )

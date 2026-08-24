@@ -11,10 +11,10 @@ import {
   createContext,
   forwardRef,
   isValidElement,
+  useCallback,
   useContext,
   useEffect,
   useId,
-  useLayoutEffect,
   useRef,
   useState,
   type AriaAttributes,
@@ -31,6 +31,7 @@ import {
 } from 'react'
 import { canCloseDialog, type DialogCloseReason } from './dialog-policy.js'
 import { useFloatingLayer, useModalLayer } from './layers.js'
+import { useMeasuredSelection, type MeasuredSelectionBox } from './measured-selection.js'
 import {
   dialogVariants,
   nxtDuration,
@@ -909,6 +910,11 @@ const TabsValueContext = createContext<{
   readonly orientation: 'horizontal' | 'vertical'
 }>({ activeValue: undefined, orientation: 'horizontal' })
 
+const tabsMutationAttributes = ['data-state'] as const
+
+const findActiveTab = (root: HTMLElement): HTMLElement | null =>
+  root.querySelector<HTMLElement>('[role="tab"][data-state="active"]')
+
 function TabsRoot({
   value,
   defaultValue,
@@ -941,53 +947,46 @@ function TabsList({ className, children, ...props }: TabsListProps) {
   const { activeValue, orientation } = useContext(TabsValueContext)
   const reduce = useNxtReducedMotion()
   const listRef = useRef<HTMLDivElement>(null)
-  const [indicator, setIndicator] = useState({ offset: 0, size: 0, ready: false, shouldAnimate: false })
-
-  useLayoutEffect(() => {
-    const list = listRef.current
-    if (!list) return
-    const update = () => {
-      const activeTrigger =
-        Array.from(list.querySelectorAll<HTMLElement>('[role="tab"]')).find(
-          (trigger) => trigger.dataset['nxtTabsValue'] === activeValue,
-        ) ?? list.querySelector<HTMLElement>('[role="tab"][data-state="active"]')
-      if (!activeTrigger) {
-        setIndicator((current) => ({ ...current, ready: false, shouldAnimate: false }))
-        return
-      }
-      setIndicator((current) => ({
-        offset: orientation === 'vertical' ? activeTrigger.offsetTop : activeTrigger.offsetLeft,
-        size: orientation === 'vertical' ? activeTrigger.offsetHeight : activeTrigger.offsetWidth,
-        ready: true,
-        shouldAnimate: current.ready,
-      }))
+  const findTab = useCallback(
+    (list: HTMLElement) =>
+      Array.from(list.querySelectorAll<HTMLElement>('[role="tab"]')).find(
+        (trigger) => trigger.dataset['nxtTabsValue'] === activeValue,
+      ) ?? findActiveTab(list),
+    [activeValue],
+  )
+  const measureTab = useCallback((list: HTMLElement, trigger: HTMLElement): MeasuredSelectionBox => {
+    const listRect = list.getBoundingClientRect()
+    const triggerRect = trigger.getBoundingClientRect()
+    return {
+      x: triggerRect.left - listRect.left,
+      y: triggerRect.top - listRect.top,
+      width: triggerRect.width,
+      height: triggerRect.height,
     }
-    update()
-    const resizeObserver = new ResizeObserver(update)
-    resizeObserver.observe(list)
-    for (const trigger of list.querySelectorAll('[role="tab"]')) resizeObserver.observe(trigger)
-    const stateObserver = new MutationObserver(update)
-    stateObserver.observe(list, { subtree: true, attributes: true, attributeFilter: ['data-state'] })
-    return () => {
-      resizeObserver.disconnect()
-      stateObserver.disconnect()
-    }
-  }, [activeValue, orientation])
+  }, [])
+  const indicator = useMeasuredSelection({
+    rootRef: listRef,
+    activeKey: activeValue,
+    candidateSelector: '[role="tab"]',
+    mutationAttributeFilter: tabsMutationAttributes,
+    findAnchor: findTab,
+    measure: measureTab,
+  })
+  const box = indicator.box
 
   return (
     <RadixTabs.List ref={listRef} className={[styles.tabsList, className].filter(Boolean).join(' ')} {...props}>
       <motion.span
-        key={reduce ? 'reduced-tabs-indicator' : 'animated-tabs-indicator'}
         className={styles.tabsIndicator}
         data-nxt-tabs-indicator=""
         data-ready={indicator.ready ? '' : undefined}
         initial={false}
         animate={
           orientation === 'vertical'
-            ? { y: indicator.offset, height: indicator.size, opacity: indicator.ready ? 1 : 0 }
-            : { x: indicator.offset, width: indicator.size, opacity: indicator.ready ? 1 : 0 }
+            ? { y: box?.y ?? 0, height: box?.height ?? 0, opacity: indicator.ready ? 1 : 0 }
+            : { x: box?.x ?? 0, width: box?.width ?? 0, opacity: indicator.ready ? 1 : 0 }
         }
-        transition={reduce || !indicator.shouldAnimate ? { duration: 0 } : tween(nxtDuration.spatial, nxtEase.standard)}
+        transition={reduce || !indicator.animate ? { duration: 0 } : tween(nxtDuration.spatial, nxtEase.standard)}
         aria-hidden="true"
       />
       {children}

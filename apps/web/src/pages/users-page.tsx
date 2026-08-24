@@ -1,5 +1,5 @@
 import type { HostApiResponse } from '@nekro-nxt/contracts'
-import { History } from 'lucide-react'
+import { History, UsersRound } from 'lucide-react'
 import { useEffect, useState } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import { EmptyState, InlineFeedback, PageHeader } from '../components/product-feedback.js'
@@ -150,6 +150,7 @@ export function UsersPage() {
   return (
     <div className={[styles.page, styles.desktopPage, styles.usersPage].join(' ')} data-product-page="users">
       <PageHeader
+        icon={UsersRound}
         quiet
         title="平台用户"
         meta={

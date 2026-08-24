@@ -7,18 +7,22 @@
   min-height: 64px;
   margin-bottom: 24px;
   border-bottom: 1px solid var(--nxt-border-subtle);
-  padding: 0 0 18px 16px;
+  padding: 0 0 18px;
 }
 
-.pageHeader::before {
+.pageHeader[data-has-icon] {
+  padding-left: 56px;
+}
+
+.pageIcon {
   position: absolute;
   top: 2px;
-  bottom: 18px;
   left: 0;
-  width: 3px;
-  border-radius: var(--nxt-radius-round);
-  background: linear-gradient(180deg, var(--nxt-brand-lumen), var(--nxt-accent) 58%, var(--nxt-brand-brass));
-  content: '';
+  display: grid;
+  width: 40px;
+  height: 40px;
+  place-items: center;
+  color: var(--nxt-accent);
 }
 
 .pageHeader[data-quiet] {
@@ -28,8 +32,8 @@
   padding: 0;
 }
 
-.pageHeader[data-quiet]::before {
-  display: none;
+.pageHeader[data-quiet][data-has-icon] {
+  padding-left: 48px;
 }
 
 .pageTitle {
@@ -176,12 +180,15 @@
   align-items: center;
   margin-bottom: 28px;
   border-bottom: 0;
-  padding: 8px 0 18px 56px;
+  padding: 8px 0 18px;
 }
 
-:global(:root[data-glin-experiment]) .pageHeader::before {
+:global(:root[data-glin-experiment]) .pageHeader[data-has-icon] {
+  padding-left: 56px;
+}
+
+:global(:root[data-glin-experiment]) .pageIcon {
   top: 8px;
-  bottom: auto;
   left: 0;
   width: 40px;
   height: 40px;
@@ -196,27 +203,33 @@
     var(--shadow-glass-sm),
     inset 0 1px 0 rgb(255 255 255 / 24%),
     0 0 24px color-mix(in srgb, var(--nxt-accent) 10%, transparent);
-  content: '';
 }
 
 :global(:root[data-glin-experiment]) .pageHeader::after {
   position: absolute;
   right: 0;
   bottom: 0;
-  left: 56px;
+  left: 0;
   height: 1px;
   background: linear-gradient(90deg, color-mix(in srgb, var(--nxt-accent) 28%, transparent), transparent 72%);
   content: '';
 }
 
+:global(:root[data-glin-experiment]) .pageHeader[data-has-icon]::after {
+  left: 56px;
+}
+
 :global(:root[data-glin-experiment]) .pageHeader[data-quiet] {
   min-height: 68px;
   margin-bottom: 26px;
-  padding: 6px 0 16px 48px;
+  padding: 6px 0 16px;
 }
 
-:global(:root[data-glin-experiment]) .pageHeader[data-quiet]::before {
-  display: block;
+:global(:root[data-glin-experiment]) .pageHeader[data-quiet][data-has-icon] {
+  padding-left: 48px;
+}
+
+:global(:root[data-glin-experiment]) .pageHeader[data-quiet] .pageIcon {
   top: 6px;
   width: 34px;
   height: 34px;
@@ -224,6 +237,10 @@
 }
 
 :global(:root[data-glin-experiment]) .pageHeader[data-quiet]::after {
+  left: 0;
+}
+
+:global(:root[data-glin-experiment]) .pageHeader[data-quiet][data-has-icon]::after {
   left: 48px;
 }
 

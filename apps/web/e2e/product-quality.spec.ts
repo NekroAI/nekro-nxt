@@ -1057,7 +1057,9 @@ test('representative product surfaces match committed visual baselines', async (
   await page.setViewportSize({ width: 1440, height: 900 })
   await page.emulateMedia({ colorScheme: 'light', reducedMotion: 'no-preference' })
   await page.addInitScript(() => {
-    window.localStorage.setItem('nekro-nxt.theme', 'light')
+    if (window.localStorage.getItem('nekro-nxt.theme') === null) {
+      window.localStorage.setItem('nekro-nxt.theme', 'light')
+    }
     window.localStorage.setItem('nekro-nxt.reduced-motion', 'true')
   })
   const runtimeReady = page.waitForResponse((response) => {
@@ -1099,6 +1101,8 @@ test('representative product surfaces match committed visual baselines', async (
   await page.evaluate(() => window.localStorage.setItem('nekro-nxt.theme', 'dark'))
   await page.goto('/settings?tab=appearance')
   await expect(page.getByRole('heading', { name: '外观' })).toBeVisible()
+  await expect(page.locator('html')).toHaveAttribute('data-theme', 'dark')
+  await expect(page.getByRole('combobox', { name: '主题' })).toHaveText('深色')
   await expect(page).toHaveScreenshot('appearance-settings-dark-1440.png', {
     animations: 'disabled',
     maxDiffPixelRatio: 0.005,
@@ -2463,24 +2467,33 @@ test('desktop shell keeps a 48px top bar and a permanently available object pane
       dragTitleBackground: dragTitleStyle.backgroundColor,
       brandRadius: Number.parseFloat(brandStyle.borderTopLeftRadius),
       dragTitleRadius: Number.parseFloat(dragTitleStyle.borderTopLeftRadius),
-      railTop: Number.parseFloat(railStyle.borderTopLeftRadius),
-      railBottom: Number.parseFloat(railStyle.borderBottomLeftRadius),
-      treeTop: Number.parseFloat(treeStyle.borderTopLeftRadius),
-      treeBottom: Number.parseFloat(treeStyle.borderBottomLeftRadius),
-      stageTop: Number.parseFloat(stageStyle.borderTopRightRadius),
-      stageBottom: Number.parseFloat(stageStyle.borderBottomRightRadius),
+      railRadii: [
+        railStyle.borderTopLeftRadius,
+        railStyle.borderTopRightRadius,
+        railStyle.borderBottomRightRadius,
+        railStyle.borderBottomLeftRadius,
+      ],
+      treeRadii: [
+        treeStyle.borderTopLeftRadius,
+        treeStyle.borderTopRightRadius,
+        treeStyle.borderBottomRightRadius,
+        treeStyle.borderBottomLeftRadius,
+      ],
+      stageRadii: [
+        stageStyle.borderTopLeftRadius,
+        stageStyle.borderTopRightRadius,
+        stageStyle.borderBottomRightRadius,
+        stageStyle.borderBottomLeftRadius,
+      ],
     }
   })
   expect(chromeGeometry.brandRadius).toBeGreaterThanOrEqual(10)
   expect(chromeGeometry.dragTitleRadius).toBeGreaterThanOrEqual(10)
   expect(chromeGeometry.brandBackground).toBe('rgba(0, 0, 0, 0)')
   expect(chromeGeometry.dragTitleBackground).toBe('rgba(0, 0, 0, 0)')
-  expect(chromeGeometry.railTop).toBe(0)
-  expect(chromeGeometry.treeTop).toBe(0)
-  expect(chromeGeometry.stageTop).toBe(0)
-  expect(chromeGeometry.railBottom).toBeGreaterThanOrEqual(16)
-  expect(chromeGeometry.treeBottom).toBeGreaterThanOrEqual(16)
-  expect(chromeGeometry.stageBottom).toBeGreaterThanOrEqual(16)
+  expect(chromeGeometry.railRadii).toEqual(['0px', '0px', '0px', '0px'])
+  expect(chromeGeometry.treeRadii).toEqual(['0px', '0px', '0px', '0px'])
+  expect(chromeGeometry.stageRadii).toEqual(['0px', '0px', '0px', '0px'])
   const shellEdges = await page.evaluate(() => {
     const body = document.querySelector<HTMLElement>('[data-shell-body]')
     const rail = document.querySelector<HTMLElement>('aside[aria-label="模式"]')
@@ -2527,6 +2540,48 @@ test('desktop shell keeps a 48px top bar and a permanently available object pane
     expect(chrome.borders).toEqual(['0px', '0px', '0px', '0px'])
     expect(chrome.shadow).toBe('none')
   }
+  const expectSquareUnframedPerimeter = async (): Promise<void> => {
+    const perimeter = await page.evaluate(() => {
+      const read = (selector: string) => {
+        const element = document.querySelector<HTMLElement>(selector)
+        if (!element) throw new Error(`窗口外壳缺少 ${selector}。`)
+        const style = getComputedStyle(element)
+        return {
+          borders: [style.borderTopWidth, style.borderRightWidth, style.borderBottomWidth, style.borderLeftWidth],
+          radii: [
+            style.borderTopLeftRadius,
+            style.borderTopRightRadius,
+            style.borderBottomRightRadius,
+            style.borderBottomLeftRadius,
+          ],
+          shadow: style.boxShadow,
+        }
+      }
+      return {
+        topBar: read('[data-window-top-bar]'),
+        rail: read('aside[aria-label="模式"]'),
+        tree: read('aside[aria-label="对象列"]'),
+        stage: read('main'),
+      }
+    })
+    expect(perimeter.topBar.borders[0]).toBe('0px')
+    expect(perimeter.topBar.borders[1]).toBe('0px')
+    expect(perimeter.topBar.borders[3]).toBe('0px')
+    expect(perimeter.topBar.shadow).toBe('none')
+    expect(perimeter.rail.borders[0]).toBe('0px')
+    expect(perimeter.rail.borders[2]).toBe('0px')
+    expect(perimeter.rail.borders[3]).toBe('0px')
+    expect(perimeter.tree.borders[0]).toBe('0px')
+    expect(perimeter.tree.borders[2]).toBe('0px')
+    expect(perimeter.stage.borders[0]).toBe('0px')
+    expect(perimeter.stage.borders[1]).toBe('0px')
+    expect(perimeter.stage.borders[2]).toBe('0px')
+    for (const panel of [perimeter.rail, perimeter.tree, perimeter.stage]) {
+      expect(panel.radii).toEqual(['0px', '0px', '0px', '0px'])
+      expect(panel.shadow).toBe('none')
+    }
+  }
+  await expectSquareUnframedPerimeter()
   await page.locator('html').evaluate((root) => root.style.setProperty('--nxt-window-controls-left', '84px'))
   expect(await topBar.evaluate((element) => getComputedStyle(element).paddingLeft)).toBe('98px')
   expect(await topBar.evaluate((element) => getComputedStyle(element, '::after').left)).toBe('0px')
@@ -2548,6 +2603,7 @@ test('desktop shell keeps a 48px top bar and a permanently available object pane
   expect(await page.evaluate(() => window.localStorage.getItem('nekro-nxt.theme'))).toBe('light')
   await expect(themeButton.locator('svg.lucide-sun')).toBeVisible()
   await expect(themeButton.locator('span')).toHaveCSS('opacity', '1')
+  await expectSquareUnframedPerimeter()
   await capture(page, testInfo, 'desktop-theme-light')
   await themeButton.click()
   await expect(page.locator('html')).toHaveAttribute('data-theme', 'dark')
@@ -2562,6 +2618,115 @@ test('desktop shell keeps a 48px top bar and a permanently available object pane
   await expect(page.getByRole('option', { name: '浅色' })).toBeVisible()
   await expect(page.getByRole('option', { name: '深色' })).toBeVisible()
   await expect(page.getByRole('option', { name: '跟随系统' })).toHaveCount(0)
+
+  expect(failures, failures.join('\n')).toEqual([])
+})
+
+test('primary product pages render semantic Lucide page and object-pane identities', async ({ page }, testInfo) => {
+  const failures = installRuntimeFailureGate(page)
+  await installProductRoutes(page)
+  await page.setViewportSize({ width: 1440, height: 900 })
+  await page.emulateMedia({ colorScheme: 'dark', reducedMotion: 'reduce' })
+  await page.addInitScript(() => {
+    window.localStorage.setItem('nekro-nxt.theme', 'dark')
+    window.localStorage.setItem('nekro-nxt.reduced-motion', 'true')
+  })
+
+  for (const scenario of [
+    { route: '/connections', pageIcon: 'lucide-cable', paneIcon: 'lucide-cable' },
+    { route: '/users', pageIcon: 'lucide-users-round', paneIcon: 'lucide-users-round' },
+    { route: '/extensions', pageIcon: 'lucide-boxes', paneIcon: 'lucide-package-open' },
+    { route: '/settings', pageIcon: 'lucide-settings', paneIcon: 'lucide-settings' },
+  ]) {
+    await page.goto(scenario.route)
+    await expect(page.locator('html')).toHaveAttribute('data-theme', 'dark')
+    await expect(page.locator(`[data-page-header] svg.${scenario.pageIcon}`)).toBeVisible()
+    await expect(page.locator(`aside[aria-label="对象列"] .${scenario.paneIcon}`).first()).toBeVisible()
+    await expect(page.locator('[data-page-header]')).toHaveAttribute('data-has-icon', '')
+    await capture(page, testInfo, `semantic-header-${scenario.pageIcon.replace('lucide-', '')}-dark`)
+  }
+
+  expect(failures, failures.join('\n')).toEqual([])
+})
+
+test('trusted Desktop bridge renders the persistent remote-instance entry across sizes and themes', async ({
+  page,
+}, testInfo) => {
+  const failures = installRuntimeFailureGate(page)
+  await installProductRoutes(page)
+  await page.addInitScript(() => {
+    const testWindow = window as Window & { __desktopSwitcherOpenCount?: number }
+    if (window.localStorage.getItem('nekro-nxt.theme') === null) {
+      window.localStorage.setItem('nekro-nxt.theme', 'light')
+    }
+    window.localStorage.setItem('nekro-nxt.reduced-motion', 'true')
+    testWindow.__desktopSwitcherOpenCount = 0
+    Object.defineProperty(window, 'nekroDesktopShell', {
+      configurable: true,
+      value: {
+        getCurrentInstancePresentation: () =>
+          Promise.resolve({ displayName: '远程开发环境', status: 'ready' as const }),
+        openInstanceSwitcher: () => {
+          testWindow.__desktopSwitcherOpenCount = (testWindow.__desktopSwitcherOpenCount ?? 0) + 1
+          return Promise.resolve()
+        },
+        subscribeCurrentInstanceStatus: () => () => undefined,
+      },
+    })
+  })
+
+  for (const scene of [
+    { size: 'default', width: 1440, height: 900, theme: 'light' },
+    { size: 'default', width: 1440, height: 900, theme: 'dark' },
+    { size: 'minimum', width: 1100, height: 720, theme: 'light' },
+    { size: 'minimum', width: 1100, height: 720, theme: 'dark' },
+  ] as const) {
+    if (page.url() !== 'about:blank') {
+      await page.evaluate((theme) => window.localStorage.setItem('nekro-nxt.theme', theme), scene.theme)
+    }
+    await page.setViewportSize({ width: scene.width, height: scene.height })
+    await page.emulateMedia({ colorScheme: scene.theme, reducedMotion: 'reduce' })
+    await page.goto('/')
+    await expect(page).toHaveURL(new RegExp(`/work/channels/${targetChannelId}$`, 'u'))
+    await expect(page.locator('html')).toHaveAttribute('data-theme', scene.theme)
+
+    const entry = page.getByRole('button', { name: /^管理并添加远程服务实例：远程开发环境/u })
+    await expect(entry).toBeVisible()
+    await expect(entry).toHaveAccessibleName('管理并添加远程服务实例：远程开发环境 · 运行正常')
+    const statusDot = entry.locator('[class*="instanceStatus_ready"]')
+    await expect(statusDot).toBeVisible()
+    await expect(statusDot).toHaveCSS('width', '7px')
+    await expect(statusDot).toHaveCSS('height', '7px')
+    const entryGeometry = await entry.evaluate((element) => {
+      const entryRect = element.getBoundingClientRect()
+      const railRect = element.closest('aside')?.getBoundingClientRect()
+      if (!railRect) throw new Error('服务实例入口缺少图标轨。')
+      return {
+        width: entryRect.width,
+        height: entryRect.height,
+        horizontalCenterOffset: Math.abs(entryRect.left + entryRect.width / 2 - (railRect.left + railRect.width / 2)),
+        bottomInset: railRect.bottom - entryRect.bottom,
+      }
+    })
+    expect(entryGeometry.width).toBe(36)
+    expect(entryGeometry.height).toBe(36)
+    expect(entryGeometry.horizontalCenterOffset).toBeLessThanOrEqual(0.5)
+    expect(entryGeometry.bottomInset).toBe(10)
+
+    await page.getByRole('link', { name: '连接' }).click()
+    await expect(page).toHaveURL(/\/connections(?:\/[^/?#]+)?$/u)
+    await expect(page.getByText('平台账号', { exact: true })).toBeVisible()
+    await expect(page.getByRole('heading', { name: '内置频道' })).toBeVisible()
+    await expect(entry).toBeVisible()
+    await expect(page.locator('html')).toHaveAttribute('data-theme', scene.theme)
+    await capture(page, testInfo, `desktop-instance-entry-${scene.size}-${scene.theme}`)
+    await entry.click()
+    await expect
+      .poll(() =>
+        page.evaluate(() => (window as Window & { __desktopSwitcherOpenCount?: number }).__desktopSwitcherOpenCount),
+      )
+      .toBe(1)
+  }
 
   expect(failures, failures.join('\n')).toEqual([])
 })

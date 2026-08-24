@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" role="img" aria-labelledby="title desc" data-platform="macos">
+  <title id="title">NekroNXT macOS 应用图标</title>
+  <desc id="desc">为 macOS 系统遮罩提供满版深靛底，并居中放大水月荧头像章。</desc>
+  <rect width="1024" height="1024" fill="#021a3e"/>
+  <g transform="translate(-82 -82) scale(1.16)"><defs><clipPath id="mark-circle"><circle cx="512" cy="512" r="500"/></clipPath></defs>
+  <image href="../../sources/logo/shuiyue-ying-avatar-source.png" width="1024" height="1024" preserveAspectRatio="xMidYMid slice" clip-path="url(#mark-circle)"/></g>
+
+</svg>

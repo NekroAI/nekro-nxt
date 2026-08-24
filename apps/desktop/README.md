@@ -8,6 +8,10 @@ Desktop 自带本地 `nxt.product-release`，并可保存多个远程服务实�
 
 BrowserWindow 使用 Product、Instance Overlay 与 Trusted Fallback 三类 `WebContentsView`。本地与每个远程 Profile 使用独立持久 partition；切换关闭旧 Product View。远程页面只有当前实例展示和打开实例浮层的窄 Bridge。Profile 位于 Electron `userData`，设备 Secret 通过 `safeStorage` 加密并与 Profile 分离。窗口样式和系统通知由 Desktop 主进程拥有。
 
+Electron 精确锁定在经过依赖年龄门禁的 `42.9.0`。Electron 42.0.x 在 macOS Content View 的命中测试回归会吞掉 `WebContentsView` 内的 hover 等指针状态；上游在 [electron/electron#51617](https://github.com/electron/electron/issues/51617) 与 [electron/electron#51626](https://github.com/electron/electron/pull/51626) 修复并从 42.1.0 发布。Desktop 运行时依赖测试同时约束批准版本、lockfile 一致性，并禁止通过 `minimumReleaseAgeExclude` 绕过年龄门禁。
+
+远程 Profile 的规范化地址与实例身份全局唯一，且创建后不可变；地址或实例身份变化时必须添加新的服务实例。现有 Profile 只允许改名、切换通知、重试、针对原地址与原实例身份重新认证和移除。添加前先读取 TLS/SPKI 与实例描述并拒绝已知重复项，再注册设备；注册后的本地凭据或 Profile 提交失败会在当前进程内清理新凭据并尽力撤销新设备。Profile Store、Credential Vault 与实例变更 IPC 串行写入，但不声明跨进程崩溃恢复日志。
+
 分发脚本用 `pnpm deploy --prod --legacy` 把 Server 及其 workspace/外部生产依赖生成到 Desktop staging。`better-sqlite3` 与 `node-pty` 使用包内 N-API prebuild，Sharp、Koffi 和其他平台可选包按 `supportedArchitectures` 同时安装；准备脚本会拒绝缺少 macOS Universal、Windows x64 或 Linux x64 原生文件的 runtime。Server runtime 和 Web dist 都作为安装包的 `extraResources` 放在应用代码之外。
 
 生产数据固定在 Electron `userData/data/`，安装包替换不得删除该目录。Server 和 Desktop 使用同一个 Server 入口、数据根布局与升级门禁；Electron 只拥有窗口、单实例、外部链接和 Host 子进程生命周期。
@@ -16,7 +20,7 @@ Desktop 使用 Renderer 自绘的统一 48px 品牌顶栏，不显示系统标�
 
 当前分发实验使用未签名完整安装包：Windows x64 NSIS、macOS Universal DMG、Linux x64 AppImage。`stable` 与 `preview` 使用不同 appId、NSIS GUID、产品名、可执行文件名和 `userData`，可以同时安装，也不会让预览版迁移正式版数据库。身份的唯一源是 `distributions.json`。
 
-平台品牌资源位于 `resources/stable/` 与 `resources/preview/`。两端分别提供 ICNS、ICO、Linux PNG 图标组、DMG 背景和 NSIS assisted installer 图；Preview 通过黄铜三节点校准胶囊与 Stable 区分，不建立 beta 品牌身份。electron-builder 按当前 channel 选择对应 `buildResources`，这些文件不进入应用运行资源。
+平台品牌资源位于 `resources/stable/` 与 `resources/preview/`。两端分别提供 ICNS、ICO、Linux PNG 图标组、DMG 背景和 NSIS assisted installer 图；Preview 通过黄铜三节点校准胶囊与 Stable 区分，不建立 beta 品牌身份。ICNS 使用视觉占位更大的 macOS 专用母版，Windows、Linux 与 Web 仍使用通用源；DMG 保持固定 Finder 窗口并让必要内容在首次打开时完整可见。图标来源、DMG 精确尺寸、坐标和安全区以[品牌资产视觉规则](../../assets/brand/README.md#视觉规则)为唯一权威。electron-builder 按当前 channel 选择对应 `buildResources`，这些文件不进入应用运行资源。
 
 产品版本的唯一手工来源是仓库根 `package.json#version`。正式版使用原值 `X.Y.Z`；预览版按 Git commit 时间确定性派生为可读的 `X.Y.Z-YYYYMMDD-HHmmutc`。Preview 只由产品名和产物前缀表达一次，版本号不再重复加入 `preview`。两类安装包都写入当前 commit、`releaseId` 和 SHA-256 receipt。正式发布 `X.Y.Z` 时，公开仓库的 `vX.Y.Z` tag 必须指向 receipt 中的 commit；本地构建命令只生成文件，不隐式上传。
 

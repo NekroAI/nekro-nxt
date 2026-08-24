@@ -41,10 +41,7 @@ export const useDesktopInstance = (): {
     }
   }, [bridge])
   return {
-    enabled:
-      bridge !== undefined &&
-      typeof window !== 'undefined' &&
-      new URLSearchParams(window.location.search).get('desktop') === '1',
+    enabled: bridge !== undefined,
     presentation,
   }
 }

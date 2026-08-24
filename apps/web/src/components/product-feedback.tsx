@@ -1,4 +1,5 @@
 import { AlertCircle, Inbox, RefreshCw, WifiOff } from 'lucide-react'
+import type { LucideIcon } from 'lucide-react'
 import { useState, type ReactNode } from 'react'
 import { useProductStore } from '../product-store.js'
 import { Button, Enter, Presence, Spinner } from '../ui-kit/index.js'
@@ -25,15 +26,27 @@ export function PageHeader({
   title,
   meta,
   actions,
+  icon: Icon,
   quiet = false,
 }: {
   readonly title: string
   readonly meta?: ReactNode
   readonly actions?: ReactNode
+  readonly icon?: LucideIcon
   readonly quiet?: boolean
 }) {
   return (
-    <header className={styles.pageHeader} data-page-header="" data-quiet={quiet ? '' : undefined}>
+    <header
+      className={styles.pageHeader}
+      data-page-header=""
+      data-has-icon={Icon ? '' : undefined}
+      data-quiet={quiet ? '' : undefined}
+    >
+      {Icon ? (
+        <span className={styles.pageIcon} aria-hidden="true">
+          <Icon size={20} strokeWidth={1.8} />
+        </span>
+      ) : null}
       <div>
         <h1 className={styles.pageTitle}>{title}</h1>
         {meta ? <div className={styles.pageMeta}>{meta}</div> : null}

@@ -55,9 +55,9 @@ const harnessModule = `
 `
 
 const motionHarnessModule = `
-  import React, { useEffect, useState } from 'react'
+  import React, { StrictMode, useEffect, useState } from 'react'
   import { createRoot } from 'react-dom/client'
-  import { Button, NxtMotionProvider, StageCrossfade, Tabs } from '/src/ui-kit/index.tsx'
+  import { Button, NavMarkGroup, NxtMotionProvider, StageCrossfade, Tabs } from '/src/ui-kit/index.tsx'
   import '/src/ui-kit/tokens.css'
 
   function TrackedPage({ page }) {
@@ -72,20 +72,43 @@ const motionHarnessModule = `
   function Harness() {
     const [page, setPage] = useState('a')
     const [tab, setTab] = useState('profile')
+    const [wideTab, setWideTab] = useState(false)
+    const [nav, setNav] = useState('overview')
+    const [wideNav, setWideNav] = useState(false)
     const [reduce, setReduce] = useState(false)
     return (
       <NxtMotionProvider reducedMotion={reduce}>
         <Button id="to-a" onClick={() => setPage('a')}>去A</Button>
         <Button id="to-b" onClick={() => setPage('b')}>去B</Button>
         <Button id="reduce" onClick={() => setReduce(true)}>减少动态</Button>
+        <Button id="resize-tab" onClick={() => setWideTab((current) => !current)}>调整页签</Button>
+        <Button id="resize-nav" onClick={() => setWideNav((current) => !current)}>调整导航</Button>
         <Tabs.Root value={tab} onValueChange={setTab}>
           <Tabs.List aria-label="测试页签">
             <Tabs.Trigger value="profile">配置</Tabs.Trigger>
-            <Tabs.Trigger value="channels">频道与平台连接</Tabs.Trigger>
+            <Tabs.Trigger value="channels" style={{ width: wideTab ? 260 : 180 }}>频道与平台连接</Tabs.Trigger>
           </Tabs.List>
           <Tabs.Content value="profile">配置内容</Tabs.Content>
           <Tabs.Content value="channels">频道内容</Tabs.Content>
         </Tabs.Root>
+        <NavMarkGroup id="test-nav">
+          <nav aria-label="测试导航" style={{ display: 'grid', gap: 8, width: 320 }}>
+            <button
+              type="button"
+              data-nav-anchor="overview"
+              data-nav-active={nav === 'overview' ? '' : undefined}
+              style={{ width: 120, height: 36 }}
+              onClick={() => setNav('overview')}
+            >概览</button>
+            <button
+              type="button"
+              data-nav-anchor="details"
+              data-nav-active={nav === 'details' ? '' : undefined}
+              style={{ width: wideNav ? 260 : 180, height: 36 }}
+              onClick={() => setNav('details')}
+            >详情</button>
+          </nav>
+        </NavMarkGroup>
         <div style={{ height: 240, overflow: 'hidden' }}>
           <StageCrossfade swapKey={page}>
             <TrackedPage page={page} />
@@ -95,7 +118,7 @@ const motionHarnessModule = `
     )
   }
 
-  createRoot(document.querySelector('#root')).render(<Harness />)
+  createRoot(document.querySelector('#root')).render(<StrictMode><Harness /></StrictMode>)
 `
 
 describe.sequential('ui-kit Dialog browser behavior', { timeout: 30_000 }, () => {
@@ -312,21 +335,21 @@ describe.sequential('ui-kit Dialog browser behavior', { timeout: 30_000 }, () =>
     ).toBe(true)
   }, 20_000)
 
-  it('slides one shared indicator between tabs instead of redrawing it at the destination', async () => {
+  it('animates the first tab click on a fresh mount with one persistent indicator', async () => {
     await page.emulateMedia({ reducedMotion: 'no-preference' })
     await page.goto(`${baseUrl}/__motion_harness__`, { waitUntil: 'domcontentloaded' })
     const indicator = page.locator('[data-nxt-tabs-indicator]')
     const destination = page.getByRole('tab', { name: '频道与平台连接' })
     await expectPage(indicator).toHaveAttribute('data-ready', '')
-    await page.waitForFunction(() =>
-      Array.from(document.querySelectorAll('[data-nxt-tabs-indicator]')).every((element) =>
-        element.getAnimations().every((animation) => animation.playState !== 'running'),
-      ),
-    )
     const [initialBox, destinationBox] = await Promise.all([indicator.boundingBox(), destination.boundingBox()])
     if (!initialBox || !destinationBox) throw new Error('Tab harness did not render both indicator positions.')
     const start = initialBox.x + initialBox.width / 2
     const end = destinationBox.x + destinationBox.width / 2
+    const identity = await indicator.evaluate((element) => {
+      const value = crypto.randomUUID()
+      element.setAttribute('data-test-identity', value)
+      return value
+    })
     await destination.click()
     const samples = await page.evaluate(async () => {
       const readCenter = (element: Element) => {
@@ -345,30 +368,157 @@ describe.sequential('ui-kit Dialog browser behavior', { timeout: 30_000 }, () =>
     })
 
     expect(await page.locator('[data-nxt-tabs-indicator]').count()).toBe(1)
-    expect(samples.some((position) => position > start + 2 && position < end - 2)).toBe(true)
-    expect(samples.at(-1)).toBeCloseTo(end, 0)
+    expect(await indicator.getAttribute('data-test-identity')).toBe(identity)
+    expect(samples.some((position) => position > Math.min(start, end) + 2 && position < Math.max(start, end) - 2)).toBe(
+      true,
+    )
+    const finalBox = await indicator.boundingBox()
+    expect(Math.abs((finalBox?.x ?? 0) + (finalBox?.width ?? 0) / 2 - end)).toBeLessThanOrEqual(1)
     await expectPage(page.getByRole('tabpanel')).toContainText('频道内容')
     expect(browserErrors).toEqual([])
   }, 20_000)
 
-  it('moves the tab indicator immediately when Reduced Motion is enabled', async () => {
+  it('animates the first NavMark click on a fresh StrictMode mount with one persistent indicator', async () => {
+    await page.emulateMedia({ reducedMotion: 'no-preference' })
     await page.goto(`${baseUrl}/__motion_harness__`, { waitUntil: 'domcontentloaded' })
+    const indicator = page.locator('[data-nav-mark="test-nav"]')
+    const destination = page.locator('[data-nav-anchor="details"]')
+    await expectPage(indicator).toHaveAttribute('data-ready', '')
+    const [initialBox, destinationBox] = await Promise.all([indicator.boundingBox(), destination.boundingBox()])
+    if (!initialBox || !destinationBox) throw new Error('Nav harness did not render both indicator positions.')
+    const start = initialBox.y + initialBox.height / 2
+    const end = destinationBox.y + destinationBox.height / 2
+    const identity = await indicator.evaluate((element) => {
+      const value = crypto.randomUUID()
+      element.setAttribute('data-test-identity', value)
+      return value
+    })
+    await destination.click()
+    const samples = await page.evaluate(async () => {
+      const samples: number[] = []
+      const startedAt = performance.now()
+      while (performance.now() - startedAt < 340) {
+        await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()))
+        const current = document.querySelector('[data-nav-mark="test-nav"]')
+        if (current) {
+          const rect = current.getBoundingClientRect()
+          samples.push(rect.top + rect.height / 2)
+        }
+      }
+      return samples
+    })
+
+    expect(await page.locator('[data-nav-mark="test-nav"]').count()).toBe(1)
+    expect(await indicator.getAttribute('data-test-identity')).toBe(identity)
+    expect(samples.some((position) => position > Math.min(start, end) + 2 && position < Math.max(start, end) - 2)).toBe(
+      true,
+    )
+    const finalBox = await indicator.boundingBox()
+    expect(Math.abs((finalBox?.y ?? 0) + (finalBox?.height ?? 0) / 2 - end)).toBeLessThanOrEqual(1)
+    expect(browserErrors).toEqual([])
+  }, 20_000)
+
+  it('immediately realigns active Tab and NavMark indicators after same-key resize', async () => {
+    await page.emulateMedia({ reducedMotion: 'no-preference' })
+    await page.goto(`${baseUrl}/__motion_harness__`, { waitUntil: 'domcontentloaded' })
+    const tab = page.getByRole('tab', { name: '频道与平台连接' })
+    const tabIndicator = page.locator('[data-nxt-tabs-indicator]')
+    const nav = page.locator('[data-nav-anchor="details"]')
+    const navIndicator = page.locator('[data-nav-mark="test-nav"]')
+
+    await tab.click()
+    await nav.click()
+    await page.waitForTimeout(340)
+    const tabIdentity = await tabIndicator.evaluate((element) => {
+      element.setAttribute('data-test-identity', 'tab-resize')
+      return element.getAttribute('data-test-identity')
+    })
+    const navIdentity = await navIndicator.evaluate((element) => {
+      element.setAttribute('data-test-identity', 'nav-resize')
+      return element.getAttribute('data-test-identity')
+    })
+
+    await page.locator('#resize-tab').click()
+    await page.locator('#resize-nav').click()
+    await page.waitForFunction(() => {
+      const tab = document.querySelector('[role="tab"][data-state="active"]')?.getBoundingClientRect()
+      const tabIndicator = document.querySelector('[data-nxt-tabs-indicator]')?.getBoundingClientRect()
+      const nav = document.querySelector('[data-nav-anchor="details"]')?.getBoundingClientRect()
+      const navIndicator = document.querySelector('[data-nav-mark="test-nav"]')?.getBoundingClientRect()
+      return Boolean(
+        tab &&
+        tabIndicator &&
+        nav &&
+        navIndicator &&
+        Math.abs(tab.width - tabIndicator.width) <= 1 &&
+        Math.abs(nav.width - navIndicator.width) <= 1,
+      )
+    })
+
+    expect(await tabIndicator.getAttribute('data-test-identity')).toBe(tabIdentity)
+    expect(await navIndicator.getAttribute('data-test-identity')).toBe(navIdentity)
+    expect(
+      await page
+        .locator('[data-nxt-tabs-indicator], [data-nav-mark="test-nav"]')
+        .evaluateAll((elements) =>
+          elements.some((element) => element.getAnimations().some((animation) => animation.playState === 'running')),
+        ),
+    ).toBe(false)
+  }, 20_000)
+
+  it('moves both persistent indicators immediately when Reduced Motion is enabled', async () => {
+    await page.goto(`${baseUrl}/__motion_harness__`, { waitUntil: 'domcontentloaded' })
+    const tabIndicator = page.locator('[data-nxt-tabs-indicator]')
+    const navIndicator = page.locator('[data-nav-mark="test-nav"]')
+    const tabIdentity = await tabIndicator.evaluate((element) => {
+      element.setAttribute('data-test-identity', 'tab-reduced')
+      return element.getAttribute('data-test-identity')
+    })
+    const navIdentity = await navIndicator.evaluate((element) => {
+      element.setAttribute('data-test-identity', 'nav-reduced')
+      return element.getAttribute('data-test-identity')
+    })
     await page.locator('#reduce').click()
     await page.getByRole('tab', { name: '频道与平台连接' }).click()
-    const indicator = page.locator('[data-nxt-tabs-indicator]')
+    await page.locator('[data-nav-anchor="details"]').click()
     const destination = page.getByRole('tab', { name: '频道与平台连接' })
+    const navDestination = page.locator('[data-nav-anchor="details"]')
     await expectPage(destination).toHaveAttribute('aria-selected', 'true')
+    await page.waitForFunction(() => {
+      const destination = document.querySelector('[data-nav-anchor="details"]')?.getBoundingClientRect()
+      const indicator = document.querySelector('[data-nav-mark="test-nav"]')?.getBoundingClientRect()
+      return Boolean(
+        destination &&
+        indicator &&
+        Math.abs(destination.top + destination.height / 2 - (indicator.top + indicator.height / 2)) <= 1,
+      )
+    })
     const destinationBox = await destination.boundingBox()
-    expect(destinationBox).not.toBeNull()
-    const indicatorBox = await indicator.boundingBox()
-    expect((indicatorBox?.x ?? 0) + (indicatorBox?.width ?? 0) / 2).toBeCloseTo(
-      (destinationBox?.x ?? 0) + (destinationBox?.width ?? 0) / 2,
-      0,
-    )
+    const indicatorBox = await tabIndicator.boundingBox()
+    const navDestinationBox = await navDestination.boundingBox()
+    const navIndicatorBox = await navIndicator.boundingBox()
     expect(
-      await indicator.evaluate((element) =>
-        element.getAnimations().some((animation) => animation.playState === 'running'),
+      Math.abs(
+        (indicatorBox?.x ?? 0) +
+          (indicatorBox?.width ?? 0) / 2 -
+          ((destinationBox?.x ?? 0) + (destinationBox?.width ?? 0) / 2),
       ),
+    ).toBeLessThanOrEqual(1)
+    expect(
+      Math.abs(
+        (navIndicatorBox?.y ?? 0) +
+          (navIndicatorBox?.height ?? 0) / 2 -
+          ((navDestinationBox?.y ?? 0) + (navDestinationBox?.height ?? 0) / 2),
+      ),
+    ).toBeLessThanOrEqual(1)
+    expect(await tabIndicator.getAttribute('data-test-identity')).toBe(tabIdentity)
+    expect(await navIndicator.getAttribute('data-test-identity')).toBe(navIdentity)
+    expect(
+      await page
+        .locator('[data-nxt-tabs-indicator], [data-nav-mark="test-nav"]')
+        .evaluateAll((elements) =>
+          elements.some((element) => element.getAnimations().some((animation) => animation.playState === 'running')),
+        ),
     ).toBe(false)
   }, 20_000)
 
@@ -378,7 +528,7 @@ describe.sequential('ui-kit Dialog browser behavior', { timeout: 30_000 }, () =>
     const outgoing = page.locator('[data-stage-layer="out"]')
     await expectPage(outgoing).toHaveAttribute('inert', '')
     await expectPage(outgoing).toHaveAttribute('aria-hidden', 'true')
-    expect(await page.evaluate(() => document.documentElement.dataset['motionMounts'] ?? '')).toBe('{"a":1,"b":1}')
+    expect(await page.evaluate(() => document.documentElement.dataset['motionMounts'] ?? '')).toBe('{"a":2,"b":2}')
   }, 20_000)
 
   it('makes stage changes instant when the app Reduced Motion setting is enabled', async () => {

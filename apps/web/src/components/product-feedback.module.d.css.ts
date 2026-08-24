@@ -11,6 +11,7 @@ declare const styles: {
   readonly info: string
   readonly pageActions: string
   readonly pageHeader: string
+  readonly pageIcon: string
   readonly pageMeta: string
   readonly pageTitle: string
   readonly success: string

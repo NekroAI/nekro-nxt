@@ -1,4 +1,4 @@
-import { ArrowRight, Check, Save, Sparkles } from 'lucide-react'
+import { ArrowRight, Boxes, Check, Save, Sparkles } from 'lucide-react'
 import { useEffect, useState } from 'react'
 import { Navigate, useParams, useSearchParams } from 'react-router-dom'
 import { useNxtNavigate } from '../shell/nxt-link.js'
@@ -99,6 +99,7 @@ export function ExtensionsPage() {
   return (
     <div className={[styles.page, styles.desktopPage, styles.extensionsPage].join(' ')} data-product-page="extensions">
       <PageHeader
+        icon={Boxes}
         title={selected?.name ?? '扩展库'}
         meta={selected ? `版本 ${selected.revision} · ${extensions.length} 个本地扩展` : undefined}
         quiet

@@ -185,7 +185,7 @@ function DesktopShell() {
           </IconButton>
           {desktopInstance.enabled ? (
             <IconButton
-              label={`服务实例：${desktopInstance.presentation.displayName} · ${
+              label={`管理并添加远程服务实例：${desktopInstance.presentation.displayName} · ${
                 desktopInstance.presentation.status === 'ready'
                   ? '运行正常'
                   : desktopInstance.presentation.status === 'connecting'

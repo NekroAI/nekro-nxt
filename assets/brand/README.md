@@ -22,16 +22,17 @@ pnpm brand:export
 pnpm brand:check
 ```
 
-`brand:export` 会先从确认后的头像源生成 SVG，再导出平台位图并同步消费者。`brand:check` 只读验证必需文件、SVG viewBox、PNG 尺寸和元数据、ICO 帧、ICNS 文件头、BMP 位深、导出哈希及消费者一致性。
+`brand:export` 会先从确认后的头像源生成 SVG，再导出平台位图并同步消费者。`brand:check` 只读验证必需文件、SVG viewBox、PNG 尺寸和元数据、ICO 帧、BMP 位深、导出哈希及消费者一致性；所有平台都会解析 ICNS 的十个标准 chunk（包括 native 16/32 的 ARGB-RLE），逐帧与来源 SVG 的新鲜栅格结果比较。在 macOS 上还会用 `iconutil` 再解码十帧，检查原生工具看到的尺寸、alpha bounds 与非透明覆盖率。DMG 检查直接扫描 `660 × 420` PNG 像素，`y>356` 只允许珍珠背景色。
 
 ## 视觉规则
 
 - 产品名写作 `NekroNXT`，受限空间可写 `NXT`；
 - Stable 使用主头像章，Preview 只增加黄铜—流明蓝—黄铜三节点校准标记；
 - 16–32px 使用微型输入，64px 以上使用主输入；
+- macOS ICNS 的 128px 以上帧消费 `app-icon-macos-stable.svg` / `app-icon-macos-preview.svg`：1024 画布使用不透明深靛满版底，由 macOS 施加最终系统遮罩，不预绘外层圆角框；头像章以中心保持的 `1.16` 倍放大。逻辑 16px 与 32px 帧分别消费 `app-icon-macos-micro-16-*` / `app-icon-macos-micro-32-*`，两者减少色阶与细碎线条，并为 Preview 使用专门放大的三节点标记；对应 @2x 帧继续使用同一逻辑尺寸母版。Windows、Linux 与 Web 继续消费原通用图标母版；
 - 月潮靛、流明蓝和黄铜只承担品牌识别，成功、警告和失败继续使用产品语义色；
 - 安装与过程图标是 64px 装饰素材；日常按钮、菜单和状态仍使用产品 ui-kit 与 Lucide；
-- DMG 背景不预绘应用或 Applications 图标，避免与 Finder 叠加资源重影。
+- DMG Finder 窗口固定为 `660 × 420`，应用与 Applications 保持在 `(190, 220)` / `(470, 220)`；首次打开按约 `660 × 360` 的可见安全区设计，必要文案、通道标记和装饰轨迹都不越过 `y=356`，无需向下拖动窗口；背景不预绘应用或 Applications 图标，避免与 Finder 叠加资源重影。
 
 ## 权利
 
