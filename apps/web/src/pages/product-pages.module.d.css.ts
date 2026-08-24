@@ -137,6 +137,7 @@ declare const styles: {
   readonly extensionNavList: string
   readonly extensionOverview: string
   readonly extensionRow: string
+  readonly extensionScroller: string
   readonly extensionWorkspace: string
   readonly facts: string
   readonly formLayout: string
@@ -233,6 +234,7 @@ declare const styles: {
   readonly settingsNavItem: string
   readonly settingsNavItemActive: string
   readonly settingsPage: string
+  readonly settingsScroller: string
   readonly settingsSection: string
   readonly sortableOrigin: string
   readonly srOnly: string
@@ -288,6 +290,7 @@ declare const styles: {
   readonly userLoadMore: string
   readonly userRow: string
   readonly userRows: string
+  readonly userTableHeader: string
   readonly userToolbar: string
   readonly viewSwitch: string
   readonly webSearchSetup: string
@@ -307,7 +310,11 @@ declare const styles: {
   readonly workbenchPage: string
   readonly workbenchSection: string
   readonly workbenchStatus: string
+  readonly workspaceHeader: string
   readonly workspaceLead: string
+  readonly workspacePage: string
+  readonly workspaceScroller: string
+  readonly workspaceStage: string
 }
 
 export default styles

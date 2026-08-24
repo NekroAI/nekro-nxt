@@ -4531,3 +4531,108 @@
 :global([data-reduced-motion='true']) .messageList {
   scroll-behavior: auto;
 }
+
+.workspacePage {
+  width: 100%;
+  height: 100%;
+  padding: 0;
+  overflow: hidden;
+}
+
+.workspacePage > * {
+  width: 100%;
+  margin: 0;
+}
+
+.workspaceStage,
+.workspaceStage > [data-stage-layer] {
+  display: flex;
+  min-width: 0;
+  min-height: 0;
+  flex: 1;
+  flex-direction: column;
+}
+
+.workspaceHeader {
+  flex: 0 0 auto;
+  margin: 0;
+  padding: 22px 28px 14px;
+}
+
+.workspaceScroller {
+  display: block;
+  width: 100%;
+  min-width: 0;
+  min-height: 0;
+  flex: 1;
+  overflow: auto;
+  padding: 18px 28px 32px;
+  scrollbar-gutter: stable;
+}
+
+.workspaceScroller > * + * {
+  margin-top: 16px;
+}
+
+.workspaceStage .userToolbar {
+  flex: 0 0 auto;
+  margin: 0;
+  padding: 0 28px 16px;
+}
+
+.userTableHeader {
+  display: grid;
+  min-height: 34px;
+  flex: 0 0 auto;
+  grid-template-columns: 34px minmax(180px, 0.9fr) minmax(240px, 1.1fr);
+  align-items: center;
+  gap: 14px;
+  border-bottom: 1px solid var(--nxt-border-subtle);
+  padding: 0 44px;
+  color: var(--nxt-text-muted);
+  background: var(--nxt-bg-subtle);
+  font-size: 11px;
+  font-weight: 650;
+}
+
+.workspaceStage .userLoadMore {
+  min-height: 52px;
+  flex: 0 0 auto;
+  margin: 0;
+  border-top: 1px solid var(--nxt-border-subtle);
+  padding: 10px 28px;
+  background: var(--nxt-bg-canvas);
+}
+
+.extensionScroller,
+.settingsScroller {
+  padding-top: 8px;
+}
+
+.workspacePage .extensionWorkspace,
+.settingsScroller .settingsSection,
+.settingsScroller > * {
+  width: 100%;
+}
+
+@media (width < 1180px) {
+  .workspaceHeader {
+    padding-right: 20px;
+    padding-left: 20px;
+  }
+
+  .workspaceScroller {
+    padding-right: 20px;
+    padding-left: 20px;
+  }
+
+  .workspaceStage .userToolbar {
+    padding-right: 20px;
+    padding-left: 20px;
+  }
+
+  .userTableHeader {
+    padding-right: 36px;
+    padding-left: 36px;
+  }
+}

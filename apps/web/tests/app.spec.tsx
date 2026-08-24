@@ -342,6 +342,21 @@ describe('NekroNxt product shell', () => {
     expect(renderRoute('/settings')).toContain('正在读取模型供应商')
   })
 
+  it('keeps domain-page chrome outside the independently scrolling workspace', () => {
+    for (const [route, label] of [
+      ['/users', '用户目录'],
+      ['/extensions', '扩展详情'],
+      ['/settings', '设置内容'],
+    ] as const) {
+      const markup = renderRoute(route)
+      const scrollMarker = `data-workspace-scroll="${label}"`
+      expect(markup).toContain(scrollMarker)
+      expect(markup.indexOf('<h1')).toBeLessThan(markup.indexOf(scrollMarker))
+    }
+    expect(renderRoute('/users')).toContain('data-fill=""')
+    expect(renderRoute('/extensions')).toContain('data-fill=""')
+  })
+
   it('keeps direct creator and runtime routes honest when no snapshot data is available', () => {
     const creator = renderRoute('/work/creator')
     const runtime = renderRoute('/runtime')

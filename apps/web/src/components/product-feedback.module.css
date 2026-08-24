@@ -94,23 +94,21 @@
 }
 
 .emptyState {
+  box-sizing: border-box;
   display: grid;
+  width: 100%;
   min-height: 280px;
   place-items: center;
   align-content: center;
-  border: 1px dashed var(--nxt-border-default);
-  border-radius: var(--nxt-radius-panel);
   padding: 32px;
   color: var(--nxt-text-muted);
-  background:
-    radial-gradient(
-      circle at calc(100% - 54px) 52px,
-      transparent 26px,
-      var(--nxt-brand-line) 27px 28px,
-      transparent 29px
-    ),
-    var(--nxt-bg-surface);
+  background: transparent;
   text-align: center;
+}
+
+.emptyState[data-fill] {
+  height: 100%;
+  min-height: 0;
 }
 
 .emptyTitle {

@@ -156,9 +156,10 @@ export function UsersPage() {
   )
 
   return (
-    <div className={[styles.page, styles.detailPage].join(' ')}>
-      <StageCrossfade swapKey={adapterKey || 'all'}>
+    <div className={[styles.page, styles.detailPage, styles.workspacePage].join(' ')}>
+      <StageCrossfade className={styles.workspaceStage} swapKey={adapterKey || 'all'}>
         <PageHeader
+          className={styles.workspaceHeader}
           quiet
           title={selectedAdapter?.displayName ?? '全部用户'}
           meta={<span>{loading ? '正在更新目录' : `${total} 位用户`}</span>}
@@ -197,34 +198,44 @@ export function UsersPage() {
             清除筛选
           </Button>
         </section>
-        {error ? <InlineFeedback tone="error">{error}</InlineFeedback> : null}
-        {historicalOnly ? (
-          <InlineFeedback tone="warning">当前结果仅包含历史记录；这些用户目前不在任何活动频道中。</InlineFeedback>
-        ) : null}
-        {loading && items.length === 0 ? (
-          <EmptyState loading title="正在读取用户目录" description="正在汇总已持久化的平台身份。" />
-        ) : items.length === 0 ? (
-          <EmptyState
-            title={hasFilters ? '当前筛选无结果' : '尚未观测到用户'}
-            description={hasFilters ? '调整名称、平台或连接筛选条件。' : '收到平台成员消息后，对应身份会出现在这里。'}
-          />
-        ) : adapterKey ? (
-          renderRows(items)
-        ) : (
-          <div className={styles.userGroups}>
-            {groups.map(([key, group]) => (
-              <section key={key} className={styles.userGroup}>
-                <header>
-                  <h2>{group.displayName}</h2>
-                  <span>{group.users.length} 位</span>
-                </header>
-                {renderRows(group.users)}
-              </section>
-            ))}
+        {items.length > 0 ? (
+          <div className={styles.userTableHeader} aria-hidden="true" data-user-table-header="">
+            <span />
+            <span>用户与来源</span>
+            <span>频道状态</span>
           </div>
-        )}
+        ) : null}
+        <div className={styles.workspaceScroller} data-workspace-scroll="用户目录">
+          {error ? <InlineFeedback tone="error">{error}</InlineFeedback> : null}
+          {historicalOnly ? (
+            <InlineFeedback tone="warning">当前结果仅包含历史记录；这些用户目前不在任何活动频道中。</InlineFeedback>
+          ) : null}
+          {loading && items.length === 0 ? (
+            <EmptyState fill loading title="正在读取用户目录" description="正在汇总已持久化的平台身份。" />
+          ) : items.length === 0 ? (
+            <EmptyState
+              fill
+              title={hasFilters ? '当前筛选无结果' : '尚未观测到用户'}
+              description={hasFilters ? '调整名称、平台或连接筛选条件。' : '收到平台成员消息后，对应身份会出现在这里。'}
+            />
+          ) : adapterKey ? (
+            renderRows(items)
+          ) : (
+            <div className={styles.userGroups}>
+              {groups.map(([key, group]) => (
+                <section key={key} className={styles.userGroup}>
+                  <header>
+                    <h2>{group.displayName}</h2>
+                    <span>{group.users.length} 位</span>
+                  </header>
+                  {renderRows(group.users)}
+                </section>
+              ))}
+            </div>
+          )}
+        </div>
         {nextCursor ? (
-          <div className={styles.userLoadMore}>
+          <div className={styles.userLoadMore} data-workspace-footer="">
             <Button onClick={() => void loadMore()} disabled={loadingMore}>
               {loadingMore ? <Spinner /> : null}
               {loadingMore ? '正在加载' : '加载更多'}
