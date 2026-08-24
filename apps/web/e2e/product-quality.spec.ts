@@ -1171,6 +1171,29 @@ test('desktop splitters and appearance preferences persist and recover defaults'
 
   const inspectorSplitter = page.getByRole('separator', { name: '调整检查器宽度' })
   await expect(inspectorSplitter).toHaveAttribute('aria-valuenow', '344')
+  const inspectorDividerGeometry = await inspectorSplitter.evaluate((element) => {
+    const previous = element.previousElementSibling
+    const next = element.nextElementSibling
+    if (!(previous instanceof HTMLElement) || !(next instanceof HTMLElement)) {
+      throw new Error('检查器分隔条缺少相邻画布。')
+    }
+    const previousRect = previous.getBoundingClientRect()
+    const nextRect = next.getBoundingClientRect()
+    const splitterRect = element.getBoundingClientRect()
+    const line = getComputedStyle(element, '::after')
+    return {
+      gap: nextRect.left - previousRect.right,
+      centerOffset: Math.abs(splitterRect.left + splitterRect.width / 2 - (previousRect.right + 0.5)),
+      hitWidth: splitterRect.width,
+      lineLeft: Number.parseFloat(line.left),
+      lineWidth: Number.parseFloat(line.width),
+    }
+  })
+  expect(inspectorDividerGeometry.gap).toBe(1)
+  expect(inspectorDividerGeometry.centerOffset).toBeLessThanOrEqual(0.5)
+  expect(inspectorDividerGeometry.hitWidth).toBe(9)
+  expect(inspectorDividerGeometry.lineLeft).toBe(4.5)
+  expect(inspectorDividerGeometry.lineWidth).toBe(1)
   await dragHorizontally(page, inspectorSplitter, -40)
   await expect(inspectorSplitter).toHaveAttribute('aria-valuenow', '384')
   await dragHorizontally(page, inspectorSplitter, 60)
@@ -1209,6 +1232,16 @@ test('desktop splitters and appearance preferences persist and recover defaults'
   await expect(page.getByRole('switch', { name: '减少动态效果' })).toBeChecked()
   await expect(page.getByRole('switch', { name: '减少透明效果' })).toBeChecked()
   await expect(page.getByLabel('对比度')).toContainText('更高对比度')
+  await expect(page.locator('[data-route-transition] > [data-stage-layer="in"]')).toHaveCount(1)
+  const reducedMotionAlignment = await page.evaluate(() => {
+    const root = document.querySelector<HTMLElement>('[data-product-page="settings"]')
+    const content = document.querySelector<HTMLElement>('[data-settings-content]')
+    if (!root || !content) throw new Error('减少动效后的设置页缺少内容中心轴。')
+    const rootRect = root.getBoundingClientRect()
+    const contentRect = content.getBoundingClientRect()
+    return Math.abs(rootRect.left + rootRect.width / 2 - (contentRect.left + contentRect.width / 2))
+  })
+  expect(reducedMotionAlignment).toBeLessThanOrEqual(1)
   await capture(page, testInfo, 'appearance-reduced-transparency-high-contrast')
 
   await page.getByRole('button', { name: '恢复默认分栏' }).click()
@@ -1395,6 +1428,17 @@ test('redesigned relationship and lifecycle pages stay legible across representa
       await expect(page.getByRole('heading', { name: '群聊摘要' })).toBeVisible()
       await expect(page.getByText('扩展', { exact: true })).toHaveCount(0)
     }
+    if (scene.route === '/settings?tab=appearance') {
+      const alignment = await page.evaluate(() => {
+        const root = document.querySelector<HTMLElement>('[data-product-page="settings"]')
+        const content = document.querySelector<HTMLElement>('[data-settings-content]')
+        if (!root || !content) throw new Error('设置页缺少内容中心轴。')
+        const rootRect = root.getBoundingClientRect()
+        const contentRect = content.getBoundingClientRect()
+        return Math.abs(rootRect.left + rootRect.width / 2 - (contentRect.left + contentRect.width / 2))
+      })
+      expect(alignment).toBeLessThanOrEqual(1)
+    }
     if (scene.route.startsWith('/work/agents/')) {
       const sectionWidths = await page
         .locator('section[id^="agent-"]')
@@ -1484,13 +1528,47 @@ test('redesigned relationship and lifecycle pages stay legible across representa
       body: JSON.stringify({ ...productSnapshot, extensions: [] }),
     }),
   )
-  await page.emulateMedia({ colorScheme: 'dark', reducedMotion: 'reduce' })
+  await page.emulateMedia({ colorScheme: 'light', reducedMotion: 'reduce' })
   await page.goto('/extensions')
   await expect(page.getByText('本地扩展', { exact: true })).toBeVisible()
   await expect(page.getByRole('heading', { name: '扩展库' })).toBeVisible()
   await expect(page.getByText('从一次动态运行开始')).toBeVisible()
   await expect(page.getByText('还没有本地扩展', { exact: true })).toHaveCount(0)
   await expect(page.getByRole('button', { name: '打开创造工作台' })).toBeVisible()
+  const emptySurfaceGeometry = await page.evaluate(() => {
+    const root = document.querySelector<HTMLElement>('[data-product-page="extensions"]')
+    const header = document.querySelector<HTMLElement>('[data-product-page="extensions"] [data-page-header]')
+    const card = document.querySelector<HTMLElement>('[data-product-page="extensions"] [data-empty-state]')
+    const transition = root?.querySelector<HTMLElement>(':scope > [data-route-transition]')
+    if (!root || !header || !card || !transition) throw new Error('扩展空态缺少必要表面。')
+    const rootRect = root.getBoundingClientRect()
+    const headerRect = header.getBoundingClientRect()
+    const cardRect = card.getBoundingClientRect()
+    const clips: string[] = []
+    let ancestor = card.parentElement
+    while (ancestor && ancestor !== root) {
+      const style = getComputedStyle(ancestor)
+      if ([style.overflowX, style.overflowY].some((value) => value === 'hidden' || value === 'clip')) {
+        clips.push(ancestor.getAttribute('data-route-transition') !== null ? 'transition' : ancestor.tagName)
+      }
+      ancestor = ancestor.parentElement
+    }
+    const center = rootRect.left + rootRect.width / 2
+    return {
+      cardCenterOffset: Math.abs(center - (cardRect.left + cardRect.width / 2)),
+      headerCenterOffset: Math.abs(center - (headerRect.left + headerRect.width / 2)),
+      transitionOverflow: getComputedStyle(transition).overflow,
+      shadow: getComputedStyle(card).boxShadow,
+      clips,
+    }
+  })
+  expect(emptySurfaceGeometry.cardCenterOffset).toBeLessThanOrEqual(1)
+  expect(emptySurfaceGeometry.headerCenterOffset).toBeLessThanOrEqual(1)
+  expect(emptySurfaceGeometry.transitionOverflow).toBe('visible')
+  expect(emptySurfaceGeometry.shadow).not.toBe('none')
+  expect(emptySurfaceGeometry.clips).toEqual([])
+  await capture(page, testInfo, 'redesign-extension-empty-light')
+  await page.emulateMedia({ colorScheme: 'dark', reducedMotion: 'reduce' })
   await capture(page, testInfo, 'redesign-extension-empty-dark')
   expect(failures, failures.join('\n')).toEqual([])
 })
@@ -2222,6 +2300,8 @@ test('desktop shell keeps a 48px top bar and a permanently available object pane
     const treeStyle = getComputedStyle(tree)
     const stageStyle = getComputedStyle(stage)
     return {
+      brandBackground: brandStyle.backgroundColor,
+      dragTitleBackground: dragTitleStyle.backgroundColor,
       brandRadius: Number.parseFloat(brandStyle.borderTopLeftRadius),
       dragTitleRadius: Number.parseFloat(dragTitleStyle.borderTopLeftRadius),
       railTop: Number.parseFloat(railStyle.borderTopLeftRadius),
@@ -2234,6 +2314,8 @@ test('desktop shell keeps a 48px top bar and a permanently available object pane
   })
   expect(chromeGeometry.brandRadius).toBeGreaterThanOrEqual(10)
   expect(chromeGeometry.dragTitleRadius).toBeGreaterThanOrEqual(10)
+  expect(chromeGeometry.brandBackground).toBe('rgba(0, 0, 0, 0)')
+  expect(chromeGeometry.dragTitleBackground).toBe('rgba(0, 0, 0, 0)')
   expect(chromeGeometry.railTop).toBe(0)
   expect(chromeGeometry.treeTop).toBe(0)
   expect(chromeGeometry.stageTop).toBe(0)
@@ -2243,21 +2325,36 @@ test('desktop shell keeps a 48px top bar and a permanently available object pane
   const shellEdges = await page.evaluate(() => {
     const body = document.querySelector<HTMLElement>('[data-shell-body]')
     const rail = document.querySelector<HTMLElement>('aside[aria-label="模式"]')
+    const tree = document.querySelector<HTMLElement>('aside[aria-label="对象列"]')
+    const splitter = document.querySelector<HTMLElement>('[role="separator"][aria-label="调整对象列宽度"]')
     const stage = document.querySelector<HTMLElement>('main')
-    if (!body || !rail || !stage) throw new Error('窗口主体缺少必要表面。')
+    if (!body || !rail || !tree || !splitter || !stage) throw new Error('窗口主体缺少必要表面。')
     const bodyRect = body.getBoundingClientRect()
     const railRect = rail.getBoundingClientRect()
+    const treeRect = tree.getBoundingClientRect()
+    const splitterRect = splitter.getBoundingClientRect()
     const stageRect = stage.getBoundingClientRect()
+    const splitterLine = getComputedStyle(splitter, '::after')
     return {
       bodyLeft: bodyRect.left,
       bodyRight: bodyRect.right,
       railLeft: railRect.left,
+      dividerGap: stageRect.left - treeRect.right,
+      dividerCenterOffset: Math.abs(splitterRect.left + splitterRect.width / 2 - (treeRect.right + 0.5)),
+      dividerHitWidth: splitterRect.width,
+      dividerLineLeft: Number.parseFloat(splitterLine.left),
+      dividerLineWidth: Number.parseFloat(splitterLine.width),
       stageRight: stageRect.right,
       viewportWidth: window.innerWidth,
     }
   })
   expect(shellEdges.bodyLeft).toBe(0)
   expect(shellEdges.railLeft).toBe(0)
+  expect(shellEdges.dividerGap).toBe(1)
+  expect(shellEdges.dividerCenterOffset).toBeLessThanOrEqual(0.5)
+  expect(shellEdges.dividerHitWidth).toBe(9)
+  expect(shellEdges.dividerLineLeft).toBe(4.5)
+  expect(shellEdges.dividerLineWidth).toBe(1)
   expect(shellEdges.bodyRight).toBe(shellEdges.viewportWidth)
   expect(shellEdges.stageRight).toBe(shellEdges.viewportWidth)
   for (const selector of ['[data-window-brand]', '[data-window-drag-title]']) {

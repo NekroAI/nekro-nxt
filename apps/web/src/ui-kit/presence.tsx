@@ -139,7 +139,15 @@ export function StageCrossfade({
   }, [])
 
   const wrapClass = [styles.stageWrap, className].filter(Boolean).join(' ')
-  if (reduce) return <div className={wrapClass}>{children}</div>
+  if (reduce) {
+    return (
+      <div className={wrapClass} data-route-transition="">
+        <div className={styles.stageLayer} data-stage-layer="in">
+          {children}
+        </div>
+      </div>
+    )
+  }
 
   return (
     <div className={wrapClass} data-route-transition="">

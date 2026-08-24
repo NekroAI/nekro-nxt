@@ -4770,7 +4770,18 @@
 }
 
 :global(:root[data-glin-experiment]) .inspectorSplitter {
+  z-index: 2;
+  width: 9px;
+  min-width: 9px;
+  justify-self: center;
+  margin-inline: -4px;
   background: transparent;
+}
+
+:global(:root[data-glin-experiment]) .inspectorSplitter[data-disabled] {
+  width: 0;
+  min-width: 0;
+  margin-inline: 0;
 }
 
 :global(:root[data-glin-experiment]) .inspectorChrome,
@@ -4942,6 +4953,19 @@
   isolation: isolate;
 }
 
+:global(:root[data-glin-experiment]) .page > :global([data-route-transition]) {
+  overflow: visible;
+}
+
+:global(:root[data-glin-experiment])
+  .page
+  > :global([data-route-transition])
+  > :global([data-stage-layer])
+  > :not(:global([data-page-header])) {
+  margin-right: auto;
+  margin-left: auto;
+}
+
 :global(:root[data-glin-experiment]) .section,
 :global(:root[data-glin-experiment]) .connectionWorkspace,
 :global(:root[data-glin-experiment]) .agentCard,
@@ -4973,6 +4997,14 @@
   box-shadow:
     0 16px 38px rgb(0 0 0 / 18%),
     inset 0 1px 0 rgb(255 255 255 / 7%);
+}
+
+:global(:root[data-glin-experiment]) .section,
+:global(:root[data-glin-experiment]) .settingsGroup,
+:global(:root[data-glin-experiment]) .connectionWorkspace,
+:global(:root[data-glin-experiment]) .extensionWorkspace,
+:global(:root[data-glin-experiment]) .systemAdapterCard {
+  overflow: visible;
 }
 
 :global(:root[data-glin-experiment]) .section::before {

@@ -33,7 +33,7 @@ export function PageHeader({
   readonly quiet?: boolean
 }) {
   return (
-    <header className={styles.pageHeader} data-quiet={quiet ? '' : undefined}>
+    <header className={styles.pageHeader} data-page-header="" data-quiet={quiet ? '' : undefined}>
       <div>
         <h1 className={styles.pageTitle}>{title}</h1>
         {meta ? <div className={styles.pageMeta}>{meta}</div> : null}
@@ -78,7 +78,7 @@ export function EmptyState({
   readonly illustration?: { readonly src: string; readonly alt?: string }
 }) {
   return (
-    <div className={styles.emptyState}>
+    <div className={styles.emptyState} data-empty-state="">
       {loading ? (
         <Spinner size={22} />
       ) : illustration ? (

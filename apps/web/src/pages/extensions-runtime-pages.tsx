@@ -97,7 +97,7 @@ export function ExtensionsPage() {
   }
 
   return (
-    <div className={[styles.page, styles.detailPage].join(' ')}>
+    <div className={[styles.page, styles.detailPage].join(' ')} data-product-page="extensions">
       <StageCrossfade swapKey={selected?.id ?? 'empty'}>
         <PageHeader
           title={selected?.name ?? '扩展库'}

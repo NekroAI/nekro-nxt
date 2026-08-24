@@ -13,7 +13,7 @@ function SystemExtensionsPanel() {
   const adapters = useProductStore((state) => state.connectionAdapters)
   const navigate = useNxtNavigate()
   return (
-    <section className={styles.settingsSection}>
+    <section className={styles.settingsSection} data-settings-content="">
       <div className={styles.systemAdapterIntro}>
         <div className={styles.sectionHeading}>已安装适配器</div>
         <p className={styles.secondaryText}>接入聊天平台。前往「连接」添加账号。</p>
@@ -73,7 +73,7 @@ export function SettingsPage() {
             : '模型供应商'
 
   return (
-    <div className={[styles.page, styles.settingsPage].join(' ')}>
+    <div className={[styles.page, styles.settingsPage].join(' ')} data-product-page="settings">
       <StageCrossfade swapKey={activeTab}>
         <PageHeader title={title} quiet />
         {activeTab === 'models' ? <LlmProviderSettings /> : null}
@@ -81,7 +81,7 @@ export function SettingsPage() {
         {activeTab === 'system-extensions' ? <SystemExtensionsPanel /> : null}
         {activeTab === 'about' ? <AboutPage metadata={productMetadata} /> : null}
         {activeTab === 'appearance' ? (
-          <section className={styles.settingsSection}>
+          <section className={styles.settingsSection} data-settings-content="">
             <div className={styles.appearanceSignature} aria-label="月潮观测所品牌主题">
               <img src="/brand/mark.svg" alt="" aria-hidden="true" />
               <div>

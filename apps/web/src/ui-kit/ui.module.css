@@ -547,6 +547,7 @@
   min-width: 5px;
   min-height: 0;
   cursor: col-resize;
+  outline: none;
   touch-action: none;
 }
 
@@ -554,10 +555,11 @@
   position: absolute;
   top: 0;
   bottom: 0;
-  left: 2px;
+  left: 50%;
   width: 1px;
   background: var(--nxt-border-subtle);
   content: '';
+  transform: translateX(-50%);
 }
 
 .resizeHandle:hover::after,

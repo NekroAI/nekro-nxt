@@ -396,7 +396,7 @@
 :global(:root[data-glin-experiment]) .windowBrand,
 :global(:root[data-glin-experiment]) .windowObjectTitle {
   min-height: 34px;
-  background: color-mix(in srgb, var(--nxt-bg-elevated) 52%, transparent);
+  background: transparent;
   box-shadow: none;
 }
 
@@ -447,7 +447,7 @@
 }
 
 :global(:root[data-glin-experiment]) .shellBody {
-  grid-template-columns: 68px var(--nxt-object-pane-width, 240px) 7px minmax(0, 1fr);
+  grid-template-columns: 68px var(--nxt-object-pane-width, 240px) 1px minmax(0, 1fr);
   padding: 0;
   background: transparent;
 }
@@ -523,6 +523,11 @@
 }
 
 :global(:root[data-glin-experiment]) .shellSplitter {
+  z-index: 2;
+  width: 9px;
+  min-width: 9px;
+  justify-self: center;
+  margin-inline: -4px;
   border: 0;
   background: transparent;
 }
