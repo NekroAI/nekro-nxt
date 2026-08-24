@@ -63,7 +63,7 @@ export function AboutPage({ metadata }: { readonly metadata?: Partial<ProductMet
           <a href="https://github.com/NekroAI/nekro-nxt/blob/main/NOTICE" target="_blank" rel="noreferrer">
             版权声明
           </a>
-          <a href="https://github.com/NekroAI/nekro-nxt/blob/main/BRAND.md" target="_blank" rel="noreferrer">
+          <a href="https://github.com/NekroAI/nekro-nxt/blob/main/docs/BRAND.md" target="_blank" rel="noreferrer">
             品牌规范
           </a>
           <a href="https://github.com/NekroAI/nekro-nxt/security" target="_blank" rel="noreferrer">

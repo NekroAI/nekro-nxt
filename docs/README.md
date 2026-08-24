@@ -5,8 +5,8 @@
 ## 开始使用
 
 1. [快速开始](guide/getting-started.md)：从安装到第一次内置频道对话；
-2. [Desktop 安装](guide/desktop.md)：macOS、Windows、Linux 安装包与 Stable/Preview；
-3. [Server 部署](guide/server.md)：单容器、`/data`、管理密钥与设备配对；
+2. [桌面版安装](guide/desktop.md)：macOS、Windows、Linux 安装包与稳定版/预览版；
+3. [服务端部署](guide/server.md)：一行启动容器，详细配置 Docker、Compose、远程访问与数据目录；
 4. [配置模型](guide/models.md)：模型供应商、API Key、连接测试和模型选择；
 5. [创建智能体](guide/agents.md)：人设、模型、授权能力和内置频道；
 6. [连接频道](guide/connections.md)：添加平台账号、发现频道、绑定和触发方式；
@@ -39,7 +39,8 @@
 - [开发与测试规范](06-开发与测试规范.md)：提交、测试阶梯、产品旅程和视觉验收；
 - [文档公开边界](00-文档公开边界.md)：敏感信息、真实样本和发布前检查；
 - [参考项目复用指南](07-参考项目复用指南.md)：引入外部机制时的证据与边界；
-- [品牌资产](../assets/brand/README.md)与[品牌使用规范](../BRAND.md)：Logo、安装资源、角色和宣传素材；
+- [品牌资产](../assets/brand/README.md)与[品牌使用规范](BRAND.md)：Logo、安装资源、角色和宣传素材；
+- [贡献指南](CONTRIBUTING.md)、[支持说明](SUPPORT.md)、[安全策略](SECURITY.md)与[社区行为准则](CODE_OF_CONDUCT.md)：参与项目和反馈问题；
 - [NekroAI 组织主页资料](guide/organization-profile.md)：组织 Profile README 文案和素材映射；
 - [仓库公开检查清单](guide/publication-checklist.md)：许可证、历史审计、GitHub About、安全报告和 ruleset；
 - [冻结历史](archive/README.md)：只用于追溯过程，不作为现行规范。

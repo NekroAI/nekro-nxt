@@ -2,7 +2,7 @@
   "name": "nekro-nxt",
   "version": "0.0.0",
   "private": true,
-  "description": "以 DSH 为核心引擎，原生面向群聊与动态扩展的智能体聊天系统",
+  "description": "连接多平台即时通信，让智能体参与真实多人群聊的 DSH 驱动系统",
   "type": "module",
   "packageManager": "pnpm@11.7.0",
   "engines": {

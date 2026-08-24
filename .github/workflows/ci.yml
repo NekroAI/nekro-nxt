@@ -123,13 +123,39 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: node scripts/rolling-preview-release.mjs upload --platform ${{ matrix.target }}
 
+  preview-server:
+    name: preview-server (linux-x64)
+    needs: preview-prepare
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Build Server Preview image
+        env:
+          NEKRO_DESKTOP_CHANNEL: preview
+          NEKRO_IMAGE: ghcr.io/nekroai/nekro-nxt:preview-${{ github.sha }}
+        run: node scripts/build-server-image.mjs
+      - name: Push Server Preview candidate
+        run: docker push ghcr.io/nekroai/nekro-nxt:preview-${{ github.sha }}
+
   preview-finalize:
     if: always() && needs.preview-prepare.result == 'success'
-    needs: [preview-prepare, preview-desktop]
+    needs: [preview-prepare, preview-desktop, preview-server]
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     permissions:
       contents: write
+      packages: write
     steps:
       - uses: actions/checkout@v4
         with:
@@ -140,4 +166,15 @@ jobs:
       - name: Publish or clean rolling Preview
         env:
           GH_TOKEN: ${{ github.token }}
-        run: node scripts/rolling-preview-release.mjs finalize --build-result ${{ needs.preview-desktop.result }}
+        run: node scripts/rolling-preview-release.mjs finalize --build-result ${{ needs.preview-desktop.result == 'success' && needs.preview-server.result == 'success' && 'success' || 'failure' }}
+      - uses: docker/login-action@v3
+        if: needs.preview-desktop.result == 'success' && needs.preview-server.result == 'success'
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Publish rolling Server Preview image
+        if: needs.preview-desktop.result == 'success' && needs.preview-server.result == 'success'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: node scripts/rolling-preview-release.mjs promote-server-image

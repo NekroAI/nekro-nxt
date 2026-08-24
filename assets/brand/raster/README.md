@@ -12,4 +12,4 @@
 
 共同身份约束：银白短发、蓝眼、圆框眼镜、深蓝帽、金色网络线、水母头饰、水滴饰品、透明披肩、蓝色胸针和深蓝研究书。所有生成提示均要求无文字、无水印、正确手部、不重设计服装；透明素材在导入后再次验证 Alpha。
 
-权利声明：**Copyright © 2026 NekroAI. All rights reserved.** 使用边界见根目录 `BRAND.md`。
+权利声明：**Copyright © 2026 NekroAI. All rights reserved.** 使用边界见 [`docs/BRAND.md`](../../../docs/BRAND.md)。

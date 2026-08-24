@@ -1,21 +1,19 @@
-# Desktop 安装
+# 桌面版安装
 
-NekroNXT Desktop 将同版本 Server、Web UI 和运行时打进一个安装包，日常使用不要求预装开发工具。
-
-![Desktop 下载、安装和首次配置](../../assets/brand/raster/install-desktop.webp)
+NekroNXT 桌面版（Desktop）把界面与完整运行环境放进一个安装包，日常使用不要求预装 Node.js、pnpm、Python 或 Docker。
 
 ## 下载渠道
 
-- **Preview**：`main` 完整 CI 通过后更新的滚动预览版；
-- **Stable**：由不可移动版本 Tag 发布，当前尚未提供公开稳定版。
+- **预览版（Preview）**：`main` 完整 CI 通过后更新的滚动构建；
+- **稳定版（Stable）**：由固定版本 Tag 发布，当前尚未提供公开稳定版。
 
-每个平台安装包旁都有 `receipt.json`，其中包含版本、Release ID、commit 和 SHA-256。当前包未签名，校验 receipt 后再安装。
+每个平台安装包旁都有 `receipt.json`，其中包含版本、Release ID、commit 和 SHA-256，可以用来核对下载文件。
 
 ## 平台
 
 ### macOS
 
-下载 Universal DMG，打开后将 NekroNXT 拖入 Applications。未签名阶段，系统可能要求在“隐私与安全性”中确认首次打开。
+下载 Universal DMG，打开后将 NekroNXT 拖入“应用程序”。当前预览包尚未签名，macOS 可能要求在“隐私与安全性”中确认首次打开。
 
 ### Windows
 
@@ -30,7 +28,7 @@ chmod +x nekro-nxt-*.AppImage
 ./nekro-nxt-*.AppImage
 ```
 
-## Stable 与 Preview
+## 稳定版与预览版
 
 两条通道使用不同 appId、安装身份、快捷方式和数据目录，可以并装。Preview 图标右下角带黄铜—流明蓝—黄铜三节点标记；不要把两个通道的数据目录互相覆盖。
 
@@ -38,6 +36,6 @@ chmod +x nekro-nxt-*.AppImage
 
 ## 数据与远程实例
 
-Desktop 的本地实例数据位于 Electron `userData/data/`。窗口还可以保存多个远程 Server；每个实例拥有独立设备凭据和浏览器存储，切换界面不会停止其他实例中的智能体。
+桌面版的本地实例数据位于 Electron `userData/data/`。窗口还可以保存多个远程服务端；每个实例拥有独立设备凭据和浏览器存储，切换界面不会停止其他实例中的智能体。
 
 备份和恢复见[升级、备份与恢复](upgrade-backup.md)。

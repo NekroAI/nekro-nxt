@@ -7,6 +7,13 @@ import { readProductRelease } from './product-release.mjs'
 export const ROLLING_PREVIEW_TAG = 'preview'
 export const PREVIEW_PLATFORMS = ['mac', 'win', 'linux']
 
+export function previewServerImage(repository, commit) {
+  if (!/^[^/]+\/[^/]+$/u.test(repository) || !/^[a-f0-9]{40}$/u.test(commit)) {
+    throw new Error('滚动预览版服务端镜像参数无效。')
+  }
+  return `ghcr.io/${repository.toLowerCase()}:preview-${commit}`
+}
+
 const repositoryRoot = path.resolve(fileURLToPath(new URL('..', import.meta.url)))
 const desktopRoot = path.join(repositoryRoot, 'apps', 'desktop')
 
@@ -47,11 +54,12 @@ export function previewReleaseTitle(release) {
 
 export function previewReleaseBody(release, repository) {
   return [
-    '这是 `main` 最新通过完整 CI 与三端构建的滚动预览版。`preview` 标签和本页面会在下一次成功构建后前移。',
+    '这是 `main` 最新通过完整 CI、三端桌面构建与服务端镜像构建的滚动预览版。`preview` 标签和本页面会在下一次成功构建后前移。',
     '',
     `- 版本：\`${release.version}\``,
     `- Release ID：\`${release.releaseId}\``,
     `- Commit：[\`${release.commit.slice(0, 12)}\`](https://github.com/${repository}/commit/${release.commit})`,
+    `- 服务端镜像：\`ghcr.io/${repository.toLowerCase()}:preview\``,
     '',
     '当前安装包尚未签名；请同时下载对应平台的 `receipt.json` 核对 SHA-256。',
   ].join('\n')
@@ -250,7 +258,7 @@ async function finalizeRollingRelease() {
 
   if (buildResult !== 'success') {
     deleteAssets(repository, candidateAssets(rollingRelease, expectedSet))
-    console.log(`三端构建结果为 ${buildResult}，已保留上一版 Preview 并清理本次候选附件。`)
+    console.log(`预览构建结果为 ${buildResult}，已保留上一版 Preview 并清理本次候选附件。`)
     return
   }
 
@@ -295,11 +303,35 @@ async function finalizeRollingRelease() {
   console.log(`滚动 Preview 已发布：${release.version} (${release.commit.slice(0, 12)})`)
 }
 
+async function promoteServerImage() {
+  const repository = requireRepository()
+  const { release } = await readContext()
+  const remoteMain = ghJson(['api', `/repos/${repository}/git/ref/heads/main`]).object?.sha
+  if (remoteMain !== release.commit) {
+    console.log(`当前 commit ${release.commit} 已不是 main 最新 HEAD，不会更新服务端 Preview 镜像。`)
+    return
+  }
+
+  const candidate = previewServerImage(repository, release.commit)
+  const rolling = `ghcr.io/${repository.toLowerCase()}:${ROLLING_PREVIEW_TAG}`
+  for (const args of [
+    ['pull', candidate],
+    ['tag', candidate, rolling],
+    ['push', rolling],
+  ]) {
+    const result = spawnSync('docker', args, { cwd: repositoryRoot, stdio: 'inherit' })
+    if (result.error) throw result.error
+    if (result.status !== 0) throw new Error(`docker ${args[0]} 执行失败：${args.at(-1)}`)
+  }
+  console.log(`服务端 Preview 镜像已发布：${rolling}`)
+}
+
 async function main() {
   const command = process.argv[2]
   if (command === 'ensure') return ensureRollingRelease()
   if (command === 'upload') return uploadPlatformAssets()
   if (command === 'finalize') return finalizeRollingRelease()
+  if (command === 'promote-server-image') return promoteServerImage()
   throw new Error(`滚动预览版命令无效：${command ?? 'undefined'}`)
 }
 

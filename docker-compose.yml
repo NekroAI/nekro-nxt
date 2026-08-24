@@ -1,11 +1,7 @@
 services:
   nekro-nxt:
-    build:
-      context: .
-      args:
-        NEKRO_RELEASE_ID: '${NEKRO_RELEASE_ID:-0.0.0+local}'
+    image: '${NEKRO_IMAGE:-ghcr.io/nekroai/nekro-nxt:preview}'
     environment:
-      NEKRO_RELEASE_ID: '${NEKRO_RELEASE_ID:-0.0.0+local}'
       NEKRO_MANAGEMENT_KEY: '${NEKRO_MANAGEMENT_KEY:?请设置至少 32 个字符的 NEKRO_MANAGEMENT_KEY}'
     ports:
       - '${NEKRO_BIND_ADDRESS:-127.0.0.1}:4960:4960'

@@ -5,6 +5,7 @@ import {
   expectedPreviewAssets,
   previewArtifactName,
   previewReleaseBody,
+  previewServerImage,
   previewReleaseTitle,
 } from '../rolling-preview-release.mjs'
 
@@ -57,4 +58,12 @@ test('rolling Preview copy identifies its moving channel and immutable Product R
   assert.match(body, /滚动预览版/u)
   assert.match(body, new RegExp(release.releaseId.replaceAll('+', '\\+'), 'u'))
   assert.match(body, /NekroAI\/nekro-nxt\/commit\/0123456789abcdef/u)
+  assert.match(body, /ghcr\.io\/nekroai\/nekro-nxt:preview/u)
+})
+
+test('rolling Preview derives a lowercase commit-addressed Server candidate image', () => {
+  assert.equal(
+    previewServerImage('NekroAI/nekro-nxt', release.commit),
+    `ghcr.io/nekroai/nekro-nxt:preview-${release.commit}`,
+  )
 })

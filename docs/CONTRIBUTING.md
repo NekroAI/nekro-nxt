@@ -4,10 +4,10 @@
 
 ## 提交问题前
 
-- 使用最新 Preview 或当前 `main` 复现；
+- 使用最新预览版或当前 `main` 复现；
 - 搜索现有 Issue；
 - 删除 API Key、真实聊天、账号、群标识、平台临时 URL、文件哈希和本机路径；
-- 安全漏洞不要创建公开 Issue，按 `SECURITY.md` 私密报告。
+- 安全漏洞不要创建公开 Issue，按[安全策略](SECURITY.md)私密报告。
 
 ## 开发
 
@@ -16,7 +16,7 @@ pnpm install --frozen-lockfile
 pnpm dev
 ```
 
-开始修改前阅读 `AGENTS.md`，再从 `docs/README.md` 进入对应产品、协议、Decision 和包 README。面向用户只使用“智能体”；内部类型可以保留 `AgentDefinition` 等 DSH/TypeScript 术语。
+开始修改前阅读 [`AGENTS.md`](../AGENTS.md)，再从[文档入口](README.md)进入对应产品、协议、Decision 和包 README。面向用户只使用“智能体”；内部类型可以保留 `AgentDefinition` 等 DSH/TypeScript 术语。
 
 ## 修改原则
 
@@ -42,7 +42,7 @@ pnpm test:journey
 
 ## Pull Request
 
-仓库会自动加载 [Pull Request 模板](.github/PULL_REQUEST_TEMPLATE.md)；请保留其中的变更、验证和公开边界检查项。
+仓库会自动加载 [Pull Request 模板](../.github/PULL_REQUEST_TEMPLATE.md)；请保留其中的变更、验证和公开边界检查项。
 
 - 标题和提交说明使用中文，格式为 `类型: 动词短语`；
 - 说明用户可观察到的结果、验证命令和文档更新；

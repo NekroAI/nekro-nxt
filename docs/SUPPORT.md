@@ -2,10 +2,10 @@
 
 ## 使用问题
 
-先查看[快速开始](docs/guide/getting-started.md)与[常见问题](docs/guide/troubleshooting.md)。仍无法解决时，使用 GitHub Issue 并提供：
+先查看[快速开始](guide/getting-started.md)与[常见问题](guide/troubleshooting.md)。仍无法解决时，使用 GitHub Issue 并提供：
 
 - NekroNXT 版本、Release ID 或 commit；
-- Desktop / Server、操作系统和安装方式；
+- 桌面版或服务端、操作系统和安装方式；
 - 复现步骤、预期结果和实际结果；
 - 已执行的检查；
 - 删除敏感信息后的日志或截图。
@@ -21,4 +21,4 @@
 - 代管生产实例、恢复没有备份的数据或保存用户凭据；
 - 调查未脱敏的真实聊天、账号或客户数据；
 - 第三方 Fork、私有扩展和修改后安装包的持续维护；
-- 紧急安全事件的公开讨论。安全问题按 `SECURITY.md` 私密报告。
+- 紧急安全事件的公开讨论。安全问题按[安全策略](SECURITY.md)私密报告。

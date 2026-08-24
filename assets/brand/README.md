@@ -35,4 +35,4 @@ pnpm brand:check
 
 ## 权利
 
-本目录中的 Logo、角色和宣传素材不属于项目软件许可证的授权范围，使用边界见根目录 [`BRAND.md`](../../BRAND.md)。
+本目录中的 Logo、角色和宣传素材不属于项目软件许可证的授权范围，使用边界见 [`docs/BRAND.md`](../../docs/BRAND.md)。

@@ -33,12 +33,21 @@ async function collectMarkdown(target) {
 const isGeneratedLocalDocument = (relativePath) =>
   relativePath.startsWith('.local/playwright-') || relativePath.startsWith('.local/coverage/')
 
-const trackedDocuments = execFileSync('git', ['ls-files', '-z', '--', '*.md'], {
-  cwd: root,
-  encoding: 'utf8',
-})
+const publicDocumentCandidates = execFileSync(
+  'git',
+  ['ls-files', '-z', '--cached', '--others', '--exclude-standard', '--', '*.md'],
+  {
+    cwd: root,
+    encoding: 'utf8',
+  },
+)
   .split('\0')
   .filter(Boolean)
+
+const trackedDocuments = []
+for (const file of publicDocumentCandidates) {
+  if (await exists(path.join(root, file))) trackedDocuments.push(file)
+}
 
 const ignoredDocumentCandidates = [
   ...(await collectMarkdown(path.join(root, '.local'))),

@@ -14,11 +14,12 @@
 
 ### NekroNXT
 
-以 DSH 为核心引擎，原生面向群聊与动态扩展的智能体聊天系统。提供安装即用的 Desktop、长期运行的 Server、频道隔离、通信工具和本地扩展创造闭环。
+让智能体真正加入群聊。NekroNXT 通过统一适配器连接不同即时通信平台，让智能体理解多人对话、持续使用工具并可靠发送消息。DSH 提供思考循环、会话持久化、上下文压缩、模型接入和扩展运行内核；NekroNXT 提供频道管理、平台连接与完整产品体验。
 
 - Repository：`https://github.com/NekroAI/nekro-nxt`
 - Documentation：`https://github.com/NekroAI/nekro-nxt/tree/main/docs`
 - Preview：`https://github.com/NekroAI/nekro-nxt/releases/tag/preview`
+- 服务端镜像：`ghcr.io/nekroai/nekro-nxt:preview`
 
 ## 素材
 
