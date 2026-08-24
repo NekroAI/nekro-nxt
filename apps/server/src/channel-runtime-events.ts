@@ -1,4 +1,5 @@
 import type { SessionEvent } from '@deepseek-ai/dsh-session'
+import { isTokenDelta } from '@deepseek-ai/dsh-llm/message'
 import { turnIsUnreplied } from './channel-reply-guard.js'
 import type { RuntimeProjectionEvent } from './channel-runtime-projection.js'
 
@@ -14,6 +15,8 @@ export const CHANNEL_RUNTIME_SSE_EVENT_TYPES = new Set([
   'user/message',
   'request/header',
   'request/context',
+  'llm/retry',
+  'llm/retry-started',
 ])
 
 export const shouldBroadcastChannelRuntime = (eventType: string | undefined): boolean =>
@@ -96,6 +99,7 @@ export const normalizeSessionEvents = (events: readonly SessionEvent[]): Runtime
       continue
     }
     if (event.type === 'assistant/chunk') {
+      if (!isTokenDelta(event.data.chunk)) continue
       const key = `${event.data.turn}:${event.data.step}`
       if (firstTokenKeys.has(key)) continue
       firstTokenKeys.add(key)
@@ -103,6 +107,29 @@ export const normalizeSessionEvents = (events: readonly SessionEvent[]): Runtime
         type: 'assistant/first-token',
         turn: event.data.turn,
         step: event.data.step,
+        at,
+      })
+      continue
+    }
+    if (event.type === 'llm/retry') {
+      result.push({
+        type: 'llm/retry',
+        retryId: String(event.data.retryId),
+        turn: event.data.turn,
+        step: event.data.step,
+        retry: event.data.retry,
+        delayMs: event.data.delayMs,
+        at,
+      })
+      continue
+    }
+    if (event.type === 'llm/retry-started') {
+      result.push({
+        type: 'llm/retry-started',
+        retryId: String(event.data.retryId),
+        turn: event.data.turn,
+        step: event.data.step,
+        retry: event.data.retry,
         at,
       })
       continue

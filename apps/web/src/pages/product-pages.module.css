@@ -1110,6 +1110,181 @@
   border-radius: 50%;
 }
 
+.performanceCard {
+  display: grid;
+  gap: 11px;
+  margin-top: 14px;
+  border-top: 1px solid var(--nxt-border-subtle);
+  padding-top: 14px;
+}
+
+.performanceHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.performanceHeader h3 {
+  margin: 0;
+  color: var(--nxt-text-secondary);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.performanceHeader > span {
+  border: 1px solid var(--nxt-border-subtle);
+  border-radius: 999px;
+  padding: 1px 7px;
+  color: var(--nxt-text-muted);
+  background: var(--nxt-bg-subtle);
+  font-size: 10px;
+  line-height: 16px;
+}
+
+.performancePrimary {
+  display: grid;
+  overflow: hidden;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  border: 1px solid var(--nxt-border-subtle);
+  border-radius: var(--nxt-radius-control);
+  background: var(--nxt-bg-subtle);
+}
+
+.performancePrimary > div {
+  display: grid;
+  min-width: 0;
+  gap: 2px;
+  padding: 9px 10px;
+}
+
+.performancePrimary > div + div {
+  border-left: 1px solid var(--nxt-border-subtle);
+}
+
+.performancePrimary span,
+.performancePrimary small {
+  overflow: hidden;
+  color: var(--nxt-text-muted);
+  font-size: 10px;
+  line-height: 14px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.performancePrimary strong {
+  color: var(--nxt-accent);
+  font-size: 23px;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.035em;
+  line-height: 28px;
+}
+
+.performancePrimary strong[data-known='false'] {
+  color: var(--nxt-text-disabled);
+}
+
+.performanceMetrics {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 6px;
+}
+
+.performanceMetrics > div {
+  display: grid;
+  min-width: 0;
+  gap: 1px;
+  border: 1px solid var(--nxt-border-subtle);
+  border-radius: var(--nxt-radius-control);
+  padding: 7px 9px;
+  background: var(--nxt-bg-subtle);
+}
+
+.performanceMetrics span {
+  color: var(--nxt-text-muted);
+  font-size: 10px;
+  line-height: 14px;
+}
+
+.performanceMetrics strong {
+  color: var(--nxt-text-primary);
+  font-size: 14px;
+  font-variant-numeric: tabular-nums;
+  line-height: 20px;
+}
+
+.performanceTrend {
+  display: grid;
+  gap: 7px;
+  margin: 0;
+}
+
+.performanceTrend figcaption {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  color: var(--nxt-text-muted);
+  font-size: 10px;
+  line-height: 15px;
+}
+
+.performanceTrend figcaption > :last-child {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.performanceTrendPlot {
+  display: flex;
+  height: 42px;
+  align-items: end;
+  gap: 4px;
+  border-bottom: 1px solid var(--nxt-border-subtle);
+  padding: 0 2px 3px;
+}
+
+.performanceTrendBar {
+  flex: 1 1 0;
+  max-width: 24px;
+  min-width: 5px;
+  border-radius: 3px 3px 1px 1px;
+  outline: none;
+  background: color-mix(in srgb, var(--nxt-accent) 74%, var(--nxt-focus-ring));
+  opacity: 0.62;
+  transition:
+    opacity var(--nxt-motion-fast) var(--nxt-ease-standard),
+    filter var(--nxt-motion-fast) var(--nxt-ease-standard);
+}
+
+.performanceTrendBar:hover,
+.performanceTrendBar:focus-visible,
+.performanceTrendBarActive {
+  filter: brightness(1.08);
+  opacity: 1;
+}
+
+.performanceTrendBar:focus-visible {
+  box-shadow: 0 0 0 2px var(--nxt-focus-ring);
+}
+
+.performanceTrendBarUnknown {
+  border: 1px dashed var(--nxt-text-disabled);
+  background: transparent;
+}
+
+.performanceTotals,
+.performanceCoverage {
+  margin: 0;
+  color: var(--nxt-text-muted);
+  font-size: 10px;
+  line-height: 15px;
+}
+
+.performanceCoverage {
+  margin-top: -7px;
+}
+
 .cacheUsageCard {
   display: grid;
   gap: 11px;
@@ -3490,6 +3665,13 @@
 
 .channelSessionInspector > .inspectorPanel:last-child {
   margin-bottom: 0;
+}
+
+.channelSessionInspector .cacheUsageCard,
+.channelSessionInspector .performanceCard {
+  margin-bottom: 0;
+  border-bottom: 0;
+  padding-bottom: 0;
 }
 
 .inspectorStatusTrigger {

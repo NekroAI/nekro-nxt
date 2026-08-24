@@ -70,6 +70,7 @@ import LocalSandboxProvider from '@deepseek-ai/dsh-sandbox-local'
 import SandboxPolicyService from '@deepseek-ai/dsh-sandbox-policy'
 import { SessionId, SessionStore, type SessionEvent } from '@deepseek-ai/dsh-session'
 import SessionProjectionRegistry from '@deepseek-ai/dsh-session-projection'
+import * as SessionStats from '@deepseek-ai/dsh-session-stats'
 import { scopeOf } from '@deepseek-ai/dsh-scope'
 import * as SessionCheckpointPolicy from '@deepseek-ai/dsh-session-checkpoint-policy'
 import { SqliteSessionPersistence } from '@deepseek-ai/dsh-session-persistence-sqlite'
@@ -146,7 +147,7 @@ import type {
 } from '@nekro-nxt/extension-runtime'
 import { shouldBroadcastChannelRuntime } from './channel-runtime-events.js'
 import { mountChannelReplyGuard } from './channel-reply-guard.js'
-import { projectSessionOccupancy } from './channel-runtime-projection.js'
+import { projectSessionOccupancy, type RuntimePerformanceTotals } from './channel-runtime-projection.js'
 import {
   NEKRO_NXT_EXTENSION_AUTHORING_REFERENCE,
   renderNekroNxtExtensionDevelopmentSkill,
@@ -304,6 +305,7 @@ const HOST_DSH_PACKAGE_VERSIONS = {
   '@deepseek-ai/dsh-session-checkpoint-policy': '0.1.1-rc.2',
   '@deepseek-ai/dsh-session-persistence-sqlite': '0.1.1-rc.2',
   '@deepseek-ai/dsh-session-projection': '0.1.1-rc.2',
+  '@deepseek-ai/dsh-session-stats': '0.1.1-rc.2',
   '@deepseek-ai/dsh-settings': '0.1.1-rc.2',
   '@deepseek-ai/dsh-settings-file': '0.1.1-rc.2',
   '@deepseek-ai/dsh-skill': '0.1.1-rc.2',
@@ -2563,6 +2565,7 @@ export class DshHostRuntime implements AgentSessionDriver, ExtensionActivationHo
         writeBatchMaxDelayMs: 1,
       })
       await context.plugin(SessionProjectionRegistry)
+      await context.plugin(SessionStats)
       await context.plugin(SystemPrompt, { persona: '' })
       await context.plugin(ToolRuntime, { mode: 'native' })
       await context.plugin(SkillRegistry)
@@ -3766,18 +3769,28 @@ export class DshHostRuntime implements AgentSessionDriver, ExtensionActivationHo
     return { status: agent.status, events: agent.session.events }
   }
 
-  sessionOccupancy(dshSessionId: string): ChannelRuntimeOccupancy | undefined {
+  sessionRuntimeMetrics(
+    dshSessionId: string,
+  ):
+    | { readonly occupancy?: ChannelRuntimeOccupancy; readonly performanceTotals?: RuntimePerformanceTotals }
+    | undefined {
     this.#assertActive()
     const agent = this.#context.agents.get(SessionId(dshSessionId))
     if (!agent) return undefined
     const snapshot = this.#context.sessionProjections.snapshot(agent.session)
-    return projectSessionOccupancy({
+    const occupancy = projectSessionOccupancy({
       projectedTokens: snapshot.values.contextPressure?.projectedTokens,
       contextWindow: snapshot.values.contextPressure?.contextWindow,
       systemTokens: snapshot.values.contextBreakdown?.systemTokens,
       toolsTokens: snapshot.values.contextBreakdown?.toolsTokens,
       messageTokens: snapshot.values.contextBreakdown?.messageTokens,
     })
+    const performanceTotals = snapshot.values.sessionStats
+    if (occupancy === undefined && performanceTotals === undefined) return undefined
+    return {
+      ...(occupancy === undefined ? {} : { occupancy }),
+      ...(performanceTotals === undefined ? {} : { performanceTotals }),
+    }
   }
 
   subscribeChannelRuntime(listener: (channelId: ChannelId) => void): () => void {
@@ -3807,7 +3820,7 @@ export class DshHostRuntime implements AgentSessionDriver, ExtensionActivationHo
       },
     )
     const offOccupancy = this.#context.sessionProjections.onChanged((session, key) => {
-      if (key !== 'contextPressure' && key !== 'contextBreakdown') return
+      if (key !== 'contextPressure' && key !== 'contextBreakdown' && key !== 'sessionStats') return
       const channelId = this.#channelBySession.get(String(session.id))
       if (channelId !== undefined) notify(channelId)
     })

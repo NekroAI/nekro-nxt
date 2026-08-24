@@ -4,6 +4,8 @@ import type {
   ChannelRuntimeCache,
   ChannelRuntimeCacheSample,
   ChannelRuntimeOccupancy,
+  ChannelRuntimePerformance,
+  ChannelRuntimePerformanceSample,
   ChannelRuntimePhase,
   ChannelRuntimeProjection,
   ChannelRuntimeUsage,
@@ -16,6 +18,7 @@ const ToolArgumentObjectSchema = z.record(z.string(), z.unknown())
 const PREVIEW_LIMIT = 160
 const TURN_LIMIT = 24
 const CACHE_RECENT_LIMIT = 12
+const PERFORMANCE_RECENT_LIMIT = 12
 const SECRET_KEY = /secret|token|password|authorization|api[_-]?key|credential/iu
 
 const TOOL_DISPLAY_NAMES: Readonly<Record<string, string>> = {
@@ -83,6 +86,33 @@ export type RuntimeProjectionEvent =
       readonly reasoning?: string
       readonly usage?: ChannelRuntimeUsage
     }
+  | {
+      readonly type: 'llm/retry'
+      readonly retryId: string
+      readonly turn: number
+      readonly step: number
+      readonly retry: number
+      readonly delayMs: number
+      readonly at?: number
+    }
+  | {
+      readonly type: 'llm/retry-started'
+      readonly retryId: string
+      readonly turn: number
+      readonly step: number
+      readonly retry: number
+      readonly at?: number
+    }
+
+export interface RuntimePerformanceTotals {
+  readonly steps: number
+  readonly llmMs: number
+  readonly toolMs: number
+  readonly ttftMs: number
+  readonly ttftSteps: number
+  readonly decodeMs: number
+  readonly decodeTokens: number
+}
 
 export interface ChannelRuntimeProjectionInput {
   readonly channelId: ChannelId
@@ -91,6 +121,7 @@ export interface ChannelRuntimeProjectionInput {
   readonly sessionStatus: RuntimeSessionStatus
   readonly pendingInjectCount: number
   readonly occupancy?: ChannelRuntimeOccupancy
+  readonly performanceTotals?: RuntimePerformanceTotals
   readonly events: readonly RuntimeProjectionEvent[]
 }
 
@@ -220,6 +251,113 @@ export const projectCacheUsage = (events: readonly RuntimeProjectionEvent[]): Ch
   }
 }
 
+/** Combine DSH's whole-log totals with request-level samples retained for the product inspector. */
+export const projectGenerationPerformance = (
+  events: readonly RuntimeProjectionEvent[],
+  totals?: RuntimePerformanceTotals,
+): ChannelRuntimePerformance | undefined => {
+  const steps = new Map<
+    string,
+    { readonly turn: number; readonly step: number; startAt?: number; firstTokenAt?: number }
+  >()
+  const pendingTools = new Map<string, number>()
+  const samples: ChannelRuntimePerformanceSample[] = []
+  let rawSteps = 0
+  let rawLlmMs = 0
+  let rawToolMs = 0
+  let rawTtftMs = 0
+  let rawTtftSteps = 0
+  let rawDecodeMs = 0
+  let rawDecodeTokens = 0
+  let decodeSteps = 0
+  let retryCount = 0
+  let retryDelayMs = 0
+
+  for (const event of events) {
+    if (event.type === 'step/start') {
+      steps.set(`${event.turn}:${event.step}`, {
+        turn: event.turn,
+        step: event.step,
+        ...(event.at === undefined ? {} : { startAt: event.at }),
+      })
+      continue
+    }
+    if (event.type === 'assistant/first-token') {
+      const key = `${event.turn}:${event.step}`
+      const current = steps.get(key) ?? { turn: event.turn, step: event.step }
+      if (current.firstTokenAt === undefined && event.at !== undefined) current.firstTokenAt = event.at
+      steps.set(key, current)
+      continue
+    }
+    if (event.type === 'assistant/message') {
+      const current = steps.get(`${event.turn}:${event.step}`)
+      const firstTokenMs = elapsedMs(current?.startAt, current?.firstTokenAt)
+      const decodeMs = elapsedMs(current?.firstTokenAt, event.at)
+      const llmMs = elapsedMs(current?.startAt, event.at)
+      if (llmMs !== undefined) rawLlmMs += llmMs
+      if (firstTokenMs !== undefined) {
+        rawTtftMs += firstTokenMs
+        rawTtftSteps += 1
+      }
+      if (decodeMs !== undefined && event.usage !== undefined) {
+        rawDecodeMs += decodeMs
+        rawDecodeTokens += event.usage.outputTokens
+        decodeSteps += 1
+      }
+      samples.push({
+        turn: event.turn,
+        step: event.step,
+        ...(event.at === undefined ? {} : { at: event.at }),
+        ...(firstTokenMs === undefined ? {} : { firstTokenMs }),
+        ...(decodeMs === undefined ? {} : { decodeMs }),
+        ...(event.usage === undefined ? {} : { outputTokens: event.usage.outputTokens }),
+      })
+      continue
+    }
+    if (event.type === 'tool/call') {
+      if (event.at !== undefined) pendingTools.set(event.callId, event.at)
+      continue
+    }
+    if (event.type === 'tool/result') {
+      const startedAt = pendingTools.get(event.callId)
+      const toolMs = elapsedMs(startedAt, event.at)
+      if (toolMs !== undefined) rawToolMs += toolMs
+      pendingTools.delete(event.callId)
+      continue
+    }
+    if (event.type === 'step/end') {
+      rawSteps += 1
+      continue
+    }
+    if (event.type === 'llm/retry') {
+      retryCount += 1
+      retryDelayMs += event.delayMs
+    }
+  }
+
+  const aggregate = {
+    steps: totals?.steps ?? rawSteps,
+    llmMs: totals?.llmMs ?? rawLlmMs,
+    toolMs: totals?.toolMs ?? rawToolMs,
+    ttftMs: totals?.ttftMs ?? rawTtftMs,
+    ttftSteps: totals?.ttftSteps ?? rawTtftSteps,
+    decodeMs: totals?.decodeMs ?? rawDecodeMs,
+    decodeTokens: totals?.decodeTokens ?? rawDecodeTokens,
+    decodeSteps,
+    retryCount,
+    retryDelayMs,
+  }
+  if (aggregate.steps === 0 && samples.length === 0 && retryCount === 0) return undefined
+  return {
+    scope: 'episode',
+    aggregate,
+    recent: {
+      windowSize: PERFORMANCE_RECENT_LIMIT,
+      samples: samples.slice(-PERFORMANCE_RECENT_LIMIT),
+    },
+  }
+}
+
 const phaseRank = (phase: ChannelRuntimePhase): number => {
   if (phase === 'unavailable') return 4
   if (phase === 'using-tool') return 3
@@ -291,6 +429,7 @@ export const emptyChannelRuntimeProjection = (
 export const projectChannelRuntime = (input: ChannelRuntimeProjectionInput): ChannelRuntimeProjection => {
   const turns = new Map<number, ProjectedTurn>()
   const cache = projectCacheUsage(input.events)
+  const performance = projectGenerationPerformance(input.events, input.performanceTotals)
 
   const ensureTurn = (turn: number): ProjectedTurn => {
     const existing = turns.get(turn)
@@ -383,6 +522,7 @@ export const projectChannelRuntime = (input: ChannelRuntimeProjectionInput): Cha
       if (event.at !== undefined && step.firstTokenAt === undefined) step.firstTokenAt = event.at
       continue
     }
+    if (event.type === 'llm/retry' || event.type === 'llm/retry-started') continue
     const step = ensureStep(event.turn, event.step)
     if (event.text?.trim()) step.text = event.text
     if (event.reasoning?.trim()) step.reasoning = event.reasoning
@@ -467,6 +607,7 @@ export const projectChannelRuntime = (input: ChannelRuntimeProjectionInput): Cha
     pendingInjectCount: input.pendingInjectCount,
     ...(input.occupancy === undefined ? {} : { occupancy: input.occupancy }),
     ...(cache === undefined ? {} : { cache }),
+    ...(performance === undefined ? {} : { performance }),
     turns: orderedTurns,
   }
 }

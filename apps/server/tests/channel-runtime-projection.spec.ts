@@ -1,10 +1,11 @@
 import { AgentIdSchema, ChannelIdSchema, EpisodeIdSchema } from '@nekro-nxt/contracts'
 import { describe, expect, it } from 'vitest'
-import { shouldBroadcastChannelRuntime } from '../src/channel-runtime-events.ts'
+import { normalizeSessionEvents, shouldBroadcastChannelRuntime } from '../src/channel-runtime-events.ts'
 import {
   previewToolArguments,
   projectCacheUsage,
   projectChannelRuntime,
+  projectGenerationPerformance,
   projectSessionOccupancy,
   worstChannelRuntimePhase,
 } from '../src/channel-runtime-projection.ts'
@@ -169,6 +170,30 @@ describe('channel runtime projection', () => {
     expect(shouldBroadcastChannelRuntime('user/message')).toBe(true)
   })
 
+  it('uses DSH token-delta semantics for the first-token boundary', () => {
+    const events = normalizeSessionEvents([
+      {
+        type: 'assistant/chunk',
+        seq: 0,
+        time: 100,
+        data: { turn: 1, step: 1, chunk: { type: 'block-start', index: 0, blockType: 'text' } },
+      },
+      {
+        type: 'assistant/chunk',
+        seq: 1,
+        time: 110,
+        data: { turn: 1, step: 1, chunk: { type: 'text-delta', index: 0, text: '' } },
+      },
+      {
+        type: 'assistant/chunk',
+        seq: 2,
+        time: 140,
+        data: { turn: 1, step: 1, chunk: { type: 'text-delta', index: 0, text: '好' } },
+      },
+    ])
+    expect(events).toEqual([{ type: 'assistant/first-token', turn: 1, step: 1, at: 140 }])
+  })
+
   it('omits occupancy until both projected tokens and a context window exist', () => {
     expect(projectSessionOccupancy({ projectedTokens: 800 })).toBeUndefined()
     expect(projectSessionOccupancy({ contextWindow: 128_000 })).toBeUndefined()
@@ -231,6 +256,61 @@ describe('channel runtime projection', () => {
           { turn: 2, step: 1, uncachedInputTokens: 400, cacheReadTokens: 0, cacheWriteTokens: 100 },
           { turn: 3, step: 1, uncachedInputTokens: 600 },
         ],
+      },
+    })
+  })
+
+  it('combines DSH session totals with recent generation samples and retry waits', () => {
+    const performance = projectGenerationPerformance(
+      [
+        { type: 'step/start', turn: 1, step: 1, at: 1000 },
+        { type: 'assistant/first-token', turn: 1, step: 1, at: 1300 },
+        {
+          type: 'assistant/message',
+          turn: 1,
+          step: 1,
+          at: 2300,
+          usage: { inputTokens: 800, outputTokens: 50 },
+        },
+        { type: 'step/end', turn: 1, step: 1, at: 2310 },
+        {
+          type: 'llm/retry',
+          retryId: 'retry-1',
+          turn: 2,
+          step: 1,
+          retry: 1,
+          delayMs: 500,
+          at: 3000,
+        },
+        {
+          type: 'llm/retry-started',
+          retryId: 'retry-1',
+          turn: 2,
+          step: 1,
+          retry: 1,
+          at: 3500,
+        },
+      ],
+      { steps: 4, llmMs: 8200, toolMs: 2100, ttftMs: 1800, ttftSteps: 3, decodeMs: 4000, decodeTokens: 200 },
+    )
+
+    expect(performance).toEqual({
+      scope: 'episode',
+      aggregate: {
+        steps: 4,
+        llmMs: 8200,
+        toolMs: 2100,
+        ttftMs: 1800,
+        ttftSteps: 3,
+        decodeMs: 4000,
+        decodeTokens: 200,
+        decodeSteps: 1,
+        retryCount: 1,
+        retryDelayMs: 500,
+      },
+      recent: {
+        windowSize: 12,
+        samples: [{ turn: 1, step: 1, at: 2300, firstTokenMs: 300, decodeMs: 1000, outputTokens: 50 }],
       },
     })
   })

@@ -552,6 +552,31 @@ describe.sequential('NekroNxt browser projections', { timeout: 30_000 }, () => {
                   },
                 }
               : undefined,
+          performance:
+            channelId === browserChannelId
+              ? {
+                  scope: 'episode',
+                  aggregate: {
+                    steps: 2,
+                    llmMs: 4200,
+                    toolMs: 900,
+                    ttftMs: 1100,
+                    ttftSteps: 2,
+                    decodeMs: 3000,
+                    decodeTokens: 120,
+                    decodeSteps: 2,
+                    retryCount: 1,
+                    retryDelayMs: 500,
+                  },
+                  recent: {
+                    windowSize: 12,
+                    samples: [
+                      { turn: 1, step: 0, firstTokenMs: 700, decodeMs: 2000, outputTokens: 70 },
+                      { turn: 1, step: 1, firstTokenMs: 400, decodeMs: 1000, outputTokens: 50 },
+                    ],
+                  },
+                }
+              : undefined,
           turns:
             channelId === browserChannelId
               ? [
@@ -1015,11 +1040,33 @@ describe.sequential('NekroNxt browser projections', { timeout: 30_000 }, () => {
       await playwrightExpect(page.getByRole('tooltip')).toContainText('智能体当前空闲。')
       await playwrightExpect(page.getByLabel('上下文占用')).toContainText('已用 3.2k')
       await playwrightExpect(page.getByLabel('上下文组成')).toContainText('对话 1.9k')
+      const generationPerformance = page.getByLabel('生成表现')
+      await playwrightExpect(generationPerformance).toContainText('最近请求首 Token')
+      await playwrightExpect(generationPerformance).toContainText('400ms')
+      await playwrightExpect(generationPerformance).toContainText('50')
+      await playwrightExpect(generationPerformance).toContainText('会话平均首 Token')
+      await playwrightExpect(generationPerformance).toContainText('生成速度 2/2')
       const cacheAnalysis = page.getByLabel('缓存分析')
+      const cacheBox = await cacheAnalysis.boundingBox()
+      const performanceBox = await generationPerformance.boundingBox()
+      expect(cacheBox?.y).toBeLessThan(performanceBox?.y ?? 0)
       await playwrightExpect(cacheAnalysis).toContainText('最近一次输入缓存覆盖')
       await playwrightExpect(cacheAnalysis).toContainText('会话加权覆盖')
       await playwrightExpect(cacheAnalysis).toContainText('累计读取 1.8k')
       await playwrightExpect(cacheAnalysis).toContainText('数据覆盖 2/2 次请求')
+      const captureDirectory = process.env['NEKRO_VISUAL_CAPTURE']
+      if (captureDirectory) {
+        await mkdir(captureDirectory, { recursive: true })
+        await page.screenshot({ path: join(captureDirectory, 'channel-runtime-light-1440.png'), fullPage: true })
+        await page.emulateMedia({ colorScheme: 'dark' })
+        await page.screenshot({ path: join(captureDirectory, 'channel-runtime-dark-1440.png'), fullPage: true })
+        await page.emulateMedia({ colorScheme: 'light' })
+        await generationPerformance.scrollIntoViewIfNeeded()
+        await page.screenshot({ path: join(captureDirectory, 'channel-performance-light-1440.png'), fullPage: true })
+        await page.emulateMedia({ colorScheme: 'dark' })
+        await page.screenshot({ path: join(captureDirectory, 'channel-performance-dark-1440.png'), fullPage: true })
+        await page.emulateMedia({ colorScheme: 'light' })
+      }
       await playwrightExpect(page.getByRole('link', { name: /资料员/u }).first()).toBeVisible()
       const chatTab = page.getByRole('tab', { name: '会话' })
       const trajectoryTab = page.getByRole('tab', { name: '工作轨迹' })
@@ -1439,6 +1486,14 @@ describe.sequential('NekroNxt browser projections', { timeout: 30_000 }, () => {
         route: `/work/channels/${browserChannelId}`,
         name: 'channel-1440',
         marker: '只属于当前频道',
+      },
+      {
+        width: 1440,
+        height: 900,
+        route: `/work/channels/${browserChannelId}`,
+        name: 'channel-dark-1440',
+        marker: '只属于当前频道',
+        colorScheme: 'dark',
       },
       { width: 1920, height: 1080, route: '/work', name: 'agents-1920', marker: '资料员' },
       {
