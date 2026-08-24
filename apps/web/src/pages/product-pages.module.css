@@ -4429,6 +4429,405 @@
   }
 }
 
+/* -------------------------------------------------------------------------
+   Glin UI experiment
+   Material is concentrated on stable surfaces. Long message/list scroll
+   layers use translucent colour without their own backdrop filter.
+   ---------------------------------------------------------------------- */
+:global(:root[data-glin-experiment]) .page,
+:global(:root[data-glin-experiment]) .workbenchPage,
+:global(:root[data-glin-experiment]) .conversationPage {
+  background: transparent;
+}
+
+:global(:root[data-glin-experiment]) .page {
+  padding-top: 34px;
+}
+
+:global(:root[data-glin-experiment]) .page::before,
+:global(:root[data-glin-experiment]) .workbenchDoc::before {
+  position: fixed;
+  z-index: -1;
+  width: 420px;
+  height: 280px;
+  border-radius: 50%;
+  background: radial-gradient(circle, color-mix(in srgb, var(--nxt-accent) 8%, transparent), transparent 70%);
+  content: '';
+  pointer-events: none;
+}
+
+:global(:root[data-glin-experiment]) .page::before {
+  top: 100px;
+  right: 4vw;
+}
+
+:global(:root[data-glin-experiment]) .workbenchDoc::before {
+  right: 10%;
+  bottom: -60px;
+}
+
+:global(:root[data-glin-experiment]) .section,
+:global(:root[data-glin-experiment]) .agentCard,
+:global(:root[data-glin-experiment]) .overviewSummary,
+:global(:root[data-glin-experiment]) .revisionNotice,
+:global(:root[data-glin-experiment]) .workbenchStatus,
+:global(:root[data-glin-experiment]) .userRows,
+:global(:root[data-glin-experiment]) .systemAdapterCard,
+:global(:root[data-glin-experiment]) .workbenchInspector section,
+:global(:root[data-glin-experiment]) .contextUsageCard,
+:global(:root[data-glin-experiment]) .cacheUsageCard,
+:global(:root[data-glin-experiment]) .performanceCard {
+  border-color: var(--glass-border-strong);
+  border-top-color: var(--glass-refraction-top);
+  border-radius: var(--radius-lg);
+  background: color-mix(in srgb, var(--nxt-bg-surface) 84%, transparent);
+  box-shadow:
+    var(--shadow-glass-sm),
+    inset 0 1px 0 rgb(255 255 255 / 16%);
+}
+
+:global(:root[data-glin-experiment]) .section {
+  gap: 18px;
+  padding: 24px;
+}
+
+:global(:root[data-glin-experiment]) .section::before {
+  top: 0;
+  right: 42%;
+  bottom: auto;
+  left: 42%;
+  width: auto;
+  height: 1px;
+  background: linear-gradient(90deg, transparent, var(--nxt-brand-lumen), transparent);
+  opacity: 0.5;
+}
+
+:global(:root[data-glin-experiment]) .agentCard,
+:global(:root[data-glin-experiment]) .systemAdapterCard {
+  transition:
+    border-color var(--nxt-motion-fast) var(--nxt-ease-standard),
+    box-shadow var(--nxt-motion-standard) var(--nxt-ease-standard),
+    transform var(--nxt-motion-standard) var(--nxt-ease-standard);
+}
+
+:global(:root[data-glin-experiment]) .agentCard:hover,
+:global(:root[data-glin-experiment]) .systemAdapterCard:hover {
+  border-color: color-mix(in srgb, var(--nxt-accent) 28%, var(--glass-border-strong));
+  box-shadow:
+    var(--shadow-glass-md),
+    inset 0 1px 0 rgb(255 255 255 / 20%);
+  transform: translateY(-2px);
+}
+
+:global(:root[data-glin-experiment]) .avatar,
+:global(:root[data-glin-experiment]) .agentAvatar,
+:global(:root[data-glin-experiment]) .messageAvatar,
+:global(:root[data-glin-experiment]) .userAvatar {
+  border-color: color-mix(in srgb, var(--nxt-accent) 24%, var(--glass-border-strong));
+  border-top-color: color-mix(in srgb, white 48%, var(--nxt-accent));
+  background: linear-gradient(
+    145deg,
+    color-mix(in srgb, var(--nxt-accent) 17%, var(--nxt-bg-elevated)),
+    color-mix(in srgb, var(--nxt-brand-lumen) 8%, var(--nxt-bg-subtle))
+  );
+  box-shadow:
+    inset 0 1px 0 rgb(255 255 255 / 24%),
+    0 4px 10px rgb(35 61 99 / 8%);
+}
+
+:global(:root[data-glin-experiment]) .channelGroups {
+  gap: 16px;
+}
+
+:global(:root[data-glin-experiment]) .channelGroup {
+  gap: 5px;
+}
+
+:global(:root[data-glin-experiment]) .channelGroupHeader,
+:global(:root[data-glin-experiment]) .channelLink,
+:global(:root[data-glin-experiment]) .connectionNavItem,
+:global(:root[data-glin-experiment]) .extensionNavItem,
+:global(:root[data-glin-experiment]) .settingsNavItem {
+  border-radius: var(--radius-md);
+}
+
+:global(:root[data-glin-experiment]) .channelGroupHeader {
+  min-height: 44px;
+  padding: 6px 9px;
+}
+
+:global(:root[data-glin-experiment]) .channelLink {
+  min-height: 50px;
+}
+
+:global(:root[data-glin-experiment]) .channelGroupHeader:hover,
+:global(:root[data-glin-experiment]) .channelLink:hover,
+:global(:root[data-glin-experiment]) .connectionNavItem:hover,
+:global(:root[data-glin-experiment]) .extensionNavItem:hover,
+:global(:root[data-glin-experiment]) .settingsNavItem:hover {
+  background: color-mix(in srgb, var(--nxt-bg-hover) 72%, transparent);
+}
+
+:global(:root[data-glin-experiment]) .channelGroup::before,
+:global(:root[data-glin-experiment]) .channelRow::before {
+  background: linear-gradient(180deg, color-mix(in srgb, var(--nxt-accent) 30%, transparent), var(--nxt-border-subtle));
+}
+
+:global(:root[data-glin-experiment]) .treeStateIndicator {
+  filter: drop-shadow(0 0 5px color-mix(in srgb, var(--nxt-accent) 32%, transparent));
+}
+
+:global(:root[data-glin-experiment]) .conversationPage {
+  grid-template-columns: minmax(0, 1fr) auto auto;
+}
+
+:global(:root[data-glin-experiment]) .conversationHeader {
+  position: relative;
+  z-index: 2;
+  min-height: 72px;
+  border-bottom-color: var(--nxt-border-subtle);
+  padding: 0 24px;
+  background: linear-gradient(180deg, color-mix(in srgb, var(--nxt-bg-elevated) 42%, transparent), transparent);
+}
+
+:global(:root[data-glin-experiment]) .conversationHeader h1 {
+  font-size: 17px;
+  font-weight: 720;
+  letter-spacing: -0.018em;
+}
+
+:global(:root[data-glin-experiment]) .viewSwitch {
+  border-color: var(--glass-border-strong);
+  border-top-color: var(--glass-refraction-top);
+  border-radius: var(--radius-md);
+  background: color-mix(in srgb, var(--nxt-bg-subtle) 72%, transparent);
+  box-shadow: inset 0 1px 4px rgb(22 38 64 / 7%);
+}
+
+:global(:root[data-glin-experiment]) .viewSwitch button {
+  border-radius: 9px;
+}
+
+:global(:root[data-glin-experiment]) .viewSwitch button[data-state='active'] {
+  border: 1px solid var(--glass-border-strong);
+  border-top-color: var(--glass-refraction-top);
+  background: var(--nxt-bg-elevated);
+  box-shadow: var(--shadow-glass-sm);
+}
+
+:global(:root[data-glin-experiment]) .canvasStageInner {
+  background:
+    radial-gradient(circle at 72% 12%, color-mix(in srgb, var(--nxt-brand-lumen) 5%, transparent), transparent 32%),
+    radial-gradient(circle at 16% 92%, color-mix(in srgb, var(--nxt-brand-brass) 4%, transparent), transparent 30%);
+}
+
+:global(:root[data-glin-experiment]) .messageList {
+  padding: 28px clamp(22px, 4vw, 72px) 26px;
+}
+
+:global(:root[data-glin-experiment]) .messageListInner {
+  width: min(960px, 100%);
+  margin-inline: auto;
+}
+
+:global(:root[data-glin-experiment]) .message {
+  gap: 13px;
+  margin-bottom: 26px;
+}
+
+:global(:root[data-glin-experiment]) .messageAvatar {
+  width: 34px;
+  height: 34px;
+  border-radius: 12px;
+}
+
+:global(:root[data-glin-experiment]) .message .messageBody {
+  margin-top: 7px;
+  border-color: var(--glass-border-strong);
+  border-top-color: var(--glass-refraction-top);
+  border-radius: var(--radius-lg);
+  padding: 10px 14px 11px;
+  background: color-mix(in srgb, var(--nxt-bg-elevated) 78%, transparent);
+  box-shadow:
+    var(--shadow-glass-sm),
+    inset 0 1px 0 rgb(255 255 255 / 16%);
+}
+
+:global(:root[data-glin-experiment]) .message[data-side='right'] .messageBody {
+  border-color: var(--glass-border-strong);
+  border-top-color: var(--glass-refraction-top);
+  border-radius: var(--radius-lg);
+  background: color-mix(in srgb, var(--nxt-bg-elevated) 78%, transparent);
+}
+
+:global(:root[data-glin-experiment]) .message[data-bubbleless] .messageBody {
+  border: 0;
+  border-radius: 0;
+  padding: 0;
+  background: transparent;
+  box-shadow: none;
+}
+
+:global(:root[data-glin-experiment]) .messageHeader strong {
+  font-weight: 680;
+}
+
+:global(:root[data-glin-experiment]) .messageImage {
+  border-color: var(--glass-border-strong);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-glass-sm);
+}
+
+:global(:root[data-glin-experiment]) .attachment {
+  border-color: var(--glass-border-strong);
+  border-radius: var(--radius-md);
+  background: color-mix(in srgb, var(--nxt-bg-subtle) 78%, transparent);
+  box-shadow: inset 0 1px 0 rgb(255 255 255 / 12%);
+}
+
+:global(:root[data-glin-experiment]) .systemMessage {
+  border: 1px solid color-mix(in srgb, var(--nxt-accent) 18%, var(--glass-border));
+  border-radius: var(--radius-md);
+  margin-inline: 46px;
+  padding: 8px 12px;
+  background: color-mix(in srgb, var(--nxt-accent-soft) 70%, transparent);
+  text-align: center;
+}
+
+:global(:root[data-glin-experiment]) .runtimeTail {
+  width: fit-content;
+  border: 1px solid var(--nxt-border-subtle);
+  border-radius: 999px;
+  margin-left: 46px;
+  padding: 7px 12px;
+  background: color-mix(in srgb, var(--nxt-bg-subtle) 76%, transparent);
+}
+
+:global(:root[data-glin-experiment]) .composer {
+  width: calc(100% - 36px);
+  max-width: 940px;
+  justify-self: center;
+  border-color: var(--glass-border-strong);
+  border-top-color: var(--glass-refraction-top);
+  border-radius: 20px;
+  margin: 0 0 18px;
+  padding: 8px;
+  background: color-mix(in srgb, var(--nxt-bg-elevated) 86%, transparent);
+  backdrop-filter: var(--nxt-glass-filter-heavy);
+  -webkit-backdrop-filter: var(--nxt-glass-filter-heavy);
+  box-shadow:
+    var(--shadow-glass-lg),
+    inset 0 1px 0 rgb(255 255 255 / 24%);
+}
+
+:global(:root[data-glin-experiment]) .composer:focus-within {
+  border-color: color-mix(in srgb, var(--nxt-focus-ring) 72%, var(--glass-border-strong));
+  box-shadow:
+    var(--shadow-glass-lg),
+    0 0 0 3px color-mix(in srgb, var(--nxt-focus-ring) 13%, transparent),
+    inset 0 1px 0 rgb(255 255 255 / 24%);
+}
+
+:global(:root[data-glin-experiment]) .composer .composerInput {
+  min-height: 46px;
+  padding: 8px 10px 4px;
+  border-color: transparent;
+  background: transparent;
+  box-shadow: none;
+  line-height: 22px;
+}
+
+:global(:root[data-glin-experiment]) .composer .composerInput:hover,
+:global(:root[data-glin-experiment]) .composer .composerInput:focus {
+  border-color: transparent;
+  background: transparent;
+  box-shadow: none;
+}
+
+:global(:root[data-glin-experiment]) .composerSend {
+  width: 30px;
+  min-width: 30px;
+  height: 30px;
+  min-height: 30px;
+  border: 1px solid color-mix(in srgb, var(--nxt-accent) 68%, white 14%);
+  background: linear-gradient(145deg, color-mix(in srgb, var(--nxt-accent) 84%, white), var(--nxt-accent));
+  box-shadow:
+    0 7px 16px color-mix(in srgb, var(--nxt-accent) 24%, transparent),
+    inset 0 1px 0 rgb(255 255 255 / 28%);
+}
+
+:global(:root[data-glin-experiment]) .jumpBottom {
+  margin-bottom: 18px;
+}
+
+:global(:root[data-glin-experiment]) .jumpBottom > * {
+  border-color: var(--glass-border-strong);
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--nxt-bg-elevated) 88%, transparent);
+  backdrop-filter: var(--nxt-glass-filter);
+  -webkit-backdrop-filter: var(--nxt-glass-filter);
+  box-shadow: var(--shadow-glass-md);
+}
+
+:global(:root[data-glin-experiment]) .inspectorSplitter {
+  background: transparent;
+}
+
+:global(:root[data-glin-experiment]) .inspectorChrome,
+:global(:root[data-glin-experiment]) .workbenchInspector {
+  background: color-mix(in srgb, var(--nxt-bg-sidebar) 88%, transparent);
+}
+
+:global(:root[data-glin-experiment]) .inspectorChromeHeader {
+  min-height: 64px;
+  border-bottom-color: var(--nxt-border-subtle);
+  background: linear-gradient(180deg, color-mix(in srgb, var(--nxt-bg-elevated) 38%, transparent), transparent);
+}
+
+:global(:root[data-glin-experiment]) .workbenchDoc {
+  padding: 30px 34px 72px;
+  background: transparent;
+}
+
+:global(:root[data-glin-experiment]) .creatorLaunchPanel,
+:global(:root[data-glin-experiment]) .creatorStartPanel,
+:global(:root[data-glin-experiment]) .accessLevelControl,
+:global(:root[data-glin-experiment]) .capabilitySubsection,
+:global(:root[data-glin-experiment]) .webSearchSetup {
+  border: 1px solid var(--nxt-border-subtle);
+  border-radius: var(--radius-lg);
+  background: color-mix(in srgb, var(--nxt-bg-subtle) 74%, transparent);
+  box-shadow: inset 0 1px 0 rgb(255 255 255 / 10%);
+}
+
+:global(:root[data-glin-experiment]) .userRow,
+:global(:root[data-glin-experiment]) .agentRow,
+:global(:root[data-glin-experiment]) .extensionRow {
+  transition: background var(--nxt-motion-fast) var(--nxt-ease-standard);
+}
+
+:global(:root[data-glin-experiment]) .userRow:hover,
+:global(:root[data-glin-experiment]) .agentRow:hover,
+:global(:root[data-glin-experiment]) .extensionRow:hover {
+  background: color-mix(in srgb, var(--nxt-bg-hover) 66%, transparent);
+}
+
+:global(:root[data-glin-experiment][data-reduced-transparency='true']) .composer,
+:global(:root[data-glin-experiment][data-reduced-transparency='true']) .jumpBottom > * {
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+}
+
+@media (width < 1280px) {
+  :global(:root[data-glin-experiment]) .workbenchDoc {
+    padding-inline: 24px;
+  }
+
+  :global(:root[data-glin-experiment]) .messageList {
+    padding-inline: 24px;
+  }
+}
+
 @media (width < 1440px) {
   .inspectorExpanded {
     padding: 12px;

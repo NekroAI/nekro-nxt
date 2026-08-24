@@ -473,3 +473,139 @@ a {
 :root[data-reduced-motion='true'] ::view-transition-new(nxt-tree) {
   animation: none !important;
 }
+
+/* Glin UI experiment: keep NekroNXT's semantic API while sourcing the visual
+   language from Glin's glass, radius, shadow and motion scales. */
+:root[data-glin-experiment] {
+  --nxt-bg-canvas: #e9eef8;
+  --nxt-bg-sidebar: rgb(247 250 255 / 64%);
+  --nxt-bg-surface: rgb(255 255 255 / 72%);
+  --nxt-bg-subtle: rgb(238 243 251 / 78%);
+  --nxt-bg-elevated: rgb(255 255 255 / 86%);
+  --nxt-bg-hover: rgb(220 230 246 / 72%);
+  --nxt-bg-pressed: rgb(204 218 240 / 82%);
+  --nxt-border-subtle: rgb(73 96 132 / 14%);
+  --nxt-border-default: rgb(73 96 132 / 23%);
+  --nxt-border-strong: rgb(54 78 116 / 38%);
+  --nxt-text-primary: #16233b;
+  --nxt-text-secondary: #45536b;
+  --nxt-text-muted: #66738a;
+  --nxt-text-disabled: #929db0;
+  --nxt-accent: #356df3;
+  --nxt-accent-hover: #255ce0;
+  --nxt-accent-pressed: #194bc4;
+  --nxt-accent-soft: rgb(75 123 243 / 12%);
+  --nxt-accent-foreground: #fff;
+  --nxt-focus-ring: #356df3;
+  --nxt-info: #356df3;
+  --nxt-brand-lumen: #68c6ff;
+  --nxt-brand-brass: #d7a85f;
+  --nxt-brand-line: rgb(75 123 243 / 22%);
+  --nxt-brand-ornament: rgb(215 168 95 / 58%);
+  --nxt-rail-bg: rgb(14 26 49 / 86%);
+  --nxt-rail-hover: rgb(255 255 255 / 10%);
+  --nxt-rail-pressed: rgb(255 255 255 / 15%);
+  --nxt-rail-text: #aebbd0;
+  --nxt-rail-text-strong: #f7faff;
+  --nxt-success: #16835d;
+  --nxt-success-soft: rgb(22 131 93 / 12%);
+  --nxt-warning: #a8660c;
+  --nxt-warning-soft: rgb(213 142 40 / 14%);
+  --nxt-danger: #be4053;
+  --nxt-danger-soft: rgb(190 64 83 / 12%);
+  --nxt-unknown: #735f9f;
+  --nxt-unknown-soft: rgb(115 95 159 / 12%);
+  --nxt-radius-control: var(--radius-md);
+  --nxt-radius-sm: var(--radius-sm);
+  --nxt-radius-panel: var(--radius-lg);
+  --nxt-radius-popover: var(--radius-lg);
+  --nxt-radius-dialog: var(--radius-2xl);
+  --nxt-shadow-control: var(--shadow-glass-sm), inset 0 1px 0 rgb(255 255 255 / 45%);
+  --nxt-shadow-popover: var(--shadow-glass-md);
+  --nxt-shadow-dialog: var(--shadow-glass-lg);
+  --nxt-shadow-float: 0 18px 46px rgb(33 55 90 / 18%), inset 0 1px 0 rgb(255 255 255 / 58%);
+  --nxt-motion-fast: var(--motion-fast);
+  --nxt-motion-standard: var(--motion-normal);
+  --nxt-motion-spatial: var(--motion-slow);
+  --nxt-ease-standard: var(--easing-glass);
+  --nxt-ease-enter: var(--easing-standard);
+  --nxt-glass-filter: saturate(var(--glass-saturate)) blur(var(--glass-3-blur));
+  --nxt-glass-filter-heavy: saturate(var(--glass-saturate)) blur(var(--glass-4-blur));
+}
+
+:root.dark[data-glin-experiment] {
+  --nxt-bg-canvas: #080f1e;
+  --nxt-bg-sidebar: rgb(17 27 46 / 70%);
+  --nxt-bg-surface: rgb(20 31 52 / 74%);
+  --nxt-bg-subtle: rgb(34 47 71 / 70%);
+  --nxt-bg-elevated: rgb(30 43 68 / 88%);
+  --nxt-bg-hover: rgb(66 84 116 / 52%);
+  --nxt-bg-pressed: rgb(76 98 134 / 60%);
+  --nxt-border-subtle: rgb(196 215 244 / 10%);
+  --nxt-border-default: rgb(196 215 244 / 18%);
+  --nxt-border-strong: rgb(196 215 244 / 32%);
+  --nxt-text-primary: #f3f7ff;
+  --nxt-text-secondary: #c8d2e3;
+  --nxt-text-muted: #929fb5;
+  --nxt-text-disabled: #68758c;
+  --nxt-accent: #76a1ff;
+  --nxt-accent-hover: #91b4ff;
+  --nxt-accent-pressed: #5d8df7;
+  --nxt-accent-soft: rgb(118 161 255 / 15%);
+  --nxt-accent-foreground: #0b1731;
+  --nxt-focus-ring: #76a1ff;
+  --nxt-info: #76a1ff;
+  --nxt-rail-bg: rgb(5 12 25 / 78%);
+  --nxt-success: #62d5a9;
+  --nxt-success-soft: #112d22;
+  --nxt-warning: #f4bd66;
+  --nxt-warning-soft: #332711;
+  --nxt-danger: #ff8e9f;
+  --nxt-danger-soft: #35191c;
+  --nxt-unknown: #c6b1f1;
+  --nxt-unknown-soft: rgb(198 177 241 / 12%);
+  --nxt-shadow-control: 0 2px 10px rgb(0 0 0 / 22%), inset 0 1px 0 rgb(255 255 255 / 8%);
+  --nxt-shadow-float: 0 20px 56px rgb(0 0 0 / 42%), inset 0 1px 0 rgb(255 255 255 / 10%);
+}
+
+:root[data-glin-experiment] body {
+  background:
+    radial-gradient(circle at 12% 0%, rgb(81 133 255 / 18%), transparent 34%),
+    radial-gradient(circle at 88% 18%, rgb(107 211 245 / 16%), transparent 28%),
+    radial-gradient(circle at 62% 100%, rgb(224 170 93 / 12%), transparent 32%), var(--nxt-bg-canvas);
+}
+
+:root.dark[data-glin-experiment] body {
+  background:
+    radial-gradient(circle at 10% -8%, rgb(70 109 214 / 24%), transparent 36%),
+    radial-gradient(circle at 92% 12%, rgb(35 162 190 / 14%), transparent 30%),
+    radial-gradient(circle at 58% 110%, rgb(179 116 48 / 10%), transparent 34%), var(--nxt-bg-canvas);
+}
+
+:root[data-glin-experiment] ::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+
+:root[data-glin-experiment] ::-webkit-scrollbar-thumb {
+  border: 3px solid transparent;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--nxt-text-muted) 38%, transparent);
+  background-clip: padding-box;
+}
+
+:root[data-glin-experiment][data-reduced-transparency='true'] {
+  --nxt-bg-sidebar: #f4f7fc;
+  --nxt-bg-surface: #fff;
+  --nxt-bg-subtle: #eef3fa;
+  --nxt-bg-elevated: #fff;
+  --nxt-glass-filter: none;
+  --nxt-glass-filter-heavy: none;
+}
+
+:root.dark[data-glin-experiment][data-reduced-transparency='true'] {
+  --nxt-bg-sidebar: #111c30;
+  --nxt-bg-surface: #15223a;
+  --nxt-bg-subtle: #202f4a;
+  --nxt-bg-elevated: #1a2944;
+}

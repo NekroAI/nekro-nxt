@@ -7,6 +7,7 @@ declare const styles: {
   readonly commandResult: string
   readonly commandResults: string
   readonly commandSearch: string
+  readonly experimentBadge: string
   readonly instanceStatus: string
   readonly instanceStatus_authenticationRequired: string
   readonly instanceStatus_connecting: string
