@@ -152,6 +152,7 @@ export type ChannelHistoryEntry =
   | {
       readonly source: 'channel-event'
       readonly sourceId: ChannelEventId
+      readonly logicalMessageId: LogicalMessageId
       readonly channelId: ChannelId
       readonly occurredAt: number
       readonly senderMemberId?: ChannelEventRecord['senderMemberId']
@@ -179,6 +180,11 @@ export interface ChannelHistorySearchHit {
 
 /** Read-only, Channel-scoped history seam; callers never receive database handles or cross-channel rows. */
 export interface ChannelHistoryRepository {
+  /** Resolve one logical message only inside the supplied Channel. */
+  getChannelHistoryEntryByLogicalMessageId(
+    channelId: ChannelId,
+    logicalMessageId: LogicalMessageId,
+  ): ChannelHistoryEntry | undefined
   listChannelHistory(
     channelId: ChannelId,
     options?: { readonly before?: ChannelHistoryCursor; readonly limit?: number },

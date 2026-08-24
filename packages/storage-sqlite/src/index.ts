@@ -213,6 +213,9 @@ export class SqliteCoreRepository implements CurrentRepository {
     this.#outbox.listUnsettledOutboundIds(...args)
   readonly listChannelHistory = (...args: Parameters<ChannelHistoryRepository['listChannelHistory']>) =>
     this.#outbox.listChannelHistory(...args)
+  readonly getChannelHistoryEntryByLogicalMessageId = (
+    ...args: Parameters<ChannelHistoryRepository['getChannelHistoryEntryByLogicalMessageId']>
+  ) => this.#outbox.getChannelHistoryEntryByLogicalMessageId(...args)
   readonly listEpisodeHistory = (...args: Parameters<ChannelHistoryRepository['listEpisodeHistory']>) =>
     this.#outbox.listEpisodeHistory(...args)
   readonly searchChannelHistory = (...args: Parameters<ChannelHistoryRepository['searchChannelHistory']>) =>

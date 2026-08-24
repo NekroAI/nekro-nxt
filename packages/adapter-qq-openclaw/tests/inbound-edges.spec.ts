@@ -98,6 +98,9 @@ describe('QQ inbound malformed and media boundaries', () => {
     expect(c2c({ id: 'fallback', author: { id: 'user' }, timestamp: 'not-a-time' })).toMatchObject({
       platformTimestamp: 999,
     })
+    expect(c2c({ id: 'missing-reference', author: { id: 'user' }, message_type: 103 })).toMatchObject({
+      quoteDiagnosticReason: 'reference-field-missing',
+    })
     expect(
       decodeQQInboundMessage('C2C_MESSAGE_CREATE', {
         author: { id: 'user' },

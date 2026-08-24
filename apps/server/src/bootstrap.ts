@@ -615,6 +615,9 @@ export class NekroRuntime {
         },
       },
       transport,
+      onQuoteDiagnostic: (diagnostic) => {
+        console.warn('[nekro-nxt] QQ 引用未解析：', JSON.stringify(diagnostic))
+      },
       gateway: {
         access: transport,
         sockets: this.#qqOptions.sockets ?? new QQNodeWebSocketFactory(),

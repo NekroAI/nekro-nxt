@@ -964,6 +964,98 @@ describe('relations, admissions and outbox', () => {
     }
   })
 
+  it('persists and resolves logical message identities within one Channel', async () => {
+    const fixture = await createFixture()
+    let activeDatabase = fixture.database
+    try {
+      const agent = createAgent(fixture.core)
+      const channel = fixture.core.createChannel({
+        connectionId: fixture.connection.id,
+        platformChannelId: 'logical-message-main',
+        kind: 'group',
+      })
+      const otherChannel = fixture.core.createChannel({
+        connectionId: fixture.connection.id,
+        platformChannelId: 'logical-message-other',
+        kind: 'group',
+      })
+      const inbound = fixture.core.appendInbound({
+        connectionId: fixture.connection.id,
+        channelId: channel.id,
+        adapterKey: 'web',
+        kind: 'message-created',
+        parts: [{ type: 'text', text: '同频道引用目标' }],
+        platformTimestamp: 10,
+        receivedAt: 10,
+        dedupeKey: 'logical-message-inbound',
+      }).event
+      const otherInbound = fixture.core.appendInbound({
+        connectionId: fixture.connection.id,
+        channelId: otherChannel.id,
+        adapterKey: 'web',
+        kind: 'message-created',
+        parts: [{ type: 'text', text: '其他频道内容' }],
+        platformTimestamp: 11,
+        receivedAt: 11,
+        dedupeKey: 'logical-message-other',
+      }).event
+      const episodeId = EpisodeIdSchema.parse('eps_LOGICALMESSAGE')
+      fixture.repository.createEpisode({
+        id: episodeId,
+        channelId: channel.id,
+        agentId: agent.definition.id,
+        agentRevisionId: agent.revision.id,
+        status: 'opening',
+        openedAtEventId: inbound.id,
+        createdAt: 12,
+      })
+      const outboundLogicalMessageId = LogicalMessageIdSchema.parse('msg_LOGICALOUTBOUND')
+      fixture.repository.createOutboundPlan(
+        {
+          id: OutboundIntentIdSchema.parse('out_LOGICALOUTBOUND'),
+          logicalMessageId: outboundLogicalMessageId,
+          agentRevisionId: agent.revision.id,
+          episodeId,
+          parts: [{ type: 'text', text: '智能体历史发言' }],
+          state: 'planned',
+          createdAt: 13,
+        },
+        [],
+      )
+
+      activeDatabase.close()
+      activeDatabase = await openMigratedCoreDatabase(path.join(fixture.directory, 'core.sqlite'))
+      const reopened = new SqliteCoreRepository(activeDatabase)
+      expect(reopened.listChannelHistory(channel.id, { limit: 10 })).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({ source: 'channel-event', logicalMessageId: inbound.logicalMessageId }),
+          expect.objectContaining({ source: 'outbound-intent', logicalMessageId: outboundLogicalMessageId }),
+        ]),
+      )
+      expect(reopened.getChannelHistoryEntryByLogicalMessageId(channel.id, inbound.logicalMessageId)).toMatchObject({
+        source: 'channel-event',
+        logicalMessageId: inbound.logicalMessageId,
+        parts: [{ type: 'text', text: '同频道引用目标' }],
+      })
+      expect(reopened.getChannelHistoryEntryByLogicalMessageId(channel.id, outboundLogicalMessageId)).toMatchObject({
+        source: 'outbound-intent',
+        logicalMessageId: outboundLogicalMessageId,
+        parts: [{ type: 'text', text: '智能体历史发言' }],
+      })
+      expect(
+        reopened.getChannelHistoryEntryByLogicalMessageId(channel.id, otherInbound.logicalMessageId),
+      ).toBeUndefined()
+      expect(
+        reopened.getChannelHistoryEntryByLogicalMessageId(
+          channel.id,
+          LogicalMessageIdSchema.parse('msg_LOGICALMISSING'),
+        ),
+      ).toBeUndefined()
+    } finally {
+      activeDatabase.close()
+    }
+  })
+
   it('searches literal percent, underscore and Chinese text within one Channel only', async () => {
     const { database, repository, core, connection } = await createFixture()
     try {

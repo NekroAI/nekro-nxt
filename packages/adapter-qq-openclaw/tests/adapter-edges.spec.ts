@@ -19,6 +19,7 @@ import {
   type QQInboundBridge,
   type QQOpenClawConfig,
   type QQOpenClawTransport,
+  type QQQuoteDiagnostic,
 } from '../src/index.ts'
 
 const connectionId = ConnectionIdSchema.parse('con_edges')
@@ -74,6 +75,7 @@ interface AdapterOptions {
   readonly assets?: Partial<QQAssetSource>
   readonly transport?: Partial<QQOpenClawTransport>
   readonly inbound?: QQInboundBridge
+  readonly onQuoteDiagnostic?: (diagnostic: QQQuoteDiagnostic) => void
 }
 
 const makeAdapter = (options: AdapterOptions = {}) =>
@@ -85,6 +87,7 @@ const makeAdapter = (options: AdapterOptions = {}) =>
       assets: makeAssets(options.assets),
       transport: makeTransport(options.transport),
       ...(options.inbound === undefined ? {} : { inbound: options.inbound }),
+      ...(options.onQuoteDiagnostic === undefined ? {} : { onQuoteDiagnostic: options.onQuoteDiagnostic }),
     },
   )
 
@@ -196,6 +199,7 @@ describe('QQ OpenClaw connection boundaries', () => {
 
   it('normalizes mentions, quotes, image/audio/file media, and empty-message fallbacks', async () => {
     const accepted: AdapterInboundEvent[] = []
+    const quoteDiagnostics: QQQuoteDiagnostic[] = []
     let attachmentIndex = 0
     const inbound: QQInboundBridge = {
       ensureTarget: () => Promise.resolve(channelId),
@@ -233,6 +237,7 @@ describe('QQ OpenClaw connection boundaries', () => {
         },
       }),
       inbound,
+      onQuoteDiagnostic: (diagnostic) => quoteDiagnostics.push(diagnostic),
     })
     await adapter.start()
     await adapter.receive({
@@ -267,6 +272,27 @@ describe('QQ OpenClaw connection boundaries', () => {
         { partIndex: 4, assetId: 'ast_file' },
       ],
     })
+    expect(quoteDiagnostics).toEqual([
+      {
+        reason: 'platform-reference-unresolved',
+        eventType: 'C2C_MESSAGE_CREATE',
+        targetKind: 'c2c',
+      },
+    ])
+
+    await adapter.receive({
+      eventType: 'GROUP_MESSAGE_CREATE',
+      platformMessageId: 'group-missing-reference-field',
+      target: { kind: 'group', openId: 'group' },
+      senderOpenId: 'sender',
+      quoteDiagnosticReason: 'reference-field-missing',
+      platformTimestamp: 401,
+    })
+    expect(quoteDiagnostics.at(-1)).toEqual({
+      reason: 'reference-field-missing',
+      eventType: 'GROUP_MESSAGE_CREATE',
+      targetKind: 'group',
+    })
 
     await adapter.receive({
       eventType: 'GROUP_MESSAGE_CREATE',
@@ -284,7 +310,8 @@ describe('QQ OpenClaw connection boundaries', () => {
       platformTimestamp: 400,
     })
     expect(accepted[1]?.parts).toEqual([{ type: 'text', text: '该消息包含暂不支持显示的内容。' }])
-    expect(accepted[2]?.parts).toEqual([{ type: 'mention', memberId: 'mbr_bot' }])
+    expect(accepted[2]?.parts).toEqual([{ type: 'text', text: '该消息包含暂不支持显示的内容。' }])
+    expect(accepted[3]?.parts).toEqual([{ type: 'mention', memberId: 'mbr_bot' }])
     await adapter.stop()
   })
 

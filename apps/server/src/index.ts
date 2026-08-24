@@ -97,13 +97,15 @@ import * as DeepSeekWebSearch from '@deepseek-ai/dsh-web-search-deepseek'
 import * as SpillPolicy from '@deepseek-ai/dsh-spill-policy'
 import * as ShellEnv from '@deepseek-ai/dsh-shell-env'
 import LocalSubprocessRuntime from '@deepseek-ai/dsh-subprocess-local'
-import type {
-  AgentSessionDriver,
-  ChannelRuntime,
-  ChannelHistoryRepository,
-  EpisodeCloseReason,
-  SendMessageInput,
-  SendMessageResult,
+import {
+  isAdminConsoleOutbound,
+  type AgentSessionDriver,
+  type ChannelHistoryEntry,
+  type ChannelRuntime,
+  type ChannelHistoryRepository,
+  type EpisodeCloseReason,
+  type SendMessageInput,
+  type SendMessageResult,
 } from '@nekro-nxt/channel-runtime'
 import {
   AssetIdSchema,
@@ -124,6 +126,7 @@ import {
   type DshSettingsPathOperation,
   type EpisodeId,
   type JsonValue,
+  type MessagePart,
   type PluginSupportAssessment,
   type PromptDocumentV1,
   type PromptSegment,
@@ -1423,7 +1426,13 @@ const requireNekroAssetAttachmentStore = (store: AttachmentStore): NekroAssetAtt
   return store
 }
 
-const CHANNEL_MESSAGE_POLICY = `你正在参与 NekroNxt 频道对话。任何用户可见发言都必须调用 send_channel_message；普通模型文字只会记录为内部输出，不会发送到频道。需要回复时请明确调用工具，不要声称已经发送但不调用工具。send_message 专用于给可继续子智能体安排下一轮任务，绝不会向频道发言。`
+const CHANNEL_MESSAGE_POLICY = `你正在通过 NekroNXT 参与一个真实频道。模型生成的普通 text 或 reasoning 只会作为内部运行轨迹保存，频道成员看不到；只有成功调用 send_channel_message，内容才会成为频道中的用户可见发言。send_message 只用于给可继续的子智能体安排后续工作，不会向频道发送内容。
+
+在频道收到第一条成功发送的消息以前，成员无法从内部轨迹判断你是否已经开始处理、是否仍在运行，或当前会话是否可用。一次 send_channel_message 不会结束当前 Turn；你可以先发送开场确认，继续使用其他工具，之后再发送进展或最终结果。
+
+对于预计需要多步操作、等待外部结果或较长处理时间的请求，通常适合先简短说明你理解的任务和马上要做的事。后续在出现阶段结果、新发现、风险、阻塞或计划变化时再同步。快速回答可以直接发送结果，不必增加没有信息量的寒暄或重复进度。
+
+沟通篇幅和频率应结合当前智能体人设以及频道成员的明确偏好。对方要求安静执行、减少过程消息或只看最终结果时，可以减少或省略过程更新；这不会改变频道的投递方式，任何希望频道成员看到的内容仍需通过 send_channel_message 发送。`
 
 const imageContextPolicy = (supportsImage: boolean, hasAuxiliary: boolean): string => {
   if (supportsImage) {
@@ -1630,7 +1639,7 @@ export const channelCommunicationTool = (
   defineTool({
     name: 'send_channel_message',
     description:
-      '向触发当前对话的频道发送一条用户可见消息。普通模型文字不会自动发送。最小合法参数：{"target":{"type":"current"},"parts":[{"text":"你好"}]}。文本 part 可省略 type；其他 part 必须显式提供 type。',
+      '向触发当前对话的频道发送一条用户可见消息。可在同一 Turn 中多次调用，用于开场确认、阶段进展或最终结果；调用后仍可继续使用其他工具。普通模型文字不会自动发送，也不能替代本工具。最小合法参数：{"target":{"type":"current"},"parts":[{"text":"你好"}]}。文本 part 可省略 type；其他 part 必须显式提供 type。',
     parameters: {
       target: {
         type: 'object',
@@ -1722,6 +1731,18 @@ const enrichedHistoryEntry = (
     : {}),
   mentions: entry.parts.flatMap((part) => (part.type === 'mention' ? [memberSummary(history, part.memberId)] : [])),
 })
+
+const historyEntrySenderDescription = (
+  history: ProductChannelHistoryRepository,
+  entry: ChannelHistoryEntry,
+): string => {
+  if (entry.source === 'outbound-intent') {
+    return isAdminConsoleOutbound(entry.sourceTurnId) ? '，管理员此前通过机器人账号发送' : '，本频道智能体此前发送'
+  }
+  if (entry.senderMemberId === undefined) return ''
+  const sender = memberSummary(history, entry.senderMemberId)
+  return `，发送成员：${sender.displayName ?? '未知成员'}（成员标识 ${sender.memberId}）`
+}
 
 const historyTools = (
   channelId: Parameters<ChannelHistoryRepository['listChannelHistory']>[0],
@@ -3409,7 +3430,7 @@ export class DshHostRuntime implements AgentSessionDriver, ExtensionActivationHo
               const blocks = await previous
               return [
                 ...blocks,
-                { type: 'text', text: `[原文 ${event.id}]` },
+                { type: 'text', text: `[原文 ${event.logicalMessageId}]` },
                 ...(await this.#projectEvent(sessionId, event, handoffImageDigests)),
               ]
             }, Promise.resolve([]))),
@@ -3482,6 +3503,7 @@ export class DshHostRuntime implements AgentSessionDriver, ExtensionActivationHo
       {
         type: 'text',
         text: [
+          `频道消息 ${input.logicalMessageId}：`,
           '管理员刚刚通过网页，以本频道绑定智能体关联的机器人账号发送了以下内容。',
           '这不是你调用 send_channel_message 产生的，也不是群成员发来的消息。',
           '频道里会看到机器人账号发出的这条发言。不要把它当成自己说过的话，也不要无故重复播报，除非管理员明确要求你跟进。',
@@ -3490,65 +3512,7 @@ export class DshHostRuntime implements AgentSessionDriver, ExtensionActivationHo
     ]
     const seen = collectVisibleImageDigests(agent, this.#assets)
     const stats: ImageProjectionStats = { imageCount: 0, injectedCount: 0, duplicateCount: 0, skippedCount: 0 }
-    const appendImage = async (assetId: AssetId, alt?: string): Promise<void> => {
-      content.push({ type: 'text', text: `图片资源 ${assetId}${alt ? `（${alt}）` : ''}` })
-      if (!this.#assets.canAccessAsset(assetId, input.channelId)) {
-        stats.skippedCount += 1
-        content.push({ type: 'text', text: '该图片当前不可访问。' })
-        return
-      }
-      const asset = this.#assets.getAssetById(assetId)
-      if (!asset?.mediaType.startsWith('image/')) {
-        stats.skippedCount += 1
-        content.push({ type: 'text', text: '该资源不是可读取的图片。' })
-        return
-      }
-      stats.imageCount += 1
-      if (!this.#imageInputSessions.has(sessionId)) {
-        content.push({ type: 'text', text: '当前主模型仅收到这条 Asset 引用。' })
-        return
-      }
-      if (seen.has(asset.contentDigest)) {
-        stats.duplicateCount += 1
-        content.push({ type: 'text', text: '相同图片已在当前视觉上下文中驻留。' })
-        return
-      }
-      const detail = this.#revisionBySession.get(String(sessionId))?.imagePolicy.history.detail ?? 'auto'
-      const attachment = await requireNekroAssetAttachmentStore(this.#context.attachments).refForAsset(
-        asset,
-        alt,
-        detail,
-      )
-      content.push({ type: 'image', attachment })
-      seen.add(asset.contentDigest)
-      stats.injectedCount += 1
-    }
-    for (const part of input.parts) {
-      switch (part.type) {
-        case 'text':
-          content.push({ type: 'text', text: part.text })
-          break
-        case 'mention':
-          content.push({ type: 'text', text: `提及成员 ${part.memberId}` })
-          break
-        case 'image':
-          await appendImage(part.assetId, part.alt)
-          break
-        case 'file':
-          content.push({ type: 'text', text: `文件资源 ${part.assetId}${part.name ? `（${part.name}）` : ''}` })
-          break
-        case 'audio':
-          content.push({ type: 'text', text: `音频资源 ${part.assetId}` })
-          break
-        case 'quote':
-          content.push({ type: 'text', text: `引用频道消息 ${part.messageId}` })
-          break
-        case 'rich':
-          content.push({ type: 'text', text: richPartContextText(part) })
-          for (const assetId of messagePartAssetIds(part)) await appendImage(assetId)
-          break
-      }
-    }
+    content.push(...(await this.#projectMessageParts(sessionId, input.channelId, input.parts, seen, stats)))
     agent.inject(
       freezeMessage({
         id: MessageId(`nxt-console-${input.logicalMessageId}`),
@@ -4532,27 +4496,17 @@ export class DshHostRuntime implements AgentSessionDriver, ExtensionActivationHo
     }
   }
 
-  async #projectEvent(
+  async #projectMessageParts(
     sessionId: SessionId,
-    event: ChannelEventRecord,
-    visibleDigests?: Set<string>,
+    channelId: ChannelId,
+    parts: readonly MessagePart[],
+    visibleDigests: Set<string>,
     imageStats?: ImageProjectionStats,
+    expandQuotes = true,
   ): Promise<ContentBlock[]> {
-    const sender = event.senderMemberId === undefined ? undefined : memberSummary(this.#history, event.senderMemberId)
-    const senderDescription =
-      sender === undefined ? '' : `，发送成员：${sender.displayName ?? '未知成员'}（成员标识 ${sender.memberId}）`
-    const mentionDescription = event.facts?.['mentionedBot'] === true ? '；该消息提及了当前智能体关联的机器人账号' : ''
-    const blocks: ContentBlock[] = [
-      { type: 'text', text: `频道事件 ${event.id}${senderDescription}${mentionDescription}：` },
-    ]
-    const seen =
-      visibleDigests ??
-      (() => {
-        const agent = this.#context.agents.get(sessionId)
-        return agent === undefined ? new Set<string>() : collectVisibleImageDigests(agent, this.#assets)
-      })()
+    const blocks: ContentBlock[] = []
     const attachImage = async (assetId: AssetId, alt?: string): Promise<void> => {
-      if (!this.#assets.canAccessAsset(assetId, event.channelId)) {
+      if (!this.#assets.canAccessAsset(assetId, channelId)) {
         if (imageStats) imageStats.skippedCount += 1
         blocks.push({ type: 'text', text: `图片资源 ${assetId} 当前不可访问。` })
         return
@@ -4570,7 +4524,7 @@ export class DshHostRuntime implements AgentSessionDriver, ExtensionActivationHo
       }
       if (imageStats) imageStats.imageCount += 1
       if (this.#imageInputSessions.has(sessionId)) {
-        if (seen.has(asset.contentDigest)) {
+        if (visibleDigests.has(asset.contentDigest)) {
           if (imageStats) imageStats.duplicateCount += 1
           blocks.push({
             type: 'text',
@@ -4585,7 +4539,7 @@ export class DshHostRuntime implements AgentSessionDriver, ExtensionActivationHo
           detail,
         )
         blocks.push({ type: 'image', attachment })
-        seen.add(asset.contentDigest)
+        visibleDigests.add(asset.contentDigest)
         if (imageStats) imageStats.injectedCount += 1
         return
       }
@@ -4594,7 +4548,7 @@ export class DshHostRuntime implements AgentSessionDriver, ExtensionActivationHo
         text: `图片资源 ${asset.id} 已收到，但当前模型不直接支持图片输入；如已配置辅助视觉模型，可使用 asset_inspect_images 批量理解。`,
       })
     }
-    for (const part of event.parts) {
+    for (const part of parts) {
       switch (part.type) {
         case 'text':
           blocks.push({ type: 'text', text: part.text })
@@ -4623,9 +4577,28 @@ export class DshHostRuntime implements AgentSessionDriver, ExtensionActivationHo
         case 'audio':
           blocks.push({ type: 'text', text: `收到音频资源 ${part.assetId}` })
           break
-        case 'quote':
-          blocks.push({ type: 'text', text: `引用频道消息 ${part.messageId}` })
+        case 'quote': {
+          if (!expandQuotes) {
+            blocks.push({ type: 'text', text: `引用频道消息 ${part.messageId}` })
+            break
+          }
+          const quoted = this.#history.getChannelHistoryEntryByLogicalMessageId(channelId, part.messageId)
+          if (quoted === undefined) {
+            blocks.push({
+              type: 'text',
+              text: `引用频道消息 ${part.messageId}，当前频道中无法读取该消息`,
+            })
+            break
+          }
+          blocks.push({
+            type: 'text',
+            text: `引用频道消息 ${part.messageId}${historyEntrySenderDescription(this.#history, quoted)}：`,
+          })
+          blocks.push(
+            ...(await this.#projectMessageParts(sessionId, channelId, quoted.parts, visibleDigests, imageStats, false)),
+          )
           break
+        }
         case 'rich': {
           const context = richPartContextText(part)
           const label = part.kind === 'forward' ? '收到转发' : '收到卡片'
@@ -4638,6 +4611,29 @@ export class DshHostRuntime implements AgentSessionDriver, ExtensionActivationHo
         }
       }
     }
+    return blocks
+  }
+
+  async #projectEvent(
+    sessionId: SessionId,
+    event: ChannelEventRecord,
+    visibleDigests?: Set<string>,
+    imageStats?: ImageProjectionStats,
+  ): Promise<ContentBlock[]> {
+    const sender = event.senderMemberId === undefined ? undefined : memberSummary(this.#history, event.senderMemberId)
+    const senderDescription =
+      sender === undefined ? '' : `，发送成员：${sender.displayName ?? '未知成员'}（成员标识 ${sender.memberId}）`
+    const mentionDescription = event.facts?.['mentionedBot'] === true ? '；该消息提及了当前智能体关联的机器人账号' : ''
+    const blocks: ContentBlock[] = [
+      { type: 'text', text: `频道消息 ${event.logicalMessageId}${senderDescription}${mentionDescription}：` },
+    ]
+    const seen =
+      visibleDigests ??
+      (() => {
+        const agent = this.#context.agents.get(sessionId)
+        return agent === undefined ? new Set<string>() : collectVisibleImageDigests(agent, this.#assets)
+      })()
+    blocks.push(...(await this.#projectMessageParts(sessionId, event.channelId, event.parts, seen, imageStats)))
     return blocks
   }
 }

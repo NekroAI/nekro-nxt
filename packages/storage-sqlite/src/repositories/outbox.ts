@@ -246,6 +246,45 @@ export function createOutboxRepository(database: DrizzleCoreDatabase): OutboxSli
         .all()
         .map(({ id }) => id)
     },
+    getChannelHistoryEntryByLogicalMessageId(channelId, logicalMessageId): ChannelHistoryEntry | undefined {
+      const outboundCandidate = database
+        .select({ intent: outboundIntents, channelId: episodes.channelId })
+        .from(outboundIntents)
+        .innerJoin(episodes, eq(episodes.id, outboundIntents.episodeId))
+        .where(and(eq(episodes.channelId, channelId), eq(outboundIntents.logicalMessageId, logicalMessageId)))
+        .get()
+      if (outboundCandidate !== undefined) {
+        const intent = OutboundIntentRowSchema.parse(outboundCandidate.intent)
+        return {
+          source: 'outbound-intent',
+          sourceId: intent.id,
+          logicalMessageId: intent.logicalMessageId,
+          channelId: outboundCandidate.channelId,
+          occurredAt: intent.createdAt,
+          parts: intent.parts,
+          state: intent.state,
+          ...(intent.sourceTurnId === null ? {} : { sourceTurnId: intent.sourceTurnId }),
+        }
+      }
+      const inboundCandidate = database
+        .select()
+        .from(channelEvents)
+        .where(and(eq(channelEvents.channelId, channelId), eq(channelEvents.logicalMessageId, logicalMessageId)))
+        .get()
+      if (inboundCandidate === undefined) return undefined
+      const row = ChannelEventRowSchema.parse(inboundCandidate)
+      const entry: ChannelHistoryEntry = {
+        source: 'channel-event',
+        sourceId: row.id,
+        logicalMessageId: row.logicalMessageId,
+        channelId: row.channelId,
+        occurredAt: row.receivedAt,
+        ...(row.senderMemberId === null ? {} : { senderMemberId: row.senderMemberId }),
+        parts: row.parts,
+        ...(row.facts === null ? {} : { facts: row.facts }),
+      }
+      return isConsoleAnchorHistory(entry) ? undefined : entry
+    },
     listChannelHistory(channelId, options = {}): readonly ChannelHistoryEntry[] {
       const limit = searchLimit(options.limit)
       const before = options.before
@@ -259,6 +298,7 @@ export function createOutboxRepository(database: DrizzleCoreDatabase): OutboxSli
           return {
             source: 'channel-event',
             sourceId: row.id,
+            logicalMessageId: row.logicalMessageId,
             channelId: row.channelId,
             occurredAt: row.receivedAt,
             ...(row.senderMemberId === null ? {} : { senderMemberId: row.senderMemberId }),
@@ -321,6 +361,7 @@ export function createOutboxRepository(database: DrizzleCoreDatabase): OutboxSli
                 return {
                   source: 'channel-event',
                   sourceId: row.id,
+                  logicalMessageId: row.logicalMessageId,
                   channelId: row.channelId,
                   occurredAt: row.receivedAt,
                   ...(row.senderMemberId === null ? {} : { senderMemberId: row.senderMemberId }),

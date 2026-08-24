@@ -145,6 +145,12 @@ export interface QQInboundAttachment {
   readonly mediaType?: string
 }
 
+export type QQQuoteDiagnostic = {
+  readonly reason: 'reference-field-missing' | 'platform-reference-unresolved'
+  readonly eventType: QQNormalizedInboundMessage['eventType']
+  readonly targetKind: QQTarget['kind']
+}
+
 export interface QQInboundBridge {
   ensureTarget(input: {
     readonly connectionId: ConnectionId
@@ -225,6 +231,7 @@ export interface QQNormalizedInboundMessage {
   }[]
   readonly attachments?: readonly QQInboundAttachment[]
   readonly platformReference?: string
+  readonly quoteDiagnosticReason?: 'reference-field-missing'
   readonly platformSequence?: number
   readonly platformTimestamp: number
   readonly receivedAt?: number
@@ -374,6 +381,7 @@ export class QQOpenClawConnection implements AdapterConnectionRuntime {
   readonly #directory: QQIdentityDirectory
   readonly #assets: QQAssetSource
   readonly #inbound: QQInboundBridge | undefined
+  readonly #onQuoteDiagnostic: ((diagnostic: QQQuoteDiagnostic) => void) | undefined
   readonly #transport: QQOpenClawTransport
   readonly #replyBudget = new QQReplyBudget()
   #running = false
@@ -386,6 +394,7 @@ export class QQOpenClawConnection implements AdapterConnectionRuntime {
       readonly assets: QQAssetSource
       readonly transport: QQOpenClawTransport
       readonly inbound?: QQInboundBridge
+      readonly onQuoteDiagnostic?: (diagnostic: QQQuoteDiagnostic) => void
     },
   ) {
     this.#context = context
@@ -393,6 +402,7 @@ export class QQOpenClawConnection implements AdapterConnectionRuntime {
     this.#directory = dependencies.directory
     this.#assets = dependencies.assets
     this.#inbound = dependencies.inbound
+    this.#onQuoteDiagnostic = dependencies.onQuoteDiagnostic
     this.#transport = dependencies.transport
     this.capabilities = {
       ...QQ_OPENCLAW_CAPABILITIES,
@@ -518,6 +528,13 @@ export class QQOpenClawConnection implements AdapterConnectionRuntime {
       ...(message.senderDisplayName === undefined ? {} : { displayName: message.senderDisplayName }),
       observedAt: receivedAt,
     })
+    if (message.quoteDiagnosticReason !== undefined) {
+      this.#onQuoteDiagnostic?.({
+        reason: message.quoteDiagnosticReason,
+        eventType: message.eventType,
+        targetKind: message.target.kind,
+      })
+    }
     const parts: MessagePart[] = []
     const assetOccurrences: { readonly partIndex: number; readonly assetId: AssetId }[] = []
     let replyToBot = false
@@ -648,6 +665,12 @@ export class QQOpenClawConnection implements AdapterConnectionRuntime {
       if (quote) {
         parts.push({ type: 'quote', messageId: quote.messageId })
         replyToBot = quote.authoredByAgent
+      } else {
+        this.#onQuoteDiagnostic?.({
+          reason: 'platform-reference-unresolved',
+          eventType: message.eventType,
+          targetKind: message.target.kind,
+        })
       }
     }
     if (parts.length === 0) {

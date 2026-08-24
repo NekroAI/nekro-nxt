@@ -78,7 +78,7 @@ export const mountChannelReplyGuard = (context: Context): (() => boolean) =>
         content: [
           {
             type: 'text',
-            text: '本轮尚未成功调用 send_channel_message，频道里还看不到你的回复。请立即使用该工具发送用户可见内容；不要只输出普通模型文字。',
+            text: '本轮尚未成功调用 send_channel_message。你生成的普通 text 或 reasoning 仍只保存在内部运行轨迹中，频道成员还没有收到回复。请通过 send_channel_message 完成本轮应答；调用后仍可继续处理其他工作。',
           },
         ],
         source: { kind: 'nekro-nxt-channel-reply-guard', turn },

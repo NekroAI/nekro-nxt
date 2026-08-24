@@ -23,6 +23,7 @@ import {
   type QQInboundBridge,
   type QQOpenClawConfig,
   type QQOpenClawTransport,
+  type QQQuoteDiagnostic,
 } from './index.js'
 
 export interface QQOpenClawRuntimeOptions {
@@ -32,6 +33,7 @@ export interface QQOpenClawRuntimeOptions {
   readonly assets: QQAssetSource
   readonly inbound: QQInboundBridge
   readonly transport: QQOpenClawTransport
+  readonly onQuoteDiagnostic?: (diagnostic: QQQuoteDiagnostic) => void
   readonly gateway: {
     readonly access: QQGatewayAccess
     readonly sockets: QQGatewaySocketFactory
@@ -57,6 +59,7 @@ export class QQOpenClawRuntime implements AdapterConnectionRuntime {
       assets: options.assets,
       inbound: options.inbound,
       transport: options.transport,
+      ...(options.onQuoteDiagnostic === undefined ? {} : { onQuoteDiagnostic: options.onQuoteDiagnostic }),
     })
     this.#gateway = new QQGatewayClient({
       appId: options.config.appId,

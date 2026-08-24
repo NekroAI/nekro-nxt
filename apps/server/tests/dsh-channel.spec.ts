@@ -238,6 +238,100 @@ class ReplyGuardNeverSendModel extends ScriptedCommunicationModel {
   }
 }
 
+class MultiStageCommunicationModel extends ScriptedCommunicationModel {
+  override async *stream(options: GenerateOptions): AsyncIterable<StreamChunk> {
+    await Promise.resolve()
+    this.calls.push(options)
+    const hasResult = (callId: string): boolean =>
+      options.messages.some((message) =>
+        message.content.some((block) => block.type === 'tool-result' && String(block.toolCallId) === callId),
+      )
+    let callId: ReturnType<typeof CallId> | undefined
+    let name = ''
+    let argumentsText = ''
+    if (!hasResult('multi-stage-opening')) {
+      callId = CallId('multi-stage-opening')
+      name = 'send_channel_message'
+      argumentsText = JSON.stringify({ target: { type: 'current' }, parts: [{ text: '我已经开始处理。' }] })
+    } else if (!hasResult('multi-stage-context')) {
+      callId = CallId('multi-stage-context')
+      name = 'nekro_nxt_channel_context'
+      argumentsText = '{}'
+    } else if (!hasResult('multi-stage-progress')) {
+      callId = CallId('multi-stage-progress')
+      name = 'send_channel_message'
+      argumentsText = JSON.stringify({ target: { type: 'current' }, parts: [{ text: '已经确认当前频道。' }] })
+    } else if (!hasResult('multi-stage-final')) {
+      callId = CallId('multi-stage-final')
+      name = 'send_channel_message'
+      argumentsText = JSON.stringify({ target: { type: 'current' }, parts: [{ text: '处理完成。' }] })
+    }
+    if (callId !== undefined) {
+      const toolCall = { type: 'tool-call' as const, id: callId, name, arguments: argumentsText }
+      yield { type: 'block-start', index: 0, blockType: 'tool-call' }
+      yield { type: 'tool-call-delta', index: 0, id: callId, name, argumentsDelta: argumentsText }
+      yield { type: 'block-end', index: 0, block: toolCall }
+      yield { type: 'finish', reason: { kind: 'tool-calls' } }
+      return
+    }
+    const text = '多阶段发送后的内部结束文字。'
+    yield { type: 'block-start', index: 0, blockType: 'text' }
+    yield { type: 'text-delta', index: 0, text }
+    yield { type: 'block-end', index: 0, block: { type: 'text', text } }
+    yield { type: 'finish', reason: { kind: 'stop' } }
+  }
+}
+
+class FinalOnlyCommunicationModel extends ScriptedCommunicationModel {
+  constructor(
+    private readonly callId: string,
+    private readonly visibleText: string,
+    private readonly expectedPersonaText: string,
+  ) {
+    super()
+  }
+
+  override async *stream(options: GenerateOptions): AsyncIterable<StreamChunk> {
+    await Promise.resolve()
+    this.calls.push(options)
+    if (!options.system?.includes(this.expectedPersonaText)) {
+      throw new Error(`Expected persona text was not present: ${this.expectedPersonaText}`)
+    }
+    const hasResult = options.messages.some((message) =>
+      message.content.some((block) => block.type === 'tool-result' && String(block.toolCallId) === this.callId),
+    )
+    if (!hasResult) {
+      const callId = CallId(this.callId)
+      const argumentsText = JSON.stringify({
+        target: { type: 'current' },
+        parts: [{ text: this.visibleText }],
+      })
+      const toolCall = {
+        type: 'tool-call' as const,
+        id: callId,
+        name: 'send_channel_message',
+        arguments: argumentsText,
+      }
+      yield { type: 'block-start', index: 0, blockType: 'tool-call' }
+      yield {
+        type: 'tool-call-delta',
+        index: 0,
+        id: callId,
+        name: toolCall.name,
+        argumentsDelta: argumentsText,
+      }
+      yield { type: 'block-end', index: 0, block: toolCall }
+      yield { type: 'finish', reason: { kind: 'tool-calls' } }
+      return
+    }
+    const text = '最终结果发送后的内部结束文字。'
+    yield { type: 'block-start', index: 0, blockType: 'text' }
+    yield { type: 'text-delta', index: 0, text }
+    yield { type: 'block-end', index: 0, block: { type: 'text', text } }
+    yield { type: 'finish', reason: { kind: 'stop' } }
+  }
+}
+
 class ImageInspectionProbeModel extends ScriptedCommunicationModel {
   constructor(private readonly assetIds: readonly string[]) {
     super(true)
@@ -393,8 +487,8 @@ class InvalidImageInspectionProbeModel extends ScriptedCommunicationModel {
 }
 
 describe('DSH Host and Web Channel vertical slice', () => {
-  it('steers one reply reminder, accepts recovery sending, and persists an unreplied outcome after a second miss', async () => {
-    const runScenario = async (model: ReplyGuardThenSendModel | ReplyGuardNeverSendModel, suffix: string) => {
+  it('supports multi-stage sends, steers one reply reminder, and persists an unreplied outcome after a second miss', async () => {
+    const runScenario = async (model: ScriptedCommunicationModel, suffix: string, persona = '回复频道消息。') => {
       const directory = await mkdtemp(path.join(tmpdir(), `nekro-nxt-reply-guard-${suffix}-`))
       temporaryDirectories.push(directory)
       const database = await openMigratedCoreDatabase(path.join(directory, 'core.sqlite'))
@@ -404,7 +498,7 @@ describe('DSH Host and Web Channel vertical slice', () => {
       const core = new CoreService(repository, { now: () => 700, nextUlid: () => `G${++sequence}` })
       const definition = core.createAgent({
         displayName: '回复守卫测试智能体',
-        persona: '回复频道消息。',
+        persona,
         model: { provider: 'test-provider', model: 'chat-model' },
       })
       const connection = core.createConnection({ adapterKey: 'web', config: {} })
@@ -494,9 +588,67 @@ describe('DSH Host and Web Channel vertical slice', () => {
       ).toHaveLength(1)
       expect(recovered.projection.turns[0]).toMatchObject({ state: 'completed', producedReply: true })
       expect(JSON.stringify(recovered.events)).toContain('发送后的内部结束文字。')
+      expect(JSON.stringify(recovered.events)).toContain('普通 text 或 reasoning 仍只保存在内部运行轨迹中')
     } finally {
       await recovered.host.dispose()
       recovered.database.close()
+    }
+
+    const multiStage = await runScenario(new MultiStageCommunicationModel(), 'MULTISTAGE')
+    try {
+      expect(multiStage.sentParts).toEqual([
+        [{ type: 'text', text: '我已经开始处理。' }],
+        [{ type: 'text', text: '已经确认当前频道。' }],
+        [{ type: 'text', text: '处理完成。' }],
+      ])
+      expect(
+        multiStage.events.filter(
+          (event) => event.type === 'user/message' && event.data.source.kind === 'nekro-nxt-channel-reply-guard',
+        ),
+      ).toHaveLength(0)
+      expect(multiStage.projection.turns[0]).toMatchObject({ state: 'completed', producedReply: true })
+      expect(JSON.stringify(multiStage.events)).toContain('多阶段发送后的内部结束文字。')
+    } finally {
+      await multiStage.host.dispose()
+      multiStage.database.close()
+    }
+
+    const quiet = await runScenario(
+      new FinalOnlyCommunicationModel('quiet-final', '安静执行后的最终结果。', '只发送最终结果'),
+      'QUIET',
+      '只发送最终结果，不发送开场确认或过程消息。',
+    )
+    try {
+      expect(quiet.sentParts).toEqual([[{ type: 'text', text: '安静执行后的最终结果。' }]])
+      expect(
+        quiet.events.filter(
+          (event) => event.type === 'user/message' && event.data.source.kind === 'nekro-nxt-channel-reply-guard',
+        ),
+      ).toHaveLength(0)
+      expect(quiet.projection.turns).toHaveLength(1)
+      expect(quiet.projection.turns[0]).toMatchObject({ state: 'completed', producedReply: true })
+    } finally {
+      await quiet.host.dispose()
+      quiet.database.close()
+    }
+
+    const quick = await runScenario(
+      new FinalOnlyCommunicationModel('quick-final', '快速任务的直接结果。', '直接给出结果'),
+      'QUICK',
+      '这是快速任务，直接给出结果，不添加寒暄。',
+    )
+    try {
+      expect(quick.sentParts).toEqual([[{ type: 'text', text: '快速任务的直接结果。' }]])
+      expect(
+        quick.events.filter(
+          (event) => event.type === 'user/message' && event.data.source.kind === 'nekro-nxt-channel-reply-guard',
+        ),
+      ).toHaveLength(0)
+      expect(quick.projection.turns).toHaveLength(1)
+      expect(quick.projection.turns[0]).toMatchObject({ state: 'completed', producedReply: true })
+    } finally {
+      await quick.host.dispose()
+      quick.database.close()
     }
 
     const missed = await runScenario(new ReplyGuardNeverSendModel(), 'MISSED')
@@ -1276,8 +1428,25 @@ describe('DSH Host and Web Channel vertical slice', () => {
       displayName: '成员乙',
       observedAt: 1000,
     }).member
+    const quotedImage = await assetService.prepare({
+      bytes: new Uint8Array(
+        Buffer.from(
+          'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Wl6ZQAAAABJRU5ErkJggg==',
+          'base64',
+        ),
+      ),
+      declaredMediaType: 'image/png',
+    })
+    repository.grantAssetAccess({
+      assetId: quotedImage.asset.id,
+      channelId: channel.id,
+      source: 'agent-tool',
+      grantedAt: 1000,
+    })
+    const quotedFileId = AssetIdSchema.parse('ast_QUOTEDFILE')
+    const quotedAudioId = AssetIdSchema.parse('ast_QUOTEDAUDIO')
     core.createBinding({ channelId: channel.id, agentId: agent.definition.id, triggerPolicy: 'always' })
-    core.appendInbound({
+    const staleEvent = core.appendInbound({
       connectionId: connection.id,
       channelId: channel.id,
       adapterKey: 'web',
@@ -1287,14 +1456,34 @@ describe('DSH Host and Web Channel vertical slice', () => {
       platformTimestamp: 999,
       receivedAt: 999,
       dedupeKey: 'web:stale-channel-event',
-    })
+    }).event
+    const quotedEvent = core.appendInbound({
+      connectionId: connection.id,
+      channelId: channel.id,
+      adapterKey: 'web',
+      platformEventId: 'quoted-channel-event',
+      kind: 'message-created',
+      senderMemberId: sender.id,
+      parts: [
+        { type: 'text', text: '这是被引用的当前频道内容。' },
+        { type: 'mention', memberId: mentionedMember.id },
+        { type: 'image', assetId: quotedImage.asset.id, alt: '引用图片' },
+        { type: 'file', assetId: quotedFileId, name: '引用资料.txt' },
+        { type: 'audio', assetId: quotedAudioId },
+        { type: 'rich', adapterKey: 'sample', kind: 'card', summary: '引用卡片摘要' },
+        { type: 'quote', messageId: staleEvent.logicalMessageId },
+      ],
+      platformTimestamp: 999,
+      receivedAt: 999,
+      dedupeKey: 'web:quoted-channel-event',
+    }).event
     const otherChannel = core.createChannel({
       connectionId: connection.id,
       platformChannelId: 'other',
       kind: 'web',
       displayName: '另一个测试频道',
     })
-    core.appendInbound({
+    const otherChannelEvent = core.appendInbound({
       connectionId: connection.id,
       channelId: otherChannel.id,
       adapterKey: 'web',
@@ -1304,7 +1493,7 @@ describe('DSH Host and Web Channel vertical slice', () => {
       platformTimestamp: 999,
       receivedAt: 999,
       dedupeKey: 'web:other-channel-event',
-    })
+    }).event
 
     const runtimeRef: { current?: ChannelRuntime } = {}
     const web = createWebAdapterConnection(connection.id, (event) => {
@@ -1344,7 +1533,7 @@ describe('DSH Host and Web Channel vertical slice', () => {
 
     try {
       await web.start()
-      await runtime.acceptInbound({
+      const browserCommit = await runtime.acceptInbound({
         connectionId: connection.id,
         channelId: channel.id,
         adapterKey: 'web',
@@ -1354,18 +1543,23 @@ describe('DSH Host and Web Channel vertical slice', () => {
         parts: [
           { type: 'text', text: '你好，请回复我。' },
           { type: 'mention', memberId: mentionedMember.id },
+          { type: 'quote', messageId: quotedEvent.logicalMessageId },
+          { type: 'quote', messageId: otherChannelEvent.logicalMessageId },
+          { type: 'quote', messageId: LogicalMessageIdSchema.parse('msg_MISSINGQUOTE') },
         ],
         platformTimestamp: 1000,
         receivedAt: 1000,
         dedupeKey: 'web:browser-event-1',
         facts: { mentionedBot: true },
       })
+      const browserEvent = repository.getChannelEvent(browserCommit.channelEventId)!
       const episode = repository.getActiveEpisode(channel.id, agent.definition.id)!
       await host.whenIdle(episode.dshSessionId!)
 
       expect(observed).toEqual(['这是通信工具确认发送的回复。'])
       expect(repository.listChannelHistory(channel.id).find((entry) => entry.source === 'channel-event')).toMatchObject(
         {
+          logicalMessageId: browserEvent.logicalMessageId,
           senderMemberId: sender.id,
           facts: { mentionedBot: true },
         },
@@ -1394,6 +1588,13 @@ describe('DSH Host and Web Channel vertical slice', () => {
       ])
       expect(model.calls[0]?.system).toContain(channel.id)
       expect(model.calls[0]?.system).toContain('主测试频道')
+      expect(model.calls[0]?.system).toContain('普通 text 或 reasoning 只会作为内部运行轨迹保存')
+      expect(model.calls[0]?.system).toContain('一次 send_channel_message 不会结束当前 Turn')
+      expect(model.calls[0]?.system).toContain('通常适合先简短说明你理解的任务和马上要做的事')
+      expect(model.calls[0]?.system).toContain('沟通篇幅和频率应结合当前智能体人设')
+      expect(model.calls[0]?.tools?.find(({ name }) => name === 'send_channel_message')?.description).toContain(
+        '可在同一 Turn 中多次调用',
+      )
       const eventText = JSON.stringify(host.sessionEvents(episode.dshSessionId!))
       expect(eventText).toContain('这段模型原始文字只能留在运行轨迹。')
       expect(eventText).toContain('工具完成后的原始结束文字也不会发送。')
@@ -1404,6 +1605,21 @@ describe('DSH Host and Web Channel vertical slice', () => {
       expect(eventText).toContain('该消息提及了当前智能体关联的机器人账号')
       expect(eventText).toContain('当前频道身份（Host 权威运行时事实）')
       expect(eventText).toContain(channel.id)
+      expect(eventText).toContain(`频道消息 ${browserEvent.logicalMessageId}`)
+      expect(eventText).not.toContain(`频道事件 ${browserEvent.id}`)
+      expect(eventText).toContain(`引用频道消息 ${quotedEvent.logicalMessageId}，发送成员：成员甲`)
+      expect(eventText).toContain('这是被引用的当前频道内容。')
+      expect(eventText).toContain('@成员乙')
+      expect(eventText).toContain(`收到图片资源 ${quotedImage.asset.id}（引用图片）`)
+      expect(eventText).toContain('当前模型不直接支持图片输入')
+      expect(eventText).toContain(`收到文件资源 ${quotedFileId}（引用资料.txt）`)
+      expect(eventText).toContain(`收到音频资源 ${quotedAudioId}`)
+      expect(eventText).toContain('引用卡片摘要')
+      expect(eventText).toContain(`引用频道消息 ${staleEvent.logicalMessageId}`)
+      expect(eventText).not.toContain('同频道但未准入旧 Episode 的内容')
+      expect(eventText).toContain(`引用频道消息 ${otherChannelEvent.logicalMessageId}，当前频道中无法读取该消息`)
+      expect(eventText).toContain('引用频道消息 msg_MISSINGQUOTE，当前频道中无法读取该消息')
+      expect(eventText).not.toContain('另一个频道的秘密内容')
 
       core.reviseAgent(agent.definition.id, agent.revision.id, {
         displayName: '小奈',
@@ -1413,7 +1629,10 @@ describe('DSH Host and Web Channel vertical slice', () => {
       await web.postMessage({
         channelId: channel.id,
         clientEventId: 'browser-event-2',
-        parts: [{ type: 'text', text: '请继续刚才的任务。' }],
+        parts: [
+          { type: 'text', text: '请继续刚才的任务。' },
+          { type: 'quote', messageId: outboundHistory[0]!.logicalMessageId },
+        ],
       })
       const resumedEpisode = repository.getActiveEpisode(channel.id, agent.definition.id)!
       await host.whenIdle(resumedEpisode.dshSessionId!)
@@ -1437,6 +1656,8 @@ describe('DSH Host and Web Channel vertical slice', () => {
       const resumedEvents = JSON.stringify(host.sessionEvents(resumedEpisode.dshSessionId!))
       expect(resumedEvents).toContain('nekro-nxt-handoff')
       expect(resumedEvents).toContain('你好，请回复我。')
+      expect(resumedEvents).toContain(`[原文 ${browserEvent.logicalMessageId}]`)
+      expect(resumedEvents).toContain(`引用频道消息 ${outboundHistory[0]!.logicalMessageId}，本频道智能体此前发送`)
       expect(resumedEvents).toContain('派生交接摘要，不是原始消息或系统事实')
       expect(resumedEvents).not.toContain('把它视为有来源的既有背景')
       expect(model.calls.some(({ system }) => system?.startsWith('你是对话交接摘要器'))).toBe(true)

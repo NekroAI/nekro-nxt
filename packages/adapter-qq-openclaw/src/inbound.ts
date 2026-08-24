@@ -86,7 +86,9 @@ const parseAttachments = (value: unknown): readonly QQInboundAttachment[] => {
   return attachments
 }
 
-const parseReference = (raw: UnknownRecord): { readonly messageId?: string; readonly reference?: string } => {
+const parseReference = (
+  raw: UnknownRecord,
+): { readonly messageId?: string; readonly reference?: string; readonly referenceFieldMissing?: boolean } => {
   const scene = record(raw['message_scene'])
   const ext = parseExt(scene['ext'])
   const elements = records(raw['msg_elements'])
@@ -99,6 +101,7 @@ const parseReference = (raw: UnknownRecord): { readonly messageId?: string; read
   return {
     ...(messageId === undefined ? {} : { messageId }),
     ...(reference === undefined ? {} : { reference }),
+    ...(messageType === 103 && reference === undefined ? { referenceFieldMissing: true } : {}),
   }
 }
 
@@ -496,6 +499,7 @@ export const decodeQQInboundMessage = (
       ...(mentions.length === 0 ? {} : { mentions }),
       attachments: parseAttachments(raw['attachments']),
       ...(reference.reference === undefined ? {} : { platformReference: reference.reference }),
+      ...(reference.referenceFieldMissing === true ? { quoteDiagnosticReason: 'reference-field-missing' } : {}),
       platformTimestamp: parseTimestamp(raw['timestamp'], now),
     }
   }
@@ -518,6 +522,7 @@ export const decodeQQInboundMessage = (
     mentions,
     attachments: parseAttachments(raw['attachments']),
     ...(reference.reference === undefined ? {} : { platformReference: reference.reference }),
+    ...(reference.referenceFieldMissing === true ? { quoteDiagnosticReason: 'reference-field-missing' } : {}),
     platformTimestamp: parseTimestamp(raw['timestamp'], now),
   }
 }

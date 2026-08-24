@@ -189,6 +189,7 @@ export const projectChannelFact = (runtime: NekroRuntime, fact: ChannelFact): Ho
     return projectHistoryEntry(runtime, {
       source: 'channel-event',
       sourceId: event.id,
+      logicalMessageId: event.logicalMessageId,
       channelId: event.channelId,
       occurredAt: event.receivedAt,
       ...(event.senderMemberId === undefined ? {} : { senderMemberId: event.senderMemberId }),
