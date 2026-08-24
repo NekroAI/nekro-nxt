@@ -4,10 +4,12 @@ import {
   cacheReadShare,
   flattenRuntimeRecords,
   formatDurationMs,
+  formatTokenRate,
   formatTokenCount,
   plotTurnStarts,
   projectContextUsage,
   recordLane,
+  sampleTokenRate,
   weightedCacheReadShare,
 } from '../src/pages/channel-trajectory.js'
 import type { ChannelRuntimeView } from '../src/product-store.js'
@@ -71,6 +73,10 @@ describe('flattenRuntimeRecords', () => {
     expect(formatDurationMs(420)).toBe('420ms')
     expect(formatDurationMs(1200)).toBe('1.2s')
     expect(formatDurationMs(65_000)).toBe('1:05')
+    expect(formatDurationMs(119_900)).toBe('2:00')
+    expect(sampleTokenRate({ turn: 1, step: 1, decodeMs: 2000, outputTokens: 75 })).toBe(37.5)
+    expect(formatTokenRate(37.5)).toBe('38')
+    expect(formatTokenRate(undefined)).toBe('暂无')
   })
 
   it('projects bounded occupancy and a non-negative composition', () => {

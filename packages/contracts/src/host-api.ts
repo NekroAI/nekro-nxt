@@ -352,6 +352,43 @@ export const ChannelRuntimeCacheSchema = z
   })
   .strict()
 
+export const ChannelRuntimePerformanceSampleSchema = z
+  .object({
+    turn: z.number().int().nonnegative(),
+    step: z.number().int().nonnegative(),
+    at: z.number().nonnegative().optional(),
+    firstTokenMs: z.number().int().nonnegative().optional(),
+    decodeMs: z.number().int().nonnegative().optional(),
+    outputTokens: z.number().int().nonnegative().optional(),
+  })
+  .strict()
+
+export const ChannelRuntimePerformanceSchema = z
+  .object({
+    scope: z.literal('episode'),
+    aggregate: z
+      .object({
+        steps: z.number().int().nonnegative(),
+        llmMs: z.number().nonnegative(),
+        toolMs: z.number().nonnegative(),
+        ttftMs: z.number().nonnegative(),
+        ttftSteps: z.number().int().nonnegative(),
+        decodeMs: z.number().nonnegative(),
+        decodeTokens: z.number().int().nonnegative(),
+        decodeSteps: z.number().int().nonnegative(),
+        retryCount: z.number().int().nonnegative(),
+        retryDelayMs: z.number().nonnegative(),
+      })
+      .strict(),
+    recent: z
+      .object({
+        windowSize: z.number().int().positive(),
+        samples: z.array(ChannelRuntimePerformanceSampleSchema),
+      })
+      .strict(),
+  })
+  .strict()
+
 export const ChannelRuntimeProjectionSchema = z
   .object({
     channelId: ChannelIdSchema,
@@ -362,6 +399,7 @@ export const ChannelRuntimeProjectionSchema = z
     pendingInjectCount: z.number().int().nonnegative(),
     occupancy: ChannelRuntimeOccupancySchema.optional(),
     cache: ChannelRuntimeCacheSchema.optional(),
+    performance: ChannelRuntimePerformanceSchema.optional(),
     turns: z.array(ChannelRuntimeTurnSchema),
   })
   .strict()
@@ -376,6 +414,8 @@ export type ChannelRuntimeUsage = z.output<typeof ChannelRuntimeUsageSchema>
 export type ChannelRuntimeOccupancy = z.output<typeof ChannelRuntimeOccupancySchema>
 export type ChannelRuntimeCacheSample = z.output<typeof ChannelRuntimeCacheSampleSchema>
 export type ChannelRuntimeCache = z.output<typeof ChannelRuntimeCacheSchema>
+export type ChannelRuntimePerformanceSample = z.output<typeof ChannelRuntimePerformanceSampleSchema>
+export type ChannelRuntimePerformance = z.output<typeof ChannelRuntimePerformanceSchema>
 export type ChannelRuntimeProjection = z.output<typeof ChannelRuntimeProjectionSchema>
 export type ChannelRuntimeSseData = z.output<typeof ChannelRuntimeSseDataSchema>
 export type ChannelFactSseData = z.output<typeof ChannelFactSseDataSchema>

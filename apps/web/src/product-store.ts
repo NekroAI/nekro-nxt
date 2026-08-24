@@ -137,6 +137,7 @@ export interface ChannelRuntimeView {
   readonly pendingInjectCount: number
   readonly occupancy?: HostApiResponse<'getChannelRuntime'>['occupancy']
   readonly cache?: HostApiResponse<'getChannelRuntime'>['cache']
+  readonly performance?: HostApiResponse<'getChannelRuntime'>['performance']
   readonly turns: HostApiResponse<'getChannelRuntime'>['turns']
 }
 

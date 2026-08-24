@@ -193,6 +193,17 @@ declare const styles: {
   readonly overviewFacts: string
   readonly overviewSummary: string
   readonly page: string
+  readonly performanceCard: string
+  readonly performanceCoverage: string
+  readonly performanceHeader: string
+  readonly performanceMetrics: string
+  readonly performancePrimary: string
+  readonly performanceTotals: string
+  readonly performanceTrend: string
+  readonly performanceTrendBar: string
+  readonly performanceTrendBarActive: string
+  readonly performanceTrendBarUnknown: string
+  readonly performanceTrendPlot: string
   readonly plot: string
   readonly plotLabels: string
   readonly plotSeg: string

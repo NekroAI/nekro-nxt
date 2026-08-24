@@ -552,6 +552,31 @@ describe.sequential('NekroNxt browser projections', { timeout: 30_000 }, () => {
                   },
                 }
               : undefined,
+          performance:
+            channelId === browserChannelId
+              ? {
+                  scope: 'episode',
+                  aggregate: {
+                    steps: 2,
+                    llmMs: 4200,
+                    toolMs: 900,
+                    ttftMs: 1100,
+                    ttftSteps: 2,
+                    decodeMs: 3000,
+                    decodeTokens: 120,
+                    decodeSteps: 2,
+                    retryCount: 1,
+                    retryDelayMs: 500,
+                  },
+                  recent: {
+                    windowSize: 12,
+                    samples: [
+                      { turn: 1, step: 0, firstTokenMs: 700, decodeMs: 2000, outputTokens: 70 },
+                      { turn: 1, step: 1, firstTokenMs: 400, decodeMs: 1000, outputTokens: 50 },
+                    ],
+                  },
+                }
+              : undefined,
           turns:
             channelId === browserChannelId
               ? [
@@ -1015,7 +1040,16 @@ describe.sequential('NekroNxt browser projections', { timeout: 30_000 }, () => {
       await playwrightExpect(page.getByRole('tooltip')).toContainText('智能体当前空闲。')
       await playwrightExpect(page.getByLabel('上下文占用')).toContainText('已用 3.2k')
       await playwrightExpect(page.getByLabel('上下文组成')).toContainText('对话 1.9k')
+      const generationPerformance = page.getByLabel('生成表现')
+      await playwrightExpect(generationPerformance).toContainText('最近请求首 Token')
+      await playwrightExpect(generationPerformance).toContainText('400ms')
+      await playwrightExpect(generationPerformance).toContainText('50')
+      await playwrightExpect(generationPerformance).toContainText('会话平均首 Token')
+      await playwrightExpect(generationPerformance).toContainText('生成速度 2/2')
       const cacheAnalysis = page.getByLabel('缓存分析')
+      const cacheBox = await cacheAnalysis.boundingBox()
+      const performanceBox = await generationPerformance.boundingBox()
+      expect(cacheBox?.y).toBeLessThan(performanceBox?.y ?? 0)
       await playwrightExpect(cacheAnalysis).toContainText('最近一次输入缓存覆盖')
       await playwrightExpect(cacheAnalysis).toContainText('会话加权覆盖')
       await playwrightExpect(cacheAnalysis).toContainText('累计读取 1.8k')

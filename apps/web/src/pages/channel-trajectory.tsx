@@ -37,6 +37,8 @@ type RuntimeTurn = ChannelRuntimeView['turns'][number]
 type RuntimeTool = RuntimeTurn['steps'][number]['tools'][number]
 type RuntimeCache = NonNullable<ChannelRuntimeView['cache']>
 type RuntimeCacheSample = RuntimeCache['recent']['samples'][number]
+type RuntimePerformance = NonNullable<ChannelRuntimeView['performance']>
+type RuntimePerformanceSample = RuntimePerformance['recent']['samples'][number]
 
 export type TrajectoryLane = 'internal' | 'tool' | 'send'
 
@@ -71,11 +73,10 @@ export const formatTokenCount = (value: number): string => {
 }
 
 export const formatDurationMs = (value: number): string => {
-  if (value < 1000) return `${value}ms`
+  if (value < 1000) return `${Math.round(value)}ms`
   if (value < 60_000) return `${(value / 1000).toFixed(value < 10_000 ? 1 : 0).replace(/\.0$/u, '')}s`
-  const minutes = Math.floor(value / 60_000)
-  const seconds = Math.round((value % 60_000) / 1000)
-  return `${minutes}:${String(seconds).padStart(2, '0')}`
+  const totalSeconds = Math.round(value / 1000)
+  return `${Math.floor(totalSeconds / 60)}:${String(totalSeconds % 60).padStart(2, '0')}`
 }
 
 export interface ContextUsageProjection {
@@ -136,6 +137,16 @@ export const weightedCacheReadShare = (samples: readonly RuntimeCacheSample[]): 
 
 const formatShare = (share: number | undefined): string =>
   share === undefined ? '暂无' : `${Math.min(100, Math.round(share * 100))}%`
+
+export const sampleTokenRate = (sample: RuntimePerformanceSample): number | undefined =>
+  sample.decodeMs !== undefined && sample.decodeMs > 0 && sample.outputTokens !== undefined
+    ? sample.outputTokens / (sample.decodeMs / 1000)
+    : undefined
+
+export const formatTokenRate = (value: number | undefined): string => {
+  if (value === undefined || !Number.isFinite(value)) return '暂无'
+  return value < 10 ? value.toFixed(1).replace(/\.0$/u, '') : String(Math.round(value))
+}
 
 function ContextRing({
   label,
@@ -382,6 +393,114 @@ function CacheUsageCard({ cache }: { readonly cache: RuntimeCache }) {
       </p>
       <p className={styles.cacheCoverage}>
         数据覆盖 {aggregate.observedRequestCount}/{aggregate.usageRequestCount} 次请求 · {formatShare(coverageShare)}
+      </p>
+    </section>
+  )
+}
+
+function PerformanceTrend({ samples }: { readonly samples: readonly RuntimePerformanceSample[] }) {
+  const [activeIndex, setActiveIndex] = useState(Math.max(0, samples.length - 1))
+  const active = samples[Math.min(activeIndex, samples.length - 1)]
+  const rates = samples.map(sampleTokenRate)
+  const maxRate = Math.max(0, ...rates.map((value) => value ?? 0))
+  return (
+    <figure className={styles.performanceTrend} aria-label={`最近 ${samples.length} 次模型请求的生成速度趋势`}>
+      <figcaption>
+        <span>最近 {samples.length} 次生成速度</span>
+        {active ? (
+          <span>
+            第 {active.turn} 轮 · 首 Token{' '}
+            {active.firstTokenMs === undefined ? '暂无' : formatDurationMs(active.firstTokenMs)} ·{' '}
+            {formatTokenRate(sampleTokenRate(active))} tok/s
+          </span>
+        ) : null}
+      </figcaption>
+      <div className={styles.performanceTrendPlot}>
+        {samples.map((sample, index) => {
+          const rate = rates[index]
+          const label = `第 ${sample.turn} 轮第 ${sample.step} 步，首 Token ${
+            sample.firstTokenMs === undefined ? '暂无' : formatDurationMs(sample.firstTokenMs)
+          }，生成速度 ${formatTokenRate(rate)} tok/s`
+          return (
+            <span
+              key={`${sample.turn}:${sample.step}:${sample.at ?? index}`}
+              role="img"
+              className={[
+                styles.performanceTrendBar,
+                rate === undefined ? styles.performanceTrendBarUnknown : '',
+                index === activeIndex ? styles.performanceTrendBarActive : '',
+              ]
+                .filter(Boolean)
+                .join(' ')}
+              style={{ height: `${rate === undefined || maxRate <= 0 ? 8 : Math.max(8, (rate / maxRate) * 100)}%` }}
+              tabIndex={0}
+              aria-label={label}
+              onPointerEnter={() => setActiveIndex(index)}
+              onFocus={() => setActiveIndex(index)}
+            />
+          )
+        })}
+      </div>
+    </figure>
+  )
+}
+
+function GenerationPerformanceCard({ performance }: { readonly performance: RuntimePerformance }) {
+  const aggregate = performance.aggregate
+  const recentSamples = performance.recent.samples.slice(-8)
+  const latest = performance.recent.samples.at(-1)
+  const latestRate = latest === undefined ? undefined : sampleTokenRate(latest)
+  const averageFirstToken = aggregate.ttftSteps > 0 ? aggregate.ttftMs / aggregate.ttftSteps : undefined
+  const weightedRate = aggregate.decodeMs > 0 ? aggregate.decodeTokens / (aggregate.decodeMs / 1000) : undefined
+
+  return (
+    <section className={styles.performanceCard} aria-label="生成表现">
+      <header className={styles.performanceHeader}>
+        <h3>生成表现</h3>
+        <span>本次会话</span>
+      </header>
+      <div className={styles.performancePrimary}>
+        <div>
+          <span>最近请求首 Token</span>
+          <strong data-known={latest?.firstTokenMs !== undefined}>
+            {latest?.firstTokenMs === undefined ? '暂无' : formatDurationMs(latest.firstTokenMs)}
+          </strong>
+          <small>{latest ? `第 ${latest.turn} 轮 · 第 ${latest.step} 步` : '暂无模型请求'}</small>
+        </div>
+        <div>
+          <span>最近请求生成速度</span>
+          <strong data-known={latestRate !== undefined}>{formatTokenRate(latestRate)}</strong>
+          <small>{latestRate === undefined ? '暂无有效用量' : 'tok/s'}</small>
+        </div>
+      </div>
+      <div className={styles.performanceMetrics}>
+        <div>
+          <span>会话平均首 Token</span>
+          <strong>{averageFirstToken === undefined ? '暂无' : formatDurationMs(averageFirstToken)}</strong>
+        </div>
+        <div>
+          <span>会话加权速度</span>
+          <strong>
+            {formatTokenRate(weightedRate)}
+            {weightedRate === undefined ? '' : ' tok/s'}
+          </strong>
+        </div>
+        <div>
+          <span>模型处理累计</span>
+          <strong>{formatDurationMs(aggregate.llmMs)}</strong>
+        </div>
+        <div>
+          <span>工具调用累计</span>
+          <strong>{formatDurationMs(aggregate.toolMs)}</strong>
+        </div>
+      </div>
+      {recentSamples.length > 1 ? <PerformanceTrend samples={recentSamples} /> : null}
+      <p className={styles.performanceTotals}>
+        重试 {aggregate.retryCount} 次
+        {aggregate.retryDelayMs > 0 ? ` · 等待 ${formatDurationMs(aggregate.retryDelayMs)}` : ''}
+      </p>
+      <p className={styles.performanceCoverage}>
+        数据覆盖 首 Token {aggregate.ttftSteps}/{aggregate.steps} · 生成速度 {aggregate.decodeSteps}/{aggregate.steps}
       </p>
     </section>
   )
@@ -829,12 +948,17 @@ export function ChannelSessionInspector({
   const phaseExplanation =
     runtime?.summary ?? (phase === '空闲' ? '智能体当前没有正在处理的任务。' : `智能体当前状态：${phase}。`)
   const hasRuntimeDetails = Boolean(
-    phase !== '空闲' || currentTool || (runtime?.pendingInjectCount ?? 0) > 0 || runtime?.occupancy || runtime?.cache,
+    phase !== '空闲' ||
+    currentTool ||
+    (runtime?.pendingInjectCount ?? 0) > 0 ||
+    runtime?.occupancy ||
+    runtime?.performance ||
+    runtime?.cache,
   )
   const runtimeEmpty = !agent
     ? {
         title: '尚未绑定智能体',
-        description: '绑定后，这里会显示运行状态、上下文占用和缓存情况。',
+        description: '绑定后，这里会显示运行状态、上下文占用、生成表现和缓存情况。',
       }
     : runtime?.episodeId
       ? {
@@ -911,6 +1035,7 @@ export function ChannelSessionInspector({
         ) : null}
         {runtime?.occupancy ? <ContextUsageCard occupancy={runtime.occupancy} /> : null}
         {runtime?.cache ? <CacheUsageCard cache={runtime.cache} /> : null}
+        {runtime?.performance ? <GenerationPerformanceCard performance={runtime.performance} /> : null}
         {!hasRuntimeDetails ? (
           <div className={styles.runtimeEmpty}>
             <span className={styles.runtimeEmptyIcon} aria-hidden="true">
