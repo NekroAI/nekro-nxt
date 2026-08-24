@@ -4,7 +4,7 @@
 
 | 文件 | 尺寸 | 用途 | 生成规格摘要 |
 |---|---:|---|---|
-| `readme-hero.png` | 2400×900 | README Hero | 月潮观测所夜景；水月荧位于右侧；左侧保留文案空间；头像章作为小型观测印章 |
+| `readme-hero.png` | 2400×900 | README Hero | 月潮观测所夜景；水月荧位于右侧；左侧写明“把 DeepSeek Harness 带到即时通讯”及三项核心能力；下方图形表达平台接入 → 多人群聊 → DSH 运行 |
 | `install-desktop.webp` | 1800×600 | Desktop 安装文档 | 下载官方安装包 → 原生安装 → 配置模型和首个智能体 |
 | `install-server.webp` | 1800×600 | Server 部署文档 | 单容器与 `/data` → 管理密钥与启动 → Desktop 连接 Server |
 | `welcome.png` | 960×1035，Alpha | 欢迎与关键空态 | 水月荧持书并伸手邀请开始 |

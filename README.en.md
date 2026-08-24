@@ -1,24 +1,18 @@
-<p align="center">
-  <img src="apps/web/public/brand/mark.svg" width="112" height="112" alt="NekroNXT Logo" />
-</p>
-
-<h1 align="center">NekroNXT</h1>
-
-<p align="center"><strong>Bring intelligent agents into real group chats.</strong></p>
-
-<p align="center">Multi-platform messaging · Multi-person conversations · Powered by DSH</p>
+![NekroNXT brings DeepSeek Harness to instant messaging](assets/brand/raster/readme-hero.png)
 
 <p align="center"><a href="README.md">简体中文</a> · <a href="docs/README.md">Documentation</a> · <a href="https://github.com/NekroAI/nekro-nxt/releases/tag/preview">Download Preview</a></p>
 
-NekroNXT is a group-chat agent system by NekroAI. It connects agents to messaging platforms through adapters, lets them follow real multi-person conversations, and keeps each channel in its own durable context.
+NekroNXT is a group-chat agent system by NekroAI. Adapters connect it to messaging platforms. Agents can follow multi-person conversations, use tools, and keep a separate context for every channel.
 
-## What makes it different
+## Built for group chats
 
-- **One integration model for messaging platforms.** Adapters provide account login, message delivery, and channel discovery without rebuilding the product flow for every platform.
-- **Built for active group conversations.** Mentions and trigger rules can wake an agent; messages arriving during tool use are recorded and folded into the next reasoning step instead of being lost.
-- **A real agent runtime powered by DSH.** DSH provides the reasoning loop, tool execution, persistent sessions, context compaction, model providers, and extension runtime. NekroNXT adds messaging integration, channel boundaries, observable delivery, and the product experience.
-- **Agents that persist beyond one request.** Each agent has its own persona, model, permissions, channels, and extensions.
-- **A verifiable creation loop.** Describe, run, inspect, revise, save, and then enable local extensions for selected agents.
+Adapters handle account login, message delivery, and channel discovery. Adding a platform keeps the same account, channel, and agent workflow.
+
+Each group chat has its own message history and runtime context. Mentions and trigger rules can wake an agent. Messages that arrive during tool use are recorded and passed into the next reasoning step.
+
+DSH runs the reasoning loop, tools, persistent sessions, context compaction, model providers, and extensions. NekroNXT handles messaging connections, channel management, delivery records, and the product UI.
+
+Agents remain manageable over time, with separate personas, models, permissions, channels, and extensions. The built-in creator can run, inspect, revise, save, and enable local extensions.
 
 ## Product preview
 
