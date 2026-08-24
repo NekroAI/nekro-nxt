@@ -122,6 +122,7 @@ declare const styles: {
   readonly creatorStartPanel: string
   readonly creatorWorkspace: string
   readonly dangerSection: string
+  readonly dark: string
   readonly detailPage: string
   readonly dialogChoice: string
   readonly dragOverlay: string

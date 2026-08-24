@@ -513,6 +513,13 @@ const capture = async (page: Page, testInfo: TestInfo, name: string): Promise<vo
   await testInfo.attach(name, { path, contentType: 'image/png' })
 }
 
+const expectProductMotionSettled = async (page: Page): Promise<void> => {
+  await expect(page.locator('html[data-nxt-view-transition]')).toHaveCount(0)
+  await expect(page.locator('[data-stage-layer="out"]')).toHaveCount(0)
+  const activeLayer = page.locator('[data-stage-layer="in"]').last()
+  if ((await activeLayer.count()) > 0) await expect(activeLayer).toHaveCSS('opacity', '1')
+}
+
 test('writes the four public product screenshots from fictional production data', async ({ page }) => {
   const outputDirectory = process.env['NEKRO_BRAND_SCREENSHOT_DIR']
   test.skip(!outputDirectory, 'Only runs when refreshing committed public screenshots.')
@@ -536,8 +543,7 @@ test('writes the four public product screenshots from fictional production data'
     .first()
     .click()
   await expect(page).toHaveURL(new RegExp(`/connections/${qqConnectionId}$`, 'u'))
-  await expect(page.locator('[data-stage-layer="out"]')).toHaveCount(0)
-  await expect(page.locator('[data-stage-layer="in"]').last()).toHaveCSS('opacity', '1')
+  await expectProductMotionSettled(page)
   await expect(page.locator('main').getByRole('heading', { name: 'QQ 官方机器人' })).toBeVisible()
   await page.screenshot({ path: `${outputDirectory}/connections.png`, animations: 'disabled' })
 
@@ -1351,6 +1357,7 @@ test('redesigned relationship and lifecycle pages stay legible across representa
       colorScheme: 'dark',
     },
     { route: '/settings?tab=appearance', text: '月潮观测所', width: 1440, height: 900, colorScheme: 'light' },
+    { route: '/settings?tab=appearance', text: '月潮观测所', width: 1440, height: 900, colorScheme: 'dark' },
     { route: '/settings?tab=about', text: '版权与品牌', width: 1440, height: 900, colorScheme: 'dark' },
     { route: '/work/agents/new', text: '创建智能体', width: 1440, height: 900, colorScheme: 'dark' },
     {
@@ -2233,6 +2240,37 @@ test('desktop shell keeps a 48px top bar and a permanently available object pane
   expect(chromeGeometry.railBottom).toBeGreaterThanOrEqual(16)
   expect(chromeGeometry.treeBottom).toBeGreaterThanOrEqual(16)
   expect(chromeGeometry.stageBottom).toBeGreaterThanOrEqual(16)
+  const shellEdges = await page.evaluate(() => {
+    const body = document.querySelector<HTMLElement>('[data-shell-body]')
+    const rail = document.querySelector<HTMLElement>('aside[aria-label="模式"]')
+    const stage = document.querySelector<HTMLElement>('main')
+    if (!body || !rail || !stage) throw new Error('窗口主体缺少必要表面。')
+    const bodyRect = body.getBoundingClientRect()
+    const railRect = rail.getBoundingClientRect()
+    const stageRect = stage.getBoundingClientRect()
+    return {
+      bodyLeft: bodyRect.left,
+      bodyRight: bodyRect.right,
+      railLeft: railRect.left,
+      stageRight: stageRect.right,
+      viewportWidth: window.innerWidth,
+    }
+  })
+  expect(shellEdges.bodyLeft).toBe(0)
+  expect(shellEdges.railLeft).toBe(0)
+  expect(shellEdges.bodyRight).toBe(shellEdges.viewportWidth)
+  expect(shellEdges.stageRight).toBe(shellEdges.viewportWidth)
+  for (const selector of ['[data-window-brand]', '[data-window-drag-title]']) {
+    const chrome = await page.locator(selector).evaluate((element) => {
+      const style = getComputedStyle(element)
+      return {
+        borders: [style.borderTopWidth, style.borderRightWidth, style.borderBottomWidth, style.borderLeftWidth],
+        shadow: style.boxShadow,
+      }
+    })
+    expect(chrome.borders).toEqual(['0px', '0px', '0px', '0px'])
+    expect(chrome.shadow).toBe('none')
+  }
   await page.locator('html').evaluate((root) => root.style.setProperty('--nxt-window-controls-left', '84px'))
   expect(await topBar.evaluate((element) => getComputedStyle(element).paddingLeft)).toBe('98px')
   expect(await topBar.evaluate((element) => getComputedStyle(element, '::after').left)).toBe('0px')
