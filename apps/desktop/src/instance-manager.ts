@@ -49,6 +49,7 @@ import type { OverlayOpenIntent, OverlayVisibility } from './overlay-visibility.
 import { IpcRegistrationRegistry, type IpcRegistrationTarget } from './ipc-registration.js'
 import { initializeDesktopManager } from './ipc-registration.js'
 import { RuntimeCredentialStore } from './runtime-credential-store.js'
+import { installF12DevToolsShortcut } from './devtools-shortcut.js'
 import {
   ManagerMutationLifecycle,
   runManagerMutation,
@@ -323,6 +324,7 @@ export class DesktopInstanceManager {
           },
         })
         view.setBackgroundColor('#00000000')
+        installF12DevToolsShortcut(view.webContents)
         view.webContents.setWindowOpenHandler(() => ({ action: 'deny' }))
         installExactTrustedNavigationGuard(view.webContents, () => this.#overlayTrustedUrl)
         view.webContents.on('did-start-navigation', (_event, _url, _isInPlace, isMainFrame) => {
@@ -710,6 +712,7 @@ export class DesktopInstanceManager {
       },
     })
     view.setBackgroundColor('#172A45')
+    installF12DevToolsShortcut(view.webContents)
     view.webContents.on('dom-ready', () => {
       if (view.webContents.isDestroyed()) return
       void view.webContents.insertCSS(desktopTitleBarCss(process.platform)).catch((error: unknown) => {
@@ -834,6 +837,7 @@ export class DesktopInstanceManager {
     if (view === undefined) {
       view = new WebContentsView({ webPreferences: { contextIsolation: true, nodeIntegration: false, sandbox: true } })
       view.setBackgroundColor('#F5F2EE')
+      installF12DevToolsShortcut(view.webContents)
       view.webContents.setWindowOpenHandler(() => ({ action: 'deny' }))
       installExactTrustedNavigationGuard(
         view.webContents,

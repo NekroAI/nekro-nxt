@@ -79,6 +79,25 @@ describe('Desktop trusted View navigation boundary', () => {
     expect(newProfileAction).toHaveBeenCalledOnce()
   })
 
+  it('allows a Fallback view to replace its loading document with the current result document', () => {
+    const listeners = new Map<string, (event: { preventDefault(): void }, target: string) => void>()
+    const loadingUrl = 'data:text/html,loading-profile'
+    const resultUrl = 'data:text/html,failed-profile'
+    const mainFrame = { url: loadingUrl }
+    installExactTrustedNavigationGuard(
+      { mainFrame, getURL: () => loadingUrl, on: (event, listener) => listeners.set(event, listener) },
+      () => resultUrl,
+    )
+
+    const resultNavigation = vi.fn()
+    listeners.get('will-navigate')?.({ preventDefault: resultNavigation }, resultUrl)
+    expect(resultNavigation).not.toHaveBeenCalled()
+
+    const externalNavigation = vi.fn()
+    listeners.get('will-navigate')?.({ preventDefault: externalNavigation }, 'https://external.example.test/')
+    expect(externalNavigation).toHaveBeenCalledOnce()
+  })
+
   it('keeps the second Fallback load alive when the first cancelled load rejects late', async () => {
     const loads = new LatestTrustedLoad<{ readonly profileId: string }>()
     let rejectFirst!: (cause: Error) => void

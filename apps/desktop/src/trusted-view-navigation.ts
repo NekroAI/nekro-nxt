@@ -36,18 +36,13 @@ export const installExactTrustedNavigationGuard = (
       action()
       return
     }
-    if (!trustedSource || target !== expected) event.preventDefault()
+    // A Fallback view replaces its loading document with a result document.
+    // The complete target data URL is supplied by the main process.
+    if (expected === undefined || target !== expected) event.preventDefault()
   })
   contents.on('will-redirect', (event, target) => {
     const expected = expectedUrl()
-    if (
-      expected === undefined ||
-      contents.getURL() !== expected ||
-      contents.mainFrame.url !== expected ||
-      target !== expected
-    ) {
-      event.preventDefault()
-    }
+    if (expected === undefined || target !== expected) event.preventDefault()
   })
 }
 

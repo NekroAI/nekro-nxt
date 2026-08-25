@@ -22,7 +22,9 @@ export const fetchSameOriginRemote = async (
 ): Promise<Response> => {
   const expected = new URL(pathname, origin).href
   const response = await fetcher(expected, { ...init, redirect: 'error' })
-  assertSameOriginRemoteUrl(origin, response.url, expected)
+  // Electron session.fetch can omit Response.url. Redirects are already
+  // rejected by redirect:error, so only validate the final URL when present.
+  if (response.url !== '') assertSameOriginRemoteUrl(origin, response.url, expected)
   return response
 }
 

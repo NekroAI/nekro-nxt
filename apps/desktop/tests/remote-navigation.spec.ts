@@ -82,4 +82,17 @@ describe('Desktop remote navigation boundary', () => {
       expect.objectContaining({ code: 'unsafe-redirect' }),
     )
   })
+
+  it('accepts an Electron response without response.url while keeping redirects disabled', async () => {
+    const origin = 'http://localhost:4960'
+    class ElectronResponse extends Response {
+      override get url(): string {
+        return ''
+      }
+    }
+    const fetcher = vi.fn<RemoteFetch>(() => Promise.resolve(new ElectronResponse('{}')))
+
+    await expect(fetchSameOriginRemote(fetcher, origin, '/.well-known/nekro-nxt')).resolves.toBeInstanceOf(Response)
+    expect(fetcher).toHaveBeenCalledWith(`${origin}/.well-known/nekro-nxt`, { redirect: 'error' })
+  })
 })
