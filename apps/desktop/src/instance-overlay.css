@@ -19,6 +19,7 @@
   --accent: #466394;
   --focus: #0b73b4;
   --danger: #b83a3a;
+  --scrim: rgb(15 26 44 / 28%);
   --motion-enter: 160ms;
   --motion-exit: 100ms;
   --ease-enter: cubic-bezier(0.16, 1, 0.3, 1);
@@ -37,6 +38,7 @@
     --accent: #96afd8;
     --focus: #6bc3f4;
     --danger: #ff8f8f;
+    --scrim: rgb(3 10 20 / 48%);
   }
 }
 
@@ -65,11 +67,33 @@ input {
   font: inherit;
 }
 
+.sheet-backdrop {
+  display: grid;
+  width: 100%;
+  height: 100%;
+  align-items: end;
+  justify-items: start;
+  padding: 12px 12px 12px 64px;
+  background: var(--scrim);
+  opacity: 1;
+  transition: opacity var(--motion-enter) var(--ease-enter);
+}
+html[data-visibility='closed'] .sheet-backdrop,
+html[data-visibility='closing'] .sheet-backdrop {
+  opacity: 0;
+}
+html[data-visibility='closing'] .sheet-backdrop {
+  transition-duration: var(--motion-exit);
+  transition-timing-function: var(--ease-exit);
+}
+
 .panel {
   position: relative;
   display: grid;
   grid-template-rows: auto minmax(0, 1fr) auto;
-  height: 100%;
+  width: min(344px, calc(100vw - 76px));
+  height: min(480px, calc(100vh - 24px));
+  min-height: 0;
   overflow: hidden;
   border: 1px solid color-mix(in srgb, var(--border) 82%, transparent);
   border-radius: 12px;
@@ -384,9 +408,19 @@ input:focus-visible {
   color: var(--muted);
 }
 @media (prefers-reduced-motion: reduce) {
+  .sheet-backdrop,
   .panel,
   .instance-row {
     transition-duration: 1ms;
+  }
+}
+
+@media (max-width: 460px) {
+  .sheet-backdrop {
+    padding-left: 12px;
+  }
+  .panel {
+    width: min(344px, calc(100vw - 24px));
   }
 }
 .risk-inline {

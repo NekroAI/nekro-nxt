@@ -2724,7 +2724,7 @@ test('trusted Desktop bridge renders the persistent remote-instance entry across
       configurable: true,
       value: {
         getCurrentInstancePresentation: () =>
-          Promise.resolve({ displayName: '远程开发环境', status: 'ready' as const }),
+          Promise.resolve({ revision: 1, displayName: '远程开发环境', status: 'ready' as const }),
         openInstanceSwitcher: () => {
           testWindow.__desktopSwitcherOpenCount = (testWindow.__desktopSwitcherOpenCount ?? 0) + 1
           return Promise.resolve()

@@ -17,6 +17,10 @@ let browser: Browser
 interface OverlayControl {
   addCalls: number
   reauthenticateCalls: number
+  closeCalls: number
+  snapshot: { revision: number; currentProfileId: string; profiles: readonly OverlayProfile[] }
+  snapshotListener?: (snapshot: OverlayControl['snapshot']) => void
+  visibilityListener?: (visibility: unknown) => void
   payload?: Record<string, unknown>
   resolve?: () => void
   reject?: (error: Error) => void
@@ -25,6 +29,10 @@ interface OverlayControl {
 declare global {
   interface Window {
     __overlayControl: OverlayControl
+    __focusedOverlayNode?: Element
+    __compositionEndCount?: number
+    __overlayAnimationFrames?: FrameRequestCallback[]
+    __flushOverlayAnimationFrames?: () => void
     nxtInstances: Record<string, unknown>
   }
 }
@@ -58,15 +66,32 @@ const localProfile: OverlayProfile = {
   insecureHttp: false,
 }
 
+const remoteProfile: OverlayProfile = {
+  id: 'remote-1',
+  kind: 'remote',
+  displayName: '北辰实例',
+  origin: 'https://remote.example.test:7443',
+  addressLabel: 'remote.example.test:7443',
+  status: 'ready',
+  notificationsEnabled: true,
+  requiresAuthentication: true,
+  insecureHttp: false,
+}
+
 const openOverlayPage = async (profiles: readonly OverlayProfile[] = [localProfile]): Promise<Page> => {
-  const page = await browser.newPage({ viewport: { width: 344, height: 480 }, colorScheme: 'dark' })
+  const page = await browser.newPage({ viewport: { width: 980, height: 632 }, colorScheme: 'dark' })
   await page.setContent('<!doctype html><html lang="zh-CN"><body><main id="app"></main></body></html>')
   await page.addStyleTag({ path: path.join(desktopRoot, 'src/instance-overlay.css') })
   await page.evaluate((providedProfiles) => {
-    const control: OverlayControl = { addCalls: 0, reauthenticateCalls: 0 }
+    const control: OverlayControl = {
+      addCalls: 0,
+      reauthenticateCalls: 0,
+      closeCalls: 0,
+      snapshot: { revision: 1, currentProfileId: 'local', profiles: providedProfiles },
+    }
     window.__overlayControl = control
     window.nxtInstances = {
-      list: () => Promise.resolve({ currentProfileId: 'local', profiles: providedProfiles }),
+      list: () => Promise.resolve(control.snapshot),
       add: (payload: Record<string, unknown>) => {
         control.addCalls += 1
         control.payload = payload
@@ -84,11 +109,22 @@ const openOverlayPage = async (profiles: readonly OverlayProfile[] = [localProfi
         return Promise.resolve()
       },
       remove: () => Promise.resolve(),
-      close: () => Promise.resolve(),
-      subscribe: () => () => undefined,
-      subscribeVisibility: (listener: (state: string) => void) => {
-        listener('open')
-        return () => undefined
+      close: () => {
+        control.closeCalls += 1
+        return Promise.resolve()
+      },
+      subscribe: (listener: (snapshot: OverlayControl['snapshot']) => void) => {
+        control.snapshotListener = listener
+        return () => {
+          delete control.snapshotListener
+        }
+      },
+      subscribeVisibility: (listener: (state: unknown) => void) => {
+        control.visibilityListener = listener
+        listener({ state: 'open', intent: { kind: 'list' } })
+        return () => {
+          delete control.visibilityListener
+        }
       },
     }
   }, profiles)
@@ -97,11 +133,102 @@ const openOverlayPage = async (profiles: readonly OverlayProfile[] = [localProfi
   return page
 }
 
+const deferOverlayAnimationFrames = (page: Page): Promise<void> =>
+  page.evaluate(() => {
+    const callbacks: FrameRequestCallback[] = []
+    window.__overlayAnimationFrames = callbacks
+    window.requestAnimationFrame = (callback) => {
+      callbacks.push(callback)
+      return callbacks.length
+    }
+    window.__flushOverlayAnimationFrames = () => {
+      const pending = callbacks.splice(0)
+      const timestamp = performance.now()
+      for (const callback of pending) callback(timestamp)
+    }
+  })
+
+const flushOverlayAnimationFrames = (page: Page): Promise<void> =>
+  page.evaluate(() => window.__flushOverlayAnimationFrames?.())
+
+const waitForOverlayAnimationFrame = (page: Page): Promise<void> =>
+  page.evaluate(() => new Promise<void>((resolve) => requestAnimationFrame(() => resolve())))
+
 const enterAddDraft = async (page: Page): Promise<void> => {
   await page.getByRole('button', { name: /添加远程实例/u }).click()
   await page.locator('#name').fill('客厅服务器')
   await page.locator('#address').fill('https://nxt.example.test:7443')
   await page.locator('#key').fill('draft-secret-value')
+}
+
+const publishSnapshot = async (
+  page: Page,
+  profiles: readonly OverlayProfile[],
+  currentProfileId = 'local',
+): Promise<void> => {
+  await page.evaluate(
+    ({ nextProfiles, nextCurrentProfileId }) => {
+      const control = window.__overlayControl
+      control.snapshot = {
+        revision: control.snapshot.revision + 1,
+        currentProfileId: nextCurrentProfileId,
+        profiles: nextProfiles,
+      }
+      control.snapshotListener?.(control.snapshot)
+    },
+    { nextProfiles: profiles, nextCurrentProfileId: currentProfileId },
+  )
+}
+
+const expectFocusedFieldStableThroughSnapshots = async (
+  page: Page,
+  selector: string,
+  profiles: readonly OverlayProfile[],
+): Promise<void> => {
+  const before = await page.locator(selector).inputValue()
+  const end = Math.max(1, before.length - 1)
+  await page.locator(selector).evaluate((element, selectionEnd) => {
+    if (!(element instanceof HTMLInputElement)) throw new Error('目标字段不是输入框。')
+    window.__focusedOverlayNode = element
+    window.__compositionEndCount = 0
+    element.addEventListener('compositionend', () => {
+      window.__compositionEndCount = (window.__compositionEndCount ?? 0) + 1
+    })
+    element.focus()
+    element.setSelectionRange(1, selectionEnd, 'backward')
+    element.dispatchEvent(new CompositionEvent('compositionstart', { data: '月' }))
+    element.dispatchEvent(new CompositionEvent('compositionupdate', { data: '月潮' }))
+  }, end)
+
+  for (const status of ['ready', 'offline', 'ready'] as const) {
+    await publishSnapshot(
+      page,
+      profiles.map((profile) => ({ ...profile, status })),
+    )
+  }
+
+  const after = await page.locator(selector).evaluate((element) => {
+    if (!(element instanceof HTMLInputElement)) throw new Error('目标字段不是输入框。')
+    return {
+      sameNode: element === window.__focusedOverlayNode,
+      active: document.activeElement === element,
+      value: element.value,
+      selectionStart: element.selectionStart,
+      selectionEnd: element.selectionEnd,
+      selectionDirection: element.selectionDirection,
+      compositionEndCount: window.__compositionEndCount,
+    }
+  })
+  expect(after).toEqual({
+    sameNode: true,
+    active: true,
+    value: before,
+    selectionStart: 1,
+    selectionEnd: end,
+    selectionDirection: 'backward',
+    compositionEndCount: 0,
+  })
+  await page.locator(selector).dispatchEvent('compositionend', { data: '月潮' })
 }
 
 describe('Desktop instance overlay accessibility contract', { timeout: 15_000 }, () => {
@@ -243,6 +370,123 @@ describe('Desktop instance overlay accessibility contract', { timeout: 15_000 },
     await page.close()
   })
 
+  it('keeps add-form name, address, and key nodes, caret, selection, and composition through status snapshots', async () => {
+    const page = await openOverlayPage([localProfile, remoteProfile])
+    await enterAddDraft(page)
+
+    for (const selector of ['#name', '#address', '#key']) {
+      await expectFocusedFieldStableThroughSnapshots(page, selector, [localProfile, remoteProfile])
+    }
+
+    await page.close()
+  })
+
+  it('keeps edit and reauthentication fields stable through snapshots and exits only when the target is removed', async () => {
+    const page = await openOverlayPage([localProfile, remoteProfile])
+    await page.getByRole('button', { name: '北辰实例的更多操作' }).click()
+    await page.getByRole('menuitem', { name: '修改名称' }).click()
+    await page.locator('#name').fill('北辰工作区')
+    await expectFocusedFieldStableThroughSnapshots(page, '#name', [localProfile, remoteProfile])
+
+    await page.getByRole('button', { name: '取消' }).click()
+    await page.getByRole('menuitem', { name: '重新认证' }).click()
+    await page.locator('#key').fill('synthetic-management-key')
+    await expectFocusedFieldStableThroughSnapshots(page, '#key', [localProfile, remoteProfile])
+
+    await publishSnapshot(page, [localProfile])
+    await expect(page.getByRole('button', { name: /添加远程实例/u }).isVisible()).resolves.toBe(true)
+    await expect(page.locator('#key').count()).resolves.toBe(0)
+    await page.close()
+  })
+
+  it('opens a Fallback reauthentication intent directly with an empty focused secret and clears it on close', async () => {
+    const page = await openOverlayPage([localProfile, remoteProfile])
+    await page.evaluate(() => {
+      window.__overlayControl.visibilityListener?.({
+        state: 'open',
+        intent: { kind: 'reauthenticate', profileId: 'remote-1' },
+      })
+    })
+    await waitForOverlayAnimationFrame(page)
+    await expect(page.getByRole('heading', { name: '重新认证' }).isVisible()).resolves.toBe(true)
+    await expect(page.locator('#key').inputValue()).resolves.toBe('')
+    await expect(page.locator('#key').evaluate((element) => document.activeElement === element)).resolves.toBe(true)
+    await page.locator('#key').fill('synthetic-management-key')
+
+    await page.evaluate(() => window.__overlayControl.visibilityListener?.({ state: 'closing' }))
+    await expect(page.locator('#key').count()).resolves.toBe(0)
+    await page.evaluate(() => {
+      window.__overlayControl.visibilityListener?.({
+        state: 'open',
+        intent: { kind: 'reauthenticate', profileId: 'remote-1' },
+      })
+    })
+    await waitForOverlayAnimationFrame(page)
+    await expect(page.locator('#key').inputValue()).resolves.toBe('')
+    await expect(page.locator('#key').evaluate((element) => document.activeElement === element)).resolves.toBe(true)
+    await page.close()
+  })
+
+  it('patches list status in place while preserving the focused instance control', async () => {
+    const page = await openOverlayPage([localProfile, remoteProfile])
+    const remoteButton = page.getByRole('button', { name: /北辰实例/u }).first()
+    await remoteButton.focus()
+    await remoteButton.evaluate((element) => {
+      window.__focusedOverlayNode = element
+    })
+
+    await publishSnapshot(page, [localProfile, { ...remoteProfile, status: 'offline' }])
+    await expect(remoteButton.getAttribute('aria-current')).resolves.toBe('false')
+    await expect(remoteButton.textContent()).resolves.toContain('无法连接')
+    await expect(remoteButton.locator('.dot.offline').count()).resolves.toBe(1)
+    await publishSnapshot(page, [localProfile, { ...remoteProfile, status: 'ready' }])
+
+    const identity = await remoteButton.evaluate((element) => ({
+      sameNode: element === window.__focusedOverlayNode,
+      active: document.activeElement === element,
+    }))
+    expect(identity).toEqual({ sameNode: true, active: true })
+    await expect(remoteButton.textContent()).resolves.toContain('运行正常')
+    await page.close()
+  })
+
+  it('uses backdrop and Escape as one Sheet hierarchy and traps Tab inside the panel', async () => {
+    const page = await openOverlayPage([localProfile, remoteProfile])
+    await deferOverlayAnimationFrames(page)
+    await page.getByRole('button', { name: /添加远程实例/u }).click()
+    await page.locator('#key').fill('synthetic-management-key')
+    await page.locator('.sheet-backdrop').click({ position: { x: 900, y: 60 } })
+    await expect(page.getByRole('button', { name: /添加远程实例/u }).isVisible()).resolves.toBe(true)
+    await expect(page.evaluate(() => window.__overlayControl.closeCalls)).resolves.toBe(0)
+    await page.getByRole('button', { name: /添加远程实例/u }).click()
+    await expect(page.locator('#key').inputValue()).resolves.toBe('')
+    await page.keyboard.press('Escape')
+
+    const add = page.getByRole('button', { name: /添加远程实例/u })
+    await add.focus()
+    await page.keyboard.press('Tab')
+    await flushOverlayAnimationFrames(page)
+    await expect(page.evaluate(() => document.activeElement?.getAttribute('data-action'))).resolves.toBe('switch')
+    await page.locator('.sheet-backdrop').click({ position: { x: 900, y: 60 } })
+    await expect(page.evaluate(() => window.__overlayControl.closeCalls)).resolves.toBe(1)
+    await page.close()
+  })
+
+  it('cancels stale focus callbacks across consecutive mode changes', async () => {
+    const page = await openOverlayPage([localProfile, remoteProfile])
+    await deferOverlayAnimationFrames(page)
+    await page.getByRole('button', { name: /添加远程实例/u }).click()
+    await page.keyboard.press('Escape')
+    await page.getByRole('button', { name: '北辰实例的更多操作' }).click()
+    await page.getByRole('menuitem', { name: '修改名称' }).click()
+
+    await expect(page.evaluate(() => document.activeElement === document.body)).resolves.toBe(true)
+    await flushOverlayAnimationFrames(page)
+    await expect(page.getByRole('heading', { name: '修改实例名称' }).isVisible()).resolves.toBe(true)
+    await expect(page.locator('#name').evaluate((element) => document.activeElement === element)).resolves.toBe(true)
+    await page.close()
+  })
+
   it.each([
     { action: 'cancel', settle: 'reject' },
     { action: 'escape', settle: 'resolve' },
@@ -297,21 +541,33 @@ describe('Desktop instance overlay accessibility contract', { timeout: 15_000 },
     const diagnostic = "Error invoking remote method 'nxt:instances:switch': Error: private stack"
     const presentation = trustedFallbackForError(new InstanceOperationError('authentication-required', diagnostic), {
       canReauthenticate: true,
+      canReturnLocal: true,
     })
-    const page = await browser.newPage({ viewport: { width: 720, height: 480 }, colorScheme: 'dark' })
-    await page.setContent(renderTrustedFallbackHtml('无法连接「远程实例」', presentation.body, presentation.actions))
+    const page = await browser.newPage({ viewport: { width: 980, height: 680 }, colorScheme: 'dark' })
+    await page.setContent(
+      renderTrustedFallbackHtml({
+        title: '无法连接「远程实例」',
+        body: presentation.body,
+        actions: presentation.actions,
+        platform: 'darwin',
+        instance: { displayName: '远程实例', addressLabel: 'secure.example.test', status: presentation.status },
+      }),
+    )
 
     await expect(page.getByRole('heading', { name: '无法连接「远程实例」' }).isVisible()).resolves.toBe(true)
     await expect(page.getByText('此客户端的设备会话已经失效，请重新认证。').isVisible()).resolves.toBe(true)
     await expect(page.getByRole('link', { name: '重新认证' }).getAttribute('href')).resolves.toBe(
       'nxt-desktop://reauthenticate',
     )
+    await expect(page.getByRole('link', { name: '返回本地实例' }).getAttribute('href')).resolves.toBe(
+      'nxt-desktop://local',
+    )
     await expect(page.locator('body').textContent()).resolves.not.toContain('nxt:instances:switch')
     await expect(page.locator('body').textContent()).resolves.not.toContain('Error:')
     await page.close()
   })
 
-  it('keeps every production Trusted Fallback state inside narrow and normal viewports', async () => {
+  it('keeps every production Trusted Fallback state inside minimum and normal Desktop viewports', async () => {
     const scenarios = [
       { name: 'generic', cause: new Error('internal generic diagnostic') },
       {
@@ -323,18 +579,40 @@ describe('Desktop instance overlay accessibility contract', { timeout: 15_000 },
         cause: new InstanceOperationError('incompatible-instance', 'internal incompatible diagnostic'),
       },
     ]
-    for (const width of [320, 344, 480, 720]) {
+    for (const viewport of [
+      { width: 980, height: 680 },
+      { width: 1360, height: 880 },
+    ]) {
       for (const scenario of scenarios) {
-        const presentation = trustedFallbackForError(scenario.cause, { canReauthenticate: true })
-        const page = await browser.newPage({ viewport: { width, height: 480 }, colorScheme: 'dark' })
+        const presentation = trustedFallbackForError(scenario.cause, {
+          canReauthenticate: true,
+          canReturnLocal: true,
+        })
+        const page = await browser.newPage({ viewport, colorScheme: 'dark' })
         await page.setContent(
-          renderTrustedFallbackHtml(`无法连接「${scenario.name}」`, presentation.body, presentation.actions),
+          renderTrustedFallbackHtml({
+            title: `无法连接「${scenario.name}」`,
+            body: presentation.body,
+            actions: presentation.actions,
+            platform: 'darwin',
+            instance: {
+              displayName: scenario.name,
+              addressLabel: `${scenario.name}.example.test`,
+              status: presentation.status,
+            },
+          }),
         )
         const geometry = await page.evaluate(() => {
-          const card = document.querySelector('.card')
-          const copy = document.querySelector('.card p')
+          const workspace = document.querySelector('.workspace')
+          const titlebar = document.querySelector('.titlebar')
+          const copy = document.querySelector('.reason p:not(.eyebrow)')
           const actions = [...document.querySelectorAll('.actions a')]
-          if (!(card instanceof HTMLElement) || !(copy instanceof HTMLElement) || actions.length === 0) {
+          if (
+            !(workspace instanceof HTMLElement) ||
+            !(titlebar instanceof HTMLElement) ||
+            !(copy instanceof HTMLElement) ||
+            actions.length === 0
+          ) {
             throw new Error('Trusted Fallback DOM 不完整。')
           }
           const rectangle = (element: Element) => {
@@ -354,24 +632,26 @@ describe('Desktop instance overlay accessibility contract', { timeout: 15_000 },
             clientWidth: document.documentElement.clientWidth,
             clientHeight: document.documentElement.clientHeight,
             scrollWidth: document.documentElement.scrollWidth,
-            card: rectangle(card),
+            workspace: rectangle(workspace),
+            titlebar: rectangle(titlebar),
             copy: rectangle(copy),
             actions: actions.map(rectangle),
           }
         })
-        const context = `${scenario.name} @ ${width}x480`
+        const context = `${scenario.name} @ ${viewport.width}x${viewport.height}`
         expect(geometry.scrollWidth, context).toBeLessThanOrEqual(geometry.clientWidth)
-        expect(geometry.card.left, context).toBeGreaterThanOrEqual(0)
-        expect(geometry.card.right, context).toBeLessThanOrEqual(geometry.clientWidth)
-        expect(geometry.card.width, context).toBeGreaterThan(0)
+        expect(geometry.titlebar.height, context).toBe(48)
+        expect(geometry.workspace.left, context).toBeGreaterThanOrEqual(0)
+        expect(geometry.workspace.right, context).toBeLessThanOrEqual(geometry.clientWidth)
+        expect(geometry.workspace.width, context).toBeGreaterThan(0)
         expect(geometry.copy.width, context).toBeGreaterThan(0)
         expect(geometry.copy.visible, context).toBe(true)
         for (const action of geometry.actions) {
           expect(action.visible, context).toBe(true)
           expect(action.width, context).toBeGreaterThan(0)
           expect(action.height, context).toBeGreaterThan(0)
-          expect(action.left, context).toBeGreaterThanOrEqual(geometry.card.left)
-          expect(action.right, context).toBeLessThanOrEqual(geometry.card.right)
+          expect(action.left, context).toBeGreaterThanOrEqual(geometry.workspace.left)
+          expect(action.right, context).toBeLessThanOrEqual(geometry.workspace.right)
           expect(action.top, context).toBeGreaterThanOrEqual(0)
           expect(action.bottom, context).toBeLessThanOrEqual(geometry.clientHeight)
         }
@@ -384,7 +664,7 @@ describe('Desktop instance overlay accessibility contract', { timeout: 15_000 },
     const source = await readFile(path.join(desktopRoot, 'src/instance-overlay.js'), 'utf8')
 
     expect(source).toContain('<ul class="list" aria-label="服务实例列表">')
-    expect(source).toContain('<li class="instance-item">')
+    expect(source).toContain('<li class="instance-item" data-profile-id=')
     expect(source).toContain('<button class="more"')
     expect(source).toContain('aria-haspopup="menu"')
     expect(source).toContain("aria-expanded=\"${menuOpen ? 'true' : 'false'}\"")

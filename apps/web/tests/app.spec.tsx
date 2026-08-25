@@ -764,7 +764,7 @@ describe.sequential('NekroNxt browser projections', { timeout: 30_000 }, () => {
             configurable: true,
             value: {
               getCurrentInstancePresentation: () =>
-                Promise.resolve({ displayName: '远程开发环境', status: 'ready' as const }),
+                Promise.resolve({ revision: 1, displayName: '远程开发环境', status: 'ready' as const }),
               openInstanceSwitcher: () => {
                 testWindow.__instanceSwitcherOpenCount = (testWindow.__instanceSwitcherOpenCount ?? 0) + 1
                 return new Promise<void>((resolve) => {
@@ -777,6 +777,108 @@ describe.sequential('NekroNxt browser projections', { timeout: 30_000 }, () => {
                 return Promise.resolve()
               },
               subscribeCurrentInstanceStatus: () => () => undefined,
+            },
+          })
+        })
+      },
+    )
+  })
+
+  it('does not let an older Desktop presentation request overwrite a newer subscribed event', async () => {
+    await withProductPage(
+      '/',
+      async (page) => {
+        const entry = page.getByRole('button', { name: /^管理并添加远程服务实例：北辰实例/u })
+        await playwrightExpect(entry).toHaveAccessibleName('管理并添加远程服务实例：北辰实例 · 无法连接')
+        await page.evaluate(() => {
+          ;(
+            window as Window & {
+              __resolveInitialDesktopPresentation?: (state: {
+                revision: number
+                displayName: string
+                status: 'ready'
+              }) => void
+            }
+          ).__resolveInitialDesktopPresentation?.({ revision: 4, displayName: '旧实例名称', status: 'ready' })
+        })
+        await page.waitForTimeout(20)
+        await playwrightExpect(entry).toHaveAccessibleName('管理并添加远程服务实例：北辰实例 · 无法连接')
+      },
+      browserSnapshot,
+      async (page) => {
+        await page.addInitScript(() => {
+          const testWindow = window as Window & {
+            __resolveInitialDesktopPresentation?: (state: {
+              revision: number
+              displayName: string
+              status: 'ready'
+            }) => void
+          }
+          Object.defineProperty(window, 'nekroDesktopShell', {
+            configurable: true,
+            value: {
+              getCurrentInstancePresentation: () =>
+                new Promise((resolve) => {
+                  testWindow.__resolveInitialDesktopPresentation = resolve
+                }),
+              openInstanceSwitcher: () => Promise.resolve(),
+              closeInstanceSwitcher: () => Promise.resolve(),
+              subscribeCurrentInstanceStatus: (listener: (state: unknown) => void) => {
+                queueMicrotask(() => listener({ revision: 5, displayName: '北辰实例', status: 'offline' as const }))
+                return () => undefined
+              },
+            },
+          })
+        })
+      },
+    )
+  })
+
+  it('accepts protocol-1 Desktop shapes without revision and keeps subscription arrival order', async () => {
+    await withProductPage(
+      '/',
+      async (page) => {
+        const entry = page.getByRole('button', { name: /^管理并添加远程服务实例：旧版远程实例/u })
+        await playwrightExpect(entry).toHaveAccessibleName('管理并添加远程服务实例：旧版远程实例 · 无法连接')
+        await page.evaluate(() => {
+          ;(
+            window as Window & {
+              __publishLegacyDesktopPresentation?: (state: { displayName: string; status: 'ready' | 'offline' }) => void
+            }
+          ).__publishLegacyDesktopPresentation?.({ displayName: '旧版远程实例', status: 'ready' })
+        })
+        await playwrightExpect(entry).toHaveAccessibleName('管理并添加远程服务实例：旧版远程实例 · 运行正常')
+        await page.evaluate(() => {
+          ;(
+            window as Window & {
+              __resolveLegacyInitialDesktopPresentation?: (state: { displayName: string; status: 'ready' }) => void
+            }
+          ).__resolveLegacyInitialDesktopPresentation?.({ displayName: '迟到初始实例', status: 'ready' })
+        })
+        await page.waitForTimeout(20)
+        await playwrightExpect(entry).toHaveAccessibleName('管理并添加远程服务实例：旧版远程实例 · 运行正常')
+      },
+      browserSnapshot,
+      async (page) => {
+        await page.addInitScript(() => {
+          const testWindow = window as Window & {
+            __publishLegacyDesktopPresentation?: (state: unknown) => void
+            __resolveLegacyInitialDesktopPresentation?: (state: unknown) => void
+          }
+          Object.defineProperty(window, 'nekroDesktopShell', {
+            configurable: true,
+            value: {
+              getCurrentInstancePresentation: () =>
+                new Promise((resolve) => {
+                  testWindow.__resolveLegacyInitialDesktopPresentation = resolve
+                }),
+              openInstanceSwitcher: () => Promise.resolve(),
+              closeInstanceSwitcher: () => Promise.resolve(),
+              subscribeCurrentInstanceStatus: (listener: (state: unknown) => void) => {
+                testWindow.__publishLegacyDesktopPresentation = listener
+                queueMicrotask(() => listener({ displayName: '旧版远程实例', status: 'offline' as const }))
+                return () => undefined
+              },
             },
           })
         })

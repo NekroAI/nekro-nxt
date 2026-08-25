@@ -13,6 +13,7 @@ import {
 } from './distribution.js'
 import { HostSupervisor, abortableDelay } from './host-supervisor.js'
 import { DesktopInstanceManager } from './instance-manager.js'
+import { LocalHostLifecycleRelay } from './local-host-state.js'
 
 const LOOPBACK_HOST = '127.0.0.1'
 const HOST_READY_TIMEOUT_MS = 60_000
@@ -21,6 +22,8 @@ const HOST_READY_INTERVAL_MS = 200
 let mainWindow: BrowserWindow | undefined
 let hostSupervisor: HostSupervisor | undefined
 let instanceManager: DesktopInstanceManager | undefined
+let detachLocalHostLifecycle: (() => void) | undefined
+const localHostLifecycle = new LocalHostLifecycleRelay()
 
 const productReleasePath = (): string => resolveProductReleasePath(import.meta.url)
 
@@ -100,12 +103,15 @@ const startProductHost = async (release: ProductRelease): Promise<string> => {
     },
     waitUntilReady: (hostOrigin, signal) => waitForHostReady(hostOrigin, release.releaseId, signal),
     onRestarting: ({ attempt, delayMs, cause }) => {
+      localHostLifecycle.commit('restarting')
       console.warn(`[desktop] 本地 Host 已停止，将在 ${delayMs}ms 后进行第 ${attempt} 次恢复：${cause.message}`)
     },
     onRecovered: (attempt) => {
+      localHostLifecycle.commit('recovered')
       console.info(`[desktop] 本地 Host 已在同一地址恢复（第 ${attempt} 次尝试）。`)
     },
     onFatal: (error) => {
+      localHostLifecycle.commit('fatal')
       console.error('[desktop] 本地 Host 自动恢复已停止。', error)
       dialog.showErrorBox(
         'NekroNXT Host 无法恢复',
@@ -115,6 +121,7 @@ const startProductHost = async (release: ProductRelease): Promise<string> => {
   })
   hostSupervisor = supervisor
   await supervisor.start()
+  localHostLifecycle.commit('initial-ready')
   return origin
 }
 
@@ -145,9 +152,17 @@ void app.whenReady().then(async () => {
   app.setAppUserModelId(desktopDistribution.appId)
   try {
     const origin = await startProductHost(productRelease)
-    instanceManager = await DesktopInstanceManager.create({ localOrigin: origin, release: productRelease })
-    mainWindow = instanceManager.window
+    const manager = await DesktopInstanceManager.create({
+      localOrigin: origin,
+      release: productRelease,
+      localHostStatus: localHostLifecycle.status,
+    })
+    instanceManager = manager
+    detachLocalHostLifecycle = localHostLifecycle.subscribe((status) => manager.commitLocalHostStatus(status))
+    mainWindow = manager.window
     mainWindow.on('closed', () => {
+      detachLocalHostLifecycle?.()
+      detachLocalHostLifecycle = undefined
       mainWindow = undefined
       instanceManager = undefined
     })
@@ -173,6 +188,8 @@ app.on('window-all-closed', () => {
 app.on('before-quit', (event) => {
   if (hostSupervisor === undefined) return
   event.preventDefault()
+  detachLocalHostLifecycle?.()
+  detachLocalHostLifecycle = undefined
   instanceManager?.dispose()
   void stopProductHost().finally(() => app.quit())
 })

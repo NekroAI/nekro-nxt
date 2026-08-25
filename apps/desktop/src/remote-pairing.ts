@@ -86,10 +86,17 @@ const spkiFromCertificate = (certificate: string | Buffer): string => {
     .digest('base64url')
 }
 
-const remoteTlsSocket = async (origin: string, expectedSpkiSha256?: string) => {
+const signalError = (signal: AbortSignal): Error =>
+  signal.reason instanceof Error ? signal.reason : new Error('连接服务器已取消。')
+
+const remoteTlsSocket = async (origin: string, expectedSpkiSha256?: string, signal?: AbortSignal) => {
   const url = new URL(origin)
   const host = url.hostname.replace(/^\[|\]$/gu, '')
   return new Promise<ReturnType<typeof tlsConnect>>((resolve, reject) => {
+    if (signal?.aborted) {
+      reject(signalError(signal))
+      return
+    }
     const socket = tlsConnect(
       {
         host,
@@ -99,6 +106,7 @@ const remoteTlsSocket = async (origin: string, expectedSpkiSha256?: string) => {
         timeout: 8_000,
       },
       () => {
+        signal?.removeEventListener('abort', abort)
         const certificate = socket.getPeerCertificate(true)
         if (!certificate.raw) {
           socket.destroy()
@@ -115,15 +123,22 @@ const remoteTlsSocket = async (origin: string, expectedSpkiSha256?: string) => {
         resolve(socket)
       },
     )
+    const abort = (): void => {
+      socket.destroy(signal === undefined ? new Error('连接服务器已取消。') : signalError(signal))
+    }
     socket.once('timeout', () =>
       socket.destroy(new InstanceOperationError('unreachable', '连接服务器超时，请检查地址和网络状态。')),
     )
-    socket.once('error', reject)
+    signal?.addEventListener('abort', abort, { once: true })
+    socket.once('error', (error) => {
+      signal?.removeEventListener('abort', abort)
+      reject(error instanceof Error ? error : new Error('连接服务器失败。'))
+    })
   })
 }
 
-export const observeRemoteSpki = async (origin: string): Promise<string> => {
-  const socket = await remoteTlsSocket(origin)
+export const observeRemoteSpki = async (origin: string, signal?: AbortSignal): Promise<string> => {
+  const socket = await remoteTlsSocket(origin, undefined, signal)
   try {
     const certificate = socket.getPeerCertificate(true)
     if (!certificate.raw) {

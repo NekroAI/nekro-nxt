@@ -111,7 +111,13 @@ describe('Desktop Trusted Fallback behavior', () => {
     const presentation = trustedFallbackForError(new InstanceOperationError('authentication-required', diagnostic), {
       canReauthenticate: true,
     })
-    const html = renderTrustedFallbackHtml('无法连接「<script>」', presentation.body, presentation.actions)
+    const html = renderTrustedFallbackHtml({
+      title: '无法连接「<script>」',
+      body: presentation.body,
+      actions: presentation.actions,
+      platform: 'darwin',
+      instance: { displayName: '<script>', addressLabel: 'secure.example.test', status: presentation.status },
+    })
     expect(html).toContain('此客户端的设备会话已经失效，请重新认证。')
     expect(html).toContain('nxt-desktop://reauthenticate')
     expect(html).toContain('&lt;script&gt;')
@@ -130,5 +136,17 @@ describe('Desktop Trusted Fallback behavior', () => {
       { canReauthenticate: false },
     )
     expect(localAuthentication.actions.map(({ href }) => href)).not.toContain('nxt-desktop://reauthenticate')
+  })
+
+  it('makes returning to the local instance the primary action for a remote failure', () => {
+    const remote = trustedFallbackForError(new InstanceOperationError('unreachable', 'private diagnostic'), {
+      canReauthenticate: true,
+      canReturnLocal: true,
+    })
+    expect(remote.actions.map(({ href }) => href)).toEqual([
+      'nxt-desktop://local',
+      'nxt-desktop://retry',
+      'nxt-desktop://instances',
+    ])
   })
 })
