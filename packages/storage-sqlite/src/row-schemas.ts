@@ -23,7 +23,11 @@ import {
   PromptDocumentV1Schema,
   ServerInstanceIdSchema,
 } from '@nekro-nxt/contracts'
-import { AgentCapabilityGrantsSchema, ImageUnderstandingPolicySchema } from '@nekro-nxt/core'
+import {
+  AgentCapabilityGrantsSchema,
+  DynamicClientApprovalPolicySchema,
+  ImageUnderstandingPolicySchema,
+} from '@nekro-nxt/core'
 import {
   admissionEvents,
   admissions,
@@ -63,6 +67,7 @@ export const AgentRevisionRowSchema = createSelectSchema(agentRevisions, {
   agentId: AgentIdSchema,
   capabilities: AgentCapabilityGrantsSchema,
   imagePolicy: ImageUnderstandingPolicySchema,
+  dynamicClientApprovalPolicy: DynamicClientApprovalPolicySchema,
   personaDocument: PromptDocumentV1Schema.nullable(),
 })
 export const AgentCurrentRevisionRowSchema = createSelectSchema(agentCurrentRevisions, {

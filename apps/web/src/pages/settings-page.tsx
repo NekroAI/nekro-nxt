@@ -1,9 +1,20 @@
 import { Settings } from 'lucide-react'
+import { useEffect, useState } from 'react'
 import { LlmProviderSettings } from '../llm-settings.js'
 import { DshExtensionSettings } from '../dsh-extension-settings.js'
-import { PageHeader } from '../components/product-feedback.js'
+import { InlineFeedback, PageHeader } from '../components/product-feedback.js'
+import { notify } from '../components/notifications.js'
 import { useProductStore, type ThemeChoice } from '../product-store.js'
-import { Button, SelectField, StageCrossfade, StatusBadge, SwitchField } from '../ui-kit/index.js'
+import {
+  Button,
+  Field,
+  Input,
+  SecretInput,
+  SelectField,
+  StageCrossfade,
+  StatusBadge,
+  SwitchField,
+} from '../ui-kit/index.js'
 import { useUiPreferences, type ContrastChoice } from '../ui-preferences.js'
 import { useSearchParams } from 'react-router-dom'
 import { useNxtNavigate } from '../shell/nxt-link.js'
@@ -41,6 +52,183 @@ function SystemExtensionsPanel() {
   )
 }
 
+function NotificationsPanel() {
+  const settings = useProductStore((state) => state.notificationSettings)
+  const [systemEnabled, setSystemEnabled] = useState(settings.system.enabled)
+  const [enabled, setEnabled] = useState(settings.bark.enabled)
+  const [serverUrl, setServerUrl] = useState(settings.bark.serverUrl)
+  const [deviceKey, setDeviceKey] = useState('')
+  const [clearDeviceKey, setClearDeviceKey] = useState(false)
+  const [approvalEnabled, setApprovalEnabled] = useState(settings.events['dynamic-client-approval-requested'])
+  const [pending, setPending] = useState<'save' | 'test-bark' | 'test-system' | null>(null)
+  const [error, setError] = useState('')
+
+  useEffect(() => {
+    setSystemEnabled(settings.system.enabled)
+    setEnabled(settings.bark.enabled)
+    setServerUrl(settings.bark.serverUrl)
+    setDeviceKey('')
+    setClearDeviceKey(false)
+    setApprovalEnabled(settings.events['dynamic-client-approval-requested'])
+  }, [settings])
+
+  const save = async (): Promise<void> => {
+    if (pending) return
+    setPending('save')
+    setError('')
+    try {
+      await useProductStore.getState().updateNotificationSettings({
+        ...(settings.revision === undefined ? {} : { expectedRevision: settings.revision }),
+        system: { enabled: systemEnabled },
+        bark: {
+          enabled,
+          serverUrl,
+          ...(deviceKey.trim() ? { deviceKey: deviceKey.trim() } : {}),
+          ...(clearDeviceKey ? { clearDeviceKey: true } : {}),
+        },
+        events: { 'dynamic-client-approval-requested': approvalEnabled },
+      })
+      notify('通知设置已保存。', 'success', 'notification-settings-save')
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : String(cause))
+    } finally {
+      setPending(null)
+    }
+  }
+
+  const test = async (): Promise<void> => {
+    if (pending) return
+    setPending('test-bark')
+    setError('')
+    try {
+      await useProductStore.getState().testBarkNotification({
+        serverUrl,
+        ...(deviceKey.trim() ? { deviceKey: deviceKey.trim() } : {}),
+      })
+      notify('Bark 测试通知已发送。', 'success', 'notification-settings-test')
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : String(cause))
+    } finally {
+      setPending(null)
+    }
+  }
+
+  const testSystem = async (): Promise<void> => {
+    if (pending) return
+    setPending('test-system')
+    setError('')
+    try {
+      await useProductStore.getState().testSystemNotification()
+      notify(
+        '系统测试通知已发布；已连接且允许通知的 Desktop 客户端会收到它。',
+        'success',
+        'system-notification-settings-test',
+      )
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : String(cause))
+    } finally {
+      setPending(null)
+    }
+  }
+
+  const configured = settings.bark.deviceKeyConfigured && !clearDeviceKey
+  const barkTestDisabled = pending !== null || clearDeviceKey || (!configured && !deviceKey.trim())
+  return (
+    <section className={styles.settingsSection} data-settings-content="">
+      <div className={styles.settingsGroup}>
+        <div className={styles.sectionHeading}>系统通知渠道</div>
+        <InlineFeedback tone="info">
+          Desktop 本地实例直接显示系统通知。服务器实例将通知实时转发给在线且已授权通知的 Desktop
+          客户端，转发范围限于当前在线时段。
+        </InlineFeedback>
+        <SwitchField
+          label="启用系统通知"
+          description="通过可信 Desktop 客户端显示操作系统通知。"
+          checked={systemEnabled}
+          onCheckedChange={setSystemEnabled}
+        />
+        <Button
+          loading={pending === 'test-system'}
+          loadingLabel="正在发布…"
+          disabled={pending !== null}
+          onClick={() => void testSystem()}
+        >
+          发送系统测试通知
+        </Button>
+      </div>
+      <div className={styles.settingsGroup}>
+        <div className={styles.sectionHeading}>Bark 通知渠道</div>
+        <InlineFeedback tone={configured ? 'info' : 'warning'}>
+          {configured
+            ? 'Device Key 已保存在本机凭据目录。输入新值将替换当前值。'
+            : '填写 Bark Device Key，用于向你的设备推送通知。'}
+        </InlineFeedback>
+        <SwitchField
+          label="启用 Bark 通知"
+          description="推送范围由下方通知项目控制。"
+          checked={enabled}
+          onCheckedChange={setEnabled}
+        />
+        <Field label="服务地址" hint="默认使用 Bark 官方服务，也可以填写自建服务地址。">
+          <Input value={serverUrl} onChange={(event) => setServerUrl(event.currentTarget.value)} />
+        </Field>
+        <Field label="Device Key" hint="只保存在本机凭据目录，不写入产品数据库。">
+          <SecretInput
+            value={deviceKey}
+            placeholder={configured ? '输入新 Device Key（可选）' : '输入 Device Key'}
+            onChange={(event) => {
+              setDeviceKey(event.currentTarget.value)
+              if (event.currentTarget.value) setClearDeviceKey(false)
+            }}
+          />
+        </Field>
+        {configured ? (
+          <Button
+            variant="ghost"
+            disabled={pending !== null}
+            onClick={() => {
+              setClearDeviceKey(true)
+              setEnabled(false)
+              setDeviceKey('')
+            }}
+          >
+            清除已保存的 Device Key
+          </Button>
+        ) : null}
+        <div className={styles.notificationActions}>
+          <Button
+            loading={pending === 'test-bark'}
+            loadingLabel="正在发送…"
+            disabled={barkTestDisabled}
+            onClick={() => void test()}
+          >
+            发送测试通知
+          </Button>
+        </div>
+      </div>
+      <div className={styles.settingsGroup}>
+        <div className={styles.sectionHeading}>通知项目</div>
+        <SwitchField
+          label="扩展预览等待确认"
+          description="智能体生成带界面的扩展并等待你确认预览时推送。"
+          checked={approvalEnabled}
+          onCheckedChange={setApprovalEnabled}
+        />
+        <Button
+          variant="primary"
+          loading={pending === 'save'}
+          loadingLabel="正在保存…"
+          disabled={pending !== null}
+          onClick={() => void save()}
+        >
+          保存通知设置
+        </Button>
+        {error ? <InlineFeedback tone="error">{error}</InlineFeedback> : null}
+      </div>
+    </section>
+  )
+}
+
 const isThemeChoice = (value: string): value is ThemeChoice => value === 'light' || value === 'dark'
 const isContrastChoice = (value: string): value is ContrastChoice =>
   value === 'system' || value === 'standard' || value === 'more'
@@ -56,6 +244,7 @@ export function SettingsPage() {
   const requestedTab = searchParams.get('tab')
   const activeTab =
     requestedTab === 'appearance' ||
+    requestedTab === 'notifications' ||
     requestedTab === 'dsh-extensions' ||
     requestedTab === 'system-extensions' ||
     requestedTab === 'about'
@@ -64,13 +253,15 @@ export function SettingsPage() {
   const title =
     activeTab === 'appearance'
       ? '外观'
-      : activeTab === 'dsh-extensions'
-        ? 'DSH 扩展'
-        : activeTab === 'system-extensions'
-          ? '系统扩展'
-          : activeTab === 'about'
-            ? '关于'
-            : '模型供应商'
+      : activeTab === 'notifications'
+        ? '通知'
+        : activeTab === 'dsh-extensions'
+          ? 'DSH 扩展'
+          : activeTab === 'system-extensions'
+            ? '系统扩展'
+            : activeTab === 'about'
+              ? '关于'
+              : '模型供应商'
 
   return (
     <div className={[styles.page, styles.desktopPage, styles.settingsPage].join(' ')} data-product-page="settings">
@@ -79,6 +270,7 @@ export function SettingsPage() {
         {activeTab === 'models' ? <LlmProviderSettings /> : null}
         {activeTab === 'dsh-extensions' ? <DshExtensionSettings /> : null}
         {activeTab === 'system-extensions' ? <SystemExtensionsPanel /> : null}
+        {activeTab === 'notifications' ? <NotificationsPanel /> : null}
         {activeTab === 'about' ? <AboutPage metadata={productMetadata} /> : null}
         {activeTab === 'appearance' ? (
           <section className={styles.settingsSection} data-settings-content="">

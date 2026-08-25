@@ -86,6 +86,10 @@ const openOverlayPage = async (profiles: readonly OverlayProfile[] = [localProfi
       remove: () => Promise.resolve(),
       close: () => Promise.resolve(),
       subscribe: () => () => undefined,
+      subscribeVisibility: (listener: (state: string) => void) => {
+        listener('open')
+        return () => undefined
+      },
     }
   }, profiles)
   await page.addScriptTag({ path: path.join(desktopRoot, 'src/instance-overlay.js'), type: 'module' })
@@ -392,6 +396,21 @@ describe('Desktop instance overlay accessibility contract', { timeout: 15_000 },
     const instanceButton = source.match(/<button class="instance[\s\S]*?<\/button>/u)?.[0] ?? ''
     expect(instanceButton).not.toContain('class="more"')
     expect(instanceButton.match(/<button/gu)).toHaveLength(1)
+  })
+
+  it('uses a bidirectional trigger-aligned transition and reduced-motion fallback', async () => {
+    const [script, stylesheet, markup] = await Promise.all([
+      readFile(path.join(desktopRoot, 'src/instance-overlay.js'), 'utf8'),
+      readFile(path.join(desktopRoot, 'src/instance-overlay.css'), 'utf8'),
+      readFile(path.join(desktopRoot, 'src/instance-overlay.html'), 'utf8'),
+    ])
+    expect(markup).toContain('data-visibility="closed"')
+    expect(script).toContain('bridge.subscribeVisibility')
+    expect(script).toContain("dataset.visibility = 'closing'")
+    expect(stylesheet).toContain('transform-origin: left bottom')
+    expect(stylesheet).toContain('--motion-enter: 160ms')
+    expect(stylesheet).toContain('--motion-exit: 100ms')
+    expect(stylesheet).toContain('@media (prefers-reduced-motion: reduce)')
   })
 
   it('keeps native Enter/Space activation and implements popup arrow/Escape focus restoration', async () => {

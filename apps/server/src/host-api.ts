@@ -493,6 +493,11 @@ export const createNekroHostApi = (
   const broadcastExtensionsChanged = (): void => {
     broadcast({ event: 'extensions-changed', data: { changed: true } })
   }
+  disposers.push(
+    runtime.host.subscribeDynamicApprovalRequests((event) => {
+      broadcast({ event: 'dynamic-changed', data: { agentId: event.agentId } })
+    }),
+  )
   const flushPendingFacts = (): void => {
     factTimer = undefined
     const batches = [...pendingFacts.entries()]
@@ -571,6 +576,7 @@ export const createNekroHostApi = (
           model: commit.revision.model,
           capabilities: commit.revision.capabilities,
           imagePolicy: commit.revision.imagePolicy,
+          dynamicClientApprovalPolicy: commit.revision.dynamicClientApprovalPolicy,
           imageDiagnostics: await runtime.host.getAgentImageDiagnostics(commit.revision),
           currentRevisionId: commit.revision.id,
           runtimeStatus: runtimePhase === 'thinking' || runtimePhase === 'using-tool' ? 'running' : 'idle',
@@ -641,6 +647,7 @@ export const createNekroHostApi = (
         webSearch,
       },
       connectionAdapters: runtime.listConnectionAdapters(),
+      notificationSettings: await runtime.notifications.getSettings(),
       agents,
       channels: channelProjection,
       messages,
@@ -660,6 +667,99 @@ export const createNekroHostApi = (
         writeJson(res, 200, await buildSnapshot())
       } catch (error) {
         writeError(res, 500, 'snapshot-failed', error instanceof Error ? error.message : String(error))
+      }
+    },
+  })
+
+  registerRoute({
+    kind: 'exact',
+    path: '/api/client-notifications',
+    handler: (req, res) => {
+      if (req.method !== 'GET') {
+        writeError(res, 405, 'method-not-allowed', '客户端通知只支持 GET。')
+        return
+      }
+      try {
+        const url = new URL(req.url ?? '/', 'http://localhost')
+        const rawCursor = url.searchParams.get('cursor')
+        const params = HostApiContracts.listClientNotifications.parseParams({
+          ...(rawCursor === null ? {} : { cursor: Number(rawCursor) }),
+        })
+        writeContractJson(
+          res,
+          200,
+          HostApiContracts.listClientNotifications,
+          runtime.notifications.readClientNotifications(params.cursor),
+        )
+      } catch (error) {
+        writeError(res, 400, 'client-notifications-failed', error instanceof Error ? error.message : String(error))
+      }
+    },
+  })
+
+  registerRoute({
+    kind: 'exact',
+    path: '/api/settings/notifications',
+    handler: async (req, res) => {
+      if (req.method !== 'PUT') {
+        writeError(res, 405, 'method-not-allowed', '通知设置只支持 PUT。')
+        return
+      }
+      try {
+        const parsed = HostApiContracts.updateNotificationSettings.parseRequest(await readJsonBody(req))
+        const settings = await runtime.notifications.updateSettings({
+          ...(parsed.expectedRevision === undefined ? {} : { expectedRevision: parsed.expectedRevision }),
+          system: parsed.system,
+          bark: {
+            enabled: parsed.bark.enabled,
+            serverUrl: parsed.bark.serverUrl,
+            ...(parsed.bark.deviceKey === undefined ? {} : { deviceKey: parsed.bark.deviceKey }),
+            ...(parsed.bark.clearDeviceKey === undefined ? {} : { clearDeviceKey: parsed.bark.clearDeviceKey }),
+          },
+          events: parsed.events,
+        })
+        writeContractJson(res, 200, HostApiContracts.updateNotificationSettings, settings)
+      } catch (error) {
+        writeError(res, 400, 'notification-settings-failed', error instanceof Error ? error.message : String(error))
+      }
+    },
+  })
+
+  registerRoute({
+    kind: 'exact',
+    path: '/api/settings/notifications/test',
+    handler: async (req, res) => {
+      if (req.method !== 'POST') {
+        writeError(res, 405, 'method-not-allowed', 'Bark 通知测试只支持 POST。')
+        return
+      }
+      try {
+        const parsed = HostApiContracts.testBarkNotification.parseRequest(await readJsonBody(req))
+        await runtime.notifications.testBark({
+          serverUrl: parsed.serverUrl,
+          ...(parsed.deviceKey === undefined ? {} : { deviceKey: parsed.deviceKey }),
+        })
+        writeContractJson(res, 200, HostApiContracts.testBarkNotification, { sent: true })
+      } catch (error) {
+        writeError(res, 400, 'notification-test-failed', error instanceof Error ? error.message : String(error))
+      }
+    },
+  })
+
+  registerRoute({
+    kind: 'exact',
+    path: '/api/settings/notifications/test-system',
+    handler: (req, res) => {
+      if (req.method !== 'POST') {
+        writeError(res, 405, 'method-not-allowed', '系统通知测试只支持 POST。')
+        return
+      }
+      try {
+        HostApiContracts.testSystemNotification.parseRequest(undefined)
+        runtime.notifications.publishSystemTest()
+        writeContractJson(res, 200, HostApiContracts.testSystemNotification, { published: true })
+      } catch (error) {
+        writeError(res, 400, 'system-notification-test-failed', error instanceof Error ? error.message : String(error))
       }
     },
   })
@@ -1401,6 +1501,9 @@ export const createNekroHostApi = (
         },
         capabilities: defaultCapabilities,
         ...(parsed.imagePolicy === undefined ? {} : { imagePolicy: parsed.imagePolicy }),
+        ...(parsed.dynamicClientApprovalPolicy === undefined
+          ? {}
+          : { dynamicClientApprovalPolicy: parsed.dynamicClientApprovalPolicy }),
       }
       const entity = await runtime.createAgentWithWebChannel(content)
       writeJson(
@@ -1519,6 +1622,7 @@ export const createNekroHostApi = (
             },
             capabilities: revision.capabilities,
             imagePolicy: parsed.imagePolicy ?? revision.imagePolicy,
+            dynamicClientApprovalPolicy: parsed.dynamicClientApprovalPolicy ?? revision.dynamicClientApprovalPolicy,
           })
           writeJson(res, 200, HostApiContracts.reviseAgent.parseResponse({ currentRevisionId: updated.revision.id }))
           return
@@ -1546,6 +1650,7 @@ export const createNekroHostApi = (
           model: revision.model,
           capabilities,
           imagePolicy: revision.imagePolicy,
+          dynamicClientApprovalPolicy: revision.dynamicClientApprovalPolicy,
         })
         writeJson(
           res,
@@ -2107,6 +2212,7 @@ export const createNekroHostApi = (
           }
           const ack = await runtime.host.resolveDynamicRunRequest(dshSessionId, parsed.requestId, resolution)
           writeJson(res, 200, contract.parseResponse({ accepted: ack.accepted }))
+          broadcast({ event: 'dynamic-changed', data: { agentId } })
         } catch (error) {
           writeError(res, 400, 'dynamic-operation-failed', error instanceof Error ? error.message : String(error))
         }
@@ -2147,6 +2253,7 @@ export const createNekroHostApi = (
             parsed.approveFutureVersions,
           )
           writeJson(res, 200, HostApiContracts.dynamicRunHostHalf.parseResponse(result))
+          broadcast({ event: 'dynamic-changed', data: { agentId } })
         } catch (error) {
           writeError(res, 400, 'dynamic-host-half-failed', error instanceof Error ? error.message : String(error))
         }
@@ -2161,6 +2268,7 @@ export const createNekroHostApi = (
             normalizeDynamicResolution(runtime, dshSessionId, parsed.resolution),
           )
           writeJson(res, 200, HostApiContracts.dynamicSettleUserRun.parseResponse(result))
+          broadcast({ event: 'dynamic-changed', data: { agentId } })
         } catch (error) {
           writeError(res, 400, 'dynamic-settle-failed', error instanceof Error ? error.message : String(error))
         }
@@ -2196,6 +2304,7 @@ export const createNekroHostApi = (
             ...(parsed.failure.stack === undefined ? {} : { stack: parsed.failure.stack }),
           })
           writeJson(res, 200, HostApiContracts.dynamicReportRenderFailure.parseResponse({ ok: true }))
+          broadcast({ event: 'dynamic-changed', data: { agentId } })
         } catch (error) {
           writeError(res, 400, 'dynamic-render-failure', error instanceof Error ? error.message : String(error))
         }

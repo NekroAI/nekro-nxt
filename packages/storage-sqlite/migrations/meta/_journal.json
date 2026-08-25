@@ -78,6 +78,13 @@
       "when": 1787480329762,
       "tag": "0010_elite_eternity",
       "breakpoints": true
+    },
+    {
+      "idx": 11,
+      "version": "6",
+      "when": 1787635162026,
+      "tag": "0011_notification_settings",
+      "breakpoints": true
     }
   ]
 }

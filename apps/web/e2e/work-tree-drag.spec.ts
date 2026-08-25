@@ -64,6 +64,7 @@ test('work tree keeps titles stable while full rows and keyboard handles cover o
         runtimeStatus: 'idle',
         runtimePhase: 'idle',
         model: { provider: 'openai', model: 'gpt-5' },
+        dynamicClientApprovalPolicy: 'manual',
         imagePolicy: {
           history: {
             mode: 'persistent-distinct',
@@ -99,6 +100,7 @@ test('work tree keeps titles stable while full rows and keyboard handles cover o
         runtimeStatus: 'idle',
         runtimePhase: 'idle',
         model: { provider: 'openai', model: 'gpt-5' },
+        dynamicClientApprovalPolicy: 'manual',
         imagePolicy: {
           history: {
             mode: 'persistent-distinct',

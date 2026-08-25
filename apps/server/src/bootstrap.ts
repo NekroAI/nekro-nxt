@@ -43,6 +43,7 @@ import path from 'node:path'
 import { monotonicFactory } from 'ulid'
 import { ChannelExtensionActivationHost, DshHostRuntime } from './index.js'
 import { LocalCredentialStore } from './credentials.js'
+import { NotificationService } from './notifications.js'
 import { QQCoreBridge, QQRemoteAssetImporter } from './qq-openclaw.js'
 
 const StoredQQConnectionConfigSchema = QQOpenClawConfigSchema.omit({ clientSecretCredentialRef: true })
@@ -84,6 +85,7 @@ export interface NekroRuntimeOptions {
     readonly sockets?: QQGatewaySocketFactory
     readonly clock?: QQGatewayClock
   }
+  readonly notifications?: { readonly fetch?: typeof fetch }
 }
 
 export interface QQConnectionDiagnostic {
@@ -152,6 +154,7 @@ export class NekroRuntime {
   readonly extensionService: ExtensionService
   readonly activation: ExtensionActivationCoordinator
   readonly credentials: LocalCredentialStore
+  readonly notifications: NotificationService
   readonly sessionStoragePreparation: DshSessionStoragePreparation
   readonly sessionStorageRetirement:
     { readonly episodesClosed: number; readonly admissionsReleased: number } | undefined
@@ -163,6 +166,7 @@ export class NekroRuntime {
   readonly #qqDiagnostics = new Map<ConnectionId, QQConnectionDiagnostic>()
   readonly #connectionListeners = new Set<() => void>()
   readonly #agents = new Map<AgentId, AgentEntity>()
+  readonly #unsubscribeDynamicApproval: () => void
   #started = false
   #disposed = false
 
@@ -179,6 +183,8 @@ export class NekroRuntime {
     readonly extensionService: ExtensionService
     readonly activation: ExtensionActivationCoordinator
     readonly credentials: LocalCredentialStore
+    readonly notifications: NotificationService
+    readonly unsubscribeDynamicApproval: () => void
     readonly sessionStoragePreparation: DshSessionStoragePreparation
     readonly sessionStorageRetirement?: { readonly episodesClosed: number; readonly admissionsReleased: number }
     readonly now: () => number
@@ -197,6 +203,8 @@ export class NekroRuntime {
     this.extensionService = input.extensionService
     this.activation = input.activation
     this.credentials = input.credentials
+    this.notifications = input.notifications
+    this.#unsubscribeDynamicApproval = input.unsubscribeDynamicApproval
     this.sessionStoragePreparation = input.sessionStoragePreparation
     this.sessionStorageRetirement = input.sessionStorageRetirement
     this.#now = input.now
@@ -292,6 +300,23 @@ export class NekroRuntime {
       const credentials = new LocalCredentialStore(
         options.credentialRoot ?? path.join(path.dirname(options.coreDatabasePath), 'credentials'),
       )
+      const notifications = new NotificationService(repository, credentials, {
+        ...(options.notifications?.fetch === undefined ? {} : { fetch: options.notifications.fetch }),
+        now,
+      })
+      const unsubscribeDynamicApproval = host.subscribeDynamicApprovalRequests((event) => {
+        const displayName = repository.getAgent(event.agentId)?.revision.displayName ?? '未命名智能体'
+        void notifications
+          .notifyDynamicApproval({
+            requestId: event.requestId,
+            agentDisplayName: displayName,
+            extensionName: event.name,
+            purpose: event.purpose,
+          })
+          .catch((error) => {
+            console.warn('[nekro-nxt] 通知投递失败：', error instanceof Error ? error.message : String(error))
+          })
+      })
 
       const runtime = new NekroRuntime({
         database,
@@ -306,6 +331,8 @@ export class NekroRuntime {
         extensionService,
         activation,
         credentials,
+        notifications,
+        unsubscribeDynamicApproval,
         sessionStoragePreparation,
         ...(sessionStorageRetirement === undefined ? {} : { sessionStorageRetirement }),
         now,
@@ -671,6 +698,7 @@ export class NekroRuntime {
   async dispose(): Promise<void> {
     if (this.#disposed) return
     this.#disposed = true
+    this.#unsubscribeDynamicApproval()
     this.#connectionListeners.clear()
     await Promise.allSettled([
       ...[...this.#qqRuntimes.values()].map((runtime) => runtime.stop()),

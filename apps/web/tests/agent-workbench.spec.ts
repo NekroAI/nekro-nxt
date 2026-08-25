@@ -28,6 +28,7 @@ const agent = (overrides: Partial<AgentSummary> = {}): AgentSummary => ({
   description: '',
   state: '空闲',
   model: 'GPT-5',
+  dynamicClientApprovalPolicy: 'manual',
   personaDocument: { version: 1, segments: [] },
   channels: [],
   extensionCount: 0,

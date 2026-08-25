@@ -12,7 +12,7 @@ import type {
   ProductHostState,
 } from './product-store.js'
 import type { AdapterConnectionDescriptor } from '@nekro-nxt/adapter-sdk'
-import { useProductStore } from './product-store.js'
+import { useProductStore, type ProductState } from './product-store.js'
 
 export interface ProductSnapshot {
   readonly host: ProductHostState
@@ -30,6 +30,7 @@ export interface ProductSnapshot {
   readonly approvals: readonly DynamicApproval[]
   /** Running dynamic Packages by intelligent-agent (from the creator runtime). */
   readonly dynamic: readonly DynamicPackageSummary[]
+  readonly notificationSettings: ProductState['notificationSettings']
   readonly diagnosticNote: string
   readonly workTreeOrder: {
     readonly agentIds: readonly string[]
@@ -111,6 +112,7 @@ export class ProductHostCoordinator implements ProductHostPort {
         platformUsersRevision: snapshot.platformUsersRevision,
         approvals: snapshot.approvals,
         dynamic: snapshot.dynamic,
+        notificationSettings: snapshot.notificationSettings,
         diagnosticNote: snapshot.diagnosticNote,
         workTreeOrder: snapshot.workTreeOrder,
       })

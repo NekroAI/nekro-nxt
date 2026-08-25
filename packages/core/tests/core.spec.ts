@@ -394,7 +394,17 @@ describe('CoreService', () => {
       imagePolicy: DEFAULT_IMAGE_UNDERSTANDING_POLICY,
     })
     expect(first).toBe(second)
-    expect(first).toMatch(/^v4:sha256:[a-f0-9]{64}$/u)
+    expect(first).toMatch(/^v5:sha256:[a-f0-9]{64}$/u)
+    expect(
+      digestRevision({
+        displayName: '小奈',
+        persona: '',
+        model: { provider: 'deepseek', model: 'v4' },
+        capabilities: deniedCapabilities,
+        imagePolicy: DEFAULT_IMAGE_UNDERSTANDING_POLICY,
+        dynamicClientApprovalPolicy: 'automatic',
+      }),
+    ).not.toBe(first)
   })
 
   it('normalizes and validates immutable image understanding policy', () => {

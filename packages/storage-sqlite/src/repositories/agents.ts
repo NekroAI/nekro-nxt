@@ -51,6 +51,7 @@ const toRevision = (input: typeof agentRevisions.$inferSelect): AgentRevisionRec
     },
     capabilities: parseAgentCapabilityGrants(row.capabilities),
     imagePolicy: parseImageUnderstandingPolicy(row.imagePolicy),
+    dynamicClientApprovalPolicy: row.dynamicClientApprovalPolicy,
     contentDigest: row.contentDigest,
     createdAt: row.createdAt,
   }
@@ -83,6 +84,7 @@ const revisionInsert = (record: AgentRevisionRecord): typeof agentRevisions.$inf
   ...(record.model.reasoningEffort === undefined ? {} : { reasoningEffort: record.model.reasoningEffort }),
   capabilities: record.capabilities,
   imagePolicy: record.imagePolicy,
+  dynamicClientApprovalPolicy: record.dynamicClientApprovalPolicy,
   contentDigest: record.contentDigest,
   createdAt: record.createdAt,
 })

@@ -19,6 +19,8 @@
 | 删除智能体 | `DELETE /api/agents/:agentId` | 校验当前配置版本和名称确认；先停止全部频道运行、停用扩展并写 tombstone；默认同时 tombstone 仍归属于它的自动创建内置频道，其他频道解绑；保留历史事实和文件 |
 | 新建内置频道 | `POST /api/channels` | 在系统托管内置连接上创建未绑定内置频道 |
 | 删除 / 移除频道 | `DELETE /api/channels/:channelId` | 携带预期 Binding；立即停止运行、解除绑定并写 Channel tombstone，保留全部历史；外部频道不影响平台真实对象 |
+| 通知设置 | `PUT /api/settings/notifications` | Core SQLite 保存系统/Bark 渠道和功能开关；Bark Device Key 只保存本机凭据引用 |
+| 客户端通知 | `GET /api/client-notifications?cursor=` | 返回进程内短暂脱敏事件；无 cursor 只建立当前位置，供在线 Desktop 本地或已认证远程 Session 拉取 |
 | 发送消息 | `POST /api/channels/:channelId/messages` | 仅内置频道入站 |
 | 频道历史 | `GET /api/channels/:channelId/messages` | `(occurredAt, sourceId)` 游标分页；首载、翻页、重连对账 |
 | 频道工作轨迹 | `GET /api/channels/:channelId/runtime` | 按频道投影 phase、当前工具、待注入、上下文占用、当前 Episode 缓存分析和最近多轮 Turn（含耗时与本步用量）；首载与重连对账 |

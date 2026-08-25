@@ -2080,6 +2080,16 @@
   transition: opacity var(--nxt-motion-instant) var(--nxt-ease-standard);
 }
 
+.treeApprovalIndicator {
+  width: 8px;
+  height: 8px;
+  flex: 0 0 auto;
+  border: 2px solid var(--nxt-surface);
+  border-radius: 999px;
+  background: var(--nxt-warning);
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--nxt-warning) 55%, transparent);
+}
+
 .treeActivityIndicator {
   --nxt-tree-activity-color: var(--nxt-info);
   position: relative;
@@ -3197,6 +3207,27 @@
   font-size: 12px;
   line-height: 18px;
   text-align: center;
+}
+
+.approvalNotice {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  max-width: 720px;
+  border: 1px solid color-mix(in srgb, var(--nxt-warning) 35%, var(--nxt-border-subtle));
+  border-radius: var(--nxt-radius-md);
+  margin: 0 0 18px 44px;
+  padding: 10px 12px;
+  background: color-mix(in srgb, var(--nxt-warning) 8%, var(--nxt-surface));
+  color: var(--nxt-text-secondary);
+  font-size: 13px;
+}
+
+.notificationActions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
 }
 
 .messageList > :global(.emptyState) {

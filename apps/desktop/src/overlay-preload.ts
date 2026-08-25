@@ -18,4 +18,9 @@ contextBridge.exposeInMainWorld('nxtInstances', {
     ipcRenderer.on('nxt:instances:changed', handler)
     return () => ipcRenderer.removeListener('nxt:instances:changed', handler)
   },
+  subscribeVisibility: (listener: (state: unknown) => void) => {
+    const handler = (_event: Electron.IpcRendererEvent, state: unknown): void => listener(state)
+    ipcRenderer.on('nxt:instances:visibility', handler)
+    return () => ipcRenderer.removeListener('nxt:instances:visibility', handler)
+  },
 })

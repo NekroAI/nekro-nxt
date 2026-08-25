@@ -199,7 +199,14 @@ function DesktopShell() {
                           : '无法连接'
               }`}
               className={`${styles.railInstance} ${instanceSwitcherOpen ? styles.railInstanceOpen : ''}`}
+              data-desktop-instance-switcher=""
+              aria-expanded={instanceSwitcherOpen}
               onClick={() => {
+                if (instanceSwitcherOpen) {
+                  setInstanceSwitcherOpen(false)
+                  void window.nekroDesktopShell?.closeInstanceSwitcher()
+                  return
+                }
                 setInstanceSwitcherOpen(true)
                 void window.nekroDesktopShell?.openInstanceSwitcher().finally(() => setInstanceSwitcherOpen(false))
               }}

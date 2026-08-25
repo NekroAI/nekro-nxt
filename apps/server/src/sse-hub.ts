@@ -28,6 +28,7 @@ const REPLAYABLE_EVENTS = new Set<HostSseEvent['event']>([
   'channel-fact',
   'runtime',
   'extensions-changed',
+  'dynamic-changed',
   'dsh-settings-changed',
   'dsh-credentials-changed',
   'binding-change',

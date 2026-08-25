@@ -52,6 +52,9 @@ export const agentRevisions = sqliteTable(
     reasoningEffort: text('reasoning_effort'),
     capabilities: jsonText<AgentCapabilityGrants>('capabilities').notNull(),
     imagePolicy: jsonText<ImageUnderstandingPolicy>('image_policy').notNull(),
+    dynamicClientApprovalPolicy: text('dynamic_client_approval_policy', { enum: ['manual', 'automatic'] })
+      .notNull()
+      .default('manual'),
     contentDigest: text('content_digest').notNull(),
     createdAt: integer('created_at').notNull(),
   },
@@ -626,6 +629,17 @@ export const workTreeOrder = sqliteTable(
   (table) => [check('work_tree_order_singleton_ck', sql`${table.id} = 1`)],
 )
 
+export const systemSettings = sqliteTable(
+  'system_settings',
+  {
+    key: text().primaryKey(),
+    value: jsonText<JsonValue>('value').notNull(),
+    revision: integer().notNull(),
+    updatedAt: integer('updated_at').notNull(),
+  },
+  (table) => [check('system_settings_revision_ck', sql`${table.revision} > 0`)],
+)
+
 export const coreSchema = {
   agentDefinitions,
   agentRevisions,
@@ -655,4 +669,5 @@ export const coreSchema = {
   hostSecurityMetadata,
   managementDevices,
   workTreeOrder,
+  systemSettings,
 } as const

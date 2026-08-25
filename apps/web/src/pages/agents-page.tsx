@@ -665,6 +665,9 @@ export function AgentManagePage() {
   const [imagePolicy, setImagePolicy] = useState<ImageUnderstandingPolicy>(
     agent?.imagePolicy ?? defaultImageUnderstandingPolicy(),
   )
+  const [dynamicClientApprovalPolicy, setDynamicClientApprovalPolicy] = useState<'manual' | 'automatic'>(
+    agent?.dynamicClientApprovalPolicy ?? 'manual',
+  )
   const [savePending, setSavePending] = useState(false)
   const [capabilityPending, setCapabilityPending] = useState<Capability | 'accessLevel' | null>(null)
   const [bindingOpen, setBindingOpen] = useState(false)
@@ -686,6 +689,7 @@ export function AgentManagePage() {
     setPersonaDocument(agent.personaDocument)
     setSelectedModelKey(modelValueForAgent(agent))
     setImagePolicy(agent.imagePolicy)
+    setDynamicClientApprovalPolicy(agent.dynamicClientApprovalPolicy)
   }, [agent])
   useEffect(() => setInspectorWidth(savedInspectorWidth), [savedInspectorWidth])
   useEffect(() => {
@@ -721,7 +725,8 @@ export function AgentManagePage() {
       persona !== (agent.persona ?? '') ||
       JSON.stringify(personaDocument) !== JSON.stringify(agent.personaDocument) ||
       selectedModelKey !== modelValueForAgent(agent) ||
-      JSON.stringify(imagePolicy) !== JSON.stringify(agent.imagePolicy))
+      JSON.stringify(imagePolicy) !== JSON.stringify(agent.imagePolicy) ||
+      dynamicClientApprovalPolicy !== agent.dynamicClientApprovalPolicy)
   useUnsavedDraft(`agent-settings:${agentId}`, isDirty)
 
   if (!agent) {
@@ -743,6 +748,7 @@ export function AgentManagePage() {
     setPersonaDocument(agent.personaDocument)
     setSelectedModelKey(modelValueForAgent(agent))
     setImagePolicy(agent.imagePolicy)
+    setDynamicClientApprovalPolicy(agent.dynamicClientApprovalPolicy)
   }
   const save = async (): Promise<void> => {
     if (!displayName.trim() || !selectedModel || savePending) return
@@ -756,6 +762,7 @@ export function AgentManagePage() {
         personaDocument,
         model: selectedModel,
         imagePolicy,
+        dynamicClientApprovalPolicy,
         ...(agent.modelRef?.provider === selectedModel.provider && agent.modelRef.model === selectedModel.id
           ? { reasoningEffort: agent.modelRef.reasoningEffort }
           : {}),
@@ -1059,36 +1066,47 @@ export function AgentManagePage() {
                   />
                 </div>
                 {agent.capabilities.dynamicCreation ? (
-                  activeDynamic ? (
-                    <div className={styles.creatorLaunchPanel}>
-                      <span>
-                        <strong>{dynamicRunLabel(activeDynamic.status)}</strong>
-                        <small>当前有 {activeDynamic.packages.length} 个临时扩展，可在创造工作台查看进度和结果。</small>
-                      </span>
-                      <Button variant="primary" onClick={() => void navigate(`/work/creator?agent=${agent.id}`)}>
-                        查看创造进度
-                      </Button>
-                    </div>
-                  ) : boundChannels.length > 0 ? (
-                    <div className={styles.creatorStartPanel}>
-                      <SelectField
-                        label="沟通频道"
-                        value={creatorChannelId}
-                        onValueChange={setCreatorChannelId}
-                        options={boundChannels.map((channel) => ({ value: channel.id, label: channel.name }))}
-                        helper="选择频道并打开，与智能体讨论要新增的功能。"
-                      />
-                      <Button
-                        variant="primary"
-                        disabled={!creatorChannelId}
-                        onClick={() => void navigate(`/work/channels/${creatorChannelId}`)}
-                      >
-                        前往频道提出需求
-                      </Button>
-                    </div>
-                  ) : (
-                    <InlineFeedback tone="warning">请先绑定频道，再与这个智能体讨论要新增的功能。</InlineFeedback>
-                  )
+                  <>
+                    <SwitchField
+                      label="自动允许扩展界面预览"
+                      description="自动加载生成的界面到本机预览。扩展保存和启用需要单独确认。"
+                      checked={dynamicClientApprovalPolicy === 'automatic'}
+                      disabled={savePending}
+                      onCheckedChange={(enabled) => setDynamicClientApprovalPolicy(enabled ? 'automatic' : 'manual')}
+                    />
+                    {activeDynamic ? (
+                      <div className={styles.creatorLaunchPanel}>
+                        <span>
+                          <strong>{dynamicRunLabel(activeDynamic.status)}</strong>
+                          <small>
+                            当前有 {activeDynamic.packages.length} 个临时扩展，可在创造工作台查看进度和结果。
+                          </small>
+                        </span>
+                        <Button variant="primary" onClick={() => void navigate(`/work/creator?agent=${agent.id}`)}>
+                          查看创造进度
+                        </Button>
+                      </div>
+                    ) : boundChannels.length > 0 ? (
+                      <div className={styles.creatorStartPanel}>
+                        <SelectField
+                          label="沟通频道"
+                          value={creatorChannelId}
+                          onValueChange={setCreatorChannelId}
+                          options={boundChannels.map((channel) => ({ value: channel.id, label: channel.name }))}
+                          helper="选择频道并打开，与智能体讨论要新增的功能。"
+                        />
+                        <Button
+                          variant="primary"
+                          disabled={!creatorChannelId}
+                          onClick={() => void navigate(`/work/channels/${creatorChannelId}`)}
+                        >
+                          前往频道提出需求
+                        </Button>
+                      </div>
+                    ) : (
+                      <InlineFeedback tone="warning">请先绑定频道，再与这个智能体讨论要新增的功能。</InlineFeedback>
+                    )}
+                  </>
                 ) : null}
               </div>
 
@@ -1381,7 +1399,7 @@ export function AgentManagePage() {
                 <section>
                   <h2>创造运行</h2>
                   <p className={styles.secondaryText}>
-                    {activeDynamic.status} · {activeDynamic.packages.length} 个临时包
+                    {dynamicRunLabel(activeDynamic.status)} · {activeDynamic.packages.length} 个临时包
                   </p>
                   <Button size="small" variant="ghost" onClick={() => void navigate(`/work/creator?agent=${agent.id}`)}>
                     打开创造工作台

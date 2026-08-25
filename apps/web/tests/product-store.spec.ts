@@ -133,6 +133,7 @@ describe('product store Host mutations', () => {
           description: '',
           state: '空闲',
           model: '测试模型',
+          dynamicClientApprovalPolicy: 'manual',
           personaDocument: { version: 1, segments: [] },
           channels: [],
           extensionCount: 1,

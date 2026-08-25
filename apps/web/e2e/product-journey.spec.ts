@@ -273,6 +273,37 @@ test('settings exposes the provider editor and survives real navigation', async 
   expect(failures, failures.join('\n')).toEqual([])
 })
 
+test('notification settings present system delivery before Bark and keep feature switches usable', async ({ page }) => {
+  const failures = installRuntimeFailureGate(page)
+  await page.goto('/settings?tab=notifications')
+
+  await expect(page.getByRole('heading', { name: '通知', level: 1 })).toBeVisible()
+  const systemHeading = page.getByText('系统通知渠道', { exact: true })
+  const barkHeading = page.getByText('Bark 通知渠道', { exact: true })
+  const eventsHeading = page.getByText('通知项目', { exact: true })
+  await expect(systemHeading).toBeVisible()
+  await expect(barkHeading).toBeVisible()
+  await expect(eventsHeading).toBeVisible()
+  const headingPositions = await Promise.all(
+    [systemHeading, barkHeading, eventsHeading].map((item) =>
+      item.evaluate((node) => node.getBoundingClientRect().top),
+    ),
+  )
+  expect(headingPositions[0]).toBeLessThan(headingPositions[1]!)
+  expect(headingPositions[1]).toBeLessThan(headingPositions[2]!)
+
+  await expect(page.getByRole('switch', { name: '启用系统通知' })).toBeChecked()
+  await expect(page.getByRole('switch', { name: '启用 Bark 通知' })).not.toBeChecked()
+  await expect(page.getByRole('switch', { name: '扩展预览等待确认' })).toBeChecked()
+
+  await page.getByRole('button', { name: '发送系统测试通知' }).click()
+  await expect(page.getByText(/系统测试通知已发布/u)).toBeVisible()
+  await page.getByRole('button', { name: '保存通知设置' }).click()
+  await expect(page.getByText('通知设置已保存。', { exact: true })).toBeVisible()
+
+  expect(failures, failures.join('\n')).toEqual([])
+})
+
 test('provider connection test uses the unsaved page draft without saving it', async ({ page }) => {
   const failures = installRuntimeFailureGate(page)
   const { saveRequests } = await installDeepSeekProviderRoutes(page, true)
@@ -459,6 +490,7 @@ test("an intelligent-agent can add another channel while replacing that channel'
       runtimeStatus: 'idle',
       runtimePhase: 'idle',
       model: input.model,
+      dynamicClientApprovalPolicy: input.dynamicClientApprovalPolicy ?? 'manual',
       imagePolicy: input.imagePolicy ?? {
         history: {
           mode: 'persistent-distinct',
@@ -614,6 +646,7 @@ test('connection workbench binds an intelligent-agent without visiting the manag
       createdAt: 1_725_000_000_000,
       runtimeStatus: 'idle',
       model: { provider: 'deepseek', model: 'deepseek-v4-flash' },
+      dynamicClientApprovalPolicy: 'manual',
       imagePolicy: {
         history: {
           mode: 'persistent-distinct',
@@ -747,6 +780,7 @@ test('channel context controls and intelligent-agent deletion are guarded and re
         runtimeStatus: 'running',
         runtimePhase: 'using-tool',
         model: { provider: 'deepseek', model: 'deepseek-v4-flash' },
+        dynamicClientApprovalPolicy: 'manual',
         imagePolicy: {
           history: {
             mode: 'persistent-distinct',

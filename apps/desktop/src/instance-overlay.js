@@ -88,6 +88,19 @@ const startOverlay = () => {
   let mode = { kind: 'list' }
   let busy = false
   let error = ''
+
+  bridge.subscribeVisibility((visibility) => {
+    if (visibility === 'closing') {
+      document.documentElement.dataset.visibility = 'closing'
+      return
+    }
+    if (visibility === 'open') {
+      document.documentElement.dataset.visibility = 'closed'
+      requestAnimationFrame(() => {
+        document.documentElement.dataset.visibility = 'open'
+      })
+    }
+  })
   let submissionGeneration = 0
   let activeSubmission
 
@@ -120,7 +133,7 @@ const startOverlay = () => {
     })[status] || '状态未知'
 
   const header = (title, back = false) =>
-    `<header class="head"><div>${back ? '<button class="back" data-action="back" aria-label="返回">←</button>' : ''}<h1 style="display:inline">${escapeHtml(title)}</h1></div>${back ? '' : `<span class="count">${snapshot.profiles.length} 个</span>`}</header>`
+    `<header class="head"><div>${back ? '<button class="back" data-action="back" aria-label="返回">←</button>' : ''}<span class="heading"><h1>${escapeHtml(title)}</h1><small>${back ? '完成后返回实例列表' : '选择 NekroNXT 工作区来源'}</small></span></div>${back ? '' : `<span class="count">${snapshot.profiles.length} 个</span>`}</header>`
 
   const renderList = () => {
     const rows = snapshot.profiles

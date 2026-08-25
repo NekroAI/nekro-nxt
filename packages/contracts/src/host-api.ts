@@ -19,6 +19,7 @@ import {
   PromptDocumentV1Schema,
   promptDocumentPlainText,
 } from './domain.js'
+import { ClientNotificationSchema } from './management-api.js'
 
 const EmptyParamsSchema = z.object({}).strict()
 const NoRequestBodySchema = z.undefined()
@@ -88,6 +89,57 @@ const AgentCapabilitiesSchema = z
   })
   .strict()
 
+export const DynamicClientApprovalPolicySchema = z.enum(['manual', 'automatic'])
+
+export const NotificationEventKeySchema = z.enum(['dynamic-client-approval-requested'])
+export type NotificationEventKey = z.output<typeof NotificationEventKeySchema>
+
+export const NotificationSettingsViewSchema = z
+  .object({
+    revision: z.number().int().positive().optional(),
+    system: z.object({ enabled: z.boolean() }).strict(),
+    bark: z
+      .object({
+        enabled: z.boolean(),
+        serverUrl: z.url(),
+        deviceKeyConfigured: z.boolean(),
+      })
+      .strict(),
+    events: z.record(NotificationEventKeySchema, z.boolean()),
+  })
+  .strict()
+
+export const UpdateNotificationSettingsRequestSchema = z
+  .object({
+    expectedRevision: z.number().int().positive().optional(),
+    system: z.object({ enabled: z.boolean() }).strict(),
+    bark: z
+      .object({
+        enabled: z.boolean(),
+        serverUrl: z.url(),
+        deviceKey: z.string().trim().min(1).max(2048).optional(),
+        clearDeviceKey: z.boolean().optional(),
+      })
+      .strict(),
+    events: z.record(NotificationEventKeySchema, z.boolean()),
+  })
+  .strict()
+  .refine((value) => !(value.bark.deviceKey !== undefined && value.bark.clearDeviceKey === true), {
+    message: '不能同时更新并清除 Bark Device Key。',
+    path: ['bark'],
+  })
+
+export const TestBarkNotificationRequestSchema = z
+  .object({ serverUrl: z.url(), deviceKey: z.string().trim().min(1).max(2048).optional() })
+  .strict()
+
+export const ClientNotificationFeedResponseSchema = z
+  .object({
+    cursor: z.number().int().nonnegative(),
+    notifications: z.array(ClientNotificationSchema),
+  })
+  .strict()
+
 const AgentRevisionRequestContentSchema = z
   .object({
     displayName: z.string().trim().min(1).max(80),
@@ -98,6 +150,7 @@ const AgentRevisionRequestContentSchema = z
     personaDocument: PromptDocumentV1Schema.optional(),
     model: AgentModelSchema,
     imagePolicy: ImageUnderstandingPolicyApiSchema.optional(),
+    dynamicClientApprovalPolicy: DynamicClientApprovalPolicySchema.optional(),
   })
   .strict()
 
@@ -506,6 +559,7 @@ export const HostSnapshotSchema = z
       })
       .strict(),
     connectionAdapters: z.array(AdapterConnectionDescriptorSchema),
+    notificationSettings: NotificationSettingsViewSchema,
     agents: z.array(
       z
         .object({
@@ -516,6 +570,7 @@ export const HostSnapshotSchema = z
           model: AgentModelSchema,
           capabilities: AgentCapabilitiesSchema,
           imagePolicy: ImageUnderstandingPolicyApiSchema,
+          dynamicClientApprovalPolicy: DynamicClientApprovalPolicySchema,
           imageDiagnostics: z
             .object({
               route: z
@@ -968,6 +1023,8 @@ export const DshSettingsChangedSseDataSchema = z
 
 export const DshCredentialsChangedSseDataSchema = z.object({ ref: DshCredentialRefSchema }).strict()
 
+export const DynamicChangedSseDataSchema = z.object({ agentId: AgentIdSchema }).strict()
+
 export const HostSseStatusDataSchema = z
   .object({
     ok: z.boolean(),
@@ -980,6 +1037,7 @@ export const HostSseEventSchema = z.discriminatedUnion('event', [
   z.object({ event: z.literal('channel-fact'), data: ChannelFactSseDataSchema }).strict(),
   z.object({ event: z.literal('runtime'), data: ChannelRuntimeSseDataSchema }).strict(),
   z.object({ event: z.literal('extensions-changed'), data: z.object({ changed: z.literal(true) }).strict() }).strict(),
+  z.object({ event: z.literal('dynamic-changed'), data: DynamicChangedSseDataSchema }).strict(),
   z.object({ event: z.literal('dsh-settings-changed'), data: DshSettingsChangedSseDataSchema }).strict(),
   z.object({ event: z.literal('dsh-credentials-changed'), data: DshCredentialsChangedSseDataSchema }).strict(),
   z.object({ event: z.literal('status'), data: HostSseStatusDataSchema }).strict(),
@@ -1138,6 +1196,38 @@ export const HostApiContracts = {
     params: EmptyParamsSchema,
     request: NoRequestBodySchema,
     response: HostSnapshotSchema,
+    error: HostApiErrorSchema,
+  }),
+  listClientNotifications: defineContract({
+    method: 'GET',
+    path: '/api/client-notifications',
+    params: z.object({ cursor: z.number().int().nonnegative().optional() }).strict(),
+    request: NoRequestBodySchema,
+    response: ClientNotificationFeedResponseSchema,
+    error: HostApiErrorSchema,
+  }),
+  updateNotificationSettings: defineContract({
+    method: 'PUT',
+    path: '/api/settings/notifications',
+    params: EmptyParamsSchema,
+    request: UpdateNotificationSettingsRequestSchema,
+    response: NotificationSettingsViewSchema,
+    error: HostApiErrorSchema,
+  }),
+  testBarkNotification: defineContract({
+    method: 'POST',
+    path: '/api/settings/notifications/test',
+    params: EmptyParamsSchema,
+    request: TestBarkNotificationRequestSchema,
+    response: z.object({ sent: z.literal(true) }).strict(),
+    error: HostApiErrorSchema,
+  }),
+  testSystemNotification: defineContract({
+    method: 'POST',
+    path: '/api/settings/notifications/test-system',
+    params: EmptyParamsSchema,
+    request: NoRequestBodySchema,
+    response: z.object({ published: z.literal(true) }).strict(),
     error: HostApiErrorSchema,
   }),
   listPlatformUsers: defineContract({

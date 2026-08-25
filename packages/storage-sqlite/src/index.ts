@@ -1,12 +1,12 @@
 import type { AdapterRuntimeStateStore } from '@nekro-nxt/adapter-sdk'
 import type { ChannelReferenceRecord, CoreRepository } from '@nekro-nxt/core'
-import type { ChannelId } from '@nekro-nxt/contracts'
+import type { ChannelId, JsonValue } from '@nekro-nxt/contracts'
 import type { AssetAccessRepository } from '@nekro-nxt/core'
 import type { ChannelHistoryRepository, RuntimeRepository } from '@nekro-nxt/channel-runtime'
 import type { ExtensionRepository } from '@nekro-nxt/extension-runtime'
 import { eq } from 'drizzle-orm'
 import type { CoreDatabase } from './database.js'
-import { workTreeOrder } from './schema.js'
+import { systemSettings, workTreeOrder } from './schema.js'
 import { createAgentsRepository } from './repositories/agents.js'
 import { createChannelsRepository } from './repositories/channels.js'
 import { createOutboxRepository } from './repositories/outbox.js'
@@ -33,6 +33,13 @@ export type WorkTreeOrderRecord = {
   readonly agentIds: readonly string[]
   readonly channelIdsByAgent: Readonly<Record<string, readonly string[]>>
   readonly unboundChannelIds: readonly string[]
+}
+
+export type SystemSettingRecord = {
+  readonly key: string
+  readonly value: JsonValue
+  readonly revision: number
+  readonly updatedAt: number
 }
 
 const emptyWorkTreeOrder = (): WorkTreeOrderRecord => ({
@@ -89,6 +96,46 @@ export class SqliteCoreRepository implements CurrentRepository {
       })
       .run()
     return order
+  }
+
+  getSystemSetting(key: string): SystemSettingRecord | undefined {
+    const normalizedKey = key.trim()
+    if (!normalizedKey) throw new TypeError('System setting key must not be empty.')
+    return this.#db.select().from(systemSettings).where(eq(systemSettings.key, normalizedKey)).get()
+  }
+
+  putSystemSetting(
+    key: string,
+    value: JsonValue,
+    expectedRevision: number | undefined,
+    updatedAt: number,
+  ): SystemSettingRecord {
+    const normalizedKey = key.trim()
+    if (!normalizedKey) throw new TypeError('System setting key must not be empty.')
+    if (!Number.isSafeInteger(updatedAt) || updatedAt < 0) {
+      throw new TypeError('System setting updatedAt must be a non-negative integer.')
+    }
+    return this.#db.transaction((transaction) => {
+      const current = transaction.select().from(systemSettings).where(eq(systemSettings.key, normalizedKey)).get()
+      if (current?.revision !== expectedRevision || (current === undefined && expectedRevision !== undefined)) {
+        throw new Error('System setting revision conflict.')
+      }
+      const record: SystemSettingRecord = {
+        key: normalizedKey,
+        value,
+        revision: (current?.revision ?? 0) + 1,
+        updatedAt,
+      }
+      transaction
+        .insert(systemSettings)
+        .values(record)
+        .onConflictDoUpdate({
+          target: systemSettings.key,
+          set: { value: record.value, revision: record.revision, updatedAt: record.updatedAt },
+        })
+        .run()
+      return record
+    })
   }
 
   readonly createAgent = (...args: Parameters<CoreRepository['createAgent']>) => this.#agents.createAgent(...args)

@@ -146,6 +146,11 @@ const emptySnapshot = (): ProductSnapshot => ({
   platformUsersRevision: 0,
   approvals: [],
   dynamic: [],
+  notificationSettings: {
+    system: { enabled: true },
+    bark: { enabled: false, serverUrl: 'https://api.day.app', deviceKeyConfigured: false },
+    events: { 'dynamic-client-approval-requested': true },
+  },
   diagnosticNote: '正在连接 NekroNXT 服务…',
   workTreeOrder: { agentIds: [], channelIdsByAgent: {}, unboundChannelIds: [] },
 })
@@ -375,6 +380,7 @@ const projectSnapshot = (json: SnapshotJson, successfulAt: number): ProductSnaps
     ).length,
     capabilities: { ...agent.capabilities },
     imagePolicy: agent.imagePolicy,
+    dynamicClientApprovalPolicy: agent.dynamicClientApprovalPolicy,
     imageDiagnostics: agent.imageDiagnostics,
   }))
   const connectionAdapterName = (connection: SnapshotJson['connections'][number]): string =>
@@ -574,6 +580,7 @@ const projectSnapshot = (json: SnapshotJson, successfulAt: number): ProductSnaps
         ...(item.policy.blockedReason === undefined ? {} : { blockedReason: item.policy.blockedReason }),
       },
     })),
+    notificationSettings: json.notificationSettings,
     diagnosticNote: `服务连接正常（${agents.length} 个智能体 · ${channels.length} 个频道 · ${extensionsLocal.length} 个本地扩展）。`,
   }
 }
@@ -636,6 +643,9 @@ export class HttpProductHost implements ProductHostPort {
       source.addEventListener('extensions-changed', () => {
         void this.#refreshAndNotify()
       })
+      source.addEventListener('dynamic-changed', () => {
+        void this.#refreshAndNotify()
+      })
       source.addEventListener('status', (event) => {
         const rawData = sseEventData(event)
         if (rawData === undefined) {
@@ -672,6 +682,19 @@ export class HttpProductHost implements ProductHostPort {
       if (failure !== null) throw failure
       return null
     }
+    if (command === 'notifications.update') {
+      const body = HostApiContracts.updateNotificationSettings.parseRequest(input)
+      const result = await this.#call(HostApiContracts.updateNotificationSettings, {}, body)
+      await this.#refreshAndNotify()
+      return result
+    }
+    if (command === 'notifications.testBark') {
+      const body = HostApiContracts.testBarkNotification.parseRequest(input)
+      return await this.#call(HostApiContracts.testBarkNotification, {}, body)
+    }
+    if (command === 'notifications.testSystem') {
+      return await this.#call(HostApiContracts.testSystemNotification, {}, undefined)
+    }
     if (command === 'platformUsers.list') {
       return await this.#call(
         HostApiContracts.listPlatformUsers,
@@ -700,6 +723,7 @@ export class HttpProductHost implements ProductHostPort {
       const personaDocument = input?.['personaDocument']
       const model = isRecord(input?.['model']) ? input['model'] : {}
       const imagePolicy = input?.['imagePolicy']
+      const dynamicClientApprovalPolicy = input?.['dynamicClientApprovalPolicy']
       if (
         !agentId.trim() ||
         !expectedCurrentRevisionId.trim() ||
@@ -722,6 +746,9 @@ export class HttpProductHost implements ProductHostPort {
           ...(typeof model['reasoningEffort'] === 'string' ? { reasoningEffort: model['reasoningEffort'] } : {}),
         },
         ...(imagePolicy === undefined ? {} : { imagePolicy }),
+        ...(dynamicClientApprovalPolicy === 'manual' || dynamicClientApprovalPolicy === 'automatic'
+          ? { dynamicClientApprovalPolicy }
+          : {}),
       })
       const result = await this.#call(HostApiContracts.reviseAgent, { agentId }, body)
       await this.#refreshAndNotify()

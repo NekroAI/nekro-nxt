@@ -71,6 +71,11 @@ const browserSnapshot = HostApiContracts.snapshot.response.parse({
       configSchema: { schemaVersion: 1, type: 'object', required: [], properties: {} },
     },
   ],
+  notificationSettings: {
+    system: { enabled: true },
+    bark: { enabled: false, serverUrl: 'https://api.day.app', deviceKeyConfigured: false },
+    events: { 'dynamic-client-approval-requested': true },
+  },
   models: [{ provider: 'openai', providerName: 'OpenAI', id: 'gpt-5', name: 'GPT-5' }],
   agents: [
     {
@@ -82,6 +87,7 @@ const browserSnapshot = HostApiContracts.snapshot.response.parse({
       createdAt: 1_725_000_000_000,
       runtimeStatus: 'idle',
       model: { provider: 'openai', model: 'gpt-5' },
+      dynamicClientApprovalPolicy: 'manual',
       imagePolicy: {
         history: {
           mode: 'persistent-distinct',
@@ -434,6 +440,7 @@ describe('NekroNxt product shell', () => {
       platformUsersRevision: state.platformUsersRevision,
       approvals: state.approvals,
       dynamic: state.dynamic,
+      notificationSettings: state.notificationSettings,
       diagnosticNote: 'projection-v1',
       workTreeOrder: state.workTreeOrder,
     }
@@ -476,6 +483,7 @@ describe('NekroNxt product shell', () => {
           platformUsersRevision: state.platformUsersRevision,
           approvals: state.approvals,
           dynamic: state.dynamic,
+          notificationSettings: state.notificationSettings,
           diagnosticNote: state.diagnosticNote,
           workTreeOrder: state.workTreeOrder,
         }
@@ -724,12 +732,34 @@ describe.sequential('NekroNxt browser projections', { timeout: 30_000 }, () => {
             ),
           )
           .toBe(1)
+        await playwrightExpect(instanceButton).toHaveAttribute('aria-expanded', 'true')
+        await instanceButton.click()
+        await playwrightExpect(instanceButton).toHaveAttribute('aria-expanded', 'false')
+        await playwrightExpect
+          .poll(() =>
+            page.evaluate(
+              () => (window as Window & { __instanceSwitcherCloseCount?: number }).__instanceSwitcherCloseCount,
+            ),
+          )
+          .toBe(1)
+        await playwrightExpect
+          .poll(() =>
+            page.evaluate(
+              () => (window as Window & { __instanceSwitcherOpenCount?: number }).__instanceSwitcherOpenCount,
+            ),
+          )
+          .toBe(1)
       },
       browserSnapshot,
       async (page) => {
         await page.addInitScript(() => {
-          const testWindow = window as Window & { __instanceSwitcherOpenCount?: number }
+          const testWindow = window as Window & {
+            __instanceSwitcherOpenCount?: number
+            __instanceSwitcherCloseCount?: number
+            __resolveInstanceSwitcher?: () => void
+          }
           testWindow.__instanceSwitcherOpenCount = 0
+          testWindow.__instanceSwitcherCloseCount = 0
           Object.defineProperty(window, 'nekroDesktopShell', {
             configurable: true,
             value: {
@@ -737,6 +767,13 @@ describe.sequential('NekroNxt browser projections', { timeout: 30_000 }, () => {
                 Promise.resolve({ displayName: '远程开发环境', status: 'ready' as const }),
               openInstanceSwitcher: () => {
                 testWindow.__instanceSwitcherOpenCount = (testWindow.__instanceSwitcherOpenCount ?? 0) + 1
+                return new Promise<void>((resolve) => {
+                  testWindow.__resolveInstanceSwitcher = resolve
+                })
+              },
+              closeInstanceSwitcher: () => {
+                testWindow.__instanceSwitcherCloseCount = (testWindow.__instanceSwitcherCloseCount ?? 0) + 1
+                testWindow.__resolveInstanceSwitcher?.()
                 return Promise.resolve()
               },
               subscribeCurrentInstanceStatus: () => () => undefined,

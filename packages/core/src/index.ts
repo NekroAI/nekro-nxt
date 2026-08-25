@@ -61,6 +61,8 @@ export interface ImageUnderstandingPolicy {
       }
 }
 
+export type DynamicClientApprovalPolicy = 'manual' | 'automatic'
+
 export interface AgentRevisionContent {
   readonly displayName: string
   readonly persona: string
@@ -68,6 +70,7 @@ export interface AgentRevisionContent {
   readonly model: AgentModelSelection
   readonly capabilities?: Partial<AgentCapabilityGrants>
   readonly imagePolicy?: ImageUnderstandingPolicy
+  readonly dynamicClientApprovalPolicy?: DynamicClientApprovalPolicy
 }
 
 export interface AgentDefinitionRecord {
@@ -85,6 +88,7 @@ export interface AgentRevisionRecord extends Omit<
   readonly revision: number
   readonly capabilities: AgentCapabilityGrants
   readonly imagePolicy: ImageUnderstandingPolicy
+  readonly dynamicClientApprovalPolicy: DynamicClientApprovalPolicy
   readonly personaDocument: PromptDocumentV1
   readonly contentDigest: string
   readonly createdAt: number
@@ -340,6 +344,8 @@ export const ImageUnderstandingPolicySchema = z
 export const DEFAULT_IMAGE_UNDERSTANDING_POLICY: ImageUnderstandingPolicy =
   ImageUnderstandingPolicySchema.parse(undefined)
 
+export const DynamicClientApprovalPolicySchema = z.enum(['manual', 'automatic']).default('manual')
+
 export function parseImageUnderstandingPolicy(input: unknown): ImageUnderstandingPolicy {
   return ImageUnderstandingPolicySchema.parse(input)
 }
@@ -362,6 +368,7 @@ const agentRevisionContentSchema = z
     model: AgentModelSelectionSchema,
     capabilities: AgentCapabilityGrantsSchema,
     imagePolicy: ImageUnderstandingPolicySchema,
+    dynamicClientApprovalPolicy: DynamicClientApprovalPolicySchema,
   })
   .strict()
 
@@ -449,10 +456,14 @@ const canonicalJson = (value: JsonValue): string => {
   return output
 }
 
-type NormalizedAgentRevisionContent = Omit<AgentRevisionContent, 'capabilities' | 'imagePolicy' | 'personaDocument'> & {
+type NormalizedAgentRevisionContent = Omit<
+  AgentRevisionContent,
+  'capabilities' | 'imagePolicy' | 'personaDocument' | 'dynamicClientApprovalPolicy'
+> & {
   readonly capabilities: AgentCapabilityGrants
   readonly imagePolicy: ImageUnderstandingPolicy
   readonly personaDocument: PromptDocumentV1
+  readonly dynamicClientApprovalPolicy: DynamicClientApprovalPolicy
 }
 
 const parseAgentRevisionContent = (input: AgentRevisionContent): NormalizedAgentRevisionContent => {
@@ -473,6 +484,7 @@ const parseAgentRevisionContent = (input: AgentRevisionContent): NormalizedAgent
     },
     capabilities: parsed.capabilities,
     imagePolicy: parsed.imagePolicy,
+    dynamicClientApprovalPolicy: parsed.dynamicClientApprovalPolicy,
   }
 }
 
@@ -514,12 +526,13 @@ const normalizedRevisionPayload = (content: NormalizedAgentRevisionContent): Jso
             maxTokens: content.imagePolicy.textModel.maxTokens,
           },
   },
+  dynamicClientApprovalPolicy: content.dynamicClientApprovalPolicy,
 })
 
 const digestRevision = (input: AgentRevisionContent): string => {
   const content = parseAgentRevisionContent(input)
-  return `v4:sha256:${createHash('sha256')
-    .update('nekro-nxt.agent-revision.v4\0')
+  return `v5:sha256:${createHash('sha256')
+    .update('nekro-nxt.agent-revision.v5\0')
     .update(canonicalJson(normalizedRevisionPayload(content)))
     .digest('hex')}`
 }
@@ -531,6 +544,7 @@ const revisionContent = (revision: AgentRevisionRecord): NormalizedAgentRevision
   model: revision.model,
   capabilities: revision.capabilities,
   imagePolicy: revision.imagePolicy,
+  dynamicClientApprovalPolicy: revision.dynamicClientApprovalPolicy,
 })
 
 const equivalentRevisionContent = (

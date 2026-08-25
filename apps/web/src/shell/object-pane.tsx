@@ -17,6 +17,7 @@ import { SortableContext, useSortable, verticalListSortingStrategy } from '@dnd-
 import { CSS, type Transform } from '@dnd-kit/utilities'
 import {
   Cable,
+  Bell,
   CircleHelp,
   Cpu,
   MessageSquare,
@@ -129,10 +130,12 @@ const ChannelRowBody = ({ item }: { readonly item: ChannelSummary; readonly acti
 const AgentHeaderBody = ({
   agent,
   hint,
+  approvalPending = false,
 }: {
   readonly agent: Pick<AgentSummary, 'name' | 'state' | 'capabilities'>
   readonly hint: string
   readonly active?: boolean
+  readonly approvalPending?: boolean
 }) => (
   <>
     <span className={styles.agentAvatar}>{agent.name.slice(0, 1)}</span>
@@ -147,6 +150,9 @@ const AgentHeaderBody = ({
       <span className={styles.treeStateIndicator} data-tree-state-indicator>
         <TreeActivityIndicator state={agent.state} />
       </span>
+    ) : null}
+    {approvalPending ? (
+      <span className={styles.treeApprovalIndicator} role="img" aria-label="有扩展预览等待确认" />
     ) : null}
   </>
 )
@@ -207,6 +213,7 @@ function SortableAgentSection({
   dropActive,
   channelActiveId,
   onGuardedClick,
+  approvalPending,
 }: {
   readonly agent: AgentSummary
   readonly channels: readonly ChannelSummary[]
@@ -215,6 +222,7 @@ function SortableAgentSection({
   readonly dropActive: boolean
   readonly channelActiveId: string | undefined
   readonly onGuardedClick: (event: MouseEvent<HTMLAnchorElement>) => void
+  readonly approvalPending: boolean
 }) {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
     id: agentSortId(agent.id),
@@ -254,6 +262,7 @@ function SortableAgentSection({
             agent={agent}
             hint={channels.length > 0 ? `${channels.length} 个频道` : '还没有绑定频道'}
             active={active}
+            approvalPending={approvalPending}
           />
         </NxtLink>
         <IconButton
@@ -341,6 +350,7 @@ function WorkTree() {
   const agents = useProductStore((state) => state.agents)
   const channels = useProductStore((state) => state.channels)
   const workTreeOrder = useProductStore((state) => state.workTreeOrder)
+  const dynamic = useProductStore((state) => state.dynamic)
   const [overId, setOverId] = useState('')
   const [activeId, setActiveId] = useState('')
   const [intent, setIntent] = useState<BindingChangeIntent>()
@@ -356,6 +366,9 @@ function WorkTree() {
     useSensor(KeyboardSensor, { coordinateGetter: workTreeKeyboardCoordinates }),
   )
   const tree = buildWorkTree(agents, channels, workTreeOrder)
+  const pendingApprovalAgentIds = new Set(
+    dynamic.filter((item) => item.status === 'awaiting-approval' && item.approvalRequestId).map((item) => item.agentId),
+  )
   const channelOwnerById = Object.fromEntries(channels.map((item) => [item.id, item.agentId]))
   channelOwnerRef.current = channelOwnerById
   const dragLists = {
@@ -578,6 +591,7 @@ function WorkTree() {
                       dropActive={dropActiveAgentId === group.agent.id}
                       channelActiveId={channelActiveId}
                       onGuardedClick={guardClick}
+                      approvalPending={pendingApprovalAgentIds.has(group.agent.id)}
                     />
                   ))}
                 </SortableContext>
@@ -780,11 +794,18 @@ function SettingsTree() {
       hint: '模型侧能力配置',
       icon: Puzzle,
     },
+    { to: '/settings?tab=notifications', id: 'notifications', label: '通知', hint: '渠道与推送项目', icon: Bell },
     { to: '/settings?tab=appearance', id: 'appearance', label: '外观', hint: '主题与动效', icon: Palette },
     { to: '/settings?tab=about', id: 'about', label: '关于', hint: '版本、仓库与版权', icon: CircleHelp },
   ]
   const active =
-    tab === 'appearance' || tab === 'dsh-extensions' || tab === 'system-extensions' || tab === 'about' ? tab : 'models'
+    tab === 'appearance' ||
+    tab === 'notifications' ||
+    tab === 'dsh-extensions' ||
+    tab === 'system-extensions' ||
+    tab === 'about'
+      ? tab
+      : 'models'
   return (
     <>
       <div className={shell.treeHead}>

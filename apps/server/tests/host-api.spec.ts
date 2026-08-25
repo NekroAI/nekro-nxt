@@ -945,6 +945,61 @@ describe('NekroNxt Server domain API (WebServer seam)', () => {
     }
   })
 
+  it('persists notification settings and exposes a transient Desktop notification feed', async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), 'nekro-nxt-notification-api-'))
+    temporaryDirectories.push(directory)
+    const runtime = await NekroRuntime.create({
+      coreDatabasePath: path.join(directory, 'core.sqlite'),
+      sessionDatabasePath: path.join(directory, 'sessions.sqlite'),
+      assetRoot: path.join(directory, 'assets'),
+      extensionDataRoot: path.join(directory, 'extension-data'),
+      extensionCacheRoot: path.join(directory, 'extension-cache'),
+    })
+    const webContext = new Context()
+    await webContext.plugin(WebServer, { host: '127.0.0.1', port: 0 })
+    const api = createNekroHostApi(webContext.webServer, runtime)
+    const origin = `http://127.0.0.1:${api.port}`
+    try {
+      const snapshot = HostApiContracts.snapshot.parseResponse(await (await fetch(`${origin}/api/snapshot`)).json())
+      expect(snapshot.notificationSettings).toEqual({
+        system: { enabled: true },
+        bark: { enabled: false, serverUrl: 'https://api.day.app', deviceKeyConfigured: false },
+        events: { 'dynamic-client-approval-requested': true },
+      })
+
+      const connected = HostApiContracts.listClientNotifications.parseResponse(
+        await (await fetch(`${origin}/api/client-notifications`)).json(),
+      )
+      expect(connected).toEqual({ cursor: 0, notifications: [] })
+
+      const updatedResponse = await fetch(`${origin}/api/settings/notifications`, {
+        method: 'PUT',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          system: { enabled: true },
+          bark: { enabled: false, serverUrl: 'https://push.example.test' },
+          events: { 'dynamic-client-approval-requested': true },
+        }),
+      })
+      expect(updatedResponse.ok).toBe(true)
+      expect(HostApiContracts.updateNotificationSettings.parseResponse(await updatedResponse.json())).toMatchObject({
+        revision: 1,
+        bark: { serverUrl: 'https://push.example.test', deviceKeyConfigured: false },
+      })
+
+      const testResponse = await fetch(`${origin}/api/settings/notifications/test-system`, { method: 'POST' })
+      expect(testResponse.ok).toBe(true)
+      const feed = HostApiContracts.listClientNotifications.parseResponse(
+        await (await fetch(`${origin}/api/client-notifications?cursor=${connected.cursor}`)).json(),
+      )
+      expect(feed.notifications).toEqual([expect.objectContaining({ title: 'NekroNXT 测试通知', route: '/settings' })])
+    } finally {
+      api.dispose()
+      await webContext.fiber.dispose()
+      await runtime.dispose()
+    }
+  })
+
   it('round-trips image policy and only accepts an explicitly visual auxiliary model', async () => {
     const directory = await mkdtemp(path.join(tmpdir(), 'nekro-nxt-image-policy-api-'))
     temporaryDirectories.push(directory)
@@ -1025,7 +1080,7 @@ describe('NekroNxt Server domain API (WebServer seam)', () => {
       snapshot = HostApiContracts.snapshot.parseResponse(await (await fetch(`${origin}/api/snapshot`)).json())
       const updated = snapshot.agents.find((agent) => agent.id === created.agentId)!
       expect(updated.imagePolicy).toEqual(disabledPolicy)
-      expect(runtime.repository.getAgent(created.agentId)?.revision.contentDigest).toMatch(/^v4:sha256:/u)
+      expect(runtime.repository.getAgent(created.agentId)?.revision.contentDigest).toMatch(/^v5:sha256:/u)
     } finally {
       api.dispose()
       await webContext.fiber.dispose()

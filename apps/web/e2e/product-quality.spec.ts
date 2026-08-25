@@ -86,6 +86,11 @@ const productSnapshot = HostApiContracts.snapshot.response.parse({
       timeoutMs: 60_000,
     },
   },
+  notificationSettings: {
+    system: { enabled: true },
+    bark: { enabled: false, serverUrl: 'https://api.day.app', deviceKeyConfigured: false },
+    events: { 'dynamic-client-approval-requested': true },
+  },
   connectionAdapters: [
     {
       key: 'web',
@@ -144,6 +149,7 @@ const productSnapshot = HostApiContracts.snapshot.response.parse({
       runtimeStatus: 'running',
       runtimePhase: 'thinking',
       model: { provider: 'deepseek', model: 'deepseek-v4-flash' },
+      dynamicClientApprovalPolicy: 'manual',
       imagePolicy,
       imageDiagnostics,
       capabilities: {
@@ -165,6 +171,7 @@ const productSnapshot = HostApiContracts.snapshot.response.parse({
       createdAt: 1_725_000_000_100,
       runtimeStatus: 'idle',
       model: { provider: 'deepseek', model: 'deepseek-v4-flash' },
+      dynamicClientApprovalPolicy: 'manual',
       imagePolicy,
       imageDiagnostics,
       capabilities: {
@@ -599,6 +606,58 @@ test('about identity stays readable across supported desktop sizes and themes', 
       await capture(page, testInfo, `about-${viewport.width}x${viewport.height}-${colorScheme}`)
     }
   }
+  expect(failures, failures.join('\n')).toEqual([])
+})
+
+test('notification settings and pending preview states stay legible in the current desktop system', async ({
+  page,
+}, testInfo) => {
+  const failures = installRuntimeFailureGate(page)
+  await installProductRoutes(page)
+  const pendingDynamic = productSnapshot.dynamic.map((item) => ({
+    ...item,
+    status: 'awaiting-approval' as const,
+    approvalRequestId: 'approval-visual-probe',
+  }))
+  await page.unroute('**/api/snapshot')
+  await page.route('**/api/snapshot', (route) =>
+    route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({ ...productSnapshot, dynamic: pendingDynamic }),
+    }),
+  )
+  await page.setViewportSize({ width: 1440, height: 900 })
+  await page.emulateMedia({ colorScheme: 'light', reducedMotion: 'reduce' })
+
+  await page.goto(`/work/channels/${targetChannelId}`)
+  await expect(page.getByText(/正在等待界面预览确认/u)).toBeVisible()
+  await expect(page.getByLabel('对象列').getByLabel('有扩展预览等待确认')).toBeVisible()
+  await assertViewportIntegrity(page)
+  await capture(page, testInfo, 'pending-client-preview-channel-light')
+
+  await page.goto(`/work/agents/${targetAgentId}`)
+  const automaticPreviewSwitch = page.getByRole('switch', { name: '自动允许扩展界面预览' })
+  await expect(automaticPreviewSwitch).toBeVisible()
+  await automaticPreviewSwitch.scrollIntoViewIfNeeded()
+  await assertViewportIntegrity(page)
+  await capture(page, testInfo, 'automatic-client-preview-policy-light')
+
+  await page.goto('/settings?tab=notifications')
+  await expect(page.getByText('系统通知渠道', { exact: true })).toBeVisible()
+  await expect(page.getByText('Bark 通知渠道', { exact: true })).toBeVisible()
+  await expect(page.getByText('通知项目', { exact: true })).toBeVisible()
+  await assertViewportIntegrity(page)
+  await capture(page, testInfo, 'notification-settings-light')
+  await page.getByText('通知项目', { exact: true }).scrollIntoViewIfNeeded()
+  await capture(page, testInfo, 'notification-events-light')
+
+  await page.evaluate(() => window.localStorage.setItem('nekro-nxt.theme', 'dark'))
+  await page.emulateMedia({ colorScheme: 'dark', reducedMotion: 'reduce' })
+  await page.reload()
+  await expect(page.getByText('系统通知渠道', { exact: true })).toBeVisible()
+  await assertViewportIntegrity(page)
+  await capture(page, testInfo, 'notification-settings-dark')
   expect(failures, failures.join('\n')).toEqual([])
 })
 

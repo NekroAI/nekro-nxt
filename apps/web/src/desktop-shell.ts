@@ -11,6 +11,7 @@ export interface DesktopInstancePresentation {
 export interface DesktopShellBridge {
   getCurrentInstancePresentation(): Promise<DesktopInstancePresentation>
   openInstanceSwitcher(): Promise<void>
+  closeInstanceSwitcher(): Promise<void>
   subscribeCurrentInstanceStatus(listener: (state: DesktopInstancePresentation) => void): () => void
 }
 

@@ -9,6 +9,7 @@ import {
   shell,
   type Session,
 } from 'electron'
+import { ClientNotificationFeedResponseSchema } from '@nekro-nxt/contracts'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { CredentialVault, type DeviceCredential } from './credential-vault.js'
@@ -32,11 +33,13 @@ import { SerialTaskQueue } from './serial-task-queue.js'
 import { renderTrustedFallbackHtml, trustedFallbackForError, type TrustedFallbackAction } from './trusted-fallback.js'
 import { isAllowedExternalUrl, type ProductRelease } from './distribution.js'
 import { desktopTitleBarCss, desktopWindowChrome } from './window-chrome.js'
+import { detachAndCloseView } from './view-lifecycle.js'
 
 const OVERLAY_WIDTH = 344
 const OVERLAY_MAX_HEIGHT = 480
 const OVERLAY_RAIL_OFFSET = 64
 const OVERLAY_MARGIN = 12
+const OVERLAY_EXIT_MS = 100
 
 interface ProfilePresentation {
   readonly id: string
@@ -91,7 +94,7 @@ export class DesktopInstanceManager {
   readonly #vault: CredentialVault
   readonly #statuses = new Map<string, InstanceStatus>()
   readonly #memoryCredentials = new Map<string, DeviceCredential>()
-  readonly #notifiedApprovals = new Map<string, Set<string>>()
+  readonly #notificationCursors = new Map<string, number>()
   readonly #overlayWaiters = new Set<() => void>()
   readonly #instanceMutations = new SerialTaskQueue()
   #productView: WebContentsView | undefined
@@ -99,8 +102,10 @@ export class DesktopInstanceManager {
   #fallbackView: WebContentsView | undefined
   #currentProfileId: string
   #overlayOpen = false
+  #overlayCloseTimer: ReturnType<typeof setTimeout> | undefined
   #switchSerial = 0
   #notificationTimer: ReturnType<typeof setInterval> | undefined
+  #disposed = false
 
   private constructor(input: {
     window: BrowserWindow
@@ -137,7 +142,7 @@ export class DesktopInstanceManager {
     const manager = new DesktopInstanceManager({ window, release: input.release, profiles, vault })
     manager.#registerIpc()
     manager.#window.on('resize', () => manager.#layout())
-    manager.#window.on('closed', () => manager.dispose())
+    manager.#window.on('close', () => manager.dispose())
     await manager.switchTo(profiles.selectedProfileId, false)
     manager.#window.show()
     manager.#startNotificationMonitor()
@@ -149,6 +154,7 @@ export class DesktopInstanceManager {
   }
 
   async switchTo(profileId: string, persist = true, force = false, skipDraftConfirm = false): Promise<void> {
+    if (this.#disposed) throw new Error('Desktop 实例管理器已经停止。')
     const profile = this.#profiles.get(profileId)
     if (profile === undefined) throw new Error('服务实例不存在。')
     if (!force && profileId === this.#currentProfileId && this.#productView !== undefined) return
@@ -191,8 +197,11 @@ export class DesktopInstanceManager {
   }
 
   openOverlay(): Promise<void> {
+    if (this.#disposed) return Promise.reject(new Error('Desktop 实例管理器已经停止。'))
     if (!this.#overlayOpen) {
       this.#overlayOpen = true
+      if (this.#overlayCloseTimer !== undefined) clearTimeout(this.#overlayCloseTimer)
+      this.#overlayCloseTimer = undefined
       if (this.#overlayView === undefined) {
         const view = new WebContentsView({
           webPreferences: {
@@ -204,34 +213,73 @@ export class DesktopInstanceManager {
         })
         view.setBackgroundColor('#00000000')
         view.webContents.setWindowOpenHandler(() => ({ action: 'deny' }))
-        void view.webContents.loadFile(rendererAsset('instance-overlay.html'))
+        void view.webContents
+          .loadFile(rendererAsset('instance-overlay.html'))
+          .then(() => {
+            if (this.#overlayOpen && this.#overlayView === view && !view.webContents.isDestroyed()) {
+              view.webContents.send('nxt:instances:visibility', 'open')
+              this.#emitSnapshot()
+            }
+          })
+          .catch((error: unknown) => {
+            if (!this.#disposed && !view.webContents.isDestroyed()) {
+              console.error('[nekro-nxt] Desktop 实例浮层加载失败：', error)
+            }
+          })
         this.#overlayView = view
       }
-      this.#window.contentView.addChildView(this.#overlayView)
+      if (!this.#window.contentView.children.includes(this.#overlayView)) {
+        this.#window.contentView.addChildView(this.#overlayView)
+      }
       this.#layout()
+      if (!this.#overlayView.webContents.isLoading()) {
+        this.#overlayView.webContents.send('nxt:instances:visibility', 'open')
+      }
       this.#overlayView.webContents.focus()
       this.#emitSnapshot()
     }
     return new Promise((resolve) => this.#overlayWaiters.add(resolve))
   }
 
-  closeOverlay(): void {
+  closeOverlay(immediate = false): void {
     if (!this.#overlayOpen) return
     this.#overlayOpen = false
-    if (this.#overlayView !== undefined) this.#window.contentView.removeChildView(this.#overlayView)
     for (const resolve of this.#overlayWaiters) resolve()
     this.#overlayWaiters.clear()
-    this.#productView?.webContents.focus()
+    const view = this.#overlayView
+    if (view !== undefined && !view.webContents.isDestroyed()) {
+      view.webContents.send('nxt:instances:visibility', 'closing')
+    }
+    const detach = (): void => {
+      this.#overlayCloseTimer = undefined
+      if (view === undefined || this.#overlayView !== view || this.#overlayOpen) return
+      try {
+        if (!this.#window.isDestroyed() && this.#window.contentView.children.includes(view)) {
+          this.#window.contentView.removeChildView(view)
+        }
+      } catch {
+        // BrowserWindow teardown may finish before the exit transition callback.
+      }
+      if (!this.#disposed && !this.#productView?.webContents.isDestroyed()) this.#productView?.webContents.focus()
+    }
+    if (this.#overlayCloseTimer !== undefined) clearTimeout(this.#overlayCloseTimer)
+    if (immediate) detach()
+    else this.#overlayCloseTimer = setTimeout(detach, OVERLAY_EXIT_MS)
   }
 
   dispose(): void {
+    if (this.#disposed) return
+    this.#disposed = true
+    this.#switchSerial += 1
     if (this.#notificationTimer !== undefined) clearInterval(this.#notificationTimer)
     this.#notificationTimer = undefined
-    this.closeOverlay()
+    if (this.#overlayCloseTimer !== undefined) clearTimeout(this.#overlayCloseTimer)
+    this.#overlayCloseTimer = undefined
+    this.closeOverlay(true)
     this.#destroyProductView()
-    this.#fallbackView?.webContents.close()
+    detachAndCloseView(this.#window, this.#fallbackView)
     this.#fallbackView = undefined
-    this.#overlayView?.webContents.close()
+    detachAndCloseView(this.#window, this.#overlayView)
     this.#overlayView = undefined
   }
 
@@ -243,6 +291,10 @@ export class DesktopInstanceManager {
     ipcMain.handle('nxt:shell:open-switcher', (event) => {
       this.#assertProductSender(event.sender.id)
       return this.openOverlay()
+    })
+    ipcMain.handle('nxt:shell:close-switcher', (event) => {
+      this.#assertProductSender(event.sender.id)
+      this.closeOverlay()
     })
     ipcMain.on('nxt:shell:content-pointer', (event) => {
       if (event.sender.id === this.#productView?.webContents.id) this.closeOverlay()
@@ -338,6 +390,7 @@ export class DesktopInstanceManager {
         await profileSession.closeAllConnections()
         if (profile.credentialRef !== undefined) await this.#vault.remove(profile.credentialRef)
         this.#memoryCredentials.delete(profile.id)
+        this.#notificationCursors.delete(profile.id)
         await this.#profiles.remove(profile.id)
         this.#statuses.delete(profile.id)
         this.#emitSnapshot()
@@ -394,12 +447,18 @@ export class DesktopInstanceManager {
   }
 
   #emitSnapshot(): void {
+    if (this.#disposed) return
     const snapshot = this.#snapshot()
-    this.#overlayView?.webContents.send('nxt:instances:changed', snapshot)
-    this.#productView?.webContents.send('nxt:shell:current-changed', this.#currentPresentation())
+    if (!this.#overlayView?.webContents.isDestroyed()) {
+      this.#overlayView?.webContents.send('nxt:instances:changed', snapshot)
+    }
+    if (!this.#productView?.webContents.isDestroyed()) {
+      this.#productView?.webContents.send('nxt:shell:current-changed', this.#currentPresentation())
+    }
   }
 
   #layout(): void {
+    if (this.#disposed || this.#window.isDestroyed()) return
     const size = this.#window.getContentSize()
     const width = size[0] ?? 0
     const height = size[1] ?? 0
@@ -523,7 +582,14 @@ export class DesktopInstanceManager {
       },
     })
     view.setBackgroundColor('#172A45')
-    view.webContents.on('dom-ready', () => void view.webContents.insertCSS(desktopTitleBarCss(process.platform)))
+    view.webContents.on('dom-ready', () => {
+      if (view.webContents.isDestroyed()) return
+      void view.webContents.insertCSS(desktopTitleBarCss(process.platform)).catch((error: unknown) => {
+        if (!this.#disposed && !view.webContents.isDestroyed()) {
+          console.error('[nekro-nxt] Desktop 标题栏样式注入失败：', error)
+        }
+      })
+    })
     view.webContents.setWindowOpenHandler(({ url }) => {
       if (isAllowedExternalUrl(url)) void shell.openExternal(url)
       return { action: 'deny' }
@@ -553,8 +619,7 @@ export class DesktopInstanceManager {
     const view = this.#productView
     this.#productView = undefined
     if (view === undefined) return
-    this.#window.contentView.removeChildView(view)
-    view.webContents.close()
+    detachAndCloseView(this.#window, view)
   }
 
   async #confirmDiscardDrafts(): Promise<boolean> {
@@ -601,9 +666,13 @@ export class DesktopInstanceManager {
     }
     if (!this.#window.contentView.children.includes(view)) this.#window.contentView.addChildView(view)
     this.#layout()
-    void view.webContents.loadURL(
-      `data:text/html;charset=utf-8,${encodeURIComponent(renderTrustedFallbackHtml(title, body, actions))}`,
-    )
+    void view.webContents
+      .loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(renderTrustedFallbackHtml(title, body, actions))}`)
+      .catch((error: unknown) => {
+        if (!this.#disposed && !view.webContents.isDestroyed()) {
+          console.error('[nekro-nxt] Desktop 连接状态页加载失败：', error)
+        }
+      })
   }
 
   #hideFallback(): void {
@@ -650,7 +719,7 @@ export class DesktopInstanceManager {
       await Promise.all(
         this.#profiles
           .list()
-          .filter((profile) => profile.kind === 'remote' && profile.notificationsEnabled)
+          .filter((profile) => profile.notificationsEnabled)
           .map(async (profile) => {
             let available = false
             try {
@@ -664,43 +733,32 @@ export class DesktopInstanceManager {
               )
               available = response.ok
               if (available) {
-                await this.#establishRemoteSession(profile, profileSession)
-                const snapshotResponse = await fetchSameOriginRemote(
+                if (profile.kind === 'remote') await this.#establishRemoteSession(profile, profileSession)
+                const cursor = this.#notificationCursors.get(profile.id)
+                const notificationResponse = await fetchSameOriginRemote(
                   profileSession.fetch.bind(profileSession),
                   profile.origin,
-                  '/api/snapshot',
+                  `/api/client-notifications${cursor === undefined ? '' : `?cursor=${cursor}`}`,
                   { credentials: 'include', signal: AbortSignal.timeout(8_000) },
                 )
-                if (!snapshotResponse.ok) {
+                if (!notificationResponse.ok) {
                   throw new InstanceOperationError(
                     'authentication-required',
-                    `实例快照请求失败（HTTP ${snapshotResponse.status}）。`,
+                    `系统通知请求失败（HTTP ${notificationResponse.status}）。`,
                   )
                 }
-                const snapshot = (await snapshotResponse.json()) as unknown
-                const dynamic = isRecord(snapshot) && Array.isArray(snapshot['dynamic']) ? snapshot['dynamic'] : []
-                const notified = this.#notifiedApprovals.get(profile.id) ?? new Set<string>()
-                this.#notifiedApprovals.set(profile.id, notified)
-                for (const row of dynamic) {
-                  if (!isRecord(row) || !isRecord(row['latestRun'])) continue
-                  const latest = row['latestRun']
-                  const requestId = latest['approvalRequestId']
-                  if (
-                    latest['status'] !== 'awaiting-approval' ||
-                    typeof requestId !== 'string' ||
-                    notified.has(requestId)
-                  )
-                    continue
-                  notified.add(requestId)
+                const feed = ClientNotificationFeedResponseSchema.parse(await notificationResponse.json())
+                this.#notificationCursors.set(profile.id, feed.cursor)
+                for (const item of feed.notifications) {
                   if (Notification.isSupported()) {
                     const notice = new Notification({
-                      title: `NekroNXT · ${profile.displayName}`,
-                      body: '智能体正在等待你确认动态扩展操作。',
+                      title: `NekroNXT · ${profile.displayName} · ${item.title}`,
+                      body: item.body,
                     })
                     notice.on('click', () => {
                       this.#window.show()
                       this.#window.focus()
-                      void this.#openProfileRoute(profile.id, '/work/creator')
+                      void this.#openProfileRoute(profile.id, item.route ?? '/work')
                     })
                     notice.show()
                   }
@@ -708,6 +766,7 @@ export class DesktopInstanceManager {
               }
             } catch (error) {
               available = false
+              this.#notificationCursors.delete(profile.id)
               this.#statuses.set(
                 profile.id,
                 trustedFallbackForError(error, {
@@ -736,7 +795,7 @@ export class DesktopInstanceManager {
       )
     }
     void poll()
-    this.#notificationTimer = setInterval(() => void poll(), 30_000)
+    this.#notificationTimer = setInterval(() => void poll(), 5_000)
   }
 
   async #openProfileRoute(profileId: string, route: string): Promise<void> {

@@ -113,6 +113,11 @@ const snapshotBody = () =>
         },
       },
     ],
+    notificationSettings: {
+      system: { enabled: true },
+      bark: { enabled: false, serverUrl: 'https://api.day.app', deviceKeyConfigured: false },
+      events: { 'dynamic-client-approval-requested': true },
+    },
     models: [
       {
         provider: 'test-provider',
@@ -132,6 +137,7 @@ const snapshotBody = () =>
         runtimePhase: 'thinking',
         createdAt: 1_700_000_000_000,
         model: { provider: 'deepseek', model: 'deepseek-chat', reasoningEffort: 'high' },
+        dynamicClientApprovalPolicy: 'manual',
         imagePolicy: {
           history: {
             mode: 'persistent-distinct',
@@ -1376,6 +1382,61 @@ describe('HttpProductHost', () => {
         },
       ],
     })
+    unsubscribe()
+  })
+
+  it('refreshes pending dynamic approvals when a dynamic-changed SSE event arrives', async () => {
+    let awaitingApproval = false
+    fetchMock = vi.fn((input: string) => {
+      if (input === '/api/snapshot') {
+        const snapshot = snapshotBody()
+        return Promise.resolve(
+          stubResponse(200, {
+            ...snapshot,
+            dynamic: awaitingApproval
+              ? [
+                  {
+                    agentId: webAgentId,
+                    episodeId: webEpisodeId,
+                    pluginId: 'plugin-sse-probe',
+                    packageId: 'package-sse-probe',
+                    approvalRequestId: 'approval-sse-probe',
+                    status: 'awaiting-approval',
+                    packages: [
+                      {
+                        packageId: 'package-sse-probe',
+                        name: 'SSE 预览探针',
+                        purpose: '验证待确认状态实时刷新。',
+                        hasHostHalf: false,
+                        hasClientHalf: true,
+                      },
+                    ],
+                    policy: { turn: 1, consecutiveFailures: 0, repeatedFingerprintCount: 0 },
+                  },
+                ]
+              : [],
+          }),
+        )
+      }
+      return Promise.resolve(stubResponse(404, { error: { code: 'not-found', message: 'x' } }))
+    })
+    vi.stubGlobal('fetch', fetchMock)
+    vi.stubGlobal('EventSource', FakeEventSource)
+
+    const host = new HttpProductHost()
+    const listener = vi.fn()
+    const unsubscribe = host.subscribe(listener)
+    await flush()
+    expect(host.getSnapshot().dynamic).toEqual([])
+
+    awaitingApproval = true
+    FakeEventSource.instances[0]?.emit('dynamic-changed', { agentId: webAgentId })
+    await flush()
+
+    expect(listener).toHaveBeenCalledTimes(2)
+    expect(host.getSnapshot().dynamic).toEqual([
+      expect.objectContaining({ agentId: webAgentId, status: 'awaiting-approval' }),
+    ])
     unsubscribe()
   })
 

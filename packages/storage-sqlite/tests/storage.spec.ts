@@ -163,7 +163,7 @@ const appendTextEvent = (
 
 describe('Core SQLite baseline', () => {
   it('accepts better-sqlite3 table_list metadata and migrates a clean database', async () => {
-    expect(Object.keys(coreSchema)).toHaveLength(28)
+    expect(Object.keys(coreSchema)).toHaveLength(29)
     expect(channelEvents.logicalMessageId.name).toBe('logical_message_id')
     expect('logicalMessageId' in channels).toBe(false)
 
@@ -174,6 +174,35 @@ describe('Core SQLite baseline', () => {
       expect(core.listConnections()).toHaveLength(1)
     } finally {
       database.close()
+    }
+  })
+
+  it('persists revisioned product settings across a database reopen', async () => {
+    const directory = await temporaryDirectory()
+    const filename = path.join(directory, 'core.sqlite')
+    const database = await openMigratedCoreDatabase(filename)
+    const repository = new SqliteCoreRepository(database)
+    expect(repository.getSystemSetting('notifications')).toBeUndefined()
+    expect(repository.putSystemSetting('notifications', { system: { enabled: true } }, undefined, 10)).toEqual({
+      key: 'notifications',
+      value: { system: { enabled: true } },
+      revision: 1,
+      updatedAt: 10,
+    })
+    expect(() => repository.putSystemSetting('notifications', {}, undefined, 11)).toThrow(
+      'System setting revision conflict.',
+    )
+    database.close()
+
+    const reopened = await openMigratedCoreDatabase(filename)
+    try {
+      const reopenedRepository = new SqliteCoreRepository(reopened)
+      expect(reopenedRepository.getSystemSetting('notifications')).toMatchObject({
+        value: { system: { enabled: true } },
+        revision: 1,
+      })
+    } finally {
+      reopened.close()
     }
   })
 

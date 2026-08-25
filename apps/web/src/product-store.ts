@@ -1,7 +1,9 @@
 import type { AdapterConnectionDescriptor } from '@nekro-nxt/adapter-sdk'
 import {
+  HostApiContracts,
   PlatformUserListResponseSchema,
   parseJsonValue,
+  type HostApiRequest,
   type HostApiResponse,
   type PromptDocumentV1,
 } from '@nekro-nxt/contracts'
@@ -92,6 +94,7 @@ export interface AgentSummary {
     readonly unrestrictedFileAccess: boolean
   }
   readonly imagePolicy: ImageUnderstandingPolicy
+  readonly dynamicClientApprovalPolicy: 'manual' | 'automatic'
   readonly imageDiagnostics: HostApiResponse<'snapshot'>['agents'][number]['imageDiagnostics']
 }
 
@@ -345,6 +348,7 @@ export interface ProductState {
   readonly platformUsersRevision: number
   readonly approvals: readonly DynamicApproval[]
   readonly dynamic: readonly DynamicPackageSummary[]
+  readonly notificationSettings: HostApiResponse<'snapshot'>['notificationSettings']
   readonly theme: ThemeChoice
   readonly reducedMotion: boolean
   readonly diagnosticNote: string
@@ -366,7 +370,13 @@ export interface ProductState {
     readonly model: ModelSummary
     readonly reasoningEffort?: string
     readonly imagePolicy: ImageUnderstandingPolicy
+    readonly dynamicClientApprovalPolicy: 'manual' | 'automatic'
   }): Promise<void>
+  updateNotificationSettings(
+    input: HostApiRequest<'updateNotificationSettings'>,
+  ): Promise<HostApiResponse<'updateNotificationSettings'>>
+  testBarkNotification(input: HostApiRequest<'testBarkNotification'>): Promise<void>
+  testSystemNotification(): Promise<void>
   deleteAgent(
     agentId: string,
     expectedCurrentRevisionId: string,
@@ -496,6 +506,11 @@ export const useProductStore = create<ProductState>((set) => ({
   platformUsersRevision: 0,
   approvals: [],
   dynamic: [],
+  notificationSettings: {
+    system: { enabled: true },
+    bark: { enabled: false, serverUrl: 'https://api.day.app', deviceKeyConfigured: false },
+    events: { 'dynamic-client-approval-requested': true },
+  },
   theme: readInitialThemeChoice(),
   reducedMotion: initialReducedMotion(),
   diagnosticNote: '正在连接 NekroNXT Host…',
@@ -526,6 +541,7 @@ export const useProductStore = create<ProductState>((set) => ({
     model,
     reasoningEffort,
     imagePolicy,
+    dynamicClientApprovalPolicy,
   }) => {
     await requireHost().execute('agents.revise', {
       agentId: requireValue(agentId, '缺少智能体标识，请刷新页面后重试。'),
@@ -539,7 +555,19 @@ export const useProductStore = create<ProductState>((set) => ({
       personaDocument,
       model: { provider: model.provider, model: model.id, ...(reasoningEffort ? { reasoningEffort } : {}) },
       imagePolicy,
+      dynamicClientApprovalPolicy,
     })
+  },
+  updateNotificationSettings: async (input) => {
+    const result = await requireHost().execute('notifications.update', input)
+    await requireHost().execute('host.refresh')
+    return HostApiContracts.updateNotificationSettings.parseResponse(result)
+  },
+  testBarkNotification: async (input) => {
+    await requireHost().execute('notifications.testBark', input)
+  },
+  testSystemNotification: async () => {
+    await requireHost().execute('notifications.testSystem')
   },
   deleteAgent: async (agentId, expectedCurrentRevisionId, confirmationName, deleteAutoCreatedBuiltInChannels) => {
     await requireHost().execute('agents.delete', {

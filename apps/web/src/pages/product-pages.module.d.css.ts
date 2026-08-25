@@ -33,6 +33,7 @@ declare const styles: {
   readonly agentRow: string
   readonly appearanceSignature: string
   readonly appearanceSwatches: string
+  readonly approvalNotice: string
   readonly attachment: string
   readonly avatar: string
   readonly bindingAgentActions: string
@@ -192,6 +193,7 @@ declare const styles: {
   readonly messageUnsupported: string
   readonly moreCapabilities: string
   readonly navCopy: string
+  readonly notificationActions: string
   readonly optionalTests: string
   readonly overviewBlocker: string
   readonly overviewFacts: string
@@ -279,6 +281,7 @@ declare const styles: {
   readonly trajectorySummary: string
   readonly trajectoryTools: string
   readonly treeActivityIndicator: string
+  readonly treeApprovalIndicator: string
   readonly treeCopy: string
   readonly treeRowDragHandle: string
   readonly treeStateIndicator: string

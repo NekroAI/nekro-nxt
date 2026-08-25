@@ -1,5 +1,14 @@
 import type { NekroNxtClientSlotName, NekroNxtClientSlotPropsMap } from '@nekro-nxt/extension-sdk'
-import { Component, createContext, useContext, useEffect, useMemo, useSyncExternalStore, type ReactNode } from 'react'
+import {
+  Component,
+  createContext,
+  useContext,
+  useEffect,
+  useMemo,
+  useRef,
+  useSyncExternalStore,
+  type ReactNode,
+} from 'react'
 import { setDynamicClientApprovalBridge } from './dynamic-client-bridge.js'
 import { DshDynamicClientRuntime, type DynamicClientHostPort, type DynamicInventoryRow } from './dsh-dynamic-client.js'
 import { HttpDynamicClientHost } from './http-dynamic-host.js'
@@ -335,6 +344,19 @@ const browserDynamicClientCoordinator = (): DynamicClientCoordinator => {
 
 export function DynamicClientProvider({ children }: { readonly children: ReactNode }) {
   const coordinator = useMemo(browserDynamicClientCoordinator, [])
+  const agents = useProductStore((state) => state.agents)
+  const dynamic = useProductStore((state) => state.dynamic)
+  const automaticApprovalInFlight = useRef(new Set<string>())
+  const automaticRequests = useMemo(
+    () =>
+      dynamic.filter(
+        (item) =>
+          item.status === 'awaiting-approval' &&
+          item.approvalRequestId !== undefined &&
+          agents.find((agent) => agent.id === item.agentId)?.dynamicClientApprovalPolicy === 'automatic',
+      ),
+    [agents, dynamic],
+  )
 
   useEffect(() => {
     sharedCoordinatorConsumers += 1
@@ -353,6 +375,19 @@ export function DynamicClientProvider({ children }: { readonly children: ReactNo
       }, 0)
     }
   }, [coordinator])
+
+  useEffect(() => {
+    for (const request of automaticRequests) {
+      const requestId = request.approvalRequestId
+      if (requestId === undefined || automaticApprovalInFlight.current.has(requestId)) continue
+      automaticApprovalInFlight.current.add(requestId)
+      void coordinator
+        .sync(request.agentId, request.episodeId)
+        .then(() => coordinator.approve(request.agentId, requestId))
+        .catch((error: unknown) => coordinator.reportFailure(error))
+        .finally(() => automaticApprovalInFlight.current.delete(requestId))
+    }
+  }, [automaticRequests, coordinator])
 
   return <DynamicClientContext.Provider value={coordinator}>{children}</DynamicClientContext.Provider>
 }

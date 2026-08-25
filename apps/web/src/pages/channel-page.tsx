@@ -211,10 +211,17 @@ export function ChannelConversationPage() {
   const allMessages = useProductStore((state) => state.messages)
   const channelHistory = useProductStore((state) => state.channelHistory)
   const connections = useProductStore((state) => state.connections)
+  const dynamic = useProductStore((state) => state.dynamic)
   const channel = useProductStore((state) =>
     channelId ? state.channels.find((item) => item.id === channelId) : state.channels[0],
   )
   const agent = channel ? agents.find((item) => item.id === channel.agentId) : undefined
+  const pendingDynamicApproval = dynamic.find(
+    (item) => item.agentId === agent?.id && item.status === 'awaiting-approval' && item.approvalRequestId,
+  )
+  const pendingExtensionName = pendingDynamicApproval?.packages.find(
+    (item) => item.packageId === (pendingDynamicApproval.packageId ?? pendingDynamicApproval.nextPackageId),
+  )?.name
   const runtime = useProductStore((state) => (channel ? state.channelRuntimes[channel.id] : undefined))
   const livePhase = runtime?.phase ?? channel?.runtimePhase ?? agent?.state ?? '空闲'
   const activeChannelId = channel?.id
@@ -481,6 +488,18 @@ export function ChannelConversationPage() {
                             channelKind={channel.kind}
                             history={history}
                           />
+                          {pendingDynamicApproval ? (
+                            <div className={styles.approvalNotice} role="status">
+                              <span>扩展「{pendingExtensionName ?? '未命名扩展'}」正在等待界面预览确认。</span>
+                              <Button
+                                size="small"
+                                variant="secondary"
+                                onClick={() => void navigate(`/work/creator?agent=${pendingDynamicApproval.agentId}`)}
+                              >
+                                前往确认
+                              </Button>
+                            </div>
+                          ) : null}
                           <ChannelWorkStream runtime={runtime} />
                           {agent && livePhase !== '空闲' ? (
                             <Enter kind="fade" className={styles.runtimeTail} key={livePhase}>
