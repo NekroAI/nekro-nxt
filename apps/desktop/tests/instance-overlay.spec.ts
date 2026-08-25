@@ -307,6 +307,75 @@ describe('Desktop instance overlay accessibility contract', { timeout: 15_000 },
     await page.close()
   })
 
+  it('keeps every production Trusted Fallback state inside narrow and normal viewports', async () => {
+    const scenarios = [
+      { name: 'generic', cause: new Error('internal generic diagnostic') },
+      {
+        name: 'authentication',
+        cause: new InstanceOperationError('authentication-required', 'internal authentication diagnostic'),
+      },
+      {
+        name: 'incompatible',
+        cause: new InstanceOperationError('incompatible-instance', 'internal incompatible diagnostic'),
+      },
+    ]
+    for (const width of [320, 344, 480, 720]) {
+      for (const scenario of scenarios) {
+        const presentation = trustedFallbackForError(scenario.cause, { canReauthenticate: true })
+        const page = await browser.newPage({ viewport: { width, height: 480 }, colorScheme: 'dark' })
+        await page.setContent(
+          renderTrustedFallbackHtml(`无法连接「${scenario.name}」`, presentation.body, presentation.actions),
+        )
+        const geometry = await page.evaluate(() => {
+          const card = document.querySelector('.card')
+          const copy = document.querySelector('.card p')
+          const actions = [...document.querySelectorAll('.actions a')]
+          if (!(card instanceof HTMLElement) || !(copy instanceof HTMLElement) || actions.length === 0) {
+            throw new Error('Trusted Fallback DOM 不完整。')
+          }
+          const rectangle = (element: Element) => {
+            const bounds = element.getBoundingClientRect()
+            const style = getComputedStyle(element)
+            return {
+              left: bounds.left,
+              right: bounds.right,
+              top: bounds.top,
+              bottom: bounds.bottom,
+              width: bounds.width,
+              height: bounds.height,
+              visible: style.display !== 'none' && style.visibility !== 'hidden',
+            }
+          }
+          return {
+            clientWidth: document.documentElement.clientWidth,
+            clientHeight: document.documentElement.clientHeight,
+            scrollWidth: document.documentElement.scrollWidth,
+            card: rectangle(card),
+            copy: rectangle(copy),
+            actions: actions.map(rectangle),
+          }
+        })
+        const context = `${scenario.name} @ ${width}x480`
+        expect(geometry.scrollWidth, context).toBeLessThanOrEqual(geometry.clientWidth)
+        expect(geometry.card.left, context).toBeGreaterThanOrEqual(0)
+        expect(geometry.card.right, context).toBeLessThanOrEqual(geometry.clientWidth)
+        expect(geometry.card.width, context).toBeGreaterThan(0)
+        expect(geometry.copy.width, context).toBeGreaterThan(0)
+        expect(geometry.copy.visible, context).toBe(true)
+        for (const action of geometry.actions) {
+          expect(action.visible, context).toBe(true)
+          expect(action.width, context).toBeGreaterThan(0)
+          expect(action.height, context).toBeGreaterThan(0)
+          expect(action.left, context).toBeGreaterThanOrEqual(geometry.card.left)
+          expect(action.right, context).toBeLessThanOrEqual(geometry.card.right)
+          expect(action.top, context).toBeGreaterThanOrEqual(0)
+          expect(action.bottom, context).toBeLessThanOrEqual(geometry.clientHeight)
+        }
+        await page.close()
+      }
+    }
+  })
+
   it('uses adjacent native controls with valid list and popup semantics', async () => {
     const source = await readFile(path.join(desktopRoot, 'src/instance-overlay.js'), 'utf8')
 
