@@ -368,6 +368,33 @@ a {
   cursor: inherit;
 }
 
+/* Electron WebContentsView 在控件重绘时可能短暂回落为默认箭头；当前命中目标
+   由入口脚本锁定为一个稳定意图，控件内部和状态切换期间不再互相抢 cursor。 */
+:root[data-nxt-cursor='pointer'] body,
+:root[data-nxt-cursor='pointer'] body * {
+  cursor: pointer !important;
+}
+
+:root[data-nxt-cursor='text'] body,
+:root[data-nxt-cursor='text'] body * {
+  cursor: text !important;
+}
+
+:root[data-nxt-cursor='grab'] body,
+:root[data-nxt-cursor='grab'] body * {
+  cursor: grab !important;
+}
+
+:root[data-nxt-cursor='grabbing'] body,
+:root[data-nxt-cursor='grabbing'] body * {
+  cursor: grabbing !important;
+}
+
+:root[data-nxt-cursor='col-resize'] body,
+:root[data-nxt-cursor='col-resize'] body * {
+  cursor: col-resize !important;
+}
+
 ::selection {
   color: var(--nxt-text-primary);
   background: var(--nxt-accent-soft);

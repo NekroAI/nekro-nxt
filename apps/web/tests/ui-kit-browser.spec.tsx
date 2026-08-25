@@ -8,8 +8,11 @@ const harnessModule = `
   import React, { useState } from 'react'
   import { createRoot } from 'react-dom/client'
   import { NotificationCenter, notify } from '/src/components/notifications.tsx'
+  import { installStableCursorIntent } from '/src/cursor-stability.ts'
   import { Button, Dialog, IconButton, NxtMotionProvider, Tooltip } from '/src/ui-kit/index.tsx'
   import '/src/ui-kit/tokens.css'
+
+  installStableCursorIntent()
 
   function Harness() {
     const [open, setOpen] = useState(false)
@@ -21,6 +24,8 @@ const harnessModule = `
       <Button id="dialog-trigger" onClick={() => { setLongContent(true); setPending(false); setOpen(true) }}>打开对话框</Button>
       <IconButton id="icon-button" label="新建内置频道"><span>+</span></IconButton>
       <IconButton id="silent-icon-button" label="主题切换" tooltip={false}><span>◐</span></IconButton>
+      <Button id="cursor-control"><span id="cursor-control-copy">稳定指针</span></Button>
+      <input id="cursor-text" aria-label="指针测试输入框" />
       <Button id="short-dialog-trigger" onClick={() => { setLongContent(false); setPending(false); setOpen(true) }}>打开短对话框</Button>
       <Button id="pending-trigger" onClick={() => { setLongContent(true); setPending(true); setOpen(true) }}>打开待处理对话框</Button>
       <Button id="grouped-notification" onClick={() => {
@@ -219,6 +224,23 @@ describe.sequential('ui-kit Dialog browser behavior', { timeout: 30_000 }, () =>
     await page.keyboard.press('Escape')
     await expectPage(page.getByRole('dialog')).toBeHidden()
     await expectPage(trigger).toBeFocused()
+  }, 20_000)
+
+  it('keeps one cursor intent across control descendants and state changes', async () => {
+    const control = page.locator('#cursor-control')
+    const copy = page.locator('#cursor-control-copy')
+    await copy.hover()
+    await expectPage(page.locator('html')).toHaveAttribute('data-nxt-cursor', 'pointer')
+    await expectPage(control).toHaveCSS('cursor', 'pointer')
+    await expectPage(copy).toHaveCSS('cursor', 'pointer')
+
+    await control.evaluate((element) => element.setAttribute('disabled', ''))
+    await expectPage(control).toHaveCSS('cursor', 'pointer')
+    await expectPage(copy).toHaveCSS('cursor', 'pointer')
+
+    await page.getByLabel('指针测试输入框').hover()
+    await expectPage(page.locator('html')).toHaveAttribute('data-nxt-cursor', 'text')
+    await expectPage(page.getByLabel('指针测试输入框')).toHaveCSS('cursor', 'text')
   }, 20_000)
 
   it('renders an independently scrollable body inside a viewport-bounded surface', async () => {

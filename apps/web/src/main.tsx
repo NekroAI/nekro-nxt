@@ -2,6 +2,7 @@ import { StrictMode } from 'react'
 import { createRoot } from 'react-dom/client'
 import { BrowserRouter } from 'react-router-dom'
 import { NekroNxtApp } from './app.js'
+import { installStableCursorIntent } from './cursor-stability.js'
 import { HttpProductHost } from './http-host.js'
 import { ProductHostCoordinator } from './product-port.js'
 import { setActiveProductHost } from './product-store.js'
@@ -13,6 +14,7 @@ const reducedMotion = window.localStorage.getItem('nekro-nxt.reduced-motion') ==
 applyThemeChoice(document.documentElement, readInitialThemeChoice())
 document.documentElement.dataset['reducedMotion'] = String(reducedMotion)
 document.documentElement.dataset['nxtMotion'] = reducedMotion ? 'off' : 'on'
+const disposeStableCursorIntent = installStableCursorIntent()
 
 const root = document.querySelector('#root')
 if (!root) throw new Error('NekroNxt Web root element is missing.')
@@ -33,6 +35,7 @@ createRoot(root).render(
 )
 
 window.addEventListener('beforeunload', () => {
+  disposeStableCursorIntent()
   coordinator.dispose()
   setActiveProductHost(null)
 })

@@ -497,12 +497,61 @@ describe('Desktop instance overlay accessibility contract', { timeout: 15_000 },
   it('opens on the dialog surface without drawing a second selected-looking row', async () => {
     const page = await openOverlayPage([localProfile, remoteProfile])
     await expect.poll(() => page.evaluate(() => document.activeElement?.getAttribute('role'))).toBe('dialog')
+    const initialGeometry = await page.evaluate(() => {
+      const panel = document.querySelector('.panel')
+      const mark = document.querySelector('[data-selection-mark]')
+      const items = [...document.querySelectorAll<HTMLElement>('[data-profile-id]')]
+      const current = document.querySelector<HTMLElement>('[data-profile-id="local"]')
+      if (!(panel instanceof HTMLElement) || !(mark instanceof HTMLElement) || !current) {
+        throw new Error('服务实例选择器结构不完整。')
+      }
+      const markRect = mark.getBoundingClientRect()
+      const currentRect = current.getBoundingClientRect()
+      return {
+        panelOutline: getComputedStyle(panel).outlineStyle,
+        gap: items[1] ? items[1].getBoundingClientRect().top - items[0]!.getBoundingClientRect().bottom : 0,
+        markTop: markRect.top,
+        markHeight: markRect.height,
+        currentTop: currentRect.top,
+        currentHeight: currentRect.height,
+      }
+    })
+    expect(initialGeometry.panelOutline).toBe('none')
+    expect(initialGeometry.gap).toBeGreaterThanOrEqual(3.8)
+    expect(initialGeometry.gap).toBeLessThanOrEqual(4.2)
+    expect(initialGeometry.markTop).toBe(initialGeometry.currentTop)
+    expect(initialGeometry.markHeight).toBe(initialGeometry.currentHeight)
     await publishSnapshot(page, [localProfile, remoteProfile], remoteProfile.id)
+    await page.waitForTimeout(220)
     await expect(page.locator('.instance-row.current').count()).resolves.toBe(1)
     await expect(page.locator('.instance:focus-visible').count()).resolves.toBe(0)
+    const movedSelection = await page.evaluate(() => {
+      const mark = document.querySelector('[data-selection-mark]')?.getBoundingClientRect()
+      const current = document.querySelector('[data-profile-id="remote-1"]')?.getBoundingClientRect()
+      return mark && current ? { markTop: mark.top, currentTop: current.top } : undefined
+    })
+    expect(movedSelection?.markTop).toBe(movedSelection?.currentTop)
     await publishSnapshot(page, [localProfile, remoteProfile, httpRemoteProfile], remoteProfile.id)
     await expect.poll(() => page.evaluate(() => document.activeElement?.getAttribute('role'))).toBe('dialog')
     await expect(page.locator('.instance:focus-visible').count()).resolves.toBe(0)
+    await page.close()
+  })
+
+  it('uses one ui-kit focus ring and clears input focus with one blank-area click', async () => {
+    const page = await openOverlayPage([localProfile, remoteProfile])
+    await page.getByRole('button', { name: /添加远程实例/u }).click()
+    const address = page.locator('#address')
+    await address.click()
+    const focusStyle = await address.evaluate((element) => {
+      const style = getComputedStyle(element)
+      return { outline: style.outlineStyle, boxShadow: style.boxShadow, active: document.activeElement === element }
+    })
+    expect(focusStyle.active).toBe(true)
+    expect(focusStyle.outline).toBe('none')
+    expect(focusStyle.boxShadow).not.toBe('none')
+
+    await page.locator('.form').click({ position: { x: 4, y: 4 } })
+    await expect(address.evaluate((element) => document.activeElement === element)).resolves.toBe(false)
     await page.close()
   })
 

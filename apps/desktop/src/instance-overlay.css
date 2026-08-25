@@ -24,6 +24,7 @@
   --nxt-text-muted: #5a6679;
   --nxt-text-disabled: #9099a9;
   --nxt-accent: #466394;
+  --nxt-accent-soft: #e2e8f2;
   --nxt-accent-hover: #375079;
   --nxt-accent-pressed: #253857;
   --nxt-accent-foreground: #ffffff;
@@ -65,6 +66,7 @@
   --nxt-text-muted: #a9b4c4;
   --nxt-text-disabled: #7b899e;
   --nxt-accent: #96afd8;
+  --nxt-accent-soft: #253857;
   --nxt-accent-hover: #bdcfec;
   --nxt-accent-pressed: #7390c0;
   --nxt-accent-foreground: #0a121f;
@@ -91,6 +93,7 @@
     --nxt-text-muted: #a9b4c4;
     --nxt-text-disabled: #7b899e;
     --nxt-accent: #96afd8;
+    --nxt-accent-soft: #253857;
     --nxt-accent-hover: #bdcfec;
     --nxt-accent-pressed: #7390c0;
     --nxt-accent-foreground: #0a121f;
@@ -169,6 +172,9 @@ html[data-visibility='closing'] .sheet-backdrop {
     opacity var(--motion-enter) var(--ease-enter),
     transform var(--motion-enter) var(--ease-enter);
 }
+.panel:focus {
+  outline: none;
+}
 html[data-visibility='closed'] .panel,
 html[data-visibility='closing'] .panel {
   opacity: 0;
@@ -224,7 +230,11 @@ html[data-visibility='closing'] .panel {
 }
 
 .list {
+  position: relative;
+  display: grid;
   flex: 1 1 auto;
+  align-content: start;
+  gap: 4px;
   min-height: 0;
   margin: 0;
   overflow-y: auto;
@@ -238,6 +248,34 @@ html[data-visibility='closing'] .panel {
 .instance-item,
 .instance-item * {
   cursor: pointer;
+}
+.instance-item {
+  position: relative;
+  z-index: 1;
+}
+
+.instance-selection-mark {
+  position: absolute;
+  top: 0;
+  right: 8px;
+  left: 8px;
+  height: var(--selection-height, 56px);
+  border-radius: 10px;
+  background: var(--nxt-accent-soft);
+  box-shadow: inset 2px 0 var(--nxt-accent);
+  opacity: 0;
+  pointer-events: none;
+  transform: translateY(var(--selection-y, 8px));
+  transition:
+    transform 180ms cubic-bezier(0.2, 0.7, 0.2, 1),
+    height 180ms cubic-bezier(0.2, 0.7, 0.2, 1),
+    opacity 120ms cubic-bezier(0.2, 0.7, 0.2, 1);
+}
+.instance-selection-mark[data-ready] {
+  opacity: 1;
+}
+.instance-selection-mark[data-instant] {
+  transition: none;
 }
 
 .instance-row {
@@ -253,7 +291,10 @@ html[data-visibility='closing'] .panel {
   background: var(--nxt-bg-hover);
 }
 .instance-row.current {
-  background: var(--nxt-bg-pressed);
+  background: transparent;
+}
+.instance-row.current:hover {
+  background: transparent;
 }
 .instance {
   display: grid;
@@ -276,8 +317,7 @@ html[data-visibility='closing'] .panel {
 .instance.current {
   background: transparent;
 }
-button:focus-visible,
-input:focus-visible {
+button:focus-visible {
   outline: 2px solid var(--nxt-focus-ring);
   outline-offset: 1px;
 }
@@ -472,9 +512,23 @@ input:focus-visible {
   color: var(--nxt-text-primary);
   background: var(--nxt-bg-subtle);
   font-size: 14px;
+  transition:
+    border-color 120ms cubic-bezier(0.2, 0.7, 0.2, 1),
+    box-shadow 120ms cubic-bezier(0.2, 0.7, 0.2, 1);
 }
 .field input:focus {
   border-color: var(--nxt-focus-ring);
+  outline: none;
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--nxt-focus-ring) 18%, transparent);
+}
+
+:root[data-nxt-cursor='pointer'] body,
+:root[data-nxt-cursor='pointer'] body * {
+  cursor: pointer !important;
+}
+:root[data-nxt-cursor='text'] body,
+:root[data-nxt-cursor='text'] body * {
+  cursor: text !important;
 }
 .field-hint {
   margin: 0;

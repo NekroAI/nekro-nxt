@@ -2658,6 +2658,7 @@ test('desktop shell keeps a 48px top bar and a permanently available object pane
   await themeButton.hover()
   await page.waitForTimeout(600)
   await expect(page.getByRole('tooltip', { name: /^主题：/u })).toHaveCount(0)
+  await expect(page.locator('html')).toHaveAttribute('data-nxt-cursor', 'pointer')
   await expect(themeButton).toHaveCSS('cursor', 'pointer')
   await page.emulateMedia({ colorScheme: 'light' })
   await expect(page.locator('html')).toHaveAttribute('data-theme', 'dark')
@@ -2761,6 +2762,7 @@ test('trusted Desktop bridge renders the persistent remote-instance entry across
       await entry.hover()
       await page.waitForTimeout(600)
       await expect(page.getByRole('tooltip', { name: /^管理并添加远程服务实例：/u })).toHaveCount(0)
+      await expect(page.locator('html')).toHaveAttribute('data-nxt-cursor', 'pointer')
     }
     const statusDot = entry.locator('[class*="instanceStatus_ready"]')
     await expect(statusDot).toBeVisible()

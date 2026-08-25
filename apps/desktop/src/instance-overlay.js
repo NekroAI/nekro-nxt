@@ -88,7 +88,29 @@ const revealIcon = (revealed) =>
     ? '<svg class="reveal-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9.88 4.24A9.12 9.12 0 0 1 12 4c6.5 0 10 8 10 8a13.16 13.16 0 0 1-1.67 2.68"/><path d="M6.61 6.61A13.5 13.5 0 0 0 2 12s3.5 8 10 8a9.74 9.74 0 0 0 5.39-1.61"/><line x1="2" y1="2" x2="22" y2="22"/></svg>'
     : '<svg class="reveal-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7-10-7-10-7Z"/><circle cx="12" cy="12" r="3"/></svg>'
 
+const overlayCursorIntentFor = (target) => {
+  if (!(target instanceof window.Element)) return undefined
+  if (target.closest('input')) return 'text'
+  if (target.closest('button, [role="menuitem"]')) return 'pointer'
+  return undefined
+}
+
+const installOverlayCursorStability = () => {
+  const update = (event) => {
+    const intent = overlayCursorIntentFor(event.target)
+    if (intent === undefined) delete document.documentElement.dataset.nxtCursor
+    else document.documentElement.dataset.nxtCursor = intent
+  }
+  const clear = () => {
+    delete document.documentElement.dataset.nxtCursor
+  }
+  document.addEventListener('pointerover', update, true)
+  document.addEventListener('pointermove', update, true)
+  document.addEventListener('pointerleave', clear, true)
+}
+
 const startOverlay = () => {
+  installOverlayCursorStability()
   const bridge = window.nxtInstances
   const root = document.querySelector('#app')
   let snapshot = { revision: 0, currentProfileId: 'local', profiles: [] }
@@ -156,8 +178,25 @@ const startOverlay = () => {
       })
       .join('')
     mountPanel(
-      `<section class="panel" role="dialog" aria-modal="true" aria-label="服务实例" tabindex="-1">${header('服务实例')}<ul class="list" aria-label="服务实例列表">${rows}</ul><footer class="foot"><button class="quiet wide" data-action="add">＋ 添加远程实例</button></footer></section>`,
+      `<section class="panel" role="dialog" aria-modal="true" aria-label="服务实例" tabindex="-1">${header('服务实例')}<ul class="list" aria-label="服务实例列表"><li class="instance-selection-mark" data-selection-mark aria-hidden="true"></li>${rows}</ul><footer class="foot"><button class="quiet wide" data-action="add">＋ 添加远程实例</button></footer></section>`,
     )
+    syncSelectionMark(false)
+  }
+
+  const syncSelectionMark = (animate = true) => {
+    const list = root.querySelector('.list')
+    const mark = root.querySelector('[data-selection-mark]')
+    const current = root.querySelector(`[data-profile-id="${window.CSS.escape(snapshot.currentProfileId)}"]`)
+    if (!(list instanceof window.HTMLElement) || !(mark instanceof window.HTMLElement)) return
+    if (!(current instanceof window.HTMLElement)) {
+      mark.removeAttribute('data-ready')
+      return
+    }
+    if (!animate || !mark.hasAttribute('data-ready')) mark.setAttribute('data-instant', '')
+    mark.style.setProperty('--selection-y', `${current.offsetTop}px`)
+    mark.style.setProperty('--selection-height', `${current.offsetHeight}px`)
+    mark.setAttribute('data-ready', '')
+    requestAnimationFrame(() => mark.removeAttribute('data-instant'))
   }
 
   const renderMenu = (profile) =>
@@ -425,6 +464,8 @@ const startOverlay = () => {
       const more = item.querySelector('[data-action="more"]')
       if (more) more.setAttribute('aria-label', `${profile.displayName}的更多操作`)
     }
+    snapshot = next
+    syncSelectionMark(true)
     return true
   }
 
@@ -441,7 +482,7 @@ const startOverlay = () => {
     }
     if (mode.kind === 'list' || mode.kind === 'menu') {
       const patched = patchList(next)
-      snapshot = next
+      if (!patched) snapshot = next
       if (!patched) renderPreservingFocus()
       applyPendingOpenIntent()
       return
@@ -578,6 +619,13 @@ const startOverlay = () => {
       error = cause instanceof Error ? cause.message : String(cause)
       render()
     }
+  })
+
+  root.addEventListener('pointerdown', (event) => {
+    const target = event.target instanceof window.Element ? event.target : undefined
+    if (target?.closest('button, input, label, a, [role="menuitem"]')) return
+    const active = document.activeElement
+    if (active instanceof window.HTMLInputElement && root.contains(active)) active.blur()
   })
 
   root.addEventListener('input', (event) => {
