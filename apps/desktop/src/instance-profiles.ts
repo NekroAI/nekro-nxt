@@ -236,13 +236,17 @@ export class InstanceProfileStore {
     return this.#envelope.profiles.find((profile) => profile.id === id)
   }
 
-  assertRemoteConnectionAvailable(input: { readonly origin: string; readonly observedInstanceId?: string }): string {
+  assertRemoteConnectionAvailable(
+    input: { readonly origin: string; readonly observedInstanceId?: string },
+    excludingId?: string,
+  ): string {
     const origin = normalizeRemoteOrigin(input.origin)
     if (
       this.#envelope.profiles.some(
         (profile) =>
-          profile.origin === origin ||
-          (input.observedInstanceId !== undefined && profile.observedInstanceId === input.observedInstanceId),
+          profile.id !== excludingId &&
+          (profile.origin === origin ||
+            (input.observedInstanceId !== undefined && profile.observedInstanceId === input.observedInstanceId)),
       )
     ) {
       throw new InstanceOperationError('duplicate-instance', '该服务实例已经添加。')
@@ -294,6 +298,64 @@ export class InstanceProfileStore {
         throw error
       }
       return profile
+    })
+  }
+
+  async updateRemoteConnection(
+    id: string,
+    connection: {
+      readonly displayName: string
+      readonly origin: string
+      readonly observedInstanceId: string
+      readonly transport?: InstanceDescriptor['transport']
+      readonly pinnedSpkiSha256?: string
+      readonly credentialRef?: string
+    },
+  ): Promise<InstanceProfile> {
+    return this.#mutations.run(async () => {
+      const current = this.get(id)
+      if (current === undefined || current.kind !== 'remote') throw new Error('远程服务实例不存在。')
+      const origin = this.assertRemoteConnectionAvailable(
+        { origin: connection.origin, observedInstanceId: connection.observedInstanceId },
+        id,
+      )
+      if (connection.observedInstanceId !== current.observedInstanceId) {
+        throw new Error('远程服务实例身份不能修改。')
+      }
+      const transport = connection.transport ?? remoteTransportForOrigin(origin)
+      if (transport !== remoteTransportForOrigin(origin)) {
+        throw new Error('远程实例 transport 与地址不匹配。')
+      }
+      if (transport === 'auto-tls-pinned-v1' && connection.pinnedSpkiSha256 === undefined) {
+        throw new Error('远程实例 TLS 身份字段无效。')
+      }
+      const next: InstanceProfile = {
+        id: current.id,
+        kind: 'remote',
+        displayName: connection.displayName.trim() || new URL(origin).host,
+        origin,
+        transport,
+        observedInstanceId: connection.observedInstanceId,
+        partition: origin === current.origin ? current.partition : `persist:nxt-instance-${current.id}-${randomUUID()}`,
+        notificationsEnabled: current.notificationsEnabled,
+        lastRoute: current.lastRoute,
+        addedAt: current.addedAt,
+        lastSelectedAt: current.lastSelectedAt,
+        ...(connection.pinnedSpkiSha256 === undefined ? {} : { pinnedSpkiSha256: connection.pinnedSpkiSha256 }),
+        ...(connection.credentialRef === undefined ? {} : { credentialRef: connection.credentialRef }),
+      }
+      const previous = this.#envelope
+      this.#envelope = {
+        ...previous,
+        profiles: previous.profiles.map((profile) => (profile.id === id ? next : profile)),
+      }
+      try {
+        await this.#save()
+      } catch (error) {
+        this.#envelope = previous
+        throw error
+      }
+      return next
     })
   }
 

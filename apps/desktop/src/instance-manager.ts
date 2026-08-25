@@ -5,6 +5,7 @@ import {
   app,
   dialog,
   ipcMain,
+  nativeTheme,
   session,
   shell,
   type IpcMainEvent,
@@ -28,7 +29,12 @@ import {
   fetchSameOriginRemote,
   installSameOriginNavigationGuard,
 } from './remote-navigation.js'
-import { addRemoteProfile, reauthenticateRemoteProfile } from './remote-profile-enrollment.js'
+import {
+  addRemoteProfile,
+  editRemoteProfileConnection,
+  reauthenticateRemoteProfile,
+  type RemoteProfileConnectionEditResult,
+} from './remote-profile-enrollment.js'
 import { certificateSpki } from './remote-pairing.js'
 import {
   establishRemoteSession,
@@ -67,6 +73,7 @@ import {
 } from './trusted-view-navigation.js'
 
 const OVERLAY_EXIT_MS = 100
+const FALLBACK_EXIT_MS = 180
 type ClientNotificationFeed = ReturnType<(typeof ClientNotificationFeedResponseSchema)['parse']>
 type DesktopHandleListener = (event: IpcMainInvokeEvent, ...args: unknown[]) => unknown
 type DesktopEventListener = (event: IpcMainEvent, ...args: unknown[]) => void
@@ -168,8 +175,12 @@ export class DesktopInstanceManager {
   #overlayIntent: OverlayOpenIntent = { kind: 'list' }
   #overlayTrustedUrl = overlayRendererUrl()
   #overlayCloseTimer: ReturnType<typeof setTimeout> | undefined
+  #overlayOpenSerial = 0
+  #fallbackCloseTimer: ReturnType<typeof setTimeout> | undefined
+  #surfaceTheme: 'light' | 'dark' = nativeTheme.shouldUseDarkColors ? 'dark' : 'light'
   #switchSerial = 0
   #profileMutationSerial = 0
+  #retirementSerial = 0
   #localHostStatus: LocalHostStatus
   #lastCurrentPresentationSignature: string | undefined
   #disposed = false
@@ -219,7 +230,7 @@ export class DesktopInstanceManager {
       minWidth: 980,
       minHeight: 680,
       show: false,
-      backgroundColor: '#172A45',
+      backgroundColor: nativeTheme.shouldUseDarkColors ? '#0F1A2C' : '#F5F2EE',
       ...desktopWindowChrome(process.platform),
       webPreferences: { contextIsolation: true, nodeIntegration: false, sandbox: true },
     })
@@ -262,14 +273,16 @@ export class DesktopInstanceManager {
     if (profile === undefined) throw new Error('服务实例不存在。')
     if (!force && profileId === this.#currentProfileId && this.#productView !== undefined) return
     if (!skipDraftConfirm && profileId !== this.#currentProfileId && !(await this.#confirmDiscardDrafts())) return
+    this.#surfaceTheme = (await this.#readProductTheme()) ?? this.#surfaceTheme
     const serial = ++this.#switchSerial
     this.#profileGenerations.advance(profile.id, 'switch')
     this.#switchingProfiles.set(profile.id, serial)
     this.closeOverlay(false, false)
     this.#statuses.set(profile.id, 'connecting')
     this.#currentProfileId = profile.id
+    await this.#showFallback(profile, `正在连接「${profile.displayName}」`, '正在读取该实例的工作区…', [])
+    if (serial !== this.#switchSerial) return
     this.#destroyProductView()
-    this.#showFallback(profile, `正在连接「${profile.displayName}」`, '正在读取该实例的工作区…', [])
     this.#window.setTitle(`NekroNXT — ${profile.displayName}`)
     this.#publishPresentationChange()
     try {
@@ -281,6 +294,8 @@ export class DesktopInstanceManager {
       const view = this.#createProductView(profile)
       this.#productView = view
       this.#window.contentView.addChildView(view)
+      this.#bringFallbackToFront()
+      this.#bringOverlayToFront()
       this.#layout()
       await view.webContents.loadURL(routeWithDesktop(profile))
       assertSameOriginRemoteUrl(profile.origin, view.webContents.getURL())
@@ -298,15 +313,22 @@ export class DesktopInstanceManager {
         canReturnLocal: profile.kind === 'remote',
       })
       this.#statuses.set(profile.id, profile.kind === 'local' ? this.#localHostStatus : fallback.status)
-      this.#showFallback(profile, `无法连接「${profile.displayName}」`, fallback.body, fallback.actions)
+      await this.#showFallback(profile, `无法连接「${profile.displayName}」`, fallback.body, fallback.actions)
       this.#publishPresentationChange()
     } finally {
       if (this.#switchingProfiles.get(profile.id) === serial) this.#switchingProfiles.delete(profile.id)
     }
   }
 
-  openOverlay(source: OverlayOpeningSource = 'product', intent: OverlayOpenIntent = { kind: 'list' }): Promise<void> {
+  async openOverlay(
+    source: OverlayOpeningSource = 'product',
+    intent: OverlayOpenIntent = { kind: 'list' },
+  ): Promise<void> {
     if (this.#disposed) return Promise.reject(new Error('Desktop 实例管理器已经停止。'))
+    const serial = ++this.#overlayOpenSerial
+    this.#surfaceTheme = (await this.#readProductTheme()) ?? this.#surfaceTheme
+    if (this.#disposed) throw new Error('Desktop 实例管理器已经停止。')
+    if (serial !== this.#overlayOpenSerial) return
     this.#overlayIntent = intent
     this.#overlayLoadGate.updateIntent()
     if (!this.#overlayOpen) {
@@ -358,7 +380,8 @@ export class DesktopInstanceManager {
     return new Promise((resolve) => this.#overlayWaiters.add(resolve))
   }
 
-  closeOverlay(immediate = false, restoreFocus = true): void {
+  closeOverlay(immediate = false, restoreFocus = true, restoreControl = false): void {
+    this.#overlayOpenSerial += 1
     if (!this.#overlayOpen) return
     this.#overlayOpen = false
     const openingSource = this.#overlayOpeningSource
@@ -379,7 +402,7 @@ export class DesktopInstanceManager {
       } catch {
         // BrowserWindow teardown may finish before the exit transition callback.
       }
-      if (!this.#disposed && restoreFocus) this.#restoreOverlayFocus(openingSource)
+      if (!this.#disposed && restoreFocus) this.#restoreOverlayFocus(openingSource, restoreControl)
     }
     if (this.#overlayCloseTimer !== undefined) clearTimeout(this.#overlayCloseTimer)
     if (immediate) detach()
@@ -405,6 +428,8 @@ export class DesktopInstanceManager {
     this.#lastCurrentPresentationSignature = undefined
     if (this.#overlayCloseTimer !== undefined) clearTimeout(this.#overlayCloseTimer)
     this.#overlayCloseTimer = undefined
+    if (this.#fallbackCloseTimer !== undefined) clearTimeout(this.#fallbackCloseTimer)
+    this.#fallbackCloseTimer = undefined
     this.closeOverlay(true, false)
     this.#destroyProductView()
     detachAndCloseView(this.#window, this.#fallbackView)
@@ -425,13 +450,15 @@ export class DesktopInstanceManager {
       })
       this.#ipcRegistrations.registerHandle('nxt:shell:close-switcher', (event) => {
         this.#assertProductSender(event.sender.id)
-        this.closeOverlay()
+        this.closeOverlay(false, true, false)
       })
       this.#ipcRegistrations.registerListener('nxt:shell:content-pointer', (event) => {
-        if (event.sender.id === this.#productView?.webContents.id) this.closeOverlay()
+        if (event.sender.id === this.#productView?.webContents.id) this.closeOverlay(false, true, false)
       })
       this.#registerOverlayIpc('list', () => this.#snapshot())
-      this.#registerOverlayIpc('close', () => this.closeOverlay())
+      this.#registerOverlayIpc('close', (value) =>
+        this.closeOverlay(false, true, isRecord(value) && value['restoreControl'] === true),
+      )
       this.#registerOverlayIpc('switch', async (value) => {
         await this.#runInstanceMutation(() =>
           this.switchTo(requiredString(isRecord(value) ? value['profileId'] : undefined, '服务实例')),
@@ -483,6 +510,58 @@ export class DesktopInstanceManager {
             await this.switchTo(profileId, false, true)
           }
           this.#publishPresentationChange()
+        })
+      })
+      this.#registerOverlayIpc('editConnection', async (value) => {
+        return this.#runInstanceMutation(async (lifecycle) => {
+          if (!isRecord(value)) throw new Error('连接修改参数无效。')
+          const profileId = requiredString(value['profileId'], '服务实例')
+          const current = this.#profiles.get(profileId)
+          if (current === undefined || current.kind !== 'remote') throw new Error('远程服务实例不存在。')
+          const managementKey = optionalSecret(value['managementKey'])
+          const origin = normalizeRemoteOrigin(typeof value['address'] === 'string' ? value['address'] : '')
+          assertInsecureHttpConfirmed(origin, value['confirmedInsecureHttpOrigin'])
+          const reconnects = origin !== current.origin || managementKey !== undefined
+          if (reconnects && profileId === this.#currentProfileId && !(await this.#confirmDiscardDrafts())) {
+            return { saved: false }
+          }
+          this.#mutationLifecycle.assertActive(lifecycle)
+          this.#profileGenerations.advance(profileId, 'update')
+          const mutationSerial = --this.#profileMutationSerial
+          this.#switchingProfiles.set(profileId, mutationSerial)
+          const previousCredential =
+            this.#memoryCredentials.get(profileId) ??
+            (current.credentialRef === undefined ? undefined : this.#vault.get(current.credentialRef))
+          try {
+            const edited = await editRemoteProfileConnection({
+              profiles: this.#profiles,
+              credentials: this.#vault,
+              profileId,
+              displayName: typeof value['displayName'] === 'string' ? value['displayName'] : '',
+              address: origin,
+              ...(managementKey === undefined ? {} : { managementKey }),
+              deviceLabel: `${app.getName()} · ${process.platform}`,
+              clientReleaseId: this.#release.releaseId,
+              assertActive: () => this.#mutationLifecycle.assertActive(lifecycle),
+            })
+            if (!this.#mutationLifecycle.isActive(lifecycle)) return { saved: false }
+            if (edited.credential !== undefined) this.#memoryCredentials.set(profileId, edited.credential)
+            else if (reconnects) this.#memoryCredentials.delete(profileId)
+            if (profileId === this.#currentProfileId) {
+              if (reconnects) await this.switchTo(profileId, false, true, true)
+              else this.#window.setTitle(`NekroNXT — ${edited.profile.displayName}`)
+            }
+            this.#publishPresentationChange()
+            if (reconnects) {
+              this.#runBackgroundAction(
+                '清理旧实例连接',
+                this.#retireReplacedConnection(current, previousCredential, edited),
+              )
+            }
+            return { saved: true }
+          } finally {
+            if (this.#switchingProfiles.get(profileId) === mutationSerial) this.#switchingProfiles.delete(profileId)
+          }
         })
       })
       this.#registerOverlayIpc('reauthenticate', async (value) => {
@@ -711,7 +790,7 @@ export class DesktopInstanceManager {
         sandbox: true,
       },
     })
-    view.setBackgroundColor('#172A45')
+    view.setBackgroundColor(this.#surfaceTheme === 'dark' ? '#0F1A2C' : '#F5F2EE')
     installF12DevToolsShortcut(view.webContents)
     view.webContents.on('dom-ready', () => {
       if (view.webContents.isDestroyed()) return
@@ -743,7 +822,7 @@ export class DesktopInstanceManager {
         this.#statuses.set(profile.id, 'offline')
         this.#publishPresentationChange()
       }
-      this.#showFallback(profile, '实例页面已经停止', '重新连接可恢复已保存的数据。', [
+      void this.#showFallback(profile, '实例页面已经停止', '重新连接可恢复已保存的数据。', [
         ...(profile.kind === 'remote' ? ([{ label: '返回本地实例', href: 'nxt-desktop://local' }] as const) : []),
         { label: '重新连接', href: 'nxt-desktop://retry' },
         { label: '管理服务实例', href: 'nxt-desktop://instances' },
@@ -757,6 +836,17 @@ export class DesktopInstanceManager {
     this.#productView = undefined
     if (view === undefined) return
     detachAndCloseView(this.#window, view)
+  }
+
+  async #readProductTheme(): Promise<'light' | 'dark' | undefined> {
+    const view = this.#productView
+    if (view === undefined || view.webContents.isDestroyed()) return undefined
+    try {
+      const theme: unknown = await view.webContents.executeJavaScript('document.documentElement.dataset.theme', true)
+      return theme === 'light' || theme === 'dark' ? theme : undefined
+    } catch {
+      return undefined
+    }
   }
 
   async #confirmDiscardDrafts(): Promise<boolean> {
@@ -791,13 +881,16 @@ export class DesktopInstanceManager {
     title: string,
     body: string,
     actions: readonly TrustedFallbackAction[],
-  ): void {
+  ): Promise<void> {
+    if (this.#fallbackCloseTimer !== undefined) clearTimeout(this.#fallbackCloseTimer)
+    this.#fallbackCloseTimer = undefined
     const fallbackUrl = `data:text/html;charset=utf-8,${encodeURIComponent(
       renderTrustedFallbackHtml({
         title,
         body,
         actions,
         platform: process.platform,
+        theme: this.#surfaceTheme,
         instance: {
           displayName: profile.displayName,
           addressLabel:
@@ -836,7 +929,6 @@ export class DesktopInstanceManager {
     let view = this.#fallbackView
     if (view === undefined) {
       view = new WebContentsView({ webPreferences: { contextIsolation: true, nodeIntegration: false, sandbox: true } })
-      view.setBackgroundColor('#F5F2EE')
       installF12DevToolsShortcut(view.webContents)
       view.webContents.setWindowOpenHandler(() => ({ action: 'deny' }))
       installExactTrustedNavigationGuard(
@@ -846,10 +938,12 @@ export class DesktopInstanceManager {
       )
       this.#fallbackView = view
     }
+    view.setBackgroundColor(this.#surfaceTheme === 'dark' ? '#0F1A2C' : '#F5F2EE')
     if (!this.#window.contentView.children.includes(view)) this.#window.contentView.addChildView(view)
+    this.#bringFallbackToFront()
     this.#bringOverlayToFront()
     this.#layout()
-    void view.webContents
+    return view.webContents
       .loadURL(fallbackUrl)
       .then(() => {
         if (this.#fallbackLoads.isCurrent(load)) assertExactTrustedUrl(view.webContents.getURL(), fallbackUrl)
@@ -867,9 +961,34 @@ export class DesktopInstanceManager {
   }
 
   #hideFallback(): void {
-    if (this.#fallbackView !== undefined && this.#window.contentView.children.includes(this.#fallbackView)) {
-      this.#window.contentView.removeChildView(this.#fallbackView)
+    const view = this.#fallbackView
+    if (view === undefined || !this.#window.contentView.children.includes(view)) return
+    if (this.#fallbackCloseTimer !== undefined) clearTimeout(this.#fallbackCloseTimer)
+    if (!view.webContents.isDestroyed()) {
+      void view.webContents
+        .executeJavaScript("document.documentElement.dataset.visibility = 'closing'", true)
+        .catch(() => undefined)
     }
+    this.#fallbackCloseTimer = setTimeout(() => {
+      this.#fallbackCloseTimer = undefined
+      if (
+        this.#disposed ||
+        this.#fallbackView !== view ||
+        this.#window.isDestroyed() ||
+        !this.#window.contentView.children.includes(view)
+      ) {
+        return
+      }
+      this.#window.contentView.removeChildView(view)
+    }, FALLBACK_EXIT_MS)
+  }
+
+  #bringFallbackToFront(): void {
+    const fallback = this.#fallbackView
+    if (fallback === undefined || this.#window.isDestroyed() || !this.#window.contentView.children.includes(fallback)) {
+      return
+    }
+    bringChildViewToFront(this.#window.contentView, fallback)
   }
 
   #bringOverlayToFront(): void {
@@ -906,8 +1025,19 @@ export class DesktopInstanceManager {
     }
     assertExactTrustedUrl(actualUrl, this.#overlayTrustedUrl)
     if (decision === 'send-open') {
-      this.#sendOverlayVisibility({ state: 'open', intent: this.#overlayIntent })
+      void this.#applyOverlayTheme(view).then(() => {
+        if (this.#overlayView === view && this.#overlayOpen && !view.webContents.isDestroyed()) {
+          this.#sendOverlayVisibility({ state: 'open', intent: this.#overlayIntent })
+        }
+      })
     }
+  }
+
+  async #applyOverlayTheme(view: WebContentsView): Promise<void> {
+    if (view.webContents.isDestroyed()) return
+    await view.webContents
+      .executeJavaScript(`document.documentElement.dataset.theme = ${JSON.stringify(this.#surfaceTheme)}`, true)
+      .catch(() => undefined)
   }
 
   #discardFailedOverlay(view: WebContentsView): void {
@@ -917,7 +1047,7 @@ export class DesktopInstanceManager {
     for (const resolve of this.#overlayWaiters) resolve()
     this.#overlayWaiters.clear()
     detachAndCloseView(this.#window, view)
-    this.#restoreOverlayFocus(this.#overlayOpeningSource)
+    this.#restoreOverlayFocus(this.#overlayOpeningSource, false)
     this.#overlayOpeningSource = undefined
   }
 
@@ -936,10 +1066,11 @@ export class DesktopInstanceManager {
     })
   }
 
-  #restoreOverlayFocus(source: OverlayOpeningSource | undefined): void {
+  #restoreOverlayFocus(source: OverlayOpeningSource | undefined, restoreControl: boolean): void {
     const view = source?.startsWith('fallback-') === true ? this.#fallbackView : this.#productView
     if (view === undefined || view.webContents.isDestroyed()) return
     view.webContents.focus()
+    if (!restoreControl) return
     const selector =
       source === 'fallback-instances'
         ? '[data-instance-sheet-trigger="instances"]'
@@ -962,6 +1093,40 @@ export class DesktopInstanceManager {
       fetcher: profileSession.fetch.bind(profileSession),
       credential,
     })
+  }
+
+  async #retireReplacedConnection(
+    previous: InstanceProfile,
+    previousCredential: ReturnType<CredentialVault['get']>,
+    edited: RemoteProfileConnectionEditResult,
+  ): Promise<void> {
+    const revokeSession = session.fromPartition(`nxt-retire-${previous.id}-${++this.#retirementSerial}`)
+    if (previousCredential !== undefined) {
+      this.#configureSession(previous, revokeSession)
+      await tryRevokeRemoteDevice({
+        profile: previous,
+        fetcher: revokeSession.fetch.bind(revokeSession),
+        credential: previousCredential,
+      })
+    }
+    await revokeSession.clearStorageData().catch(() => undefined)
+    await revokeSession.closeAllConnections().catch(() => undefined)
+    if (edited.replaced?.partition !== undefined) {
+      const previousSession = session.fromPartition(edited.replaced.partition)
+      try {
+        await previousSession.clearStorageData()
+        await previousSession.closeAllConnections()
+      } catch (error) {
+        console.warn('[nekro-nxt] Desktop 旧实例分区清理失败：', error)
+      }
+    }
+    if (edited.replaced?.credentialRef !== undefined) {
+      try {
+        await this.#vault.remove(edited.replaced.credentialRef)
+      } catch (error) {
+        console.warn('[nekro-nxt] Desktop 旧设备凭据清理失败：', error)
+      }
+    }
   }
 
   #monitorTargets(): readonly ProfileMonitorTarget[] {

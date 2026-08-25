@@ -176,7 +176,7 @@ function DesktopShell() {
           <div className={styles.railSpacer} />
           <IconButton
             label={`主题：${themeLabel}；切换为${nextThemeLabel}`}
-            className={styles.railTheme}
+            className={styles.railUtility}
             onClick={cycleTheme}
           >
             <ThemeIconSwap swapKey={theme}>
@@ -198,7 +198,7 @@ function DesktopShell() {
                           ? '版本不兼容'
                           : '无法连接'
               }`}
-              className={`${styles.railInstance} ${instanceSwitcherOpen ? styles.railInstanceOpen : ''}`}
+              className={`${styles.railUtility} ${styles.railInstance} ${instanceSwitcherOpen ? styles.railInstanceOpen : ''}`}
               data-desktop-instance-switcher=""
               aria-expanded={instanceSwitcherOpen}
               onClick={() => {

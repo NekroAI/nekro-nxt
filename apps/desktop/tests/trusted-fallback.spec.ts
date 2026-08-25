@@ -116,6 +116,7 @@ describe('Desktop Trusted Fallback behavior', () => {
       body: presentation.body,
       actions: presentation.actions,
       platform: 'darwin',
+      theme: 'dark',
       instance: { displayName: '<script>', addressLabel: 'secure.example.test', status: presentation.status },
     })
     expect(html).toContain('此客户端的设备会话已经失效，请重新认证。')
@@ -124,6 +125,10 @@ describe('Desktop Trusted Fallback behavior', () => {
     expect(html).not.toContain(diagnostic)
     expect(html).not.toContain('nxt:instances:add')
     expect(html).not.toContain('Error:')
+    expect(html).toContain('data-theme="dark"')
+    expect(html).toContain('data-visibility="open"')
+    expect(html).toContain(':root[data-theme="dark"]')
+    expect(html).toContain(':root[data-visibility="closing"] body')
   })
 
   it('uses safe generic fallback for unknown errors and omits reauthentication when unavailable', () => {

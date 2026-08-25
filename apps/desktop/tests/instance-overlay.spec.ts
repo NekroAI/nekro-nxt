@@ -16,13 +16,15 @@ let browser: Browser
 
 interface OverlayControl {
   addCalls: number
+  editConnectionCalls: number
   reauthenticateCalls: number
   closeCalls: number
+  closePayload?: unknown
   snapshot: { revision: number; currentProfileId: string; profiles: readonly OverlayProfile[] }
   snapshotListener?: (snapshot: OverlayControl['snapshot']) => void
   visibilityListener?: (visibility: unknown) => void
   payload?: Record<string, unknown>
-  resolve?: () => void
+  resolve?: (value?: unknown) => void
   reject?: (error: Error) => void
 }
 
@@ -33,6 +35,8 @@ declare global {
     __compositionEndCount?: number
     __overlayAnimationFrames?: FrameRequestCallback[]
     __flushOverlayAnimationFrames?: () => void
+    __overlayNodes?: Record<string, HTMLInputElement>
+    __selectionBefore?: Record<string, { value: string; selectionStart: number | null; selectionEnd: number | null }>
     nxtInstances: Record<string, unknown>
   }
 }
@@ -78,6 +82,18 @@ const remoteProfile: OverlayProfile = {
   insecureHttp: false,
 }
 
+const httpRemoteProfile: OverlayProfile = {
+  id: 'remote-http',
+  kind: 'remote',
+  displayName: 'HTTP 实例',
+  origin: 'http://nxt.example.test:8080',
+  addressLabel: 'http://nxt.example.test:8080',
+  status: 'ready',
+  notificationsEnabled: true,
+  requiresAuthentication: true,
+  insecureHttp: true,
+}
+
 const openOverlayPage = async (profiles: readonly OverlayProfile[] = [localProfile]): Promise<Page> => {
   const page = await browser.newPage({ viewport: { width: 980, height: 632 }, colorScheme: 'dark' })
   await page.setContent('<!doctype html><html lang="zh-CN"><body><main id="app"></main></body></html>')
@@ -85,6 +101,7 @@ const openOverlayPage = async (profiles: readonly OverlayProfile[] = [localProfi
   await page.evaluate((providedProfiles) => {
     const control: OverlayControl = {
       addCalls: 0,
+      editConnectionCalls: 0,
       reauthenticateCalls: 0,
       closeCalls: 0,
       snapshot: { revision: 1, currentProfileId: 'local', profiles: providedProfiles },
@@ -95,7 +112,15 @@ const openOverlayPage = async (profiles: readonly OverlayProfile[] = [localProfi
       add: (payload: Record<string, unknown>) => {
         control.addCalls += 1
         control.payload = payload
-        return new Promise<void>((resolve, reject) => {
+        return new Promise<unknown>((resolve, reject) => {
+          control.resolve = resolve
+          control.reject = reject
+        })
+      },
+      editConnection: (payload: Record<string, unknown>) => {
+        control.editConnectionCalls += 1
+        control.payload = payload
+        return new Promise<unknown>((resolve, reject) => {
           control.resolve = resolve
           control.reject = reject
         })
@@ -109,8 +134,9 @@ const openOverlayPage = async (profiles: readonly OverlayProfile[] = [localProfi
         return Promise.resolve()
       },
       remove: () => Promise.resolve(),
-      close: () => {
+      close: (input: unknown) => {
         control.closeCalls += 1
+        control.closePayload = input
         return Promise.resolve()
       },
       subscribe: (listener: (snapshot: OverlayControl['snapshot']) => void) => {
@@ -159,6 +185,12 @@ const enterAddDraft = async (page: Page): Promise<void> => {
   await page.locator('#name').fill('客厅服务器')
   await page.locator('#address').fill('https://nxt.example.test:7443')
   await page.locator('#key').fill('draft-secret-value')
+}
+
+const openEditForm = async (page: Page, profileId = remoteProfile.id): Promise<void> => {
+  await page.getByRole('button', { name: /的更多操作/u }).click()
+  await page.getByRole('menuitem', { name: '编辑连接' }).click()
+  await page.getByRole('heading', { name: '编辑连接' }).waitFor()
 }
 
 const publishSnapshot = async (
@@ -305,21 +337,15 @@ describe('Desktop instance overlay accessibility contract', { timeout: 15_000 },
     await page.close()
   })
 
-  it('warns again before reauthenticating a saved explicit HTTP profile', async () => {
-    const remote: OverlayProfile = {
-      id: 'remote-http',
-      kind: 'remote',
-      displayName: 'HTTP 实例',
-      origin: 'http://nxt.example.test:8080',
-      addressLabel: 'http://nxt.example.test:8080',
-      status: 'authentication-required',
-      notificationsEnabled: true,
-      requiresAuthentication: true,
-      insecureHttp: true,
-    }
-    const page = await openOverlayPage([localProfile, remote])
-    await page.getByRole('button', { name: 'HTTP 实例的更多操作' }).click()
-    await page.getByRole('menuitem', { name: '重新认证' }).click()
+  it('reconfirms explicit HTTP before reauthenticating via the Fallback intent', async () => {
+    const page = await openOverlayPage([localProfile, httpRemoteProfile])
+    await page.evaluate(() => {
+      window.__overlayControl.visibilityListener?.({
+        state: 'open',
+        intent: { kind: 'reauthenticate', profileId: 'remote-http' },
+      })
+    })
+    await waitForOverlayAnimationFrame(page)
     await expect(page.getByText('此实例使用未加密 HTTP；重新认证前会再次确认传输风险。').isVisible()).resolves.toBe(
       true,
     )
@@ -339,6 +365,14 @@ describe('Desktop instance overlay accessibility contract', { timeout: 15_000 },
         }),
       )
       .toBe(1)
+    const payload = await page.evaluate(() => {
+      return window.__overlayControl.payload
+    })
+    expect(payload).toMatchObject({
+      profileId: 'remote-http',
+      managementKey: 'm'.repeat(32),
+      confirmedInsecureHttpOrigin: 'http://nxt.example.test:8080',
+    })
     await page.close()
   })
 
@@ -383,13 +417,23 @@ describe('Desktop instance overlay accessibility contract', { timeout: 15_000 },
 
   it('keeps edit and reauthentication fields stable through snapshots and exits only when the target is removed', async () => {
     const page = await openOverlayPage([localProfile, remoteProfile])
-    await page.getByRole('button', { name: '北辰实例的更多操作' }).click()
-    await page.getByRole('menuitem', { name: '修改名称' }).click()
+    await openEditForm(page)
+    await expect(page.locator('#address').inputValue()).resolves.toBe('https://remote.example.test:7443')
+
     await page.locator('#name').fill('北辰工作区')
     await expectFocusedFieldStableThroughSnapshots(page, '#name', [localProfile, remoteProfile])
+    await expectFocusedFieldStableThroughSnapshots(page, '#address', [localProfile, remoteProfile])
+    await page.locator('#key').fill('synthetic-management-key')
+    await expectFocusedFieldStableThroughSnapshots(page, '#key', [localProfile, remoteProfile])
 
     await page.getByRole('button', { name: '取消' }).click()
-    await page.getByRole('menuitem', { name: '重新认证' }).click()
+    await page.evaluate(() => {
+      window.__overlayControl.visibilityListener?.({
+        state: 'open',
+        intent: { kind: 'reauthenticate', profileId: 'remote-1' },
+      })
+    })
+    await waitForOverlayAnimationFrame(page)
     await page.locator('#key').fill('synthetic-management-key')
     await expectFocusedFieldStableThroughSnapshots(page, '#key', [localProfile, remoteProfile])
 
@@ -450,7 +494,7 @@ describe('Desktop instance overlay accessibility contract', { timeout: 15_000 },
     await page.close()
   })
 
-  it('uses backdrop and Escape as one Sheet hierarchy and traps Tab inside the panel', async () => {
+  it('uses backdrop and Escape as one Sheet hierarchy with restoreControl hints and traps Tab', async () => {
     const page = await openOverlayPage([localProfile, remoteProfile])
     await deferOverlayAnimationFrames(page)
     await page.getByRole('button', { name: /添加远程实例/u }).click()
@@ -467,8 +511,16 @@ describe('Desktop instance overlay accessibility contract', { timeout: 15_000 },
     await page.keyboard.press('Tab')
     await flushOverlayAnimationFrames(page)
     await expect(page.evaluate(() => document.activeElement?.getAttribute('data-action'))).resolves.toBe('switch')
+
+    await page.keyboard.press('Escape')
+    await expect.poll(() => page.evaluate(() => window.__overlayControl.closeCalls)).toBe(1)
+    await expect(page.evaluate(() => window.__overlayControl.closePayload)).resolves.toEqual({ restoreControl: true })
+
+    await page.getByRole('button', { name: /添加远程实例/u }).click()
+    await page.keyboard.press('Escape')
     await page.locator('.sheet-backdrop').click({ position: { x: 900, y: 60 } })
-    await expect(page.evaluate(() => window.__overlayControl.closeCalls)).resolves.toBe(1)
+    await expect.poll(() => page.evaluate(() => window.__overlayControl.closeCalls)).toBe(2)
+    await expect(page.evaluate(() => window.__overlayControl.closePayload)).resolves.toEqual({ restoreControl: false })
     await page.close()
   })
 
@@ -478,11 +530,11 @@ describe('Desktop instance overlay accessibility contract', { timeout: 15_000 },
     await page.getByRole('button', { name: /添加远程实例/u }).click()
     await page.keyboard.press('Escape')
     await page.getByRole('button', { name: '北辰实例的更多操作' }).click()
-    await page.getByRole('menuitem', { name: '修改名称' }).click()
+    await page.getByRole('menuitem', { name: '编辑连接' }).click()
 
     await expect(page.evaluate(() => document.activeElement === document.body)).resolves.toBe(true)
     await flushOverlayAnimationFrames(page)
-    await expect(page.getByRole('heading', { name: '修改实例名称' }).isVisible()).resolves.toBe(true)
+    await expect(page.getByRole('heading', { name: '编辑连接' }).isVisible()).resolves.toBe(true)
     await expect(page.locator('#name').evaluate((element) => document.activeElement === element)).resolves.toBe(true)
     await page.close()
   })
@@ -668,8 +720,13 @@ describe('Desktop instance overlay accessibility contract', { timeout: 15_000 },
     expect(source).toContain('<button class="more"')
     expect(source).toContain('aria-haspopup="menu"')
     expect(source).toContain("aria-expanded=\"${menuOpen ? 'true' : 'false'}\"")
+    expect(source).toContain('class="menu"')
     expect(source).toContain('role="menu"')
     expect(source).toContain('role="menuitem"')
+    expect(source).toContain('data-action="retry"')
+    expect(source).toContain('data-action="edit"')
+    expect(source).toContain('data-action="notifications"')
+    expect(source).toContain('data-action="confirm-remove"')
     expect(source).not.toContain('role="button"')
     expect(source).not.toContain('tabindex="0"')
 
@@ -678,7 +735,7 @@ describe('Desktop instance overlay accessibility contract', { timeout: 15_000 },
     expect(instanceButton.match(/<button/gu)).toHaveLength(1)
   })
 
-  it('uses a bidirectional trigger-aligned transition and reduced-motion fallback', async () => {
+  it('uses a bidirectional trigger-aligned transition, ui-kit tokens, and reduced-motion fallback', async () => {
     const [script, stylesheet, markup] = await Promise.all([
       readFile(path.join(desktopRoot, 'src/instance-overlay.js'), 'utf8'),
       readFile(path.join(desktopRoot, 'src/instance-overlay.css'), 'utf8'),
@@ -688,9 +745,14 @@ describe('Desktop instance overlay accessibility contract', { timeout: 15_000 },
     expect(script).toContain('bridge.subscribeVisibility')
     expect(script).toContain("dataset.visibility = 'closing'")
     expect(stylesheet).toContain('transform-origin: left bottom')
+    expect(stylesheet).toContain('transform-origin: top right')
     expect(stylesheet).toContain('--motion-enter: 160ms')
     expect(stylesheet).toContain('--motion-exit: 100ms')
     expect(stylesheet).toContain('@media (prefers-reduced-motion: reduce)')
+    expect(stylesheet).not.toContain('linear-gradient')
+    expect(stylesheet).not.toContain('.panel::before')
+    expect(stylesheet).toContain('--nxt-bg-surface: #fffdf9')
+    expect(stylesheet).toContain('--nxt-bg-elevated: #29425f')
   })
 
   it('keeps native Enter/Space activation and implements popup arrow/Escape focus restoration', async () => {
@@ -703,13 +765,383 @@ describe('Desktop instance overlay accessibility contract', { timeout: 15_000 },
     expect(source).not.toMatch(/event\.key === ['"](?:Enter| )['"]/u)
   })
 
-  it('keeps address fields out of existing-Profile update and reauthentication IPC', async () => {
+  it('routes address and optional key through editConnection and keeps reauthentication address-free', async () => {
     const overlay = await readFile(path.join(desktopRoot, 'src/instance-overlay.js'), 'utf8')
-    const manager = await readFile(path.join(desktopRoot, 'src/instance-manager.ts'), 'utf8')
+    const preload = await readFile(path.join(desktopRoot, 'src/overlay-preload.ts'), 'utf8')
 
-    const reauthentication = overlay.match(/bridge\.reauthenticate\(\{[\s\S]*?\}\)/u)?.[0] ?? ''
-    expect(reauthentication).not.toContain('address')
-    expect(manager).toContain("if ('origin' in value)")
-    expect(manager).toContain("if ('address' in value || 'origin' in value)")
+    expect(preload).toContain("editConnection: (input: unknown) => invoke('editConnection', input)")
+    expect(preload).toContain("close: (input?: unknown) => invoke('close', input)")
+    expect(overlay).toContain("if (mode.kind === 'edit') result = await bridge.editConnection(operationPayload)")
+    expect(overlay).toContain('bridge.update({ profileId: id, notificationsEnabled: !profile.notificationsEnabled })')
+
+    for (const fragment of [
+      'profileId: mode.profileId,',
+      'displayName: mode.draft.displayName,',
+      'address: normalized.origin,',
+      "mode.draft.managementKey.trim() === '' ? {} : { managementKey: mode.draft.managementKey }",
+      '...(normalized.insecureRemoteHttp ? { confirmedInsecureHttpOrigin: normalized.origin } : {}),',
+    ]) {
+      expect(overlay, 'edit payload 应包含 ' + fragment).toContain(fragment)
+    }
+
+    const reauthPayload =
+      overlay.match(/profileId: mode\.profileId,\n\s+managementKey: mode\.draft\.managementKey[\s\S]{0,120}/u)?.[0] ??
+      ''
+    expect(reauthPayload).not.toContain('address')
+    expect(reauthPayload).not.toContain('displayName')
+    expect(overlay).toContain('result.saved === false')
+    expect(overlay).toContain('bridge.close({ restoreControl: true })')
+    expect(overlay).toContain('bridge.close({ restoreControl: false })')
+  })
+
+  it('prefills the edit connection form and submits profileId, name, address, and optional key through editConnection', async () => {
+    const page = await openOverlayPage([localProfile, remoteProfile])
+    await openEditForm(page)
+    await expect(page.locator('#name').inputValue()).resolves.toBe('北辰实例')
+    await expect(page.locator('#address').inputValue()).resolves.toBe('https://remote.example.test:7443')
+    await expect(page.locator('#key').inputValue()).resolves.toBe('')
+
+    await page.locator('#name').fill('北辰工作区')
+    await page.locator('#key').fill('rotated-management-key')
+    await page.getByRole('button', { name: '保存更改' }).click()
+    await expect.poll(() => page.evaluate(() => window.__overlayControl.editConnectionCalls)).toBe(1)
+    const payload = await page.evaluate(() => window.__overlayControl.payload)
+    expect(payload).toEqual({
+      profileId: 'remote-1',
+      displayName: '北辰工作区',
+      address: 'https://remote.example.test:7443',
+      managementKey: 'rotated-management-key',
+    })
+
+    await page.evaluate(() => window.__overlayControl.resolve?.({ saved: true }))
+    await publishSnapshot(page, [localProfile, remoteProfile])
+    await expect(page.getByRole('button', { name: /添加远程实例/u }).isVisible()).resolves.toBe(true)
+
+    await openEditForm(page)
+    await page.getByRole('button', { name: '保存更改' }).click()
+    await expect.poll(() => page.evaluate(() => window.__overlayControl.editConnectionCalls)).toBe(2)
+    const secondPayload = await page.evaluate(() => window.__overlayControl.payload)
+    expect(secondPayload).toEqual({
+      profileId: 'remote-1',
+      displayName: '北辰实例',
+      address: 'https://remote.example.test:7443',
+    })
+    await page.close()
+  })
+
+  it('keeps the edit form when the manager reports saved:false and continues on the next submit', async () => {
+    const page = await openOverlayPage([localProfile, remoteProfile])
+    await openEditForm(page)
+    await page.locator('#name').fill('北辰工作区')
+    await page.locator('#address').fill('https://moved.example.test:8443')
+    await page.getByRole('button', { name: '保存更改' }).click()
+    await expect.poll(() => page.evaluate(() => window.__overlayControl.editConnectionCalls)).toBe(1)
+
+    await page.evaluate(() => window.__overlayControl.resolve?.({ saved: false }))
+    await expect(page.getByRole('heading', { name: '编辑连接' }).isVisible()).resolves.toBe(true)
+    await expect(page.locator('#name').inputValue()).resolves.toBe('北辰工作区')
+    await expect(page.locator('#address').inputValue()).resolves.toBe('https://moved.example.test:8443')
+    await expect(page.getByRole('button', { name: '保存更改' }).isEnabled()).resolves.toBe(true)
+
+    await page.getByRole('button', { name: '保存更改' }).click()
+    await expect.poll(() => page.evaluate(() => window.__overlayControl.editConnectionCalls)).toBe(2)
+    await page.evaluate(() => window.__overlayControl.resolve?.({ saved: true }))
+    await publishSnapshot(page, [localProfile, remoteProfile])
+    await expect(page.getByRole('button', { name: /添加远程实例/u }).isVisible()).resolves.toBe(true)
+    await page.close()
+  })
+
+  it('invalidates an HTTP risk confirmation when the edit address changes', async () => {
+    const page = await openOverlayPage([localProfile, httpRemoteProfile])
+    await openEditForm(page, httpRemoteProfile.id)
+    await expect(page.locator('#address').inputValue()).resolves.toBe('http://nxt.example.test:8080')
+
+    await page.getByRole('button', { name: '保存更改' }).click()
+    await expect.poll(() => page.evaluate(() => window.__overlayControl.editConnectionCalls)).toBe(1)
+    const kept = await page.evaluate(() => window.__overlayControl.payload)
+    expect(kept).toEqual({
+      profileId: 'remote-http',
+      displayName: 'HTTP 实例',
+      address: 'http://nxt.example.test:8080',
+      confirmedInsecureHttpOrigin: 'http://nxt.example.test:8080',
+    })
+    await page.evaluate(() => window.__overlayControl.resolve?.({ saved: true }))
+    await publishSnapshot(page, [localProfile, httpRemoteProfile])
+
+    await openEditForm(page, httpRemoteProfile.id)
+    await page.locator('#address').fill('http://other.example.test:9090')
+    await page.getByRole('button', { name: '保存更改' }).click()
+    await expect(page.getByRole('button', { name: '仍要继续' }).isVisible()).resolves.toBe(true)
+    await expect(page.evaluate(() => window.__overlayControl.editConnectionCalls)).resolves.toBe(1)
+    await page.getByRole('button', { name: '仍要继续' }).click()
+    await expect.poll(() => page.evaluate(() => window.__overlayControl.editConnectionCalls)).toBe(2)
+    const changed = await page.evaluate(() => window.__overlayControl.payload)
+    expect(changed).toMatchObject({
+      profileId: 'remote-http',
+      address: 'http://other.example.test:9090',
+      confirmedInsecureHttpOrigin: 'http://other.example.test:9090',
+    })
+    await page.close()
+  })
+
+  it('keeps edit inputs, focus, and selection through pending and rejected submission without rebuilding the form', async () => {
+    const page = await openOverlayPage([localProfile, remoteProfile])
+    await openEditForm(page)
+    await page.locator('#name').fill('北辰工作区')
+    await page.locator('#key').fill('rotated-management-key')
+    await page.locator('#key').click()
+    await page.locator('#key').evaluate((element) => {
+      if (!(element instanceof HTMLInputElement)) throw new Error('目标字段不是输入框。')
+      element.setSelectionRange(2, 8, 'backward')
+    })
+    await page.evaluate(() => {
+      const inputs = [...document.querySelectorAll('form[data-form="current"] input')]
+      window.__overlayNodes = Object.fromEntries(inputs.map((input) => [input.getAttribute('name'), input]))
+      window.__selectionBefore = Object.fromEntries(
+        inputs.map((input) => {
+          const element = input as HTMLInputElement
+          return [
+            input.getAttribute('name'),
+            { value: element.value, selectionStart: element.selectionStart, selectionEnd: element.selectionEnd },
+          ]
+        }),
+      )
+    })
+
+    await page.getByRole('button', { name: '保存更改' }).click()
+    await expect(page.getByRole('button', { name: '正在保存…' }).isDisabled()).resolves.toBe(true)
+    await page.evaluate(() => {
+      window.__overlayControl.reject?.(new Error('无法连接服务器，请检查地址、端口和网络状态。'))
+    })
+    await page.getByRole('alert').waitFor()
+
+    const state = await page.evaluate(() => {
+      const inputs = [...document.querySelectorAll('form[data-form="current"] input[name]')]
+      const map: Record<
+        string,
+        { sameNode: boolean; value: string; selectionStart: number | null; selectionEnd: number | null }
+      > = {}
+      for (const input of inputs) {
+        map[input.name] = {
+          sameNode: input === window.__overlayNodes?.[input.name],
+          value: input.value,
+          selectionStart: input.selectionStart,
+          selectionEnd: input.selectionEnd,
+        }
+      }
+      return {
+        map,
+        error: document.querySelector('[data-error]')?.textContent,
+        alertVisible: Boolean(
+          document.querySelector('[data-error]') && !document.querySelector('[data-error]')?.hasAttribute('hidden'),
+        ),
+      }
+    })
+    const selectionBefore = await page.evaluate(() => window.__selectionBefore)
+    for (const name of ['displayName', 'address', 'managementKey']) {
+      expect(state.map[name]?.sameNode, name + ' 不应被重建').toBe(true)
+      expect(state.map[name]?.value, name + ' 值').toBe(selectionBefore[name].value)
+      expect(state.map[name]?.selectionStart, name + ' 选区起点').toBe(selectionBefore[name].selectionStart)
+      expect(state.map[name]?.selectionEnd, name + ' 选区终点').toBe(selectionBefore[name].selectionEnd)
+    }
+    // 重点：提交期间设置的关键字段选区在失败后仍在原文位置
+    expect(state.map.managementKey?.selectionStart).toBe(2)
+    expect(state.map.managementKey?.selectionEnd).toBe(8)
+    expect(state.error).toBe('无法连接服务器，请检查地址、端口和网络状态。')
+    expect(state.alertVisible).toBe(true)
+    await page.close()
+  })
+
+  it('shows address errors in place without rebuilding edit inputs or losing the caret', async () => {
+    const page = await openOverlayPage([localProfile, remoteProfile])
+    await openEditForm(page)
+    await page.locator('#address').fill('ftp://nxt.example.test')
+    await page.locator('#address').evaluate((element) => {
+      if (!(element instanceof HTMLInputElement)) throw new Error('目标字段不是输入框。')
+      element.setSelectionRange(4, 12, 'forward')
+    })
+    await page.getByRole('button', { name: '保存更改' }).click()
+    await expect(page.getByRole('alert').textContent()).resolves.toBe('服务器地址只支持 HTTPS 或 HTTP。')
+    await expect(page.evaluate(() => window.__overlayControl.editConnectionCalls)).resolves.toBe(0)
+    const stable = await page.locator('#address').evaluate((element) => {
+      if (!(element instanceof HTMLInputElement)) throw new Error('目标字段不是输入框。')
+      return {
+        inputKeepsSelection:
+          element.selectionStart === 4 && element.selectionEnd === 12 && element.value === 'ftp://nxt.example.test',
+        submitFocused: document.activeElement?.getAttribute('data-submit') === '' && document.activeElement !== element,
+      }
+    })
+    expect(stable).toEqual({ inputKeepsSelection: true, submitFocused: true })
+    await page.close()
+  })
+
+  it('opens the row menu as an absolute floating layer that does not squeeze the list and closes on outside clicks', async () => {
+    const page = await openOverlayPage([localProfile, remoteProfile])
+    const panel = page.locator('.panel')
+    const firstRow = page.locator('.instance-row').first()
+    const secondRow = page.locator('.instance-row').nth(1)
+    const rectsBefore = await page.evaluate(() => {
+      const panel = document.querySelector('.panel')
+      const rows = [...document.querySelectorAll('.instance-row')]
+      const offset = (element: Element) => {
+        const next = element as HTMLElement
+        return { left: next.offsetLeft, top: next.offsetTop, width: next.offsetWidth, height: next.offsetHeight }
+      }
+      return { panel: panel instanceof HTMLElement ? offset(panel) : null, rows: rows.map(offset) }
+    })
+
+    await page.getByRole('button', { name: '北辰实例的更多操作' }).click()
+    const menu = page.getByRole('menu')
+    await expect(menu.isVisible()).resolves.toBe(true)
+    await page.waitForTimeout(180)
+    const menuInfo = await page.evaluate(() => {
+      const menuElement = document.querySelector('.menu')
+      const more = document.querySelector('[data-action="more"]')
+      if (!(menuElement instanceof HTMLElement) || !(more instanceof HTMLElement)) throw new Error('浮层菜单不完整。')
+      const m = menuElement.getBoundingClientRect()
+      const b = more.getBoundingClientRect()
+      return {
+        position: getComputedStyle(menuElement).position,
+        left: m.left,
+        top: m.top,
+        right: m.right,
+        bottom: m.bottom,
+        width: m.width,
+        innerWidth: window.innerWidth,
+        innerHeight: window.innerHeight,
+        triggerLeft: b.left,
+        triggerTop: b.top,
+        triggerBottom: b.bottom,
+        triggerRight: b.right,
+      }
+    })
+    expect(menuInfo.position).toBe('absolute')
+    expect(menuInfo.width).toBeGreaterThan(0)
+    expect(menuInfo.left).toBeGreaterThanOrEqual(0)
+    expect(menuInfo.right).toBeLessThanOrEqual(menuInfo.innerWidth)
+    expect(menuInfo.top).toBeGreaterThanOrEqual(0)
+    expect(menuInfo.bottom).toBeLessThanOrEqual(menuInfo.innerHeight)
+    const onRight = menuInfo.left >= menuInfo.triggerRight + 2
+    const onLeft = menuInfo.right <= menuInfo.triggerLeft - 2
+    expect(onRight || onLeft, '菜单应贴在触发按钮侧面，避免遮挡实例列表').toBe(true)
+
+    const rectsAfter = await page.evaluate(() => {
+      const panel = document.querySelector('.panel')
+      const rows = [...document.querySelectorAll('.instance-row')]
+      const offset = (element: Element) => {
+        const next = element as HTMLElement
+        return { left: next.offsetLeft, top: next.offsetTop, width: next.offsetWidth, height: next.offsetHeight }
+      }
+      return { panel: panel instanceof HTMLElement ? offset(panel) : null, rows: rows.map(offset) }
+    })
+    expect(rectsAfter).toEqual(rectsBefore)
+
+    await firstRow.click({ position: { x: 40, y: 20 } })
+    await expect(menu.count()).resolves.toBe(0)
+    await expect(page.evaluate(() => window.__overlayControl.closeCalls)).resolves.toBe(0)
+    await expect.poll(() => page.evaluate(() => document.activeElement?.getAttribute('data-action'))).toBe('more')
+
+    await page.locator('.sheet-backdrop').click({ position: { x: 900, y: 60 } })
+    await expect.poll(() => page.evaluate(() => window.__overlayControl.closeCalls)).toBe(1)
+    await expect(page.evaluate(() => window.__overlayControl.closePayload)).resolves.toEqual({ restoreControl: false })
+    await page.close()
+  })
+
+  it('flips the floating menu upward when the trigger sits near the window bottom', async () => {
+    const page = await openOverlayPage([localProfile, remoteProfile])
+    await page.setViewportSize({ width: 980, height: 320 })
+    await page.getByRole('button', { name: '北辰实例的更多操作' }).click()
+    const menu = page.getByRole('menu')
+    await expect(menu.isVisible()).resolves.toBe(true)
+    await page.waitForTimeout(180)
+    const geometry = await page.evaluate(() => {
+      const menuElement = document.querySelector('.menu')
+      const more = document.querySelector('[data-action="more"]')
+      if (!(menuElement instanceof HTMLElement) || !(more instanceof HTMLElement)) throw new Error('浮层菜单不完整。')
+      const m = menuElement.getBoundingClientRect()
+      const b = more.getBoundingClientRect()
+      return {
+        menuTop: m.top,
+        menuBottom: m.bottom,
+        triggerTop: b.top,
+        triggerBottom: b.bottom,
+        innerHeight: window.innerHeight,
+      }
+    })
+    expect(geometry.menuBottom).toBeLessThanOrEqual(geometry.innerHeight)
+    expect(geometry.menuTop).toBeGreaterThanOrEqual(0)
+    // 下方空间不足时向上生长，底边不超过触发器底边。
+    expect(geometry.menuTop).toBeLessThan(geometry.triggerTop)
+    expect(geometry.menuBottom).toBeLessThanOrEqual(geometry.triggerBottom + 2)
+    await page.close()
+  })
+
+  it('sizes the panel to content with a max height and scrolls the instance list independently', async () => {
+    const manyProfiles: readonly OverlayProfile[] = [
+      localProfile,
+      ...Array.from({ length: 11 }, (_, index) => ({
+        id: `remote-${index + 1}`,
+        kind: 'remote' as const,
+        displayName: `实例 ${index + 1}`,
+        origin: `https://r${index + 1}.example.test`,
+        addressLabel: `r${index + 1}.example.test`,
+        status: 'ready',
+        notificationsEnabled: true,
+        requiresAuthentication: false,
+        insecureHttp: false,
+      })),
+    ]
+    const page = await openOverlayPage([localProfile])
+    const panelRect = () =>
+      page.locator('.panel').evaluate((element) => {
+        const r = element.getBoundingClientRect()
+        return { width: r.width, height: r.height }
+      })
+
+    await expect.poll(async () => (await panelRect()).width).toBe(344)
+    const compact = await panelRect()
+    expect(compact.width).toBe(344)
+    expect(compact.height).toBeLessThan(480)
+
+    await publishSnapshot(page, manyProfiles)
+    await expect.poll(async () => (await panelRect()).height).toBe(480)
+    const list = await page.evaluate(() => {
+      const element = document.querySelector('.list')
+      if (!(element instanceof HTMLElement)) throw new Error('列表缺失。')
+      return {
+        clientHeight: element.clientHeight,
+        scrollHeight: element.scrollHeight,
+        overflowY: getComputedStyle(element).overflowY,
+        insidePanel:
+          element.getBoundingClientRect().bottom <= document.querySelector('.panel')!.getBoundingClientRect().bottom,
+      }
+    })
+    expect(list.overflowY).toBe('auto')
+    expect(list.scrollHeight).toBeGreaterThan(list.clientHeight)
+    expect(list.insidePanel).toBe(true)
+    await page.close()
+  })
+
+  it('keeps every row pixel on a pointer cursor without dead zones beside the more button', async () => {
+    const page = await openOverlayPage([localProfile, remoteProfile])
+    const samples = await page.evaluate(() => {
+      const rows = [...document.querySelectorAll('.instance-row')]
+      const results: { row: number; x: number; cursor: string; tag: string }[] = []
+      rows.forEach((row, index) => {
+        const rect = row.getBoundingClientRect()
+        const y = rect.top + rect.height / 2
+        for (let x = rect.left + 2; x <= rect.right - 2; x += 4) {
+          const element = document.elementFromPoint(x, y)
+          if (element === null) continue
+          results.push({ row: index, x: Math.round(x), cursor: getComputedStyle(element).cursor, tag: element.tagName })
+        }
+      })
+      return results
+    })
+    expect(samples.length).toBeGreaterThan(0)
+    for (const sample of samples) {
+      expect(sample.cursor, `row ${sample.row} x=${sample.x} 命中 ${sample.tag}`).toBe('pointer')
+    }
+    await page.close()
   })
 })

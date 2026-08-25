@@ -4,7 +4,11 @@ import path from 'node:path'
 import { InstanceDescriptorSchema, ManagementDeviceIdSchema } from '@nekro-nxt/contracts'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { InstanceProfileStore, normalizeRemoteOrigin } from '../src/instance-profiles.ts'
-import { addRemoteProfile, reauthenticateRemoteProfile } from '../src/remote-profile-enrollment.ts'
+import {
+  addRemoteProfile,
+  editRemoteProfileConnection,
+  reauthenticateRemoteProfile,
+} from '../src/remote-profile-enrollment.ts'
 import { enrollRemoteDevice, type PairRemoteResult, type RemoteInspection } from '../src/remote-pairing.ts'
 import { SerialTaskQueue } from '../src/serial-task-queue.ts'
 
@@ -319,5 +323,364 @@ describe('Desktop remote Profile enrollment', () => {
     ).rejects.toThrow('添加为新的服务实例')
     expect(enroll).not.toHaveBeenCalled()
     expect(profiles.get(profile.id)).toEqual(before)
+  })
+
+  it('renames a remote Profile without network I/O or partition rotation when the address is unchanged', async () => {
+    const profiles = await openStore()
+    const instanceId = 'nxt_instance_01H00000000000000000000050'
+    const profile = await profiles.addRemote({
+      displayName: '旧名称',
+      origin: 'rename-edit.example',
+      observedInstanceId: instanceId,
+      pinnedSpkiSha256: 'fixed-spki',
+      credentialRef: 'fixed-credential',
+    })
+    const inspect = vi.fn()
+    const enroll = vi.fn()
+    const revoke = vi.fn()
+    const result = await editRemoteProfileConnection({
+      profiles,
+      credentials: credentials().store,
+      profileId: profile.id,
+      displayName: '新名称',
+      address: profile.origin,
+      deviceLabel: 'NekroNXT test device',
+      clientReleaseId: 'nxt.test-release',
+      gateway: { inspect, enroll, revoke },
+    })
+    expect(result.profile).toMatchObject({
+      id: profile.id,
+      displayName: '新名称',
+      origin: profile.origin,
+      partition: profile.partition,
+      credentialRef: 'fixed-credential',
+    })
+    expect(result.credential).toBeUndefined()
+    expect(result.replaced).toBeUndefined()
+    expect(inspect).not.toHaveBeenCalled()
+    expect(enroll).not.toHaveBeenCalled()
+    expect(revoke).not.toHaveBeenCalled()
+  })
+
+  it('renames a keyless loopback Profile without inventing security fields', async () => {
+    const profiles = await openStore()
+    const instanceId = 'nxt_instance_01H00000000000000000000051'
+    const origin = 'http://127.0.0.1:4960'
+    const profile = await profiles.addRemote({
+      displayName: '旧本机实例',
+      origin,
+      observedInstanceId: instanceId,
+    })
+    const result = await editRemoteProfileConnection({
+      profiles,
+      credentials: credentials().store,
+      profileId: profile.id,
+      displayName: '新本机实例',
+      address: origin,
+      deviceLabel: 'NekroNXT test device',
+      clientReleaseId: 'nxt.test-release',
+      gateway: { inspect: vi.fn(), enroll: vi.fn(), revoke: vi.fn() },
+    })
+    expect(result.profile).toMatchObject({
+      id: profile.id,
+      displayName: '新本机实例',
+      origin,
+      partition: profile.partition,
+    })
+    expect(result.profile.pinnedSpkiSha256).toBeUndefined()
+    expect(result.profile.credentialRef).toBeUndefined()
+    expect(result.replaced).toBeUndefined()
+  })
+
+  it('reauthenticates the unchanged address and atomically commits the name and new security fields', async () => {
+    const profiles = await openStore()
+    const instanceId = 'nxt_instance_01H00000000000000000000052'
+    const profile = await profiles.addRemote({
+      displayName: '旧名称',
+      origin: 'reauth-edit.example',
+      observedInstanceId: instanceId,
+      pinnedSpkiSha256: 'old-spki',
+      credentialRef: 'old-credential',
+    })
+    const inspected = inspection(profile.origin, instanceId, 'new-spki')
+    const paired = enrollment(inspected, '20')
+    const credentialStore = credentials()
+    const result = await editRemoteProfileConnection({
+      profiles,
+      credentials: credentialStore.store,
+      profileId: profile.id,
+      displayName: '新名称',
+      address: profile.origin,
+      managementKey: 'm'.repeat(32),
+      deviceLabel: 'NekroNXT test device',
+      clientReleaseId: 'nxt.test-release',
+      gateway: {
+        inspect: () => Promise.resolve(inspected),
+        enroll: () => Promise.resolve(paired),
+        revoke: () => Promise.resolve(),
+      },
+    })
+    expect(result.profile).toMatchObject({
+      id: profile.id,
+      displayName: '新名称',
+      origin: profile.origin,
+      partition: profile.partition,
+      pinnedSpkiSha256: 'new-spki',
+      credentialRef: 'new-credential',
+    })
+    expect(result.credential).toBeDefined()
+    expect(result.replaced).toEqual({ credentialRef: 'old-credential' })
+    expect(credentialStore.values.has('new-credential')).toBe(true)
+  })
+
+  it('migrates a Profile to a new address of the same instance keeping its id and rotating the partition', async () => {
+    const profiles = await openStore()
+    const instanceId = 'nxt_instance_01H00000000000000000000053'
+    const profile = await profiles.addRemote({
+      displayName: '旧地址',
+      origin: 'old-home.example',
+      observedInstanceId: instanceId,
+      pinnedSpkiSha256: 'old-spki',
+      credentialRef: 'old-credential',
+    })
+    const inspected = inspection('new-home.example', instanceId, 'new-spki')
+    const paired = enrollment(inspected, '21')
+    const credentialStore = credentials()
+    const result = await editRemoteProfileConnection({
+      profiles,
+      credentials: credentialStore.store,
+      profileId: profile.id,
+      displayName: '新地址',
+      address: 'new-home.example',
+      managementKey: 'm'.repeat(32),
+      deviceLabel: 'NekroNXT test device',
+      clientReleaseId: 'nxt.test-release',
+      gateway: {
+        inspect: () => Promise.resolve(inspected),
+        enroll: () => Promise.resolve(paired),
+        revoke: () => Promise.resolve(),
+      },
+    })
+    expect(result.profile.id).toBe(profile.id)
+    expect(result.profile).toMatchObject({
+      displayName: '新地址',
+      origin: 'https://new-home.example:4960',
+      observedInstanceId: instanceId,
+      pinnedSpkiSha256: 'new-spki',
+      credentialRef: 'new-credential',
+      transport: 'auto-tls-pinned-v1',
+    })
+    expect(result.profile.partition).not.toBe(profile.partition)
+    expect(result.profile.partition).toMatch(/^persist:nxt-instance-/u)
+    expect(result.replaced).toEqual({ partition: profile.partition, credentialRef: 'old-credential' })
+    expect(credentialStore.values.has('new-credential')).toBe(true)
+  })
+
+  it('migrates a Profile to a confirmed explicit HTTP address without inventing SPKI', async () => {
+    const profiles = await openStore()
+    const instanceId = 'nxt_instance_01H00000000000000000000061'
+    const profile = await profiles.addRemote({
+      displayName: '旧地址',
+      origin: 'old-tls.example',
+      observedInstanceId: instanceId,
+      pinnedSpkiSha256: 'old-spki',
+      credentialRef: 'old-credential',
+    })
+    const inspected: RemoteInspection = {
+      origin: `http://${REMOTE_HTTP_TEST_IP}:4960`,
+      descriptor: descriptor(instanceId, 'explicit-http-v1'),
+    }
+    const paired = enrollment(inspected, '24')
+    const credentialStore = credentials()
+    const result = await editRemoteProfileConnection({
+      profiles,
+      credentials: credentialStore.store,
+      profileId: profile.id,
+      displayName: '显式 HTTP',
+      address: inspected.origin,
+      managementKey: 'm'.repeat(32),
+      deviceLabel: 'NekroNXT test device',
+      clientReleaseId: 'nxt.test-release',
+      gateway: {
+        inspect: () => Promise.resolve(inspected),
+        enroll: () => Promise.resolve(paired),
+        revoke: () => Promise.resolve(),
+      },
+    })
+    expect(result.profile).toMatchObject({
+      id: profile.id,
+      origin: `http://${REMOTE_HTTP_TEST_IP}:4960`,
+      transport: 'explicit-http-v1',
+      observedInstanceId: instanceId,
+      credentialRef: 'new-credential',
+    })
+    expect(result.profile.pinnedSpkiSha256).toBeUndefined()
+    expect(result.profile.partition).not.toBe(profile.partition)
+    expect(result.replaced).toEqual({ partition: profile.partition, credentialRef: 'old-credential' })
+  })
+
+  it('rejects migrating to an address that returns another instance identity before enrollment', async () => {
+    const profiles = await openStore()
+    const profile = await profiles.addRemote({
+      displayName: '原实例',
+      origin: 'original.example',
+      observedInstanceId: 'nxt_instance_01H00000000000000000000054',
+      pinnedSpkiSha256: 'old-spki',
+      credentialRef: 'old-credential',
+    })
+    const before = profiles.get(profile.id)
+    const other = inspection('relocated.example', 'nxt_instance_01H00000000000000000000055')
+    const enroll = vi.fn(() => Promise.resolve(enrollment(other, '22')))
+    const credentialStore = credentials()
+    await expect(
+      editRemoteProfileConnection({
+        profiles,
+        credentials: credentialStore.store,
+        profileId: profile.id,
+        displayName: '不应成功',
+        address: 'relocated.example',
+        managementKey: 'm'.repeat(32),
+        deviceLabel: 'NekroNXT test device',
+        clientReleaseId: 'nxt.test-release',
+        gateway: { inspect: () => Promise.resolve(other), enroll, revoke: () => Promise.resolve() },
+      }),
+    ).rejects.toThrow('另一个服务实例')
+    expect(enroll).not.toHaveBeenCalled()
+    expect(credentialStore.values.size).toBe(0)
+    expect(profiles.get(profile.id)).toEqual(before)
+  })
+
+  it('rejects a candidate address already owned by another Profile before network I/O', async () => {
+    const profiles = await openStore()
+    const first = await profiles.addRemote({
+      displayName: '已有实例',
+      origin: 'taken.example',
+      observedInstanceId: 'nxt_instance_01H00000000000000000000056',
+      pinnedSpkiSha256: 'spki-taken',
+    })
+    const profile = await profiles.addRemote({
+      displayName: '要编辑实例',
+      origin: 'editing.example',
+      observedInstanceId: 'nxt_instance_01H00000000000000000000057',
+      pinnedSpkiSha256: 'spki-editing',
+    })
+    const inspect = vi.fn()
+    await expect(
+      editRemoteProfileConnection({
+        profiles,
+        credentials: credentials().store,
+        profileId: profile.id,
+        displayName: '撞地址',
+        address: first.origin,
+        managementKey: 'm'.repeat(32),
+        deviceLabel: 'NekroNXT test device',
+        clientReleaseId: 'nxt.test-release',
+        gateway: { inspect, enroll: vi.fn(), revoke: vi.fn() },
+      }),
+    ).rejects.toThrow('已经添加')
+    expect(inspect).not.toHaveBeenCalled()
+    expect(profiles.get(profile.id)).toMatchObject({
+      origin: 'https://editing.example:4960',
+      displayName: '要编辑实例',
+    })
+  })
+
+  it('removes the new credential and revokes the new device when the migrated commit fails', async () => {
+    const profiles = await openStore()
+    const instanceId = 'nxt_instance_01H00000000000000000000058'
+    const profile = await profiles.addRemote({
+      displayName: '旧地址',
+      origin: 'old-migrate.example',
+      observedInstanceId: instanceId,
+      pinnedSpkiSha256: 'old-spki',
+      credentialRef: 'old-credential',
+    })
+    const inspected = inspection('new-migrate.example', instanceId, 'new-spki')
+    const paired = enrollment(inspected, '23')
+    const credentialStore = credentials()
+    const revoke = vi.fn(() => Promise.resolve())
+    const updateRemoteConnection = vi
+      .spyOn(profiles, 'updateRemoteConnection')
+      .mockImplementationOnce(() => Promise.reject(new Error('disk full')))
+    await expect(
+      editRemoteProfileConnection({
+        profiles,
+        credentials: credentialStore.store,
+        profileId: profile.id,
+        displayName: '提交失败',
+        address: 'new-migrate.example',
+        managementKey: 'm'.repeat(32),
+        deviceLabel: 'NekroNXT test device',
+        clientReleaseId: 'nxt.test-release',
+        gateway: {
+          inspect: () => Promise.resolve(inspected),
+          enroll: () => Promise.resolve(paired),
+          revoke,
+        },
+      }),
+    ).rejects.toThrow('disk full')
+    expect(updateRemoteConnection).toHaveBeenCalledOnce()
+    expect(credentialStore.values.size).toBe(0)
+    expect(revoke).toHaveBeenCalledWith(paired)
+    expect(profiles.get(profile.id)).toMatchObject({
+      origin: 'https://old-migrate.example:4960',
+      displayName: '旧地址',
+      credentialRef: 'old-credential',
+    })
+  })
+
+  it('rejects keyless migration to a TLS address before the vault writes', async () => {
+    const profiles = await openStore()
+    const instanceId = 'nxt_instance_01H00000000000000000000059'
+    const profile = await profiles.addRemote({
+      displayName: '旧地址',
+      origin: 'old-keyless.example',
+      observedInstanceId: instanceId,
+      pinnedSpkiSha256: 'spki-keyless',
+    })
+    const inspected = inspection('new-keyless.example', instanceId)
+    const credentialStore = credentials()
+    await expect(
+      editRemoteProfileConnection({
+        profiles,
+        credentials: credentialStore.store,
+        profileId: profile.id,
+        displayName: '新地址',
+        address: 'new-keyless.example',
+        deviceLabel: 'NekroNXT test device',
+        clientReleaseId: 'nxt.test-release',
+        gateway: {
+          inspect: () => Promise.resolve(inspected),
+          enroll: enrollRemoteDevice,
+          revoke: () => Promise.resolve(),
+        },
+      }),
+    ).rejects.toThrow('需要管理密钥')
+    expect(credentialStore.values.size).toBe(0)
+    expect(profiles.get(profile.id)).toMatchObject({ origin: 'https://old-keyless.example:4960' })
+  })
+
+  it('rejects keyed reauthentication for a keyless loopback Profile', async () => {
+    const profiles = await openStore()
+    const profile = await profiles.addRemote({
+      displayName: '本机实例',
+      origin: 'http://127.0.0.1:4960',
+      observedInstanceId: 'nxt_instance_01H00000000000000000000060',
+    })
+    const inspect = vi.fn()
+    await expect(
+      editRemoteProfileConnection({
+        profiles,
+        credentials: credentials().store,
+        profileId: profile.id,
+        displayName: '新本机实例',
+        address: profile.origin,
+        managementKey: 'm'.repeat(32),
+        deviceLabel: 'NekroNXT test device',
+        clientReleaseId: 'nxt.test-release',
+        gateway: { inspect, enroll: vi.fn(), revoke: vi.fn() },
+      }),
+    ).rejects.toThrow('不需要重新认证')
+    expect(inspect).not.toHaveBeenCalled()
   })
 })

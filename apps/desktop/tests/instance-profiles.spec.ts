@@ -244,4 +244,191 @@ describe('Desktop instance profiles', () => {
     ).rejects.toThrow()
     expect(store.list().map(({ id }) => id)).toEqual(['local'])
   })
+
+  it('updates a same-origin remote connection in place preserving id, identity and partition', async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), 'nxt-instance-edit-same-'))
+    roots.push(root)
+    const file = path.join(root, 'profiles.json')
+    const store = await InstanceProfileStore.open(file, 'http://127.0.0.1:41010', 100)
+    const instanceId = 'nxt_instance_01H00000000000000000000040'
+    const profile = await store.addRemote({
+      displayName: '旧名称',
+      origin: 'edit-same.example',
+      observedInstanceId: instanceId,
+      pinnedSpkiSha256: 'old-spki',
+      credentialRef: 'old-credential',
+      now: 200,
+    })
+    const updated = await store.updateRemoteConnection(profile.id, {
+      displayName: '新名称',
+      origin: profile.origin,
+      observedInstanceId: instanceId,
+      transport: profile.transport,
+      pinnedSpkiSha256: 'new-spki',
+      credentialRef: 'new-credential',
+    })
+    expect(updated).toMatchObject({
+      id: profile.id,
+      displayName: '新名称',
+      origin: profile.origin,
+      observedInstanceId: instanceId,
+      partition: profile.partition,
+      pinnedSpkiSha256: 'new-spki',
+      credentialRef: 'new-credential',
+    })
+    const reopened = await InstanceProfileStore.open(file, 'http://127.0.0.1:41010', 200)
+    expect(reopened.get(profile.id)).toMatchObject({
+      displayName: '新名称',
+      partition: profile.partition,
+      pinnedSpkiSha256: 'new-spki',
+      credentialRef: 'new-credential',
+    })
+  })
+
+  it('migrates a remote connection to a new address keeping its id and rotating the partition', async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), 'nxt-instance-edit-migrate-'))
+    roots.push(root)
+    const file = path.join(root, 'profiles.json')
+    const store = await InstanceProfileStore.open(file, 'http://127.0.0.1:41011', 100)
+    const instanceId = 'nxt_instance_01H00000000000000000000041'
+    const profile = await store.addRemote({
+      displayName: '旧地址',
+      origin: 'old-home.example',
+      observedInstanceId: instanceId,
+      pinnedSpkiSha256: 'old-spki',
+      credentialRef: 'old-credential',
+      now: 200,
+    })
+    const updated = await store.updateRemoteConnection(profile.id, {
+      displayName: '新地址',
+      origin: 'new-home.example',
+      observedInstanceId: instanceId,
+      pinnedSpkiSha256: 'new-spki',
+      credentialRef: 'new-credential',
+    })
+    expect(updated).toMatchObject({
+      id: profile.id,
+      displayName: '新地址',
+      origin: 'https://new-home.example:4960',
+      observedInstanceId: instanceId,
+      pinnedSpkiSha256: 'new-spki',
+      credentialRef: 'new-credential',
+      transport: 'auto-tls-pinned-v1',
+    })
+    expect(updated.partition).not.toBe(profile.partition)
+    expect(updated.partition).toMatch(/^persist:nxt-instance-/u)
+    const reopened = await InstanceProfileStore.open(file, 'http://127.0.0.1:41011', 200)
+    expect(reopened.get(profile.id)).toMatchObject({
+      id: profile.id,
+      origin: 'https://new-home.example:4960',
+      observedInstanceId: instanceId,
+      partition: updated.partition,
+    })
+  })
+
+  it('rejects connection updates conflicting with another Profile and excludes the current one', async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), 'nxt-instance-edit-conflict-'))
+    roots.push(root)
+    const file = path.join(root, 'profiles.json')
+    const store = await InstanceProfileStore.open(file, 'http://127.0.0.1:41012', 100)
+    const first = await store.addRemote({
+      displayName: '甲',
+      origin: 'first.example',
+      observedInstanceId: 'nxt_instance_01H00000000000000000000042',
+      pinnedSpkiSha256: 'spki-first',
+      now: 200,
+    })
+    const second = await store.addRemote({
+      displayName: '乙',
+      origin: 'second.example',
+      observedInstanceId: 'nxt_instance_01H00000000000000000000043',
+      pinnedSpkiSha256: 'spki-second',
+      now: 300,
+    })
+    await expect(
+      store.updateRemoteConnection(second.id, {
+        displayName: '撞地址',
+        origin: first.origin,
+        observedInstanceId: 'nxt_instance_01H00000000000000000000043',
+        pinnedSpkiSha256: 'spki-second',
+      }),
+    ).rejects.toThrow('已经添加')
+    await expect(
+      store.updateRemoteConnection(second.id, {
+        displayName: '撞身份',
+        origin: 'own.example',
+        observedInstanceId: 'nxt_instance_01H00000000000000000000042',
+        pinnedSpkiSha256: 'spki-second',
+      }),
+    ).rejects.toThrow('已经添加')
+    const migrated = await store.updateRemoteConnection(first.id, {
+      displayName: '甲迁址',
+      origin: 'relocated.example',
+      observedInstanceId: 'nxt_instance_01H00000000000000000000042',
+      pinnedSpkiSha256: 'spki-first-new',
+    })
+    expect(migrated).toMatchObject({
+      id: first.id,
+      displayName: '甲迁址',
+      origin: 'https://relocated.example:4960',
+      observedInstanceId: 'nxt_instance_01H00000000000000000000042',
+    })
+    expect(store.get(second.id)).toMatchObject({ origin: 'https://second.example:4960', displayName: '乙' })
+  })
+
+  it('rejects changing the instance identity or omitting the TLS pin on an HTTPS connection', async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), 'nxt-instance-edit-invariant-'))
+    roots.push(root)
+    const file = path.join(root, 'profiles.json')
+    const store = await InstanceProfileStore.open(file, 'http://127.0.0.1:41014', 100)
+    const instanceId = 'nxt_instance_01H00000000000000000000045'
+    const profile = await store.addRemote({
+      displayName: '固定实例',
+      origin: 'invariant.example',
+      observedInstanceId: instanceId,
+      pinnedSpkiSha256: 'old-spki',
+      now: 200,
+    })
+    await expect(
+      store.updateRemoteConnection(profile.id, {
+        displayName: '换身份',
+        origin: profile.origin,
+        observedInstanceId: 'nxt_instance_01H00000000000000000000046',
+        pinnedSpkiSha256: 'old-spki',
+      }),
+    ).rejects.toThrow('身份不能修改')
+    await expect(
+      store.updateRemoteConnection(profile.id, {
+        displayName: '无固定证书',
+        origin: profile.origin,
+        observedInstanceId: instanceId,
+      }),
+    ).rejects.toThrow('TLS 身份字段')
+    expect(store.get(profile.id)).toMatchObject({ displayName: '固定实例', observedInstanceId: instanceId })
+  })
+
+  it('rolls back the in-memory connection update when the durable write fails', async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), 'nxt-instance-edit-write-failure-'))
+    roots.push(root)
+    const store = await InstanceProfileStore.open(path.join(root, 'profiles.json'), 'http://127.0.0.1:41015', 100)
+    const instanceId = 'nxt_instance_01H00000000000000000000044'
+    const profile = await store.addRemote({
+      displayName: '保存前',
+      origin: 'edit-failure.example',
+      observedInstanceId: instanceId,
+      pinnedSpkiSha256: 'spki-write-failure',
+      now: 200,
+    })
+    await rm(root, { recursive: true, force: true })
+
+    await expect(
+      store.updateRemoteConnection(profile.id, {
+        displayName: '保存后',
+        origin: 'edit-failure.example',
+        observedInstanceId: instanceId,
+        pinnedSpkiSha256: 'spki-write-failure',
+      }),
+    ).rejects.toThrow()
+    expect(store.get(profile.id)).toMatchObject({ displayName: '保存前', origin: 'https://edit-failure.example:4960' })
+  })
 })

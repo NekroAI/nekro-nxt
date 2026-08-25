@@ -1,12 +1,12 @@
 /* global window, document, requestAnimationFrame */
 
 /**
- * @typedef {{ displayName: string, address: string, managementKey: string }} AddRemoteDraft
+ * @typedef {{ displayName: string, address: string, managementKey: string }} ConnectionFormDraft
  */
 
 /**
- * @param {Partial<AddRemoteDraft>} [input]
- * @returns {AddRemoteDraft}
+ * @param {Partial<ConnectionFormDraft>} [input]
+ * @returns {ConnectionFormDraft}
  */
 export const createAddRemoteDraft = (input = {}) => ({
   displayName: typeof input.displayName === 'string' ? input.displayName : '',
@@ -15,7 +15,7 @@ export const createAddRemoteDraft = (input = {}) => ({
 })
 
 /**
- * @param {AddRemoteDraft} draft
+ * @param {ConnectionFormDraft} draft
  * @returns {{ displayName: string, address: string, managementKey?: string }}
  */
 export const createAddRemotePayload = (draft) => ({
@@ -81,6 +81,13 @@ export const retainDraftAfterFailure = (draft, message) => ({
   error: String(message),
 })
 
+const checkIcon =
+  '<svg class="check-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12l5 5 9-10"/></svg>'
+const revealIcon = (revealed) =>
+  revealed
+    ? '<svg class="reveal-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9.88 4.24A9.12 9.12 0 0 1 12 4c6.5 0 10 8 10 8a13.16 13.16 0 0 1-1.67 2.68"/><path d="M6.61 6.61A13.5 13.5 0 0 0 2 12s3.5 8 10 8a9.74 9.74 0 0 0 5.39-1.61"/><line x1="2" y1="2" x2="22" y2="22"/></svg>'
+    : '<svg class="reveal-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7-10-7-10-7Z"/><circle cx="12" cy="12" r="3"/></svg>'
+
 const startOverlay = () => {
   const bridge = window.nxtInstances
   const root = document.querySelector('#app')
@@ -122,7 +129,10 @@ const startOverlay = () => {
     })[status] || '状态未知'
 
   const mountPanel = (panel) => {
-    root.innerHTML = `<div class="sheet-backdrop">${panel}</div>`
+    const menuMarkup =
+      mode.kind === 'menu' ? renderMenu(snapshot.profiles.find((item) => item.id === mode.profileId)) : ''
+    root.innerHTML = `<div class="sheet-backdrop">${panel}</div>${menuMarkup}`
+    if (menuMarkup !== '') anchorFloatingMenu(mode.profileId)
   }
 
   const header = (title, back = false) =>
@@ -135,14 +145,13 @@ const startOverlay = () => {
         const menuOpen = mode.kind === 'menu' && mode.profileId === profile.id
         return `<li class="instance-item" data-profile-id="${escapeHtml(profile.id)}">
         <div class="instance-row ${current ? 'current' : ''}">
-        <button class="instance ${current ? 'current' : ''}" data-action="switch" data-id="${escapeHtml(profile.id)}" aria-current="${current ? 'true' : 'false'}">
-          <span class="dot ${escapeHtml(profile.status)}" data-profile-status></span>
-          <span class="copy"><span class="name" data-profile-name>${escapeHtml(profile.displayName)}</span><span class="meta" data-profile-meta>${escapeHtml(profile.addressLabel)} · ${escapeHtml(statusText(profile.status))}</span></span>
-          <span data-current-check>${current ? '<span class="check" aria-label="当前实例">✓</span>' : ''}</span>
-        </button>
-        ${profile.kind === 'remote' ? `<button class="more" data-action="more" data-id="${escapeHtml(profile.id)}" aria-label="${escapeHtml(profile.displayName)}的更多操作" aria-haspopup="menu" aria-expanded="${menuOpen ? 'true' : 'false'}" aria-controls="instance-menu-${escapeHtml(profile.id)}">⋯</button>` : ''}
+          <button class="instance ${current ? 'current' : ''}" data-action="switch" data-id="${escapeHtml(profile.id)}" aria-current="${current ? 'true' : 'false'}">
+            <span class="dot ${escapeHtml(profile.status)}" data-profile-status></span>
+            <span class="copy"><span class="name" data-profile-name>${escapeHtml(profile.displayName)}</span><span class="meta" data-profile-meta>${escapeHtml(profile.addressLabel)} · ${escapeHtml(statusText(profile.status))}</span></span>
+            <span data-current-check>${current ? `<span class="check" aria-label="当前实例">${checkIcon}</span>` : ''}</span>
+          </button>
+          ${profile.kind === 'remote' ? `<button class="more" data-action="more" data-id="${escapeHtml(profile.id)}" aria-label="${escapeHtml(profile.displayName)}的更多操作" aria-haspopup="menu" aria-expanded="${menuOpen ? 'true' : 'false'}" aria-controls="instance-menu-${escapeHtml(profile.id)}">⋯</button>` : ''}
         </div>
-        ${menuOpen ? renderMenu(profile) : ''}
       </li>`
       })
       .join('')
@@ -151,35 +160,77 @@ const startOverlay = () => {
     )
   }
 
-  const renderMenu = (
-    profile,
-  ) => `<div class="menu" id="instance-menu-${escapeHtml(profile.id)}" role="menu" aria-label="${escapeHtml(profile.displayName)}的实例操作">
+  const renderMenu = (profile) =>
+    `<div class="menu" id="instance-menu-${escapeHtml(profile.id)}" role="menu" aria-label="${escapeHtml(profile.displayName)}的实例操作">
     <button role="menuitem" data-action="retry" data-id="${escapeHtml(profile.id)}">重新连接</button>
-    <button role="menuitem" data-action="edit" data-id="${escapeHtml(profile.id)}">修改名称</button>
+    <button role="menuitem" data-action="edit" data-id="${escapeHtml(profile.id)}">编辑连接</button>
     <button role="menuitem" data-action="notifications" data-id="${escapeHtml(profile.id)}">系统通知：${profile.notificationsEnabled ? '已开启' : '已关闭'}</button>
-    ${profile.requiresAuthentication ? `<button role="menuitem" data-action="reauth" data-id="${escapeHtml(profile.id)}">重新认证</button>` : ''}
     <button role="menuitem" class="danger" data-action="confirm-remove" data-id="${escapeHtml(profile.id)}">移除实例</button>
   </div>`
 
-  const formShell = (title, body, primaryLabel) =>
-    `<section class="panel" role="dialog" aria-modal="true" aria-label="${escapeHtml(title)}">${header(title, true)}<form class="form" data-form="current">${body}${error ? `<p class="error" role="alert">${escapeHtml(error)}</p>` : ''}<div class="form-actions"><button type="button" class="quiet" data-action="back">取消</button><button class="primary" ${busy ? 'disabled' : ''}>${busy ? '正在连接…' : primaryLabel}</button></div></form><div></div></section>`
+  const anchorFloatingMenu = (profileId) => {
+    const menu = root.querySelector('.menu')
+    const anchor = root.querySelector(`[data-action="more"][data-id="${CSS.escape(profileId)}"]`)
+    if (!menu || !(anchor instanceof window.HTMLElement)) return
+    const rect = anchor.getBoundingClientRect()
+    const menuHeight = menu.offsetHeight
+    const menuWidth = menu.offsetWidth
+    let top = rect.top
+    const bottomLimit = window.innerHeight - 4
+    if (top + menuHeight > bottomLimit) top = Math.max(4, rect.bottom - menuHeight)
+    const rightSideLeft = rect.right + 6
+    const fitsRight = rightSideLeft + menuWidth <= window.innerWidth - 4
+    menu.dataset.side = fitsRight ? 'right' : 'left'
+    menu.style.left = `${fitsRight ? rightSideLeft : Math.max(4, rect.left - menuWidth - 6)}px`
+    menu.style.right = 'auto'
+    menu.style.top = `${top}px`
+  }
+
+  const keyField = (draft) =>
+    `<div class="field"><label for="key">管理密钥（可选）</label><div class="secret-wrap"><input id="key" name="managementKey" type="${mode.revealKey ? 'text' : 'password'}" autocomplete="off" spellcheck="false" data-1p-ignore data-lpignore="true" value="${escapeHtml(draft.managementKey)}"><button type="button" class="reveal" data-action="reveal" aria-label="${mode.revealKey ? '隐藏' : '显示'}管理密钥">${revealIcon(mode.revealKey)}</button></div><p class="field-hint">服务器配置了管理密钥时填写。</p></div>`
+
+  const formShell = ({ title, body, primaryLabel, busyLabel, progressText }) =>
+    `<section class="panel" role="dialog" aria-modal="true" aria-label="${escapeHtml(title)}">${header(title, true)}<form class="form" data-form="current">${body}<p class="progress" data-progress hidden>${escapeHtml(progressText)}</p><p class="error" data-error role="alert" hidden></p><div class="form-actions"><button type="button" class="quiet" data-action="back">取消</button><button type="submit" class="primary" data-submit data-idle-label="${escapeHtml(primaryLabel)}" data-busy-label="${escapeHtml(busyLabel)}">${escapeHtml(primaryLabel)}</button></div></form></section>`
+
+  /**
+   * Busy/error feedback updates in place so a submission start or failure never
+   * replaces focused inputs, their caret/selection, or IME composition.
+   */
+  const patchFormState = (nextBusy, nextError) => {
+    const form = root.querySelector('form[data-form="current"]')
+    if (!form) return
+    const progress = form.querySelector('[data-progress]')
+    const alert = form.querySelector('[data-error]')
+    const submit = form.querySelector('[data-submit]')
+    if (progress instanceof window.HTMLElement) progress.hidden = !nextBusy
+    if (alert instanceof window.HTMLElement) {
+      alert.textContent = nextError
+      alert.hidden = !nextError
+    }
+    if (submit instanceof window.HTMLButtonElement) {
+      submit.disabled = nextBusy
+      submit.textContent = nextBusy ? submit.dataset.busyLabel : submit.dataset.idleLabel
+    }
+  }
 
   const renderForm = () => {
     if (mode.pendingInsecureHttpOrigin) {
       const title = mode.kind === 'reauth' ? '确认重新认证风险' : '确认 HTTP 连接风险'
       mountPanel(
-        `<section class="panel" role="dialog" aria-modal="true" aria-label="${escapeHtml(title)}">${header(title, true)}<div class="risk-confirm" role="alert"><h2>连接未加密</h2><p>HTTP 连接未加密。管理密钥和设备凭据可能在传输途中被截获或篡改。</p><p class="risk-origin">${escapeHtml(mode.pendingInsecureHttpOrigin)}</p><p>仅在你信任当前网络和服务器时继续。</p><div class="form-actions"><button type="button" class="quiet" data-action="cancel-http-confirmation">返回检查</button><button type="button" class="danger" data-action="confirm-http">仍要继续</button></div></div><div></div></section>`,
+        `<section class="panel" role="dialog" aria-modal="true" aria-label="${escapeHtml(title)}">${header(title, true)}<div class="risk-confirm" role="alert"><h2>连接未加密</h2><p>HTTP 连接未加密。管理密钥和设备凭据可能在传输途中被截获或篡改。</p><p class="risk-origin">${escapeHtml(mode.pendingInsecureHttpOrigin)}</p><p>仅在你信任当前网络和服务器时继续。</p><div class="form-actions"><button type="button" class="quiet" data-action="cancel-http-confirmation">返回检查</button><button type="button" class="danger" data-action="confirm-http">仍要继续</button></div></div></section>`,
       )
       return
     }
     if (mode.kind === 'add') {
       const draft = mode.draft
       mountPanel(
-        formShell(
-          '添加远程实例',
-          `<div class="field"><label for="name">实例名称</label><input id="name" name="displayName" autocomplete="off" placeholder="我的云服务器" value="${escapeHtml(draft.displayName)}"></div><div class="field"><label for="address">服务器地址</label><input id="address" name="address" autocomplete="off" placeholder="server.example:4960" value="${escapeHtml(draft.address)}" required></div><div class="field"><label for="key">管理密钥（可选）</label><div class="secret-wrap"><input id="key" name="managementKey" type="${mode.revealKey ? 'text' : 'password'}" autocomplete="off" spellcheck="false" data-1p-ignore data-lpignore="true" value="${escapeHtml(draft.managementKey)}"><button type="button" class="reveal" data-action="reveal" aria-label="${mode.revealKey ? '隐藏' : '显示'}管理密钥">👁</button></div><p class="field-hint">服务器配置了管理密钥时填写。</p></div>${busy ? '<p class="progress">正在验证服务器身份并建立设备会话…</p>' : ''}`,
-          '连接并添加',
-        ),
+        formShell({
+          title: '添加远程实例',
+          body: `<div class="field"><label for="name">实例名称</label><input id="name" name="displayName" autocomplete="off" placeholder="我的云服务器" value="${escapeHtml(draft.displayName)}"></div><div class="field"><label for="address">服务器地址</label><input id="address" name="address" autocomplete="off" placeholder="server.example:4960" value="${escapeHtml(draft.address)}" required></div>${keyField(draft)}`,
+          primaryLabel: '连接并添加',
+          busyLabel: '正在连接…',
+          progressText: '正在验证服务器身份并建立设备会话…',
+        }),
       )
       return
     }
@@ -190,28 +241,33 @@ const startOverlay = () => {
       return
     }
     if (mode.kind === 'edit') {
+      const draft = mode.draft
       mountPanel(
-        formShell(
-          '修改实例名称',
-          `<div class="field"><label for="name">实例名称</label><input id="name" name="displayName" value="${escapeHtml(mode.draft.displayName)}" required></div>`,
-          '保存名称',
-        ),
+        formShell({
+          title: '编辑连接',
+          body: `<div class="field"><label for="name">实例名称</label><input id="name" name="displayName" autocomplete="off" value="${escapeHtml(draft.displayName)}"></div><div class="field"><label for="address">服务器地址</label><input id="address" name="address" autocomplete="off" value="${escapeHtml(draft.address)}" required></div>${keyField(draft)}`,
+          primaryLabel: '保存更改',
+          busyLabel: '正在保存…',
+          progressText: '正在保存更改…',
+        }),
       )
       return
     }
     if (mode.kind === 'reauth') {
       mountPanel(
-        formShell(
-          '重新认证',
-          `<p class="hint">${escapeHtml(profile.displayName)} · ${escapeHtml(profile.addressLabel)}</p>${profile.insecureHttp ? '<p class="risk-inline">此实例使用未加密 HTTP；重新认证前会再次确认传输风险。</p>' : ''}<div class="field"><label for="key">管理密钥</label><div class="secret-wrap"><input id="key" name="managementKey" type="${mode.revealKey ? 'text' : 'password'}" autocomplete="off" spellcheck="false" data-1p-ignore data-lpignore="true" value="${escapeHtml(mode.draft.managementKey)}" required><button type="button" class="reveal" data-action="reveal" aria-label="${mode.revealKey ? '隐藏' : '显示'}管理密钥">👁</button></div></div>${busy ? '<p class="progress">正在验证原服务器身份并更新设备会话…</p>' : ''}`,
-          '重新认证',
-        ),
+        formShell({
+          title: '重新认证',
+          body: `<p class="hint">${escapeHtml(profile.displayName)} · ${escapeHtml(profile.addressLabel)}</p>${profile.insecureHttp ? '<p class="risk-inline">此实例使用未加密 HTTP；重新认证前会再次确认传输风险。</p>' : ''}<div class="field"><label for="key">管理密钥</label><div class="secret-wrap"><input id="key" name="managementKey" type="${mode.revealKey ? 'text' : 'password'}" autocomplete="off" spellcheck="false" data-1p-ignore data-lpignore="true" value="${escapeHtml(mode.draft.managementKey)}" required><button type="button" class="reveal" data-action="reveal" aria-label="${mode.revealKey ? '隐藏' : '显示'}管理密钥">${revealIcon(mode.revealKey)}</button></div></div>`,
+          primaryLabel: '重新认证',
+          busyLabel: '正在验证…',
+          progressText: '正在验证原服务器身份并更新设备会话…',
+        }),
       )
       return
     }
     if (mode.kind === 'remove') {
       mountPanel(
-        `<section class="panel" role="dialog" aria-modal="true" aria-label="移除服务实例">${header('移除服务实例', true)}<div class="confirm"><h2>${escapeHtml(profile.displayName)}</h2><p>此操作会清除此客户端保存的连接记录、浏览数据和设备凭据。服务器中的智能体、频道、消息和扩展不会被删除。</p>${error ? `<p class="error">${escapeHtml(error)}</p>` : ''}<div class="form-actions"><button class="quiet" data-action="back">取消</button><button class="danger" data-action="remove" data-id="${profile.id}" ${busy ? 'disabled' : ''}>移除实例</button></div></div><div></div></section>`,
+        `<section class="panel" role="dialog" aria-modal="true" aria-label="移除服务实例">${header('移除服务实例', true)}<div class="confirm"><h2>${escapeHtml(profile.displayName)}</h2><p>此操作会清除此客户端保存的连接记录、浏览数据和设备凭据。服务器中的智能体、频道、消息和扩展不会被删除。</p>${error ? `<p class="error">${escapeHtml(error)}</p>` : ''}<div class="form-actions"><button class="quiet" data-action="back">取消</button><button class="danger" data-action="remove" data-id="${profile.id}" ${busy ? 'disabled' : ''}>移除实例</button></div></div></section>`,
       )
     }
   }
@@ -360,11 +416,9 @@ const startOverlay = () => {
       const check = item.querySelector('[data-current-check]')
       if (name) name.textContent = profile.displayName
       if (meta) meta.textContent = `${profile.addressLabel} · ${statusText(profile.status)}`
-      if (check) check.innerHTML = current ? '<span class="check" aria-label="当前实例">✓</span>' : ''
+      if (check) check.innerHTML = current ? `<span class="check" aria-label="当前实例">${checkIcon}</span>` : ''
       const more = item.querySelector('[data-action="more"]')
-      more?.setAttribute('aria-label', `${profile.displayName}的更多操作`)
-      const notification = item.querySelector('[data-action="notifications"]')
-      if (notification) notification.textContent = `系统通知：${profile.notificationsEnabled ? '已开启' : '已关闭'}`
+      if (more) more.setAttribute('aria-label', `${profile.displayName}的更多操作`)
     }
     return true
   }
@@ -396,9 +450,20 @@ const startOverlay = () => {
   }
 
   root.addEventListener('click', async (event) => {
-    if (event.target instanceof window.Element && event.target.classList.contains('sheet-backdrop')) {
+    const target = event.target instanceof window.Element ? event.target : undefined
+
+    if (mode.kind === 'menu' && target?.closest('.menu, [data-action="more"]') === null) {
+      const profileId = mode.profileId
       event.preventDefault()
-      if (mode.kind === 'list') bridge.close()
+      mode = { kind: 'list' }
+      render()
+      focusControl('more', profileId)
+      return
+    }
+
+    if (target?.classList.contains('sheet-backdrop') === true) {
+      event.preventDefault()
+      if (mode.kind === 'list') bridge.close({ restoreControl: false })
       else {
         const profileId = mode.profileId
         invalidateSubmission()
@@ -408,12 +473,13 @@ const startOverlay = () => {
       }
       return
     }
-    const target = event.target.closest('[data-action]')
-    if (!target) return
+
+    const actionTarget = target?.closest('[data-action]')
+    if (!actionTarget) return
     event.preventDefault()
     event.stopPropagation()
-    const action = target.dataset.action
-    const id = target.dataset.id
+    const action = actionTarget.dataset.action
+    const id = actionTarget.dataset.id
     error = ''
     if (action === 'back') {
       const profileId = mode.profileId
@@ -439,13 +505,18 @@ const startOverlay = () => {
     }
     if (action === 'edit') {
       const profile = snapshot.profiles.find((item) => item.id === id)
-      mode = { kind: 'edit', profileId: id, draft: { displayName: profile?.displayName || '' } }
-      render()
-      focusFirstField()
-      return
-    }
-    if (action === 'reauth') {
-      mode = { kind: 'reauth', profileId: id, draft: { managementKey: '' }, revealKey: false }
+      if (!profile) return
+      mode = {
+        kind: 'edit',
+        profileId: id,
+        draft: {
+          displayName: profile.displayName,
+          address: profile.origin ?? '',
+          managementKey: '',
+        },
+        revealKey: false,
+        ...(profile.insecureHttp && profile.origin ? { confirmedInsecureHttpOrigin: profile.origin } : {}),
+      }
       render()
       focusFirstField()
       return
@@ -477,9 +548,16 @@ const startOverlay = () => {
     }
     try {
       if (action === 'switch') await bridge.switchTo(id)
-      if (action === 'retry') await bridge.retry(id)
+      if (action === 'retry') {
+        mode = { kind: 'list' }
+        render()
+        await bridge.retry(id)
+      }
       if (action === 'notifications') {
         const profile = snapshot.profiles.find((item) => item.id === id)
+        if (!profile) return
+        mode = { kind: 'list' }
+        render()
         await bridge.update({ profileId: id, notificationsEnabled: !profile.notificationsEnabled })
       }
       if (action === 'remove') {
@@ -522,7 +600,7 @@ const startOverlay = () => {
         normalized = normalizeOverlayOrigin(mode.draft.address)
       } catch (cause) {
         error = cause instanceof Error ? cause.message : String(cause)
-        render()
+        patchFormState(false, error)
         return
       }
       if (normalized.insecureRemoteHttp && mode.confirmedInsecureHttpOrigin !== normalized.origin) {
@@ -535,6 +613,30 @@ const startOverlay = () => {
       operationPayload = {
         ...createAddRemotePayload(mode.draft),
         address: normalized.origin,
+        ...(normalized.insecureRemoteHttp ? { confirmedInsecureHttpOrigin: normalized.origin } : {}),
+      }
+    }
+    if (mode.kind === 'edit') {
+      let normalized
+      try {
+        normalized = normalizeOverlayOrigin(mode.draft.address)
+      } catch (cause) {
+        error = cause instanceof Error ? cause.message : String(cause)
+        patchFormState(false, error)
+        return
+      }
+      if (normalized.insecureRemoteHttp && mode.confirmedInsecureHttpOrigin !== normalized.origin) {
+        mode = { ...mode, pendingInsecureHttpOrigin: normalized.origin }
+        error = ''
+        render()
+        focusControl('cancel-http-confirmation')
+        return
+      }
+      operationPayload = {
+        profileId: mode.profileId,
+        displayName: mode.draft.displayName,
+        address: normalized.origin,
+        ...(mode.draft.managementKey.trim() === '' ? {} : { managementKey: mode.draft.managementKey }),
         ...(normalized.insecureRemoteHttp ? { confirmedInsecureHttpOrigin: normalized.origin } : {}),
       }
     }
@@ -558,17 +660,20 @@ const startOverlay = () => {
     activeSubmission = { generation, draft: submittedMode.draft, payload: operationPayload }
     busy = true
     error = ''
-    render()
+    patchFormState(true, '')
     try {
-      if (mode.kind === 'add') await bridge.add(operationPayload)
-      if (mode.kind === 'edit')
-        await bridge.update({
-          profileId: mode.profileId,
-          displayName: submittedMode.draft.displayName,
-        })
-      if (mode.kind === 'reauth') await bridge.reauthenticate(operationPayload)
+      let result
+      if (mode.kind === 'add') result = await bridge.add(operationPayload)
+      if (mode.kind === 'edit') result = await bridge.editConnection(operationPayload)
+      if (mode.kind === 'reauth') result = await bridge.reauthenticate(operationPayload)
       if (generation !== submissionGeneration) return
       activeSubmission = undefined
+      if (result !== null && typeof result === 'object' && result.saved === false) {
+        // 产品存在未保存草稿且用户取消迁址/重认证：保留当前表单，不切回列表。
+        busy = false
+        patchFormState(false, '')
+        return
+      }
       mode = { kind: 'list' }
       busy = false
       await refresh()
@@ -582,7 +687,7 @@ const startOverlay = () => {
       activeSubmission = undefined
       busy = failure.busy
       error = failure.error
-      render()
+      patchFormState(false, failure.error)
     }
   })
 
@@ -612,7 +717,7 @@ const startOverlay = () => {
     }
     if (event.key === 'Escape') {
       if (mode.kind === 'list') {
-        bridge.close()
+        bridge.close({ restoreControl: true })
       } else {
         const profileId = mode.profileId
         invalidateSubmission()

@@ -11,9 +11,10 @@ contextBridge.exposeInMainWorld('nxtInstances', {
   switchTo: (profileId: string) => invoke('switch', { profileId }),
   retry: (profileId: string) => invoke('retry', { profileId }),
   update: (input: unknown) => invoke('update', input),
+  editConnection: (input: unknown) => invoke('editConnection', input),
   reauthenticate: (input: unknown) => invoke('reauthenticate', input),
   remove: (profileId: string) => invoke('remove', { profileId }),
-  close: () => invoke('close'),
+  close: (input?: unknown) => invoke('close', input),
   subscribe: (listener: (state: unknown) => void) => {
     const handler = (_event: Electron.IpcRendererEvent, state: unknown): void => listener(state)
     ipcRenderer.on('nxt:instances:changed', handler)

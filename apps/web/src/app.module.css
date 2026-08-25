@@ -155,31 +155,28 @@
   flex: 1;
 }
 
-.railTheme {
-  width: 32px;
-  min-width: 32px;
-  height: 32px;
-  min-height: 32px;
+.railUtility {
+  width: 36px;
+  min-width: 36px;
+  height: 36px;
+  min-height: 36px;
+  color: var(--nxt-rail-text-strong);
+  background: transparent;
 }
 
-.shell .rail .railTheme:not(:disabled) {
+.shell .rail .railUtility:not(:disabled) {
   color: var(--nxt-rail-text-strong);
-  background: color-mix(in srgb, var(--nxt-rail-hover) 72%, transparent);
+  background: transparent;
 }
 
 .railInstance {
   position: relative;
-  width: 32px;
-  min-width: 32px;
-  height: 32px;
-  min-height: 32px;
-  margin-top: 4px;
-  color: var(--nxt-text-muted);
+  margin-top: 2px;
 }
 
-.rail .railInstance:not(:disabled):hover,
-.rail .railInstance:not(:disabled):focus-visible,
-.railInstanceOpen {
+.rail .railUtility:not(:disabled):hover,
+.rail .railUtility:not(:disabled):focus-visible,
+.rail .railInstanceOpen:not(:disabled) {
   color: var(--nxt-lumen-300);
   background: var(--nxt-rail-hover);
 }
@@ -210,12 +207,6 @@
 }
 .instanceStatus_incompatible {
   background: var(--nxt-text-disabled);
-}
-
-.rail .railTheme:not(:disabled):hover,
-.rail .railTheme:not(:disabled):focus-visible {
-  color: var(--nxt-lumen-300);
-  background: var(--nxt-rail-hover);
 }
 
 .themeIcon {

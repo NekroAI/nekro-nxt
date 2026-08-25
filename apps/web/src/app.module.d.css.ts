@@ -20,8 +20,8 @@ declare const styles: {
   readonly railBtnActive: string
   readonly railInstance: string
   readonly railInstanceOpen: string
+  readonly railUtility: string
   readonly railSpacer: string
-  readonly railTheme: string
   readonly routeView: string
   readonly shell: string
   readonly shellBody: string
