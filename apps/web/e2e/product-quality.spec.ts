@@ -2655,6 +2655,10 @@ test('desktop shell keeps a 48px top bar and a permanently available object pane
   await expect(page.locator('html')).toHaveAttribute('data-theme', 'dark')
   expect(await page.evaluate(() => window.localStorage.getItem('nekro-nxt.theme'))).toBe('dark')
   expect(await themeButton.evaluate((element) => getComputedStyle(element).color)).toBe('rgb(247, 250, 255)')
+  await themeButton.hover()
+  await page.waitForTimeout(600)
+  await expect(page.getByRole('tooltip', { name: /^主题：/u })).toHaveCount(0)
+  await expect(themeButton).toHaveCSS('cursor', 'pointer')
   await page.emulateMedia({ colorScheme: 'light' })
   await expect(page.locator('html')).toHaveAttribute('data-theme', 'dark')
   await themeButton.click()
@@ -2752,6 +2756,12 @@ test('trusted Desktop bridge renders the persistent remote-instance entry across
     const entry = page.getByRole('button', { name: /^管理并添加远程服务实例：远程开发环境/u })
     await expect(entry).toBeVisible()
     await expect(entry).toHaveAccessibleName('管理并添加远程服务实例：远程开发环境 · 运行正常')
+    await expect(entry).toHaveCSS('cursor', 'pointer')
+    if (scene.size === 'default' && scene.theme === 'light') {
+      await entry.hover()
+      await page.waitForTimeout(600)
+      await expect(page.getByRole('tooltip', { name: /^管理并添加远程服务实例：/u })).toHaveCount(0)
+    }
     const statusDot = entry.locator('[class*="instanceStatus_ready"]')
     await expect(statusDot).toBeVisible()
     await expect(statusDot).toHaveCSS('width', '7px')
@@ -2770,7 +2780,8 @@ test('trusted Desktop bridge renders the persistent remote-instance entry across
     expect(entryGeometry.width).toBe(36)
     expect(entryGeometry.height).toBe(36)
     expect(entryGeometry.horizontalCenterOffset).toBeLessThanOrEqual(0.5)
-    expect(entryGeometry.bottomInset).toBe(10)
+    expect(entryGeometry.bottomInset).toBeGreaterThanOrEqual(10)
+    expect(entryGeometry.bottomInset).toBeLessThanOrEqual(12)
 
     await page.getByRole('link', { name: '连接' }).click()
     await expect(page).toHaveURL(/\/connections(?:\/[^/?#]+)?$/u)

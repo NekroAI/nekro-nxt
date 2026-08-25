@@ -176,6 +176,7 @@ function DesktopShell() {
           <div className={styles.railSpacer} />
           <IconButton
             label={`主题：${themeLabel}；切换为${nextThemeLabel}`}
+            tooltip={false}
             className={styles.railUtility}
             onClick={cycleTheme}
           >
@@ -198,6 +199,7 @@ function DesktopShell() {
                           ? '版本不兼容'
                           : '无法连接'
               }`}
+              tooltip={false}
               className={`${styles.railUtility} ${styles.railInstance} ${instanceSwitcherOpen ? styles.railInstanceOpen : ''}`}
               data-desktop-instance-switcher=""
               aria-expanded={instanceSwitcherOpen}

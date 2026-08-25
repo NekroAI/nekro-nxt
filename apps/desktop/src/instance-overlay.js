@@ -156,7 +156,7 @@ const startOverlay = () => {
       })
       .join('')
     mountPanel(
-      `<section class="panel" role="dialog" aria-modal="true" aria-label="服务实例">${header('服务实例')}<ul class="list" aria-label="服务实例列表">${rows}</ul><footer class="foot"><button class="quiet wide" data-action="add">＋ 添加远程实例</button></footer></section>`,
+      `<section class="panel" role="dialog" aria-modal="true" aria-label="服务实例" tabindex="-1">${header('服务实例')}<ul class="list" aria-label="服务实例列表">${rows}</ul><footer class="foot"><button class="quiet wide" data-action="add">＋ 添加远程实例</button></footer></section>`,
     )
   }
 
@@ -170,7 +170,7 @@ const startOverlay = () => {
 
   const anchorFloatingMenu = (profileId) => {
     const menu = root.querySelector('.menu')
-    const anchor = root.querySelector(`[data-action="more"][data-id="${CSS.escape(profileId)}"]`)
+    const anchor = root.querySelector(`[data-action="more"][data-id="${window.CSS.escape(profileId)}"]`)
     if (!menu || !(anchor instanceof window.HTMLElement)) return
     const rect = anchor.getBoundingClientRect()
     const menuHeight = menu.offsetHeight
@@ -311,7 +311,7 @@ const startOverlay = () => {
     )
   const focusFirstMenuItem = () => scheduleFocus(() => root.querySelector('[role="menuitem"]'))
   const focusFirstField = () => scheduleFocus(() => root.querySelector('input, .confirm button'))
-  const focusCurrentInstance = () => scheduleFocus(() => root.querySelector('.instance.current, button'))
+  const focusPanel = () => scheduleFocus(() => root.querySelector('.panel'))
 
   const applyPendingOpenIntent = () => {
     if (!pendingOpenIntent) return
@@ -340,13 +340,14 @@ const startOverlay = () => {
     mode = { kind: 'list' }
     pendingOpenIntent = undefined
     render()
-    focusCurrentInstance()
+    focusPanel()
   }
 
   const captureFocusedControl = () => {
     const active = document.activeElement
     if (!(active instanceof window.HTMLElement) || !root.contains(active)) return undefined
     return {
+      panel: active.matches('.panel'),
       action: active.dataset.action,
       id: active.dataset.id,
       name: active.getAttribute('name'),
@@ -358,6 +359,10 @@ const startOverlay = () => {
 
   const restoreFocusedControl = (focus) => {
     if (!focus) return
+    if (focus.panel) {
+      focusPanel()
+      return
+    }
     scheduleFocus(
       () =>
         [...root.querySelectorAll('button, input')].find(
@@ -453,11 +458,10 @@ const startOverlay = () => {
     const target = event.target instanceof window.Element ? event.target : undefined
 
     if (mode.kind === 'menu' && target?.closest('.menu, [data-action="more"]') === null) {
-      const profileId = mode.profileId
       event.preventDefault()
       mode = { kind: 'list' }
       render()
-      focusControl('more', profileId)
+      focusPanel()
       return
     }
 
@@ -499,8 +503,9 @@ const startOverlay = () => {
       const opening = mode.kind !== 'menu' || mode.profileId !== id
       mode = opening ? { kind: 'menu', profileId: id } : { kind: 'list' }
       render()
-      if (opening) focusFirstMenuItem()
-      else focusControl('more', id)
+      if (opening && lastInputWasKeyboard) focusFirstMenuItem()
+      else if (!opening && lastInputWasKeyboard) focusControl('more', id)
+      else focusPanel()
       return
     }
     if (action === 'edit') {
@@ -691,7 +696,12 @@ const startOverlay = () => {
     }
   })
 
+  let lastInputWasKeyboard = false
+  document.addEventListener('pointerdown', () => {
+    lastInputWasKeyboard = false
+  })
   document.addEventListener('keydown', (event) => {
+    lastInputWasKeyboard = true
     if (event.key === 'Tab') {
       const focusable = [...root.querySelectorAll('button:not(:disabled), input:not(:disabled), a[href]')].filter(
         (item) => item.getClientRects().length > 0,
@@ -760,7 +770,7 @@ const startOverlay = () => {
   })
   bridge.subscribe(applySnapshot)
   refresh().then(() => {
-    if (mode.kind === 'list' || mode.kind === 'menu') focusCurrentInstance()
+    if ((mode.kind === 'list' || mode.kind === 'menu') && !hasValidOverlayFocus()) focusPanel()
   })
 }
 

@@ -188,7 +188,7 @@ const enterAddDraft = async (page: Page): Promise<void> => {
 }
 
 const openEditForm = async (page: Page, profileId = remoteProfile.id): Promise<void> => {
-  await page.getByRole('button', { name: /的更多操作/u }).click()
+  await page.locator(`[data-action="more"][data-id="${profileId}"]`).click()
   await page.getByRole('menuitem', { name: '编辑连接' }).click()
   await page.getByRole('heading', { name: '编辑连接' }).waitFor()
 }
@@ -491,6 +491,18 @@ describe('Desktop instance overlay accessibility contract', { timeout: 15_000 },
     }))
     expect(identity).toEqual({ sameNode: true, active: true })
     await expect(remoteButton.textContent()).resolves.toContain('运行正常')
+    await page.close()
+  })
+
+  it('opens on the dialog surface without drawing a second selected-looking row', async () => {
+    const page = await openOverlayPage([localProfile, remoteProfile])
+    await expect.poll(() => page.evaluate(() => document.activeElement?.getAttribute('role'))).toBe('dialog')
+    await publishSnapshot(page, [localProfile, remoteProfile], remoteProfile.id)
+    await expect(page.locator('.instance-row.current').count()).resolves.toBe(1)
+    await expect(page.locator('.instance:focus-visible').count()).resolves.toBe(0)
+    await publishSnapshot(page, [localProfile, remoteProfile, httpRemoteProfile], remoteProfile.id)
+    await expect.poll(() => page.evaluate(() => document.activeElement?.getAttribute('role'))).toBe('dialog')
+    await expect(page.locator('.instance:focus-visible').count()).resolves.toBe(0)
     await page.close()
   })
 
@@ -895,14 +907,13 @@ describe('Desktop instance overlay accessibility contract', { timeout: 15_000 },
       element.setSelectionRange(2, 8, 'backward')
     })
     await page.evaluate(() => {
-      const inputs = [...document.querySelectorAll('form[data-form="current"] input')]
-      window.__overlayNodes = Object.fromEntries(inputs.map((input) => [input.getAttribute('name'), input]))
+      const inputs = [...document.querySelectorAll<HTMLInputElement>('form[data-form="current"] input')]
+      window.__overlayNodes = Object.fromEntries(inputs.map((input) => [input.name, input]))
       window.__selectionBefore = Object.fromEntries(
         inputs.map((input) => {
-          const element = input as HTMLInputElement
           return [
-            input.getAttribute('name'),
-            { value: element.value, selectionStart: element.selectionStart, selectionEnd: element.selectionEnd },
+            input.name,
+            { value: input.value, selectionStart: input.selectionStart, selectionEnd: input.selectionEnd },
           ]
         }),
       )
@@ -916,7 +927,7 @@ describe('Desktop instance overlay accessibility contract', { timeout: 15_000 },
     await page.getByRole('alert').waitFor()
 
     const state = await page.evaluate(() => {
-      const inputs = [...document.querySelectorAll('form[data-form="current"] input[name]')]
+      const inputs = [...document.querySelectorAll<HTMLInputElement>('form[data-form="current"] input[name]')]
       const map: Record<
         string,
         { sameNode: boolean; value: string; selectionStart: number | null; selectionEnd: number | null }
@@ -938,15 +949,18 @@ describe('Desktop instance overlay accessibility contract', { timeout: 15_000 },
       }
     })
     const selectionBefore = await page.evaluate(() => window.__selectionBefore)
+    if (selectionBefore === undefined) throw new Error('提交前输入框状态没有记录。')
     for (const name of ['displayName', 'address', 'managementKey']) {
+      const before = selectionBefore[name]
+      if (before === undefined) throw new Error(`${name} 的提交前状态没有记录。`)
       expect(state.map[name]?.sameNode, name + ' 不应被重建').toBe(true)
-      expect(state.map[name]?.value, name + ' 值').toBe(selectionBefore[name].value)
-      expect(state.map[name]?.selectionStart, name + ' 选区起点').toBe(selectionBefore[name].selectionStart)
-      expect(state.map[name]?.selectionEnd, name + ' 选区终点').toBe(selectionBefore[name].selectionEnd)
+      expect(state.map[name]?.value, name + ' 值').toBe(before.value)
+      expect(state.map[name]?.selectionStart, name + ' 选区起点').toBe(before.selectionStart)
+      expect(state.map[name]?.selectionEnd, name + ' 选区终点').toBe(before.selectionEnd)
     }
     // 重点：提交期间设置的关键字段选区在失败后仍在原文位置
-    expect(state.map.managementKey?.selectionStart).toBe(2)
-    expect(state.map.managementKey?.selectionEnd).toBe(8)
+    expect(state.map['managementKey']?.selectionStart).toBe(2)
+    expect(state.map['managementKey']?.selectionEnd).toBe(8)
     expect(state.error).toBe('无法连接服务器，请检查地址、端口和网络状态。')
     expect(state.alertVisible).toBe(true)
     await page.close()
@@ -977,15 +991,18 @@ describe('Desktop instance overlay accessibility contract', { timeout: 15_000 },
 
   it('opens the row menu as an absolute floating layer that does not squeeze the list and closes on outside clicks', async () => {
     const page = await openOverlayPage([localProfile, remoteProfile])
-    const panel = page.locator('.panel')
     const firstRow = page.locator('.instance-row').first()
-    const secondRow = page.locator('.instance-row').nth(1)
     const rectsBefore = await page.evaluate(() => {
       const panel = document.querySelector('.panel')
       const rows = [...document.querySelectorAll('.instance-row')]
       const offset = (element: Element) => {
-        const next = element as HTMLElement
-        return { left: next.offsetLeft, top: next.offsetTop, width: next.offsetWidth, height: next.offsetHeight }
+        if (!(element instanceof HTMLElement)) throw new Error('浮层几何目标无效。')
+        return {
+          left: element.offsetLeft,
+          top: element.offsetTop,
+          width: element.offsetWidth,
+          height: element.offsetHeight,
+        }
       }
       return { panel: panel instanceof HTMLElement ? offset(panel) : null, rows: rows.map(offset) }
     })
@@ -1029,8 +1046,13 @@ describe('Desktop instance overlay accessibility contract', { timeout: 15_000 },
       const panel = document.querySelector('.panel')
       const rows = [...document.querySelectorAll('.instance-row')]
       const offset = (element: Element) => {
-        const next = element as HTMLElement
-        return { left: next.offsetLeft, top: next.offsetTop, width: next.offsetWidth, height: next.offsetHeight }
+        if (!(element instanceof HTMLElement)) throw new Error('浮层几何目标无效。')
+        return {
+          left: element.offsetLeft,
+          top: element.offsetTop,
+          width: element.offsetWidth,
+          height: element.offsetHeight,
+        }
       }
       return { panel: panel instanceof HTMLElement ? offset(panel) : null, rows: rows.map(offset) }
     })
@@ -1039,7 +1061,7 @@ describe('Desktop instance overlay accessibility contract', { timeout: 15_000 },
     await firstRow.click({ position: { x: 40, y: 20 } })
     await expect(menu.count()).resolves.toBe(0)
     await expect(page.evaluate(() => window.__overlayControl.closeCalls)).resolves.toBe(0)
-    await expect.poll(() => page.evaluate(() => document.activeElement?.getAttribute('data-action'))).toBe('more')
+    await expect.poll(() => page.evaluate(() => document.activeElement?.getAttribute('role'))).toBe('dialog')
 
     await page.locator('.sheet-backdrop').click({ position: { x: 900, y: 60 } })
     await expect.poll(() => page.evaluate(() => window.__overlayControl.closeCalls)).toBe(1)
@@ -1098,13 +1120,13 @@ describe('Desktop instance overlay accessibility contract', { timeout: 15_000 },
         return { width: r.width, height: r.height }
       })
 
-    await expect.poll(async () => (await panelRect()).width).toBe(344)
+    await expect.poll(async () => (await panelRect()).width).toBe(420)
     const compact = await panelRect()
-    expect(compact.width).toBe(344)
-    expect(compact.height).toBeLessThan(480)
+    expect(compact.width).toBe(420)
+    expect(compact.height).toBeLessThan(560)
 
     await publishSnapshot(page, manyProfiles)
-    await expect.poll(async () => (await panelRect()).height).toBe(480)
+    await expect.poll(async () => (await panelRect()).height).toBe(560)
     const list = await page.evaluate(() => {
       const element = document.querySelector('.list')
       if (!(element instanceof HTMLElement)) throw new Error('列表缺失。')
@@ -1126,21 +1148,28 @@ describe('Desktop instance overlay accessibility contract', { timeout: 15_000 },
     const page = await openOverlayPage([localProfile, remoteProfile])
     const samples = await page.evaluate(() => {
       const rows = [...document.querySelectorAll('.instance-row')]
-      const results: { row: number; x: number; cursor: string; tag: string }[] = []
+      const results: { row: number; x: number; y: number; cursor: string; tag: string }[] = []
       rows.forEach((row, index) => {
         const rect = row.getBoundingClientRect()
-        const y = rect.top + rect.height / 2
-        for (let x = rect.left + 2; x <= rect.right - 2; x += 4) {
-          const element = document.elementFromPoint(x, y)
-          if (element === null) continue
-          results.push({ row: index, x: Math.round(x), cursor: getComputedStyle(element).cursor, tag: element.tagName })
+        for (let y = rect.top + 1; y <= rect.bottom - 1; y += 4) {
+          for (let x = rect.left + 1; x <= rect.right - 1; x += 4) {
+            const element = document.elementFromPoint(x, y)
+            if (element === null) continue
+            results.push({
+              row: index,
+              x: Math.round(x),
+              y: Math.round(y),
+              cursor: getComputedStyle(element).cursor,
+              tag: element.tagName,
+            })
+          }
         }
       })
       return results
     })
     expect(samples.length).toBeGreaterThan(0)
     for (const sample of samples) {
-      expect(sample.cursor, `row ${sample.row} x=${sample.x} 命中 ${sample.tag}`).toBe('pointer')
+      expect(sample.cursor, `row ${sample.row} x=${sample.x} y=${sample.y} 命中 ${sample.tag}`).toBe('pointer')
     }
     await page.close()
   })

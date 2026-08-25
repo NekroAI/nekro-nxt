@@ -55,6 +55,7 @@ describe('Desktop manager mutation lifecycle', () => {
           assertRemoteConnectionAvailable: ({ origin }) => origin,
           addRemote: profileAdd,
           get: () => undefined,
+          updateRemoteConnection: () => Promise.reject(new Error('connection update must not run')),
           updateRemoteSecurity: () => Promise.reject(new Error('security update must not run')),
         },
         credentials: { put: credentialPut, remove: credentialRemove },

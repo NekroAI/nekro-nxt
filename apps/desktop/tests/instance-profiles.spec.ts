@@ -263,7 +263,7 @@ describe('Desktop instance profiles', () => {
       displayName: '新名称',
       origin: profile.origin,
       observedInstanceId: instanceId,
-      transport: profile.transport,
+      ...(profile.transport === undefined ? {} : { transport: profile.transport }),
       pinnedSpkiSha256: 'new-spki',
       credentialRef: 'new-credential',
     })

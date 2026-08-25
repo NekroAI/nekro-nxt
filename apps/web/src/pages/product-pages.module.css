@@ -2933,7 +2933,7 @@
 }
 
 .trajTable tbody tr {
-  cursor: default;
+  cursor: pointer;
 }
 
 .trajTable tbody tr:hover td {

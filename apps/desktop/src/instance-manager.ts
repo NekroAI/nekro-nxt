@@ -42,7 +42,12 @@ import {
   tryRevokeRemoteDevice,
 } from './remote-session.js'
 import { SerialTaskQueue } from './serial-task-queue.js'
-import { renderTrustedFallbackHtml, trustedFallbackForError, type TrustedFallbackAction } from './trusted-fallback.js'
+import {
+  fallbackRemainingVisibleMs,
+  renderTrustedFallbackHtml,
+  trustedFallbackForError,
+  type TrustedFallbackAction,
+} from './trusted-fallback.js'
 import { isAllowedExternalUrl, type ProductRelease } from './distribution.js'
 import { desktopTitleBarCss, desktopWindowChrome } from './window-chrome.js'
 import { detachAndCloseView } from './view-lifecycle.js'
@@ -281,6 +286,7 @@ export class DesktopInstanceManager {
     this.#statuses.set(profile.id, 'connecting')
     this.#currentProfileId = profile.id
     await this.#showFallback(profile, `正在连接「${profile.displayName}」`, '正在读取该实例的工作区…', [])
+    const fallbackVisibleAt = this.#window.isVisible() ? Date.now() : undefined
     if (serial !== this.#switchSerial) return
     this.#destroyProductView()
     this.#window.setTitle(`NekroNXT — ${profile.displayName}`)
@@ -302,6 +308,11 @@ export class DesktopInstanceManager {
       if (serial !== this.#switchSerial) return
       if (profile.kind === 'local') this.#localHostStatus = 'ready'
       this.#statuses.set(profile.id, 'ready')
+      if (fallbackVisibleAt !== undefined) {
+        const remaining = fallbackRemainingVisibleMs(fallbackVisibleAt, Date.now())
+        if (remaining > 0) await new Promise<void>((resolve) => setTimeout(resolve, remaining))
+        if (serial !== this.#switchSerial) return
+      }
       this.#hideFallback()
       this.#publishPresentationChange()
     } catch (error) {

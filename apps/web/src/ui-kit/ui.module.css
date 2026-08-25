@@ -37,7 +37,7 @@
 
 .button[data-loading],
 .iconButton[data-loading] {
-  cursor: wait;
+  cursor: pointer;
 }
 
 .loadingSpinner {
@@ -329,7 +329,7 @@
   border-radius: 5px;
   padding: 0 9px;
   font-size: 13px;
-  cursor: default;
+  cursor: pointer;
   outline: none;
 }
 
@@ -436,7 +436,7 @@
 
 .dialogClose:disabled {
   color: var(--nxt-text-disabled);
-  cursor: wait;
+  cursor: pointer;
 }
 
 .dialogBody {
@@ -555,7 +555,7 @@
   font-size: 13px;
   line-height: 20px;
   outline: none;
-  cursor: default;
+  cursor: pointer;
   user-select: none;
 }
 

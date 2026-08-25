@@ -115,29 +115,32 @@ export const IconButton = forwardRef<
     readonly label: string
     readonly loading?: boolean
     readonly loadingLabel?: string
+    readonly tooltip?: boolean
     readonly children: ReactNode
   }
 >(function IconButton(
-  { label, loadingLabel, loading = false, type = 'button', className, disabled, children, ...props },
+  { label, loadingLabel, loading = false, tooltip = true, type = 'button', className, disabled, children, ...props },
   ref,
 ) {
   const accessibleLabel = loading ? (loadingLabel ?? `${label}，处理中`) : label
+  const control = (
+    <button
+      ref={ref}
+      type={type}
+      className={[styles.iconButton, className].filter(Boolean).join(' ')}
+      aria-label={accessibleLabel}
+      aria-busy={loading || undefined}
+      data-loading={loading ? '' : undefined}
+      disabled={disabled || loading}
+      {...props}
+    >
+      {loading ? <LoaderCircle className={styles.loadingSpinner} size={15} aria-hidden="true" /> : children}
+    </button>
+  )
+  if (!tooltip) return control
   return (
     <Tooltip.Root>
-      <Tooltip.Trigger asChild>
-        <button
-          ref={ref}
-          type={type}
-          className={[styles.iconButton, className].filter(Boolean).join(' ')}
-          aria-label={accessibleLabel}
-          aria-busy={loading || undefined}
-          data-loading={loading ? '' : undefined}
-          disabled={disabled || loading}
-          {...props}
-        >
-          {loading ? <LoaderCircle className={styles.loadingSpinner} size={15} aria-hidden="true" /> : children}
-        </button>
-      </Tooltip.Trigger>
+      <Tooltip.Trigger asChild>{control}</Tooltip.Trigger>
       <Tooltip.Portal>
         <Tooltip.Content className={styles.tooltipContent} sideOffset={6}>
           {accessibleLabel}

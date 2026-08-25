@@ -9,10 +9,7 @@ interface ShortcutInput {
 }
 
 interface DevToolsContents {
-  on(
-    event: 'before-input-event',
-    listener: (event: ShortcutEvent, input: ShortcutInput) => void,
-  ): unknown
+  on(event: 'before-input-event', listener: (event: ShortcutEvent, input: ShortcutInput) => void): unknown
   toggleDevTools(): void
 }
 

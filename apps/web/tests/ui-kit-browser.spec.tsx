@@ -20,6 +20,7 @@ const harnessModule = `
       <main>
       <Button id="dialog-trigger" onClick={() => { setLongContent(true); setPending(false); setOpen(true) }}>打开对话框</Button>
       <IconButton id="icon-button" label="新建内置频道"><span>+</span></IconButton>
+      <IconButton id="silent-icon-button" label="主题切换" tooltip={false}><span>◐</span></IconButton>
       <Button id="short-dialog-trigger" onClick={() => { setLongContent(false); setPending(false); setOpen(true) }}>打开短对话框</Button>
       <Button id="pending-trigger" onClick={() => { setLongContent(true); setPending(true); setOpen(true) }}>打开待处理对话框</Button>
       <Button id="grouped-notification" onClick={() => {
@@ -274,6 +275,25 @@ describe.sequential('ui-kit Dialog browser behavior', { timeout: 30_000 }, () =>
     await trigger.hover()
     await expectPage(page.getByRole('tooltip', { name: '新建内置频道' })).toBeVisible()
     expect(browserErrors.filter((message) => message.includes('Function components cannot be given refs'))).toEqual([])
+  }, 20_000)
+
+  it('can keep an icon button accessible without rendering hover text', async () => {
+    await page.goto(`${baseUrl}/__ui-kit_harness__`, { waitUntil: 'domcontentloaded' })
+    const trigger = page.locator('#silent-icon-button')
+    await expectPage(trigger).toHaveAccessibleName('主题切换')
+    await trigger.hover()
+    await page.waitForTimeout(600)
+    await expectPage(page.getByRole('tooltip', { name: '主题切换' })).toHaveCount(0)
+  }, 20_000)
+
+  it('keeps a pointer cursor across interactive controls and their icon descendants', async () => {
+    await page.goto(`${baseUrl}/__ui-kit_harness__`, { waitUntil: 'domcontentloaded' })
+    for (const selector of ['#dialog-trigger', '#icon-button', '#icon-button span', '#silent-icon-button span']) {
+      await expectPage(page.locator(selector)).toHaveCSS('cursor', 'pointer')
+    }
+    await page.goto(`${baseUrl}/__motion_harness__`, { waitUntil: 'domcontentloaded' })
+    await expectPage(page.locator('#inside-a')).toHaveCSS('cursor', 'pointer')
+    await expectPage(page.getByRole('tab', { name: '配置' })).toHaveCSS('cursor', 'pointer')
   }, 20_000)
 
   it('groups repeated notifications, exposes live semantics, and supports manual dismissal', async () => {
