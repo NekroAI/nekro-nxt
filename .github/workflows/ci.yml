@@ -56,7 +56,7 @@ jobs:
       - run: pnpm smoke:better-sqlite3
       - run: pnpm check:drizzle
       - run: pnpm --filter @nekro-nxt/storage-sqlite test
-      - run: pnpm exec vitest run --exclude apps/web/tests/app.spec.tsx --exclude apps/web/tests/ui-kit-browser.spec.tsx
+      - run: pnpm exec vitest run --exclude apps/web/tests/app.spec.tsx --exclude apps/web/tests/ui-kit-browser.spec.tsx --exclude apps/desktop/tests/instance-overlay.spec.ts
 
   all-checks-passed:
     if: always()

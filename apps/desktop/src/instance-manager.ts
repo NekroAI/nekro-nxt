@@ -9,15 +9,28 @@ import {
   shell,
   type Session,
 } from 'electron'
-import { InstanceDescriptorSchema } from '@nekro-nxt/contracts'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { CredentialVault, type DeviceCredential } from './credential-vault.js'
-import { InstanceProfileStore, type InstanceProfile, type InstanceStatus } from './instance-profiles.js'
+import { InstanceOperationError, trustedInstanceFailure, trustedInstanceSuccess } from './instance-operation-error.js'
+import {
+  InstanceProfileStore,
+  assertInsecureHttpConfirmed,
+  normalizeRemoteOrigin,
+  remoteTransportForOrigin,
+  type InstanceProfile,
+  type InstanceStatus,
+} from './instance-profiles.js'
+import {
+  assertSameOriginRemoteUrl,
+  fetchSameOriginRemote,
+  installSameOriginNavigationGuard,
+} from './remote-navigation.js'
 import { addRemoteProfile, reauthenticateRemoteProfile } from './remote-profile-enrollment.js'
-import { certificateSpki, observeRemoteSpki } from './remote-pairing.js'
+import { certificateSpki, observeRemoteSpki, parseRemoteDescriptor } from './remote-pairing.js'
 import { SerialTaskQueue } from './serial-task-queue.js'
-import { isAllowedExternalUrl, isSameApplicationOrigin, type ProductRelease } from './distribution.js'
+import { renderTrustedFallbackHtml, trustedFallbackForError, type TrustedFallbackAction } from './trusted-fallback.js'
+import { isAllowedExternalUrl, type ProductRelease } from './distribution.js'
 import { desktopTitleBarCss, desktopWindowChrome } from './window-chrome.js'
 
 const OVERLAY_WIDTH = 344
@@ -33,6 +46,8 @@ interface ProfilePresentation {
   readonly addressLabel: string
   readonly status: InstanceStatus
   readonly notificationsEnabled: boolean
+  readonly requiresAuthentication: boolean
+  readonly insecureHttp: boolean
 }
 
 interface InstanceSnapshot {
@@ -49,6 +64,8 @@ const requiredString = (value: unknown, field: string): string => {
   if (typeof value !== 'string' || value.trim() === '') throw new Error(`${field}不能为空。`)
   return value
 }
+const optionalSecret = (value: unknown): string | undefined =>
+  typeof value === 'string' && value.trim() !== '' ? value : undefined
 
 const routeWithDesktop = (profile: InstanceProfile): string => {
   const url = new URL(profile.lastRoute, profile.origin)
@@ -65,18 +82,6 @@ const savedRoute = (profile: InstanceProfile, target: string): string | undefine
   } catch {
     return undefined
   }
-}
-
-const fallbackHtml = (
-  title: string,
-  body: string,
-  actions: readonly { readonly label: string; readonly href: string }[],
-): string => {
-  const buttons = actions
-    .map(({ label, href }, index) => `<a class="${index === 0 ? 'primary' : ''}" href="${href}">${label}</a>`)
-    .join('')
-  return `<!doctype html><html lang="zh-CN"><head><meta charset="UTF-8"><meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'"><style>
-  :root{color-scheme:light dark;font-family:Inter,system-ui,-apple-system,"Segoe UI","PingFang SC",sans-serif;background:#f5f2ee;color:#172a45}body{display:grid;min-height:100vh;margin:0;place-items:center}.card{width:min(520px,calc(100vw - 48px));padding:30px;border:1px solid #cdd3dd;border-radius:12px;background:#fffdf9;box-shadow:0 20px 60px rgb(3 14 22/18%)}h1{margin:0 0 12px;font-size:20px}p{margin:0;color:#5a6679;line-height:1.7}.actions{display:flex;gap:8px;margin-top:24px}a{padding:8px 13px;border-radius:8px;color:inherit;text-decoration:none;background:#e8ecf3}.primary{color:#fff;background:#466394}@media(prefers-color-scheme:dark){:root{background:#0f1a2c;color:#f2f4f7}.card{border-color:#3d5878;background:#182d4a}p{color:#a9b4c4}a{background:#2c4666}.primary{color:#0a121f;background:#96afd8}}</style></head><body><main class="card"><h1>${title}</h1><p>${body}</p><div class="actions">${buttons}</div></main></body></html>`
 }
 
 export class DesktopInstanceManager {
@@ -167,31 +172,20 @@ export class DesktopInstanceManager {
       this.#window.contentView.addChildView(view)
       this.#layout()
       await view.webContents.loadURL(routeWithDesktop(profile))
+      assertSameOriginRemoteUrl(profile.origin, view.webContents.getURL())
       if (serial !== this.#switchSerial) return
       this.#statuses.set(profile.id, 'ready')
       this.#hideFallback()
       this.#emitSnapshot()
     } catch (error) {
       if (serial !== this.#switchSerial) return
-      const authenticationRequired = error instanceof Error && error.message.includes('重新认证')
-      const incompatible = error instanceof Error && error.message.includes('版本不兼容')
-      this.#statuses.set(
-        profile.id,
-        incompatible ? 'incompatible' : authenticationRequired ? 'authentication-required' : 'offline',
-      )
-      this.#showFallback(
-        `无法连接「${profile.displayName}」`,
-        incompatible
-          ? '服务实例与当前 Desktop 的管理协议版本不兼容，请升级版本较旧的一端。'
-          : authenticationRequired
-            ? '此客户端的设备会话已经失效，请重新认证。'
-            : '服务器可能正在启动，或当前网络无法访问该地址。',
-        [
-          { label: '重试连接', href: 'nxt-desktop://retry' },
-          ...(profile.kind === 'remote' ? [{ label: '重新认证', href: 'nxt-desktop://reauthenticate' }] : []),
-          { label: '打开实例列表', href: 'nxt-desktop://instances' },
-        ],
-      )
+      this.#destroyProductView()
+      console.error(`[nekro-nxt] Desktop 实例连接失败（${profile.id} · ${profile.origin}）：`, error)
+      const fallback = trustedFallbackForError(error, {
+        canReauthenticate: profile.kind === 'remote' && profile.transport !== 'loopback-http',
+      })
+      this.#statuses.set(profile.id, fallback.status)
+      this.#showFallback(`无法连接「${profile.displayName}」`, fallback.body, fallback.actions)
       this.#emitSnapshot()
     }
   }
@@ -253,46 +247,39 @@ export class DesktopInstanceManager {
     ipcMain.on('nxt:shell:content-pointer', (event) => {
       if (event.sender.id === this.#productView?.webContents.id) this.closeOverlay()
     })
-    ipcMain.handle('nxt:instances:list', (event) => {
-      this.#assertOverlaySender(event.sender.id)
-      return this.#snapshot()
-    })
-    ipcMain.handle('nxt:instances:close', (event) => {
-      this.#assertOverlaySender(event.sender.id)
-      this.closeOverlay()
-    })
-    ipcMain.handle('nxt:instances:switch', async (event, value: unknown) => {
-      this.#assertOverlaySender(event.sender.id)
+    this.#registerOverlayIpc('list', () => this.#snapshot())
+    this.#registerOverlayIpc('close', () => this.closeOverlay())
+    this.#registerOverlayIpc('switch', async (value) => {
       await this.#instanceMutations.run(() =>
         this.switchTo(requiredString(isRecord(value) ? value['profileId'] : undefined, '服务实例')),
       )
     })
-    ipcMain.handle('nxt:instances:retry', async (event, value: unknown) => {
-      this.#assertOverlaySender(event.sender.id)
+    this.#registerOverlayIpc('retry', async (value) => {
       await this.#instanceMutations.run(() =>
         this.switchTo(requiredString(isRecord(value) ? value['profileId'] : undefined, '服务实例'), true, true),
       )
     })
-    ipcMain.handle('nxt:instances:add', async (event, value: unknown) => {
-      this.#assertOverlaySender(event.sender.id)
+    this.#registerOverlayIpc('add', async (value) => {
       await this.#instanceMutations.run(async () => {
         if (!isRecord(value)) throw new Error('添加实例参数无效。')
+        const managementKey = optionalSecret(value['managementKey'])
+        const origin = normalizeRemoteOrigin(typeof value['address'] === 'string' ? value['address'] : '')
+        assertInsecureHttpConfirmed(origin, value['confirmedInsecureHttpOrigin'])
         const added = await addRemoteProfile({
           profiles: this.#profiles,
           credentials: this.#vault,
           displayName: typeof value['displayName'] === 'string' ? value['displayName'] : '',
-          address: requiredString(value['address'], '服务器地址'),
-          managementKey: requiredString(value['managementKey'], '管理密钥'),
+          address: origin,
+          ...(managementKey === undefined ? {} : { managementKey }),
           deviceLabel: `${app.getName()} · ${process.platform}`,
           clientReleaseId: this.#release.releaseId,
         })
-        this.#memoryCredentials.set(added.profile.id, added.credential)
+        if (added.credential !== undefined) this.#memoryCredentials.set(added.profile.id, added.credential)
         this.#statuses.set(added.profile.id, 'connecting')
         await this.switchTo(added.profile.id, false)
       })
     })
-    ipcMain.handle('nxt:instances:update', async (event, value: unknown) => {
-      this.#assertOverlaySender(event.sender.id)
+    this.#registerOverlayIpc('update', async (value) => {
       await this.#instanceMutations.run(async () => {
         if (!isRecord(value)) throw new Error('实例修改参数无效。')
         if ('origin' in value) throw new Error('已保存服务实例的服务器地址不能修改，请添加新的服务实例。')
@@ -310,28 +297,33 @@ export class DesktopInstanceManager {
         this.#emitSnapshot()
       })
     })
-    ipcMain.handle('nxt:instances:reauthenticate', async (event, value: unknown) => {
-      this.#assertOverlaySender(event.sender.id)
+    this.#registerOverlayIpc('reauthenticate', async (value) => {
       await this.#instanceMutations.run(async () => {
         if (!isRecord(value)) throw new Error('重新认证参数无效。')
         if ('address' in value || 'origin' in value) {
           throw new Error('重新认证不能修改服务器地址，请添加新的服务实例。')
         }
         const profileId = requiredString(value['profileId'], '服务实例')
+        const profile = this.#profiles.get(profileId)
+        if (profile?.transport === 'explicit-http-v1') {
+          assertInsecureHttpConfirmed(profile.origin, value['confirmedInsecureHttpOrigin'])
+        }
+        const managementKey = optionalSecret(value['managementKey'])
         const authenticated = await reauthenticateRemoteProfile({
           profiles: this.#profiles,
           credentials: this.#vault,
           profileId,
-          managementKey: requiredString(value['managementKey'], '管理密钥'),
+          ...(managementKey === undefined ? {} : { managementKey }),
           deviceLabel: `${app.getName()} · ${process.platform}`,
           clientReleaseId: this.#release.releaseId,
         })
-        this.#memoryCredentials.set(authenticated.profile.id, authenticated.credential)
+        if (authenticated.credential !== undefined) {
+          this.#memoryCredentials.set(authenticated.profile.id, authenticated.credential)
+        }
         await this.switchTo(authenticated.profile.id, false, true)
       })
     })
-    ipcMain.handle('nxt:instances:remove', async (event, value: unknown) => {
-      this.#assertOverlaySender(event.sender.id)
+    this.#registerOverlayIpc('remove', async (value) => {
       await this.#instanceMutations.run(async () => {
         const profileId = requiredString(isRecord(value) ? value['profileId'] : undefined, '服务实例')
         const profile = this.#profiles.get(profileId)
@@ -353,6 +345,19 @@ export class DesktopInstanceManager {
     })
   }
 
+  #registerOverlayIpc(action: string, operation: (value: unknown) => unknown): void {
+    const channel = `nxt:instances:${action}`
+    ipcMain.handle(channel, async (event, value: unknown) => {
+      this.#assertOverlaySender(event.sender.id)
+      try {
+        return trustedInstanceSuccess(await operation(value))
+      } catch (cause) {
+        console.error(`[nekro-nxt] Desktop 实例操作失败（${channel}）：`, cause)
+        return trustedInstanceFailure(cause)
+      }
+    })
+  }
+
   #assertProductSender(senderId: number): void {
     if (senderId !== this.#productView?.webContents.id) throw new Error('Product View 无权访问该 Desktop Shell 操作。')
   }
@@ -369,9 +374,16 @@ export class DesktopInstanceManager {
         kind: profile.kind,
         displayName: profile.displayName,
         origin: profile.origin,
-        addressLabel: profile.kind === 'local' ? '此设备' : new URL(profile.origin).host,
+        addressLabel:
+          profile.kind === 'local'
+            ? '此设备'
+            : new URL(profile.origin).protocol === 'http:'
+              ? `http://${new URL(profile.origin).host}`
+              : new URL(profile.origin).host,
         status: this.#statuses.get(profile.id) ?? 'offline',
         notificationsEnabled: profile.notificationsEnabled,
+        requiresAuthentication: profile.kind === 'remote' && profile.transport !== 'loopback-http',
+        insecureHttp: profile.kind === 'remote' && profile.transport === 'explicit-http-v1',
       })),
     }
   }
@@ -412,14 +424,18 @@ export class DesktopInstanceManager {
       profileSession.setCertificateVerifyProc(null)
       return
     }
-    profileSession.setCertificateVerifyProc((request, callback) => {
-      try {
-        const sameHost = request.hostname === new URL(profile.origin).hostname
-        callback(sameHost && certificateSpki(request.certificate.data) === profile.pinnedSpkiSha256 ? 0 : -2)
-      } catch {
-        callback(-2)
-      }
-    })
+    if (new URL(profile.origin).protocol === 'http:') profileSession.setCertificateVerifyProc(null)
+    else {
+      profileSession.setCertificateVerifyProc((request, callback) => {
+        try {
+          const sameHost = request.hostname === new URL(profile.origin).hostname
+          callback(sameHost && certificateSpki(request.certificate.data) === profile.pinnedSpkiSha256 ? 0 : -2)
+        } catch {
+          callback(-2)
+        }
+      })
+    }
+    if (profile.transport === 'loopback-http') return
     profileSession.webRequest.onBeforeSendHeaders({ urls: [`${profile.origin}/*`] }, (details, callback) => {
       if (details.method === 'GET' || details.method === 'HEAD' || details.method === 'OPTIONS') {
         callback({ requestHeaders: details.requestHeaders })
@@ -442,31 +458,58 @@ export class DesktopInstanceManager {
   }
 
   async #establishRemoteSession(profile: InstanceProfile, profileSession: Session): Promise<void> {
-    const observedSpki = await observeRemoteSpki(profile.origin)
-    if (observedSpki !== profile.pinnedSpkiSha256) throw new Error('服务器证书已经变化，请使用管理密钥重新认证。')
-    const descriptorResponse = await profileSession.fetch(`${profile.origin}/.well-known/nekro-nxt`)
-    if (!descriptorResponse.ok) throw new Error('该地址不是可识别的 NekroNXT 服务实例。')
-    const descriptor = InstanceDescriptorSchema.parse(await descriptorResponse.json())
-    if (descriptor.managementProtocol !== 1 || descriptor.desktopChromeProtocol !== 1) {
-      throw new Error('服务实例版本不兼容。')
+    const secure = new URL(profile.origin).protocol === 'https:'
+    if (secure) {
+      const observedSpki = await observeRemoteSpki(profile.origin)
+      if (observedSpki !== profile.pinnedSpkiSha256) {
+        throw new InstanceOperationError('tls-identity-changed', '服务器 TLS 身份已经变化，请重新认证。')
+      }
     }
-    if (descriptor.instanceId !== profile.observedInstanceId)
-      throw new Error('服务器身份已经变化，请使用管理密钥重新认证。')
-    const currentSession = await profileSession.fetch(`${profile.origin}/api/management/session`, {
-      credentials: 'include',
-    })
+    const descriptorResponse = await fetchSameOriginRemote(
+      profileSession.fetch.bind(profileSession),
+      profile.origin,
+      '/.well-known/nekro-nxt',
+    )
+    if (!descriptorResponse.ok) {
+      throw new InstanceOperationError('operation-failed', `实例描述请求失败（HTTP ${descriptorResponse.status}）。`)
+    }
+    const descriptor = parseRemoteDescriptor(
+      await descriptorResponse.json(),
+      profile.transport ?? remoteTransportForOrigin(profile.origin),
+    )
+    if (descriptor.instanceId !== profile.observedInstanceId) {
+      throw new InstanceOperationError('instance-identity-changed', '实例描述中的 instanceId 与保存的身份不一致。')
+    }
+    if (profile.transport === 'loopback-http') return
+    const currentSession = await fetchSameOriginRemote(
+      profileSession.fetch.bind(profileSession),
+      profile.origin,
+      '/api/management/session',
+      {
+        credentials: 'include',
+      },
+    )
     if (currentSession.ok) return
     const credential =
       this.#memoryCredentials.get(profile.id) ??
       (profile.credentialRef ? this.#vault.get(profile.credentialRef) : undefined)
-    if (credential === undefined) throw new Error('设备凭据不可用，请重新认证。')
-    const response = await profileSession.fetch(`${profile.origin}/api/management/session`, {
-      method: 'POST',
-      credentials: 'include',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify(credential),
-    })
-    if (!response.ok) throw new Error('设备会话已经失效，请重新认证。')
+    if (credential === undefined) {
+      throw new InstanceOperationError('authentication-required', '本地设备凭据不可用。')
+    }
+    const response = await fetchSameOriginRemote(
+      profileSession.fetch.bind(profileSession),
+      profile.origin,
+      '/api/management/session',
+      {
+        method: 'POST',
+        credentials: 'include',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify(credential),
+      },
+    )
+    if (!response.ok) {
+      throw new InstanceOperationError('authentication-required', `设备会话请求失败（HTTP ${response.status}）。`)
+    }
   }
 
   #createProductView(profile: InstanceProfile): WebContentsView {
@@ -485,9 +528,7 @@ export class DesktopInstanceManager {
       if (isAllowedExternalUrl(url)) void shell.openExternal(url)
       return { action: 'deny' }
     })
-    view.webContents.on('will-navigate', (event, target) => {
-      if (isSameApplicationOrigin(profile.origin, target)) return
-      event.preventDefault()
+    installSameOriginNavigationGuard(view.webContents, profile.origin, (target) => {
       if (isAllowedExternalUrl(target)) void shell.openExternal(target)
     })
     const rememberRoute = (_event: Electron.Event, target: string): void => {
@@ -543,11 +584,7 @@ export class DesktopInstanceManager {
     return result.response === 1
   }
 
-  #showFallback(
-    title: string,
-    body: string,
-    actions: readonly { readonly label: string; readonly href: string }[],
-  ): void {
+  #showFallback(title: string, body: string, actions: readonly TrustedFallbackAction[]): void {
     let view = this.#fallbackView
     if (view === undefined) {
       view = new WebContentsView({ webPreferences: { contextIsolation: true, nodeIntegration: false, sandbox: true } })
@@ -565,7 +602,7 @@ export class DesktopInstanceManager {
     if (!this.#window.contentView.children.includes(view)) this.#window.contentView.addChildView(view)
     this.#layout()
     void view.webContents.loadURL(
-      `data:text/html;charset=utf-8,${encodeURIComponent(fallbackHtml(title, body, actions))}`,
+      `data:text/html;charset=utf-8,${encodeURIComponent(renderTrustedFallbackHtml(title, body, actions))}`,
     )
   }
 
@@ -583,14 +620,19 @@ export class DesktopInstanceManager {
     try {
       this.#configureSession(profile, profileSession)
       await this.#establishRemoteSession(profile, profileSession)
-      const sessionResponse = await profileSession.fetch(`${profile.origin}/api/management/session`, {
-        credentials: 'include',
-      })
+      const sessionResponse = await fetchSameOriginRemote(
+        profileSession.fetch.bind(profileSession),
+        profile.origin,
+        '/api/management/session',
+        { credentials: 'include' },
+      )
       if (!sessionResponse.ok) return
       const state: unknown = await sessionResponse.json()
       if (!isRecord(state) || typeof state['csrfToken'] !== 'string') return
-      await profileSession.fetch(
-        `${profile.origin}/api/management/devices/${encodeURIComponent(credential.deviceId)}`,
+      await fetchSameOriginRemote(
+        profileSession.fetch.bind(profileSession),
+        profile.origin,
+        `/api/management/devices/${encodeURIComponent(credential.deviceId)}`,
         {
           method: 'DELETE',
           credentials: 'include',
@@ -614,17 +656,27 @@ export class DesktopInstanceManager {
             try {
               const profileSession = session.fromPartition(profile.partition)
               this.#configureSession(profile, profileSession)
-              const response = await profileSession.fetch(`${profile.origin}/health/ready`, {
-                signal: AbortSignal.timeout(4_000),
-              })
+              const response = await fetchSameOriginRemote(
+                profileSession.fetch.bind(profileSession),
+                profile.origin,
+                '/health/ready',
+                { signal: AbortSignal.timeout(4_000) },
+              )
               available = response.ok
               if (available) {
                 await this.#establishRemoteSession(profile, profileSession)
-                const snapshotResponse = await profileSession.fetch(`${profile.origin}/api/snapshot`, {
-                  credentials: 'include',
-                  signal: AbortSignal.timeout(8_000),
-                })
-                if (!snapshotResponse.ok) throw new Error('设备会话已经失效，请重新认证。')
+                const snapshotResponse = await fetchSameOriginRemote(
+                  profileSession.fetch.bind(profileSession),
+                  profile.origin,
+                  '/api/snapshot',
+                  { credentials: 'include', signal: AbortSignal.timeout(8_000) },
+                )
+                if (!snapshotResponse.ok) {
+                  throw new InstanceOperationError(
+                    'authentication-required',
+                    `实例快照请求失败（HTTP ${snapshotResponse.status}）。`,
+                  )
+                }
                 const snapshot = (await snapshotResponse.json()) as unknown
                 const dynamic = isRecord(snapshot) && Array.isArray(snapshot['dynamic']) ? snapshot['dynamic'] : []
                 const notified = this.#notifiedApprovals.get(profile.id) ?? new Set<string>()
@@ -658,7 +710,9 @@ export class DesktopInstanceManager {
               available = false
               this.#statuses.set(
                 profile.id,
-                error instanceof Error && error.message.includes('重新认证') ? 'authentication-required' : 'offline',
+                trustedFallbackForError(error, {
+                  canReauthenticate: profile.transport !== 'loopback-http',
+                }).status,
               )
             }
             if (available) this.#statuses.set(profile.id, 'ready')

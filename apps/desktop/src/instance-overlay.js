@@ -1,11 +1,108 @@
-/* global window, document, FormData, requestAnimationFrame */
-;(() => {
+/* global window, document, requestAnimationFrame */
+
+/**
+ * @typedef {{ displayName: string, address: string, managementKey: string }} AddRemoteDraft
+ */
+
+/**
+ * @param {Partial<AddRemoteDraft>} [input]
+ * @returns {AddRemoteDraft}
+ */
+export const createAddRemoteDraft = (input = {}) => ({
+  displayName: typeof input.displayName === 'string' ? input.displayName : '',
+  address: typeof input.address === 'string' ? input.address : '',
+  managementKey: typeof input.managementKey === 'string' ? input.managementKey : '',
+})
+
+/**
+ * @param {AddRemoteDraft} draft
+ * @returns {{ displayName: string, address: string, managementKey?: string }}
+ */
+export const createAddRemotePayload = (draft) => ({
+  displayName: draft.displayName,
+  address: draft.address,
+  ...(draft.managementKey.trim() === '' ? {} : { managementKey: draft.managementKey }),
+})
+
+/**
+ * Normalize locally before any trusted-bridge call so explicit remote HTTP can
+ * be confirmed without probing the address.
+ * @param {string} input
+ * @returns {{ origin: string, insecureRemoteHttp: boolean }}
+ */
+export const normalizeOverlayOrigin = (input) => {
+  const trimmed = String(input).trim()
+  if (trimmed === '') throw new Error('请输入服务器地址。')
+  const address = trimmed.includes('://') ? trimmed : `https://${trimmed}`
+  const authority = /^[a-z][a-z\d+.-]*:\/\/([^/?#]*)/iu.exec(address)?.[1]
+  const hostPort = authority?.slice((authority.lastIndexOf('@') ?? -1) + 1)
+  if (!authority || !hostPort || hostPort.endsWith(':')) {
+    throw new Error('服务器地址格式无效，请输入主机名或 IP 与端口。')
+  }
+  const explicitlyPorted = /^\[[^\]]+\]:\d+$/u.test(hostPort) || /:\d+$/u.test(hostPort)
+  let parsed
+  try {
+    parsed = new URL(address)
+  } catch {
+    throw new Error('服务器地址格式无效，请输入主机名或 IP 与端口。')
+  }
+  if (parsed.protocol !== 'https:' && parsed.protocol !== 'http:') {
+    throw new Error('服务器地址只支持 HTTPS 或 HTTP。')
+  }
+  if (parsed.username || parsed.password || parsed.search || parsed.hash) {
+    throw new Error('服务器地址不能包含账号、密码、查询参数或片段。')
+  }
+  if (parsed.pathname !== '/' && parsed.pathname !== '') throw new Error('服务器地址不能包含路径。')
+  if (!explicitlyPorted && !parsed.port) parsed.port = '4960'
+  const loopback =
+    parsed.hostname === 'localhost' || parsed.hostname === '[::1]' || /^127(?:\.\d{1,3}){3}$/u.test(parsed.hostname)
+  return { origin: parsed.origin, insecureRemoteHttp: parsed.protocol === 'http:' && !loopback }
+}
+
+/**
+ * @template {Record<string, string>} T
+ * @param {T} draft
+ * @param {string} field
+ * @param {unknown} value
+ * @returns {T}
+ */
+export const updateFormDraft = (draft, field, value) =>
+  Object.hasOwn(draft, field) ? { ...draft, [field]: String(value) } : draft
+
+/**
+ * @template {Record<string, string>} T
+ * @param {T} draft
+ * @param {unknown} message
+ * @returns {{ draft: T, busy: false, error: string }}
+ */
+export const retainDraftAfterFailure = (draft, message) => ({
+  draft: { ...draft },
+  busy: false,
+  error: String(message),
+})
+
+const startOverlay = () => {
   const bridge = window.nxtInstances
   const root = document.querySelector('#app')
   let snapshot = { currentProfileId: 'local', profiles: [] }
   let mode = { kind: 'list' }
   let busy = false
   let error = ''
+  let submissionGeneration = 0
+  let activeSubmission
+
+  const invalidateSubmission = () => {
+    submissionGeneration += 1
+    if (activeSubmission?.draft && Object.hasOwn(activeSubmission.draft, 'managementKey')) {
+      activeSubmission.draft.managementKey = ''
+    }
+    if (activeSubmission?.payload && Object.hasOwn(activeSubmission.payload, 'managementKey')) {
+      activeSubmission.payload.managementKey = ''
+    }
+    activeSubmission = undefined
+    busy = false
+    error = ''
+  }
 
   const escapeHtml = (value) =>
     String(value).replace(
@@ -52,7 +149,7 @@
     <button role="menuitem" data-action="retry" data-id="${escapeHtml(profile.id)}">重新连接</button>
     <button role="menuitem" data-action="edit" data-id="${escapeHtml(profile.id)}">修改名称</button>
     <button role="menuitem" data-action="notifications" data-id="${escapeHtml(profile.id)}">系统通知：${profile.notificationsEnabled ? '已开启' : '已关闭'}</button>
-    <button role="menuitem" data-action="reauth" data-id="${escapeHtml(profile.id)}">重新认证</button>
+    ${profile.requiresAuthentication ? `<button role="menuitem" data-action="reauth" data-id="${escapeHtml(profile.id)}">重新认证</button>` : ''}
     <button role="menuitem" class="danger" data-action="confirm-remove" data-id="${escapeHtml(profile.id)}">移除实例</button>
   </div>`
 
@@ -60,10 +157,16 @@
     `<section class="panel">${header(title, true)}<form class="form" data-form="current">${body}${error ? `<p class="error" role="alert">${escapeHtml(error)}</p>` : ''}<div class="form-actions"><button type="button" class="quiet" data-action="back">取消</button><button class="primary" ${busy ? 'disabled' : ''}>${busy ? '正在连接…' : primaryLabel}</button></div></form><div></div></section>`
 
   const renderForm = () => {
+    if (mode.pendingInsecureHttpOrigin) {
+      const title = mode.kind === 'reauth' ? '确认重新认证风险' : '确认 HTTP 连接风险'
+      root.innerHTML = `<section class="panel">${header(title, true)}<div class="risk-confirm" role="alert"><h2>连接未加密</h2><p>HTTP 连接未加密。管理密钥和设备凭据可能在传输途中被截获或篡改。</p><p class="risk-origin">${escapeHtml(mode.pendingInsecureHttpOrigin)}</p><p>仅在你信任当前网络和服务器时继续。</p><div class="form-actions"><button type="button" class="quiet" data-action="cancel-http-confirmation">返回检查</button><button type="button" class="danger" data-action="confirm-http">仍要继续</button></div></div><div></div></section>`
+      return
+    }
     if (mode.kind === 'add') {
+      const draft = mode.draft
       root.innerHTML = formShell(
         '添加远程实例',
-        `<div class="field"><label for="name">实例名称</label><input id="name" name="displayName" autocomplete="off" placeholder="我的云服务器"></div><div class="field"><label for="address">服务器地址</label><input id="address" name="address" autocomplete="off" placeholder="server.example:4960" required></div><div class="field"><label for="key">管理密钥</label><div class="secret-wrap"><input id="key" name="managementKey" type="password" autocomplete="new-password" required><button type="button" class="reveal" data-action="reveal" aria-label="显示管理密钥">👁</button></div></div>${busy ? '<p class="progress">正在验证服务器身份并建立设备会话…</p>' : ''}`,
+        `<div class="field"><label for="name">实例名称</label><input id="name" name="displayName" autocomplete="off" placeholder="我的云服务器" value="${escapeHtml(draft.displayName)}"></div><div class="field"><label for="address">服务器地址</label><input id="address" name="address" autocomplete="off" placeholder="server.example:4960" value="${escapeHtml(draft.address)}" required></div><div class="field"><label for="key">管理密钥（可选）</label><div class="secret-wrap"><input id="key" name="managementKey" type="${mode.revealKey ? 'text' : 'password'}" autocomplete="new-password" value="${escapeHtml(draft.managementKey)}"><button type="button" class="reveal" data-action="reveal" aria-label="${mode.revealKey ? '隐藏' : '显示'}管理密钥">👁</button></div><p class="field-hint">服务器配置了管理密钥时填写。</p></div>${busy ? '<p class="progress">正在验证服务器身份并建立设备会话…</p>' : ''}`,
         '连接并添加',
       )
       return
@@ -77,7 +180,7 @@
     if (mode.kind === 'edit') {
       root.innerHTML = formShell(
         '修改实例名称',
-        `<div class="field"><label for="name">实例名称</label><input id="name" name="displayName" value="${escapeHtml(profile.displayName)}" required></div>`,
+        `<div class="field"><label for="name">实例名称</label><input id="name" name="displayName" value="${escapeHtml(mode.draft.displayName)}" required></div>`,
         '保存名称',
       )
       return
@@ -85,7 +188,7 @@
     if (mode.kind === 'reauth') {
       root.innerHTML = formShell(
         '重新认证',
-        `<p class="hint">${escapeHtml(profile.displayName)} · ${escapeHtml(profile.addressLabel)}</p><div class="field"><label for="key">管理密钥</label><div class="secret-wrap"><input id="key" name="managementKey" type="password" autocomplete="new-password" required><button type="button" class="reveal" data-action="reveal" aria-label="显示管理密钥">👁</button></div></div>${busy ? '<p class="progress">正在验证原服务器身份并更新设备会话…</p>' : ''}`,
+        `<p class="hint">${escapeHtml(profile.displayName)} · ${escapeHtml(profile.addressLabel)}</p>${profile.insecureHttp ? '<p class="risk-inline">此实例使用未加密 HTTP；重新认证前会再次确认传输风险。</p>' : ''}<div class="field"><label for="key">管理密钥</label><div class="secret-wrap"><input id="key" name="managementKey" type="${mode.revealKey ? 'text' : 'password'}" autocomplete="new-password" value="${escapeHtml(mode.draft.managementKey)}" required><button type="button" class="reveal" data-action="reveal" aria-label="${mode.revealKey ? '隐藏' : '显示'}管理密钥">👁</button></div></div>${busy ? '<p class="progress">正在验证原服务器身份并更新设备会话…</p>' : ''}`,
         '重新认证',
       )
       return
@@ -103,8 +206,8 @@
       )
       control?.focus()
     })
-  const focusFirstMenuItem = () => requestAnimationFrame(() => root.querySelector('[role="menuitem"]')?.focus())
-  const focusFirstField = () => requestAnimationFrame(() => root.querySelector('input, .confirm button')?.focus())
+  const focusFirstMenuItem = () => root.querySelector('[role="menuitem"]')?.focus()
+  const focusFirstField = () => root.querySelector('input, .confirm button')?.focus()
   const refresh = async () => {
     const active = document.activeElement
     const action = active?.dataset?.action
@@ -124,13 +227,14 @@
     error = ''
     if (action === 'back') {
       const profileId = mode.profileId
+      invalidateSubmission()
       mode = profileId ? { kind: 'menu', profileId } : { kind: 'list' }
       render()
       focusControl(profileId ? 'more' : 'add', profileId)
       return
     }
     if (action === 'add') {
-      mode = { kind: 'add' }
+      mode = { kind: 'add', draft: createAddRemoteDraft(), revealKey: false }
       render()
       focusFirstField()
       return
@@ -144,13 +248,14 @@
       return
     }
     if (action === 'edit') {
-      mode = { kind: 'edit', profileId: id }
+      const profile = snapshot.profiles.find((item) => item.id === id)
+      mode = { kind: 'edit', profileId: id, draft: { displayName: profile?.displayName || '' } }
       render()
       focusFirstField()
       return
     }
     if (action === 'reauth') {
-      mode = { kind: 'reauth', profileId: id }
+      mode = { kind: 'reauth', profileId: id, draft: { managementKey: '' }, revealKey: false }
       render()
       focusFirstField()
       return
@@ -161,9 +266,23 @@
       focusFirstField()
       return
     }
+    if (action === 'cancel-http-confirmation') {
+      mode = { ...mode, pendingInsecureHttpOrigin: undefined }
+      render()
+      focusFirstField()
+      return
+    }
+    if (action === 'confirm-http') {
+      const confirmedInsecureHttpOrigin = mode.pendingInsecureHttpOrigin
+      mode = { ...mode, pendingInsecureHttpOrigin: undefined, confirmedInsecureHttpOrigin }
+      render()
+      root.querySelector('form')?.requestSubmit()
+      return
+    }
     if (action === 'reveal') {
-      const field = root.querySelector('#key')
-      field.type = field.type === 'password' ? 'text' : 'password'
+      mode = { ...mode, revealKey: !mode.revealKey }
+      render()
+      focusControl('reveal')
       return
     }
     try {
@@ -188,36 +307,91 @@
     }
   })
 
+  root.addEventListener('input', (event) => {
+    const field = event.target
+    if (!field?.name || mode.kind === 'list' || mode.kind === 'menu' || mode.kind === 'remove') return
+    mode = {
+      ...mode,
+      draft: updateFormDraft(mode.draft, field.name, field.value),
+      ...(field.name === 'address'
+        ? { confirmedInsecureHttpOrigin: undefined, pendingInsecureHttpOrigin: undefined }
+        : {}),
+    }
+  })
+
   root.addEventListener('submit', async (event) => {
     event.preventDefault()
     if (busy) return
-    const data = new FormData(event.target)
+    for (const field of event.target.querySelectorAll('[name]')) {
+      mode = { ...mode, draft: updateFormDraft(mode.draft, field.name, field.value) }
+    }
+    let operationPayload
+    if (mode.kind === 'add') {
+      let normalized
+      try {
+        normalized = normalizeOverlayOrigin(mode.draft.address)
+      } catch (cause) {
+        error = cause instanceof Error ? cause.message : String(cause)
+        render()
+        return
+      }
+      if (normalized.insecureRemoteHttp && mode.confirmedInsecureHttpOrigin !== normalized.origin) {
+        mode = { ...mode, pendingInsecureHttpOrigin: normalized.origin }
+        error = ''
+        render()
+        focusControl('cancel-http-confirmation')
+        return
+      }
+      operationPayload = {
+        ...createAddRemotePayload(mode.draft),
+        address: normalized.origin,
+        ...(normalized.insecureRemoteHttp ? { confirmedInsecureHttpOrigin: normalized.origin } : {}),
+      }
+    }
+    if (mode.kind === 'reauth') {
+      const profile = snapshot.profiles.find((item) => item.id === mode.profileId)
+      if (profile?.insecureHttp && mode.confirmedInsecureHttpOrigin !== profile.origin) {
+        mode = { ...mode, pendingInsecureHttpOrigin: profile.origin }
+        error = ''
+        render()
+        focusControl('cancel-http-confirmation')
+        return
+      }
+      operationPayload = {
+        profileId: mode.profileId,
+        managementKey: mode.draft.managementKey,
+        ...(profile?.insecureHttp ? { confirmedInsecureHttpOrigin: profile.origin } : {}),
+      }
+    }
+    const submittedMode = mode
+    const generation = ++submissionGeneration
+    activeSubmission = { generation, draft: submittedMode.draft, payload: operationPayload }
     busy = true
     error = ''
     render()
     try {
-      if (mode.kind === 'add')
-        await bridge.add({
-          displayName: data.get('displayName'),
-          address: data.get('address'),
-          managementKey: data.get('managementKey'),
-        })
+      if (mode.kind === 'add') await bridge.add(operationPayload)
       if (mode.kind === 'edit')
         await bridge.update({
           profileId: mode.profileId,
-          displayName: data.get('displayName'),
+          displayName: submittedMode.draft.displayName,
         })
-      if (mode.kind === 'reauth')
-        await bridge.reauthenticate({
-          profileId: mode.profileId,
-          managementKey: data.get('managementKey'),
-        })
+      if (mode.kind === 'reauth') await bridge.reauthenticate(operationPayload)
+      if (generation !== submissionGeneration) return
+      activeSubmission = undefined
       mode = { kind: 'list' }
       busy = false
       await refresh()
     } catch (cause) {
-      busy = false
-      error = cause instanceof Error ? cause.message : String(cause)
+      if (generation !== submissionGeneration) return
+      const failure = retainDraftAfterFailure(
+        submittedMode.draft,
+        cause instanceof Error ? cause.message : String(cause),
+      )
+      mode = { ...submittedMode, draft: failure.draft }
+      activeSubmission = undefined
+      busy = failure.busy
+      error = failure.error
       render()
     }
   })
@@ -240,6 +414,7 @@
         bridge.close()
       } else {
         const profileId = mode.profileId
+        invalidateSubmission()
         mode = { kind: 'list' }
         render()
         focusControl(profileId ? 'more' : 'add', profileId)
@@ -265,4 +440,6 @@
     if (action) focusControl(action, id)
   })
   refresh().then(() => requestAnimationFrame(() => root.querySelector('.instance.current, button')?.focus()))
-})()
+}
+
+if (typeof window !== 'undefined' && typeof document !== 'undefined') startOverlay()

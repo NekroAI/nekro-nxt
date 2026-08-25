@@ -14,6 +14,7 @@ import os from 'node:os'
 import path from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
 import { startManagementEdge } from '../src/management-edge.ts'
+import { LegacyDesktopProtocol1DescriptorSchema } from './legacy-descriptor.js'
 
 interface ResponseRecord {
   readonly status: number
@@ -89,6 +90,12 @@ describe('automatic TLS management edge', () => {
       repository,
     })
     try {
+      const descriptorResponse = await request(edge.port, '/.well-known/nekro-nxt')
+      expect(descriptorResponse.status).toBe(200)
+      expect(LegacyDesktopProtocol1DescriptorSchema.parse(descriptorResponse.json)).toMatchObject({
+        managementProtocol: 1,
+        transport: 'auto-tls-pinned-v1',
+      })
       expect((await request(edge.port, '/api/private')).status).toBe(401)
       expect((await request(edge.port, '/health/ready')).status).toBe(200)
       const challengeResponse = await request(edge.port, '/api/management/pairing/challenge', {

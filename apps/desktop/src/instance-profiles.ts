@@ -1,6 +1,8 @@
 import { randomUUID } from 'node:crypto'
+import type { InstanceDescriptor } from '@nekro-nxt/contracts'
 import { mkdir, readFile, rename, writeFile } from 'node:fs/promises'
 import path from 'node:path'
+import { InstanceOperationError } from './instance-operation-error.js'
 import { SerialTaskQueue } from './serial-task-queue.js'
 
 export type InstanceKind = 'local' | 'remote'
@@ -12,6 +14,7 @@ export interface InstanceProfile {
   readonly kind: InstanceKind
   readonly displayName: string
   readonly origin: string
+  readonly transport?: InstanceDescriptor['transport']
   readonly observedInstanceId?: string
   readonly pinnedSpkiSha256?: string
   readonly credentialRef?: string
@@ -37,14 +40,53 @@ const isRecord = (value: unknown): value is Record<string, unknown> => typeof va
 
 export const normalizeRemoteOrigin = (input: string): string => {
   const trimmed = input.trim()
-  if (trimmed.length === 0) throw new Error('请输入服务器地址。')
-  const parsed = new URL(trimmed.includes('://') ? trimmed : `https://${trimmed}`)
-  if (parsed.protocol !== 'https:' || parsed.username || parsed.password || parsed.search || parsed.hash) {
-    throw new Error('服务器地址只能包含 IP 或域名与端口。')
+  if (trimmed.length === 0) throw new InstanceOperationError('invalid-address', '请输入服务器地址。')
+  const address = trimmed.includes('://') ? trimmed : `https://${trimmed}`
+  const authority = /^[a-z][a-z\d+.-]*:\/\/([^/?#]*)/iu.exec(address)?.[1]
+  const hostPort = authority?.slice((authority.lastIndexOf('@') ?? -1) + 1)
+  if (authority === undefined || hostPort === undefined || hostPort.endsWith(':')) {
+    throw new InstanceOperationError('invalid-address', '服务器地址格式无效，请输入主机名或 IP 与端口。')
   }
-  if (parsed.pathname !== '/' && parsed.pathname !== '') throw new Error('服务器地址不能包含路径。')
-  if (!parsed.port) parsed.port = '4960'
+  const explicitlyPorted = /^\[[^\]]+\]:\d+$/u.test(hostPort) || /:\d+$/u.test(hostPort)
+  let parsed: URL
+  try {
+    parsed = new URL(address)
+  } catch {
+    throw new InstanceOperationError('invalid-address', '服务器地址格式无效，请输入主机名或 IP 与端口。')
+  }
+  if (parsed.protocol !== 'https:' && parsed.protocol !== 'http:') {
+    throw new InstanceOperationError('unsupported-protocol', '服务器地址只支持 HTTPS 或 HTTP。')
+  }
+  if (parsed.username || parsed.password || parsed.search || parsed.hash) {
+    throw new InstanceOperationError('invalid-address', '服务器地址不能包含账号、密码、查询参数或片段。')
+  }
+  if (parsed.pathname !== '/' && parsed.pathname !== '') {
+    throw new InstanceOperationError('invalid-address', '服务器地址不能包含路径。')
+  }
+  if (!explicitlyPorted && !parsed.port) parsed.port = '4960'
   return parsed.origin
+}
+
+export const isLoopbackOrigin = (origin: string): boolean => {
+  const parsed = new URL(origin)
+  return (
+    parsed.hostname === 'localhost' || parsed.hostname === '[::1]' || /^127(?:\.\d{1,3}){3}$/u.test(parsed.hostname)
+  )
+}
+
+export const remoteTransportForOrigin = (origin: string): InstanceDescriptor['transport'] => {
+  const parsed = new URL(origin)
+  if (parsed.protocol === 'https:') return 'auto-tls-pinned-v1'
+  return isLoopbackOrigin(origin) ? 'loopback-http' : 'explicit-http-v1'
+}
+
+export const requiresInsecureHttpConfirmation = (origin: string): boolean =>
+  new URL(origin).protocol === 'http:' && !isLoopbackOrigin(origin)
+
+export const assertInsecureHttpConfirmed = (origin: string, confirmedOrigin: unknown): void => {
+  if (requiresInsecureHttpConfirmation(origin) && confirmedOrigin !== origin) {
+    throw new InstanceOperationError('insecure-http-confirmation-required', '请先确认未加密 HTTP 连接风险。')
+  }
 }
 
 const parseProfile = (value: unknown): InstanceProfile => {
@@ -65,18 +107,36 @@ const parseProfile = (value: unknown): InstanceProfile => {
   if (value['kind'] === 'remote' && !value['partition'].startsWith('persist:nxt-instance-')) {
     throw new Error('远程实例 partition 无效。')
   }
+  if (value['kind'] === 'remote' && typeof value['observedInstanceId'] !== 'string') {
+    throw new Error('远程实例身份字段无效。')
+  }
+  const origin = value['kind'] === 'remote' ? normalizeRemoteOrigin(value['origin']) : new URL(value['origin']).origin
+  const transport =
+    value['kind'] === 'remote' &&
+    (value['transport'] === 'loopback-http' ||
+      value['transport'] === 'auto-tls-pinned-v1' ||
+      value['transport'] === 'explicit-http-v1')
+      ? value['transport']
+      : value['kind'] === 'remote'
+        ? remoteTransportForOrigin(origin)
+        : undefined
+  if (value['kind'] === 'remote' && transport !== remoteTransportForOrigin(origin)) {
+    throw new Error('远程实例 transport 与地址不匹配。')
+  }
   if (
     value['kind'] === 'remote' &&
-    (typeof value['observedInstanceId'] !== 'string' || typeof value['pinnedSpkiSha256'] !== 'string')
+    new URL(origin).protocol === 'https:' &&
+    typeof value['pinnedSpkiSha256'] !== 'string'
   ) {
-    throw new Error('远程实例身份字段无效。')
+    throw new Error('远程实例 TLS 身份字段无效。')
   }
   if (!ALLOWED_ROUTE.test(value['lastRoute'])) throw new Error('实例最近路由无效。')
   return {
     id: value['id'],
     kind: value['kind'],
     displayName: value['displayName'],
-    origin: value['kind'] === 'remote' ? normalizeRemoteOrigin(value['origin']) : new URL(value['origin']).origin,
+    origin,
+    ...(transport === undefined ? {} : { transport }),
     ...(typeof value['observedInstanceId'] === 'string' ? { observedInstanceId: value['observedInstanceId'] } : {}),
     ...(typeof value['pinnedSpkiSha256'] === 'string' ? { pinnedSpkiSha256: value['pinnedSpkiSha256'] } : {}),
     ...(typeof value['credentialRef'] === 'string' ? { credentialRef: value['credentialRef'] } : {}),
@@ -185,7 +245,7 @@ export class InstanceProfileStore {
           (input.observedInstanceId !== undefined && profile.observedInstanceId === input.observedInstanceId),
       )
     ) {
-      throw new Error('该服务实例已经添加。')
+      throw new InstanceOperationError('duplicate-instance', '该服务实例已经添加。')
     }
     return origin
   }
@@ -194,7 +254,8 @@ export class InstanceProfileStore {
     readonly displayName: string
     readonly origin: string
     readonly observedInstanceId: string
-    readonly pinnedSpkiSha256: string
+    readonly transport?: InstanceDescriptor['transport']
+    readonly pinnedSpkiSha256?: string
     readonly credentialRef?: string
     readonly now?: number
   }): Promise<InstanceProfile> {
@@ -203,6 +264,10 @@ export class InstanceProfileStore {
         origin: input.origin,
         observedInstanceId: input.observedInstanceId,
       })
+      const transport = input.transport ?? remoteTransportForOrigin(origin)
+      if (transport !== remoteTransportForOrigin(origin)) {
+        throw new Error('远程实例 transport 与地址不匹配。')
+      }
       const now = input.now ?? Date.now()
       const id = randomUUID()
       const profile: InstanceProfile = {
@@ -210,8 +275,9 @@ export class InstanceProfileStore {
         kind: 'remote',
         displayName: input.displayName.trim() || new URL(origin).host,
         origin,
+        transport,
         observedInstanceId: input.observedInstanceId,
-        pinnedSpkiSha256: input.pinnedSpkiSha256,
+        ...(input.pinnedSpkiSha256 === undefined ? {} : { pinnedSpkiSha256: input.pinnedSpkiSha256 }),
         ...(input.credentialRef === undefined ? {} : { credentialRef: input.credentialRef }),
         partition: `persist:nxt-instance-${id}`,
         notificationsEnabled: true,
@@ -263,7 +329,7 @@ export class InstanceProfileStore {
   async updateRemoteSecurity(
     id: string,
     security: {
-      readonly pinnedSpkiSha256: string
+      readonly pinnedSpkiSha256?: string
       readonly credentialRef?: string
     },
   ): Promise<InstanceProfile> {
@@ -281,7 +347,8 @@ export class InstanceProfileStore {
         addedAt: current.addedAt,
         lastSelectedAt: current.lastSelectedAt,
         ...(current.observedInstanceId === undefined ? {} : { observedInstanceId: current.observedInstanceId }),
-        pinnedSpkiSha256: security.pinnedSpkiSha256,
+        ...(current.transport === undefined ? {} : { transport: current.transport }),
+        ...(security.pinnedSpkiSha256 === undefined ? {} : { pinnedSpkiSha256: security.pinnedSpkiSha256 }),
         ...(security.credentialRef === undefined ? {} : { credentialRef: security.credentialRef }),
       }
       const previous = this.#envelope

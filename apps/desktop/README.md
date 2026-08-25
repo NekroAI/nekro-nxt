@@ -10,7 +10,7 @@ BrowserWindow 使用 Product、Instance Overlay 与 Trusted Fallback 三类 `Web
 
 Electron 精确锁定在经过依赖年龄门禁的 `42.9.0`。Electron 42.0.x 在 macOS Content View 的命中测试回归会吞掉 `WebContentsView` 内的 hover 等指针状态；上游在 [electron/electron#51617](https://github.com/electron/electron/issues/51617) 与 [electron/electron#51626](https://github.com/electron/electron/pull/51626) 修复并从 42.1.0 发布。Desktop 运行时依赖测试同时约束批准版本、lockfile 一致性，并禁止通过 `minimumReleaseAgeExclude` 绕过年龄门禁。
 
-远程 Profile 的规范化地址与实例身份全局唯一，且创建后不可变；地址或实例身份变化时必须添加新的服务实例。现有 Profile 只允许改名、切换通知、重试、针对原地址与原实例身份重新认证和移除。添加前先读取 TLS/SPKI 与实例描述并拒绝已知重复项，再注册设备；注册后的本地凭据或 Profile 提交失败会在当前进程内清理新凭据并尽力撤销新设备。Profile Store、Credential Vault 与实例变更 IPC 串行写入，但不声明跨进程崩溃恢复日志。
+远程 Profile 的规范化地址与实例身份全局唯一，且创建后不可变；地址或实例身份变化时必须添加新的服务实例。现有 Profile 只允许改名、切换通知、重试、针对原地址与原实例身份重新认证和移除。无协议地址按 HTTPS 处理，不探测或静默降级；显式标准端口保持标准端口，只有真正省略端口时才补 4960。显式非回环 HTTP 在任何实例请求前由可信浮层确认未加密风险，主进程同时核对确认的规范化 Origin；地址编辑使确认失效。HTTPS inspection 首次观察 TLS/SPKI，之后 descriptor、challenge、enrollment、session 和 revoke 的每条连接都在发送正文或接收数据前验证相同 SPKI。远程 Session 请求使用 `redirect: error` 并核对最终 URL，Product View 同时阻止跨 Origin navigation/redirect 并在加载后复核最终 Origin。未配置管理密钥的 loopback HTTP Server 直接通过实例描述配对，不创建设备凭据；显式远程 HTTP 使用独立的 `explicit-http-v1` transport 与 management protocol 2，不声明 SPKI 或其他加密保证。注册后的本地凭据或 Profile 提交失败会在当前进程内清理新凭据并尽力撤销新设备。Profile Store、Credential Vault 与实例变更 IPC 串行写入，但不声明跨进程崩溃恢复日志。实例 IPC 在主进程可信边界映射为稳定错误码和简洁用户文案，Electron channel、method 与堆栈只进入诊断日志。
 
 分发脚本用 `pnpm deploy --prod --legacy` 把 Server 及其 workspace/外部生产依赖生成到 Desktop staging。`better-sqlite3` 与 `node-pty` 使用包内 N-API prebuild，Sharp、Koffi 和其他平台可选包按 `supportedArchitectures` 同时安装；准备脚本会拒绝缺少 macOS Universal、Windows x64 或 Linux x64 原生文件的 runtime。Server runtime 和 Web dist 都作为安装包的 `extraResources` 放在应用代码之外。
 

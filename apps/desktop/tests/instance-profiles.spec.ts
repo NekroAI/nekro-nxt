@@ -2,7 +2,12 @@ import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
-import { InstanceProfileStore, normalizeRemoteOrigin } from '../src/instance-profiles.ts'
+import {
+  InstanceProfileStore,
+  assertInsecureHttpConfirmed,
+  normalizeRemoteOrigin,
+  remoteTransportForOrigin,
+} from '../src/instance-profiles.ts'
 
 const TEST_IP = [203, 0, 113, 8].join('.')
 
@@ -10,12 +15,55 @@ describe('Desktop instance profiles', () => {
   const roots: string[] = []
   afterEach(async () => Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true }))))
 
-  it('normalizes only host addresses and supplies the secure default port', () => {
+  it('accepts host, explicit HTTPS, and explicit HTTP addresses with standard-port preservation', () => {
     expect(normalizeRemoteOrigin(TEST_IP)).toBe(`https://${TEST_IP}:4960`)
     expect(normalizeRemoteOrigin('home.example:7443')).toBe('https://home.example:7443')
-    expect(() => normalizeRemoteOrigin('http://home.example')).toThrow('只能包含')
+    expect(normalizeRemoteOrigin('https://home.example:7443')).toBe('https://home.example:7443')
+    expect(normalizeRemoteOrigin('https://home.example:443')).toBe('https://home.example')
+    expect(normalizeRemoteOrigin('http://127.0.0.1:7443')).toBe('http://127.0.0.1:7443')
+    expect(normalizeRemoteOrigin('http://127.0.0.1:80')).toBe('http://127.0.0.1')
+    expect(normalizeRemoteOrigin('http://localhost')).toBe('http://localhost:4960')
+    expect(normalizeRemoteOrigin('https://[2001:db8::8]:443')).toBe('https://[2001:db8::8]')
+    expect(normalizeRemoteOrigin('https://[2001:db8::8]')).toBe('https://[2001:db8::8]:4960')
+    expect(normalizeRemoteOrigin('http://[::1]:80')).toBe('http://[::1]')
+    expect(normalizeRemoteOrigin('http://[::1]')).toBe('http://[::1]:4960')
+    expect(normalizeRemoteOrigin('http://home.example')).toBe('http://home.example:4960')
+    expect(() => normalizeRemoteOrigin('ftp://home.example')).toThrow('只支持 HTTPS 或 HTTP')
     expect(() => normalizeRemoteOrigin('home.example/path')).toThrow('不能包含路径')
-    expect(() => normalizeRemoteOrigin('user:pass@home.example')).toThrow('只能包含')
+    expect(() => normalizeRemoteOrigin('user:pass@home.example')).toThrow('不能包含账号')
+    try {
+      normalizeRemoteOrigin('https://private-user:private-pass@home.example')
+    } catch (error) {
+      expect(String(error)).not.toContain('private-user')
+      expect(String(error)).not.toContain('private-pass')
+    }
+  })
+
+  it('stores a keyless loopback remote without inventing TLS or credential fields', async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), 'nxt-instance-loopback-'))
+    roots.push(root)
+    const store = await InstanceProfileStore.open(path.join(root, 'profiles.json'), 'http://127.0.0.1:41009', 100)
+    const profile = await store.addRemote({
+      displayName: '本机测试实例',
+      origin: 'http://127.0.0.1:4961',
+      observedInstanceId: 'nxt_instance_01H00000000000000000000021',
+    })
+    expect(profile).toMatchObject({ origin: 'http://127.0.0.1:4961' })
+    expect(profile.pinnedSpkiSha256).toBeUndefined()
+    expect(profile.credentialRef).toBeUndefined()
+  })
+
+  it('requires an exact normalized confirmation only for explicit remote HTTP', () => {
+    const remoteHttp = normalizeRemoteOrigin('http://home.example:80')
+    expect(remoteTransportForOrigin(remoteHttp)).toBe('explicit-http-v1')
+    expect(() => assertInsecureHttpConfirmed(remoteHttp, undefined)).toThrow(
+      expect.objectContaining({ code: 'insecure-http-confirmation-required' }),
+    )
+    expect(() => assertInsecureHttpConfirmed(remoteHttp, 'http://home.example:4960')).toThrow(
+      expect.objectContaining({ code: 'insecure-http-confirmation-required' }),
+    )
+    expect(() => assertInsecureHttpConfirmed(remoteHttp, remoteHttp)).not.toThrow()
+    expect(() => assertInsecureHttpConfirmed('http://127.0.0.1:4960', undefined)).not.toThrow()
   })
 
   it('keeps local first, preserves remote insertion order, and removes only the client profile', async () => {

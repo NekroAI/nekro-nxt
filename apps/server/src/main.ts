@@ -18,15 +18,17 @@ import WebServer from '@deepseek-ai/dsh-host-webserver'
 import * as LlmDeepSeek from '@deepseek-ai/dsh-llm-deepseek'
 import * as LlmPiAi from '@deepseek-ai/dsh-llm-pi-ai'
 import type { Context as LlmContext } from '@deepseek-ai/cordis'
+import { InstanceDescriptorSchema } from '@nekro-nxt/contracts'
 import { createSqliteBackupSet, type SqliteBackupSource } from '@nekro-nxt/storage-sqlite'
 import { createHash } from 'node:crypto'
 import { existsSync } from 'node:fs'
 import { mkdir, mkdtemp, readFile, rename, rm, stat, writeFile } from 'node:fs/promises'
+import { isIP } from 'node:net'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { NekroRuntime } from './bootstrap.js'
 import { createNekroHostApi } from './host-api.js'
-import { startManagementEdge, type ManagementEdgeHandle } from './management-edge.js'
+import { initializeServerIdentity, startManagementEdge, type ManagementEdgeHandle } from './management-edge.js'
 
 const resolveRoot = (input: string): string => (path.isAbsolute(input) ? input : path.resolve(process.cwd(), input))
 
@@ -50,6 +52,9 @@ export const parseListenHost = (input: string | undefined): '127.0.0.1' | '0.0.0
   if (input === '127.0.0.1' || input === '0.0.0.0') return input
   throw new TypeError(`NEKRO_HOST 无效：${input}`)
 }
+
+export const isLoopbackListenHost = (host: string): boolean =>
+  host === 'localhost' || host === '::1' || (isIP(host) === 4 && host.split('.')[0] === '127')
 
 export const parseManagementKey = (input: string | undefined, required = false): string | undefined => {
   if (input === undefined || input.trim() === '') {
@@ -254,7 +259,7 @@ export interface StartServerOptions {
   readonly developmentWorkspaceRoot?: string
   /** Absolute path to the built Web `dist/index.html`. */
   readonly distIndex: string
-  readonly host?: '127.0.0.1' | '0.0.0.0'
+  readonly host?: string
   readonly port?: number
   /** Non-secret immutable image/application release identity exposed by readiness. */
   readonly releaseId?: string
@@ -271,9 +276,13 @@ export interface NekroServerHandle {
 }
 
 export const startNekroServer = async (options: StartServerOptions): Promise<NekroServerHandle> => {
-  const host = options.host ?? '127.0.0.1'
+  const requestedHost = options.host ?? '127.0.0.1'
   const port = options.port ?? 0
-  const managementKey = parseManagementKey(options.managementKey, host === '0.0.0.0')
+  const managementKey = parseManagementKey(options.managementKey, !isLoopbackListenHost(requestedHost))
+  if (requestedHost !== '127.0.0.1' && requestedHost !== '0.0.0.0') {
+    throw new TypeError(`Server 当前不支持监听 host：${requestedHost}`)
+  }
+  const host = requestedHost
   const releaseId = parseReleaseId(options.releaseId)
   const dataRoot = resolveRoot(options.dataRoot)
   const developmentWorkspaceRoot = resolveRoot(options.developmentWorkspaceRoot ?? path.join(dataRoot, 'workspaces'))
@@ -342,6 +351,38 @@ export const startNekroServer = async (options: StartServerOptions): Promise<Nek
   const disposeLive = registerHealthRoute('/health/live', 'live')
   const disposeReady = registerHealthRoute('/health/ready', 'ready')
 
+  const disposeLoopbackDescriptor =
+    managementKey === undefined
+      ? webContext.webServer.register({
+          kind: 'exact',
+          path: '/.well-known/nekro-nxt',
+          handler: (request, response) => {
+            if (request.method !== 'GET' && request.method !== 'HEAD') {
+              response.writeHead(405, { allow: 'GET, HEAD', 'cache-control': 'no-store' })
+              response.end()
+              return
+            }
+            const descriptor = InstanceDescriptorSchema.parse({
+              format: 'nxt.instance-descriptor',
+              descriptorVersion: 1,
+              instanceId: initializeServerIdentity(runtime.hostSecurity, undefined, Date.now()),
+              releaseId,
+              productVersion: SERVER_PACKAGE_VERSION,
+              managementProtocol: 1,
+              desktopChromeProtocol: 1,
+              transport: 'loopback-http',
+            })
+            const body = JSON.stringify(descriptor)
+            response.writeHead(200, {
+              'content-type': 'application/json; charset=utf-8',
+              'cache-control': 'no-store',
+              'content-length': Buffer.byteLength(body),
+            })
+            response.end(request.method === 'HEAD' ? undefined : body)
+          },
+        })
+      : undefined
+
   let managementEdge: ManagementEdgeHandle | undefined
   if (managementKey !== undefined) {
     try {
@@ -358,6 +399,7 @@ export const startNekroServer = async (options: StartServerOptions): Promise<Nek
     } catch (error) {
       disposeReady()
       disposeLive()
+      disposeLoopbackDescriptor?.()
       api.dispose()
       disposeSpaRoutes()
       await webContext.fiber.dispose()
@@ -371,6 +413,7 @@ export const startNekroServer = async (options: StartServerOptions): Promise<Nek
     if (stopped) return
     stopped = true
     await managementEdge?.stop()
+    disposeLoopbackDescriptor?.()
     disposeReady()
     disposeLive()
     api.dispose()

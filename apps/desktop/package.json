@@ -15,7 +15,8 @@
   },
   "devDependencies": {
     "electron": "42.9.0",
-    "electron-builder": "26.15.3"
+    "electron-builder": "26.15.3",
+    "selfsigned": "5.5.0"
   },
   "description": "NekroNXT 可安装 Desktop 宿主",
   "author": "NekroAI contributors",

@@ -88,6 +88,9 @@ importers:
       electron-builder:
         specifier: 26.15.3
         version: 26.15.3(electron-builder-squirrel-windows@26.15.3)
+      selfsigned:
+        specifier: 5.5.0
+        version: 5.5.0
 
   apps/server:
     dependencies:

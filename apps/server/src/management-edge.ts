@@ -185,12 +185,15 @@ const loadOrCreateCertificate = async (
   return { key, cert, spkiSha256: createHash('sha256').update(publicKey).digest('base64url') }
 }
 
-const initializeIdentity = (
+export const initializeServerIdentity = (
   repository: SqliteHostSecurityRepository,
-  managementKey: string,
+  managementKey: string | undefined,
   now: number,
 ): ServerInstanceId => {
-  const keyDigest = digest('nxt-management-key-v1', managementKey)
+  const keyDigest = digest(
+    managementKey === undefined ? 'nxt-management-key-unconfigured-v1' : 'nxt-management-key-v1',
+    managementKey ?? '',
+  )
   const current = repository.getMetadata()
   if (current !== undefined) {
     if (!safeEqual(current.managementKeyDigest, keyDigest)) {
@@ -206,7 +209,7 @@ const initializeIdentity = (
 
 export const startManagementEdge = async (options: ManagementEdgeOptions): Promise<ManagementEdgeHandle> => {
   const now = options.now ?? Date.now
-  const instanceId = initializeIdentity(options.repository, options.managementKey, now())
+  const instanceId = initializeServerIdentity(options.repository, options.managementKey, now())
   const certificate = await loadOrCreateCertificate(options.dataRoot, instanceId)
   const descriptor: InstanceDescriptor = InstanceDescriptorSchema.parse({
     format: 'nxt.instance-descriptor',

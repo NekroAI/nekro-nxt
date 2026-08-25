@@ -15,6 +15,20 @@ export const ManagementDeviceIdSchema = z
   .brand<'ManagementDeviceId'>()
 export type ManagementDeviceId = z.output<typeof ManagementDeviceIdSchema>
 
+export const InstanceDescriptorWireSchema = z
+  .object({
+    format: z.literal('nxt.instance-descriptor'),
+    descriptorVersion: z.number().int().positive(),
+    instanceId: ServerInstanceIdSchema,
+    releaseId: NonEmptyStringSchema.max(256),
+    productVersion: NonEmptyStringSchema.max(64),
+    managementProtocol: z.number().int().positive(),
+    desktopChromeProtocol: z.number().int().positive(),
+    transport: NonEmptyStringSchema.max(80),
+  })
+  .passthrough()
+export type InstanceDescriptorWire = z.output<typeof InstanceDescriptorWireSchema>
+
 export const InstanceDescriptorSchema = z
   .object({
     format: z.literal('nxt.instance-descriptor'),
@@ -22,11 +36,18 @@ export const InstanceDescriptorSchema = z
     instanceId: ServerInstanceIdSchema,
     releaseId: NonEmptyStringSchema.max(256),
     productVersion: NonEmptyStringSchema.max(64),
-    managementProtocol: z.literal(1),
+    managementProtocol: z.union([z.literal(1), z.literal(2)]),
     desktopChromeProtocol: z.literal(1),
-    transport: z.enum(['loopback-http', 'auto-tls-pinned-v1']),
+    transport: z.enum(['loopback-http', 'auto-tls-pinned-v1', 'explicit-http-v1']),
   })
   .strict()
+  .superRefine((value, context) => {
+    const valid =
+      (value.managementProtocol === 1 &&
+        (value.transport === 'loopback-http' || value.transport === 'auto-tls-pinned-v1')) ||
+      (value.managementProtocol === 2 && value.transport === 'explicit-http-v1')
+    if (!valid) context.addIssue({ code: 'custom', message: 'management protocol 与 transport 不匹配。' })
+  })
 export type InstanceDescriptor = z.output<typeof InstanceDescriptorSchema>
 
 export const ManagementChallengeResponseSchema = z
@@ -39,6 +60,17 @@ export const ManagementChallengeResponseSchema = z
   })
   .strict()
 export type ManagementChallengeResponse = z.output<typeof ManagementChallengeResponseSchema>
+
+export const InsecureHttpManagementChallengeResponseSchema = z
+  .object({
+    challengeId: Base64UrlSchema,
+    serverNonce: Base64UrlSchema,
+    instanceId: ServerInstanceIdSchema,
+    transportBinding: Base64UrlSchema,
+    expiresAt: z.number().int().positive(),
+  })
+  .strict()
+export type InsecureHttpManagementChallengeResponse = z.output<typeof InsecureHttpManagementChallengeResponseSchema>
 
 export const ManagementDeviceEnrollmentRequestSchema = z
   .object({
@@ -111,4 +143,22 @@ export const managementPairProofMessage = (input: {
     input.clientNonce,
     input.instanceId,
     input.spkiSha256,
+  ].join('\n')
+
+export const INSECURE_HTTP_MANAGEMENT_PAIR_PROOF_PREFIX = 'nxt-management-pair-insecure-http-v1' as const
+
+export const insecureHttpManagementPairProofMessage = (input: {
+  readonly challengeId: string
+  readonly serverNonce: string
+  readonly clientNonce: string
+  readonly instanceId: ServerInstanceId
+  readonly transportBinding: string
+}): string =>
+  [
+    INSECURE_HTTP_MANAGEMENT_PAIR_PROOF_PREFIX,
+    input.challengeId,
+    input.serverNonce,
+    input.clientNonce,
+    input.instanceId,
+    input.transportBinding,
   ].join('\n')

@@ -1,4 +1,5 @@
 import type { DeviceCredential } from './credential-vault.js'
+import { InstanceOperationError } from './instance-operation-error.js'
 import type { InstanceProfile, InstanceProfileStore } from './instance-profiles.js'
 import {
   enrollRemoteDevice,
@@ -32,7 +33,7 @@ interface RemoteProfileOperationInput {
     'assertRemoteConnectionAvailable' | 'addRemote' | 'get' | 'updateRemoteSecurity'
   >
   readonly credentials: CredentialStore
-  readonly managementKey: string
+  readonly managementKey?: string
   readonly deviceLabel: string
   readonly clientReleaseId: string
   readonly gateway?: RemotePairingGateway
@@ -49,12 +50,12 @@ export interface ReauthenticateRemoteProfileInput extends RemoteProfileOperation
 
 export interface RemoteProfileEnrollmentResult {
   readonly profile: InstanceProfile
-  readonly credential: DeviceCredential
+  readonly credential?: DeviceCredential
 }
 
 const enrollmentInput = (input: RemoteProfileOperationInput, inspection: RemoteInspection): EnrollRemoteInput => ({
   inspection,
-  managementKey: input.managementKey,
+  ...(input.managementKey === undefined ? {} : { managementKey: input.managementKey }),
   deviceLabel: input.deviceLabel,
   clientReleaseId: input.clientReleaseId,
 })
@@ -94,16 +95,20 @@ export const addRemoteProfile = async (input: AddRemoteProfileInput): Promise<Re
       origin: paired.origin,
       observedInstanceId: paired.descriptor.instanceId,
     })
-    const credential = { deviceId: paired.deviceId, deviceSecret: paired.deviceSecret }
-    credentialRef = await input.credentials.put(credential)
+    const credential =
+      paired.deviceId === undefined || paired.deviceSecret === undefined
+        ? undefined
+        : { deviceId: paired.deviceId, deviceSecret: paired.deviceSecret }
+    if (credential !== undefined) credentialRef = await input.credentials.put(credential)
     const profile = await input.profiles.addRemote({
       displayName: input.displayName,
       origin: paired.origin,
       observedInstanceId: paired.descriptor.instanceId,
-      pinnedSpkiSha256: paired.spkiSha256,
+      transport: paired.descriptor.transport,
+      ...(paired.spkiSha256 === undefined ? {} : { pinnedSpkiSha256: paired.spkiSha256 }),
       ...(credentialRef === undefined ? {} : { credentialRef }),
     })
-    return { profile, credential }
+    return { profile, ...(credential === undefined ? {} : { credential }) }
   } catch (error) {
     await compensateEnrollment(gateway, input.credentials, paired, credentialRef)
     throw error
@@ -118,17 +123,30 @@ export const reauthenticateRemoteProfile = async (
     throw new Error('远程服务实例不存在。')
   }
   const gateway = input.gateway ?? defaultGateway
+  if (current.transport === 'loopback-http') {
+    throw new Error('本机 HTTP 服务实例不需要重新认证。')
+  }
   const inspection = await gateway.inspect(current.origin)
   if (inspection.origin !== current.origin || inspection.descriptor.instanceId !== current.observedInstanceId) {
-    throw new Error('服务器地址或实例身份已经变化，请将其添加为新的服务实例。')
+    throw new InstanceOperationError(
+      'instance-identity-changed',
+      '服务器地址或实例身份已经变化，请将其添加为新的服务实例。',
+    )
   }
   const paired = await gateway.enroll(enrollmentInput(input, inspection))
+  if (
+    paired.deviceId === undefined ||
+    paired.deviceSecret === undefined ||
+    (current.transport === 'auto-tls-pinned-v1' && paired.spkiSha256 === undefined)
+  ) {
+    throw new Error('服务器没有返回设备凭据。')
+  }
   let credentialRef: string | undefined
   try {
     const credential = { deviceId: paired.deviceId, deviceSecret: paired.deviceSecret }
     credentialRef = await input.credentials.put(credential)
     const profile = await input.profiles.updateRemoteSecurity(current.id, {
-      pinnedSpkiSha256: paired.spkiSha256,
+      ...(paired.spkiSha256 === undefined ? {} : { pinnedSpkiSha256: paired.spkiSha256 }),
       ...(credentialRef === undefined ? {} : { credentialRef }),
     })
     if (current.credentialRef !== undefined && current.credentialRef !== credentialRef) {

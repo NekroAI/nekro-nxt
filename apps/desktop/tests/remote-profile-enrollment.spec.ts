@@ -5,19 +5,24 @@ import { InstanceDescriptorSchema, ManagementDeviceIdSchema } from '@nekro-nxt/c
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { InstanceProfileStore, normalizeRemoteOrigin } from '../src/instance-profiles.ts'
 import { addRemoteProfile, reauthenticateRemoteProfile } from '../src/remote-profile-enrollment.ts'
-import type { PairRemoteResult, RemoteInspection } from '../src/remote-pairing.ts'
+import { enrollRemoteDevice, type PairRemoteResult, type RemoteInspection } from '../src/remote-pairing.ts'
 import { SerialTaskQueue } from '../src/serial-task-queue.ts'
 
-const descriptor = (instanceId: string): PairRemoteResult['descriptor'] =>
+const REMOTE_HTTP_TEST_IP = [192, 0, 2, 44].join('.')
+
+const descriptor = (
+  instanceId: string,
+  transport: 'loopback-http' | 'auto-tls-pinned-v1' | 'explicit-http-v1' = 'auto-tls-pinned-v1',
+): PairRemoteResult['descriptor'] =>
   InstanceDescriptorSchema.parse({
     format: 'nxt.instance-descriptor',
     descriptorVersion: 1,
     instanceId,
     releaseId: 'nxt.test-release',
     productVersion: '0.0.0-test',
-    managementProtocol: 1,
+    managementProtocol: transport === 'explicit-http-v1' ? 2 : 1,
     desktopChromeProtocol: 1,
-    transport: 'auto-tls-pinned-v1',
+    transport,
   })
 
 const inspection = (origin: string, instanceId: string, spkiSha256 = 'test-spki'): RemoteInspection => ({
@@ -88,6 +93,70 @@ describe('Desktop remote Profile enrollment', () => {
     expect(enroll).not.toHaveBeenCalled()
     expect(revoke).not.toHaveBeenCalled()
     expect(credentialStore.values.size).toBe(0)
+  })
+
+  it('pairs a loopback HTTP instance without a management key or bogus device credential', async () => {
+    const profiles = await openStore()
+    const inspected: RemoteInspection = {
+      origin: 'http://127.0.0.1:4960',
+      descriptor: descriptor('nxt_instance_01H00000000000000000000022', 'loopback-http'),
+    }
+    const enroll = vi.fn(enrollRemoteDevice)
+    const credentialStore = credentials()
+
+    const added = await addRemoteProfile({
+      profiles,
+      credentials: credentialStore.store,
+      displayName: '无密钥本机实例',
+      address: inspected.origin,
+      deviceLabel: 'NekroNXT test device',
+      clientReleaseId: 'nxt.test-release',
+      gateway: { inspect: () => Promise.resolve(inspected), enroll, revoke: () => Promise.resolve() },
+    })
+
+    expect(enroll).toHaveBeenCalledOnce()
+    expect(enroll.mock.calls[0]?.[0]).not.toHaveProperty('managementKey')
+    expect(added.credential).toBeUndefined()
+    expect(added.profile).toMatchObject({ origin: inspected.origin })
+    expect(credentialStore.values.size).toBe(0)
+  })
+
+  it('stores device credentials for a confirmed explicit HTTP transport without inventing SPKI', async () => {
+    const profiles = await openStore()
+    const inspected: RemoteInspection = {
+      origin: `http://${REMOTE_HTTP_TEST_IP}:4960`,
+      descriptor: descriptor('nxt_instance_01H00000000000000000000026', 'explicit-http-v1'),
+    }
+    const paired = enrollment(inspected, '06')
+    const credentialStore = credentials()
+    const added = await addRemoteProfile({
+      profiles,
+      credentials: credentialStore.store,
+      displayName: '显式 HTTP 实例',
+      address: inspected.origin,
+      managementKey: 'm'.repeat(32),
+      deviceLabel: 'NekroNXT test device',
+      clientReleaseId: 'nxt.test-release',
+      gateway: {
+        inspect: () => Promise.resolve(inspected),
+        enroll: () => Promise.resolve(paired),
+        revoke: () => Promise.resolve(),
+      },
+    })
+    expect(added.profile).toMatchObject({ transport: 'explicit-http-v1', credentialRef: 'new-credential' })
+    expect(added.profile.pinnedSpkiSha256).toBeUndefined()
+    expect(added.credential).toBeDefined()
+  })
+
+  it('requires a management key for TLS pairing before sending an enrollment request', async () => {
+    const inspected = inspection('key-required.example', 'nxt_instance_01H00000000000000000000023')
+    await expect(
+      enrollRemoteDevice({
+        inspection: inspected,
+        deviceLabel: 'NekroNXT test device',
+        clientReleaseId: 'nxt.test-release',
+      }),
+    ).rejects.toThrow('需要管理密钥')
   })
 
   it('rejects an exact normalized origin before remote inspection', async () => {

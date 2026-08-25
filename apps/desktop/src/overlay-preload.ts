@@ -1,7 +1,8 @@
 import { contextBridge, ipcRenderer } from 'electron'
+import { invokeTrustedInstanceOperation } from './instance-operation-error.js'
 
 const invoke = (action: string, payload?: unknown): Promise<unknown> =>
-  ipcRenderer.invoke(`nxt:instances:${action}`, payload)
+  invokeTrustedInstanceOperation(ipcRenderer.invoke.bind(ipcRenderer), action, payload)
 
 contextBridge.exposeInMainWorld('nxtInstances', {
   list: () => invoke('list'),

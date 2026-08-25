@@ -1,12 +1,21 @@
 import { LlmAdapter, type StreamChunk } from '@deepseek-ai/dsh-llm'
-import { HostApiContracts } from '@nekro-nxt/contracts'
+import { HostApiContracts, InstanceDescriptorSchema } from '@nekro-nxt/contracts'
 import { access, mkdir, mkdtemp, rm, stat, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
-import { defaultDataRoot, defaultWebDistIndex, parseLlmProviderRoutes, startNekroServer } from '../src/main.js'
+import {
+  defaultDataRoot,
+  defaultWebDistIndex,
+  isLoopbackListenHost,
+  parseLlmProviderRoutes,
+  startNekroServer,
+} from '../src/main.js'
+import { LegacyDesktopProtocol1DescriptorSchema } from './legacy-descriptor.js'
 
 const temporaryDirectories: string[] = []
+const SECOND_LOOPBACK_IP = [127, 0, 0, 2].join('.')
+const LAN_TEST_IP = [192, 0, 2, 20].join('.')
 
 afterEach(async () => {
   await Promise.all(temporaryDirectories.splice(0).map((directory) => rm(directory, { recursive: true, force: true })))
@@ -111,6 +120,33 @@ describe('Server executable defaults', () => {
     expect(() => parseLlmProviderRoutes('opencode-go,../forged')).toThrow('无效路由')
   })
 
+  it('recognizes loopback hosts without treating wildcard or LAN binds as local', () => {
+    expect(['127.0.0.1', SECOND_LOOPBACK_IP, '::1', 'localhost'].map(isLoopbackListenHost)).toEqual([
+      true,
+      true,
+      true,
+      true,
+    ])
+    expect(['0.0.0.0', '::', LAN_TEST_IP].map(isLoopbackListenHost)).toEqual([false, false, false])
+  })
+
+  it.each(['0.0.0.0', '::', LAN_TEST_IP])(
+    'rejects keyless non-loopback host %s before runtime startup',
+    async (host) => {
+      const directory = await mkdtemp(path.join(tmpdir(), 'nekro-nxt-main-host-guard-'))
+      temporaryDirectories.push(directory)
+      const dataRoot = path.join(directory, 'data')
+      await expect(
+        startNekroServer({
+          dataRoot,
+          distIndex: path.join(directory, 'missing.html'),
+          host,
+        }),
+      ).rejects.toThrow('NEKRO_MANAGEMENT_KEY')
+      await expect(access(dataRoot)).rejects.toThrow()
+    },
+  )
+
   it('serves only the declared NekroNxt SPA routes as index documents', async () => {
     const directory = await mkdtemp(path.join(tmpdir(), 'nekro-nxt-main-spa-'))
     temporaryDirectories.push(directory)
@@ -145,6 +181,17 @@ describe('Server executable defaults', () => {
       expect(snapshot.status).toBe(200)
       expect(snapshot.headers.get('content-type')).toContain('application/json')
       HostApiContracts.snapshot.response.parse(await snapshot.json())
+
+      const descriptorResponse = await fetch(`${origin}/.well-known/nekro-nxt`)
+      expect(descriptorResponse.status).toBe(200)
+      const descriptorJson: unknown = await descriptorResponse.json()
+      const descriptor = InstanceDescriptorSchema.parse(descriptorJson)
+      expect(LegacyDesktopProtocol1DescriptorSchema.parse(descriptorJson)).toMatchObject({
+        managementProtocol: 1,
+        transport: 'loopback-http',
+      })
+      expect(descriptor.releaseId.length).toBeGreaterThan(0)
+      expect(descriptor.transport).toBe('loopback-http')
     } finally {
       await handle.stop()
     }
