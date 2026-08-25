@@ -145,6 +145,30 @@ describe('Desktop product distribution', () => {
     }
   })
 
+  it('builds macOS as separate arm64 and x64 DMGs instead of a Universal package', async () => {
+    for (const channel of ['stable', 'preview']) {
+      const previousChannel = process.env['NEKRO_DESKTOP_CHANNEL']
+      process.env['NEKRO_DESKTOP_CHANNEL'] = channel
+      try {
+        const configUrl = new URL(`../electron-builder.config.mjs?mac-arches-${channel}`, import.meta.url).href
+        const configModule: unknown = await import(configUrl)
+        if (typeof configModule !== 'object' || configModule === null || !('default' in configModule)) {
+          throw new TypeError('electron-builder 配置缺少默认导出')
+        }
+        const config: unknown = configModule.default
+        if (typeof config !== 'object' || config === null || !('mac' in config) || !('artifactName' in config)) {
+          throw new TypeError('electron-builder 配置缺少 mac/artifactName 设置')
+        }
+        expect(config.mac).toMatchObject({ target: [{ target: 'dmg', arch: ['arm64', 'x64'] }] })
+        expect(JSON.stringify(config.mac)).not.toContain('universal')
+        expect(String(config.artifactName)).toContain('${arch}')
+      } finally {
+        if (previousChannel === undefined) delete process.env['NEKRO_DESKTOP_CHANNEL']
+        else process.env['NEKRO_DESKTOP_CHANNEL'] = previousChannel
+      }
+    }
+  })
+
   it('keeps one stable product identity and one data root outside the installation', () => {
     const stable = getDesktopDistribution('stable')
     const preview = getDesktopDistribution('preview')

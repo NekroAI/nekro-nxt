@@ -19,8 +19,18 @@ test('stable product Release binds Desktop, Host and DSH to the root version and
 
 test('preview version is deterministic, derived from the root version and newer than its earlier preview', () => {
   assert.equal(releaseVersionForChannel('1.4.0', 'stable', 1_750_000_000), '1.4.0')
-  assert.equal(releaseVersionForChannel('1.4.0', 'preview', 1_750_000_000), '1.4.0-20250615-1506utc')
-  assert.throws(() => releaseVersionForChannel('1.4.0-rc.1', 'preview', 1_750_000_000), /SemVer/u)
+  const firstCommit = '0123456789abcdef0123456789abcdef01234567'
+  const secondCommit = 'fedcba9876543210fedcba9876543210fedcba98'
+  assert.equal(
+    releaseVersionForChannel('1.4.0', 'preview', 1_750_000_000, firstCommit),
+    '1.4.0-20250615-150640utc.g0123456789ab',
+  )
+  assert.notEqual(
+    releaseVersionForChannel('1.4.0', 'preview', 1_750_000_000, firstCommit),
+    releaseVersionForChannel('1.4.0', 'preview', 1_750_000_000, secondCommit),
+  )
+  assert.throws(() => releaseVersionForChannel('1.4.0-rc.1', 'preview', 1_750_000_000, firstCommit), /SemVer/u)
+  assert.throws(() => releaseVersionForChannel('1.4.0', 'preview', 1_750_000_000), /commit/u)
 })
 
 test('product Release rejects a dirty worktree before assigning the HEAD identity', () => {

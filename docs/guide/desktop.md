@@ -7,13 +7,13 @@ NekroNXT 桌面版（Desktop）把界面与完整运行环境放进一个安装�
 - **预览版（Preview）**：`main` 完整 CI 通过后更新的滚动构建；
 - **稳定版（Stable）**：由固定版本 Tag 发布，当前尚未提供公开稳定版。
 
-每个平台安装包旁都有 `receipt.json`，其中包含版本、Release ID、commit 和 SHA-256，可以用来核对下载文件。
+每个平台安装包旁都有 `receipt.json`，其中包含版本、Release ID、commit、文件大小和 SHA-256，可以用来核对下载文件。
 
 ## 平台
 
 ### macOS
 
-下载 Universal DMG，打开后将 NekroNXT 拖入“应用程序”。当前预览包尚未签名，macOS 可能要求在“隐私与安全性”中确认首次打开。
+下载与芯片匹配的 DMG：Apple Silicon Mac 选择文件名含 `-mac-arm64-` 的包，Intel Mac 选择含 `-mac-x64-` 的包，每个 DMG 都有独立 `receipt.json` 核对。打开后将 NekroNXT 拖入“应用程序”。当前预览包尚未签名，macOS 可能要求在“隐私与安全性”中确认首次打开。
 
 ### Windows
 

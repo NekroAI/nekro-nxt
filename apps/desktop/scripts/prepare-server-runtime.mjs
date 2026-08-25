@@ -37,7 +37,7 @@ if (result.status !== 0) process.exit(result.status ?? 1)
 const virtualStore = path.join(destination, 'node_modules', '.pnpm')
 const entries = await readdir(virtualStore)
 // legacy deploy 会为 workspace 根包留下一个指回 apps/server 的 hoist 链接。
-// Server 运行时不消费自身包名；保留该越界链接会让打包后的 Universal 临时目录失去目标。
+// Server 运行时不消费自身包名；保留该越界链接会让打包临时目录失去目标。
 await rm(path.join(virtualStore, 'node_modules', '@nekro-nxt', 'server'), { force: true })
 const findPackageDirectory = (packagePrefix, packagePath) => {
   const entry = entries.find((candidate) => candidate.startsWith(`${packagePrefix}@`))

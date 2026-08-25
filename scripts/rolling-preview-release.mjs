@@ -1,11 +1,19 @@
 import { spawnSync } from 'node:child_process'
-import { readFile, stat } from 'node:fs/promises'
+import { readFile } from 'node:fs/promises'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { readProductRelease } from './product-release.mjs'
+import {
+  DESKTOP_PLATFORMS,
+  assertArtifactIntegrity,
+  artifactTarget,
+  artifactTargets,
+  desktopArchitectures,
+  readArtifactIntegrity,
+  readProductRelease,
+} from './product-release.mjs'
 
 export const ROLLING_PREVIEW_TAG = 'preview'
-export const PREVIEW_PLATFORMS = ['mac', 'win', 'linux']
+export const PREVIEW_PLATFORMS = DESKTOP_PLATFORMS
 
 export function previewServerImage(repository, commit) {
   if (!/^[^/]+\/[^/]+$/u.test(repository) || !/^[a-f0-9]{40}$/u.test(commit)) {
@@ -17,35 +25,80 @@ export function previewServerImage(repository, commit) {
 const repositoryRoot = path.resolve(fileURLToPath(new URL('..', import.meta.url)))
 const desktopRoot = path.join(repositoryRoot, 'apps', 'desktop')
 
-export function previewArtifactName(distribution, releaseVersion, platform) {
-  if (platform === 'mac') return `${distribution.artifactSlug}-mac-universal-v${releaseVersion}.dmg`
-  if (platform === 'win') return `${distribution.artifactSlug}-win-x64-v${releaseVersion}-setup.exe`
-  if (platform === 'linux') return `${distribution.artifactSlug}-linux-x64-v${releaseVersion}.AppImage`
-  throw new Error(`滚动预览版平台无效：${platform}`)
+export function previewArtifactName(distribution, releaseVersion, platform, arch) {
+  return artifactTarget(distribution, releaseVersion, platform, arch).artifactName
+}
+
+export function previewArtifactTargets(distribution, releaseVersion) {
+  return artifactTargets(distribution, releaseVersion, 'all')
+}
+
+export function previewUploadTargets(distribution, releaseVersion, platform, arch) {
+  const architectures = desktopArchitectures(platform)
+  if (arch !== undefined) return [artifactTarget(distribution, releaseVersion, platform, arch)]
+  return architectures.map((architecture) => artifactTarget(distribution, releaseVersion, platform, architecture))
 }
 
 export function expectedPreviewAssets(distribution, releaseVersion) {
-  return PREVIEW_PLATFORMS.flatMap((platform) => {
-    const artifact = previewArtifactName(distribution, releaseVersion, platform)
-    return [artifact, `${artifact}.receipt.json`]
-  })
+  return previewArtifactTargets(distribution, releaseVersion).flatMap(({ artifactName }) => [
+    artifactName,
+    `${artifactName}.receipt.json`,
+  ])
 }
 
-export function assertPreviewReceipt(receipt, release, platform, artifactName) {
+export function assertPreviewReceipt(receipt, release, platform, artifactName, arch = 'x64') {
   if (
     receipt?.format !== 'nxt.desktop-artifact-receipt' ||
     receipt.version !== 1 ||
     receipt.channel !== 'preview' ||
     receipt.platform !== platform ||
+    receipt.arch !== arch ||
     receipt.releaseVersion !== release.version ||
     receipt.releaseId !== release.releaseId ||
     receipt.commit !== release.commit ||
     receipt.artifact !== artifactName ||
+    !Number.isSafeInteger(receipt.bytes) ||
+    receipt.bytes <= 0 ||
     typeof receipt.sha256 !== 'string' ||
     !/^[a-f0-9]{64}$/u.test(receipt.sha256)
   ) {
     throw new Error(`滚动预览版 receipt 与当前 Product Release 不一致：${artifactName}`)
   }
+}
+
+export function assertRemoteArtifactIntegrity(asset, receipt, artifactName) {
+  if (
+    asset?.name !== artifactName ||
+    !Number.isSafeInteger(asset.size) ||
+    asset.size <= 0 ||
+    asset.size !== receipt.bytes ||
+    (asset.digest !== undefined && asset.digest !== null && asset.digest !== `sha256:${receipt.sha256}`)
+  ) {
+    throw new Error(`滚动预览版远端安装包与 receipt 完整性不一致：${artifactName}`)
+  }
+}
+
+export function assertPreviewCandidateAssets(rollingRelease, release, distribution, readReceipt) {
+  const targets = previewArtifactTargets(distribution, release.version)
+  const expectedNames = expectedPreviewAssets(distribution, release.version)
+  const assetsByName = new Map((rollingRelease.assets ?? []).map((asset) => [asset.name, asset]))
+  for (const name of expectedNames) {
+    if (!assetsByName.has(name)) throw new Error(`滚动预览版缺少候选附件：${name}`)
+  }
+  for (const target of targets) {
+    const artifactAsset = assetsByName.get(target.artifactName)
+    const receiptAsset = assetsByName.get(`${target.artifactName}.receipt.json`)
+    const receipt = readReceipt(receiptAsset, target)
+    assertPreviewReceipt(receipt, release, target.platform, target.artifactName, target.arch)
+    assertRemoteArtifactIntegrity(artifactAsset, receipt, target.artifactName)
+  }
+}
+
+export function shouldDeletePreviewCandidateAssets(previewTagCommit, candidateCommit) {
+  if (typeof candidateCommit !== 'string' || !/^[a-f0-9]{40}$/u.test(candidateCommit)) {
+    throw new Error('滚动预览版候选 commit 无效。')
+  }
+  return previewTagCommit !== candidateCommit
 }
 
 export function previewReleaseTitle(release) {
@@ -54,7 +107,7 @@ export function previewReleaseTitle(release) {
 
 export function previewReleaseBody(release, repository) {
   return [
-    '这是 `main` 最新通过完整 CI、三端桌面构建与服务端镜像构建的滚动预览版。`preview` 标签和本页面会在下一次成功构建后前移。',
+    '这是 `main` 最新通过完整 CI、四类桌面构建与服务端镜像构建的滚动预览版。`preview` 标签和本页面会在下一次成功构建后前移。',
     '',
     `- 版本：\`${release.version}\``,
     `- Release ID：\`${release.releaseId}\``,
@@ -62,6 +115,10 @@ export function previewReleaseBody(release, repository) {
     `- 服务端镜像：\`ghcr.io/${repository.toLowerCase()}:preview\``,
     '',
     '当前安装包尚未签名；请同时下载对应平台的 `receipt.json` 核对 SHA-256。',
+    '',
+    '- macOS：Apple Silicon 选择 `-mac-arm64-` 包，Intel 选择 `-mac-x64-` 包；',
+    '- Windows：x64 `setup.exe`；',
+    '- Linux：x64 AppImage。',
   ].join('\n')
 }
 
@@ -209,18 +266,23 @@ async function uploadPlatformAssets() {
   if (typeof platform !== 'string' || !PREVIEW_PLATFORMS.includes(platform)) {
     throw new Error(`滚动预览版平台无效：${platform ?? 'undefined'}`)
   }
+  const archOption = commandOption('--arch')
 
   const { release, distribution } = await readContext()
-  const artifactName = previewArtifactName(distribution, release.version, platform)
-  const artifact = path.join(desktopRoot, 'release', 'preview', artifactName)
-  const receiptPath = `${artifact}.receipt.json`
-  const [artifactStat, receiptText] = await Promise.all([stat(artifact), readFile(receiptPath, 'utf8')])
-  if (!artifactStat.isFile()) throw new Error(`滚动预览版缺少安装包：${artifact}`)
-  assertPreviewReceipt(JSON.parse(receiptText), release, platform, artifactName)
+  const targets = previewUploadTargets(distribution, release.version, platform, archOption)
+  for (const target of targets) {
+    const artifactName = target.artifactName
+    const artifact = path.join(desktopRoot, 'release', 'preview', artifactName)
+    const receiptPath = `${artifact}.receipt.json`
+    const [integrity, receiptText] = await Promise.all([readArtifactIntegrity(artifact), readFile(receiptPath, 'utf8')])
+    const receipt = JSON.parse(receiptText)
+    assertPreviewReceipt(receipt, release, target.platform, artifactName, target.arch)
+    assertArtifactIntegrity(receipt, integrity, artifactName)
 
-  runGh(['release', 'upload', ROLLING_PREVIEW_TAG, artifact, receiptPath, '--clobber', '--repo', repository], {
-    stdio: 'inherit',
-  })
+    runGh(['release', 'upload', ROLLING_PREVIEW_TAG, artifact, receiptPath, '--clobber', '--repo', repository], {
+      stdio: 'inherit',
+    })
+  }
 }
 
 function deleteAssets(repository, assets) {
@@ -229,8 +291,32 @@ function deleteAssets(repository, assets) {
   }
 }
 
+function readRollingTagCommit(repository) {
+  const result = runGh(['api', `/repos/${repository}/git/ref/tags/${ROLLING_PREVIEW_TAG}`], { allowFailure: true })
+  if (result.status === 0) {
+    const commit = JSON.parse(String(result.stdout)).object?.sha
+    if (typeof commit !== 'string' || !/^[a-f0-9]{40}$/u.test(commit)) {
+      throw new Error('滚动预览版 tag 响应缺少有效 commit。')
+    }
+    return commit
+  }
+  const diagnostic = `${String(result.stderr)}\n${String(result.stdout)}`
+  if (/HTTP 404|Not Found/iu.test(diagnostic)) return undefined
+  throw new Error(`读取滚动预览版 tag 失败：${diagnostic.trim()}`)
+}
+
 function candidateAssets(rollingRelease, names) {
   return (rollingRelease.assets ?? []).filter((asset) => names.has(asset.name))
+}
+
+function cleanupPreviewCandidateAssets(repository, rollingRelease, names, candidateCommit, reason) {
+  const previewTagCommit = readRollingTagCommit(repository)
+  if (!shouldDeletePreviewCandidateAssets(previewTagCommit, candidateCommit)) {
+    console.log(`${reason}；preview tag 已指向当前 commit，保留已发布附件。`)
+    return
+  }
+  deleteAssets(repository, candidateAssets(rollingRelease, names))
+  console.log(`${reason}；已清理本次候选附件。`)
 }
 
 function readRemoteReceipt(repository, asset) {
@@ -257,25 +343,29 @@ async function finalizeRollingRelease() {
   if (!rollingRelease) throw new Error('滚动预览版不存在，无法收敛平台构建。')
 
   if (buildResult !== 'success') {
-    deleteAssets(repository, candidateAssets(rollingRelease, expectedSet))
-    console.log(`预览构建结果为 ${buildResult}，已保留上一版 Preview 并清理本次候选附件。`)
+    cleanupPreviewCandidateAssets(
+      repository,
+      rollingRelease,
+      expectedSet,
+      release.commit,
+      `预览构建结果为 ${buildResult}`,
+    )
     return
   }
 
-  const assetsByName = new Map((rollingRelease.assets ?? []).map((asset) => [asset.name, asset]))
-  for (const name of expectedNames) {
-    if (!assetsByName.has(name)) throw new Error(`滚动预览版缺少候选附件：${name}`)
-  }
-  for (const platform of PREVIEW_PLATFORMS) {
-    const artifactName = previewArtifactName(distribution, release.version, platform)
-    const receiptAsset = assetsByName.get(`${artifactName}.receipt.json`)
-    assertPreviewReceipt(readRemoteReceipt(repository, receiptAsset), release, platform, artifactName)
-  }
+  assertPreviewCandidateAssets(rollingRelease, release, distribution, (receiptAsset) =>
+    readRemoteReceipt(repository, receiptAsset),
+  )
 
   const remoteMain = ghJson(['api', `/repos/${repository}/git/ref/heads/main`]).object?.sha
   if (remoteMain !== release.commit) {
-    deleteAssets(repository, candidateAssets(rollingRelease, expectedSet))
-    console.log(`当前 commit ${release.commit} 已不是 main 最新 HEAD，候选附件已清理且不会回退 Preview。`)
+    cleanupPreviewCandidateAssets(
+      repository,
+      rollingRelease,
+      expectedSet,
+      release.commit,
+      `当前 commit ${release.commit} 已不是 main 最新 HEAD，不会回退 Preview`,
+    )
     return
   }
 

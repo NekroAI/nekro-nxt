@@ -1,6 +1,7 @@
 import { spawnSync } from 'node:child_process'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { desktopPlatforms, electronBuilderArguments, receiptTargets } from '../../../scripts/product-release.mjs'
 
 const args = process.argv.slice(2)
 const option = (name) => {
@@ -39,7 +40,7 @@ if (gitStatus.status !== 0 || gitStatus.stdout.trim() !== '') {
   throw new Error('Desktop Release 构建要求 Git worktree 干净，确保版本与 receipt 对应准确源码。')
 }
 if ((target === 'mac' || target === 'all') && process.platform !== 'darwin') {
-  throw new Error('macOS Universal DMG 必须在 macOS 上构建；--target all 因此也必须从 macOS 启动。')
+  throw new Error('macOS DMG 必须在 macOS 上构建；--target all 因此也必须从 macOS 启动。')
 }
 
 runPnpm(['--filter', '@nekro-nxt/web', 'build'])
@@ -52,10 +53,16 @@ delete builderEnvironment['npm_execpath']
 delete builderEnvironment['npm_config_user_agent']
 
 const packageLocally = (platform) => {
-  const architecture = platform === 'mac' ? 'universal' : 'x64'
   run(
     process.execPath,
-    [builderCli, '--config', 'electron-builder.config.mjs', `--${platform}`, `--${architecture}`, '--publish', 'never'],
+    [
+      builderCli,
+      '--config',
+      'electron-builder.config.mjs',
+      ...electronBuilderArguments(platform),
+      '--publish',
+      'never',
+    ],
     appRoot,
     builderEnvironment,
   )
@@ -95,14 +102,24 @@ const prepareRuntime = (platform) => {
   )
 }
 
-const platforms = target === 'all' ? ['mac', 'win', 'linux'] : [target]
+const platforms = desktopPlatforms(target)
 for (const platform of platforms) {
   prepareRuntime(platform)
   packageLocally(platform)
-  run(
-    process.execPath,
-    ['scripts/write-artifact-receipt.mjs', '--channel', channel, '--platform', platform],
-    appRoot,
-    buildEnvironment,
-  )
+  for (const receiptTarget of receiptTargets(platform)) {
+    run(
+      process.execPath,
+      [
+        'scripts/write-artifact-receipt.mjs',
+        '--channel',
+        channel,
+        '--platform',
+        receiptTarget.platform,
+        '--arch',
+        receiptTarget.arch,
+      ],
+      appRoot,
+      buildEnvironment,
+    )
+  }
 }

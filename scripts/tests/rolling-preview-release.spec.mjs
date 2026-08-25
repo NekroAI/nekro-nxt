@@ -1,48 +1,87 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import {
+  assertPreviewCandidateAssets,
   assertPreviewReceipt,
+  assertRemoteArtifactIntegrity,
   expectedPreviewAssets,
   previewArtifactName,
+  previewArtifactTargets,
   previewReleaseBody,
   previewServerImage,
   previewReleaseTitle,
+  previewUploadTargets,
+  shouldDeletePreviewCandidateAssets,
 } from '../rolling-preview-release.mjs'
 
 const distribution = { artifactSlug: 'nekro-nxt-preview' }
 const release = {
-  version: '1.4.0-20250615-1506utc',
-  releaseId: '1.4.0-20250615-1506utc+0123456789ab',
+  version: '1.4.0-20250615-150640utc.g0123456789ab',
+  releaseId: '1.4.0-20250615-150640utc.g0123456789ab+0123456789ab',
   commit: '0123456789abcdef0123456789abcdef01234567',
 }
 
-test('rolling Preview derives the six public assets from the Product Release version', () => {
+test('rolling Preview derives the eight public assets from the Product Release version', () => {
   assert.equal(
-    previewArtifactName(distribution, release.version, 'mac'),
-    'nekro-nxt-preview-mac-universal-v1.4.0-20250615-1506utc.dmg',
+    previewArtifactName(distribution, release.version, 'mac', 'arm64'),
+    'nekro-nxt-preview-mac-arm64-v1.4.0-20250615-150640utc.g0123456789ab.dmg',
+  )
+  assert.equal(
+    previewArtifactName(distribution, release.version, 'mac', 'x64'),
+    'nekro-nxt-preview-mac-x64-v1.4.0-20250615-150640utc.g0123456789ab.dmg',
   )
   assert.equal(
     previewArtifactName(distribution, release.version, 'win'),
-    'nekro-nxt-preview-win-x64-v1.4.0-20250615-1506utc-setup.exe',
+    'nekro-nxt-preview-win-x64-v1.4.0-20250615-150640utc.g0123456789ab-setup.exe',
   )
   assert.equal(
     previewArtifactName(distribution, release.version, 'linux'),
-    'nekro-nxt-preview-linux-x64-v1.4.0-20250615-1506utc.AppImage',
+    'nekro-nxt-preview-linux-x64-v1.4.0-20250615-150640utc.g0123456789ab.AppImage',
   )
-  assert.equal(expectedPreviewAssets(distribution, release.version).length, 6)
+  assert.throws(() => previewArtifactName(distribution, release.version, 'mac'), /产物架构/u)
+  const assets = expectedPreviewAssets(distribution, release.version)
+  assert.equal(assets.length, 8)
+  assert.deepEqual(
+    assets.filter((name) => name.startsWith('nekro-nxt-preview-mac-')),
+    [
+      'nekro-nxt-preview-mac-arm64-v1.4.0-20250615-150640utc.g0123456789ab.dmg',
+      'nekro-nxt-preview-mac-arm64-v1.4.0-20250615-150640utc.g0123456789ab.dmg.receipt.json',
+      'nekro-nxt-preview-mac-x64-v1.4.0-20250615-150640utc.g0123456789ab.dmg',
+      'nekro-nxt-preview-mac-x64-v1.4.0-20250615-150640utc.g0123456789ab.dmg.receipt.json',
+    ],
+  )
 })
 
-test('rolling Preview accepts only receipts for the same commit and platform artifact', () => {
+test('rolling Preview upload plan includes both macOS artifacts', () => {
+  assert.deepEqual(
+    previewUploadTargets(distribution, release.version, 'mac').map(({ platform, arch, artifactName }) => ({
+      platform,
+      arch,
+      artifactName,
+    })),
+    previewArtifactTargets(distribution, release.version)
+      .filter(({ platform }) => platform === 'mac')
+      .map(({ platform, arch, artifactName }) => ({ platform, arch, artifactName })),
+  )
+  assert.deepEqual(
+    previewUploadTargets(distribution, release.version, 'mac').map(({ arch }) => arch),
+    ['arm64', 'x64'],
+  )
+})
+
+test('rolling Preview accepts only receipts for the same commit, platform artifact and arch', () => {
   const artifact = previewArtifactName(distribution, release.version, 'linux')
   const receipt = {
     format: 'nxt.desktop-artifact-receipt',
     version: 1,
     channel: 'preview',
     platform: 'linux',
+    arch: 'x64',
     releaseVersion: release.version,
     releaseId: release.releaseId,
     commit: release.commit,
     artifact,
+    bytes: 128,
     sha256: 'a'.repeat(64),
   }
   assert.doesNotThrow(() => assertPreviewReceipt(receipt, release, 'linux', artifact))
@@ -50,6 +89,73 @@ test('rolling Preview accepts only receipts for the same commit and platform art
     () => assertPreviewReceipt({ ...receipt, commit: 'f'.repeat(40) }, release, 'linux', artifact),
     /receipt/u,
   )
+
+  const macArtifact = previewArtifactName(distribution, release.version, 'mac', 'arm64')
+  const macReceipt = { ...receipt, platform: 'mac', arch: 'arm64', artifact: macArtifact }
+  assert.doesNotThrow(() => assertPreviewReceipt(macReceipt, release, 'mac', macArtifact, 'arm64'))
+  assert.throws(() => assertPreviewReceipt(macReceipt, release, 'mac', macArtifact, 'x64'), /receipt/u)
+  assert.throws(
+    () => assertPreviewReceipt({ ...macReceipt, arch: 'x64' }, release, 'mac', macArtifact, 'arm64'),
+    /receipt/u,
+  )
+  assert.throws(() => assertPreviewReceipt({ ...receipt, bytes: 0 }, release, 'linux', artifact), /receipt/u)
+})
+
+test('rolling Preview finalize plan validates all four artifacts and remote size/digest', () => {
+  const targets = previewArtifactTargets(distribution, release.version)
+  const sha256 = 'b'.repeat(64)
+  const receipts = new Map(
+    targets.map((target) => [
+      `${target.artifactName}.receipt.json`,
+      {
+        format: 'nxt.desktop-artifact-receipt',
+        version: 1,
+        channel: 'preview',
+        platform: target.platform,
+        arch: target.arch,
+        releaseVersion: release.version,
+        releaseId: release.releaseId,
+        commit: release.commit,
+        artifact: target.artifactName,
+        bytes: 256,
+        sha256,
+      },
+    ]),
+  )
+  const assets = targets.flatMap((target, index) => [
+    { id: index * 2 + 1, name: target.artifactName, size: 256, digest: `sha256:${sha256}` },
+    { id: index * 2 + 2, name: `${target.artifactName}.receipt.json`, size: 512 },
+  ])
+  const visited = []
+  assert.doesNotThrow(() =>
+    assertPreviewCandidateAssets({ assets }, release, distribution, (receiptAsset, target) => {
+      visited.push(`${target.platform}/${target.arch}`)
+      return receipts.get(receiptAsset.name)
+    }),
+  )
+  assert.deepEqual(visited, ['mac/arm64', 'mac/x64', 'win/x64', 'linux/x64'])
+
+  const macArm64 = targets[0]
+  const receipt = receipts.get(`${macArm64.artifactName}.receipt.json`)
+  assert.throws(
+    () => assertRemoteArtifactIntegrity({ name: macArm64.artifactName, size: 255 }, receipt, macArm64.artifactName),
+    /完整性不一致/u,
+  )
+  assert.throws(
+    () =>
+      assertRemoteArtifactIntegrity(
+        { name: macArm64.artifactName, size: 256, digest: `sha256:${'c'.repeat(64)}` },
+        receipt,
+        macArm64.artifactName,
+      ),
+    /完整性不一致/u,
+  )
+})
+
+test('failed rerun preserves assets when preview tag already points at the candidate commit', () => {
+  assert.equal(shouldDeletePreviewCandidateAssets(release.commit, release.commit), false)
+  assert.equal(shouldDeletePreviewCandidateAssets('f'.repeat(40), release.commit), true)
+  assert.equal(shouldDeletePreviewCandidateAssets(undefined, release.commit), true)
 })
 
 test('rolling Preview copy identifies its moving channel and immutable Product Release', () => {
