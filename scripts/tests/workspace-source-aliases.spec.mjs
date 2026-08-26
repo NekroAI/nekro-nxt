@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { execFileSync } from 'node:child_process'
-import { existsSync } from 'node:fs'
+import { existsSync, readdirSync, readFileSync } from 'node:fs'
 import path from 'node:path'
 import test from 'node:test'
 
@@ -26,4 +26,17 @@ test('workspace source aliases point at tracked TypeScript entries', () => {
   }
   assert.deepEqual(missing, [])
   assert.ok(workspaceSourceAliases['@nekro-nxt/contracts']?.endsWith('packages/contracts/src/index.ts'))
+})
+
+test('every workspace package has a source alias', () => {
+  const packageNames = readdirSync(path.join(root, 'packages'), { withFileTypes: true })
+    .filter((entry) => entry.isDirectory())
+    .map((entry) => path.join(root, 'packages', entry.name, 'package.json'))
+    .filter(existsSync)
+    .map((packageJson) => JSON.parse(readFileSync(packageJson, 'utf8')).name)
+    .filter((name) => typeof name === 'string')
+    .sort()
+  const missing = packageNames.filter((name) => workspaceSourceAliases[name] === undefined)
+
+  assert.deepEqual(missing, [])
 })
