@@ -43,6 +43,7 @@ import {
 } from './remote-session.js'
 import { SerialTaskQueue } from './serial-task-queue.js'
 import {
+  FALLBACK_TRANSITION_MS,
   fallbackRemainingVisibleMs,
   renderTrustedFallbackHtml,
   trustedFallbackForError,
@@ -78,7 +79,7 @@ import {
 } from './trusted-view-navigation.js'
 
 const OVERLAY_EXIT_MS = 100
-const FALLBACK_EXIT_MS = 180
+const FALLBACK_EXIT_MS = FALLBACK_TRANSITION_MS
 type ClientNotificationFeed = ReturnType<(typeof ClientNotificationFeedResponseSchema)['parse']>
 type DesktopHandleListener = (event: IpcMainInvokeEvent, ...args: unknown[]) => unknown
 type DesktopEventListener = (event: IpcMainEvent, ...args: unknown[]) => void
@@ -285,8 +286,8 @@ export class DesktopInstanceManager {
     this.closeOverlay(false, false)
     this.#statuses.set(profile.id, 'connecting')
     this.#currentProfileId = profile.id
-    await this.#showFallback(profile, `正在连接「${profile.displayName}」`, '正在读取该实例的工作区…', [])
     const fallbackVisibleAt = this.#window.isVisible() ? Date.now() : undefined
+    await this.#showFallback(profile, `正在连接「${profile.displayName}」`, '正在读取该实例的工作区…', [], true)
     if (serial !== this.#switchSerial) return
     this.#destroyProductView()
     this.#window.setTitle(`NekroNXT — ${profile.displayName}`)
@@ -887,14 +888,20 @@ export class DesktopInstanceManager {
     return result.response === 1
   }
 
-  #showFallback(
+  async #showFallback(
     profile: InstanceProfile,
     title: string,
     body: string,
     actions: readonly TrustedFallbackAction[],
+    transitionFromProduct = false,
   ): Promise<void> {
     if (this.#fallbackCloseTimer !== undefined) clearTimeout(this.#fallbackCloseTimer)
     this.#fallbackCloseTimer = undefined
+    const animateEntrance =
+      transitionFromProduct &&
+      this.#window.isVisible() &&
+      this.#productView !== undefined &&
+      this.#window.contentView.children.includes(this.#productView)
     const fallbackUrl = `data:text/html;charset=utf-8,${encodeURIComponent(
       renderTrustedFallbackHtml({
         title,
@@ -902,6 +909,7 @@ export class DesktopInstanceManager {
         actions,
         platform: process.platform,
         theme: this.#surfaceTheme,
+        initialVisibility: animateEntrance ? 'entering' : 'open',
         instance: {
           displayName: profile.displayName,
           addressLabel:
@@ -949,26 +957,35 @@ export class DesktopInstanceManager {
       )
       this.#fallbackView = view
     }
-    view.setBackgroundColor(this.#surfaceTheme === 'dark' ? '#0F1A2C' : '#F5F2EE')
-    if (!this.#window.contentView.children.includes(view)) this.#window.contentView.addChildView(view)
-    this.#bringFallbackToFront()
-    this.#bringOverlayToFront()
-    this.#layout()
-    return view.webContents
-      .loadURL(fallbackUrl)
-      .then(() => {
-        if (this.#fallbackLoads.isCurrent(load)) assertExactTrustedUrl(view.webContents.getURL(), fallbackUrl)
-      })
-      .catch((error: unknown) => {
-        if (!this.#fallbackLoads.isCurrent(load)) return
-        if (!this.#disposed && !view.webContents.isDestroyed()) {
-          console.error('[nekro-nxt] Desktop 连接状态页加载失败：', error)
-        }
-        if (this.#fallbackView === view) {
-          detachAndCloseView(this.#window, view)
-          this.#fallbackView = undefined
-        }
-      })
+    view.setBackgroundColor('#00000000')
+    if (animateEntrance && this.#window.contentView.children.includes(view)) {
+      this.#window.contentView.removeChildView(view)
+    }
+    try {
+      await view.webContents.loadURL(fallbackUrl)
+      if (!this.#fallbackLoads.isCurrent(load)) return
+      assertExactTrustedUrl(view.webContents.getURL(), fallbackUrl)
+      if (!this.#window.contentView.children.includes(view)) this.#window.contentView.addChildView(view)
+      this.#bringFallbackToFront()
+      this.#bringOverlayToFront()
+      this.#layout()
+      if (animateEntrance) {
+        await view.webContents.executeJavaScript(
+          "new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => { document.documentElement.dataset.visibility = 'open'; resolve() })))",
+          true,
+        )
+        await new Promise<void>((resolve) => setTimeout(resolve, FALLBACK_TRANSITION_MS))
+      }
+    } catch (error: unknown) {
+      if (!this.#fallbackLoads.isCurrent(load)) return
+      if (!this.#disposed && !view.webContents.isDestroyed()) {
+        console.error('[nekro-nxt] Desktop 连接状态页加载失败：', error)
+      }
+      if (this.#fallbackView === view) {
+        detachAndCloseView(this.#window, view)
+        this.#fallbackView = undefined
+      }
+    }
   }
 
   #hideFallback(): void {

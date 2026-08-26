@@ -9,7 +9,7 @@ import {
   toTrustedInstanceError,
   trustedInstanceFailure,
 } from '../src/instance-operation-error.ts'
-import { renderTrustedFallbackHtml, trustedFallbackForError } from '../src/trusted-fallback.ts'
+import { FALLBACK_TRANSITION_MS, renderTrustedFallbackHtml, trustedFallbackForError } from '../src/trusted-fallback.ts'
 
 const desktopRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 let browser: Browser
@@ -677,6 +677,54 @@ describe('Desktop instance overlay accessibility contract', { timeout: 15_000 },
     )
     await expect(page.locator('body').textContent()).resolves.not.toContain('nxt:instances:switch')
     await expect(page.locator('body').textContent()).resolves.not.toContain('Error:')
+    await page.close()
+  })
+
+  it('crossfades from the current instance into the switch surface and back out to the new instance', async () => {
+    const page = await browser.newPage({ viewport: { width: 980, height: 680 }, colorScheme: 'dark' })
+    await page.setContent(
+      renderTrustedFallbackHtml({
+        title: '正在连接「远程实例」',
+        body: '正在读取该实例的工作区…',
+        actions: [],
+        platform: 'darwin',
+        theme: 'dark',
+        initialVisibility: 'entering',
+        instance: { displayName: '远程实例', addressLabel: 'remote.example.test', status: 'connecting' },
+      }),
+    )
+    const opacity = () =>
+      page.locator('body').evaluate((element) => Number.parseFloat(getComputedStyle(element).opacity))
+    await expect(opacity()).resolves.toBe(0)
+    await expect(page.locator('html').evaluate((element) => getComputedStyle(element).backgroundColor)).resolves.toBe(
+      'rgba(0, 0, 0, 0)',
+    )
+
+    await page.evaluate(
+      () =>
+        new Promise<void>((resolve) =>
+          requestAnimationFrame(() =>
+            requestAnimationFrame(() => {
+              document.documentElement.dataset['visibility'] = 'open'
+              resolve()
+            }),
+          ),
+        ),
+    )
+    await page.waitForTimeout(FALLBACK_TRANSITION_MS / 2)
+    await expect(opacity()).resolves.toBeGreaterThan(0)
+    await expect(opacity()).resolves.toBeLessThan(1)
+    await page.waitForTimeout(FALLBACK_TRANSITION_MS)
+    await expect(opacity()).resolves.toBe(1)
+
+    await page.evaluate(() => {
+      document.documentElement.dataset['visibility'] = 'closing'
+    })
+    await page.waitForTimeout(FALLBACK_TRANSITION_MS / 2)
+    await expect(opacity()).resolves.toBeGreaterThan(0)
+    await expect(opacity()).resolves.toBeLessThan(1)
+    await page.waitForTimeout(FALLBACK_TRANSITION_MS)
+    await expect(opacity()).resolves.toBe(0)
     await page.close()
   })
 

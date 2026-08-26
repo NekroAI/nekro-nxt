@@ -6,6 +6,7 @@ import {
 } from '../src/instance-operation-error.ts'
 import {
   FALLBACK_MIN_VISIBLE_MS,
+  FALLBACK_TRANSITION_MS,
   fallbackRemainingVisibleMs,
   renderTrustedFallbackHtml,
   trustedFallbackForError,
@@ -96,11 +97,28 @@ const expected = {
 
 describe('Desktop Trusted Fallback behavior', () => {
   it('keeps a fast visible switch on screen for a stable minimum interval', () => {
-    expect(FALLBACK_MIN_VISIBLE_MS).toBe(480)
-    expect(fallbackRemainingVisibleMs(1_000, 1_000)).toBe(480)
-    expect(fallbackRemainingVisibleMs(1_000, 1_180)).toBe(300)
-    expect(fallbackRemainingVisibleMs(1_000, 1_480)).toBe(0)
-    expect(fallbackRemainingVisibleMs(1_000, 2_000)).toBe(0)
+    expect(FALLBACK_MIN_VISIBLE_MS).toBe(2_000)
+    expect(FALLBACK_TRANSITION_MS).toBe(240)
+    expect(fallbackRemainingVisibleMs(1_000, 1_000)).toBe(2_000)
+    expect(fallbackRemainingVisibleMs(1_000, 1_240)).toBe(1_760)
+    expect(fallbackRemainingVisibleMs(1_000, 3_000)).toBe(0)
+    expect(fallbackRemainingVisibleMs(1_000, 4_000)).toBe(0)
+  })
+
+  it('can enter transparently over the current instance before becoming the visible switch surface', () => {
+    const html = renderTrustedFallbackHtml({
+      title: '正在连接「远程实例」',
+      body: '正在读取该实例的工作区…',
+      actions: [],
+      platform: 'darwin',
+      theme: 'dark',
+      initialVisibility: 'entering',
+      instance: { displayName: '远程实例', addressLabel: 'remote.example.test', status: 'connecting' },
+    })
+    expect(html).toContain('data-visibility="entering"')
+    expect(html).toContain(':root[data-visibility="entering"] body')
+    expect(html).toContain('background:transparent')
+    expect(html).toContain(`transition:opacity ${FALLBACK_TRANSITION_MS}ms`)
   })
 
   it('maps every public instance error code to fixed status, copy, and actions', () => {
