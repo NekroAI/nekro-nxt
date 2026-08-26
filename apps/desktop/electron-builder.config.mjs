@@ -1,4 +1,6 @@
 import { spawnSync } from 'node:child_process'
+import path from 'node:path'
+import { archFromString } from 'electron-builder'
 import desktopDistributions from './distributions.json' with { type: 'json' }
 import { desktopArchitectures } from '../../scripts/product-release.mjs'
 
@@ -12,6 +14,44 @@ export const signMacApplication = ({ app }) => {
   const result = spawnSync('/usr/bin/codesign', ['--force', '--deep', '--sign', '-', app], { stdio: 'inherit' })
   if (result.error) throw result.error
   if (result.status !== 0) throw new Error(`macOS ad-hoc 签署失败：${app}`)
+}
+
+const packagedExecutable = (context) => {
+  if (context.electronPlatformName === 'win32') {
+    return path.join(context.appOutDir, `${distribution.executableName}.exe`)
+  }
+  if (context.electronPlatformName === 'linux') {
+    return path.join(context.appOutDir, distribution.linuxExecutableName)
+  }
+  return path.join(context.appOutDir, `${distribution.productName}.app`, 'Contents', 'MacOS', distribution.productName)
+}
+
+const packagedResources = (context) =>
+  context.electronPlatformName === 'darwin'
+    ? path.join(context.appOutDir, `${distribution.productName}.app`, 'Contents', 'Resources')
+    : path.join(context.appOutDir, 'resources')
+
+export const verifyPackagedServerRuntime = async (context) => {
+  const hostPlatform = process.platform
+  const targetPlatform = context.electronPlatformName
+  const hostArch = archFromString(process.arch)
+  if (targetPlatform !== hostPlatform) return
+  const executable = context.arch === hostArch ? packagedExecutable(context) : process.execPath
+  const result = spawnSync(
+    process.execPath,
+    [
+      'scripts/verify-packaged-server-runtime.mjs',
+      '--executable',
+      executable,
+      '--resources',
+      packagedResources(context),
+      '--release-id',
+      `desktop-${channel}-${targetPlatform}-${process.arch}-smoke`,
+    ],
+    { cwd: new URL('.', import.meta.url), stdio: 'inherit', env: process.env },
+  )
+  if (result.error) throw result.error
+  if (result.status !== 0) throw new Error(`Desktop 最终运行时验证失败（code ${result.status ?? 'unknown'}）。`)
 }
 
 /** @type {import('electron-builder').Configuration} */
@@ -45,6 +85,7 @@ const config = {
     { from: 'dist/runtime', to: 'server-runtime', filter: ['**/*', '!node_modules{,/**/*}'] },
     { from: 'dist/runtime/node_modules', to: 'server-runtime/node_modules', filter: ['**/*'] },
   ],
+  afterPack: verifyPackagedServerRuntime,
   asar: true,
   npmRebuild: false,
   mac: {

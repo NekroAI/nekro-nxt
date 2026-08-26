@@ -1,6 +1,6 @@
 {
   "name": "nekro-nxt",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "private": true,
   "license": "AGPL-3.0-only",
   "description": "连接多平台即时通信，让智能体参与真实多人群聊的 DSH 驱动系统",

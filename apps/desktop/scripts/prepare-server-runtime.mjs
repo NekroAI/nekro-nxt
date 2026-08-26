@@ -1,5 +1,5 @@
 import { spawnSync } from 'node:child_process'
-import { readdir, rm, stat } from 'node:fs/promises'
+import { lstat, rm, stat } from 'node:fs/promises'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 
@@ -20,7 +20,17 @@ const pnpmCli = process.env['npm_execpath']
 await rm(destination, { recursive: true, force: true })
 const result = spawnSync(
   pnpmCli ? process.execPath : 'pnpm',
-  [...(pnpmCli ? [pnpmCli] : []), '--filter', '@nekro-nxt/server', 'deploy', '--prod', '--legacy', destination],
+  [
+    ...(pnpmCli ? [pnpmCli] : []),
+    '--config.node-linker=hoisted',
+    '--config.package-import-method=copy',
+    '--filter',
+    '@nekro-nxt/server',
+    'deploy',
+    '--prod',
+    '--legacy',
+    destination,
+  ],
   {
     cwd: repositoryRoot,
     stdio: 'inherit',
@@ -34,22 +44,36 @@ const result = spawnSync(
 if (result.error) throw result.error
 if (result.status !== 0) process.exit(result.status ?? 1)
 
+// extraResources 会把 runtime 搬离 pnpm 创建它的目录。生产依赖必须已经是
+// 顶层实体目录，不能依赖 .pnpm 内部符号链接才能完成 Node ESM 解析。
+for (const packageName of ['@deepseek-ai/cordis', '@deepseek-ai/cosmokit']) {
+  const packageRoot = path.join(destination, 'node_modules', ...packageName.split('/'))
+  const entry = await lstat(packageRoot).catch(() => undefined)
+  if (!entry?.isDirectory() || entry.isSymbolicLink()) {
+    throw new Error(`Server runtime 依赖不是可搬运的实体目录：${packageName}`)
+  }
+  const manifest = await stat(path.join(packageRoot, 'package.json')).catch(() => undefined)
+  if (!manifest?.isFile()) throw new Error(`Server runtime 依赖缺少 package.json：${packageName}`)
+}
+
 const virtualStore = path.join(destination, 'node_modules', '.pnpm')
-const entries = await readdir(virtualStore)
 // legacy deploy 会为 workspace 根包留下一个指回 apps/server 的 hoist 链接。
 // Server 运行时不消费自身包名；保留该越界链接会让打包临时目录失去目标。
 await rm(path.join(virtualStore, 'node_modules', '@nekro-nxt', 'server'), { force: true })
-const findPackageDirectory = (packagePrefix, packagePath) => {
-  const entry = entries.find((candidate) => candidate.startsWith(`${packagePrefix}@`))
-  if (!entry) throw new Error(`Server runtime 缺少 ${packagePrefix}。`)
-  return path.join(virtualStore, entry, 'node_modules', ...packagePath.split('/'))
-}
 const requireFile = async (filename) => {
   const entry = await stat(filename).catch(() => undefined)
   if (!entry?.isFile()) throw new Error(`Server runtime 缺少跨平台预编译文件：${filename}`)
 }
+const requirePackageDirectory = async (packageName) => {
+  const packageRoot = path.join(destination, 'node_modules', ...packageName.split('/'))
+  const entry = await lstat(packageRoot).catch(() => undefined)
+  if (!entry?.isDirectory() || entry.isSymbolicLink()) {
+    throw new Error(`Server runtime 缺少可搬运的实体依赖目录：${packageName}`)
+  }
+  return packageRoot
+}
 
-const nodePtyRoot = findPackageDirectory('node-pty', 'node-pty')
+const nodePtyRoot = await requirePackageDirectory('node-pty')
 const nodePtyPrebuilds =
   targetPlatform === 'mac' ? ['darwin-arm64', 'darwin-x64'] : targetPlatform === 'linux' ? ['linux-x64'] : []
 // node-pty 优先读取 build/Release。部署时生成的宿主二进制会遮蔽包内 N-API
@@ -63,21 +87,17 @@ if (targetPlatform === 'win') {
   await requireFile(path.join(nodePtyRoot, 'prebuilds', 'win32-x64', 'conpty_console_list.node'))
 }
 
-const betterSqliteRoot = findPackageDirectory('better-sqlite3', 'better-sqlite3')
+const betterSqliteRoot = await requirePackageDirectory('better-sqlite3')
 const targetArchitectures =
   targetPlatform === 'mac' ? ['darwin-arm64', 'darwin-x64'] : targetPlatform === 'win' ? ['win32-x64'] : ['linux-x64']
 for (const platformArch of targetArchitectures) {
   await requireFile(path.join(betterSqliteRoot, 'prebuilds', `${platformArch}.node`))
 }
 
-const optionalPackagePrefixes =
+const optionalPackages =
   targetPlatform === 'mac'
-    ? ['@img+sharp-darwin-arm64', '@img+sharp-darwin-x64', '@koromix+koffi-darwin-arm64', '@koromix+koffi-darwin-x64']
+    ? ['@img/sharp-darwin-arm64', '@img/sharp-darwin-x64', '@koromix/koffi-darwin-arm64', '@koromix/koffi-darwin-x64']
     : targetPlatform === 'win'
-      ? ['@img+sharp-win32-x64', '@koromix+koffi-win32-x64']
-      : ['@img+sharp-linux-x64', '@img+sharp-libvips-linux-x64', '@koromix+koffi-linux-x64']
-for (const packagePrefix of optionalPackagePrefixes) {
-  if (!entries.some((candidate) => candidate.startsWith(`${packagePrefix}@`))) {
-    throw new Error(`Server runtime 缺少跨平台可选依赖：${packagePrefix}`)
-  }
-}
+      ? ['@img/sharp-win32-x64', '@koromix/koffi-win32-x64']
+      : ['@img/sharp-linux-x64', '@img/sharp-libvips-linux-x64', '@koromix/koffi-linux-x64']
+for (const packageName of optionalPackages) await requirePackageDirectory(packageName)

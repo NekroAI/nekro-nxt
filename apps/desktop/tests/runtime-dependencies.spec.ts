@@ -23,4 +23,41 @@ describe('Desktop runtime dependencies', () => {
     const exclusions = workspace.split('minimumReleaseAgeExclude:')[1]?.split('# Desktop Release')[0] ?? ''
     expect(exclusions).not.toContain('electron@')
   })
+
+  it('materializes a portable Server dependency tree and starts the final packaged runtime', async () => {
+    const desktopRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
+    const prepareScript = await readFile(path.join(desktopRoot, 'scripts/prepare-server-runtime.mjs'), 'utf8')
+    expect(prepareScript).toContain("'--config.node-linker=hoisted'")
+    expect(prepareScript).toContain("'--config.package-import-method=copy'")
+    expect(prepareScript).toContain("'@deepseek-ai/cosmokit'")
+
+    const verifier = await readFile(path.join(desktopRoot, 'scripts/verify-packaged-server-runtime.mjs'), 'utf8')
+    expect(verifier).toContain("ELECTRON_RUN_AS_NODE: '1'")
+    expect(verifier).toContain('/health/ready')
+
+    for (const channel of ['stable', 'preview']) {
+      const previousChannel = process.env['NEKRO_DESKTOP_CHANNEL']
+      process.env['NEKRO_DESKTOP_CHANNEL'] = channel
+      try {
+        const configUrl = new URL(`../electron-builder.config.mjs?runtime-smoke-${channel}`, import.meta.url).href
+        const configModule: unknown = await import(configUrl)
+        if (
+          typeof configModule !== 'object' ||
+          configModule === null ||
+          !('default' in configModule) ||
+          !('verifyPackagedServerRuntime' in configModule)
+        ) {
+          throw new TypeError('electron-builder 配置缺少默认导出')
+        }
+        const config = configModule.default
+        if (typeof config !== 'object' || config === null || !('afterPack' in config)) {
+          throw new TypeError('electron-builder 配置缺少 afterPack 验证')
+        }
+        expect(config.afterPack).toBe(configModule.verifyPackagedServerRuntime)
+      } finally {
+        if (previousChannel === undefined) delete process.env['NEKRO_DESKTOP_CHANNEL']
+        else process.env['NEKRO_DESKTOP_CHANNEL'] = previousChannel
+      }
+    }
+  })
 })
