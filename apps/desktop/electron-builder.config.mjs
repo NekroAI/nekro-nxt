@@ -1,3 +1,4 @@
+import { spawnSync } from 'node:child_process'
 import desktopDistributions from './distributions.json' with { type: 'json' }
 import { desktopArchitectures } from '../../scripts/product-release.mjs'
 
@@ -6,6 +7,12 @@ if (channel !== 'preview' && channel !== 'stable') {
   throw new Error(`NEKRO_DESKTOP_CHANNEL 无效：${channel ?? 'undefined'}`)
 }
 const distribution = desktopDistributions[channel]
+
+export const signMacApplication = ({ app }) => {
+  const result = spawnSync('/usr/bin/codesign', ['--force', '--deep', '--sign', '-', app], { stdio: 'inherit' })
+  if (result.error) throw result.error
+  if (result.status !== 0) throw new Error(`macOS ad-hoc 签署失败：${app}`)
+}
 
 /** @type {import('electron-builder').Configuration} */
 const config = {
@@ -48,6 +55,9 @@ const config = {
     identity: '-',
     hardenedRuntime: false,
     notarize: false,
+    // @electron/osx-sign 会并发遍历完整 server-runtime，在 GitHub macOS runner 上
+    // 可能超过文件句柄上限；原生 codesign --deep 使用同一 ad-hoc 身份且不会触发该问题。
+    sign: signMacApplication,
     // server-runtime 同时携带 darwin-arm64/darwin-x64 N-API prebuild，并在
     // 运行时按 process.arch 选择；mac 产物按架构独立打包，不做 Universal 合并。
     target: [{ target: 'dmg', arch: desktopArchitectures('mac') }],

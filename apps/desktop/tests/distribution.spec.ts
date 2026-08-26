@@ -171,6 +171,7 @@ describe('Desktop product distribution', () => {
           notarize: false,
           target: [{ target: 'dmg', arch: ['arm64', 'x64'] }],
         })
+        expect(config.mac.sign).toBe(configModule.signMacApplication)
         expect(JSON.stringify(config.mac)).not.toContain('universal')
         expect(String(config.artifactName)).toContain('${arch}')
       } finally {
