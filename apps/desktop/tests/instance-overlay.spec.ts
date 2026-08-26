@@ -522,15 +522,17 @@ describe('Desktop instance overlay accessibility contract', { timeout: 15_000 },
     expect(initialGeometry.markTop).toBe(initialGeometry.currentTop)
     expect(initialGeometry.markHeight).toBe(initialGeometry.currentHeight)
     await publishSnapshot(page, [localProfile, remoteProfile], remoteProfile.id)
-    await page.waitForTimeout(220)
     await expect(page.locator('.instance-row.current').count()).resolves.toBe(1)
     await expect(page.locator('.instance:focus-visible').count()).resolves.toBe(0)
-    const movedSelection = await page.evaluate(() => {
-      const mark = document.querySelector('[data-selection-mark]')?.getBoundingClientRect()
-      const current = document.querySelector('[data-profile-id="remote-1"]')?.getBoundingClientRect()
-      return mark && current ? { markTop: mark.top, currentTop: current.top } : undefined
-    })
-    expect(movedSelection?.markTop).toBe(movedSelection?.currentTop)
+    await expect
+      .poll(() =>
+        page.evaluate(() => {
+          const mark = document.querySelector('[data-selection-mark]')?.getBoundingClientRect()
+          const current = document.querySelector('[data-profile-id="remote-1"]')?.getBoundingClientRect()
+          return mark && current ? Math.abs(mark.top - current.top) : Number.POSITIVE_INFINITY
+        }),
+      )
+      .toBeLessThan(0.1)
     await publishSnapshot(page, [localProfile, remoteProfile, httpRemoteProfile], remoteProfile.id)
     await expect.poll(() => page.evaluate(() => document.activeElement?.getAttribute('role'))).toBe('dialog')
     await expect(page.locator('.instance:focus-visible').count()).resolves.toBe(0)
