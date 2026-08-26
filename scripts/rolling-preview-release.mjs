@@ -40,10 +40,7 @@ export function previewUploadTargets(distribution, releaseVersion, platform, arc
 }
 
 export function expectedPreviewAssets(distribution, releaseVersion) {
-  return previewArtifactTargets(distribution, releaseVersion).flatMap(({ artifactName }) => [
-    artifactName,
-    `${artifactName}.receipt.json`,
-  ])
+  return previewArtifactTargets(distribution, releaseVersion).map(({ artifactName }) => artifactName)
 }
 
 export function assertPreviewReceipt(receipt, release, platform, artifactName, arch = 'x64') {
@@ -87,8 +84,7 @@ export function assertPreviewCandidateAssets(rollingRelease, release, distributi
   }
   for (const target of targets) {
     const artifactAsset = assetsByName.get(target.artifactName)
-    const receiptAsset = assetsByName.get(`${target.artifactName}.receipt.json`)
-    const receipt = readReceipt(receiptAsset, target)
+    const receipt = readReceipt(target)
     assertPreviewReceipt(receipt, release, target.platform, target.artifactName, target.arch)
     assertRemoteArtifactIntegrity(artifactAsset, receipt, target.artifactName)
   }
@@ -105,20 +101,42 @@ export function previewReleaseTitle(release) {
   return `NekroNXT Preview ${release.version}`
 }
 
-export function previewReleaseBody(release, repository) {
+export function previewReleaseBody(release, repository, distribution) {
+  const targets = new Map(
+    previewArtifactTargets(distribution, release.version).map((target) => [
+      `${target.platform}/${target.arch}`,
+      target,
+    ]),
+  )
+  const downloadLink = (platform, arch, label) => {
+    const target = targets.get(`${platform}/${arch}`)
+    if (!target) throw new Error(`滚动预览版缺少下载目标：${platform}/${arch}`)
+    const url = `https://github.com/${repository}/releases/download/${ROLLING_PREVIEW_TAG}/${target.artifactName}`
+    return `[${label}](${url})`
+  }
   return [
-    '这是 `main` 最新通过完整 CI、四类桌面构建与服务端镜像构建的滚动预览版。`preview` 标签和本页面会在下一次成功构建后前移。',
+    '> 这是 `main` 最新通过完整 CI 的滚动预览版；下一次成功构建会更新本页面。',
+    '',
+    '## 客户端下载',
+    '',
+    '| 平台 | 适用设备 | 安装包 |',
+    '| --- | --- | --- |',
+    `| macOS | Apple Silicon（arm64） | ${downloadLink('mac', 'arm64', '下载 DMG')} |`,
+    `| macOS | Intel（x64） | ${downloadLink('mac', 'x64', '下载 DMG')} |`,
+    `| Windows | x64 | ${downloadLink('win', 'x64', '下载安装程序')} |`,
+    `| Linux | x64 | ${downloadLink('linux', 'x64', '下载 AppImage')} |`,
+    '',
+    '安装包的版本、文件大小和 SHA-256 已由发布流程核对。',
+    '',
+    '## 服务端',
+    '',
+    `镜像：\`ghcr.io/${repository.toLowerCase()}:preview\` · [部署说明](https://github.com/${repository}/blob/main/docs/guide/server.md)`,
+    '',
+    '## 版本信息',
     '',
     `- 版本：\`${release.version}\``,
     `- Release ID：\`${release.releaseId}\``,
     `- Commit：[\`${release.commit.slice(0, 12)}\`](https://github.com/${repository}/commit/${release.commit})`,
-    `- 服务端镜像：\`ghcr.io/${repository.toLowerCase()}:preview\``,
-    '',
-    '当前安装包尚未签名；请同时下载对应平台的 `receipt.json` 核对 SHA-256。',
-    '',
-    '- macOS：Apple Silicon 选择 `-mac-arm64-` 包，Intel 选择 `-mac-x64-` 包；',
-    '- Windows：x64 `setup.exe`；',
-    '- Linux：x64 AppImage。',
   ].join('\n')
 }
 
@@ -220,7 +238,7 @@ async function readContext() {
 
 async function ensureRollingRelease() {
   const repository = requireRepository()
-  const { release } = await readContext()
+  const { release, distribution } = await readContext()
   const existing = readRollingRelease(repository)
   if (existing) {
     if (!existing.prerelease || existing.tag_name !== ROLLING_PREVIEW_TAG || existing.immutable) {
@@ -242,7 +260,7 @@ async function ensureRollingRelease() {
       '-f',
       `name=${previewReleaseTitle(release)}`,
       '-f',
-      `body=${previewReleaseBody(release, repository)}`,
+      `body=${previewReleaseBody(release, repository, distribution)}`,
       '-F',
       'draft=true',
       '-F',
@@ -279,7 +297,7 @@ async function uploadPlatformAssets() {
     assertPreviewReceipt(receipt, release, target.platform, artifactName, target.arch)
     assertArtifactIntegrity(receipt, integrity, artifactName)
 
-    runGh(['release', 'upload', ROLLING_PREVIEW_TAG, artifact, receiptPath, '--clobber', '--repo', repository], {
+    runGh(['release', 'upload', ROLLING_PREVIEW_TAG, artifact, '--clobber', '--repo', repository], {
       stdio: 'inherit',
     })
   }
@@ -319,16 +337,6 @@ function cleanupPreviewCandidateAssets(repository, rollingRelease, names, candid
   console.log(`${reason}；已清理本次候选附件。`)
 }
 
-function readRemoteReceipt(repository, asset) {
-  const result = runGh([
-    'api',
-    '-H',
-    'Accept: application/octet-stream',
-    `/repos/${repository}/releases/assets/${asset.id}`,
-  ])
-  return JSON.parse(String(result.stdout))
-}
-
 async function finalizeRollingRelease() {
   const repository = requireRepository()
   const buildResult = commandOption('--build-result')
@@ -353,9 +361,17 @@ async function finalizeRollingRelease() {
     return
   }
 
-  assertPreviewCandidateAssets(rollingRelease, release, distribution, (receiptAsset) =>
-    readRemoteReceipt(repository, receiptAsset),
-  )
+  const receiptsDirectoryInput = commandOption('--receipts-dir')
+  if (typeof receiptsDirectoryInput !== 'string' || receiptsDirectoryInput.trim() === '') {
+    throw new Error('滚动预览版最终校验缺少内部 receipt 目录。')
+  }
+  const receiptsDirectory = path.resolve(repositoryRoot, receiptsDirectoryInput)
+  const receipts = new Map()
+  for (const target of previewArtifactTargets(distribution, release.version)) {
+    const receiptPath = path.join(receiptsDirectory, `${target.artifactName}.receipt.json`)
+    receipts.set(target.artifactName, JSON.parse(await readFile(receiptPath, 'utf8')))
+  }
+  assertPreviewCandidateAssets(rollingRelease, release, distribution, (target) => receipts.get(target.artifactName))
 
   const remoteMain = ghJson(['api', `/repos/${repository}/git/ref/heads/main`]).object?.sha
   if (remoteMain !== release.commit) {
@@ -378,7 +394,7 @@ async function finalizeRollingRelease() {
     '-f',
     `name=${previewReleaseTitle(release)}`,
     '-f',
-    `body=${previewReleaseBody(release, repository)}`,
+    `body=${previewReleaseBody(release, repository, distribution)}`,
     '-F',
     'draft=false',
     '-F',

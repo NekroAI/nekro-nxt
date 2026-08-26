@@ -21,7 +21,7 @@ const release = {
   commit: '0123456789abcdef0123456789abcdef01234567',
 }
 
-test('rolling Preview derives the eight public assets from the Product Release version', () => {
+test('rolling Preview exposes only the four platform installers', () => {
   assert.equal(
     previewArtifactName(distribution, release.version, 'mac', 'arm64'),
     'nekro-nxt-preview-mac-arm64-v1.4.0-20250615-150640utc.g0123456789ab.dmg',
@@ -40,14 +40,12 @@ test('rolling Preview derives the eight public assets from the Product Release v
   )
   assert.throws(() => previewArtifactName(distribution, release.version, 'mac'), /产物架构/u)
   const assets = expectedPreviewAssets(distribution, release.version)
-  assert.equal(assets.length, 8)
+  assert.equal(assets.length, 4)
   assert.deepEqual(
     assets.filter((name) => name.startsWith('nekro-nxt-preview-mac-')),
     [
       'nekro-nxt-preview-mac-arm64-v1.4.0-20250615-150640utc.g0123456789ab.dmg',
-      'nekro-nxt-preview-mac-arm64-v1.4.0-20250615-150640utc.g0123456789ab.dmg.receipt.json',
       'nekro-nxt-preview-mac-x64-v1.4.0-20250615-150640utc.g0123456789ab.dmg',
-      'nekro-nxt-preview-mac-x64-v1.4.0-20250615-150640utc.g0123456789ab.dmg.receipt.json',
     ],
   )
 })
@@ -122,15 +120,17 @@ test('rolling Preview finalize plan validates all four artifacts and remote size
       },
     ]),
   )
-  const assets = targets.flatMap((target, index) => [
-    { id: index * 2 + 1, name: target.artifactName, size: 256, digest: `sha256:${sha256}` },
-    { id: index * 2 + 2, name: `${target.artifactName}.receipt.json`, size: 512 },
-  ])
+  const assets = targets.map((target, index) => ({
+    id: index + 1,
+    name: target.artifactName,
+    size: 256,
+    digest: `sha256:${sha256}`,
+  }))
   const visited = []
   assert.doesNotThrow(() =>
-    assertPreviewCandidateAssets({ assets }, release, distribution, (receiptAsset, target) => {
+    assertPreviewCandidateAssets({ assets }, release, distribution, (target) => {
       visited.push(`${target.platform}/${target.arch}`)
-      return receipts.get(receiptAsset.name)
+      return receipts.get(`${target.artifactName}.receipt.json`)
     }),
   )
   assert.deepEqual(visited, ['mac/arm64', 'mac/x64', 'win/x64', 'linux/x64'])
@@ -160,11 +160,21 @@ test('failed rerun preserves assets when preview tag already points at the candi
 
 test('rolling Preview copy identifies its moving channel and immutable Product Release', () => {
   assert.equal(previewReleaseTitle(release), `NekroNXT Preview ${release.version}`)
-  const body = previewReleaseBody(release, 'NekroAI/nekro-nxt')
+  const body = previewReleaseBody(release, 'NekroAI/nekro-nxt', distribution)
   assert.match(body, /滚动预览版/u)
   assert.match(body, new RegExp(release.releaseId.replaceAll('+', '\\+'), 'u'))
   assert.match(body, /NekroAI\/nekro-nxt\/commit\/0123456789abcdef/u)
   assert.match(body, /ghcr\.io\/nekroai\/nekro-nxt:preview/u)
+  assert.match(body, /SHA-256 已由发布流程核对/u)
+  assert.doesNotMatch(body, /receipt\.json/u)
+  assert.match(body, /\| macOS \| Apple Silicon（arm64） \| \[下载 DMG\]/u)
+  assert.match(body, /\| macOS \| Intel（x64） \| \[下载 DMG\]/u)
+  assert.match(body, /\| Windows \| x64 \| \[下载安装程序\]/u)
+  assert.match(body, /\| Linux \| x64 \| \[下载 AppImage\]/u)
+  assert.match(
+    body,
+    /releases\/download\/preview\/nekro-nxt-preview-mac-arm64-v1\.4\.0-20250615-150640utc\.g0123456789ab\.dmg/u,
+  )
 })
 
 test('rolling Preview derives a lowercase commit-addressed Server candidate image', () => {

@@ -28,7 +28,7 @@ Desktop 使用 Renderer 自绘的统一 48px 品牌顶栏，不显示系统标�
 
 产品版本的唯一手工来源是仓库根 `package.json#version`。正式版使用原值 `X.Y.Z`；预览版按 Git commit 时间与 commit 短哈希确定性派生为 `X.Y.Z-YYYYMMDD-HHmmssutc.g<commit 前 12 位>`，因此不同 commit 的版本和附件名必然不同。Preview 只由产品名和产物前缀表达一次，版本号不再重复加入 `preview`。两类安装包都写入当前 commit、`releaseId`、正整数 bytes 和 SHA-256 receipt；上传前重新计算本地安装包的 bytes 与 SHA-256，滚动发布时再核对 GitHub 安装包附件大小及可用 digest。正式发布 `X.Y.Z` 时，公开仓库的 `vX.Y.Z` tag 必须指向 receipt 中的 commit；本地构建命令只生成文件，不隐式上传。
 
-`main` 的 push 在完整 CI 通过后由三个原生 GitHub runner 构建 Preview，并直接更新固定 `preview` tag 对应的滚动 Prerelease，不使用 Actions Artifact 分发客户端。Windows 与 Linux runner 各上传安装包和 receipt，macOS runner 上传 arm64/x64 两个 DMG 和两个 receipt，共 8 项附件。全部附件与 receipt 验证成功、且候选 commit 仍是远端 `main` 最新 HEAD 时才前移 `preview`；失败或已经过期的构建只在 `preview` tag 尚未指向该候选 commit 时清理自己的候选附件，同 commit workflow 重跑失败不会删除已经发布的当前附件。滚动页只保留最新一组附件，正式版 `vX.Y.Z` tag 不可移动。
+`main` 的 push 在完整 CI 通过后由三个原生 GitHub runner 构建 Preview，并直接更新固定 `preview` tag 对应的滚动 Prerelease。公开 Release 只保留 Windows、Linux、macOS arm64 与 macOS x64 四个安装包；各 runner 生成的 receipt 作为短期 Actions Artifact 交给最终发布 job，不进入用户下载列表。四个安装包与内部 receipt 验证成功、且候选 commit 是远端 `main` 最新 HEAD 时才前移 `preview`；失败或已经过期的构建只在 `preview` tag 尚未指向该候选 commit 时清理自己的候选安装包，同 commit workflow 重跑失败不会删除已经发布的当前附件。正式版 `vX.Y.Z` tag 不可移动。
 
 在 macOS 维护机上可以一次生成三端产物；macOS 仍必须由 macOS 构建。未签名 Windows 包关闭依赖 Wine 的 EXE 资源编辑，保留 NSIS 安装身份和完整应用内容。Windows 引导安装保留“仅当前用户/所有用户”两种范围；electron-builder 固定使用包含安全 `UserProgramFiles` 路径读取修复的 `26.15.3`，不得降级到仍会在当前用户路径解析阶段越界退出的版本。获得签名证书后恢复 EXE 资源编辑与签名：
 

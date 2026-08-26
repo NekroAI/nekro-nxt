@@ -118,6 +118,13 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - name: Build Desktop Preview
         run: pnpm desktop:preview --platform ${{ matrix.target }}
+      - name: Store receipts for final verification
+        uses: actions/upload-artifact@v4
+        with:
+          name: preview-receipts-${{ matrix.target }}-${{ github.sha }}-${{ github.run_attempt }}
+          path: apps/desktop/release/preview/*.receipt.json
+          if-no-files-found: error
+          retention-days: 1
       - name: Upload platform assets to rolling Preview
         env:
           GH_TOKEN: ${{ github.token }}
@@ -163,10 +170,17 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22.23.2
+      - name: Download receipts for final verification
+        if: needs.preview-desktop.result == 'success' && needs.preview-server.result == 'success'
+        uses: actions/download-artifact@v4
+        with:
+          pattern: preview-receipts-*-${{ github.sha }}-${{ github.run_attempt }}
+          path: .local/preview-receipts
+          merge-multiple: true
       - name: Publish or clean rolling Preview
         env:
           GH_TOKEN: ${{ github.token }}
-        run: node scripts/rolling-preview-release.mjs finalize --build-result ${{ needs.preview-desktop.result == 'success' && needs.preview-server.result == 'success' && 'success' || 'failure' }}
+        run: node scripts/rolling-preview-release.mjs finalize --receipts-dir .local/preview-receipts --build-result ${{ needs.preview-desktop.result == 'success' && needs.preview-server.result == 'success' && 'success' || 'failure' }}
       - uses: docker/login-action@v3
         if: needs.preview-desktop.result == 'success' && needs.preview-server.result == 'success'
         with:

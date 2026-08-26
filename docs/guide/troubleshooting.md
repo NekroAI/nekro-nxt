@@ -2,7 +2,7 @@
 
 ## 安装包被系统拦截
 
-当前 Preview 尚未签名。确认下载来自 `NekroAI/nekro-nxt` Release，并用同名 `receipt.json` 核对 SHA-256。不要从第三方链接下载带 NekroNXT 品牌的安装包。
+当前 Preview 尚未签名。确认下载来自 `NekroAI/nekro-nxt` Release；GitHub 资产列表会显示安装包的 SHA-256。不要从第三方链接下载带 NekroNXT 品牌的安装包。
 
 ## 桌面版一直显示正在连接或无法连接
 

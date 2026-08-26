@@ -12,7 +12,7 @@
 - [ ] 在全新目录检出待公开 commit，确认构建和文档不依赖 `.local`；
 - [ ] 从 README 走通桌面版、服务端、模型配置、创建智能体和排障入口；
 - [ ] 确认 `ghcr.io/nekroai/nekro-nxt:preview` 可以在未登录 GitHub 的环境中拉取和启动；
-- [ ] Release、receipt、README 和用户文档不存在失效链接或未实现承诺。
+- [ ] Release、内部 receipt、README 和用户文档不存在失效链接或未实现承诺。
 
 ## GitHub About
 
