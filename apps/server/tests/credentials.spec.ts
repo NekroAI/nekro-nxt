@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, rm, stat } from 'node:fs/promises'
+import { chmod, mkdir, mkdtemp, readFile, rm, stat } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
@@ -18,12 +18,26 @@ describe('LocalCredentialStore', () => {
     const reference = await new LocalCredentialStore(root).save('real-test-secret')
 
     expect(reference).toMatch(/^credential:local:[a-f0-9]{32}$/u)
-    expect((await stat(root)).mode & 0o777).toBe(0o700)
+    if (process.platform !== 'win32') expect((await stat(root)).mode & 0o777).toBe(0o700)
     const files = await import('node:fs/promises').then(({ readdir }) => readdir(root))
     expect(files).toHaveLength(1)
-    expect((await stat(path.join(root, files[0]!))).mode & 0o777).toBe(0o600)
+    if (process.platform !== 'win32') expect((await stat(path.join(root, files[0]!))).mode & 0o777).toBe(0o600)
     expect(await readFile(path.join(root, files[0]!), 'utf8')).toBe('real-test-secret')
     expect(await new LocalCredentialStore(root).resolve(reference)).toBe('real-test-secret')
+  })
+
+  it.runIf(process.platform !== 'win32')('does not apply POSIX directory modes on Windows', async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), 'nekro-nxt-credentials-win32-'))
+    temporaryDirectories.push(directory)
+    const root = path.join(directory, 'credentials')
+    await mkdir(root, { mode: 0o755 })
+    await chmod(root, 0o755)
+
+    const store = new LocalCredentialStore(root, { platform: 'win32' })
+    const reference = await store.save('windows-test-secret')
+
+    expect((await stat(root)).mode & 0o777).toBe(0o755)
+    expect(await store.resolve(reference)).toBe('windows-test-secret')
   })
 
   it('rejects forged references and deletes a committed credential', async () => {

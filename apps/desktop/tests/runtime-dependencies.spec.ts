@@ -34,6 +34,8 @@ describe('Desktop runtime dependencies', () => {
     const verifier = await readFile(path.join(desktopRoot, 'scripts/verify-packaged-server-runtime.mjs'), 'utf8')
     expect(verifier).toContain("ELECTRON_RUN_AS_NODE: '1'")
     expect(verifier).toContain('/health/ready')
+    expect(verifier).toContain('/api/settings/notifications')
+    expect(verifier).toContain('deviceKeyConfigured')
 
     for (const channel of ['stable', 'preview']) {
       const previousChannel = process.env['NEKRO_DESKTOP_CHANNEL']

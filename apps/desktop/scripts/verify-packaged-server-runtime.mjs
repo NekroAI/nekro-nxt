@@ -81,6 +81,28 @@ const exited = new Promise((resolve, reject) => {
 const deadline = Date.now() + 60_000
 let ready = false
 let lastError
+const verifyCredentialPersistence = async () => {
+  const response = await globalThis.fetch(`http://127.0.0.1:${port}/api/settings/notifications`, {
+    method: 'PUT',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({
+      system: { enabled: true },
+      bark: {
+        enabled: false,
+        serverUrl: 'https://push.example.test',
+        deviceKey: 'desktop-runtime-credential-smoke',
+      },
+      events: { 'dynamic-client-approval-requested': true },
+    }),
+    signal: globalThis.AbortSignal.timeout(5_000),
+  })
+  const body = await response.text()
+  if (!response.ok) throw new Error(`凭据写入验证失败：HTTP ${response.status} ${body}`)
+  const settings = JSON.parse(body)
+  if (settings?.bark?.deviceKeyConfigured !== true) {
+    throw new Error(`凭据写入验证响应不匹配：${body}`)
+  }
+}
 try {
   while (Date.now() < deadline) {
     const result = await Promise.race([
@@ -110,7 +132,8 @@ try {
     await delay(200)
   }
   if (!ready) throw new Error('Desktop Server 未能在 60 秒内就绪。', { cause: lastError })
-  console.log(`[desktop-runtime] 最终打包目录已通过 Server readiness 验证：${releaseId}`)
+  await verifyCredentialPersistence()
+  console.log(`[desktop-runtime] 最终打包目录已通过 Server readiness 与凭据持久化验证：${releaseId}`)
 } catch (error) {
   const detail = output.join('').trim()
   if (detail) console.error(detail)

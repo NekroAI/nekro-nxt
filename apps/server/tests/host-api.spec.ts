@@ -980,14 +980,18 @@ describe('NekroNxt Server domain API (WebServer seam)', () => {
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify({
           system: { enabled: true },
-          bark: { enabled: false, serverUrl: 'https://push.example.test' },
+          bark: {
+            enabled: false,
+            serverUrl: 'https://push.example.test',
+            deviceKey: 'host-api-test-device-key',
+          },
           events: { 'dynamic-client-approval-requested': true },
         }),
       })
       expect(updatedResponse.ok).toBe(true)
       expect(HostApiContracts.updateNotificationSettings.parseResponse(await updatedResponse.json())).toMatchObject({
         revision: 1,
-        bark: { serverUrl: 'https://push.example.test', deviceKeyConfigured: false },
+        bark: { serverUrl: 'https://push.example.test', deviceKeyConfigured: true },
       })
 
       const testResponse = await fetch(`${origin}/api/settings/notifications/test-system`, { method: 'POST' })
