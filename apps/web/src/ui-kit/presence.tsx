@@ -83,6 +83,7 @@ export const Enter = forwardRef<HTMLDivElement, EnterProps>(function Enter({ kin
     <motion.div
       ref={ref}
       {...props}
+      data-nxt-enter-kind={kind}
       variants={enterKinds[kind]}
       initial={reduce ? false : 'hidden'}
       animate="visible"

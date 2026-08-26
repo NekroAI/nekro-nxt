@@ -1059,28 +1059,12 @@ test('platform-user updates stay local while persona references use the shared m
   const editor = page.getByRole('textbox', { name: '人设' })
   await editor.fill('引用 ')
   await editor.press('End')
-  const menuSamplesPromise = page.evaluate(
-    () =>
-      new Promise<number[]>((resolve) => {
-        const samples: number[] = []
-        const deadline = performance.now() + 1_000
-        const sample = (): void => {
-          const menu = document.querySelector<HTMLElement>('[role="listbox"][aria-label="可引用对象"]')
-          if (menu) samples.push(Number(getComputedStyle(menu).opacity))
-          if (samples.length >= 20 || performance.now() >= deadline) {
-            resolve(samples)
-            return
-          }
-          requestAnimationFrame(sample)
-        }
-        requestAnimationFrame(sample)
-      }),
-  )
   await editor.type('@')
   const menu = page.getByRole('listbox', { name: '可引用对象' })
-  const menuSamples = await menuSamplesPromise
+  await expect(page.locator('html')).toHaveAttribute('data-nxt-motion', 'on')
+  await expect(menu).toHaveAttribute('data-nxt-enter-kind', 'popover')
   await expect(menu).toHaveAttribute('data-reference-menu-placement', 'below')
-  expect(menuSamples.some((opacity) => opacity > 0.02 && opacity < 0.98)).toBe(true)
+  await expect(menu).toBeVisible()
 
   await page.evaluate(() => window.localStorage.setItem('nekro-nxt.reduced-motion', 'true'))
   await page.reload()

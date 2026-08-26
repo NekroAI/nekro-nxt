@@ -608,19 +608,21 @@ export function PromptReferenceEditor({
           .listPlatformUsers({ query: reference.labelSnapshot, limit: 100 })
         return { reference, user: result.items.find((item) => item.identityId === reference.targetId) }
       }),
-    ).then((results) => {
-      if (!active) return
-      setKnownUsers((current) => {
-        const next = new Map(current)
-        for (const result of results) if (result?.user) next.set(result.reference.targetId, result.user)
-        return next
+    )
+      .then((results) => {
+        if (!active) return
+        setKnownUsers((current) => {
+          const next = new Map(current)
+          for (const result of results) if (result?.user) next.set(result.reference.targetId, result.user)
+          return next
+        })
+        setResolvedUserIds((current) => {
+          const next = new Set(current)
+          userReferences.forEach((reference) => next.add(reference.targetId))
+          return next
+        })
       })
-      setResolvedUserIds((current) => {
-        const next = new Set(current)
-        userReferences.forEach((reference) => next.add(reference.targetId))
-        return next
-      })
-    })
+      .catch(() => undefined)
     return () => {
       active = false
     }
@@ -640,6 +642,7 @@ export function PromptReferenceEditor({
             (current) => new Map([...current, ...result.items.map((item) => [item.identityId, item] as const)]),
           )
         })
+        .catch(() => undefined)
     }, 160)
     return () => {
       active = false
