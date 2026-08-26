@@ -162,16 +162,22 @@ describe('Desktop product distribution', () => {
           throw new TypeError('electron-builder 配置缺少默认导出')
         }
         const config: unknown = configModule.default
-        if (typeof config !== 'object' || config === null || !('mac' in config) || !('artifactName' in config)) {
+        if (
+          typeof config !== 'object' ||
+          config === null ||
+          !('mac' in config) ||
+          !('artifactName' in config) ||
+          !('signMacApplication' in configModule)
+        ) {
           throw new TypeError('electron-builder 配置缺少 mac/artifactName 设置')
         }
         expect(config.mac).toMatchObject({
           identity: '-',
           hardenedRuntime: false,
           notarize: false,
+          sign: configModule.signMacApplication,
           target: [{ target: 'dmg', arch: ['arm64', 'x64'] }],
         })
-        expect(config.mac.sign).toBe(configModule.signMacApplication)
         expect(JSON.stringify(config.mac)).not.toContain('universal')
         expect(String(config.artifactName)).toContain('${arch}')
       } finally {
