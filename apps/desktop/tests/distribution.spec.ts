@@ -116,8 +116,8 @@ describe('Desktop product distribution', () => {
         throw new TypeError('electron-builder 配置缺少默认导出')
       }
       const config = configModule.default
-      if (typeof config !== 'object' || config === null || !('dmg' in config)) {
-        throw new TypeError('electron-builder 配置缺少 DMG 设置')
+      if (typeof config !== 'object' || config === null || !('dmg' in config) || !('extraResources' in config)) {
+        throw new TypeError('electron-builder 配置缺少 DMG 或附加资源设置')
       }
       expect(config.dmg).toMatchObject({
         iconSize: 108,
@@ -127,6 +127,12 @@ describe('Desktop product distribution', () => {
           { x: 470, y: 220, type: 'link', path: '/Applications' },
         ],
       })
+      expect(config.extraResources).toEqual(
+        expect.arrayContaining([
+          { from: '../../LICENSE', to: 'LICENSE' },
+          { from: '../../NOTICE', to: 'NOTICE' },
+        ]),
+      )
     } finally {
       if (previousChannel === undefined) delete process.env['NEKRO_DESKTOP_CHANNEL']
       else process.env['NEKRO_DESKTOP_CHANNEL'] = previousChannel

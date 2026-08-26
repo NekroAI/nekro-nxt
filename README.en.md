@@ -46,6 +46,6 @@ The complete user documentation is currently maintained in Chinese: [Quick start
 
 NekroNXT is an early preview. The main user flow works today, while adapters, recovery coverage, and distribution are still being expanded.
 
-The software license will be added by the project owner before public release. Brand and character assets are separately reserved; see [Brand guidelines](docs/BRAND.md) and [`NOTICE`](NOTICE).
+The software source code is licensed under [GNU AGPL v3.0](LICENSE) (`AGPL-3.0-only`). Brand and character assets are not included in that license; see the [brand guidelines](docs/BRAND.md) and [`NOTICE`](NOTICE).
 
 Copyright © 2026 NekroAI contributors.

@@ -327,7 +327,7 @@ export const startNekroServer = async (options: StartServerOptions): Promise<Nek
     version: SERVER_PACKAGE_VERSION,
     releaseId,
     repositoryUrl: 'https://github.com/NekroAI/nekro-nxt',
-    licenseSpdx: null,
+    licenseSpdx: 'AGPL-3.0-only',
   })
   const registerHealthRoute = (routePath: '/health/live' | '/health/ready', status: 'live' | 'ready'): (() => void) =>
     webContext.webServer.register({

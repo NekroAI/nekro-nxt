@@ -72,7 +72,7 @@ const productSnapshot = HostApiContracts.snapshot.response.parse({
     version: '0.0.0-preview',
     releaseId: '0.0.0-visual-review',
     repositoryUrl: 'https://github.com/NekroAI/nekro-nxt',
-    licenseSpdx: null,
+    licenseSpdx: 'AGPL-3.0-only',
   },
   capabilityAvailability: {
     subagents: { available: true },
@@ -598,7 +598,7 @@ test('about identity stays readable across supported desktop sizes and themes', 
       await page.goto('/settings?tab=about')
       await expect(page.getByRole('heading', { name: 'NekroNXT Preview' })).toBeVisible()
       await expect(page.getByText('0.0.0-visual-review', { exact: true })).toBeVisible()
-      await expect(page.getByText('待项目所有者补充', { exact: true })).toBeVisible()
+      await expect(page.getByText('AGPL-3.0-only', { exact: true })).toBeVisible()
       const logo = page.getByRole('img', { name: 'NekroNXT Logo' })
       await expect(logo).toBeVisible()
       await expect.poll(() => logo.evaluate((image: HTMLImageElement) => image.naturalWidth)).toBeGreaterThan(0)

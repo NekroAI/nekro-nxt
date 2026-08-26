@@ -91,6 +91,6 @@ NekroNXT 处于早期预览阶段。创建智能体、群聊接入、频道对�
 
 安全问题请按[安全策略](docs/SECURITY.md)私密报告。社区交流遵循[行为准则](docs/CODE_OF_CONDUCT.md)。
 
-项目所有者将在公开前补充代码许可证；品牌与角色素材使用边界见[品牌规范](docs/BRAND.md)和 [`NOTICE`](NOTICE)。
+软件代码以 [GNU AGPL v3.0](LICENSE)（SPDX：`AGPL-3.0-only`）授权；品牌与角色素材不属于该授权范围，使用边界见[品牌规范](docs/BRAND.md)和 [`NOTICE`](NOTICE)。
 
 Copyright © 2026 NekroAI contributors.

@@ -30,6 +30,6 @@ describe('about page', () => {
     expect(markup).toContain('NekroNXT')
     expect(markup).toContain('Release ID')
     expect(markup).toContain('暂无')
-    expect(markup).toContain('待项目所有者补充')
+    expect(markup).toContain('AGPL-3.0-only')
   })
 })

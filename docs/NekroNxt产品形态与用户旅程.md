@@ -66,7 +66,7 @@ Desktop 中每个服务实例都是独立工作区。切换实例只更换当前
 
 工作模式的产品路由统一位于 `/work`：频道、智能体、新建智能体和创造分别使用 `/work/channels/:channelId`、`/work/agents/:agentId`、`/work/agents/new`、`/work/creator`。旧路径仅用于兼容重定向。
 
-设置对象列包含模型供应商、系统扩展、DSH 扩展、通知、外观和关于。通知页先展示系统通知，再展示 Bark：渠道开关控制投递方式，通知项目开关控制具体功能事件是否推送；Bark Device Key 只写入本机凭据目录，页面只显示是否已配置。服务器实例的系统通知由在线且已授权通知的 Desktop 客户端实时转发，离线时段不补发；Bark 由 Server 直接推送。`/settings?tab=about` 展示 NekroNXT、NekroAI、产品版本、Release ID、代码仓库、软件许可证状态和品牌版权；旧 Server 缺少实时产品元数据时相应字段显示“暂无”，不阻断其他设置。
+设置对象列包含模型供应商、系统扩展、DSH 扩展、通知、外观和关于。通知页先展示系统通知，再展示 Bark：渠道开关控制投递方式，通知项目开关控制具体功能事件是否推送；Bark Device Key 只写入本机凭据目录，页面只显示是否已配置。服务器实例的系统通知由在线且已授权通知的 Desktop 客户端实时转发，离线时段不补发；Bark 由 Server 直接推送。`/settings?tab=about` 展示 NekroNXT、NekroAI、产品版本、Release ID、代码仓库、`AGPL-3.0-only` 软件许可证和品牌版权；旧 Server 缺少实时产品元数据时使用构建期身份与许可证，无法可靠推断的 Release ID 显示“暂无”，不阻断其他设置。
 
 避免使用一个“在线”绿点概括所有状态：
 

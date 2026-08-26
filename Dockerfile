@@ -25,6 +25,7 @@ RUN apt-get update \
 
 COPY --from=build --chown=root:root /release/server /opt/nekro/server
 COPY --from=build --chown=root:root /workspace/apps/web/dist /opt/nekro/web/dist
+COPY --from=build --chown=root:root /workspace/LICENSE /workspace/NOTICE /opt/nekro/
 RUN chmod -R a=rX /opt/nekro
 
 ENV NODE_ENV=production \

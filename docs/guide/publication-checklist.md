@@ -4,7 +4,7 @@
 
 ## 必须完成
 
-- [ ] 提交项目所有者选定的代码许可证，并将 SPDX 标识同步到所有 workspace `package.json`；
+- [x] 提交 GNU AGPL v3.0 代码许可证，并将 `AGPL-3.0-only` 同步到所有 workspace `package.json`；
 - [ ] `pnpm check`、`pnpm test`、`pnpm build`、`pnpm test:journey` 全部通过；
 - [ ] `pnpm brand:check` 通过，Stable/Preview 小尺寸图标和真实安装器画面完成验收；
 - [ ] 使用固定版本 Gitleaks 或等效工具扫描完整 Git 历史；

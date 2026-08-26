@@ -9,6 +9,7 @@ const fallbackMetadata = {
   organizationName: 'NekroAI',
   version: compiledProductVersion,
   repositoryUrl: 'https://github.com/NekroAI/nekro-nxt',
+  licenseSpdx: 'AGPL-3.0-only',
 } as const
 
 function Fact({ label, children }: { readonly label: string; readonly children: ReactNode }) {
@@ -27,7 +28,7 @@ export function AboutPage({ metadata }: { readonly metadata?: Partial<ProductMet
     version: metadata?.version?.trim() || fallbackMetadata.version,
     releaseId: metadata?.releaseId?.trim() || '',
     repositoryUrl: metadata?.repositoryUrl?.trim() || fallbackMetadata.repositoryUrl,
-    licenseSpdx: metadata?.licenseSpdx?.trim() || null,
+    licenseSpdx: metadata?.licenseSpdx?.trim() || fallbackMetadata.licenseSpdx,
   }
   return (
     <section className={styles.about} aria-label="关于 NekroNXT">
@@ -53,12 +54,19 @@ export function AboutPage({ metadata }: { readonly metadata?: Partial<ProductMet
             NekroAI/nekro-nxt
           </a>
         </Fact>
-        <Fact label="软件许可证">{product.licenseSpdx || '待项目所有者补充'}</Fact>
+        <Fact label="软件许可证">
+          <a href="https://github.com/NekroAI/nekro-nxt/blob/main/LICENSE" target="_blank" rel="noreferrer">
+            {product.licenseSpdx}
+          </a>
+        </Fact>
       </dl>
 
       <div className={styles.notice}>
         <strong>版权与品牌</strong>
-        <p>代码版权归 NekroAI contributors。Logo、水月荧、角色插画和宣传素材版权归 NekroAI，且不属于代码许可证。</p>
+        <p>
+          代码版权归 NekroAI contributors，并按 GNU AGPL v3.0
+          授权，在适用法律允许范围内不提供担保。Logo、水月荧、角色插画和宣传素材版权归 NekroAI，且不属于代码许可证。
+        </p>
         <div className={styles.links}>
           <a href="https://github.com/NekroAI/nekro-nxt/blob/main/NOTICE" target="_blank" rel="noreferrer">
             版权声明

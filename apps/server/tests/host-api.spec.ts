@@ -195,7 +195,7 @@ describe('NekroNxt Server domain API (WebServer seam)', () => {
         version: '0.0.0',
         releaseId: '@nekro-nxt/server@0.0.0',
         repositoryUrl: 'https://github.com/NekroAI/nekro-nxt',
-        licenseSpdx: null,
+        licenseSpdx: 'AGPL-3.0-only',
       })
       expect(importedSnapshot.agents).toEqual([
         expect.objectContaining({ id: importedAgent.definition.id, channels: [] }),

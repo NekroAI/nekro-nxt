@@ -466,7 +466,7 @@ export const createNekroHostApi = (
     version: '0.0.0',
     releaseId: '@nekro-nxt/server@0.0.0',
     repositoryUrl: 'https://github.com/NekroAI/nekro-nxt',
-    licenseSpdx: null,
+    licenseSpdx: 'AGPL-3.0-only',
   },
 ): NekroHostApi => {
   const disposers: Array<() => void> = []

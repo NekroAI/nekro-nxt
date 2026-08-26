@@ -32,6 +32,8 @@ const config = {
     'package.json',
   ],
   extraResources: [
+    { from: '../../LICENSE', to: 'LICENSE' },
+    { from: '../../NOTICE', to: 'NOTICE' },
     { from: '../web/dist', to: 'web-dist' },
     { from: 'dist/runtime', to: 'server-runtime', filter: ['**/*', '!node_modules{,/**/*}'] },
     { from: 'dist/runtime/node_modules', to: 'server-runtime/node_modules', filter: ['**/*'] },

@@ -60,3 +60,11 @@ test('Docker build context excludes every repository credential pattern', async 
     assert.ok(entries.has(pattern), `Docker ignore 缺少敏感模式：${pattern}`)
   }
 })
+
+test('Server image carries the software license and reserved-brand notice', async () => {
+  const dockerfile = await readFile(path.join(repositoryRoot, 'Dockerfile'), 'utf8')
+  assert.match(
+    dockerfile,
+    /COPY --from=build --chown=root:root \/workspace\/LICENSE \/workspace\/NOTICE \/opt\/nekro\//u,
+  )
+})
