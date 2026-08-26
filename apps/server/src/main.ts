@@ -29,12 +29,13 @@ import { fileURLToPath } from 'node:url'
 import { NekroRuntime } from './bootstrap.js'
 import { createNekroHostApi } from './host-api.js'
 import { initializeServerIdentity, startManagementEdge, type ManagementEdgeHandle } from './management-edge.js'
+import { PRODUCT_VERSION } from './product-version.js'
 
 const resolveRoot = (input: string): string => (path.isAbsolute(input) ? input : path.resolve(process.cwd(), input))
 
 const PROVIDER_ROUTE_PATTERN = /^[a-z0-9][a-z0-9-]*$/u
 const SERVER_PACKAGE_NAME = '@nekro-nxt/server'
-const SERVER_PACKAGE_VERSION = '0.0.0'
+const SERVER_PACKAGE_VERSION = PRODUCT_VERSION
 
 export const defaultReleaseId = (): string => `${SERVER_PACKAGE_NAME}@${SERVER_PACKAGE_VERSION}`
 

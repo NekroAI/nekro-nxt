@@ -11,6 +11,7 @@ import { afterEach, describe, expect, it } from 'vitest'
 import { z } from 'zod'
 import { NekroRuntime } from '../src/bootstrap.js'
 import { createNekroHostApi } from '../src/host-api.js'
+import { PRODUCT_VERSION } from '../src/product-version.js'
 import { configureDshLlmProviders } from '../src/main.js'
 
 const temporaryDirectories: string[] = []
@@ -192,8 +193,8 @@ describe('NekroNxt Server domain API (WebServer seam)', () => {
       expect(importedSnapshot.productMetadata).toEqual({
         displayName: 'NekroNXT',
         organizationName: 'NekroAI',
-        version: '0.0.0',
-        releaseId: '@nekro-nxt/server@0.0.0',
+        version: PRODUCT_VERSION,
+        releaseId: `@nekro-nxt/server@${PRODUCT_VERSION}`,
         repositoryUrl: 'https://github.com/NekroAI/nekro-nxt',
         licenseSpdx: 'AGPL-3.0-only',
       })

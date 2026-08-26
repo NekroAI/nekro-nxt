@@ -27,6 +27,7 @@ import { readFile } from 'node:fs/promises'
 import type { IncomingMessage, ServerResponse } from 'node:http'
 import { z } from 'zod'
 import type { NekroRuntime } from './bootstrap.js'
+import { PRODUCT_VERSION } from './product-version.js'
 import { normalizeSessionEvents } from './channel-runtime-events.js'
 import {
   emptyChannelRuntimeProjection,
@@ -463,8 +464,8 @@ export const createNekroHostApi = (
   } = {
     displayName: 'NekroNXT',
     organizationName: 'NekroAI',
-    version: '0.0.0',
-    releaseId: '@nekro-nxt/server@0.0.0',
+    version: PRODUCT_VERSION,
+    releaseId: `@nekro-nxt/server@${PRODUCT_VERSION}`,
     repositoryUrl: 'https://github.com/NekroAI/nekro-nxt',
     licenseSpdx: 'AGPL-3.0-only',
   },

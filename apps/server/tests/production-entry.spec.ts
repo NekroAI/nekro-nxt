@@ -37,7 +37,7 @@ describe('Server production entry', () => {
 
   it('uses the package identity by default and validates an injected release identity', async () => {
     const packageJson: unknown = JSON.parse(
-      await readFile(path.resolve(import.meta.dirname, '../package.json'), 'utf8'),
+      await readFile(path.resolve(import.meta.dirname, '../../../package.json'), 'utf8'),
     )
     if (
       typeof packageJson !== 'object' ||
@@ -47,9 +47,9 @@ describe('Server production entry', () => {
       !('version' in packageJson) ||
       typeof packageJson.version !== 'string'
     ) {
-      throw new TypeError('Server package.json 缺少有效名称或版本。')
+      throw new TypeError('根 package.json 缺少有效名称或版本。')
     }
-    expect(defaultReleaseId()).toBe(`${packageJson.name}@${packageJson.version}`)
+    expect(defaultReleaseId()).toBe(`@nekro-nxt/server@${packageJson.version}`)
     expect(parseReleaseId(' release-test-2 ')).toBe('release-test-2')
     expect(() => parseReleaseId('   ')).toThrow('NEKRO_RELEASE_ID')
   })

@@ -2,7 +2,7 @@ import type { ReactNode } from 'react'
 import type { ProductMetadataView } from '../product-store.js'
 import styles from './about-page.module.css'
 
-const compiledProductVersion = typeof __NEKRO_PRODUCT_VERSION__ === 'string' ? __NEKRO_PRODUCT_VERSION__ : '0.0.0'
+const compiledProductVersion = typeof __NEKRO_PRODUCT_VERSION__ === 'string' ? __NEKRO_PRODUCT_VERSION__ : ''
 
 const fallbackMetadata = {
   displayName: 'NekroNXT',
