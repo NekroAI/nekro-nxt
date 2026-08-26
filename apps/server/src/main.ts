@@ -29,6 +29,7 @@ import { fileURLToPath } from 'node:url'
 import { NekroRuntime } from './bootstrap.js'
 import { createNekroHostApi } from './host-api.js'
 import { initializeServerIdentity, startManagementEdge, type ManagementEdgeHandle } from './management-edge.js'
+import { DEEPSEEK_HARNESS_VERSION } from './dsh-version.js'
 import { PRODUCT_VERSION } from './product-version.js'
 
 const resolveRoot = (input: string): string => (path.isAbsolute(input) ? input : path.resolve(process.cwd(), input))
@@ -329,6 +330,7 @@ export const startNekroServer = async (options: StartServerOptions): Promise<Nek
     releaseId,
     repositoryUrl: 'https://github.com/NekroAI/nekro-nxt',
     licenseSpdx: 'AGPL-3.0-only',
+    dshVersion: DEEPSEEK_HARNESS_VERSION,
   })
   const registerHealthRoute = (routePath: '/health/live' | '/health/ready', status: 'live' | 'ready'): (() => void) =>
     webContext.webServer.register({

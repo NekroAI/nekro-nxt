@@ -28,6 +28,7 @@ import type { IncomingMessage, ServerResponse } from 'node:http'
 import { z } from 'zod'
 import type { NekroRuntime } from './bootstrap.js'
 import { PRODUCT_VERSION } from './product-version.js'
+import { DEEPSEEK_HARNESS_VERSION } from './dsh-version.js'
 import { normalizeSessionEvents } from './channel-runtime-events.js'
 import {
   emptyChannelRuntimeProjection,
@@ -461,6 +462,7 @@ export const createNekroHostApi = (
     readonly releaseId: string
     readonly repositoryUrl: string
     readonly licenseSpdx: string | null
+    readonly dshVersion: string
   } = {
     displayName: 'NekroNXT',
     organizationName: 'NekroAI',
@@ -468,6 +470,7 @@ export const createNekroHostApi = (
     releaseId: `@nekro-nxt/server@${PRODUCT_VERSION}`,
     repositoryUrl: 'https://github.com/NekroAI/nekro-nxt',
     licenseSpdx: 'AGPL-3.0-only',
+    dshVersion: DEEPSEEK_HARNESS_VERSION,
   },
 ): NekroHostApi => {
   const disposers: Array<() => void> = []

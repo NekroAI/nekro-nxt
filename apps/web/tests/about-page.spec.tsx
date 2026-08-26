@@ -13,6 +13,7 @@ describe('about page', () => {
           releaseId: 'nxt-release-test',
           repositoryUrl: 'https://github.com/NekroAI/nekro-nxt',
           licenseSpdx: 'MIT',
+          dshVersion: '0.1.1-rc.2',
         }}
       />,
     )
@@ -22,7 +23,13 @@ describe('about page', () => {
     expect(markup).toContain('nxt-release-test')
     expect(markup).toContain('NekroAI/nekro-nxt')
     expect(markup).toContain('MIT')
+    expect(markup).toContain('DSH 版本')
+    expect(markup).toContain('0.1.1-rc.2')
     expect(markup).toContain('Logo、水月荧、角色插画和宣传素材版权归 NekroAI')
+    const factLabels = ['项目组织', '软件版本', '开源仓库', 'DSH 版本', '开源许可证', 'Release ID']
+    const factPositions = factLabels.map((label) => markup.indexOf(label))
+    expect(factPositions.every((position) => position >= 0)).toBe(true)
+    expect(factPositions).toEqual([...factPositions].sort((left, right) => left - right))
   })
 
   it('keeps missing live metadata understandable', () => {

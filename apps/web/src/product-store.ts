@@ -299,6 +299,7 @@ export interface ProductMetadataView {
   readonly releaseId: string
   readonly repositoryUrl: string
   readonly licenseSpdx: string | null
+  readonly dshVersion?: string | undefined
 }
 
 export interface SavedDynamicExtension {

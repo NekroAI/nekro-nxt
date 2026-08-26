@@ -527,6 +527,7 @@ export const HostSnapshotSchema = z
         releaseId: NonEmptyStringSchema,
         repositoryUrl: z.url(),
         licenseSpdx: NonEmptyStringSchema.nullable(),
+        dshVersion: NonEmptyStringSchema.optional(),
       })
       .strict()
       .optional(),

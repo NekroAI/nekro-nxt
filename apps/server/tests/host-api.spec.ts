@@ -12,6 +12,7 @@ import { z } from 'zod'
 import { NekroRuntime } from '../src/bootstrap.js'
 import { createNekroHostApi } from '../src/host-api.js'
 import { PRODUCT_VERSION } from '../src/product-version.js'
+import { DEEPSEEK_HARNESS_VERSION } from '../src/dsh-version.js'
 import { configureDshLlmProviders } from '../src/main.js'
 
 const temporaryDirectories: string[] = []
@@ -197,6 +198,7 @@ describe('NekroNxt Server domain API (WebServer seam)', () => {
         releaseId: `@nekro-nxt/server@${PRODUCT_VERSION}`,
         repositoryUrl: 'https://github.com/NekroAI/nekro-nxt',
         licenseSpdx: 'AGPL-3.0-only',
+        dshVersion: DEEPSEEK_HARNESS_VERSION,
       })
       expect(importedSnapshot.agents).toEqual([
         expect.objectContaining({ id: importedAgent.definition.id, channels: [] }),

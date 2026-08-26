@@ -1,5 +1,6 @@
 import { openMigratedCoreDatabase } from '@nekro-nxt/storage-sqlite'
 import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises'
+import { createRequire } from 'node:module'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
@@ -11,6 +12,7 @@ import {
   parseReleaseId,
   startNekroServer,
 } from '../src/main.js'
+import { DEEPSEEK_HARNESS_VERSION } from '../src/dsh-version.js'
 
 const temporaryDirectories: string[] = []
 
@@ -52,6 +54,14 @@ describe('Server production entry', () => {
     expect(defaultReleaseId()).toBe(`@nekro-nxt/server@${packageJson.version}`)
     expect(parseReleaseId(' release-test-2 ')).toBe('release-test-2')
     expect(() => parseReleaseId('   ')).toThrow('NEKRO_RELEASE_ID')
+  })
+
+  it('reads the DeepSeek Harness version from the installed DSH core package', async () => {
+    const require = createRequire(import.meta.url)
+    const manifestSource = await readFile(require.resolve('@deepseek-ai/dsh-agent/package.json'), 'utf8')
+    const installedVersion = /^\s*"version"\s*:\s*"([^"]+)"/mu.exec(manifestSource)?.[1]
+    expect(installedVersion).toBeTruthy()
+    expect(DEEPSEEK_HARNESS_VERSION).toBe(installedVersion)
   })
 
   it('publishes non-sensitive live and ready probes with the immutable release identity', async () => {

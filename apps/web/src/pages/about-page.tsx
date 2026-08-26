@@ -29,6 +29,7 @@ export function AboutPage({ metadata }: { readonly metadata?: Partial<ProductMet
     releaseId: metadata?.releaseId?.trim() || '',
     repositoryUrl: metadata?.repositoryUrl?.trim() || fallbackMetadata.repositoryUrl,
     licenseSpdx: metadata?.licenseSpdx?.trim() || fallbackMetadata.licenseSpdx,
+    dshVersion: metadata?.dshVersion?.trim() || '',
   }
   return (
     <section className={styles.about} aria-label="关于 NekroNXT">
@@ -47,18 +48,19 @@ export function AboutPage({ metadata }: { readonly metadata?: Partial<ProductMet
             {product.organizationName}
           </a>
         </Fact>
-        <Fact label="产品版本">{product.version || '暂无'}</Fact>
-        <Fact label="Release ID">{product.releaseId || '暂无'}</Fact>
-        <Fact label="代码仓库">
+        <Fact label="软件版本">{product.version || '暂无'}</Fact>
+        <Fact label="开源仓库">
           <a href={product.repositoryUrl} target="_blank" rel="noreferrer">
             NekroAI/nekro-nxt
           </a>
         </Fact>
-        <Fact label="软件许可证">
+        <Fact label="DSH 版本">{product.dshVersion || '暂无'}</Fact>
+        <Fact label="开源许可证">
           <a href="https://github.com/NekroAI/nekro-nxt/blob/main/LICENSE" target="_blank" rel="noreferrer">
             {product.licenseSpdx}
           </a>
         </Fact>
+        <Fact label="Release ID">{product.releaseId || '暂无'}</Fact>
       </dl>
 
       <div className={styles.notice}>
