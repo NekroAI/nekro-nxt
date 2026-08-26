@@ -4,6 +4,7 @@ import type {
   AgentRevisionId,
   AssetId,
   ChannelEventId,
+  ChannelActivityType,
   ChannelId,
   ChannelMemberId,
   ConnectionId,
@@ -17,6 +18,7 @@ import {
   AgentIdSchema,
   AgentRevisionIdSchema,
   ChannelEventIdSchema,
+  ChannelActivityTypeSchema,
   ChannelIdSchema,
   ChannelMemberIdSchema,
   ConnectionIdSchema,
@@ -158,6 +160,8 @@ export interface BindingRecord {
   readonly channelId: ChannelId
   readonly agentId: AgentId
   readonly triggerPolicy: BindingTriggerPolicy
+  readonly processingFeedback: 'auto' | 'off'
+  readonly eventTriggers: readonly ChannelActivityType[]
   readonly boundAt: number
 }
 
@@ -167,6 +171,9 @@ export interface ChannelEventRecord {
   readonly channelId: ChannelId
   readonly platformMessageId?: string
   readonly kind: AdapterInboundEvent['kind']
+  readonly activityType?: ChannelActivityType
+  readonly targetPlatformMessageId?: string
+  readonly targetLogicalMessageId?: LogicalMessageId
   readonly senderMemberId?: AdapterInboundEvent['senderMemberId']
   readonly parts: readonly MessagePart[]
   readonly sourceTimestamp: number
@@ -416,6 +423,8 @@ const bindingInputSchema = z
     channelId: z.string().trim().min(1),
     agentId: z.string().trim().min(1),
     triggerPolicy: z.enum(['always', 'mentioned-or-replied', 'command', 'observe-only']),
+    processingFeedback: z.enum(['auto', 'off']).default('auto'),
+    eventTriggers: z.array(ChannelActivityTypeSchema).default([]),
   })
   .strict()
 
@@ -627,6 +636,8 @@ export class CoreService {
       channelId,
       agentId,
       triggerPolicy: channelInput.triggerPolicy,
+      processingFeedback: 'auto',
+      eventTriggers: [],
       boundAt: createdAt,
     }
     const commit = { definition, revision, channel, binding }
@@ -861,6 +872,8 @@ export class CoreService {
     readonly channelId: ChannelId
     readonly agentId: AgentId
     readonly triggerPolicy: BindingTriggerPolicy
+    readonly processingFeedback?: 'auto' | 'off'
+    readonly eventTriggers?: readonly ChannelActivityType[]
   }): BindingRecord {
     const parsed = bindingInputSchema.parse(input)
     if (!this.#repository.getChannel(input.channelId)) throw new Error(`Unknown channel: ${input.channelId}`)
@@ -871,6 +884,8 @@ export class CoreService {
       channelId: input.channelId,
       agentId: input.agentId,
       triggerPolicy: parsed.triggerPolicy,
+      processingFeedback: parsed.processingFeedback,
+      eventTriggers: parsed.eventTriggers,
       boundAt: this.#timestamp(),
     }
     return this.#repository.replaceBinding(record)
@@ -880,6 +895,8 @@ export class CoreService {
     readonly channelId: ChannelId
     readonly agentId: AgentId
     readonly triggerPolicy: BindingTriggerPolicy
+    readonly processingFeedback?: 'auto' | 'off'
+    readonly eventTriggers?: readonly ChannelActivityType[]
   }): BindingRecord {
     const parsed = bindingInputSchema.parse(input)
     if (!this.#repository.getChannel(input.channelId)) throw new Error(`Unknown channel: ${input.channelId}`)
@@ -888,6 +905,8 @@ export class CoreService {
       channelId: input.channelId,
       agentId: input.agentId,
       triggerPolicy: parsed.triggerPolicy,
+      processingFeedback: parsed.processingFeedback,
+      eventTriggers: parsed.eventTriggers,
       boundAt: this.#timestamp(),
     })
   }
@@ -917,12 +936,21 @@ export class CoreService {
       }
     }
     const searchText = messagePartsSearchText(event.parts)
+    const target =
+      event.targetPlatformMessageId === undefined
+        ? undefined
+        : this.#repository.resolvePlatformMessage(event.connectionId, event.channelId, event.targetPlatformMessageId)
     const record: ChannelEventRecord = {
       id: ChannelEventIdSchema.parse(`evt_${this.#nextUlid()}`),
       logicalMessageId: LogicalMessageIdSchema.parse(`msg_${this.#nextUlid()}`),
       channelId: event.channelId,
       ...(event.platformMessageId === undefined ? {} : { platformMessageId: event.platformMessageId }),
       kind: event.kind,
+      ...(event.activityType === undefined ? {} : { activityType: event.activityType }),
+      ...(event.targetPlatformMessageId === undefined
+        ? {}
+        : { targetPlatformMessageId: event.targetPlatformMessageId }),
+      ...(target === undefined ? {} : { targetLogicalMessageId: target.logicalMessageId }),
       ...(event.senderMemberId === undefined ? {} : { senderMemberId: event.senderMemberId }),
       parts: event.parts,
       sourceTimestamp: event.platformTimestamp,

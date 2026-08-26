@@ -35,7 +35,12 @@
 
 同一个智能体可以绑定多个群聊。每个群聊保留独立上下文；群成员在智能体使用工具期间发送的新消息也会被收录，并进入下一步思考。
 
-详见[连接频道](connections.md)。
+QQ 接入可选择以下方式：
+
+- [QQ 官方机器人](connections/qq-official-bot.md)：通过 QQ 开放平台创建机器人，使用 AppID 与 AppSecret 接入；
+- [OneBot V11](connections/onebot-11.md)：连接独立部署的 SnowLuma、NapCat 或 LLBot。
+
+其他平台及通用流程见[连接频道](connections.md)。
 
 ## 6. 可选：创造扩展
 

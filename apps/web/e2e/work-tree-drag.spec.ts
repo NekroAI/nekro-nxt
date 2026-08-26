@@ -136,7 +136,16 @@ test('work tree keeps titles stable while full rows and keyboard handles cover o
         displayName: '规划员的内置频道',
         boundAgentId: mapleId,
         runtimePhase: 'idle',
-        bindings: [{ channelId: mapleChannelId, agentId: mapleId, triggerPolicy: 'always', boundAt: 1 }],
+        bindings: [
+          {
+            channelId: mapleChannelId,
+            agentId: mapleId,
+            triggerPolicy: 'always',
+            processingFeedback: 'auto',
+            eventTriggers: [],
+            boundAt: 1,
+          },
+        ],
       },
       {
         id: mapleSpareChannelId,
@@ -146,7 +155,16 @@ test('work tree keeps titles stable while full rows and keyboard handles cover o
         displayName: '规划员的备用地',
         boundAgentId: mapleId,
         runtimePhase: 'idle',
-        bindings: [{ channelId: mapleSpareChannelId, agentId: mapleId, triggerPolicy: 'always', boundAt: 1 }],
+        bindings: [
+          {
+            channelId: mapleSpareChannelId,
+            agentId: mapleId,
+            triggerPolicy: 'always',
+            processingFeedback: 'auto',
+            eventTriggers: [],
+            boundAt: 1,
+          },
+        ],
       },
       {
         id: clerkChannelId,
@@ -156,7 +174,16 @@ test('work tree keeps titles stable while full rows and keyboard handles cover o
         displayName: '资料员的内置频道',
         boundAgentId: clerkId,
         runtimePhase: 'idle',
-        bindings: [{ channelId: clerkChannelId, agentId: clerkId, triggerPolicy: 'always', boundAt: 2 }],
+        bindings: [
+          {
+            channelId: clerkChannelId,
+            agentId: clerkId,
+            triggerPolicy: 'always',
+            processingFeedback: 'auto',
+            eventTriggers: [],
+            boundAt: 2,
+          },
+        ],
       },
     ],
   }
@@ -219,6 +246,8 @@ test('work tree keeps titles stable while full rows and keyboard handles cover o
       channelId: input.channelId,
       agentId: input.agentId,
       triggerPolicy: input.triggerPolicy,
+      processingFeedback: input.processingFeedback ?? 'auto',
+      eventTriggers: input.eventTriggers ?? [],
       boundAt: 3,
     }
     snapshot = {

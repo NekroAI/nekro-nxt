@@ -3899,6 +3899,13 @@
   padding: 11px 12px 12px;
 }
 
+.bindingEventSettings {
+  display: grid;
+  gap: 2px;
+  border-top: 1px solid var(--nxt-border-subtle);
+  padding-top: 10px;
+}
+
 .bindingSourceRow {
   display: flex;
   min-width: 0;

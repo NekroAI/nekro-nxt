@@ -71,10 +71,10 @@ describe('MessagePart boundary', () => {
           adapterKey: 'qq-openclaw',
           kind: 'miniapp',
           summary: '摘要',
-          extension: { dump: 'x'.repeat(40_000) },
+          extension: { dump: 'x'.repeat(70_000) },
         },
       ]),
-    ).toThrow(/32768 bytes/u)
+    ).toThrow(/65536 bytes/u)
     expect(() =>
       parseMessageParts([
         {

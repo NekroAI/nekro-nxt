@@ -38,14 +38,14 @@
 | 修改配置 | `POST /api/agents/:id/revision` | 名称、人设、模型；带 expectedCurrentRevisionId |
 | 查询平台用户 | `GET /api/platform-users` | 名称、Adapter、平台连接筛选与游标分页；不返回平台原始用户 ID |
 | 供应商 | `GET/POST /api/llm/providers`、`discover-models`、`test-provider` | DSH settings/credentials |
-| QQ 收发测试 | `POST /api/connections/:id/test` | 接收与发送分开 |
+| Connection 收发测试 | `POST /api/connections/:id/test` | 由已安装 Adapter Driver 执行，接收与发送分开 |
 | 保存动态包 | `POST /api/extensions/save-from-dynamic` | 不自动启用 |
 | 动态回路 | `POST /api/dynamic/:agentId/...` | 每次请求携带精确 `episodeId`；审批、Host half、Client 源码、渲染证据、Guard 报告与结算不猜活动 Session |
 | Client Artifact | `GET /api/extensions/:extensionId/revisions/:revisionId/client/:buildKey.mjs` | 只向匹配当前 Agent Activation 的精确构建提供源码 |
 | Extension RPC | `POST /api/extensions/:extensionId/revisions/:revisionId/call` | 按 `agentId + revisionId + method` 调用 Activation handler |
 | Client 诊断 | `POST /api/extensions/:extensionId/revisions/:revisionId/client-diagnostic` | 保存当前 Activation 最近一次 loaded/failed；不回滚 Host |
 
-快照含 DSH 模型目录、能力可用状态、Adapter 目录、Connection（无 Secret，含可选 alias）、Gateway、已绑定频道和动态 Package。已 tombstone 的智能体和频道不进入活动快照与工作树；普通解绑频道继续存在并进入未绑定频道。外部 Adapter 再次发现同一 `(connectionId, platformChannelId)` 时清除 Channel tombstone，复用原 Channel ID 与历史。Web 侧只用 `alias ?? Adapter displayName` 作为连接主辨识名，Adapter displayName 仍作为平台身份的次要信息；频道、对象列、连接详情、智能体频道列表和绑定选择器共享同一投影。Web 搜索是否可用看 DSH 凭据，不靠环境变量名推断。
+快照含 DSH 模型目录、能力可用状态、Adapter 目录、Connection（无 Secret，含可选 alias）、通用连接状态与动态能力诊断、已绑定频道和动态 Package。连接快照不再把 `appId` 或 Gateway 当作所有平台共有字段；账号标识、实现版本和可选能力来自 Adapter 诊断。已 tombstone 的智能体和频道不进入活动快照与工作树；普通解绑频道继续存在并进入未绑定频道。外部 Adapter 再次发现同一 `(connectionId, platformChannelId)` 时清除 Channel tombstone，复用原 Channel ID 与历史。Web 侧只用 `alias ?? Adapter displayName` 作为连接主辨识名，Adapter displayName 仍作为平台身份的次要信息；频道、对象列、连接详情、智能体频道列表和绑定选择器共享同一投影。Web 搜索是否可用看 DSH 凭据，不靠环境变量名推断。
 
 全局只有一条 `GET /api/events`。消息和工作轨迹不再用「通知后再拉 REST」作为热路径。
 
@@ -67,6 +67,6 @@
 - 生产 CLI 由构建后的 `dist/main.mjs` 直接启动；`NEKRO_HOST` 默认 `127.0.0.1`。公开监听 `0.0.0.0` 必须设置至少 32 个字符的 `NEKRO_MANAGEMENT_KEY`，并在外部 4960 启动自动 TLS 与设备鉴权入口；DSH WebServer 只监听随机 loopback。`GET /health/live` 与 `GET /health/ready` 保持匿名，只返回状态和 Release 身份。
 - Desktop 自带本地 Host 使用随机 loopback HTTP，并按 `500ms → 1s → 2s → 5s → 5s` 有界退避恢复。Desktop BrowserWindow 使用可替换 Product View：本地 Profile 指向自带 Host，远程 Profile 指向固定 SPKI 的 Server TLS 入口；每个 Profile 使用独立 partition 和最近路由。切换关闭旧 Product View，不重启任何 Host Runtime。详细安全与 View 边界见 [Desktop 多实例与设备鉴权](decisions/implemented/2026-08-23-Desktop多实例与设备鉴权.md)。
 - Runtime 打开双 SQLite 前，生产入口在 `backups/release-<releaseId digest>/` 为已有数据库创建一次 Release 恢复点；失败拒绝启动。该实验恢复点不覆盖数据根文件目录，完整升级协调仍以 Client migration Decision 为准。
-- 启动恢复持久 Web Connection、Extension Activation 和 QQ Connection 的凭据引用；单个 Connection 故障不阻断其他恢复。
+- 启动通过 Adapter Driver 目录恢复持久 Web、QQ OpenClaw 和 OneBot 11 Connection，再恢复处理中反馈、Channel Runtime 与 Extension Activation；单个 Connection 故障不阻断其他恢复。
 
 一期缺口见 `04-一期开发计划与决策清单.md`。技术栈见 `decisions/accepted/2026-08-16-一期技术栈与UI基础设施.md`。

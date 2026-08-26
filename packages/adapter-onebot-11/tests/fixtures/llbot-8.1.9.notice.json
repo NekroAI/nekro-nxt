@@ -1,0 +1,10 @@
+{
+  "time": 202,
+  "post_type": "notice",
+  "notice_type": "group_ban",
+  "sub_type": "ban",
+  "group_id": "fixture-group-llbot",
+  "user_id": "fixture-member-llbot",
+  "operator_id": "fixture-operator-llbot",
+  "duration": "60"
+}

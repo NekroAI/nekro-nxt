@@ -168,6 +168,8 @@ export const projectHistoryEntry = (runtime: NekroRuntime, entry: ChannelHistory
             },
           }),
       ...(entry.facts?.['mentionedBot'] === true ? { mentionedConnectionAccount: true } : {}),
+      ...(entry.activityType === undefined ? {} : { activityType: entry.activityType }),
+      ...(entry.targetLogicalMessageId === undefined ? {} : { targetLogicalMessageId: entry.targetLogicalMessageId }),
       occurredAt: entry.occurredAt,
     }
   }
@@ -195,6 +197,8 @@ export const projectChannelFact = (runtime: NekroRuntime, fact: ChannelFact): Ho
       channelId: event.channelId,
       occurredAt: event.receivedAt,
       ...(event.senderMemberId === undefined ? {} : { senderMemberId: event.senderMemberId }),
+      ...(event.activityType === undefined ? {} : { activityType: event.activityType }),
+      ...(event.targetLogicalMessageId === undefined ? {} : { targetLogicalMessageId: event.targetLogicalMessageId }),
       parts: event.parts,
       ...(event.facts === undefined ? {} : { facts: event.facts }),
     })
@@ -605,6 +609,8 @@ export const createNekroHostApi = (
           channelId: binding.channelId,
           agentId: binding.agentId,
           triggerPolicy: binding.triggerPolicy,
+          processingFeedback: binding.processingFeedback,
+          eventTriggers: binding.eventTriggers,
           boundAt: binding.boundAt,
         })),
       }
@@ -619,27 +625,41 @@ export const createNekroHostApi = (
         .passthrough()
         .safeParse(connection.config)
       const diagnostic = runtime.connectionDiagnostic(connection.id)
+      const adapterDiagnostic = runtime.adapterConnectionDiagnostic(connection.id)
+      const gateway =
+        diagnostic?.gateway ??
+        (adapterDiagnostic === undefined
+          ? undefined
+          : {
+              state: adapterDiagnostic.status,
+              ...(adapterDiagnostic.message === undefined ? {} : { lastError: adapterDiagnostic.message }),
+            })
       return {
         id: connection.id,
         adapterKey: connection.adapterKey,
         ...(connection.alias === undefined ? {} : { alias: connection.alias }),
-        appId: config.success ? (config.data.appId ?? '') : '',
-        proactiveSend: config.success && config.data.proactiveSend === true,
-        credentialConfigured: connection.adapterKey === 'web' ? true : (diagnostic?.credentialConfigured ?? false),
+        status: {
+          state: gateway?.state ?? 'stopped',
+          credentialConfigured: adapterDiagnostic?.credentialConfigured ?? diagnostic?.credentialConfigured ?? false,
+          proactiveSend: adapterDiagnostic?.proactiveSend ?? (config.success && config.data.proactiveSend === true),
+          ...(adapterDiagnostic?.message === undefined ? {} : { message: adapterDiagnostic.message }),
+          ...(adapterDiagnostic?.accountId === undefined ? {} : { accountId: adapterDiagnostic.accountId }),
+          ...(adapterDiagnostic?.implementation === undefined
+            ? {}
+            : { implementation: adapterDiagnostic.implementation }),
+          ...(adapterDiagnostic?.optionalCapabilities === undefined
+            ? {}
+            : { optionalCapabilities: adapterDiagnostic.optionalCapabilities }),
+        },
         channelCount: runtime.core.listChannelsByConnection(connection.id).length,
         knownChannels: runtime.core.listChannelsByConnection(connection.id).map((channel) => ({
           id: channel.id,
           name: channel.displayName ?? channel.platformChannelId,
           kind: channel.kind,
         })),
-        ...(diagnostic === undefined
-          ? {}
-          : {
-              gateway: diagnostic.gateway,
-              ...(diagnostic.lastInbound === undefined ? {} : { lastInbound: diagnostic.lastInbound }),
-              ...(diagnostic.receiveTest === undefined ? {} : { receiveTest: diagnostic.receiveTest }),
-              ...(diagnostic.sendTest === undefined ? {} : { sendTest: diagnostic.sendTest }),
-            }),
+        ...(diagnostic?.lastInbound === undefined ? {} : { lastInbound: diagnostic.lastInbound }),
+        ...(diagnostic?.receiveTest === undefined ? {} : { receiveTest: diagnostic.receiveTest }),
+        ...(diagnostic?.sendTest === undefined ? {} : { sendTest: diagnostic.sendTest }),
       }
     })
     const webSearch = await runtime.host.getWebSearchCapabilityStatus()
@@ -1017,6 +1037,8 @@ export const createNekroHostApi = (
             agentId,
             channelId,
             triggerPolicy: parsed.triggerPolicy,
+            ...(parsed.processingFeedback === undefined ? {} : { processingFeedback: parsed.processingFeedback }),
+            ...(parsed.eventTriggers === undefined ? {} : { eventTriggers: parsed.eventTriggers }),
           })
           emit('write-binding', 'done', kind === 'replace' ? '已改由新智能体响应。' : '频道已绑定。')
           writeJson(res, 201, HostApiContracts.createBinding.parseResponse(binding))
@@ -1934,11 +1956,7 @@ export const createNekroHostApi = (
           return
         }
         const connection = runtime.repository.getConnection(channel.connectionId)
-        const connectionConfig = z
-          .object({ proactiveSend: z.boolean().optional() })
-          .passthrough()
-          .safeParse(connection?.config)
-        if (connection?.adapterKey !== 'web' && connectionConfig.data?.proactiveSend !== true) {
+        if (!connection || runtime.connectionCapabilities(connection.id)?.proactiveSend !== true) {
           writeError(res, 400, 'proactive-send-disabled', '这个平台连接不允许主动发言。请在连接配置中打开主动发送。')
           return
         }
@@ -2063,41 +2081,12 @@ export const createNekroHostApi = (
         writeError(res, 404, 'not-found', '连接不存在。')
         return
       }
-      if (connection.adapterKey === 'qq-openclaw') {
-        writeContractJson(
-          res,
-          200,
-          HostApiContracts.testConnection,
-          await runtime.testConnection(connection.id, parsed.direction, parsed.channelId),
-        )
-        return
-      }
-      const channel = runtime.core.listChannelsByConnection(connection.id)[0]
-      if (!channel) {
-        writeContractJson(res, 200, HostApiContracts.testConnection, {
-          status: 'needs-channel',
-          message: 'Web 连接还没有绑定频道，无法测试。',
-        })
-        return
-      }
-      if (parsed.direction === 'send') {
-        const result = await runtime.web.postMessage({
-          channelId: channel.id,
-          clientEventId: `test-send-${Date.now()}`,
-          parts: [{ type: 'text', text: '连接诊断测试消息。' }],
-        })
-        writeContractJson(res, 200, HostApiContracts.testConnection, {
-          status: 'sent',
-          channelId: channel.id,
-          platformMessageId: result.channelEventId,
-        })
-      } else {
-        writeContractJson(res, 200, HostApiContracts.testConnection, {
-          status: 'received',
-          channelId: channel.id,
-          platformMessageId: channel.id,
-        })
-      }
+      writeContractJson(
+        res,
+        200,
+        HostApiContracts.testConnection,
+        await runtime.testConnection(connection.id, parsed.direction, parsed.channelId),
+      )
     },
   })
 

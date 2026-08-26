@@ -20,7 +20,9 @@ const channel = (
   agentId,
   trigger: triggerPolicy === 'always' ? '始终响应' : '被提及或回复时',
   runtimePhase: '空闲',
-  bindings: agentId ? [{ id: `${id}:${agentId}`, agentId, triggerPolicy }] : [],
+  bindings: agentId
+    ? [{ id: `${id}:${agentId}`, agentId, triggerPolicy, processingFeedback: 'auto', eventTriggers: [] }]
+    : [],
   unread: 0,
 })
 

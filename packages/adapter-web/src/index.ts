@@ -50,16 +50,17 @@ export interface WebOutboundEvent {
 }
 
 export type WebOutboundListener = (event: WebOutboundEvent) => Promise<void> | void
+type WebAdapterContext = Pick<AdapterConnectionContext, 'connectionId' | 'acceptInbound' | 'now'>
 
 /** In-process platform boundary for Web Channel; durable truth remains in Core Outbox. */
 export class WebAdapterConnection implements AdapterConnectionRuntime {
   readonly capabilities = WEB_ADAPTER_CAPABILITIES
-  readonly #context: AdapterConnectionContext
+  readonly #context: WebAdapterContext
   readonly #listeners = new Set<WebOutboundListener>()
   #running = false
   #nextMessage = 1
 
-  constructor(context: AdapterConnectionContext) {
+  constructor(context: WebAdapterContext) {
     this.#context = context
   }
 

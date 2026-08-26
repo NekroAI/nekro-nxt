@@ -120,6 +120,8 @@ export interface ChannelSummary {
     readonly id: string
     readonly agentId: string
     readonly triggerPolicy: 'always' | 'mentioned-or-replied' | 'command' | 'observe-only'
+    readonly processingFeedback: 'auto' | 'off'
+    readonly eventTriggers: HostApiResponse<'snapshot'>['channels'][number]['bindings'][number]['eventTriggers']
   }[]
   readonly unread: number
 }
@@ -216,6 +218,7 @@ export interface ConnectionSummary {
   /** User-facing Adapter name. The stable key remains available only for internal branching. */
   readonly adapter: string
   readonly adapterKey: string
+  readonly userManaged: boolean
   readonly state: ConnectionState
   readonly appId: string
   readonly credentialConfigured: boolean
@@ -401,6 +404,8 @@ export interface ProductState {
     readonly agentId: string
     readonly channelId: string
     readonly triggerPolicy: 'always' | 'mentioned-or-replied' | 'command' | 'observe-only'
+    readonly processingFeedback?: 'auto' | 'off'
+    readonly eventTriggers?: HostApiResponse<'snapshot'>['channels'][number]['bindings'][number]['eventTriggers']
   }): Promise<void>
   clearBinding(channelId: string): Promise<void>
   deleteChannel(channelId: string, expectedBoundAgentId: string | null): Promise<void>
@@ -605,11 +610,13 @@ export const useProductStore = create<ProductState>((set) => ({
     }
     return { channelId: result['channelId'] }
   },
-  createBinding: async ({ agentId, channelId, triggerPolicy }) => {
+  createBinding: async ({ agentId, channelId, triggerPolicy, processingFeedback, eventTriggers }) => {
     await requireHost().execute('bindings.create', {
       agentId: requireValue(agentId, '缺少智能体标识，请刷新页面后重试。'),
       channelId: requireValue(channelId, '请选择要绑定的频道。'),
       triggerPolicy,
+      ...(processingFeedback === undefined ? {} : { processingFeedback }),
+      ...(eventTriggers === undefined ? {} : { eventTriggers }),
     })
   },
   clearBinding: async (channelId) => {

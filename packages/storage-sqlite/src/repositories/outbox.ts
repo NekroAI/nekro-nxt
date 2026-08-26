@@ -31,6 +31,7 @@ import {
 type OutboxSlice = Pick<
   RuntimeRepository,
   | 'findOutboundByClientRequest'
+  | 'findOutboundByLogicalMessageId'
   | 'createOutboundPlan'
   | 'markIntentSending'
   | 'markDeliverySending'
@@ -147,6 +148,15 @@ export function createOutboxRepository(database: DrizzleCoreDatabase): OutboxSli
             eq(outboundIntents.clientRequestId, clientRequestId),
           ),
         )
+        .get()
+      return row === undefined ? undefined : getOutbound(row.id)
+    },
+    findOutboundByLogicalMessageId(channelId, logicalMessageId): OutboundSnapshot | undefined {
+      const row = database
+        .select({ id: outboundIntents.id })
+        .from(outboundIntents)
+        .innerJoin(episodes, eq(episodes.id, outboundIntents.episodeId))
+        .where(and(eq(episodes.channelId, channelId), eq(outboundIntents.logicalMessageId, logicalMessageId)))
         .get()
       return row === undefined ? undefined : getOutbound(row.id)
     },
@@ -280,6 +290,8 @@ export function createOutboxRepository(database: DrizzleCoreDatabase): OutboxSli
         channelId: row.channelId,
         occurredAt: row.receivedAt,
         ...(row.senderMemberId === null ? {} : { senderMemberId: row.senderMemberId }),
+        ...(row.activityType === null ? {} : { activityType: row.activityType }),
+        ...(row.targetLogicalMessageId === null ? {} : { targetLogicalMessageId: row.targetLogicalMessageId }),
         parts: row.parts,
         ...(row.facts === null ? {} : { facts: row.facts }),
       }
@@ -302,6 +314,8 @@ export function createOutboxRepository(database: DrizzleCoreDatabase): OutboxSli
             channelId: row.channelId,
             occurredAt: row.receivedAt,
             ...(row.senderMemberId === null ? {} : { senderMemberId: row.senderMemberId }),
+            ...(row.activityType === null ? {} : { activityType: row.activityType }),
+            ...(row.targetLogicalMessageId === null ? {} : { targetLogicalMessageId: row.targetLogicalMessageId }),
             parts: row.parts,
             ...(row.facts === null ? {} : { facts: row.facts }),
           }
@@ -365,6 +379,10 @@ export function createOutboxRepository(database: DrizzleCoreDatabase): OutboxSli
                   channelId: row.channelId,
                   occurredAt: row.receivedAt,
                   ...(row.senderMemberId === null ? {} : { senderMemberId: row.senderMemberId }),
+                  ...(row.activityType === null ? {} : { activityType: row.activityType }),
+                  ...(row.targetLogicalMessageId === null
+                    ? {}
+                    : { targetLogicalMessageId: row.targetLogicalMessageId }),
                   parts: row.parts,
                   ...(row.facts === null ? {} : { facts: row.facts }),
                 }

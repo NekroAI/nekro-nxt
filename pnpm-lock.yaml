@@ -253,6 +253,9 @@ importers:
       '@deepseek-ai/dsh-web-search-deepseek':
         specifier: 0.1.1-rc.2
         version: 0.1.1-rc.2(8e47c89c848a591c17689609bee09251)
+      '@nekro-nxt/adapter-onebot-11':
+        specifier: workspace:*
+        version: link:../../packages/adapter-onebot-11
       '@nekro-nxt/adapter-qq-openclaw':
         specifier: workspace:*
         version: link:../../packages/adapter-qq-openclaw
@@ -447,6 +450,25 @@ importers:
       vite:
         specifier: 6.4.3
         version: 6.4.3(@types/node@24.13.3)(jiti@2.7.0)(tsx@4.22.4)(yaml@2.9.0)
+
+  packages/adapter-onebot-11:
+    dependencies:
+      '@nekro-nxt/adapter-sdk':
+        specifier: workspace:*
+        version: link:../adapter-sdk
+      '@nekro-nxt/contracts':
+        specifier: workspace:*
+        version: link:../contracts
+      ws:
+        specifier: 8.21.3
+        version: 8.21.3
+      zod:
+        specifier: 4.4.3
+        version: 4.4.3
+    devDependencies:
+      '@types/ws':
+        specifier: 8.18.1
+        version: 8.18.1
 
   packages/adapter-qq-openclaw:
     dependencies:

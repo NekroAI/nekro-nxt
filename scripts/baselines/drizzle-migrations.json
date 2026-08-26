@@ -14,6 +14,7 @@
     "0009_boring_penance.sql": "1b33b567e7b337cd3c9b4e9eca0dca1de84c72608caf99e4c106fe773efff7ad",
     "0010_elite_eternity.sql": "3b82c5bc17f64da1a17d1bc5c4c8880e213ce9e85247262348da384b5d5a7465",
     "0011_notification_settings.sql": "14078c0a8badc632fbdd321592605d0581a562b023d9360f61fbacf6c0a95af5",
+    "0012_onebot_activity_bindings.sql": "281d58fff520053fa313fa6c19ebf764e4d4c4e2a0c7976b305418dbe865a646",
     "meta/0000_snapshot.json": "03573ed4ecfb276bfad4bd1d6041564c11d3c52e1fcb35fc3dd278da7b55448d",
     "meta/0001_snapshot.json": "48b7a1cd91c44d75a394c94af554fc85621fe5fda2dd680d4bc25b68679d4ee5",
     "meta/0002_snapshot.json": "aa0ed0d69885976c1ce596d468657ac121e8cae5ac9e09aa9843be0b3b3127c9",
@@ -26,6 +27,7 @@
     "meta/0009_snapshot.json": "69a755586b0dc71aba1cb7001b5f9923de16de04b5f2f4e10e98653b5c631003",
     "meta/0010_snapshot.json": "a936a737ef59d5704d4803992ff27f22d2412679057f4fe1dacab97ccb2c689c",
     "meta/0011_snapshot.json": "f9db39448895eed9bb73d72321b9876ae0c50a8edf61131e42fe290d58416b89",
-    "meta/_journal.json": "0cb68bfc6d9ae23aa593fdb98856b6f42cdd2cb25b7a0c67a5734881012acdb6"
+    "meta/0012_snapshot.json": "10e2dd0f869d2af9c4c214db5744a410c2c6d9e35ada7a9befcce5a134a38fdc",
+    "meta/_journal.json": "7a02155e3f72d053f5f00df31124be2e8b46ff0bc9d6032e7c6b4da91098ece8"
   }
 }

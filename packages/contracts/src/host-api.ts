@@ -4,6 +4,7 @@ import {
   AgentRevisionIdSchema,
   AssetIdSchema,
   ChannelEventIdSchema,
+  ChannelActivityTypeSchema,
   ChannelIdSchema,
   ChannelMemberIdSchema,
   ConnectionIdSchema,
@@ -228,6 +229,8 @@ export const HostSnapshotMessageSchema = z
     parts: z.array(SnapshotMessagePartSchema),
     sender: z.object({ memberId: ChannelMemberIdSchema, displayName: z.string().optional() }).strict().optional(),
     mentionedConnectionAccount: z.boolean().optional(),
+    activityType: ChannelActivityTypeSchema.optional(),
+    targetLogicalMessageId: LogicalMessageIdSchema.optional(),
     occurredAt: z.number().finite(),
     deliveryState: z.enum(['planned', 'sending', 'sent', 'partially-sent', 'failed', 'unknown']).optional(),
     origin: z.enum(['admin-console']).optional(),
@@ -642,6 +645,8 @@ export const HostSnapshotSchema = z
                 channelId: ChannelIdSchema,
                 agentId: AgentIdSchema,
                 triggerPolicy: TriggerPolicySchema,
+                processingFeedback: z.enum(['auto', 'off']).default('auto'),
+                eventTriggers: z.array(ChannelActivityTypeSchema).default([]),
                 boundAt: z.number().int().safe().nonnegative(),
               })
               .strict(),
@@ -661,9 +666,31 @@ export const HostSnapshotSchema = z
           id: ConnectionIdSchema,
           adapterKey: NonEmptyStringSchema,
           alias: ConnectionAliasOutputSchema.optional(),
-          appId: z.string(),
-          proactiveSend: z.boolean(),
-          credentialConfigured: z.boolean(),
+          status: z
+            .object({
+              state: z.enum(['stopped', 'connecting', 'connected', 'reconnecting', 'failed']),
+              message: z.string().optional(),
+              credentialConfigured: z.boolean(),
+              proactiveSend: z.boolean(),
+              accountId: z.string().optional(),
+              implementation: z
+                .object({
+                  name: z.string().optional(),
+                  version: z.string().optional(),
+                  protocolVersion: z.string().optional(),
+                })
+                .strict()
+                .optional(),
+              optionalCapabilities: z
+                .record(z.string(), z.enum(['unknown', 'available', 'unsupported', 'degraded']))
+                .optional(),
+            })
+            .strict()
+            .default({ state: 'stopped', credentialConfigured: false, proactiveSend: false }),
+          /** Legacy response fields remain parseable during the client transition; Server no longer emits them. */
+          appId: z.string().optional(),
+          proactiveSend: z.boolean().optional(),
+          credentialConfigured: z.boolean().optional(),
           channelCount: z.number().int().nonnegative(),
           knownChannels: z.array(
             z.object({ id: ChannelIdSchema, name: z.string(), kind: z.enum(['web', 'group', 'direct']) }).strict(),
@@ -1315,13 +1342,21 @@ export const HostApiContracts = {
     path: '/api/bindings',
     params: EmptyParamsSchema,
     request: z
-      .object({ agentId: AgentIdSchema, channelId: ChannelIdSchema, triggerPolicy: TriggerPolicySchema })
+      .object({
+        agentId: AgentIdSchema,
+        channelId: ChannelIdSchema,
+        triggerPolicy: TriggerPolicySchema,
+        processingFeedback: z.enum(['auto', 'off']).optional(),
+        eventTriggers: z.array(ChannelActivityTypeSchema).optional(),
+      })
       .strict(),
     response: z
       .object({
         channelId: ChannelIdSchema,
         agentId: AgentIdSchema,
         triggerPolicy: TriggerPolicySchema,
+        processingFeedback: z.enum(['auto', 'off']).default('auto'),
+        eventTriggers: z.array(ChannelActivityTypeSchema).default([]),
         boundAt: z.number().int().safe().nonnegative(),
       })
       .strict(),

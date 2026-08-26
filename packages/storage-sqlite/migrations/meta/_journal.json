@@ -85,6 +85,13 @@
       "when": 1787635162026,
       "tag": "0011_notification_settings",
       "breakpoints": true
+    },
+    {
+      "idx": 12,
+      "version": "6",
+      "when": 1787747514696,
+      "tag": "0012_onebot_activity_bindings",
+      "breakpoints": true
     }
   ]
 }

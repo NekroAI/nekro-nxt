@@ -15,12 +15,40 @@ import {
   Presence,
   SelectField,
   StatusBadge,
+  SwitchField,
   Tabs,
 } from '../ui-kit/index.js'
 import { isTriggerPolicy, TRIGGER_POLICY_OPTIONS } from './binding-task.js'
 import styles from './product-pages.module.css'
 
 const VIEW_KEY = 'nekro-nxt.channel-view'
+
+type ChannelActivityType = ChannelSummary['bindings'][number]['eventTriggers'][number]
+
+const CHANNEL_ACTIVITY_OPTIONS: readonly {
+  readonly value: ChannelActivityType
+  readonly label: string
+  readonly description: string
+}[] = [
+  { value: 'member-poked', label: '戳一戳', description: '成员戳一戳时允许触发智能体。' },
+  { value: 'profile-liked', label: '资料卡点赞', description: '成员资料卡收到点赞时允许触发。' },
+  { value: 'member-joined', label: '成员加入', description: '新成员加入频道时允许触发。' },
+  { value: 'member-left', label: '成员离开', description: '成员退出或被移出频道时允许触发。' },
+  { value: 'member-muted', label: '成员被禁言', description: '成员被禁言时允许触发。' },
+  { value: 'member-unmuted', label: '解除禁言', description: '成员解除禁言时允许触发。' },
+  { value: 'member-admin-set', label: '设为管理员', description: '成员成为管理员时允许触发。' },
+  { value: 'member-admin-unset', label: '取消管理员', description: '成员不再是管理员时允许触发。' },
+  { value: 'member-card-changed', label: '成员名片变化', description: '成员的频道名片变化时允许触发。' },
+  { value: 'member-title-changed', label: '成员头衔变化', description: '成员头衔变化时允许触发。' },
+  { value: 'channel-name-changed', label: '频道名称变化', description: '外部平台频道名称变化时允许触发。' },
+  { value: 'message-recalled', label: '消息撤回', description: '频道消息被撤回时允许触发。' },
+  { value: 'message-reaction-added', label: '添加消息回应', description: '消息收到新的表情回应时允许触发。' },
+  { value: 'message-reaction-removed', label: '移除消息回应', description: '消息回应被移除时允许触发。' },
+  { value: 'file-uploaded', label: '文件上传', description: '频道中上传文件时允许触发。' },
+  { value: 'essence-added', label: '设为精华', description: '消息被设为精华时允许触发。' },
+  { value: 'essence-removed', label: '取消精华', description: '消息被取消精华时允许触发。' },
+  { value: 'friend-added', label: '新增好友', description: '连接账号新增好友时允许触发。' },
+]
 
 export type ChannelCanvasView = 'chat' | 'trajectory'
 
@@ -930,8 +958,10 @@ export function ChannelSessionInspector({
   const [renamePending, setRenamePending] = useState(false)
   const [triggerPending, setTriggerPending] = useState(false)
   const [renameOpen, setRenameOpen] = useState(false)
+  const [eventsOpen, setEventsOpen] = useState(false)
   const [channelName, setChannelName] = useState(channel.name)
-  const currentTrigger = channel.bindings[0]?.triggerPolicy ?? 'mentioned-or-replied'
+  const currentBinding = channel.bindings[0]
+  const currentTrigger = currentBinding?.triggerPolicy ?? 'mentioned-or-replied'
   const currentTool = workTools(latestTurn(runtime)).find((tool) => tool.state === 'running')
   const hasRuntimeDetails = Boolean(
     phase !== '空闲' ||
@@ -981,10 +1011,34 @@ export function ChannelSessionInspector({
         agentId: agent.id,
         channelId: channel.id,
         triggerPolicy,
+        processingFeedback: currentBinding?.processingFeedback ?? 'auto',
+        eventTriggers: currentBinding?.eventTriggers ?? [],
       })
       notify('响应方式已更新。', 'success', `channel-trigger:${channel.id}`)
     } catch (error) {
       notify(error instanceof Error ? error.message : String(error), 'error', `channel-trigger:${channel.id}`)
+    } finally {
+      setTriggerPending(false)
+    }
+  }
+
+  const updateBindingOptions = async (input: {
+    readonly processingFeedback?: 'auto' | 'off'
+    readonly eventTriggers?: readonly ChannelActivityType[]
+  }): Promise<void> => {
+    if (!agent || triggerPending) return
+    setTriggerPending(true)
+    try {
+      await useProductStore.getState().createBinding({
+        agentId: agent.id,
+        channelId: channel.id,
+        triggerPolicy: currentTrigger,
+        processingFeedback: input.processingFeedback ?? currentBinding?.processingFeedback ?? 'auto',
+        eventTriggers: [...(input.eventTriggers ?? currentBinding?.eventTriggers ?? [])],
+      })
+      notify('频道事件设置已更新。', 'success', `channel-events:${channel.id}`)
+    } catch (error) {
+      notify(error instanceof Error ? error.message : String(error), 'error', `channel-events:${channel.id}`)
     } finally {
       setTriggerPending(false)
     }
@@ -1056,6 +1110,49 @@ export function ChannelSessionInspector({
                 }}
                 options={TRIGGER_POLICY_OPTIONS.map((option) => ({ value: option.value, label: option.label }))}
               />
+              {channel.kind === 'web' ? null : (
+                <>
+                  <SwitchField
+                    label="显示处理中状态"
+                    description="平台支持时，在智能体处理期间为触发消息添加临时回应，结束后自动移除。"
+                    checked={(currentBinding?.processingFeedback ?? 'auto') === 'auto'}
+                    disabled={triggerPending}
+                    onCheckedChange={(checked) =>
+                      void updateBindingOptions({ processingFeedback: checked ? 'auto' : 'off' })
+                    }
+                  />
+                  <Button
+                    size="small"
+                    variant="ghost"
+                    aria-expanded={eventsOpen}
+                    onClick={() => setEventsOpen((open) => !open)}
+                  >
+                    {eventsOpen ? '收起特殊事件' : '设置特殊事件'}
+                  </Button>
+                  <Disclosure open={eventsOpen}>
+                    <div className={styles.bindingEventSettings}>
+                      <p className={styles.secondaryText}>特殊事件默认只记录。逐项开启的事件会触发智能体。</p>
+                      {CHANNEL_ACTIVITY_OPTIONS.map((option) => (
+                        <SwitchField
+                          key={option.value}
+                          label={option.label}
+                          description={option.description}
+                          checked={currentBinding?.eventTriggers.includes(option.value) ?? false}
+                          disabled={triggerPending || currentTrigger === 'observe-only'}
+                          onCheckedChange={(checked) => {
+                            const current = currentBinding?.eventTriggers ?? []
+                            void updateBindingOptions({
+                              eventTriggers: checked
+                                ? [...new Set([...current, option.value])]
+                                : current.filter((value) => value !== option.value),
+                            })
+                          }}
+                        />
+                      ))}
+                    </div>
+                  </Disclosure>
+                </>
+              )}
             </div>
           </div>
         ) : (

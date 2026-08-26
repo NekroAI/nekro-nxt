@@ -384,23 +384,18 @@ const projectSnapshot = (json: SnapshotJson, successfulAt: number): ProductSnaps
     imageDiagnostics: agent.imageDiagnostics,
   }))
   const connectionAdapterName = (connection: SnapshotJson['connections'][number]): string =>
-    connection.adapterKey === 'web'
-      ? '内置频道'
-      : nonEmptyLabel(
-          json.connectionAdapters.find((adapter) => adapter.key === connection.adapterKey)?.displayName,
-          '未命名连接平台',
-        )
+    nonEmptyLabel(
+      json.connectionAdapters.find((adapter) => adapter.key === connection.adapterKey)?.displayName,
+      '未命名连接平台',
+    )
   const connectionNameById = new Map(
     json.connections.map((connection) => [
       connection.id,
       connectionDisplayName({
-        name:
-          connection.adapterKey === 'web'
-            ? '内置频道'
-            : nonEmptyLabel(
-                json.connectionAdapters.find((adapter) => adapter.key === connection.adapterKey)?.displayName,
-                '未命名连接',
-              ),
+        name: nonEmptyLabel(
+          json.connectionAdapters.find((adapter) => adapter.key === connection.adapterKey)?.displayName,
+          '未命名连接',
+        ),
         ...(connection.alias === undefined ? {} : { alias: connection.alias }),
       }),
     ]),
@@ -430,6 +425,8 @@ const projectSnapshot = (json: SnapshotJson, successfulAt: number): ProductSnaps
       id: `${binding.channelId}:${binding.agentId}:${binding.boundAt}`,
       agentId: binding.agentId,
       triggerPolicy: binding.triggerPolicy,
+      processingFeedback: binding.processingFeedback,
+      eventTriggers: binding.eventTriggers,
     })),
     unread: 0,
   }))
@@ -445,13 +442,15 @@ const projectSnapshot = (json: SnapshotJson, successfulAt: number): ProductSnaps
   }
   const connections: ConnectionSummary[] = json.connections.map((connection) => {
     const adapterName = connectionAdapterName(connection)
-    const gatewayState = connection.gateway?.state ?? (connection.adapterKey === 'web' ? 'connected' : 'disconnected')
+    const descriptor = json.connectionAdapters.find(({ key }) => key === connection.adapterKey)
+    const gatewayState = connection.gateway?.state ?? connection.status.state
     return {
       id: connection.id,
       ...(connection.alias === undefined ? {} : { alias: connection.alias }),
       name: adapterName,
       adapter: adapterName,
       adapterKey: connection.adapterKey,
+      userManaged: descriptor?.userCreatable ?? false,
       state:
         gatewayState === 'connected'
           ? '已连接'
@@ -460,11 +459,11 @@ const projectSnapshot = (json: SnapshotJson, successfulAt: number): ProductSnaps
             : connection.credentialConfigured
               ? '已配置'
               : '已断开',
-      appId: connection.appId ?? '',
-      credentialConfigured: connection.credentialConfigured ?? false,
+      appId: connection.appId ?? connection.status.accountId ?? '',
+      credentialConfigured: connection.credentialConfigured ?? connection.status.credentialConfigured,
       gatewayState,
-      lastError: connection.gateway?.lastError ?? '',
-      proactiveSend: connection.proactiveSend ?? false,
+      lastError: connection.gateway?.lastError ?? connection.status.message ?? '',
+      proactiveSend: connection.proactiveSend ?? connection.status.proactiveSend,
       channels: connection.channelCount ?? 0,
       knownChannels: (connection.knownChannels ?? []).map((channel) => ({
         ...channel,
@@ -901,12 +900,25 @@ export class HttpProductHost implements ProductHostPort {
       const agentId = typeof input?.['agentId'] === 'string' ? input['agentId'] : ''
       const channelId = typeof input?.['channelId'] === 'string' ? input['channelId'] : ''
       const triggerPolicy = isTriggerPolicy(input?.['triggerPolicy']) ? input['triggerPolicy'] : undefined
+      const processingFeedback =
+        input?.['processingFeedback'] === 'off' ? 'off' : input?.['processingFeedback'] === 'auto' ? 'auto' : undefined
+      const eventTriggers = Array.isArray(input?.['eventTriggers']) ? input['eventTriggers'] : undefined
       if (!agentId.trim()) throw new Error('缺少智能体标识，请刷新页面后重试。')
       if (!channelId.trim()) throw new Error('请选择要绑定的频道。')
       if (triggerPolicy === undefined) {
         throw new Error('频道触发策略无效，请重新选择。')
       }
-      const result = await this.#call(HostApiContracts.createBinding, {}, { agentId, channelId, triggerPolicy })
+      const result = await this.#call(
+        HostApiContracts.createBinding,
+        {},
+        {
+          agentId,
+          channelId,
+          triggerPolicy,
+          ...(processingFeedback === undefined ? {} : { processingFeedback }),
+          ...(eventTriggers === undefined ? {} : { eventTriggers }),
+        },
+      )
       await this.#refreshAndNotify()
       return result
     }

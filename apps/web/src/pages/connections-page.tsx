@@ -210,7 +210,7 @@ export function ConnectionsPage() {
           meta={
             selected ? (
               <>
-                <span>{selected.adapterKey === 'web' ? '当前设备托管' : selected.adapter}</span>
+                <span>{selected.userManaged ? selected.adapter : '当前设备托管'}</span>
                 <span aria-hidden="true"> · </span>
                 <span>{connections.length} 个账号</span>
               </>
@@ -257,7 +257,7 @@ export function ConnectionsPage() {
           />
         ) : selected ? (
           <section className={styles.connectionWorkspace}>
-            {selected.adapterKey !== 'web' ? (
+            {selected.userManaged ? (
               <ol className={styles.connectionProgress} aria-label="连接完成进度">
                 {[
                   { label: '连接账号', done: selected.state === '已连接' || selected.state === '已配置' },
@@ -282,9 +282,9 @@ export function ConnectionsPage() {
               <dd>{selected.lastEvent}</dd>
               <dt>已发现频道</dt>
               <dd>{selected.channels} 个</dd>
-              {selected.adapterKey !== 'web' ? (
+              {selected.userManaged ? (
                 <>
-                  <dt>应用账号</dt>
+                  <dt>连接账号</dt>
                   <dd>{maskedAccount(selected.appId)}</dd>
                   <dt>凭据</dt>
                   <dd>{selected.credentialConfigured ? '已保存' : '未配置'}</dd>
@@ -294,7 +294,7 @@ export function ConnectionsPage() {
               ) : null}
             </dl>
 
-            {selected.adapterKey !== 'web' ? (
+            {selected.userManaged ? (
               <>
                 <div className={styles.sectionDivider} />
                 <div className={styles.connectionAliasEditor}>
@@ -334,7 +334,7 @@ export function ConnectionsPage() {
               </>
             ) : null}
 
-            {selected.adapterKey === 'web' ? (
+            {!selected.userManaged ? (
               <InlineFeedback tone="info">内置频道由 NekroNXT 直接提供。</InlineFeedback>
             ) : (
               <>

@@ -1,6 +1,9 @@
 import type {
+  AssetId,
   ChannelEventId,
+  ChannelActivityType,
   ChannelId,
+  ChannelMemberId,
   ConnectionId,
   JsonValue,
   LogicalMessageId,
@@ -9,6 +12,7 @@ import type {
 } from '@nekro-nxt/contracts'
 import {
   AssetIdSchema,
+  ChannelActivityTypeSchema,
   ChannelIdSchema,
   ChannelMemberIdSchema,
   ConnectionIdSchema,
@@ -37,6 +41,9 @@ export type AdapterOutboundCapabilities = z.infer<typeof AdapterOutboundCapabili
 export type AdapterInboundEventKind =
   'message-created' | 'message-edited' | 'message-deleted' | 'member-updated' | 'reaction' | 'control'
 
+export { ChannelActivityTypeSchema }
+export type { ChannelActivityType }
+
 export const AdapterInboundEventSchema = z
   .object({
     connectionId: ConnectionIdSchema,
@@ -45,6 +52,8 @@ export const AdapterInboundEventSchema = z
     platformEventId: z.string().min(1).optional(),
     platformMessageId: z.string().min(1).optional(),
     kind: z.enum(['message-created', 'message-edited', 'message-deleted', 'member-updated', 'reaction', 'control']),
+    activityType: ChannelActivityTypeSchema.optional(),
+    targetPlatformMessageId: z.string().min(1).optional(),
     senderMemberId: ChannelMemberIdSchema.optional(),
     parts: z.array(MessagePartSchema),
     platformSequence: z.number().int().safe().optional(),
@@ -69,6 +78,96 @@ export interface AdapterConnectionContext {
   readonly connectionId: ConnectionId
   readonly acceptInbound: (event: AdapterInboundEvent) => Promise<InboundCommitResult>
   readonly now: () => number
+  readonly channels?: AdapterChannelDirectory
+  readonly members?: AdapterMemberDirectory
+  readonly messages?: AdapterMessageDirectory
+  readonly assets?: AdapterAssetHost
+  readonly credentials?: AdapterCredentialHost
+  readonly state?: AdapterScopedStateStore
+  readonly diagnostics?: AdapterDiagnosticPublisher
+}
+
+export type AdapterConnectionHostContext = AdapterConnectionContext &
+  Required<
+    Pick<
+      AdapterConnectionContext,
+      'channels' | 'members' | 'messages' | 'assets' | 'credentials' | 'state' | 'diagnostics'
+    >
+  >
+
+/** Restricted Host-owned channel directory. It never exposes Core repositories. */
+export interface AdapterChannelDirectory {
+  ensure(input: {
+    readonly platformChannelId: string
+    readonly kind: 'direct' | 'group'
+    readonly displayName?: string
+    readonly observedAt: number
+  }): Promise<ChannelId>
+  updateDisplayName(channelId: ChannelId, displayName: string): Promise<void>
+  resolvePlatformChannelId(channelId: ChannelId): Promise<string | undefined>
+  resolveKind(channelId: ChannelId): Promise<'direct' | 'group' | undefined>
+}
+
+/** Restricted Host-owned identity directory scoped to this Connection. */
+export interface AdapterMemberDirectory {
+  ensure(input: {
+    readonly channelId: ChannelId
+    readonly platformUserId: string
+    readonly displayName?: string
+    readonly observedAt: number
+  }): Promise<ChannelMemberId>
+  resolvePlatformUserId(channelId: ChannelId, memberId: ChannelMemberId): Promise<string | undefined>
+}
+
+export interface AdapterMessageDirectory {
+  resolvePlatformMessage(
+    channelId: ChannelId,
+    platformMessageId: string,
+  ): Promise<{ readonly logicalMessageId: LogicalMessageId; readonly authoredByAgent: boolean } | undefined>
+  resolvePlatformMessageId(channelId: ChannelId, logicalMessageId: LogicalMessageId): Promise<string | undefined>
+}
+
+export interface AdapterAssetHost {
+  importBytes(input: {
+    readonly bytes: Uint8Array
+    readonly declaredMediaType?: string
+  }): Promise<{ readonly assetId: AssetId; readonly mediaType: string; readonly byteSize: number }>
+  read(input: {
+    readonly assetId: AssetId
+    readonly channelId: ChannelId
+  }): Promise<{ readonly bytes: Uint8Array; readonly mediaType: string; readonly byteSize: number }>
+}
+
+export interface AdapterCredentialHost {
+  resolve(reference: string): Promise<string>
+}
+
+export interface AdapterScopedStateStore {
+  load(key: string): Promise<JsonValue | undefined>
+  save(key: string, value: JsonValue): Promise<void>
+  clear(key: string): Promise<void>
+}
+
+export type AdapterConnectionStatus = 'connecting' | 'connected' | 'reconnecting' | 'failed' | 'stopped'
+export type AdapterOptionalCapabilityStatus = 'unknown' | 'available' | 'unsupported' | 'degraded'
+
+export interface AdapterConnectionDiagnostic {
+  readonly status: AdapterConnectionStatus
+  readonly message?: string
+  readonly credentialConfigured?: boolean
+  readonly proactiveSend?: boolean
+  readonly accountId?: string
+  readonly implementation?: {
+    readonly name?: string
+    readonly version?: string
+    readonly protocolVersion?: string
+  }
+  readonly optionalCapabilities?: Readonly<Record<string, AdapterOptionalCapabilityStatus>>
+  readonly details?: Readonly<Record<string, JsonValue>>
+}
+
+export interface AdapterDiagnosticPublisher {
+  publish(diagnostic: AdapterConnectionDiagnostic): void
 }
 
 export type AdapterConfigurationProperty =
@@ -325,6 +424,7 @@ export type AdapterDeliveryReceipt = z.infer<typeof AdapterDeliveryReceiptSchema
 
 export interface AdapterConnectionRuntime {
   readonly capabilities: AdapterOutboundCapabilities
+  readonly interactions?: AdapterConnectionInteractions
   /** Platform-aware, side-effect-free split before PhysicalDelivery facts are committed. */
   planOutbound?(input: {
     readonly connectionId: ConnectionId
@@ -335,6 +435,33 @@ export interface AdapterConnectionRuntime {
   start(): Promise<void>
   stop(): Promise<void>
   deliver(request: PhysicalDeliveryRequest, signal: AbortSignal): Promise<AdapterDeliveryReceipt>
+}
+
+export type AdapterInteractionOutcome =
+  | { readonly status: 'succeeded' }
+  | { readonly status: 'unsupported'; readonly message: string }
+  | { readonly status: 'failed'; readonly message: string }
+  | { readonly status: 'unknown'; readonly message: string }
+
+export interface AdapterConnectionInteractions {
+  startProcessingFeedback(input: {
+    readonly channelId: ChannelId
+    readonly platformMessageId: string
+  }): Promise<AdapterInteractionOutcome>
+  finishProcessingFeedback(input: {
+    readonly channelId: ChannelId
+    readonly platformMessageId: string
+  }): Promise<AdapterInteractionOutcome>
+  retractOwnMessage(input: {
+    readonly channelId: ChannelId
+    readonly platformMessageId: string
+    readonly clientRequestId: string
+  }): Promise<AdapterInteractionOutcome>
+  nudgeMember(input: {
+    readonly channelId: ChannelId
+    readonly memberId: ChannelMemberId
+    readonly clientRequestId: string
+  }): Promise<AdapterInteractionOutcome>
 }
 
 export interface AdapterPhysicalPlan {

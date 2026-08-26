@@ -75,15 +75,15 @@ docker run -d \
 
 ## 📚 文档与社区
 
-| 目标                   | 入口                                                                                                                        |
-| ---------------------- | --------------------------------------------------------------------------------------------------------------------------- |
-| 安装、配置并开始对话   | [快速开始](docs/guide/getting-started.md)                                                                                   |
-| 连接即时通信平台与群聊 | [连接频道](docs/guide/connections.md)                                                                                       |
-| 配置模型、智能体和扩展 | [模型](docs/guide/models.md) · [智能体](docs/guide/agents.md) · [扩展](docs/guide/extensions.md)                            |
-| 部署、升级、备份或排障 | [服务端部署](docs/guide/server.md) · [升级与备份](docs/guide/upgrade-backup.md) · [常见问题](docs/guide/troubleshooting.md) |
-| 参与开发               | [贡献指南](docs/CONTRIBUTING.md) · [贡献者文档](docs/guide/contributors.md)                                                 |
-| 反馈问题               | [支持说明](docs/SUPPORT.md) · [GitHub Issues](https://github.com/NekroAI/nekro-nxt/issues)                                  |
-| 社区交流               | NekroAI 官方 QQ 群 `636925153`                                                                                              |
+| 目标                   | 入口                                                                                                                                                   |
+| ---------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| 安装、配置并开始对话   | [快速开始](docs/guide/getting-started.md)                                                                                                              |
+| 连接即时通信平台与群聊 | [连接频道](docs/guide/connections.md) · [QQ 官方机器人](docs/guide/connections/qq-official-bot.md) · [OneBot V11](docs/guide/connections/onebot-11.md) |
+| 配置模型、智能体和扩展 | [模型](docs/guide/models.md) · [智能体](docs/guide/agents.md) · [扩展](docs/guide/extensions.md)                                                       |
+| 部署、升级、备份或排障 | [服务端部署](docs/guide/server.md) · [升级与备份](docs/guide/upgrade-backup.md) · [常见问题](docs/guide/troubleshooting.md)                            |
+| 参与开发               | [贡献指南](docs/CONTRIBUTING.md) · [贡献者文档](docs/guide/contributors.md)                                                                            |
+| 反馈问题               | [支持说明](docs/SUPPORT.md) · [GitHub Issues](https://github.com/NekroAI/nekro-nxt/issues)                                                             |
+| 社区交流               | NekroAI 官方 QQ 群 `636925153`                                                                                                                         |
 
 ## 当前状态
 

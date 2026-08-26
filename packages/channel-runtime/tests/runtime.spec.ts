@@ -1,4 +1,8 @@
-import type { AdapterConnectionContext, AdapterInboundEvent } from '@nekro-nxt/adapter-sdk'
+import type {
+  AdapterConnectionContext,
+  AdapterConnectionInteractions,
+  AdapterInboundEvent,
+} from '@nekro-nxt/adapter-sdk'
 import {
   AgentIdSchema,
   AssetIdSchema,
@@ -17,6 +21,7 @@ import type {
   ChannelMemberId,
   ConnectionId,
   EpisodeId,
+  JsonValue,
   OutboundIntentId,
   PhysicalDeliveryId,
   PlatformIdentityId,
@@ -415,6 +420,15 @@ class MemoryRuntimeRepository implements RuntimeRepository {
       )
     })
   }
+  findOutboundByLogicalMessageId(
+    channelId: ChannelId,
+    logicalMessageId: ReturnType<typeof LogicalMessageIdSchema.parse>,
+  ) {
+    return [...this.outbounds.values()].find(({ intent }) => {
+      const episode = this.episodes.get(intent.episodeId)
+      return episode?.channelId === channelId && intent.logicalMessageId === logicalMessageId
+    })
+  }
   createOutboundPlan(intent: OutboundIntentRecord, deliveries: readonly PhysicalDeliveryRecord[]): void {
     this.outbounds.set(intent.id, { intent, deliveries, receipts: [] })
   }
@@ -487,6 +501,7 @@ const setup = async (
   mixedContent = true,
   idleRolloverMs?: number | false,
   handoffSummary?: AgentSessionDriver['createHandoffSummary'],
+  feedbackInteractions?: AdapterConnectionInteractions,
 ) => {
   const coreRepository = new MemoryCoreRepository()
   const runtimeRepository = new MemoryRuntimeRepository(coreRepository)
@@ -518,6 +533,7 @@ const setup = async (
       return Promise.resolve()
     },
     sessionStatus: () => sessionStatus,
+    whenIdle: () => Promise.resolve(),
     findAdmissionMessage: (_sessionId, admissionId) => persistedAdmissionMessages.get(admissionId),
     createHandoffSummary: (input) => {
       handoffInputs.push(input)
@@ -549,11 +565,29 @@ const setup = async (
     acceptInbound: () => Promise.reject(new Error('test calls runtime directly')),
   }
   const adapter = new FakeAdapterConnection(context, { ...FAKE_ADAPTER_CAPABILITIES, mixedContent })
+  if (feedbackInteractions !== undefined) {
+    Object.defineProperty(adapter, 'interactions', { value: feedbackInteractions })
+  }
   await adapter.start()
+  const adapterStateRows = new Map<string, JsonValue>()
+  const feedbackOrder: string[] = []
   const runtime = new ChannelRuntime(core, coreRepository, runtimeRepository, sessionDriver, {
     now: () => 100,
     nextUlid: () => `R${++runtimeId}`,
     resolveAdapter: (id) => (id === connection.id ? adapter : undefined),
+    adapterState: {
+      load: (_connectionId, key) => Promise.resolve(adapterStateRows.get(key)),
+      save: (_connectionId, key, value) => {
+        feedbackOrder.push('persist')
+        adapterStateRows.set(key, value)
+        return Promise.resolve()
+      },
+      clear: (_connectionId, key) => {
+        feedbackOrder.push('clear')
+        adapterStateRows.delete(key)
+        return Promise.resolve()
+      },
+    },
     ...(idleRolloverMs === undefined ? {} : { idleRolloverMs }),
   })
   return {
@@ -575,6 +609,8 @@ const setup = async (
     markAdmissionPersisted: (admissionId: AdmissionId, dshMessageId: string) => {
       persistedAdmissionMessages.set(admissionId, dshMessageId)
     },
+    feedbackOrder,
+    adapterStateRows,
   }
 }
 
@@ -596,6 +632,112 @@ const inbound = (
 })
 
 describe('ChannelRuntime M1 lane', () => {
+  it('persists group processing feedback and removes it after the Session becomes idle', async () => {
+    const calls: string[] = []
+    const context = await setup(true, undefined, undefined, {
+      startProcessingFeedback: ({ platformMessageId }) => {
+        calls.push(`start:${platformMessageId}`)
+        return Promise.resolve({ status: 'succeeded' })
+      },
+      finishProcessingFeedback: ({ platformMessageId }) => {
+        calls.push(`finish:${platformMessageId}`)
+        return Promise.resolve({ status: 'succeeded' })
+      },
+      retractOwnMessage: () => Promise.resolve({ status: 'succeeded' }),
+      nudgeMember: () => Promise.resolve({ status: 'succeeded' }),
+    })
+    await context.runtime.acceptInbound({
+      ...inbound(context.connection.id, context.channel.id, 'feedback-message'),
+      platformMessageId: 'platform-message-1',
+    })
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    expect(calls).toEqual(['start:platform-message-1', 'finish:platform-message-1'])
+    expect(context.feedbackOrder[0]).toBe('persist')
+    expect(context.adapterStateRows.size).toBe(0)
+  })
+
+  it('durably deduplicates safe retract and nudge interactions', async () => {
+    const retractCalls: string[] = []
+    const nudgeCalls: string[] = []
+    const context = await setup(true, undefined, undefined, {
+      startProcessingFeedback: () => Promise.resolve({ status: 'succeeded' }),
+      finishProcessingFeedback: () => Promise.resolve({ status: 'succeeded' }),
+      retractOwnMessage: ({ platformMessageId }) => {
+        retractCalls.push(platformMessageId)
+        return Promise.resolve({ status: 'succeeded' })
+      },
+      nudgeMember: ({ memberId }) => {
+        nudgeCalls.push(memberId)
+        return Promise.resolve({ status: 'succeeded' })
+      },
+    })
+    await context.runtime.acceptInbound(inbound(context.connection.id, context.channel.id, 'interaction-anchor'))
+    const episode = [...context.runtimeRepository.episodes.values()][0]!
+    context.adapter.queueReceipt({ status: 'sent', platformMessageId: 'outbound-platform-1' })
+    const sent = await context.runtime.sendMessage({
+      episodeId: episode.id,
+      parts: [{ type: 'text', text: '稍后撤回' }],
+    })
+    const first = await context.runtime.retractChannelMessage({
+      episodeId: episode.id,
+      logicalMessageId: sent.logicalMessageId,
+      clientRequestId: 'retract-request-1',
+    })
+    const replay = await context.runtime.retractChannelMessage({
+      episodeId: episode.id,
+      logicalMessageId: sent.logicalMessageId,
+      clientRequestId: 'retract-request-1',
+    })
+    expect(first).toMatchObject({ status: 'succeeded' })
+    expect(replay).toEqual(first)
+    expect(retractCalls).toEqual(['outbound-platform-1'])
+    expect([...context.coreRepository.events.values()]).toContainEqual(
+      expect.objectContaining({ activityType: 'message-recalled', targetPlatformMessageId: 'outbound-platform-1' }),
+    )
+
+    const members = ['member-a', 'member-b', 'member-c', 'member-d'].map(
+      (platformUserId, index) =>
+        context.core.observeChannelMember({
+          connectionId: context.connection.id,
+          channelId: context.channel.id,
+          platformUserId,
+          observedAt: 100 + index,
+        }).member,
+    )
+    await expect(
+      context.runtime.nudgeChannelMember({
+        episodeId: episode.id,
+        memberId: members[0]!.id,
+        clientRequestId: 'nudge-1',
+      }),
+    ).resolves.toMatchObject({ status: 'succeeded' })
+    await expect(
+      context.runtime.nudgeChannelMember({
+        episodeId: episode.id,
+        memberId: members[0]!.id,
+        clientRequestId: 'nudge-2',
+      }),
+    ).rejects.toThrow('30 秒')
+    await context.runtime.nudgeChannelMember({
+      episodeId: episode.id,
+      memberId: members[1]!.id,
+      clientRequestId: 'nudge-3',
+    })
+    await context.runtime.nudgeChannelMember({
+      episodeId: episode.id,
+      memberId: members[2]!.id,
+      clientRequestId: 'nudge-4',
+    })
+    await expect(
+      context.runtime.nudgeChannelMember({
+        episodeId: episode.id,
+        memberId: members[3]!.id,
+        clientRequestId: 'nudge-5',
+      }),
+    ).rejects.toThrow('每分钟最多')
+    expect(nudgeCalls).toHaveLength(3)
+  })
+
   it('creates a binding through the runtime after the channel becomes unbound', async () => {
     const context = await setup()
     await context.runtime.clearBinding(context.channel.id)
@@ -622,6 +764,44 @@ describe('ChannelRuntime M1 lane', () => {
     expect(context.runtimeRepository.admissions).toHaveLength(1)
     expect(context.sessionCalls.filter((call) => call.startsWith('create:'))).toHaveLength(1)
     expect([...context.runtimeRepository.admissions.values()][0]).toMatchObject({ state: 'logged-to-session' })
+  })
+
+  it('records special activity but only admits explicitly enabled event types', async () => {
+    const context = await setup()
+    const activity = {
+      ...inbound(context.connection.id, context.channel.id, 'poke-default'),
+      kind: 'control' as const,
+      activityType: 'member-poked' as const,
+    }
+    await context.runtime.acceptInbound(activity)
+    expect(context.coreRepository.events.size).toBe(1)
+    expect(context.runtimeRepository.admissions).toHaveLength(0)
+
+    await context.runtime.replaceBinding({
+      channelId: context.channel.id,
+      agentId: context.agent.definition.id,
+      triggerPolicy: 'always',
+      eventTriggers: ['member-poked'],
+    })
+    await context.runtime.acceptInbound({
+      ...activity,
+      platformEventId: 'poke-enabled',
+      dedupeKey: 'event:poke-enabled',
+    })
+    expect(context.runtimeRepository.admissions).toHaveLength(1)
+
+    await context.runtime.replaceBinding({
+      channelId: context.channel.id,
+      agentId: context.agent.definition.id,
+      triggerPolicy: 'observe-only',
+      eventTriggers: ['member-poked'],
+    })
+    await context.runtime.acceptInbound({
+      ...activity,
+      platformEventId: 'poke-observed',
+      dedupeKey: 'event:poke-observed',
+    })
+    expect(context.runtimeRepository.admissions).toHaveLength(1)
   })
 
   it('sends admin console outbound as the robot account and notifies the session without a model turn', async () => {
@@ -955,6 +1135,8 @@ describe('ChannelRuntime M1 lane', () => {
       channelId: ChannelIdSchema.parse('chn_trigger'),
       agentId: AgentIdSchema.parse('agt_trigger'),
       triggerPolicy,
+      processingFeedback: 'auto',
+      eventTriggers: [],
       boundAt: 1,
     })
 

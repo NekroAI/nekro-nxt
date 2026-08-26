@@ -5,6 +5,7 @@ import type {
   AdmissionId,
   AssetId,
   ChannelEventId,
+  ChannelActivityType,
   ChannelId,
   ChannelMemberId,
   ConnectionId,
@@ -180,6 +181,10 @@ export const channelBindings = sqliteTable(
     triggerPolicy: text('trigger_policy', {
       enum: ['always', 'mentioned-or-replied', 'command', 'observe-only'],
     }).notNull(),
+    processingFeedback: text('processing_feedback', { enum: ['auto', 'off'] })
+      .notNull()
+      .default('auto'),
+    eventTriggers: jsonText<readonly ChannelActivityType[]>('event_triggers').notNull().default([]),
     boundAt: integer('bound_at').notNull(),
   },
   (table) => [
@@ -188,6 +193,7 @@ export const channelBindings = sqliteTable(
       'channel_bindings_trigger_policy_ck',
       sql`${table.triggerPolicy} IN ('always', 'mentioned-or-replied', 'command', 'observe-only')`,
     ),
+    check('channel_bindings_processing_feedback_ck', sql`${table.processingFeedback} IN ('auto', 'off')`),
   ],
 )
 
@@ -204,6 +210,9 @@ export const channelEvents = sqliteTable(
     kind: text({
       enum: ['message-created', 'message-edited', 'message-deleted', 'member-updated', 'reaction', 'control'],
     }).notNull(),
+    activityType: text('activity_type').$type<ChannelActivityType>(),
+    targetPlatformMessageId: text('target_platform_message_id'),
+    targetLogicalMessageId: text('target_logical_message_id').$type<LogicalMessageId>(),
     senderMemberId: text('sender_member_id').$type<ChannelMemberId>(),
     parts: jsonText<readonly MessagePart[]>('parts').notNull(),
     sourceTimestamp: integer('source_timestamp').notNull(),

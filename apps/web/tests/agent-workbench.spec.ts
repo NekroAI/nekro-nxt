@@ -60,7 +60,9 @@ const channel = (bound: boolean): ChannelSummary => ({
   agentId: bound ? agentId : '',
   trigger: '始终响应',
   runtimePhase: '空闲',
-  bindings: bound ? [{ id: 'binding', agentId, triggerPolicy: 'always' }] : [],
+  bindings: bound
+    ? [{ id: 'binding', agentId, triggerPolicy: 'always', processingFeedback: 'auto', eventTriggers: [] }]
+    : [],
   unread: 0,
 })
 

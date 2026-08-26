@@ -104,13 +104,16 @@ import {
   type ChannelHistoryEntry,
   type ChannelRuntime,
   type ChannelHistoryRepository,
+  type ChannelInteractionResult,
   type EpisodeCloseReason,
   type SendMessageInput,
   type SendMessageResult,
 } from '@nekro-nxt/channel-runtime'
 import {
   AssetIdSchema,
+  ChannelMemberIdSchema,
   JsonValueSchema,
+  LogicalMessageIdSchema,
   messagePartAssetIds,
   parseJsonValue,
   parseMessageParts,
@@ -120,6 +123,7 @@ import {
   type AgentRevisionId,
   type AssetId,
   type ChannelId,
+  type ChannelMemberId,
   type ChannelRuntimeOccupancy,
   type ConnectionId,
   type DshCredentialView,
@@ -127,6 +131,7 @@ import {
   type DshSettingsPathOperation,
   type EpisodeId,
   type JsonValue,
+  type LogicalMessageId,
   type MessagePart,
   type PluginSupportAssessment,
   type PromptDocumentV1,
@@ -516,6 +521,17 @@ export function assertHostDshPackageVersions(): void {
 
 export interface AgentCommunicationPort {
   sendMessage(input: SendMessageInput): Promise<SendMessageResult>
+  supportsInteractions?(channelId: ChannelId): boolean
+  retractMessage?(input: {
+    readonly episodeId: EpisodeId
+    readonly logicalMessageId: LogicalMessageId
+    readonly clientRequestId: string
+  }): Promise<ChannelInteractionResult>
+  nudgeMember?(input: {
+    readonly episodeId: EpisodeId
+    readonly memberId: ChannelMemberId
+    readonly clientRequestId: string
+  }): Promise<ChannelInteractionResult>
 }
 
 export interface DshHostRuntimeOptions {
@@ -1718,6 +1734,123 @@ export const channelCommunicationTool = (
         signal: exec.signal,
       })
       return ChannelMessageResultSchema.parse(JSON.parse(JSON.stringify(result)))
+    },
+  })
+
+const ChannelInteractionResultSchema = z
+  .object({
+    intentId: z.string(),
+    status: z.enum(['succeeded', 'partially-succeeded', 'failed', 'unknown']),
+    message: z.string(),
+    outcomes: z
+      .array(z.object({ platformMessageId: z.string(), status: z.string(), message: z.string().optional() }).strict())
+      .optional(),
+  })
+  .strict()
+
+const parseChannelInteractionResult = (input: unknown) => {
+  const parsed = ChannelInteractionResultSchema.parse(input)
+  return {
+    intentId: parsed.intentId,
+    status: parsed.status,
+    message: parsed.message,
+    ...(parsed.outcomes === undefined
+      ? {}
+      : {
+          outcomes: parsed.outcomes.map((outcome) => ({
+            platformMessageId: outcome.platformMessageId,
+            status: outcome.status,
+            ...(outcome.message === undefined ? {} : { message: outcome.message }),
+          })),
+        }),
+  }
+}
+
+export const retractChannelMessageTool = (episodeId: EpisodeId, communication: AgentCommunicationPort) =>
+  defineTool({
+    name: 'retract_channel_message',
+    description: '撤回当前频道中由本智能体发送的一条消息。只能使用频道逻辑消息 ID；结果不明确时不会自动重试。',
+    parameters: {
+      logicalMessageId: { type: 'string', required: true },
+      clientRequestId: { type: 'string' },
+    },
+    output: {
+      schema: {
+        type: 'object',
+        additionalProperties: false,
+        properties: {
+          intentId: { type: 'string', required: true },
+          status: { type: 'string', enum: ['succeeded', 'partially-succeeded', 'failed', 'unknown'], required: true },
+          message: { type: 'string', required: true },
+          outcomes: {
+            type: 'array',
+            items: {
+              type: 'object',
+              additionalProperties: false,
+              properties: {
+                platformMessageId: { type: 'string', required: true },
+                status: { type: 'string', required: true },
+                message: { type: 'string' },
+              },
+            },
+          },
+        },
+      },
+      render: (_arguments, value) => [{ type: 'text', text: value.message }],
+    },
+    execute: async (args, exec) => {
+      if (!communication.retractMessage) throw new Error('当前频道不支持消息撤回。')
+      return parseChannelInteractionResult(
+        await communication.retractMessage({
+          episodeId,
+          logicalMessageId: LogicalMessageIdSchema.parse(args.logicalMessageId),
+          clientRequestId: args.clientRequestId ?? `${episodeId}:${exec.callId}`,
+        }),
+      )
+    },
+  })
+
+export const nudgeChannelMemberTool = (episodeId: EpisodeId, communication: AgentCommunicationPort) =>
+  defineTool({
+    name: 'nudge_channel_member',
+    description: '戳一戳当前频道中的一名已知成员。使用 NekroNXT 成员 ID；同一成员 30 秒冷却，每频道每分钟最多三次。',
+    parameters: {
+      memberId: { type: 'string', required: true },
+      clientRequestId: { type: 'string' },
+    },
+    output: {
+      schema: {
+        type: 'object',
+        additionalProperties: false,
+        properties: {
+          intentId: { type: 'string', required: true },
+          status: { type: 'string', enum: ['succeeded', 'partially-succeeded', 'failed', 'unknown'], required: true },
+          message: { type: 'string', required: true },
+          outcomes: {
+            type: 'array',
+            items: {
+              type: 'object',
+              additionalProperties: false,
+              properties: {
+                platformMessageId: { type: 'string', required: true },
+                status: { type: 'string', required: true },
+                message: { type: 'string' },
+              },
+            },
+          },
+        },
+      },
+      render: (_arguments, value) => [{ type: 'text', text: value.message }],
+    },
+    execute: async (args, exec) => {
+      if (!communication.nudgeMember) throw new Error('当前频道不支持戳一戳。')
+      return parseChannelInteractionResult(
+        await communication.nudgeMember({
+          episodeId,
+          memberId: ChannelMemberIdSchema.parse(args.memberId),
+          clientRequestId: args.clientRequestId ?? `${episodeId}:${exec.callId}`,
+        }),
+      )
     },
   })
 
@@ -3311,6 +3444,14 @@ export class DshHostRuntime implements AgentSessionDriver, ExtensionActivationHo
       agentContext.tools.register(
         channelCommunicationTool(input.episodeId, input.channelId, this.#assets, this.#communication),
       )
+      if (
+        this.#communication.supportsInteractions?.(input.channelId) === true &&
+        this.#communication.retractMessage !== undefined &&
+        this.#communication.nudgeMember !== undefined
+      ) {
+        agentContext.tools.register(retractChannelMessageTool(input.episodeId, this.#communication))
+        agentContext.tools.register(nudgeChannelMemberTool(input.episodeId, this.#communication))
+      }
       for (const tool of historyTools(input.channelId, this.#history)) agentContext.tools.register(tool)
       agentContext.tools.register(assetInspectTool(input.channelId, this.#assets))
       if (supportsImage || auxiliary !== undefined) {

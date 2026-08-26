@@ -136,7 +136,7 @@ describe('NekroNxt domain API — real QQ Connection diagnostics', () => {
       for (;;) {
         snapshot = await readSnapshot(origin)
         const connection = snapshot.connections.find((candidate) => candidate.id === created.connectionId)
-        if (connection?.gateway?.state === 'connected' && connection.channelCount === 1) break
+        if (connection?.status.state === 'connected' && connection.channelCount === 1) break
         if (Date.now() - before > 5_000) {
           throw new Error(`Timed out waiting for the QQ Gateway assembly: ${JSON.stringify(connection)}`)
         }
@@ -147,9 +147,8 @@ describe('NekroNxt domain API — real QQ Connection diagnostics', () => {
       expect(projected).toMatchObject({
         adapterKey: 'qq-openclaw',
         alias: '测试机器人',
-        credentialConfigured: true,
+        status: { state: 'connected', credentialConfigured: true, proactiveSend: true },
         channelCount: 1,
-        gateway: { state: 'connected' },
       })
       expect(JSON.stringify(snapshot)).not.toContain('client-secret-real-1')
       expect(JSON.stringify(runtime.core.listConnections())).not.toContain('client-secret-real-1')

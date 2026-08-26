@@ -119,6 +119,8 @@ const toBinding = (input: typeof channelBindings.$inferSelect): BindingRecord =>
     channelId: row.channelId,
     agentId: row.agentId,
     triggerPolicy: row.triggerPolicy,
+    processingFeedback: row.processingFeedback,
+    eventTriggers: row.eventTriggers,
     boundAt: row.boundAt,
   }
 }
@@ -131,6 +133,9 @@ const toEvent = (input: typeof channelEvents.$inferSelect): ChannelEventRecord =
     channelId: row.channelId,
     ...(row.platformMessageId === null ? {} : { platformMessageId: row.platformMessageId }),
     kind: row.kind,
+    ...(row.activityType === null ? {} : { activityType: row.activityType }),
+    ...(row.targetPlatformMessageId === null ? {} : { targetPlatformMessageId: row.targetPlatformMessageId }),
+    ...(row.targetLogicalMessageId === null ? {} : { targetLogicalMessageId: row.targetLogicalMessageId }),
     ...(row.senderMemberId === null ? {} : { senderMemberId: row.senderMemberId }),
     parts: row.parts,
     sourceTimestamp: row.sourceTimestamp,
@@ -408,7 +413,13 @@ export function createChannelsRepository(database: DrizzleCoreDatabase): Channel
         .values(record)
         .onConflictDoUpdate({
           target: channelBindings.channelId,
-          set: { agentId: record.agentId, triggerPolicy: record.triggerPolicy, boundAt: record.boundAt },
+          set: {
+            agentId: record.agentId,
+            triggerPolicy: record.triggerPolicy,
+            processingFeedback: record.processingFeedback,
+            eventTriggers: record.eventTriggers,
+            boundAt: record.boundAt,
+          },
         })
         .run()
       return record

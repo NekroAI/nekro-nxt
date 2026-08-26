@@ -9,7 +9,7 @@
 3. [服务端部署](guide/server.md)：一行启动容器，详细配置 Docker、Compose、远程访问与数据目录；
 4. [配置模型](guide/models.md)：模型供应商、API Key、连接测试和模型选择；
 5. [创建智能体](guide/agents.md)：人设、模型、授权能力和内置频道；
-6. [连接频道](guide/connections.md)：添加平台账号、发现频道、绑定和触发方式；
+6. [连接频道](guide/connections.md)：添加平台账号、发现频道、绑定和触发方式；QQ 可选择 [QQ 官方机器人](guide/connections/qq-official-bot.md)或 [OneBot V11](guide/connections/onebot-11.md)；
 7. [使用扩展](guide/extensions.md)：动态运行、验证、保存和为智能体启用；
 8. [升级、备份与恢复](guide/upgrade-backup.md)：双通道、数据根和恢复原则；
 9. [常见问题与排障](guide/troubleshooting.md)：安装、Host、模型、连接和扩展问题；

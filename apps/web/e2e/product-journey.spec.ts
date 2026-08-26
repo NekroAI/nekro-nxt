@@ -529,6 +529,8 @@ test("an intelligent-agent can add another channel while replacing that channel'
           channelId: plan.channelId,
           agentId: plan.agentId,
           triggerPolicy: 'always',
+          processingFeedback: 'auto',
+          eventTriggers: [],
           boundAt: 1_725_000_000_000 + created * 100,
         },
       ],
@@ -747,6 +749,160 @@ test('connection workbench binds an intelligent-agent without visiting the manag
   await expect(page.getByText('频道已绑定。')).toBeVisible()
   await expect(page).toHaveURL(/\/connections(?:\/|$)/u)
   await expect(page.getByRole('heading', { name: 'QQ 官方机器人' })).toBeVisible()
+  expect(failures, failures.join('\n')).toEqual([])
+})
+
+test('external channel exposes processing feedback and per-event trigger controls', async ({ page, request }) => {
+  const failures = installRuntimeFailureGate(page)
+  const baseResponse = await request.get('/api/snapshot')
+  expect(baseResponse.ok()).toBe(true)
+  const baseSnapshot = HostApiContracts.snapshot.response.parse(await baseResponse.json())
+  const sourceAgent =
+    baseSnapshot.agents[0] ??
+    ({
+      id: AgentIdSchema.parse('agt_onebotsettings'),
+      displayName: '频道设置智能体',
+      persona: '',
+      personaDocument: { version: 1, segments: [] },
+      currentRevisionId: AgentRevisionIdSchema.parse('arev_onebotsettings'),
+      createdAt: 1_725_000_000_000,
+      runtimeStatus: 'idle',
+      runtimePhase: 'idle',
+      model: { provider: 'deepseek', model: 'deepseek-v4-flash' },
+      dynamicClientApprovalPolicy: 'manual',
+      imagePolicy: {
+        history: {
+          mode: 'persistent-distinct',
+          detail: 'auto',
+          restoreAfterCompaction: { recentMessages: 32, maxImages: 20 },
+        },
+        textModel: { mode: 'disabled' },
+      },
+      imageDiagnostics: {
+        route: { mode: 'unavailable' },
+        activeSessions: 0,
+        residentImages: 0,
+        duplicateImagesSkipped: 0,
+        blockers: [],
+      },
+      capabilities: {
+        subagents: true,
+        fileTools: false,
+        webSearch: false,
+        dynamicCreation: false,
+        developmentShell: false,
+        unrestrictedFileAccess: false,
+      },
+      channels: [],
+    } as const)
+  const connectionId = ConnectionIdSchema.parse('con_onebotsettings')
+  const channelId = ChannelIdSchema.parse('chn_onebotsettings')
+  let binding = HostApiContracts.createBinding.response.parse({
+    channelId,
+    agentId: sourceAgent.id,
+    triggerPolicy: 'always',
+    processingFeedback: 'auto',
+    eventTriggers: [],
+    boundAt: 1_725_000_000_000,
+  })
+  let snapshot: HostSnapshot = HostApiContracts.snapshot.response.parse({
+    ...baseSnapshot,
+    connectionAdapters: baseSnapshot.connectionAdapters.some(({ key }) => key === 'onebot-11')
+      ? baseSnapshot.connectionAdapters
+      : [
+          ...baseSnapshot.connectionAdapters,
+          {
+            key: 'onebot-11',
+            displayName: 'OneBot 11',
+            description: '连接独立部署的 OneBot 11 协议端',
+            userCreatable: true,
+            configSchema: { schemaVersion: 1, type: 'object' as const, required: [], properties: {} },
+          },
+        ],
+    agents: (baseSnapshot.agents.some(({ id }) => id === sourceAgent.id)
+      ? baseSnapshot.agents
+      : [...baseSnapshot.agents, sourceAgent]
+    ).map((agent) =>
+      agent.id === sourceAgent.id ? { ...agent, channels: [...new Set([...agent.channels, channelId])] } : agent,
+    ),
+    connections: [
+      ...baseSnapshot.connections.filter(({ id }) => id !== connectionId),
+      {
+        id: connectionId,
+        adapterKey: 'onebot-11',
+        alias: '测试协议端',
+        status: {
+          state: 'connected',
+          credentialConfigured: true,
+          proactiveSend: true,
+          accountId: 'fixture-account',
+          implementation: { name: 'Fixture', version: '1.0.0', protocolVersion: 'v11' },
+          optionalCapabilities: { set_msg_emoji_like: 'available', send_poke: 'unknown' },
+        },
+        channelCount: 1,
+        knownChannels: [{ id: channelId, name: '外部群聊', kind: 'group' }],
+      },
+    ],
+    channels: [
+      ...baseSnapshot.channels.filter(({ id }) => id !== channelId),
+      {
+        id: channelId,
+        connectionId,
+        platformChannelId: 'group:fixture-settings',
+        kind: 'group',
+        displayName: '外部群聊',
+        boundAgentId: sourceAgent.id,
+        runtimePhase: 'idle',
+        bindings: [binding],
+      },
+    ],
+  })
+  const bindingRequests: unknown[] = []
+  await page.route('**/api/snapshot', (route) =>
+    route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(snapshot) }),
+  )
+  await page.route(`**/api/channels/${channelId}/messages**`, (route) =>
+    route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({ messages: [], hasMore: false }),
+    }),
+  )
+  await page.route(`**/api/channels/${channelId}/runtime`, (route) =>
+    route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({ channelId, phase: 'idle', pendingInjectCount: 0, turns: [] }),
+    }),
+  )
+  await page.route('**/api/bindings', async (route) => {
+    const input = HostApiContracts.createBinding.request.parse(route.request().postDataJSON())
+    bindingRequests.push(input)
+    binding = HostApiContracts.createBinding.response.parse({ ...input, boundAt: binding.boundAt + 1 })
+    snapshot = HostApiContracts.snapshot.response.parse({
+      ...snapshot,
+      channels: snapshot.channels.map((channel) =>
+        channel.id === channelId ? { ...channel, bindings: [binding] } : channel,
+      ),
+    })
+    return route.fulfill({ status: 201, contentType: 'application/json', body: JSON.stringify(binding) })
+  })
+
+  await page.goto(`/work/channels/${channelId}`)
+  const inspector = page.getByLabel('频道')
+  const feedback = inspector.getByRole('switch', { name: '显示处理中状态' })
+  await expect(feedback).toBeChecked()
+  await feedback.click()
+  await expect(page.getByText('频道事件设置已更新。')).toBeVisible()
+  await inspector.getByRole('button', { name: '设置特殊事件' }).click()
+  const poke = inspector.getByRole('switch', { name: '戳一戳' })
+  await expect(poke).not.toBeChecked()
+  await poke.click()
+  await expect(poke).toBeChecked()
+  expect(bindingRequests).toEqual([
+    expect.objectContaining({ processingFeedback: 'off', eventTriggers: [] }),
+    expect.objectContaining({ processingFeedback: 'off', eventTriggers: ['member-poked'] }),
+  ])
   expect(failures, failures.join('\n')).toEqual([])
 })
 

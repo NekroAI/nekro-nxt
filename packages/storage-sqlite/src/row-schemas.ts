@@ -6,6 +6,7 @@ import {
   AgentRevisionIdSchema,
   AssetIdSchema,
   ChannelEventIdSchema,
+  ChannelActivityTypeSchema,
   ChannelIdSchema,
   ChannelMemberIdSchema,
   ConnectionIdSchema,
@@ -101,12 +102,15 @@ export const ChannelMemberRowSchema = createSelectSchema(channelMembers, {
 export const ChannelBindingRowSchema = createSelectSchema(channelBindings, {
   channelId: ChannelIdSchema,
   agentId: AgentIdSchema,
+  eventTriggers: z.array(ChannelActivityTypeSchema),
 })
 export const ChannelEventRowSchema = createSelectSchema(channelEvents, {
   id: ChannelEventIdSchema,
   logicalMessageId: LogicalMessageIdSchema,
   channelId: ChannelIdSchema,
   senderMemberId: ChannelMemberIdSchema.nullable(),
+  activityType: ChannelActivityTypeSchema.nullable(),
+  targetLogicalMessageId: LogicalMessageIdSchema.nullable(),
   parts: MessagePartsSchema,
   facts: jsonObjectSchema.nullable(),
 })

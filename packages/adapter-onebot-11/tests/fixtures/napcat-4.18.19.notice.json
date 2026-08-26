@@ -1,0 +1,11 @@
+{
+  "time": "201",
+  "post_type": "notice",
+  "notice_type": "group_msg_emoji_like",
+  "sub_type": "add",
+  "group_id": "fixture-group-napcat",
+  "user_id": "fixture-member-napcat",
+  "message_id": "fixture-message-napcat",
+  "emoji_id": 66,
+  "implementation_extra": "ignored"
+}

@@ -41,6 +41,7 @@ declare const styles: {
   readonly bindingAgentRow: string
   readonly bindingEmpty: string
   readonly bindingEmptyIcon: string
+  readonly bindingEventSettings: string
   readonly bindingInspector: string
   readonly bindingNextStep: string
   readonly bindingSettings: string

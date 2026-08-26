@@ -760,6 +760,8 @@ describe('Core SQLite baseline', () => {
         channelId: channel.id,
         agentId: agent.definition.id,
         triggerPolicy: 'always',
+        processingFeedback: 'auto',
+        eventTriggers: [],
         boundAt: 1,
       }
       Object.defineProperty(invalidBinding, 'triggerPolicy', { value: 'invalid' })
@@ -889,6 +891,47 @@ describe('relations, admissions and outbox', () => {
         dedupeKey: 'plain-event',
       })
       expect(database.db.select({ value: count() }).from(assetOccurrences).get()?.value).toBe(1)
+    } finally {
+      database.close()
+    }
+  })
+
+  it('persists activity relationships without rewriting the target message fact', async () => {
+    const { database, repository, core, connection } = await createFixture()
+    try {
+      const channel = core.createChannel({ connectionId: connection.id, platformChannelId: 'activity', kind: 'group' })
+      const original = core.appendInbound({
+        connectionId: connection.id,
+        channelId: channel.id,
+        adapterKey: 'web',
+        platformMessageId: 'platform-original',
+        kind: 'message-created',
+        parts: [{ type: 'text', text: '原始事实' }],
+        platformTimestamp: 20,
+        receivedAt: 20,
+        dedupeKey: 'original-event',
+      })
+      const recalled = core.appendInbound({
+        connectionId: connection.id,
+        channelId: channel.id,
+        adapterKey: 'web',
+        kind: 'message-deleted',
+        activityType: 'message-recalled',
+        targetPlatformMessageId: 'platform-original',
+        parts: [{ type: 'rich', adapterKey: 'web', kind: 'message-recalled', summary: '一条消息被撤回。' }],
+        platformTimestamp: 21,
+        receivedAt: 21,
+        dedupeKey: 'recall-event',
+      })
+      expect(recalled.event).toMatchObject({
+        activityType: 'message-recalled',
+        targetPlatformMessageId: 'platform-original',
+        targetLogicalMessageId: original.event.logicalMessageId,
+      })
+      expect(repository.getChannelEvent(original.event.id)).toMatchObject({
+        kind: 'message-created',
+        parts: [{ type: 'text', text: '原始事实' }],
+      })
     } finally {
       database.close()
     }

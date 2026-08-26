@@ -9,3 +9,7 @@ Handoff 的摘要来源由 `listEpisodeHistory()` 限定为旧 Episode 已完成
 `ChannelHistoryEntry` 对入站和出站统一携带 `logicalMessageId`；精确查询始终要求 `channelId + logicalMessageId`，不提供跨频道回退。Channel Event ID 继续属于 Admission、恢复和审计来源，不作为模型引用消息的身份。
 
 `deleteChannel(channelId)` 与该频道当前 Binding 共用 lane，先以 `channel-deleted` 取消 DSH Session、关闭 Episode，再清除 Binding 并写 Channel tombstone；不生成 handoff，也不删除频道事实、出站、资源引用或 DSH 历史。
+
+Binding 的普通 `triggerPolicy` 只控制普通消息；特殊活动只有列入 `eventTriggers` 才能创建 Admission，`observe-only` 永远不触发。群聊处理中反馈使用 Connection 命名空间的耐久 Lease，平台调用前持久化，Session 空闲或重启恢复后清理。
+
+撤回与戳一戳使用耐久 Interaction Intent。提交平台前依次保存 `planned` 和 `sending`，写入后结果不明时保存 `unknown` 且不自动重试；`clientRequestId` 在智能体、频道范围内去重。撤回只允许同一智能体在当前频道的成功物理投递，戳一戳只允许当前频道成员并执行 30 秒成员冷却和每频道每分钟三次限制。

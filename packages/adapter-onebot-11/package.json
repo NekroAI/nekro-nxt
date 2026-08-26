@@ -1,0 +1,36 @@
+{
+  "name": "@nekro-nxt/adapter-onebot-11",
+  "version": "0.0.0",
+  "private": true,
+  "license": "AGPL-3.0-only",
+  "type": "module",
+  "exports": {
+    ".": {
+      "types": "./lib/types/index.d.ts",
+      "import": "./dist/index.mjs"
+    }
+  },
+  "scripts": {
+    "build": "tsdown",
+    "dev": "tsdown --watch --no-clean",
+    "test": "vitest run --root ../.. packages/adapter-onebot-11/tests",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@nekro-nxt/adapter-sdk": "workspace:*",
+    "@nekro-nxt/contracts": "workspace:*",
+    "ws": "8.21.3",
+    "zod": "4.4.3"
+  },
+  "devDependencies": {
+    "@types/ws": "8.18.1"
+  },
+  "description": "NekroNXT OneBot 11 正向 WebSocket 适配器",
+  "author": "NekroAI contributors",
+  "homepage": "https://github.com/NekroAI/nekro-nxt#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/NekroAI/nekro-nxt.git",
+    "directory": "packages/adapter-onebot-11"
+  }
+}

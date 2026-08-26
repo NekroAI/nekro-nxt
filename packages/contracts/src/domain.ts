@@ -40,6 +40,29 @@ export type EpisodeHandoffId = z.infer<typeof EpisodeHandoffIdSchema>
 export type ExtensionId = z.infer<typeof ExtensionIdSchema>
 export type ExtensionRevisionId = z.infer<typeof ExtensionRevisionIdSchema>
 
+export const ChannelActivityTypeSchema = z.enum([
+  'member-poked',
+  'profile-liked',
+  'member-joined',
+  'member-left',
+  'member-muted',
+  'member-unmuted',
+  'member-admin-set',
+  'member-admin-unset',
+  'member-card-changed',
+  'member-title-changed',
+  'channel-name-changed',
+  'message-recalled',
+  'message-reaction-added',
+  'message-reaction-removed',
+  'file-uploaded',
+  'essence-added',
+  'essence-removed',
+  'friend-added',
+])
+
+export type ChannelActivityType = z.infer<typeof ChannelActivityTypeSchema>
+
 const PromptTextSegmentSchema = z.object({ type: z.literal('text'), text: z.string() }).strict()
 
 const PromptReferenceLabelSchema = z.string().trim().min(1).max(120)
@@ -215,7 +238,7 @@ export interface DshCredentialView {
 
 const utf8ByteLength = (value: string): number => new TextEncoder().encode(value).byteLength
 
-export const RICH_EXTENSION_MAX_BYTES = 32 * 1024
+export const RICH_EXTENSION_MAX_BYTES = 64 * 1024
 
 export const RichExtensionSchema = JsonValueSchema.refine(
   (value) => utf8ByteLength(JSON.stringify(value)) <= RICH_EXTENSION_MAX_BYTES,

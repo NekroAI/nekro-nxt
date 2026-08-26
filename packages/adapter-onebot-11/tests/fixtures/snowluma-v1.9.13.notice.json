@@ -1,0 +1,8 @@
+{
+  "time": 200,
+  "post_type": "notice",
+  "notice_type": "group_card",
+  "group_id": "fixture-group-snowluma",
+  "user_id": "fixture-member-snowluma",
+  "card_new": "合成成员甲"
+}
