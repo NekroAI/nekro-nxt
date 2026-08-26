@@ -16,9 +16,9 @@
 
 ## GitHub About
 
-- Description：`连接多平台即时通信，让智能体参与真实多人群聊的 DSH 驱动系统`；
+- Description：`NekroNXT：基于 DeepSeek Harness（DSH）的多平台群聊智能体系统｜A DSH-powered multi-platform group-chat agent system`；
 - Homepage：没有正式站点时留空，不填写临时地址；
-- Topics：`ai-agents`、`chat`、`dsh`、`electron`、`llm`、`multi-platform`、`typescript`、`pnpm`；
+- Topics：`deepseek-harness`、`dsh`、`dsh-plugin`、`cordis`、`ai-agents`、`group-chat`、`instant-messaging`、`multi-platform`、`self-hosted`、`desktop-app`、`electron`、`typescript`、`docker`；
 - Social preview：`assets/brand/exports/distribution/github-social-preview.png`；
 - Issues：开启；Wiki、Discussions：暂不启用。
 

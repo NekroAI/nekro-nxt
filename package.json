@@ -3,7 +3,7 @@
   "version": "0.1.1",
   "private": true,
   "license": "AGPL-3.0-only",
-  "description": "连接多平台即时通信，让智能体参与真实多人群聊的 DSH 驱动系统",
+  "description": "NekroNXT：基于 DeepSeek Harness（DSH）的多平台群聊智能体系统｜A DSH-powered multi-platform group-chat agent system",
   "type": "module",
   "packageManager": "pnpm@11.7.0",
   "engines": {
