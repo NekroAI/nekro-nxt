@@ -209,6 +209,7 @@ const expectedPngs = new Map([
   ['assets/brand/raster/install-server.webp', [1800, 600]],
   ['assets/brand/raster/welcome.png', [960, 1035]],
   ['assets/brand/raster/upgrade-complete.png', [960, 818]],
+  ['assets/brand/release-images/current/about.png', [1360, 880]],
   ['assets/brand/screenshots/channel-conversation.png', [1440, 900]],
   ['assets/brand/screenshots/agent-workbench.png', [1600, 900]],
   ['assets/brand/screenshots/connections.png', [1600, 900]],

@@ -1542,6 +1542,29 @@
       "alpha": true
     },
     {
+      "path": "release-images/README.md",
+      "format": "md",
+      "bytes": 377,
+      "sha256": "f912ed0bccd591ca2d93251ced101c0903618df2d859fc8d970dac90a4ab2629",
+      "rightsCategory": "brand-reserved",
+      "rights": "Copyright © 2026 NekroAI. All rights reserved.",
+      "usage": "Release-scoped temporary artwork",
+      "source": "Release preparation and reviewed product captures"
+    },
+    {
+      "path": "release-images/current/about.png",
+      "format": "png",
+      "bytes": 388741,
+      "sha256": "f19454f5d35a6c9f51201c3942402bebe6e3aba7b2ff92190d3695ad985199fa",
+      "rightsCategory": "brand-reserved",
+      "rights": "Copyright © 2026 NekroAI. All rights reserved.",
+      "usage": "Release-scoped temporary artwork",
+      "source": "Release preparation and reviewed product captures",
+      "width": 1360,
+      "height": 880,
+      "alpha": true
+    },
+    {
       "path": "screenshots/README.md",
       "format": "md",
       "bytes": 692,

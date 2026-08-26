@@ -1,6 +1,6 @@
 services:
   nekro-nxt:
-    image: '${NEKRO_IMAGE:-ghcr.io/nekroai/nekro-nxt:preview}'
+    image: '${NEKRO_IMAGE:-ghcr.io/nekroai/nekro-nxt:latest}'
     environment:
       NEKRO_MANAGEMENT_KEY: '${NEKRO_MANAGEMENT_KEY:?请设置至少 32 个字符的 NEKRO_MANAGEMENT_KEY}'
     ports:

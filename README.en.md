@@ -1,6 +1,6 @@
 ![NekroNXT brings DeepSeek Harness to instant messaging](assets/brand/raster/readme-hero.png)
 
-<p align="center"><a href="README.md">简体中文</a> · <a href="docs/README.md">Documentation</a> · <a href="https://github.com/NekroAI/nekro-nxt/releases/tag/preview">Download Preview</a></p>
+<p align="center"><a href="README.md">简体中文</a> · <a href="docs/README.md">Documentation</a> · <a href="https://github.com/NekroAI/nekro-nxt/releases/latest">Download Stable</a></p>
 
 NekroNXT is a group-chat agent system by NekroAI. Adapters connect it to messaging platforms. Agents can follow multi-person conversations, use tools, and keep a separate context for every channel.
 
@@ -24,11 +24,11 @@ Screenshots are provided for interface reference only.
 
 The desktop app includes the complete local runtime. Choose the package for your platform:
 
-| Platform | Client download                                                                        |
-| -------- | -------------------------------------------------------------------------------------- |
-| macOS    | [Download NekroNXT Preview](https://github.com/NekroAI/nekro-nxt/releases/tag/preview) |
-| Windows  | [Download NekroNXT Preview](https://github.com/NekroAI/nekro-nxt/releases/tag/preview) |
-| Linux    | [Download NekroNXT Preview](https://github.com/NekroAI/nekro-nxt/releases/tag/preview) |
+| Platform | Client download                                                           |
+| -------- | ------------------------------------------------------------------------- |
+| macOS    | [Download NekroNXT](https://github.com/NekroAI/nekro-nxt/releases/latest) |
+| Windows  | [Download NekroNXT](https://github.com/NekroAI/nekro-nxt/releases/latest) |
+| Linux    | [Download NekroNXT](https://github.com/NekroAI/nekro-nxt/releases/latest) |
 
 For a long-running server, replace the two placeholders and run:
 
@@ -39,12 +39,12 @@ docker run -d \
   -p 127.0.0.1:4960:4960 \
   -e NEKRO_MANAGEMENT_KEY='<management-key-at-least-32-characters>' \
   -v '<persistent-data-directory>:/data' \
-  ghcr.io/nekroai/nekro-nxt:preview
+  ghcr.io/nekroai/nekro-nxt:latest
 ```
 
 The complete user documentation is currently maintained in Chinese: [Quick start](docs/guide/getting-started.md), [Desktop installation](docs/guide/desktop.md), [Server deployment](docs/guide/server.md), [Connect messaging channels](docs/guide/connections.md), and [Troubleshooting](docs/guide/troubleshooting.md).
 
-NekroNXT is an early preview. The main user flow works today, while adapters, recovery coverage, and distribution are still being expanded.
+NekroNXT provides a stable release and keeps a rolling Preview built from `main`. The main user flow works today, while adapters and recovery coverage continue to expand.
 
 The software source code is licensed under [GNU AGPL v3.0](LICENSE) (`AGPL-3.0-only`). Brand and character assets are not included in that license; see the [brand guidelines](docs/BRAND.md) and [`NOTICE`](NOTICE).
 

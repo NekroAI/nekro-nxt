@@ -126,7 +126,7 @@ export function previewReleaseBody(release, repository, distribution) {
     `| Windows | x64 | ${downloadLink('win', 'x64', '下载安装程序')} |`,
     `| Linux | x64 | ${downloadLink('linux', 'x64', '下载 AppImage')} |`,
     '',
-    '安装包的版本、文件大小和 SHA-256 已由发布流程核对。',
+    `安装包的版本、文件大小和 SHA-256 已由发布流程核对。首次安装或遇到系统拦截时，请查看[桌面版安装说明](https://github.com/${repository}/blob/main/docs/guide/desktop.md)。`,
     '',
     '## 服务端',
     '',

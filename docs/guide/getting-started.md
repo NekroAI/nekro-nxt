@@ -4,7 +4,7 @@
 
 ## 1. 安装
 
-- 桌面版：从[预览版下载页](https://github.com/NekroAI/nekro-nxt/releases/tag/preview)选择 macOS、Windows 或 Linux 安装包，步骤见[桌面版安装](desktop.md)；
+- 桌面版：从[正式版下载页](https://github.com/NekroAI/nekro-nxt/releases/latest)选择 macOS、Windows 或 Linux 安装包，步骤见[桌面版安装](desktop.md)；
 - 服务端：复制[服务端部署](server.md)中的 `docker run` 命令，替换管理密钥与持久化目录后运行。
 
 ## 2. 配置模型

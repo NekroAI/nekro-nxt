@@ -30,6 +30,8 @@ Desktop 使用 Renderer 自绘的统一 48px 品牌顶栏，不显示系统标�
 
 `main` 的 push 在完整 CI 通过后由三个原生 GitHub runner 构建 Preview，并直接更新固定 `preview` tag 对应的滚动 Prerelease。公开 Release 只保留 Windows、Linux、macOS arm64 与 macOS x64 四个安装包；各 runner 生成的 receipt 作为短期 Actions Artifact 交给最终发布 job，不进入用户下载列表。四个安装包与内部 receipt 验证成功、且候选 commit 是远端 `main` 最新 HEAD 时才前移 `preview`；失败或已经过期的构建只在 `preview` tag 尚未指向该候选 commit 时清理自己的候选安装包，同 commit workflow 重跑失败不会删除已经发布的当前附件。正式版 `vX.Y.Z` tag 不可移动。
 
+正式版先按[更新日志规范](../../docs/09-正式发布与更新日志规范.md)更新 `docs/releases/current.md` 并取得用户审查，再运行 `pnpm release <X.Y.Z>`。命令要求根版本、`main`、远端 HEAD 与已验证 Preview 指向同一提交，显示完整更新内容并交互确认后推送 Tag。Tag 触发三个原生 runner 构建 Stable，最终 job 验证四个安装包与内部 receipt，生成正式 Release，并发布同版本与 `latest` Server 镜像。
+
 在 macOS 维护机上可以一次生成三端产物；macOS 仍必须由 macOS 构建。未签名 Windows 包关闭依赖 Wine 的 EXE 资源编辑，保留 NSIS 安装身份和完整应用内容。Windows 引导安装保留“仅当前用户/所有用户”两种范围；electron-builder 固定使用包含安全 `UserProgramFiles` 路径读取修复的 `26.15.3`，不得降级到仍会在当前用户路径解析阶段越界退出的版本。获得签名证书后恢复 EXE 资源编辑与签名：
 
 ```sh
@@ -39,9 +41,10 @@ pnpm desktop:preview --platform linux
 pnpm desktop:preview --platform all
 
 pnpm desktop:stable --platform all
+pnpm release 0.1.0
 ```
 
-省略 `--platform` 时构建当前系统对应平台。Release 构建要求 Git worktree 干净。更新通过下载并替换同通道完整产品包完成；自动替换、平台签名、公证和差分资源更新均未开放。
+省略 `--platform` 时构建当前系统对应平台。`desktop:stable` 只在本地生成安装包，不创建 Tag 或上传；正式发布只使用带显式版本的 `pnpm release`。Release 构建要求 Git worktree 干净。更新通过下载并替换同通道完整产品包完成；自动替换、平台签名、公证和差分资源更新均未开放。
 
 ## 验证
 

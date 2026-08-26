@@ -4,8 +4,8 @@ NekroNXT 桌面版（Desktop）把界面与完整运行环境放进一个安装�
 
 ## 下载渠道
 
-- **预览版（Preview）**：`main` 完整 CI 通过后更新的滚动构建；
-- **稳定版（Stable）**：由固定版本 Tag 发布，当前尚未提供公开稳定版。
+- **稳定版（Stable）**：从[最新正式版](https://github.com/NekroAI/nekro-nxt/releases/latest)下载，固定 Tag 和安装包不会被后续版本覆盖；
+- **预览版（Preview）**：`main` 完整 CI 通过后更新的滚动构建，适合提前验证下一版改动。
 
 发布流程会核对每个安装包的版本、Release ID、commit、文件大小和 SHA-256；GitHub 资产列表显示安装包的 SHA-256。
 
@@ -13,7 +13,25 @@ NekroNXT 桌面版（Desktop）把界面与完整运行环境放进一个安装�
 
 ### macOS
 
-下载与芯片匹配的 DMG：Apple Silicon Mac 选择文件名含 `-mac-arm64-` 的包，Intel Mac 选择含 `-mac-x64-` 的包。打开后将 NekroNXT 拖入“应用程序”。当前预览包尚未签名，macOS 可能要求在“隐私与安全性”中确认首次打开。
+下载与芯片匹配的 DMG：Apple Silicon Mac 选择文件名含 `-mac-arm64-` 的包，Intel Mac 选择含 `-mac-x64-` 的包。打开 DMG，将 NekroNXT 拖入“应用程序”，然后从“应用程序”中启动。
+
+macOS 安装包已经过完整性校验，但尚未使用 Apple Developer ID 签名和公证。首次打开时需要手动确认；下面的操作只适用于从 [NekroAI 官方 Release](https://github.com/NekroAI/nekro-nxt/releases)下载的安装包。截图使用 Preview，正式版中的应用名称是 `NekroNXT.app`。
+
+#### 首次打开被系统拦截
+
+1. 第一次启动时，如果看到“未打开 NekroNXT.app”或“未打开 NekroNXT Preview.app”，点击“完成”，不要点击“移到废纸篓”。
+
+   ![macOS 提示无法验证 NekroNXT Preview，点击“完成”关闭提示](images/macos/gatekeeper-blocked.png)
+
+2. 打开“系统设置 → 隐私与安全性”，向下找到对应的 NekroNXT 拦截记录，点击右侧的“仍要打开”。这个按钮只有在上一步启动被拦截后才会出现。
+
+   ![在 macOS 隐私与安全性设置中点击 NekroNXT Preview 的“仍要打开”](images/macos/privacy-security-open-anyway.png)
+
+3. macOS 再次询问时，确认应用名称是 `NekroNXT.app` 或 `NekroNXT Preview.app`，点击“仍要打开”。完成一次确认后，可直接启动当前安装的版本。
+
+   ![在 macOS 二次确认窗口中点击“仍要打开”](images/macos/confirm-open-anyway.png)
+
+如果系统仍提示应用“已损坏”，或者“隐私与安全性”中始终没有“仍要打开”，请删除旧应用和旧 DMG，再从官方 Release 下载最新版本。
 
 ### Windows
 

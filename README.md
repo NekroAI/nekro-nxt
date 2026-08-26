@@ -1,7 +1,7 @@
 ![NekroNXT：把 DeepSeek Harness 带到即时通讯](assets/brand/raster/readme-hero.png)
 
 <p align="center">
-  简体中文 · <a href="README.en.md">English</a> · <a href="docs/README.md">使用文档</a> · <a href="https://github.com/NekroAI/nekro-nxt/releases/tag/preview">下载预览版</a>
+  简体中文 · <a href="README.en.md">English</a> · <a href="docs/README.md">使用文档</a> · <a href="https://github.com/NekroAI/nekro-nxt/releases/latest">下载正式版</a>
 </p>
 
 NekroNXT 是 NekroAI 开发的群聊智能体系统。它把智能体接入你正在使用的即时通信平台。智能体面对的是群聊里持续发生的多人对话，可以理解上下文、使用工具并参与协作。
@@ -41,11 +41,11 @@ DSH 负责智能体的思考循环、工具执行、会话持久化、上下文�
 
 桌面版已经带上运行环境。下载对应平台的安装包，打开应用后配置模型即可开始。
 
-| 支持平台 | 客户端下载                                                                         |
-| -------- | ---------------------------------------------------------------------------------- |
-| macOS    | [下载 NekroNXT Preview](https://github.com/NekroAI/nekro-nxt/releases/tag/preview) |
-| Windows  | [下载 NekroNXT Preview](https://github.com/NekroAI/nekro-nxt/releases/tag/preview) |
-| Linux    | [下载 NekroNXT Preview](https://github.com/NekroAI/nekro-nxt/releases/tag/preview) |
+| 支持平台 | 客户端下载                                                            |
+| -------- | --------------------------------------------------------------------- |
+| macOS    | [下载 NekroNXT](https://github.com/NekroAI/nekro-nxt/releases/latest) |
+| Windows  | [下载 NekroNXT](https://github.com/NekroAI/nekro-nxt/releases/latest) |
+| Linux    | [下载 NekroNXT](https://github.com/NekroAI/nekro-nxt/releases/latest) |
 
 [查看桌面版安装说明](docs/guide/desktop.md)
 
@@ -60,7 +60,7 @@ docker run -d \
   -p 127.0.0.1:4960:4960 \
   -e NEKRO_MANAGEMENT_KEY='<管理密钥>' \
   -v '<持久化目录>:/data' \
-  ghcr.io/nekroai/nekro-nxt:preview
+  ghcr.io/nekroai/nekro-nxt:latest
 ```
 
 [查看公网访问、Docker Compose、设备配对与备份说明](docs/guide/server.md)
@@ -87,7 +87,7 @@ docker run -d \
 
 ## 当前状态
 
-NekroNXT 处于早期预览阶段。创建智能体、群聊接入、频道对话和扩展创造的主流程已经跑通；平台适配、升级恢复和发行流程还在完善。`main` 通过检查后更新滚动预览版，稳定版将在发行条件齐备后提供。
+NekroNXT 已提供正式版，同时保留由 `main` 完整 CI 自动更新的 Preview。创建智能体、群聊接入、频道对话和扩展创造的主流程已经跑通；平台适配与升级恢复仍在继续完善。
 
 安全问题请按[安全策略](docs/SECURITY.md)私密报告。社区交流遵循[行为准则](docs/CODE_OF_CONDUCT.md)。
 

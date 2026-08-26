@@ -18,8 +18,9 @@
 
 - Repository：`https://github.com/NekroAI/nekro-nxt`
 - Documentation：`https://github.com/NekroAI/nekro-nxt/tree/main/docs`
+- Stable：`https://github.com/NekroAI/nekro-nxt/releases/latest`
 - Preview：`https://github.com/NekroAI/nekro-nxt/releases/tag/preview`
-- 服务端镜像：`ghcr.io/nekroai/nekro-nxt:preview`
+- 服务端镜像：`ghcr.io/nekroai/nekro-nxt:latest`
 
 ## 素材
 

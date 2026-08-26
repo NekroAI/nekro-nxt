@@ -13,6 +13,7 @@
 - `exports/`：由导出器生成的 PNG、ICO、ICNS 和 BMP；
 - [`raster/`](raster/README.md)：README、安装文档和产品场景插画；
 - [`screenshots/`](screenshots/README.md)：生产产品旅程生成、只含虚构数据的真实界面截图；
+- [`release-images/`](release-images/README.md)：当前正式发布专用、发布后可清理的临时配图；
 - `manifest.json`：用途、源文件、格式、尺寸、SHA-256 与版权类别。
 
 产品实际消费物位于 `apps/web/public/` 与 `apps/desktop/resources/`。这些目录不是另一套母版，必须通过根命令同步：

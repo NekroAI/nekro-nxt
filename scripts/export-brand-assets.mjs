@@ -307,6 +307,7 @@ const files = [
   ...(await collectFiles(exportsRoot)),
   ...(await collectFiles(path.join(brandRoot, 'raster'))),
   ...(await collectFiles(path.join(brandRoot, 'screenshots'))),
+  ...(await collectFiles(path.join(brandRoot, 'release-images'))),
 ].sort()
 const describeManifestItem = (relativePath) => {
   const macosIconMatch = relativePath.match(/^exports\/(stable|preview)\/macos\/icon\.icns$/u)
@@ -381,6 +382,12 @@ const describeManifestItem = (relativePath) => {
     return {
       usage: 'Public product screenshot with fictional data',
       source: 'apps/web/e2e/product-quality.spec.ts production journey',
+    }
+  }
+  if (relativePath.startsWith('release-images/')) {
+    return {
+      usage: 'Release-scoped temporary artwork',
+      source: 'Release preparation and reviewed product captures',
     }
   }
   return { usage: 'Brand production documentation', source: 'NekroAI brand production workflow' }

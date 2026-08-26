@@ -15,6 +15,7 @@
     "dsh:check-update": "node scripts/check-dsh-update.mjs",
     "desktop:preview": "node scripts/release-desktop.mjs preview",
     "desktop:stable": "node scripts/release-desktop.mjs stable",
+    "release": "node scripts/stable-release.mjs",
     "dist:server": "node scripts/build-server-image.mjs",
     "brand:export": "node scripts/export-brand-assets.mjs",
     "brand:check": "node scripts/check-brand-assets.mjs",

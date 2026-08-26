@@ -13,14 +13,14 @@ docker run -d \
   -p 127.0.0.1:4960:4960 \
   -e NEKRO_MANAGEMENT_KEY='<管理密钥>' \
   -v '<持久化目录>:/data' \
-  ghcr.io/nekroai/nekro-nxt:preview
+  ghcr.io/nekroai/nekro-nxt:latest
 ```
 
 启动后访问 `https://127.0.0.1:4960`。首次连接需要核对自动生成的证书指纹，并使用管理密钥完成设备配对。
 
 ## Docker Compose
 
-仓库中的 [`docker-compose.yml`](../../docker-compose.yml) 使用相同的预览镜像、命名数据卷和自动重启策略：
+仓库中的 [`docker-compose.yml`](../../docker-compose.yml) 使用正式版镜像、命名数据卷和自动重启策略：
 
 ```bash
 git clone https://github.com/NekroAI/nekro-nxt.git
@@ -56,7 +56,7 @@ NEKRO_IMAGE='nekro-nxt:local' pnpm dist:server
 智能体、会话、扩展、资源、证书和工作区都位于 `/data`。升级时拉取新镜像并替换容器，不要在运行容器内执行 `git pull`：
 
 ```bash
-docker pull ghcr.io/nekroai/nekro-nxt:preview
+docker pull ghcr.io/nekroai/nekro-nxt:latest
 docker stop nekro-nxt
 docker rm nekro-nxt
 ```

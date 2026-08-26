@@ -166,6 +166,7 @@ test('rolling Preview copy identifies its moving channel and immutable Product R
   assert.match(body, /NekroAI\/nekro-nxt\/commit\/0123456789abcdef/u)
   assert.match(body, /ghcr\.io\/nekroai\/nekro-nxt:preview/u)
   assert.match(body, /SHA-256 已由发布流程核对/u)
+  assert.match(body, /blob\/main\/docs\/guide\/desktop\.md/u)
   assert.doesNotMatch(body, /receipt\.json/u)
   assert.match(body, /\| macOS \| Apple Silicon（arm64） \| \[下载 DMG\]/u)
   assert.match(body, /\| macOS \| Intel（x64） \| \[下载 DMG\]/u)
