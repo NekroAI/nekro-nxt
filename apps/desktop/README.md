@@ -22,7 +22,7 @@ Windows、macOS 与 Linux Desktop 均保留 F12 渲染器诊断入口。焦点�
 
 Desktop 使用 Renderer 自绘的统一 48px 品牌顶栏，不显示系统标题栏。macOS 采用 `hiddenInset` 并为左侧 traffic lights 预留 84px；Windows/Linux 采用 `frame: false + titleBarOverlay` 并为右侧窗口控件预留 138px。主进程只注入根级安全区 CSS 变量，Renderer 顶栏负责拖动区域和业务内容，Web 保持同一几何但不伪造窗口按钮。
 
-当前分发实验使用未签名完整安装包：Windows x64 NSIS、macOS arm64 与 x64 两个独立 DMG、Linux x64 AppImage。macOS 一次构建产出 `*-mac-arm64-v*.dmg` 与 `*-mac-x64-v*.dmg`，Apple Silicon 选择 arm64 包、Intel 选择 x64 包，每个 DMG 都带独立 receipt；server-runtime 的双架构 N-API prebuild 不参与架构合并。`stable` 与 `preview` 使用不同 appId、NSIS GUID、产品名、可执行文件名和 `userData`，可以同时安装，也不会让预览版迁移正式版数据库。身份的唯一源是 `distributions.json`。
+当前分发实验尚未使用平台开发者证书：Windows x64 NSIS、macOS arm64 与 x64 两个独立 DMG、Linux x64 AppImage。macOS 应用包在没有 Developer ID 时仍执行完整 ad-hoc 签署，Release 构建会重新挂载两个 DMG 并运行严格签名校验，避免 Electron 残留的 linker signature 让 Gatekeeper 把应用误判为损坏；该签署不等于 Apple 公证，首次打开仍需用户确认。macOS 一次构建产出 `*-mac-arm64-v*.dmg` 与 `*-mac-x64-v*.dmg`，Apple Silicon 选择 arm64 包、Intel 选择 x64 包，每个 DMG 都带独立 receipt；server-runtime 的双架构 N-API prebuild 不参与架构合并。`stable` 与 `preview` 使用不同 appId、NSIS GUID、产品名、可执行文件名和 `userData`，可以同时安装，也不会让预览版迁移正式版数据库。身份的唯一源是 `distributions.json`。
 
 平台品牌资源位于 `resources/stable/` 与 `resources/preview/`。两端分别提供 ICNS、ICO、Linux PNG 图标组、DMG 背景和 NSIS assisted installer 图；Preview 通过黄铜三节点校准胶囊与 Stable 区分，不建立 beta 品牌身份。ICNS 使用视觉占位更大的 macOS 专用母版，Windows、Linux 与 Web 仍使用通用源；DMG 保持固定 Finder 窗口并让必要内容在首次打开时完整可见。图标来源、DMG 精确尺寸、坐标和安全区以[品牌资产视觉规则](../../assets/brand/README.md#视觉规则)为唯一权威。electron-builder 按当前 channel 选择对应 `buildResources`，这些文件不进入应用运行资源。
 

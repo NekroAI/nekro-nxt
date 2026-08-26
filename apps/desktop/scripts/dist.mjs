@@ -106,6 +106,9 @@ const platforms = desktopPlatforms(target)
 for (const platform of platforms) {
   prepareRuntime(platform)
   packageLocally(platform)
+  if (platform === 'mac') {
+    run(process.execPath, ['scripts/verify-macos-artifacts.mjs', '--channel', channel], appRoot, buildEnvironment)
+  }
   for (const receiptTarget of receiptTargets(platform)) {
     run(
       process.execPath,

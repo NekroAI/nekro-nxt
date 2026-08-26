@@ -43,7 +43,10 @@ const config = {
   mac: {
     category: 'public.app-category.productivity',
     icon: 'icon.icns',
-    identity: null,
+    // 没有 Developer ID 证书时仍需完整 ad-hoc 签署应用包。直接跳过签名会保留
+    // Electron 主可执行文件的 linker signature，Gatekeeper 会把下载后的应用判为损坏。
+    identity: '-',
+    hardenedRuntime: false,
     notarize: false,
     // server-runtime 同时携带 darwin-arm64/darwin-x64 N-API prebuild，并在
     // 运行时按 process.arch 选择；mac 产物按架构独立打包，不做 Universal 合并。
