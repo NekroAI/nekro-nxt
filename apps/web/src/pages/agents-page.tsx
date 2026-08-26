@@ -584,10 +584,6 @@ export function AgentsPage() {
               <span>模型</span>
               <strong>{selectedModel ? `${selectedModel.providerName} · ${selectedModel.name}` : '尚未选择'}</strong>
             </div>
-            <div>
-              <span>内置频道</span>
-              <strong>创建后自动建立</strong>
-            </div>
           </div>
         </section>
         <section>
