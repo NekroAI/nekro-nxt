@@ -507,7 +507,8 @@ const setup = async (
   const runtimeRepository = new MemoryRuntimeRepository(coreRepository)
   let coreId = 0
   let runtimeId = 0
-  const core = new CoreService(coreRepository, { now: () => 100, nextUlid: () => `C${++coreId}` })
+  let currentTime = 100
+  const core = new CoreService(coreRepository, { now: () => currentTime, nextUlid: () => `C${++coreId}` })
   const agent = core.createAgent({
     displayName: '小奈',
     persona: '',
@@ -561,7 +562,7 @@ const setup = async (
   }
   const context: AdapterConnectionContext = {
     connectionId: connection.id,
-    now: () => 100,
+    now: () => currentTime,
     acceptInbound: () => Promise.reject(new Error('test calls runtime directly')),
   }
   const adapter = new FakeAdapterConnection(context, { ...FAKE_ADAPTER_CAPABILITIES, mixedContent })
@@ -572,7 +573,7 @@ const setup = async (
   const adapterStateRows = new Map<string, JsonValue>()
   const feedbackOrder: string[] = []
   const runtime = new ChannelRuntime(core, coreRepository, runtimeRepository, sessionDriver, {
-    now: () => 100,
+    now: () => currentTime,
     nextUlid: () => `R${++runtimeId}`,
     resolveAdapter: (id) => (id === connection.id ? adapter : undefined),
     adapterState: {
@@ -604,6 +605,9 @@ const setup = async (
     agent,
     setSessionStatus: (status: 'idle' | 'running') => {
       sessionStatus = status
+    },
+    setNow: (value: number) => {
+      currentTime = value
     },
     maxActiveAdmissions: () => maxActiveAdmissions,
     markAdmissionPersisted: (admissionId: AdmissionId, dshMessageId: string) => {
@@ -736,6 +740,362 @@ describe('ChannelRuntime M1 lane', () => {
       }),
     ).rejects.toThrow('每分钟最多')
     expect(nudgeCalls).toHaveLength(3)
+  })
+
+  it('recovers valid feedback leases, ignores malformed rows and disables unsupported cleanup', async () => {
+    const starts: string[] = []
+    const finishes: string[] = []
+    const context = await setup(true, undefined, undefined, {
+      startProcessingFeedback: ({ platformMessageId }) => {
+        starts.push(platformMessageId)
+        return Promise.resolve({ status: 'succeeded' })
+      },
+      finishProcessingFeedback: ({ platformMessageId }) => {
+        finishes.push(platformMessageId)
+        return Promise.resolve({ status: 'unsupported', message: 'fixture unsupported' })
+      },
+      retractOwnMessage: () => Promise.resolve({ status: 'succeeded' }),
+      nudgeMember: () => Promise.resolve({ status: 'succeeded' }),
+    })
+    const key = 'host/processing-feedback-leases'
+    context.adapterStateRows.set(key, { malformed: true })
+    await context.runtime.recoverProcessingFeedback()
+    const base = {
+      id: 'feedback:fixture',
+      connectionId: context.connection.id,
+      channelId: context.channel.id,
+      episodeId: EpisodeIdSchema.parse('eps_FEEDBACK'),
+      platformMessageId: 'platform-feedback',
+      state: 'active',
+      attempts: 0,
+      createdAt: 100,
+      updatedAt: 100,
+    }
+    context.adapterStateRows.set(key, [
+      null,
+      [],
+      {},
+      { ...base, id: 1 },
+      { ...base, connectionId: 'invalid' },
+      { ...base, channelId: 'invalid' },
+      { ...base, episodeId: 'invalid' },
+      { ...base, platformMessageId: 1 },
+      { ...base, state: 'invalid' },
+      { ...base, attempts: '0' },
+      { ...base, createdAt: '100' },
+      { ...base, updatedAt: '100' },
+      { ...base, id: 'feedback:other', connectionId: 'con_OTHER' },
+      base,
+    ])
+    await context.runtime.recoverProcessingFeedback()
+    await context.runtime.stopProcessingFeedback()
+    expect(finishes).toContain('platform-feedback')
+    expect(context.adapterStateRows.has(key)).toBe(false)
+
+    await context.runtime.acceptInbound({
+      ...inbound(context.connection.id, context.channel.id, 'feedback-disabled'),
+      platformMessageId: 'platform-after-disable',
+    })
+    expect(starts).toEqual([])
+  })
+
+  it('persists failed feedback starts and stops retrying after the durable attempt budget', async () => {
+    const context = await setup(true, undefined, undefined, {
+      startProcessingFeedback: () => Promise.reject(new Error('start failed')),
+      finishProcessingFeedback: () => Promise.resolve({ status: 'succeeded' }),
+      retractOwnMessage: () => Promise.resolve({ status: 'succeeded' }),
+      nudgeMember: () => Promise.resolve({ status: 'succeeded' }),
+    })
+    await context.runtime.acceptInbound({
+      ...inbound(context.connection.id, context.channel.id, 'feedback-start-failed'),
+      platformMessageId: 'platform-start-failed',
+    })
+    await context.runtime.stopProcessingFeedback()
+    expect(context.adapterStateRows.has('host/processing-feedback-leases')).toBe(false)
+
+    const exhausted = await setup(true, undefined, undefined, {
+      startProcessingFeedback: () => Promise.resolve({ status: 'succeeded' }),
+      finishProcessingFeedback: () => Promise.reject(new Error('cleanup failed')),
+      retractOwnMessage: () => Promise.resolve({ status: 'succeeded' }),
+      nudgeMember: () => Promise.resolve({ status: 'succeeded' }),
+    })
+    exhausted.adapterStateRows.set('host/processing-feedback-leases', [
+      {
+        id: 'feedback:exhausted',
+        connectionId: exhausted.connection.id,
+        channelId: exhausted.channel.id,
+        episodeId: EpisodeIdSchema.parse('eps_EXHAUSTED'),
+        platformMessageId: 'platform-exhausted',
+        state: 'cleanup-pending',
+        attempts: 6,
+        createdAt: 100,
+        updatedAt: 100,
+      },
+    ])
+    await exhausted.runtime.recoverProcessingFeedback()
+    await exhausted.runtime.stopProcessingFeedback()
+    const storedLeases = exhausted.adapterStateRows.get('host/processing-feedback-leases')
+    if (!Array.isArray(storedLeases)) throw new Error('Expected persisted feedback leases.')
+    const storedLease = storedLeases[0]
+    expect(storedLease).toMatchObject({ state: 'cleanup-pending' })
+    expect(
+      typeof (storedLease && typeof storedLease === 'object' && !Array.isArray(storedLease)
+        ? storedLease['attempts']
+        : undefined),
+    ).toBe('number')
+  })
+
+  it('restores interaction intents, converts in-flight work to unknown and parses saved outcomes safely', async () => {
+    const context = await setup(true, undefined, undefined, {
+      startProcessingFeedback: () => Promise.resolve({ status: 'succeeded' }),
+      finishProcessingFeedback: () => Promise.resolve({ status: 'succeeded' }),
+      retractOwnMessage: () => Promise.resolve({ status: 'succeeded' }),
+      nudgeMember: () => Promise.resolve({ status: 'succeeded' }),
+    })
+    await context.runtime.acceptInbound(inbound(context.connection.id, context.channel.id, 'restore-interactions'))
+    const episode = [...context.runtimeRepository.episodes.values()][0]!
+    const member = context.core.observeChannelMember({
+      connectionId: context.connection.id,
+      channelId: context.channel.id,
+      platformUserId: 'restored-member',
+      observedAt: 100,
+    }).member
+    const base = {
+      id: 'interaction:restored',
+      connectionId: context.connection.id,
+      channelId: context.channel.id,
+      episodeId: episode.id,
+      agentId: episode.agentId,
+      clientRequestId: 'restore-planned',
+      kind: 'nudge-member',
+      targetId: member.id,
+      state: 'planned',
+      createdAt: 100,
+      updatedAt: 100,
+    }
+    context.adapterStateRows.set('host/interaction-intents', [
+      null,
+      [],
+      {},
+      { ...base, id: 1 },
+      { ...base, connectionId: 'invalid' },
+      { ...base, channelId: 'invalid' },
+      { ...base, episodeId: 'invalid' },
+      { ...base, agentId: 'invalid' },
+      { ...base, clientRequestId: 1 },
+      { ...base, kind: 'invalid' },
+      { ...base, targetId: 1 },
+      { ...base, state: 'invalid' },
+      { ...base, createdAt: '100' },
+      { ...base, updatedAt: '100' },
+      { ...base, id: 'interaction:other', connectionId: 'con_OTHER' },
+      base,
+      {
+        ...base,
+        id: 'interaction:succeeded',
+        clientRequestId: 'restore-succeeded',
+        state: 'succeeded',
+        result: {
+          intentId: 'interaction:succeeded',
+          status: 'succeeded',
+          message: '已恢复结果',
+          outcomes: [
+            null,
+            [],
+            {},
+            { platformMessageId: 1, status: 'failed' },
+            { platformMessageId: 'platform-1', status: 1 },
+            { platformMessageId: 'platform-2', status: 'succeeded' },
+            { platformMessageId: 'platform-3', status: 'failed', message: '失败原因' },
+          ],
+        },
+      },
+      {
+        ...base,
+        id: 'interaction:invalid-result',
+        clientRequestId: 'restore-invalid-result',
+        state: 'failed',
+        result: 1,
+      },
+    ])
+    const restoredPlanned = await context.runtime.nudgeChannelMember({
+      episodeId: episode.id,
+      memberId: member.id,
+      clientRequestId: 'restore-planned',
+    })
+    expect(restoredPlanned.status).toBe('unknown')
+    expect(restoredPlanned.message).toContain('重启')
+    await expect(
+      context.runtime.nudgeChannelMember({
+        episodeId: episode.id,
+        memberId: member.id,
+        clientRequestId: 'restore-succeeded',
+      }),
+    ).resolves.toEqual({
+      intentId: 'interaction:succeeded',
+      status: 'succeeded',
+      message: '已恢复结果',
+      outcomes: [
+        { platformMessageId: 'platform-2', status: 'succeeded' },
+        { platformMessageId: 'platform-3', status: 'failed', message: '失败原因' },
+      ],
+    })
+    const restoredInvalid = await context.runtime.nudgeChannelMember({
+      episodeId: episode.id,
+      memberId: member.id,
+      clientRequestId: 'restore-invalid-result',
+    })
+    expect(restoredInvalid.status).toBe('unknown')
+    expect(restoredInvalid.message).toContain('不会重复执行')
+  })
+
+  it('reports partial, unknown and failed retract outcomes without repeating side effects', async () => {
+    const retractOutcomes: Array<'succeeded' | 'unknown' | 'failed' | 'throw'> = [
+      'succeeded',
+      'unknown',
+      'failed',
+      'unknown',
+      'throw',
+    ]
+    const context = await setup(false, undefined, undefined, {
+      startProcessingFeedback: () => Promise.resolve({ status: 'succeeded' }),
+      finishProcessingFeedback: () => Promise.resolve({ status: 'succeeded' }),
+      retractOwnMessage: () => {
+        const outcome = retractOutcomes.shift()
+        if (outcome === 'throw') return Promise.reject(new Error('fixture retract failure'))
+        if (outcome === 'succeeded') return Promise.resolve({ status: 'succeeded' })
+        return Promise.resolve({ status: outcome ?? 'failed', message: `fixture ${outcome ?? 'failed'}` })
+      },
+      nudgeMember: () => Promise.resolve({ status: 'succeeded' }),
+    })
+    await context.runtime.acceptInbound(inbound(context.connection.id, context.channel.id, 'retract-matrix'))
+    const episode = [...context.runtimeRepository.episodes.values()][0]!
+    context.adapter.queueReceipt({ status: 'sent', platformMessageId: 'partial-1' })
+    context.adapter.queueReceipt({ status: 'sent', platformMessageId: 'partial-2' })
+    context.adapter.queueReceipt({ status: 'sent', platformMessageId: 'partial-3' })
+    const partial = await context.runtime.sendMessage({
+      episodeId: episode.id,
+      parts: [
+        { type: 'text', text: '一' },
+        { type: 'image', assetId: AssetIdSchema.parse('ast_PARTIAL') },
+        { type: 'audio', assetId: AssetIdSchema.parse('ast_AUDIO') },
+      ],
+    })
+    const partialRetraction = await context.runtime.retractChannelMessage({
+      episodeId: episode.id,
+      logicalMessageId: partial.logicalMessageId,
+      clientRequestId: 'retract-partial',
+    })
+    expect(partialRetraction.status).toBe('partially-succeeded')
+    expect(Array.isArray(partialRetraction.outcomes)).toBe(true)
+
+    context.adapter.queueReceipt({ status: 'sent', platformMessageId: 'unknown-1' })
+    const unknown = await context.runtime.sendMessage({ episodeId: episode.id, parts: [{ type: 'text', text: '二' }] })
+    await expect(
+      context.runtime.retractChannelMessage({
+        episodeId: episode.id,
+        logicalMessageId: unknown.logicalMessageId,
+        clientRequestId: 'retract-unknown',
+      }),
+    ).resolves.toMatchObject({ status: 'unknown' })
+
+    context.adapter.queueReceipt({ status: 'sent', platformMessageId: 'failed-1' })
+    const failed = await context.runtime.sendMessage({ episodeId: episode.id, parts: [{ type: 'text', text: '三' }] })
+    await expect(
+      context.runtime.retractChannelMessage({
+        episodeId: episode.id,
+        logicalMessageId: failed.logicalMessageId,
+        clientRequestId: 'retract-failed',
+      }),
+    ).resolves.toMatchObject({ status: 'failed' })
+
+    context.adapter.queueReceipt({ status: 'failed', failure: { kind: 'invalid', message: 'not sent' } })
+    const unsent = await context.runtime.sendMessage({ episodeId: episode.id, parts: [{ type: 'text', text: '四' }] })
+    const unsentRetraction = await context.runtime.retractChannelMessage({
+      episodeId: episode.id,
+      logicalMessageId: unsent.logicalMessageId,
+      clientRequestId: 'retract-unsent',
+    })
+    expect(unsentRetraction.status).toBe('failed')
+    expect(unsentRetraction.message).toContain('没有可撤回')
+  })
+
+  it('validates interaction ownership, request ids, adapter support and nudge failures', async () => {
+    const context = await setup(true, undefined, undefined, {
+      startProcessingFeedback: () => Promise.resolve({ status: 'succeeded' }),
+      finishProcessingFeedback: () => Promise.resolve({ status: 'succeeded' }),
+      retractOwnMessage: () => Promise.resolve({ status: 'succeeded' }),
+      nudgeMember: ({ clientRequestId }) =>
+        clientRequestId === 'nudge-throw'
+          ? Promise.reject(new Error('fixture nudge failure'))
+          : Promise.resolve({ status: 'unknown', message: 'fixture unknown' }),
+    })
+    await context.runtime.acceptInbound(inbound(context.connection.id, context.channel.id, 'interaction-validation'))
+    const episode = [...context.runtimeRepository.episodes.values()][0]!
+    const member = context.core.observeChannelMember({
+      connectionId: context.connection.id,
+      channelId: context.channel.id,
+      platformUserId: 'validation-member',
+      observedAt: 100,
+    }).member
+    await expect(
+      context.runtime.nudgeChannelMember({ episodeId: episode.id, memberId: member.id, clientRequestId: '' }),
+    ).rejects.toThrow('clientRequestId')
+    await expect(
+      context.runtime.nudgeChannelMember({
+        episodeId: episode.id,
+        memberId: ChannelMemberIdSchema.parse('mbr_MISSING'),
+        clientRequestId: 'nudge-missing',
+      }),
+    ).rejects.toThrow('已知成员')
+    await expect(
+      context.runtime.nudgeChannelMember({
+        episodeId: episode.id,
+        memberId: member.id,
+        clientRequestId: 'nudge-unknown',
+      }),
+    ).resolves.toMatchObject({ status: 'unknown' })
+    context.setNow(31_000)
+    await expect(
+      context.runtime.nudgeChannelMember({
+        episodeId: episode.id,
+        memberId: member.id,
+        clientRequestId: 'nudge-throw',
+      }),
+    ).resolves.toMatchObject({ status: 'failed', message: 'fixture nudge failure' })
+    await expect(
+      context.runtime.retractChannelMessage({
+        episodeId: EpisodeIdSchema.parse('eps_MISSING'),
+        logicalMessageId: LogicalMessageIdSchema.parse('msg_MISSING'),
+        clientRequestId: 'missing-episode',
+      }),
+    ).rejects.toThrow('活动频道会话')
+    await expect(
+      context.runtime.retractChannelMessage({
+        episodeId: episode.id,
+        logicalMessageId: LogicalMessageIdSchema.parse('msg_MISSING'),
+        clientRequestId: 'missing-message',
+      }),
+    ).rejects.toThrow('找不到')
+
+    const unsupported = await setup()
+    await unsupported.runtime.acceptInbound(
+      inbound(unsupported.connection.id, unsupported.channel.id, 'unsupported-interaction'),
+    )
+    const unsupportedEpisode = [...unsupported.runtimeRepository.episodes.values()][0]!
+    const unsupportedMember = unsupported.core.observeChannelMember({
+      connectionId: unsupported.connection.id,
+      channelId: unsupported.channel.id,
+      platformUserId: 'unsupported-member',
+      observedAt: 100,
+    }).member
+    await expect(
+      unsupported.runtime.nudgeChannelMember({
+        episodeId: unsupportedEpisode.id,
+        memberId: unsupportedMember.id,
+        clientRequestId: 'unsupported-nudge',
+      }),
+    ).rejects.toThrow('不支持戳一戳')
   })
 
   it('creates a binding through the runtime after the channel becomes unbound', async () => {
