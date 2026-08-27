@@ -180,6 +180,10 @@ describe('NekroNxt domain API — real QQ Connection diagnostics', () => {
         ).json(),
       )
       expect(sendResult).toMatchObject({ status: 'sent', platformMessageId: 'qq-real-outbound-1' })
+      if (sendResult.status !== 'sent') throw new Error('Expected a sent connection-test result.')
+      expect(
+        HostApiContracts.testConnection.parseResponse({ status: 'sent', channelId: sendResult.channelId }),
+      ).toEqual({ status: 'sent', channelId: sendResult.channelId })
       expect(requests.find(({ url }) => url.includes('/v2/groups/group-real-1/messages'))?.body).toContain(
         'NekroNxt QQ 连接发送测试',
       )

@@ -262,13 +262,14 @@ describe('OneBot 11 normalized inbound', () => {
     await waitFor(() => fake.events.length === 1)
     const channelId = [...fake.channels.values()][0]!
     await expect(
-      runtime.interactions.startProcessingFeedback({
+      runtime.interactions.startProcessingFeedback!({
+        leaseId: 'lease-feedback',
         channelId,
         platformMessageId: 'fixture-message-feedback',
       }),
     ).resolves.toEqual({ status: 'succeeded' })
     await expect(
-      runtime.interactions.retractOwnMessage({
+      runtime.interactions.retractOwnMessage!({
         channelId,
         platformMessageId: 'fixture-own-message',
         clientRequestId: 'fixture-retract-request',
@@ -339,23 +340,16 @@ describe('OneBot 11 normalized inbound', () => {
         ),
     })
     const fetched: string[] = []
+    Object.defineProperty(fake.context.assets, 'fetchRemoteBytes', {
+      value: ({ url }: { readonly url: string }) => {
+        fetched.push(url)
+        if (url.endsWith('/failed')) return Promise.reject(new Error('fixture download failure'))
+        return Promise.resolve({ bytes: new Uint8Array([4, 5, 6]), declaredMediaType: 'image/png' })
+      },
+    })
     const runtime = new OneBot11Runtime({
       context: fake.context,
       config: { endpoint: protocol.endpoint, capturePokeEvents: true, captureMessageReactionEvents: true },
-      validateRemoteHost: (hostname) => {
-        expect(hostname).toBe('media.example.test')
-        return Promise.resolve()
-      },
-      fetch: (input) => {
-        const url = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url
-        fetched.push(url)
-        if (url.endsWith('/failed')) return Promise.reject(new Error('fixture download failure'))
-        return Promise.resolve(
-          new Response(new Uint8Array([4, 5, 6]), {
-            headers: { 'content-type': 'image/png; charset=binary', 'content-length': '3' },
-          }),
-        )
-      },
     })
     await runtime.start()
     await waitFor(
@@ -442,16 +436,12 @@ describe('OneBot 11 normalized inbound', () => {
         return Promise.resolve()
       },
     })
+    Object.defineProperty(fake.context.assets, 'fetchRemoteBytes', {
+      value: () => Promise.resolve({ bytes: new Uint8Array([7, 8]), declaredMediaType: 'application/octet-stream' }),
+    })
     const runtime = new OneBot11Runtime({
       context: fake.context,
       config: { endpoint: protocol.endpoint, capturePokeEvents: true, captureMessageReactionEvents: true },
-      validateRemoteHost: () => Promise.resolve(),
-      fetch: () =>
-        Promise.resolve(
-          new Response(new Uint8Array([7, 8]), {
-            headers: { 'content-type': 'application/octet-stream' },
-          }),
-        ),
     })
     await runtime.start()
     await waitFor(() => fake.diagnostics.some(({ status }) => status === 'connected'))
@@ -559,7 +549,11 @@ describe('OneBot 11 normalized inbound', () => {
     })
     await expect(runtime.testSend(missingChannelId)).rejects.toMatchObject({ kind: 'invalid', submitted: false })
     await expect(
-      runtime.interactions.startProcessingFeedback({ channelId: missingChannelId, platformMessageId: 'missing' }),
+      runtime.interactions.startProcessingFeedback!({
+        leaseId: 'lease-missing',
+        channelId: missingChannelId,
+        platformMessageId: 'missing',
+      }),
     ).resolves.toMatchObject({ status: 'unsupported' })
 
     const socket = [...protocol.server.clients][0]!
@@ -577,25 +571,34 @@ describe('OneBot 11 normalized inbound', () => {
     const channelId = [...fake.channels.values()][0]!
     const memberId = [...fake.members.values()][0]!
     await expect(
-      runtime.interactions.startProcessingFeedback({ channelId, platformMessageId: 'failure-anchor' }),
+      runtime.interactions.startProcessingFeedback!({
+        leaseId: 'lease-failure',
+        channelId,
+        platformMessageId: 'failure-anchor',
+      }),
     ).resolves.toMatchObject({ status: 'unsupported' })
     await expect(
-      runtime.interactions.finishProcessingFeedback({ channelId, platformMessageId: 'failure-anchor' }),
+      runtime.interactions.finishProcessingFeedback!({
+        leaseId: 'lease-failure',
+        channelId,
+        platformMessageId: 'failure-anchor',
+        reason: 'error',
+      }),
     ).resolves.toMatchObject({ status: 'unsupported' })
     await expect(
-      runtime.interactions.retractOwnMessage({
+      runtime.interactions.retractOwnMessage!({
         channelId,
         platformMessageId: 'own-message',
         clientRequestId: 'retract-failure',
       }),
     ).resolves.toMatchObject({ status: 'failed' })
     await expect(
-      runtime.interactions.nudgeMember({ channelId, memberId, clientRequestId: 'nudge-failure' }),
+      runtime.interactions.nudgeMember!({ channelId, memberId, clientRequestId: 'nudge-failure' }),
     ).resolves.toMatchObject({ status: 'failed' })
 
     Object.defineProperty(fake.context.members, 'resolvePlatformUserId', { value: () => Promise.resolve(undefined) })
     await expect(
-      runtime.interactions.nudgeMember({ channelId, memberId, clientRequestId: 'nudge-missing-member' }),
+      runtime.interactions.nudgeMember!({ channelId, memberId, clientRequestId: 'nudge-missing-member' }),
     ).resolves.toMatchObject({ status: 'failed' })
 
     Object.defineProperty(fake.context.assets, 'read', {
@@ -620,7 +623,7 @@ describe('OneBot 11 normalized inbound', () => {
     await runtime.stop()
     await runtime.stop()
     await expect(
-      runtime.interactions.retractOwnMessage({
+      runtime.interactions.retractOwnMessage!({
         channelId,
         platformMessageId: 'after-stop',
         clientRequestId: 'retract-after-stop',

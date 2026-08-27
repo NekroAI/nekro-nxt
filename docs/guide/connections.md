@@ -40,3 +40,9 @@ OneBot 11 连接适用于已独立部署的协议端。NekroNXT 作为 WebSocket
 协议端必须使用数组消息格式。首版支持群聊和私聊的文字、Mention、引用、图片、语音、合并转发和富消息摘要；主动文件、群管理、公告、签到、精华和 raw Action 尚未开放。
 
 按照 [OneBot V11 接入教程](connections/onebot-11.md)配置 SnowLuma、NapCat 或 LLBot，填写 Endpoint，并完成收发测试和频道绑定。各协议端的自动化兼容与真实账号验收状态以 [OneBot 11 Decision](../decisions/implemented/2026-08-26-OneBot11正向WebSocket适配器.md) 为准。
+
+## 企业微信智能机器人
+
+企业微信智能机器人使用官方长连接接入。NekroNXT 通过 BotID 与只写 Secret 主动连接企业微信，无需公网回调地址。群聊消息需要成员提及机器人账号；单聊和群聊首次发来消息后，NekroNXT 发现频道并允许发送测试与绑定智能体。
+
+首版支持 Markdown、图片、普通文件、AMR 语音、MP4 视频、流式处理中状态，以及进入会话、模板卡片操作和消息反馈事件。按照[企业微信智能机器人接入教程](connections/wecom-ai-bot.md)创建 API 长连接机器人、填写凭据并完成验收。

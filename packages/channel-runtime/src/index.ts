@@ -133,6 +133,7 @@ export interface PhysicalDeliveryRecord {
   readonly sequence: number
   readonly parts: readonly MessagePart[]
   readonly adapterContext?: JsonValue
+  readonly processingFeedbackLeaseId?: string
   readonly state: 'planned' | 'sending' | 'sent' | 'failed' | 'unknown'
   readonly receipt?: AdapterDeliveryReceipt
   readonly completedAt?: number
@@ -585,6 +586,11 @@ export class ChannelRuntime {
   readonly #feedbackLeases = new Map<string, ProcessingFeedbackLease>()
   readonly #feedbackDisabledConnections = new Set<ConnectionId>()
   readonly #feedbackTasks = new Set<Promise<void>>()
+  readonly #feedbackCleanups = new Map<string, Promise<void>>()
+  readonly #feedbackEndReasons = new Map<
+    EpisodeId,
+    'idle' | 'error' | 'cancelled' | 'timeout' | 'shutdown' | 'recovery'
+  >()
   readonly #feedbackPersistence = new Map<ConnectionId, Promise<void>>()
   readonly #interactionIntents = new Map<string, DurableInteractionIntent>()
   readonly #interactionLoadedConnections = new Set<ConnectionId>()
@@ -649,14 +655,15 @@ export class ChannelRuntime {
         if (!lease) continue
         if (lease.connectionId !== connectionId) continue
         this.#feedbackLeases.set(lease.id, lease)
-        this.#trackFeedbackTask(this.#cleanupFeedbackLease(lease.id))
+        this.#trackFeedbackTask(this.#cleanupFeedbackLease(lease.id, 'recovery'))
       }
     }
   }
 
   /** Best-effort feedback cleanup before Adapter shutdown, then waits for owned cleanup tasks. */
   async stopProcessingFeedback(): Promise<void> {
-    for (const lease of this.#feedbackLeases.values()) this.#trackFeedbackTask(this.#cleanupFeedbackLease(lease.id))
+    for (const lease of this.#feedbackLeases.values())
+      this.#trackFeedbackTask(this.#cleanupFeedbackLease(lease.id, 'shutdown'))
     await Promise.allSettled([...this.#feedbackTasks])
   }
 
@@ -677,7 +684,7 @@ export class ChannelRuntime {
       throw new Error('只能撤回当前频道中该智能体自己发送的消息。')
     }
     const adapter = this.#resolveAdapter(channel.connectionId)
-    if (!adapter?.interactions) throw new Error('当前连接不支持消息撤回。')
+    if (!adapter?.interactions?.retractOwnMessage) throw new Error('当前连接不支持消息撤回。')
     const intent = await this.#planInteraction({
       episode,
       connectionId: channel.connectionId,
@@ -686,7 +693,7 @@ export class ChannelRuntime {
       targetId: input.logicalMessageId,
     })
     const deliveries = outbound.deliveries.flatMap((delivery) =>
-      delivery.receipt?.status === 'sent'
+      delivery.receipt?.status === 'sent' && delivery.receipt.platformMessageId !== undefined
         ? [{ deliveryId: delivery.id, platformMessageId: delivery.receipt.platformMessageId }]
         : [],
     )
@@ -778,7 +785,7 @@ export class ChannelRuntime {
     }
     if (recent.length >= 3) throw new Error('当前频道每分钟最多戳三次。')
     const adapter = this.#resolveAdapter(channel.connectionId)
-    if (!adapter?.interactions) throw new Error('当前连接不支持戳一戳。')
+    if (!adapter?.interactions?.nudgeMember) throw new Error('当前连接不支持戳一戳。')
     const intent = await this.#planInteraction({
       episode,
       connectionId: channel.connectionId,
@@ -787,7 +794,11 @@ export class ChannelRuntime {
       targetId: input.memberId,
     })
     const outcome = await adapter.interactions
-      .nudgeMember({ channelId: channel.id, memberId: input.memberId, clientRequestId: input.clientRequestId })
+      .nudgeMember({
+        channelId: channel.id,
+        memberId: input.memberId,
+        clientRequestId: input.clientRequestId,
+      })
       .catch((error: unknown) => ({
         status: 'failed' as const,
         message: error instanceof Error ? error.message : String(error),
@@ -818,7 +829,9 @@ export class ChannelRuntime {
       if (current !== undefined && current.agentId !== input.agentId) {
         const episode = this.#runtimeRepository.getActiveEpisode(input.channelId, current.agentId)
         if (episode?.dshSessionId !== undefined) {
+          this.#feedbackEndReasons.set(episode.id, 'cancelled')
           await this.#sessionDriver.cancelSession(episode.dshSessionId, 'binding-replaced')
+          await this.#cleanupEpisodeFeedback(episode.id)
           this.#runtimeRepository.closeEpisode(
             episode.id,
             'binding-replaced',
@@ -841,7 +854,9 @@ export class ChannelRuntime {
     await this.#withLane(channelId, current.agentId, async () => {
       const episode = this.#runtimeRepository.getActiveEpisode(channelId, current.agentId)
       if (episode?.status === 'active' && episode.dshSessionId !== undefined) {
+        this.#feedbackEndReasons.set(episode.id, 'cancelled')
         await this.#sessionDriver.cancelSession(episode.dshSessionId, 'stopped')
+        await this.#cleanupEpisodeFeedback(episode.id)
         this.#runtimeRepository.closeEpisode(
           episode.id,
           'stopped',
@@ -864,7 +879,9 @@ export class ChannelRuntime {
     await this.#withLane(channelId, current.agentId, async () => {
       const episode = this.#runtimeRepository.getActiveEpisode(channelId, current.agentId)
       if (episode?.dshSessionId !== undefined) {
+        this.#feedbackEndReasons.set(episode.id, 'cancelled')
         await this.#sessionDriver.cancelSession(episode.dshSessionId, 'channel-deleted')
+        await this.#cleanupEpisodeFeedback(episode.id)
       }
       if (episode !== undefined) {
         this.#runtimeRepository.closeEpisode(
@@ -901,18 +918,48 @@ export class ChannelRuntime {
 
     const intentId = OutboundIntentIdSchema.parse(`out_${this.#nextUlid()}`)
     const logicalMessageId = LogicalMessageIdSchema.parse(`msg_${this.#nextUlid()}`)
+    const originEvent =
+      episode.lastAdmittedEventId === undefined
+        ? undefined
+        : this.#coreRepository.getChannelEvent(episode.lastAdmittedEventId)
+    const activeFeedback = [...this.#feedbackLeases.values()]
+      .filter((lease) => lease.episodeId === episode.id && lease.state === 'active')
+      .sort((left, right) => right.createdAt - left.createdAt)[0]
     const plans = adapter.planOutbound
       ? await adapter.planOutbound({
           connectionId: channel.connectionId,
           channelId: channel.id,
           parts: input.parts,
           ...(input.replyTo === undefined ? {} : { replyTo: input.replyTo }),
+          ...(originEvent === undefined
+            ? {}
+            : {
+                origin: {
+                  ...(originEvent.platformMessageId === undefined
+                    ? {}
+                    : { platformMessageId: originEvent.platformMessageId }),
+                  ...(originEvent.activityType === undefined ? {} : { activityType: originEvent.activityType }),
+                  receivedAt: originEvent.receivedAt,
+                },
+              }),
+          ...(activeFeedback === undefined
+            ? {}
+            : {
+                processingFeedback: {
+                  leaseId: activeFeedback.id,
+                  platformMessageId: activeFeedback.platformMessageId,
+                },
+              }),
         })
       : adapter.capabilities.mixedContent
         ? [{ parts: input.parts }]
         : input.parts.map((part) => ({ parts: [part] }))
     if (plans.length === 0 || plans.some(({ parts }) => parts.length === 0)) {
       throw new Error('Adapter outbound planner returned an empty PhysicalDelivery.')
+    }
+    const feedbackConsumers = plans.filter(({ consumesProcessingFeedback }) => consumesProcessingFeedback === true)
+    if (feedbackConsumers.length > 1 || (feedbackConsumers.length === 1 && activeFeedback === undefined)) {
+      throw new Error('Adapter outbound planner returned an invalid processing-feedback consumer.')
     }
     for (const { parts } of plans) {
       for (const part of parts) {
@@ -938,14 +985,19 @@ export class ChannelRuntime {
       state: 'planned',
       createdAt: this.#timestamp(),
     }
-    const deliveries: PhysicalDeliveryRecord[] = plans.map(({ parts, adapterContext }, sequence) => ({
-      id: PhysicalDeliveryIdSchema.parse(`phy_${this.#nextUlid()}`),
-      intentId,
-      sequence,
-      parts,
-      ...(adapterContext === undefined ? {} : { adapterContext }),
-      state: 'planned',
-    }))
+    const deliveries: PhysicalDeliveryRecord[] = plans.map(
+      ({ parts, adapterContext, consumesProcessingFeedback }, sequence) => ({
+        id: PhysicalDeliveryIdSchema.parse(`phy_${this.#nextUlid()}`),
+        intentId,
+        sequence,
+        parts,
+        ...(adapterContext === undefined ? {} : { adapterContext }),
+        ...(consumesProcessingFeedback === true && activeFeedback !== undefined
+          ? { processingFeedbackLeaseId: activeFeedback.id }
+          : {}),
+        state: 'planned',
+      }),
+    )
     this.#runtimeRepository.createOutboundPlan(intent, deliveries)
     this.#publishFact({ channelId: channel.id, kind: 'outbound', sourceId: intent.id })
     const settled = await this.#dispatchOutbound(intent.id, input.signal ?? new AbortController().signal)
@@ -1010,7 +1062,9 @@ export class ChannelRuntime {
         if (episode.status === 'opening' && handoff !== undefined) {
           const previous = this.#runtimeRepository.getEpisode(handoff.fromEpisodeId)
           if (previous?.dshSessionId !== undefined) {
+            this.#feedbackEndReasons.set(previous.id, 'cancelled')
             await this.#sessionDriver.cancelSession(previous.dshSessionId, previous.closeReason ?? 'manual')
+            await this.#cleanupEpisodeFeedback(previous.id)
           }
         }
         const recentEvents =
@@ -1090,7 +1144,9 @@ export class ChannelRuntime {
       if (!episode || episode.status !== 'active' || !episode.dshSessionId) {
         throw new Error(`Episode is not active: ${episodeId}`)
       }
+      this.#feedbackEndReasons.set(episode.id, 'cancelled')
       await this.#sessionDriver.cancelSession(episode.dshSessionId, reason)
+      await this.#cleanupEpisodeFeedback(episode.id)
       return this.#runtimeRepository.closeEpisode(
         episode.id,
         reason,
@@ -1124,7 +1180,9 @@ export class ChannelRuntime {
       if (!anchor) throw new Error(`Episode anchor Event no longer exists: ${anchorId}`)
       const reason = mode === 'clear' ? 'context-cleared' : 'context-compacted'
 
+      this.#feedbackEndReasons.set(episode.id, 'cancelled')
       await this.#sessionDriver.cancelSession(episode.dshSessionId, reason)
+      await this.#cleanupEpisodeFeedback(episode.id)
       if (mode === 'clear') {
         return {
           mode,
@@ -1348,7 +1406,7 @@ export class ChannelRuntime {
         )
       }
     } catch (error) {
-      if (feedbackLeaseId !== undefined) await this.#cleanupFeedbackLease(feedbackLeaseId)
+      if (feedbackLeaseId !== undefined) await this.#cleanupFeedbackLease(feedbackLeaseId, 'error')
       throw error
     }
   }
@@ -1369,7 +1427,7 @@ export class ChannelRuntime {
     if (!channel || channel.kind !== 'group' || this.#feedbackDisabledConnections.has(channel.connectionId))
       return undefined
     const adapter = this.#resolveAdapter(channel.connectionId)
-    if (!adapter?.interactions) return undefined
+    if (!adapter?.interactions?.startProcessingFeedback) return undefined
     const now = this.#timestamp()
     const lease: ProcessingFeedbackLease = {
       id: `feedback:${episode.id}:${event.id}`,
@@ -1385,7 +1443,7 @@ export class ChannelRuntime {
     this.#feedbackLeases.set(lease.id, lease)
     await this.#persistFeedbackLeases(channel.connectionId)
     const outcome = await adapter.interactions
-      .startProcessingFeedback({ channelId: channel.id, platformMessageId: event.platformMessageId })
+      .startProcessingFeedback({ leaseId: lease.id, channelId: channel.id, platformMessageId: event.platformMessageId })
       .catch((error: unknown) => ({
         status: 'failed' as const,
         message: error instanceof Error ? error.message : String(error),
@@ -1405,19 +1463,49 @@ export class ChannelRuntime {
     return lease.id
   }
 
-  async #cleanupEpisodeFeedback(episodeId: EpisodeId): Promise<void> {
+  async #cleanupEpisodeFeedback(
+    episodeId: EpisodeId,
+    reason?: 'idle' | 'error' | 'cancelled' | 'timeout' | 'shutdown' | 'recovery',
+  ): Promise<void> {
+    if (reason !== undefined) this.#feedbackEndReasons.set(episodeId, reason)
+    const resolvedReason = this.#feedbackEndReasons.get(episodeId) ?? 'idle'
     const leases = [...this.#feedbackLeases.values()].filter((lease) => lease.episodeId === episodeId)
-    await Promise.allSettled(leases.map((lease) => this.#cleanupFeedbackLease(lease.id)))
+    await Promise.allSettled(leases.map((lease) => this.#cleanupFeedbackLease(lease.id, resolvedReason)))
+    if (![...this.#feedbackLeases.values()].some((lease) => lease.episodeId === episodeId)) {
+      this.#feedbackEndReasons.delete(episodeId)
+    }
   }
 
-  async #cleanupFeedbackLease(leaseId: string): Promise<void> {
+  async #cleanupFeedbackLease(
+    leaseId: string,
+    reason: 'idle' | 'error' | 'cancelled' | 'timeout' | 'shutdown' | 'recovery',
+  ): Promise<void> {
+    const current = this.#feedbackCleanups.get(leaseId)
+    if (current) return current
+    const cleanup = this.#performFeedbackCleanup(leaseId, reason)
+    const tracked = cleanup.finally(() => {
+      if (this.#feedbackCleanups.get(leaseId) === tracked) this.#feedbackCleanups.delete(leaseId)
+    })
+    this.#feedbackCleanups.set(leaseId, tracked)
+    return tracked
+  }
+
+  async #performFeedbackCleanup(
+    leaseId: string,
+    reason: 'idle' | 'error' | 'cancelled' | 'timeout' | 'shutdown' | 'recovery',
+  ): Promise<void> {
     const lease = this.#feedbackLeases.get(leaseId)
     if (!lease) return
     if (this.#timestamp() - lease.createdAt >= FEEDBACK_MAX_AGE_MS) return
     const adapter = this.#resolveAdapter(lease.connectionId)
-    if (!adapter?.interactions) return
+    if (!adapter?.interactions?.finishProcessingFeedback) return
     const outcome = await adapter.interactions
-      .finishProcessingFeedback({ channelId: lease.channelId, platformMessageId: lease.platformMessageId })
+      .finishProcessingFeedback({
+        leaseId: lease.id,
+        channelId: lease.channelId,
+        platformMessageId: lease.platformMessageId,
+        reason,
+      })
       .catch((error: unknown) => ({
         status: 'failed' as const,
         message: error instanceof Error ? error.message : String(error),
@@ -1442,7 +1530,9 @@ export class ChannelRuntime {
       return
     }
     this.#trackFeedbackTask(
-      new Promise<void>((resolve) => setTimeout(resolve, delay)).then(() => this.#cleanupFeedbackLease(lease.id)),
+      new Promise<void>((resolve) => setTimeout(resolve, delay)).then(() =>
+        this.#cleanupFeedbackLease(lease.id, reason),
+      ),
     )
   }
 
@@ -1697,7 +1787,9 @@ export class ChannelRuntime {
       nextEpisode,
       handoff,
     })
+    this.#feedbackEndReasons.set(episode.id, reason === 'idle-timeout' ? 'timeout' : 'cancelled')
     await this.#sessionDriver.cancelSession(episode.dshSessionId, reason)
+    await this.#cleanupEpisodeFeedback(episode.id)
     const dshSessionId = await this.#sessionDriver.createSession({
       episodeId: nextEpisode.id,
       channelId: nextEpisode.channelId,
@@ -1766,6 +1858,9 @@ export class ChannelRuntime {
           },
           this.#timestamp(),
         )
+        if (delivery.processingFeedbackLeaseId !== undefined) {
+          await this.#settleConsumedFeedback(delivery.processingFeedbackLeaseId)
+        }
         unknownDeliveries += 1
         continue
       }
@@ -1781,6 +1876,19 @@ export class ChannelRuntime {
           parts: delivery.parts,
           ...(snapshot.intent.replyTo === undefined ? {} : { replyTo: snapshot.intent.replyTo }),
           ...(delivery.adapterContext === undefined ? {} : { adapterContext: delivery.adapterContext }),
+          ...(delivery.processingFeedbackLeaseId === undefined
+            ? {}
+            : (() => {
+                const lease = this.#feedbackLeases.get(delivery.processingFeedbackLeaseId)
+                return lease === undefined
+                  ? {}
+                  : {
+                      processingFeedback: {
+                        leaseId: lease.id,
+                        platformMessageId: lease.platformMessageId,
+                      },
+                    }
+              })()),
         }
         receipt = await adapter.deliver(request, signal)
       } catch (error) {
@@ -1790,6 +1898,13 @@ export class ChannelRuntime {
         }
       }
       this.#runtimeRepository.recordDeliveryReceipt(delivery.id, receipt, this.#timestamp())
+      if (delivery.processingFeedbackLeaseId !== undefined) {
+        if (receipt.status === 'sent' || receipt.status === 'unknown') {
+          await this.#settleConsumedFeedback(delivery.processingFeedbackLeaseId)
+        } else {
+          await this.#cleanupFeedbackLease(delivery.processingFeedbackLeaseId, 'error')
+        }
+      }
     }
     const state = this.#aggregate(this.#runtimeRepository.getOutbound(id).receipts)
     this.#runtimeRepository.completeOutboundIntent(id, state)
@@ -1805,6 +1920,13 @@ export class ChannelRuntime {
         // A projection listener must never roll back an already committed fact.
       }
     }
+  }
+
+  async #settleConsumedFeedback(leaseId: string): Promise<void> {
+    const lease = this.#feedbackLeases.get(leaseId)
+    if (!lease) return
+    this.#feedbackLeases.delete(leaseId)
+    await this.#persistFeedbackLeases(lease.connectionId)
   }
 
   #aggregate(receipts: readonly DeliveryReceiptRecord[]): OutboundState {

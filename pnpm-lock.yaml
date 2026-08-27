@@ -265,6 +265,9 @@ importers:
       '@nekro-nxt/adapter-web':
         specifier: workspace:*
         version: link:../../packages/adapter-web
+      '@nekro-nxt/adapter-wecom-ai-bot':
+        specifier: workspace:*
+        version: link:../../packages/adapter-wecom-ai-bot
       '@nekro-nxt/channel-runtime':
         specifier: workspace:*
         version: link:../../packages/channel-runtime
@@ -506,6 +509,25 @@ importers:
       '@nekro-nxt/contracts':
         specifier: workspace:*
         version: link:../contracts
+
+  packages/adapter-wecom-ai-bot:
+    dependencies:
+      '@nekro-nxt/adapter-sdk':
+        specifier: workspace:*
+        version: link:../adapter-sdk
+      '@nekro-nxt/contracts':
+        specifier: workspace:*
+        version: link:../contracts
+      ws:
+        specifier: 8.21.3
+        version: 8.21.3
+      zod:
+        specifier: 4.4.3
+        version: 4.4.3
+    devDependencies:
+      '@types/ws':
+        specifier: 8.18.1
+        version: 8.18.1
 
   packages/channel-runtime:
     dependencies:

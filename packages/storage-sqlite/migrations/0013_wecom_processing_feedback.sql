@@ -1,0 +1,1 @@
+ALTER TABLE `physical_deliveries` ADD `processing_feedback_lease_id` text;

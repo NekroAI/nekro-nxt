@@ -264,6 +264,11 @@ export interface CoreRepository {
     channelId: ChannelId,
     platformMessageId: string,
   ): PlatformMessageReferenceRecord | undefined
+  resolveLogicalMessage(
+    connectionId: ConnectionId,
+    channelId: ChannelId,
+    logicalMessageId: LogicalMessageId,
+  ): PlatformMessageReferenceRecord | undefined
   resolveLogicalMessagePlatformId(
     connectionId: ConnectionId,
     channelId: ChannelId,
@@ -937,9 +942,14 @@ export class CoreService {
     }
     const searchText = messagePartsSearchText(event.parts)
     const target =
-      event.targetPlatformMessageId === undefined
-        ? undefined
-        : this.#repository.resolvePlatformMessage(event.connectionId, event.channelId, event.targetPlatformMessageId)
+      event.targetLogicalMessageId !== undefined
+        ? this.#repository.resolveLogicalMessage(event.connectionId, event.channelId, event.targetLogicalMessageId)
+        : event.targetPlatformMessageId === undefined
+          ? undefined
+          : this.#repository.resolvePlatformMessage(event.connectionId, event.channelId, event.targetPlatformMessageId)
+    if (event.targetLogicalMessageId !== undefined && target === undefined) {
+      throw new Error('Inbound target logical message does not belong to this Connection and Channel.')
+    }
     const record: ChannelEventRecord = {
       id: ChannelEventIdSchema.parse(`evt_${this.#nextUlid()}`),
       logicalMessageId: LogicalMessageIdSchema.parse(`msg_${this.#nextUlid()}`),

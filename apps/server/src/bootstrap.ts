@@ -9,6 +9,13 @@ import {
   type OneBot11RuntimeConfig,
 } from '@nekro-nxt/adapter-onebot-11'
 import {
+  WeComAiBotConnectionConfigurationSchema,
+  WeComAiBotRuntime,
+  WeComTransportError,
+  WECOM_AI_BOT_CONNECTION_DEFINITION,
+  type WeComAiBotRuntimeConfig,
+} from '@nekro-nxt/adapter-wecom-ai-bot'
+import {
   parseAdapterConnectionConfiguration,
   type AdapterConnectionHostContext,
   type AdapterConnectionDescriptor,
@@ -51,6 +58,7 @@ import { readFile } from 'node:fs/promises'
 import path from 'node:path'
 import { monotonicFactory } from 'ulid'
 import { ChannelExtensionActivationHost, DshHostRuntime } from './index.js'
+import { fetchAdapterRemoteBytes } from './adapter-remote-assets.js'
 import { LocalCredentialStore } from './credentials.js'
 import { NotificationService } from './notifications.js'
 import { QQCoreBridge, QQRemoteAssetImporter } from './qq-openclaw.js'
@@ -60,6 +68,7 @@ const ADAPTER_CONNECTION_DEFINITIONS = [
   WEB_CONNECTION_DEFINITION,
   QQ_OPENCLAW_CONNECTION_DEFINITION,
   ONEBOT_11_CONNECTION_DEFINITION,
+  WECOM_AI_BOT_CONNECTION_DEFINITION,
 ]
 
 interface ServerAdapterDriver {
@@ -113,10 +122,6 @@ export interface NekroRuntimeOptions {
     readonly sockets?: QQGatewaySocketFactory
     readonly clock?: QQGatewayClock
   }
-  readonly onebot?: {
-    readonly fetch?: typeof fetch
-    readonly validateRemoteHost?: (hostname: string) => Promise<void>
-  }
   readonly notifications?: { readonly fetch?: typeof fetch }
 }
 
@@ -135,7 +140,7 @@ export interface QQConnectionDiagnostic {
 
 export type ConnectionTestResult =
   | { readonly status: 'received'; readonly channelId: ChannelId; readonly platformMessageId: string }
-  | { readonly status: 'sent'; readonly channelId: ChannelId; readonly platformMessageId: string }
+  | { readonly status: 'sent'; readonly channelId: ChannelId; readonly platformMessageId?: string }
   | {
       readonly status: 'waiting-for-message' | 'needs-channel' | 'needs-target' | 'not-connected'
       readonly message: string
@@ -193,9 +198,9 @@ export class NekroRuntime {
   readonly #database: CoreDatabase
   readonly #now: () => number
   readonly #qqOptions: NonNullable<NekroRuntimeOptions['qq']>
-  readonly #onebotOptions: NonNullable<NekroRuntimeOptions['onebot']>
   readonly #qqRuntimes = new Map<ConnectionId, QQOpenClawRuntime>()
   readonly #onebotRuntimes = new Map<ConnectionId, OneBot11Runtime>()
+  readonly #wecomRuntimes = new Map<ConnectionId, WeComAiBotRuntime>()
   readonly #adapterRuntimes: Map<ConnectionId, AdapterConnectionRuntime>
   readonly #qqDiagnostics = new Map<ConnectionId, QQConnectionDiagnostic>()
   readonly #adapterDiagnostics = new Map<ConnectionId, AdapterConnectionDiagnostic>()
@@ -229,7 +234,6 @@ export class NekroRuntime {
     readonly sessionStorageRetirement?: { readonly episodesClosed: number; readonly admissionsReleased: number }
     readonly now: () => number
     readonly qqOptions: NonNullable<NekroRuntimeOptions['qq']>
-    readonly onebotOptions: NonNullable<NekroRuntimeOptions['onebot']>
     readonly adapterRuntimes: Map<ConnectionId, AdapterConnectionRuntime>
   }) {
     this.#database = input.database
@@ -250,7 +254,6 @@ export class NekroRuntime {
     this.sessionStorageRetirement = input.sessionStorageRetirement
     this.#now = input.now
     this.#qqOptions = input.qqOptions
-    this.#onebotOptions = input.onebotOptions
     this.#adapterRuntimes = input.adapterRuntimes
     this.#adapterDiagnostics.set(input.webConnectionId, {
       status: 'connected',
@@ -279,6 +282,12 @@ export class NekroRuntime {
       create: (request) => this.#createOneBotConnection(request),
       mount: (connectionId) => this.#mountOneBot(connectionId),
       test: (connectionId, direction, channelId) => this.#testOneBotConnection(connectionId, direction, channelId),
+    })
+    this.#adapterDrivers.set(WECOM_AI_BOT_CONNECTION_DEFINITION.descriptor.key, {
+      descriptor: WECOM_AI_BOT_CONNECTION_DEFINITION.descriptor,
+      create: (request) => this.#createWeComConnection(request),
+      mount: (connectionId) => this.#mountWeCom(connectionId),
+      test: (connectionId, direction, channelId) => this.#testWeComConnection(connectionId, direction, channelId),
     })
   }
 
@@ -331,10 +340,15 @@ export class NekroRuntime {
             if (!settled.current) return Promise.reject(new Error('Channel Runtime is not ready.'))
             return settled.current.sendMessage(input)
           },
-          supportsInteractions: (channelId) => {
+          supportsRetraction: (channelId) => {
             const channel = core.getChannel(channelId)
             if (!channel) return false
-            return adapterRuntimes.get(channel.connectionId)?.interactions !== undefined
+            return adapterRuntimes.get(channel.connectionId)?.interactions?.retractOwnMessage !== undefined
+          },
+          supportsNudge: (channelId) => {
+            const channel = core.getChannel(channelId)
+            if (!channel) return false
+            return adapterRuntimes.get(channel.connectionId)?.interactions?.nudgeMember !== undefined
           },
           retractMessage: (input) => {
             if (!settled.current) return Promise.reject(new Error('Channel Runtime is not ready.'))
@@ -421,7 +435,6 @@ export class NekroRuntime {
         ...(sessionStorageRetirement === undefined ? {} : { sessionStorageRetirement }),
         now,
         qqOptions: options.qq ?? {},
-        onebotOptions: options.onebot ?? {},
         adapterRuntimes,
       })
       return runtime
@@ -741,10 +754,6 @@ export class NekroRuntime {
     const runtime = new OneBot11Runtime({
       context: this.#adapterContext(connectionId),
       config,
-      ...(this.#onebotOptions.fetch === undefined ? {} : { fetch: this.#onebotOptions.fetch }),
-      ...(this.#onebotOptions.validateRemoteHost === undefined
-        ? {}
-        : { validateRemoteHost: this.#onebotOptions.validateRemoteHost }),
     })
     this.#onebotRuntimes.set(connectionId, runtime)
     this.#adapterRuntimes.set(connectionId, runtime)
@@ -793,6 +802,106 @@ export class NekroRuntime {
       return {
         status: 'failed',
         kind: error instanceof OneBotActionError ? error.kind : 'transient',
+        message: error instanceof Error ? error.message : String(error),
+      }
+    }
+  }
+
+  async #createWeComConnection(input: {
+    readonly alias?: string | undefined
+    readonly configuration?: Readonly<Record<string, unknown>>
+    readonly credentials?: Readonly<Record<string, unknown>>
+  }): Promise<ConnectionRecord> {
+    if (!this.#started || this.#disposed) throw new Error('NekroRuntime is not accepting new Connections.')
+    const parsed = parseAdapterConnectionConfiguration(WECOM_AI_BOT_CONNECTION_DEFINITION, input)
+    const secretReference = await this.credentials.save(parsed.credentials.secret)
+    let connection: ConnectionRecord
+    try {
+      connection = this.core.createConnection({
+        adapterKey: WECOM_AI_BOT_CONNECTION_DEFINITION.descriptor.key,
+        ...(input.alias === undefined ? {} : { alias: input.alias }),
+        config: parsed.configuration,
+        credentialRefs: { secret: secretReference },
+      })
+    } catch (error) {
+      await this.credentials.delete(secretReference)
+      throw error
+    }
+    await this.#mountWeCom(connection.id)
+    return connection
+  }
+
+  async #mountWeCom(connectionId: ConnectionId): Promise<void> {
+    if (this.#wecomRuntimes.has(connectionId)) return
+    const connection = this.core.getConnection(connectionId)
+    if (!connection || connection.adapterKey !== WECOM_AI_BOT_CONNECTION_DEFINITION.descriptor.key) {
+      throw new Error('企业微信智能机器人 Connection 不存在。')
+    }
+    let config: WeComAiBotRuntimeConfig
+    try {
+      const stored = WeComAiBotConnectionConfigurationSchema.parse(connection.config)
+      const secretCredentialRef = connection.credentialRefs['secret']
+      if (!secretCredentialRef || !(await this.credentials.has(secretCredentialRef))) {
+        throw new Error('这个连接的 Secret 凭据不可用。')
+      }
+      config = { ...stored, secretCredentialRef }
+    } catch (error) {
+      this.#adapterDiagnostics.set(connectionId, {
+        status: 'failed',
+        message: error instanceof Error ? error.message : String(error),
+      })
+      this.#notifyConnectionChanges()
+      return
+    }
+    const runtime = new WeComAiBotRuntime({ context: this.#adapterContext(connectionId), config })
+    this.#wecomRuntimes.set(connectionId, runtime)
+    this.#adapterRuntimes.set(connectionId, runtime)
+    try {
+      await runtime.start()
+    } catch (error) {
+      this.#wecomRuntimes.delete(connectionId)
+      this.#adapterRuntimes.delete(connectionId)
+      this.#adapterDiagnostics.set(connectionId, {
+        status: 'failed',
+        message: error instanceof Error ? error.message : String(error),
+      })
+      this.#notifyConnectionChanges()
+    }
+  }
+
+  async #testWeComConnection(
+    connectionId: ConnectionId,
+    direction: 'send' | 'receive',
+    targetChannelId?: ChannelId,
+  ): Promise<ConnectionTestResult> {
+    const diagnostic = this.#adapterDiagnostics.get(connectionId)
+    const runtime = this.#wecomRuntimes.get(connectionId)
+    if (!runtime || diagnostic?.status !== 'connected') {
+      return { status: 'not-connected', message: diagnostic?.message ?? '尚未连接到企业微信智能机器人。' }
+    }
+    if (direction === 'receive') {
+      const inbound = this.#lastInboundByConnection.get(connectionId)
+      return inbound?.platformMessageId
+        ? { status: 'received', channelId: inbound.channelId, platformMessageId: inbound.platformMessageId }
+        : { status: 'waiting-for-message', message: '请先向企业微信智能机器人发送一条消息，再重新测试接收。' }
+    }
+    const channels = this.core.listChannelsByConnection(connectionId)
+    if (targetChannelId !== undefined && !channels.some(({ id }) => id === targetChannelId)) {
+      throw new Error('测试目标不属于这个企业微信智能机器人 Connection。')
+    }
+    const channelId = targetChannelId ?? (channels.length === 1 ? channels[0]?.id : undefined)
+    if (!channelId) {
+      return channels.length === 0
+        ? { status: 'needs-channel', message: '尚未发现频道；请先从企业微信发送一条消息。' }
+        : { status: 'needs-target', message: '该连接发现了多个频道，请选择发送测试的目标频道。' }
+    }
+    try {
+      await runtime.testSend(channelId)
+      return { status: 'sent', channelId }
+    } catch (error) {
+      return {
+        status: 'failed',
+        kind: error instanceof WeComTransportError ? error.kind : 'transient',
         message: error instanceof Error ? error.message : String(error),
       }
     }
@@ -858,6 +967,8 @@ export class NekroRuntime {
           Promise.resolve(this.core.resolvePlatformMessage(connectionId, channelId, platformMessageId)),
         resolvePlatformMessageId: (channelId, logicalMessageId) =>
           Promise.resolve(this.core.resolveLogicalMessagePlatformId(connectionId, channelId, logicalMessageId)),
+        resolveLogicalMessage: (channelId, logicalMessageId) =>
+          Promise.resolve(this.repository.resolveLogicalMessage(connectionId, channelId, logicalMessageId)),
       },
       assets: {
         importBytes: async (input) => {
@@ -880,6 +991,7 @@ export class NekroRuntime {
             byteSize: asset.byteSize,
           }
         },
+        fetchRemoteBytes: fetchAdapterRemoteBytes,
       },
       credentials: { resolve: (reference) => this.credentials.resolve(reference) },
       state: {
@@ -1048,12 +1160,14 @@ export class NekroRuntime {
     await Promise.allSettled([
       ...[...this.#qqRuntimes.values()].map((runtime) => runtime.stop()),
       ...[...this.#onebotRuntimes.values()].map((runtime) => runtime.stop()),
+      ...[...this.#wecomRuntimes.values()].map((runtime) => runtime.stop()),
       this.activation.dispose(),
       this.web.stop(),
       this.host.dispose(),
     ])
     this.#qqRuntimes.clear()
     this.#onebotRuntimes.clear()
+    this.#wecomRuntimes.clear()
     this.#adapterDiagnostics.clear()
     this.#lastInboundByConnection.clear()
     this.#adapterRuntimes.clear()

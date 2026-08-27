@@ -439,6 +439,7 @@ export const physicalDeliveries = sqliteTable(
     sequence: integer().notNull(),
     parts: jsonText<readonly MessagePart[]>('parts').notNull(),
     adapterContext: jsonText<JsonValue>('adapter_context'),
+    processingFeedbackLeaseId: text('processing_feedback_lease_id'),
     state: text({ enum: ['planned', 'sending', 'sent', 'failed', 'unknown'] }).notNull(),
     platformMessageId: text('platform_message_id'),
     capabilityOutcomes: jsonText<Readonly<Record<string, JsonValue>>>('capability_outcomes'),

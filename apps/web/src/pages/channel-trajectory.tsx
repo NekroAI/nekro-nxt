@@ -48,6 +48,11 @@ const CHANNEL_ACTIVITY_OPTIONS: readonly {
   { value: 'essence-added', label: '设为精华', description: '消息被设为精华时允许触发。' },
   { value: 'essence-removed', label: '取消精华', description: '消息被取消精华时允许触发。' },
   { value: 'friend-added', label: '新增好友', description: '连接账号新增好友时允许触发。' },
+  { value: 'conversation-entered', label: '进入会话', description: '成员进入与机器人账号的会话时允许触发。' },
+  { value: 'card-action-invoked', label: '卡片操作', description: '成员操作交互式卡片时允许触发。' },
+  { value: 'message-feedback-positive', label: '正向反馈', description: '成员认可一条回复时允许触发。' },
+  { value: 'message-feedback-negative', label: '负向反馈', description: '成员反馈回复不准确时允许触发。' },
+  { value: 'message-feedback-withdrawn', label: '撤销反馈', description: '成员撤销回复反馈时允许触发。' },
 ]
 
 export type ChannelCanvasView = 'chat' | 'trajectory'

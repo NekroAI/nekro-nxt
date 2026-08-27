@@ -59,6 +59,11 @@ export const ChannelActivityTypeSchema = z.enum([
   'essence-added',
   'essence-removed',
   'friend-added',
+  'conversation-entered',
+  'card-action-invoked',
+  'message-feedback-positive',
+  'message-feedback-negative',
+  'message-feedback-withdrawn',
 ])
 
 export type ChannelActivityType = z.infer<typeof ChannelActivityTypeSchema>

@@ -1147,7 +1147,7 @@ export const ConnectionTestResultSchema = z.discriminatedUnion('status', [
     .object({
       status: z.literal('sent'),
       channelId: ChannelIdSchema,
-      platformMessageId: NonEmptyStringSchema,
+      platformMessageId: NonEmptyStringSchema.optional(),
     })
     .strict(),
   z

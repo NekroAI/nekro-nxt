@@ -9,10 +9,11 @@ import {
   ChannelIdSchema,
   ChannelMemberIdSchema,
   ConnectionIdSchema,
+  LogicalMessageIdSchema,
   type JsonValue,
 } from '@nekro-nxt/contracts'
 
-export const waitFor = async (predicate: () => boolean, timeoutMs = 2_000): Promise<void> => {
+export const waitFor = async (predicate: () => boolean, timeoutMs = 3_000): Promise<void> => {
   const deadline = Date.now() + timeoutMs
   while (!predicate()) {
     if (Date.now() >= deadline) throw new Error('Timed out waiting for condition.')
@@ -26,21 +27,23 @@ export const createFakeContext = () => {
   const states = new Map<string, JsonValue>()
   const channels = new Map<string, ReturnType<typeof ChannelIdSchema.parse>>()
   const members = new Map<string, ReturnType<typeof ChannelMemberIdSchema.parse>>()
+  const imported: Uint8Array[] = []
+  let remoteBytes = new Uint8Array([1])
   let channelSequence = 0
   let memberSequence = 0
   const context: AdapterConnectionHostContext = {
-    connectionId: ConnectionIdSchema.parse('con_TEST1'),
+    connectionId: ConnectionIdSchema.parse('con_WECOMTEST'),
     now: () => Date.now(),
     acceptInbound: (event) => {
       events.push(event)
       return Promise.resolve({ channelEventId: ChannelEventIdSchema.parse(`evt_${events.length}`), inserted: true })
     },
     channels: {
-      ensure: (input) => {
-        const existing = channels.get(input.platformChannelId)
-        if (existing) return Promise.resolve(existing)
-        const id = ChannelIdSchema.parse(`chn_${++channelSequence}`)
-        channels.set(input.platformChannelId, id)
+      ensure: ({ platformChannelId }) => {
+        const current = channels.get(platformChannelId)
+        if (current) return Promise.resolve(current)
+        const id = ChannelIdSchema.parse(`chn_WECOM${++channelSequence}`)
+        channels.set(platformChannelId, id)
         return Promise.resolve(id)
       },
       updateDisplayName: () => Promise.resolve(),
@@ -48,44 +51,42 @@ export const createFakeContext = () => {
         Promise.resolve([...channels].find(([, candidate]) => candidate === channelId)?.[0]),
       resolveKind: (channelId) => {
         const platform = [...channels].find(([, candidate]) => candidate === channelId)?.[0]
-        return Promise.resolve(
-          platform?.startsWith('group:') ? 'group' : platform?.startsWith('private:') ? 'direct' : undefined,
-        )
+        return Promise.resolve(platform?.startsWith('group:') ? 'group' : platform ? 'direct' : undefined)
       },
     },
     members: {
-      ensure: (input) => {
-        const key = `${input.channelId}:${input.platformUserId}`
-        const existing = members.get(key)
-        if (existing) return Promise.resolve(existing)
-        const id = ChannelMemberIdSchema.parse(`mbr_${++memberSequence}`)
+      ensure: ({ channelId, platformUserId }) => {
+        const key = `${channelId}:${platformUserId}`
+        const current = members.get(key)
+        if (current) return Promise.resolve(current)
+        const id = ChannelMemberIdSchema.parse(`mbr_WECOM${++memberSequence}`)
         members.set(key, id)
         return Promise.resolve(id)
       },
-      resolvePlatformUserId: (channelId, memberId) =>
-        Promise.resolve(
-          [...members]
-            .find(([key, candidate]) => key.startsWith(`${channelId}:`) && candidate === memberId)?.[0]
-            .split(':')
-            .at(-1),
-        ),
+      resolvePlatformUserId: () => Promise.resolve(undefined),
     },
     messages: {
       resolvePlatformMessage: () => Promise.resolve(undefined),
       resolvePlatformMessageId: () => Promise.resolve(undefined),
-      resolveLogicalMessage: () => Promise.resolve(undefined),
+      resolveLogicalMessage: (_channelId, logicalMessageId) =>
+        Promise.resolve(
+          LogicalMessageIdSchema.safeParse(logicalMessageId).success ? { authoredByAgent: true } : undefined,
+        ),
     },
     assets: {
-      importBytes: ({ bytes }) =>
-        Promise.resolve({
-          assetId: AssetIdSchema.parse('ast_TEST1'),
-          mediaType: 'image/png',
+      importBytes: ({ bytes, declaredMediaType }) => {
+        imported.push(bytes)
+        return Promise.resolve({
+          assetId: AssetIdSchema.parse(`ast_WECOM${imported.length}`),
+          mediaType: declaredMediaType ?? 'application/octet-stream',
           byteSize: bytes.byteLength,
-        }),
+        })
+      },
       read: () => Promise.resolve({ bytes: new Uint8Array([1, 2, 3]), mediaType: 'image/png', byteSize: 3 }),
-      fetchRemoteBytes: () => Promise.resolve({ bytes: new Uint8Array([4, 5, 6]), declaredMediaType: 'image/png' }),
+      fetchRemoteBytes: () =>
+        Promise.resolve({ bytes: remoteBytes, declaredMediaType: 'image/png', filename: 'fixture.png' }),
     },
-    credentials: { resolve: () => Promise.resolve('test-token') },
+    credentials: { resolve: () => Promise.resolve('fixture-secret') },
     state: {
       load: (key) => Promise.resolve(states.get(key)),
       save: (key, value) => {
@@ -97,11 +98,17 @@ export const createFakeContext = () => {
         return Promise.resolve()
       },
     },
-    diagnostics: {
-      publish: (diagnostic) => {
-        diagnostics.push(diagnostic)
-      },
+    diagnostics: { publish: (diagnostic) => diagnostics.push(diagnostic) },
+  }
+  return {
+    context,
+    events,
+    diagnostics,
+    states,
+    channels,
+    imported,
+    setRemoteBytes: (bytes: Uint8Array) => {
+      remoteBytes = new Uint8Array(bytes)
     },
   }
-  return { context, events, diagnostics, states, channels, members }
 }

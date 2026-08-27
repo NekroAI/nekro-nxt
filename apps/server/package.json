@@ -77,6 +77,7 @@
     "@deepseek-ai/dsh-web-search-deepseek": "0.1.1-rc.2",
     "@nekro-nxt/adapter-qq-openclaw": "workspace:*",
     "@nekro-nxt/adapter-onebot-11": "workspace:*",
+    "@nekro-nxt/adapter-wecom-ai-bot": "workspace:*",
     "@nekro-nxt/adapter-sdk": "workspace:*",
     "@nekro-nxt/adapter-web": "workspace:*",
     "@nekro-nxt/channel-runtime": "workspace:*",

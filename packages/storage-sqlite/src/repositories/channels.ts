@@ -63,6 +63,7 @@ type ChannelRepository = Pick<
   | 'getChannelEvent'
   | 'listChannelEvents'
   | 'resolvePlatformMessage'
+  | 'resolveLogicalMessage'
   | 'resolveLogicalMessagePlatformId'
 > & {
   getChannelReference(id: ChannelId): ChannelReferenceRecord | undefined
@@ -504,6 +505,23 @@ export function createChannelsRepository(database: DrizzleCoreDatabase): Channel
         .innerJoin(outboundIntents, eq(outboundIntents.id, physicalDeliveries.intentId))
         .innerJoin(episodes, eq(episodes.id, outboundIntents.episodeId))
         .where(and(eq(episodes.channelId, channelId), eq(physicalDeliveries.platformMessageId, platformMessageId)))
+        .get()
+      return outbound === undefined ? undefined : { logicalMessageId: outbound.logicalMessageId, authoredByAgent: true }
+    },
+    resolveLogicalMessage(connectionId, channelId, logicalMessageId): PlatformMessageReferenceRecord | undefined {
+      const channel = getChannel(channelId)
+      if (channel?.connectionId !== connectionId) return undefined
+      const inbound = database
+        .select({ logicalMessageId: channelEvents.logicalMessageId })
+        .from(channelEvents)
+        .where(and(eq(channelEvents.channelId, channelId), eq(channelEvents.logicalMessageId, logicalMessageId)))
+        .get()
+      if (inbound !== undefined) return { logicalMessageId: inbound.logicalMessageId, authoredByAgent: false }
+      const outbound = database
+        .select({ logicalMessageId: outboundIntents.logicalMessageId })
+        .from(outboundIntents)
+        .innerJoin(episodes, eq(episodes.id, outboundIntents.episodeId))
+        .where(and(eq(episodes.channelId, channelId), eq(outboundIntents.logicalMessageId, logicalMessageId)))
         .get()
       return outbound === undefined ? undefined : { logicalMessageId: outbound.logicalMessageId, authoredByAgent: true }
     },

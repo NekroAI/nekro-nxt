@@ -521,7 +521,8 @@ export function assertHostDshPackageVersions(): void {
 
 export interface AgentCommunicationPort {
   sendMessage(input: SendMessageInput): Promise<SendMessageResult>
-  supportsInteractions?(channelId: ChannelId): boolean
+  supportsRetraction?(channelId: ChannelId): boolean
+  supportsNudge?(channelId: ChannelId): boolean
   retractMessage?(input: {
     readonly episodeId: EpisodeId
     readonly logicalMessageId: LogicalMessageId
@@ -3444,12 +3445,10 @@ export class DshHostRuntime implements AgentSessionDriver, ExtensionActivationHo
       agentContext.tools.register(
         channelCommunicationTool(input.episodeId, input.channelId, this.#assets, this.#communication),
       )
-      if (
-        this.#communication.supportsInteractions?.(input.channelId) === true &&
-        this.#communication.retractMessage !== undefined &&
-        this.#communication.nudgeMember !== undefined
-      ) {
+      if (this.#communication.supportsRetraction?.(input.channelId) === true && this.#communication.retractMessage) {
         agentContext.tools.register(retractChannelMessageTool(input.episodeId, this.#communication))
+      }
+      if (this.#communication.supportsNudge?.(input.channelId) === true && this.#communication.nudgeMember) {
         agentContext.tools.register(nudgeChannelMemberTool(input.episodeId, this.#communication))
       }
       for (const tool of historyTools(input.channelId, this.#history)) agentContext.tools.register(tool)

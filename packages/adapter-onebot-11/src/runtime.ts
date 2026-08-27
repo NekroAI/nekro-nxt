@@ -9,8 +9,6 @@ import type {
 import type { AssetId, ChannelId, JsonValue, MessagePart } from '@nekro-nxt/contracts'
 import { LogicalMessageIdSchema } from '@nekro-nxt/contracts'
 import { createHash } from 'node:crypto'
-import { lookup } from 'node:dns/promises'
-import { isIP } from 'node:net'
 import { z } from 'zod'
 import { ONEBOT_11_ADAPTER_KEY, ONEBOT_11_CAPABILITIES, type OneBot11RuntimeConfig } from './definition.js'
 import {
@@ -29,8 +27,6 @@ const FORWARD_JSON_LIMIT = 64 * 1024
 export interface OneBot11RuntimeOptions {
   readonly context: AdapterConnectionHostContext
   readonly config: OneBot11RuntimeConfig
-  readonly fetch?: typeof fetch
-  readonly validateRemoteHost?: (hostname: string) => Promise<void>
   readonly transport?: {
     readonly requestTimeoutMs?: number
     readonly reconnectDelaysMs?: readonly number[]
@@ -71,44 +67,6 @@ const stableJson = (value: unknown): string => {
 
 const eventDigest = (event: OneBotObject): string => createHash('sha256').update(stableJson(event)).digest('hex')
 
-const privateIpv4 = (hostname: string): boolean => {
-  const parts = hostname.split('.').map(Number)
-  if (parts.length !== 4 || parts.some((part) => !Number.isInteger(part) || part < 0 || part > 255)) return false
-  return (
-    parts[0] === 10 ||
-    parts[0] === 127 ||
-    (parts[0] === 169 && parts[1] === 254) ||
-    (parts[0] === 172 && (parts[1] ?? 0) >= 16 && (parts[1] ?? 0) <= 31) ||
-    (parts[0] === 192 && parts[1] === 168) ||
-    parts[0] === 0
-  )
-}
-
-const defaultValidateRemoteHost = async (hostname: string): Promise<void> => {
-  if (hostname === 'localhost' || hostname.endsWith('.localhost')) throw new Error('媒体地址不能指向本机。')
-  const literal = isIP(hostname)
-  const addresses = literal
-    ? [{ address: hostname, family: literal }]
-    : await lookup(hostname, { all: true, verbatim: true })
-  for (const { address, family } of addresses) {
-    if (family === 4 && privateIpv4(address)) throw new Error('媒体地址不能指向私网。')
-    if (family === 6) {
-      const normalized = address.toLowerCase()
-      if (
-        normalized === '::1' ||
-        normalized.startsWith('fc') ||
-        normalized.startsWith('fd') ||
-        normalized.startsWith('fe8') ||
-        normalized.startsWith('fe9') ||
-        normalized.startsWith('fea') ||
-        normalized.startsWith('feb')
-      ) {
-        throw new Error('媒体地址不能指向私网。')
-      }
-    }
-  }
-}
-
 const targetFromPlatformChannel = (
   platformChannelId: string,
 ): { readonly kind: 'group' | 'private'; readonly id: string } | undefined => {
@@ -134,8 +92,6 @@ export class OneBot11Runtime implements AdapterConnectionRuntime {
   readonly interactions: AdapterConnectionInteractions
   readonly #context: AdapterConnectionHostContext
   readonly #config: OneBot11RuntimeConfig
-  readonly #fetch: typeof fetch
-  readonly #validateRemoteHost: (hostname: string) => Promise<void>
   readonly #transportOptions: NonNullable<OneBot11RuntimeOptions['transport']>
   readonly #feedbackEchoes = new Map<string, number>()
   readonly #recallEchoes = new Map<string, number>()
@@ -145,8 +101,6 @@ export class OneBot11Runtime implements AdapterConnectionRuntime {
   constructor(options: OneBot11RuntimeOptions) {
     this.#context = options.context
     this.#config = options.config
-    this.#fetch = options.fetch ?? fetch
-    this.#validateRemoteHost = options.validateRemoteHost ?? defaultValidateRemoteHost
     this.#transportOptions = options.transport ?? {}
     this.interactions = {
       startProcessingFeedback: (input) => this.#setProcessingFeedback(input.channelId, input.platformMessageId, true),
@@ -743,39 +697,11 @@ export class OneBot11Runtime implements AdapterConnectionRuntime {
   }
 
   async #downloadAsset(rawUrl: string) {
-    const url = new URL(rawUrl)
-    if (url.protocol !== 'https:') throw new Error('媒体地址必须使用 HTTPS。')
-    await this.#validateRemoteHost(url.hostname)
-    const response = await this.#fetch(url, { redirect: 'error', signal: AbortSignal.timeout(15_000) })
-    if (!response.ok) throw new Error(`媒体下载失败（HTTP ${response.status}）。`)
-    const declared = Number(response.headers.get('content-length'))
-    if (Number.isFinite(declared) && declared > MAX_ASSET_BYTES) throw new Error('媒体超过大小上限。')
-    if (!response.body) throw new Error('媒体响应没有可读取内容。')
-    const reader = response.body.getReader()
-    const chunks: Uint8Array[] = []
-    let byteLength = 0
-    try {
-      while (true) {
-        const item = await reader.read()
-        if (item.done) break
-        byteLength += item.value.byteLength
-        if (byteLength > MAX_ASSET_BYTES) {
-          await reader.cancel('媒体超过大小上限。')
-          throw new Error('媒体超过大小上限。')
-        }
-        chunks.push(item.value)
-      }
-    } finally {
-      reader.releaseLock()
-    }
-    const bytes = new Uint8Array(byteLength)
-    let offset = 0
-    for (const chunk of chunks) {
-      bytes.set(chunk, offset)
-      offset += chunk.byteLength
-    }
-    const declaredMediaType = response.headers.get('content-type')?.split(';', 1)[0]?.trim()
-    return this.#context.assets.importBytes({ bytes, ...(declaredMediaType ? { declaredMediaType } : {}) })
+    const remote = await this.#context.assets.fetchRemoteBytes({ url: rawUrl, maxBytes: MAX_ASSET_BYTES })
+    return this.#context.assets.importBytes({
+      bytes: remote.bytes,
+      ...(remote.declaredMediaType ? { declaredMediaType: remote.declaredMediaType } : {}),
+    })
   }
 
   async #resolveTarget(channelId: ChannelId) {

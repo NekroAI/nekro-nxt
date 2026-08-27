@@ -92,6 +92,13 @@
       "when": 1787747514696,
       "tag": "0012_onebot_activity_bindings",
       "breakpoints": true
+    },
+    {
+      "idx": 13,
+      "version": "6",
+      "when": 1787790588860,
+      "tag": "0013_wecom_processing_feedback",
+      "breakpoints": true
     }
   ]
 }

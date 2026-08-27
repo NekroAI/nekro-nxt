@@ -399,17 +399,17 @@ test('adding a connection selects a platform before showing its fields', async (
   await expect(dialog.getByText('选择要连接的平台账号。')).toBeVisible()
   await dialog.getByLabel('平台').click()
   await expect(page.getByRole('option', { name: 'QQ 官方机器人' })).toBeVisible()
-  await page.getByRole('option', { name: 'QQ 官方机器人' }).click()
+  await expect(page.getByRole('option', { name: '企业微信智能机器人' })).toBeVisible()
+  await page.getByRole('option', { name: '企业微信智能机器人' }).click()
   await expect(dialog.getByLabel('App ID')).toHaveCount(0)
 
   await dialog.getByRole('button', { name: '填写连接信息' }).click()
-  await expect(dialog.getByRole('heading', { name: '配置 QQ 官方机器人' })).toBeVisible()
+  await expect(dialog.getByRole('heading', { name: '配置 企业微信智能机器人' })).toBeVisible()
   await expect(dialog.getByLabel('连接别名')).toBeVisible()
   await dialog.getByLabel('连接别名').fill('旅程测试连接')
-  await expect(dialog.getByLabel('App ID')).toBeVisible()
-  await expect(dialog.getByLabel('Client Secret')).toHaveAttribute('type', 'password')
-  await expect(dialog.getByLabel('Client Secret')).toHaveAttribute('autocomplete', 'off')
-  await expect(dialog.getByText('使用 Markdown')).toBeVisible()
+  await expect(dialog.getByLabel('BotID')).toBeVisible()
+  await expect(dialog.getByLabel('Secret')).toHaveAttribute('type', 'password')
+  await expect(dialog.getByLabel('Secret')).toHaveAttribute('autocomplete', 'off')
   await expect(dialog.getByLabel('平台')).toHaveCount(0)
   expect(failures, failures.join('\n')).toEqual([])
 })
@@ -895,13 +895,23 @@ test('external channel exposes processing feedback and per-event trigger control
   await feedback.click()
   await expect(page.getByText('频道事件设置已更新。')).toBeVisible()
   await inspector.getByRole('button', { name: '设置特殊事件' }).click()
+  for (const label of ['进入会话', '卡片操作', '正向反馈', '负向反馈', '撤销反馈']) {
+    await expect(inspector.getByRole('switch', { name: label })).toBeVisible()
+  }
   const poke = inspector.getByRole('switch', { name: '戳一戳' })
   await expect(poke).not.toBeChecked()
   await poke.click()
   await expect(poke).toBeChecked()
+  const negativeFeedback = inspector.getByRole('switch', { name: '负向反馈' })
+  await negativeFeedback.click()
+  await expect(negativeFeedback).toBeChecked()
   expect(bindingRequests).toEqual([
     expect.objectContaining({ processingFeedback: 'off', eventTriggers: [] }),
     expect.objectContaining({ processingFeedback: 'off', eventTriggers: ['member-poked'] }),
+    expect.objectContaining({
+      processingFeedback: 'off',
+      eventTriggers: ['member-poked', 'message-feedback-negative'],
+    }),
   ])
   expect(failures, failures.join('\n')).toEqual([])
 })

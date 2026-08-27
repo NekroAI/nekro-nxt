@@ -206,6 +206,8 @@ export class SqliteCoreRepository implements CurrentRepository {
     this.#channels.listChannelEvents(...args)
   readonly resolvePlatformMessage = (...args: Parameters<CoreRepository['resolvePlatformMessage']>) =>
     this.#channels.resolvePlatformMessage(...args)
+  readonly resolveLogicalMessage = (...args: Parameters<CoreRepository['resolveLogicalMessage']>) =>
+    this.#channels.resolveLogicalMessage(...args)
   readonly resolveLogicalMessagePlatformId = (...args: Parameters<CoreRepository['resolveLogicalMessagePlatformId']>) =>
     this.#channels.resolveLogicalMessagePlatformId(...args)
 

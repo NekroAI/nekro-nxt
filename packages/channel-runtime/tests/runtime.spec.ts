@@ -276,6 +276,19 @@ class MemoryCoreRepository implements CoreRepository {
     )
     return event ? { logicalMessageId: event.logicalMessageId, authoredByAgent: false } : undefined
   }
+  resolveLogicalMessage(
+    connectionId: ConnectionId,
+    channelId: ChannelId,
+    logicalMessageId: ChannelEventRecord['logicalMessageId'],
+  ) {
+    const event = [...this.events.values()].find(
+      (candidate) =>
+        this.channels.get(candidate.channelId)?.connectionId === connectionId &&
+        candidate.channelId === channelId &&
+        candidate.logicalMessageId === logicalMessageId,
+    )
+    return event ? { logicalMessageId: event.logicalMessageId, authoredByAgent: false } : undefined
+  }
   resolveLogicalMessagePlatformId(
     connectionId: ConnectionId,
     channelId: ChannelId,
@@ -660,6 +673,45 @@ describe('ChannelRuntime M1 lane', () => {
     expect(context.adapterStateRows.size).toBe(0)
   })
 
+  it('deduplicates concurrent feedback cleanup and preserves explicit cancellation reasons', async () => {
+    const finishes: Array<{ platformMessageId: string; reason: string }> = []
+    let releaseIdle!: () => void
+    const idle = new Promise<void>((resolve) => {
+      releaseIdle = resolve
+    })
+    let releaseFinish!: () => void
+    const finished = new Promise<void>((resolve) => {
+      releaseFinish = resolve
+    })
+    const context = await setup(true, undefined, undefined, {
+      startProcessingFeedback: () => Promise.resolve({ status: 'succeeded' }),
+      finishProcessingFeedback: async ({ platformMessageId, reason }) => {
+        finishes.push({ platformMessageId, reason })
+        await finished
+        return { status: 'succeeded' }
+      },
+    })
+    context.sessionDriver.whenIdle = () => idle
+    await context.runtime.acceptInbound({
+      ...inbound(context.connection.id, context.channel.id, 'feedback-cancelled'),
+      platformMessageId: 'platform-cancelled',
+    })
+
+    const clearing = context.runtime.clearBinding(context.channel.id)
+    for (let attempt = 0; attempt < 20 && finishes.length === 0; attempt += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 0))
+    }
+    expect(finishes).toEqual([{ platformMessageId: 'platform-cancelled', reason: 'cancelled' }])
+
+    releaseIdle()
+    await Promise.resolve()
+    await Promise.resolve()
+    expect(finishes).toHaveLength(1)
+    releaseFinish()
+    await clearing
+    expect(context.adapterStateRows.size).toBe(0)
+  })
+
   it('durably deduplicates safe retract and nudge interactions', async () => {
     const retractCalls: string[] = []
     const nudgeCalls: string[] = []
@@ -1018,6 +1070,19 @@ describe('ChannelRuntime M1 lane', () => {
     })
     expect(unsentRetraction.status).toBe('failed')
     expect(unsentRetraction.message).toContain('没有可撤回')
+
+    context.adapter.queueReceipt({ status: 'sent' })
+    const sentWithoutPlatformId = await context.runtime.sendMessage({
+      episodeId: episode.id,
+      parts: [{ type: 'text', text: '平台仅确认发送成功' }],
+    })
+    const noIdRetraction = await context.runtime.retractChannelMessage({
+      episodeId: episode.id,
+      logicalMessageId: sentWithoutPlatformId.logicalMessageId,
+      clientRequestId: 'retract-without-platform-id',
+    })
+    expect(noIdRetraction.status).toBe('failed')
+    expect(noIdRetraction.message).toContain('没有可撤回')
   })
 
   it('validates interaction ownership, request ids, adapter support and nudge failures', async () => {

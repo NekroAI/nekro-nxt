@@ -67,7 +67,7 @@ const receiptFromRow = (
     case 'sent':
       return AdapterDeliveryReceiptSchema.parse({
         status: 'sent',
-        platformMessageId: row.platformMessageId,
+        ...(row.platformMessageId === null ? {} : { platformMessageId: row.platformMessageId }),
         ...(row.capabilityOutcomes === null ? {} : { capabilityOutcomes: row.capabilityOutcomes }),
       })
     case 'failed':
@@ -93,6 +93,7 @@ const toDelivery = (input: typeof physicalDeliveries.$inferSelect): PhysicalDeli
     sequence: row.sequence,
     parts: row.parts,
     ...(row.adapterContext === null ? {} : { adapterContext: row.adapterContext }),
+    ...(row.processingFeedbackLeaseId === null ? {} : { processingFeedbackLeaseId: row.processingFeedbackLeaseId }),
     state: row.state,
     ...(receipt === undefined ? {} : { receipt }),
     ...(row.completedAt === null ? {} : { completedAt: row.completedAt }),
@@ -178,6 +179,9 @@ export function createOutboxRepository(database: DrizzleCoreDatabase): OutboxSli
                   sequence: delivery.sequence,
                   parts: delivery.parts,
                   ...(delivery.adapterContext === undefined ? {} : { adapterContext: delivery.adapterContext }),
+                  ...(delivery.processingFeedbackLeaseId === undefined
+                    ? {}
+                    : { processingFeedbackLeaseId: delivery.processingFeedbackLeaseId }),
                   state: delivery.state,
                 })),
               )
@@ -213,7 +217,7 @@ export function createOutboxRepository(database: DrizzleCoreDatabase): OutboxSli
         parsed.status === 'sent'
           ? {
               state: 'sent' as const,
-              platformMessageId: parsed.platformMessageId,
+              platformMessageId: parsed.platformMessageId ?? null,
               capabilityOutcomes: parsed.capabilityOutcomes ?? null,
               completedAt,
             }

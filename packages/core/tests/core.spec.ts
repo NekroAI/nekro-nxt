@@ -319,6 +319,20 @@ class MemoryRepository implements CoreRepository {
     return event ? { logicalMessageId: event.logicalMessageId, authoredByAgent: false } : undefined
   }
 
+  resolveLogicalMessage(
+    connectionId: ConnectionId,
+    channelId: ChannelId,
+    logicalMessageId: ChannelEventRecord['logicalMessageId'],
+  ) {
+    const event = [...this.events.values()].find(
+      (candidate) =>
+        this.channels.get(candidate.channelId)?.connectionId === connectionId &&
+        candidate.channelId === channelId &&
+        candidate.logicalMessageId === logicalMessageId,
+    )
+    return event ? { logicalMessageId: event.logicalMessageId, authoredByAgent: false } : undefined
+  }
+
   resolveLogicalMessagePlatformId(
     connectionId: ConnectionId,
     channelId: ChannelId,

@@ -16,6 +16,7 @@ import {
   ChannelIdSchema,
   ChannelMemberIdSchema,
   ConnectionIdSchema,
+  LogicalMessageIdSchema,
   MessagePartSchema,
 } from '@nekro-nxt/contracts'
 import { z } from 'zod'
@@ -54,6 +55,7 @@ export const AdapterInboundEventSchema = z
     kind: z.enum(['message-created', 'message-edited', 'message-deleted', 'member-updated', 'reaction', 'control']),
     activityType: ChannelActivityTypeSchema.optional(),
     targetPlatformMessageId: z.string().min(1).optional(),
+    targetLogicalMessageId: LogicalMessageIdSchema.optional(),
     senderMemberId: ChannelMemberIdSchema.optional(),
     parts: z.array(MessagePartSchema),
     platformSequence: z.number().int().safe().optional(),
@@ -125,6 +127,10 @@ export interface AdapterMessageDirectory {
     platformMessageId: string,
   ): Promise<{ readonly logicalMessageId: LogicalMessageId; readonly authoredByAgent: boolean } | undefined>
   resolvePlatformMessageId(channelId: ChannelId, logicalMessageId: LogicalMessageId): Promise<string | undefined>
+  resolveLogicalMessage(
+    channelId: ChannelId,
+    logicalMessageId: LogicalMessageId,
+  ): Promise<{ readonly authoredByAgent: boolean } | undefined>
 }
 
 export interface AdapterAssetHost {
@@ -136,6 +142,11 @@ export interface AdapterAssetHost {
     readonly assetId: AssetId
     readonly channelId: ChannelId
   }): Promise<{ readonly bytes: Uint8Array; readonly mediaType: string; readonly byteSize: number }>
+  fetchRemoteBytes(input: { readonly url: string; readonly maxBytes: number }): Promise<{
+    readonly bytes: Uint8Array
+    readonly declaredMediaType?: string
+    readonly filename?: string
+  }>
 }
 
 export interface AdapterCredentialHost {
@@ -393,6 +404,10 @@ export interface PhysicalDeliveryRequest {
   readonly parts: readonly MessagePart[]
   readonly replyTo?: string
   readonly adapterContext?: JsonValue
+  readonly processingFeedback?: {
+    readonly leaseId: string
+    readonly platformMessageId: string
+  }
 }
 
 export type AdapterFailureKind = 'transient' | 'permanent' | 'rate-limited' | 'authentication' | 'invalid'
@@ -401,7 +416,7 @@ export const AdapterDeliveryReceiptSchema = z.discriminatedUnion('status', [
   z
     .object({
       status: z.literal('sent'),
-      platformMessageId: z.string().min(1),
+      platformMessageId: z.string().min(1).optional(),
       capabilityOutcomes: z.record(z.string(), z.json()).optional(),
     })
     .strict(),
@@ -431,6 +446,15 @@ export interface AdapterConnectionRuntime {
     readonly channelId: ChannelId
     readonly parts: readonly MessagePart[]
     readonly replyTo?: string
+    readonly origin?: {
+      readonly platformMessageId?: string
+      readonly activityType?: ChannelActivityType
+      readonly receivedAt: number
+    }
+    readonly processingFeedback?: {
+      readonly leaseId: string
+      readonly platformMessageId: string
+    }
   }): Promise<readonly AdapterPhysicalPlan[]>
   start(): Promise<void>
   stop(): Promise<void>
@@ -444,20 +468,23 @@ export type AdapterInteractionOutcome =
   | { readonly status: 'unknown'; readonly message: string }
 
 export interface AdapterConnectionInteractions {
-  startProcessingFeedback(input: {
+  startProcessingFeedback?(input: {
+    readonly leaseId: string
     readonly channelId: ChannelId
     readonly platformMessageId: string
   }): Promise<AdapterInteractionOutcome>
-  finishProcessingFeedback(input: {
+  finishProcessingFeedback?(input: {
+    readonly leaseId: string
     readonly channelId: ChannelId
     readonly platformMessageId: string
+    readonly reason: 'idle' | 'error' | 'cancelled' | 'timeout' | 'shutdown' | 'recovery'
   }): Promise<AdapterInteractionOutcome>
-  retractOwnMessage(input: {
+  retractOwnMessage?(input: {
     readonly channelId: ChannelId
     readonly platformMessageId: string
     readonly clientRequestId: string
   }): Promise<AdapterInteractionOutcome>
-  nudgeMember(input: {
+  nudgeMember?(input: {
     readonly channelId: ChannelId
     readonly memberId: ChannelMemberId
     readonly clientRequestId: string
@@ -467,6 +494,7 @@ export interface AdapterConnectionInteractions {
 export interface AdapterPhysicalPlan {
   readonly parts: readonly MessagePart[]
   readonly adapterContext?: JsonValue
+  readonly consumesProcessingFeedback?: boolean
 }
 
 export interface AdapterContribution<Config = unknown> {

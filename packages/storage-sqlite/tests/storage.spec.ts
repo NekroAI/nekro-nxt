@@ -932,6 +932,38 @@ describe('relations, admissions and outbox', () => {
         kind: 'message-created',
         parts: [{ type: 'text', text: '原始事实' }],
       })
+      const feedback = core.appendInbound({
+        connectionId: connection.id,
+        channelId: channel.id,
+        adapterKey: 'web',
+        kind: 'control',
+        activityType: 'message-feedback-negative',
+        targetLogicalMessageId: original.event.logicalMessageId,
+        parts: [{ type: 'rich', adapterKey: 'web', kind: 'feedback', summary: '成员提交了负向反馈。' }],
+        platformTimestamp: 22,
+        receivedAt: 22,
+        dedupeKey: 'feedback-event',
+      })
+      expect(feedback.event.targetLogicalMessageId).toBe(original.event.logicalMessageId)
+      const otherChannel = core.createChannel({
+        connectionId: connection.id,
+        platformChannelId: 'activity-other',
+        kind: 'group',
+      })
+      expect(() =>
+        core.appendInbound({
+          connectionId: connection.id,
+          channelId: otherChannel.id,
+          adapterKey: 'web',
+          kind: 'control',
+          activityType: 'message-feedback-negative',
+          targetLogicalMessageId: original.event.logicalMessageId,
+          parts: [{ type: 'rich', adapterKey: 'web', kind: 'feedback', summary: '无效跨频道反馈。' }],
+          platformTimestamp: 23,
+          receivedAt: 23,
+          dedupeKey: 'invalid-feedback-event',
+        }),
+      ).toThrow(/does not belong/u)
     } finally {
       database.close()
     }
@@ -1012,7 +1044,16 @@ describe('relations, admissions and outbox', () => {
           state: 'planned',
           createdAt: 5,
         },
-        [{ id: deliveryId, intentId, sequence: 0, parts: [{ type: 'text', text: 'reply' }], state: 'planned' }],
+        [
+          {
+            id: deliveryId,
+            intentId,
+            sequence: 0,
+            parts: [{ type: 'text', text: 'reply' }],
+            processingFeedbackLeaseId: 'feedback:delivery-fixture',
+            state: 'planned',
+          },
+        ],
       )
       repository.markIntentSending(intentId)
       repository.markDeliverySending(deliveryId)
@@ -1030,7 +1071,40 @@ describe('relations, admissions and outbox', () => {
       ).toMatchObject({
         state: 'sent',
         platformMessageId: 'platform-out-1',
+        processingFeedbackLeaseId: 'feedback:delivery-fixture',
       })
+
+      const noIdIntent = OutboundIntentIdSchema.parse('out_INTENTNOID')
+      const noIdDelivery = PhysicalDeliveryIdSchema.parse('phy_DELIVERYNOID')
+      repository.createOutboundPlan(
+        {
+          id: noIdIntent,
+          logicalMessageId: LogicalMessageIdSchema.parse('msg_OUTBOUNDNOID'),
+          agentRevisionId: agent.revision.id,
+          episodeId,
+          parts: [{ type: 'text', text: 'accepted without id' }],
+          state: 'planned',
+          createdAt: 7,
+        },
+        [
+          {
+            id: noIdDelivery,
+            intentId: noIdIntent,
+            sequence: 0,
+            parts: [{ type: 'text', text: 'accepted without id' }],
+            state: 'planned',
+          },
+        ],
+      )
+      repository.markIntentSending(noIdIntent)
+      repository.markDeliverySending(noIdDelivery)
+      repository.recordDeliveryReceipt(noIdDelivery, { status: 'sent' }, 8)
+      expect(repository.getOutbound(noIdIntent).receipts).toEqual([
+        { physicalDeliveryId: noIdDelivery, receipt: { status: 'sent' }, completedAt: 8 },
+      ])
+      expect(
+        database.db.select().from(physicalDeliveries).where(eq(physicalDeliveries.id, noIdDelivery)).get(),
+      ).toMatchObject({ state: 'sent', platformMessageId: null })
     } finally {
       database.close()
     }
