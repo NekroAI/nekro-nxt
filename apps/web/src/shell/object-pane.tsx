@@ -11,7 +11,6 @@ import {
   type CollisionDetection,
   type DragEndEvent,
   type KeyboardCoordinateGetter,
-  type Modifier,
 } from '@dnd-kit/core'
 import { SortableContext, useSortable, verticalListSortingStrategy } from '@dnd-kit/sortable'
 import { CSS, type Transform } from '@dnd-kit/utilities'
@@ -29,7 +28,16 @@ import {
   Settings,
   UsersRound,
 } from 'lucide-react'
-import { useMemo, useRef, useState, type CSSProperties, type MouseEvent } from 'react'
+import {
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type CSSProperties,
+  type MouseEvent,
+  type PointerEvent as ReactPointerEvent,
+} from 'react'
+import { createPortal } from 'react-dom'
 import { useLocation, useParams } from 'react-router-dom'
 import { BindingChangeDialog, type BindingChangeIntent } from '../pages/binding-change.js'
 import { notify } from '../components/notifications.js'
@@ -51,8 +59,6 @@ import {
   pickWorkTreeCollision,
   resolveWorkTreeDragEnd,
 } from './work-tree-order.js'
-
-const restrictToVerticalAxis: Modifier = ({ transform }) => ({ ...transform, x: 0 })
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === 'object' && value !== null && !Array.isArray(value)
@@ -92,13 +98,9 @@ const workTreeKeyboardCoordinates: KeyboardCoordinateGetter = (event, { active, 
   }
 }
 
-const sortableStyle = (
-  transform: Transform | null,
-  transition: string | undefined,
-  dragging: boolean,
-): CSSProperties => ({
-  transform: CSS.Translate.toString(dragging ? null : transform),
-  transition: dragging ? undefined : transition,
+const sortableStyle = (transform: Transform | null, transition: string | undefined): CSSProperties => ({
+  transform: CSS.Transform.toString(transform),
+  transition,
 })
 
 const TreeActivityIndicator = ({ state }: { readonly state: AgentSummary['state'] }) => (
@@ -168,15 +170,16 @@ function SortableChannelLink({
 }) {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
     id: channelSortId(item.id),
-    animateLayoutChanges: () => false,
     data: { type: 'channel', channelId: item.id },
   })
   const { onKeyDown: onSortableKeyDown, onPointerDown: onSortablePointerDown } = listeners ?? {}
   return (
     <div
       ref={setNodeRef}
-      style={sortableStyle(transform, transition, isDragging)}
+      style={sortableStyle(transform, transition)}
       className={[styles.channelRow, isDragging ? styles.sortableOrigin : ''].filter(Boolean).join(' ')}
+      data-work-tree-sortable={`channel:${item.id}`}
+      data-dragging={isDragging ? '' : undefined}
       onPointerDown={(event) => {
         onSortablePointerDown?.(event)
       }}
@@ -226,18 +229,19 @@ function SortableAgentSection({
 }) {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
     id: agentSortId(agent.id),
-    animateLayoutChanges: () => false,
     data: { type: 'agent', agentId: agent.id },
   })
   const { onKeyDown: onSortableKeyDown, onPointerDown: onSortablePointerDown } = listeners ?? {}
-  const channelIds = channels.map((item) => channelSortId(item.id))
+  const channelIds = useMemo(() => channels.map((item) => channelSortId(item.id)), [channels])
   return (
     <section
       ref={setNodeRef}
-      style={sortableStyle(transform, transition, isDragging)}
+      style={sortableStyle(transform, transition)}
       className={[styles.channelGroup, dropActive ? styles.dropTarget : '', isDragging ? styles.sortableOrigin : '']
         .filter(Boolean)
         .join(' ')}
+      data-work-tree-sortable={agentSortId(agent.id)}
+      data-dragging={isDragging ? '' : undefined}
     >
       <div
         className={styles.agentHeaderRow}
@@ -306,7 +310,7 @@ function UnboundSection({
   readonly onCreate: () => void
 }) {
   const { setNodeRef } = useDroppable({ id: UNBOUND_DROP_ID })
-  const channelIds = channels.map((item) => channelSortId(item.id))
+  const channelIds = useMemo(() => channels.map((item) => channelSortId(item.id)), [channels])
   return (
     <section
       ref={setNodeRef}
@@ -343,6 +347,65 @@ function UnboundSection({
   )
 }
 
+function AgentDragPreview({
+  group,
+  approvalPending,
+}: {
+  readonly group: { readonly agent: AgentSummary; readonly channels: readonly ChannelSummary[] }
+  readonly approvalPending: boolean
+}) {
+  return (
+    <section
+      className={[styles.channelGroup, styles.dragOverlay, styles.agentDragOverlay].join(' ')}
+      data-work-tree-drag-overlay={agentSortId(group.agent.id)}
+    >
+      <div className={styles.agentHeaderRow}>
+        <div className={styles.channelGroupHeader}>
+          <AgentHeaderBody
+            agent={group.agent}
+            hint={group.channels.length > 0 ? `${group.channels.length} 个频道` : '还没有绑定频道'}
+            approvalPending={approvalPending}
+          />
+        </div>
+      </div>
+      {group.channels.map((item) => (
+        <div className={styles.channelRow} key={item.id}>
+          <div className={styles.channelLink}>
+            <ChannelRowBody item={item} />
+          </div>
+        </div>
+      ))}
+    </section>
+  )
+}
+
+function WorkTreeDragOverlay({
+  activeAgent,
+  activeChannel,
+  approvalPending,
+}: {
+  readonly activeAgent: { readonly agent: AgentSummary; readonly channels: readonly ChannelSummary[] } | undefined
+  readonly activeChannel: ChannelSummary | undefined
+  readonly approvalPending: boolean
+}) {
+  if (typeof document === 'undefined') return null
+  return createPortal(
+    <DragOverlay style={{ zIndex: 'var(--nxt-layer-drag)' }}>
+      {activeAgent ? (
+        <AgentDragPreview group={activeAgent} approvalPending={approvalPending} />
+      ) : activeChannel ? (
+        <div
+          className={[styles.channelLink, styles.dragOverlay].join(' ')}
+          data-work-tree-drag-overlay={`channel:${activeChannel.id}`}
+        >
+          <ChannelRowBody item={activeChannel} />
+        </div>
+      ) : null}
+    </DragOverlay>,
+    document.body,
+  )
+}
+
 function WorkTree() {
   const { agentId, channelId } = useParams()
   const location = useLocation()
@@ -358,6 +421,8 @@ function WorkTree() {
   const [webChannelName, setWebChannelName] = useState('内置频道')
   const treeBodyRef = useRef<HTMLDivElement>(null)
   const suppressClickRef = useRef(false)
+  const suppressClickTimerRef = useRef<number>()
+  const pointerAttemptCleanupRef = useRef<() => void>()
   const keyboardDragRef = useRef(false)
   const channelOwnerRef = useRef<Readonly<Record<string, string>>>({})
   const focusChannelAfterDialogRef = useRef('')
@@ -365,7 +430,7 @@ function WorkTree() {
     useSensor(PointerSensor, { activationConstraint: { distance: 8 } }),
     useSensor(KeyboardSensor, { coordinateGetter: workTreeKeyboardCoordinates }),
   )
-  const tree = buildWorkTree(agents, channels, workTreeOrder)
+  const tree = useMemo(() => buildWorkTree(agents, channels, workTreeOrder), [agents, channels, workTreeOrder])
   const pendingApprovalAgentIds = new Set(
     dynamic.filter((item) => item.status === 'awaiting-approval' && item.approvalRequestId).map((item) => item.agentId),
   )
@@ -470,6 +535,58 @@ function WorkTree() {
         notify(error instanceof Error ? error.message : String(error), 'error', 'work-tree-order')
       })
   }
+  const clearScheduledClickSuppression = (): void => {
+    if (suppressClickTimerRef.current !== undefined) window.clearTimeout(suppressClickTimerRef.current)
+    suppressClickTimerRef.current = undefined
+  }
+  const scheduleClickSuppressionRelease = (): void => {
+    clearScheduledClickSuppression()
+    suppressClickTimerRef.current = window.setTimeout(() => {
+      suppressClickRef.current = false
+      suppressClickTimerRef.current = undefined
+    }, 80)
+  }
+  const beginPointerDragAttempt = (event: ReactPointerEvent<HTMLDivElement>): void => {
+    if (event.button !== 0 || !(event.target instanceof Element) || !event.target.closest('[data-work-tree-sortable]'))
+      return
+    pointerAttemptCleanupRef.current?.()
+    const pointerId = event.pointerId
+    const startX = event.clientX
+    const startY = event.clientY
+    let moved = false
+    const cleanup = (): void => {
+      window.removeEventListener('pointermove', onMove)
+      window.removeEventListener('pointerup', onFinish)
+      window.removeEventListener('pointercancel', onFinish)
+      window.removeEventListener('blur', onFinish)
+      if (pointerAttemptCleanupRef.current === cleanup) pointerAttemptCleanupRef.current = undefined
+    }
+    const onMove = (nextEvent: PointerEvent): void => {
+      if (nextEvent.pointerId !== pointerId) return
+      const distance = Math.hypot(nextEvent.clientX - startX, nextEvent.clientY - startY)
+      if (distance < 3) return
+      moved = true
+      clearScheduledClickSuppression()
+      suppressClickRef.current = true
+    }
+    const onFinish = (nextEvent: PointerEvent | Event): void => {
+      if (nextEvent instanceof PointerEvent && nextEvent.pointerId !== pointerId) return
+      cleanup()
+      if (moved) scheduleClickSuppressionRelease()
+    }
+    pointerAttemptCleanupRef.current = cleanup
+    window.addEventListener('pointermove', onMove)
+    window.addEventListener('pointerup', onFinish)
+    window.addEventListener('pointercancel', onFinish)
+    window.addEventListener('blur', onFinish)
+  }
+  useEffect(
+    () => () => {
+      pointerAttemptCleanupRef.current?.()
+      if (suppressClickTimerRef.current !== undefined) window.clearTimeout(suppressClickTimerRef.current)
+    },
+    [],
+  )
   const openBindingIntent = (nextIntent: BindingChangeIntent): void => {
     focusChannelAfterDialogRef.current = nextIntent.channelId
     setIntent(nextIntent)
@@ -486,6 +603,7 @@ function WorkTree() {
     if (!suppressClickRef.current) return
     event.preventDefault()
     suppressClickRef.current = false
+    clearScheduledClickSuppression()
   }
   const onDragEnd = (event: DragEndEvent): void => {
     const nextActiveId = String(event.active.id)
@@ -500,16 +618,12 @@ function WorkTree() {
     })
     if (resolution.kind === 'bind' || resolution.kind === 'replace') {
       openBindingIntent({ kind: resolution.kind, channelId: resolution.channelId, agentId: resolution.agentId })
-      window.setTimeout(() => {
-        suppressClickRef.current = false
-      }, 0)
+      scheduleClickSuppressionRelease()
       return
     }
     if (resolution.kind === 'unbind') {
       openBindingIntent({ kind: 'clear', channelId: resolution.channelId })
-      window.setTimeout(() => {
-        suppressClickRef.current = false
-      }, 0)
+      scheduleClickSuppressionRelease()
       return
     }
     const nextOrder = applyWorkTreeDragResolution(
@@ -521,12 +635,10 @@ function WorkTree() {
       resolution,
     )
     if (nextOrder) persistOrder(nextOrder)
-    window.setTimeout(() => {
-      suppressClickRef.current = false
-    }, 0)
+    scheduleClickSuppressionRelease()
   }
 
-  const agentIds = tree.agents.map((group) => agentSortId(group.agent.id))
+  const agentIds = useMemo(() => tree.agents.map((group) => agentSortId(group.agent.id)), [tree.agents])
 
   return (
     <>
@@ -538,7 +650,12 @@ function WorkTree() {
           <Plus size={14} aria-hidden="true" />
         </NxtLink>
       </div>
-      <div className={shell.treeBody} ref={treeBodyRef}>
+      <div
+        className={shell.treeBody}
+        ref={treeBodyRef}
+        data-work-tree-dragging={activeId ? '' : undefined}
+        onPointerDownCapture={beginPointerDragAttempt}
+      >
         {channels.length === 0 && agents.length === 0 ? (
           <div className={styles.railEmpty}>{host.status === 'initializing' ? '正在读取…' : '还没有智能体'}</div>
         ) : (
@@ -546,7 +663,6 @@ function WorkTree() {
             <DndContext
               sensors={sensors}
               collisionDetection={collisionDetection}
-              modifiers={[restrictToVerticalAxis]}
               accessibility={{
                 screenReaderInstructions: {
                   draggable:
@@ -558,6 +674,7 @@ function WorkTree() {
                 layoutShiftCompensation: false,
               }}
               onDragStart={(event) => {
+                clearScheduledClickSuppression()
                 suppressClickRef.current = true
                 keyboardDragRef.current = event.activatorEvent instanceof KeyboardEvent
                 setActiveId(String(event.active.id))
@@ -573,9 +690,7 @@ function WorkTree() {
                 setOverId('')
                 setActiveId('')
                 keyboardDragRef.current = false
-                window.setTimeout(() => {
-                  suppressClickRef.current = false
-                }, 0)
+                scheduleClickSuppressionRelease()
               }}
               onDragEnd={onDragEnd}
             >
@@ -606,22 +721,11 @@ function WorkTree() {
                   }}
                 />
               </div>
-              <DragOverlay dropAnimation={null}>
-                {activeAgent ? (
-                  <div className={[styles.channelGroupHeader, styles.dragOverlay].join(' ')}>
-                    <AgentHeaderBody
-                      agent={activeAgent.agent}
-                      hint={
-                        activeAgent.channels.length > 0 ? `${activeAgent.channels.length} 个频道` : '还没有绑定频道'
-                      }
-                    />
-                  </div>
-                ) : activeChannel ? (
-                  <div className={[styles.channelLink, styles.dragOverlay].join(' ')}>
-                    <ChannelRowBody item={activeChannel} />
-                  </div>
-                ) : null}
-              </DragOverlay>
+              <WorkTreeDragOverlay
+                activeAgent={activeAgent}
+                activeChannel={activeChannel}
+                approvalPending={Boolean(activeAgent && pendingApprovalAgentIds.has(activeAgent.agent.id))}
+              />
             </DndContext>
           </NavMarkGroup>
         )}
@@ -763,7 +867,15 @@ function ExtensionTree() {
                       <strong>{extension.name}</strong>
                       <small>版本 {extension.revision}</small>
                     </span>
-                    <em>{extension.activations.length > 0 ? `${extension.activations.length} 个智能体` : '未启用'}</em>
+                    <em>
+                      {extension.scope === 'host-adapter'
+                        ? extension.installation
+                          ? '已安装'
+                          : '未安装'
+                        : extension.activations.length > 0
+                          ? `${extension.activations.length} 个智能体`
+                          : '未启用'}
+                    </em>
                   </NxtNavLink>
                 )
               })}

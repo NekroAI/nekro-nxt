@@ -29,6 +29,18 @@ const dragTo = async (page: Page, source: Locator, target: Locator): Promise<voi
   await page.mouse.move(8, 8)
 }
 
+const beginDragTo = async (page: Page, source: Locator, target: Locator): Promise<{ x: number; y: number }> => {
+  const from = await source.boundingBox()
+  const to = await target.boundingBox()
+  if (!from || !to) throw new Error('拖拽目标没有几何尺寸。')
+  await page.mouse.move(from.x + from.width / 2, from.y + from.height / 2)
+  await page.mouse.down()
+  await page.mouse.move(from.x + from.width / 2 + 12, from.y + from.height / 2 + 8, { steps: 6 })
+  const targetPoint = { x: to.x + to.width / 2, y: to.y + to.height / 2 }
+  await page.mouse.move(targetPoint.x, targetPoint.y, { steps: 12 })
+  return targetPoint
+}
+
 test('work tree keeps titles stable while full rows and keyboard handles cover ordering and binding', async ({
   page,
   request,
@@ -311,6 +323,8 @@ test('work tree keeps titles stable while full rows and keyboard handles cover o
   const mapleHeader = page.getByRole('link', { name: /规划员.*\d+ 个频道/u })
   const clerkHeader = page.getByRole('link', { name: /资料员.*\d+ 个频道/u })
   const mapleChannelHandle = page.getByRole('button', { name: '拖动“规划员的内置频道”排序' })
+  const mapleChannelRow = page.locator('[data-work-tree-sortable="channel:chn_dragmaple"]')
+  const mapleSpareRow = page.locator('[data-work-tree-sortable="channel:chn_dragmaplespare"]')
   const top = async (locator: Locator): Promise<number> => {
     const box = await locator.boundingBox()
     if (!box) throw new Error('排序目标没有几何尺寸。')
@@ -323,7 +337,7 @@ test('work tree keeps titles stable while full rows and keyboard handles cover o
   expect(widthBeforeHover).toBeDefined()
   expect(widthAfterHover).toBeDefined()
   expect(Math.abs((widthAfterHover ?? 0) - (widthBeforeHover ?? 0))).toBeLessThanOrEqual(0.5)
-  const objectPane = page.getByLabel('对象列')
+  const objectPane = page.getByRole('complementary', { name: '对象列', exact: true })
   await expect(objectPane.getByRole('button', { name: /频道操作/u })).toHaveCount(0)
   await expect(objectPane.getByRole('button', { name: /智能体操作/u })).toHaveCount(0)
 
@@ -333,6 +347,59 @@ test('work tree keeps titles stable while full rows and keyboard handles cover o
   await createDialog.getByLabel('频道名称').fill('临时网页台')
   await createDialog.getByRole('button', { name: '创建内置频道' }).click()
   await expect(page.getByRole('link', { name: /临时网页台/u })).toBeVisible()
+
+  const routeBeforeDrag = page.url()
+  const clickGuardBox = await mapleChannel.boundingBox()
+  if (!clickGuardBox) throw new Error('频道行没有几何尺寸。')
+  await page.mouse.move(clickGuardBox.x + clickGuardBox.width / 2, clickGuardBox.y + clickGuardBox.height / 2)
+  await page.mouse.down()
+  await page.mouse.move(clickGuardBox.x + clickGuardBox.width / 2 + 5, clickGuardBox.y + clickGuardBox.height / 2, {
+    steps: 3,
+  })
+  await page.mouse.up()
+  await expect(page).toHaveURL(routeBeforeDrag)
+
+  const sourceTopBeforeProjection = await top(mapleChannelRow)
+  const spareTopBeforeProjection = await top(mapleSpareRow)
+  const pointer = await beginDragTo(page, mapleChannel, mapleSpare)
+  const channelOverlay = page.locator('[data-work-tree-drag-overlay="channel:chn_dragmaple"]')
+  await expect(channelOverlay).toBeVisible()
+  await expect(mapleChannel).toHaveCSS('opacity', '0')
+  await expect(mapleChannelHandle).toHaveCSS('opacity', '0')
+  await expect(page.locator('[data-nav-mark="work-nav"]')).toHaveCSS('opacity', '0')
+  await expect.poll(async () => Math.abs((await top(mapleSpareRow)) - sourceTopBeforeProjection)).toBeLessThan(2)
+  expect(spareTopBeforeProjection).toBeGreaterThan(sourceTopBeforeProjection)
+  expect(await channelOverlay.evaluate((element) => element.parentElement?.parentElement === document.body)).toBe(true)
+  const transitionDuration = await mapleSpareRow.evaluate(
+    (element) => Number.parseFloat(getComputedStyle(element).transitionDuration) * 1_000,
+  )
+  expect(transitionDuration).toBeGreaterThanOrEqual(150)
+  const objectPaneBox = await objectPane.boundingBox()
+  if (!objectPaneBox) throw new Error('对象列没有几何尺寸。')
+  await page.mouse.move(objectPaneBox.x + objectPaneBox.width + 80, pointer.y, { steps: 8 })
+  await expect
+    .poll(async () => {
+      const overlayBox = await channelOverlay.boundingBox()
+      return overlayBox ? overlayBox.x + overlayBox.width - (objectPaneBox.x + objectPaneBox.width) : 0
+    })
+    .toBeGreaterThan(40)
+  const dragScreenshot = testInfo.outputPath('work-tree-live-reorder.png')
+  await page.screenshot({ path: dragScreenshot })
+  await testInfo.attach('work-tree-live-reorder', { path: dragScreenshot, contentType: 'image/png' })
+  await page.keyboard.press('Escape')
+  await expect(channelOverlay).toHaveCount(0)
+  await expect.poll(async () => Math.abs((await top(mapleSpareRow)) - spareTopBeforeProjection)).toBeLessThan(2)
+  await expect(page).toHaveURL(routeBeforeDrag)
+
+  await page.getByRole('button', { name: /切换为深色/u }).click()
+  await expect(page.locator('html')).toHaveAttribute('data-theme', 'dark')
+  const darkPointer = await beginDragTo(page, mapleChannel, mapleSpare)
+  await page.mouse.move(objectPaneBox.x + objectPaneBox.width + 80, darkPointer.y, { steps: 8 })
+  const darkDragScreenshot = testInfo.outputPath('work-tree-live-reorder-dark.png')
+  await page.screenshot({ path: darkDragScreenshot })
+  await testInfo.attach('work-tree-live-reorder-dark', { path: darkDragScreenshot, contentType: 'image/png' })
+  await page.keyboard.press('Escape')
+  await expect(channelOverlay).toHaveCount(0)
 
   expect(await top(mapleChannel)).toBeLessThan(await top(mapleSpare))
   await mapleChannelHandle.focus()
@@ -346,9 +413,26 @@ test('work tree keeps titles stable while full rows and keyboard handles cover o
 
   const rejectedChannelTop = await top(mapleChannel)
   const rejectedSpareTop = await top(mapleSpare)
+  await expect
+    .poll(async () => {
+      const running = await Promise.all(
+        [mapleChannelRow, mapleSpareRow].map((row) =>
+          row.evaluate((element) => element.getAnimations().some((animation) => animation.playState === 'running')),
+        ),
+      )
+      return running.some(Boolean)
+    })
+    .toBe(false)
   rejectNextOrder = true
   allowOrderFailureConsole = true
-  await dragTo(page, mapleChannel, mapleSpare)
+  for (let attempt = 0; attempt < 3 && rejectedOrderRequests === 0; attempt += 1) {
+    await mapleChannelHandle.focus()
+    await page.keyboard.press('Space')
+    if ((await mapleChannelHandle.getAttribute('aria-pressed')) !== 'true') continue
+    await page.keyboard.press((await top(mapleChannel)) > (await top(mapleSpare)) ? 'ArrowUp' : 'ArrowDown')
+    await page.keyboard.press('Space')
+    await page.waitForTimeout(250)
+  }
   await expect.poll(() => rejectedOrderRequests).toBe(1)
   await expect(page.getByText('测试拒绝保存顺序。')).toBeVisible()
   await expect.poll(async () => Math.abs((await top(mapleChannel)) - rejectedChannelTop) < 1).toBe(true)
@@ -358,11 +442,25 @@ test('work tree keeps titles stable while full rows and keyboard handles cover o
   await dragTo(page, mapleChannel, mapleSpare)
   await expect(page.getByRole('dialog')).toHaveCount(0)
   await expect.poll(async () => (await top(mapleChannel)) < (await top(mapleSpare))).toBe(true)
+  await expect
+    .poll(async () =>
+      mapleChannelRow.evaluate((element) =>
+        element.getAnimations().some((animation) => animation.playState === 'running'),
+      ),
+    )
+    .toBe(false)
   await dragTo(page, mapleSpare, mapleChannel)
   await expect(page.getByRole('dialog')).toHaveCount(0)
-  expect(await top(mapleSpare)).toBeLessThan(await top(mapleChannel))
+  await expect.poll(async () => (await top(mapleSpare)) < (await top(mapleChannel))).toBe(true)
   expect(await top(mapleHeader)).toBeLessThan(await top(clerkHeader))
-  await dragTo(page, mapleHeader, clerkHeader)
+  await beginDragTo(page, mapleHeader, clerkHeader)
+  const agentOverlay = page.locator('[data-work-tree-drag-overlay="agent:agt_dragmaple"]')
+  await expect(agentOverlay).toBeVisible()
+  await expect(mapleHeader.locator('..')).toHaveCSS('opacity', '0')
+  await expect(agentOverlay.getByText('规划员的备用地', { exact: true })).toBeVisible()
+  await expect(agentOverlay.getByText('规划员的内置频道', { exact: true })).toBeVisible()
+  await page.mouse.up()
+  await page.mouse.move(8, 8)
   await expect(page.getByRole('dialog')).toHaveCount(0)
   await expect.poll(async () => (await top(clerkHeader)) < (await top(mapleHeader))).toBe(true)
 

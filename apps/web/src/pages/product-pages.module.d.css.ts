@@ -27,6 +27,7 @@ declare const styles: {
   readonly agentCardMeta: string
   readonly agentCardTitle: string
   readonly agentCreatePage: string
+  readonly agentDragOverlay: string
   readonly agentHeaderRow: string
   readonly agentNameLine: string
   readonly agentOverview: string

@@ -93,6 +93,7 @@
   --nxt-layer-content: 0;
   --nxt-layer-sticky: 20;
   --nxt-layer-floating: 60;
+  --nxt-layer-drag: 70;
   --nxt-layer-modal-base: 80;
   --nxt-layer-modal-step: 4;
   --nxt-layer-notification: 1000;

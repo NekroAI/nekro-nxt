@@ -1990,7 +1990,31 @@
 }
 
 .sortableOrigin {
-  opacity: 0.4;
+  position: relative;
+  pointer-events: none;
+}
+
+.sortableOrigin > * {
+  opacity: 0;
+}
+
+.sortableOrigin::after {
+  position: absolute;
+  z-index: 3;
+  inset: 0;
+  border: 1px dashed color-mix(in srgb, var(--nxt-accent) 72%, var(--nxt-border-default));
+  border-radius: var(--nxt-radius-md);
+  background: color-mix(in srgb, var(--nxt-accent-soft) 46%, transparent);
+  content: '';
+  pointer-events: none;
+}
+
+.channelGroup.sortableOrigin::before {
+  opacity: 0;
+}
+
+:global([data-work-tree-dragging]) [data-nav-mark='work-nav'] {
+  opacity: 0 !important;
 }
 
 .channelGroups {
@@ -1999,6 +2023,7 @@
 
 .channelGroup {
   position: relative;
+  transition: transform var(--nxt-motion-standard) var(--nxt-ease-standard);
 }
 
 .agentHeaderRow,
@@ -2205,6 +2230,7 @@
   position: relative;
   width: calc(100% - 28px);
   margin-left: 28px;
+  transition: transform var(--nxt-motion-standard) var(--nxt-ease-standard);
 }
 
 .channelRow::before {
@@ -2263,10 +2289,15 @@
 .agentHeaderRow:focus-within .treeRowDragHandle,
 .channelRow:hover .treeRowDragHandle,
 .channelRow:focus-within .treeRowDragHandle,
-.treeRowDragHandle:focus-visible,
-.sortableOrigin .treeRowDragHandle {
+.treeRowDragHandle:focus-visible {
   opacity: 1;
   pointer-events: auto;
+}
+
+.channelGroup.sortableOrigin .treeRowDragHandle,
+.channelRow.sortableOrigin .treeRowDragHandle {
+  opacity: 0;
+  pointer-events: none;
 }
 
 .agentHeaderRow:hover .treeStateIndicator,
@@ -2417,12 +2448,19 @@
 }
 
 .dragOverlay {
+  box-sizing: border-box;
   cursor: grabbing;
-  width: 216px;
+  width: 100%;
   margin-left: 0;
+  border-radius: var(--nxt-radius-md);
   box-shadow: var(--nxt-shadow-float);
   background: var(--nxt-bg-surface);
   pointer-events: none;
+}
+
+.agentDragOverlay {
+  overflow: hidden;
+  padding: 0 0 4px;
 }
 
 .unread {
