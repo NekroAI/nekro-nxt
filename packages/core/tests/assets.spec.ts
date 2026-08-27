@@ -112,4 +112,28 @@ describe('AssetService', () => {
     ).rejects.toThrow('conflicting metadata')
     expect(await readdir(path.join(root, 'staging'))).toEqual([])
   })
+
+  it('accepts streamed byte chunks and rejects invalid stream, limit, and clock values', async () => {
+    const root = await createRoot()
+    const repository = new MemoryAssetRepository()
+    expect(() => new AssetService(repository, root, { maxAssetBytes: Number.NaN })).toThrow('positive safe integer')
+    const service = new AssetService(repository, root, { now: () => 11, nextUlid: () => 'STREAM' })
+    const stream = async function* () {
+      await Promise.resolve()
+      yield new TextEncoder().encode('streamed ')
+      yield new TextEncoder().encode('asset')
+    }
+    await expect(service.prepare({ bytes: stream() })).resolves.toMatchObject({ asset: { byteSize: 14 } })
+
+    const invalidStream = async function* () {
+      await Promise.resolve()
+      yield 'not-bytes'
+    }
+    await expect(Reflect.apply(service.prepare.bind(service), undefined, [{ bytes: invalidStream() }])).rejects.toThrow(
+      'must yield Uint8Array',
+    )
+    const invalidClock = new AssetService(repository, root, { now: () => -1, nextUlid: () => 'CLOCK' })
+    await expect(invalidClock.prepare({ bytes: new Uint8Array() })).rejects.toThrow('Clock must return')
+    expect(await readdir(path.join(root, 'staging'))).toEqual([])
+  })
 })

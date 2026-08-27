@@ -116,6 +116,22 @@ describe('MigrationRegistry', () => {
     ).toThrowError(expect.objectContaining({ code: 'invalid-registry' }))
   })
 
+  it('rejects malformed registry identities, versions, and out-of-range steps', () => {
+    const create = (format: string, currentVersion: number, from: number) =>
+      new MigrationRegistry({
+        format,
+        currentVersion,
+        steps: [{ from, migrate: (data) => data }],
+        parseCurrent: (data) => data,
+      })
+    expect(() => create('', 1, 0)).toThrowError(expect.objectContaining({ code: 'invalid-registry' }))
+    expect(() => create('fixture', Number.NaN, 0)).toThrowError(expect.objectContaining({ code: 'invalid-registry' }))
+    expect(() => create('fixture', -1, 0)).toThrowError(expect.objectContaining({ code: 'invalid-registry' }))
+    expect(() => create('fixture', 1, Number.NaN)).toThrowError(expect.objectContaining({ code: 'invalid-registry' }))
+    expect(() => create('fixture', 1, -1)).toThrowError(expect.objectContaining({ code: 'invalid-registry' }))
+    expect(() => create('fixture', 1, 1)).toThrowError(expect.objectContaining({ code: 'invalid-registry' }))
+  })
+
   it('preserves the caller input when a migration mutates and then fails', () => {
     const original = { items: ['a'] }
     const failing = new MigrationRegistry({
@@ -216,6 +232,26 @@ describe('runUpgradePlan', () => {
     expect(events).toEqual(['begin:broken', 'fail:broken'])
   })
 
+  it('rejects empty and duplicate upgrade identities before journaling', async () => {
+    const journal = {
+      begin: () => Promise.reject(new Error('must not begin')),
+      complete: () => Promise.resolve(),
+      fail: () => Promise.resolve(),
+    }
+    await expect(runUpgradePlan([{ id: '', run: () => Promise.resolve() }], journal)).rejects.toMatchObject({
+      code: 'invalid-registry',
+    })
+    await expect(
+      runUpgradePlan(
+        [
+          { id: 'duplicate', run: () => Promise.resolve() },
+          { id: 'duplicate', run: () => Promise.resolve() },
+        ],
+        journal,
+      ),
+    ).rejects.toMatchObject({ code: 'invalid-registry' })
+  })
+
   it('locks, preflights, backs up and enters recovery without publishing ready after failure', async () => {
     const lifecycle: string[] = []
     const coordinator = new HostUpgradeCoordinator({
@@ -273,5 +309,42 @@ describe('runUpgradePlan', () => {
       'fail:extensions',
       'unlock',
     ])
+  })
+
+  it('shares one in-flight run and reports pre-backup recovery without retaining listeners', async () => {
+    let announcePreflight: (() => void) | undefined
+    const enteredPreflight = new Promise<void>((resolve) => {
+      announcePreflight = resolve
+    })
+    let releasePreflight: (() => void) | undefined
+    const preflightGate = new Promise<void>((resolve) => {
+      releasePreflight = resolve
+    })
+    const coordinator = new HostUpgradeCoordinator({
+      lock: { acquire: () => Promise.resolve(() => Promise.resolve()) },
+      preflight: () => {
+        announcePreflight?.()
+        return preflightGate.then(() => Promise.reject(new Error('preflight fixture failure')))
+      },
+      createBackup: () => Promise.reject(new Error('must not back up')),
+      steps: [],
+      journal: {
+        begin: () => Promise.resolve(),
+        complete: () => Promise.resolve(),
+        fail: () => Promise.resolve(),
+      },
+    })
+    let publications = 0
+    const unsubscribe = coordinator.subscribe(() => {
+      publications += 1
+    })
+    const first = coordinator.run()
+    const second = coordinator.run()
+    expect(second).toBe(first)
+    await enteredPreflight
+    unsubscribe()
+    releasePreflight?.()
+    await expect(first).resolves.toEqual({ phase: 'recovery', errorSummary: 'preflight fixture failure' })
+    expect(publications).toBe(1)
   })
 })
