@@ -99,6 +99,13 @@
       "when": 1787790588860,
       "tag": "0013_wecom_processing_feedback",
       "breakpoints": true
+    },
+    {
+      "idx": 14,
+      "version": "6",
+      "when": 1787825869171,
+      "tag": "0014_host_extension_installations",
+      "breakpoints": true
     }
   ]
 }

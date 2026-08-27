@@ -552,6 +552,27 @@ export const extensionRevisionVerifications = sqliteTable('extension_revision_ve
   evidence: jsonText<ExtensionRevisionVerification>('evidence').notNull(),
 })
 
+export const hostExtensionInstallations = sqliteTable(
+  'host_extension_installations',
+  {
+    extensionId: text('extension_id')
+      .$type<ExtensionId>()
+      .primaryKey()
+      .references(() => localExtensions.id, { onDelete: 'restrict' }),
+    extensionRevisionId: text('extension_revision_id').$type<ExtensionRevisionId>().notNull(),
+    installedAt: integer('installed_at').notNull(),
+  },
+  (table) => [
+    uniqueIndex('host_extension_installations_revision_uq').on(table.extensionId, table.extensionRevisionId),
+    foreignKey({
+      name: 'host_extension_installations_revision_fk',
+      columns: [table.extensionRevisionId, table.extensionId],
+      foreignColumns: [extensionRevisions.id, extensionRevisions.extensionId],
+    }).onDelete('restrict'),
+    check('host_extension_installations_installed_at_ck', sql`${table.installedAt} >= 0`),
+  ],
+)
+
 export const agentActivations = sqliteTable(
   'agent_activations',
   {
@@ -674,6 +695,7 @@ export const coreSchema = {
   localExtensions,
   extensionRevisions,
   extensionRevisionVerifications,
+  hostExtensionInstallations,
   agentActivations,
   extensionClientDiagnostics,
   hostSecurityMetadata,

@@ -26,6 +26,7 @@ import {
   ExtensionService,
   ExtensionSourceStore,
 } from '@nekro-nxt/extension-runtime'
+import { NEKRO_NXT_EXTENSION_AUTHORING_REFERENCE } from '@nekro-nxt/extension-sdk'
 import { admissions, openMigratedCoreDatabase, SqliteCoreRepository } from '@nekro-nxt/storage-sqlite'
 import { access, mkdtemp, rm, stat } from 'node:fs/promises'
 import { createServer } from 'node:http'
@@ -1032,12 +1033,9 @@ describe('DSH Host and Web Channel vertical slice', () => {
         channel: { channelId: enabledChannel.id, episodeId: enabledEpisode },
       })
       await expect(host.queryNekroNxtInspect(enabledSession, 'supportedContributions')).resolves.toEqual({
-        contractVersion: 'nekro-nxt-extension-v1',
-        dshVersion: '0.1.1-rc.2',
-        hostTool: true,
-        hostRpc: true,
-        clientSlots: ['agent.workbench.sections', 'extension.details.panels'],
-        dshNativeWebUi: false,
+        contractVersion: NEKRO_NXT_EXTENSION_AUTHORING_REFERENCE.contractVersion,
+        dshVersion: NEKRO_NXT_EXTENSION_AUTHORING_REFERENCE.dshVersion,
+        ...NEKRO_NXT_EXTENSION_AUTHORING_REFERENCE.supportedContributions,
       })
       const developmentExample = await host.queryNekroNxtInspect(enabledSession, 'developmentExample')
       if (typeof developmentExample !== 'object' || developmentExample === null || Array.isArray(developmentExample)) {

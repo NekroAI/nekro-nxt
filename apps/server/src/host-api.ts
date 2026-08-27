@@ -25,7 +25,7 @@ import {
 } from '@nekro-nxt/contracts'
 import { readFile } from 'node:fs/promises'
 import type { IncomingMessage, ServerResponse } from 'node:http'
-import { z } from 'zod'
+import type { z } from 'zod'
 import type { NekroRuntime } from './bootstrap.js'
 import { PRODUCT_VERSION } from './product-version.js'
 import { DEEPSEEK_HARNESS_VERSION } from './dsh-version.js'
@@ -241,67 +241,87 @@ export const buildSnapshotMessage = (
 /** Project persisted local Extensions and their Agent Activations for the Shell. */
 const projectExtensions = (runtime: NekroRuntime) => {
   const activations = runtime.repository.listActivations()
-  return runtime.repository.listExtensions().map((extension) => ({
-    id: extension.id,
-    slug: extension.slug,
-    displayName: extension.displayName,
-    description: extension.description,
-    ...(extension.createdByAgentId === undefined ? {} : { createdByAgentId: extension.createdByAgentId }),
-    revisions: runtime.repository.listExtensionRevisions(extension.id).map((revision) => {
-      const verification = runtime.repository.getExtensionRevisionVerification(revision.id)
-      return {
-        id: revision.id,
-        revisionNumber: revision.revisionNumber,
-        createdAt: revision.createdAt,
-        contributions:
-          verification === undefined
-            ? []
-            : [
-                ...verification.toolInvocations.map(({ name }) => `工具：${name}`),
-                ...verification.rpcMethods.map((method) => `RPC：${method}`),
-                ...verification.renderedSlots.map((slot) => `界面：${slot}`),
-              ],
-        ...(verification === undefined
-          ? {}
-          : {
-              verification: {
-                verifiedAt: verification.verifiedAt,
-                dshVersion: verification.dshVersion,
-                contractVersion: verification.contractVersion,
-                hostBuilt: verification.hostBuild.built,
-                clientBuilt: verification.clientBuild.built,
-                buildKey: verification.hostBuild.buildKey,
-                toolInvocationCount: verification.toolInvocations.length,
-                rpcMethods: verification.rpcMethods,
-                renderedSlots: verification.renderedSlots,
-              },
-            }),
-      }
-    }),
-    activations: activations
-      .filter((activation) => activation.extensionId === extension.id)
-      .map((activation) => ({
-        agentId: activation.agentId,
-        extensionRevisionId: activation.extensionRevisionId,
-        config: activation.config,
-        activatedAt: activation.activatedAt,
-      })),
-    clientDiagnostics: activations
-      .filter((activation) => activation.extensionId === extension.id)
-      .flatMap((activation) => {
-        const diagnostic = runtime.repository.getExtensionClientDiagnostic(activation.agentId, extension.id)
-        if (!diagnostic) return []
-        return [
-          {
-            agentId: diagnostic.agentId,
-            revisionId: diagnostic.revisionId,
-            status: diagnostic.status,
-            ...(diagnostic.message === undefined ? {} : { message: diagnostic.message }),
-            observedAt: diagnostic.observedAt,
-          },
-        ]
+  return runtime.repository.listExtensions().map((extension) => {
+    const installation = runtime.repository.getHostInstallation(extension.id)
+    const hostClientDiagnostic = runtime.hostClientDiagnostic(extension.id)
+    return {
+      id: extension.id,
+      slug: extension.slug,
+      displayName: extension.displayName,
+      description: extension.description,
+      ...(extension.createdByAgentId === undefined ? {} : { createdByAgentId: extension.createdByAgentId }),
+      revisions: runtime.repository.listExtensionRevisions(extension.id).map((revision) => {
+        const verification = runtime.repository.getExtensionRevisionVerification(revision.id)
+        return {
+          id: revision.id,
+          revisionNumber: revision.revisionNumber,
+          createdAt: revision.createdAt,
+          scope: verification?.scope ?? 'agent',
+          contributions:
+            verification === undefined
+              ? []
+              : [
+                  ...verification.toolInvocations.map(({ name }) => `工具：${name}`),
+                  ...verification.rpcMethods.map((method) => `RPC：${method}`),
+                  ...verification.renderedSlots.map((slot) => `界面：${slot}`),
+                  ...(verification.adapter === undefined ? [] : [`适配器：${verification.adapter.key}`]),
+                  ...(verification.renderedHostSlots ?? []).map(({ key }) => `界面：${key}`),
+                ],
+          ...(verification === undefined
+            ? {}
+            : {
+                verification: {
+                  verifiedAt: verification.verifiedAt,
+                  dshVersion: verification.dshVersion,
+                  contractVersion: verification.contractVersion,
+                  hostBuilt: verification.hostBuild.built,
+                  clientBuilt: verification.clientBuild.built,
+                  buildKey: verification.hostBuild.buildKey,
+                  toolInvocationCount: verification.toolInvocations.length,
+                  rpcMethods: verification.rpcMethods,
+                  renderedSlots: verification.renderedSlots,
+                  ...(verification.renderedHostSlots === undefined
+                    ? {}
+                    : { renderedHostSlots: verification.renderedHostSlots }),
+                  ...(verification.adapter === undefined ? {} : { adapter: verification.adapter }),
+                },
+              }),
+        }
       }),
-  }))
+      activations: activations
+        .filter((activation) => activation.extensionId === extension.id)
+        .map((activation) => ({
+          agentId: activation.agentId,
+          extensionRevisionId: activation.extensionRevisionId,
+          config: activation.config,
+          activatedAt: activation.activatedAt,
+        })),
+      ...(installation === undefined
+        ? {}
+        : {
+            installation: {
+              extensionRevisionId: installation.extensionRevisionId,
+              installedAt: installation.installedAt,
+            },
+          }),
+      ...(hostClientDiagnostic === undefined ? {} : { hostClientDiagnostic }),
+      clientDiagnostics: activations
+        .filter((activation) => activation.extensionId === extension.id)
+        .flatMap((activation) => {
+          const diagnostic = runtime.repository.getExtensionClientDiagnostic(activation.agentId, extension.id)
+          if (!diagnostic) return []
+          return [
+            {
+              agentId: diagnostic.agentId,
+              revisionId: diagnostic.revisionId,
+              status: diagnostic.status,
+              ...(diagnostic.message === undefined ? {} : { message: diagnostic.message }),
+              observedAt: diagnostic.observedAt,
+            },
+          ]
+        }),
+    }
+  })
 }
 
 /** Running dynamic Packages owned by an intelligent-agent's active Session. */
@@ -408,7 +428,10 @@ const normalizeDynamicResolution = (
 const saveActiveDynamicPackage = async (
   runtime: NekroRuntime,
   input: ReturnType<typeof HostApiContracts.saveExtensionFromDynamic.parseRequest>,
-): Promise<{ readonly extension: { readonly id: string }; readonly revision: { readonly id: string } }> => {
+): Promise<{
+  readonly extension: { readonly id: z.output<typeof ExtensionIdSchema> }
+  readonly revision: { readonly id: z.output<typeof ExtensionRevisionIdSchema> }
+}> => {
   const episode = runtime.repository.getEpisode(input.episodeId)
   if (episode?.agentId !== input.agentId || episode.status !== 'active' || episode.dshSessionId === undefined) {
     throw new Error('指定会话不是该智能体当前可保存动态 Package 的活动会话。')
@@ -428,6 +451,7 @@ const saveActiveDynamicPackage = async (
   }
   const inspection = runtime.host.inspectDynamicPackage(episode.dshSessionId, input.pluginId, input.packageId)
   const verified = await runtime.host.verifyDynamicPackage(episode.dshSessionId, input.pluginId, input.packageId)
+  const adapterVerification = 'scope' in verified && verified.scope === 'host-adapter' ? verified : undefined
   return runtime.extensionService.saveDynamicPackage({
     snapshot: {
       name: inspection.name,
@@ -442,7 +466,10 @@ const saveActiveDynamicPackage = async (
     createdByAgentId: input.agentId,
     verification: {
       dshVersion: '0.1.1-rc.2',
-      contractVersion: 'nekro-nxt-extension-v1',
+      contractVersion: adapterVerification ? 'nekro-nxt-extension-v2' : 'nekro-nxt-extension-v1',
+      ...(adapterVerification === undefined
+        ? {}
+        : { scope: adapterVerification.scope, adapter: adapterVerification.adapter }),
       origin: {
         episodeId: input.episodeId,
         pluginId: input.pluginId,
@@ -620,12 +647,10 @@ export const createNekroHostApi = (
     // every Channel's history.
     const messages: HostSnapshotMessage[] = []
     const connections = runtime.core.listConnections().map((connection) => {
-      const config = z
-        .object({ appId: z.string().optional(), proactiveSend: z.boolean().optional() })
-        .passthrough()
-        .safeParse(connection.config)
       const diagnostic = runtime.connectionDiagnostic(connection.id)
       const adapterDiagnostic = runtime.adapterConnectionDiagnostic(connection.id)
+      const lastInbound = runtime.lastInbound(connection.id)
+      const tests = runtime.connectionTests(connection.id)
       const gateway =
         diagnostic?.gateway ??
         (adapterDiagnostic === undefined
@@ -641,7 +666,7 @@ export const createNekroHostApi = (
         status: {
           state: gateway?.state ?? 'stopped',
           credentialConfigured: adapterDiagnostic?.credentialConfigured ?? diagnostic?.credentialConfigured ?? false,
-          proactiveSend: adapterDiagnostic?.proactiveSend ?? (config.success && config.data.proactiveSend === true),
+          proactiveSend: adapterDiagnostic?.proactiveSend ?? false,
           ...(adapterDiagnostic?.message === undefined ? {} : { message: adapterDiagnostic.message }),
           ...(adapterDiagnostic?.accountId === undefined ? {} : { accountId: adapterDiagnostic.accountId }),
           ...(adapterDiagnostic?.implementation === undefined
@@ -657,9 +682,11 @@ export const createNekroHostApi = (
           name: channel.displayName ?? channel.platformChannelId,
           kind: channel.kind,
         })),
-        ...(diagnostic?.lastInbound === undefined ? {} : { lastInbound: diagnostic.lastInbound }),
-        ...(diagnostic?.receiveTest === undefined ? {} : { receiveTest: diagnostic.receiveTest }),
-        ...(diagnostic?.sendTest === undefined ? {} : { sendTest: diagnostic.sendTest }),
+        ...(lastInbound?.platformMessageId === undefined
+          ? {}
+          : { lastInbound: { ...lastInbound, platformMessageId: lastInbound.platformMessageId } }),
+        ...(tests?.receive === undefined ? {} : { receiveTest: tests.receive }),
+        ...(tests?.send === undefined ? {} : { sendTest: tests.send }),
       }
     })
     const webSearch = await runtime.host.getWebSearchCapabilityStatus()
@@ -899,8 +926,47 @@ export const createNekroHostApi = (
     path: '/api/extensions',
     handler: async (req, res) => {
       const url = new URL(req.url ?? '/', 'http://localhost')
+      const installationMatch = /^\/api\/extensions\/([^/]+)\/installation$/u.exec(url.pathname)
+      if (installationMatch) {
+        let extensionId: z.output<typeof ExtensionIdSchema>
+        try {
+          extensionId = ExtensionIdSchema.parse(decodeURIComponent(installationMatch[1] ?? ''))
+        } catch {
+          writeError(res, 400, 'invalid-extension', '无效的扩展 ID。')
+          return
+        }
+        if (req.method === 'PUT') {
+          try {
+            const params = HostApiContracts.installHostExtension.parseParams({ extensionId })
+            const parsed = HostApiContracts.installHostExtension.parseRequest(await readJsonBody(req))
+            const installation = await runtime.installHostExtension({
+              extensionId: params.extensionId,
+              revisionId: parsed.revisionId,
+            })
+            writeContractJson(res, 200, HostApiContracts.installHostExtension, { installation })
+            broadcastExtensionsChanged()
+          } catch (error) {
+            writeError(res, 400, 'installation-failed', error instanceof Error ? error.message : String(error))
+          }
+          return
+        }
+        if (req.method === 'DELETE') {
+          try {
+            const params = HostApiContracts.uninstallHostExtension.parseParams({ extensionId })
+            HostApiContracts.uninstallHostExtension.parseRequest(undefined)
+            await runtime.uninstallHostExtension(params.extensionId)
+            writeContractJson(res, 200, HostApiContracts.uninstallHostExtension, { uninstalled: true })
+            broadcastExtensionsChanged()
+          } catch (error) {
+            writeError(res, 400, 'uninstall-failed', error instanceof Error ? error.message : String(error))
+          }
+          return
+        }
+        writeError(res, 405, 'method-not-allowed', '安装适配器只支持 PUT/DELETE。')
+        return
+      }
       const match =
-        /^\/api\/extensions\/([^/]+)\/revisions\/([^/]+)\/(call|client-diagnostic|client\/([a-f0-9]{64})\.mjs)$/u.exec(
+        /^\/api\/extensions\/([^/]+)\/revisions\/([^/]+)\/(call|client-diagnostic|host-client-diagnostic|client\/([a-f0-9]{64})\.mjs)$/u.exec(
           url.pathname,
         )
       if (!match) {
@@ -927,17 +993,26 @@ export const createNekroHostApi = (
           writeError(res, 405, 'method-not-allowed', 'Client Artifact 只支持 GET。')
           return
         }
-        let agentId: AgentId
-        try {
-          agentId = AgentIdSchema.parse(url.searchParams.get('agentId'))
-        } catch {
-          writeError(res, 400, 'invalid-agent', 'Client Artifact 缺少有效的智能体 ID。')
-          return
-        }
-        const activation = runtime.repository.getActivation(agentId, extensionId)
-        if (activation?.extensionRevisionId !== revisionId) {
-          writeError(res, 409, 'stale-client-build', '该 Revision 不是此智能体当前启用的版本。')
-          return
+        const verification = runtime.repository.getExtensionRevisionVerification(revisionId)
+        if (verification?.scope === 'host-adapter') {
+          const installation = runtime.repository.getHostInstallation(extensionId)
+          if (installation?.extensionRevisionId !== revisionId) {
+            writeError(res, 409, 'stale-client-build', '该 Revision 不是当前安装到本机的版本。')
+            return
+          }
+        } else {
+          let agentId: AgentId
+          try {
+            agentId = AgentIdSchema.parse(url.searchParams.get('agentId'))
+          } catch {
+            writeError(res, 400, 'invalid-agent', 'Client Artifact 缺少有效的智能体 ID。')
+            return
+          }
+          const activation = runtime.repository.getActivation(agentId, extensionId)
+          if (activation?.extensionRevisionId !== revisionId) {
+            writeError(res, 409, 'stale-client-build', '该 Revision 不是此智能体当前启用的版本。')
+            return
+          }
         }
         try {
           const artifact = await runtime.extensionService.buildRevision(revision)
@@ -998,6 +1073,25 @@ export const createNekroHostApi = (
             'extension-client-diagnostic-failed',
             error instanceof Error ? error.message : String(error),
           )
+        }
+        return
+      }
+      if (action === 'host-client-diagnostic') {
+        try {
+          const parsed = HostApiContracts.hostExtensionClientDiagnostic.parseRequest(await readJsonBody(req))
+          const installation = runtime.repository.getHostInstallation(extensionId)
+          if (installation?.extensionRevisionId !== revisionId) {
+            throw new Error('该 Revision 不是当前安装到本机的版本。')
+          }
+          runtime.recordHostClientDiagnostic(extensionId, {
+            revisionId,
+            status: parsed.status,
+            ...(parsed.message === undefined ? {} : { message: parsed.message }),
+          })
+          writeContractJson(res, 200, HostApiContracts.hostExtensionClientDiagnostic, { accepted: true })
+          broadcastExtensionsChanged()
+        } catch (error) {
+          writeError(res, 400, 'host-client-diagnostic-failed', error instanceof Error ? error.message : String(error))
         }
         return
       }
@@ -1127,7 +1221,7 @@ export const createNekroHostApi = (
         HostApiContracts.dshPlugins.parseParams({})
         HostApiContracts.dshPlugins.parseRequest(undefined)
         writeContractJson(res, 200, HostApiContracts.dshPlugins, {
-          plugins: runtime.host.listDshPluginSupport(),
+          plugins: runtime.host.listDshPlugins(),
         })
       } catch (error) {
         writeError(res, 500, 'dsh-plugins-failed', error instanceof Error ? error.message : String(error))
@@ -2362,6 +2456,9 @@ export const createNekroHostApi = (
             extensionId: saved.extension.id,
             revisionId: saved.revision.id,
             activation: 'inactive',
+            ...(runtime.repository.getExtensionRevisionVerification(saved.revision.id)?.scope === 'host-adapter'
+              ? { installation: 'uninstalled' as const }
+              : {}),
           }),
         )
       } catch (error) {

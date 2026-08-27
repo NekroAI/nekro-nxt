@@ -520,7 +520,7 @@
 :global(:root[data-glin-experiment]) .stage {
   position: relative;
   isolation: isolate;
-  overflow: hidden;
+  overflow: clip;
   background: color-mix(in srgb, var(--nxt-bg-surface) 86%, transparent);
 }
 

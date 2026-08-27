@@ -295,6 +295,9 @@ importers:
       ulid:
         specifier: 3.0.2
         version: 3.0.2
+      ws:
+        specifier: 8.21.3
+        version: 8.21.3
       zod:
         specifier: 4.4.3
         version: 4.4.3
@@ -314,6 +317,9 @@ importers:
       '@deepseek-ai/dsh-host-plugin-inventory':
         specifier: 0.1.1-rc.2
         version: 0.1.1-rc.2(@deepseek-ai/cordis-plugin-loader@1.0.2)(@deepseek-ai/cordis@4.0.1)(@deepseek-ai/dsh-brand@0.1.1-rc.2(@deepseek-ai/cordis@4.0.1)(@deepseek-ai/dsh-invariants@0.1.1-rc.2(@deepseek-ai/cordis@4.0.1)))(@deepseek-ai/dsh-invariants@0.1.1-rc.2(@deepseek-ai/cordis@4.0.1))(@deepseek-ai/dsh-typert-protocol@0.1.1-rc.2(@deepseek-ai/cordis@4.0.1)(@deepseek-ai/dsh-invariants@0.1.1-rc.2(@deepseek-ai/cordis@4.0.1)))
+      '@types/ws':
+        specifier: 8.18.1
+        version: 8.18.1
       tsx:
         specifier: 4.22.4
         version: 4.22.4
@@ -469,6 +475,9 @@ importers:
         specifier: 4.4.3
         version: 4.4.3
     devDependencies:
+      '@nekro-nxt/test-harness':
+        specifier: workspace:*
+        version: link:../test-harness
       '@types/ws':
         specifier: 8.18.1
         version: 8.18.1
@@ -525,6 +534,9 @@ importers:
         specifier: 4.4.3
         version: 4.4.3
     devDependencies:
+      '@nekro-nxt/test-harness':
+        specifier: workspace:*
+        version: link:../test-harness
       '@types/ws':
         specifier: 8.18.1
         version: 8.18.1
@@ -662,7 +674,14 @@ importers:
         specifier: 4.4.3
         version: 4.4.3
 
-  packages/extension-sdk: {}
+  packages/extension-sdk:
+    dependencies:
+      '@nekro-nxt/adapter-sdk':
+        specifier: workspace:*
+        version: link:../adapter-sdk
+      '@nekro-nxt/contracts':
+        specifier: workspace:*
+        version: link:../contracts
 
   packages/storage-sqlite:
     dependencies:

@@ -20,7 +20,7 @@ import { connectionDisplayName } from '../src/product-store.ts'
 class FakeEventSource {
   static instances: FakeEventSource[] = []
   readonly listeners = new Map<string, Set<(event: unknown) => void>>()
-  onerror: (() => void) | null = null
+  readyState = 0
 
   constructor(readonly url: string) {
     FakeEventSource.instances.push(this)
@@ -32,7 +32,13 @@ class FakeEventSource {
   }
 
   close(): void {
+    this.readyState = 2
     FakeEventSource.instances = FakeEventSource.instances.filter((instance) => instance !== this)
+  }
+
+  open(): void {
+    this.readyState = 1
+    for (const listener of this.listeners.get('open') ?? []) listener(new Event('open'))
   }
 
   emit(type: string, data: unknown): void {
@@ -40,7 +46,8 @@ class FakeEventSource {
   }
 
   fail(): void {
-    this.onerror?.()
+    this.readyState = 2
+    for (const listener of this.listeners.get('error') ?? []) listener(new Event('error'))
   }
 }
 
@@ -95,6 +102,9 @@ const snapshotBody = () =>
         displayName: '内置频道',
         description: '系统托管',
         userCreatable: false,
+        aliasEditable: false,
+        channelDiscovery: 'host-created',
+        diagnostics: { receive: false, send: false },
         configSchema: { schemaVersion: 1, type: 'object', required: [], properties: {} },
       },
       {
@@ -102,6 +112,9 @@ const snapshotBody = () =>
         displayName: 'QQ 官方机器人',
         description: '连接 QQ 官方机器人账号',
         userCreatable: true,
+        aliasEditable: true,
+        channelDiscovery: 'adapter-observed',
+        diagnostics: { receive: true, send: true },
         configSchema: {
           schemaVersion: 1,
           type: 'object',
@@ -235,7 +248,15 @@ const snapshotBodyWithExtension = () => {
         displayName: '频道摘要',
         description: '生成结构化阶段摘要。',
         createdByAgentId: webAgentId,
-        revisions: [{ id: summaryRevisionId, revisionNumber: 1, createdAt: 1_700_000_000_000, contributions: [] }],
+        revisions: [
+          {
+            id: summaryRevisionId,
+            revisionNumber: 1,
+            createdAt: 1_700_000_000_000,
+            scope: 'agent',
+            contributions: [],
+          },
+        ],
         activations: [
           { agentId: webAgentId, extensionRevisionId: summaryRevisionId, config: {}, activatedAt: 1_700_000_000_000 },
           {
@@ -1505,6 +1526,41 @@ describe('HttpProductHost', () => {
     expect(host.getSnapshot().host).toMatchObject({ status: 'ready', error: null })
     expect(host.getSnapshot().agents).toHaveLength(1)
     expect(listener).toHaveBeenCalledTimes(3)
+    unsubscribe()
+  })
+
+  it('makes host.refresh replace the realtime stream and reconciles loaded channels after open', async () => {
+    const requests: string[] = []
+    fetchMock = vi.fn((input: string) => {
+      requests.push(String(input))
+      if (input === '/api/snapshot') return Promise.resolve(stubResponse(200, snapshotBody()))
+      if (String(input).startsWith(`/api/channels/${webChannelId}/messages`)) {
+        return Promise.resolve(stubResponse(200, { messages: snapshotBody().messages, hasMore: false }))
+      }
+      return Promise.resolve(stubResponse(404, { error: { code: 'not-found', message: 'x' } }))
+    })
+    vi.stubGlobal('fetch', fetchMock)
+    vi.stubGlobal('EventSource', FakeEventSource)
+
+    const host = new HttpProductHost()
+    const unsubscribe = host.subscribe(() => undefined)
+    await flush()
+    const firstSource = FakeEventSource.instances[0]
+    if (!firstSource) throw new Error('测试缺少初始 EventSource。')
+
+    await host.execute('host.refresh')
+    const replacement = FakeEventSource.instances[0]
+    expect(replacement).toBeDefined()
+    expect(replacement).not.toBe(firstSource)
+    expect(firstSource.readyState).toBe(2)
+
+    requests.length = 0
+    replacement?.open()
+    await flush()
+    expect(requests).toContain('/api/snapshot')
+    expect(requests.some((url) => url.includes(`/api/channels/${webChannelId}/messages`))).toBe(true)
+    expect(host.getSnapshot().host).toMatchObject({ status: 'ready', error: null })
+
     unsubscribe()
   })
 

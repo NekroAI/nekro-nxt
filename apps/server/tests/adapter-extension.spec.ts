@@ -1,0 +1,223 @@
+import { Context } from '@deepseek-ai/cordis'
+import { LlmAdapter, type GenerateOptions, type StreamChunk } from '@deepseek-ai/dsh-llm'
+import WebServer from '@deepseek-ai/dsh-host-webserver'
+import { HostApiContracts } from '@nekro-nxt/contracts'
+import { mkdtemp, rm } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import path from 'node:path'
+import { afterEach, describe, expect, it } from 'vitest'
+import { NekroRuntime } from '../src/bootstrap.js'
+import { createNekroHostApi } from '../src/host-api.js'
+
+const temporaryDirectories: string[] = []
+
+afterEach(async () => {
+  await Promise.all(temporaryDirectories.splice(0).map((directory) => rm(directory, { recursive: true, force: true })))
+})
+
+class QuietModel extends LlmAdapter {
+  override providerInfo(provider: string) {
+    return { id: provider, name: 'quiet model' }
+  }
+  override listModels(provider: string) {
+    return Promise.resolve([{ provider, id: 'chat-model', name: 'chat', inputModalities: ['text'] as const }])
+  }
+  override resolveModel(provider: string, model: string) {
+    return Promise.resolve({
+      provider,
+      id: model,
+      name: model,
+      inputModalities: ['text'] as const,
+      context: { contextWindow: 128_000 },
+    })
+  }
+  override async *stream(options: GenerateOptions): AsyncIterable<StreamChunk> {
+    void options
+    await Promise.resolve()
+    yield { type: 'finish', reason: { kind: 'stop' } }
+  }
+}
+
+const HOST_CODE = `
+const descriptor = {
+  key: 'synthetic-chat',
+  displayName: '合成聊天平台',
+  description: '只用于离线适配器闭环测试。',
+  userCreatable: true,
+  aliasEditable: true,
+  channelDiscovery: 'adapter-observed',
+  diagnostics: { receive: true, send: true },
+  configSchema: { schemaVersion: 1, type: 'object', required: [], properties: {} }
+}
+harness.registerAdapter({
+  apiVersion: 1,
+  descriptor,
+  async create(context) {
+    let running = false
+    return {
+      capabilities: {
+        text: true, mentions: false, images: false, files: false, audio: false,
+        replies: false, mixedContent: false, proactiveSend: true
+      },
+      async start() {
+        running = true
+        const channelId = await context.channels.ensure({
+          platformChannelId: 'synthetic-room', kind: 'group', displayName: '合成频道', observedAt: context.now()
+        })
+        await context.acceptInbound({
+          connectionId: context.connectionId,
+          channelId,
+          adapterKey: descriptor.key,
+          platformEventId: 'synthetic-event',
+          platformMessageId: 'synthetic-message',
+          kind: 'message-created',
+          parts: [{ type: 'text', text: 'synthetic inbound' }],
+          platformTimestamp: context.now(),
+          receivedAt: context.now(),
+          dedupeKey: 'synthetic-event'
+        })
+        context.diagnostics.publish({ status: 'connected' })
+      },
+      async stop() { running = false },
+      async deliver() {
+        if (!running) return { status: 'failed', failure: { kind: 'transient', message: 'not running' } }
+        return { status: 'sent', platformMessageId: 'synthetic-outbound' }
+      }
+    }
+  }
+})
+return { apply() {} }
+`
+
+describe('Host Adapter Extension end-to-end', () => {
+  it('runs with the offline harness, saves V3, installs, creates a Connection, and uninstalls without data loss', async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), 'nekro-nxt-adapter-extension-'))
+    temporaryDirectories.push(directory)
+    const runtime = await NekroRuntime.create({
+      coreDatabasePath: path.join(directory, 'core.sqlite'),
+      sessionDatabasePath: path.join(directory, 'sessions.sqlite'),
+      assetRoot: path.join(directory, 'assets'),
+      extensionDataRoot: path.join(directory, 'extension-data'),
+      extensionCacheRoot: path.join(directory, 'extension-cache'),
+      configureLlm: (context) => {
+        context.llm.registerAdapter(['test-provider'], new QuietModel())
+      },
+    })
+    await runtime.start()
+    const entity = await runtime.createAgentWithWebChannel({
+      displayName: '适配器创造智能体',
+      persona: '',
+      model: { provider: 'test-provider', model: 'chat-model' },
+      capabilities: { dynamicCreation: true },
+    })
+    await runtime.web.postMessage({
+      channelId: entity.channelId,
+      clientEventId: 'adapter-seed',
+      parts: [{ type: 'text', text: '创建合成适配器。' }],
+    })
+    const episode = runtime.repository.listActiveEpisodesForAgent(entity.agentId)[0]
+    if (!episode?.dshSessionId) throw new Error('Expected a live DSH Session.')
+    const defined = runtime.host.defineDynamicPackage(episode.dshSessionId, {
+      plugin: { kind: 'new', idPrefix: 'adapt' },
+      name: '合成适配器',
+      purpose: '验证 Host Adapter 安装闭环。',
+      code: { host: HOST_CODE },
+    })
+    await expect(
+      runtime.host.runDynamicPackage(episode.dshSessionId, defined.pluginId, defined.packageId, 'run'),
+    ).resolves.toMatchObject({ ok: true, status: 'running' })
+
+    const webContext = new Context()
+    await webContext.plugin(WebServer, { host: '127.0.0.1', port: 0 })
+    const api = createNekroHostApi(webContext.webServer, runtime)
+    const origin = `http://127.0.0.1:${api.port}`
+    try {
+      const save = await fetch(`${origin}/api/extensions/save-from-dynamic`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          agentId: entity.agentId,
+          episodeId: episode.id,
+          pluginId: defined.pluginId,
+          packageId: defined.packageId,
+          displayName: '合成适配器',
+          slug: 'synthetic-adapter',
+          description: '合成适配器测试 Revision。',
+        }),
+      })
+      expect(save.ok).toBe(true)
+      const saved = HostApiContracts.saveExtensionFromDynamic.parseResponse(await save.json())
+      expect(runtime.repository.getExtensionRevisionVerification(saved.revisionId)).toMatchObject({
+        contractVersion: 'nekro-nxt-extension-v2',
+        scope: 'host-adapter',
+        adapter: { key: 'synthetic-chat', registered: true, started: true, stopped: true },
+      })
+
+      const install = await fetch(`${origin}/api/extensions/${saved.extensionId}/installation`, {
+        method: 'PUT',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ revisionId: saved.revisionId }),
+      })
+      expect(install.ok).toBe(true)
+      expect(runtime.listConnectionAdapters()).toEqual(
+        expect.arrayContaining([expect.objectContaining({ key: 'synthetic-chat', displayName: '合成聊天平台' })]),
+      )
+      const connection = await runtime.createConnection({ adapterKey: 'synthetic-chat' })
+      expect(runtime.core.listChannelsByConnection(connection.id)).toEqual([
+        expect.objectContaining({ platformChannelId: 'synthetic-room' }),
+      ])
+
+      const uninstall = await fetch(`${origin}/api/extensions/${saved.extensionId}/installation`, {
+        method: 'DELETE',
+      })
+      expect(uninstall.ok).toBe(true)
+      expect(runtime.adapters.get('synthetic-chat')).toBeUndefined()
+      expect(runtime.core.getConnection(connection.id)).toBeDefined()
+      expect(runtime.core.listChannelsByConnection(connection.id)).toHaveLength(1)
+      expect(runtime.adapterConnectionDiagnostic(connection.id)).toMatchObject({
+        status: 'stopped',
+        message: '这个连接的适配器未安装。',
+      })
+
+      const conflicting = runtime.host.defineDynamicPackage(episode.dshSessionId, {
+        plugin: { kind: 'existing', pluginId: defined.pluginId },
+        name: '内置 key 冲突适配器',
+        purpose: '验证安装前拒绝占用内置适配器 key。',
+        code: { host: HOST_CODE.replace("key: 'synthetic-chat'", "key: 'web'") },
+      })
+      await expect(
+        runtime.host.runDynamicPackage(episode.dshSessionId, conflicting.pluginId, conflicting.packageId, 'update'),
+      ).resolves.toMatchObject({ ok: true, status: 'running' })
+      const conflictingSave = await fetch(`${origin}/api/extensions/save-from-dynamic`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          agentId: entity.agentId,
+          episodeId: episode.id,
+          pluginId: conflicting.pluginId,
+          packageId: conflicting.packageId,
+          displayName: '内置 key 冲突适配器',
+          slug: 'builtin-key-conflict',
+          description: '只用于验证 Registry 冲突预检。',
+        }),
+      })
+      expect(conflictingSave.ok).toBe(true)
+      const conflictingSaved = HostApiContracts.saveExtensionFromDynamic.parseResponse(await conflictingSave.json())
+      const builtinWeb = runtime.adapters.get('web')
+      const webConnections = runtime.core.listConnectionsByAdapter('web')
+      const conflictingInstall = await fetch(`${origin}/api/extensions/${conflictingSaved.extensionId}/installation`, {
+        method: 'PUT',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ revisionId: conflictingSaved.revisionId }),
+      })
+      expect(conflictingInstall.ok).toBe(false)
+      expect(runtime.adapters.get('web')).toBe(builtinWeb)
+      expect(runtime.core.listConnectionsByAdapter('web')).toEqual(webConnections)
+      expect(runtime.repository.getHostInstallation(conflictingSaved.extensionId)).toBeUndefined()
+    } finally {
+      api.dispose()
+      await webContext.fiber.dispose()
+      await runtime.dispose()
+    }
+  })
+})

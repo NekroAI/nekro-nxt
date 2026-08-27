@@ -31,6 +31,7 @@ import {
 } from '@nekro-nxt/contracts'
 import { providerDisplayName } from './provider-labels.js'
 import type { ProductHostPort, ProductSnapshot } from './product-port.js'
+import { HostEventStream } from './host-event-stream.js'
 
 /**
  * Real Host port for the Web product: consumes the NekroNxt domain API exposed
@@ -203,6 +204,7 @@ const projectAdapterProperty = (
     title: property.title,
     ...(property.description === undefined ? {} : { description: property.description }),
     ...(property.default === undefined ? {} : { default: property.default }),
+    ...(property.credentialKey === undefined ? {} : { credentialKey: property.credentialKey }),
   }
 }
 
@@ -213,6 +215,9 @@ const projectAdapterDescriptor = (
   displayName: descriptor.displayName,
   description: descriptor.description,
   userCreatable: descriptor.userCreatable,
+  aliasEditable: descriptor.aliasEditable,
+  channelDiscovery: descriptor.channelDiscovery,
+  diagnostics: descriptor.diagnostics,
   configSchema: {
     schemaVersion: descriptor.configSchema.schemaVersion,
     type: 'object',
@@ -299,6 +304,7 @@ const projectConversationMessage = (
         ...(part.title === undefined ? {} : { title: part.title }),
         ...(part.source === undefined ? {} : { source: part.source }),
         ...(part.targetUrl === undefined ? {} : { targetUrl: part.targetUrl }),
+        ...(part.extension === undefined ? {} : { extension: part.extension }),
         ...(previewText === undefined ? {} : { preview: previewText }),
         ...(items.length === 0 ? {} : { items }),
         ...(part.previewAssetId === undefined ? {} : { previewUrl: assetUrl(part.previewAssetId) }),
@@ -450,7 +456,7 @@ const projectSnapshot = (json: SnapshotJson, successfulAt: number): ProductSnaps
       name: adapterName,
       adapter: adapterName,
       adapterKey: connection.adapterKey,
-      userManaged: descriptor?.userCreatable ?? false,
+      userManaged: descriptor?.userCreatable ?? true,
       state:
         gatewayState === 'connected'
           ? '已连接'
@@ -489,6 +495,17 @@ const projectSnapshot = (json: SnapshotJson, successfulAt: number): ProductSnaps
       name: extension.displayName,
       description: extension.description,
       revision: latestRevision?.revisionNumber ?? 0,
+      scope: latestRevision?.scope ?? 'agent',
+      revisions: extension.revisions.map((revision) => ({
+        id: revision.id,
+        revision: revision.revisionNumber,
+        createdAt: revision.createdAt,
+        scope: revision.scope,
+        contributions: revision.contributions,
+        clientBuilt: revision.verification?.clientBuilt ?? false,
+        ...(revision.verification === undefined ? {} : { buildKey: revision.verification.buildKey }),
+        hostSlots: revision.verification?.renderedHostSlots ?? [],
+      })),
       ...(extension.createdByAgentId === undefined ? {} : { createdByAgentId: extension.createdByAgentId }),
       createdByAgent:
         extension.createdByAgentId === undefined
@@ -544,6 +561,26 @@ const projectSnapshot = (json: SnapshotJson, successfulAt: number): ProductSnaps
         ...(diagnostic.message === undefined ? {} : { message: diagnostic.message }),
         observedAt: diagnostic.observedAt,
       })),
+      ...(extension.installation === undefined
+        ? {}
+        : {
+            installation: {
+              revisionId: extension.installation.extensionRevisionId,
+              installedAt: extension.installation.installedAt,
+            },
+          }),
+      ...(extension.hostClientDiagnostic === undefined
+        ? {}
+        : {
+            hostClientDiagnostic: {
+              revisionId: extension.hostClientDiagnostic.revisionId,
+              status: extension.hostClientDiagnostic.status,
+              ...(extension.hostClientDiagnostic.message === undefined
+                ? {}
+                : { message: extension.hostClientDiagnostic.message }),
+              observedAt: extension.hostClientDiagnostic.observedAt,
+            },
+          }),
       ...(latestRevision === undefined ? {} : { revisionId: latestRevision.id }),
     }
   })
@@ -587,6 +624,7 @@ const projectSnapshot = (json: SnapshotJson, successfulAt: number): ProductSnaps
 export class HttpProductHost implements ProductHostPort {
   #snapshot: ProductSnapshot = emptySnapshot()
   #listener: (() => void) | undefined
+  readonly #events: HostEventStream
   readonly #loadedChannels = new Set<string>()
   readonly #loadedRuntimes = new Set<string>()
   readonly #messageRevision = new Map<string, number>()
@@ -594,6 +632,11 @@ export class HttpProductHost implements ProductHostPort {
   readonly #reconciling = new Set<string>()
   readonly #messageReconcileDepth = new Map<string, number>()
   readonly #pendingChannelFacts = new Map<string, ChannelFactSseData[]>()
+  #reconcilePromise: Promise<void> | undefined
+
+  constructor(events: HostEventStream = new HostEventStream()) {
+    this.#events = events
+  }
 
   getSnapshot(): ProductSnapshot {
     return this.#snapshot
@@ -603,13 +646,11 @@ export class HttpProductHost implements ProductHostPort {
     if (this.#listener) throw new Error('HttpProductHost 已经订阅，不能再订阅。')
     this.#listener = listener
     void this.#refreshAndNotify()
-    let source: EventSource | undefined
-    try {
-      source = new EventSource('/api/events')
-      source.addEventListener('open', () => {
-        void this.#refreshAndNotify()
-      })
-      source.addEventListener('channel-fact', (event) => {
+    const unsubscribeEvents = this.#events.subscribe({
+      open: () => {
+        this.#requestReconcile()
+      },
+      'channel-fact': (event) => {
         const rawData = sseEventData(event)
         if (rawData === undefined) {
           void this.#refreshAndNotify()
@@ -628,8 +669,8 @@ export class HttpProductHost implements ProductHostPort {
         }
         this.#snapshot = { ...this.#snapshot, platformUsersRevision: this.#snapshot.platformUsersRevision + 1 }
         this.#applyChannelFact(parsed.data)
-      })
-      source.addEventListener('runtime', (event) => {
+      },
+      runtime: (event) => {
         const rawData = sseEventData(event)
         if (rawData === undefined) return
         try {
@@ -638,14 +679,14 @@ export class HttpProductHost implements ProductHostPort {
         } catch {
           // Ignore malformed runtime frames; do not refetch the global snapshot.
         }
-      })
-      source.addEventListener('extensions-changed', () => {
+      },
+      'extensions-changed': () => {
         void this.#refreshAndNotify()
-      })
-      source.addEventListener('dynamic-changed', () => {
+      },
+      'dynamic-changed': () => {
         void this.#refreshAndNotify()
-      })
-      source.addEventListener('status', (event) => {
+      },
+      status: (event) => {
         const rawData = sseEventData(event)
         if (rawData === undefined) {
           void this.#refreshAndNotify()
@@ -655,28 +696,27 @@ export class HttpProductHost implements ProductHostPort {
           const parsed = HostSseStatusDataSchema.safeParse(JSON.parse(rawData))
           if (parsed.success && parsed.data.replay === 'complete') return
           if (parsed.success && parsed.data.replay === 'expired') {
-            void this.#reconcileLoaded()
+            this.#requestReconcile()
             return
           }
         } catch {
           // Fall through to a snapshot refresh for unparseable status frames.
         }
         void this.#refreshAndNotify()
-      })
-      source.onerror = () => {
+      },
+      error: () => {
         this.#publishFailure({ code: 'sse', message: '与 NekroNXT Host 的实时连接已中断，正在尝试恢复。' })
-      }
-    } catch (cause) {
-      this.#publishFailure({ code: 'sse', message: errorMessage(cause, '无法建立 NekroNXT Host 实时连接。') })
-    }
+      },
+    })
     return () => {
       this.#listener = undefined
-      source?.close()
+      unsubscribeEvents()
     }
   }
 
   async execute(command: string, input?: Readonly<Record<string, unknown>>): Promise<unknown> {
     if (command === 'host.refresh') {
+      this.#events.reconnectNow()
       const failure = await this.#refreshAndNotify()
       if (failure !== null) throw failure
       return null
@@ -994,6 +1034,35 @@ export class HttpProductHost implements ProductHostPort {
       await this.#refreshAndNotify()
       return result
     }
+    if (command === 'extensions.install') {
+      const extensionId = typeof input?.['extensionId'] === 'string' ? input['extensionId'] : ''
+      const revisionId = typeof input?.['revisionId'] === 'string' ? input['revisionId'] : ''
+      if (!extensionId.trim() || !revisionId.trim()) throw new Error('缺少扩展或适配器版本标识。')
+      const result = await this.#call(HostApiContracts.installHostExtension, { extensionId }, { revisionId })
+      await this.#refreshAndNotify()
+      return result
+    }
+    if (command === 'extensions.uninstall') {
+      const extensionId = typeof input?.['extensionId'] === 'string' ? input['extensionId'] : ''
+      if (!extensionId.trim()) throw new Error('缺少本地扩展标识，请刷新页面后重试。')
+      const result = await this.#call(HostApiContracts.uninstallHostExtension, { extensionId }, undefined)
+      await this.#refreshAndNotify()
+      return result
+    }
+    if (command === 'extensions.hostClientDiagnostic') {
+      const extensionId = typeof input?.['extensionId'] === 'string' ? input['extensionId'] : ''
+      const revisionId = typeof input?.['revisionId'] === 'string' ? input['revisionId'] : ''
+      const status = input?.['status'] === 'loaded' || input?.['status'] === 'failed' ? input['status'] : undefined
+      if (!extensionId.trim() || !revisionId.trim() || !status) throw new Error('Host Client 诊断目标无效。')
+      return this.#call(
+        HostApiContracts.hostExtensionClientDiagnostic,
+        { extensionId, revisionId },
+        {
+          status,
+          ...(typeof input?.['message'] === 'string' ? { message: input['message'] } : {}),
+        },
+      )
+    }
     if (command === 'extensions.deactivate') {
       const extensionId = typeof input?.['extensionId'] === 'string' ? input['extensionId'] : ''
       if (!extensionId.trim()) throw new Error('缺少本地扩展标识，请刷新页面后重试。')
@@ -1255,13 +1324,24 @@ export class HttpProductHost implements ProductHostPort {
   }
 
   async #reconcileLoaded(): Promise<void> {
-    await this.#refreshAndNotify()
+    const failure = await this.#refreshAndNotify()
+    if (failure !== null) return
     await Promise.all([
       ...[...this.#loadedChannels].map((channelId) =>
         this.#loadChannelMessages(channelId, 'latest', CHANNEL_MESSAGE_PAGE_SIZE),
       ),
       ...[...this.#loadedRuntimes].map((channelId) => this.#loadChannelRuntime(channelId)),
     ])
+  }
+
+  #requestReconcile(): void {
+    if (this.#reconcilePromise !== undefined) return
+    const task = this.#reconcileLoaded()
+      .catch(() => undefined)
+      .finally(() => {
+        if (this.#reconcilePromise === task) this.#reconcilePromise = undefined
+      })
+    this.#reconcilePromise = task
   }
 
   async #observeRequest<Result>(request: () => Promise<Result>): Promise<Result> {

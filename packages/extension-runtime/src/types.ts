@@ -42,6 +42,21 @@ export type ExtensionContribution =
       readonly kind: 'client-slot'
       readonly name: 'agent.workbench.sections' | 'extension.details.panels'
     }
+  | HostAdapterContributionEvidence
+  | HostClientSlotContributionEvidence
+
+export interface HostAdapterContributionEvidence {
+  readonly kind: 'adapter'
+  readonly apiVersion: 1
+  readonly key: string
+  readonly descriptorDigest: string
+}
+
+export interface HostClientSlotContributionEvidence {
+  readonly kind: 'host-client-slot'
+  readonly name: 'conversation.message.rich'
+  readonly key: string
+}
 
 export interface ExtensionManifestV1 {
   readonly extensionId: ExtensionId
@@ -57,13 +72,24 @@ export interface ExtensionManifestV2 extends ExtensionManifestV1 {
   readonly contributions: readonly ExtensionContribution[]
 }
 
-export type ExtensionManifest = ExtensionManifestV1 | ExtensionManifestV2
+export interface ExtensionManifestV3 {
+  readonly schemaVersion: 3
+  readonly scope: 'host-adapter'
+  readonly extensionId: ExtensionId
+  readonly revisionId: ExtensionRevisionId
+  readonly entrypoints:
+    { readonly host: 'source/host.ts'; readonly client: 'source/client.ts' } | { readonly host: 'source/host.ts' }
+  readonly contributions: readonly [HostAdapterContributionEvidence, ...HostClientSlotContributionEvidence[]]
+}
+
+export type ExtensionManifest = ExtensionManifestV1 | ExtensionManifestV2 | ExtensionManifestV3
 
 export interface ExtensionRevisionVerification {
   readonly revisionId: ExtensionRevisionId
   /** Exact DSH release used when this immutable verification evidence was produced. */
   readonly dshVersion: string
-  readonly contractVersion: 'nekro-nxt-extension-v1'
+  readonly contractVersion: 'nekro-nxt-extension-v1' | 'nekro-nxt-extension-v2'
+  readonly scope?: 'host-adapter'
   readonly origin: {
     readonly episodeId: string
     readonly pluginId: string
@@ -76,6 +102,27 @@ export interface ExtensionRevisionVerification {
   readonly toolInvocations: readonly { readonly name: string; readonly succeeded: boolean }[]
   readonly rpcMethods: readonly string[]
   readonly renderedSlots: readonly ('agent.workbench.sections' | 'extension.details.panels')[]
+  readonly adapter?: {
+    readonly apiVersion: 1
+    readonly key: string
+    readonly descriptorDigest: string
+    readonly registered: boolean
+    readonly started: boolean
+    readonly stopped: boolean
+    readonly inboundCommitted: boolean
+    readonly outboundReceipt: 'sent' | 'failed' | 'unknown'
+  }
+  readonly renderedHostSlots?: readonly {
+    readonly name: 'conversation.message.rich'
+    readonly key: string
+  }[]
+}
+
+/** The single currently installed Host-scoped Revision for one Extension. */
+export interface HostInstallation {
+  readonly extensionId: ExtensionId
+  readonly extensionRevisionId: ExtensionRevisionId
+  readonly installedAt: number
 }
 
 export interface ExtensionClientDiagnostic {
@@ -123,4 +170,9 @@ export interface ExtensionRepository {
   listActivations(agentId?: AgentId): readonly Activation[]
   upsertActivation(activation: Activation): void
   deleteActivation(agentId: AgentId, extensionId: ExtensionId): void
+
+  getHostInstallation(extensionId: ExtensionId): HostInstallation | undefined
+  listHostInstallations(): readonly HostInstallation[]
+  upsertHostInstallation(installation: HostInstallation): void
+  deleteHostInstallation(extensionId: ExtensionId): void
 }

@@ -61,6 +61,9 @@ const browserSnapshot = HostApiContracts.snapshot.response.parse({
       displayName: '内置频道',
       description: '内置频道',
       userCreatable: false,
+      aliasEditable: false,
+      channelDiscovery: 'host-created',
+      diagnostics: { receive: false, send: false },
       configSchema: { schemaVersion: 1, type: 'object', required: [], properties: {} },
     },
     {
@@ -68,6 +71,9 @@ const browserSnapshot = HostApiContracts.snapshot.response.parse({
       displayName: 'QQ 开放平台',
       description: '连接 QQ 机器人账号',
       userCreatable: true,
+      aliasEditable: true,
+      channelDiscovery: 'adapter-observed',
+      diagnostics: { receive: true, send: true },
       configSchema: { schemaVersion: 1, type: 'object', required: [], properties: {} },
     },
   ],
@@ -214,6 +220,7 @@ const browserSnapshot = HostApiContracts.snapshot.response.parse({
           id: browserExtensionRevisionId,
           revisionNumber: 3,
           createdAt: 1_725_000_000_000,
+          scope: 'agent',
           contributions: ['工具：document_review'],
           verification: {
             verifiedAt: 1_725_000_000_000,
@@ -1432,15 +1439,21 @@ describe.sequential('NekroNxt browser projections', { timeout: 30_000 }, () => {
             {
               packageName: '@deepseek-ai/dsh-web-search-deepseek',
               packageVersion: '0.1.1-rc.2',
-              dshVersion: '0.1.1-rc.2',
               origin: 'builtin',
-              overall: 'verified',
               settingsNamespaces: ['web-search-deepseek'],
-              facets: [
-                { facet: 'host-load', status: 'supported', evidence: [] },
-                { facet: 'settings', status: 'supported', evidence: [] },
-                { facet: 'client-ui', status: 'supported', evidence: [] },
-              ],
+            },
+            {
+              packageName: '@example/dsh-user-extension',
+              packageVersion: '1.0.0',
+              origin: 'profile',
+              settingsNamespaces: [],
+            },
+            {
+              packageName: '@example/dsh-broken-extension',
+              packageVersion: '1.0.0',
+              origin: 'profile',
+              settingsNamespaces: [],
+              loadError: { code: 'missing-dependency', message: '缺少运行所需的测试服务。' },
             },
           ],
         }),
@@ -1512,6 +1525,14 @@ describe.sequential('NekroNxt browser projections', { timeout: 30_000 }, () => {
     try {
       await page.goto(`${baseUrl}/settings?tab=dsh-extensions`)
       await playwrightExpect(page.getByText('DeepSeek 网页搜索', { exact: true }).first()).toBeVisible()
+      await playwrightExpect(page.getByText('内置', { exact: true }).first()).toBeVisible()
+      await playwrightExpect(page.getByText('用户安装', { exact: true }).first()).toBeVisible()
+      await playwrightExpect(page.getByText('加载失败', { exact: true }).first()).toBeVisible()
+      await playwrightExpect(page.locator('body')).not.toContainText('已验证支持')
+      await playwrightExpect(page.locator('body')).not.toContainText('未完整验证')
+      await page.getByText('@example/dsh-broken-extension', { exact: true }).click()
+      await playwrightExpect(page.getByText('缺少运行所需的测试服务。', { exact: true })).toBeVisible()
+      await page.getByText('DeepSeek 网页搜索', { exact: true }).first().click()
       await playwrightExpect(page.getByText('DSH 原生界面', { exact: true }).first()).toBeVisible()
       await playwrightExpect(page.locator('[data-dsh-native-surface]')).toBeVisible()
       await playwrightExpect(page.locator('[data-dsh-native-surface]')).toContainText(/Web search|网页搜索/, {
@@ -1660,7 +1681,9 @@ describe.sequential('NekroNxt browser projections', { timeout: 30_000 }, () => {
     try {
       await page.goto(`${baseUrl}/settings?tab=dsh-extensions`)
       await playwrightExpect(page.getByText('runtime-extra', { exact: true }).first()).toBeVisible()
-      await playwrightExpect(page.getByText(/尚未识别所属插件/)).toBeVisible()
+      await playwrightExpect(page.getByText('其他扩展', { exact: true }).first()).toBeVisible()
+      await playwrightExpect(page.getByText(/当前 DSH Host 运行时注册/)).toBeVisible()
+      await playwrightExpect(page.locator('body')).not.toContainText('未评估归属')
       await playwrightExpect(page.getByText('保存后需要重启')).toBeVisible()
       await playwrightExpect(page.getByRole('button', { name: '添加一项' })).toBeVisible()
       await playwrightExpect(page.getByRole('button', { name: '添加键值' })).toBeVisible()

@@ -19,6 +19,7 @@
     "dist:server": "node scripts/build-server-image.mjs",
     "brand:export": "node scripts/export-brand-assets.mjs",
     "brand:check": "node scripts/check-brand-assets.mjs",
+    "scaffold:adapter": "node scripts/scaffold-adapter-extension.mjs",
     "build": "tsc -b && pnpm -r --if-present run build && node scripts/check-built-exports.mjs",
     "check": "pnpm check:format && pnpm typecheck && pnpm lint && pnpm check:static && pnpm check:drizzle && pnpm check:css-types && pnpm check:docs && pnpm check:public && pnpm brand:check && pnpm check:workspace && pnpm check:dsh-family && pnpm check:ui-boundary && pnpm check:ui-actions && pnpm check:gates",
     "check:css-types": "node scripts/check-css-module-types.mjs",

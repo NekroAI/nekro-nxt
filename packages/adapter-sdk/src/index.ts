@@ -87,13 +87,14 @@ export interface AdapterConnectionContext {
   readonly credentials?: AdapterCredentialHost
   readonly state?: AdapterScopedStateStore
   readonly diagnostics?: AdapterDiagnosticPublisher
+  readonly transport?: AdapterTransportService
 }
 
 export type AdapterConnectionHostContext = AdapterConnectionContext &
   Required<
     Pick<
       AdapterConnectionContext,
-      'channels' | 'members' | 'messages' | 'assets' | 'credentials' | 'state' | 'diagnostics'
+      'channels' | 'members' | 'messages' | 'assets' | 'credentials' | 'state' | 'diagnostics' | 'transport'
     >
   >
 
@@ -153,6 +154,43 @@ export interface AdapterCredentialHost {
   resolve(reference: string): Promise<string>
 }
 
+export interface AdapterHttpRequest {
+  readonly url: string
+  readonly method?: string
+  readonly headers?: Readonly<Record<string, string>>
+  readonly body?: string | Uint8Array
+  readonly signal?: AbortSignal
+}
+
+export interface AdapterHttpResponse {
+  readonly status: number
+  readonly headers: Readonly<Record<string, string>>
+  readonly body: Uint8Array
+}
+
+export type AdapterWebSocketEvent =
+  | { readonly type: 'open' }
+  | { readonly type: 'message'; readonly data: string | Uint8Array }
+  | { readonly type: 'close'; readonly code: number; readonly reason: string }
+  | { readonly type: 'error'; readonly message: string }
+
+export interface AdapterWebSocketConnection {
+  send(data: string | Uint8Array): Promise<void>
+  close(code?: number, reason?: string): Promise<void>
+  subscribe(listener: (event: AdapterWebSocketEvent) => void): () => void
+}
+
+/** Replaceable network boundary used by production Adapters and offline validation harnesses. */
+export interface AdapterTransportService {
+  request(input: AdapterHttpRequest): Promise<AdapterHttpResponse>
+  connectWebSocket(input: {
+    readonly url: string
+    readonly protocols?: string | readonly string[]
+    readonly headers?: Readonly<Record<string, string>>
+    readonly signal?: AbortSignal
+  }): Promise<AdapterWebSocketConnection>
+}
+
 export interface AdapterScopedStateStore {
   load(key: string): Promise<JsonValue | undefined>
   save(key: string, value: JsonValue): Promise<void>
@@ -187,6 +225,8 @@ export type AdapterConfigurationProperty =
       readonly title: string
       readonly description?: string
       readonly default?: string
+      /** Durable credential reference key; defaults to the public property key. */
+      readonly credentialKey?: string
     }
   | {
       readonly type: 'boolean'
@@ -235,6 +275,7 @@ type AdapterCredentialPropertyFor<Value> = [Exclude<Value, undefined>] extends [
       readonly type: 'credential-reference'
       readonly title: string
       readonly description?: string
+      readonly credentialKey?: string
     }
   : never
 
@@ -282,6 +323,15 @@ export type AdapterConnectionDescriptor<
   readonly description: string
   /** System-managed adapters remain visible for diagnostics but cannot be created by users. */
   readonly userCreatable: boolean
+  /** Whether the user can edit the optional Connection alias. */
+  readonly aliasEditable: boolean
+  /** How Channels become available for this Connection. */
+  readonly channelDiscovery: 'host-created' | 'adapter-observed'
+  /** Product-owned diagnostic actions supported by this Adapter. */
+  readonly diagnostics: {
+    readonly receive: boolean
+    readonly send: boolean
+  }
   readonly configSchema: [ConfigurationSchema] extends [never]
     ? AdapterConnectionWireSchema
     : [CredentialsSchema] extends [never]
@@ -316,6 +366,9 @@ export function defineAdapterConnection<
   readonly displayName: string
   readonly description: string
   readonly userCreatable: boolean
+  readonly aliasEditable?: boolean
+  readonly channelDiscovery?: 'host-created' | 'adapter-observed'
+  readonly diagnostics?: { readonly receive: boolean; readonly send: boolean }
   readonly configurationSchema: ConfigurationSchema
   readonly credentialsSchema: CredentialsSchema
   readonly configSchema: AdapterConnectionUiSchema<ConfigurationSchema, CredentialsSchema>
@@ -327,6 +380,9 @@ export function defineAdapterConnection<
       displayName: input.displayName,
       description: input.description,
       userCreatable: input.userCreatable,
+      aliasEditable: input.aliasEditable ?? input.userCreatable,
+      channelDiscovery: input.channelDiscovery ?? (input.userCreatable ? 'adapter-observed' : 'host-created'),
+      diagnostics: input.diagnostics ?? { receive: input.userCreatable, send: input.userCreatable },
       configSchema: input.configSchema,
     },
     configurationSchema: input.configurationSchema,
@@ -500,6 +556,108 @@ export interface AdapterPhysicalPlan {
 export interface AdapterContribution<Config = unknown> {
   readonly key: string
   create(context: AdapterConnectionContext, config: Config): Promise<AdapterConnectionRuntime>
+}
+
+export interface AdapterStoredConnectionConfiguration {
+  readonly configuration: Readonly<Record<string, string | number | boolean>>
+  readonly credentialRefs: Readonly<Record<string, string>>
+}
+
+/** Versioned Host-wide Adapter contribution loaded from built-ins or an installed Extension Revision. */
+export interface AdapterHostContributionV1 {
+  readonly apiVersion: 1
+  readonly descriptor: AdapterConnectionDescriptor
+  create(
+    context: AdapterConnectionHostContext,
+    stored: AdapterStoredConnectionConfiguration,
+  ): Promise<AdapterConnectionRuntime>
+}
+
+export interface RegisteredAdapterHandle {
+  readonly owner: string
+  readonly contribution: AdapterHostContributionV1
+  dispose(): Promise<void>
+}
+
+const assertAdapterDescriptor = (descriptor: AdapterConnectionDescriptor): void => {
+  if (!descriptor.key.trim()) throw new TypeError('Adapter key must not be empty.')
+  if (!/^[a-z][a-z0-9-]{1,62}[a-z0-9]$/u.test(descriptor.key)) {
+    throw new TypeError('Adapter key must use lowercase letters, numbers, and hyphens.')
+  }
+  if (!descriptor.displayName.trim()) throw new TypeError('Adapter displayName must not be empty.')
+  if (descriptor.configSchema.type !== 'object') throw new TypeError('Adapter config schema must be an object.')
+  if (!Number.isSafeInteger(descriptor.configSchema.schemaVersion) || descriptor.configSchema.schemaVersion < 1) {
+    throw new TypeError('Adapter config schema version must be a positive integer.')
+  }
+  const credentialKeys = new Set<string>()
+  const requiredKeys = new Set<string>()
+  for (const key of descriptor.configSchema.required) {
+    if (requiredKeys.has(key)) throw new TypeError(`Adapter required property is duplicated: ${key}`)
+    requiredKeys.add(key)
+  }
+  for (const [key, property] of Object.entries(descriptor.configSchema.properties)) {
+    if (!key.trim() || !property.title.trim())
+      throw new TypeError('Adapter config properties need stable keys and titles.')
+    if (property.default !== undefined && property.type === 'credential-reference') {
+      throw new TypeError(`Adapter credential property cannot declare a default: ${key}`)
+    }
+    if (property.default !== undefined && typeof property.default !== property.type) {
+      throw new TypeError(`Adapter config property default has the wrong type: ${key}`)
+    }
+    if (property.type !== 'credential-reference') continue
+    const credentialKey = property.credentialKey?.trim() || key
+    if (credentialKeys.has(credentialKey)) throw new TypeError(`Adapter credential key is duplicated: ${credentialKey}`)
+    credentialKeys.add(credentialKey)
+  }
+  const unknownRequired = descriptor.configSchema.required.find(
+    (key) => !Object.hasOwn(descriptor.configSchema.properties, key),
+  )
+  if (unknownRequired) throw new TypeError(`Adapter required property is not declared: ${unknownRequired}`)
+}
+
+/** Single authoritative catalog for built-in and installed Host Adapter contributions. */
+export class AdapterRegistry {
+  readonly #byKey = new Map<string, RegisteredAdapterHandle>()
+  readonly #byOwner = new Map<string, RegisteredAdapterHandle>()
+
+  register(ownerInput: string, contribution: AdapterHostContributionV1): RegisteredAdapterHandle {
+    const owner = ownerInput.trim()
+    if (!owner) throw new TypeError('Adapter contribution owner must not be empty.')
+    if (contribution.apiVersion !== 1)
+      throw new TypeError(`Unsupported Adapter Host API version: ${String(contribution.apiVersion)}`)
+    assertAdapterDescriptor(contribution.descriptor)
+    if (this.#byOwner.has(owner)) throw new Error(`Adapter contribution owner is already registered: ${owner}`)
+    if (this.#byKey.has(contribution.descriptor.key)) {
+      throw new Error(`Adapter key is already registered: ${contribution.descriptor.key}`)
+    }
+    let active = true
+    const handle: RegisteredAdapterHandle = {
+      owner,
+      contribution,
+      dispose: () => {
+        if (!active) return Promise.resolve()
+        active = false
+        if (this.#byKey.get(contribution.descriptor.key) === handle) this.#byKey.delete(contribution.descriptor.key)
+        if (this.#byOwner.get(owner) === handle) this.#byOwner.delete(owner)
+        return Promise.resolve()
+      },
+    }
+    this.#byKey.set(contribution.descriptor.key, handle)
+    this.#byOwner.set(owner, handle)
+    return handle
+  }
+
+  get(key: string): AdapterHostContributionV1 | undefined {
+    return this.#byKey.get(key)?.contribution
+  }
+
+  getByOwner(owner: string): AdapterHostContributionV1 | undefined {
+    return this.#byOwner.get(owner)?.contribution
+  }
+
+  list(): readonly AdapterHostContributionV1[] {
+    return [...this.#byKey.values()].map(({ contribution }) => contribution)
+  }
 }
 
 export function parseAdapterInboundEvent(input: unknown): AdapterInboundEvent {

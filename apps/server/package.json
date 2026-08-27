@@ -89,9 +89,11 @@
     "selfsigned": "5.5.0",
     "sharp": "0.35.3",
     "ulid": "3.0.2",
+    "ws": "8.21.3",
     "zod": "4.4.3"
   },
   "devDependencies": {
+    "@types/ws": "8.18.1",
     "@deepseek-ai/cordis-plugin-loader": "1.0.2",
     "@deepseek-ai/dsh-anonymous-user-id": "0.1.1-rc.2",
     "@deepseek-ai/dsh-app-boot": "0.1.1-rc.2",

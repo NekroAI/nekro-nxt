@@ -127,13 +127,13 @@ import {
   type ChannelRuntimeOccupancy,
   type ConnectionId,
   type DshCredentialView,
+  type DshPluginCatalogEntry,
   type DshSettingsNamespaceView,
   type DshSettingsPathOperation,
   type EpisodeId,
   type JsonValue,
   type LogicalMessageId,
   type MessagePart,
-  type PluginSupportAssessment,
   type PromptDocumentV1,
   type PromptSegment,
 } from '@nekro-nxt/contracts'
@@ -146,6 +146,7 @@ import type {
   ChannelReferenceRecord,
   CoreRepository,
 } from '@nekro-nxt/core'
+import { canonicalJson } from '@nekro-nxt/core'
 import type {
   Activation,
   ExtensionActivationHost,
@@ -177,6 +178,12 @@ import sharp from 'sharp'
 import { z } from 'zod'
 import { defineDshToolFromUnknown, parseDshImageAttachmentRef, parseDshToolDefinition } from './dsh-interop/unsafe.js'
 import { QuotaLocalSpillStore } from './dsh-spill.js'
+import {
+  ADAPTER_DYNAMIC_EVIDENCE_METHOD,
+  AdapterDynamicEvidenceSchema,
+  isAdapterDynamicHostSource,
+  wrapAdapterDynamicHostSource,
+} from './adapter-dynamic-harness.js'
 
 export interface AssetAccessRepository {
   getAssetById(id: AssetRecord['id']): AssetRecord | undefined
@@ -341,94 +348,70 @@ const HOST_DSH_PACKAGE_VERSIONS = {
   '@deepseek-ai/dsh-web-search-deepseek': '0.1.1-rc.2',
 } as const
 
-interface DshRosterEntry {
+interface DshBuiltinExtensionEntry {
   readonly packageName: keyof typeof HOST_DSH_PACKAGE_VERSIONS
   readonly settingsNamespaces?: readonly string[]
-  readonly facets: readonly ('settings' | 'tools' | 'providers' | 'scope-bundle-preset')[]
-  readonly externallyVerified: boolean
-  readonly nativeClientUi?: boolean
 }
 
-/** Explicit production composition; this is not a second plugin loader. */
-const DSH_CAPABILITY_ROSTER: readonly DshRosterEntry[] = [
+/** Product-visible identities for the fixed DSH packages composed by this Host. */
+const DSH_BUILTIN_EXTENSION_ROSTER: readonly DshBuiltinExtensionEntry[] = [
   {
     packageName: '@deepseek-ai/dsh-llm-pi-ai',
     settingsNamespaces: ['llm-pi-ai'],
-    facets: ['settings', 'providers'],
-    externallyVerified: true,
   },
   {
     packageName: '@deepseek-ai/dsh-llm-deepseek',
     settingsNamespaces: ['llm-deepseek'],
-    facets: ['settings', 'providers'],
-    externallyVerified: false,
+  },
+  {
+    packageName: '@deepseek-ai/dsh-agent-loop',
+    settingsNamespaces: ['agent-loop'],
+  },
+  {
+    packageName: '@deepseek-ai/dsh-bash-sandbox',
+    settingsNamespaces: ['shell'],
   },
   {
     packageName: '@deepseek-ai/dsh-subagent',
-    facets: ['providers'],
-    externallyVerified: true,
   },
   {
     packageName: '@deepseek-ai/dsh-subagent-spawn-in-process',
-    facets: ['providers'],
-    externallyVerified: true,
   },
   {
     packageName: '@deepseek-ai/dsh-tool-subagent',
-    facets: ['tools', 'scope-bundle-preset'],
-    externallyVerified: true,
   },
   {
     packageName: '@deepseek-ai/dsh-tool-subagent-control',
-    facets: ['tools', 'scope-bundle-preset'],
-    externallyVerified: true,
   },
   {
     packageName: '@deepseek-ai/dsh-web',
-    facets: ['providers'],
-    externallyVerified: true,
   },
   {
     packageName: '@deepseek-ai/dsh-web-search-deepseek',
     settingsNamespaces: ['web-search-deepseek'],
-    facets: ['settings', 'providers'],
-    externallyVerified: true,
-    nativeClientUi: true,
   },
   {
     packageName: '@deepseek-ai/dsh-tool-web',
-    facets: ['tools', 'scope-bundle-preset'],
-    externallyVerified: true,
   },
   {
     packageName: '@deepseek-ai/dsh-compaction-tool-result-pruner',
-    facets: [],
-    externallyVerified: true,
   },
   {
     packageName: '@deepseek-ai/dsh-llm-retry',
-    facets: [],
-    externallyVerified: true,
   },
   {
     packageName: '@deepseek-ai/dsh-tool-call-timeout-policy',
-    facets: [],
-    externallyVerified: true,
   },
   {
     packageName: '@deepseek-ai/dsh-spill-policy',
-    facets: ['tools'],
-    externallyVerified: true,
   },
   {
     packageName: '@deepseek-ai/dsh-cordis-host-runner',
-    facets: ['tools', 'scope-bundle-preset'],
-    externallyVerified: true,
   },
 ] as const
 
 const DSH_SETTINGS_OWNER = new Map(
-  DSH_CAPABILITY_ROSTER.flatMap((entry) =>
+  DSH_BUILTIN_EXTENSION_ROSTER.flatMap((entry) =>
     (entry.settingsNamespaces ?? []).map((ns) => [ns, entry.packageName] as const),
   ),
 )
@@ -955,13 +938,13 @@ const nekroNxtInspectProvider = (input: {
       },
       {
         name: 'supportedContributions',
-        description: '读取 NekroNxt 当前允许的 Host Tool、Host RPC 与产品 Client Slot。',
+        description: '读取 NekroNxt 当前允许的 Host Tool、Host RPC、产品 Client Slot 与 Adapter Host API。',
         inputSchema: noFieldsSchema,
         outputSchema: jsonObjectSchema,
       },
       {
         name: 'developmentExample',
-        description: '读取与当前契约同源的 Host Tool、RPC 和产品 Client Slot 完整示例。',
+        description: '读取与当前契约同源的 Host Tool、RPC、产品 Client Slot 和 Adapter 完整示例。',
         inputSchema: noFieldsSchema,
         outputSchema: jsonObjectSchema,
       },
@@ -1024,6 +1007,12 @@ const nekroNxtInspectProvider = (input: {
           },
           save: { createsImmutableSourceRevision: true, activatesAutomatically: false },
           activation: { target: 'one-agent', safeSwitchRequired: true },
+          hostInstallation: {
+            target: 'local-host',
+            acceptsScope: 'host-adapter',
+            requiresVerifiedSavedRevision: true,
+            restoresBeforeConnections: true,
+          },
           recoveryRules: NEKRO_NXT_EXTENSION_AUTHORING_REFERENCE.recoveryRules,
           forbidden: ['host-path-as-identity', 'direct-core-database-access', 'implicit-shell-or-file-grant'],
         }),
@@ -1107,6 +1096,8 @@ class NekroNxtDynamicCordisRunner extends DynamicCordisRunnerService {
     string,
     { readonly pluginRunId: string; readonly methods: Set<string> }
   >()
+  private readonly adapterPackages = new Set<string>()
+  private readonly originalHostByPackage = new Map<string, string>()
 
   constructor(context: Context, config: { readonly vmTimeoutMs?: number }) {
     super(context, config)
@@ -1148,13 +1139,40 @@ class NekroNxtDynamicCordisRunner extends DynamicCordisRunnerService {
       throw new Error(`只能向当前 Episode 的 Plugin ${state.primaryPluginId ?? '（尚未创建）'} 追加 Package。`)
     }
     try {
-      const receipt = super.define(request)
+      const adapterHost = isAdapterDynamicHostSource(request.code.host) ? request.code.host : undefined
+      const receipt = super.define(
+        adapterHost === undefined
+          ? request
+          : {
+              ...request,
+              code: { ...request.code, host: wrapAdapterDynamicHostSource(adapterHost) },
+            },
+      )
+      if (adapterHost !== undefined) {
+        this.adapterPackages.add(receipt.packageId)
+        this.originalHostByPackage.set(receipt.packageId, adapterHost)
+      }
       if (request.plugin.kind === 'new') this.state = { ...state, primaryPluginId: receipt.pluginId }
       return receipt
     } catch (error) {
       this.recordFailure('define', error instanceof Error ? error.message : String(error))
       throw error
     }
+  }
+
+  override inspectPackage(
+    agent: Agent,
+    pluginId: CordisDynamicPluginIdType,
+    packageId: CordisDynamicPackageIdType,
+  ): DynamicCordisPackageInspection {
+    const inspection = super.inspectPackage(agent, pluginId, packageId)
+    const originalHost = this.originalHostByPackage.get(packageId)
+    if (originalHost === undefined) return inspection
+    return { ...inspection, code: { ...inspection.code, host: originalHost } }
+  }
+
+  isAdapterPackage(packageId: string): boolean {
+    return this.adapterPackages.has(packageId)
   }
 
   override async run(
@@ -1290,6 +1308,8 @@ class NekroNxtDynamicCordisRunner extends DynamicCordisRunnerService {
         this.toolNamesByPackage.delete(pkg.packageId)
         this.clientEvidenceByPackage.delete(pkg.packageId)
         this.clientRpcMethodsByPackage.delete(pkg.packageId)
+        this.adapterPackages.delete(pkg.packageId)
+        this.originalHostByPackage.delete(pkg.packageId)
       }
     }
     const state = this.requireState()
@@ -2990,8 +3010,8 @@ export class DshHostRuntime implements AgentSessionDriver, ExtensionActivationHo
     return { ...fallback, available: credentialConfigured, credentialConfigured, credentialReference }
   }
 
-  /** Project the explicit production roster and current public DSH registrations. */
-  listDshPluginSupport(): readonly PluginSupportAssessment[] {
+  /** Project the fixed product-visible DSH package roster without inventing a compatibility rating. */
+  listDshPlugins(): readonly DshPluginCatalogEntry[] {
     this.#assertActive()
     const liveNamespaces = new Set(
       this.#hasLlmSettings
@@ -3001,101 +3021,12 @@ export class DshHostRuntime implements AgentSessionDriver, ExtensionActivationHo
             .map((descriptor) => String(descriptor.ns))
         : [],
     )
-    const require = createRequire(import.meta.url)
-    return DSH_CAPABILITY_ROSTER.map((entry) => {
-      const manifest = PackageManifestSchema.parse(require(`${entry.packageName}/package.json`))
+    return DSH_BUILTIN_EXTENSION_ROSTER.map((entry) => {
       const expectedNamespaces = entry.settingsNamespaces ?? []
-      const missingNamespaces = expectedNamespaces.filter((ns) => !liveNamespaces.has(ns))
-      const hasClient = entry.nativeClientUi === true || manifest.dsh?.client?.platform === 'web'
-      const facets: PluginSupportAssessment['facets'] = [
-        {
-          facet: 'host-load',
-          status: 'supported',
-          evidence: [
-            {
-              level: 'activation',
-              code: 'fixed-roster-active',
-              message: '该精确版本已由当前 Host 固定组装并完成启动。',
-            },
-          ],
-        },
-        {
-          facet: 'service-injection',
-          status: 'supported',
-          evidence: [
-            {
-              level: 'integration',
-              code: 'host-composition-satisfied',
-              message: '当前生产组合已满足插件公开 Service 注入。',
-            },
-          ],
-        },
-        {
-          facet: 'lifecycle',
-          status: 'supported',
-          evidence: [
-            {
-              level: 'lifecycle',
-              code: 'host-owned-fiber',
-              message: '插件 Fiber 由 DSH Host 根生命周期拥有并在关闭时等待 dispose。',
-            },
-          ],
-        },
-        ...(['settings', 'tools', 'providers', 'scope-bundle-preset'] as const).map((facet) => {
-          const declared = entry.facets.includes(facet)
-          const settingsFailed = facet === 'settings' && missingNamespaces.length > 0
-          return {
-            facet,
-            status: settingsFailed
-              ? ('failed' as const)
-              : declared
-                ? ('supported' as const)
-                : ('not-applicable' as const),
-            evidence: declared
-              ? [
-                  {
-                    level: entry.externallyVerified ? ('external-result' as const) : ('activation' as const),
-                    code: settingsFailed ? 'settings-registration-missing' : 'roster-capability-verified',
-                    message: settingsFailed
-                      ? `预期 Settings namespace 未注册：${missingNamespaces.join('、')}`
-                      : '当前锁定版本已通过对应能力面的真实组装测试。',
-                  },
-                ]
-              : [],
-          }
-        }),
-        {
-          facet: 'client-ui',
-          status: entry.nativeClientUi === true ? 'supported' : hasClient ? 'unsupported' : 'not-applicable',
-          evidence: hasClient
-            ? [
-                {
-                  level: entry.nativeClientUi === true ? 'integration' : 'metadata',
-                  code: entry.nativeClientUi === true ? 'native-settings-fixture' : 'client-runtime-not-mounted',
-                  message:
-                    entry.nativeClientUi === true
-                      ? '已通过官方 DSH 插件配置界面与 NekroNxt Client Bridge 的真实渲染测试。'
-                      : '包声明了 DSH Web Client，但当前 Host 尚未开放该 Client bundle。',
-                },
-              ]
-            : [],
-        },
-      ]
-      const failed = facets.some((facet) => facet.status === 'failed')
-      const partial = facets.some((facet) => facet.status === 'unsupported')
       return {
         packageName: entry.packageName,
         packageVersion: HOST_DSH_PACKAGE_VERSIONS[entry.packageName],
-        dshVersion: '0.1.1-rc.2',
         origin: 'builtin',
-        overall: failed
-          ? 'incompatible'
-          : partial
-            ? 'partial'
-            : entry.externallyVerified
-              ? 'verified'
-              : 'loadable-unverified',
-        facets,
         settingsNamespaces: expectedNamespaces.filter((ns) => liveNamespaces.has(ns)),
       }
     })
@@ -4054,7 +3985,62 @@ export class DshHostRuntime implements AgentSessionDriver, ExtensionActivationHo
       | { readonly kind: 'tool'; readonly name: string; readonly description: string }
       | { readonly kind: 'rpc'; readonly method: string }
       | { readonly kind: 'client-slot'; readonly name: 'agent.workbench.sections' | 'extension.details.panels' }
+      | {
+          readonly kind: 'adapter'
+          readonly apiVersion: 1
+          readonly key: string
+          readonly descriptorDigest: string
+        }
     >
+    if (runner.isAdapterPackage(packageId)) {
+      if (evidence.toolNames.length > 0 || evidence.renderedSlots.length > 0) {
+        throw new Error('适配器 Revision 不能混装智能体工具或智能体 Slot，请拆分为两个扩展。')
+      }
+      const foreignRpc = evidence.rpcMethods.filter((method) => method !== ADAPTER_DYNAMIC_EVIDENCE_METHOD)
+      if (foreignRpc.length > 0) throw new Error('适配器 Revision 不能混装智能体 RPC，请拆分为两个扩展。')
+      const result = await runner.invoke(
+        CordisDynamicPluginId(pluginId),
+        CordisDynamicPluginRunId(evidence.pluginRunId),
+        ADAPTER_DYNAMIC_EVIDENCE_METHOD,
+        null,
+      )
+      if (!result.ok) throw new Error(`Adapter synthetic verification failed: ${result.message}`)
+      const observed = AdapterDynamicEvidenceSchema.parse(result.value)
+      if (
+        !observed.started ||
+        !observed.stopped ||
+        !observed.credentialIsolated ||
+        !observed.inboundCommitted ||
+        !observed.channelDiscovered ||
+        observed.outboundReceipt !== 'sent' ||
+        !observed.transportIdle
+      ) {
+        throw new Error('适配器验证未完整通过创建、入站、出站、凭据隔离和停止静止检查。')
+      }
+      const descriptorDigest = createHash('sha256')
+        .update(canonicalJson(JsonValueSchema.parse(observed.descriptor)))
+        .digest('hex')
+      const adapter = {
+        apiVersion: 1 as const,
+        key: observed.descriptor.key,
+        descriptorDigest,
+        registered: true,
+        started: observed.started,
+        stopped: observed.stopped,
+        inboundCommitted: observed.inboundCommitted,
+        outboundReceipt: observed.outboundReceipt,
+      }
+      contributions.push({ kind: 'adapter', apiVersion: 1, key: adapter.key, descriptorDigest })
+      return {
+        ...evidence,
+        rpcMethods: [],
+        renderedSlots: [],
+        contributions,
+        toolInvocations,
+        scope: 'host-adapter' as const,
+        adapter,
+      }
+    }
     for (const name of evidence.toolNames) {
       const schema = visibleTools.find((candidate) => candidate.name === name)
       if (!schema) throw new Error(`Dynamic Tool disappeared before verification: ${name}`)
@@ -4323,6 +4309,9 @@ export class DshHostRuntime implements AgentSessionDriver, ExtensionActivationHo
               handlers.set(method, handler)
               // The Activation owns the handler. A Session fiber cannot retract it.
               return () => undefined
+            },
+            registerAdapter: () => {
+              throw new Error('宿主适配器不能通过智能体 Activation 加载；请安装这个适配器 Revision。')
             },
           },
           config,

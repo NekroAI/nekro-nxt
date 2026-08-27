@@ -2,7 +2,7 @@ import { isValidElement } from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { materializeDynamicPackage, ExtensionBuilder, ExtensionSourceStore } from '@nekro-nxt/extension-runtime'
 import { AgentIdSchema, ExtensionIdSchema, ExtensionRevisionIdSchema } from '@nekro-nxt/contracts'
-import { mkdtemp, rm } from 'node:fs/promises'
+import { mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { pathToFileURL } from 'node:url'
@@ -12,6 +12,7 @@ import {
   ExtensionClientRuntime,
   type ClientActivationDescriptor,
 } from '../src/extension-client.ts'
+import { AdapterHostClientRuntime } from '../src/adapter-host-client.tsx'
 
 const temporaryDirectories: string[] = []
 
@@ -20,6 +21,48 @@ afterEach(async () => {
 })
 
 describe('Extension Client Runtime', () => {
+  it('loads only declared Adapter rich keys and retracts them on unmount', async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), 'nekro-nxt-adapter-client-'))
+    temporaryDirectories.push(directory)
+    const entry = path.join(directory, 'client.mjs')
+    await writeFile(
+      entry,
+      `export default async ({ React }) => ({
+        inject: ['slots'],
+        apply(ctx) {
+          ctx.slots.register(
+            { name: 'conversation.message.rich', id: 'synthetic-chat:card' },
+            ({ part }) => React.createElement('article', { 'data-adapter-card': '' }, part.summary),
+          )
+        }
+      })`,
+      'utf8',
+    )
+    const runtime = new AdapterHostClientRuntime()
+    try {
+      await runtime.mount({
+        owner: 'ext_adapter',
+        adapterKey: 'synthetic-chat',
+        moduleUrl: pathToFileURL(entry).href,
+        allowedKeys: ['synthetic-chat:card'],
+      })
+      const mounted = runtime.entry('synthetic-chat:card')
+      expect(mounted).toBeDefined()
+      const rendered = Reflect.apply(mounted!.component, undefined, [
+        {
+          part: { type: 'rich', adapterKey: 'synthetic-chat', kind: 'card', summary: '合成卡片' },
+          messageId: 'msg_SYNTHETIC',
+          channelId: 'chn_SYNTHETIC',
+        },
+      ])
+      expect(renderToStaticMarkup(rendered)).toBe('<article data-adapter-card="">合成卡片</article>')
+      await runtime.unmount('ext_adapter')
+      expect(runtime.entry('synthetic-chat:card')).toBeUndefined()
+    } finally {
+      await runtime.dispose()
+    }
+  })
+
   it('loads a built Client artifact, renders its real Slot component and retracts it on dispose', async () => {
     const directory = await mkdtemp(path.join(tmpdir(), 'nekro-nxt-extension-client-'))
     temporaryDirectories.push(directory)

@@ -57,7 +57,11 @@ describe('QQ OpenClaw Adapter', () => {
       required: ['appId', 'clientSecretCredentialRef'],
       properties: {
         appId: { type: 'string', title: 'App ID' },
-        clientSecretCredentialRef: { type: 'credential-reference', title: 'Client Secret' },
+        clientSecretCredentialRef: {
+          type: 'credential-reference',
+          credentialKey: 'clientSecret',
+          title: 'Client Secret',
+        },
         proactiveSend: { type: 'boolean', title: '允许主动发送', default: false },
         markdown: { type: 'boolean', title: '使用 Markdown', default: true },
         maxTextLength: { type: 'number', title: '单条字符上限', default: 1800 },

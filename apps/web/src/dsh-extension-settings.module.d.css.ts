@@ -9,7 +9,6 @@ declare const styles: {
   readonly detailHeader: string
   readonly dictAddRow: string
   readonly editorFooter: string
-  readonly facetList: string
   readonly fieldGroup: string
   readonly fieldHintMeta: string
   readonly inlineActions: string

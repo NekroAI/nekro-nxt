@@ -64,6 +64,42 @@ const extensionManifestSchema = z.union([
       ),
     })
     .strict(),
+  extensionManifestV1Schema
+    .extend({
+      schemaVersion: z.literal(3),
+      scope: z.literal('host-adapter'),
+      entrypoints: z.union([
+        z.object({ host: z.literal('source/host.ts'), client: z.literal('source/client.ts') }).strict(),
+        z.object({ host: z.literal('source/host.ts') }).strict(),
+      ]),
+      contributions: z
+        .array(
+          z.discriminatedUnion('kind', [
+            z
+              .object({
+                kind: z.literal('adapter'),
+                apiVersion: z.literal(1),
+                key: z.string().trim().min(1),
+                descriptorDigest: z.string().regex(/^[a-f0-9]{64}$/u),
+              })
+              .strict(),
+            z
+              .object({
+                kind: z.literal('host-client-slot'),
+                name: z.literal('conversation.message.rich'),
+                key: z.string().trim().min(1),
+              })
+              .strict(),
+          ]),
+        )
+        .min(1)
+        .superRefine((contributions, context) => {
+          if (contributions.filter(({ kind }) => kind === 'adapter').length !== 1) {
+            context.addIssue({ code: 'custom', message: 'Host Adapter Manifest 必须且只能声明一个 Adapter。' })
+          }
+        }),
+    })
+    .strict(),
 ])
 
 const importPolicy: Plugin = {

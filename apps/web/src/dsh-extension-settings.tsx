@@ -18,11 +18,12 @@ import {
   JsonValueSchema,
   parseJsonValue,
 } from '@nekro-nxt/contracts'
-import { ChevronDown, ChevronUp, KeyRound, RotateCcw, ShieldAlert } from 'lucide-react'
+import { ChevronDown, ChevronUp, KeyRound, RotateCcw } from 'lucide-react'
 import { Component, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { notify } from './components/notifications.js'
 import { InlineFeedback } from './components/product-feedback.js'
 import { DshNativeSettingsSlots } from './dynamic-client-coordinator.js'
+import { productHostEventStream } from './host-event-stream.js'
 import { useUnsavedDraft } from './unsaved-drafts.js'
 import {
   Button,
@@ -38,13 +39,13 @@ import {
 } from './ui-kit/index.js'
 import styles from './dsh-extension-settings.module.css'
 
-type PluginSupportAssessment = HostApiResponse<'dshPlugins'>['plugins'][number]
+type DshPluginCatalogEntry = HostApiResponse<'dshPlugins'>['plugins'][number]
 type DshSettingsNamespaceView = HostApiResponse<'dshSettings'>['namespaces'][number]
 type DshCredentialView = HostApiResponse<'dshCredentialsDescribe'>['credentials'][string]
 type DshSettingsPathOperation = HostApiRequest<'dshSettingsMutate'>['ops'][number]
 
 interface DshSettingsCatalog {
-  readonly plugins: readonly PluginSupportAssessment[]
+  readonly plugins: readonly DshPluginCatalogEntry[]
   readonly namespaces: readonly DshSettingsNamespaceView[]
 }
 
@@ -53,7 +54,7 @@ interface DshSettingsCatalogEntry {
   readonly label: string
   readonly version: string
   readonly namespaces: readonly DshSettingsNamespaceView[]
-  readonly plugin?: PluginSupportAssessment
+  readonly plugin?: DshPluginCatalogEntry
 }
 
 class NativeSettingsBoundary extends Component<
@@ -126,24 +127,20 @@ const parseDshCredentialsChangedEvent = (text: string) => {
   }
 }
 
-const supportLabel = (status: PluginSupportAssessment['overall']): string => {
-  if (status === 'verified') return '已验证支持'
-  if (status === 'loadable-unverified') return '可加载，未完整验证'
-  if (status === 'partial') return '部分支持'
-  if (status === 'incompatible') return '不兼容'
-  return '未评估'
-}
+const extensionSourceLabel = (origin: DshPluginCatalogEntry['origin']): string =>
+  origin === 'builtin' ? '内置' : origin === 'profile' ? '用户安装' : '动态加载'
 
-const supportTone = (status: PluginSupportAssessment['overall']) => {
-  if (status === 'verified') return 'success' as const
-  if (status === 'loadable-unverified') return 'info' as const
-  if (status === 'partial') return 'warning' as const
-  if (status === 'incompatible') return 'error' as const
-  return 'unknown' as const
-}
+const extensionBadge = (plugin: DshPluginCatalogEntry): ReactNode =>
+  plugin.loadError ? (
+    <StatusBadge tone="error">加载失败</StatusBadge>
+  ) : (
+    <StatusBadge>{extensionSourceLabel(plugin.origin)}</StatusBadge>
+  )
 
 const packageLabel = (name: string): string => {
   if (name === '@deepseek-ai/dsh-web-search-deepseek') return 'DeepSeek 网页搜索'
+  if (name === '@deepseek-ai/dsh-agent-loop') return '思考与工具执行运行时'
+  if (name === '@deepseek-ai/dsh-bash-sandbox') return '命令运行时'
   if (name === '@deepseek-ai/dsh-llm-pi-ai') return '模型供应商运行时'
   if (name === '@deepseek-ai/dsh-subagent') return '子智能体运行时'
   if (name === '@deepseek-ai/dsh-subagent-spawn-in-process') return '子智能体进程内启动'
@@ -992,20 +989,20 @@ export function DshExtensionSettings() {
   }, [])
   useEffect(() => {
     void refresh()
-    const source = new EventSource('/api/events')
-    const settingsListener = (event: Event): void => {
+    const settingsListener = (event: unknown): void => {
       if (!(event instanceof MessageEvent) || typeof event.data !== 'string') return
       if (parseDshSettingsChangedEvent(event.data) === undefined) return
       void refresh()
     }
-    const credentialsListener = (event: Event): void => {
+    const credentialsListener = (event: unknown): void => {
       if (!(event instanceof MessageEvent) || typeof event.data !== 'string') return
       if (parseDshCredentialsChangedEvent(event.data) === undefined) return
       void refresh()
     }
-    source.addEventListener('dsh-settings-changed', settingsListener)
-    source.addEventListener('dsh-credentials-changed', credentialsListener)
-    return () => source.close()
+    return productHostEventStream.subscribe({
+      'dsh-settings-changed': settingsListener,
+      'dsh-credentials-changed': credentialsListener,
+    })
   }, [refresh])
   const entries = useMemo<readonly DshSettingsCatalogEntry[]>(() => {
     const claimed = new Set(catalog.plugins.flatMap((plugin) => plugin.settingsNamespaces))
@@ -1042,10 +1039,6 @@ export function DshExtensionSettings() {
   }, [entries, selectedEntryId])
   const selectedEntry = entries.find((entry) => entry.id === selectedEntryId)
   const selected = selectedEntry?.plugin
-  const selectedOverall =
-    nativeFailure && selected?.packageName === '@deepseek-ai/dsh-web-search-deepseek'
-      ? ('partial' as const)
-      : selected?.overall
   const namespaces = selectedEntry?.namespaces ?? []
   const activeNamespace = namespaces.find((item) => item.ns === selectedNamespace) ?? namespaces[0]
   useEffect(() => {
@@ -1077,17 +1070,7 @@ export function DshExtensionSettings() {
               <strong>{entry.label}</strong>
               <small>{entry.version}</small>
             </span>
-            {entry.plugin ? (
-              <StatusBadge
-                tone={supportTone(
-                  entry.id === selectedEntryId && selectedOverall ? selectedOverall : entry.plugin.overall,
-                )}
-              >
-                {supportLabel(entry.id === selectedEntryId && selectedOverall ? selectedOverall : entry.plugin.overall)}
-              </StatusBadge>
-            ) : (
-              <StatusBadge tone="unknown">未评估归属</StatusBadge>
-            )}
+            {entry.plugin ? extensionBadge(entry.plugin) : <StatusBadge>其他扩展</StatusBadge>}
           </Button>
         ))}
       </aside>
@@ -1099,37 +1082,12 @@ export function DshExtensionSettings() {
                 <h2>{selectedEntry.label}</h2>
                 <p>{selected?.packageName ?? `DSH Settings namespace · ${activeNamespace?.ns ?? ''}`}</p>
               </div>
-              {selected ? (
-                <StatusBadge tone={supportTone(selectedOverall ?? selected.overall)}>
-                  {supportLabel(selectedOverall ?? selected.overall)}
-                </StatusBadge>
-              ) : (
-                <StatusBadge tone="unknown">未评估归属</StatusBadge>
-              )}
+              {selected ? extensionBadge(selected) : <StatusBadge>其他扩展</StatusBadge>}
             </div>
-            {selected ? (
-              <div className={styles.facetList}>
-                {selected.facets.map((facet) => (
-                  <span
-                    key={facet.facet}
-                    data-status={nativeFailure && facet.facet === 'client-ui' ? 'failed' : facet.status}
-                  >
-                    {facet.facet} · {nativeFailure && facet.facet === 'client-ui' ? 'failed' : facet.status}
-                  </span>
-                ))}
-              </div>
-            ) : (
-              <InlineFeedback tone="info">
-                此 namespace 已由当前 DSH Host 注册，但尚未识别所属插件；可以使用基础 Schema 配置。
-              </InlineFeedback>
-            )}
-            {selected && (selectedOverall === 'partial' || selectedOverall === 'incompatible') ? (
-              <InlineFeedback tone={selectedOverall === 'incompatible' ? 'error' : 'warning'}>
-                <ShieldAlert size={15} aria-hidden="true" />
-                {selected.facets.flatMap((facet) => facet.evidence).find((evidence) => evidence.code)?.message ??
-                  '存在尚未支持的能力面。'}
-              </InlineFeedback>
+            {!selected ? (
+              <InlineFeedback tone="info">此配置由当前 DSH Host 运行时注册，可以使用基础 Schema 配置。</InlineFeedback>
             ) : null}
+            {selected?.loadError ? <InlineFeedback tone="error">{selected.loadError.message}</InlineFeedback> : null}
             {namespaces.length > 1 ? (
               <SelectField
                 label="配置区域"

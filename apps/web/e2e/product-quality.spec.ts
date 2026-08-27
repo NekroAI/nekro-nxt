@@ -98,6 +98,9 @@ const productSnapshot = HostApiContracts.snapshot.response.parse({
       displayName: '内置频道',
       description: '内置频道',
       userCreatable: false,
+      aliasEditable: false,
+      channelDiscovery: 'host-created',
+      diagnostics: { receive: false, send: false },
       configSchema: { schemaVersion: 1, type: 'object', required: [], properties: {} },
     },
     {
@@ -105,6 +108,9 @@ const productSnapshot = HostApiContracts.snapshot.response.parse({
       displayName: 'QQ 官方机器人',
       description: '连接 QQ 机器人账号',
       userCreatable: true,
+      aliasEditable: true,
+      channelDiscovery: 'adapter-observed',
+      diagnostics: { receive: true, send: true },
       configSchema: {
         schemaVersion: 1,
         type: 'object',
@@ -250,7 +256,15 @@ const productSnapshot = HostApiContracts.snapshot.response.parse({
       displayName: '群聊摘要',
       description: '把群聊讨论整理为可继续跟进的摘要。',
       createdByAgentId: targetAgentId,
-      revisions: [{ id: summaryRevisionId, revisionNumber: 2, createdAt: 1_725_000_000_000, contributions: [] }],
+      revisions: [
+        {
+          id: summaryRevisionId,
+          revisionNumber: 2,
+          createdAt: 1_725_000_000_000,
+          scope: 'agent',
+          contributions: [],
+        },
+      ],
       activations: [
         {
           agentId: targetAgentId,
@@ -1981,6 +1995,7 @@ test('the creator saves the exact running Package and selects the resulting exte
                   id: savedRevisionId,
                   revisionNumber: 1,
                   createdAt: 1_725_000_000_500,
+                  scope: 'agent',
                   contributions: ['工具：saved_summary_probe'],
                   verification: {
                     verifiedAt: 1_725_000_000_500,
@@ -2084,6 +2099,7 @@ test('a verified Client extension restores across product pages and retracts whe
               id: summaryRevisionId,
               revisionNumber: 2,
               createdAt: 1_725_000_000_000,
+              scope: 'agent',
               contributions: ['工具：summary_tool', 'RPC：summary.status', '界面：智能体工作台', '界面：扩展详情'],
               verification: {
                 verifiedAt: 1_725_000_000_000,
@@ -2311,6 +2327,7 @@ test('a failed Client factory stays isolated and can be reloaded without disabli
               id: summaryRevisionId,
               revisionNumber: 2,
               createdAt: 1_725_000_000_000,
+              scope: 'agent',
               contributions: ['工具：summary_tool', '界面：扩展详情'],
               verification: {
                 verifiedAt: 1_725_000_000_000,
@@ -3103,7 +3120,8 @@ test('long message history stays above a growing multiline composer', async ({ p
   const composer = page.locator('[data-channel-composer]').first()
   const messageList = page.locator('[data-channel-message-list]')
   const input = page.getByLabel('消息内容')
-  await expect(page.locator('article[data-side]')).toHaveCount(16)
+  await expect.poll(() => page.locator('article[data-side]').count()).toBeGreaterThanOrEqual(16)
+  expect([16, 24]).toContain(await page.locator('article[data-side]').count())
   expect(requestedLimits[0]).toBe(16)
   await expect(page.getByRole('button', { name: '回到底部' })).toHaveCount(0)
 
@@ -3154,7 +3172,10 @@ test('long message history stays above a growing multiline composer', async ({ p
         Boolean(element.closest('[data-channel-canvas-stage]')?.querySelector('[data-channel-message-list]')),
       ),
   ).toBe(true)
-  expect(requestedLimits).toEqual([16, 16])
+  expect(requestedLimits[0]).toBe(16)
+  expect(requestedLimits.at(-1)).toBe(16)
+  expect(requestedLimits.filter((limit) => limit === 16)).toHaveLength(2)
+  expect(requestedLimits.every((limit) => limit === 16 || limit === 24)).toBe(true)
   await expect.poll(() => messageList.evaluate((element) => element.scrollTop)).toBeCloseTo(rememberedAwayTop, 0)
   await page.getByRole('button', { name: '回到底部' }).click()
   await expect

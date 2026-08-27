@@ -7,6 +7,7 @@ import { EmptyState, HostNotice } from './components/product-feedback.js'
 import { DynamicClientProvider } from './dynamic-client-coordinator.js'
 import { useDesktopInstance } from './desktop-shell.js'
 import { PersistentExtensionClientProvider } from './persistent-extension-client.js'
+import { AdapterHostClientProvider } from './adapter-host-client.js'
 import {
   AgentManagePage,
   AgentsPage,
@@ -322,35 +323,37 @@ export function NekroNxtApp() {
     <ProductErrorBoundary>
       <MotionRoot>
         <DynamicClientProvider>
-          <PersistentExtensionClientProvider>
-            <Tooltip.Provider {...tooltipProps}>
-              <ThemeEffects />
-              <Routes>
-                <Route element={<DesktopShell />}>
-                  <Route index element={<RootRedirect />} />
-                  <Route path="work" element={<WorkIndex />} />
-                  <Route path="work/agents/new" element={<AgentsPage />} />
-                  <Route path="work/agents/:agentId" element={<AgentManagePage />} />
-                  <Route path="work/channels" element={<Navigate to="/work" replace />} />
-                  <Route path="work/channels/:channelId" element={<ChannelConversationPage />} />
-                  <Route path="work/creator" element={<CreatorPage />} />
-                  <Route path="agents" element={<LegacyWorkRedirect kind="agents" />} />
-                  <Route path="agents/:agentId" element={<LegacyWorkRedirect kind="agent" />} />
-                  <Route path="channels" element={<LegacyWorkRedirect kind="channels" />} />
-                  <Route path="channels/:channelId" element={<LegacyWorkRedirect kind="channel" />} />
-                  <Route path="connections" element={<ConnectionsPage />} />
-                  <Route path="connections/:connectionId" element={<ConnectionsPage />} />
-                  <Route path="users" element={<UsersPage />} />
-                  <Route path="extensions" element={<ExtensionsPage />} />
-                  <Route path="extensions/:extensionId" element={<ExtensionsPage />} />
-                  <Route path="creator" element={<LegacyWorkRedirect kind="creator" />} />
-                  <Route path="runtime" element={<RuntimeRedirect />} />
-                  <Route path="settings" element={<SettingsPage />} />
-                  <Route path="*" element={<NotFoundPage />} />
-                </Route>
-              </Routes>
-            </Tooltip.Provider>
-          </PersistentExtensionClientProvider>
+          <AdapterHostClientProvider>
+            <PersistentExtensionClientProvider>
+              <Tooltip.Provider {...tooltipProps}>
+                <ThemeEffects />
+                <Routes>
+                  <Route element={<DesktopShell />}>
+                    <Route index element={<RootRedirect />} />
+                    <Route path="work" element={<WorkIndex />} />
+                    <Route path="work/agents/new" element={<AgentsPage />} />
+                    <Route path="work/agents/:agentId" element={<AgentManagePage />} />
+                    <Route path="work/channels" element={<Navigate to="/work" replace />} />
+                    <Route path="work/channels/:channelId" element={<ChannelConversationPage />} />
+                    <Route path="work/creator" element={<CreatorPage />} />
+                    <Route path="agents" element={<LegacyWorkRedirect kind="agents" />} />
+                    <Route path="agents/:agentId" element={<LegacyWorkRedirect kind="agent" />} />
+                    <Route path="channels" element={<LegacyWorkRedirect kind="channels" />} />
+                    <Route path="channels/:channelId" element={<LegacyWorkRedirect kind="channel" />} />
+                    <Route path="connections" element={<ConnectionsPage />} />
+                    <Route path="connections/:connectionId" element={<ConnectionsPage />} />
+                    <Route path="users" element={<UsersPage />} />
+                    <Route path="extensions" element={<ExtensionsPage />} />
+                    <Route path="extensions/:extensionId" element={<ExtensionsPage />} />
+                    <Route path="creator" element={<LegacyWorkRedirect kind="creator" />} />
+                    <Route path="runtime" element={<RuntimeRedirect />} />
+                    <Route path="settings" element={<SettingsPage />} />
+                    <Route path="*" element={<NotFoundPage />} />
+                  </Route>
+                </Routes>
+              </Tooltip.Provider>
+            </PersistentExtensionClientProvider>
+          </AdapterHostClientProvider>
         </DynamicClientProvider>
       </MotionRoot>
     </ProductErrorBoundary>

@@ -18,6 +18,7 @@ import {
   ExtensionBuilder,
   ExtensionService,
   ExtensionSourceStore,
+  HostExtensionInstallationCoordinator,
   materializeDynamicPackage,
   type Activation,
   type ExtensionActivationHost,
@@ -25,8 +26,11 @@ import {
   type ExtensionClientDiagnostic,
   type ExtensionRepository,
   type ExtensionRevisionVerification,
+  type HostExtensionInstallationHost,
+  type HostInstallation,
   type LocalExtension,
   type MountedExtension,
+  type MountedHostExtension,
   type Revision,
 } from '../src/index.ts'
 
@@ -68,9 +72,12 @@ class MemoryExtensionRepository implements ExtensionRepository {
   readonly verifications = new Map<ExtensionRevisionId, ExtensionRevisionVerification>()
   readonly activations = new Map<string, Activation>()
   readonly clientDiagnostics = new Map<string, ExtensionClientDiagnostic>()
+  readonly installations = new Map<ExtensionId, HostInstallation>()
   beforeSave?: (input: { readonly extension: LocalExtension; readonly revision: Revision }) => void
   failActivationUpsert = false
   failActivationDelete = false
+  failInstallationUpsert = false
+  failInstallationDelete = false
 
   getExtension(id: ExtensionId): LocalExtension | undefined {
     return this.extensions.get(id)
@@ -142,6 +149,24 @@ class MemoryExtensionRepository implements ExtensionRepository {
     if (this.failActivationDelete) throw new Error('Activation delete failed.')
     if (!this.activations.delete(this.#key(agent, extension))) throw new Error('Activation does not exist.')
     this.clientDiagnostics.delete(this.#key(agent, extension))
+  }
+
+  getHostInstallation(extension: ExtensionId): HostInstallation | undefined {
+    return this.installations.get(extension)
+  }
+
+  listHostInstallations(): readonly HostInstallation[] {
+    return [...this.installations.values()]
+  }
+
+  upsertHostInstallation(installation: HostInstallation): void {
+    if (this.failInstallationUpsert) throw new Error('Installation transaction failed.')
+    this.installations.set(installation.extensionId, installation)
+  }
+
+  deleteHostInstallation(extension: ExtensionId): void {
+    if (this.failInstallationDelete) throw new Error('Installation delete failed.')
+    this.installations.delete(extension)
   }
 
   #key(agent: AgentId, extension: ExtensionId): string {
@@ -985,5 +1010,578 @@ describe('Extension materialization and build policy', () => {
     expect(() =>
       sourceStore.revisionSourceDirectory(ExtensionIdSchema.parse('../outside'), revisionId('safe')),
     ).toThrow('ExtensionId has an invalid format')
+  })
+})
+
+class FakeHostInstallationHost implements HostExtensionInstallationHost {
+  readonly mounted: ExtensionRevisionId[] = []
+  readonly disposed: ExtensionRevisionId[] = []
+  readonly handles = new Map<ExtensionRevisionId, { adapterKey: string; dispose(): Promise<void> }>()
+  readonly waitCalls: string[] = []
+  readonly availabilityChecks: string[] = []
+  readonly fail = new Set<ExtensionRevisionId>()
+  readonly unavailable = new Set<string>()
+  readonly keys = new Map<ExtensionRevisionId, string>()
+  onMount?: (revision: Revision) => Promise<void>
+  onWaitUntilSafe?: (adapterKey: string) => Promise<void>
+  activeMounts = 0
+  maximumActiveMounts = 0
+
+  assertAdapterKeyAvailable(adapterKey: string): Promise<void> {
+    this.availabilityChecks.push(adapterKey)
+    if (this.unavailable.has(adapterKey)) throw new Error(`Adapter key is occupied: ${adapterKey}`)
+    return Promise.resolve()
+  }
+
+  waitUntilSafe(adapterKey: string): Promise<void> {
+    this.waitCalls.push(adapterKey)
+    return this.onWaitUntilSafe?.(adapterKey) ?? Promise.resolve()
+  }
+
+  async mount(revision: Revision): Promise<MountedHostExtension> {
+    if (this.fail.has(revision.id)) throw new Error('Host mount failed.')
+    this.activeMounts += 1
+    this.maximumActiveMounts = Math.max(this.maximumActiveMounts, this.activeMounts)
+    try {
+      await this.onMount?.(revision)
+    } finally {
+      this.activeMounts -= 1
+    }
+    this.mounted.push(revision.id)
+    const mounted = {
+      adapterKey: this.keys.get(revision.id) ?? 'synthetic-adapter',
+      dispose: () => {
+        this.disposed.push(revision.id)
+        return Promise.resolve()
+      },
+    }
+    this.handles.set(revision.id, mounted)
+    return mounted
+  }
+}
+
+const adapterVerification = (id: ExtensionRevisionId, key = 'synthetic-adapter'): ExtensionRevisionVerification => ({
+  revisionId: id,
+  dshVersion: '0.1.1-rc.2',
+  contractVersion: 'nekro-nxt-extension-v2',
+  scope: 'host-adapter',
+  origin: { episodeId: 'episode', pluginId: 'plugin', packageId: 'package', pluginRunId: 'run' },
+  verifiedAt: 1,
+  hostBuild: { built: true, buildKey: 'host' },
+  clientBuild: { built: false, buildKey: 'client' },
+  toolInvocations: [],
+  rpcMethods: [],
+  renderedSlots: [],
+  adapter: {
+    apiVersion: 1,
+    key,
+    descriptorDigest: 'a'.repeat(64),
+    registered: true,
+    started: true,
+    stopped: true,
+    inboundCommitted: true,
+    outboundReceipt: 'sent',
+  },
+})
+
+const installationCoordinator = (
+  repository: MemoryExtensionRepository,
+  host: FakeHostInstallationHost,
+  options: {
+    readonly now?: () => number
+    readonly build?: (id: ExtensionRevisionId) => Promise<ExtensionBuildArtifact>
+  } = {},
+) =>
+  new HostExtensionInstallationCoordinator(
+    repository,
+    { revisionSourceDirectory: (item) => `/source/${item.id}` },
+    {
+      build: ({ revisionId: id }) =>
+        options.build?.(id) ??
+        Promise.resolve({ revisionId: id, buildKey: `build-${id}`, directory: '/cache', hostEntry: '/cache/host.mjs' }),
+    },
+    host,
+    { now: options.now ?? (() => 100) },
+  )
+
+describe('Host Extension Installation', () => {
+  it('installs, updates, rolls back, and restores the previous Revision after a failed update', async () => {
+    const repository = new MemoryExtensionRepository()
+    const extension = localExtension(extensionId('hostinstall'))
+    const first = revision(revisionId('hostinstall1'), extension.id, 1)
+    const second = revision(revisionId('hostinstall2'), extension.id, 2)
+    repository.saveExtensionRevision({ extension, revision: first, verification: adapterVerification(first.id) })
+    repository.saveExtensionRevision({ extension, revision: second, verification: adapterVerification(second.id) })
+    const host = new FakeHostInstallationHost()
+    const coordinator = installationCoordinator(repository, host)
+
+    await expect(coordinator.install({ extensionId: extension.id, revisionId: first.id })).resolves.toMatchObject({
+      extensionRevisionId: first.id,
+    })
+    await expect(coordinator.install({ extensionId: extension.id, revisionId: second.id })).resolves.toMatchObject({
+      extensionRevisionId: second.id,
+    })
+    expect(host.disposed).toContain(first.id)
+
+    host.fail.add(first.id)
+    await expect(coordinator.install({ extensionId: extension.id, revisionId: first.id })).rejects.toThrow(
+      'Host mount failed',
+    )
+    expect(repository.getHostInstallation(extension.id)?.extensionRevisionId).toBe(second.id)
+    expect(host.mounted.at(-1)).toBe(second.id)
+
+    host.fail.add(second.id)
+    await expect(coordinator.install({ extensionId: extension.id, revisionId: first.id })).rejects.toThrow(
+      '原 Revision 无法恢复',
+    )
+    expect(repository.getHostInstallation(extension.id)?.extensionRevisionId).toBe(second.id)
+
+    await coordinator.dispose()
+  })
+
+  it('restores the previous contribution when the Installation database commit fails', async () => {
+    const repository = new MemoryExtensionRepository()
+    const extension = localExtension(extensionId('hosttransaction'))
+    const first = revision(revisionId('hosttransaction1'), extension.id, 1)
+    const second = revision(revisionId('hosttransaction2'), extension.id, 2)
+    repository.saveExtensionRevision({ extension, revision: first, verification: adapterVerification(first.id) })
+    repository.saveExtensionRevision({ extension, revision: second, verification: adapterVerification(second.id) })
+    const host = new FakeHostInstallationHost()
+    const coordinator = installationCoordinator(repository, host)
+    await coordinator.install({ extensionId: extension.id, revisionId: first.id })
+
+    repository.failInstallationUpsert = true
+    await expect(coordinator.install({ extensionId: extension.id, revisionId: second.id })).rejects.toThrow(
+      'Installation transaction failed',
+    )
+    expect(repository.getHostInstallation(extension.id)?.extensionRevisionId).toBe(first.id)
+    expect(host.mounted.at(-1)).toBe(first.id)
+    repository.failInstallationUpsert = false
+    await coordinator.dispose()
+  })
+
+  it('serializes concurrent installs by adapter key and rejects the conflicting Extension before stopping runtimes', async () => {
+    const repository = new MemoryExtensionRepository()
+    const firstExtension = localExtension(extensionId('hostkeyfirst'))
+    const secondExtension = localExtension(extensionId('hostkeysecond'))
+    const firstRevision = revision(revisionId('hostkeyfirst1'), firstExtension.id, 1)
+    const secondRevision = revision(revisionId('hostkeysecond1'), secondExtension.id, 1)
+    const key = 'shared-adapter'
+    repository.saveExtensionRevision({
+      extension: firstExtension,
+      revision: firstRevision,
+      verification: adapterVerification(firstRevision.id, key),
+    })
+    repository.saveExtensionRevision({
+      extension: secondExtension,
+      revision: secondRevision,
+      verification: adapterVerification(secondRevision.id, key),
+    })
+    const host = new FakeHostInstallationHost()
+    host.keys.set(firstRevision.id, key)
+    host.keys.set(secondRevision.id, key)
+    const coordinator = installationCoordinator(repository, host)
+
+    const outcomes = await Promise.allSettled([
+      coordinator.install({ extensionId: firstExtension.id, revisionId: firstRevision.id }),
+      coordinator.install({ extensionId: secondExtension.id, revisionId: secondRevision.id }),
+    ])
+
+    expect(outcomes.map(({ status }) => status).sort()).toEqual(['fulfilled', 'rejected'])
+    expect(host.waitCalls).toEqual([key])
+    expect(host.disposed).toEqual([])
+    expect(repository.listHostInstallations()).toHaveLength(1)
+    await coordinator.dispose()
+  })
+
+  it('allows different adapter keys to install in parallel', async () => {
+    const repository = new MemoryExtensionRepository()
+    const firstExtension = localExtension(extensionId('hostparallelfirst'))
+    const secondExtension = localExtension(extensionId('hostparallelsecond'))
+    const firstRevision = revision(revisionId('hostparallelfirst1'), firstExtension.id, 1)
+    const secondRevision = revision(revisionId('hostparallelsecond1'), secondExtension.id, 1)
+    repository.saveExtensionRevision({
+      extension: firstExtension,
+      revision: firstRevision,
+      verification: adapterVerification(firstRevision.id, 'parallel-first'),
+    })
+    repository.saveExtensionRevision({
+      extension: secondExtension,
+      revision: secondRevision,
+      verification: adapterVerification(secondRevision.id, 'parallel-second'),
+    })
+    const host = new FakeHostInstallationHost()
+    host.keys.set(firstRevision.id, 'parallel-first')
+    host.keys.set(secondRevision.id, 'parallel-second')
+    let startedMounts = 0
+    let announceBothStarted: (() => void) | undefined
+    const bothStarted = new Promise<void>((resolve) => {
+      announceBothStarted = resolve
+    })
+    let releaseMounts: (() => void) | undefined
+    const mountGate = new Promise<void>((resolve) => {
+      releaseMounts = resolve
+    })
+    host.onMount = () => {
+      startedMounts += 1
+      if (startedMounts === 2) announceBothStarted?.()
+      return mountGate
+    }
+    const coordinator = installationCoordinator(repository, host)
+
+    const installs = Promise.all([
+      coordinator.install({ extensionId: firstExtension.id, revisionId: firstRevision.id }),
+      coordinator.install({ extensionId: secondExtension.id, revisionId: secondRevision.id }),
+    ])
+    const ranConcurrently = await Promise.race([
+      bothStarted.then(() => true),
+      new Promise<false>((resolve) => setTimeout(() => resolve(false), 200)),
+    ])
+    releaseMounts?.()
+    await installs
+
+    expect(ranConcurrently).toBe(true)
+    expect(host.maximumActiveMounts).toBe(2)
+    await coordinator.dispose()
+  })
+
+  it('restores only one Installation when persisted Extensions claim the same adapter key', async () => {
+    const repository = new MemoryExtensionRepository()
+    const firstExtension = localExtension(extensionId('hostrestorefirst'))
+    const secondExtension = localExtension(extensionId('hostrestoresecond'))
+    const firstRevision = revision(revisionId('hostrestorefirst1'), firstExtension.id, 1)
+    const secondRevision = revision(revisionId('hostrestoresecond1'), secondExtension.id, 1)
+    const key = 'restore-shared'
+    repository.saveExtensionRevision({
+      extension: firstExtension,
+      revision: firstRevision,
+      verification: adapterVerification(firstRevision.id, key),
+    })
+    repository.saveExtensionRevision({
+      extension: secondExtension,
+      revision: secondRevision,
+      verification: adapterVerification(secondRevision.id, key),
+    })
+    repository.upsertHostInstallation({
+      extensionId: firstExtension.id,
+      extensionRevisionId: firstRevision.id,
+      installedAt: 1,
+    })
+    repository.upsertHostInstallation({
+      extensionId: secondExtension.id,
+      extensionRevisionId: secondRevision.id,
+      installedAt: 2,
+    })
+    const host = new FakeHostInstallationHost()
+    host.keys.set(firstRevision.id, key)
+    host.keys.set(secondRevision.id, key)
+    const coordinator = installationCoordinator(repository, host)
+
+    await expect(coordinator.restore()).resolves.toEqual({ restored: 1, failed: 1 })
+    expect(host.mounted).toHaveLength(1)
+    await coordinator.dispose()
+  })
+
+  it('serializes uninstall with another Extension installing the same adapter key', async () => {
+    const repository = new MemoryExtensionRepository()
+    const firstExtension = localExtension(extensionId('hosthandofffirst'))
+    const secondExtension = localExtension(extensionId('hosthandoffsecond'))
+    const firstRevision = revision(revisionId('hosthandofffirst1'), firstExtension.id, 1)
+    const secondRevision = revision(revisionId('hosthandoffsecond1'), secondExtension.id, 1)
+    const key = 'handoff-adapter'
+    repository.saveExtensionRevision({
+      extension: firstExtension,
+      revision: firstRevision,
+      verification: adapterVerification(firstRevision.id, key),
+    })
+    repository.saveExtensionRevision({
+      extension: secondExtension,
+      revision: secondRevision,
+      verification: adapterVerification(secondRevision.id, key),
+    })
+    const host = new FakeHostInstallationHost()
+    host.keys.set(firstRevision.id, key)
+    host.keys.set(secondRevision.id, key)
+    const coordinator = installationCoordinator(repository, host)
+    await coordinator.install({ extensionId: firstExtension.id, revisionId: firstRevision.id })
+
+    let announceWaiting: (() => void) | undefined
+    const waiting = new Promise<void>((resolve) => {
+      announceWaiting = resolve
+    })
+    let releaseUninstall: (() => void) | undefined
+    const uninstallGate = new Promise<void>((resolve) => {
+      releaseUninstall = resolve
+    })
+    host.onWaitUntilSafe = () => {
+      announceWaiting?.()
+      return uninstallGate
+    }
+    const uninstall = coordinator.uninstall(firstExtension.id)
+    await waiting
+    const install = coordinator.install({ extensionId: secondExtension.id, revisionId: secondRevision.id })
+    await Promise.resolve()
+    expect(host.mounted).not.toContain(secondRevision.id)
+    releaseUninstall?.()
+
+    await Promise.all([uninstall, install])
+    expect(repository.getHostInstallation(firstExtension.id)).toBeUndefined()
+    expect(repository.getHostInstallation(secondExtension.id)?.extensionRevisionId).toBe(secondRevision.id)
+    await coordinator.dispose()
+  })
+
+  it('rejects a key occupied by the product Registry before waiting or mounting', async () => {
+    const repository = new MemoryExtensionRepository()
+    const extension = localExtension(extensionId('hostbuiltinconflict'))
+    const hostRevision = revision(revisionId('hostbuiltinconflict1'), extension.id, 1)
+    const key = 'builtin-conflict'
+    repository.saveExtensionRevision({
+      extension,
+      revision: hostRevision,
+      verification: adapterVerification(hostRevision.id, key),
+    })
+    const host = new FakeHostInstallationHost()
+    host.keys.set(hostRevision.id, key)
+    host.unavailable.add(key)
+    const coordinator = installationCoordinator(repository, host)
+
+    await expect(coordinator.install({ extensionId: extension.id, revisionId: hostRevision.id })).rejects.toThrow(
+      'Adapter key is occupied',
+    )
+    expect(host.waitCalls).toEqual([])
+    expect(host.mounted).toEqual([])
+    await coordinator.dispose()
+  })
+
+  it('rejects unrelated, unverified, unbuildable, and invalid-clock install requests without mounting', async () => {
+    const repository = new MemoryExtensionRepository()
+    const extension = localExtension(extensionId('hostinvalidrequest'))
+    const otherExtension = localExtension(extensionId('hostinvalidother'))
+    const unverified = revision(revisionId('hostinvalidrequest1'), extension.id, 1)
+    const verified = revision(revisionId('hostinvalidrequest2'), extension.id, 2)
+    const otherRevision = revision(revisionId('hostinvalidother1'), otherExtension.id, 1)
+    repository.saveExtensionRevision({ extension, revision: unverified })
+    repository.saveExtensionRevision({
+      extension,
+      revision: verified,
+      verification: adapterVerification(verified.id),
+    })
+    repository.saveExtensionRevision({
+      extension: otherExtension,
+      revision: otherRevision,
+      verification: adapterVerification(otherRevision.id),
+    })
+    const host = new FakeHostInstallationHost()
+    const coordinator = installationCoordinator(repository, host)
+
+    await expect(coordinator.install({ extensionId: extension.id, revisionId: otherRevision.id })).rejects.toThrow(
+      'Revision 不属于',
+    )
+    await expect(coordinator.install({ extensionId: extension.id, revisionId: unverified.id })).rejects.toThrow(
+      '只接受完成适配器验证',
+    )
+
+    const missingHost = installationCoordinator(repository, host, {
+      build: (id) => Promise.resolve({ revisionId: id, buildKey: 'missing-host', directory: '/cache' }),
+    })
+    await expect(missingHost.install({ extensionId: extension.id, revisionId: verified.id })).rejects.toThrow(
+      '缺少 Host 构建产物',
+    )
+    const invalidClock = installationCoordinator(repository, host, { now: () => -1 })
+    await expect(invalidClock.install({ extensionId: extension.id, revisionId: verified.id })).rejects.toThrow(
+      'Clock must return',
+    )
+    expect(host.mounted).toEqual([])
+    await Promise.all([coordinator.dispose(), missingHost.dispose(), invalidClock.dispose()])
+  })
+
+  it('keeps repeated installation idempotent and rejects operations after disposal', async () => {
+    const repository = new MemoryExtensionRepository()
+    const extension = localExtension(extensionId('hostidempotent'))
+    const hostRevision = revision(revisionId('hostidempotent1'), extension.id, 1)
+    repository.saveExtensionRevision({
+      extension,
+      revision: hostRevision,
+      verification: adapterVerification(hostRevision.id),
+    })
+    const host = new FakeHostInstallationHost()
+    const coordinator = installationCoordinator(repository, host)
+
+    const first = await coordinator.install({ extensionId: extension.id, revisionId: hostRevision.id })
+    await expect(coordinator.install({ extensionId: extension.id, revisionId: hostRevision.id })).resolves.toBe(first)
+    expect(host.mounted).toEqual([hostRevision.id])
+    await coordinator.dispose()
+    await coordinator.dispose()
+    await expect(coordinator.restore()).rejects.toThrow('coordinator is disposed')
+    await expect(coordinator.install({ extensionId: extension.id, revisionId: hostRevision.id })).rejects.toThrow(
+      'coordinator is disposed',
+    )
+  })
+
+  it('rejects key changes and disposes a mount whose observed key differs from verification', async () => {
+    const repository = new MemoryExtensionRepository()
+    const extension = localExtension(extensionId('hostkeyinvariant'))
+    const first = revision(revisionId('hostkeyinvariant1'), extension.id, 1)
+    const second = revision(revisionId('hostkeyinvariant2'), extension.id, 2)
+    const third = revision(revisionId('hostkeyinvariant3'), extension.id, 3)
+    repository.saveExtensionRevision({
+      extension,
+      revision: first,
+      verification: adapterVerification(first.id, 'stable-key'),
+    })
+    repository.saveExtensionRevision({
+      extension,
+      revision: second,
+      verification: adapterVerification(second.id, 'changed-key'),
+    })
+    repository.saveExtensionRevision({
+      extension,
+      revision: third,
+      verification: adapterVerification(third.id, 'stable-key'),
+    })
+    const host = new FakeHostInstallationHost()
+    host.keys.set(first.id, 'stable-key')
+    host.keys.set(second.id, 'changed-key')
+    const coordinator = installationCoordinator(repository, host)
+    await coordinator.install({ extensionId: extension.id, revisionId: first.id })
+    await expect(coordinator.install({ extensionId: extension.id, revisionId: second.id })).rejects.toThrow(
+      'key 不得跨 Revision 改变',
+    )
+    const mountedFirst = host.handles.get(first.id)
+    if (!mountedFirst) throw new Error('Expected the first fixture Revision to be mounted.')
+    mountedFirst.adapterKey = 'corrupted-runtime-key'
+    await expect(coordinator.install({ extensionId: extension.id, revisionId: third.id })).rejects.toThrow(
+      'key 不得跨 Revision 改变',
+    )
+
+    const mismatchedExtension = localExtension(extensionId('hostobservedkey'))
+    const mismatchedRevision = revision(revisionId('hostobservedkey1'), mismatchedExtension.id, 1)
+    repository.saveExtensionRevision({
+      extension: mismatchedExtension,
+      revision: mismatchedRevision,
+      verification: adapterVerification(mismatchedRevision.id, 'expected-key'),
+    })
+    await expect(
+      coordinator.install({ extensionId: mismatchedExtension.id, revisionId: mismatchedRevision.id }),
+    ).rejects.toThrow('实际注册的 key 与验证证据不一致')
+    expect(host.disposed).toContain(mismatchedRevision.id)
+    await coordinator.dispose()
+  })
+
+  it('covers cold-start skip and rejects invalid persisted Installations independently', async () => {
+    const repository = new MemoryExtensionRepository()
+    const validExtension = localExtension(extensionId('hostrestorevalid'))
+    const invalidExtension = localExtension(extensionId('hostrestoreinvalid'))
+    const missingHostExtension = localExtension(extensionId('hostrestoremissinghost'))
+    const wrongKeyExtension = localExtension(extensionId('hostrestorewrongkey'))
+    const validRevision = revision(revisionId('hostrestorevalid1'), validExtension.id, 1)
+    const invalidRevision = revision(revisionId('hostrestoreinvalid1'), invalidExtension.id, 1)
+    const missingHostRevision = revision(revisionId('hostrestoremissinghost1'), missingHostExtension.id, 1)
+    const wrongKeyRevision = revision(revisionId('hostrestorewrongkey1'), wrongKeyExtension.id, 1)
+    repository.saveExtensionRevision({
+      extension: validExtension,
+      revision: validRevision,
+      verification: adapterVerification(validRevision.id, 'restore-valid'),
+    })
+    repository.saveExtensionRevision({ extension: invalidExtension, revision: invalidRevision })
+    repository.saveExtensionRevision({
+      extension: missingHostExtension,
+      revision: missingHostRevision,
+      verification: adapterVerification(missingHostRevision.id, 'restore-missing-host'),
+    })
+    repository.saveExtensionRevision({
+      extension: wrongKeyExtension,
+      revision: wrongKeyRevision,
+      verification: adapterVerification(wrongKeyRevision.id, 'restore-expected-key'),
+    })
+    for (const [extensionIdValue, extensionRevisionId] of [
+      [validExtension.id, validRevision.id],
+      [invalidExtension.id, invalidRevision.id],
+      [missingHostExtension.id, missingHostRevision.id],
+      [wrongKeyExtension.id, wrongKeyRevision.id],
+    ] as const) {
+      repository.upsertHostInstallation({ extensionId: extensionIdValue, extensionRevisionId, installedAt: 1 })
+    }
+    const host = new FakeHostInstallationHost()
+    host.keys.set(validRevision.id, 'restore-valid')
+    const coordinator = installationCoordinator(repository, host, {
+      build: (id) =>
+        Promise.resolve({
+          revisionId: id,
+          buildKey: `restore-${id}`,
+          directory: '/cache',
+          ...(id === missingHostRevision.id ? {} : { hostEntry: '/cache/host.mjs' }),
+        }),
+    })
+
+    await expect(coordinator.restore()).resolves.toEqual({ restored: 1, failed: 3 })
+    await expect(coordinator.restore()).resolves.toEqual({ restored: 0, failed: 3 })
+    expect(host.disposed).toContain(wrongKeyRevision.id)
+    await coordinator.dispose()
+  })
+
+  it('uninstalls persisted and mounted states transactionally, including database rollback', async () => {
+    const repository = new MemoryExtensionRepository()
+    const extension = localExtension(extensionId('hostuninstallpaths'))
+    const hostRevision = revision(revisionId('hostuninstallpaths1'), extension.id, 1)
+    repository.saveExtensionRevision({
+      extension,
+      revision: hostRevision,
+      verification: adapterVerification(hostRevision.id),
+    })
+    const host = new FakeHostInstallationHost()
+    const coordinator = installationCoordinator(repository, host)
+    await expect(coordinator.uninstall(extension.id)).rejects.toThrow('尚未安装')
+
+    repository.upsertHostInstallation({
+      extensionId: extension.id,
+      extensionRevisionId: hostRevision.id,
+      installedAt: 1,
+    })
+    await coordinator.uninstall(extension.id)
+    expect(repository.getHostInstallation(extension.id)).toBeUndefined()
+    expect(host.waitCalls).toEqual([])
+
+    await coordinator.install({ extensionId: extension.id, revisionId: hostRevision.id })
+    repository.failInstallationDelete = true
+    await expect(coordinator.uninstall(extension.id)).rejects.toThrow('Installation delete failed')
+    expect(repository.getHostInstallation(extension.id)).toBeDefined()
+    expect(host.mounted.at(-1)).toBe(hostRevision.id)
+    repository.failInstallationDelete = false
+    await coordinator.dispose()
+  })
+
+  it('rejects an installed row that has no recoverable adapter key', async () => {
+    const repository = new MemoryExtensionRepository()
+    const extension = localExtension(extensionId('hostmissingkey'))
+    const hostRevision = revision(revisionId('hostmissingkey1'), extension.id, 1)
+    repository.saveExtensionRevision({ extension, revision: hostRevision })
+    repository.upsertHostInstallation({
+      extensionId: extension.id,
+      extensionRevisionId: hostRevision.id,
+      installedAt: 1,
+    })
+    const coordinator = installationCoordinator(repository, new FakeHostInstallationHost())
+    await expect(coordinator.uninstall(extension.id)).rejects.toThrow('缺少适配器 key')
+    await coordinator.dispose()
+  })
+
+  it('rejects Host Adapter Revisions through Agent Activation', async () => {
+    const repository = new MemoryExtensionRepository()
+    const extension = localExtension(extensionId('hostactivation'))
+    const hostRevision = revision(revisionId('hostactivation1'), extension.id, 1)
+    repository.saveExtensionRevision({
+      extension,
+      revision: hostRevision,
+      verification: adapterVerification(hostRevision.id),
+    })
+    const coordinator = activationCoordinator(repository, new FakeActivationHost())
+    await expect(
+      coordinator.activate({
+        agentId: agentId('hostactivation'),
+        extensionId: extension.id,
+        revisionId: hostRevision.id,
+      }),
+    ).rejects.toThrow('必须安装到本机')
   })
 })

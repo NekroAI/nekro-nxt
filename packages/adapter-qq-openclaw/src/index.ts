@@ -76,6 +76,9 @@ export const QQ_OPENCLAW_CONNECTION_DEFINITION = defineAdapterConnection({
   displayName: 'QQ 官方机器人',
   description: '连接 QQ 官方机器人账号，支持收发群聊消息',
   userCreatable: true,
+  aliasEditable: true,
+  channelDiscovery: 'adapter-observed',
+  diagnostics: { receive: true, send: true },
   configurationSchema: QQOpenClawConnectionConfigurationSchema,
   credentialsSchema: QQOpenClawCredentialsSchema,
   configSchema: {
@@ -84,7 +87,11 @@ export const QQ_OPENCLAW_CONNECTION_DEFINITION = defineAdapterConnection({
     required: ['appId', 'clientSecretCredentialRef'],
     properties: {
       appId: { type: 'string', title: 'App ID' },
-      clientSecretCredentialRef: { type: 'credential-reference', title: 'Client Secret' },
+      clientSecretCredentialRef: {
+        type: 'credential-reference',
+        credentialKey: 'clientSecret',
+        title: 'Client Secret',
+      },
       proactiveSend: { type: 'boolean', title: '允许主动发送', default: false },
       markdown: { type: 'boolean', title: '使用 Markdown', default: true },
       maxTextLength: { type: 'number', title: '单条字符上限', default: 1800 },

@@ -134,26 +134,6 @@
   font-size: 11px;
 }
 
-.facetList {
-  display: flex;
-  flex-wrap: wrap;
-  gap: var(--nxt-space-2);
-}
-
-.facetList span {
-  padding: 2px 7px;
-  border-radius: var(--nxt-radius-round);
-  color: var(--nxt-text-secondary);
-  background: var(--nxt-bg-subtle);
-  font-size: 11px;
-}
-
-.facetList span[data-status='failed'],
-.facetList span[data-status='unsupported'] {
-  color: var(--nxt-danger);
-  background: var(--nxt-danger-soft);
-}
-
 .namespaceEditor {
   display: flex;
   flex-direction: column;

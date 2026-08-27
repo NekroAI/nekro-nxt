@@ -52,6 +52,7 @@ import {
   extensionRevisionVerifications,
   extensionClientDiagnostics,
   hostSecurityMetadata,
+  hostExtensionInstallations,
   localExtensions,
   managementDevices,
   outboundIntents,
@@ -175,6 +176,10 @@ export const ExtensionRevisionVerificationRowSchema = createSelectSchema(extensi
   revisionId: ExtensionRevisionIdSchema,
   evidence: JsonValueSchema,
 })
+export const HostExtensionInstallationRowSchema = createSelectSchema(hostExtensionInstallations, {
+  extensionId: ExtensionIdSchema,
+  extensionRevisionId: ExtensionRevisionIdSchema,
+})
 export const AgentActivationRowSchema = createSelectSchema(agentActivations, {
   agentId: AgentIdSchema,
   extensionId: ExtensionIdSchema,
@@ -220,6 +225,7 @@ export const CoreRowSchemas = {
   localExtensions: LocalExtensionRowSchema,
   extensionRevisions: ExtensionRevisionRowSchema,
   extensionRevisionVerifications: ExtensionRevisionVerificationRowSchema,
+  hostExtensionInstallations: HostExtensionInstallationRowSchema,
   agentActivations: AgentActivationRowSchema,
   extensionClientDiagnostics: ExtensionClientDiagnosticRowSchema,
   hostSecurityMetadata: HostSecurityMetadataRowSchema,

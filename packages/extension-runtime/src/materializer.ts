@@ -35,6 +35,21 @@ const inputSchema = z
                   name: z.enum(['agent.workbench.sections', 'extension.details.panels']),
                 })
                 .strict(),
+              z
+                .object({
+                  kind: z.literal('adapter'),
+                  apiVersion: z.literal(1),
+                  key: z.string().trim().min(1),
+                  descriptorDigest: z.string().regex(/^[a-f0-9]{64}$/u),
+                })
+                .strict(),
+              z
+                .object({
+                  kind: z.literal('host-client-slot'),
+                  name: z.literal('conversation.message.rich'),
+                  key: z.string().trim().min(1),
+                })
+                .strict(),
             ]),
           )
           .default([]),
@@ -70,9 +85,22 @@ const extensionManifestSchema = z
   })
   .strict()
 
+const hostAdapterManifestSchema = extensionManifestSchema
+  .omit({ schemaVersion: true, entrypoints: true, contributions: true })
+  .extend({
+    schemaVersion: z.literal(3),
+    scope: z.literal('host-adapter'),
+    entrypoints: z.union([
+      z.object({ host: z.literal('source/host.ts'), client: z.literal('source/client.ts') }).strict(),
+      z.object({ host: z.literal('source/host.ts') }).strict(),
+    ]),
+    contributions: inputSchema.shape.snapshot.shape.contributions,
+  })
+  .strict()
+
 const digestInputSchema = z
   .object({
-    manifest: extensionManifestSchema,
+    manifest: z.union([extensionManifestSchema, hostAdapterManifestSchema]),
     sources: sourcesSchema,
   })
   .strict()
@@ -112,16 +140,37 @@ export function materializeDynamicPackage(input: {
     ...(parsed.snapshot.hostCode === undefined ? {} : { host: wrapHost(parsed.snapshot.hostCode) }),
     ...(parsed.snapshot.clientCode === undefined ? {} : { client: wrapClient(parsed.snapshot.clientCode) }),
   })
-  const manifest = extensionManifestSchema.parse({
-    schemaVersion: 2,
-    extensionId: input.extensionId,
-    revisionId: input.revisionId,
-    entrypoints: {
-      ...('host' in sources ? { host: 'source/host.ts' } : {}),
-      ...('client' in sources ? { client: 'source/client.ts' } : {}),
-    },
-    contributions: parsed.snapshot.contributions,
-  })
+  const adapters = parsed.snapshot.contributions.filter(({ kind }) => kind === 'adapter')
+  const hostSlots = parsed.snapshot.contributions.filter(({ kind }) => kind === 'host-client-slot')
+  const agentContributions = parsed.snapshot.contributions.filter(
+    ({ kind }) => kind !== 'adapter' && kind !== 'host-client-slot',
+  )
+  const isHostAdapter = adapters.length > 0 || hostSlots.length > 0
+  if (isHostAdapter && (adapters.length !== 1 || agentContributions.length > 0 || !('host' in sources))) {
+    throw new Error('适配器 Revision 必须包含一个 Host Adapter，且不能混装智能体工具、RPC 或 Slot。')
+  }
+  const manifest = isHostAdapter
+    ? hostAdapterManifestSchema.parse({
+        schemaVersion: 3,
+        scope: 'host-adapter',
+        extensionId: input.extensionId,
+        revisionId: input.revisionId,
+        entrypoints: {
+          host: 'source/host.ts',
+          ...('client' in sources ? { client: 'source/client.ts' } : {}),
+        },
+        contributions: parsed.snapshot.contributions,
+      })
+    : extensionManifestSchema.parse({
+        schemaVersion: 2,
+        extensionId: input.extensionId,
+        revisionId: input.revisionId,
+        entrypoints: {
+          ...('host' in sources ? { host: 'source/host.ts' } : {}),
+          ...('client' in sources ? { client: 'source/client.ts' } : {}),
+        },
+        contributions: parsed.snapshot.contributions,
+      })
   const digestInput = canonicalJson(JsonValueSchema.parse(digestInputSchema.parse({ manifest, sources })))
   return {
     manifest,

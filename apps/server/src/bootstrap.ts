@@ -1,30 +1,19 @@
 import type { Context } from '@deepseek-ai/cordis'
-import { createWebAdapterConnection, WEB_CONNECTION_DEFINITION } from '@nekro-nxt/adapter-web'
+import { createWebAdapterConnection, WEB_HOST_CONTRIBUTION } from '@nekro-nxt/adapter-web'
 import type { WebAdapterConnection } from '@nekro-nxt/adapter-web'
+import { createOneBot11HostContribution } from '@nekro-nxt/adapter-onebot-11'
+import { createWeComAiBotHostContribution } from '@nekro-nxt/adapter-wecom-ai-bot'
 import {
-  OneBot11ConnectionConfigurationSchema,
-  OneBot11Runtime,
-  OneBotActionError,
-  ONEBOT_11_CONNECTION_DEFINITION,
-  type OneBot11RuntimeConfig,
-} from '@nekro-nxt/adapter-onebot-11'
-import {
-  WeComAiBotConnectionConfigurationSchema,
-  WeComAiBotRuntime,
-  WeComTransportError,
-  WECOM_AI_BOT_CONNECTION_DEFINITION,
-  type WeComAiBotRuntimeConfig,
-} from '@nekro-nxt/adapter-wecom-ai-bot'
-import {
-  parseAdapterConnectionConfiguration,
+  AdapterRegistry,
   type AdapterConnectionHostContext,
-  type AdapterConnectionDescriptor,
   type AdapterConnectionDiagnostic,
   type AdapterConnectionRuntime,
+  type AdapterHostContributionV1,
+  type AdapterTransportService,
+  type RegisteredAdapterHandle,
 } from '@nekro-nxt/adapter-sdk'
 import {
   createQQGatewayCheckpointStore,
-  isQQTransportError,
   QQNodeWebSocketFactory,
   QQOpenClawConfigSchema,
   QQOpenClawHttpTransport,
@@ -38,12 +27,22 @@ import {
 import { ChannelRuntime } from '@nekro-nxt/channel-runtime'
 import { AssetService, CoreService } from '@nekro-nxt/core'
 import type { AgentRevisionContent, ConnectionRecord } from '@nekro-nxt/core'
-import type { AgentId, ChannelId, ConnectionId } from '@nekro-nxt/contracts'
+import {
+  LogicalMessageIdSchema,
+  PhysicalDeliveryIdSchema,
+  type AgentId,
+  type ChannelId,
+  type ConnectionId,
+  type ExtensionId,
+  type ExtensionRevisionId,
+  type JsonValue,
+} from '@nekro-nxt/contracts'
 import {
   ExtensionActivationCoordinator,
   ExtensionBuilder,
   ExtensionService,
   ExtensionSourceStore,
+  HostExtensionInstallationCoordinator,
 } from '@nekro-nxt/extension-runtime'
 import {
   completeDshSessionStoragePreparation,
@@ -62,30 +61,24 @@ import { fetchAdapterRemoteBytes } from './adapter-remote-assets.js'
 import { LocalCredentialStore } from './credentials.js'
 import { NotificationService } from './notifications.js'
 import { QQCoreBridge, QQRemoteAssetImporter } from './qq-openclaw.js'
+import { ServerAdapterHostInstallationHost } from './host-extension-installation.js'
+import { createProductionAdapterTransport } from './adapter-transport.js'
 
 const StoredQQConnectionConfigSchema = QQOpenClawConfigSchema.omit({ clientSecretCredentialRef: true })
-const ADAPTER_CONNECTION_DEFINITIONS = [
-  WEB_CONNECTION_DEFINITION,
-  QQ_OPENCLAW_CONNECTION_DEFINITION,
-  ONEBOT_11_CONNECTION_DEFINITION,
-  WECOM_AI_BOT_CONNECTION_DEFINITION,
-]
 
-interface ServerAdapterDriver {
-  readonly descriptor: AdapterConnectionDescriptor
-  readonly create?: (input: {
-    readonly alias?: string | undefined
-    readonly configuration?: Readonly<Record<string, unknown>>
-    readonly credentials?: Readonly<Record<string, unknown>>
-  }) => Promise<ConnectionRecord>
-  readonly mount: (connectionId: ConnectionId) => Promise<void>
-  readonly test: (
-    connectionId: ConnectionId,
-    direction: 'send' | 'receive',
-    targetChannelId?: ChannelId,
-  ) => Promise<ConnectionTestResult>
+const parseStoredAdapterConfiguration = (value: JsonValue): Readonly<Record<string, string | number | boolean>> => {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) {
+    throw new TypeError('连接配置必须是对象。')
+  }
+  const configuration: Record<string, string | number | boolean> = {}
+  for (const [key, entry] of Object.entries(value)) {
+    if (typeof entry !== 'string' && typeof entry !== 'number' && typeof entry !== 'boolean') {
+      throw new TypeError(`连接配置字段 ${key} 的持久格式无效。`)
+    }
+    configuration[key] = entry
+  }
+  return configuration
 }
-
 /**
  * Single source of truth for the NekroNxt Server main assembly. Extracts the
  * inline composition previously duplicated across tests into one reusable
@@ -123,6 +116,8 @@ export interface NekroRuntimeOptions {
     readonly clock?: QQGatewayClock
   }
   readonly notifications?: { readonly fetch?: typeof fetch }
+  /** Replaced by an offline Fake for tests and AI validation; production uses fetch/ws. */
+  readonly adapterTransport?: AdapterTransportService
 }
 
 export interface QQConnectionDiagnostic {
@@ -190,6 +185,7 @@ export class NekroRuntime {
   readonly webConnectionId: ConnectionId
   readonly extensionService: ExtensionService
   readonly activation: ExtensionActivationCoordinator
+  readonly installation: HostExtensionInstallationCoordinator
   readonly credentials: LocalCredentialStore
   readonly notifications: NotificationService
   readonly sessionStoragePreparation: DshSessionStoragePreparation
@@ -198,17 +194,29 @@ export class NekroRuntime {
   readonly #database: CoreDatabase
   readonly #now: () => number
   readonly #qqOptions: NonNullable<NekroRuntimeOptions['qq']>
-  readonly #qqRuntimes = new Map<ConnectionId, QQOpenClawRuntime>()
-  readonly #onebotRuntimes = new Map<ConnectionId, OneBot11Runtime>()
-  readonly #wecomRuntimes = new Map<ConnectionId, WeComAiBotRuntime>()
+  readonly adapters: AdapterRegistry
+  readonly #adapterHandles: RegisteredAdapterHandle[] = []
   readonly #adapterRuntimes: Map<ConnectionId, AdapterConnectionRuntime>
+  readonly #adapterTransport: AdapterTransportService
   readonly #qqDiagnostics = new Map<ConnectionId, QQConnectionDiagnostic>()
   readonly #adapterDiagnostics = new Map<ConnectionId, AdapterConnectionDiagnostic>()
+  readonly #connectionTests = new Map<
+    ConnectionId,
+    { readonly receive?: ConnectionTestResult; readonly send?: ConnectionTestResult }
+  >()
+  readonly #hostClientDiagnostics = new Map<
+    ExtensionId,
+    {
+      readonly revisionId: ExtensionRevisionId
+      readonly status: 'loaded' | 'failed'
+      readonly message?: string
+      readonly observedAt: number
+    }
+  >()
   readonly #lastInboundByConnection = new Map<
     ConnectionId,
     { readonly channelId: ChannelId; readonly platformMessageId?: string; readonly receivedAt: number }
   >()
-  readonly #adapterDrivers = new Map<string, ServerAdapterDriver>()
   readonly #connectionListeners = new Set<() => void>()
   readonly #agents = new Map<AgentId, AgentEntity>()
   readonly #unsubscribeDynamicApproval: () => void
@@ -227,6 +235,7 @@ export class NekroRuntime {
     readonly webConnectionId: ConnectionId
     readonly extensionService: ExtensionService
     readonly activation: ExtensionActivationCoordinator
+    readonly extensionBuilder: ExtensionBuilder
     readonly credentials: LocalCredentialStore
     readonly notifications: NotificationService
     readonly unsubscribeDynamicApproval: () => void
@@ -234,7 +243,9 @@ export class NekroRuntime {
     readonly sessionStorageRetirement?: { readonly episodesClosed: number; readonly admissionsReleased: number }
     readonly now: () => number
     readonly qqOptions: NonNullable<NekroRuntimeOptions['qq']>
+    readonly adapters: AdapterRegistry
     readonly adapterRuntimes: Map<ConnectionId, AdapterConnectionRuntime>
+    readonly adapterTransport: AdapterTransportService
   }) {
     this.#database = input.database
     this.repository = input.repository
@@ -254,41 +265,46 @@ export class NekroRuntime {
     this.sessionStorageRetirement = input.sessionStorageRetirement
     this.#now = input.now
     this.#qqOptions = input.qqOptions
+    this.adapters = input.adapters
     this.#adapterRuntimes = input.adapterRuntimes
+    this.#adapterTransport = input.adapterTransport
     this.#adapterDiagnostics.set(input.webConnectionId, {
       status: 'connected',
       credentialConfigured: true,
       proactiveSend: true,
     })
-    this.#adapterDrivers.set(WEB_CONNECTION_DEFINITION.descriptor.key, {
-      descriptor: WEB_CONNECTION_DEFINITION.descriptor,
-      mount: () => Promise.resolve(),
-      test: (connectionId, direction, channelId) => this.#testWebConnection(connectionId, direction, channelId),
-    })
-    this.#adapterDrivers.set(QQ_OPENCLAW_CONNECTION_DEFINITION.descriptor.key, {
-      descriptor: QQ_OPENCLAW_CONNECTION_DEFINITION.descriptor,
-      create: async (request) => {
-        const parsed = parseAdapterConnectionConfiguration(QQ_OPENCLAW_CONNECTION_DEFINITION, request)
-        return this.createQQConnection(
-          QQ_OPENCLAW_CONNECTION_DEFINITION.create(parsed.configuration, parsed.credentials),
-          request.alias,
-        )
-      },
-      mount: (connectionId) => this.#mountQQ(connectionId),
-      test: (connectionId, direction, channelId) => this.#testQQConnection(connectionId, direction, channelId),
-    })
-    this.#adapterDrivers.set(ONEBOT_11_CONNECTION_DEFINITION.descriptor.key, {
-      descriptor: ONEBOT_11_CONNECTION_DEFINITION.descriptor,
-      create: (request) => this.#createOneBotConnection(request),
-      mount: (connectionId) => this.#mountOneBot(connectionId),
-      test: (connectionId, direction, channelId) => this.#testOneBotConnection(connectionId, direction, channelId),
-    })
-    this.#adapterDrivers.set(WECOM_AI_BOT_CONNECTION_DEFINITION.descriptor.key, {
-      descriptor: WECOM_AI_BOT_CONNECTION_DEFINITION.descriptor,
-      create: (request) => this.#createWeComConnection(request),
-      mount: (connectionId) => this.#mountWeCom(connectionId),
-      test: (connectionId, direction, channelId) => this.#testWeComConnection(connectionId, direction, channelId),
-    })
+    this.#adapterHandles.push(
+      this.adapters.register('builtin:web', WEB_HOST_CONTRIBUTION),
+      this.adapters.register('builtin:qq-openclaw', this.#qqHostContribution()),
+      this.adapters.register('builtin:onebot-11', createOneBot11HostContribution()),
+      this.adapters.register('builtin:wecom-ai-bot', createWeComAiBotHostContribution()),
+    )
+    this.installation = new HostExtensionInstallationCoordinator(
+      this.repository,
+      this.extensionService,
+      input.extensionBuilder,
+      new ServerAdapterHostInstallationHost({
+        expectedAdapter: (revision) => {
+          const verification = this.repository.getExtensionRevisionVerification(revision.id)
+          if (verification?.scope !== 'host-adapter' || !verification.adapter) {
+            throw new Error('Host 安装只接受完成适配器验证的 Extension Revision。')
+          }
+          return { key: verification.adapter.key, descriptorDigest: verification.adapter.descriptorDigest }
+        },
+        assertAdapterKeyAvailable: (adapterKey, extensionId) => {
+          const registered = this.adapters.get(adapterKey)
+          const owned = this.adapters.getByOwner(`extension:${extensionId}`)
+          if (registered && registered !== owned) {
+            throw new Error(`适配器 key 已被占用: ${adapterKey}`)
+          }
+          return Promise.resolve()
+        },
+        register: (owner, contribution) => this.registerAdapter(owner, contribution),
+        mountConnections: (adapterKey) => this.mountAdapterConnections(adapterKey),
+        waitUntilSafe: () => Promise.resolve(),
+      }),
+      { now: this.#now },
+    )
   }
 
   static async create(options: NekroRuntimeOptions): Promise<NekroRuntime> {
@@ -310,6 +326,7 @@ export class NekroRuntime {
       }
       const assetService = new AssetService(repository, options.assetRoot)
       const core = new CoreService(repository, { now, nextUlid })
+      const adapters = new AdapterRegistry()
       const webConnection =
         core.listConnectionsByAdapter('web')[0] ?? core.createConnection({ adapterKey: 'web', config: {} })
       const webConnectionId = webConnection.id
@@ -329,6 +346,7 @@ export class NekroRuntime {
         },
         now,
       )
+      adapterRuntimes.set(webConnectionId, web)
 
       const host = await DshHostRuntime.create({
         sessionDatabasePath: options.sessionDatabasePath,
@@ -360,9 +378,7 @@ export class NekroRuntime {
           },
         },
         history: repository,
-        resolveAdapterDisplayName: (adapterKey) =>
-          ADAPTER_CONNECTION_DEFINITIONS.find((definition) => definition.descriptor.key === adapterKey)?.descriptor
-            .displayName,
+        resolveAdapterDisplayName: (adapterKey) => adapters.get(adapterKey)?.descriptor.displayName,
         assets: repository,
         assetService,
         resolveAgentRevision: (revisionId) => repository.getAgentRevision(revisionId),
@@ -428,6 +444,7 @@ export class NekroRuntime {
         webConnectionId,
         extensionService,
         activation,
+        extensionBuilder,
         credentials,
         notifications,
         unsubscribeDynamicApproval,
@@ -435,7 +452,9 @@ export class NekroRuntime {
         ...(sessionStorageRetirement === undefined ? {} : { sessionStorageRetirement }),
         now,
         qqOptions: options.qq ?? {},
+        adapters,
         adapterRuntimes,
+        adapterTransport: options.adapterTransport ?? createProductionAdapterTransport(),
       })
       return runtime
     } catch (error) {
@@ -518,9 +537,9 @@ export class NekroRuntime {
 
   /** Resume persisted Episodes, Admissions, Outbounds and active Extensions after a cold start. */
   async recover(): Promise<void> {
+    await this.installation.restore()
     for (const connection of this.core.listConnections()) {
-      const driver = this.#adapterDrivers.get(connection.adapterKey)
-      if (driver) await driver.mount(connection.id)
+      await this.#mountAdapter(connection.id)
     }
     await this.channels.recoverProcessingFeedback()
     await this.channels.recover()
@@ -533,15 +552,52 @@ export class NekroRuntime {
   }
 
   connectionDiagnostic(connectionId: ConnectionId): QQConnectionDiagnostic | undefined {
-    return this.#qqDiagnostics.get(connectionId)
+    const legacy = this.#qqDiagnostics.get(connectionId)
+    if (legacy) return legacy
+    const diagnostic = this.#adapterDiagnostics.get(connectionId)
+    if (!diagnostic) return undefined
+    const tests = this.#connectionTests.get(connectionId)
+    return {
+      gateway: {
+        state: diagnostic.status,
+        ...(diagnostic.message === undefined ? {} : { lastError: diagnostic.message }),
+      },
+      credentialConfigured: diagnostic.credentialConfigured ?? false,
+      knownChannelIds: this.core.listChannelsByConnection(connectionId).map((channel) => channel.id),
+      ...(tests?.receive === undefined ? {} : { receiveTest: tests.receive }),
+      ...(tests?.send === undefined ? {} : { sendTest: tests.send }),
+    }
   }
 
   adapterConnectionDiagnostic(connectionId: ConnectionId): AdapterConnectionDiagnostic | undefined {
     return this.#adapterDiagnostics.get(connectionId)
   }
 
-  listConnectionAdapters(): readonly AdapterConnectionDescriptor[] {
-    return ADAPTER_CONNECTION_DEFINITIONS.map(({ descriptor }) => descriptor)
+  lastInbound(connectionId: ConnectionId) {
+    return this.#lastInboundByConnection.get(connectionId)
+  }
+
+  connectionTests(connectionId: ConnectionId) {
+    return this.#connectionTests.get(connectionId)
+  }
+
+  hostClientDiagnostic(extensionId: ExtensionId) {
+    return this.#hostClientDiagnostics.get(extensionId)
+  }
+
+  recordHostClientDiagnostic(
+    extensionId: ExtensionId,
+    diagnostic: {
+      readonly revisionId: ExtensionRevisionId
+      readonly status: 'loaded' | 'failed'
+      readonly message?: string
+    },
+  ): void {
+    this.#hostClientDiagnostics.set(extensionId, { ...diagnostic, observedAt: this.#now() })
+  }
+
+  listConnectionAdapters() {
+    return this.adapters.list().map(({ descriptor }) => descriptor)
   }
 
   async createConnection(input: {
@@ -550,42 +606,82 @@ export class NekroRuntime {
     readonly configuration?: Readonly<Record<string, unknown>>
     readonly credentials?: Readonly<Record<string, unknown>>
   }) {
-    const driver = this.#adapterDrivers.get(input.adapterKey)
-    if (!driver?.descriptor.userCreatable || !driver.create) throw new Error('该连接平台不可由用户创建。')
-    return driver.create(input)
+    if (!this.#started || this.#disposed) throw new Error('NekroRuntime is not accepting new Connections.')
+    const contribution = this.adapters.get(input.adapterKey)
+    if (!contribution?.descriptor.userCreatable) throw new Error('该连接平台不可由用户创建。')
+    const descriptor = contribution.descriptor
+    const configurationInput = input.configuration ?? {}
+    const credentialsInput = input.credentials ?? {}
+    const configuration: Record<string, string | number | boolean> = {}
+    const rawCredentials: Array<{ readonly key: string; readonly value: string }> = []
+    for (const key of Object.keys(configurationInput)) {
+      const property = descriptor.configSchema.properties[key]
+      if (!property || property.type === 'credential-reference') throw new TypeError(`连接配置包含未知字段：${key}`)
+    }
+    for (const key of Object.keys(credentialsInput)) {
+      const property = descriptor.configSchema.properties[key]
+      if (!property || property.type !== 'credential-reference') throw new TypeError(`连接凭据包含未知字段：${key}`)
+    }
+    for (const [key, property] of Object.entries(descriptor.configSchema.properties)) {
+      if (property.type === 'credential-reference') {
+        const raw = credentialsInput[key]
+        if (raw === undefined && descriptor.configSchema.required.includes(key))
+          throw new TypeError(`请填写${property.title}。`)
+        if (raw !== undefined) {
+          if (typeof raw !== 'string' || !raw.trim()) throw new TypeError(`请填写${property.title}。`)
+          rawCredentials.push({ key: property.credentialKey?.trim() || key, value: raw })
+        }
+        continue
+      }
+      const value = configurationInput[key] ?? property.default
+      if (value === undefined) {
+        if (descriptor.configSchema.required.includes(key)) throw new TypeError(`请填写${property.title}。`)
+        continue
+      }
+      if (property.type === 'string' && typeof value === 'string') configuration[key] = value
+      else if (property.type === 'number' && typeof value === 'number') configuration[key] = value
+      else if (property.type === 'boolean' && typeof value === 'boolean') configuration[key] = value
+      else throw new TypeError(`${property.title}的类型无效。`)
+    }
+    const credentialRefs: Record<string, string> = {}
+    try {
+      for (const credential of rawCredentials)
+        credentialRefs[credential.key] = await this.credentials.save(credential.value)
+      const connection = this.core.createConnection({
+        adapterKey: descriptor.key,
+        ...(input.alias === undefined ? {} : { alias: input.alias }),
+        config: configuration,
+        credentialRefs,
+      })
+      await this.#mountAdapter(connection.id)
+      return connection
+    } catch (error) {
+      await Promise.allSettled(Object.values(credentialRefs).map((reference) => this.credentials.delete(reference)))
+      throw error
+    }
   }
 
   async createQQConnection(input: QQOpenClawConnectionInput, alias?: string) {
-    if (!this.#started || this.#disposed) throw new Error('NekroRuntime is not accepting new Connections.')
-    const credentialReference = await this.credentials.save(input.clientSecret)
-    let connection
-    try {
-      connection = this.core.createConnection({
-        adapterKey: 'qq-openclaw',
-        ...(alias === undefined ? {} : { alias }),
-        config: {
-          appId: input.appId,
-          proactiveSend: input.proactiveSend ?? false,
-          markdown: input.markdown ?? true,
-          maxTextLength: input.maxTextLength ?? 1800,
-          maxTextBytes: input.maxTextBytes ?? 7200,
-        },
-        credentialRefs: { clientSecret: credentialReference },
-      })
-    } catch (error) {
-      await this.credentials.delete(credentialReference)
-      throw error
-    }
-    await this.#mountQQ(connection.id)
-    return this.core.listConnections().find((candidate) => candidate.id === connection.id)!
+    return this.createConnection({
+      adapterKey: QQ_OPENCLAW_CONNECTION_DEFINITION.descriptor.key,
+      ...(alias === undefined ? {} : { alias }),
+      configuration: {
+        appId: input.appId,
+        proactiveSend: input.proactiveSend ?? false,
+        markdown: input.markdown ?? true,
+        maxTextLength: input.maxTextLength ?? 1800,
+        maxTextBytes: input.maxTextBytes ?? 7200,
+      },
+      credentials: { clientSecretCredentialRef: input.clientSecret },
+    })
   }
 
   updateConnectionAlias(connectionId: ConnectionId, alias?: string): ConnectionRecord {
     if (this.#disposed) throw new Error('NekroRuntime is disposed.')
     const connection = this.core.getConnection(connectionId)
     if (!connection) throw new Error('连接不存在。')
-    const descriptor = ADAPTER_CONNECTION_DEFINITIONS.find(({ descriptor }) => descriptor.key === connection.adapterKey)
-    if (!descriptor?.descriptor.userCreatable) throw new Error('系统托管连接不需要编辑别名。')
+    const descriptor = this.adapters.get(connection.adapterKey)?.descriptor
+    if (!descriptor?.aliasEditable) throw new Error('系统托管连接不需要编辑别名。')
     const updated = this.core.updateConnectionAlias(connectionId, alias)
     this.#notifyConnectionChanges()
     return updated
@@ -598,197 +694,28 @@ export class NekroRuntime {
   ): Promise<ConnectionTestResult> {
     const connection = this.core.listConnections().find((candidate) => candidate.id === connectionId)
     if (!connection) throw new Error('Connection does not exist.')
-    const driver = this.#adapterDrivers.get(connection.adapterKey)
-    if (!driver) throw new Error('该连接平台不提供测试流程。')
-    return driver.test(connectionId, direction, targetChannelId)
-  }
-
-  async #testQQConnection(
-    connectionId: ConnectionId,
-    direction: 'send' | 'receive',
-    targetChannelId?: ChannelId,
-  ): Promise<ConnectionTestResult> {
-    const connection = this.core.listConnections().find((candidate) => candidate.id === connectionId)
-    if (!connection || connection.adapterKey !== 'qq-openclaw') throw new Error('QQ Connection does not exist.')
-    const diagnostic = this.#qqDiagnostics.get(connectionId)
-    let result: ConnectionTestResult
-    if (!diagnostic || diagnostic.gateway.state !== 'connected') {
-      result = { status: 'not-connected', message: '尚未连接到该平台；请先检查凭据和网络。' }
-      this.#recordConnectionTest(connectionId, direction, result)
-      return result
-    }
-    if (direction === 'receive') {
-      result = diagnostic.lastInbound
-        ? {
-            status: 'received',
-            channelId: diagnostic.lastInbound.channelId,
-            platformMessageId: diagnostic.lastInbound.platformMessageId,
-          }
-        : { status: 'waiting-for-message', message: '请先在测试群或私聊中向该机器人账号发送一条消息，再重新测试接收。' }
-      this.#recordConnectionTest(connectionId, direction, result)
-      return result
-    }
-    if (targetChannelId !== undefined && !diagnostic.knownChannelIds.includes(targetChannelId)) {
-      throw new Error('QQ test target does not belong to this Connection.')
-    }
-    const channelId =
-      targetChannelId ?? (diagnostic.knownChannelIds.length === 1 ? diagnostic.knownChannelIds[0] : undefined)
-    if (!channelId) {
-      result =
-        diagnostic.knownChannelIds.length === 0
-          ? { status: 'needs-channel', message: '尚未发现频道；请先向机器人账号发送一条消息。' }
-          : { status: 'needs-target', message: '该连接发现了多个频道，请明确选择发送测试的目标频道。' }
-      this.#recordConnectionTest(connectionId, direction, result)
-      return result
-    }
-    try {
-      const platformMessageId = await this.#qqRuntimes
-        .get(connectionId)!
-        .testSend(channelId, AbortSignal.timeout(15_000))
-      result = { status: 'sent', channelId, platformMessageId }
-    } catch (error) {
-      if (isQQTransportError(error)) {
-        result = {
-          status: 'failed',
-          kind: error.kind,
-          message: error.message,
-          ...(error.retryAfterMs === undefined ? {} : { retryAfterMs: error.retryAfterMs }),
-        }
-      } else {
-        result = {
-          status: 'failed',
-          kind: 'transient',
-          message: error instanceof Error ? error.message : String(error),
-        }
-      }
-    }
-    this.#recordConnectionTest(connectionId, direction, result)
-    return result
-  }
-
-  async #testWebConnection(
-    connectionId: ConnectionId,
-    direction: 'send' | 'receive',
-    targetChannelId?: ChannelId,
-  ): Promise<ConnectionTestResult> {
-    const channels = this.core.listChannelsByConnection(connectionId)
-    const channel = targetChannelId
-      ? channels.find(({ id }) => id === targetChannelId)
-      : channels.length === 1
-        ? channels[0]
-        : undefined
-    if (!channel) return { status: 'needs-channel', message: '内置连接还没有可测试的频道。' }
-    if (direction === 'receive') return { status: 'received', channelId: channel.id, platformMessageId: channel.id }
-    const result = await this.web.postMessage({
-      channelId: channel.id,
-      clientEventId: `test-send-${this.#now()}`,
-      parts: [{ type: 'text', text: '连接诊断测试消息。' }],
-    })
-    return { status: 'sent', channelId: channel.id, platformMessageId: result.channelEventId }
-  }
-
-  connectionCapabilities(connectionId: ConnectionId) {
-    if (connectionId === this.webConnectionId) return this.web.capabilities
-    return this.#adapterRuntimes.get(connectionId)?.capabilities
-  }
-
-  #recordConnectionTest(connectionId: ConnectionId, direction: 'send' | 'receive', result: ConnectionTestResult): void {
-    const current = this.#qqDiagnostics.get(connectionId)
-    if (!current) return
-    this.#setQQDiagnostic(connectionId, {
-      ...current,
-      ...(direction === 'send' ? { sendTest: result } : { receiveTest: result }),
-    })
-  }
-
-  async #createOneBotConnection(input: {
-    readonly alias?: string | undefined
-    readonly configuration?: Readonly<Record<string, unknown>>
-    readonly credentials?: Readonly<Record<string, unknown>>
-  }): Promise<ConnectionRecord> {
-    if (!this.#started || this.#disposed) throw new Error('NekroRuntime is not accepting new Connections.')
-    const parsed = parseAdapterConnectionConfiguration(ONEBOT_11_CONNECTION_DEFINITION, input)
-    const accessToken = parsed.credentials.accessToken
-    const credentialReference = accessToken === undefined ? undefined : await this.credentials.save(accessToken)
-    let connection: ConnectionRecord
-    try {
-      connection = this.core.createConnection({
-        adapterKey: ONEBOT_11_CONNECTION_DEFINITION.descriptor.key,
-        ...(input.alias === undefined ? {} : { alias: input.alias }),
-        config: parsed.configuration,
-        ...(credentialReference === undefined ? {} : { credentialRefs: { accessToken: credentialReference } }),
-      })
-    } catch (error) {
-      if (credentialReference !== undefined) await this.credentials.delete(credentialReference)
-      throw error
-    }
-    await this.#mountOneBot(connection.id)
-    return connection
-  }
-
-  async #mountOneBot(connectionId: ConnectionId): Promise<void> {
-    if (this.#onebotRuntimes.has(connectionId)) return
-    const connection = this.core.getConnection(connectionId)
-    if (!connection || connection.adapterKey !== ONEBOT_11_CONNECTION_DEFINITION.descriptor.key) {
-      throw new Error('OneBot 11 Connection does not exist.')
-    }
-    let config: OneBot11RuntimeConfig
-    try {
-      const stored = OneBot11ConnectionConfigurationSchema.parse(connection.config)
-      const credentialReference = connection.credentialRefs['accessToken']
-      if (credentialReference !== undefined && !(await this.credentials.has(credentialReference))) {
-        throw new Error('这个连接的 Access Token 凭据不可用。')
-      }
-      config = {
-        ...stored,
-        ...(credentialReference === undefined ? {} : { accessTokenCredentialRef: credentialReference }),
-      }
-    } catch (error) {
-      this.#adapterDiagnostics.set(connectionId, {
-        status: 'failed',
-        message: error instanceof Error ? error.message : String(error),
-      })
-      this.#notifyConnectionChanges()
-      return
-    }
-    const runtime = new OneBot11Runtime({
-      context: this.#adapterContext(connectionId),
-      config,
-    })
-    this.#onebotRuntimes.set(connectionId, runtime)
-    this.#adapterRuntimes.set(connectionId, runtime)
-    try {
-      await runtime.start()
-    } catch (error) {
-      this.#onebotRuntimes.delete(connectionId)
-      this.#adapterRuntimes.delete(connectionId)
-      this.#adapterDiagnostics.set(connectionId, {
-        status: 'failed',
-        message: error instanceof Error ? error.message : String(error),
-      })
-      this.#notifyConnectionChanges()
-    }
-  }
-
-  async #testOneBotConnection(
-    connectionId: ConnectionId,
-    direction: 'send' | 'receive',
-    targetChannelId?: ChannelId,
-  ): Promise<ConnectionTestResult> {
+    const descriptor = this.adapters.get(connection.adapterKey)?.descriptor
+    if (!descriptor?.diagnostics[direction]) throw new Error('该连接平台不提供这个测试流程。')
+    const runtime = this.#adapterRuntimes.get(connectionId)
     const diagnostic = this.#adapterDiagnostics.get(connectionId)
-    const runtime = this.#onebotRuntimes.get(connectionId)
     if (!runtime || diagnostic?.status !== 'connected') {
-      return { status: 'not-connected', message: diagnostic?.message ?? '尚未连接到 OneBot 11 协议端。' }
+      return { status: 'not-connected', message: diagnostic?.message ?? '尚未连接到该平台。' }
     }
     if (direction === 'receive') {
       const inbound = this.#lastInboundByConnection.get(connectionId)
-      return inbound?.platformMessageId
-        ? { status: 'received', channelId: inbound.channelId, platformMessageId: inbound.platformMessageId }
-        : { status: 'waiting-for-message', message: '请先从测试群或私聊发送一条消息，再重新测试接收。' }
+      const result: ConnectionTestResult = inbound?.platformMessageId
+        ? {
+            status: 'received',
+            channelId: inbound.channelId,
+            platformMessageId: inbound.platformMessageId,
+          }
+        : { status: 'waiting-for-message', message: '请先从平台发送一条消息，再重新测试接收。' }
+      this.#recordConnectionTest(connectionId, direction, result)
+      return result
     }
     const channels = this.core.listChannelsByConnection(connectionId)
     if (targetChannelId !== undefined && !channels.some(({ id }) => id === targetChannelId)) {
-      throw new Error('测试目标不属于这个 OneBot 11 Connection。')
+      throw new Error('测试目标不属于这个连接。')
     }
     const channelId = targetChannelId ?? (channels.length === 1 ? channels[0]?.id : undefined)
     if (!channelId) {
@@ -797,114 +724,146 @@ export class NekroRuntime {
         : { status: 'needs-target', message: '该连接发现了多个频道，请选择发送测试的目标频道。' }
     }
     try {
-      return { status: 'sent', channelId, platformMessageId: await runtime.testSend(channelId) }
-    } catch (error) {
-      return {
-        status: 'failed',
-        kind: error instanceof OneBotActionError ? error.kind : 'transient',
-        message: error instanceof Error ? error.message : String(error),
+      const parts = [{ type: 'text' as const, text: 'NekroNXT 连接诊断测试消息。' }]
+      const plans = runtime.planOutbound ? await runtime.planOutbound({ connectionId, channelId, parts }) : [{ parts }]
+      let platformMessageId: string | undefined
+      for (const [index, plan] of plans.entries()) {
+        const receipt = await runtime.deliver(
+          {
+            deliveryId: PhysicalDeliveryIdSchema.parse(`phy_TEST${this.#now()}${index}`),
+            logicalMessageId: LogicalMessageIdSchema.parse(`msg_TEST${this.#now()}${index}`),
+            connectionId,
+            channelId,
+            parts: plan.parts,
+            ...(plan.adapterContext === undefined ? {} : { adapterContext: plan.adapterContext }),
+          },
+          AbortSignal.timeout(15_000),
+        )
+        if (receipt.status === 'failed') {
+          return { status: 'failed', kind: receipt.failure.kind, message: receipt.failure.message }
+        }
+        if (receipt.status === 'unknown') return { status: 'failed', kind: 'transient', message: receipt.message }
+        platformMessageId = receipt.platformMessageId ?? platformMessageId
       }
-    }
-  }
-
-  async #createWeComConnection(input: {
-    readonly alias?: string | undefined
-    readonly configuration?: Readonly<Record<string, unknown>>
-    readonly credentials?: Readonly<Record<string, unknown>>
-  }): Promise<ConnectionRecord> {
-    if (!this.#started || this.#disposed) throw new Error('NekroRuntime is not accepting new Connections.')
-    const parsed = parseAdapterConnectionConfiguration(WECOM_AI_BOT_CONNECTION_DEFINITION, input)
-    const secretReference = await this.credentials.save(parsed.credentials.secret)
-    let connection: ConnectionRecord
-    try {
-      connection = this.core.createConnection({
-        adapterKey: WECOM_AI_BOT_CONNECTION_DEFINITION.descriptor.key,
-        ...(input.alias === undefined ? {} : { alias: input.alias }),
-        config: parsed.configuration,
-        credentialRefs: { secret: secretReference },
-      })
+      const result: ConnectionTestResult = {
+        status: 'sent',
+        channelId,
+        ...(platformMessageId === undefined ? {} : { platformMessageId }),
+      }
+      this.#recordConnectionTest(connectionId, direction, result)
+      return result
     } catch (error) {
-      await this.credentials.delete(secretReference)
-      throw error
+      return { status: 'failed', kind: 'transient', message: error instanceof Error ? error.message : String(error) }
     }
-    await this.#mountWeCom(connection.id)
-    return connection
   }
 
-  async #mountWeCom(connectionId: ConnectionId): Promise<void> {
-    if (this.#wecomRuntimes.has(connectionId)) return
+  connectionCapabilities(connectionId: ConnectionId) {
+    return this.#adapterRuntimes.get(connectionId)?.capabilities
+  }
+
+  #recordConnectionTest(connectionId: ConnectionId, direction: 'send' | 'receive', result: ConnectionTestResult): void {
+    this.#connectionTests.set(connectionId, { ...this.#connectionTests.get(connectionId), [direction]: result })
+    const current = this.#qqDiagnostics.get(connectionId)
+    if (!current) return
+    this.#setQQDiagnostic(connectionId, {
+      ...current,
+      ...(direction === 'send' ? { sendTest: result } : { receiveTest: result }),
+    })
+  }
+
+  registerAdapter(owner: string, contribution: AdapterHostContributionV1): Promise<RegisteredAdapterHandle> {
+    const registered = this.adapters.register(owner, contribution)
+    this.#notifyConnectionChanges()
+    return Promise.resolve({
+      ...registered,
+      dispose: async () => {
+        await this.stopAdapterConnections(contribution.descriptor.key)
+        await registered.dispose()
+        this.#notifyConnectionChanges()
+      },
+    })
+  }
+
+  installHostExtension(input: Parameters<HostExtensionInstallationCoordinator['install']>[0]) {
+    return this.installation.install(input)
+  }
+
+  uninstallHostExtension(extensionId: Parameters<HostExtensionInstallationCoordinator['uninstall']>[0]): Promise<void> {
+    return this.installation.uninstall(extensionId)
+  }
+
+  async mountAdapterConnections(adapterKey: string): Promise<void> {
+    for (const connectionId of this.repository.listConnectionIdsByAdapter(adapterKey))
+      await this.#mountAdapter(connectionId)
+  }
+
+  async stopAdapterConnections(adapterKey: string): Promise<void> {
+    const connectionIds = this.repository.listConnectionIdsByAdapter(adapterKey)
+    await Promise.allSettled(
+      connectionIds.map(async (connectionId) => {
+        const runtime = this.#adapterRuntimes.get(connectionId)
+        this.#adapterRuntimes.delete(connectionId)
+        await runtime?.stop()
+        this.#adapterDiagnostics.set(connectionId, { status: 'stopped', message: '这个连接的适配器未安装。' })
+      }),
+    )
+    this.#notifyConnectionChanges()
+  }
+
+  async #mountAdapter(connectionId: ConnectionId): Promise<void> {
+    if (this.#adapterRuntimes.has(connectionId)) return
     const connection = this.core.getConnection(connectionId)
-    if (!connection || connection.adapterKey !== WECOM_AI_BOT_CONNECTION_DEFINITION.descriptor.key) {
-      throw new Error('企业微信智能机器人 Connection 不存在。')
-    }
-    let config: WeComAiBotRuntimeConfig
-    try {
-      const stored = WeComAiBotConnectionConfigurationSchema.parse(connection.config)
-      const secretCredentialRef = connection.credentialRefs['secret']
-      if (!secretCredentialRef || !(await this.credentials.has(secretCredentialRef))) {
-        throw new Error('这个连接的 Secret 凭据不可用。')
-      }
-      config = { ...stored, secretCredentialRef }
-    } catch (error) {
-      this.#adapterDiagnostics.set(connectionId, {
-        status: 'failed',
-        message: error instanceof Error ? error.message : String(error),
-      })
+    if (!connection) throw new Error('Connection does not exist.')
+    const contribution = this.adapters.get(connection.adapterKey)
+    if (!contribution) {
+      this.#adapterDiagnostics.set(connectionId, { status: 'stopped', message: '这个连接的适配器未安装。' })
       this.#notifyConnectionChanges()
       return
     }
-    const runtime = new WeComAiBotRuntime({ context: this.#adapterContext(connectionId), config })
-    this.#wecomRuntimes.set(connectionId, runtime)
-    this.#adapterRuntimes.set(connectionId, runtime)
+    let credentialsAvailable = true
     try {
+      for (const reference of Object.values(connection.credentialRefs)) {
+        let available = false
+        try {
+          available = await this.credentials.has(reference)
+        } catch {
+          available = false
+        }
+        if (!available) {
+          credentialsAvailable = false
+          throw new Error('这个连接的凭据不可用。')
+        }
+      }
+      const configuration = parseStoredAdapterConfiguration(connection.config)
+      const runtime = await contribution.create(this.#adapterContext(connectionId), {
+        configuration,
+        credentialRefs: connection.credentialRefs,
+      })
+      this.#adapterRuntimes.set(connectionId, runtime)
+      this.#adapterDiagnostics.set(connectionId, {
+        status: 'connecting',
+        credentialConfigured: Object.keys(connection.credentialRefs).length > 0,
+        proactiveSend: runtime.capabilities.proactiveSend,
+      })
       await runtime.start()
+      if (this.#adapterDiagnostics.get(connectionId)?.status === 'connecting') {
+        this.#adapterDiagnostics.set(connectionId, {
+          status: 'connected',
+          credentialConfigured: Object.keys(connection.credentialRefs).length > 0,
+          proactiveSend: runtime.capabilities.proactiveSend,
+        })
+      }
     } catch (error) {
-      this.#wecomRuntimes.delete(connectionId)
+      const runtime = this.#adapterRuntimes.get(connectionId)
       this.#adapterRuntimes.delete(connectionId)
+      await runtime?.stop().catch(() => undefined)
       this.#adapterDiagnostics.set(connectionId, {
         status: 'failed',
         message: error instanceof Error ? error.message : String(error),
+        credentialConfigured: credentialsAvailable && Object.keys(connection.credentialRefs).length > 0,
       })
-      this.#notifyConnectionChanges()
     }
-  }
-
-  async #testWeComConnection(
-    connectionId: ConnectionId,
-    direction: 'send' | 'receive',
-    targetChannelId?: ChannelId,
-  ): Promise<ConnectionTestResult> {
-    const diagnostic = this.#adapterDiagnostics.get(connectionId)
-    const runtime = this.#wecomRuntimes.get(connectionId)
-    if (!runtime || diagnostic?.status !== 'connected') {
-      return { status: 'not-connected', message: diagnostic?.message ?? '尚未连接到企业微信智能机器人。' }
-    }
-    if (direction === 'receive') {
-      const inbound = this.#lastInboundByConnection.get(connectionId)
-      return inbound?.platformMessageId
-        ? { status: 'received', channelId: inbound.channelId, platformMessageId: inbound.platformMessageId }
-        : { status: 'waiting-for-message', message: '请先向企业微信智能机器人发送一条消息，再重新测试接收。' }
-    }
-    const channels = this.core.listChannelsByConnection(connectionId)
-    if (targetChannelId !== undefined && !channels.some(({ id }) => id === targetChannelId)) {
-      throw new Error('测试目标不属于这个企业微信智能机器人 Connection。')
-    }
-    const channelId = targetChannelId ?? (channels.length === 1 ? channels[0]?.id : undefined)
-    if (!channelId) {
-      return channels.length === 0
-        ? { status: 'needs-channel', message: '尚未发现频道；请先从企业微信发送一条消息。' }
-        : { status: 'needs-target', message: '该连接发现了多个频道，请选择发送测试的目标频道。' }
-    }
-    try {
-      await runtime.testSend(channelId)
-      return { status: 'sent', channelId }
-    } catch (error) {
-      return {
-        status: 'failed',
-        kind: error instanceof WeComTransportError ? error.kind : 'transient',
-        message: error instanceof Error ? error.message : String(error),
-      }
-    }
+    this.#notifyConnectionChanges()
   }
 
   #adapterContext(connectionId: ConnectionId): AdapterConnectionHostContext {
@@ -1009,124 +968,93 @@ export class NekroRuntime {
           this.#notifyConnectionChanges()
         },
       },
+      transport: this.#adapterTransport,
     }
   }
 
-  async #mountQQ(connectionId: ConnectionId): Promise<void> {
-    if (this.#qqRuntimes.has(connectionId)) return
-    const connection = this.core.listConnections().find((candidate) => candidate.id === connectionId)
-    if (!connection || connection.adapterKey !== 'qq-openclaw') throw new Error('QQ Connection does not exist.')
-    const config = StoredQQConnectionConfigSchema.parse(connection.config)
-    const appId = config.appId
-    const credentialReference = connection.credentialRefs['clientSecret']
-    let credentialConfigured = false
-    if (credentialReference) {
-      try {
-        credentialConfigured = await this.credentials.has(credentialReference)
-      } catch {
-        // Persisted data can be damaged independently from the Server binary.
-        // Isolate the failure to this Connection instead of aborting all recovery.
-      }
-    }
-    if (!appId || !credentialReference || !credentialConfigured) {
-      this.#setQQDiagnostic(connectionId, {
-        gateway: { state: 'failed', lastError: '这个连接的凭据不可用。' },
-        credentialConfigured: false,
-        knownChannelIds: this.core.listChannelsByConnection(connectionId).map((channel) => channel.id),
-      })
-      return
-    }
-    const transport = new QQOpenClawHttpTransport({
-      appId,
-      clientSecretCredentialRef: credentialReference,
-      credentials: this.credentials,
-      ...(this.#qqOptions.fetch === undefined ? {} : { fetch: this.#qqOptions.fetch }),
-      now: this.#now,
-    })
-    const bridge = new QQCoreBridge(
-      this.core,
-      new QQRemoteAssetImporter(this.assetService, {
-        ...(this.#qqOptions.fetch === undefined ? {} : { fetch: this.#qqOptions.fetch }),
-      }),
-    )
-    const runtime = new QQOpenClawRuntime({
-      context: {
-        ...this.#adapterContext(connectionId),
-        connectionId,
-        now: this.#now,
-        acceptInbound: async (event) => {
-          const result = await this.channels.acceptInbound(event)
-          if (event.platformMessageId) {
-            this.#setQQDiagnostic(connectionId, {
-              gateway: this.#qqDiagnostics.get(connectionId)?.gateway ?? { state: 'connected' },
-              credentialConfigured: true,
-              knownChannelIds: this.core.listChannelsByConnection(connectionId).map((channel) => channel.id),
-              lastInbound: {
-                channelId: event.channelId,
-                platformMessageId: event.platformMessageId,
-                receivedAt: event.receivedAt,
-              },
-            })
-          }
-          return result
-        },
+  #qqHostContribution(): AdapterHostContributionV1 {
+    return {
+      apiVersion: 1,
+      descriptor: QQ_OPENCLAW_CONNECTION_DEFINITION.descriptor,
+      create: (context, stored) => {
+        const connectionId = context.connectionId
+        const config = StoredQQConnectionConfigSchema.parse(stored.configuration)
+        const credentialReference = stored.credentialRefs['clientSecret']
+        if (!credentialReference) throw new Error('这个连接的凭据不可用。')
+        const transport = new QQOpenClawHttpTransport({
+          appId: config.appId,
+          clientSecretCredentialRef: credentialReference,
+          credentials: this.credentials,
+          ...(this.#qqOptions.fetch === undefined ? {} : { fetch: this.#qqOptions.fetch }),
+          now: this.#now,
+        })
+        const bridge = new QQCoreBridge(
+          this.core,
+          new QQRemoteAssetImporter(this.assetService, {
+            ...(this.#qqOptions.fetch === undefined ? {} : { fetch: this.#qqOptions.fetch }),
+          }),
+        )
+        const runtime = new QQOpenClawRuntime({
+          context: {
+            ...context,
+            acceptInbound: async (event) => {
+              const result = await context.acceptInbound(event)
+              if (event.platformMessageId) {
+                this.#setQQDiagnostic(connectionId, {
+                  gateway: this.#qqDiagnostics.get(connectionId)?.gateway ?? { state: 'connected' },
+                  credentialConfigured: true,
+                  knownChannelIds: this.core.listChannelsByConnection(connectionId).map((channel) => channel.id),
+                  lastInbound: {
+                    channelId: event.channelId,
+                    platformMessageId: event.platformMessageId,
+                    receivedAt: event.receivedAt,
+                  },
+                })
+              }
+              return result
+            },
+          },
+          config: {
+            appId: config.appId,
+            clientSecretCredentialRef: credentialReference,
+            proactiveSend: config.proactiveSend,
+            markdown: config.markdown,
+            maxTextLength: config.maxTextLength,
+            maxTextBytes: config.maxTextBytes,
+          },
+          directory: bridge,
+          inbound: bridge,
+          assets: {
+            read: async (assetId) => {
+              const asset = this.repository.getAssetById(assetId)
+              if (!asset) throw new Error('QQ outbound Asset is unavailable.')
+              return {
+                bytes: new Uint8Array(await readFile(this.assetService.blobPath(asset))),
+                mediaType: asset.mediaType,
+              }
+            },
+          },
+          transport,
+          onQuoteDiagnostic: (diagnostic) => {
+            console.warn('[nekro-nxt] QQ 引用未解析：', JSON.stringify(diagnostic))
+          },
+          gateway: {
+            access: transport,
+            sockets: this.#qqOptions.sockets ?? new QQNodeWebSocketFactory(),
+            checkpoints: createQQGatewayCheckpointStore(connectionId, this.repository),
+            clock: this.#qqOptions.clock ?? systemGatewayClock(),
+            onStatus: (gateway) => {
+              this.#setQQDiagnostic(connectionId, {
+                ...this.#qqDiagnostics.get(connectionId),
+                gateway,
+                credentialConfigured: true,
+                knownChannelIds: this.core.listChannelsByConnection(connectionId).map((channel) => channel.id),
+              })
+            },
+          },
+        })
+        return Promise.resolve(runtime)
       },
-      config: {
-        appId,
-        clientSecretCredentialRef: credentialReference,
-        proactiveSend: config.proactiveSend,
-        markdown: config.markdown,
-        maxTextLength: config.maxTextLength,
-        maxTextBytes: config.maxTextBytes,
-      },
-      directory: bridge,
-      inbound: bridge,
-      assets: {
-        read: async (assetId) => {
-          const asset = this.repository.getAssetById(assetId)
-          if (!asset) throw new Error('QQ outbound Asset is unavailable.')
-          return {
-            bytes: new Uint8Array(await readFile(this.assetService.blobPath(asset))),
-            mediaType: asset.mediaType,
-          }
-        },
-      },
-      transport,
-      onQuoteDiagnostic: (diagnostic) => {
-        console.warn('[nekro-nxt] QQ 引用未解析：', JSON.stringify(diagnostic))
-      },
-      gateway: {
-        access: transport,
-        sockets: this.#qqOptions.sockets ?? new QQNodeWebSocketFactory(),
-        checkpoints: createQQGatewayCheckpointStore(connectionId, this.repository),
-        clock: this.#qqOptions.clock ?? systemGatewayClock(),
-        onStatus: (gateway) => {
-          this.#setQQDiagnostic(connectionId, {
-            ...this.#qqDiagnostics.get(connectionId),
-            gateway,
-            credentialConfigured: true,
-            knownChannelIds: this.core.listChannelsByConnection(connectionId).map((channel) => channel.id),
-          })
-        },
-      },
-    })
-    this.#qqRuntimes.set(connectionId, runtime)
-    this.#adapterRuntimes.set(connectionId, runtime)
-    this.#setQQDiagnostic(connectionId, {
-      gateway: { state: 'connecting' },
-      credentialConfigured: true,
-      knownChannelIds: this.core.listChannelsByConnection(connectionId).map((channel) => channel.id),
-    })
-    try {
-      await runtime.start()
-    } catch (error) {
-      this.#qqRuntimes.delete(connectionId)
-      this.#adapterRuntimes.delete(connectionId)
-      this.#setQQDiagnostic(connectionId, {
-        gateway: { state: 'failed', lastError: error instanceof Error ? error.message : String(error) },
-        credentialConfigured: true,
-        knownChannelIds: this.core.listChannelsByConnection(connectionId).map((channel) => channel.id),
-      })
     }
   }
 
@@ -1157,18 +1085,15 @@ export class NekroRuntime {
     this.#unsubscribeDynamicApproval()
     this.#connectionListeners.clear()
     await this.channels.stopProcessingFeedback()
-    await Promise.allSettled([
-      ...[...this.#qqRuntimes.values()].map((runtime) => runtime.stop()),
-      ...[...this.#onebotRuntimes.values()].map((runtime) => runtime.stop()),
-      ...[...this.#wecomRuntimes.values()].map((runtime) => runtime.stop()),
-      this.activation.dispose(),
-      this.web.stop(),
-      this.host.dispose(),
-    ])
-    this.#qqRuntimes.clear()
-    this.#onebotRuntimes.clear()
-    this.#wecomRuntimes.clear()
+    await this.activation.dispose()
+    await this.installation.dispose()
+    await Promise.allSettled([...this.#adapterRuntimes.values()].map((runtime) => runtime.stop()))
+    await this.host.dispose()
+    await Promise.allSettled(this.#adapterHandles.map((handle) => handle.dispose()))
+    this.#adapterHandles.length = 0
     this.#adapterDiagnostics.clear()
+    this.#connectionTests.clear()
+    this.#hostClientDiagnostics.clear()
     this.#lastInboundByConnection.clear()
     this.#adapterRuntimes.clear()
     this.#database.close()

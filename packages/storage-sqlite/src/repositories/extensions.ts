@@ -10,6 +10,7 @@ import type {
   ExtensionRepository,
   ExtensionClientDiagnostic,
   ExtensionRevisionVerification,
+  HostInstallation,
   LocalExtension,
   Revision,
 } from '@nekro-nxt/extension-runtime'
@@ -20,9 +21,15 @@ import {
   extensionClientDiagnostics,
   extensionRevisions,
   extensionRevisionVerifications,
+  hostExtensionInstallations,
   localExtensions,
 } from '../schema.js'
-import { AgentActivationRowSchema, ExtensionRevisionRowSchema, LocalExtensionRowSchema } from '../row-schemas.js'
+import {
+  AgentActivationRowSchema,
+  ExtensionRevisionRowSchema,
+  HostExtensionInstallationRowSchema,
+  LocalExtensionRowSchema,
+} from '../row-schemas.js'
 
 const toExtension = (input: typeof localExtensions.$inferSelect): LocalExtension => {
   const row = LocalExtensionRowSchema.parse(input)
@@ -58,10 +65,20 @@ const toActivation = (input: typeof agentActivations.$inferSelect): Activation =
   }
 }
 
+const toHostInstallation = (input: typeof hostExtensionInstallations.$inferSelect): HostInstallation => {
+  const row = HostExtensionInstallationRowSchema.parse(input)
+  return {
+    extensionId: row.extensionId,
+    extensionRevisionId: row.extensionRevisionId,
+    installedAt: row.installedAt,
+  }
+}
+
 const ExtensionRevisionVerificationSchema = z.object({
   revisionId: ExtensionRevisionIdSchema,
   dshVersion: z.string().trim().min(1),
-  contractVersion: z.literal('nekro-nxt-extension-v1'),
+  contractVersion: z.enum(['nekro-nxt-extension-v1', 'nekro-nxt-extension-v2']),
+  scope: z.literal('host-adapter').optional(),
   origin: z.object({ episodeId: z.string(), pluginId: z.string(), packageId: z.string(), pluginRunId: z.string() }),
   verifiedAt: z.number().int().nonnegative(),
   hostBuild: z.object({ built: z.boolean(), buildKey: z.string() }),
@@ -69,7 +86,48 @@ const ExtensionRevisionVerificationSchema = z.object({
   toolInvocations: z.array(z.object({ name: z.string(), succeeded: z.boolean() })),
   rpcMethods: z.array(z.string()),
   renderedSlots: z.array(z.enum(['agent.workbench.sections', 'extension.details.panels'])),
+  adapter: z
+    .object({
+      apiVersion: z.literal(1),
+      key: z.string().trim().min(1),
+      descriptorDigest: z.string().regex(/^[a-f0-9]{64}$/u),
+      registered: z.boolean(),
+      started: z.boolean(),
+      stopped: z.boolean(),
+      inboundCommitted: z.boolean(),
+      outboundReceipt: z.enum(['sent', 'failed', 'unknown']),
+    })
+    .optional(),
+  renderedHostSlots: z
+    .array(
+      z
+        .object({
+          name: z.literal('conversation.message.rich'),
+          key: z.string().trim().min(1),
+        })
+        .strict(),
+    )
+    .optional(),
 })
+
+const parseExtensionRevisionVerification = (input: unknown): ExtensionRevisionVerification => {
+  const parsed = ExtensionRevisionVerificationSchema.parse(input)
+  return {
+    revisionId: parsed.revisionId,
+    dshVersion: parsed.dshVersion,
+    contractVersion: parsed.contractVersion,
+    origin: parsed.origin,
+    verifiedAt: parsed.verifiedAt,
+    hostBuild: parsed.hostBuild,
+    clientBuild: parsed.clientBuild,
+    toolInvocations: parsed.toolInvocations,
+    rpcMethods: parsed.rpcMethods,
+    renderedSlots: parsed.renderedSlots,
+    ...(parsed.scope === undefined ? {} : { scope: parsed.scope }),
+    ...(parsed.adapter === undefined ? {} : { adapter: parsed.adapter }),
+    ...(parsed.renderedHostSlots === undefined ? {} : { renderedHostSlots: parsed.renderedHostSlots }),
+  }
+}
 
 export function createExtensionsRepository(database: DrizzleCoreDatabase): ExtensionRepository {
   return {
@@ -129,7 +187,7 @@ export function createExtensionsRepository(database: DrizzleCoreDatabase): Exten
         .from(extensionRevisionVerifications)
         .where(eq(extensionRevisionVerifications.revisionId, revisionId))
         .get()
-      return row === undefined ? undefined : ExtensionRevisionVerificationSchema.parse(row.evidence)
+      return row === undefined ? undefined : parseExtensionRevisionVerification(row.evidence)
     },
     getExtensionClientDiagnostic(agentId, extensionId): ExtensionClientDiagnostic | undefined {
       const row = database
@@ -198,6 +256,38 @@ export function createExtensionsRepository(database: DrizzleCoreDatabase): Exten
         .delete(agentActivations)
         .where(and(eq(agentActivations.agentId, agentId), eq(agentActivations.extensionId, extensionId)))
         .run()
+    },
+    getHostInstallation(extensionId): HostInstallation | undefined {
+      const row = database
+        .select()
+        .from(hostExtensionInstallations)
+        .where(eq(hostExtensionInstallations.extensionId, extensionId))
+        .get()
+      return row === undefined ? undefined : toHostInstallation(row)
+    },
+    listHostInstallations(): readonly HostInstallation[] {
+      return database
+        .select()
+        .from(hostExtensionInstallations)
+        .orderBy(asc(hostExtensionInstallations.installedAt), asc(hostExtensionInstallations.extensionId))
+        .all()
+        .map(toHostInstallation)
+    },
+    upsertHostInstallation(installation): void {
+      database
+        .insert(hostExtensionInstallations)
+        .values(installation)
+        .onConflictDoUpdate({
+          target: hostExtensionInstallations.extensionId,
+          set: {
+            extensionRevisionId: installation.extensionRevisionId,
+            installedAt: installation.installedAt,
+          },
+        })
+        .run()
+    },
+    deleteHostInstallation(extensionId): void {
+      database.delete(hostExtensionInstallations).where(eq(hostExtensionInstallations.extensionId, extensionId)).run()
     },
   }
 }

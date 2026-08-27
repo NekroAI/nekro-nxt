@@ -74,7 +74,7 @@ const createFixture = async () => {
   return { directory, database, repository, core, connection }
 }
 
-const createDatabaseAtMigration = async (filename: string, lastMigration: 0 | 1 | 2): Promise<void> => {
+const createDatabaseAtMigration = async (filename: string, lastMigration: number): Promise<void> => {
   const native = new BetterSqlite3(filename)
   try {
     native.exec(`CREATE TABLE IF NOT EXISTS "__drizzle_migrations" (
@@ -163,7 +163,7 @@ const appendTextEvent = (
 
 describe('Core SQLite baseline', () => {
   it('accepts better-sqlite3 table_list metadata and migrates a clean database', async () => {
-    expect(Object.keys(coreSchema)).toHaveLength(29)
+    expect(Object.keys(coreSchema)).toHaveLength(30)
     expect(channelEvents.logicalMessageId.name).toBe('logical_message_id')
     expect('logicalMessageId' in channels).toBe(false)
 
@@ -325,6 +325,52 @@ describe('Core SQLite baseline', () => {
       expect(native.pragma('foreign_key_check')).toEqual([])
     } finally {
       native.close()
+    }
+  })
+
+  it('adds an empty Host installation catalog while preserving schema 0013 Extension data', async () => {
+    const directory = await temporaryDirectory()
+    const filename = path.join(directory, 'core.sqlite')
+    await createDatabaseAtMigration(filename, 13)
+    const oldDatabase = openCoreDatabase(filename)
+    const oldRepository = new SqliteCoreRepository(oldDatabase)
+    const extensionId = ExtensionIdSchema.parse('ext_MIGRATIONHOST')
+    const revisionId = ExtensionRevisionIdSchema.parse('xrv_MIGRATIONHOST')
+    oldRepository.saveExtensionRevision({
+      extension: {
+        id: extensionId,
+        slug: 'migration-host',
+        displayName: '迁移夹具扩展',
+        description: 'Synthetic migration fixture.',
+        createdAt: 1,
+      },
+      revision: {
+        id: revisionId,
+        extensionId,
+        revisionNumber: 1,
+        contentDigest: 'a'.repeat(64),
+        createdAt: 2,
+      },
+    })
+    oldDatabase.close()
+
+    const migrated = await openMigratedCoreDatabase(filename)
+    try {
+      const repository = new SqliteCoreRepository(migrated)
+      expect(repository.getExtension(extensionId)?.displayName).toBe('迁移夹具扩展')
+      expect(repository.getExtensionRevision(revisionId)?.contentDigest).toBe('a'.repeat(64))
+      expect(repository.listHostInstallations()).toEqual([])
+      repository.upsertHostInstallation({ extensionId, extensionRevisionId: revisionId, installedAt: 3 })
+      expect(repository.getHostInstallation(extensionId)).toEqual({
+        extensionId,
+        extensionRevisionId: revisionId,
+        installedAt: 3,
+      })
+      repository.deleteHostInstallation(extensionId)
+      expect(repository.getHostInstallation(extensionId)).toBeUndefined()
+      expect(migrated.pragma('foreign_keys')).toBe(1)
+    } finally {
+      migrated.close()
     }
   })
 

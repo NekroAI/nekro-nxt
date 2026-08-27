@@ -165,52 +165,13 @@ export function parseJsonValue(input: unknown): JsonValue {
   return JsonValueSchema.parse(input)
 }
 
-/** Current-environment support conclusion for one DSH capability package. */
-export type DshPluginSupportStatus = 'verified' | 'loadable-unverified' | 'partial' | 'incompatible' | 'unassessed'
-
-export type DshSupportFacet =
-  | 'host-load'
-  | 'service-injection'
-  | 'lifecycle'
-  | 'settings'
-  | 'tools'
-  | 'providers'
-  | 'scope-bundle-preset'
-  | 'client-ui'
-
-export type DshFacetStatus = 'supported' | 'unverified' | 'unsupported' | 'failed' | 'not-applicable'
-
-export type DshSupportEvidenceLevel = 'metadata' | 'activation' | 'lifecycle' | 'integration' | 'external-result'
-
-export interface DshClientModuleDescriptor {
+/** Package identity and source for one DSH extension visible in the current Host. */
+export interface DshPluginCatalogEntry {
   readonly packageName: string
   readonly packageVersion: string
-  readonly moduleId: string
-  readonly platform: 'web'
-  readonly inject: readonly string[]
-  readonly bundleDigest: string
-  readonly bundleUrl: string
-  readonly compatibility: 'ready' | 'missing-dependency' | 'version-conflict' | 'unsupported-remote'
-  readonly reasons: readonly string[]
-}
-
-export interface PluginSupportAssessment {
-  readonly packageName: string
-  readonly packageVersion: string
-  readonly dshVersion: string
   readonly origin: 'builtin' | 'profile' | 'dynamic'
-  readonly overall: DshPluginSupportStatus
-  readonly facets: readonly {
-    readonly facet: DshSupportFacet
-    readonly status: DshFacetStatus
-    readonly evidence: readonly {
-      readonly level: DshSupportEvidenceLevel
-      readonly code: string
-      readonly message: string
-    }[]
-  }[]
   readonly settingsNamespaces: readonly string[]
-  readonly clientModule?: DshClientModuleDescriptor
+  readonly loadError?: { readonly code: string; readonly message: string }
 }
 
 export interface DshSettingsNamespaceView {

@@ -307,6 +307,14 @@ export class SqliteCoreRepository implements CurrentRepository {
     this.#extensions.upsertActivation(...args)
   readonly deleteActivation = (...args: Parameters<ExtensionRepository['deleteActivation']>) =>
     this.#extensions.deleteActivation(...args)
+  readonly getHostInstallation = (...args: Parameters<ExtensionRepository['getHostInstallation']>) =>
+    this.#extensions.getHostInstallation(...args)
+  readonly listHostInstallations = (...args: Parameters<ExtensionRepository['listHostInstallations']>) =>
+    this.#extensions.listHostInstallations(...args)
+  readonly upsertHostInstallation = (...args: Parameters<ExtensionRepository['upsertHostInstallation']>) =>
+    this.#extensions.upsertHostInstallation(...args)
+  readonly deleteHostInstallation = (...args: Parameters<ExtensionRepository['deleteHostInstallation']>) =>
+    this.#extensions.deleteHostInstallation(...args)
 
   readonly ensureAsset = (...args: Parameters<AssetAccessRepository['ensureAsset']>) =>
     this.#assets.ensureAsset(...args)

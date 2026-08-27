@@ -3,6 +3,7 @@ import { createRoot } from 'react-dom/client'
 import { BrowserRouter } from 'react-router-dom'
 import { NekroNxtApp } from './app.js'
 import { installStableCursorIntent } from './cursor-stability.js'
+import { productHostEventStream } from './host-event-stream.js'
 import { HttpProductHost } from './http-host.js'
 import { ProductHostCoordinator } from './product-port.js'
 import { setActiveProductHost } from './product-store.js'
@@ -22,7 +23,7 @@ if (!root) throw new Error('NekroNxt Web root element is missing.')
 // Real-Host wiring (design docs/08): stream the authoritative Server projection
 // into the Shell and route product actions through the domain API. Without a
 // live Server the Shell keeps its local demo data (graded fallback).
-const coordinator = new ProductHostCoordinator(new HttpProductHost())
+const coordinator = new ProductHostCoordinator(new HttpProductHost(productHostEventStream))
 setActiveProductHost(coordinator)
 coordinator.start()
 

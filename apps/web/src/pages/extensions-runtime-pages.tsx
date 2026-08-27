@@ -57,6 +57,8 @@ export function ExtensionsPage() {
   const agents = useProductStore((state) => state.agents)
   const extensions = useProductStore((state) => state.extensions)
   const [pendingAgentId, setPendingAgentId] = useState<string | null>(null)
+  const [installationPending, setInstallationPending] = useState(false)
+  const [uninstallOpen, setUninstallOpen] = useState(false)
   const selectedId = extensionId || extensions[0]?.id || ''
 
   const changeActivation = async (
@@ -92,6 +94,26 @@ export function ExtensionsPage() {
     (diagnostic) =>
       diagnostic.agentId === detailsActivation?.agentId && diagnostic.revisionId === detailsActivation.revisionId,
   )
+  const visibleClientDiagnostic =
+    selected?.scope === 'host-adapter' ? selected.hostClientDiagnostic : selectedClientDiagnostic
+  const changeInstallation = async (revisionId: string | null): Promise<boolean> => {
+    if (!selected || installationPending) return false
+    setInstallationPending(true)
+    try {
+      await useProductStore.getState().setHostExtensionInstalled(selected.id, revisionId)
+      notify(
+        revisionId === null ? `已卸载“${selected.name}”。` : `已安装“${selected.name}”的所选版本。`,
+        'success',
+        `extension-installation:${selected.id}`,
+      )
+      return true
+    } catch (error) {
+      notify(error instanceof Error ? error.message : String(error), 'error', `extension-installation:${selected.id}`)
+      return false
+    } finally {
+      setInstallationPending(false)
+    }
+  }
   if (!extensionId && extensions[0]) {
     return <Navigate to={`/extensions/${extensions[0].id}`} replace />
   }
@@ -105,8 +127,20 @@ export function ExtensionsPage() {
         quiet
         actions={
           selected ? (
-            <StatusBadge tone={extensionTone(selected.activations.length)}>
-              {extensionLabel(selected.activations.length)}
+            <StatusBadge
+              tone={
+                selected.scope === 'host-adapter'
+                  ? selected.installation
+                    ? 'success'
+                    : 'neutral'
+                  : extensionTone(selected.activations.length)
+              }
+            >
+              {selected.scope === 'host-adapter'
+                ? selected.installation
+                  ? '已安装到本机'
+                  : '尚未安装'
+                : extensionLabel(selected.activations.length)}
             </StatusBadge>
           ) : undefined
         }
@@ -158,9 +192,29 @@ export function ExtensionsPage() {
                     </span>
                     <small>保存为扩展</small>
                   </li>
-                  <li data-done={selected.activations.length > 0 ? '' : undefined}>
-                    <span>{selected.activations.length > 0 ? <Check size={12} aria-hidden="true" /> : '3'}</span>
-                    <small>启用给智能体</small>
+                  <li
+                    data-done={
+                      (
+                        selected.scope === 'host-adapter'
+                          ? selected.installation !== undefined
+                          : selected.activations.length > 0
+                      )
+                        ? ''
+                        : undefined
+                    }
+                  >
+                    <span>
+                      {(
+                        selected.scope === 'host-adapter'
+                          ? selected.installation !== undefined
+                          : selected.activations.length > 0
+                      ) ? (
+                        <Check size={12} aria-hidden="true" />
+                      ) : (
+                        '3'
+                      )}
+                    </span>
+                    <small>{selected.scope === 'host-adapter' ? '安装到本机' : '启用给智能体'}</small>
                   </li>
                 </ol>
               </section>
@@ -172,9 +226,25 @@ export function ExtensionsPage() {
                   <dt>创建来源</dt>
                   <dd>{selected.createdByAgent || '未记录'}</dd>
                   <dt>正在使用</dt>
-                  <dd>{selected.activations.length > 0 ? `${selected.activations.length} 个智能体` : '暂无'}</dd>
+                  <dd>
+                    {selected.scope === 'host-adapter'
+                      ? selected.installation
+                        ? '本机 Host'
+                        : '暂无'
+                      : selected.activations.length > 0
+                        ? `${selected.activations.length} 个智能体`
+                        : '暂无'}
+                  </dd>
                   <dt>当前状态</dt>
-                  <dd>{selected.activations.length > 0 ? '已启用' : '尚未启用'}</dd>
+                  <dd>
+                    {selected.scope === 'host-adapter'
+                      ? selected.installation
+                        ? '已安装'
+                        : '尚未安装'
+                      : selected.activations.length > 0
+                        ? '已启用'
+                        : '尚未启用'}
+                  </dd>
                 </dl>
               </section>
             </div>
@@ -215,11 +285,11 @@ export function ExtensionsPage() {
                     <dd>
                       {!selected.verification.clientBuilt
                         ? '未包含界面功能'
-                        : selectedClientDiagnostic === undefined
+                        : visibleClientDiagnostic === undefined
                           ? '还没有加载记录'
-                          : selectedClientDiagnostic.status === 'loaded'
-                            ? `已加载 · ${new Date(selectedClientDiagnostic.observedAt).toLocaleString('zh-CN')}`
-                            : `失败 · ${new Date(selectedClientDiagnostic.observedAt).toLocaleString('zh-CN')}`}
+                          : visibleClientDiagnostic.status === 'loaded'
+                            ? `已加载 · ${new Date(visibleClientDiagnostic.observedAt).toLocaleString('zh-CN')}`
+                            : `失败 · ${new Date(visibleClientDiagnostic.observedAt).toLocaleString('zh-CN')}`}
                     </dd>
                   </dl>
                 ) : (
@@ -228,52 +298,102 @@ export function ExtensionsPage() {
               </section>
             </div>
             <section className={styles.activationSection}>
-              <div className={styles.sectionBar}>
-                <div>
-                  <div className={styles.sectionHeading}>使用范围</div>
-                  <div className={styles.secondaryText}>选择使用这个扩展的智能体。</div>
-                </div>
-                <span className={styles.activationCount}>
-                  {selected.activations.length}/{agents.length} 已启用
-                </span>
-              </div>
-              {agents.length > 0 ? (
-                <div className={styles.activationGrid} role="list" aria-label="智能体使用范围">
-                  {agents.map((agent) => {
-                    const activation = selected.activations.find((candidate) => candidate.agentId === agent.id)
-                    return (
-                      <div
-                        className={styles.activationCard}
-                        data-active={activation ? '' : undefined}
-                        key={agent.id}
-                        role="listitem"
+              {selected.scope === 'host-adapter' ? (
+                <>
+                  <div className={styles.sectionBar}>
+                    <div>
+                      <div className={styles.sectionHeading}>本机安装</div>
+                      <div className={styles.secondaryText}>选择一个已验证版本安装；卸载时保留连接和历史。</div>
+                    </div>
+                    {selected.installation ? (
+                      <Button
+                        variant="danger"
+                        size="small"
+                        disabled={installationPending}
+                        onClick={() => setUninstallOpen(true)}
                       >
-                        <span className={styles.activationGlyph} aria-hidden="true">
-                          {agent.name.trim().slice(0, 1) || '智'}
-                        </span>
-                        <span className={styles.activationCopy}>
-                          <strong>{agent.name}</strong>
-                          <small className={styles.activationMeta}>
-                            {activation
-                              ? `正在使用 · 版本 ${activation.revision || selected.revision}`
-                              : `尚未启用 · 可用版本 ${selected.revision}`}
-                          </small>
-                        </span>
-                        <SwitchControl
-                          label={`${activation ? '停止让' : '允许'}${agent.name}使用“${selected.name}”`}
-                          checked={activation !== undefined}
-                          disabled={pendingAgentId !== null}
-                          onCheckedChange={(enabled) => void changeActivation(selected, agent.id, agent.name, enabled)}
-                        />
-                      </div>
-                    )
-                  })}
-                </div>
+                        卸载
+                      </Button>
+                    ) : null}
+                  </div>
+                  <div className={styles.compactList} role="list" aria-label="适配器版本">
+                    {selected.revisions.toReversed().map((revision) => {
+                      const installed = selected.installation?.revisionId === revision.id
+                      const latest = revision.id === selected.revisionId
+                      return (
+                        <div className={styles.staticRow} key={revision.id} role="listitem">
+                          <span>
+                            <strong>版本 {revision.revision}</strong>
+                            <small>
+                              {installed ? '当前已安装' : new Date(revision.createdAt).toLocaleString('zh-CN')}
+                            </small>
+                          </span>
+                          <Button
+                            size="small"
+                            disabled={installed || installationPending}
+                            loading={installationPending}
+                            loadingLabel="正在切换…"
+                            onClick={() => void changeInstallation(revision.id)}
+                          >
+                            {selected.installation ? (latest ? '更新到此版本' : '回滚到此版本') : '安装到本机'}
+                          </Button>
+                        </div>
+                      )
+                    })}
+                  </div>
+                </>
               ) : (
-                <p className={styles.secondaryText}>请先创建智能体，再为它启用这个扩展。</p>
+                <>
+                  <div className={styles.sectionBar}>
+                    <div>
+                      <div className={styles.sectionHeading}>使用范围</div>
+                      <div className={styles.secondaryText}>选择使用这个扩展的智能体。</div>
+                    </div>
+                    <span className={styles.activationCount}>
+                      {selected.activations.length}/{agents.length} 已启用
+                    </span>
+                  </div>
+                  {agents.length > 0 ? (
+                    <div className={styles.activationGrid} role="list" aria-label="智能体使用范围">
+                      {agents.map((agent) => {
+                        const activation = selected.activations.find((candidate) => candidate.agentId === agent.id)
+                        return (
+                          <div
+                            className={styles.activationCard}
+                            data-active={activation ? '' : undefined}
+                            key={agent.id}
+                            role="listitem"
+                          >
+                            <span className={styles.activationGlyph} aria-hidden="true">
+                              {agent.name.trim().slice(0, 1) || '智'}
+                            </span>
+                            <span className={styles.activationCopy}>
+                              <strong>{agent.name}</strong>
+                              <small className={styles.activationMeta}>
+                                {activation
+                                  ? `正在使用 · 版本 ${activation.revision || selected.revision}`
+                                  : `尚未启用 · 可用版本 ${selected.revision}`}
+                              </small>
+                            </span>
+                            <SwitchControl
+                              label={`${activation ? '停止让' : '允许'}${agent.name}使用“${selected.name}”`}
+                              checked={activation !== undefined}
+                              disabled={pendingAgentId !== null}
+                              onCheckedChange={(enabled) =>
+                                void changeActivation(selected, agent.id, agent.name, enabled)
+                              }
+                            />
+                          </div>
+                        )
+                      })}
+                    </div>
+                  ) : (
+                    <p className={styles.secondaryText}>请先创建智能体，再为它启用这个扩展。</p>
+                  )}
+                </>
               )}
             </section>
-            {detailsActivation ? (
+            {selected.scope === 'agent' && detailsActivation ? (
               <ExtensionDetailsExtensionSlots
                 agentId={detailsActivation.agentId}
                 extensionId={selected.id}
@@ -284,6 +404,15 @@ export function ExtensionsPage() {
           </section>
         ) : null}
       </StageCrossfade>
+      <ConfirmDialog
+        open={uninstallOpen}
+        onOpenChange={setUninstallOpen}
+        title="卸载适配器"
+        description="连接、频道和历史会保留，但重新安装相同适配器前不能收发消息。"
+        confirmLabel="卸载适配器"
+        confirmVariant="danger"
+        onConfirm={() => changeInstallation(null)}
+      />
     </div>
   )
 }

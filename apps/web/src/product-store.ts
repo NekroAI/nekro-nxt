@@ -166,6 +166,7 @@ export type ConversationPart =
       readonly targetUrl?: string
       readonly previewUrl?: string
       readonly preview?: string
+      readonly extension?: ExtensionJsonValue
       readonly items?: readonly {
         readonly sender?: string
         readonly text?: string
@@ -237,6 +238,17 @@ export interface LocalExtensionSummary {
   readonly name: string
   readonly description: string
   readonly revision: number
+  readonly scope: 'agent' | 'host-adapter'
+  readonly revisions: readonly {
+    readonly id: string
+    readonly revision: number
+    readonly createdAt: number
+    readonly scope: 'agent' | 'host-adapter'
+    readonly contributions: readonly string[]
+    readonly clientBuilt: boolean
+    readonly buildKey?: string
+    readonly hostSlots: readonly { readonly name: 'conversation.message.rich'; readonly key: string }[]
+  }[]
   readonly createdByAgentId?: string
   readonly createdByAgent: string
   readonly activations: readonly {
@@ -270,6 +282,13 @@ export interface LocalExtensionSummary {
     readonly message?: string
     readonly observedAt: number
   }[]
+  readonly installation?: { readonly revisionId: string; readonly installedAt: number }
+  readonly hostClientDiagnostic?: {
+    readonly revisionId: string
+    readonly status: 'loaded' | 'failed'
+    readonly message?: string
+    readonly observedAt: number
+  }
   /** Latest saved Revision id; not intended for display. */
   readonly revisionId?: string
 }
@@ -429,6 +448,13 @@ export interface ProductState {
     readonly description: string
   }): Promise<SavedDynamicExtension>
   setExtensionActive(id: string, agentId: string, enabled: boolean): Promise<void>
+  setHostExtensionInstalled(id: string, revisionId: string | null): Promise<void>
+  reportHostExtensionClientDiagnostic(input: {
+    readonly extensionId: string
+    readonly revisionId: string
+    readonly status: 'loaded' | 'failed'
+    readonly message?: string
+  }): Promise<void>
   callExtensionClient(input: {
     readonly agentId: string
     readonly extensionId: string
@@ -820,6 +846,25 @@ export const useProductStore = create<ProductState>((set) => ({
     await requireHost().execute('extensions.deactivate', {
       extensionId,
       agentId: targetAgentId,
+    })
+  },
+  setHostExtensionInstalled: async (id, revisionId) => {
+    const extensionId = requireValue(id, '缺少本地扩展标识，请刷新页面后重试。')
+    if (revisionId === null) {
+      await requireHost().execute('extensions.uninstall', { extensionId })
+      return
+    }
+    await requireHost().execute('extensions.install', {
+      extensionId,
+      revisionId: requireValue(revisionId, '缺少要安装的适配器版本。'),
+    })
+  },
+  reportHostExtensionClientDiagnostic: async ({ extensionId, revisionId, status, message }) => {
+    await requireHost().execute('extensions.hostClientDiagnostic', {
+      extensionId: requireValue(extensionId, '缺少扩展标识。'),
+      revisionId: requireValue(revisionId, '缺少扩展版本。'),
+      status,
+      ...(message === undefined ? {} : { message }),
     })
   },
   callExtensionClient: async ({ agentId, extensionId, revisionId, method, value }) => {

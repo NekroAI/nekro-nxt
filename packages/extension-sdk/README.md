@@ -4,7 +4,9 @@
 
 运行时能力通过 Activation Host 注入；新增 SDK 面必须有已实现 Extension 消费者、兼容版本和卸载测试。
 
-当前公开契约为 `nekro-nxt-extension-v1`，对应 DSH `0.1.1-rc.2`。Host 暴露类型化 Tool 注册和 JSON RPC；Client 只允许注册 `agent.workbench.sections` 与 `extension.details.panels`，并只接收 `section`、`sectionHeading`、`secondaryText`、`actionRow`、`button`、`badge` 六个稳定样式键。`NEKRO_NXT_EXTENSION_AUTHORING_REFERENCE` 是 Skill、Inspect 和测试共同消费的唯一开发参考，禁止在各入口复制另一套示例。
+智能体扩展契约为 `nekro-nxt-extension-v1`；Host Adapter 验证证据为 `nekro-nxt-extension-v2`，两者对应 DSH `0.1.1-rc.2`。Host Tool/RPC Client 只允许 `agent.workbench.sections` 与 `extension.details.panels`；Adapter Host 使用 `harness.registerAdapter()`，Adapter Client V1 只允许 `conversation.message.rich`。
+
+Adapter Client 的 `id` 必须是当前 `<adapterKey>:<kind>`，Props 只含结构化 rich part、`messageId` 和 `channelId`。它没有 Host RPC、Core、宿主路径或平台原始事件。组件加载失败、抛错、未命中或卸载时撤销当前贡献并回退宿主卡片。
 
 ## Host 工具注册与 `ctx.effect`
 

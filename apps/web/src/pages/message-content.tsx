@@ -1,4 +1,5 @@
 import { File, Headphones, Quote } from 'lucide-react'
+import { MessagePartSchema } from '@nekro-nxt/contracts'
 import { useState } from 'react'
 import ReactMarkdown, { defaultUrlTransform, type Components } from 'react-markdown'
 import rehypeSanitize from 'rehype-sanitize'
@@ -8,6 +9,7 @@ import { Button } from '../ui-kit/index.js'
 import contentStyles from './message-content.module.css'
 import styles from './product-pages.module.css'
 import { detectResourceKind, ResourcePreviewDialog, type PreviewResource } from './resource-preview.js'
+import { AdapterRichMessageRenderer } from '../adapter-host-client.js'
 
 export type MessageSide = 'left' | 'right' | 'system'
 
@@ -170,11 +172,35 @@ function HostRichCard({
 function StructuredPart({
   part,
   onPreview,
+  messageId,
+  channelId,
 }: {
   readonly part: Exclude<ConversationPart, { readonly type: 'text' | 'mention' }>
   readonly onPreview: (resource: PreviewResource) => void
+  readonly messageId: string
+  readonly channelId: string
 }) {
-  if (part.type === 'rich') return <HostRichCard part={part} onPreview={onPreview} />
+  if (part.type === 'rich') {
+    const fallback = <HostRichCard part={part} onPreview={onPreview} />
+    const adapterPart = MessagePartSchema.safeParse({
+      type: 'rich',
+      adapterKey: part.adapterKey,
+      kind: part.kind,
+      summary: part.summary,
+      ...(part.title === undefined ? {} : { title: part.title }),
+      ...(part.source === undefined ? {} : { source: part.source }),
+      ...(part.targetUrl === undefined ? {} : { targetUrl: part.targetUrl }),
+      ...(part.extension === undefined ? {} : { extension: part.extension }),
+    })
+    if (!adapterPart.success || adapterPart.data.type !== 'rich') return fallback
+    return (
+      <AdapterRichMessageRenderer
+        slotKey={`${part.adapterKey}:${part.kind}`}
+        props={{ part: adapterPart.data, messageId, channelId }}
+        fallback={fallback}
+      />
+    )
+  }
   if (part.type === 'image') {
     return (
       <Button
@@ -248,7 +274,12 @@ export function MessageContent({ message }: { readonly message: ConversationMess
         if (run.kind === 'block') {
           return (
             <div className={contentStyles.contentRun} key={`${runIndex}:${run.part.type}`}>
-              <StructuredPart part={run.part} onPreview={setPreview} />
+              <StructuredPart
+                part={run.part}
+                onPreview={setPreview}
+                messageId={message.id}
+                channelId={message.channelId}
+              />
             </div>
           )
         }

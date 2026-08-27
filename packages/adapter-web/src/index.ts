@@ -2,6 +2,7 @@ import type {
   AdapterConnectionContext,
   AdapterConnectionRuntime,
   AdapterDeliveryReceipt,
+  AdapterHostContributionV1,
   AdapterOutboundCapabilities,
   InboundCommitResult,
   PhysicalDeliveryRequest,
@@ -16,6 +17,9 @@ export const WEB_CONNECTION_DEFINITION = defineAdapterConnection({
   displayName: '内置频道',
   description: '由 NekroNXT 直接提供，用于应用内对话。',
   userCreatable: false,
+  aliasEditable: false,
+  channelDiscovery: 'host-created',
+  diagnostics: { receive: false, send: false },
   configurationSchema: AdapterEmptyObjectSchema,
   credentialsSchema: AdapterEmptyObjectSchema,
   configSchema: { schemaVersion: 1, type: 'object', required: [], properties: {} },
@@ -23,6 +27,13 @@ export const WEB_CONNECTION_DEFINITION = defineAdapterConnection({
 })
 
 export const WEB_CONNECTION_DESCRIPTOR = WEB_CONNECTION_DEFINITION.descriptor
+
+export const WEB_HOST_CONTRIBUTION: AdapterHostContributionV1 = {
+  apiVersion: 1,
+  descriptor: WEB_CONNECTION_DEFINITION.descriptor,
+  create: (context) =>
+    Promise.resolve(createWebAdapterConnection(context.connectionId, context.acceptInbound, context.now)),
+}
 
 export const WEB_ADAPTER_CAPABILITIES: AdapterOutboundCapabilities = {
   text: true,

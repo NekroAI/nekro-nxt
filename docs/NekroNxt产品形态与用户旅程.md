@@ -45,6 +45,7 @@ Desktop 中每个服务实例都是独立工作区。切换实例只更换当前
 | Extension | 可贡献工具、适配器、预设或 UI Slot 的能力包 | 只能提供 Tool 的狭义插件 |
 | Extension Revision | Extension 的不可变保存版本 | 动态试运行产生的临时 Package |
 | `AgentActivation` | 某智能体使用某 Extension Revision 的关系 | 安装插件后自动全局生效 |
+| Host Installation | 本机当前安装的 Adapter Extension Revision | 给每个智能体启用工具 |
 
 所有页面都必须有且只有一个主要对象。右侧检查器只展示摘要和就地动作，完整编辑进入对应管理页。
 
@@ -66,7 +67,7 @@ Desktop 中每个服务实例都是独立工作区。切换实例只更换当前
 
 工作模式的产品路由统一位于 `/work`：频道、智能体、新建智能体和创造分别使用 `/work/channels/:channelId`、`/work/agents/:agentId`、`/work/agents/new`、`/work/creator`。旧路径仅用于兼容重定向。
 
-设置对象列包含模型供应商、系统扩展、DSH 扩展、通知、外观和关于。通知页先展示系统通知，再展示 Bark：渠道开关控制投递方式，通知项目开关控制具体功能事件是否推送；Bark Device Key 只写入本机凭据目录，页面只显示是否已配置。服务器实例的系统通知由在线且已授权通知的 Desktop 客户端实时转发，离线时段不补发；Bark 由 Server 直接推送。`/settings?tab=about` 按“项目组织｜软件版本、开源仓库｜DSH 版本、开源许可证｜Release ID”展示公开元数据，再展示品牌版权；DSH 版本来自 Host 实际安装的 DSH 核心包，旧 Server 缺少该字段时显示“暂无”。
+设置对象列包含模型供应商、系统扩展、DSH 扩展、通知、外观和关于。DSH 扩展页把固定随产品装载的包标记为“内置”，只在真实加载失败时显示错误；用户安装来源在开放安装能力后单独标明。通知页先展示系统通知，再展示 Bark：渠道开关控制投递方式，通知项目开关控制具体功能事件是否推送；Bark Device Key 只写入本机凭据目录，页面只显示是否已配置。服务器实例的系统通知由在线且已授权通知的 Desktop 客户端实时转发，离线时段不补发；Bark 由 Server 直接推送。`/settings?tab=about` 按“项目组织｜软件版本、开源仓库｜DSH 版本、开源许可证｜Release ID”展示公开元数据，再展示品牌版权；DSH 版本来自 Host 实际安装的 DSH 核心包，旧 Server 缺少该字段时显示“暂无”。
 
 避免使用一个“在线”绿点概括所有状态：
 
@@ -206,10 +207,11 @@ Extension Draft
 → Dynamic Run
 → Validation Evidence
 → Local Extension Revision
-→ `AgentActivation`
+→ Tool/UI Revision：`AgentActivation`
+  或 Adapter Revision：Host Installation
 ```
 
-这些状态不可合并：试跑成功不等于保存，保存不等于启用，安装或更新 Extension 不等于强制替换活动 Session。
+这些状态不可合并：试跑成功不等于保存，保存不等于启用或安装；Adapter 安装只切换 Host 平台贡献，不创建 `AgentActivation`，也不强制替换活动智能体 Session。
 
 ### 5.3 群消息投递流
 

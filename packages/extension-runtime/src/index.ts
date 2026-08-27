@@ -1,4 +1,5 @@
 export * from './activation.js'
+export * from './installation.js'
 export * from './builder.js'
 export * from './materializer.js'
 export * from './service.js'

@@ -15,6 +15,10 @@
     "dev": "tsdown --watch --no-clean",
     "typecheck": "tsc --noEmit"
   },
+  "dependencies": {
+    "@nekro-nxt/adapter-sdk": "workspace:*",
+    "@nekro-nxt/contracts": "workspace:*"
+  },
   "description": "NekroNXT 扩展开发 SDK",
   "author": "NekroAI contributors",
   "homepage": "https://github.com/NekroAI/nekro-nxt#readme",

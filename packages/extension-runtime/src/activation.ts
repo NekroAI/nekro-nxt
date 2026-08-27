@@ -63,6 +63,9 @@ export class ExtensionActivationCoordinator {
       if (!revision || revision.extensionId !== input.extensionId) {
         throw new Error('Activation requires a Revision owned by the selected Extension.')
       }
+      if (this.#repository.getExtensionRevisionVerification(revision.id)?.scope === 'host-adapter') {
+        throw new Error('适配器 Revision 必须安装到本机，不能启用给智能体。')
+      }
 
       const artifact = await this.#build(revision)
       const previous = this.#repository.getActivation(input.agentId, input.extensionId)

@@ -35,7 +35,14 @@ const LlmProviderSnapshotSchema = z
 const DshPluginCatalogSchema = z
   .object({
     plugins: z.array(
-      z.object({ packageName: z.string(), overall: z.string(), settingsNamespaces: z.array(z.string()) }).passthrough(),
+      z
+        .object({
+          packageName: z.string(),
+          packageVersion: z.string(),
+          origin: z.enum(['builtin', 'profile', 'dynamic']),
+          settingsNamespaces: z.array(z.string()),
+        })
+        .strict(),
     ),
   })
   .passthrough()
@@ -1225,8 +1232,22 @@ describe('NekroNxt Server domain API (WebServer seam)', () => {
       expect(pluginCatalog.plugins).toContainEqual(
         expect.objectContaining({
           packageName: '@deepseek-ai/dsh-web-search-deepseek',
-          overall: 'verified',
+          origin: 'builtin',
           settingsNamespaces: ['web-search-deepseek'],
+        }),
+      )
+      expect(pluginCatalog.plugins).toContainEqual(
+        expect.objectContaining({
+          packageName: '@deepseek-ai/dsh-agent-loop',
+          origin: 'builtin',
+          settingsNamespaces: ['agent-loop'],
+        }),
+      )
+      expect(pluginCatalog.plugins).toContainEqual(
+        expect.objectContaining({
+          packageName: '@deepseek-ai/dsh-bash-sandbox',
+          origin: 'builtin',
+          settingsNamespaces: [],
         }),
       )
 

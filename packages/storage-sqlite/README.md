@@ -12,4 +12,6 @@
 
 频道历史搜索保存规范化 `search_text`，按频道分页后在 TypeScript 中执行字面子串匹配。`%`、`_` 和中文短文本都保持字面语义。
 
-Binding 只表达每个频道的当前归属，以 `channel_id` 为主键；历史消息和 Episode 不依赖历史 Binding 行。Agent Revision 继续不可变，当前 Revision 指针由独立表和复合外键保证归属。Asset Occurrence 以 `(channel_event_id, part_index)` 记录授权来源；Extension Activation 以 `(agent_id, extension_id)` 保存每个智能体当前启用版本，`extension_client_diagnostics` 只保留该 Activation 最近一次 Client loaded/failed 结果并随停用级联删除。
+Binding 只表达每个频道的当前归属，以 `channel_id` 为主键；历史消息和 Episode 不依赖历史 Binding 行。Agent Revision 继续不可变，当前 Revision 指针由独立表和复合外键保证归属。Asset Occurrence 以 `(channel_event_id, part_index)` 记录授权来源；Extension Activation 以 `(agent_id, extension_id)` 保存每个智能体当前启用版本。`host_extension_installations` 只保存每个 Host Adapter Extension 当前安装的 Revision，并用复合外键保证 Revision 归属。
+
+`0014_host_extension_installations` 只创建空表和索引，不重建旧表、不回填、不扫描扩展源码。已有用户首次启动新 Release 时由 Drizzle 自动应用，现有 Agent、Connection、Channel、消息、Revision 和 Activation 不变；内置 Adapter 不写入该表。迁移后统一执行 `foreign_key_check`，失败则回滚并拒绝启动。

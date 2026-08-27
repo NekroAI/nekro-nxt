@@ -27,11 +27,11 @@
 
 ## DSH、模型与扩展
 
-- DSH 公开插件接缝和支持级别：[DSH 能力插件优先兼容与支持识别](accepted/2026-08-18-DSH能力插件优先兼容与支持识别.md)。
+- DSH 公开插件接缝、来源和加载诊断：[DSH 能力插件优先兼容与加载目录](accepted/2026-08-18-DSH能力插件优先兼容与支持识别.md)。
 - DSH Session、Tool、Handoff 与群聊组合：[DSH 0.1.1 群聊能力组合](implemented/2026-08-18-DSH-0.1.1群聊能力组合.md)。
 - 模型供应商目录和配置来源：[复用 DSH 模型供应商目录](implemented/2026-08-17-复用DSH模型供应商目录.md)。
 - 动态包、保存版本与 Activation：[本地扩展持久化](implemented/2026-08-15-本地扩展持久化.md)。
-- Adapter Contribution、宿主扩展和产品 Slot：[适配器 Host 贡献与产品 Slot](accepted/2026-08-20-适配器Host贡献与产品Slot.md)。
+- Adapter Contribution、宿主安装和富消息产品 Slot：[适配器 Host 贡献与产品 Slot](implemented/2026-08-20-适配器Host贡献与产品Slot.md)。
 
 ## Adapter、连接与绑定
 

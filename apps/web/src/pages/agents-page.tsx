@@ -650,6 +650,7 @@ export function AgentManagePage() {
   const models = useProductStore((state) => state.models)
   const channels = useProductStore((state) => state.channels)
   const connections = useProductStore((state) => state.connections)
+  const connectionAdapters = useProductStore((state) => state.connectionAdapters)
   const extensions = useProductStore((state) => state.extensions)
   const dynamic = useProductStore((state) => state.dynamic)
   const [displayName, setDisplayName] = useState(agent?.name ?? '')
@@ -813,7 +814,9 @@ export function AgentManagePage() {
   const actionableBlockers = blockers.filter((blocker) => blocker.kind !== 'creation-running')
   const bindableChannels = listBindingChannels({ channels, excludeBoundToAgentId: agent.id })
   const undiscoveredConnections = connections.filter(
-    (connection) => connection.adapterKey !== 'web' && connection.knownChannels.length === 0,
+    (connection) =>
+      connectionAdapters.find(({ key }) => key === connection.adapterKey)?.channelDiscovery === 'adapter-observed' &&
+      connection.knownChannels.length === 0,
   )
   const openTab = (tab: AgentSettingsTab): void => {
     const next = new URLSearchParams(searchParams)

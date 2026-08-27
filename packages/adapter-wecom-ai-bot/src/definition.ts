@@ -17,6 +17,9 @@ export const WECOM_AI_BOT_CONNECTION_DEFINITION = defineAdapterConnection({
   displayName: '企业微信智能机器人',
   description: '连接企业微信官方智能机器人长连接',
   userCreatable: true,
+  aliasEditable: true,
+  channelDiscovery: 'adapter-observed',
+  diagnostics: { receive: true, send: true },
   configurationSchema: WeComAiBotConnectionConfigurationSchema,
   credentialsSchema: WeComAiBotCredentialsSchema,
   configSchema: {
@@ -27,6 +30,7 @@ export const WECOM_AI_BOT_CONNECTION_DEFINITION = defineAdapterConnection({
       botId: { type: 'string', title: 'BotID', description: '企业微信智能机器人配置页提供的 BotID。' },
       secret: {
         type: 'credential-reference',
+        credentialKey: 'secret',
         title: 'Secret',
         description: '开启长连接 API 模式后提供的专用 Secret。',
       },

@@ -4,7 +4,9 @@
 
 人设 Revision 的权威内容是 `PromptDocumentV1`。无引用时 Host 继续注入原始纯文本；存在平台用户、频道或扩展引用时，Host 解析当前可用状态，使用转义后的 `<nxt-persona-document>` 内联标记，并先注入固定引用协议。展示名称和扩展描述始终作为不可信数据，引用不扩大权限、频道访问或工具目录。
 
-`NekroRuntime` 是生产组合根：它拥有 Core SQLite、Channel Runtime、Extension 恢复、稳定 Web Connection、本地凭据目录，以及已安装 Adapter 的连接目录与运行实例。用户创建连接先选择 Adapter，再提交该贡献声明的普通配置和只写凭据；QQ 官方机器人使用 HTTP/Gateway Runtime，OneBot 11 与企业微信智能机器人使用正向 WebSocket Runtime。Secret 只由 Host 凭据存储解析，Core 只保存引用。Gateway、Adapter 注册和诊断监听均在 dispose 时撤销并等待静止。
+`NekroRuntime` 是生产组合根：它拥有 Core SQLite、Channel Runtime、Extension 恢复、本地凭据目录、统一 `AdapterRegistry`、Connection Runtime Map 和 `HostExtensionInstallationCoordinator`。四个内置 Adapter 与动态安装 Revision 走同一创建、恢复、测试和停止路径；Secret 只由 Host 凭据存储解析，Core 只保存引用。启动顺序是内置 Registry → Host Installation → Connection → Agent Activation，关闭时反向撤销并等待静止。
+
+Host Adapter 产物先在候选 Registry 执行 factory，实际 key、API 版本和 descriptor digest 与验证证据一致后才进入产品 Registry。安装、更新、回滚和卸载通过 `/api/extensions/:extensionId/installation` 提交；网络不通或凭据失效只形成 Connection 诊断。全局 Adapter Client Runtime 只允许 `conversation.message.rich` 的 `<adapterKey>:<kind>` 注册，异常时回退 `HostRichCard`。
 
 `DshHostRuntime` 继续只拥有 DSH Agent handle、Episode handoff、频道回复守卫、图片投影、压缩后视觉恢复和智能体作用域扩展；Adapter 和 Core 不能通过 DSH Context 互相读取数据库。应答型 Turn 第一次缺少成功的 `send_channel_message` 时通过公开 `agent/turn-stopping` 接缝在同一 Turn 提醒一次，第二次仍缺失则持久投影为 `unreplied`，不自动投递模型原始文字。频道环境说明如实告知普通模型文字不可见、同一 Turn 可多次发送，并默认建议长任务先确认再按真实阶段同步；人设和成员偏好可以减少过程消息，Host 不增加中途计时或自动进度。模型可见的入站、出站、Handoff 和历史统一使用 `logicalMessageId`，quote 只在当前频道展开一层。图片是否走原生路径只取决于 DSH 模型目录的 `inputModalities`；缺失声明按文本路径运行，不能按模型名推断。
 
@@ -28,7 +30,7 @@ Compaction 使用 `NekroNxtCompactionEngine` 继承 DSH `BasicCompactionEngine`�
 
 DSH 0.1.1-rc.2 的 `frontend-static` 只服务真实文件和明确的 index 路径，未知路径返回 404。Server 因此为 NekroNXT 的产品页面前缀显式注册 SPA index 路由；`/api` 和不存在的 Asset 仍保持各自的 JSON/404 语义，不能用全局 index 回退掩盖错误路径。
 
-通用 DSH 配置面直接投影当前 Host：`GET /api/dsh/plugins` 返回固定生产 roster 的分能力面支持诊断，`GET /api/dsh/settings` 返回所有可安全上线的脱敏 Settings descriptor；路径级修改走 `POST /api/dsh/settings/:namespace/mutate` 并强制 `expectedRevision`，凭据只通过 `describe`、`PUT` 和 `DELETE` 端点读状态或写入/清除，响应和日志不返回值。Settings/Credentials 提交事件通过同一 SSE 通知普通表单和 DSH 原生界面失效刷新。
+通用 DSH 配置面直接投影当前 Host：`GET /api/dsh/plugins` 返回固定生产 roster 的包身份、版本、来源和实时 Settings namespace，内置包不按运行验收或外部服务结果评级；`GET /api/dsh/settings` 返回所有可安全上线的脱敏 Settings descriptor。`agent-loop` 与 `shell` 等运行时 namespace 归入实际内置包，未知运行时注册项作为其他扩展显示。路径级修改走 `POST /api/dsh/settings/:namespace/mutate` 并强制 `expectedRevision`，凭据只通过 `describe`、`PUT` 和 `DELETE` 端点读状态或写入/清除，响应和日志不返回值。Settings/Credentials 提交事件通过同一 SSE 通知普通表单和 DSH 原生界面失效刷新。
 
 DSH 0.1.1-rc.2 的 `redactSecrets` 尚不能证明 union、intersect、transform、lazy 中 Secret 的线安全，序列化 schema 也可能携带 Secret default。因此 Server 在 descriptor 离开 Host 前做 fail-closed 检查：发现不受 0.1.1-rc.2 redactor 覆盖的 Secret 或 Secret default 时，不向 Web 暴露该 namespace，也拒绝通用 mutation；这不是提示词或表单层防护。待上游提供完备 `describeForWire()` 后再通过兼容 fixture 收敛此包装边界。
 

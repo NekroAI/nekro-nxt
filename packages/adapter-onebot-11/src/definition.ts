@@ -36,6 +36,9 @@ export const ONEBOT_11_CONNECTION_DEFINITION = defineAdapterConnection({
   displayName: 'OneBot 11',
   description: '连接独立部署的 OneBot 11 协议端',
   userCreatable: true,
+  aliasEditable: true,
+  channelDiscovery: 'adapter-observed',
+  diagnostics: { receive: true, send: true },
   configurationSchema: OneBot11ConnectionConfigurationSchema,
   credentialsSchema: OneBot11CredentialsSchema,
   configSchema: {
@@ -50,6 +53,7 @@ export const ONEBOT_11_CONNECTION_DEFINITION = defineAdapterConnection({
       },
       accessToken: {
         type: 'credential-reference',
+        credentialKey: 'accessToken',
         title: 'Access Token',
         description: '可选。以 Authorization: Bearer 头发送。',
       },

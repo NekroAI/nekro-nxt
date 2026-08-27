@@ -68,6 +68,7 @@ export function BindingTaskDialog({
   const agents = useProductStore((state) => state.agents)
   const channels = useProductStore((state) => state.channels)
   const connections = useProductStore((state) => state.connections)
+  const connectionAdapters = useProductStore((state) => state.connectionAdapters)
   const candidates = useMemo(
     () =>
       listBindingChannels({
@@ -99,7 +100,15 @@ export function BindingTaskDialog({
   }, [agents, channels, connectionId, excludeBoundToAgentId, lockedAgentId, lockedChannelId, open])
 
   const selectedConnection = connectionId ? connections.find((connection) => connection.id === connectionId) : undefined
-  const undiscovered = undiscoveredExternalConnections(connections, connectionId)
+  const undiscovered = undiscoveredExternalConnections(
+    connections,
+    new Set(
+      connectionAdapters
+        .filter(({ channelDiscovery }) => channelDiscovery === 'adapter-observed')
+        .map(({ key }) => key),
+    ),
+    connectionId,
+  )
   const agentIsPreset = lockedAgentId !== undefined
   const channelIsPreset = lockedChannelId !== undefined
   const dialogTitle = title ?? (agentIsPreset && !channelIsPreset ? '新增频道绑定' : '绑定智能体')
@@ -187,11 +196,12 @@ export function BindingTaskDialog({
 
 const undiscoveredExternalConnections = (
   connections: readonly ConnectionSummary[],
+  observedAdapterKeys: ReadonlySet<string>,
   connectionId: string | undefined,
 ): ConnectionSummary[] =>
   connections.filter(
     (connection) =>
-      connection.adapterKey !== 'web' &&
+      observedAdapterKeys.has(connection.adapterKey) &&
       connection.knownChannels.length === 0 &&
       (connectionId === undefined || connection.id === connectionId),
   )

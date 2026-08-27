@@ -5,7 +5,10 @@ import {
   ChannelIdSchema,
   ConnectionIdSchema,
   EpisodeIdSchema,
+  ExtensionIdSchema,
+  ExtensionRevisionIdSchema,
   HostApiContracts,
+  type ExtensionRevisionId,
 } from '@nekro-nxt/contracts'
 import { spawn, type ChildProcess } from 'node:child_process'
 import { mkdtemp, rm } from 'node:fs/promises'
@@ -229,6 +232,42 @@ test('the open page reconnects after the real Host restarts on the same origin',
   }
 })
 
+test('the open page recovers when an intermediary returns HTTP 500 for the SSE handshake', async ({ page }) => {
+  const pageErrors: string[] = []
+  page.on('pageerror', (error) => pageErrors.push(error.message))
+  let hostAvailable = false
+  let eventAttempts = 0
+
+  await page.route('**/api/snapshot', (route) => {
+    if (hostAvailable) return route.continue()
+    return route.fulfill({
+      status: 503,
+      contentType: 'application/json',
+      body: JSON.stringify({ error: { code: 'unavailable', message: 'Host 正在重新启动。' } }),
+    })
+  })
+  await page.route('**/api/events', (route) => {
+    eventAttempts += 1
+    if (hostAvailable) return route.continue()
+    return route.fulfill({ status: 500, contentType: 'text/plain', body: '' })
+  })
+
+  await page.goto('/connections')
+  await expect(page.getByRole('alert').filter({ hasText: '无法连接' })).toBeVisible()
+  await page.evaluate(() => {
+    document.documentElement.dataset['sseRecoveryJourney'] = 'same-document'
+  })
+
+  hostAvailable = true
+  await expect(page.getByRole('alert').filter({ hasText: '无法连接' })).toHaveCount(0, { timeout: 10_000 })
+  expect(eventAttempts).toBeGreaterThanOrEqual(2)
+  await expect
+    .poll(() => page.evaluate(() => document.documentElement.dataset['sseRecoveryJourney']))
+    .toBe('same-document')
+  await expect(page.getByRole('heading', { name: '内置频道', level: 1 })).toBeVisible()
+  expect(pageErrors, pageErrors.join('\n')).toEqual([])
+})
+
 test('legacy work links replace into /work without dropping query or hash', async ({ page }) => {
   const failures = installRuntimeFailureGate(page)
 
@@ -353,6 +392,10 @@ test('DSH extension settings load the official native surface and generic fallba
   await page.goto('/settings?tab=dsh-extensions')
 
   await expect(page.getByText('DeepSeek 网页搜索', { exact: true }).first()).toBeVisible()
+  await expect(page.getByText('内置', { exact: true }).first()).toBeVisible()
+  await expect(page.locator('body')).not.toContainText('已验证支持')
+  await expect(page.locator('body')).not.toContainText('未完整验证')
+  await expect(page.locator('body')).not.toContainText('未评估归属')
   await expect(page.locator('[data-dsh-native-surface]')).toBeVisible()
   await expect(page.locator('[data-dsh-native-surface]')).toContainText(/Web search|网页搜索/u)
   await page.getByRole('tab', { name: '通用配置' }).click()
@@ -411,6 +454,232 @@ test('adding a connection selects a platform before showing its fields', async (
   await expect(dialog.getByLabel('Secret')).toHaveAttribute('type', 'password')
   await expect(dialog.getByLabel('Secret')).toHaveAttribute('autocomplete', 'off')
   await expect(dialog.getByLabel('平台')).toHaveCount(0)
+  expect(failures, failures.join('\n')).toEqual([])
+})
+
+test('a verified Adapter can install, create a schema-backed connection, roll back, and uninstall without losing facts', async ({
+  page,
+  request,
+}, testInfo) => {
+  const failures = installRuntimeFailureGate(page)
+  const baseResponse = await request.get('/api/snapshot')
+  expect(baseResponse.ok()).toBe(true)
+  const baseSnapshot = HostApiContracts.snapshot.response.parse(await baseResponse.json())
+  const extensionId = ExtensionIdSchema.parse('ext_adapterjourney')
+  const revisionV1 = ExtensionRevisionIdSchema.parse('xrv_adapterjourneyv1')
+  const revisionV2 = ExtensionRevisionIdSchema.parse('xrv_adapterjourneyv2')
+  const connectionId = ConnectionIdSchema.parse('con_adapterjourney')
+  const channelId = ChannelIdSchema.parse('chn_adapterjourney')
+  let installedRevisionId: ExtensionRevisionId | undefined
+  let connectionCreated = false
+  const installationRequests: string[] = []
+  const connectionRequests: unknown[] = []
+  const descriptor = {
+    key: 'synthetic-chat',
+    displayName: '合成聊天平台',
+    description: '离线产品旅程使用的虚构聊天平台。',
+    userCreatable: true,
+    aliasEditable: true,
+    channelDiscovery: 'adapter-observed' as const,
+    diagnostics: { receive: true, send: true },
+    configSchema: {
+      schemaVersion: 1,
+      type: 'object' as const,
+      required: ['workspace', 'token'],
+      properties: {
+        workspace: { type: 'string' as const, title: '工作区', default: 'journey-room' },
+        token: {
+          type: 'credential-reference' as const,
+          credentialKey: 'token',
+          title: '访问令牌',
+        },
+      },
+    },
+  }
+  const revision = (id: ExtensionRevisionId, revisionNumber: number, createdAt: number) => ({
+    id,
+    revisionNumber,
+    createdAt,
+    scope: 'host-adapter' as const,
+    contributions: ['适配器：synthetic-chat'],
+    verification: {
+      verifiedAt: createdAt,
+      dshVersion: '0.1.1-rc.2',
+      contractVersion: 'nekro-nxt-extension-v2',
+      hostBuilt: true,
+      clientBuilt: false,
+      buildKey: String(revisionNumber).repeat(64),
+      toolInvocationCount: 0,
+      rpcMethods: [],
+      renderedSlots: [],
+      renderedHostSlots: [],
+      adapter: {
+        apiVersion: 1 as const,
+        key: 'synthetic-chat',
+        descriptorDigest: 'a'.repeat(64),
+        registered: true,
+        started: true,
+        stopped: true,
+        inboundCommitted: true,
+        outboundReceipt: 'sent' as const,
+      },
+    },
+  })
+  const snapshot = () =>
+    HostApiContracts.snapshot.response.parse({
+      ...baseSnapshot,
+      connectionAdapters: installedRevisionId
+        ? [...baseSnapshot.connectionAdapters, descriptor]
+        : baseSnapshot.connectionAdapters,
+      connections: connectionCreated
+        ? [
+            ...baseSnapshot.connections,
+            {
+              id: connectionId,
+              adapterKey: 'synthetic-chat',
+              alias: '旅程合成连接',
+              status: installedRevisionId
+                ? { state: 'connected', credentialConfigured: true, proactiveSend: true }
+                : {
+                    state: 'stopped',
+                    message: '这个连接的适配器未安装。',
+                    credentialConfigured: true,
+                    proactiveSend: true,
+                  },
+              channelCount: 1,
+              knownChannels: [{ id: channelId, name: '合成演示频道', kind: 'group' as const }],
+            },
+          ]
+        : baseSnapshot.connections,
+      channels: connectionCreated
+        ? [
+            ...baseSnapshot.channels,
+            {
+              id: channelId,
+              connectionId,
+              platformChannelId: 'synthetic-room',
+              kind: 'group' as const,
+              displayName: '合成演示频道',
+              bindings: [],
+            },
+          ]
+        : baseSnapshot.channels,
+      extensions: [
+        ...baseSnapshot.extensions.filter((item) => item.id !== extensionId),
+        {
+          id: extensionId,
+          slug: 'synthetic-chat-adapter',
+          displayName: '合成聊天适配器',
+          description: '验证适配器本机安装、版本切换和卸载保留语义。',
+          revisions: [revision(revisionV1, 1, 1_725_000_000_000), revision(revisionV2, 2, 1_725_000_001_000)],
+          activations: [],
+          ...(installedRevisionId
+            ? { installation: { extensionRevisionId: installedRevisionId, installedAt: 1_725_000_002_000 } }
+            : {}),
+          clientDiagnostics: [],
+        },
+      ],
+    })
+
+  await page.route('**/api/snapshot', (route) =>
+    route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(snapshot()) }),
+  )
+  await page.route(`**/api/extensions/${extensionId}/installation`, async (route) => {
+    if (route.request().method() === 'DELETE') {
+      installedRevisionId = undefined
+      installationRequests.push('uninstall')
+      return route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({ uninstalled: true }),
+      })
+    }
+    const body = HostApiContracts.installHostExtension.request.parse(route.request().postDataJSON())
+    installedRevisionId = body.revisionId === revisionV1 ? revisionV1 : revisionV2
+    installationRequests.push(installedRevisionId)
+    return route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({
+        installation: { extensionId, extensionRevisionId: installedRevisionId, installedAt: 1_725_000_002_000 },
+      }),
+    })
+  })
+  await page.route('**/api/connections', async (route) => {
+    if (route.request().method() !== 'POST') return route.continue()
+    const body = HostApiContracts.createConnection.request.parse(route.request().postDataJSON())
+    connectionRequests.push(body)
+    expect(body.configuration).toEqual({ workspace: 'journey-room' })
+    expect(body.credentials).toEqual({ token: 'synthetic-secret' })
+    expect(body.configuration).not.toHaveProperty('token')
+    connectionCreated = true
+    return route.fulfill({
+      status: 201,
+      contentType: 'application/json',
+      body: JSON.stringify({ connectionId, adapterKey: 'synthetic-chat' }),
+    })
+  })
+
+  await page.setViewportSize({ width: 1440, height: 900 })
+  await page.goto(`/extensions/${extensionId}`)
+  await expect(page.getByRole('heading', { name: '合成聊天适配器' })).toBeVisible()
+  await expect(page.getByText('尚未安装', { exact: true }).first()).toBeVisible()
+  const version2 = page.getByRole('listitem').filter({ hasText: '版本 2' })
+  await version2.getByRole('button', { name: '安装到本机' }).click()
+  await expect(page.getByText('已安装到本机', { exact: true })).toBeVisible()
+  expect(installationRequests).toEqual([revisionV2])
+
+  await page.goto('/connections?create=1&adapter=synthetic-chat')
+  const createDialog = page.getByRole('dialog')
+  await expect(createDialog.getByRole('heading', { name: '配置 合成聊天平台' })).toBeVisible()
+  await createDialog.getByLabel('访问令牌').fill('synthetic-secret')
+  await createDialog.getByRole('button', { name: '创建连接' }).click()
+  await expect(page.getByText('连接已创建', { exact: true })).toBeVisible()
+  expect(connectionRequests).toHaveLength(1)
+  await page.goto(`/connections/${connectionId}`)
+  await expect(page.getByRole('heading', { name: '旅程合成连接' })).toBeVisible()
+  await page.getByRole('button', { name: '收发测试' }).click()
+  await expect(page.getByLabel('测试消息发送到')).toContainText('合成演示频道 · 群聊')
+
+  await page.goto(`/extensions/${extensionId}`)
+  await page.getByRole('listitem').filter({ hasText: '版本 1' }).getByRole('button', { name: '回滚到此版本' }).click()
+  await expect(page.getByRole('listitem').filter({ hasText: '版本 1' })).toContainText('当前已安装')
+  await version2.getByRole('button', { name: '更新到此版本' }).click()
+  await expect(version2).toContainText('当前已安装')
+  expect(installationRequests).toEqual([revisionV2, revisionV1, revisionV2])
+
+  await expect(page.locator('html[data-nxt-view-transition]')).toHaveCount(0)
+  const stage = page.locator('main')
+  const pageBox = await stage.boundingBox()
+  const includedBox = await page.getByText('包含内容', { exact: true }).locator('..').boundingBox()
+  if (!pageBox || !includedBox) throw new Error('适配器扩展页缺少视觉验收区域。')
+  expect(await stage.evaluate((element) => element.scrollLeft)).toBe(0)
+  expect(includedBox.x).toBeGreaterThanOrEqual(pageBox.x)
+
+  const installedScreenshot = testInfo.outputPath('adapter-installed.png')
+  await page.screenshot({ path: installedScreenshot, animations: 'disabled' })
+  await testInfo.attach('adapter-installed', { path: installedScreenshot, contentType: 'image/png' })
+  await page.getByRole('button', { name: '卸载', exact: true }).click()
+  const uninstallDialog = page.getByRole('alertdialog')
+  await expect(uninstallDialog).toContainText('连接、频道和历史会保留')
+  const dialogScreenshot = testInfo.outputPath('adapter-uninstall-confirmation.png')
+  await page.screenshot({ path: dialogScreenshot, animations: 'disabled' })
+  await testInfo.attach('adapter-uninstall-confirmation', { path: dialogScreenshot, contentType: 'image/png' })
+  await uninstallDialog.getByRole('button', { name: '卸载适配器' }).click()
+  await expect(page.getByText('尚未安装', { exact: true }).first()).toBeVisible()
+  expect(installationRequests.at(-1)).toBe('uninstall')
+
+  await page.goto(`/connections/${connectionId}`)
+  await expect(page.getByText('这个连接的适配器未安装。')).toBeVisible()
+  await expect(page.getByText('已发现频道', { exact: true }).locator('xpath=following-sibling::dd[1]')).toHaveText(
+    '1 个',
+  )
+  const retainedScreenshot = testInfo.outputPath('adapter-uninstalled-connection-retained.png')
+  await page.screenshot({ path: retainedScreenshot, animations: 'disabled' })
+  await testInfo.attach('adapter-uninstalled-connection-retained', {
+    path: retainedScreenshot,
+    contentType: 'image/png',
+  })
   expect(failures, failures.join('\n')).toEqual([])
 })
 
@@ -698,6 +967,9 @@ test('connection workbench binds an intelligent-agent without visiting the manag
             displayName: 'QQ 官方机器人',
             description: '连接 QQ 机器人账号',
             userCreatable: true,
+            aliasEditable: true,
+            channelDiscovery: 'adapter-observed',
+            diagnostics: { receive: true, send: true },
             configSchema: { schemaVersion: 1, type: 'object' as const, required: [], properties: {} },
           },
         ],
@@ -816,6 +1088,9 @@ test('external channel exposes processing feedback and per-event trigger control
             displayName: 'OneBot 11',
             description: '连接独立部署的 OneBot 11 协议端',
             userCreatable: true,
+            aliasEditable: true,
+            channelDiscovery: 'adapter-observed',
+            diagnostics: { receive: true, send: true },
             configSchema: { schemaVersion: 1, type: 'object' as const, required: [], properties: {} },
           },
         ],

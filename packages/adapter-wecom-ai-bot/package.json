@@ -23,6 +23,7 @@
     "zod": "4.4.3"
   },
   "devDependencies": {
+    "@nekro-nxt/test-harness": "workspace:*",
     "@types/ws": "8.18.1"
   },
   "description": "NekroNXT 企业微信智能机器人长连接适配器",

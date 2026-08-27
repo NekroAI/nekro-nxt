@@ -7,5 +7,6 @@
     "emitDeclarationOnly": true,
     "tsBuildInfoFile": "lib/types.tsbuildinfo"
   },
-  "include": ["src/**/*.ts"]
+  "include": ["src/**/*.ts"],
+  "references": [{ "path": "../adapter-sdk" }, { "path": "../contracts" }]
 }

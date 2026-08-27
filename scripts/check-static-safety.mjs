@@ -9,6 +9,7 @@ const root = process.cwd()
 const baselinePath = 'scripts/baselines/static-safety.json'
 const sourceRoots = ['apps', 'packages']
 const sourcePattern = /\.(?:cts|mts|ts|tsx)$/u
+const concreteAdapterKeys = new Set(['web', 'qq-openclaw', 'onebot-11', 'wecom-ai-bot'])
 const sqlStart =
   /^\s*(?:SELECT\b[\s\S]*\bFROM\b|INSERT\s+INTO\b|UPDATE\s+[A-Za-z_][\w$]*\s+SET\b|DELETE\s+FROM\b|CREATE\s+(?:(?:UNIQUE|VIRTUAL)\s+)?(?:INDEX|TABLE|TRIGGER|VIEW)\b|ALTER\s+TABLE\b|DROP\s+(?:INDEX|TABLE|TRIGGER|VIEW)\b|PRAGMA\s+[A-Za-z_]|BEGIN(?:\s+(?:DEFERRED|EXCLUSIVE|IMMEDIATE|TRANSACTION))?\s*;?\s*$|COMMIT\s*;?\s*$|ROLLBACK\s*;?\s*$|WITH\b[\s\S]*\b(?:DELETE|INSERT|SELECT|UPDATE)\b)/iu
 const exemptFiles = new Set([
@@ -105,6 +106,19 @@ function scanFile(file, fixedExceptions) {
   }
 
   function visit(node) {
+    if (
+      ts.isBinaryExpression(node) &&
+      (relative.startsWith('apps/server/src/') || relative.startsWith('apps/web/src/')) &&
+      (concreteAdapterKeys.has(stringValue(node.left) ?? '') ||
+        concreteAdapterKeys.has(stringValue(node.right) ?? '')) &&
+      normalizedText(node, sourceFile).includes('adapterKey')
+    ) {
+      report(
+        'platform-key-branch',
+        node,
+        'Server 与通用 Web 页面必须通过 Adapter descriptor/Registry 能力分支，不能判断具体平台 key',
+      )
+    }
     if (ts.isCallExpression(node)) {
       const member = propertyName(node.expression)
       const firstValue = node.arguments[0] && stringValue(node.arguments[0])

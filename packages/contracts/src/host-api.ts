@@ -483,6 +483,7 @@ const AdapterConfigurationPropertySchema = z.discriminatedUnion('type', [
       title: z.string(),
       description: z.string().optional(),
       default: z.string().optional(),
+      credentialKey: z.string().trim().min(1).optional(),
     })
     .strict(),
   z
@@ -509,6 +510,9 @@ const AdapterConnectionDescriptorSchema = z
     displayName: z.string(),
     description: z.string(),
     userCreatable: z.boolean(),
+    aliasEditable: z.boolean(),
+    channelDiscovery: z.enum(['host-created', 'adapter-observed']),
+    diagnostics: z.object({ receive: z.boolean(), send: z.boolean() }).strict(),
     configSchema: z
       .object({
         schemaVersion: z.number().int().nonnegative(),
@@ -732,6 +736,7 @@ export const HostSnapshotSchema = z
                 id: ExtensionRevisionIdSchema,
                 revisionNumber: z.number().int().positive(),
                 createdAt: z.number().int().safe().nonnegative(),
+                scope: z.enum(['agent', 'host-adapter']),
                 contributions: z.array(z.string()),
                 verification: z
                   .object({
@@ -744,6 +749,24 @@ export const HostSnapshotSchema = z
                     toolInvocationCount: z.number().int().nonnegative(),
                     rpcMethods: z.array(z.string()),
                     renderedSlots: z.array(z.string()),
+                    renderedHostSlots: z
+                      .array(
+                        z.object({ name: z.literal('conversation.message.rich'), key: NonEmptyStringSchema }).strict(),
+                      )
+                      .optional(),
+                    adapter: z
+                      .object({
+                        apiVersion: z.literal(1),
+                        key: NonEmptyStringSchema,
+                        descriptorDigest: z.string().regex(/^[a-f0-9]{64}$/u),
+                        registered: z.boolean(),
+                        started: z.boolean(),
+                        stopped: z.boolean(),
+                        inboundCommitted: z.boolean(),
+                        outboundReceipt: z.enum(['sent', 'failed', 'unknown']),
+                      })
+                      .strict()
+                      .optional(),
                   })
                   .strict()
                   .optional(),
@@ -760,6 +783,22 @@ export const HostSnapshotSchema = z
               })
               .strict(),
           ),
+          installation: z
+            .object({
+              extensionRevisionId: ExtensionRevisionIdSchema,
+              installedAt: z.number().int().safe().nonnegative(),
+            })
+            .strict()
+            .optional(),
+          hostClientDiagnostic: z
+            .object({
+              revisionId: ExtensionRevisionIdSchema,
+              status: z.enum(['loaded', 'failed']),
+              message: z.string().optional(),
+              observedAt: z.number().int().safe().nonnegative(),
+            })
+            .strict()
+            .optional(),
           clientDiagnostics: z.array(
             z
               .object({
@@ -955,55 +994,13 @@ const DynamicInventoryRowSchema = z
   })
   .strict()
 
-export const DshClientModuleDescriptorSchema = z
+export const DshPluginCatalogEntrySchema = z
   .object({
     packageName: NonEmptyStringSchema,
     packageVersion: NonEmptyStringSchema,
-    moduleId: NonEmptyStringSchema,
-    platform: z.literal('web'),
-    inject: z.array(z.string()),
-    bundleDigest: NonEmptyStringSchema,
-    bundleUrl: NonEmptyStringSchema,
-    compatibility: z.enum(['ready', 'missing-dependency', 'version-conflict', 'unsupported-remote']),
-    reasons: z.array(z.string()),
-  })
-  .strict()
-
-export const DshSupportEvidenceSchema = z
-  .object({
-    level: z.enum(['metadata', 'activation', 'lifecycle', 'integration', 'external-result']),
-    code: NonEmptyStringSchema,
-    message: z.string(),
-  })
-  .strict()
-
-export const DshSupportFacetSchema = z
-  .object({
-    facet: z.enum([
-      'host-load',
-      'service-injection',
-      'lifecycle',
-      'settings',
-      'tools',
-      'providers',
-      'scope-bundle-preset',
-      'client-ui',
-    ]),
-    status: z.enum(['supported', 'unverified', 'unsupported', 'failed', 'not-applicable']),
-    evidence: z.array(DshSupportEvidenceSchema),
-  })
-  .strict()
-
-export const DshPluginSupportAssessmentSchema = z
-  .object({
-    packageName: NonEmptyStringSchema,
-    packageVersion: NonEmptyStringSchema,
-    dshVersion: NonEmptyStringSchema,
     origin: z.enum(['builtin', 'profile', 'dynamic']),
-    overall: z.enum(['verified', 'loadable-unverified', 'partial', 'incompatible', 'unassessed']),
-    facets: z.array(DshSupportFacetSchema),
     settingsNamespaces: z.array(NonEmptyStringSchema),
-    clientModule: DshClientModuleDescriptorSchema.optional(),
+    loadError: z.object({ code: NonEmptyStringSchema, message: NonEmptyStringSchema }).strict().optional(),
   })
   .strict()
 
@@ -1210,6 +1207,7 @@ const agentParam = z.object({ agentId: AgentIdSchema }).strict()
 const channelParam = z.object({ channelId: ChannelIdSchema }).strict()
 const connectionParam = z.object({ connectionId: ConnectionIdSchema }).strict()
 const agentExtensionParam = z.object({ agentId: AgentIdSchema, extensionId: ExtensionIdSchema }).strict()
+const extensionParam = z.object({ extensionId: ExtensionIdSchema }).strict()
 const extensionRevisionParam = z
   .object({ extensionId: ExtensionIdSchema, revisionId: ExtensionRevisionIdSchema })
   .strict()
@@ -1479,7 +1477,7 @@ export const HostApiContracts = {
     path: '/api/dsh/plugins',
     params: EmptyParamsSchema,
     request: NoRequestBodySchema,
-    response: z.object({ plugins: z.array(DshPluginSupportAssessmentSchema) }).strict(),
+    response: z.object({ plugins: z.array(DshPluginCatalogEntrySchema) }).strict(),
     error: HostApiErrorSchema,
   }),
   dshSettings: defineContract({
@@ -1786,6 +1784,7 @@ export const HostApiContracts = {
         extensionId: ExtensionIdSchema,
         revisionId: ExtensionRevisionIdSchema,
         activation: z.literal('inactive'),
+        installation: z.literal('uninstalled').optional(),
       })
       .strict(),
     error: HostApiErrorSchema,
@@ -1811,6 +1810,14 @@ export const HostApiContracts = {
         message: z.string().max(4096).optional(),
       })
       .strict(),
+    response: z.object({ accepted: z.literal(true) }).strict(),
+    error: HostApiErrorSchema,
+  }),
+  hostExtensionClientDiagnostic: defineContract({
+    method: 'POST',
+    path: '/api/extensions/:extensionId/revisions/:revisionId/host-client-diagnostic',
+    params: extensionRevisionParam,
+    request: z.object({ status: z.enum(['loaded', 'failed']), message: z.string().max(4096).optional() }).strict(),
     response: z.object({ accepted: z.literal(true) }).strict(),
     error: HostApiErrorSchema,
   }),
@@ -1840,6 +1847,32 @@ export const HostApiContracts = {
     params: agentExtensionParam,
     request: NoRequestBodySchema,
     response: z.object({ disabled: z.literal(true) }).strict(),
+    error: HostApiErrorSchema,
+  }),
+  installHostExtension: defineContract({
+    method: 'PUT',
+    path: '/api/extensions/:extensionId/installation',
+    params: extensionParam,
+    request: z.object({ revisionId: ExtensionRevisionIdSchema }).strict(),
+    response: z
+      .object({
+        installation: z
+          .object({
+            extensionId: ExtensionIdSchema,
+            extensionRevisionId: ExtensionRevisionIdSchema,
+            installedAt: z.number().int().safe().nonnegative(),
+          })
+          .strict(),
+      })
+      .strict(),
+    error: HostApiErrorSchema,
+  }),
+  uninstallHostExtension: defineContract({
+    method: 'DELETE',
+    path: '/api/extensions/:extensionId/installation',
+    params: extensionParam,
+    request: NoRequestBodySchema,
+    response: z.object({ uninstalled: z.literal(true) }).strict(),
     error: HostApiErrorSchema,
   }),
 } as const

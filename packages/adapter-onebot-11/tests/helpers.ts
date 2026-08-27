@@ -11,6 +11,7 @@ import {
   ConnectionIdSchema,
   type JsonValue,
 } from '@nekro-nxt/contracts'
+import { FakeAdapterTransport } from '@nekro-nxt/test-harness'
 
 export const waitFor = async (predicate: () => boolean, timeoutMs = 2_000): Promise<void> => {
   const deadline = Date.now() + timeoutMs
@@ -102,6 +103,7 @@ export const createFakeContext = () => {
         diagnostics.push(diagnostic)
       },
     },
+    transport: new FakeAdapterTransport(),
   }
   return { context, events, diagnostics, states, channels, members }
 }

@@ -1,3 +1,17 @@
+import type { AdapterHostContributionV1 } from '@nekro-nxt/adapter-sdk'
+import type { MessagePart } from '@nekro-nxt/contracts'
+
+export type {
+  AdapterConnectionHostContext,
+  AdapterConnectionRuntime,
+  AdapterDeliveryReceipt,
+  AdapterHostContributionV1,
+  AdapterStoredConnectionConfiguration,
+  AdapterOutboundCapabilities,
+  AdapterWebSocketConnection,
+  PhysicalDeliveryRequest,
+} from '@nekro-nxt/adapter-sdk'
+
 export type ExtensionJsonValue =
   null | boolean | number | string | readonly ExtensionJsonValue[] | { readonly [key: string]: ExtensionJsonValue }
 
@@ -59,6 +73,8 @@ export interface ExtensionHostEnvironment {
     ): ExtensionToolDefinition<Args, Output>
     registerTool(context: ExtensionHostContext, tool: ExtensionToolDefinition): () => void
     handle(method: string, handler: ExtensionRpcHandler): () => void
+    /** Host-scoped Adapter Revisions register exactly one contribution during factory evaluation. */
+    registerAdapter(contribution: AdapterHostContributionV1): () => void
   }
   readonly config: ExtensionJsonValue
 }
@@ -81,6 +97,27 @@ export interface NekroNxtClientSlotPropsMap {
   readonly 'agent.workbench.sections': AgentWorkbenchSlotProps
   readonly 'extension.details.panels': ExtensionDetailsSlotProps
 }
+
+export type AdapterRichMessagePart = Extract<MessagePart, { readonly type: 'rich' }>
+
+export interface AdapterRichMessageSlotProps {
+  readonly part: AdapterRichMessagePart
+  readonly messageId: string
+  readonly channelId: string
+}
+
+export interface AdapterHostClientSlotRegistry {
+  register(
+    options: { readonly name: 'conversation.message.rich'; readonly id: string },
+    component: (props: AdapterRichMessageSlotProps) => unknown,
+  ): () => void
+}
+
+export interface AdapterHostClientContext {
+  readonly slots: AdapterHostClientSlotRegistry
+}
+
+export type AdapterHostClientEnvironment = Pick<ExtensionClientEnvironment, 'React' | 'styles'>
 
 export interface ExtensionClientStyles {
   readonly section: string
@@ -125,11 +162,30 @@ export interface NekroNxtExtensionAuthoringReference {
     readonly hostTool: true
     readonly hostRpc: true
     readonly clientSlots: readonly NekroNxtClientSlotName[]
+    readonly hostAdapter: {
+      readonly apiVersion: 1
+      readonly scope: 'host-adapter'
+      readonly registration: 'harness.registerAdapter'
+      readonly oneStableKey: true
+      readonly allowedHostServices: readonly [
+        'channels',
+        'members',
+        'messages',
+        'assets',
+        'credentials',
+        'state',
+        'diagnostics',
+        'transport',
+      ]
+      readonly configSchemaExample: AdapterHostContributionV1['descriptor']['configSchema']
+      readonly cannotMixWith: readonly ['tool', 'rpc', 'agent-client-slot']
+    }
     readonly dshNativeWebUi: false
   }
   readonly examples: {
     readonly hostTool: string
     readonly hostRpcAndClientSlot: string
+    readonly hostAdapter: string
   }
   readonly recoveryRules: readonly string[]
 }
@@ -177,6 +233,34 @@ return {
   }
 }`
 
+const HOST_ADAPTER_EXAMPLE = `const descriptor = {
+  key: 'example-chat',
+  displayName: 'Example Chat',
+  description: 'Synthetic Adapter example.',
+  userCreatable: true,
+  aliasEditable: true,
+  channelDiscovery: 'adapter-observed',
+  diagnostics: { receive: true, send: true },
+  configSchema: {
+    schemaVersion: 1,
+    type: 'object',
+    required: ['endpoint', 'token'],
+    properties: {
+      endpoint: { type: 'string', title: 'Endpoint', default: 'wss://chat.example.invalid/events' },
+      token: { type: 'credential-reference', credentialKey: 'token', title: 'Token' }
+    }
+  }
+}
+harness.registerAdapter({
+  apiVersion: 1,
+  descriptor,
+  async create(context, stored) {
+    // Only resolve stored.credentialRefs through context.credentials; never read raw secrets from configuration.
+    return createRuntime(context, stored)
+  }
+})
+return { apply() {} }`
+
 export const NEKRO_NXT_EXTENSION_AUTHORING_REFERENCE: NekroNxtExtensionAuthoringReference = {
   contractVersion: 'nekro-nxt-extension-v1',
   dshVersion: '0.1.1-rc.2',
@@ -184,15 +268,44 @@ export const NEKRO_NXT_EXTENSION_AUTHORING_REFERENCE: NekroNxtExtensionAuthoring
     hostTool: true,
     hostRpc: true,
     clientSlots: ['agent.workbench.sections', 'extension.details.panels'],
+    hostAdapter: {
+      apiVersion: 1,
+      scope: 'host-adapter',
+      registration: 'harness.registerAdapter',
+      oneStableKey: true,
+      allowedHostServices: [
+        'channels',
+        'members',
+        'messages',
+        'assets',
+        'credentials',
+        'state',
+        'diagnostics',
+        'transport',
+      ],
+      configSchemaExample: {
+        schemaVersion: 1,
+        type: 'object',
+        required: ['endpoint', 'token'],
+        properties: {
+          endpoint: { type: 'string', title: 'Endpoint', default: 'wss://chat.example.invalid/events' },
+          token: { type: 'credential-reference', credentialKey: 'token', title: 'Token' },
+        },
+      },
+      cannotMixWith: ['tool', 'rpc', 'agent-client-slot'],
+    },
     dshNativeWebUi: false,
   },
   examples: {
     hostTool: HOST_TOOL_EXAMPLE,
     hostRpcAndClientSlot: HOST_RPC_AND_CLIENT_SLOT_EXAMPLE,
+    hostAdapter: HOST_ADAPTER_EXAMPLE,
   },
   recoveryRules: [
     '一个 Episode 同时只维护一个动态 Plugin；修复必须向同一 Plugin 追加 kind:existing Package。',
     'define、run、保存和启用是四个独立提交点；不得把动态运行声称为已保存或已启用。',
+    '适配器使用 registerAdapter 在隔离 Host Harness 中验证；保存后仍是未安装，必须再执行安装到本机。',
+    '一个适配器 Revision 只允许一个稳定 adapterKey，且不能混装智能体 Tool、RPC 或智能体 Client Slot。',
     'ctx.effect 的回调会立即执行；Tool 和 Slot 按示例直接注册，禁止在 effect 回调中立即调用注册返回的 disposer。自管资源必须由 effect 回调返回 teardown。',
     'Host RPC 必须在 Activation factory 注册；浏览器 RPC 没有 Agent Loop initiator，禁止依赖 currentInitiator 读取产品智能体身份。需要的稳定生成期数据应写入当前 Revision 源码或显式配置。',
     'agent.workbench.sections 接收当前智能体的 agentId/displayName，位于智能体配置宿主区块之后；多个贡献按注册顺序排列。',
@@ -228,6 +341,12 @@ ${reference.examples.hostTool}
 ${reference.examples.hostRpcAndClientSlot}
 \`\`\`
 
+## Host Adapter 示例
+
+\`\`\`js
+${reference.examples.hostAdapter}
+\`\`\`
+
 ## 修复与停止
 
 ${reference.recoveryRules.map((rule) => `- ${rule}`).join('\n')}
@@ -238,6 +357,7 @@ ${reference.recoveryRules.map((rule) => `- ${rule}`).join('\n')}
 export const EXTENSION_SDK_BUNDLE_SOURCE = `
 export const defineHostExtension = (factory) => factory
 export const defineClientExtension = (factory) => factory
+export const defineAdapterClientExtension = (factory) => factory
 `
 
 /** Marks a Host entry factory without executing it during build or import. */
@@ -247,6 +367,13 @@ export const defineHostExtension = <T extends ExtensionPluginFactory<ExtensionHo
 /** Marks a Client entry factory without executing it during build or import. */
 export const defineClientExtension = <
   T extends ExtensionPluginFactory<ExtensionClientEnvironment, ExtensionClientContext>,
+>(
+  factory: T,
+): T => factory
+
+/** Marks a Host Adapter Client factory; V1 only receives the keyed rich-message Slot. */
+export const defineAdapterClientExtension = <
+  T extends ExtensionPluginFactory<AdapterHostClientEnvironment, AdapterHostClientContext>,
 >(
   factory: T,
 ): T => factory

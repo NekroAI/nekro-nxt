@@ -185,7 +185,7 @@ describe('NekroNxt domain API — real QQ Connection diagnostics', () => {
         HostApiContracts.testConnection.parseResponse({ status: 'sent', channelId: sendResult.channelId }),
       ).toEqual({ status: 'sent', channelId: sendResult.channelId })
       expect(requests.find(({ url }) => url.includes('/v2/groups/group-real-1/messages'))?.body).toContain(
-        'NekroNxt QQ 连接发送测试',
+        'NekroNXT 连接诊断测试消息。',
       )
       expect(requests.find(({ url }) => url.endsWith('/app/getAppAccessToken'))?.body).toContain('client-secret-real-1')
     } finally {

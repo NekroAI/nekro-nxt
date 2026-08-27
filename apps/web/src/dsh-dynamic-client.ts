@@ -41,6 +41,7 @@ import {
   type ClientPluginHandoff,
   type SlotRegistryFace,
 } from './dsh-interop/unsafe.js'
+import { productHostEventStream } from './host-event-stream.js'
 
 interface ClientModuleSystemFace {
   import(specifier: string): Promise<unknown>
@@ -532,7 +533,7 @@ export class DshClientRuntime {
   readonly #runner: DynamicPackageRunnerFace
   readonly #orchestrator: RunOrchestratorFace
   readonly #nativeLoader: BrowserDynamicLoader
-  readonly #eventSource: EventSource | undefined
+  readonly #unsubscribeHostEvents: () => void
   readonly #host: DynamicClientHostPort
   readonly #moduleLoader: ClientModuleRegistrationTarget
   readonly #agentByPlugin = new Map<string, string>()
@@ -548,7 +549,7 @@ export class DshClientRuntime {
     runner: DynamicPackageRunnerFace,
     orchestrator: RunOrchestratorFace,
     nativeLoader: BrowserDynamicLoader,
-    eventSource: EventSource | undefined,
+    unsubscribeHostEvents: () => void,
     host: DynamicClientHostPort,
     moduleLoader: ClientModuleRegistrationTarget,
   ) {
@@ -559,7 +560,7 @@ export class DshClientRuntime {
     this.#runner = runner
     this.#orchestrator = orchestrator
     this.#nativeLoader = nativeLoader
-    this.#eventSource = eventSource
+    this.#unsubscribeHostEvents = unsubscribeHostEvents
     this.#host = host
     this.#moduleLoader = moduleLoader
   }
@@ -568,6 +569,7 @@ export class DshClientRuntime {
     const { modules, moduleSystem, moduleLoader } = await loadDynamicClientModules(documentValue)
     const dynamicContext = new Context()
     const nativeContext = new Context()
+    let unsubscribeHostEvents: (() => void) | undefined
     try {
       const dynamicLoader = new BrowserDynamicLoader(dynamicContext, moduleSystem)
       const nativeLoader = new BrowserDynamicLoader(nativeContext, moduleSystem)
@@ -621,16 +623,17 @@ export class DshClientRuntime {
         },
       })
       const orchestrator = new modules.CordisRunOrchestrator({ runner, host })
-      const eventSource = typeof EventSource === 'undefined' ? undefined : new EventSource('/api/events')
-      eventSource?.addEventListener('dsh-settings-changed', (event) => {
-        if (!(event instanceof MessageEvent) || typeof event.data !== 'string') return
-        const value = parseDshSettingsChangedEvent(event.data)
-        if (value) remote.emit('settings/document-updated', value.namespace, value.revision)
-      })
-      eventSource?.addEventListener('dsh-credentials-changed', (event) => {
-        if (!(event instanceof MessageEvent) || typeof event.data !== 'string') return
-        const value = parseDshCredentialsChangedEvent(event.data)
-        if (value) remote.emit('credentials/updated', value.ref)
+      unsubscribeHostEvents = productHostEventStream.subscribe({
+        'dsh-settings-changed': (event) => {
+          if (!(event instanceof MessageEvent) || typeof event.data !== 'string') return
+          const value = parseDshSettingsChangedEvent(event.data)
+          if (value) remote.emit('settings/document-updated', value.namespace, value.revision)
+        },
+        'dsh-credentials-changed': (event) => {
+          if (!(event instanceof MessageEvent) || typeof event.data !== 'string') return
+          const value = parseDshCredentialsChangedEvent(event.data)
+          if (value) remote.emit('credentials/updated', value.ref)
+        },
       })
       return new DshClientRuntime(
         dynamicContext,
@@ -640,11 +643,12 @@ export class DshClientRuntime {
         runner,
         orchestrator,
         nativeLoader,
-        eventSource,
+        unsubscribeHostEvents,
         host,
         moduleLoader,
       )
     } catch (error) {
+      unsubscribeHostEvents?.()
       await Promise.all([dynamicContext.fiber.dispose(), nativeContext.fiber.dispose()])
       if (Reflect.get(globalThis, '__ModuleLoader__') === moduleLoader) {
         Reflect.deleteProperty(globalThis, '__ModuleLoader__')
@@ -757,7 +761,7 @@ export class DshClientRuntime {
   async dispose(): Promise<void> {
     if (this.#disposed) return
     this.#disposed = true
-    this.#eventSource?.close()
+    this.#unsubscribeHostEvents()
     if (Reflect.get(globalThis, '__ModuleLoader__') === this.#moduleLoader) {
       Reflect.deleteProperty(globalThis, '__ModuleLoader__')
     }
