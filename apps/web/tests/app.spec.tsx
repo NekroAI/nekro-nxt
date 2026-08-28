@@ -563,7 +563,10 @@ describe.sequential('NekroNxt browser projections', { timeout: 30_000 }, () => {
     const runtimeErrors: string[] = []
     page.on('pageerror', (error) => runtimeErrors.push(error.message))
     page.on('console', (message) => {
-      if (message.type() === 'error') runtimeErrors.push(message.text())
+      if (message.type() === 'error') {
+        const location = message.location().url
+        runtimeErrors.push(location ? `${message.text()} (${location})` : message.text())
+      }
     })
     const parsedSnapshot = HostApiContracts.snapshot.response.parse(snapshot)
     await page.route('**/api/snapshot', (request) =>
@@ -1666,7 +1669,10 @@ describe.sequential('NekroNxt browser projections', { timeout: 30_000 }, () => {
     const runtimeErrors: string[] = []
     page.on('pageerror', (error) => runtimeErrors.push(error.message))
     page.on('console', (message) => {
-      if (message.type() === 'error') runtimeErrors.push(message.text())
+      if (message.type() === 'error') {
+        const location = message.location().url
+        runtimeErrors.push(location ? `${message.text()} (${location})` : message.text())
+      }
     })
     const schema = {
       uid: 20,
