@@ -12,6 +12,9 @@ declare const styles: {
   readonly richSource: string
   readonly richSummary: string
   readonly richTitle: string
+  readonly systemEventBody: string
+  readonly systemEventMember: string
+  readonly systemEventResource: string
 }
 
 export default styles

@@ -266,8 +266,50 @@ const groupMessageRuns = (parts: readonly ConversationPart[]): readonly MessageR
   return runs
 }
 
-export function MessageContent({ message }: { readonly message: ConversationMessage }) {
+export function MessageContent({
+  message,
+  variant = 'message',
+}: {
+  readonly message: ConversationMessage
+  readonly variant?: 'message' | 'system-event'
+}) {
   const [preview, setPreview] = useState<PreviewResource | null>(null)
+  if (variant === 'system-event') {
+    return (
+      <>
+        <div className={contentStyles.systemEventBody} data-system-event-content>
+          {message.parts.map((part, index) => {
+            if (part.type === 'text') return <span key={`${index}:text`}>{part.text}</span>
+            if (part.type === 'mention') {
+              return (
+                <strong className={contentStyles.systemEventMember} key={`${index}:mention`}>
+                  {part.displayName}
+                </strong>
+              )
+            }
+            if (part.type === 'rich') return <span key={`${index}:rich`}>{part.summary}</span>
+            return (
+              <span className={contentStyles.systemEventResource} key={`${index}:${part.type}`}>
+                <StructuredPart
+                  part={part}
+                  onPreview={setPreview}
+                  messageId={message.id}
+                  channelId={message.channelId}
+                />
+              </span>
+            )
+          })}
+        </div>
+        <ResourcePreviewDialog
+          open={preview !== null}
+          resource={preview}
+          onOpenChange={(open) => {
+            if (!open) setPreview(null)
+          }}
+        />
+      </>
+    )
+  }
   return (
     <div className={styles.messageBody} data-message-bubble>
       {groupMessageRuns(message.parts).map((run, runIndex) => {

@@ -267,7 +267,10 @@ declare const styles: {
   readonly systemAdapterCard: string
   readonly systemAdapterGrid: string
   readonly systemAdapterIntro: string
-  readonly systemMessage: string
+  readonly systemEvent: string
+  readonly systemEventIcon: string
+  readonly systemEventMain: string
+  readonly systemEventRule: string
   readonly tagList: string
   readonly testRow: string
   readonly testRows: string

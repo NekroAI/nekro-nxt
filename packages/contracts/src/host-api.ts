@@ -236,7 +236,7 @@ export const HostSnapshotMessageSchema = z
   .object({
     id: z.union([ChannelEventIdSchema, OutboundIntentIdSchema]),
     channelId: ChannelIdSchema,
-    role: z.enum(['member', 'agent']),
+    role: z.enum(['member', 'agent', 'system']),
     parts: z.array(SnapshotMessagePartSchema),
     sender: z.object({ memberId: ChannelMemberIdSchema, displayName: z.string().optional() }).strict().optional(),
     mentionedConnectionAccount: z.boolean().optional(),

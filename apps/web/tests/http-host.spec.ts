@@ -439,6 +439,56 @@ describe('HttpProductHost', () => {
     unsubscribe()
   })
 
+  it('projects platform activities as system messages instead of member bubbles', async () => {
+    const base = snapshotBody()
+    const body = HostApiContracts.snapshot.response.parse({
+      ...base,
+      messages: [
+        {
+          id: groupEventId,
+          channelId: webChannelId,
+          role: 'system',
+          sender: { memberId: senderMemberId, displayName: '成员甲' },
+          activityType: 'member-joined',
+          parts: [
+            { type: 'mention', memberId: senderMemberId, displayName: '新成员' },
+            { type: 'text', text: ' 受 ' },
+            { type: 'mention', memberId: targetMemberId, displayName: '邀请人' },
+            { type: 'text', text: ' 邀请加入了频道。' },
+          ],
+          occurredAt: 1_700_000_000_000,
+        },
+      ],
+    })
+    fetchMock = vi.fn((input: string) =>
+      Promise.resolve(
+        input === '/api/snapshot'
+          ? stubResponse(200, body)
+          : stubResponse(404, { error: { code: 'not-found', message: 'x' } }),
+      ),
+    )
+    vi.stubGlobal('fetch', fetchMock)
+    vi.stubGlobal('EventSource', FakeEventSource)
+
+    const host = new HttpProductHost()
+    const unsubscribe = host.subscribe(() => undefined)
+    await flush()
+
+    expect(host.getSnapshot().messages[0]).toMatchObject({
+      role: 'system',
+      activityType: 'member-joined',
+      author: '频道事件',
+      body: '@新成员 受 @邀请人 邀请加入了频道。',
+      parts: [
+        { type: 'mention', displayName: '新成员' },
+        { type: 'text', text: ' 受 ' },
+        { type: 'mention', displayName: '邀请人' },
+        { type: 'text', text: ' 邀请加入了频道。' },
+      ],
+    })
+    unsubscribe()
+  })
+
   it('renders a safe fallback for unresolved Mention labels', () => {
     expect(renderConversationBody([{ type: 'mention', memberId: targetMemberId }])).toBe('@群成员')
     expect(renderConversationBody([{ type: 'rich', title: '示例分享', summary: '示例来源 · 示例分享' }])).toBe(

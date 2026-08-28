@@ -1,7 +1,9 @@
 import type { AdapterAssetHost } from '@nekro-nxt/adapter-sdk'
+import type { LookupAddress } from 'node:dns'
 import { lookup } from 'node:dns/promises'
-import { request } from 'node:https'
-import { isIP } from 'node:net'
+import { request as requestHttp } from 'node:http'
+import { request as requestHttps } from 'node:https'
+import { isIP, type LookupFunction } from 'node:net'
 
 const REMOTE_TIMEOUT_MS = 30_000
 
@@ -67,12 +69,30 @@ const safeFilename = (header: string | string[] | undefined): string | undefined
   return bytes.byteLength <= 256 ? basename : bytes.subarray(0, 256).toString('utf8').replace(/�+$/u, '')
 }
 
-export const fetchAdapterRemoteBytes: AdapterAssetHost['fetchRemoteBytes'] = async ({ url, maxBytes }) => {
-  if (!Number.isSafeInteger(maxBytes) || maxBytes < 1) throw new TypeError('Remote Asset maxBytes must be positive.')
-  const target = new URL(url)
-  if (target.protocol !== 'https:' || target.username || target.password) {
-    throw new Error('远程资源必须使用不含用户凭据的 HTTPS 地址。')
+export const parseAdapterRemoteAssetUrl = (rawUrl: string, allowHttp = false): URL => {
+  const target = new URL(rawUrl)
+  const allowedProtocol = target.protocol === 'https:' || (allowHttp && target.protocol === 'http:')
+  if (!allowedProtocol || target.username || target.password) {
+    throw new Error(
+      allowHttp ? '远程资源必须使用不含用户凭据的 HTTP 或 HTTPS 地址。' : '远程资源必须使用不含用户凭据的 HTTPS 地址。',
+    )
   }
+  return target
+}
+
+export const pinnedAdapterAssetLookup =
+  (selected: LookupAddress): LookupFunction =>
+  (_hostname, options, callback) => {
+    if (options.all) {
+      callback(null, [selected])
+      return
+    }
+    callback(null, selected.address, selected.family)
+  }
+
+export const fetchAdapterRemoteBytes: AdapterAssetHost['fetchRemoteBytes'] = async ({ url, maxBytes, allowHttp }) => {
+  if (!Number.isSafeInteger(maxBytes) || maxBytes < 1) throw new TypeError('Remote Asset maxBytes must be positive.')
+  const target = parseAdapterRemoteAssetUrl(url, allowHttp)
   const hostname = target.hostname.startsWith('[') ? target.hostname.slice(1, -1) : target.hostname
   const literalFamily = isIP(hostname)
   const addresses = literalFamily
@@ -83,13 +103,14 @@ export const fetchAdapterRemoteBytes: AdapterAssetHost['fetchRemoteBytes'] = asy
   }
   const selected = addresses[0]!
   return new Promise((resolve, reject) => {
+    const request = target.protocol === 'http:' ? requestHttp : requestHttps
     const req = request(
       target,
       {
         method: 'GET',
         headers: { Accept: '*/*' },
-        ...(literalFamily ? {} : { servername: hostname }),
-        lookup: (_hostname, _options, callback) => callback(null, selected.address, selected.family),
+        ...(target.protocol === 'https:' && !literalFamily ? { servername: hostname } : {}),
+        lookup: pinnedAdapterAssetLookup(selected),
       },
       (response) => {
         const status = response.statusCode ?? 0

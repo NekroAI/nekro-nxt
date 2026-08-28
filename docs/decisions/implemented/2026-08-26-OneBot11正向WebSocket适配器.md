@@ -22,11 +22,13 @@ Server 用 Adapter Driver 目录统一分派用户创建、冷启动挂载、测
 
 协议端必须上报数组消息。字符串消息不会解析 CQ 码，只产生 `invalid-message-format` 富消息和连接诊断。
 
-入站图片和语音只接受 HTTPS，禁止重定向和私网目标；Host 在流式读取期间执行 20 MiB 上限，再导入内容寻址 Asset。出站图片和音频从当前频道已授权 Asset 字节生成 `base64://`，不使用路径、`file://` 或共享卷。普通发送使用消息段数组和 `send_group_msg` / `send_private_msg`，回执缺少 `message_id` 时结果为 `unknown`。
+入站图片和语音接受协议端给出的公网 HTTP 或 HTTPS URL，因为 SnowLuma 等 OneBot 实现会生成 HTTP 媒体地址。Host 仍禁止 URL 凭据、重定向和私网目标，并在流式读取期间执行 20 MiB 上限，再导入内容寻址 Asset；OneBot 对公网 HTTP 的允许是单次显式选择，不改变其他 Adapter 默认只接受 HTTPS 的策略。出站图片和音频从当前频道已授权 Asset 字节生成 `base64://`，不使用路径、`file://` 或共享卷。普通发送使用消息段数组和 `send_group_msg` / `send_private_msg`，回执缺少 `message_id` 时结果为 `unknown`。
 
 ## 特殊事件与 Binding
 
 公共 `ChannelActivityType` 覆盖戳一戳、资料卡点赞、成员进退、禁言、管理员、名片、头衔、频道名称、撤回、消息回应、群文件、精华和好友新增。特殊事件追加关系事实，使用 `targetPlatformMessageId` 解析 `targetLogicalMessageId`；不会删除或改写原始消息事实。
+
+OneBot 通知中的 `sub_type`、`user_id`、`operator_id`、`sender_id`、`target_id`、禁言时长、名片新旧值、频道新名称和文件元数据按各自语义保存。Adapter 优先调用 `get_group_member_info` 补全群名片或昵称，成员已离群等失败场景再调用 `get_stranger_info`，两者都失败时使用不泄漏平台 ID 的中性称呼。参与者保存为 `mention` part 和稳定成员关系；Host 快照将事件投影为系统消息，客户端在低噪声状态行中原位显示参与者名称，不显示成员头像、发送者标题、普通消息气泡或富卡片。
 
 Binding 持久化 `processingFeedback: auto | off` 和逐项 `eventTriggers`。迁移后默认 `auto` 与空事件列表。普通 `triggerPolicy` 只决定普通消息；特殊事件只有明确列入 `eventTriggers` 才触发智能体，`observe-only` 始终不触发。
 

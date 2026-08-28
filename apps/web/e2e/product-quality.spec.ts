@@ -34,6 +34,7 @@ const reportsPageId = HostUiPageInstanceIdSchema.parse('hup_REPORTS')
 const targetEpisodeId = EpisodeIdSchema.parse('eps_target')
 const visibleEventId = ChannelEventIdSchema.parse('evt_visible')
 const qqEventId = ChannelEventIdSchema.parse('evt_qqvisible')
+const qqSystemEventId = ChannelEventIdSchema.parse('evt_qqsystem')
 const qqCardEventId = ChannelEventIdSchema.parse('evt_qqcardmsg')
 const qqImageEventId = ChannelEventIdSchema.parse('evt_qqimagemsg')
 const sentEventId = ChannelEventIdSchema.parse('evt_sent')
@@ -325,6 +326,20 @@ const channelMessages = HostApiContracts.listChannelMessages.response.parse({
         { type: 'text', text: '一起复核。' },
       ],
       occurredAt: 1_725_000_010_000,
+    },
+    {
+      id: qqSystemEventId,
+      channelId: qqChannelId,
+      role: 'system',
+      sender: { memberId: senderMemberId, displayName: '成员甲' },
+      activityType: 'member-joined',
+      parts: [
+        { type: 'mention', memberId: senderMemberId, displayName: '新成员' },
+        { type: 'text', text: ' 受 ' },
+        { type: 'mention', memberId: targetMemberId, displayName: '邀请人' },
+        { type: 'text', text: ' 邀请加入了频道。' },
+      ],
+      occurredAt: 1_725_000_012_000,
     },
     {
       id: qqCardEventId,
@@ -1539,6 +1554,8 @@ test('group conversations preserve sender and Mention semantics without exposing
   await expect(page.getByText('成员甲', { exact: true }).first()).toBeVisible()
   await expect(page.getByText('@机器人账号', { exact: true })).toBeVisible()
   await expect(page.getByText('@成员乙', { exact: true })).toBeVisible()
+  await expect(page.getByText('新成员', { exact: true })).toBeVisible()
+  await expect(page.getByText('邀请人', { exact: true })).toBeVisible()
   await expect(page.getByText('示例来源', { exact: true })).toBeVisible()
   await expect(page.getByText('示例分享', { exact: true })).toBeVisible()
   const mentionMessage = page.locator('article[data-side="left"]').filter({ hasText: '请和' })
@@ -1547,6 +1564,7 @@ test('group conversations preserve sender and Mention semantics without exposing
   const imageMessage = page
     .locator('article[data-side="left"]')
     .filter({ has: page.getByRole('img', { name: '讨论截图' }) })
+  const systemEvent = page.locator('[data-activity-type="member-joined"]')
   await expect(mentionMessage).not.toHaveAttribute('data-bubbleless', '')
   await expect(richMessage).toHaveAttribute('data-bubbleless', '')
   await expect(richCardLink).toHaveAttribute('href', 'https://example.test/share/qq-card')
@@ -1555,6 +1573,11 @@ test('group conversations preserve sender and Mention semantics without exposing
   await expect(richMessage.getByRole('button')).toHaveCount(0)
   await expect(page.getByRole('dialog', { name: '示例分享' })).toHaveCount(0)
   await expect(imageMessage).toHaveAttribute('data-bubbleless', '')
+  await expect(systemEvent).toBeVisible()
+  await expect(systemEvent).toContainText('新成员 受 邀请人 邀请加入了频道。')
+  await expect(systemEvent.locator('[data-message-bubble]')).toHaveCount(0)
+  await expect(systemEvent.locator('article')).toHaveCount(0)
+  await expect(systemEvent.locator('img')).toHaveCount(0)
   await expect(mentionMessage).toContainText('请和')
   await expect(page.getByText('请先绑定智能体', { exact: true })).toHaveCount(1)
   const sendButton = page.getByRole('button', { name: '发到频道' })

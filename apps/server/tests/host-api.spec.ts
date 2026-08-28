@@ -2,7 +2,13 @@ import { LlmAdapter, CallId, type GenerateOptions, type StreamChunk } from '@dee
 import { credentialRef } from '@deepseek-ai/dsh-credentials'
 import { Context } from '@deepseek-ai/cordis'
 import WebServer from '@deepseek-ai/dsh-host-webserver'
-import { HostApiContracts } from '@nekro-nxt/contracts'
+import {
+  ChannelEventIdSchema,
+  ChannelIdSchema,
+  ChannelMemberIdSchema,
+  HostApiContracts,
+  LogicalMessageIdSchema,
+} from '@nekro-nxt/contracts'
 import { mkdir, mkdtemp, rm, stat } from 'node:fs/promises'
 import { createServer } from 'node:http'
 import { tmpdir } from 'node:os'
@@ -10,7 +16,7 @@ import path from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
 import { z } from 'zod'
 import { NekroRuntime } from '../src/bootstrap.js'
-import { createNekroHostApi } from '../src/host-api.js'
+import { createNekroHostApi, projectHistoryEntry } from '../src/host-api.js'
 import { PRODUCT_VERSION } from '../src/product-version.js'
 import { DEEPSEEK_HARNESS_VERSION } from '../src/dsh-version.js'
 import { configureDshLlmProviders } from '../src/main.js'
@@ -146,6 +152,46 @@ class ScriptedCommunicationModel extends LlmAdapter {
 }
 
 describe('NekroNxt Server domain API (WebServer seam)', () => {
+  it('projects platform activities as system facts while preserving actor relations', async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), 'nekro-nxt-host-activity-projection-'))
+    temporaryDirectories.push(directory)
+    const runtime = await NekroRuntime.create({
+      coreDatabasePath: path.join(directory, 'core.sqlite'),
+      sessionDatabasePath: path.join(directory, 'sessions.sqlite'),
+      assetRoot: path.join(directory, 'assets'),
+      extensionDataRoot: path.join(directory, 'extension-data'),
+      extensionCacheRoot: path.join(directory, 'extension-cache'),
+    })
+    const memberId = ChannelMemberIdSchema.parse('mbr_ACTIVITYACTOR')
+    try {
+      expect(
+        projectHistoryEntry(runtime, {
+          source: 'channel-event',
+          sourceId: ChannelEventIdSchema.parse('evt_ACTIVITY1'),
+          logicalMessageId: LogicalMessageIdSchema.parse('msg_ACTIVITY1'),
+          channelId: ChannelIdSchema.parse('chn_ACTIVITY1'),
+          occurredAt: 1_700_000_000_000,
+          senderMemberId: memberId,
+          activityType: 'member-joined',
+          parts: [
+            {
+              type: 'rich',
+              adapterKey: 'onebot-11',
+              kind: 'member-joined',
+              summary: '一名成员加入了频道。',
+            },
+          ],
+        }),
+      ).toMatchObject({
+        role: 'system',
+        sender: { memberId },
+        activityType: 'member-joined',
+      })
+    } finally {
+      await runtime.dispose()
+    }
+  })
+
   it('rejects oversized JSON requests without buffering the full body', async () => {
     const directory = await mkdtemp(path.join(tmpdir(), 'nekro-nxt-host-api-body-limit-'))
     temporaryDirectories.push(directory)

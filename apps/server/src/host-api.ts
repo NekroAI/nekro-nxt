@@ -580,7 +580,7 @@ export const projectHistoryEntry = (runtime: NekroRuntime, entry: ChannelHistory
     return {
       id: entry.sourceId,
       channelId: entry.channelId,
-      role: 'member',
+      role: entry.activityType === undefined ? 'member' : 'system',
       parts,
       ...(entry.senderMemberId === undefined
         ? {}

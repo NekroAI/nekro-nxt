@@ -143,7 +143,12 @@ export interface AdapterAssetHost {
     readonly assetId: AssetId
     readonly channelId: ChannelId
   }): Promise<{ readonly bytes: Uint8Array; readonly mediaType: string; readonly byteSize: number }>
-  fetchRemoteBytes(input: { readonly url: string; readonly maxBytes: number }): Promise<{
+  fetchRemoteBytes(input: {
+    readonly url: string
+    readonly maxBytes: number
+    /** Public HTTP is disabled by default and must be enabled by a protocol adapter that requires it. */
+    readonly allowHttp?: boolean
+  }): Promise<{
     readonly bytes: Uint8Array
     readonly declaredMediaType?: string
     readonly filename?: string

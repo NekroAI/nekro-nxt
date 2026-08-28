@@ -70,6 +70,38 @@ describe('channel message memoization boundary', () => {
     expect(right).toContain('<strong>统一 Markdown</strong>')
   })
 
+  it('renders channel activities as compact system rows instead of member messages', () => {
+    const markup = renderToStaticMarkup(
+      <MessageRow
+        message={message({
+          id: 'msg_joined',
+          role: 'system',
+          author: '频道事件',
+          activityType: 'member-joined',
+          parts: [
+            { type: 'mention', memberId: 'member_a', displayName: '新成员' },
+            { type: 'text', text: ' 受 ' },
+            { type: 'mention', memberId: 'member_b', displayName: '邀请人' },
+            { type: 'text', text: ' 邀请加入了频道。' },
+          ],
+        })}
+        side="system"
+        incoming={false}
+      />,
+    )
+
+    expect(markup).toContain('data-side="system"')
+    expect(markup).toContain('data-activity-type="member-joined"')
+    expect(markup).toContain('data-system-event-content')
+    expect(markup).toContain('新成员')
+    expect(markup).toContain('邀请人')
+    expect(markup).not.toContain('19:30')
+    expect(markup).toContain('<svg')
+    expect(markup).not.toContain('<article')
+    expect(markup).not.toContain('data-message-bubble')
+    expect(markup).not.toContain('频道事件')
+  })
+
   it('removes the outer bubble only for one standalone rendered block', () => {
     expect(
       isBubblelessMessage(message({ parts: [{ type: 'image', assetId: 'asset_a', alt: '图片', url: '/a.png' }] })),

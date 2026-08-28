@@ -6,7 +6,7 @@ import type {
   AdapterInteractionOutcome,
   PhysicalDeliveryRequest,
 } from '@nekro-nxt/adapter-sdk'
-import type { AssetId, ChannelId, JsonValue, MessagePart } from '@nekro-nxt/contracts'
+import type { AssetId, ChannelId, ChannelMemberId, JsonValue, MessagePart } from '@nekro-nxt/contracts'
 import { LogicalMessageIdSchema } from '@nekro-nxt/contracts'
 import { createHash } from 'node:crypto'
 import { z } from 'zod'
@@ -47,6 +47,26 @@ const timestampMs = (value: unknown, fallback: number): number => {
   const numeric = numberValue(value)
   if (numeric === undefined || !Number.isFinite(numeric) || numeric < 0) return fallback
   return numeric < 10_000_000_000 ? Math.trunc(numeric * 1000) : Math.trunc(numeric)
+}
+
+const compactNoticeText = (value: unknown, maxLength = 120): string | undefined => {
+  const text = textValue(value)?.trim()
+  return text ? text.slice(0, maxLength) : undefined
+}
+
+const durationLabel = (seconds: number | undefined): string | undefined => {
+  if (seconds === undefined || !Number.isFinite(seconds) || seconds <= 0) return undefined
+  if (seconds % 86_400 === 0) return `${seconds / 86_400} 天`
+  if (seconds % 3_600 === 0) return `${seconds / 3_600} 小时`
+  if (seconds % 60 === 0) return `${seconds / 60} 分钟`
+  return `${Math.trunc(seconds)} 秒`
+}
+
+const byteSizeLabel = (bytes: number | undefined): string | undefined => {
+  if (bytes === undefined || !Number.isFinite(bytes) || bytes < 0) return undefined
+  if (bytes < 1024) return `${Math.trunc(bytes)} B`
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(bytes < 10 * 1024 ? 1 : 0)} KiB`
+  return `${(bytes / (1024 * 1024)).toFixed(bytes < 10 * 1024 * 1024 ? 1 : 0)} MiB`
 }
 
 const segment = (input: unknown): Segment | undefined => {
@@ -562,10 +582,11 @@ export class OneBot11Runtime implements AdapterConnectionRuntime {
     const groupId = oneBotStringId(event['group_id'])
     const userId = oneBotStringId(event['user_id']) ?? oneBotStringId(event['target_id'])
     const operatorId = oneBotStringId(event['operator_id'])
+    const senderId = oneBotStringId(event['sender_id'])
+    const targetId = oneBotStringId(event['target_id'])
     const messageId = oneBotStringId(event['message_id'])
     let activityType: Parameters<AdapterConnectionHostContext['acceptInbound']>[0]['activityType']
     let kind: Parameters<AdapterConnectionHostContext['acceptInbound']>[0]['kind'] = 'control'
-    let summary = '收到平台活动。'
     let reactionEmoji: string | undefined
     let reactionAdded = true
 
@@ -573,61 +594,50 @@ export class OneBot11Runtime implements AdapterConnectionRuntime {
       if (messageId && this.#isRecallEcho(messageId, userId, operatorId)) return
       activityType = 'message-recalled'
       kind = 'message-deleted'
-      summary = '一条消息被撤回。'
     } else if (noticeType === 'group_msg_emoji_like') {
-      reactionEmoji = oneBotStringId(event['emoji_id']) ?? oneBotStringId(event['emoji_type'])
+      const likes = Array.isArray(event['likes']) ? oneBotObject(event['likes'][0]) : undefined
+      reactionEmoji =
+        oneBotStringId(event['emoji_id']) ?? oneBotStringId(event['emoji_type']) ?? oneBotStringId(likes?.['emoji_id'])
       reactionAdded = subType !== 'remove' && event['set'] !== false
       activityType = reactionAdded ? 'message-reaction-added' : 'message-reaction-removed'
       kind = 'reaction'
-      summary = reactionAdded ? '有人回应了一条消息。' : '有人移除了消息回应。'
       if (this.#isFeedbackEcho(messageId, reactionEmoji, reactionAdded, userId)) return
       if (!this.#config.captureMessageReactionEvents) return
     } else if (noticeType === 'notify' && subType === 'poke') {
       if (!this.#config.capturePokeEvents) return
       activityType = 'member-poked'
-      summary = '一名成员戳了戳另一名成员。'
     } else if ((noticeType === 'notify' && subType === 'profile_like') || noticeType === 'profile_like') {
       activityType = 'profile-liked'
-      summary = '成员资料卡收到点赞。'
     } else if (noticeType === 'group_increase') {
       activityType = 'member-joined'
       kind = 'member-updated'
-      summary = '一名成员加入了频道。'
     } else if (noticeType === 'group_decrease') {
       activityType = 'member-left'
       kind = 'member-updated'
-      summary = '一名成员离开了频道。'
     } else if (noticeType === 'group_ban') {
       activityType = subType === 'lift_ban' || numberValue(event['duration']) === 0 ? 'member-unmuted' : 'member-muted'
       kind = 'member-updated'
-      summary = activityType === 'member-muted' ? '一名成员被禁言。' : '一名成员被解除禁言。'
     } else if (noticeType === 'group_admin') {
       activityType = subType === 'unset' ? 'member-admin-unset' : 'member-admin-set'
       kind = 'member-updated'
-      summary = activityType === 'member-admin-set' ? '一名成员被设为管理员。' : '一名成员不再是管理员。'
     } else if (noticeType === 'group_card') {
       activityType = 'member-card-changed'
       kind = 'member-updated'
-      summary = '一名成员修改了群名片。'
     } else if (noticeType === 'notify' && subType === 'title') {
       activityType = 'member-title-changed'
       kind = 'member-updated'
-      summary = '一名成员的群头衔发生变化。'
     } else if (noticeType === 'notify' && (subType === 'group_name' || subType === 'group_name_change')) {
       activityType = 'channel-name-changed'
-      summary = '频道名称发生变化。'
     } else if (noticeType === 'group_upload') {
       activityType = 'file-uploaded'
-      summary = `频道上传了文件：${textValue(oneBotObject(event['file'])?.['name']) ?? '未命名文件'}`
     } else if (noticeType === 'essence') {
       activityType = subType === 'delete' || subType === 'remove' ? 'essence-removed' : 'essence-added'
-      summary = activityType === 'essence-added' ? '一条消息被设为精华。' : '一条消息被取消精华。'
     } else if (noticeType === 'friend_add') {
       activityType = 'friend-added'
-      summary = '新增了一名好友。'
     } else return
 
-    const channelPlatformId = groupId ? `group:${groupId}` : userId ? `private:${userId}` : undefined
+    const directPeerId = userId ?? operatorId ?? senderId
+    const channelPlatformId = groupId ? `group:${groupId}` : directPeerId ? `private:${directPeerId}` : undefined
     if (!channelPlatformId) return
     const channelId = await this.#context.channels.ensure({
       platformChannelId: channelPlatformId,
@@ -635,30 +645,216 @@ export class OneBot11Runtime implements AdapterConnectionRuntime {
       observedAt: now,
     })
     if (activityType === 'channel-name-changed') {
-      const name = textValue(event['group_name']) ?? textValue(event['name'])
+      const name =
+        compactNoticeText(event['name_new']) ??
+        compactNoticeText(event['group_name']) ??
+        compactNoticeText(event['name'])
       if (name) await this.#context.channels.updateDisplayName(channelId, name)
     }
-    const actorId = userId ?? operatorId
-    const senderMemberId = actorId
-      ? await this.#context.members.ensure({
+
+    const displayHints = new Map<string, string>()
+    const operatorNickname = compactNoticeText(event['operator_nick'])
+    const cardNew = compactNoticeText(event['card_new'])
+    if (operatorId && operatorNickname) displayHints.set(operatorId, operatorNickname)
+    if (userId && cardNew) displayHints.set(userId, cardNew)
+    const participantPlatformIds = [
+      ...new Set([userId, operatorId, senderId, targetId].filter((id) => id !== undefined)),
+    ]
+    const participantMembers = new Map<string, ChannelMemberId>()
+    await Promise.all(
+      participantPlatformIds.map(async (platformUserId) => {
+        const memberId = await this.#ensureNoticeMember(
           channelId,
-          platformUserId: actorId,
-          ...(activityType === 'member-card-changed' && textValue(event['card_new'])
-            ? { displayName: textValue(event['card_new'])! }
-            : {}),
-          observedAt: now,
-        })
-      : undefined
+          platformUserId,
+          groupId,
+          displayHints.get(platformUserId),
+        )
+        participantMembers.set(platformUserId, memberId)
+      }),
+    )
+
+    const memberId = (platformUserId: string | undefined): ChannelMemberId | undefined =>
+      platformUserId === undefined ? undefined : participantMembers.get(platformUserId)
+    const memberParts = (platformUserId: string | undefined, fallback: string): MessagePart[] => {
+      const resolved = memberId(platformUserId)
+      return resolved ? [{ type: 'mention', memberId: resolved }] : [{ type: 'text', text: fallback }]
+    }
+    const sameMember = (left: string | undefined, right: string | undefined): boolean =>
+      left !== undefined && right !== undefined && left === right
+
     const facts: Record<string, JsonValue> = {}
-    if (operatorId) facts['operatorPlatformUserId'] = operatorId
+    if (subType) facts['subType'] = subType
+    const subjectMemberId = memberId(userId)
+    const operatorMemberId = memberId(operatorId)
+    const targetMemberId = memberId(targetId)
+    const senderActorMemberId = memberId(senderId)
+    if (subjectMemberId) facts['subjectMemberId'] = subjectMemberId
+    if (operatorMemberId) facts['operatorMemberId'] = operatorMemberId
+    if (targetMemberId) facts['targetMemberId'] = targetMemberId
+    if (senderActorMemberId) facts['senderMemberId'] = senderActorMemberId
     if (reactionEmoji) facts['reactionEmoji'] = reactionEmoji
-    let parts: MessagePart[] = [{ type: 'rich', adapterKey: ONEBOT_11_ADAPTER_KEY, kind: activityType, summary }]
+    const durationSeconds = numberValue(event['duration'])
+    if (durationSeconds !== undefined) facts['durationSeconds'] = durationSeconds
+    const previousValue = compactNoticeText(event['card_old'])
+    const newValue =
+      cardNew ??
+      compactNoticeText(event['title']) ??
+      compactNoticeText(event['name_new']) ??
+      compactNoticeText(event['name'])
+    if (previousValue) facts['previousValue'] = previousValue
+    if (newValue) facts['newValue'] = newValue
+
+    let senderMemberId: ChannelMemberId | undefined
+    let parts: MessagePart[]
+    if (activityType === 'message-recalled') {
+      const actorId = operatorId ?? userId
+      senderMemberId = memberId(actorId)
+      parts = sameMember(actorId, userId)
+        ? [...memberParts(actorId, '一名成员'), { type: 'text', text: ' 撤回了一条消息。' }]
+        : operatorId
+          ? [
+              ...memberParts(operatorId, '一名管理员'),
+              { type: 'text', text: ' 撤回了 ' },
+              ...memberParts(userId, '一名成员'),
+              { type: 'text', text: ' 的一条消息。' },
+            ]
+          : [...memberParts(userId, '一名成员'), { type: 'text', text: ' 撤回了一条消息。' }]
+    } else if (activityType === 'message-reaction-added' || activityType === 'message-reaction-removed') {
+      senderMemberId = memberId(userId)
+      parts = [
+        ...memberParts(userId, '一名成员'),
+        {
+          type: 'text',
+          text: activityType === 'message-reaction-added' ? ' 对一条消息添加了回应。' : ' 移除了一条消息的回应。',
+        },
+      ]
+    } else if (activityType === 'member-poked') {
+      const actorId = senderId ?? userId
+      senderMemberId = memberId(actorId)
+      parts = [
+        ...memberParts(actorId, '一名成员'),
+        { type: 'text', text: ' 戳了戳 ' },
+        ...memberParts(targetId, '另一名成员'),
+        { type: 'text', text: '。' },
+      ]
+    } else if (activityType === 'profile-liked') {
+      senderMemberId = memberId(operatorId)
+      const times = numberValue(event['times'])
+      if (times !== undefined) facts['times'] = times
+      parts = [
+        ...memberParts(operatorId, '一名成员'),
+        { type: 'text', text: ` 为机器人账号资料卡点了${times && times > 1 ? ` ${times} 次` : ''}赞。` },
+      ]
+    } else if (activityType === 'member-joined') {
+      senderMemberId = memberId(userId)
+      parts =
+        subType === 'invite' && operatorId && !sameMember(operatorId, userId)
+          ? [
+              ...memberParts(userId, '一名成员'),
+              { type: 'text', text: ' 受 ' },
+              ...memberParts(operatorId, '一名成员'),
+              { type: 'text', text: ' 邀请加入了频道。' },
+            ]
+          : subType === 'approve'
+            ? [...memberParts(userId, '一名成员'), { type: 'text', text: ' 通过申请加入了频道。' }]
+            : [...memberParts(userId, '一名成员'), { type: 'text', text: ' 加入了频道。' }]
+    } else if (activityType === 'member-left') {
+      senderMemberId = memberId(subType === 'kick' || subType === 'kick_me' ? (operatorId ?? userId) : userId)
+      parts =
+        subType === 'disband'
+          ? [{ type: 'text', text: '频道已被解散。' }]
+          : (subType === 'kick' || subType === 'kick_me') && operatorId
+            ? [
+                ...memberParts(operatorId, '一名管理员'),
+                { type: 'text', text: ' 将 ' },
+                ...memberParts(userId, subType === 'kick_me' ? '机器人账号' : '一名成员'),
+                { type: 'text', text: ' 移出了频道。' },
+              ]
+            : subType === 'kick' || subType === 'kick_me'
+              ? [...memberParts(userId, '一名成员'), { type: 'text', text: ' 被移出了频道。' }]
+              : [...memberParts(userId, '一名成员'), { type: 'text', text: ' 离开了频道。' }]
+    } else if (activityType === 'member-muted' || activityType === 'member-unmuted') {
+      senderMemberId = operatorMemberId ?? subjectMemberId
+      const prefix = operatorId
+        ? [...memberParts(operatorId, '一名管理员'), { type: 'text' as const, text: ' 将 ' }]
+        : []
+      const duration = durationLabel(durationSeconds)
+      parts = [
+        ...prefix,
+        ...memberParts(userId, '一名成员'),
+        {
+          type: 'text',
+          text:
+            activityType === 'member-muted'
+              ? `${operatorId ? '' : ' 被'}禁言${duration ? ` ${duration}` : ''}。`
+              : `${operatorId ? '' : ' 被'}解除了禁言。`,
+        },
+      ]
+    } else if (activityType === 'member-admin-set' || activityType === 'member-admin-unset') {
+      senderMemberId = subjectMemberId
+      parts = [
+        ...memberParts(userId, '一名成员'),
+        {
+          type: 'text',
+          text: activityType === 'member-admin-set' ? ' 被设为管理员。' : ' 不再担任管理员。',
+        },
+      ]
+    } else if (activityType === 'member-card-changed') {
+      senderMemberId = subjectMemberId
+      parts =
+        previousValue && cardNew
+          ? [
+              ...memberParts(userId, '一名成员'),
+              { type: 'text', text: ` 将群名片从「${previousValue}」改为「${cardNew}」。` },
+            ]
+          : cardNew
+            ? [...memberParts(userId, '一名成员'), { type: 'text', text: ` 将群名片改为「${cardNew}」。` }]
+            : previousValue
+              ? [...memberParts(userId, '一名成员'), { type: 'text', text: ` 清除了群名片「${previousValue}」。` }]
+              : [...memberParts(userId, '一名成员'), { type: 'text', text: ' 修改了群名片。' }]
+    } else if (activityType === 'member-title-changed') {
+      senderMemberId = subjectMemberId
+      const title = compactNoticeText(event['title'])
+      parts = title
+        ? [...memberParts(userId, '一名成员'), { type: 'text', text: ` 获得了群头衔「${title}」。` }]
+        : [...memberParts(userId, '一名成员'), { type: 'text', text: ' 的群头衔发生了变化。' }]
+    } else if (activityType === 'channel-name-changed') {
+      senderMemberId = subjectMemberId
+      const name =
+        compactNoticeText(event['name_new']) ??
+        compactNoticeText(event['group_name']) ??
+        compactNoticeText(event['name'])
+      parts = name
+        ? [...memberParts(userId, '一名管理员'), { type: 'text', text: ` 将频道名称改为「${name}」。` }]
+        : [{ type: 'text', text: '频道名称发生了变化。' }]
+    } else if (activityType === 'essence-added' || activityType === 'essence-removed') {
+      senderMemberId = operatorMemberId ?? subjectMemberId
+      parts = [
+        ...memberParts(operatorId ?? userId, '一名管理员'),
+        { type: 'text', text: ' 将 ' },
+        ...memberParts(userId, '一名成员'),
+        {
+          type: 'text',
+          text: activityType === 'essence-added' ? ' 的一条消息设为精华。' : ' 的一条消息取消了精华。',
+        },
+      ]
+    } else if (activityType === 'friend-added') {
+      senderMemberId = subjectMemberId
+      parts = [...memberParts(userId, '一名成员'), { type: 'text', text: ' 已成为机器人账号的好友。' }]
+    } else {
+      senderMemberId = subjectMemberId
+      parts = [{ type: 'text', text: '收到一条频道事件。' }]
+    }
+
     let assetOccurrences: { readonly partIndex: number; readonly assetId: AssetId }[] | undefined
     if (activityType === 'file-uploaded' && groupId) {
       const file = oneBotObject(event['file'])
       const fileId = oneBotStringId(file?.['id'])
       const busid = oneBotStringId(file?.['busid'])
-      const fileName = textValue(file?.['name'])
+      const fileName = compactNoticeText(file?.['name'], 200)
+      const fileSize = numberValue(file?.['size'])
+      senderMemberId = subjectMemberId
+      if (fileSize !== undefined) facts['fileSize'] = fileSize
       if (fileId && busid) {
         try {
           const response = oneBotObject(
@@ -671,12 +867,20 @@ export class OneBot11Runtime implements AdapterConnectionRuntime {
           const url = textValue(response?.['url'])
           if (url) {
             const asset = await this.#downloadAsset(url)
-            parts = [{ type: 'file', assetId: asset.assetId, ...(fileName ? { name: fileName } : {}) }]
-            assetOccurrences = [{ partIndex: 0, assetId: asset.assetId }]
+            parts = [
+              ...memberParts(userId, '一名成员'),
+              { type: 'text', text: ' 上传了文件：' },
+              { type: 'file', assetId: asset.assetId, ...(fileName ? { name: fileName } : {}) },
+            ]
+            assetOccurrences = [{ partIndex: parts.length - 1, assetId: asset.assetId }]
           }
         } catch {
           // The durable rich summary remains when this protocol endpoint cannot provide a safe URL.
         }
+      }
+      if (assetOccurrences === undefined) {
+        const detail = [fileName ? `「${fileName}」` : '一个文件', byteSizeLabel(fileSize)].filter(Boolean).join(' · ')
+        parts = [...memberParts(userId, '一名成员'), { type: 'text', text: ` 上传了${detail}。` }]
       }
     }
     await this.#context.acceptInbound({
@@ -696,8 +900,51 @@ export class OneBot11Runtime implements AdapterConnectionRuntime {
     })
   }
 
+  async #ensureNoticeMember(
+    channelId: ChannelId,
+    platformUserId: string,
+    groupId: string | undefined,
+    displayHint: string | undefined,
+  ): Promise<ChannelMemberId> {
+    let displayName = displayHint
+    if (!displayName && groupId) {
+      try {
+        const info = oneBotObject(
+          await this.#requireClient().call('get_group_member_info', {
+            group_id: groupId,
+            user_id: platformUserId,
+            no_cache: true,
+          }),
+        )
+        displayName = compactNoticeText(info?.['card']) ?? compactNoticeText(info?.['nickname'])
+      } catch {
+        // A member may already have left the group; fall back to stranger info below.
+      }
+    }
+    if (!displayName) {
+      try {
+        const info = oneBotObject(
+          await this.#requireClient().call('get_stranger_info', { user_id: platformUserId, no_cache: false }),
+        )
+        displayName = compactNoticeText(info?.['nickname'])
+      } catch {
+        // Existing Host member observations can still supply a display name.
+      }
+    }
+    return this.#context.members.ensure({
+      channelId,
+      platformUserId,
+      ...(displayName ? { displayName } : {}),
+      observedAt: this.#context.now(),
+    })
+  }
+
   async #downloadAsset(rawUrl: string) {
-    const remote = await this.#context.assets.fetchRemoteBytes({ url: rawUrl, maxBytes: MAX_ASSET_BYTES })
+    const remote = await this.#context.assets.fetchRemoteBytes({
+      url: rawUrl,
+      maxBytes: MAX_ASSET_BYTES,
+      allowHttp: true,
+    })
     return this.#context.assets.importBytes({
       bytes: remote.bytes,
       ...(remote.declaredMediaType ? { declaredMediaType: remote.declaredMediaType } : {}),

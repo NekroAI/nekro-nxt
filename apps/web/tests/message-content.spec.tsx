@@ -73,6 +73,42 @@ describe('MessageContent', () => {
     expect(markup.indexOf('一起复核')).toBeLessThan(markup.indexOf('示意图'))
   })
 
+  it('renders system events as plain inline facts without Mention chips or rich cards', () => {
+    const markup = renderToStaticMarkup(
+      <MessageContent
+        variant="system-event"
+        message={{
+          ...message([
+            { type: 'mention', memberId: 'member_a', displayName: '新成员' },
+            { type: 'text', text: ' 受 ' },
+            { type: 'mention', memberId: 'member_b', displayName: '邀请人' },
+            { type: 'text', text: ' 邀请加入了频道。' },
+            {
+              type: 'rich',
+              adapterKey: 'onebot-11',
+              kind: 'legacy-notice',
+              summary: '旧事件摘要',
+              targetUrl: 'https://example.test/legacy',
+            },
+          ]),
+          role: 'system',
+          activityType: 'member-joined',
+        }}
+      />,
+    )
+
+    expect(markup).toContain('data-system-event-content')
+    expect(markup).toContain('<strong')
+    expect(markup).toContain('新成员')
+    expect(markup).toContain('邀请人')
+    expect(markup).toContain('邀请加入了频道。')
+    expect(markup).toContain('旧事件摘要')
+    expect(markup).not.toContain('@新成员')
+    expect(markup).not.toContain('@邀请人')
+    expect(markup).not.toContain('href=')
+    expect(markup).not.toContain('data-message-bubble')
+  })
+
   it('opens images with an in-app preview trigger instead of a new window', () => {
     const markup = renderToStaticMarkup(
       <MessageContent

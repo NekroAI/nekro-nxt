@@ -6,6 +6,6 @@ Internal Web Adapter 声明为系统托管且不可由用户创建；所有内�
 
 `credential-reference` 可用 `credentialKey` 指定持久引用字段；原始值只经过 Host 只写通道，Connection 配置和 Adapter factory 只接收引用。`AdapterConnectionHostContext.transport` 是可替换 HTTP/WebSocket 边界：生产使用 Server 的 `fetch`/`ws`，测试和动态验证使用无网络 Fake。
 
-`AdapterConnectionContext` 只暴露当前 Connection 可用的频道、成员、消息映射、Asset、Credential、命名空间状态、诊断和 Transport 服务。Adapter 不读取 Core Repository、SQLite 或宿主路径。Host 统一创建、恢复、测试和停止 Connection Runtime；Connection 网络或凭据失败只形成诊断，不改变 Adapter Revision 的安装事实。
+`AdapterConnectionContext` 只暴露当前 Connection 可用的频道、成员、消息映射、Asset、Credential、命名空间状态、诊断和 Transport 服务。Adapter 不读取 Core Repository、SQLite 或宿主路径。远程 Asset 默认只允许 HTTPS；协议明确只提供 HTTP 媒体地址时，Adapter 可在单次 `fetchRemoteBytes` 调用中启用公网 HTTP，Host 仍统一拒绝 URL 凭据、重定向和私网目标。Host 统一创建、恢复、测试和停止 Connection Runtime；Connection 网络或凭据失败只形成诊断，不改变 Adapter Revision 的安装事实。
 
 特殊平台活动使用公共 `ChannelActivityType` 与可选目标消息关系。Adapter 追加事实，不能通过撤回或回应事件删除、覆盖既有消息事实。

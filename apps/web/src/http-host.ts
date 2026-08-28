@@ -109,8 +109,8 @@ export const renderConversationBody = (
     title?: string | undefined
     summary?: string | undefined
   }[],
-): string =>
-  parts
+): string => {
+  const tokens = parts
     .map((part) => {
       if (part.type === 'text') return visibleText(part.text ?? '')
       if (part.type === 'mention') return `@${nonEmptyLabel(part.displayName, '群成员')}`
@@ -120,7 +120,12 @@ export const renderConversationBody = (
       return '[暂不支持显示的消息内容]'
     })
     .filter((token) => token.trim().length > 0)
-    .join(' ')
+  return tokens.reduce(
+    (body, token) =>
+      body.length === 0 || /\s$/u.test(body) || /^\s/u.test(token) ? `${body}${token}` : `${body} ${token}`,
+    '',
+  )
+}
 
 const emptySnapshot = (): ProductSnapshot => ({
   host: { status: 'initializing', error: null, lastSuccessfulAt: null },
@@ -331,15 +336,18 @@ const projectConversationMessage = (
   return {
     id: message.id,
     channelId: message.channelId,
-    role: message.role === 'agent' ? 'agent' : 'member',
+    role: message.role === 'agent' ? 'agent' : message.role === 'system' ? 'system' : 'member',
+    ...(message.activityType === undefined ? {} : { activityType: message.activityType }),
     author:
       message.role === 'agent'
         ? (sourceAgent?.name ?? '智能体')
-        : message.sender !== undefined
-          ? nonEmptyLabel(message.sender.displayName, '群成员')
-          : sourceChannel?.kind === 'web'
-            ? '你'
-            : '群成员',
+        : message.role === 'system'
+          ? '频道事件'
+          : message.sender !== undefined
+            ? nonEmptyLabel(message.sender.displayName, '群成员')
+            : sourceChannel?.kind === 'web'
+              ? '你'
+              : '群成员',
     body: renderConversationBody(message.parts),
     parts,
     mentionedConnectionAccount: message.mentionedConnectionAccount === true,

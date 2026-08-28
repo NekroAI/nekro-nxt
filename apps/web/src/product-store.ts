@@ -5,6 +5,7 @@ import {
   parseJsonValue,
   type HostApiRequest,
   type HostApiResponse,
+  type ChannelActivityType,
   type HostUiPermissionDeclaration,
   type PromptDocumentV1,
 } from '@nekro-nxt/contracts'
@@ -189,6 +190,7 @@ export interface ConversationMessage {
   readonly channelId: string
   readonly author: string
   readonly role: 'member' | 'agent' | 'system'
+  readonly activityType?: ChannelActivityType
   readonly body: string
   readonly parts: readonly ConversationPart[]
   readonly mentionedConnectionAccount: boolean

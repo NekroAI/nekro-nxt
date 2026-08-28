@@ -339,10 +339,10 @@ describe('OneBot 11 normalized inbound', () => {
             : undefined,
         ),
     })
-    const fetched: string[] = []
+    const fetched: { readonly url: string; readonly allowHttp: boolean | undefined }[] = []
     Object.defineProperty(fake.context.assets, 'fetchRemoteBytes', {
-      value: ({ url }: { readonly url: string }) => {
-        fetched.push(url)
+      value: ({ url, allowHttp }: { readonly url: string; readonly allowHttp?: boolean }) => {
+        fetched.push({ url, allowHttp })
         if (url.endsWith('/failed')) return Promise.reject(new Error('fixture download failure'))
         return Promise.resolve({ bytes: new Uint8Array([4, 5, 6]), declaredMediaType: 'image/png' })
       },
@@ -374,7 +374,7 @@ describe('OneBot 11 normalized inbound', () => {
           { type: 'reply', data: { id: 'missing-reply' } },
           { type: 'image', data: {} },
           { type: 'record', data: {} },
-          { type: 'image', data: { url: 'https://media.example.test/image' } },
+          { type: 'image', data: { url: 'http://media.example.test/image' } },
           { type: 'record', data: { url: 'https://media.example.test/failed' } },
           { type: 'forward', data: {} },
           { type: 'forward', data: { id: 'root-forward' } },
@@ -397,7 +397,10 @@ describe('OneBot 11 normalized inbound', () => {
       }),
     )
     await waitFor(() => fake.events.length === 2)
-    expect(fetched).toEqual(['https://media.example.test/image', 'https://media.example.test/failed'])
+    expect(fetched).toEqual([
+      { url: 'http://media.example.test/image', allowHttp: true },
+      { url: 'https://media.example.test/failed', allowHttp: true },
+    ])
     expect(fake.events[0]).toMatchObject({
       platformMessageId: '20002',
       platformTimestamp: 123_000,
@@ -423,11 +426,28 @@ describe('OneBot 11 normalized inbound', () => {
   })
 
   it('normalizes the supported notice families and downloads uploaded group files', async () => {
-    const protocol = await protocolEndpoint((request) =>
-      request['action'] === 'get_group_file_url'
-        ? { status: 'ok', retcode: 0, data: { url: 'https://files.example.test/group-file' } }
-        : undefined,
-    )
+    const protocol = await protocolEndpoint((request) => {
+      if (request['action'] === 'get_group_file_url') {
+        return { status: 'ok', retcode: 0, data: { url: 'https://files.example.test/group-file' } }
+      }
+      if (request['action'] === 'get_group_member_info') {
+        const params = RequestSchema.parse(request['params'])
+        return {
+          status: 'ok',
+          retcode: 0,
+          data: { user_id: params['user_id'], nickname: `昵称${String(params['user_id'])}`, card: '' },
+        }
+      }
+      if (request['action'] === 'get_stranger_info') {
+        const params = RequestSchema.parse(request['params'])
+        return {
+          status: 'ok',
+          retcode: 0,
+          data: { user_id: params['user_id'], nickname: `昵称${String(params['user_id'])}` },
+        }
+      }
+      return undefined
+    })
     const fake = createFakeContext()
     const renamed: string[] = []
     Object.defineProperty(fake.context.channels, 'updateDisplayName', {
@@ -448,25 +468,65 @@ describe('OneBot 11 normalized inbound', () => {
     const socket = [...protocol.server.clients][0]!
     const notices = [
       { notice_type: 'friend_recall', user_id: 'friend-1', message_id: 'recall-1' },
-      { notice_type: 'profile_like', user_id: 'friend-1' },
-      { notice_type: 'group_increase', group_id: 'group-events', user_id: 'member-1' },
-      { notice_type: 'group_decrease', group_id: 'group-events', user_id: 'member-2' },
-      { notice_type: 'group_ban', sub_type: 'ban', group_id: 'group-events', user_id: 'member-3', duration: '30' },
-      { notice_type: 'group_ban', sub_type: 'lift_ban', group_id: 'group-events', user_id: 'member-3', duration: 0 },
+      { notice_type: 'profile_like', operator_id: 'friend-1', operator_nick: '成员甲', times: 2 },
+      {
+        notice_type: 'group_increase',
+        sub_type: 'invite',
+        group_id: 'group-events',
+        user_id: 'member-1',
+        operator_id: 'inviter-1',
+      },
+      {
+        notice_type: 'group_decrease',
+        sub_type: 'kick',
+        group_id: 'group-events',
+        user_id: 'member-2',
+        operator_id: 'admin-1',
+      },
+      {
+        notice_type: 'group_ban',
+        sub_type: 'ban',
+        group_id: 'group-events',
+        user_id: 'member-3',
+        operator_id: 'admin-1',
+        duration: '30',
+      },
+      {
+        notice_type: 'group_ban',
+        sub_type: 'lift_ban',
+        group_id: 'group-events',
+        user_id: 'member-3',
+        operator_id: 'admin-1',
+        duration: 0,
+      },
       { notice_type: 'group_admin', sub_type: 'set', group_id: 'group-events', user_id: 'member-4' },
       { notice_type: 'group_admin', sub_type: 'unset', group_id: 'group-events', user_id: 'member-4' },
-      { notice_type: 'notify', sub_type: 'title', group_id: 'group-events', user_id: 'member-5' },
-      { notice_type: 'notify', sub_type: 'group_name_change', group_id: 'group-events', name: '新频道名' },
+      {
+        notice_type: 'group_card',
+        group_id: 'group-events',
+        user_id: 'member-4',
+        card_old: '旧名片',
+        card_new: '新名片',
+      },
+      { notice_type: 'notify', sub_type: 'title', group_id: 'group-events', user_id: 'member-5', title: '活跃成员' },
+      {
+        notice_type: 'notify',
+        sub_type: 'group_name',
+        group_id: 'group-events',
+        user_id: 'admin-1',
+        name_new: '新频道名',
+      },
       {
         notice_type: 'group_upload',
         group_id: 'group-events',
         user_id: 'member-6',
-        file: { id: 'file-1', busid: 2, name: '附件.bin' },
+        file: { id: 'file-1', busid: 2, name: '附件.bin', size: 1536 },
       },
       {
         notice_type: 'essence',
         sub_type: 'add',
         group_id: 'group-events',
+        user_id: 'member-6',
         operator_id: 'admin-1',
         message_id: 'essence-1',
       },
@@ -474,6 +534,7 @@ describe('OneBot 11 normalized inbound', () => {
         notice_type: 'essence',
         sub_type: 'remove',
         group_id: 'group-events',
+        user_id: 'member-6',
         operator_id: 'admin-1',
         message_id: 'essence-2',
       },
@@ -495,6 +556,7 @@ describe('OneBot 11 normalized inbound', () => {
         'member-unmuted',
         'member-admin-set',
         'member-admin-unset',
+        'member-card-changed',
         'member-title-changed',
         'channel-name-changed',
         'file-uploaded',
@@ -504,10 +566,48 @@ describe('OneBot 11 normalized inbound', () => {
       ]),
     )
     expect(renamed).toEqual(['新频道名'])
-    expect(fake.events.find(({ activityType }) => activityType === 'file-uploaded')).toMatchObject({
-      parts: [{ type: 'file', assetId: 'ast_TEST1', name: '附件.bin' }],
-      assetOccurrences: [{ partIndex: 0, assetId: 'ast_TEST1' }],
+    const joinedEvent = fake.events.find(({ activityType }) => activityType === 'member-joined')
+    expect(joinedEvent).toMatchObject({
+      facts: {
+        subType: 'invite',
+      },
+      parts: [
+        { type: 'mention' },
+        { type: 'text', text: ' 受 ' },
+        { type: 'mention' },
+        { type: 'text', text: ' 邀请加入了频道。' },
+      ],
     })
+    const joinedSubjectMemberId = joinedEvent?.facts?.['subjectMemberId']
+    const joinedOperatorMemberId = joinedEvent?.facts?.['operatorMemberId']
+    expect(typeof joinedSubjectMemberId).toBe('string')
+    expect(typeof joinedOperatorMemberId).toBe('string')
+    if (typeof joinedSubjectMemberId === 'string') expect(joinedSubjectMemberId).toMatch(/^mbr_/u)
+    if (typeof joinedOperatorMemberId === 'string') expect(joinedOperatorMemberId).toMatch(/^mbr_/u)
+    expect(fake.events.find(({ activityType }) => activityType === 'member-left')?.parts).toEqual([
+      expect.objectContaining({ type: 'mention' }),
+      { type: 'text', text: ' 将 ' },
+      expect.objectContaining({ type: 'mention' }),
+      { type: 'text', text: ' 移出了频道。' },
+    ])
+    expect(fake.events.find(({ activityType }) => activityType === 'member-card-changed')?.parts).toEqual([
+      expect.objectContaining({ type: 'mention' }),
+      { type: 'text', text: ' 将群名片从「旧名片」改为「新名片」。' },
+    ])
+    expect(fake.events.find(({ activityType }) => activityType === 'channel-name-changed')?.parts).toEqual([
+      expect.objectContaining({ type: 'mention' }),
+      { type: 'text', text: ' 将频道名称改为「新频道名」。' },
+    ])
+    expect(fake.events.find(({ activityType }) => activityType === 'file-uploaded')).toMatchObject({
+      facts: { fileSize: 1536 },
+      parts: [
+        { type: 'mention' },
+        { type: 'text', text: ' 上传了文件：' },
+        { type: 'file', assetId: 'ast_TEST1', name: '附件.bin' },
+      ],
+      assetOccurrences: [{ partIndex: 2, assetId: 'ast_TEST1' }],
+    })
+    expect(protocol.requests.some(({ action }) => action === 'get_group_member_info')).toBe(true)
     await runtime.stop()
   })
 

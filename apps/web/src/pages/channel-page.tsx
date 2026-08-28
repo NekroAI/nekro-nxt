@@ -1,4 +1,22 @@
-import { Activity, ArrowDown, Info, MoreHorizontal, PanelRightClose, PanelRightOpen, Send, Wrench } from 'lucide-react'
+import {
+  Activity,
+  ArrowDown,
+  FileUp,
+  Hand,
+  Info,
+  MoreHorizontal,
+  PanelRightClose,
+  PanelRightOpen,
+  Send,
+  Shield,
+  Smile,
+  Sparkles,
+  Undo2,
+  UserMinus,
+  UserPlus,
+  Wrench,
+  type LucideIcon,
+} from 'lucide-react'
 import { memo, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type FormEvent } from 'react'
 import { Navigate, useParams } from 'react-router-dom'
 import { useNxtNavigate } from '../shell/nxt-link.js'
@@ -76,6 +94,38 @@ const runtimeDescription = (state: AgentRuntimeState): string => {
   return '智能体当前空闲。'
 }
 
+const systemEventIcon = (activityType: ConversationMessage['activityType']): LucideIcon => {
+  if (activityType === 'member-joined' || activityType === 'friend-added') return UserPlus
+  if (activityType === 'member-left') return UserMinus
+  if (activityType === 'member-poked') return Hand
+  if (activityType === 'message-recalled') return Undo2
+  if (activityType === 'message-reaction-added' || activityType === 'message-reaction-removed') return Smile
+  if (activityType === 'file-uploaded') return FileUp
+  if (activityType === 'essence-added' || activityType === 'essence-removed') return Sparkles
+  if (
+    activityType === 'member-muted' ||
+    activityType === 'member-unmuted' ||
+    activityType === 'member-admin-set' ||
+    activityType === 'member-admin-unset'
+  )
+    return Shield
+  return Activity
+}
+
+function SystemEventRow({ message }: { readonly message: ConversationMessage }) {
+  const Icon = systemEventIcon(message.activityType)
+  return (
+    <div className={styles.systemEvent} data-side="system" data-activity-type={message.activityType}>
+      <span className={styles.systemEventRule} aria-hidden="true" />
+      <div className={styles.systemEventMain}>
+        <Icon className={styles.systemEventIcon} size={14} strokeWidth={1.8} aria-hidden="true" />
+        <MessageContent message={message} variant="system-event" />
+      </div>
+      <span className={styles.systemEventRule} aria-hidden="true" />
+    </div>
+  )
+}
+
 /**
  * One rendered message row. Wrapped in React.memo so that when only a newer
  * message is appended (or a pure runtime frame refreshes phase/summary),
@@ -93,9 +143,7 @@ function MessageRowBase({
 }) {
   const body =
     side === 'system' ? (
-      <div className={styles.systemMessage}>
-        <MessageContent message={message} />
-      </div>
+      <SystemEventRow message={message} />
     ) : (
       <article
         className={styles.message}
