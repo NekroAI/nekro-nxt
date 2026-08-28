@@ -9,7 +9,6 @@ import type {
 import clientModulesBundle from '@deepseek-ai/dsh-client-modules/client?raw'
 import clientRuntimeBundle from '@deepseek-ai/dsh-client-runtime/client?raw'
 import * as SchemaFormModule from '@deepseek-ai/dsh-client-schema-form'
-import * as UiPrimitivesModule from '@deepseek-ai/dsh-client-ui-primitives'
 import * as SlotModule from '@deepseek-ai/dsh-client-ui-slots'
 import { createSlotRenderer } from '@deepseek-ai/dsh-client-web-react'
 import {
@@ -473,7 +472,7 @@ const loadDynamicClientModules = async (
         'react/jsx-runtime': ReactJsxRuntime,
         '@deepseek-ai/cordis': Cordis,
         '@deepseek-ai/dsh-client-schema-form': SchemaFormModule,
-        '@deepseek-ai/dsh-client-ui-primitives': UiPrimitivesModule,
+        '@deepseek-ai/dsh-client-ui-primitives': await import('@deepseek-ai/dsh-client-ui-primitives'),
         '@deepseek-ai/dsh-client-ui-slots': SlotModule,
       },
       registrationTarget,

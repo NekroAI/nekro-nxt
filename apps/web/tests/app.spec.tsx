@@ -1747,6 +1747,17 @@ describe.sequential('NekroNxt browser projections', { timeout: 30_000 }, () => {
         body: JSON.stringify({ namespaces: [namespace] }),
       }),
     )
+    await page.route('**/api/channels/*/messages?*', (route) => {
+      const channelId = new URL(route.request().url()).pathname.split('/')[3]
+      return route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({
+          messages: browserSnapshot.messages.filter((message) => message.channelId === channelId),
+          hasMore: false,
+        }),
+      })
+    })
     try {
       await page.goto(`${baseUrl}/settings?tab=dsh-extensions`)
       await playwrightExpect(page.getByText('runtime-extra', { exact: true }).first()).toBeVisible()
