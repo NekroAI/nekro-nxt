@@ -16,7 +16,7 @@ Electron 精确锁定在经过依赖年龄门禁的 `42.9.0`。Electron 42.0.x �
 
 Windows、macOS 与 Linux Desktop 均保留 F12 渲染器诊断入口。焦点位于产品页面、服务实例 Sheet 或可信恢复页时，F12 打开对应 `WebContentsView` 的 DevTools。
 
-分发脚本用 `pnpm deploy --prod --legacy` 配合 `node-linker=hoisted` 和 `package-import-method=copy`，把 Server 及其 workspace/外部生产依赖生成成不依赖 pnpm 符号链接拓扑的 Desktop staging。`better-sqlite3` 与 `node-pty` 使用包内 N-API prebuild，Sharp、Koffi 和其他平台可选包按 `supportedArchitectures` 同时安装；Server runtime 同时携带 macOS arm64/x64 两套 N-API prebuild，运行时按 `process.arch` 选择，不参与 macOS 架构合并。准备脚本会拒绝缺少 Cordis 运行依赖、macOS arm64/x64、Windows x64 或 Linux x64 原生文件的 runtime。Server runtime 和 Web dist 都作为安装包的 `extraResources` 放在应用代码之外；`afterPack` 从当前平台的最终打包目录启动 Server，当前架构使用包内 Electron Node，macOS 交叉架构使用构建 Node 复核同一资源目录；`/health/ready` 必须返回本次验证的 Release ID，随后 Host 必须真实写入并重新读取一条临时凭据，全部通过后才继续生成安装包。
+分发脚本用 `pnpm deploy --prod --legacy` 配合 `node-linker=hoisted` 和 `package-import-method=copy`，把 Server 及其 workspace/外部生产依赖生成成不依赖 pnpm 符号链接拓扑的 Desktop staging。`better-sqlite3` 与 `node-pty` 使用包内 N-API prebuild，Sharp、Koffi 和其他平台可选包按 `supportedArchitectures` 同时安装；Server runtime 同时携带 macOS arm64/x64 两套 N-API prebuild，运行时按 `process.arch` 选择，不参与 macOS 架构合并。准备脚本会拒绝缺少 Cordis 运行依赖、macOS arm64/x64、Windows x64 或 Linux x64 原生文件的 runtime。Server runtime 和 Web dist 都作为安装包的 `extraResources` 放在应用代码之外；`afterPack` 从当前平台的最终打包目录启动 Server，当前架构使用包内 Electron Node，macOS 交叉架构使用构建 Node 复核同一资源目录；`/health/ready` 必须返回本次验证的 Release ID，随后 Host 真实写入并重新读取一条临时凭据，再安装并启用合成 DSH 插件，重启 Server 验证 Loader 恢复，最后关闭并移除插件，全部通过后才继续生成安装包。
 
 生产数据固定在 Electron `userData/data/`，安装包替换不得删除该目录。Server 和 Desktop 使用同一个 Server 入口、数据根布局与升级门禁；Electron 只拥有窗口、单实例、外部链接和 Host 子进程生命周期。
 
@@ -54,4 +54,4 @@ pnpm --filter @nekro-nxt/desktop test
 pnpm desktop:preview --platform mac
 ```
 
-最后一条分发命令会同时执行最终 `appOutDir` 的 Server readiness 和凭据持久化验证；只检查 staging、依赖文件存在或安装包摘要不能替代该验证。
+最后一条分发命令会同时执行最终 `appOutDir` 的 Server readiness、凭据持久化与 DSH 插件安装/恢复/关闭/移除验证；只检查 staging、依赖文件存在或安装包摘要不能替代该验证。

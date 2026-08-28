@@ -22,8 +22,8 @@
 
 不要只复制主数据库而遗漏 DSH 会话、扩展、资源、工作区和设备凭据。当前尚未提供一键完整数据根恢复，正式升级前应保留可回滚的完整副本。
 
-每个新 Release 第一次打开 Runtime 前，会把已有 `core.sqlite` 和 `sessions.sqlite` 备份到 `/data/backups/release-<releaseId摘要>/`，同一 Release 不重复创建。随后 Drizzle 自动应用未执行迁移并运行 `PRAGMA foreign_key_check`；失败时关闭数据库并拒绝启动。这个恢复点不包含 Extension 源码、资源、凭据和工作区，因此不能替代升级前的完整 `/data` 备份。
+每次生产启动都会先获取 `/data/backups/upgrade.lock`，避免多个 Host 同时迁移同一数据根。每个新 Release 第一次打开 Runtime 前，会把已有 `core.sqlite` 和 `sessions.sqlite` 备份到 `/data/backups/release-<releaseId摘要>/`，同一 Release 不重复创建。随后存储所有者执行现行迁移，Host 完成插件、Connection、频道和智能体运行关系恢复；对应 `upgrade-<releaseId摘要>.json` 只有全部成功才标记 `ready`。备份、迁移或恢复失败时 journal 标记 `recovery`，Server 不开放业务端口，原始数据保留供重试或人工恢复。
 
-`0014_host_extension_installations` 是只新增空表的低风险迁移，不修改现有 Connection、Channel、Binding、消息、凭据或 AgentActivation。旧版本会忽略新增表；回退旧程序后，已安装的动态 Adapter 不会运行。没有 Drizzle 基线元数据的早期开发数据库仍拒绝自动升级，不建立特殊迁移路径。
+Release 恢复点不包含 Extension 源码、资源、凭据和工作区，因此不能替代升级前的完整 `/data` 备份。没有 Drizzle 基线元数据的早期开发数据库仍拒绝自动升级，不建立特殊迁移路径；数据库 downgrade 不受支持，程序回滚必须同时恢复升级前备份。
 
 ![水月荧展示升级或备份完成的档案舱](../../assets/brand/raster/upgrade-complete.png)

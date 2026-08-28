@@ -68,6 +68,7 @@ import { NotificationService } from './notifications.js'
 import { QQCoreBridge, QQRemoteAssetImporter } from './qq-openclaw.js'
 import { ServerAdapterHostInstallationHost } from './host-extension-installation.js'
 import { createProductionAdapterTransport } from './adapter-transport.js'
+import { verifyImportedExtensionRevision } from './imported-extension-verifier.js'
 import { DshPluginPackageInstaller } from './dsh-plugin-installer.js'
 
 const StoredQQConnectionConfigSchema = QQOpenClawConfigSchema.omit({ clientSecretCredentialRef: true })
@@ -206,6 +207,7 @@ export class NekroRuntime {
   readonly adapters: AdapterRegistry
   readonly #adapterHandles: RegisteredAdapterHandle[] = []
   readonly #adapterRuntimes: Map<ConnectionId, AdapterConnectionRuntime>
+  readonly #quiescingAdapterKeys = new Set<string>()
   readonly #adapterTransport: AdapterTransportService
   readonly #qqDiagnostics = new Map<ConnectionId, QQConnectionDiagnostic>()
   readonly #adapterDiagnostics = new Map<ConnectionId, AdapterConnectionDiagnostic>()
@@ -312,7 +314,15 @@ export class NekroRuntime {
         },
         register: (owner, contribution) => this.registerAdapter(owner, contribution),
         mountConnections: (adapterKey) => this.mountAdapterConnections(adapterKey),
-        waitUntilSafe: () => Promise.resolve(),
+        waitUntilSafe: async (adapterKey) => {
+          this.#quiescingAdapterKeys.add(adapterKey)
+          try {
+            await this.channels.waitUntilConnectionsSafe(this.repository.listConnectionIdsByAdapter(adapterKey))
+          } catch (error) {
+            this.#quiescingAdapterKeys.delete(adapterKey)
+            throw error
+          }
+        },
       }),
       { now: this.#now },
     )
@@ -424,6 +434,7 @@ export class NekroRuntime {
         now,
         nextUlid,
         builder: extensionBuilder,
+        importVerifier: verifyImportedExtensionRevision,
       })
       const activation = new ExtensionActivationCoordinator(
         repository,
@@ -635,6 +646,11 @@ export class NekroRuntime {
     for (const activation of this.repository.listActivations(agentId)) {
       await this.activation.disable(agentId, activation.extensionId)
     }
+    for (const activation of this.repository
+      .listDshPluginActivations()
+      .filter((candidate) => candidate.target === 'agent' && candidate.agentId === agentId)) {
+      await this.host.disableInstalledDshPlugin(activation.entryId, activation.targetKey)
+    }
     this.core.deleteAgent(agentId)
     this.#agents.delete(agentId)
     return { unboundChannelIds, deletedChannelIds }
@@ -659,6 +675,10 @@ export class NekroRuntime {
       const entry = this.repository.getDshPluginEntry(activation.entryId)
       const packageRecord = entry ? this.repository.getDshPluginPackage(entry.packageId) : undefined
       if (!entry || !packageRecord) continue
+      if (this.repository.getDshPluginDiagnostic(entry.id, activation.targetKey)?.status !== 'active') {
+        this.repository.deleteHostUiDshPages(entry.id)
+        continue
+      }
       const manifest = packageRecord.manifest
       const nekroNxt =
         typeof manifest === 'object' && manifest !== null && !Array.isArray(manifest) ? manifest['nekroNxt'] : undefined
@@ -960,21 +980,55 @@ export class NekroRuntime {
   }
 
   async mountAdapterConnections(adapterKey: string): Promise<void> {
+    this.#quiescingAdapterKeys.delete(adapterKey)
     for (const connectionId of this.repository.listConnectionIdsByAdapter(adapterKey))
       await this.#mountAdapter(connectionId)
   }
 
   async stopAdapterConnections(adapterKey: string): Promise<void> {
     const connectionIds = this.repository.listConnectionIdsByAdapter(adapterKey)
-    await Promise.allSettled(
+    const outcomes = await Promise.allSettled(
       connectionIds.map(async (connectionId) => {
         const runtime = this.#adapterRuntimes.get(connectionId)
-        this.#adapterRuntimes.delete(connectionId)
         await runtime?.stop()
+        this.#adapterRuntimes.delete(connectionId)
         this.#adapterDiagnostics.set(connectionId, { status: 'stopped', message: '这个连接的适配器未安装。' })
       }),
     )
     this.#notifyConnectionChanges()
+    const failures = outcomes
+      .map((outcome, index) => ({ outcome, connectionId: connectionIds[index]! }))
+      .filter(
+        (item): item is { outcome: PromiseRejectedResult; connectionId: ConnectionId } =>
+          item.outcome.status === 'rejected',
+      )
+    if (failures.length) {
+      this.#quiescingAdapterKeys.delete(adapterKey)
+      for (const { connectionId, outcome } of failures) {
+        this.#adapterDiagnostics.set(connectionId, {
+          status: 'failed',
+          message: outcome.reason instanceof Error ? outcome.reason.message : String(outcome.reason),
+        })
+      }
+      const remounts = await Promise.allSettled(
+        outcomes.flatMap((outcome, index) =>
+          outcome.status === 'fulfilled' ? [this.#mountAdapter(connectionIds[index]!)] : [],
+        ),
+      )
+      const remountFailures = remounts
+        .filter((outcome): outcome is PromiseRejectedResult => outcome.status === 'rejected')
+        .map((outcome): unknown => outcome.reason)
+      this.#notifyConnectionChanges()
+      throw new AggregateError(
+        [
+          ...failures.map(({ outcome }) =>
+            outcome.reason instanceof Error ? outcome.reason : new Error(String(outcome.reason)),
+          ),
+          ...remountFailures,
+        ],
+        '适配器连接未能全部静止；安装状态保持不变。',
+      )
+    }
   }
 
   async #mountAdapter(connectionId: ConnectionId): Promise<void> {
@@ -1038,6 +1092,10 @@ export class NekroRuntime {
       connectionId,
       now: this.#now,
       acceptInbound: async (event) => {
+        const adapterKey = this.core.getConnection(connectionId)?.adapterKey
+        if (adapterKey && this.#quiescingAdapterKeys.has(adapterKey)) {
+          throw new Error('适配器正在进入安全间隙，暂不接收新的频道事件。')
+        }
         this.#lastInboundByConnection.set(connectionId, {
           channelId: event.channelId,
           ...(event.platformMessageId === undefined ? {} : { platformMessageId: event.platformMessageId }),

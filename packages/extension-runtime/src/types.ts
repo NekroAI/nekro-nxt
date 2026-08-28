@@ -228,6 +228,19 @@ export interface ExtensionRepository {
 }
 
 export interface HostUiRepository {
+  /** Atomically publishes the Installation fact together with its permission grant and page directory. */
+  commitHostInstallationState(input: {
+    readonly installation: HostInstallation
+    readonly hostUi?: {
+      readonly grant: HostUiPermissionGrant
+      readonly pages: readonly HostPageContribution[]
+      readonly clientBuildKey: string
+      readonly now: number
+      readonly nextPageInstanceId: () => HostUiPageInstanceId
+    }
+  }): readonly HostUiPageEntry[]
+  /** Atomically retracts an Installation, its extension-owned pages and its permission grant. */
+  deleteHostInstallationState(input: { readonly extensionId: ExtensionId; readonly now: number }): void
   listHostUiPageEntries(): readonly HostUiPageEntry[]
   replaceHostUiExtensionPages(input: {
     readonly extensionId: ExtensionId

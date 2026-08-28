@@ -414,6 +414,180 @@ export function createExtensionsRepository(database: DrizzleCoreDatabase): Exten
     deleteHostInstallation(extensionId): void {
       database.delete(hostExtensionInstallations).where(eq(hostExtensionInstallations.extensionId, extensionId)).run()
     },
+    commitHostInstallationState(input): readonly HostUiPageEntry[] {
+      database.transaction(
+        (transaction) => {
+          transaction
+            .insert(hostExtensionInstallations)
+            .values(input.installation)
+            .onConflictDoUpdate({
+              target: hostExtensionInstallations.extensionId,
+              set: {
+                extensionRevisionId: input.installation.extensionRevisionId,
+                installedAt: input.installation.installedAt,
+              },
+            })
+            .run()
+
+          const existing = transaction
+            .select()
+            .from(hostUiPageEntries)
+            .where(
+              and(
+                eq(hostUiPageEntries.ownerKind, 'extension'),
+                eq(hostUiPageEntries.ownerId, input.installation.extensionId),
+              ),
+            )
+            .all()
+          const byEntryId = new Map(existing.map((row) => [row.entryId, row] as const))
+          const now = input.hostUi?.now ?? input.installation.installedAt
+          let directoryChanged = false
+
+          if (input.hostUi) {
+            transaction
+              .insert(hostUiPermissionGrants)
+              .values(input.hostUi.grant)
+              .onConflictDoUpdate({
+                target: hostUiPermissionGrants.ownerKey,
+                set: {
+                  artifactDigest: input.hostUi.grant.artifactDigest,
+                  permissionDigest: input.hostUi.grant.permissionDigest,
+                  declaration: input.hostUi.grant.declaration,
+                  approvedAt: input.hostUi.grant.approvedAt,
+                },
+              })
+              .run()
+            let nextSortOrder =
+              (transaction.select().from(hostUiPageEntries).orderBy(asc(hostUiPageEntries.sortOrder)).all().at(-1)
+                ?.sortOrder ?? -1) + 1
+            for (const page of input.hostUi.pages) {
+              const previous = byEntryId.get(page.entryId)
+              transaction
+                .insert(hostUiPageEntries)
+                .values({
+                  pageInstanceId: previous?.pageInstanceId ?? input.hostUi.nextPageInstanceId(),
+                  ownerKind: 'extension',
+                  ownerId: input.installation.extensionId,
+                  artifactId: input.installation.extensionRevisionId,
+                  entryId: page.entryId,
+                  title: page.title,
+                  description: page.description ?? null,
+                  icon: page.icon,
+                  objectPane: page.objectPane,
+                  startPath: page.startPath,
+                  visible: previous?.visible ?? true,
+                  sortOrder: previous?.sortOrder ?? nextSortOrder++,
+                  clientBuildKey: input.hostUi.clientBuildKey,
+                  createdAt: previous?.createdAt ?? now,
+                  updatedAt: now,
+                })
+                .onConflictDoUpdate({
+                  target: [hostUiPageEntries.ownerKind, hostUiPageEntries.ownerId, hostUiPageEntries.entryId],
+                  set: {
+                    artifactId: input.installation.extensionRevisionId,
+                    title: page.title,
+                    description: page.description ?? null,
+                    icon: page.icon,
+                    objectPane: page.objectPane,
+                    startPath: page.startPath,
+                    clientBuildKey: input.hostUi.clientBuildKey,
+                    updatedAt: now,
+                  },
+                })
+                .run()
+            }
+            const retainedIds = input.hostUi.pages.map(({ entryId }) => entryId)
+            transaction
+              .delete(hostUiPageEntries)
+              .where(
+                retainedIds.length === 0
+                  ? and(
+                      eq(hostUiPageEntries.ownerKind, 'extension'),
+                      eq(hostUiPageEntries.ownerId, input.installation.extensionId),
+                    )
+                  : and(
+                      eq(hostUiPageEntries.ownerKind, 'extension'),
+                      eq(hostUiPageEntries.ownerId, input.installation.extensionId),
+                      notInArray(hostUiPageEntries.entryId, retainedIds),
+                    ),
+              )
+              .run()
+            directoryChanged =
+              existing.length !== input.hostUi.pages.length ||
+              input.hostUi.pages.some((page) => !byEntryId.has(page.entryId))
+          } else {
+            const removed = transaction
+              .delete(hostUiPageEntries)
+              .where(
+                and(
+                  eq(hostUiPageEntries.ownerKind, 'extension'),
+                  eq(hostUiPageEntries.ownerId, input.installation.extensionId),
+                ),
+              )
+              .run()
+            directoryChanged = removed.changes > 0
+            transaction
+              .delete(hostUiPermissionGrants)
+              .where(eq(hostUiPermissionGrants.ownerKey, `extension:${input.installation.extensionId}`))
+              .run()
+          }
+
+          if (directoryChanged) {
+            const preference = transaction
+              .select()
+              .from(hostUiPagePreferences)
+              .where(eq(hostUiPagePreferences.id, 1))
+              .get()
+            transaction
+              .insert(hostUiPagePreferences)
+              .values({ id: 1, revision: (preference?.revision ?? 0) + 1, updatedAt: now })
+              .onConflictDoUpdate({
+                target: hostUiPagePreferences.id,
+                set: { revision: (preference?.revision ?? 0) + 1, updatedAt: now },
+              })
+              .run()
+          }
+        },
+        { behavior: 'immediate' },
+      )
+      return this.listHostUiPageEntries().filter(
+        (entry) => entry.owner.kind === 'extension' && entry.owner.extensionId === input.installation.extensionId,
+      )
+    },
+    deleteHostInstallationState(input): void {
+      database.transaction(
+        (transaction) => {
+          transaction
+            .delete(hostExtensionInstallations)
+            .where(eq(hostExtensionInstallations.extensionId, input.extensionId))
+            .run()
+          const removed = transaction
+            .delete(hostUiPageEntries)
+            .where(and(eq(hostUiPageEntries.ownerKind, 'extension'), eq(hostUiPageEntries.ownerId, input.extensionId)))
+            .run()
+          transaction
+            .delete(hostUiPermissionGrants)
+            .where(eq(hostUiPermissionGrants.ownerKey, `extension:${input.extensionId}`))
+            .run()
+          if (removed.changes > 0) {
+            const preference = transaction
+              .select()
+              .from(hostUiPagePreferences)
+              .where(eq(hostUiPagePreferences.id, 1))
+              .get()
+            transaction
+              .insert(hostUiPagePreferences)
+              .values({ id: 1, revision: (preference?.revision ?? 0) + 1, updatedAt: input.now })
+              .onConflictDoUpdate({
+                target: hostUiPagePreferences.id,
+                set: { revision: (preference?.revision ?? 0) + 1, updatedAt: input.now },
+              })
+              .run()
+          }
+        },
+        { behavior: 'immediate' },
+      )
+    },
     listHostUiPageEntries(): readonly HostUiPageEntry[] {
       const diagnostics = new Map(
         database

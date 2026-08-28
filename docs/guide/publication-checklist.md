@@ -5,7 +5,7 @@
 ## 必须完成
 
 - [x] 提交 GNU AGPL v3.0 代码许可证，并将 `AGPL-3.0-only` 同步到所有 workspace `package.json`；
-- [ ] `pnpm check`、`pnpm test`、`pnpm build`、`pnpm test:journey` 全部通过；
+- [ ] `pnpm check`、`pnpm test`、`pnpm test:coverage`、`pnpm build`、`pnpm test:journey` 全部通过；
 - [ ] `pnpm brand:check` 通过，Stable/Preview 小尺寸图标和真实安装器画面完成验收；
 - [ ] 使用固定版本 Gitleaks 或等效工具扫描完整 Git 历史；
 - [ ] 人工检查图片、压缩包、数据库、日志和二进制元数据；

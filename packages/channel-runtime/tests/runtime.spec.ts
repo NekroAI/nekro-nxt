@@ -1725,6 +1725,71 @@ describe('ChannelRuntime M1 lane', () => {
     expect(context.runtimeRepository.handoffs).toHaveLength(0)
   })
 
+  it('serializes concurrent Binding replacements by Channel and stops the actual previous owner', async () => {
+    const context = await setup()
+    await context.runtime.acceptInbound(inbound(context.connection.id, context.channel.id, 'before-concurrent-replace'))
+    const firstEpisode = [...context.runtimeRepository.episodes.values()][0]!
+    const second = context.core.createAgent({
+      displayName: '第二个智能体',
+      persona: '',
+      model: { provider: 'deepseek', model: 'v4' },
+    })
+    const third = context.core.createAgent({
+      displayName: '第三个智能体',
+      persona: '',
+      model: { provider: 'deepseek', model: 'v4' },
+    })
+    const secondEpisodeId = EpisodeIdSchema.parse('eps_CONCURRENTSECOND')
+    const originalReplace = context.coreRepository.replaceBinding.bind(context.coreRepository)
+    context.coreRepository.replaceBinding = (record) => {
+      const saved = originalReplace(record)
+      if (record.agentId === second.definition.id) {
+        context.runtimeRepository.createEpisode({
+          id: secondEpisodeId,
+          channelId: context.channel.id,
+          agentId: second.definition.id,
+          agentRevisionId: second.revision.id,
+          dshSessionId: `dsh-${secondEpisodeId}`,
+          status: 'active',
+          openedAtEventId: firstEpisode.openedAtEventId,
+          createdAt: 100,
+        })
+      }
+      return saved
+    }
+    const cancellations: string[] = []
+    context.sessionDriver.cancelSession = (sessionId, reason) => {
+      cancellations.push(`${sessionId}:${reason}`)
+      return Promise.resolve()
+    }
+
+    const toSecond = context.runtime.replaceBinding({
+      channelId: context.channel.id,
+      agentId: second.definition.id,
+      triggerPolicy: 'always',
+    })
+    const toThird = context.runtime.replaceBinding({
+      channelId: context.channel.id,
+      agentId: third.definition.id,
+      triggerPolicy: 'always',
+    })
+
+    await expect(Promise.all([toSecond, toThird])).resolves.toHaveLength(2)
+    expect(context.coreRepository.getBinding(context.channel.id)).toMatchObject({ agentId: third.definition.id })
+    expect(context.runtimeRepository.getEpisode(firstEpisode.id)).toMatchObject({
+      status: 'closed',
+      closeReason: 'binding-replaced',
+    })
+    expect(context.runtimeRepository.getEpisode(secondEpisodeId)).toMatchObject({
+      status: 'closed',
+      closeReason: 'binding-replaced',
+    })
+    expect(cancellations).toEqual([
+      `dsh-${firstEpisode.id}:binding-replaced`,
+      `dsh-${secondEpisodeId}:binding-replaced`,
+    ])
+  })
+
   it('stops an active Episode before clearing a Binding', async () => {
     const context = await setup()
     await context.runtime.acceptInbound(inbound(context.connection.id, context.channel.id, 'before-clear'))
@@ -1735,6 +1800,28 @@ describe('ChannelRuntime M1 lane', () => {
       closeReason: 'stopped',
     })
     expect(context.coreRepository.getBinding(context.channel.id)).toBeUndefined()
+  })
+
+  it('waits for active Sessions on Adapter Connections to reach an idle checkpoint', async () => {
+    const context = await setup()
+    await context.runtime.acceptInbound(inbound(context.connection.id, context.channel.id, 'adapter-safe-wait'))
+    let releaseIdle!: () => void
+    const idle = new Promise<void>((resolve) => {
+      releaseIdle = resolve
+    })
+    let settled = false
+    context.sessionDriver.whenIdle = () => idle
+
+    const waiting = context.runtime.waitUntilConnectionsSafe([context.connection.id]).then(() => {
+      settled = true
+    })
+    await Promise.resolve()
+    await Promise.resolve()
+    expect(settled).toBe(false)
+
+    releaseIdle()
+    await expect(waiting).resolves.toBeUndefined()
+    expect(settled).toBe(true)
   })
 
   it('cancels without handoff before tombstoning a channel', async () => {

@@ -16,4 +16,4 @@
 - [`adapter-qq-openclaw`](adapter-qq-openclaw/README.md)：首个外部 Adapter，QQ 开放平台 WebSocket Gateway 与 HTTP 发送；
 - [`test-harness`](test-harness/README.md)：Virtual Clock 等确定性场景基础设施。
 
-没有当前消费者和验证价值的目录不提前建立。Desktop 在 M7 进入。
+没有当前消费者和验证价值的目录不提前建立；应用组合根由 [`apps/README.md`](../apps/README.md) 统一路由。

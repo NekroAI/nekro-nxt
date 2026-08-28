@@ -6,7 +6,7 @@ import { strFromU8, unzipSync } from 'fflate'
 import { access, mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { NekroRuntime } from '../src/bootstrap.js'
 import { createNekroHostApi } from '../src/host-api.js'
 
@@ -217,7 +217,12 @@ describe('NekroNxt domain API — save a running dynamic Package as a local Exte
         })
         expect(importedRuntime.repository.listActivations()).toEqual([])
         expect(importedRuntime.repository.getHostInstallation(saved.extensionId)).toBeUndefined()
-        expect(importedRuntime.repository.getExtensionRevisionVerification(saved.revisionId)).toBeUndefined()
+        expect(importedRuntime.repository.getExtensionRevisionVerification(saved.revisionId)).toMatchObject({
+          revisionId: saved.revisionId,
+          dshVersion: '0.1.1-rc.2',
+          origin: { pluginRunId: 'local-runtime-verification' },
+          toolInvocations: [{ name: 'saved_probe', succeeded: true }],
+        })
 
         const repeatedInspect = await fetch(`${importOrigin}/api/extensions/imports/inspect`, {
           method: 'POST',
@@ -231,6 +236,25 @@ describe('NekroNxt domain API — save a running dynamic Package as a local Exte
           body: '{}',
         })
         expect(HostApiContracts.commitExtensionImport.parseResponse(await repeatedCommit.json()).idempotent).toBe(true)
+
+        const expiringInspect = await fetch(`${importOrigin}/api/extensions/imports/inspect`, {
+          method: 'POST',
+          body: Buffer.from(archiveBytes),
+        })
+        const expiring = HostApiContracts.inspectExtensionImport.parseResponse(await expiringInspect.json())
+        const inspectedAt = Date.now()
+        const now = vi.spyOn(Date, 'now').mockReturnValue(inspectedAt + 10 * 60_000 + 1)
+        try {
+          const expiredCommit = await fetch(`${importOrigin}/api/extensions/imports/${expiring.token}/commit`, {
+            method: 'POST',
+            headers: { 'content-type': 'application/json' },
+            body: '{}',
+          })
+          expect(expiredCommit.status).toBe(400)
+          expect(await expiredCommit.text()).toContain('扩展导入检查已失效')
+        } finally {
+          now.mockRestore()
+        }
       } finally {
         importApi.dispose()
         await importWebContext.fiber.dispose()

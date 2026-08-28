@@ -28,6 +28,7 @@ const MAX_TARBALL_BYTES = 64 * 1024 * 1024
 const MAX_PACKAGE_BYTES = 256 * 1024 * 1024
 const MAX_COMMAND_OUTPUT = 2 * 1024 * 1024
 const INSTALL_TIMEOUT_MS = 5 * 60_000
+const INSPECTION_TTL_MS = 10 * 60_000
 
 const packageManifestSchema = z
   .object({
@@ -69,6 +70,7 @@ export type DshPluginInstallProgress = (phase: DshPluginInstallPhase, message: s
 
 interface PendingInspection {
   readonly token: string
+  readonly expiresAt: number
   readonly packageId: ReturnType<typeof DshPluginPackageIdSchema.parse>
   readonly source: DshPluginInstallSource
   readonly stagingDirectory: string
@@ -232,15 +234,29 @@ export class DshPluginPackageInstaller {
   async initialize(): Promise<void> {
     this.#initializePromise ??= (async () => {
       const staging = path.join(this.#root, 'plugin-staging')
+      const packages = path.join(this.#root, 'plugin-packages')
+      const trash = path.join(this.#root, 'plugin-trash')
       await Promise.all([
-        mkdir(path.join(this.#root, 'plugin-packages'), { recursive: true, mode: 0o700 }),
+        mkdir(packages, { recursive: true, mode: 0o700 }),
         mkdir(staging, { recursive: true, mode: 0o700 }),
-        mkdir(path.join(this.#root, 'plugin-trash'), { recursive: true, mode: 0o700 }),
+        mkdir(trash, { recursive: true, mode: 0o700 }),
         mkdir(this.#storeDirectory, { recursive: true, mode: 0o700 }),
       ])
       const interrupted = await readdir(staging, { withFileTypes: true })
       await Promise.all(
         interrupted.map((entry) => rm(path.join(staging, entry.name), { recursive: true, force: true })),
+      )
+      const committed = new Set<string>(this.#repository.listDshPluginPackages().map(({ id }) => id))
+      const installed = await readdir(packages, { withFileTypes: true })
+      await Promise.all(
+        installed
+          .filter((entry) => entry.isDirectory() && !committed.has(entry.name))
+          .map((entry) =>
+            rename(
+              path.join(packages, entry.name),
+              path.join(trash, `orphan-${entry.name}-${this.#timestamp()}-${randomUUID()}`),
+            ),
+          ),
       )
     })()
     await this.#initializePromise
@@ -320,6 +336,7 @@ export class DshPluginPackageInstaller {
     approvedBuilds: readonly string[],
     onProgress?: DshPluginInstallProgress,
   ): Promise<DshPluginPackageRecord> {
+    await this.#cleanupExpiredInspections()
     const pending = this.#pending.get(token)
     if (!pending) throw new Error('DSH 插件安装检查已失效，请重新检查。')
     const approved = [...new Set(approvedBuilds)].sort()
@@ -504,6 +521,7 @@ export class DshPluginPackageInstaller {
     onProgress?: DshPluginInstallProgress,
   ): Promise<DshPluginInstallInspection> {
     await this.initialize()
+    await this.#cleanupExpiredInspections()
     const stagingDirectory = existingStagingRoot ?? path.join(this.#root, 'plugin-staging', `inspect-${randomUUID()}`)
     try {
       return await this.#inspectPrepared(source, spec, stagingDirectory, expected, onProgress)
@@ -569,6 +587,17 @@ export class DshPluginPackageInstaller {
     const { blockedBuilds, buildAllowKeys } = await this.#blockedBuilds(projectDirectory)
     onProgress?.('validation', '正在校验 npm 身份、Bundle 入口和内容摘要。')
     const entries = this.#inspectEntries(packageRoot, manifest)
+    const projectRequire = createRequire(path.join(projectDirectory, 'package.json'))
+    for (const entry of entries) {
+      let resolved: string
+      try {
+        resolved = await realpath(projectRequire.resolve(entry.moduleName))
+      } catch (error) {
+        throw new Error(`DSH 插件入口无法解析：${entry.moduleName}（${messageOf(error)}）`)
+      }
+      assertInside(this.#root, resolved)
+      if (!(await stat(resolved)).isFile()) throw new Error(`DSH 插件入口不是普通文件：${entry.moduleName}`)
+    }
     const hostUi = manifest.nekroNxt?.hostUi
     if (hostUi) {
       if (!entries.some(({ entryKey }) => entryKey === hostUi.entryKey)) {
@@ -619,6 +648,7 @@ export class DshPluginPackageInstaller {
     }
     const pending: PendingInspection = {
       token,
+      expiresAt: this.#timestamp() + INSPECTION_TTL_MS,
       packageId,
       source,
       stagingDirectory,
@@ -764,7 +794,12 @@ export class DshPluginPackageInstaller {
       .object({ allowBuilds: z.record(z.string(), z.union([z.boolean(), z.string()])).default({}) })
       .passthrough()
       .parse(parseYaml(await readFile(workspacePath, 'utf8')))
-    const blockedBuilds = [...new Set([...staticNames, ...reported])].sort()
+    const reportedNames = new Set(reported)
+    for (const key of reportedKeys) {
+      const name = staticNames.find((candidate) => key === candidate || key.startsWith(`${candidate}@`))
+      if (name) reportedNames.add(name)
+    }
+    const blockedBuilds = staticNames.filter((name) => reportedNames.has(name))
     const buildAllowKeys = Object.fromEntries(
       blockedBuilds.map((name) => {
         const keys = [...Object.keys(workspace.allowBuilds), ...reportedKeys].filter(
@@ -775,6 +810,19 @@ export class DshPluginPackageInstaller {
       }),
     )
     return { blockedBuilds, buildAllowKeys }
+  }
+
+  async #cleanupExpiredInspections(): Promise<void> {
+    const now = this.#timestamp()
+    const expired = [...this.#pending.values()].filter(({ expiresAt }) => expiresAt <= now)
+    for (const inspection of expired) this.#pending.delete(inspection.token)
+    const outcomes = await Promise.allSettled(
+      expired.map(({ stagingDirectory }) => rm(stagingDirectory, { recursive: true, force: true })),
+    )
+    const failures = outcomes
+      .filter((outcome): outcome is PromiseRejectedResult => outcome.status === 'rejected')
+      .map((outcome): unknown => outcome.reason)
+    if (failures.length) throw new AggregateError(failures, 'Expired DSH plugin staging cleanup failed.')
   }
 
   #runPnpm(projectDirectory: string, args: readonly string[]): Promise<string> {

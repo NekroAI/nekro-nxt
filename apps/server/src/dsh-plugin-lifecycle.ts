@@ -36,7 +36,11 @@ export interface DshPluginLifecycleOptions {
   readonly rootContext: Context
   readonly isolateContext: (context: Context) => Context
   readonly resolveModule: (packageId: DshPluginPackageId, moduleName: string) => string
-  readonly listAgentSessions: (agentId: AgentId) => readonly { readonly sessionId: string; readonly context: Context }[]
+  readonly listAgentSessions: (agentId: AgentId) => readonly {
+    readonly sessionId: string
+    readonly context: Context
+    readonly waitUntilSafe: () => Promise<void>
+  }[]
   readonly now?: () => number
 }
 
@@ -117,6 +121,7 @@ export class DshPluginLifecycleCoordinator {
   readonly #agentLoaders = new Map<string, OwnedLoader>()
   readonly #transitions = new Map<DshPluginEntryId, Promise<void>>()
   #hostLoader: OwnedLoader | undefined
+  #agentProbeLoader: OwnedLoader | undefined
   #disposed = false
 
   constructor(options: DshPluginLifecycleOptions) {
@@ -132,6 +137,8 @@ export class DshPluginLifecycleCoordinator {
     this.#assertActive()
     const context = this.#isolateContext(this.#rootContext).isolate('loader').isolate('pluginInventory')
     this.#hostLoader = await this.#createLoader(context)
+    const probeContext = this.#isolateContext(this.#rootContext).isolate('loader').isolate('pluginInventory')
+    this.#agentProbeLoader = await this.#createLoader(probeContext)
     let restored = 0
     let failed = 0
     for (const activation of this.#repository
@@ -177,7 +184,6 @@ export class DshPluginLifecycleCoordinator {
           this.#diagnose(entry.id, activation.targetKey, 'active', 'restore')
         } catch (error) {
           this.#diagnose(entry.id, activation.targetKey, 'restore-failed', phaseOf(error, 'restore'), error)
-          throw error
         }
       }
       context.effect(
@@ -188,7 +194,11 @@ export class DshPluginLifecycleCoordinator {
       )
     } catch (error) {
       this.#agentLoaders.delete(sessionId)
-      await context.fiber.dispose().catch(() => undefined)
+      try {
+        await context.fiber.dispose()
+      } catch (disposeError) {
+        throw new AggregateError([error, disposeError], 'DSH Agent Loader 创建失败，且临时 Context 未完整静止。')
+      }
       throw error
     }
   }
@@ -198,6 +208,7 @@ export class DshPluginLifecycleCoordinator {
     readonly target: DshPluginActivationScope
     readonly agentId?: AgentId
     readonly config: JsonValue
+    readonly hostUi?: Parameters<DshPluginRepository['commitDshPluginActivationState']>[0]['hostUi']
   }): Promise<DshPluginActivationRecord> {
     return this.#exclusive(input.entryId, async () => {
       this.#assertActive()
@@ -216,7 +227,6 @@ export class DshPluginLifecycleCoordinator {
       }
       const candidate = { ...entry, selectedScope: input.target, config: input.config }
       const changed = new Map<OwnedLoader, boolean>()
-      let probeContext: Context | undefined
       try {
         if (input.target === 'host') {
           if (!this.#hostLoader) throw new Error('DSH Host Loader 尚未初始化。')
@@ -230,10 +240,13 @@ export class DshPluginLifecycleCoordinator {
           )
           agentIds.add(input.agentId!)
           const sessions = [...agentIds].flatMap((agentId) => this.#listAgentSessions(agentId))
+          await Promise.all(sessions.map((session) => session.waitUntilSafe()))
           if (sessions.length === 0) {
-            probeContext = this.#isolateContext(this.#rootContext).isolate('loader').isolate('pluginInventory')
-            const probe = await this.#createLoader(probeContext)
-            await this.#mount(probe, candidate)
+            if (!this.#agentProbeLoader) throw new Error('DSH Agent Probe Loader 尚未初始化。')
+            changed.set(this.#agentProbeLoader, false)
+            await this.#mount(this.#agentProbeLoader, candidate)
+            await this.#unmount(this.#agentProbeLoader, candidate.id)
+            changed.delete(this.#agentProbeLoader)
           } else {
             for (const session of sessions) {
               const loader = this.#agentLoaders.get(session.sessionId)
@@ -250,7 +263,6 @@ export class DshPluginLifecycleCoordinator {
             existed ? this.#mountOrUpdate(loader, entry) : this.#unmount(loader, entry.id),
           ),
         )
-        await probeContext?.fiber.dispose().catch(() => undefined)
         this.#diagnose(entry.id, targetKey, 'load-failed', phaseOf(error, 'apply'), error)
         const failures = rollback
           .filter((outcome): outcome is PromiseRejectedResult => outcome.status === 'rejected')
@@ -258,7 +270,6 @@ export class DshPluginLifecycleCoordinator {
         if (failures.length) throw new AggregateError([error, ...failures], 'DSH 插件变更失败，且旧配置未完整恢复。')
         throw error
       }
-      await probeContext?.fiber.dispose()
       const activation: DshPluginActivationRecord = {
         entryId: entry.id,
         targetKey,
@@ -267,8 +278,11 @@ export class DshPluginLifecycleCoordinator {
         activatedAt: this.#timestamp(),
       }
       try {
-        this.#repository.updateDshPluginEntry(candidate)
-        this.#repository.upsertDshPluginActivation(activation)
+        this.#repository.commitDshPluginActivationState({
+          entry: candidate,
+          activation,
+          ...(input.hostUi === undefined ? {} : { hostUi: input.hostUi }),
+        })
         this.#diagnose(entry.id, targetKey, 'active', 'apply')
       } catch (error) {
         const rollback = await Promise.allSettled(
@@ -293,23 +307,48 @@ export class DshPluginLifecycleCoordinator {
         .listDshPluginActivations(entryId)
         .find((candidate) => candidate.targetKey === targetKey)
       if (!activation) throw new Error('DSH 插件入口在该作用域尚未启用。')
+      const sessions = activation.target === 'agent' ? this.#listAgentSessions(activation.agentId!) : []
+      await Promise.all(sessions.map((session) => session.waitUntilSafe()))
+      const sessionIds = new Set(sessions.map((session) => session.sessionId))
       const loaders =
         activation.target === 'host'
           ? this.#hostLoader
             ? [this.#hostLoader]
             : []
           : [...this.#agentLoaders.entries()]
-              .filter(([sessionId]) =>
-                this.#listAgentSessions(activation.agentId!).some((session) => session.sessionId === sessionId),
-              )
+              .filter(([sessionId]) => sessionIds.has(sessionId))
               .map(([, loader]) => loader)
+      const entry = this.#requireEntry(entryId)
+      const unmounted: OwnedLoader[] = []
       try {
-        for (const loader of loaders) await this.#unmount(loader, entryId)
+        for (const loader of loaders) {
+          const existed = loader.loaderIds.has(entryId)
+          await this.#unmount(loader, entryId)
+          if (existed) unmounted.push(loader)
+        }
       } catch (error) {
         this.#diagnose(entryId, targetKey, 'dispose-failed', 'dispose', error)
+        const rollback = await Promise.allSettled(unmounted.map((loader) => this.#mount(loader, entry)))
+        const failures = rollback
+          .filter((outcome): outcome is PromiseRejectedResult => outcome.status === 'rejected')
+          .map((outcome): unknown => outcome.reason)
+        if (failures.length) {
+          throw new AggregateError([error, ...failures], 'DSH 插件关闭失败，且已卸载 Session 未完整恢复。')
+        }
         throw error
       }
-      this.#repository.deleteDshPluginActivation(entryId, targetKey)
+      try {
+        this.#repository.deleteDshPluginActivationState({ entryId, targetKey, now: this.#timestamp() })
+      } catch (error) {
+        const rollback = await Promise.allSettled(unmounted.map((loader) => this.#mount(loader, entry)))
+        const failures = rollback
+          .filter((outcome): outcome is PromiseRejectedResult => outcome.status === 'rejected')
+          .map((outcome): unknown => outcome.reason)
+        if (failures.length) {
+          throw new AggregateError([error, ...failures], 'DSH 插件关闭提交失败，且运行时未完整恢复。')
+        }
+        throw error
+      }
     })
   }
 
@@ -328,9 +367,11 @@ export class DshPluginLifecycleCoordinator {
     await Promise.allSettled([...this.#transitions.values()])
     const contexts = [
       this.#hostLoader?.context,
+      this.#agentProbeLoader?.context,
       ...[...this.#agentLoaders.values()].map(({ context }) => context),
     ].filter((context): context is Context => context !== undefined)
     this.#hostLoader = undefined
+    this.#agentProbeLoader = undefined
     this.#agentLoaders.clear()
     const outcomes = await Promise.allSettled(contexts.map((context) => context.fiber.dispose()))
     const failures = outcomes

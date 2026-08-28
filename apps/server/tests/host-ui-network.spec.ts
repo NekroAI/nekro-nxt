@@ -12,6 +12,11 @@ describe('Host UI network request guard', () => {
     expect(isPrivateNetworkAddress(['169', '254', '1', '1'].join('.'))).toBe(true)
     expect(isPrivateNetworkAddress('::1')).toBe(true)
     expect(isPrivateNetworkAddress('fd00::1')).toBe(true)
+    expect(isPrivateNetworkAddress('ff02::1')).toBe(true)
+    expect(isPrivateNetworkAddress('fec0::1')).toBe(true)
+    expect(isPrivateNetworkAddress('2001:db8::1')).toBe(true)
+    expect(isPrivateNetworkAddress('2002:0a00:0001::1')).toBe(true)
+    expect(isPrivateNetworkAddress('::ffff:127.0.0.1')).toBe(true)
     expect(isPrivateNetworkAddress('2606:4700:4700::1111')).toBe(false)
   })
 

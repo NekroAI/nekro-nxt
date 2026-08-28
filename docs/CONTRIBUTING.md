@@ -34,11 +34,12 @@ pnpm dev
 ```bash
 pnpm check
 pnpm test
+pnpm test:coverage
 pnpm build
 pnpm test:journey
 ```
 
-用户可见 Web 改动必须补充生产构建产品旅程和真实像素视觉验收；平台安装资源还需运行 `pnpm brand:check` 并检查真实安装器画面。
+`pnpm test:coverage` 不包含在 `check` 或 `test` 中，统计范围和阈值以[开发与测试规范](06-开发与测试规范.md#覆盖率门禁)为准。用户可见 Web 改动必须补充生产构建产品旅程和真实像素视觉验收；平台安装资源还需运行 `pnpm brand:check` 并检查真实安装器画面。
 
 ## Pull Request
 

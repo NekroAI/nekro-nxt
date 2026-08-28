@@ -17,6 +17,7 @@ import {
   ChannelMemberIdSchema,
   ConnectionIdSchema,
   DshPluginEntryIdSchema,
+  DshPluginPackageIdSchema,
   EpisodeHandoffIdSchema,
   EpisodeIdSchema,
   ExtensionIdSchema,
@@ -1792,6 +1793,113 @@ describe('relations, admissions and outbox', () => {
 })
 
 describe('Extension and backup', () => {
+  it('commits DSH Activation, Config, permission grant and page directory atomically', async () => {
+    const { database, repository } = await createFixture()
+    try {
+      const packageId = DshPluginPackageIdSchema.parse('dsp_ATOMICUI')
+      const entryId = DshPluginEntryIdSchema.parse('dse_ATOMICUI')
+      repository.saveDshPluginPackage({
+        package: {
+          id: packageId,
+          packageName: '@example/dsh-atomic-ui',
+          packageVersion: '1.0.0',
+          source: 'tarball',
+          packageDigest: 'a'.repeat(64),
+          lockfileDigest: 'b'.repeat(64),
+          manifest: {},
+          approvedBuilds: [],
+          installedAt: 1,
+        },
+        entries: [
+          {
+            id: entryId,
+            packageId,
+            entryKey: 'default',
+            moduleName: '@example/dsh-atomic-ui',
+            suggestedScope: 'host',
+            config: {},
+            createdAt: 1,
+          },
+        ],
+      })
+      const firstEntry = { ...repository.getDshPluginEntry(entryId)!, selectedScope: 'host' as const, config: { v: 1 } }
+      const ownerKey = `dsh:${entryId}`
+      const firstPageId = HostUiPageInstanceIdSchema.parse('hup_DSHATOMICONE')
+      repository.commitDshPluginActivationState({
+        entry: firstEntry,
+        activation: { entryId, targetKey: 'host', target: 'host', activatedAt: 10 },
+        hostUi: {
+          grant: {
+            ownerKey,
+            artifactDigest: 'a'.repeat(64),
+            permissionDigest: 'c'.repeat(64),
+            declaration: { permissions: ['runtime.read'], networkOrigins: [] },
+            approvedAt: 10,
+          },
+          artifactDigest: 'a'.repeat(64),
+          pages: [
+            {
+              kind: 'host-page',
+              entryId: 'overview',
+              title: 'DSH 原子页面',
+              icon: { kind: 'host-icon', name: 'puzzle' },
+              objectPane: 'hidden',
+              startPath: '',
+            },
+          ],
+          clientBuildKey: 'a'.repeat(64),
+          now: 10,
+          nextPageInstanceId: () => firstPageId,
+        },
+      })
+
+      expect(() =>
+        repository.commitDshPluginActivationState({
+          entry: { ...firstEntry, config: { v: 2 } },
+          activation: { entryId, targetKey: 'host', target: 'host', activatedAt: 11 },
+          hostUi: {
+            grant: {
+              ownerKey,
+              artifactDigest: 'd'.repeat(64),
+              permissionDigest: 'e'.repeat(64),
+              declaration: { permissions: ['runtime.read', 'agents.read'], networkOrigins: [] },
+              approvedAt: 11,
+            },
+            artifactDigest: 'd'.repeat(64),
+            pages: [
+              {
+                kind: 'host-page',
+                entryId: 'conflict',
+                title: '冲突页面',
+                icon: { kind: 'host-icon', name: 'bar-chart' },
+                objectPane: 'hidden',
+                startPath: '',
+              },
+            ],
+            clientBuildKey: 'd'.repeat(64),
+            now: 11,
+            nextPageInstanceId: () => firstPageId,
+          },
+        }),
+      ).toThrow()
+      expect(repository.getDshPluginEntry(entryId)?.config).toEqual({ v: 1 })
+      expect(repository.listDshPluginActivations(entryId)).toEqual([
+        expect.objectContaining({ targetKey: 'host', activatedAt: 10 }),
+      ])
+      expect(repository.getHostUiPermissionGrant(ownerKey)?.artifactDigest).toBe('a'.repeat(64))
+      expect(repository.listHostUiPageEntries()).toEqual([
+        expect.objectContaining({ pageInstanceId: firstPageId, entryId: 'overview' }),
+      ])
+
+      repository.deleteDshPluginActivationState({ entryId, targetKey: 'host', now: 12 })
+      expect(repository.listDshPluginActivations(entryId)).toEqual([])
+      expect(repository.getHostUiPermissionGrant(ownerKey)).toBeUndefined()
+      expect(repository.listHostUiPageEntries()).toEqual([])
+    } finally {
+      database.close()
+    }
+  })
+
   it('preserves Host UI page identity while atomically updating shared order and visibility', async () => {
     const { database, repository } = await createFixture()
     try {
@@ -1905,6 +2013,67 @@ describe('Extension and backup', () => {
       expect(repository.getHostUiPermissionGrant(ownerKey)).toMatchObject({ artifactDigest: 'd'.repeat(64) })
       repository.deleteHostUiPermissionGrant(ownerKey)
       expect(repository.getHostUiPermissionGrant(ownerKey)).toBeUndefined()
+
+      repository.deleteHostUiExtensionPages(extensionId)
+      const committed = repository.commitHostInstallationState({
+        installation: { extensionId, extensionRevisionId: firstRevisionId, installedAt: 15 },
+        hostUi: {
+          grant: {
+            ownerKey,
+            artifactDigest: 'b'.repeat(64),
+            permissionDigest: 'c'.repeat(64),
+            declaration: { permissions: ['agents.read'], networkOrigins: [] },
+            approvedAt: 15,
+          },
+          pages: [
+            {
+              kind: 'host-page',
+              entryId: 'atomic-overview',
+              title: '原子概览',
+              icon: { kind: 'host-icon', name: 'layout-dashboard' },
+              objectPane: 'hidden',
+              startPath: '',
+            },
+          ],
+          clientBuildKey: 'c'.repeat(64),
+          now: 15,
+          nextPageInstanceId: () => HostUiPageInstanceIdSchema.parse(`hup_PAGE${++sequence}`),
+        },
+      })
+      const committedPageId = committed[0]!.pageInstanceId
+      expect(repository.getHostInstallation(extensionId)?.extensionRevisionId).toBe(firstRevisionId)
+      expect(() =>
+        repository.commitHostInstallationState({
+          installation: { extensionId, extensionRevisionId: secondRevisionId, installedAt: 16 },
+          hostUi: {
+            grant: {
+              ownerKey,
+              artifactDigest: 'd'.repeat(64),
+              permissionDigest: 'e'.repeat(64),
+              declaration: { permissions: ['agents.read', 'channels.read'], networkOrigins: [] },
+              approvedAt: 16,
+            },
+            pages: [
+              {
+                kind: 'host-page',
+                entryId: 'atomic-conflict',
+                title: '冲突页面',
+                icon: { kind: 'host-icon', name: 'bar-chart' },
+                objectPane: 'hidden',
+                startPath: '',
+              },
+            ],
+            clientBuildKey: 'f'.repeat(64),
+            now: 16,
+            nextPageInstanceId: () => committedPageId,
+          },
+        }),
+      ).toThrow()
+      expect(repository.getHostInstallation(extensionId)?.extensionRevisionId).toBe(firstRevisionId)
+      expect(repository.getHostUiPermissionGrant(ownerKey)?.artifactDigest).toBe('b'.repeat(64))
+      expect(repository.listHostUiPageEntries()).toEqual([
+        expect.objectContaining({ pageInstanceId: committedPageId, entryId: 'atomic-overview' }),
+      ])
 
       const replaced = repository.replaceHostUiExtensionPages({
         extensionId,

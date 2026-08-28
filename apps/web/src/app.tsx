@@ -33,7 +33,7 @@ import {
 import type { HostUiPageEntry } from '@nekro-nxt/contracts'
 import { Navigate, Outlet, Route, Routes, useLocation, useNavigate, useParams } from 'react-router-dom'
 import styles from './app.module.css'
-import { NotificationCenter } from './components/notifications.js'
+import { NotificationCenter, notify } from './components/notifications.js'
 import { EmptyState, HostNotice } from './components/product-feedback.js'
 import { DynamicClientProvider } from './dynamic-client-coordinator.js'
 import { useDesktopInstance } from './desktop-shell.js'
@@ -119,6 +119,23 @@ export const hostPresentation = (status: ProductHostStatus): { readonly label: s
   return { label: '无法连接', tone: 'error' }
 }
 
+export const nextVisibleHostUiPage = (
+  previous: HostUiPageEntry | undefined,
+  previousOrder: readonly HostUiPageEntry[],
+  current: readonly HostUiPageEntry[],
+): HostUiPageEntry | undefined => {
+  const visibleById = new Map(current.filter(({ visible }) => visible).map((page) => [page.pageInstanceId, page]))
+  if (visibleById.size === 0) return undefined
+  if (!previous) return visibleById.values().next().value
+  const index = previousOrder.findIndex(({ pageInstanceId }) => pageInstanceId === previous.pageInstanceId)
+  if (index < 0) return visibleById.values().next().value
+  for (const candidate of [...previousOrder.slice(index + 1), ...previousOrder.slice(0, index)]) {
+    const visible = visibleById.get(candidate.pageInstanceId)
+    if (visible) return visible
+  }
+  return visibleById.values().next().value
+}
+
 function WorkIndex() {
   const host = useProductStore((state) => state.host)
   const channels = useProductStore((state) => state.channels)
@@ -180,25 +197,31 @@ function DesktopShell() {
   const visibleHostUiPages = hostUiPages.filter(({ visible }) => visible)
   const activeHostUiPage = hostUiPages.find(({ routeBase }) => location.pathname.startsWith(routeBase))
   const lastActiveHostUiPage = useRef<HostUiPageEntry | undefined>(activeHostUiPage)
+  const previousHostUiOrder = useRef(hostUiPages)
   const objectPaneHidden = activeHostUiPage?.objectPane === 'hidden'
   useEffect(() => {
     if (activeHostUiPage) lastActiveHostUiPage.current = activeHostUiPage
     if (!location.pathname.startsWith('/apps/')) return
     if (!hostSnapshotReady) return
     if (activeHostUiPage?.visible) return
-    const fallback = visibleHostUiPages[0]
+    const previous = activeHostUiPage ?? lastActiveHostUiPage.current
+    const fallback = nextVisibleHostUiPage(previous, previousHostUiOrder.current, hostUiPages)
     if (fallback) {
       void navigate(`${fallback.routeBase}${fallback.startPath ? `/${fallback.startPath}` : ''}`, { replace: true })
+      notify('当前扩展页面已不可用，已打开下一个页面。', 'info', 'host-ui-page-recovery')
       return
     }
-    const previous = activeHostUiPage ?? lastActiveHostUiPage.current
     void navigate(
       previous?.owner.kind === 'extension'
         ? `/extensions/${previous.owner.extensionId}`
         : '/settings?tab=dsh-extensions',
       { replace: true },
     )
-  }, [activeHostUiPage, hostSnapshotReady, location.pathname, navigate, visibleHostUiPages])
+    notify('当前扩展页面已不可用，已返回扩展管理。', 'info', 'host-ui-page-recovery')
+  }, [activeHostUiPage, hostSnapshotReady, hostUiPages, location.pathname, navigate, visibleHostUiPages])
+  useEffect(() => {
+    previousHostUiOrder.current = hostUiPages
+  }, [hostUiPages])
   const [instanceSwitcherOpen, setInstanceSwitcherOpen] = useState(false)
   const instanceStatusClass = {
     connecting: styles.instanceStatus_connecting,

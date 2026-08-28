@@ -31,7 +31,7 @@ import {
   type ChannelRuntimeProjection,
   type HostSseEvent,
 } from '@nekro-nxt/contracts'
-import { hostUiPermissionDigest, validateHostUiSvg } from '@nekro-nxt/extension-runtime'
+import { hostUiPermissionDigest, scopeHostUiCss, validateHostUiSvg } from '@nekro-nxt/extension-runtime'
 import { createHash, randomUUID } from 'node:crypto'
 import { readFile } from 'node:fs/promises'
 import path from 'node:path'
@@ -71,11 +71,43 @@ export interface NekroHostApi {
   dispose(): void
 }
 
+const MAX_JSON_BODY_BYTES = 2 * 1024 * 1024
+const HOST_UI_PRODUCT_MUTATIONS = new Set([
+  'agents.create',
+  'agents.revise',
+  'agents.capabilities',
+  'channels.create',
+  'channels.rename',
+  'channels.bind',
+  'channels.unbind',
+  'connections.create',
+  'connections.rename',
+])
+
 const readJsonBody = (req: IncomingMessage): Promise<unknown> =>
   new Promise((resolve, reject) => {
+    const declaredLength = Number(req.headers['content-length'])
+    if (Number.isFinite(declaredLength) && declaredLength > MAX_JSON_BODY_BYTES) {
+      req.resume()
+      reject(new Error(`JSON 请求体超过 ${MAX_JSON_BODY_BYTES} 字节限制。`))
+      return
+    }
     const chunks: Uint8Array[] = []
-    req.on('data', (chunk: Uint8Array) => chunks.push(chunk))
+    let bytes = 0
+    let exceeded = false
+    req.on('data', (chunk: Uint8Array) => {
+      if (exceeded) return
+      bytes += chunk.byteLength
+      if (bytes > MAX_JSON_BODY_BYTES) {
+        exceeded = true
+        chunks.length = 0
+        reject(new Error(`JSON 请求体超过 ${MAX_JSON_BODY_BYTES} 字节限制。`))
+        return
+      }
+      chunks.push(chunk)
+    })
     req.on('end', () => {
+      if (exceeded) return
       const raw = Buffer.concat(chunks).toString('utf8').trim()
       if (raw.length === 0) {
         resolve(undefined)
@@ -1018,6 +1050,11 @@ export const createNekroHostApi = (
       if (pending.expiresAt <= now) pendingHostUiCredentials.delete(token)
     }
   }
+  const pruneExpiredExtensionImports = (now = Date.now()): void => {
+    for (const [token, pending] of pendingExtensionImports) {
+      if (pending.expiresAt <= now) pendingExtensionImports.delete(token)
+    }
+  }
 
   const registerRoute = (route: WebRoute): void => {
     disposers.push(webServer.register(route))
@@ -1896,6 +1933,9 @@ export const createNekroHostApi = (
             value = await runtime.installation.callHostUi(page.owner.extensionId, input.method, input.input)
           }
           writeContractJson(res, 200, HostApiContracts.callHostUiPage, { value })
+          if (HOST_UI_PRODUCT_MUTATIONS.has(input.method)) {
+            broadcast({ event: 'status', data: { ok: true, message: '扩展页面已更新产品数据' } })
+          }
         } catch (error) {
           runtime.repository.upsertHostUiDiagnostic({
             pageInstanceId: page.pageInstanceId,
@@ -1952,6 +1992,7 @@ export const createNekroHostApi = (
           return
         }
         try {
+          pruneExpiredExtensionImports()
           const parsed = parseExtensionImport(await readBinaryBody(req, 16 * 1024 * 1024))
           const existingRevision = runtime.repository.getExtensionRevision(parsed.manifest.revision.id)
           if (
@@ -1992,14 +2033,12 @@ export const createNekroHostApi = (
           return
         }
         try {
+          pruneExpiredExtensionImports()
           const token = decodeURIComponent(importCommitMatch[1] ?? '')
           const params = HostApiContracts.commitExtensionImport.parseParams({ token })
           const input = HostApiContracts.commitExtensionImport.parseRequest(await readJsonBody(req))
           const pending = pendingExtensionImports.get(params.token)
-          if (!pending || pending.expiresAt < Date.now()) {
-            pendingExtensionImports.delete(params.token)
-            throw new Error('扩展导入检查已失效，请重新选择文件。')
-          }
+          if (!pending) throw new Error('扩展导入检查已失效，请重新选择文件。')
           const result = await runtime.extensionService.importRevision({
             extension: pending.parsed.manifest.extension,
             revision: pending.parsed.manifest.revision,
@@ -2107,7 +2146,7 @@ export const createNekroHostApi = (
             'content-type': css ? 'text/css; charset=utf-8' : 'text/javascript; charset=utf-8',
             'cache-control': 'private, no-cache',
           })
-          res.end(source)
+          res.end(css ? scopeHostUiCss(source, artifact.buildKey) : source)
         } catch (error) {
           writeError(res, 409, 'host-ui-client-unavailable', error instanceof Error ? error.message : String(error))
         }
@@ -2563,7 +2602,7 @@ export const createNekroHostApi = (
             'content-type': css ? 'text/css; charset=utf-8' : 'text/javascript; charset=utf-8',
             'cache-control': 'private, no-cache',
           })
-          res.end(css ? (client.css ?? '') : client.source)
+          res.end(css ? scopeHostUiCss(client.css ?? '', client.packageDigest) : client.source)
         } catch (error) {
           writeError(res, 409, 'dsh-host-ui-client-unavailable', error instanceof Error ? error.message : String(error))
         }
@@ -2645,35 +2684,30 @@ export const createNekroHostApi = (
             target: input.target,
             config: input.config,
             ...(input.agentId === undefined ? {} : { agentId: input.agentId }),
+            ...(input.target === 'host' &&
+            metadata.success &&
+            metadata.data.entryKey === entry?.entryKey &&
+            packageRecord &&
+            permissionDigest
+              ? {
+                  hostUi: {
+                    grant: {
+                      ownerKey: `dsh:${entryId}`,
+                      artifactDigest: packageRecord.packageDigest,
+                      permissionDigest,
+                      declaration: metadata.data.permissions,
+                      approvedAt: Date.now(),
+                    },
+                    artifactDigest: packageRecord.packageDigest,
+                    pages: metadata.data.pages,
+                    clientBuildKey: packageRecord.packageDigest,
+                    now: Date.now(),
+                    nextPageInstanceId: () =>
+                      HostUiPageInstanceIdSchema.parse(`hup_${randomUUID().replaceAll('-', '')}`),
+                  },
+                }
+              : {}),
           })
-          try {
-            if (
-              input.target === 'host' &&
-              metadata.success &&
-              metadata.data.entryKey === entry?.entryKey &&
-              packageRecord &&
-              permissionDigest
-            ) {
-              runtime.repository.upsertHostUiPermissionGrant({
-                ownerKey: `dsh:${entryId}`,
-                artifactDigest: packageRecord.packageDigest,
-                permissionDigest,
-                declaration: metadata.data.permissions,
-                approvedAt: Date.now(),
-              })
-              runtime.repository.replaceHostUiDshPages({
-                entryId,
-                artifactDigest: packageRecord.packageDigest,
-                pages: metadata.data.pages,
-                clientBuildKey: packageRecord.packageDigest,
-                now: Date.now(),
-                nextPageInstanceId: () => HostUiPageInstanceIdSchema.parse(`hup_${randomUUID().replaceAll('-', '')}`),
-              })
-            }
-          } catch (error) {
-            await runtime.host.disableInstalledDshPlugin(entryId, activation.targetKey).catch(() => undefined)
-            throw error
-          }
           broadcast({ event: 'dsh-plugins-changed', data: { changed: true } })
           broadcastExtensionsChanged()
           writeContractJson(res, 200, HostApiContracts.activateDshPluginEntry, {
@@ -2684,10 +2718,6 @@ export const createNekroHostApi = (
         if (req.method === 'DELETE') {
           const input = HostApiContracts.deactivateDshPluginEntry.parseRequest(await readJsonBody(req))
           await runtime.host.disableInstalledDshPlugin(entryId, input.targetKey)
-          if (input.targetKey === 'host') {
-            runtime.repository.deleteHostUiDshPages(entryId)
-            runtime.repository.deleteHostUiPermissionGrant(`dsh:${entryId}`)
-          }
           broadcast({ event: 'dsh-plugins-changed', data: { changed: true } })
           broadcastExtensionsChanged()
           writeContractJson(res, 200, HostApiContracts.deactivateDshPluginEntry, { disabled: true })
@@ -3980,6 +4010,8 @@ export const createNekroHostApi = (
     dispose() {
       if (factTimer !== undefined) clearTimeout(factTimer)
       pendingFacts.clear()
+      pendingExtensionImports.clear()
+      pendingHostUiCredentials.clear()
       unsubscribeConnectionChanges()
       unsubscribeRuntimeStatus()
       unsubscribeChannelRuntime()

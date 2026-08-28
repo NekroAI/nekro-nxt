@@ -47,13 +47,20 @@ const descriptor = {
   aliasEditable: true,
   channelDiscovery: 'adapter-observed',
   diagnostics: { receive: true, send: true },
-  configSchema: { schemaVersion: 1, type: 'object', required: [], properties: {} }
+  configSchema: {
+    schemaVersion: 1,
+    type: 'object',
+    required: [],
+    properties: { failFirstStop: { type: 'boolean', title: '首次停止失败', default: false } }
+  }
 }
 harness.registerAdapter({
   apiVersion: 1,
   descriptor,
-  async create(context) {
+  async create(context, stored) {
     let running = false
+    let stopAttempts = 0
+    const failFirstStop = stored.configuration.failFirstStop === true
     return {
       capabilities: {
         text: true, mentions: false, images: false, files: false, audio: false,
@@ -78,7 +85,11 @@ harness.registerAdapter({
         })
         context.diagnostics.publish({ status: 'connected' })
       },
-      async stop() { running = false },
+      async stop() {
+        stopAttempts += 1
+        if (failFirstStop && stopAttempts === 1) throw new Error('synthetic stop failure')
+        running = false
+      },
       async deliver() {
         if (!running) return { status: 'failed', failure: { kind: 'transient', message: 'not running' } }
         return { status: 'sent', platformMessageId: 'synthetic-outbound' }
@@ -190,6 +201,69 @@ describe('Host Adapter Extension end-to-end', () => {
         adapter: { key: 'synthetic-chat', registered: true, started: true, stopped: true },
       })
 
+      const exported = await fetch(`${origin}/api/extensions/${saved.extensionId}/revisions/${saved.revisionId}/export`)
+      expect(exported.ok).toBe(true)
+      const archive = Buffer.from(await exported.arrayBuffer())
+      const importDirectory = await mkdtemp(path.join(tmpdir(), 'nekro-nxt-adapter-import-'))
+      temporaryDirectories.push(importDirectory)
+      const importedRuntime = await NekroRuntime.create({
+        coreDatabasePath: path.join(importDirectory, 'core.sqlite'),
+        sessionDatabasePath: path.join(importDirectory, 'sessions.sqlite'),
+        assetRoot: path.join(importDirectory, 'assets'),
+        extensionDataRoot: path.join(importDirectory, 'extension-data'),
+        extensionCacheRoot: path.join(importDirectory, 'extension-cache'),
+      })
+      await importedRuntime.start()
+      const importContext = new Context()
+      await importContext.plugin(WebServer, { host: '127.0.0.1', port: 0 })
+      const importApi = createNekroHostApi(importContext.webServer, importedRuntime)
+      const importOrigin = `http://127.0.0.1:${importApi.port}`
+      try {
+        const inspectResponse = await fetch(`${importOrigin}/api/extensions/imports/inspect`, {
+          method: 'POST',
+          body: archive,
+        })
+        expect(inspectResponse.ok, await inspectResponse.clone().text()).toBe(true)
+        const inspection = HostApiContracts.inspectExtensionImport.parseResponse(await inspectResponse.json())
+        const commitResponse = await fetch(
+          `${importOrigin}/api/extensions/imports/${encodeURIComponent(inspection.token)}/commit`,
+          {
+            method: 'POST',
+            headers: { 'content-type': 'application/json' },
+            body: '{}',
+          },
+        )
+        expect(commitResponse.ok, await commitResponse.clone().text()).toBe(true)
+        expect(importedRuntime.repository.getExtensionRevisionVerification(saved.revisionId)).toMatchObject({
+          scope: 'host-adapter',
+          origin: { pluginRunId: 'local-runtime-verification' },
+          adapter: {
+            key: 'synthetic-chat',
+            registered: true,
+            started: true,
+            stopped: true,
+            inboundCommitted: true,
+            outboundReceipt: 'sent',
+          },
+          renderedHostSlots: [{ name: 'conversation.message.rich', key: 'synthetic-chat:card' }],
+        })
+        expect(importedRuntime.repository.getHostInstallation(saved.extensionId)).toBeUndefined()
+        const importedInstall = await fetch(`${importOrigin}/api/extensions/${saved.extensionId}/installation`, {
+          method: 'PUT',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ revisionId: saved.revisionId }),
+        })
+        expect(importedInstall.ok, await importedInstall.clone().text()).toBe(true)
+        const importedConnection = await importedRuntime.createConnection({ adapterKey: 'synthetic-chat' })
+        expect(importedRuntime.core.listChannelsByConnection(importedConnection.id)).toEqual([
+          expect.objectContaining({ platformChannelId: 'synthetic-room' }),
+        ])
+      } finally {
+        importApi.dispose()
+        await importContext.fiber.dispose()
+        await importedRuntime.dispose()
+      }
+
       const install = await fetch(`${origin}/api/extensions/${saved.extensionId}/installation`, {
         method: 'PUT',
         headers: { 'content-type': 'application/json' },
@@ -200,9 +274,26 @@ describe('Host Adapter Extension end-to-end', () => {
         expect.arrayContaining([expect.objectContaining({ key: 'synthetic-chat', displayName: '合成聊天平台' })]),
       )
       const connection = await runtime.createConnection({ adapterKey: 'synthetic-chat' })
+      const failingConnection = await runtime.createConnection({
+        adapterKey: 'synthetic-chat',
+        configuration: { failFirstStop: true },
+      })
       expect(runtime.core.listChannelsByConnection(connection.id)).toEqual([
         expect.objectContaining({ platformChannelId: 'synthetic-room' }),
       ])
+
+      const failedUninstall = await fetch(`${origin}/api/extensions/${saved.extensionId}/installation`, {
+        method: 'DELETE',
+      })
+      expect(failedUninstall.ok).toBe(false)
+      expect(await failedUninstall.text()).toContain('安装状态保持不变')
+      expect(runtime.repository.getHostInstallation(saved.extensionId)).toBeDefined()
+      expect(runtime.adapters.get('synthetic-chat')).toBeDefined()
+      expect(runtime.adapterConnectionDiagnostic(connection.id)).toMatchObject({ status: 'connected' })
+      expect(runtime.adapterConnectionDiagnostic(failingConnection.id)).toMatchObject({
+        status: 'failed',
+        message: 'synthetic stop failure',
+      })
 
       const uninstall = await fetch(`${origin}/api/extensions/${saved.extensionId}/installation`, {
         method: 'DELETE',

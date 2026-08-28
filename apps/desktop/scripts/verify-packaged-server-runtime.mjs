@@ -4,6 +4,10 @@ import { createServer } from 'node:net'
 import os from 'node:os'
 import path from 'node:path'
 import { setTimeout as delay } from 'node:timers/promises'
+import {
+  installManagedPluginSmoke,
+  verifyRestoredManagedPluginAndRemove,
+} from '../../../scripts/lib/managed-plugin-smoke.mjs'
 
 const args = process.argv.slice(2)
 const option = (name) => {
@@ -65,22 +69,64 @@ const environment = {
 delete environment['NEKRO_MANAGEMENT_KEY']
 delete environment['NEKRO_DEVELOPMENT_WORKSPACE_ROOT']
 
-const child = spawn(executable, [serverEntry], {
-  cwd: resources,
-  env: environment,
-  stdio: ['ignore', 'pipe', 'pipe'],
-  windowsHide: true,
-})
-child.stdout.on('data', appendOutput)
-child.stderr.on('data', appendOutput)
-const exited = new Promise((resolve, reject) => {
-  child.once('error', reject)
-  child.once('exit', (code, signal) => resolve({ code, signal }))
-})
+const launch = () => {
+  const child = spawn(executable, [serverEntry], {
+    cwd: resources,
+    env: environment,
+    stdio: ['ignore', 'pipe', 'pipe'],
+    windowsHide: true,
+  })
+  child.stdout.on('data', appendOutput)
+  child.stderr.on('data', appendOutput)
+  const exited = new Promise((resolve, reject) => {
+    child.once('error', reject)
+    child.once('exit', (code, signal) => resolve({ code, signal }))
+  })
+  return { child, exited }
+}
 
-const deadline = Date.now() + 60_000
-let ready = false
-let lastError
+const waitUntilReady = async (running) => {
+  const deadline = Date.now() + 60_000
+  let lastError
+  while (Date.now() < deadline) {
+    const result = await Promise.race([
+      running.exited.then(({ code, signal }) => ({ kind: 'exit', code, signal })),
+      globalThis
+        .fetch(`http://127.0.0.1:${port}/health/ready`, { signal: globalThis.AbortSignal.timeout(2_000) })
+        .then(async (response) => ({ kind: 'response', response, body: await response.text() }))
+        .catch((error) => ({ kind: 'request-error', error })),
+    ])
+    if (result.kind === 'exit') {
+      throw new Error(`Desktop Server 在就绪前退出（code ${result.code}, signal ${result.signal ?? 'none'}）。`)
+    }
+    if (result.kind === 'response') {
+      try {
+        const body = JSON.parse(result.body)
+        if (result.response.ok && body?.status === 'ready' && body?.releaseId === releaseId) return
+        lastError = new Error(`就绪响应不匹配：HTTP ${result.response.status} ${result.body}`)
+      } catch (error) {
+        lastError = error
+      }
+    } else {
+      lastError = result.error
+    }
+    await delay(200)
+  }
+  throw new Error('Desktop Server 未能在 60 秒内就绪。', { cause: lastError })
+}
+
+const stop = async (running) => {
+  if (running.child.exitCode === null && running.child.signalCode === null) running.child.kill('SIGTERM')
+  const result = await Promise.race([running.exited, delay(10_000).then(() => ({ timeout: true }))])
+  if ('timeout' in result) {
+    running.child.kill('SIGKILL')
+    throw new Error('Desktop Server 未能在 10 秒内静止关闭。')
+  }
+  if (result.code !== 0) {
+    throw new Error(`Desktop Server 关闭失败（code ${result.code}, signal ${result.signal ?? 'none'}）。`)
+  }
+}
+
 const verifyCredentialPersistence = async () => {
   const response = await globalThis.fetch(`http://127.0.0.1:${port}/api/settings/notifications`, {
     method: 'PUT',
@@ -103,43 +149,24 @@ const verifyCredentialPersistence = async () => {
     throw new Error(`凭据写入验证响应不匹配：${body}`)
   }
 }
+let running = launch()
 try {
-  while (Date.now() < deadline) {
-    const result = await Promise.race([
-      exited.then(({ code, signal }) => ({ kind: 'exit', code, signal })),
-      globalThis
-        .fetch(`http://127.0.0.1:${port}/health/ready`, { signal: globalThis.AbortSignal.timeout(2_000) })
-        .then(async (response) => ({ kind: 'response', response, body: await response.text() }))
-        .catch((error) => ({ kind: 'request-error', error })),
-    ])
-    if (result.kind === 'exit') {
-      throw new Error(`Desktop Server 在就绪前退出（code ${result.code}, signal ${result.signal ?? 'none'}）。`)
-    }
-    if (result.kind === 'response') {
-      try {
-        const body = JSON.parse(result.body)
-        if (result.response.ok && body?.status === 'ready' && body?.releaseId === releaseId) {
-          ready = true
-          break
-        }
-        lastError = new Error(`就绪响应不匹配：HTTP ${result.response.status} ${result.body}`)
-      } catch (error) {
-        lastError = error
-      }
-    } else {
-      lastError = result.error
-    }
-    await delay(200)
-  }
-  if (!ready) throw new Error('Desktop Server 未能在 60 秒内就绪。', { cause: lastError })
+  await waitUntilReady(running)
   await verifyCredentialPersistence()
-  console.log(`[desktop-runtime] 最终打包目录已通过 Server readiness 与凭据持久化验证：${releaseId}`)
+  const managedPlugin = await installManagedPluginSmoke(`http://127.0.0.1:${port}`, dataRoot)
+  await stop(running)
+  running = launch()
+  await waitUntilReady(running)
+  await verifyRestoredManagedPluginAndRemove(`http://127.0.0.1:${port}`, managedPlugin)
+  console.log(
+    `[desktop-runtime] 最终打包目录已通过 Server 就绪、凭据持久化与 DSH 插件安装/恢复/关闭/移除验证：${releaseId}`,
+  )
 } catch (error) {
   const detail = output.join('').trim()
   if (detail) console.error(detail)
   throw error
 } finally {
-  if (child.exitCode === null && child.signalCode === null) child.kill()
-  await Promise.race([exited.catch(() => undefined), delay(5_000)])
+  if (running.child.exitCode === null && running.child.signalCode === null) running.child.kill('SIGTERM')
+  await Promise.race([running.exited.catch(() => undefined), delay(5_000)])
   await rm(dataRoot, { recursive: true, force: true })
 }

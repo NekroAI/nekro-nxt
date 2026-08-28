@@ -14,11 +14,13 @@
     { "path": "../../packages/extension-runtime" },
     { "path": "../../packages/extension-sdk" },
     { "path": "../../packages/channel-runtime" },
+    { "path": "../../packages/client-migrations" },
     { "path": "../../packages/adapter-qq-openclaw" },
     { "path": "../../packages/adapter-onebot-11" },
     { "path": "../../packages/adapter-wecom-ai-bot" },
     { "path": "../../packages/adapter-sdk" },
     { "path": "../../packages/adapter-web" },
-    { "path": "../../packages/storage-sqlite" }
+    { "path": "../../packages/storage-sqlite" },
+    { "path": "../../packages/test-harness" }
   ]
 }

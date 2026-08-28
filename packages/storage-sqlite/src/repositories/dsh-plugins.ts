@@ -5,10 +5,21 @@ import type {
   DshPluginEntryRecord,
   DshPluginPackageId,
   DshPluginPackageRecord,
+  HostPageContribution,
+  HostUiPageInstanceId,
 } from '@nekro-nxt/contracts'
-import { and, asc, eq } from 'drizzle-orm'
+import type { HostUiPermissionGrant } from '@nekro-nxt/extension-runtime'
+import { and, asc, eq, notInArray } from 'drizzle-orm'
 import type { DrizzleCoreDatabase } from '../database.js'
-import { dshPluginActivations, dshPluginDiagnostics, dshPluginEntries, dshPluginPackages } from '../schema.js'
+import {
+  dshPluginActivations,
+  dshPluginDiagnostics,
+  dshPluginEntries,
+  dshPluginPackages,
+  hostUiPageEntries,
+  hostUiPagePreferences,
+  hostUiPermissionGrants,
+} from '../schema.js'
 import {
   DshPluginActivationRowSchema,
   DshPluginDiagnosticRowSchema,
@@ -35,6 +46,23 @@ export interface DshPluginRepository {
   listDshPluginActivations(entryId?: DshPluginEntryId): readonly DshPluginActivationRecord[]
   upsertDshPluginActivation(activation: DshPluginActivationRecord): void
   deleteDshPluginActivation(entryId: DshPluginEntryId, targetKey: string): void
+  commitDshPluginActivationState(input: {
+    readonly entry: DshPluginEntryRecord
+    readonly activation: DshPluginActivationRecord
+    readonly hostUi?: {
+      readonly grant: HostUiPermissionGrant
+      readonly artifactDigest: string
+      readonly pages: readonly HostPageContribution[]
+      readonly clientBuildKey: string
+      readonly now: number
+      readonly nextPageInstanceId: () => HostUiPageInstanceId
+    }
+  }): void
+  deleteDshPluginActivationState(input: {
+    readonly entryId: DshPluginEntryId
+    readonly targetKey: string
+    readonly now: number
+  }): void
   getDshPluginDiagnostic(entryId: DshPluginEntryId, targetKey: string): DshPluginDiagnosticRecord | undefined
   upsertDshPluginDiagnostic(diagnostic: DshPluginDiagnosticRecord): void
 }
@@ -179,6 +207,172 @@ export const createDshPluginRepository = (database: DrizzleCoreDatabase): DshPlu
       .delete(dshPluginActivations)
       .where(and(eq(dshPluginActivations.entryId, entryId), eq(dshPluginActivations.targetKey, targetKey)))
       .run()
+  },
+  commitDshPluginActivationState: (input) => {
+    database.transaction(
+      (transaction) => {
+        transaction
+          .update(dshPluginEntries)
+          .set({ selectedScope: input.entry.selectedScope ?? null, config: input.entry.config })
+          .where(eq(dshPluginEntries.id, input.entry.id))
+          .run()
+        transaction
+          .insert(dshPluginActivations)
+          .values({ ...input.activation, agentId: input.activation.agentId ?? null })
+          .onConflictDoUpdate({
+            target: [dshPluginActivations.entryId, dshPluginActivations.targetKey],
+            set: {
+              target: input.activation.target,
+              agentId: input.activation.agentId ?? null,
+              activatedAt: input.activation.activatedAt,
+            },
+          })
+          .run()
+        if (input.activation.target !== 'host') return
+
+        const existing = transaction
+          .select()
+          .from(hostUiPageEntries)
+          .where(and(eq(hostUiPageEntries.ownerKind, 'dsh-plugin'), eq(hostUiPageEntries.ownerId, input.entry.id)))
+          .all()
+        const byEntryId = new Map(existing.map((row) => [row.entryId, row] as const))
+        let directoryChanged = false
+        if (input.hostUi) {
+          transaction
+            .insert(hostUiPermissionGrants)
+            .values(input.hostUi.grant)
+            .onConflictDoUpdate({
+              target: hostUiPermissionGrants.ownerKey,
+              set: {
+                artifactDigest: input.hostUi.grant.artifactDigest,
+                permissionDigest: input.hostUi.grant.permissionDigest,
+                declaration: input.hostUi.grant.declaration,
+                approvedAt: input.hostUi.grant.approvedAt,
+              },
+            })
+            .run()
+          let nextSortOrder =
+            (transaction.select().from(hostUiPageEntries).orderBy(asc(hostUiPageEntries.sortOrder)).all().at(-1)
+              ?.sortOrder ?? -1) + 1
+          for (const page of input.hostUi.pages) {
+            const previous = byEntryId.get(page.entryId)
+            transaction
+              .insert(hostUiPageEntries)
+              .values({
+                pageInstanceId: previous?.pageInstanceId ?? input.hostUi.nextPageInstanceId(),
+                ownerKind: 'dsh-plugin',
+                ownerId: input.entry.id,
+                artifactId: input.hostUi.artifactDigest,
+                entryId: page.entryId,
+                title: page.title,
+                description: page.description ?? null,
+                icon: page.icon,
+                objectPane: page.objectPane,
+                startPath: page.startPath,
+                visible: previous?.visible ?? true,
+                sortOrder: previous?.sortOrder ?? nextSortOrder++,
+                clientBuildKey: input.hostUi.clientBuildKey,
+                createdAt: previous?.createdAt ?? input.hostUi.now,
+                updatedAt: input.hostUi.now,
+              })
+              .onConflictDoUpdate({
+                target: [hostUiPageEntries.ownerKind, hostUiPageEntries.ownerId, hostUiPageEntries.entryId],
+                set: {
+                  artifactId: input.hostUi.artifactDigest,
+                  title: page.title,
+                  description: page.description ?? null,
+                  icon: page.icon,
+                  objectPane: page.objectPane,
+                  startPath: page.startPath,
+                  clientBuildKey: input.hostUi.clientBuildKey,
+                  updatedAt: input.hostUi.now,
+                },
+              })
+              .run()
+          }
+          const retainedIds = input.hostUi.pages.map(({ entryId }) => entryId)
+          transaction
+            .delete(hostUiPageEntries)
+            .where(
+              retainedIds.length === 0
+                ? and(eq(hostUiPageEntries.ownerKind, 'dsh-plugin'), eq(hostUiPageEntries.ownerId, input.entry.id))
+                : and(
+                    eq(hostUiPageEntries.ownerKind, 'dsh-plugin'),
+                    eq(hostUiPageEntries.ownerId, input.entry.id),
+                    notInArray(hostUiPageEntries.entryId, retainedIds),
+                  ),
+            )
+            .run()
+          directoryChanged =
+            existing.length !== input.hostUi.pages.length ||
+            input.hostUi.pages.some((page) => !byEntryId.has(page.entryId))
+        } else {
+          const removed = transaction
+            .delete(hostUiPageEntries)
+            .where(and(eq(hostUiPageEntries.ownerKind, 'dsh-plugin'), eq(hostUiPageEntries.ownerId, input.entry.id)))
+            .run()
+          directoryChanged = removed.changes > 0
+          transaction
+            .delete(hostUiPermissionGrants)
+            .where(eq(hostUiPermissionGrants.ownerKey, `dsh:${input.entry.id}`))
+            .run()
+        }
+        if (directoryChanged) {
+          const now = input.hostUi?.now ?? input.activation.activatedAt
+          const preference = transaction
+            .select()
+            .from(hostUiPagePreferences)
+            .where(eq(hostUiPagePreferences.id, 1))
+            .get()
+          transaction
+            .insert(hostUiPagePreferences)
+            .values({ id: 1, revision: (preference?.revision ?? 0) + 1, updatedAt: now })
+            .onConflictDoUpdate({
+              target: hostUiPagePreferences.id,
+              set: { revision: (preference?.revision ?? 0) + 1, updatedAt: now },
+            })
+            .run()
+        }
+      },
+      { behavior: 'immediate' },
+    )
+  },
+  deleteDshPluginActivationState: (input) => {
+    database.transaction(
+      (transaction) => {
+        transaction
+          .delete(dshPluginActivations)
+          .where(
+            and(eq(dshPluginActivations.entryId, input.entryId), eq(dshPluginActivations.targetKey, input.targetKey)),
+          )
+          .run()
+        if (input.targetKey !== 'host') return
+        const removed = transaction
+          .delete(hostUiPageEntries)
+          .where(and(eq(hostUiPageEntries.ownerKind, 'dsh-plugin'), eq(hostUiPageEntries.ownerId, input.entryId)))
+          .run()
+        transaction
+          .delete(hostUiPermissionGrants)
+          .where(eq(hostUiPermissionGrants.ownerKey, `dsh:${input.entryId}`))
+          .run()
+        if (removed.changes > 0) {
+          const preference = transaction
+            .select()
+            .from(hostUiPagePreferences)
+            .where(eq(hostUiPagePreferences.id, 1))
+            .get()
+          transaction
+            .insert(hostUiPagePreferences)
+            .values({ id: 1, revision: (preference?.revision ?? 0) + 1, updatedAt: input.now })
+            .onConflictDoUpdate({
+              target: hostUiPagePreferences.id,
+              set: { revision: (preference?.revision ?? 0) + 1, updatedAt: input.now },
+            })
+            .run()
+        }
+      },
+      { behavior: 'immediate' },
+    )
   },
   getDshPluginDiagnostic: (entryId, targetKey) => {
     const row = database

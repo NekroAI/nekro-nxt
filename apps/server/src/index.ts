@@ -130,7 +130,6 @@ import {
   type ConnectionId,
   type DshCredentialView,
   type DshPluginActivationRecord,
-  type DshPluginActivationScope,
   type DshPluginCatalogEntry,
   type DshPluginEntryId,
   type DshPluginPackageId,
@@ -2754,7 +2753,11 @@ export class DshHostRuntime implements AgentSessionDriver, ExtensionActivationHo
             listAgentSessions: (agentId) =>
               [...this.#handles.entries()]
                 .filter(([sessionId]) => this.#productAgentBySession.get(sessionId) === agentId)
-                .map(([sessionId, handle]) => ({ sessionId, context: handle.agent.ctx })),
+                .map(([sessionId, handle]) => ({
+                  sessionId,
+                  context: handle.agent.ctx,
+                  waitUntilSafe: () => handle.agent.whenIdle(),
+                })),
           })
     const compaction = context.compaction
     if (!(compaction instanceof NekroNxtCompactionEngine)) {
@@ -3082,12 +3085,9 @@ export class DshHostRuntime implements AgentSessionDriver, ExtensionActivationHo
     })
   }
 
-  activateInstalledDshPlugin(input: {
-    readonly entryId: DshPluginEntryId
-    readonly target: DshPluginActivationScope
-    readonly agentId?: AgentId
-    readonly config: JsonValue
-  }): Promise<DshPluginActivationRecord> {
+  activateInstalledDshPlugin(
+    input: Parameters<DshPluginLifecycleCoordinator['activate']>[0],
+  ): Promise<DshPluginActivationRecord> {
     this.#assertActive()
     if (!this.#dshPluginLifecycle) return Promise.reject(new Error('DSH 用户插件生命周期未配置。'))
     return this.#dshPluginLifecycle.activate(input)

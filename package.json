@@ -42,7 +42,7 @@
     "test:journey": "pnpm --filter @nekro-nxt/web build && pnpm --filter @nekro-nxt/server build && playwright test",
     "test:coverage": "vitest run --coverage --exclude apps/web/tests/app.spec.tsx --exclude apps/web/tests/ui-kit-browser.spec.tsx --exclude apps/desktop/tests/instance-overlay.spec.ts",
     "smoke:better-sqlite3": "node scripts/smoke-better-sqlite3.mjs",
-    "verify:product": "pnpm check && pnpm test && pnpm build && playwright test",
+    "verify:product": "pnpm check && pnpm test && pnpm test:coverage && pnpm build && playwright test",
     "typecheck": "tsc -b && tsc -p tsconfig.lint.json && tsc -p tsconfig.scripts.json"
   },
   "devDependencies": {
@@ -55,6 +55,7 @@
     "eslint": "9.39.5",
     "imagetracerjs": "^1.2.6",
     "prettier": "3.9.6",
+    "tar": "7.5.22",
     "tsdown": "0.22.2",
     "tsx": "4.22.4",
     "typescript": "6.0.3",

@@ -582,6 +582,7 @@ export class ChannelRuntime {
   readonly #idleRolloverMs: number | false
   readonly #adapterState: AdapterRuntimeStateStore | undefined
   readonly #lanes = new Map<string, Promise<void>>()
+  readonly #bindingTransitions = new Map<ChannelId, Promise<void>>()
   readonly #factListeners = new Set<(fact: ChannelFact) => void>()
   readonly #feedbackLeases = new Map<string, ProcessingFeedbackLease>()
   readonly #feedbackDisabledConnections = new Set<ConnectionId>()
@@ -665,6 +666,33 @@ export class ChannelRuntime {
     for (const lease of this.#feedbackLeases.values())
       this.#trackFeedbackTask(this.#cleanupFeedbackLease(lease.id, 'shutdown'))
     await Promise.allSettled([...this.#feedbackTasks])
+  }
+
+  /** Waits for all current Session work on the supplied Connections to reach an idle checkpoint. */
+  async waitUntilConnectionsSafe(connectionIds: readonly ConnectionId[]): Promise<void> {
+    const seen = new Set<string>()
+    const waits = connectionIds.flatMap((connectionId) =>
+      this.#coreRepository.listChannelIdsByConnection(connectionId).flatMap((channelId) => {
+        const binding = this.#coreRepository.getBinding(channelId)
+        if (!binding) return []
+        const key = `${channelId}\u0000${binding.agentId}`
+        if (seen.has(key)) return []
+        seen.add(key)
+        return [
+          this.#withLane(channelId, binding.agentId, async () => {
+            const episode = this.#runtimeRepository.getActiveEpisode(channelId, binding.agentId)
+            if (episode?.dshSessionId !== undefined) {
+              await (this.#sessionDriver.whenIdle?.(episode.dshSessionId) ?? Promise.resolve())
+            }
+          }),
+        ]
+      }),
+    )
+    const outcomes = await Promise.allSettled(waits)
+    const failures = outcomes
+      .filter((outcome): outcome is PromiseRejectedResult => outcome.status === 'rejected')
+      .map((outcome): unknown => outcome.reason)
+    if (failures.length) throw new AggregateError(failures, 'Adapter 连接无法进入安全间隙。')
   }
 
   async retractChannelMessage(input: {
@@ -823,75 +851,81 @@ export class ChannelRuntime {
     readonly processingFeedback?: BindingRecord['processingFeedback']
     readonly eventTriggers?: BindingRecord['eventTriggers']
   }): Promise<BindingRecord> {
-    const current = this.#coreRepository.getBinding(input.channelId)
-    const laneAgentId = current?.agentId ?? input.agentId
-    return this.#withLane(input.channelId, laneAgentId, async () => {
-      if (current !== undefined && current.agentId !== input.agentId) {
-        const episode = this.#runtimeRepository.getActiveEpisode(input.channelId, current.agentId)
-        if (episode?.dshSessionId !== undefined) {
-          this.#feedbackEndReasons.set(episode.id, 'cancelled')
-          await this.#sessionDriver.cancelSession(episode.dshSessionId, 'binding-replaced')
-          await this.#cleanupEpisodeFeedback(episode.id)
-          this.#runtimeRepository.closeEpisode(
-            episode.id,
-            'binding-replaced',
-            episode.lastAdmittedEventId ?? episode.openedAtEventId,
-            this.#timestamp(),
-          )
+    return this.#withBindingTransition(input.channelId, async () => {
+      const current = this.#coreRepository.getBinding(input.channelId)
+      const laneAgentId = current?.agentId ?? input.agentId
+      return this.#withLane(input.channelId, laneAgentId, async () => {
+        if (current !== undefined && current.agentId !== input.agentId) {
+          const episode = this.#runtimeRepository.getActiveEpisode(input.channelId, current.agentId)
+          if (episode?.dshSessionId !== undefined) {
+            this.#feedbackEndReasons.set(episode.id, 'cancelled')
+            await this.#sessionDriver.cancelSession(episode.dshSessionId, 'binding-replaced')
+            await this.#cleanupEpisodeFeedback(episode.id)
+            this.#runtimeRepository.closeEpisode(
+              episode.id,
+              'binding-replaced',
+              episode.lastAdmittedEventId ?? episode.openedAtEventId,
+              this.#timestamp(),
+            )
+          }
         }
-      }
-      return this.#core.replaceBinding({
-        ...input,
-        processingFeedback: input.processingFeedback ?? current?.processingFeedback ?? 'auto',
-        eventTriggers: input.eventTriggers ?? current?.eventTriggers ?? [],
+        return this.#core.replaceBinding({
+          ...input,
+          processingFeedback: input.processingFeedback ?? current?.processingFeedback ?? 'auto',
+          eventTriggers: input.eventTriggers ?? current?.eventTriggers ?? [],
+        })
       })
     })
   }
 
   async clearBinding(channelId: ChannelId): Promise<void> {
-    const current = this.#coreRepository.getBinding(channelId)
-    if (!current) return
-    await this.#withLane(channelId, current.agentId, async () => {
-      const episode = this.#runtimeRepository.getActiveEpisode(channelId, current.agentId)
-      if (episode?.status === 'active' && episode.dshSessionId !== undefined) {
-        this.#feedbackEndReasons.set(episode.id, 'cancelled')
-        await this.#sessionDriver.cancelSession(episode.dshSessionId, 'stopped')
-        await this.#cleanupEpisodeFeedback(episode.id)
-        this.#runtimeRepository.closeEpisode(
-          episode.id,
-          'stopped',
-          episode.lastAdmittedEventId ?? episode.openedAtEventId,
-          this.#timestamp(),
-        )
-      }
-      this.#core.clearBinding(channelId)
+    await this.#withBindingTransition(channelId, async () => {
+      const current = this.#coreRepository.getBinding(channelId)
+      if (!current) return
+      await this.#withLane(channelId, current.agentId, async () => {
+        const episode = this.#runtimeRepository.getActiveEpisode(channelId, current.agentId)
+        if (episode?.status === 'active' && episode.dshSessionId !== undefined) {
+          this.#feedbackEndReasons.set(episode.id, 'cancelled')
+          await this.#sessionDriver.cancelSession(episode.dshSessionId, 'stopped')
+          await this.#cleanupEpisodeFeedback(episode.id)
+          this.#runtimeRepository.closeEpisode(
+            episode.id,
+            'stopped',
+            episode.lastAdmittedEventId ?? episode.openedAtEventId,
+            this.#timestamp(),
+          )
+        }
+        this.#core.clearBinding(channelId)
+      })
     })
   }
 
   /** Stops the live lane before removing a Channel from active product state. */
   async deleteChannel(channelId: ChannelId): Promise<void> {
-    if (!this.#coreRepository.getChannel(channelId)) throw new Error(`Unknown channel: ${channelId}`)
-    const current = this.#coreRepository.getBinding(channelId)
-    if (!current) {
-      this.#core.deleteChannel(channelId)
-      return
-    }
-    await this.#withLane(channelId, current.agentId, async () => {
-      const episode = this.#runtimeRepository.getActiveEpisode(channelId, current.agentId)
-      if (episode?.dshSessionId !== undefined) {
-        this.#feedbackEndReasons.set(episode.id, 'cancelled')
-        await this.#sessionDriver.cancelSession(episode.dshSessionId, 'channel-deleted')
-        await this.#cleanupEpisodeFeedback(episode.id)
+    await this.#withBindingTransition(channelId, async () => {
+      if (!this.#coreRepository.getChannel(channelId)) throw new Error(`Unknown channel: ${channelId}`)
+      const current = this.#coreRepository.getBinding(channelId)
+      if (!current) {
+        this.#core.deleteChannel(channelId)
+        return
       }
-      if (episode !== undefined) {
-        this.#runtimeRepository.closeEpisode(
-          episode.id,
-          'channel-deleted',
-          episode.lastAdmittedEventId ?? episode.openedAtEventId,
-          this.#timestamp(),
-        )
-      }
-      this.#core.deleteChannel(channelId)
+      await this.#withLane(channelId, current.agentId, async () => {
+        const episode = this.#runtimeRepository.getActiveEpisode(channelId, current.agentId)
+        if (episode?.dshSessionId !== undefined) {
+          this.#feedbackEndReasons.set(episode.id, 'cancelled')
+          await this.#sessionDriver.cancelSession(episode.dshSessionId, 'channel-deleted')
+          await this.#cleanupEpisodeFeedback(episode.id)
+        }
+        if (episode !== undefined) {
+          this.#runtimeRepository.closeEpisode(
+            episode.id,
+            'channel-deleted',
+            episode.lastAdmittedEventId ?? episode.openedAtEventId,
+            this.#timestamp(),
+          )
+        }
+        this.#core.deleteChannel(channelId)
+      })
     })
   }
 
@@ -1971,6 +2005,21 @@ export class ChannelRuntime {
     } finally {
       release()
       if (this.#lanes.get(key) === tail) this.#lanes.delete(key)
+    }
+  }
+
+  async #withBindingTransition<T>(channelId: ChannelId, operation: () => Promise<T>): Promise<T> {
+    const previous = this.#bindingTransitions.get(channelId) ?? Promise.resolve()
+    const result = previous.catch(() => undefined).then(operation)
+    const tail = result.then(
+      () => undefined,
+      () => undefined,
+    )
+    this.#bindingTransitions.set(channelId, tail)
+    try {
+      return await result
+    } finally {
+      if (this.#bindingTransitions.get(channelId) === tail) this.#bindingTransitions.delete(channelId)
     }
   }
 

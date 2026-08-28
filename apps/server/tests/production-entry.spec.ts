@@ -1,5 +1,5 @@
 import { openMigratedCoreDatabase } from '@nekro-nxt/storage-sqlite'
-import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, readdir, rm, stat, writeFile } from 'node:fs/promises'
 import { createRequire } from 'node:module'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
@@ -13,6 +13,10 @@ import {
   startNekroServer,
 } from '../src/main.js'
 import { DEEPSEEK_HARNESS_VERSION } from '../src/dsh-version.js'
+import {
+  installManagedPluginSmoke,
+  verifyRestoredManagedPluginAndRemove,
+} from '../../../scripts/lib/managed-plugin-smoke.mjs'
 
 const temporaryDirectories: string[] = []
 
@@ -87,10 +91,68 @@ describe('Server production entry', () => {
 
       const rejected = await fetch(`${origin}/health/ready`, { method: 'POST' })
       expect(rejected.status).toBe(405)
+      const journalName = (await readdir(path.join(dataRoot, 'backups'))).find(
+        (name) => name.startsWith('upgrade-') && name.endsWith('.json'),
+      )
+      expect(journalName).toBeDefined()
+      expect(JSON.parse(await readFile(path.join(dataRoot, 'backups', journalName!), 'utf8'))).toMatchObject({
+        format: 'nxt.server-upgrade-journal',
+        releaseId: 'release-health-test',
+        status: 'ready',
+        steps: {
+          'storage-owners-open-v1': { status: 'completed', attempts: 1 },
+          'runtime-recovery-v1': { status: 'completed', attempts: 1 },
+        },
+      })
+      await expect(stat(path.join(dataRoot, 'backups', 'upgrade.lock'))).rejects.toThrow()
     } finally {
       await handle.stop()
     }
   })
+
+  it('refuses to start after an upgrade backup failure and leaves a recovery journal', async () => {
+    const directory = await createTemporaryRoot()
+    const dataRoot = path.join(directory, 'data')
+    const distIndex = path.join(directory, 'web', 'index.html')
+    await mkdir(path.dirname(distIndex), { recursive: true })
+    await mkdir(dataRoot, { recursive: true })
+    await writeFile(distIndex, '<div id="root"></div>', 'utf8')
+    await writeFile(path.join(dataRoot, 'core.sqlite'), 'not a sqlite database', 'utf8')
+
+    await expect(startNekroServer({ dataRoot, distIndex, releaseId: 'release-upgrade-failure-test' })).rejects.toThrow(
+      'Host 升级失败',
+    )
+    expect(await readFile(path.join(dataRoot, 'core.sqlite'), 'utf8')).toBe('not a sqlite database')
+    const journalName = (await readdir(path.join(dataRoot, 'backups'))).find(
+      (name) => name.startsWith('upgrade-') && name.endsWith('.json'),
+    )
+    expect(journalName).toBeDefined()
+    const journal: unknown = JSON.parse(await readFile(path.join(dataRoot, 'backups', journalName!), 'utf8'))
+    expect(journal).toMatchObject({
+      releaseId: 'release-upgrade-failure-test',
+      status: 'recovery',
+    })
+    expect(journal).toHaveProperty('errorSummary')
+    await expect(stat(path.join(dataRoot, 'backups', 'upgrade.lock'))).rejects.toThrow()
+  })
+
+  it('installs, restores, disables and removes a managed DSH plugin through the production entry', async () => {
+    const directory = await createTemporaryRoot()
+    const dataRoot = path.join(directory, 'data')
+    const distIndex = path.join(directory, 'web', 'index.html')
+    await mkdir(path.dirname(distIndex), { recursive: true })
+    await writeFile(distIndex, '<div id="root"></div>', 'utf8')
+    const first = await startNekroServer({ dataRoot, distIndex, releaseId: 'release-managed-plugin-smoke' })
+    const state = await installManagedPluginSmoke(`http://127.0.0.1:${first.port}`, directory)
+    await first.stop()
+
+    const restored = await startNekroServer({ dataRoot, distIndex, releaseId: 'release-managed-plugin-smoke' })
+    try {
+      await verifyRestoredManagedPluginAndRemove(`http://127.0.0.1:${restored.port}`, state)
+    } finally {
+      await restored.stop()
+    }
+  }, 30_000)
 
   it('backs up only existing SQLite lanes once per release before opening the runtime', async () => {
     const dataRoot = path.join(await createTemporaryRoot(), 'data')

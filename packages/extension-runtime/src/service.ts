@@ -7,11 +7,26 @@ import type { ExtensionSourceStore } from './source-store.js'
 import type {
   DynamicPackageSnapshot,
   ExtensionBuildArtifact,
+  MaterializedExtensionRevision,
   ExtensionRepository,
   ExtensionRevisionVerification,
   LocalExtension,
   Revision,
 } from './types.js'
+
+export interface ImportedRevisionVerificationInput {
+  readonly extension: LocalExtension
+  readonly revision: Revision
+  readonly materialized: MaterializedExtensionRevision
+  readonly artifact: ExtensionBuildArtifact
+  readonly dshVersion: string
+}
+
+export type ImportedRevisionVerifier = (
+  input: ImportedRevisionVerificationInput,
+) => Promise<
+  Omit<ExtensionRevisionVerification, 'revisionId' | 'verifiedAt' | 'hostBuild' | 'clientBuild' | 'dshVersion'>
+>
 
 const slugSchema = z
   .string()
@@ -29,6 +44,7 @@ export class ExtensionService {
   readonly #now: () => number
   readonly #nextUlid: () => string
   readonly #builder: ExtensionBuilder | undefined
+  readonly #importVerifier: ImportedRevisionVerifier | undefined
 
   constructor(
     repository: ExtensionRepository,
@@ -37,6 +53,7 @@ export class ExtensionService {
       readonly now?: () => number
       readonly nextUlid?: () => string
       readonly builder?: ExtensionBuilder
+      readonly importVerifier?: ImportedRevisionVerifier
     } = {},
   ) {
     this.#repository = repository
@@ -44,6 +61,7 @@ export class ExtensionService {
     this.#now = options.now ?? Date.now
     this.#nextUlid = options.nextUlid ?? monotonicFactory()
     this.#builder = options.builder
+    this.#importVerifier = options.importVerifier
   }
 
   async saveDynamicPackage(input: {
@@ -226,33 +244,26 @@ export class ExtensionService {
       contentDigest: revision.contentDigest,
       sourceDirectory: this.#sources.revisionSourceDirectory(extension.id, revision.id),
     })
-    const verification: ExtensionRevisionVerification | undefined =
-      'schemaVersion' in materialized.manifest && materialized.manifest.schemaVersion === 4
-        ? {
-            revisionId: revision.id,
-            dshVersion: input.dshVersion ?? 'unknown',
-            contractVersion: 'nekro-nxt-extension-v3',
-            scope: 'host-ui',
-            origin: {
-              episodeId: 'import',
-              pluginId: 'import',
-              packageId: 'import',
-              pluginRunId: 'local-build',
-            },
-            verifiedAt: now,
-            hostBuild: { built: artifact.hostEntry !== undefined, buildKey: artifact.buildKey },
-            clientBuild: { built: artifact.clientEntry !== undefined, buildKey: artifact.buildKey },
-            toolInvocations: [],
-            rpcMethods: [],
-            renderedSlots: [],
-            renderedPages: materialized.manifest.contributions,
-            permissions: materialized.manifest.permissions,
-          }
-        : undefined
+    if (!this.#importVerifier) throw new Error('导入扩展需要配置本机 Runtime 验证器。')
+    const verified = await this.#importVerifier({
+      extension,
+      revision,
+      materialized,
+      artifact,
+      dshVersion: input.dshVersion ?? 'unknown',
+    })
+    const verification: ExtensionRevisionVerification = {
+      ...verified,
+      revisionId: revision.id,
+      dshVersion: input.dshVersion ?? 'unknown',
+      verifiedAt: now,
+      hostBuild: { built: artifact.hostEntry !== undefined, buildKey: artifact.buildKey },
+      clientBuild: { built: artifact.clientEntry !== undefined, buildKey: artifact.buildKey },
+    }
     this.#repository.saveExtensionRevision({
       extension,
       revision,
-      ...(verification === undefined ? {} : { verification }),
+      verification,
     })
     return { extension, revision, idempotent: false }
   }

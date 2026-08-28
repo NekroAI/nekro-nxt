@@ -4,7 +4,7 @@
 
 人设 Revision 的权威内容是 `PromptDocumentV1`。无引用时 Host 继续注入原始纯文本；存在平台用户、频道或扩展引用时，Host 解析当前可用状态，使用转义后的 `<nxt-persona-document>` 内联标记，并先注入固定引用协议。展示名称和扩展描述始终作为不可信数据，引用不扩大权限、频道访问或工具目录。
 
-`NekroRuntime` 是生产组合根：它拥有 Core SQLite、Channel Runtime、Extension 恢复、本地凭据目录、统一 `AdapterRegistry`、Connection Runtime Map 和 `HostExtensionInstallationCoordinator`。四个内置 Adapter 与动态安装 Revision 走同一创建、恢复、测试和停止路径；Secret 只由 Host 凭据存储解析，Core 只保存引用。启动顺序是内置 Registry → Host Installation → Connection → Agent Activation，关闭时反向撤销并等待静止。
+`NekroRuntime` 是生产组合根：它拥有 Core SQLite、Channel Runtime、Extension 恢复、本地凭据目录、统一 `AdapterRegistry`、Connection Runtime Map 和 `HostExtensionInstallationCoordinator`。四个内置 Adapter 与动态安装 Revision 走同一创建、恢复、测试和停止路径；Secret 只由 Host 凭据存储解析，Core 只保存引用。Adapter Revision 切换会暂停该 key 的新入站，等待关联 Session 进入安全间隙，再停止全部 Connection Runtime；任一 `stop()` 失败会聚合上抛并恢复已停止的连接，不提交安装变化。启动顺序是内置 Registry → Host Installation → Connection → Agent Activation，关闭时反向撤销并等待静止。
 
 Host Adapter 产物先在候选 Registry 执行 factory，实际 key、API 版本和 descriptor digest 与验证证据一致后才进入产品 Registry。安装、更新、回滚和卸载通过 `/api/extensions/:extensionId/installation` 提交；网络不通或凭据失效形成 Connection 诊断。全局 Adapter Client Runtime 接受 Catalog 声明的富消息、连接创建/状态/测试和频道检查器 Slot；富消息 id 使用 `<adapterKey>:<kind>`，其他 Adapter Slot id 等于 `adapterKey`。带 `host-page` 的 Adapter Revision 同时进入 Host UI 页面目录。
 
@@ -16,7 +16,7 @@ Host UI 页面由独立 Runtime 承载。页面实例、显隐、跨扩展顺序
 
 持久 Extension Host factory 每个 Activation 执行一次并拥有 RPC；返回的 Cordis Plugin 只负责向该智能体的每个 Session 挂载 Tool Fiber。Client Artifact、Activation RPC 和最近一次加载诊断分别通过 Revision 精确路由；stale build、错误智能体和已停用 Revision 都被拒绝，Client 失败不回滚 Host Tool。
 
-`NekroRuntime.create()` 在挂载 DSH Session Provider 前验证 `sessions.sqlite` 所有权。schema 17 正常使用；DSH 0.1.0-rc.6 的 schema 15 先以 SQLite backup 归档到 `dsh/session-archives/<UTC>-schema15/`，再以 `incompatible-session-storage` 关闭旧 Episode 并释放未完成 Admission，由 rc.2 创建全新 schema 17 会话。归档含 SHA-256、版本与原路径，未知或外部数据库拒绝启动，NekroNXT 不修改 DSH 私有表也不自动删除归档。
+生产入口在创建 `NekroRuntime` 前通过共享 `HostUpgradeCoordinator` 获取 `backups/upgrade.lock`，完成 preflight 和 Release 双 SQLite 备份，再以持久 journal 记录存储所有者打开与 Runtime 冷启动恢复；任一步失败都进入 `recovery` 并阻止 HTTP 就绪。`NekroRuntime.create()` 在挂载 DSH Session Provider 前验证 `sessions.sqlite` 所有权。schema 17 正常使用；DSH 0.1.0-rc.6 的 schema 15 先以 SQLite backup 归档到 `dsh/session-archives/<UTC>-schema15/`，再以 `incompatible-session-storage` 关闭旧 Episode 并释放未完成 Admission，由 rc.2 创建全新 schema 17 会话。归档含 SHA-256、版本与原路径，未知或外部数据库拒绝启动，NekroNXT 不修改 DSH 私有表也不自动删除归档。
 
 每个根 Session 通过常驻系统提示和 `nekro_nxt_channel_context` 获得 Host 权威的 Channel/Episode 身份；发送、历史、Asset 与该只读工具都绑定当前频道。Episode handoff 只总结该 Episode 已准入的 Channel Event 与自身 Outbound，上一份派生 handoff、频道原文和智能体旧出站分区标注；最近 12 条频道原文仍作为独立恢复窗口注入。摘要请求不设置 `maxTokens`、使用 180 秒边界，任何摘要失败都降级且不阻断 rollover。
 
@@ -36,9 +36,9 @@ DSH 0.1.1-rc.2 的 `frontend-static` 只服务真实文件和明确的 index 路
 
 DSH 0.1.1-rc.2 的 `redactSecrets` 尚不能证明 union、intersect、transform、lazy 中 Secret 的线安全，序列化 schema 也可能携带 Secret default。因此 Server 在 descriptor 离开 Host 前做 fail-closed 检查：发现不受 0.1.1-rc.2 redactor 覆盖的 Secret 或 Secret default 时，不向 Web 暴露该 namespace，也拒绝通用 mutation；这不是提示词或表单层防护。待上游提供完备 `describeForWire()` 后再通过兼容 fixture 收敛此包装边界。
 
-用户 DSH 插件使用独立受管项目安装到 `dsh/plugin-packages/<packageInstallId>/project/`，每个精确版本拥有自己的 lockfile 和 `node_modules`。Server 通过随应用交付的固定 pnpm CLI 和 `process.execPath` 安装，不调用 shell，也不依赖系统 Node/pnpm。安装先使用 `--ignore-scripts`，检测 blocked builds 后只执行用户逐项批准的依赖；批准绑定精确插件版本和 lockfile 摘要。staging 校验成功后原子提交，进程重启清理未提交 staging。
+用户 DSH 插件使用独立受管项目安装到 `dsh/plugin-packages/<packageInstallId>/project/`，每个精确版本拥有自己的 lockfile 和 `node_modules`。Server 通过随应用交付的固定 pnpm CLI 和 `process.execPath` 安装，不调用 shell，也不依赖系统 Node/pnpm。安装先使用 `--ignore-scripts`，只有 pnpm 实际报告且静态检查确认的 blocked build 才要求逐项批准；批准绑定精确插件版本和 lockfile 摘要。检查必须证明每个 Bundle 入口能从受管项目解析为普通文件，凭证十分钟失效并清理 staging。staging 校验成功后原子提交；进程重启清理未提交 staging，并把数据库没有对应安装事实的正式目录移入 `plugin-trash/`，不直接删除可能可恢复的包。
 
-生产 `DshHostRuntime` 同时拥有 Host Loader 和每个智能体 Session 的 Agent Loader。普通入口同一时刻只能使用一种作用域；Bundle 使用公开 `composeEntries()` 展开后逐入口配置。Loader 的 create/update/remove、`await()` 和官方 Inventory 决定真实结果；数据库 Activation 只在全部目标 Loader 成功后提交，失败时恢复旧挂载。冷启动失败保留启用意图并写 `restore-failed`。移除先关闭包下所有 Activation，任何 dispose 失败都会保留安装记录和目录。
+生产 `DshHostRuntime` 同时拥有 Host Loader、常驻 Agent Probe Loader 和每个智能体 Session 的 Agent Loader。普通入口同一时刻只能使用一种作用域；Bundle 使用公开 `composeEntries()` 展开后逐入口配置。Loader 的 create/update/remove、`await()` 和官方 Inventory 决定真实结果；智能体作用域变更先等待目标 Session 空闲。Config、Activation、NXT 权限和页面目录只在全部目标 Loader 成功后以一个 SQLite 事务提交，失败时恢复旧挂载。冷启动按入口隔离恢复，坏插件写 `restore-failed` 但不阻止智能体 Session 和其他插件；无存活 Session 的候选通过常驻 Probe 验证，不销毁根 Context Service。移除先关闭包下所有 Activation，任何 dispose 失败都会恢复已卸载 Loader 并保留安装记录和目录。
 
 DSH Settings 使用现有路径级 mutate 与 Credentials；普通 Cordis Config 优先序列化 Schema 表单，没有 Schema 时提供高级 JSON。Secret/credential-ref Config 拒绝持久化。DSH 原生 WebUI 不接入产品，`dsh.client` 只形成“原生界面未接入”提示。安装检查与提交使用进程内 Operation ID，通过 SSE 报告下载、依赖、构建脚本、校验和原子提交阶段。
 

@@ -181,6 +181,25 @@ describe('automatic TLS management edge', () => {
         ).status,
       ).toBe(200)
       expect((await request(edge.port, '/api/private', { cookie })).status).toBe(401)
+
+      for (let index = 0; index < 8; index += 1) {
+        expect(
+          (
+            await request(edge.port, '/api/management/pairing/challenge', {
+              method: 'POST',
+              body: {},
+            })
+          ).status,
+        ).toBe(200)
+      }
+      expect(
+        (
+          await request(edge.port, '/api/management/pairing/challenge', {
+            method: 'POST',
+            body: {},
+          })
+        ).status,
+      ).toBe(429)
     } finally {
       await edge.stop()
       await new Promise<void>((resolve, reject) => internal.close((error) => (error ? reject(error) : resolve())))
@@ -226,6 +245,79 @@ describe('automatic TLS management edge', () => {
       expect(repository.getActiveDevice(deviceId)).toBeUndefined()
     } finally {
       await second.stop()
+      await new Promise<void>((resolve, reject) => internal.close((error) => (error ? reject(error) : resolve())))
+      database.close()
+    }
+  })
+
+  it('cancels a proxied event stream and closes within a bounded shutdown', async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), 'nxt-management-edge-stream-'))
+    roots.push(root)
+    const database = await openMigratedCoreDatabase(path.join(root, 'core.sqlite'))
+    const repository = new SqliteHostSecurityRepository(database)
+    let closedUpstreams = 0
+    const internal = createServer((req, res) => {
+      req.once('close', () => {
+        closedUpstreams += 1
+      })
+      res.writeHead(200, { 'content-type': 'text/event-stream', 'cache-control': 'no-cache' })
+      res.write('event: ready\ndata: {}\n\n')
+    })
+    await new Promise<void>((resolve) => internal.listen(0, '127.0.0.1', resolve))
+    const address = internal.address()
+    if (address === null || typeof address === 'string') throw new Error('missing internal port')
+    const edge = await startManagementEdge({
+      host: '127.0.0.1',
+      port: 0,
+      internalPort: address.port,
+      dataRoot: root,
+      managementKey: 'stream management key 0123456789abcdef',
+      releaseId: 'stream-test',
+      productVersion: '0.0.0',
+      repository,
+    })
+    let client: ReturnType<typeof httpsRequest> | undefined
+    try {
+      await new Promise<void>((resolve, reject) => {
+        client = httpsRequest(
+          {
+            hostname: '127.0.0.1',
+            port: edge.port,
+            path: '/health/ready',
+            rejectUnauthorized: false,
+          },
+          (response) => {
+            response.once('data', () => resolve())
+            response.on('error', () => undefined)
+          },
+        )
+        client.once('error', reject)
+        client.end()
+      })
+      client?.destroy()
+      await expect.poll(() => closedUpstreams).toBe(1)
+
+      await new Promise<void>((resolve, reject) => {
+        client = httpsRequest(
+          {
+            hostname: '127.0.0.1',
+            port: edge.port,
+            path: '/health/ready',
+            rejectUnauthorized: false,
+          },
+          (response) => {
+            response.once('data', () => resolve())
+            response.on('error', () => undefined)
+          },
+        )
+        client.once('error', reject)
+        client.end()
+      })
+      await expect(edge.stop()).resolves.toBeUndefined()
+      await expect.poll(() => closedUpstreams).toBe(2)
+    } finally {
+      client?.destroy()
+      await edge.stop()
       await new Promise<void>((resolve, reject) => internal.close((error) => (error ? reject(error) : resolve())))
       database.close()
     }

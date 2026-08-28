@@ -16,8 +16,9 @@ import type { SqliteHostSecurityRepository } from '@nekro-nxt/storage-sqlite'
 import { X509Certificate, createHash, createHmac, randomBytes, timingSafeEqual } from 'node:crypto'
 import { chmod, mkdir, readFile, rename, writeFile } from 'node:fs/promises'
 import { request as httpRequest } from 'node:http'
-import type { IncomingMessage, ServerResponse } from 'node:http'
+import type { ClientRequest, IncomingMessage, ServerResponse } from 'node:http'
 import { createServer, type Server as HttpsServer } from 'node:https'
+import type { Duplex } from 'node:stream'
 import path from 'node:path'
 import { generate } from 'selfsigned'
 import { monotonicFactory } from 'ulid'
@@ -27,6 +28,9 @@ const CSRF_COOKIE = 'nxt_csrf'
 const CHALLENGE_TTL_MS = 60_000
 const SESSION_TTL_MS = 12 * 60 * 60 * 1_000
 const MAX_JSON_BYTES = 64 * 1_024
+const MAX_PENDING_CHALLENGES = 256
+const CHALLENGES_PER_ADDRESS_PER_MINUTE = 10
+const CHALLENGE_RATE_WINDOW_MS = 60_000
 const nextUlid = monotonicFactory()
 
 interface ChallengeRecord {
@@ -223,11 +227,21 @@ export const startManagementEdge = async (options: ManagementEdgeOptions): Promi
   })
   const challenges = new Map<string, ChallengeRecord>()
   const sessions = new Map<string, SessionRecord>()
+  const challengeRequests = new Map<string, number[]>()
+  const upstreamRequests = new Set<ClientRequest>()
+  const sockets = new Set<Duplex>()
+  let stopping = false
+  let stopPromise: Promise<void> | undefined
 
   const cleanExpired = (): void => {
     const timestamp = now()
     for (const [id, challenge] of challenges) if (challenge.expiresAt <= timestamp) challenges.delete(id)
     for (const [id, session] of sessions) if (session.expiresAt <= timestamp) sessions.delete(id)
+    for (const [address, requests] of challengeRequests) {
+      const retained = requests.filter((requestedAt) => requestedAt > timestamp - CHALLENGE_RATE_WINDOW_MS)
+      if (retained.length === 0) challengeRequests.delete(address)
+      else challengeRequests.set(address, retained)
+    }
   }
 
   const authenticatedSession = (
@@ -254,6 +268,10 @@ export const startManagementEdge = async (options: ManagementEdgeOptions): Promi
   }
 
   const proxy = (request: IncomingMessage, response: ServerResponse): void => {
+    if (stopping) {
+      writeProblem(response, 503, 'server_stopping', '服务实例正在关闭。')
+      return
+    }
     const upstream = httpRequest(
       {
         host: '127.0.0.1',
@@ -264,10 +282,27 @@ export const startManagementEdge = async (options: ManagementEdgeOptions): Promi
       },
       (upstreamResponse) => {
         response.writeHead(upstreamResponse.statusCode ?? 502, upstreamResponse.headers)
+        upstreamResponse.once('aborted', () => response.destroy(new Error('上游响应提前中断。')))
+        upstreamResponse.once('error', (error) => response.destroy(error))
         upstreamResponse.pipe(response)
       },
     )
-    upstream.on('error', () => writeProblem(response, 502, 'upstream_unavailable', '服务实例正在启动，请稍后重试。'))
+    upstreamRequests.add(upstream)
+    const detach = (): void => {
+      upstreamRequests.delete(upstream)
+      request.off('aborted', abortUpstream)
+      response.off('close', abortUpstream)
+    }
+    const abortUpstream = (): void => {
+      if (!upstream.destroyed) upstream.destroy(new Error('下游连接已经关闭。'))
+    }
+    request.once('aborted', abortUpstream)
+    response.once('close', abortUpstream)
+    upstream.once('close', detach)
+    upstream.on('error', () => {
+      if (response.headersSent) response.destroy()
+      else writeProblem(response, 502, 'upstream_unavailable', '服务实例正在启动，请稍后重试。')
+    })
     request.pipe(upstream)
   }
 
@@ -280,6 +315,13 @@ export const startManagementEdge = async (options: ManagementEdgeOptions): Promi
       }
       if (request.method === 'POST' && url.pathname === '/api/management/pairing/challenge') {
         cleanExpired()
+        const address = request.socket.remoteAddress ?? 'unknown'
+        const recent = challengeRequests.get(address) ?? []
+        if (challenges.size >= MAX_PENDING_CHALLENGES || recent.length >= CHALLENGES_PER_ADDRESS_PER_MINUTE) {
+          writeProblem(response, 429, 'pairing_rate_limited', '配对请求过于频繁，请稍后重试。')
+          return
+        }
+        challengeRequests.set(address, [...recent, now()])
         const challengeId = randomBytes(24).toString('base64url')
         const serverNonce = randomBytes(32).toString('base64url')
         const expiresAt = now() + CHALLENGE_TTL_MS
@@ -415,6 +457,11 @@ export const startManagementEdge = async (options: ManagementEdgeOptions): Promi
     })
   })
 
+  server.on('connection', (socket) => {
+    sockets.add(socket)
+    socket.once('close', () => sockets.delete(socket))
+  })
+
   await new Promise<void>((resolve, reject) => {
     server.once('error', reject)
     server.listen(options.port, options.host, () => {
@@ -428,6 +475,30 @@ export const startManagementEdge = async (options: ManagementEdgeOptions): Promi
     port: address.port,
     instanceId,
     spkiSha256: certificate.spkiSha256,
-    stop: () => new Promise<void>((resolve, reject) => server.close((error) => (error ? reject(error) : resolve()))),
+    stop: () => {
+      if (stopPromise) return stopPromise
+      stopping = true
+      stopPromise = (async () => {
+        for (const upstream of upstreamRequests) upstream.destroy(new Error('Management Edge 正在关闭。'))
+        server.closeIdleConnections()
+        const closed = new Promise<void>((resolve, reject) =>
+          server.close((error) => (error ? reject(error) : resolve())),
+        )
+        const timeout = setTimeout(() => {
+          for (const socket of sockets) socket.destroy()
+          server.closeAllConnections()
+        }, 5_000)
+        timeout.unref()
+        try {
+          await closed
+        } finally {
+          clearTimeout(timeout)
+          for (const socket of sockets) socket.destroy()
+          sockets.clear()
+          upstreamRequests.clear()
+        }
+      })()
+      return stopPromise
+    },
   }
 }

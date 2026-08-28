@@ -10,13 +10,13 @@
 
 SQLite 实现位于 `storage-sqlite`，DSH/Cordis 挂载位于 Server 组合根；本包不读取其他包数据库，也不依赖 Electron。动态运行、保存 Revision、给智能体启用和把 Adapter 安装到本机是独立提交点。源码 Revision 是持久事实，构建缓存可删除重建。
 
-导入只接受经过分享协议检查的单 Revision，并在本机重新物化和构建；来源验证证据不成为本机有效 Verification，导入后没有 Activation 或 Installation。删除 Extension 时，Server 先等待全部 Activation 或 Installation 静止，再把整个源码目录移动到 `extension-data/trash/`，删除数据库事实和 Revision 构建缓存；提交失败时恢复源码与原运行关系。连接、频道和消息不是 Extension 私有数据，不参与删除。
+导入只接受经过分享协议检查的单 Revision，并在本机重新物化、构建和执行 Runtime 验证；来源验证证据不成为本机有效 Verification。智能体扩展会真实执行 Host factory、Tool、RPC、Client Slot 和 dispose；Host UI 会执行 Host RPC、页面注册、组件、Navigation 与 dispose；Adapter 会使用完整 Fake Host Context 验证注册、启动、入站、出站、凭据引用、状态、Transport 静止和 Client Slot。只有本机证据成功后才提交 Revision，导入后仍没有 Activation 或 Installation。删除 Extension 时，Server 先等待全部 Activation 或 Installation 静止，再把整个源码目录移动到 `extension-data/trash/`，删除数据库事实和 Revision 构建缓存；提交失败时恢复源码与原运行关系。连接、频道和消息不是 Extension 私有数据，不参与删除。
 
 Manifest V3 固定 `scope: host-adapter`，必须有一个 Host entry、恰好一个 Adapter Contribution，并可附带 Adapter 产品 Slot 与最多 8 个 `host-page`；Tool、Agent RPC 和智能体 Slot 混装会在物化和验证阶段失败。V1/V2 继续只读兼容并走 `AgentActivation`。同一 Extension 的后续 Adapter Revision 不能改变 key。
 
-`HostExtensionInstallationCoordinator` 按 scope 分派 Adapter Driver 或 Host UI Driver。Host UI 使用 `nekro-nxt-extension-v3`、Manifest V4、精确权限摘要和 1–8 个页面贡献；新增权限未批准时旧版本不停止。页面实例按稳定 `entryId` 保留 Host 级顺序和显隐，Client 失败只写诊断。Adapter 安装继续在 `adapterKey` 级别串行，内置 Registry 或其他 Extension 已占用 key 时在停止连接 Runtime 前拒绝变更。
+`HostExtensionInstallationCoordinator` 按 scope 分派 Adapter Driver 或 Host UI Driver。Host UI 使用 `nekro-nxt-extension-v3`、Manifest V4、精确权限摘要和 1–8 个页面贡献；新增权限未批准时旧版本不停止。Installation、权限批准和页面目录由 Repository 在一个 SQLite 事务中发布或撤销，任何一表失败都保留原事实。冷启动重建页面目录失败时会 dispose 已挂载的候选 Runtime，再记录 `restore-failed`，不会留下未受安装状态拥有的挂载。页面实例按稳定 `entryId` 保留 Host 级顺序和显隐，Client 失败只写诊断。Adapter 安装继续在 `adapterKey` 级别串行，内置 Registry 或其他 Extension 已占用 key 时在停止连接 Runtime 前拒绝变更。
 
-Revision 目录保存 `manifest.json`、`source/`、可选 `assets/`，以及用于并发发布校验的 `content.sha256` 和 `payload.sha256`。智能体 Revision 使用 Manifest V2，Adapter Revision 使用 Manifest V3，纯页面 Revision 使用 Manifest V4；旧 V1 继续只读且不重写。Builder 严格校验 Manifest、CSS/SVG 声明和摘要后按 entrypoint 构建当前 Host/Client。Client CSS 必须是受作用域约束的 CSS Module；PostCSS 检查拒绝产品根选择器、裸全局选择器、`:global`、外部 URL、`@import` 和 `@font-face`。SVG 作为单色 mask 使用，拒绝脚本、样式、事件属性、外部引用及可嵌入内容。
+Revision 目录保存 `manifest.json`、`source/`、可选 `assets/`，以及用于并发发布校验的 `content.sha256` 和 `payload.sha256`。智能体 Revision 使用 Manifest V2，Adapter Revision 使用 Manifest V3，纯页面 Revision 使用 Manifest V4；旧 V1 继续只读且不重写。Builder 严格校验 Manifest、CSS/SVG 声明和摘要后按 entrypoint 构建当前 Host/Client。Client CSS 必须是受作用域约束的 CSS Module；PostCSS 检查拒绝产品根选择器、裸全局选择器、`:global`、外部 URL、`@import` 和 `@font-face`，Server 交付时再把所有选择器固定到精确 Artifact 的 `data-host-ui-owner` 页面根。SVG 作为单色 mask 使用，拒绝脚本、样式、事件属性、外部引用及可嵌入内容。
 
 `build.json` 是可丢弃缓存清单，只保存 `revisionId`、由固定 Builder/Node ABI/Revision digest 计算的 `buildKey` 和相对产物名；缓存目录和绝对产物路径由 Builder 推导，并在命中前检查产物文件仍存在。损坏的 Manifest 会拒绝构建，损坏或不完整的缓存会重新构建。
 

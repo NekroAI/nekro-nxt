@@ -36,6 +36,9 @@ describe('Desktop runtime dependencies', () => {
     expect(verifier).toContain('/health/ready')
     expect(verifier).toContain('/api/settings/notifications')
     expect(verifier).toContain('deviceKeyConfigured')
+    expect(verifier).toContain('installManagedPluginSmoke')
+    expect(verifier).toContain('verifyRestoredManagedPluginAndRemove')
+    expect(verifier).toContain("child.kill('SIGTERM')")
 
     for (const channel of ['stable', 'preview']) {
       const previousChannel = process.env['NEKRO_DESKTOP_CHANNEL']

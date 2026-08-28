@@ -152,6 +152,28 @@ jobs:
           NEKRO_DESKTOP_CHANNEL: preview
           NEKRO_IMAGE: ghcr.io/nekroai/nekro-nxt:preview-${{ github.sha }}
         run: node scripts/build-server-image.mjs
+      - name: Verify Server image plugin lifecycle and restart recovery
+        env:
+          NEKRO_IMAGE: ghcr.io/nekroai/nekro-nxt:preview-${{ github.sha }}
+        run: |
+          container="nekro-nxt-preview-smoke-${{ github.run_id }}-${{ github.run_attempt }}"
+          cleanup() { docker rm --force "$container" >/dev/null 2>&1 || true; }
+          trap cleanup EXIT
+          docker run --detach --name "$container" -e NEKRO_HOST=127.0.0.1 "$NEKRO_IMAGE"
+          docker cp scripts/lib/managed-plugin-smoke.mjs "$container":/opt/nekro/server/managed-plugin-smoke.mjs
+          for attempt in $(seq 1 60); do
+            if docker exec "$container" node -e "fetch('http://127.0.0.1:4960/health/ready').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"; then break; fi
+            if [ "$attempt" = 60 ]; then docker logs "$container"; exit 1; fi
+            sleep 1
+          done
+          docker exec "$container" node /opt/nekro/server/managed-plugin-smoke.mjs install http://127.0.0.1:4960 /data/managed-plugin-smoke.json
+          docker restart "$container"
+          for attempt in $(seq 1 60); do
+            if docker exec "$container" node -e "fetch('http://127.0.0.1:4960/health/ready').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"; then break; fi
+            if [ "$attempt" = 60 ]; then docker logs "$container"; exit 1; fi
+            sleep 1
+          done
+          docker exec "$container" node /opt/nekro/server/managed-plugin-smoke.mjs verify-remove http://127.0.0.1:4960 /data/managed-plugin-smoke.json
       - name: Push Server Preview candidate
         run: docker push ghcr.io/nekroai/nekro-nxt:preview-${{ github.sha }}
 

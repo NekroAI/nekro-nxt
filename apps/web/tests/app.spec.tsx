@@ -17,8 +17,9 @@ import {
   ExtensionIdSchema,
   ExtensionRevisionIdSchema,
   HostApiContracts,
+  HostUiPageEntrySchema,
 } from '@nekro-nxt/contracts'
-import { hostPresentation, NekroNxtApp } from '../src/app.js'
+import { hostPresentation, NekroNxtApp, nextVisibleHostUiPage } from '../src/app.js'
 import { runHostRefresh } from '../src/components/product-feedback.js'
 import { ProductHostCoordinator, type ProductSnapshot } from '../src/product-port.js'
 import { setActiveProductHost, useProductStore } from '../src/product-store.js'
@@ -43,6 +44,22 @@ const browserExtensionPreviousRevisionId = ExtensionRevisionIdSchema.parse('xrv_
 const browserEpisodeId = EpisodeIdSchema.parse('eps_browser')
 const browserEventId = ChannelEventIdSchema.parse('evt_current')
 const otherEventId = ChannelEventIdSchema.parse('evt_other')
+const hostUiPage = (id: string, visible = true) =>
+  HostUiPageEntrySchema.parse({
+    pageInstanceId: `hup_${id}`,
+    owner: { kind: 'extension', extensionId: browserExtensionId, revisionId: browserExtensionRevisionId },
+    entryId: id,
+    title: id,
+    icon: { kind: 'host-icon', name: 'puzzle' },
+    objectPane: 'hidden',
+    startPath: '',
+    visible,
+    sortOrder: 0,
+    routeBase: `/apps/hup_${id}`,
+    client: { moduleUrl: `/host-ui/${id}.mjs`, buildKey: 'a'.repeat(64) },
+    createdAt: 1,
+    updatedAt: 1,
+  })
 const browserSnapshot = HostApiContracts.snapshot.response.parse({
   capabilityAvailability: {
     subagents: { available: true },
@@ -336,6 +353,16 @@ describe('NekroNxt product shell', () => {
     ['error', '无法连接', 'error'],
   ] as const)('maps Host %s state to an explicit product status', (status, label, tone) => {
     expect(hostPresentation(status)).toEqual({ label, tone })
+  })
+
+  it('selects the next visible Host UI page after a hidden or removed current entry', () => {
+    const first = hostUiPage('first')
+    const second = hostUiPage('second')
+    const third = hostUiPage('third')
+    const previousOrder = [first, second, third]
+    expect(nextVisibleHostUiPage(second, previousOrder, [first, hostUiPage('second', false), third])).toBe(third)
+    expect(nextVisibleHostUiPage(second, previousOrder, [first, third])).toBe(third)
+    expect(nextVisibleHostUiPage(third, previousOrder, [first, hostUiPage('second', false)])).toBe(first)
   })
 
   it('uses the product navigation order and keeps creator and runtime out of primary navigation', () => {

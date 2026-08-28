@@ -825,7 +825,6 @@
 
 .extensionDetailGrid > section {
   align-content: start;
-  min-height: 100%;
   border: 1px solid var(--nxt-border-subtle);
   border-radius: var(--nxt-radius-panel);
   padding: 20px;

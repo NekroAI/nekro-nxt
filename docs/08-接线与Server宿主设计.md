@@ -7,6 +7,7 @@
 
 - HTTP、SSE 和静态托管复用 DSH WebServer / frontend-static，不引入第二套 HTTP 框架；NekroNXT 在同一 WebServer 上显式注册产品 SPA 页面前缀，因为 DSH 0.1.1-rc.2 的静态 fallback 对未知路径返回 404；
 - 领域 API 由 `NekroHostApi` 定义，只经过 Core、Channel Runtime、Asset 和 Extension 公开服务，不把数据库或 DSH `Context` 暴露到 wire；
+- 普通 JSON 请求体统一限制为 2 MiB，超过限制后停止缓冲并返回明确错误；Extension 分享包限制为 16 MiB，DSH tgz/分享包限制为 64 MiB，各二进制协议再执行自身的解压体积、文件数和文件大小校验；
 - Web 不复制业务事实。`ProductHostPort.getSnapshot()` / `subscribe()` / `execute()` 消费 Server 权威投影；Zustand 只保留主题、减少动效和草稿。
 
 ## 2. 领域 API
@@ -47,7 +48,7 @@
 | 卸载 Host Revision | `DELETE /api/extensions/:extensionId/installation` | 停止 Runtime 并撤销 Adapter Slot 或页面；保留连接、频道与历史 |
 | Client 诊断 | `POST /api/extensions/:extensionId/revisions/:revisionId/client-diagnostic` | 保存当前 Activation 最近一次 loaded/failed；不回滚 Host |
 | 删除本地扩展 | `DELETE /api/extensions/:extensionId` | 先关闭全部 Activation 或卸载 Adapter，再删除源码、版本、验证与诊断；失败时恢复原运行关系 |
-| Extension 导出/导入 | `GET /api/extensions/:id/revisions/:revisionId/export`、`POST /api/extensions/imports/inspect`、`POST /api/extensions/imports/:token/commit` | 单 Revision `.nxt-extension`；两阶段检查、冲突处理、本机构建，提交后处于关闭状态 |
+| Extension 导出/导入 | `GET /api/extensions/:id/revisions/:revisionId/export`、`POST /api/extensions/imports/inspect`、`POST /api/extensions/imports/:token/commit` | 单 Revision `.nxt-extension`；两阶段检查、冲突处理、本机构建，检查凭证十分钟失效，提交后处于关闭状态 |
 | Host UI 页面偏好 | `PUT /api/host-ui/page-preferences` | `expectedRevision` 原子提交完整页面顺序与显隐，冲突时以 Host 为准 |
 | Host UI 页面服务 | `POST /api/host-ui/pages/:pageInstanceId/call` | 精确 owner、Artifact、权限和输入 Schema 下的产品服务、状态、事件、网络与自定义 RPC |
 | Host UI 页面诊断 | `POST /api/host-ui/pages/:pageInstanceId/diagnostic` | 记录 Client、导航或 RPC 故障，不改变 Installation/Activation 事实 |
@@ -77,7 +78,7 @@
 - 产品 SPA 深链覆盖 `/work`、`/agents`、`/channels`、`/creator`、`/runtime`、`/settings`、`/connections`、`/extensions`、`/apps` 及其子路径；GET/HEAD 返回经过 DSH index injection 的产品入口，其他方法 405。`/api` 和不存在的静态资源不进入 SPA 回退。
 - 生产 CLI 由构建后的 `dist/main.mjs` 直接启动；`NEKRO_HOST` 默认 `127.0.0.1`。公开监听 `0.0.0.0` 必须设置至少 32 个字符的 `NEKRO_MANAGEMENT_KEY`，并在外部 4960 启动自动 TLS 与设备鉴权入口；DSH WebServer 只监听随机 loopback。`GET /health/live` 与 `GET /health/ready` 保持匿名，只返回状态和 Release 身份。
 - Desktop 自带本地 Host 使用随机 loopback HTTP，并按 `500ms → 1s → 2s → 5s → 5s` 有界退避恢复。Desktop BrowserWindow 使用可替换 Product View：本地 Profile 指向自带 Host，远程 Profile 指向固定 SPKI 的 Server TLS 入口；每个 Profile 使用独立 partition 和最近路由。切换关闭旧 Product View，不重启任何 Host Runtime。详细安全与 View 边界见 [Desktop 多实例与设备鉴权](decisions/implemented/2026-08-23-Desktop多实例与设备鉴权.md)。
-- Runtime 打开双 SQLite 前，生产入口在 `backups/release-<releaseId digest>/` 为已有数据库创建一次 Release 恢复点；失败拒绝启动。该实验恢复点不覆盖数据根文件目录，完整升级协调仍以 Client migration Decision 为准。
+- 生产入口在开放 HTTP 前通过共享 `HostUpgradeCoordinator` 获取 `backups/upgrade.lock`，执行数据根与 SQLite preflight，创建 `backups/release-<releaseId digest>/` 恢复点，再按 `storage-owners-open-v1`、`runtime-recovery-v1` 两个幂等步骤打开各格式所有者并完成冷启动恢复。每个 Release 的 `upgrade-<releaseId digest>.json` 记录尝试、完成或失败摘要；任一步失败进入 `recovery`、释放锁并拒绝上线。当前恢复点仍只覆盖双 SQLite，不代表完整数据根已经可恢复。
 - 启动先注册内置 Adapter Contribution，再恢复 `host_extension_installations`，随后按统一 Registry 恢复全部 Connection、处理中反馈、Channel Runtime 与 Agent Activation。单个 Connection 网络或凭据故障不阻断 Installation 或其他 Connection 恢复。
 
 一期缺口见 `04-一期开发计划与决策清单.md`。技术栈见 `decisions/accepted/2026-08-16-一期技术栈与UI基础设施.md`。

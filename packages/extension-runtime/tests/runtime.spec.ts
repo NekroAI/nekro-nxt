@@ -25,6 +25,7 @@ import {
   HostExtensionInstallationCoordinator,
   materializeDynamicPackage,
   materializeImportedRevision,
+  scopeHostUiCss,
   validateHostUiCss,
   validateHostUiSvg,
   type Activation,
@@ -63,6 +64,17 @@ describe('Host UI assets', () => {
     expect(() => validateHostUiCss('@media (width > 600px) { .panel { display: grid; } }')).not.toThrow()
     expect(() => validateHostUiCss('@supports (display: grid) { .panel { display: grid; } }')).not.toThrow()
     expect(() => validateHostUiCss('@container page (width > 600px) { .panel { display: grid; } }')).not.toThrow()
+  })
+
+  it('prefixes every CSS selector with the owning Host UI Runtime boundary', () => {
+    expect(scopeHostUiCss('.panel, #status { color: red; }', 'artifact_123')).toBe(
+      ':where([data-host-ui-owner="artifact_123"]) .panel, ' +
+        ':where([data-host-ui-owner="artifact_123"]) #status { color: red; }',
+    )
+    expect(scopeHostUiCss('@media (width > 600px) { :local(.panel) { display: grid; } }', 'artifact_123')).toContain(
+      ':where([data-host-ui-owner="artifact_123"]) .panel',
+    )
+    expect(() => scopeHostUiCss('.panel {}', 'unsafe scope')).toThrow('owner scope')
   })
 
   it('accepts a bounded monochrome SVG and rejects executable SVG', () => {
@@ -136,6 +148,7 @@ class MemoryExtensionRepository implements ExtensionRepository, HostUiRepository
   failActivationDelete = false
   failInstallationUpsert = false
   failInstallationDelete = false
+  failHostUiPageReplace = false
 
   getExtension(id: ExtensionId): LocalExtension | undefined {
     return this.extensions.get(id)
@@ -239,11 +252,60 @@ class MemoryExtensionRepository implements ExtensionRepository, HostUiRepository
     this.installations.delete(extension)
   }
 
+  commitHostInstallationState(input: Parameters<HostUiRepository['commitHostInstallationState']>[0]) {
+    const previousInstallation = this.installations.get(input.installation.extensionId)
+    const previousGrant = this.hostUiGrants.get(`extension:${input.installation.extensionId}`)
+    const previousPages = new Map(this.hostUiPages)
+    try {
+      this.upsertHostInstallation(input.installation)
+      if (input.hostUi) {
+        this.upsertHostUiPermissionGrant(input.hostUi.grant)
+        return this.replaceHostUiExtensionPages({
+          extensionId: input.installation.extensionId,
+          revisionId: input.installation.extensionRevisionId,
+          pages: input.hostUi.pages,
+          clientBuildKey: input.hostUi.clientBuildKey,
+          now: input.hostUi.now,
+          nextPageInstanceId: input.hostUi.nextPageInstanceId,
+        })
+      }
+      this.deleteHostUiExtensionPages(input.installation.extensionId)
+      this.deleteHostUiPermissionGrant(`extension:${input.installation.extensionId}`)
+      return []
+    } catch (error) {
+      if (previousInstallation) this.installations.set(previousInstallation.extensionId, previousInstallation)
+      else this.installations.delete(input.installation.extensionId)
+      if (previousGrant) this.hostUiGrants.set(previousGrant.ownerKey, previousGrant)
+      else this.hostUiGrants.delete(`extension:${input.installation.extensionId}`)
+      this.hostUiPages.clear()
+      for (const [id, page] of previousPages) this.hostUiPages.set(id, page)
+      throw error
+    }
+  }
+
+  deleteHostInstallationState(input: Parameters<HostUiRepository['deleteHostInstallationState']>[0]): void {
+    const previousInstallation = this.installations.get(input.extensionId)
+    const previousGrant = this.hostUiGrants.get(`extension:${input.extensionId}`)
+    const previousPages = new Map(this.hostUiPages)
+    try {
+      this.deleteHostInstallation(input.extensionId)
+      this.deleteHostUiExtensionPages(input.extensionId)
+      this.deleteHostUiPermissionGrant(`extension:${input.extensionId}`)
+    } catch (error) {
+      if (previousInstallation) this.installations.set(previousInstallation.extensionId, previousInstallation)
+      if (previousGrant) this.hostUiGrants.set(previousGrant.ownerKey, previousGrant)
+      this.hostUiPages.clear()
+      for (const [id, page] of previousPages) this.hostUiPages.set(id, page)
+      throw error
+    }
+  }
+
   listHostUiPageEntries(): readonly HostUiPageEntry[] {
     return [...this.hostUiPages.values()].sort((left, right) => left.sortOrder - right.sortOrder)
   }
 
   replaceHostUiExtensionPages(input: Parameters<HostUiRepository['replaceHostUiExtensionPages']>[0]) {
+    if (this.failHostUiPageReplace) throw new Error('Host UI page transaction failed.')
     this.deleteHostUiExtensionPages(input.extensionId)
     return this.#appendHostUiPages(
       input.pages,
@@ -1815,6 +1877,59 @@ describe('Host Extension Installation', () => {
     expect(repository.getHostInstallation(extension.id)).toBeUndefined()
     expect(repository.listHostUiPageEntries()).toEqual([])
     await coordinator.dispose()
+  })
+
+  it('disposes a restored Host UI candidate when rebuilding its page directory fails', async () => {
+    const repository = new MemoryExtensionRepository()
+    const extension = { ...localExtension(extensionId('uirestorefail')), scope: 'host-ui' as const }
+    const savedRevision = revision(revisionId('uirestorefail1'), extension.id, 1)
+    repository.saveExtensionRevision({
+      extension,
+      revision: savedRevision,
+      verification: hostUiVerification(savedRevision),
+    })
+    const firstHost = new FakeHostInstallationHost()
+    const first = new HostExtensionInstallationCoordinator(
+      repository,
+      { revisionSourceDirectory: () => '/source' },
+      {
+        build: () =>
+          Promise.resolve({
+            revisionId: savedRevision.id,
+            buildKey: 'restore-build',
+            directory: '/cache',
+            clientEntry: '/cache/client.mjs',
+          }),
+      },
+      firstHost,
+      { now: () => 40 },
+    )
+    await first.install({ extensionId: extension.id, revisionId: savedRevision.id })
+    await first.dispose()
+
+    repository.failHostUiPageReplace = true
+    const restoringHost = new FakeHostInstallationHost()
+    const restoring = new HostExtensionInstallationCoordinator(
+      repository,
+      { revisionSourceDirectory: () => '/source' },
+      {
+        build: () =>
+          Promise.resolve({
+            revisionId: savedRevision.id,
+            buildKey: 'restore-build',
+            directory: '/cache',
+            clientEntry: '/cache/client.mjs',
+          }),
+      },
+      restoringHost,
+      { now: () => 41 },
+    )
+    await expect(restoring.restore()).resolves.toEqual({ restored: 0, failed: 1 })
+    expect(restoringHost.mountedHostUi).toEqual([savedRevision.id])
+    expect(restoringHost.disposedHostUi).toEqual([savedRevision.id])
+    expect(restoring.getDiagnostic(extension.id)).toMatchObject({ status: 'restore-failed' })
+    await expect(restoring.callHostUi(extension.id, 'status', null)).rejects.toThrow('当前不可用')
+    await restoring.dispose()
   })
 
   it('installs, updates, rolls back, and restores the previous Revision after a failed update', async () => {

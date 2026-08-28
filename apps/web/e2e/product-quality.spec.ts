@@ -2517,6 +2517,13 @@ test('a verified Client extension restores across product pages and retracts whe
   await expect(page.getByRole('switch', { name: '允许记录员使用“群聊摘要”', exact: true })).not.toBeChecked()
   await expect.poll(() => diagnostics.length).toBeGreaterThanOrEqual(1)
   expect(diagnostics[0]).toEqual({ agentId: targetAgentId, status: 'loaded' })
+  const contentPanel = page.getByText('r2 的内容', { exact: true }).locator('..')
+  const verificationPanel = page.getByText('验证记录', { exact: true }).locator('..')
+  const [contentPanelBox, verificationPanelBox] = await Promise.all([
+    contentPanel.boundingBox(),
+    verificationPanel.boundingBox(),
+  ])
+  expect(contentPanelBox?.height).toBeLessThan(verificationPanelBox?.height ?? 0)
   await assertViewportIntegrity(page)
   await capture(page, testInfo, 'persistent-extension-details-light-1440')
 

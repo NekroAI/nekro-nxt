@@ -1,7 +1,7 @@
 import { lookup } from 'node:dns/promises'
 import { request as httpRequest } from 'node:http'
 import { request as httpsRequest } from 'node:https'
-import { isIP } from 'node:net'
+import { BlockList, isIP } from 'node:net'
 import { z } from 'zod'
 
 const RequestSchema = z
@@ -36,15 +36,33 @@ const isPrivateIpv4 = (value: string): boolean => {
   )
 }
 
+const blockedIpv6 = new BlockList()
+for (const [address, prefix] of [
+  ['::', 8],
+  ['64:ff9b::', 96],
+  ['64:ff9b:1::', 48],
+  ['100::', 64],
+  ['2001::', 32],
+  ['2001:2::', 48],
+  ['2001:10::', 28],
+  ['2001:20::', 28],
+  ['2001:db8::', 32],
+  ['2002::', 16],
+  ['3fff::', 20],
+  ['fc00::', 7],
+  ['fe80::', 10],
+  ['fec0::', 10],
+  ['ff00::', 8],
+] as const) {
+  blockedIpv6.addSubnet(address, prefix, 'ipv6')
+}
+
 export const isPrivateNetworkAddress = (value: string): boolean => {
   const normalized = value.toLowerCase().split('%')[0] ?? ''
   const family = isIP(normalized)
   if (family === 4) return isPrivateIpv4(normalized)
   if (family !== 6) return true
-  if (normalized === '::' || normalized === '::1') return true
-  if (normalized.startsWith('fc') || normalized.startsWith('fd') || /^fe[89ab]/u.test(normalized)) return true
-  const mapped = /^::ffff:(\d+\.\d+\.\d+\.\d+)$/u.exec(normalized)?.[1]
-  return mapped ? isPrivateIpv4(mapped) : false
+  return blockedIpv6.check(normalized, 'ipv6')
 }
 
 interface ResolvedPublicUrl {

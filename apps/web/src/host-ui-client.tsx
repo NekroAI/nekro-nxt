@@ -43,6 +43,19 @@ type PageRegistration = {
   readonly navigation?: HostUiNavigationProvider
 }
 
+const reportHostUiDiagnostic = (
+  pageInstanceId: string,
+  status: 'ready' | 'load-failed' | 'navigation-failed',
+  message?: string,
+): Promise<void> =>
+  fetch(`/api/host-ui/pages/${encodeURIComponent(pageInstanceId)}/diagnostic`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ status, ...(message === undefined ? {} : { message }) }),
+  })
+    .then(() => undefined)
+    .catch(() => undefined)
+
 const isRecord = (value: unknown): value is Readonly<Record<string, unknown>> =>
   typeof value === 'object' && value !== null && !Array.isArray(value)
 
@@ -501,7 +514,11 @@ function MountedPageCanvas({ page, wildcard }: { readonly page: HostUiPageEntry;
   }
   return (
     <PageErrorBoundary resetKey={`${page.client.buildKey}:${wildcard}:${location.search}`}>
-      <div className={styles.pageRoot} data-host-ui-page={page.pageInstanceId}>
+      <div
+        className={styles.pageRoot}
+        data-host-ui-page={page.pageInstanceId}
+        data-host-ui-owner={page.client.buildKey}
+      >
         {React.createElement(registration.component, props)}
       </div>
     </PageErrorBoundary>
@@ -531,6 +548,18 @@ export function HostUiObjectPane({ page }: { readonly page: HostUiPageEntry }) {
   return <HostUiNavigation page={page} provider={registration.navigation} />
 }
 
+type HostUiNavigationState =
+  | { readonly status: 'ready'; readonly model: ReturnType<typeof HostUiNavigationModelSchema.parse> }
+  | { readonly status: 'failed'; readonly error: Error }
+
+export const readHostUiNavigation = (provider: HostUiNavigationProvider): HostUiNavigationState => {
+  try {
+    return { status: 'ready', model: HostUiNavigationModelSchema.parse(provider.getSnapshot()) }
+  } catch (error) {
+    return { status: 'failed', error: error instanceof Error ? error : new Error(String(error)) }
+  }
+}
+
 function HostUiNavigation({
   page,
   provider,
@@ -539,22 +568,40 @@ function HostUiNavigation({
   readonly provider: HostUiNavigationProvider
 }) {
   const navigate = useNavigate()
-  let model
-  try {
-    model = HostUiNavigationModelSchema.parse(
-      useSyncExternalStore(
-        (listener) => provider.subscribe(listener),
-        () => provider.getSnapshot(),
-        () => provider.getSnapshot(),
-      ),
+  const [retry, setRetry] = React.useState(0)
+  const [state, setState] = React.useState<HostUiNavigationState>(() => readHostUiNavigation(provider))
+  useEffect(() => {
+    const update = (): void => setState(readHostUiNavigation(provider))
+    update()
+    try {
+      const unsubscribe = provider.subscribe(update)
+      if (typeof unsubscribe !== 'function') throw new Error('Navigation Provider subscribe() 必须返回清理函数。')
+      return unsubscribe
+    } catch (error) {
+      setState({ status: 'failed', error: error instanceof Error ? error : new Error(String(error)) })
+      return undefined
+    }
+  }, [provider, retry])
+  useEffect(() => {
+    void reportHostUiDiagnostic(
+      page.pageInstanceId,
+      state.status === 'ready' ? 'ready' : 'navigation-failed',
+      state.status === 'failed' ? state.error.message : undefined,
     )
-  } catch (error) {
+  }, [page.pageInstanceId, state])
+  if (state.status === 'failed') {
     return (
-      <InlineFeedback tone="error" role="alert">
-        {error instanceof Error ? error.message : String(error)}
-      </InlineFeedback>
+      <div className={styles.navigationFeedback} role="alert">
+        <AlertTriangle size={18} aria-hidden="true" />
+        <strong>导航不可用</strong>
+        <span>{state.error.message}</span>
+        <Button size="small" onClick={() => setRetry((value) => value + 1)}>
+          重试
+        </Button>
+      </div>
     )
   }
+  const { model } = state
   return (
     <nav className={styles.navigation} aria-label={`${page.title}导航`}>
       <PageHeader title={page.title} meta={page.description} quiet />

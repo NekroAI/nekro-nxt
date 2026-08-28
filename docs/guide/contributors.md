@@ -28,11 +28,12 @@ Web 默认监听 `http://127.0.0.1:4961`，并代理本地 Server `127.0.0.1:496
 ```bash
 pnpm check
 pnpm test
+pnpm test:coverage
 pnpm build
 pnpm test:journey
 ```
 
-用户可见 Web 改动必须完成生产构建产品旅程和真实像素视觉验收。品牌资产使用 `pnpm brand:export` 生成，使用 `pnpm brand:check` 验证；公开构建不得依赖 `.local`。
+`pnpm test:coverage` 是独立门禁，不包含在 `check` 或 `test` 中；当前统计范围和阈值见[开发与测试规范的覆盖率门禁](../06-开发与测试规范.md#覆盖率门禁)。用户可见 Web 改动必须完成生产构建产品旅程和真实像素视觉验收。品牌资产使用 `pnpm brand:export` 生成，使用 `pnpm brand:check` 验证；公开构建不得依赖 `.local`。
 
 ## 提交
 

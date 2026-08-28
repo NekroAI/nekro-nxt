@@ -18,14 +18,16 @@ import WebServer from '@deepseek-ai/dsh-host-webserver'
 import * as LlmDeepSeek from '@deepseek-ai/dsh-llm-deepseek'
 import * as LlmPiAi from '@deepseek-ai/dsh-llm-pi-ai'
 import type { Context as LlmContext } from '@deepseek-ai/cordis'
+import { HostUpgradeCoordinator, type UpgradeJournal } from '@nekro-nxt/client-migrations'
 import { InstanceDescriptorSchema } from '@nekro-nxt/contracts'
 import { createSqliteBackupSet, type SqliteBackupSource } from '@nekro-nxt/storage-sqlite'
-import { createHash } from 'node:crypto'
+import { createHash, randomUUID } from 'node:crypto'
 import { existsSync } from 'node:fs'
-import { mkdir, mkdtemp, readFile, rename, rm, stat, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, open, readFile, rename, rm, stat, writeFile } from 'node:fs/promises'
 import { isIP } from 'node:net'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { z } from 'zod'
 import { NekroRuntime } from './bootstrap.js'
 import { createNekroHostApi } from './host-api.js'
 import { initializeServerIdentity, startManagementEdge, type ManagementEdgeHandle } from './management-edge.js'
@@ -252,6 +254,240 @@ export const ensureReleaseSqliteBackup = async (
   }
 }
 
+const upgradeJournalSchema = z
+  .object({
+    format: z.literal('nxt.server-upgrade-journal'),
+    version: z.literal(1),
+    releaseId: z.string().min(1),
+    status: z.enum(['migrating', 'ready', 'recovery']),
+    backupId: z.string().optional(),
+    updatedAt: z.number().int().safe().nonnegative(),
+    steps: z.record(
+      z.string(),
+      z
+        .object({
+          status: z.enum(['running', 'completed', 'failed']),
+          attempts: z.number().int().positive(),
+          startedAt: z.number().int().safe().nonnegative(),
+          completedAt: z.number().int().safe().nonnegative().optional(),
+          errorSummary: z.string().max(512).optional(),
+        })
+        .strict(),
+    ),
+    errorSummary: z.string().max(512).optional(),
+  })
+  .strict()
+
+export type ServerUpgradeJournalRecord = z.output<typeof upgradeJournalSchema>
+
+const upgradeIdentity = (releaseId: string): string => createHash('sha256').update(releaseId).digest('hex')
+
+const createServerUpgradeJournal = async (
+  backupRoot: string,
+  releaseId: string,
+  getBackupId: () => string | undefined,
+): Promise<UpgradeJournal & { readonly finish: (status: 'ready' | 'recovery', error?: string) => Promise<void> }> => {
+  const journalPath = path.join(backupRoot, `upgrade-${upgradeIdentity(releaseId)}.json`)
+  let record: ServerUpgradeJournalRecord
+  try {
+    record = upgradeJournalSchema.parse(JSON.parse(await readFile(journalPath, 'utf8')))
+    if (record.releaseId !== releaseId) throw new Error('Host upgrade journal release identity mismatch.')
+  } catch (error) {
+    if (!isMissing(error)) throw error
+    record = {
+      format: 'nxt.server-upgrade-journal',
+      version: 1,
+      releaseId,
+      status: 'migrating',
+      updatedAt: Date.now(),
+      steps: {},
+    }
+  }
+  const publish = async (next: ServerUpgradeJournalRecord): Promise<void> => {
+    const temporary = `${journalPath}.${randomUUID()}.tmp`
+    await writeFile(temporary, `${JSON.stringify(upgradeJournalSchema.parse(next), null, 2)}\n`, {
+      encoding: 'utf8',
+      mode: 0o600,
+      flag: 'wx',
+    })
+    try {
+      await rename(temporary, journalPath)
+      record = next
+    } finally {
+      await rm(temporary, { force: true })
+    }
+  }
+  const withBackup = <T extends ServerUpgradeJournalRecord>(next: T): T => {
+    const backupId = getBackupId()
+    return { ...next, ...(backupId === undefined ? {} : { backupId }) }
+  }
+  return {
+    begin: async (id) => {
+      const previous = record.steps[id]
+      const now = Date.now()
+      await publish(
+        withBackup({
+          ...record,
+          status: 'migrating',
+          updatedAt: now,
+          steps: {
+            ...record.steps,
+            [id]: {
+              status: 'running',
+              attempts: (previous?.attempts ?? 0) + 1,
+              startedAt: now,
+            },
+          },
+        }),
+      )
+    },
+    complete: async (id) => {
+      const current = record.steps[id]
+      if (!current) throw new Error(`Host upgrade journal has not begun step: ${id}`)
+      await publish(
+        withBackup({
+          ...record,
+          updatedAt: Date.now(),
+          steps: {
+            ...record.steps,
+            [id]: { ...current, status: 'completed', completedAt: Date.now() },
+          },
+        }),
+      )
+    },
+    fail: async (id, error) => {
+      const current = record.steps[id]
+      if (!current) throw new Error(`Host upgrade journal has not begun step: ${id}`)
+      const errorSummary = (error instanceof Error ? error.message : String(error)).slice(0, 512)
+      await publish(
+        withBackup({
+          ...record,
+          status: 'recovery',
+          updatedAt: Date.now(),
+          steps: { ...record.steps, [id]: { ...current, status: 'failed', errorSummary } },
+          errorSummary,
+        }),
+      )
+    },
+    finish: async (status, error) => {
+      await publish(
+        withBackup({
+          ...record,
+          status,
+          updatedAt: Date.now(),
+          ...(error === undefined ? { errorSummary: undefined } : { errorSummary: error.slice(0, 512) }),
+        }),
+      )
+    },
+  }
+}
+
+const processIsAlive = (pid: number): boolean => {
+  try {
+    process.kill(pid, 0)
+    return true
+  } catch (error) {
+    return !(error instanceof Error && 'code' in error && error.code === 'ESRCH')
+  }
+}
+
+const acquireUpgradeFileLock = async (backupRoot: string, releaseId: string): Promise<() => Promise<void>> => {
+  const lockPath = path.join(backupRoot, 'upgrade.lock')
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    const token = randomUUID()
+    try {
+      const handle = await open(lockPath, 'wx', 0o600)
+      try {
+        await handle.writeFile(
+          `${JSON.stringify({ format: 'nxt.server-upgrade-lock', version: 1, releaseId, pid: process.pid, token })}\n`,
+          'utf8',
+        )
+      } catch (error) {
+        await handle.close()
+        await rm(lockPath, { force: true })
+        throw error
+      }
+      return async () => {
+        await handle.close()
+        const current = z
+          .object({ token: z.unknown().optional() })
+          .passthrough()
+          .parse(JSON.parse(await readFile(lockPath, 'utf8')))
+        if (current.token !== token) throw new Error('Host upgrade lock ownership changed before release.')
+        await rm(lockPath, { force: true })
+      }
+    } catch (error) {
+      if (!(error instanceof Error && 'code' in error && error.code === 'EEXIST')) throw error
+      const current = z
+        .object({
+          format: z.literal('nxt.server-upgrade-lock'),
+          version: z.literal(1),
+          releaseId: z.string(),
+          pid: z.number().int().positive(),
+          token: z.string().uuid(),
+        })
+        .strict()
+        .parse(JSON.parse(await readFile(lockPath, 'utf8')))
+      if (processIsAlive(current.pid)) {
+        throw new Error(`数据根正在由另一个 Host 执行升级：PID ${current.pid}，Release ${current.releaseId}`)
+      }
+      await rm(lockPath, { force: true })
+    }
+  }
+  throw new Error('无法获取 Host 升级锁。')
+}
+
+const createRuntimeThroughUpgradeCoordinator = async (
+  dataRoot: string,
+  releaseId: string,
+  options: Parameters<typeof NekroRuntime.create>[0],
+): Promise<NekroRuntime> => {
+  const backupRoot = path.join(dataRoot, 'backups')
+  await mkdir(backupRoot, { recursive: true, mode: 0o700 })
+  let backupId: string | undefined
+  let runtime: NekroRuntime | undefined
+  const journal = await createServerUpgradeJournal(backupRoot, releaseId, () => backupId)
+  const coordinator = new HostUpgradeCoordinator({
+    lock: { acquire: () => acquireUpgradeFileLock(backupRoot, releaseId) },
+    preflight: async () => {
+      const info = await stat(dataRoot)
+      if (!info.isDirectory()) throw new Error(`Host 数据根不是目录：${dataRoot}`)
+      await existingSqliteSources(dataRoot)
+    },
+    createBackup: async () => {
+      const backup = await ensureReleaseSqliteBackup(dataRoot, releaseId)
+      backupId = backup.backupId
+      return { id: backup.backupId }
+    },
+    steps: [
+      {
+        id: 'storage-owners-open-v1',
+        run: async () => {
+          runtime = await NekroRuntime.create(options)
+        },
+      },
+      {
+        id: 'runtime-recovery-v1',
+        run: async () => {
+          if (!runtime) throw new Error('Host Runtime storage step did not produce a Runtime.')
+          await runtime.start()
+          await runtime.recover()
+        },
+      },
+    ],
+    journal,
+  })
+  const status = await coordinator.run()
+  if (status.phase !== 'ready' || !runtime) {
+    const summary = status.errorSummary ?? 'Host 升级未进入 ready。'
+    await journal.finish('recovery', summary)
+    await runtime?.dispose().catch(() => undefined)
+    throw new Error(`Host 升级失败：${summary}`)
+  }
+  await journal.finish('ready')
+  return runtime
+}
+
 export interface StartServerOptions {
   /** Root of the durable data directory (core.sqlite / sessions.sqlite / assets / extension-*). */
   readonly dataRoot: string
@@ -291,9 +527,7 @@ export const startNekroServer = async (options: StartServerOptions): Promise<Nek
   const developmentWorkspaceRoot = resolveRoot(options.developmentWorkspaceRoot ?? path.join(dataRoot, 'workspaces'))
   await mkdir(dataRoot, { recursive: true, mode: 0o700 })
   await mkdir(developmentWorkspaceRoot, { recursive: true, mode: 0o700 })
-  await ensureReleaseSqliteBackup(dataRoot, releaseId)
-
-  const runtime = await NekroRuntime.create({
+  const runtime = await createRuntimeThroughUpgradeCoordinator(dataRoot, releaseId, {
     coreDatabasePath: path.join(dataRoot, 'core.sqlite'),
     sessionDatabasePath: path.join(dataRoot, 'sessions.sqlite'),
     assetRoot: path.join(dataRoot, 'assets'),
@@ -305,9 +539,6 @@ export const startNekroServer = async (options: StartServerOptions): Promise<Nek
     developmentWorkspaceRoot,
     ...(options.configureLlm === undefined ? {} : { configureLlm: options.configureLlm }),
   })
-  await runtime.start()
-  await runtime.recover()
-
   // The HTTP/SSE host owns a narrow Cordis Context with the WebServer seam and
   // the static dist fallback. The DSH Session runtime stays inside NekroRuntime.
   const webContext = new Context()

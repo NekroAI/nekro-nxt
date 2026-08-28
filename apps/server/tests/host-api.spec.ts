@@ -146,6 +146,35 @@ class ScriptedCommunicationModel extends LlmAdapter {
 }
 
 describe('NekroNxt Server domain API (WebServer seam)', () => {
+  it('rejects oversized JSON requests without buffering the full body', async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), 'nekro-nxt-host-api-body-limit-'))
+    temporaryDirectories.push(directory)
+    const runtime = await NekroRuntime.create({
+      coreDatabasePath: path.join(directory, 'core.sqlite'),
+      sessionDatabasePath: path.join(directory, 'sessions.sqlite'),
+      assetRoot: path.join(directory, 'assets'),
+      extensionDataRoot: path.join(directory, 'extension-data'),
+      extensionCacheRoot: path.join(directory, 'extension-cache'),
+    })
+    const webContext = new Context()
+    await webContext.plugin(WebServer, { host: '127.0.0.1', port: 0 })
+    const api = createNekroHostApi(webContext.webServer, runtime)
+    try {
+      const response = await fetch(`http://127.0.0.1:${api.port}/api/agents`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ displayName: '超限智能体', padding: 'x'.repeat(2 * 1024 * 1024) }),
+      })
+      expect(response.status).toBe(400)
+      expect(await response.text()).toContain('JSON 请求体超过 2097152 字节限制')
+      expect(runtime.core.listAgents()).toEqual([])
+    } finally {
+      api.dispose()
+      await webContext.fiber.dispose()
+      await runtime.dispose()
+    }
+  })
+
   it('creates an intelligent-agent, admits a Web message, and exposes only the communication-tool reply', async () => {
     const directory = await mkdtemp(path.join(tmpdir(), 'nekro-nxt-host-api-'))
     temporaryDirectories.push(directory)

@@ -325,6 +325,10 @@ export class SqliteCoreRepository implements CurrentRepository {
     this.#extensions.upsertHostInstallation(...args)
   readonly deleteHostInstallation = (...args: Parameters<ExtensionRepository['deleteHostInstallation']>) =>
     this.#extensions.deleteHostInstallation(...args)
+  readonly commitHostInstallationState = (...args: Parameters<HostUiRepository['commitHostInstallationState']>) =>
+    this.#extensions.commitHostInstallationState(...args)
+  readonly deleteHostInstallationState = (...args: Parameters<HostUiRepository['deleteHostInstallationState']>) =>
+    this.#extensions.deleteHostInstallationState(...args)
   readonly listHostUiPageEntries = (...args: Parameters<HostUiRepository['listHostUiPageEntries']>) =>
     this.#extensions.listHostUiPageEntries(...args)
   readonly replaceHostUiExtensionPages = (...args: Parameters<HostUiRepository['replaceHostUiExtensionPages']>) =>
@@ -376,6 +380,12 @@ export class SqliteCoreRepository implements CurrentRepository {
     this.#dshPlugins.upsertDshPluginActivation(...args)
   readonly deleteDshPluginActivation = (...args: Parameters<DshPluginRepository['deleteDshPluginActivation']>) =>
     this.#dshPlugins.deleteDshPluginActivation(...args)
+  readonly commitDshPluginActivationState = (
+    ...args: Parameters<DshPluginRepository['commitDshPluginActivationState']>
+  ) => this.#dshPlugins.commitDshPluginActivationState(...args)
+  readonly deleteDshPluginActivationState = (
+    ...args: Parameters<DshPluginRepository['deleteDshPluginActivationState']>
+  ) => this.#dshPlugins.deleteDshPluginActivationState(...args)
   readonly getDshPluginDiagnostic = (...args: Parameters<DshPluginRepository['getDshPluginDiagnostic']>) =>
     this.#dshPlugins.getDshPluginDiagnostic(...args)
   readonly upsertDshPluginDiagnostic = (...args: Parameters<DshPluginRepository['upsertDshPluginDiagnostic']>) =>

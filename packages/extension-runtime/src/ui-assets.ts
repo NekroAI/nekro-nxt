@@ -36,6 +36,20 @@ export const validateHostUiCss = (source: string): void => {
   })
 }
 
+export const scopeHostUiCss = (source: string, ownerScope: string): string => {
+  validateHostUiCss(source)
+  if (!/^[a-z0-9_-]{1,128}$/iu.test(ownerScope)) throw new Error('Host UI CSS owner scope 无效。')
+  const root = postcss.parse(source)
+  const boundary = `:where([data-host-ui-owner="${ownerScope}"])`
+  root.walkRules((rule) => {
+    rule.selectors = rule.selectors.map((selector) => {
+      const local = selector.replace(/:local\(([^()]+)\)/gu, '$1')
+      return `${boundary} ${local}`
+    })
+  })
+  return root.toString()
+}
+
 const SVG_ALLOWED_ELEMENTS = new Set(['svg', 'g', 'path', 'circle', 'ellipse', 'rect', 'line', 'polyline', 'polygon'])
 const SVG_ALLOWED_ATTRIBUTES = new Set([
   'xmlns',

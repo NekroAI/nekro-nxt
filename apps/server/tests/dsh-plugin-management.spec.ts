@@ -4,7 +4,7 @@ import { LlmAdapter, type GenerateOptions, type StreamChunk } from '@deepseek-ai
 import { HostApiContracts } from '@nekro-nxt/contracts'
 import { strFromU8, unzipSync } from 'fflate'
 import { createHash } from 'node:crypto'
-import { access, mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises'
+import { access, mkdtemp, mkdir, readFile, readdir, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { create as createTarball } from 'tar'
@@ -26,6 +26,7 @@ const createFixtureTarball = async (
     readonly installScript?: boolean
     readonly moduleSource?: string
     readonly hostUi?: boolean
+    readonly exportTarget?: string
   } = {},
 ): Promise<Uint8Array> => {
   const packageName = options.name ?? '@example/dsh-managed-fixture'
@@ -41,7 +42,7 @@ const createFixtureTarball = async (
         name: packageName,
         version: '1.2.3',
         type: 'module',
-        exports: './index.js',
+        exports: options.exportTarget ?? './index.js',
         ...(options.hostUi ? { files: ['index.js', 'nxt-client.mjs', 'nxt-client.css', 'assets'] } : {}),
         ...(options.hostUi
           ? {
@@ -173,6 +174,77 @@ class QuietModel extends LlmAdapter {
 }
 
 describe('managed DSH plugin lifecycle', () => {
+  it('rejects package entries that Node cannot resolve during inspection', async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), 'nekro-nxt-dsh-entry-validation-'))
+    temporaryDirectories.push(directory)
+    const runtime = await NekroRuntime.create({
+      coreDatabasePath: path.join(directory, 'core.sqlite'),
+      sessionDatabasePath: path.join(directory, 'sessions.sqlite'),
+      assetRoot: path.join(directory, 'assets'),
+      extensionDataRoot: path.join(directory, 'extension-data'),
+      extensionCacheRoot: path.join(directory, 'extension-cache'),
+      dshPluginRoot: path.join(directory, 'dsh'),
+    })
+    try {
+      await expect(
+        runtime.dshPluginInstaller.inspectTarball(
+          await createFixtureTarball(directory, { exportTarget: './missing-entry.js' }),
+        ),
+      ).rejects.toThrow('DSH 插件入口无法解析')
+      expect(runtime.repository.listDshPluginPackages()).toEqual([])
+    } finally {
+      await runtime.dispose()
+    }
+  }, 30_000)
+
+  it('expires inspection tokens after ten minutes and removes their staging directory', async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), 'nekro-nxt-dsh-inspection-expiry-'))
+    temporaryDirectories.push(directory)
+    let now = 1_000
+    const runtime = await NekroRuntime.create({
+      coreDatabasePath: path.join(directory, 'core.sqlite'),
+      sessionDatabasePath: path.join(directory, 'sessions.sqlite'),
+      assetRoot: path.join(directory, 'assets'),
+      extensionDataRoot: path.join(directory, 'extension-data'),
+      extensionCacheRoot: path.join(directory, 'extension-cache'),
+      dshPluginRoot: path.join(directory, 'dsh'),
+      now: () => now,
+    })
+    try {
+      const inspection = await runtime.dshPluginInstaller.inspectTarball(await createFixtureTarball(directory))
+      expect(await readdir(path.join(directory, 'dsh', 'plugin-staging'))).toHaveLength(1)
+      now += 10 * 60_000
+      await expect(runtime.dshPluginInstaller.commit(inspection.token, [])).rejects.toThrow('安装检查已失效')
+      expect(await readdir(path.join(directory, 'dsh', 'plugin-staging'))).toEqual([])
+      expect(runtime.repository.listDshPluginPackages()).toEqual([])
+    } finally {
+      await runtime.dispose()
+    }
+  }, 30_000)
+
+  it('moves an uncommitted package directory to trash during startup recovery', async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), 'nekro-nxt-dsh-orphan-recovery-'))
+    temporaryDirectories.push(directory)
+    const dshRoot = path.join(directory, 'dsh')
+    const orphan = path.join(dshRoot, 'plugin-packages', 'dsp_ORPHAN', 'project')
+    await mkdir(orphan, { recursive: true })
+    await writeFile(path.join(orphan, 'package.json'), '{}\n')
+    const runtime = await NekroRuntime.create({
+      coreDatabasePath: path.join(directory, 'core.sqlite'),
+      sessionDatabasePath: path.join(directory, 'sessions.sqlite'),
+      assetRoot: path.join(directory, 'assets'),
+      extensionDataRoot: path.join(directory, 'extension-data'),
+      extensionCacheRoot: path.join(directory, 'extension-cache'),
+      dshPluginRoot: dshRoot,
+    })
+    try {
+      await expect(access(path.dirname(orphan))).rejects.toThrow()
+      expect(await readdir(path.join(dshRoot, 'plugin-trash'))).toEqual([expect.stringMatching(/^orphan-dsp_ORPHAN-/u)])
+    } finally {
+      await runtime.dispose()
+    }
+  })
+
   it('publishes explicit NXT pages only after approved Host activation and retracts them on disable', async () => {
     const directory = await mkdtemp(path.join(tmpdir(), 'nekro-nxt-dsh-host-ui-'))
     temporaryDirectories.push(directory)
@@ -214,6 +286,9 @@ describe('managed DSH plugin lifecycle', () => {
       const [page] = runtime.repository.listHostUiPageEntries()
       expect(page).toMatchObject({ entryId: 'overview', visible: true })
       expect(await fetch(`http://127.0.0.1:${api.port}${page!.client.moduleUrl}`)).toHaveProperty('status', 200)
+      const pageCss = await fetch(`http://127.0.0.1:${api.port}${page!.client.moduleUrl.replace(/\.mjs$/u, '.css')}`)
+      expect(pageCss.ok).toBe(true)
+      expect(await pageCss.text()).toContain(`:where([data-host-ui-owner="${inspection.packageDigest}"]) .dshPage`)
       expect(
         await fetch(
           `http://127.0.0.1:${api.port}/api/dsh/plugin-entries/${entry!.id}/host-ui/assets/${page!.icon.kind === 'svg' ? page!.icon.sha256 : ''}.svg`,
@@ -292,6 +367,23 @@ describe('managed DSH plugin lifecycle', () => {
       expect(runtime.repository.getDshPluginDiagnostic(entry!.id, 'host')).toMatchObject({ status: 'active' })
 
       await runtime.host.disableInstalledDshPlugin(entry!.id, 'host')
+      expect(runtime.repository.listDshPluginActivations(entry!.id)).toEqual([])
+
+      const agent = runtime.core.createAgent({
+        displayName: '插件清理测试智能体',
+        persona: '',
+        model: { provider: 'deepseek', model: 'v4' },
+      })
+      await runtime.host.activateInstalledDshPlugin({
+        entryId: entry!.id,
+        target: 'agent',
+        agentId: agent.definition.id,
+        config: {},
+      })
+      expect(runtime.repository.listDshPluginActivations(entry!.id)).toEqual([
+        expect.objectContaining({ target: 'agent', agentId: agent.definition.id }),
+      ])
+      await runtime.deleteAgent(agent.definition.id, { deleteAutoCreatedBuiltInChannels: false })
       expect(runtime.repository.listDshPluginActivations(entry!.id)).toEqual([])
 
       const webContext = new Context()
@@ -556,6 +648,60 @@ describe('managed DSH plugin lifecycle', () => {
       expect(runtime.host.toolNames(secondSession)).not.toContain('managed_agent_probe')
       await runtime.host.disableInstalledDshPlugin(entry.id, first.agentId)
       expect(runtime.host.toolNames(firstSession)).not.toContain('managed_agent_probe')
+    } finally {
+      await runtime.dispose()
+    }
+  }, 30_000)
+
+  it('keeps an intelligent-agent Session available when one persisted DSH plugin fails to restore', async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), 'nekro-nxt-dsh-agent-restore-failure-'))
+    temporaryDirectories.push(directory)
+    const runtime = await NekroRuntime.create({
+      coreDatabasePath: path.join(directory, 'core.sqlite'),
+      sessionDatabasePath: path.join(directory, 'sessions.sqlite'),
+      assetRoot: path.join(directory, 'assets'),
+      extensionDataRoot: path.join(directory, 'extension-data'),
+      extensionCacheRoot: path.join(directory, 'extension-cache'),
+      dshPluginRoot: path.join(directory, 'dsh'),
+      configureLlm: (context) => {
+        context.llm.registerAdapter(['test-provider'], new QuietModel())
+      },
+    })
+    await runtime.start()
+    try {
+      const agent = await runtime.createAgentWithWebChannel({
+        displayName: '恢复隔离测试智能体',
+        persona: '',
+        model: { provider: 'test-provider', model: 'chat-model' },
+      })
+      const inspection = await runtime.dshPluginInstaller.inspectTarball(
+        await createFixtureTarball(directory, {
+          name: '@example/dsh-broken-agent-fixture',
+          moduleSource: `export default function brokenAgentPlugin() { throw new Error('synthetic restore failure') }\n`,
+        }),
+      )
+      const installed = await runtime.dshPluginInstaller.commit(inspection.token, [])
+      const entry = runtime.repository.listDshPluginEntries(installed.id)[0]!
+      runtime.repository.updateDshPluginEntry({ ...entry, selectedScope: 'agent' })
+      runtime.repository.upsertDshPluginActivation({
+        entryId: entry.id,
+        targetKey: agent.agentId,
+        target: 'agent',
+        agentId: agent.agentId,
+        activatedAt: 100,
+      })
+
+      await expect(
+        runtime.web.postMessage({
+          channelId: agent.channelId,
+          clientEventId: 'broken-plugin-session',
+          parts: [{ type: 'text', text: '即使扩展损坏，也要建立会话。' }],
+        }),
+      ).resolves.toBeDefined()
+      expect(runtime.repository.listActiveEpisodesForAgent(agent.agentId)[0]?.dshSessionId).toBeDefined()
+      const diagnostic = runtime.repository.getDshPluginDiagnostic(entry.id, agent.agentId)
+      expect(diagnostic).toMatchObject({ status: 'restore-failed' })
+      expect(diagnostic?.message).toContain('synthetic restore failure')
     } finally {
       await runtime.dispose()
     }
