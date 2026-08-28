@@ -833,6 +833,7 @@ export class DshPluginPackageInstaller {
         env: {
           PATH: process.env['PATH'],
           TMPDIR: process.env['TMPDIR'],
+          ELECTRON_RUN_AS_NODE: process.env['ELECTRON_RUN_AS_NODE'],
           HTTPS_PROXY: process.env['HTTPS_PROXY'],
           HTTP_PROXY: process.env['HTTP_PROXY'],
           NO_PROXY: process.env['NO_PROXY'],

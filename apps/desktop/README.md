@@ -54,4 +54,4 @@ pnpm --filter @nekro-nxt/desktop test
 pnpm desktop:preview --platform mac
 ```
 
-最后一条分发命令会同时执行最终 `appOutDir` 的 Server readiness、凭据持久化与 DSH 插件安装/恢复/关闭/移除验证；只检查 staging、依赖文件存在或安装包摘要不能替代该验证。
+最后一条分发命令会同时执行最终 `appOutDir` 的 Server readiness、凭据持久化与 DSH 插件安装/恢复/关闭/移除验证；只检查 staging、依赖文件存在或安装包摘要不能替代该验证。Server 启动 pnpm 子进程时继续传递 `ELECTRON_RUN_AS_NODE=1`，确保打包后的 Electron 以 Node 模式执行内置 CLI，而不是启动浏览器进程。

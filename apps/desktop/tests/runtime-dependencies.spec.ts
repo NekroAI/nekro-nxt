@@ -26,6 +26,7 @@ describe('Desktop runtime dependencies', () => {
 
   it('materializes a portable Server dependency tree and starts the final packaged runtime', async () => {
     const desktopRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
+    const repositoryRoot = path.resolve(desktopRoot, '../..')
     const prepareScript = await readFile(path.join(desktopRoot, 'scripts/prepare-server-runtime.mjs'), 'utf8')
     expect(prepareScript).toContain("'--config.node-linker=hoisted'")
     expect(prepareScript).toContain("'--config.package-import-method=copy'")
@@ -39,6 +40,9 @@ describe('Desktop runtime dependencies', () => {
     expect(verifier).toContain('installManagedPluginSmoke')
     expect(verifier).toContain('verifyRestoredManagedPluginAndRemove')
     expect(verifier).toContain("child.kill('SIGTERM')")
+
+    const pluginInstaller = await readFile(path.join(repositoryRoot, 'apps/server/src/dsh-plugin-installer.ts'), 'utf8')
+    expect(pluginInstaller).toContain("ELECTRON_RUN_AS_NODE: process.env['ELECTRON_RUN_AS_NODE']")
 
     for (const channel of ['stable', 'preview']) {
       const previousChannel = process.env['NEKRO_DESKTOP_CHANNEL']
