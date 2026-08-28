@@ -58,7 +58,11 @@ describe('Host UI assets', () => {
     expect(() => validateHostUiCss('.panel {')).toThrow('语法无效')
     expect(() => validateHostUiCss('x'.repeat(128 * 1024 + 1))).toThrow('128 KiB')
     expect(() => validateHostUiCss('.panel { color: var(--nxt-text-primary); }')).not.toThrow()
+    expect(() => validateHostUiCss('#panel { display: block; }')).not.toThrow()
+    expect(() => validateHostUiCss(':local(.panel) { display: block; }')).not.toThrow()
     expect(() => validateHostUiCss('@media (width > 600px) { .panel { display: grid; } }')).not.toThrow()
+    expect(() => validateHostUiCss('@supports (display: grid) { .panel { display: grid; } }')).not.toThrow()
+    expect(() => validateHostUiCss('@container page (width > 600px) { .panel { display: grid; } }')).not.toThrow()
   })
 
   it('accepts a bounded monochrome SVG and rejects executable SVG', () => {
@@ -71,9 +75,13 @@ describe('Host UI assets', () => {
     )
     expect(() => validateHostUiSvg('x'.repeat(32 * 1024 + 1))).toThrow('32 KiB')
     expect(() => validateHostUiSvg('<!DOCTYPE svg><svg viewBox="0 0 24 24"></svg>')).toThrow('实体')
+    expect(() => validateHostUiSvg('<?xml version="1.0"?><svg viewBox="0 0 24 24"></svg>')).toThrow('实体')
+    expect(() => validateHostUiSvg('<svg viewBox="0 0 24 24">&#32;</svg>')).toThrow('实体')
     expect(() => validateHostUiSvg('<svg viewBox="0 0 24 24">')).toThrow('完整')
     expect(() => validateHostUiSvg('<svg><path d="M0 0"/></svg>')).toThrow('viewBox')
     expect(() => validateHostUiSvg('<svg viewBox="0 0 0 24"><path d="M0 0"/></svg>')).toThrow('尺寸')
+    expect(() => validateHostUiSvg('<svg viewBox="0 0 513 24"><path d="M0 0"/></svg>')).toThrow('尺寸')
+    expect(() => validateHostUiSvg('<svg viewBox="0 0 24 513"><path d="M0 0"/></svg>')).toThrow('尺寸')
     expect(() => validateHostUiSvg('<svg viewBox="0 0 24 24"><image href="probe"/></svg>')).toThrow('image')
     expect(() => validateHostUiSvg('<svg viewBox="0 0 24 24"><path unknown="probe"/></svg>')).toThrow('unknown')
     expect(() => validateHostUiSvg('<svg viewBox="0 0 24 24"><path disabled/></svg>')).toThrow('无法识别')
@@ -1432,6 +1440,8 @@ class FakeHostInstallationHost implements HostExtensionInstallationHost {
   readonly keys = new Map<ExtensionRevisionId, string>()
   readonly mountedHostUi: ExtensionRevisionId[] = []
   readonly disposedHostUi: ExtensionRevisionId[] = []
+  readonly failedHostUiMounts = new Set<ExtensionRevisionId>()
+  readonly failedHostUiDisposals = new Set<ExtensionRevisionId>()
   onMount?: (revision: Revision) => Promise<void>
   onWaitUntilSafe?: (adapterKey: string) => Promise<void>
   activeMounts = 0
@@ -1470,11 +1480,13 @@ class FakeHostInstallationHost implements HostExtensionInstallationHost {
   }
 
   mountHostUi(revision: Revision): Promise<MountedHostUiExtension> {
+    if (this.failedHostUiMounts.has(revision.id)) return Promise.reject(new Error('Host UI mount failed.'))
     this.mountedHostUi.push(revision.id)
     return Promise.resolve({
       call: () => Promise.resolve(null),
       dispose: () => {
         this.disposedHostUi.push(revision.id)
+        if (this.failedHostUiDisposals.has(revision.id)) return Promise.reject(new Error('Host UI dispose failed.'))
         return Promise.resolve()
       },
     })
@@ -1503,6 +1515,31 @@ const adapterVerification = (id: ExtensionRevisionId, key = 'synthetic-adapter')
     inboundCommitted: true,
     outboundReceipt: 'sent',
   },
+})
+
+const hostUiVerification = (revision: Revision): ExtensionRevisionVerification => ({
+  revisionId: revision.id,
+  dshVersion: '0.1.1-rc.2',
+  contractVersion: 'nekro-nxt-extension-v3',
+  scope: 'host-ui',
+  origin: { episodeId: 'episode', pluginId: 'plugin', packageId: 'package', pluginRunId: 'run' },
+  verifiedAt: 1,
+  hostBuild: { built: false, buildKey: 'host' },
+  clientBuild: { built: true, buildKey: 'client' },
+  toolInvocations: [],
+  rpcMethods: [],
+  renderedSlots: [],
+  renderedPages: [
+    {
+      kind: 'host-page',
+      entryId: 'overview',
+      title: '概览',
+      icon: { kind: 'host-icon', name: 'layout-dashboard' },
+      objectPane: 'hidden',
+      startPath: '',
+    },
+  ],
+  permissions: { permissions: [], networkOrigins: [] },
 })
 
 const installationCoordinator = (
@@ -1733,6 +1770,51 @@ describe('Host Extension Installation', () => {
       new FakeHostInstallationHost(),
     )
     await defaultClockCoordinator.dispose()
+  })
+
+  it('restores the active Host UI revision after a failed update and keeps facts when disposal fails', async () => {
+    const repository = new MemoryExtensionRepository()
+    const extension = { ...localExtension(extensionId('uifailure')), scope: 'host-ui' as const }
+    const first = revision(revisionId('uifailure1'), extension.id, 1)
+    const second = revision(revisionId('uifailure2'), extension.id, 2)
+    repository.saveExtensionRevision({ extension, revision: first, verification: hostUiVerification(first) })
+    repository.saveExtensionRevision({ extension, revision: second, verification: hostUiVerification(second) })
+    const host = new FakeHostInstallationHost()
+    const coordinator = new HostExtensionInstallationCoordinator(
+      repository,
+      { revisionSourceDirectory: () => '/source' },
+      {
+        build: ({ revisionId: id }) =>
+          Promise.resolve({
+            revisionId: id,
+            buildKey: `build-${id}`,
+            directory: '/cache',
+            clientEntry: '/cache/client.mjs',
+          }),
+      },
+      host,
+      { now: () => 30 },
+    )
+
+    await coordinator.install({ extensionId: extension.id, revisionId: first.id })
+    host.failedHostUiMounts.add(second.id)
+    await expect(coordinator.install({ extensionId: extension.id, revisionId: second.id })).rejects.toThrow(
+      'Host UI mount failed',
+    )
+    expect(repository.getHostInstallation(extension.id)?.extensionRevisionId).toBe(first.id)
+    expect(host.mountedHostUi).toEqual([first.id, first.id])
+
+    host.failedHostUiDisposals.add(first.id)
+    await expect(coordinator.uninstall(extension.id)).rejects.toThrow('Host UI dispose failed')
+    expect(repository.getHostInstallation(extension.id)?.extensionRevisionId).toBe(first.id)
+    expect(repository.listHostUiPageEntries()).toHaveLength(1)
+    expect(coordinator.getDiagnostic(extension.id)).toMatchObject({ status: 'dispose-failed' })
+
+    host.failedHostUiDisposals.delete(first.id)
+    await coordinator.uninstall(extension.id)
+    expect(repository.getHostInstallation(extension.id)).toBeUndefined()
+    expect(repository.listHostUiPageEntries()).toEqual([])
+    await coordinator.dispose()
   })
 
   it('installs, updates, rolls back, and restores the previous Revision after a failed update', async () => {
