@@ -6,6 +6,11 @@ import { notify } from '../components/notifications.js'
 import { InlineFeedback } from '../components/product-feedback.js'
 import { useProductStore, type AgentSummary, type ChannelRuntimeView, type ChannelSummary } from '../product-store.js'
 import {
+  ChannelInspectorAgentExtensionSlots,
+  ConversationToolCardExtensionSlots,
+} from '../persistent-extension-client.js'
+import { AdapterChannelInspectorExtensionSlots } from '../adapter-host-client.js'
+import {
   Button,
   Disclosure,
   Enter,
@@ -77,6 +82,7 @@ export interface TrajectoryRecord {
   readonly input?: string
   readonly output?: string
   readonly state?: RuntimeTool['state']
+  readonly toolName?: string
   readonly wroteToChannel?: boolean
   readonly durationMs?: number
   readonly firstTokenMs?: number
@@ -596,6 +602,7 @@ export const flattenRuntimeRecords = (runtime: ChannelRuntimeView | undefined): 
           ...(tool.inputPreview === undefined ? {} : { input: tool.inputPreview }),
           ...(tool.resultPreview === undefined ? {} : { output: tool.resultPreview }),
           state: tool.state,
+          toolName: tool.name,
           ...(tool.wroteToChannel === undefined ? {} : { wroteToChannel: tool.wroteToChannel }),
           ...(tool.durationMs === undefined ? {} : { durationMs: tool.durationMs }),
         })
@@ -686,6 +693,8 @@ export function ChannelWorkStream({ runtime }: { readonly runtime: ChannelRuntim
                   tool={tool}
                   open={openId === tool.callId}
                   onToggle={() => setOpenId((currentId) => (currentId === tool.callId ? null : tool.callId))}
+                  {...(runtime?.agentId === undefined ? {} : { agentId: runtime.agentId })}
+                  {...(runtime?.channelId === undefined ? {} : { channelId: runtime.channelId })}
                 />
               ))}
             </div>
@@ -696,6 +705,8 @@ export function ChannelWorkStream({ runtime }: { readonly runtime: ChannelRuntim
           tool={current}
           open={openId === current.callId}
           onToggle={() => setOpenId((currentId) => (currentId === current.callId ? null : current.callId))}
+          {...(runtime?.agentId === undefined ? {} : { agentId: runtime.agentId })}
+          {...(runtime?.channelId === undefined ? {} : { channelId: runtime.channelId })}
         />
       ) : null}
     </div>
@@ -706,10 +717,14 @@ function WorkToolRow({
   tool,
   open,
   onToggle,
+  agentId,
+  channelId,
 }: {
   readonly tool: RuntimeTool
   readonly open: boolean
   readonly onToggle: () => void
+  readonly agentId?: string
+  readonly channelId?: string
 }) {
   const detailId = useId()
   const hasDetails = Boolean(tool.inputPreview || tool.resultPreview)
@@ -735,19 +750,59 @@ function WorkToolRow({
   )
 
   if (!hasDetails) {
-    return <div className={styles.toolRow}>{row}</div>
+    return (
+      <div className={styles.toolRow}>
+        {row}
+        {agentId && channelId ? (
+          <ConversationToolCardExtensionSlots
+            agentId={agentId}
+            channelId={channelId}
+            callId={tool.callId}
+            toolName={tool.name}
+            displayName={tool.displayName}
+            state={tool.state}
+            surface="stream"
+            {...(tool.durationMs === undefined ? {} : { durationMs: tool.durationMs })}
+            {...(tool.wroteToChannel === undefined ? {} : { wroteToChannel: tool.wroteToChannel })}
+          />
+        ) : null}
+      </div>
+    )
   }
 
   return (
-    <Button className={styles.toolRow} type="button" aria-expanded={open} aria-controls={detailId} onClick={onToggle}>
-      {row}
+    <div className={styles.toolRowGroup}>
+      <Button
+        className={styles.toolRowTrigger}
+        type="button"
+        aria-expanded={open}
+        aria-controls={detailId}
+        onClick={onToggle}
+      >
+        {row}
+      </Button>
       <Disclosure open={open}>
         <div className={styles.toolCard} id={detailId}>
           {tool.inputPreview ? <pre>{tool.inputPreview}</pre> : null}
           {tool.resultPreview ? <pre>{tool.resultPreview}</pre> : null}
+          {agentId && channelId ? (
+            <ConversationToolCardExtensionSlots
+              agentId={agentId}
+              channelId={channelId}
+              callId={tool.callId}
+              toolName={tool.name}
+              displayName={tool.displayName}
+              state={tool.state}
+              surface="stream"
+              {...(tool.inputPreview === undefined ? {} : { inputPresentation: tool.inputPreview })}
+              {...(tool.resultPreview === undefined ? {} : { resultPresentation: tool.resultPreview })}
+              {...(tool.durationMs === undefined ? {} : { durationMs: tool.durationMs })}
+              {...(tool.wroteToChannel === undefined ? {} : { wroteToChannel: tool.wroteToChannel })}
+            />
+          ) : null}
         </div>
       </Disclosure>
-    </Button>
+    </div>
   )
 }
 
@@ -959,6 +1014,9 @@ export function ChannelSessionInspector({
   readonly onDelete: () => void
 }) {
   const navigate = useNxtNavigate()
+  const connection = useProductStore((state) =>
+    state.connections.find((candidate) => candidate.id === channel.connectionId),
+  )
   const phase = runtime?.phase ?? channel.runtimePhase
   const [renamePending, setRenamePending] = useState(false)
   const [triggerPending, setTriggerPending] = useState(false)
@@ -1080,6 +1138,33 @@ export function ChannelSessionInspector({
           </div>
         ) : null}
       </section>
+      {agent ? (
+        <ChannelInspectorAgentExtensionSlots
+          agentId={agent.id}
+          channelId={channel.id}
+          connectionId={channel.connectionId}
+          {...(runtime?.episodeId === undefined ? {} : { episodeId: runtime.episodeId })}
+          runtimePhase={
+            phase === '思考中'
+              ? 'thinking'
+              : phase === '使用工具'
+                ? 'using-tool'
+                : phase === '等待输入'
+                  ? 'waiting-input'
+                  : phase === '空闲'
+                    ? 'idle'
+                    : 'unavailable'
+          }
+        />
+      ) : null}
+      {connection ? (
+        <AdapterChannelInspectorExtensionSlots
+          adapterKey={connection.adapterKey}
+          connectionId={connection.id}
+          channelId={channel.id}
+          channelKind={channel.kind === 'web' ? 'web' : channel.kind === 'qq-group' ? 'group' : 'direct'}
+        />
+      ) : null}
       <section className={styles.inspectorPanel}>
         <div className={styles.inspectorSectionHead}>
           <h2>绑定</h2>
@@ -1244,7 +1329,15 @@ function InspectorRegion({ label, text }: { readonly label: string; readonly tex
   )
 }
 
-export function ChannelTrajectoryInspector({ record }: { readonly record: TrajectoryRecord | undefined }) {
+export function ChannelTrajectoryInspector({
+  record,
+  agentId,
+  channelId,
+}: {
+  readonly record: TrajectoryRecord | undefined
+  readonly agentId?: string
+  readonly channelId: string
+}) {
   const lane = record ? recordLane(record) : undefined
   const sent = (record?.input ?? record?.summary ?? '').trim()
   const output = (record?.output ?? '').trim()
@@ -1281,6 +1374,21 @@ export function ChannelTrajectoryInspector({ record }: { readonly record: Trajec
             {lane === 'send' && output && output !== sent ? <InspectorRegion label="发送结果" text={output} /> : null}
             {lane === 'tool' && record.input ? <InspectorRegion label="输入" text={record.input} /> : null}
             {lane === 'tool' && output ? <InspectorRegion label="输出" text={output} /> : null}
+            {lane === 'tool' && agentId && record.toolName && record.state ? (
+              <ConversationToolCardExtensionSlots
+                agentId={agentId}
+                channelId={channelId}
+                callId={record.id}
+                toolName={record.toolName}
+                displayName={record.name}
+                state={record.state}
+                surface="trajectory"
+                {...(record.input === undefined ? {} : { inputPresentation: record.input })}
+                {...(record.output === undefined ? {} : { resultPresentation: record.output })}
+                {...(record.durationMs === undefined ? {} : { durationMs: record.durationMs })}
+                {...(record.wroteToChannel === undefined ? {} : { wroteToChannel: record.wroteToChannel })}
+              />
+            ) : null}
           </>
         ) : (
           <section>

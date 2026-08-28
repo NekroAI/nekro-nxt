@@ -120,6 +120,13 @@
       "when": 1787838975862,
       "tag": "0016_dsh_plugin_packages",
       "breakpoints": true
+    },
+    {
+      "idx": 17,
+      "version": "6",
+      "when": 1787898247624,
+      "tag": "0017_host_ui_pages",
+      "breakpoints": true
     }
   ]
 }

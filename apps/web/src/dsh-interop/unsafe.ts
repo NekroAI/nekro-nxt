@@ -6,7 +6,7 @@ import type {
   CordisDynamicPluginRunId,
 } from '@deepseek-ai/dsh-cordis-client-runner/client'
 import type { StoredEntry } from '@deepseek-ai/dsh-client-ui-slots'
-import { HostApiContracts } from '@nekro-nxt/contracts'
+import { AgentClientSlotNameSchema, HostApiContracts } from '@nekro-nxt/contracts'
 import type { ExtensionClientEnvironment, ExtensionPluginFactory } from '@nekro-nxt/extension-sdk'
 import type { ReactNode } from 'react'
 
@@ -134,9 +134,11 @@ export const requireDynamicPluginRunId = (value: unknown): CordisDynamicPluginRu
   )
 
 /** Validate a dynamically imported Extension Client factory before invoking it. */
-export const requireExtensionPluginFactory = (value: unknown): ExtensionPluginFactory<ExtensionClientEnvironment> => {
+export const requireExtensionPluginFactory = <Environment = ExtensionClientEnvironment>(
+  value: unknown,
+): ExtensionPluginFactory<Environment> => {
   if (typeof value !== 'function') throw new TypeError('Extension Client artifact has no default factory.')
-  return value as ExtensionPluginFactory<ExtensionClientEnvironment>
+  return value as ExtensionPluginFactory<Environment>
 }
 
 interface DynamicSlotCoreFace {
@@ -170,8 +172,6 @@ export const requireProductSlotComponent = <Props extends object>(
   return value as (props: Props) => ReactNode
 }
 
-const NEKRO_NXT_CLIENT_SLOT_NAMES = new Set(['agent.workbench.sections', 'extension.details.panels'])
-
 /**
  * Bridge the intentionally open Extension SDK registration into DSH's declaration-merged SlotCore.
  * SlotCore performs its own full slot-kind validation after these minimum shape checks.
@@ -185,7 +185,7 @@ export const registerDynamicSlot = (
   const coreFace = requireObjectWithMethods<DynamicSlotCoreFace>(core, 'DSH SlotCore', ['register'])
   const registration = requireRecord(options, 'Extension Client slot options')
   const name = registration['name']
-  if (typeof name !== 'string' || !NEKRO_NXT_CLIENT_SLOT_NAMES.has(name)) {
+  if (!AgentClientSlotNameSchema.safeParse(name).success) {
     throw new TypeError(`Extension Client slot is not supported by NekroNxt: ${String(name)}`)
   }
   if (Object.keys(registration).some((key) => key !== 'name' && key !== 'id')) {

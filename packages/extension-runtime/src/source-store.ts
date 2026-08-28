@@ -49,6 +49,11 @@ export class ExtensionSourceStore {
     const final = path.join(this.#root, finalRelativePath)
     await mkdir(path.join(staging, 'source'), { recursive: true, mode: 0o700 })
     try {
+      const resources = materialized.resources ?? {}
+      for (const resourcePath of Object.keys(resources)) {
+        assertRelativeStoragePath(resourcePath)
+        await mkdir(path.dirname(path.join(staging, resourcePath)), { recursive: true, mode: 0o700 })
+      }
       await Promise.all([
         writeFile(path.join(staging, 'manifest.json'), JSON.stringify(materialized.manifest, null, 2) + '\n', {
           encoding: 'utf8',
@@ -60,6 +65,9 @@ export class ExtensionSourceStore {
         ...(materialized.sources.client === undefined
           ? []
           : [writeFile(path.join(staging, 'source', 'client.ts'), materialized.sources.client, { mode: 0o600 })]),
+        ...Object.entries(resources).map(([resourcePath, content]) =>
+          writeFile(path.join(staging, resourcePath), content, { encoding: 'utf8', mode: 0o600 }),
+        ),
         writeFile(path.join(staging, 'content.sha256'), materialized.contentDigest + '\n', {
           encoding: 'utf8',
           mode: 0o600,

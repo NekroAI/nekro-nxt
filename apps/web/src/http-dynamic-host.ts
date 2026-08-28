@@ -210,8 +210,13 @@ export class HttpDynamicClientHost implements DynamicClientHostPort {
     pluginId: string,
     packageId: string,
     pluginRunId: string,
-    renderedSlots: readonly ('agent.workbench.sections' | 'extension.details.panels')[],
-    renderedHostSlots: readonly { readonly name: 'conversation.message.rich'; readonly key: string }[],
+    renderedSlots: Parameters<DynamicClientHostPort['reportClientVerification']>[4],
+    renderedHostSlots: Parameters<DynamicClientHostPort['reportClientVerification']>[5],
+    renderedPages: Parameters<DynamicClientHostPort['reportClientVerification']>[6] = [],
+    permissions: Parameters<DynamicClientHostPort['reportClientVerification']>[7] = {
+      permissions: [],
+      networkOrigins: [],
+    },
   ): Promise<void> {
     void agentId
     await this.#post(
@@ -224,6 +229,8 @@ export class HttpDynamicClientHost implements DynamicClientHostPort {
         pluginRunId,
         renderedSlots: [...renderedSlots],
         renderedHostSlots: [...renderedHostSlots],
+        renderedPages: [...renderedPages],
+        permissions,
       },
     )
   }

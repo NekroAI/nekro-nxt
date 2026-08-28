@@ -43,11 +43,14 @@
 | 动态回路 | `POST /api/dynamic/:agentId/...` | 每次请求携带精确 `episodeId`；审批、Host half、Client 源码、渲染证据、Guard 报告与结算不猜活动 Session |
 | Client Artifact | `GET /api/extensions/:extensionId/revisions/:revisionId/client/:buildKey.mjs` | 只向匹配当前 Agent Activation 的精确构建提供源码 |
 | Extension RPC | `POST /api/extensions/:extensionId/revisions/:revisionId/call` | 按 `agentId + revisionId + method` 调用 Activation handler |
-| 安装/切换 Adapter Revision | `PUT /api/extensions/:extensionId/installation` | 幂等安装或显式更新/回滚到 `{ revisionId }` |
-| 卸载 Adapter Revision | `DELETE /api/extensions/:extensionId/installation` | 停止 Runtime 并移除目录和 Client Slot；保留连接、频道与历史 |
+| 安装/切换 Host Revision | `PUT /api/extensions/:extensionId/installation` | 幂等安装或显式更新/回滚 `host-adapter`、`host-ui` Revision；权限扩大时保留旧 Runtime |
+| 卸载 Host Revision | `DELETE /api/extensions/:extensionId/installation` | 停止 Runtime 并撤销 Adapter Slot 或页面；保留连接、频道与历史 |
 | Client 诊断 | `POST /api/extensions/:extensionId/revisions/:revisionId/client-diagnostic` | 保存当前 Activation 最近一次 loaded/failed；不回滚 Host |
 | 删除本地扩展 | `DELETE /api/extensions/:extensionId` | 先关闭全部 Activation 或卸载 Adapter，再删除源码、版本、验证与诊断；失败时恢复原运行关系 |
 | Extension 导出/导入 | `GET /api/extensions/:id/revisions/:revisionId/export`、`POST /api/extensions/imports/inspect`、`POST /api/extensions/imports/:token/commit` | 单 Revision `.nxt-extension`；两阶段检查、冲突处理、本机构建，提交后处于关闭状态 |
+| Host UI 页面偏好 | `PUT /api/host-ui/page-preferences` | `expectedRevision` 原子提交完整页面顺序与显隐，冲突时以 Host 为准 |
+| Host UI 页面服务 | `POST /api/host-ui/pages/:pageInstanceId/call` | 精确 owner、Artifact、权限和输入 Schema 下的产品服务、状态、事件、网络与自定义 RPC |
+| Host UI 页面诊断 | `POST /api/host-ui/pages/:pageInstanceId/diagnostic` | 记录 Client、导航或 RPC 故障，不改变 Installation/Activation 事实 |
 | DSH 安装检查/提交 | `POST /api/dsh/plugin-installs/inspect`、`POST /api/dsh/plugin-installs` | 精确 npm 版本、tgz 或分享包；脚本逐依赖批准，原子提交后处于关闭状态 |
 | DSH 入口配置/启停 | `POST /api/dsh/plugin-entries/:entryId/config/inspect`、`PUT/DELETE /api/dsh/plugin-entries/:entryId/activation` | Config Schema 或高级 JSON；用户确认 Host/智能体作用域，Loader 成功后提交 Activation |
 | DSH 导出/移除 | `GET/DELETE /api/dsh/plugin-installs/:packageId[/export]` | 导出根 tgz 与锁元数据；移除先静止关闭全部入口，任一失败不删除包 |
@@ -65,12 +68,13 @@
 ## 3. Web 与 Server
 
 - `apps/web/src/http-host.ts` 实现 `ProductHostPort`。`apps/web/src/host-event-stream.ts` 是浏览器 SSE 的唯一生命周期所有者，产品快照、DSH 设置和动态 Client 只订阅这条共享流，不各自建立连接。`execute` 覆盖创建/删除智能体、删除频道、两种上下文操作、发消息、改能力、扩展启停、从动态保存、创建/测试连接、修改连接别名和动态审批；状态变更成功后重新读取权威快照，失败不发布前端成功状态；`host.refresh` 同时重建共享流和读取快照。
-- 每个智能体使用独立产品 SlotCore。Snapshot/SSE 变化驱动 Client Activation 对账；Revision 更新先 dispose 后 mount，刷新与 Server 重启按权威 Activation 恢复。Host Adapter Client 使用独立全局 Runtime，只加载当前已安装 Revision 的 Artifact，并只接受 `conversation.message.rich` keyed Slot。
+- 每个智能体使用独立产品 SlotCore。Snapshot/SSE 变化驱动 Client Activation 对账；Revision 更新先 dispose 后 mount，刷新与 Server 重启按权威 Activation 恢复。Host Adapter Client 使用独立全局 Runtime，加载当前已安装 Revision 的 Artifact，并接受 Catalog 中的富消息、连接和频道检查器 Slot。Host UI Client 使用第三个独立 Runtime，按 Client Artifact 共享模块实例，每个页面拥有独立错误边界、滚动根和声明式导航 Provider；三类 Registry 不互相注册。
+- Host UI 页面路由固定为 `/apps/:pageInstanceId/*`。Web 使用快照中的 `routeBase`，入口隐藏、Activation 关闭或 Extension 删除后跳转到其他可见扩展页面；没有可见页面时进入对应 Extension 或 DSH 详情。系统图标组和底部工具组不参与扩展排序。
 - 添加平台连接先选用户可创建的平台，再按版本化 schema 渲染表单；从某适配器详情「再添加一个账号」可跳过选平台。系统托管内置 Adapter 不出现在创建目录。
 - `/api/snapshot` 只携带智能体的结构化人设文档，不承载平台用户全集。`/api/platform-users` 从持久身份与活动频道关系独立分页；Web 在 `channel-fact` 后使目录查询失效并防抖刷新。
 - 外部频道未发现时说明先向机器人账号发一条消息。`POST /api/channels/:id/messages`：内置频道入站交给智能体；外部频道在已绑定且允许主动发送时，以机器人账号出站，并注入管理员从客户端发出的系统事实。
 - `apps/server/src/main.ts` 使用 `NEKRO_DATA`、`NEKRO_PORT`（默认 4960）与可选 `NEKRO_MANAGEMENT_KEY`。开发工作区为 `<dataRoot>/workspaces/<agentId>/`。
-- 产品 SPA 深链只覆盖 `/work`、`/agents`、`/channels`、`/creator`、`/runtime`、`/settings`、`/connections`、`/extensions` 及其子路径；GET/HEAD 返回经过 DSH index injection 的产品入口，其他方法 405。`/api` 和不存在的静态资源不进入 SPA 回退。
+- 产品 SPA 深链覆盖 `/work`、`/agents`、`/channels`、`/creator`、`/runtime`、`/settings`、`/connections`、`/extensions`、`/apps` 及其子路径；GET/HEAD 返回经过 DSH index injection 的产品入口，其他方法 405。`/api` 和不存在的静态资源不进入 SPA 回退。
 - 生产 CLI 由构建后的 `dist/main.mjs` 直接启动；`NEKRO_HOST` 默认 `127.0.0.1`。公开监听 `0.0.0.0` 必须设置至少 32 个字符的 `NEKRO_MANAGEMENT_KEY`，并在外部 4960 启动自动 TLS 与设备鉴权入口；DSH WebServer 只监听随机 loopback。`GET /health/live` 与 `GET /health/ready` 保持匿名，只返回状态和 Release 身份。
 - Desktop 自带本地 Host 使用随机 loopback HTTP，并按 `500ms → 1s → 2s → 5s → 5s` 有界退避恢复。Desktop BrowserWindow 使用可替换 Product View：本地 Profile 指向自带 Host，远程 Profile 指向固定 SPKI 的 Server TLS 入口；每个 Profile 使用独立 partition 和最近路由。切换关闭旧 Product View，不重启任何 Host Runtime。详细安全与 View 边界见 [Desktop 多实例与设备鉴权](decisions/implemented/2026-08-23-Desktop多实例与设备鉴权.md)。
 - Runtime 打开双 SQLite 前，生产入口在 `backups/release-<releaseId digest>/` 为已有数据库创建一次 Release 恢复点；失败拒绝启动。该实验恢复点不覆盖数据根文件目录，完整升级协调仍以 Client migration Decision 为准。

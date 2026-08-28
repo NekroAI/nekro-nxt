@@ -4,9 +4,11 @@
 
 运行时能力通过 Activation Host 注入；新增 SDK 面必须有已实现 Extension 消费者、兼容版本和卸载测试。
 
-智能体扩展契约为 `nekro-nxt-extension-v1`；Host Adapter 验证证据为 `nekro-nxt-extension-v2`，两者对应 DSH `0.1.1-rc.2`。Host Tool/RPC Client 只允许 `agent.workbench.sections` 与 `extension.details.panels`；Adapter Host 使用 `harness.registerAdapter()`，Adapter Client V1 只允许 `conversation.message.rich`。
+智能体和 Adapter 旧契约继续只读兼容；当前 Client 契约是 `nekro-nxt-extension-v3`。Manifest V4 的 `host-ui` Revision 必须包含 Client、1–8 个 `host-page` 和完整权限声明。页面通过 `defineHostUiClientExtension()` 注册，使用 Host 分配的 `routeBase`、React Hooks 子集和 NXT UI Kit，不接管产品外壳。
 
-Adapter Client 的 `id` 必须是当前 `<adapterKey>:<kind>`，Props 只含结构化 rich part、`messageId` 和 `channelId`。它没有 Host RPC、Core、宿主路径或平台原始事件。组件加载失败、抛错、未命中或卸载时撤销当前贡献并回退宿主卡片。
+Adapter Client 的 `conversation.message.rich` id 使用 `<adapterKey>:<kind>`；`connection.adapter.setup/status/test` 与 `channel.inspector.adapter.sections` 的 id 等于当前 `adapterKey`。Props 是裁剪后的连接、频道或富消息展示投影，不包含 Core、宿主路径、Secret 或平台原始事件。组件加载失败、抛错、未命中或卸载时撤销当前贡献；富消息恢复宿主卡片，局部增强恢复宿主原有界面。
+
+Host UI 页面使用 `ctx.pages.register({ page, navigation? }, component)` 注册 Manifest 已声明的入口。`navigation` 返回版本化声明对象，路径限制在 Host 分配的 `routeBase` 内；主画布接收 `relativePath`、只读查询参数和受控 `navigate()`。`host.call()` 提供权限绑定的产品服务、扩展命名空间状态、事件订阅和受控网络请求。权限批准绑定精确 Artifact；凭据通过短期写入 token 交给 Connection 创建，不提供明文读取。Client CSS 和 SVG 必须通过 Manifest 资源清单、摘要与 Runtime 安全校验。
 
 ## Host 工具注册与 `ctx.effect`
 
@@ -37,19 +39,20 @@ Client Slot 遵循同一规则：按 Authoring Reference 直接调用 `ctx.slots
 
 ## Client Slot 宿主契约
 
-`agent.workbench.sections` 位于智能体配置页全部宿主区块之后、绑定与删除确认 Dialog 之前。它只在该智能体存在已加载的 Client Activation 时渲染，接收 `{ agentId, displayName }`。这是 `list` 槽：多个贡献按注册顺序纵向排列，每个贡献自行使用 `styles.section` 建立与宿主一致的区块，不得接管页头、保存动作、危险操作或右侧检查器。
+`agent.workbench.sections` 位于智能体配置页“可用扩展”之后、“危险操作”之前。它在该智能体存在已加载的 Client Activation 时渲染，接收 `{ agentId, displayName }`。这是 `list` 槽：多个贡献按注册顺序纵向排列，每个贡献自行使用 `styles.section` 建立与宿主一致的区块，不得接管页头、保存动作、危险操作或右侧检查器。
 
-`extension.details.panels` 位于扩展详情的“使用范围”之后。宿主只为当前详情页选中的一个 active Activation 渲染它，接收 `{ agentId, extensionId, revisionId, activation: 'active' }`；未启用时不显示。它同样是 `list` 槽，多个贡献按注册顺序纵向排列。动态创造预览固定使用 `extensionId: 'dynamic-preview'`、`revisionId: 'dynamic-preview'` 和 `activation: 'active'`，这些值只表示尚未保存的预览环境，不能据此声称扩展已保存或已启用。
+`extension.activation.panels` 位于扩展详情的“使用范围”之后。用户明确选择一个 active Activation 后，宿主传入对应 `agentId`、`extensionId`、`revisionId`、`activationId` 和运行状态。旧 `extension.details.panels` 只作为 V1 兼容映射。
 
 ```text
 智能体配置页                         扩展详情页
-├─ 人设与模型等宿主区块              ├─ 版本与验证信息
-├─ 授权能力                          ├─ 使用范围 / Activation
-│  └─ 动态创造策略                   └─ extension.details.panels[]
-├─ 危险操作                             └─ 按 Client 注册顺序纵向追加
-└─ agent.workbench.sections[]
-   └─ 按 Client 注册顺序纵向追加
+├─ 人设、模型、频道与授权             ├─ 修订与验证信息
+├─ 可用扩展                          ├─ 使用范围 / Activation
+├─ agent.workbench.sections[]        └─ extension.activation.panels[]
+│  └─ 按 Client 注册顺序纵向追加          └─ 按 Client 注册顺序纵向追加
+└─ 危险操作
 ```
+
+`channel.inspector.agent.sections` 位于频道检查器“运行”与“绑定”之间，接收当前频道、绑定智能体和裁剪后的运行状态。`conversation.tool.card` 按 Tool name keyed，在会话工作流和工作轨迹详情中共享同一展示投影；参数和结果经过长度限制与脱敏，不传 DSH 内部对象。Catalog 未列出的名称、跨作用域注册和 Adapter id 不匹配都会立即失败。
 
 持久 Client 的生命周期跟随 `agentId + Extension Activation Revision`：Snapshot/SSE 对账发现新增或换版时加载，换版先 dispose 旧注册再挂载新注册，停用、删除或 Provider 卸载时撤销全部 Slot 与 RPC。单个贡献渲染异常由 Slot Error Boundary 隔离；持久 Client 加载失败时宿主显示“扩展界面加载失败”和重新加载动作，其他扩展及宿主页保持可用。动态预览的加载、Host/Client 半边失败会回写动态运行诊断，不会伪造验证成功。
 

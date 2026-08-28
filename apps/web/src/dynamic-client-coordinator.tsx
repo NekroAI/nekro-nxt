@@ -5,6 +5,7 @@ import {
   useEffect,
   useMemo,
   useRef,
+  useState,
   useSyncExternalStore,
   type ReactNode,
 } from 'react'
@@ -12,12 +13,22 @@ import { setDynamicClientApprovalBridge } from './dynamic-client-bridge.js'
 import {
   DshDynamicClientRuntime,
   type DynamicClientHostPort,
+  type DynamicHostPageEntry,
   type DynamicInventoryRow,
   type DynamicProductSlotName,
   type DynamicProductSlotPropsMap,
 } from './dsh-dynamic-client.js'
+import type {
+  AdapterClientSlotName,
+  AgentClientSlotName,
+  HostPageContribution,
+  HostUiPermissionDeclaration,
+} from '@nekro-nxt/contracts'
+import { ADAPTER_CLIENT_SLOT_NAMES, AGENT_CLIENT_SLOT_NAMES, HostUiNavigationModelSchema } from '@nekro-nxt/contracts'
 import { HttpDynamicClientHost } from './http-dynamic-host.js'
 import { useProductStore } from './product-store.js'
+import { Button } from './ui-kit/index.js'
+import styles from './dynamic-client-coordinator.module.css'
 
 /** One browser ModuleLoader/SlotRegistry multiplexed across product intelligent-agents. */
 class MultiplexDynamicClientHost implements DynamicClientHostPort {
@@ -93,8 +104,10 @@ class MultiplexDynamicClientHost implements DynamicClientHostPort {
     pluginId: string,
     packageId: string,
     pluginRunId: string,
-    renderedSlots: readonly ('agent.workbench.sections' | 'extension.details.panels')[],
-    renderedHostSlots: readonly { readonly name: 'conversation.message.rich'; readonly key: string }[],
+    renderedSlots: readonly AgentClientSlotName[],
+    renderedHostSlots: readonly { readonly name: AdapterClientSlotName; readonly key: string }[],
+    renderedPages: readonly HostPageContribution[],
+    permissions: HostUiPermissionDeclaration,
   ): Promise<void> {
     const owner = this.#pluginOwner.get(pluginId)
     if (!owner) return Promise.reject(new Error('找不到动态扩展所属的 Episode。'))
@@ -105,6 +118,8 @@ class MultiplexDynamicClientHost implements DynamicClientHostPort {
       pluginRunId,
       renderedSlots,
       renderedHostSlots,
+      renderedPages,
+      permissions,
     )
   }
 
@@ -182,6 +197,10 @@ class DynamicClientCoordinator {
     return this.#runtime?.entries(name) ?? []
   }
 
+  pageEntries(): readonly DynamicHostPageEntry[] {
+    return this.#runtime?.pageEntries() ?? []
+  }
+
   reportSlotFailure(agentId: string, error: unknown): void {
     this.#failure = error instanceof Error ? error.message : String(error)
     void this.#runtime?.reportRenderFailure(agentId, error).catch(() => undefined)
@@ -196,16 +215,14 @@ class DynamicClientCoordinator {
       for (const loaded of runtime.loaded()) {
         const key = `${loaded.pluginId}:${loaded.pluginRunId}`
         if (this.#reportedClientRuns.has(key)) continue
-        const renderedSlots = loaded.slots.filter(
-          (slot): slot is 'agent.workbench.sections' | 'extension.details.panels' =>
-            slot === 'agent.workbench.sections' || slot === 'extension.details.panels',
+        const renderedSlots = loaded.slots.filter((slot): slot is AgentClientSlotName =>
+          AGENT_CLIENT_SLOT_NAMES.some((candidate) => candidate === slot),
         )
-        const renderedHostSlots = loaded.slots.includes('conversation.message.rich')
-          ? runtime
-              .entries('conversation.message.rich')
-              .map((entry) => ({ name: 'conversation.message.rich' as const, key: entry.id }))
-          : []
-        if (renderedSlots.length === 0 && renderedHostSlots.length === 0) continue
+        const renderedHostSlots = ADAPTER_CLIENT_SLOT_NAMES.flatMap((name) =>
+          loaded.slots.includes(name) ? runtime.entries(name).map((entry) => ({ name, key: entry.id })) : [],
+        )
+        const renderedPages = runtime.pageEntries().map(({ page }) => page)
+        if (renderedSlots.length === 0 && renderedHostSlots.length === 0 && renderedPages.length === 0) continue
         await this.#host.reportClientVerification(
           agentId,
           loaded.pluginId,
@@ -213,6 +230,8 @@ class DynamicClientCoordinator {
           loaded.pluginRunId,
           renderedSlots,
           renderedHostSlots,
+          renderedPages,
+          runtime.pagePermissions(),
         )
         this.#reportedClientRuns.add(key)
       }
@@ -319,6 +338,86 @@ function DynamicRuntimeSlot<Name extends DynamicProductSlotName>({
   )
 }
 
+const EMPTY_DYNAMIC_NAVIGATION: ReturnType<typeof HostUiNavigationModelSchema.parse> = { revision: 0, groups: [] }
+
+function DynamicPagePreview({
+  agentId,
+  coordinator,
+  entry,
+}: {
+  readonly agentId: string
+  readonly coordinator: DynamicClientCoordinator
+  readonly entry: DynamicHostPageEntry
+}) {
+  const [relativePath, setRelativePath] = useState(entry.page.startPath)
+  const navigationProvider = entry.navigation
+  const navigationSnapshot = useSyncExternalStore(
+    (listener) => navigationProvider?.subscribe(listener) ?? (() => undefined),
+    () => navigationProvider?.getSnapshot() ?? EMPTY_DYNAMIC_NAVIGATION,
+    () => EMPTY_DYNAMIC_NAVIGATION,
+  )
+  const navigation = HostUiNavigationModelSchema.parse(navigationSnapshot)
+  const Page = entry.component
+  return (
+    <section className={styles.pagePreview} data-dynamic-host-page={entry.page.entryId}>
+      <header className={styles.pagePreviewHeader}>
+        <span>
+          <strong>{entry.page.title}</strong>
+          {entry.page.description ? <small>{entry.page.description}</small> : null}
+        </span>
+        <small>{entry.page.objectPane === 'navigation' ? '带对象列' : '全宽页面'}</small>
+      </header>
+      <div className={styles.pagePreviewFrame} data-object-pane={entry.page.objectPane}>
+        {entry.page.objectPane === 'navigation' ? (
+          <nav className={styles.pagePreviewNavigation} aria-label={`${entry.page.title} 预览导航`}>
+            {navigation.groups.length === 0 ? <small>页面没有提供导航项</small> : null}
+            {navigation.groups.map((group) => (
+              <div key={group.id}>
+                {group.label ? <strong>{group.label}</strong> : null}
+                {group.items.map((item) => (
+                  <Button
+                    variant="ghost"
+                    size="small"
+                    key={item.id}
+                    disabled={item.disabledReason !== undefined}
+                    title={item.disabledReason}
+                    aria-current={relativePath === item.path ? 'page' : undefined}
+                    onClick={() => setRelativePath(item.path)}
+                  >
+                    <span>{item.label}</span>
+                    {item.badge ? <small>{item.badge}</small> : null}
+                  </Button>
+                ))}
+              </div>
+            ))}
+          </nav>
+        ) : null}
+        <div className={styles.pagePreviewCanvas}>
+          <DynamicSlotBoundary
+            entryId={entry.page.entryId}
+            onFailure={(error) => coordinator.reportSlotFailure(agentId, error)}
+          >
+            <Page
+              pageInstanceId={`dynamic-preview-${entry.page.entryId}`}
+              entryId={entry.page.entryId}
+              relativePath={relativePath}
+              search={{}}
+              navigate={(path, options) => {
+                void options
+                const normalized = path.trim().replace(/^\/+|\/+$/gu, '')
+                if (normalized.split('/').includes('..') || !/^(?:[a-z0-9][a-z0-9/_-]*)?$/u.test(normalized)) {
+                  throw new Error('页面预览只能在当前入口内导航。')
+                }
+                setRelativePath(normalized)
+              }}
+            />
+          </DynamicSlotBoundary>
+        </div>
+      </div>
+    </section>
+  )
+}
+
 const DynamicClientContext = createContext<DynamicClientCoordinator | null>(null)
 let sharedCoordinator: DynamicClientCoordinator | undefined
 let sharedCoordinatorConsumers = 0
@@ -414,8 +513,9 @@ export function DynamicClientSlots({ agentId, episodeId }: { readonly agentId: s
   const failure = coordinator.failure()
   const rendered =
     coordinator.entries('agent.workbench.sections').length > 0 ||
-    coordinator.entries('extension.details.panels').length > 0 ||
-    coordinator.entries('conversation.message.rich').length > 0
+    AGENT_CLIENT_SLOT_NAMES.some((name) => coordinator.entries(name).length > 0) ||
+    ADAPTER_CLIENT_SLOT_NAMES.some((name) => coordinator.entries(name).length > 0) ||
+    coordinator.pageEntries().length > 0
   useEffect(() => {
     if (rendered) void coordinator.reportRendered(agentId).catch((error) => coordinator.reportFailure(error))
   }, [agentId, coordinator, inventoryVersion, rendered])
@@ -437,6 +537,47 @@ export function DynamicClientSlots({ agentId, episodeId }: { readonly agentId: s
           extensionId: 'dynamic-preview',
           revisionId: 'dynamic-preview',
           activation: 'active',
+        }}
+      />
+      <DynamicRuntimeSlot
+        coordinator={coordinator}
+        agentId={agentId}
+        name="extension.activation.panels"
+        props={{
+          agentId,
+          extensionId: 'dynamic-preview',
+          revisionId: 'dynamic-preview',
+          activation: 'active',
+          activationId: 'dynamic-preview',
+          runtimeStatus: 'active',
+        }}
+      />
+      <DynamicRuntimeSlot
+        coordinator={coordinator}
+        agentId={agentId}
+        name="channel.inspector.agent.sections"
+        props={{
+          agentId,
+          channelId: 'dynamic-preview',
+          connectionId: 'dynamic-preview',
+          episodeId,
+          runtimePhase: 'idle',
+        }}
+      />
+      <DynamicRuntimeSlot
+        coordinator={coordinator}
+        agentId={agentId}
+        name="conversation.tool.card"
+        props={{
+          agentId,
+          channelId: 'dynamic-preview',
+          callId: 'dynamic-preview',
+          toolName: 'dynamic-preview',
+          displayName: '工具卡片预览',
+          state: 'succeeded',
+          surface: 'stream',
+          inputPresentation: '{}',
+          resultPresentation: '预览结果',
         }}
       />
       {coordinator.entries('conversation.message.rich').map((entry) => {
@@ -463,6 +604,38 @@ export function DynamicClientSlots({ agentId, episodeId }: { readonly agentId: s
           </DynamicSlotBoundary>
         )
       })}
+      <DynamicRuntimeSlot
+        coordinator={coordinator}
+        agentId={agentId}
+        name="connection.adapter.setup"
+        props={{ adapterKey: 'dynamic-preview', phase: 'setup' }}
+      />
+      <DynamicRuntimeSlot
+        coordinator={coordinator}
+        agentId={agentId}
+        name="connection.adapter.status"
+        props={{ adapterKey: 'dynamic-preview', connectionId: 'dynamic-preview', phase: 'active' }}
+      />
+      <DynamicRuntimeSlot
+        coordinator={coordinator}
+        agentId={agentId}
+        name="connection.adapter.test"
+        props={{ adapterKey: 'dynamic-preview', connectionId: 'dynamic-preview', phase: 'testing' }}
+      />
+      <DynamicRuntimeSlot
+        coordinator={coordinator}
+        agentId={agentId}
+        name="channel.inspector.adapter.sections"
+        props={{
+          adapterKey: 'dynamic-preview',
+          connectionId: 'dynamic-preview',
+          channelId: 'dynamic-preview',
+          channelKind: 'group',
+        }}
+      />
+      {coordinator.pageEntries().map((entry) => (
+        <DynamicPagePreview agentId={agentId} coordinator={coordinator} entry={entry} key={entry.page.entryId} />
+      ))}
     </div>
   ) : null
 }

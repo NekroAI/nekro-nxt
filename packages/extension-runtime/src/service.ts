@@ -144,7 +144,7 @@ export class ExtensionService {
   async importRevision(input: {
     readonly extension: {
       readonly id: ExtensionId
-      readonly scope: 'agent' | 'host-adapter'
+      readonly scope: 'agent' | 'host-adapter' | 'host-ui'
       readonly slug: string
       readonly displayName: string
       readonly description: string
@@ -156,11 +156,17 @@ export class ExtensionService {
     }
     readonly manifest: unknown
     readonly sources: { readonly host?: string; readonly client?: string }
+    readonly resources?: Readonly<Record<string, string>>
     readonly localSlug?: string
+    readonly dshVersion?: string
   }): Promise<{ readonly extension: LocalExtension; readonly revision: Revision; readonly idempotent: boolean }> {
     const slug = slugSchema.parse(input.localSlug ?? input.extension.slug)
     const metadata = textSchema.parse(input.extension)
-    const materialized = materializeImportedRevision({ manifest: input.manifest, sources: input.sources })
+    const materialized = materializeImportedRevision({
+      manifest: input.manifest,
+      sources: input.sources,
+      ...(input.resources === undefined ? {} : { resources: input.resources }),
+    })
     if (
       materialized.manifest.extensionId !== input.extension.id ||
       materialized.manifest.revisionId !== input.revision.id
@@ -214,13 +220,40 @@ export class ExtensionService {
     }
     await this.#sources.publish(extension.id, revision.id, materialized)
     if (!this.#builder) throw new Error('导入扩展需要配置本机构建器。')
-    await this.#builder.build({
+    const artifact = await this.#builder.build({
       extensionId: extension.id,
       revisionId: revision.id,
       contentDigest: revision.contentDigest,
       sourceDirectory: this.#sources.revisionSourceDirectory(extension.id, revision.id),
     })
-    this.#repository.saveExtensionRevision({ extension, revision })
+    const verification: ExtensionRevisionVerification | undefined =
+      'schemaVersion' in materialized.manifest && materialized.manifest.schemaVersion === 4
+        ? {
+            revisionId: revision.id,
+            dshVersion: input.dshVersion ?? 'unknown',
+            contractVersion: 'nekro-nxt-extension-v3',
+            scope: 'host-ui',
+            origin: {
+              episodeId: 'import',
+              pluginId: 'import',
+              packageId: 'import',
+              pluginRunId: 'local-build',
+            },
+            verifiedAt: now,
+            hostBuild: { built: artifact.hostEntry !== undefined, buildKey: artifact.buildKey },
+            clientBuild: { built: artifact.clientEntry !== undefined, buildKey: artifact.buildKey },
+            toolInvocations: [],
+            rpcMethods: [],
+            renderedSlots: [],
+            renderedPages: materialized.manifest.contributions,
+            permissions: materialized.manifest.permissions,
+          }
+        : undefined
+    this.#repository.saveExtensionRevision({
+      extension,
+      revision,
+      ...(verification === undefined ? {} : { verification }),
+    })
     return { extension, revision, idempotent: false }
   }
 

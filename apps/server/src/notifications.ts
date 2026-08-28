@@ -242,6 +242,31 @@ export class NotificationService {
     })
   }
 
+  publishExtensionNotification(input: {
+    readonly owner: string
+    readonly title: string
+    readonly body: string
+    readonly route?: string
+  }): void {
+    const title = z.string().trim().min(1).max(80).parse(input.title)
+    const body = z.string().trim().min(1).max(240).parse(input.body)
+    const route =
+      input.route === undefined
+        ? undefined
+        : z
+            .string()
+            .regex(/^\/(?!\/)[a-z0-9/_?=&.-]*$/u)
+            .parse(input.route)
+    this.#publishClientNotification({
+      id: `extension:${input.owner}:${this.#now()}:${this.#notificationCursor + 1}`,
+      kind: 'action-required',
+      title,
+      body,
+      occurredAt: this.#now(),
+      ...(route === undefined ? {} : { route }),
+    })
+  }
+
   readClientNotifications(cursor: number | undefined): {
     readonly cursor: number
     readonly notifications: readonly ClientNotification[]

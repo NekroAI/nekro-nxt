@@ -16,6 +16,9 @@ import {
   EpisodeIdSchema,
   ExtensionIdSchema,
   ExtensionRevisionIdSchema,
+  HostPageIconSchema,
+  HostUiPageInstanceIdSchema,
+  HostUiPermissionDeclarationSchema,
   JsonValueSchema,
   LogicalMessageIdSchema,
   ManagementDeviceIdSchema,
@@ -59,6 +62,10 @@ import {
   extensionClientDiagnostics,
   hostSecurityMetadata,
   hostExtensionInstallations,
+  hostUiDiagnostics,
+  hostUiPageEntries,
+  hostUiPagePreferences,
+  hostUiPermissionGrants,
   localExtensions,
   managementDevices,
   outboundIntents,
@@ -186,6 +193,17 @@ export const HostExtensionInstallationRowSchema = createSelectSchema(hostExtensi
   extensionId: ExtensionIdSchema,
   extensionRevisionId: ExtensionRevisionIdSchema,
 })
+export const HostUiPageEntryRowSchema = createSelectSchema(hostUiPageEntries, {
+  pageInstanceId: HostUiPageInstanceIdSchema,
+  icon: HostPageIconSchema,
+})
+export const HostUiPagePreferenceRowSchema = createSelectSchema(hostUiPagePreferences)
+export const HostUiPermissionGrantRowSchema = createSelectSchema(hostUiPermissionGrants, {
+  declaration: HostUiPermissionDeclarationSchema,
+})
+export const HostUiDiagnosticRowSchema = createSelectSchema(hostUiDiagnostics, {
+  pageInstanceId: HostUiPageInstanceIdSchema,
+})
 export const AgentActivationRowSchema = createSelectSchema(agentActivations, {
   agentId: AgentIdSchema,
   extensionId: ExtensionIdSchema,
@@ -249,6 +267,10 @@ export const CoreRowSchemas = {
   extensionRevisions: ExtensionRevisionRowSchema,
   extensionRevisionVerifications: ExtensionRevisionVerificationRowSchema,
   hostExtensionInstallations: HostExtensionInstallationRowSchema,
+  hostUiPageEntries: HostUiPageEntryRowSchema,
+  hostUiPagePreferences: HostUiPagePreferenceRowSchema,
+  hostUiPermissionGrants: HostUiPermissionGrantRowSchema,
+  hostUiDiagnostics: HostUiDiagnosticRowSchema,
   agentActivations: AgentActivationRowSchema,
   extensionClientDiagnostics: ExtensionClientDiagnosticRowSchema,
   dshPluginPackages: DshPluginPackageRowSchema,

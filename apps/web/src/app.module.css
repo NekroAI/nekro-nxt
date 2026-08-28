@@ -13,6 +13,16 @@
   grid-template-columns: 56px var(--nxt-object-pane-width, 240px) 5px minmax(0, 1fr);
 }
 
+.shell[data-object-pane-hidden] .shellBody {
+  grid-template-columns: 56px 0 0 minmax(0, 1fr);
+}
+
+.shell[data-object-pane-hidden] .tree,
+.shell[data-object-pane-hidden] .shellSplitter {
+  visibility: hidden;
+  pointer-events: none;
+}
+
 .windowTopBar {
   position: relative;
   z-index: var(--nxt-layer-sticky);
@@ -94,6 +104,36 @@
   gap: 8px;
 }
 
+.rail > [data-nav-track='rail'] {
+  position: relative;
+  display: flex;
+  width: 100%;
+  min-height: 0;
+  flex: 1 1 auto;
+  flex-direction: column;
+  align-items: center;
+}
+
+.railSystem {
+  flex: 0 0 auto;
+}
+
+.railDivider {
+  width: 24px;
+  height: 1px;
+  margin: 10px 0;
+  flex: 0 0 auto;
+  background: color-mix(in srgb, var(--nxt-rail-text) 28%, transparent);
+}
+
+.railExtensions {
+  min-height: 0;
+  overflow: hidden auto;
+  flex: 1 1 auto;
+  padding: 1px 4px;
+  scrollbar-width: thin;
+}
+
 .brandMark {
   display: block;
   width: 28px;
@@ -151,8 +191,29 @@
   color: var(--nxt-accent);
 }
 
+.hostPageSvgIcon {
+  display: block;
+  width: 18px;
+  height: 18px;
+  background: currentColor;
+  mask: var(--nxt-host-page-icon) center / contain no-repeat;
+}
+
+.railBtn[data-host-ui-error]::after {
+  position: absolute;
+  z-index: 2;
+  top: 6px;
+  right: 6px;
+  width: 6px;
+  height: 6px;
+  border: 1px solid var(--nxt-rail-bg);
+  border-radius: 50%;
+  background: var(--nxt-danger);
+  content: '';
+}
+
 .railSpacer {
-  flex: 1;
+  flex: 0 0 8px;
 }
 
 .railUtility {
@@ -443,6 +504,10 @@
   grid-template-columns: 68px var(--nxt-object-pane-width, 240px) 1px minmax(0, 1fr);
   padding: 0;
   background: transparent;
+}
+
+:global(:root[data-glin-experiment]) .shell[data-object-pane-hidden] .shellBody {
+  grid-template-columns: 68px 0 0 minmax(0, 1fr);
 }
 
 :global(:root[data-glin-experiment]) .rail,

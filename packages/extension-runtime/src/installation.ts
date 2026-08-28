@@ -1,9 +1,18 @@
-import type { ExtensionId, ExtensionRevisionId } from '@nekro-nxt/contracts'
+import {
+  HostUiPermissionDeclarationSchema,
+  HostUiPageInstanceIdSchema,
+  type ExtensionId,
+  type ExtensionRevisionId,
+  type JsonValue,
+} from '@nekro-nxt/contracts'
+import { createHash, randomUUID } from 'node:crypto'
 import type { ExtensionBuilder } from './builder.js'
 import type { ExtensionService } from './service.js'
 import type {
   ExtensionBuildArtifact,
   ExtensionRepository,
+  HostUiPermissionGrant,
+  HostUiRepository,
   ExtensionRuntimeDiagnostic,
   HostInstallation,
   Revision,
@@ -14,36 +23,60 @@ export interface MountedHostExtension {
   dispose(): Promise<void>
 }
 
+export interface MountedHostUiExtension {
+  call(method: string, input: JsonValue): Promise<JsonValue>
+  dispose(): Promise<void>
+}
+
 export interface HostExtensionInstallationHost {
   assertAdapterKeyAvailable(adapterKey: string, extensionId: ExtensionId): Promise<void>
   waitUntilSafe(adapterKey: string): Promise<void>
   mount(revision: Revision, artifact: ExtensionBuildArtifact): Promise<MountedHostExtension>
+  mountHostUi?(revision: Revision, artifact: ExtensionBuildArtifact): Promise<MountedHostUiExtension>
 }
 
 type ArtifactBuilder = Pick<ExtensionBuilder, 'build'>
 type RevisionSourceResolver = Pick<ExtensionService, 'revisionSourceDirectory'>
 
+const canonicalPermissionDeclaration = (input: unknown) => {
+  const parsed = HostUiPermissionDeclarationSchema.parse(input)
+  return {
+    permissions: [...parsed.permissions].sort(),
+    networkOrigins: [...parsed.networkOrigins].sort(),
+  }
+}
+
+export const hostUiPermissionDigest = (input: unknown): string =>
+  createHash('sha256')
+    .update(JSON.stringify(canonicalPermissionDeclaration(input)))
+    .digest('hex')
+
+const extensionOwnerKey = (extensionId: ExtensionId): string => `extension:${extensionId}`
+
 /** Owns install/update/rollback/uninstall for Host-scoped Extension Revisions. */
 export class HostExtensionInstallationCoordinator {
   readonly #repository: ExtensionRepository
+  readonly #hostUiRepository: HostUiRepository
   readonly #service: RevisionSourceResolver
   readonly #builder: ArtifactBuilder
   readonly #host: HostExtensionInstallationHost
   readonly #now: () => number
   readonly #mounted = new Map<ExtensionId, MountedHostExtension>()
+  readonly #mountedHostUi = new Map<ExtensionId, MountedHostUiExtension>()
   readonly #diagnostics = new Map<ExtensionId, ExtensionRuntimeDiagnostic>()
   readonly #transitions = new Map<ExtensionId, Promise<void>>()
   readonly #adapterTransitions = new Map<string, Promise<void>>()
   #disposed = false
 
   constructor(
-    repository: ExtensionRepository,
+    repository: ExtensionRepository & HostUiRepository,
     service: RevisionSourceResolver,
     builder: ArtifactBuilder,
     host: HostExtensionInstallationHost,
     options: { readonly now?: () => number } = {},
   ) {
     this.#repository = repository
+    this.#hostUiRepository = repository
     this.#service = service
     this.#builder = builder
     this.#host = host
@@ -53,21 +86,35 @@ export class HostExtensionInstallationCoordinator {
   async install(input: {
     readonly extensionId: ExtensionId
     readonly revisionId: ExtensionRevisionId
+    readonly permissionApproval?: { readonly permissionDigest: string }
   }): Promise<HostInstallation> {
     return this.#exclusive(input.extensionId, async () => {
       this.#assertAvailable()
       const revision = this.#requireRevision(input.extensionId, input.revisionId)
-      if (this.#repository.getExtension(input.extensionId)?.scope !== 'host-adapter') {
-        throw new Error('Only Host Adapter Extensions can be installed on this Host.')
-      }
+      const scope = this.#repository.getExtension(input.extensionId)?.scope
+      if (scope === 'host-ui') return this.#installHostUi(input, revision)
+      if (scope !== 'host-adapter') throw new Error('只有 Host UI 或适配器扩展可以安装到本机。')
       const verification = this.#repository.getExtensionRevisionVerification(revision.id)
       if (verification?.scope !== 'host-adapter' || !verification.adapter) {
         throw new Error('Host 安装只接受完成适配器验证的 Extension Revision。')
+      }
+      const adapterPages = verification.renderedPages ?? []
+      const permissionRequirement =
+        adapterPages.length > 0 ? this.getHostUiPermissionRequirement(input.extensionId, revision.id) : undefined
+      if (
+        adapterPages.length > 0 &&
+        permissionRequirement?.approvalRequired &&
+        input.permissionApproval?.permissionDigest !== permissionRequirement.permissionDigest
+      ) {
+        throw new Error(`permission-approval-required:${permissionRequirement.permissionDigest}`)
       }
       const existing = this.#repository.getHostInstallation(input.extensionId)
       if (existing?.extensionRevisionId === revision.id && this.#mounted.has(input.extensionId)) return existing
       const artifact = await this.#build(revision)
       if (!artifact.hostEntry) throw new Error('适配器 Extension Revision 缺少 Host 构建产物。')
+      if (adapterPages.length > 0 && !artifact.clientEntry) {
+        throw new Error('带页面入口的适配器扩展缺少 Client 构建产物。')
+      }
       const previousRevision = existing
         ? this.#requireRevision(existing.extensionId, existing.extensionRevisionId)
         : undefined
@@ -111,6 +158,26 @@ export class HostExtensionInstallationCoordinator {
         }
         try {
           this.#repository.upsertHostInstallation(installation)
+          if (adapterPages.length > 0 && permissionRequirement) {
+            this.#hostUiRepository.upsertHostUiPermissionGrant({
+              ownerKey: extensionOwnerKey(input.extensionId),
+              artifactDigest: revision.payloadDigest,
+              permissionDigest: permissionRequirement.permissionDigest,
+              declaration: permissionRequirement.declaration,
+              approvedAt: installedAt,
+            })
+            this.#hostUiRepository.replaceHostUiExtensionPages({
+              extensionId: input.extensionId,
+              revisionId: revision.id,
+              pages: adapterPages,
+              clientBuildKey: artifact.buildKey,
+              now: installedAt,
+              nextPageInstanceId: () => HostUiPageInstanceIdSchema.parse(`hup_${randomUUID().replaceAll('-', '')}`),
+            })
+          } else if (this.#supportsHostUiRepository()) {
+            this.#hostUiRepository.deleteHostUiExtensionPages(input.extensionId)
+            this.#hostUiRepository.deleteHostUiPermissionGrant(extensionOwnerKey(input.extensionId))
+          }
         } catch (error) {
           await mounted.dispose().catch(() => undefined)
           await this.#restorePrevious(input.extensionId, previousRevision, previousArtifact, error)
@@ -123,6 +190,115 @@ export class HostExtensionInstallationCoordinator {
     })
   }
 
+  getHostUiPermissionRequirement(extensionId: ExtensionId, revisionId: ExtensionRevisionId) {
+    const revision = this.#requireRevision(extensionId, revisionId)
+    const extension = this.#repository.getExtension(extensionId)
+    if (extension?.scope !== 'host-ui' && extension?.scope !== 'host-adapter') return undefined
+    const verification = this.#repository.getExtensionRevisionVerification(revision.id)
+    const declaration = canonicalPermissionDeclaration(
+      verification?.permissions ?? {
+        permissions: [],
+        networkOrigins: [],
+      },
+    )
+    const permissionDigest = hostUiPermissionDigest(declaration)
+    const current = this.#hostUiRepository.getHostUiPermissionGrant(extensionOwnerKey(extensionId))
+    return {
+      declaration,
+      permissionDigest,
+      approvalRequired:
+        declaration.permissions.length > 0 || declaration.networkOrigins.length > 0
+          ? current?.permissionDigest !== permissionDigest || current.artifactDigest !== revision.payloadDigest
+          : false,
+    }
+  }
+
+  async callHostUi(extensionId: ExtensionId, method: string, input: JsonValue): Promise<JsonValue> {
+    const mounted = this.#mountedHostUi.get(extensionId)
+    if (!mounted) throw new Error('页面 Host Runtime 当前不可用。')
+    return mounted.call(method, input)
+  }
+
+  async #installHostUi(
+    input: {
+      readonly extensionId: ExtensionId
+      readonly revisionId: ExtensionRevisionId
+      readonly permissionApproval?: { readonly permissionDigest: string }
+    },
+    revision: Revision,
+  ): Promise<HostInstallation> {
+    const verification = this.#repository.getExtensionRevisionVerification(revision.id)
+    if (verification?.scope !== 'host-ui' || verification.contractVersion !== 'nekro-nxt-extension-v3') {
+      throw new Error('Host UI 安装只接受在当前 Host 完成页面验证的扩展版本。')
+    }
+    const pages = verification.renderedPages ?? []
+    if (pages.length === 0 || pages.length > 8) throw new Error('Host UI 扩展必须声明 1 到 8 个页面入口。')
+    const requirement = this.getHostUiPermissionRequirement(input.extensionId, revision.id)
+    if (!requirement) throw new Error('无法读取 Host UI 权限声明。')
+    if (requirement.approvalRequired && input.permissionApproval?.permissionDigest !== requirement.permissionDigest) {
+      throw new Error(`permission-approval-required:${requirement.permissionDigest}`)
+    }
+    const existing = this.#repository.getHostInstallation(input.extensionId)
+    if (existing?.extensionRevisionId === revision.id && this.#mountedHostUi.has(input.extensionId)) return existing
+    const artifact = await this.#build(revision)
+    if (!artifact.clientEntry) throw new Error('Host UI 扩展缺少 Client 构建产物。')
+    if (!this.#host.mountHostUi) throw new Error('当前宿主未提供 Host UI Runtime。')
+    const previousRevision = existing
+      ? this.#requireRevision(existing.extensionId, existing.extensionRevisionId)
+      : undefined
+    const previousArtifact = previousRevision ? await this.#build(previousRevision) : undefined
+    const previousMounted = this.#mountedHostUi.get(input.extensionId)
+    const previousGrant = this.#hostUiRepository.getHostUiPermissionGrant(extensionOwnerKey(input.extensionId))
+    if (previousMounted) {
+      await previousMounted.dispose()
+      this.#mountedHostUi.delete(input.extensionId)
+    }
+
+    let mounted: MountedHostUiExtension
+    try {
+      mounted = await this.#host.mountHostUi(revision, artifact)
+    } catch (error) {
+      await this.#restorePreviousHostUi(input.extensionId, previousRevision, previousArtifact, error)
+      throw error
+    }
+    const installedAt = this.#timestamp()
+    const installation: HostInstallation = {
+      extensionId: input.extensionId,
+      extensionRevisionId: revision.id,
+      installedAt,
+    }
+    const grant: HostUiPermissionGrant = {
+      ownerKey: extensionOwnerKey(input.extensionId),
+      artifactDigest: revision.payloadDigest,
+      permissionDigest: requirement.permissionDigest,
+      declaration: requirement.declaration,
+      approvedAt: installedAt,
+    }
+    try {
+      this.#repository.upsertHostInstallation(installation)
+      this.#hostUiRepository.upsertHostUiPermissionGrant(grant)
+      this.#hostUiRepository.replaceHostUiExtensionPages({
+        extensionId: input.extensionId,
+        revisionId: revision.id,
+        pages,
+        clientBuildKey: artifact.buildKey,
+        now: installedAt,
+        nextPageInstanceId: () => HostUiPageInstanceIdSchema.parse(`hup_${randomUUID().replaceAll('-', '')}`),
+      })
+    } catch (error) {
+      await mounted.dispose().catch(() => undefined)
+      if (existing) this.#repository.upsertHostInstallation(existing)
+      else this.#repository.deleteHostInstallation(input.extensionId)
+      if (previousGrant) this.#hostUiRepository.upsertHostUiPermissionGrant(previousGrant)
+      else this.#hostUiRepository.deleteHostUiPermissionGrant(extensionOwnerKey(input.extensionId))
+      await this.#restorePreviousHostUi(input.extensionId, previousRevision, previousArtifact, error)
+      throw error
+    }
+    this.#mountedHostUi.set(input.extensionId, mounted)
+    this.#diagnostics.set(input.extensionId, { status: 'active', observedAt: this.#timestamp() })
+    return installation
+  }
+
   async restore(): Promise<{ readonly restored: number; readonly failed: number }> {
     this.#assertAvailable()
     const outcomes = await Promise.all(
@@ -130,8 +306,14 @@ export class HostExtensionInstallationCoordinator {
         try {
           return await this.#exclusive(installation.extensionId, async () => {
             this.#assertAvailable()
-            if (this.#mounted.has(installation.extensionId)) return 'skipped' as const
+            if (this.#mounted.has(installation.extensionId) || this.#mountedHostUi.has(installation.extensionId)) {
+              return 'skipped' as const
+            }
             const revision = this.#requireRevision(installation.extensionId, installation.extensionRevisionId)
+            if (this.#repository.getExtension(installation.extensionId)?.scope === 'host-ui') {
+              await this.#restoreHostUiInstallation(installation.extensionId, revision)
+              return 'restored' as const
+            }
             const verification = this.#repository.getExtensionRevisionVerification(revision.id)
             if (verification?.scope !== 'host-adapter' || !verification.adapter) {
               throw new Error('Host 安装只接受完成适配器验证的 Extension Revision。')
@@ -147,6 +329,28 @@ export class HostExtensionInstallationCoordinator {
                 throw new Error('适配器 Host 实际注册的 key 与验证证据不一致。')
               }
               this.#mounted.set(installation.extensionId, mounted)
+              if ((verification.renderedPages ?? []).length > 0) {
+                if (!artifact.clientEntry) throw new Error('带页面入口的适配器扩展缺少 Client 构建产物。')
+                const requirement = this.getHostUiPermissionRequirement(installation.extensionId, revision.id)
+                const grant = this.#hostUiRepository.getHostUiPermissionGrant(
+                  extensionOwnerKey(installation.extensionId),
+                )
+                if (
+                  !requirement ||
+                  grant?.artifactDigest !== revision.payloadDigest ||
+                  grant.permissionDigest !== requirement.permissionDigest
+                ) {
+                  throw new Error('permission-approval-required')
+                }
+                this.#hostUiRepository.replaceHostUiExtensionPages({
+                  extensionId: installation.extensionId,
+                  revisionId: revision.id,
+                  pages: verification.renderedPages ?? [],
+                  clientBuildKey: artifact.buildKey,
+                  now: this.#timestamp(),
+                  nextPageInstanceId: () => HostUiPageInstanceIdSchema.parse(`hup_${randomUUID().replaceAll('-', '')}`),
+                })
+              }
               this.#diagnostics.set(installation.extensionId, {
                 status: 'active',
                 observedAt: this.#timestamp(),
@@ -175,6 +379,10 @@ export class HostExtensionInstallationCoordinator {
       this.#assertAvailable()
       const installation = this.#repository.getHostInstallation(extensionId)
       if (!installation) throw new Error('这个扩展尚未安装到本机。')
+      if (this.#repository.getExtension(extensionId)?.scope === 'host-ui') {
+        await this.#uninstallHostUi(extensionId, installation)
+        return
+      }
       const mounted = this.#mounted.get(extensionId)
       const revision = this.#requireRevision(extensionId, installation.extensionRevisionId)
       const artifact = await this.#build(revision)
@@ -198,6 +406,10 @@ export class HostExtensionInstallationCoordinator {
         }
         try {
           this.#repository.deleteHostInstallation(extensionId)
+          if ((verification?.renderedPages ?? []).length > 0 && this.#supportsHostUiRepository()) {
+            this.#hostUiRepository.deleteHostUiExtensionPages(extensionId)
+            this.#hostUiRepository.deleteHostUiPermissionGrant(extensionOwnerKey(extensionId))
+          }
         } catch (error) {
           if (mounted) await this.#restorePrevious(extensionId, revision, artifact, error)
           throw error
@@ -205,6 +417,66 @@ export class HostExtensionInstallationCoordinator {
         this.#diagnostics.delete(extensionId)
       })
     })
+  }
+
+  async #restoreHostUiInstallation(extensionId: ExtensionId, revision: Revision): Promise<void> {
+    const verification = this.#repository.getExtensionRevisionVerification(revision.id)
+    if (verification?.scope !== 'host-ui' || verification.contractVersion !== 'nekro-nxt-extension-v3') {
+      throw new Error('已安装扩展缺少可恢复的 Host UI 验证证据。')
+    }
+    const pages = verification.renderedPages ?? []
+    if (pages.length === 0 || pages.length > 8) throw new Error('已安装 Host UI 页面入口无效。')
+    const requirement = this.getHostUiPermissionRequirement(extensionId, revision.id)
+    const grant = this.#hostUiRepository.getHostUiPermissionGrant(extensionOwnerKey(extensionId))
+    if (
+      !requirement ||
+      grant?.artifactDigest !== revision.payloadDigest ||
+      grant.permissionDigest !== requirement.permissionDigest
+    ) {
+      throw new Error('permission-approval-required')
+    }
+    if (!this.#host.mountHostUi) throw new Error('当前宿主未提供 Host UI Runtime。')
+    const artifact = await this.#build(revision)
+    if (!artifact.clientEntry) throw new Error('Host UI 扩展缺少 Client 构建产物。')
+    const mounted = await this.#host.mountHostUi(revision, artifact)
+    this.#hostUiRepository.replaceHostUiExtensionPages({
+      extensionId,
+      revisionId: revision.id,
+      pages,
+      clientBuildKey: artifact.buildKey,
+      now: this.#timestamp(),
+      nextPageInstanceId: () => HostUiPageInstanceIdSchema.parse(`hup_${randomUUID().replaceAll('-', '')}`),
+    })
+    this.#mountedHostUi.set(extensionId, mounted)
+    this.#diagnostics.set(extensionId, { status: 'active', observedAt: this.#timestamp() })
+  }
+
+  async #uninstallHostUi(extensionId: ExtensionId, installation: HostInstallation): Promise<void> {
+    const mounted = this.#mountedHostUi.get(extensionId)
+    const revision = this.#requireRevision(extensionId, installation.extensionRevisionId)
+    const artifact = await this.#build(revision)
+    if (mounted) {
+      try {
+        await mounted.dispose()
+      } catch (error) {
+        this.#diagnostics.set(extensionId, {
+          status: 'dispose-failed',
+          message: error instanceof Error ? error.message : String(error),
+          observedAt: this.#timestamp(),
+        })
+        throw error
+      }
+      this.#mountedHostUi.delete(extensionId)
+    }
+    try {
+      this.#hostUiRepository.deleteHostUiExtensionPages(extensionId)
+      this.#repository.deleteHostInstallation(extensionId)
+      this.#hostUiRepository.deleteHostUiPermissionGrant(extensionOwnerKey(extensionId))
+    } catch (error) {
+      await this.#restorePreviousHostUi(extensionId, revision, artifact, error)
+      throw error
+    }
+    this.#diagnostics.delete(extensionId)
   }
 
   getDiagnostic(extensionId: ExtensionId): ExtensionRuntimeDiagnostic | undefined {
@@ -218,7 +490,9 @@ export class HostExtensionInstallationCoordinator {
     await Promise.allSettled([...this.#adapterTransitions.values()])
     const mounted = [...this.#mounted.values()]
     this.#mounted.clear()
-    const outcomes = await Promise.allSettled(mounted.map((entry) => entry.dispose()))
+    const mountedHostUi = [...this.#mountedHostUi.values()]
+    this.#mountedHostUi.clear()
+    const outcomes = await Promise.allSettled([...mounted, ...mountedHostUi].map((entry) => entry.dispose()))
     const failures = outcomes
       .filter((outcome): outcome is PromiseRejectedResult => outcome.status === 'rejected')
       .map((outcome): unknown => outcome.reason)
@@ -236,6 +510,20 @@ export class HostExtensionInstallationCoordinator {
       this.#mounted.set(extensionId, await this.#host.mount(revision, artifact))
     } catch (restoreError) {
       throw new AggregateError([originalError, restoreError], 'Host Extension 变更失败，且原 Revision 无法恢复。')
+    }
+  }
+
+  async #restorePreviousHostUi(
+    extensionId: ExtensionId,
+    revision: Revision | undefined,
+    artifact: ExtensionBuildArtifact | undefined,
+    originalError: unknown,
+  ): Promise<void> {
+    if (!revision || !artifact || !this.#host.mountHostUi) return
+    try {
+      this.#mountedHostUi.set(extensionId, await this.#host.mountHostUi(revision, artifact))
+    } catch (restoreError) {
+      throw new AggregateError([originalError, restoreError], 'Host UI 变更失败，且原扩展版本无法恢复。')
     }
   }
 
@@ -300,5 +588,12 @@ export class HostExtensionInstallationCoordinator {
 
   #assertAvailable(): void {
     if (this.#disposed) throw new Error('Host Extension Installation coordinator is disposed.')
+  }
+
+  #supportsHostUiRepository(): boolean {
+    return (
+      typeof this.#hostUiRepository.getHostUiPermissionGrant === 'function' &&
+      typeof this.#hostUiRepository.replaceHostUiExtensionPages === 'function'
+    )
   }
 }

@@ -3,7 +3,7 @@ import type { ChannelReferenceRecord, CoreRepository } from '@nekro-nxt/core'
 import type { ChannelId, JsonValue } from '@nekro-nxt/contracts'
 import type { AssetAccessRepository } from '@nekro-nxt/core'
 import type { ChannelHistoryRepository, RuntimeRepository } from '@nekro-nxt/channel-runtime'
-import type { ExtensionRepository } from '@nekro-nxt/extension-runtime'
+import type { ExtensionRepository, HostUiRepository } from '@nekro-nxt/extension-runtime'
 import { eq } from 'drizzle-orm'
 import type { CoreDatabase } from './database.js'
 import { systemSettings, workTreeOrder } from './schema.js'
@@ -28,6 +28,7 @@ type CurrentRepository = CoreRepository &
   ChannelHistoryRepository &
   AdapterRuntimeStateStore &
   ExtensionRepository &
+  HostUiRepository &
   AssetAccessRepository
 
 /** Typed Drizzle façade. Domain implementations stay separate and share one immediate-transaction database. */
@@ -324,6 +325,33 @@ export class SqliteCoreRepository implements CurrentRepository {
     this.#extensions.upsertHostInstallation(...args)
   readonly deleteHostInstallation = (...args: Parameters<ExtensionRepository['deleteHostInstallation']>) =>
     this.#extensions.deleteHostInstallation(...args)
+  readonly listHostUiPageEntries = (...args: Parameters<HostUiRepository['listHostUiPageEntries']>) =>
+    this.#extensions.listHostUiPageEntries(...args)
+  readonly replaceHostUiExtensionPages = (...args: Parameters<HostUiRepository['replaceHostUiExtensionPages']>) =>
+    this.#extensions.replaceHostUiExtensionPages(...args)
+  readonly deleteHostUiExtensionPages = (...args: Parameters<HostUiRepository['deleteHostUiExtensionPages']>) =>
+    this.#extensions.deleteHostUiExtensionPages(...args)
+  readonly replaceHostUiDshPages = (...args: Parameters<HostUiRepository['replaceHostUiDshPages']>) =>
+    this.#extensions.replaceHostUiDshPages(...args)
+  readonly deleteHostUiDshPages = (...args: Parameters<HostUiRepository['deleteHostUiDshPages']>) =>
+    this.#extensions.deleteHostUiDshPages(...args)
+  readonly getHostUiPreferencesRevision = (...args: Parameters<HostUiRepository['getHostUiPreferencesRevision']>) =>
+    this.#extensions.getHostUiPreferencesRevision(...args)
+  readonly updateHostUiPagePreferences = (...args: Parameters<HostUiRepository['updateHostUiPagePreferences']>) =>
+    this.#extensions.updateHostUiPagePreferences(...args)
+  readonly getHostUiPermissionGrant = (...args: Parameters<HostUiRepository['getHostUiPermissionGrant']>) =>
+    this.#extensions.getHostUiPermissionGrant(...args)
+  readonly upsertHostUiPermissionGrant = (...args: Parameters<HostUiRepository['upsertHostUiPermissionGrant']>) =>
+    this.#extensions.upsertHostUiPermissionGrant(...args)
+  readonly deleteHostUiPermissionGrant = (...args: Parameters<HostUiRepository['deleteHostUiPermissionGrant']>) =>
+    this.#extensions.deleteHostUiPermissionGrant(...args)
+  readonly getHostUiDiagnostic = (...args: Parameters<HostUiRepository['getHostUiDiagnostic']>) =>
+    this.#extensions.getHostUiDiagnostic(...args)
+  readonly upsertHostUiDiagnostic = (...args: Parameters<HostUiRepository['upsertHostUiDiagnostic']>) =>
+    this.#extensions.upsertHostUiDiagnostic(...args)
+  readonly deleteHostUiDiagnosticsForExtension = (
+    ...args: Parameters<HostUiRepository['deleteHostUiDiagnosticsForExtension']>
+  ) => this.#extensions.deleteHostUiDiagnosticsForExtension(...args)
 
   readonly listDshPluginPackages = (...args: Parameters<DshPluginRepository['listDshPluginPackages']>) =>
     this.#dshPlugins.listDshPluginPackages(...args)

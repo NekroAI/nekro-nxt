@@ -12,6 +12,7 @@ import {
   DshPluginPackageIdSchema,
   ExtensionIdSchema,
   ExtensionRevisionIdSchema,
+  HostUiPageInstanceIdSchema,
   EpisodeIdSchema,
   JsonValueSchema,
   LogicalMessageIdSchema,
@@ -23,6 +24,14 @@ import {
   promptDocumentPlainText,
 } from './domain.js'
 import { ClientNotificationSchema } from './management-api.js'
+import {
+  AdapterClientSlotNameSchema,
+  AgentClientSlotNameSchema,
+  DshNxtHostUiSchema,
+  HostPageContributionSchema,
+  HostUiPageEntrySchema,
+  HostUiPermissionDeclarationSchema,
+} from './extension-ui.js'
 
 const EmptyParamsSchema = z.object({}).strict()
 const NoRequestBodySchema = z.undefined()
@@ -728,7 +737,7 @@ export const HostSnapshotSchema = z
       z
         .object({
           id: ExtensionIdSchema,
-          scope: z.enum(['agent', 'host-adapter']),
+          scope: z.enum(['agent', 'host-adapter', 'host-ui']),
           slug: NonEmptyStringSchema,
           displayName: z.string(),
           description: z.string(),
@@ -739,7 +748,7 @@ export const HostSnapshotSchema = z
                 id: ExtensionRevisionIdSchema,
                 revisionNumber: z.number().int().positive(),
                 createdAt: z.number().int().safe().nonnegative(),
-                scope: z.enum(['agent', 'host-adapter']),
+                scope: z.enum(['agent', 'host-adapter', 'host-ui']),
                 contributions: z.array(z.string()),
                 verification: z
                   .object({
@@ -753,10 +762,15 @@ export const HostSnapshotSchema = z
                     rpcMethods: z.array(z.string()),
                     renderedSlots: z.array(z.string()),
                     renderedHostSlots: z
-                      .array(
-                        z.object({ name: z.literal('conversation.message.rich'), key: NonEmptyStringSchema }).strict(),
-                      )
+                      .array(z.object({ name: AdapterClientSlotNameSchema, key: NonEmptyStringSchema }).strict())
                       .optional(),
+                    renderedPages: z.array(HostPageContributionSchema).max(8).optional(),
+                    permissions: HostUiPermissionDeclarationSchema.optional(),
+                    permissionDigest: z
+                      .string()
+                      .regex(/^[a-f0-9]{64}$/u)
+                      .optional(),
+                    permissionApprovalRequired: z.boolean().optional(),
                     adapter: z
                       .object({
                         apiVersion: z.literal(1),
@@ -807,6 +821,14 @@ export const HostSnapshotSchema = z
             })
             .strict()
             .optional(),
+          hostUiPermission: z
+            .object({
+              declaration: HostUiPermissionDeclarationSchema,
+              permissionDigest: z.string().regex(/^[a-f0-9]{64}$/u),
+              approvalRequired: z.boolean(),
+            })
+            .strict()
+            .optional(),
           hostClientDiagnostic: z
             .object({
               revisionId: ExtensionRevisionIdSchema,
@@ -830,6 +852,13 @@ export const HostSnapshotSchema = z
         })
         .strict(),
     ),
+    hostUi: z
+      .object({
+        preferencesRevision: z.number().int().nonnegative(),
+        pages: z.array(HostUiPageEntrySchema),
+      })
+      .strict()
+      .default({ preferencesRevision: 0, pages: [] }),
     dynamic: z.array(
       z
         .object({
@@ -1022,6 +1051,7 @@ export const DshPluginCatalogEntrySchema = z
     installSource: z.enum(['registry', 'tarball', 'imported']).optional(),
     installedAt: z.number().int().safe().nonnegative().optional(),
     clientUiDetected: z.boolean().optional(),
+    hostUi: DshNxtHostUiSchema.optional(),
     approvedBuilds: z.array(NonEmptyStringSchema).optional(),
     entries: z
       .array(
@@ -1563,6 +1593,7 @@ export const HostApiContracts = {
         lockfileDigest: z.string().regex(/^[a-f0-9]{64}$/u),
         blockedBuilds: z.array(NonEmptyStringSchema),
         clientUiDetected: z.boolean(),
+        hostUi: DshNxtHostUiSchema.optional(),
         entries: z.array(
           z
             .object({
@@ -1607,7 +1638,15 @@ export const HostApiContracts = {
     path: '/api/dsh/plugin-entries/:entryId/activation',
     params: dshPluginEntryParam,
     request: z
-      .object({ target: z.enum(['host', 'agent']), agentId: AgentIdSchema.optional(), config: JsonValueSchema })
+      .object({
+        target: z.enum(['host', 'agent']),
+        agentId: AgentIdSchema.optional(),
+        config: JsonValueSchema,
+        permissionApproval: z
+          .object({ permissionDigest: z.string().regex(/^[a-f0-9]{64}$/u) })
+          .strict()
+          .optional(),
+      })
       .strict(),
     response: z.object({ targetKey: NonEmptyStringSchema }).strict(),
     error: HostApiErrorSchema,
@@ -1640,7 +1679,7 @@ export const HostApiContracts = {
         revisionId: ExtensionRevisionIdSchema,
         slug: NonEmptyStringSchema,
         displayName: NonEmptyStringSchema,
-        scope: z.enum(['agent', 'host-adapter']),
+        scope: z.enum(['agent', 'host-adapter', 'host-ui']),
         idempotent: z.boolean(),
         slugConflict: z.boolean(),
       })
@@ -1929,15 +1968,30 @@ export const HostApiContracts = {
         pluginId: DynamicIdSchema,
         packageId: DynamicIdSchema,
         pluginRunId: DynamicIdSchema,
-        renderedSlots: z.array(z.enum(['agent.workbench.sections', 'extension.details.panels'])).max(2),
+        renderedSlots: z.array(AgentClientSlotNameSchema).max(5),
         renderedHostSlots: z
-          .array(z.object({ name: z.literal('conversation.message.rich'), key: NonEmptyStringSchema }).strict())
+          .array(z.object({ name: AdapterClientSlotNameSchema, key: NonEmptyStringSchema }).strict())
           .max(16)
           .default([]),
+        renderedPages: z.array(HostPageContributionSchema).max(8).default([]),
+        permissions: HostUiPermissionDeclarationSchema.default({ permissions: [], networkOrigins: [] }),
       })
       .strict()
-      .refine((value) => value.renderedSlots.length > 0 || value.renderedHostSlots.length > 0, {
-        message: '动态 Client 必须提供至少一个真实渲染 Slot。',
+      .refine(
+        (value) =>
+          value.renderedSlots.length > 0 || value.renderedHostSlots.length > 0 || value.renderedPages.length > 0,
+        {
+          message: '动态 Client 必须提供至少一个真实渲染的产品 Slot 或页面。',
+        },
+      )
+      .superRefine((value, context) => {
+        if (value.renderedPages.length === 0 && value.permissions.permissions.length === 0) return
+        if (value.renderedPages.length > 0) return
+        context.addIssue({
+          code: 'custom',
+          path: ['permissions'],
+          message: '没有页面贡献时不能声明 Host UI 权限。',
+        })
       }),
     response: z.object({ ok: z.literal(true) }).strict(),
     error: HostApiErrorSchema,
@@ -2035,7 +2089,15 @@ export const HostApiContracts = {
     method: 'PUT',
     path: '/api/extensions/:extensionId/installation',
     params: extensionParam,
-    request: z.object({ revisionId: ExtensionRevisionIdSchema }).strict(),
+    request: z
+      .object({
+        revisionId: ExtensionRevisionIdSchema,
+        permissionApproval: z
+          .object({ permissionDigest: z.string().regex(/^[a-f0-9]{64}$/u) })
+          .strict()
+          .optional(),
+      })
+      .strict(),
     response: z
       .object({
         installation: z
@@ -2055,6 +2117,40 @@ export const HostApiContracts = {
     params: extensionParam,
     request: NoRequestBodySchema,
     response: z.object({ uninstalled: z.literal(true) }).strict(),
+    error: HostApiErrorSchema,
+  }),
+  updateHostUiPagePreferences: defineContract({
+    method: 'PUT',
+    path: '/api/host-ui/page-preferences',
+    params: EmptyParamsSchema,
+    request: z
+      .object({
+        expectedRevision: z.number().int().nonnegative(),
+        entries: z.array(z.object({ pageInstanceId: HostUiPageInstanceIdSchema, visible: z.boolean() }).strict()),
+      })
+      .strict(),
+    response: z.object({ revision: z.number().int().positive() }).strict(),
+    error: HostApiErrorSchema,
+  }),
+  callHostUiPage: defineContract({
+    method: 'POST',
+    path: '/api/host-ui/pages/:pageInstanceId/call',
+    params: z.object({ pageInstanceId: HostUiPageInstanceIdSchema }).strict(),
+    request: z.object({ method: NonEmptyStringSchema, input: JsonValueSchema.default({}) }).strict(),
+    response: z.object({ value: JsonValueSchema }).strict(),
+    error: HostApiErrorSchema,
+  }),
+  reportHostUiPageDiagnostic: defineContract({
+    method: 'POST',
+    path: '/api/host-ui/pages/:pageInstanceId/diagnostic',
+    params: z.object({ pageInstanceId: HostUiPageInstanceIdSchema }).strict(),
+    request: z
+      .object({
+        status: z.enum(['ready', 'load-failed', 'navigation-failed', 'rpc-failed']),
+        message: z.string().max(2000).optional(),
+      })
+      .strict(),
+    response: z.object({ recorded: z.literal(true) }).strict(),
     error: HostApiErrorSchema,
   }),
   deleteLocalExtension: defineContract({

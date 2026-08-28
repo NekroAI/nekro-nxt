@@ -11,6 +11,69 @@
     var(--nxt-bg-canvas);
 }
 
+.hostUiPageManager {
+  width: min(880px, calc(100% - 48px));
+  margin: 24px auto;
+  overflow: hidden;
+  border: 1px solid var(--nxt-border-subtle);
+  border-radius: var(--nxt-radius-lg);
+  background: var(--nxt-bg-surface);
+}
+
+.hostUiPageRow {
+  display: grid;
+  min-height: 64px;
+  grid-template-columns: 32px minmax(0, 1fr) auto auto;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 14px 8px 8px;
+  border-bottom: 1px solid var(--nxt-border-subtle);
+}
+
+.hostUiPageRow:last-child {
+  border-bottom: 0;
+}
+
+.hostUiPageRow[data-dragging] {
+  position: relative;
+  z-index: 2;
+  box-shadow: var(--nxt-shadow-floating);
+  background: var(--nxt-bg-elevated);
+}
+
+.hostUiPageDrag {
+  display: grid;
+  width: 28px;
+  height: 28px;
+  place-items: center;
+  border: 0;
+  border-radius: var(--nxt-radius-md);
+  color: var(--nxt-text-muted);
+  background: transparent;
+  cursor: grab;
+}
+
+.hostUiPageDrag:hover:not(:disabled) {
+  color: var(--nxt-text-primary);
+  background: var(--nxt-bg-hover);
+}
+
+.hostUiPageCopy {
+  min-width: 0;
+  display: grid;
+}
+
+.hostUiPageCopy strong,
+.hostUiPageCopy small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.hostUiPageCopy small {
+  color: var(--nxt-text-muted);
+}
+
 .page > * {
   width: min(1280px, 100%);
   margin-right: auto;
@@ -1870,62 +1933,6 @@
   line-height: 18px;
 }
 
-.lifecycleSteps {
-  display: grid;
-  grid-template-columns: repeat(5, minmax(0, 1fr));
-  margin: 0;
-  border: 1px solid var(--nxt-border-subtle);
-  border-radius: var(--nxt-radius-control);
-  padding: 16px 12px 12px;
-  background: var(--nxt-bg-subtle);
-  list-style: none;
-}
-
-.lifecycleStepsCompact {
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-}
-
-.lifecycleSteps li {
-  position: relative;
-  display: grid;
-  justify-items: center;
-  gap: 6px;
-  color: var(--nxt-text-muted);
-  font-size: 10px;
-  text-align: center;
-}
-
-.lifecycleSteps li:not(:last-child)::after {
-  position: absolute;
-  z-index: 0;
-  top: 12px;
-  left: 62%;
-  width: 76%;
-  height: 1px;
-  background: var(--nxt-border-default);
-  content: '';
-}
-
-.lifecycleSteps li > span {
-  z-index: 1;
-  display: grid;
-  width: 28px;
-  height: 28px;
-  place-items: center;
-  border: 1px solid var(--nxt-border-default);
-  border-radius: 50%;
-  background: var(--nxt-bg-surface);
-}
-
-.lifecycleSteps li[data-done] {
-  color: var(--nxt-success);
-}
-
-.lifecycleSteps li[data-done] > span {
-  border-color: color-mix(in srgb, var(--nxt-success) 45%, var(--nxt-border-default));
-  background: var(--nxt-success-soft);
-}
-
 .tagList {
   display: flex;
   flex-wrap: wrap;
@@ -2832,7 +2839,8 @@
 }
 
 .workStreamSummary,
-.toolRow {
+.toolRow,
+.toolRowTrigger {
   display: grid;
   width: fit-content;
   max-width: 100%;
@@ -2844,6 +2852,12 @@
   text-align: left;
   background: transparent;
   border: 0;
+}
+
+.toolRowGroup {
+  display: grid;
+  max-width: 100%;
+  justify-items: start;
 }
 
 .workStreamSummary {
@@ -5919,7 +5933,6 @@
 
 :global(:root[data-glin-experiment]) .facts,
 :global(:root[data-glin-experiment]) .connectionProgress,
-:global(:root[data-glin-experiment]) .lifecycleSteps,
 :global(:root[data-glin-experiment]) .creatorEvidence,
 :global(:root[data-glin-experiment]) .dynamicSlotSurface,
 :global(:root[data-glin-experiment]) .connectionAliasEditor {
@@ -5932,13 +5945,11 @@
   box-shadow: inset 0 1px 0 rgb(255 255 255 / 11%);
 }
 
-:global(:root[data-glin-experiment]) .connectionProgress,
-:global(:root[data-glin-experiment]) .lifecycleSteps {
+:global(:root[data-glin-experiment]) .connectionProgress {
   padding: 18px 14px 14px;
 }
 
-:global(:root[data-glin-experiment]) .connectionProgress li > span,
-:global(:root[data-glin-experiment]) .lifecycleSteps li > span {
+:global(:root[data-glin-experiment]) .connectionProgress li > span {
   border-color: var(--glass-border-strong);
   background: var(--nxt-bg-elevated);
   box-shadow:
@@ -5946,8 +5957,7 @@
     inset 0 1px 0 rgb(255 255 255 / 16%);
 }
 
-:global(:root[data-glin-experiment]) .connectionProgress li[data-done] > span,
-:global(:root[data-glin-experiment]) .lifecycleSteps li[data-done] > span {
+:global(:root[data-glin-experiment]) .connectionProgress li[data-done] > span {
   border-color: color-mix(in srgb, var(--nxt-success) 42%, var(--glass-border-strong));
   background: color-mix(in srgb, var(--nxt-success-soft) 72%, var(--nxt-bg-elevated));
   box-shadow: 0 5px 14px color-mix(in srgb, var(--nxt-success) 12%, transparent);

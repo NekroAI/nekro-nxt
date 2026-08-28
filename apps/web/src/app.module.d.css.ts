@@ -8,6 +8,7 @@ declare const styles: {
   readonly commandResults: string
   readonly commandSearch: string
   readonly experimentBadge: string
+  readonly hostPageSvgIcon: string
   readonly instanceStatus: string
   readonly instanceStatus_authenticationRequired: string
   readonly instanceStatus_connecting: string
@@ -18,9 +19,12 @@ declare const styles: {
   readonly rail: string
   readonly railBtn: string
   readonly railBtnActive: string
+  readonly railDivider: string
+  readonly railExtensions: string
   readonly railInstance: string
   readonly railInstanceOpen: string
   readonly railSpacer: string
+  readonly railSystem: string
   readonly railUtility: string
   readonly routeView: string
   readonly shell: string

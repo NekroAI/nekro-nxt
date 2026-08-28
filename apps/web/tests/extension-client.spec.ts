@@ -63,6 +63,94 @@ describe('Extension Client Runtime', () => {
     }
   })
 
+  it('loads every declared Adapter product Slot with the Adapter key and retracts them together', async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), 'nekro-nxt-adapter-product-client-'))
+    temporaryDirectories.push(directory)
+    const entry = path.join(directory, 'client.mjs')
+    const slotNames = [
+      'connection.adapter.setup',
+      'connection.adapter.status',
+      'connection.adapter.test',
+      'channel.inspector.adapter.sections',
+    ] as const
+    await writeFile(
+      entry,
+      `export default async ({ React }) => ({
+        inject: ['slots'],
+        apply(ctx) {
+          for (const name of ${JSON.stringify(slotNames)}) {
+            ctx.slots.register(
+              { name, id: 'synthetic-chat' },
+              ({ adapterKey }) => React.createElement('section', { 'data-slot': name }, adapterKey),
+            )
+          }
+        }
+      })`,
+      'utf8',
+    )
+    const runtime = new AdapterHostClientRuntime()
+    try {
+      await runtime.mount({
+        owner: 'ext_adapter_product',
+        adapterKey: 'synthetic-chat',
+        moduleUrl: pathToFileURL(entry).href,
+        allowedSlots: slotNames.map((name) => ({ name, key: 'synthetic-chat' })),
+      })
+      for (const name of slotNames) {
+        const mounted = runtime.entry(name, 'synthetic-chat')
+        expect(mounted?.owner).toBe('ext_adapter_product')
+      }
+      await runtime.unmount('ext_adapter_product')
+      for (const name of slotNames) expect(runtime.entry(name, 'synthetic-chat')).toBeUndefined()
+    } finally {
+      await runtime.dispose()
+    }
+  })
+
+  it('rejects Adapter product Slots with an unrelated id or without a Manifest declaration', async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), 'nekro-nxt-adapter-product-policy-'))
+    temporaryDirectories.push(directory)
+    const wrongIdEntry = path.join(directory, 'wrong-id.mjs')
+    await writeFile(
+      wrongIdEntry,
+      `export default async () => ({
+        inject: ['slots'],
+        apply(ctx) { ctx.slots.register({ name: 'connection.adapter.status', id: 'another-adapter' }, () => null) }
+      })`,
+      'utf8',
+    )
+    const undeclaredEntry = path.join(directory, 'undeclared.mjs')
+    await writeFile(
+      undeclaredEntry,
+      `export default async () => ({
+        inject: ['slots'],
+        apply(ctx) { ctx.slots.register({ name: 'connection.adapter.status', id: 'synthetic-chat' }, () => null) }
+      })`,
+      'utf8',
+    )
+    const runtime = new AdapterHostClientRuntime()
+    try {
+      await expect(
+        runtime.mount({
+          owner: 'ext_wrong_id',
+          adapterKey: 'synthetic-chat',
+          moduleUrl: pathToFileURL(wrongIdEntry).href,
+          allowedSlots: [{ name: 'connection.adapter.status', key: 'synthetic-chat' }],
+        }),
+      ).rejects.toThrow('必须等于 synthetic-chat')
+      await expect(
+        runtime.mount({
+          owner: 'ext_undeclared',
+          adapterKey: 'synthetic-chat',
+          moduleUrl: pathToFileURL(undeclaredEntry).href,
+        }),
+      ).rejects.toThrow('未声明的产品 Slot')
+      expect(runtime.entry('connection.adapter.status', 'synthetic-chat')).toBeUndefined()
+    } finally {
+      await runtime.dispose()
+    }
+  })
+
   it('loads a built Client artifact, renders its real Slot component and retracts it on dispose', async () => {
     const directory = await mkdtemp(path.join(tmpdir(), 'nekro-nxt-extension-client-'))
     temporaryDirectories.push(directory)

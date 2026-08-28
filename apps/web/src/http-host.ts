@@ -144,6 +144,7 @@ const emptySnapshot = (): ProductSnapshot => ({
   channelRuntimes: {},
   connections: [],
   extensions: [],
+  hostUi: { preferencesRevision: 0, pages: [] },
   platformUsersRevision: 0,
   approvals: [],
   dynamic: [],
@@ -506,6 +507,9 @@ const projectSnapshot = (json: SnapshotJson, successfulAt: number): ProductSnaps
         clientBuilt: revision.verification?.clientBuilt ?? false,
         ...(revision.verification === undefined ? {} : { buildKey: revision.verification.buildKey }),
         hostSlots: revision.verification?.renderedHostSlots ?? [],
+        pages: json.hostUi.pages.filter(
+          (page) => page.owner.kind === 'extension' && page.owner.revisionId === revision.id,
+        ),
         ...(revision.verification === undefined
           ? {}
           : {
@@ -519,6 +523,15 @@ const projectSnapshot = (json: SnapshotJson, successfulAt: number): ProductSnaps
                 toolInvocationCount: revision.verification.toolInvocationCount,
                 rpcMethods: revision.verification.rpcMethods,
                 renderedSlots: revision.verification.renderedSlots,
+                ...(revision.verification.permissions === undefined
+                  ? {}
+                  : { permissions: revision.verification.permissions }),
+                ...(revision.verification.permissionDigest === undefined
+                  ? {}
+                  : { permissionDigest: revision.verification.permissionDigest }),
+                ...(revision.verification.permissionApprovalRequired === undefined
+                  ? {}
+                  : { permissionApprovalRequired: revision.verification.permissionApprovalRequired }),
               },
             }),
       })),
@@ -566,6 +579,15 @@ const projectSnapshot = (json: SnapshotJson, successfulAt: number): ProductSnaps
               toolInvocationCount: latestRevision.verification.toolInvocationCount,
               rpcMethods: latestRevision.verification.rpcMethods,
               renderedSlots: latestRevision.verification.renderedSlots,
+              ...(latestRevision.verification.permissions === undefined
+                ? {}
+                : { permissions: latestRevision.verification.permissions }),
+              ...(latestRevision.verification.permissionDigest === undefined
+                ? {}
+                : { permissionDigest: latestRevision.verification.permissionDigest }),
+              ...(latestRevision.verification.permissionApprovalRequired === undefined
+                ? {}
+                : { permissionApprovalRequired: latestRevision.verification.permissionApprovalRequired }),
             },
           }),
       clientActivations: extension.activations.flatMap((candidate) => {
@@ -617,6 +639,7 @@ const projectSnapshot = (json: SnapshotJson, successfulAt: number): ProductSnaps
               observedAt: extension.hostClientDiagnostic.observedAt,
             },
           }),
+      ...(extension.hostUiPermission === undefined ? {} : { hostUiPermission: extension.hostUiPermission }),
       ...(latestRevision === undefined ? {} : { revisionId: latestRevision.id }),
     }
   })
@@ -633,6 +656,7 @@ const projectSnapshot = (json: SnapshotJson, successfulAt: number): ProductSnaps
     connections,
     workTreeOrder: json.workTreeOrder,
     extensions: extensionsLocal,
+    hostUi: json.hostUi,
     platformUsersRevision: 0,
     approvals: [],
     dynamic: json.dynamic.map((item) => ({
@@ -1073,8 +1097,16 @@ export class HttpProductHost implements ProductHostPort {
     if (command === 'extensions.install') {
       const extensionId = typeof input?.['extensionId'] === 'string' ? input['extensionId'] : ''
       const revisionId = typeof input?.['revisionId'] === 'string' ? input['revisionId'] : ''
+      const permissionDigest = typeof input?.['permissionDigest'] === 'string' ? input['permissionDigest'] : undefined
       if (!extensionId.trim() || !revisionId.trim()) throw new Error('缺少扩展或适配器版本标识。')
-      const result = await this.#call(HostApiContracts.installHostExtension, { extensionId }, { revisionId })
+      const result = await this.#call(
+        HostApiContracts.installHostExtension,
+        { extensionId },
+        {
+          revisionId,
+          ...(permissionDigest === undefined ? {} : { permissionApproval: { permissionDigest } }),
+        },
+      )
       await this.#refreshAndNotify()
       return result
     }

@@ -5,6 +5,7 @@ import {
   parseJsonValue,
   type HostApiRequest,
   type HostApiResponse,
+  type HostUiPermissionDeclaration,
   type PromptDocumentV1,
 } from '@nekro-nxt/contracts'
 import type { ExtensionJsonValue } from '@nekro-nxt/extension-sdk'
@@ -239,16 +240,17 @@ export interface LocalExtensionSummary {
   readonly name: string
   readonly description: string
   readonly revision: number
-  readonly scope: 'agent' | 'host-adapter'
+  readonly scope: 'agent' | 'host-adapter' | 'host-ui'
   readonly revisions: readonly {
     readonly id: string
     readonly revision: number
     readonly createdAt: number
-    readonly scope: 'agent' | 'host-adapter'
+    readonly scope: 'agent' | 'host-adapter' | 'host-ui'
     readonly contributions: readonly string[]
     readonly clientBuilt: boolean
     readonly buildKey?: string
-    readonly hostSlots: readonly { readonly name: 'conversation.message.rich'; readonly key: string }[]
+    readonly hostSlots: readonly { readonly name: string; readonly key: string }[]
+    readonly pages: HostApiResponse<'snapshot'>['hostUi']['pages']
     readonly verification?: {
       readonly verifiedAt: number
       readonly dshVersion: string
@@ -259,6 +261,9 @@ export interface LocalExtensionSummary {
       readonly toolInvocationCount: number
       readonly rpcMethods: readonly string[]
       readonly renderedSlots: readonly string[]
+      readonly permissions?: HostUiPermissionDeclaration
+      readonly permissionDigest?: string
+      readonly permissionApprovalRequired?: boolean
     }
   }[]
   readonly createdByAgentId?: string
@@ -286,6 +291,9 @@ export interface LocalExtensionSummary {
     readonly toolInvocationCount: number
     readonly rpcMethods: readonly string[]
     readonly renderedSlots: readonly string[]
+    readonly permissions?: HostUiPermissionDeclaration
+    readonly permissionDigest?: string
+    readonly permissionApprovalRequired?: boolean
   }
   readonly clientActivations: readonly {
     readonly agentId: string
@@ -314,6 +322,7 @@ export interface LocalExtensionSummary {
     readonly message?: string
     readonly observedAt: number
   }
+  readonly hostUiPermission?: HostApiResponse<'snapshot'>['extensions'][number]['hostUiPermission']
   /** Latest saved Revision id; not intended for display. */
   readonly revisionId?: string
 }
@@ -392,6 +401,7 @@ export interface ProductState {
   readonly channelRuntimes: Readonly<Record<string, ChannelRuntimeView>>
   readonly connections: readonly ConnectionSummary[]
   readonly extensions: readonly LocalExtensionSummary[]
+  readonly hostUi: HostApiResponse<'snapshot'>['hostUi']
   readonly platformUserFacets: HostApiResponse<'listPlatformUsers'>['facets']
   readonly platformUsersRevision: number
   readonly approvals: readonly DynamicApproval[]
@@ -474,7 +484,7 @@ export interface ProductState {
     readonly targetExtensionId?: string
   }): Promise<SavedDynamicExtension>
   setExtensionActive(id: string, agentId: string, enabled: boolean, revisionId?: string): Promise<void>
-  setHostExtensionInstalled(id: string, revisionId: string | null): Promise<void>
+  setHostExtensionInstalled(id: string, revisionId: string | null, permissionDigest?: string): Promise<void>
   reportHostExtensionClientDiagnostic(input: {
     readonly extensionId: string
     readonly revisionId: string
@@ -560,6 +570,7 @@ export const useProductStore = create<ProductState>((set) => ({
   channelRuntimes: {},
   connections: [],
   extensions: [],
+  hostUi: { preferencesRevision: 0, pages: [] },
   platformUserFacets: { adapters: [], connections: [] },
   platformUsersRevision: 0,
   approvals: [],
@@ -884,7 +895,7 @@ export const useProductStore = create<ProductState>((set) => ({
       agentId: targetAgentId,
     })
   },
-  setHostExtensionInstalled: async (id, revisionId) => {
+  setHostExtensionInstalled: async (id, revisionId, permissionDigest) => {
     const extensionId = requireValue(id, '缺少本地扩展标识，请刷新页面后重试。')
     if (revisionId === null) {
       await requireHost().execute('extensions.uninstall', { extensionId })
@@ -892,7 +903,8 @@ export const useProductStore = create<ProductState>((set) => ({
     }
     await requireHost().execute('extensions.install', {
       extensionId,
-      revisionId: requireValue(revisionId, '缺少要安装的适配器版本。'),
+      revisionId: requireValue(revisionId, '缺少要安装的扩展版本。'),
+      ...(permissionDigest === undefined ? {} : { permissionDigest }),
     })
   },
   reportHostExtensionClientDiagnostic: async ({ extensionId, revisionId, status, message }) => {

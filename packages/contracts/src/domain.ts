@@ -24,6 +24,7 @@ export const ExtensionIdSchema = brandedId('ext', 'ExtensionId')
 export const ExtensionRevisionIdSchema = brandedId('xrv', 'ExtensionRevisionId')
 export const DshPluginPackageIdSchema = brandedId('dsp', 'DshPluginPackageId')
 export const DshPluginEntryIdSchema = brandedId('dse', 'DshPluginEntryId')
+export const HostUiPageInstanceIdSchema = brandedId('hup', 'HostUiPageInstanceId')
 
 export type AgentId = z.infer<typeof AgentIdSchema>
 export type AgentRevisionId = z.infer<typeof AgentRevisionIdSchema>
@@ -43,6 +44,7 @@ export type ExtensionId = z.infer<typeof ExtensionIdSchema>
 export type ExtensionRevisionId = z.infer<typeof ExtensionRevisionIdSchema>
 export type DshPluginPackageId = z.infer<typeof DshPluginPackageIdSchema>
 export type DshPluginEntryId = z.infer<typeof DshPluginEntryIdSchema>
+export type HostUiPageInstanceId = z.infer<typeof HostUiPageInstanceIdSchema>
 
 export const ChannelActivityTypeSchema = z.enum([
   'member-poked',

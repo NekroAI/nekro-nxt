@@ -1,5 +1,17 @@
 import { Context, Service } from '@deepseek-ai/cordis'
-import type { AdapterRichMessageSlotProps, ExtensionClientStyles } from '@nekro-nxt/extension-sdk'
+import type {
+  AdapterChannelInspectorSlotProps,
+  AdapterClientSlotPropsMap,
+  AdapterConnectionSlotProps,
+  AdapterHostClientEnvironment,
+  AdapterRichMessageSlotProps,
+} from '@nekro-nxt/extension-sdk'
+import {
+  AdapterClientSlotNameSchema,
+  HostPageContributionSchema,
+  HostUiPermissionDeclarationSchema,
+  type AdapterClientSlotName,
+} from '@nekro-nxt/contracts'
 import * as React from 'react'
 import {
   Component,
@@ -18,29 +30,28 @@ import {
   requireProductSlotComponent,
 } from './dsh-interop/unsafe.js'
 import { useProductStore, type LocalExtensionSummary } from './product-store.js'
+import { hostUiKit } from './host-ui-client.js'
+import { DEFAULT_EXTENSION_CLIENT_STYLES } from './extension-client.js'
 
-const CLIENT_STYLES: ExtensionClientStyles = {
-  section: 'nxt-extension-section',
-  sectionHeading: 'nxt-extension-section-heading',
-  secondaryText: 'nxt-extension-secondary-text',
-  actionRow: 'nxt-extension-action-row',
-  button: 'nxt-extension-button',
-  badge: 'nxt-extension-badge',
-}
-
-interface AdapterClientEntry {
+interface AdapterClientEntry<Name extends AdapterClientSlotName = AdapterClientSlotName> {
   readonly owner: string
+  readonly name: Name
   readonly key: string
-  readonly component: (props: AdapterRichMessageSlotProps) => ReactNode
+  readonly component: (props: AdapterClientSlotPropsMap[Name]) => ReactNode
 }
+
+const adapterSlotIdentity = (name: AdapterClientSlotName, key: string): string => `${name}\0${key}`
 
 class AdapterSlotsService extends Service {
   private readonly adapterKey: string
-  private readonly registerSlot: (key: string, component: unknown) => () => void
+  private readonly registerSlot: (name: AdapterClientSlotName, key: string, component: unknown) => () => void
 
   constructor(
     context: Context,
-    config: { readonly adapterKey: string; readonly register: (key: string, component: unknown) => () => void },
+    config: {
+      readonly adapterKey: string
+      readonly register: (name: AdapterClientSlotName, key: string, component: unknown) => () => void
+    },
   ) {
     super(context, 'slots')
     this.adapterKey = config.adapterKey
@@ -49,20 +60,50 @@ class AdapterSlotsService extends Service {
 
   register(options: unknown, component: unknown): () => void {
     const record = requireModuleRecord(options, 'Adapter Client Slot options')
-    if (record['name'] !== 'conversation.message.rich') {
-      throw new Error('Adapter Client V1 只允许 conversation.message.rich。')
-    }
+    const name = AdapterClientSlotNameSchema.parse(record['name'])
     const key = record['id']
-    if (typeof key !== 'string' || !key.startsWith(`${this.adapterKey}:`) || key.length <= this.adapterKey.length + 1) {
-      throw new Error(`Adapter Client Slot key 必须使用 ${this.adapterKey}:<kind>。`)
+    if (typeof key !== 'string') throw new Error('Adapter Client Slot 必须声明稳定 id。')
+    if (
+      name === 'conversation.message.rich'
+        ? !key.startsWith(`${this.adapterKey}:`) || key.length <= this.adapterKey.length + 1
+        : key !== this.adapterKey
+    ) {
+      throw new Error(
+        name === 'conversation.message.rich'
+          ? `富消息 Slot key 必须使用 ${this.adapterKey}:<kind>。`
+          : `Adapter 产品 Slot id 必须等于 ${this.adapterKey}。`,
+      )
     }
-    const slotComponent = requireProductSlotComponent<AdapterRichMessageSlotProps>(
+    const slotComponent = requireProductSlotComponent<AdapterClientSlotPropsMap[typeof name]>(
       component,
       'Adapter Client Slot component',
     )
-    const dispose = this.registerSlot(key, slotComponent)
-    this.ctx.effect(() => dispose, 'nekro-nxt: Adapter Client rich message Slot')
+    const dispose = this.registerSlot(name, key, slotComponent)
+    this.ctx.effect(() => dispose, `nekro-nxt: Adapter Client ${name} Slot`)
     return dispose
+  }
+}
+
+class AdapterPagesService extends Service {
+  readonly #allowedEntryIds: ReadonlySet<string>
+
+  constructor(context: Context, config: { readonly allowedEntryIds: readonly string[] }) {
+    super(context, 'pages')
+    this.#allowedEntryIds = new Set(config.allowedEntryIds)
+  }
+
+  declarePermissions(declaration: unknown): void {
+    HostUiPermissionDeclarationSchema.parse(declaration)
+  }
+
+  register(options: unknown, component: unknown): () => void {
+    const record = requireModuleRecord(options, 'Adapter page registration')
+    const page = HostPageContributionSchema.parse(record['page'])
+    if (!this.#allowedEntryIds.has(page.entryId)) {
+      throw new Error(`Adapter Client 注册了 Manifest 未声明的页面入口：${page.entryId}`)
+    }
+    if (typeof component !== 'function') throw new Error(`页面 ${page.entryId} 必须注册 React 组件。`)
+    return () => undefined
   }
 }
 
@@ -80,37 +121,51 @@ export class AdapterHostClientRuntime {
 
   version = (): number => this.#version
 
-  entry(key: string): AdapterClientEntry | undefined {
-    return this.#entries.get(key)
+  entry(key: string): AdapterClientEntry<'conversation.message.rich'> | undefined
+  entry<Name extends AdapterClientSlotName>(name: Name, key: string): AdapterClientEntry<Name> | undefined
+  entry(nameOrKey: string, key?: string): unknown {
+    const name = key === undefined ? 'conversation.message.rich' : AdapterClientSlotNameSchema.parse(nameOrKey)
+    const resolvedKey = key ?? nameOrKey
+    return this.#entries.get(adapterSlotIdentity(name, resolvedKey))
   }
 
   async mount(input: {
     readonly owner: string
     readonly adapterKey: string
     readonly moduleUrl: string
-    readonly allowedKeys: readonly string[]
+    readonly allowedSlots?: readonly { readonly name: AdapterClientSlotName; readonly key: string }[]
+    readonly allowedKeys?: readonly string[]
+    readonly allowedPageEntryIds?: readonly string[]
   }): Promise<void> {
     if (this.#disposed) throw new Error('Adapter Host Client Runtime is disposed.')
     if (this.#contexts.has(input.owner)) throw new Error('Adapter Host Client is already mounted.')
     const context = new Context()
-    const ownedKeys = new Set<string>()
-    const register = (key: string, component: unknown): (() => void) => {
-      if (!input.allowedKeys.includes(key)) throw new Error(`Adapter Client 注册了未声明的 rich key：${key}`)
-      if (this.#entries.has(key)) throw new Error(`Adapter rich key 已注册：${key}`)
+    context.reflect.provide('ui', hostUiKit)
+    const allowedSlots =
+      input.allowedSlots ??
+      (input.allowedKeys ?? []).map((key) => ({ name: 'conversation.message.rich' as const, key }))
+    const ownedSlots = new Set<string>()
+    const register = (name: AdapterClientSlotName, key: string, component: unknown): (() => void) => {
+      const identity = adapterSlotIdentity(name, key)
+      if (!allowedSlots.some((slot) => slot.name === name && slot.key === key)) {
+        throw new Error(`Adapter Client 注册了未声明的产品 Slot：${name}:${key}`)
+      }
+      if (this.#entries.has(identity)) throw new Error(`Adapter 产品 Slot 已注册：${name}:${key}`)
       const entry: AdapterClientEntry = {
         owner: input.owner,
+        name,
         key,
-        component: requireProductSlotComponent<AdapterRichMessageSlotProps>(component, 'Adapter rich component'),
+        component: requireProductSlotComponent(component, `Adapter ${name} component`),
       }
-      this.#entries.set(key, entry)
-      ownedKeys.add(key)
+      this.#entries.set(identity, entry)
+      ownedSlots.add(identity)
       this.#publish()
       let active = true
       return () => {
         if (!active) return
         active = false
-        if (this.#entries.get(key) === entry) this.#entries.delete(key)
-        ownedKeys.delete(key)
+        if (this.#entries.get(identity) === entry) this.#entries.delete(identity)
+        ownedSlots.delete(identity)
         this.#publish()
       }
     }
@@ -119,16 +174,18 @@ export class AdapterHostClientRuntime {
         await import(`${input.moduleUrl}${input.moduleUrl.includes('?') ? '&' : '?'}nxt=${Date.now()}`),
         'Adapter Client module',
       )
-      const factory = requireExtensionPluginFactory(loaded['default'])
+      const factory = requireExtensionPluginFactory<AdapterHostClientEnvironment>(loaded['default'])
       const plugin = await factory({
         React,
-        styles: CLIENT_STYLES,
-        host: { call: () => Promise.reject(new Error('Adapter Client V1 不提供 Host RPC。')) },
+        styles: DEFAULT_EXTENSION_CLIENT_STYLES,
+        ui: hostUiKit,
+        host: { call: () => Promise.reject(new Error('Adapter Client 不提供自定义 Host RPC。')) },
       })
       await context.plugin(AdapterSlotsService, { adapterKey: input.adapterKey, register })
+      await context.plugin(AdapterPagesService, { allowedEntryIds: input.allowedPageEntryIds ?? [] })
       await context.plugin(requireCordisPlugin(plugin, 'Adapter Client factory result'))
-      if (input.allowedKeys.some((key) => !ownedKeys.has(key))) {
-        throw new Error('Adapter Client 没有注册 Manifest 声明的全部 rich key。')
+      if (allowedSlots.some(({ name, key }) => !ownedSlots.has(adapterSlotIdentity(name, key)))) {
+        throw new Error('Adapter Client 没有注册 Manifest 声明的全部产品 Slot。')
       }
       this.#contexts.set(input.owner, context)
     } catch (error) {
@@ -165,7 +222,8 @@ interface DesiredAdapterClient {
   readonly revisionId: string
   readonly adapterKey: string
   readonly moduleUrl: string
-  readonly allowedKeys: readonly string[]
+  readonly allowedSlots: readonly { readonly name: AdapterClientSlotName; readonly key: string }[]
+  readonly allowedPageEntryIds: readonly string[]
 }
 
 const desiredClients = (extensions: readonly LocalExtensionSummary[]): readonly DesiredAdapterClient[] =>
@@ -182,7 +240,11 @@ const desiredClients = (extensions: readonly LocalExtensionSummary[]): readonly 
         revisionId: revision.id,
         adapterKey,
         moduleUrl: `/api/extensions/${encodeURIComponent(extension.id)}/revisions/${encodeURIComponent(revision.id)}/client/${revision.buildKey}.mjs`,
-        allowedKeys: revision.hostSlots.map(({ key }) => key),
+        allowedSlots: revision.hostSlots.map(({ name, key }) => ({
+          name: AdapterClientSlotNameSchema.parse(name),
+          key,
+        })),
+        allowedPageEntryIds: revision.pages.map(({ entryId }) => entryId),
       },
     ]
   })
@@ -320,7 +382,7 @@ function MountedAdapterRichMessageRenderer({
 }) {
   const runtime = coordinator.runtime
   useSyncExternalStore(runtime.subscribe, runtime.version, runtime.version)
-  const entry = runtime.entry(slotKey)
+  const entry = runtime.entry('conversation.message.rich', slotKey)
   if (!entry) return fallback
   const Entry = entry.component
   return (
@@ -333,4 +395,46 @@ function MountedAdapterRichMessageRenderer({
       <Entry {...props} />
     </RichSlotBoundary>
   )
+}
+
+function AdapterRuntimeSlot<Name extends Exclude<AdapterClientSlotName, 'conversation.message.rich'>>({
+  name,
+  adapterKey,
+  props,
+}: {
+  readonly name: Name
+  readonly adapterKey: string
+  readonly props: AdapterClientSlotPropsMap[Name]
+}) {
+  const coordinator = useContext(AdapterHostClientContext)
+  if (!coordinator) return null
+  const runtime = coordinator.runtime
+  useSyncExternalStore(runtime.subscribe, runtime.version, runtime.version)
+  const entry = runtime.entry(name, adapterKey)
+  if (!entry) return null
+  const Entry = entry.component
+  return (
+    <RichSlotBoundary
+      key={`${entry.owner}:${name}:${entry.key}`}
+      owner={entry.owner}
+      fallback={null}
+      onFailure={(owner) => void coordinator.disableOwner(owner)}
+    >
+      <Entry {...props} />
+    </RichSlotBoundary>
+  )
+}
+
+export function AdapterConnectionExtensionSlot({
+  name,
+  props,
+}: {
+  readonly name: 'connection.adapter.setup' | 'connection.adapter.status' | 'connection.adapter.test'
+  readonly props: AdapterConnectionSlotProps
+}) {
+  return <AdapterRuntimeSlot name={name} adapterKey={props.adapterKey} props={props} />
+}
+
+export function AdapterChannelInspectorExtensionSlots(props: AdapterChannelInspectorSlotProps) {
+  return <AdapterRuntimeSlot name="channel.inspector.adapter.sections" adapterKey={props.adapterKey} props={props} />
 }

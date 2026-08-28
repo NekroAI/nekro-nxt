@@ -21,6 +21,7 @@ import {
   type StatusTone,
 } from '../ui-kit/index.js'
 import styles from './product-pages.module.css'
+import { AdapterConnectionExtensionSlot } from '../adapter-host-client.js'
 
 const connectionTone = (state: ConnectionState): StatusTone => {
   if (state === '已连接') return 'success'
@@ -294,6 +295,20 @@ export function ConnectionsPage() {
               ) : null}
             </dl>
 
+            <AdapterConnectionExtensionSlot
+              name="connection.adapter.status"
+              props={{
+                adapterKey: selected.adapterKey,
+                connectionId: selected.id,
+                phase: 'active',
+                diagnostic: {
+                  state: selected.state,
+                  receiveTest: selected.receiveTest,
+                  sendTest: selected.sendTest,
+                },
+              }}
+            />
+
             {selected.userManaged ? (
               <>
                 <div className={styles.sectionDivider} />
@@ -348,6 +363,18 @@ export function ConnectionsPage() {
                     收发测试
                   </Button>
                   <Disclosure open={testsOpen}>
+                    <AdapterConnectionExtensionSlot
+                      name="connection.adapter.test"
+                      props={{
+                        adapterKey: selected.adapterKey,
+                        connectionId: selected.id,
+                        phase: 'testing',
+                        diagnostic: {
+                          receiveTest: selected.receiveTest,
+                          sendTest: selected.sendTest,
+                        },
+                      }}
+                    />
                     {selected.knownChannels.length > 0 ? (
                       <SelectField
                         label="测试消息发送到"
@@ -367,7 +394,7 @@ export function ConnectionsPage() {
                       />
                     ) : (
                       <InlineFeedback tone="warning">
-                        还没有发现频道。请先在已连接的平台向机器人账号发送一条消息。
+                        还没有发现频道。平台收到一条发给机器人账号的消息后，频道会出现在这里。
                       </InlineFeedback>
                     )}
                     <div className={styles.testRows}>
@@ -430,7 +457,7 @@ export function ConnectionsPage() {
                     ) : null}
                   </div>
                 ) : (
-                  <InlineFeedback tone="warning">请先创建智能体，再绑定已发现的频道。</InlineFeedback>
+                  <InlineFeedback tone="warning">当前没有可绑定的智能体，可在“工作”中创建。</InlineFeedback>
                 )}
               </>
             )}
@@ -530,6 +557,12 @@ export function ConnectionsPage() {
               <Field label="连接别名" hint="可选，用于区分这个连接；平台名称显示为次要信息。">
                 <Input value={createAlias} maxLength={80} onChange={(event) => setCreateAlias(event.target.value)} />
               </Field>
+              {selectedPlatform ? (
+                <AdapterConnectionExtensionSlot
+                  name="connection.adapter.setup"
+                  props={{ adapterKey: selectedPlatform.key, phase: 'setup' }}
+                />
+              ) : null}
               {Object.entries(selectedPlatform?.configSchema.properties ?? {}).map(([key, property]) => {
                 if (property.type === 'boolean') {
                   return (

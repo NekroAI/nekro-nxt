@@ -119,7 +119,9 @@ import {
   parseMessageParts,
   richPartContextText,
   type AdmissionId,
+  type AdapterClientSlotName,
   type AgentId,
+  type AgentClientSlotName,
   type AgentRevisionId,
   type AssetId,
   type ChannelId,
@@ -135,6 +137,8 @@ import {
   type DshSettingsNamespaceView,
   type DshSettingsPathOperation,
   type EpisodeId,
+  type HostPageContribution,
+  type HostUiPermissionDeclaration,
   type JsonValue,
   type LogicalMessageId,
   type MessagePart,
@@ -1099,8 +1103,10 @@ class NekroNxtDynamicCordisRunner extends DynamicCordisRunnerService {
     string,
     {
       readonly pluginRunId: string
-      readonly renderedSlots: readonly ('agent.workbench.sections' | 'extension.details.panels')[]
-      readonly renderedHostSlots: readonly { readonly name: 'conversation.message.rich'; readonly key: string }[]
+      readonly renderedSlots: readonly AgentClientSlotName[]
+      readonly renderedHostSlots: readonly { readonly name: AdapterClientSlotName; readonly key: string }[]
+      readonly renderedPages: readonly HostPageContribution[]
+      readonly permissions: HostUiPermissionDeclaration
     }
   >()
   private readonly clientRpcMethodsByPackage = new Map<
@@ -1229,8 +1235,10 @@ class NekroNxtDynamicCordisRunner extends DynamicCordisRunnerService {
     readonly pluginRunId: string
     readonly toolNames: readonly string[]
     readonly rpcMethods: readonly string[]
-    readonly renderedSlots: readonly ('agent.workbench.sections' | 'extension.details.panels')[]
-    readonly renderedHostSlots: readonly { readonly name: 'conversation.message.rich'; readonly key: string }[]
+    readonly renderedSlots: readonly AgentClientSlotName[]
+    readonly renderedHostSlots: readonly { readonly name: AdapterClientSlotName; readonly key: string }[]
+    readonly renderedPages: readonly HostPageContribution[]
+    readonly permissions: HostUiPermissionDeclaration
   } {
     const row = this.snapshot(agent).find((candidate) => candidate.pluginId === pluginId)
     if (row?.activeRun?.packageId !== packageId) throw new Error('Dynamic Package is not the active verified Run.')
@@ -1254,6 +1262,8 @@ class NekroNxtDynamicCordisRunner extends DynamicCordisRunnerService {
       rpcMethods: row.activeRun.handlers,
       renderedSlots: clientEvidence?.renderedSlots ?? [],
       renderedHostSlots: clientEvidence?.renderedHostSlots ?? [],
+      renderedPages: clientEvidence?.renderedPages ?? [],
+      permissions: clientEvidence?.permissions ?? { permissions: [], networkOrigins: [] },
     }
   }
 
@@ -1262,8 +1272,10 @@ class NekroNxtDynamicCordisRunner extends DynamicCordisRunnerService {
     pluginId: string,
     packageId: string,
     pluginRunId: string,
-    renderedSlots: readonly ('agent.workbench.sections' | 'extension.details.panels')[],
-    renderedHostSlots: readonly { readonly name: 'conversation.message.rich'; readonly key: string }[],
+    renderedSlots: readonly AgentClientSlotName[],
+    renderedHostSlots: readonly { readonly name: AdapterClientSlotName; readonly key: string }[],
+    renderedPages: readonly HostPageContribution[],
+    permissions: HostUiPermissionDeclaration,
   ): void {
     const row = this.snapshot(agent).find((candidate) => candidate.pluginId === pluginId)
     if (row?.activeRun?.packageId !== packageId || row.activeRun.pluginRunId !== pluginRunId) {
@@ -1271,13 +1283,15 @@ class NekroNxtDynamicCordisRunner extends DynamicCordisRunnerService {
     }
     const pkg = row.packages.find((candidate) => candidate.packageId === packageId)
     if (!pkg?.hasClientHalf) throw new Error('Host-only Package cannot report Client verification.')
-    if (renderedSlots.length === 0 && renderedHostSlots.length === 0) {
-      throw new Error('Dynamic Client verification must contain a product Slot.')
+    if (renderedSlots.length === 0 && renderedHostSlots.length === 0 && renderedPages.length === 0) {
+      throw new Error('Dynamic Client verification must contain a product Slot or page.')
     }
     this.clientEvidenceByPackage.set(packageId, {
       pluginRunId,
       renderedSlots: [...new Set(renderedSlots)],
       renderedHostSlots: [...new Map(renderedHostSlots.map((slot) => [slot.key, slot])).values()],
+      renderedPages,
+      permissions,
     })
   }
 
@@ -4050,8 +4064,9 @@ export class DshHostRuntime implements AgentSessionDriver, ExtensionActivationHo
     const contributions = [] as Array<
       | { readonly kind: 'tool'; readonly name: string; readonly description: string }
       | { readonly kind: 'rpc'; readonly method: string }
-      | { readonly kind: 'client-slot'; readonly name: 'agent.workbench.sections' | 'extension.details.panels' }
-      | { readonly kind: 'host-client-slot'; readonly name: 'conversation.message.rich'; readonly key: string }
+      | { readonly kind: 'client-slot'; readonly name: AgentClientSlotName }
+      | { readonly kind: 'host-client-slot'; readonly name: AdapterClientSlotName; readonly key: string }
+      | HostPageContribution
       | {
           readonly kind: 'adapter'
           readonly apiVersion: 1
@@ -4097,15 +4112,18 @@ export class DshHostRuntime implements AgentSessionDriver, ExtensionActivationHo
         inboundCommitted: observed.inboundCommitted,
         outboundReceipt: observed.outboundReceipt,
       }
-      const renderedHostSlots = evidence.renderedHostSlots.filter(
-        (slot) => slot.key.startsWith(`${adapter.key}:`) && slot.key.length > adapter.key.length + 1,
+      const renderedHostSlots = evidence.renderedHostSlots.filter((slot) =>
+        slot.name === 'conversation.message.rich'
+          ? slot.key.startsWith(`${adapter.key}:`) && slot.key.length > adapter.key.length + 1
+          : slot.key === adapter.key,
       )
-      if (evidence.renderedHostSlots.length > 0 && renderedHostSlots.length === 0) {
-        throw new Error(`适配器 Client 未真实渲染使用 ${adapter.key}:<kind> 的 rich Slot。`)
+      if (renderedHostSlots.length !== evidence.renderedHostSlots.length) {
+        throw new Error(`适配器 Client Slot 没有使用 ${adapter.key} 的稳定 key。`)
       }
       for (const slot of renderedHostSlots) {
         contributions.push({ kind: 'host-client-slot', name: slot.name, key: slot.key })
       }
+      contributions.push(...evidence.renderedPages)
       contributions.push({ kind: 'adapter', apiVersion: 1, key: adapter.key, descriptorDigest })
       return {
         ...evidence,
@@ -4116,6 +4134,29 @@ export class DshHostRuntime implements AgentSessionDriver, ExtensionActivationHo
         toolInvocations,
         scope: 'host-adapter' as const,
         adapter,
+      }
+    }
+    if (evidence.renderedPages.length > 0) {
+      if (evidence.toolNames.length > 0 || evidence.renderedSlots.length > 0 || evidence.renderedHostSlots.length > 0) {
+        throw new Error('页面 Extension 不能混装智能体工具、智能体 Slot 或 Adapter Slot，请拆分为两个扩展。')
+      }
+      for (const method of evidence.rpcMethods) {
+        const result = await runner.invoke(
+          CordisDynamicPluginId(pluginId),
+          CordisDynamicPluginRunId(evidence.pluginRunId),
+          method,
+          null,
+        )
+        if (!result.ok) throw new Error(`Dynamic RPC synthetic verification failed: ${method}: ${result.message}`)
+        if (JSON.stringify(result.value).length > 16 * 1024) {
+          throw new Error(`Dynamic RPC verification exceeded 16 KiB: ${method}`)
+        }
+      }
+      return {
+        ...evidence,
+        contributions: evidence.renderedPages,
+        toolInvocations,
+        scope: 'host-ui' as const,
       }
     }
     if (evidence.renderedHostSlots.length > 0) {
@@ -4253,11 +4294,22 @@ export class DshHostRuntime implements AgentSessionDriver, ExtensionActivationHo
     pluginId: string,
     packageId: string,
     pluginRunId: string,
-    renderedSlots: readonly ('agent.workbench.sections' | 'extension.details.panels')[],
-    renderedHostSlots: readonly { readonly name: 'conversation.message.rich'; readonly key: string }[] = [],
+    renderedSlots: readonly AgentClientSlotName[],
+    renderedHostSlots: readonly { readonly name: AdapterClientSlotName; readonly key: string }[] = [],
+    renderedPages: readonly HostPageContribution[] = [],
+    permissions: HostUiPermissionDeclaration = { permissions: [], networkOrigins: [] },
   ): void {
     const { agent, runner } = this.#dynamicRuntime(dshSessionId)
-    runner.recordClientVerification(agent, pluginId, packageId, pluginRunId, renderedSlots, renderedHostSlots)
+    runner.recordClientVerification(
+      agent,
+      pluginId,
+      packageId,
+      pluginRunId,
+      renderedSlots,
+      renderedHostSlots,
+      renderedPages,
+      permissions,
+    )
   }
 
   reportDynamicGuardFailure(

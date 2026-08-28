@@ -1,4 +1,16 @@
-import type { AgentId, ExtensionId, ExtensionRevisionId, JsonValue } from '@nekro-nxt/contracts'
+import type {
+  AdapterClientSlotName,
+  AgentClientSlotName,
+  AgentId,
+  DshPluginEntryId,
+  ExtensionId,
+  ExtensionRevisionId,
+  HostPageContribution,
+  HostUiPageEntry,
+  HostUiPageInstanceId,
+  HostUiPermissionDeclaration,
+  JsonValue,
+} from '@nekro-nxt/contracts'
 
 export interface LocalExtension {
   readonly id: ExtensionId
@@ -10,7 +22,7 @@ export interface LocalExtension {
   readonly createdAt: number
 }
 
-export type LocalExtensionScope = 'agent' | 'host-adapter'
+export type LocalExtensionScope = 'agent' | 'host-adapter' | 'host-ui'
 
 export interface Revision {
   readonly id: ExtensionRevisionId
@@ -37,6 +49,7 @@ export interface DynamicPackageSnapshot {
   readonly purpose: string
   readonly hostCode?: string
   readonly clientCode?: string
+  readonly permissions?: HostUiPermissionDeclaration
   readonly contributions?: readonly ExtensionContribution[]
 }
 
@@ -45,10 +58,11 @@ export type ExtensionContribution =
   | { readonly kind: 'rpc'; readonly method: string }
   | {
       readonly kind: 'client-slot'
-      readonly name: 'agent.workbench.sections' | 'extension.details.panels'
+      readonly name: AgentClientSlotName
     }
   | HostAdapterContributionEvidence
   | HostClientSlotContributionEvidence
+  | HostPageContribution
 
 export interface HostAdapterContributionEvidence {
   readonly kind: 'adapter'
@@ -59,7 +73,7 @@ export interface HostAdapterContributionEvidence {
 
 export interface HostClientSlotContributionEvidence {
   readonly kind: 'host-client-slot'
-  readonly name: 'conversation.message.rich'
+  readonly name: AdapterClientSlotName
   readonly key: string
 }
 
@@ -84,17 +98,33 @@ export interface ExtensionManifestV3 {
   readonly revisionId: ExtensionRevisionId
   readonly entrypoints:
     { readonly host: 'source/host.ts'; readonly client: 'source/client.ts' } | { readonly host: 'source/host.ts' }
-  readonly contributions: readonly [HostAdapterContributionEvidence, ...HostClientSlotContributionEvidence[]]
+  readonly clientCss?: { readonly path: string; readonly sha256: string }
+  readonly contributions: readonly [
+    HostAdapterContributionEvidence,
+    ...(HostClientSlotContributionEvidence | HostPageContribution)[],
+  ]
 }
 
-export type ExtensionManifest = ExtensionManifestV1 | ExtensionManifestV2 | ExtensionManifestV3
+export interface ExtensionManifestV4 {
+  readonly schemaVersion: 4
+  readonly scope: 'host-ui'
+  readonly extensionId: ExtensionId
+  readonly revisionId: ExtensionRevisionId
+  readonly entrypoints:
+    { readonly host: 'source/host.ts'; readonly client: 'source/client.ts' } | { readonly client: 'source/client.ts' }
+  readonly clientCss?: { readonly path: string; readonly sha256: string }
+  readonly permissions: HostUiPermissionDeclaration
+  readonly contributions: readonly HostPageContribution[]
+}
+
+export type ExtensionManifest = ExtensionManifestV1 | ExtensionManifestV2 | ExtensionManifestV3 | ExtensionManifestV4
 
 export interface ExtensionRevisionVerification {
   readonly revisionId: ExtensionRevisionId
   /** Exact DSH release used when this immutable verification evidence was produced. */
   readonly dshVersion: string
-  readonly contractVersion: 'nekro-nxt-extension-v1' | 'nekro-nxt-extension-v2'
-  readonly scope?: 'host-adapter'
+  readonly contractVersion: 'nekro-nxt-extension-v1' | 'nekro-nxt-extension-v2' | 'nekro-nxt-extension-v3'
+  readonly scope?: 'host-adapter' | 'host-ui'
   readonly origin: {
     readonly episodeId: string
     readonly pluginId: string
@@ -106,7 +136,9 @@ export interface ExtensionRevisionVerification {
   readonly clientBuild: { readonly built: boolean; readonly buildKey: string }
   readonly toolInvocations: readonly { readonly name: string; readonly succeeded: boolean }[]
   readonly rpcMethods: readonly string[]
-  readonly renderedSlots: readonly ('agent.workbench.sections' | 'extension.details.panels')[]
+  readonly renderedSlots: readonly AgentClientSlotName[]
+  readonly renderedPages?: readonly HostPageContribution[]
+  readonly permissions?: HostUiPermissionDeclaration
   readonly adapter?: {
     readonly apiVersion: 1
     readonly key: string
@@ -118,7 +150,7 @@ export interface ExtensionRevisionVerification {
     readonly outboundReceipt: 'sent' | 'failed' | 'unknown'
   }
   readonly renderedHostSlots?: readonly {
-    readonly name: 'conversation.message.rich'
+    readonly name: AdapterClientSlotName
     readonly key: string
   }[]
 }
@@ -148,6 +180,7 @@ export interface ExtensionRuntimeDiagnostic {
 export interface MaterializedExtensionRevision {
   readonly manifest: ExtensionManifest
   readonly sources: { readonly host?: string; readonly client?: string }
+  readonly resources?: Readonly<Record<string, string>>
   readonly contentDigest: string
   readonly payloadDigest: string
   readonly scope: LocalExtensionScope
@@ -159,6 +192,7 @@ export interface ExtensionBuildArtifact {
   readonly directory: string
   readonly hostEntry?: string
   readonly clientEntry?: string
+  readonly clientCssEntry?: string
 }
 
 export interface ExtensionRepository {
@@ -191,4 +225,53 @@ export interface ExtensionRepository {
   listHostInstallations(): readonly HostInstallation[]
   upsertHostInstallation(installation: HostInstallation): void
   deleteHostInstallation(extensionId: ExtensionId): void
+}
+
+export interface HostUiRepository {
+  listHostUiPageEntries(): readonly HostUiPageEntry[]
+  replaceHostUiExtensionPages(input: {
+    readonly extensionId: ExtensionId
+    readonly revisionId: ExtensionRevisionId
+    readonly pages: readonly HostPageContribution[]
+    readonly clientBuildKey: string
+    readonly now: number
+    readonly nextPageInstanceId: () => HostUiPageInstanceId
+  }): readonly HostUiPageEntry[]
+  deleteHostUiExtensionPages(extensionId: ExtensionId): void
+  replaceHostUiDshPages(input: {
+    readonly entryId: DshPluginEntryId
+    readonly artifactDigest: string
+    readonly pages: readonly HostPageContribution[]
+    readonly clientBuildKey: string
+    readonly now: number
+    readonly nextPageInstanceId: () => HostUiPageInstanceId
+  }): readonly HostUiPageEntry[]
+  deleteHostUiDshPages(entryId: DshPluginEntryId): void
+  getHostUiPreferencesRevision(): number
+  updateHostUiPagePreferences(input: {
+    readonly expectedRevision: number
+    readonly entries: readonly { readonly pageInstanceId: HostUiPageInstanceId; readonly visible: boolean }[]
+    readonly now: number
+  }): number
+  getHostUiPermissionGrant(ownerKey: string): HostUiPermissionGrant | undefined
+  upsertHostUiPermissionGrant(grant: HostUiPermissionGrant): void
+  deleteHostUiPermissionGrant(ownerKey: string): void
+  getHostUiDiagnostic(pageInstanceId: HostUiPageInstanceId): HostUiDiagnostic | undefined
+  upsertHostUiDiagnostic(diagnostic: HostUiDiagnostic): void
+  deleteHostUiDiagnosticsForExtension(extensionId: ExtensionId): void
+}
+
+export interface HostUiPermissionGrant {
+  readonly ownerKey: string
+  readonly artifactDigest: string
+  readonly permissionDigest: string
+  readonly declaration: HostUiPermissionDeclaration
+  readonly approvedAt: number
+}
+
+export interface HostUiDiagnostic {
+  readonly pageInstanceId: HostUiPageInstanceId
+  readonly status: 'ready' | 'load-failed' | 'navigation-failed' | 'rpc-failed' | 'restore-failed'
+  readonly message?: string
+  readonly observedAt: number
 }

@@ -1193,6 +1193,7 @@ export function AgentManagePage() {
               )}
             </div>
           </section>
+          <AgentWorkbenchExtensionSlots agentId={agent.id} displayName={agent.name} />
           <section className={[styles.workbenchSection, styles.dangerSection].join(' ')}>
             <div className={styles.section}>
               <div className={styles.sectionBar}>
@@ -1215,7 +1216,6 @@ export function AgentManagePage() {
               </div>
             </div>
           </section>
-          <AgentWorkbenchExtensionSlots agentId={agent.id} displayName={agent.name} />
           <BindingTaskDialog
             open={bindingOpen}
             onOpenChange={setBindingOpen}

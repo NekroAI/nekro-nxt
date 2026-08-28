@@ -100,6 +100,7 @@ export const defaultDataRoot = (): string => fileURLToPath(new URL('../../../dat
 /** Product-owned client routes. DSH's rc.2 static fallback intentionally returns 404 for unknown paths. */
 export const NEKRO_SPA_ROUTE_PREFIXES = [
   '/work',
+  '/apps',
   '/agents',
   '/channels',
   '/creator',

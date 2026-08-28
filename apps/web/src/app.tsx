@@ -1,6 +1,37 @@
-import { Boxes, Cable, MessageSquare, Moon, Server, Settings, Sun, UsersRound } from 'lucide-react'
-import { Component, useEffect, useMemo, useState, type CSSProperties, type ErrorInfo, type ReactNode } from 'react'
-import { Navigate, Outlet, Route, Routes, useLocation, useParams } from 'react-router-dom'
+import {
+  AppWindow,
+  BarChart3,
+  BookOpen,
+  Boxes,
+  Cable,
+  Database,
+  FileText,
+  Folder,
+  Globe,
+  LayoutDashboard,
+  MessageSquare,
+  Moon,
+  Puzzle,
+  Server,
+  Settings,
+  Sun,
+  Terminal,
+  UsersRound,
+  Workflow,
+  Wrench,
+} from 'lucide-react'
+import {
+  Component,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type CSSProperties,
+  type ErrorInfo,
+  type ReactNode,
+} from 'react'
+import type { HostUiPageEntry } from '@nekro-nxt/contracts'
+import { Navigate, Outlet, Route, Routes, useLocation, useNavigate, useParams } from 'react-router-dom'
 import styles from './app.module.css'
 import { NotificationCenter } from './components/notifications.js'
 import { EmptyState, HostNotice } from './components/product-feedback.js'
@@ -38,6 +69,7 @@ import {
 } from './ui-kit/index.js'
 import { OBJECT_PANE_WIDTH, useUiPreferences } from './ui-preferences.js'
 import { applyThemeChoice } from './theme-preference.js'
+import { HostUiClientProvider, HostUiObjectPane, HostUiPageCanvas } from './host-ui-client.js'
 
 const modes = [
   { to: '/work', label: '工作', icon: MessageSquare, work: true },
@@ -46,6 +78,39 @@ const modes = [
   { to: '/extensions', label: '扩展', icon: Boxes, work: false },
   { to: '/settings', label: '设置', icon: Settings, work: false },
 ] as const
+
+const hostPageIcons = {
+  'app-window': AppWindow,
+  'bar-chart': BarChart3,
+  'book-open': BookOpen,
+  boxes: Boxes,
+  database: Database,
+  'file-text': FileText,
+  folder: Folder,
+  globe: Globe,
+  'layout-dashboard': LayoutDashboard,
+  puzzle: Puzzle,
+  terminal: Terminal,
+  workflow: Workflow,
+  wrench: Wrench,
+} as const
+
+const hostPageSvgUrl = (page: HostUiPageEntry): string =>
+  page.owner.kind === 'extension'
+    ? `/api/extensions/${encodeURIComponent(page.owner.extensionId)}/revisions/${encodeURIComponent(page.owner.revisionId)}/host-ui/assets/${page.icon.kind === 'svg' ? page.icon.sha256 : ''}.svg`
+    : `/api/dsh/plugin-entries/${encodeURIComponent(page.owner.entryId)}/host-ui/assets/${page.icon.kind === 'svg' ? page.icon.sha256 : ''}.svg`
+
+function HostPageGlyph({ page }: { readonly page: HostUiPageEntry }) {
+  if (page.icon.kind === 'host-icon') {
+    const Icon = hostPageIcons[page.icon.name]
+    return <Icon size={18} strokeWidth={1.8} aria-hidden="true" />
+  }
+  const url = hostPageSvgUrl(page)
+  const iconStyle: CSSProperties & { '--nxt-host-page-icon': string } = {
+    '--nxt-host-page-icon': `url(${JSON.stringify(url)})`,
+  }
+  return <span className={styles.hostPageSvgIcon} aria-hidden="true" style={iconStyle} />
+}
 
 export const hostPresentation = (status: ProductHostStatus): { readonly label: string; readonly tone: StatusTone } => {
   if (status === 'initializing') return { label: '正在连接', tone: 'info' }
@@ -104,11 +169,36 @@ function RuntimeRedirect() {
 
 function DesktopShell() {
   const location = useLocation()
+  const navigate = useNavigate()
   const theme = useProductStore((state) => state.theme)
   const reducedMotion = useProductStore((state) => state.reducedMotion)
   const savedObjectPaneWidth = useUiPreferences((state) => state.layout.objectPaneWidth)
   const [objectPaneWidth, setObjectPaneWidth] = useState(savedObjectPaneWidth)
   const desktopInstance = useDesktopInstance()
+  const hostSnapshotReady = useProductStore((state) => state.host.lastSuccessfulAt !== null)
+  const hostUiPages = useProductStore((state) => state.hostUi.pages)
+  const visibleHostUiPages = hostUiPages.filter(({ visible }) => visible)
+  const activeHostUiPage = hostUiPages.find(({ routeBase }) => location.pathname.startsWith(routeBase))
+  const lastActiveHostUiPage = useRef<HostUiPageEntry | undefined>(activeHostUiPage)
+  const objectPaneHidden = activeHostUiPage?.objectPane === 'hidden'
+  useEffect(() => {
+    if (activeHostUiPage) lastActiveHostUiPage.current = activeHostUiPage
+    if (!location.pathname.startsWith('/apps/')) return
+    if (!hostSnapshotReady) return
+    if (activeHostUiPage?.visible) return
+    const fallback = visibleHostUiPages[0]
+    if (fallback) {
+      void navigate(`${fallback.routeBase}${fallback.startPath ? `/${fallback.startPath}` : ''}`, { replace: true })
+      return
+    }
+    const previous = activeHostUiPage ?? lastActiveHostUiPage.current
+    void navigate(
+      previous?.owner.kind === 'extension'
+        ? `/extensions/${previous.owner.extensionId}`
+        : '/settings?tab=dsh-extensions',
+      { replace: true },
+    )
+  }, [activeHostUiPage, hostSnapshotReady, location.pathname, navigate, visibleHostUiPages])
   const [instanceSwitcherOpen, setInstanceSwitcherOpen] = useState(false)
   const instanceStatusClass = {
     connecting: styles.instanceStatus_connecting,
@@ -136,7 +226,7 @@ function DesktopShell() {
   }
 
   return (
-    <div className={styles.shell} style={shellStyle}>
+    <div className={styles.shell} style={shellStyle} data-object-pane-hidden={objectPaneHidden ? '' : undefined}>
       <header className={styles.windowTopBar} data-window-top-bar>
         <div className={styles.windowBrand} data-window-brand>
           <img className={styles.brandMark} src="/brand/mark.svg" alt="" aria-hidden="true" />
@@ -153,7 +243,7 @@ function DesktopShell() {
       <div className={styles.shellBody} data-shell-body>
         <aside className={styles.rail} aria-label="模式">
           <NavMarkGroup id="rail">
-            <nav aria-label="主导航">
+            <nav className={styles.railSystem} aria-label="主导航">
               {modes.map(({ to, label, icon: Icon, work }) => {
                 const active = work ? isWorkPath(location.pathname) : location.pathname.startsWith(to)
                 return (
@@ -173,6 +263,32 @@ function DesktopShell() {
                 )
               })}
             </nav>
+            {visibleHostUiPages.length > 0 ? <div className={styles.railDivider} aria-hidden="true" /> : null}
+            {visibleHostUiPages.length > 0 ? (
+              <nav className={styles.railExtensions} aria-label="扩展页面">
+                {visibleHostUiPages.map((page) => {
+                  const active = location.pathname.startsWith(page.routeBase)
+                  const start = page.startPath ? `/${page.startPath}` : ''
+                  return (
+                    <NxtNavLink
+                      key={page.pageInstanceId}
+                      to={`${page.routeBase}${start}`}
+                      aria-label={page.title}
+                      title={page.title}
+                      className={() => [styles.railBtn, active ? styles.railBtnActive : ''].filter(Boolean).join(' ')}
+                      aria-current={active ? 'page' : undefined}
+                      data-nav-active={active ? '' : undefined}
+                      data-host-ui-error={page.diagnostic && page.diagnostic.status !== 'ready' ? '' : undefined}
+                      data-host-ui-rail-entry={page.pageInstanceId}
+                    >
+                      <NavGlyph active={active}>
+                        <HostPageGlyph page={page} />
+                      </NavGlyph>
+                    </NxtNavLink>
+                  )
+                })}
+              </nav>
+            ) : null}
           </NavMarkGroup>
           <div className={styles.railSpacer} />
           <IconButton
@@ -219,8 +335,12 @@ function DesktopShell() {
             </IconButton>
           ) : null}
         </aside>
-        <aside className={styles.tree} aria-label="对象列">
-          <ObjectPane />
+        <aside className={styles.tree} aria-label="对象列" aria-hidden={objectPaneHidden || undefined}>
+          {activeHostUiPage?.objectPane === 'navigation' ? (
+            <HostUiObjectPane page={activeHostUiPage} />
+          ) : objectPaneHidden ? null : (
+            <ObjectPane />
+          )}
         </aside>
         <ResizeHandle
           className={styles.shellSplitter}
@@ -229,6 +349,7 @@ function DesktopShell() {
           min={OBJECT_PANE_WIDTH.min}
           max={OBJECT_PANE_WIDTH.max}
           defaultValue={OBJECT_PANE_WIDTH.default}
+          disabled={objectPaneHidden}
           onChange={setObjectPaneWidth}
           onCommit={(value) => useUiPreferences.getState().setObjectPaneWidth(value)}
         />
@@ -325,33 +446,36 @@ export function NekroNxtApp() {
         <DynamicClientProvider>
           <AdapterHostClientProvider>
             <PersistentExtensionClientProvider>
-              <Tooltip.Provider {...tooltipProps}>
-                <ThemeEffects />
-                <Routes>
-                  <Route element={<DesktopShell />}>
-                    <Route index element={<RootRedirect />} />
-                    <Route path="work" element={<WorkIndex />} />
-                    <Route path="work/agents/new" element={<AgentsPage />} />
-                    <Route path="work/agents/:agentId" element={<AgentManagePage />} />
-                    <Route path="work/channels" element={<Navigate to="/work" replace />} />
-                    <Route path="work/channels/:channelId" element={<ChannelConversationPage />} />
-                    <Route path="work/creator" element={<CreatorPage />} />
-                    <Route path="agents" element={<LegacyWorkRedirect kind="agents" />} />
-                    <Route path="agents/:agentId" element={<LegacyWorkRedirect kind="agent" />} />
-                    <Route path="channels" element={<LegacyWorkRedirect kind="channels" />} />
-                    <Route path="channels/:channelId" element={<LegacyWorkRedirect kind="channel" />} />
-                    <Route path="connections" element={<ConnectionsPage />} />
-                    <Route path="connections/:connectionId" element={<ConnectionsPage />} />
-                    <Route path="users" element={<UsersPage />} />
-                    <Route path="extensions" element={<ExtensionsPage />} />
-                    <Route path="extensions/:extensionId" element={<ExtensionsPage />} />
-                    <Route path="creator" element={<LegacyWorkRedirect kind="creator" />} />
-                    <Route path="runtime" element={<RuntimeRedirect />} />
-                    <Route path="settings" element={<SettingsPage />} />
-                    <Route path="*" element={<NotFoundPage />} />
-                  </Route>
-                </Routes>
-              </Tooltip.Provider>
+              <HostUiClientProvider>
+                <Tooltip.Provider {...tooltipProps}>
+                  <ThemeEffects />
+                  <Routes>
+                    <Route element={<DesktopShell />}>
+                      <Route index element={<RootRedirect />} />
+                      <Route path="work" element={<WorkIndex />} />
+                      <Route path="work/agents/new" element={<AgentsPage />} />
+                      <Route path="work/agents/:agentId" element={<AgentManagePage />} />
+                      <Route path="work/channels" element={<Navigate to="/work" replace />} />
+                      <Route path="work/channels/:channelId" element={<ChannelConversationPage />} />
+                      <Route path="work/creator" element={<CreatorPage />} />
+                      <Route path="agents" element={<LegacyWorkRedirect kind="agents" />} />
+                      <Route path="agents/:agentId" element={<LegacyWorkRedirect kind="agent" />} />
+                      <Route path="channels" element={<LegacyWorkRedirect kind="channels" />} />
+                      <Route path="channels/:channelId" element={<LegacyWorkRedirect kind="channel" />} />
+                      <Route path="connections" element={<ConnectionsPage />} />
+                      <Route path="connections/:connectionId" element={<ConnectionsPage />} />
+                      <Route path="users" element={<UsersPage />} />
+                      <Route path="extensions" element={<ExtensionsPage />} />
+                      <Route path="extensions/:extensionId" element={<ExtensionsPage />} />
+                      <Route path="apps/:pageInstanceId/*" element={<HostUiPageCanvas />} />
+                      <Route path="creator" element={<LegacyWorkRedirect kind="creator" />} />
+                      <Route path="runtime" element={<RuntimeRedirect />} />
+                      <Route path="settings" element={<SettingsPage />} />
+                      <Route path="*" element={<NotFoundPage />} />
+                    </Route>
+                  </Routes>
+                </Tooltip.Provider>
+              </HostUiClientProvider>
             </PersistentExtensionClientProvider>
           </AdapterHostClientProvider>
         </DynamicClientProvider>

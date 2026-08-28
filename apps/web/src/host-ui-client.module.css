@@ -1,0 +1,100 @@
+.pageRoot {
+  min-width: 0;
+  min-height: 100%;
+  color: var(--nxt-text-primary);
+  background: var(--nxt-bg-canvas);
+  container-type: inline-size;
+}
+
+.loading,
+.navigationLoading {
+  min-height: 160px;
+  display: grid;
+  place-content: center;
+  justify-items: center;
+  gap: var(--nxt-space-3);
+  color: var(--nxt-text-muted);
+}
+
+.stack {
+  display: flex;
+  flex-direction: column;
+  gap: var(--nxt-space-4);
+}
+
+.grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: var(--nxt-space-4);
+}
+
+.tableScroll {
+  overflow: auto;
+  max-width: 100%;
+}
+
+.tableScroll table {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+.navigation {
+  min-height: 0;
+  height: 100%;
+  overflow: auto;
+  padding: var(--nxt-space-4) var(--nxt-space-3);
+}
+
+.navigationGroup + .navigationGroup {
+  margin-top: var(--nxt-space-5);
+}
+
+.navigationGroup h2 {
+  margin: 0 0 var(--nxt-space-2);
+  padding: 0 var(--nxt-space-2);
+  color: var(--nxt-text-muted);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.navigationGroup button {
+  width: 100%;
+  min-height: 40px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--nxt-space-3);
+  padding: var(--nxt-space-2);
+  border: 0;
+  border-radius: var(--nxt-radius-md);
+  color: var(--nxt-text-primary);
+  background: transparent;
+  text-align: left;
+}
+
+.navigationGroup button:not(:disabled):hover {
+  background: var(--nxt-bg-hover);
+}
+
+.navigationGroup button > span:first-child {
+  min-width: 0;
+  display: grid;
+}
+
+.navigationGroup small {
+  overflow: hidden;
+  color: var(--nxt-text-muted);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.navigationFeedback {
+  margin: var(--nxt-space-4);
+  display: grid;
+  gap: var(--nxt-space-2);
+  color: var(--nxt-text-muted);
+}
+
+.navigationFeedback strong {
+  color: var(--nxt-text-primary);
+}

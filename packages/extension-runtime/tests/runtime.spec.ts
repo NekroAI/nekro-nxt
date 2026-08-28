@@ -3,11 +3,15 @@ import {
   ExtensionIdSchema,
   ExtensionRevisionIdSchema,
   type AgentId,
+  type DshPluginEntryId,
   type ExtensionId,
   type ExtensionRevisionId,
+  type HostUiPageEntry,
+  type HostUiPageInstanceId,
   type JsonValue,
 } from '@nekro-nxt/contracts'
 import { existsSync } from 'node:fs'
+import { createHash } from 'node:crypto'
 import { mkdir, mkdtemp, readdir, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
@@ -20,6 +24,9 @@ import {
   ExtensionSourceStore,
   HostExtensionInstallationCoordinator,
   materializeDynamicPackage,
+  materializeImportedRevision,
+  validateHostUiCss,
+  validateHostUiSvg,
   type Activation,
   type ExtensionActivationHost,
   type ExtensionBuildArtifact,
@@ -28,11 +35,35 @@ import {
   type ExtensionRevisionVerification,
   type HostExtensionInstallationHost,
   type HostInstallation,
+  type HostUiDiagnostic,
+  type HostUiPermissionGrant,
+  type HostUiRepository,
   type LocalExtension,
   type MountedExtension,
   type MountedHostExtension,
+  type MountedHostUiExtension,
   type Revision,
 } from '../src/index.ts'
+
+describe('Host UI assets', () => {
+  it('rejects CSS that escapes the page module boundary', () => {
+    expect(() => validateHostUiCss(':global(body) { color: red; }')).toThrow(':global')
+    expect(() => validateHostUiCss('@import "https://example.invalid/a.css";')).toThrow('@import')
+    expect(() => validateHostUiCss('body { color: red; }')).toThrow('根节点')
+    expect(() => validateHostUiCss('button { color: red; }')).toThrow('本地 class')
+    expect(() => validateHostUiCss('.panel { color: var(--nxt-text-primary); }')).not.toThrow()
+  })
+
+  it('accepts a bounded monochrome SVG and rejects executable SVG', () => {
+    expect(() =>
+      validateHostUiSvg('<svg viewBox="0 0 24 24"><path d="M4 4h16v16H4z" fill="currentColor"/></svg>'),
+    ).not.toThrow()
+    expect(() => validateHostUiSvg('<svg viewBox="0 0 24 24"><script>alert(1)</script></svg>')).toThrow('script')
+    expect(() => validateHostUiSvg('<svg viewBox="0 0 24 24"><path onclick="alert(1)" d="M0 0"/></svg>')).toThrow(
+      'onclick',
+    )
+  })
+})
 
 const temporaryDirectories: string[] = []
 
@@ -66,13 +97,17 @@ const buildCacheSchema = z
   })
   .strict()
 
-class MemoryExtensionRepository implements ExtensionRepository {
+class MemoryExtensionRepository implements ExtensionRepository, HostUiRepository {
   readonly extensions = new Map<ExtensionId, LocalExtension>()
   readonly revisions = new Map<ExtensionRevisionId, Revision>()
   readonly verifications = new Map<ExtensionRevisionId, ExtensionRevisionVerification>()
   readonly activations = new Map<string, Activation>()
   readonly clientDiagnostics = new Map<string, ExtensionClientDiagnostic>()
   readonly installations = new Map<ExtensionId, HostInstallation>()
+  readonly hostUiPages = new Map<HostUiPageInstanceId, HostUiPageEntry>()
+  readonly hostUiGrants = new Map<string, HostUiPermissionGrant>()
+  readonly hostUiDiagnostics = new Map<HostUiPageInstanceId, HostUiDiagnostic>()
+  hostUiPreferencesRevision = 0
   beforeSave?: (input: { readonly extension: LocalExtension; readonly revision: Revision }) => void
   failActivationUpsert = false
   failActivationDelete = false
@@ -181,6 +216,116 @@ class MemoryExtensionRepository implements ExtensionRepository {
     this.installations.delete(extension)
   }
 
+  listHostUiPageEntries(): readonly HostUiPageEntry[] {
+    return [...this.hostUiPages.values()].sort((left, right) => left.sortOrder - right.sortOrder)
+  }
+
+  replaceHostUiExtensionPages(input: Parameters<HostUiRepository['replaceHostUiExtensionPages']>[0]) {
+    this.deleteHostUiExtensionPages(input.extensionId)
+    return this.#appendHostUiPages(
+      input.pages,
+      () => ({ kind: 'extension', extensionId: input.extensionId, revisionId: input.revisionId }),
+      input.clientBuildKey,
+      input.now,
+      input.nextPageInstanceId,
+    )
+  }
+
+  deleteHostUiExtensionPages(extensionId: ExtensionId): void {
+    for (const [id, page] of this.hostUiPages) {
+      if (page.owner.kind === 'extension' && page.owner.extensionId === extensionId) this.hostUiPages.delete(id)
+    }
+  }
+
+  replaceHostUiDshPages(input: Parameters<HostUiRepository['replaceHostUiDshPages']>[0]) {
+    this.deleteHostUiDshPages(input.entryId)
+    return this.#appendHostUiPages(
+      input.pages,
+      () => ({ kind: 'dsh-plugin', entryId: input.entryId, artifactDigest: input.artifactDigest }),
+      input.clientBuildKey,
+      input.now,
+      input.nextPageInstanceId,
+    )
+  }
+
+  deleteHostUiDshPages(entryId: DshPluginEntryId): void {
+    for (const [id, page] of this.hostUiPages) {
+      if (page.owner.kind === 'dsh-plugin' && page.owner.entryId === entryId) this.hostUiPages.delete(id)
+    }
+  }
+
+  getHostUiPreferencesRevision(): number {
+    return this.hostUiPreferencesRevision
+  }
+
+  updateHostUiPagePreferences(input: Parameters<HostUiRepository['updateHostUiPagePreferences']>[0]): number {
+    if (input.expectedRevision !== this.hostUiPreferencesRevision) throw new Error('页面入口偏好已更新。')
+    input.entries.forEach((preference, index) => {
+      const page = this.hostUiPages.get(preference.pageInstanceId)
+      if (page)
+        this.hostUiPages.set(preference.pageInstanceId, { ...page, visible: preference.visible, sortOrder: index })
+    })
+    return ++this.hostUiPreferencesRevision
+  }
+
+  getHostUiPermissionGrant(ownerKey: string): HostUiPermissionGrant | undefined {
+    return this.hostUiGrants.get(ownerKey)
+  }
+
+  upsertHostUiPermissionGrant(grant: HostUiPermissionGrant): void {
+    this.hostUiGrants.set(grant.ownerKey, grant)
+  }
+
+  deleteHostUiPermissionGrant(ownerKey: string): void {
+    this.hostUiGrants.delete(ownerKey)
+  }
+
+  getHostUiDiagnostic(pageInstanceId: HostUiPageInstanceId): HostUiDiagnostic | undefined {
+    return this.hostUiDiagnostics.get(pageInstanceId)
+  }
+
+  upsertHostUiDiagnostic(diagnostic: HostUiDiagnostic): void {
+    this.hostUiDiagnostics.set(diagnostic.pageInstanceId, diagnostic)
+  }
+
+  deleteHostUiDiagnosticsForExtension(extensionId: ExtensionId): void {
+    for (const page of this.hostUiPages.values()) {
+      if (page.owner.kind === 'extension' && page.owner.extensionId === extensionId) {
+        this.hostUiDiagnostics.delete(page.pageInstanceId)
+      }
+    }
+  }
+
+  #appendHostUiPages(
+    pages: Parameters<HostUiRepository['replaceHostUiExtensionPages']>[0]['pages'],
+    owner: (entryId: string) => HostUiPageEntry['owner'],
+    buildKey: string,
+    now: number,
+    nextPageInstanceId: () => HostUiPageInstanceId,
+  ): readonly HostUiPageEntry[] {
+    return pages.map((page, index) => {
+      const pageInstanceId = nextPageInstanceId()
+      const entry: HostUiPageEntry = {
+        pageInstanceId,
+        owner: owner(page.entryId),
+        entryId: page.entryId,
+        title: page.title,
+        ...(page.description === undefined ? {} : { description: page.description }),
+        icon: page.icon,
+        objectPane: page.objectPane,
+        startPath: page.startPath,
+        visible: true,
+        sortOrder: index,
+        routeBase: `/apps/${pageInstanceId}`,
+        client: { moduleUrl: '/client.mjs', buildKey },
+        createdAt: now,
+        updatedAt: now,
+      }
+      this.hostUiPages.set(pageInstanceId, entry)
+      return entry
+    })
+  }
+
   #key(agent: AgentId, extension: ExtensionId): string {
     return `${agent}\0${extension}`
   }
@@ -283,6 +428,37 @@ const materialize = (hostCode: string) =>
   })
 
 describe('Extension save', () => {
+  it('materializes a Host UI Manifest V4 with stable pages and an explicit permission set', () => {
+    const materialized = materializeDynamicPackage({
+      extensionId: extensionId('hostui'),
+      revisionId: revisionId('hostui'),
+      snapshot: {
+        name: '项目面板',
+        purpose: '展示项目状态。',
+        clientCode: 'return { apply(ctx) { ctx.pages.register({ entryId: "overview" }, () => null) } }',
+        permissions: { permissions: ['agents.read'], networkOrigins: [] },
+        contributions: [
+          {
+            kind: 'host-page',
+            entryId: 'overview',
+            title: '项目面板',
+            icon: { kind: 'host-icon', name: 'layout-dashboard' },
+            objectPane: 'hidden',
+            startPath: '',
+          },
+        ],
+      },
+    })
+    expect(materialized.scope).toBe('host-ui')
+    expect(materialized.manifest).toMatchObject({
+      schemaVersion: 4,
+      scope: 'host-ui',
+      permissions: { permissions: ['agents.read'], networkOrigins: [] },
+      contributions: [{ kind: 'host-page', entryId: 'overview' }],
+    })
+    expect(materialized.sources.client).toContain('defineHostUiClientExtension')
+  })
+
   it('publishes a complete source directory before atomically saving LocalExtension and Revision', async () => {
     const directory = await mkdtemp(path.join(tmpdir(), 'nekro-nxt-extension-save-'))
     temporaryDirectories.push(directory)
@@ -851,6 +1027,57 @@ describe('Extension source store', () => {
 })
 
 describe('Extension import validation', () => {
+  it('validates declared Host UI CSS and SVG resources and includes them in the immutable build', async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), 'nekro-nxt-extension-ui-resources-'))
+    temporaryDirectories.push(directory)
+    const css = '.panel { color: var(--nxt-text-primary); }\n'
+    const svg = '<svg viewBox="0 0 24 24"><path d="M4 4h16v16H4z" fill="currentColor"/></svg>\n'
+    const digest = (value: string): string => createHash('sha256').update(value).digest('hex')
+    const manifest = {
+      schemaVersion: 4 as const,
+      scope: 'host-ui' as const,
+      extensionId: extensionId('importUiAssets'),
+      revisionId: revisionId('importUiAssets'),
+      entrypoints: { client: 'source/client.ts' as const },
+      clientCss: { path: 'assets/page.module.css', sha256: digest(css) },
+      permissions: { permissions: [], networkOrigins: [] },
+      contributions: [
+        {
+          kind: 'host-page' as const,
+          entryId: 'overview',
+          title: '资源页',
+          icon: { kind: 'svg' as const, path: 'assets/icon.svg', sha256: digest(svg) },
+          objectPane: 'hidden' as const,
+          startPath: '',
+        },
+      ],
+    }
+    const sources = {
+      client: `import styles from '../assets/page.module.css'\nexport default () => ({ apply() { return styles.panel } })\n`,
+    }
+    const resources = { 'assets/page.module.css': css, 'assets/icon.svg': svg }
+    const materialized = materializeImportedRevision({ manifest, sources, resources })
+    const sourceStore = new ExtensionSourceStore(path.join(directory, 'data'))
+    await sourceStore.publish(manifest.extensionId, manifest.revisionId, materialized)
+    const artifact = await new ExtensionBuilder(path.join(directory, 'cache')).build({
+      extensionId: manifest.extensionId,
+      revisionId: manifest.revisionId,
+      contentDigest: materialized.contentDigest,
+      sourceDirectory: sourceStore.revisionSourceDirectory(manifest.extensionId, manifest.revisionId),
+    })
+    expect(artifact.clientEntry).toBeDefined()
+    expect(artifact.clientCssEntry).toBeDefined()
+    expect(await readFile(artifact.clientCssEntry!, 'utf8')).toMatch(/color:\s*var\(--nxt-text-primary\)/u)
+
+    expect(() =>
+      materializeImportedRevision({
+        manifest,
+        sources,
+        resources: { ...resources, 'assets/icon.svg': svg.replace('M4', 'M5') },
+      }),
+    ).toThrow('资源摘要不一致')
+  })
+
   it('rejects identity, scope, digest, existing Revision, and existing Extension conflicts', async () => {
     const directory = await mkdtemp(path.join(tmpdir(), 'nekro-nxt-extension-import-validation-'))
     temporaryDirectories.push(directory)
@@ -1188,6 +1415,8 @@ class FakeHostInstallationHost implements HostExtensionInstallationHost {
   readonly fail = new Set<ExtensionRevisionId>()
   readonly unavailable = new Set<string>()
   readonly keys = new Map<ExtensionRevisionId, string>()
+  readonly mountedHostUi: ExtensionRevisionId[] = []
+  readonly disposedHostUi: ExtensionRevisionId[] = []
   onMount?: (revision: Revision) => Promise<void>
   onWaitUntilSafe?: (adapterKey: string) => Promise<void>
   activeMounts = 0
@@ -1223,6 +1452,17 @@ class FakeHostInstallationHost implements HostExtensionInstallationHost {
     }
     this.handles.set(revision.id, mounted)
     return mounted
+  }
+
+  mountHostUi(revision: Revision): Promise<MountedHostUiExtension> {
+    this.mountedHostUi.push(revision.id)
+    return Promise.resolve({
+      call: () => Promise.resolve(null),
+      dispose: () => {
+        this.disposedHostUi.push(revision.id)
+        return Promise.resolve()
+      },
+    })
   }
 }
 
@@ -1271,6 +1511,83 @@ const installationCoordinator = (
   )
 
 describe('Host Extension Installation', () => {
+  it('requires exact Host UI permission approval and preserves page identity through installation', async () => {
+    const repository = new MemoryExtensionRepository()
+    const extension = { ...localExtension(extensionId('uiinstall')), scope: 'host-ui' as const }
+    const savedRevision = revision(revisionId('uiinstall1'), extension.id, 1)
+    repository.saveExtensionRevision({
+      extension,
+      revision: savedRevision,
+      verification: {
+        revisionId: savedRevision.id,
+        dshVersion: '0.1.1-rc.2',
+        contractVersion: 'nekro-nxt-extension-v3',
+        scope: 'host-ui',
+        origin: { episodeId: 'episode', pluginId: 'plugin', packageId: 'package', pluginRunId: 'run' },
+        verifiedAt: 1,
+        hostBuild: { built: false, buildKey: 'build' },
+        clientBuild: { built: true, buildKey: 'build' },
+        toolInvocations: [],
+        rpcMethods: [],
+        renderedSlots: [],
+        renderedPages: [
+          {
+            kind: 'host-page',
+            entryId: 'overview',
+            title: '概览',
+            icon: { kind: 'host-icon', name: 'layout-dashboard' },
+            objectPane: 'hidden',
+            startPath: '',
+          },
+        ],
+        permissions: { permissions: ['agents.read'], networkOrigins: [] },
+      },
+    })
+    const pages: unknown[] = []
+    const grants = new Map<string, unknown>()
+    Object.assign(repository, {
+      getHostUiPermissionGrant: (ownerKey: string) => grants.get(ownerKey),
+      upsertHostUiPermissionGrant: (grant: { readonly ownerKey: string }) => grants.set(grant.ownerKey, grant),
+      deleteHostUiPermissionGrant: (ownerKey: string) => grants.delete(ownerKey),
+      replaceHostUiExtensionPages: (input: { readonly pages: readonly unknown[] }) => {
+        pages.splice(0, pages.length, ...input.pages)
+        return pages
+      },
+      deleteHostUiExtensionPages: () => pages.splice(0),
+    })
+    const host = new FakeHostInstallationHost()
+    const coordinator = new HostExtensionInstallationCoordinator(
+      repository,
+      { revisionSourceDirectory: () => '/source' },
+      {
+        build: () =>
+          Promise.resolve({
+            revisionId: savedRevision.id,
+            buildKey: 'a'.repeat(64),
+            directory: '/cache',
+            clientEntry: '/cache/client.mjs',
+          }),
+      },
+      host,
+      { now: () => 10 },
+    )
+    const requirement = coordinator.getHostUiPermissionRequirement(extension.id, savedRevision.id)!
+    await expect(coordinator.install({ extensionId: extension.id, revisionId: savedRevision.id })).rejects.toThrow(
+      'permission-approval-required',
+    )
+    expect(host.mountedHostUi).toEqual([])
+    await coordinator.install({
+      extensionId: extension.id,
+      revisionId: savedRevision.id,
+      permissionApproval: { permissionDigest: requirement.permissionDigest },
+    })
+    expect(host.mountedHostUi).toEqual([savedRevision.id])
+    expect(pages).toHaveLength(1)
+    await coordinator.uninstall(extension.id)
+    expect(host.disposedHostUi).toEqual([savedRevision.id])
+    expect(pages).toEqual([])
+  })
+
   it('installs, updates, rolls back, and restores the previous Revision after a failed update', async () => {
     const repository = new MemoryExtensionRepository()
     const extension = localExtension(extensionId('hostinstall'))

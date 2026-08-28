@@ -1,19 +1,22 @@
 import {
   DshPluginEntryIdSchema,
   DshPluginPackageIdSchema,
+  DshNxtHostUiSchema,
   JsonValueSchema,
   type DshPluginEntryRecord,
   type DshPluginInstallSource,
   type DshPluginPackageRecord,
+  type DshNxtHostUi,
 } from '@nekro-nxt/contracts'
 import { canonicalJson } from '@nekro-nxt/core'
+import { validateHostUiCss, validateHostUiSvg } from '@nekro-nxt/extension-runtime'
 import { composeEntries, loadOptionalPatches } from '@deepseek-ai/dsh-app-boot'
 import type { DshPluginRepository } from '@nekro-nxt/storage-sqlite'
 import { createHash, randomUUID } from 'node:crypto'
 import { spawn } from 'node:child_process'
-import { existsSync, realpathSync, type Dirent } from 'node:fs'
+import { existsSync, realpathSync, statSync, type Dirent } from 'node:fs'
 import { createRequire } from 'node:module'
-import { mkdir, readFile, readdir, realpath, rename, rm, writeFile } from 'node:fs/promises'
+import { mkdir, readFile, readdir, realpath, rename, rm, stat, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { monotonicFactory } from 'ulid'
@@ -41,6 +44,7 @@ const packageManifestSchema = z
       })
       .passthrough()
       .optional(),
+    nekroNxt: z.object({ hostUi: DshNxtHostUiSchema.optional() }).passthrough().optional(),
   })
   .passthrough()
 
@@ -52,6 +56,7 @@ export interface DshPluginInstallInspection {
   readonly lockfileDigest: string
   readonly blockedBuilds: readonly string[]
   readonly clientUiDetected: boolean
+  readonly hostUi?: DshNxtHostUi
   readonly entries: readonly {
     readonly entryKey: string
     readonly moduleName: string
@@ -406,6 +411,64 @@ export class DshPluginPackageInstaller {
     return pathToFileURL(require.resolve(moduleName)).href
   }
 
+  async readHostUiClient(entryId: ReturnType<typeof DshPluginEntryIdSchema.parse>): Promise<{
+    readonly source: string
+    readonly css?: string
+    readonly metadata: DshNxtHostUi
+    readonly packageDigest: string
+  }> {
+    const entry = this.#repository.getDshPluginEntry(entryId)
+    if (!entry) throw new Error('DSH 插件入口不存在。')
+    const packageRecord = this.#repository.getDshPluginPackage(entry.packageId)
+    if (!packageRecord) throw new Error('DSH 插件包不存在。')
+    const manifest = packageManifestSchema.parse(packageRecord.manifest)
+    const metadata = manifest.nekroNxt?.hostUi
+    if (!metadata || metadata.entryKey !== entry.entryKey) throw new Error('此 DSH 入口没有声明 NXT 页面。')
+    const packageRoot = await realpath(
+      path.join(this.projectDirectory(entry.packageId), 'node_modules', packageRecord.packageName),
+    )
+    const clientPath = path.resolve(packageRoot, metadata.client)
+    assertInside(packageRoot, clientPath)
+    const info = await stat(clientPath)
+    if (!info.isFile() || info.size > 1024 * 1024) throw new Error('DSH NXT Client 必须是 1 MiB 内的普通文件。')
+    const css =
+      metadata.css === undefined
+        ? undefined
+        : await readFile(this.#resolveHostUiResource(packageRoot, metadata.css, 128 * 1024), 'utf8')
+    return {
+      source: await readFile(clientPath, 'utf8'),
+      ...(css === undefined ? {} : { css }),
+      metadata,
+      packageDigest: packageRecord.packageDigest,
+    }
+  }
+
+  async readHostUiSvg(entryId: ReturnType<typeof DshPluginEntryIdSchema.parse>, digest: string): Promise<string> {
+    const client = await this.readHostUiClient(entryId)
+    const icon = client.metadata.pages
+      .map(({ icon }) => icon)
+      .find((candidate) => candidate.kind === 'svg' && candidate.sha256 === digest)
+    if (!icon || icon.kind !== 'svg') throw new Error('DSH 页面图标不存在。')
+    const entry = this.#repository.getDshPluginEntry(entryId)
+    const packageRecord = entry ? this.#repository.getDshPluginPackage(entry.packageId) : undefined
+    if (!entry || !packageRecord) throw new Error('DSH 插件入口不存在。')
+    const packageRoot = await realpath(
+      path.join(this.projectDirectory(entry.packageId), 'node_modules', packageRecord.packageName),
+    )
+    const source = await readFile(this.#resolveHostUiResource(packageRoot, icon.path, 32 * 1024), 'utf8')
+    if (createHash('sha256').update(source).digest('hex') !== icon.sha256) throw new Error('DSH 页面图标摘要不一致。')
+    validateHostUiSvg(source)
+    return source
+  }
+
+  #resolveHostUiResource(packageRoot: string, relativePath: string, maxBytes: number): string {
+    const resourcePath = path.resolve(packageRoot, relativePath)
+    assertInside(packageRoot, resourcePath)
+    const info = statSync(resourcePath)
+    if (!info.isFile() || info.size > maxBytes) throw new Error('DSH NXT UI 资源文件无效。')
+    return resourcePath
+  }
+
   async moveToTrash(packageId: ReturnType<typeof DshPluginPackageIdSchema.parse>): Promise<string> {
     const source = this.packageDirectory(packageId)
     const target = path.join(this.#root, 'plugin-trash', `${packageId}-${Date.now()}`)
@@ -506,6 +569,41 @@ export class DshPluginPackageInstaller {
     const { blockedBuilds, buildAllowKeys } = await this.#blockedBuilds(projectDirectory)
     onProgress?.('validation', '正在校验 npm 身份、Bundle 入口和内容摘要。')
     const entries = this.#inspectEntries(packageRoot, manifest)
+    const hostUi = manifest.nekroNxt?.hostUi
+    if (hostUi) {
+      if (!entries.some(({ entryKey }) => entryKey === hostUi.entryKey)) {
+        throw new Error(`nekroNxt.hostUi 指向不存在的 DSH 入口：${hostUi.entryKey}`)
+      }
+      const clientPath = path.resolve(packageRoot, hostUi.client)
+      assertInside(packageRoot, clientPath)
+      const clientInfo = await stat(clientPath)
+      if (!clientInfo.isFile() || clientInfo.size > 1024 * 1024) {
+        throw new Error('DSH NXT Client 必须是 1 MiB 内的普通文件。')
+      }
+      const source = await readFile(clientPath, 'utf8')
+      if (/\bimport\s*(?:\(|[{'"*])|\bexport\s+[^;]*\sfrom\s*['"]/u.test(source)) {
+        throw new Error('DSH NXT Client 必须是自包含 ESM，不能在浏览器中继续导入包内或外部模块。')
+      }
+      if (hostUi.css) {
+        const cssPath = path.resolve(packageRoot, hostUi.css)
+        assertInside(packageRoot, cssPath)
+        const cssInfo = await stat(cssPath)
+        if (!cssInfo.isFile() || cssInfo.size > 128 * 1024) throw new Error('DSH NXT CSS 必须是 128 KiB 内的普通文件。')
+        validateHostUiCss(await readFile(cssPath, 'utf8'))
+      }
+      for (const page of hostUi.pages) {
+        if (page.icon.kind !== 'svg') continue
+        const svgPath = path.resolve(packageRoot, page.icon.path)
+        assertInside(packageRoot, svgPath)
+        const svgInfo = await stat(svgPath)
+        if (!svgInfo.isFile() || svgInfo.size > 32 * 1024) throw new Error('DSH NXT SVG 必须是 32 KiB 内的普通文件。')
+        const svg = await readFile(svgPath, 'utf8')
+        if (createHash('sha256').update(svg).digest('hex') !== page.icon.sha256) {
+          throw new Error(`DSH NXT SVG 摘要不一致：${page.icon.path}`)
+        }
+        validateHostUiSvg(svg)
+      }
+    }
     if (expected) {
       if (manifest.name !== expected.packageName || manifest.version !== expected.packageVersion) {
         throw new Error('DSH 导入包的 npm 身份与分享清单不一致。')
@@ -542,6 +640,7 @@ export class DshPluginPackageInstaller {
       lockfileDigest,
       blockedBuilds,
       clientUiDetected: manifest.dsh?.client !== undefined,
+      ...(hostUi === undefined ? {} : { hostUi }),
       entries: entries.map(({ entryKey, moduleName, suggestedScope }) => ({
         entryKey,
         moduleName,

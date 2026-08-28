@@ -32,6 +32,7 @@
 - 模型供应商目录和配置来源：[复用 DSH 模型供应商目录](implemented/2026-08-17-复用DSH模型供应商目录.md)。
 - 动态包、保存版本与 Activation：[本地扩展持久化](implemented/2026-08-15-本地扩展持久化.md)。
 - Adapter Contribution、宿主安装和富消息产品 Slot：[适配器 Host 贡献与产品 Slot](implemented/2026-08-20-适配器Host贡献与产品Slot.md)。
+- 顶级页面、侧栏入口、Host UI Runtime 与页面权限：[扩展应用页面与 Host UI 运行时](implemented/2026-08-28-扩展应用页面与HostUI运行时.md)。
 
 ## Adapter、连接与绑定
 

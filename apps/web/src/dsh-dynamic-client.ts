@@ -1,5 +1,5 @@
 import * as Cordis from '@deepseek-ai/cordis'
-import { Context, type Fiber } from '@deepseek-ai/cordis'
+import { Context, Service, type Fiber } from '@deepseek-ai/cordis'
 import clientRunnerBundle from '@deepseek-ai/dsh-cordis-client-runner/client?raw'
 import type {
   ApprovalRequestId,
@@ -14,18 +14,26 @@ import { createSlotRenderer } from '@deepseek-ai/dsh-client-web-react'
 import {
   DshCredentialsChangedSseDataSchema,
   DshSettingsChangedSseDataSchema,
+  HostPageContributionSchema,
   HostApiContracts,
   HostApiErrorSchema,
+  HostUiNavigationModelSchema,
+  HostUiPermissionDeclarationSchema,
   buildHostApiContractPath,
   parseJsonValue,
+  type HostPageContribution,
+  type HostUiPermissionDeclaration,
   type HostApiContract,
   type HostApiResponse,
 } from '@nekro-nxt/contracts'
 import type {
-  AdapterRichMessageSlotProps,
+  AdapterClientSlotPropsMap,
+  HostUiNavigationProvider,
+  HostUiPageProps,
   NekroNxtClientSlotName,
   NekroNxtClientSlotPropsMap,
 } from '@nekro-nxt/extension-sdk'
+import type { AdapterClientSlotName, AgentClientSlotName } from '@nekro-nxt/contracts'
 import * as React from 'react'
 import * as ReactJsxRuntime from 'react/jsx-runtime'
 import type { ReactNode } from 'react'
@@ -41,6 +49,108 @@ import {
   type SlotRegistryFace,
 } from './dsh-interop/unsafe.js'
 import { productHostEventStream } from './host-event-stream.js'
+import { hostUiKit } from './host-ui-client.js'
+
+export interface DynamicHostPageEntry {
+  readonly page: HostPageContribution
+  readonly component: (props: HostUiPageProps) => ReactNode
+  readonly navigation?: HostUiNavigationProvider
+}
+
+class DynamicHostPagesRegistry extends Service {
+  private readonly pageEntries = new Map<string, DynamicHostPageEntry>()
+  private readonly pageListeners = new Set<() => void>()
+  private permissionDeclaration: HostUiPermissionDeclaration = { permissions: [], networkOrigins: [] }
+  private pageRevision = 0
+
+  constructor(context: Context) {
+    super(context, 'pages')
+  }
+
+  subscribe = (listener: () => void): (() => void) => {
+    this.pageListeners.add(listener)
+    return () => this.pageListeners.delete(listener)
+  }
+
+  version = (): number => this.pageRevision
+
+  entries(): readonly DynamicHostPageEntry[] {
+    return [...this.pageEntries.values()]
+  }
+
+  permissions(): HostUiPermissionDeclaration {
+    return this.permissionDeclaration
+  }
+
+  declarePermissions(declaration: unknown): void {
+    const parsed = HostUiPermissionDeclarationSchema.parse(declaration)
+    if (this.pageEntries.size > 0) throw new Error('页面注册完成后不能再改变权限声明。')
+    this.permissionDeclaration = parsed
+    this.publishPages()
+  }
+
+  register(options: unknown, component: unknown): () => void {
+    const optionsRecord = requireModuleRecord(options, 'Dynamic Host page registration')
+    const page = HostPageContributionSchema.parse(optionsRecord['page'])
+    const pageComponent = requireProductSlotComponent<HostUiPageProps>(component, `Dynamic Host page ${page.entryId}`)
+    if (this.pageEntries.has(page.entryId)) throw new Error(`页面入口重复注册：${page.entryId}`)
+    if (this.pageEntries.size >= 8) throw new Error('一个 Revision 最多注册 8 个顶级页面。')
+    const navigationValue = optionsRecord['navigation']
+    let navigation: HostUiNavigationProvider | undefined
+    if (navigationValue !== undefined) {
+      const navigationRecord = requireModuleRecord(navigationValue, `Dynamic Host page ${page.entryId} navigation`)
+      const getSnapshot = navigationRecord['getSnapshot']
+      const subscribe = navigationRecord['subscribe']
+      if (typeof getSnapshot !== 'function' || typeof subscribe !== 'function') {
+        throw new Error(`页面 ${page.entryId} 的 navigation Provider 无效。`)
+      }
+      let navigationSnapshot = HostUiNavigationModelSchema.parse(Reflect.apply(getSnapshot, navigationValue, []))
+      const parsedNavigation: HostUiNavigationProvider = {
+        getSnapshot: () => navigationSnapshot,
+        subscribe: (listener) => {
+          const dispose: unknown = Reflect.apply(subscribe, navigationValue, [
+            () => {
+              navigationSnapshot = HostUiNavigationModelSchema.parse(Reflect.apply(getSnapshot, navigationValue, []))
+              listener()
+            },
+          ])
+          if (typeof dispose !== 'function') throw new Error(`页面 ${page.entryId} 的 navigation 订阅无效。`)
+          return () => void Reflect.apply(dispose, navigationValue, [])
+        },
+      }
+      navigation = parsedNavigation
+    }
+    const entry: DynamicHostPageEntry = {
+      page,
+      component: pageComponent,
+      ...(navigation === undefined ? {} : { navigation }),
+    }
+    this.pageEntries.set(page.entryId, entry)
+    this.publishPages()
+    let active = true
+    const dispose = () => {
+      if (!active) return
+      active = false
+      if (this.pageEntries.get(page.entryId) === entry) this.pageEntries.delete(page.entryId)
+      if (this.pageEntries.size === 0) this.permissionDeclaration = { permissions: [], networkOrigins: [] }
+      this.publishPages()
+    }
+    this.ctx.effect(() => dispose, `nekro-nxt: Dynamic Host page ${page.entryId}`)
+    return dispose
+  }
+
+  clear(): void {
+    if (this.pageEntries.size === 0 && this.permissionDeclaration.permissions.length === 0) return
+    this.pageEntries.clear()
+    this.permissionDeclaration = { permissions: [], networkOrigins: [] }
+    this.publishPages()
+  }
+
+  private publishPages(): void {
+    this.pageRevision += 1
+    for (const listener of this.pageListeners) listener()
+  }
+}
 
 interface ClientModuleSystemFace {
   import(specifier: string): Promise<unknown>
@@ -196,10 +306,8 @@ interface DynamicProductRootProps {
   readonly renderSlot: (name: string, props: object) => ReactNode
 }
 
-export type DynamicProductSlotName = NekroNxtClientSlotName | 'conversation.message.rich'
-export interface DynamicProductSlotPropsMap extends NekroNxtClientSlotPropsMap {
-  readonly 'conversation.message.rich': AdapterRichMessageSlotProps
-}
+export type DynamicProductSlotName = NekroNxtClientSlotName | AdapterClientSlotName
+export interface DynamicProductSlotPropsMap extends NekroNxtClientSlotPropsMap, AdapterClientSlotPropsMap {}
 
 const DynamicProductRoot = ({ renderSlot, agentId, displayName }: DynamicProductRootProps): ReactNode =>
   React.createElement(
@@ -397,8 +505,10 @@ export interface DynamicClientHostPort extends CordisRunHostSeam {
     pluginId: string,
     packageId: string,
     pluginRunId: string,
-    renderedSlots: readonly ('agent.workbench.sections' | 'extension.details.panels')[],
-    renderedHostSlots: readonly { readonly name: 'conversation.message.rich'; readonly key: string }[],
+    renderedSlots: readonly AgentClientSlotName[],
+    renderedHostSlots: readonly { readonly name: AdapterClientSlotName; readonly key: string }[],
+    renderedPages: readonly HostPageContribution[],
+    permissions: HostUiPermissionDeclaration,
   ): Promise<void>
 }
 
@@ -519,6 +629,7 @@ const loadDynamicClientModules = async (
 /** Single browser owner for NekroNXT dynamic Client Packages. */
 export class DshClientRuntime {
   readonly slots: SlotRegistryFace
+  readonly pages: DynamicHostPagesRegistry
   readonly #dynamicContext: Context
   readonly #runner: DynamicPackageRunnerFace
   readonly #orchestrator: RunOrchestratorFace
@@ -531,6 +642,7 @@ export class DshClientRuntime {
   private constructor(
     dynamicContext: Context,
     slots: SlotRegistryFace,
+    pages: DynamicHostPagesRegistry,
     runner: DynamicPackageRunnerFace,
     orchestrator: RunOrchestratorFace,
     unsubscribeHostEvents: () => void,
@@ -539,6 +651,7 @@ export class DshClientRuntime {
   ) {
     this.#dynamicContext = dynamicContext
     this.slots = slots
+    this.pages = pages
     this.#runner = runner
     this.#orchestrator = orchestrator
     this.#unsubscribeHostEvents = unsubscribeHostEvents
@@ -553,6 +666,11 @@ export class DshClientRuntime {
     try {
       const dynamicLoader = new BrowserDynamicLoader(dynamicContext, moduleSystem)
       installSlotRendererShellFeeds(dynamicContext)
+      await dynamicContext.plugin(DynamicHostPagesRegistry)
+      const pagesValue: unknown = dynamicContext.get('pages')
+      if (!(pagesValue instanceof DynamicHostPagesRegistry)) throw new Error('Dynamic Host pages Service 未挂载。')
+      const pages = pagesValue
+      dynamicContext.reflect.provide('ui', hostUiKit)
       const remote = new DshRemoteBridge()
       const connection = createDshConnectionBridge()
       dynamicContext.reflect.provide('connection', connection)
@@ -570,8 +688,15 @@ export class DshClientRuntime {
           priority: 0,
           children: {
             'agent.workbench.sections': { kind: 'list', scope: 'root' },
+            'extension.activation.panels': { kind: 'list', scope: 'root' },
             'extension.details.panels': { kind: 'list', scope: 'root' },
+            'channel.inspector.agent.sections': { kind: 'list', scope: 'root' },
+            'conversation.tool.card': { kind: 'list', scope: 'root' },
             'conversation.message.rich': { kind: 'list', scope: 'root' },
+            'connection.adapter.setup': { kind: 'list', scope: 'root' },
+            'connection.adapter.status': { kind: 'list', scope: 'root' },
+            'connection.adapter.test': { kind: 'list', scope: 'root' },
+            'channel.inspector.adapter.sections': { kind: 'list', scope: 'root' },
           },
         },
         DynamicProductRoot,
@@ -605,6 +730,7 @@ export class DshClientRuntime {
       return new DshClientRuntime(
         dynamicContext,
         slots,
+        pages,
         runner,
         orchestrator,
         unsubscribeHostEvents,
@@ -664,6 +790,21 @@ export class DshClientRuntime {
     return this.#runner.getSnapshot()
   }
 
+  pageEntries(): readonly DynamicHostPageEntry[] {
+    this.#assertActive()
+    return this.pages.entries()
+  }
+
+  pagePermissions(): HostUiPermissionDeclaration {
+    this.#assertActive()
+    return this.pages.permissions()
+  }
+
+  subscribePages(listener: () => void): () => void {
+    this.#assertActive()
+    return this.pages.subscribe(listener)
+  }
+
   entries<Name extends DynamicProductSlotName>(
     name: Name,
   ): readonly {
@@ -703,6 +844,7 @@ export class DshClientRuntime {
       Reflect.deleteProperty(globalThis, '__ModuleLoader__')
     }
     await this.#runner.dispose()
+    this.pages.clear()
     await this.#dynamicContext.fiber.dispose()
   }
 
@@ -711,13 +853,24 @@ export class DshClientRuntime {
   }
 
   async #rejectUnsupportedSlots(): Promise<void> {
-    const allowed = new Set(['agent.workbench.sections', 'extension.details.panels', 'conversation.message.rich'])
+    const allowed = new Set([
+      'agent.workbench.sections',
+      'extension.activation.panels',
+      'extension.details.panels',
+      'channel.inspector.agent.sections',
+      'conversation.tool.card',
+      'conversation.message.rich',
+      'connection.adapter.setup',
+      'connection.adapter.status',
+      'connection.adapter.test',
+      'channel.inspector.adapter.sections',
+    ])
     for (const loaded of this.#runner.getSnapshot()) {
       const unsupported = loaded.slots.filter((slot) => !allowed.has(slot))
-      if (loaded.slots.length > 0 && unsupported.length === 0) continue
+      if ((loaded.slots.length > 0 || this.pages.entries().length > 0) && unsupported.length === 0) continue
       const message =
-        loaded.slots.length === 0
-          ? 'Client half did not register a NekroNxt product Slot.'
+        loaded.slots.length === 0 && this.pages.entries().length === 0
+          ? 'Client half did not register a NekroNxt product Slot or page.'
           : `Client half registered unsupported Slots: ${unsupported.join(', ')}`
       const agentId = this.#agentByPlugin.get(loaded.pluginId)
       if (agentId) {

@@ -1,6 +1,10 @@
 import {
+  AdapterClientSlotNameSchema,
+  AgentClientSlotNameSchema,
   ExtensionIdSchema,
   ExtensionRevisionIdSchema,
+  HostPageContributionSchema,
+  HostUiPermissionDeclarationSchema,
   type ExtensionId,
   type ExtensionRevisionId,
 } from '@nekro-nxt/contracts'
@@ -11,8 +15,9 @@ import path from 'node:path'
 import { build, type Plugin } from 'esbuild'
 import { z } from 'zod'
 import type { ExtensionBuildArtifact } from './types.js'
+import { validateHostUiCss, validateHostUiSvg } from './ui-assets.js'
 
-const BUILDER_VERSION = 'nekro-nxt-esbuild-v2'
+const BUILDER_VERSION = 'nekro-nxt-esbuild-v3'
 
 const getNodeErrorCode = (error: unknown): string | undefined => {
   if (!(error instanceof Error) || !('code' in error) || typeof error.code !== 'string') return undefined
@@ -25,6 +30,7 @@ const extensionBuildCacheSchema = z
     buildKey: z.string().regex(/^[a-f0-9]{64}$/),
     hostEntry: z.literal('host.mjs').optional(),
     clientEntry: z.literal('client.mjs').optional(),
+    clientCssEntry: z.literal('client.css').optional(),
   })
   .strict()
   .refine(({ hostEntry, clientEntry }) => hostEntry !== undefined || clientEntry !== undefined, {
@@ -36,6 +42,13 @@ const extensionEntrypointsSchema = z.union([
   z.object({ host: z.literal('source/host.ts') }).strict(),
   z.object({ client: z.literal('source/client.ts') }).strict(),
 ])
+
+const clientCssSchema = z
+  .object({
+    path: z.string().regex(/^assets\/[a-z0-9][a-z0-9/_-]*\.module\.css$/u),
+    sha256: z.string().regex(/^[a-f0-9]{64}$/u),
+  })
+  .strict()
 
 const extensionManifestV1Schema = z
   .object({
@@ -57,7 +70,7 @@ const extensionManifestSchema = z.union([
           z
             .object({
               kind: z.literal('client-slot'),
-              name: z.enum(['agent.workbench.sections', 'extension.details.panels']),
+              name: AgentClientSlotNameSchema,
             })
             .strict(),
         ]),
@@ -72,6 +85,7 @@ const extensionManifestSchema = z.union([
         z.object({ host: z.literal('source/host.ts'), client: z.literal('source/client.ts') }).strict(),
         z.object({ host: z.literal('source/host.ts') }).strict(),
       ]),
+      clientCss: clientCssSchema.optional(),
       contributions: z
         .array(
           z.discriminatedUnion('kind', [
@@ -86,10 +100,11 @@ const extensionManifestSchema = z.union([
             z
               .object({
                 kind: z.literal('host-client-slot'),
-                name: z.literal('conversation.message.rich'),
+                name: AdapterClientSlotNameSchema,
                 key: z.string().trim().min(1),
               })
               .strict(),
+            HostPageContributionSchema,
           ]),
         )
         .min(1)
@@ -98,6 +113,19 @@ const extensionManifestSchema = z.union([
             context.addIssue({ code: 'custom', message: 'Host Adapter Manifest 必须且只能声明一个 Adapter。' })
           }
         }),
+    })
+    .strict(),
+  extensionManifestV1Schema
+    .extend({
+      schemaVersion: z.literal(4),
+      scope: z.literal('host-ui'),
+      entrypoints: z.union([
+        z.object({ host: z.literal('source/host.ts'), client: z.literal('source/client.ts') }).strict(),
+        z.object({ client: z.literal('source/client.ts') }).strict(),
+      ]),
+      clientCss: clientCssSchema.optional(),
+      permissions: HostUiPermissionDeclarationSchema,
+      contributions: z.array(HostPageContributionSchema).min(1).max(8),
     })
     .strict(),
 ])
@@ -144,6 +172,7 @@ export class ExtensionBuilder {
     if (input.extensionId !== undefined && manifest.extensionId !== input.extensionId) {
       throw new Error('Extension Manifest identity does not match build input.')
     }
+    await this.#validateResources(input.sourceDirectory, manifest)
     try {
       const cached = extensionBuildCacheSchema.parse(JSON.parse(await readFile(manifestPath, 'utf8')))
       if (
@@ -180,6 +209,16 @@ export class ExtensionBuilder {
               'browser',
             )
           : undefined
+      const emittedClientCss = path.join(temporary, 'client.css')
+      const clientCssEntry = await stat(emittedClientCss)
+        .then((info) => (info.isFile() ? emittedClientCss : undefined))
+        .catch(() => undefined)
+      if ('clientCss' in manifest && manifest.clientCss && !clientCssEntry) {
+        throw new Error('Manifest 声明了 Client CSS，但 Client entrypoint 没有导入该 CSS Module。')
+      }
+      if ((!('clientCss' in manifest) || !manifest.clientCss) && clientCssEntry) {
+        throw new Error('Client 构建生成了未在 Manifest 声明的 CSS。')
+      }
       if (!hostEntry && !clientEntry) throw new Error('Extension Manifest has no buildable entrypoint.')
       const artifact: ExtensionBuildArtifact = {
         revisionId: input.revisionId,
@@ -187,12 +226,16 @@ export class ExtensionBuilder {
         directory,
         ...(hostEntry === undefined ? {} : { hostEntry: path.join(directory, path.basename(hostEntry)) }),
         ...(clientEntry === undefined ? {} : { clientEntry: path.join(directory, path.basename(clientEntry)) }),
+        ...(clientCssEntry === undefined
+          ? {}
+          : { clientCssEntry: path.join(directory, path.basename(clientCssEntry)) }),
       }
       const cache = extensionBuildCacheSchema.parse({
         revisionId: artifact.revisionId,
         buildKey: artifact.buildKey,
         ...(artifact.hostEntry === undefined ? {} : { hostEntry: 'host.mjs' }),
         ...(artifact.clientEntry === undefined ? {} : { clientEntry: 'client.mjs' }),
+        ...(artifact.clientCssEntry === undefined ? {} : { clientCssEntry: 'client.css' }),
       })
       await writeFile(path.join(temporary, 'build.json'), JSON.stringify(cache, null, 2) + '\n', 'utf8')
       await mkdir(path.dirname(directory), { recursive: true, mode: 0o700 })
@@ -229,6 +272,7 @@ export class ExtensionBuilder {
       directory,
       ...(cache.hostEntry === undefined ? {} : { hostEntry: path.join(directory, cache.hostEntry) }),
       ...(cache.clientEntry === undefined ? {} : { clientEntry: path.join(directory, cache.clientEntry) }),
+      ...(cache.clientCssEntry === undefined ? {} : { clientCssEntry: path.join(directory, cache.clientCssEntry) }),
     }
   }
 
@@ -238,12 +282,13 @@ export class ExtensionBuilder {
   ): boolean {
     return (
       (cache.hostEntry !== undefined) === 'host' in manifest.entrypoints &&
-      (cache.clientEntry !== undefined) === 'client' in manifest.entrypoints
+      (cache.clientEntry !== undefined) === 'client' in manifest.entrypoints &&
+      (cache.clientCssEntry !== undefined) === ('clientCss' in manifest && manifest.clientCss !== undefined)
     )
   }
 
   async #isCompleteCache(directory: string, cache: z.infer<typeof extensionBuildCacheSchema>): Promise<boolean> {
-    const entries = [cache.hostEntry, cache.clientEntry].filter((entry) => entry !== undefined)
+    const entries = [cache.hostEntry, cache.clientEntry, cache.clientCssEntry].filter((entry) => entry !== undefined)
     return (
       await Promise.all(
         entries.map(async (entry) => {
@@ -277,5 +322,31 @@ export class ExtensionBuilder {
       plugins: [importPolicy],
     })
     return outfile
+  }
+
+  async #validateResources(sourceDirectory: string, manifest: z.infer<typeof extensionManifestSchema>): Promise<void> {
+    const expected = new Map<string, { readonly digest: string; readonly kind: 'css' | 'svg' }>()
+    if ('clientCss' in manifest && manifest.clientCss) {
+      expected.set(manifest.clientCss.path, { digest: manifest.clientCss.sha256, kind: 'css' })
+    }
+    if ('contributions' in manifest) {
+      for (const contribution of manifest.contributions) {
+        if (contribution.kind === 'host-page' && contribution.icon.kind === 'svg') {
+          expected.set(contribution.icon.path, { digest: contribution.icon.sha256, kind: 'svg' })
+        }
+      }
+    }
+    for (const [relativePath, descriptor] of expected) {
+      const resourcePath = path.resolve(sourceDirectory, relativePath)
+      const relative = path.relative(sourceDirectory, resourcePath)
+      if (relative.startsWith('..') || path.isAbsolute(relative))
+        throw new Error('Host UI 资源路径越过 Revision 根目录。')
+      const source = await readFile(resourcePath, 'utf8')
+      if (createHash('sha256').update(source).digest('hex') !== descriptor.digest) {
+        throw new Error(`Host UI 资源摘要不一致：${relativePath}`)
+      }
+      if (descriptor.kind === 'css') validateHostUiCss(source)
+      else validateHostUiSvg(source)
+    }
   }
 }

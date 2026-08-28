@@ -1,5 +1,8 @@
 import type {
+  ExtensionActivationSlotProps,
   ExtensionDetailsSlotProps,
+  ChannelInspectorAgentSlotProps,
+  ConversationToolCardSlotProps,
   NekroNxtClientSlotName,
   NekroNxtClientSlotPropsMap,
 } from '@nekro-nxt/extension-sdk'
@@ -300,6 +303,7 @@ function RuntimeSlot<Name extends NekroNxtClientSlotName>({
   name,
   props,
   entryPrefix,
+  entrySuffix,
 }: {
   readonly runtime: ExtensionClientRuntime
   readonly coordinator: PersistentExtensionClientCoordinator
@@ -307,6 +311,7 @@ function RuntimeSlot<Name extends NekroNxtClientSlotName>({
   readonly name: Name
   readonly props: NekroNxtClientSlotPropsMap[Name]
   readonly entryPrefix?: string
+  readonly entrySuffix?: string
 }) {
   useSyncExternalStore(
     (listener) => runtime.subscribe(name, listener),
@@ -316,6 +321,7 @@ function RuntimeSlot<Name extends NekroNxtClientSlotName>({
   const entries = runtime
     .entries(name)
     .filter((entry) => entryPrefix === undefined || entry.id.startsWith(`${entryPrefix}:`))
+    .filter((entry) => entrySuffix === undefined || entry.id.endsWith(`:${entrySuffix}`))
   return (
     <>
       {entries.map((entry: ProductClientSlotEntry<NekroNxtClientSlotPropsMap[Name]>) => {
@@ -364,7 +370,7 @@ export function AgentWorkbenchExtensionSlots({
   )
 }
 
-export function ExtensionDetailsExtensionSlots(props: ExtensionDetailsSlotProps) {
+export function ExtensionActivationExtensionSlots(props: ExtensionActivationSlotProps) {
   const coordinator = usePersistentExtensionCoordinator()
   const diagnostic = useProductStore((state) =>
     state.extensions
@@ -389,14 +395,61 @@ export function ExtensionDetailsExtensionSlots(props: ExtensionDetailsSlotProps)
     )
   }
   if (!runtime) return null
+  const legacyProps: ExtensionDetailsSlotProps = {
+    agentId: props.agentId,
+    extensionId: props.extensionId,
+    revisionId: props.revisionId,
+    activation: props.activation,
+  }
+  return (
+    <>
+      <RuntimeSlot
+        runtime={runtime}
+        coordinator={coordinator}
+        agentId={props.agentId}
+        name="extension.activation.panels"
+        props={props}
+        entryPrefix={coordinator.activationId(props.agentId, props.extensionId)}
+      />
+      <RuntimeSlot
+        runtime={runtime}
+        coordinator={coordinator}
+        agentId={props.agentId}
+        name="extension.details.panels"
+        props={legacyProps}
+        entryPrefix={coordinator.activationId(props.agentId, props.extensionId)}
+      />
+    </>
+  )
+}
+
+export function ChannelInspectorAgentExtensionSlots(props: ChannelInspectorAgentSlotProps) {
+  const coordinator = usePersistentExtensionCoordinator()
+  const runtime = coordinator.runtime(props.agentId)
+  if (!runtime) return null
   return (
     <RuntimeSlot
       runtime={runtime}
       coordinator={coordinator}
       agentId={props.agentId}
-      name="extension.details.panels"
+      name="channel.inspector.agent.sections"
       props={props}
-      entryPrefix={coordinator.activationId(props.agentId, props.extensionId)}
+    />
+  )
+}
+
+export function ConversationToolCardExtensionSlots(props: ConversationToolCardSlotProps) {
+  const coordinator = usePersistentExtensionCoordinator()
+  const runtime = coordinator.runtime(props.agentId)
+  if (!runtime) return null
+  return (
+    <RuntimeSlot
+      runtime={runtime}
+      coordinator={coordinator}
+      agentId={props.agentId}
+      name="conversation.tool.card"
+      props={props}
+      entrySuffix={props.toolName}
     />
   )
 }

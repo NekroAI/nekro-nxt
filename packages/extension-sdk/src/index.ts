@@ -1,5 +1,23 @@
 import type { AdapterHostContributionV1 } from '@nekro-nxt/adapter-sdk'
-import type { MessagePart } from '@nekro-nxt/contracts'
+import type { ElementType, ReactNode } from 'react'
+import type {
+  AdapterClientSlotName,
+  AgentClientSlotName,
+  HostPageContribution,
+  HostUiNavigationModel,
+  HostUiPermissionDeclaration,
+  MessagePart,
+} from '@nekro-nxt/contracts'
+
+export type {
+  AdapterClientSlotName,
+  AgentClientSlotName,
+  HostIconName,
+  HostPageContribution,
+  HostUiNavigationModel,
+  HostUiPermission,
+  HostUiPermissionDeclaration,
+} from '@nekro-nxt/contracts'
 
 export type {
   AdapterConnectionHostContext,
@@ -63,7 +81,7 @@ export type ExtensionRpcHandler = (input: ExtensionJsonValue) => ExtensionJsonVa
 
 export interface ExtensionPluginDefinition<Context = ExtensionHostContext> {
   readonly inject?: readonly string[]
-  apply(context: Context): void | Promise<void>
+  apply(context: Context): void | (() => void | Promise<void>) | Promise<void | (() => void | Promise<void>)>
 }
 
 export interface ExtensionHostEnvironment {
@@ -79,7 +97,7 @@ export interface ExtensionHostEnvironment {
   readonly config: ExtensionJsonValue
 }
 
-export type NekroNxtClientSlotName = 'agent.workbench.sections' | 'extension.details.panels'
+export type NekroNxtClientSlotName = AgentClientSlotName
 
 export interface AgentWorkbenchSlotProps {
   readonly agentId: string
@@ -93,9 +111,39 @@ export interface ExtensionDetailsSlotProps {
   readonly activation: 'active' | 'inactive'
 }
 
+export interface ExtensionActivationSlotProps extends ExtensionDetailsSlotProps {
+  readonly activationId: string
+  readonly runtimeStatus: 'active' | 'restore-failed' | 'dispose-failed'
+}
+
+export interface ChannelInspectorAgentSlotProps {
+  readonly agentId: string
+  readonly channelId: string
+  readonly connectionId: string
+  readonly episodeId?: string
+  readonly runtimePhase: 'idle' | 'thinking' | 'using-tool' | 'waiting-input' | 'unavailable'
+}
+
+export interface ConversationToolCardSlotProps {
+  readonly agentId: string
+  readonly channelId: string
+  readonly callId: string
+  readonly toolName: string
+  readonly displayName: string
+  readonly state: 'running' | 'succeeded' | 'failed'
+  readonly surface: 'stream' | 'trajectory'
+  readonly inputPresentation?: string
+  readonly resultPresentation?: string
+  readonly durationMs?: number
+  readonly wroteToChannel?: boolean
+}
+
 export interface NekroNxtClientSlotPropsMap {
   readonly 'agent.workbench.sections': AgentWorkbenchSlotProps
+  readonly 'extension.activation.panels': ExtensionActivationSlotProps
   readonly 'extension.details.panels': ExtensionDetailsSlotProps
+  readonly 'channel.inspector.agent.sections': ChannelInspectorAgentSlotProps
+  readonly 'conversation.tool.card': ConversationToolCardSlotProps
 }
 
 export type AdapterRichMessagePart = Extract<MessagePart, { readonly type: 'rich' }>
@@ -106,18 +154,44 @@ export interface AdapterRichMessageSlotProps {
   readonly channelId: string
 }
 
+export interface AdapterConnectionSlotProps {
+  readonly adapterKey: string
+  readonly connectionId?: string
+  readonly phase: 'setup' | 'active' | 'testing'
+  readonly diagnostic?: ExtensionJsonObject
+}
+
+export interface AdapterChannelInspectorSlotProps {
+  readonly adapterKey: string
+  readonly connectionId: string
+  readonly channelId: string
+  readonly channelKind: 'web' | 'group' | 'direct'
+}
+
+export interface AdapterClientSlotPropsMap {
+  readonly 'conversation.message.rich': AdapterRichMessageSlotProps
+  readonly 'connection.adapter.setup': AdapterConnectionSlotProps
+  readonly 'connection.adapter.status': AdapterConnectionSlotProps
+  readonly 'connection.adapter.test': AdapterConnectionSlotProps
+  readonly 'channel.inspector.adapter.sections': AdapterChannelInspectorSlotProps
+}
+
 export interface AdapterHostClientSlotRegistry {
-  register(
-    options: { readonly name: 'conversation.message.rich'; readonly id: string },
-    component: (props: AdapterRichMessageSlotProps) => unknown,
+  register<Name extends AdapterClientSlotName>(
+    options: { readonly name: Name; readonly id: string },
+    component: (props: AdapterClientSlotPropsMap[Name]) => ReactNode,
   ): () => void
 }
 
 export interface AdapterHostClientContext {
   readonly slots: AdapterHostClientSlotRegistry
+  readonly pages: HostUiPageRegistry
+  readonly ui: HostUiKit
 }
 
-export type AdapterHostClientEnvironment = Pick<ExtensionClientEnvironment, 'React' | 'styles'>
+export type AdapterHostClientEnvironment = Pick<ExtensionClientEnvironment, 'React' | 'styles' | 'host'> & {
+  readonly ui: HostUiKit
+}
 
 export interface ExtensionClientStyles {
   readonly section: string
@@ -135,7 +209,7 @@ export interface ExtensionClientHost {
 export interface ExtensionClientSlotRegistry {
   register<Name extends NekroNxtClientSlotName>(
     options: { readonly name: Name; readonly id?: string },
-    component: (props: NekroNxtClientSlotPropsMap[Name]) => unknown,
+    component: (props: NekroNxtClientSlotPropsMap[Name]) => ReactNode,
   ): () => void
 }
 
@@ -145,10 +219,94 @@ export interface ExtensionClientContext {
 
 export interface ExtensionClientEnvironment {
   readonly React: {
-    createElement(type: string | ((props: object) => unknown), props?: object | null, ...children: unknown[]): unknown
+    createElement(type: ElementType, props?: object | null, ...children: ReactNode[]): ReactNode
   }
   readonly host: ExtensionClientHost
   readonly styles: ExtensionClientStyles
+}
+
+export interface HostUiPageProps {
+  readonly pageInstanceId: string
+  readonly entryId: string
+  readonly relativePath: string
+  readonly search: Readonly<Record<string, string>>
+  navigate(path: string, options?: { readonly replace?: boolean }): void
+}
+
+export interface HostUiNavigationProvider {
+  getSnapshot(): HostUiNavigationModel
+  subscribe(listener: () => void): () => void
+}
+
+export interface HostUiPageRegistry {
+  declarePermissions(declaration: HostUiPermissionDeclaration): void
+  register(
+    options: {
+      readonly page: HostPageContribution
+      readonly navigation?: HostUiNavigationProvider
+    },
+    component: (props: HostUiPageProps) => ReactNode,
+  ): () => void
+}
+
+export interface HostUiClientContext {
+  readonly pages: HostUiPageRegistry
+  /** Present for a host-adapter Revision that also contributes pages; page-only clients leave it unused. */
+  readonly slots: AdapterHostClientSlotRegistry
+  /** Mirrors the environment facade so dynamic preview and installed pages use the same component surface. */
+  readonly ui: HostUiKit
+}
+
+export type HostUiReactFacade = ExtensionClientEnvironment['React'] & {
+  readonly Fragment: unknown
+  useState<Value>(initial: Value | (() => Value)): [Value, (value: Value | ((current: Value) => Value)) => void]
+  useEffect(effect: () => void | (() => void), dependencies?: readonly unknown[]): void
+  useMemo<Value>(factory: () => Value, dependencies: readonly unknown[]): Value
+  useCallback<Value extends (...args: never[]) => unknown>(callback: Value, dependencies: readonly unknown[]): Value
+  useRef<Value>(initial: Value): { current: Value }
+  useSyncExternalStore<Snapshot>(
+    subscribe: (listener: () => void) => () => void,
+    getSnapshot: () => Snapshot,
+    getServerSnapshot?: () => Snapshot,
+  ): Snapshot
+}
+
+export interface HostUiKit {
+  readonly Button: ElementType
+  readonly IconButton: ElementType
+  readonly Input: ElementType
+  readonly Textarea: ElementType
+  readonly Select: ElementType
+  readonly Switch: ElementType
+  readonly Tabs: object
+  readonly Dialog: object
+  readonly Popover: object
+  readonly Tooltip: object
+  readonly Field: ElementType
+  readonly StatusBadge: ElementType
+  readonly InlineFeedback: ElementType
+  readonly EmptyState: ElementType
+  readonly Spinner: ElementType
+  readonly PageHeader: ElementType
+  readonly Section: ElementType
+  readonly Stack: ElementType
+  readonly Grid: ElementType
+  readonly DataTable: ElementType
+  readonly SidePane: ElementType
+}
+
+export interface HostUiClientEnvironment {
+  readonly React: HostUiReactFacade
+  readonly ui: HostUiKit
+  readonly styles: ExtensionClientStyles
+  readonly host: ExtensionClientHost & {
+    subscribe(topic: string, listener: (value: ExtensionJsonValue) => void): () => void
+  }
+}
+
+export interface HostUiExtensionDefinition {
+  readonly pages: readonly HostPageContribution[]
+  readonly permissions: HostUiPermissionDeclaration
 }
 
 export type ExtensionPluginFactory<Environment, Context = ExtensionHostContext> = (
@@ -156,17 +314,19 @@ export type ExtensionPluginFactory<Environment, Context = ExtensionHostContext> 
 ) => ExtensionPluginDefinition<Context> | Promise<ExtensionPluginDefinition<Context>>
 
 export interface NekroNxtExtensionAuthoringReference {
-  readonly contractVersion: 'nekro-nxt-extension-v1'
+  readonly contractVersion: 'nekro-nxt-extension-v3'
   readonly dshVersion: '0.1.1-rc.2'
   readonly supportedContributions: {
     readonly hostTool: true
     readonly hostRpc: true
     readonly clientSlots: readonly NekroNxtClientSlotName[]
+    readonly hostPages: { readonly maxEntries: 8 }
     readonly hostAdapter: {
       readonly apiVersion: 1
       readonly scope: 'host-adapter'
       readonly registration: 'harness.registerAdapter'
       readonly oneStableKey: true
+      readonly clientSlots: readonly AdapterClientSlotName[]
       readonly allowedHostServices: readonly [
         'channels',
         'members',
@@ -262,17 +422,30 @@ harness.registerAdapter({
 return { apply() {} }`
 
 export const NEKRO_NXT_EXTENSION_AUTHORING_REFERENCE: NekroNxtExtensionAuthoringReference = {
-  contractVersion: 'nekro-nxt-extension-v1',
+  contractVersion: 'nekro-nxt-extension-v3',
   dshVersion: '0.1.1-rc.2',
   supportedContributions: {
     hostTool: true,
     hostRpc: true,
-    clientSlots: ['agent.workbench.sections', 'extension.details.panels'],
+    clientSlots: [
+      'agent.workbench.sections',
+      'extension.activation.panels',
+      'channel.inspector.agent.sections',
+      'conversation.tool.card',
+    ],
+    hostPages: { maxEntries: 8 },
     hostAdapter: {
       apiVersion: 1,
       scope: 'host-adapter',
       registration: 'harness.registerAdapter',
       oneStableKey: true,
+      clientSlots: [
+        'conversation.message.rich',
+        'connection.adapter.setup',
+        'connection.adapter.status',
+        'connection.adapter.test',
+        'channel.inspector.adapter.sections',
+      ],
       allowedHostServices: [
         'channels',
         'members',
@@ -309,7 +482,7 @@ export const NEKRO_NXT_EXTENSION_AUTHORING_REFERENCE: NekroNxtExtensionAuthoring
     'ctx.effect 的回调会立即执行；Tool 和 Slot 按示例直接注册，禁止在 effect 回调中立即调用注册返回的 disposer。自管资源必须由 effect 回调返回 teardown。',
     'Host RPC 必须在 Activation factory 注册；浏览器 RPC 没有 Agent Loop initiator，禁止依赖 currentInitiator 读取产品智能体身份。需要的稳定生成期数据应写入当前 Revision 源码或显式配置。',
     'agent.workbench.sections 接收当前智能体的 agentId/displayName，位于智能体配置宿主区块之后；多个贡献按注册顺序排列。',
-    'extension.details.panels 只在 active Activation 下接收 agentId/extensionId/revisionId/activation；动态预览固定使用 dynamic-preview 标识，不代表已保存或已启用。',
+    'extension.activation.panels 只接收用户明确选中的 active Activation；动态预览使用 synthetic 标识，不代表已保存、已安装或已启用。',
     'Host 或 Client 失败后先读取 Inspect 诊断，再修复同一 Plugin；不要静默新建替代 Plugin。',
     '只使用 NekroNXT Inspect 公布的 Contribution 和 Slot；禁止注册 root 或 DSH 官方 WebUI Slot。',
   ],
@@ -325,7 +498,8 @@ export const renderNekroNxtExtensionDevelopmentSkill = (
 
 - 只能使用 cordis_inspect_list / cordis_inspect_query 公布的 NekroNXT Host Contribution 与 Client Slot。
 - Client 只允许：${reference.supportedContributions.clientSlots.map((slot) => `\`${slot}\``).join('、')}。
-- 禁止注册 root、DSH 官方页面 Slot、整页接管、Composer 或频道顶栏。
+- Adapter Client 还可使用：${reference.supportedContributions.hostAdapter.clientSlots.map((slot) => `\`${slot}\``).join('、')}；除富消息外，稳定 id 等于 adapterKey。
+- 禁止注册 root、DSH 官方页面 Slot、Composer 或频道顶栏；顶级页面只能使用 Host Page Contribution。
 - 动态运行、保存不可变扩展 Revision、给智能体启用扩展彼此独立；每一步都必须等待真实结果。
 - Host Tool 必须通过真实 Tool Runtime 调用验证；RPC 必须由 Client 预览真实调用；Client 必须在相同产品 Slot 与合成 Props 中渲染成功。
 
@@ -358,6 +532,8 @@ export const EXTENSION_SDK_BUNDLE_SOURCE = `
 export const defineHostExtension = (factory) => factory
 export const defineClientExtension = (factory) => factory
 export const defineAdapterClientExtension = (factory) => factory
+export const defineHostUiExtension = (factory) => factory
+export const defineHostUiClientExtension = (factory) => factory
 `
 
 /** Marks a Host entry factory without executing it during build or import. */
@@ -374,6 +550,17 @@ export const defineClientExtension = <
 /** Marks a Host Adapter Client factory; V1 only receives the keyed rich-message Slot. */
 export const defineAdapterClientExtension = <
   T extends ExtensionPluginFactory<AdapterHostClientEnvironment, AdapterHostClientContext>,
+>(
+  factory: T,
+): T => factory
+
+/** Marks a Host UI server factory without executing it during build or import. */
+export const defineHostUiExtension = <T extends ExtensionPluginFactory<ExtensionHostEnvironment>>(factory: T): T =>
+  factory
+
+/** Marks a Host UI Client factory; page registrations are owned by one Host installation. */
+export const defineHostUiClientExtension = <
+  T extends ExtensionPluginFactory<HostUiClientEnvironment, HostUiClientContext>,
 >(
   factory: T,
 ): T => factory

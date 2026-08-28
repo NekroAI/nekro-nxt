@@ -15,17 +15,23 @@ import {
   EpisodeIdSchema,
   OutboundIntentIdSchema,
   DshCredentialsChangedSseDataSchema,
+  DshNxtHostUiSchema,
   DshSettingsChangedSseDataSchema,
   HostApiErrorSchema,
   HostApiContracts,
+  HostPageContributionSchema,
+  HostUiPageInstanceIdSchema,
+  JsonValueSchema,
   parseJsonValue,
   type AgentId,
   type ChannelId,
   type HostApiContract,
+  type HostUiPermission,
   type HostSnapshotMessage,
   type ChannelRuntimeProjection,
   type HostSseEvent,
 } from '@nekro-nxt/contracts'
+import { hostUiPermissionDigest, validateHostUiSvg } from '@nekro-nxt/extension-runtime'
 import { createHash, randomUUID } from 'node:crypto'
 import { readFile } from 'node:fs/promises'
 import path from 'node:path'
@@ -35,6 +41,7 @@ import type { NekroRuntime } from './bootstrap.js'
 import { PRODUCT_VERSION } from './product-version.js'
 import { DEEPSEEK_HARNESS_VERSION } from './dsh-version.js'
 import { normalizeSessionEvents } from './channel-runtime-events.js'
+import { performHostUiNetworkRequest } from './host-ui-network.js'
 import {
   emptyChannelRuntimeProjection,
   projectChannelRuntime,
@@ -148,7 +155,7 @@ const extensionTransferManifestSchema = z
     extension: z
       .object({
         id: ExtensionIdSchema,
-        scope: z.enum(['agent', 'host-adapter']),
+        scope: z.enum(['agent', 'host-adapter', 'host-ui']),
         slug: z.string().trim().min(3).max(64),
         displayName: z.string().trim().min(1).max(80),
         description: z.string().max(500),
@@ -179,7 +186,7 @@ const extensionTransferManifestSchema = z
           .strict(),
       )
       .min(1)
-      .max(8),
+      .max(16),
     sourceVerification: z.unknown().nullable(),
   })
   .strict()
@@ -188,6 +195,7 @@ type ParsedExtensionImport = {
   readonly manifest: z.output<typeof extensionTransferManifestSchema>
   readonly revisionManifest: unknown
   readonly sources: { readonly host?: string; readonly client?: string }
+  readonly resources: Readonly<Record<string, string>>
 }
 
 const assertSafeArchivePath = (name: string): void => {
@@ -301,6 +309,11 @@ const parseExtensionImport = (data: Uint8Array): ParsedExtensionImport => {
       ...(host === undefined ? {} : { host: strFromU8(host) }),
       ...(client === undefined ? {} : { client: strFromU8(client) }),
     },
+    resources: Object.fromEntries(
+      Object.entries(files)
+        .filter(([filePath]) => filePath.startsWith('revision/assets/'))
+        .map(([filePath, content]) => [filePath.slice('revision/'.length), strFromU8(content)]),
+    ),
   }
 }
 
@@ -391,6 +404,25 @@ const createExtensionRevisionExport = async (
     } catch (error) {
       if (relative === 'manifest.json') throw error
     }
+  }
+  const resourceManifest = z
+    .object({
+      clientCss: z
+        .object({ path: z.string().startsWith('assets/'), sha256: z.string() })
+        .strict()
+        .optional(),
+      contributions: z.array(z.unknown()).optional(),
+    })
+    .passthrough()
+    .parse(JSON.parse(strFromU8(files['revision/manifest.json']!)))
+  const resourcePaths = new Set<string>()
+  if (resourceManifest.clientCss) resourcePaths.add(resourceManifest.clientCss.path)
+  for (const contribution of resourceManifest.contributions ?? []) {
+    const page = HostPageContributionSchema.safeParse(contribution)
+    if (page.success && page.data.icon.kind === 'svg') resourcePaths.add(page.data.icon.path)
+  }
+  for (const resourcePath of resourcePaths) {
+    files[`revision/${resourcePath}`] = await readFile(path.join(sourceDirectory, resourcePath))
   }
   const fileList = Object.entries(files).map(([filePath, content]) => ({
     path: filePath,
@@ -603,6 +635,11 @@ const projectExtensions = (runtime: NekroRuntime) => {
   return runtime.repository.listExtensions().map((extension) => {
     const installation = runtime.repository.getHostInstallation(extension.id)
     const hostClientDiagnostic = runtime.hostClientDiagnostic(extension.id)
+    const latestRevision = runtime.repository.listExtensionRevisions(extension.id).at(-1)
+    const hostUiPermission =
+      latestRevision === undefined
+        ? undefined
+        : runtime.installation.getHostUiPermissionRequirement(extension.id, latestRevision.id)
     return {
       id: extension.id,
       scope: extension.scope,
@@ -612,6 +649,7 @@ const projectExtensions = (runtime: NekroRuntime) => {
       ...(extension.createdByAgentId === undefined ? {} : { createdByAgentId: extension.createdByAgentId }),
       revisions: runtime.repository.listExtensionRevisions(extension.id).map((revision) => {
         const verification = runtime.repository.getExtensionRevisionVerification(revision.id)
+        const permissionRequirement = runtime.installation.getHostUiPermissionRequirement(extension.id, revision.id)
         return {
           id: revision.id,
           revisionNumber: revision.revisionNumber,
@@ -626,6 +664,7 @@ const projectExtensions = (runtime: NekroRuntime) => {
                   ...verification.renderedSlots.map((slot) => `界面：${slot}`),
                   ...(verification.adapter === undefined ? [] : [`适配器：${verification.adapter.key}`]),
                   ...(verification.renderedHostSlots ?? []).map(({ key }) => `界面：${key}`),
+                  ...(verification.renderedPages ?? []).map(({ title }) => `页面：${title}`),
                 ],
           ...(verification === undefined
             ? {}
@@ -643,6 +682,14 @@ const projectExtensions = (runtime: NekroRuntime) => {
                   ...(verification.renderedHostSlots === undefined
                     ? {}
                     : { renderedHostSlots: verification.renderedHostSlots }),
+                  ...(verification.renderedPages === undefined ? {} : { renderedPages: verification.renderedPages }),
+                  ...(verification.permissions === undefined ? {} : { permissions: verification.permissions }),
+                  ...(permissionRequirement === undefined
+                    ? {}
+                    : {
+                        permissionDigest: permissionRequirement.permissionDigest,
+                        permissionApprovalRequired: permissionRequirement.approvalRequired,
+                      }),
                   ...(verification.adapter === undefined ? {} : { adapter: verification.adapter }),
                 },
               }),
@@ -670,6 +717,7 @@ const projectExtensions = (runtime: NekroRuntime) => {
                 : { runtime: runtime.installation.getDiagnostic(extension.id) }),
             },
           }),
+      ...(hostUiPermission === undefined ? {} : { hostUiPermission }),
       ...(hostClientDiagnostic === undefined ? {} : { hostClientDiagnostic }),
       clientDiagnostics: activations
         .filter((activation) => activation.extensionId === extension.id)
@@ -733,6 +781,11 @@ const projectDshPlugins = (runtime: NekroRuntime) => [
       .flatMap((entry) => entry.activations)
       .map((activation) => activation.diagnostic)
       .find((diagnostic) => diagnostic !== undefined && diagnostic.status !== 'active')
+    const hostUi = DshNxtHostUiSchema.safeParse(
+      'nekroNxt' in manifest && typeof manifest['nekroNxt'] === 'object' && manifest['nekroNxt'] !== null
+        ? Reflect.get(manifest['nekroNxt'], 'hostUi')
+        : undefined,
+    )
     return {
       packageName: packageRecord.packageName,
       packageVersion: packageRecord.packageVersion,
@@ -746,6 +799,7 @@ const projectDshPlugins = (runtime: NekroRuntime) => [
         typeof manifest['dsh'] === 'object' &&
         manifest['dsh'] !== null &&
         'client' in manifest['dsh'],
+      ...(hostUi.success ? { hostUi: hostUi.data } : {}),
       approvedBuilds: [...packageRecord.approvedBuilds],
       entries,
       ...(failure === undefined
@@ -883,12 +937,16 @@ const saveActiveDynamicPackage = async (
   const inspection = runtime.host.inspectDynamicPackage(episode.dshSessionId, input.pluginId, input.packageId)
   const verified = await runtime.host.verifyDynamicPackage(episode.dshSessionId, input.pluginId, input.packageId)
   const adapterVerification = 'scope' in verified && verified.scope === 'host-adapter' ? verified : undefined
+  const scopedVerification =
+    'scope' in verified && (verified.scope === 'host-adapter' || verified.scope === 'host-ui') ? verified : undefined
+  const hasHostPages = verified.renderedPages.length > 0
   return runtime.extensionService.saveDynamicPackage({
     snapshot: {
       name: inspection.name,
       purpose: inspection.purpose,
       ...(inspection.code.host === undefined ? {} : { hostCode: inspection.code.host }),
       ...(inspection.code.client === undefined ? {} : { clientCode: inspection.code.client }),
+      ...(hasHostPages ? { permissions: verified.permissions } : {}),
       contributions: verified.contributions,
     },
     slug: input.slug,
@@ -898,10 +956,13 @@ const saveActiveDynamicPackage = async (
     createdByAgentId: input.agentId,
     verification: {
       dshVersion: '0.1.1-rc.2',
-      contractVersion: adapterVerification ? 'nekro-nxt-extension-v2' : 'nekro-nxt-extension-v1',
-      ...(adapterVerification === undefined
-        ? {}
-        : { scope: adapterVerification.scope, adapter: adapterVerification.adapter }),
+      contractVersion: hasHostPages
+        ? 'nekro-nxt-extension-v3'
+        : adapterVerification
+          ? 'nekro-nxt-extension-v2'
+          : 'nekro-nxt-extension-v1',
+      ...(scopedVerification === undefined ? {} : { scope: scopedVerification.scope }),
+      ...(adapterVerification === undefined ? {} : { adapter: adapterVerification.adapter }),
       origin: {
         episodeId: input.episodeId,
         pluginId: input.pluginId,
@@ -912,6 +973,7 @@ const saveActiveDynamicPackage = async (
       rpcMethods: verified.rpcMethods,
       renderedSlots: verified.renderedSlots,
       ...(verified.renderedHostSlots.length === 0 ? {} : { renderedHostSlots: verified.renderedHostSlots }),
+      ...(hasHostPages ? { renderedPages: verified.renderedPages, permissions: verified.permissions } : {}),
     },
   })
 }
@@ -942,6 +1004,20 @@ export const createNekroHostApi = (
     string,
     { readonly parsed: ParsedExtensionImport; readonly expiresAt: number }
   >()
+  const pendingHostUiCredentials = new Map<
+    string,
+    {
+      readonly ownerKey: string
+      readonly adapterKey: string
+      readonly credentials: Readonly<Record<string, string>>
+      readonly expiresAt: number
+    }
+  >()
+  const pruneExpiredHostUiCredentials = (now = Date.now()): void => {
+    for (const [token, pending] of pendingHostUiCredentials) {
+      if (pending.expiresAt <= now) pendingHostUiCredentials.delete(token)
+    }
+  }
 
   const registerRoute = (route: WebRoute): void => {
     disposers.push(webServer.register(route))
@@ -1174,6 +1250,10 @@ export const createNekroHostApi = (
       messages,
       connections,
       extensions: projectExtensions(runtime),
+      hostUi: {
+        preferencesRevision: runtime.repository.getHostUiPreferencesRevision(),
+        pages: runtime.repository.listHostUiPageEntries(),
+      },
       workTreeOrder: runtime.repository.getWorkTreeOrder(),
       dynamic: [...agentIds].flatMap((agentId) => projectDynamicInventory(runtime, agentId)),
     })
@@ -1390,6 +1470,459 @@ export const createNekroHostApi = (
     },
   })
 
+  registerRoute({
+    kind: 'prefix',
+    path: '/api/host-ui',
+    handler: async (req, res) => {
+      const url = new URL(req.url ?? '/', 'http://localhost')
+      if (url.pathname === '/api/host-ui/page-preferences') {
+        if (req.method !== 'PUT') {
+          writeError(res, 405, 'method-not-allowed', '页面入口偏好只支持 PUT。')
+          return
+        }
+        try {
+          const input = HostApiContracts.updateHostUiPagePreferences.parseRequest(await readJsonBody(req))
+          const revision = runtime.repository.updateHostUiPagePreferences({ ...input, now: Date.now() })
+          writeContractJson(res, 200, HostApiContracts.updateHostUiPagePreferences, { revision })
+          broadcastExtensionsChanged()
+        } catch (error) {
+          writeError(res, 409, 'host-ui-preference-conflict', error instanceof Error ? error.message : String(error))
+        }
+        return
+      }
+      const pageMatch = /^\/api\/host-ui\/pages\/([^/]+)\/(call|diagnostic)$/u.exec(url.pathname)
+      if (!pageMatch) {
+        writeError(res, 404, 'not-found', `未定义路由：${req.method} ${url.pathname}。`)
+        return
+      }
+      const page = runtime.repository
+        .listHostUiPageEntries()
+        .find(({ pageInstanceId }) => pageInstanceId === decodeURIComponent(pageMatch[1] ?? ''))
+      if (!page) {
+        writeError(res, 404, 'host-ui-page-missing', '页面入口不存在或已撤销。')
+        return
+      }
+      if (req.method !== 'POST') {
+        writeError(res, 405, 'method-not-allowed', '页面 Runtime 端点只支持 POST。')
+        return
+      }
+      if (pageMatch[2] === 'call') {
+        try {
+          HostApiContracts.callHostUiPage.parseParams({ pageInstanceId: page.pageInstanceId })
+          const input = HostApiContracts.callHostUiPage.parseRequest(await readJsonBody(req))
+          const ownerKey =
+            page.owner.kind === 'extension' ? `extension:${page.owner.extensionId}` : `dsh:${page.owner.entryId}`
+          const grant = runtime.repository.getHostUiPermissionGrant(ownerKey)
+          const artifactDigest =
+            page.owner.kind === 'extension'
+              ? runtime.repository.getExtensionRevision(page.owner.revisionId)?.payloadDigest
+              : page.owner.artifactDigest
+          if (!grant || grant.artifactDigest !== artifactDigest) throw new Error('页面权限批准已失效。')
+          const permissionByMethod: ReadonlyMap<string, HostUiPermission> = new Map([
+            ['agents.list', 'agents.read'],
+            ['agents.create', 'agents.manage'],
+            ['agents.revise', 'agents.manage'],
+            ['agents.capabilities', 'agents.manage'],
+            ['channels.list', 'channels.read'],
+            ['channels.create', 'channels.manage'],
+            ['channels.rename', 'channels.manage'],
+            ['channels.bind', 'channels.manage'],
+            ['channels.unbind', 'channels.manage'],
+            ['connections.list', 'connections.read'],
+            ['connections.create', 'connections.manage'],
+            ['connections.rename', 'connections.manage'],
+            ['connections.test', 'connections.manage'],
+            ['credentials.write', 'credentials.write'],
+            ['extensions.list', 'extensions.read'],
+            ['dsh-plugins.list', 'dsh-plugins.read'],
+            ['runtime.list', 'runtime.read'],
+            ['messages.list', 'messages.read'],
+            ['messages.send', 'messages.send'],
+            ['assets.get', 'assets.read'],
+            ['notifications.publish', 'notifications.publish'],
+            ['network.request', 'network.request'],
+          ])
+          const topicPermission: ReadonlyMap<string, HostUiPermission> = new Map([
+            ['agents', 'agents.read'],
+            ['channels', 'channels.read'],
+            ['connections', 'connections.read'],
+            ['extensions', 'extensions.read'],
+            ['dsh-plugins', 'dsh-plugins.read'],
+            ['runtime', 'runtime.read'],
+            ['messages', 'messages.read'],
+          ])
+          const eventRequest =
+            input.method === 'events.subscribe'
+              ? z
+                  .object({
+                    topic: z.enum([
+                      'agents',
+                      'channels',
+                      'connections',
+                      'extensions',
+                      'dsh-plugins',
+                      'runtime',
+                      'messages',
+                    ]),
+                  })
+                  .strict()
+                  .parse(input.input)
+              : undefined
+          const requiredPermission =
+            eventRequest === undefined ? permissionByMethod.get(input.method) : topicPermission.get(eventRequest.topic)
+          let value
+          if (requiredPermission) {
+            if (!grant?.declaration.permissions.includes(requiredPermission)) {
+              throw new Error(`页面未获得 ${requiredPermission} 权限。`)
+            }
+            if (input.method === 'agents.list') {
+              value = runtime.core.listAgents().map((agent) => ({
+                id: agent.definition.id,
+                displayName: agent.revision.displayName,
+                currentRevisionId: agent.revision.id,
+              }))
+            } else if (input.method === 'agents.create') {
+              const parsed = HostApiContracts.createAgent.parseRequest(input.input)
+              const capabilities =
+                parsed.capabilities ??
+                ({
+                  subagents: true,
+                  fileTools: false,
+                  webSearch: (await runtime.host.getWebSearchCapabilityStatus()).available,
+                  dynamicCreation: false,
+                  developmentShell: false,
+                  unrestrictedFileAccess: false,
+                } as const)
+              await assertAuxiliaryImageModel(runtime, parsed.imagePolicy)
+              const entity = await runtime.createAgentWithWebChannel({
+                displayName: parsed.displayName,
+                persona: parsed.persona,
+                ...(parsed.personaDocument === undefined ? {} : { personaDocument: parsed.personaDocument }),
+                model: parsed.model,
+                capabilities,
+                ...(parsed.imagePolicy === undefined ? {} : { imagePolicy: parsed.imagePolicy }),
+                ...(parsed.dynamicClientApprovalPolicy === undefined
+                  ? {}
+                  : { dynamicClientApprovalPolicy: parsed.dynamicClientApprovalPolicy }),
+              })
+              value = { agentId: entity.agentId, channelId: entity.channelId, connectionId: entity.connectionId }
+            } else if (input.method === 'agents.revise') {
+              const request = z.object({ agentId: AgentIdSchema, revision: z.unknown() }).strict().parse(input.input)
+              const parsed = HostApiContracts.reviseAgent.parseRequest(request.revision)
+              const current = runtime.repository.getAgent(request.agentId)
+              if (!current || current.revision.id !== parsed.expectedCurrentRevisionId) {
+                throw new Error('智能体配置已更新。')
+              }
+              await assertAuxiliaryImageModel(runtime, parsed.imagePolicy)
+              const updated = runtime.core.reviseAgent(request.agentId, current.revision.id, {
+                displayName: parsed.displayName,
+                persona: parsed.persona,
+                ...(parsed.personaDocument === undefined ? {} : { personaDocument: parsed.personaDocument }),
+                model: parsed.model,
+                capabilities: current.revision.capabilities,
+                imagePolicy: parsed.imagePolicy ?? current.revision.imagePolicy,
+                dynamicClientApprovalPolicy:
+                  parsed.dynamicClientApprovalPolicy ?? current.revision.dynamicClientApprovalPolicy,
+              })
+              value = { currentRevisionId: updated.revision.id }
+            } else if (input.method === 'agents.capabilities') {
+              const request = z
+                .object({ agentId: AgentIdSchema, capabilities: z.unknown() })
+                .strict()
+                .parse(input.input)
+              const parsed = HostApiContracts.updateAgentCapabilities.parseRequest(request.capabilities)
+              const current = runtime.repository.getAgent(request.agentId)
+              if (!current) throw new Error('智能体不存在。')
+              const capabilities = {
+                ...current.revision.capabilities,
+                ...(parsed.subagents === undefined ? {} : { subagents: parsed.subagents }),
+                ...(parsed.fileTools === undefined ? {} : { fileTools: parsed.fileTools }),
+                ...(parsed.webSearch === undefined ? {} : { webSearch: parsed.webSearch }),
+                ...(parsed.dynamicCreation === undefined ? {} : { dynamicCreation: parsed.dynamicCreation }),
+                ...(parsed.developmentShell === undefined ? {} : { developmentShell: parsed.developmentShell }),
+                ...(parsed.unrestrictedFileAccess === undefined
+                  ? {}
+                  : { unrestrictedFileAccess: parsed.unrestrictedFileAccess }),
+              }
+              const updated = runtime.core.reviseAgent(request.agentId, current.revision.id, {
+                displayName: current.revision.displayName,
+                persona: current.revision.persona,
+                personaDocument: current.revision.personaDocument,
+                model: current.revision.model,
+                capabilities,
+                imagePolicy: current.revision.imagePolicy,
+                dynamicClientApprovalPolicy: current.revision.dynamicClientApprovalPolicy,
+              })
+              value = { currentRevisionId: updated.revision.id, capabilities: updated.revision.capabilities }
+            } else if (input.method === 'connections.list') {
+              value = runtime.core.listConnections().map((connection) => ({
+                id: connection.id,
+                adapterKey: connection.adapterKey,
+                ...(connection.alias === undefined ? {} : { alias: connection.alias }),
+              }))
+            } else if (input.method === 'credentials.write') {
+              pruneExpiredHostUiCredentials()
+              const request = z
+                .object({
+                  adapterKey: z.string().trim().min(1).max(120),
+                  values: z.record(
+                    z.string(),
+                    z
+                      .string()
+                      .min(1)
+                      .max(16 * 1024),
+                  ),
+                })
+                .strict()
+                .parse(input.input)
+              const descriptor = runtime.adapters.get(request.adapterKey)?.descriptor
+              if (!descriptor?.userCreatable) throw new Error('这个 Adapter 不能创建用户连接。')
+              for (const key of Object.keys(request.values)) {
+                if (descriptor.configSchema.properties[key]?.type !== 'credential-reference') {
+                  throw new Error(`连接凭据包含未知字段：${key}`)
+                }
+              }
+              const token = randomUUID()
+              pendingHostUiCredentials.set(token, {
+                ownerKey,
+                adapterKey: request.adapterKey,
+                credentials: request.values,
+                expiresAt: Date.now() + 5 * 60_000,
+              })
+              value = { token, fields: Object.keys(request.values) }
+            } else if (input.method === 'connections.create') {
+              pruneExpiredHostUiCredentials()
+              const request = z
+                .object({
+                  adapterKey: z.string().trim().min(1).max(120),
+                  alias: z.string().trim().max(80).optional(),
+                  configuration: z.record(z.string(), JsonValueSchema).default({}),
+                  credentialToken: z.string().uuid().optional(),
+                })
+                .strict()
+                .parse(input.input)
+              const pending = request.credentialToken
+                ? pendingHostUiCredentials.get(request.credentialToken)
+                : undefined
+              if (request.credentialToken && !pending) throw new Error('连接凭据提交不存在或已经使用。')
+              if (
+                pending &&
+                (pending.ownerKey !== ownerKey ||
+                  pending.adapterKey !== request.adapterKey ||
+                  pending.expiresAt < Date.now())
+              ) {
+                pendingHostUiCredentials.delete(request.credentialToken!)
+                throw new Error('连接凭据提交已失效。')
+              }
+              const connection = await runtime.createConnection({
+                adapterKey: request.adapterKey,
+                ...(request.alias === undefined ? {} : { alias: request.alias }),
+                configuration: request.configuration,
+                credentials: pending?.credentials ?? {},
+              })
+              if (request.credentialToken) pendingHostUiCredentials.delete(request.credentialToken)
+              value = { connectionId: connection.id, adapterKey: connection.adapterKey }
+            } else if (input.method === 'connections.rename') {
+              const request = z
+                .object({ connectionId: ConnectionIdSchema, alias: z.string().trim().max(80).optional() })
+                .strict()
+                .parse(input.input)
+              const connection = runtime.updateConnectionAlias(request.connectionId, request.alias)
+              value = {
+                connectionId: connection.id,
+                ...(connection.alias === undefined ? {} : { alias: connection.alias }),
+              }
+            } else if (input.method === 'connections.test') {
+              const request = z
+                .object({
+                  connectionId: ConnectionIdSchema,
+                  direction: z.enum(['send', 'receive']),
+                  channelId: ChannelIdSchema.optional(),
+                })
+                .strict()
+                .parse(input.input)
+              value = await runtime.testConnection(request.connectionId, request.direction, request.channelId)
+            } else if (input.method === 'channels.list') {
+              value = runtime.core.listConnections().flatMap((connection) =>
+                runtime.core.listChannelsByConnection(connection.id).map((channel) => ({
+                  id: channel.id,
+                  connectionId: connection.id,
+                  kind: channel.kind,
+                  ...(channel.displayName === undefined ? {} : { displayName: channel.displayName }),
+                })),
+              )
+            } else if (input.method === 'channels.create') {
+              const parsed = HostApiContracts.createWebChannel.parseRequest(input.input)
+              const channel = runtime.core.createChannel({
+                connectionId: runtime.webConnectionId,
+                platformChannelId: `host-ui-${randomUUID()}`,
+                kind: 'web',
+                displayName: parsed.displayName,
+              })
+              value = { channelId: channel.id, connectionId: channel.connectionId }
+            } else if (input.method === 'channels.rename') {
+              const request = z
+                .object({ channelId: ChannelIdSchema, displayName: z.string() })
+                .strict()
+                .parse(input.input)
+              const parsed = HostApiContracts.renameChannel.parseRequest({ displayName: request.displayName })
+              const channel = runtime.core.updateChannelDisplayName(request.channelId, parsed.displayName)
+              value = { channelId: channel.id, displayName: channel.displayName }
+            } else if (input.method === 'channels.bind') {
+              const parsed = HostApiContracts.createBinding.parseRequest(input.input)
+              value = await runtime.channels.replaceBinding({
+                channelId: parsed.channelId,
+                agentId: parsed.agentId,
+                triggerPolicy: parsed.triggerPolicy,
+                ...(parsed.processingFeedback === undefined ? {} : { processingFeedback: parsed.processingFeedback }),
+                ...(parsed.eventTriggers === undefined ? {} : { eventTriggers: parsed.eventTriggers }),
+              })
+            } else if (input.method === 'channels.unbind') {
+              const request = z.object({ channelId: ChannelIdSchema }).strict().parse(input.input)
+              await runtime.channels.clearBinding(request.channelId)
+              value = { channelId: request.channelId, cleared: true }
+            } else if (input.method === 'extensions.list') {
+              value = runtime.repository.listExtensions().map((extension) => ({
+                id: extension.id,
+                scope: extension.scope,
+                displayName: extension.displayName,
+                description: extension.description,
+              }))
+            } else if (input.method === 'dsh-plugins.list') {
+              value = projectDshPlugins(runtime)
+            } else if (input.method === 'runtime.list') {
+              value = runtime.repository.listRecoverableEpisodes().map((episode) => ({
+                id: episode.id,
+                agentId: episode.agentId,
+                channelId: episode.channelId,
+                status: episode.status,
+              }))
+            } else if (input.method === 'messages.list') {
+              const request = z
+                .object({ channelId: ChannelIdSchema, limit: z.number().int().min(1).max(100).default(50) })
+                .strict()
+                .parse(input.input)
+              value = buildSnapshotMessage(runtime, request.channelId, { limit: request.limit })
+            } else if (input.method === 'messages.send') {
+              const request = z.object({ channelId: ChannelIdSchema, message: z.unknown() }).strict().parse(input.input)
+              const message = HostApiContracts.sendChannelMessage.parseRequest(request.message)
+              const channel = runtime.repository.getChannel(request.channelId)
+              if (!channel) throw new Error('频道不存在。')
+              if (channel.kind === 'web') {
+                value = await runtime.web.postMessage({
+                  channelId: request.channelId,
+                  clientEventId: message.clientEventId ?? `host-ui-${Date.now()}`,
+                  parts: message.parts,
+                  ...(message.senderMemberId === undefined ? {} : { senderMemberId: message.senderMemberId }),
+                })
+              } else {
+                if (!runtime.repository.getBinding(request.channelId)) throw new Error('频道尚未绑定智能体。')
+                const connection = runtime.repository.getConnection(channel.connectionId)
+                if (!connection || runtime.connectionCapabilities(connection.id)?.proactiveSend !== true) {
+                  throw new Error('这个连接不允许主动发言。')
+                }
+                await runtime.channels.sendAdminConsoleMessage({
+                  channelId: request.channelId,
+                  parts: message.parts,
+                  ...(message.clientEventId === undefined ? {} : { clientRequestId: message.clientEventId }),
+                })
+                value = { inserted: true }
+              }
+            } else if (input.method === 'assets.get') {
+              const request = z
+                .object({ channelId: ChannelIdSchema, assetId: AssetIdSchema })
+                .strict()
+                .parse(input.input)
+              if (!runtime.repository.canAccessAsset(request.assetId, request.channelId)) {
+                throw new Error('当前频道无法访问该资源。')
+              }
+              const asset = runtime.repository.getAssetById(request.assetId)
+              if (!asset) throw new Error('资源不存在。')
+              value = {
+                assetId: asset.id,
+                mediaType: asset.mediaType,
+                byteSize: asset.byteSize,
+                url: `/api/channels/${encodeURIComponent(request.channelId)}/assets/${encodeURIComponent(request.assetId)}`,
+              }
+            } else if (input.method === 'notifications.publish') {
+              const request = z
+                .object({ title: z.string(), body: z.string(), route: z.string().optional() })
+                .strict()
+                .parse(input.input)
+              runtime.notifications.publishExtensionNotification({
+                owner: ownerKey,
+                title: request.title,
+                body: request.body,
+                ...(request.route === undefined ? {} : { route: request.route }),
+              })
+              value = { published: true }
+            } else if (input.method === 'network.request') {
+              value = await performHostUiNetworkRequest(input.input, grant.declaration.networkOrigins)
+            } else {
+              value = { subscribed: true, topic: eventRequest?.topic }
+            }
+            value = JsonValueSchema.parse(JSON.parse(JSON.stringify(value)))
+          } else if (input.method === 'state.get' || input.method === 'state.set' || input.method === 'state.delete') {
+            const settingKey = `host-ui-state:${createHash('sha256').update(ownerKey).digest('hex')}`
+            const current = runtime.repository.getSystemSetting(settingKey)
+            const document = z.record(z.string(), JsonValueSchema).parse(current?.value ?? {})
+            if (input.method === 'state.get') {
+              const request = z
+                .object({ key: z.string().trim().min(1).max(120) })
+                .strict()
+                .parse(input.input)
+              value = { revision: current?.revision ?? 0, value: document[request.key] ?? null }
+            } else {
+              const request = z
+                .object({
+                  key: z.string().trim().min(1).max(120),
+                  expectedRevision: z.number().int().nonnegative(),
+                  value: JsonValueSchema.optional(),
+                })
+                .strict()
+                .parse(input.input)
+              if ((current?.revision ?? 0) !== request.expectedRevision) throw new Error('扩展状态已更新。')
+              const next = { ...document }
+              if (input.method === 'state.delete') delete next[request.key]
+              else next[request.key] = request.value ?? null
+              if (Object.keys(next).length > 128 || JSON.stringify(next).length > 64 * 1024) {
+                throw new Error('扩展状态超过 128 项或 64 KiB。')
+              }
+              const saved = runtime.repository.putSystemSetting(settingKey, next, current?.revision, Date.now())
+              value = { revision: saved.revision }
+            }
+          } else {
+            if (page.owner.kind !== 'extension') throw new Error('DSH 页面没有注册自定义 Host RPC。')
+            value = await runtime.installation.callHostUi(page.owner.extensionId, input.method, input.input)
+          }
+          writeContractJson(res, 200, HostApiContracts.callHostUiPage, { value })
+        } catch (error) {
+          runtime.repository.upsertHostUiDiagnostic({
+            pageInstanceId: page.pageInstanceId,
+            status: 'rpc-failed',
+            message: error instanceof Error ? error.message : String(error),
+            observedAt: Date.now(),
+          })
+          writeError(res, 400, 'host-ui-call-failed', error instanceof Error ? error.message : String(error))
+        }
+        return
+      }
+      try {
+        const input = HostApiContracts.reportHostUiPageDiagnostic.parseRequest(await readJsonBody(req))
+        runtime.repository.upsertHostUiDiagnostic({
+          pageInstanceId: page.pageInstanceId,
+          status: input.status,
+          ...(input.message === undefined ? {} : { message: input.message }),
+          observedAt: Date.now(),
+        })
+        writeContractJson(res, 200, HostApiContracts.reportHostUiPageDiagnostic, { recorded: true })
+        broadcastExtensionsChanged()
+      } catch (error) {
+        writeError(res, 400, 'host-ui-diagnostic-failed', error instanceof Error ? error.message : String(error))
+      }
+    },
+  })
+
   // Persistent Extension Client artifact, Activation RPC, and diagnostics.
   registerRoute({
     kind: 'prefix',
@@ -1472,6 +2005,8 @@ export const createNekroHostApi = (
             revision: pending.parsed.manifest.revision,
             manifest: pending.parsed.revisionManifest,
             sources: pending.parsed.sources,
+            resources: pending.parsed.resources,
+            dshVersion: DEEPSEEK_HARNESS_VERSION,
             ...(input.localSlug === undefined ? {} : { localSlug: input.localSlug }),
           })
           pendingExtensionImports.delete(params.token)
@@ -1518,6 +2053,7 @@ export const createNekroHostApi = (
             const installation = await runtime.installHostExtension({
               extensionId: params.extensionId,
               revisionId: parsed.revisionId,
+              ...(parsed.permissionApproval === undefined ? {} : { permissionApproval: parsed.permissionApproval }),
             })
             writeContractJson(res, 200, HostApiContracts.installHostExtension, { installation })
             broadcastExtensionsChanged()
@@ -1538,7 +2074,86 @@ export const createNekroHostApi = (
           }
           return
         }
-        writeError(res, 405, 'method-not-allowed', '安装适配器只支持 PUT/DELETE。')
+        writeError(res, 405, 'method-not-allowed', '本机扩展安装只支持 PUT/DELETE。')
+        return
+      }
+      const hostUiClientMatch =
+        /^\/api\/extensions\/([^/]+)\/revisions\/([^/]+)\/host-ui\/client\/([a-f0-9]{64})\.(mjs|css)$/u.exec(
+          url.pathname,
+        )
+      if (hostUiClientMatch) {
+        if (req.method !== 'GET') {
+          writeError(res, 405, 'method-not-allowed', '页面 Client Artifact 只支持 GET。')
+          return
+        }
+        try {
+          const extensionId = ExtensionIdSchema.parse(decodeURIComponent(hostUiClientMatch[1] ?? ''))
+          const revisionId = ExtensionRevisionIdSchema.parse(decodeURIComponent(hostUiClientMatch[2] ?? ''))
+          const installation = runtime.repository.getHostInstallation(extensionId)
+          if (installation?.extensionRevisionId !== revisionId) throw new Error('该扩展版本未安装到本机。')
+          const revision = runtime.repository.getExtensionRevision(revisionId)
+          if (!revision || revision.extensionId !== extensionId) throw new Error('找不到页面扩展版本。')
+          const artifact = await runtime.extensionService.buildRevision(revision)
+          if (!artifact.clientEntry || artifact.buildKey !== hostUiClientMatch[3]) {
+            throw new Error('页面 Client buildKey 已过期。')
+          }
+          const css = hostUiClientMatch[4] === 'css'
+          const source = css
+            ? artifact.clientCssEntry
+              ? await readFile(artifact.clientCssEntry, 'utf8')
+              : ''
+            : await readFile(artifact.clientEntry, 'utf8')
+          res.writeHead(200, {
+            'content-type': css ? 'text/css; charset=utf-8' : 'text/javascript; charset=utf-8',
+            'cache-control': 'private, no-cache',
+          })
+          res.end(source)
+        } catch (error) {
+          writeError(res, 409, 'host-ui-client-unavailable', error instanceof Error ? error.message : String(error))
+        }
+        return
+      }
+      const hostUiAssetMatch =
+        /^\/api\/extensions\/([^/]+)\/revisions\/([^/]+)\/host-ui\/assets\/([a-f0-9]{64})\.svg$/u.exec(url.pathname)
+      if (hostUiAssetMatch) {
+        if (req.method !== 'GET') {
+          writeError(res, 405, 'method-not-allowed', '页面图标只支持 GET。')
+          return
+        }
+        try {
+          const extensionId = ExtensionIdSchema.parse(decodeURIComponent(hostUiAssetMatch[1] ?? ''))
+          const revisionId = ExtensionRevisionIdSchema.parse(decodeURIComponent(hostUiAssetMatch[2] ?? ''))
+          const installation = runtime.repository.getHostInstallation(extensionId)
+          if (installation?.extensionRevisionId !== revisionId) throw new Error('该扩展版本未安装到本机。')
+          const revision = runtime.repository.getExtensionRevision(revisionId)
+          if (!revision || revision.extensionId !== extensionId) throw new Error('找不到页面扩展版本。')
+          const sourceDirectory = runtime.extensionService.revisionSourceDirectory(revision)
+          const manifest = z
+            .object({ contributions: z.array(z.unknown()) })
+            .passthrough()
+            .parse(JSON.parse(await readFile(path.join(sourceDirectory, 'manifest.json'), 'utf8')))
+          const page = manifest.contributions
+            .map((candidate) => HostPageContributionSchema.safeParse(candidate))
+            .find(
+              (candidate) =>
+                candidate.success &&
+                candidate.data.icon.kind === 'svg' &&
+                candidate.data.icon.sha256 === hostUiAssetMatch[3],
+            )
+          if (!page?.success || page.data.icon.kind !== 'svg') throw new Error('页面图标不存在。')
+          const source = await readFile(path.join(sourceDirectory, page.data.icon.path), 'utf8')
+          if (createHash('sha256').update(source).digest('hex') !== page.data.icon.sha256) {
+            throw new Error('页面图标摘要不一致。')
+          }
+          validateHostUiSvg(source)
+          res.writeHead(200, {
+            'content-type': 'image/svg+xml; charset=utf-8',
+            'cache-control': 'private, max-age=31536000, immutable',
+          })
+          res.end(source)
+        } catch (error) {
+          writeError(res, 409, 'host-ui-icon-unavailable', error instanceof Error ? error.message : String(error))
+        }
         return
       }
       const match =
@@ -1928,6 +2543,57 @@ export const createNekroHostApi = (
     path: '/api/dsh/plugin-entries',
     handler: async (req, res) => {
       const url = new URL(req.url ?? '/', 'http://localhost')
+      const hostUiClientMatch =
+        /^\/api\/dsh\/plugin-entries\/([^/]+)\/host-ui\/client\/([a-f0-9]{64})\.(mjs|css)$/u.exec(url.pathname)
+      if (hostUiClientMatch) {
+        if (req.method !== 'GET') {
+          writeError(res, 405, 'method-not-allowed', 'DSH 页面 Client 只支持 GET。')
+          return
+        }
+        try {
+          const entryId = DshPluginEntryIdSchema.parse(decodeURIComponent(hostUiClientMatch[1] ?? ''))
+          const activation = runtime.repository
+            .listDshPluginActivations(entryId)
+            .find((candidate) => candidate.target === 'host')
+          if (!activation) throw new Error('对应 DSH Host 入口未启用。')
+          const client = await runtime.dshPluginInstaller.readHostUiClient(entryId)
+          if (client.packageDigest !== hostUiClientMatch[2]) throw new Error('DSH 页面 Client 摘要已过期。')
+          const css = hostUiClientMatch[3] === 'css'
+          res.writeHead(200, {
+            'content-type': css ? 'text/css; charset=utf-8' : 'text/javascript; charset=utf-8',
+            'cache-control': 'private, no-cache',
+          })
+          res.end(css ? (client.css ?? '') : client.source)
+        } catch (error) {
+          writeError(res, 409, 'dsh-host-ui-client-unavailable', error instanceof Error ? error.message : String(error))
+        }
+        return
+      }
+      const hostUiAssetMatch = /^\/api\/dsh\/plugin-entries\/([^/]+)\/host-ui\/assets\/([a-f0-9]{64})\.svg$/u.exec(
+        url.pathname,
+      )
+      if (hostUiAssetMatch) {
+        if (req.method !== 'GET') {
+          writeError(res, 405, 'method-not-allowed', 'DSH 页面图标只支持 GET。')
+          return
+        }
+        try {
+          const entryId = DshPluginEntryIdSchema.parse(decodeURIComponent(hostUiAssetMatch[1] ?? ''))
+          const activation = runtime.repository
+            .listDshPluginActivations(entryId)
+            .find((candidate) => candidate.target === 'host')
+          if (!activation) throw new Error('对应 DSH Host 入口未启用。')
+          const source = await runtime.dshPluginInstaller.readHostUiSvg(entryId, hostUiAssetMatch[2] ?? '')
+          res.writeHead(200, {
+            'content-type': 'image/svg+xml; charset=utf-8',
+            'cache-control': 'private, max-age=31536000, immutable',
+          })
+          res.end(source)
+        } catch (error) {
+          writeError(res, 409, 'dsh-host-ui-icon-unavailable', error instanceof Error ? error.message : String(error))
+        }
+        return
+      }
       const activationMatch = /^\/api\/dsh\/plugin-entries\/([^/]+)\/activation$/u.exec(url.pathname)
       const configMatch = /^\/api\/dsh\/plugin-entries\/([^/]+)\/config\/inspect$/u.exec(url.pathname)
       const encodedEntryId = activationMatch?.[1] ?? configMatch?.[1]
@@ -1953,13 +2619,63 @@ export const createNekroHostApi = (
         }
         if (req.method === 'PUT') {
           const input = HostApiContracts.activateDshPluginEntry.parseRequest(await readJsonBody(req))
+          const entry = runtime.repository.getDshPluginEntry(entryId)
+          const packageRecord = entry ? runtime.repository.getDshPluginPackage(entry.packageId) : undefined
+          const manifest = packageRecord?.manifest
+          const nekroNxt =
+            typeof manifest === 'object' && manifest !== null && !Array.isArray(manifest)
+              ? manifest['nekroNxt']
+              : undefined
+          const metadata = DshNxtHostUiSchema.safeParse(
+            typeof nekroNxt === 'object' && nekroNxt !== null && !Array.isArray(nekroNxt)
+              ? nekroNxt['hostUi']
+              : undefined,
+          )
+          const permissionDigest = metadata.success ? hostUiPermissionDigest(metadata.data.permissions) : undefined
+          if (metadata.success && metadata.data.entryKey === entry?.entryKey && input.target === 'host') {
+            const grant = runtime.repository.getHostUiPermissionGrant(`dsh:${entryId}`)
+            const approved =
+              grant?.artifactDigest === packageRecord?.packageDigest && grant?.permissionDigest === permissionDigest
+            if (!approved && input.permissionApproval?.permissionDigest !== permissionDigest) {
+              throw new Error(`permission-approval-required:${permissionDigest}`)
+            }
+          }
           const activation = await runtime.host.activateInstalledDshPlugin({
             entryId,
             target: input.target,
             config: input.config,
             ...(input.agentId === undefined ? {} : { agentId: input.agentId }),
           })
+          try {
+            if (
+              input.target === 'host' &&
+              metadata.success &&
+              metadata.data.entryKey === entry?.entryKey &&
+              packageRecord &&
+              permissionDigest
+            ) {
+              runtime.repository.upsertHostUiPermissionGrant({
+                ownerKey: `dsh:${entryId}`,
+                artifactDigest: packageRecord.packageDigest,
+                permissionDigest,
+                declaration: metadata.data.permissions,
+                approvedAt: Date.now(),
+              })
+              runtime.repository.replaceHostUiDshPages({
+                entryId,
+                artifactDigest: packageRecord.packageDigest,
+                pages: metadata.data.pages,
+                clientBuildKey: packageRecord.packageDigest,
+                now: Date.now(),
+                nextPageInstanceId: () => HostUiPageInstanceIdSchema.parse(`hup_${randomUUID().replaceAll('-', '')}`),
+              })
+            }
+          } catch (error) {
+            await runtime.host.disableInstalledDshPlugin(entryId, activation.targetKey).catch(() => undefined)
+            throw error
+          }
           broadcast({ event: 'dsh-plugins-changed', data: { changed: true } })
+          broadcastExtensionsChanged()
           writeContractJson(res, 200, HostApiContracts.activateDshPluginEntry, {
             targetKey: activation.targetKey,
           })
@@ -1968,7 +2684,12 @@ export const createNekroHostApi = (
         if (req.method === 'DELETE') {
           const input = HostApiContracts.deactivateDshPluginEntry.parseRequest(await readJsonBody(req))
           await runtime.host.disableInstalledDshPlugin(entryId, input.targetKey)
+          if (input.targetKey === 'host') {
+            runtime.repository.deleteHostUiDshPages(entryId)
+            runtime.repository.deleteHostUiPermissionGrant(`dsh:${entryId}`)
+          }
           broadcast({ event: 'dsh-plugins-changed', data: { changed: true } })
+          broadcastExtensionsChanged()
           writeContractJson(res, 200, HostApiContracts.deactivateDshPluginEntry, { disabled: true })
           return
         }
@@ -3178,6 +3899,8 @@ export const createNekroHostApi = (
             parsed.pluginRunId,
             parsed.renderedSlots,
             parsed.renderedHostSlots,
+            parsed.renderedPages,
+            parsed.permissions,
           )
           writeJson(res, 200, HostApiContracts.dynamicReportClientVerification.parseResponse({ ok: true }))
         } catch (error) {

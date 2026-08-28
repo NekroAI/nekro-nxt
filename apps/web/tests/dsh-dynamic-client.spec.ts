@@ -123,6 +123,102 @@ describe('DSH Dynamic Client Runtime', () => {
     }
   })
 
+  it('registers dynamic Host pages with permissions and retracts their navigation and components', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn((input: string) => {
+        if (input.endsWith('/run-host-half')) {
+          return Promise.resolve(
+            stubResponse(200, {
+              ok: true,
+              pluginId: 'plugin-page',
+              packageId: 'package-page',
+              pluginRunId: 'run-page',
+              waitingFor: [],
+              startedHere: true,
+            }),
+          )
+        }
+        if (input.endsWith('/get-client-code')) {
+          return Promise.resolve(
+            stubResponse(200, {
+              pluginId: 'plugin-page',
+              packageId: 'package-page',
+              pluginRunId: 'run-page',
+              name: '动态项目页',
+              code: `return {
+                inject: ['pages'],
+                apply(ctx) {
+                  ctx.pages.declarePermissions({ permissions: ['agents.read'], networkOrigins: [] })
+                  ctx.pages.register({
+                    page: {
+                      kind: 'host-page', entryId: 'overview', title: '项目概览',
+                      icon: { kind: 'host-icon', name: 'layout-dashboard' },
+                      objectPane: 'navigation', startPath: ''
+                    },
+                    navigation: {
+                      getSnapshot: () => ({ revision: 0, groups: [{ id: 'main', items: [{ id: 'overview', label: '概览', path: '' }] }] }),
+                      subscribe: () => () => undefined
+                    }
+                  }, ({ relativePath }) => React.createElement('main', { 'data-page': 'overview' }, relativePath || '首页'))
+                }
+              }`,
+            }),
+          )
+        }
+        if (input.endsWith('/approve')) return Promise.resolve(stubResponse(200, { accepted: true }))
+        return Promise.resolve(stubResponse(404, { error: { code: 'not-found', message: 'x' } }))
+      }),
+    )
+    const runtime = await DshDynamicClientRuntime.create(new HttpDynamicClientHost(agentId, episodeId), {
+      querySelectorAll: () => [],
+    })
+    const pending: DynamicInventoryRow = {
+      pluginId: 'plugin-page',
+      agentId,
+      packages: [
+        {
+          packageId: 'package-page',
+          name: '动态项目页',
+          purpose: '验证动态页面注册。',
+          hasHostHalf: false,
+          hasClientHalf: true,
+        },
+      ],
+      latestRun: {
+        pluginRunId: 'run-page',
+        packageId: 'package-page',
+        mode: 'run',
+        status: 'awaiting-approval',
+        approvalRequestId: 'approval-page',
+        requiresApproval: true,
+      },
+    }
+    try {
+      await runtime.reconcile([pending])
+      await runtime.approve('approval-page')
+      expect(runtime.pagePermissions()).toEqual({ permissions: ['agents.read'], networkOrigins: [] })
+      const [entry] = runtime.pageEntries()
+      expect(entry?.page).toMatchObject({ entryId: 'overview', objectPane: 'navigation' })
+      expect(entry?.navigation?.getSnapshot()).toMatchObject({ groups: [{ id: 'main' }] })
+      expect(entry?.navigation?.getSnapshot()).toBe(entry?.navigation?.getSnapshot())
+      const rendered = createElement(entry!.component, {
+        pageInstanceId: 'preview',
+        entryId: 'overview',
+        relativePath: 'tasks',
+        search: {},
+        navigate: () => undefined,
+      })
+      expect(renderToStaticMarkup(rendered)).toBe('<main data-page="overview">tasks</main>')
+      await runtime.reconcile([{ ...pending, activeRun: { pluginRunId: 'run-page', packageId: 'package-page' } }])
+      await runtime.reconcile([])
+      expect(runtime.pageEntries()).toEqual([])
+      expect(runtime.pagePermissions()).toEqual({ permissions: [], networkOrigins: [] })
+    } finally {
+      await runtime.dispose()
+    }
+  })
+
   it('retracts DSH WebUI root registrations and reports the product Slot guard failure', async () => {
     const guardReports: unknown[] = []
     vi.stubGlobal(

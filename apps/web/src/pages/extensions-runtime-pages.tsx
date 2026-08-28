@@ -1,5 +1,14 @@
-import { ArrowRight, Boxes, Check, Download, FileArchive, Save, Sparkles, Trash2, Upload } from 'lucide-react'
-import { HostApiContracts, HostApiErrorSchema, type HostApiResponse } from '@nekro-nxt/contracts'
+import { DndContext, KeyboardSensor, PointerSensor, closestCenter, useSensor, useSensors } from '@dnd-kit/core'
+import {
+  SortableContext,
+  arrayMove,
+  sortableKeyboardCoordinates,
+  useSortable,
+  verticalListSortingStrategy,
+} from '@dnd-kit/sortable'
+import { CSS } from '@dnd-kit/utilities'
+import { ArrowRight, Boxes, Download, FileArchive, GripVertical, Save, Sparkles, Trash2, Upload } from 'lucide-react'
+import { HostApiContracts, HostApiErrorSchema, type HostApiResponse, type HostUiPageEntry } from '@nekro-nxt/contracts'
 import { useEffect, useState } from 'react'
 import { Navigate, useParams, useSearchParams } from 'react-router-dom'
 import { useNxtNavigate } from '../shell/nxt-link.js'
@@ -10,6 +19,7 @@ import {
   Button,
   ConfirmDialog,
   Field,
+  IconButton,
   Input,
   SelectField,
   StageCrossfade,
@@ -20,12 +30,166 @@ import {
 } from '../ui-kit/index.js'
 import styles from './product-pages.module.css'
 import { DynamicClientSlots } from '../dynamic-client-coordinator.js'
-import { ExtensionDetailsExtensionSlots } from '../persistent-extension-client.js'
+import { ExtensionActivationExtensionSlots } from '../persistent-extension-client.js'
 
 const extensionLabel = (activeAgentCount: number): string =>
   activeAgentCount > 0 ? `${activeAgentCount} 个智能体正在使用` : '尚未启用'
 
 const extensionTone = (activeAgentCount: number): StatusTone => (activeAgentCount > 0 ? 'success' : 'neutral')
+
+const extensionScopeLabel = (scope: LocalExtensionSummary['scope']): string =>
+  scope === 'host-adapter' ? '本机适配器' : scope === 'host-ui' ? '页面扩展' : '智能体扩展'
+
+function SortableHostUiPageRow({
+  page,
+  ownerLabel,
+  pending,
+  onVisibleChange,
+}: {
+  readonly page: HostUiPageEntry
+  readonly ownerLabel: string
+  readonly pending: boolean
+  readonly onVisibleChange: (visible: boolean) => void
+}) {
+  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
+    id: page.pageInstanceId,
+  })
+  const { onKeyDown: onSortableKeyDown, onPointerDown: onSortablePointerDown } = listeners ?? {}
+  return (
+    <div
+      ref={setNodeRef}
+      className={styles.hostUiPageRow}
+      data-dragging={isDragging ? '' : undefined}
+      style={{ transform: CSS.Transform.toString(transform), transition }}
+    >
+      <IconButton
+        className={styles.hostUiPageDrag}
+        label={`拖动“${page.title}”排序`}
+        tooltip={false}
+        disabled={pending}
+        {...attributes}
+        onPointerDown={(event) => {
+          onSortablePointerDown?.(event)
+        }}
+        onKeyDown={(event) => {
+          onSortableKeyDown?.(event)
+        }}
+      >
+        <GripVertical size={16} aria-hidden="true" />
+      </IconButton>
+      <span className={styles.hostUiPageCopy}>
+        <strong>{page.title}</strong>
+        <small>
+          {ownerLabel} · {page.objectPane === 'navigation' ? '带对象列' : '全宽页面'}
+        </small>
+      </span>
+      {page.diagnostic && page.diagnostic.status !== 'ready' ? (
+        <StatusBadge tone="error">加载异常</StatusBadge>
+      ) : (
+        <StatusBadge tone={page.visible ? 'success' : 'neutral'}>{page.visible ? '侧栏可见' : '已隐藏'}</StatusBadge>
+      )}
+      <SwitchControl
+        label={`${page.visible ? '隐藏' : '显示'}“${page.title}”入口`}
+        checked={page.visible}
+        disabled={pending}
+        onCheckedChange={onVisibleChange}
+      />
+    </div>
+  )
+}
+
+function HostUiPageManager() {
+  const hostUi = useProductStore((state) => state.hostUi)
+  const extensions = useProductStore((state) => state.extensions)
+  const [pages, setPages] = useState<readonly HostUiPageEntry[]>(hostUi.pages)
+  const [pending, setPending] = useState(false)
+  const sensors = useSensors(
+    useSensor(PointerSensor, { activationConstraint: { distance: 5 } }),
+    useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates }),
+  )
+  useEffect(() => setPages(hostUi.pages), [hostUi.pages, hostUi.preferencesRevision])
+  const commit = async (next: readonly HostUiPageEntry[]): Promise<void> => {
+    if (pending) return
+    setPages(next)
+    setPending(true)
+    try {
+      const response = await fetch('/api/host-ui/page-preferences', {
+        method: 'PUT',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          expectedRevision: hostUi.preferencesRevision,
+          entries: next.map(({ pageInstanceId, visible }) => ({ pageInstanceId, visible })),
+        }),
+      })
+      const body: unknown = await response.json()
+      if (!response.ok) {
+        const parsed = HostApiErrorSchema.safeParse(body)
+        throw new Error(parsed.success ? parsed.data.error.message : `保存页面入口失败（HTTP ${response.status}）。`)
+      }
+      HostApiContracts.updateHostUiPagePreferences.parseResponse(body)
+      await useProductStore.getState().refreshHost()
+    } catch (error) {
+      setPages(hostUi.pages)
+      notify(error instanceof Error ? error.message : String(error), 'error', 'host-ui-page-preferences')
+      await useProductStore
+        .getState()
+        .refreshHost()
+        .catch(() => undefined)
+    } finally {
+      setPending(false)
+    }
+  }
+  return (
+    <div className={[styles.page, styles.desktopPage].join(' ')} data-product-page="host-ui-pages">
+      <PageHeader icon={Boxes} title="页面入口" meta="管理扩展页面在侧栏中的顺序和可见状态。" quiet />
+      {pages.length === 0 ? (
+        <EmptyState title="没有扩展页面" description="安装带页面入口的本机扩展后，入口会出现在侧栏。" />
+      ) : (
+        <section className={styles.hostUiPageManager} aria-label="扩展页面入口">
+          <DndContext
+            sensors={sensors}
+            collisionDetection={closestCenter}
+            onDragEnd={({ active, over }) => {
+              if (!over || active.id === over.id) return
+              const oldIndex = pages.findIndex(({ pageInstanceId }) => pageInstanceId === active.id)
+              const newIndex = pages.findIndex(({ pageInstanceId }) => pageInstanceId === over.id)
+              if (oldIndex < 0 || newIndex < 0) return
+              void commit(arrayMove([...pages], oldIndex, newIndex))
+            }}
+          >
+            <SortableContext
+              items={pages.map(({ pageInstanceId }) => pageInstanceId)}
+              strategy={verticalListSortingStrategy}
+            >
+              {pages.map((page) => {
+                const ownerExtensionId = page.owner.kind === 'extension' ? page.owner.extensionId : undefined
+                const ownerLabel =
+                  ownerExtensionId !== undefined
+                    ? (extensions.find(({ id }) => id === ownerExtensionId)?.name ?? '已移除的扩展')
+                    : 'DSH 扩展'
+                return (
+                  <SortableHostUiPageRow
+                    key={page.pageInstanceId}
+                    page={page}
+                    pending={pending}
+                    ownerLabel={ownerLabel}
+                    onVisibleChange={(visible) =>
+                      void commit(
+                        pages.map((candidate) =>
+                          candidate.pageInstanceId === page.pageInstanceId ? { ...candidate, visible } : candidate,
+                        ),
+                      )
+                    }
+                  />
+                )
+              })}
+            </SortableContext>
+          </DndContext>
+        </section>
+      )}
+    </div>
+  )
+}
 
 export const extensionDescription = (description: string): string =>
   description
@@ -39,11 +203,12 @@ export const extensionDescription = (description: string): string =>
     .replace(/([\p{Script=Han}])\s+([与和及、，。；])/gu, '$1$2')
 
 export const contributionLabel = (contribution: string): string => {
-  const match = /^(工具|RPC|界面)[：:]\s*(.+)$/u.exec(contribution)
+  const match = /^(工具|RPC|界面|页面)[：:]\s*(.+)$/u.exec(contribution)
   if (!match) return contribution
   const [, kind, name = ''] = match
   if (kind === '工具') return `智能体工具 · ${name}`
   if (kind === 'RPC') return `界面数据接口 · ${name}`
+  if (kind === '页面') return `专属页面 · ${name}`
   if (name === 'agent.workbench.sections' || name === '智能体工作台') return '智能体工作台面板'
   if (name === 'extension.details.panels' || name === '扩展详情') return '扩展详情面板'
   return `产品界面 · ${name}`
@@ -54,6 +219,7 @@ export const contractVersionLabel = (version: string): string =>
 
 export function ExtensionsPage() {
   const { extensionId = '' } = useParams()
+  const [extensionSearchParams] = useSearchParams()
   const navigate = useNxtNavigate()
   const host = useProductStore((state) => state.host)
   const agents = useProductStore((state) => state.agents)
@@ -62,6 +228,7 @@ export function ExtensionsPage() {
   const [revisionByAgent, setRevisionByAgent] = useState<Record<string, string>>({})
   const [installationPending, setInstallationPending] = useState(false)
   const [uninstallOpen, setUninstallOpen] = useState(false)
+  const [permissionRevisionId, setPermissionRevisionId] = useState('')
   const [deleteOpen, setDeleteOpen] = useState(false)
   const [deletePending, setDeletePending] = useState(false)
   const [importInspection, setImportInspection] = useState<HostApiResponse<'inspectExtensionImport'> | null>(null)
@@ -70,6 +237,7 @@ export function ExtensionsPage() {
   const [importFileName, setImportFileName] = useState('')
   const [importDragging, setImportDragging] = useState(false)
   const [focusedRevisionId, setFocusedRevisionId] = useState('')
+  const [detailsAgentId, setDetailsAgentId] = useState('')
   const selectedId = extensionId || extensions[0]?.id || ''
 
   const changeActivation = async (
@@ -101,26 +269,26 @@ export function ExtensionsPage() {
   const selected = extensions.find((extension) => extension.id === selectedId) ?? extensions[0]
   useEffect(() => {
     setFocusedRevisionId(selected?.revisionId ?? '')
+    setDetailsAgentId('')
   }, [selected?.id, selected?.revisionId])
   const focusedRevision =
     selected?.revisions.find((revision) => revision.id === focusedRevisionId) ?? selected?.revisions.at(-1)
-  const detailsActivation =
-    selected?.activations.find((activation) => activation.agentId === selected.createdByAgentId) ??
-    selected?.activations[0]
+  const permissionRevision = selected?.revisions.find((revision) => revision.id === permissionRevisionId)
+  const detailsActivation = selected?.activations.find((activation) => activation.agentId === detailsAgentId)
   const selectedClientDiagnostic = selected?.clientDiagnostics.find(
     (diagnostic) =>
       diagnostic.agentId === detailsActivation?.agentId && diagnostic.revisionId === detailsActivation.revisionId,
   )
   const visibleClientDiagnostic =
-    selected?.scope === 'host-adapter' ? selected.hostClientDiagnostic : selectedClientDiagnostic
+    selected === undefined || selected.scope === 'agent' ? selectedClientDiagnostic : selected.hostClientDiagnostic
   const focusedVerification = focusedRevision?.verification
   const focusedClientDiagnostic =
     visibleClientDiagnostic?.revisionId === focusedRevision?.id ? visibleClientDiagnostic : undefined
-  const changeInstallation = async (revisionId: string | null): Promise<boolean> => {
+  const changeInstallation = async (revisionId: string | null, permissionDigest?: string): Promise<boolean> => {
     if (!selected || installationPending) return false
     setInstallationPending(true)
     try {
-      await useProductStore.getState().setHostExtensionInstalled(selected.id, revisionId)
+      await useProductStore.getState().setHostExtensionInstalled(selected.id, revisionId, permissionDigest)
       notify(
         revisionId === null ? `已卸载“${selected.name}”。` : `已安装“${selected.name}”的所选版本。`,
         'success',
@@ -203,6 +371,7 @@ export function ExtensionsPage() {
       setDeletePending(false)
     }
   }
+  if (!extensionId && extensionSearchParams.get('view') === 'pages') return <HostUiPageManager />
   if (!extensionId && extensions[0]) {
     return <Navigate to={`/extensions/${extensions[0].id}`} replace />
   }
@@ -212,25 +381,21 @@ export function ExtensionsPage() {
       <PageHeader
         icon={Boxes}
         title={selected?.name ?? '扩展库'}
-        meta={
-          selected
-            ? `${selected.scope === 'host-adapter' ? '本机适配器' : '智能体扩展'} · ${extensions.length} 个本地扩展`
-            : undefined
-        }
+        meta={selected ? `${extensionScopeLabel(selected.scope)} · ${extensions.length} 个本地扩展` : undefined}
         quiet
         actions={
           selected ? (
             <>
               <StatusBadge
                 tone={
-                  selected.scope === 'host-adapter'
+                  selected.scope !== 'agent'
                     ? selected.installation
                       ? 'success'
                       : 'neutral'
                     : extensionTone(selected.activations.length)
                 }
               >
-                {selected.scope === 'host-adapter'
+                {selected.scope !== 'agent'
                   ? selected.installation
                     ? '已安装到本机'
                     : '尚未安装'
@@ -289,7 +454,7 @@ export function ExtensionsPage() {
                   {selected.description ? extensionDescription(selected.description) : '暂无扩展说明。'}
                 </p>
                 <div className={styles.extensionMetaLine}>
-                  <span>{selected.scope === 'host-adapter' ? '本机适配器' : '智能体扩展'}</span>
+                  <span>{extensionScopeLabel(selected.scope)}</span>
                   <span>{selected.revisions.length} 个修订</span>
                   <span>{focusedRevision?.contributions.length ?? 0} 项内容</span>
                   <span>{selected.createdByAgent ? `保存来源：${selected.createdByAgent}` : '保存来源：本地导入'}</span>
@@ -308,7 +473,7 @@ export function ExtensionsPage() {
               </div>
             </section>
             <section className={[styles.activationSection, styles.extensionPrimarySection].join(' ')}>
-              {selected.scope === 'host-adapter' ? (
+              {selected.scope !== 'agent' ? (
                 <>
                   {selected.installation?.runtime && selected.installation.runtime.status !== 'active' ? (
                     <InlineFeedback tone="error">
@@ -319,7 +484,11 @@ export function ExtensionsPage() {
                   <div className={styles.sectionBar}>
                     <div>
                       <div className={styles.sectionHeading}>本机安装</div>
-                      <div className={styles.secondaryText}>可安装任意已验证修订。卸载时保留连接和历史。</div>
+                      <div className={styles.secondaryText}>
+                        {selected.scope === 'host-ui'
+                          ? '安装后，已设为可见的页面入口会出现在侧栏。'
+                          : '可安装任意已验证修订。卸载后连接和历史保留。'}
+                      </div>
                     </div>
                     {selected.installation ? (
                       <Button
@@ -349,7 +518,16 @@ export function ExtensionsPage() {
                             disabled={installed || installationPending}
                             loading={installationPending}
                             loadingLabel="正在切换…"
-                            onClick={() => void changeInstallation(revision.id)}
+                            onClick={() => {
+                              if (
+                                revision.verification?.permissionApprovalRequired &&
+                                revision.verification.permissionDigest
+                              ) {
+                                setPermissionRevisionId(revision.id)
+                                return
+                              }
+                              void changeInstallation(revision.id)
+                            }}
                           >
                             {selected.installation
                               ? latest
@@ -429,6 +607,21 @@ export function ExtensionsPage() {
                   ) : (
                     <p className={styles.secondaryText}>当前没有可配置的智能体。创建智能体后，可在此授权使用扩展。</p>
                   )}
+                  {selected.activations.length > 0 && selected.revisions.some((revision) => revision.clientBuilt) ? (
+                    <SelectField
+                      label="扩展界面所属智能体"
+                      helper="选择一个已启用关系，界面会使用对应智能体和修订的运行上下文。"
+                      value={detailsAgentId}
+                      onValueChange={setDetailsAgentId}
+                      options={[
+                        { value: '', label: '选择已启用的智能体' },
+                        ...selected.activations.map((activation) => ({
+                          value: activation.agentId,
+                          label: `${activation.agentName} · r${activation.revision}`,
+                        })),
+                      ]}
+                    />
+                  ) : null}
                 </>
               )}
             </section>
@@ -561,7 +754,11 @@ export function ExtensionsPage() {
                   <span>
                     <strong>{importInspection.displayName}</strong>
                     <small>
-                      {importInspection.scope === 'host-adapter' ? '本机适配器' : '智能体扩展'}
+                      {importInspection.scope === 'host-adapter'
+                        ? '本机适配器'
+                        : importInspection.scope === 'host-ui'
+                          ? '页面扩展'
+                          : '智能体扩展'}
                       {importInspection.idempotent ? ' · 本地已存在相同修订' : ' · 已通过文件检查'}
                     </small>
                   </span>
@@ -581,11 +778,13 @@ export function ExtensionsPage() {
               ) : null}
             </section>
             {selected.scope === 'agent' && detailsActivation ? (
-              <ExtensionDetailsExtensionSlots
+              <ExtensionActivationExtensionSlots
                 agentId={detailsActivation.agentId}
                 extensionId={selected.id}
                 revisionId={detailsActivation.revisionId}
                 activation="active"
+                activationId={`${detailsActivation.agentId}:${selected.id}`}
+                runtimeStatus={detailsActivation.runtime?.status ?? 'active'}
               />
             ) : null}
             <section className={styles.extensionDangerZone} aria-labelledby="extension-danger-heading">
@@ -607,11 +806,39 @@ export function ExtensionsPage() {
         ) : null}
       </StageCrossfade>
       <ConfirmDialog
+        open={permissionRevisionId !== ''}
+        onOpenChange={(open) => {
+          if (!open) setPermissionRevisionId('')
+        }}
+        title="批准页面权限"
+        description={
+          permissionRevision?.verification?.permissions
+            ? [
+                ...permissionRevision.verification.permissions.permissions,
+                ...permissionRevision.verification.permissions.networkOrigins.map((origin) => `网络：${origin}`),
+              ].join('、') || '此页面扩展未申请产品数据权限。'
+            : '无法读取此扩展版本的权限声明。'
+        }
+        confirmLabel="批准并安装"
+        confirmLoadingLabel="正在安装…"
+        onConfirm={async () => {
+          const digest = permissionRevision?.verification?.permissionDigest
+          if (!permissionRevision || !digest) return false
+          const installed = await changeInstallation(permissionRevision.id, digest)
+          if (installed) setPermissionRevisionId('')
+          return installed
+        }}
+      />
+      <ConfirmDialog
         open={uninstallOpen}
         onOpenChange={setUninstallOpen}
-        title="卸载适配器"
-        description="连接、频道和历史会保留，但重新安装相同适配器前不能收发消息。"
-        confirmLabel="卸载适配器"
+        title={selected?.scope === 'host-ui' ? '卸载页面扩展' : '卸载适配器'}
+        description={
+          selected?.scope === 'host-ui'
+            ? '对应页面入口会从侧栏和页面入口列表中移除。'
+            : '连接、频道和历史会保留，但重新安装相同适配器前不能收发消息。'
+        }
+        confirmLabel={selected?.scope === 'host-ui' ? '卸载页面扩展' : '卸载适配器'}
         confirmVariant="danger"
         onConfirm={() => changeInstallation(null)}
       />
@@ -622,7 +849,9 @@ export function ExtensionsPage() {
         description={
           selected?.scope === 'host-adapter'
             ? `删除操作会卸载本机适配器，并移除 ${selected.revisions.length} 个修订及源码。连接、频道和历史保留。`
-            : `删除操作会关闭 ${selected?.activations.length ?? 0} 个智能体使用关系，并移除 ${selected?.revisions.length ?? 0} 个修订及源码。`
+            : selected?.scope === 'host-ui'
+              ? `删除操作会卸载页面扩展，并移除 ${selected.revisions.length} 个修订、源码和页面入口。`
+              : `删除操作会关闭 ${selected?.activations.length ?? 0} 个智能体使用关系，并移除 ${selected?.revisions.length ?? 0} 个修订及源码。`
         }
         cancelLabel="保留扩展"
         confirmLabel="删除本地扩展"
@@ -729,7 +958,7 @@ export function CreatorPage() {
                 <span>3</span>
                 <div>
                   <strong>保存并启用</strong>
-                  <small>确认结果后保存版本，再独立启用给智能体。</small>
+                  <small>运行结果确认无误时，可保存为本地扩展；智能体授权在扩展详情中管理。</small>
                 </div>
               </li>
             </ol>
@@ -810,32 +1039,6 @@ export function CreatorPage() {
                   {dynamicStatus(selectedItem.status).label}
                 </StatusBadge>
               </div>
-              <ol className={styles.lifecycleSteps} aria-label="创造进度">
-                <li data-done="">
-                  <span>
-                    <Check size={12} aria-hidden="true" />
-                  </span>
-                  <small>描述需求</small>
-                </li>
-                <li data-done="">
-                  <span>
-                    <Check size={12} aria-hidden="true" />
-                  </span>
-                  <small>动态运行</small>
-                </li>
-                <li data-done={selectedItem.status === 'running' ? '' : undefined}>
-                  <span>3</span>
-                  <small>验证结果</small>
-                </li>
-                <li>
-                  <span>4</span>
-                  <small>保存版本</small>
-                </li>
-                <li>
-                  <span>5</span>
-                  <small>启用给智能体</small>
-                </li>
-              </ol>
               <div className={styles.creatorEvidence}>
                 <div>
                   <span>目标智能体</span>
@@ -857,12 +1060,14 @@ export function CreatorPage() {
               {selectedItem.status === 'awaiting-approval' && selectedItem.approvalRequestId ? (
                 <InlineFeedback tone="warning">这次动态运行正在等待界面预览确认。</InlineFeedback>
               ) : (
-                <InlineFeedback tone="info">只有正在运行的动态包可以保存；保存后再选择使用它的智能体。</InlineFeedback>
+                <InlineFeedback tone="info">
+                  运行状态正常。保存将生成本地扩展修订，智能体授权在扩展详情中管理。
+                </InlineFeedback>
               )}
               <div className={styles.sectionActionRow}>
                 <span>
-                  <strong>下一步</strong>
-                  <small>确认运行结果后保存为可追踪的本地扩展版本。</small>
+                  <strong>保存到本地扩展</strong>
+                  <small>保存内容成为新的不可变修订；动态运行由创造工作台独立管理。</small>
                 </span>
                 <span className={styles.rowActions}>
                   {selectedItem.approvalRequestId && selectedIndex >= 0 ? (

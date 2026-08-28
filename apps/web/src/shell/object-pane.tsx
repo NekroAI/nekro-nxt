@@ -832,6 +832,7 @@ function ConnectionTree() {
 
 function ExtensionTree() {
   const { extensionId } = useParams()
+  const location = useLocation()
   const extensions = useProductStore((state) => state.extensions)
   const host = useProductStore((state) => state.host)
   return (
@@ -842,6 +843,26 @@ function ExtensionTree() {
         </span>
       </div>
       <div className={shell.treeBody}>
+        <NxtNavLink
+          to="/extensions?view=pages"
+          className={() =>
+            [
+              styles.extensionNavItem,
+              !extensionId && location.search.includes('view=pages') ? styles.extensionNavItemActive : '',
+            ]
+              .filter(Boolean)
+              .join(' ')
+          }
+          data-nav-active={!extensionId && location.search.includes('view=pages') ? '' : undefined}
+        >
+          <NavGlyph active={!extensionId && location.search.includes('view=pages')}>
+            <Puzzle size={17} aria-hidden="true" />
+          </NavGlyph>
+          <span className={styles.navCopy}>
+            <strong>页面入口</strong>
+            <small>显隐与排序</small>
+          </span>
+        </NxtNavLink>
         {extensions.length === 0 ? (
           host.status === 'initializing' ? (
             <div className={styles.railEmpty}>正在读取…</div>

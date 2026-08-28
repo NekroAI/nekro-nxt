@@ -165,6 +165,10 @@ declare const styles: {
   readonly formStack: string
   readonly headerActionLabel: string
   readonly historyNotice: string
+  readonly hostUiPageCopy: string
+  readonly hostUiPageDrag: string
+  readonly hostUiPageManager: string
+  readonly hostUiPageRow: string
   readonly identityCell: string
   readonly inlineFieldAction: string
   readonly inlineFieldHint: string
@@ -185,8 +189,6 @@ declare const styles: {
   readonly kindMessage: string
   readonly kindTag: string
   readonly kindTool: string
-  readonly lifecycleSteps: string
-  readonly lifecycleStepsCompact: string
   readonly linkRow: string
   readonly listHeader: string
   readonly markdownPart: string
@@ -277,6 +279,8 @@ declare const styles: {
   readonly toolName: string
   readonly toolOut: string
   readonly toolRow: string
+  readonly toolRowGroup: string
+  readonly toolRowTrigger: string
   readonly traj: string
   readonly trajBar: string
   readonly trajBarCopy: string

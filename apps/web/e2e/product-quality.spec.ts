@@ -12,6 +12,7 @@ import {
   ExtensionIdSchema,
   ExtensionRevisionIdSchema,
   HostApiContracts,
+  HostUiPageInstanceIdSchema,
   OutboundIntentIdSchema,
 } from '@nekro-nxt/contracts'
 
@@ -26,6 +27,10 @@ const webConnectionId = ConnectionIdSchema.parse('con_web')
 const qqConnectionId = ConnectionIdSchema.parse('con_qq')
 const summaryExtensionId = ExtensionIdSchema.parse('ext_summary')
 const summaryRevisionId = ExtensionRevisionIdSchema.parse('xrv_summary')
+const dashboardExtensionId = ExtensionIdSchema.parse('ext_dashboard')
+const dashboardRevisionId = ExtensionRevisionIdSchema.parse('xrv_dashboard')
+const overviewPageId = HostUiPageInstanceIdSchema.parse('hup_DASHBOARD')
+const reportsPageId = HostUiPageInstanceIdSchema.parse('hup_REPORTS')
 const targetEpisodeId = EpisodeIdSchema.parse('eps_target')
 const visibleEventId = ChannelEventIdSchema.parse('evt_visible')
 const qqEventId = ChannelEventIdSchema.parse('evt_qqvisible')
@@ -541,6 +546,12 @@ const expectProductMotionSettled = async (page: Page): Promise<void> => {
   await expect(page.locator('[data-stage-layer="out"]')).toHaveCount(0)
   const activeLayer = page.locator('[data-stage-layer="in"]').last()
   if ((await activeLayer.count()) > 0) await expect(activeLayer).toHaveCSS('opacity', '1')
+  await page.evaluate(
+    () =>
+      new Promise<void>((resolve) => {
+        requestAnimationFrame(() => requestAnimationFrame(() => resolve()))
+      }),
+  )
 }
 
 test('writes the four public product screenshots from fictional production data', async ({ page }) => {
@@ -881,6 +892,8 @@ test('platform-user directory and persona references remain legible across deskt
       await page.goto('/users')
       await expect(page.getByRole('heading', { name: '平台用户' })).toBeVisible()
       await expect(page.getByText('成员甲', { exact: true })).toBeVisible()
+      await expect(page.getByText('正在连接', { exact: true })).toHaveCount(0)
+      await expectProductMotionSettled(page)
       const workspaceGeometry = await page.evaluate(() => {
         const stage = document.querySelector<HTMLElement>('main')
         const root = document.querySelector<HTMLElement>('[data-product-page="users"]')
@@ -1783,7 +1796,7 @@ test('redesigned relationship and lifecycle pages stay legible across representa
 
 test('the product Client runtime approves, renders, and retracts a live DSH interface without reloading', async ({
   page,
-}) => {
+}, testInfo) => {
   const failures = installRuntimeFailureGate(page)
   let phase: 'pending' | 'active' | 'stopped' = 'pending'
   let releaseStatus!: () => void
@@ -1900,12 +1913,33 @@ test('the product Client runtime approves, renders, and retracts a live DSH inte
         pluginRunId: 'run-1',
         name: '即时界面探针',
         code: `return {
-          inject: ['slots'],
+          inject: ['slots', 'pages'],
           apply(ctx) {
+            const navigationSnapshot = {
+              revision: 1,
+              groups: [{ id: 'main', label: '项目', items: [{ id: 'overview', label: '概览', path: 'overview', badge: '1' }] }]
+            }
             ctx.slots.register(
               { name: 'agent.workbench.sections', id: 'main' },
               () => React.createElement('section', { 'data-live-client': 'probe' }, '即时界面已真实加载')
             )
+            ctx.pages.declarePermissions({ permissions: ['agents.read'], networkOrigins: [] })
+            ctx.pages.register({
+              page: {
+                kind: 'host-page', entryId: 'overview', title: '项目概览',
+                description: '在创造工作台内验证页面结构。',
+                icon: { kind: 'host-icon', name: 'layout-dashboard' },
+                objectPane: 'navigation', startPath: 'overview'
+              },
+              navigation: {
+                getSnapshot: () => navigationSnapshot,
+                subscribe: () => () => undefined
+              }
+            }, ({ relativePath }) => React.createElement(
+              'section',
+              { 'data-live-page': 'probe' },
+              '动态页面：' + relativePath
+            ))
           }
         }`,
       }),
@@ -1921,16 +1955,25 @@ test('the product Client runtime approves, renders, and retracts a live DSH inte
     return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ ok: true }) })
   })
 
+  await page.setViewportSize({ width: 1440, height: 900 })
+  await page.emulateMedia({ colorScheme: 'light', reducedMotion: 'reduce' })
   await page.goto('/work/creator')
   await page.getByRole('button', { name: '审查界面预览' }).click()
   await page.getByRole('dialog').getByRole('button', { name: '允许本次预览' }).click()
   await expect(page.getByText('即时界面已真实加载')).toBeVisible()
+  await expect(page.getByText('项目概览', { exact: true })).toBeVisible()
+  await expect(page.getByRole('navigation', { name: '项目概览 预览导航' })).toBeVisible()
+  await expect(page.getByRole('button', { name: /概览/u })).toBeVisible()
+  await expect(page.getByText('动态页面：overview', { exact: true })).toBeVisible()
   await expect.poll(() => calls).toContain('report-client-verification')
   expect(calls).toEqual(['run-host-half', 'get-client-code', 'approve', 'report-client-verification'])
+  await assertViewportIntegrity(page)
+  await capture(page, testInfo, 'dynamic-host-page-preview-light-1440')
 
   phase = 'stopped'
   releaseStatus()
   await expect(page.getByText('即时界面已真实加载')).toBeHidden()
+  await expect(page.getByText('动态页面：overview', { exact: true })).toBeHidden()
   await expect(page.getByText('已停止', { exact: true }).first()).toBeVisible()
   expect(failures, failures.join('\n')).toEqual([])
 })
@@ -2064,6 +2107,249 @@ test('the creator saves the exact running Package and selects the resulting exte
     description: '验证创造工作台保存结果。',
   })
   expect(clientCodeRequests).toBe(0)
+  expect(failures, failures.join('\n')).toEqual([])
+})
+
+test('Host UI pages load through the production shell and share sidebar preferences', async ({ page }, testInfo) => {
+  const failures = installRuntimeFailureGate(page)
+  const buildKey = 'e'.repeat(64)
+  const overviewPage = {
+    kind: 'host-page' as const,
+    entryId: 'overview',
+    title: '项目中心',
+    description: '查看项目与任务状态。',
+    icon: { kind: 'host-icon' as const, name: 'layout-dashboard' as const },
+    objectPane: 'navigation' as const,
+    startPath: 'overview',
+  }
+  const reportsPage = {
+    kind: 'host-page' as const,
+    entryId: 'reports',
+    title: '项目报表',
+    description: '查看项目统计结果。',
+    icon: { kind: 'host-icon' as const, name: 'bar-chart' as const },
+    objectPane: 'hidden' as const,
+    startPath: 'daily',
+  }
+  let preferencesRevision = 3
+  let cssLoads = 0
+  let clientLoads = 0
+  const calls: unknown[] = []
+  let pages = [
+    {
+      pageInstanceId: overviewPageId,
+      owner: { kind: 'extension' as const, extensionId: dashboardExtensionId, revisionId: dashboardRevisionId },
+      entryId: overviewPage.entryId,
+      title: overviewPage.title,
+      description: overviewPage.description,
+      icon: overviewPage.icon,
+      objectPane: overviewPage.objectPane,
+      startPath: overviewPage.startPath,
+      visible: true,
+      sortOrder: 0,
+      routeBase: `/apps/${overviewPageId}`,
+      client: { moduleUrl: '/fixtures/host-ui-client.mjs', buildKey },
+      createdAt: 1_725_000_000_000,
+      updatedAt: 1_725_000_000_000,
+    },
+    {
+      pageInstanceId: reportsPageId,
+      owner: { kind: 'extension' as const, extensionId: dashboardExtensionId, revisionId: dashboardRevisionId },
+      entryId: reportsPage.entryId,
+      title: reportsPage.title,
+      description: reportsPage.description,
+      icon: reportsPage.icon,
+      objectPane: reportsPage.objectPane,
+      startPath: reportsPage.startPath,
+      visible: true,
+      sortOrder: 1,
+      routeBase: `/apps/${reportsPageId}`,
+      client: { moduleUrl: '/fixtures/host-ui-client.mjs', buildKey },
+      createdAt: 1_725_000_000_000,
+      updatedAt: 1_725_000_000_000,
+    },
+  ]
+  const snapshot = () =>
+    HostApiContracts.snapshot.response.parse({
+      ...productSnapshot,
+      extensions: [
+        ...productSnapshot.extensions,
+        {
+          id: dashboardExtensionId,
+          slug: 'project-dashboard',
+          displayName: '项目工作台',
+          description: '集中查看项目状态。',
+          scope: 'host-ui',
+          revisions: [
+            {
+              id: dashboardRevisionId,
+              revisionNumber: 1,
+              createdAt: 1_725_000_000_000,
+              scope: 'host-ui',
+              contributions: ['页面：项目中心', '页面：项目报表'],
+              verification: {
+                verifiedAt: 1_725_000_000_000,
+                dshVersion: '0.1.1-rc.2',
+                contractVersion: 'nekro-nxt-extension-v3',
+                hostBuilt: false,
+                clientBuilt: true,
+                buildKey,
+                toolInvocationCount: 0,
+                rpcMethods: [],
+                renderedSlots: [],
+                renderedPages: [overviewPage, reportsPage],
+                permissions: { permissions: ['runtime.read'], networkOrigins: [] },
+              },
+            },
+          ],
+          activations: [],
+          installation: {
+            extensionRevisionId: dashboardRevisionId,
+            installedAt: 1_725_000_000_000,
+            runtime: { status: 'active', observedAt: 1_725_000_000_000 },
+          },
+          hostUiPermission: {
+            declaration: { permissions: ['runtime.read'], networkOrigins: [] },
+            permissionDigest: 'a'.repeat(64),
+            approvalRequired: false,
+          },
+          clientDiagnostics: [],
+        },
+      ],
+      hostUi: { preferencesRevision, pages },
+    })
+
+  await page.route('**/api/snapshot', (route) =>
+    route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(snapshot()) }),
+  )
+  await page.route('**/fixtures/host-ui-client.css*', (route) => {
+    cssLoads += 1
+    return route.fulfill({
+      status: 200,
+      contentType: 'text/css; charset=utf-8',
+      body: '[data-host-ui-page] .fixture-page { min-height: 100%; }',
+    })
+  })
+  await page.route('**/fixtures/host-ui-client.mjs*', (route) => {
+    clientLoads += 1
+    return route.fulfill({
+      status: 200,
+      contentType: 'text/javascript; charset=utf-8',
+      body: `
+        const navigationSnapshot = {
+          revision: 1,
+          groups: [{ id: 'projects', label: '项目', items: [
+            { id: 'overview', label: '项目总览', description: '查看当前进展', path: 'overview', badge: '3' },
+            { id: 'tasks', label: '待办任务', path: 'tasks', status: 'warning', badge: '2' }
+          ] }]
+        }
+        export default ({ React, host }) => ({
+          apply(ctx) {
+            const disposeOverview = ctx.pages.register(
+              { page: ${JSON.stringify(overviewPage)}, navigation: {
+                getSnapshot: () => navigationSnapshot,
+                subscribe: () => () => undefined
+              } },
+              function Overview(props) {
+                const [runtimeCount, setRuntimeCount] = React.useState('读取中')
+                React.useEffect(() => {
+                  let active = true
+                  host.call('runtime.list', {}).then((value) => {
+                    if (active) setRuntimeCount(String(value.length))
+                  })
+                  return () => { active = false }
+                }, [])
+                return React.createElement('main', { className: 'fixture-page' },
+                  React.createElement('h1', null, '项目中心'),
+                  React.createElement('p', null, '路径：' + props.relativePath),
+                  React.createElement('p', null, '运行会话：' + runtimeCount)
+                )
+              }
+            )
+            const disposeReports = ctx.pages.register(
+              { page: ${JSON.stringify(reportsPage)} },
+              (props) => React.createElement('main', { className: 'fixture-page' },
+                React.createElement('h1', null, '项目报表'),
+                React.createElement('p', null, '报表路径：' + props.relativePath)
+              )
+            )
+            return () => { disposeReports(); disposeOverview() }
+          }
+        })
+      `,
+    })
+  })
+  await page.route('**/api/host-ui/pages/*/call', async (route) => {
+    calls.push(route.request().postDataJSON())
+    return route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({ value: [{ id: 'episode-fixture', status: 'active' }] }),
+    })
+  })
+  await page.route('**/api/host-ui/pages/*/diagnostic', (route) =>
+    route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ recorded: true }) }),
+  )
+  await page.route('**/api/host-ui/page-preferences', async (route) => {
+    const request = HostApiContracts.updateHostUiPagePreferences.parseRequest(route.request().postDataJSON())
+    expect(request.expectedRevision).toBe(preferencesRevision)
+    pages = request.entries.map((preference, index) => {
+      const current = pages.find(({ pageInstanceId }) => pageInstanceId === preference.pageInstanceId)
+      if (!current) throw new Error('页面偏好包含未知入口。')
+      return { ...current, visible: preference.visible, sortOrder: index, updatedAt: Date.now() }
+    })
+    preferencesRevision += 1
+    return route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({ revision: preferencesRevision }),
+    })
+  })
+
+  await page.setViewportSize({ width: 1440, height: 900 })
+  await page.emulateMedia({ colorScheme: 'light', reducedMotion: 'reduce' })
+  await page.goto(`/apps/${overviewPageId}/overview`)
+  await expect(page.getByRole('link', { name: '项目中心', exact: true })).toBeVisible()
+  await expect(page.getByRole('link', { name: '项目报表', exact: true })).toBeVisible()
+  await expect(page.getByRole('navigation', { name: '项目中心导航' })).toBeVisible()
+  await expect(page.getByRole('button', { name: /项目总览/u })).toBeVisible()
+  await expect(
+    page.locator('[data-host-ui-page]').getByRole('heading', { name: '项目中心', exact: true }),
+  ).toBeVisible()
+  await expect(page.getByText('路径：overview', { exact: true })).toBeVisible()
+  await expect(page.getByText('运行会话：1', { exact: true })).toBeVisible()
+  await expect.poll(() => calls.length).toBeGreaterThan(0)
+  expect(calls[0]).toEqual({ method: 'runtime.list', input: {} })
+  await assertViewportIntegrity(page)
+  await capture(page, testInfo, 'host-ui-navigation-light-1440')
+
+  await page.getByRole('link', { name: '项目报表', exact: true }).click()
+  await expect(page).toHaveURL(new RegExp(`/apps/${reportsPageId}/daily$`, 'u'))
+  await expect(page.getByRole('heading', { name: '项目报表', exact: true })).toBeVisible()
+  await expect(page.getByText('报表路径：daily', { exact: true })).toBeVisible()
+  await expect(page.locator('[data-object-pane-hidden]')).toBeVisible()
+  await expect
+    .poll(() => page.locator('aside[aria-label="对象列"]').evaluate((element) => element.getBoundingClientRect().width))
+    .toBeLessThanOrEqual(2)
+  await expect
+    .poll(() => page.locator('[data-shell-body] > main').evaluate((element) => element.getBoundingClientRect().left))
+    .toBeLessThanOrEqual(68)
+  await page.setViewportSize({ width: 1100, height: 720 })
+  await page.emulateMedia({ colorScheme: 'dark', reducedMotion: 'reduce' })
+  await page.getByRole('button', { name: '主题：浅色；切换为深色', exact: true }).click()
+  await expect(page.locator('html')).toHaveAttribute('data-theme', 'dark')
+  await assertViewportIntegrity(page)
+  await capture(page, testInfo, 'host-ui-full-width-dark-1100')
+
+  await page.goto('/extensions?view=pages')
+  await expect(page.getByRole('heading', { name: '页面入口', exact: true })).toBeVisible()
+  await page.getByRole('switch', { name: '隐藏“项目报表”入口', exact: true }).click()
+  await expect(page.getByRole('link', { name: '项目报表', exact: true })).toBeHidden()
+  await expect(page.getByText('已隐藏', { exact: true })).toBeVisible()
+  await assertViewportIntegrity(page)
+  await capture(page, testInfo, 'host-ui-page-manager-dark-1100')
+  expect(clientLoads).toBe(1)
+  expect(cssLoads).toBe(1)
   expect(failures, failures.join('\n')).toEqual([])
 })
 
@@ -2223,6 +2509,8 @@ test('a verified Client extension restores across product pages and retracts whe
   await expect(page.getByText('选择使用这个扩展的智能体。', { exact: true })).toBeVisible()
   await expect(page.getByText('界面数据接口 · summary.status', { exact: true })).toBeVisible()
   await expect(page.getByText('DSH 版本').locator('..')).toContainText('0.1.1-rc.2')
+  await page.getByLabel('扩展界面所属智能体').click()
+  await page.getByRole('option', { name: '资料员 · r2', exact: true }).click()
   await expect(page.getByText('扩展验证面板', { exact: true })).toBeVisible()
   await expect(page.getByText('已接入产品 Slot', { exact: true })).toBeVisible()
   await expect(page.getByRole('switch', { name: '停止让资料员使用“群聊摘要”', exact: true })).toBeChecked()
@@ -2234,6 +2522,9 @@ test('a verified Client extension restores across product pages and retracts whe
 
   await page.setViewportSize({ width: 1280, height: 800 })
   await page.emulateMedia({ colorScheme: 'dark', reducedMotion: 'reduce' })
+  await page.getByRole('button', { name: '主题：浅色；切换为深色', exact: true }).click()
+  await expect(page.locator('html')).toHaveAttribute('data-theme', 'dark')
+  await expectProductMotionSettled(page)
   await expect(page.getByText('r2 的内容', { exact: true })).toBeVisible()
   await assertViewportIntegrity(page)
   await capture(page, testInfo, 'persistent-extension-details-dark-1280')
@@ -2404,6 +2695,8 @@ test('a failed Client factory stays isolated and can be reloaded without disabli
   })
 
   await page.reload()
+  await page.getByLabel('扩展界面所属智能体').click()
+  await page.getByRole('option', { name: '资料员 · r2', exact: true }).click()
   await expect(page.getByText('扩展界面加载失败', { exact: true })).toBeVisible()
   await expect(page.getByText('合成 Client factory 失败', { exact: true })).toBeVisible()
   await expect(page.getByRole('switch', { name: '停止让资料员使用“群聊摘要”', exact: true })).toBeChecked()

@@ -29,6 +29,8 @@ import { AssetService, CoreService } from '@nekro-nxt/core'
 import type { AgentRevisionContent, ConnectionRecord } from '@nekro-nxt/core'
 import {
   LogicalMessageIdSchema,
+  DshNxtHostUiSchema,
+  HostUiPageInstanceIdSchema,
   PhysicalDeliveryIdSchema,
   type AgentId,
   type ChannelId,
@@ -44,6 +46,7 @@ import {
   ExtensionService,
   ExtensionSourceStore,
   HostExtensionInstallationCoordinator,
+  hostUiPermissionDigest,
 } from '@nekro-nxt/extension-runtime'
 import {
   completeDshSessionStoragePreparation,
@@ -55,6 +58,7 @@ import {
   type DshSessionStoragePreparation,
 } from '@nekro-nxt/storage-sqlite'
 import { readFile } from 'node:fs/promises'
+import { randomUUID } from 'node:crypto'
 import path from 'node:path'
 import { monotonicFactory } from 'ulid'
 import { ChannelExtensionActivationHost, DshHostRuntime } from './index.js'
@@ -492,7 +496,12 @@ export class NekroRuntime {
   async removeDshPluginPackage(packageId: DshPluginPackageId): Promise<void> {
     const packageRecord = this.repository.getDshPluginPackage(packageId)
     if (!packageRecord) throw new Error('DSH 插件包不存在。')
+    const entryIds = this.repository.listDshPluginEntries(packageId).map(({ id }) => id)
     await this.host.disableInstalledDshPluginPackage(packageId)
+    for (const entryId of entryIds) {
+      this.repository.deleteHostUiDshPages(entryId)
+      this.repository.deleteHostUiPermissionGrant(`dsh:${entryId}`)
+    }
     const trashDirectory = await this.dshPluginInstaller.moveToTrash(packageId)
     try {
       this.repository.deleteDshPluginPackage(packageId)
@@ -634,12 +643,74 @@ export class NekroRuntime {
   /** Resume persisted Episodes, Admissions, Outbounds and active Extensions after a cold start. */
   async recover(): Promise<void> {
     await this.installation.restore()
+    await this.#restoreDshHostUiPages()
     for (const connection of this.core.listConnections()) {
       await this.#mountAdapter(connection.id)
     }
     await this.channels.recoverProcessingFeedback()
     await this.channels.recover()
     await this.activation.restore()
+  }
+
+  async #restoreDshHostUiPages(): Promise<void> {
+    for (const activation of this.repository
+      .listDshPluginActivations()
+      .filter((candidate) => candidate.target === 'host')) {
+      const entry = this.repository.getDshPluginEntry(activation.entryId)
+      const packageRecord = entry ? this.repository.getDshPluginPackage(entry.packageId) : undefined
+      if (!entry || !packageRecord) continue
+      const manifest = packageRecord.manifest
+      const nekroNxt =
+        typeof manifest === 'object' && manifest !== null && !Array.isArray(manifest) ? manifest['nekroNxt'] : undefined
+      const metadata = DshNxtHostUiSchema.safeParse(
+        typeof nekroNxt === 'object' && nekroNxt !== null && !Array.isArray(nekroNxt) ? nekroNxt['hostUi'] : undefined,
+      )
+      if (!metadata.success || metadata.data.entryKey !== entry.entryKey) {
+        this.repository.deleteHostUiDshPages(entry.id)
+        continue
+      }
+      const permissionDigest = hostUiPermissionDigest(metadata.data.permissions)
+      const grant = this.repository.getHostUiPermissionGrant(`dsh:${entry.id}`)
+      if (grant?.artifactDigest !== packageRecord.packageDigest || grant.permissionDigest !== permissionDigest) {
+        this.repository.deleteHostUiDshPages(entry.id)
+        continue
+      }
+      try {
+        await this.dshPluginInstaller.readHostUiClient(entry.id)
+        const pages = this.repository.replaceHostUiDshPages({
+          entryId: entry.id,
+          artifactDigest: packageRecord.packageDigest,
+          pages: metadata.data.pages,
+          clientBuildKey: packageRecord.packageDigest,
+          now: this.#now(),
+          nextPageInstanceId: () => HostUiPageInstanceIdSchema.parse(`hup_${randomUUID().replaceAll('-', '')}`),
+        })
+        for (const page of pages) {
+          this.repository.upsertHostUiDiagnostic({
+            pageInstanceId: page.pageInstanceId,
+            status: 'ready',
+            observedAt: this.#now(),
+          })
+        }
+      } catch (error) {
+        const pages = this.repository.replaceHostUiDshPages({
+          entryId: entry.id,
+          artifactDigest: packageRecord.packageDigest,
+          pages: metadata.data.pages,
+          clientBuildKey: packageRecord.packageDigest,
+          now: this.#now(),
+          nextPageInstanceId: () => HostUiPageInstanceIdSchema.parse(`hup_${randomUUID().replaceAll('-', '')}`),
+        })
+        for (const page of pages) {
+          this.repository.upsertHostUiDiagnostic({
+            pageInstanceId: page.pageInstanceId,
+            status: 'restore-failed',
+            message: error instanceof Error ? error.message : String(error),
+            observedAt: this.#now(),
+          })
+        }
+      }
+    }
   }
 
   subscribeConnectionChanges(listener: () => void): () => void {

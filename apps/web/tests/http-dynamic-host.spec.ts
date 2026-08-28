@@ -120,6 +120,8 @@ describe('HttpDynamicClientHost (browser dynamic Client circuit)', () => {
       pluginRunId: 'run-7',
       renderedSlots: [],
       renderedHostSlots: [{ name: 'conversation.message.rich', key: 'synthetic-chat:card' }],
+      renderedPages: [],
+      permissions: { permissions: [], networkOrigins: [] },
     })
   })
 

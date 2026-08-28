@@ -49,7 +49,7 @@ export interface ProductClientSlotEntry<Props extends object> {
   readonly component: (props: Props) => React.ReactNode
 }
 
-const DEFAULT_EXTENSION_CLIENT_STYLES: ExtensionClientStyles = {
+export const DEFAULT_EXTENSION_CLIENT_STYLES: ExtensionClientStyles = {
   section: 'nxt-extension-section',
   sectionHeading: 'nxt-extension-section-heading',
   secondaryText: 'nxt-extension-secondary-text',
@@ -72,7 +72,10 @@ export class ExtensionClientRuntime {
         name: 'root',
         children: {
           'agent.workbench.sections': { kind: 'list', scope: 'root' },
+          'extension.activation.panels': { kind: 'list', scope: 'root' },
           'extension.details.panels': { kind: 'list', scope: 'root' },
+          'channel.inspector.agent.sections': { kind: 'list', scope: 'root' },
+          'conversation.tool.card': { kind: 'list', scope: 'root' },
         },
         registrant: 'nekro-nxt-product-shell',
       },

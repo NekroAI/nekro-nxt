@@ -12,8 +12,10 @@
 
 频道历史搜索保存规范化 `search_text`，按频道分页后在 TypeScript 中执行字面子串匹配。`%`、`_` 和中文短文本都保持字面语义。
 
-Binding 只表达每个频道的当前归属，以 `channel_id` 为主键；历史消息和 Episode 不依赖历史 Binding 行。Agent Revision 继续不可变，当前 Revision 指针由独立表和复合外键保证归属。Asset Occurrence 以 `(channel_event_id, part_index)` 记录授权来源；Extension Activation 以 `(agent_id, extension_id)` 保存每个智能体当前启用版本。`host_extension_installations` 只保存每个 Host Adapter Extension 当前安装的 Revision，并用复合外键保证 Revision 归属。
+Binding 只表达每个频道的当前归属，以 `channel_id` 为主键；历史消息和 Episode 不依赖历史 Binding 行。Agent Revision 继续不可变，当前 Revision 指针由独立表和复合外键保证归属。Asset Occurrence 以 `(channel_event_id, part_index)` 记录授权来源；Extension Activation 以 `(agent_id, extension_id)` 保存每个智能体当前启用版本。`host_extension_installations` 保存每个 `host-adapter` 或 `host-ui` Extension 当前安装的 Revision，并用复合外键保证 Revision 归属。
 
 `0015_extension_scope_payload_digest` 把 Extension scope 固定到父对象，并给 Revision 增加独立 `payload_digest`。`0016_dsh_plugin_packages` 保存不可变 DSH 包身份、精确版本、来源、内容与 lockfile 摘要、可选 registry integrity、批准构建依赖、Bundle 展开入口、Host/智能体 Activation 和最近 Loader 诊断。Activation 是启用事实源；诊断只记录 `active/load-failed/restore-failed/dispose-failed` 和 Loader 阶段，不代替启用关系。
+
+`0017_host_ui_pages` 保存 Host 级页面实例、共享顺序与显隐 Revision、绑定精确 Extension Revision 或 DSH Artifact 的权限批准，以及页面 Client/导航/RPC/恢复诊断。`host_ui_page_entries` 只在对应 Installation 或 DSH Host Activation 存在时发布；诊断不代替 Installation 或 Activation。扩展命名空间状态复用 `system_settings`，key 使用 owner 摘要隔离，并限制为 128 项、64 KiB。
 
 `0014_host_extension_installations` 只创建空表和索引，不重建旧表、不回填、不扫描扩展源码。已有用户首次启动新 Release 时由 Drizzle 自动应用，现有 Agent、Connection、Channel、消息、Revision 和 Activation 不变；内置 Adapter 不写入该表。迁移后统一执行 `foreign_key_check`，失败则回滚并拒绝启动。

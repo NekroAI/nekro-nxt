@@ -3,6 +3,7 @@ import WebServer from '@deepseek-ai/dsh-host-webserver'
 import { LlmAdapter, type GenerateOptions, type StreamChunk } from '@deepseek-ai/dsh-llm'
 import { HostApiContracts } from '@nekro-nxt/contracts'
 import { strFromU8, unzipSync } from 'fflate'
+import { createHash } from 'node:crypto'
 import { access, mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
@@ -10,6 +11,7 @@ import { create as createTarball } from 'tar'
 import { afterEach, describe, expect, it } from 'vitest'
 import { NekroRuntime } from '../src/bootstrap.js'
 import { createNekroHostApi } from '../src/host-api.js'
+import { hostUiPermissionDigest } from '@nekro-nxt/extension-runtime'
 
 const temporaryDirectories: string[] = []
 
@@ -19,12 +21,19 @@ afterEach(async () => {
 
 const createFixtureTarball = async (
   root: string,
-  options: { readonly name?: string; readonly installScript?: boolean; readonly moduleSource?: string } = {},
+  options: {
+    readonly name?: string
+    readonly installScript?: boolean
+    readonly moduleSource?: string
+    readonly hostUi?: boolean
+  } = {},
 ): Promise<Uint8Array> => {
   const packageName = options.name ?? '@example/dsh-managed-fixture'
   const source = path.join(root, `package-source-${packageName.replaceAll(/[^a-z0-9]/giu, '-')}`)
   const tarball = path.join(root, `${path.basename(packageName)}.tgz`)
   await mkdir(source, { recursive: true })
+  const svg = '<svg viewBox="0 0 24 24"><path d="M4 4h16v16H4z" fill="currentColor"/></svg>'
+  const svgDigest = createHash('sha256').update(svg).digest('hex')
   await writeFile(
     path.join(source, 'package.json'),
     JSON.stringify(
@@ -33,6 +42,30 @@ const createFixtureTarball = async (
         version: '1.2.3',
         type: 'module',
         exports: './index.js',
+        ...(options.hostUi ? { files: ['index.js', 'nxt-client.mjs', 'nxt-client.css', 'assets'] } : {}),
+        ...(options.hostUi
+          ? {
+              nekroNxt: {
+                hostUi: {
+                  schemaVersion: 1,
+                  entryKey: 'default',
+                  client: 'nxt-client.mjs',
+                  css: 'nxt-client.css',
+                  pages: [
+                    {
+                      kind: 'host-page',
+                      entryId: 'overview',
+                      title: '示例页面',
+                      icon: { kind: 'svg', path: 'assets/icon.svg', sha256: svgDigest },
+                      objectPane: 'hidden',
+                      startPath: '',
+                    },
+                  ],
+                  permissions: { permissions: ['runtime.read'], networkOrigins: [] },
+                },
+              },
+            }
+          : {}),
         ...(options.installScript
           ? { scripts: { postinstall: `node -e "require('fs').writeFileSync('built.txt','built')"` } }
           : {}),
@@ -49,7 +82,27 @@ const createFixtureTarball = async (
 }
 `,
   )
-  await createTarball({ cwd: source, file: tarball, gzip: true }, ['package.json', 'index.js'])
+  if (options.hostUi) {
+    await writeFile(
+      path.join(source, 'nxt-client.mjs'),
+      `export default async ({ React }) => ({ apply(ctx) { return ctx.pages.register({ page: ${JSON.stringify({
+        kind: 'host-page',
+        entryId: 'overview',
+        title: '示例页面',
+        icon: { kind: 'svg', path: 'assets/icon.svg', sha256: svgDigest },
+        objectPane: 'hidden',
+        startPath: '',
+      })} }, () => React.createElement('div', null, 'DSH Host UI')) } })\n`,
+    )
+    await writeFile(path.join(source, 'nxt-client.css'), '.dshPage { color: var(--nxt-text-primary); }\n')
+    await mkdir(path.join(source, 'assets'), { recursive: true })
+    await writeFile(path.join(source, 'assets', 'icon.svg'), svg)
+  }
+  await createTarball({ cwd: source, file: tarball, gzip: true, prefix: 'package/' }, [
+    'package.json',
+    'index.js',
+    ...(options.hostUi ? ['nxt-client.mjs', 'nxt-client.css', 'assets'] : []),
+  ])
   return readFile(tarball)
 }
 
@@ -120,6 +173,81 @@ class QuietModel extends LlmAdapter {
 }
 
 describe('managed DSH plugin lifecycle', () => {
+  it('publishes explicit NXT pages only after approved Host activation and retracts them on disable', async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), 'nekro-nxt-dsh-host-ui-'))
+    temporaryDirectories.push(directory)
+    const runtime = await NekroRuntime.create({
+      coreDatabasePath: path.join(directory, 'core.sqlite'),
+      sessionDatabasePath: path.join(directory, 'sessions.sqlite'),
+      assetRoot: path.join(directory, 'assets'),
+      extensionDataRoot: path.join(directory, 'extension-data'),
+      extensionCacheRoot: path.join(directory, 'extension-cache'),
+      dshPluginRoot: path.join(directory, 'dsh'),
+    })
+    const context = new Context()
+    await context.plugin(WebServer, { host: '127.0.0.1', port: 0 })
+    const api = createNekroHostApi(context.webServer, runtime)
+    try {
+      const inspection = await runtime.dshPluginInstaller.inspectTarball(
+        await createFixtureTarball(directory, { hostUi: true }),
+      )
+      expect(inspection.hostUi?.pages).toHaveLength(1)
+      const installed = await runtime.dshPluginInstaller.commit(inspection.token, [])
+      const [entry] = runtime.repository.listDshPluginEntries(installed.id)
+      expect(entry).toBeDefined()
+      expect(runtime.repository.listHostUiPageEntries()).toEqual([])
+      const activationUrl = `http://127.0.0.1:${api.port}/api/dsh/plugin-entries/${entry!.id}/activation`
+      const denied = await fetch(activationUrl, {
+        method: 'PUT',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ target: 'host', config: {} }),
+      })
+      expect(denied.status).toBe(400)
+      expect(await denied.text()).toContain('permission-approval-required')
+      const permissionDigest = hostUiPermissionDigest(inspection.hostUi!.permissions)
+      const activated = await fetch(activationUrl, {
+        method: 'PUT',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ target: 'host', config: {}, permissionApproval: { permissionDigest } }),
+      })
+      expect(activated.ok).toBe(true)
+      const [page] = runtime.repository.listHostUiPageEntries()
+      expect(page).toMatchObject({ entryId: 'overview', visible: true })
+      expect(await fetch(`http://127.0.0.1:${api.port}${page!.client.moduleUrl}`)).toHaveProperty('status', 200)
+      expect(
+        await fetch(
+          `http://127.0.0.1:${api.port}/api/dsh/plugin-entries/${entry!.id}/host-ui/assets/${page!.icon.kind === 'svg' ? page!.icon.sha256 : ''}.svg`,
+        ),
+      ).toHaveProperty('status', 200)
+      const clientFailure = await fetch(
+        `http://127.0.0.1:${api.port}/api/host-ui/pages/${page!.pageInstanceId}/diagnostic`,
+        {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ status: 'load-failed', message: '合成 Client 加载失败' }),
+        },
+      )
+      expect(clientFailure.ok).toBe(true)
+      expect(runtime.repository.listDshPluginActivations(entry!.id)).toEqual([
+        expect.objectContaining({ entryId: entry!.id, targetKey: 'host' }),
+      ])
+      expect(runtime.repository.getHostUiDiagnostic(page!.pageInstanceId)).toMatchObject({
+        status: 'load-failed',
+      })
+      const disabled = await fetch(activationUrl, {
+        method: 'DELETE',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ targetKey: 'host' }),
+      })
+      expect(disabled.ok).toBe(true)
+      expect(runtime.repository.listHostUiPageEntries()).toEqual([])
+    } finally {
+      api.dispose()
+      await context.fiber.dispose()
+      await runtime.dispose()
+    }
+  }, 30_000)
+
   it('installs a tgz closed, activates it through Loader, disables it, and removes its files', async () => {
     const directory = await mkdtemp(path.join(tmpdir(), 'nekro-nxt-dsh-plugin-'))
     temporaryDirectories.push(directory)

@@ -20,6 +20,7 @@ import {
   EpisodeIdSchema,
   ExtensionIdSchema,
   ExtensionRevisionIdSchema,
+  HostUiPageInstanceIdSchema,
   LogicalMessageIdSchema,
   OutboundIntentIdSchema,
   PhysicalDeliveryIdSchema,
@@ -163,7 +164,7 @@ const appendTextEvent = (
 
 describe('Core SQLite baseline', () => {
   it('accepts better-sqlite3 table_list metadata and migrates a clean database', async () => {
-    expect(Object.keys(coreSchema)).toHaveLength(34)
+    expect(Object.keys(coreSchema)).toHaveLength(38)
     expect(channelEvents.logicalMessageId.name).toBe('logical_message_id')
     expect('logicalMessageId' in channels).toBe(false)
 
@@ -1790,6 +1791,106 @@ describe('relations, admissions and outbox', () => {
 })
 
 describe('Extension and backup', () => {
+  it('preserves Host UI page identity while atomically updating shared order and visibility', async () => {
+    const { database, repository } = await createFixture()
+    try {
+      const extensionId = ExtensionIdSchema.parse('ext_HOSTUI')
+      const firstRevisionId = ExtensionRevisionIdSchema.parse('xrv_HOSTUIONE')
+      const secondRevisionId = ExtensionRevisionIdSchema.parse('xrv_HOSTUITWO')
+      repository.saveExtensionRevision({
+        extension: {
+          id: extensionId,
+          scope: 'host-ui',
+          slug: 'host-ui-test',
+          displayName: '页面扩展',
+          description: '',
+          createdAt: 1,
+        },
+        revision: {
+          id: firstRevisionId,
+          extensionId,
+          revisionNumber: 1,
+          contentDigest: 'a'.repeat(64),
+          payloadDigest: 'b'.repeat(64),
+          createdAt: 1,
+        },
+      })
+      repository.saveExtensionRevision({
+        extension: {
+          id: extensionId,
+          scope: 'host-ui',
+          slug: 'host-ui-test',
+          displayName: '页面扩展',
+          description: '',
+          createdAt: 1,
+        },
+        revision: {
+          id: secondRevisionId,
+          extensionId,
+          revisionNumber: 2,
+          contentDigest: 'c'.repeat(64),
+          payloadDigest: 'd'.repeat(64),
+          createdAt: 2,
+        },
+      })
+      let sequence = 0
+      const first = repository.replaceHostUiExtensionPages({
+        extensionId,
+        revisionId: firstRevisionId,
+        pages: [
+          {
+            kind: 'host-page',
+            entryId: 'overview',
+            title: '概览',
+            icon: { kind: 'host-icon', name: 'layout-dashboard' },
+            objectPane: 'hidden',
+            startPath: '',
+          },
+        ],
+        clientBuildKey: 'e'.repeat(64),
+        now: 10,
+        nextPageInstanceId: () => HostUiPageInstanceIdSchema.parse(`hup_PAGE${++sequence}`),
+      })
+      expect(first).toHaveLength(1)
+      const pageInstanceId = first[0]!.pageInstanceId
+      const preferenceRevision = repository.getHostUiPreferencesRevision()
+      expect(
+        repository.updateHostUiPagePreferences({
+          expectedRevision: preferenceRevision,
+          entries: [{ pageInstanceId, visible: false }],
+          now: 11,
+        }),
+      ).toBe(preferenceRevision + 1)
+      expect(() =>
+        repository.updateHostUiPagePreferences({
+          expectedRevision: preferenceRevision,
+          entries: [{ pageInstanceId, visible: true }],
+          now: 12,
+        }),
+      ).toThrow('已被其他客户端更新')
+      const updated = repository.replaceHostUiExtensionPages({
+        extensionId,
+        revisionId: secondRevisionId,
+        pages: [
+          {
+            kind: 'host-page',
+            entryId: 'overview',
+            title: '项目概览',
+            icon: { kind: 'host-icon', name: 'layout-dashboard' },
+            objectPane: 'navigation',
+            startPath: 'projects',
+          },
+        ],
+        clientBuildKey: 'f'.repeat(64),
+        now: 13,
+        nextPageInstanceId: () => HostUiPageInstanceIdSchema.parse(`hup_PAGE${++sequence}`),
+      })
+      expect(updated[0]).toMatchObject({ pageInstanceId, visible: false, title: '项目概览' })
+    } finally {
+      database.close()
+    }
+  })
+
   it('keeps historical Extension verification evidence readable after a DSH upgrade', async () => {
     const { database, repository } = await createFixture()
     try {

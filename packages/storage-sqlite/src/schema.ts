@@ -15,6 +15,9 @@ import type {
   EpisodeId,
   ExtensionId,
   ExtensionRevisionId,
+  HostPageIcon,
+  HostUiPageInstanceId,
+  HostUiPermissionDeclaration,
   JsonValue,
   LogicalMessageId,
   ManagementDeviceId,
@@ -516,7 +519,7 @@ export const assetChannelGrants = sqliteTable(
 
 export const localExtensions = sqliteTable('local_extensions', {
   id: text().$type<ExtensionId>().primaryKey(),
-  scope: text({ enum: ['agent', 'host-adapter'] }).notNull(),
+  scope: text({ enum: ['agent', 'host-adapter', 'host-ui'] }).notNull(),
   slug: text().notNull().unique(),
   displayName: text('display_name').notNull(),
   description: text().notNull(),
@@ -576,6 +579,70 @@ export const hostExtensionInstallations = sqliteTable(
     }).onDelete('restrict'),
     check('host_extension_installations_installed_at_ck', sql`${table.installedAt} >= 0`),
   ],
+)
+
+export const hostUiPageEntries = sqliteTable(
+  'host_ui_page_entries',
+  {
+    pageInstanceId: text('page_instance_id').$type<HostUiPageInstanceId>().primaryKey(),
+    ownerKind: text('owner_kind', { enum: ['extension', 'dsh-plugin'] }).notNull(),
+    ownerId: text('owner_id').notNull(),
+    artifactId: text('artifact_id').notNull(),
+    entryId: text('entry_id').notNull(),
+    title: text().notNull(),
+    description: text(),
+    icon: jsonText<HostPageIcon>('icon').notNull(),
+    objectPane: text('object_pane', { enum: ['navigation', 'hidden'] }).notNull(),
+    startPath: text('start_path').notNull(),
+    visible: integer({ mode: 'boolean' }).notNull(),
+    sortOrder: integer('sort_order').notNull(),
+    clientBuildKey: text('client_build_key').notNull(),
+    createdAt: integer('created_at').notNull(),
+    updatedAt: integer('updated_at').notNull(),
+  },
+  (table) => [
+    uniqueIndex('host_ui_page_entries_owner_entry_uq').on(table.ownerKind, table.ownerId, table.entryId),
+    uniqueIndex('host_ui_page_entries_sort_order_uq').on(table.sortOrder),
+    index('host_ui_page_entries_owner_idx').on(table.ownerKind, table.ownerId),
+    check('host_ui_page_entries_sort_order_ck', sql`${table.sortOrder} >= 0`),
+    check('host_ui_page_entries_created_at_ck', sql`${table.createdAt} >= 0`),
+    check('host_ui_page_entries_updated_at_ck', sql`${table.updatedAt} >= 0`),
+  ],
+)
+
+export const hostUiPagePreferences = sqliteTable(
+  'host_ui_page_preferences',
+  {
+    id: integer().primaryKey(),
+    revision: integer().notNull(),
+    updatedAt: integer('updated_at').notNull(),
+  },
+  (table) => [
+    check('host_ui_page_preferences_singleton_ck', sql`${table.id} = 1`),
+    check('host_ui_page_preferences_revision_ck', sql`${table.revision} >= 0`),
+  ],
+)
+
+export const hostUiPermissionGrants = sqliteTable('host_ui_permission_grants', {
+  ownerKey: text('owner_key').primaryKey(),
+  artifactDigest: text('artifact_digest').notNull(),
+  permissionDigest: text('permission_digest').notNull(),
+  declaration: jsonText<HostUiPermissionDeclaration>('declaration').notNull(),
+  approvedAt: integer('approved_at').notNull(),
+})
+
+export const hostUiDiagnostics = sqliteTable(
+  'host_ui_diagnostics',
+  {
+    pageInstanceId: text('page_instance_id')
+      .$type<HostUiPageInstanceId>()
+      .primaryKey()
+      .references(() => hostUiPageEntries.pageInstanceId, { onDelete: 'cascade' }),
+    status: text({ enum: ['ready', 'load-failed', 'navigation-failed', 'rpc-failed', 'restore-failed'] }).notNull(),
+    message: text(),
+    observedAt: integer('observed_at').notNull(),
+  },
+  (table) => [check('host_ui_diagnostics_observed_at_ck', sql`${table.observedAt} >= 0`)],
 )
 
 export const agentActivations = sqliteTable(
@@ -786,6 +853,10 @@ export const coreSchema = {
   extensionRevisions,
   extensionRevisionVerifications,
   hostExtensionInstallations,
+  hostUiPageEntries,
+  hostUiPagePreferences,
+  hostUiPermissionGrants,
+  hostUiDiagnostics,
   agentActivations,
   extensionClientDiagnostics,
   dshPluginPackages,

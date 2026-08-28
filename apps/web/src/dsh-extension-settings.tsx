@@ -1018,6 +1018,10 @@ export function DshExtensionSettings() {
   const [operationError, setOperationError] = useState('')
   const [operationNotice, setOperationNotice] = useState('')
   const [removeOpen, setRemoveOpen] = useState(false)
+  const [permissionApproval, setPermissionApproval] = useState<{
+    readonly entryId: string
+    readonly digest: string
+  } | null>(null)
   const refresh = useCallback(async () => {
     try {
       const next = await loadCatalog()
@@ -1192,7 +1196,10 @@ export function DshExtensionSettings() {
     }
   }
 
-  const activateEntry = async (entry: NonNullable<DshPluginCatalogEntry['entries']>[number]): Promise<void> => {
+  const activateEntry = async (
+    entry: NonNullable<DshPluginCatalogEntry['entries']>[number],
+    approvedPermissionDigest?: string,
+  ): Promise<void> => {
     const configInspection = configInspections[entry.id]
     if (!configInspection) {
       setOperationError('需要检查入口的 Config Schema；检查操作会初始化第三方模块。')
@@ -1216,12 +1223,25 @@ export function DshExtensionSettings() {
         HostApiContracts.activateDshPluginEntry,
         HostApiContracts.activateDshPluginEntry.response,
         { entryId: entry.id },
-        { target, ...(target === 'agent' ? { agentId } : {}), config },
+        {
+          target,
+          ...(target === 'agent' ? { agentId } : {}),
+          config,
+          ...(approvedPermissionDigest === undefined
+            ? {}
+            : { permissionApproval: { permissionDigest: approvedPermissionDigest } }),
+        },
       )
       setOperationNotice(target === 'host' ? '入口已在本机启用。' : '入口已给所选智能体启用。')
       await refresh()
     } catch (cause) {
-      setOperationError(cause instanceof Error ? cause.message : String(cause))
+      const message = cause instanceof Error ? cause.message : String(cause)
+      const permissionMatch = /^permission-approval-required:([a-f0-9]{64})$/u.exec(message)
+      if (permissionMatch?.[1]) {
+        setPermissionApproval({ entryId: entry.id, digest: permissionMatch[1] })
+        return
+      }
+      setOperationError(message)
     }
   }
 
@@ -1300,6 +1320,11 @@ export function DshExtensionSettings() {
             <strong>{installInspection.packageName}</strong>
             <small>精确版本 {installInspection.packageVersion}</small>
             <small>{installInspection.entries.length} 个入口 · 安装完成时未启用</small>
+            {installInspection.hostUi ? (
+              <InlineFeedback tone="info">
+                包含 {installInspection.hostUi.pages.length} 个 NekroNXT 页面入口；启用对应本机入口时会显示权限确认。
+              </InlineFeedback>
+            ) : null}
             {installInspection.blockedBuilds.length > 0 ? (
               <>
                 <InlineFeedback tone="warning">
@@ -1359,6 +1384,12 @@ export function DshExtensionSettings() {
             {selected?.clientUiDetected ? (
               <InlineFeedback tone="info">
                 插件包含 DSH 原生界面，NekroNXT 当前未接入。Host 能力和通用配置正常可用。
+              </InlineFeedback>
+            ) : null}
+            {selected?.hostUi ? (
+              <InlineFeedback tone="info">
+                此插件声明了 {selected.hostUi.pages.length} 个 NekroNXT 页面；页面随“{selected.hostUi.entryKey}
+                ”的本机启用关系加载。
               </InlineFeedback>
             ) : null}
             {selected?.origin === 'installed' ? (
@@ -1523,6 +1554,30 @@ export function DshExtensionSettings() {
           <InlineFeedback tone="info">当前没有已识别的 DSH 扩展。</InlineFeedback>
         )}
       </section>
+      <ConfirmDialog
+        open={permissionApproval !== null}
+        onOpenChange={(open) => {
+          if (!open) setPermissionApproval(null)
+        }}
+        title="批准 DSH 页面权限"
+        description={
+          selected?.hostUi
+            ? [
+                ...selected.hostUi.permissions.permissions,
+                ...selected.hostUi.permissions.networkOrigins.map((origin) => `网络：${origin}`),
+              ].join('、') || '这个 NXT 页面未申请产品数据权限。'
+            : '无法读取页面权限声明。'
+        }
+        confirmLabel="批准并启用"
+        onConfirm={async () => {
+          const pending = permissionApproval
+          const entry = selected?.entries?.find(({ id }) => id === pending?.entryId)
+          if (!pending || !entry) return false
+          await activateEntry(entry, pending.digest)
+          setPermissionApproval(null)
+          return true
+        }}
+      />
     </div>
   )
 }

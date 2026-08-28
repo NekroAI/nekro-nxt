@@ -632,7 +632,11 @@ export function ChannelConversationPage() {
                   <Presence initial={false}>
                     <Enter kind="fade" key={`${channel.id}:${canvasView}`} style={{ height: '100%', minHeight: 0 }}>
                       {canvasView === 'trajectory' ? (
-                        <ChannelTrajectoryInspector record={selectedRecord} />
+                        <ChannelTrajectoryInspector
+                          record={selectedRecord}
+                          {...(agent === undefined ? {} : { agentId: agent.id })}
+                          channelId={channel.id}
+                        />
                       ) : (
                         <ChannelSessionInspector
                           channel={channel}

@@ -1,0 +1,97 @@
+.pagePreview {
+  overflow: hidden;
+  border: 1px solid var(--nxt-border-subtle);
+  border-radius: var(--nxt-radius-lg);
+  background: var(--nxt-bg-surface);
+}
+
+.pagePreviewHeader {
+  min-height: 56px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--nxt-space-4);
+  padding: var(--nxt-space-3) var(--nxt-space-4);
+  border-bottom: 1px solid var(--nxt-border-subtle);
+}
+
+.pagePreviewHeader > span {
+  min-width: 0;
+  display: grid;
+  gap: 2px;
+}
+
+.pagePreviewHeader small,
+.pagePreviewNavigation small {
+  color: var(--nxt-text-muted);
+}
+
+.pagePreviewFrame {
+  min-height: 320px;
+  display: grid;
+  grid-template-columns: minmax(180px, 24%) minmax(0, 1fr);
+}
+
+.pagePreviewFrame[data-object-pane='hidden'] {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.pagePreviewNavigation {
+  min-width: 0;
+  padding: var(--nxt-space-3);
+  overflow: auto;
+  border-right: 1px solid var(--nxt-border-subtle);
+  background: var(--nxt-bg-canvas);
+}
+
+.pagePreviewNavigation > div {
+  display: grid;
+  gap: var(--nxt-space-1);
+}
+
+.pagePreviewNavigation > div + div {
+  margin-top: var(--nxt-space-4);
+}
+
+.pagePreviewNavigation > div > strong {
+  padding: var(--nxt-space-2);
+  color: var(--nxt-text-muted);
+  font-size: 12px;
+}
+
+.pagePreviewNavigation button {
+  min-height: 36px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--nxt-space-2);
+  padding: var(--nxt-space-2);
+  border: 0;
+  border-radius: var(--nxt-radius-md);
+  color: var(--nxt-text-primary);
+  background: transparent;
+  text-align: left;
+}
+
+.pagePreviewNavigation button[aria-current='page'] {
+  background: var(--nxt-bg-selected);
+}
+
+.pagePreviewCanvas {
+  min-width: 0;
+  overflow: auto;
+  padding: var(--nxt-space-4);
+  background: var(--nxt-bg-canvas);
+}
+
+@media (max-width: 720px) {
+  .pagePreviewFrame {
+    grid-template-columns: 1fr;
+  }
+
+  .pagePreviewNavigation {
+    max-height: 180px;
+    border-right: 0;
+    border-bottom: 1px solid var(--nxt-border-subtle);
+  }
+}
