@@ -8,6 +8,8 @@ import {
   ChannelIdSchema,
   ChannelMemberIdSchema,
   ConnectionIdSchema,
+  DshPluginEntryIdSchema,
+  DshPluginPackageIdSchema,
   ExtensionIdSchema,
   ExtensionRevisionIdSchema,
   EpisodeIdSchema,
@@ -726,6 +728,7 @@ export const HostSnapshotSchema = z
       z
         .object({
           id: ExtensionIdSchema,
+          scope: z.enum(['agent', 'host-adapter']),
           slug: NonEmptyStringSchema,
           displayName: z.string(),
           description: z.string(),
@@ -780,6 +783,13 @@ export const HostSnapshotSchema = z
                 extensionRevisionId: ExtensionRevisionIdSchema,
                 config: JsonValueSchema,
                 activatedAt: z.number().int().safe().nonnegative(),
+                runtime: z
+                  .object({
+                    status: z.enum(['active', 'restore-failed', 'dispose-failed']),
+                    message: z.string().optional(),
+                    observedAt: z.number().int().safe().nonnegative(),
+                  })
+                  .optional(),
               })
               .strict(),
           ),
@@ -787,6 +797,13 @@ export const HostSnapshotSchema = z
             .object({
               extensionRevisionId: ExtensionRevisionIdSchema,
               installedAt: z.number().int().safe().nonnegative(),
+              runtime: z
+                .object({
+                  status: z.enum(['active', 'restore-failed', 'dispose-failed']),
+                  message: z.string().optional(),
+                  observedAt: z.number().int().safe().nonnegative(),
+                })
+                .optional(),
             })
             .strict()
             .optional(),
@@ -998,9 +1015,46 @@ export const DshPluginCatalogEntrySchema = z
   .object({
     packageName: NonEmptyStringSchema,
     packageVersion: NonEmptyStringSchema,
-    origin: z.enum(['builtin', 'profile', 'dynamic']),
+    origin: z.enum(['builtin', 'profile', 'dynamic', 'installed']),
     settingsNamespaces: z.array(NonEmptyStringSchema),
     loadError: z.object({ code: NonEmptyStringSchema, message: NonEmptyStringSchema }).strict().optional(),
+    packageId: DshPluginPackageIdSchema.optional(),
+    installSource: z.enum(['registry', 'tarball', 'imported']).optional(),
+    installedAt: z.number().int().safe().nonnegative().optional(),
+    clientUiDetected: z.boolean().optional(),
+    approvedBuilds: z.array(NonEmptyStringSchema).optional(),
+    entries: z
+      .array(
+        z
+          .object({
+            id: DshPluginEntryIdSchema,
+            entryKey: NonEmptyStringSchema,
+            moduleName: NonEmptyStringSchema,
+            suggestedScope: z.enum(['host', 'agent']),
+            selectedScope: z.enum(['host', 'agent']).optional(),
+            config: JsonValueSchema,
+            activations: z.array(
+              z
+                .object({
+                  targetKey: NonEmptyStringSchema,
+                  target: z.enum(['host', 'agent']),
+                  agentId: AgentIdSchema.optional(),
+                  activatedAt: z.number().int().safe().nonnegative(),
+                  diagnostic: z
+                    .object({
+                      status: z.enum(['active', 'load-failed', 'restore-failed', 'dispose-failed']),
+                      phase: z.enum(['import', 'apply', 'update', 'dispose', 'restore']),
+                      message: z.string().optional(),
+                      observedAt: z.number().int().safe().nonnegative(),
+                    })
+                    .optional(),
+                })
+                .strict(),
+            ),
+          })
+          .strict(),
+      )
+      .optional(),
   })
   .strict()
 
@@ -1058,10 +1112,22 @@ export const HostSseStatusDataSchema = z
   })
   .strict()
 
+export const DshPluginOperationSseDataSchema = z
+  .object({
+    operationId: z.string().uuid(),
+    kind: z.enum(['inspect', 'install']),
+    phase: z.enum(['download', 'dependencies', 'build-scripts', 'validation', 'publish']),
+    status: z.enum(['running', 'done', 'failed']),
+    message: z.string(),
+  })
+  .strict()
+
 export const HostSseEventSchema = z.discriminatedUnion('event', [
   z.object({ event: z.literal('channel-fact'), data: ChannelFactSseDataSchema }).strict(),
   z.object({ event: z.literal('runtime'), data: ChannelRuntimeSseDataSchema }).strict(),
   z.object({ event: z.literal('extensions-changed'), data: z.object({ changed: z.literal(true) }).strict() }).strict(),
+  z.object({ event: z.literal('dsh-plugins-changed'), data: z.object({ changed: z.literal(true) }).strict() }).strict(),
+  z.object({ event: z.literal('dsh-plugin-operation'), data: DshPluginOperationSseDataSchema }).strict(),
   z.object({ event: z.literal('dynamic-changed'), data: DynamicChangedSseDataSchema }).strict(),
   z.object({ event: z.literal('dsh-settings-changed'), data: DshSettingsChangedSseDataSchema }).strict(),
   z.object({ event: z.literal('dsh-credentials-changed'), data: DshCredentialsChangedSseDataSchema }).strict(),
@@ -1208,6 +1274,8 @@ const channelParam = z.object({ channelId: ChannelIdSchema }).strict()
 const connectionParam = z.object({ connectionId: ConnectionIdSchema }).strict()
 const agentExtensionParam = z.object({ agentId: AgentIdSchema, extensionId: ExtensionIdSchema }).strict()
 const extensionParam = z.object({ extensionId: ExtensionIdSchema }).strict()
+const dshPluginPackageParam = z.object({ packageId: DshPluginPackageIdSchema }).strict()
+const dshPluginEntryParam = z.object({ entryId: DshPluginEntryIdSchema }).strict()
 const extensionRevisionParam = z
   .object({ extensionId: ExtensionIdSchema, revisionId: ExtensionRevisionIdSchema })
   .strict()
@@ -1478,6 +1546,115 @@ export const HostApiContracts = {
     params: EmptyParamsSchema,
     request: NoRequestBodySchema,
     response: z.object({ plugins: z.array(DshPluginCatalogEntrySchema) }).strict(),
+    error: HostApiErrorSchema,
+  }),
+  inspectDshPluginInstall: defineContract({
+    method: 'POST',
+    path: '/api/dsh/plugin-installs/inspect',
+    params: EmptyParamsSchema,
+    request: z.object({ spec: NonEmptyStringSchema.max(500), operationId: z.string().uuid().optional() }).strict(),
+    response: z
+      .object({
+        token: NonEmptyStringSchema,
+        operationId: z.string().uuid().optional(),
+        packageName: NonEmptyStringSchema,
+        packageVersion: NonEmptyStringSchema,
+        packageDigest: z.string().regex(/^[a-f0-9]{64}$/u),
+        lockfileDigest: z.string().regex(/^[a-f0-9]{64}$/u),
+        blockedBuilds: z.array(NonEmptyStringSchema),
+        clientUiDetected: z.boolean(),
+        entries: z.array(
+          z
+            .object({
+              entryKey: NonEmptyStringSchema,
+              moduleName: NonEmptyStringSchema,
+              suggestedScope: z.enum(['host', 'agent']),
+            })
+            .strict(),
+        ),
+      })
+      .strict(),
+    error: HostApiErrorSchema,
+  }),
+  commitDshPluginInstall: defineContract({
+    method: 'POST',
+    path: '/api/dsh/plugin-installs',
+    params: EmptyParamsSchema,
+    request: z
+      .object({
+        token: NonEmptyStringSchema,
+        approvedBuilds: z.array(NonEmptyStringSchema).default([]),
+        operationId: z.string().uuid().optional(),
+      })
+      .strict(),
+    response: z.object({ packageId: DshPluginPackageIdSchema, operationId: z.string().uuid().optional() }).strict(),
+    error: HostApiErrorSchema,
+  }),
+  inspectDshPluginEntryConfig: defineContract({
+    method: 'POST',
+    path: '/api/dsh/plugin-entries/:entryId/config/inspect',
+    params: dshPluginEntryParam,
+    request: NoRequestBodySchema,
+    response: z.discriminatedUnion('mode', [
+      z.object({ mode: z.literal('schema'), schema: JsonValueSchema }).strict(),
+      z.object({ mode: z.literal('json') }).strict(),
+      z.object({ mode: z.literal('incompatible'), reason: NonEmptyStringSchema }).strict(),
+    ]),
+    error: HostApiErrorSchema,
+  }),
+  activateDshPluginEntry: defineContract({
+    method: 'PUT',
+    path: '/api/dsh/plugin-entries/:entryId/activation',
+    params: dshPluginEntryParam,
+    request: z
+      .object({ target: z.enum(['host', 'agent']), agentId: AgentIdSchema.optional(), config: JsonValueSchema })
+      .strict(),
+    response: z.object({ targetKey: NonEmptyStringSchema }).strict(),
+    error: HostApiErrorSchema,
+  }),
+  deactivateDshPluginEntry: defineContract({
+    method: 'DELETE',
+    path: '/api/dsh/plugin-entries/:entryId/activation',
+    params: dshPluginEntryParam,
+    request: z.object({ targetKey: NonEmptyStringSchema }).strict(),
+    response: z.object({ disabled: z.literal(true) }).strict(),
+    error: HostApiErrorSchema,
+  }),
+  removeDshPluginPackage: defineContract({
+    method: 'DELETE',
+    path: '/api/dsh/plugin-installs/:packageId',
+    params: dshPluginPackageParam,
+    request: NoRequestBodySchema,
+    response: z.object({ removed: z.literal(true) }).strict(),
+    error: HostApiErrorSchema,
+  }),
+  inspectExtensionImport: defineContract({
+    method: 'POST',
+    path: '/api/extensions/imports/inspect',
+    params: EmptyParamsSchema,
+    request: NoRequestBodySchema,
+    response: z
+      .object({
+        token: NonEmptyStringSchema,
+        extensionId: ExtensionIdSchema,
+        revisionId: ExtensionRevisionIdSchema,
+        slug: NonEmptyStringSchema,
+        displayName: NonEmptyStringSchema,
+        scope: z.enum(['agent', 'host-adapter']),
+        idempotent: z.boolean(),
+        slugConflict: z.boolean(),
+      })
+      .strict(),
+    error: HostApiErrorSchema,
+  }),
+  commitExtensionImport: defineContract({
+    method: 'POST',
+    path: '/api/extensions/imports/:token/commit',
+    params: z.object({ token: NonEmptyStringSchema }).strict(),
+    request: z.object({ localSlug: z.string().trim().min(3).max(64).optional() }).strict(),
+    response: z
+      .object({ extensionId: ExtensionIdSchema, revisionId: ExtensionRevisionIdSchema, idempotent: z.boolean() })
+      .strict(),
     error: HostApiErrorSchema,
   }),
   dshSettings: defineContract({
@@ -1752,12 +1929,16 @@ export const HostApiContracts = {
         pluginId: DynamicIdSchema,
         packageId: DynamicIdSchema,
         pluginRunId: DynamicIdSchema,
-        renderedSlots: z
-          .array(z.enum(['agent.workbench.sections', 'extension.details.panels']))
-          .min(1)
-          .max(2),
+        renderedSlots: z.array(z.enum(['agent.workbench.sections', 'extension.details.panels'])).max(2),
+        renderedHostSlots: z
+          .array(z.object({ name: z.literal('conversation.message.rich'), key: NonEmptyStringSchema }).strict())
+          .max(16)
+          .default([]),
       })
-      .strict(),
+      .strict()
+      .refine((value) => value.renderedSlots.length > 0 || value.renderedHostSlots.length > 0, {
+        message: '动态 Client 必须提供至少一个真实渲染 Slot。',
+      }),
     response: z.object({ ok: z.literal(true) }).strict(),
     error: HostApiErrorSchema,
   }),
@@ -1777,6 +1958,7 @@ export const HostApiContracts = {
           .trim()
           .regex(/^[a-z0-9][a-z0-9-]{1,62}[a-z0-9]$/u),
         description: z.string().max(500).default(''),
+        targetExtensionId: ExtensionIdSchema.optional(),
       })
       .strict(),
     response: z
@@ -1873,6 +2055,14 @@ export const HostApiContracts = {
     params: extensionParam,
     request: NoRequestBodySchema,
     response: z.object({ uninstalled: z.literal(true) }).strict(),
+    error: HostApiErrorSchema,
+  }),
+  deleteLocalExtension: defineContract({
+    method: 'DELETE',
+    path: '/api/extensions/:extensionId',
+    params: extensionParam,
+    request: NoRequestBodySchema,
+    response: z.object({ deleted: z.literal(true) }).strict(),
     error: HostApiErrorSchema,
   }),
 } as const

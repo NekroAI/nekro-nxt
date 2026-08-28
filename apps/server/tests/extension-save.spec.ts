@@ -2,7 +2,8 @@ import { LlmAdapter, type GenerateOptions, type StreamChunk } from '@deepseek-ai
 import { Context } from '@deepseek-ai/cordis'
 import WebServer from '@deepseek-ai/dsh-host-webserver'
 import { HostApiContracts } from '@nekro-nxt/contracts'
-import { mkdtemp, rm } from 'node:fs/promises'
+import { strFromU8, unzipSync } from 'fflate'
+import { access, mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
@@ -160,12 +161,111 @@ describe('NekroNxt domain API — save a running dynamic Package as a local Exte
       })
       expect(runtime.repository.listActivations(entity.agentId)).toEqual([])
 
+      const exportResponse = await fetch(
+        `${origin}/api/extensions/${saved.extensionId}/revisions/${saved.revisionId}/export`,
+      )
+      expect(exportResponse.ok).toBe(true)
+      expect(exportResponse.headers.get('content-disposition')).toContain('.nxt-extension')
+      const archiveBytes = new Uint8Array(await exportResponse.arrayBuffer())
+      const archive = unzipSync(archiveBytes)
+      const transferManifest: unknown = JSON.parse(strFromU8(archive['manifest.json']!))
+      expect(transferManifest).toMatchObject({
+        schemaVersion: 1,
+        kind: 'nekro-nxt-extension',
+        extension: { id: saved.extensionId, scope: 'agent', slug: 'saved-probe' },
+        revision: { id: saved.revisionId },
+      })
+      expect(strFromU8(archive['revision/source/host.ts']!)).toContain('saved_probe')
+
+      const importDirectory = await mkdtemp(path.join(tmpdir(), 'nekro-nxt-extension-import-'))
+      temporaryDirectories.push(importDirectory)
+      const importedRuntime = await NekroRuntime.create({
+        coreDatabasePath: path.join(importDirectory, 'core.sqlite'),
+        sessionDatabasePath: path.join(importDirectory, 'sessions.sqlite'),
+        assetRoot: path.join(importDirectory, 'assets'),
+        extensionDataRoot: path.join(importDirectory, 'extension-data'),
+        extensionCacheRoot: path.join(importDirectory, 'extension-cache'),
+      })
+      const importWebContext = new Context()
+      await importWebContext.plugin(WebServer, { host: '127.0.0.1', port: 0 })
+      const importApi = createNekroHostApi(importWebContext.webServer, importedRuntime)
+      const importOrigin = `http://127.0.0.1:${importApi.port}`
+      try {
+        const inspectResponse = await fetch(`${importOrigin}/api/extensions/imports/inspect`, {
+          method: 'POST',
+          headers: { 'content-type': 'application/vnd.nekro-nxt.extension+zip' },
+          body: Buffer.from(archiveBytes),
+        })
+        expect(inspectResponse.ok).toBe(true)
+        const inspection = HostApiContracts.inspectExtensionImport.parseResponse(await inspectResponse.json())
+        expect(inspection).toMatchObject({
+          extensionId: saved.extensionId,
+          revisionId: saved.revisionId,
+          idempotent: false,
+          slugConflict: false,
+        })
+        const commitResponse = await fetch(`${importOrigin}/api/extensions/imports/${inspection.token}/commit`, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: '{}',
+        })
+        expect(commitResponse.ok).toBe(true)
+        expect(HostApiContracts.commitExtensionImport.parseResponse(await commitResponse.json())).toMatchObject({
+          extensionId: saved.extensionId,
+          revisionId: saved.revisionId,
+          idempotent: false,
+        })
+        expect(importedRuntime.repository.listActivations()).toEqual([])
+        expect(importedRuntime.repository.getHostInstallation(saved.extensionId)).toBeUndefined()
+        expect(importedRuntime.repository.getExtensionRevisionVerification(saved.revisionId)).toBeUndefined()
+
+        const repeatedInspect = await fetch(`${importOrigin}/api/extensions/imports/inspect`, {
+          method: 'POST',
+          body: Buffer.from(archiveBytes),
+        })
+        const repeated = HostApiContracts.inspectExtensionImport.parseResponse(await repeatedInspect.json())
+        expect(repeated.idempotent).toBe(true)
+        const repeatedCommit = await fetch(`${importOrigin}/api/extensions/imports/${repeated.token}/commit`, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: '{}',
+        })
+        expect(HostApiContracts.commitExtensionImport.parseResponse(await repeatedCommit.json()).idempotent).toBe(true)
+      } finally {
+        importApi.dispose()
+        await importWebContext.fiber.dispose()
+        await importedRuntime.dispose()
+      }
+
       // Saving does not stop or replace the running creator-workbench Package.
       expect(
         runtime.host
           .dynamicInventory(dshSessionId)
           .some((item) => item.latestRun?.status === 'running' && item.pluginId === defined.pluginId),
       ).toBe(true)
+
+      const activationResponse = await fetch(
+        `${origin}/api/agents/${entity.agentId}/extensions/${saved.extensionId}/activation`,
+        {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ revisionId: saved.revisionId }),
+        },
+      )
+      expect(activationResponse.ok).toBe(true)
+      expect(runtime.repository.getActivation(entity.agentId, saved.extensionId)).toBeDefined()
+      const sourceDirectory = runtime.extensionService.revisionSourceDirectory(
+        runtime.repository.getExtensionRevision(saved.revisionId)!,
+      )
+      const deleteResponse = await fetch(`${origin}/api/extensions/${saved.extensionId}`, { method: 'DELETE' })
+      expect(deleteResponse.ok).toBe(true)
+      expect(HostApiContracts.deleteLocalExtension.parseResponse(await deleteResponse.json())).toEqual({
+        deleted: true,
+      })
+      expect(runtime.repository.getExtension(saved.extensionId)).toBeUndefined()
+      expect(runtime.repository.getExtensionRevision(saved.revisionId)).toBeUndefined()
+      expect(runtime.repository.getActivation(entity.agentId, saved.extensionId)).toBeUndefined()
+      await expect(access(sourceDirectory)).rejects.toThrow()
     } finally {
       api.dispose()
       await webContext.fiber.dispose()

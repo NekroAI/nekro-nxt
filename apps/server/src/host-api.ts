@@ -1,4 +1,5 @@
 import type { WebServer, WebRoute } from '@deepseek-ai/dsh-host-webserver'
+import { strFromU8, strToU8, unzipSync, zipSync } from 'fflate'
 import { isAdminConsoleOutbound, type ChannelFact, type ChannelHistoryEntry } from '@nekro-nxt/channel-runtime'
 import type { AgentRevisionContent, ImageUnderstandingPolicy } from '@nekro-nxt/core'
 import {
@@ -7,6 +8,8 @@ import {
   ChannelEventIdSchema,
   ChannelIdSchema,
   ConnectionIdSchema,
+  DshPluginEntryIdSchema,
+  DshPluginPackageIdSchema,
   ExtensionIdSchema,
   ExtensionRevisionIdSchema,
   EpisodeIdSchema,
@@ -23,9 +26,11 @@ import {
   type ChannelRuntimeProjection,
   type HostSseEvent,
 } from '@nekro-nxt/contracts'
+import { createHash, randomUUID } from 'node:crypto'
 import { readFile } from 'node:fs/promises'
+import path from 'node:path'
 import type { IncomingMessage, ServerResponse } from 'node:http'
-import type { z } from 'zod'
+import { z } from 'zod'
 import type { NekroRuntime } from './bootstrap.js'
 import { PRODUCT_VERSION } from './product-version.js'
 import { DEEPSEEK_HARNESS_VERSION } from './dsh-version.js'
@@ -78,6 +83,23 @@ const readJsonBody = (req: IncomingMessage): Promise<unknown> =>
     req.on('error', reject)
   })
 
+const readBinaryBody = (req: IncomingMessage, maxBytes: number): Promise<Uint8Array> =>
+  new Promise((resolve, reject) => {
+    const chunks: Uint8Array[] = []
+    let bytes = 0
+    req.on('data', (chunk: Uint8Array) => {
+      bytes += chunk.byteLength
+      if (bytes > maxBytes) {
+        reject(new Error(`请求体超过 ${maxBytes} 字节限制。`))
+        req.destroy()
+        return
+      }
+      chunks.push(chunk)
+    })
+    req.on('end', () => resolve(Buffer.concat(chunks)))
+    req.on('error', reject)
+  })
+
 const assembleChannelRuntime = (runtime: NekroRuntime, channelId: ChannelId): ChannelRuntimeProjection => {
   if (!runtime.repository.getChannel(channelId)) {
     throw new Error(`Unknown Channel: ${channelId}`)
@@ -107,6 +129,343 @@ const writeJson = (res: ServerResponse, status: number, body: unknown): void => 
     'cache-control': 'no-store',
   })
   res.end(JSON.stringify(body))
+}
+
+const writeDownload = (res: ServerResponse, filename: string, body: Uint8Array): void => {
+  res.writeHead(200, {
+    'content-type': 'application/vnd.nekro-nxt.extension+zip',
+    'content-length': String(body.byteLength),
+    'content-disposition': `attachment; filename="${filename.replaceAll(/[^a-zA-Z0-9._-]/gu, '-')}"`,
+    'cache-control': 'no-store',
+  })
+  res.end(body)
+}
+
+const extensionTransferManifestSchema = z
+  .object({
+    schemaVersion: z.literal(1),
+    kind: z.literal('nekro-nxt-extension'),
+    extension: z
+      .object({
+        id: ExtensionIdSchema,
+        scope: z.enum(['agent', 'host-adapter']),
+        slug: z.string().trim().min(3).max(64),
+        displayName: z.string().trim().min(1).max(80),
+        description: z.string().max(500),
+        createdAt: z.number().int().safe().nonnegative(),
+      })
+      .strict(),
+    revision: z
+      .object({
+        id: ExtensionRevisionIdSchema,
+        revisionNumber: z.number().int().positive(),
+        contentDigest: z.string().regex(/^[a-f0-9]{64}$/u),
+        payloadDigest: z.string().regex(/^[a-f0-9]{64}$/u),
+        createdAt: z.number().int().safe().nonnegative(),
+      })
+      .strict(),
+    files: z
+      .array(
+        z
+          .object({
+            path: z.string().min(1).max(200),
+            size: z
+              .number()
+              .int()
+              .nonnegative()
+              .max(4 * 1024 * 1024),
+            sha256: z.string().regex(/^[a-f0-9]{64}$/u),
+          })
+          .strict(),
+      )
+      .min(1)
+      .max(8),
+    sourceVerification: z.unknown().nullable(),
+  })
+  .strict()
+
+type ParsedExtensionImport = {
+  readonly manifest: z.output<typeof extensionTransferManifestSchema>
+  readonly revisionManifest: unknown
+  readonly sources: { readonly host?: string; readonly client?: string }
+}
+
+const assertSafeArchivePath = (name: string): void => {
+  if (
+    !name ||
+    name.includes('\\') ||
+    name.startsWith('/') ||
+    /^[A-Za-z]:/u.test(name) ||
+    name.split('/').some((segment) => segment === '..' || segment === '')
+  ) {
+    throw new Error(`导入包包含不安全路径：${name}`)
+  }
+}
+
+const assertZipHasNoLinksOrDuplicates = (data: Uint8Array): void => {
+  const view = new DataView(data.buffer, data.byteOffset, data.byteLength)
+  let eocdOffset = -1
+  const minimumOffset = Math.max(0, data.byteLength - 22 - 65_535)
+  for (let offset = data.byteLength - 22; offset >= minimumOffset; offset -= 1) {
+    if (view.getUint32(offset, true) === 0x06054b50) {
+      eocdOffset = offset
+      break
+    }
+  }
+  if (eocdOffset < 0) throw new Error('导入包缺少有效 ZIP 中央目录。')
+  const disk = view.getUint16(eocdOffset + 4, true)
+  const centralDisk = view.getUint16(eocdOffset + 6, true)
+  const diskEntries = view.getUint16(eocdOffset + 8, true)
+  const totalEntries = view.getUint16(eocdOffset + 10, true)
+  const centralSize = view.getUint32(eocdOffset + 12, true)
+  const centralOffset = view.getUint32(eocdOffset + 16, true)
+  const commentLength = view.getUint16(eocdOffset + 20, true)
+  if (
+    disk !== 0 ||
+    centralDisk !== 0 ||
+    diskEntries !== totalEntries ||
+    totalEntries === 0xffff ||
+    centralSize === 0xffffffff ||
+    centralOffset === 0xffffffff ||
+    eocdOffset + 22 + commentLength !== data.byteLength ||
+    centralOffset + centralSize > eocdOffset
+  ) {
+    throw new Error('导入包使用了不支持的分卷、ZIP64 或损坏的中央目录。')
+  }
+  const names = new Set<string>()
+  let offset = centralOffset
+  for (let index = 0; index < totalEntries; index += 1) {
+    if (offset + 46 > eocdOffset || view.getUint32(offset, true) !== 0x02014b50) {
+      throw new Error('导入包 ZIP 中央目录条目损坏。')
+    }
+    const nameLength = view.getUint16(offset + 28, true)
+    const extraLength = view.getUint16(offset + 30, true)
+    const commentLength = view.getUint16(offset + 32, true)
+    if (offset + 46 + nameLength + extraLength + commentLength > eocdOffset) {
+      throw new Error('导入包 ZIP 中央目录条目越界。')
+    }
+    const name = strFromU8(data.subarray(offset + 46, offset + 46 + nameLength))
+    assertSafeArchivePath(name)
+    if (names.has(name)) throw new Error(`导入包包含重复文件：${name}`)
+    names.add(name)
+    const madeBy = view.getUint16(offset + 4, true) >>> 8
+    const unixMode = view.getUint32(offset + 38, true) >>> 16
+    if (madeBy === 3 && (unixMode & 0xf000) === 0xa000) throw new Error(`导入包不得包含符号链接：${name}`)
+    offset += 46 + nameLength + extraLength + commentLength
+  }
+  if (names.size === 0 || offset !== centralOffset + centralSize) throw new Error('导入包 ZIP 中央目录大小不一致。')
+}
+
+const unzipTransferArchive = (data: Uint8Array): Record<string, Uint8Array> => {
+  if (data.byteLength === 0 || data.byteLength > 16 * 1024 * 1024) throw new Error('导入包必须大于 0 且不超过 16 MiB。')
+  assertZipHasNoLinksOrDuplicates(data)
+  let fileCount = 0
+  let expandedBytes = 0
+  return unzipSync(data, {
+    filter: (file) => {
+      assertSafeArchivePath(file.name)
+      fileCount += 1
+      expandedBytes += file.originalSize
+      if (fileCount > 64) throw new Error('导入包文件数超过 64 个。')
+      if (file.originalSize > 4 * 1024 * 1024) throw new Error(`导入包单文件超过 4 MiB：${file.name}`)
+      if (expandedBytes > 32 * 1024 * 1024) throw new Error('导入包解压后超过 32 MiB。')
+      return true
+    },
+  })
+}
+
+const parseExtensionImport = (data: Uint8Array): ParsedExtensionImport => {
+  const files = unzipTransferArchive(data)
+  const root = files['manifest.json']
+  if (!root) throw new Error('导入包缺少根 manifest.json。')
+  const manifest = extensionTransferManifestSchema.parse(JSON.parse(strFromU8(root)))
+  const expected = new Set(['manifest.json', ...manifest.files.map((file) => file.path)])
+  for (const name of Object.keys(files)) if (!expected.has(name)) throw new Error(`导入包包含清单外文件：${name}`)
+  for (const descriptor of manifest.files) {
+    const content = files[descriptor.path]
+    if (!content) throw new Error(`导入包缺少文件：${descriptor.path}`)
+    if (content.byteLength !== descriptor.size) throw new Error(`导入包文件大小不一致：${descriptor.path}`)
+    if (createHash('sha256').update(content).digest('hex') !== descriptor.sha256) {
+      throw new Error(`导入包文件校验和不一致：${descriptor.path}`)
+    }
+  }
+  const revisionManifest = files['revision/manifest.json']
+  if (!revisionManifest) throw new Error('导入包缺少 Revision Manifest。')
+  const host = files['revision/source/host.ts']
+  const client = files['revision/source/client.ts']
+  if (!host && !client) throw new Error('导入包没有可构建源码。')
+  return {
+    manifest,
+    revisionManifest: parseJsonValue(JSON.parse(strFromU8(revisionManifest))),
+    sources: {
+      ...(host === undefined ? {} : { host: strFromU8(host) }),
+      ...(client === undefined ? {} : { client: strFromU8(client) }),
+    },
+  }
+}
+
+const dshPluginTransferManifestSchema = z
+  .object({
+    schemaVersion: z.literal(1),
+    kind: z.literal('dsh-plugin-package'),
+    package: z
+      .object({
+        name: z.string().min(1),
+        version: z.string().min(1),
+        packageDigest: z.string().regex(/^[a-f0-9]{64}$/u),
+        lockfileDigest: z.string().regex(/^[a-f0-9]{64}$/u),
+        integrity: z.string().optional(),
+      })
+      .strict(),
+    entries: z.array(z.object({ entryKey: z.string(), moduleName: z.string() }).strict()),
+    files: z
+      .array(
+        z
+          .object({
+            path: z.literal('package.tgz'),
+            size: z.number().int().positive(),
+            sha256: z.string().regex(/^[a-f0-9]{64}$/u),
+          })
+          .strict(),
+      )
+      .length(1),
+  })
+  .strict()
+
+const parseDshPluginTransfer = (
+  data: Uint8Array,
+): {
+  readonly tarball: Uint8Array
+  readonly expected: {
+    readonly packageName: string
+    readonly packageVersion: string
+    readonly packageDigest: string
+    readonly lockfileDigest: string
+    readonly integrity?: string
+    readonly entries: readonly { readonly entryKey: string; readonly moduleName: string }[]
+  }
+} => {
+  const files = unzipTransferArchive(data)
+  const root = files['manifest.json']
+  const tarball = files['package.tgz']
+  if (!root || !tarball) throw new Error('DSH 插件导入包缺少 manifest.json 或 package.tgz。')
+  if (Object.keys(files).some((name) => name !== 'manifest.json' && name !== 'package.tgz')) {
+    throw new Error('DSH 插件导入包包含清单外文件。')
+  }
+  const manifest = dshPluginTransferManifestSchema.parse(JSON.parse(strFromU8(root)))
+  const descriptor = manifest.files[0]!
+  if (
+    tarball.byteLength !== descriptor.size ||
+    createHash('sha256').update(tarball).digest('hex') !== descriptor.sha256
+  ) {
+    throw new Error('DSH 插件导入包的 tgz 校验失败。')
+  }
+  return {
+    tarball,
+    expected: {
+      packageName: manifest.package.name,
+      packageVersion: manifest.package.version,
+      packageDigest: manifest.package.packageDigest,
+      lockfileDigest: manifest.package.lockfileDigest,
+      ...(manifest.package.integrity === undefined ? {} : { integrity: manifest.package.integrity }),
+      entries: manifest.entries,
+    },
+  }
+}
+
+const createExtensionRevisionExport = async (
+  runtime: NekroRuntime,
+  extensionId: z.output<typeof ExtensionIdSchema>,
+  revisionId: z.output<typeof ExtensionRevisionIdSchema>,
+): Promise<{ readonly filename: string; readonly body: Uint8Array }> => {
+  const extension = runtime.repository.getExtension(extensionId)
+  const revision = runtime.repository.getExtensionRevision(revisionId)
+  if (!extension || !revision || revision.extensionId !== extension.id) {
+    throw new Error('要导出的扩展版本不存在。')
+  }
+  const sourceDirectory = runtime.extensionService.revisionSourceDirectory(revision)
+  const files: Record<string, Uint8Array> = {}
+  for (const relative of ['manifest.json', 'source/host.ts', 'source/client.ts']) {
+    try {
+      files[`revision/${relative}`] = await readFile(path.join(sourceDirectory, relative))
+    } catch (error) {
+      if (relative === 'manifest.json') throw error
+    }
+  }
+  const fileList = Object.entries(files).map(([filePath, content]) => ({
+    path: filePath,
+    size: content.byteLength,
+    sha256: createHash('sha256').update(content).digest('hex'),
+  }))
+  files['manifest.json'] = strToU8(
+    JSON.stringify(
+      {
+        schemaVersion: 1,
+        kind: 'nekro-nxt-extension',
+        extension: {
+          id: extension.id,
+          scope: extension.scope,
+          slug: extension.slug,
+          displayName: extension.displayName,
+          description: extension.description,
+          createdAt: extension.createdAt,
+        },
+        revision: {
+          id: revision.id,
+          revisionNumber: revision.revisionNumber,
+          contentDigest: revision.contentDigest,
+          payloadDigest: revision.payloadDigest,
+          createdAt: revision.createdAt,
+        },
+        files: fileList,
+        sourceVerification: runtime.repository.getExtensionRevisionVerification(revision.id) ?? null,
+      },
+      null,
+      2,
+    ) + '\n',
+  )
+  return {
+    filename: `${extension.slug}-v${revision.revisionNumber}.nxt-extension`,
+    body: zipSync(files, { level: 6 }),
+  }
+}
+
+const createDshPluginExport = async (
+  runtime: NekroRuntime,
+  packageId: z.output<typeof DshPluginPackageIdSchema>,
+): Promise<{ readonly filename: string; readonly body: Uint8Array }> => {
+  const packageRecord = runtime.repository.getDshPluginPackage(packageId)
+  if (!packageRecord) throw new Error('要导出的 DSH 插件不存在。')
+  const tarball = await runtime.dshPluginInstaller.exportRootTarball(packageId)
+  const manifest = {
+    schemaVersion: 1,
+    kind: 'dsh-plugin-package',
+    package: {
+      name: packageRecord.packageName,
+      version: packageRecord.packageVersion,
+      packageDigest: packageRecord.packageDigest,
+      lockfileDigest: packageRecord.lockfileDigest,
+      ...(packageRecord.integrity === undefined ? {} : { integrity: packageRecord.integrity }),
+    },
+    entries: runtime.repository
+      .listDshPluginEntries(packageId)
+      .map((entry) => ({ entryKey: entry.entryKey, moduleName: entry.moduleName })),
+    files: [
+      {
+        path: 'package.tgz',
+        size: tarball.byteLength,
+        sha256: createHash('sha256').update(tarball).digest('hex'),
+      },
+    ],
+  }
+  const filename = `${packageRecord.packageName.replaceAll(/[^a-zA-Z0-9._-]/gu, '-')}-${packageRecord.packageVersion}.nxt-extension`
+  return {
+    filename,
+    body: zipSync(
+      { 'manifest.json': strToU8(JSON.stringify(manifest, null, 2) + '\n'), 'package.tgz': tarball },
+      { level: 6 },
+    ),
+  }
 }
 
 const writeError = (res: ServerResponse, status: number, code: string, message: string): void =>
@@ -246,6 +605,7 @@ const projectExtensions = (runtime: NekroRuntime) => {
     const hostClientDiagnostic = runtime.hostClientDiagnostic(extension.id)
     return {
       id: extension.id,
+      scope: extension.scope,
       slug: extension.slug,
       displayName: extension.displayName,
       description: extension.description,
@@ -256,7 +616,7 @@ const projectExtensions = (runtime: NekroRuntime) => {
           id: revision.id,
           revisionNumber: revision.revisionNumber,
           createdAt: revision.createdAt,
-          scope: verification?.scope ?? 'agent',
+          scope: extension.scope,
           contributions:
             verification === undefined
               ? []
@@ -295,6 +655,9 @@ const projectExtensions = (runtime: NekroRuntime) => {
           extensionRevisionId: activation.extensionRevisionId,
           config: activation.config,
           activatedAt: activation.activatedAt,
+          ...(runtime.activation.getDiagnostic(activation.agentId, extension.id) === undefined
+            ? {}
+            : { runtime: runtime.activation.getDiagnostic(activation.agentId, extension.id) }),
         })),
       ...(installation === undefined
         ? {}
@@ -302,6 +665,9 @@ const projectExtensions = (runtime: NekroRuntime) => {
             installation: {
               extensionRevisionId: installation.extensionRevisionId,
               installedAt: installation.installedAt,
+              ...(runtime.installation.getDiagnostic(extension.id) === undefined
+                ? {}
+                : { runtime: runtime.installation.getDiagnostic(extension.id) }),
             },
           }),
       ...(hostClientDiagnostic === undefined ? {} : { hostClientDiagnostic }),
@@ -323,6 +689,71 @@ const projectExtensions = (runtime: NekroRuntime) => {
     }
   })
 }
+
+const projectDshPlugins = (runtime: NekroRuntime) => [
+  ...runtime.host.listDshPlugins(),
+  ...runtime.repository.listDshPluginPackages().map((packageRecord) => {
+    const manifest =
+      typeof packageRecord.manifest === 'object' &&
+      packageRecord.manifest !== null &&
+      !Array.isArray(packageRecord.manifest)
+        ? packageRecord.manifest
+        : {}
+    const entries = runtime.repository.listDshPluginEntries(packageRecord.id).map((entry) => {
+      const activations = runtime.repository.listDshPluginActivations(entry.id).map((activation) => {
+        const diagnostic = runtime.repository.getDshPluginDiagnostic(entry.id, activation.targetKey)
+        return {
+          targetKey: activation.targetKey,
+          target: activation.target,
+          ...(activation.agentId === undefined ? {} : { agentId: activation.agentId }),
+          activatedAt: activation.activatedAt,
+          ...(diagnostic === undefined
+            ? {}
+            : {
+                diagnostic: {
+                  status: diagnostic.status,
+                  phase: diagnostic.phase,
+                  observedAt: diagnostic.observedAt,
+                  ...(diagnostic.message === undefined ? {} : { message: diagnostic.message }),
+                },
+              }),
+        }
+      })
+      return {
+        id: entry.id,
+        entryKey: entry.entryKey,
+        moduleName: entry.moduleName,
+        suggestedScope: entry.suggestedScope,
+        ...(entry.selectedScope === undefined ? {} : { selectedScope: entry.selectedScope }),
+        config: entry.config,
+        activations,
+      }
+    })
+    const failure = entries
+      .flatMap((entry) => entry.activations)
+      .map((activation) => activation.diagnostic)
+      .find((diagnostic) => diagnostic !== undefined && diagnostic.status !== 'active')
+    return {
+      packageName: packageRecord.packageName,
+      packageVersion: packageRecord.packageVersion,
+      origin: 'installed' as const,
+      settingsNamespaces: [],
+      packageId: packageRecord.id,
+      installSource: packageRecord.source,
+      installedAt: packageRecord.installedAt,
+      clientUiDetected:
+        'dsh' in manifest &&
+        typeof manifest['dsh'] === 'object' &&
+        manifest['dsh'] !== null &&
+        'client' in manifest['dsh'],
+      approvedBuilds: [...packageRecord.approvedBuilds],
+      entries,
+      ...(failure === undefined
+        ? {}
+        : { loadError: { code: failure.status, message: failure.message ?? 'DSH 插件加载失败。' } }),
+    }
+  }),
+]
 
 /** Running dynamic Packages owned by an intelligent-agent's active Session. */
 const projectDynamicInventory = (runtime: NekroRuntime, agentId: AgentId) =>
@@ -463,6 +894,7 @@ const saveActiveDynamicPackage = async (
     slug: input.slug,
     displayName: input.displayName,
     description: input.description,
+    ...(input.targetExtensionId === undefined ? {} : { extensionId: input.targetExtensionId }),
     createdByAgentId: input.agentId,
     verification: {
       dshVersion: '0.1.1-rc.2',
@@ -479,6 +911,7 @@ const saveActiveDynamicPackage = async (
       toolInvocations: verified.toolInvocations,
       rpcMethods: verified.rpcMethods,
       renderedSlots: verified.renderedSlots,
+      ...(verified.renderedHostSlots.length === 0 ? {} : { renderedHostSlots: verified.renderedHostSlots }),
     },
   })
 }
@@ -505,6 +938,10 @@ export const createNekroHostApi = (
   },
 ): NekroHostApi => {
   const disposers: Array<() => void> = []
+  const pendingExtensionImports = new Map<
+    string,
+    { readonly parsed: ParsedExtensionImport; readonly expiresAt: number }
+  >()
 
   const registerRoute = (route: WebRoute): void => {
     disposers.push(webServer.register(route))
@@ -527,6 +964,39 @@ export const createNekroHostApi = (
   }
   const broadcastExtensionsChanged = (): void => {
     broadcast({ event: 'extensions-changed', data: { changed: true } })
+  }
+  const dshPluginOperation = (
+    operationId: string,
+    kind: 'inspect' | 'install',
+  ): {
+    readonly progress: (
+      phase: 'download' | 'dependencies' | 'build-scripts' | 'validation' | 'publish',
+      message: string,
+    ) => void
+    readonly done: () => void
+    readonly failed: (message: string) => void
+  } => {
+    let phase: 'download' | 'dependencies' | 'build-scripts' | 'validation' | 'publish' =
+      kind === 'inspect' ? 'download' : 'publish'
+    let message = kind === 'inspect' ? '正在检查 DSH 插件安装内容。' : '正在提交 DSH 插件安装。'
+    const publish = (status: 'running' | 'done' | 'failed'): void =>
+      broadcast({ event: 'dsh-plugin-operation', data: { operationId, kind, phase, status, message } })
+    publish('running')
+    return {
+      progress: (nextPhase, nextMessage) => {
+        phase = nextPhase
+        message = nextMessage
+        publish('running')
+      },
+      done: () => {
+        message = kind === 'inspect' ? '安装内容检查完成。' : '插件已经安装并保持关闭。'
+        publish('done')
+      },
+      failed: (failure) => {
+        message = failure
+        publish('failed')
+      },
+    }
   }
   disposers.push(
     runtime.host.subscribeDynamicApprovalRequests((event) => {
@@ -926,6 +1396,112 @@ export const createNekroHostApi = (
     path: '/api/extensions',
     handler: async (req, res) => {
       const url = new URL(req.url ?? '/', 'http://localhost')
+      const deleteMatch = /^\/api\/extensions\/([^/]+)$/u.exec(url.pathname)
+      if (deleteMatch) {
+        if (req.method !== 'DELETE') {
+          writeError(res, 405, 'method-not-allowed', '删除本地扩展只支持 DELETE。')
+          return
+        }
+        try {
+          const extensionId = ExtensionIdSchema.parse(decodeURIComponent(deleteMatch[1] ?? ''))
+          HostApiContracts.deleteLocalExtension.parseRequest(undefined)
+          await runtime.deleteLocalExtension(extensionId)
+          broadcastExtensionsChanged()
+          writeContractJson(res, 200, HostApiContracts.deleteLocalExtension, { deleted: true })
+        } catch (error) {
+          writeError(res, 400, 'extension-delete-failed', error instanceof Error ? error.message : String(error))
+        }
+        return
+      }
+      if (url.pathname === '/api/extensions/imports/inspect') {
+        if (req.method !== 'POST') {
+          writeError(res, 405, 'method-not-allowed', '检查扩展导入包只支持 POST。')
+          return
+        }
+        try {
+          const parsed = parseExtensionImport(await readBinaryBody(req, 16 * 1024 * 1024))
+          const existingRevision = runtime.repository.getExtensionRevision(parsed.manifest.revision.id)
+          if (
+            existingRevision &&
+            (existingRevision.extensionId !== parsed.manifest.extension.id ||
+              existingRevision.contentDigest !== parsed.manifest.revision.contentDigest ||
+              existingRevision.payloadDigest !== parsed.manifest.revision.payloadDigest)
+          ) {
+            throw new Error('相同 Extension/Revision 身份已存在，但内容不同；不会覆盖本地版本。')
+          }
+          const token = randomUUID()
+          pendingExtensionImports.set(token, { parsed, expiresAt: Date.now() + 10 * 60_000 })
+          const slugOwner = runtime.repository.getExtensionBySlug(parsed.manifest.extension.slug)
+          writeContractJson(res, 200, HostApiContracts.inspectExtensionImport, {
+            token,
+            extensionId: parsed.manifest.extension.id,
+            revisionId: parsed.manifest.revision.id,
+            slug: parsed.manifest.extension.slug,
+            displayName: parsed.manifest.extension.displayName,
+            scope: parsed.manifest.extension.scope,
+            idempotent: existingRevision !== undefined,
+            slugConflict: slugOwner !== undefined && slugOwner.id !== parsed.manifest.extension.id,
+          })
+        } catch (error) {
+          writeError(
+            res,
+            400,
+            'extension-import-inspect-failed',
+            error instanceof Error ? error.message : String(error),
+          )
+        }
+        return
+      }
+      const importCommitMatch = /^\/api\/extensions\/imports\/([^/]+)\/commit$/u.exec(url.pathname)
+      if (importCommitMatch) {
+        if (req.method !== 'POST') {
+          writeError(res, 405, 'method-not-allowed', '提交扩展导入只支持 POST。')
+          return
+        }
+        try {
+          const token = decodeURIComponent(importCommitMatch[1] ?? '')
+          const params = HostApiContracts.commitExtensionImport.parseParams({ token })
+          const input = HostApiContracts.commitExtensionImport.parseRequest(await readJsonBody(req))
+          const pending = pendingExtensionImports.get(params.token)
+          if (!pending || pending.expiresAt < Date.now()) {
+            pendingExtensionImports.delete(params.token)
+            throw new Error('扩展导入检查已失效，请重新选择文件。')
+          }
+          const result = await runtime.extensionService.importRevision({
+            extension: pending.parsed.manifest.extension,
+            revision: pending.parsed.manifest.revision,
+            manifest: pending.parsed.revisionManifest,
+            sources: pending.parsed.sources,
+            ...(input.localSlug === undefined ? {} : { localSlug: input.localSlug }),
+          })
+          pendingExtensionImports.delete(params.token)
+          broadcastExtensionsChanged()
+          writeContractJson(res, 200, HostApiContracts.commitExtensionImport, {
+            extensionId: result.extension.id,
+            revisionId: result.revision.id,
+            idempotent: result.idempotent,
+          })
+        } catch (error) {
+          writeError(res, 400, 'extension-import-commit-failed', error instanceof Error ? error.message : String(error))
+        }
+        return
+      }
+      const exportMatch = /^\/api\/extensions\/([^/]+)\/revisions\/([^/]+)\/export$/u.exec(url.pathname)
+      if (exportMatch) {
+        if (req.method !== 'GET') {
+          writeError(res, 405, 'method-not-allowed', '导出扩展版本只支持 GET。')
+          return
+        }
+        try {
+          const extensionId = ExtensionIdSchema.parse(decodeURIComponent(exportMatch[1] ?? ''))
+          const revisionId = ExtensionRevisionIdSchema.parse(decodeURIComponent(exportMatch[2] ?? ''))
+          const exported = await createExtensionRevisionExport(runtime, extensionId, revisionId)
+          writeDownload(res, exported.filename, exported.body)
+        } catch (error) {
+          writeError(res, 400, 'extension-export-failed', error instanceof Error ? error.message : String(error))
+        }
+        return
+      }
       const installationMatch = /^\/api\/extensions\/([^/]+)\/installation$/u.exec(url.pathname)
       if (installationMatch) {
         let extensionId: z.output<typeof ExtensionIdSchema>
@@ -1221,7 +1797,7 @@ export const createNekroHostApi = (
         HostApiContracts.dshPlugins.parseParams({})
         HostApiContracts.dshPlugins.parseRequest(undefined)
         writeContractJson(res, 200, HostApiContracts.dshPlugins, {
-          plugins: runtime.host.listDshPlugins(),
+          plugins: projectDshPlugins(runtime),
         })
       } catch (error) {
         writeError(res, 500, 'dsh-plugins-failed', error instanceof Error ? error.message : String(error))
@@ -1245,6 +1821,201 @@ export const createNekroHostApi = (
         })
       } catch (error) {
         writeError(res, 500, 'dsh-settings-failed', error instanceof Error ? error.message : String(error))
+      }
+    },
+  })
+
+  registerRoute({
+    kind: 'exact',
+    path: '/api/dsh/plugin-installs/inspect',
+    handler: async (req, res) => {
+      if (req.method !== 'POST') {
+        writeError(res, 405, 'method-not-allowed', '只支持 POST。')
+        return
+      }
+      try {
+        const input = HostApiContracts.inspectDshPluginInstall.parseRequest(await readJsonBody(req))
+        const operationId = input.operationId ?? randomUUID()
+        const operation = dshPluginOperation(operationId, 'inspect')
+        try {
+          const inspection = await runtime.dshPluginInstaller.inspectRegistry(input.spec, operation.progress)
+          operation.done()
+          writeContractJson(res, 200, HostApiContracts.inspectDshPluginInstall, { ...inspection, operationId })
+        } catch (error) {
+          operation.failed(error instanceof Error ? error.message : String(error))
+          throw error
+        }
+      } catch (error) {
+        writeError(res, 400, 'dsh-plugin-inspect-failed', error instanceof Error ? error.message : String(error))
+      }
+    },
+  })
+
+  registerRoute({
+    kind: 'exact',
+    path: '/api/dsh/plugin-installs/inspect-tarball',
+    handler: async (req, res) => {
+      if (req.method !== 'POST') {
+        writeError(res, 405, 'method-not-allowed', '只支持 POST。')
+        return
+      }
+      try {
+        const requestedOperationId = req.headers['x-operation-id']
+        const operationId =
+          typeof requestedOperationId === 'string' && z.string().uuid().safeParse(requestedOperationId).success
+            ? requestedOperationId
+            : randomUUID()
+        const operation = dshPluginOperation(operationId, 'inspect')
+        const content = await readBinaryBody(req, 64 * 1024 * 1024)
+        try {
+          const isNxtArchive = content[0] === 0x50 && content[1] === 0x4b
+          const imported = isNxtArchive ? parseDshPluginTransfer(content) : undefined
+          const inspection = imported
+            ? await runtime.dshPluginInstaller.inspectImportedTarball(
+                imported.tarball,
+                imported.expected,
+                operation.progress,
+              )
+            : await runtime.dshPluginInstaller.inspectTarball(content, operation.progress)
+          operation.done()
+          writeJson(res, 200, HostApiContracts.inspectDshPluginInstall.parseResponse({ ...inspection, operationId }))
+        } catch (error) {
+          operation.failed(error instanceof Error ? error.message : String(error))
+          throw error
+        }
+      } catch (error) {
+        writeError(res, 400, 'dsh-plugin-inspect-failed', error instanceof Error ? error.message : String(error))
+      }
+    },
+  })
+
+  registerRoute({
+    kind: 'exact',
+    path: '/api/dsh/plugin-installs',
+    handler: async (req, res) => {
+      if (req.method !== 'POST') {
+        writeError(res, 405, 'method-not-allowed', '只支持 POST。')
+        return
+      }
+      try {
+        const input = HostApiContracts.commitDshPluginInstall.parseRequest(await readJsonBody(req))
+        const operationId = input.operationId ?? randomUUID()
+        const operation = dshPluginOperation(operationId, 'install')
+        try {
+          const installed = await runtime.dshPluginInstaller.commit(
+            input.token,
+            input.approvedBuilds,
+            operation.progress,
+          )
+          operation.done()
+          broadcast({ event: 'dsh-plugins-changed', data: { changed: true } })
+          writeContractJson(res, 200, HostApiContracts.commitDshPluginInstall, {
+            packageId: installed.id,
+            operationId,
+          })
+        } catch (error) {
+          operation.failed(error instanceof Error ? error.message : String(error))
+          throw error
+        }
+      } catch (error) {
+        writeError(res, 400, 'dsh-plugin-install-failed', error instanceof Error ? error.message : String(error))
+      }
+    },
+  })
+
+  registerRoute({
+    kind: 'prefix',
+    path: '/api/dsh/plugin-entries',
+    handler: async (req, res) => {
+      const url = new URL(req.url ?? '/', 'http://localhost')
+      const activationMatch = /^\/api\/dsh\/plugin-entries\/([^/]+)\/activation$/u.exec(url.pathname)
+      const configMatch = /^\/api\/dsh\/plugin-entries\/([^/]+)\/config\/inspect$/u.exec(url.pathname)
+      const encodedEntryId = activationMatch?.[1] ?? configMatch?.[1]
+      if (!encodedEntryId) {
+        writeError(res, 404, 'not-found', `未定义路由：${req.method} ${url.pathname}。`)
+        return
+      }
+      try {
+        const entryId = DshPluginEntryIdSchema.parse(decodeURIComponent(encodedEntryId))
+        if (configMatch) {
+          if (req.method !== 'POST') {
+            writeError(res, 405, 'method-not-allowed', '检查 DSH 插件配置只支持 POST。')
+            return
+          }
+          HostApiContracts.inspectDshPluginEntryConfig.parseRequest(undefined)
+          writeContractJson(
+            res,
+            200,
+            HostApiContracts.inspectDshPluginEntryConfig,
+            await runtime.host.inspectInstalledDshPluginConfig(entryId),
+          )
+          return
+        }
+        if (req.method === 'PUT') {
+          const input = HostApiContracts.activateDshPluginEntry.parseRequest(await readJsonBody(req))
+          const activation = await runtime.host.activateInstalledDshPlugin({
+            entryId,
+            target: input.target,
+            config: input.config,
+            ...(input.agentId === undefined ? {} : { agentId: input.agentId }),
+          })
+          broadcast({ event: 'dsh-plugins-changed', data: { changed: true } })
+          writeContractJson(res, 200, HostApiContracts.activateDshPluginEntry, {
+            targetKey: activation.targetKey,
+          })
+          return
+        }
+        if (req.method === 'DELETE') {
+          const input = HostApiContracts.deactivateDshPluginEntry.parseRequest(await readJsonBody(req))
+          await runtime.host.disableInstalledDshPlugin(entryId, input.targetKey)
+          broadcast({ event: 'dsh-plugins-changed', data: { changed: true } })
+          writeContractJson(res, 200, HostApiContracts.deactivateDshPluginEntry, { disabled: true })
+          return
+        }
+        writeError(res, 405, 'method-not-allowed', '只支持 PUT 或 DELETE。')
+      } catch (error) {
+        writeError(res, 400, 'dsh-plugin-activation-failed', error instanceof Error ? error.message : String(error))
+      }
+    },
+  })
+
+  registerRoute({
+    kind: 'prefix',
+    path: '/api/dsh/plugin-installs',
+    handler: async (req, res) => {
+      const url = new URL(req.url ?? '/', 'http://localhost')
+      const exportMatch = /^\/api\/dsh\/plugin-installs\/([^/]+)\/export$/u.exec(url.pathname)
+      if (exportMatch) {
+        if (req.method !== 'GET') {
+          writeError(res, 405, 'method-not-allowed', '导出 DSH 插件只支持 GET。')
+          return
+        }
+        try {
+          const packageId = DshPluginPackageIdSchema.parse(decodeURIComponent(exportMatch[1] ?? ''))
+          const exported = await createDshPluginExport(runtime, packageId)
+          writeDownload(res, exported.filename, exported.body)
+        } catch (error) {
+          writeError(res, 400, 'dsh-plugin-export-failed', error instanceof Error ? error.message : String(error))
+        }
+        return
+      }
+      const match = /^\/api\/dsh\/plugin-installs\/([^/]+)$/u.exec(url.pathname)
+      if (!match?.[1]) {
+        writeError(res, 404, 'not-found', `未定义路由：${req.method} ${url.pathname}。`)
+        return
+      }
+      if (req.method !== 'DELETE') {
+        writeError(res, 405, 'method-not-allowed', '只支持 DELETE。')
+        return
+      }
+      try {
+        const packageId = DshPluginPackageIdSchema.parse(decodeURIComponent(match[1]))
+        HostApiContracts.removeDshPluginPackage.parseRequest(undefined)
+        await runtime.removeDshPluginPackage(packageId)
+        broadcast({ event: 'dsh-plugins-changed', data: { changed: true } })
+        writeContractJson(res, 200, HostApiContracts.removeDshPluginPackage, { removed: true })
+      } catch (error) {
+        writeError(res, 400, 'dsh-plugin-remove-failed', error instanceof Error ? error.message : String(error))
       }
     },
   })
@@ -2406,6 +3177,7 @@ export const createNekroHostApi = (
             parsed.packageId,
             parsed.pluginRunId,
             parsed.renderedSlots,
+            parsed.renderedHostSlots,
           )
           writeJson(res, 200, HostApiContracts.dynamicReportClientVerification.parseResponse({ ok: true }))
         } catch (error) {

@@ -17,6 +17,8 @@
     "0012_onebot_activity_bindings.sql": "281d58fff520053fa313fa6c19ebf764e4d4c4e2a0c7976b305418dbe865a646",
     "0013_wecom_processing_feedback.sql": "a0c4d9009584b747feea4d50c3cb28eb4b278f855c67d5fae022ab39f436ad98",
     "0014_host_extension_installations.sql": "190b06c60f845b75e2f78548823bfcba215531e9871e02675825815717543460",
+    "0015_extension_scope_payload_digest.sql": "24ef78e28634d73983450e9d4787161b890a07bbee61da62aacf57a3b8fc76c6",
+    "0016_dsh_plugin_packages.sql": "9878a013826a362931d9c1914a232b8e0b0414fd9c69fd91f4fd57f46faf2946",
     "meta/0000_snapshot.json": "03573ed4ecfb276bfad4bd1d6041564c11d3c52e1fcb35fc3dd278da7b55448d",
     "meta/0001_snapshot.json": "48b7a1cd91c44d75a394c94af554fc85621fe5fda2dd680d4bc25b68679d4ee5",
     "meta/0002_snapshot.json": "aa0ed0d69885976c1ce596d468657ac121e8cae5ac9e09aa9843be0b3b3127c9",
@@ -32,6 +34,8 @@
     "meta/0012_snapshot.json": "10e2dd0f869d2af9c4c214db5744a410c2c6d9e35ada7a9befcce5a134a38fdc",
     "meta/0013_snapshot.json": "f5c0261097a1d3bc78cbf1a88aa2eabf823857fad7a26a8e94913894e4aea830",
     "meta/0014_snapshot.json": "f5e69cbb909f829b8e9db62c2462cb1a07d79cf0d6e301a1e84de43fe7a48ed8",
-    "meta/_journal.json": "0b3a01fcd1d2b2a4a70f2c3ca8201b3d39b4b775516fa917ab2f3d84dfe46746"
+    "meta/0015_snapshot.json": "0aa30cbde515338d64c4ccb7810b7762bf9b9507d82b2fd326d5ea11a2895610",
+    "meta/0016_snapshot.json": "d4198de8fec49dff0aaac42de5b43215b8c11b2bded264dcb515487a7622ba31",
+    "meta/_journal.json": "466f20183498da9d1d71b07190e16d6b5b967dbac0761a0e75a97db3ffe6e02a"
   }
 }

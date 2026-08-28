@@ -22,6 +22,8 @@ export const EpisodeIdSchema = brandedId('eps', 'EpisodeId')
 export const EpisodeHandoffIdSchema = brandedId('hof', 'EpisodeHandoffId')
 export const ExtensionIdSchema = brandedId('ext', 'ExtensionId')
 export const ExtensionRevisionIdSchema = brandedId('xrv', 'ExtensionRevisionId')
+export const DshPluginPackageIdSchema = brandedId('dsp', 'DshPluginPackageId')
+export const DshPluginEntryIdSchema = brandedId('dse', 'DshPluginEntryId')
 
 export type AgentId = z.infer<typeof AgentIdSchema>
 export type AgentRevisionId = z.infer<typeof AgentRevisionIdSchema>
@@ -39,6 +41,8 @@ export type EpisodeId = z.infer<typeof EpisodeIdSchema>
 export type EpisodeHandoffId = z.infer<typeof EpisodeHandoffIdSchema>
 export type ExtensionId = z.infer<typeof ExtensionIdSchema>
 export type ExtensionRevisionId = z.infer<typeof ExtensionRevisionIdSchema>
+export type DshPluginPackageId = z.infer<typeof DshPluginPackageIdSchema>
+export type DshPluginEntryId = z.infer<typeof DshPluginEntryIdSchema>
 
 export const ChannelActivityTypeSchema = z.enum([
   'member-poked',
@@ -169,9 +173,53 @@ export function parseJsonValue(input: unknown): JsonValue {
 export interface DshPluginCatalogEntry {
   readonly packageName: string
   readonly packageVersion: string
-  readonly origin: 'builtin' | 'profile' | 'dynamic'
+  readonly origin: 'builtin' | 'profile' | 'dynamic' | 'installed'
   readonly settingsNamespaces: readonly string[]
   readonly loadError?: { readonly code: string; readonly message: string }
+}
+
+export type DshPluginInstallSource = 'registry' | 'tarball' | 'imported'
+export type DshPluginActivationScope = 'host' | 'agent'
+
+export interface DshPluginPackageRecord {
+  readonly id: DshPluginPackageId
+  readonly packageName: string
+  readonly packageVersion: string
+  readonly source: DshPluginInstallSource
+  readonly packageDigest: string
+  readonly integrity?: string
+  readonly lockfileDigest: string
+  readonly manifest: JsonValue
+  readonly approvedBuilds: readonly string[]
+  readonly installedAt: number
+}
+
+export interface DshPluginEntryRecord {
+  readonly id: DshPluginEntryId
+  readonly packageId: DshPluginPackageId
+  readonly entryKey: string
+  readonly moduleName: string
+  readonly suggestedScope: DshPluginActivationScope
+  readonly selectedScope?: DshPluginActivationScope
+  readonly config: JsonValue
+  readonly createdAt: number
+}
+
+export interface DshPluginActivationRecord {
+  readonly entryId: DshPluginEntryId
+  readonly targetKey: string
+  readonly target: DshPluginActivationScope
+  readonly agentId?: AgentId
+  readonly activatedAt: number
+}
+
+export interface DshPluginDiagnosticRecord {
+  readonly entryId: DshPluginEntryId
+  readonly targetKey: string
+  readonly status: 'active' | 'load-failed' | 'restore-failed' | 'dispose-failed'
+  readonly phase: 'import' | 'apply' | 'update' | 'dispose' | 'restore'
+  readonly message?: string
+  readonly observedAt: number
 }
 
 export interface DshSettingsNamespaceView {

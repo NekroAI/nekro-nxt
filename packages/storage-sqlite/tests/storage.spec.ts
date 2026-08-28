@@ -163,7 +163,7 @@ const appendTextEvent = (
 
 describe('Core SQLite baseline', () => {
   it('accepts better-sqlite3 table_list metadata and migrates a clean database', async () => {
-    expect(Object.keys(coreSchema)).toHaveLength(30)
+    expect(Object.keys(coreSchema)).toHaveLength(34)
     expect(channelEvents.logicalMessageId.name).toBe('logical_message_id')
     expect('logicalMessageId' in channels).toBe(false)
 
@@ -328,37 +328,56 @@ describe('Core SQLite baseline', () => {
     }
   })
 
-  it('adds an empty Host installation catalog while preserving schema 0013 Extension data', async () => {
+  it('backfills Extension scope and payload digest while preserving schema 0014 data', async () => {
     const directory = await temporaryDirectory()
     const filename = path.join(directory, 'core.sqlite')
-    await createDatabaseAtMigration(filename, 13)
-    const oldDatabase = openCoreDatabase(filename)
-    const oldRepository = new SqliteCoreRepository(oldDatabase)
+    await createDatabaseAtMigration(filename, 14)
     const extensionId = ExtensionIdSchema.parse('ext_MIGRATIONHOST')
     const revisionId = ExtensionRevisionIdSchema.parse('xrv_MIGRATIONHOST')
-    oldRepository.saveExtensionRevision({
-      extension: {
-        id: extensionId,
-        slug: 'migration-host',
-        displayName: '迁移夹具扩展',
-        description: 'Synthetic migration fixture.',
-        createdAt: 1,
-      },
-      revision: {
-        id: revisionId,
-        extensionId,
-        revisionNumber: 1,
-        contentDigest: 'a'.repeat(64),
-        createdAt: 2,
-      },
-    })
-    oldDatabase.close()
+    const legacy = new BetterSqlite3(filename)
+    legacy
+      .prepare('INSERT INTO local_extensions (id, slug, display_name, description, created_at) VALUES (?, ?, ?, ?, ?)')
+      .run(extensionId, 'migration-host', '迁移夹具扩展', 'Synthetic migration fixture.', 1)
+    legacy
+      .prepare(
+        'INSERT INTO extension_revisions (id, extension_id, revision_number, content_digest, created_at) VALUES (?, ?, ?, ?, ?)',
+      )
+      .run(revisionId, extensionId, 1, 'a'.repeat(64), 2)
+    legacy
+      .prepare('INSERT INTO extension_revision_verifications (revision_id, verified_at, evidence) VALUES (?, ?, ?)')
+      .run(
+        revisionId,
+        2,
+        JSON.stringify({
+          revisionId,
+          dshVersion: '0.1.1-rc.2',
+          contractVersion: 'nekro-nxt-extension-v2',
+          scope: 'host-adapter',
+          origin: {
+            episodeId: 'eps_fixture',
+            pluginId: 'plugin_fixture',
+            packageId: 'pkg_fixture',
+            pluginRunId: 'run_fixture',
+          },
+          verifiedAt: 2,
+          hostBuild: { built: true, buildKey: 'host' },
+          clientBuild: { built: false, buildKey: 'client' },
+          toolInvocations: [],
+          rpcMethods: [],
+          renderedSlots: [],
+        }),
+      )
+    legacy.close()
 
     const migrated = await openMigratedCoreDatabase(filename)
     try {
       const repository = new SqliteCoreRepository(migrated)
       expect(repository.getExtension(extensionId)?.displayName).toBe('迁移夹具扩展')
-      expect(repository.getExtensionRevision(revisionId)?.contentDigest).toBe('a'.repeat(64))
+      expect(repository.getExtension(extensionId)?.scope).toBe('host-adapter')
+      expect(repository.getExtensionRevision(revisionId)).toMatchObject({
+        contentDigest: 'a'.repeat(64),
+        payloadDigest: 'a'.repeat(64),
+      })
       expect(repository.listHostInstallations()).toEqual([])
       repository.upsertHostInstallation({ extensionId, extensionRevisionId: revisionId, installedAt: 3 })
       expect(repository.getHostInstallation(extensionId)).toEqual({
@@ -1779,12 +1798,20 @@ describe('Extension and backup', () => {
       repository.saveExtensionRevision({
         extension: {
           id: extensionId,
+          scope: 'agent',
           slug: 'historical-extension',
           displayName: '历史验证扩展',
           description: '',
           createdAt: 1,
         },
-        revision: { id: revisionId, extensionId, revisionNumber: 1, contentDigest: 'sha256:historical', createdAt: 1 },
+        revision: {
+          id: revisionId,
+          extensionId,
+          revisionNumber: 1,
+          contentDigest: 'sha256:historical',
+          payloadDigest: 'sha256:historical',
+          createdAt: 1,
+        },
         verification: {
           revisionId,
           dshVersion: '0.1.1-rc.1',
@@ -1823,13 +1850,21 @@ describe('Extension and backup', () => {
       repository.saveExtensionRevision({
         extension: {
           id: extensionId,
+          scope: 'agent',
           slug: 'test-extension',
           displayName: '测试扩展',
           description: '',
           createdByAgentId: firstAgent.definition.id,
           createdAt: 1,
         },
-        revision: { id: revisionId, extensionId, revisionNumber: 1, contentDigest: 'sha256:test', createdAt: 1 },
+        revision: {
+          id: revisionId,
+          extensionId,
+          revisionNumber: 1,
+          contentDigest: 'sha256:test',
+          payloadDigest: 'sha256:test',
+          createdAt: 1,
+        },
       })
       repository.upsertActivation({
         agentId: firstAgent.definition.id,
@@ -1869,6 +1904,7 @@ describe('Extension and backup', () => {
       repository.saveExtensionRevision({
         extension: {
           id: extensionId,
+          scope: 'agent',
           slug: 'query-extension',
           displayName: '查询扩展',
           description: '有创建者',
@@ -1880,12 +1916,14 @@ describe('Extension and backup', () => {
           extensionId,
           revisionNumber: 1,
           contentDigest: 'sha256:query-one',
+          payloadDigest: 'sha256:query-one',
           createdAt: 1,
         },
       })
       repository.saveExtensionRevision({
         extension: {
           id: extensionId,
+          scope: 'agent',
           slug: 'query-extension',
           displayName: '查询扩展',
           description: '重复的扩展元数据不会覆盖',
@@ -1896,6 +1934,7 @@ describe('Extension and backup', () => {
           extensionId,
           revisionNumber: 2,
           contentDigest: 'sha256:query-two',
+          payloadDigest: 'sha256:query-two',
           createdAt: 2,
         },
       })

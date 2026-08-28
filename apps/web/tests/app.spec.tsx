@@ -39,6 +39,7 @@ const browserConnectionId = ConnectionIdSchema.parse('con_webinternal')
 const qqConnectionId = ConnectionIdSchema.parse('con_qqinternal')
 const browserExtensionId = ExtensionIdSchema.parse('ext_internal')
 const browserExtensionRevisionId = ExtensionRevisionIdSchema.parse('xrv_internal')
+const browserExtensionPreviousRevisionId = ExtensionRevisionIdSchema.parse('xrv_previous')
 const browserEpisodeId = EpisodeIdSchema.parse('eps_browser')
 const browserEventId = ChannelEventIdSchema.parse('evt_current')
 const otherEventId = ChannelEventIdSchema.parse('evt_other')
@@ -215,7 +216,26 @@ const browserSnapshot = HostApiContracts.snapshot.response.parse({
       displayName: '文档复核',
       description: '检查文档中的遗漏',
       createdByAgentId: browserAgentId,
+      scope: 'agent',
       revisions: [
+        {
+          id: browserExtensionPreviousRevisionId,
+          revisionNumber: 2,
+          createdAt: 1_724_000_000_000,
+          scope: 'agent',
+          contributions: ['工具：legacy_review'],
+          verification: {
+            verifiedAt: 1_724_000_000_000,
+            dshVersion: '0.1.1-rc.2',
+            contractVersion: 'nekro-nxt-extension-v1',
+            hostBuilt: true,
+            clientBuilt: false,
+            buildKey: 'b'.repeat(64),
+            toolInvocationCount: 0,
+            rpcMethods: [],
+            renderedSlots: [],
+          },
+        },
         {
           id: browserExtensionRevisionId,
           revisionNumber: 3,
@@ -1004,10 +1024,63 @@ describe.sequential('NekroNxt browser projections', { timeout: 30_000 }, () => {
 
     await withProductPage('/extensions', async (page) => {
       await playwrightExpect(page.getByRole('link', { name: /文档复核/u })).toBeVisible()
-      await playwrightExpect(page.getByText('已启用', { exact: true }).first()).toBeVisible()
+      await playwrightExpect(page.getByText('1 个智能体正在使用', { exact: true })).toBeVisible()
+      await playwrightExpect(page.getByRole('combobox', { name: '查看修订' })).toBeVisible()
+      await playwrightExpect(page.getByText('智能体工具 · document_review', { exact: true })).toBeVisible()
+      await page.getByRole('combobox', { name: '查看修订' }).click()
+      await page.getByRole('option', { name: /r2/u }).click()
+      await playwrightExpect(page.getByText('智能体工具 · legacy_review', { exact: true })).toBeVisible()
+      await playwrightExpect(page.getByRole('button', { name: '删除本地扩展' })).toBeVisible()
+      await playwrightExpect(page.getByLabel('选择 .nxt-extension 文件')).toHaveCount(1)
+      await playwrightExpect(page.locator('body')).not.toContainText('使用进度')
       await playwrightExpect(page.locator('body')).not.toContainText(browserExtensionRevisionId)
       await playwrightExpect(page.locator('body')).not.toContainText('Revision')
     })
+  })
+
+  it('inspects an extension dropped onto the managed import surface', async () => {
+    let inspectRequests = 0
+    await withProductPage(
+      `/extensions/${browserExtensionId}`,
+      async (page) => {
+        const dropZone = page.locator('[data-extension-drop-zone]')
+        await playwrightExpect(dropZone).toBeVisible()
+        await dropZone.evaluate((element) => {
+          const transfer = new DataTransfer()
+          transfer.items.add(
+            new File(['shared-extension'], 'shared.nxt-extension', {
+              type: 'application/vnd.nekro-nxt.extension+zip',
+            }),
+          )
+          element.dispatchEvent(new DragEvent('dragenter', { bubbles: true, cancelable: true, dataTransfer: transfer }))
+          element.dispatchEvent(new DragEvent('drop', { bubbles: true, cancelable: true, dataTransfer: transfer }))
+        })
+        await playwrightExpect(page.getByText('共享扩展', { exact: true })).toBeVisible()
+        await playwrightExpect(page.getByRole('button', { name: '导入为未启用扩展' })).toBeVisible()
+        expect(inspectRequests).toBe(1)
+      },
+      browserSnapshot,
+      async (page) => {
+        await page.route('**/api/extensions/imports/inspect', async (request) => {
+          inspectRequests += 1
+          expect(request.request().postDataBuffer()?.byteLength).toBeGreaterThan(0)
+          await request.fulfill({
+            status: 200,
+            contentType: 'application/json',
+            body: JSON.stringify({
+              token: 'import-token',
+              extensionId: 'ext_shared',
+              revisionId: 'xrv_shared',
+              slug: 'shared-extension',
+              displayName: '共享扩展',
+              scope: 'agent',
+              idempotent: false,
+              slugConflict: false,
+            }),
+          })
+        })
+      },
+    )
   })
 
   it('shows the platform-user directory and keeps filters in the URL', async () => {
@@ -1367,7 +1440,7 @@ describe.sequential('NekroNxt browser projections', { timeout: 30_000 }, () => {
     })
   })
 
-  it('loads the official DSH settings surface through the shared Client Runtime and theme bridge', async () => {
+  it('uses the NekroNXT settings surface without mounting the DSH native WebUI', async () => {
     const page = await browser.newPage({ viewport: { width: 1440, height: 900 } })
     const runtimeErrors: string[] = []
     page.on('pageerror', (error) => runtimeErrors.push(error.message))
@@ -1533,17 +1606,7 @@ describe.sequential('NekroNxt browser projections', { timeout: 30_000 }, () => {
       await page.getByText('@example/dsh-broken-extension', { exact: true }).click()
       await playwrightExpect(page.getByText('缺少运行所需的测试服务。', { exact: true })).toBeVisible()
       await page.getByText('DeepSeek 网页搜索', { exact: true }).first().click()
-      await playwrightExpect(page.getByText('DSH 原生界面', { exact: true }).first()).toBeVisible()
-      await playwrightExpect(page.locator('[data-dsh-native-surface]')).toBeVisible()
-      await playwrightExpect(page.locator('[data-dsh-native-surface]')).toContainText(/Web search|网页搜索/, {
-        timeout: 8_000,
-      })
-      const mappedColor = await page
-        .locator('[data-dsh-native-surface]')
-        .evaluate((element) => getComputedStyle(element).getPropertyValue('--dsw-alias-brand-primary').trim())
-      expect(mappedColor).not.toBe('')
-
-      await page.getByRole('tab', { name: '通用配置' }).click()
+      await playwrightExpect(page.locator('[data-dsh-native-surface]')).toHaveCount(0)
       await page.getByLabel('maxUses').fill('4')
       await page.getByRole('button', { name: '保存扩展配置' }).click()
       await playwrightExpect.poll(() => mutations.length).toBe(1)

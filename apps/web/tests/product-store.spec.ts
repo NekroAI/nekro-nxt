@@ -158,6 +158,7 @@ describe('product store Host mutations', () => {
       extensions: [
         {
           id: extensionId,
+          slug: 'test-extension',
           name: '测试扩展',
           description: '',
           revision: 1,
@@ -217,6 +218,7 @@ describe('product store Host mutations', () => {
       extensions: [
         {
           id: extensionId,
+          slug: 'shared-extension',
           name: '共享扩展',
           description: '',
           revision: 2,
@@ -267,6 +269,7 @@ describe('product store Host mutations', () => {
       extensions: [
         {
           id: extensionId,
+          slug: 'missing-revision-extension',
           name: '缺少版本的扩展',
           description: '',
           revision: 1,

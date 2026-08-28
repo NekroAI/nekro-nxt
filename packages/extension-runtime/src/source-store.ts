@@ -64,6 +64,10 @@ export class ExtensionSourceStore {
           encoding: 'utf8',
           mode: 0o600,
         }),
+        writeFile(path.join(staging, 'payload.sha256'), materialized.payloadDigest + '\n', {
+          encoding: 'utf8',
+          mode: 0o600,
+        }),
       ])
       await mkdir(path.dirname(final), { recursive: true, mode: 0o700 })
       try {
@@ -85,5 +89,25 @@ export class ExtensionSourceStore {
     const relativePath = this.revisionRelativePath(extensionId, revisionId)
     assertRelativeStoragePath(relativePath)
     return path.join(this.#root, relativePath)
+  }
+
+  async stageExtensionDeletion(extensionId: ExtensionId): Promise<string> {
+    assertStorageIdentity(extensionId)
+    const source = path.join(this.#root, 'extensions', extensionId)
+    const trash = path.join(this.#root, 'trash', 'extensions', `${extensionId}-${randomUUID()}`)
+    await mkdir(path.dirname(trash), { recursive: true, mode: 0o700 })
+    await rename(source, trash)
+    return trash
+  }
+
+  async restoreStagedExtension(extensionId: ExtensionId, trash: string): Promise<void> {
+    assertStorageIdentity(extensionId)
+    const trashRoot = path.join(this.#root, 'trash', 'extensions')
+    const relative = path.relative(trashRoot, trash)
+    if (relative.startsWith('..') || path.isAbsolute(relative))
+      throw new Error('Extension trash path escaped its root.')
+    const destination = path.join(this.#root, 'extensions', extensionId)
+    await mkdir(path.dirname(destination), { recursive: true, mode: 0o700 })
+    await rename(trash, destination)
   }
 }

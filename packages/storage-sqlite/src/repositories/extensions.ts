@@ -35,6 +35,7 @@ const toExtension = (input: typeof localExtensions.$inferSelect): LocalExtension
   const row = LocalExtensionRowSchema.parse(input)
   return {
     id: row.id,
+    scope: row.scope,
     slug: row.slug,
     displayName: row.displayName,
     description: row.description,
@@ -50,6 +51,7 @@ const toRevision = (input: typeof extensionRevisions.$inferSelect): Revision => 
     extensionId: row.extensionId,
     revisionNumber: row.revisionNumber,
     contentDigest: row.contentDigest,
+    payloadDigest: row.payloadDigest,
     createdAt: row.createdAt,
   }
 }
@@ -158,6 +160,16 @@ export function createExtensionsRepository(database: DrizzleCoreDatabase): Exten
       const row = database.select().from(extensionRevisions).where(eq(extensionRevisions.id, id)).get()
       return row === undefined ? undefined : toRevision(row)
     },
+    getExtensionRevisionByPayloadDigest(extensionId, payloadDigest): Revision | undefined {
+      const row = database
+        .select()
+        .from(extensionRevisions)
+        .where(
+          and(eq(extensionRevisions.extensionId, extensionId), eq(extensionRevisions.payloadDigest, payloadDigest)),
+        )
+        .get()
+      return row === undefined ? undefined : toRevision(row)
+    },
     nextExtensionRevisionNumber(extensionId: ExtensionId): number {
       const rows = database
         .select({ revisionNumber: extensionRevisions.revisionNumber })
@@ -177,6 +189,34 @@ export function createExtensionsRepository(database: DrizzleCoreDatabase): Exten
               .values({ revisionId: revision.id, verifiedAt: verification.verifiedAt, evidence: verification })
               .run()
           }
+        },
+        { behavior: 'immediate' },
+      )
+    },
+    deleteExtension(extensionId): void {
+      database.transaction(
+        (tx) => {
+          const active = tx.select().from(agentActivations).where(eq(agentActivations.extensionId, extensionId)).get()
+          const installed = tx
+            .select()
+            .from(hostExtensionInstallations)
+            .where(eq(hostExtensionInstallations.extensionId, extensionId))
+            .get()
+          if (active || installed) throw new Error('运行中的 Extension 必须先全部关闭或卸载。')
+          const revisions = tx
+            .select({ id: extensionRevisions.id })
+            .from(extensionRevisions)
+            .where(eq(extensionRevisions.extensionId, extensionId))
+            .all()
+          tx.delete(extensionClientDiagnostics).where(eq(extensionClientDiagnostics.extensionId, extensionId)).run()
+          for (const revision of revisions) {
+            tx.delete(extensionRevisionVerifications)
+              .where(eq(extensionRevisionVerifications.revisionId, revision.id))
+              .run()
+          }
+          tx.delete(extensionRevisions).where(eq(extensionRevisions.extensionId, extensionId)).run()
+          const result = tx.delete(localExtensions).where(eq(localExtensions.id, extensionId)).run()
+          if (result.changes !== 1) throw new Error('Extension 不存在或已被删除。')
         },
         { behavior: 'immediate' },
       )

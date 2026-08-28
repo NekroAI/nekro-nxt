@@ -89,6 +89,16 @@ harness.registerAdapter({
 return { apply() {} }
 `
 
+const CLIENT_CODE = `return {
+  inject: ['slots'],
+  apply(ctx) {
+    ctx.slots.register(
+      { name: 'conversation.message.rich', id: 'synthetic-chat:card' },
+      ({ part }) => React.createElement('article', { 'data-synthetic-card': '' }, part.summary)
+    )
+  }
+}`
+
 describe('Host Adapter Extension end-to-end', () => {
   it('runs with the offline harness, saves V3, installs, creates a Connection, and uninstalls without data loss', async () => {
     const directory = await mkdtemp(path.join(tmpdir(), 'nekro-nxt-adapter-extension-'))
@@ -121,11 +131,37 @@ describe('Host Adapter Extension end-to-end', () => {
       plugin: { kind: 'new', idPrefix: 'adapt' },
       name: '合成适配器',
       purpose: '验证 Host Adapter 安装闭环。',
-      code: { host: HOST_CODE },
+      code: { host: HOST_CODE, client: CLIENT_CODE },
     })
-    await expect(
-      runtime.host.runDynamicPackage(episode.dshSessionId, defined.pluginId, defined.packageId, 'run'),
-    ).resolves.toMatchObject({ ok: true, status: 'running' })
+    const pendingRun = runtime.host.runDynamicPackage(episode.dshSessionId, defined.pluginId, defined.packageId, 'run')
+    await Promise.resolve()
+    const approval = runtime.host
+      .dynamicInventory(episode.dshSessionId)
+      .find((row) => row.pluginId === defined.pluginId)?.latestRun?.approvalRequestId
+    expect(approval).toBeDefined()
+    const hostHalf = await runtime.host.runDynamicHostHalf(
+      episode.dshSessionId,
+      defined.pluginId,
+      defined.packageId,
+      'run',
+      approval!,
+      false,
+    )
+    expect(hostHalf.ok).toBe(true)
+    if (!hostHalf.ok) throw new Error(hostHalf.message)
+    await runtime.host.resolveDynamicRunRequest(episode.dshSessionId, approval!, {
+      ok: true,
+      pluginRunId: hostHalf.pluginRunId,
+    })
+    runtime.host.recordDynamicClientVerification(
+      episode.dshSessionId,
+      defined.pluginId,
+      defined.packageId,
+      hostHalf.pluginRunId,
+      [],
+      [{ name: 'conversation.message.rich', key: 'synthetic-chat:card' }],
+    )
+    await expect(pendingRun).resolves.toMatchObject({ ok: true })
 
     const webContext = new Context()
     await webContext.plugin(WebServer, { host: '127.0.0.1', port: 0 })
@@ -145,11 +181,12 @@ describe('Host Adapter Extension end-to-end', () => {
           description: '合成适配器测试 Revision。',
         }),
       })
-      expect(save.ok).toBe(true)
+      expect(save.ok, await save.clone().text()).toBe(true)
       const saved = HostApiContracts.saveExtensionFromDynamic.parseResponse(await save.json())
       expect(runtime.repository.getExtensionRevisionVerification(saved.revisionId)).toMatchObject({
         contractVersion: 'nekro-nxt-extension-v2',
         scope: 'host-adapter',
+        renderedHostSlots: [{ name: 'conversation.message.rich', key: 'synthetic-chat:card' }],
         adapter: { key: 'synthetic-chat', registered: true, started: true, stopped: true },
       })
 

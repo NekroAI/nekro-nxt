@@ -106,6 +106,20 @@
       "when": 1787825869171,
       "tag": "0014_host_extension_installations",
       "breakpoints": true
+    },
+    {
+      "idx": 15,
+      "version": "6",
+      "when": 1787837868603,
+      "tag": "0015_extension_scope_payload_digest",
+      "breakpoints": true
+    },
+    {
+      "idx": 16,
+      "version": "6",
+      "when": 1787838975862,
+      "tag": "0016_dsh_plugin_packages",
+      "breakpoints": true
     }
   ]
 }

@@ -2,6 +2,7 @@ import type { AgentId, ExtensionId, ExtensionRevisionId, JsonValue } from '@nekr
 
 export interface LocalExtension {
   readonly id: ExtensionId
+  readonly scope: LocalExtensionScope
   readonly slug: string
   readonly displayName: string
   readonly description: string
@@ -9,11 +10,15 @@ export interface LocalExtension {
   readonly createdAt: number
 }
 
+export type LocalExtensionScope = 'agent' | 'host-adapter'
+
 export interface Revision {
   readonly id: ExtensionRevisionId
   readonly extensionId: ExtensionId
   readonly revisionNumber: number
   readonly contentDigest: string
+  /** Stable digest of normalized code and contributions; excludes local Revision identities. */
+  readonly payloadDigest: string
   readonly createdAt: number
 }
 
@@ -134,10 +139,18 @@ export interface ExtensionClientDiagnostic {
   readonly observedAt: number
 }
 
+export interface ExtensionRuntimeDiagnostic {
+  readonly status: 'active' | 'restore-failed' | 'dispose-failed'
+  readonly message?: string
+  readonly observedAt: number
+}
+
 export interface MaterializedExtensionRevision {
   readonly manifest: ExtensionManifest
   readonly sources: { readonly host?: string; readonly client?: string }
   readonly contentDigest: string
+  readonly payloadDigest: string
+  readonly scope: LocalExtensionScope
 }
 
 export interface ExtensionBuildArtifact {
@@ -154,6 +167,7 @@ export interface ExtensionRepository {
   getExtensionBySlug(slug: string): LocalExtension | undefined
   listExtensionRevisions(extensionId?: ExtensionId): readonly Revision[]
   getExtensionRevision(id: ExtensionRevisionId): Revision | undefined
+  getExtensionRevisionByPayloadDigest(extensionId: ExtensionId, payloadDigest: string): Revision | undefined
   nextExtensionRevisionNumber(extensionId: ExtensionId): number
 
   /** Atomically inserts a new immutable Revision and its LocalExtension when it is new. */
@@ -162,6 +176,8 @@ export interface ExtensionRepository {
     readonly revision: Revision
     readonly verification?: ExtensionRevisionVerification
   }): void
+  /** Deletes one inactive Extension and all immutable Revisions in one database transaction. */
+  deleteExtension(extensionId: ExtensionId): void
   getExtensionRevisionVerification(revisionId: ExtensionRevisionId): ExtensionRevisionVerification | undefined
   getExtensionClientDiagnostic(agentId: AgentId, extensionId: ExtensionId): ExtensionClientDiagnostic | undefined
   upsertExtensionClientDiagnostic(diagnostic: ExtensionClientDiagnostic): void

@@ -51,6 +51,9 @@ describe('HttpDynamicClientHost (browser dynamic Client circuit)', () => {
       if (input.endsWith('/invoke')) {
         return Promise.resolve(stubResponse(200, { ok: true, value: { result: 'ok' } }))
       }
+      if (input.endsWith('/report-client-verification')) {
+        return Promise.resolve(stubResponse(200, { ok: true }))
+      }
       return Promise.resolve(stubResponse(404, { error: { code: 'not-found', message: 'x' } }))
     })
     vi.stubGlobal('fetch', fetchMock)
@@ -97,6 +100,26 @@ describe('HttpDynamicClientHost (browser dynamic Client circuit)', () => {
       pluginRunId: 'run-7',
       method: 'run',
       args: null,
+    })
+
+    await host.reportClientVerification(
+      agentId,
+      'plugin-1',
+      'package-1',
+      'run-7',
+      [],
+      [{ name: 'conversation.message.rich', key: 'synthetic-chat:card' }],
+    )
+    const verificationCall = requests.find((r) => r.url.endsWith('/report-client-verification'))
+    const verificationBody = verificationCall?.init?.body
+    if (typeof verificationBody !== 'string') throw new TypeError('verification request body must be JSON text.')
+    expect(HostApiContracts.dynamicReportClientVerification.request.parse(JSON.parse(verificationBody))).toEqual({
+      episodeId,
+      pluginId: 'plugin-1',
+      packageId: 'package-1',
+      pluginRunId: 'run-7',
+      renderedSlots: [],
+      renderedHostSlots: [{ name: 'conversation.message.rich', key: 'synthetic-chat:card' }],
     })
   })
 
@@ -192,6 +215,83 @@ describe('HttpDynamicClientHost (browser dynamic Client circuit)', () => {
       const rendered: unknown = createElement(entry.component, { agentId, displayName: '动态测试智能体' })
       if (!isValidElement(rendered)) throw new TypeError('Dynamic product Slot must return a React element.')
       expect(renderToStaticMarkup(rendered)).toBe('<section data-dynamic="probe">动态界面已加载</section>')
+    } finally {
+      await runtime.dispose()
+    }
+  })
+
+  it('loads and renders a dynamic Adapter rich-message Slot through the product registry', async () => {
+    fetchMock = vi.fn((input: string) => {
+      if (input.endsWith('/run-host-half')) {
+        return Promise.resolve(
+          stubResponse(200, {
+            ok: true,
+            pluginId: 'plugin-adapter',
+            packageId: 'package-adapter',
+            pluginRunId: 'run-adapter',
+            waitingFor: [],
+            startedHere: true,
+          }),
+        )
+      }
+      if (input.endsWith('/get-client-code')) {
+        return Promise.resolve(
+          stubResponse(200, {
+            pluginId: 'plugin-adapter',
+            packageId: 'package-adapter',
+            pluginRunId: 'run-adapter',
+            name: '动态适配器界面',
+            code: `return {
+              inject: ['slots'],
+              apply(ctx) {
+                ctx.slots.register(
+                  { name: 'conversation.message.rich', id: 'synthetic-chat:card' },
+                  ({ part }) => React.createElement('article', { 'data-dynamic-adapter-card': '' }, part.summary)
+                )
+              }
+            }`,
+          }),
+        )
+      }
+      if (input.endsWith('/approve')) return Promise.resolve(stubResponse(200, { accepted: true }))
+      return Promise.resolve(stubResponse(404, { error: { code: 'not-found', message: 'x' } }))
+    })
+    vi.stubGlobal('fetch', fetchMock)
+    const runtime = await DshDynamicClientRuntime.create(new HttpDynamicClientHost(agentId, episodeId), {
+      querySelectorAll: () => [],
+    })
+    const pending: DynamicInventoryRow = {
+      pluginId: 'plugin-adapter',
+      agentId,
+      packages: [
+        {
+          packageId: 'package-adapter',
+          name: '动态适配器界面',
+          purpose: '验证 Adapter rich Slot。',
+          hasHostHalf: true,
+          hasClientHalf: true,
+        },
+      ],
+      latestRun: {
+        pluginRunId: 'run-adapter',
+        packageId: 'package-adapter',
+        mode: 'run',
+        status: 'awaiting-approval',
+        approvalRequestId: 'approval-adapter',
+        requiresApproval: true,
+      },
+    }
+    try {
+      await runtime.reconcile([pending])
+      await runtime.approve('approval-adapter')
+      const [entry] = runtime.entries('conversation.message.rich')
+      if (!entry) throw new TypeError('Dynamic Adapter rich Slot must be registered.')
+      const rendered = createElement(entry.component, {
+        part: { type: 'rich', adapterKey: 'synthetic-chat', kind: 'card', summary: '合成卡片' },
+        messageId: 'msg_SYNTHETIC',
+        channelId: 'chn_SYNTHETIC',
+      })
+      expect(renderToStaticMarkup(rendered)).toBe('<article data-dynamic-adapter-card="">合成卡片</article>')
     } finally {
       await runtime.dispose()
     }

@@ -1,7 +1,7 @@
 import { ExtensionIdSchema, ExtensionRevisionIdSchema, type AgentId, type ExtensionId } from '@nekro-nxt/contracts'
 import { monotonicFactory } from 'ulid'
 import { z } from 'zod'
-import { materializeDynamicPackage } from './materializer.js'
+import { materializeDynamicPackage, materializeImportedRevision } from './materializer.js'
 import type { ExtensionBuilder } from './builder.js'
 import type { ExtensionSourceStore } from './source-store.js'
 import type {
@@ -75,8 +75,24 @@ export class ExtensionService {
       revisionId,
       snapshot: input.snapshot,
     })
+    if (existing && existing.scope !== materialized.scope) {
+      throw new Error('An existing Extension cannot change scope across Revisions.')
+    }
+    if (existing?.scope === 'host-adapter') {
+      const previousKey = this.#repository
+        .listExtensionRevisions(existing.id)
+        .map((revision) => this.#repository.getExtensionRevisionVerification(revision.id)?.adapter?.key)
+        .find((key) => key !== undefined)
+      const nextKey = input.verification?.adapter?.key
+      if (previousKey !== undefined && nextKey !== previousKey) {
+        throw new Error('A Host Adapter Extension cannot change adapter key across Revisions.')
+      }
+    }
+    const duplicate = this.#repository.getExtensionRevisionByPayloadDigest(extensionId, materialized.payloadDigest)
+    if (duplicate) return { extension: existing ?? this.#requireExtension(extensionId), revision: duplicate }
     const extension: LocalExtension = existing ?? {
       id: extensionId,
+      scope: materialized.scope,
       slug,
       displayName: metadata.displayName,
       description: metadata.description,
@@ -88,6 +104,7 @@ export class ExtensionService {
       extensionId,
       revisionNumber: this.#repository.nextExtensionRevisionNumber(extensionId),
       contentDigest: materialized.contentDigest,
+      payloadDigest: materialized.payloadDigest,
       createdAt: now,
     }
 
@@ -124,6 +141,95 @@ export class ExtensionService {
     return { extension, revision }
   }
 
+  async importRevision(input: {
+    readonly extension: {
+      readonly id: ExtensionId
+      readonly scope: 'agent' | 'host-adapter'
+      readonly slug: string
+      readonly displayName: string
+      readonly description: string
+    }
+    readonly revision: {
+      readonly id: ReturnType<typeof ExtensionRevisionIdSchema.parse>
+      readonly contentDigest: string
+      readonly payloadDigest: string
+    }
+    readonly manifest: unknown
+    readonly sources: { readonly host?: string; readonly client?: string }
+    readonly localSlug?: string
+  }): Promise<{ readonly extension: LocalExtension; readonly revision: Revision; readonly idempotent: boolean }> {
+    const slug = slugSchema.parse(input.localSlug ?? input.extension.slug)
+    const metadata = textSchema.parse(input.extension)
+    const materialized = materializeImportedRevision({ manifest: input.manifest, sources: input.sources })
+    if (
+      materialized.manifest.extensionId !== input.extension.id ||
+      materialized.manifest.revisionId !== input.revision.id
+    ) {
+      throw new Error('导入扩展的 Manifest 身份与传输清单不一致。')
+    }
+    if (materialized.scope !== input.extension.scope) throw new Error('导入扩展的 scope 与 Manifest 不一致。')
+    if (
+      materialized.contentDigest !== input.revision.contentDigest ||
+      materialized.payloadDigest !== input.revision.payloadDigest
+    ) {
+      throw new Error('导入扩展的内容摘要不一致。')
+    }
+    const existingRevision = this.#repository.getExtensionRevision(input.revision.id)
+    if (existingRevision) {
+      if (
+        existingRevision.extensionId !== input.extension.id ||
+        existingRevision.contentDigest !== materialized.contentDigest ||
+        existingRevision.payloadDigest !== materialized.payloadDigest
+      ) {
+        throw new Error('相同 Extension/Revision 身份已存在，但内容不同；不会覆盖本地版本。')
+      }
+      return {
+        extension: this.#requireExtension(input.extension.id),
+        revision: existingRevision,
+        idempotent: true,
+      }
+    }
+    const existingExtension = this.#repository.getExtension(input.extension.id)
+    if (existingExtension && (existingExtension.scope !== input.extension.scope || existingExtension.slug !== slug)) {
+      throw new Error('同一 Extension 身份不能改变 scope 或本地 slug。')
+    }
+    const slugOwner = this.#repository.getExtensionBySlug(slug)
+    if (slugOwner && slugOwner.id !== input.extension.id) throw new Error(`Extension slug already exists: ${slug}`)
+    const now = this.#timestamp()
+    const extension: LocalExtension = existingExtension ?? {
+      id: input.extension.id,
+      scope: input.extension.scope,
+      slug,
+      displayName: metadata.displayName,
+      description: metadata.description,
+      createdAt: now,
+    }
+    const revision: Revision = {
+      id: input.revision.id,
+      extensionId: extension.id,
+      revisionNumber: this.#repository.nextExtensionRevisionNumber(extension.id),
+      contentDigest: materialized.contentDigest,
+      payloadDigest: materialized.payloadDigest,
+      createdAt: now,
+    }
+    await this.#sources.publish(extension.id, revision.id, materialized)
+    if (!this.#builder) throw new Error('导入扩展需要配置本机构建器。')
+    await this.#builder.build({
+      extensionId: extension.id,
+      revisionId: revision.id,
+      contentDigest: revision.contentDigest,
+      sourceDirectory: this.#sources.revisionSourceDirectory(extension.id, revision.id),
+    })
+    this.#repository.saveExtensionRevision({ extension, revision })
+    return { extension, revision, idempotent: false }
+  }
+
+  #requireExtension(extensionId: ExtensionId): LocalExtension {
+    const extension = this.#repository.getExtension(extensionId)
+    if (!extension) throw new Error(`Unknown Extension: ${extensionId}`)
+    return extension
+  }
+
   revisionSourceDirectory(revision: Revision): string {
     return this.#sources.revisionSourceDirectory(revision.extensionId, revision.id)
   }
@@ -136,6 +242,21 @@ export class ExtensionService {
       contentDigest: revision.contentDigest,
       sourceDirectory: this.revisionSourceDirectory(revision),
     })
+  }
+
+  stageExtensionDeletion(extensionId: ExtensionId): Promise<string> {
+    if (!this.#repository.getExtension(extensionId))
+      return Promise.reject(new Error(`Unknown Extension: ${extensionId}`))
+    return this.#sources.stageExtensionDeletion(extensionId)
+  }
+
+  restoreStagedExtension(extensionId: ExtensionId, trash: string): Promise<void> {
+    return this.#sources.restoreStagedExtension(extensionId, trash)
+  }
+
+  async deleteRevisionCaches(revisions: readonly Revision[]): Promise<void> {
+    if (!this.#builder) return
+    await this.#builder.deleteRevisionCaches(revisions.map((revision) => revision.id))
   }
 
   #timestamp(): number {

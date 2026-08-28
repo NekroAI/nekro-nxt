@@ -1,4 +1,5 @@
-import { ArrowRight, Boxes, Check, Save, Sparkles } from 'lucide-react'
+import { ArrowRight, Boxes, Check, Download, FileArchive, Save, Sparkles, Trash2, Upload } from 'lucide-react'
+import { HostApiContracts, HostApiErrorSchema, type HostApiResponse } from '@nekro-nxt/contracts'
 import { useEffect, useState } from 'react'
 import { Navigate, useParams, useSearchParams } from 'react-router-dom'
 import { useNxtNavigate } from '../shell/nxt-link.js'
@@ -10,6 +11,7 @@ import {
   ConfirmDialog,
   Field,
   Input,
+  SelectField,
   StageCrossfade,
   StatusBadge,
   SwitchControl,
@@ -57,8 +59,17 @@ export function ExtensionsPage() {
   const agents = useProductStore((state) => state.agents)
   const extensions = useProductStore((state) => state.extensions)
   const [pendingAgentId, setPendingAgentId] = useState<string | null>(null)
+  const [revisionByAgent, setRevisionByAgent] = useState<Record<string, string>>({})
   const [installationPending, setInstallationPending] = useState(false)
   const [uninstallOpen, setUninstallOpen] = useState(false)
+  const [deleteOpen, setDeleteOpen] = useState(false)
+  const [deletePending, setDeletePending] = useState(false)
+  const [importInspection, setImportInspection] = useState<HostApiResponse<'inspectExtensionImport'> | null>(null)
+  const [importSlug, setImportSlug] = useState('')
+  const [importPending, setImportPending] = useState(false)
+  const [importFileName, setImportFileName] = useState('')
+  const [importDragging, setImportDragging] = useState(false)
+  const [focusedRevisionId, setFocusedRevisionId] = useState('')
   const selectedId = extensionId || extensions[0]?.id || ''
 
   const changeActivation = async (
@@ -66,11 +77,12 @@ export function ExtensionsPage() {
     agentId: string,
     agentName: string,
     enabled: boolean,
+    revisionId?: string,
   ): Promise<void> => {
     if (pendingAgentId) return
     setPendingAgentId(agentId)
     try {
-      await useProductStore.getState().setExtensionActive(extension.id, agentId, enabled)
+      await useProductStore.getState().setExtensionActive(extension.id, agentId, enabled, revisionId)
       notify(
         `${enabled ? '已为' : '已停止让'}${agentName}${enabled ? '启用' : '使用'}“${extension.name}”。`,
         'success',
@@ -87,6 +99,11 @@ export function ExtensionsPage() {
     }
   }
   const selected = extensions.find((extension) => extension.id === selectedId) ?? extensions[0]
+  useEffect(() => {
+    setFocusedRevisionId(selected?.revisionId ?? '')
+  }, [selected?.id, selected?.revisionId])
+  const focusedRevision =
+    selected?.revisions.find((revision) => revision.id === focusedRevisionId) ?? selected?.revisions.at(-1)
   const detailsActivation =
     selected?.activations.find((activation) => activation.agentId === selected.createdByAgentId) ??
     selected?.activations[0]
@@ -96,6 +113,9 @@ export function ExtensionsPage() {
   )
   const visibleClientDiagnostic =
     selected?.scope === 'host-adapter' ? selected.hostClientDiagnostic : selectedClientDiagnostic
+  const focusedVerification = focusedRevision?.verification
+  const focusedClientDiagnostic =
+    visibleClientDiagnostic?.revisionId === focusedRevision?.id ? visibleClientDiagnostic : undefined
   const changeInstallation = async (revisionId: string | null): Promise<boolean> => {
     if (!selected || installationPending) return false
     setInstallationPending(true)
@@ -114,6 +134,75 @@ export function ExtensionsPage() {
       setInstallationPending(false)
     }
   }
+  const inspectImport = async (file: File): Promise<void> => {
+    setImportPending(true)
+    setImportFileName(file.name)
+    try {
+      const response = await fetch('/api/extensions/imports/inspect', { method: 'POST', body: file })
+      const body: unknown = await response.json()
+      if (!response.ok) {
+        const parsed = HostApiErrorSchema.safeParse(body)
+        throw new Error(parsed.success ? parsed.data.error.message : `导入检查失败（HTTP ${response.status}）。`)
+      }
+      const inspection = HostApiContracts.inspectExtensionImport.parseResponse(body)
+      setImportInspection(inspection)
+      setImportSlug(inspection.slugConflict ? `${inspection.slug}-imported` : inspection.slug)
+    } catch (error) {
+      setImportInspection(null)
+      setImportFileName('')
+      notify(error instanceof Error ? error.message : String(error), 'error', 'extension-import-inspect')
+    } finally {
+      setImportPending(false)
+    }
+  }
+  const commitImport = async (): Promise<void> => {
+    if (!importInspection || importPending) return
+    setImportPending(true)
+    try {
+      const response = await fetch(`/api/extensions/imports/${encodeURIComponent(importInspection.token)}/commit`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify(importInspection.slugConflict ? { localSlug: importSlug } : {}),
+      })
+      const body: unknown = await response.json()
+      if (!response.ok) {
+        const parsed = HostApiErrorSchema.safeParse(body)
+        throw new Error(parsed.success ? parsed.data.error.message : `导入提交失败（HTTP ${response.status}）。`)
+      }
+      const result = HostApiContracts.commitExtensionImport.parseResponse(body)
+      await useProductStore.getState().refreshHost()
+      setImportInspection(null)
+      setImportFileName('')
+      notify(result.idempotent ? '相同的扩展修订已存在，未重复导入。' : '扩展修订已导入，当前未启用。', 'success')
+      void navigate(`/extensions/${result.extensionId}`)
+    } catch (error) {
+      notify(error instanceof Error ? error.message : String(error), 'error', 'extension-import-commit')
+    } finally {
+      setImportPending(false)
+    }
+  }
+  const deleteExtension = async (): Promise<boolean> => {
+    if (!selected || deletePending) return false
+    setDeletePending(true)
+    try {
+      const response = await fetch(`/api/extensions/${encodeURIComponent(selected.id)}`, { method: 'DELETE' })
+      const body: unknown = await response.json()
+      if (!response.ok) {
+        const parsed = HostApiErrorSchema.safeParse(body)
+        throw new Error(parsed.success ? parsed.data.error.message : `删除扩展失败（HTTP ${response.status}）。`)
+      }
+      HostApiContracts.deleteLocalExtension.parseResponse(body)
+      notify(`已删除本地扩展“${selected.name}”。`, 'success', `extension-delete:${selected.id}`)
+      void navigate('/extensions')
+      await useProductStore.getState().refreshHost()
+      return true
+    } catch (error) {
+      notify(error instanceof Error ? error.message : String(error), 'error', `extension-delete:${selected.id}`)
+      return false
+    } finally {
+      setDeletePending(false)
+    }
+  }
   if (!extensionId && extensions[0]) {
     return <Navigate to={`/extensions/${extensions[0].id}`} replace />
   }
@@ -123,25 +212,31 @@ export function ExtensionsPage() {
       <PageHeader
         icon={Boxes}
         title={selected?.name ?? '扩展库'}
-        meta={selected ? `版本 ${selected.revision} · ${extensions.length} 个本地扩展` : undefined}
+        meta={
+          selected
+            ? `${selected.scope === 'host-adapter' ? '本机适配器' : '智能体扩展'} · ${extensions.length} 个本地扩展`
+            : undefined
+        }
         quiet
         actions={
           selected ? (
-            <StatusBadge
-              tone={
-                selected.scope === 'host-adapter'
+            <>
+              <StatusBadge
+                tone={
+                  selected.scope === 'host-adapter'
+                    ? selected.installation
+                      ? 'success'
+                      : 'neutral'
+                    : extensionTone(selected.activations.length)
+                }
+              >
+                {selected.scope === 'host-adapter'
                   ? selected.installation
-                    ? 'success'
-                    : 'neutral'
-                  : extensionTone(selected.activations.length)
-              }
-            >
-              {selected.scope === 'host-adapter'
-                ? selected.installation
-                  ? '已安装到本机'
-                  : '尚未安装'
-                : extensionLabel(selected.activations.length)}
-            </StatusBadge>
+                    ? '已安装到本机'
+                    : '尚未安装'
+                  : extensionLabel(selected.activations.length)}
+              </StatusBadge>
+            </>
           ) : undefined
         }
       />
@@ -162,148 +257,69 @@ export function ExtensionsPage() {
             }
             action={
               host.status === 'ready' ? (
-                <Button onClick={() => void navigate('/work/creator')}>
-                  打开创造工作台 <ArrowRight size={14} aria-hidden="true" />
-                </Button>
+                <div className={styles.extensionEmptyActions}>
+                  <Button onClick={() => void navigate('/work/creator')}>
+                    打开创造工作台 <ArrowRight size={14} aria-hidden="true" />
+                  </Button>
+                  <label className={styles.extensionFileButton} data-disabled={importPending ? '' : undefined}>
+                    <Upload size={14} aria-hidden="true" />
+                    {importPending ? '正在检查…' : '导入扩展'}
+                    <Input
+                      className={styles.extensionFileInput}
+                      type="file"
+                      accept=".nxt-extension,application/vnd.nekro-nxt.extension+zip"
+                      aria-label="选择 .nxt-extension 文件"
+                      disabled={importPending}
+                      onChange={(event) => {
+                        const file = event.currentTarget.files?.[0]
+                        if (file) void inspectImport(file)
+                        event.currentTarget.value = ''
+                      }}
+                    />
+                  </label>
+                </div>
               ) : undefined
             }
           />
         ) : selected ? (
           <section className={styles.extensionWorkspace}>
-            <p className={styles.workspaceLead}>
-              {selected.description ? extensionDescription(selected.description) : '还没有说明这个扩展是做什么的。'}
-            </p>
-            <div className={styles.extensionOverview}>
-              <section>
-                <div className={styles.sectionHeading}>使用进度</div>
-                <ol
-                  className={[styles.lifecycleSteps, styles.lifecycleStepsCompact].join(' ')}
-                  aria-label="扩展使用进度"
-                >
-                  <li data-done="">
-                    <span>
-                      <Check size={12} aria-hidden="true" />
-                    </span>
-                    <small>试运行</small>
-                  </li>
-                  <li data-done="">
-                    <span>
-                      <Check size={12} aria-hidden="true" />
-                    </span>
-                    <small>保存为扩展</small>
-                  </li>
-                  <li
-                    data-done={
-                      (
-                        selected.scope === 'host-adapter'
-                          ? selected.installation !== undefined
-                          : selected.activations.length > 0
-                      )
-                        ? ''
-                        : undefined
-                    }
-                  >
-                    <span>
-                      {(
-                        selected.scope === 'host-adapter'
-                          ? selected.installation !== undefined
-                          : selected.activations.length > 0
-                      ) ? (
-                        <Check size={12} aria-hidden="true" />
-                      ) : (
-                        '3'
-                      )}
-                    </span>
-                    <small>{selected.scope === 'host-adapter' ? '安装到本机' : '启用给智能体'}</small>
-                  </li>
-                </ol>
-              </section>
-              <section>
-                <div className={styles.sectionHeading}>当前版本</div>
-                <dl className={styles.facts}>
-                  <dt>版本</dt>
-                  <dd>版本 {selected.revision}</dd>
-                  <dt>创建来源</dt>
-                  <dd>{selected.createdByAgent || '未记录'}</dd>
-                  <dt>正在使用</dt>
-                  <dd>
-                    {selected.scope === 'host-adapter'
-                      ? selected.installation
-                        ? '本机 Host'
-                        : '暂无'
-                      : selected.activations.length > 0
-                        ? `${selected.activations.length} 个智能体`
-                        : '暂无'}
-                  </dd>
-                  <dt>当前状态</dt>
-                  <dd>
-                    {selected.scope === 'host-adapter'
-                      ? selected.installation
-                        ? '已安装'
-                        : '尚未安装'
-                      : selected.activations.length > 0
-                        ? '已启用'
-                        : '尚未启用'}
-                  </dd>
-                </dl>
-              </section>
-            </div>
-            <div className={styles.extensionDetailGrid}>
-              <section>
-                <div className={styles.sectionHeading}>包含内容</div>
-                {selected.contributions.length > 0 ? (
-                  <div className={styles.tagList}>
-                    {selected.contributions.map((item) => (
-                      <span key={item} title={item}>
-                        {contributionLabel(item)}
-                      </span>
-                    ))}
-                  </div>
-                ) : (
-                  <p className={styles.secondaryText}>这个版本没有可展示的工具或界面。</p>
-                )}
-              </section>
-              <section>
-                <div className={styles.sectionHeading}>检查结果</div>
-                {selected.verification ? (
-                  <dl className={styles.facts}>
-                    <dt>扩展格式</dt>
-                    <dd>{contractVersionLabel(selected.verification.contractVersion)}</dd>
-                    <dt>DSH 版本</dt>
-                    <dd>{selected.verification.dshVersion}</dd>
-                    <dt>服务端功能</dt>
-                    <dd>{selected.verification.hostBuilt ? '检查通过' : '未包含'}</dd>
-                    <dt>界面功能</dt>
-                    <dd>{selected.verification.clientBuilt ? '检查通过' : '未包含'}</dd>
-                    <dt>工具测试</dt>
-                    <dd>
-                      {selected.verification.toolInvocationCount > 0
-                        ? `${selected.verification.toolInvocationCount} 次通过`
-                        : '未包含'}
-                    </dd>
-                    <dt>最近界面加载</dt>
-                    <dd>
-                      {!selected.verification.clientBuilt
-                        ? '未包含界面功能'
-                        : visibleClientDiagnostic === undefined
-                          ? '还没有加载记录'
-                          : visibleClientDiagnostic.status === 'loaded'
-                            ? `已加载 · ${new Date(visibleClientDiagnostic.observedAt).toLocaleString('zh-CN')}`
-                            : `失败 · ${new Date(visibleClientDiagnostic.observedAt).toLocaleString('zh-CN')}`}
-                    </dd>
-                  </dl>
-                ) : (
-                  <p className={styles.secondaryText}>这个版本保存时还没有记录检查结果。</p>
-                )}
-              </section>
-            </div>
-            <section className={styles.activationSection}>
+            <section className={styles.extensionSummary} aria-label="扩展摘要">
+              <div className={styles.extensionSummaryCopy}>
+                <p className={styles.workspaceLead}>
+                  {selected.description ? extensionDescription(selected.description) : '暂无扩展说明。'}
+                </p>
+                <div className={styles.extensionMetaLine}>
+                  <span>{selected.scope === 'host-adapter' ? '本机适配器' : '智能体扩展'}</span>
+                  <span>{selected.revisions.length} 个修订</span>
+                  <span>{focusedRevision?.contributions.length ?? 0} 项内容</span>
+                  <span>{selected.createdByAgent ? `保存来源：${selected.createdByAgent}` : '保存来源：本地导入'}</span>
+                </div>
+              </div>
+              <div className={styles.extensionRevisionPicker}>
+                <SelectField
+                  label="查看修订"
+                  value={focusedRevision?.id ?? ''}
+                  onValueChange={setFocusedRevisionId}
+                  options={selected.revisions.toReversed().map((revision) => ({
+                    value: revision.id,
+                    label: `r${revision.revision} · ${new Date(revision.createdAt).toLocaleDateString('zh-CN')}`,
+                  }))}
+                />
+              </div>
+            </section>
+            <section className={[styles.activationSection, styles.extensionPrimarySection].join(' ')}>
               {selected.scope === 'host-adapter' ? (
                 <>
+                  {selected.installation?.runtime && selected.installation.runtime.status !== 'active' ? (
+                    <InlineFeedback tone="error">
+                      {selected.installation.runtime.status === 'restore-failed' ? '启动恢复失败' : '停止资源失败'}
+                      {selected.installation.runtime.message ? `：${selected.installation.runtime.message}` : '。'}
+                    </InlineFeedback>
+                  ) : null}
                   <div className={styles.sectionBar}>
                     <div>
                       <div className={styles.sectionHeading}>本机安装</div>
-                      <div className={styles.secondaryText}>选择一个已验证版本安装；卸载时保留连接和历史。</div>
+                      <div className={styles.secondaryText}>可安装任意已验证修订。卸载时保留连接和历史。</div>
                     </div>
                     {selected.installation ? (
                       <Button
@@ -316,14 +332,14 @@ export function ExtensionsPage() {
                       </Button>
                     ) : null}
                   </div>
-                  <div className={styles.compactList} role="list" aria-label="适配器版本">
+                  <div className={styles.compactList} role="list" aria-label="适配器修订">
                     {selected.revisions.toReversed().map((revision) => {
                       const installed = selected.installation?.revisionId === revision.id
                       const latest = revision.id === selected.revisionId
                       return (
                         <div className={styles.staticRow} key={revision.id} role="listitem">
                           <span>
-                            <strong>版本 {revision.revision}</strong>
+                            <strong>r{revision.revision}</strong>
                             <small>
                               {installed ? '当前已安装' : new Date(revision.createdAt).toLocaleString('zh-CN')}
                             </small>
@@ -335,7 +351,11 @@ export function ExtensionsPage() {
                             loadingLabel="正在切换…"
                             onClick={() => void changeInstallation(revision.id)}
                           >
-                            {selected.installation ? (latest ? '更新到此版本' : '回滚到此版本') : '安装到本机'}
+                            {selected.installation
+                              ? latest
+                                ? `更新到 r${revision.revision}`
+                                : `切换到 r${revision.revision}`
+                              : '安装到本机'}
                           </Button>
                         </div>
                       )
@@ -357,6 +377,8 @@ export function ExtensionsPage() {
                     <div className={styles.activationGrid} role="list" aria-label="智能体使用范围">
                       {agents.map((agent) => {
                         const activation = selected.activations.find((candidate) => candidate.agentId === agent.id)
+                        const selectedRevisionId =
+                          revisionByAgent[agent.id] ?? activation?.revisionId ?? selected.revisionId ?? ''
                         return (
                           <div
                             className={styles.activationCard}
@@ -371,16 +393,33 @@ export function ExtensionsPage() {
                               <strong>{agent.name}</strong>
                               <small className={styles.activationMeta}>
                                 {activation
-                                  ? `正在使用 · 版本 ${activation.revision || selected.revision}`
-                                  : `尚未启用 · 可用版本 ${selected.revision}`}
+                                  ? activation.runtime && activation.runtime.status !== 'active'
+                                    ? `${activation.runtime.status === 'restore-failed' ? '恢复失败' : '停止失败'} · r${activation.revision || selected.revision}`
+                                    : `正在使用 r${activation.revision || selected.revision}`
+                                  : `尚未启用 · 最新 r${selected.revision}`}
                               </small>
                             </span>
+                            <SelectField
+                              label={`${agent.name}使用的修订`}
+                              value={selectedRevisionId}
+                              disabled={pendingAgentId !== null}
+                              onValueChange={(revisionId) => {
+                                setRevisionByAgent((current) => ({ ...current, [agent.id]: revisionId }))
+                                if (activation && revisionId !== activation.revisionId) {
+                                  void changeActivation(selected, agent.id, agent.name, true, revisionId)
+                                }
+                              }}
+                              options={selected.revisions.toReversed().map((revision) => ({
+                                value: revision.id,
+                                label: `r${revision.revision}`,
+                              }))}
+                            />
                             <SwitchControl
                               label={`${activation ? '停止让' : '允许'}${agent.name}使用“${selected.name}”`}
                               checked={activation !== undefined}
                               disabled={pendingAgentId !== null}
                               onCheckedChange={(enabled) =>
-                                void changeActivation(selected, agent.id, agent.name, enabled)
+                                void changeActivation(selected, agent.id, agent.name, enabled, selectedRevisionId)
                               }
                             />
                           </div>
@@ -388,10 +427,158 @@ export function ExtensionsPage() {
                       })}
                     </div>
                   ) : (
-                    <p className={styles.secondaryText}>请先创建智能体，再为它启用这个扩展。</p>
+                    <p className={styles.secondaryText}>当前没有可配置的智能体。创建智能体后，可在此授权使用扩展。</p>
                   )}
                 </>
               )}
+            </section>
+            <div className={styles.extensionDetailGrid}>
+              <section>
+                <div className={styles.sectionHeading}>r{focusedRevision?.revision ?? selected.revision} 的内容</div>
+                {focusedRevision && focusedRevision.contributions.length > 0 ? (
+                  <div className={styles.tagList}>
+                    {focusedRevision.contributions.map((item) => (
+                      <span key={item} title={item}>
+                        {contributionLabel(item)}
+                      </span>
+                    ))}
+                  </div>
+                ) : (
+                  <p className={styles.secondaryText}>没有注册可展示的工具或界面。</p>
+                )}
+              </section>
+              <section>
+                <div className={styles.sectionHeading}>验证记录</div>
+                {focusedVerification ? (
+                  <dl className={styles.facts}>
+                    <dt>扩展格式</dt>
+                    <dd>{contractVersionLabel(focusedVerification.contractVersion)}</dd>
+                    <dt>DSH 版本</dt>
+                    <dd>{focusedVerification.dshVersion}</dd>
+                    <dt>服务端功能</dt>
+                    <dd>{focusedVerification.hostBuilt ? '验证通过' : '未提供'}</dd>
+                    <dt>界面功能</dt>
+                    <dd>{focusedVerification.clientBuilt ? '验证通过' : '未提供'}</dd>
+                    <dt>工具测试</dt>
+                    <dd>
+                      {focusedVerification.toolInvocationCount > 0
+                        ? `${focusedVerification.toolInvocationCount} 次通过`
+                        : '无工具调用'}
+                    </dd>
+                    <dt>最近界面加载</dt>
+                    <dd>
+                      {!focusedVerification.clientBuilt
+                        ? '无界面入口'
+                        : focusedClientDiagnostic === undefined
+                          ? '暂无运行记录'
+                          : focusedClientDiagnostic.status === 'loaded'
+                            ? `已加载 · ${new Date(focusedClientDiagnostic.observedAt).toLocaleString('zh-CN')}`
+                            : `失败 · ${new Date(focusedClientDiagnostic.observedAt).toLocaleString('zh-CN')}`}
+                    </dd>
+                  </dl>
+                ) : (
+                  <p className={styles.secondaryText}>
+                    本机没有 r{focusedRevision?.revision ?? selected.revision} 的验证记录。
+                  </p>
+                )}
+              </section>
+            </div>
+            <section className={styles.extensionTransferSection} aria-labelledby="extension-transfer-heading">
+              <div className={styles.sectionBar}>
+                <div>
+                  <div className={styles.sectionHeading} id="extension-transfer-heading">
+                    导入与分享
+                  </div>
+                  <div className={styles.secondaryText}>
+                    .nxt-extension 可用于备份或小范围共享。导入后由你决定何时启用。
+                  </div>
+                </div>
+              </div>
+              <div className={styles.extensionTransferGrid}>
+                <div
+                  className={styles.extensionDropZone}
+                  data-extension-drop-zone=""
+                  data-dragging={importDragging ? '' : undefined}
+                  onDragEnter={(event) => {
+                    event.preventDefault()
+                    setImportDragging(true)
+                  }}
+                  onDragOver={(event) => event.preventDefault()}
+                  onDragLeave={(event) => {
+                    if (event.relatedTarget instanceof Node && event.currentTarget.contains(event.relatedTarget)) return
+                    setImportDragging(false)
+                  }}
+                  onDrop={(event) => {
+                    event.preventDefault()
+                    setImportDragging(false)
+                    const file = event.dataTransfer.files[0]
+                    if (file) void inspectImport(file)
+                  }}
+                >
+                  <Upload size={22} aria-hidden="true" />
+                  <span>
+                    <strong>{importDragging ? '释放文件开始检查' : '导入扩展'}</strong>
+                    <small>{importFileName || '将 .nxt-extension 拖到此处，或从本机选择文件。'}</small>
+                  </span>
+                  <label className={styles.extensionFileButton} data-disabled={importPending ? '' : undefined}>
+                    <FileArchive size={14} aria-hidden="true" />
+                    {importPending ? '正在检查…' : '选择文件'}
+                    <Input
+                      className={styles.extensionFileInput}
+                      type="file"
+                      accept=".nxt-extension,application/vnd.nekro-nxt.extension+zip"
+                      aria-label="选择 .nxt-extension 文件"
+                      disabled={importPending}
+                      onChange={(event) => {
+                        const file = event.currentTarget.files?.[0]
+                        if (file) void inspectImport(file)
+                        event.currentTarget.value = ''
+                      }}
+                    />
+                  </label>
+                </div>
+                <div className={styles.extensionExportPanel}>
+                  <Download size={22} aria-hidden="true" />
+                  <span>
+                    <strong>导出 r{focusedRevision?.revision ?? selected.revision}</strong>
+                    <small>导出内容：源码、扩展契约和校验信息。启用关系、运行配置与凭据不在分享包内。</small>
+                  </span>
+                  <Button
+                    disabled={!focusedRevision}
+                    onClick={() => {
+                      if (!focusedRevision) return
+                      window.location.assign(
+                        `/api/extensions/${encodeURIComponent(selected.id)}/revisions/${encodeURIComponent(focusedRevision.id)}/export`,
+                      )
+                    }}
+                  >
+                    <Download size={14} aria-hidden="true" /> 导出 r{focusedRevision?.revision ?? selected.revision}
+                  </Button>
+                </div>
+              </div>
+              {importInspection ? (
+                <div className={styles.extensionImportReview}>
+                  <span>
+                    <strong>{importInspection.displayName}</strong>
+                    <small>
+                      {importInspection.scope === 'host-adapter' ? '本机适配器' : '智能体扩展'}
+                      {importInspection.idempotent ? ' · 本地已存在相同修订' : ' · 已通过文件检查'}
+                    </small>
+                  </span>
+                  {importInspection.slugConflict ? (
+                    <Field label="本地标识" hint="该标识已被其他扩展占用。">
+                      <Input value={importSlug} onChange={(event) => setImportSlug(event.currentTarget.value)} />
+                    </Field>
+                  ) : null}
+                  <Button
+                    loading={importPending}
+                    disabled={importInspection.slugConflict && importSlug.trim().length < 3}
+                    onClick={() => void commitImport()}
+                  >
+                    {importInspection.idempotent ? '确认已存在' : '导入为未启用扩展'}
+                  </Button>
+                </div>
+              ) : null}
             </section>
             {selected.scope === 'agent' && detailsActivation ? (
               <ExtensionDetailsExtensionSlots
@@ -401,6 +588,21 @@ export function ExtensionsPage() {
                 activation="active"
               />
             ) : null}
+            <section className={styles.extensionDangerZone} aria-labelledby="extension-danger-heading">
+              <span>
+                <Trash2 size={18} aria-hidden="true" />
+                <span>
+                  <strong id="extension-danger-heading">删除本地扩展</strong>
+                  <small>
+                    删除源码、修订、验证记录和使用关系。
+                    {selected.scope === 'host-adapter' ? '连接、频道和消息保留在原位。' : ''}
+                  </small>
+                </span>
+              </span>
+              <Button variant="danger" size="small" disabled={deletePending} onClick={() => setDeleteOpen(true)}>
+                <Trash2 size={14} aria-hidden="true" /> 删除本地扩展
+              </Button>
+            </section>
           </section>
         ) : null}
       </StageCrossfade>
@@ -412,6 +614,21 @@ export function ExtensionsPage() {
         confirmLabel="卸载适配器"
         confirmVariant="danger"
         onConfirm={() => changeInstallation(null)}
+      />
+      <ConfirmDialog
+        open={deleteOpen}
+        onOpenChange={setDeleteOpen}
+        title={`删除“${selected?.name ?? '本地扩展'}”`}
+        description={
+          selected?.scope === 'host-adapter'
+            ? `删除操作会卸载本机适配器，并移除 ${selected.revisions.length} 个修订及源码。连接、频道和历史保留。`
+            : `删除操作会关闭 ${selected?.activations.length ?? 0} 个智能体使用关系，并移除 ${selected?.revisions.length ?? 0} 个修订及源码。`
+        }
+        cancelLabel="保留扩展"
+        confirmLabel="删除本地扩展"
+        confirmVariant="danger"
+        confirmLoadingLabel="正在停止并删除…"
+        onConfirm={deleteExtension}
       />
     </div>
   )
@@ -429,6 +646,7 @@ export function CreatorPage() {
   const host = useProductStore((state) => state.host)
   const dynamic = useProductStore((state) => state.dynamic)
   const agents = useProductStore((state) => state.agents)
+  const extensions = useProductStore((state) => state.extensions)
   const navigate = useNxtNavigate()
   const [searchParams] = useSearchParams()
   const requestedAgentId = searchParams.get('agent') ?? ''
@@ -438,6 +656,7 @@ export function CreatorPage() {
   const [extensionName, setExtensionName] = useState('')
   const [extensionSlug, setExtensionSlug] = useState('')
   const [extensionDescription, setExtensionDescription] = useState('')
+  const [targetExtensionId, setTargetExtensionId] = useState('')
   const [saveError, setSaveError] = useState('')
   const [declinePending, setDeclinePending] = useState(false)
   const reviewItem = reviewIndex === null ? undefined : dynamic[reviewIndex]
@@ -544,7 +763,9 @@ export function CreatorPage() {
                 ))}
               </div>
             ) : (
-              <InlineFeedback tone="warning">还没有智能体获得动态创造授权。请先在智能体的能力页开启。</InlineFeedback>
+              <InlineFeedback tone="warning">
+                当前没有获得动态创造授权的智能体。可在智能体的能力页开启授权。
+              </InlineFeedback>
             )}
           </section>
         </div>
@@ -651,6 +872,7 @@ export function CreatorPage() {
                     variant="primary"
                     disabled={selectedItem.status !== 'running' || !selectedPackageAvailable}
                     onClick={() => {
+                      setTargetExtensionId('')
                       setExtensionName(`${selectedAgent?.name ?? '智能体'}的新扩展`)
                       setExtensionSlug(`local-extension-${Date.now().toString(36)}`)
                       setExtensionDescription('从动态创造运行保存的本地扩展。')
@@ -690,6 +912,7 @@ export function CreatorPage() {
               name: extensionName,
               slug: extensionSlug,
               description: extensionDescription,
+              ...(targetExtensionId ? { targetExtensionId } : {}),
             })
             notify('动态运行已保存为本地扩展。', 'success', 'dynamic-extension-save')
             navigate(`/extensions/${saved.extensionId}`)
@@ -701,14 +924,45 @@ export function CreatorPage() {
         }}
       >
         <div className={styles.formStack}>
+          <SelectField
+            label="保存位置"
+            value={targetExtensionId}
+            onValueChange={(nextId) => {
+              setTargetExtensionId(nextId)
+              const target = extensions.find((extension) => extension.id === nextId)
+              if (!target) return
+              setExtensionName(target.name)
+              setExtensionSlug(target.slug)
+              setExtensionDescription(target.description)
+            }}
+            options={[
+              { value: '', label: '创建新扩展' },
+              ...extensions.map((extension) => ({
+                value: extension.id,
+                label: `${extension.name} · r${extension.revision}`,
+              })),
+            ]}
+          />
           <Field label="扩展名称">
-            <Input value={extensionName} onChange={(event) => setExtensionName(event.target.value)} />
+            <Input
+              value={extensionName}
+              disabled={Boolean(targetExtensionId)}
+              onChange={(event) => setExtensionName(event.target.value)}
+            />
           </Field>
           <Field label="本地标识" hint="使用小写字母、数字和连字符。">
-            <Input value={extensionSlug} onChange={(event) => setExtensionSlug(event.target.value)} />
+            <Input
+              value={extensionSlug}
+              disabled={Boolean(targetExtensionId)}
+              onChange={(event) => setExtensionSlug(event.target.value)}
+            />
           </Field>
           <Field label="说明">
-            <Textarea value={extensionDescription} onChange={(event) => setExtensionDescription(event.target.value)} />
+            <Textarea
+              value={extensionDescription}
+              disabled={Boolean(targetExtensionId)}
+              onChange={(event) => setExtensionDescription(event.target.value)}
+            />
           </Field>
           {saveError ? <InlineFeedback tone="error">{saveError}</InlineFeedback> : null}
         </div>

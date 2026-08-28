@@ -46,6 +46,11 @@
 | 安装/切换 Adapter Revision | `PUT /api/extensions/:extensionId/installation` | 幂等安装或显式更新/回滚到 `{ revisionId }` |
 | 卸载 Adapter Revision | `DELETE /api/extensions/:extensionId/installation` | 停止 Runtime 并移除目录和 Client Slot；保留连接、频道与历史 |
 | Client 诊断 | `POST /api/extensions/:extensionId/revisions/:revisionId/client-diagnostic` | 保存当前 Activation 最近一次 loaded/failed；不回滚 Host |
+| 删除本地扩展 | `DELETE /api/extensions/:extensionId` | 先关闭全部 Activation 或卸载 Adapter，再删除源码、版本、验证与诊断；失败时恢复原运行关系 |
+| Extension 导出/导入 | `GET /api/extensions/:id/revisions/:revisionId/export`、`POST /api/extensions/imports/inspect`、`POST /api/extensions/imports/:token/commit` | 单 Revision `.nxt-extension`；两阶段检查、冲突处理、本机构建，提交后处于关闭状态 |
+| DSH 安装检查/提交 | `POST /api/dsh/plugin-installs/inspect`、`POST /api/dsh/plugin-installs` | 精确 npm 版本、tgz 或分享包；脚本逐依赖批准，原子提交后处于关闭状态 |
+| DSH 入口配置/启停 | `POST /api/dsh/plugin-entries/:entryId/config/inspect`、`PUT/DELETE /api/dsh/plugin-entries/:entryId/activation` | Config Schema 或高级 JSON；用户确认 Host/智能体作用域，Loader 成功后提交 Activation |
+| DSH 导出/移除 | `GET/DELETE /api/dsh/plugin-installs/:packageId[/export]` | 导出根 tgz 与锁元数据；移除先静止关闭全部入口，任一失败不删除包 |
 
 快照含 DSH 模型目录、能力可用状态、Adapter 目录、Connection（无 Secret，含可选 alias）、通用连接状态与动态能力诊断、已绑定频道和动态 Package。连接快照不再把 `appId` 或 Gateway 当作所有平台共有字段；账号标识、实现版本和可选能力来自 Adapter 诊断。已 tombstone 的智能体和频道不进入活动快照与工作树；普通解绑频道继续存在并进入未绑定频道。外部 Adapter 再次发现同一 `(connectionId, platformChannelId)` 时清除 Channel tombstone，复用原 Channel ID 与历史。Web 侧只用 `alias ?? Adapter displayName` 作为连接主辨识名，Adapter displayName 仍作为平台身份的次要信息；频道、对象列、连接详情、智能体频道列表和绑定选择器共享同一投影。Web 搜索是否可用看 DSH 凭据，不靠环境变量名推断。
 
@@ -54,7 +59,7 @@
 - `channel-fact` 携带该频道一批已投影的 `HostSnapshotMessage`（与历史接口同一形状）和该频道消息面 `revision`。同一 `sourceId` 先 planned 再 sent 时按 id 覆盖投递态。Host 对同一频道约 80ms 合并写入，并按 UTF-8 约 48 KiB 预算拆分消息批；单条消息保持原子。
 - `runtime` 携带与 `GET /runtime` 相同的裁剪投影（工具预览 160 字、最近 24 轮、可选 occupancy、步骤耗时与用量）和该频道轨迹面 `revision`。占用从 DSH `sessionProjections` 的 `contextPressure` / `tokenUsage` / `contextBreakdown` 投影；缺少窗口或用量样本时省略。服务端在 100ms 合并后再组装。UTF-8 序列化超过约 48 KiB 时只推 `phase` / `summary` / `occupancy` 并标 `truncated`，前端对已打开的工作轨迹回退一次 REST。
 - 可回放事件带 `Host epoch:序号` 形式的 SSE `id:`。Web 的共享 `HostEventStream` 先保留浏览器原生重连，使普通网络短断继续自动携带 `Last-Event-ID`；`EventSource` 进入永久关闭状态时按 1、2、4、8、16、30 秒上限退避重建，原生重连超过 5 秒未恢复时也由应用层重建。浏览器重新联网和用户点击「重新连接」会立即重建同一条共享流。连接每次重新打开都刷新权威快照，并对已加载频道重新读取历史与轨迹，因此代理返回 5xx、Host 重启或重建对象丢失浏览器内部游标时也不会留下数据缺口。Host 在内存里保留最近 512 帧；同一 epoch 的窗口内帧补发，窗口外、Host 重启和未来游标都返回 `status.replay = expired`，前端再次执行相同对账。慢客户端最多排队 512 KiB，超过预算就断开并依赖重连对账。权威事实仍是频道 Event Log 和当前 Session 投影，不是这份环形缓冲。
-- `status` / `extensions-changed` / `binding-change` / DSH 设置与凭据变更仍是信号，前端刷新对应快照或进度。
+- `status` / `extensions-changed` / `binding-change` / DSH 设置与凭据变更仍是信号，前端刷新对应快照或进度。`dsh-plugin-operation` 使用进程内 Operation ID 报告下载、依赖、构建脚本、校验和提交阶段；进程重启后未提交操作视为中断，staging 在启动时清理。
 - 不按频道再建 SSE，不把 `assistant/chunk` 或资源二进制推进帧。
 
 ## 3. Web 与 Server

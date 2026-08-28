@@ -209,6 +209,19 @@ export class ExtensionBuilder {
     }
   }
 
+  async deleteRevisionCaches(revisionIds: readonly ExtensionRevisionId[]): Promise<void> {
+    const results = await Promise.allSettled(
+      revisionIds.map((revisionId) => {
+        ExtensionRevisionIdSchema.parse(revisionId)
+        return rm(path.join(this.#cacheRoot, revisionId), { recursive: true, force: true })
+      }),
+    )
+    const failures = results
+      .filter((result): result is PromiseRejectedResult => result.status === 'rejected')
+      .map((result): unknown => result.reason)
+    if (failures.length) throw new AggregateError(failures, 'Extension build cache cleanup failed.')
+  }
+
   #artifactFromCache(directory: string, cache: z.infer<typeof extensionBuildCacheSchema>): ExtensionBuildArtifact {
     return {
       revisionId: cache.revisionId,

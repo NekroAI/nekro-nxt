@@ -95,6 +95,12 @@ class MemoryExtensionRepository implements ExtensionRepository {
     return this.revisions.get(id)
   }
 
+  getExtensionRevisionByPayloadDigest(id: ExtensionId, payloadDigest: string): Revision | undefined {
+    return [...this.revisions.values()].find(
+      (revision) => revision.extensionId === id && revision.payloadDigest === payloadDigest,
+    )
+  }
+
   listExtensionRevisions(id?: ExtensionId): readonly Revision[] {
     return [...this.revisions.values()].filter((revision) => id === undefined || revision.extensionId === id)
   }
@@ -118,6 +124,12 @@ class MemoryExtensionRepository implements ExtensionRepository {
     this.extensions.set(input.extension.id, input.extension)
     this.revisions.set(input.revision.id, input.revision)
     if (input.verification) this.verifications.set(input.revision.id, input.verification)
+  }
+  deleteExtension(extensionId: ExtensionId): void {
+    this.extensions.delete(extensionId)
+    for (const [revisionId, revision] of this.revisions) {
+      if (revision.extensionId === extensionId) this.revisions.delete(revisionId)
+    }
   }
 
   getExtensionRevisionVerification(id: ExtensionRevisionId): ExtensionRevisionVerification | undefined {
@@ -223,6 +235,7 @@ const deferred = <T>() => {
 
 const localExtension = (id: ExtensionId): LocalExtension => ({
   id,
+  scope: id.startsWith('ext_host') ? 'host-adapter' : 'agent',
   slug: 'test-extension',
   displayName: '测试扩展',
   description: '测试启停。',
@@ -234,6 +247,7 @@ const revision = (id: ExtensionRevisionId, extension: ExtensionId, number: numbe
   extensionId: extension,
   revisionNumber: number,
   contentDigest: `digest-${number}`,
+  payloadDigest: `payload-${number}`,
   createdAt: number,
 })
 
@@ -279,6 +293,7 @@ describe('Extension save', () => {
       expect(existsSync(sourceDirectory)).toBe(true)
       expect(existsSync(path.join(sourceDirectory, 'manifest.json'))).toBe(true)
       expect(existsSync(path.join(sourceDirectory, 'content.sha256'))).toBe(true)
+      expect(existsSync(path.join(sourceDirectory, 'payload.sha256'))).toBe(true)
       expect(existsSync(path.join(sourceDirectory, 'source', 'host.ts'))).toBe(true)
       expect(existsSync(path.join(sourceDirectory, 'source-input.json'))).toBe(false)
     }
@@ -313,7 +328,12 @@ describe('Extension save', () => {
       contributions: [],
     })
     expect(existsSync(path.join(sourceDirectory, 'source-input.json'))).toBe(false)
-    expect((await readdir(sourceDirectory)).sort()).toEqual(['content.sha256', 'manifest.json', 'source'])
+    expect((await readdir(sourceDirectory)).sort()).toEqual([
+      'content.sha256',
+      'manifest.json',
+      'payload.sha256',
+      'source',
+    ])
     expect((await readdir(path.join(sourceDirectory, 'source'))).sort()).toEqual(['host.ts'])
   })
 
@@ -347,6 +367,34 @@ describe('Extension save', () => {
       createdAt: 42,
     })
     expect(existsSync(service.revisionSourceDirectory(saved.revision))).toBe(true)
+  })
+
+  it('reuses an existing Revision when normalized code and contributions are unchanged', async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), 'nekro-nxt-extension-deduplicate-'))
+    temporaryDirectories.push(directory)
+    const repository = new MemoryExtensionRepository()
+    const sources = new ExtensionSourceStore(path.join(directory, 'data'))
+    const ids = ['dedupeExtension', 'dedupeRevision', 'unusedRevision'].values()
+    const service = new ExtensionService(repository, sources, {
+      now: () => 10,
+      nextUlid: () => ids.next().value ?? 'unexpected-id',
+    })
+    const first = await service.saveDynamicPackage({
+      snapshot: { name: '去重', purpose: '验证内容身份。', hostCode: 'return { apply() {} }\r\n' },
+      slug: 'dedupe-extension',
+      displayName: '去重扩展',
+      description: '',
+    })
+    const second = await service.saveDynamicPackage({
+      extensionId: first.extension.id,
+      snapshot: { name: '去重', purpose: '验证内容身份。', hostCode: 'return { apply() {} }\n' },
+      slug: first.extension.slug,
+      displayName: first.extension.displayName,
+      description: first.extension.description,
+    })
+
+    expect(second.revision.id).toBe(first.revision.id)
+    expect(repository.listExtensionRevisions(first.extension.id)).toEqual([first.revision])
   })
 
   it('rejects an existing slug change and a new slug collision before publishing or committing', async () => {
@@ -757,6 +805,124 @@ describe('Extension source store', () => {
 
   it('rejects relative source roots', () => {
     expect(() => new ExtensionSourceStore('relative-root')).toThrow('Extension source root must be absolute.')
+  })
+
+  it('stages and restores a complete Extension while rejecting unknown identities and escaped trash paths', async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), 'nekro-nxt-extension-trash-'))
+    temporaryDirectories.push(directory)
+    const repository = new MemoryExtensionRepository()
+    const sources = new ExtensionSourceStore(path.join(directory, 'data'))
+    const ids = ['trashExtension', 'trashRevision'].values()
+    const service = new ExtensionService(repository, sources, {
+      now: () => 20,
+      nextUlid: () => ids.next().value ?? 'unexpected-trash-id',
+    })
+
+    await expect(service.stageExtensionDeletion(extensionId('missingTrash'))).rejects.toThrow(
+      'Unknown Extension: ext_missingTrash',
+    )
+    const saved = await service.saveDynamicPackage({
+      snapshot: { name: '回收测试', purpose: '验证源码恢复。', hostCode: 'return {}' },
+      slug: 'trash-extension',
+      displayName: '回收测试',
+      description: '',
+    })
+    const sourceDirectory = service.revisionSourceDirectory(saved.revision)
+    const trash = await service.stageExtensionDeletion(saved.extension.id)
+    expect(existsSync(sourceDirectory)).toBe(false)
+    expect(existsSync(trash)).toBe(true)
+
+    await expect(service.restoreStagedExtension(saved.extension.id, directory)).rejects.toThrow(
+      'Extension trash path escaped its root.',
+    )
+    await service.restoreStagedExtension(saved.extension.id, trash)
+    expect(existsSync(sourceDirectory)).toBe(true)
+    await expect(service.buildRevision(saved.revision)).rejects.toThrow('Extension Builder is unavailable.')
+    await expect(service.deleteRevisionCaches([saved.revision])).resolves.toBeUndefined()
+
+    const cacheRoot = path.join(directory, 'cache')
+    const builder = new ExtensionBuilder(cacheRoot)
+    const builtService = new ExtensionService(repository, sources, { builder })
+    const artifact = await builtService.buildRevision(saved.revision)
+    expect(existsSync(artifact.directory)).toBe(true)
+    await builtService.deleteRevisionCaches([saved.revision])
+    expect(existsSync(path.join(cacheRoot, saved.revision.id))).toBe(false)
+  })
+})
+
+describe('Extension import validation', () => {
+  it('rejects identity, scope, digest, existing Revision, and existing Extension conflicts', async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), 'nekro-nxt-extension-import-validation-'))
+    temporaryDirectories.push(directory)
+    const incoming = materialize('return { imported: true }')
+    const extension = {
+      id: incoming.manifest.extensionId,
+      scope: 'agent' as const,
+      slug: 'imported-extension',
+      displayName: '导入扩展',
+      description: '',
+    }
+    const revisionInput = {
+      id: incoming.manifest.revisionId,
+      contentDigest: incoming.contentDigest,
+      payloadDigest: incoming.payloadDigest,
+    }
+    const repository = new MemoryExtensionRepository()
+    const service = new ExtensionService(repository, new ExtensionSourceStore(path.join(directory, 'data')))
+
+    await expect(
+      service.importRevision({
+        extension,
+        revision: revisionInput,
+        manifest: { ...incoming.manifest, extensionId: extensionId('otherImported') },
+        sources: incoming.sources,
+      }),
+    ).rejects.toThrow('导入扩展的 Manifest 身份与传输清单不一致。')
+    await expect(
+      service.importRevision({
+        extension: { ...extension, scope: 'host-adapter' },
+        revision: revisionInput,
+        manifest: incoming.manifest,
+        sources: incoming.sources,
+      }),
+    ).rejects.toThrow('导入扩展的 scope 与 Manifest 不一致。')
+    await expect(
+      service.importRevision({
+        extension,
+        revision: { ...revisionInput, payloadDigest: '0'.repeat(64) },
+        manifest: incoming.manifest,
+        sources: incoming.sources,
+      }),
+    ).rejects.toThrow('导入扩展的内容摘要不一致。')
+
+    const other = localExtension(extensionId('importConflictOwner'))
+    repository.saveExtensionRevision({
+      extension: other,
+      revision: revision(incoming.manifest.revisionId, other.id, 1),
+    })
+    await expect(
+      service.importRevision({
+        extension,
+        revision: revisionInput,
+        manifest: incoming.manifest,
+        sources: incoming.sources,
+      }),
+    ).rejects.toThrow('相同 Extension/Revision 身份已存在，但内容不同')
+
+    const identityRepository = new MemoryExtensionRepository()
+    identityRepository.extensions.set(extension.id, { ...localExtension(extension.id), slug: 'different-slug' })
+    const identityService = new ExtensionService(
+      identityRepository,
+      new ExtensionSourceStore(path.join(directory, 'identity-data')),
+    )
+    await expect(
+      identityService.importRevision({
+        extension,
+        revision: revisionInput,
+        manifest: incoming.manifest,
+        sources: incoming.sources,
+      }),
+    ).rejects.toThrow('同一 Extension 身份不能改变 scope 或本地 slug。')
   })
 })
 

@@ -127,7 +127,11 @@ import {
   type ChannelRuntimeOccupancy,
   type ConnectionId,
   type DshCredentialView,
+  type DshPluginActivationRecord,
+  type DshPluginActivationScope,
   type DshPluginCatalogEntry,
+  type DshPluginEntryId,
+  type DshPluginPackageId,
   type DshSettingsNamespaceView,
   type DshSettingsPathOperation,
   type EpisodeId,
@@ -155,6 +159,8 @@ import type {
   Revision,
   MountedExtension,
 } from '@nekro-nxt/extension-runtime'
+import type { DshPluginRepository } from '@nekro-nxt/storage-sqlite'
+import { DshPluginLifecycleCoordinator } from './dsh-plugin-lifecycle.js'
 import { shouldBroadcastChannelRuntime } from './channel-runtime-events.js'
 import { mountChannelReplyGuard } from './channel-reply-guard.js'
 import { projectSessionOccupancy, type RuntimePerformanceTotals } from './channel-runtime-projection.js'
@@ -543,6 +549,10 @@ export interface DshHostRuntimeOptions {
   /** DSH-owned settings and write-only credential documents. Both paths must be absolute when enabled. */
   readonly llmSettingsPath?: string
   readonly llmCredentialPath?: string
+  readonly dshPlugins?: {
+    readonly repository: DshPluginRepository
+    readonly resolveModule: (packageId: DshPluginPackageId, moduleName: string) => string
+  }
 }
 
 export interface ConfigurableLlmProviderView {
@@ -1090,6 +1100,7 @@ class NekroNxtDynamicCordisRunner extends DynamicCordisRunnerService {
     {
       readonly pluginRunId: string
       readonly renderedSlots: readonly ('agent.workbench.sections' | 'extension.details.panels')[]
+      readonly renderedHostSlots: readonly { readonly name: 'conversation.message.rich'; readonly key: string }[]
     }
   >()
   private readonly clientRpcMethodsByPackage = new Map<
@@ -1219,6 +1230,7 @@ class NekroNxtDynamicCordisRunner extends DynamicCordisRunnerService {
     readonly toolNames: readonly string[]
     readonly rpcMethods: readonly string[]
     readonly renderedSlots: readonly ('agent.workbench.sections' | 'extension.details.panels')[]
+    readonly renderedHostSlots: readonly { readonly name: 'conversation.message.rich'; readonly key: string }[]
   } {
     const row = this.snapshot(agent).find((candidate) => candidate.pluginId === pluginId)
     if (row?.activeRun?.packageId !== packageId) throw new Error('Dynamic Package is not the active verified Run.')
@@ -1230,7 +1242,10 @@ class NekroNxtDynamicCordisRunner extends DynamicCordisRunnerService {
     const clientRpcEvidence = this.clientRpcMethodsByPackage.get(packageId)
     const clientRpcMethods =
       clientRpcEvidence?.pluginRunId === row.activeRun.pluginRunId ? clientRpcEvidence.methods : new Set<string>()
-    if (pkg?.hasClientHalf && row.activeRun.handlers.some((method) => !clientRpcMethods.has(method))) {
+    const clientCallableHandlers = this.isAdapterPackage(packageId)
+      ? row.activeRun.handlers.filter((method) => method !== ADAPTER_DYNAMIC_EVIDENCE_METHOD)
+      : row.activeRun.handlers
+    if (pkg?.hasClientHalf && clientCallableHandlers.some((method) => !clientRpcMethods.has(method))) {
       throw new Error('Dynamic Client preview has not called every registered Host RPC for this Run.')
     }
     return {
@@ -1238,6 +1253,7 @@ class NekroNxtDynamicCordisRunner extends DynamicCordisRunnerService {
       toolNames: this.toolNamesByPackage.get(packageId) ?? [],
       rpcMethods: row.activeRun.handlers,
       renderedSlots: clientEvidence?.renderedSlots ?? [],
+      renderedHostSlots: clientEvidence?.renderedHostSlots ?? [],
     }
   }
 
@@ -1247,6 +1263,7 @@ class NekroNxtDynamicCordisRunner extends DynamicCordisRunnerService {
     packageId: string,
     pluginRunId: string,
     renderedSlots: readonly ('agent.workbench.sections' | 'extension.details.panels')[],
+    renderedHostSlots: readonly { readonly name: 'conversation.message.rich'; readonly key: string }[],
   ): void {
     const row = this.snapshot(agent).find((candidate) => candidate.pluginId === pluginId)
     if (row?.activeRun?.packageId !== packageId || row.activeRun.pluginRunId !== pluginRunId) {
@@ -1254,10 +1271,13 @@ class NekroNxtDynamicCordisRunner extends DynamicCordisRunnerService {
     }
     const pkg = row.packages.find((candidate) => candidate.packageId === packageId)
     if (!pkg?.hasClientHalf) throw new Error('Host-only Package cannot report Client verification.')
-    if (renderedSlots.length === 0) throw new Error('Dynamic Client verification must contain a product Slot.')
+    if (renderedSlots.length === 0 && renderedHostSlots.length === 0) {
+      throw new Error('Dynamic Client verification must contain a product Slot.')
+    }
     this.clientEvidenceByPackage.set(packageId, {
       pluginRunId,
       renderedSlots: [...new Set(renderedSlots)],
+      renderedHostSlots: [...new Map(renderedHostSlots.map((slot) => [slot.key, slot])).values()],
     })
   }
 
@@ -2695,6 +2715,7 @@ export class DshHostRuntime implements AgentSessionDriver, ExtensionActivationHo
   readonly #episodeBySession = new Map<string, EpisodeId>()
   readonly #revisionBySession = new Map<string, AgentRevisionRecord>()
   readonly #persistentExtensions = new Map<string, PersistentExtensionRegistration>()
+  readonly #dshPluginLifecycle: DshPluginLifecycleCoordinator | undefined
   readonly #dynamicApprovalListeners = new Set<(event: DynamicApprovalRequestEvent) => void>()
   #disposed = false
 
@@ -2708,6 +2729,19 @@ export class DshHostRuntime implements AgentSessionDriver, ExtensionActivationHo
     this.#resolveAdapterDisplayName = options.resolveAdapterDisplayName ?? (() => undefined)
     this.#developmentWorkspaceRoot = options.developmentWorkspaceRoot
     this.#hasLlmSettings = options.llmSettingsPath !== undefined
+    this.#dshPluginLifecycle =
+      options.dshPlugins === undefined
+        ? undefined
+        : new DshPluginLifecycleCoordinator({
+            repository: options.dshPlugins.repository,
+            rootContext: context,
+            isolateContext: isolatePrivateExtensionServices,
+            resolveModule: options.dshPlugins.resolveModule,
+            listAgentSessions: (agentId) =>
+              [...this.#handles.entries()]
+                .filter(([sessionId]) => this.#productAgentBySession.get(sessionId) === agentId)
+                .map(([sessionId, handle]) => ({ sessionId, context: handle.agent.ctx })),
+          })
     const compaction = context.compaction
     if (!(compaction instanceof NekroNxtCompactionEngine)) {
       throw new Error('NekroNxt visual restoration requires its public DSH compaction wrapper.')
@@ -2794,7 +2828,9 @@ export class DshHostRuntime implements AgentSessionDriver, ExtensionActivationHo
         maxUses: 2,
       })
       await context.plugin(SessionCheckpointPolicy)
-      return new DshHostRuntime(context, options)
+      const runtime = new DshHostRuntime(context, options)
+      await runtime.#dshPluginLifecycle?.initialize()
+      return runtime
     } catch (error) {
       await context.fiber.dispose()
       throw error
@@ -3030,6 +3066,35 @@ export class DshHostRuntime implements AgentSessionDriver, ExtensionActivationHo
         settingsNamespaces: expectedNamespaces.filter((ns) => liveNamespaces.has(ns)),
       }
     })
+  }
+
+  activateInstalledDshPlugin(input: {
+    readonly entryId: DshPluginEntryId
+    readonly target: DshPluginActivationScope
+    readonly agentId?: AgentId
+    readonly config: JsonValue
+  }): Promise<DshPluginActivationRecord> {
+    this.#assertActive()
+    if (!this.#dshPluginLifecycle) return Promise.reject(new Error('DSH 用户插件生命周期未配置。'))
+    return this.#dshPluginLifecycle.activate(input)
+  }
+
+  inspectInstalledDshPluginConfig(entryId: DshPluginEntryId) {
+    this.#assertActive()
+    if (!this.#dshPluginLifecycle) return Promise.reject(new Error('DSH 用户插件生命周期未配置。'))
+    return this.#dshPluginLifecycle.inspectConfig(entryId)
+  }
+
+  disableInstalledDshPlugin(entryId: DshPluginEntryId, targetKey: string): Promise<void> {
+    this.#assertActive()
+    if (!this.#dshPluginLifecycle) return Promise.reject(new Error('DSH 用户插件生命周期未配置。'))
+    return this.#dshPluginLifecycle.disable(entryId, targetKey)
+  }
+
+  disableInstalledDshPluginPackage(packageId: DshPluginPackageId): Promise<void> {
+    this.#assertActive()
+    if (!this.#dshPluginLifecycle) return Promise.reject(new Error('DSH 用户插件生命周期未配置。'))
+    return this.#dshPluginLifecycle.disablePackage(packageId)
   }
 
   /** Return every live DSH Settings namespace without exposing secret values. */
@@ -3472,6 +3537,7 @@ export class DshHostRuntime implements AgentSessionDriver, ExtensionActivationHo
       await mountDelegationCapabilities(agentContext, revision)
       await mountWebCapabilities(agentContext, revision)
       await mountDevelopmentCapabilities(agentContext, revision, developmentWorkspace)
+      await this.#dshPluginLifecycle?.mountAgentSession(revision.agentId, sessionId, agentContext)
       await this.#mountPersistentExtensionsIntoSession(revision.agentId, sessionId, agentContext)
     }
     const persisted = (await this.#context.sessionPersistence.list()).some(({ id }) => id === sessionId)
@@ -3985,6 +4051,7 @@ export class DshHostRuntime implements AgentSessionDriver, ExtensionActivationHo
       | { readonly kind: 'tool'; readonly name: string; readonly description: string }
       | { readonly kind: 'rpc'; readonly method: string }
       | { readonly kind: 'client-slot'; readonly name: 'agent.workbench.sections' | 'extension.details.panels' }
+      | { readonly kind: 'host-client-slot'; readonly name: 'conversation.message.rich'; readonly key: string }
       | {
           readonly kind: 'adapter'
           readonly apiVersion: 1
@@ -4030,9 +4097,19 @@ export class DshHostRuntime implements AgentSessionDriver, ExtensionActivationHo
         inboundCommitted: observed.inboundCommitted,
         outboundReceipt: observed.outboundReceipt,
       }
+      const renderedHostSlots = evidence.renderedHostSlots.filter(
+        (slot) => slot.key.startsWith(`${adapter.key}:`) && slot.key.length > adapter.key.length + 1,
+      )
+      if (evidence.renderedHostSlots.length > 0 && renderedHostSlots.length === 0) {
+        throw new Error(`适配器 Client 未真实渲染使用 ${adapter.key}:<kind> 的 rich Slot。`)
+      }
+      for (const slot of renderedHostSlots) {
+        contributions.push({ kind: 'host-client-slot', name: slot.name, key: slot.key })
+      }
       contributions.push({ kind: 'adapter', apiVersion: 1, key: adapter.key, descriptorDigest })
       return {
         ...evidence,
+        renderedHostSlots,
         rpcMethods: [],
         renderedSlots: [],
         contributions,
@@ -4040,6 +4117,9 @@ export class DshHostRuntime implements AgentSessionDriver, ExtensionActivationHo
         scope: 'host-adapter' as const,
         adapter,
       }
+    }
+    if (evidence.renderedHostSlots.length > 0) {
+      throw new Error('智能体 Extension 不能注册 Host Adapter rich Slot，请拆分为两个扩展。')
     }
     for (const name of evidence.toolNames) {
       const schema = visibleTools.find((candidate) => candidate.name === name)
@@ -4174,9 +4254,10 @@ export class DshHostRuntime implements AgentSessionDriver, ExtensionActivationHo
     packageId: string,
     pluginRunId: string,
     renderedSlots: readonly ('agent.workbench.sections' | 'extension.details.panels')[],
+    renderedHostSlots: readonly { readonly name: 'conversation.message.rich'; readonly key: string }[] = [],
   ): void {
     const { agent, runner } = this.#dynamicRuntime(dshSessionId)
-    runner.recordClientVerification(agent, pluginId, packageId, pluginRunId, renderedSlots)
+    runner.recordClientVerification(agent, pluginId, packageId, pluginRunId, renderedSlots, renderedHostSlots)
   }
 
   reportDynamicGuardFailure(
@@ -4386,6 +4467,11 @@ export class DshHostRuntime implements AgentSessionDriver, ExtensionActivationHo
     }
     const disposedHandles = await Promise.allSettled(handles.map((handle) => handle.dispose()))
     for (const result of disposedHandles) if (result.status === 'rejected') failures.push(result.reason)
+    try {
+      await this.#dshPluginLifecycle?.dispose()
+    } catch (error) {
+      failures.push(error)
+    }
     this.#handles.clear()
     this.#imageInputSessions.clear()
     this.#dynamicSessions.clear()

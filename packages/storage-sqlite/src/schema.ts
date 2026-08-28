@@ -9,6 +9,8 @@ import type {
   ChannelId,
   ChannelMemberId,
   ConnectionId,
+  DshPluginEntryId,
+  DshPluginPackageId,
   EpisodeHandoffId,
   EpisodeId,
   ExtensionId,
@@ -514,6 +516,7 @@ export const assetChannelGrants = sqliteTable(
 
 export const localExtensions = sqliteTable('local_extensions', {
   id: text().$type<ExtensionId>().primaryKey(),
+  scope: text({ enum: ['agent', 'host-adapter'] }).notNull(),
   slug: text().notNull().unique(),
   displayName: text('display_name').notNull(),
   description: text().notNull(),
@@ -533,6 +536,7 @@ export const extensionRevisions = sqliteTable(
       .references(() => localExtensions.id, { onDelete: 'restrict' }),
     revisionNumber: integer('revision_number').notNull(),
     contentDigest: text('content_digest').notNull(),
+    payloadDigest: text('payload_digest').notNull(),
     createdAt: integer('created_at').notNull(),
   },
   (table) => [
@@ -540,6 +544,7 @@ export const extensionRevisions = sqliteTable(
     uniqueIndex('extension_revisions_id_extension_uq').on(table.id, table.extensionId),
     uniqueIndex('extension_revisions_number_uq').on(table.extensionId, table.revisionNumber),
     uniqueIndex('extension_revisions_digest_uq').on(table.extensionId, table.contentDigest),
+    uniqueIndex('extension_revisions_payload_digest_uq').on(table.extensionId, table.payloadDigest),
   ],
 )
 
@@ -624,6 +629,91 @@ export const extensionClientDiagnostics = sqliteTable(
   ],
 )
 
+export const dshPluginPackages = sqliteTable(
+  'dsh_plugin_packages',
+  {
+    id: text().$type<DshPluginPackageId>().primaryKey(),
+    packageName: text('package_name').notNull(),
+    packageVersion: text('package_version').notNull(),
+    source: text({ enum: ['registry', 'tarball', 'imported'] }).notNull(),
+    packageDigest: text('package_digest').notNull(),
+    integrity: text(),
+    lockfileDigest: text('lockfile_digest').notNull(),
+    manifest: jsonText<JsonValue>('manifest').notNull(),
+    approvedBuilds: jsonText<readonly string[]>('approved_builds').notNull(),
+    installedAt: integer('installed_at').notNull(),
+  },
+  (table) => [
+    uniqueIndex('dsh_plugin_packages_identity_uq').on(table.packageName, table.packageVersion, table.packageDigest),
+    check('dsh_plugin_packages_installed_at_ck', sql`${table.installedAt} >= 0`),
+  ],
+)
+
+export const dshPluginEntries = sqliteTable(
+  'dsh_plugin_entries',
+  {
+    id: text().$type<DshPluginEntryId>().primaryKey(),
+    packageId: text('package_id')
+      .$type<DshPluginPackageId>()
+      .notNull()
+      .references(() => dshPluginPackages.id, { onDelete: 'cascade' }),
+    entryKey: text('entry_key').notNull(),
+    moduleName: text('module_name').notNull(),
+    suggestedScope: text('suggested_scope', { enum: ['host', 'agent'] }).notNull(),
+    selectedScope: text('selected_scope', { enum: ['host', 'agent'] }),
+    config: jsonText<JsonValue>('config').notNull(),
+    createdAt: integer('created_at').notNull(),
+  },
+  (table) => [
+    uniqueIndex('dsh_plugin_entries_package_key_uq').on(table.packageId, table.entryKey),
+    check('dsh_plugin_entries_created_at_ck', sql`${table.createdAt} >= 0`),
+  ],
+)
+
+export const dshPluginActivations = sqliteTable(
+  'dsh_plugin_activations',
+  {
+    entryId: text('entry_id')
+      .$type<DshPluginEntryId>()
+      .notNull()
+      .references(() => dshPluginEntries.id, { onDelete: 'cascade' }),
+    targetKey: text('target_key').notNull(),
+    target: text({ enum: ['host', 'agent'] }).notNull(),
+    agentId: text('agent_id')
+      .$type<AgentId>()
+      .references(() => agentDefinitions.id, { onDelete: 'restrict' }),
+    activatedAt: integer('activated_at').notNull(),
+  },
+  (table) => [
+    primaryKey({ columns: [table.entryId, table.targetKey] }),
+    index('dsh_plugin_activations_agent_idx').on(table.agentId, table.entryId),
+    check(
+      'dsh_plugin_activations_target_ck',
+      sql`(${table.target} = 'host' AND ${table.targetKey} = 'host' AND ${table.agentId} IS NULL) OR (${table.target} = 'agent' AND ${table.agentId} IS NOT NULL AND ${table.targetKey} = ${table.agentId})`,
+    ),
+    check('dsh_plugin_activations_activated_at_ck', sql`${table.activatedAt} >= 0`),
+  ],
+)
+
+export const dshPluginDiagnostics = sqliteTable(
+  'dsh_plugin_diagnostics',
+  {
+    entryId: text('entry_id')
+      .$type<DshPluginEntryId>()
+      .notNull()
+      .references(() => dshPluginEntries.id, { onDelete: 'cascade' }),
+    targetKey: text('target_key').notNull(),
+    status: text({ enum: ['active', 'load-failed', 'restore-failed', 'dispose-failed'] }).notNull(),
+    phase: text({ enum: ['import', 'apply', 'update', 'dispose', 'restore'] }).notNull(),
+    message: text(),
+    observedAt: integer('observed_at').notNull(),
+  },
+  (table) => [
+    primaryKey({ columns: [table.entryId, table.targetKey] }),
+    check('dsh_plugin_diagnostics_observed_at_ck', sql`${table.observedAt} >= 0`),
+  ],
+)
+
 export const hostSecurityMetadata = sqliteTable(
   'host_security_metadata',
   {
@@ -698,6 +788,10 @@ export const coreSchema = {
   hostExtensionInstallations,
   agentActivations,
   extensionClientDiagnostics,
+  dshPluginPackages,
+  dshPluginEntries,
+  dshPluginActivations,
+  dshPluginDiagnostics,
   hostSecurityMetadata,
   managementDevices,
   workTreeOrder,

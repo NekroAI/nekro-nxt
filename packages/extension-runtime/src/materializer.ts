@@ -105,6 +105,20 @@ const digestInputSchema = z
   })
   .strict()
 
+const payloadDigestInputSchema = z
+  .object({
+    manifest: z
+      .object({
+        schemaVersion: z.union([z.literal(2), z.literal(3)]),
+        scope: z.literal('host-adapter').optional(),
+        entrypoints: extensionEntrypointsSchema,
+        contributions: inputSchema.shape.snapshot.shape.contributions,
+      })
+      .strict(),
+    sources: sourcesSchema,
+  })
+  .strict()
+
 const canonicalJson = (value: JsonValue): string => {
   if (value === null || typeof value !== 'object') return JSON.stringify(value)
   if (Array.isArray(value)) return `[${value.map(canonicalJson).join(',')}]`
@@ -172,9 +186,55 @@ export function materializeDynamicPackage(input: {
         contributions: parsed.snapshot.contributions,
       })
   const digestInput = canonicalJson(JsonValueSchema.parse(digestInputSchema.parse({ manifest, sources })))
+  const payloadManifest = {
+    schemaVersion: manifest.schemaVersion,
+    ...('scope' in manifest ? { scope: manifest.scope } : {}),
+    entrypoints: manifest.entrypoints,
+    contributions: manifest.contributions,
+  }
+  const payloadDigestInput = canonicalJson(
+    JsonValueSchema.parse(payloadDigestInputSchema.parse({ manifest: payloadManifest, sources })),
+  )
   return {
     manifest,
     sources,
     contentDigest: createHash('sha256').update(digestInput).digest('hex'),
+    payloadDigest: createHash('sha256').update(payloadDigestInput).digest('hex'),
+    scope: isHostAdapter ? 'host-adapter' : 'agent',
+  }
+}
+
+/** Recomputes canonical digests for a transferred immutable Revision without trusting archive metadata. */
+export function materializeImportedRevision(input: {
+  readonly manifest: unknown
+  readonly sources: { readonly host?: string; readonly client?: string }
+}): MaterializedExtensionRevision {
+  const manifest = z.union([extensionManifestSchema, hostAdapterManifestSchema]).parse(input.manifest)
+  const sources = sourcesSchema.parse({
+    ...(input.sources.host === undefined ? {} : { host: normalizeSource(input.sources.host) }),
+    ...(input.sources.client === undefined ? {} : { client: normalizeSource(input.sources.client) }),
+  })
+  if (
+    'host' in manifest.entrypoints !== 'host' in sources ||
+    'client' in manifest.entrypoints !== 'client' in sources
+  ) {
+    throw new Error('导入扩展的 Manifest entrypoints 与源码文件不一致。')
+  }
+  const digestInput = canonicalJson(JsonValueSchema.parse(digestInputSchema.parse({ manifest, sources })))
+  const payloadManifest = {
+    schemaVersion: manifest.schemaVersion,
+    ...('scope' in manifest ? { scope: manifest.scope } : {}),
+    entrypoints: manifest.entrypoints,
+    contributions: manifest.contributions,
+  }
+  const payloadDigestInput = canonicalJson(
+    JsonValueSchema.parse(payloadDigestInputSchema.parse({ manifest: payloadManifest, sources })),
+  )
+  return {
+    manifest,
+    sources,
+    contentDigest: createHash('sha256').update(digestInput).digest('hex'),
+    payloadDigest: createHash('sha256').update(payloadDigestInput).digest('hex'),
+    scope: manifest.schemaVersion === 3 ? 'host-adapter' : 'agent',
   }
 }

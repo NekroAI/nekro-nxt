@@ -1,12 +1,16 @@
 # Extension Runtime
 
-该包拥有指定动态 Package 快照到不可变本地 Extension Revision 的物化、源码目录原子发布、受控构建缓存、按智能体隔离的 Activation，以及宿主级 Adapter Installation。
+该包拥有指定动态 Package 快照到不可变本地 Extension Revision 的物化、源码目录原子发布、导入构建、受控构建缓存、按智能体隔离的 Activation、宿主级 Adapter Installation 和本地扩展删除事务。
 
 `ExtensionService` 先完整写入临时源码目录并原子 rename，再调用 `ExtensionRepository.saveExtensionRevision` 在一次仓库事务中保存 `LocalExtension` 与 `Revision`。文件系统与 SQLite 不伪装成跨介质事务；数据库不会发布源码尚未完整落盘的 Revision，数据库事务失败可能留下不可达的源码目录。
+
+`LocalExtension.scope` 固定为 `agent | host-adapter`。同一 Extension 的所有 Revision 必须保持 scope，Adapter Extension 还必须保持同一个 adapter key。Revision 同时保存本地 `contentDigest` 和不含 Extension/Revision 身份的 `payloadDigest`；后者用于跨身份识别相同规范化源码、Manifest 契约和 Contribution。`save-from-dynamic` 可以创建新 Extension，也可以通过 `targetExtensionId` 给现有 Extension 增加下一不可变 Revision。
 
 `Activation` 以 `(agentId, extensionId)` 为复合身份。切换版本时先构建、进入安全间隙并挂载，挂载成功后才 upsert 当前 Activation；失败时数据库保持不变，并恢复本协调器原先挂载的版本。停用同样使用 `(agentId, extensionId)`，不同智能体的挂载互不影响。
 
 SQLite 实现位于 `storage-sqlite`，DSH/Cordis 挂载位于 Server 组合根；本包不读取其他包数据库，也不依赖 Electron。动态运行、保存 Revision、给智能体启用和把 Adapter 安装到本机是独立提交点。源码 Revision 是持久事实，构建缓存可删除重建。
+
+导入只接受经过分享协议检查的单 Revision，并在本机重新物化和构建；来源验证证据不成为本机有效 Verification，导入后没有 Activation 或 Installation。删除 Extension 时，Server 先等待全部 Activation 或 Installation 静止，再把整个源码目录移动到 `extension-data/trash/`，删除数据库事实和 Revision 构建缓存；提交失败时恢复源码与原运行关系。连接、频道和消息不是 Extension 私有数据，不参与删除。
 
 Manifest V3 固定 `scope: host-adapter`，必须有一个 Host entry、恰好一个 Adapter Contribution，并可附带 `conversation.message.rich` Host Client Slot；Tool、Agent RPC 和智能体 Slot 混装会在物化和验证阶段失败。V1/V2 继续只读兼容并只走 `AgentActivation`。同一 Extension 的后续 Adapter Revision 不能改变 key。
 

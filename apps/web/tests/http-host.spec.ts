@@ -244,6 +244,7 @@ const snapshotBodyWithExtension = () => {
     extensions: [
       {
         id: summaryExtensionId,
+        scope: 'agent',
         slug: 'channel-summary',
         displayName: '频道摘要',
         description: '生成结构化阶段摘要。',

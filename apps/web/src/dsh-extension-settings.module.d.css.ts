@@ -13,12 +13,12 @@ declare const styles: {
   readonly fieldHintMeta: string
   readonly inlineActions: string
   readonly inputWithReset: string
+  readonly installFileButton: string
+  readonly installFileInput: string
   readonly jsonField: string
   readonly listHeading: string
   readonly namespaceEditor: string
   readonly namespaceMeta: string
-  readonly nativeNotice: string
-  readonly nxtDshNativeSurface: string
   readonly pluginButton: string
   readonly pluginButtonActive: string
   readonly pluginList: string

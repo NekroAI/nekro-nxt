@@ -1,4 +1,3 @@
-import type { NekroNxtClientSlotName, NekroNxtClientSlotPropsMap } from '@nekro-nxt/extension-sdk'
 import {
   Component,
   createContext,
@@ -10,7 +9,13 @@ import {
   type ReactNode,
 } from 'react'
 import { setDynamicClientApprovalBridge } from './dynamic-client-bridge.js'
-import { DshDynamicClientRuntime, type DynamicClientHostPort, type DynamicInventoryRow } from './dsh-dynamic-client.js'
+import {
+  DshDynamicClientRuntime,
+  type DynamicClientHostPort,
+  type DynamicInventoryRow,
+  type DynamicProductSlotName,
+  type DynamicProductSlotPropsMap,
+} from './dsh-dynamic-client.js'
 import { HttpDynamicClientHost } from './http-dynamic-host.js'
 import { useProductStore } from './product-store.js'
 
@@ -89,10 +94,18 @@ class MultiplexDynamicClientHost implements DynamicClientHostPort {
     packageId: string,
     pluginRunId: string,
     renderedSlots: readonly ('agent.workbench.sections' | 'extension.details.panels')[],
+    renderedHostSlots: readonly { readonly name: 'conversation.message.rich'; readonly key: string }[],
   ): Promise<void> {
     const owner = this.#pluginOwner.get(pluginId)
     if (!owner) return Promise.reject(new Error('找不到动态扩展所属的 Episode。'))
-    return this.#ownedHost(owner).reportClientVerification(agentId, pluginId, packageId, pluginRunId, renderedSlots)
+    return this.#ownedHost(owner).reportClientVerification(
+      agentId,
+      pluginId,
+      packageId,
+      pluginRunId,
+      renderedSlots,
+      renderedHostSlots,
+    )
   }
 
   #host(agentId: string, episodeId: string): HttpDynamicClientHost {
@@ -126,8 +139,6 @@ class DynamicClientCoordinator {
   #queue: Promise<void> = Promise.resolve()
   #disposed = false
   #failure = ''
-  #nativeFailure = ''
-  #nativeReady = false
   readonly #reportedClientRuns = new Set<string>()
 
   subscribe = (listener: () => void): (() => void) => {
@@ -167,7 +178,7 @@ class DynamicClientCoordinator {
     return this.#resolve(agentId, requestId, false)
   }
 
-  entries<Name extends NekroNxtClientSlotName>(name: Name) {
+  entries<Name extends DynamicProductSlotName>(name: Name) {
     return this.#runtime?.entries(name) ?? []
   }
 
@@ -189,47 +200,23 @@ class DynamicClientCoordinator {
           (slot): slot is 'agent.workbench.sections' | 'extension.details.panels' =>
             slot === 'agent.workbench.sections' || slot === 'extension.details.panels',
         )
-        if (renderedSlots.length === 0) continue
+        const renderedHostSlots = loaded.slots.includes('conversation.message.rich')
+          ? runtime
+              .entries('conversation.message.rich')
+              .map((entry) => ({ name: 'conversation.message.rich' as const, key: entry.id }))
+          : []
+        if (renderedSlots.length === 0 && renderedHostSlots.length === 0) continue
         await this.#host.reportClientVerification(
           agentId,
           loaded.pluginId,
           loaded.packageId,
           loaded.pluginRunId,
           renderedSlots,
+          renderedHostSlots,
         )
         this.#reportedClientRuns.add(key)
       }
     })
-  }
-
-  loadNativeSettings(): Promise<void> {
-    return this.#enqueue(async () => {
-      try {
-        const runtime = await this.#ensureRuntime()
-        await runtime.loadNativeSettings()
-        this.#nativeReady = true
-        this.#nativeFailure = ''
-      } catch (error) {
-        this.#nativeReady = false
-        this.#nativeFailure = error instanceof Error ? error.message : String(error)
-      }
-      this.#publish()
-    })
-  }
-
-  renderNativeSettings(): ReactNode | undefined {
-    if (!this.#runtime || !this.#nativeReady) return undefined
-    try {
-      return this.#runtime.renderNativeSettings()
-    } catch (error) {
-      this.#nativeReady = false
-      this.#nativeFailure = error instanceof Error ? error.message : String(error)
-      return undefined
-    }
-  }
-
-  nativeFailure(): string {
-    return this.#nativeFailure
   }
 
   failure(): string {
@@ -303,7 +290,7 @@ class DynamicSlotBoundary extends Component<
   }
 }
 
-function DynamicRuntimeSlot<Name extends NekroNxtClientSlotName>({
+function DynamicRuntimeSlot<Name extends DynamicProductSlotName>({
   coordinator,
   agentId,
   name,
@@ -312,7 +299,7 @@ function DynamicRuntimeSlot<Name extends NekroNxtClientSlotName>({
   readonly coordinator: DynamicClientCoordinator
   readonly agentId: string
   readonly name: Name
-  readonly props: NekroNxtClientSlotPropsMap[Name]
+  readonly props: DynamicProductSlotPropsMap[Name]
 }) {
   return (
     <>
@@ -427,7 +414,8 @@ export function DynamicClientSlots({ agentId, episodeId }: { readonly agentId: s
   const failure = coordinator.failure()
   const rendered =
     coordinator.entries('agent.workbench.sections').length > 0 ||
-    coordinator.entries('extension.details.panels').length > 0
+    coordinator.entries('extension.details.panels').length > 0 ||
+    coordinator.entries('conversation.message.rich').length > 0
   useEffect(() => {
     if (rendered) void coordinator.reportRendered(agentId).catch((error) => coordinator.reportFailure(error))
   }, [agentId, coordinator, inventoryVersion, rendered])
@@ -451,22 +439,30 @@ export function DynamicClientSlots({ agentId, episodeId }: { readonly agentId: s
           activation: 'active',
         }}
       />
+      {coordinator.entries('conversation.message.rich').map((entry) => {
+        const separator = entry.id.indexOf(':')
+        const adapterKey = separator > 0 ? entry.id.slice(0, separator) : entry.id
+        const kind = separator > 0 ? entry.id.slice(separator + 1) : 'preview'
+        const Entry = entry.component
+        return (
+          <DynamicSlotBoundary
+            entryId={entry.id}
+            key={`conversation.message.rich:${entry.id}`}
+            onFailure={(error) => coordinator.reportSlotFailure(agentId, error)}
+          >
+            <Entry
+              part={{
+                type: 'rich',
+                adapterKey,
+                kind,
+                summary: '动态适配器富消息预览',
+              }}
+              messageId="dynamic-preview-message"
+              channelId="dynamic-preview-channel"
+            />
+          </DynamicSlotBoundary>
+        )
+      })}
     </div>
   ) : null
-}
-
-export function DshNativeSettingsSlots({ onFailure }: { readonly onFailure?: (message: string) => void }) {
-  const coordinator = useContext(DynamicClientContext)
-  if (!coordinator) throw new Error('DSH 原生界面缺少产品级 Client Runtime。')
-  useSyncExternalStore(coordinator.subscribe, coordinator.getVersion, coordinator.getVersion)
-  useEffect(() => {
-    void coordinator.loadNativeSettings()
-  }, [coordinator])
-  const failure = coordinator.nativeFailure()
-  useEffect(() => {
-    if (failure) onFailure?.(failure)
-  }, [failure, onFailure])
-  if (failure) return <div role="alert">DSH 原生界面加载失败：{failure}</div>
-  const content = coordinator.renderNativeSettings()
-  return content === undefined ? <div>正在加载 DSH 原生界面…</div> : <>{content}</>
 }

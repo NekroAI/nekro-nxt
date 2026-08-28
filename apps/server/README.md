@@ -10,7 +10,7 @@ Host Adapter 产物先在候选 Registry 执行 factory，实际 key、API 版�
 
 `DshHostRuntime` 继续只拥有 DSH Agent handle、Episode handoff、频道回复守卫、图片投影、压缩后视觉恢复和智能体作用域扩展；Adapter 和 Core 不能通过 DSH Context 互相读取数据库。应答型 Turn 第一次缺少成功的 `send_channel_message` 时通过公开 `agent/turn-stopping` 接缝在同一 Turn 提醒一次，第二次仍缺失则持久投影为 `unreplied`，不自动投递模型原始文字。频道环境说明如实告知普通模型文字不可见、同一 Turn 可多次发送，并默认建议长任务先确认再按真实阶段同步；人设和成员偏好可以减少过程消息，Host 不增加中途计时或自动进度。模型可见的入站、出站、Handoff 和历史统一使用 `logicalMessageId`，quote 只在当前频道展开一层。图片是否走原生路径只取决于 DSH 模型目录的 `inputModalities`；缺失声明按文本路径运行，不能按模型名推断。
 
-动态创造的所有浏览器修改操作都显式携带 `episodeId`，Server 校验 Agent、Episode 和 DSH Session 的精确归属，不按智能体猜“第一个活动会话”。动态 Client 与持久 Client 只接受 NekroNXT 的 `agent.workbench.sections`、`extension.details.panels`；DSH 官方 WebUI Slot 和 `root` 会在浏览器 Guard 阶段撤回并报告给原动态 Run。含 Client 半边的 Package 必须先在产品 Slot 提交渲染证据才能保存。扩展 Revision 的验证证据保留生成证据时的实际 DSH 版本；升级不会改写或拒绝旧版本证据，新验证使用当前锁定的 rc.2。
+动态创造的所有浏览器修改操作都显式携带 `episodeId`，Server 校验 Agent、Episode 和 DSH Session 的精确归属，不按智能体猜“第一个活动会话”。智能体 Client 只接受 `agent.workbench.sections`、`extension.details.panels`；Adapter Client 只接受 `conversation.message.rich`，并要求 key 使用 `<adapterKey>:<kind>`。含 Client 半边的 Package 必须先在产品 Slot 真实渲染并提交证据才能保存；Adapter 验证还覆盖注册、启动、入站、出站、凭据隔离、WebSocket/HTTP/状态存储和停止静止。扩展 Revision 的验证证据保留生成证据时的实际 DSH 版本；升级不会改写或拒绝旧版本证据，新验证使用当前锁定的 rc.2。
 
 持久 Extension Host factory 每个 Activation 执行一次并拥有 RPC；返回的 Cordis Plugin 只负责向该智能体的每个 Session 挂载 Tool Fiber。Client Artifact、Activation RPC 和最近一次加载诊断分别通过 Revision 精确路由；stale build、错误智能体和已停用 Revision 都被拒绝，Client 失败不回滚 Host Tool。
 
@@ -34,7 +34,11 @@ DSH 0.1.1-rc.2 的 `frontend-static` 只服务真实文件和明确的 index 路
 
 DSH 0.1.1-rc.2 的 `redactSecrets` 尚不能证明 union、intersect、transform、lazy 中 Secret 的线安全，序列化 schema 也可能携带 Secret default。因此 Server 在 descriptor 离开 Host 前做 fail-closed 检查：发现不受 0.1.1-rc.2 redactor 覆盖的 Secret 或 Secret default 时，不向 Web 暴露该 namespace，也拒绝通用 mutation；这不是提示词或表单层防护。待上游提供完备 `describeForWire()` 后再通过兼容 fixture 收敛此包装边界。
 
-Loader/Profile Spike 已验证 0.1.1-rc.2 Loader 的 create/update/remove、失败激活回滚、官方 inventory 和隔离 Context；同时确认 Profile 只描述 Cordis 插件树，不携带 NekroNXT 的智能体配置版本、频道和私有 Service 授权语义。因此当前不开放用户安装/启用 DSH 包入口，固定 roster 保持不变；后续必须先补齐 Session/Preset 分层、冷启动恢复和静止关闭的完整组合证据。
+用户 DSH 插件使用独立受管项目安装到 `dsh/plugin-packages/<packageInstallId>/project/`，每个精确版本拥有自己的 lockfile 和 `node_modules`。Server 通过随应用交付的固定 pnpm CLI 和 `process.execPath` 安装，不调用 shell，也不依赖系统 Node/pnpm。安装先使用 `--ignore-scripts`，检测 blocked builds 后只执行用户逐项批准的依赖；批准绑定精确插件版本和 lockfile 摘要。staging 校验成功后原子提交，进程重启清理未提交 staging。
+
+生产 `DshHostRuntime` 同时拥有 Host Loader 和每个智能体 Session 的 Agent Loader。普通入口同一时刻只能使用一种作用域；Bundle 使用公开 `composeEntries()` 展开后逐入口配置。Loader 的 create/update/remove、`await()` 和官方 Inventory 决定真实结果；数据库 Activation 只在全部目标 Loader 成功后提交，失败时恢复旧挂载。冷启动失败保留启用意图并写 `restore-failed`。移除先关闭包下所有 Activation，任何 dispose 失败都会保留安装记录和目录。
+
+DSH Settings 使用现有路径级 mutate 与 Credentials；普通 Cordis Config 优先序列化 Schema 表单，没有 Schema 时提供高级 JSON。Secret/credential-ref Config 拒绝持久化。DSH 原生 WebUI 不接入产品，`dsh.client` 只形成“原生界面未接入”提示。安装检查与提交使用进程内 Operation ID，通过 SSE 报告下载、依赖、构建脚本、校验和原子提交阶段。
 
 `dataRoot` 是 Server 唯一数据根，生产入口会创建 `dataRoot/workspaces/`，并在智能体首次使用开发 Shell 或文件工具时自动创建私有的 `workspaces/<agentId>/`。开发 Shell 的默认 `cwd` 和文件工具的默认 `cwd` 都使用该目录；`workspace-write` 只限制写入位置，DSH 0.1.1-rc.2 的 read/grep/glob 仍能读取 Server 进程有权读取的宿主文件，因此文件工具默认关闭且界面必须如实警示读取范围。完整文件访问只把已启用文件工具或开发 Shell 的策略提升为 `danger-full-access`，不会单独提供工具，也不改变默认 `cwd`。高级部署可用 `developmentWorkspaceRoot` 或 `NEKRO_DEVELOPMENT_WORKSPACE_ROOT` 覆盖工作区根，覆盖后仍自动追加 `<agentId>`。
 

@@ -492,10 +492,11 @@ const projectSnapshot = (json: SnapshotJson, successfulAt: number): ProductSnaps
     const latestRevision = extension.revisions.at(-1)
     return {
       id: extension.id,
+      slug: extension.slug,
       name: extension.displayName,
       description: extension.description,
       revision: latestRevision?.revisionNumber ?? 0,
-      scope: latestRevision?.scope ?? 'agent',
+      scope: extension.scope,
       revisions: extension.revisions.map((revision) => ({
         id: revision.id,
         revision: revision.revisionNumber,
@@ -505,6 +506,21 @@ const projectSnapshot = (json: SnapshotJson, successfulAt: number): ProductSnaps
         clientBuilt: revision.verification?.clientBuilt ?? false,
         ...(revision.verification === undefined ? {} : { buildKey: revision.verification.buildKey }),
         hostSlots: revision.verification?.renderedHostSlots ?? [],
+        ...(revision.verification === undefined
+          ? {}
+          : {
+              verification: {
+                verifiedAt: revision.verification.verifiedAt,
+                dshVersion: revision.verification.dshVersion,
+                contractVersion: revision.verification.contractVersion,
+                hostBuilt: revision.verification.hostBuilt,
+                clientBuilt: revision.verification.clientBuilt,
+                buildKey: revision.verification.buildKey,
+                toolInvocationCount: revision.verification.toolInvocationCount,
+                rpcMethods: revision.verification.rpcMethods,
+                renderedSlots: revision.verification.renderedSlots,
+              },
+            }),
       })),
       ...(extension.createdByAgentId === undefined ? {} : { createdByAgentId: extension.createdByAgentId }),
       createdByAgent:
@@ -525,6 +541,15 @@ const projectSnapshot = (json: SnapshotJson, successfulAt: number): ProductSnaps
           revisionId: candidate.extensionRevisionId,
           revision: activeRevision?.revisionNumber ?? 0,
           activatedAt: candidate.activatedAt,
+          ...(candidate.runtime === undefined
+            ? {}
+            : {
+                runtime: {
+                  status: candidate.runtime.status,
+                  observedAt: candidate.runtime.observedAt,
+                  ...(candidate.runtime.message === undefined ? {} : { message: candidate.runtime.message }),
+                },
+              }),
         }
       }),
       contributions: latestRevision?.contributions ?? [],
@@ -567,6 +592,17 @@ const projectSnapshot = (json: SnapshotJson, successfulAt: number): ProductSnaps
             installation: {
               revisionId: extension.installation.extensionRevisionId,
               installedAt: extension.installation.installedAt,
+              ...(extension.installation.runtime === undefined
+                ? {}
+                : {
+                    runtime: {
+                      status: extension.installation.runtime.status,
+                      observedAt: extension.installation.runtime.observedAt,
+                      ...(extension.installation.runtime.message === undefined
+                        ? {}
+                        : { message: extension.installation.runtime.message }),
+                    },
+                  }),
             },
           }),
       ...(extension.hostClientDiagnostic === undefined
@@ -1080,6 +1116,8 @@ export class HttpProductHost implements ProductHostPort {
       const name = typeof input?.['name'] === 'string' ? input['name'] : ''
       const slug = typeof input?.['slug'] === 'string' ? input['slug'] : ''
       const description = typeof input?.['description'] === 'string' ? input['description'] : ''
+      const targetExtensionId =
+        typeof input?.['targetExtensionId'] === 'string' ? input['targetExtensionId'] : undefined
       if (!agentId.trim()) throw new Error('缺少智能体标识，请刷新页面后重试。')
       if (!episodeId.trim() || !pluginId.trim() || !packageId.trim()) {
         throw new Error('缺少精确的 Episode、Plugin 或 Package，请刷新页面后重试。')
@@ -1097,6 +1135,7 @@ export class HttpProductHost implements ProductHostPort {
           displayName: name,
           slug,
           description: description.trim() || '从创造工作台保存的动态 Package。',
+          ...(targetExtensionId === undefined ? {} : { targetExtensionId }),
         },
       )
       await this.#refreshAndNotify()

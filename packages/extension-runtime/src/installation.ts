@@ -1,7 +1,13 @@
 import type { ExtensionId, ExtensionRevisionId } from '@nekro-nxt/contracts'
 import type { ExtensionBuilder } from './builder.js'
 import type { ExtensionService } from './service.js'
-import type { ExtensionBuildArtifact, ExtensionRepository, HostInstallation, Revision } from './types.js'
+import type {
+  ExtensionBuildArtifact,
+  ExtensionRepository,
+  ExtensionRuntimeDiagnostic,
+  HostInstallation,
+  Revision,
+} from './types.js'
 
 export interface MountedHostExtension {
   readonly adapterKey: string
@@ -25,6 +31,7 @@ export class HostExtensionInstallationCoordinator {
   readonly #host: HostExtensionInstallationHost
   readonly #now: () => number
   readonly #mounted = new Map<ExtensionId, MountedHostExtension>()
+  readonly #diagnostics = new Map<ExtensionId, ExtensionRuntimeDiagnostic>()
   readonly #transitions = new Map<ExtensionId, Promise<void>>()
   readonly #adapterTransitions = new Map<string, Promise<void>>()
   #disposed = false
@@ -50,6 +57,9 @@ export class HostExtensionInstallationCoordinator {
     return this.#exclusive(input.extensionId, async () => {
       this.#assertAvailable()
       const revision = this.#requireRevision(input.extensionId, input.revisionId)
+      if (this.#repository.getExtension(input.extensionId)?.scope !== 'host-adapter') {
+        throw new Error('Only Host Adapter Extensions can be installed on this Host.')
+      }
       const verification = this.#repository.getExtensionRevisionVerification(revision.id)
       if (verification?.scope !== 'host-adapter' || !verification.adapter) {
         throw new Error('Host 安装只接受完成适配器验证的 Extension Revision。')
@@ -107,6 +117,7 @@ export class HostExtensionInstallationCoordinator {
           throw error
         }
         this.#mounted.set(input.extensionId, mounted)
+        this.#diagnostics.set(input.extensionId, { status: 'active', observedAt: this.#timestamp() })
         return installation
       })
     })
@@ -136,10 +147,19 @@ export class HostExtensionInstallationCoordinator {
                 throw new Error('适配器 Host 实际注册的 key 与验证证据不一致。')
               }
               this.#mounted.set(installation.extensionId, mounted)
+              this.#diagnostics.set(installation.extensionId, {
+                status: 'active',
+                observedAt: this.#timestamp(),
+              })
             })
             return 'restored' as const
           })
-        } catch {
+        } catch (error) {
+          this.#diagnostics.set(installation.extensionId, {
+            status: 'restore-failed',
+            message: error instanceof Error ? error.message : String(error),
+            observedAt: this.#timestamp(),
+          })
           return 'failed' as const
         }
       }),
@@ -164,7 +184,16 @@ export class HostExtensionInstallationCoordinator {
       await this.#exclusiveAdapter(adapterKey, async () => {
         if (mounted) {
           await this.#host.waitUntilSafe(adapterKey)
-          await mounted.dispose()
+          try {
+            await mounted.dispose()
+          } catch (error) {
+            this.#diagnostics.set(extensionId, {
+              status: 'dispose-failed',
+              message: error instanceof Error ? error.message : String(error),
+              observedAt: this.#timestamp(),
+            })
+            throw error
+          }
           this.#mounted.delete(extensionId)
         }
         try {
@@ -173,8 +202,13 @@ export class HostExtensionInstallationCoordinator {
           if (mounted) await this.#restorePrevious(extensionId, revision, artifact, error)
           throw error
         }
+        this.#diagnostics.delete(extensionId)
       })
     })
+  }
+
+  getDiagnostic(extensionId: ExtensionId): ExtensionRuntimeDiagnostic | undefined {
+    return this.#diagnostics.get(extensionId)
   }
 
   async dispose(): Promise<void> {
@@ -184,7 +218,11 @@ export class HostExtensionInstallationCoordinator {
     await Promise.allSettled([...this.#adapterTransitions.values()])
     const mounted = [...this.#mounted.values()]
     this.#mounted.clear()
-    await Promise.allSettled(mounted.map((entry) => entry.dispose()))
+    const outcomes = await Promise.allSettled(mounted.map((entry) => entry.dispose()))
+    const failures = outcomes
+      .filter((outcome): outcome is PromiseRejectedResult => outcome.status === 'rejected')
+      .map((outcome): unknown => outcome.reason)
+    if (failures.length) throw new AggregateError(failures, 'Host Extension Installation disposal failed.')
   }
 
   async #restorePrevious(

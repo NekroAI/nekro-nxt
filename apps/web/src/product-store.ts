@@ -235,6 +235,7 @@ export interface ConnectionSummary {
 
 export interface LocalExtensionSummary {
   readonly id: string
+  readonly slug: string
   readonly name: string
   readonly description: string
   readonly revision: number
@@ -248,6 +249,17 @@ export interface LocalExtensionSummary {
     readonly clientBuilt: boolean
     readonly buildKey?: string
     readonly hostSlots: readonly { readonly name: 'conversation.message.rich'; readonly key: string }[]
+    readonly verification?: {
+      readonly verifiedAt: number
+      readonly dshVersion: string
+      readonly contractVersion: string
+      readonly hostBuilt: boolean
+      readonly clientBuilt: boolean
+      readonly buildKey: string
+      readonly toolInvocationCount: number
+      readonly rpcMethods: readonly string[]
+      readonly renderedSlots: readonly string[]
+    }
   }[]
   readonly createdByAgentId?: string
   readonly createdByAgent: string
@@ -257,6 +269,11 @@ export interface LocalExtensionSummary {
     readonly revisionId: string
     readonly revision: number
     readonly activatedAt: number
+    readonly runtime?: {
+      readonly status: 'active' | 'restore-failed' | 'dispose-failed'
+      readonly message?: string
+      readonly observedAt: number
+    }
   }[]
   readonly contributions: readonly string[]
   readonly verification?: {
@@ -282,7 +299,15 @@ export interface LocalExtensionSummary {
     readonly message?: string
     readonly observedAt: number
   }[]
-  readonly installation?: { readonly revisionId: string; readonly installedAt: number }
+  readonly installation?: {
+    readonly revisionId: string
+    readonly installedAt: number
+    readonly runtime?: {
+      readonly status: 'active' | 'restore-failed' | 'dispose-failed'
+      readonly message?: string
+      readonly observedAt: number
+    }
+  }
   readonly hostClientDiagnostic?: {
     readonly revisionId: string
     readonly status: 'loaded' | 'failed'
@@ -446,8 +471,9 @@ export interface ProductState {
     readonly name: string
     readonly slug: string
     readonly description: string
+    readonly targetExtensionId?: string
   }): Promise<SavedDynamicExtension>
-  setExtensionActive(id: string, agentId: string, enabled: boolean): Promise<void>
+  setExtensionActive(id: string, agentId: string, enabled: boolean, revisionId?: string): Promise<void>
   setHostExtensionInstalled(id: string, revisionId: string | null): Promise<void>
   reportHostExtensionClientDiagnostic(input: {
     readonly extensionId: string
@@ -805,7 +831,16 @@ export const useProductStore = create<ProductState>((set) => ({
     }
     await requireHost().execute('host.refresh')
   },
-  saveDynamicExtension: async ({ agentId, episodeId, pluginId, packageId, name, slug, description }) => {
+  saveDynamicExtension: async ({
+    agentId,
+    episodeId,
+    pluginId,
+    packageId,
+    name,
+    slug,
+    description,
+    targetExtensionId,
+  }) => {
     const result = await requireHost().execute('extensions.saveFromDynamic', {
       agentId: requireValue(agentId, '缺少智能体标识，请刷新页面后重试。'),
       episodeId: requireValue(episodeId, '缺少 Episode 标识，请刷新页面后重试。'),
@@ -814,6 +849,7 @@ export const useProductStore = create<ProductState>((set) => ({
       name: requireValue(name, '请输入本地扩展名称。'),
       slug: requireValue(slug, '请输入本地扩展标识。'),
       description,
+      ...(targetExtensionId === undefined ? {} : { targetExtensionId }),
     })
     if (
       !isRecord(result) ||
@@ -826,7 +862,7 @@ export const useProductStore = create<ProductState>((set) => ({
     }
     return { extensionId: result['extensionId'], revisionId: result['revisionId'] }
   },
-  setExtensionActive: async (id, agentId, enabled) => {
+  setExtensionActive: async (id, agentId, enabled, selectedRevisionId) => {
     const extensionId = requireValue(id, '缺少本地扩展标识，请刷新页面后重试。')
     const targetAgentId = requireValue(agentId, '缺少目标智能体，请刷新页面后重试。')
     const extension = useProductStore.getState().extensions.find((candidate) => candidate.id === extensionId)
@@ -836,7 +872,7 @@ export const useProductStore = create<ProductState>((set) => ({
 
     if (enabled) {
       const revisionId = requireValue(
-        extension.revisionId ?? '',
+        selectedRevisionId ?? extension.revisionId ?? '',
         '此本地扩展缺少可启用版本，请重新保存后重试。',
         'missing-prerequisite',
       )

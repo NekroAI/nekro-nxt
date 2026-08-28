@@ -137,13 +137,27 @@ declare const styles: {
   readonly emptyState: string
   readonly eventInner: string
   readonly extensionActionPanel: string
+  readonly extensionDangerZone: string
   readonly extensionDetailGrid: string
+  readonly extensionDropZone: string
+  readonly extensionEmptyActions: string
+  readonly extensionExportPanel: string
+  readonly extensionFileButton: string
+  readonly extensionFileInput: string
   readonly extensionHeader: string
+  readonly extensionImportReview: string
+  readonly extensionMetaLine: string
   readonly extensionNavItem: string
   readonly extensionNavItemActive: string
   readonly extensionNavList: string
   readonly extensionOverview: string
+  readonly extensionPrimarySection: string
+  readonly extensionRevisionPicker: string
   readonly extensionRow: string
+  readonly extensionSummary: string
+  readonly extensionSummaryCopy: string
+  readonly extensionTransferGrid: string
+  readonly extensionTransferSection: string
   readonly extensionWorkspace: string
   readonly extensionsPage: string
   readonly facts: string

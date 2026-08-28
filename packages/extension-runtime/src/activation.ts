@@ -1,7 +1,13 @@
 import type { AgentId, ExtensionId, ExtensionRevisionId, JsonValue } from '@nekro-nxt/contracts'
 import type { ExtensionBuilder } from './builder.js'
 import type { ExtensionService } from './service.js'
-import type { Activation, ExtensionBuildArtifact, ExtensionRepository, Revision } from './types.js'
+import type {
+  Activation,
+  ExtensionBuildArtifact,
+  ExtensionRepository,
+  ExtensionRuntimeDiagnostic,
+  Revision,
+} from './types.js'
 
 export interface MountedExtension {
   readonly evidence: {
@@ -32,6 +38,7 @@ export class ExtensionActivationCoordinator {
   readonly #host: ExtensionActivationHost
   readonly #now: () => number
   readonly #mounted = new Map<string, MountedExtension>()
+  readonly #diagnostics = new Map<string, ExtensionRuntimeDiagnostic>()
   readonly #transitions = new Map<string, Promise<void>>()
   #disposed = false
   #disposePromise: Promise<void> | undefined
@@ -65,6 +72,9 @@ export class ExtensionActivationCoordinator {
       }
       if (this.#repository.getExtensionRevisionVerification(revision.id)?.scope === 'host-adapter') {
         throw new Error('适配器 Revision 必须安装到本机，不能启用给智能体。')
+      }
+      if (this.#repository.getExtension(input.extensionId)?.scope !== 'agent') {
+        throw new Error('Only Agent-scoped Extensions can be activated for an intelligent agent.')
       }
 
       const artifact = await this.#build(revision)
@@ -101,6 +111,7 @@ export class ExtensionActivationCoordinator {
         throw error
       }
       this.#mounted.set(key, mounted)
+      this.#diagnostics.set(key, { status: 'active', observedAt: this.#timestamp() })
       return activation
     })
   }
@@ -122,10 +133,16 @@ export class ExtensionActivationCoordinator {
           }
           const artifact = await this.#build(revision)
           this.#mounted.set(key, await this.#host.mount(activation.agentId, revision, artifact, activation.config))
+          this.#diagnostics.set(key, { status: 'active', observedAt: this.#timestamp() })
           return true
         })
         if (mounted) restored += 1
-      } catch {
+      } catch (error) {
+        this.#diagnostics.set(key, {
+          status: 'restore-failed',
+          message: error instanceof Error ? error.message : String(error),
+          observedAt: this.#timestamp(),
+        })
         failed += 1
       }
     }
@@ -142,7 +159,16 @@ export class ExtensionActivationCoordinator {
       const rollback = instance ? await this.#prepareRollback(activation) : undefined
       await this.#host.waitUntilSafe(agentId)
       if (instance) {
-        await instance.dispose()
+        try {
+          await instance.dispose()
+        } catch (error) {
+          this.#diagnostics.set(key, {
+            status: 'dispose-failed',
+            message: error instanceof Error ? error.message : String(error),
+            observedAt: this.#timestamp(),
+          })
+          throw error
+        }
         this.#mounted.delete(key)
       }
       try {
@@ -151,7 +177,12 @@ export class ExtensionActivationCoordinator {
         await this.#restorePrevious(key, rollback, error)
         throw error
       }
+      this.#diagnostics.delete(key)
     })
+  }
+
+  getDiagnostic(agentId: AgentId, extensionId: ExtensionId): ExtensionRuntimeDiagnostic | undefined {
+    return this.#diagnostics.get(this.#key(agentId, extensionId))
   }
 
   async dispose(): Promise<void> {
@@ -161,7 +192,11 @@ export class ExtensionActivationCoordinator {
       await Promise.allSettled([...this.#transitions.values()])
       const instances = [...this.#mounted.values()]
       this.#mounted.clear()
-      await Promise.allSettled(instances.map((instance) => instance.dispose()))
+      const outcomes = await Promise.allSettled(instances.map((instance) => instance.dispose()))
+      const failures = outcomes
+        .filter((outcome): outcome is PromiseRejectedResult => outcome.status === 'rejected')
+        .map((outcome): unknown => outcome.reason)
+      if (failures.length) throw new AggregateError(failures, 'Extension Activation disposal failed.')
     })()
     return this.#disposePromise
   }

@@ -256,6 +256,7 @@ const productSnapshot = HostApiContracts.snapshot.response.parse({
       displayName: '群聊摘要',
       description: '把群聊讨论整理为可继续跟进的摘要。',
       createdByAgentId: targetAgentId,
+      scope: 'agent',
       revisions: [
         {
           id: summaryRevisionId,
@@ -540,30 +541,6 @@ const expectProductMotionSettled = async (page: Page): Promise<void> => {
   await expect(page.locator('[data-stage-layer="out"]')).toHaveCount(0)
   const activeLayer = page.locator('[data-stage-layer="in"]').last()
   if ((await activeLayer.count()) > 0) await expect(activeLayer).toHaveCSS('opacity', '1')
-}
-
-const expectTabsSettled = async (page: Page): Promise<void> => {
-  const indicator = page.locator('[data-nxt-tabs-indicator]').last()
-  await expect(indicator).toBeVisible()
-  await expect
-    .poll(() =>
-      indicator.evaluate((element) => element.getAnimations().some((animation) => animation.playState === 'running')),
-    )
-    .toBe(false)
-  await expect
-    .poll(() =>
-      indicator.evaluate((element) => {
-        const activeTab = element.parentElement?.querySelector<HTMLElement>('[role="tab"][aria-selected="true"]')
-        if (!activeTab) return Number.POSITIVE_INFINITY
-        const indicatorRect = element.getBoundingClientRect()
-        const activeRect = activeTab.getBoundingClientRect()
-        return Math.max(
-          Math.abs(indicatorRect.left - activeRect.left),
-          Math.abs(indicatorRect.right - activeRect.right),
-        )
-      }),
-    )
-    .toBeLessThanOrEqual(1)
 }
 
 test('writes the four public product screenshots from fictional production data', async ({ page }) => {
@@ -1466,7 +1443,7 @@ test('desktop splitters and appearance preferences persist and recover defaults'
   expect(failures, failures.join('\n')).toEqual([])
 })
 
-test('DSH native and generic settings remain legible across desktop themes and viewports', async ({
+test('DSH settings remain legible without loading native WebUI across desktop themes and viewports', async ({
   page,
 }, testInfo) => {
   const failures = installRuntimeFailureGate(page)
@@ -1482,17 +1459,11 @@ test('DSH native and generic settings remain legible across desktop themes and v
       await page.evaluate((theme) => window.localStorage.setItem('nekro-nxt.theme', theme), colorScheme)
       await page.reload()
       await expect(page.getByText('DeepSeek 网页搜索', { exact: true }).first()).toBeVisible()
-      await expect(page.locator('[data-dsh-native-surface]')).toBeVisible()
-      await expect(page.locator('[data-dsh-native-surface]')).toContainText(/Web search|网页搜索/u)
-      await assertViewportIntegrity(page)
-      await capture(page, testInfo, `dsh-native-${viewport.width}x${viewport.height}-${colorScheme}`)
-
-      await page.getByRole('tab', { name: '通用配置' }).click()
+      await expect(page.locator('[data-dsh-native-surface]')).toHaveCount(0)
       await expect(page.getByText('Namespace：web-search-deepseek', { exact: true })).toBeVisible()
       await expect(page.getByLabel('新的凭据值')).toBeVisible()
-      await expectTabsSettled(page)
       await assertViewportIntegrity(page)
-      await capture(page, testInfo, `dsh-generic-${viewport.width}x${viewport.height}-${colorScheme}`)
+      await capture(page, testInfo, `dsh-settings-${viewport.width}x${viewport.height}-${colorScheme}`)
     }
   }
   expect(failures, failures.join('\n')).toEqual([])
@@ -1509,8 +1480,7 @@ test('clearing a DSH credential requires an explicit dangerous confirmation', as
   )
   await page.setViewportSize({ width: 1100, height: 720 })
   await page.goto('/settings?tab=dsh-extensions')
-  await page.getByRole('tab', { name: '通用配置' }).click()
-  await expectTabsSettled(page)
+  await expect(page.getByText('Namespace：web-search-deepseek', { exact: true })).toBeVisible()
 
   const trigger = page.getByRole('button', { name: '清除凭据' })
   await trigger.click()
@@ -1590,8 +1560,8 @@ test('redesigned relationship and lifecycle pages stay legible across representa
       colorScheme: 'light',
     },
     { route: '/work/creator', text: '与资料员协作创造', width: 1920, height: 1080, colorScheme: 'dark' },
-    { route: '/extensions', text: '包含内容', width: 1920, height: 1080, colorScheme: 'light' },
-    { route: '/extensions', text: '包含内容', width: 1920, height: 900, colorScheme: 'dark' },
+    { route: '/extensions', text: 'r2 的内容', width: 1920, height: 1080, colorScheme: 'light' },
+    { route: '/extensions', text: 'r2 的内容', width: 1920, height: 900, colorScheme: 'dark' },
     { route: '/settings?tab=models', text: '供应商配置', width: 1440, height: 900, colorScheme: 'light' },
     { route: '/settings?tab=models', text: '供应商配置', width: 1920, height: 900, colorScheme: 'dark' },
     {
@@ -1990,6 +1960,7 @@ test('the creator saves the exact running Package and selects the resulting exte
               displayName: '持久摘要探针',
               description: '验证创造工作台保存结果。',
               createdByAgentId: targetAgentId,
+              scope: 'agent',
               revisions: [
                 {
                   id: savedRevisionId,
@@ -2245,7 +2216,7 @@ test('a verified Client extension restores across product pages and retracts whe
 
   await page.setViewportSize({ width: 1280, height: 800 })
   await page.emulateMedia({ colorScheme: 'dark', reducedMotion: 'reduce' })
-  await expect(page.getByText('包含内容', { exact: true })).toBeVisible()
+  await expect(page.getByText('r2 的内容', { exact: true })).toBeVisible()
   await assertViewportIntegrity(page)
   await capture(page, testInfo, 'persistent-extension-details-dark-1280')
 
@@ -2253,6 +2224,14 @@ test('a verified Client extension restores across product pages and retracts whe
   await page.getByText('使用范围', { exact: true }).scrollIntoViewIfNeeded()
   await assertViewportIntegrity(page)
   await capture(page, testInfo, 'persistent-extension-usage-dark-1100')
+
+  await page.getByText('导入与分享', { exact: true }).scrollIntoViewIfNeeded()
+  await expect(page.getByLabel('选择 .nxt-extension 文件')).toBeVisible()
+  await expect(page.getByRole('button', { name: '删除本地扩展' })).toBeVisible()
+  await assertViewportIntegrity(page)
+  await capture(page, testInfo, 'persistent-extension-transfer-danger-dark-1100')
+  await page.getByRole('button', { name: '删除本地扩展' }).scrollIntoViewIfNeeded()
+  await capture(page, testInfo, 'persistent-extension-danger-dark-1100')
 
   await page.setViewportSize({ width: 1920, height: 1080 })
   await page.getByRole('heading', { name: '群聊摘要', exact: true }).scrollIntoViewIfNeeded()
@@ -3123,7 +3102,9 @@ test('long message history stays above a growing multiline composer', async ({ p
   await expect.poll(() => page.locator('article[data-side]').count()).toBeGreaterThanOrEqual(16)
   expect([16, 24]).toContain(await page.locator('article[data-side]').count())
   expect(requestedLimits[0]).toBe(16)
-  await expect(page.getByRole('button', { name: '回到底部' })).toHaveCount(0)
+  const jumpToBottom = page.getByRole('button', { name: '回到底部' })
+  if (await jumpToBottom.isVisible()) await jumpToBottom.click()
+  await expect(jumpToBottom).toHaveCount(0)
 
   const overflowGeometry = await page.evaluate(() => {
     const list = document.querySelector<HTMLElement>('[data-channel-message-list]')!

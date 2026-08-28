@@ -385,9 +385,7 @@ test('provider connection test uses the unsaved page draft without saving it', a
   expect(failures, failures.join('\n')).toEqual([])
 })
 
-test('DSH extension settings load the official native surface and generic fallback from the production bundle', async ({
-  page,
-}) => {
+test('DSH extension settings use the NekroNXT configuration surface without loading native WebUI', async ({ page }) => {
   const failures = installRuntimeFailureGate(page)
   await page.goto('/settings?tab=dsh-extensions')
 
@@ -396,9 +394,7 @@ test('DSH extension settings load the official native surface and generic fallba
   await expect(page.locator('body')).not.toContainText('已验证支持')
   await expect(page.locator('body')).not.toContainText('未完整验证')
   await expect(page.locator('body')).not.toContainText('未评估归属')
-  await expect(page.locator('[data-dsh-native-surface]')).toBeVisible()
-  await expect(page.locator('[data-dsh-native-surface]')).toContainText(/Web search|网页搜索/u)
-  await page.getByRole('tab', { name: '通用配置' }).click()
+  await expect(page.locator('[data-dsh-native-surface]')).toHaveCount(0)
   await expect(page.getByText('Namespace：web-search-deepseek', { exact: true })).toBeVisible()
   await expect(page.getByLabel('新的凭据值')).toHaveAttribute('type', 'password')
   await expect(page.getByLabel('新的凭据值')).toHaveAttribute('autocomplete', 'off')
@@ -571,6 +567,7 @@ test('a verified Adapter can install, create a schema-backed connection, roll ba
           slug: 'synthetic-chat-adapter',
           displayName: '合成聊天适配器',
           description: '验证适配器本机安装、版本切换和卸载保留语义。',
+          scope: 'host-adapter',
           revisions: [revision(revisionV1, 1, 1_725_000_000_000), revision(revisionV2, 2, 1_725_000_001_000)],
           activations: [],
           ...(installedRevisionId
@@ -624,7 +621,7 @@ test('a verified Adapter can install, create a schema-backed connection, roll ba
   await page.goto(`/extensions/${extensionId}`)
   await expect(page.getByRole('heading', { name: '合成聊天适配器' })).toBeVisible()
   await expect(page.getByText('尚未安装', { exact: true }).first()).toBeVisible()
-  const version2 = page.getByRole('listitem').filter({ hasText: '版本 2' })
+  const version2 = page.getByRole('listitem').filter({ hasText: 'r2' })
   await version2.getByRole('button', { name: '安装到本机' }).click()
   await expect(page.getByText('已安装到本机', { exact: true })).toBeVisible()
   expect(installationRequests).toEqual([revisionV2])
@@ -642,16 +639,16 @@ test('a verified Adapter can install, create a schema-backed connection, roll ba
   await expect(page.getByLabel('测试消息发送到')).toContainText('合成演示频道 · 群聊')
 
   await page.goto(`/extensions/${extensionId}`)
-  await page.getByRole('listitem').filter({ hasText: '版本 1' }).getByRole('button', { name: '回滚到此版本' }).click()
-  await expect(page.getByRole('listitem').filter({ hasText: '版本 1' })).toContainText('当前已安装')
-  await version2.getByRole('button', { name: '更新到此版本' }).click()
+  await page.getByRole('listitem').filter({ hasText: 'r1' }).getByRole('button', { name: '切换到 r1' }).click()
+  await expect(page.getByRole('listitem').filter({ hasText: 'r1' })).toContainText('当前已安装')
+  await version2.getByRole('button', { name: '更新到 r2' }).click()
   await expect(version2).toContainText('当前已安装')
   expect(installationRequests).toEqual([revisionV2, revisionV1, revisionV2])
 
   await expect(page.locator('html[data-nxt-view-transition]')).toHaveCount(0)
   const stage = page.locator('main')
   const pageBox = await stage.boundingBox()
-  const includedBox = await page.getByText('包含内容', { exact: true }).locator('..').boundingBox()
+  const includedBox = await page.getByText('r2 的内容', { exact: true }).locator('..').boundingBox()
   if (!pageBox || !includedBox) throw new Error('适配器扩展页缺少视觉验收区域。')
   expect(await stage.evaluate((element) => element.scrollLeft)).toBe(0)
   expect(includedBox.x).toBeGreaterThanOrEqual(pageBox.x)

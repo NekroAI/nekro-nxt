@@ -35,6 +35,7 @@ import {
   type ConnectionId,
   type ExtensionId,
   type ExtensionRevisionId,
+  type DshPluginPackageId,
   type JsonValue,
 } from '@nekro-nxt/contracts'
 import {
@@ -63,6 +64,7 @@ import { NotificationService } from './notifications.js'
 import { QQCoreBridge, QQRemoteAssetImporter } from './qq-openclaw.js'
 import { ServerAdapterHostInstallationHost } from './host-extension-installation.js'
 import { createProductionAdapterTransport } from './adapter-transport.js'
+import { DshPluginPackageInstaller } from './dsh-plugin-installer.js'
 
 const StoredQQConnectionConfigSchema = QQOpenClawConfigSchema.omit({ clientSecretCredentialRef: true })
 
@@ -97,6 +99,8 @@ export interface NekroRuntimeOptions {
   readonly extensionDataRoot: string
   /** Extension build-artifact cache root. */
   readonly extensionCacheRoot: string
+  /** Managed DSH package installation root. Defaults to `<data>/dsh`. */
+  readonly dshPluginRoot?: string
   /** Host-owned private credential directory; secrets never enter Core records. */
   readonly credentialRoot?: string
   /** DSH-owned model settings and credential documents. */
@@ -188,6 +192,7 @@ export class NekroRuntime {
   readonly installation: HostExtensionInstallationCoordinator
   readonly credentials: LocalCredentialStore
   readonly notifications: NotificationService
+  readonly dshPluginInstaller: DshPluginPackageInstaller
   readonly sessionStoragePreparation: DshSessionStoragePreparation
   readonly sessionStorageRetirement:
     { readonly episodesClosed: number; readonly admissionsReleased: number } | undefined
@@ -238,6 +243,7 @@ export class NekroRuntime {
     readonly extensionBuilder: ExtensionBuilder
     readonly credentials: LocalCredentialStore
     readonly notifications: NotificationService
+    readonly dshPluginInstaller: DshPluginPackageInstaller
     readonly unsubscribeDynamicApproval: () => void
     readonly sessionStoragePreparation: DshSessionStoragePreparation
     readonly sessionStorageRetirement?: { readonly episodesClosed: number; readonly admissionsReleased: number }
@@ -260,6 +266,7 @@ export class NekroRuntime {
     this.activation = input.activation
     this.credentials = input.credentials
     this.notifications = input.notifications
+    this.dshPluginInstaller = input.dshPluginInstaller
     this.#unsubscribeDynamicApproval = input.unsubscribeDynamicApproval
     this.sessionStoragePreparation = input.sessionStoragePreparation
     this.sessionStorageRetirement = input.sessionStorageRetirement
@@ -327,6 +334,12 @@ export class NekroRuntime {
       const assetService = new AssetService(repository, options.assetRoot)
       const core = new CoreService(repository, { now, nextUlid })
       const adapters = new AdapterRegistry()
+      const dshPluginInstaller = new DshPluginPackageInstaller(
+        repository,
+        options.dshPluginRoot ?? path.join(path.dirname(options.coreDatabasePath), 'dsh'),
+        { now, nextUlid },
+      )
+      await dshPluginInstaller.initialize()
       const webConnection =
         core.listConnectionsByAdapter('web')[0] ?? core.createConnection({ adapterKey: 'web', config: {} })
       const webConnectionId = webConnection.id
@@ -385,6 +398,10 @@ export class NekroRuntime {
         ...(options.llmSettingsPath === undefined ? {} : { llmSettingsPath: options.llmSettingsPath }),
         ...(options.llmCredentialPath === undefined ? {} : { llmCredentialPath: options.llmCredentialPath }),
         ...(options.configureLlm === undefined ? {} : { configureLlm: options.configureLlm }),
+        dshPlugins: {
+          repository,
+          resolveModule: (packageId, moduleName) => dshPluginInstaller.resolveModule(packageId, moduleName),
+        },
       })
 
       const channels = new ChannelRuntime(core, repository, repository, host, {
@@ -447,6 +464,7 @@ export class NekroRuntime {
         extensionBuilder,
         credentials,
         notifications,
+        dshPluginInstaller,
         unsubscribeDynamicApproval,
         sessionStoragePreparation,
         ...(sessionStorageRetirement === undefined ? {} : { sessionStorageRetirement }),
@@ -469,6 +487,84 @@ export class NekroRuntime {
     if (this.#started) throw new Error('NekroRuntime is already started.')
     this.#started = true
     await this.web.start()
+  }
+
+  async removeDshPluginPackage(packageId: DshPluginPackageId): Promise<void> {
+    const packageRecord = this.repository.getDshPluginPackage(packageId)
+    if (!packageRecord) throw new Error('DSH 插件包不存在。')
+    await this.host.disableInstalledDshPluginPackage(packageId)
+    const trashDirectory = await this.dshPluginInstaller.moveToTrash(packageId)
+    try {
+      this.repository.deleteDshPluginPackage(packageId)
+    } catch (error) {
+      await this.dshPluginInstaller.restoreFromTrash(packageId, trashDirectory)
+      throw error
+    }
+  }
+
+  async deleteLocalExtension(extensionId: ExtensionId): Promise<void> {
+    const extension = this.repository.getExtension(extensionId)
+    if (!extension) throw new Error('本地扩展不存在或已被删除。')
+    const revisions = this.repository.listExtensionRevisions(extensionId)
+    const activations = this.repository.listActivations().filter((activation) => activation.extensionId === extensionId)
+    const installation = this.repository.getHostInstallation(extensionId)
+    const disabled: (typeof activations)[number][] = []
+    let uninstalled = false
+    let stagedSources: string | undefined
+    try {
+      for (const activation of activations) {
+        await this.activation.disable(activation.agentId, extensionId)
+        disabled.push(activation)
+      }
+      if (installation) {
+        await this.uninstallHostExtension(extensionId)
+        uninstalled = true
+      }
+      stagedSources = await this.extensionService.stageExtensionDeletion(extensionId)
+      this.repository.deleteExtension(extensionId)
+    } catch (error) {
+      const rollbackFailures: unknown[] = []
+      if (stagedSources) {
+        try {
+          await this.extensionService.restoreStagedExtension(extensionId, stagedSources)
+        } catch (restoreError) {
+          rollbackFailures.push(restoreError)
+        }
+      }
+      if (uninstalled && installation) {
+        try {
+          await this.installHostExtension({
+            extensionId,
+            revisionId: installation.extensionRevisionId,
+          })
+        } catch (restoreError) {
+          rollbackFailures.push(restoreError)
+        }
+      }
+      for (const activation of disabled) {
+        try {
+          await this.activation.activate({
+            agentId: activation.agentId,
+            extensionId,
+            revisionId: activation.extensionRevisionId,
+            config: activation.config,
+          })
+        } catch (restoreError) {
+          rollbackFailures.push(restoreError)
+        }
+      }
+      if (rollbackFailures.length) {
+        throw new AggregateError([error, ...rollbackFailures], '删除本地扩展失败，且原运行状态未完整恢复。')
+      }
+      throw error
+    }
+    this.#hostClientDiagnostics.delete(extensionId)
+    await this.extensionService.deleteRevisionCaches(revisions).catch((error) => {
+      console.warn(
+        '[nekro-nxt] Extension 已删除，但构建缓存清理失败：',
+        error instanceof Error ? error.message : String(error),
+      )
+    })
   }
 
   /** Every deliberate Agent entity this Server owns, in creation order. */
@@ -1082,14 +1178,34 @@ export class NekroRuntime {
   async dispose(): Promise<void> {
     if (this.#disposed) return
     this.#disposed = true
+    const failures: unknown[] = []
     this.#unsubscribeDynamicApproval()
     this.#connectionListeners.clear()
-    await this.channels.stopProcessingFeedback()
-    await this.activation.dispose()
-    await this.installation.dispose()
-    await Promise.allSettled([...this.#adapterRuntimes.values()].map((runtime) => runtime.stop()))
-    await this.host.dispose()
-    await Promise.allSettled(this.#adapterHandles.map((handle) => handle.dispose()))
+    for (const operation of [
+      () => this.channels.stopProcessingFeedback(),
+      () => this.activation.dispose(),
+      () => this.installation.dispose(),
+    ]) {
+      try {
+        await operation()
+      } catch (error) {
+        failures.push(error)
+      }
+    }
+    const stopped = await Promise.allSettled([...this.#adapterRuntimes.values()].map((runtime) => runtime.stop()))
+    for (const outcome of stopped) if (outcome.status === 'rejected') failures.push(outcome.reason)
+    try {
+      await this.host.dispose()
+    } catch (error) {
+      failures.push(error)
+    }
+    try {
+      await this.dshPluginInstaller.dispose()
+    } catch (error) {
+      failures.push(error)
+    }
+    const handles = await Promise.allSettled(this.#adapterHandles.map((handle) => handle.dispose()))
+    for (const outcome of handles) if (outcome.status === 'rejected') failures.push(outcome.reason)
     this.#adapterHandles.length = 0
     this.#adapterDiagnostics.clear()
     this.#connectionTests.clear()
@@ -1097,5 +1213,6 @@ export class NekroRuntime {
     this.#lastInboundByConnection.clear()
     this.#adapterRuntimes.clear()
     this.#database.close()
+    if (failures.length) throw new AggregateError(failures, 'Nekro Runtime disposal failed.')
   }
 }

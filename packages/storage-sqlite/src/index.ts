@@ -13,6 +13,7 @@ import { createOutboxRepository } from './repositories/outbox.js'
 import { createRuntimeRepository } from './repositories/runtime.js'
 import { createExtensionsRepository } from './repositories/extensions.js'
 import { createAssetsRepository } from './repositories/assets.js'
+import { createDshPluginRepository, type DshPluginRepository } from './repositories/dsh-plugins.js'
 
 export * from './backup.js'
 export * from './database.js'
@@ -20,6 +21,7 @@ export * from './dsh-session-storage.js'
 export * from './host-security.js'
 export * from './schema.js'
 export * from './row-schemas.js'
+export type { DshPluginRepository } from './repositories/dsh-plugins.js'
 
 type CurrentRepository = CoreRepository &
   RuntimeRepository &
@@ -56,6 +58,7 @@ export class SqliteCoreRepository implements CurrentRepository {
   readonly #outbox
   readonly #extensions
   readonly #assets
+  readonly #dshPlugins
 
   constructor(database: CoreDatabase) {
     this.#db = database.db
@@ -65,6 +68,7 @@ export class SqliteCoreRepository implements CurrentRepository {
     this.#outbox = createOutboxRepository(database.db)
     this.#extensions = createExtensionsRepository(database.db)
     this.#assets = createAssetsRepository(database.db)
+    this.#dshPlugins = createDshPluginRepository(database.db)
   }
 
   getWorkTreeOrder(): WorkTreeOrderRecord {
@@ -287,10 +291,15 @@ export class SqliteCoreRepository implements CurrentRepository {
     this.#extensions.listExtensionRevisions(...args)
   readonly getExtensionRevision = (...args: Parameters<ExtensionRepository['getExtensionRevision']>) =>
     this.#extensions.getExtensionRevision(...args)
+  readonly getExtensionRevisionByPayloadDigest = (
+    ...args: Parameters<ExtensionRepository['getExtensionRevisionByPayloadDigest']>
+  ) => this.#extensions.getExtensionRevisionByPayloadDigest(...args)
   readonly nextExtensionRevisionNumber = (...args: Parameters<ExtensionRepository['nextExtensionRevisionNumber']>) =>
     this.#extensions.nextExtensionRevisionNumber(...args)
   readonly saveExtensionRevision = (...args: Parameters<ExtensionRepository['saveExtensionRevision']>) =>
     this.#extensions.saveExtensionRevision(...args)
+  readonly deleteExtension = (...args: Parameters<ExtensionRepository['deleteExtension']>) =>
+    this.#extensions.deleteExtension(...args)
   readonly getExtensionRevisionVerification = (
     ...args: Parameters<ExtensionRepository['getExtensionRevisionVerification']>
   ) => this.#extensions.getExtensionRevisionVerification(...args)
@@ -315,6 +324,34 @@ export class SqliteCoreRepository implements CurrentRepository {
     this.#extensions.upsertHostInstallation(...args)
   readonly deleteHostInstallation = (...args: Parameters<ExtensionRepository['deleteHostInstallation']>) =>
     this.#extensions.deleteHostInstallation(...args)
+
+  readonly listDshPluginPackages = (...args: Parameters<DshPluginRepository['listDshPluginPackages']>) =>
+    this.#dshPlugins.listDshPluginPackages(...args)
+  readonly getDshPluginPackage = (...args: Parameters<DshPluginRepository['getDshPluginPackage']>) =>
+    this.#dshPlugins.getDshPluginPackage(...args)
+  readonly getDshPluginPackageByIdentity = (
+    ...args: Parameters<DshPluginRepository['getDshPluginPackageByIdentity']>
+  ) => this.#dshPlugins.getDshPluginPackageByIdentity(...args)
+  readonly saveDshPluginPackage = (...args: Parameters<DshPluginRepository['saveDshPluginPackage']>) =>
+    this.#dshPlugins.saveDshPluginPackage(...args)
+  readonly deleteDshPluginPackage = (...args: Parameters<DshPluginRepository['deleteDshPluginPackage']>) =>
+    this.#dshPlugins.deleteDshPluginPackage(...args)
+  readonly listDshPluginEntries = (...args: Parameters<DshPluginRepository['listDshPluginEntries']>) =>
+    this.#dshPlugins.listDshPluginEntries(...args)
+  readonly getDshPluginEntry = (...args: Parameters<DshPluginRepository['getDshPluginEntry']>) =>
+    this.#dshPlugins.getDshPluginEntry(...args)
+  readonly updateDshPluginEntry = (...args: Parameters<DshPluginRepository['updateDshPluginEntry']>) =>
+    this.#dshPlugins.updateDshPluginEntry(...args)
+  readonly listDshPluginActivations = (...args: Parameters<DshPluginRepository['listDshPluginActivations']>) =>
+    this.#dshPlugins.listDshPluginActivations(...args)
+  readonly upsertDshPluginActivation = (...args: Parameters<DshPluginRepository['upsertDshPluginActivation']>) =>
+    this.#dshPlugins.upsertDshPluginActivation(...args)
+  readonly deleteDshPluginActivation = (...args: Parameters<DshPluginRepository['deleteDshPluginActivation']>) =>
+    this.#dshPlugins.deleteDshPluginActivation(...args)
+  readonly getDshPluginDiagnostic = (...args: Parameters<DshPluginRepository['getDshPluginDiagnostic']>) =>
+    this.#dshPlugins.getDshPluginDiagnostic(...args)
+  readonly upsertDshPluginDiagnostic = (...args: Parameters<DshPluginRepository['upsertDshPluginDiagnostic']>) =>
+    this.#dshPlugins.upsertDshPluginDiagnostic(...args)
 
   readonly ensureAsset = (...args: Parameters<AssetAccessRepository['ensureAsset']>) =>
     this.#assets.ensureAsset(...args)

@@ -10,6 +10,8 @@ import {
   ChannelIdSchema,
   ChannelMemberIdSchema,
   ConnectionIdSchema,
+  DshPluginEntryIdSchema,
+  DshPluginPackageIdSchema,
   EpisodeHandoffIdSchema,
   EpisodeIdSchema,
   ExtensionIdSchema,
@@ -45,6 +47,10 @@ import {
   channels,
   connectionState,
   connections,
+  dshPluginActivations,
+  dshPluginDiagnostics,
+  dshPluginEntries,
+  dshPluginPackages,
   episodeHandoffEvents,
   episodeHandoffs,
   episodes,
@@ -186,6 +192,23 @@ export const AgentActivationRowSchema = createSelectSchema(agentActivations, {
   extensionRevisionId: ExtensionRevisionIdSchema,
   config: JsonValueSchema,
 })
+export const DshPluginPackageRowSchema = createSelectSchema(dshPluginPackages, {
+  id: DshPluginPackageIdSchema,
+  manifest: JsonValueSchema,
+  approvedBuilds: z.array(z.string()),
+})
+export const DshPluginEntryRowSchema = createSelectSchema(dshPluginEntries, {
+  id: DshPluginEntryIdSchema,
+  packageId: DshPluginPackageIdSchema,
+  config: JsonValueSchema,
+})
+export const DshPluginActivationRowSchema = createSelectSchema(dshPluginActivations, {
+  entryId: DshPluginEntryIdSchema,
+  agentId: AgentIdSchema.nullable(),
+})
+export const DshPluginDiagnosticRowSchema = createSelectSchema(dshPluginDiagnostics, {
+  entryId: DshPluginEntryIdSchema,
+})
 export const ExtensionClientDiagnosticRowSchema = createSelectSchema(extensionClientDiagnostics, {
   agentId: AgentIdSchema,
   extensionId: ExtensionIdSchema,
@@ -228,6 +251,10 @@ export const CoreRowSchemas = {
   hostExtensionInstallations: HostExtensionInstallationRowSchema,
   agentActivations: AgentActivationRowSchema,
   extensionClientDiagnostics: ExtensionClientDiagnosticRowSchema,
+  dshPluginPackages: DshPluginPackageRowSchema,
+  dshPluginEntries: DshPluginEntryRowSchema,
+  dshPluginActivations: DshPluginActivationRowSchema,
+  dshPluginDiagnostics: DshPluginDiagnosticRowSchema,
   hostSecurityMetadata: HostSecurityMetadataRowSchema,
   managementDevices: ManagementDeviceRowSchema,
 } as const

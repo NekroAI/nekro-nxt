@@ -11,6 +11,7 @@ import {
 import type { HostApiContract, HostApiRequest, HostApiResponse } from '@nekro-nxt/contracts'
 import {
   DshCredentialsChangedSseDataSchema,
+  DshPluginOperationSseDataSchema,
   DshSettingsChangedSseDataSchema,
   HostApiContracts,
   HostApiErrorSchema,
@@ -18,12 +19,12 @@ import {
   JsonValueSchema,
   parseJsonValue,
 } from '@nekro-nxt/contracts'
-import { ChevronDown, ChevronUp, KeyRound, RotateCcw } from 'lucide-react'
-import { Component, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
+import { ChevronDown, ChevronUp, KeyRound, RotateCcw, Trash2, Upload } from 'lucide-react'
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { notify } from './components/notifications.js'
 import { InlineFeedback } from './components/product-feedback.js'
-import { DshNativeSettingsSlots } from './dynamic-client-coordinator.js'
 import { productHostEventStream } from './host-event-stream.js'
+import { useProductStore } from './product-store.js'
 import { useUnsavedDraft } from './unsaved-drafts.js'
 import {
   Button,
@@ -34,12 +35,13 @@ import {
   SelectField,
   StatusBadge,
   SwitchField,
-  Tabs,
   Textarea,
 } from './ui-kit/index.js'
 import styles from './dsh-extension-settings.module.css'
 
 type DshPluginCatalogEntry = HostApiResponse<'dshPlugins'>['plugins'][number]
+type DshPluginEntry = NonNullable<DshPluginCatalogEntry['entries']>[number]
+type DshPluginConfigInspection = HostApiResponse<'inspectDshPluginEntryConfig'>
 type DshSettingsNamespaceView = HostApiResponse<'dshSettings'>['namespaces'][number]
 type DshCredentialView = HostApiResponse<'dshCredentialsDescribe'>['credentials'][string]
 type DshSettingsPathOperation = HostApiRequest<'dshSettingsMutate'>['ops'][number]
@@ -57,25 +59,6 @@ interface DshSettingsCatalogEntry {
   readonly plugin?: DshPluginCatalogEntry
 }
 
-class NativeSettingsBoundary extends Component<
-  { readonly children: ReactNode; readonly onFailure: (message: string) => void },
-  { readonly failed: boolean }
-> {
-  override state = { failed: false }
-
-  static getDerivedStateFromError(): { readonly failed: true } {
-    return { failed: true }
-  }
-
-  override componentDidCatch(error: Error): void {
-    this.props.onFailure(error.message)
-  }
-
-  override render(): ReactNode {
-    return this.state.failed ? null : this.props.children
-  }
-}
-
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === 'object' && value !== null && !Array.isArray(value)
 
@@ -90,7 +73,7 @@ const requestHostApi = async <Output,>(
   const response = await fetch(url, {
     method: contract.method,
     headers: { 'content-type': 'application/json' },
-    ...(contract.method === 'GET' || contract.method === 'DELETE' ? {} : { body: JSON.stringify(requestBody) }),
+    ...(contract.method === 'GET' || requestBody === undefined ? {} : { body: JSON.stringify(requestBody) }),
   })
   const responseBody: unknown = await response.json()
   if (!response.ok) {
@@ -128,7 +111,7 @@ const parseDshCredentialsChangedEvent = (text: string) => {
 }
 
 const extensionSourceLabel = (origin: DshPluginCatalogEntry['origin']): string =>
-  origin === 'builtin' ? '内置' : origin === 'profile' ? '用户安装' : '动态加载'
+  origin === 'builtin' ? '内置' : origin === 'profile' || origin === 'installed' ? '用户安装' : '动态加载'
 
 const extensionBadge = (plugin: DshPluginCatalogEntry): ReactNode =>
   plugin.loadError ? (
@@ -513,7 +496,7 @@ function GenericField(props: GenericFieldProps): ReactNode {
     if (containsSecretNode(node.inner)) {
       return (
         <InlineFeedback tone="warning">
-          “{name}”的集合项包含只写 Secret；当前版本禁止整体添加、删除和排序，避免覆盖未回传的值。
+          “{name}”的集合项包含只写 Secret，因此整体添加、删除和排序不可用，以免覆盖未回传的值。
         </InlineFeedback>
       )
     }
@@ -582,7 +565,7 @@ function GenericField(props: GenericFieldProps): ReactNode {
     if (containsSecretNode(node.inner)) {
       return (
         <InlineFeedback tone="warning">
-          “{name}”的键值包含只写 Secret；当前版本禁止整体改名、添加和删除，避免覆盖未回传的值。
+          “{name}”的键值包含只写 Secret，因此整体改名、添加和删除不可用，以免覆盖未回传的值。
         </InlineFeedback>
       )
     }
@@ -659,6 +642,52 @@ function GenericField(props: GenericFieldProps): ReactNode {
   }
 
   return <UnsupportedField {...props} disabled={locked} />
+}
+
+function DshPluginConfigEditor({
+  entry,
+  inspection,
+  onChange,
+}: {
+  readonly entry: DshPluginEntry
+  readonly inspection: DshPluginConfigInspection | undefined
+  readonly onChange: (value: unknown) => void
+}) {
+  const schema = useMemo(() => {
+    if (inspection?.mode !== 'schema') return undefined
+    try {
+      return rehydrateSchema(inspection.schema)
+    } catch {
+      return undefined
+    }
+  }, [inspection])
+  const [draft, setDraft] = useState<unknown>(entry.config)
+  useEffect(() => setDraft(entry.config), [entry.config])
+  if (!inspection) return <InlineFeedback tone="info">正在检查插件 Config Schema…</InlineFeedback>
+  if (inspection.mode === 'incompatible') return <InlineFeedback tone="error">{inspection.reason}</InlineFeedback>
+  if (inspection.mode !== 'schema' || !schema) return null
+  return (
+    <div className={styles.fieldGroup}>
+      <strong>启动配置</strong>
+      <GenericField
+        name={entry.entryKey}
+        node={schema}
+        path={[]}
+        value={draft}
+        disabled={false}
+        onSet={(path, value) => {
+          const next = path.length === 0 ? value : setPath(isRecord(draft) ? draft : {}, path, value)
+          setDraft(next)
+          onChange(next)
+        }}
+        onUnset={(path) => {
+          const next = path.length === 0 ? {} : deletePath(isRecord(draft) ? draft : {}, path)
+          setDraft(next)
+          onChange(next)
+        }}
+      />
+    </div>
+  )
 }
 
 function CredentialEditor({ refName, onChanged }: { readonly refName: string; readonly onChanged: () => void }) {
@@ -969,13 +998,26 @@ function NamespaceEditor({
 }
 
 export function DshExtensionSettings() {
+  const agents = useProductStore((state) => state.agents)
   const [catalog, setCatalog] = useState<DshSettingsCatalog>({ plugins: [], namespaces: [] })
   const [selectedEntryId, setSelectedEntryId] = useState('')
   const [selectedNamespace, setSelectedNamespace] = useState('')
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
-  const [nativeFailure, setNativeFailure] = useState('')
-  const [configView, setConfigView] = useState<'native' | 'generic'>('native')
+  const [installSpec, setInstallSpec] = useState('')
+  const [installInspection, setInstallInspection] = useState<HostApiResponse<'inspectDshPluginInstall'> | null>(null)
+  const [approvedBuilds, setApprovedBuilds] = useState<Record<string, boolean>>({})
+  const [installing, setInstalling] = useState(false)
+  const [activeOperationId, setActiveOperationId] = useState('')
+  const [operationProgress, setOperationProgress] = useState('')
+  const [entryScope, setEntryScope] = useState<Record<string, 'host' | 'agent'>>({})
+  const [entryAgent, setEntryAgent] = useState<Record<string, string>>({})
+  const [entryConfig, setEntryConfig] = useState<Record<string, string>>({})
+  const [configInspections, setConfigInspections] = useState<Record<string, DshPluginConfigInspection>>({})
+  const [configInspecting, setConfigInspecting] = useState<Record<string, boolean>>({})
+  const [operationError, setOperationError] = useState('')
+  const [operationNotice, setOperationNotice] = useState('')
+  const [removeOpen, setRemoveOpen] = useState(false)
   const refresh = useCallback(async () => {
     try {
       const next = await loadCatalog()
@@ -999,16 +1041,31 @@ export function DshExtensionSettings() {
       if (parseDshCredentialsChangedEvent(event.data) === undefined) return
       void refresh()
     }
+    const pluginsListener = (): void => {
+      void refresh()
+    }
+    const operationListener = (event: unknown): void => {
+      if (!(event instanceof MessageEvent) || typeof event.data !== 'string') return
+      try {
+        const progress = DshPluginOperationSseDataSchema.parse(JSON.parse(event.data))
+        if (progress.operationId !== activeOperationId) return
+        setOperationProgress(progress.message)
+      } catch {
+        // Ignore malformed or unrelated operation frames; the HTTP request remains authoritative.
+      }
+    }
     return productHostEventStream.subscribe({
       'dsh-settings-changed': settingsListener,
       'dsh-credentials-changed': credentialsListener,
+      'dsh-plugins-changed': pluginsListener,
+      'dsh-plugin-operation': operationListener,
     })
-  }, [refresh])
+  }, [activeOperationId, refresh])
   const entries = useMemo<readonly DshSettingsCatalogEntry[]>(() => {
     const claimed = new Set(catalog.plugins.flatMap((plugin) => plugin.settingsNamespaces))
     return [
       ...catalog.plugins.map((plugin) => ({
-        id: `plugin:${plugin.packageName}`,
+        id: `plugin:${plugin.packageId ?? plugin.packageName}`,
         label: packageLabel(plugin.packageName),
         version: plugin.packageVersion,
         namespaces: catalog.namespaces.filter((namespace) => plugin.settingsNamespaces.includes(namespace.ns)),
@@ -1040,23 +1097,234 @@ export function DshExtensionSettings() {
   const selectedEntry = entries.find((entry) => entry.id === selectedEntryId)
   const selected = selectedEntry?.plugin
   const namespaces = selectedEntry?.namespaces ?? []
+  const defaultAgentSelection = agents[0]?.id ?? ''
   const activeNamespace = namespaces.find((item) => item.ns === selectedNamespace) ?? namespaces[0]
   useEffect(() => {
     setSelectedNamespace(namespaces[0]?.ns ?? '')
-    setNativeFailure('')
-    setConfigView('native')
   }, [selectedEntryId])
-  const reportNativeFailure = useCallback((message: string) => {
-    setNativeFailure(message)
-    setConfigView('generic')
-  }, [])
+
+  const inspectRegistryPackage = async (): Promise<void> => {
+    if (!installSpec.trim() || installing) return
+    setInstalling(true)
+    const operationId = crypto.randomUUID()
+    setActiveOperationId(operationId)
+    setOperationProgress('正在开始安装检查…')
+    setOperationError('')
+    setOperationNotice('')
+    try {
+      const inspection = await requestHostApi(
+        HostApiContracts.inspectDshPluginInstall,
+        HostApiContracts.inspectDshPluginInstall.response,
+        {},
+        { spec: installSpec.trim(), operationId },
+      )
+      setInstallInspection(inspection)
+      setApprovedBuilds(Object.fromEntries(inspection.blockedBuilds.map((name) => [name, false])))
+    } catch (cause) {
+      setInstallInspection(null)
+      setOperationError(cause instanceof Error ? cause.message : String(cause))
+    } finally {
+      setInstalling(false)
+    }
+  }
+
+  const inspectTarball = async (file: File): Promise<void> => {
+    setInstalling(true)
+    const operationId = crypto.randomUUID()
+    setActiveOperationId(operationId)
+    setOperationProgress('正在上传安装包…')
+    setOperationError('')
+    setOperationNotice('')
+    try {
+      const response = await fetch('/api/dsh/plugin-installs/inspect-tarball', {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/octet-stream',
+          'x-file-name': file.name,
+          'x-operation-id': operationId,
+        },
+        body: file,
+      })
+      const body: unknown = await response.json()
+      if (!response.ok) {
+        const parsedError = HostApiErrorSchema.safeParse(body)
+        throw new Error(parsedError.success ? parsedError.data.error.message : `请求失败（HTTP ${response.status}）。`)
+      }
+      setInstallInspection(HostApiContracts.inspectDshPluginInstall.parseResponse(body))
+      const parsed = HostApiContracts.inspectDshPluginInstall.parseResponse(body)
+      setInstallInspection(parsed)
+      setApprovedBuilds(Object.fromEntries(parsed.blockedBuilds.map((name) => [name, false])))
+    } catch (cause) {
+      setInstallInspection(null)
+      setOperationError(cause instanceof Error ? cause.message : String(cause))
+    } finally {
+      setInstalling(false)
+    }
+  }
+
+  const commitInstall = async (): Promise<void> => {
+    if (!installInspection || installing) return
+    setInstalling(true)
+    const operationId = crypto.randomUUID()
+    setActiveOperationId(operationId)
+    setOperationProgress('正在提交安装…')
+    setOperationError('')
+    setOperationNotice('')
+    try {
+      await requestHostApi(
+        HostApiContracts.commitDshPluginInstall,
+        HostApiContracts.commitDshPluginInstall.response,
+        {},
+        {
+          token: installInspection.token,
+          approvedBuilds: installInspection.blockedBuilds.filter((name) => approvedBuilds[name] === true),
+          operationId,
+        },
+      )
+      setInstallInspection(null)
+      setInstallSpec('')
+      setOperationNotice('DSH 插件已安装并保持关闭。')
+      await refresh()
+    } catch (cause) {
+      setOperationError(cause instanceof Error ? cause.message : String(cause))
+    } finally {
+      setInstalling(false)
+    }
+  }
+
+  const activateEntry = async (entry: NonNullable<DshPluginCatalogEntry['entries']>[number]): Promise<void> => {
+    const configInspection = configInspections[entry.id]
+    if (!configInspection) {
+      setOperationError('需要检查入口的 Config Schema；检查操作会初始化第三方模块。')
+      return
+    }
+    if (configInspection.mode === 'incompatible') {
+      setOperationError(configInspection.reason)
+      return
+    }
+    const target = entryScope[entry.id] ?? entry.selectedScope ?? entry.suggestedScope
+    const agentId = entryAgent[entry.id] ?? agents[0]?.id
+    if (target === 'agent' && !agentId) {
+      setOperationError('当前没有可选择的智能体。创建智能体后可启用该入口。')
+      return
+    }
+    setOperationError('')
+    setOperationNotice('')
+    try {
+      const config = parseJsonValue(JSON.parse(entryConfig[entry.id] ?? JSON.stringify(entry.config)))
+      await requestHostApi(
+        HostApiContracts.activateDshPluginEntry,
+        HostApiContracts.activateDshPluginEntry.response,
+        { entryId: entry.id },
+        { target, ...(target === 'agent' ? { agentId } : {}), config },
+      )
+      setOperationNotice(target === 'host' ? '入口已在本机启用。' : '入口已给所选智能体启用。')
+      await refresh()
+    } catch (cause) {
+      setOperationError(cause instanceof Error ? cause.message : String(cause))
+    }
+  }
+
+  const inspectEntryConfig = async (entryId: string): Promise<void> => {
+    setConfigInspecting((current) => ({ ...current, [entryId]: true }))
+    setOperationError('')
+    try {
+      const inspection = await requestHostApi(
+        HostApiContracts.inspectDshPluginEntryConfig,
+        HostApiContracts.inspectDshPluginEntryConfig.response,
+        { entryId },
+        undefined,
+      )
+      setConfigInspections((current) => ({ ...current, [entryId]: inspection }))
+    } catch (cause) {
+      setOperationError(cause instanceof Error ? cause.message : String(cause))
+    } finally {
+      setConfigInspecting((current) => ({ ...current, [entryId]: false }))
+    }
+  }
+
+  const deactivateEntry = async (entryId: string, targetKey: string): Promise<void> => {
+    setOperationError('')
+    setOperationNotice('')
+    try {
+      await requestHostApi(
+        HostApiContracts.deactivateDshPluginEntry,
+        HostApiContracts.deactivateDshPluginEntry.response,
+        { entryId },
+        { targetKey },
+      )
+      setOperationNotice('入口已关闭并完成资源清理。')
+      await refresh()
+    } catch (cause) {
+      setOperationError(cause instanceof Error ? cause.message : String(cause))
+    }
+  }
 
   if (loading) return <InlineFeedback tone="info">正在读取 DSH 扩展和配置…</InlineFeedback>
   if (error && catalog.plugins.length === 0) return <InlineFeedback tone="error">{error}</InlineFeedback>
   return (
     <div className={styles.catalog}>
       <aside className={styles.pluginList} aria-label="DSH 扩展">
-        <div className={styles.listHeading}>已加载的 DSH 扩展</div>
+        <div className={styles.listHeading}>安装 DSH 插件</div>
+        <Field label="npm 包与精确版本" hint="例如 @scope/plugin@1.2.3；版本范围会在预检时解析为精确版本。">
+          <Input
+            value={installSpec}
+            placeholder="package-name@1.2.3"
+            disabled={installing}
+            onChange={(event) => setInstallSpec(event.currentTarget.value)}
+          />
+        </Field>
+        <Button loading={installing} disabled={!installSpec.trim()} onClick={() => void inspectRegistryPackage()}>
+          检查安装内容
+        </Button>
+        <Field label="npm tgz 或 .nxt-extension" hint="从本机选择一个安装包进行预检。">
+          <label className={styles.installFileButton} data-disabled={installing ? '' : undefined}>
+            <Upload size={14} aria-hidden="true" />
+            {installing ? '正在检查…' : '选择安装包'}
+            <Input
+              className={styles.installFileInput}
+              type="file"
+              accept=".tgz,.tar.gz,.nxt-extension,application/gzip,application/vnd.nekro-nxt.extension+zip"
+              aria-label="选择 npm tgz 或 .nxt-extension"
+              disabled={installing}
+              onChange={(event) => {
+                const file = event.currentTarget.files?.[0]
+                if (file) void inspectTarball(file)
+                event.currentTarget.value = ''
+              }}
+            />
+          </label>
+        </Field>
+        {installInspection ? (
+          <div className={styles.fieldGroup}>
+            <strong>{installInspection.packageName}</strong>
+            <small>精确版本 {installInspection.packageVersion}</small>
+            <small>{installInspection.entries.length} 个入口 · 安装完成时未启用</small>
+            {installInspection.blockedBuilds.length > 0 ? (
+              <>
+                <InlineFeedback tone="warning">
+                  以下依赖声明了构建脚本。未批准的依赖按禁用脚本方式安装；批准记录绑定当前精确版本和依赖锁摘要。
+                </InlineFeedback>
+                {installInspection.blockedBuilds.map((name) => (
+                  <SwitchField
+                    key={name}
+                    label={name}
+                    description="允许这个依赖执行安装构建脚本"
+                    checked={approvedBuilds[name] === true}
+                    onCheckedChange={(checked) => setApprovedBuilds((current) => ({ ...current, [name]: checked }))}
+                  />
+                ))}
+              </>
+            ) : (
+              <InlineFeedback tone="success">依赖未请求执行被阻止的构建脚本。</InlineFeedback>
+            )}
+            <Button variant="primary" loading={installing} onClick={() => void commitInstall()}>
+              安装插件（未启用）
+            </Button>
+          </div>
+        ) : null}
+        {installing && operationProgress ? <InlineFeedback tone="info">{operationProgress}</InlineFeedback> : null}
+        <div className={styles.listHeading}>DSH 扩展目录</div>
         {entries.map((entry) => (
           <Button
             variant="ghost"
@@ -1088,6 +1356,155 @@ export function DshExtensionSettings() {
               <InlineFeedback tone="info">此配置由当前 DSH Host 运行时注册，可以使用基础 Schema 配置。</InlineFeedback>
             ) : null}
             {selected?.loadError ? <InlineFeedback tone="error">{selected.loadError.message}</InlineFeedback> : null}
+            {selected?.clientUiDetected ? (
+              <InlineFeedback tone="info">
+                插件包含 DSH 原生界面，NekroNXT 当前未接入。Host 能力和通用配置正常可用。
+              </InlineFeedback>
+            ) : null}
+            {selected?.origin === 'installed' ? (
+              <>
+                {(selected.entries ?? []).map((entry) => {
+                  const scope = entryScope[entry.id] ?? entry.selectedScope ?? entry.suggestedScope
+                  const configText = entryConfig[entry.id] ?? JSON.stringify(entry.config, null, 2)
+                  const configInspection = configInspections[entry.id]
+                  return (
+                    <fieldset className={styles.fieldGroup} key={entry.id}>
+                      <legend>{entry.entryKey}</legend>
+                      <p>{entry.moduleName}</p>
+                      <SelectField
+                        label="启用范围"
+                        value={scope}
+                        disabled={entry.activations.length > 0}
+                        options={[
+                          { value: 'host', label: entry.suggestedScope === 'host' ? '本机（建议）' : '本机' },
+                          {
+                            value: 'agent',
+                            label: entry.suggestedScope === 'agent' ? '指定智能体（建议）' : '指定智能体',
+                          },
+                        ]}
+                        onValueChange={(value) => {
+                          if (value !== 'host' && value !== 'agent') return
+                          setEntryScope((current) => ({ ...current, [entry.id]: value }))
+                        }}
+                      />
+                      {scope === 'agent' ? (
+                        <SelectField
+                          label="智能体"
+                          value={entryAgent[entry.id] ?? defaultAgentSelection}
+                          options={agents.map((agent) => ({ value: agent.id, label: agent.name }))}
+                          onValueChange={(agentId) => setEntryAgent((current) => ({ ...current, [entry.id]: agentId }))}
+                        />
+                      ) : null}
+                      {!configInspection ? (
+                        <>
+                          <InlineFeedback tone="warning">
+                            检查 Config Schema 和启用入口会初始化第三方模块。执行这些操作表示你信任当前安装来源。
+                          </InlineFeedback>
+                          <Button
+                            loading={configInspecting[entry.id] === true}
+                            onClick={() => void inspectEntryConfig(entry.id)}
+                          >
+                            检查配置界面
+                          </Button>
+                        </>
+                      ) : null}
+                      {configInspection?.mode === 'schema' ? (
+                        <DshPluginConfigEditor
+                          entry={entry}
+                          inspection={configInspection}
+                          onChange={(value) =>
+                            setEntryConfig((current) => ({ ...current, [entry.id]: JSON.stringify(value, null, 2) }))
+                          }
+                        />
+                      ) : null}
+                      {configInspection?.mode === 'json' ? (
+                        <Field
+                          label="启动配置（高级 JSON）"
+                          hint="插件没有可序列化 Config Schema；不能在这里保存 Secret 或凭据。"
+                        >
+                          <Textarea
+                            rows={6}
+                            value={configText}
+                            onChange={(event) =>
+                              setEntryConfig((current) => ({ ...current, [entry.id]: event.currentTarget.value }))
+                            }
+                          />
+                        </Field>
+                      ) : null}
+                      {configInspection?.mode === 'incompatible' ? (
+                        <InlineFeedback tone="error">{configInspection.reason}</InlineFeedback>
+                      ) : null}
+                      <Button
+                        variant="primary"
+                        disabled={!configInspection || configInspection.mode === 'incompatible'}
+                        onClick={() => void activateEntry(entry)}
+                      >
+                        {entry.activations.length > 0 ? '应用配置 / 添加授权' : '启用入口'}
+                      </Button>
+                      {entry.activations.map((activation) => (
+                        <div className={styles.inlineActions} key={activation.targetKey}>
+                          <StatusBadge tone={activation.diagnostic?.status === 'active' ? 'success' : 'warning'}>
+                            {activation.target === 'host'
+                              ? '本机已启用'
+                              : `${agents.find((agent) => agent.id === activation.agentId)?.name ?? '智能体'}已启用`}
+                          </StatusBadge>
+                          {activation.diagnostic?.message ? <span>{activation.diagnostic.message}</span> : null}
+                          <Button
+                            size="small"
+                            variant="danger"
+                            onClick={() => void deactivateEntry(entry.id, activation.targetKey)}
+                          >
+                            关闭
+                          </Button>
+                        </div>
+                      ))}
+                    </fieldset>
+                  )
+                })}
+                <Button variant="danger" onClick={() => setRemoveOpen(true)}>
+                  <Trash2 size={14} aria-hidden="true" /> 移除这个插件
+                </Button>
+                {selected.packageId ? (
+                  <Button
+                    onClick={() =>
+                      window.location.assign(
+                        `/api/dsh/plugin-installs/${encodeURIComponent(selected.packageId!)}/export`,
+                      )
+                    }
+                  >
+                    导出分享包
+                  </Button>
+                ) : null}
+                <ConfirmDialog
+                  open={removeOpen}
+                  onOpenChange={setRemoveOpen}
+                  title={`移除“${selected.packageName}”`}
+                  description={`移除操作会关闭 ${selected.entries?.flatMap((entry) => entry.activations).length ?? 0} 个启用关系。全部入口静止成功后，安装包移入回收目录。`}
+                  cancelLabel="保留插件"
+                  confirmLabel="关闭并移除"
+                  confirmVariant="danger"
+                  onConfirm={async () => {
+                    if (!selected.packageId) return false
+                    try {
+                      await requestHostApi(
+                        HostApiContracts.removeDshPluginPackage,
+                        HostApiContracts.removeDshPluginPackage.response,
+                        { packageId: selected.packageId },
+                        undefined,
+                      )
+                      setOperationNotice('DSH 插件已关闭并移除。')
+                      await refresh()
+                      return true
+                    } catch (cause) {
+                      setOperationError(cause instanceof Error ? cause.message : String(cause))
+                      return false
+                    }
+                  }}
+                />
+              </>
+            ) : null}
+            {operationNotice ? <InlineFeedback tone="success">{operationNotice}</InlineFeedback> : null}
+            {operationError ? <InlineFeedback tone="error">{operationError}</InlineFeedback> : null}
             {namespaces.length > 1 ? (
               <SelectField
                 label="配置区域"
@@ -1096,40 +1513,7 @@ export function DshExtensionSettings() {
                 onValueChange={setSelectedNamespace}
               />
             ) : null}
-            {selected?.packageName === '@deepseek-ai/dsh-web-search-deepseek' && activeNamespace ? (
-              <Tabs.Root
-                value={configView}
-                onValueChange={(value) => {
-                  if (value === 'native' || value === 'generic') setConfigView(value)
-                }}
-              >
-                <Tabs.List aria-label="DSH 扩展配置界面">
-                  <Tabs.Trigger value="native">DSH 原生界面</Tabs.Trigger>
-                  <Tabs.Trigger value="generic">通用配置</Tabs.Trigger>
-                </Tabs.List>
-                {nativeFailure ? (
-                  <InlineFeedback tone="warning">
-                    原生界面未能加载：{nativeFailure}。已自动切换到通用配置。
-                  </InlineFeedback>
-                ) : null}
-                <Tabs.Content value="native">
-                  <div className={styles.nativeNotice}>
-                    <StatusBadge tone="info">DSH 原生界面</StatusBadge>
-                    <span>内部采用上游术语和交互；配置写入同一 DSH Settings/Credentials。</span>
-                  </div>
-                  {nativeFailure ? null : (
-                    <NativeSettingsBoundary onFailure={reportNativeFailure}>
-                      <div className={styles.nxtDshNativeSurface} data-dsh-native-surface="">
-                        <DshNativeSettingsSlots onFailure={reportNativeFailure} />
-                      </div>
-                    </NativeSettingsBoundary>
-                  )}
-                </Tabs.Content>
-                <Tabs.Content value="generic">
-                  <NamespaceEditor namespace={activeNamespace} onSaved={() => void refresh()} />
-                </Tabs.Content>
-              </Tabs.Root>
-            ) : activeNamespace ? (
+            {activeNamespace ? (
               <NamespaceEditor namespace={activeNamespace} onSaved={() => void refresh()} />
             ) : (
               <InlineFeedback tone="info">这个运行组件没有注册可在线编辑的 DSH Settings namespace。</InlineFeedback>
