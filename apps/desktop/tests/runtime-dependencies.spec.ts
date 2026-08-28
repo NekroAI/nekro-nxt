@@ -40,6 +40,7 @@ describe('Desktop runtime dependencies', () => {
     expect(verifier).toContain('installManagedPluginSmoke')
     expect(verifier).toContain('verifyRestoredManagedPluginAndRemove')
     expect(verifier).toContain("child.kill('SIGTERM')")
+    expect(verifier).toContain("result.signal === 'SIGTERM'")
 
     const pluginInstaller = await readFile(path.join(repositoryRoot, 'apps/server/src/dsh-plugin-installer.ts'), 'utf8')
     expect(pluginInstaller).toContain("ELECTRON_RUN_AS_NODE: process.env['ELECTRON_RUN_AS_NODE']")

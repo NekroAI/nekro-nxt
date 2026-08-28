@@ -116,13 +116,17 @@ const waitUntilReady = async (running) => {
 }
 
 const stop = async (running) => {
-  if (running.child.exitCode === null && running.child.signalCode === null) running.child.kill('SIGTERM')
+  let terminationRequested = false
+  if (running.child.exitCode === null && running.child.signalCode === null) {
+    terminationRequested = running.child.kill('SIGTERM')
+  }
   const result = await Promise.race([running.exited, delay(10_000).then(() => ({ timeout: true }))])
   if ('timeout' in result) {
     running.child.kill('SIGKILL')
     throw new Error('Desktop Server 未能在 10 秒内静止关闭。')
   }
-  if (result.code !== 0) {
+  const expectedSignalExit = terminationRequested && result.code === null && result.signal === 'SIGTERM'
+  if (result.code !== 0 && !expectedSignalExit) {
     throw new Error(`Desktop Server 关闭失败（code ${result.code}, signal ${result.signal ?? 'none'}）。`)
   }
 }
