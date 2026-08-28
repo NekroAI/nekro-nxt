@@ -1462,6 +1462,24 @@ test('DSH settings remain legible without loading native WebUI across desktop th
       await expect(page.locator('[data-dsh-native-surface]')).toHaveCount(0)
       await expect(page.getByText('Namespace：web-search-deepseek', { exact: true })).toBeVisible()
       await expect(page.getByLabel('新的凭据值')).toBeVisible()
+      const detailSurface = await page.evaluate(() => {
+        const detail = document.querySelector<HTMLElement>('[data-dsh-detail]')
+        const header = document.querySelector<HTMLElement>('[data-dsh-detail-header]')
+        const footer = document.querySelector<HTMLElement>('[data-dsh-settings-footer]')
+        if (!detail || !header || !footer) throw new Error('DSH 详情表面、页头或表单底部缺失。')
+        const detailRect = detail.getBoundingClientRect()
+        const headerRect = header.getBoundingClientRect()
+        return {
+          headerBackground: getComputedStyle(header).backgroundColor,
+          footerPosition: getComputedStyle(footer).position,
+          leftInset: headerRect.left - detailRect.left,
+          rightInset: detailRect.right - headerRect.right,
+        }
+      })
+      expect(detailSurface.headerBackground).toBe('rgba(0, 0, 0, 0)')
+      expect(detailSurface.footerPosition).toBe('static')
+      expect(detailSurface.leftInset).toBeGreaterThanOrEqual(16)
+      expect(detailSurface.rightInset).toBeGreaterThanOrEqual(16)
       await assertViewportIntegrity(page)
       await capture(page, testInfo, `dsh-settings-${viewport.width}x${viewport.height}-${colorScheme}`)
     }

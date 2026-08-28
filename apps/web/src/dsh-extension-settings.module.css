@@ -119,6 +119,23 @@
   gap: var(--nxt-space-3);
 }
 
+.detailHeader {
+  align-items: flex-start;
+  padding-bottom: var(--nxt-space-4);
+  border-bottom: 1px solid var(--nxt-border-subtle);
+}
+
+.detailHeader > div {
+  display: grid;
+  min-width: 0;
+  gap: var(--nxt-space-1);
+}
+
+.detailHeader > :last-child {
+  flex: 0 0 auto;
+  margin-top: 2px;
+}
+
 .detailHeader h2,
 .detailHeader p {
   margin: 0;
@@ -130,10 +147,10 @@
 }
 
 .detailHeader p {
-  margin-top: var(--nxt-space-1);
   color: var(--nxt-text-muted);
   font-family: var(--nxt-font-mono);
   font-size: 11px;
+  overflow-wrap: anywhere;
 }
 
 .namespaceEditor {
@@ -262,12 +279,11 @@
 }
 
 .editorFooter {
-  position: sticky;
-  bottom: 0;
-  padding: var(--nxt-space-3) 0 0;
-  border-top: 0;
+  position: static;
+  padding: var(--nxt-space-4) 0 0;
+  border-top: 1px solid var(--nxt-border-subtle);
   color: var(--nxt-text-muted);
-  background: var(--nxt-bg-surface);
+  background: transparent;
   font-size: 12px;
 }
 
@@ -310,18 +326,16 @@
 :global(:root[data-glin-experiment]) .detail {
   overflow-x: hidden;
   overflow-y: auto;
-  border-radius: 0;
-  padding: 0 0 36px 24px;
-  background: transparent;
+  border: 1px solid var(--nxt-border-subtle);
+  border-radius: var(--nxt-radius-panel);
+  padding: var(--nxt-space-5) var(--nxt-space-4) 36px var(--nxt-space-5);
+  background: color-mix(in srgb, var(--nxt-bg-surface) 88%, transparent);
   box-shadow: none;
   scrollbar-gutter: stable;
 }
 
 :global(:root[data-glin-experiment]) .detailHeader {
-  position: sticky;
-  z-index: var(--nxt-layer-sticky);
-  top: 0;
-  border-bottom: 1px solid var(--nxt-border-subtle);
-  padding: 0 0 var(--nxt-space-3);
-  background: var(--nxt-bg-canvas);
+  position: static;
+  padding: 0 0 var(--nxt-space-4);
+  background: transparent;
 }

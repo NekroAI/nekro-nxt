@@ -981,7 +981,7 @@ function NamespaceEditor({
       ) : null}
       {notice ? <InlineFeedback tone="success">{notice}</InlineFeedback> : null}
       {error ? <InlineFeedback tone="error">{error}</InlineFeedback> : null}
-      <div className={styles.editorFooter}>
+      <div className={styles.editorFooter} data-dsh-settings-footer="">
         <span>{ops.size > 0 ? `${ops.size} 项未保存更改` : '没有未保存更改'}</span>
         <Button
           variant="primary"
@@ -1342,10 +1342,10 @@ export function DshExtensionSettings() {
           </Button>
         ))}
       </aside>
-      <section className={styles.detail}>
+      <section className={styles.detail} data-dsh-detail="">
         {selectedEntry ? (
           <>
-            <div className={styles.detailHeader}>
+            <div className={styles.detailHeader} data-dsh-detail-header="">
               <div>
                 <h2>{selectedEntry.label}</h2>
                 <p>{selected?.packageName ?? `DSH Settings namespace · ${activeNamespace?.ns ?? ''}`}</p>
