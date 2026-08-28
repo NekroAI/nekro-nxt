@@ -16,6 +16,7 @@ import {
   ChannelIdSchema,
   ChannelMemberIdSchema,
   ConnectionIdSchema,
+  DshPluginEntryIdSchema,
   EpisodeHandoffIdSchema,
   EpisodeIdSchema,
   ExtensionIdSchema,
@@ -1886,6 +1887,74 @@ describe('Extension and backup', () => {
         nextPageInstanceId: () => HostUiPageInstanceIdSchema.parse(`hup_PAGE${++sequence}`),
       })
       expect(updated[0]).toMatchObject({ pageInstanceId, visible: false, title: '项目概览' })
+      expect(repository.getHostUiDiagnostic(pageInstanceId)).toBeUndefined()
+      repository.upsertHostUiDiagnostic({ pageInstanceId, status: 'ready', observedAt: 14 })
+      expect(repository.getHostUiDiagnostic(pageInstanceId)).toMatchObject({ status: 'ready' })
+      repository.upsertHostUiDiagnostic({ pageInstanceId, status: 'rpc-failed', message: '调用失败', observedAt: 15 })
+      expect(repository.getHostUiDiagnostic(pageInstanceId)).toMatchObject({ message: '调用失败' })
+
+      const ownerKey = `extension:${extensionId}`
+      expect(repository.getHostUiPermissionGrant(ownerKey)).toBeUndefined()
+      repository.upsertHostUiPermissionGrant({
+        ownerKey,
+        artifactDigest: 'd'.repeat(64),
+        permissionDigest: 'e'.repeat(64),
+        declaration: { permissions: ['agents.read'], networkOrigins: [] },
+        approvedAt: 15,
+      })
+      expect(repository.getHostUiPermissionGrant(ownerKey)).toMatchObject({ artifactDigest: 'd'.repeat(64) })
+      repository.deleteHostUiPermissionGrant(ownerKey)
+      expect(repository.getHostUiPermissionGrant(ownerKey)).toBeUndefined()
+
+      const replaced = repository.replaceHostUiExtensionPages({
+        extensionId,
+        revisionId: secondRevisionId,
+        pages: [
+          {
+            kind: 'host-page',
+            entryId: 'reports',
+            title: '报表',
+            icon: { kind: 'host-icon', name: 'bar-chart' },
+            objectPane: 'hidden',
+            startPath: 'daily',
+          },
+        ],
+        clientBuildKey: 'f'.repeat(64),
+        now: 16,
+        nextPageInstanceId: () => HostUiPageInstanceIdSchema.parse(`hup_PAGE${++sequence}`),
+      })
+      expect(replaced[0]?.pageInstanceId).not.toBe(pageInstanceId)
+      repository.replaceHostUiExtensionPages({
+        extensionId,
+        revisionId: secondRevisionId,
+        pages: [],
+        clientBuildKey: 'f'.repeat(64),
+        now: 17,
+        nextPageInstanceId: () => HostUiPageInstanceIdSchema.parse(`hup_PAGE${++sequence}`),
+      })
+      expect(repository.listHostUiPageEntries()).toEqual([])
+
+      const dshEntryId = DshPluginEntryIdSchema.parse('dse_HOSTUI')
+      const dshPages = repository.replaceHostUiDshPages({
+        entryId: dshEntryId,
+        artifactDigest: 'a'.repeat(64),
+        pages: [
+          {
+            kind: 'host-page',
+            entryId: 'dsh-overview',
+            title: 'DSH 概览',
+            icon: { kind: 'host-icon', name: 'puzzle' },
+            objectPane: 'navigation',
+            startPath: '',
+          },
+        ],
+        clientBuildKey: 'b'.repeat(64),
+        now: 18,
+        nextPageInstanceId: () => HostUiPageInstanceIdSchema.parse(`hup_PAGE${++sequence}`),
+      })
+      expect(dshPages[0]?.owner).toMatchObject({ kind: 'dsh-plugin', entryId: dshEntryId })
+      repository.deleteHostUiDshPages(dshEntryId)
+      expect(repository.listHostUiPageEntries()).toEqual([])
     } finally {
       database.close()
     }

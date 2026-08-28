@@ -49,9 +49,16 @@ describe('Host UI assets', () => {
   it('rejects CSS that escapes the page module boundary', () => {
     expect(() => validateHostUiCss(':global(body) { color: red; }')).toThrow(':global')
     expect(() => validateHostUiCss('@import "https://example.invalid/a.css";')).toThrow('@import')
+    expect(() => validateHostUiCss('@font-face { font-family: probe; }')).toThrow('字体')
+    expect(() => validateHostUiCss('.panel { background: url("probe.svg"); }')).toThrow('URL')
     expect(() => validateHostUiCss('body { color: red; }')).toThrow('根节点')
     expect(() => validateHostUiCss('button { color: red; }')).toThrow('本地 class')
+    expect(() => validateHostUiCss('.panel body { color: red; }')).toThrow('产品根节点')
+    expect(() => validateHostUiCss('@keyframes probe { from { opacity: 0; } }')).toThrow('@keyframes')
+    expect(() => validateHostUiCss('.panel {')).toThrow('语法无效')
+    expect(() => validateHostUiCss('x'.repeat(128 * 1024 + 1))).toThrow('128 KiB')
     expect(() => validateHostUiCss('.panel { color: var(--nxt-text-primary); }')).not.toThrow()
+    expect(() => validateHostUiCss('@media (width > 600px) { .panel { display: grid; } }')).not.toThrow()
   })
 
   it('accepts a bounded monochrome SVG and rejects executable SVG', () => {
@@ -62,6 +69,14 @@ describe('Host UI assets', () => {
     expect(() => validateHostUiSvg('<svg viewBox="0 0 24 24"><path onclick="alert(1)" d="M0 0"/></svg>')).toThrow(
       'onclick',
     )
+    expect(() => validateHostUiSvg('x'.repeat(32 * 1024 + 1))).toThrow('32 KiB')
+    expect(() => validateHostUiSvg('<!DOCTYPE svg><svg viewBox="0 0 24 24"></svg>')).toThrow('实体')
+    expect(() => validateHostUiSvg('<svg viewBox="0 0 24 24">')).toThrow('完整')
+    expect(() => validateHostUiSvg('<svg><path d="M0 0"/></svg>')).toThrow('viewBox')
+    expect(() => validateHostUiSvg('<svg viewBox="0 0 0 24"><path d="M0 0"/></svg>')).toThrow('尺寸')
+    expect(() => validateHostUiSvg('<svg viewBox="0 0 24 24"><image href="probe"/></svg>')).toThrow('image')
+    expect(() => validateHostUiSvg('<svg viewBox="0 0 24 24"><path unknown="probe"/></svg>')).toThrow('unknown')
+    expect(() => validateHostUiSvg('<svg viewBox="0 0 24 24"><path disabled/></svg>')).toThrow('无法识别')
   })
 })
 
@@ -1514,78 +1529,210 @@ describe('Host Extension Installation', () => {
   it('requires exact Host UI permission approval and preserves page identity through installation', async () => {
     const repository = new MemoryExtensionRepository()
     const extension = { ...localExtension(extensionId('uiinstall')), scope: 'host-ui' as const }
-    const savedRevision = revision(revisionId('uiinstall1'), extension.id, 1)
+    const first = revision(revisionId('uiinstall1'), extension.id, 1)
+    const second = revision(revisionId('uiinstall2'), extension.id, 2)
+    const reduced = revision(revisionId('uiinstall3'), extension.id, 3)
+    const expanded = revision(revisionId('uiinstall4'), extension.id, 4)
+    const undeclared = revision(revisionId('uiinstall5'), extension.id, 5)
+    const unverified = revision(revisionId('uiinstall6'), extension.id, 6)
+    const pageLess = revision(revisionId('uiinstall7'), extension.id, 7)
+    const overfull = revision(revisionId('uiinstall8'), extension.id, 8)
+    const verification = (
+      savedRevision: Revision,
+      permissions?: NonNullable<ExtensionRevisionVerification['permissions']>,
+      renderedPages: NonNullable<ExtensionRevisionVerification['renderedPages']> = [
+        {
+          kind: 'host-page',
+          entryId: 'overview',
+          title: '概览',
+          icon: { kind: 'host-icon', name: 'layout-dashboard' },
+          objectPane: 'hidden',
+          startPath: '',
+        },
+      ],
+    ): ExtensionRevisionVerification => ({
+      revisionId: savedRevision.id,
+      dshVersion: '0.1.1-rc.2',
+      contractVersion: 'nekro-nxt-extension-v3',
+      scope: 'host-ui',
+      origin: { episodeId: 'episode', pluginId: 'plugin', packageId: 'package', pluginRunId: 'run' },
+      verifiedAt: 1,
+      hostBuild: { built: false, buildKey: 'build' },
+      clientBuild: { built: true, buildKey: 'build' },
+      toolInvocations: [],
+      rpcMethods: [],
+      renderedSlots: [],
+      renderedPages,
+      ...(permissions === undefined ? {} : { permissions }),
+    })
+    const revisionsWithPermissions: Array<[Revision, NonNullable<ExtensionRevisionVerification['permissions']>]> = [
+      [first, { permissions: ['agents.read'], networkOrigins: [] }],
+      [second, { permissions: ['agents.read'], networkOrigins: [] }],
+      [reduced, { permissions: [], networkOrigins: [] }],
+      [
+        expanded,
+        { permissions: ['agents.read', 'channels.read', 'network.request'], networkOrigins: ['https://example.com'] },
+      ],
+    ]
+    for (const [savedRevision, permissions] of revisionsWithPermissions) {
+      repository.saveExtensionRevision({
+        extension,
+        revision: savedRevision,
+        verification: verification(savedRevision, permissions),
+      })
+    }
+    repository.saveExtensionRevision({ extension, revision: undeclared, verification: verification(undeclared) })
+    repository.saveExtensionRevision({ extension, revision: unverified })
     repository.saveExtensionRevision({
       extension,
-      revision: savedRevision,
+      revision: pageLess,
+      verification: verification(pageLess, { permissions: [], networkOrigins: [] }, []),
+    })
+    const overfullVerification = verification(overfull, { permissions: [], networkOrigins: [] })
+    repository.saveExtensionRevision({
+      extension,
+      revision: overfull,
       verification: {
-        revisionId: savedRevision.id,
-        dshVersion: '0.1.1-rc.2',
-        contractVersion: 'nekro-nxt-extension-v3',
-        scope: 'host-ui',
-        origin: { episodeId: 'episode', pluginId: 'plugin', packageId: 'package', pluginRunId: 'run' },
-        verifiedAt: 1,
-        hostBuild: { built: false, buildKey: 'build' },
-        clientBuild: { built: true, buildKey: 'build' },
-        toolInvocations: [],
-        rpcMethods: [],
-        renderedSlots: [],
-        renderedPages: [
-          {
-            kind: 'host-page',
-            entryId: 'overview',
-            title: '概览',
-            icon: { kind: 'host-icon', name: 'layout-dashboard' },
-            objectPane: 'hidden',
-            startPath: '',
-          },
-        ],
-        permissions: { permissions: ['agents.read'], networkOrigins: [] },
+        ...overfullVerification,
+        renderedPages: Array.from({ length: 9 }, (_, index) => ({
+          ...overfullVerification.renderedPages![0]!,
+          entryId: `page-${index}`,
+        })),
       },
     })
-    const pages: unknown[] = []
-    const grants = new Map<string, unknown>()
-    Object.assign(repository, {
-      getHostUiPermissionGrant: (ownerKey: string) => grants.get(ownerKey),
-      upsertHostUiPermissionGrant: (grant: { readonly ownerKey: string }) => grants.set(grant.ownerKey, grant),
-      deleteHostUiPermissionGrant: (ownerKey: string) => grants.delete(ownerKey),
-      replaceHostUiExtensionPages: (input: { readonly pages: readonly unknown[] }) => {
-        pages.splice(0, pages.length, ...input.pages)
-        return pages
-      },
-      deleteHostUiExtensionPages: () => pages.splice(0),
-    })
+    const agentExtension = localExtension(extensionId('uinotlocal'))
+    const agentRevision = revision(revisionId('uinotlocal1'), agentExtension.id, 1)
+    repository.saveExtensionRevision({ extension: agentExtension, revision: agentRevision })
     const host = new FakeHostInstallationHost()
+    const build = (savedRevision: Revision): Promise<ExtensionBuildArtifact> =>
+      Promise.resolve({
+        revisionId: savedRevision.id,
+        buildKey: savedRevision.payloadDigest,
+        directory: '/cache',
+        clientEntry: '/cache/client.mjs',
+      })
     const coordinator = new HostExtensionInstallationCoordinator(
       repository,
       { revisionSourceDirectory: () => '/source' },
+      { build: ({ revisionId: id }) => build(repository.getExtensionRevision(id)!) },
+      host,
+      { now: () => 10 },
+    )
+    await expect(coordinator.callHostUi(extension.id, 'status', null)).rejects.toThrow('当前不可用')
+    expect(coordinator.getHostUiPermissionRequirement(agentExtension.id, agentRevision.id)).toBeUndefined()
+    await expect(coordinator.install({ extensionId: agentExtension.id, revisionId: agentRevision.id })).rejects.toThrow(
+      '只有 Host UI 或适配器扩展',
+    )
+    await expect(coordinator.install({ extensionId: extension.id, revisionId: unverified.id })).rejects.toThrow(
+      'Host UI 安装只接受',
+    )
+    await expect(coordinator.install({ extensionId: extension.id, revisionId: pageLess.id })).rejects.toThrow(
+      '1 到 8 个页面入口',
+    )
+    await expect(coordinator.install({ extensionId: extension.id, revisionId: overfull.id })).rejects.toThrow(
+      '1 到 8 个页面入口',
+    )
+    const firstRequirement = coordinator.getHostUiPermissionRequirement(extension.id, first.id)!
+    const missingClient = new HostExtensionInstallationCoordinator(
+      repository,
+      { revisionSourceDirectory: () => '/source' },
       {
-        build: () =>
-          Promise.resolve({
-            revisionId: savedRevision.id,
-            buildKey: 'a'.repeat(64),
-            directory: '/cache',
-            clientEntry: '/cache/client.mjs',
-          }),
+        build: ({ revisionId: id }) =>
+          Promise.resolve({ revisionId: id, buildKey: 'a'.repeat(64), directory: '/cache' }),
       },
       host,
       { now: () => 10 },
     )
-    const requirement = coordinator.getHostUiPermissionRequirement(extension.id, savedRevision.id)!
-    await expect(coordinator.install({ extensionId: extension.id, revisionId: savedRevision.id })).rejects.toThrow(
+    await expect(
+      missingClient.install({
+        extensionId: extension.id,
+        revisionId: first.id,
+        permissionApproval: { permissionDigest: firstRequirement.permissionDigest },
+      }),
+    ).rejects.toThrow('缺少 Client 构建产物')
+    await missingClient.dispose()
+    const hostWithoutUi: HostExtensionInstallationHost = {
+      assertAdapterKeyAvailable: (adapterKey) => host.assertAdapterKeyAvailable(adapterKey),
+      waitUntilSafe: (adapterKey) => host.waitUntilSafe(adapterKey),
+      mount: (savedRevision) => host.mount(savedRevision),
+    }
+    const unsupportedHost = new HostExtensionInstallationCoordinator(
+      repository,
+      { revisionSourceDirectory: () => '/source' },
+      { build: ({ revisionId: id }) => build(repository.getExtensionRevision(id)!) },
+      hostWithoutUi,
+      { now: () => 10 },
+    )
+    await expect(
+      unsupportedHost.install({
+        extensionId: extension.id,
+        revisionId: first.id,
+        permissionApproval: { permissionDigest: firstRequirement.permissionDigest },
+      }),
+    ).rejects.toThrow('未提供 Host UI Runtime')
+    await unsupportedHost.dispose()
+    await expect(coordinator.install({ extensionId: extension.id, revisionId: first.id })).rejects.toThrow(
       'permission-approval-required',
     )
     expect(host.mountedHostUi).toEqual([])
     await coordinator.install({
       extensionId: extension.id,
-      revisionId: savedRevision.id,
-      permissionApproval: { permissionDigest: requirement.permissionDigest },
+      revisionId: first.id,
+      permissionApproval: { permissionDigest: firstRequirement.permissionDigest },
     })
-    expect(host.mountedHostUi).toEqual([savedRevision.id])
-    expect(pages).toHaveLength(1)
-    await coordinator.uninstall(extension.id)
-    expect(host.disposedHostUi).toEqual([savedRevision.id])
-    expect(pages).toEqual([])
+    expect(await coordinator.callHostUi(extension.id, 'status', null)).toBeNull()
+    expect(repository.listHostUiPageEntries()).toHaveLength(1)
+
+    expect(coordinator.getHostUiPermissionRequirement(extension.id, second.id)?.approvalRequired).toBe(false)
+    await coordinator.install({ extensionId: extension.id, revisionId: second.id })
+    expect(host.disposedHostUi).toContain(first.id)
+    expect(repository.getHostInstallation(extension.id)?.extensionRevisionId).toBe(second.id)
+    await coordinator.install({ extensionId: extension.id, revisionId: second.id })
+    expect(host.mountedHostUi).toEqual([first.id, second.id])
+
+    expect(coordinator.getHostUiPermissionRequirement(extension.id, reduced.id)?.approvalRequired).toBe(false)
+    await coordinator.install({ extensionId: extension.id, revisionId: reduced.id })
+    expect(coordinator.getHostUiPermissionRequirement(extension.id, undeclared.id)).toMatchObject({
+      declaration: { permissions: [], networkOrigins: [] },
+      approvalRequired: false,
+    })
+
+    const expandedRequirement = coordinator.getHostUiPermissionRequirement(extension.id, expanded.id)!
+    expect(expandedRequirement.approvalRequired).toBe(true)
+    await expect(coordinator.install({ extensionId: extension.id, revisionId: expanded.id })).rejects.toThrow(
+      'permission-approval-required',
+    )
+    await coordinator.install({
+      extensionId: extension.id,
+      revisionId: expanded.id,
+      permissionApproval: { permissionDigest: expandedRequirement.permissionDigest },
+    })
+    expect(host.mountedHostUi).toEqual([first.id, second.id, reduced.id, expanded.id])
+
+    await coordinator.dispose()
+    const restoredHost = new FakeHostInstallationHost()
+    const restored = new HostExtensionInstallationCoordinator(
+      repository,
+      { revisionSourceDirectory: () => '/source' },
+      { build: ({ revisionId: id }) => build(repository.getExtensionRevision(id)!) },
+      restoredHost,
+      { now: () => 20 },
+    )
+    await expect(restored.restore()).resolves.toEqual({ restored: 1, failed: 0 })
+    expect(restored.getDiagnostic(extension.id)).toMatchObject({ status: 'active' })
+    expect(await restored.callHostUi(extension.id, 'status', null)).toBeNull()
+    await restored.uninstall(extension.id)
+    expect(restoredHost.disposedHostUi).toEqual([expanded.id])
+    expect(repository.listHostUiPageEntries()).toEqual([])
+    expect(repository.hostUiGrants.size).toBe(0)
+    await restored.dispose()
+    const defaultClockCoordinator = new HostExtensionInstallationCoordinator(
+      repository,
+      { revisionSourceDirectory: () => '/source' },
+      { build: ({ revisionId: id }) => build(repository.getExtensionRevision(id)!) },
+      new FakeHostInstallationHost(),
+    )
+    await defaultClockCoordinator.dispose()
   })
 
   it('installs, updates, rolls back, and restores the previous Revision after a failed update', async () => {

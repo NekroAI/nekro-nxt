@@ -203,12 +203,17 @@ export class HostExtensionInstallationCoordinator {
     )
     const permissionDigest = hostUiPermissionDigest(declaration)
     const current = this.#hostUiRepository.getHostUiPermissionGrant(extensionOwnerKey(extensionId))
+    const currentPermissions = new Set(current?.declaration.permissions ?? [])
+    const currentOrigins = new Set(current?.declaration.networkOrigins ?? [])
+    const expandsGrant =
+      declaration.permissions.some((permission) => !currentPermissions.has(permission)) ||
+      declaration.networkOrigins.some((origin) => !currentOrigins.has(origin))
     return {
       declaration,
       permissionDigest,
       approvalRequired:
         declaration.permissions.length > 0 || declaration.networkOrigins.length > 0
-          ? current?.permissionDigest !== permissionDigest || current.artifactDigest !== revision.payloadDigest
+          ? current === undefined || expandsGrant
           : false,
     }
   }
