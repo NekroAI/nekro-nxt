@@ -1044,6 +1044,62 @@ describe.sequential('NekroNxt browser projections', { timeout: 30_000 }, () => {
     )
   })
 
+  it('preserves intelligent-agent drafts and the persona cursor across an authoritative Host refresh', async () => {
+    let snapshotRequests = 0
+    await withProductPage(
+      `/work/agents/${browserAgentId}`,
+      async (page) => {
+        const name = page.getByLabel('名称')
+        const editor = page.getByRole('textbox', { name: '人设' })
+        await playwrightExpect(name).toHaveValue('资料员')
+        await playwrightExpect(editor).toHaveText('严谨、简洁')
+
+        await name.fill('资料员草稿')
+        await editor.fill('草稿内容保持在这里')
+        const selectionBefore = await editor.evaluate((element) => {
+          element.focus()
+          const walker = document.createTreeWalker(element, NodeFilter.SHOW_TEXT)
+          const text = walker.nextNode()
+          if (!(text instanceof Text)) throw new Error('人设草稿缺少文本节点。')
+          const offset = Math.max(1, text.data.length - 2)
+          const range = document.createRange()
+          range.setStart(text, offset)
+          range.collapse(true)
+          const selection = window.getSelection()
+          if (!selection) throw new Error('浏览器没有可用选区。')
+          selection.removeAllRanges()
+          selection.addRange(range)
+          return { text: text.data, offset }
+        })
+        const requestsBeforeRefresh = snapshotRequests
+
+        await page.evaluate(() => window.dispatchEvent(new Event('online')))
+        await playwrightExpect.poll(() => snapshotRequests).toBeGreaterThan(requestsBeforeRefresh)
+
+        await playwrightExpect(name).toHaveValue('资料员草稿')
+        await playwrightExpect(editor).toHaveText('草稿内容保持在这里')
+        await playwrightExpect(page.getByRole('button', { name: '保存新配置' })).toBeEnabled()
+        expect(
+          await editor.evaluate(() => {
+            const selection = window.getSelection()
+            return { text: selection?.anchorNode?.textContent ?? '', offset: selection?.anchorOffset ?? -1 }
+          }),
+        ).toEqual(selectionBefore)
+      },
+      browserSnapshot,
+      async (page) => {
+        await page.route('**/api/snapshot', async (request) => {
+          snapshotRequests += 1
+          await request.fulfill({
+            status: 200,
+            contentType: 'application/json',
+            body: JSON.stringify(browserSnapshot),
+          })
+        })
+      },
+    )
+  })
+
   it('renders authoritative intelligent-agent and extension data without technical identifiers', async () => {
     await withProductPage('/work', async (page) => {
       await playwrightExpect(page.getByRole('link', { name: /资料员/u }).first()).toBeVisible()

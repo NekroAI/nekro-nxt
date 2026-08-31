@@ -640,6 +640,38 @@ const dynamicRunLabel = (status: string): string => {
   return '状态待确认'
 }
 
+interface AgentProfileDraft {
+  readonly displayName: string
+  readonly persona: string
+  readonly personaDocument: PromptDocumentV1
+  readonly selectedModelKey: string
+  readonly imagePolicy: ImageUnderstandingPolicy
+  readonly dynamicClientApprovalPolicy: 'manual' | 'automatic'
+}
+
+interface AgentProfileBaseline {
+  readonly agentId: string
+  readonly revisionId: string | undefined
+  readonly profile: AgentProfileDraft
+}
+
+const agentProfileDraft = (agent: AgentSummary): AgentProfileDraft => ({
+  displayName: agent.name,
+  persona: agent.persona ?? '',
+  personaDocument: agent.personaDocument,
+  selectedModelKey: modelValueForAgent(agent),
+  imagePolicy: agent.imagePolicy,
+  dynamicClientApprovalPolicy: agent.dynamicClientApprovalPolicy,
+})
+
+const sameAgentProfile = (left: AgentProfileDraft, right: AgentProfileDraft): boolean =>
+  left.displayName === right.displayName &&
+  left.persona === right.persona &&
+  JSON.stringify(left.personaDocument) === JSON.stringify(right.personaDocument) &&
+  left.selectedModelKey === right.selectedModelKey &&
+  JSON.stringify(left.imagePolicy) === JSON.stringify(right.imagePolicy) &&
+  left.dynamicClientApprovalPolicy === right.dynamicClientApprovalPolicy
+
 export function AgentManagePage() {
   const { agentId = '' } = useParams()
   const [searchParams, setSearchParams] = useSearchParams()
@@ -678,16 +710,66 @@ export function AgentManagePage() {
   const inspectorCollapsed = useUiPreferences((state) => state.layout.inspectorCollapsed)
   const inspectorPaneRef = useRef<HTMLDivElement>(null)
   const [inspectorWidth, setInspectorWidth] = useState(savedInspectorWidth)
+  const currentDraft: AgentProfileDraft = {
+    displayName,
+    persona,
+    personaDocument,
+    selectedModelKey,
+    imagePolicy,
+    dynamicClientApprovalPolicy,
+  }
+  const currentDraftRef = useRef(currentDraft)
+  currentDraftRef.current = currentDraft
+  const profileBaselineRef = useRef<AgentProfileBaseline | null>(null)
+
+  const hydrateProfile = (profile: AgentProfileDraft): void => {
+    setDisplayName(profile.displayName)
+    setPersona(profile.persona)
+    setPersonaDocument(profile.personaDocument)
+    setSelectedModelKey(profile.selectedModelKey)
+    setImagePolicy(profile.imagePolicy)
+    setDynamicClientApprovalPolicy(profile.dynamicClientApprovalPolicy)
+  }
 
   useEffect(() => {
     if (!agent) return
-    setDisplayName(agent.name)
-    setPersona(agent.persona ?? '')
-    setPersonaDocument(agent.personaDocument)
-    setSelectedModelKey(modelValueForAgent(agent))
-    setImagePolicy(agent.imagePolicy)
-    setDynamicClientApprovalPolicy(agent.dynamicClientApprovalPolicy)
-  }, [agent])
+    const incomingProfile = agentProfileDraft(agent)
+    const baseline = profileBaselineRef.current
+    if (!baseline || baseline.agentId !== agent.id) {
+      profileBaselineRef.current = { agentId: agent.id, revisionId: agent.currentRevisionId, profile: incomingProfile }
+      hydrateProfile(incomingProfile)
+      return
+    }
+    if (baseline.revisionId === agent.currentRevisionId) return
+
+    const draft = currentDraftRef.current
+    if (sameAgentProfile(draft, incomingProfile)) {
+      profileBaselineRef.current = { agentId: agent.id, revisionId: agent.currentRevisionId, profile: incomingProfile }
+      return
+    }
+    if (sameAgentProfile({ ...draft, displayName: draft.displayName.trim() }, incomingProfile)) {
+      // Saving normalizes the display name. Accept the committed form and make
+      // the local draft match what the Host stored.
+      profileBaselineRef.current = { agentId: agent.id, revisionId: agent.currentRevisionId, profile: incomingProfile }
+      hydrateProfile(incomingProfile)
+      return
+    }
+    if (sameAgentProfile(incomingProfile, baseline.profile)) {
+      // A Revision that only changed immediately-applied settings such as
+      // capabilities advances the concurrency baseline without rewriting the
+      // editor DOM or its selection.
+      profileBaselineRef.current = { agentId: agent.id, revisionId: agent.currentRevisionId, profile: incomingProfile }
+      return
+    }
+    if (sameAgentProfile(draft, baseline.profile)) {
+      // No local edits: accept a genuinely newer profile Revision.
+      profileBaselineRef.current = { agentId: agent.id, revisionId: agent.currentRevisionId, profile: incomingProfile }
+      hydrateProfile(incomingProfile)
+    }
+    // Both sides changed: preserve the local draft and its original Revision.
+    // Saving with that Revision lets the Host report the existing conflict
+    // instead of silently overwriting either side.
+  }, [agent?.id, agent?.currentRevisionId])
   useEffect(() => setInspectorWidth(savedInspectorWidth), [savedInspectorWidth])
   useEffect(() => {
     const pane = inspectorPaneRef.current
@@ -716,14 +798,7 @@ export function AgentManagePage() {
     target?.scrollIntoView({ block: 'start' })
   }, [agentId, activeTab])
 
-  const isDirty =
-    agent !== undefined &&
-    (displayName !== agent.name ||
-      persona !== (agent.persona ?? '') ||
-      JSON.stringify(personaDocument) !== JSON.stringify(agent.personaDocument) ||
-      selectedModelKey !== modelValueForAgent(agent) ||
-      JSON.stringify(imagePolicy) !== JSON.stringify(agent.imagePolicy) ||
-      dynamicClientApprovalPolicy !== agent.dynamicClientApprovalPolicy)
+  const isDirty = agent !== undefined && !sameAgentProfile(currentDraft, agentProfileDraft(agent))
   useUnsavedDraft(`agent-settings:${agentId}`, isDirty)
 
   if (!agent) {
@@ -740,12 +815,9 @@ export function AgentManagePage() {
   }
 
   const reset = (): void => {
-    setDisplayName(agent.name)
-    setPersona(agent.persona ?? '')
-    setPersonaDocument(agent.personaDocument)
-    setSelectedModelKey(modelValueForAgent(agent))
-    setImagePolicy(agent.imagePolicy)
-    setDynamicClientApprovalPolicy(agent.dynamicClientApprovalPolicy)
+    const incomingProfile = agentProfileDraft(agent)
+    profileBaselineRef.current = { agentId: agent.id, revisionId: agent.currentRevisionId, profile: incomingProfile }
+    hydrateProfile(incomingProfile)
   }
   const save = async (): Promise<void> => {
     if (!displayName.trim() || !selectedModel || savePending) return
@@ -753,7 +825,11 @@ export function AgentManagePage() {
     try {
       await useProductStore.getState().reviseAgent({
         agentId: agent.id,
-        ...(agent.currentRevisionId ? { expectedCurrentRevisionId: agent.currentRevisionId } : {}),
+        ...(profileBaselineRef.current?.agentId === agent.id && profileBaselineRef.current.revisionId
+          ? { expectedCurrentRevisionId: profileBaselineRef.current.revisionId }
+          : agent.currentRevisionId
+            ? { expectedCurrentRevisionId: agent.currentRevisionId }
+            : {}),
         displayName: displayName.trim(),
         persona,
         personaDocument,
