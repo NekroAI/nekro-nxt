@@ -31,6 +31,16 @@ const inputSchema = z
           .max(1024 * 1024)
           .optional(),
         permissions: HostUiPermissionDeclarationSchema.optional(),
+        resources: z
+          .record(z.string().regex(/^assets\/[a-z0-9][a-z0-9/_.-]*$/u), z.string().max(256 * 1024))
+          .optional(),
+        clientCss: z
+          .object({
+            path: z.string().regex(/^assets\/[a-z0-9][a-z0-9/_-]*\.module\.css$/u),
+            sha256: z.string().regex(/^[a-f0-9]{64}$/u),
+          })
+          .strict()
+          .optional(),
         contributions: z
           .array(
             z.discriminatedUnion('kind', [
@@ -172,8 +182,9 @@ export default ${hostUi ? 'defineHostUiExtension' : 'defineHostExtension'}(async
 ${body}
 })`)
 
-const wrapClient = (body: string, hostUi: boolean): string =>
-  normalizeSource(`import { ${hostUi ? 'defineHostUiClientExtension' : 'defineClientExtension'} } from '@nekro-nxt/extension-sdk'
+const wrapClient = (body: string, hostUi: boolean, clientCssPath?: string): string =>
+  normalizeSource(`${clientCssPath === undefined ? '' : `import '../${clientCssPath}?nxt-dynamic-css'\n`}
+import { ${hostUi ? 'defineHostUiClientExtension' : 'defineClientExtension'} } from '@nekro-nxt/extension-sdk'
 
 export default ${hostUi ? 'defineHostUiClientExtension' : 'defineClientExtension'}(async ({ React, host, ${hostUi ? 'ui' : 'styles'} }) => {
 ${body}
@@ -201,15 +212,17 @@ export function materializeDynamicPackage(input: {
     throw new Error('适配器 Revision 必须包含一个 Host Adapter，且不能混装智能体工具、RPC 或 Slot。')
   }
   if (isHostAdapter && hostPages.length > 8) throw new Error('一个适配器 Revision 最多贡献 8 个顶级页面。')
-  if (hostPages.some(({ icon }) => icon.kind === 'svg')) {
-    throw new Error('动态页面当前只能使用 Host 图标；SVG 文件请通过扩展导入包提供。')
-  }
   if (isHostUi && (agentContributions.length > 0 || !parsed.snapshot.clientCode)) {
     throw new Error('Host UI Revision 必须包含 Client，且不能混装智能体工具、RPC 或 Slot。')
   }
+  if (parsed.snapshot.clientCss !== undefined && hostPages.length === 0) {
+    throw new Error('Client CSS 只用于包含顶级页面的 Revision。')
+  }
   const sources = sourcesSchema.parse({
     ...(parsed.snapshot.hostCode === undefined ? {} : { host: wrapHost(parsed.snapshot.hostCode, isHostUi) }),
-    ...(parsed.snapshot.clientCode === undefined ? {} : { client: wrapClient(parsed.snapshot.clientCode, isHostUi) }),
+    ...(parsed.snapshot.clientCode === undefined
+      ? {}
+      : { client: wrapClient(parsed.snapshot.clientCode, isHostUi, parsed.snapshot.clientCss?.path) }),
   })
   const manifest = isHostAdapter
     ? hostAdapterManifestSchema.parse({
@@ -221,6 +234,7 @@ export function materializeDynamicPackage(input: {
           host: 'source/host.ts',
           ...('client' in sources ? { client: 'source/client.ts' } : {}),
         },
+        ...(parsed.snapshot.clientCss === undefined ? {} : { clientCss: parsed.snapshot.clientCss }),
         contributions: parsed.snapshot.contributions,
       })
     : isHostUi
@@ -233,6 +247,7 @@ export function materializeDynamicPackage(input: {
             ...('host' in sources ? { host: 'source/host.ts' } : {}),
             client: 'source/client.ts',
           },
+          ...(parsed.snapshot.clientCss === undefined ? {} : { clientCss: parsed.snapshot.clientCss }),
           permissions: parsed.snapshot.permissions ?? { permissions: [], networkOrigins: [] },
           contributions: hostPages,
         })
@@ -246,7 +261,28 @@ export function materializeDynamicPackage(input: {
           },
           contributions: parsed.snapshot.contributions,
         })
-  const resources = resourcesSchema.parse({})
+  const resources = resourcesSchema.parse(parsed.snapshot.resources ?? {})
+  const expectedResources = new Map<string, { readonly digest: string; readonly kind: 'css' | 'svg' }>()
+  if (parsed.snapshot.clientCss) {
+    expectedResources.set(parsed.snapshot.clientCss.path, { digest: parsed.snapshot.clientCss.sha256, kind: 'css' })
+  }
+  for (const contribution of parsed.snapshot.contributions) {
+    if (contribution.kind === 'host-page' && contribution.icon.kind === 'svg') {
+      expectedResources.set(contribution.icon.path, { digest: contribution.icon.sha256, kind: 'svg' })
+    }
+  }
+  if (expectedResources.size !== Object.keys(resources).length) {
+    throw new Error('动态扩展资源文件与 Manifest 声明不一致。')
+  }
+  for (const [resourcePath, expected] of expectedResources) {
+    const source = resources[resourcePath]
+    if (source === undefined) throw new Error(`动态扩展缺少资源：${resourcePath}`)
+    if (createHash('sha256').update(source).digest('hex') !== expected.digest) {
+      throw new Error(`动态扩展资源摘要不一致：${resourcePath}`)
+    }
+    if (expected.kind === 'css') validateHostUiCss(source)
+    else validateHostUiSvg(source)
+  }
   const digestInput = canonicalJson(JsonValueSchema.parse(digestInputSchema.parse({ manifest, sources, resources })))
   const payloadManifest = {
     schemaVersion: manifest.schemaVersion,

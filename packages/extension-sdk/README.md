@@ -10,6 +10,8 @@ Adapter Client 的 `conversation.message.rich` id 使用 `<adapterKey>:<kind>`�
 
 Host UI 页面使用 `ctx.pages.register({ page, navigation? }, component)` 注册 Manifest 已声明的入口。`navigation` 返回版本化声明对象，路径限制在 Host 分配的 `routeBase` 内；主画布接收 `relativePath`、只读查询参数和受控 `navigate()`。`host.call()` 提供权限绑定的产品服务、扩展命名空间状态、事件订阅和受控网络请求。权限批准绑定精确 Artifact；凭据通过短期写入 token 交给 Connection 创建，不提供明文读取。Client CSS 和 SVG 必须通过 Manifest 资源清单、摘要与 Runtime 安全校验。
 
+页面 Client 声明 `inject: ['pages', 'ui']`，并从 `ctx.ui` 使用 NXT UI Kit。`supportedContributions.hostPages.designContract` 使用 `nxt-host-ui-design-v1` 明确 Host 提供页面背景、安全边距、根滚动、对象列和 Portal，Extension 只提供当前视图内容与局部样式；普通用户不需要在需求中给出组件名或 CSS 数值。概览数字使用 `MetricStrip + Metric` 形成紧凑数字带，不用 `Grid + Section` 生成卡片墙。原生元素只用于无交互语义容器和 `DataTable` 内部表格结构；按钮、输入框、选择器、文本域、表格外壳、页头、状态和反馈不得退回浏览器默认样式。动态预览会读取真实 DOM 的 UI Kit 标记和页面几何，把组件清单、Insets、内容轴、标题区分和横向溢出写入验证证据；裸控件、缺少标准页面框、标题重复、边距/内容轴错误或没有 UI Kit 使用证据都会拒绝候选。
+
 ## Host 工具注册与 `ctx.effect`
 
 `ctx.effect` 的回调会立即执行；回调返回值才是 Fiber 销毁时调用的 disposer。需要自行管理的资源应在回调中创建，并返回清理函数：

@@ -60,6 +60,9 @@ export class HttpDynamicClientHost implements DynamicClientHostPort {
               ...(row.latestRun.requiresApproval === undefined
                 ? {}
                 : { requiresApproval: row.latestRun.requiresApproval }),
+              host: { ...row.latestRun.host, waitingFor: [...row.latestRun.host.waitingFor] },
+              client: { ...row.latestRun.client, waitingFor: [...row.latestRun.client.waitingFor] },
+              ...(row.latestRun.error === undefined ? {} : { error: { ...row.latestRun.error } }),
             },
           }),
     }))
@@ -213,10 +216,13 @@ export class HttpDynamicClientHost implements DynamicClientHostPort {
     renderedSlots: Parameters<DynamicClientHostPort['reportClientVerification']>[4],
     renderedHostSlots: Parameters<DynamicClientHostPort['reportClientVerification']>[5],
     renderedPages: Parameters<DynamicClientHostPort['reportClientVerification']>[6] = [],
-    permissions: Parameters<DynamicClientHostPort['reportClientVerification']>[7] = {
+    usedUiComponents: Parameters<DynamicClientHostPort['reportClientVerification']>[7] = [],
+    pageGeometry: Parameters<DynamicClientHostPort['reportClientVerification']>[8] = [],
+    permissions: Parameters<DynamicClientHostPort['reportClientVerification']>[9] = {
       permissions: [],
       networkOrigins: [],
     },
+    navigationEntries: Parameters<DynamicClientHostPort['reportClientVerification']>[10] = [],
   ): Promise<void> {
     void agentId
     await this.#post(
@@ -230,7 +236,10 @@ export class HttpDynamicClientHost implements DynamicClientHostPort {
         renderedSlots: [...renderedSlots],
         renderedHostSlots: [...renderedHostSlots],
         renderedPages: [...renderedPages],
+        usedUiComponents: [...usedUiComponents],
+        pageGeometry: [...pageGeometry],
         permissions,
+        navigationEntries: [...navigationEntries],
       },
     )
   }

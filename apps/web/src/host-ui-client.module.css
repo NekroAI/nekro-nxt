@@ -1,9 +1,44 @@
 .pageRoot {
+  --nxt-page-inset-block-start: 24px;
+  --nxt-page-inset-block-end: 40px;
+  --nxt-page-inset-inline: 24px;
+  box-sizing: border-box;
+  width: 100%;
   min-width: 0;
-  min-height: 100%;
+  min-height: 0;
+  flex: 1 1 auto;
+  overflow: auto;
   color: var(--nxt-text-primary);
   background: var(--nxt-bg-canvas);
   container-type: inline-size;
+  scrollbar-gutter: stable;
+}
+
+.pageFrame {
+  box-sizing: border-box;
+  width: 100%;
+  min-height: 100%;
+  padding: var(--nxt-page-inset-block-start) var(--nxt-page-inset-inline) var(--nxt-page-inset-block-end);
+}
+
+.pageContent {
+  min-width: 0;
+}
+
+.pageContent :global([data-page-header]) {
+  margin-bottom: 0;
+}
+
+@container (width > 960px) {
+  .pageFrame {
+    --nxt-page-inset-inline: 32px;
+  }
+}
+
+@container (width > 1440px) {
+  .pageFrame {
+    --nxt-page-inset-inline: 40px;
+  }
 }
 
 .loading,
@@ -22,6 +57,51 @@
   gap: var(--nxt-space-4);
 }
 
+.uiComponentMarker {
+  display: contents;
+}
+
+.section {
+  min-width: 0;
+  display: grid;
+  gap: var(--nxt-space-3);
+}
+
+.section > :where(h1, h2, h3, p) {
+  margin: 0;
+}
+
+.metricStrip {
+  min-width: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--nxt-space-6);
+  padding: var(--nxt-space-3) 0;
+  border-top: 1px solid var(--nxt-border-subtle);
+  border-bottom: 1px solid var(--nxt-border-subtle);
+}
+
+.metric {
+  min-width: 120px;
+  display: grid;
+  gap: 2px;
+}
+
+.metric > span,
+.metric > small {
+  color: var(--nxt-text-muted);
+  font-size: 12px;
+  line-height: 18px;
+}
+
+.metric > strong {
+  color: var(--nxt-text-primary);
+  font-size: 22px;
+  font-variant-numeric: tabular-nums;
+  font-weight: 720;
+  line-height: 28px;
+}
+
 .grid {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
@@ -36,6 +116,31 @@
 .tableScroll table {
   width: 100%;
   border-collapse: collapse;
+}
+
+.tableScroll :where(th, td) {
+  padding: var(--nxt-space-3);
+  border-bottom: 1px solid var(--nxt-border-subtle);
+  color: var(--nxt-text-secondary);
+  font-size: 13px;
+  line-height: 1.45;
+  text-align: left;
+  vertical-align: middle;
+}
+
+.tableScroll th {
+  color: var(--nxt-text-muted);
+  background: var(--nxt-bg-subtle);
+  font-size: 12px;
+  font-weight: 650;
+}
+
+.tableScroll tbody tr:last-child td {
+  border-bottom: 0;
+}
+
+.tableScroll tbody tr:hover td {
+  background: var(--nxt-bg-hover);
 }
 
 .navigation {
@@ -58,6 +163,7 @@
 }
 
 .navigationGroup button {
+  position: relative;
   width: 100%;
   min-height: 40px;
   display: flex;
@@ -70,6 +176,22 @@
   color: var(--nxt-text-primary);
   background: transparent;
   text-align: left;
+}
+
+.navigationGroup button[aria-current='page'] {
+  color: var(--nxt-text-primary);
+  background: var(--nxt-bg-selected);
+}
+
+.navigationGroup button[aria-current='page']::before {
+  position: absolute;
+  top: var(--nxt-space-2);
+  bottom: var(--nxt-space-2);
+  left: 0;
+  width: 2px;
+  border-radius: var(--nxt-radius-round);
+  background: var(--nxt-accent);
+  content: '';
 }
 
 .navigationGroup button:not(:disabled):hover {

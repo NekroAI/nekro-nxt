@@ -22,6 +22,8 @@ import {
   buildHostApiContractPath,
   parseJsonValue,
   type HostPageContribution,
+  type HostUiKitComponentName,
+  type HostUiPageGeometryEvidence,
   type HostUiPermissionDeclaration,
   type HostApiContract,
   type HostApiResponse,
@@ -55,6 +57,10 @@ export interface DynamicHostPageEntry {
   readonly page: HostPageContribution
   readonly component: (props: HostUiPageProps) => ReactNode
   readonly navigation?: HostUiNavigationProvider
+  readonly usedUiComponents: () => readonly HostUiKitComponentName[]
+  readonly recordUiComponents: (components: readonly HostUiKitComponentName[]) => void
+  readonly pageGeometry: () => HostUiPageGeometryEvidence | undefined
+  readonly recordPageGeometry: (geometry: HostUiPageGeometryEvidence) => void
 }
 
 class DynamicHostPagesRegistry extends Service {
@@ -120,10 +126,21 @@ class DynamicHostPagesRegistry extends Service {
       }
       navigation = parsedNavigation
     }
+    const usedUiComponents = new Set<HostUiKitComponentName>()
+    let pageGeometry: HostUiPageGeometryEvidence | undefined
     const entry: DynamicHostPageEntry = {
       page,
       component: pageComponent,
       ...(navigation === undefined ? {} : { navigation }),
+      usedUiComponents: () => [...usedUiComponents],
+      recordUiComponents: (components) => {
+        usedUiComponents.clear()
+        for (const component of components) usedUiComponents.add(component)
+      },
+      pageGeometry: () => pageGeometry,
+      recordPageGeometry: (geometry) => {
+        pageGeometry = geometry
+      },
     }
     this.pageEntries.set(page.entryId, entry)
     this.publishPages()
@@ -256,6 +273,13 @@ interface DynamicPackageRunnerConstructor {
 }
 
 interface RunOrchestratorFace {
+  readonly lastRunError: {
+    getSnapshot(): ReadonlyMap<
+      string,
+      { readonly reason: string; readonly message?: string; readonly stack?: string; readonly packageId: string }
+    >
+    subscribe(listener: () => void): () => void
+  }
   reconcileApprovals(rows: readonly DynamicInventoryRow[]): void
   approve(requestId: ApprovalRequestId, approveFutureVersions: boolean): Promise<void>
   decline(requestId: ApprovalRequestId): Promise<void>
@@ -493,10 +517,12 @@ export type DynamicInventoryRow = Pick<
   readonly latestRun?: Pick<
     DynamicInventoryLatestRun,
     'pluginRunId' | 'packageId' | 'mode' | 'status' | 'approvalRequestId' | 'requiresApproval'
-  >
+  > &
+    Partial<Pick<DynamicInventoryLatestRun, 'host' | 'client' | 'error'>>
 }
 
 export interface DynamicClientHostPort extends CordisRunHostSeam {
+  getClientCode(agentId: string, pluginId: string, pluginRunId: string): ReturnType<CordisRunHostSeam['getClientCode']>
   invoke(pluginId: string, pluginRunId: string, method: string, args: unknown): Promise<unknown>
   reportRenderFailure(agentId: string, pluginId: string, pluginRunId: string, failure: unknown): Promise<void>
   reportGuardFailure(agentId: string, pluginId: string, pluginRunId: string, failure: unknown): Promise<void>
@@ -508,7 +534,10 @@ export interface DynamicClientHostPort extends CordisRunHostSeam {
     renderedSlots: readonly AgentClientSlotName[],
     renderedHostSlots: readonly { readonly name: AdapterClientSlotName; readonly key: string }[],
     renderedPages: readonly HostPageContribution[],
+    usedUiComponents: readonly HostUiKitComponentName[],
+    pageGeometry: readonly HostUiPageGeometryEvidence[],
     permissions: HostUiPermissionDeclaration,
+    navigationEntries: readonly string[],
   ): Promise<void>
 }
 
@@ -637,6 +666,7 @@ export class DshClientRuntime {
   readonly #host: DynamicClientHostPort
   readonly #moduleLoader: ClientModuleRegistrationTarget
   readonly #agentByPlugin = new Map<string, string>()
+  readonly #pluginByApprovalRequest = new Map<string, string>()
   #disposed = false
 
   private constructor(
@@ -750,7 +780,13 @@ export class DshClientRuntime {
   async reconcile(rows: readonly DynamicInventoryRow[]): Promise<void> {
     this.#assertActive()
     this.#agentByPlugin.clear()
-    for (const row of rows) this.#agentByPlugin.set(row.pluginId, row.agentId)
+    this.#pluginByApprovalRequest.clear()
+    for (const row of rows) {
+      this.#agentByPlugin.set(row.pluginId, row.agentId)
+      if (row.latestRun?.approvalRequestId) {
+        this.#pluginByApprovalRequest.set(row.latestRun.approvalRequestId, row.pluginId)
+      }
+    }
     this.#orchestrator.reconcileApprovals(rows)
     const activeRuns = new Map(
       rows.flatMap((row) => (row.activeRun ? [[row.pluginId, row.activeRun.pluginRunId]] : [])),
@@ -771,13 +807,48 @@ export class DshClientRuntime {
       }
     }
     await Promise.all(retractions)
+    for (const row of rows) {
+      const activeRun = row.activeRun
+      if (activeRun === undefined || this.#runner.isLoaded(row.pluginId)) continue
+      const activePackage = row.packages.find((candidate) => candidate.packageId === activeRun.packageId)
+      if (activePackage === undefined) {
+        throw new Error(`动态 Client 恢复失败：运行中的 Package ${activeRun.packageId} 不在 Host 清单中。`)
+      }
+      if (!activePackage.hasClientHalf) continue
+      const source = await this.#host.getClientCode(row.agentId, row.pluginId, activeRun.pluginRunId)
+      if (
+        source.pluginId !== row.pluginId ||
+        source.packageId !== activeRun.packageId ||
+        source.pluginRunId !== activeRun.pluginRunId
+      ) {
+        throw new Error(`动态 Client 恢复失败：Host 返回的 Client 源码与当前运行版本不一致。`)
+      }
+      const loaded = await this.#runner.load({
+        pluginId: source.pluginId,
+        packageId: source.packageId,
+        pluginRunId: source.pluginRunId,
+        agentId: row.agentId,
+        name: source.name,
+        code: source.code,
+      })
+      if (!loaded || typeof loaded !== 'object' || !('ok' in loaded) || loaded.ok !== true) {
+        const message =
+          loaded && typeof loaded === 'object' && 'message' in loaded && typeof loaded.message === 'string'
+            ? loaded.message
+            : '浏览器未能重新加载界面代码。'
+        throw new Error(`动态 Client 恢复失败：${message}`)
+      }
+    }
     await this.#rejectUnsupportedSlots()
   }
 
   async approve(requestId: string, approveFutureVersions = false): Promise<void> {
     this.#assertActive()
+    const pluginId = this.#pluginByApprovalRequest.get(requestId)
     await this.#orchestrator.approve(requireApprovalRequestId(requestId), approveFutureVersions)
     await this.#rejectUnsupportedSlots()
+    const failure = pluginId === undefined ? undefined : this.#orchestrator.lastRunError.getSnapshot().get(pluginId)
+    if (failure) throw new Error(failure.message ?? `动态 Client ${failure.reason}。`)
   }
 
   decline(requestId: string): Promise<void> {

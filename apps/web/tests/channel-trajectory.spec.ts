@@ -9,6 +9,7 @@ import {
   plotTurnStarts,
   projectContextUsage,
   recordLane,
+  responseStateNotice,
   sampleTokenRate,
   weightedCacheReadShare,
 } from '../src/pages/channel-trajectory.js'
@@ -26,6 +27,7 @@ describe('flattenRuntimeRecords', () => {
           turn: 2,
           state: 'completed',
           producedReply: true,
+          responseState: 'sent',
           steps: [
             {
               step: 1,
@@ -45,6 +47,7 @@ describe('flattenRuntimeRecords', () => {
                   displayName: '发送频道消息',
                   state: 'succeeded',
                   wroteToChannel: true,
+                  deliveryState: 'sent',
                   resultPreview: 'sent',
                 },
               ],
@@ -59,11 +62,26 @@ describe('flattenRuntimeRecords', () => {
     expect(rows[0]?.turnStart).toBe(true)
     expect(rows[1]?.turnStart).toBe(false)
     expect(rows[2]?.wroteToChannel).toBe(true)
+    expect(rows[2]?.deliveryState).toBe('sent')
   })
 
   it('marks plot turn boundaries on visible turn changes, skipping the first row', () => {
     expect(plotTurnStarts([{ turn: 1 }, { turn: 1 }, { turn: 2 }, { turn: 2 }, { turn: 4 }])).toEqual([2, 4])
     expect(plotTurnStarts([{ turn: 3 }])).toEqual([])
+  })
+
+  it('describes pending, explicit finish and protocol failure without claiming a message was sent', () => {
+    const turn = (responseState: ChannelRuntimeView['turns'][number]['responseState']) => ({
+      turn: 1,
+      state: 'completed' as const,
+      producedReply: false,
+      responseState,
+      steps: [],
+    })
+    expect(responseStateNotice(turn('pending'))).toBe('智能体需要发送频道消息或明确结束本轮。')
+    expect(responseStateNotice(turn('finished'))).toBe('智能体已明确结束本轮，未必发送频道消息。')
+    expect(responseStateNotice(turn('protocol-failed'))).toBe('智能体未按频道回应协议完成本轮。')
+    expect(responseStateNotice(turn('sent'))).toBeUndefined()
   })
 
   it('formats occupancy and duration for the inspector', () => {

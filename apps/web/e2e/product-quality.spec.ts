@@ -4,6 +4,8 @@ import {
   AgentIdSchema,
   AgentRevisionIdSchema,
   AssetIdSchema,
+  AuthoringAttemptIdSchema,
+  AuthoringTaskIdSchema,
   ChannelEventIdSchema,
   ChannelIdSchema,
   ChannelMemberIdSchema,
@@ -32,6 +34,10 @@ const dashboardRevisionId = ExtensionRevisionIdSchema.parse('xrv_dashboard')
 const overviewPageId = HostUiPageInstanceIdSchema.parse('hup_DASHBOARD')
 const reportsPageId = HostUiPageInstanceIdSchema.parse('hup_REPORTS')
 const targetEpisodeId = EpisodeIdSchema.parse('eps_target')
+const previewAuthoringTaskId = AuthoringTaskIdSchema.parse('aut_PREVIEWPROBE')
+const previewAuthoringAttemptId = AuthoringAttemptIdSchema.parse('aua_PREVIEWPROBE')
+const saveAuthoringTaskId = AuthoringTaskIdSchema.parse('aut_SAVEPROBE')
+const saveAuthoringAttemptId = AuthoringAttemptIdSchema.parse('aua_SAVEPROBE')
 const visibleEventId = ChannelEventIdSchema.parse('evt_visible')
 const qqEventId = ChannelEventIdSchema.parse('evt_qqvisible')
 const qqSystemEventId = ChannelEventIdSchema.parse('evt_qqsystem')
@@ -1276,6 +1282,7 @@ test('channel tabs, running tools, and trajectory rows remain keyboard operable'
             turn: 1,
             state: 'in-progress',
             producedReply: false,
+            responseState: 'pending',
             steps: [
               {
                 step: 1,
@@ -1649,6 +1656,9 @@ test('redesigned relationship and lifecycle pages stay legible across representa
     await page.setViewportSize({ width: scene.width, height: scene.height })
     await page.emulateMedia({ colorScheme: scene.colorScheme, reducedMotion: 'reduce' })
     await page.goto(scene.route)
+    await page.evaluate((theme) => window.localStorage.setItem('nekro-nxt.theme', theme), scene.colorScheme)
+    await page.reload()
+    await expect(page.locator('html')).toHaveAttribute('data-theme', scene.colorScheme)
     await expect(page.getByText(scene.text).first()).toBeVisible()
     if (scene.route === '/connections' || scene.route === '/extensions' || scene.route === '/settings?tab=models') {
       await expect(page.locator('[data-stage-layer="in"]').last()).toHaveCSS('background-color', 'rgba(0, 0, 0, 0)')
@@ -1817,7 +1827,7 @@ test('redesigned relationship and lifecycle pages stay legible across representa
   expect(failures, failures.join('\n')).toEqual([])
 })
 
-test('the product Client runtime approves, renders, and retracts a live DSH interface without reloading', async ({
+test('the product Client runtime approves, restores after reload, and retracts a live DSH interface', async ({
   page,
 }, testInfo) => {
   const failures = installRuntimeFailureGate(page)
@@ -1882,7 +1892,36 @@ test('the product Client runtime approves, renders, and retracts a live DSH inte
     route.fulfill({
       status: 200,
       contentType: 'application/json',
-      body: JSON.stringify({ ...productSnapshot, dynamic: dynamicSummary() }),
+      body: JSON.stringify({
+        ...productSnapshot,
+        dynamic: dynamicSummary(),
+        authoringTasks: [
+          {
+            id: previewAuthoringTaskId,
+            agentId: targetAgentId,
+            channelId: targetChannelId,
+            episodeId: targetEpisodeId,
+            title: '即时界面探针',
+            requirementSummary: '验证产品中的动态界面装卸链路。',
+            status: 'awaiting-approval',
+            approvalPolicy: 'risk-stable',
+            revision: 2,
+            candidateAttempt: {
+              id: previewAuthoringAttemptId,
+              ordinal: 1,
+              name: '即时界面探针',
+              purpose: '验证产品中的动态界面装卸链路。',
+              state: 'awaiting-approval',
+              riskDigest: 'd'.repeat(64),
+              host: { status: 'absent', waitingFor: [] },
+              client: { status: 'pending', waitingFor: [] },
+              createdAt: 1_725_000_000_000,
+            },
+            createdAt: 1_725_000_000_000,
+            updatedAt: 1_725_000_000_100,
+          },
+        ],
+      }),
     }),
   )
   await page.route('**/api/events', async (route) => {
@@ -1936,7 +1975,7 @@ test('the product Client runtime approves, renders, and retracts a live DSH inte
         pluginRunId: 'run-1',
         name: '即时界面探针',
         code: `return {
-          inject: ['slots', 'pages'],
+          inject: ['slots', 'pages', 'ui'],
           apply(ctx) {
             const navigationSnapshot = {
               revision: 1,
@@ -1949,7 +1988,7 @@ test('the product Client runtime approves, renders, and retracts a live DSH inte
             ctx.pages.declarePermissions({ permissions: ['agents.read'], networkOrigins: [] })
             ctx.pages.register({
               page: {
-                kind: 'host-page', entryId: 'overview', title: '项目概览',
+                kind: 'host-page', entryId: 'overview', title: '项目工作台',
                 description: '在创造工作台内验证页面结构。',
                 icon: { kind: 'host-icon', name: 'layout-dashboard' },
                 objectPane: 'navigation', startPath: 'overview'
@@ -1959,13 +1998,35 @@ test('the product Client runtime approves, renders, and retracts a live DSH inte
                 subscribe: () => () => undefined
               }
             }, ({ relativePath }) => React.createElement(
-              'section',
+              ctx.ui.Stack,
               { 'data-live-page': 'probe' },
-              '动态页面：' + relativePath
+              React.createElement(ctx.ui.PageHeader, {
+                title: '项目概览',
+                meta: '动态页面：' + relativePath
+              }),
+              React.createElement(
+                ctx.ui.Section,
+                null,
+                React.createElement('h2', null, '即时页面内容'),
+                React.createElement(
+                  ctx.ui.MetricStrip,
+                  null,
+                  React.createElement(ctx.ui.Metric, { label: '检查项', value: '2' }),
+                  React.createElement(ctx.ui.Metric, { label: '已通过', value: '1' })
+                )
+              )
             ))
           }
         }`,
       }),
+    })
+  })
+  await page.route('**/api/authoring/tasks/*/attempts/*/decision', (route) => {
+    calls.push('authoring-decision')
+    return route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({ accepted: true, taskRevision: 3, executionRequired: true }),
     })
   })
   await page.route('**/api/dynamic/*/approve', (route) => {
@@ -1975,23 +2036,45 @@ test('the product Client runtime approves, renders, and retracts a live DSH inte
   })
   await page.route('**/api/dynamic/*/report-client-verification', (route) => {
     calls.push('report-client-verification')
+    expect(
+      HostApiContracts.dynamicReportClientVerification.request.parse(route.request().postDataJSON()),
+    ).toMatchObject({
+      usedUiComponents: expect.arrayContaining(['PageHeader', 'Section', 'Stack', 'MetricStrip', 'Metric']),
+    })
     return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ ok: true }) })
   })
 
   await page.setViewportSize({ width: 1440, height: 900 })
   await page.emulateMedia({ colorScheme: 'light', reducedMotion: 'reduce' })
-  await page.goto('/work/creator')
-  await page.getByRole('button', { name: '审查界面预览' }).click()
-  await page.getByRole('dialog').getByRole('button', { name: '允许本次预览' }).click()
+  await page.goto(`/work/creator/${previewAuthoringTaskId}`)
+  await expect(page.getByText('候选已通过静态检查，等待运行确认', { exact: true })).toBeVisible()
+  await expect(page.getByRole('heading', { name: '即时界面探针' })).toBeVisible()
+  await capture(page, testInfo, 'authoring-task-approval-light-1440')
+  await page.getByRole('button', { name: '允许并运行' }).click()
   await expect(page.getByText('即时界面已真实加载')).toBeVisible()
-  await expect(page.getByText('项目概览', { exact: true })).toBeVisible()
-  await expect(page.getByRole('navigation', { name: '项目概览 预览导航' })).toBeVisible()
+  await expect(page.getByRole('heading', { name: '项目概览', exact: true })).toBeVisible()
+  await expect(page.getByRole('navigation', { name: '项目工作台 预览导航' })).toBeVisible()
   await expect(page.getByRole('button', { name: /概览/u })).toBeVisible()
   await expect(page.getByText('动态页面：overview', { exact: true })).toBeVisible()
+  await expect(page.locator('[data-dynamic-host-page="overview"] [data-nxt-ui-component]')).not.toHaveCount(0)
   await expect.poll(() => calls).toContain('report-client-verification')
-  expect(calls).toEqual(['run-host-half', 'get-client-code', 'approve', 'report-client-verification'])
+  expect(calls).toEqual([
+    'authoring-decision',
+    'run-host-half',
+    'get-client-code',
+    'approve',
+    'report-client-verification',
+  ])
   await assertViewportIntegrity(page)
   await capture(page, testInfo, 'dynamic-host-page-preview-light-1440')
+
+  await page.reload()
+  await expect(page.getByText('即时界面已真实加载')).toBeVisible()
+  await expect(page.getByText('动态页面：overview', { exact: true })).toBeVisible()
+  await expect.poll(() => calls.filter((call) => call === 'get-client-code').length).toBe(2)
+  expect(calls.filter((call) => call === 'run-host-half')).toHaveLength(1)
+  expect(calls.filter((call) => call === 'approve')).toHaveLength(1)
+  await assertViewportIntegrity(page)
 
   phase = 'stopped'
   releaseStatus()
@@ -2001,7 +2084,7 @@ test('the product Client runtime approves, renders, and retracts a live DSH inte
   expect(failures, failures.join('\n')).toEqual([])
 })
 
-test('the creator saves the exact running Package and selects the resulting extension', async ({ page }) => {
+test('the creator saves the exact running Package and selects the resulting extension', async ({ page }, testInfo) => {
   const failures = installRuntimeFailureGate(page)
   const savedExtensionId = ExtensionIdSchema.parse('ext_savedprobe')
   const savedRevisionId = ExtensionRevisionIdSchema.parse('xrv_savedprobe')
@@ -2019,6 +2102,14 @@ test('the creator saves the exact running Package and selects the resulting exte
       packageId: 'package-save-probe',
       currentPackageId: 'package-save-probe',
       status: 'running',
+      latestRun: {
+        pluginRunId: 'run-save-probe',
+        packageId: 'package-save-probe',
+        mode: 'run',
+        status: 'running',
+        host: { status: 'running', waitingFor: [] },
+        client: { status: 'absent', waitingFor: [] },
+      },
       packages: [
         {
           packageId: 'package-save-probe',
@@ -2034,7 +2125,38 @@ test('the creator saves the exact running Package and selects the resulting exte
   const snapshot = () =>
     HostApiContracts.snapshot.response.parse({
       ...productSnapshot,
+      agents: productSnapshot.agents.map((agent) =>
+        agent.id === targetAgentId ? { ...agent, runtimeStatus: 'idle', runtimePhase: 'idle' } : agent,
+      ),
       dynamic,
+      authoringTasks: [
+        {
+          id: saveAuthoringTaskId,
+          agentId: targetAgentId,
+          channelId: targetChannelId,
+          episodeId: targetEpisodeId,
+          title: '待保存摘要工具',
+          requirementSummary: '验证创造工作台的精确保存。',
+          status: 'ready',
+          approvalPolicy: 'risk-stable',
+          approvedRiskDigest: 'a'.repeat(64),
+          revision: 4,
+          candidateAttempt: {
+            id: saveAuthoringAttemptId,
+            ordinal: 1,
+            name: '待保存摘要工具',
+            purpose: '验证创造工作台的精确保存。',
+            state: 'active',
+            riskDigest: 'a'.repeat(64),
+            host: { status: 'running', waitingFor: [] },
+            client: { status: 'absent', waitingFor: [] },
+            createdAt: 1_725_000_000_000,
+            settledAt: 1_725_000_000_100,
+          },
+          createdAt: 1_725_000_000_000,
+          updatedAt: 1_725_000_000_100,
+        },
+      ],
       extensions: saved
         ? [
             ...productSnapshot.extensions,
@@ -2109,22 +2231,45 @@ test('the creator saves the exact running Package and selects the resulting exte
     })
   })
 
-  await page.goto('/work/creator')
+  await page.goto(`/work/creator/${saveAuthoringTaskId}`)
+  for (const viewport of [
+    { width: 1100, height: 720 },
+    { width: 1440, height: 900 },
+    { width: 1920, height: 1080 },
+  ]) {
+    for (const theme of ['light', 'dark'] as const) {
+      await page.setViewportSize(viewport)
+      await page.emulateMedia({ colorScheme: theme, reducedMotion: 'reduce' })
+      await page.evaluate((nextTheme) => window.localStorage.setItem('nekro-nxt.theme', nextTheme), theme)
+      await page.goto(`/work/creator/${saveAuthoringTaskId}`)
+      await expect(page.locator('html')).toHaveAttribute('data-theme', theme)
+      await expect(page.getByRole('heading', { name: '待保存摘要工具' })).toBeVisible()
+      await expect(page.getByText('开发任务', { exact: true })).toBeVisible()
+      await expect(page.getByText('结果验证', { exact: true })).toBeVisible()
+      await assertViewportIntegrity(page)
+      await capture(page, testInfo, `authoring-task-ready-${viewport.width}x${viewport.height}-${theme}`)
+    }
+  }
+  await page.setViewportSize({ width: 1100, height: 720 })
+  await page.emulateMedia({ colorScheme: 'light', reducedMotion: 'reduce' })
+  await page.evaluate(() => window.localStorage.setItem('nekro-nxt.theme', 'light'))
+  await page.goto(`/work/creator/${saveAuthoringTaskId}`)
   await page.getByRole('button', { name: '保存为本地扩展', exact: true }).click()
-  const dialog = page.getByRole('dialog')
-  await dialog.getByLabel('扩展名称').fill('持久摘要探针')
-  await dialog.getByLabel('本地标识').fill('saved-summary-probe')
-  await dialog.getByLabel('说明').fill('验证创造工作台保存结果。')
-  await dialog.getByRole('button', { name: '保存本地版本', exact: true }).click()
+  const savePanel = page.getByRole('region', { name: '保存为本地扩展' })
+  await expect(savePanel).toBeVisible()
+  await assertViewportIntegrity(page)
+  await capture(page, testInfo, 'authoring-save-panel-1100x720-light')
+  await savePanel.getByLabel('扩展名称').fill('持久摘要探针')
+  await savePanel.getByLabel('本地标识').fill('saved-summary-probe')
+  await savePanel.getByLabel('说明').fill('验证创造工作台保存结果。')
+  await savePanel.getByRole('button', { name: '保存本地扩展', exact: true }).click()
 
   await expect(page).toHaveURL(new RegExp(`/extensions/${savedExtensionId}$`, 'u'))
   await expect(page.getByRole('heading', { name: '持久摘要探针' })).toBeVisible()
   await expect(page.getByText('智能体工具 · saved_summary_probe', { exact: true })).toBeVisible()
   expect(HostApiContracts.saveExtensionFromDynamic.request.parse(saveRequest)).toEqual({
-    agentId: targetAgentId,
-    episodeId: targetEpisodeId,
-    pluginId: 'plugin-save-probe',
-    packageId: 'package-save-probe',
+    taskId: saveAuthoringTaskId,
+    attemptId: saveAuthoringAttemptId,
     displayName: '持久摘要探针',
     slug: 'saved-summary-probe',
     description: '验证创造工作台保存结果。',

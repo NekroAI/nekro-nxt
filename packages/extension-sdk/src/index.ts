@@ -4,6 +4,7 @@ import type {
   AdapterClientSlotName,
   AgentClientSlotName,
   HostPageContribution,
+  HostUiKitComponentName,
   HostUiNavigationModel,
   HostUiPermissionDeclaration,
   MessagePart,
@@ -14,6 +15,7 @@ export type {
   AgentClientSlotName,
   HostIconName,
   HostPageContribution,
+  HostUiKitComponentName,
   HostUiNavigationModel,
   HostUiPermission,
   HostUiPermissionDeclaration,
@@ -279,7 +281,7 @@ export interface HostUiKit {
   readonly Select: ElementType
   readonly Switch: ElementType
   readonly Tabs: object
-  readonly Dialog: object
+  readonly Dialog: ElementType
   readonly Popover: object
   readonly Tooltip: object
   readonly Field: ElementType
@@ -288,6 +290,8 @@ export interface HostUiKit {
   readonly EmptyState: ElementType
   readonly Spinner: ElementType
   readonly PageHeader: ElementType
+  readonly MetricStrip: ElementType
+  readonly Metric: ElementType
   readonly Section: ElementType
   readonly Stack: ElementType
   readonly Grid: ElementType
@@ -320,7 +324,27 @@ export interface NekroNxtExtensionAuthoringReference {
     readonly hostTool: true
     readonly hostRpc: true
     readonly clientSlots: readonly NekroNxtClientSlotName[]
-    readonly hostPages: { readonly maxEntries: 8 }
+    readonly hostPages: {
+      readonly maxEntries: 8
+      readonly requiredServices: readonly ['pages', 'ui']
+      readonly uiComponents: readonly HostUiKitComponentName[]
+      readonly nativeInteractiveElements: false
+      readonly designContract: {
+        readonly version: 'nxt-host-ui-design-v1'
+        readonly responsibilities: readonly {
+          readonly owner: 'host' | 'extension' | 'ui-kit'
+          readonly provided: readonly string[]
+          readonly forbidden: readonly string[]
+        }[]
+        readonly standardInsets: {
+          readonly blockStart: 24
+          readonly blockEnd: 40
+          readonly inline: readonly [24, 32, 40]
+          readonly contentBreakpoints: readonly [960, 1440]
+        }
+        readonly compositionRules: readonly string[]
+      }
+    }
     readonly hostAdapter: {
       readonly apiVersion: 1
       readonly scope: 'host-adapter'
@@ -346,6 +370,7 @@ export interface NekroNxtExtensionAuthoringReference {
     readonly hostTool: string
     readonly hostRpcAndClientSlot: string
     readonly hostAdapter: string
+    readonly hostPage: string
   }
   readonly recoveryRules: readonly string[]
 }
@@ -421,6 +446,98 @@ harness.registerAdapter({
 })
 return { apply() {} }`
 
+const HOST_PAGE_EXAMPLE = `return {
+  inject: ['pages', 'ui'],
+  apply(ctx) {
+    const { DataTable, Metric, MetricStrip, PageHeader, Section, Stack, StatusBadge } = ctx.ui
+    const records = [
+      { name: '接口联调', owner: '研发组', status: '已通过' },
+      { name: '桌面端回归', owner: '质量组', status: '进行中' }
+    ]
+    const navigation = {
+      getSnapshot: () => ({
+        revision: 1,
+        groups: [{
+          id: 'main',
+          items: [
+            { id: 'overview', label: '概览', path: 'overview' },
+            { id: 'details', label: '明细', path: 'details' }
+          ]
+        }]
+      }),
+      subscribe: () => () => undefined
+    }
+    ctx.pages.declarePermissions({ permissions: [], networkOrigins: [] })
+    const AcceptancePage = ({ relativePath, navigate }) => {
+      const details = relativePath === 'details'
+      return React.createElement(
+        Stack,
+        null,
+        React.createElement(PageHeader, {
+          title: details ? '验收明细' : '验收概览',
+          meta: details ? '逐项检查负责人和当前状态' : '查看项目当前的验收进展'
+        }),
+        details
+          ? React.createElement(
+              Section,
+              null,
+              React.createElement(
+                DataTable,
+                null,
+                React.createElement(
+                  'thead',
+                  null,
+                  React.createElement('tr', null,
+                    React.createElement('th', null, '验收项'),
+                    React.createElement('th', null, '负责人'),
+                    React.createElement('th', null, '状态')
+                  )
+                ),
+                React.createElement(
+                  'tbody',
+                  null,
+                  ...records.map((record) => React.createElement(
+                    'tr',
+                    { key: record.name },
+                    React.createElement('td', null, record.name),
+                    React.createElement('td', null, record.owner),
+                    React.createElement('td', null, React.createElement(
+                      StatusBadge,
+                      { tone: record.status === '已通过' ? 'success' : 'info' },
+                      record.status
+                    ))
+                  ))
+                )
+              )
+            )
+          : React.createElement(
+              Section,
+              null,
+              React.createElement('h2', null, '当前进展'),
+              React.createElement(
+                MetricStrip,
+                null,
+                React.createElement(Metric, { label: '验收项', value: String(records.length) }),
+                React.createElement(Metric, { label: '已通过', value: '1' })
+              ),
+              React.createElement(StatusBadge, { tone: 'info' }, '验收中')
+            )
+      )
+    }
+    ctx.pages.register({
+      page: {
+        kind: 'host-page',
+        entryId: 'acceptance',
+        title: '验收看板',
+        icon: { kind: 'host-icon', name: 'layout-dashboard' },
+        objectPane: 'navigation',
+        startPath: 'overview'
+      },
+      navigation
+    }, AcceptancePage)
+  }
+}`
+
 export const NEKRO_NXT_EXTENSION_AUTHORING_REFERENCE: NekroNxtExtensionAuthoringReference = {
   contractVersion: 'nekro-nxt-extension-v3',
   dshVersion: '0.1.1-rc.2',
@@ -433,7 +550,71 @@ export const NEKRO_NXT_EXTENSION_AUTHORING_REFERENCE: NekroNxtExtensionAuthoring
       'channel.inspector.agent.sections',
       'conversation.tool.card',
     ],
-    hostPages: { maxEntries: 8 },
+    hostPages: {
+      maxEntries: 8,
+      requiredServices: ['pages', 'ui'],
+      uiComponents: [
+        'Button',
+        'IconButton',
+        'Input',
+        'Textarea',
+        'Select',
+        'Switch',
+        'Tabs',
+        'Dialog',
+        'Popover',
+        'Tooltip',
+        'Field',
+        'StatusBadge',
+        'InlineFeedback',
+        'EmptyState',
+        'Spinner',
+        'PageHeader',
+        'MetricStrip',
+        'Metric',
+        'Section',
+        'Stack',
+        'Grid',
+        'DataTable',
+        'SidePane',
+      ],
+      nativeInteractiveElements: false,
+      designContract: {
+        version: 'nxt-host-ui-design-v1',
+        responsibilities: [
+          {
+            owner: 'host',
+            provided: ['产品外壳', '页面背景', '页面安全边距', '根滚动', '声明式对象列', 'Portal 层级'],
+            forbidden: ['不得把背景、外边距或根滚动交给 Extension'],
+          },
+          {
+            owner: 'extension',
+            provided: ['当前视图标题', '业务数据', '业务操作', '内容区块顺序', '局部受作用域样式'],
+            forbidden: ['页面根背景', '页面根 padding', '负边距越界', '100vw/100vh', '重复对象列导航'],
+          },
+          {
+            owner: 'ui-kit',
+            provided: ['基础控件状态', '内容表面', '表格外壳', '反馈', 'Dialog/Popover/Tooltip'],
+            forbidden: ['复制基础组件状态机', '裸交互控件', '后台指标卡片墙'],
+          },
+        ],
+        standardInsets: {
+          blockStart: 24,
+          blockEnd: 40,
+          inline: [24, 32, 40],
+          contentBreakpoints: [960, 1440],
+        },
+        compositionRules: [
+          'Host 已提供背景、外边距和根滚动，页面组件从透明内容区开始。',
+          '对象列标题表示应用，PageHeader 表示当前视图，两者不得相同。',
+          '对象列已有的视图切换不得再渲染成页面主按钮。',
+          'Section 默认使用间距分组，只有独立对象才使用 Surface。',
+          '概览优先使用紧凑摘要、列表或表格，不默认生成等宽指标卡片墙。',
+          'StatusBadge 贴合文字，不拉伸成无进度语义的横条。',
+          '状态名称、汇总数量、日期和表格数据必须互相一致。',
+        ],
+      },
+    },
     hostAdapter: {
       apiVersion: 1,
       scope: 'host-adapter',
@@ -473,6 +654,7 @@ export const NEKRO_NXT_EXTENSION_AUTHORING_REFERENCE: NekroNxtExtensionAuthoring
     hostTool: HOST_TOOL_EXAMPLE,
     hostRpcAndClientSlot: HOST_RPC_AND_CLIENT_SLOT_EXAMPLE,
     hostAdapter: HOST_ADAPTER_EXAMPLE,
+    hostPage: HOST_PAGE_EXAMPLE,
   },
   recoveryRules: [
     '一个 Episode 同时只维护一个动态 Plugin；修复必须向同一 Plugin 追加 kind:existing Package。',
@@ -497,6 +679,8 @@ export const renderNekroNxtExtensionDevelopmentSkill = (
 ## 强制边界
 
 - 只能使用 cordis_inspect_list / cordis_inspect_query 公布的 NekroNXT Host Contribution 与 Client Slot。
+- 定义候选默认使用 \`nekro_nxt_extension_define\`。它会把页面、权限和资源写入持久任务账本并在运行前预检；旧 \`cordis_define\` 只用于不带页面和资源的 DSH ABI 兼容场景。
+- \`scope\` 按真实产物选择：智能体 Tool/RPC/局部 Slot 使用 \`agent\`，平台 Adapter 使用 \`host-adapter\`，顶级专属页面使用 \`host-ui\`。不要依赖源码字符串让 Host 猜类型。
 - Client 只允许：${reference.supportedContributions.clientSlots.map((slot) => `\`${slot}\``).join('、')}。
 - Adapter Client 还可使用：${reference.supportedContributions.hostAdapter.clientSlots.map((slot) => `\`${slot}\``).join('、')}；除富消息外，稳定 id 等于 adapterKey。
 - 禁止注册 root、DSH 官方页面 Slot、Composer 或频道顶栏；顶级页面只能使用 Host Page Contribution。
@@ -519,6 +703,23 @@ ${reference.examples.hostRpcAndClientSlot}
 
 \`\`\`js
 ${reference.examples.hostAdapter}
+\`\`\`
+
+## Host Page 示例
+
+页面 Client 必须声明 \`inject: ['pages', 'ui']\`，并从 \`ctx.ui\` 使用 NekroNXT UI Kit。按钮、输入框、选择器、文本域和表格不得使用浏览器默认控件；页面必须使用语义 Token，适配明暗主题和桌面端紧凑密度。\`startPath\`、导航项 \`path\` 和 \`navigate()\` 都使用当前入口内的相对路径，不得以 \`/\` 开头。
+
+页面责任契约（${reference.supportedContributions.hostPages.designContract.version}）：
+${reference.supportedContributions.hostPages.designContract.responsibilities
+  .map(({ owner, provided, forbidden }) => `- ${owner} 提供：${provided.join('、')}；禁止：${forbidden.join('、')}。`)
+  .join('\n')}
+${reference.supportedContributions.hostPages.designContract.compositionRules.map((rule) => `- ${rule}`).join('\n')}
+
+这些职责由 Host 和验证器执行，不要求普通用户在需求中提供组件名、CSS 数值或实现步骤。Extension 不得自行补页面根背景、外边距或滚动。
+把页面的完整 Contribution 放进 \`nekro_nxt_extension_define.pages\`，权限放进 \`permissions\`；CSS Module 和 SVG 通过 \`resources\` 提交，不能只把声明写在 Client 源码里。
+
+\`\`\`js
+${reference.examples.hostPage}
 \`\`\`
 
 ## 修复与停止

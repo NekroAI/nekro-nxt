@@ -3,7 +3,7 @@ import type { ChannelReferenceRecord, CoreRepository } from '@nekro-nxt/core'
 import type { ChannelId, JsonValue } from '@nekro-nxt/contracts'
 import type { AssetAccessRepository } from '@nekro-nxt/core'
 import type { ChannelHistoryRepository, RuntimeRepository } from '@nekro-nxt/channel-runtime'
-import type { ExtensionRepository, HostUiRepository } from '@nekro-nxt/extension-runtime'
+import type { AuthoringRepository, ExtensionRepository, HostUiRepository } from '@nekro-nxt/extension-runtime'
 import { eq } from 'drizzle-orm'
 import type { CoreDatabase } from './database.js'
 import { systemSettings, workTreeOrder } from './schema.js'
@@ -14,6 +14,7 @@ import { createRuntimeRepository } from './repositories/runtime.js'
 import { createExtensionsRepository } from './repositories/extensions.js'
 import { createAssetsRepository } from './repositories/assets.js'
 import { createDshPluginRepository, type DshPluginRepository } from './repositories/dsh-plugins.js'
+import { createAuthoringRepository } from './repositories/authoring.js'
 
 export * from './backup.js'
 export * from './database.js'
@@ -29,6 +30,7 @@ type CurrentRepository = CoreRepository &
   AdapterRuntimeStateStore &
   ExtensionRepository &
   HostUiRepository &
+  AuthoringRepository &
   AssetAccessRepository
 
 /** Typed Drizzle façade. Domain implementations stay separate and share one immediate-transaction database. */
@@ -60,6 +62,7 @@ export class SqliteCoreRepository implements CurrentRepository {
   readonly #extensions
   readonly #assets
   readonly #dshPlugins
+  readonly #authoring
 
   constructor(database: CoreDatabase) {
     this.#db = database.db
@@ -70,6 +73,7 @@ export class SqliteCoreRepository implements CurrentRepository {
     this.#extensions = createExtensionsRepository(database.db)
     this.#assets = createAssetsRepository(database.db)
     this.#dshPlugins = createDshPluginRepository(database.db)
+    this.#authoring = createAuthoringRepository(database.db)
   }
 
   getWorkTreeOrder(): WorkTreeOrderRecord {
@@ -281,6 +285,32 @@ export class SqliteCoreRepository implements CurrentRepository {
   readonly load = (...args: Parameters<AdapterRuntimeStateStore['load']>) => this.#runtime.load(...args)
   readonly save = (...args: Parameters<AdapterRuntimeStateStore['save']>) => this.#runtime.save(...args)
   readonly clear = (...args: Parameters<AdapterRuntimeStateStore['clear']>) => this.#runtime.clear(...args)
+
+  readonly listAuthoringTasks = (...args: Parameters<AuthoringRepository['listAuthoringTasks']>) =>
+    this.#authoring.listAuthoringTasks(...args)
+  readonly listRecoverableAuthoringTasks = (
+    ...args: Parameters<AuthoringRepository['listRecoverableAuthoringTasks']>
+  ) => this.#authoring.listRecoverableAuthoringTasks(...args)
+  readonly getAuthoringTask = (...args: Parameters<AuthoringRepository['getAuthoringTask']>) =>
+    this.#authoring.getAuthoringTask(...args)
+  readonly getAuthoringTaskByPlugin = (...args: Parameters<AuthoringRepository['getAuthoringTaskByPlugin']>) =>
+    this.#authoring.getAuthoringTaskByPlugin(...args)
+  readonly listAuthoringAttempts = (...args: Parameters<AuthoringRepository['listAuthoringAttempts']>) =>
+    this.#authoring.listAuthoringAttempts(...args)
+  readonly getAuthoringAttempt = (...args: Parameters<AuthoringRepository['getAuthoringAttempt']>) =>
+    this.#authoring.getAuthoringAttempt(...args)
+  readonly listAuthoringEvents = (...args: Parameters<AuthoringRepository['listAuthoringEvents']>) =>
+    this.#authoring.listAuthoringEvents(...args)
+  readonly createAuthoringTask = (...args: Parameters<AuthoringRepository['createAuthoringTask']>) =>
+    this.#authoring.createAuthoringTask(...args)
+  readonly appendAuthoringAttempt = (...args: Parameters<AuthoringRepository['appendAuthoringAttempt']>) =>
+    this.#authoring.appendAuthoringAttempt(...args)
+  readonly updateAuthoringAttempt = (...args: Parameters<AuthoringRepository['updateAuthoringAttempt']>) =>
+    this.#authoring.updateAuthoringAttempt(...args)
+  readonly updateAuthoringTask = (...args: Parameters<AuthoringRepository['updateAuthoringTask']>) =>
+    this.#authoring.updateAuthoringTask(...args)
+  readonly deleteAuthoringTask = (...args: Parameters<AuthoringRepository['deleteAuthoringTask']>) =>
+    this.#authoring.deleteAuthoringTask(...args)
 
   readonly listExtensions = (...args: Parameters<ExtensionRepository['listExtensions']>) =>
     this.#extensions.listExtensions(...args)

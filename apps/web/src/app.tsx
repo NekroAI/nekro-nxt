@@ -481,6 +481,7 @@ export function NekroNxtApp() {
                       <Route path="work/channels" element={<Navigate to="/work" replace />} />
                       <Route path="work/channels/:channelId" element={<ChannelConversationPage />} />
                       <Route path="work/creator" element={<CreatorPage />} />
+                      <Route path="work/creator/:taskId" element={<CreatorPage />} />
                       <Route path="agents" element={<LegacyWorkRedirect kind="agents" />} />
                       <Route path="agents/:agentId" element={<LegacyWorkRedirect kind="agent" />} />
                       <Route path="channels" element={<LegacyWorkRedirect kind="channels" />} />

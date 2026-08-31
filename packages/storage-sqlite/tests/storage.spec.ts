@@ -11,6 +11,8 @@ import {
   AdmissionIdSchema,
   AgentIdSchema,
   AgentRevisionIdSchema,
+  AuthoringAttemptIdSchema,
+  AuthoringTaskIdSchema,
   AssetIdSchema,
   ChannelEventIdSchema,
   ChannelIdSchema,
@@ -2472,6 +2474,184 @@ describe('Extension and backup', () => {
         [firstEvent.id],
       )
       expect(repository.retireDshSessionEpisodes(7)).toEqual({ episodesClosed: 0, admissionsReleased: 0 })
+    } finally {
+      database.close()
+    }
+  })
+
+  it('persists revisioned dynamic authoring tasks, attempts, and events', async () => {
+    const { database, repository, core, connection } = await createFixture()
+    try {
+      const agent = createAgent(core)
+      const channel = core.createChannel({
+        connectionId: connection.id,
+        platformChannelId: 'authoring-ledger',
+        kind: 'web',
+      })
+      const event = appendTextEvent(core, connection.id, channel.id, 'authoring-ledger', '创建验收看板', 1)
+      const episodeId = EpisodeIdSchema.parse('eps_AUTHORINGLEDGER')
+      repository.createEpisode({
+        id: episodeId,
+        channelId: channel.id,
+        agentId: agent.definition.id,
+        agentRevisionId: agent.revision.id,
+        status: 'opening',
+        openedAtEventId: event.id,
+        createdAt: 2,
+      })
+      repository.activateEpisode(episodeId, 'dsh-authoring-ledger')
+      const taskId = AuthoringTaskIdSchema.parse('aut_AUTHORINGLEDGER')
+      const firstAttemptId = AuthoringAttemptIdSchema.parse('aua_AUTHORINGLEDGER1')
+      const task = {
+        id: taskId,
+        agentId: agent.definition.id,
+        channelId: channel.id,
+        episodeId,
+        initiatingEventId: event.id,
+        pluginKey: 'plugin-ledger',
+        title: '验收看板',
+        requirementSummary: '创建两个可切换页面。',
+        status: 'working' as const,
+        approvalPolicy: 'risk-stable' as const,
+        revision: 1,
+        createdAt: 3,
+        updatedAt: 3,
+      }
+      const firstAttempt = {
+        id: firstAttemptId,
+        taskId,
+        ordinal: 1,
+        name: '验收看板',
+        purpose: '创建页面。',
+        snapshotDigest: 'a'.repeat(64),
+        riskDigest: 'b'.repeat(64),
+        sourcePath: 'agt/authoring/task/attempts/one',
+        state: 'drafting' as const,
+        host: { status: 'pending' as const, waitingFor: [] },
+        client: { status: 'pending' as const, waitingFor: [] },
+        runnerPluginId: 'plugin-ledger',
+        runnerPackageId: 'package-one',
+        createdAt: 3,
+      }
+      repository.createAuthoringTask({
+        task,
+        attempt: firstAttempt,
+        event: {
+          taskId,
+          sequence: 1,
+          kind: 'task-created',
+          attemptId: firstAttemptId,
+          payload: { source: 'test' },
+          createdAt: 3,
+        },
+      })
+      expect(repository.getAuthoringTaskByPlugin(episodeId, 'plugin-ledger')).toEqual(task)
+      expect(repository.listRecoverableAuthoringTasks()).toEqual([task])
+
+      const secondAttemptId = AuthoringAttemptIdSchema.parse('aua_AUTHORINGLEDGER2')
+      const revisedTask = { ...task, status: 'repairing' as const, revision: 2, updatedAt: 4 }
+      repository.appendAuthoringAttempt({
+        task: revisedTask,
+        expectedRevision: 1,
+        attempt: {
+          ...firstAttempt,
+          id: secondAttemptId,
+          ordinal: 2,
+          runnerPackageId: 'package-two',
+          sourcePath: 'agt/authoring/task/attempts/two',
+          createdAt: 4,
+        },
+        event: {
+          taskId,
+          sequence: 2,
+          kind: 'attempt-created',
+          attemptId: secondAttemptId,
+          payload: {},
+          createdAt: 4,
+        },
+      })
+      expect(repository.listAuthoringAttempts(taskId).map(({ ordinal }) => ordinal)).toEqual([1, 2])
+      expect(repository.listAuthoringEvents(taskId).map(({ sequence }) => sequence)).toEqual([1, 2])
+      expect(repository.listAuthoringTasks()).toEqual([revisedTask])
+      expect(repository.listAuthoringTasks(agent.definition.id)).toEqual([revisedTask])
+      expect(repository.getAuthoringTask(AuthoringTaskIdSchema.parse('aut_MISSINGAUTHORING'))).toBeUndefined()
+      expect(repository.getAuthoringAttempt(AuthoringAttemptIdSchema.parse('aua_MISSINGAUTHORING'))).toBeUndefined()
+      expect(() =>
+        repository.updateAuthoringTask({
+          task: { ...revisedTask, revision: 2, updatedAt: 5 },
+          expectedRevision: 1,
+          event: { taskId, sequence: 3, kind: 'task-stopped', payload: {}, createdAt: 5 },
+        }),
+      ).toThrow('revision conflict')
+      expect(() =>
+        repository.updateAuthoringTask({
+          task: { ...revisedTask, revision: 4, updatedAt: 5 },
+          expectedRevision: 2,
+          event: { taskId, sequence: 3, kind: 'task-stopped', payload: {}, createdAt: 5 },
+        }),
+      ).toThrow('increase by one')
+      expect(() => repository.deleteAuthoringTask(taskId)).toThrow('must stop')
+
+      const completedTask = {
+        ...revisedTask,
+        status: 'completed' as const,
+        approvedRiskDigest: 'c'.repeat(64),
+        revision: 3,
+        updatedAt: 5,
+        completedAt: 5,
+      }
+      const completedAttempt = {
+        ...firstAttempt,
+        id: secondAttemptId,
+        ordinal: 2,
+        sourcePath: 'agt/authoring/task/attempts/two',
+        runnerPackageId: 'package-two',
+        createdAt: 4,
+        state: 'active' as const,
+        host: { status: 'running' as const, waitingFor: ['verification'], error: 'host warning' },
+        client: { status: 'failed' as const, waitingFor: [], error: 'client failure' },
+        error: {
+          phase: 'client-render' as const,
+          message: 'client failure',
+          stack: 'synthetic stack',
+          repairable: true,
+        },
+        verification: {
+          hostStarted: true,
+          clientLoaded: false,
+          renderedSlots: [],
+          renderedPages: [],
+          usedUiComponents: [],
+          pageGeometry: [],
+          rpcCalls: ['probe'],
+          toolInvocations: [{ name: 'probe', succeeded: true }],
+          navigationChecks: [],
+          resourceChecks: [],
+          stoppedCleanly: false,
+        },
+        runnerRunId: 'run-ledger',
+        settledAt: 5,
+      }
+      repository.updateAuthoringAttempt({
+        task: completedTask,
+        expectedRevision: 2,
+        attempt: completedAttempt,
+        event: {
+          taskId,
+          sequence: 3,
+          kind: 'task-completed',
+          payload: { source: 'verification' },
+          createdAt: 5,
+        },
+      })
+      expect(repository.getAuthoringTask(taskId)).toEqual(completedTask)
+      expect(repository.getAuthoringAttempt(secondAttemptId)).toEqual(completedAttempt)
+      expect(repository.listAuthoringEvents(taskId).at(-1)).not.toHaveProperty('attemptId')
+      expect(repository.listRecoverableAuthoringTasks()).toEqual([])
+      repository.deleteAuthoringTask(taskId)
+      expect(repository.getAuthoringTask(taskId)).toBeUndefined()
+      expect(repository.listAuthoringAttempts(taskId)).toEqual([])
+      repository.deleteAuthoringTask(taskId)
     } finally {
       database.close()
     }

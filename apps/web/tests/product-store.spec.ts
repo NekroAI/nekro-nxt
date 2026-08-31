@@ -1,5 +1,13 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { AgentIdSchema, ExtensionIdSchema, ExtensionRevisionIdSchema } from '@nekro-nxt/contracts'
+import {
+  AgentIdSchema,
+  AuthoringAttemptIdSchema,
+  AuthoringTaskIdSchema,
+  ChannelIdSchema,
+  EpisodeIdSchema,
+  ExtensionIdSchema,
+  ExtensionRevisionIdSchema,
+} from '@nekro-nxt/contracts'
 import { ProductHostCoordinator } from '../src/product-port.ts'
 import {
   defaultImageUnderstandingPolicy,
@@ -34,6 +42,7 @@ const resetBusinessFacts = (): void => {
     extensions: [],
     approvals: [],
     dynamic: [],
+    authoringTasks: [],
     diagnosticNote: '正在连接 NekroNxt Host…',
     workTreeOrder: { agentIds: [], channelIdsByAgent: {}, unboundChannelIds: [] },
   })
@@ -205,6 +214,89 @@ describe('product store Host mutations', () => {
     expect(useProductStore.getState().agents[0]?.capabilities.dynamicCreation).toBe(false)
     expect(useProductStore.getState().approvals[0]?.state).toBe('等待批准')
     expect(useProductStore.getState().extensions[0]?.activations).toEqual([])
+  })
+
+  it('retries approval once when the same immutable authoring attempt advances its task revision', async () => {
+    const taskId = AuthoringTaskIdSchema.parse('aut_STOREAPPROVAL')
+    const attemptId = AuthoringAttemptIdSchema.parse('aua_STOREAPPROVAL')
+    const channelId = ChannelIdSchema.parse('chn_storeapproval')
+    const episodeId = EpisodeIdSchema.parse('eps_storeapproval')
+    let decisionCount = 0
+    const execute = vi.fn((command: string, input?: unknown) => {
+      if (command === 'authoring.decide') {
+        if (typeof input !== 'object' || input === null) return Promise.reject(new Error('审批输入缺失。'))
+        decisionCount += 1
+        if (decisionCount === 1) return Promise.reject(new Error('创造任务状态已更新，请刷新后重试。'))
+      }
+      if (command === 'host.refresh' && decisionCount === 1) {
+        useProductStore.setState((state) => ({
+          authoringTasks: state.authoringTasks.map((task) => (task.id === taskId ? { ...task, revision: 3 } : task)),
+        }))
+      }
+      return Promise.resolve(null)
+    })
+    setActiveProductHost({
+      getSnapshot: () => useProductStore.getState(),
+      subscribe: () => () => undefined,
+      execute,
+    })
+    useProductStore.setState({
+      dynamic: [
+        {
+          agentId,
+          episodeId,
+          pluginId: 'plugin-store-approval',
+          approvalRequestId: 'request-store-approval',
+          status: 'awaiting-approval',
+          packages: [],
+          policy: { turn: 1, consecutiveFailures: 0, repeatedFingerprintCount: 0 },
+        },
+      ],
+      authoringTasks: [
+        {
+          id: taskId,
+          agentId,
+          channelId,
+          episodeId,
+          title: '审批并发探针',
+          requirementSummary: '验证同一候选的修订推进可以自动恢复。',
+          status: 'awaiting-approval',
+          approvalPolicy: 'risk-stable',
+          revision: 2,
+          candidateAttempt: {
+            id: attemptId,
+            ordinal: 1,
+            name: '审批并发探针',
+            purpose: '验证审批重试。',
+            state: 'awaiting-approval',
+            riskDigest: 'a'.repeat(64),
+            host: { status: 'pending', waitingFor: [] },
+            client: { status: 'pending', waitingFor: [] },
+            createdAt: 1,
+          },
+          createdAt: 1,
+          updatedAt: 2,
+        },
+      ],
+    })
+
+    await expect(
+      useProductStore.getState().resolveApproval({
+        requestId: 'request-store-approval',
+        agentId,
+        approved: true,
+      }),
+    ).resolves.toBeUndefined()
+
+    expect(execute.mock.calls.map(([command]) => command)).toEqual([
+      'authoring.decide',
+      'host.refresh',
+      'authoring.decide',
+      'dynamic.approve',
+      'host.refresh',
+    ])
+    expect(execute.mock.calls[0]?.[1]).toMatchObject({ expectedRevision: 2, attemptId })
+    expect(execute.mock.calls[2]?.[1]).toMatchObject({ expectedRevision: 3, attemptId })
   })
 
   it('sends Extension activation changes to the explicitly selected intelligent-agent', async () => {

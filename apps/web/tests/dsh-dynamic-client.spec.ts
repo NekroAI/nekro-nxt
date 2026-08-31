@@ -147,7 +147,7 @@ describe('DSH Dynamic Client Runtime', () => {
               pluginRunId: 'run-page',
               name: '动态项目页',
               code: `return {
-                inject: ['pages'],
+                inject: ['pages', 'ui'],
                 apply(ctx) {
                   ctx.pages.declarePermissions({ permissions: ['agents.read'], networkOrigins: [] })
                   ctx.pages.register({
@@ -160,7 +160,7 @@ describe('DSH Dynamic Client Runtime', () => {
                       getSnapshot: () => ({ revision: 0, groups: [{ id: 'main', items: [{ id: 'overview', label: '概览', path: '' }] }] }),
                       subscribe: () => () => undefined
                     }
-                  }, ({ relativePath }) => React.createElement('main', { 'data-page': 'overview' }, relativePath || '首页'))
+                  }, ({ relativePath }) => React.createElement(ctx.ui.Section, { 'data-page': 'overview' }, relativePath || '首页'))
                 }
               }`,
             }),
@@ -209,11 +209,95 @@ describe('DSH Dynamic Client Runtime', () => {
         search: {},
         navigate: () => undefined,
       })
-      expect(renderToStaticMarkup(rendered)).toBe('<main data-page="overview">tasks</main>')
+      expect(renderToStaticMarkup(rendered)).toContain('data-nxt-ui-component="Section"')
+      expect(renderToStaticMarkup(rendered)).toContain('>tasks</section>')
       await runtime.reconcile([{ ...pending, activeRun: { pluginRunId: 'run-page', packageId: 'package-page' } }])
       await runtime.reconcile([])
       expect(runtime.pageEntries()).toEqual([])
       expect(runtime.pagePermissions()).toEqual({ permissions: [], networkOrigins: [] })
+    } finally {
+      await runtime.dispose()
+    }
+  })
+
+  it('restores an already-running Client from authoritative inventory after a browser refresh', async () => {
+    const calls: string[] = []
+    vi.stubGlobal(
+      'fetch',
+      vi.fn((input: string) => {
+        if (input.endsWith('/get-client-code')) {
+          calls.push('get-client-code')
+          return Promise.resolve(
+            stubResponse(200, {
+              pluginId: 'plugin-restored-page',
+              packageId: 'package-restored-page',
+              pluginRunId: 'run-restored-page',
+              name: '刷新恢复页面',
+              code: `return {
+                inject: ['pages', 'ui'],
+                apply(ctx) {
+                  ctx.pages.declarePermissions({ permissions: [], networkOrigins: [] })
+                  ctx.pages.register({
+                    page: {
+                      kind: 'host-page', entryId: 'overview', title: '恢复后的项目概览',
+                      icon: { kind: 'host-icon', name: 'layout-dashboard' },
+                      objectPane: 'hidden', startPath: ''
+                    }
+                  }, () => React.createElement('main', { 'data-page': 'restored' }, '刷新后仍可见'))
+                }
+              }`,
+            }),
+          )
+        }
+        if (input.endsWith('/approve') || input.endsWith('/run-host-half')) {
+          calls.push(input.endsWith('/approve') ? 'approve' : 'run-host-half')
+          return Promise.resolve(stubResponse(500, { error: { code: 'unexpected', message: '不应重复执行' } }))
+        }
+        return Promise.resolve(stubResponse(404, { error: { code: 'not-found', message: 'x' } }))
+      }),
+    )
+    const runtime = await DshDynamicClientRuntime.create(new HttpDynamicClientHost(agentId, episodeId), {
+      querySelectorAll: () => [],
+    })
+    const running: DynamicInventoryRow = {
+      pluginId: 'plugin-restored-page',
+      agentId,
+      packages: [
+        {
+          packageId: 'package-restored-page',
+          name: '刷新恢复页面',
+          purpose: '验证浏览器刷新恢复。',
+          hasHostHalf: false,
+          hasClientHalf: true,
+        },
+      ],
+      activeRun: { pluginRunId: 'run-restored-page', packageId: 'package-restored-page' },
+      latestRun: {
+        pluginRunId: 'run-restored-page',
+        packageId: 'package-restored-page',
+        mode: 'run',
+        status: 'running',
+        host: { status: 'absent', waitingFor: [] },
+        client: { status: 'running', waitingFor: [] },
+      },
+    }
+    try {
+      await runtime.reconcile([running])
+      expect(calls).toEqual(['get-client-code'])
+      expect(runtime.loaded()).toHaveLength(1)
+      const [entry] = runtime.pageEntries()
+      expect(entry?.page.entryId).toBe('overview')
+      const rendered = createElement(entry!.component, {
+        pageInstanceId: 'preview',
+        entryId: 'overview',
+        relativePath: '',
+        search: {},
+        navigate: () => undefined,
+      })
+      expect(renderToStaticMarkup(rendered)).toBe('<main data-page="restored">刷新后仍可见</main>')
+
+      await runtime.reconcile([running])
+      expect(calls).toEqual(['get-client-code'])
     } finally {
       await runtime.dispose()
     }

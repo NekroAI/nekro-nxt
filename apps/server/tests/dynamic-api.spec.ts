@@ -5,7 +5,7 @@ import { HostApiContracts } from '@nekro-nxt/contracts'
 import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { NekroRuntime } from '../src/bootstrap.js'
 import { createNekroHostApi } from '../src/host-api.js'
 
@@ -16,6 +16,7 @@ afterEach(async () => {
 })
 
 class SettledModel extends LlmAdapter {
+  streamCalls = 0
   override providerInfo(provider: string) {
     return { id: provider, name: 'settled model' }
   }
@@ -32,6 +33,7 @@ class SettledModel extends LlmAdapter {
     })
   }
   override async *stream(_: GenerateOptions): AsyncIterable<StreamChunk> {
+    this.streamCalls += 1
     await Promise.resolve()
     void _
     yield { type: 'block-start', index: 0, blockType: 'text' }
@@ -46,6 +48,7 @@ describe('NekroNxt domain API — browser dynamic client circuit', () => {
   it('resolves a dynamic approval request through the API for the Agent live Session', async () => {
     const directory = await mkdtemp(path.join(tmpdir(), 'nekro-nxt-dyn-api-'))
     temporaryDirectories.push(directory)
+    const model = new SettledModel()
     const runtime = await NekroRuntime.create({
       coreDatabasePath: path.join(directory, 'core.sqlite'),
       sessionDatabasePath: path.join(directory, 'sessions.sqlite'),
@@ -53,7 +56,7 @@ describe('NekroNxt domain API — browser dynamic client circuit', () => {
       extensionDataRoot: path.join(directory, 'extension-data'),
       extensionCacheRoot: path.join(directory, 'extension-cache'),
       configureLlm: (context) => {
-        context.llm.registerAdapter(['test-provider'], new SettledModel())
+        context.llm.registerAdapter(['test-provider'], model)
       },
     })
     await runtime.start()
@@ -89,10 +92,11 @@ describe('NekroNxt domain API — browser dynamic client circuit', () => {
       .find((candidate) => candidate.dshSessionId !== undefined)!
 
     // Define + run a dual-half dynamic Package → pending approval request.
-    const defined = runtime.host.defineDynamicPackage(dshSessionId, {
+    const defined = runtime.host.defineDynamicAuthoringPackage(dshSessionId, {
       plugin: { kind: 'new', idPrefix: 'client' },
       name: '动态客户端',
       purpose: '验证浏览器审批。',
+      scope: 'agent',
       code: {
         host: `return {
           inject: ['tools'],
@@ -117,13 +121,52 @@ describe('NekroNxt domain API — browser dynamic client circuit', () => {
           }
         }`,
       },
+      resources: {},
+      permissions: { permissions: [], networkOrigins: [] },
+      contributions: [],
     })
     const ran = runtime.host.runDynamicPackage(dshSessionId, defined.pluginId, defined.packageId, 'run')
-    await Promise.resolve()
-    const inventory = runtime.host.dynamicInventory(dshSessionId)
-    const row = inventory.find((r) => r.pluginId === defined.pluginId)
-    const approval = row?.latestRun?.approvalRequestId
+    await expect
+      .poll(
+        () =>
+          runtime.host.dynamicInventory(dshSessionId).find((row) => row.pluginId === defined.pluginId)?.latestRun
+            ?.approvalRequestId,
+      )
+      .toBeDefined()
+    const approval = runtime.host.dynamicInventory(dshSessionId).find((row) => row.pluginId === defined.pluginId)
+      ?.latestRun?.approvalRequestId
     expect(approval).toBeDefined()
+    const authoringTask = runtime.repository.listAuthoringTasks(entity.agentId)[0]
+    const authoringAttempt = authoringTask
+      ? runtime.repository.listAuthoringAttempts(authoringTask.id).at(-1)
+      : undefined
+    expect(authoringTask?.revision).toBeGreaterThan(1)
+    expect(authoringAttempt?.state).toBe('awaiting-approval')
+    if (!authoringTask || !authoringAttempt) throw new Error('Expected an awaiting Authoring attempt.')
+    const decisionContext = new Context()
+    await decisionContext.plugin(WebServer, { host: '127.0.0.1', port: 0 })
+    const decisionApi = createNekroHostApi(decisionContext.webServer, runtime)
+    try {
+      const authoringDecisionResponse = await fetch(
+        `http://127.0.0.1:${decisionApi.port}/api/authoring/tasks/${authoringTask.id}/attempts/${authoringAttempt.id}/decision`,
+        {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({
+            expectedRevision: authoringTask.revision - 1,
+            approved: true,
+            approveRiskStable: true,
+          }),
+        },
+      )
+      expect(authoringDecisionResponse.ok, await authoringDecisionResponse.clone().text()).toBe(true)
+      expect(
+        HostApiContracts.decideAuthoringAttempt.parseResponse(await authoringDecisionResponse.json()),
+      ).toMatchObject({ accepted: true, executionRequired: true })
+    } finally {
+      decisionApi.dispose()
+      await decisionContext.fiber.dispose()
+    }
     // Drive the Host half (as the browser would via runDynamicHostHalf) to get a pluginRunId.
     const hostHalf = await runtime.host.runDynamicHostHalf(
       dshSessionId,
@@ -187,9 +230,8 @@ describe('NekroNxt domain API — browser dynamic client circuit', () => {
       const ack = HostApiContracts.dynamicApprove.parseResponse(await approveResponse.json())
       expect(ack.accepted).toBe(true)
 
-      const clientVerificationResponse = await fetch(
-        `${origin}/api/dynamic/${entity.agentId}/report-client-verification`,
-        {
+      const clientVerificationRequest = () =>
+        fetch(`${origin}/api/dynamic/${entity.agentId}/report-client-verification`, {
           method: 'POST',
           headers: { 'content-type': 'application/json' },
           body: JSON.stringify({
@@ -199,9 +241,35 @@ describe('NekroNxt domain API — browser dynamic client circuit', () => {
             pluginRunId,
             renderedSlots: ['agent.workbench.sections'],
           }),
-        },
-      )
+        })
+      const continuationErrors = vi.spyOn(console, 'error').mockImplementation(() => undefined)
+      const clientVerificationResponse = await clientVerificationRequest()
       expect(clientVerificationResponse.ok).toBe(true)
+      const repeatedClientVerificationResponse = await clientVerificationRequest()
+      expect(repeatedClientVerificationResponse.ok).toBe(true)
+      const settleSpy = vi.spyOn(runtime.host, 'whenAuthoringSettled')
+      const saveResponse = await fetch(`${origin}/api/extensions/save-from-dynamic`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          taskId: authoringTask.id,
+          attemptId: authoringAttempt.id,
+          displayName: '续跑静止探针',
+          slug: 'continuation-settle-probe',
+          description: '等待智能体收尾后保存精确候选。',
+        }),
+      })
+      expect(saveResponse.ok, await saveResponse.clone().text()).toBe(true)
+      expect(HostApiContracts.saveExtensionFromDynamic.parseResponse(await saveResponse.json())).toMatchObject({
+        activation: 'inactive',
+      })
+      expect(settleSpy).toHaveBeenCalledWith(dshSessionId)
+      expect(runtime.repository.getAuthoringTask(authoringTask.id)?.status).toBe('completed')
+      await runtime.host.waitUntilSafe(entity.agentId)
+      expect(
+        continuationErrors.mock.calls.filter(([message]) => String(message).includes('扩展开发自动续跑事件注入失败')),
+      ).toEqual([])
+      continuationErrors.mockRestore()
       const verification = await runtime.host.verifyDynamicPackage(dshSessionId, defined.pluginId, defined.packageId)
       expect(verification).toMatchObject({
         toolNames: ['dynamic_client_probe'],
@@ -221,6 +289,113 @@ describe('NekroNxt domain API — browser dynamic client circuit', () => {
       api.dispose()
       await webContext.fiber.dispose()
       await runtime.dispose()
+    }
+  })
+
+  it('restores a verified Host-only authoring task from its persisted source ledger', async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), 'nekro-nxt-authoring-recovery-'))
+    temporaryDirectories.push(directory)
+    const models: SettledModel[] = []
+    const options = {
+      coreDatabasePath: path.join(directory, 'core.sqlite'),
+      sessionDatabasePath: path.join(directory, 'sessions.sqlite'),
+      assetRoot: path.join(directory, 'assets'),
+      extensionDataRoot: path.join(directory, 'extension-data'),
+      extensionCacheRoot: path.join(directory, 'extension-cache'),
+      configureLlm: (context: Context) => {
+        const model = new SettledModel()
+        models.push(model)
+        context.llm.registerAdapter(['test-provider'], model)
+      },
+    }
+    let runtime = await NekroRuntime.create(options)
+    await runtime.start()
+    let disposed = false
+    try {
+      const entity = await runtime.createAgentWithWebChannel({
+        displayName: '恢复验证智能体',
+        persona: '',
+        model: { provider: 'test-provider', model: 'chat-model' },
+        capabilities: { dynamicCreation: true },
+      })
+      await runtime.web.postMessage({
+        channelId: entity.channelId,
+        clientEventId: 'seed-recovery-session',
+        parts: [{ type: 'text', text: '建立恢复测试会话。' }],
+      })
+      const episode = runtime.repository
+        .listActiveEpisodesForAgent(entity.agentId)
+        .find((candidate) => candidate.dshSessionId !== undefined)
+      if (!episode?.dshSessionId) throw new Error('Expected a live recovery Session.')
+      const firstSessionId = episode.dshSessionId
+      const callsBeforeAuthoringResult = models[0]?.streamCalls ?? 0
+      const defined = runtime.host.defineDynamicAuthoringPackage(firstSessionId, {
+        plugin: { kind: 'new', idPrefix: 'recv' },
+        name: '恢复探针',
+        purpose: '重启后继续提供同一个已验证工具。',
+        scope: 'agent',
+        code: {
+          host: `return {
+            inject: ['tools'],
+            apply(ctx) {
+              harness.registerTool(ctx, harness.defineTool({
+                name: 'recovery_probe',
+                description: '返回恢复状态。',
+                parameters: {},
+                output: { schema: { type: 'string' }, render(_args, value) { return [{ type: 'text', text: value }] } },
+                execute() { return 'restored' }
+              }))
+            }
+          }`,
+        },
+        resources: {},
+        permissions: { permissions: [], networkOrigins: [] },
+        contributions: [],
+      })
+      await expect(
+        runtime.host.runDynamicPackage(firstSessionId, defined.pluginId, defined.packageId, 'run'),
+      ).resolves.toMatchObject({ ok: true, status: 'running' })
+      await expect.poll(() => runtime.repository.listAuthoringTasks(entity.agentId)[0]?.status).toBe('ready')
+      await runtime.host.whenAuthoringSettled(firstSessionId)
+      expect(models[0]?.streamCalls ?? 0).toBeGreaterThan(callsBeforeAuthoringResult)
+      const taskBeforeRestart = runtime.repository.listAuthoringTasks(entity.agentId)[0]
+      expect(taskBeforeRestart).toBeDefined()
+      const attemptBeforeRestart = runtime.repository.listAuthoringAttempts(taskBeforeRestart!.id).at(-1)
+      expect(attemptBeforeRestart?.state).toBe('active')
+
+      const snapshotContext = new Context()
+      await snapshotContext.plugin(WebServer, { host: '127.0.0.1', port: 0 })
+      const snapshotApi = createNekroHostApi(snapshotContext.webServer, runtime)
+      try {
+        const snapshotResponse = await fetch(`http://127.0.0.1:${snapshotApi.port}/api/snapshot`)
+        expect(snapshotResponse.ok).toBe(true)
+        const snapshot = HostApiContracts.snapshot.parseResponse(await snapshotResponse.json())
+        const projectedTask = snapshot.authoringTasks.find((task) => task.id === taskBeforeRestart!.id)
+        expect(projectedTask?.activeAttempt?.id).toBe(attemptBeforeRestart?.id)
+        expect(projectedTask?.candidateAttempt?.id).toBe(attemptBeforeRestart?.id)
+      } finally {
+        snapshotApi.dispose()
+        await snapshotContext.fiber.dispose()
+      }
+
+      await runtime.dispose()
+      disposed = true
+      runtime = await NekroRuntime.create(options)
+      disposed = false
+      await runtime.start()
+      await runtime.recover()
+
+      await expect.poll(() => runtime.repository.getAuthoringTask(taskBeforeRestart!.id)?.status).toBe('ready')
+      const taskAfterRestart = runtime.repository.getAuthoringTask(taskBeforeRestart!.id)
+      expect(taskAfterRestart?.pluginKey).not.toBe(defined.pluginId)
+      const recoveredEpisode = runtime.repository.getEpisode(episode.id)
+      expect(recoveredEpisode?.dshSessionId).toBe(firstSessionId)
+      expect(runtime.host.toolNames(firstSessionId)).toContain('recovery_probe')
+      const inventory = runtime.host.dynamicInventory(firstSessionId)
+      expect(inventory).toHaveLength(1)
+      expect(inventory[0]?.latestRun?.status).toBe('running')
+    } finally {
+      if (!disposed) await runtime.dispose()
     }
   })
 })

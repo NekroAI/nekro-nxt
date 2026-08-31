@@ -73,6 +73,15 @@ const deliveryTone = (state: DeliveryState): StatusTone => {
   return 'unknown'
 }
 
+const authoringTaskPresentation = (status: string): { readonly label: string; readonly tone: StatusTone } => {
+  if (status === 'awaiting-approval') return { label: '等待确认', tone: 'warning' }
+  if (status === 'ready') return { label: '可以预览', tone: 'success' }
+  if (status === 'failed' || status === 'interrupted') return { label: '需要处理', tone: 'error' }
+  if (status === 'stopped' || status === 'completed') return { label: '已结束', tone: 'neutral' }
+  if (status === 'repairing') return { label: '正在修复', tone: 'info' }
+  return { label: '正在开发', tone: 'info' }
+}
+
 export const isBubblelessMessage = (message: Pick<ConversationMessage, 'parts'>): boolean => {
   if (message.parts.length !== 1) return false
   const [part] = message.parts
@@ -260,6 +269,7 @@ export function ChannelConversationPage() {
   const channelHistory = useProductStore((state) => state.channelHistory)
   const connections = useProductStore((state) => state.connections)
   const dynamic = useProductStore((state) => state.dynamic)
+  const authoringTasks = useProductStore((state) => state.authoringTasks)
   const channel = useProductStore((state) =>
     channelId ? state.channels.find((item) => item.id === channelId) : state.channels[0],
   )
@@ -270,6 +280,7 @@ export function ChannelConversationPage() {
   const pendingExtensionName = pendingDynamicApproval?.packages.find(
     (item) => item.packageId === (pendingDynamicApproval.packageId ?? pendingDynamicApproval.nextPackageId),
   )?.name
+  const authoringTask = authoringTasks.find((item) => item.channelId === channel?.id)
   const runtime = useProductStore((state) => (channel ? state.channelRuntimes[channel.id] : undefined))
   const livePhase = runtime?.phase ?? channel?.runtimePhase ?? agent?.state ?? '空闲'
   const activeChannelId = channel?.id
@@ -536,7 +547,24 @@ export function ChannelConversationPage() {
                             channelKind={channel.kind}
                             history={history}
                           />
-                          {pendingDynamicApproval ? (
+                          {authoringTask ? (
+                            <div className={styles.approvalNotice} role="status">
+                              <span>
+                                扩展开发“{authoringTask.title}”：{authoringTaskPresentation(authoringTask.status).label}
+                                。
+                              </span>
+                              <StatusBadge tone={authoringTaskPresentation(authoringTask.status).tone}>
+                                {authoringTaskPresentation(authoringTask.status).label}
+                              </StatusBadge>
+                              <Button
+                                size="small"
+                                variant="secondary"
+                                onClick={() => void navigate(`/work/creator/${authoringTask.id}`)}
+                              >
+                                打开任务
+                              </Button>
+                            </div>
+                          ) : pendingDynamicApproval ? (
                             <div className={styles.approvalNotice} role="status">
                               <span>扩展「{pendingExtensionName ?? '未命名扩展'}」正在等待界面预览确认。</span>
                               <Button

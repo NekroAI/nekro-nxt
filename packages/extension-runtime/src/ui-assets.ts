@@ -34,6 +34,26 @@ export const validateHostUiCss = (source: string): void => {
       }
     }
   })
+  root.walkDecls((declaration) => {
+    const property = declaration.prop.toLowerCase()
+    const value = declaration.value.trim().toLowerCase()
+    if (property === 'position' && value === 'fixed') {
+      throw new Error('CSS 不允许使用 fixed 脱离 Host 页面内容框。')
+    }
+    if (/^(?:width|min-width|max-width)$/u.test(property) && /(?:^|[^a-z])100vw(?:[^a-z]|$)/u.test(value)) {
+      throw new Error('CSS 不允许使用 100vw 越过 Host 页面内容框。')
+    }
+    if (/^(?:height|min-height|max-height)$/u.test(property) && /(?:^|[^a-z])100vh(?:[^a-z]|$)/u.test(value)) {
+      throw new Error('CSS 不允许使用 100vh 接管 Host 页面视口。')
+    }
+    if (
+      /^margin(?:-(?:top|right|bottom|left|inline|inline-start|inline-end|block|block-start|block-end))?$/u.test(
+        property,
+      )
+    ) {
+      if (/(?:^|[\s,(])-\d/u.test(value)) throw new Error('CSS 不允许使用负边距越过 Host 页面内容框。')
+    }
+  })
 }
 
 export const scopeHostUiCss = (source: string, ownerScope: string): string => {

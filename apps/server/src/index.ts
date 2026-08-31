@@ -112,6 +112,8 @@ import {
 import {
   AssetIdSchema,
   ChannelMemberIdSchema,
+  HostPageContributionSchema,
+  HostUiPermissionDeclarationSchema,
   JsonValueSchema,
   LogicalMessageIdSchema,
   messagePartAssetIds,
@@ -123,7 +125,9 @@ import {
   type AgentId,
   type AgentClientSlotName,
   type AgentRevisionId,
+  type AuthoringTaskId,
   type AssetId,
+  type ChannelEventId,
   type ChannelId,
   type ChannelMemberId,
   type ChannelRuntimeOccupancy,
@@ -137,6 +141,8 @@ import {
   type DshSettingsPathOperation,
   type EpisodeId,
   type HostPageContribution,
+  type HostUiKitComponentName,
+  type HostUiPageGeometryEvidence,
   type HostUiPermissionDeclaration,
   type JsonValue,
   type LogicalMessageId,
@@ -154,18 +160,23 @@ import type {
   CoreRepository,
 } from '@nekro-nxt/core'
 import { canonicalJson } from '@nekro-nxt/core'
-import type {
-  Activation,
-  ExtensionActivationHost,
-  ExtensionBuildArtifact,
-  LocalExtension,
-  Revision,
-  MountedExtension,
+import {
+  scopeHostUiCss,
+  validateHostUiCss,
+  validateHostUiSvg,
+  type Activation,
+  type DynamicAuthoringService,
+  type DynamicAuthoringSnapshot,
+  type ExtensionActivationHost,
+  type ExtensionBuildArtifact,
+  type LocalExtension,
+  type MountedExtension,
+  type Revision,
 } from '@nekro-nxt/extension-runtime'
 import type { DshPluginRepository } from '@nekro-nxt/storage-sqlite'
 import { DshPluginLifecycleCoordinator } from './dsh-plugin-lifecycle.js'
-import { shouldBroadcastChannelRuntime } from './channel-runtime-events.js'
-import { mountChannelReplyGuard } from './channel-reply-guard.js'
+import { normalizeSessionEvents, shouldBroadcastChannelRuntime } from './channel-runtime-events.js'
+import { mountChannelReplyGuard, type ChannelReplyGuardController } from './channel-reply-guard.js'
 import { projectSessionOccupancy, type RuntimePerformanceTotals } from './channel-runtime-projection.js'
 import {
   NEKRO_NXT_EXTENSION_AUTHORING_REFERENCE,
@@ -190,7 +201,7 @@ import { QuotaLocalSpillStore } from './dsh-spill.js'
 import {
   ADAPTER_DYNAMIC_EVIDENCE_METHOD,
   AdapterDynamicEvidenceSchema,
-  isAdapterDynamicHostSource,
+  isLegacyAdapterDynamicHostSource,
   wrapAdapterDynamicHostSource,
 } from './adapter-dynamic-harness.js'
 
@@ -265,6 +276,14 @@ declare module '@deepseek-ai/dsh-llm' {
       readonly recentEventIds: readonly string[]
       readonly createdAt: number
       readonly form: 'recall'
+    }
+    'nekro-nxt-authoring-event': {
+      readonly kind: 'nekro-nxt-authoring-event'
+      readonly taskId: string
+      readonly attemptId?: string
+      readonly pluginId: string
+      readonly packageId: string
+      readonly status: string
     }
   }
 }
@@ -546,6 +565,10 @@ export interface DshHostRuntimeOptions {
   readonly assets: AssetAccessRepository
   readonly assetService: AssetService
   readonly resolveAgentRevision: (revisionId: AgentRevisionId) => AgentRevisionRecord | undefined
+  readonly authoring?: {
+    readonly service: DynamicAuthoringService
+    readonly resolveInitiatingEvent: (episodeId: EpisodeId) => ChannelEventId | undefined
+  }
   /** Absolute workspace used by explicitly granted development capabilities. */
   readonly developmentWorkspaceRoot?: string
   readonly configureLlm?: (context: Context) => Promise<void> | void
@@ -728,6 +751,14 @@ export interface DynamicPackageDefinitionInput {
   readonly name: string
   readonly purpose: string
   readonly code: { readonly host?: string; readonly client?: string }
+}
+
+export interface DynamicAuthoringPackageDefinitionInput extends DynamicPackageDefinitionInput {
+  readonly scope: DynamicAuthoringSnapshot['scope']
+  readonly resources: Readonly<Record<string, string>>
+  readonly clientCss?: { readonly path: string; readonly sha256: string }
+  readonly permissions: HostUiPermissionDeclaration
+  readonly contributions: readonly JsonValue[]
 }
 
 const noFieldsSchema = { type: 'object', properties: {}, additionalProperties: false } as const
@@ -1093,6 +1124,164 @@ const normalizeDynamicFailure = (phase: string, message: string): string =>
     .replace(/\s+/gu, ' ')
     .trim()
 
+const DynamicAuthoringFacadeInputSchema = z
+  .object({
+    plugin: z.discriminatedUnion('kind', [
+      z.object({ kind: z.literal('new'), idPrefix: z.string().regex(/^[a-z]{3,6}$/u) }).strict(),
+      z.object({ kind: z.literal('existing'), pluginId: z.string().trim().min(1) }).strict(),
+    ]),
+    name: z.string().trim().min(1).max(80),
+    purpose: z.string().trim().min(1).max(500),
+    scope: z.enum(['agent', 'host-adapter', 'host-ui']),
+    code: z
+      .object({
+        host: z
+          .string()
+          .max(1024 * 1024)
+          .optional(),
+        client: z
+          .string()
+          .max(1024 * 1024)
+          .optional(),
+      })
+      .strict()
+      .refine(({ host, client }) => host !== undefined || client !== undefined, '扩展必须包含 Host 或 Client 源码。'),
+    resources: z
+      .array(
+        z
+          .object({
+            path: z.string().regex(/^assets\/[a-z0-9][a-z0-9/_.-]*$/u),
+            content: z.string().max(256 * 1024),
+          })
+          .strict(),
+      )
+      .max(32)
+      .default([]),
+    clientCssPath: z
+      .string()
+      .regex(/^assets\/[a-z0-9][a-z0-9/_-]*\.module\.css$/u)
+      .optional(),
+    pages: z.array(HostPageContributionSchema).max(8).default([]),
+    permissions: HostUiPermissionDeclarationSchema.default({ permissions: [], networkOrigins: [] }),
+  })
+  .strict()
+
+const preflightNekroNxtAuthoringDefinition = (
+  input: DynamicAuthoringPackageDefinitionInput,
+): DynamicAuthoringPackageDefinitionInput => {
+  const resourceEntries = Object.entries(input.resources)
+  const resourcePaths = new Set(resourceEntries.map(([resourcePath]) => resourcePath))
+  if (resourcePaths.size !== resourceEntries.length) throw new Error('动态页面预检失败：资源路径不能重复。')
+  if (input.contributions.length > 8) throw new Error('动态页面预检失败：一个 Revision 最多声明 8 个页面入口。')
+  const pages = input.contributions.map((contribution) => HostPageContributionSchema.parse(contribution))
+  if (new Set(pages.map(({ entryId }) => entryId)).size !== pages.length) {
+    throw new Error('动态页面预检失败：页面 entryId 不能重复。')
+  }
+  HostUiPermissionDeclarationSchema.parse(input.permissions)
+  if (pages.length === 0 && (input.permissions.permissions.length > 0 || input.permissions.networkOrigins.length > 0)) {
+    throw new Error('动态页面预检失败：没有页面贡献时不能声明 Host UI 权限。')
+  }
+  if (input.scope === 'host-ui' && pages.length === 0) {
+    throw new Error('动态页面预检失败：host-ui 候选必须声明至少一个页面入口。')
+  }
+  if (input.scope === 'agent' && pages.length > 0) {
+    throw new Error('动态页面预检失败：智能体候选不能贡献顶级页面。')
+  }
+  if (input.scope === 'host-adapter' && input.code.host === undefined) {
+    throw new Error('动态 Adapter 预检失败：host-adapter 候选必须包含 Host 源码。')
+  }
+  if (
+    (pages.length > 0 || resourceEntries.length > 0 || input.clientCss !== undefined) &&
+    input.code.client === undefined
+  ) {
+    throw new Error('动态页面预检失败：页面声明和 Client 资源必须配套 Client 源码。')
+  }
+  const referencedResources = new Set<string>()
+  if (input.clientCss) {
+    const source = input.resources[input.clientCss.path]
+    if (source === undefined) throw new Error(`动态页面预检失败：缺少 CSS 资源 ${input.clientCss.path}。`)
+    const actualDigest = createHash('sha256').update(source).digest('hex')
+    if (actualDigest !== input.clientCss.sha256)
+      throw new Error(`动态页面预检失败：CSS 摘要不匹配 ${input.clientCss.path}。`)
+    validateHostUiCss(source)
+    referencedResources.add(input.clientCss.path)
+  }
+  for (const page of pages) {
+    if (page.icon.kind !== 'svg') continue
+    const source = input.resources[page.icon.path]
+    if (source === undefined) throw new Error(`动态页面预检失败：缺少图标资源 ${page.icon.path}。`)
+    const actualDigest = createHash('sha256').update(source).digest('hex')
+    if (actualDigest !== page.icon.sha256) throw new Error(`动态页面预检失败：SVG 摘要不匹配 ${page.icon.path}。`)
+    validateHostUiSvg(source)
+    referencedResources.add(page.icon.path)
+  }
+  for (const [resourcePath] of resourceEntries) {
+    if (!referencedResources.has(resourcePath)) {
+      throw new Error(`动态页面预检失败：资源没有被 CSS 或页面图标声明引用：${resourcePath}。`)
+    }
+  }
+  return input
+}
+
+const dynamicPreviewClientCode = (input: DynamicAuthoringPackageDefinitionInput): string | undefined => {
+  const source = input.code.client
+  if (source === undefined || input.clientCss === undefined) return source
+  const css = input.resources[input.clientCss.path]
+  if (css === undefined) throw new Error(`动态页面预览缺少 CSS 资源 ${input.clientCss.path}。`)
+  return `styles.insert(${JSON.stringify(scopeHostUiCss(css, 'dynamic-preview'))})\n${source}`
+}
+
+const authoringDefinitionFromFacade = (raw: unknown): DynamicAuthoringPackageDefinitionInput => {
+  const parsed = DynamicAuthoringFacadeInputSchema.parse(raw)
+  const resources: Record<string, string> = {}
+  for (const resource of parsed.resources) {
+    if (resources[resource.path] !== undefined) throw new Error(`动态页面预检失败：资源路径重复 ${resource.path}。`)
+    resources[resource.path] = resource.content
+  }
+  const clientCss =
+    parsed.clientCssPath === undefined
+      ? undefined
+      : {
+          path: parsed.clientCssPath,
+          sha256: createHash('sha256')
+            .update(resources[parsed.clientCssPath] ?? '')
+            .digest('hex'),
+        }
+  const code = {
+    ...(parsed.code.host === undefined ? {} : { host: parsed.code.host }),
+    ...(parsed.code.client === undefined ? {} : { client: parsed.code.client }),
+  }
+  return preflightNekroNxtAuthoringDefinition({
+    plugin: parsed.plugin,
+    name: parsed.name,
+    purpose: parsed.purpose,
+    scope: parsed.scope,
+    code,
+    resources,
+    ...(clientCss === undefined ? {} : { clientCss }),
+    permissions: parsed.permissions,
+    contributions: parsed.pages.map((page) => JsonValueSchema.parse(page)),
+  })
+}
+
+const preflightNekroNxtDynamicSource = (request: DynamicCordisDefineRequest): void => {
+  const client = request.code.client
+  if (client === undefined) return
+  const registersPages = /\b(?:ctx\.)?pages\s*\.\s*(?:register|declarePermissions)\b/u.test(client)
+  const injectsPages = /\binject\s*:\s*\[[^\]]*['"]pages['"][^\]]*\]/su.test(client)
+  const injectsUi = /\binject\s*:\s*\[[^\]]*['"]ui['"][^\]]*\]/su.test(client)
+  if (registersPages && !injectsPages) {
+    throw new Error("动态页面预检失败：Client 使用了 pages Service，但没有声明 inject: ['pages', 'ui']。")
+  }
+  if (registersPages && !injectsUi) {
+    throw new Error("动态页面预检失败：Client 必须声明 inject: ['pages', 'ui'] 并使用 NekroNXT UI Kit。")
+  }
+  const absolutePagePath = /\b(?:startPath|path)\s*:\s*['"]\//u.exec(client)
+  if (absolutePagePath) {
+    throw new Error('动态页面预检失败：startPath、导航 path 和 navigate() 必须使用入口内相对路径，不能以 / 开头。')
+  }
+}
+
 /** DSH public Runner with NekroNxt's per-Episode authoring budget. */
 class NekroNxtDynamicCordisRunner extends DynamicCordisRunnerService {
   private state: DynamicAuthoringPolicyState | undefined
@@ -1105,6 +1294,9 @@ class NekroNxtDynamicCordisRunner extends DynamicCordisRunnerService {
       readonly renderedSlots: readonly AgentClientSlotName[]
       readonly renderedHostSlots: readonly { readonly name: AdapterClientSlotName; readonly key: string }[]
       readonly renderedPages: readonly HostPageContribution[]
+      readonly usedUiComponents: readonly HostUiKitComponentName[]
+      readonly pageGeometry: readonly HostUiPageGeometryEvidence[]
+      readonly navigationEntries: readonly string[]
       readonly permissions: HostUiPermissionDeclaration
     }
   >()
@@ -1114,6 +1306,19 @@ class NekroNxtDynamicCordisRunner extends DynamicCordisRunnerService {
   >()
   private readonly adapterPackages = new Set<string>()
   private readonly originalHostByPackage = new Map<string, string>()
+  private readonly authoringPersistenceByPackage = new Map<string, Promise<void>>()
+  private authoringPersistenceTail: Promise<void> = Promise.resolve()
+  private definingAuthoringSnapshot: DynamicAuthoringSnapshot | undefined
+  private suppressAuthoringPersistence = false
+  private onAuthoringDefinition:
+    | ((
+        request: DynamicCordisDefineRequest,
+        receipt: DynamicCordisDefineReceipt,
+        snapshot: DynamicAuthoringSnapshot,
+      ) => Promise<void>)
+    | undefined
+  private onAuthoringRun:
+    ((pluginId: string, packageId: string, result: DynamicCordisRunResponse) => Promise<void>) | undefined
 
   constructor(context: Context, config: { readonly vmTimeoutMs?: number }) {
     super(context, config)
@@ -1127,6 +1332,94 @@ class NekroNxtDynamicCordisRunner extends DynamicCordisRunnerService {
       turn: 0,
       consecutiveFailures: 0,
       repeatedFingerprintCount: 0,
+    }
+  }
+
+  configureAuthoringLedger(callbacks: {
+    readonly definition: (
+      request: DynamicCordisDefineRequest,
+      receipt: DynamicCordisDefineReceipt,
+      snapshot: DynamicAuthoringSnapshot,
+    ) => Promise<void>
+    readonly run: (pluginId: string, packageId: string, result: DynamicCordisRunResponse) => Promise<void>
+  }): void {
+    this.onAuthoringDefinition = callbacks.definition
+    this.onAuthoringRun = callbacks.run
+  }
+
+  defineAuthoringPackage(sessionId: string, input: DynamicAuthoringPackageDefinitionInput): DynamicCordisDefineReceipt {
+    const parsed = preflightNekroNxtAuthoringDefinition(input)
+    const previewClient = dynamicPreviewClientCode(parsed)
+    const request: DynamicCordisDefineRequest = {
+      sessionId: SessionId(sessionId),
+      plugin:
+        parsed.plugin.kind === 'new'
+          ? { kind: 'new', idPrefix: parsed.plugin.idPrefix }
+          : { kind: 'existing', pluginId: CordisDynamicPluginId(parsed.plugin.pluginId) },
+      name: parsed.name,
+      purpose: parsed.purpose,
+      code: {
+        ...(parsed.code.host === undefined ? {} : { host: parsed.code.host }),
+        ...(previewClient === undefined ? {} : { client: previewClient }),
+      },
+    }
+    this.definingAuthoringSnapshot = {
+      name: parsed.name,
+      purpose: parsed.purpose,
+      scope: parsed.scope,
+      code: parsed.code,
+      resources: parsed.resources,
+      ...(parsed.clientCss === undefined ? {} : { clientCss: parsed.clientCss }),
+      permissions: parsed.permissions,
+      contributions: parsed.contributions,
+    }
+    try {
+      return this.define(request)
+    } finally {
+      this.definingAuthoringSnapshot = undefined
+    }
+  }
+
+  restoreAuthoringPackage(sessionId: string, snapshot: DynamicAuthoringSnapshot): DynamicCordisDefineReceipt {
+    preflightNekroNxtAuthoringDefinition({
+      plugin: { kind: 'new', idPrefix: 'rest' },
+      name: snapshot.name,
+      purpose: snapshot.purpose,
+      scope: snapshot.scope,
+      code: snapshot.code,
+      resources: snapshot.resources,
+      ...(snapshot.clientCss === undefined ? {} : { clientCss: snapshot.clientCss }),
+      permissions: snapshot.permissions,
+      contributions: snapshot.contributions,
+    })
+    const previewClient = dynamicPreviewClientCode({
+      plugin: { kind: 'new', idPrefix: 'rest' },
+      name: snapshot.name,
+      purpose: snapshot.purpose,
+      scope: snapshot.scope,
+      code: snapshot.code,
+      resources: snapshot.resources,
+      ...(snapshot.clientCss === undefined ? {} : { clientCss: snapshot.clientCss }),
+      permissions: snapshot.permissions,
+      contributions: snapshot.contributions,
+    })
+    const code = {
+      ...(snapshot.code.host === undefined ? {} : { host: snapshot.code.host }),
+      ...(previewClient === undefined ? {} : { client: previewClient }),
+    }
+    this.suppressAuthoringPersistence = true
+    this.definingAuthoringSnapshot = snapshot
+    try {
+      return this.define({
+        sessionId: SessionId(sessionId),
+        plugin: { kind: 'new', idPrefix: 'rest' },
+        name: snapshot.name,
+        purpose: snapshot.purpose,
+        code,
+      })
+    } finally {
+      this.definingAuthoringSnapshot = undefined
+      this.suppressAuthoringPersistence = false
     }
   }
 
@@ -1147,6 +1440,7 @@ class NekroNxtDynamicCordisRunner extends DynamicCordisRunnerService {
 
   override define(request: DynamicCordisDefineRequest): DynamicCordisDefineReceipt {
     this.assertWritable('define')
+    preflightNekroNxtDynamicSource(request)
     const state = this.requireState()
     if (request.plugin.kind === 'new' && state.primaryPluginId !== undefined) {
       throw new Error(`当前 Episode 已拥有 Plugin ${state.primaryPluginId}；修复必须使用 kind:existing。`)
@@ -1155,7 +1449,12 @@ class NekroNxtDynamicCordisRunner extends DynamicCordisRunnerService {
       throw new Error(`只能向当前 Episode 的 Plugin ${state.primaryPluginId ?? '（尚未创建）'} 追加 Package。`)
     }
     try {
-      const adapterHost = isAdapterDynamicHostSource(request.code.host) ? request.code.host : undefined
+      const adapterHost =
+        this.definingAuthoringSnapshot?.scope === 'host-adapter'
+          ? request.code.host
+          : this.definingAuthoringSnapshot === undefined && isLegacyAdapterDynamicHostSource(request.code.host)
+            ? request.code.host
+            : undefined
       const receipt = super.define(
         adapterHost === undefined
           ? request
@@ -1169,6 +1468,24 @@ class NekroNxtDynamicCordisRunner extends DynamicCordisRunnerService {
         this.originalHostByPackage.set(receipt.packageId, adapterHost)
       }
       if (request.plugin.kind === 'new') this.state = { ...state, primaryPluginId: receipt.pluginId }
+      if (this.onAuthoringDefinition && !this.suppressAuthoringPersistence) {
+        const persistDefinition = this.onAuthoringDefinition
+        const snapshot = this.definingAuthoringSnapshot ?? {
+          name: request.name,
+          purpose: request.purpose,
+          scope: adapterHost === undefined ? 'agent' : 'host-adapter',
+          code: request.code,
+          resources: {},
+          permissions: { permissions: [], networkOrigins: [] },
+          contributions: [],
+        }
+        const persistence = this.authoringPersistenceTail.then(() => persistDefinition(request, receipt, snapshot))
+        this.authoringPersistenceTail = persistence.catch(() => undefined)
+        this.authoringPersistenceByPackage.set(receipt.packageId, persistence)
+        void persistence.catch((error: unknown) => {
+          console.error('[nekro-nxt] 动态创造账本写入失败：', error)
+        })
+      }
       return receipt
     } catch (error) {
       this.recordFailure('define', error instanceof Error ? error.message : String(error))
@@ -1199,6 +1516,7 @@ class NekroNxtDynamicCordisRunner extends DynamicCordisRunnerService {
     signal?: AbortSignal,
   ): Promise<DynamicCordisRunResponse> {
     this.assertWritable('run')
+    await this.authoringPersistenceByPackage.get(packageId)
     const tools = this.runtimeContext.get('tools')
     const before =
       tools instanceof ToolRuntime ? new Set(tools.schemas(scopeOf(agent.ctx)).map(({ name }) => name)) : new Set()
@@ -1223,6 +1541,7 @@ class NekroNxtDynamicCordisRunner extends DynamicCordisRunnerService {
         this.clearFailures()
       }
     } else if (!result.ok) this.recordFailure(result.reason, result.message)
+    await this.onAuthoringRun?.(pluginId, packageId, result)
     return result
   }
 
@@ -1237,6 +1556,9 @@ class NekroNxtDynamicCordisRunner extends DynamicCordisRunnerService {
     readonly renderedSlots: readonly AgentClientSlotName[]
     readonly renderedHostSlots: readonly { readonly name: AdapterClientSlotName; readonly key: string }[]
     readonly renderedPages: readonly HostPageContribution[]
+    readonly usedUiComponents: readonly HostUiKitComponentName[]
+    readonly pageGeometry: readonly HostUiPageGeometryEvidence[]
+    readonly navigationEntries: readonly string[]
     readonly permissions: HostUiPermissionDeclaration
   } {
     const row = this.snapshot(agent).find((candidate) => candidate.pluginId === pluginId)
@@ -1262,6 +1584,9 @@ class NekroNxtDynamicCordisRunner extends DynamicCordisRunnerService {
       renderedSlots: clientEvidence?.renderedSlots ?? [],
       renderedHostSlots: clientEvidence?.renderedHostSlots ?? [],
       renderedPages: clientEvidence?.renderedPages ?? [],
+      usedUiComponents: clientEvidence?.usedUiComponents ?? [],
+      pageGeometry: clientEvidence?.pageGeometry ?? [],
+      navigationEntries: clientEvidence?.navigationEntries ?? [],
       permissions: clientEvidence?.permissions ?? { permissions: [], networkOrigins: [] },
     }
   }
@@ -1274,6 +1599,9 @@ class NekroNxtDynamicCordisRunner extends DynamicCordisRunnerService {
     renderedSlots: readonly AgentClientSlotName[],
     renderedHostSlots: readonly { readonly name: AdapterClientSlotName; readonly key: string }[],
     renderedPages: readonly HostPageContribution[],
+    usedUiComponents: readonly HostUiKitComponentName[],
+    pageGeometry: readonly HostUiPageGeometryEvidence[],
+    navigationEntries: readonly string[],
     permissions: HostUiPermissionDeclaration,
   ): void {
     const row = this.snapshot(agent).find((candidate) => candidate.pluginId === pluginId)
@@ -1285,11 +1613,17 @@ class NekroNxtDynamicCordisRunner extends DynamicCordisRunnerService {
     if (renderedSlots.length === 0 && renderedHostSlots.length === 0 && renderedPages.length === 0) {
       throw new Error('Dynamic Client verification must contain a product Slot or page.')
     }
+    if (renderedPages.length > 0 && usedUiComponents.length === 0) {
+      throw new Error('动态页面必须实际使用 NekroNXT UI Kit。')
+    }
     this.clientEvidenceByPackage.set(packageId, {
       pluginRunId,
       renderedSlots: [...new Set(renderedSlots)],
       renderedHostSlots: [...new Map(renderedHostSlots.map((slot) => [slot.key, slot])).values()],
       renderedPages,
+      usedUiComponents: [...new Set(usedUiComponents)],
+      pageGeometry,
+      navigationEntries: [...new Set(navigationEntries)],
       permissions,
     })
   }
@@ -1398,6 +1732,112 @@ class NekroNxtDynamicCordisRunner extends DynamicCordisRunnerService {
     return this.state
   }
 }
+
+const nekroNxtExtensionDefineTool = (runner: NekroNxtDynamicCordisRunner, sessionId: string) =>
+  defineTool({
+    name: 'nekro_nxt_extension_define',
+    description:
+      '定义一个 NekroNXT 动态扩展候选，并在执行前完成页面、权限、CSS 和 SVG 的宿主预检。普通 Host Tool、RPC 或 Slot 也可使用；开发专属页面或携带资源时必须使用本工具。定义不会运行代码，成功后使用 cordis_run 启动返回的精确 Package。',
+    parameters: {
+      plugin: {
+        required: true,
+        oneOf: [
+          {
+            type: 'object',
+            additionalProperties: false,
+            properties: {
+              kind: { type: 'string', const: 'new', required: true },
+              idPrefix: {
+                type: 'string',
+                required: true,
+                description: '3–6 个小写英文字母组成的语义前缀。',
+              },
+            },
+          },
+          {
+            type: 'object',
+            additionalProperties: false,
+            properties: {
+              kind: { type: 'string', const: 'existing', required: true },
+              pluginId: { type: 'string', required: true, description: '当前任务已有 Plugin 的精确标识。' },
+            },
+          },
+        ],
+      },
+      name: { type: 'string', required: true, description: '用户可读的候选名称。' },
+      purpose: { type: 'string', required: true, description: '一句话说明这个候选为用户完成什么。' },
+      scope: {
+        type: 'string',
+        enum: ['agent', 'host-adapter', 'host-ui'],
+        required: true,
+        description: '智能体工具/局部界面使用 agent，平台适配器使用 host-adapter，专属页面使用 host-ui。',
+      },
+      code: {
+        type: 'object',
+        additionalProperties: false,
+        required: true,
+        properties: {
+          host: { type: 'string', description: '返回 Host Cordis Plugin 的纯 JavaScript 函数体。' },
+          client: { type: 'string', description: '返回 Client Cordis Plugin 的纯 JavaScript 函数体。' },
+        },
+      },
+      resources: {
+        type: 'array',
+        items: {
+          type: 'object',
+          additionalProperties: false,
+          properties: {
+            path: { type: 'string', required: true, description: 'assets/ 下的 CSS Module 或 SVG 相对路径。' },
+            content: { type: 'string', required: true, description: 'UTF-8 资源源码。' },
+          },
+        },
+        description: '页面资源；每个资源必须被 clientCssPath 或页面 SVG 图标精确引用。',
+      },
+      clientCssPath: {
+        type: 'string',
+        description: 'resources 中作为 Client CSS Module 的路径，必须以 .module.css 结尾。',
+      },
+      pages: {
+        type: 'array',
+        items: { type: 'json' },
+        description: '0–8 个符合 HostPageContribution 的完整页面声明；entryId 和相对路径必须稳定。',
+      },
+      permissions: {
+        type: 'object',
+        additionalProperties: false,
+        properties: {
+          permissions: { type: 'array', items: { type: 'string' }, required: true },
+          networkOrigins: { type: 'array', items: { type: 'string' }, required: true },
+        },
+        description: 'Client 需要的完整 Host UI 权限和 HTTP(S) origin 清单。',
+      },
+    },
+    output: {
+      schema: {
+        type: 'object',
+        additionalProperties: false,
+        properties: {
+          pluginId: { type: 'string', required: true },
+          packageId: { type: 'string', required: true },
+          name: { type: 'string', required: true },
+          purpose: { type: 'string', required: true },
+          hasHostHalf: { type: 'boolean', required: true },
+          hasClientHalf: { type: 'boolean', required: true },
+        },
+      },
+      render: (_args, value) => [
+        {
+          type: 'text',
+          text: `已生成候选 ${value.name}（${value.pluginId}/${value.packageId}），尚未运行；接下来使用 cordis_run 启动并验证。`,
+        },
+      ],
+      presentationMeta: (_args, value) => ({ pluginId: value.pluginId, packageId: value.packageId }),
+    },
+    async execute(args) {
+      const definition = authoringDefinitionFromFacade(args)
+      return Promise.resolve(runner.defineAuthoringPackage(sessionId, definition))
+    },
+  })
 
 const nekroImageAttachmentId = (assetId: AssetId, detail: EffectiveImageDetail): ReturnType<typeof AttachmentId> =>
   AttachmentId(`nxt-asset:${assetId}:${detail}`)
@@ -1509,6 +1949,8 @@ const requireNekroAssetAttachmentStore = (store: AttachmentStore): NekroAssetAtt
 }
 
 const CHANNEL_MESSAGE_POLICY = `你正在通过 NekroNXT 参与一个真实频道互动。模型生成的普通 text 或 reasoning 只会作为内部运行轨迹保存，并仅在系统后台可见，频道成员完全看不到；只有成功调用 **send_channel_message**，内容才会成为频道中的用户可见发言，请在对话中根据人设给予频道用户积极及时的响应，例如在长工作流程中先调用 **send_channel_message** 说明要做什么，避免用户干等不知道你是否在工作！一次 send_channel_message 不会结束当前 Turn；发送后仍可继续使用其他工具和发送后续消息。send_message 只用于给可继续的子智能体安排后续工作，不会向频道发送内容。
+
+按频道触发策略需要你回应的消息会建立一项回应义务。该义务只能由它之后确认送达的 **send_channel_message**，或显式调用 **finish_channel_turn** 清除；更早的发送不能覆盖后来注入的新请求。任务已经完成且希望立即停止、明确无需发言，或确实无法回应时，必须把 finish_channel_turn 作为最后一个工具调用，并提供真实原因。不要用普通 text/reasoning 冒充已经回复或已经结束。
 
 对于预计需要多步操作、等待外部结果或较长处理时间的请求，通常适合先简短说明你理解的任务和马上要做的事。后续在出现阶段结果、新发现、风险、阻塞或计划变化时再同步。快速回答可以直接发送结果，不必增加没有信息量的寒暄或重复进度。
 
@@ -1637,6 +2079,61 @@ export const assetCreateTool = (
         assetService,
         ...(options.now === undefined ? {} : { grantedAt: options.now() }),
       })
+    },
+  })
+
+const FinishChannelTurnInputSchema = z
+  .object({
+    outcome: z.enum(['response-complete', 'no-response-needed', 'cannot-respond']),
+    reason: z.string().trim().min(1).max(500),
+  })
+  .strict()
+
+const FinishChannelTurnResultSchema = FinishChannelTurnInputSchema.extend({ status: z.literal('finished') }).strict()
+
+export const finishChannelTurnTool = () =>
+  defineTool({
+    name: 'finish_channel_turn',
+    description:
+      '显式结束当前频道 Turn。把它作为当前处理的最后一个工具调用，不要在同一批次中继续提交其他工作。已发送最终回应后使用 response-complete；明确无需发送频道消息时使用 no-response-needed；因权限、能力或安全限制无法回应时使用 cannot-respond。reason 必须用 1–500 字说明真实原因，只进入后台运行轨迹，不会自动发到频道。普通 text/reasoning 不能替代本工具。',
+    parameters: {
+      outcome: {
+        type: 'string',
+        enum: ['response-complete', 'no-response-needed', 'cannot-respond'],
+        required: true,
+      },
+      reason: { type: 'string', required: true, description: '结束原因，去除首尾空白后为 1–500 字。' },
+    },
+    output: {
+      schema: {
+        type: 'object',
+        additionalProperties: false,
+        properties: {
+          status: { type: 'string', const: 'finished', required: true },
+          outcome: {
+            type: 'string',
+            enum: ['response-complete', 'no-response-needed', 'cannot-respond'],
+            required: true,
+          },
+          reason: { type: 'string', required: true },
+        },
+      },
+      render: (_arguments, value) => [
+        {
+          type: 'text',
+          text: `当前频道 Turn 已明确结束：${FinishChannelTurnResultSchema.parse(value).reason}`,
+        },
+      ],
+      presentationMeta: (_arguments, value) => {
+        const parsed = FinishChannelTurnResultSchema.parse(value)
+        return { outcome: parsed.outcome }
+      },
+    },
+    execute: (args, exec) => {
+      if (!exec.agent) throw new Error('finish_channel_turn requires a live DSH Agent execution.')
+      const parsed = FinishChannelTurnInputSchema.parse(args)
+      exec.concludeTurn()
+      return Promise.resolve(FinishChannelTurnResultSchema.parse({ status: 'finished', ...parsed }))
     },
   })
 
@@ -1774,6 +2271,9 @@ export const channelCommunicationTool = (
           text: `频道消息 ${value.logicalMessageId} 的投递状态：${value.status}。`,
         },
       ],
+      presentationMeta: (_arguments, value) => ({
+        deliveryState: ChannelMessageResultSchema.parse(value).status,
+      }),
     },
     async execute(args, exec) {
       if (!exec.agent) throw new Error('send_channel_message requires a live DSH Agent execution.')
@@ -2729,10 +3229,18 @@ export class DshHostRuntime implements AgentSessionDriver, ExtensionActivationHo
   readonly #revisionBySession = new Map<string, AgentRevisionRecord>()
   readonly #persistentExtensions = new Map<string, PersistentExtensionRegistration>()
   readonly #dshPluginLifecycle: DshPluginLifecycleCoordinator | undefined
+  readonly #authoring: DshHostRuntimeOptions['authoring']
+  readonly #authoringContinuationIds = new Set<string>()
+  readonly #authoringContinuationPending = new Map<string, Promise<void>>()
   readonly #dynamicApprovalListeners = new Set<(event: DynamicApprovalRequestEvent) => void>()
+  readonly #channelReplyGuard: ChannelReplyGuardController
   #disposed = false
 
-  private constructor(context: Context, options: DshHostRuntimeOptions) {
+  private constructor(
+    context: Context,
+    options: DshHostRuntimeOptions,
+    channelReplyGuard: ChannelReplyGuardController,
+  ) {
     this.#context = context
     this.#communication = options.communication
     this.#history = options.history
@@ -2742,6 +3250,8 @@ export class DshHostRuntime implements AgentSessionDriver, ExtensionActivationHo
     this.#resolveAdapterDisplayName = options.resolveAdapterDisplayName ?? (() => undefined)
     this.#developmentWorkspaceRoot = options.developmentWorkspaceRoot
     this.#hasLlmSettings = options.llmSettingsPath !== undefined
+    this.#authoring = options.authoring
+    this.#channelReplyGuard = channelReplyGuard
     this.#dshPluginLifecycle =
       options.dshPlugins === undefined
         ? undefined
@@ -2831,7 +3341,7 @@ export class DshHostRuntime implements AgentSessionDriver, ExtensionActivationHo
       })
       await context.plugin(NekroNxtCompactionEngine, { auto: true })
       await context.plugin(AgentLoop, { agents: [] })
-      mountChannelReplyGuard(context)
+      const channelReplyGuard = mountChannelReplyGuard(context)
       await context.plugin(LlmRetry)
       await context.plugin(ToolCallTimeoutPolicy)
       await context.plugin(QuotaLocalSpillStore, {
@@ -2845,7 +3355,7 @@ export class DshHostRuntime implements AgentSessionDriver, ExtensionActivationHo
         maxUses: 2,
       })
       await context.plugin(SessionCheckpointPolicy)
-      const runtime = new DshHostRuntime(context, options)
+      const runtime = new DshHostRuntime(context, options, channelReplyGuard)
       await runtime.#dshPluginLifecycle?.initialize()
       return runtime
     } catch (error) {
@@ -3402,6 +3912,13 @@ export class DshHostRuntime implements AgentSessionDriver, ExtensionActivationHo
         auxiliary = undefined
       }
     }
+    const recoveredAuthoringPackages: Array<{
+      readonly task: Awaited<ReturnType<DynamicAuthoringService['recoveryCandidates']>>[number]['task']
+      readonly pluginId: string
+      readonly packageId: string
+      readonly shouldRun: boolean
+      readonly hasClient: boolean
+    }> = []
     const setup = async (agentContext: Context): Promise<void> => {
       agentContext.effect(() => {
         this.#productAgentBySession.set(sessionId, revision.agentId)
@@ -3455,6 +3972,7 @@ export class DshHostRuntime implements AgentSessionDriver, ExtensionActivationHo
       agentContext.tools.register(
         channelCommunicationTool(input.episodeId, input.channelId, this.#assets, this.#communication),
       )
+      agentContext.tools.register(finishChannelTurnTool())
       if (this.#communication.supportsRetraction?.(input.channelId) === true && this.#communication.retractMessage) {
         agentContext.tools.register(retractChannelMessageTool(input.episodeId, this.#communication))
       }
@@ -3498,6 +4016,64 @@ export class DshHostRuntime implements AgentSessionDriver, ExtensionActivationHo
           throw new Error('Dynamic Cordis runner did not publish its isolated Service.')
         }
         runner.bindEpisode(input.episodeId)
+        if (this.#authoring) {
+          runner.configureAuthoringLedger({
+            definition: async (_request, receipt, snapshot) => {
+              const initiatingEventId = this.#authoring?.resolveInitiatingEvent(input.episodeId)
+              if (!initiatingEventId) throw new Error('动态创造任务缺少发起消息。')
+              await this.#authoring?.service.recordDefinition({
+                agentId: revision.agentId,
+                channelId: input.channelId,
+                episodeId: input.episodeId,
+                initiatingEventId,
+                approvalPolicy:
+                  revision.dynamicClientApprovalPolicy === 'automatic' ? 'fully-automatic' : 'risk-stable',
+                pluginKey: receipt.pluginId,
+                runnerPackageId: receipt.packageId,
+                snapshot,
+              })
+            },
+            run: async (pluginId, packageId) => {
+              const row = runner.inventory().find((candidate) => candidate.pluginId === pluginId)
+              if (row) {
+                this.#syncAuthoringRow(input.episodeId, row, packageId)
+                if (row.latestRun?.status === 'running' && row.latestRun.client.status === 'absent') {
+                  await this.#completeAuthoringVerification(sessionId, pluginId, packageId)
+                  const verifiedRow = runner.inventory().find((candidate) => candidate.pluginId === pluginId)
+                  if (verifiedRow) this.#queueAuthoringContinuation(input.episodeId, verifiedRow)
+                } else if (row.latestRun?.status === 'failed' || row.latestRun?.status === 'cancelled') {
+                  this.#queueAuthoringContinuation(input.episodeId, row)
+                }
+              }
+            },
+          })
+          const recoveryCandidates = await this.#authoring.service.recoveryCandidates(input.episodeId)
+          for (const candidate of recoveryCandidates) {
+            try {
+              const receipt = runner.restoreAuthoringPackage(sessionId, candidate.snapshot)
+              this.#authoring.service.rebindRecoveredAttempt({
+                task: candidate.task,
+                attempt: candidate.attempt,
+                pluginKey: receipt.pluginId,
+                runnerPackageId: receipt.packageId,
+                shouldRun: candidate.shouldRun,
+              })
+              recoveredAuthoringPackages.push({
+                task: candidate.task,
+                pluginId: receipt.pluginId,
+                packageId: receipt.packageId,
+                shouldRun: candidate.shouldRun,
+                hasClient: candidate.snapshot.code.client !== undefined,
+              })
+            } catch (error) {
+              this.#authoring.service.interruptTask(
+                candidate.task,
+                error instanceof Error ? error.message : String(error),
+                candidate.attempt.id,
+              )
+            }
+          }
+        }
         dynamicContext.effect(
           () =>
             dynamicContext.on('cordis/request-run', (request: DynamicCordisRunRequest) => {
@@ -3537,6 +4113,7 @@ export class DshHostRuntime implements AgentSessionDriver, ExtensionActivationHo
           'nekro-nxt: inspect provider',
         )
         await dynamicContext.plugin(CordisTool)
+        agentContext.tools.register(nekroNxtExtensionDefineTool(runner, sessionId))
         dynamicContext.effect(() => {
           if (this.#dynamicSessions.has(sessionId)) {
             throw new Error(`Dynamic creation is already mounted for DSH Session: ${sessionId}`)
@@ -3568,6 +4145,17 @@ export class DshHostRuntime implements AgentSessionDriver, ExtensionActivationHo
           setup,
         })
     this.#handles.set(sessionId, handle)
+    for (const recovered of recoveredAuthoringPackages) {
+      if (!recovered.shouldRun) continue
+      const run = this.runDynamicPackage(sessionId, recovered.pluginId, recovered.packageId, 'run')
+      if (!recovered.hasClient) {
+        await run
+      } else {
+        void run.catch((error: unknown) => {
+          this.#authoring?.service.interruptTask(recovered.task, error instanceof Error ? error.message : String(error))
+        })
+      }
+    }
     if (supportsImage) this.#imageInputSessions.add(sessionId)
     await this.#restoreLatestPendingVisualContext(handle.agent)
     const hasHandoffMessage =
@@ -3665,6 +4253,7 @@ export class DshHostRuntime implements AgentSessionDriver, ExtensionActivationHo
         channelEventIds: input.events.map(({ id }) => id),
       },
     }) satisfies UserMessage
+    this.#channelReplyGuard.rememberAdmission(agent, input.admissionId, input.replyRequired)
     if (input.mode === 'inject') agent.inject(message)
     else {
       this.#dynamicSessions.get(input.dshSessionId)?.runner.beginOrdinaryTurn()
@@ -3887,6 +4476,25 @@ export class DshHostRuntime implements AgentSessionDriver, ExtensionActivationHo
     await agent.whenIdle()
   }
 
+  async whenAuthoringSettled(dshSessionId: string): Promise<void> {
+    const agent = this.#context.agents.get(SessionId(dshSessionId))
+    if (!agent) throw new Error(`DSH Agent Session is not live: ${dshSessionId}`)
+    const continuationPrefix = `${agent.id}:`
+    for (let round = 0; round < 16; round += 1) {
+      const pending = [...this.#authoringContinuationPending]
+        .filter(([continuationId]) => continuationId.startsWith(continuationPrefix))
+        .map(([, continuation]) => continuation)
+      await Promise.all(pending)
+      await agent.whenIdle()
+      await Promise.resolve()
+      const hasPending = [...this.#authoringContinuationPending.keys()].some((continuationId) =>
+        continuationId.startsWith(continuationPrefix),
+      )
+      if (!hasPending && agent.status !== 'running') return
+    }
+    throw new Error('智能体扩展开发收尾没有静止，暂时不能保存候选。')
+  }
+
   /** Aggregate the public DSH status of every live Session owned by one product intelligent-agent. */
   runtimeStatus(agentId: AgentRevisionRecord['agentId']): AgentStatus {
     this.#assertActive()
@@ -3988,6 +4596,12 @@ export class DshHostRuntime implements AgentSessionDriver, ExtensionActivationHo
     return agent.session.events
   }
 
+  normalizedSessionEvents(dshSessionId: string) {
+    const agent = this.#context.agents.get(SessionId(dshSessionId))
+    if (!agent) throw new Error(`DSH Agent Session is not live: ${dshSessionId}`)
+    return normalizeSessionEvents(agent.session.events, (turn) => this.#channelReplyGuard.responseState(agent, turn))
+  }
+
   async compactSessionNow(dshSessionId: string, signal?: AbortSignal): Promise<boolean> {
     this.#assertActive()
     const agent = this.#context.agents.get(SessionId(dshSessionId))
@@ -4015,6 +4629,14 @@ export class DshHostRuntime implements AgentSessionDriver, ExtensionActivationHo
       purpose: input.purpose,
       code: input.code,
     })
+  }
+
+  defineDynamicAuthoringPackage(
+    dshSessionId: string,
+    input: DynamicAuthoringPackageDefinitionInput,
+  ): DynamicCordisDefineReceipt {
+    const { agent, runner } = this.#dynamicRuntime(dshSessionId)
+    return runner.defineAuthoringPackage(agent.id, input)
   }
 
   runDynamicPackage(
@@ -4054,6 +4676,43 @@ export class DshHostRuntime implements AgentSessionDriver, ExtensionActivationHo
   inspectDynamicPackage(dshSessionId: string, pluginId: string, packageId: string): DynamicCordisPackageInspection {
     const { agent, runner } = this.#dynamicRuntime(dshSessionId)
     return runner.inspectPackage(agent, CordisDynamicPluginId(pluginId), CordisDynamicPackageId(packageId))
+  }
+
+  dynamicAuthoringSnapshot(
+    dshSessionId: string,
+    pluginId: string,
+    packageId: string,
+  ): Promise<DynamicAuthoringSnapshot | undefined> {
+    const episodeId = this.#episodeBySession.get(dshSessionId)
+    if (!this.#authoring || !episodeId) return Promise.resolve(undefined)
+    return this.#authoring.service.snapshotForRunnerPackage(episodeId, pluginId, packageId)
+  }
+
+  async deleteAuthoringTask(taskId: AuthoringTaskId): Promise<boolean> {
+    this.#assertActive()
+    if (!this.#authoring) throw new Error('动态创造账本未启用。')
+    const task = this.#authoring.service.getTask(taskId)
+    if (!task) return false
+    const dshSessionId = [...this.#episodeBySession].find(([, episodeId]) => episodeId === task.episodeId)?.[0]
+    if (dshSessionId !== undefined) {
+      const stopped = await this.stopDynamicPlugin(dshSessionId, task.pluginKey)
+      if (!stopped.ok && stopped.reason !== 'plugin-missing' && stopped.reason !== 'not-running') {
+        throw new Error(stopped.message)
+      }
+      const stoppedRow = this.dynamicInventory(dshSessionId).find((row) => row.pluginId === task.pluginKey)
+      if (stoppedRow?.latestRun) {
+        this.#syncAuthoringRow(task.episodeId, stoppedRow, stoppedRow.latestRun.packageId)
+      }
+      const undefinedPlugin = await this.undefineDynamicPlugin(dshSessionId, task.pluginKey)
+      if (!undefinedPlugin.ok && undefinedPlugin.reason !== 'plugin-missing') {
+        throw new Error(undefinedPlugin.message)
+      }
+    }
+    const settledTask = this.#authoring.service.getTask(taskId)
+    if (settledTask && !['interrupted', 'stopped', 'completed'].includes(settledTask.status)) {
+      this.#authoring.service.interruptTask(settledTask, '删除前未找到可继续运行的临时 Plugin。')
+    }
+    return this.#authoring.service.deleteTask(taskId)
   }
 
   async verifyDynamicPackage(dshSessionId: string, pluginId: string, packageId: string) {
@@ -4195,9 +4854,190 @@ export class DshHostRuntime implements AgentSessionDriver, ExtensionActivationHo
     return { ...evidence, contributions, toolInvocations }
   }
 
+  async #completeAuthoringVerification(dshSessionId: string, pluginId: string, packageId: string): Promise<void> {
+    const episodeId = this.#episodeBySession.get(dshSessionId)
+    if (!this.#authoring || !episodeId) return
+    const verified = await this.verifyDynamicPackage(dshSessionId, pluginId, packageId)
+    const snapshot = await this.dynamicAuthoringSnapshot(dshSessionId, pluginId, packageId)
+    const row = this.dynamicInventory(dshSessionId).find((candidate) => candidate.pluginId === pluginId)
+    const latest = row?.latestRun
+    if (!latest || latest.packageId !== packageId || latest.status !== 'running') {
+      throw new Error('动态扩展验证完成时，候选已经不再是当前运行版本。')
+    }
+    this.#authoring.service.syncAttempt({
+      episodeId,
+      pluginKey: pluginId,
+      runnerPackageId: packageId,
+      runnerRunId: verified.pluginRunId,
+      state: 'active',
+      taskStatus: 'ready',
+      host: {
+        status: latest.host.status,
+        waitingFor: latest.host.waitingFor,
+        ...(latest.host.error === undefined ? {} : { error: latest.host.error }),
+      },
+      client: {
+        status: latest.client.status,
+        waitingFor: latest.client.waitingFor,
+        ...(latest.client.error === undefined ? {} : { error: latest.client.error }),
+      },
+      verification: {
+        hostStarted: latest.host.status === 'running' || latest.host.status === 'absent',
+        clientLoaded: latest.client.status === 'running' || latest.client.status === 'absent',
+        renderedSlots: verified.renderedSlots,
+        renderedPages: verified.renderedPages,
+        usedUiComponents: verified.usedUiComponents,
+        pageGeometry: verified.pageGeometry,
+        rpcCalls: verified.rpcMethods,
+        toolInvocations: verified.toolInvocations,
+        navigationChecks: verified.navigationEntries,
+        resourceChecks: Object.keys(snapshot?.resources ?? {}).sort(),
+        stoppedCleanly: false,
+      },
+      eventKind: 'verification-completed',
+      eventPayload: {
+        renderedSlots: [...verified.renderedSlots],
+        renderedPages: verified.renderedPages.map((page) => page.entryId),
+        toolInvocations: verified.toolInvocations.map(({ name }) => name),
+      },
+    })
+  }
+
   dynamicInventory(dshSessionId: string): readonly DynamicCordisInventoryRow[] {
     const { agent, runner } = this.#dynamicRuntime(dshSessionId)
     return runner.inventory().filter(({ agentId }) => agentId === agent.id)
+  }
+
+  #syncAuthoringRow(episodeId: EpisodeId, row: DynamicCordisInventoryRow, packageId: string): void {
+    const latest = row.latestRun
+    if (!this.#authoring || !latest || latest.packageId !== packageId) return
+    const state =
+      latest.status === 'awaiting-approval'
+        ? 'awaiting-approval'
+        : latest.status === 'starting-host'
+          ? 'starting-host'
+          : latest.status === 'client-pending'
+            ? 'loading-client'
+            : latest.status === 'running' || latest.status === 'waiting'
+              ? 'active'
+              : latest.status === 'rejected'
+                ? 'rejected'
+                : latest.status === 'stopped'
+                  ? 'stopped'
+                  : 'failed'
+    const taskStatus =
+      latest.status === 'awaiting-approval'
+        ? 'awaiting-approval'
+        : latest.status === 'failed' || latest.status === 'cancelled'
+          ? 'failed'
+          : latest.status === 'rejected'
+            ? 'working'
+            : latest.status === 'stopped'
+              ? 'stopped'
+              : 'running'
+    const eventKind =
+      latest.status === 'awaiting-approval'
+        ? 'approval-requested'
+        : latest.status === 'failed' || latest.status === 'cancelled'
+          ? 'attempt-failed'
+          : latest.status === 'rejected'
+            ? 'approval-rejected'
+            : latest.status === 'stopped'
+              ? 'task-stopped'
+              : 'phase-changed'
+    this.#authoring.service.syncAttempt({
+      episodeId,
+      pluginKey: row.pluginId,
+      runnerPackageId: latest.packageId,
+      runnerRunId: latest.pluginRunId,
+      state,
+      taskStatus,
+      host: {
+        status: latest.host.status,
+        waitingFor: latest.host.waitingFor,
+        ...(latest.host.error === undefined ? {} : { error: latest.host.error }),
+      },
+      client: {
+        status: latest.client.status,
+        waitingFor: latest.client.waitingFor,
+        ...(latest.client.error === undefined ? {} : { error: latest.client.error }),
+      },
+      ...(latest.error === undefined
+        ? {}
+        : {
+            error: {
+              phase: latest.error.phase,
+              message: latest.error.message,
+              ...(latest.error.stack === undefined ? {} : { stack: latest.error.stack }),
+              repairable: latest.error.phase !== 'approval',
+            },
+          }),
+      eventKind,
+      eventPayload: { status: latest.status },
+    })
+  }
+
+  #queueAuthoringContinuation(episodeId: EpisodeId, row: DynamicCordisInventoryRow): void {
+    const latest = row.latestRun
+    if (!this.#authoring || !latest || !['running', 'failed', 'cancelled'].includes(latest.status)) {
+      return
+    }
+    const task = this.#authoring.service.taskForRunner(episodeId, row.pluginId)
+    const dshSessionId = [...this.#episodeBySession].find(([, ownedEpisodeId]) => ownedEpisodeId === episodeId)?.[0]
+    const agent = dshSessionId === undefined ? undefined : this.#context.agents.get(SessionId(dshSessionId))
+    if (!task || !agent) return
+    const messageId = createHash('sha256')
+      .update(`${task.id}:${latest.packageId}:${latest.pluginRunId ?? 'pending'}:${latest.status}`)
+      .digest('hex')
+      .slice(0, 24)
+    const continuationId = `${agent.id}:${messageId}`
+    if (this.#authoringContinuationIds.has(continuationId)) return
+    this.#authoringContinuationIds.add(continuationId)
+    const content = [
+      '这是 NekroNXT Host 产生的扩展开发状态事件，不是用户的新需求。',
+      `任务：${task.title}（${task.id}）`,
+      `候选：${latest.packageId}；状态：${latest.status}。`,
+      latest.error === undefined
+        ? '运行链路已经返回结果。请核对真实预览和验证证据；成功时向用户清楚说明可见成果，失败时继续修复同一 Plugin。'
+        : `失败阶段：${latest.error.phase}；错误：${latest.error.message}。请读取当前诊断，向同一 Plugin 追加修复候选并继续验证。`,
+      '不需要等待用户再发送“继续”，也不要把定义、审批或 Host 启动误报为最终成功。',
+    ].join('\n')
+    const pending = (async () => {
+      try {
+        await agent.whenIdle()
+        if (this.#context.agents.get(agent.id) !== agent) {
+          this.#authoringContinuationIds.delete(continuationId)
+          return
+        }
+        agent.inject(
+          freezeMessage({
+            id: MessageId(`nxt-authoring-${messageId}`),
+            role: 'user',
+            content: [{ type: 'text', text: content }],
+            source: {
+              kind: 'nekro-nxt-authoring-event',
+              taskId: task.id,
+              pluginId: row.pluginId,
+              packageId: latest.packageId,
+              status: latest.status,
+            },
+          }),
+        )
+        await this.#context.sessions.flush(agent.session)
+      } catch (error) {
+        if (
+          error instanceof Error &&
+          error.message.includes(`message "nxt-authoring-${messageId}" is already pending`)
+        ) {
+          return
+        }
+        this.#authoringContinuationIds.delete(continuationId)
+        console.error('[nekro-nxt] 扩展开发自动续跑事件注入失败：', error)
+      } finally {
+        this.#authoringContinuationPending.delete(continuationId)
+      }
+    })()
+    this.#authoringContinuationPending.set(continuationId, pending)
   }
 
   subscribeDynamicApprovalRequests(listener: (event: DynamicApprovalRequestEvent) => void): () => void {
@@ -4206,11 +5046,18 @@ export class DshHostRuntime implements AgentSessionDriver, ExtensionActivationHo
     return () => this.#dynamicApprovalListeners.delete(listener)
   }
 
+  subscribeAuthoringChanges(
+    listener: (change: { readonly taskId: AuthoringTaskId; readonly agentId: AgentId }) => void,
+  ): () => void {
+    this.#assertActive()
+    return this.#authoring?.service.subscribe(listener) ?? (() => undefined)
+  }
+
   dynamicAuthoringPolicy(dshSessionId: string): DynamicAuthoringPolicyState {
     return this.#dynamicRuntime(dshSessionId).runner.policySnapshot()
   }
 
-  runDynamicHostHalf(
+  async runDynamicHostHalf(
     dshSessionId: string,
     pluginId: string,
     packageId: string,
@@ -4219,7 +5066,7 @@ export class DshHostRuntime implements AgentSessionDriver, ExtensionActivationHo
     approveFutureVersions: boolean,
   ): Promise<DynamicCordisHostHalfResult> {
     const { agent, runner } = this.#dynamicRuntime(dshSessionId)
-    return runner.runHostHalf(
+    const result = await runner.runHostHalf(
       agent,
       CordisDynamicPluginId(pluginId),
       CordisDynamicPackageId(packageId),
@@ -4227,6 +5074,10 @@ export class DshHostRuntime implements AgentSessionDriver, ExtensionActivationHo
       requestId === null ? null : ApprovalRequestId(requestId),
       approveFutureVersions,
     )
+    const row = runner.inventory().find((candidate) => candidate.pluginId === pluginId)
+    const episodeId = this.#episodeBySession.get(dshSessionId)
+    if (row && episodeId) this.#syncAuthoringRow(episodeId, row, packageId)
+    return result
   }
 
   getDynamicClientCode(dshSessionId: string, pluginId: string, pluginRunId: string): DynamicCordisClientSource {
@@ -4234,7 +5085,7 @@ export class DshHostRuntime implements AgentSessionDriver, ExtensionActivationHo
     return runner.getClientCode(agent, CordisDynamicPluginId(pluginId), CordisDynamicPluginRunId(pluginRunId))
   }
 
-  resolveDynamicRunRequest(
+  async resolveDynamicRunRequest(
     dshSessionId: string,
     requestId: string,
     resolution: DynamicCordisRunResolution,
@@ -4242,18 +5093,29 @@ export class DshHostRuntime implements AgentSessionDriver, ExtensionActivationHo
     const { agent, runner } = this.#dynamicRuntime(dshSessionId)
     const owned = runner
       .inventory()
-      .some((row) => row.agentId === agent.id && row.latestRun?.approvalRequestId === ApprovalRequestId(requestId))
-    if (!owned) throw new Error('Dynamic Client approval request is not owned by this DSH Session.')
-    return runner.resolveRequestRun(ApprovalRequestId(requestId), resolution)
+      .find((row) => row.agentId === agent.id && row.latestRun?.approvalRequestId === ApprovalRequestId(requestId))
+    if (!owned?.latestRun) throw new Error('Dynamic Client approval request is not owned by this DSH Session.')
+    const result = await runner.resolveRequestRun(ApprovalRequestId(requestId), resolution)
+    const row = runner.inventory().find((candidate) => candidate.pluginId === owned.pluginId)
+    const episodeId = this.#episodeBySession.get(dshSessionId)
+    if (row && episodeId) this.#syncAuthoringRow(episodeId, row, owned.latestRun.packageId)
+    return result
   }
 
-  settleDynamicUserRun(
+  async settleDynamicUserRun(
     dshSessionId: string,
     pluginId: string,
     resolution: DynamicCordisRunResolution,
   ): Promise<DynamicCordisRunResponse> {
     const { agent, runner } = this.#dynamicRuntime(dshSessionId)
-    return runner.settleUserRun(agent, CordisDynamicPluginId(pluginId), resolution)
+    const result = await runner.settleUserRun(agent, CordisDynamicPluginId(pluginId), resolution)
+    const row = runner.inventory().find((candidate) => candidate.pluginId === pluginId)
+    const episodeId = this.#episodeBySession.get(dshSessionId)
+    if (row?.latestRun && episodeId) {
+      this.#syncAuthoringRow(episodeId, row, row.latestRun.packageId)
+      this.#queueAuthoringContinuation(episodeId, row)
+    }
+    return result
   }
 
   invokeDynamicHost(
@@ -4274,22 +5136,29 @@ export class DshHostRuntime implements AgentSessionDriver, ExtensionActivationHo
       })
   }
 
-  reportDynamicRenderFailure(
+  async reportDynamicRenderFailure(
     dshSessionId: string,
     pluginId: string,
     pluginRunId: string,
     failure: DynamicCordisRenderFailure,
   ): Promise<null> {
     const { agent, runner } = this.#dynamicRuntime(dshSessionId)
-    return runner.reportRenderFailure(
+    const result = await runner.reportRenderFailure(
       agent,
       CordisDynamicPluginId(pluginId),
       CordisDynamicPluginRunId(pluginRunId),
       failure,
     )
+    const row = runner.inventory().find((candidate) => candidate.pluginId === pluginId)
+    const episodeId = this.#episodeBySession.get(dshSessionId)
+    if (row?.latestRun && episodeId) {
+      this.#syncAuthoringRow(episodeId, row, row.latestRun.packageId)
+      this.#queueAuthoringContinuation(episodeId, row)
+    }
+    return result
   }
 
-  recordDynamicClientVerification(
+  async recordDynamicClientVerification(
     dshSessionId: string,
     pluginId: string,
     packageId: string,
@@ -4297,34 +5166,97 @@ export class DshHostRuntime implements AgentSessionDriver, ExtensionActivationHo
     renderedSlots: readonly AgentClientSlotName[],
     renderedHostSlots: readonly { readonly name: AdapterClientSlotName; readonly key: string }[] = [],
     renderedPages: readonly HostPageContribution[] = [],
+    usedUiComponents: readonly HostUiKitComponentName[] = [],
+    pageGeometry: readonly HostUiPageGeometryEvidence[] = [],
     permissions: HostUiPermissionDeclaration = { permissions: [], networkOrigins: [] },
-  ): void {
+    navigationEntries: readonly string[] = [],
+  ): Promise<void> {
     const { agent, runner } = this.#dynamicRuntime(dshSessionId)
-    runner.recordClientVerification(
-      agent,
-      pluginId,
-      packageId,
-      pluginRunId,
-      renderedSlots,
-      renderedHostSlots,
-      renderedPages,
-      permissions,
-    )
+    try {
+      const declared = await this.dynamicAuthoringSnapshot(dshSessionId, pluginId, packageId)
+      if (declared) {
+        const declaredPages = declared.contributions.map((contribution) =>
+          HostPageContributionSchema.parse(contribution),
+        )
+        if (JSON.stringify(declaredPages) !== JSON.stringify(renderedPages)) {
+          throw new Error('动态 Client 实际注册的页面与候选声明不一致。')
+        }
+        if (JSON.stringify(declared.permissions) !== JSON.stringify(permissions)) {
+          throw new Error('动态 Client 实际声明的权限与候选风险摘要不一致。')
+        }
+      }
+      const navigationEntrySet = new Set(navigationEntries)
+      for (const page of renderedPages) {
+        if (page.objectPane === 'navigation' && !navigationEntrySet.has(page.entryId)) {
+          throw new Error(`动态页面 ${page.entryId} 声明对象列，但没有注册 Navigation Provider。`)
+        }
+        if (page.objectPane === 'hidden' && navigationEntrySet.has(page.entryId)) {
+          throw new Error(`动态页面 ${page.entryId} 隐藏对象列，不能注册 Navigation Provider。`)
+        }
+      }
+      if (navigationEntries.some((entryId) => !renderedPages.some((page) => page.entryId === entryId))) {
+        throw new Error('动态 Client 上报了不属于当前页面声明的 Navigation Provider。')
+      }
+      runner.recordClientVerification(
+        agent,
+        pluginId,
+        packageId,
+        pluginRunId,
+        renderedSlots,
+        renderedHostSlots,
+        renderedPages,
+        usedUiComponents,
+        pageGeometry,
+        navigationEntries,
+        permissions,
+      )
+      const episodeId = this.#episodeBySession.get(dshSessionId)
+      await this.#completeAuthoringVerification(dshSessionId, pluginId, packageId)
+      const row = runner.inventory().find((candidate) => candidate.pluginId === pluginId)
+      if (row && episodeId) {
+        this.#queueAuthoringContinuation(episodeId, row)
+      }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error)
+      await runner.reportClientGuardFailure(
+        agent,
+        CordisDynamicPluginId(pluginId),
+        CordisDynamicPluginRunId(pluginRunId),
+        {
+          message,
+          ...(error instanceof Error && error.stack ? { stack: error.stack } : {}),
+        },
+      )
+      const episodeId = this.#episodeBySession.get(dshSessionId)
+      const row = runner.inventory().find((candidate) => candidate.pluginId === pluginId)
+      if (row?.latestRun && episodeId) {
+        this.#syncAuthoringRow(episodeId, row, row.latestRun.packageId)
+        this.#queueAuthoringContinuation(episodeId, row)
+      }
+      throw error
+    }
   }
 
-  reportDynamicGuardFailure(
+  async reportDynamicGuardFailure(
     dshSessionId: string,
     pluginId: string,
     pluginRunId: string,
     failure: CordisErrorDetails,
   ): Promise<null> {
     const { agent, runner } = this.#dynamicRuntime(dshSessionId)
-    return runner.reportClientGuardFailure(
+    const result = await runner.reportClientGuardFailure(
       agent,
       CordisDynamicPluginId(pluginId),
       CordisDynamicPluginRunId(pluginRunId),
       failure,
     )
+    const row = runner.inventory().find((candidate) => candidate.pluginId === pluginId)
+    const episodeId = this.#episodeBySession.get(dshSessionId)
+    if (row?.latestRun && episodeId) {
+      this.#syncAuthoringRow(episodeId, row, row.latestRun.packageId)
+      this.#queueAuthoringContinuation(episodeId, row)
+    }
+    return result
   }
 
   dynamicToolNames(dshSessionId: string): readonly string[] {
@@ -4393,11 +5325,17 @@ export class DshHostRuntime implements AgentSessionDriver, ExtensionActivationHo
 
   async waitUntilSafe(agentId: AgentRevisionRecord['agentId']): Promise<void> {
     this.#assertActive()
-    await Promise.all(
-      [...this.#handles.entries()]
-        .filter(([sessionId]) => this.#productAgentBySession.get(sessionId) === agentId)
-        .map(([, handle]) => handle.agent.whenIdle()),
+    const handles = [...this.#handles.entries()].filter(
+      ([sessionId]) => this.#productAgentBySession.get(sessionId) === agentId,
     )
+    await Promise.all(handles.map(([, handle]) => handle.agent.whenIdle()))
+    const sessionIds = new Set(handles.map(([sessionId]) => sessionId))
+    await Promise.all(
+      [...this.#authoringContinuationPending.entries()]
+        .filter(([continuationId]) => sessionIds.has(continuationId.slice(0, continuationId.indexOf(':'))))
+        .map(([, continuation]) => continuation),
+    )
+    await Promise.all(handles.map(([, handle]) => handle.agent.whenIdle()))
   }
 
   async mount(

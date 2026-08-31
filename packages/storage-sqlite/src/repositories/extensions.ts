@@ -6,6 +6,8 @@ import {
   ExtensionIdSchema,
   ExtensionRevisionIdSchema,
   HostPageContributionSchema,
+  HostUiKitComponentNameSchema,
+  HostUiPageGeometryEvidenceSchema,
   HostUiPermissionDeclarationSchema,
   type AgentId,
   type ExtensionId,
@@ -164,6 +166,8 @@ const ExtensionRevisionVerificationSchema = z.object({
   rpcMethods: z.array(z.string()),
   renderedSlots: z.array(AgentClientSlotNameSchema),
   renderedPages: z.array(HostPageContributionSchema).max(8).optional(),
+  usedUiComponents: z.array(HostUiKitComponentNameSchema).optional(),
+  pageGeometry: z.array(HostUiPageGeometryEvidenceSchema).max(8).optional(),
   permissions: HostUiPermissionDeclarationSchema.optional(),
   adapter: z
     .object({
@@ -204,6 +208,8 @@ const parseExtensionRevisionVerification = (input: unknown): ExtensionRevisionVe
     renderedSlots: parsed.renderedSlots,
     ...(parsed.scope === undefined ? {} : { scope: parsed.scope }),
     ...(parsed.renderedPages === undefined ? {} : { renderedPages: parsed.renderedPages }),
+    ...(parsed.usedUiComponents === undefined ? {} : { usedUiComponents: parsed.usedUiComponents }),
+    ...(parsed.pageGeometry === undefined ? {} : { pageGeometry: parsed.pageGeometry }),
     ...(parsed.permissions === undefined ? {} : { permissions: parsed.permissions }),
     ...(parsed.adapter === undefined ? {} : { adapter: parsed.adapter }),
     ...(parsed.renderedHostSlots === undefined ? {} : { renderedHostSlots: parsed.renderedHostSlots }),

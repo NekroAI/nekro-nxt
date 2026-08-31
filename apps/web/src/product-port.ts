@@ -31,6 +31,7 @@ export interface ProductSnapshot {
   readonly approvals: readonly DynamicApproval[]
   /** Running dynamic Packages by intelligent-agent (from the creator runtime). */
   readonly dynamic: readonly DynamicPackageSummary[]
+  readonly authoringTasks?: ProductState['authoringTasks']
   readonly notificationSettings: ProductState['notificationSettings']
   readonly diagnosticNote: string
   readonly workTreeOrder: {
@@ -49,6 +50,34 @@ export interface DynamicPackageSummary {
   readonly nextPackageId?: string
   readonly approvalRequestId?: string
   readonly status: string
+  readonly activeRun?: { readonly pluginRunId: string; readonly packageId: string }
+  readonly latestRun?: {
+    readonly pluginRunId: string
+    readonly packageId: string
+    readonly mode: 'run' | 'update'
+    readonly status:
+      | 'awaiting-approval'
+      | 'starting-host'
+      | 'client-pending'
+      | 'running'
+      | 'waiting'
+      | 'rejected'
+      | 'failed'
+      | 'cancelled'
+      | 'stopped'
+    readonly approvalRequestId?: string
+    readonly requiresApproval?: boolean
+    readonly host: DynamicHalfStateSummary
+    readonly client: DynamicHalfStateSummary
+    readonly error?: {
+      readonly phase: 'approval' | 'host-load' | 'host-apply' | 'client-load' | 'client-apply' | 'client-render'
+      readonly message: string
+      readonly stack?: string
+      readonly pluginId: string
+      readonly packageId: string
+      readonly pluginRunId: string
+    }
+  }
   readonly packages: readonly {
     readonly packageId: string
     readonly name: string
@@ -62,6 +91,12 @@ export interface DynamicPackageSummary {
     readonly repeatedFingerprintCount: number
     readonly blockedReason?: string
   }
+}
+
+interface DynamicHalfStateSummary {
+  readonly status: 'absent' | 'pending' | 'stopped' | 'running' | 'waiting' | 'failed'
+  readonly waitingFor: readonly string[]
+  readonly error?: string
 }
 
 export interface ProductHostPort {
@@ -114,6 +149,7 @@ export class ProductHostCoordinator implements ProductHostPort {
         platformUsersRevision: snapshot.platformUsersRevision,
         approvals: snapshot.approvals,
         dynamic: snapshot.dynamic,
+        authoringTasks: snapshot.authoringTasks ?? [],
         notificationSettings: snapshot.notificationSettings,
         diagnosticNote: snapshot.diagnosticNote,
         workTreeOrder: snapshot.workTreeOrder,

@@ -42,6 +42,8 @@ import {
 } from '@nekro-nxt/contracts'
 import {
   ExtensionActivationCoordinator,
+  AuthoringArtifactStore,
+  DynamicAuthoringService,
   ExtensionBuilder,
   ExtensionService,
   ExtensionSourceStore,
@@ -57,7 +59,7 @@ import {
   type CoreDatabase,
   type DshSessionStoragePreparation,
 } from '@nekro-nxt/storage-sqlite'
-import { readFile } from 'node:fs/promises'
+import { mkdir, readFile } from 'node:fs/promises'
 import { randomUUID } from 'node:crypto'
 import path from 'node:path'
 import { monotonicFactory } from 'ulid'
@@ -346,6 +348,14 @@ export class NekroRuntime {
         await completeDshSessionStoragePreparation(options.sessionDatabasePath)
       }
       const assetService = new AssetService(repository, options.assetRoot)
+      const authoringWorkspaceRoot =
+        options.developmentWorkspaceRoot ?? path.join(path.dirname(options.coreDatabasePath), 'workspaces')
+      await mkdir(authoringWorkspaceRoot, { recursive: true, mode: 0o700 })
+      const authoringService = new DynamicAuthoringService(
+        repository,
+        new AuthoringArtifactStore(authoringWorkspaceRoot),
+        { now, nextUlid },
+      )
       const core = new CoreService(repository, { now, nextUlid })
       const adapters = new AdapterRegistry()
       const dshPluginInstaller = new DshPluginPackageInstaller(
@@ -409,6 +419,13 @@ export class NekroRuntime {
         assets: repository,
         assetService,
         resolveAgentRevision: (revisionId) => repository.getAgentRevision(revisionId),
+        authoring: {
+          service: authoringService,
+          resolveInitiatingEvent: (episodeId) => {
+            const episode = repository.getEpisode(episodeId)
+            return episode?.lastAdmittedEventId ?? episode?.openedAtEventId
+          },
+        },
         ...(options.llmSettingsPath === undefined ? {} : { llmSettingsPath: options.llmSettingsPath }),
         ...(options.llmCredentialPath === undefined ? {} : { llmCredentialPath: options.llmCredentialPath }),
         ...(options.configureLlm === undefined ? {} : { configureLlm: options.configureLlm }),

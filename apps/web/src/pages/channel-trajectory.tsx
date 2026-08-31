@@ -84,6 +84,7 @@ export interface TrajectoryRecord {
   readonly state?: RuntimeTool['state']
   readonly toolName?: string
   readonly wroteToChannel?: boolean
+  readonly deliveryState?: RuntimeTool['deliveryState']
   readonly durationMs?: number
   readonly firstTokenMs?: number
   readonly usage?: NonNullable<RuntimeTurn['steps'][number]['usage']>
@@ -604,6 +605,7 @@ export const flattenRuntimeRecords = (runtime: ChannelRuntimeView | undefined): 
           state: tool.state,
           toolName: tool.name,
           ...(tool.wroteToChannel === undefined ? {} : { wroteToChannel: tool.wroteToChannel }),
+          ...(tool.deliveryState === undefined ? {} : { deliveryState: tool.deliveryState }),
           ...(tool.durationMs === undefined ? {} : { durationMs: tool.durationMs }),
         })
         turnStart = false
@@ -614,6 +616,13 @@ export const flattenRuntimeRecords = (runtime: ChannelRuntimeView | undefined): 
 }
 
 const latestTurn = (runtime: ChannelRuntimeView | undefined): RuntimeTurn | undefined => runtime?.turns.at(-1)
+
+export const responseStateNotice = (turn: RuntimeTurn | undefined): string | undefined => {
+  if (turn?.responseState === 'pending') return '智能体需要发送频道消息或明确结束本轮。'
+  if (turn?.responseState === 'finished') return '智能体已明确结束本轮，未必发送频道消息。'
+  if (turn?.responseState === 'protocol-failed') return '智能体未按频道回应协议完成本轮。'
+  return undefined
+}
 
 const workTools = (turn: RuntimeTurn | undefined): RuntimeTool[] =>
   turn?.steps.flatMap((step) => step.tools.filter((tool) => tool.wroteToChannel !== true)) ?? []
@@ -643,6 +652,7 @@ export function ChannelWorkStream({ runtime }: { readonly runtime: ChannelRuntim
   const running = turn?.state === 'in-progress'
   const current = tools.find((tool) => tool.state === 'running')
   const latest = current ?? tools.at(-1)
+  const responseNotice = responseStateNotice(turn)
   const liveSummary = latest
     ? `${latest.displayName}${latest.inputPreview ? ` · ${latest.inputPreview}` : ''}`
     : (text.split('\n')[0] ?? runtime?.summary ?? '')
@@ -660,6 +670,7 @@ export function ChannelWorkStream({ runtime }: { readonly runtime: ChannelRuntim
       {runtime && runtime.pendingInjectCount > 0 ? (
         <div className={styles.sysLine}>{runtime.pendingInjectCount} 条新消息已收录，将在安全间隙进入后续处理。</div>
       ) : null}
+      {responseNotice ? <div className={styles.sysLine}>{responseNotice}</div> : null}
       {hasDetails ? (
         <>
           <Button
@@ -728,6 +739,16 @@ function WorkToolRow({
 }) {
   const detailId = useId()
   const hasDetails = Boolean(tool.inputPreview || tool.resultPreview)
+  const deliveryLabel =
+    tool.deliveryState === 'sent'
+      ? '已发送'
+      : tool.deliveryState === 'partially-sent'
+        ? '部分发送'
+        : tool.deliveryState === 'failed'
+          ? '发送失败'
+          : tool.deliveryState === 'unknown'
+            ? '结果未知'
+            : undefined
   const row = (
     <span className={styles.workRow}>
       <span
@@ -744,7 +765,7 @@ function WorkToolRow({
       <strong>{tool.displayName}</strong>
       <em>{tool.inputPreview ?? tool.resultPreview ?? ''}</em>
       <StatusBadge tone={tool.state === 'running' ? 'info' : tool.state === 'failed' ? 'error' : 'neutral'}>
-        {tool.state === 'running' ? '进行中' : tool.state === 'failed' ? '失败' : '完成'}
+        {tool.state === 'running' ? '进行中' : tool.state === 'failed' ? '失败' : (deliveryLabel ?? '完成')}
       </StatusBadge>
     </span>
   )
@@ -1374,6 +1395,20 @@ export function ChannelTrajectoryInspector({
             {lane === 'send' && output && output !== sent ? <InspectorRegion label="发送结果" text={output} /> : null}
             {lane === 'tool' && record.input ? <InspectorRegion label="输入" text={record.input} /> : null}
             {lane === 'tool' && output ? <InspectorRegion label="输出" text={output} /> : null}
+            {record.deliveryState ? (
+              <InspectorRegion
+                label="投递状态"
+                text={
+                  record.deliveryState === 'sent'
+                    ? '已发送'
+                    : record.deliveryState === 'partially-sent'
+                      ? '部分发送'
+                      : record.deliveryState === 'failed'
+                        ? '发送失败'
+                        : '结果未知'
+                }
+              />
+            ) : null}
             {lane === 'tool' && agentId && record.toolName && record.state ? (
               <ConversationToolCardExtensionSlots
                 agentId={agentId}

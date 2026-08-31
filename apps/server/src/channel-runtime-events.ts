@@ -1,6 +1,10 @@
 import type { SessionEvent } from '@deepseek-ai/dsh-session'
 import { isTokenDelta } from '@deepseek-ai/dsh-llm/message'
-import { turnIsUnreplied } from './channel-reply-guard.js'
+import {
+  deliveryStateFromToolResult,
+  responseObligationState,
+  type ResponseObligationState,
+} from './channel-reply-guard.js'
 import type { RuntimeProjectionEvent } from './channel-runtime-projection.js'
 
 /** Session log types that change the product runtime projection. Streaming chunks do not. */
@@ -42,12 +46,17 @@ const reasoningFromBlocks = (
   return text.length > 0 ? text : undefined
 }
 
-export const normalizeSessionEvents = (events: readonly SessionEvent[]): RuntimeProjectionEvent[] => {
+export const normalizeSessionEvents = (
+  events: readonly SessionEvent[],
+  responseStateForTurn: (turn: number) => ResponseObligationState = (turn) => responseObligationState(events, turn),
+): RuntimeProjectionEvent[] => {
   const result: RuntimeProjectionEvent[] = []
   const firstTokenKeys = new Set<string>()
+  const turns = new Set<number>()
   for (const event of events) {
     const at = event.time
     if (event.type === 'turn/start') {
+      turns.add(event.data.turn)
       result.push({ type: 'turn/start', turn: event.data.turn, at })
       continue
     }
@@ -60,9 +69,6 @@ export const normalizeSessionEvents = (events: readonly SessionEvent[]): Runtime
         at,
         ...(reason.kind === 'error' ? { errorCode: reason.error.code, errorMessage: reason.error.message } : {}),
       })
-      if (turnIsUnreplied(events, event.data.turn)) {
-        result.push({ type: 'channel/reply-missing', turn: event.data.turn, at })
-      }
       continue
     }
     if (event.type === 'step/start' || event.type === 'step/end') {
@@ -87,6 +93,7 @@ export const normalizeSessionEvents = (events: readonly SessionEvent[]): Runtime
       if (!callId) continue
       const nested = block.type === 'tool-result' ? block.content : []
       const resultPreview = textFromBlocks(nested)
+      const deliveryState = deliveryStateFromToolResult(event)
       result.push({
         type: 'tool/result',
         turn: event.data.turn,
@@ -95,6 +102,7 @@ export const normalizeSessionEvents = (events: readonly SessionEvent[]): Runtime
         failed: event.data.error !== undefined || (block.type === 'tool-result' && block.isError === true),
         at,
         ...(resultPreview === undefined ? {} : { resultPreview }),
+        ...(deliveryState === undefined ? {} : { deliveryState }),
       })
       continue
     }
@@ -150,6 +158,15 @@ export const normalizeSessionEvents = (events: readonly SessionEvent[]): Runtime
         ...(usage === undefined ? {} : { usage }),
       })
     }
+  }
+  for (const turn of turns) {
+    const response = responseStateForTurn(turn)
+    result.push({
+      type: 'channel/response-state',
+      turn,
+      responseState: response.responseState,
+      producedReply: response.producedReply,
+    })
   }
   return result
 }

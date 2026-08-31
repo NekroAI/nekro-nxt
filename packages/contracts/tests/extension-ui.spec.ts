@@ -1,5 +1,6 @@
 import {
   DshNxtHostUiSchema,
+  HostApiContracts,
   HostPageContributionSchema,
   HostPageIconSchema,
   HostUiNavigationModelSchema,
@@ -139,6 +140,55 @@ describe('Host UI contracts', () => {
     expect(
       DshNxtHostUiSchema.safeParse({ schemaVersion: 1, entryKey: 'main', client: '../client.mjs', pages: [hostPage] })
         .success,
+    ).toBe(false)
+  })
+
+  it('requires real UI Kit evidence for a dynamic page verification', () => {
+    const request = {
+      episodeId: 'eps_project',
+      pluginId: 'plugin-project',
+      packageId: 'package-project',
+      pluginRunId: 'run-project',
+      renderedSlots: [],
+      renderedHostSlots: [],
+      renderedPages: [hostPage],
+      navigationEntries: ['overview'],
+      permissions: { permissions: [], networkOrigins: [] },
+    }
+    expect(HostApiContracts.dynamicReportClientVerification.request.safeParse(request).success).toBe(false)
+    expect(
+      HostApiContracts.dynamicReportClientVerification.request.parse({
+        ...request,
+        usedUiComponents: ['PageHeader', 'DataTable'],
+        pageGeometry: [
+          {
+            entryId: hostPage.entryId,
+            objectPane: hostPage.objectPane,
+            viewport: { width: 1200, height: 720 },
+            insets: { top: 24, right: 32, bottom: 40, left: 32 },
+            contentAxesAligned: true,
+            horizontalOverflow: false,
+            titleDistinct: true,
+          },
+        ],
+      }),
+    ).toMatchObject({ usedUiComponents: ['PageHeader', 'DataTable'], pageGeometry: [{ entryId: hostPage.entryId }] })
+    expect(
+      HostApiContracts.dynamicReportClientVerification.request.safeParse({
+        ...request,
+        usedUiComponents: ['PageHeader'],
+        pageGeometry: [
+          {
+            entryId: hostPage.entryId,
+            objectPane: hostPage.objectPane,
+            viewport: { width: 1200, height: 720 },
+            insets: { top: 0, right: 0, bottom: 0, left: 0 },
+            contentAxesAligned: false,
+            horizontalOverflow: true,
+            titleDistinct: false,
+          },
+        ],
+      }).success,
     ).toBe(false)
   })
 })

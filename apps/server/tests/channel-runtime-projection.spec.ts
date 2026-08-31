@@ -129,6 +129,7 @@ describe('channel runtime projection', () => {
         },
         { type: 'tool/result', turn: 2, step: 1, callId: 'call_send', failed: false, resultPreview: 'sent' },
         { type: 'turn/end', turn: 2, reasonKind: 'completed' },
+        { type: 'channel/response-state', turn: 2, responseState: 'sent', producedReply: true },
       ],
     })
     expect(projection.phase).toBe('idle')
@@ -152,13 +153,17 @@ describe('channel runtime projection', () => {
         { type: 'turn/start', turn: 4, at: 1000 },
         { type: 'step/start', turn: 4, step: 1, at: 1010 },
         { type: 'assistant/message', turn: 4, step: 1, text: '这不是频道回复。', at: 1100 },
-        { type: 'channel/reply-missing', turn: 4, at: 1200 },
         { type: 'turn/end', turn: 4, reasonKind: 'completed', at: 1210 },
+        { type: 'channel/response-state', turn: 4, responseState: 'protocol-failed', producedReply: false },
       ],
     })
     expect(projection.phase).toBe('idle')
-    expect(projection.summary).toBe('智能体本轮未产生频道回复。')
-    expect(projection.turns[0]).toMatchObject({ state: 'unreplied', producedReply: false })
+    expect(projection.summary).toBe('智能体未按频道回应协议完成本轮。')
+    expect(projection.turns[0]).toMatchObject({
+      state: 'unreplied',
+      responseState: 'protocol-failed',
+      producedReply: false,
+    })
   })
 
   it('does not broadcast runtime frames for streaming chunks', () => {

@@ -36,6 +36,8 @@ declare const styles: {
   readonly appearanceSwatches: string
   readonly approvalNotice: string
   readonly attachment: string
+  readonly authoringPhase: string
+  readonly authoringPhases: string
   readonly avatar: string
   readonly bindingAgentActions: string
   readonly bindingAgentIdentity: string
@@ -117,14 +119,20 @@ declare const styles: {
   readonly conversationPage: string
   readonly conversationTitleRow: string
   readonly createSummary: string
+  readonly creatorCanvas: string
   readonly creatorEvidence: string
   readonly creatorGuide: string
   readonly creatorIntro: string
   readonly creatorLaunchPanel: string
   readonly creatorPage: string
+  readonly creatorSaveActions: string
+  readonly creatorSaveGrid: string
+  readonly creatorSavePanel: string
   readonly creatorStartGrid: string
   readonly creatorStartPanel: string
+  readonly creatorTaskSummary: string
   readonly creatorWorkspace: string
+  readonly creatorWorkspaceTask: string
   readonly dangerSection: string
   readonly dark: string
   readonly desktopContentStage: string
@@ -170,6 +178,7 @@ declare const styles: {
   readonly hostUiPageManager: string
   readonly hostUiPageRow: string
   readonly identityCell: string
+  readonly inlineApproval: string
   readonly inlineFieldAction: string
   readonly inlineFieldHint: string
   readonly inspector: string

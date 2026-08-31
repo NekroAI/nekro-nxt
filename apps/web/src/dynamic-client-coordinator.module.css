@@ -79,8 +79,9 @@
 
 .pagePreviewCanvas {
   min-width: 0;
-  overflow: auto;
-  padding: var(--nxt-space-4);
+  min-height: 320px;
+  display: flex;
+  overflow: hidden;
   background: var(--nxt-bg-canvas);
 }
 

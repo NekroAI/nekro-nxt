@@ -4,7 +4,7 @@ import { HostApiContracts } from '@nekro-nxt/contracts'
 import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { NekroRuntime } from '../src/bootstrap.js'
 import { createNekroHostApi } from '../src/host-api.js'
 
@@ -67,6 +67,19 @@ describe('NekroNxt domain API — local Extension lifecycle (M4 slice)', () => {
       displayName: '频道摘要',
       description: '生成结构化阶段摘要。',
       createdByAgentId: agent.definition.id,
+      verification: {
+        dshVersion: '0.1.1-rc.2',
+        contractVersion: 'nekro-nxt-extension-v1',
+        origin: {
+          episodeId: 'eps_synthetic_extension_api',
+          pluginId: 'plugin-synthetic-extension-api',
+          packageId: 'package-synthetic-extension-api',
+          pluginRunId: 'run-synthetic-extension-api',
+        },
+        toolInvocations: [{ name: 'summary_tool', succeeded: true }],
+        rpcMethods: ['summary'],
+        renderedSlots: ['extension.details.panels'],
+      },
     })
 
     const webContext = new Context()
@@ -76,13 +89,24 @@ describe('NekroNxt domain API — local Extension lifecycle (M4 slice)', () => {
 
     try {
       // The saved Extension appears in the authoritative snapshot (inactive).
+      const projectedBuildKey = 'f'.repeat(64)
+      const buildKeyProjection = vi
+        .spyOn(runtime.extensionService, 'currentBuildKey')
+        .mockReturnValue(projectedBuildKey)
       let snapshot = HostApiContracts.snapshot.parseResponse(await (await fetch(`${origin}/api/snapshot`)).json())
       expect(snapshot.extensions).toHaveLength(1)
       expect(snapshot.extensions[0]).toMatchObject({
         slug: 'channel-summary',
-        revisions: [{ id: saved.revision.id, revisionNumber: 1 }],
+        revisions: [
+          {
+            id: saved.revision.id,
+            revisionNumber: 1,
+            verification: { buildKey: projectedBuildKey },
+          },
+        ],
         activations: [],
       })
+      buildKeyProjection.mockRestore()
 
       // Activate it for the intelligent-agent through the API.
       const activationResponse = await fetch(

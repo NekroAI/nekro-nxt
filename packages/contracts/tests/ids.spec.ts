@@ -37,6 +37,7 @@ describe('public ID boundaries', () => {
         turn: 1,
         state: 'unreplied',
         producedReply: false,
+        responseState: 'protocol-failed',
         steps: [],
       }),
     ).toMatchObject({ state: 'unreplied', producedReply: false })

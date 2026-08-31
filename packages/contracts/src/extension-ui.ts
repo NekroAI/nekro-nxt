@@ -45,6 +45,65 @@ export const HostUiPermissionSchema = z.enum([
 
 export type HostUiPermission = z.output<typeof HostUiPermissionSchema>
 
+export const HOST_UI_KIT_COMPONENT_NAMES = [
+  'Button',
+  'IconButton',
+  'Input',
+  'Textarea',
+  'Select',
+  'Switch',
+  'Tabs',
+  'Dialog',
+  'Popover',
+  'Tooltip',
+  'Field',
+  'StatusBadge',
+  'InlineFeedback',
+  'EmptyState',
+  'Spinner',
+  'PageHeader',
+  'MetricStrip',
+  'Metric',
+  'Section',
+  'Stack',
+  'Grid',
+  'DataTable',
+  'SidePane',
+] as const
+
+export const HostUiKitComponentNameSchema = z.enum(HOST_UI_KIT_COMPONENT_NAMES)
+
+export type HostUiKitComponentName = z.output<typeof HostUiKitComponentNameSchema>
+
+export const HostUiPageGeometryEvidenceSchema = z
+  .object({
+    entryId: z
+      .string()
+      .trim()
+      .regex(/^[a-z](?:[a-z0-9-]{0,62}[a-z0-9])?$/u),
+    objectPane: z.enum(['navigation', 'hidden']),
+    viewport: z
+      .object({
+        width: z.number().finite().positive().max(16_384),
+        height: z.number().finite().positive().max(16_384),
+      })
+      .strict(),
+    insets: z
+      .object({
+        top: z.number().finite().nonnegative().max(512),
+        right: z.number().finite().nonnegative().max(512),
+        bottom: z.number().finite().nonnegative().max(512),
+        left: z.number().finite().nonnegative().max(512),
+      })
+      .strict(),
+    contentAxesAligned: z.boolean(),
+    horizontalOverflow: z.boolean(),
+    titleDistinct: z.boolean(),
+  })
+  .strict()
+
+export type HostUiPageGeometryEvidence = z.output<typeof HostUiPageGeometryEvidenceSchema>
+
 export const HostIconNameSchema = z.enum([
   'app-window',
   'bar-chart',

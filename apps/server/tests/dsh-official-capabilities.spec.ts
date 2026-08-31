@@ -241,6 +241,7 @@ describe('DSH 0.1.1-rc.2 official capability composition', () => {
         admissionId: AdmissionIdSchema.parse('adm_SEARCH'),
         events: [event],
         mode: 'followup',
+        replyRequired: true,
       })
       await host.whenIdle(sessionId)
 
@@ -395,6 +396,7 @@ describe('DSH 0.1.1-rc.2 official capability composition', () => {
         admissionId: AdmissionIdSchema.parse('adm_DELEGATION1'),
         events: [appendEvent('启动后台子任务。')],
         mode: 'followup',
+        replyRequired: true,
       })
       await model.initialChildStarted.promise
       await host.whenIdle(sessionId)
@@ -404,6 +406,7 @@ describe('DSH 0.1.1-rc.2 official capability composition', () => {
         admissionId: AdmissionIdSchema.parse('adm_DELEGATION2'),
         events: [appendEvent('子任务运行时继续响应这条频道消息。')],
         mode: 'followup',
+        replyRequired: true,
       })
       await host.whenIdle(sessionId)
       expect(model.rootRequests).toBeGreaterThanOrEqual(3)
@@ -419,6 +422,7 @@ describe('DSH 0.1.1-rc.2 official capability composition', () => {
           'bash',
           'web_search',
           'cordis_define',
+          'nekro_nxt_extension_define',
         ]),
       )
 
@@ -450,6 +454,7 @@ describe('DSH 0.1.1-rc.2 official capability composition', () => {
         admissionId: AdmissionIdSchema.parse('adm_DELEGATION3'),
         events: [appendEvent('继续先前的子任务。')],
         mode: 'followup',
+        replyRequired: true,
       })
       await model.followupChildFinished.promise
       await host.whenIdle(sessionId)

@@ -10,7 +10,11 @@ Host Adapter 产物先在候选 Registry 执行 factory，实际 key、API 版�
 
 `DshHostRuntime` 继续只拥有 DSH Agent handle、Episode handoff、频道回复守卫、图片投影、压缩后视觉恢复和智能体作用域扩展；Adapter 和 Core 不能通过 DSH Context 互相读取数据库。应答型 Turn 第一次缺少成功的 `send_channel_message` 时通过公开 `agent/turn-stopping` 接缝在同一 Turn 提醒一次，第二次仍缺失则持久投影为 `unreplied`，不自动投递模型原始文字。频道环境说明如实告知普通模型文字不可见、同一 Turn 可多次发送，并默认建议长任务先确认再按真实阶段同步；人设和成员偏好可以减少过程消息，Host 不增加中途计时或自动进度。模型可见的入站、出站、Handoff 和历史统一使用 `logicalMessageId`，quote 只在当前频道展开一层。图片是否走原生路径只取决于 DSH 模型目录的 `inputModalities`；缺失声明按文本路径运行，不能按模型名推断。
 
-动态创造的所有浏览器修改操作都显式携带 `episodeId`，Server 校验智能体、Episode 和 DSH Session 的精确归属，不按智能体猜活动会话。智能体、Adapter 与 Host Page 使用共享 Catalog 中彼此隔离的名称集合；未知名称、错误 key 和跨作用域混装会被拒绝。含 Client 半边的 Package 必须在产品 Slot 或创造工作台页面画布中真实渲染并提交证据才能保存；页面证据包含入口、对象列、权限和停止清理，Adapter 验证还覆盖注册、启动、入站、出站、凭据隔离、WebSocket/HTTP/状态存储和停止静止。扩展 Revision 的验证证据保留生成证据时的实际 DSH 版本；升级不会改写或拒绝旧版本证据，新验证使用当前锁定的 rc.2。
+动态创造以持久 Authoring Task/Attempt/Event 账本拥有用户任务，DSH Plugin/Package/Run ID 只是当前进程的临时执行身份。`nekro_nxt_extension_define` 在 DSH Define 前接收并预检源码、页面、权限和 CSS/SVG 资源；旧 `cordis_define` 继续兼容不带这些元数据的普通动态包。专属页面必须同时注入 `pages` 和 `ui`；Inspect 与开发上下文提供版本化 `nxt-host-ui-design-v1` 责任契约，明确 Host 拥有背景、外边距和根滚动。浏览器从真实 DOM 上报 UI Kit 组件清单及页面 Insets、内容轴、标题区分和横向溢出，Server 逐入口复核；默认交互控件、裸表格、缺少标准页面框或几何证据会被 Client Guard 拒绝。普通智能体首次确认后，风险摘要不变的同任务修订自动运行；`dynamicClientApprovalPolicy: automatic` 对风险扩大也保持完全自动。审批和最终运行结果通过安全间隙注入原 Session，智能体自动继续修复或收尾。冷启动从 `workspaces/<agentId>/authoring/` 重建 Runner 临时身份和原启用意图，不能恢复时写 `interrupted`。
+
+Task 的候选可以在智能体收尾前短暂进入 `ready`。Task 身份保存会先等待该 Session 的 Authoring continuation 和 Agent Loop 全部静止，再重新核对最新 Attempt；期间出现新候选时拒绝保存旧 Attempt。这个等待只保护 Task/Attempt 精确保存，不把动态运行、保存 Revision 和安装/启用合并成一个提交点。
+
+智能体、Adapter 与 Host Page 使用共享 Catalog 中彼此隔离的名称集合；未知名称、错误 key 和跨作用域混装会被拒绝。含 Client 半边的候选必须在产品 Slot 或创造工作台页面画布中真实渲染，实际页面和权限必须与 Define 时的风险声明完全一致；Host-only 候选也必须完成真实 Tool/RPC 调用。验证成功后 Task 才进入 `ready`。保存 API 优先使用 `taskId + attemptId`，只接受当前最后一个已验证候选；旧 `agentId + episodeId + pluginId + packageId` 暂时保留兼容。页面证据包含入口、对象列、权限和资源，Adapter 验证还覆盖注册、启动、入站、出站、凭据隔离、WebSocket/HTTP/状态存储和停止静止。扩展 Revision 的验证证据保留生成证据时的实际 DSH 版本；升级不会改写或拒绝旧版本证据，新验证使用当前锁定的 rc.2。
 
 Host UI 页面由独立 Runtime 承载。页面实例、显隐、跨扩展顺序和权限批准来自 Host 快照；Server 为精确 Artifact 提供页面 Client/CSS/SVG、类型化产品服务、扩展命名空间状态、事件订阅和受控网络请求。网络请求逐跳校验获准 origin，并把已验证的公网地址固定到实际 socket，阻断私网、loopback、链路本地和 DNS 重绑定。Credential 明文不进入 SQLite，也不返回 Client；`credentials.write` 生成五分钟、owner 与 Adapter 绑定的一次性 token。Client 加载失败写页面诊断，不撤销已成功的 Host Installation 或 DSH Loader Activation。
 

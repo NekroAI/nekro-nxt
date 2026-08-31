@@ -6,6 +6,8 @@ import type {
   ExtensionId,
   ExtensionRevisionId,
   HostPageContribution,
+  HostUiKitComponentName,
+  HostUiPageGeometryEvidence,
   HostUiPageEntry,
   HostUiPageInstanceId,
   HostUiPermissionDeclaration,
@@ -51,6 +53,8 @@ export interface DynamicPackageSnapshot {
   readonly clientCode?: string
   readonly permissions?: HostUiPermissionDeclaration
   readonly contributions?: readonly ExtensionContribution[]
+  readonly resources?: Readonly<Record<string, string>>
+  readonly clientCss?: { readonly path: string; readonly sha256: string }
 }
 
 export type ExtensionContribution =
@@ -138,6 +142,8 @@ export interface ExtensionRevisionVerification {
   readonly rpcMethods: readonly string[]
   readonly renderedSlots: readonly AgentClientSlotName[]
   readonly renderedPages?: readonly HostPageContribution[]
+  readonly usedUiComponents?: readonly HostUiKitComponentName[]
+  readonly pageGeometry?: readonly HostUiPageGeometryEvidence[]
   readonly permissions?: HostUiPermissionDeclaration
   readonly adapter?: {
     readonly apiVersion: 1

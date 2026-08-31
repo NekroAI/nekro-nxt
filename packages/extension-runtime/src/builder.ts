@@ -144,6 +144,20 @@ const importPolicy: Plugin = {
   },
 }
 
+const dynamicClientCss: Plugin = {
+  name: 'nekro-nxt-dynamic-client-css',
+  setup(buildContext) {
+    buildContext.onResolve({ filter: /\?nxt-dynamic-css$/ }, (args) => ({
+      path: path.resolve(args.resolveDir, args.path.slice(0, -'?nxt-dynamic-css'.length)),
+      namespace: 'nekro-nxt-dynamic-css',
+    }))
+    buildContext.onLoad({ filter: /.*/, namespace: 'nekro-nxt-dynamic-css' }, async (args) => ({
+      contents: await readFile(args.path, 'utf8'),
+      loader: 'css',
+    }))
+  },
+}
+
 export class ExtensionBuilder {
   readonly #cacheRoot: string
 
@@ -152,15 +166,21 @@ export class ExtensionBuilder {
     this.#cacheRoot = cacheRoot
   }
 
+  buildKey(contentDigest: string): string {
+    const digest = z
+      .string()
+      .regex(/^[a-f0-9]{64}$/u)
+      .parse(contentDigest)
+    return createHash('sha256').update(`${BUILDER_VERSION}\0node-${process.versions.modules}\0${digest}`).digest('hex')
+  }
+
   async build(input: {
     readonly extensionId?: ExtensionId
     readonly revisionId: ExtensionRevisionId
     readonly contentDigest: string
     readonly sourceDirectory: string
   }): Promise<ExtensionBuildArtifact> {
-    const buildKey = createHash('sha256')
-      .update(`${BUILDER_VERSION}\0node-${process.versions.modules}\0${input.contentDigest}`)
-      .digest('hex')
+    const buildKey = this.buildKey(input.contentDigest)
     const directory = path.join(this.#cacheRoot, input.revisionId, buildKey)
     const manifestPath = path.join(directory, 'build.json')
     const manifest = extensionManifestSchema.parse(
@@ -319,7 +339,7 @@ export class ExtensionBuilder {
       target: platform === 'node' ? 'node22' : 'es2022',
       sourcemap: 'external',
       logLevel: 'silent',
-      plugins: [importPolicy],
+      plugins: [dynamicClientCss, importPolicy],
     })
     return outfile
   }

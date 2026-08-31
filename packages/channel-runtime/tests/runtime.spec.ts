@@ -532,6 +532,7 @@ const setup = async (
   core.createBinding({ channelId: channel.id, agentId: agent.definition.id, triggerPolicy: 'always' })
 
   const sessionCalls: string[] = []
+  const admissionCalls: Parameters<AgentSessionDriver['admit']>[0][] = []
   let sessionStatus: 'idle' | 'running' = 'idle'
   let activeAdmissions = 0
   let maxActiveAdmissions = 0
@@ -564,7 +565,9 @@ const setup = async (
       sessionCalls.push(`console-outbound:${logicalMessageId}`)
       return Promise.resolve()
     },
-    admit: async ({ admissionId, events, mode }) => {
+    admit: async (input) => {
+      const { admissionId, events, mode } = input
+      admissionCalls.push(input)
       activeAdmissions += 1
       maxActiveAdmissions = Math.max(maxActiveAdmissions, activeAdmissions)
       await Promise.resolve()
@@ -613,6 +616,7 @@ const setup = async (
     connection,
     channel,
     sessionCalls,
+    admissionCalls,
     handoffInputs,
     core,
     agent,
@@ -1577,6 +1581,7 @@ describe('ChannelRuntime M1 lane', () => {
 
     const context = await setup()
     await context.runtime.acceptInbound(inbound(context.connection.id, context.channel.id, 'initial'))
+    expect(context.admissionCalls.at(-1)?.replyRequired).toBe(true)
     context.core.replaceBinding({
       channelId: context.channel.id,
       agentId: context.agent.definition.id,
@@ -1586,6 +1591,29 @@ describe('ChannelRuntime M1 lane', () => {
     await context.runtime.acceptInbound(inbound(context.connection.id, context.channel.id, 'running-observe-only'))
     expect([...context.runtimeRepository.admissions.values()]).toHaveLength(2)
     expect([...context.runtimeRepository.admissions.values()][1]).toMatchObject({ mode: 'inject' })
+    expect(context.admissionCalls.at(-1)?.replyRequired).toBe(false)
+
+    context.core.replaceBinding({
+      channelId: context.channel.id,
+      agentId: context.agent.definition.id,
+      triggerPolicy: 'mentioned-or-replied',
+    })
+    await context.runtime.acceptInbound({
+      ...inbound(context.connection.id, context.channel.id, 'running-mention'),
+      facts: { mentionedBot: true },
+    })
+    expect(context.admissionCalls.at(-1)?.replyRequired).toBe(true)
+
+    context.core.replaceBinding({
+      channelId: context.channel.id,
+      agentId: context.agent.definition.id,
+      triggerPolicy: 'command',
+    })
+    await context.runtime.acceptInbound({
+      ...inbound(context.connection.id, context.channel.id, 'running-command'),
+      facts: { command: '/status' },
+    })
+    expect(context.admissionCalls.at(-1)?.replyRequired).toBe(true)
   })
 
   it('publishes inbound and outbound facts while isolating and removing listeners', async () => {

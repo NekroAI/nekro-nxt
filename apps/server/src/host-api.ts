@@ -4,6 +4,8 @@ import { isAdminConsoleOutbound, type ChannelFact, type ChannelHistoryEntry } fr
 import type { AgentRevisionContent, ImageUnderstandingPolicy } from '@nekro-nxt/core'
 import {
   AgentIdSchema,
+  AuthoringAttemptIdSchema,
+  AuthoringTaskIdSchema,
   AssetIdSchema,
   ChannelEventIdSchema,
   ChannelIdSchema,
@@ -31,7 +33,13 @@ import {
   type ChannelRuntimeProjection,
   type HostSseEvent,
 } from '@nekro-nxt/contracts'
-import { hostUiPermissionDigest, scopeHostUiCss, validateHostUiSvg } from '@nekro-nxt/extension-runtime'
+import {
+  hostUiPermissionDigest,
+  scopeHostUiCss,
+  validateHostUiSvg,
+  type DynamicAuthoringAttempt,
+  type DynamicAuthoringTask,
+} from '@nekro-nxt/extension-runtime'
 import { createHash, randomUUID } from 'node:crypto'
 import { readFile } from 'node:fs/promises'
 import path from 'node:path'
@@ -40,7 +48,6 @@ import { z } from 'zod'
 import type { NekroRuntime } from './bootstrap.js'
 import { PRODUCT_VERSION } from './product-version.js'
 import { DEEPSEEK_HARNESS_VERSION } from './dsh-version.js'
-import { normalizeSessionEvents } from './channel-runtime-events.js'
 import { performHostUiNetworkRequest } from './host-ui-network.js'
 import {
   emptyChannelRuntimeProjection,
@@ -158,7 +165,10 @@ const assembleChannelRuntime = (runtime: NekroRuntime, channelId: ChannelId): Ch
     pendingInjectCount,
     ...(metrics?.occupancy === undefined ? {} : { occupancy: metrics.occupancy }),
     ...(metrics?.performanceTotals === undefined ? {} : { performanceTotals: metrics.performanceTotals }),
-    events: live === undefined ? [] : normalizeSessionEvents(live.events),
+    events:
+      live === undefined || episode?.dshSessionId === undefined
+        ? []
+        : runtime.host.normalizedSessionEvents(episode.dshSessionId),
   })
 }
 
@@ -707,7 +717,7 @@ const projectExtensions = (runtime: NekroRuntime) => {
                   contractVersion: verification.contractVersion,
                   hostBuilt: verification.hostBuild.built,
                   clientBuilt: verification.clientBuild.built,
-                  buildKey: verification.hostBuild.buildKey,
+                  buildKey: runtime.extensionService.currentBuildKey(revision),
                   toolInvocationCount: verification.toolInvocations.length,
                   rpcMethods: verification.rpcMethods,
                   renderedSlots: verification.renderedSlots,
@@ -715,6 +725,10 @@ const projectExtensions = (runtime: NekroRuntime) => {
                     ? {}
                     : { renderedHostSlots: verification.renderedHostSlots }),
                   ...(verification.renderedPages === undefined ? {} : { renderedPages: verification.renderedPages }),
+                  ...(verification.usedUiComponents === undefined
+                    ? {}
+                    : { usedUiComponents: verification.usedUiComponents }),
+                  ...(verification.pageGeometry === undefined ? {} : { pageGeometry: verification.pageGeometry }),
                   ...(verification.permissions === undefined ? {} : { permissions: verification.permissions }),
                   ...(permissionRequirement === undefined
                     ? {}
@@ -857,7 +871,7 @@ const projectDynamicInventory = (runtime: NekroRuntime, agentId: AgentId) =>
         ...(row.latestRun?.approvalRequestId === undefined
           ? {}
           : { approvalRequestId: row.latestRun.approvalRequestId }),
-        status: row.activeRun ? 'running' : (row.latestRun?.status ?? 'stopped'),
+        status: row.latestRun?.status ?? (row.activeRun ? 'running' : 'stopped'),
         ...(row.activeRun === undefined
           ? {}
           : {
@@ -872,7 +886,17 @@ const projectDynamicInventory = (runtime: NekroRuntime, agentId: AgentId) =>
               latestRun: {
                 pluginRunId: row.latestRun.pluginRunId,
                 packageId: row.latestRun.packageId,
+                mode: row.latestRun.mode,
                 status: row.latestRun.status,
+                ...(row.latestRun.approvalRequestId === undefined
+                  ? {}
+                  : { approvalRequestId: row.latestRun.approvalRequestId }),
+                ...(row.latestRun.requiresApproval === undefined
+                  ? {}
+                  : { requiresApproval: row.latestRun.requiresApproval }),
+                host: row.latestRun.host,
+                client: row.latestRun.client,
+                ...(row.latestRun.error === undefined ? {} : { error: row.latestRun.error }),
               },
             }),
         packages: row.packages,
@@ -889,6 +913,50 @@ const projectDynamicInventory = (runtime: NekroRuntime, agentId: AgentId) =>
       return []
     }
   })
+
+const projectAuthoringAttempt = (attempt: DynamicAuthoringAttempt) => ({
+  id: attempt.id,
+  ordinal: attempt.ordinal,
+  name: attempt.name,
+  purpose: attempt.purpose,
+  state: attempt.state,
+  riskDigest: attempt.riskDigest,
+  host: attempt.host,
+  client: attempt.client,
+  ...(attempt.error === undefined
+    ? {}
+    : {
+        error: {
+          phase: attempt.error.phase,
+          message: attempt.error.message,
+          repairable: attempt.error.repairable,
+        },
+      }),
+  createdAt: attempt.createdAt,
+  ...(attempt.settledAt === undefined ? {} : { settledAt: attempt.settledAt }),
+})
+
+const projectAuthoringTask = (runtime: NekroRuntime, task: DynamicAuthoringTask) => {
+  const attempts = runtime.repository.listAuthoringAttempts(task.id)
+  const active = attempts.findLast((attempt) => attempt.state === 'active')
+  const candidate = attempts.at(-1)
+  return {
+    id: task.id,
+    agentId: task.agentId,
+    channelId: task.channelId,
+    episodeId: task.episodeId,
+    title: task.title,
+    requirementSummary: task.requirementSummary,
+    status: task.status,
+    approvalPolicy: task.approvalPolicy,
+    ...(task.approvedRiskDigest === undefined ? {} : { approvedRiskDigest: task.approvedRiskDigest }),
+    revision: task.revision,
+    ...(active === undefined ? {} : { activeAttempt: projectAuthoringAttempt(active) }),
+    ...(candidate === undefined ? {} : { candidateAttempt: projectAuthoringAttempt(candidate) }),
+    createdAt: task.createdAt,
+    updatedAt: task.updatedAt,
+  }
+}
 
 /** Resolve the dshSessionId of an intelligent-agent's active Episode, or throw. */
 const resolveEpisodeSession = (
@@ -949,43 +1017,106 @@ const saveActiveDynamicPackage = async (
   readonly extension: { readonly id: z.output<typeof ExtensionIdSchema> }
   readonly revision: { readonly id: z.output<typeof ExtensionRevisionIdSchema> }
 }> => {
-  const episode = runtime.repository.getEpisode(input.episodeId)
-  if (episode?.agentId !== input.agentId || episode.status !== 'active' || episode.dshSessionId === undefined) {
+  if ('taskId' in input) {
+    const initialTask = runtime.repository.getAuthoringTask(input.taskId)
+    const initialEpisode = initialTask ? runtime.repository.getEpisode(initialTask.episodeId) : undefined
+    if (
+      initialTask &&
+      initialEpisode?.agentId === initialTask.agentId &&
+      initialEpisode.status === 'active' &&
+      initialEpisode.dshSessionId
+    ) {
+      await runtime.host.whenAuthoringSettled(initialEpisode.dshSessionId)
+    }
+  }
+  const authoringIdentity =
+    'taskId' in input
+      ? (() => {
+          const task = runtime.repository.getAuthoringTask(input.taskId)
+          const attempt = runtime.repository.getAuthoringAttempt(input.attemptId)
+          const latestAttempt = task ? runtime.repository.listAuthoringAttempts(task.id).at(-1) : undefined
+          if (!task || !attempt || attempt.taskId !== task.id || latestAttempt?.id !== attempt.id) {
+            throw new Error('只能保存该创造任务当前的精确候选。')
+          }
+          if (task.status !== 'ready' || attempt.state !== 'active' || !attempt.verification) {
+            throw new Error('候选尚未完成真实运行和验证，不能保存为本地扩展。')
+          }
+          if (!attempt.runnerPluginId || !attempt.runnerPackageId) {
+            throw new Error('候选缺少当前运行时身份，请重新运行后再保存。')
+          }
+          return {
+            task,
+            attempt,
+            agentId: task.agentId,
+            episodeId: task.episodeId,
+            pluginId: attempt.runnerPluginId,
+            packageId: attempt.runnerPackageId,
+          }
+        })()
+      : undefined
+  const identity = authoringIdentity
+    ? {
+        agentId: authoringIdentity.agentId,
+        episodeId: authoringIdentity.episodeId,
+        pluginId: authoringIdentity.pluginId,
+        packageId: authoringIdentity.packageId,
+      }
+    : 'agentId' in input
+      ? {
+          agentId: input.agentId,
+          episodeId: input.episodeId,
+          pluginId: input.pluginId,
+          packageId: input.packageId,
+        }
+      : (() => {
+          throw new Error('创造任务身份无法解析。')
+        })()
+  const episode = runtime.repository.getEpisode(identity.episodeId)
+  if (!episode || episode.agentId !== identity.agentId || episode.status !== 'active' || !episode.dshSessionId) {
     throw new Error('指定会话不是该智能体当前可保存动态 Package 的活动会话。')
   }
   const inventory = runtime.host.dynamicInventory(episode.dshSessionId)
-  const row = inventory.find((candidate) => candidate.pluginId === input.pluginId)
-  if (!row?.packages.some((candidate) => candidate.packageId === input.packageId)) {
+  const row = inventory.find((candidate) => candidate.pluginId === identity.pluginId)
+  if (!row?.packages.some((candidate) => candidate.packageId === identity.packageId)) {
     throw new Error('指定动态 Package 不属于该智能体的活动会话。')
   }
+  const latestRun = row.latestRun
   if (
-    row.currentPackageId !== input.packageId ||
-    row.activeRun?.packageId !== input.packageId ||
-    row.latestRun?.packageId !== input.packageId ||
-    row.latestRun.status !== 'running'
+    row.currentPackageId !== identity.packageId ||
+    row.activeRun?.packageId !== identity.packageId ||
+    latestRun?.packageId !== identity.packageId ||
+    latestRun.status !== 'running'
   ) {
     throw new Error('只能保存当前已真实运行成功、且没有审批或版本切换中的精确 Package。')
   }
-  const inspection = runtime.host.inspectDynamicPackage(episode.dshSessionId, input.pluginId, input.packageId)
-  const verified = await runtime.host.verifyDynamicPackage(episode.dshSessionId, input.pluginId, input.packageId)
+  const inspection = runtime.host.inspectDynamicPackage(episode.dshSessionId, identity.pluginId, identity.packageId)
+  const authoringSnapshot = await runtime.host.dynamicAuthoringSnapshot(
+    episode.dshSessionId,
+    identity.pluginId,
+    identity.packageId,
+  )
+  const verified = await runtime.host.verifyDynamicPackage(episode.dshSessionId, identity.pluginId, identity.packageId)
   const adapterVerification = 'scope' in verified && verified.scope === 'host-adapter' ? verified : undefined
   const scopedVerification =
     'scope' in verified && (verified.scope === 'host-adapter' || verified.scope === 'host-ui') ? verified : undefined
   const hasHostPages = verified.renderedPages.length > 0
-  return runtime.extensionService.saveDynamicPackage({
+  const sourceCode = authoringSnapshot?.code ?? inspection.code
+  const saved = await runtime.extensionService.saveDynamicPackage({
     snapshot: {
       name: inspection.name,
       purpose: inspection.purpose,
-      ...(inspection.code.host === undefined ? {} : { hostCode: inspection.code.host }),
-      ...(inspection.code.client === undefined ? {} : { clientCode: inspection.code.client }),
+      ...(sourceCode.host === undefined ? {} : { hostCode: sourceCode.host }),
+      ...(sourceCode.client === undefined ? {} : { clientCode: sourceCode.client }),
       ...(hasHostPages ? { permissions: verified.permissions } : {}),
       contributions: verified.contributions,
+      ...(authoringSnapshot === undefined ? {} : { resources: authoringSnapshot.resources }),
+      ...(authoringSnapshot?.clientCss === undefined ? {} : { clientCss: authoringSnapshot.clientCss }),
     },
     slug: input.slug,
     displayName: input.displayName,
     description: input.description,
     ...(input.targetExtensionId === undefined ? {} : { extensionId: input.targetExtensionId }),
-    createdByAgentId: input.agentId,
+    createdByAgentId: identity.agentId,
     verification: {
       dshVersion: '0.1.1-rc.2',
       contractVersion: hasHostPages
@@ -996,18 +1127,51 @@ const saveActiveDynamicPackage = async (
       ...(scopedVerification === undefined ? {} : { scope: scopedVerification.scope }),
       ...(adapterVerification === undefined ? {} : { adapter: adapterVerification.adapter }),
       origin: {
-        episodeId: input.episodeId,
-        pluginId: input.pluginId,
-        packageId: input.packageId,
+        episodeId: identity.episodeId,
+        pluginId: identity.pluginId,
+        packageId: identity.packageId,
         pluginRunId: verified.pluginRunId,
       },
       toolInvocations: verified.toolInvocations,
       rpcMethods: verified.rpcMethods,
       renderedSlots: verified.renderedSlots,
       ...(verified.renderedHostSlots.length === 0 ? {} : { renderedHostSlots: verified.renderedHostSlots }),
-      ...(hasHostPages ? { renderedPages: verified.renderedPages, permissions: verified.permissions } : {}),
+      ...(hasHostPages
+        ? {
+            renderedPages: verified.renderedPages,
+            usedUiComponents: verified.usedUiComponents,
+            pageGeometry: verified.pageGeometry,
+            permissions: verified.permissions,
+          }
+        : {}),
     },
   })
+  if (authoringIdentity) {
+    const currentTask = runtime.repository.getAuthoringTask(authoringIdentity.task.id)
+    const currentAttempt = currentTask ? runtime.repository.listAuthoringAttempts(currentTask.id).at(-1) : undefined
+    if (currentTask?.status === 'ready' && currentAttempt?.id === authoringIdentity.attempt.id) {
+      const now = Date.now()
+      runtime.repository.updateAuthoringTask({
+        task: {
+          ...currentTask,
+          status: 'completed',
+          revision: currentTask.revision + 1,
+          updatedAt: now,
+          completedAt: now,
+        },
+        expectedRevision: currentTask.revision,
+        event: {
+          taskId: currentTask.id,
+          sequence: currentTask.revision + 1,
+          kind: 'task-completed',
+          attemptId: currentAttempt.id,
+          payload: { extensionId: saved.extension.id, revisionId: saved.revision.id },
+          createdAt: now,
+        },
+      })
+    }
+  }
+  return saved
 }
 
 export const createNekroHostApi = (
@@ -1114,6 +1278,9 @@ export const createNekroHostApi = (
   disposers.push(
     runtime.host.subscribeDynamicApprovalRequests((event) => {
       broadcast({ event: 'dynamic-changed', data: { agentId: event.agentId } })
+    }),
+    runtime.host.subscribeAuthoringChanges((change) => {
+      broadcast({ event: 'dynamic-changed', data: { agentId: change.agentId } })
     }),
   )
   const flushPendingFacts = (): void => {
@@ -1293,6 +1460,7 @@ export const createNekroHostApi = (
       },
       workTreeOrder: runtime.repository.getWorkTreeOrder(),
       dynamic: [...agentIds].flatMap((agentId) => projectDynamicInventory(runtime, agentId)),
+      authoringTasks: runtime.repository.listAuthoringTasks().map((task) => projectAuthoringTask(runtime, task)),
     })
   }
 
@@ -1305,6 +1473,158 @@ export const createNekroHostApi = (
         writeJson(res, 200, await buildSnapshot())
       } catch (error) {
         writeError(res, 500, 'snapshot-failed', error instanceof Error ? error.message : String(error))
+      }
+    },
+  })
+
+  registerRoute({
+    kind: 'prefix',
+    path: '/api/authoring/tasks',
+    handler: async (req, res) => {
+      const url = new URL(req.url ?? '/', 'http://localhost')
+      const decisionMatch = /^\/api\/authoring\/tasks\/([^/]+)\/attempts\/([^/]+)\/decision$/.exec(url.pathname)
+      const stopMatch = /^\/api\/authoring\/tasks\/([^/]+)\/stop$/.exec(url.pathname)
+      const taskMatch = /^\/api\/authoring\/tasks\/([^/]+)$/.exec(url.pathname)
+      try {
+        if (decisionMatch) {
+          if (req.method !== 'POST') throw new Error('创造任务审批只支持 POST。')
+          const taskId = AuthoringTaskIdSchema.parse(decodeURIComponent(decisionMatch[1] ?? ''))
+          const attemptId = AuthoringAttemptIdSchema.parse(decodeURIComponent(decisionMatch[2] ?? ''))
+          const params = HostApiContracts.decideAuthoringAttempt.parseParams({ taskId, attemptId })
+          const body = HostApiContracts.decideAuthoringAttempt.parseRequest(await readJsonBody(req))
+          const current = runtime.repository.getAuthoringTask(params.taskId)
+          const currentAttempt = runtime.repository.getAuthoringAttempt(params.attemptId)
+          if (!current) throw new Error('创造任务状态已更新，请刷新后重试。')
+          const latestAttempt = runtime.repository.listAuthoringAttempts(current.id).at(-1)
+          if (!currentAttempt || currentAttempt.taskId !== current.id || latestAttempt?.id !== currentAttempt.id) {
+            throw new Error('候选内容已经更新，请检查新的运行内容。')
+          }
+          if (
+            current.revision !== body.expectedRevision &&
+            (current.status !== 'awaiting-approval' || currentAttempt.state !== 'awaiting-approval')
+          ) {
+            throw new Error('创造任务状态已更新，请刷新后重试。')
+          }
+          const now = Date.now()
+          const task = {
+            ...current,
+            status: body.approved ? ('running' as const) : ('working' as const),
+            ...(body.approved && (body.approveRiskStable || current.approvalPolicy === 'fully-automatic')
+              ? { approvedRiskDigest: currentAttempt.riskDigest }
+              : {}),
+            revision: current.revision + 1,
+            updatedAt: now,
+          }
+          const attempt = {
+            ...currentAttempt,
+            state: body.approved ? ('starting-host' as const) : ('rejected' as const),
+            ...(body.approved ? {} : { settledAt: now }),
+          }
+          runtime.repository.updateAuthoringAttempt({
+            task,
+            expectedRevision: current.revision,
+            attempt,
+            event: {
+              taskId: task.id,
+              sequence: task.revision,
+              kind: body.approved ? 'approval-accepted' : 'approval-rejected',
+              attemptId: attempt.id,
+              payload: { approved: body.approved },
+              createdAt: now,
+            },
+          })
+          writeContractJson(res, 200, HostApiContracts.decideAuthoringAttempt, {
+            accepted: true,
+            taskRevision: task.revision,
+            executionRequired: body.approved,
+          })
+          broadcast({ event: 'dynamic-changed', data: { agentId: task.agentId } })
+          return
+        }
+        if (stopMatch) {
+          if (req.method !== 'POST') throw new Error('停止创造任务只支持 POST。')
+          const taskId = AuthoringTaskIdSchema.parse(decodeURIComponent(stopMatch[1] ?? ''))
+          const params = HostApiContracts.stopAuthoringTask.parseParams({ taskId })
+          const body = HostApiContracts.stopAuthoringTask.parseRequest(await readJsonBody(req))
+          const current = runtime.repository.getAuthoringTask(params.taskId)
+          if (!current || current.revision !== body.expectedRevision)
+            throw new Error('创造任务状态已更新，请刷新后重试。')
+          const episode = runtime.repository.getEpisode(current.episodeId)
+          if (episode?.status === 'active' && episode.dshSessionId) {
+            await runtime.host.stopDynamicPlugin(episode.dshSessionId, current.pluginKey)
+          }
+          const now = Date.now()
+          const task = { ...current, status: 'stopped' as const, revision: current.revision + 1, updatedAt: now }
+          const attempt = runtime.repository.listAuthoringAttempts(current.id).at(-1)
+          if (attempt) {
+            runtime.repository.updateAuthoringAttempt({
+              task,
+              expectedRevision: current.revision,
+              attempt: {
+                ...attempt,
+                state: 'stopped',
+                host: {
+                  status: attempt.host.status === 'absent' ? 'absent' : 'stopped',
+                  waitingFor: [],
+                },
+                client: {
+                  status: attempt.client.status === 'absent' ? 'absent' : 'stopped',
+                  waitingFor: [],
+                },
+                settledAt: now,
+              },
+              event: {
+                taskId: task.id,
+                sequence: task.revision,
+                kind: 'task-stopped',
+                attemptId: attempt.id,
+                payload: {},
+                createdAt: now,
+              },
+            })
+          } else {
+            runtime.repository.updateAuthoringTask({
+              task,
+              expectedRevision: current.revision,
+              event: {
+                taskId: task.id,
+                sequence: task.revision,
+                kind: 'task-stopped',
+                payload: {},
+                createdAt: now,
+              },
+            })
+          }
+          writeContractJson(res, 200, HostApiContracts.stopAuthoringTask, projectAuthoringTask(runtime, task))
+          broadcast({ event: 'dynamic-changed', data: { agentId: task.agentId } })
+          return
+        }
+        if (!taskMatch) {
+          writeError(res, 404, 'not-found', `未定义路由：${req.method} ${url.pathname}。`)
+          return
+        }
+        const taskId = AuthoringTaskIdSchema.parse(decodeURIComponent(taskMatch[1] ?? ''))
+        if (req.method === 'DELETE') {
+          const deleted = await runtime.host.deleteAuthoringTask(taskId)
+          writeContractJson(res, 200, HostApiContracts.deleteAuthoringTask, { deleted })
+          return
+        }
+        if (req.method !== 'GET') throw new Error('创造任务详情只支持 GET。')
+        const task = runtime.repository.getAuthoringTask(taskId)
+        if (!task) throw new Error('创造任务不存在。')
+        writeContractJson(res, 200, HostApiContracts.getAuthoringTask, {
+          task: projectAuthoringTask(runtime, task),
+          attempts: runtime.repository.listAuthoringAttempts(task.id).map(projectAuthoringAttempt),
+          events: runtime.repository.listAuthoringEvents(task.id).map((event) => ({
+            sequence: event.sequence,
+            kind: event.kind,
+            ...(event.attemptId === undefined ? {} : { attemptId: event.attemptId }),
+            payload: event.payload,
+            createdAt: event.createdAt,
+          })),
+        })
+      } catch (error) {
+        writeError(res, 400, 'authoring-operation-failed', error instanceof Error ? error.message : String(error))
       }
     },
   })
@@ -3922,7 +4242,7 @@ export const createNekroHostApi = (
       if (action === 'report-client-verification') {
         const parsed = HostApiContracts.dynamicReportClientVerification.parseRequest(body)
         try {
-          runtime.host.recordDynamicClientVerification(
+          await runtime.host.recordDynamicClientVerification(
             dshSessionId,
             parsed.pluginId,
             parsed.packageId,
@@ -3930,7 +4250,10 @@ export const createNekroHostApi = (
             parsed.renderedSlots,
             parsed.renderedHostSlots,
             parsed.renderedPages,
+            parsed.usedUiComponents,
+            parsed.pageGeometry,
             parsed.permissions,
+            parsed.navigationEntries,
           )
           writeJson(res, 200, HostApiContracts.dynamicReportClientVerification.parseResponse({ ok: true }))
         } catch (error) {

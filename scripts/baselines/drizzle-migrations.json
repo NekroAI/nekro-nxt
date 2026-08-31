@@ -20,6 +20,7 @@
     "0015_extension_scope_payload_digest.sql": "24ef78e28634d73983450e9d4787161b890a07bbee61da62aacf57a3b8fc76c6",
     "0016_dsh_plugin_packages.sql": "9878a013826a362931d9c1914a232b8e0b0414fd9c69fd91f4fd57f46faf2946",
     "0017_host_ui_pages.sql": "72a00762e4c410381a169bd30ce2070a0be9eeeb76d606a36359e6dbfdacfcb6",
+    "0018_productive_starfox.sql": "cf93ab375cbb4b3623d97e5784e2385781ae4983159ff44084787d19f34a3281",
     "meta/0000_snapshot.json": "03573ed4ecfb276bfad4bd1d6041564c11d3c52e1fcb35fc3dd278da7b55448d",
     "meta/0001_snapshot.json": "48b7a1cd91c44d75a394c94af554fc85621fe5fda2dd680d4bc25b68679d4ee5",
     "meta/0002_snapshot.json": "aa0ed0d69885976c1ce596d468657ac121e8cae5ac9e09aa9843be0b3b3127c9",
@@ -38,6 +39,7 @@
     "meta/0015_snapshot.json": "0aa30cbde515338d64c4ccb7810b7762bf9b9507d82b2fd326d5ea11a2895610",
     "meta/0016_snapshot.json": "d4198de8fec49dff0aaac42de5b43215b8c11b2bded264dcb515487a7622ba31",
     "meta/0017_snapshot.json": "b521f9031922698913a20e1a569ee5c4d483d35bd222b85d03bd13af9d164809",
-    "meta/_journal.json": "99182172e684dab731c2381deabfe45b2cdfbf5d39b956021b558c18ac0a4fa5"
+    "meta/0018_snapshot.json": "c0de360ca37120021d3c3fd13621fc35776165db8a8e153e86dba425f66b1fc5",
+    "meta/_journal.json": "ce48a0f902e33d7d084c566ec276d5d7405d5b1fa9d9fa4dee46a96b7d14b635"
   }
 }

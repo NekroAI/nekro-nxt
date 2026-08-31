@@ -299,6 +299,7 @@ export interface AgentSessionDriver {
     readonly admissionId: AdmissionId
     readonly events: readonly ChannelEventRecord[]
     readonly mode: 'followup' | 'inject'
+    readonly replyRequired: boolean
   }): Promise<{ readonly dshMessageId: string }>
   notifyConsoleOutbound(input: {
     readonly dshSessionId: string
@@ -1146,11 +1147,14 @@ export class ChannelRuntime {
             if (!event) throw new Error(`Admission references a missing Channel Event: ${id}`)
             return event
           })
+          const binding = this.#coreRepository.getBinding(episode.channelId)
           const result = await this.#sessionDriver.admit({
             dshSessionId,
             admissionId: admission.id,
             events,
             mode: admission.mode,
+            replyRequired:
+              binding?.agentId === episode.agentId && events.some((candidate) => isTriggered(binding, candidate)),
           })
           this.#runtimeRepository.completeAdmission(admission.id, result.dshMessageId, lastEventId)
           report.recoveredAdmissions += 1
@@ -1428,6 +1432,10 @@ export class ChannelRuntime {
           return candidate
         }),
         mode: admission.mode,
+        replyRequired: admission.eventIds.some((eventId) => {
+          const candidate = this.#coreRepository.getChannelEvent(eventId)
+          return candidate !== undefined && isTriggered(binding, candidate)
+        }),
       })
       const lastEventId = admission.eventIds.at(-1)
       if (lastEventId === undefined) throw new Error(`Admission has no events: ${admission.id}`)

@@ -121,6 +121,9 @@ describe('HttpDynamicClientHost (browser dynamic Client circuit)', () => {
       renderedSlots: [],
       renderedHostSlots: [{ name: 'conversation.message.rich', key: 'synthetic-chat:card' }],
       renderedPages: [],
+      usedUiComponents: [],
+      pageGeometry: [],
+      navigationEntries: [],
       permissions: { permissions: [], networkOrigins: [] },
     })
   })

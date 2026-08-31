@@ -278,6 +278,11 @@ export class ExtensionService {
     return this.#sources.revisionSourceDirectory(revision.extensionId, revision.id)
   }
 
+  currentBuildKey(revision: Revision): string {
+    if (!this.#builder) throw new Error('Extension Builder is unavailable.')
+    return this.#builder.buildKey(revision.contentDigest)
+  }
+
   async buildRevision(revision: Revision): Promise<ExtensionBuildArtifact> {
     if (!this.#builder) throw new Error('Extension Builder is unavailable.')
     return this.#builder.build({

@@ -3,6 +3,7 @@ import {
   createContext,
   useContext,
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -22,12 +23,21 @@ import type {
   AdapterClientSlotName,
   AgentClientSlotName,
   HostPageContribution,
+  HostUiKitComponentName,
+  HostUiPageGeometryEvidence,
   HostUiPermissionDeclaration,
 } from '@nekro-nxt/contracts'
-import { ADAPTER_CLIENT_SLOT_NAMES, AGENT_CLIENT_SLOT_NAMES, HostUiNavigationModelSchema } from '@nekro-nxt/contracts'
+import {
+  ADAPTER_CLIENT_SLOT_NAMES,
+  AGENT_CLIENT_SLOT_NAMES,
+  HostUiKitComponentNameSchema,
+  HostUiNavigationModelSchema,
+} from '@nekro-nxt/contracts'
 import { HttpDynamicClientHost } from './http-dynamic-host.js'
+import type { DynamicPackageSummary } from './product-port.js'
 import { useProductStore } from './product-store.js'
 import { Button } from './ui-kit/index.js'
+import { HostUiPageFrame } from './host-ui-client.js'
 import styles from './dynamic-client-coordinator.module.css'
 
 /** One browser ModuleLoader/SlotRegistry multiplexed across product intelligent-agents. */
@@ -107,7 +117,10 @@ class MultiplexDynamicClientHost implements DynamicClientHostPort {
     renderedSlots: readonly AgentClientSlotName[],
     renderedHostSlots: readonly { readonly name: AdapterClientSlotName; readonly key: string }[],
     renderedPages: readonly HostPageContribution[],
+    usedUiComponents: readonly HostUiKitComponentName[],
+    pageGeometry: readonly HostUiPageGeometryEvidence[],
     permissions: HostUiPermissionDeclaration,
+    navigationEntries: readonly string[],
   ): Promise<void> {
     const owner = this.#pluginOwner.get(pluginId)
     if (!owner) return Promise.reject(new Error('找不到动态扩展所属的 Episode。'))
@@ -119,7 +132,10 @@ class MultiplexDynamicClientHost implements DynamicClientHostPort {
       renderedSlots,
       renderedHostSlots,
       renderedPages,
+      usedUiComponents,
+      pageGeometry,
       permissions,
+      navigationEntries,
     )
   }
 
@@ -222,6 +238,15 @@ class DynamicClientCoordinator {
           loaded.slots.includes(name) ? runtime.entries(name).map((entry) => ({ name, key: entry.id })) : [],
         )
         const renderedPages = runtime.pageEntries().map(({ page }) => page)
+        const usedUiComponents = [...new Set(runtime.pageEntries().flatMap((entry) => entry.usedUiComponents()))]
+        const pageGeometry = runtime.pageEntries().flatMap((entry) => {
+          const geometry = entry.pageGeometry()
+          return geometry === undefined ? [] : [geometry]
+        })
+        const navigationEntries = runtime
+          .pageEntries()
+          .filter(({ page, navigation }) => page.objectPane === 'navigation' && navigation !== undefined)
+          .map(({ page }) => page.entryId)
         if (renderedSlots.length === 0 && renderedHostSlots.length === 0 && renderedPages.length === 0) continue
         await this.#host.reportClientVerification(
           agentId,
@@ -231,7 +256,10 @@ class DynamicClientCoordinator {
           renderedSlots,
           renderedHostSlots,
           renderedPages,
+          usedUiComponents,
+          pageGeometry,
           runtime.pagePermissions(),
+          navigationEntries,
         )
         this.#reportedClientRuns.add(key)
       }
@@ -261,10 +289,24 @@ class DynamicClientCoordinator {
       const runtime = await this.#ensureRuntime()
       const episodeId = this.#activeAgentId === agentId ? this.#activeEpisodeId : undefined
       if (!episodeId) throw new Error('请先打开这个动态运行所属的 Episode。')
-      await runtime.reconcile(await this.#host.inventory(agentId, episodeId))
+      const before = await this.#host.inventory(agentId, episodeId)
+      const pending = before.find((row) => row.latestRun?.approvalRequestId === requestId)
+      await runtime.reconcile(before)
       if (approved) await runtime.approve(requestId)
       else await runtime.decline(requestId)
-      await runtime.reconcile(await this.#host.inventory(agentId, episodeId))
+      const after = await this.#host.inventory(agentId, episodeId)
+      await runtime.reconcile(after)
+      const settled = pending === undefined ? undefined : after.find((row) => row.pluginId === pending.pluginId)
+      const failure = settled?.latestRun?.error
+      if (
+        approved &&
+        (failure !== undefined ||
+          settled?.latestRun?.status === 'failed' ||
+          settled?.latestRun?.status === 'cancelled' ||
+          settled?.latestRun?.status === 'rejected')
+      ) {
+        throw new Error(failure?.message ?? '动态界面运行失败。')
+      }
       this.#failure = ''
       this.#publish()
     })
@@ -340,6 +382,99 @@ function DynamicRuntimeSlot<Name extends DynamicProductSlotName>({
 
 const EMPTY_DYNAMIC_NAVIGATION: ReturnType<typeof HostUiNavigationModelSchema.parse> = { revision: 0, groups: [] }
 
+export const inspectDynamicPageUi = (
+  root: ParentNode,
+): { readonly usedUiComponents: readonly HostUiKitComponentName[]; readonly violations: readonly string[] } => {
+  const usedUiComponents = [
+    ...new Set(
+      [...root.querySelectorAll('[data-nxt-ui-component]')].flatMap((element) => {
+        const parsed = HostUiKitComponentNameSchema.safeParse(element.getAttribute('data-nxt-ui-component'))
+        return parsed.success ? [parsed.data] : []
+      }),
+    ),
+  ]
+  const nakedControls = [...root.querySelectorAll('button, input, select, textarea')].filter(
+    (element) => element.closest('[data-nxt-ui-component]') === null,
+  )
+  const nakedTables = [...root.querySelectorAll('table')].filter(
+    (element) => element.closest('[data-nxt-ui-component="DataTable"]') === null,
+  )
+  const violations: string[] = []
+  if (usedUiComponents.length === 0) violations.push('页面没有实际使用 NekroNXT UI Kit。')
+  if (nakedControls.length > 0) violations.push('页面使用了浏览器默认交互控件。')
+  if (nakedTables.length > 0) violations.push('页面使用了裸表格，必须改用 DataTable。')
+  return { usedUiComponents, violations }
+}
+
+const cssPixels = (value: string): number => {
+  const parsed = Number.parseFloat(value)
+  return Number.isFinite(parsed) ? parsed : 0
+}
+
+export const inspectDynamicPageGeometry = (
+  viewport: HTMLElement,
+  page: HostPageContribution,
+): { readonly evidence: HostUiPageGeometryEvidence; readonly violations: readonly string[] } => {
+  const frame = viewport.querySelector<HTMLElement>('[data-host-ui-frame]')
+  const content = viewport.querySelector<HTMLElement>('[data-host-ui-content]')
+  if (!frame || !content) throw new Error('Host 页面预览缺少标准内容框。')
+  const viewportRect = viewport.getBoundingClientRect()
+  const contentRect = content.getBoundingClientRect()
+  const frameStyle = window.getComputedStyle(frame)
+  const insets = {
+    top: cssPixels(frameStyle.paddingTop),
+    right: cssPixels(frameStyle.paddingRight),
+    bottom: cssPixels(frameStyle.paddingBottom),
+    left: cssPixels(frameStyle.paddingLeft),
+  }
+  const axisTargets = [
+    ...content.querySelectorAll<HTMLElement>(
+      '[data-page-header], [data-nxt-ui-component="Section"], [data-nxt-ui-component="Grid"], [data-nxt-ui-component="DataTable"]',
+    ),
+  ].filter((target) => {
+    const containingTarget = target.parentElement?.closest(
+      '[data-page-header], [data-nxt-ui-component="Section"], [data-nxt-ui-component="Grid"], [data-nxt-ui-component="DataTable"]',
+    )
+    return containingTarget === null || containingTarget === undefined || !content.contains(containingTarget)
+  })
+  const pageHeader = content.querySelector<HTMLElement>('[data-page-header]')
+  const contentAxesAligned =
+    pageHeader !== null &&
+    axisTargets.length > 0 &&
+    axisTargets.every((target) => {
+      const rect = target.getBoundingClientRect()
+      return Math.abs(rect.left - contentRect.left) <= 1 && Math.abs(rect.right - contentRect.right) <= 1
+    })
+  const pageTitle = pageHeader?.querySelector('h1')?.textContent?.trim() ?? ''
+  const titleDistinct = page.objectPane === 'hidden' || (pageTitle.length > 0 && pageTitle !== page.title.trim())
+  const horizontalOverflow = viewport.scrollWidth > viewport.clientWidth + 1
+  const evidence: HostUiPageGeometryEvidence = {
+    entryId: page.entryId,
+    objectPane: page.objectPane,
+    viewport: { width: viewportRect.width, height: viewportRect.height },
+    insets,
+    contentAxesAligned,
+    horizontalOverflow,
+    titleDistinct,
+  }
+  const expectedInline = viewportRect.width <= 960 ? 24 : viewportRect.width <= 1440 ? 32 : 40
+  const violations: string[] = []
+  for (const [side, actual, expected] of [
+    ['top', insets.top, 24],
+    ['right', insets.right, expectedInline],
+    ['bottom', insets.bottom, 40],
+    ['left', insets.left, expectedInline],
+  ] as const) {
+    if (Math.abs(actual - expected) > 1) {
+      violations.push(`${side} 边距为 ${actual}px，Host 页面契约要求 ${expected}px。`)
+    }
+  }
+  if (!contentAxesAligned) violations.push('PageHeader 与正文没有共享左右内容轴。')
+  if (horizontalOverflow) violations.push('页面根产生了横向溢出。')
+  if (!titleDistinct) violations.push('对象列应用标题与主画布当前视图标题重复。')
+  return { evidence, violations }
+}
+
 function DynamicPagePreview({
   agentId,
   coordinator,
@@ -350,6 +485,7 @@ function DynamicPagePreview({
   readonly entry: DynamicHostPageEntry
 }) {
   const [relativePath, setRelativePath] = useState(entry.page.startPath)
+  const previewRoot = useRef<HTMLDivElement>(null)
   const navigationProvider = entry.navigation
   const navigationSnapshot = useSyncExternalStore(
     (listener) => navigationProvider?.subscribe(listener) ?? (() => undefined),
@@ -358,8 +494,24 @@ function DynamicPagePreview({
   )
   const navigation = HostUiNavigationModelSchema.parse(navigationSnapshot)
   const Page = entry.component
+  useLayoutEffect(() => {
+    const root = previewRoot.current
+    if (!root) return
+    const evidence = inspectDynamicPageUi(root)
+    entry.recordUiComponents(evidence.usedUiComponents)
+    const geometry = inspectDynamicPageGeometry(root, entry.page)
+    entry.recordPageGeometry(geometry.evidence)
+    const violations = [...evidence.violations, ...geometry.violations]
+    if (violations.length > 0) {
+      coordinator.reportSlotFailure(agentId, new Error(`页面样式验证失败：${violations.join(' ')}`))
+    }
+  }, [agentId, coordinator, entry, relativePath])
   return (
-    <section className={styles.pagePreview} data-dynamic-host-page={entry.page.entryId}>
+    <section
+      className={styles.pagePreview}
+      data-dynamic-host-page={entry.page.entryId}
+      data-host-ui-owner="dynamic-preview"
+    >
       <header className={styles.pagePreviewHeader}>
         <span>
           <strong>{entry.page.title}</strong>
@@ -393,25 +545,27 @@ function DynamicPagePreview({
           </nav>
         ) : null}
         <div className={styles.pagePreviewCanvas}>
-          <DynamicSlotBoundary
-            entryId={entry.page.entryId}
-            onFailure={(error) => coordinator.reportSlotFailure(agentId, error)}
-          >
-            <Page
-              pageInstanceId={`dynamic-preview-${entry.page.entryId}`}
+          <HostUiPageFrame viewportRef={previewRoot}>
+            <DynamicSlotBoundary
               entryId={entry.page.entryId}
-              relativePath={relativePath}
-              search={{}}
-              navigate={(path, options) => {
-                void options
-                const normalized = path.trim().replace(/^\/+|\/+$/gu, '')
-                if (normalized.split('/').includes('..') || !/^(?:[a-z0-9][a-z0-9/_-]*)?$/u.test(normalized)) {
-                  throw new Error('页面预览只能在当前入口内导航。')
-                }
-                setRelativePath(normalized)
-              }}
-            />
-          </DynamicSlotBoundary>
+              onFailure={(error) => coordinator.reportSlotFailure(agentId, error)}
+            >
+              <Page
+                pageInstanceId={`dynamic-preview-${entry.page.entryId}`}
+                entryId={entry.page.entryId}
+                relativePath={relativePath}
+                search={{}}
+                navigate={(path, options) => {
+                  void options
+                  const normalized = path.trim().replace(/^\/+|\/+$/gu, '')
+                  if (normalized.split('/').includes('..') || !/^(?:[a-z0-9][a-z0-9/_-]*)?$/u.test(normalized)) {
+                    throw new Error('页面预览只能在当前入口内导航。')
+                  }
+                  setRelativePath(normalized)
+                }}
+              />
+            </DynamicSlotBoundary>
+          </HostUiPageFrame>
         </div>
       </div>
     </section>
@@ -428,20 +582,48 @@ const browserDynamicClientCoordinator = (): DynamicClientCoordinator => {
   return sharedCoordinator
 }
 
+export const dynamicClientInventoryVersion = (inventory: readonly DynamicPackageSummary[], agentId: string): string =>
+  inventory
+    .filter((item) => item.agentId === agentId)
+    .map((item) =>
+      [
+        item.pluginId,
+        item.packageId ?? '',
+        item.status,
+        item.approvalRequestId ?? '',
+        item.activeRun?.pluginRunId ?? '',
+        item.activeRun?.packageId ?? '',
+        item.latestRun?.pluginRunId ?? '',
+        item.latestRun?.packageId ?? '',
+        item.latestRun?.status ?? '',
+        item.latestRun?.approvalRequestId ?? '',
+      ].join(':'),
+    )
+    .sort()
+    .join('|')
+
 export function DynamicClientProvider({ children }: { readonly children: ReactNode }) {
   const coordinator = useMemo(browserDynamicClientCoordinator, [])
   const agents = useProductStore((state) => state.agents)
   const dynamic = useProductStore((state) => state.dynamic)
+  const authoringTasks = useProductStore((state) => state.authoringTasks)
   const automaticApprovalInFlight = useRef(new Set<string>())
   const automaticRequests = useMemo(
     () =>
-      dynamic.filter(
-        (item) =>
-          item.status === 'awaiting-approval' &&
-          item.approvalRequestId !== undefined &&
-          agents.find((agent) => agent.id === item.agentId)?.dynamicClientApprovalPolicy === 'automatic',
-      ),
-    [agents, dynamic],
+      dynamic.filter((item) => {
+        if (item.status !== 'awaiting-approval' || item.approvalRequestId === undefined) return false
+        if (agents.find((agent) => agent.id === item.agentId)?.dynamicClientApprovalPolicy === 'automatic') return true
+        const task = authoringTasks.find(
+          (candidate) => candidate.agentId === item.agentId && candidate.episodeId === item.episodeId,
+        )
+        return (
+          task?.status === 'awaiting-approval' &&
+          task.candidateAttempt?.state === 'awaiting-approval' &&
+          task.approvedRiskDigest !== undefined &&
+          task.candidateAttempt.riskDigest === task.approvedRiskDigest
+        )
+      }),
+    [agents, authoringTasks, dynamic],
   )
 
   useEffect(() => {
@@ -467,9 +649,9 @@ export function DynamicClientProvider({ children }: { readonly children: ReactNo
       const requestId = request.approvalRequestId
       if (requestId === undefined || automaticApprovalInFlight.current.has(requestId)) continue
       automaticApprovalInFlight.current.add(requestId)
-      void coordinator
-        .sync(request.agentId, request.episodeId)
-        .then(() => coordinator.approve(request.agentId, requestId))
+      void useProductStore
+        .getState()
+        .resolveApproval({ requestId, agentId: request.agentId, approved: true })
         .catch((error: unknown) => coordinator.reportFailure(error))
         .finally(() => automaticApprovalInFlight.current.delete(requestId))
     }
@@ -493,13 +675,7 @@ if (import.meta.hot) {
 export function DynamicClientSlots({ agentId, episodeId }: { readonly agentId: string; readonly episodeId: string }) {
   const coordinator = useContext(DynamicClientContext)
   if (!coordinator) throw new Error('动态 Client Slot 缺少产品级运行时。')
-  const inventoryVersion = useProductStore((state) =>
-    state.dynamic
-      .filter((item) => item.agentId === agentId)
-      .map((item) => `${item.pluginId}:${item.packageId ?? ''}:${item.status}:${item.approvalRequestId ?? ''}`)
-      .sort()
-      .join('|'),
-  )
+  const inventoryVersion = useProductStore((state) => dynamicClientInventoryVersion(state.dynamic, agentId))
   const displayName = useProductStore((state) => state.agents.find((agent) => agent.id === agentId)?.name ?? '智能体')
   useSyncExternalStore(coordinator.subscribe, coordinator.getVersion, coordinator.getVersion)
   useEffect(() => {

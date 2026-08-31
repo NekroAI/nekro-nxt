@@ -12,6 +12,7 @@ import type {
   EpisodeId,
 } from '@nekro-nxt/contracts'
 import { z } from 'zod'
+import type { ChannelDeliveryState, ChannelResponseState } from './channel-reply-guard.js'
 
 const ToolArgumentObjectSchema = z.record(z.string(), z.unknown())
 
@@ -23,6 +24,7 @@ const SECRET_KEY = /secret|token|password|authorization|api[_-]?key|credential/i
 
 const TOOL_DISPLAY_NAMES: Readonly<Record<string, string>> = {
   send_channel_message: '发送频道消息',
+  finish_channel_turn: '结束本轮处理',
   web_search: '网页搜索',
   web_fetch: '获取网页',
   subagent: '子智能体',
@@ -42,7 +44,12 @@ export type RuntimeSessionStatus = 'idle' | 'running' | 'missing'
 
 export type RuntimeProjectionEvent =
   | { readonly type: 'turn/start'; readonly turn: number; readonly at?: number }
-  | { readonly type: 'channel/reply-missing'; readonly turn: number; readonly at?: number }
+  | {
+      readonly type: 'channel/response-state'
+      readonly turn: number
+      readonly responseState: ChannelResponseState
+      readonly producedReply: boolean
+    }
   | {
       readonly type: 'turn/end'
       readonly turn: number
@@ -70,6 +77,7 @@ export type RuntimeProjectionEvent =
       readonly failed: boolean
       readonly at?: number
       readonly resultPreview?: string
+      readonly deliveryState?: ChannelDeliveryState
     }
   | {
       readonly type: 'assistant/first-token'
@@ -133,6 +141,7 @@ type ProjectedTool = {
   inputPreview?: string
   resultPreview?: string
   wroteToChannel?: boolean
+  deliveryState?: ChannelDeliveryState
   startedAt?: number
   durationMs?: number
 }
@@ -152,6 +161,7 @@ type ProjectedTurn = {
   turn: number
   state: ChannelRuntimeProjection['turns'][number]['state']
   producedReply: boolean
+  responseState: ChannelResponseState
   error?: { code: string; message: string }
   startedAt?: number
   endedAt?: number
@@ -434,7 +444,13 @@ export const projectChannelRuntime = (input: ChannelRuntimeProjectionInput): Cha
   const ensureTurn = (turn: number): ProjectedTurn => {
     const existing = turns.get(turn)
     if (existing) return existing
-    const created: ProjectedTurn = { turn, state: 'in-progress', producedReply: false, steps: new Map() }
+    const created: ProjectedTurn = {
+      turn,
+      state: 'in-progress',
+      producedReply: false,
+      responseState: 'not-required',
+      steps: new Map(),
+    }
     turns.set(turn, created)
     return created
   }
@@ -467,11 +483,11 @@ export const projectChannelRuntime = (input: ChannelRuntimeProjectionInput): Cha
       }
       continue
     }
-    if (event.type === 'channel/reply-missing') {
+    if (event.type === 'channel/response-state') {
       const record = ensureTurn(event.turn)
-      record.state = 'unreplied'
-      record.producedReply = false
-      if (event.at !== undefined) record.endedAt = event.at
+      record.responseState = event.responseState
+      record.producedReply = event.producedReply
+      if (event.responseState === 'protocol-failed' && record.state === 'completed') record.state = 'unreplied'
       continue
     }
     if (event.type === 'step/start') {
@@ -510,11 +526,19 @@ export const projectChannelRuntime = (input: ChannelRuntimeProjectionInput): Cha
         state: event.failed ? 'failed' : 'succeeded',
         ...(current?.inputPreview === undefined ? {} : { inputPreview: current.inputPreview }),
         ...(event.resultPreview === undefined ? {} : { resultPreview: previewText(event.resultPreview) }),
-        ...(name === 'send_channel_message' ? { wroteToChannel: !event.failed } : {}),
+        ...(name === 'send_channel_message'
+          ? {
+              wroteToChannel:
+                !event.failed &&
+                (event.deliveryState === undefined ||
+                  event.deliveryState === 'sent' ||
+                  event.deliveryState === 'partially-sent'),
+            }
+          : {}),
+        ...(event.deliveryState === undefined ? {} : { deliveryState: event.deliveryState }),
         ...(current?.startedAt === undefined ? {} : { startedAt: current.startedAt }),
         ...(durationMs === undefined ? {} : { durationMs }),
       })
-      if (!event.failed && name === 'send_channel_message') ensureTurn(event.turn).producedReply = true
       continue
     }
     if (event.type === 'assistant/first-token') {
@@ -536,6 +560,7 @@ export const projectChannelRuntime = (input: ChannelRuntimeProjectionInput): Cha
       turn: record.turn,
       state: record.state,
       producedReply: record.producedReply,
+      responseState: record.responseState,
       ...(record.error === undefined ? {} : { error: record.error }),
       ...(elapsedMs(record.startedAt, record.endedAt) === undefined
         ? {}
@@ -555,6 +580,7 @@ export const projectChannelRuntime = (input: ChannelRuntimeProjectionInput): Cha
               ...(tool.inputPreview === undefined ? {} : { inputPreview: tool.inputPreview }),
               ...(tool.resultPreview === undefined ? {} : { resultPreview: tool.resultPreview }),
               ...(tool.wroteToChannel === undefined ? {} : { wroteToChannel: tool.wroteToChannel }),
+              ...(tool.deliveryState === undefined ? {} : { deliveryState: tool.deliveryState }),
               ...(tool.durationMs === undefined ? {} : { durationMs: tool.durationMs }),
             })),
             ...(step.text || step.reasoning
@@ -595,8 +621,10 @@ export const projectChannelRuntime = (input: ChannelRuntimeProjectionInput): Cha
               ? `智能体本轮失败：${failedTurn.error.message}`
               : '智能体当前不可用，请检查模型和连接设置。'
             : unrepliedTurn
-              ? '智能体本轮未产生频道回复。'
-              : '智能体当前空闲。'
+              ? '智能体未按频道回应协议完成本轮。'
+              : latest?.responseState === 'finished'
+                ? '智能体已明确结束本轮处理。'
+                : '智能体当前空闲。'
 
   return {
     channelId: input.channelId,

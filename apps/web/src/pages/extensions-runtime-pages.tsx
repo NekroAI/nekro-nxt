@@ -15,6 +15,7 @@ import { useNxtNavigate } from '../shell/nxt-link.js'
 import { notify } from '../components/notifications.js'
 import { EmptyState, InlineFeedback, PageHeader } from '../components/product-feedback.js'
 import { useProductStore, type LocalExtensionSummary } from '../product-store.js'
+import type { DynamicPackageSummary } from '../product-port.js'
 import {
   Button,
   ConfirmDialog,
@@ -864,48 +865,98 @@ export function ExtensionsPage() {
 }
 
 const dynamicStatus = (status: string): { readonly label: string; readonly tone: StatusTone } => {
+  if (status === 'ready') return { label: '可以预览', tone: 'success' }
+  if (status === 'working') return { label: '正在开发', tone: 'info' }
+  if (status === 'repairing') return { label: '正在修复', tone: 'info' }
+  if (status === 'interrupted') return { label: '恢复中断', tone: 'error' }
+  if (status === 'completed') return { label: '已完成', tone: 'success' }
+  if (status === 'drafting') return { label: '正在生成', tone: 'info' }
+  if (status === 'preflight-failed') return { label: '预检失败', tone: 'error' }
+  if (status === 'loading-client') return { label: '正在加载界面', tone: 'info' }
+  if (status === 'verifying') return { label: '正在验证', tone: 'info' }
+  if (status === 'active') return { label: '已经运行', tone: 'success' }
   if (status === 'running') return { label: '运行中', tone: 'info' }
   if (status === 'awaiting-approval') return { label: '等待确认', tone: 'warning' }
+  if (status === 'starting-host') return { label: '正在启动宿主', tone: 'info' }
+  if (status === 'client-pending') return { label: '正在加载界面', tone: 'info' }
+  if (status === 'waiting') return { label: '等待运行条件', tone: 'warning' }
+  if (status === 'rejected') return { label: '已拒绝', tone: 'neutral' }
+  if (status === 'cancelled') return { label: '已取消', tone: 'neutral' }
   if (status === 'failed') return { label: '运行失败', tone: 'error' }
   if (status === 'stopped') return { label: '已停止', tone: 'neutral' }
   return { label: '状态待确认', tone: 'unknown' }
 }
 
+const dynamicRunSummary = (item: DynamicPackageSummary): string => {
+  const latest = item.latestRun
+  const active = item.activeRun
+  if (!latest) return dynamicStatus(item.status).label
+  if (active && active.pluginRunId !== latest.pluginRunId) {
+    return `已有预览仍在运行；新候选${dynamicStatus(latest.status).label}`
+  }
+  return dynamicStatus(latest.status).label
+}
+
+const dynamicHalfLabel = (
+  status: DynamicPackageSummary['latestRun'] extends infer Latest
+    ? Latest extends { host: infer Half }
+      ? Half extends { status: infer Status }
+        ? Status
+        : never
+      : never
+    : never,
+): string => {
+  if (status === 'absent') return '不包含'
+  if (status === 'pending') return '等待启动'
+  if (status === 'running') return '已启动'
+  if (status === 'waiting') return '等待条件'
+  if (status === 'failed') return '失败'
+  return '已停止'
+}
+
 export function CreatorPage() {
+  const { taskId: routeTaskId } = useParams()
   const host = useProductStore((state) => state.host)
   const dynamic = useProductStore((state) => state.dynamic)
+  const authoringTasks = useProductStore((state) => state.authoringTasks)
   const agents = useProductStore((state) => state.agents)
   const extensions = useProductStore((state) => state.extensions)
   const navigate = useNxtNavigate()
   const [searchParams] = useSearchParams()
   const requestedAgentId = searchParams.get('agent') ?? ''
-  const [reviewIndex, setReviewIndex] = useState<number | null>(null)
   const [selectedKey, setSelectedKey] = useState('')
   const [saveOpen, setSaveOpen] = useState(false)
+  const [deleteTaskOpen, setDeleteTaskOpen] = useState(false)
   const [extensionName, setExtensionName] = useState('')
   const [extensionSlug, setExtensionSlug] = useState('')
   const [extensionDescription, setExtensionDescription] = useState('')
   const [targetExtensionId, setTargetExtensionId] = useState('')
   const [saveError, setSaveError] = useState('')
+  const [savePending, setSavePending] = useState(false)
   const [declinePending, setDeclinePending] = useState(false)
-  const reviewItem = reviewIndex === null ? undefined : dynamic[reviewIndex]
-  const reviewApprovalRequestId = reviewItem?.approvalRequestId
+  const [approvePending, setApprovePending] = useState(false)
+  const selectedTask = routeTaskId ? authoringTasks.find((task) => task.id === routeTaskId) : undefined
+  const visibleDynamic = selectedTask
+    ? dynamic.filter((item) => item.agentId === selectedTask.agentId && item.episodeId === selectedTask.episodeId)
+    : dynamic
   const selectedItem =
-    dynamic.find((item) => `${item.episodeId}:${item.pluginId}:${item.packageId ?? ''}` === selectedKey) ?? dynamic[0]
-  const selectedIndex = selectedItem === undefined ? -1 : dynamic.indexOf(selectedItem)
+    visibleDynamic.find((item) => `${item.episodeId}:${item.pluginId}:${item.packageId ?? ''}` === selectedKey) ??
+    visibleDynamic[0]
   const selectedAgent = selectedItem ? agents.find((agent) => agent.id === selectedItem.agentId) : undefined
+  const agentIsSettling = selectedAgent !== undefined && selectedAgent.state !== '空闲'
   const selectedPackageAvailable = selectedItem?.packageId !== undefined
   const eligibleAgents = agents.filter((agent) => agent.capabilities.dynamicCreation)
   const requestedAgent = agents.find((agent) => agent.id === requestedAgentId)
 
   useEffect(() => {
-    const index = dynamic.findIndex((item) => item.agentId === requestedAgentId)
-    const item = dynamic[index]
+    const item = selectedTask
+      ? dynamic.find((candidate) => candidate.episodeId === selectedTask.episodeId)
+      : dynamic.find((candidate) => candidate.agentId === requestedAgentId)
     if (item) setSelectedKey(`${item.episodeId}:${item.pluginId}:${item.packageId ?? ''}`)
-  }, [dynamic, requestedAgentId])
+  }, [dynamic, requestedAgentId, selectedTask])
 
   const decline = async (): Promise<void> => {
-    const item = reviewItem
+    const item = selectedItem
     const approvalRequestId = item?.approvalRequestId
     if (!item || !approvalRequestId || declinePending) return
     setDeclinePending(true)
@@ -915,7 +966,6 @@ export function CreatorPage() {
         agentId: item.agentId,
         approved: false,
       })
-      setReviewIndex(null)
       notify('本次界面预览已拒绝。', 'success', `dynamic-approval:${approvalRequestId}`)
     } catch (error) {
       notify(error instanceof Error ? error.message : String(error), 'error', `dynamic-approval:${approvalRequestId}`)
@@ -924,10 +974,121 @@ export function CreatorPage() {
     }
   }
 
+  const approve = async (): Promise<void> => {
+    const item = selectedItem
+    const approvalRequestId = item?.approvalRequestId
+    if (!item || !approvalRequestId || approvePending) return
+    setApprovePending(true)
+    try {
+      await useProductStore.getState().resolveApproval({
+        requestId: approvalRequestId,
+        agentId: item.agentId,
+        approved: true,
+      })
+      notify('候选已完成启动，正在核对真实预览。', 'success', `dynamic-approval:${approvalRequestId}`)
+    } catch (error) {
+      notify(error instanceof Error ? error.message : String(error), 'error', `dynamic-approval:${approvalRequestId}`)
+    } finally {
+      setApprovePending(false)
+    }
+  }
+
+  const saveDynamic = async (): Promise<void> => {
+    if (agentIsSettling) {
+      setSaveError('智能体仍在核对运行结果，请等待它完成收尾。')
+      return
+    }
+    if (!selectedItem || !selectedItem.packageId || !extensionName.trim() || !extensionSlug.trim()) {
+      setSaveError('请填写扩展名称和本地标识。')
+      return
+    }
+    setSaveError('')
+    setSavePending(true)
+    try {
+      const saved = await useProductStore.getState().saveDynamicExtension({
+        ...(selectedTask?.candidateAttempt === undefined
+          ? {}
+          : { taskId: selectedTask.id, attemptId: selectedTask.candidateAttempt.id }),
+        agentId: selectedItem.agentId,
+        episodeId: selectedItem.episodeId,
+        pluginId: selectedItem.pluginId,
+        packageId: selectedItem.packageId,
+        name: extensionName,
+        slug: extensionSlug,
+        description: extensionDescription,
+        ...(targetExtensionId ? { targetExtensionId } : {}),
+      })
+      setSaveOpen(false)
+      notify('已保存为本地扩展。', 'success', 'dynamic-extension-save')
+      navigate(`/extensions/${saved.extensionId}`)
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error)
+      setSaveError(message)
+      notify(message, 'error', 'dynamic-extension-save')
+    } finally {
+      setSavePending(false)
+    }
+  }
+
   return (
     <div className={[styles.page, styles.creatorPage].join(' ')}>
-      <PageHeader title="创造" meta="动态运行、保存为本地扩展和启用给智能体是三个独立动作。" />
-      {dynamic.length === 0 ? (
+      <PageHeader
+        title={selectedTask?.title ?? '创造'}
+        meta={selectedTask?.requirementSummary ?? '动态运行、保存为本地扩展和启用给智能体是三个独立动作。'}
+      />
+      {selectedTask ? (
+        <section className={styles.creatorTaskSummary}>
+          <div className={styles.sectionBar}>
+            <div>
+              <div className={styles.sectionHeading}>开发任务</div>
+              <div className={styles.secondaryText}>
+                {selectedTask.candidateAttempt
+                  ? `第 ${selectedTask.candidateAttempt.ordinal} 次尝试 · ${dynamicStatus(selectedTask.candidateAttempt.state).label}`
+                  : '正在等待智能体生成候选内容'}
+              </div>
+            </div>
+            <span className={styles.rowActions}>
+              <StatusBadge tone={dynamicStatus(selectedTask.status).tone}>
+                {dynamicStatus(selectedTask.status).label}
+              </StatusBadge>
+              {!['stopped', 'completed', 'interrupted'].includes(selectedTask.status) ? (
+                <Button
+                  size="small"
+                  variant="secondary"
+                  onClick={() =>
+                    void useProductStore
+                      .getState()
+                      .stopAuthoringTask(selectedTask.id, selectedTask.revision)
+                      .catch((error: unknown) =>
+                        notify(error instanceof Error ? error.message : String(error), 'error', 'authoring-stop'),
+                      )
+                  }
+                >
+                  停止任务
+                </Button>
+              ) : (
+                <Button variant="danger" size="small" onClick={() => setDeleteTaskOpen(true)}>
+                  删除任务记录
+                </Button>
+              )}
+            </span>
+          </div>
+          {selectedTask.candidateAttempt?.error ? (
+            <InlineFeedback tone="error">
+              {selectedTask.candidateAttempt.error.phase}：{selectedTask.candidateAttempt.error.message}
+            </InlineFeedback>
+          ) : (
+            <InlineFeedback tone={selectedTask.status === 'ready' && !agentIsSettling ? 'success' : 'info'}>
+              {selectedTask.status === 'ready' && agentIsSettling
+                ? '候选内容已经通过验证，智能体正在核对结果；收尾完成后可以保存。'
+                : selectedTask.status === 'ready'
+                  ? '候选内容已经完成真实运行与界面验证，可以检查效果并保存。'
+                  : '任务状态会随预检、运行确认、宿主启动、界面加载和结果验证自动更新。'}
+            </InlineFeedback>
+          )}
+        </section>
+      ) : null}
+      {visibleDynamic.length === 0 && !selectedTask ? (
         <div className={styles.creatorStartGrid}>
           <section className={styles.section}>
             <div className={styles.creatorIntro}>
@@ -999,46 +1160,87 @@ export function CreatorPage() {
           </section>
         </div>
       ) : (
-        <div className={styles.creatorWorkspace}>
-          <div className={styles.masterList} role="list" aria-label="动态运行">
-            {dynamic.map((item, index) => {
-              const presentation = dynamicStatus(item.status)
-              const agentName = agents.find((agent) => agent.id === item.agentId)?.name ?? '未命名智能体'
-              return (
-                <Button
-                  className={[styles.masterButton, item === selectedItem ? styles.masterButtonActive : '']
-                    .filter(Boolean)
-                    .join(' ')}
-                  variant="ghost"
-                  onClick={() => setSelectedKey(`${item.episodeId}:${item.pluginId}:${item.packageId ?? ''}`)}
-                  key={`${item.episodeId}:${item.pluginId}:${item.packageId ?? ''}`}
-                >
-                  <Sparkles size={16} aria-hidden="true" />
-                  <span className={styles.masterCopy}>
-                    <strong>
-                      {item.packages.find((pkg) => pkg.packageId === item.packageId)?.name ?? `${agentName}的临时扩展`}
-                    </strong>
-                    <small>
-                      {item.packages.find((pkg) => pkg.packageId === item.packageId)?.purpose ??
-                        `动态运行 ${index + 1}`}
-                    </small>
-                  </span>
-                  <StatusBadge tone={presentation.tone}>{presentation.label}</StatusBadge>
-                </Button>
-              )
-            })}
-          </div>
+        <div
+          className={[styles.creatorWorkspace, selectedTask ? styles.creatorWorkspaceTask : '']
+            .filter(Boolean)
+            .join(' ')}
+        >
+          {!selectedTask ? (
+            <div className={styles.masterList} role="list" aria-label="动态运行">
+              {visibleDynamic.map((item, index) => {
+                const presentation = dynamicStatus(item.status)
+                const agentName = agents.find((agent) => agent.id === item.agentId)?.name ?? '未命名智能体'
+                return (
+                  <Button
+                    className={[styles.masterButton, item === selectedItem ? styles.masterButtonActive : '']
+                      .filter(Boolean)
+                      .join(' ')}
+                    variant="ghost"
+                    onClick={() => setSelectedKey(`${item.episodeId}:${item.pluginId}:${item.packageId ?? ''}`)}
+                    key={`${item.episodeId}:${item.pluginId}:${item.packageId ?? ''}`}
+                  >
+                    <Sparkles size={16} aria-hidden="true" />
+                    <span className={styles.masterCopy}>
+                      <strong>
+                        {item.packages.find((pkg) => pkg.packageId === item.packageId)?.name ??
+                          `${agentName}的临时扩展`}
+                      </strong>
+                      <small>
+                        {item.packages.find((pkg) => pkg.packageId === item.packageId)?.purpose ??
+                          `动态运行 ${index + 1}`}
+                      </small>
+                    </span>
+                    <StatusBadge tone={presentation.tone}>{presentation.label}</StatusBadge>
+                  </Button>
+                )
+              })}
+            </div>
+          ) : null}
           {selectedItem ? (
-            <section className={styles.section}>
+            <section className={[styles.section, styles.creatorCanvas].join(' ')}>
               <div className={styles.sectionBar}>
                 <div>
                   <div className={styles.sectionHeading}>与{selectedAgent?.name ?? '智能体'}协作创造</div>
                   <div className={styles.secondaryText}>当前内容属于临时动态运行，尚未成为本地扩展。</div>
                 </div>
                 <StatusBadge tone={dynamicStatus(selectedItem.status).tone}>
-                  {dynamicStatus(selectedItem.status).label}
+                  {dynamicRunSummary(selectedItem)}
                 </StatusBadge>
               </div>
+              {selectedTask?.candidateAttempt ? (
+                <div className={styles.authoringPhases} aria-label="候选运行阶段">
+                  {[
+                    ['候选生成', 'drafting'],
+                    ['运行确认', 'awaiting-approval'],
+                    ['宿主启动', 'starting-host'],
+                    ['界面加载', 'loading-client'],
+                    ['结果验证', 'active'],
+                  ].map(([label, phase], index, phases) => {
+                    const states = phases.map(([, value]) => value)
+                    const current = states.indexOf(selectedTask.candidateAttempt!.state)
+                    const failed = selectedTask.candidateAttempt!.state === 'failed'
+                    const complete = selectedTask.status === 'ready' || current > index
+                    return (
+                      <div
+                        className={styles.authoringPhase}
+                        data-state={
+                          failed && index === Math.max(current, 0)
+                            ? 'failed'
+                            : complete
+                              ? 'complete'
+                              : current === index
+                                ? 'current'
+                                : 'pending'
+                        }
+                        key={phase}
+                      >
+                        <span>{index + 1}</span>
+                        <strong>{label}</strong>
+                      </div>
+                    )
+                  })}
+                </div>
+              ) : null}
               <div className={styles.creatorEvidence}>
                 <div>
                   <span>目标智能体</span>
@@ -1046,22 +1248,57 @@ export function CreatorPage() {
                 </div>
                 <div>
                   <span>当前状态</span>
-                  <strong>{dynamicStatus(selectedItem.status).label}</strong>
+                  <strong>{dynamicRunSummary(selectedItem)}</strong>
                 </div>
                 <div>
-                  <span>保存状态</span>
-                  <strong>尚未保存</strong>
+                  <span>宿主 / 界面</span>
+                  <strong>
+                    {selectedItem.latestRun
+                      ? `${dynamicHalfLabel(selectedItem.latestRun.host.status)} / ${dynamicHalfLabel(selectedItem.latestRun.client.status)}`
+                      : '尚未启动'}
+                  </strong>
                 </div>
               </div>
               <div className={styles.dynamicSlotSurface}>
                 <div className={styles.sectionHeading}>即时界面</div>
                 <DynamicClientSlots agentId={selectedItem.agentId} episodeId={selectedItem.episodeId} />
               </div>
-              {selectedItem.status === 'awaiting-approval' && selectedItem.approvalRequestId ? (
-                <InlineFeedback tone="warning">这次动态运行正在等待界面预览确认。</InlineFeedback>
+              {selectedItem.latestRun?.error ? (
+                <InlineFeedback tone="error">
+                  {dynamicStatus(selectedItem.latestRun.status).label}：{selectedItem.latestRun.error.message}
+                </InlineFeedback>
+              ) : selectedItem.status === 'awaiting-approval' && selectedItem.approvalRequestId ? (
+                <div className={styles.inlineApproval}>
+                  <div>
+                    <strong>候选已通过静态检查，等待运行确认</strong>
+                    <small>该操作在当前浏览器加载候选界面，并验证实际渲染和调用。保存为本地扩展是独立操作。</small>
+                  </div>
+                  <span className={styles.rowActions}>
+                    <Button
+                      variant="secondary"
+                      loading={declinePending}
+                      loadingLabel="正在拒绝…"
+                      disabled={approvePending}
+                      onClick={() => void decline()}
+                    >
+                      拒绝候选
+                    </Button>
+                    <Button
+                      variant="primary"
+                      loading={approvePending}
+                      loadingLabel="正在启动…"
+                      disabled={declinePending}
+                      onClick={() => void approve()}
+                    >
+                      允许并运行
+                    </Button>
+                  </span>
+                </div>
               ) : (
                 <InlineFeedback tone="info">
-                  运行状态正常。保存将生成本地扩展修订，智能体授权在扩展详情中管理。
+                  {selectedItem.status === 'running'
+                    ? '运行结果已经通过实际加载与调用验证；保存会生成本地扩展修订。'
+                    : `当前阶段：${dynamicRunSummary(selectedItem)}。`}
                 </InlineFeedback>
               )}
               <div className={styles.sectionActionRow}>
@@ -1070,12 +1307,9 @@ export function CreatorPage() {
                   <small>保存内容成为新的不可变修订；动态运行由创造工作台独立管理。</small>
                 </span>
                 <span className={styles.rowActions}>
-                  {selectedItem.approvalRequestId && selectedIndex >= 0 ? (
-                    <Button onClick={() => setReviewIndex(selectedIndex)}>审查界面预览</Button>
-                  ) : null}
                   <Button
                     variant="primary"
-                    disabled={selectedItem.status !== 'running' || !selectedPackageAvailable}
+                    disabled={selectedItem.status !== 'running' || !selectedPackageAvailable || agentIsSettling}
                     onClick={() => {
                       setTargetExtensionId('')
                       setExtensionName(`${selectedAgent?.name ?? '智能体'}的新扩展`)
@@ -1093,121 +1327,100 @@ export function CreatorPage() {
           ) : null}
         </div>
       )}
-      <ConfirmDialog
-        open={saveOpen}
-        onOpenChange={(open) => {
-          setSaveOpen(open)
-          if (!open) setSaveError('')
-        }}
-        title="保存为本地扩展"
-        description="保存会创建可追踪的本地版本；使用它的智能体单独选择。"
-        confirmLabel="保存本地版本"
-        onConfirm={async () => {
-          if (!selectedItem || !selectedItem.packageId || !extensionName.trim() || !extensionSlug.trim()) {
-            setSaveError('请填写扩展名称和本地标识。')
-            return false
-          }
-          setSaveError('')
-          try {
-            const saved = await useProductStore.getState().saveDynamicExtension({
-              agentId: selectedItem.agentId,
-              episodeId: selectedItem.episodeId,
-              pluginId: selectedItem.pluginId,
-              packageId: selectedItem.packageId,
-              name: extensionName,
-              slug: extensionSlug,
-              description: extensionDescription,
-              ...(targetExtensionId ? { targetExtensionId } : {}),
-            })
-            notify('动态运行已保存为本地扩展。', 'success', 'dynamic-extension-save')
-            navigate(`/extensions/${saved.extensionId}`)
-            return true
-          } catch (error) {
-            notify(error instanceof Error ? error.message : String(error), 'error', 'dynamic-extension-save')
-            return false
-          }
-        }}
-      >
-        <div className={styles.formStack}>
-          <SelectField
-            label="保存位置"
-            value={targetExtensionId}
-            onValueChange={(nextId) => {
-              setTargetExtensionId(nextId)
-              const target = extensions.find((extension) => extension.id === nextId)
-              if (!target) return
-              setExtensionName(target.name)
-              setExtensionSlug(target.slug)
-              setExtensionDescription(target.description)
-            }}
-            options={[
-              { value: '', label: '创建新扩展' },
-              ...extensions.map((extension) => ({
-                value: extension.id,
-                label: `${extension.name} · r${extension.revision}`,
-              })),
-            ]}
-          />
-          <Field label="扩展名称">
-            <Input
-              value={extensionName}
-              disabled={Boolean(targetExtensionId)}
-              onChange={(event) => setExtensionName(event.target.value)}
-            />
-          </Field>
-          <Field label="本地标识" hint="使用小写字母、数字和连字符。">
-            <Input
-              value={extensionSlug}
-              disabled={Boolean(targetExtensionId)}
-              onChange={(event) => setExtensionSlug(event.target.value)}
-            />
-          </Field>
-          <Field label="说明">
-            <Textarea
-              value={extensionDescription}
-              disabled={Boolean(targetExtensionId)}
-              onChange={(event) => setExtensionDescription(event.target.value)}
-            />
-          </Field>
-          {saveError ? <InlineFeedback tone="error">{saveError}</InlineFeedback> : null}
-        </div>
-      </ConfirmDialog>
-      {reviewItem && reviewApprovalRequestId ? (
-        <ConfirmDialog
-          open={reviewIndex !== null}
-          onOpenChange={(open) => {
-            if (!open && !declinePending) setReviewIndex(null)
-          }}
-          title="允许界面预览"
-          description="允许后，本次动态运行会在当前浏览器中显示界面；保存扩展是独立操作。"
-          confirmLabel="允许本次预览"
-          onConfirm={async () => {
-            try {
-              await useProductStore.getState().resolveApproval({
-                requestId: reviewApprovalRequestId,
-                agentId: reviewItem.agentId,
-                approved: true,
-              })
-              notify('本次界面预览已允许。', 'success', `dynamic-approval:${reviewApprovalRequestId}`)
-              return true
-            } catch (error) {
-              notify(
-                error instanceof Error ? error.message : String(error),
-                'error',
-                `dynamic-approval:${reviewApprovalRequestId}`,
-              )
-              return false
-            }
-          }}
-        >
-          <div className={styles.dialogChoice}>
-            <InlineFeedback tone="warning">只允许你确认来源和用途的界面预览。</InlineFeedback>
-            <Button variant="danger" loading={declinePending} loadingLabel="正在拒绝…" onClick={() => void decline()}>
-              拒绝本次预览
+      {saveOpen ? (
+        <section className={styles.creatorSavePanel} aria-label="保存为本地扩展">
+          <div className={styles.sectionBar}>
+            <div>
+              <div className={styles.sectionHeading}>保存为本地扩展</div>
+              <div className={styles.secondaryText}>保存会把当前候选写成不可变修订；新修订默认未启用。</div>
+            </div>
+            <Button variant="ghost" disabled={savePending} onClick={() => setSaveOpen(false)}>
+              收起
             </Button>
           </div>
-        </ConfirmDialog>
+          <div className={styles.creatorSaveGrid}>
+            <SelectField
+              label="保存位置"
+              value={targetExtensionId}
+              onValueChange={(nextId) => {
+                setTargetExtensionId(nextId)
+                const target = extensions.find((extension) => extension.id === nextId)
+                if (!target) return
+                setExtensionName(target.name)
+                setExtensionSlug(target.slug)
+                setExtensionDescription(target.description)
+              }}
+              options={[
+                { value: '', label: '创建新扩展' },
+                ...extensions.map((extension) => ({
+                  value: extension.id,
+                  label: `${extension.name} · r${extension.revision}`,
+                })),
+              ]}
+            />
+            <Field label="扩展名称">
+              <Input
+                value={extensionName}
+                disabled={Boolean(targetExtensionId)}
+                onChange={(event) => setExtensionName(event.target.value)}
+              />
+            </Field>
+            <Field label="本地标识" hint="使用小写字母、数字和连字符。">
+              <Input
+                value={extensionSlug}
+                disabled={Boolean(targetExtensionId)}
+                onChange={(event) => setExtensionSlug(event.target.value)}
+              />
+            </Field>
+            <Field label="说明">
+              <Textarea
+                value={extensionDescription}
+                disabled={Boolean(targetExtensionId)}
+                onChange={(event) => setExtensionDescription(event.target.value)}
+              />
+            </Field>
+            {saveError ? <InlineFeedback tone="error">{saveError}</InlineFeedback> : null}
+            <div className={styles.creatorSaveActions}>
+              <Button variant="secondary" disabled={savePending} onClick={() => setSaveOpen(false)}>
+                取消
+              </Button>
+              <Button
+                variant="primary"
+                loading={savePending}
+                loadingLabel="正在保存…"
+                disabled={agentIsSettling}
+                onClick={() => void saveDynamic()}
+              >
+                保存本地扩展
+              </Button>
+            </div>
+          </div>
+        </section>
       ) : null}
+      <ConfirmDialog
+        open={deleteTaskOpen}
+        onOpenChange={setDeleteTaskOpen}
+        title="删除扩展开发任务"
+        description="任务账本和全部候选源码会被删除，已经保存的本地扩展不受影响。"
+        confirmLabel="删除任务记录"
+        confirmVariant="danger"
+        onConfirm={async () => {
+          if (!selectedTask) return false
+          try {
+            await useProductStore.getState().deleteAuthoringTask(selectedTask.id)
+            notify('扩展开发任务已删除。', 'success', `authoring-delete:${selectedTask.id}`)
+            navigate('/work/creator')
+            return true
+          } catch (error) {
+            notify(
+              error instanceof Error ? error.message : String(error),
+              'error',
+              `authoring-delete:${selectedTask.id}`,
+            )
+            return false
+          }
+        }}
+      />
     </div>
   )
 }

@@ -153,6 +153,7 @@ const emptySnapshot = (): ProductSnapshot => ({
   platformUsersRevision: 0,
   approvals: [],
   dynamic: [],
+  authoringTasks: [],
   notificationSettings: {
     system: { enabled: true },
     bark: { enabled: false, serverUrl: 'https://api.day.app', deviceKeyConfigured: false },
@@ -676,6 +677,45 @@ const projectSnapshot = (json: SnapshotJson, successfulAt: number): ProductSnaps
       ...(item.nextPackageId === undefined ? {} : { nextPackageId: item.nextPackageId }),
       ...(item.approvalRequestId === undefined ? {} : { approvalRequestId: item.approvalRequestId }),
       status: item.status,
+      ...(item.activeRun === undefined ? {} : { activeRun: { ...item.activeRun } }),
+      ...(item.latestRun === undefined
+        ? {}
+        : {
+            latestRun: {
+              pluginRunId: item.latestRun.pluginRunId,
+              packageId: item.latestRun.packageId,
+              mode: item.latestRun.mode,
+              status: item.latestRun.status,
+              ...(item.latestRun.approvalRequestId === undefined
+                ? {}
+                : { approvalRequestId: item.latestRun.approvalRequestId }),
+              ...(item.latestRun.requiresApproval === undefined
+                ? {}
+                : { requiresApproval: item.latestRun.requiresApproval }),
+              host: {
+                status: item.latestRun.host.status,
+                waitingFor: [...item.latestRun.host.waitingFor],
+                ...(item.latestRun.host.error === undefined ? {} : { error: item.latestRun.host.error }),
+              },
+              client: {
+                status: item.latestRun.client.status,
+                waitingFor: [...item.latestRun.client.waitingFor],
+                ...(item.latestRun.client.error === undefined ? {} : { error: item.latestRun.client.error }),
+              },
+              ...(item.latestRun.error === undefined
+                ? {}
+                : {
+                    error: {
+                      phase: item.latestRun.error.phase,
+                      message: item.latestRun.error.message,
+                      ...(item.latestRun.error.stack === undefined ? {} : { stack: item.latestRun.error.stack }),
+                      pluginId: item.latestRun.error.pluginId,
+                      packageId: item.latestRun.error.packageId,
+                      pluginRunId: item.latestRun.error.pluginRunId,
+                    },
+                  }),
+            },
+          }),
       packages: item.packages,
       policy: {
         turn: item.policy.turn,
@@ -684,6 +724,7 @@ const projectSnapshot = (json: SnapshotJson, successfulAt: number): ProductSnaps
         ...(item.policy.blockedReason === undefined ? {} : { blockedReason: item.policy.blockedReason }),
       },
     })),
+    authoringTasks: json.authoringTasks,
     notificationSettings: json.notificationSettings,
     diagnosticNote: `服务连接正常（${agents.length} 个智能体 · ${channels.length} 个频道 · ${extensionsLocal.length} 个本地扩展）。`,
   }
@@ -1091,6 +1132,36 @@ export class HttpProductHost implements ProductHostPort {
       await this.#refreshAndNotify()
       return result
     }
+    if (command === 'authoring.decide') {
+      const taskId = typeof input?.['taskId'] === 'string' ? input['taskId'] : ''
+      const attemptId = typeof input?.['attemptId'] === 'string' ? input['attemptId'] : ''
+      const expectedRevision = typeof input?.['expectedRevision'] === 'number' ? input['expectedRevision'] : 0
+      const approved = input?.['approved'] === true
+      const approveRiskStable = input?.['approveRiskStable'] !== false
+      if (!taskId || !attemptId || expectedRevision < 1) throw new Error('创造任务审批状态不完整，请刷新后重试。')
+      const result = await this.#call(
+        HostApiContracts.decideAuthoringAttempt,
+        { taskId, attemptId },
+        { expectedRevision, approved, approveRiskStable },
+      )
+      await this.#refreshAndNotify()
+      return result
+    }
+    if (command === 'authoring.stop') {
+      const taskId = typeof input?.['taskId'] === 'string' ? input['taskId'] : ''
+      const expectedRevision = typeof input?.['expectedRevision'] === 'number' ? input['expectedRevision'] : 0
+      if (!taskId || expectedRevision < 1) throw new Error('创造任务状态不完整，请刷新后重试。')
+      const result = await this.#call(HostApiContracts.stopAuthoringTask, { taskId }, { expectedRevision })
+      await this.#refreshAndNotify()
+      return result
+    }
+    if (command === 'authoring.delete') {
+      const taskId = typeof input?.['taskId'] === 'string' ? input['taskId'] : ''
+      if (!taskId) throw new Error('缺少创造任务标识，请刷新后重试。')
+      const result = await this.#call(HostApiContracts.deleteAuthoringTask, { taskId }, undefined)
+      await this.#refreshAndNotify()
+      return result
+    }
     if (command === 'extensions.activate') {
       const extensionId = typeof input?.['extensionId'] === 'string' ? input['extensionId'] : ''
       const agentId = typeof input?.['agentId'] === 'string' ? input['agentId'] : ''
@@ -1149,6 +1220,8 @@ export class HttpProductHost implements ProductHostPort {
       return result
     }
     if (command === 'extensions.saveFromDynamic') {
+      const taskId = typeof input?.['taskId'] === 'string' ? input['taskId'] : ''
+      const attemptId = typeof input?.['attemptId'] === 'string' ? input['attemptId'] : ''
       const agentId = typeof input?.['agentId'] === 'string' ? input['agentId'] : ''
       const episodeId = typeof input?.['episodeId'] === 'string' ? input['episodeId'] : ''
       const pluginId = typeof input?.['pluginId'] === 'string' ? input['pluginId'] : ''
@@ -1158,8 +1231,9 @@ export class HttpProductHost implements ProductHostPort {
       const description = typeof input?.['description'] === 'string' ? input['description'] : ''
       const targetExtensionId =
         typeof input?.['targetExtensionId'] === 'string' ? input['targetExtensionId'] : undefined
-      if (!agentId.trim()) throw new Error('缺少智能体标识，请刷新页面后重试。')
-      if (!episodeId.trim() || !pluginId.trim() || !packageId.trim()) {
+      const usesAuthoringIdentity = Boolean(taskId.trim() && attemptId.trim())
+      if (!usesAuthoringIdentity && !agentId.trim()) throw new Error('缺少智能体标识，请刷新页面后重试。')
+      if (!usesAuthoringIdentity && (!episodeId.trim() || !pluginId.trim() || !packageId.trim())) {
         throw new Error('缺少精确的 Episode、Plugin 或 Package，请刷新页面后重试。')
       }
       if (!name.trim()) throw new Error('请输入本地扩展名称。')
@@ -1167,16 +1241,25 @@ export class HttpProductHost implements ProductHostPort {
       const result = await this.#call(
         HostApiContracts.saveExtensionFromDynamic,
         {},
-        {
-          agentId,
-          episodeId,
-          pluginId,
-          packageId,
-          displayName: name,
-          slug,
-          description: description.trim() || '从创造工作台保存的动态 Package。',
-          ...(targetExtensionId === undefined ? {} : { targetExtensionId }),
-        },
+        usesAuthoringIdentity
+          ? {
+              taskId,
+              attemptId,
+              displayName: name,
+              slug,
+              description: description.trim() || '从创造工作台保存的动态 Package。',
+              ...(targetExtensionId === undefined ? {} : { targetExtensionId }),
+            }
+          : {
+              agentId,
+              episodeId,
+              pluginId,
+              packageId,
+              displayName: name,
+              slug,
+              description: description.trim() || '从创造工作台保存的动态 Package。',
+              ...(targetExtensionId === undefined ? {} : { targetExtensionId }),
+            },
       )
       await this.#refreshAndNotify()
       return result

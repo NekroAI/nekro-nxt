@@ -40,7 +40,8 @@
 | 查询平台用户 | `GET /api/platform-users` | 名称、Adapter、平台连接筛选与游标分页；不返回平台原始用户 ID |
 | 供应商 | `GET/POST /api/llm/providers`、`discover-models`、`test-provider` | DSH settings/credentials |
 | Connection 收发测试 | `POST /api/connections/:id/test` | 由已安装 Adapter Driver 执行，接收与发送分开 |
-| 保存动态包 | `POST /api/extensions/save-from-dynamic` | 不自动启用 |
+| Authoring 任务 | `GET/DELETE /api/authoring/tasks/:taskId`、`POST .../attempts/:attemptId/decision`、`POST .../stop` | 持久 Task/Attempt/Event；revision 冲突刷新权威状态；删除先静止并回收源码 |
+| 保存动态包 | `POST /api/extensions/save-from-dynamic` | 优先使用已验证的 `taskId + attemptId`；保存后不自动启用，旧 Runner 身份参数仅兼容 |
 | 动态回路 | `POST /api/dynamic/:agentId/...` | 每次请求携带精确 `episodeId`；审批、Host half、Client 源码、渲染证据、Guard 报告与结算不猜活动 Session |
 | Client Artifact | `GET /api/extensions/:extensionId/revisions/:revisionId/client/:buildKey.mjs` | 只向匹配当前 Agent Activation 的精确构建提供源码 |
 | Extension RPC | `POST /api/extensions/:extensionId/revisions/:revisionId/call` | 按 `agentId + revisionId + method` 调用 Activation handler |
@@ -56,7 +57,7 @@
 | DSH 入口配置/启停 | `POST /api/dsh/plugin-entries/:entryId/config/inspect`、`PUT/DELETE /api/dsh/plugin-entries/:entryId/activation` | Config Schema 或高级 JSON；用户确认 Host/智能体作用域，Loader 成功后提交 Activation |
 | DSH 导出/移除 | `GET/DELETE /api/dsh/plugin-installs/:packageId[/export]` | 导出根 tgz 与锁元数据；移除先静止关闭全部入口，任一失败不删除包 |
 
-快照含 DSH 模型目录、能力可用状态、Adapter 目录、Connection（无 Secret，含可选 alias）、通用连接状态与动态能力诊断、已绑定频道和动态 Package。连接快照不再把 `appId` 或 Gateway 当作所有平台共有字段；账号标识、实现版本和可选能力来自 Adapter 诊断。已 tombstone 的智能体和频道不进入活动快照与工作树；普通解绑频道继续存在并进入未绑定频道。外部 Adapter 再次发现同一 `(connectionId, platformChannelId)` 时清除 Channel tombstone，复用原 Channel ID 与历史。Web 侧只用 `alias ?? Adapter displayName` 作为连接主辨识名，Adapter displayName 仍作为平台身份的次要信息；频道、对象列、连接详情、智能体频道列表和绑定选择器共享同一投影。Web 搜索是否可用看 DSH 凭据，不靠环境变量名推断。
+快照含 DSH 模型目录、能力可用状态、Adapter 目录、Connection（无 Secret，含可选 alias）、通用连接状态与动态能力诊断、Authoring Task 摘要、已绑定频道和动态 Package。Authoring 摘要保留 Task revision、审批策略、已批准风险摘要、active/candidate Attempt、Host/Client 半边和结构化错误；`candidateAttempt` 始终是最新 Attempt，验证成功时允许与 `activeAttempt` 指向同一身份，旧 active 不能覆盖新 candidate 的待审批或失败状态。Extension Revision 的来源验证证据保持不可变，快照中的 `buildKey` 则投影当前本机构建器和 Node ABI 对同一不可变源码计算出的 Artifact 身份，升级 Builder 后 Web 不继续请求历史缓存 key。连接快照不再把 `appId` 或 Gateway 当作所有平台共有字段；账号标识、实现版本和可选能力来自 Adapter 诊断。已 tombstone 的智能体和频道不进入活动快照与工作树；普通解绑频道继续存在并进入未绑定频道。外部 Adapter 再次发现同一 `(connectionId, platformChannelId)` 时清除 Channel tombstone，复用原 Channel ID 与历史。Web 侧只用 `alias ?? Adapter displayName` 作为连接主辨识名，Adapter displayName 仍作为平台身份的次要信息；频道、对象列、连接详情、智能体频道列表和绑定选择器共享同一投影。Web 搜索是否可用看 DSH 凭据，不靠环境变量名推断。
 
 全局只有一条 `GET /api/events`。消息和工作轨迹不再用「通知后再拉 REST」作为热路径。
 
@@ -68,8 +69,8 @@
 
 ## 3. Web 与 Server
 
-- `apps/web/src/http-host.ts` 实现 `ProductHostPort`。`apps/web/src/host-event-stream.ts` 是浏览器 SSE 的唯一生命周期所有者，产品快照、DSH 设置和动态 Client 只订阅这条共享流，不各自建立连接。`execute` 覆盖创建/删除智能体、删除频道、两种上下文操作、发消息、改能力、扩展启停、从动态保存、创建/测试连接、修改连接别名和动态审批；状态变更成功后重新读取权威快照，失败不发布前端成功状态；`host.refresh` 同时重建共享流和读取快照。
-- 每个智能体使用独立产品 SlotCore。Snapshot/SSE 变化驱动 Client Activation 对账；Revision 更新先 dispose 后 mount，刷新与 Server 重启按权威 Activation 恢复。Host Adapter Client 使用独立全局 Runtime，加载当前已安装 Revision 的 Artifact，并接受 Catalog 中的富消息、连接和频道检查器 Slot。Host UI Client 使用第三个独立 Runtime，按 Client Artifact 共享模块实例，每个页面拥有独立错误边界、滚动根和声明式导航 Provider；三类 Registry 不互相注册。
+- `apps/web/src/http-host.ts` 实现 `ProductHostPort`。`apps/web/src/host-event-stream.ts` 是浏览器 SSE 的唯一生命周期所有者，产品快照、DSH 设置和动态 Client 只订阅这条共享流，不各自建立连接。`execute` 覆盖创建/删除智能体、删除频道、两种上下文操作、发消息、改能力、扩展启停、Authoring 决策/停止/保存、创建/测试连接、修改连接别名和动态审批；决策先提交 Task revision，再由浏览器运行候选，Client evaluate/apply/render 或结算失败必须 reject，不能清空错误或发布成功提示。状态变更成功后重新读取权威快照；`host.refresh` 同时重建共享流和读取快照。
+- 每个智能体使用独立产品 SlotCore。Snapshot/SSE 变化驱动 Client Activation 对账；Revision 更新先 dispose 后 mount，刷新与 Server 重启按权威 Activation 恢复。动态 Client 同样按 Host 的 `activeRun` 恢复精确源码和页面，对账键包含 `pluginRunId`，所以同一 Plugin 和 Package 在 Server 重启或重新运行后会先卸载旧 Client 再加载新 Run，不重复执行 Host half、审批或结算。Host Adapter Client 使用独立全局 Runtime，加载当前已安装 Revision 的 Artifact，并接受 Catalog 中的富消息、连接和频道检查器 Slot。Host UI Client 使用第三个独立 Runtime，按 Client Artifact 共享模块实例，每个页面拥有独立错误边界、滚动根和声明式导航 Provider；三类 Registry 不互相注册。
 - Host UI 页面路由固定为 `/apps/:pageInstanceId/*`。Web 使用快照中的 `routeBase`，入口隐藏、Activation 关闭或 Extension 删除后跳转到其他可见扩展页面；没有可见页面时进入对应 Extension 或 DSH 详情。系统图标组和底部工具组不参与扩展排序。
 - 添加平台连接先选用户可创建的平台，再按版本化 schema 渲染表单；从某适配器详情「再添加一个账号」可跳过选平台。系统托管内置 Adapter 不出现在创建目录。
 - `/api/snapshot` 只携带智能体的结构化人设文档，不承载平台用户全集。`/api/platform-users` 从持久身份与活动频道关系独立分页；Web 在 `channel-fact` 后使目录查询失效并防抖刷新。

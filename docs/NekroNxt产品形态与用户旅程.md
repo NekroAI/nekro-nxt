@@ -171,7 +171,9 @@ Adapter 是 Extension 提供的接入贡献；Connection 是登录账号；Chann
 
 ![创造工作台 V2](../assets/product-concepts/creator-workbench-v2.png)
 
-需求在已授权智能体的频道里描述。创造页按 Episode 展示正在运行的 Plugin 与 Package 历史、Client 预览审批和“保存为本地扩展”。保存请求携带当前 Episode、Plugin 和 Package 的精确归属，成功后直接进入新扩展详情并保持该扩展选中。动态 Client 与保存后的 Client 使用同一组 NekroNXT 产品 Slot 和合成 Props；DSH 官方 WebUI Slot 不进入产品能力面。系统不为创造另建智能体。保存不自动启用；启用在扩展详情或智能体工作台单独完成。
+需求在已授权智能体的频道里用普通用户语言描述，系统不为创造另建智能体。智能体开始实现后，频道出现持久任务卡；创造页以 Task 为主对象，用一个画布展示需求、候选次数、运行阶段、风险确认、真实预览、错误和保存。普通策略第一次确认后，风险不变的修订自动运行；完全自动策略始终自动运行。审批和技术结果返回后，原智能体自动继续修复或收尾，不要求用户补发“继续”。
+
+候选源码、页面声明、权限和资源按 Attempt 写入智能体工作区与 SQLite 账本，重启后恢复当前任务。Host-only 候选必须真实调用 Tool/RPC，Client 候选必须真实加载并让实际页面和权限匹配预先声明，完成后 Task 才进入可保存状态。保存请求使用当前 `taskId + attemptId`，成功后直接进入新扩展详情并保持该扩展选中。动态 Client 与保存后的 Client 使用同一组 NekroNXT 产品 Slot 和合成 Props；DSH 官方 WebUI Slot 不进入产品能力面。保存不自动启用；启用在扩展详情或智能体工作台单独完成。
 
 ### 4.7 平台用户目录：观察事实，不承担账号管理
 

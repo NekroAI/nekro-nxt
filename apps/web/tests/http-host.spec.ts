@@ -1088,6 +1088,7 @@ describe('HttpProductHost', () => {
     const saveBody = saveCall?.init?.body
     if (typeof saveBody !== 'string') throw new TypeError('save extension request body must be JSON text.')
     const body = HostApiContracts.saveExtensionFromDynamic.request.parse(JSON.parse(saveBody))
+    if (!('agentId' in body)) throw new TypeError('legacy dynamic identity was expected in this request.')
     expect(body.agentId).toBe(webAgentId)
     expect(body.episodeId).toBe(webEpisodeId)
     expect(body.pluginId).toBe('plugin-save')
@@ -1282,6 +1283,7 @@ describe('HttpProductHost', () => {
           turn: 1,
           state: 'in-progress',
           producedReply: false,
+          responseState: 'pending',
           steps: [
             {
               step: 1,

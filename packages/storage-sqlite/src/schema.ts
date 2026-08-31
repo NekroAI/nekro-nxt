@@ -2,6 +2,8 @@ import type { AdapterFailureKind } from '@nekro-nxt/adapter-sdk'
 import type {
   AgentId,
   AgentRevisionId,
+  AuthoringAttemptId,
+  AuthoringTaskId,
   AdmissionId,
   AssetId,
   ChannelEventId,
@@ -29,7 +31,12 @@ import type {
   ServerInstanceId,
 } from '@nekro-nxt/contracts'
 import type { AgentCapabilityGrants, ImageUnderstandingPolicy } from '@nekro-nxt/core'
-import type { ExtensionRevisionVerification } from '@nekro-nxt/extension-runtime'
+import type {
+  AuthoringAttemptFailure,
+  AuthoringHalfState,
+  DynamicAuthoringVerification,
+  ExtensionRevisionVerification,
+} from '@nekro-nxt/extension-runtime'
 import { sql } from 'drizzle-orm'
 import { check, foreignKey, index, integer, primaryKey, sqliteTable, text, uniqueIndex } from 'drizzle-orm/sqlite-core'
 
@@ -313,6 +320,145 @@ export const episodes = sqliteTable(
       columns: [table.closedAtEventId, table.channelId],
       foreignColumns: [channelEvents.id, channelEvents.channelId],
     }).onDelete('restrict'),
+  ],
+)
+
+export const dynamicAuthoringTasks = sqliteTable(
+  'dynamic_authoring_tasks',
+  {
+    id: text().$type<AuthoringTaskId>().primaryKey(),
+    agentId: text('agent_id').$type<AgentId>().notNull(),
+    channelId: text('channel_id').$type<ChannelId>().notNull(),
+    episodeId: text('episode_id').$type<EpisodeId>().notNull(),
+    initiatingEventId: text('initiating_event_id').$type<ChannelEventId>().notNull(),
+    pluginKey: text('plugin_key').notNull(),
+    title: text().notNull(),
+    requirementSummary: text('requirement_summary').notNull(),
+    status: text({
+      enum: [
+        'working',
+        'awaiting-approval',
+        'running',
+        'ready',
+        'repairing',
+        'failed',
+        'interrupted',
+        'stopped',
+        'completed',
+      ],
+    }).notNull(),
+    approvalPolicy: text('approval_policy', { enum: ['risk-stable', 'fully-automatic'] }).notNull(),
+    approvedRiskDigest: text('approved_risk_digest'),
+    revision: integer().notNull(),
+    createdAt: integer('created_at').notNull(),
+    updatedAt: integer('updated_at').notNull(),
+    completedAt: integer('completed_at'),
+  },
+  (table) => [
+    uniqueIndex('dynamic_authoring_tasks_episode_plugin_uq').on(table.episodeId, table.pluginKey),
+    index('dynamic_authoring_tasks_agent_status_idx').on(table.agentId, table.status, table.updatedAt),
+    foreignKey({
+      name: 'dynamic_authoring_tasks_episode_owner_fk',
+      columns: [table.episodeId, table.channelId, table.agentId],
+      foreignColumns: [episodes.id, episodes.channelId, episodes.agentId],
+    }).onDelete('restrict'),
+    foreignKey({
+      name: 'dynamic_authoring_tasks_initiating_event_fk',
+      columns: [table.initiatingEventId, table.channelId],
+      foreignColumns: [channelEvents.id, channelEvents.channelId],
+    }).onDelete('restrict'),
+    check('dynamic_authoring_tasks_revision_ck', sql`${table.revision} > 0`),
+    check('dynamic_authoring_tasks_created_at_ck', sql`${table.createdAt} >= 0`),
+    check('dynamic_authoring_tasks_updated_at_ck', sql`${table.updatedAt} >= ${table.createdAt}`),
+  ],
+)
+
+export const dynamicAuthoringAttempts = sqliteTable(
+  'dynamic_authoring_attempts',
+  {
+    id: text().$type<AuthoringAttemptId>().primaryKey(),
+    taskId: text('task_id')
+      .$type<AuthoringTaskId>()
+      .notNull()
+      .references(() => dynamicAuthoringTasks.id, { onDelete: 'cascade' }),
+    ordinal: integer().notNull(),
+    name: text().notNull(),
+    purpose: text().notNull(),
+    snapshotDigest: text('snapshot_digest').notNull(),
+    riskDigest: text('risk_digest').notNull(),
+    sourcePath: text('source_path').notNull(),
+    state: text({
+      enum: [
+        'drafting',
+        'preflight-failed',
+        'awaiting-approval',
+        'starting-host',
+        'loading-client',
+        'verifying',
+        'active',
+        'failed',
+        'rejected',
+        'stopped',
+      ],
+    }).notNull(),
+    host: jsonText<AuthoringHalfState>('host').notNull(),
+    client: jsonText<AuthoringHalfState>('client').notNull(),
+    error: jsonText<AuthoringAttemptFailure>('error'),
+    verification: jsonText<DynamicAuthoringVerification>('verification'),
+    runnerPluginId: text('runner_plugin_id'),
+    runnerPackageId: text('runner_package_id'),
+    runnerRunId: text('runner_run_id'),
+    createdAt: integer('created_at').notNull(),
+    settledAt: integer('settled_at'),
+  },
+  (table) => [
+    uniqueIndex('dynamic_authoring_attempts_id_task_uq').on(table.id, table.taskId),
+    uniqueIndex('dynamic_authoring_attempts_task_ordinal_uq').on(table.taskId, table.ordinal),
+    uniqueIndex('dynamic_authoring_attempts_task_package_uq').on(table.taskId, table.runnerPackageId),
+    index('dynamic_authoring_attempts_task_state_idx').on(table.taskId, table.state, table.ordinal),
+    check('dynamic_authoring_attempts_ordinal_ck', sql`${table.ordinal} > 0`),
+    check('dynamic_authoring_attempts_created_at_ck', sql`${table.createdAt} >= 0`),
+  ],
+)
+
+export const dynamicAuthoringEvents = sqliteTable(
+  'dynamic_authoring_events',
+  {
+    taskId: text('task_id')
+      .$type<AuthoringTaskId>()
+      .notNull()
+      .references(() => dynamicAuthoringTasks.id, { onDelete: 'cascade' }),
+    sequence: integer().notNull(),
+    kind: text({
+      enum: [
+        'task-created',
+        'attempt-created',
+        'preflight-failed',
+        'approval-requested',
+        'approval-accepted',
+        'approval-rejected',
+        'phase-changed',
+        'verification-completed',
+        'attempt-failed',
+        'task-interrupted',
+        'task-stopped',
+        'task-completed',
+      ],
+    }).notNull(),
+    attemptId: text('attempt_id').$type<AuthoringAttemptId>(),
+    payload: jsonText<JsonValue>('payload').notNull(),
+    createdAt: integer('created_at').notNull(),
+  },
+  (table) => [
+    primaryKey({ columns: [table.taskId, table.sequence] }),
+    index('dynamic_authoring_events_attempt_idx').on(table.attemptId, table.sequence),
+    foreignKey({
+      name: 'dynamic_authoring_events_attempt_fk',
+      columns: [table.attemptId, table.taskId],
+      foreignColumns: [dynamicAuthoringAttempts.id, dynamicAuthoringAttempts.taskId],
+    }).onDelete('cascade'),
+    check('dynamic_authoring_events_sequence_ck', sql`${table.sequence} > 0`),
+    check('dynamic_authoring_events_created_at_ck', sql`${table.createdAt} >= 0`),
   ],
 )
 

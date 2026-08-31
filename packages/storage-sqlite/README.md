@@ -4,7 +4,7 @@
 
 当前基线使用 `better-sqlite3 13.x + drizzle-orm 0.45.x`。`CoreDatabase` 只公开 typed Drizzle DB、迁移、事务、pragma、backup 和 close；领域代码不得获得原生连接，也不得调用 `.prepare()`、`.exec()`、`sql.raw()` 或拼接 SQL。WAL、foreign keys、busy timeout 与在线备份分别使用驱动的 `pragma()` 和 `backup()` API。
 
-数据库按 agents、channels、runtime、outbox、assets、extensions 和 DSH plugins 七个 Repository 文件维护，另含 Host 工作树顺序单行表与独立 Host Security Repository。Host Security 保存单例实例身份、管理密钥摘要和配对设备 Secret 摘要，不保存管理密钥或设备 Secret。Connection 的可选 `alias` 与其他字段一起经过行 Schema 读取；所有持久 JSON 读出后均经过 `drizzle-zod` 行 Schema 和领域 Schema；ID 使用带格式校验的 Zod brand。
+数据库按 agents、channels、runtime、outbox、assets、extensions、动态创造账本和 DSH plugins 分域维护 Repository，另含 Host 工作树顺序单行表与独立 Host Security Repository。Host Security 保存单例实例身份、管理密钥摘要和配对设备 Secret 摘要，不保存管理密钥或设备 Secret。Connection 的可选 `alias` 与其他字段一起经过行 Schema 读取；所有持久 JSON 读出后均经过 `drizzle-zod` 行 Schema 和领域 Schema；ID 使用带格式校验的 Zod brand。
 
 迁移目录保留 Drizzle Kit 生成的 `0000_initial` 至当前增量迁移。空数据库按完整序列应用；已有带当前迁移元数据的数据库顺序应用新增迁移；任何不含 Drizzle migration 元数据的旧实验数据库都会被明确拒绝并要求重置。Drizzle 在事务内执行 SQLite 表重建，而 SQLite 不允许在事务内切换 `foreign_keys`，因此 `CoreDatabase` 在迁移事务开始前暂停外键执行，迁移完成后先运行全库 `foreign_key_check`，再恢复外键；发现任何违规都拒绝启动。测试必须覆盖已有子表引用数据的真实表重建。本项目不维护 0000–0016 的升级兼容，也不允许人工编辑迁移 SQL。
 
@@ -17,5 +17,7 @@ Binding 只表达每个频道的当前归属，以 `channel_id` 为主键；历�
 `0015_extension_scope_payload_digest` 把 Extension scope 固定到父对象，并给 Revision 增加独立 `payload_digest`。`0016_dsh_plugin_packages` 保存不可变 DSH 包身份、精确版本、来源、内容与 lockfile 摘要、可选 registry integrity、批准构建依赖、Bundle 展开入口、Host/智能体 Activation 和最近 Loader 诊断。Activation 是启用事实源；诊断只记录 `active/load-failed/restore-failed/dispose-failed` 和 Loader 阶段，不代替启用关系。
 
 `0017_host_ui_pages` 保存 Host 级页面实例、共享顺序与显隐 Revision、绑定精确 Extension Revision 或 DSH Artifact 的权限批准，以及页面 Client/导航/RPC/恢复诊断。`host_ui_page_entries` 只在对应 Installation 或 DSH Host Activation 存在时发布；诊断不代替 Installation 或 Activation。扩展命名空间状态复用 `system_settings`，key 使用 owner 摘要隔离，并限制为 128 项、64 KiB。
+
+`0018_productive_starfox` 增加 `dynamic_authoring_tasks`、`dynamic_authoring_attempts` 和 `dynamic_authoring_events`。Task 使用 revision 做乐观并发；Attempt 按任务内 ordinal 追加并保存不可变源码摘要、风险摘要、Runner 临时身份、Host/Client 阶段和验证证据；Event 使用任务内单调 sequence 记录审批、阶段、失败、恢复、停止和完成。诊断不是运行成功事实，只有 Attempt 完成真实验证后 Task 才进入 `ready`。运行中的任务不能直接删除。
 
 `0014_host_extension_installations` 只创建空表和索引，不重建旧表、不回填、不扫描扩展源码。已有用户首次启动新 Release 时由 Drizzle 自动应用，现有 Agent、Connection、Channel、消息、Revision 和 Activation 不变；内置 Adapter 不写入该表。迁移后统一执行 `foreign_key_check`，失败则回滚并拒绝启动。

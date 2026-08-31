@@ -2,6 +2,8 @@ import { z } from 'zod'
 import {
   AgentIdSchema,
   AgentRevisionIdSchema,
+  AuthoringAttemptIdSchema,
+  AuthoringTaskIdSchema,
   AssetIdSchema,
   ChannelEventIdSchema,
   ChannelActivityTypeSchema,
@@ -29,6 +31,8 @@ import {
   AgentClientSlotNameSchema,
   DshNxtHostUiSchema,
   HostPageContributionSchema,
+  HostUiKitComponentNameSchema,
+  HostUiPageGeometryEvidenceSchema,
   HostUiPageEntrySchema,
   HostUiPermissionDeclarationSchema,
 } from './extension-ui.js'
@@ -37,6 +41,132 @@ const EmptyParamsSchema = z.object({}).strict()
 const NoRequestBodySchema = z.undefined()
 const NonEmptyStringSchema = z.string().trim().min(1)
 const DynamicIdSchema = NonEmptyStringSchema
+
+const DynamicAttemptStatusSchema = z.enum([
+  'awaiting-approval',
+  'starting-host',
+  'client-pending',
+  'running',
+  'waiting',
+  'rejected',
+  'failed',
+  'cancelled',
+  'stopped',
+])
+
+const DynamicHalfStateSchema = z
+  .object({
+    status: z.enum(['absent', 'pending', 'stopped', 'running', 'waiting', 'failed']),
+    waitingFor: z.array(z.string()),
+    error: z.string().optional(),
+  })
+  .strict()
+
+const DynamicAttemptErrorSchema = z
+  .object({
+    phase: z.enum(['approval', 'host-load', 'host-apply', 'client-load', 'client-apply', 'client-render']),
+    message: z.string(),
+    stack: z.string().optional(),
+    pluginId: DynamicIdSchema,
+    packageId: DynamicIdSchema,
+    pluginRunId: DynamicIdSchema,
+  })
+  .strict()
+
+const DynamicLatestRunSchema = z
+  .object({
+    pluginRunId: DynamicIdSchema,
+    packageId: DynamicIdSchema,
+    mode: z.enum(['run', 'update']),
+    status: DynamicAttemptStatusSchema,
+    approvalRequestId: DynamicIdSchema.optional(),
+    requiresApproval: z.boolean().optional(),
+    host: DynamicHalfStateSchema,
+    client: DynamicHalfStateSchema,
+    error: DynamicAttemptErrorSchema.optional(),
+  })
+  .strict()
+
+const AuthoringTaskStatusSchema = z.enum([
+  'working',
+  'awaiting-approval',
+  'running',
+  'ready',
+  'repairing',
+  'failed',
+  'interrupted',
+  'stopped',
+  'completed',
+])
+
+const AuthoringAttemptStateSchema = z.enum([
+  'drafting',
+  'preflight-failed',
+  'awaiting-approval',
+  'starting-host',
+  'loading-client',
+  'verifying',
+  'active',
+  'failed',
+  'rejected',
+  'stopped',
+])
+
+const AuthoringAttemptSummarySchema = z
+  .object({
+    id: AuthoringAttemptIdSchema,
+    ordinal: z.number().int().positive(),
+    name: z.string(),
+    purpose: z.string(),
+    state: AuthoringAttemptStateSchema,
+    riskDigest: z.string().regex(/^[a-f0-9]{64}$/u),
+    host: DynamicHalfStateSchema,
+    client: DynamicHalfStateSchema,
+    error: z
+      .object({
+        phase: z.enum([
+          'preflight',
+          'approval',
+          'host-load',
+          'host-apply',
+          'client-load',
+          'client-apply',
+          'client-render',
+          'verification',
+          'settlement',
+          'restore',
+        ]),
+        message: z.string(),
+        repairable: z.boolean(),
+      })
+      .strict()
+      .optional(),
+    createdAt: z.number().int().nonnegative(),
+    settledAt: z.number().int().nonnegative().optional(),
+  })
+  .strict()
+
+const AuthoringTaskSummarySchema = z
+  .object({
+    id: AuthoringTaskIdSchema,
+    agentId: AgentIdSchema,
+    channelId: ChannelIdSchema,
+    episodeId: EpisodeIdSchema,
+    title: z.string(),
+    requirementSummary: z.string(),
+    status: AuthoringTaskStatusSchema,
+    approvalPolicy: z.enum(['risk-stable', 'fully-automatic']),
+    approvedRiskDigest: z
+      .string()
+      .regex(/^[a-f0-9]{64}$/u)
+      .optional(),
+    revision: z.number().int().positive(),
+    activeAttempt: AuthoringAttemptSummarySchema.optional(),
+    candidateAttempt: AuthoringAttemptSummarySchema.optional(),
+    createdAt: z.number().int().nonnegative(),
+    updatedAt: z.number().int().nonnegative(),
+  })
+  .strict()
 const ConnectionAliasInputSchema = z
   .string()
   .trim()
@@ -336,6 +466,7 @@ export const ChannelRuntimeToolSchema = z
     inputPreview: z.string().optional(),
     resultPreview: z.string().optional(),
     wroteToChannel: z.boolean().optional(),
+    deliveryState: z.enum(['sent', 'partially-sent', 'failed', 'unknown']).optional(),
     durationMs: z.number().int().nonnegative().optional(),
   })
   .strict()
@@ -363,6 +494,7 @@ export const ChannelRuntimeTurnSchema = z
     turn: z.number().int().nonnegative(),
     state: z.enum(['in-progress', 'completed', 'unreplied', 'aborted', 'error', 'max-tokens', 'interrupted']),
     producedReply: z.boolean(),
+    responseState: z.enum(['not-required', 'pending', 'sent', 'finished', 'protocol-failed', 'interrupted']),
     error: z.object({ code: NonEmptyStringSchema, message: z.string() }).strict().optional(),
     steps: z.array(ChannelRuntimeStepSchema),
     durationMs: z.number().int().nonnegative().optional(),
@@ -765,6 +897,8 @@ export const HostSnapshotSchema = z
                       .array(z.object({ name: AdapterClientSlotNameSchema, key: NonEmptyStringSchema }).strict())
                       .optional(),
                     renderedPages: z.array(HostPageContributionSchema).max(8).optional(),
+                    usedUiComponents: z.array(HostUiKitComponentNameSchema).optional(),
+                    pageGeometry: z.array(HostUiPageGeometryEvidenceSchema).max(8).optional(),
                     permissions: HostUiPermissionDeclarationSchema.optional(),
                     permissionDigest: z
                       .string()
@@ -869,12 +1003,9 @@ export const HostSnapshotSchema = z
           currentPackageId: DynamicIdSchema.optional(),
           nextPackageId: DynamicIdSchema.optional(),
           approvalRequestId: DynamicIdSchema.optional(),
-          status: NonEmptyStringSchema,
+          status: DynamicAttemptStatusSchema,
           activeRun: z.object({ pluginRunId: DynamicIdSchema, packageId: DynamicIdSchema }).strict().optional(),
-          latestRun: z
-            .object({ pluginRunId: DynamicIdSchema, packageId: DynamicIdSchema, status: NonEmptyStringSchema })
-            .strict()
-            .optional(),
+          latestRun: DynamicLatestRunSchema.optional(),
           packages: z.array(
             z
               .object({
@@ -899,6 +1030,7 @@ export const HostSnapshotSchema = z
         })
         .strict(),
     ),
+    authoringTasks: z.array(AuthoringTaskSummarySchema).default([]),
   })
   .strict()
 
@@ -977,14 +1109,6 @@ const DynamicRunResponseSchema = z.discriminatedUnion('ok', [
     .strict(),
 ])
 
-const DynamicHalfStateSchema = z
-  .object({
-    status: z.enum(['absent', 'pending', 'stopped', 'running', 'waiting', 'failed']),
-    waitingFor: z.array(z.string()),
-    error: z.string().optional(),
-  })
-  .strict()
-
 const DynamicInventoryRowSchema = z
   .object({
     pluginId: DynamicIdSchema,
@@ -1003,40 +1127,7 @@ const DynamicInventoryRowSchema = z
     currentPackageId: DynamicIdSchema.optional(),
     nextPackageId: DynamicIdSchema.optional(),
     activeRun: z.object({ pluginRunId: DynamicIdSchema, packageId: DynamicIdSchema }).strict().optional(),
-    latestRun: z
-      .object({
-        pluginRunId: DynamicIdSchema,
-        packageId: DynamicIdSchema,
-        mode: z.enum(['run', 'update']),
-        status: z.enum([
-          'awaiting-approval',
-          'starting-host',
-          'client-pending',
-          'running',
-          'waiting',
-          'rejected',
-          'failed',
-          'cancelled',
-          'stopped',
-        ]),
-        approvalRequestId: DynamicIdSchema.optional(),
-        requiresApproval: z.boolean().optional(),
-        host: DynamicHalfStateSchema,
-        client: DynamicHalfStateSchema,
-        error: z
-          .object({
-            phase: z.enum(['approval', 'host-load', 'host-apply', 'client-load', 'client-apply', 'client-render']),
-            message: z.string(),
-            stack: z.string().optional(),
-            pluginId: DynamicIdSchema,
-            packageId: DynamicIdSchema,
-            pluginRunId: DynamicIdSchema,
-          })
-          .strict()
-          .optional(),
-      })
-      .strict()
-      .optional(),
+    latestRun: DynamicLatestRunSchema.optional(),
   })
   .strict()
 
@@ -1312,6 +1403,8 @@ const extensionRevisionParam = z
 const dshSettingsParam = z.object({ namespace: NonEmptyStringSchema }).strict()
 const dshCredentialParam = z.object({ ref: DshCredentialRefSchema }).strict()
 const llmProviderParam = z.object({ provider: NonEmptyStringSchema }).strict()
+const authoringTaskParam = z.object({ taskId: AuthoringTaskIdSchema }).strict()
+const authoringAttemptParam = z.object({ taskId: AuthoringTaskIdSchema, attemptId: AuthoringAttemptIdSchema }).strict()
 
 export const HostApiContracts = {
   snapshot: defineContract({
@@ -1320,6 +1413,58 @@ export const HostApiContracts = {
     params: EmptyParamsSchema,
     request: NoRequestBodySchema,
     response: HostSnapshotSchema,
+    error: HostApiErrorSchema,
+  }),
+  getAuthoringTask: defineContract({
+    method: 'GET',
+    path: '/api/authoring/tasks/:taskId',
+    params: authoringTaskParam,
+    request: NoRequestBodySchema,
+    response: z
+      .object({
+        task: AuthoringTaskSummarySchema,
+        attempts: z.array(AuthoringAttemptSummarySchema),
+        events: z.array(
+          z
+            .object({
+              sequence: z.number().int().positive(),
+              kind: z.string(),
+              attemptId: AuthoringAttemptIdSchema.optional(),
+              payload: JsonValueSchema,
+              createdAt: z.number().int().nonnegative(),
+            })
+            .strict(),
+        ),
+      })
+      .strict(),
+    error: HostApiErrorSchema,
+  }),
+  decideAuthoringAttempt: defineContract({
+    method: 'POST',
+    path: '/api/authoring/tasks/:taskId/attempts/:attemptId/decision',
+    params: authoringAttemptParam,
+    request: z
+      .object({ expectedRevision: z.number().int().positive(), approved: z.boolean(), approveRiskStable: z.boolean() })
+      .strict(),
+    response: z
+      .object({ accepted: z.boolean(), taskRevision: z.number().int().positive(), executionRequired: z.boolean() })
+      .strict(),
+    error: HostApiErrorSchema,
+  }),
+  stopAuthoringTask: defineContract({
+    method: 'POST',
+    path: '/api/authoring/tasks/:taskId/stop',
+    params: authoringTaskParam,
+    request: z.object({ expectedRevision: z.number().int().positive() }).strict(),
+    response: AuthoringTaskSummarySchema,
+    error: HostApiErrorSchema,
+  }),
+  deleteAuthoringTask: defineContract({
+    method: 'DELETE',
+    path: '/api/authoring/tasks/:taskId',
+    params: authoringTaskParam,
+    request: NoRequestBodySchema,
+    response: z.object({ deleted: z.literal(true) }).strict(),
     error: HostApiErrorSchema,
   }),
   listClientNotifications: defineContract({
@@ -1974,6 +2119,12 @@ export const HostApiContracts = {
           .max(16)
           .default([]),
         renderedPages: z.array(HostPageContributionSchema).max(8).default([]),
+        usedUiComponents: z
+          .array(HostUiKitComponentNameSchema)
+          .max(HostUiKitComponentNameSchema.options.length)
+          .default([]),
+        pageGeometry: z.array(HostUiPageGeometryEvidenceSchema).max(8).default([]),
+        navigationEntries: z.array(z.string().trim().min(1).max(64)).max(8).default([]),
         permissions: HostUiPermissionDeclarationSchema.default({ permissions: [], networkOrigins: [] }),
       })
       .strict()
@@ -1985,6 +2136,78 @@ export const HostApiContracts = {
         },
       )
       .superRefine((value, context) => {
+        if (value.renderedPages.length > 0 && value.usedUiComponents.length === 0) {
+          context.addIssue({
+            code: 'custom',
+            path: ['usedUiComponents'],
+            message: '动态页面必须实际使用 NekroNXT UI Kit。',
+          })
+        }
+        if (value.renderedPages.length > 0) {
+          const geometryByEntry = new Map(value.pageGeometry.map((geometry) => [geometry.entryId, geometry]))
+          for (const page of value.renderedPages) {
+            const geometry = geometryByEntry.get(page.entryId)
+            if (!geometry) {
+              context.addIssue({
+                code: 'custom',
+                path: ['pageGeometry'],
+                message: `动态页面 ${page.entryId} 没有真实页面几何证据。`,
+              })
+              continue
+            }
+            if (geometry.objectPane !== page.objectPane) {
+              context.addIssue({
+                code: 'custom',
+                path: ['pageGeometry'],
+                message: `动态页面 ${page.entryId} 的几何证据与对象列模式不一致。`,
+              })
+            }
+            const expectedInline = geometry.viewport.width <= 960 ? 24 : geometry.viewport.width <= 1440 ? 32 : 40
+            const insetChecks = [
+              ['top', geometry.insets.top, 24],
+              ['right', geometry.insets.right, expectedInline],
+              ['bottom', geometry.insets.bottom, 40],
+              ['left', geometry.insets.left, expectedInline],
+            ] as const
+            for (const [side, actual, expected] of insetChecks) {
+              if (Math.abs(actual - expected) > 1) {
+                context.addIssue({
+                  code: 'custom',
+                  path: ['pageGeometry'],
+                  message: `动态页面 ${page.entryId} 的 ${side} 边距为 ${actual}px，Host 契约要求 ${expected}px。`,
+                })
+              }
+            }
+            if (!geometry.contentAxesAligned) {
+              context.addIssue({
+                code: 'custom',
+                path: ['pageGeometry'],
+                message: `动态页面 ${page.entryId} 的 PageHeader 与正文内容轴没有对齐。`,
+              })
+            }
+            if (geometry.horizontalOverflow) {
+              context.addIssue({
+                code: 'custom',
+                path: ['pageGeometry'],
+                message: `动态页面 ${page.entryId} 产生了页面级横向溢出。`,
+              })
+            }
+            if (!geometry.titleDistinct) {
+              context.addIssue({
+                code: 'custom',
+                path: ['pageGeometry'],
+                message: `动态页面 ${page.entryId} 的应用标题与当前视图标题重复。`,
+              })
+            }
+          }
+          if (geometryByEntry.size !== value.renderedPages.length) {
+            context.addIssue({
+              code: 'custom',
+              path: ['pageGeometry'],
+              message: '动态页面几何证据包含重复或未声明的页面入口。',
+            })
+          }
+        }
         if (value.renderedPages.length === 0 && value.permissions.permissions.length === 0) return
         if (value.renderedPages.length > 0) return
         context.addIssue({
@@ -2000,21 +2223,36 @@ export const HostApiContracts = {
     method: 'POST',
     path: '/api/extensions/save-from-dynamic',
     params: EmptyParamsSchema,
-    request: z
-      .object({
-        agentId: AgentIdSchema,
-        episodeId: EpisodeIdSchema,
-        pluginId: DynamicIdSchema,
-        packageId: DynamicIdSchema,
-        displayName: z.string().trim().min(1).max(80),
-        slug: z
-          .string()
-          .trim()
-          .regex(/^[a-z0-9][a-z0-9-]{1,62}[a-z0-9]$/u),
-        description: z.string().max(500).default(''),
-        targetExtensionId: ExtensionIdSchema.optional(),
-      })
-      .strict(),
+    request: z.union([
+      z
+        .object({
+          taskId: AuthoringTaskIdSchema,
+          attemptId: AuthoringAttemptIdSchema,
+          displayName: z.string().trim().min(1).max(80),
+          slug: z
+            .string()
+            .trim()
+            .regex(/^[a-z0-9][a-z0-9-]{1,62}[a-z0-9]$/u),
+          description: z.string().max(500).default(''),
+          targetExtensionId: ExtensionIdSchema.optional(),
+        })
+        .strict(),
+      z
+        .object({
+          agentId: AgentIdSchema,
+          episodeId: EpisodeIdSchema,
+          pluginId: DynamicIdSchema,
+          packageId: DynamicIdSchema,
+          displayName: z.string().trim().min(1).max(80),
+          slug: z
+            .string()
+            .trim()
+            .regex(/^[a-z0-9][a-z0-9-]{1,62}[a-z0-9]$/u),
+          description: z.string().max(500).default(''),
+          targetExtensionId: ExtensionIdSchema.optional(),
+        })
+        .strict(),
+    ]),
     response: z
       .object({
         extensionId: ExtensionIdSchema,

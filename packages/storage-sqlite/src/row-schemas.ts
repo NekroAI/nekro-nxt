@@ -4,6 +4,8 @@ import {
   AdmissionIdSchema,
   AgentIdSchema,
   AgentRevisionIdSchema,
+  AuthoringAttemptIdSchema,
+  AuthoringTaskIdSchema,
   AssetIdSchema,
   ChannelEventIdSchema,
   ChannelActivityTypeSchema,
@@ -35,6 +37,11 @@ import {
   ImageUnderstandingPolicySchema,
 } from '@nekro-nxt/core'
 import {
+  AuthoringAttemptFailureSchema,
+  AuthoringHalfStateSchema,
+  DynamicAuthoringVerificationSchema,
+} from '@nekro-nxt/extension-runtime'
+import {
   admissionEvents,
   admissions,
   agentActivations,
@@ -54,6 +61,9 @@ import {
   dshPluginDiagnostics,
   dshPluginEntries,
   dshPluginPackages,
+  dynamicAuthoringAttempts,
+  dynamicAuthoringEvents,
+  dynamicAuthoringTasks,
   episodeHandoffEvents,
   episodeHandoffs,
   episodes,
@@ -136,6 +146,26 @@ export const EpisodeRowSchema = createSelectSchema(episodes, {
   openedAtEventId: ChannelEventIdSchema,
   lastAdmittedEventId: ChannelEventIdSchema.nullable(),
   closedAtEventId: ChannelEventIdSchema.nullable(),
+})
+export const DynamicAuthoringTaskRowSchema = createSelectSchema(dynamicAuthoringTasks, {
+  id: AuthoringTaskIdSchema,
+  agentId: AgentIdSchema,
+  channelId: ChannelIdSchema,
+  episodeId: EpisodeIdSchema,
+  initiatingEventId: ChannelEventIdSchema,
+})
+export const DynamicAuthoringAttemptRowSchema = createSelectSchema(dynamicAuthoringAttempts, {
+  id: AuthoringAttemptIdSchema,
+  taskId: AuthoringTaskIdSchema,
+  host: AuthoringHalfStateSchema,
+  client: AuthoringHalfStateSchema,
+  error: AuthoringAttemptFailureSchema.nullable(),
+  verification: DynamicAuthoringVerificationSchema.nullable(),
+})
+export const DynamicAuthoringEventRowSchema = createSelectSchema(dynamicAuthoringEvents, {
+  taskId: AuthoringTaskIdSchema,
+  attemptId: AuthoringAttemptIdSchema.nullable(),
+  payload: JsonValueSchema,
 })
 export const EpisodeHandoffRowSchema = createSelectSchema(episodeHandoffs, {
   id: EpisodeHandoffIdSchema,
@@ -254,6 +284,9 @@ export const CoreRowSchemas = {
   channelBindings: ChannelBindingRowSchema,
   channelEvents: ChannelEventRowSchema,
   episodes: EpisodeRowSchema,
+  dynamicAuthoringTasks: DynamicAuthoringTaskRowSchema,
+  dynamicAuthoringAttempts: DynamicAuthoringAttemptRowSchema,
+  dynamicAuthoringEvents: DynamicAuthoringEventRowSchema,
   episodeHandoffs: EpisodeHandoffRowSchema,
   episodeHandoffEvents: EpisodeHandoffEventRowSchema,
   admissions: AdmissionRowSchema,

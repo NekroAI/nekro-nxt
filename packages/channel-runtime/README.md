@@ -12,4 +12,6 @@ Binding 的替换、清除和频道删除先按 `channelId` 串行，并在锁�
 
 Binding 的普通 `triggerPolicy` 只控制普通消息；特殊活动只有列入 `eventTriggers` 才能创建 Admission，`observe-only` 永远不触发。群聊处理中反馈使用 Connection 命名空间的耐久 Lease，平台调用前持久化，Session 空闲或重启恢复后清理。
 
+Channel Runtime 在每次调用 `AgentSessionDriver.admit()` 时，根据当前 Binding 和该批 Channel Event 计算瞬时 `replyRequired`：任一事件满足 `isTriggered(binding, event)` 即为 `true`。该值只交给当前 Host 进程维护回应守卫，不增加 `AdmissionRecord` 字段，也不写 Core/Runtime SQLite。pending/claimed Admission 恢复时使用当前 Binding 和持久 Channel Event 重新计算；已经写入 DSH Session 的旧消息不会携带或恢复这项标记。回应义务的发送、显式结束、纠正预算和运行投影契约见[消息内容与投递协议](../../docs/03-消息内容与投递协议.md)。
+
 撤回与戳一戳使用耐久 Interaction Intent。提交平台前依次保存 `planned` 和 `sending`，写入后结果不明时保存 `unknown` 且不自动重试；`clientRequestId` 在智能体、频道范围内去重。撤回只允许同一智能体在当前频道的成功物理投递，戳一戳只允许当前频道成员并执行 30 秒成员冷却和每频道每分钟三次限制。

@@ -163,7 +163,8 @@ harness.registerAdapter = (contribution) => {
 }
 `
 
-export const isAdapterDynamicHostSource = (source: string | undefined): source is string =>
+/** Compatibility fallback for Packages defined through the upstream cordis_define tool. */
+export const isLegacyAdapterDynamicHostSource = (source: string | undefined): source is string =>
   source?.includes('harness.registerAdapter(') === true
 
 export const wrapAdapterDynamicHostSource = (source: string): string => `${ADAPTER_DYNAMIC_HARNESS_SOURCE}\n${source}`

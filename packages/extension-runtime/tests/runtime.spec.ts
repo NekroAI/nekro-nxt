@@ -1,8 +1,14 @@
 import {
   AgentIdSchema,
+  AuthoringAttemptIdSchema,
+  AuthoringTaskIdSchema,
+  ChannelEventIdSchema,
+  ChannelIdSchema,
+  EpisodeIdSchema,
   ExtensionIdSchema,
   ExtensionRevisionIdSchema,
   type AgentId,
+  type AuthoringTaskId,
   type DshPluginEntryId,
   type ExtensionId,
   type ExtensionRevisionId,
@@ -18,6 +24,8 @@ import path from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
 import { z } from 'zod'
 import {
+  AuthoringArtifactStore,
+  DynamicAuthoringService,
   ExtensionActivationCoordinator,
   ExtensionBuilder,
   ExtensionService,
@@ -29,9 +37,14 @@ import {
   validateHostUiCss,
   validateHostUiSvg,
   type Activation,
+  type AuthoringRepository,
+  type DynamicAuthoringAttempt,
   type ExtensionActivationHost,
   type ExtensionBuildArtifact,
   type ExtensionClientDiagnostic,
+  type DynamicAuthoringEvent,
+  type DynamicAuthoringSnapshot,
+  type DynamicAuthoringTask,
   type ExtensionRepository,
   type ExtensionRevisionVerification,
   type HostExtensionInstallationHost,
@@ -46,6 +59,406 @@ import {
   type Revision,
 } from '../src/index.ts'
 
+const createAuthoringMemoryRepository = (): AuthoringRepository & {
+  failDelete: boolean
+  dropAttempts(taskId: DynamicAuthoringTask['id']): void
+} => {
+  const tasks = new Map<string, DynamicAuthoringTask>()
+  const attempts = new Map<string, DynamicAuthoringAttempt>()
+  const events = new Map<string, DynamicAuthoringEvent[]>()
+  const appendEvent = (event: DynamicAuthoringEvent): void => {
+    events.set(event.taskId, [...(events.get(event.taskId) ?? []), event])
+  }
+  return {
+    failDelete: false,
+    dropAttempts: (taskId) => {
+      for (const attempt of [...attempts.values()]) if (attempt.taskId === taskId) attempts.delete(attempt.id)
+    },
+    listAuthoringTasks: (agentId) => [...tasks.values()].filter((task) => !agentId || task.agentId === agentId),
+    listRecoverableAuthoringTasks: () =>
+      [...tasks.values()].filter((task) => !['interrupted', 'stopped', 'completed'].includes(task.status)),
+    getAuthoringTask: (id) => tasks.get(id),
+    getAuthoringTaskByPlugin: (episodeId, pluginKey) =>
+      [...tasks.values()].find((task) => task.episodeId === episodeId && task.pluginKey === pluginKey),
+    listAuthoringAttempts: (taskId) =>
+      [...attempts.values()]
+        .filter((attempt) => attempt.taskId === taskId)
+        .sort((left, right) => left.ordinal - right.ordinal),
+    getAuthoringAttempt: (id) => attempts.get(id),
+    listAuthoringEvents: (taskId) => events.get(taskId) ?? [],
+    createAuthoringTask: ({ task, attempt, event }) => {
+      tasks.set(task.id, task)
+      attempts.set(attempt.id, attempt)
+      appendEvent(event)
+    },
+    appendAuthoringAttempt: ({ task, attempt, event }) => {
+      tasks.set(task.id, task)
+      attempts.set(attempt.id, attempt)
+      appendEvent(event)
+    },
+    updateAuthoringAttempt: ({ task, attempt, event }) => {
+      tasks.set(task.id, task)
+      attempts.set(attempt.id, attempt)
+      appendEvent(event)
+    },
+    updateAuthoringTask: ({ task, event }) => {
+      tasks.set(task.id, task)
+      appendEvent(event)
+    },
+    deleteAuthoringTask(id) {
+      if (this.failDelete) throw new Error('synthetic delete failure')
+      const task = tasks.get(id)
+      if (!task) return
+      if (!['interrupted', 'stopped', 'completed'].includes(task.status)) throw new Error('must stop')
+      tasks.delete(id)
+      for (const attempt of [...attempts.values()]) if (attempt.taskId === id) attempts.delete(attempt.id)
+      events.delete(id)
+    },
+  }
+}
+
+describe('Dynamic authoring artifacts', () => {
+  it('publishes immutable snapshots and stages task deletion without leaving source files behind', async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), 'nekro-nxt-authoring-artifacts-'))
+    temporaryDirectories.push(directory)
+    expect(() => new AuthoringArtifactStore('relative')).toThrow('absolute')
+    const store = new AuthoringArtifactStore(directory)
+    const agentId = AgentIdSchema.parse('agt_AUTHORINGARTIFACTS')
+    const taskId = AuthoringTaskIdSchema.parse('aut_AUTHORINGARTIFACTS')
+    const attemptId = AuthoringAttemptIdSchema.parse('aua_AUTHORINGARTIFACTS')
+    const snapshot: DynamicAuthoringSnapshot = {
+      name: '验收面板',
+      purpose: '验证源码账本。',
+      scope: 'host-ui',
+      code: { client: 'return { apply() {} }' },
+      resources: {},
+      permissions: { permissions: [], networkOrigins: [] },
+      contributions: [],
+    }
+
+    const relative = await store.publish(agentId, taskId, attemptId, snapshot)
+    await expect(store.read(relative)).resolves.toEqual(snapshot)
+    await expect(store.publish(agentId, taskId, attemptId, snapshot)).resolves.toBe(relative)
+    await expect(store.publish(agentId, taskId, attemptId, { ...snapshot, purpose: '不同内容。' })).rejects.toThrow(
+      '其他内容',
+    )
+    await expect(store.read('../outside')).rejects.toThrow('unsafe')
+
+    const staged = await store.stageTaskDeletion(agentId, taskId)
+    expect(staged).toBeDefined()
+    await expect(readFile(path.join(directory, relative, 'snapshot.json'), 'utf8')).rejects.toThrow()
+    await store.restoreTaskDeletion(staged!)
+    await expect(store.read(relative)).resolves.toEqual(snapshot)
+    const stagedAgain = await store.stageTaskDeletion(agentId, taskId)
+    expect(stagedAgain).toBeDefined()
+    await store.discardTaskDeletion(stagedAgain!)
+    expect(await store.stageTaskDeletion(agentId, taskId)).toBeUndefined()
+  })
+
+  it('keeps task revisions idempotent, restores runner identities, and rolls back failed deletion', async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), 'nekro-nxt-authoring-service-'))
+    temporaryDirectories.push(directory)
+    const repository = createAuthoringMemoryRepository()
+    const store = new AuthoringArtifactStore(directory)
+    let clock = 100
+    const service = new DynamicAuthoringService(repository, store, { now: () => ++clock })
+    const defaultClockService = new DynamicAuthoringService(repository, store)
+    const changes: Array<{ readonly taskId: AuthoringTaskId; readonly agentId: AgentId }> = []
+    const unsubscribe = service.subscribe((change) => changes.push(change))
+    const unsubscribeFailingObserver = service.subscribe(() => {
+      throw new Error('synthetic observer failure')
+    })
+    const agentId = AgentIdSchema.parse('agt_AUTHORINGSERVICE')
+    const channelId = ChannelIdSchema.parse('chn_AUTHORINGSERVICE')
+    const episodeId = EpisodeIdSchema.parse('eps_AUTHORINGSERVICE')
+    const initiatingEventId = ChannelEventIdSchema.parse('evt_AUTHORINGSERVICE')
+    expect(defaultClockService.taskForRunner(episodeId, 'not-created')).toBeUndefined()
+    const base = {
+      agentId,
+      channelId,
+      episodeId,
+      initiatingEventId,
+      approvalPolicy: 'risk-stable' as const,
+      pluginKey: 'plugin-authoring',
+    }
+    const first = await service.recordDefinition({
+      ...base,
+      runnerPackageId: 'package-one',
+      snapshot: {
+        name: '状态工具',
+        purpose: '验证任务账本。',
+        scope: 'agent',
+        code: { host: 'return { apply() {} }' },
+        resources: {},
+        permissions: { permissions: [], networkOrigins: [] },
+        contributions: [],
+      },
+    })
+    expect(changes).toEqual([{ taskId: first.task.id, agentId }])
+    unsubscribeFailingObserver()
+    const secondSnapshot: DynamicAuthoringSnapshot = {
+      name: '状态工具修订',
+      purpose: '验证同任务追加候选。',
+      scope: 'agent',
+      code: { host: 'return { apply() { return undefined } }' },
+      resources: { 'assets/probe.module.css': '.probe { color: red; }' },
+      clientCss: {
+        path: 'assets/probe.module.css',
+        sha256: createHash('sha256').update('.probe { color: red; }').digest('hex'),
+      },
+      permissions: { permissions: [], networkOrigins: [] },
+      contributions: [],
+    }
+    const second = await service.recordDefinition({
+      ...base,
+      runnerPackageId: 'package-two',
+      snapshot: secondSnapshot,
+    })
+    expect(second.task.id).toBe(first.task.id)
+    expect(second.attempt.ordinal).toBe(2)
+    const revisionBeforeReplay = repository.getAuthoringTask(first.task.id)!.revision
+    const changesBeforeReplay = changes.length
+    const eventsBeforeReplay = repository.listAuthoringEvents(first.task.id)
+    const attemptsBeforeReplay = repository.listAuthoringAttempts(first.task.id)
+    const attemptDirectoriesBeforeReplay = await readdir(
+      path.join(directory, agentId, 'authoring', first.task.id, 'attempts'),
+    )
+    const replayed = await service.recordDefinition({
+      ...base,
+      runnerPackageId: 'package-two',
+      snapshot: secondSnapshot,
+    })
+    expect(replayed).toEqual({
+      task: repository.getAuthoringTask(first.task.id),
+      attempt: second.attempt,
+    })
+    expect(repository.getAuthoringTask(first.task.id)?.revision).toBe(revisionBeforeReplay)
+    expect(repository.listAuthoringEvents(first.task.id)).toEqual(eventsBeforeReplay)
+    expect(repository.listAuthoringAttempts(first.task.id)).toEqual(attemptsBeforeReplay)
+    expect(changes).toHaveLength(changesBeforeReplay)
+    await expect(readdir(path.join(directory, agentId, 'authoring', first.task.id, 'attempts'))).resolves.toEqual(
+      attemptDirectoriesBeforeReplay,
+    )
+    await expect(
+      service.recordDefinition({
+        ...base,
+        runnerPackageId: 'package-two',
+        snapshot: { ...secondSnapshot, purpose: '试图复用相同运行包身份提交其他内容。' },
+      }),
+    ).rejects.toThrow('运行包身份冲突')
+    expect(repository.getAuthoringTask(first.task.id)?.revision).toBe(revisionBeforeReplay)
+    expect(repository.listAuthoringEvents(first.task.id)).toEqual(eventsBeforeReplay)
+    expect(repository.listAuthoringAttempts(first.task.id)).toEqual(attemptsBeforeReplay)
+    await expect(readdir(path.join(directory, agentId, 'authoring', first.task.id, 'attempts'))).resolves.toEqual(
+      attemptDirectoriesBeforeReplay,
+    )
+    expect(
+      service.syncAttempt({
+        episodeId: EpisodeIdSchema.parse('eps_MISSINGAUTHORING'),
+        pluginKey: 'missing',
+        runnerPackageId: 'missing',
+        state: 'failed',
+        taskStatus: 'failed',
+        host: { status: 'failed', waitingFor: [] },
+        client: { status: 'absent', waitingFor: [] },
+        eventKind: 'attempt-failed',
+      }),
+    ).toBeUndefined()
+    expect(
+      service.syncAttempt({
+        episodeId,
+        pluginKey: base.pluginKey,
+        runnerPackageId: 'missing',
+        state: 'failed',
+        taskStatus: 'failed',
+        host: { status: 'failed', waitingFor: [] },
+        client: { status: 'absent', waitingFor: [] },
+        eventKind: 'attempt-failed',
+      }),
+    ).toBeUndefined()
+    const verification = {
+      hostStarted: true,
+      clientLoaded: true,
+      renderedSlots: [],
+      renderedPages: [],
+      usedUiComponents: [],
+      pageGeometry: [],
+      rpcCalls: [],
+      toolInvocations: [{ name: 'status_probe', succeeded: true }],
+      navigationChecks: [],
+      resourceChecks: ['assets/probe.module.css'],
+      stoppedCleanly: false,
+    } as const
+    const changesBeforeVerification = changes.length
+    service.syncAttempt({
+      episodeId,
+      pluginKey: base.pluginKey,
+      runnerPackageId: 'package-two',
+      runnerRunId: 'run-two',
+      state: 'active',
+      taskStatus: 'ready',
+      host: { status: 'running', waitingFor: [] },
+      client: { status: 'absent', waitingFor: [] },
+      verification,
+      eventKind: 'verification-completed',
+    })
+    expect(changes).toHaveLength(changesBeforeVerification + 1)
+    const readyRevision = repository.getAuthoringTask(first.task.id)!.revision
+    service.syncAttempt({
+      episodeId,
+      pluginKey: base.pluginKey,
+      runnerPackageId: 'package-two',
+      runnerRunId: 'run-two',
+      state: 'active',
+      taskStatus: 'ready',
+      host: { status: 'running', waitingFor: [] },
+      client: { status: 'absent', waitingFor: [] },
+      verification,
+      eventKind: 'verification-completed',
+    })
+    expect(repository.getAuthoringTask(first.task.id)?.revision).toBe(readyRevision)
+    expect(changes).toHaveLength(changesBeforeVerification + 1)
+    expect(service.taskForRunner(episodeId, base.pluginKey)?.id).toBe(first.task.id)
+    await expect(service.snapshotForRunnerPackage(episodeId, base.pluginKey, 'missing')).resolves.toBeUndefined()
+
+    const clientOnly = await service.recordDefinition({
+      ...base,
+      approvalPolicy: 'fully-automatic',
+      pluginKey: 'plugin-client-only',
+      runnerPackageId: 'package-client-only',
+      snapshot: {
+        name: '界面探针',
+        purpose: '覆盖 Client 恢复分支。',
+        scope: 'agent',
+        code: { client: 'return { apply() {} }' },
+        resources: {},
+        permissions: { permissions: [], networkOrigins: [] },
+        contributions: [],
+      },
+    })
+    const recoveries = await service.recoveryCandidates(episodeId)
+    const recovery = recoveries.find(({ task }) => task.id === first.task.id)
+    const clientRecovery = recoveries.find(({ task }) => task.id === clientOnly.task.id)
+    expect(recovery?.shouldRun).toBe(true)
+    expect(clientRecovery?.shouldRun).toBe(false)
+    service.rebindRecoveredAttempt({
+      task: clientRecovery!.task,
+      attempt: clientRecovery!.attempt,
+      pluginKey: 'plugin-client-restored',
+      runnerPackageId: 'package-client-restored',
+      shouldRun: false,
+    })
+    service.syncAttempt({
+      episodeId,
+      pluginKey: 'plugin-client-restored',
+      runnerPackageId: 'package-client-restored',
+      state: 'failed',
+      taskStatus: 'completed',
+      host: { status: 'absent', waitingFor: [] },
+      client: { status: 'failed', waitingFor: [], error: 'synthetic client failure' },
+      error: { phase: 'client-apply', message: 'synthetic client failure', repairable: true },
+      eventKind: 'attempt-failed',
+    })
+    expect(repository.getAuthoringTask(clientOnly.task.id)).toMatchObject({
+      status: 'completed',
+      approvedRiskDigest: clientOnly.attempt.riskDigest,
+    })
+    service.interruptTask(repository.getAuthoringTask(clientOnly.task.id)!, 'ignored terminal interruption')
+    service.rebindRecoveredAttempt({
+      task: recovery!.task,
+      attempt: recovery!.attempt,
+      pluginKey: 'plugin-restored',
+      runnerPackageId: 'package-restored',
+      shouldRun: true,
+    })
+    expect(repository.getAuthoringTask(first.task.id)).toMatchObject({
+      pluginKey: 'plugin-restored',
+      status: 'running',
+    })
+    service.interruptTask(repository.getAuthoringTask(first.task.id)!, 'synthetic interruption', second.attempt.id)
+    expect(repository.getAuthoringTask(first.task.id)?.status).toBe('interrupted')
+    const changesBeforeDeletion = changes.length
+    await expect(service.deleteTask(first.task.id)).resolves.toBe(true)
+    expect(changes).toHaveLength(changesBeforeDeletion + 1)
+    expect(changes.at(-1)).toEqual({ taskId: first.task.id, agentId })
+    await expect(service.deleteTask(first.task.id)).resolves.toBe(false)
+    expect(changes).toHaveLength(changesBeforeDeletion + 1)
+    unsubscribe()
+    service.rebindRecoveredAttempt({
+      task: recovery!.task,
+      attempt: recovery!.attempt,
+      pluginKey: 'missing-after-delete',
+      runnerPackageId: 'missing-after-delete',
+      shouldRun: false,
+    })
+
+    const missingAttempt = await service.recordDefinition({
+      ...base,
+      pluginKey: 'plugin-missing-attempt',
+      runnerPackageId: 'package-missing-attempt',
+      snapshot: {
+        name: '缺失候选探针',
+        purpose: '覆盖恢复缺失候选。',
+        scope: 'agent',
+        code: { host: 'return { apply() {} }' },
+        resources: {},
+        permissions: { permissions: [], networkOrigins: [] },
+        contributions: [],
+      },
+    })
+    repository.dropAttempts(missingAttempt.task.id)
+    const candidatesWithoutMissingAttempt = await service.recoveryCandidates(episodeId)
+    expect(candidatesWithoutMissingAttempt.some(({ task }) => task.id === missingAttempt.task.id)).toBe(false)
+    const missingAttemptStaged = await store.stageTaskDeletion(agentId, missingAttempt.task.id)
+    await store.discardTaskDeletion(missingAttemptStaged!)
+    repository.failDelete = true
+    await expect(service.deleteTask(missingAttempt.task.id)).rejects.toThrow('synthetic delete failure')
+    repository.failDelete = false
+    await expect(service.deleteTask(missingAttempt.task.id)).resolves.toBe(true)
+
+    const missingSource = await service.recordDefinition({
+      ...base,
+      pluginKey: 'plugin-missing-source',
+      runnerPackageId: 'package-missing-source',
+      snapshot: {
+        name: '缺失源码探针',
+        purpose: '覆盖恢复缺失源码。',
+        scope: 'agent',
+        code: { host: 'return { apply() {} }' },
+        resources: {},
+        permissions: { permissions: [], networkOrigins: [] },
+        contributions: [],
+      },
+    })
+    const missingSourceStaged = await store.stageTaskDeletion(agentId, missingSource.task.id)
+    await store.discardTaskDeletion(missingSourceStaged!)
+    await service.recoveryCandidates(episodeId)
+    expect(repository.getAuthoringTask(missingSource.task.id)?.status).toBe('interrupted')
+    await expect(service.deleteTask(missingSource.task.id)).resolves.toBe(true)
+
+    const rollback = await service.recordDefinition({
+      ...base,
+      pluginKey: 'plugin-rollback',
+      runnerPackageId: 'package-rollback',
+      snapshot: {
+        name: '删除回滚探针',
+        purpose: '验证目录恢复。',
+        scope: 'agent',
+        code: { host: 'return { apply() {} }' },
+        resources: {},
+        permissions: { permissions: [], networkOrigins: [] },
+        contributions: [],
+      },
+    })
+    service.interruptTask(rollback.task, 'ready to delete')
+    repository.failDelete = true
+    await expect(service.deleteTask(rollback.task.id)).rejects.toThrow('synthetic delete failure')
+    await expect(store.read(rollback.attempt.sourcePath)).resolves.toMatchObject({ name: '删除回滚探针' })
+    repository.failDelete = false
+    await expect(service.deleteTask(rollback.task.id)).resolves.toBe(true)
+  })
+})
+
 describe('Host UI assets', () => {
   it('rejects CSS that escapes the page module boundary', () => {
     expect(() => validateHostUiCss(':global(body) { color: red; }')).toThrow(':global')
@@ -55,6 +468,10 @@ describe('Host UI assets', () => {
     expect(() => validateHostUiCss('body { color: red; }')).toThrow('根节点')
     expect(() => validateHostUiCss('button { color: red; }')).toThrow('本地 class')
     expect(() => validateHostUiCss('.panel body { color: red; }')).toThrow('产品根节点')
+    expect(() => validateHostUiCss('.panel { position: fixed; }')).toThrow('fixed')
+    expect(() => validateHostUiCss('.panel { width: 100vw; }')).toThrow('100vw')
+    expect(() => validateHostUiCss('.panel { min-height: 100vh; }')).toThrow('100vh')
+    expect(() => validateHostUiCss('.panel { margin-inline: -24px; }')).toThrow('负边距')
     expect(() => validateHostUiCss('@keyframes probe { from { opacity: 0; } }')).toThrow('@keyframes')
     expect(() => validateHostUiCss('.panel {')).toThrow('语法无效')
     expect(() => validateHostUiCss('x'.repeat(128 * 1024 + 1))).toThrow('128 KiB')
@@ -542,6 +959,47 @@ describe('Extension save', () => {
       contributions: [{ kind: 'host-page', entryId: 'overview' }],
     })
     expect(materialized.sources.client).toContain('defineHostUiClientExtension')
+  })
+
+  it('automatically connects declared dynamic page CSS to the persistent Client build', async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), 'nekro-nxt-extension-dynamic-css-'))
+    temporaryDirectories.push(directory)
+    const css = '.panel { color: var(--nxt-text-primary); }\n'
+    const page = {
+      kind: 'host-page' as const,
+      entryId: 'overview',
+      title: '项目面板',
+      icon: { kind: 'host-icon' as const, name: 'layout-dashboard' as const },
+      objectPane: 'hidden' as const,
+      startPath: '',
+    }
+    const materialized = materializeDynamicPackage({
+      extensionId: extensionId('dynamicCss'),
+      revisionId: revisionId('dynamicCss'),
+      snapshot: {
+        name: '动态样式页面',
+        purpose: '验证动态页面样式随保存接入构建。',
+        clientCode: `return { inject: ['pages', 'ui'], apply(ctx) { ctx.pages.register({ page: ${JSON.stringify(page)} }, () => React.createElement(ctx.ui.Section, { className: 'panel' })) } }`,
+        clientCss: { path: 'assets/page.module.css', sha256: createHash('sha256').update(css).digest('hex') },
+        resources: { 'assets/page.module.css': css },
+        permissions: { permissions: [], networkOrigins: [] },
+        contributions: [page],
+      },
+    })
+    expect(materialized.sources.client).toContain("import '../assets/page.module.css?nxt-dynamic-css'")
+    const sources = new ExtensionSourceStore(path.join(directory, 'sources'))
+    await sources.publish(materialized.manifest.extensionId, materialized.manifest.revisionId, materialized)
+    const artifact = await new ExtensionBuilder(path.join(directory, 'cache')).build({
+      extensionId: materialized.manifest.extensionId,
+      revisionId: materialized.manifest.revisionId,
+      contentDigest: materialized.contentDigest,
+      sourceDirectory: sources.revisionSourceDirectory(
+        materialized.manifest.extensionId,
+        materialized.manifest.revisionId,
+      ),
+    })
+    expect(artifact.clientCssEntry).toBeDefined()
+    expect(await readFile(artifact.clientCssEntry!, 'utf8')).toContain('.panel')
   })
 
   it('publishes a complete source directory before atomically saving LocalExtension and Revision', async () => {
@@ -1286,6 +1744,7 @@ describe('Extension materialization and build policy', () => {
       })
 
       expect(artifact.revisionId).toBe(materialized.manifest.revisionId)
+      expect(builder.buildKey(materialized.contentDigest)).toBe(artifact.buildKey)
       expect(artifact.hostEntry === undefined).toBe(!('hostCode' in variant.snapshot))
       expect(artifact.clientEntry === undefined).toBe(!('clientCode' in variant.snapshot))
       if (artifact.hostEntry) expect(existsSync(artifact.hostEntry)).toBe(true)

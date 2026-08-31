@@ -12,7 +12,7 @@ import {
   type HostUiPageEntry,
 } from '@nekro-nxt/contracts'
 import * as React from 'react'
-import { useEffect, useMemo, useSyncExternalStore, type ReactNode } from 'react'
+import { useEffect, useMemo, useSyncExternalStore, type ReactNode, type Ref } from 'react'
 import { useLocation, useNavigate, useParams } from 'react-router-dom'
 import { AlertTriangle, RefreshCw } from 'lucide-react'
 import {
@@ -36,6 +36,16 @@ import { useProductStore } from './product-store.js'
 import { DEFAULT_EXTENSION_CLIENT_STYLES } from './extension-client.js'
 import { productHostEventStream, type HostEventStreamEvent, type HostEventStreamHandlers } from './host-event-stream.js'
 import styles from './host-ui-client.module.css'
+
+const markHostUiComponent = (name: string, Component: React.ElementType): React.ElementType => {
+  const MarkedHostUiComponent = React.forwardRef<unknown, Readonly<Record<string, unknown>>>((props, ref) => (
+    <div className={styles.uiComponentMarker} data-nxt-ui-component={name}>
+      <Component {...props} ref={ref} />
+    </div>
+  ))
+  MarkedHostUiComponent.displayName = `HostUi${name}`
+  return MarkedHostUiComponent
+}
 
 type PageComponent = (props: HostUiPageProps) => ReactNode
 type PageRegistration = {
@@ -79,31 +89,83 @@ const HOST_UI_TOPIC_EVENTS: ReadonlyMap<string, readonly HostEventStreamEvent[]>
 ])
 
 export const hostUiKit: HostUiClientEnvironment['ui'] = {
-  Button,
-  IconButton,
-  Input,
-  Textarea,
-  Select: SelectField,
-  Switch: SwitchControl,
+  Button: markHostUiComponent('Button', Button),
+  IconButton: markHostUiComponent('IconButton', IconButton),
+  Input: markHostUiComponent('Input', Input),
+  Textarea: markHostUiComponent('Textarea', Textarea),
+  Select: markHostUiComponent('Select', SelectField),
+  Switch: markHostUiComponent('Switch', SwitchControl),
   Tabs,
-  Dialog,
+  Dialog: markHostUiComponent('Dialog', Dialog),
   Popover: DropdownMenu,
   Tooltip,
-  Field,
-  StatusBadge,
-  InlineFeedback,
-  EmptyState,
-  Spinner,
-  PageHeader,
-  Section: (props: { readonly children?: ReactNode }) => <section>{props.children}</section>,
-  Stack: (props: { readonly children?: ReactNode }) => <div className={styles.stack}>{props.children}</div>,
-  Grid: (props: { readonly children?: ReactNode }) => <div className={styles.grid}>{props.children}</div>,
+  Field: markHostUiComponent('Field', Field),
+  StatusBadge: markHostUiComponent('StatusBadge', StatusBadge),
+  InlineFeedback: markHostUiComponent('InlineFeedback', InlineFeedback),
+  EmptyState: markHostUiComponent('EmptyState', EmptyState),
+  Spinner: markHostUiComponent('Spinner', Spinner),
+  PageHeader: markHostUiComponent('PageHeader', PageHeader),
+  MetricStrip: (props: { readonly children?: ReactNode }) => (
+    <div className={styles.metricStrip} data-nxt-ui-component="MetricStrip">
+      {props.children}
+    </div>
+  ),
+  Metric: (props: { readonly label?: ReactNode; readonly value?: ReactNode; readonly detail?: ReactNode }) => (
+    <div className={styles.metric} data-nxt-ui-component="Metric">
+      <span>{props.label}</span>
+      <strong>{props.value}</strong>
+      {props.detail === undefined ? null : <small>{props.detail}</small>}
+    </div>
+  ),
+  Section: (props: { readonly children?: ReactNode }) => (
+    <section className={styles.section} data-nxt-ui-component="Section">
+      {props.children}
+    </section>
+  ),
+  Stack: (props: { readonly children?: ReactNode }) => (
+    <div className={styles.stack} data-nxt-ui-component="Stack">
+      {props.children}
+    </div>
+  ),
+  Grid: (props: { readonly children?: ReactNode }) => (
+    <div className={styles.grid} data-nxt-ui-component="Grid">
+      {props.children}
+    </div>
+  ),
   DataTable: (props: { readonly children?: ReactNode }) => (
-    <div className={styles.tableScroll}>
+    <div className={styles.tableScroll} data-nxt-ui-component="DataTable">
       <table>{props.children}</table>
     </div>
   ),
-  SidePane,
+  SidePane: markHostUiComponent('SidePane', SidePane),
+}
+
+export function HostUiPageFrame({
+  children,
+  pageInstanceId,
+  owner,
+  viewportRef,
+}: {
+  readonly children: ReactNode
+  readonly pageInstanceId?: string
+  readonly owner?: string
+  readonly viewportRef?: Ref<HTMLDivElement>
+}) {
+  return (
+    <div
+      ref={viewportRef}
+      className={styles.pageRoot}
+      data-host-ui-viewport=""
+      data-host-ui-page={pageInstanceId}
+      data-host-ui-owner={owner}
+    >
+      <div className={styles.pageFrame} data-host-ui-frame="">
+        <div className={styles.pageContent} data-host-ui-content="">
+          {children}
+        </div>
+      </div>
+    </div>
+  )
 }
 
 export class HostUiModuleRuntime {
@@ -514,13 +576,9 @@ function MountedPageCanvas({ page, wildcard }: { readonly page: HostUiPageEntry;
   }
   return (
     <PageErrorBoundary resetKey={`${page.client.buildKey}:${wildcard}:${location.search}`}>
-      <div
-        className={styles.pageRoot}
-        data-host-ui-page={page.pageInstanceId}
-        data-host-ui-owner={page.client.buildKey}
-      >
+      <HostUiPageFrame pageInstanceId={page.pageInstanceId} owner={page.client.buildKey}>
         {React.createElement(registration.component, props)}
-      </div>
+      </HostUiPageFrame>
     </PageErrorBoundary>
   )
 }
@@ -568,6 +626,7 @@ function HostUiNavigation({
   readonly provider: HostUiNavigationProvider
 }) {
   const navigate = useNavigate()
+  const location = useLocation()
   const [retry, setRetry] = React.useState(0)
   const [state, setState] = React.useState<HostUiNavigationState>(() => readHostUiNavigation(provider))
   useEffect(() => {
@@ -613,6 +672,9 @@ function HostUiNavigation({
               key={item.id}
               variant="ghost"
               size="small"
+              aria-current={
+                toRelativePath(location.pathname.slice(page.routeBase.length)) === item.path ? 'page' : undefined
+              }
               disabled={item.disabledReason !== undefined}
               title={item.disabledReason}
               onClick={() => {

@@ -21,7 +21,8 @@ import {
 } from '@nekro-nxt/contracts'
 import { hostPresentation, NekroNxtApp, nextVisibleHostUiPage } from '../src/app.js'
 import { runHostRefresh } from '../src/components/product-feedback.js'
-import { ProductHostCoordinator, type ProductSnapshot } from '../src/product-port.js'
+import { dynamicClientInventoryVersion } from '../src/dynamic-client-coordinator.js'
+import { ProductHostCoordinator, type DynamicPackageSummary, type ProductSnapshot } from '../src/product-port.js'
 import { setActiveProductHost, useProductStore } from '../src/product-store.js'
 
 const renderRoute = (route: string): string =>
@@ -365,6 +366,35 @@ describe('NekroNxt product shell', () => {
     expect(nextVisibleHostUiPage(third, previousOrder, [first, hostUiPage('second', false)])).toBe(first)
   })
 
+  it('reconciles a dynamic Client again when the active Package Run identity changes', () => {
+    const current: DynamicPackageSummary = {
+      agentId: browserAgentId,
+      episodeId: browserEpisodeId,
+      pluginId: 'plugin-client',
+      packageId: 'package-client',
+      status: 'running',
+      activeRun: { pluginRunId: 'run-client', packageId: 'package-client' },
+      latestRun: {
+        pluginRunId: 'run-client',
+        packageId: 'package-client',
+        mode: 'run',
+        status: 'running',
+        host: { status: 'absent', waitingFor: [] },
+        client: { status: 'running', waitingFor: [] },
+      },
+      packages: [],
+      policy: { turn: 1, consecutiveFailures: 0, repeatedFingerprintCount: 0 },
+    }
+    const replacement = {
+      ...current,
+      activeRun: { ...current.activeRun!, pluginRunId: 'run-client-restarted' },
+      latestRun: { ...current.latestRun!, pluginRunId: 'run-client-restarted' },
+    }
+    expect(dynamicClientInventoryVersion([current], current.agentId)).not.toBe(
+      dynamicClientInventoryVersion([replacement], current.agentId),
+    )
+  })
+
   it('uses the product navigation order and keeps creator and runtime out of primary navigation', () => {
     const markup = renderRoute('/work/agents/new')
     const navigation = markup.slice(markup.indexOf('<nav'), markup.indexOf('</nav>'))
@@ -677,6 +707,7 @@ describe.sequential('NekroNxt browser projections', { timeout: 30_000 }, () => {
                     turn: 1,
                     state: 'completed',
                     producedReply: true,
+                    responseState: 'sent',
                     steps: [
                       {
                         step: 1,
@@ -707,6 +738,7 @@ describe.sequential('NekroNxt browser projections', { timeout: 30_000 }, () => {
                     turn: 2,
                     state: 'completed',
                     producedReply: false,
+                    responseState: 'not-required',
                     steps: [
                       {
                         step: 1,
@@ -1122,6 +1154,123 @@ describe.sequential('NekroNxt browser projections', { timeout: 30_000 }, () => {
       await playwrightExpect(page.locator('body')).not.toContainText(browserExtensionRevisionId)
       await playwrightExpect(page.locator('body')).not.toContainText('Revision')
     })
+  })
+
+  it('keeps Host UI content inside Host-owned page insets for navigation and full-width modes', async () => {
+    const navigationPage = HostUiPageEntrySchema.parse({
+      ...hostUiPage('geometrynavigation'),
+      title: '交付检查台',
+      objectPane: 'navigation',
+      startPath: 'overview',
+      routeBase: '/apps/hup_geometrynavigation',
+      client: { moduleUrl: '/host-ui/geometrynavigation.mjs', buildKey: 'c'.repeat(64) },
+    })
+    const fullWidthPage = HostUiPageEntrySchema.parse({
+      ...hostUiPage('geometryfull'),
+      title: '全宽检查台',
+      objectPane: 'hidden',
+      startPath: 'overview',
+      routeBase: '/apps/hup_geometryfull',
+      client: { moduleUrl: '/host-ui/geometryfull.mjs', buildKey: 'd'.repeat(64) },
+    })
+    const snapshot = {
+      ...browserSnapshot,
+      hostUi: { preferencesRevision: 1, pages: [navigationPage, fullWidthPage] },
+    }
+    const moduleSource = (entry: typeof navigationPage): string => `
+      export default function (environment) {
+        const { React, ui } = environment
+        return {
+          apply(ctx) {
+            const page = ${JSON.stringify({
+              kind: 'host-page',
+              entryId: entry.entryId,
+              title: entry.title,
+              icon: entry.icon,
+              objectPane: entry.objectPane,
+              startPath: entry.startPath,
+            })}
+            const navigation = {
+              getSnapshot: () => ({ revision: 1, groups: [{ id: 'main', items: [{ id: 'overview', label: '本周概览', path: 'overview' }] }] }),
+              subscribe: () => () => undefined
+            }
+            return ctx.pages.register(
+              { page, ...(page.objectPane === 'navigation' ? { navigation } : {}) },
+              () => React.createElement(
+                ui.Stack,
+                null,
+                React.createElement(ui.PageHeader, { title: '本周概览', meta: '检查页面标准内容轴。' }),
+                React.createElement(ui.Section, null, React.createElement('h2', null, '当前进展'), React.createElement('p', null, '两项检查正在进行。'))
+              )
+            )
+          }
+        }
+      }
+    `
+    const assertGeometry = async (page: Page, expectedInline: number): Promise<void> => {
+      const geometry = await page.locator('[data-host-ui-viewport]').evaluate((viewport) => {
+        const frame = viewport.querySelector('[data-host-ui-frame]')
+        const content = viewport.querySelector('[data-host-ui-content]')
+        const header = viewport.querySelector('[data-page-header]')
+        const section = viewport.querySelector('[data-nxt-ui-component="Section"]')
+        if (!(frame instanceof HTMLElement) || !(content instanceof HTMLElement)) throw new Error('missing frame')
+        if (!(header instanceof HTMLElement) || !(section instanceof HTMLElement)) throw new Error('missing content')
+        const style = getComputedStyle(frame)
+        const viewportRect = viewport.getBoundingClientRect()
+        const contentRect = content.getBoundingClientRect()
+        const headerRect = header.getBoundingClientRect()
+        const sectionRect = section.getBoundingClientRect()
+        return {
+          viewportWidth: viewportRect.width,
+          insets: {
+            top: Number.parseFloat(style.paddingTop),
+            right: Number.parseFloat(style.paddingRight),
+            bottom: Number.parseFloat(style.paddingBottom),
+            left: Number.parseFloat(style.paddingLeft),
+          },
+          contentLeft: contentRect.left,
+          headerLeft: headerRect.left,
+          headerRight: headerRect.right,
+          sectionLeft: sectionRect.left,
+          sectionRight: sectionRect.right,
+          horizontalOverflow: viewport.scrollWidth > viewport.clientWidth + 1,
+        }
+      })
+      expect(geometry.insets).toEqual({ top: 24, right: expectedInline, bottom: 40, left: expectedInline })
+      expect(Math.abs(geometry.contentLeft - geometry.headerLeft)).toBeLessThanOrEqual(1)
+      expect(Math.abs(geometry.headerLeft - geometry.sectionLeft)).toBeLessThanOrEqual(1)
+      expect(Math.abs(geometry.headerRight - geometry.sectionRight)).toBeLessThanOrEqual(1)
+      expect(geometry.horizontalOverflow).toBe(false)
+    }
+    await withProductPage(
+      '/apps/hup_geometrynavigation/overview',
+      async (page) => {
+        await playwrightExpect(page.getByRole('heading', { name: '本周概览', exact: true })).toBeVisible()
+        await playwrightExpect(page.getByRole('button', { name: '本周概览', exact: true })).toHaveAttribute(
+          'aria-current',
+          'page',
+        )
+        await assertGeometry(page, 32)
+        await page.setViewportSize({ width: 1920, height: 1080 })
+        await page.goto(`${baseUrl}/apps/hup_geometryfull/overview`)
+        await playwrightExpect(page.getByRole('heading', { name: '本周概览', exact: true })).toBeVisible()
+        await playwrightExpect(page.locator('aside[aria-label="对象列"]')).toHaveAttribute('aria-hidden', 'true')
+        await assertGeometry(page, 40)
+      },
+      snapshot,
+      async (page) => {
+        await page.route('**/host-ui/*.css*', (request) =>
+          request.fulfill({ status: 200, contentType: 'text/css', body: '' }),
+        )
+        await page.route('**/host-ui/*.mjs*', (request) => {
+          const source = request.request().url().includes('geometryfull') ? fullWidthPage : navigationPage
+          return request.fulfill({ status: 200, contentType: 'text/javascript', body: moduleSource(source) })
+        })
+        await page.route('**/api/host-ui/pages/*/diagnostic', (request) =>
+          request.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ ok: true }) }),
+        )
+      },
+    )
   })
 
   it('inspects an extension dropped onto the managed import surface', async () => {

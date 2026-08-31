@@ -138,20 +138,26 @@ describe('Host Adapter Extension end-to-end', () => {
     })
     const episode = runtime.repository.listActiveEpisodesForAgent(entity.agentId)[0]
     if (!episode?.dshSessionId) throw new Error('Expected a live DSH Session.')
-    const defined = runtime.host.defineDynamicPackage(episode.dshSessionId, {
+    const dshSessionId = episode.dshSessionId
+    const defined = runtime.host.defineDynamicPackage(dshSessionId, {
       plugin: { kind: 'new', idPrefix: 'adapt' },
       name: '合成适配器',
       purpose: '验证 Host Adapter 安装闭环。',
       code: { host: HOST_CODE, client: CLIENT_CODE },
     })
-    const pendingRun = runtime.host.runDynamicPackage(episode.dshSessionId, defined.pluginId, defined.packageId, 'run')
-    await Promise.resolve()
-    const approval = runtime.host
-      .dynamicInventory(episode.dshSessionId)
-      .find((row) => row.pluginId === defined.pluginId)?.latestRun?.approvalRequestId
+    const pendingRun = runtime.host.runDynamicPackage(dshSessionId, defined.pluginId, defined.packageId, 'run')
+    await expect
+      .poll(
+        () =>
+          runtime.host.dynamicInventory(dshSessionId).find((row) => row.pluginId === defined.pluginId)?.latestRun
+            ?.approvalRequestId,
+      )
+      .toBeDefined()
+    const approval = runtime.host.dynamicInventory(dshSessionId).find((row) => row.pluginId === defined.pluginId)
+      ?.latestRun?.approvalRequestId
     expect(approval).toBeDefined()
     const hostHalf = await runtime.host.runDynamicHostHalf(
-      episode.dshSessionId,
+      dshSessionId,
       defined.pluginId,
       defined.packageId,
       'run',
@@ -164,7 +170,7 @@ describe('Host Adapter Extension end-to-end', () => {
       ok: true,
       pluginRunId: hostHalf.pluginRunId,
     })
-    runtime.host.recordDynamicClientVerification(
+    await runtime.host.recordDynamicClientVerification(
       episode.dshSessionId,
       defined.pluginId,
       defined.packageId,

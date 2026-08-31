@@ -408,6 +408,7 @@ export interface ProductState {
   readonly platformUsersRevision: number
   readonly approvals: readonly DynamicApproval[]
   readonly dynamic: readonly DynamicPackageSummary[]
+  readonly authoringTasks: HostApiResponse<'snapshot'>['authoringTasks']
   readonly notificationSettings: HostApiResponse<'snapshot'>['notificationSettings']
   readonly theme: ThemeChoice
   readonly reducedMotion: boolean
@@ -475,7 +476,11 @@ export interface ProductState {
   setCapabilities(agentId: string, capabilities: Partial<AgentSummary['capabilities']>): Promise<void>
   runConnectionTest(id: string, direction: 'receive' | 'send', channelId?: string): Promise<void>
   resolveApproval(input: { requestId: string; agentId: string; approved: boolean }): Promise<void>
+  stopAuthoringTask(taskId: string, expectedRevision: number): Promise<void>
+  deleteAuthoringTask(taskId: string): Promise<void>
   saveDynamicExtension(input: {
+    readonly taskId?: string
+    readonly attemptId?: string
     readonly agentId: string
     readonly episodeId: string
     readonly pluginId: string
@@ -577,6 +582,7 @@ export const useProductStore = create<ProductState>((set) => ({
   platformUsersRevision: 0,
   approvals: [],
   dynamic: [],
+  authoringTasks: [],
   notificationSettings: {
     system: { enabled: true },
     bark: { enabled: false, serverUrl: 'https://api.day.app', deviceKeyConfigured: false },
@@ -827,6 +833,44 @@ export const useProductStore = create<ProductState>((set) => ({
   resolveApproval: async ({ requestId, agentId, approved }) => {
     const normalizedRequestId = requireValue(requestId, '缺少批准请求，请刷新页面后重试。')
     const normalizedAgentId = requireValue(agentId, '缺少智能体标识，请刷新页面后重试。')
+    const dynamicItem = useProductStore
+      .getState()
+      .dynamic.find((item) => item.agentId === normalizedAgentId && item.approvalRequestId === normalizedRequestId)
+    const task = dynamicItem
+      ? useProductStore
+          .getState()
+          .authoringTasks.find(
+            (candidate) =>
+              candidate.agentId === normalizedAgentId &&
+              candidate.episodeId === dynamicItem.episodeId &&
+              candidate.candidateAttempt !== undefined,
+          )
+      : undefined
+    if (task?.candidateAttempt) {
+      const host = requireHost()
+      const decide = (candidate: typeof task, attemptId: string): Promise<unknown> =>
+        host.execute('authoring.decide', {
+          taskId: candidate.id,
+          attemptId,
+          expectedRevision: candidate.revision,
+          approved,
+          approveRiskStable: true,
+        })
+      try {
+        await decide(task, task.candidateAttempt.id)
+      } catch (cause) {
+        await host.execute('host.refresh')
+        const refreshedTask = useProductStore.getState().authoringTasks.find((candidate) => candidate.id === task.id)
+        if (
+          refreshedTask?.candidateAttempt?.id !== task.candidateAttempt.id ||
+          refreshedTask.status !== 'awaiting-approval' ||
+          refreshedTask.revision === task.revision
+        ) {
+          throw cause
+        }
+        await decide(refreshedTask, refreshedTask.candidateAttempt.id)
+      }
+    }
     const handled = approved
       ? await approveDynamicClientRequest(normalizedAgentId, normalizedRequestId)
       : await declineDynamicClientRequest(normalizedAgentId, normalizedRequestId)
@@ -844,7 +888,22 @@ export const useProductStore = create<ProductState>((set) => ({
     }
     await requireHost().execute('host.refresh')
   },
+  stopAuthoringTask: async (taskId, expectedRevision) => {
+    await requireHost().execute('authoring.stop', {
+      taskId: requireValue(taskId, '缺少创造任务标识，请刷新页面后重试。'),
+      expectedRevision,
+    })
+    await requireHost().execute('host.refresh')
+  },
+  deleteAuthoringTask: async (taskId) => {
+    await requireHost().execute('authoring.delete', {
+      taskId: requireValue(taskId, '缺少创造任务标识，请刷新页面后重试。'),
+    })
+    await requireHost().execute('host.refresh')
+  },
   saveDynamicExtension: async ({
+    taskId,
+    attemptId,
     agentId,
     episodeId,
     pluginId,
@@ -855,6 +914,8 @@ export const useProductStore = create<ProductState>((set) => ({
     targetExtensionId,
   }) => {
     const result = await requireHost().execute('extensions.saveFromDynamic', {
+      ...(taskId === undefined ? {} : { taskId }),
+      ...(attemptId === undefined ? {} : { attemptId }),
       agentId: requireValue(agentId, '缺少智能体标识，请刷新页面后重试。'),
       episodeId: requireValue(episodeId, '缺少 Episode 标识，请刷新页面后重试。'),
       pluginId: requireValue(pluginId, '缺少 Plugin 标识，请刷新页面后重试。'),

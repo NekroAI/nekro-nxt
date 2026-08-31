@@ -933,6 +933,7 @@ function TabsRoot({
     <TabsValueContext.Provider value={{ activeValue, orientation }}>
       <RadixTabs.Root
         {...props}
+        data-nxt-ui-component="Tabs"
         orientation={orientation}
         {...(value === undefined ? (defaultValue === undefined ? {} : { defaultValue }) : { value })}
         onValueChange={(nextValue) => {
@@ -1060,6 +1061,7 @@ const DropdownMenuContent = forwardRef<ElementRef<typeof RadixDropdownMenu.Conte
               className={[styles.dropdownMenuContent, className].filter(Boolean).join(' ')}
               sideOffset={sideOffset}
               style={{ zIndex: floatingLayer }}
+              data-nxt-ui-component="Popover"
               {...props}
             >
               <motion.div
@@ -1154,6 +1156,7 @@ const TooltipContent = forwardRef<ElementRef<typeof RadixTooltip.Content>, Toolt
       sideOffset={sideOffset}
       className={[styles.tooltipContent, className].filter(Boolean).join(' ')}
       data-nxt-floating-layer={floatingLayer}
+      data-nxt-ui-component="Tooltip"
       variants={tooltipVariants}
       initial={reduce ? false : 'hidden'}
       animate="visible"

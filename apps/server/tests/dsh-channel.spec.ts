@@ -21,6 +21,8 @@ import {
   LogicalMessageIdSchema,
 } from '@nekro-nxt/contracts'
 import {
+  AuthoringArtifactStore,
+  DynamicAuthoringService,
   ExtensionActivationCoordinator,
   ExtensionBuilder,
   ExtensionService,
@@ -36,7 +38,6 @@ import sharp from 'sharp'
 import { afterEach, describe, expect, it } from 'vitest'
 import { z } from 'zod'
 import { assertHostDshPackageVersions, ChannelExtensionActivationHost, DshHostRuntime } from '../src/index.ts'
-import { normalizeSessionEvents } from '../src/channel-runtime-events.ts'
 import { projectChannelRuntime } from '../src/channel-runtime-projection.ts'
 
 const temporaryDirectories: string[] = []
@@ -232,6 +233,121 @@ class ReplyGuardNeverSendModel extends ScriptedCommunicationModel {
     await Promise.resolve()
     this.calls.push(options)
     const text = `第 ${this.calls.length} 次仍只输出普通模型文字。`
+    yield { type: 'block-start', index: 0, blockType: 'text' }
+    yield { type: 'text-delta', index: 0, text }
+    yield { type: 'block-end', index: 0, block: { type: 'text', text } }
+    yield { type: 'finish', reason: { kind: 'stop' } }
+  }
+}
+
+class FinishChannelTurnModel extends ScriptedCommunicationModel {
+  constructor(
+    private readonly invalidFirst = false,
+    private readonly sendUnknownFirst = false,
+  ) {
+    super()
+  }
+
+  override async *stream(options: GenerateOptions): AsyncIterable<StreamChunk> {
+    await Promise.resolve()
+    this.calls.push(options)
+    const hasResult = (callId: string): boolean =>
+      options.messages.some((message) =>
+        message.content.some((block) => block.type === 'tool-result' && String(block.toolCallId) === callId),
+      )
+    let callId: ReturnType<typeof CallId>
+    let name: string
+    let argumentsText: string
+    if (this.sendUnknownFirst && !hasResult('finish-unknown-send')) {
+      callId = CallId('finish-unknown-send')
+      name = 'send_channel_message'
+      argumentsText = JSON.stringify({ target: { type: 'current' }, parts: [{ text: '投递状态未知。' }] })
+    } else if (this.invalidFirst && !hasResult('finish-invalid')) {
+      callId = CallId('finish-invalid')
+      name = 'finish_channel_turn'
+      argumentsText = JSON.stringify({ outcome: 'no-response-needed', reason: '   ' })
+    } else {
+      callId = CallId('finish-valid')
+      name = 'finish_channel_turn'
+      argumentsText = JSON.stringify({ outcome: 'no-response-needed', reason: '测试场景明确保持静默。' })
+    }
+    const toolCall = { type: 'tool-call' as const, id: callId, name, arguments: argumentsText }
+    yield { type: 'block-start', index: 0, blockType: 'tool-call' }
+    yield { type: 'tool-call-delta', index: 0, id: callId, name, argumentsDelta: argumentsText }
+    yield { type: 'block-end', index: 0, block: toolCall }
+    yield { type: 'finish', reason: { kind: 'tool-calls' } }
+  }
+}
+
+class LateRequiredAdmissionModel extends ScriptedCommunicationModel {
+  readonly plainStepStarted: Promise<void>
+  private resolvePlainStepStarted!: () => void
+  private readonly releasePlainStep: Promise<void>
+  private resolveReleasePlainStep!: () => void
+
+  constructor() {
+    super()
+    this.plainStepStarted = new Promise<void>((resolve) => {
+      this.resolvePlainStepStarted = resolve
+    })
+    this.releasePlainStep = new Promise<void>((resolve) => {
+      this.resolveReleasePlainStep = resolve
+    })
+  }
+
+  continuePlainStep(): void {
+    this.resolveReleasePlainStep()
+  }
+
+  override async *stream(options: GenerateOptions): AsyncIterable<StreamChunk> {
+    this.calls.push(options)
+    const hasResult = (callId: string): boolean =>
+      options.messages.some((message) =>
+        message.content.some((block) => block.type === 'tool-result' && String(block.toolCallId) === callId),
+      )
+    const hasGuard = options.messages.some((message) => message.source.kind === 'nekro-nxt-channel-reply-guard')
+    const send = (callIdText: string, text: string) => {
+      const id = CallId(callIdText)
+      const argumentsText = JSON.stringify({ target: { type: 'current' }, parts: [{ text }] })
+      return {
+        id,
+        argumentsText,
+        toolCall: { type: 'tool-call' as const, id, name: 'send_channel_message', arguments: argumentsText },
+      }
+    }
+    if (!hasResult('late-opening')) {
+      const call = send('late-opening', '先回应第一条请求。')
+      yield { type: 'block-start', index: 0, blockType: 'tool-call' }
+      yield {
+        type: 'tool-call-delta',
+        index: 0,
+        id: call.id,
+        name: call.toolCall.name,
+        argumentsDelta: call.argumentsText,
+      }
+      yield { type: 'block-end', index: 0, block: call.toolCall }
+      yield { type: 'finish', reason: { kind: 'tool-calls' } }
+      return
+    }
+    if (hasGuard && !hasResult('late-final')) {
+      const call = send('late-final', '回应后来注入的新请求。')
+      yield { type: 'block-start', index: 0, blockType: 'tool-call' }
+      yield {
+        type: 'tool-call-delta',
+        index: 0,
+        id: call.id,
+        name: call.toolCall.name,
+        argumentsDelta: call.argumentsText,
+      }
+      yield { type: 'block-end', index: 0, block: call.toolCall }
+      yield { type: 'finish', reason: { kind: 'tool-calls' } }
+      return
+    }
+    if (!hasResult('late-final')) {
+      this.resolvePlainStepStarted()
+      await this.releasePlainStep
+    }
+    const text = hasResult('late-final') ? '最终发送后的内部文字。' : '我正在说话，但这仍只是普通内部文本。'
     yield { type: 'block-start', index: 0, blockType: 'text' }
     yield { type: 'text-delta', index: 0, text }
     yield { type: 'block-end', index: 0, block: { type: 'text', text } }
@@ -488,8 +604,13 @@ class InvalidImageInspectionProbeModel extends ScriptedCommunicationModel {
 }
 
 describe('DSH Host and Web Channel vertical slice', () => {
-  it('supports multi-stage sends, steers one reply reminder, and persists an unreplied outcome after a second miss', async () => {
-    const runScenario = async (model: ScriptedCommunicationModel, suffix: string, persona = '回复频道消息。') => {
+  it('supports multi-stage sends, enforces two reply corrections, and projects protocol failure after a third miss', async () => {
+    const runScenario = async (
+      model: ScriptedCommunicationModel,
+      suffix: string,
+      persona = '回复频道消息。',
+      deliveryState: 'sent' | 'partially-sent' | 'failed' | 'unknown' = 'sent',
+    ) => {
       const directory = await mkdtemp(path.join(tmpdir(), `nekro-nxt-reply-guard-${suffix}-`))
       temporaryDirectories.push(directory)
       const database = await openMigratedCoreDatabase(path.join(directory, 'core.sqlite'))
@@ -527,7 +648,7 @@ describe('DSH Host and Web Channel vertical slice', () => {
             sentParts.push(input.parts)
             return Promise.resolve({
               logicalMessageId: LogicalMessageIdSchema.parse(`msg_GUARD${suffix.toUpperCase()}`),
-              status: 'sent',
+              status: deliveryState,
               receipts: [],
             })
           },
@@ -552,6 +673,7 @@ describe('DSH Host and Web Channel vertical slice', () => {
         admissionId: AdmissionIdSchema.parse(`adm_GUARD${suffix.toUpperCase()}`),
         events: [inbound],
         mode: 'followup',
+        replyRequired: true,
       })
       await host.whenIdle(sessionId)
       const events = host.sessionEvents(sessionId)
@@ -561,7 +683,7 @@ describe('DSH Host and Web Channel vertical slice', () => {
         episodeId,
         sessionStatus: host.sessionStatus(sessionId),
         pendingInjectCount: 0,
-        events: normalizeSessionEvents(events),
+        events: host.normalizedSessionEvents(sessionId),
       })
       return {
         assetService,
@@ -589,7 +711,8 @@ describe('DSH Host and Web Channel vertical slice', () => {
       ).toHaveLength(1)
       expect(recovered.projection.turns[0]).toMatchObject({ state: 'completed', producedReply: true })
       expect(JSON.stringify(recovered.events)).toContain('发送后的内部结束文字。')
-      expect(JSON.stringify(recovered.events)).toContain('普通 text 或 reasoning 仍只保存在内部运行轨迹中')
+      expect(JSON.stringify(recovered.events)).toContain('普通 text/reasoning 仍只保存在内部运行轨迹中')
+      expect(JSON.stringify(recovered.events)).not.toContain('replyRequired')
     } finally {
       await recovered.host.dispose()
       recovered.database.close()
@@ -652,6 +775,105 @@ describe('DSH Host and Web Channel vertical slice', () => {
       quick.database.close()
     }
 
+    const explicitlyFinished = await runScenario(new FinishChannelTurnModel(), 'FINISHED')
+    try {
+      expect(explicitlyFinished.sentParts).toEqual([])
+      expect(explicitlyFinished.projection.turns[0]).toMatchObject({
+        state: 'completed',
+        responseState: 'finished',
+        producedReply: false,
+      })
+      expect(explicitlyFinished.projection.summary).toBe('智能体已明确结束本轮处理。')
+      expect(explicitlyFinished.events.filter((event) => event.type === 'step/start')).toHaveLength(1)
+      expect(explicitlyFinished.projection.turns[0]?.steps[0]?.tools[0]?.resultPreview).toContain(
+        '测试场景明确保持静默。',
+      )
+    } finally {
+      await explicitlyFinished.host.dispose()
+      explicitlyFinished.database.close()
+    }
+
+    const invalidThenFinished = await runScenario(new FinishChannelTurnModel(true), 'INVALIDFINISH')
+    try {
+      expect(invalidThenFinished.sentParts).toEqual([])
+      expect(invalidThenFinished.projection.turns[0]).toMatchObject({
+        state: 'completed',
+        responseState: 'finished',
+        producedReply: false,
+      })
+      const invalidResult = invalidThenFinished.events.find((event) => event.type === 'tool/result')
+      expect(invalidResult?.type === 'tool/result' ? invalidResult.data.message.content[0] : undefined).toMatchObject({
+        isError: true,
+      })
+      expect(invalidThenFinished.events.filter((event) => event.type === 'step/start')).toHaveLength(2)
+    } finally {
+      await invalidThenFinished.host.dispose()
+      invalidThenFinished.database.close()
+    }
+
+    const unknownThenFinished = await runScenario(
+      new FinishChannelTurnModel(false, true),
+      'UNKNOWNFINISH',
+      '回复频道消息。',
+      'unknown',
+    )
+    try {
+      expect(unknownThenFinished.sentParts).toEqual([[{ type: 'text', text: '投递状态未知。' }]])
+      expect(unknownThenFinished.projection.turns[0]).toMatchObject({
+        state: 'completed',
+        responseState: 'finished',
+        producedReply: false,
+      })
+      expect(unknownThenFinished.projection.turns[0]?.steps[0]?.tools[0]).toMatchObject({
+        deliveryState: 'unknown',
+        wroteToChannel: false,
+      })
+      expect(unknownThenFinished.events.filter((event) => event.type === 'step/start')).toHaveLength(2)
+    } finally {
+      await unknownThenFinished.host.dispose()
+      unknownThenFinished.database.close()
+    }
+
+    const partiallySentThenFinished = await runScenario(
+      new FinishChannelTurnModel(false, true),
+      'PARTIALFINISH',
+      '回复频道消息。',
+      'partially-sent',
+    )
+    try {
+      expect(partiallySentThenFinished.projection.turns[0]).toMatchObject({
+        responseState: 'finished',
+        producedReply: true,
+      })
+      expect(partiallySentThenFinished.projection.turns[0]?.steps[0]?.tools[0]).toMatchObject({
+        deliveryState: 'partially-sent',
+        wroteToChannel: true,
+      })
+    } finally {
+      await partiallySentThenFinished.host.dispose()
+      partiallySentThenFinished.database.close()
+    }
+
+    const failedThenFinished = await runScenario(
+      new FinishChannelTurnModel(false, true),
+      'FAILEDFINISH',
+      '回复频道消息。',
+      'failed',
+    )
+    try {
+      expect(failedThenFinished.projection.turns[0]).toMatchObject({
+        responseState: 'finished',
+        producedReply: false,
+      })
+      expect(failedThenFinished.projection.turns[0]?.steps[0]?.tools[0]).toMatchObject({
+        deliveryState: 'failed',
+        wroteToChannel: false,
+      })
+    } finally {
+      await failedThenFinished.host.dispose()
+      failedThenFinished.database.close()
+    }
+
     const missed = await runScenario(new ReplyGuardNeverSendModel(), 'MISSED')
     let missedHostDisposed = false
     try {
@@ -660,9 +882,9 @@ describe('DSH Host and Web Channel vertical slice', () => {
         missed.events.filter(
           (event) => event.type === 'user/message' && event.data.source.kind === 'nekro-nxt-channel-reply-guard',
         ),
-      ).toHaveLength(1)
+      ).toHaveLength(2)
       expect(missed.projection.turns[0]).toMatchObject({ state: 'unreplied', producedReply: false })
-      expect(missed.projection.summary).toBe('智能体本轮未产生频道回复。')
+      expect(missed.projection.summary).toBe('智能体未按频道回应协议完成本轮。')
       await missed.host.dispose()
       missedHostDisposed = true
       const resumed = await DshHostRuntime.create({
@@ -691,15 +913,158 @@ describe('DSH Host and Web Channel vertical slice', () => {
           episodeId: missed.episodeId,
           sessionStatus: resumed.sessionStatus(missed.sessionId),
           pendingInjectCount: 0,
-          events: normalizeSessionEvents(resumed.sessionEvents(missed.sessionId)),
+          events: resumed.normalizedSessionEvents(missed.sessionId),
         })
-        expect(resumedProjection.turns[0]).toMatchObject({ state: 'unreplied', producedReply: false })
+        expect(resumedProjection.turns[0]).toMatchObject({
+          state: 'completed',
+          responseState: 'not-required',
+          producedReply: false,
+        })
       } finally {
         await resumed.dispose()
       }
     } finally {
       if (!missedHostDisposed) await missed.host.dispose()
       missed.database.close()
+    }
+  })
+
+  it('does not let an early send satisfy a later required Admission while ordinary injects keep the Turn open', async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), 'nekro-nxt-late-obligation-'))
+    temporaryDirectories.push(directory)
+    const database = await openMigratedCoreDatabase(path.join(directory, 'core.sqlite'))
+    const repository = new SqliteCoreRepository(database)
+    const assetService = new AssetService(repository, path.join(directory, 'assets'))
+    let coreId = 0
+    const core = new CoreService(repository, { now: () => 900, nextUlid: () => `L${++coreId}` })
+    const definition = core.createAgent({
+      displayName: '后到义务测试智能体',
+      persona: '',
+      model: { provider: 'test-provider', model: 'chat-model' },
+    })
+    const connection = core.createConnection({ adapterKey: 'web', config: {} })
+    const channel = core.createChannel({
+      connectionId: connection.id,
+      platformChannelId: 'late-obligation',
+      kind: 'web',
+    })
+    const appendEvent = (suffix: string, text: string) =>
+      core.appendInbound({
+        connectionId: connection.id,
+        channelId: channel.id,
+        adapterKey: 'web',
+        platformEventId: `late-${suffix}`,
+        kind: 'message-created',
+        parts: [{ type: 'text', text }],
+        platformTimestamp: 900,
+        receivedAt: 900,
+        dedupeKey: `late:${suffix}`,
+      }).event
+    const model = new LateRequiredAdmissionModel()
+    const sentParts: unknown[] = []
+    let resolveOpeningSend!: () => void
+    const openingSendStarted = new Promise<void>((resolve) => {
+      resolveOpeningSend = resolve
+    })
+    let releaseOpeningSend!: () => void
+    const openingSendReleased = new Promise<void>((resolve) => {
+      releaseOpeningSend = resolve
+    })
+    const host = await DshHostRuntime.create({
+      sessionDatabasePath: path.join(directory, 'sessions.sqlite'),
+      communication: {
+        sendMessage: async (input) => {
+          sentParts.push(input.parts)
+          if (sentParts.length === 1) {
+            resolveOpeningSend()
+            await openingSendReleased
+          }
+          return {
+            logicalMessageId: LogicalMessageIdSchema.parse(`msg_LATE${sentParts.length}`),
+            status: 'sent',
+            receipts: [],
+          }
+        },
+      },
+      history: repository,
+      assets: repository,
+      assetService,
+      resolveAgentRevision: (revisionId) => repository.getAgentRevision(revisionId),
+      configureLlm: (context) => {
+        context.llm.registerAdapter(['test-provider'], model)
+      },
+    })
+    const episodeId = EpisodeIdSchema.parse('eps_LATEOBLIGATION')
+    const sessionId = await host.createSession({
+      episodeId,
+      channelId: channel.id,
+      agentId: definition.definition.id,
+      agentRevisionId: definition.revision.id,
+    })
+    try {
+      await host.admit({
+        dshSessionId: sessionId,
+        admissionId: AdmissionIdSchema.parse('adm_LATEINITIAL'),
+        events: [appendEvent('initial', '第一条需要回应的请求。')],
+        mode: 'followup',
+        replyRequired: true,
+      })
+      await openingSendStarted
+      await host.admit({
+        dshSessionId: sessionId,
+        admissionId: AdmissionIdSchema.parse('adm_LATEOBSERVE'),
+        events: [appendEvent('observe', '运行中用于上下文的普通消息。')],
+        mode: 'inject',
+        replyRequired: false,
+      })
+      await host.admit({
+        dshSessionId: sessionId,
+        admissionId: AdmissionIdSchema.parse('adm_LATEREQUIRED'),
+        events: [appendEvent('required', '后来 @ 智能体的新请求。')],
+        mode: 'inject',
+        replyRequired: true,
+      })
+      releaseOpeningSend()
+      await model.plainStepStarted
+      await host.admit({
+        dshSessionId: sessionId,
+        admissionId: AdmissionIdSchema.parse('adm_LATEKEEPALIVE'),
+        events: [appendEvent('keepalive', '继续注入的普通上下文消息。')],
+        mode: 'inject',
+        replyRequired: false,
+      })
+      model.continuePlainStep()
+      await host.whenIdle(sessionId)
+
+      expect(sentParts).toEqual([
+        [{ type: 'text', text: '先回应第一条请求。' }],
+        [{ type: 'text', text: '回应后来注入的新请求。' }],
+      ])
+      const events = host.sessionEvents(sessionId)
+      expect(
+        events.filter(
+          (event) => event.type === 'user/message' && event.data.source.kind === 'nekro-nxt-channel-reply-guard',
+        ),
+      ).toHaveLength(1)
+      expect(JSON.stringify(events)).toContain('我正在说话，但这仍只是普通内部文本。')
+      const projection = projectChannelRuntime({
+        channelId: channel.id,
+        agentId: definition.definition.id,
+        episodeId,
+        sessionStatus: host.sessionStatus(sessionId),
+        pendingInjectCount: 0,
+        events: host.normalizedSessionEvents(sessionId),
+      })
+      expect(projection.turns[0]).toMatchObject({
+        state: 'completed',
+        responseState: 'sent',
+        producedReply: true,
+      })
+    } finally {
+      model.continuePlainStep()
+      releaseOpeningSend()
+      await host.dispose()
+      database.close()
     }
   })
 
@@ -795,7 +1160,13 @@ describe('DSH Host and Web Channel vertical slice', () => {
       hosts.push(resumedHost)
       await expect(resumedHost.createSession(sessionInput)).resolves.toBe(sessionId)
       const admissionId = AdmissionIdSchema.parse('adm_PENDINGRESUME')
-      await resumedHost.admit({ dshSessionId: sessionId, admissionId, events: [event], mode: 'inject' })
+      await resumedHost.admit({
+        dshSessionId: sessionId,
+        admissionId,
+        events: [event],
+        mode: 'inject',
+        replyRequired: false,
+      })
       expect(resumedHost.findAdmissionMessage(sessionId, admissionId)).toBe(`nxt-${admissionId}`)
 
       const secondResume = await createHost()
@@ -995,6 +1366,7 @@ describe('DSH Host and Web Channel vertical slice', () => {
           admissionId: AdmissionIdSchema.parse(admissionId),
           events: [appendModelEvent(channelId, text)],
           mode: 'followup',
+          replyRequired: true,
         })
         await host.whenIdle(dshSessionId)
         expect(model.calls.length).toBeGreaterThan(previousCallCount)
@@ -1009,6 +1381,7 @@ describe('DSH Host and Web Channel vertical slice', () => {
           'cordis_inspect_query',
           'cordis_inspect_self',
           'cordis_define',
+          'nekro_nxt_extension_define',
           'cordis_run',
           'cordis_stop',
           'cordis_undefine',
@@ -1043,6 +1416,9 @@ describe('DSH Host and Web Channel vertical slice', () => {
       }
       expect(developmentExample['hostTool']).toContain("name: 'project_status'")
       expect(developmentExample['hostRpcAndClientSlot']).toContain("name: 'agent.workbench.sections'")
+      expect(developmentExample['hostPage']).toContain("inject: ['pages', 'ui']")
+      expect(developmentExample['hostPage']).toContain('ctx.ui')
+      expect(developmentExample['hostPage']).not.toContain("React.createElement('button'")
       await expect(host.queryNekroNxtInspect(enabledSession, 'extensionLifecycle')).resolves.toMatchObject({
         dynamicRun: { lifetime: 'current-dsh-session' },
         save: { createsImmutableSourceRevision: true, activatesAutomatically: false },
@@ -1050,7 +1426,59 @@ describe('DSH Host and Web Channel vertical slice', () => {
       const extensionSkill = await host.loadNekroNxtExtensionSkill(enabledSession)
       expect(extensionSkill.provider).toBe('nekro-nxt-runtime')
       expect(extensionSkill.content).toContain('宿主是 NekroNXT')
+      expect(extensionSkill.content).toContain('nekro_nxt_extension_define')
+      expect(extensionSkill.content).toContain('nxt-host-ui-design-v1')
+      expect(extensionSkill.content).toContain('Host 已提供背景、外边距和根滚动')
+      expect(extensionSkill.content).not.toContain('actions: React.createElement(\n            Button')
       await expect(host.loadNekroNxtExtensionSkill(deniedSession)).rejects.toThrow('not granted')
+
+      expect(() =>
+        host.defineDynamicAuthoringPackage(enabledSession, {
+          plugin: { kind: 'new', idPrefix: 'page' },
+          name: '默认控件页面',
+          purpose: '验证页面必须注入 NekroNXT UI Kit。',
+          scope: 'host-ui',
+          code: {
+            client: `return { inject: ['pages'], apply(ctx) { ctx.pages.register({ page: { kind: 'host-page', entryId: 'main', title: '页面', icon: { kind: 'host-icon', name: 'puzzle' }, objectPane: 'hidden', startPath: '' } }, () => React.createElement('button', null, '操作')) } }`,
+          },
+          resources: {},
+          permissions: { permissions: [], networkOrigins: [] },
+          contributions: [
+            {
+              kind: 'host-page',
+              entryId: 'main',
+              title: '页面',
+              icon: { kind: 'host-icon', name: 'puzzle' },
+              objectPane: 'hidden',
+              startPath: '',
+            },
+          ],
+        }),
+      ).toThrow("inject: ['pages', 'ui']")
+
+      expect(() =>
+        host.defineDynamicAuthoringPackage(enabledSession, {
+          plugin: { kind: 'new', idPrefix: 'page' },
+          name: '越界页面',
+          purpose: '验证页面路径在运行和审批前被拒绝。',
+          scope: 'host-ui',
+          code: {
+            client: `return { inject: ['pages', 'ui'], apply(ctx) { ctx.pages.register({ page: { kind: 'host-page', entryId: 'main', title: '页面', icon: { kind: 'host-icon', name: 'puzzle' }, objectPane: 'hidden', startPath: '/outside' } }, () => React.createElement(ctx.ui.Section, null, '内容')) } }`,
+          },
+          resources: {},
+          permissions: { permissions: [], networkOrigins: [] },
+          contributions: [
+            {
+              kind: 'host-page',
+              entryId: 'main',
+              title: '页面',
+              icon: { kind: 'host-icon', name: 'puzzle' },
+              objectPane: 'hidden',
+              startPath: 'outside',
+            },
+          ],
+        }),
+      ).toThrow('不能以 / 开头')
 
       const privateServiceProbe = host.defineDynamicPackage(enabledSession, {
         plugin: { kind: 'new', idPrefix: 'priv' },
@@ -1294,6 +1722,120 @@ describe('DSH Host and Web Channel vertical slice', () => {
     }
   })
 
+  it('stops and undefines a live dynamic Package before deleting its authoring task', async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), 'nekro-nxt-authoring-delete-'))
+    temporaryDirectories.push(directory)
+    const database = await openMigratedCoreDatabase(path.join(directory, 'core.sqlite'))
+    const repository = new SqliteCoreRepository(database)
+    const assetService = new AssetService(repository, path.join(directory, 'assets'))
+    const authoringRoot = path.join(directory, 'workspaces')
+    const authoring = new DynamicAuthoringService(repository, new AuthoringArtifactStore(authoringRoot))
+    const core = new CoreService(repository, { now: () => 900, nextUlid: () => 'AUTHORINGDELETE' })
+    const created = core.createAgent({
+      displayName: '任务删除智能体',
+      persona: '',
+      model: { provider: 'test-provider', model: 'chat-model' },
+      capabilities: { dynamicCreation: true },
+    })
+    const connection = core.createConnection({ adapterKey: 'web', config: {} })
+    const channel = core.createChannel({
+      connectionId: connection.id,
+      platformChannelId: 'authoring-delete',
+      kind: 'web',
+    })
+    const initiatingEventId = core.appendInbound({
+      connectionId: connection.id,
+      channelId: channel.id,
+      adapterKey: 'web',
+      platformEventId: 'authoring-delete-open',
+      kind: 'message-created',
+      parts: [{ type: 'text', text: '创建一个删除生命周期探针。' }],
+      platformTimestamp: 901,
+      receivedAt: 901,
+      dedupeKey: 'authoring-delete-open',
+    }).event.id
+    const episodeId = EpisodeIdSchema.parse('eps_AUTHORINGDELETE')
+    repository.createEpisode({
+      id: episodeId,
+      channelId: channel.id,
+      agentId: created.definition.id,
+      agentRevisionId: created.revision.id,
+      status: 'opening',
+      openedAtEventId: initiatingEventId,
+      createdAt: 902,
+    })
+    const host = await DshHostRuntime.create({
+      sessionDatabasePath: path.join(directory, 'sessions.sqlite'),
+      communication: { sendMessage: () => Promise.reject(new Error('not used')) },
+      history: repository,
+      assets: repository,
+      assetService,
+      resolveAgentRevision: (revisionId) => repository.getAgentRevision(revisionId),
+      authoring: { service: authoring, resolveInitiatingEvent: () => initiatingEventId },
+      configureLlm: (context) => {
+        context.llm.registerAdapter(['test-provider'], new ToolSchemaProbeModel())
+      },
+    })
+    const changes: Array<{ readonly taskId: string; readonly agentId: string }> = []
+    const unsubscribe = host.subscribeAuthoringChanges((change) => changes.push(change))
+    try {
+      const sessionId = await host.createSession({
+        episodeId,
+        channelId: channel.id,
+        agentId: created.definition.id,
+        agentRevisionId: created.revision.id,
+      })
+      const receipt = host.defineDynamicAuthoringPackage(sessionId, {
+        plugin: { kind: 'new', idPrefix: 'delete' },
+        name: '删除生命周期探针',
+        purpose: '验证删除任务会先停止并撤销动态运行包。',
+        scope: 'agent',
+        code: {
+          host: `return {
+            inject: ['tools'],
+            apply(ctx) {
+              const tool = harness.defineTool({
+                name: 'authoring_delete_probe',
+                description: 'Authoring deletion probe',
+                parameters: {},
+                output: {
+                  schema: { type: 'string' },
+                  render(_args, value) { return [{ type: 'text', text: value }] }
+                },
+                execute() { return 'active' }
+              })
+              harness.registerTool(ctx, tool)
+            }
+          }`,
+        },
+        resources: {},
+        permissions: { permissions: [], networkOrigins: [] },
+        contributions: [],
+      })
+      await expect(
+        host.runDynamicPackage(sessionId, receipt.pluginId, receipt.packageId, 'run'),
+      ).resolves.toMatchObject({ ok: true, status: 'running' })
+      const task = authoring.taskForRunner(episodeId, receipt.pluginId)
+      expect(task).toBeDefined()
+      const attempt = repository.listAuthoringAttempts(task!.id).at(-1)
+      expect(attempt).toBeDefined()
+      expect(host.toolNames(sessionId)).toContain('authoring_delete_probe')
+
+      await expect(host.deleteAuthoringTask(task!.id)).resolves.toBe(true)
+
+      expect(host.toolNames(sessionId)).not.toContain('authoring_delete_probe')
+      expect(host.dynamicInventory(sessionId)).toEqual([])
+      expect(repository.getAuthoringTask(task!.id)).toBeUndefined()
+      expect(changes.at(-1)).toEqual({ taskId: task!.id, agentId: created.definition.id })
+      await expect(access(path.join(authoringRoot, attempt!.sourcePath, 'snapshot.json'))).rejects.toThrow()
+      await expect(host.deleteAuthoringTask(task!.id)).resolves.toBe(false)
+    } finally {
+      unsubscribe()
+      await host.dispose()
+      database.close()
+    }
+  })
+
   it('mounts creation, file tools, development Shell and unrestricted file access as independent grants', async () => {
     const directory = await mkdtemp(path.join(tmpdir(), 'nekro-nxt-capability-grants-'))
     temporaryDirectories.push(directory)
@@ -1363,19 +1905,23 @@ describe('DSH Host and Web Channel vertical slice', () => {
       const [creationTools, shellTools, fileTools, completeTools] = sessions.map((session) => host.toolNames(session))
 
       expect(creationTools).toContain('cordis_define')
+      expect(creationTools).toContain('nekro_nxt_extension_define')
       expect(creationTools).not.toContain('bash')
       expect(creationTools).not.toContain('read')
 
       expect(shellTools).toContain('bash')
       expect(shellTools).not.toEqual(expect.arrayContaining(['read', 'write', 'edit']))
       expect(shellTools).not.toContain('cordis_define')
+      expect(shellTools).not.toContain('nekro_nxt_extension_define')
 
       expect(fileTools).toEqual(expect.arrayContaining(['read', 'write', 'edit']))
       expect(fileTools).not.toContain('bash')
       expect(fileTools).not.toContain('cordis_define')
+      expect(fileTools).not.toContain('nekro_nxt_extension_define')
 
       expect(completeTools).toEqual(expect.arrayContaining(['bash', 'read', 'write', 'edit']))
       expect(completeTools).not.toContain('cordis_define')
+      expect(completeTools).not.toContain('nekro_nxt_extension_define')
 
       await expect(access(path.join(workspaceRoot, definitions[0]!.definition.id))).rejects.toThrow()
       for (const agent of definitions.slice(1)) {
@@ -1581,6 +2127,7 @@ describe('DSH Host and Web Channel vertical slice', () => {
         'asset_inspect',
         'conversation_history_read',
         'conversation_history_search',
+        'finish_channel_turn',
         'nekro_nxt_channel_context',
         'send_channel_message',
       ])
@@ -1588,6 +2135,7 @@ describe('DSH Host and Web Channel vertical slice', () => {
       expect(model.calls[0]?.system).toContain('主测试频道')
       expect(model.calls[0]?.system).toContain('普通 text 或 reasoning 只会作为内部运行轨迹保存')
       expect(model.calls[0]?.system).toContain('一次 send_channel_message 不会结束当前 Turn')
+      expect(model.calls[0]?.system).toContain('更早的发送不能覆盖后来注入的新请求')
       expect(model.calls[0]?.system).toContain('通常适合先简短说明你理解的任务和马上要做的事')
       expect(model.calls[0]?.system).toContain('沟通篇幅和频率应结合当前智能体人设')
       expect(model.calls[0]?.tools?.find(({ name }) => name === 'send_channel_message')?.description).toContain(
@@ -1994,10 +2542,10 @@ describe('DSH Host and Web Channel vertical slice', () => {
       })
       const episode = repository.getActiveEpisode(channel.id, agent.definition.id)!
       await host.whenIdle(episode.dshSessionId!)
-      if (chatBodies.length !== 3) {
+      if (chatBodies.length !== 4) {
         throw new Error(JSON.stringify({ requestPaths, tail: host.sessionEvents(episode.dshSessionId!).slice(-8) }))
       }
-      expect(chatBodies).toHaveLength(3)
+      expect(chatBodies).toHaveLength(4)
       const firstMultimodal = chatBodies[0]!.messages.find(
         (message) => Array.isArray(message.content) && message.content.some(isDeepSeekWireImagePart),
       )
@@ -2012,7 +2560,8 @@ describe('DSH Host and Web Channel vertical slice', () => {
       expect(Array.isArray(toolImages?.content) ? toolImages.content.filter(isDeepSeekWireImagePart) : []).toHaveLength(
         2,
       )
-      expect(JSON.stringify(chatBodies[2])).toContain('本轮尚未成功调用 send_channel_message')
+      expect(JSON.stringify(chatBodies[2])).toContain('finish_channel_turn')
+      expect(JSON.stringify(chatBodies[3])).toContain('finish_channel_turn')
       expect(
         projectChannelRuntime({
           channelId: channel.id,
@@ -2020,7 +2569,7 @@ describe('DSH Host and Web Channel vertical slice', () => {
           episodeId: episode.id,
           sessionStatus: host.sessionStatus(episode.dshSessionId!),
           pendingInjectCount: 0,
-          events: normalizeSessionEvents(host.sessionEvents(episode.dshSessionId!)),
+          events: host.normalizedSessionEvents(episode.dshSessionId!),
         }).turns[0]?.state,
       ).toBe('unreplied')
     } finally {
