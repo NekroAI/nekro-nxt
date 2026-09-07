@@ -1,3 +1,4 @@
+import { platformUserFilterKey, emptyPlatformUserDirectory } from '../product-model.js'
 import { useProductRuntime } from '../product-runtime.js'
 import type { HostApiResponse } from '@nekro-nxt/contracts'
 import { History, UsersRound } from 'lucide-react'
@@ -23,12 +24,15 @@ export function UsersPage() {
   const connectionId = searchParams.get('connection') ?? ''
   const query = searchParams.get('query') ?? ''
   const [queryDraft, setQueryDraft] = useState(query)
-  const [items, setItems] = useState<readonly PlatformUser[]>([])
-  const [total, setTotal] = useState(0)
-  const [nextCursor, setNextCursor] = useState<string | undefined>()
-  const [loading, setLoading] = useState(true)
-  const [loadingMore, setLoadingMore] = useState(false)
-  const [error, setError] = useState('')
+  const filter = {
+    ...(query ? { query } : {}),
+    ...(adapterKey ? { adapterKey } : {}),
+    ...(connectionId ? { connectionId } : {}),
+  }
+  const key = platformUserFilterKey(filter)
+  const directory = useProductStore((state) => state.platformUserDirectory)
+  const { items, total, nextCursor, loading, loadingMore, error } =
+    directory.key === key ? directory : { ...emptyPlatformUserDirectory(key), loading: true }
 
   useEffect(() => setQueryDraft(query), [query])
   useEffect(() => {
@@ -43,39 +47,17 @@ export function UsersPage() {
   }, [queryDraft, query, searchParams, setSearchParams])
 
   useEffect(() => {
-    let active = true
     const timer = window.setTimeout(
       () => {
-        setLoading(true)
-        setError('')
-        void useProductStore
-          .getState()
-          .listPlatformUsers({
-            ...(query ? { query } : {}),
-            ...(adapterKey ? { adapterKey } : {}),
-            ...(connectionId ? { connectionId } : {}),
-            limit: 50,
-          })
-          .then((result) => {
-            if (!active) return
-            setItems(result.items)
-            setTotal(result.total)
-            setNextCursor(result.nextCursor)
-          })
-          .catch((cause: unknown) => {
-            if (active) setError(cause instanceof Error ? cause.message : String(cause))
-          })
-          .finally(() => {
-            if (active) setLoading(false)
-          })
+        void useProductStore.getState().loadPlatformUserDirectory(filter)
       },
       revision === 0 ? 0 : 220,
     )
     return () => {
-      active = false
       window.clearTimeout(timer)
+      useProductStore.getState().cancelPlatformUserDirectory()
     }
-  }, [adapterKey, connectionId, query, revision])
+  }, [key, revision, useProductStore])
 
   const selectedAdapter = facets.adapters.find((adapter) => adapter.key === adapterKey)
   const connectionOptions = facets.connections
@@ -92,27 +74,7 @@ export function UsersPage() {
     setSearchParams(next, { replace: true })
   }
 
-  const loadMore = async (): Promise<void> => {
-    if (!nextCursor || loadingMore) return
-    setLoadingMore(true)
-    setError('')
-    try {
-      const result = await useProductStore.getState().listPlatformUsers({
-        ...(query ? { query } : {}),
-        ...(adapterKey ? { adapterKey } : {}),
-        ...(connectionId ? { connectionId } : {}),
-        cursor: nextCursor,
-        limit: 50,
-      })
-      setItems((current) => [...current, ...result.items])
-      setTotal(result.total)
-      setNextCursor(result.nextCursor)
-    } catch (cause) {
-      setError(cause instanceof Error ? cause.message : String(cause))
-    } finally {
-      setLoadingMore(false)
-    }
-  }
+  const loadMore = (): Promise<void> => useProductStore.getState().loadPlatformUserDirectory(filter, true)
 
   const renderRows = (users: readonly PlatformUser[]) => (
     <div className={styles.userRows} role="rowgroup">

@@ -1,6 +1,7 @@
 import type { AdapterConnectionDescriptor } from '@nekro-nxt/adapter-sdk'
 import type {
   ChannelRuntimePhase,
+  HostApiParams,
   HostApiRequest,
   HostApiResponse,
   AdapterActivityKey,
@@ -392,7 +393,32 @@ export class ProductActionError extends Error {
   }
 }
 
+export type PlatformUserFilter = Pick<HostApiParams<'listPlatformUsers'>, 'query' | 'adapterKey' | 'connectionId'>
+export interface PlatformUserDirectory {
+  readonly key: string
+  readonly items: HostApiResponse<'listPlatformUsers'>['items']
+  readonly total: number
+  readonly nextCursor: string | undefined
+  readonly loading: boolean
+  readonly loadingMore: boolean
+  readonly error: string
+}
+export const platformUserFilterKey = (input: PlatformUserFilter): string =>
+  JSON.stringify([input.query ?? '', input.adapterKey ?? '', input.connectionId ?? ''])
+export const emptyPlatformUserDirectory = (key = ''): PlatformUserDirectory => ({
+  key,
+  items: [],
+  total: 0,
+  nextCursor: undefined,
+  loading: false,
+  loadingMore: false,
+  error: '',
+})
+
 export interface ProductState {
+  readonly platformUserDirectory: PlatformUserDirectory
+  loadPlatformUserDirectory(input: PlatformUserFilter, older?: boolean): Promise<void>
+  cancelPlatformUserDirectory(): void
   readonly host: ProductHostState
   readonly productMetadata: ProductMetadataView | undefined
   readonly connectionAdapters: readonly AdapterConnectionDescriptor[]

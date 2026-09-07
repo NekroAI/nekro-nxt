@@ -15,7 +15,8 @@ export function createProductRuntime(events = new HostEventStream()) {
   const store = createProductStore(() => host, approvals)
   const host = new HttpProductHost(events, {
     getSnapshot: store.getState,
-    resetLoads: () =>
+    resetLoads: () => {
+      store.getState().cancelPlatformUserDirectory()
       store.setState((state) => ({
         channelHistory: Object.fromEntries(
           Object.entries(state.channelHistory).map(([id, page]) => [
@@ -24,7 +25,8 @@ export function createProductRuntime(events = new HostEventStream()) {
           ]),
         ),
         connections: state.connections.map((connection) => ({ ...connection, eventsLoading: false })),
-      })),
+      }))
+    },
     applySnapshot: (snapshot) =>
       store.setState({
         ...snapshot,

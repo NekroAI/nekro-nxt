@@ -985,8 +985,8 @@ export class HttpProductHost implements ProductHostPort {
     'notifications.update': async (body) => this.#mutate(HostApiContracts.updateNotificationSettings, {}, body),
     'notifications.testBark': async (body) => this.#call(HostApiContracts.testBarkNotification, {}, body),
     'notifications.testSystem': async () => this.#call(HostApiContracts.testSystemNotification, {}, undefined),
-    'platformUsers.list': async (input = {}) =>
-      this.#call(HostApiContracts.listPlatformUsers, { ...input, limit: input.limit ?? 50 }, undefined),
+    'platformUsers.list': async (input = {}, signal) =>
+      this.#call(HostApiContracts.listPlatformUsers, { ...input, limit: input.limit ?? 50 }, undefined, signal),
     'connections.listEvents': async (input) =>
       this.#call(HostApiContracts.listConnectionEvents, { ...input, limit: input.limit ?? 30 }, undefined),
     'agents.create': async (body) => this.#mutate(HostApiContracts.createAgent, {}, body),
@@ -1084,11 +1084,24 @@ export class HttpProductHost implements ProductHostPort {
     contract: Contract & { readonly parseResponse: (input: unknown) => Output },
     params: HostApiContractParams<Contract>,
     body: HostApiContractRequest<Contract>,
+    signal?: AbortSignal,
   ): Promise<Output> {
     const lifecycle = this.#lifecycle
     const reading = contract.method === 'GET'
     try {
-      const result = await callHostApi(contract, params, body, reading ? { signal: this.#readController.signal } : {})
+      const result = await callHostApi(
+        contract,
+        params,
+        body,
+        reading
+          ? {
+              signal:
+                signal === undefined
+                  ? this.#readController.signal
+                  : AbortSignal.any([this.#readController.signal, signal]),
+            }
+          : {},
+      )
       if (reading && lifecycle !== this.#lifecycle) throw new StaleHostReadError()
       return result
     } catch (cause) {

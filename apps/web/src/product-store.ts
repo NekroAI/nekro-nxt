@@ -5,6 +5,8 @@ import type { ProductHostPort } from './product-port.js'
 import { createDynamicClientApprovalBridge } from './dynamic-client-bridge.js'
 import {
   ProductActionError,
+  platformUserFilterKey,
+  emptyPlatformUserDirectory,
   defaultImageUnderstandingPolicy,
   CHANNEL_MESSAGE_INITIAL_PAGE_SIZE,
   CHANNEL_MESSAGE_PAGE_SIZE,
@@ -21,7 +23,62 @@ export function createProductStore(
   requireHost: () => ProductHostPort,
   approvals = createDynamicClientApprovalBridge(),
 ) {
+  let directoryGeneration = 0
+  let directoryAbort: AbortController | undefined
   const useProductStore = create<ProductState>((set) => ({
+    platformUserDirectory: emptyPlatformUserDirectory(),
+    cancelPlatformUserDirectory: () => {
+      directoryGeneration += 1
+      directoryAbort?.abort()
+      set((state) => ({
+        platformUserDirectory: { ...state.platformUserDirectory, loading: false, loadingMore: false },
+      }))
+    },
+    loadPlatformUserDirectory: async (input, older = false) => {
+      const key = platformUserFilterKey(input)
+      const previous = useProductStore.getState().platformUserDirectory
+      if (older && (previous.key !== key || previous.loading || previous.loadingMore || !previous.nextCursor)) return
+      const generation = ++directoryGeneration
+      directoryAbort?.abort()
+      const controller = new AbortController()
+      directoryAbort = controller
+      const initial = previous.key === key ? previous : emptyPlatformUserDirectory(key)
+      set({ platformUserDirectory: { ...initial, loading: !older, loadingMore: older, error: '' } })
+      try {
+        const result = await requireHost().actions['platformUsers.list'](
+          {
+            ...input,
+            limit: 50,
+            ...(older ? { cursor: previous.nextCursor } : {}),
+          },
+          controller.signal,
+        )
+        if (generation !== directoryGeneration) return
+        const items = older ? [...previous.items, ...result.items] : result.items
+        set({
+          platformUserFacets: result.facets,
+          platformUserDirectory: {
+            key,
+            items: [...new Map(items.map((item) => [item.identityId, item])).values()],
+            total: result.total,
+            nextCursor: result.nextCursor,
+            loading: false,
+            loadingMore: false,
+            error: '',
+          },
+        })
+      } catch (cause) {
+        if (generation !== directoryGeneration || cause instanceof StaleHostReadError) return
+        set({
+          platformUserDirectory: {
+            ...initial,
+            loading: false,
+            loadingMore: false,
+            error: cause instanceof Error ? cause.message : String(cause),
+          },
+        })
+      }
+    },
     host: { status: 'initializing', error: null, lastSuccessfulAt: null },
     productMetadata: undefined,
     connectionAdapters: [],
@@ -485,7 +542,6 @@ export function createProductStore(
     },
     listPlatformUsers: async (input = {}) => {
       const result = await requireHost().actions['platformUsers.list'](input)
-      set({ platformUserFacets: result.facets })
       return result
     },
   }))

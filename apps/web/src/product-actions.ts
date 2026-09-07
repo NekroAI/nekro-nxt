@@ -20,6 +20,7 @@ export interface ProductActions {
   'notifications.testSystem': () => Promise<HostApiResponse<'testSystemNotification'>>
   'platformUsers.list': (
     input?: Partial<HostApiParams<'listPlatformUsers'>>,
+    signal?: AbortSignal,
   ) => Promise<HostApiResponse<'listPlatformUsers'>>
   'connections.listEvents': (
     input: Omit<HostApiParams<'listConnectionEvents'>, 'limit'> & { limit?: number },
