@@ -332,6 +332,7 @@ export const episodes = sqliteTable(
       .on(table.channelId, table.agentId)
       .where(sql`${table.status} IN ('opening', 'active')`),
     index('episodes_agent_history_idx').on(table.agentId, table.createdAt),
+    index('episodes_channel_history_idx').on(table.channelId, table.id),
     foreignKey({
       name: 'episodes_channel_fk',
       columns: [table.channelId],

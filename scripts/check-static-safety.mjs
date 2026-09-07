@@ -13,6 +13,8 @@ const sqlStart =
   /^\s*(?:SELECT\b[\s\S]*\bFROM\b|INSERT\s+INTO\b|UPDATE\s+[A-Za-z_][\w$]*\s+SET\b|DELETE\s+FROM\b|CREATE\s+(?:(?:UNIQUE|VIRTUAL)\s+)?(?:INDEX|TABLE|TRIGGER|VIEW)\b|ALTER\s+TABLE\b|DROP\s+(?:INDEX|TABLE|TRIGGER|VIEW)\b|PRAGMA\s+[A-Za-z_]|BEGIN(?:\s+(?:DEFERRED|EXCLUSIVE|IMMEDIATE|TRANSACTION))?\s*;?\s*$|COMMIT\s*;?\s*$|ROLLBACK\s*;?\s*$|WITH\b[\s\S]*\b(?:DELETE|INSERT|SELECT|UPDATE)\b)/iu
 const exemptFiles = new Set([
   'packages/storage-sqlite/src/schema.ts',
+  // Migration runner owns native SQL and the transaction commit boundary.
+  'packages/storage-sqlite/src/database.ts',
   // This adapter owns the foreign DSH SQLite identity/backup protocol. It
   // deliberately cannot use the Core Drizzle schema because NekroNxt must not
   // import or model DSH's private tables.
@@ -148,7 +150,12 @@ function scanFile(file, fixedExceptions) {
     if (ts.isCallExpression(node)) {
       const member = propertyName(node.expression)
       const firstValue = node.arguments[0] && stringValue(node.arguments[0])
-      if ((member === 'prepare' || member === 'exec') && firstValue !== undefined && sqlStart.test(firstValue)) {
+      if (
+        !relative.startsWith('packages/storage-sqlite/src/') &&
+        (member === 'prepare' || member === 'exec') &&
+        firstValue !== undefined &&
+        sqlStart.test(firstValue)
+      ) {
         report('forbidden-sql-api', node, `业务源码不得调用 .${member}() 执行 SQL`)
       }
       if (
@@ -165,6 +172,7 @@ function scanFile(file, fixedExceptions) {
 
     if (
       (ts.isStringLiteralLike(node) || ts.isNoSubstitutionTemplateLiteral(node) || ts.isTemplateExpression(node)) &&
+      !relative.startsWith('packages/storage-sqlite/src/') &&
       sqlStart.test(stringValue(node) ?? '')
     ) {
       report('string-sql', node, '业务源码不得包含字符串 SQL')

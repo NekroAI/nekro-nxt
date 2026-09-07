@@ -1,0 +1,1 @@
+CREATE INDEX `episodes_channel_history_idx` ON `episodes` (`channel_id`,`id`);
