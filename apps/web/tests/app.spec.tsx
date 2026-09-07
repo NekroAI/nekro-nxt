@@ -1,3 +1,5 @@
+import { useUiStateStore } from './product-fixture.js'
+import { ProductHostCoordinator } from './product-fixture.js'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { MemoryRouter } from 'react-router-dom'
 import { mkdir, mkdtemp, rm } from 'node:fs/promises'
@@ -22,8 +24,8 @@ import {
 import { hostPresentation, NekroNxtApp, nextVisibleHostUiPage } from '../src/app.js'
 import { runHostRefresh } from '../src/components/product-feedback.js'
 import { dynamicClientInventoryVersion } from '../src/dynamic-client-coordinator.js'
-import { ProductHostCoordinator, type DynamicPackageSummary, type ProductSnapshot } from '../src/product-port.js'
-import { setActiveProductHost, useProductStore } from '../src/product-store.js'
+import { type DynamicPackageSummary, type ProductSnapshot } from '../src/product-port.js'
+import { setActiveProductHost, useProductStore } from './product-fixture.js'
 
 const renderRoute = (route: string): string =>
   renderToStaticMarkup(
@@ -62,6 +64,8 @@ const hostUiPage = (id: string, visible = true) =>
     updatedAt: 1,
   })
 const browserSnapshot = HostApiContracts.snapshot.response.parse({
+  cursor: { epoch: 'fixture', sequence: 0 },
+  diagnosticsSampledAt: 0,
   capabilityAvailability: {
     subagents: { available: true },
     webSearch: {
@@ -334,6 +338,7 @@ const providerSettingsSnapshot = {
 
 beforeEach(() => {
   setActiveProductHost(null)
+  useUiStateStore.setState({ theme: 'light', reducedMotion: false })
   useProductStore.setState({
     host: { status: 'initializing', error: null, lastSuccessfulAt: null },
     connectionAdapters: [],
@@ -346,8 +351,6 @@ beforeEach(() => {
     approvals: [],
     dynamic: [],
     diagnosticNote: '',
-    theme: 'light',
-    reducedMotion: false,
   })
 })
 
@@ -648,6 +651,7 @@ describe.sequential('NekroNxt browser projections', { timeout: 30_000 }, () => {
         status: 200,
         contentType: 'application/json',
         body: JSON.stringify({
+          cursor: { epoch: 'fixture', sequence: 0 },
           channelId,
           ...(channel?.boundAgentId === undefined ? {} : { agentId: channel.boundAgentId }),
           phase: channel?.runtimePhase ?? 'idle',
@@ -767,7 +771,7 @@ describe.sequential('NekroNxt browser projections', { timeout: 30_000 }, () => {
       return request.fulfill({
         status: 200,
         contentType: 'application/json',
-        body: JSON.stringify({ messages, hasMore: false }),
+        body: JSON.stringify({ cursor: { epoch: 'fixture', sequence: 0 }, messages, hasMore: false }),
       })
     })
     await page.route('**/api/dynamic/*/inventory', (request) =>
@@ -1999,6 +2003,7 @@ describe.sequential('NekroNxt browser projections', { timeout: 30_000 }, () => {
         body: JSON.stringify({
           messages: browserSnapshot.messages.filter((message) => message.channelId === channelId),
           hasMore: false,
+          cursor: { epoch: 'fixture', sequence: 0 },
         }),
       })
     })

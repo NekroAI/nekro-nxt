@@ -1,10 +1,11 @@
+import { useProductRuntime } from '../product-runtime.js'
 import { useEffect, useId, useLayoutEffect, useMemo, useState, type KeyboardEvent, type RefObject } from 'react'
 import { Activity, ChevronDown, Link2, Trash2 } from 'lucide-react'
 import { useNxtNavigate } from '../shell/nxt-link.js'
 import { Cell, Pie, PieChart } from 'recharts'
 import { notify } from '../components/notifications.js'
 import { InlineFeedback } from '../components/product-feedback.js'
-import { useProductStore, type AgentSummary, type ChannelRuntimeView, type ChannelSummary } from '../product-store.js'
+import { type AgentSummary, type ChannelRuntimeView, type ChannelSummary } from '../product-runtime.js'
 import {
   ChannelInspectorAgentExtensionSlots,
   ConversationToolCardExtensionSlots,
@@ -1003,6 +1004,8 @@ export function ChannelSessionInspector({
   readonly onReassign: () => void
   readonly onDelete: () => void
 }) {
+  const useProductStore = useProductRuntime().store
+
   const navigate = useNxtNavigate()
   const connection = useProductStore((state) =>
     state.connections.find((candidate) => candidate.id === channel.connectionId),
@@ -1036,7 +1039,7 @@ export function ChannelSessionInspector({
   const currentTrigger = currentBinding?.triggerPolicy ?? 'mentioned-or-replied'
   const currentTool = workTools(latestTurn(runtime)).find((tool) => tool.state === 'running')
   const hasRuntimeDetails = Boolean(
-    phase !== '空闲' ||
+    phase !== 'idle' ||
     currentTool ||
     (runtime?.pendingInjectCount ?? 0) > 0 ||
     runtime?.occupancy ||
@@ -1122,7 +1125,7 @@ export function ChannelSessionInspector({
         <div className={styles.inspectorSectionHead}>
           <h2>运行</h2>
         </div>
-        {runtime?.summary && phase !== '空闲' ? <p className={styles.trajectorySummary}>{runtime.summary}</p> : null}
+        {runtime?.summary && phase !== 'idle' ? <p className={styles.trajectorySummary}>{runtime.summary}</p> : null}
         {currentTool ? (
           <p className={styles.secondaryText}>
             {currentTool.displayName}
@@ -1153,17 +1156,7 @@ export function ChannelSessionInspector({
           channelId={channel.id}
           connectionId={channel.connectionId}
           {...(runtime?.episodeId === undefined ? {} : { episodeId: runtime.episodeId })}
-          runtimePhase={
-            phase === '思考中'
-              ? 'thinking'
-              : phase === '使用工具'
-                ? 'using-tool'
-                : phase === '等待输入'
-                  ? 'waiting-input'
-                  : phase === '空闲'
-                    ? 'idle'
-                    : 'unavailable'
-          }
+          runtimePhase={phase}
         />
       ) : null}
       {connection ? (

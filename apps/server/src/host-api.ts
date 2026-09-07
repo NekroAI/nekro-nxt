@@ -1251,8 +1251,36 @@ export const createNekroHostApi = (
     }
   }
 
+  const snapshotMutations = Object.values(HostApiContracts)
+    .filter((contract) => contract.invalidatesSnapshot)
+    .map((contract) => ({
+      method: contract.method,
+      segments: contract.path.split('/'),
+    }))
   const registerRoute = (route: WebRoute): void => {
-    disposers.push(webServer.register(route))
+    disposers.push(
+      webServer.register({
+        ...route,
+        handler: (req, res) => {
+          const segments = new URL(req.url ?? '/', 'http://localhost').pathname.split('/')
+          if (
+            snapshotMutations.some(
+              (contract) =>
+                contract.method === req.method &&
+                contract.segments.length === segments.length &&
+                contract.segments.every((segment, index) => segment.startsWith(':') || segment === segments[index]),
+            )
+          ) {
+            res.once('finish', () => {
+              if (res.statusCode >= 200 && res.statusCode < 300) {
+                broadcast({ event: 'snapshot-changed', data: { changed: true } })
+              }
+            })
+          }
+          return route.handler(req, res)
+        },
+      }),
+    )
   }
 
   // One global SSE hub: live clients plus a short in-memory replay window
@@ -1364,6 +1392,22 @@ export const createNekroHostApi = (
   )
 
   const buildSnapshot = async (): Promise<unknown> => {
+    // Sample asynchronous auxiliary information before capturing synchronous facts.
+    // Revision keys prevent diagnostics for an old revision attaching to a new one.
+    const [diagnostics, webSearch, models, notificationSettings] = await Promise.all([
+      Promise.all(
+        runtime.core.listAgents().map(async (commit) => ({
+          revisionId: commit.revision.id,
+          value: await runtime.host.getAgentImageDiagnostics(commit.revision),
+        })),
+      ),
+      runtime.host.getWebSearchCapabilityStatus(),
+      runtime.host.listAvailableLlmModels(),
+      runtime.notifications.getSettings(),
+    ])
+    const diagnosticsSampledAt = Date.now()
+    const diagnosticsByRevision = new Map(diagnostics.map((item) => [item.revisionId, item.value]))
+    // No await below: domain facts and the event cursor belong to one capture.
     // Enumerate channels durably from the Core repository so the snapshot
     // survives restart, then discover bound Agents via their Bindings.
     const channels = runtime.core
@@ -1375,33 +1419,33 @@ export const createNekroHostApi = (
     const runtimeByChannel = new Map(
       channels.map((channel) => [channel.id, assembleChannelRuntime(runtime, channel.id)] as const),
     )
-    const agents = await Promise.all(
-      agentCommits.map(async (commit) => {
-        const agentId = commit.definition.id
-        const ownedChannels = channels
-          .filter((channel) => bindingsByChannel.get(channel.id)?.some((binding) => binding.agentId === agentId))
-          .map((channel) => channel.id)
-        const runtimePhase = worstChannelRuntimePhase(
-          ownedChannels.map((channelId) => runtimeByChannel.get(channelId)?.phase ?? 'idle'),
-        )
-        return {
-          id: agentId,
-          displayName: commit.revision.displayName,
-          persona: commit.revision.persona,
-          personaDocument: commit.revision.personaDocument,
-          model: commit.revision.model,
-          capabilities: commit.revision.capabilities,
-          imagePolicy: commit.revision.imagePolicy,
-          dynamicClientApprovalPolicy: commit.revision.dynamicClientApprovalPolicy,
-          imageDiagnostics: await runtime.host.getAgentImageDiagnostics(commit.revision),
-          currentRevisionId: commit.revision.id,
-          runtimeStatus: runtimePhase === 'thinking' || runtimePhase === 'using-tool' ? 'running' : 'idle',
-          runtimePhase,
-          createdAt: commit.revision.createdAt,
-          channels: ownedChannels,
-        }
-      }),
-    )
+    const agents = agentCommits.map((commit) => {
+      const agentId = commit.definition.id
+      const ownedChannels = channels
+        .filter((channel) => bindingsByChannel.get(channel.id)?.some((binding) => binding.agentId === agentId))
+        .map((channel) => channel.id)
+      const runtimePhase = worstChannelRuntimePhase(
+        ownedChannels.map((channelId) => runtimeByChannel.get(channelId)?.phase ?? 'idle'),
+      )
+      return {
+        id: agentId,
+        displayName: commit.revision.displayName,
+        persona: commit.revision.persona,
+        personaDocument: commit.revision.personaDocument,
+        model: commit.revision.model,
+        capabilities: commit.revision.capabilities,
+        imagePolicy: commit.revision.imagePolicy,
+        dynamicClientApprovalPolicy: commit.revision.dynamicClientApprovalPolicy,
+        ...(diagnosticsByRevision.has(commit.revision.id)
+          ? { imageDiagnostics: diagnosticsByRevision.get(commit.revision.id) }
+          : {}),
+        currentRevisionId: commit.revision.id,
+        runtimeStatus: runtimePhase === 'thinking' || runtimePhase === 'using-tool' ? 'running' : 'idle',
+        runtimePhase,
+        createdAt: commit.revision.createdAt,
+        channels: ownedChannels,
+      }
+    })
     const channelProjection = channels.map((channel) => {
       const bindings = bindingsByChannel.get(channel.id) ?? []
       const boundAgentId = bindings[0]?.agentId
@@ -1478,16 +1522,17 @@ export const createNekroHostApi = (
       channelCount: runtime.repository.listChannelIdsByConnection(connection.id).length,
       archivedAt: connection.archivedAt,
     }))
-    const webSearch = await runtime.host.getWebSearchCapabilityStatus()
     return HostApiContracts.snapshot.parseResponse({
+      cursor: hub.cursor,
+      diagnosticsSampledAt,
       productMetadata,
-      models: await runtime.host.listAvailableLlmModels(),
+      models,
       capabilityAvailability: {
         subagents: { available: true },
         webSearch,
       },
       connectionAdapters: runtime.listConnectionAdapters(),
-      notificationSettings: await runtime.notifications.getSettings(),
+      notificationSettings,
       agents,
       channels: channelProjection,
       messages,
@@ -2296,7 +2341,7 @@ export const createNekroHostApi = (
           }
           writeContractJson(res, 200, HostApiContracts.callHostUiPage, { value })
           if (HOST_UI_PRODUCT_MUTATIONS.has(input.method)) {
-            broadcast({ event: 'status', data: { ok: true, message: '扩展页面已更新产品数据' } })
+            broadcast({ event: 'snapshot-changed', data: { changed: true } })
           }
         } catch (error) {
           runtime.repository.upsertHostUiDiagnostic({
@@ -3761,12 +3806,10 @@ export const createNekroHostApi = (
           return
         }
         try {
-          writeContractJson(
-            res,
-            200,
-            HostApiContracts.getChannelRuntime,
-            assembleChannelRuntime(runtime, typedChannelId),
-          )
+          writeContractJson(res, 200, HostApiContracts.getChannelRuntime, {
+            ...assembleChannelRuntime(runtime, typedChannelId),
+            cursor: hub.cursor,
+          })
         } catch (error) {
           writeError(res, 404, 'channel-runtime-missing', error instanceof Error ? error.message : String(error))
         }
@@ -3893,7 +3936,7 @@ export const createNekroHostApi = (
         // buildSnapshotMessage exposes oldest-first. The extra row is therefore
         // the oldest candidate, not the newest message at the end of the page.
         const messages = hasMore ? page.slice(-params.limit) : page
-        writeContractJson(res, 200, HostApiContracts.listChannelMessages, { messages, hasMore })
+        writeContractJson(res, 200, HostApiContracts.listChannelMessages, { messages, hasMore, cursor: hub.cursor })
         return
       }
       if (req.method !== 'POST') {
@@ -4172,10 +4215,10 @@ export const createNekroHostApi = (
 
   const unsubscribeConnectionChanges = runtime.subscribeConnectionChanges((event) => {
     if (event) broadcast({ event: 'connection-fact', data: projectConnectionEvent(runtime, event) })
-    broadcast({ event: 'status', data: { ok: true, message: '连接状态已更新' } })
+    broadcast({ event: 'snapshot-changed', data: { changed: true } })
   })
   const unsubscribeRuntimeStatus = runtime.host.subscribeRuntimeStatus(() => {
-    broadcast({ event: 'status', data: { ok: true, message: '智能体运行状态已更新' } })
+    broadcast({ event: 'snapshot-changed', data: { changed: true } })
   })
   const unsubscribeChannelRuntime = runtime.host.subscribeChannelRuntime((channelId) => {
     if (!runtime.repository.getChannel(channelId)) return

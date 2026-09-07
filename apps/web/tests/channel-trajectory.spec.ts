@@ -13,13 +13,13 @@ import {
   sampleTokenRate,
   weightedCacheReadShare,
 } from '../src/pages/channel-trajectory.js'
-import type { ChannelRuntimeView } from '../src/product-store.js'
+import type { ChannelRuntimeView } from './product-fixture.js'
 
 describe('flattenRuntimeRecords', () => {
   it('turns internal output and tools into ledger rows without treating send as a second bubble', () => {
     const runtime: ChannelRuntimeView = {
       channelId: 'chn_web',
-      phase: '空闲',
+      phase: 'idle',
       summary: '智能体当前空闲。',
       pendingInjectCount: 0,
       turns: [

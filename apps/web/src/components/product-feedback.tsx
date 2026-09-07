@@ -1,7 +1,7 @@
+import { useProductRuntime } from '../product-runtime.js'
 import { AlertCircle, Inbox, RefreshCw, WifiOff } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
 import { useState, type ReactNode } from 'react'
-import { useProductStore } from '../product-store.js'
 import { Button, Enter, Presence, Spinner } from '../ui-kit/index.js'
 import { notify } from './notifications.js'
 import styles from './product-feedback.module.css'
@@ -107,6 +107,8 @@ export function EmptyState({
 }
 
 export function HostNotice() {
+  const useProductStore = useProductRuntime().store
+
   const host = useProductStore((state) => state.host)
   const [pending, setPending] = useState(false)
   const reconnect = async (): Promise<void> => {

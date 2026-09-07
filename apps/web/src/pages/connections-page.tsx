@@ -1,14 +1,10 @@
+import { useProductRuntime } from '../product-runtime.js'
 import { ArrowRight, Cable, Check, Circle, Plus, Radio, RotateCcw, Send, Trash2 } from 'lucide-react'
 import { useEffect, useMemo, useState } from 'react'
 import { Navigate, useParams, useSearchParams } from 'react-router-dom'
 import { notify } from '../components/notifications.js'
 import { EmptyState, InlineFeedback, PageHeader } from '../components/product-feedback.js'
-import {
-  connectionDisplayName,
-  useProductStore,
-  type ConnectionState,
-  type ConnectionSummary,
-} from '../product-store.js'
+import { connectionDisplayName, type ConnectionState, type ConnectionSummary } from '../product-runtime.js'
 import { BindingTaskDialog } from './binding-task.js'
 import { useNxtNavigate } from '../shell/nxt-link.js'
 import { useUnsavedDraft } from '../unsaved-drafts.js'
@@ -60,6 +56,8 @@ export const friendlyKnownChannelLabel = (channel: { readonly name: string; read
 }
 
 export function ConnectionsPage() {
+  const useProductStore = useProductRuntime().store
+
   const { connectionId = '' } = useParams()
   const [searchParams, setSearchParams] = useSearchParams()
   const host = useProductStore((state) => state.host)

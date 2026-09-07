@@ -2555,15 +2555,15 @@
   animation: treeActivityOrbit 1.45s linear infinite;
 }
 
-.treeActivityIndicator[data-runtime-state='使用工具']::after {
+.treeActivityIndicator[data-runtime-state='using-tool']::after {
   animation-duration: 1s;
 }
 
-.treeActivityIndicator[data-runtime-state='等待输入'] {
+.treeActivityIndicator[data-runtime-state='waiting-input'] {
   --nxt-tree-activity-color: var(--nxt-warning);
 }
 
-.treeActivityIndicator[data-runtime-state='不可用'] {
+.treeActivityIndicator[data-runtime-state='unavailable'] {
   --nxt-tree-activity-color: var(--nxt-danger);
 }
 

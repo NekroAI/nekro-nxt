@@ -1,38 +1,15 @@
+import { useProductRuntime } from './product-runtime.js'
+import { callHostApi } from './host-api-client.js'
 import { useEffect, useState, type ReactNode } from 'react'
-import {
-  HostApiContracts,
-  HostApiErrorSchema,
-  buildHostApiContractPath,
-  type HostApiContract,
-} from '@nekro-nxt/contracts'
+import { HostApiContracts } from '@nekro-nxt/contracts'
 import { notify } from './components/notifications.js'
 import { InlineFeedback } from './components/product-feedback.js'
-import { useProductStore } from './product-store.js'
 import { Button, Field, SecretInput } from './ui-kit/index.js'
 import styles from './llm-settings.module.css'
 
-const requestHostApi = async <Output,>(
-  contract: HostApiContract,
-  responseSchema: { parse(input: unknown): Output },
-  params: unknown,
-  request: unknown,
-): Promise<Output> => {
-  const url = buildHostApiContractPath(contract, params)
-  const requestBody = contract.parseRequest(request)
-  const response = await fetch(url, {
-    method: contract.method,
-    headers: { 'content-type': 'application/json' },
-    ...(contract.method === 'GET' || contract.method === 'DELETE' ? {} : { body: JSON.stringify(requestBody) }),
-  })
-  const responseBody: unknown = await response.json()
-  if (!response.ok) {
-    const parsedError = HostApiErrorSchema.safeParse(responseBody)
-    throw new Error(parsedError.success ? parsedError.data.error.message : `请求失败（HTTP ${response.status}）`)
-  }
-  return responseSchema.parse(responseBody)
-}
-
 export function WebSearchCredentialForm({ onSaved }: { readonly onSaved?: () => void }): ReactNode {
+  const useProductStore = useProductRuntime().store
+
   const availability = useProductStore((state) => state.capabilityAvailability.webSearch)
   const [value, setValue] = useState('')
   const [pending, setPending] = useState(false)
@@ -49,9 +26,8 @@ export function WebSearchCredentialForm({ onSaved }: { readonly onSaved?: () => 
     setPending(true)
     setError('')
     try {
-      const next = await requestHostApi(
+      const next = await callHostApi(
         HostApiContracts.dshCredentialSet,
-        HostApiContracts.dshCredentialSet.response,
         { ref: availability.credentialReference },
         { value: secret },
       )

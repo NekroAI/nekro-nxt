@@ -1,7 +1,7 @@
 import { renderToStaticMarkup } from 'react-dom/server'
 import { describe, expect, it } from 'vitest'
 import { appendedMessageIds, ChannelMessageList, isBubblelessMessage, MessageRow } from '../src/pages/channel-page.js'
-import type { ChannelHistoryState, ConversationMessage } from '../src/product-store.js'
+import type { ChannelHistoryState, ConversationMessage } from './product-fixture.js'
 
 const message = (overrides: Partial<ConversationMessage> = {}): ConversationMessage => ({
   id: 'msg_1',

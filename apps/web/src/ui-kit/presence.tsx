@@ -364,19 +364,19 @@ export function Spinner({
   )
 }
 
-export type AgentVisualState = '空闲' | '思考中' | '使用工具' | '等待输入' | '已暂停' | '不可用'
+export type AgentVisualState = 'idle' | 'thinking' | 'using-tool' | 'waiting-input' | 'unavailable'
 
 const ringTone = (state: AgentVisualState): string => {
-  if (state === '思考中' || state === '使用工具') return styles.ringInfo
-  if (state === '等待输入') return styles.ringInfo
-  if (state === '不可用') return styles.ringDanger
+  if (state === 'thinking' || state === 'using-tool') return styles.ringInfo
+  if (state === 'waiting-input') return styles.ringInfo
+  if (state === 'unavailable') return styles.ringDanger
   return styles.ringNeutral
 }
 
 export function AgentStateRing({ state, label }: { readonly state: AgentVisualState; readonly label: string }) {
   const reduce = useNxtReducedMotion()
-  const thinking = state === '思考中' && !reduce
-  const tooling = state === '使用工具' && !reduce
+  const thinking = state === 'thinking' && !reduce
+  const tooling = state === 'using-tool' && !reduce
   return (
     <motion.span
       className={[styles.stateRing, ringTone(state)].join(' ')}

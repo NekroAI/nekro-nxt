@@ -1,3 +1,4 @@
+import { useProductRuntime } from '../product-runtime.js'
 import { LexicalComposer } from '@lexical/react/LexicalComposer'
 import { ContentEditable } from '@lexical/react/LexicalContentEditable'
 import { HistoryPlugin } from '@lexical/react/LexicalHistoryPlugin'
@@ -51,7 +52,7 @@ import {
   type PromptDocumentV1,
   type PromptSegment,
 } from '@nekro-nxt/contracts'
-import { useProductStore } from '../product-store.js'
+import { useProductStore } from '../product-runtime.js'
 import { Button, Enter, Presence, Tooltip } from '../ui-kit/index.js'
 import styles from './prompt-reference-editor.module.css'
 
@@ -576,6 +577,8 @@ export function PromptReferenceEditor({
   readonly description?: string
   readonly placeholder?: string
 }) {
+  const useProductStore = useProductRuntime().store
+
   const wrapperRef = useRef<HTMLDivElement>(null)
   const channels = useProductStore((state) => state.channels)
   const connections = useProductStore((state) => state.connections)

@@ -1,8 +1,10 @@
+import type { ProductActions } from './product-actions.js'
+import { callHostApi, HostRequestError, StaleHostReadError } from './host-api-client.js'
+import { createStore } from 'zustand/vanilla'
 import {
   CHANNEL_MESSAGE_INITIAL_PAGE_SIZE,
   CHANNEL_MESSAGE_PAGE_SIZE,
   connectionDisplayName,
-  runtimePhaseToState,
   type AgentRuntimeState,
   type AgentSummary,
   type ChannelRuntimeView,
@@ -12,28 +14,25 @@ import {
   type DeliveryState,
   type ModelSummary,
   type ProductHostError,
-} from './product-store.js'
+} from './product-model.js'
 import type { AdapterConnectionDescriptor, AdapterConfigurationProperty } from '@nekro-nxt/adapter-sdk'
 import {
   HostApiContracts,
-  HostApiErrorSchema,
   ChannelFactSseDataSchema,
   ChannelRuntimeSseDataSchema,
   HostConnectionEventSchema,
   HostSseStatusDataSchema,
-  buildHostApiContractPath,
   type ChannelFactSseData,
   type ChannelRuntimeSseData,
   type HostApiContract,
   type HostApiContractParams,
   type HostApiContractRequest,
-  type HostApiRequest,
   type HostApiResponse,
   type HostConnectionEvent,
 } from '@nekro-nxt/contracts'
 import { providerDisplayName } from './provider-labels.js'
 import type { ProductHostPort, ProductSnapshot } from './product-port.js'
-import { HostEventStream } from './host-event-stream.js'
+import { HostEventStream, type HostEventStreamHandlers } from './host-event-stream.js'
 
 /**
  * Real Host port for the Web product: consumes the NekroNxt domain API exposed
@@ -71,17 +70,17 @@ const deliveryStateToUi = (state: string | undefined): DeliveryState | undefined
 }
 
 const agentStateRank = (state: AgentRuntimeState): number => {
-  if (state === '不可用') return 4
-  if (state === '使用工具') return 3
-  if (state === '思考中') return 2
-  if (state === '等待输入') return 1
+  if (state === 'unavailable') return 4
+  if (state === 'using-tool') return 3
+  if (state === 'thinking') return 2
+  if (state === 'waiting-input') return 1
   return 0
 }
 
 const worstAgentState = (states: readonly AgentRuntimeState[]): AgentRuntimeState =>
   states.reduce<AgentRuntimeState>(
     (current, state) => (agentStateRank(state) > agentStateRank(current) ? state : current),
-    '空闲',
+    'idle',
   )
 
 const sseEventData = (event: unknown): string | undefined => {
@@ -163,16 +162,21 @@ const emptySnapshot = (): ProductSnapshot => ({
 })
 
 type SnapshotJson = HostApiResponse<'snapshot'>
+type MessagePage = { readonly messages: readonly ConversationMessage[]; readonly hasMore: boolean }
+
+type SyncCursor = SnapshotJson['cursor']
+
 type SnapshotMessageJson = SnapshotJson['messages'][number]
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === 'object' && value !== null && !Array.isArray(value)
 
-const isStringRecord = (value: unknown): value is Record<string, string> =>
-  isRecord(value) && Object.values(value).every((entry) => typeof entry === 'string')
-
-const isTriggerPolicy = (value: unknown): value is 'always' | 'mentioned-or-replied' | 'command' | 'observe-only' =>
-  value === 'always' || value === 'mentioned-or-replied' || value === 'command' || value === 'observe-only'
+const eventCursor = (event: unknown): SyncCursor | undefined => {
+  const id = isRecord(event) && typeof event['lastEventId'] === 'string' ? event['lastEventId'] : ''
+  const match = /^([a-zA-Z0-9_-]{1,100}):([1-9]\d*)$/u.exec(id)
+  const sequence = Number(match?.[2])
+  return match === null || !Number.isSafeInteger(sequence) ? undefined : { epoch: match[1]!, sequence }
+}
 
 const nonEmptyLabel = (value: string | undefined, fallback: string): string => value?.trim() || fallback
 
@@ -385,7 +389,7 @@ const projectSnapshot = (json: SnapshotJson, successfulAt: number): ProductSnaps
     id: agent.id,
     name: nonEmptyLabel(agent.displayName, '未命名智能体'),
     description: '',
-    state: runtimePhaseToState(agent.runtimePhase, agent.runtimeStatus),
+    state: agent.runtimePhase ?? (agent.runtimeStatus === 'running' ? 'thinking' : 'idle'),
     model:
       models.find((model) => model['provider'] === agent.model['provider'] && model.id === agent.model['model'])
         ?.name ?? '未命名模型',
@@ -433,7 +437,7 @@ const projectSnapshot = (json: SnapshotJson, successfulAt: number): ProductSnaps
     kind: channel.kind === 'group' ? 'group' : channel.kind === 'direct' ? 'direct' : 'internal',
     connectionName: connectionNameById.get(channel.connectionId) ?? '未命名连接',
     agentId: channel.boundAgentId ?? '',
-    runtimePhase: runtimePhaseToState(channel.runtimePhase),
+    runtimePhase: channel.runtimePhase ?? 'idle',
     trigger:
       channel.bindings[0]?.triggerPolicy === 'mentioned-or-replied'
         ? '被提及或回复时'
@@ -755,7 +759,46 @@ const projectSnapshot = (json: SnapshotJson, successfulAt: number): ProductSnaps
 }
 
 export class HttpProductHost implements ProductHostPort {
-  #snapshot: ProductSnapshot = emptySnapshot()
+  #refreshRevision = 0
+  #snapshotRequest: Promise<Error | null> | undefined
+  #refreshAgain = false
+  #snapshotInvalidation: SyncCursor | undefined
+  #snapshotCursor: SyncCursor | undefined
+  #mutationInvalidation = 0
+  #syncAfterCommit = false
+  #retryTimer: ReturnType<typeof setTimeout> | undefined
+  #retryAttempt = 0
+  #readController = new AbortController()
+  #snapshotEvents:
+    | Array<{
+        cursor: { epoch: string; sequence: number } | undefined
+        replay: () => void
+      }>
+    | undefined
+  #snapshotOverflow = false
+  #replayingSnapshot = false
+  readonly #messageRequests = new Map<string, { key: string; promise: Promise<MessagePage> }>()
+  readonly #messageAgain = new Set<string>()
+  readonly #messageCursor = new Map<string, SyncCursor>()
+  readonly #runtimeCursor = new Map<string, SyncCursor>()
+  readonly #runtimeRequests = new Map<string, Promise<ChannelRuntimeView>>()
+  readonly #pendingRuntimeFrames = new Map<
+    string,
+    Array<{ data: ChannelRuntimeSseData; cursor: SyncCursor | undefined }>
+  >()
+  readonly #runtimeOverflow = new Set<string>()
+  #lifecycle = 0
+  readonly #data: {
+    getSnapshot(): ProductSnapshot
+    applySnapshot(snapshot: ProductSnapshot): void
+    resetLoads?(): void
+  }
+  get #snapshot(): ProductSnapshot {
+    return this.#data.getSnapshot()
+  }
+  set #snapshot(snapshot: ProductSnapshot) {
+    this.#data.applySnapshot(snapshot)
+  }
   #listener: (() => void) | undefined
   readonly #events: HostEventStream
   readonly #loadedChannels = new Set<string>()
@@ -764,11 +807,19 @@ export class HttpProductHost implements ProductHostPort {
   readonly #runtimeRevision = new Map<string, number>()
   readonly #reconciling = new Set<string>()
   readonly #messageReconcileDepth = new Map<string, number>()
-  readonly #pendingChannelFacts = new Map<string, ChannelFactSseData[]>()
+  readonly #pendingChannelFacts = new Map<string, Array<{ data: ChannelFactSseData; cursor: SyncCursor | undefined }>>()
   #reconcilePromise: Promise<void> | undefined
 
-  constructor(events: HostEventStream = new HostEventStream()) {
+  constructor(
+    events: HostEventStream = new HostEventStream(),
+    data?: { getSnapshot(): ProductSnapshot; applySnapshot(snapshot: ProductSnapshot): void; resetLoads?(): void },
+  ) {
     this.#events = events
+    const isolated = data === undefined ? createStore<ProductSnapshot>(() => emptySnapshot()) : undefined
+    this.#data = data ?? {
+      getSnapshot: () => isolated!.getState(),
+      applySnapshot: (snapshot) => isolated!.setState(snapshot, true),
+    }
   }
 
   getSnapshot(): ProductSnapshot {
@@ -777,9 +828,23 @@ export class HttpProductHost implements ProductHostPort {
 
   subscribe(listener: () => void): () => void {
     if (this.#listener) throw new Error('HttpProductHost 已经订阅，不能再订阅。')
+    this.#lifecycle += 1
     this.#listener = listener
     void this.#refreshAndNotify()
-    const unsubscribeEvents = this.#events.subscribe({
+    const handlers: HostEventStreamHandlers = {
+      'snapshot-changed': (event) => {
+        this.#mutationInvalidation += 1
+        const cursor = eventCursor(event)
+        if (
+          cursor !== undefined &&
+          this.#snapshotCursor?.epoch === cursor.epoch &&
+          cursor.sequence <= this.#snapshotCursor.sequence
+        )
+          return
+        this.#snapshotInvalidation = cursor
+        if (this.#snapshotRequest !== undefined && cursor !== undefined) return
+        void this.#refreshAndNotify()
+      },
       open: () => {
         this.#requestReconcile()
       },
@@ -801,7 +866,7 @@ export class HttpProductHost implements ProductHostPort {
           return
         }
         this.#snapshot = { ...this.#snapshot, platformUsersRevision: this.#snapshot.platformUsersRevision + 1 }
-        this.#applyChannelFact(parsed.data)
+        this.#applyChannelFact(parsed.data, eventCursor(event))
       },
       'connection-fact': (event) => {
         const rawData = sseEventData(event)
@@ -818,7 +883,7 @@ export class HttpProductHost implements ProductHostPort {
         if (rawData === undefined) return
         try {
           const parsed = ChannelRuntimeSseDataSchema.safeParse(JSON.parse(rawData))
-          if (parsed.success) this.#applyRuntimeFrame(parsed.data)
+          if (parsed.success) this.#applyRuntimeFrame(parsed.data, eventCursor(event))
         } catch {
           // Ignore malformed runtime frames; do not refetch the global snapshot.
         }
@@ -850,528 +915,169 @@ export class HttpProductHost implements ProductHostPort {
       error: () => {
         this.#publishFailure({ code: 'sse', message: '与 NekroNXT Host 的实时连接已中断，正在尝试恢复。' })
       },
-    })
+    }
+    const unsubscribeEvents = this.#events.subscribe(
+      Object.fromEntries(
+        Object.entries(handlers).map(([type, handler]) => [
+          type,
+          (event: unknown) => {
+            if (type === 'runtime' || type === 'channel-fact' || type === 'connection-fact') {
+              this.#bufferSnapshotEvent(event, () => handler(event))
+            }
+            handler(event)
+          },
+        ]),
+      ),
+    )
     return () => {
+      this.#lifecycle += 1
+      this.#readController.abort()
+      this.#readController = new AbortController()
+      this.#snapshotRequest = undefined
+      this.#snapshotEvents = undefined
+      this.#snapshotInvalidation = undefined
+      this.#snapshotCursor = undefined
+      this.#syncAfterCommit = false
+      this.#messageReconcileDepth.clear()
+      this.#pendingChannelFacts.clear()
+      this.#reconciling.clear()
+      this.#messageRequests.clear()
+      this.#messageAgain.clear()
+      this.#messageCursor.clear()
+      this.#runtimeCursor.clear()
+      this.#runtimeRequests.clear()
+      this.#pendingRuntimeFrames.clear()
+      this.#runtimeOverflow.clear()
+      this.#refreshAgain = false
+      if (this.#retryTimer !== undefined) clearTimeout(this.#retryTimer)
+      this.#retryTimer = undefined
+      this.#retryAttempt = 0
       this.#listener = undefined
+      this.#data.resetLoads?.()
       unsubscribeEvents()
     }
   }
 
-  async execute(command: string, input?: Readonly<Record<string, unknown>>): Promise<unknown> {
-    if (command === 'host.refresh') {
-      this.#events.reconnectNow()
+  #bufferSnapshotEvent(event: unknown, replay: () => void): void {
+    if (this.#snapshotEvents === undefined) return
+    if (this.#snapshotEvents.length >= 512) {
+      this.#snapshotOverflow = true
+      return
+    }
+    const cursor = eventCursor(event)
+    this.#snapshotEvents.push({ cursor, replay })
+  }
+
+  readonly actions: ProductActions = {
+    'extensions.commitImport': async ({ token, ...body }) =>
+      this.#mutate(HostApiContracts.commitExtensionImport, { token }, body),
+    'extensions.delete': async (params) => this.#mutate(HostApiContracts.deleteLocalExtension, params, undefined),
+    'hostUi.updatePreferences': async (body) => this.#mutate(HostApiContracts.updateHostUiPagePreferences, {}, body),
+    'host.refresh': async () => {
       const failure = await this.#refreshAndNotify()
       if (failure !== null) throw failure
       return null
-    }
-    if (command === 'notifications.update') {
-      const body = HostApiContracts.updateNotificationSettings.parseRequest(input)
-      const result = await this.#call(HostApiContracts.updateNotificationSettings, {}, body)
-      await this.#refreshAndNotify()
-      return result
-    }
-    if (command === 'notifications.testBark') {
-      const body = HostApiContracts.testBarkNotification.parseRequest(input)
-      return await this.#call(HostApiContracts.testBarkNotification, {}, body)
-    }
-    if (command === 'notifications.testSystem') {
-      return await this.#call(HostApiContracts.testSystemNotification, {}, undefined)
-    }
-    if (command === 'platformUsers.list') {
-      return await this.#call(
-        HostApiContracts.listPlatformUsers,
-        {
-          ...(typeof input?.['query'] === 'string' ? { query: input['query'] } : {}),
-          ...(typeof input?.['adapterKey'] === 'string' ? { adapterKey: input['adapterKey'] } : {}),
-          ...(typeof input?.['connectionId'] === 'string' ? { connectionId: input['connectionId'] } : {}),
-          ...(typeof input?.['cursor'] === 'string' ? { cursor: input['cursor'] } : {}),
-          limit: typeof input?.['limit'] === 'number' ? input['limit'] : 50,
-        },
-        undefined,
-      )
-    }
-    if (command === 'connections.listEvents') {
-      const connectionId = typeof input?.['connectionId'] === 'string' ? input['connectionId'] : ''
-      return await this.#call(
-        HostApiContracts.listConnectionEvents,
-        {
-          connectionId,
-          ...(typeof input?.['beforeReceivedAt'] === 'number' ? { beforeReceivedAt: input['beforeReceivedAt'] } : {}),
-          ...(typeof input?.['beforeId'] === 'string' ? { beforeId: input['beforeId'] } : {}),
-          limit: typeof input?.['limit'] === 'number' ? input['limit'] : 30,
-        },
-        undefined,
-      )
-    }
-    if (command === 'agents.create') {
-      const body = createAgentRequestBody(input)
-      const result = await this.#call(HostApiContracts.createAgent, {}, body)
-      await this.#refreshAndNotify()
-      return result
-    }
-    if (command === 'agents.revise') {
-      const agentId = typeof input?.['agentId'] === 'string' ? input['agentId'] : ''
-      const expectedCurrentRevisionId =
-        typeof input?.['expectedCurrentRevisionId'] === 'string' ? input['expectedCurrentRevisionId'] : ''
-      const displayName = typeof input?.['displayName'] === 'string' ? input['displayName'] : ''
-      const persona = typeof input?.['persona'] === 'string' ? input['persona'] : ''
-      const personaDocument = input?.['personaDocument']
-      const model = isRecord(input?.['model']) ? input['model'] : {}
-      const imagePolicy = input?.['imagePolicy']
-      const dynamicClientApprovalPolicy = input?.['dynamicClientApprovalPolicy']
-      if (
-        !agentId.trim() ||
-        !expectedCurrentRevisionId.trim() ||
-        !displayName.trim() ||
-        typeof model['provider'] !== 'string' ||
-        !model['provider'].trim() ||
-        typeof model['model'] !== 'string' ||
-        !model['model'].trim()
-      ) {
-        throw new Error('智能体配置不完整，请刷新页面后重试。')
-      }
-      const body = HostApiContracts.reviseAgent.parseRequest({
-        expectedCurrentRevisionId,
-        displayName,
-        persona,
-        ...(personaDocument === undefined ? {} : { personaDocument }),
-        model: {
-          provider: model['provider'],
-          model: model['model'],
-          ...(typeof model['reasoningEffort'] === 'string' ? { reasoningEffort: model['reasoningEffort'] } : {}),
-        },
-        ...(imagePolicy === undefined ? {} : { imagePolicy }),
-        ...(dynamicClientApprovalPolicy === 'manual' || dynamicClientApprovalPolicy === 'automatic'
-          ? { dynamicClientApprovalPolicy }
-          : {}),
-      })
-      const result = await this.#call(HostApiContracts.reviseAgent, { agentId }, body)
-      await this.#refreshAndNotify()
-      return result
-    }
-    if (command === 'agents.delete') {
-      const agentId = typeof input?.['agentId'] === 'string' ? input['agentId'] : ''
-      const expectedCurrentRevisionId =
-        typeof input?.['expectedCurrentRevisionId'] === 'string' ? input['expectedCurrentRevisionId'] : ''
-      const confirmationName = typeof input?.['confirmationName'] === 'string' ? input['confirmationName'] : ''
-      const deleteAutoCreatedBuiltInChannels = input?.['deleteAutoCreatedBuiltInChannels'] !== false
-      if (!agentId.trim() || !expectedCurrentRevisionId.trim()) {
-        throw new Error('智能体删除信息不完整，请刷新页面后重试。')
-      }
-      const body = HostApiContracts.deleteAgent.parseRequest({
-        expectedCurrentRevisionId,
-        confirmationName,
-        deleteAutoCreatedBuiltInChannels,
-      })
-      const result = await this.#call(HostApiContracts.deleteAgent, { agentId }, body)
-      await this.#refreshAndNotify()
-      return result
-    }
-    if (command === 'channels.sendMessage') {
-      const channelId = typeof input?.['channelId'] === 'string' ? input['channelId'] : ''
-      const text = typeof input?.['body'] === 'string' ? input['body'] : ''
-      if (!channelId.trim()) throw new Error('缺少目标频道，请刷新页面后重试。')
-      if (!text.trim()) throw new Error('消息内容不能为空。')
-      const result = await this.#call(
-        HostApiContracts.sendChannelMessage,
-        { channelId },
-        {
-          parts: [{ type: 'text', text }],
-        },
-      )
-      await this.#refreshAndNotify()
-      return result
-    }
-    if (command === 'channels.listMessages') {
-      const channelId = typeof input?.['channelId'] === 'string' ? input['channelId'] : ''
-      const mode = input?.['mode'] === 'older' || input?.['mode'] === 'latest' ? input['mode'] : 'initial'
-      const limit =
-        typeof input?.['limit'] === 'number'
-          ? Math.min(Math.max(Math.trunc(input['limit']), 1), 100)
-          : mode === 'initial'
-            ? CHANNEL_MESSAGE_INITIAL_PAGE_SIZE
-            : CHANNEL_MESSAGE_PAGE_SIZE
-      if (!channelId.trim()) throw new Error('缺少目标频道，请刷新页面后重试。')
-      const beforeOccurredAt = typeof input?.['beforeOccurredAt'] === 'number' ? input['beforeOccurredAt'] : undefined
-      const beforeSourceId = typeof input?.['beforeSourceId'] === 'string' ? input['beforeSourceId'] : undefined
-      return await this.#loadChannelMessages(channelId, mode, limit, beforeOccurredAt, beforeSourceId)
-    }
-    if (command === 'channels.getRuntime') {
-      const channelId = typeof input?.['channelId'] === 'string' ? input['channelId'] : ''
-      if (!channelId.trim()) throw new Error('缺少目标频道，请刷新页面后重试。')
-      return await this.#loadChannelRuntime(channelId)
-    }
-    if (command === 'channels.resetContext') {
-      const channelId = typeof input?.['channelId'] === 'string' ? input['channelId'] : ''
-      const expectedEpisodeId = typeof input?.['expectedEpisodeId'] === 'string' ? input['expectedEpisodeId'] : ''
-      const mode = input?.['mode'] === 'clear' || input?.['mode'] === 'compact' ? input['mode'] : undefined
-      if (!channelId.trim() || !expectedEpisodeId.trim() || mode === undefined) {
-        throw new Error('频道上下文操作信息不完整，请刷新页面后重试。')
-      }
-      const result = await this.#call(HostApiContracts.resetChannelContext, { channelId }, { expectedEpisodeId, mode })
-      await this.#refreshAndNotify()
-      return result
-    }
-    if (command === 'channels.delete') {
-      const channelId = typeof input?.['channelId'] === 'string' ? input['channelId'] : ''
-      const expectedBoundAgentId =
-        input?.['expectedBoundAgentId'] === null
-          ? null
-          : typeof input?.['expectedBoundAgentId'] === 'string'
-            ? input['expectedBoundAgentId']
-            : undefined
-      if (!channelId.trim() || expectedBoundAgentId === undefined) {
-        throw new Error('频道删除信息不完整，请刷新页面后重试。')
-      }
-      const result = await this.#call(HostApiContracts.deleteChannel, { channelId }, { expectedBoundAgentId })
-      await this.#refreshAndNotify()
-      return result
-    }
-    if (command === 'channels.rename') {
-      const channelId = typeof input?.['channelId'] === 'string' ? input['channelId'] : ''
-      const displayName = typeof input?.['displayName'] === 'string' ? input['displayName'] : ''
-      if (!channelId.trim()) throw new Error('缺少目标频道，请刷新页面后重试。')
-      if (!displayName.trim()) throw new Error('请输入频道名称。')
-      const result = await this.#call(
-        HostApiContracts.renameChannel,
-        { channelId },
-        {
-          displayName,
-        },
-      )
-      await this.#refreshAndNotify()
-      return result
-    }
-    if (command === 'agents.updateCapabilities') {
-      const agentId = typeof input?.['agentId'] === 'string' ? input['agentId'] : ''
-      if (!agentId.trim()) throw new Error('缺少智能体标识，请刷新页面后重试。')
-      const body: Record<string, unknown> = {}
-      if (typeof input?.['subagents'] === 'boolean') body['subagents'] = input['subagents']
-      if (typeof input?.['fileTools'] === 'boolean') body['fileTools'] = input['fileTools']
-      if (typeof input?.['webSearch'] === 'boolean') body['webSearch'] = input['webSearch']
-      if (typeof input?.['dynamicCreation'] === 'boolean') body['dynamicCreation'] = input['dynamicCreation']
-      if (typeof input?.['developmentShell'] === 'boolean') body['developmentShell'] = input['developmentShell']
-      if (typeof input?.['unrestrictedFileAccess'] === 'boolean') {
-        body['unrestrictedFileAccess'] = input['unrestrictedFileAccess']
-      }
-      if (Object.keys(body).length === 0) throw new Error('请选择至少一项要更新的智能体权限。')
-      const result = await this.#call(HostApiContracts.updateAgentCapabilities, { agentId }, body)
-      await this.#refreshAndNotify()
-      return result
-    }
-    if (command === 'connections.create') {
-      const adapterKey = typeof input?.['adapterKey'] === 'string' ? input['adapterKey'] : ''
-      const alias = typeof input?.['alias'] === 'string' ? input['alias'] : undefined
-      const configuration = isRecord(input?.['configuration'])
-        ? HostApiContracts.createConnection.request.shape.configuration.parse(input['configuration'])
-        : undefined
-      const credentials = isStringRecord(input?.['credentials']) ? input['credentials'] : undefined
-      if (!adapterKey.trim()) throw new Error('请选择连接平台。')
-      if (configuration === undefined || credentials === undefined) throw new Error('连接配置格式无效，请重新填写。')
-      const result = await this.#call(
-        HostApiContracts.createConnection,
-        {},
-        { adapterKey, ...(alias === undefined ? {} : { alias }), configuration, credentials },
-      )
-      await this.#refreshAndNotify()
-      return result
-    }
-    if (command === 'connections.updateAlias') {
-      const connectionId = typeof input?.['connectionId'] === 'string' ? input['connectionId'] : ''
-      const alias = typeof input?.['alias'] === 'string' ? input['alias'] : undefined
-      if (!connectionId.trim()) throw new Error('缺少连接标识，请刷新页面后重试。')
-      if (alias === undefined) throw new Error('连接别名格式无效，请重新填写。')
-      const result = await this.#call(HostApiContracts.updateConnectionAlias, { connectionId }, { alias })
-      await this.#refreshAndNotify()
-      return result
-    }
-    if (command === 'connections.updateActivityTriggerDefaults') {
-      const connectionId = typeof input?.['connectionId'] === 'string' ? input['connectionId'] : ''
-      const activityKeys = Array.isArray(input?.['activityKeys']) ? input['activityKeys'] : undefined
-      if (!connectionId.trim()) throw new Error('缺少连接标识，请刷新页面后重试。')
-      const body = HostApiContracts.updateConnectionActivityTriggerDefaults.request.parse({ activityKeys })
-      const result = await this.#call(HostApiContracts.updateConnectionActivityTriggerDefaults, { connectionId }, body)
-      await this.#refreshAndNotify()
-      return result
-    }
-    if (command === 'connections.delete') {
-      const connectionId = typeof input?.['connectionId'] === 'string' ? input['connectionId'] : ''
-      const deleteChannelData = input?.['deleteChannelData']
-      if (!connectionId.trim()) throw new Error('缺少连接标识，请刷新页面后重试。')
-      if (typeof deleteChannelData !== 'boolean') throw new Error('请选择是否同时删除频道数据。')
-      const result = await this.#call(HostApiContracts.deleteConnection, { connectionId }, { deleteChannelData })
-      await this.#refreshAndNotify()
-      return result
-    }
-    if (command === 'connections.restore') {
-      const connectionId = typeof input?.['connectionId'] === 'string' ? input['connectionId'] : ''
-      if (!connectionId.trim()) throw new Error('缺少连接标识，请刷新页面后重试。')
-      const result = await this.#call(HostApiContracts.restoreConnection, { connectionId }, undefined)
-      await this.#refreshAndNotify()
-      return result
-    }
-    if (command === 'channels.createInternal') {
-      const displayName = typeof input?.['displayName'] === 'string' ? input['displayName'] : ''
-      if (!displayName.trim()) throw new Error('请输入频道名称。')
-      const result = await this.#call(HostApiContracts.createInternalChannel, {}, { displayName: displayName.trim() })
-      await this.#refreshAndNotify()
-      return result
-    }
-    if (command === 'bindings.create') {
-      const agentId = typeof input?.['agentId'] === 'string' ? input['agentId'] : ''
-      const channelId = typeof input?.['channelId'] === 'string' ? input['channelId'] : ''
-      const triggerPolicy = isTriggerPolicy(input?.['triggerPolicy']) ? input['triggerPolicy'] : undefined
-      const processingFeedback =
-        input?.['processingFeedback'] === 'off' ? 'off' : input?.['processingFeedback'] === 'auto' ? 'auto' : undefined
-      const activityTriggerOverrides = isRecord(input?.['activityTriggerOverrides'])
-        ? HostApiContracts.createBinding.request.shape.activityTriggerOverrides.parse(input['activityTriggerOverrides'])
-        : undefined
-      if (!agentId.trim()) throw new Error('缺少智能体标识，请刷新页面后重试。')
-      if (!channelId.trim()) throw new Error('请选择要绑定的频道。')
-      if (triggerPolicy === undefined) {
-        throw new Error('频道触发策略无效，请重新选择。')
-      }
-      const result = await this.#call(
-        HostApiContracts.createBinding,
-        {},
-        {
-          agentId,
-          channelId,
-          triggerPolicy,
-          ...(processingFeedback === undefined ? {} : { processingFeedback }),
-          ...(activityTriggerOverrides === undefined ? {} : { activityTriggerOverrides }),
-        },
-      )
-      await this.#refreshAndNotify()
-      return result
-    }
-    if (command === 'bindings.clear') {
-      const channelId = typeof input?.['channelId'] === 'string' ? input['channelId'] : ''
-      if (!channelId.trim()) throw new Error('请选择要解除绑定的频道。')
-      const result = await this.#call(HostApiContracts.clearBinding, { channelId }, undefined)
-      await this.#refreshAndNotify()
-      return result
-    }
-    if (command === 'workTreeOrder.put') {
-      const agentIds = Array.isArray(input?.['agentIds'])
-        ? input['agentIds'].filter((id) => typeof id === 'string')
-        : []
-      const unboundChannelIds = Array.isArray(input?.['unboundChannelIds'])
-        ? input['unboundChannelIds'].filter((id) => typeof id === 'string')
-        : []
-      const rawByAgent = isRecord(input?.['channelIdsByAgent']) ? input['channelIdsByAgent'] : {}
-      const channelIdsByAgent: Record<string, string[]> = {}
-      for (const [agentId, value] of Object.entries(rawByAgent)) {
-        if (Array.isArray(value)) channelIdsByAgent[agentId] = value.filter((id) => typeof id === 'string')
-      }
-      const result = await this.#call(
-        HostApiContracts.putWorkTreeOrder,
-        {},
-        { agentIds, channelIdsByAgent, unboundChannelIds },
-      )
-      await this.#refreshAndNotify()
-      return result
-    }
-    if (command === 'connections.test') {
-      const connectionId = typeof input?.['connectionId'] === 'string' ? input['connectionId'] : ''
-      const direction =
-        input?.['direction'] === 'receive' || input?.['direction'] === 'send' ? input['direction'] : undefined
-      const channelId = typeof input?.['channelId'] === 'string' ? input['channelId'] : undefined
-      if (!connectionId.trim()) throw new Error('缺少连接标识，请刷新页面后重试。')
-      if (direction === undefined) throw new Error('连接测试方向无效，请重新选择。')
-      const result = await this.#call(
-        HostApiContracts.testConnection,
-        { connectionId },
-        {
-          direction,
-          ...(channelId === undefined ? {} : { channelId }),
-        },
-      )
-      await this.#refreshAndNotify()
-      return result
-    }
-    if (command === 'dynamic.approve' || command === 'dynamic.decline') {
-      const agentId = typeof input?.['agentId'] === 'string' ? input['agentId'] : ''
-      const episodeId = typeof input?.['episodeId'] === 'string' ? input['episodeId'] : ''
-      const requestId = typeof input?.['requestId'] === 'string' ? input['requestId'] : ''
-      const pluginRunId = typeof input?.['pluginRunId'] === 'string' ? input['pluginRunId'] : ''
-      if (!agentId.trim()) throw new Error('缺少智能体标识，请刷新页面后重试。')
-      if (!episodeId.trim()) throw new Error('缺少 Episode 标识，请刷新页面后重试。')
-      if (!requestId.trim()) throw new Error('缺少批准请求，请刷新页面后重试。')
-      const result = await this.#call(
-        command === 'dynamic.approve' ? HostApiContracts.dynamicApprove : HostApiContracts.dynamicDecline,
-        { agentId },
-        { episodeId, requestId, ...(pluginRunId.trim() ? { pluginRunId } : {}) },
-      )
-      await this.#refreshAndNotify()
-      return result
-    }
-    if (command === 'authoring.decide') {
-      const taskId = typeof input?.['taskId'] === 'string' ? input['taskId'] : ''
-      const attemptId = typeof input?.['attemptId'] === 'string' ? input['attemptId'] : ''
-      const expectedRevision = typeof input?.['expectedRevision'] === 'number' ? input['expectedRevision'] : 0
-      const approved = input?.['approved'] === true
-      const approveRiskStable = input?.['approveRiskStable'] !== false
-      if (!taskId || !attemptId || expectedRevision < 1) throw new Error('创造任务审批状态不完整，请刷新后重试。')
-      const result = await this.#call(
-        HostApiContracts.decideAuthoringAttempt,
-        { taskId, attemptId },
-        { expectedRevision, approved, approveRiskStable },
-      )
-      await this.#refreshAndNotify()
-      return result
-    }
-    if (command === 'authoring.stop') {
-      const taskId = typeof input?.['taskId'] === 'string' ? input['taskId'] : ''
-      const expectedRevision = typeof input?.['expectedRevision'] === 'number' ? input['expectedRevision'] : 0
-      if (!taskId || expectedRevision < 1) throw new Error('创造任务状态不完整，请刷新后重试。')
-      const result = await this.#call(HostApiContracts.stopAuthoringTask, { taskId }, { expectedRevision })
-      await this.#refreshAndNotify()
-      return result
-    }
-    if (command === 'authoring.delete') {
-      const taskId = typeof input?.['taskId'] === 'string' ? input['taskId'] : ''
-      if (!taskId) throw new Error('缺少创造任务标识，请刷新后重试。')
-      const result = await this.#call(HostApiContracts.deleteAuthoringTask, { taskId }, undefined)
-      await this.#refreshAndNotify()
-      return result
-    }
-    if (command === 'extensions.activate') {
-      const extensionId = typeof input?.['extensionId'] === 'string' ? input['extensionId'] : ''
-      const agentId = typeof input?.['agentId'] === 'string' ? input['agentId'] : ''
-      const revisionId = typeof input?.['revisionId'] === 'string' ? input['revisionId'] : ''
-      if (!extensionId.trim()) throw new Error('缺少本地扩展标识，请刷新页面后重试。')
-      if (!agentId.trim()) throw new Error('此本地扩展缺少目标智能体，无法启用。')
-      if (!revisionId.trim()) throw new Error('此本地扩展缺少可启用版本，请重新保存后重试。')
-      const result = await this.#call(HostApiContracts.activateExtension, { agentId, extensionId }, { revisionId })
-      await this.#refreshAndNotify()
-      return result
-    }
-    if (command === 'extensions.install') {
-      const extensionId = typeof input?.['extensionId'] === 'string' ? input['extensionId'] : ''
-      const revisionId = typeof input?.['revisionId'] === 'string' ? input['revisionId'] : ''
-      const permissionDigest = typeof input?.['permissionDigest'] === 'string' ? input['permissionDigest'] : undefined
-      if (!extensionId.trim() || !revisionId.trim()) throw new Error('缺少扩展或适配器版本标识。')
-      const result = await this.#call(
+    },
+    'host.reconnect': async () => {
+      this.#events.reconnectNow()
+      return this.actions['host.refresh']()
+    },
+    'notifications.update': async (body) => this.#mutate(HostApiContracts.updateNotificationSettings, {}, body),
+    'notifications.testBark': async (body) => this.#call(HostApiContracts.testBarkNotification, {}, body),
+    'notifications.testSystem': async () => this.#call(HostApiContracts.testSystemNotification, {}, undefined),
+    'platformUsers.list': async (input = {}) =>
+      this.#call(HostApiContracts.listPlatformUsers, { ...input, limit: input.limit ?? 50 }, undefined),
+    'connections.listEvents': async (input) =>
+      this.#call(HostApiContracts.listConnectionEvents, { ...input, limit: input.limit ?? 30 }, undefined),
+    'agents.create': async (body) => this.#mutate(HostApiContracts.createAgent, {}, body),
+    'agents.revise': async ({ agentId, ...body }) => this.#mutate(HostApiContracts.reviseAgent, { agentId }, body),
+    'agents.delete': async ({ agentId, ...body }) => this.#mutate(HostApiContracts.deleteAgent, { agentId }, body),
+    'channels.resetContext': async ({ channelId, ...body }) =>
+      this.#mutate(HostApiContracts.resetChannelContext, { channelId }, body),
+    'channels.delete': async ({ channelId, ...body }) =>
+      this.#mutate(HostApiContracts.deleteChannel, { channelId }, body),
+    'channels.rename': async ({ channelId, ...body }) =>
+      this.#mutate(HostApiContracts.renameChannel, { channelId }, body),
+    'agents.updateCapabilities': async ({ agentId, ...body }) =>
+      this.#mutate(HostApiContracts.updateAgentCapabilities, { agentId }, body),
+    'connections.create': async (body) => this.#mutate(HostApiContracts.createConnection, {}, body),
+    'connections.updateAlias': async ({ connectionId, ...body }) =>
+      this.#mutate(HostApiContracts.updateConnectionAlias, { connectionId }, body),
+    'connections.updateActivityTriggerDefaults': async ({ connectionId, ...body }) =>
+      this.#mutate(HostApiContracts.updateConnectionActivityTriggerDefaults, { connectionId }, body),
+    'connections.delete': async ({ connectionId, ...body }) =>
+      this.#mutate(HostApiContracts.deleteConnection, { connectionId }, body),
+    'connections.restore': async ({ connectionId }) =>
+      this.#mutate(HostApiContracts.restoreConnection, { connectionId }, undefined),
+    'channels.createInternal': async (body) => this.#mutate(HostApiContracts.createInternalChannel, {}, body),
+    'bindings.create': async (body) => this.#mutate(HostApiContracts.createBinding, {}, body),
+    'bindings.clear': async ({ channelId }) => this.#mutate(HostApiContracts.clearBinding, { channelId }, undefined),
+    'workTreeOrder.put': async (body) => this.#mutate(HostApiContracts.putWorkTreeOrder, {}, body),
+    'connections.test': async ({ connectionId, ...body }) =>
+      this.#mutate(HostApiContracts.testConnection, { connectionId }, body),
+    'dynamic.approve': async ({ agentId, ...body }) => this.#mutate(HostApiContracts.dynamicApprove, { agentId }, body),
+    'dynamic.decline': async ({ agentId, ...body }) => this.#mutate(HostApiContracts.dynamicDecline, { agentId }, body),
+    'authoring.decide': async ({ taskId, attemptId, ...body }) =>
+      this.#mutate(HostApiContracts.decideAuthoringAttempt, { taskId, attemptId }, body),
+    'authoring.stop': async ({ taskId, ...body }) => this.#mutate(HostApiContracts.stopAuthoringTask, { taskId }, body),
+    'authoring.delete': async ({ taskId }) => this.#mutate(HostApiContracts.deleteAuthoringTask, { taskId }, undefined),
+    'extensions.activate': async ({ agentId, extensionId, ...body }) =>
+      this.#mutate(HostApiContracts.activateExtension, { agentId, extensionId }, body),
+    'extensions.uninstall': async ({ extensionId }) =>
+      this.#mutate(HostApiContracts.uninstallHostExtension, { extensionId }, undefined),
+    'extensions.hostClientDiagnostic': async ({ extensionId, revisionId, ...body }) =>
+      this.#call(HostApiContracts.hostExtensionClientDiagnostic, { extensionId, revisionId }, body),
+    'extensions.deactivate': async ({ agentId, extensionId }) =>
+      this.#mutate(HostApiContracts.deactivateExtension, { agentId, extensionId }, undefined),
+    'extensions.clientDiagnostic': async ({ extensionId, revisionId, ...body }) =>
+      this.#call(HostApiContracts.extensionClientDiagnostic, { extensionId, revisionId }, body),
+    'channels.sendMessage': async ({ channelId, body }) =>
+      this.#mutate(HostApiContracts.sendChannelMessage, { channelId }, { parts: [{ type: 'text', text: body }] }),
+    'channels.listMessages': async ({ channelId, mode = 'initial', limit, beforeOccurredAt, beforeSourceId }) =>
+      this.#loadChannelMessages(
+        channelId,
+        mode,
+        limit ?? (mode === 'initial' ? CHANNEL_MESSAGE_INITIAL_PAGE_SIZE : CHANNEL_MESSAGE_PAGE_SIZE),
+        beforeOccurredAt,
+        beforeSourceId,
+      ),
+    'channels.getRuntime': async ({ channelId }) => this.#loadChannelRuntime(channelId),
+    'extensions.install': async ({ extensionId, permissionDigest, ...body }) =>
+      this.#mutate(
         HostApiContracts.installHostExtension,
         { extensionId },
         {
-          revisionId,
+          ...body,
           ...(permissionDigest === undefined ? {} : { permissionApproval: { permissionDigest } }),
         },
-      )
-      await this.#refreshAndNotify()
-      return result
-    }
-    if (command === 'extensions.uninstall') {
-      const extensionId = typeof input?.['extensionId'] === 'string' ? input['extensionId'] : ''
-      if (!extensionId.trim()) throw new Error('缺少本地扩展标识，请刷新页面后重试。')
-      const result = await this.#call(HostApiContracts.uninstallHostExtension, { extensionId }, undefined)
-      await this.#refreshAndNotify()
-      return result
-    }
-    if (command === 'extensions.hostClientDiagnostic') {
-      const extensionId = typeof input?.['extensionId'] === 'string' ? input['extensionId'] : ''
-      const revisionId = typeof input?.['revisionId'] === 'string' ? input['revisionId'] : ''
-      const status = input?.['status'] === 'loaded' || input?.['status'] === 'failed' ? input['status'] : undefined
-      if (!extensionId.trim() || !revisionId.trim() || !status) throw new Error('Host Client 诊断目标无效。')
-      return this.#call(
-        HostApiContracts.hostExtensionClientDiagnostic,
-        { extensionId, revisionId },
-        {
-          status,
-          ...(typeof input?.['message'] === 'string' ? { message: input['message'] } : {}),
-        },
-      )
-    }
-    if (command === 'extensions.deactivate') {
-      const extensionId = typeof input?.['extensionId'] === 'string' ? input['extensionId'] : ''
-      if (!extensionId.trim()) throw new Error('缺少本地扩展标识，请刷新页面后重试。')
-      const agentId = typeof input?.['agentId'] === 'string' ? input['agentId'] : ''
-      if (!agentId.trim()) throw new Error('此本地扩展缺少目标智能体，无法停用。')
-      const result = await this.#call(HostApiContracts.deactivateExtension, { agentId, extensionId }, undefined)
-      await this.#refreshAndNotify()
-      return result
-    }
-    if (command === 'extensions.saveFromDynamic') {
-      const taskId = typeof input?.['taskId'] === 'string' ? input['taskId'] : ''
-      const attemptId = typeof input?.['attemptId'] === 'string' ? input['attemptId'] : ''
-      const agentId = typeof input?.['agentId'] === 'string' ? input['agentId'] : ''
-      const episodeId = typeof input?.['episodeId'] === 'string' ? input['episodeId'] : ''
-      const pluginId = typeof input?.['pluginId'] === 'string' ? input['pluginId'] : ''
-      const packageId = typeof input?.['packageId'] === 'string' ? input['packageId'] : ''
-      const name = typeof input?.['name'] === 'string' ? input['name'] : ''
-      const slug = typeof input?.['slug'] === 'string' ? input['slug'] : ''
-      const description = typeof input?.['description'] === 'string' ? input['description'] : ''
-      const targetExtensionId =
-        typeof input?.['targetExtensionId'] === 'string' ? input['targetExtensionId'] : undefined
-      const usesAuthoringIdentity = Boolean(taskId.trim() && attemptId.trim())
-      if (!usesAuthoringIdentity && !agentId.trim()) throw new Error('缺少智能体标识，请刷新页面后重试。')
-      if (!usesAuthoringIdentity && (!episodeId.trim() || !pluginId.trim() || !packageId.trim())) {
-        throw new Error('缺少精确的 Episode、Plugin 或 Package，请刷新页面后重试。')
-      }
-      if (!name.trim()) throw new Error('请输入本地扩展名称。')
-      if (!slug.trim()) throw new Error('缺少本地扩展标识，请重新生成后重试。')
-      const result = await this.#call(
-        HostApiContracts.saveExtensionFromDynamic,
-        {},
-        usesAuthoringIdentity
-          ? {
-              taskId,
-              attemptId,
-              displayName: name,
-              slug,
-              description: description.trim() || '从创造工作台保存的动态 Package。',
-              ...(targetExtensionId === undefined ? {} : { targetExtensionId }),
-            }
-          : {
-              agentId,
-              episodeId,
-              pluginId,
-              packageId,
-              displayName: name,
-              slug,
-              description: description.trim() || '从创造工作台保存的动态 Package。',
-              ...(targetExtensionId === undefined ? {} : { targetExtensionId }),
-            },
-      )
-      await this.#refreshAndNotify()
-      return result
-    }
-    if (command === 'extensions.clientCall') {
-      const extensionId = typeof input?.['extensionId'] === 'string' ? input['extensionId'] : ''
-      const revisionId = typeof input?.['revisionId'] === 'string' ? input['revisionId'] : ''
-      const agentId = typeof input?.['agentId'] === 'string' ? input['agentId'] : ''
-      const method = typeof input?.['method'] === 'string' ? input['method'] : ''
-      if (!extensionId.trim() || !revisionId.trim() || !agentId.trim() || !method.trim()) {
-        throw new Error('扩展 RPC 请求缺少精确的智能体、扩展、版本或方法。')
-      }
-      const value =
-        'value' in (input ?? {})
-          ? HostApiContracts.extensionClientCall.request.shape.input.parse(input?.['value'])
-          : undefined
-      return await this.#call(
+      ),
+    'extensions.saveFromDynamic': async ({ name, ...body }) =>
+      this.#mutate(HostApiContracts.saveExtensionFromDynamic, {}, { ...body, displayName: name }),
+    'extensions.clientCall': async ({ extensionId, revisionId, value, ...body }) =>
+      this.#call(
         HostApiContracts.extensionClientCall,
         { extensionId, revisionId },
-        { agentId, method, ...(value === undefined ? {} : { input: value }) },
-      )
+        {
+          ...body,
+          ...(value === undefined ? {} : { input: value }),
+        },
+      ),
+  }
+
+  async #mutate<Contract extends HostApiContract, Output>(
+    contract: Contract & { readonly parseResponse: (input: unknown) => Output },
+    params: HostApiContractParams<Contract>,
+    body: HostApiContractRequest<Contract>,
+  ): Promise<Output> {
+    const lifecycle = this.#lifecycle
+    const invalidation = this.#mutationInvalidation
+    const result = await this.#call(contract, params, body)
+    if (lifecycle === this.#lifecycle) {
+      this.#syncAfterCommit = true
+      // A committed action never waits for synchronization or resubmits on its failure.
+      if (invalidation === this.#mutationInvalidation) void this.#refreshAndNotify()
     }
-    if (command === 'extensions.clientDiagnostic') {
-      const extensionId = typeof input?.['extensionId'] === 'string' ? input['extensionId'] : ''
-      const revisionId = typeof input?.['revisionId'] === 'string' ? input['revisionId'] : ''
-      const agentId = typeof input?.['agentId'] === 'string' ? input['agentId'] : ''
-      const status = input?.['status'] === 'loaded' || input?.['status'] === 'failed' ? input['status'] : undefined
-      const message = typeof input?.['message'] === 'string' ? input['message'] : undefined
-      if (!extensionId.trim() || !revisionId.trim() || !agentId.trim() || status === undefined) {
-        throw new Error('Client 诊断缺少精确的智能体、扩展、版本或状态。')
-      }
-      return await this.#call(
-        HostApiContracts.extensionClientDiagnostic,
-        { extensionId, revisionId },
-        { agentId, status, ...(message === undefined ? {} : { message }) },
-      )
-    }
-    throw new Error(`当前 Web Host 不支持操作“${command}”。`)
+    return result
   }
 
   async #call<Contract extends HostApiContract, Output>(
@@ -1379,16 +1085,61 @@ export class HttpProductHost implements ProductHostPort {
     params: HostApiContractParams<Contract>,
     body: HostApiContractRequest<Contract>,
   ): Promise<Output> {
-    return this.#observeRequest(() => callHostApi(contract, params, body))
+    const lifecycle = this.#lifecycle
+    const reading = contract.method === 'GET'
+    try {
+      const result = await callHostApi(contract, params, body, reading ? { signal: this.#readController.signal } : {})
+      if (reading && lifecycle !== this.#lifecycle) throw new StaleHostReadError()
+      return result
+    } catch (cause) {
+      if (reading && lifecycle !== this.#lifecycle) throw new StaleHostReadError()
+      if (lifecycle === this.#lifecycle && cause instanceof HostRequestError && cause.kind === 'network') {
+        this.#publishFailure({ code: 'network', message: cause.message })
+      }
+      throw cause
+    }
   }
 
-  async #loadChannelMessages(
+  #loadChannelMessages(
+    channelId: string,
+    mode: 'initial' | 'older' | 'latest',
+    limit: number,
+    beforeOccurredAt?: number,
+    beforeSourceId?: string,
+  ): Promise<MessagePage> {
+    const lifecycle = this.#lifecycle
+    const key = JSON.stringify([mode, limit, beforeOccurredAt, beforeSourceId])
+    const current = this.#messageRequests.get(channelId)
+    if (current !== undefined) {
+      if (current.key === key) return current.promise
+      return current.promise
+        .catch(() => undefined)
+        .then(() => {
+          if (lifecycle !== this.#lifecycle) throw new StaleHostReadError()
+          return this.#loadChannelMessages(channelId, mode, limit, beforeOccurredAt, beforeSourceId)
+        })
+    }
+    const task = this.#readChannelMessages(channelId, mode, limit, beforeOccurredAt, beforeSourceId).finally(() => {
+      if (this.#messageRequests.get(channelId)?.promise === task) {
+        this.#messageRequests.delete(channelId)
+        if (this.#messageAgain.delete(channelId)) {
+          void this.#loadChannelMessages(channelId, 'latest', CHANNEL_MESSAGE_PAGE_SIZE).catch(() => undefined)
+        }
+      }
+    })
+    this.#messageRequests.set(channelId, { key, promise: task })
+    return task
+  }
+
+  async #readChannelMessages(
     channelId: string,
     mode: 'initial' | 'older' | 'latest',
     limit: number,
     beforeOccurredAt?: number,
     beforeSourceId?: string,
   ): Promise<{ readonly messages: readonly ConversationMessage[]; readonly hasMore: boolean }> {
+    const lifecycle = this.#lifecycle
+    let cursor: SyncCursor | undefined
     this.#messageReconcileDepth.set(channelId, (this.#messageReconcileDepth.get(channelId) ?? 0) + 1)
     try {
       const raw = await this.#call(
@@ -1401,6 +1152,12 @@ export class HttpProductHost implements ProductHostPort {
         },
         undefined,
       )
+      cursor = raw.cursor
+      const buffered = this.#pendingChannelFacts.get(channelId) ?? []
+      if (buffered.some((entry) => entry.cursor !== undefined && entry.cursor.epoch !== raw.cursor.epoch)) {
+        this.#messageAgain.add(channelId)
+        return { messages: [], hasMore: true }
+      }
       const projected = raw.messages.map((message) =>
         projectConversationMessage(message, this.#snapshot.channels, this.#snapshot.agents),
       )
@@ -1412,41 +1169,98 @@ export class HttpProductHost implements ProductHostPort {
         (left, right) => (left.occurredAt ?? 0) - (right.occurredAt ?? 0),
       )
       this.#loadedChannels.add(channelId)
+      this.#messageCursor.set(channelId, raw.cursor)
       this.#messageRevision.delete(channelId)
       this.#snapshot = { ...this.#snapshot, messages: [...other, ...deduplicated] }
       this.#listener?.()
       return { messages: projected, hasMore: raw.hasMore }
     } finally {
-      const remaining = (this.#messageReconcileDepth.get(channelId) ?? 1) - 1
-      if (remaining > 0) {
-        this.#messageReconcileDepth.set(channelId, remaining)
-      } else {
-        this.#messageReconcileDepth.delete(channelId)
-        const pending = this.#pendingChannelFacts.get(channelId) ?? []
-        this.#pendingChannelFacts.delete(channelId)
-        for (const fact of pending) this.#applyChannelFact(fact)
+      if (lifecycle === this.#lifecycle) {
+        const remaining = (this.#messageReconcileDepth.get(channelId) ?? 1) - 1
+        if (remaining > 0) {
+          this.#messageReconcileDepth.set(channelId, remaining)
+        } else {
+          this.#messageReconcileDepth.delete(channelId)
+          const pending = this.#pendingChannelFacts.get(channelId) ?? []
+          this.#pendingChannelFacts.delete(channelId)
+          for (const fact of pending) {
+            if (cursor !== undefined && fact.cursor !== undefined) {
+              if (fact.cursor.epoch !== cursor.epoch) {
+                this.#messageAgain.add(channelId)
+                continue
+              }
+              if (fact.cursor.sequence <= cursor.sequence) continue
+            }
+            this.#applyChannelFact(fact.data, fact.cursor)
+          }
+        }
       }
     }
   }
 
-  async #loadChannelRuntime(channelId: string): Promise<ChannelRuntimeView> {
+  #loadChannelRuntime(channelId: string): Promise<ChannelRuntimeView> {
+    const current = this.#runtimeRequests.get(channelId)
+    if (current !== undefined) return current
+    const task = this.#readChannelRuntime(channelId).finally(() => {
+      if (this.#runtimeRequests.get(channelId) === task) this.#runtimeRequests.delete(channelId)
+    })
+    this.#runtimeRequests.set(channelId, task)
+    return task
+  }
+
+  async #readChannelRuntime(channelId: string): Promise<ChannelRuntimeView> {
+    const lifecycle = this.#lifecycle
     this.#reconciling.add(`runtime:${channelId}`)
     try {
-      const raw = await this.#call(HostApiContracts.getChannelRuntime, { channelId }, undefined)
-      const view = this.#runtimeViewFromProjection(raw)
-      this.#loadedRuntimes.add(channelId)
-      this.#runtimeRevision.delete(channelId)
-      this.#writeRuntimeView(view, { includeTurns: true })
-      return view
+      for (;;) {
+        this.#reconciling.add(`runtime:${channelId}`)
+        this.#runtimeOverflow.delete(channelId)
+        this.#pendingRuntimeFrames.set(channelId, [])
+        const raw = await this.#call(HostApiContracts.getChannelRuntime, { channelId }, undefined)
+        const pending = this.#pendingRuntimeFrames.get(channelId) ?? []
+        if (
+          this.#runtimeOverflow.has(channelId) ||
+          pending.some((entry) => entry.cursor !== undefined && entry.cursor.epoch !== raw.cursor.epoch)
+        )
+          continue
+        const view = this.#runtimeViewFromProjection(raw)
+        this.#loadedRuntimes.add(channelId)
+        this.#runtimeCursor.set(channelId, raw.cursor)
+        this.#runtimeRevision.delete(channelId)
+        this.#writeRuntimeView(view, { includeTurns: true })
+        this.#pendingRuntimeFrames.delete(channelId)
+        this.#reconciling.delete(`runtime:${channelId}`)
+        const newer = pending.filter(
+          (entry) => entry.cursor === undefined || entry.cursor.sequence > raw.cursor.sequence,
+        )
+        // A truncated incremental frame cannot reconstruct the complete trajectory.
+        if (
+          newer.some(
+            (entry, index) =>
+              entry.data.truncated || (index > 0 && entry.data.revision > newer[index - 1]!.data.revision + 1),
+          )
+        )
+          continue
+        for (const entry of newer) this.#applyRuntimeFrame(entry.data, entry.cursor)
+        return this.#snapshot.channelRuntimes[channelId] ?? view
+      }
     } finally {
-      this.#reconciling.delete(`runtime:${channelId}`)
+      if (lifecycle === this.#lifecycle) {
+        this.#reconciling.delete(`runtime:${channelId}`)
+        this.#pendingRuntimeFrames.delete(channelId)
+        this.#runtimeOverflow.delete(channelId)
+      }
     }
   }
 
-  #applyChannelFact(data: ChannelFactSseData): void {
+  #applyChannelFact(data: ChannelFactSseData, cursor?: SyncCursor): void {
     if ((this.#messageReconcileDepth.get(data.channelId) ?? 0) > 0) {
       const pending = this.#pendingChannelFacts.get(data.channelId) ?? []
-      pending.push(data)
+      if (pending.length >= 512) {
+        this.#messageAgain.add(data.channelId)
+        return
+      }
+      pending.push({ data, cursor })
       this.#pendingChannelFacts.set(data.channelId, pending)
       return
     }
@@ -1458,9 +1272,19 @@ export class HttpProductHost implements ProductHostPort {
       return
     }
     this.#loadedChannels.add(data.channelId)
+    const floor = this.#messageCursor.get(data.channelId)
+    if (cursor !== undefined && floor !== undefined) {
+      if (cursor.epoch !== floor.epoch) {
+        this.#requestReconcile()
+        return
+      }
+      if (cursor.sequence <= floor.sequence) return
+    }
     const last = this.#messageRevision.get(data.channelId)
+    if (last !== undefined && data.revision <= last) return
     if (last !== undefined && data.revision !== last + 1) {
-      void this.#loadChannelMessages(data.channelId, 'latest', CHANNEL_MESSAGE_PAGE_SIZE)
+      if (this.#messageRequests.has(data.channelId)) this.#messageAgain.add(data.channelId)
+      void this.#loadChannelMessages(data.channelId, 'latest', CHANNEL_MESSAGE_PAGE_SIZE).catch(() => undefined)
       return
     }
     const projected = data.items.map((item) =>
@@ -1473,6 +1297,7 @@ export class HttpProductHost implements ProductHostPort {
       (left, right) => (left.occurredAt ?? 0) - (right.occurredAt ?? 0),
     )
     this.#messageRevision.set(data.channelId, data.revision)
+    if (cursor !== undefined) this.#messageCursor.set(data.channelId, cursor)
     this.#snapshot = { ...this.#snapshot, messages: [...other, ...deduplicated] }
     this.#listener?.()
   }
@@ -1490,14 +1315,34 @@ export class HttpProductHost implements ProductHostPort {
     this.#listener?.()
   }
 
-  #applyRuntimeFrame(data: ChannelRuntimeSseData): void {
+  #applyRuntimeFrame(data: ChannelRuntimeSseData, cursor?: SyncCursor): void {
+    const pending = this.#pendingRuntimeFrames.get(data.channelId)
+    if (pending !== undefined && !this.#replayingSnapshot) {
+      if (pending.length >= 512) this.#runtimeOverflow.add(data.channelId)
+      else pending.push({ data, cursor })
+    }
     const view = this.#runtimeViewFromProjection(data)
+    if (this.#replayingSnapshot) {
+      this.#writeRuntimeView(view, { includeTurns: false })
+      return
+    }
+    const floor = this.#runtimeCursor.get(data.channelId)
+    if (cursor !== undefined && floor !== undefined) {
+      if (cursor.epoch !== floor.epoch) {
+        this.#requestReconcile()
+        return
+      }
+      if (cursor.sequence <= floor.sequence) return
+    }
+    if (cursor !== undefined) this.#runtimeCursor.set(data.channelId, cursor)
+    const previousRevision = this.#runtimeRevision.get(data.channelId)
+    if (previousRevision !== undefined && data.revision <= previousRevision) return
     this.#writeRuntimeView(view, { includeTurns: false })
     if (!this.#loadedRuntimes.has(data.channelId)) return
     if (this.#reconciling.has(`runtime:${data.channelId}`)) return
     const last = this.#runtimeRevision.get(data.channelId)
     if (data.truncated === true || (last !== undefined && data.revision !== last + 1)) {
-      void this.#loadChannelRuntime(data.channelId)
+      void this.#loadChannelRuntime(data.channelId).catch(() => undefined)
       return
     }
     this.#runtimeRevision.set(data.channelId, data.revision)
@@ -1523,7 +1368,7 @@ export class HttpProductHost implements ProductHostPort {
       channelId: raw.channelId,
       ...(raw.agentId === undefined ? {} : { agentId: raw.agentId }),
       ...(raw.episodeId === undefined ? {} : { episodeId: raw.episodeId }),
-      phase: runtimePhaseToState(raw.phase),
+      phase: raw.phase,
       summary: raw.summary,
       pendingInjectCount: raw.pendingInjectCount,
       ...(raw.occupancy === undefined ? {} : { occupancy: raw.occupancy }),
@@ -1593,22 +1438,40 @@ export class HttpProductHost implements ProductHostPort {
     this.#reconcilePromise = task
   }
 
-  async #observeRequest<Result>(request: () => Promise<Result>): Promise<Result> {
-    try {
-      return await request()
-    } catch (cause) {
-      if (cause instanceof HostRequestError && cause.kind === 'network') {
-        this.#publishFailure({ code: 'network', message: cause.message })
-      }
-      throw cause
+  #refreshAndNotify(): Promise<Error | null> {
+    if (this.#retryTimer !== undefined) clearTimeout(this.#retryTimer)
+    this.#retryTimer = undefined
+    if (this.#snapshotRequest !== undefined) {
+      this.#refreshAgain = true
+      return this.#snapshotRequest
     }
+    const lifecycle = this.#lifecycle
+    const task = (async (): Promise<Error | null> => {
+      let failure: Error | null
+      do {
+        this.#refreshAgain = false
+        failure = await this.#readSnapshot()
+      } while (this.#refreshAgain && lifecycle === this.#lifecycle)
+      return failure
+    })().finally(() => {
+      if (this.#snapshotRequest === task) this.#snapshotRequest = undefined
+    })
+    this.#snapshotRequest = task
+    return task
   }
 
-  async #refreshAndNotify(): Promise<Error | null> {
+  async #readSnapshot(): Promise<Error | null> {
+    this.#snapshotEvents = []
+    this.#snapshotOverflow = false
+    const revision = ++this.#refreshRevision
+    const lifecycle = this.#lifecycle
+    const current = (): boolean => revision === this.#refreshRevision && lifecycle === this.#lifecycle
     let json: SnapshotJson
     try {
-      json = await callHostApi(HostApiContracts.snapshot, {}, undefined)
+      json = await callHostApi(HostApiContracts.snapshot, {}, undefined, { signal: this.#readController.signal })
     } catch (cause) {
+      if (!current()) return null
+      this.#snapshotEvents = undefined
       const failure = cause instanceof Error ? cause : new Error(errorMessage(cause, '无法连接 NekroNXT Host。'))
       const code =
         cause instanceof HostRequestError
@@ -1618,8 +1481,36 @@ export class HttpProductHost implements ProductHostPort {
               ? 'http'
               : 'invalid-snapshot'
           : 'invalid-snapshot'
-      this.#publishFailure({ code, message: failure.message })
+      this.#publishFailure({
+        code,
+        message: this.#syncAfterCommit ? `已保存，界面同步失败：${failure.message}` : failure.message,
+      })
+      this.#scheduleReadRetry()
       return failure
+    }
+    if (!current()) return null
+    const buffered = this.#snapshotEvents ?? []
+    this.#snapshotEvents = undefined
+    if (
+      this.#snapshotOverflow ||
+      buffered.some((entry) => entry.cursor !== undefined && entry.cursor.epoch !== json.cursor.epoch)
+    ) {
+      this.#refreshAgain = false
+      this.#scheduleReadRetry()
+      return null
+    }
+    this.#retryAttempt = 0
+    this.#syncAfterCommit = false
+    this.#snapshotCursor = json.cursor
+    if (this.#snapshotInvalidation !== undefined) {
+      if (
+        this.#snapshotInvalidation.epoch !== json.cursor.epoch ||
+        this.#snapshotInvalidation.sequence > json.cursor.sequence
+      ) {
+        this.#refreshAgain = true
+      } else {
+        this.#snapshotInvalidation = undefined
+      }
     }
     const projected = projectSnapshot(json, Date.now())
     const previousConnections = new Map(this.#snapshot.connections.map((connection) => [connection.id, connection]))
@@ -1642,8 +1533,28 @@ export class HttpProductHost implements ProductHostPort {
       platformUsersRevision: this.#snapshot.platformUsersRevision,
     }
     for (const message of this.#snapshot.messages) this.#loadedChannels.add(message.channelId)
+    const replay = buffered.filter(
+      (entry) => entry.cursor === undefined || entry.cursor.sequence > json.cursor.sequence,
+    )
+    replay.sort((left, right) => (left.cursor?.sequence ?? Infinity) - (right.cursor?.sequence ?? Infinity))
+    this.#replayingSnapshot = true
+    try {
+      for (const entry of replay) entry.replay()
+    } finally {
+      this.#replayingSnapshot = false
+    }
     this.#listener?.()
     return null
+  }
+
+  #scheduleReadRetry(): void {
+    if (!this.#listener || this.#retryTimer !== undefined) return
+    const lifecycle = this.#lifecycle
+    const delay = Math.min(1000 * 2 ** this.#retryAttempt++, 30_000)
+    this.#retryTimer = setTimeout(() => {
+      this.#retryTimer = undefined
+      if (lifecycle === this.#lifecycle) this.#requestReconcile()
+    }, delay)
   }
 
   #publishFailure(error: ProductHostError): void {
@@ -1663,82 +1574,5 @@ export class HttpProductHost implements ProductHostPort {
   }
 }
 
-const createAgentRequestBody = (input?: Readonly<Record<string, unknown>>): HostApiRequest<'createAgent'> => {
-  const displayName = typeof input?.['displayName'] === 'string' ? input['displayName'] : ''
-  const model = isRecord(input?.['model']) ? input['model'] : undefined
-  const provider = typeof model?.['provider'] === 'string' ? model['provider'].trim() : ''
-  const modelId = typeof model?.['model'] === 'string' ? model['model'].trim() : ''
-  const persona = typeof input?.['persona'] === 'string' ? input['persona'] : ''
-  const personaDocument = input?.['personaDocument']
-  const rawCapabilities = isRecord(input?.['capabilities']) ? input['capabilities'] : {}
-  const imagePolicy = input?.['imagePolicy']
-  if (!displayName.trim()) throw new Error('请输入智能体名称。')
-  if (!provider || !modelId) throw new Error('请选择当前可用的模型。')
-  return HostApiContracts.createAgent.parseRequest({
-    displayName: displayName.trim(),
-    persona,
-    ...(personaDocument === undefined ? {} : { personaDocument }),
-    model: { provider, model: modelId },
-    capabilities: {
-      subagents: rawCapabilities['subagents'] === true,
-      fileTools: rawCapabilities['fileTools'] === true,
-      webSearch: rawCapabilities['webSearch'] === true,
-      dynamicCreation: rawCapabilities['dynamicCreation'] === true,
-      developmentShell: rawCapabilities['developmentShell'] === true,
-      unrestrictedFileAccess: rawCapabilities['unrestrictedFileAccess'] === true,
-    },
-    ...(imagePolicy === undefined ? {} : { imagePolicy }),
-  })
-}
-
 const errorMessage = (cause: unknown, fallback: string): string =>
   cause instanceof Error && cause.message.trim() ? cause.message : fallback
-
-class HostRequestError extends Error {
-  constructor(
-    readonly kind: 'network' | 'http' | 'invalid-response',
-    message: string,
-  ) {
-    super(message)
-    this.name = 'HostRequestError'
-  }
-}
-
-const callHostApi = async <Contract extends HostApiContract, Output>(
-  contract: Contract & { readonly parseResponse: (input: unknown) => Output },
-  params: HostApiContractParams<Contract>,
-  body: HostApiContractRequest<Contract>,
-): Promise<Output> => {
-  const path = buildHostApiContractPath(contract, params)
-  const requestBody = contract.parseRequest(body)
-  let response: Response
-  try {
-    response = await fetch(path, {
-      method: contract.method,
-      headers: {
-        accept: 'application/json',
-        ...(requestBody === undefined ? {} : { 'content-type': 'application/json' }),
-      },
-      ...(requestBody === undefined ? {} : { body: JSON.stringify(requestBody) }),
-    })
-  } catch (cause) {
-    throw new HostRequestError('network', errorMessage(cause, '无法连接 NekroNXT Host。'))
-  }
-  const json: unknown = await response.json().catch(() => null)
-  if (!response.ok) {
-    const parsedError = HostApiErrorSchema.safeParse(json)
-    throw new HostRequestError(
-      'http',
-      parsedError.success ? parsedError.data.error.message : `服务请求失败：${response.status}`,
-    )
-  }
-  try {
-    const parseResponse: (input: unknown) => Output = contract.parseResponse
-    return parseResponse(json)
-  } catch (cause) {
-    throw new HostRequestError(
-      'invalid-response',
-      `NekroNXT Host 返回的数据格式无效：${cause instanceof Error ? cause.message : String(cause)}`,
-    )
-  }
-}

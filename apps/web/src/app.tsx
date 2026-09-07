@@ -1,3 +1,5 @@
+import { useProductRuntime } from './product-runtime.js'
+import { useUiStateStore } from './product-runtime.js'
 import {
   AppWindow,
   BarChart3,
@@ -49,7 +51,7 @@ import {
   SettingsPage,
   UsersPage,
 } from './pages/product-pages.js'
-import { useProductStore, type ProductHostStatus } from './product-store.js'
+import { useProductStore, type ProductHostStatus } from './product-runtime.js'
 import { isWorkPath, workHomePath } from './shell/last-channel.js'
 import { CommandPalette } from './shell/command-palette.js'
 import { NxtNavLink } from './shell/nxt-link.js'
@@ -185,10 +187,13 @@ function RuntimeRedirect() {
 }
 
 function DesktopShell() {
+  const useProductRuntimeUi = useProductRuntime().uiStore
+
+  const uiStore = useProductRuntime().uiStore
   const location = useLocation()
   const navigate = useNavigate()
-  const theme = useProductStore((state) => state.theme)
-  const reducedMotion = useProductStore((state) => state.reducedMotion)
+  const theme = useUiStateStore((state) => state.theme)
+  const reducedMotion = useUiStateStore((state) => state.reducedMotion)
   const savedObjectPaneWidth = useUiPreferences((state) => state.layout.objectPaneWidth)
   const [objectPaneWidth, setObjectPaneWidth] = useState(savedObjectPaneWidth)
   const desktopInstance = useDesktopInstance()
@@ -244,7 +249,7 @@ function DesktopShell() {
   const cycleTheme = (): void => {
     const root = document.documentElement
     if (!reducedMotion) root.dataset['themeChanging'] = ''
-    useProductStore.getState().setTheme(nextTheme)
+    uiStore.getState().setTheme(nextTheme)
     if (!reducedMotion) window.setTimeout(() => delete root.dataset['themeChanging'], 240)
   }
 
@@ -374,7 +379,7 @@ function DesktopShell() {
           defaultValue={OBJECT_PANE_WIDTH.default}
           disabled={objectPaneHidden}
           onChange={setObjectPaneWidth}
-          onCommit={(value) => useUiPreferences.getState().setObjectPaneWidth(value)}
+          onCommit={(value) => useProductRuntimeUi.getState().setObjectPaneWidth(value)}
         />
         <main className={styles.stage}>
           <CommandPalette />
@@ -396,8 +401,8 @@ function DesktopShell() {
 }
 
 function ThemeEffects() {
-  const theme = useProductStore((state) => state.theme)
-  const reducedMotion = useProductStore((state) => state.reducedMotion)
+  const theme = useUiStateStore((state) => state.theme)
+  const reducedMotion = useUiStateStore((state) => state.reducedMotion)
   const reducedTransparency = useUiPreferences((state) => state.appearance.reducedTransparency)
   const contrast = useUiPreferences((state) => state.appearance.contrast)
 
@@ -457,7 +462,7 @@ class ProductErrorBoundary extends Component<{ readonly children: ReactNode }, P
 }
 
 function MotionRoot({ children }: { readonly children: ReactNode }) {
-  const reducedMotion = useProductStore((state) => state.reducedMotion)
+  const reducedMotion = useUiStateStore((state) => state.reducedMotion)
   return <NxtMotionProvider reducedMotion={reducedMotion}>{children}</NxtMotionProvider>
 }
 

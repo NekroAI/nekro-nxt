@@ -1,3 +1,5 @@
+import { runtimeStateLabel } from '../product-model.js'
+import { useProductRuntime } from '../product-runtime.js'
 import {
   Activity,
   ArrowDown,
@@ -23,7 +25,7 @@ import {
   type ConversationMessage,
   type DeliveryState,
   type ChannelSummary,
-} from '../product-store.js'
+} from '../product-runtime.js'
 import {
   Button,
   ConfirmDialog,
@@ -82,17 +84,16 @@ export const isBubblelessMessage = (message: Pick<ConversationMessage, 'parts'>)
 }
 
 const agentTone = (state: AgentRuntimeState): StatusTone => {
-  if (state === '思考中' || state === '使用工具' || state === '等待输入') return 'info'
-  if (state === '不可用') return 'error'
+  if (state === 'thinking' || state === 'using-tool' || state === 'waiting-input') return 'info'
+  if (state === 'unavailable') return 'error'
   return 'neutral'
 }
 
 const runtimeDescription = (state: AgentRuntimeState): string => {
-  if (state === '思考中') return '智能体正在处理当前消息。'
-  if (state === '使用工具') return '智能体正在使用工具。'
-  if (state === '等待输入') return '智能体正在等待输入。'
-  if (state === '已暂停') return '智能体已暂停响应新消息。'
-  if (state === '不可用') return '智能体当前不可用，请检查模型和连接设置。'
+  if (state === 'thinking') return '智能体正在处理当前消息。'
+  if (state === 'using-tool') return '智能体正在使用工具。'
+  if (state === 'waiting-input') return '智能体正在等待输入。'
+  if (state === 'unavailable') return '智能体当前不可用，请检查模型和连接设置。'
   return '智能体当前空闲。'
 }
 
@@ -247,6 +248,10 @@ function ChannelMessageListBase({
 export const ChannelMessageList = memo(ChannelMessageListBase)
 
 export function ChannelConversationPage() {
+  const useProductRuntimeUi = useProductRuntime().uiStore
+
+  const useProductStore = useProductRuntime().store
+
   const { channelId } = useParams()
   const navigate = useNxtNavigate()
   const host = useProductStore((state) => state.host)
@@ -269,7 +274,7 @@ export function ChannelConversationPage() {
   )?.name
   const authoringTask = authoringTasks.find((item) => item.channelId === channel?.id)
   const runtime = useProductStore((state) => (channel ? state.channelRuntimes[channel.id] : undefined))
-  const livePhase = runtime?.phase ?? channel?.runtimePhase ?? agent?.state ?? '空闲'
+  const livePhase = runtime?.phase ?? channel?.runtimePhase ?? agent?.state ?? 'idle'
   const activeChannelId = channel?.id
   const messages = useMemo(
     () => (activeChannelId ? allMessages.filter((message) => message.channelId === activeChannelId) : []),
@@ -303,7 +308,7 @@ export function ChannelConversationPage() {
   const canSendOnWeb = channel?.kind === 'internal' && Boolean(agent)
   const canSendAsRobot = Boolean(channel && channel.kind !== 'internal' && agent && connection?.proactiveSend)
   const toggleInspector = (): void => {
-    useUiPreferences.getState().setInspectorCollapsed(!inspectorCollapsed)
+    useProductRuntimeUi.getState().setInspectorCollapsed(!inspectorCollapsed)
   }
 
   useEffect(() => {
@@ -468,7 +473,9 @@ export function ChannelConversationPage() {
                 <StageCrossfade swapKey={channel.id}>
                   <div>
                     <div className={styles.conversationTitleRow} data-conversation-title>
-                      {agent ? <StatusBadge tone={agentTone(livePhase)}>{livePhase}</StatusBadge> : null}
+                      {agent ? (
+                        <StatusBadge tone={agentTone(livePhase)}>{runtimeStateLabel(livePhase)}</StatusBadge>
+                      ) : null}
                       <h1>{channel.name}</h1>
                     </div>
                     <p>{agent ? `由“${agent.name}”响应 · ${channel.trigger}` : '尚未绑定智能体'}</p>
@@ -564,9 +571,9 @@ export function ChannelConversationPage() {
                             </div>
                           ) : null}
                           <ChannelWorkStream runtime={runtime} />
-                          {agent && livePhase !== '空闲' ? (
+                          {agent && livePhase !== 'idle' ? (
                             <Enter kind="fade" className={styles.runtimeTail} key={livePhase}>
-                              {livePhase === '使用工具' ? (
+                              {livePhase === 'using-tool' ? (
                                 <Wrench size={14} aria-hidden="true" />
                               ) : (
                                 <Activity size={14} aria-hidden="true" />
@@ -678,7 +685,7 @@ export function ChannelConversationPage() {
               side="after"
               disabled={inspectorCollapsed}
               onChange={setInspectorWidth}
-              onCommit={(value) => useUiPreferences.getState().setInspectorWidth(value)}
+              onCommit={(value) => useProductRuntimeUi.getState().setInspectorWidth(value)}
             />
             <SidePane collapsed={inspectorCollapsed} width={inspectorWidth} className={styles.inspectorPane}>
               <div ref={inspectorPaneRef} className={styles.inspectorChrome}>

@@ -1,6 +1,6 @@
+import { useProductRuntime } from '../product-runtime.js'
 import { useState, type ComponentProps } from 'react'
 import { notify } from '../components/notifications.js'
-import { useProductStore } from '../product-store.js'
 import { ConfirmDialog, SelectField } from '../ui-kit/index.js'
 import { isTriggerPolicy, TRIGGER_POLICY_OPTIONS, type TriggerPolicy } from './binding-task.js'
 
@@ -18,13 +18,15 @@ export function BindingChangeDialog({
   readonly onClose: () => void
   readonly onCloseAutoFocus?: ComponentProps<typeof ConfirmDialog>['onCloseAutoFocus']
 }) {
+  const useProductStore = useProductRuntime().store
+
   const agents = useProductStore((state) => state.agents)
   const channels = useProductStore((state) => state.channels)
   const [triggerPolicy, setTriggerPolicy] = useState<TriggerPolicy>('mentioned-or-replied')
   const channel = channels.find((item) => item.id === intent?.channelId)
   const target = intent && intent.kind !== 'clear' ? agents.find((item) => item.id === intent.agentId) : undefined
   const current = channel ? agents.find((item) => item.id === channel.agentId) : undefined
-  const busy = channel?.runtimePhase === '思考中' || channel?.runtimePhase === '使用工具'
+  const busy = channel?.runtimePhase === 'thinking' || channel?.runtimePhase === 'using-tool'
   const title =
     intent?.kind === 'bind' ? '交给智能体响应' : intent?.kind === 'replace' ? '改由其他智能体响应' : '解除频道绑定'
   const description =

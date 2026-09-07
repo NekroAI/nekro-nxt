@@ -25,7 +25,9 @@ interface SseClientState {
 }
 
 const REPLAYABLE_EVENTS = new Set<HostSseEvent['event']>([
+  'snapshot-changed',
   'channel-fact',
+  'connection-fact',
   'runtime',
   'extensions-changed',
   'dynamic-changed',
@@ -70,6 +72,10 @@ export class HostSseHub {
     this.#limit = limit
     if (!/^[a-zA-Z0-9_-]{1,100}$/u.test(epoch)) throw new TypeError('SSE epoch is invalid.')
     this.#epoch = epoch
+  }
+
+  get cursor(): SseCursor {
+    return { epoch: this.#epoch, sequence: this.#nextId - 1 }
   }
 
   get size(): number {

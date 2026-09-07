@@ -1,15 +1,10 @@
+import { useProductRuntime } from './product-runtime.js'
+import { callHostApi } from './host-api-client.js'
 import { Plus, RefreshCw } from 'lucide-react'
 import { useEffect, useMemo, useState, type FormEvent, type ReactNode } from 'react'
-import {
-  HostApiContracts,
-  HostApiErrorSchema,
-  buildHostApiContractPath,
-  type HostApiContract,
-  type HostApiResponse,
-} from '@nekro-nxt/contracts'
+import { HostApiContracts, type HostApiResponse } from '@nekro-nxt/contracts'
 import { notify } from './components/notifications.js'
 import { EmptyState } from './components/product-feedback.js'
-import { useProductStore } from './product-store.js'
 import { providerDisplayName } from './provider-labels.js'
 import { Button, Dialog, Field, Input, SecretInput, SelectField, StatusBadge, Textarea } from './ui-kit/index.js'
 import styles from './llm-settings.module.css'
@@ -17,27 +12,6 @@ import styles from './llm-settings.module.css'
 type ProviderSettingsView = HostApiResponse<'llmProviders'>
 type ProviderView = ProviderSettingsView['providers'][number]
 type DiscoveredModelView = HostApiResponse<'llmDiscoverModels'>['models'][number]
-
-const requestHostApi = async <Output,>(
-  contract: HostApiContract,
-  responseSchema: { parse(input: unknown): Output },
-  params: unknown,
-  request: unknown,
-): Promise<Output> => {
-  const url = buildHostApiContractPath(contract, params)
-  const requestBody = contract.parseRequest(request)
-  const response = await fetch(url, {
-    method: contract.method,
-    headers: { 'content-type': 'application/json' },
-    ...(contract.method === 'GET' || contract.method === 'DELETE' ? {} : { body: JSON.stringify(requestBody) }),
-  })
-  const responseBody: unknown = await response.json()
-  if (!response.ok) {
-    const parsedError = HostApiErrorSchema.safeParse(responseBody)
-    throw new Error(parsedError.success ? parsedError.data.error.message : `请求失败（HTTP ${response.status}）`)
-  }
-  return responseSchema.parse(responseBody)
-}
 
 const modelLines = (models: readonly { readonly id: string }[]): string => models.map((model) => model.id).join('\n')
 
@@ -58,6 +32,8 @@ const customProviderKey = (displayName: string, providers: readonly ProviderView
 }
 
 export function LlmProviderSettings(): React.ReactNode {
+  const useProductStore = useProductRuntime().store
+
   const [settings, setSettings] = useState<ProviderSettingsView | null>(null)
   const [selectedId, setSelectedId] = useState('')
   const [customMode, setCustomMode] = useState(false)
@@ -100,12 +76,7 @@ export function LlmProviderSettings(): React.ReactNode {
     setPending('load')
     setError('')
     try {
-      const next = await requestHostApi(
-        HostApiContracts.llmProviders,
-        HostApiContracts.llmProviders.response,
-        {},
-        undefined,
-      )
+      const next = await callHostApi(HostApiContracts.llmProviders, {}, undefined)
       setSettings(next)
       setSelectedId((current) =>
         next.providers.some((provider) => provider.provider === current && provider.configured)
@@ -161,9 +132,8 @@ export function LlmProviderSettings(): React.ReactNode {
     setPending('discover')
     setError('')
     try {
-      const result = await requestHostApi(
+      const result = await callHostApi(
         HostApiContracts.llmDiscoverModels,
-        HostApiContracts.llmDiscoverModels.response,
         {},
         {
           provider: providerId,
@@ -200,9 +170,8 @@ export function LlmProviderSettings(): React.ReactNode {
     setPending('save')
     setError('')
     try {
-      const next = await requestHostApi(
+      const next = await callHostApi(
         HostApiContracts.llmSaveProvider,
-        HostApiContracts.llmSaveProvider.response,
         { provider: providerId },
         {
           expectedRevision: revision,
@@ -238,9 +207,8 @@ export function LlmProviderSettings(): React.ReactNode {
     setPending('test')
     setError('')
     try {
-      await requestHostApi(
+      await callHostApi(
         HostApiContracts.llmTestProvider,
-        HostApiContracts.llmTestProvider.response,
         {},
         {
           provider: providerId,
@@ -518,6 +486,8 @@ export function LlmProviderSettings(): React.ReactNode {
 }
 
 export function AddModelProviderForm({ onSaved }: { readonly onSaved?: () => void }): ReactNode {
+  const useProductStore = useProductRuntime().store
+
   const [settings, setSettings] = useState<ProviderSettingsView | null>(null)
   const [providerId, setProviderId] = useState('')
   const [apiKey, setApiKey] = useState('')
@@ -528,12 +498,7 @@ export function AddModelProviderForm({ onSaved }: { readonly onSaved?: () => voi
     setPending('load')
     setError('')
     try {
-      const next = await requestHostApi(
-        HostApiContracts.llmProviders,
-        HostApiContracts.llmProviders.response,
-        {},
-        undefined,
-      )
+      const next = await callHostApi(HostApiContracts.llmProviders, {}, undefined)
       setSettings(next)
       setProviderId((current) => {
         if (next.providers.some((provider) => provider.provider === current)) return current
@@ -561,9 +526,8 @@ export function AddModelProviderForm({ onSaved }: { readonly onSaved?: () => voi
     setPending('save')
     setError('')
     try {
-      await requestHostApi(
+      await callHostApi(
         HostApiContracts.llmSaveProvider,
-        HostApiContracts.llmSaveProvider.response,
         { provider: selected.provider },
         {
           expectedRevision: selected.settingsRevision,

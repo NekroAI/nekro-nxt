@@ -1,3 +1,5 @@
+import { runtimeStateLabel } from '../product-model.js'
+import { useProductRuntime } from '../product-runtime.js'
 import {
   DndContext,
   DragOverlay,
@@ -42,7 +44,7 @@ import { useLocation, useParams } from 'react-router-dom'
 import { BindingChangeDialog, type BindingChangeIntent } from '../pages/binding-change.js'
 import { notify } from '../components/notifications.js'
 import { AgentAccessChip } from '../components/agent-access-chip.js'
-import { connectionDisplayName, useProductStore, type AgentSummary, type ChannelSummary } from '../product-store.js'
+import { connectionDisplayName, useProductStore, type AgentSummary, type ChannelSummary } from '../product-runtime.js'
 import { NxtLink, NxtNavLink } from './nxt-link.js'
 import { ConfirmDialog, Field, IconButton, Input, NavGlyph, NavMarkGroup, Tooltip } from '../ui-kit/index.js'
 import styles from '../pages/product-pages.module.css'
@@ -108,7 +110,7 @@ const TreeActivityIndicator = ({ state }: { readonly state: AgentSummary['state'
     className={styles.treeActivityIndicator}
     data-runtime-state={state}
     role="img"
-    aria-label={`运行状态：${state}`}
+    aria-label={`运行状态：${runtimeStateLabel(state)}`}
   />
 )
 
@@ -123,7 +125,7 @@ const ChannelRowBody = ({ item }: { readonly item: ChannelSummary; readonly acti
       <strong>{item.name}</strong>
       <small>{item.connectionName}</small>
     </span>
-    {item.runtimePhase !== '空闲' ? (
+    {item.runtimePhase !== 'idle' ? (
       <span className={styles.treeStateIndicator} data-tree-state-indicator>
         <TreeActivityIndicator state={item.runtimePhase} />
       </span>
@@ -152,7 +154,7 @@ const AgentHeaderBody = ({
       </span>
       <small>{hint}</small>
     </span>
-    {agent.state !== '空闲' ? (
+    {agent.state !== 'idle' ? (
       <span className={styles.treeStateIndicator} data-tree-state-indicator>
         <TreeActivityIndicator state={agent.state} />
       </span>
@@ -411,6 +413,8 @@ function WorkTreeDragOverlay({
 }
 
 function WorkTree() {
+  const useProductStore = useProductRuntime().store
+
   const { agentId, channelId } = useParams()
   const location = useLocation()
   const host = useProductStore((state) => state.host)

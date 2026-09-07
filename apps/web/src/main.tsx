@@ -3,10 +3,7 @@ import { createRoot } from 'react-dom/client'
 import { BrowserRouter } from 'react-router-dom'
 import { NekroNxtApp } from './app.js'
 import { installStableCursorIntent } from './cursor-stability.js'
-import { productHostEventStream } from './host-event-stream.js'
-import { HttpProductHost } from './http-host.js'
-import { ProductHostCoordinator } from './product-port.js'
-import { setActiveProductHost } from './product-store.js'
+import { createProductRuntime, ProductRuntimeProvider } from './product-runtime.js'
 import { applyThemeChoice, readInitialThemeChoice } from './theme-preference.js'
 import '@glinui/tokens/theme.css'
 import './ui-kit/tokens.css'
@@ -20,23 +17,21 @@ const disposeStableCursorIntent = installStableCursorIntent()
 const root = document.querySelector('#root')
 if (!root) throw new Error('NekroNxt Web root element is missing.')
 
-// Real-Host wiring (design docs/08): stream the authoritative Server projection
-// into the Shell and route product actions through the domain API. Without a
-// live Server the Shell keeps its local demo data (graded fallback).
-const coordinator = new ProductHostCoordinator(new HttpProductHost(productHostEventStream))
-setActiveProductHost(coordinator)
-coordinator.start()
+// The transport and product actions share the runtime's single authoritative store.
+const runtime = createProductRuntime()
+const unsubscribeHost = runtime.host.subscribe(() => undefined)
 
 createRoot(root).render(
   <StrictMode>
-    <BrowserRouter>
-      <NekroNxtApp />
-    </BrowserRouter>
+    <ProductRuntimeProvider runtime={runtime}>
+      <BrowserRouter>
+        <NekroNxtApp />
+      </BrowserRouter>
+    </ProductRuntimeProvider>
   </StrictMode>,
 )
 
 window.addEventListener('beforeunload', () => {
   disposeStableCursorIntent()
-  coordinator.dispose()
-  setActiveProductHost(null)
+  unsubscribeHost()
 })

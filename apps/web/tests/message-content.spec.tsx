@@ -1,7 +1,7 @@
 import { renderToStaticMarkup } from 'react-dom/server'
 import { describe, expect, it } from 'vitest'
 import { MessageContent, resolveMessageSide } from '../src/pages/message-content.js'
-import type { ConversationMessage } from '../src/product-store.js'
+import type { ConversationMessage } from './product-fixture.js'
 
 const message = (parts: ConversationMessage['parts']): ConversationMessage => ({
   id: 'msg_markdown',

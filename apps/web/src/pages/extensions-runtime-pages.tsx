@@ -1,3 +1,6 @@
+import { useProductRuntime } from '../product-runtime.js'
+import { callHostApi } from '../host-api-client.js'
+import { useHostActions } from '../product-runtime.js'
 import { DndContext, KeyboardSensor, PointerSensor, closestCenter, useSensor, useSensors } from '@dnd-kit/core'
 import {
   SortableContext,
@@ -8,13 +11,13 @@ import {
 } from '@dnd-kit/sortable'
 import { CSS } from '@dnd-kit/utilities'
 import { ArrowRight, Boxes, Download, FileArchive, GripVertical, Save, Sparkles, Trash2, Upload } from 'lucide-react'
-import { HostApiContracts, HostApiErrorSchema, type HostApiResponse, type HostUiPageEntry } from '@nekro-nxt/contracts'
+import { HostApiContracts, type HostApiResponse, type HostUiPageEntry } from '@nekro-nxt/contracts'
 import { useEffect, useState } from 'react'
 import { Navigate, useParams, useSearchParams } from 'react-router-dom'
 import { useNxtNavigate } from '../shell/nxt-link.js'
 import { notify } from '../components/notifications.js'
 import { EmptyState, InlineFeedback, PageHeader } from '../components/product-feedback.js'
-import { useProductStore, type LocalExtensionSummary } from '../product-store.js'
+import { type LocalExtensionSummary } from '../product-runtime.js'
 import type { DynamicPackageSummary } from '../product-port.js'
 import {
   Button,
@@ -100,6 +103,9 @@ function SortableHostUiPageRow({
 }
 
 function HostUiPageManager() {
+  const useProductStore = useProductRuntime().store
+
+  const hostActions = useHostActions()
   const hostUi = useProductStore((state) => state.hostUi)
   const extensions = useProductStore((state) => state.extensions)
   const [pages, setPages] = useState<readonly HostUiPageEntry[]>(hostUi.pages)
@@ -114,21 +120,10 @@ function HostUiPageManager() {
     setPages(next)
     setPending(true)
     try {
-      const response = await fetch('/api/host-ui/page-preferences', {
-        method: 'PUT',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({
-          expectedRevision: hostUi.preferencesRevision,
-          entries: next.map(({ pageInstanceId, visible }) => ({ pageInstanceId, visible })),
-        }),
+      await hostActions['hostUi.updatePreferences']({
+        expectedRevision: hostUi.preferencesRevision,
+        entries: next.map(({ pageInstanceId, visible }) => ({ pageInstanceId, visible })),
       })
-      const body: unknown = await response.json()
-      if (!response.ok) {
-        const parsed = HostApiErrorSchema.safeParse(body)
-        throw new Error(parsed.success ? parsed.data.error.message : `保存页面入口失败（HTTP ${response.status}）。`)
-      }
-      HostApiContracts.updateHostUiPagePreferences.parseResponse(body)
-      await useProductStore.getState().refreshHost()
     } catch (error) {
       setPages(hostUi.pages)
       notify(error instanceof Error ? error.message : String(error), 'error', 'host-ui-page-preferences')
@@ -219,6 +214,9 @@ export const contractVersionLabel = (version: string): string =>
   version === 'nekro-nxt-extension-v1' ? 'NekroNXT 扩展 v1' : version
 
 export function ExtensionsPage() {
+  const useProductStore = useProductRuntime().store
+
+  const hostActions = useHostActions()
   const { extensionId = '' } = useParams()
   const [extensionSearchParams] = useSearchParams()
   const navigate = useNxtNavigate()
@@ -307,13 +305,13 @@ export function ExtensionsPage() {
     setImportPending(true)
     setImportFileName(file.name)
     try {
-      const response = await fetch('/api/extensions/imports/inspect', { method: 'POST', body: file })
-      const body: unknown = await response.json()
-      if (!response.ok) {
-        const parsed = HostApiErrorSchema.safeParse(body)
-        throw new Error(parsed.success ? parsed.data.error.message : `导入检查失败（HTTP ${response.status}）。`)
-      }
-      const inspection = HostApiContracts.inspectExtensionImport.parseResponse(body)
+      const inspection = await callHostApi(
+        HostApiContracts.inspectExtensionImport,
+        {},
+        {
+          bytes: new Uint8Array(await file.arrayBuffer()),
+        },
+      )
       setImportInspection(inspection)
       setImportSlug(inspection.slugConflict ? `${inspection.slug}-imported` : inspection.slug)
     } catch (error) {
@@ -328,18 +326,10 @@ export function ExtensionsPage() {
     if (!importInspection || importPending) return
     setImportPending(true)
     try {
-      const response = await fetch(`/api/extensions/imports/${encodeURIComponent(importInspection.token)}/commit`, {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify(importInspection.slugConflict ? { localSlug: importSlug } : {}),
+      const result = await hostActions['extensions.commitImport']({
+        token: importInspection.token,
+        ...(importInspection.slugConflict ? { localSlug: importSlug } : {}),
       })
-      const body: unknown = await response.json()
-      if (!response.ok) {
-        const parsed = HostApiErrorSchema.safeParse(body)
-        throw new Error(parsed.success ? parsed.data.error.message : `导入提交失败（HTTP ${response.status}）。`)
-      }
-      const result = HostApiContracts.commitExtensionImport.parseResponse(body)
-      await useProductStore.getState().refreshHost()
       setImportInspection(null)
       setImportFileName('')
       notify(result.idempotent ? '相同的扩展修订已存在，未重复导入。' : '扩展修订已导入，当前未启用。', 'success')
@@ -354,16 +344,9 @@ export function ExtensionsPage() {
     if (!selected || deletePending) return false
     setDeletePending(true)
     try {
-      const response = await fetch(`/api/extensions/${encodeURIComponent(selected.id)}`, { method: 'DELETE' })
-      const body: unknown = await response.json()
-      if (!response.ok) {
-        const parsed = HostApiErrorSchema.safeParse(body)
-        throw new Error(parsed.success ? parsed.data.error.message : `删除扩展失败（HTTP ${response.status}）。`)
-      }
-      HostApiContracts.deleteLocalExtension.parseResponse(body)
+      await hostActions['extensions.delete']({ extensionId: selected.id })
       notify(`已删除本地扩展“${selected.name}”。`, 'success', `extension-delete:${selected.id}`)
       void navigate('/extensions')
-      await useProductStore.getState().refreshHost()
       return true
     } catch (error) {
       notify(error instanceof Error ? error.message : String(error), 'error', `extension-delete:${selected.id}`)
@@ -741,9 +724,27 @@ export function ExtensionsPage() {
                     disabled={!focusedRevision}
                     onClick={() => {
                       if (!focusedRevision) return
-                      window.location.assign(
-                        `/api/extensions/${encodeURIComponent(selected.id)}/revisions/${encodeURIComponent(focusedRevision.id)}/export`,
+                      void callHostApi(
+                        HostApiContracts.exportExtensionRevision,
+                        {
+                          extensionId: selected.id,
+                          revisionId: focusedRevision.id,
+                        },
+                        undefined,
                       )
+                        .then((bytes) => {
+                          const url = URL.createObjectURL(
+                            new Blob([new Uint8Array(bytes)], { type: 'application/zip' }),
+                          )
+                          const anchor = document.createElement('a')
+                          anchor.href = url
+                          anchor.download = `${selected.id}-${focusedRevision.id}.zip`
+                          anchor.click()
+                          setTimeout(() => URL.revokeObjectURL(url), 1000)
+                        })
+                        .catch((error: unknown) =>
+                          notify(error instanceof Error ? error.message : String(error), 'error'),
+                        )
                     }}
                   >
                     <Download size={14} aria-hidden="true" /> 导出 r{focusedRevision?.revision ?? selected.revision}
@@ -915,6 +916,8 @@ const dynamicHalfLabel = (
 }
 
 export function CreatorPage() {
+  const useProductStore = useProductRuntime().store
+
   const { taskId: routeTaskId } = useParams()
   const host = useProductStore((state) => state.host)
   const dynamic = useProductStore((state) => state.dynamic)
@@ -943,7 +946,7 @@ export function CreatorPage() {
     visibleDynamic.find((item) => `${item.episodeId}:${item.pluginId}:${item.packageId ?? ''}` === selectedKey) ??
     visibleDynamic[0]
   const selectedAgent = selectedItem ? agents.find((agent) => agent.id === selectedItem.agentId) : undefined
-  const agentIsSettling = selectedAgent !== undefined && selectedAgent.state !== '空闲'
+  const agentIsSettling = selectedAgent !== undefined && selectedAgent.state !== 'idle'
   const selectedPackageAvailable = selectedItem?.packageId !== undefined
   const eligibleAgents = agents.filter((agent) => agent.capabilities.dynamicCreation)
   const requestedAgent = agents.find((agent) => agent.id === requestedAgentId)

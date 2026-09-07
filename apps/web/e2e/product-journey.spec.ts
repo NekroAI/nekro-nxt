@@ -781,6 +781,7 @@ test("an intelligent-agent can add another channel while replacing that channel'
       status: 200,
       contentType: 'application/json',
       body: JSON.stringify({
+        cursor: { epoch: 'fixture', sequence: 0 },
         channelId,
         ...(channel?.boundAgentId === undefined ? {} : { agentId: channel.boundAgentId }),
         phase: channel?.runtimePhase ?? 'idle',
@@ -1243,14 +1244,20 @@ test('external channel exposes processing feedback and per-event trigger control
     route.fulfill({
       status: 200,
       contentType: 'application/json',
-      body: JSON.stringify({ messages: [], hasMore: false }),
+      body: JSON.stringify({ cursor: { epoch: 'fixture', sequence: 0 }, messages: [], hasMore: false }),
     }),
   )
   await page.route(`**/api/channels/${channelId}/runtime`, (route) =>
     route.fulfill({
       status: 200,
       contentType: 'application/json',
-      body: JSON.stringify({ channelId, phase: 'idle', pendingInjectCount: 0, turns: [] }),
+      body: JSON.stringify({
+        cursor: { epoch: 'fixture', sequence: 0 },
+        channelId,
+        phase: 'idle',
+        pendingInjectCount: 0,
+        turns: [],
+      }),
     }),
   )
   await page.route('**/api/bindings', async (route) => {
@@ -1505,7 +1512,7 @@ test('channel context controls and intelligent-agent deletion are guarded and re
     route.fulfill({
       status: 200,
       contentType: 'application/json',
-      body: JSON.stringify({ messages: [], hasMore: false }),
+      body: JSON.stringify({ cursor: { epoch: 'fixture', sequence: 0 }, messages: [], hasMore: false }),
     }),
   )
   await page.route(`**/api/channels/${channelId}/runtime`, (route) =>
@@ -1513,6 +1520,7 @@ test('channel context controls and intelligent-agent deletion are guarded and re
       status: 200,
       contentType: 'application/json',
       body: JSON.stringify({
+        cursor: { epoch: 'fixture', sequence: 0 },
         channelId,
         agentId,
         episodeId,
@@ -1527,7 +1535,7 @@ test('channel context controls and intelligent-agent deletion are guarded and re
     route.fulfill({
       status: 200,
       contentType: 'application/json',
-      body: JSON.stringify({ messages: [], hasMore: false }),
+      body: JSON.stringify({ cursor: { epoch: 'fixture', sequence: 0 }, messages: [], hasMore: false }),
     }),
   )
   await page.route(`**/api/channels/${externalChannelId}/runtime`, (route) =>
@@ -1535,6 +1543,7 @@ test('channel context controls and intelligent-agent deletion are guarded and re
       status: 200,
       contentType: 'application/json',
       body: JSON.stringify({
+        cursor: { epoch: 'fixture', sequence: 0 },
         channelId: externalChannelId,
         phase: 'idle',
         pendingInjectCount: 0,

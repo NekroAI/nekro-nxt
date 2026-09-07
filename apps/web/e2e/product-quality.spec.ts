@@ -92,6 +92,8 @@ const connectionEvents = Array.from({ length: 35 }, (_, index) => ({
 }))
 
 const productSnapshot = HostApiContracts.snapshot.response.parse({
+  cursor: { epoch: 'fixture', sequence: 0 },
+  diagnosticsSampledAt: 0,
   productMetadata: {
     displayName: 'NekroNXT Preview',
     organizationName: 'NekroAI',
@@ -336,6 +338,7 @@ const productSnapshot = HostApiContracts.snapshot.response.parse({
 })
 
 const channelMessages = HostApiContracts.listChannelMessages.response.parse({
+  cursor: { epoch: 'fixture', sequence: 0 },
   messages: [
     {
       id: visibleEventId,
@@ -435,6 +438,7 @@ const installProductRoutes = async (page: Page): Promise<void> => {
       status: 200,
       contentType: 'application/json',
       body: JSON.stringify({
+        cursor: { epoch: 'fixture', sequence: 0 },
         channelId,
         ...(channel?.boundAgentId === undefined ? {} : { agentId: channel.boundAgentId }),
         phase: channel?.runtimePhase ?? 'idle',
@@ -481,7 +485,7 @@ const installProductRoutes = async (page: Page): Promise<void> => {
     return route.fulfill({
       status: 200,
       contentType: 'application/json',
-      body: JSON.stringify({ messages, hasMore: false }),
+      body: JSON.stringify({ cursor: { epoch: 'fixture', sequence: 0 }, messages, hasMore: false }),
     })
   })
   await page.route('**/api/connections/*/events?*', (route) => {
@@ -1335,6 +1339,7 @@ test('channel tabs, running tools, and trajectory rows remain keyboard operable'
       status: 200,
       contentType: 'application/json',
       body: JSON.stringify({
+        cursor: { epoch: 'fixture', sequence: 0 },
         channelId: targetChannelId,
         agentId: targetAgentId,
         phase: 'using-tool',
@@ -2008,6 +2013,7 @@ test('the product Client runtime approves, restores after reload, and retracts a
       status: 200,
       contentType: 'application/json',
       body: JSON.stringify({
+        cursor: { epoch: 'fixture', sequence: 0 },
         channelId,
         phase: 'idle',
         summary: '智能体当前空闲。',
@@ -2644,6 +2650,7 @@ test('a verified Client extension restores across product pages and retracts whe
       status: 200,
       contentType: 'application/json',
       body: JSON.stringify({
+        cursor: { epoch: 'fixture', sequence: 0 },
         channelId,
         agentId: targetAgentId,
         phase: 'idle',
@@ -3384,6 +3391,7 @@ test('an initial Host failure is explicit and can recover without reloading', as
       status: 200,
       contentType: 'application/json',
       body: JSON.stringify({
+        cursor: { epoch: 'fixture', sequence: 0 },
         channelId,
         phase: 'idle',
         summary: '智能体当前空闲。',
@@ -3396,7 +3404,7 @@ test('an initial Host failure is explicit and can recover without reloading', as
     route.fulfill({
       status: 200,
       contentType: 'application/json',
-      body: JSON.stringify({ messages: [], hasMore: false }),
+      body: JSON.stringify({ cursor: { epoch: 'fixture', sequence: 0 }, messages: [], hasMore: false }),
     }),
   )
   await page.goto('/connections')
@@ -3615,6 +3623,7 @@ test('long message history stays above a growing multiline composer', async ({ p
     '```',
   ].join('\n')
   const longMessages = HostApiContracts.listChannelMessages.response.parse({
+    cursor: { epoch: 'fixture', sequence: 0 },
     messages: Array.from({ length: 32 }, (_, index) => ({
       id: ChannelEventIdSchema.parse(`evt_longhistory${String(index).padStart(2, '0')}`),
       channelId: targetChannelId,
@@ -3642,7 +3651,11 @@ test('long message history stays above a growing multiline composer', async ({ p
     return route.fulfill({
       status: 200,
       contentType: 'application/json',
-      body: JSON.stringify({ messages, hasMore: available.length > messages.length }),
+      body: JSON.stringify({
+        cursor: { epoch: 'fixture', sequence: 0 },
+        messages,
+        hasMore: available.length > messages.length,
+      }),
     })
   })
   await page.setViewportSize({ width: 1100, height: 720 })

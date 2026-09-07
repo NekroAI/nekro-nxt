@@ -1,9 +1,9 @@
+import { useProductRuntime } from '../product-runtime.js'
 import type { HostApiResponse } from '@nekro-nxt/contracts'
 import { History, UsersRound } from 'lucide-react'
 import { useEffect, useState } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import { EmptyState, InlineFeedback, PageHeader } from '../components/product-feedback.js'
-import { useProductStore } from '../product-store.js'
 import { Button, Field, Input, SelectField, Spinner } from '../ui-kit/index.js'
 import styles from './product-pages.module.css'
 
@@ -14,6 +14,8 @@ const channelLabel = (channel: PlatformUser['channelPreview'][number]): string =
   (channel.kind === 'group' ? '未命名群聊' : channel.kind === 'direct' ? '未命名私聊' : '未命名内置频道')
 
 export function UsersPage() {
+  const useProductStore = useProductRuntime().store
+
   const [searchParams, setSearchParams] = useSearchParams()
   const revision = useProductStore((state) => state.platformUsersRevision)
   const facets = useProductStore((state) => state.platformUserFacets)

@@ -1,1095 +1,494 @@
-import type { AdapterConnectionDescriptor } from '@nekro-nxt/adapter-sdk'
-import {
-  HostApiContracts,
-  PlatformUserListResponseSchema,
-  parseJsonValue,
-  type HostApiRequest,
-  type HostApiResponse,
-  type AdapterActivityKey,
-  type HostUiPermissionDeclaration,
-  type PromptDocumentV1,
-} from '@nekro-nxt/contracts'
-import type { ExtensionJsonValue } from '@nekro-nxt/extension-sdk'
+import { StaleHostReadError } from './host-api-client.js'
+import { parseJsonValue } from '@nekro-nxt/contracts'
 import { create } from 'zustand'
-import type { DynamicPackageSummary, ProductHostPort } from './product-port.js'
-import { approveDynamicClientRequest, declineDynamicClientRequest } from './dynamic-client-bridge.js'
-import { readInitialThemeChoice, THEME_STORAGE_KEY, type ThemeChoice } from './theme-preference.js'
-
-export type { ThemeChoice } from './theme-preference.js'
-
-let activeHost: ProductHostPort | null = null
-
-export const setActiveProductHost = (host: ProductHostPort | null): void => {
-  activeHost = host
-}
-
-export const getActiveProductHost = (): ProductHostPort | null => activeHost
-
-export type AgentRuntimeState = '空闲' | '思考中' | '使用工具' | '等待输入' | '已暂停' | '不可用'
-
-export const runtimePhaseToState = (phase: string | undefined, fallbackStatus?: string): AgentRuntimeState => {
-  if (phase === 'using-tool') return '使用工具'
-  if (phase === 'thinking') return '思考中'
-  if (phase === 'waiting-input') return '等待输入'
-  if (phase === 'unavailable') return '不可用'
-  if (phase === 'idle') return '空闲'
-  return fallbackStatus === 'running' ? '思考中' : '空闲'
-}
-export const CHANNEL_MESSAGE_INITIAL_PAGE_SIZE = 16
-export const CHANNEL_MESSAGE_PAGE_SIZE = 24
-export type DeliveryState = '已发送' | '发送中' | '部分发送' | '失败' | '结果未知'
-export type ConnectionState = '已连接' | '正在连接' | '认证过期' | '已配置' | '已断开' | '异常'
-
-export interface ImageUnderstandingPolicy {
-  readonly history: {
-    readonly mode: 'persistent-distinct'
-    readonly detail: 'low' | 'auto' | 'high'
-    readonly restoreAfterCompaction: {
-      readonly recentMessages: number
-      readonly maxImages: number
-    }
-  }
-  readonly textModel:
-    | { readonly mode: 'disabled' }
-    | {
-        readonly mode: 'auxiliary'
-        readonly model: {
-          readonly provider: string
-          readonly model: string
-          readonly reasoningEffort?: string | undefined
-        }
-        readonly maxTokens: number
-      }
-}
-
-export const defaultImageUnderstandingPolicy = (): ImageUnderstandingPolicy => ({
-  history: {
-    mode: 'persistent-distinct',
-    detail: 'auto',
-    restoreAfterCompaction: { recentMessages: 32, maxImages: 20 },
-  },
-  textModel: { mode: 'disabled' },
-})
-
-export interface AgentSummary {
-  readonly id: string
-  readonly name: string
-  readonly description: string
-  readonly state: AgentRuntimeState
-  readonly model: string
-  readonly modelRef?: {
-    readonly provider: string
-    readonly model: string
-    readonly reasoningEffort?: string
-  }
-  readonly persona?: string
-  readonly personaDocument: PromptDocumentV1
-  readonly currentRevisionId?: string
-  readonly channels: readonly string[]
-  readonly extensionCount: number
-  readonly capabilities: {
-    readonly subagents: boolean
-    readonly fileTools: boolean
-    readonly webSearch: boolean
-    readonly dynamicCreation: boolean
-    readonly developmentShell: boolean
-    readonly unrestrictedFileAccess: boolean
-  }
-  readonly imagePolicy: ImageUnderstandingPolicy
-  readonly dynamicClientApprovalPolicy: 'manual' | 'automatic'
-  readonly imageDiagnostics: HostApiResponse<'snapshot'>['agents'][number]['imageDiagnostics']
-}
-
-export interface ModelSummary {
-  readonly provider: string
-  readonly providerName: string
-  readonly id: string
-  readonly name: string
-  readonly description?: string
-  readonly inputModalities?: readonly string[]
-}
-
-export interface ChannelSummary {
-  readonly id: string
-  readonly connectionId: string
-  readonly name: string
-  readonly kind: 'internal' | 'group' | 'direct'
-  readonly connectionName: string
-  readonly agentId: string
-  readonly trigger: string
-  readonly runtimePhase: AgentRuntimeState
-  readonly bindings: readonly {
-    readonly id: string
-    readonly agentId: string
-    readonly triggerPolicy: 'always' | 'mentioned-or-replied' | 'command' | 'observe-only'
-    readonly processingFeedback: 'auto' | 'off'
-    readonly activityTriggerOverrides: HostApiResponse<'snapshot'>['channels'][number]['bindings'][number]['activityTriggerOverrides']
-  }[]
-  readonly unread: number
-}
-
-export interface ChannelRuntimeToolView {
-  readonly callId: string
-  readonly name: string
-  readonly displayName: string
-  readonly state: 'running' | 'succeeded' | 'failed'
-  readonly inputPreview?: string
-  readonly resultPreview?: string
-  readonly wroteToChannel?: boolean
-}
-
-export interface ChannelRuntimeView {
-  readonly channelId: string
-  readonly agentId?: string
-  readonly episodeId?: string
-  readonly phase: AgentRuntimeState
-  readonly summary: string
-  readonly pendingInjectCount: number
-  readonly occupancy?: HostApiResponse<'getChannelRuntime'>['occupancy']
-  readonly cache?: HostApiResponse<'getChannelRuntime'>['cache']
-  readonly performance?: HostApiResponse<'getChannelRuntime'>['performance']
-  readonly turns: HostApiResponse<'getChannelRuntime'>['turns']
-}
-
-export type ConversationPart =
-  | { readonly type: 'text'; readonly text: string }
-  | { readonly type: 'mention'; readonly memberId: string; readonly displayName: string }
-  | { readonly type: 'image'; readonly assetId: string; readonly alt: string; readonly url: string }
-  | { readonly type: 'file'; readonly assetId: string; readonly name: string; readonly url: string }
-  | { readonly type: 'audio'; readonly assetId: string; readonly url: string }
-  | { readonly type: 'quote'; readonly messageId: string }
-  | {
-      readonly type: 'rich'
-      readonly adapterKey: string
-      readonly kind: string
-      readonly summary: string
-      readonly title?: string
-      readonly source?: string
-      readonly targetUrl?: string
-      readonly previewUrl?: string
-      readonly preview?: string
-      readonly extension?: ExtensionJsonValue
-      readonly items?: readonly {
-        readonly sender?: string
-        readonly text?: string
-        readonly card?: {
-          readonly summary: string
-          readonly title?: string
-          readonly source?: string
-          readonly targetUrl?: string
-          readonly previewUrl?: string
-        }
-        readonly imageUrl?: string
-        readonly imageName?: string
-      }[]
-    }
-  | { readonly type: 'unsupported'; readonly label: string }
-
-export interface ConversationMessage {
-  readonly id: string
-  readonly channelId: string
-  readonly author: string
-  readonly role: 'member' | 'agent' | 'system'
-  readonly activityKey?: AdapterActivityKey
-  readonly body: string
-  readonly parts: readonly ConversationPart[]
-  readonly mentionedConnectionAccount: boolean
-  readonly time: string
-  readonly occurredAt?: number
-  readonly delivery?: DeliveryState
-  readonly origin?: 'admin-console'
-  readonly resources: readonly {
-    readonly assetId: string
-    readonly name: string
-    readonly kind: 'image' | 'file' | 'audio'
-    readonly url: string
-  }[]
-}
-
-export interface ChannelHistoryState {
-  readonly loaded: boolean
-  readonly loading: boolean
-  readonly loadingMore: boolean
-  readonly hasMore: boolean
-  readonly error: string
-}
-
-export interface ConnectionSummary {
-  readonly id: string
-  /** Optional user-facing name; the Adapter name remains the platform identity. */
-  readonly alias?: string
-  readonly name: string
-  /** User-facing Adapter name. The opaque key only joins Descriptor, Runtime, and Slot projections. */
-  readonly adapter: string
-  readonly adapterKey: string
-  readonly userManaged: boolean
-  readonly state: ConnectionState
-  readonly accountReference: string
-  readonly credentialConfigured: boolean
-  readonly runtimeState: string
-  readonly lastError: string
-  readonly proactiveSend: boolean
-  readonly activityCapabilities: HostApiResponse<'snapshot'>['connections'][number]['status']['activities']
-  readonly activityTriggerDefaults: HostApiResponse<'snapshot'>['connections'][number]['activityTriggerDefaults']
-  readonly processingFeedbackCapability?: HostApiResponse<'snapshot'>['connections'][number]['status']['processingFeedback']
-  readonly channels: number
-  readonly knownChannels: readonly { readonly id: string; readonly name: string; readonly kind: string }[]
-  readonly lastEvent: string
-  readonly receiveTest: string
-  readonly sendTest: string
-  readonly events: HostApiResponse<'listConnectionEvents'>['events']
-  readonly eventsLoaded: boolean
-  readonly eventsLoading: boolean
-  readonly eventsHasMore: boolean
-}
-
-export interface ArchivedConnectionSummary {
-  readonly id: string
-  readonly adapterKey: string
-  readonly alias?: string
-  readonly adapter: string
-  readonly channelCount: number
-  readonly archivedAt: number
-}
-
-export interface LocalExtensionSummary {
-  readonly id: string
-  readonly slug: string
-  readonly name: string
-  readonly description: string
-  readonly revision: number
-  readonly scope: 'agent' | 'host-adapter' | 'host-ui'
-  readonly revisions: readonly {
-    readonly id: string
-    readonly revision: number
-    readonly createdAt: number
-    readonly scope: 'agent' | 'host-adapter' | 'host-ui'
-    readonly contributions: readonly string[]
-    readonly clientBuilt: boolean
-    readonly buildKey?: string
-    readonly hostSlots: readonly { readonly name: string; readonly key: string }[]
-    readonly pages: HostApiResponse<'snapshot'>['hostUi']['pages']
-    readonly verification?: {
-      readonly verifiedAt: number
-      readonly dshVersion: string
-      readonly contractVersion: string
-      readonly hostBuilt: boolean
-      readonly clientBuilt: boolean
-      readonly buildKey: string
-      readonly toolInvocationCount: number
-      readonly rpcMethods: readonly string[]
-      readonly renderedSlots: readonly string[]
-      readonly permissions?: HostUiPermissionDeclaration
-      readonly permissionDigest?: string
-      readonly permissionApprovalRequired?: boolean
-    }
-  }[]
-  readonly createdByAgentId?: string
-  readonly createdByAgent: string
-  readonly activations: readonly {
-    readonly agentId: string
-    readonly agentName: string
-    readonly revisionId: string
-    readonly revision: number
-    readonly activatedAt: number
-    readonly runtime?: {
-      readonly status: 'active' | 'restore-failed' | 'dispose-failed'
-      readonly message?: string
-      readonly observedAt: number
-    }
-  }[]
-  readonly contributions: readonly string[]
-  readonly verification?: {
-    readonly verifiedAt: number
-    readonly dshVersion: string
-    readonly contractVersion: string
-    readonly hostBuilt: boolean
-    readonly clientBuilt: boolean
-    readonly buildKey: string
-    readonly toolInvocationCount: number
-    readonly rpcMethods: readonly string[]
-    readonly renderedSlots: readonly string[]
-    readonly permissions?: HostUiPermissionDeclaration
-    readonly permissionDigest?: string
-    readonly permissionApprovalRequired?: boolean
-  }
-  readonly clientActivations: readonly {
-    readonly agentId: string
-    readonly revisionId: string
-    readonly buildKey: string
-  }[]
-  readonly clientDiagnostics: readonly {
-    readonly agentId: string
-    readonly revisionId: string
-    readonly status: 'loaded' | 'failed'
-    readonly message?: string
-    readonly observedAt: number
-  }[]
-  readonly installation?: {
-    readonly revisionId: string
-    readonly installedAt: number
-    readonly runtime?: {
-      readonly status: 'active' | 'restore-failed' | 'dispose-failed'
-      readonly message?: string
-      readonly observedAt: number
-    }
-  }
-  readonly hostClientDiagnostic?: {
-    readonly revisionId: string
-    readonly status: 'loaded' | 'failed'
-    readonly message?: string
-    readonly observedAt: number
-  }
-  readonly hostUiPermission?: HostApiResponse<'snapshot'>['extensions'][number]['hostUiPermission']
-  /** Latest saved Revision id; not intended for display. */
-  readonly revisionId?: string
-}
-
-export interface DynamicApproval {
-  readonly id: string
-  readonly title: string
-  readonly purpose: string
-  readonly packageName: string
-  readonly state: '等待批准' | '已批准' | '已拒绝'
-}
-
-export type ProductHostStatus = 'initializing' | 'ready' | 'stale' | 'error'
-
-export interface ProductHostError {
-  readonly code: 'network' | 'http' | 'invalid-snapshot' | 'sse' | 'unknown'
-  readonly message: string
-}
-
-export interface ProductHostState {
-  readonly status: ProductHostStatus
-  readonly error: ProductHostError | null
-  readonly lastSuccessfulAt: number | null
-}
-
-export interface ProductMetadataView {
-  readonly displayName: string
-  readonly organizationName: string
-  readonly version: string
-  readonly releaseId: string
-  readonly repositoryUrl: string
-  readonly licenseSpdx: string | null
-  readonly dshVersion?: string | undefined
-}
-
-export interface SavedDynamicExtension {
-  readonly extensionId: string
-  readonly revisionId: string
-}
-
-export interface CapabilityAvailability {
-  readonly subagents: { readonly available: boolean }
-  readonly webSearch: {
-    readonly provider: string
-    readonly available: boolean
-    readonly credentialConfigured: boolean
-    readonly credentialReference: string
-    readonly maxUsesPerCall: number
-    readonly maxResultsPerCall: number
-    readonly timeoutMs: number
-  }
-}
-
-export type ProductActionErrorCode = 'host-unavailable' | 'invalid-input' | 'missing-prerequisite'
-
-export class ProductActionError extends Error {
-  constructor(
-    readonly code: ProductActionErrorCode,
-    message: string,
-  ) {
-    super(message)
-    this.name = 'ProductActionError'
-  }
-}
-
-export interface ProductState {
-  readonly host: ProductHostState
-  readonly productMetadata: ProductMetadataView | undefined
-  readonly connectionAdapters: readonly AdapterConnectionDescriptor[]
-  readonly capabilityAvailability: CapabilityAvailability
-  readonly models: readonly ModelSummary[]
-  readonly agents: readonly AgentSummary[]
-  readonly channels: readonly ChannelSummary[]
-  readonly messages: readonly ConversationMessage[]
-  readonly channelHistory: Readonly<Record<string, ChannelHistoryState>>
-  readonly channelRuntimes: Readonly<Record<string, ChannelRuntimeView>>
-  readonly connections: readonly ConnectionSummary[]
-  readonly archivedConnections: readonly ArchivedConnectionSummary[]
-  readonly extensions: readonly LocalExtensionSummary[]
-  readonly hostUi: HostApiResponse<'snapshot'>['hostUi']
-  readonly platformUserFacets: HostApiResponse<'listPlatformUsers'>['facets']
-  readonly platformUsersRevision: number
-  readonly approvals: readonly DynamicApproval[]
-  readonly dynamic: readonly DynamicPackageSummary[]
-  readonly authoringTasks: HostApiResponse<'snapshot'>['authoringTasks']
-  readonly notificationSettings: HostApiResponse<'snapshot'>['notificationSettings']
-  readonly theme: ThemeChoice
-  readonly reducedMotion: boolean
-  readonly diagnosticNote: string
-  refreshHost(): Promise<void>
-  createAgent(input: {
-    readonly name: string
-    readonly persona: string
-    readonly personaDocument: PromptDocumentV1
-    readonly model: ModelSummary
-    readonly capabilities: AgentSummary['capabilities']
-    readonly imagePolicy?: ImageUnderstandingPolicy
-  }): Promise<{ readonly agentId: string; readonly channelId: string }>
-  reviseAgent(input: {
-    readonly agentId: string
-    readonly expectedCurrentRevisionId?: string
-    readonly displayName: string
-    readonly persona: string
-    readonly personaDocument: PromptDocumentV1
-    readonly model: ModelSummary
-    readonly reasoningEffort?: string
-    readonly imagePolicy: ImageUnderstandingPolicy
-    readonly dynamicClientApprovalPolicy: 'manual' | 'automatic'
-  }): Promise<void>
-  updateNotificationSettings(
-    input: HostApiRequest<'updateNotificationSettings'>,
-  ): Promise<HostApiResponse<'updateNotificationSettings'>>
-  testBarkNotification(input: HostApiRequest<'testBarkNotification'>): Promise<void>
-  testSystemNotification(): Promise<void>
-  deleteAgent(
-    agentId: string,
-    expectedCurrentRevisionId: string,
-    confirmationName: string,
-    deleteAutoCreatedBuiltInChannels: boolean,
-  ): Promise<void>
-  createConnection(input: {
-    readonly adapterKey: string
-    readonly configuration: Readonly<Record<string, string | number | boolean>>
-    readonly credentials: Readonly<Record<string, string>>
-    readonly alias?: string
-  }): Promise<void>
-  updateConnectionAlias(connectionId: string, alias: string): Promise<void>
-  updateConnectionActivityTriggerDefaults(connectionId: string, activityKeys: readonly string[]): Promise<void>
-  deleteConnection(connectionId: string, deleteChannelData: boolean): Promise<void>
-  restoreConnection(connectionId: string): Promise<void>
-  workTreeOrder: {
-    readonly agentIds: readonly string[]
-    readonly channelIdsByAgent: Readonly<Record<string, readonly string[]>>
-    readonly unboundChannelIds: readonly string[]
-  }
-  createInternalChannel(input: { readonly displayName: string }): Promise<{ readonly channelId: string }>
-  createBinding(input: {
-    readonly agentId: string
-    readonly channelId: string
-    readonly triggerPolicy: 'always' | 'mentioned-or-replied' | 'command' | 'observe-only'
-    readonly processingFeedback?: 'auto' | 'off'
-    readonly activityTriggerOverrides?: HostApiResponse<'snapshot'>['channels'][number]['bindings'][number]['activityTriggerOverrides']
-  }): Promise<void>
-  clearBinding(channelId: string): Promise<void>
-  deleteChannel(channelId: string, expectedBoundAgentId: string | null): Promise<void>
-  resetChannelContext(channelId: string, episodeId: string, mode: 'clear' | 'compact'): Promise<void>
-  putWorkTreeOrder(order: ProductState['workTreeOrder']): Promise<void>
-  sendMessage(channelId: string, body: string): Promise<void>
-  loadChannelMessages(channelId: string, mode?: 'initial' | 'older' | 'latest'): Promise<void>
-  loadChannelRuntime(channelId: string): Promise<void>
-  renameChannel(channelId: string, displayName: string): Promise<void>
-  setCapability(agentId: string, capability: keyof AgentSummary['capabilities'], enabled: boolean): Promise<void>
-  setCapabilities(agentId: string, capabilities: Partial<AgentSummary['capabilities']>): Promise<void>
-  runConnectionTest(id: string, direction: 'receive' | 'send', channelId?: string): Promise<void>
-  loadConnectionEvents(connectionId: string, older?: boolean): Promise<void>
-  resolveApproval(input: { requestId: string; agentId: string; approved: boolean }): Promise<void>
-  stopAuthoringTask(taskId: string, expectedRevision: number): Promise<void>
-  deleteAuthoringTask(taskId: string): Promise<void>
-  saveDynamicExtension(input: {
-    readonly taskId?: string
-    readonly attemptId?: string
-    readonly agentId: string
-    readonly episodeId: string
-    readonly pluginId: string
-    readonly packageId: string
-    readonly name: string
-    readonly slug: string
-    readonly description: string
-    readonly targetExtensionId?: string
-  }): Promise<SavedDynamicExtension>
-  setExtensionActive(id: string, agentId: string, enabled: boolean, revisionId?: string): Promise<void>
-  setHostExtensionInstalled(id: string, revisionId: string | null, permissionDigest?: string): Promise<void>
-  reportHostExtensionClientDiagnostic(input: {
-    readonly extensionId: string
-    readonly revisionId: string
-    readonly status: 'loaded' | 'failed'
-    readonly message?: string
-  }): Promise<void>
-  callExtensionClient(input: {
-    readonly agentId: string
-    readonly extensionId: string
-    readonly revisionId: string
-    readonly method: string
-    readonly value?: ExtensionJsonValue
-  }): Promise<ExtensionJsonValue>
-  reportExtensionClientDiagnostic(input: {
-    readonly agentId: string
-    readonly extensionId: string
-    readonly revisionId: string
-    readonly status: 'loaded' | 'failed'
-    readonly message?: string
-  }): Promise<void>
-  listPlatformUsers(input?: {
-    readonly query?: string
-    readonly adapterKey?: string
-    readonly connectionId?: string
-    readonly cursor?: string
-    readonly limit?: number
-  }): Promise<HostApiResponse<'listPlatformUsers'>>
-  setTheme(theme: ThemeChoice): void
-  setReducedMotion(enabled: boolean): void
-}
-
-const initialReducedMotion = (): boolean =>
-  typeof window !== 'undefined' && window.localStorage.getItem('nekro-nxt.reduced-motion') === 'true'
-
-const requireHost = (): ProductHostPort => {
-  if (activeHost === null)
-    throw new ProductActionError('host-unavailable', '当前未连接 NekroNXT Host，无法执行此操作。')
-  return activeHost
-}
-
+import type { ProductHostPort } from './product-port.js'
+import { createDynamicClientApprovalBridge } from './dynamic-client-bridge.js'
+import {
+  ProductActionError,
+  defaultImageUnderstandingPolicy,
+  CHANNEL_MESSAGE_INITIAL_PAGE_SIZE,
+  CHANNEL_MESSAGE_PAGE_SIZE,
+  type ProductState,
+  type ProductActionErrorCode,
+} from './product-model.js'
 const requireValue = (value: string, message: string, code: ProductActionErrorCode = 'invalid-input'): string => {
   const normalized = value.trim()
   if (!normalized) throw new ProductActionError(code, message)
   return normalized
 }
 
-/** The one product projection for a Connection's primary user-facing label. */
-export const connectionDisplayName = (connection: Pick<ConnectionSummary, 'alias' | 'name'>): string =>
-  connection.alias?.trim() || connection.name
-
-const isRecord = (value: unknown): value is Record<string, unknown> =>
-  typeof value === 'object' && value !== null && !Array.isArray(value)
-
-const isChannelRuntimeView = (value: unknown): value is ChannelRuntimeView =>
-  isRecord(value) &&
-  typeof value['channelId'] === 'string' &&
-  typeof value['summary'] === 'string' &&
-  typeof value['phase'] === 'string' &&
-  typeof value['pendingInjectCount'] === 'number' &&
-  Array.isArray(value['turns'])
-
-export const useProductStore = create<ProductState>((set) => ({
-  host: { status: 'initializing', error: null, lastSuccessfulAt: null },
-  productMetadata: undefined,
-  connectionAdapters: [],
-  capabilityAvailability: {
-    subagents: { available: true },
-    webSearch: {
-      provider: 'deepseek-official',
-      available: false,
-      credentialConfigured: false,
-      credentialReference: 'DEEPSEEK_API_KEY',
-      maxUsesPerCall: 2,
-      maxResultsPerCall: 5,
-      timeoutMs: 60_000,
+export function createProductStore(
+  requireHost: () => ProductHostPort,
+  approvals = createDynamicClientApprovalBridge(),
+) {
+  const useProductStore = create<ProductState>((set) => ({
+    host: { status: 'initializing', error: null, lastSuccessfulAt: null },
+    productMetadata: undefined,
+    connectionAdapters: [],
+    capabilityAvailability: {
+      subagents: { available: true },
+      webSearch: {
+        provider: 'deepseek-official',
+        available: false,
+        credentialConfigured: false,
+        credentialReference: 'DEEPSEEK_API_KEY',
+        maxUsesPerCall: 2,
+        maxResultsPerCall: 5,
+        timeoutMs: 60_000,
+      },
     },
-  },
-  models: [],
-  agents: [],
-  channels: [],
-  messages: [],
-  channelHistory: {},
-  channelRuntimes: {},
-  connections: [],
-  archivedConnections: [],
-  extensions: [],
-  hostUi: { preferencesRevision: 0, pages: [] },
-  platformUserFacets: { adapters: [], connections: [] },
-  platformUsersRevision: 0,
-  approvals: [],
-  dynamic: [],
-  authoringTasks: [],
-  notificationSettings: {
-    system: { enabled: true },
-    bark: { enabled: false, serverUrl: 'https://api.day.app', deviceKeyConfigured: false },
-    events: { 'dynamic-client-approval-requested': true },
-  },
-  theme: readInitialThemeChoice(),
-  reducedMotion: initialReducedMotion(),
-  diagnosticNote: '正在连接 NekroNXT Host…',
-  workTreeOrder: { agentIds: [], channelIdsByAgent: {}, unboundChannelIds: [] },
-  refreshHost: async () => {
-    await requireHost().execute('host.refresh')
-  },
-  createAgent: async ({ name, persona, personaDocument, model, capabilities, imagePolicy }) => {
-    const result = await requireHost().execute('agents.create', {
-      displayName: requireValue(name, '请输入智能体名称。'),
+    models: [],
+    agents: [],
+    channels: [],
+    messages: [],
+    channelHistory: {},
+    channelRuntimes: {},
+    connections: [],
+    archivedConnections: [],
+    extensions: [],
+    hostUi: { preferencesRevision: 0, pages: [] },
+    platformUserFacets: { adapters: [], connections: [] },
+    platformUsersRevision: 0,
+    approvals: [],
+    dynamic: [],
+    authoringTasks: [],
+    notificationSettings: {
+      system: { enabled: true },
+      bark: { enabled: false, serverUrl: 'https://api.day.app', deviceKeyConfigured: false },
+      events: { 'dynamic-client-approval-requested': true },
+    },
+    diagnosticNote: '正在连接 NekroNXT Host…',
+    workTreeOrder: { agentIds: [], channelIdsByAgent: {}, unboundChannelIds: [] },
+    refreshHost: async () => {
+      await requireHost().actions['host.refresh']()
+    },
+    createAgent: async ({ name, persona, personaDocument, model, capabilities, imagePolicy }) => {
+      const result = await requireHost().actions['agents.create']({
+        displayName: requireValue(name, '请输入智能体名称。'),
+        persona,
+        personaDocument,
+        model: { provider: model.provider, model: model.id },
+        capabilities,
+        imagePolicy: imagePolicy ?? defaultImageUnderstandingPolicy(),
+      })
+      return { agentId: result['agentId'], channelId: result['channelId'] }
+    },
+    reviseAgent: async ({
+      agentId,
+      expectedCurrentRevisionId,
+      displayName,
       persona,
       personaDocument,
-      model: { provider: model.provider, model: model.id },
-      capabilities,
-      imagePolicy: imagePolicy ?? defaultImageUnderstandingPolicy(),
-    })
-    if (!isRecord(result) || typeof result['agentId'] !== 'string' || typeof result['channelId'] !== 'string') {
-      throw new ProductActionError('invalid-input', '智能体已创建，但返回结果不完整，请刷新页面。')
-    }
-    return { agentId: result['agentId'], channelId: result['channelId'] }
-  },
-  reviseAgent: async ({
-    agentId,
-    expectedCurrentRevisionId,
-    displayName,
-    persona,
-    personaDocument,
-    model,
-    reasoningEffort,
-    imagePolicy,
-    dynamicClientApprovalPolicy,
-  }) => {
-    await requireHost().execute('agents.revise', {
-      agentId: requireValue(agentId, '缺少智能体标识，请刷新页面后重试。'),
-      expectedCurrentRevisionId: requireValue(
-        expectedCurrentRevisionId ?? '',
-        '缺少当前智能体配置版本，请刷新页面后重试。',
-        'missing-prerequisite',
-      ),
-      displayName: requireValue(displayName, '请输入智能体名称。'),
-      persona,
-      personaDocument,
-      model: { provider: model.provider, model: model.id, ...(reasoningEffort ? { reasoningEffort } : {}) },
+      model,
+      reasoningEffort,
       imagePolicy,
       dynamicClientApprovalPolicy,
-    })
-  },
-  updateNotificationSettings: async (input) => {
-    const result = await requireHost().execute('notifications.update', input)
-    await requireHost().execute('host.refresh')
-    return HostApiContracts.updateNotificationSettings.parseResponse(result)
-  },
-  testBarkNotification: async (input) => {
-    await requireHost().execute('notifications.testBark', input)
-  },
-  testSystemNotification: async () => {
-    await requireHost().execute('notifications.testSystem')
-  },
-  deleteAgent: async (agentId, expectedCurrentRevisionId, confirmationName, deleteAutoCreatedBuiltInChannels) => {
-    await requireHost().execute('agents.delete', {
-      agentId: requireValue(agentId, '缺少智能体标识，请刷新页面后重试。'),
-      expectedCurrentRevisionId: requireValue(
-        expectedCurrentRevisionId,
-        '缺少当前智能体配置版本，请刷新页面后重试。',
-        'missing-prerequisite',
-      ),
-      confirmationName,
-      deleteAutoCreatedBuiltInChannels,
-    })
-  },
-  createConnection: async ({ adapterKey, alias, configuration, credentials }) => {
-    await requireHost().execute('connections.create', {
-      adapterKey: requireValue(adapterKey, '请选择连接平台。'),
-      ...(alias === undefined ? {} : { alias: alias.trim() }),
-      configuration,
-      credentials,
-    })
-  },
-  updateConnectionAlias: async (connectionId, alias) => {
-    await requireHost().execute('connections.updateAlias', {
-      connectionId: requireValue(connectionId, '缺少连接标识，请刷新页面后重试。'),
-      alias: alias.trim(),
-    })
-  },
-  updateConnectionActivityTriggerDefaults: async (connectionId, activityKeys) => {
-    await requireHost().execute('connections.updateActivityTriggerDefaults', {
-      connectionId: requireValue(connectionId, '缺少连接标识，请刷新页面后重试。'),
-      activityKeys,
-    })
-  },
-  deleteConnection: async (connectionId, deleteChannelData) => {
-    await requireHost().execute('connections.delete', {
-      connectionId: requireValue(connectionId, '缺少连接标识，请刷新页面后重试。'),
-      deleteChannelData,
-    })
-  },
-  restoreConnection: async (connectionId) => {
-    await requireHost().execute('connections.restore', {
-      connectionId: requireValue(connectionId, '缺少连接标识，请刷新页面后重试。'),
-    })
-  },
-  createInternalChannel: async ({ displayName }) => {
-    const result = await requireHost().execute('channels.createInternal', {
-      displayName: requireValue(displayName, '请输入频道名称。'),
-    })
-    if (!isRecord(result) || typeof result['channelId'] !== 'string') {
-      throw new ProductActionError('invalid-input', '内置频道创建结果无效，请重新加载。')
-    }
-    return { channelId: result['channelId'] }
-  },
-  createBinding: async ({ agentId, channelId, triggerPolicy, processingFeedback, activityTriggerOverrides }) => {
-    await requireHost().execute('bindings.create', {
-      agentId: requireValue(agentId, '缺少智能体标识，请刷新页面后重试。'),
-      channelId: requireValue(channelId, '请选择要绑定的频道。'),
-      triggerPolicy,
-      ...(processingFeedback === undefined ? {} : { processingFeedback }),
-      ...(activityTriggerOverrides === undefined ? {} : { activityTriggerOverrides }),
-    })
-  },
-  clearBinding: async (channelId) => {
-    await requireHost().execute('bindings.clear', {
-      channelId: requireValue(channelId, '请选择要解除绑定的频道。'),
-    })
-  },
-  deleteChannel: async (channelId, expectedBoundAgentId) => {
-    await requireHost().execute('channels.delete', {
-      channelId: requireValue(channelId, '缺少目标频道，请刷新页面后重试。'),
-      expectedBoundAgentId,
-    })
-  },
-  resetChannelContext: async (channelId, episodeId, mode) => {
-    await requireHost().execute('channels.resetContext', {
-      channelId: requireValue(channelId, '缺少目标频道，请刷新页面后重试。'),
-      expectedEpisodeId: requireValue(episodeId, '频道当前没有可重置的上下文。', 'missing-prerequisite'),
-      mode,
-    })
-  },
-  putWorkTreeOrder: async (order) => {
-    const previous = useProductStore.getState().workTreeOrder
-    const next = {
-      agentIds: [...order.agentIds],
-      channelIdsByAgent: Object.fromEntries(
-        Object.entries(order.channelIdsByAgent).map(([agentId, channelIds]) => [agentId, [...channelIds]]),
-      ),
-      unboundChannelIds: [...order.unboundChannelIds],
-    }
-    useProductStore.setState({ workTreeOrder: next })
-    try {
-      await requireHost().execute('workTreeOrder.put', next)
-    } catch (error) {
-      useProductStore.setState({ workTreeOrder: previous })
-      throw error
-    }
-  },
-  sendMessage: async (channelId, body) => {
-    await requireHost().execute('channels.sendMessage', {
-      channelId: requireValue(channelId, '缺少目标频道，请刷新页面后重试。'),
-      body: requireValue(body, '消息内容不能为空。'),
-    })
-  },
-  loadChannelMessages: async (channelId, mode = 'initial') => {
-    const normalizedChannelId = requireValue(channelId, '缺少目标频道，请刷新页面后重试。')
-    const currentState = useProductStore.getState()
-    const history = currentState.channelHistory[normalizedChannelId]
-    if (mode === 'initial' && (history?.loaded || history?.loading)) return
-    if (mode === 'older' && (history?.loadingMore || history?.hasMore === false)) return
-    const existing = currentState.messages.filter((message) => message.channelId === normalizedChannelId)
-    const oldest = existing[0]
-    useProductStore.setState((state) => ({
-      channelHistory: {
-        ...state.channelHistory,
-        [normalizedChannelId]: {
-          loaded: history?.loaded ?? false,
-          loading: mode === 'initial',
-          loadingMore: mode === 'older',
-          hasMore: history?.hasMore ?? true,
-          error: '',
-        },
-      },
-    }))
-    try {
-      const result = await requireHost().execute('channels.listMessages', {
-        channelId: normalizedChannelId,
-        mode,
-        limit: mode === 'initial' ? CHANNEL_MESSAGE_INITIAL_PAGE_SIZE : CHANNEL_MESSAGE_PAGE_SIZE,
-        ...(mode === 'older' && oldest?.occurredAt !== undefined
-          ? { beforeOccurredAt: oldest.occurredAt, beforeSourceId: oldest.id }
-          : {}),
+    }) => {
+      await requireHost().actions['agents.revise']({
+        agentId: requireValue(agentId, '缺少智能体标识，请刷新页面后重试。'),
+        expectedCurrentRevisionId: requireValue(
+          expectedCurrentRevisionId ?? '',
+          '缺少当前智能体配置版本，请刷新页面后重试。',
+          'missing-prerequisite',
+        ),
+        displayName: requireValue(displayName, '请输入智能体名称。'),
+        persona,
+        personaDocument,
+        model: { provider: model.provider, model: model.id, ...(reasoningEffort ? { reasoningEffort } : {}) },
+        imagePolicy,
+        dynamicClientApprovalPolicy,
       })
-      if (!isRecord(result) || typeof result['hasMore'] !== 'boolean') {
-        throw new ProductActionError('invalid-input', '频道历史返回结果无效，请重新加载。')
+    },
+    updateNotificationSettings: async (input) => {
+      const result = await requireHost().actions['notifications.update'](input)
+      return result
+    },
+    testBarkNotification: async (input) => {
+      await requireHost().actions['notifications.testBark'](input)
+    },
+    testSystemNotification: async () => {
+      await requireHost().actions['notifications.testSystem']()
+    },
+    deleteAgent: async (agentId, expectedCurrentRevisionId, confirmationName, deleteAutoCreatedBuiltInChannels) => {
+      await requireHost().actions['agents.delete']({
+        agentId: requireValue(agentId, '缺少智能体标识，请刷新页面后重试。'),
+        expectedCurrentRevisionId: requireValue(
+          expectedCurrentRevisionId,
+          '缺少当前智能体配置版本，请刷新页面后重试。',
+          'missing-prerequisite',
+        ),
+        confirmationName,
+        deleteAutoCreatedBuiltInChannels,
+      })
+    },
+    createConnection: async ({ adapterKey, alias, configuration, credentials }) => {
+      await requireHost().actions['connections.create']({
+        adapterKey: requireValue(adapterKey, '请选择连接平台。'),
+        ...(alias === undefined ? {} : { alias: alias.trim() }),
+        configuration,
+        credentials,
+      })
+    },
+    updateConnectionAlias: async (connectionId, alias) => {
+      await requireHost().actions['connections.updateAlias']({
+        connectionId: requireValue(connectionId, '缺少连接标识，请刷新页面后重试。'),
+        alias: alias.trim(),
+      })
+    },
+    updateConnectionActivityTriggerDefaults: async (connectionId, activityKeys) => {
+      await requireHost().actions['connections.updateActivityTriggerDefaults']({
+        connectionId: requireValue(connectionId, '缺少连接标识，请刷新页面后重试。'),
+        activityKeys: [...activityKeys],
+      })
+    },
+    deleteConnection: async (connectionId, deleteChannelData) => {
+      await requireHost().actions['connections.delete']({
+        connectionId: requireValue(connectionId, '缺少连接标识，请刷新页面后重试。'),
+        deleteChannelData,
+      })
+    },
+    restoreConnection: async (connectionId) => {
+      await requireHost().actions['connections.restore']({
+        connectionId: requireValue(connectionId, '缺少连接标识，请刷新页面后重试。'),
+      })
+    },
+    createInternalChannel: async ({ displayName }) => {
+      const result = await requireHost().actions['channels.createInternal']({
+        displayName: requireValue(displayName, '请输入频道名称。'),
+      })
+      return { channelId: result['channelId'] }
+    },
+    createBinding: async ({ agentId, channelId, triggerPolicy, processingFeedback, activityTriggerOverrides }) => {
+      await requireHost().actions['bindings.create']({
+        agentId: requireValue(agentId, '缺少智能体标识，请刷新页面后重试。'),
+        channelId: requireValue(channelId, '请选择要绑定的频道。'),
+        triggerPolicy,
+        ...(processingFeedback === undefined ? {} : { processingFeedback }),
+        ...(activityTriggerOverrides === undefined ? {} : { activityTriggerOverrides }),
+      })
+    },
+    clearBinding: async (channelId) => {
+      await requireHost().actions['bindings.clear']({
+        channelId: requireValue(channelId, '请选择要解除绑定的频道。'),
+      })
+    },
+    deleteChannel: async (channelId, expectedBoundAgentId) => {
+      await requireHost().actions['channels.delete']({
+        channelId: requireValue(channelId, '缺少目标频道，请刷新页面后重试。'),
+        expectedBoundAgentId,
+      })
+    },
+    resetChannelContext: async (channelId, episodeId, mode) => {
+      await requireHost().actions['channels.resetContext']({
+        channelId: requireValue(channelId, '缺少目标频道，请刷新页面后重试。'),
+        expectedEpisodeId: requireValue(episodeId, '频道当前没有可重置的上下文。', 'missing-prerequisite'),
+        mode,
+      })
+    },
+    putWorkTreeOrder: async (order) => {
+      const previous = useProductStore.getState().workTreeOrder
+      const next = {
+        agentIds: [...order.agentIds],
+        channelIdsByAgent: Object.fromEntries(
+          Object.entries(order.channelIdsByAgent).map(([agentId, channelIds]) => [agentId, [...channelIds]]),
+        ),
+        unboundChannelIds: [...order.unboundChannelIds],
       }
-      const hasMore = result['hasMore']
-      useProductStore.setState((state) => ({
-        channelHistory: {
-          ...state.channelHistory,
-          [normalizedChannelId]: {
-            loaded: true,
-            loading: false,
-            loadingMore: false,
-            hasMore,
-            error: '',
-          },
-        },
-      }))
-    } catch (error) {
+      useProductStore.setState({ workTreeOrder: next })
+      try {
+        await requireHost().actions['workTreeOrder.put'](next)
+      } catch (error) {
+        if (error instanceof StaleHostReadError) return
+        useProductStore.setState({ workTreeOrder: previous })
+        throw error
+      }
+    },
+    sendMessage: async (channelId, body) => {
+      await requireHost().actions['channels.sendMessage']({
+        channelId: requireValue(channelId, '缺少目标频道，请刷新页面后重试。'),
+        body: requireValue(body, '消息内容不能为空。'),
+      })
+    },
+    loadChannelMessages: async (channelId, mode = 'initial') => {
+      const normalizedChannelId = requireValue(channelId, '缺少目标频道，请刷新页面后重试。')
+      const currentState = useProductStore.getState()
+      const history = currentState.channelHistory[normalizedChannelId]
+      if (mode === 'initial' && (history?.loaded || history?.loading)) return
+      if (mode === 'older' && (history?.loadingMore || history?.hasMore === false)) return
+      const existing = currentState.messages.filter((message) => message.channelId === normalizedChannelId)
+      const oldest = existing[0]
       useProductStore.setState((state) => ({
         channelHistory: {
           ...state.channelHistory,
           [normalizedChannelId]: {
             loaded: history?.loaded ?? false,
-            loading: false,
-            loadingMore: false,
+            loading: mode === 'initial',
+            loadingMore: mode === 'older',
             hasMore: history?.hasMore ?? true,
-            error: error instanceof Error ? error.message : String(error),
+            error: '',
           },
         },
       }))
-      throw error
-    }
-  },
-  loadChannelRuntime: async (channelId) => {
-    const normalizedChannelId = requireValue(channelId, '缺少目标频道，请刷新页面后重试。')
-    const result = await requireHost().execute('channels.getRuntime', { channelId: normalizedChannelId })
-    if (!isChannelRuntimeView(result) || result.channelId !== normalizedChannelId) {
-      throw new ProductActionError('invalid-input', '频道运行状态返回结果无效，请重新加载。')
-    }
-    useProductStore.setState((state) => ({
-      channelRuntimes: {
-        ...state.channelRuntimes,
-        [normalizedChannelId]: result,
-      },
-    }))
-  },
-  renameChannel: async (channelId, displayName) => {
-    await requireHost().execute('channels.rename', {
-      channelId: requireValue(channelId, '缺少目标频道，请刷新页面后重试。'),
-      displayName: requireValue(displayName, '请输入频道名称。'),
-    })
-  },
-  setCapability: async (agentId, capability, enabled) => {
-    await requireHost().execute('agents.updateCapabilities', {
-      agentId: requireValue(agentId, '缺少智能体标识，请刷新页面后重试。'),
-      [capability]: enabled,
-    })
-  },
-  setCapabilities: async (agentId, capabilities) => {
-    await requireHost().execute('agents.updateCapabilities', {
-      agentId: requireValue(agentId, '缺少智能体标识，请刷新页面后重试。'),
-      ...capabilities,
-    })
-  },
-  runConnectionTest: async (id, direction, channelId) => {
-    await requireHost().execute('connections.test', {
-      connectionId: requireValue(id, '缺少连接标识，请刷新页面后重试。'),
-      direction,
-      ...(channelId === undefined ? {} : { channelId }),
-    })
-  },
-  loadConnectionEvents: async (connectionId, older = false) => {
-    const id = requireValue(connectionId, '缺少连接标识，请刷新页面后重试。')
-    const current = useProductStore.getState().connections.find((connection) => connection.id === id)
-    if (!current || current.eventsLoading || (older && !current.eventsHasMore)) return
-    useProductStore.setState((state) => ({
-      connections: state.connections.map((connection) =>
-        connection.id === id ? { ...connection, eventsLoading: true } : connection,
-      ),
-    }))
-    try {
-      const oldest = older ? current.events.at(-1) : undefined
-      const result = HostApiContracts.listConnectionEvents.parseResponse(
-        await requireHost().execute('connections.listEvents', {
+      try {
+        const result = await requireHost().actions['channels.listMessages']({
+          channelId: normalizedChannelId,
+          mode,
+          limit: mode === 'initial' ? CHANNEL_MESSAGE_INITIAL_PAGE_SIZE : CHANNEL_MESSAGE_PAGE_SIZE,
+          ...(mode === 'older' && oldest?.occurredAt !== undefined
+            ? { beforeOccurredAt: oldest.occurredAt, beforeSourceId: oldest.id }
+            : {}),
+        })
+        const hasMore = result['hasMore']
+        useProductStore.setState((state) => ({
+          channelHistory: {
+            ...state.channelHistory,
+            [normalizedChannelId]: {
+              loaded: true,
+              loading: false,
+              loadingMore: false,
+              hasMore,
+              error: '',
+            },
+          },
+        }))
+      } catch (error) {
+        if (error instanceof StaleHostReadError) return
+        useProductStore.setState((state) => ({
+          channelHistory: {
+            ...state.channelHistory,
+            [normalizedChannelId]: {
+              loaded: history?.loaded ?? false,
+              loading: false,
+              loadingMore: false,
+              hasMore: history?.hasMore ?? true,
+              error: error instanceof Error ? error.message : String(error),
+            },
+          },
+        }))
+        throw error
+      }
+    },
+    loadChannelRuntime: async (channelId) => {
+      const normalizedChannelId = requireValue(channelId, '缺少目标频道，请刷新页面后重试。')
+      const result = await requireHost().actions['channels.getRuntime']({ channelId: normalizedChannelId })
+      // The loader owns the runtime cache; do not write a second, potentially stale copy.
+      return void result
+    },
+    renameChannel: async (channelId, displayName) => {
+      await requireHost().actions['channels.rename']({
+        channelId: requireValue(channelId, '缺少目标频道，请刷新页面后重试。'),
+        displayName: requireValue(displayName, '请输入频道名称。'),
+      })
+    },
+    setCapability: async (agentId, capability, enabled) => {
+      await requireHost().actions['agents.updateCapabilities']({
+        agentId: requireValue(agentId, '缺少智能体标识，请刷新页面后重试。'),
+        [capability]: enabled,
+      })
+    },
+    setCapabilities: async (agentId, capabilities) => {
+      await requireHost().actions['agents.updateCapabilities']({
+        agentId: requireValue(agentId, '缺少智能体标识，请刷新页面后重试。'),
+        ...capabilities,
+      })
+    },
+    runConnectionTest: async (id, direction, channelId) => {
+      await requireHost().actions['connections.test']({
+        connectionId: requireValue(id, '缺少连接标识，请刷新页面后重试。'),
+        direction,
+        ...(channelId === undefined ? {} : { channelId }),
+      })
+    },
+    loadConnectionEvents: async (connectionId, older = false) => {
+      const id = requireValue(connectionId, '缺少连接标识，请刷新页面后重试。')
+      const current = useProductStore.getState().connections.find((connection) => connection.id === id)
+      if (!current || current.eventsLoading || (older && !current.eventsHasMore)) return
+      useProductStore.setState((state) => ({
+        connections: state.connections.map((connection) =>
+          connection.id === id ? { ...connection, eventsLoading: true } : connection,
+        ),
+      }))
+      try {
+        const oldest = older ? current.events.at(-1) : undefined
+        const result = await requireHost().actions['connections.listEvents']({
           connectionId: id,
           limit: 30,
           ...(oldest === undefined ? {} : { beforeReceivedAt: oldest.occurredAt, beforeId: oldest.id }),
-        }),
-      )
-      useProductStore.setState((state) => ({
-        connections: state.connections.map((connection) => {
-          if (connection.id !== id) return connection
-          const combined = older ? [...connection.events, ...result.events] : result.events
-          return {
-            ...connection,
-            events: [...new Map(combined.map((event) => [event.id, event])).values()],
-            eventsLoaded: true,
-            eventsLoading: false,
-            eventsHasMore: result.hasMore,
-          }
-        }),
-      }))
-    } catch (error) {
-      useProductStore.setState((state) => ({
-        connections: state.connections.map((connection) =>
-          connection.id === id ? { ...connection, eventsLoading: false } : connection,
-        ),
-      }))
-      throw error
-    }
-  },
-  resolveApproval: async ({ requestId, agentId, approved }) => {
-    const normalizedRequestId = requireValue(requestId, '缺少批准请求，请刷新页面后重试。')
-    const normalizedAgentId = requireValue(agentId, '缺少智能体标识，请刷新页面后重试。')
-    const dynamicItem = useProductStore
-      .getState()
-      .dynamic.find((item) => item.agentId === normalizedAgentId && item.approvalRequestId === normalizedRequestId)
-    const task = dynamicItem
-      ? useProductStore
-          .getState()
-          .authoringTasks.find(
-            (candidate) =>
-              candidate.agentId === normalizedAgentId &&
-              candidate.episodeId === dynamicItem.episodeId &&
-              candidate.candidateAttempt !== undefined,
-          )
-      : undefined
-    if (task?.candidateAttempt) {
-      const host = requireHost()
-      const decide = (candidate: typeof task, attemptId: string): Promise<unknown> =>
-        host.execute('authoring.decide', {
-          taskId: candidate.id,
-          attemptId,
-          expectedRevision: candidate.revision,
+        })
+        useProductStore.setState((state) => ({
+          connections: state.connections.map((connection) => {
+            if (connection.id !== id) return connection
+            const combined = older ? [...connection.events, ...result.events] : result.events
+            return {
+              ...connection,
+              events: [...new Map(combined.map((event) => [event.id, event])).values()],
+              eventsLoaded: true,
+              eventsLoading: false,
+              eventsHasMore: result.hasMore,
+            }
+          }),
+        }))
+      } catch (error) {
+        if (error instanceof StaleHostReadError) return
+        useProductStore.setState((state) => ({
+          connections: state.connections.map((connection) =>
+            connection.id === id ? { ...connection, eventsLoading: false } : connection,
+          ),
+        }))
+        throw error
+      }
+    },
+    resolveApproval: async ({ requestId, agentId, approved }) => {
+      const normalizedRequestId = requireValue(requestId, '缺少批准请求，请刷新页面后重试。')
+      const normalizedAgentId = requireValue(agentId, '缺少智能体标识，请刷新页面后重试。')
+      const dynamicItem = useProductStore
+        .getState()
+        .dynamic.find((item) => item.agentId === normalizedAgentId && item.approvalRequestId === normalizedRequestId)
+      const task = dynamicItem
+        ? useProductStore
+            .getState()
+            .authoringTasks.find(
+              (candidate) =>
+                candidate.agentId === normalizedAgentId &&
+                candidate.episodeId === dynamicItem.episodeId &&
+                candidate.candidateAttempt !== undefined,
+            )
+        : undefined
+      if (task?.candidateAttempt) {
+        const host = requireHost()
+        await host.actions['authoring.decide']({
+          taskId: task.id,
+          attemptId: task.candidateAttempt.id,
+          expectedRevision: task.revision,
           approved,
           approveRiskStable: true,
         })
-      try {
-        await decide(task, task.candidateAttempt.id)
-      } catch (cause) {
-        await host.execute('host.refresh')
-        const refreshedTask = useProductStore.getState().authoringTasks.find((candidate) => candidate.id === task.id)
-        if (
-          refreshedTask?.candidateAttempt?.id !== task.candidateAttempt.id ||
-          refreshedTask.status !== 'awaiting-approval' ||
-          refreshedTask.revision === task.revision
-        ) {
-          throw cause
-        }
-        await decide(refreshedTask, refreshedTask.candidateAttempt.id)
       }
-    }
-    const handled = approved
-      ? await approveDynamicClientRequest(normalizedAgentId, normalizedRequestId)
-      : await declineDynamicClientRequest(normalizedAgentId, normalizedRequestId)
-    if (!handled) {
-      const episodeId = useProductStore
-        .getState()
-        .dynamic.find(
-          (item) => item.agentId === normalizedAgentId && item.approvalRequestId === normalizedRequestId,
-        )?.episodeId
-      await requireHost().execute(approved ? 'dynamic.approve' : 'dynamic.decline', {
-        requestId: normalizedRequestId,
-        agentId: normalizedAgentId,
-        episodeId: requireValue(episodeId ?? '', '找不到批准请求所属的 Episode，请刷新页面后重试。'),
+      const handled = approved
+        ? await approvals.approve(normalizedAgentId, normalizedRequestId)
+        : await approvals.decline(normalizedAgentId, normalizedRequestId)
+      if (!handled) {
+        const episodeId = useProductStore
+          .getState()
+          .dynamic.find(
+            (item) => item.agentId === normalizedAgentId && item.approvalRequestId === normalizedRequestId,
+          )?.episodeId
+        await requireHost().actions[approved ? 'dynamic.approve' : 'dynamic.decline']({
+          requestId: normalizedRequestId,
+          agentId: normalizedAgentId,
+          episodeId: requireValue(episodeId ?? '', '找不到批准请求所属的 Episode，请刷新页面后重试。'),
+        })
+      }
+      void requireHost()
+        .actions['host.refresh']()
+        .catch(() => undefined)
+    },
+    stopAuthoringTask: async (taskId, expectedRevision) => {
+      await requireHost().actions['authoring.stop']({
+        taskId: requireValue(taskId, '缺少创造任务标识，请刷新页面后重试。'),
+        expectedRevision,
       })
-    }
-    await requireHost().execute('host.refresh')
-  },
-  stopAuthoringTask: async (taskId, expectedRevision) => {
-    await requireHost().execute('authoring.stop', {
-      taskId: requireValue(taskId, '缺少创造任务标识，请刷新页面后重试。'),
-      expectedRevision,
-    })
-    await requireHost().execute('host.refresh')
-  },
-  deleteAuthoringTask: async (taskId) => {
-    await requireHost().execute('authoring.delete', {
-      taskId: requireValue(taskId, '缺少创造任务标识，请刷新页面后重试。'),
-    })
-    await requireHost().execute('host.refresh')
-  },
-  saveDynamicExtension: async ({
-    taskId,
-    attemptId,
-    agentId,
-    episodeId,
-    pluginId,
-    packageId,
-    name,
-    slug,
-    description,
-    targetExtensionId,
-  }) => {
-    const result = await requireHost().execute('extensions.saveFromDynamic', {
-      ...(taskId === undefined ? {} : { taskId }),
-      ...(attemptId === undefined ? {} : { attemptId }),
-      agentId: requireValue(agentId, '缺少智能体标识，请刷新页面后重试。'),
-      episodeId: requireValue(episodeId, '缺少 Episode 标识，请刷新页面后重试。'),
-      pluginId: requireValue(pluginId, '缺少 Plugin 标识，请刷新页面后重试。'),
-      packageId: requireValue(packageId, '缺少 Package 标识，请刷新页面后重试。'),
-      name: requireValue(name, '请输入本地扩展名称。'),
-      slug: requireValue(slug, '请输入本地扩展标识。'),
+    },
+    deleteAuthoringTask: async (taskId) => {
+      await requireHost().actions['authoring.delete']({
+        taskId: requireValue(taskId, '缺少创造任务标识，请刷新页面后重试。'),
+      })
+    },
+    saveDynamicExtension: async ({
+      taskId,
+      attemptId,
+      agentId,
+      episodeId,
+      pluginId,
+      packageId,
+      name,
+      slug,
       description,
-      ...(targetExtensionId === undefined ? {} : { targetExtensionId }),
-    })
-    if (
-      !isRecord(result) ||
-      typeof result['extensionId'] !== 'string' ||
-      !result['extensionId'].trim() ||
-      typeof result['revisionId'] !== 'string' ||
-      !result['revisionId'].trim()
-    ) {
-      throw new ProductActionError('invalid-input', '扩展保存结果缺少扩展或版本标识。')
-    }
-    return { extensionId: result['extensionId'], revisionId: result['revisionId'] }
-  },
-  setExtensionActive: async (id, agentId, enabled, selectedRevisionId) => {
-    const extensionId = requireValue(id, '缺少本地扩展标识，请刷新页面后重试。')
-    const targetAgentId = requireValue(agentId, '缺少目标智能体，请刷新页面后重试。')
-    const extension = useProductStore.getState().extensions.find((candidate) => candidate.id === extensionId)
-    if (extension === undefined) {
-      throw new ProductActionError('missing-prerequisite', '找不到要更新的本地扩展，请刷新页面后重试。')
-    }
+      targetExtensionId,
+    }) => {
+      const result = await requireHost().actions['extensions.saveFromDynamic']({
+        ...(taskId !== undefined && attemptId !== undefined
+          ? { taskId, attemptId }
+          : {
+              agentId: requireValue(agentId, '缺少智能体标识，请刷新页面后重试。'),
+              episodeId: requireValue(episodeId, '缺少 Episode 标识，请刷新页面后重试。'),
+              pluginId: requireValue(pluginId, '缺少 Plugin 标识，请刷新页面后重试。'),
+              packageId: requireValue(packageId, '缺少 Package 标识，请刷新页面后重试。'),
+            }),
+        name: requireValue(name, '请输入本地扩展名称。'),
+        slug: requireValue(slug, '请输入本地扩展标识。'),
+        description,
+        ...(targetExtensionId === undefined ? {} : { targetExtensionId }),
+      })
+      return { extensionId: result['extensionId'], revisionId: result['revisionId'] }
+    },
+    setExtensionActive: async (id, agentId, enabled, selectedRevisionId) => {
+      const extensionId = requireValue(id, '缺少本地扩展标识，请刷新页面后重试。')
+      const targetAgentId = requireValue(agentId, '缺少目标智能体，请刷新页面后重试。')
+      const extension = useProductStore.getState().extensions.find((candidate) => candidate.id === extensionId)
+      if (extension === undefined) {
+        throw new ProductActionError('missing-prerequisite', '找不到要更新的本地扩展，请刷新页面后重试。')
+      }
 
-    if (enabled) {
-      const revisionId = requireValue(
-        selectedRevisionId ?? extension.revisionId ?? '',
-        '此本地扩展缺少可启用版本，请重新保存后重试。',
-        'missing-prerequisite',
-      )
-      await requireHost().execute('extensions.activate', { extensionId, agentId: targetAgentId, revisionId })
-      return
-    }
-    await requireHost().execute('extensions.deactivate', {
-      extensionId,
-      agentId: targetAgentId,
-    })
-  },
-  setHostExtensionInstalled: async (id, revisionId, permissionDigest) => {
-    const extensionId = requireValue(id, '缺少本地扩展标识，请刷新页面后重试。')
-    if (revisionId === null) {
-      await requireHost().execute('extensions.uninstall', { extensionId })
-      return
-    }
-    await requireHost().execute('extensions.install', {
-      extensionId,
-      revisionId: requireValue(revisionId, '缺少要安装的扩展版本。'),
-      ...(permissionDigest === undefined ? {} : { permissionDigest }),
-    })
-  },
-  reportHostExtensionClientDiagnostic: async ({ extensionId, revisionId, status, message }) => {
-    await requireHost().execute('extensions.hostClientDiagnostic', {
-      extensionId: requireValue(extensionId, '缺少扩展标识。'),
-      revisionId: requireValue(revisionId, '缺少扩展版本。'),
-      status,
-      ...(message === undefined ? {} : { message }),
-    })
-  },
-  callExtensionClient: async ({ agentId, extensionId, revisionId, method, value }) => {
-    const result = await requireHost().execute('extensions.clientCall', {
-      agentId: requireValue(agentId, '缺少智能体标识，请刷新页面后重试。'),
-      extensionId: requireValue(extensionId, '缺少扩展标识，请刷新页面后重试。'),
-      revisionId: requireValue(revisionId, '缺少扩展版本，请刷新页面后重试。'),
-      method: requireValue(method, '缺少 RPC 方法，请刷新页面后重试。'),
-      ...(value === undefined ? {} : { value }),
-    })
-    if (!isRecord(result) || !('value' in result)) {
-      throw new ProductActionError('invalid-input', '扩展 RPC 返回结果无效。')
-    }
-    return parseJsonValue(result['value'])
-  },
-  reportExtensionClientDiagnostic: async ({ agentId, extensionId, revisionId, status, message }) => {
-    await requireHost().execute('extensions.clientDiagnostic', {
-      agentId: requireValue(agentId, '缺少智能体标识，请刷新页面后重试。'),
-      extensionId: requireValue(extensionId, '缺少扩展标识，请刷新页面后重试。'),
-      revisionId: requireValue(revisionId, '缺少扩展版本，请刷新页面后重试。'),
-      status,
-      ...(message === undefined ? {} : { message }),
-    })
-  },
-  listPlatformUsers: async (input = {}) => {
-    const result = PlatformUserListResponseSchema.parse(await requireHost().execute('platformUsers.list', input))
-    set({ platformUserFacets: result.facets })
-    return result
-  },
-  setTheme: (theme) => {
-    if (typeof window !== 'undefined') window.localStorage.setItem(THEME_STORAGE_KEY, theme)
-    useProductStore.setState({ theme })
-  },
-  setReducedMotion: (reducedMotion) => {
-    if (typeof window !== 'undefined') window.localStorage.setItem('nekro-nxt.reduced-motion', String(reducedMotion))
-    useProductStore.setState({ reducedMotion })
-  },
-}))
+      if (enabled) {
+        const revisionId = requireValue(
+          selectedRevisionId ?? extension.revisionId ?? '',
+          '此本地扩展缺少可启用版本，请重新保存后重试。',
+          'missing-prerequisite',
+        )
+        await requireHost().actions['extensions.activate']({ extensionId, agentId: targetAgentId, revisionId })
+        return
+      }
+      await requireHost().actions['extensions.deactivate']({
+        extensionId,
+        agentId: targetAgentId,
+      })
+    },
+    setHostExtensionInstalled: async (id, revisionId, permissionDigest) => {
+      const extensionId = requireValue(id, '缺少本地扩展标识，请刷新页面后重试。')
+      if (revisionId === null) {
+        await requireHost().actions['extensions.uninstall']({ extensionId })
+        return
+      }
+      await requireHost().actions['extensions.install']({
+        extensionId,
+        revisionId: requireValue(revisionId, '缺少要安装的扩展版本。'),
+        ...(permissionDigest === undefined ? {} : { permissionDigest }),
+      })
+    },
+    reportHostExtensionClientDiagnostic: async ({ extensionId, revisionId, status, message }) => {
+      await requireHost().actions['extensions.hostClientDiagnostic']({
+        extensionId: requireValue(extensionId, '缺少扩展标识。'),
+        revisionId: requireValue(revisionId, '缺少扩展版本。'),
+        status,
+        ...(message === undefined ? {} : { message }),
+      })
+    },
+    callExtensionClient: async ({ agentId, extensionId, revisionId, method, value }) => {
+      const result = await requireHost().actions['extensions.clientCall']({
+        agentId: requireValue(agentId, '缺少智能体标识，请刷新页面后重试。'),
+        extensionId: requireValue(extensionId, '缺少扩展标识，请刷新页面后重试。'),
+        revisionId: requireValue(revisionId, '缺少扩展版本，请刷新页面后重试。'),
+        method: requireValue(method, '缺少 RPC 方法，请刷新页面后重试。'),
+        ...(value === undefined ? {} : { value: parseJsonValue(value) }),
+      })
+      return result.value
+    },
+    reportExtensionClientDiagnostic: async ({ agentId, extensionId, revisionId, status, message }) => {
+      await requireHost().actions['extensions.clientDiagnostic']({
+        agentId: requireValue(agentId, '缺少智能体标识，请刷新页面后重试。'),
+        extensionId: requireValue(extensionId, '缺少扩展标识，请刷新页面后重试。'),
+        revisionId: requireValue(revisionId, '缺少扩展版本，请刷新页面后重试。'),
+        status,
+        ...(message === undefined ? {} : { message }),
+      })
+    },
+    listPlatformUsers: async (input = {}) => {
+      const result = await requireHost().actions['platformUsers.list'](input)
+      set({ platformUserFacets: result.facets })
+      return result
+    },
+  }))
+
+  return useProductStore
+}

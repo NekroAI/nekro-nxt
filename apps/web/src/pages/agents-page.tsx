@@ -1,3 +1,5 @@
+import { runtimeStateLabel } from '../product-model.js'
+import { useProductRuntime } from '../product-runtime.js'
 import { ChevronDown, ChevronUp, PanelRightClose, PanelRightOpen, Plus, Save, ShieldAlert, Trash2 } from 'lucide-react'
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type KeyboardEvent } from 'react'
 import { useParams, useSearchParams } from 'react-router-dom'
@@ -21,13 +23,12 @@ import {
 import {
   connectionDisplayName,
   defaultImageUnderstandingPolicy,
-  useProductStore,
   type AgentRuntimeState,
   type AgentSummary,
   type ImageUnderstandingPolicy,
   type LocalExtensionSummary,
   type ModelSummary,
-} from '../product-store.js'
+} from '../product-runtime.js'
 import {
   AgentStateRing,
   Button,
@@ -54,10 +55,10 @@ import { agentModelKey, createAgentDraft } from './agent-create-draft.js'
 import styles from './product-pages.module.css'
 
 const agentTone = (state: AgentRuntimeState): StatusTone => {
-  if (state === '空闲') return 'neutral'
-  if (state === '思考中' || state === '使用工具') return 'info'
-  if (state === '等待输入') return 'info'
-  if (state === '不可用') return 'error'
+  if (state === 'idle') return 'neutral'
+  if (state === 'thinking' || state === 'using-tool') return 'info'
+  if (state === 'waiting-input') return 'info'
+  if (state === 'unavailable') return 'error'
   return 'neutral'
 }
 
@@ -375,6 +376,8 @@ const isAgentSettingsTab = (value: string | null): value is AgentSettingsTab =>
   value === 'profile' || value === 'channels' || value === 'capabilities' || value === 'extensions'
 
 export function AgentsPage() {
+  const useProductStore = useProductRuntime().store
+
   const host = useProductStore((state) => state.host)
   const models = useProductStore((state) => state.models)
   const capabilityAvailability = useProductStore((state) => state.capabilityAvailability)
@@ -673,6 +676,10 @@ const sameAgentProfile = (left: AgentProfileDraft, right: AgentProfileDraft): bo
   left.dynamicClientApprovalPolicy === right.dynamicClientApprovalPolicy
 
 export function AgentManagePage() {
+  const useProductRuntimeUi = useProductRuntime().uiStore
+
+  const useProductStore = useProductRuntime().store
+
   const { agentId = '' } = useParams()
   const [searchParams, setSearchParams] = useSearchParams()
   const navigate = useNxtNavigate()
@@ -962,7 +969,7 @@ export function AgentManagePage() {
   }
   const canConfirmDelete = deleteConfirmation === agent.name && Boolean(agent.currentRevisionId)
   const toggleInspector = (): void => {
-    useUiPreferences.getState().setInspectorCollapsed(!inspectorCollapsed)
+    useProductRuntimeUi.getState().setInspectorCollapsed(!inspectorCollapsed)
   }
 
   return (
@@ -980,8 +987,10 @@ export function AgentManagePage() {
             title={agent.name}
             meta={
               <>
-                {agent.state !== '空闲' ? <AgentStateRing state={agent.state} label={agent.state} /> : null}
-                <StatusBadge tone={agentTone(agent.state)}>{agent.state}</StatusBadge>
+                {agent.state !== 'idle' ? (
+                  <AgentStateRing state={agent.state} label={runtimeStateLabel(agent.state)} />
+                ) : null}
+                <StatusBadge tone={agentTone(agent.state)}>{runtimeStateLabel(agent.state)}</StatusBadge>
               </>
             }
             actions={
@@ -1343,7 +1352,7 @@ export function AgentManagePage() {
           side="after"
           disabled={inspectorCollapsed}
           onChange={setInspectorWidth}
-          onCommit={(value) => useUiPreferences.getState().setInspectorWidth(value)}
+          onCommit={(value) => useProductRuntimeUi.getState().setInspectorWidth(value)}
         />
         <SidePane collapsed={inspectorCollapsed} width={inspectorWidth} className={styles.inspectorPane}>
           <div ref={inspectorPaneRef} style={{ height: '100%', minHeight: 0 }}>
@@ -1361,9 +1370,9 @@ export function AgentManagePage() {
                 <h2>运行概况</h2>
                 <div className={styles.workbenchStatus}>
                   <div>
-                    <strong>{agent.state}</strong>
+                    <strong>{runtimeStateLabel(agent.state)}</strong>
                     <small>
-                      {agent.state === '空闲'
+                      {agent.state === 'idle'
                         ? '当前没有正在执行的智能体任务。'
                         : '运行中的任务会在安全间隙使用兼容的新配置。'}
                     </small>
