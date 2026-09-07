@@ -74,12 +74,12 @@ export class CoreDatabase {
           .get()?.createdAt
       : undefined
     const migrations = readMigrationFiles({ migrationsFolder: migrationFolder })
-    if (hasMigrationTable) {
-      const known = new Set(migrations.map(({ folderMillis }) => folderMillis))
-      const applied = this.db.select().from(migrationJournal).all()
-      if (applied.some(({ createdAt }) => !known.has(createdAt))) {
-        throw new Error('Core SQLite 包含当前版本未知迁移，拒绝降级启动。')
-      }
+    const latestKnown = Math.max(...migrations.map(({ folderMillis }) => folderMillis))
+    // Drizzle historically advances by the latest timestamp. Existing development
+    // journals may contain older timestamps no longer listed in today's files;
+    // rejecting those would strand already-supported data. Refuse future schemas.
+    if (lastApplied !== undefined && lastApplied > latestKnown) {
+      throw new Error('Core SQLite 包含当前版本未知迁移，拒绝降级启动。')
     }
     const pending = migrations.filter(({ folderMillis }) => lastApplied === undefined || folderMillis > lastApplied)
     const checkIntegrity = (): void => {

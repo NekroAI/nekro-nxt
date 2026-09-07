@@ -6,7 +6,7 @@
 
 数据库按 agents、channels、connection events、runtime、outbox、assets、extensions、动态创造账本和 DSH plugins 分域维护 Repository，另含 Host 工作树顺序单行表与独立 Host Security Repository。Host Security 保存单例实例身份、管理密钥摘要和配对设备 Secret 摘要，不保存管理密钥或设备 Secret。Connection 的可选 `alias` 与其他字段一起经过行 Schema 读取；所有持久 JSON 读出后均经过 `drizzle-zod` 行 Schema 和领域 Schema；ID 使用带格式校验的 Zod brand。
 
-迁移目录保留 Drizzle Kit 生成的 `0000_initial` 至当前增量迁移。空数据库按完整序列应用；已有带当前迁移元数据的数据库顺序应用新增迁移；任何不含 Drizzle migration 元数据的旧实验数据库都会被明确拒绝并要求重置。`CoreDatabase` 沿用 Drizzle 迁移文件与 journal 格式，在 immediate transaction 内执行待应用 SQL、记录迁移并检查全库外键；检查失败同时回滚结构、数据和 journal。事务前暂停外键执行，事务结束后恢复；当前版本无待应用迁移时也检查完整性，未知迁移拒绝降级启动。测试必须覆盖已有子表引用数据的真实表重建。本项目不维护 0000–0016 的升级兼容，也不允许人工编辑迁移 SQL。
+迁移目录保留 Drizzle Kit 生成的 `0000_initial` 至当前增量迁移。空数据库按完整序列应用；已有带当前迁移元数据的数据库顺序应用新增迁移；任何不含 Drizzle migration 元数据的旧实验数据库都会被明确拒绝并要求重置。`CoreDatabase` 沿用 Drizzle 迁移文件与 journal 格式，在 immediate transaction 内执行待应用 SQL、记录迁移并检查全库外键；检查失败同时回滚结构、数据和 journal。事务前暂停外键执行，事务结束后恢复；当前版本无待应用迁移时也检查完整性，超出当前最新时间标识的未来迁移拒绝降级启动；已经支持的历史 journal 时间差异保留，不能据此拒绝现有数据。测试必须覆盖已有子表引用数据的真实表重建。不接管无 Drizzle journal 的旧实验格式；不修改已经发布的迁移文件。
 
 `agent_revisions.persona_document` 保存可空的版本化结构化人设 JSON；旧行读取时由 `persona` 合成单一文本段，新 Revision 同时保存权威文档与确定性纯文本兼容投影。平台用户目录直接从 `platform_identities`、Connection、Channel Member 与未删除 Channel 联合投影，保留没有活动频道的历史身份，不复制平台原始用户 ID 到 API DTO。
 

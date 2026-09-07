@@ -54,6 +54,25 @@ describe('migration commit boundary', () => {
     await expect(openMigratedCoreDatabase(file)).rejects.toThrow('外键违规')
   })
 
+  it('preserves historical journal timestamps while upgrading supported data', async () => {
+    const file = await filename()
+    const database = await openMigratedCoreDatabase(file)
+    database.close()
+    const native = new BetterSqlite3(file)
+    native.prepare('INSERT INTO __drizzle_migrations (hash, created_at) VALUES (?, ?)').run('synthetic-historical', 1)
+    native.close()
+    const reopened = await openMigratedCoreDatabase(file)
+    reopened.close()
+    const inspected = new BetterSqlite3(file)
+    try {
+      expect(
+        inspected.prepare('SELECT created_at FROM __drizzle_migrations WHERE hash = ?').get('synthetic-historical'),
+      ).toEqual({ created_at: 1 })
+    } finally {
+      inspected.close()
+    }
+  })
+
   it('rejects future migration metadata without modifying it', async () => {
     const file = await filename()
     const database = await openMigratedCoreDatabase(file)
