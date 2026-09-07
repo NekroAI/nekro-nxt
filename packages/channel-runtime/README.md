@@ -15,3 +15,5 @@ Binding 的普通 `triggerPolicy` 只控制普通消息。频道活动先读取 
 Channel Runtime 在每次调用 `AgentSessionDriver.admit()` 时，根据当前 Binding 和该批 Channel Event 计算瞬时 `replyRequired`：任一事件满足 `isTriggered(binding, event)` 即为 `true`。该值只交给当前 Host 进程维护回应守卫，不增加 `AdmissionRecord` 字段，也不写 Core/Runtime SQLite。pending/claimed Admission 恢复时使用当前 Binding 和持久 Channel Event 重新计算；已经写入 DSH Session 的旧消息不会携带或恢复这项标记。回应义务的发送、显式结束、纠正预算和运行投影契约见[消息内容与投递协议](../../docs/03-消息内容与投递协议.md)。
 
 撤回与戳一戳使用耐久 Interaction Intent。提交平台前依次保存 `planned` 和 `sending`，写入后结果不明时保存 `unknown` 且不自动重试；`clientRequestId` 在智能体、频道范围内去重。撤回只允许同一智能体在当前频道的成功物理投递，戳一戳只允许当前频道成员并执行 30 秒成员冷却和每频道每分钟三次限制。
+
+`ChannelInteractions` 独立持有撤回与戳一戳的耐久意图、连接恢复及持久化队列。同一频道的交互按顺序检查和提交，重复请求返回已提交结果；不同频道可以并行。首次连接读取合并为单次请求，读取失败不会把连接误记为已恢复。

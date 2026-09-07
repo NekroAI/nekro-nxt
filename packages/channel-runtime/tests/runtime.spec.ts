@@ -805,6 +805,31 @@ describe('ChannelRuntime M1 lane', () => {
     expect(context.adapterStateRows.size).toBe(0)
   })
 
+  it('deduplicates concurrent interaction requests before any platform side effect', async () => {
+    let calls = 0
+    const context = await setup(true, undefined, undefined, {
+      nudgeMember: () => {
+        calls += 1
+        return Promise.resolve({ status: 'succeeded' })
+      },
+    })
+    await context.runtime.acceptChannelInbound(inbound(context.connection.id, context.channel.id, 'concurrent-nudge'))
+    const episode = context.runtimeRepository.getActiveEpisode(context.channel.id, context.agent.definition.id)!
+    const member = context.core.observeChannelMember({
+      connectionId: context.connection.id,
+      channelId: context.channel.id,
+      platformUserId: 'fixture-member',
+      observedAt: 100,
+    }).member
+    const input = { episodeId: episode.id, memberId: member.id, clientRequestId: 'concurrent-nudge-request' }
+    const results = await Promise.all([
+      context.runtime.nudgeChannelMember(input),
+      context.runtime.nudgeChannelMember(input),
+    ])
+    expect(results[0]).toEqual(results[1])
+    expect(calls).toBe(1)
+  })
+
   it('durably deduplicates safe retract and nudge interactions', async () => {
     const retractCalls: string[] = []
     const nudgeCalls: string[] = []
