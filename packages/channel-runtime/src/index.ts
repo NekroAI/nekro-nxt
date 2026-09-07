@@ -1,7 +1,7 @@
 import type {
+  AdapterChannelInboundEvent,
   AdapterConnectionRuntime,
   AdapterDeliveryReceipt,
-  AdapterChannelInboundEvent,
   AdapterRuntimeStateStore,
   InboundCommitResult,
   PhysicalDeliveryRequest,
@@ -14,8 +14,8 @@ import type {
   ChannelId,
   ChannelMemberId,
   ConnectionId,
-  EpisodeId,
   EpisodeHandoffId,
+  EpisodeId,
   JsonValue,
   LogicalMessageId,
   MessagePart,
@@ -44,6 +44,7 @@ import type {
 } from '@nekro-nxt/core'
 import { canonicalJson } from '@nekro-nxt/core'
 import { monotonicFactory } from 'ulid'
+import { ProcessingFeedback } from './processing-feedback.js'
 
 export type EpisodeStatus = 'opening' | 'active' | 'closed' | 'failed'
 
@@ -332,22 +333,7 @@ export interface ContextResetResult {
 }
 
 const HANDOFF_RECENT_EVENT_LIMIT = 12
-const FEEDBACK_STATE_KEY = 'host/processing-feedback-leases'
-const FEEDBACK_RETRY_DELAYS_MS = [1_000, 2_000, 4_000, 8_000, 16_000, 30_000] as const
-const FEEDBACK_MAX_AGE_MS = 24 * 60 * 60 * 1000
 const INTERACTION_STATE_KEY = 'host/interaction-intents'
-
-interface ProcessingFeedbackLease {
-  readonly id: string
-  readonly connectionId: ConnectionId
-  readonly channelId: ChannelId
-  readonly episodeId: EpisodeId
-  readonly platformMessageId: string
-  readonly state: 'planned' | 'active' | 'cleanup-pending'
-  readonly attempts: number
-  readonly createdAt: number
-  readonly updatedAt: number
-}
 
 type ChannelInteractionStatus = 'succeeded' | 'partially-succeeded' | 'failed' | 'unknown'
 
@@ -375,40 +361,6 @@ export interface ChannelInteractionResult {
     readonly status: string
     readonly message?: string
   }[]
-}
-
-const parseFeedbackLease = (candidate: unknown): ProcessingFeedbackLease | undefined => {
-  const parsed = JsonValueSchema.safeParse(candidate)
-  if (!parsed.success || typeof parsed.data !== 'object' || parsed.data === null || Array.isArray(parsed.data))
-    return undefined
-  const row = parsed.data
-  const connectionId = ConnectionIdSchema.safeParse(row['connectionId'])
-  const channelId = ChannelIdSchema.safeParse(row['channelId'])
-  const episodeId = EpisodeIdSchema.safeParse(row['episodeId'])
-  const state = row['state']
-  if (
-    typeof row['id'] !== 'string' ||
-    !connectionId.success ||
-    !channelId.success ||
-    !episodeId.success ||
-    typeof row['platformMessageId'] !== 'string' ||
-    (state !== 'planned' && state !== 'active' && state !== 'cleanup-pending') ||
-    typeof row['attempts'] !== 'number' ||
-    typeof row['createdAt'] !== 'number' ||
-    typeof row['updatedAt'] !== 'number'
-  )
-    return undefined
-  return {
-    id: row['id'],
-    connectionId: connectionId.data,
-    channelId: channelId.data,
-    episodeId: episodeId.data,
-    platformMessageId: row['platformMessageId'],
-    state,
-    attempts: row['attempts'],
-    createdAt: row['createdAt'],
-    updatedAt: row['updatedAt'],
-  }
 }
 
 const parseChannelInteractionResult = (candidate: JsonValue | undefined): ChannelInteractionResult | undefined => {
@@ -589,6 +541,7 @@ export const isSessionCompatibleRevision = (previous: AgentRevisionRecord, targe
 
 /** Single-lane M1 Runtime. M2 extends the same persisted states with injection and recovery. */
 export class ChannelRuntime {
+  readonly #feedback: ProcessingFeedback
   readonly #core: CoreService
   readonly #coreRepository: CoreRepository
   readonly #runtimeRepository: RuntimeRepository
@@ -604,15 +557,6 @@ export class ChannelRuntime {
   readonly #lanes = new Map<string, Promise<void>>()
   readonly #bindingTransitions = new Map<ChannelId, Promise<void>>()
   readonly #factListeners = new Set<(fact: ChannelFact) => void>()
-  readonly #feedbackLeases = new Map<string, ProcessingFeedbackLease>()
-  readonly #feedbackDisabledConnections = new Set<ConnectionId>()
-  readonly #feedbackTasks = new Set<Promise<void>>()
-  readonly #feedbackCleanups = new Map<string, Promise<void>>()
-  readonly #feedbackEndReasons = new Map<
-    EpisodeId,
-    'idle' | 'error' | 'cancelled' | 'timeout' | 'shutdown' | 'recovery'
-  >()
-  readonly #feedbackPersistence = new Map<ConnectionId, Promise<void>>()
   readonly #interactionIntents = new Map<string, DurableInteractionIntent>()
   readonly #interactionLoadedConnections = new Set<ConnectionId>()
   readonly #interactionPersistence = new Map<ConnectionId, Promise<void>>()
@@ -636,6 +580,9 @@ export class ChannelRuntime {
     this.#nextUlid = options.nextUlid ?? monotonicFactory()
     this.#idleRolloverMs = options.idleRolloverMs ?? 6 * 60 * 60 * 1000
     this.#adapterState = options.adapterState
+    this.#feedback = new ProcessingFeedback(coreRepository, options.resolveAdapter, options.adapterState, () =>
+      this.#timestamp(),
+    )
     if (this.#idleRolloverMs !== false && (!Number.isSafeInteger(this.#idleRolloverMs) || this.#idleRolloverMs <= 0)) {
       throw new TypeError('idleRolloverMs must be a positive integer or false.')
     }
@@ -674,29 +621,14 @@ export class ChannelRuntime {
       inserted: commit.inserted,
     }
   }
-
-  /** Loads durable leases and removes stale platform feedback once Adapters are mounted. */
   async recoverProcessingFeedback(): Promise<void> {
-    if (!this.#adapterState) return
-    for (const connectionId of this.#coreRepository.listConnectionIdsByAdapter()) {
+    for (const connectionId of this.#coreRepository.listConnectionIdsByAdapter())
       await this.#ensureInteractionsLoaded(connectionId)
-      const raw = await this.#adapterState.load(connectionId, FEEDBACK_STATE_KEY)
-      if (!Array.isArray(raw)) continue
-      for (const candidate of raw) {
-        const lease = parseFeedbackLease(candidate)
-        if (!lease) continue
-        if (lease.connectionId !== connectionId) continue
-        this.#feedbackLeases.set(lease.id, lease)
-        this.#trackFeedbackTask(this.#cleanupFeedbackLease(lease.id, 'recovery'))
-      }
-    }
+    await this.#feedback.recoverProcessingFeedback()
   }
 
-  /** Best-effort feedback cleanup before Adapter shutdown, then waits for owned cleanup tasks. */
   async stopProcessingFeedback(): Promise<void> {
-    for (const lease of this.#feedbackLeases.values())
-      this.#trackFeedbackTask(this.#cleanupFeedbackLease(lease.id, 'shutdown'))
-    await Promise.allSettled([...this.#feedbackTasks])
+    await this.#feedback.stopProcessingFeedback()
   }
 
   /** Waits for all current Session work on the supplied Connections to reach an idle checkpoint. */
@@ -891,9 +823,9 @@ export class ChannelRuntime {
         if (current !== undefined && current.agentId !== input.agentId) {
           const episode = this.#runtimeRepository.getActiveEpisode(input.channelId, current.agentId)
           if (episode?.dshSessionId !== undefined) {
-            this.#feedbackEndReasons.set(episode.id, 'cancelled')
+            this.#feedback.markEndReason(episode.id, 'cancelled')
             await this.#sessionDriver.cancelSession(episode.dshSessionId, 'binding-replaced')
-            await this.#cleanupEpisodeFeedback(episode.id)
+            await this.#feedback.cleanupEpisodeFeedback(episode.id)
             this.#runtimeRepository.closeEpisode(
               episode.id,
               'binding-replaced',
@@ -918,9 +850,9 @@ export class ChannelRuntime {
       await this.#withLane(channelId, current.agentId, async () => {
         const episode = this.#runtimeRepository.getActiveEpisode(channelId, current.agentId)
         if (episode?.status === 'active' && episode.dshSessionId !== undefined) {
-          this.#feedbackEndReasons.set(episode.id, 'cancelled')
+          this.#feedback.markEndReason(episode.id, 'cancelled')
           await this.#sessionDriver.cancelSession(episode.dshSessionId, 'stopped')
-          await this.#cleanupEpisodeFeedback(episode.id)
+          await this.#feedback.cleanupEpisodeFeedback(episode.id)
           this.#runtimeRepository.closeEpisode(
             episode.id,
             'stopped',
@@ -941,9 +873,9 @@ export class ChannelRuntime {
       await this.#withLane(channelId, current.agentId, async () => {
         const episode = this.#runtimeRepository.getActiveEpisode(channelId, current.agentId)
         if (episode?.dshSessionId !== undefined) {
-          this.#feedbackEndReasons.set(episode.id, 'cancelled')
+          this.#feedback.markEndReason(episode.id, 'cancelled')
           await this.#sessionDriver.cancelSession(episode.dshSessionId, 'stopped')
-          await this.#cleanupEpisodeFeedback(episode.id)
+          await this.#feedback.cleanupEpisodeFeedback(episode.id)
         }
         if (episode !== undefined) {
           this.#runtimeRepository.closeEpisode(
@@ -969,9 +901,9 @@ export class ChannelRuntime {
       await this.#withLane(channelId, current.agentId, async () => {
         const episode = this.#runtimeRepository.getActiveEpisode(channelId, current.agentId)
         if (episode?.dshSessionId !== undefined) {
-          this.#feedbackEndReasons.set(episode.id, 'cancelled')
+          this.#feedback.markEndReason(episode.id, 'cancelled')
           await this.#sessionDriver.cancelSession(episode.dshSessionId, 'channel-deleted')
-          await this.#cleanupEpisodeFeedback(episode.id)
+          await this.#feedback.cleanupEpisodeFeedback(episode.id)
         }
         if (episode !== undefined) {
           this.#runtimeRepository.closeEpisode(
@@ -1013,9 +945,7 @@ export class ChannelRuntime {
       episode.lastAdmittedEventId === undefined
         ? undefined
         : this.#coreRepository.getChannelEvent(episode.lastAdmittedEventId)
-    const activeFeedback = [...this.#feedbackLeases.values()]
-      .filter((lease) => lease.episodeId === episode.id && lease.state === 'active')
-      .sort((left, right) => right.createdAt - left.createdAt)[0]
+    const activeFeedback = this.#feedback.latestActiveLease(episode.id)
     const plans = adapter.planOutbound
       ? await adapter.planOutbound({
           connectionId: channel.connectionId,
@@ -1153,9 +1083,9 @@ export class ChannelRuntime {
         if (episode.status === 'opening' && handoff !== undefined) {
           const previous = this.#runtimeRepository.getEpisode(handoff.fromEpisodeId)
           if (previous?.dshSessionId !== undefined) {
-            this.#feedbackEndReasons.set(previous.id, 'cancelled')
+            this.#feedback.markEndReason(previous.id, 'cancelled')
             await this.#sessionDriver.cancelSession(previous.dshSessionId, previous.closeReason ?? 'manual')
-            await this.#cleanupEpisodeFeedback(previous.id)
+            await this.#feedback.cleanupEpisodeFeedback(previous.id)
           }
         }
         const recentEvents =
@@ -1246,9 +1176,9 @@ export class ChannelRuntime {
       if (!episode || episode.status !== 'active' || !episode.dshSessionId) {
         throw new Error(`Episode is not active: ${episodeId}`)
       }
-      this.#feedbackEndReasons.set(episode.id, 'cancelled')
+      this.#feedback.markEndReason(episode.id, 'cancelled')
       await this.#sessionDriver.cancelSession(episode.dshSessionId, reason)
-      await this.#cleanupEpisodeFeedback(episode.id)
+      await this.#feedback.cleanupEpisodeFeedback(episode.id)
       return this.#runtimeRepository.closeEpisode(
         episode.id,
         reason,
@@ -1282,9 +1212,9 @@ export class ChannelRuntime {
       if (!anchor) throw new Error(`Episode anchor Event no longer exists: ${anchorId}`)
       const reason = mode === 'clear' ? 'context-cleared' : 'context-compacted'
 
-      this.#feedbackEndReasons.set(episode.id, 'cancelled')
+      this.#feedback.markEndReason(episode.id, 'cancelled')
       await this.#sessionDriver.cancelSession(episode.dshSessionId, reason)
-      await this.#cleanupEpisodeFeedback(episode.id)
+      await this.#feedback.cleanupEpisodeFeedback(episode.id)
       if (mode === 'clear') {
         return {
           mode,
@@ -1465,7 +1395,7 @@ export class ChannelRuntime {
     episode = await this.#applyCurrentCompatibleRevision(episode)
     const dshSessionId = episode.dshSessionId
     if (dshSessionId === undefined) throw new Error(`Episode has no DSH Session after revision switch: ${episode.id}`)
-    const feedbackLeaseId = await this.#startProcessingFeedback(binding, episode, event)
+    const feedbackLeaseId = await this.#feedback.startProcessingFeedback(binding, episode, event)
     const candidateEvents = this.#candidateTriggeredEvents(binding, event)
     const existingAdmission = this.#runtimeRepository
       .listRecoverableAdmissions(episode.id)
@@ -1508,164 +1438,12 @@ export class ChannelRuntime {
       if (lastEventId === undefined) throw new Error(`Admission has no events: ${admission.id}`)
       this.#runtimeRepository.completeAdmission(admission.id, result.dshMessageId, lastEventId)
       if (feedbackLeaseId !== undefined) {
-        this.#trackFeedbackTask(
-          (this.#sessionDriver.whenIdle?.(dshSessionId) ?? Promise.resolve()).then(() =>
-            this.#cleanupEpisodeFeedback(episode.id),
-          ),
-        )
+        this.#feedback.finishWhenIdle(episode.id, this.#sessionDriver.whenIdle?.(dshSessionId) ?? Promise.resolve())
       }
     } catch (error) {
-      if (feedbackLeaseId !== undefined) await this.#cleanupFeedbackLease(feedbackLeaseId, 'error')
+      if (feedbackLeaseId !== undefined) await this.#feedback.cleanupFeedbackLease(feedbackLeaseId, 'error')
       throw error
     }
-  }
-
-  async #startProcessingFeedback(
-    binding: BindingRecord,
-    episode: EpisodeRecord,
-    event: ChannelEventRecord,
-  ): Promise<string | undefined> {
-    if (
-      binding.processingFeedback !== 'auto' ||
-      event.kind !== 'message-created' ||
-      event.activityKey !== undefined ||
-      event.platformMessageId === undefined
-    )
-      return undefined
-    const channel = this.#coreRepository.getChannel(event.channelId)
-    if (!channel || channel.kind !== 'group' || this.#feedbackDisabledConnections.has(channel.connectionId))
-      return undefined
-    const adapter = this.#resolveAdapter(channel.connectionId)
-    if (!adapter?.interactions?.startProcessingFeedback) return undefined
-    const now = this.#timestamp()
-    const lease: ProcessingFeedbackLease = {
-      id: `feedback:${episode.id}:${event.id}`,
-      connectionId: channel.connectionId,
-      channelId: channel.id,
-      episodeId: episode.id,
-      platformMessageId: event.platformMessageId,
-      state: 'planned',
-      attempts: 0,
-      createdAt: now,
-      updatedAt: now,
-    }
-    this.#feedbackLeases.set(lease.id, lease)
-    await this.#persistFeedbackLeases(channel.connectionId)
-    const outcome = await adapter.interactions
-      .startProcessingFeedback({ leaseId: lease.id, channelId: channel.id, platformMessageId: event.platformMessageId })
-      .catch((error: unknown) => ({
-        status: 'failed' as const,
-        message: error instanceof Error ? error.message : String(error),
-      }))
-    if (outcome.status === 'unsupported') {
-      this.#feedbackDisabledConnections.add(channel.connectionId)
-      this.#feedbackLeases.delete(lease.id)
-      await this.#persistFeedbackLeases(channel.connectionId)
-      return undefined
-    }
-    this.#feedbackLeases.set(lease.id, {
-      ...lease,
-      state: outcome.status === 'succeeded' ? 'active' : 'cleanup-pending',
-      updatedAt: this.#timestamp(),
-    })
-    await this.#persistFeedbackLeases(channel.connectionId)
-    return lease.id
-  }
-
-  async #cleanupEpisodeFeedback(
-    episodeId: EpisodeId,
-    reason?: 'idle' | 'error' | 'cancelled' | 'timeout' | 'shutdown' | 'recovery',
-  ): Promise<void> {
-    if (reason !== undefined) this.#feedbackEndReasons.set(episodeId, reason)
-    const resolvedReason = this.#feedbackEndReasons.get(episodeId) ?? 'idle'
-    const leases = [...this.#feedbackLeases.values()].filter((lease) => lease.episodeId === episodeId)
-    await Promise.allSettled(leases.map((lease) => this.#cleanupFeedbackLease(lease.id, resolvedReason)))
-    if (![...this.#feedbackLeases.values()].some((lease) => lease.episodeId === episodeId)) {
-      this.#feedbackEndReasons.delete(episodeId)
-    }
-  }
-
-  async #cleanupFeedbackLease(
-    leaseId: string,
-    reason: 'idle' | 'error' | 'cancelled' | 'timeout' | 'shutdown' | 'recovery',
-  ): Promise<void> {
-    const current = this.#feedbackCleanups.get(leaseId)
-    if (current) return current
-    const cleanup = this.#performFeedbackCleanup(leaseId, reason)
-    const tracked = cleanup.finally(() => {
-      if (this.#feedbackCleanups.get(leaseId) === tracked) this.#feedbackCleanups.delete(leaseId)
-    })
-    this.#feedbackCleanups.set(leaseId, tracked)
-    return tracked
-  }
-
-  async #performFeedbackCleanup(
-    leaseId: string,
-    reason: 'idle' | 'error' | 'cancelled' | 'timeout' | 'shutdown' | 'recovery',
-  ): Promise<void> {
-    const lease = this.#feedbackLeases.get(leaseId)
-    if (!lease) return
-    if (this.#timestamp() - lease.createdAt >= FEEDBACK_MAX_AGE_MS) return
-    const adapter = this.#resolveAdapter(lease.connectionId)
-    if (!adapter?.interactions?.finishProcessingFeedback) return
-    const outcome = await adapter.interactions
-      .finishProcessingFeedback({
-        leaseId: lease.id,
-        channelId: lease.channelId,
-        platformMessageId: lease.platformMessageId,
-        reason,
-      })
-      .catch((error: unknown) => ({
-        status: 'failed' as const,
-        message: error instanceof Error ? error.message : String(error),
-      }))
-    if (outcome.status === 'succeeded' || outcome.status === 'unsupported') {
-      if (outcome.status === 'unsupported') this.#feedbackDisabledConnections.add(lease.connectionId)
-      this.#feedbackLeases.delete(lease.id)
-      await this.#persistFeedbackLeases(lease.connectionId)
-      return
-    }
-    const attempts = lease.attempts + 1
-    this.#feedbackLeases.set(lease.id, {
-      ...lease,
-      state: 'cleanup-pending',
-      attempts,
-      updatedAt: this.#timestamp(),
-    })
-    await this.#persistFeedbackLeases(lease.connectionId)
-    const delay = FEEDBACK_RETRY_DELAYS_MS[attempts - 1]
-    if (delay === undefined) {
-      this.#feedbackDisabledConnections.add(lease.connectionId)
-      return
-    }
-    this.#trackFeedbackTask(
-      new Promise<void>((resolve) => setTimeout(resolve, delay)).then(() =>
-        this.#cleanupFeedbackLease(lease.id, reason),
-      ),
-    )
-  }
-
-  async #persistFeedbackLeases(connectionId: ConnectionId): Promise<void> {
-    if (!this.#adapterState) return
-    const previous = this.#feedbackPersistence.get(connectionId) ?? Promise.resolve()
-    const next = previous
-      .catch(() => undefined)
-      .then(async () => {
-        const leases = [...this.#feedbackLeases.values()].filter((lease) => lease.connectionId === connectionId)
-        if (leases.length === 0) await this.#adapterState!.clear(connectionId, FEEDBACK_STATE_KEY)
-        else await this.#adapterState!.save(connectionId, FEEDBACK_STATE_KEY, parseJsonValue(leases), this.#timestamp())
-      })
-    this.#feedbackPersistence.set(connectionId, next)
-    try {
-      await next
-    } finally {
-      if (this.#feedbackPersistence.get(connectionId) === next) this.#feedbackPersistence.delete(connectionId)
-    }
-  }
-
-  #trackFeedbackTask(task: Promise<void>): void {
-    this.#feedbackTasks.add(task)
-    void task.finally(() => this.#feedbackTasks.delete(task)).catch(() => undefined)
   }
 
   #requireInteractionEpisode(episodeId: EpisodeId): EpisodeRecord {
@@ -1896,9 +1674,9 @@ export class ChannelRuntime {
       nextEpisode,
       handoff,
     })
-    this.#feedbackEndReasons.set(episode.id, reason === 'idle-timeout' ? 'timeout' : 'cancelled')
+    this.#feedback.markEndReason(episode.id, reason === 'idle-timeout' ? 'timeout' : 'cancelled')
     await this.#sessionDriver.cancelSession(episode.dshSessionId, reason)
-    await this.#cleanupEpisodeFeedback(episode.id)
+    await this.#feedback.cleanupEpisodeFeedback(episode.id)
     const dshSessionId = await this.#sessionDriver.createSession({
       episodeId: nextEpisode.id,
       channelId: nextEpisode.channelId,
@@ -1968,7 +1746,7 @@ export class ChannelRuntime {
           this.#timestamp(),
         )
         if (delivery.processingFeedbackLeaseId !== undefined) {
-          await this.#settleConsumedFeedback(delivery.processingFeedbackLeaseId)
+          await this.#feedback.settleConsumedFeedback(delivery.processingFeedbackLeaseId)
         }
         unknownDeliveries += 1
         continue
@@ -1988,7 +1766,7 @@ export class ChannelRuntime {
           ...(delivery.processingFeedbackLeaseId === undefined
             ? {}
             : (() => {
-                const lease = this.#feedbackLeases.get(delivery.processingFeedbackLeaseId)
+                const lease = this.#feedback.getLease(delivery.processingFeedbackLeaseId)
                 return lease === undefined
                   ? {}
                   : {
@@ -2009,9 +1787,9 @@ export class ChannelRuntime {
       this.#runtimeRepository.recordDeliveryReceipt(delivery.id, receipt, this.#timestamp())
       if (delivery.processingFeedbackLeaseId !== undefined) {
         if (receipt.status === 'sent' || receipt.status === 'unknown') {
-          await this.#settleConsumedFeedback(delivery.processingFeedbackLeaseId)
+          await this.#feedback.settleConsumedFeedback(delivery.processingFeedbackLeaseId)
         } else {
-          await this.#cleanupFeedbackLease(delivery.processingFeedbackLeaseId, 'error')
+          await this.#feedback.cleanupFeedbackLease(delivery.processingFeedbackLeaseId, 'error')
         }
       }
     }
@@ -2029,13 +1807,6 @@ export class ChannelRuntime {
         // A projection listener must never roll back an already committed fact.
       }
     }
-  }
-
-  async #settleConsumedFeedback(leaseId: string): Promise<void> {
-    const lease = this.#feedbackLeases.get(leaseId)
-    if (!lease) return
-    this.#feedbackLeases.delete(leaseId)
-    await this.#persistFeedbackLeases(lease.connectionId)
   }
 
   #aggregate(receipts: readonly DeliveryReceiptRecord[]): OutboundState {

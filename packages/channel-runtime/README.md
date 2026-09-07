@@ -10,7 +10,7 @@ Handoff 的摘要来源由 `listEpisodeHistory()` 限定为旧 Episode 已完成
 
 Binding 的替换、清除和频道删除先按 `channelId` 串行，并在锁内重读当前 Binding，再进入实际 `(channelId, agentId)` lane。并发换绑因此总会停止提交时真正的前任 Session，不会留下已失去 Binding 的活动 Episode。`deleteChannel(channelId)` 在同一转换边界内先以 `channel-deleted` 取消 DSH Session、关闭 Episode，再清除 Binding 并写 Channel tombstone；不生成 handoff，也不删除频道事实、出站、资源引用或 DSH 历史。
 
-Binding 的普通 `triggerPolicy` 只控制普通消息。频道活动先读取 Binding 的布尔覆盖，key 缺失时读取具体 Connection 的默认值；最终为开启且当前 Adapter Descriptor 仍声明其可触发、匹配 Channel kind、Runtime 能力可用时才创建 Admission，`observe-only` 永远不触发。Connection 活动不进入本包。归档或删除 Connection 前使用 `suspendChannel()` 停止 Episode，但归档不会清除 Binding。处理中反馈只有 Descriptor 与 Runtime 都支持当前 Channel kind 时启用；耐久 Lease 使用 Connection 命名空间，平台调用前持久化，Session 空闲或重启恢复后清理。
+Binding 的普通 `triggerPolicy` 只控制普通消息。频道活动先读取 Binding 的布尔覆盖，key 缺失时读取具体 Connection 的默认值；最终为开启且当前 Adapter Descriptor 仍声明其可触发、匹配 Channel kind、Runtime 能力可用时才创建 Admission，`observe-only` 永远不触发。Connection 活动不进入本包。归档或删除 Connection 前使用 `suspendChannel()` 停止 Episode，但归档不会清除 Binding。处理中反馈只有 Descriptor 与 Runtime 都支持当前 Channel kind 时启用；耐久 Lease 使用 Connection 命名空间，平台调用前持久化，Session 空闲或重启恢复后清理。`ProcessingFeedback` 独立持有租约、清理任务、重试计时器与持久化队列；关闭时取消延迟重试，等待已开始的清理任务完成，未能清理的租约保留到下次恢复。
 
 Channel Runtime 在每次调用 `AgentSessionDriver.admit()` 时，根据当前 Binding 和该批 Channel Event 计算瞬时 `replyRequired`：任一事件满足 `isTriggered(binding, event)` 即为 `true`。该值只交给当前 Host 进程维护回应守卫，不增加 `AdmissionRecord` 字段，也不写 Core/Runtime SQLite。pending/claimed Admission 恢复时使用当前 Binding 和持久 Channel Event 重新计算；已经写入 DSH Session 的旧消息不会携带或恢复这项标记。回应义务的发送、显式结束、纠正预算和运行投影契约见[消息内容与投递协议](../../docs/03-消息内容与投递协议.md)。
 
