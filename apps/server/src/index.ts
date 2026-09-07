@@ -4051,6 +4051,25 @@ export class DshHostRuntime implements AgentSessionDriver, ExtensionActivationHo
     return this.#authoring.service.snapshotForRunnerPackage(episodeId, pluginId, packageId)
   }
 
+  decideAuthoringAttempt(input: Parameters<DynamicAuthoringService['decideAttempt']>[0]) {
+    this.#assertActive()
+    if (!this.#authoring) throw new Error('动态创造账本未启用。')
+    return this.#authoring.service.decideAttempt(input)
+  }
+
+  stopAuthoringTask(input: Parameters<DynamicAuthoringService['stopTask']>[0]) {
+    this.#assertActive()
+    if (!this.#authoring) throw new Error('动态创造账本未启用。')
+    return this.#authoring.service.stopTask(input, async (task) => {
+      const session = [...this.#sessions.records()].find((record) => record.episodeId === task.episodeId)
+      if (!session) return
+      const result = await this.stopDynamicPlugin(session.sessionId, task.pluginKey)
+      if (!result.ok && result.reason !== 'plugin-missing' && result.reason !== 'not-running') {
+        throw new Error('动态扩展未能停止。')
+      }
+    })
+  }
+
   async deleteAuthoringTask(taskId: AuthoringTaskId): Promise<boolean> {
     this.#assertActive()
     if (!this.#authoring) throw new Error('动态创造账本未启用。')

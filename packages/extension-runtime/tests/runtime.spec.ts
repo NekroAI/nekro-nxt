@@ -155,6 +155,64 @@ describe('Dynamic authoring artifacts', () => {
     expect(await store.stageTaskDeletion(agentId, taskId)).toBeUndefined()
   })
 
+  it('shares approval commits and refuses to overwrite a candidate created while stopping', async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), 'nxt-authoring-actions-'))
+    temporaryDirectories.push(directory)
+    const repository = createAuthoringMemoryRepository()
+    const service = new DynamicAuthoringService(repository, new AuthoringArtifactStore(directory))
+    const definition = {
+      agentId: AgentIdSchema.parse('agt_ACTIONS'),
+      channelId: ChannelIdSchema.parse('chn_ACTIONS'),
+      episodeId: EpisodeIdSchema.parse('eps_ACTIONS'),
+      initiatingEventId: ChannelEventIdSchema.parse('evt_ACTIONS'),
+      approvalPolicy: 'risk-stable' as const,
+      pluginKey: 'actions',
+      runnerPackageId: 'package-one',
+      snapshot: {
+        name: '测试操作',
+        purpose: '测试状态提交',
+        scope: 'agent' as const,
+        code: { host: 'return { apply() {} }' },
+        resources: {},
+        permissions: { permissions: [], networkOrigins: [] },
+        contributions: [],
+      },
+    }
+    const first = await service.recordDefinition(definition)
+    const decision = service.decideAttempt({
+      taskId: first.task.id,
+      attemptId: first.attempt.id,
+      expectedRevision: first.task.revision,
+      approved: true,
+      approveRiskStable: true,
+    })
+    expect(decision).toMatchObject({ accepted: true, executionRequired: true })
+    expect(service.getTask(first.task.id)?.approvedRiskDigest).toBe(first.attempt.riskDigest)
+    await expect(
+      service.stopTask({ taskId: first.task.id, expectedRevision: decision.taskRevision }, async () => {
+        await service.recordDefinition({
+          ...definition,
+          runnerPackageId: 'package-two',
+          snapshot: { ...definition.snapshot, name: '新的候选' },
+        })
+      }),
+    ).rejects.toThrow('状态已更新')
+    const current = service.getTask(first.task.id)!
+    expect(current.status).not.toBe('stopped')
+    expect(() =>
+      service.decideAttempt({
+        taskId: first.task.id,
+        attemptId: first.attempt.id,
+        expectedRevision: current.revision,
+        approved: true,
+        approveRiskStable: false,
+      }),
+    ).toThrow('候选内容已经更新')
+    const stopped = await service.stopTask({ taskId: current.id, expectedRevision: current.revision }, async () => {})
+    expect(stopped.status).toBe('stopped')
+    expect(repository.listAuthoringAttempts(current.id).at(-1)?.state).toBe('stopped')
+  })
+
   it('keeps task revisions idempotent, restores runner identities, and rolls back failed deletion', async () => {
     const directory = await mkdtemp(path.join(tmpdir(), 'nekro-nxt-authoring-service-'))
     temporaryDirectories.push(directory)
