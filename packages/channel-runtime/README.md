@@ -17,3 +17,5 @@ Channel Runtime 在每次调用 `AgentSessionDriver.admit()` 时，根据当前 
 撤回与戳一戳使用耐久 Interaction Intent。提交平台前依次保存 `planned` 和 `sending`，写入后结果不明时保存 `unknown` 且不自动重试；`clientRequestId` 在智能体、频道范围内去重。撤回只允许同一智能体在当前频道的成功物理投递，戳一戳只允许当前频道成员并执行 30 秒成员冷却和每频道每分钟三次限制。
 
 `ChannelInteractions` 独立持有撤回与戳一戳的耐久意图、连接恢复及持久化队列。同一频道的交互按顺序检查和提交，重复请求返回已提交结果；不同频道可以并行。首次连接读取合并为单次请求，读取失败不会把连接误记为已恢复。
+
+`ChannelDelivery` 负责投递计划、平台回执提交和未完成投递恢复；`ChannelRuntime` 保留会话推进、Binding 变更和管理员消息协调。发送开始后缺少确认回执的投递仍恢复为结果未知，不自动重发。
