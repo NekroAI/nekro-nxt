@@ -66,7 +66,7 @@ for (const [name, versions] of lockVersions) {
   }
 }
 
-const hostSource = await readFile(path.join(root, 'apps/server/src/index.ts'), 'utf8')
+const hostSource = await readFile(path.join(root, 'apps/server/src/dsh-roster.ts'), 'utf8')
 const rosterMatch = /const HOST_DSH_PACKAGE_VERSIONS = \{(?<body>[\s\S]*?)\n\} as const/u.exec(hostSource)
 if (!rosterMatch?.groups?.body) {
   failures.push('HOST_DSH_PACKAGE_VERSIONS could not be located.')

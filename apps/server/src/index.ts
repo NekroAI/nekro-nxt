@@ -1,9 +1,11 @@
-import { AgentRegistry, type Agent, type AgentHandle, type AgentStatus } from '@deepseek-ai/dsh-agent'
+import { HOST_DSH_PACKAGE_VERSIONS } from './dsh-roster.js'
+import { Context, Service, type Fiber } from '@deepseek-ai/cordis'
+import { AgentRegistry, type Agent, type AgentStatus } from '@deepseek-ai/dsh-agent'
 import AgentLoop from '@deepseek-ai/dsh-agent-loop'
 import AttachmentStore, {
   AttachmentId,
-  type ImageRequestPolicy,
   type ImageAttachmentRef,
+  type ImageRequestPolicy,
   type RequestImageAttachment,
   type SaveImageAttachment,
   type StoredImageAttachment,
@@ -12,18 +14,6 @@ import { readRequestImageFile } from '@deepseek-ai/dsh-attachment-local'
 import SandboxBashExecutor from '@deepseek-ai/dsh-bash-sandbox'
 import { BasicCompactionEngine } from '@deepseek-ai/dsh-compaction-basic'
 import ToolResultPruner from '@deepseek-ai/dsh-compaction-tool-result-pruner'
-import { Context, Service, type Fiber } from '@deepseek-ai/cordis'
-import CredentialProvider, {
-  credentialRef,
-  type CredentialInfo,
-  type CredentialKey,
-  type CredentialRecord,
-  type CredentialRecordEntry,
-  type CredentialRecordInfo,
-  type CredentialRef,
-  type ResolvedCredential,
-} from '@deepseek-ai/dsh-credentials'
-import LocalCredentialProvider from '@deepseek-ai/dsh-credentials-local'
 import DynamicCordisRunnerService, {
   ApprovalRequestId,
   CordisDynamicPackageId,
@@ -32,8 +22,8 @@ import DynamicCordisRunnerService, {
   type CordisDynamicRunMode,
   type CordisErrorDetails,
   type DynamicCordisClientSource,
-  type DynamicCordisDefineRequest,
   type DynamicCordisDefineReceipt,
+  type DynamicCordisDefineRequest,
   type DynamicCordisHostHalfResult,
   type DynamicCordisInventoryRow,
   type DynamicCordisInvokeResult,
@@ -50,9 +40,9 @@ import DynamicCordisRunnerService, {
   type DynamicCordisUndefineReceipt,
   type HostCordisInspectProviderRegistration,
 } from '@deepseek-ai/dsh-cordis-host-runner'
-type CordisDynamicPackageIdType = ReturnType<typeof CordisDynamicPackageId>
-type CordisDynamicPluginIdType = ReturnType<typeof CordisDynamicPluginId>
-type ApprovalRequestIdType = ReturnType<typeof ApprovalRequestId>
+import LocalCredentialProvider from '@deepseek-ai/dsh-credentials-local'
+import * as FsObservationPolicy from '@deepseek-ai/dsh-fs-observation-policy'
+import SandboxedFileSystem from '@deepseek-ai/dsh-fs-sandbox'
 import {
   BlockAssembler,
   CallId,
@@ -66,28 +56,27 @@ import {
   type TokenUsage,
   type UserMessage,
 } from '@deepseek-ai/dsh-llm'
-import * as LlmPiAi from '@deepseek-ai/dsh-llm-pi-ai'
 import * as LlmRetry from '@deepseek-ai/dsh-llm-retry'
-import * as FsObservationPolicy from '@deepseek-ai/dsh-fs-observation-policy'
-import SandboxedFileSystem from '@deepseek-ai/dsh-fs-sandbox'
 import LocalSandboxProvider from '@deepseek-ai/dsh-sandbox-local'
 import SandboxPolicyService from '@deepseek-ai/dsh-sandbox-policy'
-import { SessionId, SessionStore, type SessionEvent } from '@deepseek-ai/dsh-session'
-import SessionProjectionRegistry from '@deepseek-ai/dsh-session-projection'
-import * as SessionStats from '@deepseek-ai/dsh-session-stats'
 import { bindScopeParent, scopeOf } from '@deepseek-ai/dsh-scope'
+import { SessionId, SessionStore, type SessionEvent } from '@deepseek-ai/dsh-session'
 import * as SessionCheckpointPolicy from '@deepseek-ai/dsh-session-checkpoint-policy'
 import { SqliteSessionPersistence } from '@deepseek-ai/dsh-session-persistence-sqlite'
-import { settingsNamespace, type SettingsPathOp } from '@deepseek-ai/dsh-settings'
+import SessionProjectionRegistry from '@deepseek-ai/dsh-session-projection'
+import * as SessionStats from '@deepseek-ai/dsh-session-stats'
 import FileSettingsProvider from '@deepseek-ai/dsh-settings-file'
+import * as ShellEnv from '@deepseek-ai/dsh-shell-env'
 import SkillRegistry from '@deepseek-ai/dsh-skill'
-import { PERSONA_ORDER, PERSONA_SECTION, SystemPrompt } from '@deepseek-ai/dsh-system-prompt'
-import TokenMeter from '@deepseek-ai/dsh-token-meter'
+import * as SpillPolicy from '@deepseek-ai/dsh-spill-policy'
 import SubagentRuntime, { type SubagentListEntry } from '@deepseek-ai/dsh-subagent'
 import * as SubagentSpawnInProcess from '@deepseek-ai/dsh-subagent-spawn-in-process'
-import * as CordisTool from '@deepseek-ai/dsh-tool-cordis'
+import LocalSubprocessRuntime from '@deepseek-ai/dsh-subprocess-local'
+import { PERSONA_ORDER, PERSONA_SECTION, SystemPrompt } from '@deepseek-ai/dsh-system-prompt'
+import TokenMeter from '@deepseek-ai/dsh-token-meter'
 import * as BashTool from '@deepseek-ai/dsh-tool-bash'
 import * as ToolCallTimeoutPolicy from '@deepseek-ai/dsh-tool-call-timeout-policy'
+import * as CordisTool from '@deepseek-ai/dsh-tool-cordis'
 import * as FsTool from '@deepseek-ai/dsh-tool-fs'
 import * as SkillTool from '@deepseek-ai/dsh-tool-skill'
 import * as ToolSubagent from '@deepseek-ai/dsh-tool-subagent'
@@ -98,16 +87,13 @@ import * as ToolWeb from '@deepseek-ai/dsh-tool-web'
 import { defineTool, ToolRuntime } from '@deepseek-ai/dsh-tools'
 import WebRuntime from '@deepseek-ai/dsh-web'
 import * as DeepSeekWebSearch from '@deepseek-ai/dsh-web-search-deepseek'
-import * as SpillPolicy from '@deepseek-ai/dsh-spill-policy'
-import * as ShellEnv from '@deepseek-ai/dsh-shell-env'
-import LocalSubprocessRuntime from '@deepseek-ai/dsh-subprocess-local'
 import {
   isAdminConsoleOutbound,
   type AgentSessionDriver,
   type ChannelHistoryEntry,
-  type ChannelRuntime,
   type ChannelHistoryRepository,
   type ChannelInteractionResult,
+  type ChannelRuntime,
   type EpisodeCloseReason,
   type SendMessageInput,
   type SendMessageResult,
@@ -123,17 +109,16 @@ import {
   parseJsonValue,
   parseMessageParts,
   richPartContextText,
-  type AdmissionId,
   type AdapterClientSlotName,
-  type AgentId,
+  type AdmissionId,
   type AgentClientSlotName,
+  type AgentId,
   type AgentRevisionId,
-  type AuthoringTaskId,
   type AssetId,
+  type AuthoringTaskId,
   type ChannelEventId,
   type ChannelId,
   type ChannelMemberId,
-  type ChannelRuntimeOccupancy,
   type ConnectionId,
   type DshCredentialView,
   type DshPluginActivationRecord,
@@ -176,11 +161,6 @@ import {
   type MountedExtension,
   type Revision,
 } from '@nekro-nxt/extension-runtime'
-import type { DshPluginRepository } from '@nekro-nxt/storage-sqlite'
-import { DshPluginLifecycleCoordinator } from './dsh-plugin-lifecycle.js'
-import { normalizeSessionEvents, shouldBroadcastChannelRuntime } from './channel-runtime-events.js'
-import { mountChannelReplyGuard, type ChannelReplyGuardController } from './channel-reply-guard.js'
-import { projectSessionOccupancy, type RuntimePerformanceTotals } from './channel-runtime-projection.js'
 import {
   NEKRO_NXT_EXTENSION_AUTHORING_REFERENCE,
   renderNekroNxtExtensionDevelopmentSkill,
@@ -191,6 +171,7 @@ import {
   type ExtensionPluginFactory,
   type ExtensionToolDefinition,
 } from '@nekro-nxt/extension-sdk'
+import type { DshPluginRepository } from '@nekro-nxt/storage-sqlite'
 import { Buffer } from 'node:buffer'
 import { createHash } from 'node:crypto'
 import { mkdir, readFile } from 'node:fs/promises'
@@ -199,28 +180,44 @@ import path from 'node:path'
 import { pathToFileURL } from 'node:url'
 import sharp from 'sharp'
 import { z } from 'zod'
-import { defineDshToolFromUnknown, parseDshImageAttachmentRef, parseDshToolDefinition } from './dsh-interop/unsafe.js'
-import { QuotaLocalSpillStore } from './dsh-spill.js'
 import {
   ADAPTER_DYNAMIC_EVIDENCE_METHOD,
   AdapterDynamicEvidenceSchema,
   isLegacyAdapterDynamicHostSource,
   wrapAdapterDynamicHostSource,
 } from './adapter-dynamic-harness.js'
+import { mountChannelReplyGuard, type ChannelReplyGuardController } from './channel-reply-guard.js'
+import { normalizeSessionEvents } from './channel-runtime-events.js'
+import { defineDshToolFromUnknown, parseDshImageAttachmentRef, parseDshToolDefinition } from './dsh-interop/unsafe.js'
+import { DshPluginLifecycleCoordinator } from './dsh-plugin-lifecycle.js'
+import { QuotaLocalSpillStore } from './dsh-spill.js'
+import {
+  HostModelSettings,
+  type AvailableLlmModel,
+  type LlmProviderSettingsView,
+  type SaveLlmProviderInput,
+  type TestLlmProviderInput,
+  type WebSearchCapabilityStatus,
+} from './host-model-settings.js'
+import { SessionRegistry } from './session-registry.js'
+import { SessionRuntimeProjection } from './session-runtime-projection.js'
+export {
+  isDshSettingsSchemaWireSafe,
+  type AvailableLlmModel,
+  type ConfigurableLlmProviderView,
+  type LlmProviderSettingsView,
+  type SaveLlmProviderInput,
+  type TestLlmProviderInput,
+  type WebSearchCapabilityStatus,
+} from './host-model-settings.js'
+type CordisDynamicPackageIdType = ReturnType<typeof CordisDynamicPackageId>
+type CordisDynamicPluginIdType = ReturnType<typeof CordisDynamicPluginId>
+type ApprovalRequestIdType = ReturnType<typeof ApprovalRequestId>
 
 export interface AssetAccessRepository {
   getAssetById(id: AssetRecord['id']): AssetRecord | undefined
   canAccessAsset(assetId: AssetRecord['id'], channelId: ChannelId): boolean
   grantAssetAccess(grant: AssetChannelGrant): AssetChannelGrant
-}
-
-export interface AvailableLlmModel {
-  readonly provider: string
-  readonly providerName: string
-  readonly id: string
-  readonly name: string
-  readonly description?: string
-  readonly inputModalities?: readonly string[]
 }
 
 export interface AgentImageDiagnostics {
@@ -322,145 +319,6 @@ declare module '@deepseek-ai/dsh-session/types' {
     }
   }
 }
-
-const HOST_DSH_PACKAGE_VERSIONS = {
-  '@deepseek-ai/cordis': '4.0.1',
-  '@deepseek-ai/dsh-agent': '0.1.1-rc.2',
-  '@deepseek-ai/dsh-agent-loop': '0.1.1-rc.2',
-  '@deepseek-ai/dsh-attachment': '0.1.1-rc.2',
-  '@deepseek-ai/dsh-attachment-local': '0.1.1-rc.2',
-  '@deepseek-ai/dsh-bash-sandbox': '0.1.1-rc.2',
-  '@deepseek-ai/dsh-compaction-basic': '0.1.1-rc.2',
-  '@deepseek-ai/dsh-compaction-tool-result-pruner': '0.1.1-rc.2',
-  '@deepseek-ai/dsh-cordis-host-runner': '0.1.1-rc.2',
-  '@deepseek-ai/dsh-credentials': '0.1.1-rc.2',
-  '@deepseek-ai/dsh-credentials-local': '0.1.1-rc.2',
-  '@deepseek-ai/dsh-launch-environment': '0.1.1-rc.2',
-  '@deepseek-ai/dsh-llm': '0.1.1-rc.2',
-  '@deepseek-ai/dsh-llm-deepseek': '0.1.1-rc.2',
-  '@deepseek-ai/dsh-llm-pi-ai': '0.1.1-rc.2',
-  '@deepseek-ai/dsh-llm-retry': '0.1.1-rc.2',
-  '@deepseek-ai/dsh-output-retention': '0.1.1-rc.2',
-  '@deepseek-ai/dsh-fs-observation-policy': '0.1.1-rc.2',
-  '@deepseek-ai/dsh-fs-sandbox': '0.1.1-rc.2',
-  '@deepseek-ai/dsh-sandbox-local': '0.1.1-rc.2',
-  '@deepseek-ai/dsh-sandbox-policy': '0.1.1-rc.2',
-  '@deepseek-ai/dsh-scope': '0.1.1-rc.2',
-  '@deepseek-ai/dsh-session': '0.1.1-rc.2',
-  '@deepseek-ai/dsh-session-checkpoint-policy': '0.1.1-rc.2',
-  '@deepseek-ai/dsh-session-persistence-sqlite': '0.1.1-rc.2',
-  '@deepseek-ai/dsh-session-projection': '0.1.1-rc.2',
-  '@deepseek-ai/dsh-session-stats': '0.1.1-rc.2',
-  '@deepseek-ai/dsh-settings': '0.1.1-rc.2',
-  '@deepseek-ai/dsh-settings-file': '0.1.1-rc.2',
-  '@deepseek-ai/dsh-skill': '0.1.1-rc.2',
-  '@deepseek-ai/dsh-system-prompt': '0.1.1-rc.2',
-  '@deepseek-ai/dsh-shell-env': '0.1.1-rc.2',
-  '@deepseek-ai/dsh-subprocess-local': '0.1.1-rc.2',
-  '@deepseek-ai/dsh-token-meter': '0.1.1-rc.2',
-  '@deepseek-ai/dsh-spill': '0.1.1-rc.2',
-  '@deepseek-ai/dsh-spill-local': '0.1.1-rc.2',
-  '@deepseek-ai/dsh-spill-policy': '0.1.1-rc.2',
-  '@deepseek-ai/dsh-subagent': '0.1.1-rc.2',
-  '@deepseek-ai/dsh-subagent-spawn-in-process': '0.1.1-rc.2',
-  '@deepseek-ai/dsh-tool-bash': '0.1.1-rc.2',
-  '@deepseek-ai/dsh-tool-call-timeout-policy': '0.1.1-rc.2',
-  '@deepseek-ai/dsh-tool-cordis': '0.1.1-rc.2',
-  '@deepseek-ai/dsh-tool-fs': '0.1.1-rc.2',
-  '@deepseek-ai/dsh-tool-skill': '0.1.1-rc.2',
-  '@deepseek-ai/dsh-tool-subagent': '0.1.1-rc.2',
-  '@deepseek-ai/dsh-tool-subagent-control': '0.1.1-rc.2',
-  '@deepseek-ai/dsh-tool-subagent-report': '0.1.1-rc.2',
-  '@deepseek-ai/dsh-tool-web': '0.1.1-rc.2',
-  '@deepseek-ai/dsh-tools': '0.1.1-rc.2',
-  '@deepseek-ai/dsh-web': '0.1.1-rc.2',
-  '@deepseek-ai/dsh-web-search-deepseek': '0.1.1-rc.2',
-} as const
-
-interface DshBuiltinExtensionEntry {
-  readonly packageName: keyof typeof HOST_DSH_PACKAGE_VERSIONS
-  readonly settingsNamespaces?: readonly string[]
-}
-
-/** Product-visible identities for the fixed DSH packages composed by this Host. */
-const DSH_BUILTIN_EXTENSION_ROSTER: readonly DshBuiltinExtensionEntry[] = [
-  {
-    packageName: '@deepseek-ai/dsh-llm-pi-ai',
-    settingsNamespaces: ['llm-pi-ai'],
-  },
-  {
-    packageName: '@deepseek-ai/dsh-llm-deepseek',
-    settingsNamespaces: ['llm-deepseek'],
-  },
-  {
-    packageName: '@deepseek-ai/dsh-agent-loop',
-    settingsNamespaces: ['agent-loop'],
-  },
-  {
-    packageName: '@deepseek-ai/dsh-bash-sandbox',
-    settingsNamespaces: ['shell'],
-  },
-  {
-    packageName: '@deepseek-ai/dsh-subagent',
-  },
-  {
-    packageName: '@deepseek-ai/dsh-subagent-spawn-in-process',
-  },
-  {
-    packageName: '@deepseek-ai/dsh-tool-subagent',
-  },
-  {
-    packageName: '@deepseek-ai/dsh-tool-subagent-control',
-  },
-  {
-    packageName: '@deepseek-ai/dsh-web',
-  },
-  {
-    packageName: '@deepseek-ai/dsh-web-search-deepseek',
-    settingsNamespaces: ['web-search-deepseek'],
-  },
-  {
-    packageName: '@deepseek-ai/dsh-tool-web',
-  },
-  {
-    packageName: '@deepseek-ai/dsh-compaction-tool-result-pruner',
-  },
-  {
-    packageName: '@deepseek-ai/dsh-llm-retry',
-  },
-  {
-    packageName: '@deepseek-ai/dsh-tool-call-timeout-policy',
-  },
-  {
-    packageName: '@deepseek-ai/dsh-spill-policy',
-  },
-  {
-    packageName: '@deepseek-ai/dsh-cordis-host-runner',
-  },
-] as const
-
-const DSH_SETTINGS_OWNER = new Map(
-  DSH_BUILTIN_EXTENSION_ROSTER.flatMap((entry) =>
-    (entry.settingsNamespaces ?? []).map((ns) => [ns, entry.packageName] as const),
-  ),
-)
-
-const JsonObjectSchema = z.record(z.string(), z.unknown())
-const SerializedSchemaNodeSchema = z
-  .object({
-    type: z.unknown().optional(),
-    meta: z.object({ role: z.unknown().optional(), default: z.unknown().optional() }).passthrough().optional(),
-    inner: z.unknown().optional(),
-    dict: JsonObjectSchema.optional(),
-    list: z.array(z.unknown()).optional(),
-  })
-  .passthrough()
-const SerializedSchemaEnvelopeSchema = z
-  .object({
-    uid: z.number(),
-    refs: JsonObjectSchema,
-  })
-  .passthrough()
 const PackageManifestSchema = z
   .object({
     version: z.unknown().optional(),
@@ -472,53 +330,6 @@ const PackageManifestSchema = z
       .optional(),
   })
   .passthrough()
-
-/**
- * 0.1.1-rc.2 redaction only walks object/dict/array containers and serialized
- * schemas retain Secret defaults. Refuse descriptors whose Secret nodes can
- * escape either rule instead of treating prompt/UI behavior as a wire bound.
- */
-export function isDshSettingsSchemaWireSafe(serialized: unknown): boolean {
-  const envelopeResult = SerializedSchemaEnvelopeSchema.safeParse(serialized)
-  if (!envelopeResult.success) return false
-  const envelope = envelopeResult.data
-  const nodeCache = new WeakMap<object, z.infer<typeof SerializedSchemaNodeSchema>>()
-  const resolveNode = (reference: unknown): z.infer<typeof SerializedSchemaNodeSchema> | undefined => {
-    const candidate = typeof reference === 'number' ? envelope.refs[String(reference)] : reference
-    if (typeof candidate !== 'object' || candidate === null) return undefined
-    const cached = nodeCache.get(candidate)
-    if (cached) return cached
-    const result = SerializedSchemaNodeSchema.safeParse(candidate)
-    if (!result.success) return undefined
-    nodeCache.set(candidate, result.data)
-    return result.data
-  }
-  const visited = new WeakMap<object, number>()
-  let safe = true
-  const visit = (reference: unknown, redactorCanReach: boolean): void => {
-    const node = resolveNode(reference)
-    if (!node || !safe) return
-    const bit = redactorCanReach ? 1 : 2
-    const previous = visited.get(node) ?? 0
-    if ((previous & bit) !== 0) return
-    visited.set(node, previous | bit)
-    if (node.meta?.role === 'secret') {
-      if (!redactorCanReach || Object.prototype.hasOwnProperty.call(node.meta, 'default')) safe = false
-    }
-    const type = typeof node.type === 'string' ? node.type : ''
-    if (node.dict) {
-      const supported = redactorCanReach && type === 'object'
-      for (const child of Object.values(node.dict)) visit(child, supported)
-    }
-    if (node.inner !== undefined) {
-      const supported = redactorCanReach && (type === 'dict' || type === 'array')
-      visit(node.inner, supported)
-    }
-    for (const child of node.list ?? []) visit(child, false)
-  }
-  visit(envelope.uid, true)
-  return safe
-}
 
 export function assertHostDshPackageVersions(): void {
   const require = createRequire(import.meta.url)
@@ -581,163 +392,6 @@ export interface DshHostRuntimeOptions {
     readonly resolveModule: (packageId: DshPluginPackageId, moduleName: string) => string
   }
 }
-
-export interface ConfigurableLlmProviderView {
-  readonly provider: string
-  readonly displayName: string
-  readonly settingsNs: string
-  readonly settingsPath: readonly string[]
-  readonly settingsRevision: number
-  readonly declared: boolean
-  readonly active: boolean
-  readonly configured: boolean
-  readonly baseURL?: string
-  readonly api?: string
-  readonly credential?: { readonly configured: boolean; readonly source?: string; readonly writable: boolean }
-  readonly models: readonly {
-    readonly id: string
-    readonly name: string
-    readonly contextWindow?: number
-    readonly maxTokens?: number
-  }[]
-}
-
-export interface LlmProviderSettingsView {
-  readonly writable: boolean
-  readonly protocols: readonly string[]
-  readonly providers: readonly ConfigurableLlmProviderView[]
-}
-
-export interface WebSearchCapabilityStatus {
-  readonly provider: 'deepseek-official'
-  readonly available: boolean
-  readonly credentialConfigured: boolean
-  readonly credentialReference: string
-  readonly maxUsesPerCall: number
-  readonly maxResultsPerCall: number
-  readonly timeoutMs: number
-}
-
-export interface SaveLlmProviderInput {
-  readonly provider: string
-  readonly expectedRevision: number
-  readonly apiKey?: string
-  readonly displayName?: string
-  readonly baseURL?: string
-  readonly api?: string
-  readonly models?: readonly {
-    readonly id: string
-    readonly name?: string
-    readonly contextWindow?: number
-    readonly maxTokens?: number
-  }[]
-}
-
-export interface TestLlmProviderInput {
-  readonly provider: string
-  readonly model: string
-  readonly settingsNs?: string
-  readonly apiKey?: string
-  readonly baseURL?: string
-  readonly api?: string
-  readonly models?: SaveLlmProviderInput['models']
-}
-
-const DRAFT_LLM_CREDENTIAL_REF = 'NEKRO_NXT_DRAFT_API_KEY'
-
-class DraftLlmCredentialProvider extends CredentialProvider {
-  readonly apiKey: string | undefined
-
-  constructor(context: Context, config: { readonly apiKey?: string }) {
-    super(context)
-    this.apiKey = config.apiKey
-  }
-
-  async resolve(ref: CredentialRef): Promise<ResolvedCredential | undefined> {
-    await Promise.resolve()
-    return ref === DRAFT_LLM_CREDENTIAL_REF && this.apiKey
-      ? { value: this.apiKey, source: 'nekro-nxt-draft' }
-      : undefined
-  }
-
-  async describe(ref: CredentialRef): Promise<CredentialInfo> {
-    await Promise.resolve()
-    return {
-      configured: ref === DRAFT_LLM_CREDENTIAL_REF && Boolean(this.apiKey),
-      source: 'nekro-nxt-draft',
-      writable: false,
-    }
-  }
-
-  set(): Promise<void> {
-    return Promise.reject(new Error('连接测试的临时凭据只读。'))
-  }
-
-  unset(): Promise<void> {
-    return Promise.reject(new Error('连接测试的临时凭据只读。'))
-  }
-
-  async readRecord(): Promise<CredentialRecord | undefined> {
-    await Promise.resolve()
-    return undefined
-  }
-
-  async describeRecord(): Promise<CredentialRecordInfo> {
-    await Promise.resolve()
-    return { configured: false, writable: false }
-  }
-
-  async listRecords(): Promise<readonly CredentialRecordEntry[]> {
-    await Promise.resolve()
-    return []
-  }
-
-  modifyRecord(
-    key: CredentialKey,
-    mutate: (current: CredentialRecord | undefined) => Promise<CredentialRecord | undefined>,
-  ): Promise<CredentialRecord | undefined> {
-    void key
-    void mutate
-    return Promise.reject(new Error('连接测试的临时凭据不支持授权记录写入。'))
-  }
-
-  async deleteRecord(): Promise<void> {
-    await Promise.resolve()
-  }
-}
-
-const ConfiguredLlmModelSchema = z
-  .object({
-    id: z.string(),
-    name: z.string().optional(),
-    contextWindow: z.number().optional(),
-    maxTokens: z.number().optional(),
-  })
-  .passthrough()
-const LlmProviderProfileSchema = z
-  .object({
-    apiKeyEnv: z.unknown().optional(),
-    displayName: z.unknown().optional(),
-    baseURL: z.unknown().optional(),
-    api: z.unknown().optional(),
-    models: z.unknown().optional(),
-  })
-  .passthrough()
-const WebSearchSettingsSchema = z.object({ apiKeyEnv: z.unknown().optional() }).passthrough()
-
-const readObjectPath = (value: unknown, pathSegments: readonly string[]): Record<string, unknown> | undefined => {
-  let current: unknown = value
-  for (const segment of pathSegments) {
-    const result = JsonObjectSchema.safeParse(current)
-    if (!result.success) return undefined
-    current = result.data[segment]
-  }
-  const result = JsonObjectSchema.safeParse(current)
-  return result.success ? result.data : undefined
-}
-
-const credentialReferenceForProvider = (provider: string): string =>
-  `${provider.toUpperCase().replaceAll('-', '_')}_API_KEY`
 
 const errorFromUnknown = (cause: unknown, message: string): Error =>
   cause instanceof Error ? cause : new Error(message, { cause })
@@ -3331,17 +2985,12 @@ export class DshHostRuntime implements AgentSessionDriver, ExtensionActivationHo
   readonly #resolveAgentRevision: DshHostRuntimeOptions['resolveAgentRevision']
   readonly #resolveAdapterDisplayName: NonNullable<DshHostRuntimeOptions['resolveAdapterDisplayName']>
   readonly #developmentWorkspaceRoot: string | undefined
-  readonly #hasLlmSettings: boolean
-  readonly #handles = new Map<string, AgentHandle>()
-  readonly #imageInputSessions = new Set<string>()
-  readonly #dynamicSessions = new Map<
-    string,
-    { readonly context: Context; readonly runner: NekroNxtDynamicCordisRunner }
-  >()
-  readonly #productAgentBySession = new Map<string, AgentRevisionRecord['agentId']>()
-  readonly #channelBySession = new Map<string, ChannelId>()
-  readonly #episodeBySession = new Map<string, EpisodeId>()
-  readonly #revisionBySession = new Map<string, AgentRevisionRecord>()
+  readonly #modelSettings: HostModelSettings
+  readonly #sessions = new SessionRegistry<{
+    readonly context: Context
+    readonly runner: NekroNxtDynamicCordisRunner
+  }>()
+  readonly #runtimeProjection: SessionRuntimeProjection
   readonly #persistentExtensions = new Map<string, PersistentExtensionRegistration>()
   readonly #dshPluginLifecycle: DshPluginLifecycleCoordinator | undefined
   readonly #authoring: DshHostRuntimeOptions['authoring']
@@ -3357,6 +3006,7 @@ export class DshHostRuntime implements AgentSessionDriver, ExtensionActivationHo
     channelReplyGuard: ChannelReplyGuardController,
   ) {
     this.#context = context
+    this.#runtimeProjection = new SessionRuntimeProjection(context, this.#sessions)
     this.#communication = options.communication
     this.#history = options.history
     this.#assets = options.assets
@@ -3364,7 +3014,7 @@ export class DshHostRuntime implements AgentSessionDriver, ExtensionActivationHo
     this.#resolveAgentRevision = options.resolveAgentRevision
     this.#resolveAdapterDisplayName = options.resolveAdapterDisplayName ?? (() => undefined)
     this.#developmentWorkspaceRoot = options.developmentWorkspaceRoot
-    this.#hasLlmSettings = options.llmSettingsPath !== undefined
+    this.#modelSettings = new HostModelSettings(context, options.llmSettingsPath !== undefined)
     this.#authoring = options.authoring
     this.#channelReplyGuard = channelReplyGuard
     this.#dshPluginLifecycle =
@@ -3376,8 +3026,8 @@ export class DshHostRuntime implements AgentSessionDriver, ExtensionActivationHo
             isolateContext: isolatePrivateExtensionServices,
             resolveModule: options.dshPlugins.resolveModule,
             listAgentSessions: (agentId) =>
-              [...this.#handles.entries()]
-                .filter(([sessionId]) => this.#productAgentBySession.get(sessionId) === agentId)
+              [...this.#sessions.handles()]
+                .filter(([sessionId]) => this.#sessions.get(sessionId)?.revision.agentId === agentId)
                 .map(([sessionId, handle]) => ({
                   sessionId,
                   context: handle.agent.ctx,
@@ -3483,28 +3133,14 @@ export class DshHostRuntime implements AgentSessionDriver, ExtensionActivationHo
       throw error
     }
   }
-
   registerLlmAdapter(providers: string[], adapter: LlmAdapter): () => void {
     this.#assertActive()
-    return this.#context.llm.registerAdapter(providers, adapter)
+    return this.#modelSettings.registerLlmAdapter(providers, adapter)
   }
 
-  /** Read the live DSH adapter registry; NekroNxt does not maintain a second provider catalog. */
-  async listAvailableLlmModels(): Promise<readonly AvailableLlmModel[]> {
+  listAvailableLlmModels(): Promise<readonly AvailableLlmModel[]> {
     this.#assertActive()
-    const groups = await Promise.all(
-      this.#context.llm.listProviders().map(async (provider) =>
-        (await this.#context.llm.listModels(provider.id)).map((model) => ({
-          provider: provider.id,
-          providerName: provider.name,
-          id: model.id,
-          name: model.name,
-          ...(model.description === undefined ? {} : { description: model.description }),
-          ...(model.inputModalities === undefined ? {} : { inputModalities: [...model.inputModalities] }),
-        })),
-      ),
-    )
-    return groups.flat()
+    return this.#modelSettings.listAvailableLlmModels()
   }
 
   async getAgentImageDiagnostics(revision: AgentRevisionRecord): Promise<AgentImageDiagnostics> {
@@ -3542,7 +3178,8 @@ export class DshHostRuntime implements AgentSessionDriver, ExtensionActivationHo
       blockers.push('主模型当前不可用，无法建立图片理解路由。')
     }
 
-    const sessions = [...this.#productAgentBySession.entries()]
+    const sessions = [...this.#sessions.records()]
+      .map((record) => [record.sessionId, record.revision.agentId] as const)
       .filter(([, agentId]) => agentId === revision.agentId)
       .flatMap(([sessionId]) => {
         const agent = this.#context.agents.get(SessionId(sessionId))
@@ -3602,117 +3239,19 @@ export class DshHostRuntime implements AgentSessionDriver, ExtensionActivationHo
       blockers,
     }
   }
-
-  /** Project DSH's configurable-provider directory and redacted settings/credential facts. */
-  async getLlmProviderSettings(): Promise<LlmProviderSettingsView> {
+  getLlmProviderSettings(): Promise<LlmProviderSettingsView> {
     this.#assertActive()
-    if (!this.#hasLlmSettings) throw new Error('DSH 模型设置服务未启用。')
-    const descriptors = new Map(
-      this.#context.settings.describe({ redactSecrets: true }).map((descriptor) => [descriptor.ns, descriptor]),
-    )
-    const active = new Map(this.#context.llm.listProviders().map((provider) => [provider.id, provider]))
-    const providers = await Promise.all(
-      this.#context.llm.listConfigurableProviders().map(async (entry): Promise<ConfigurableLlmProviderView> => {
-        const descriptor = descriptors.get(settingsNamespace(entry.settingsNs))
-        if (!descriptor) throw new Error(`DSH 模型设置 namespace 未注册：${entry.settingsNs}`)
-        const rawProfile = readObjectPath(descriptor.value, entry.settingsPath)
-        const profile = rawProfile === undefined ? undefined : LlmProviderProfileSchema.parse(rawProfile)
-        const configured = rawProfile !== undefined
-        const apiKeyEnv = typeof profile?.apiKeyEnv === 'string' ? profile.apiKeyEnv : undefined
-        const credential =
-          apiKeyEnv === undefined ? undefined : await this.#context.credentials.describe(credentialRef(apiKeyEnv))
-        const configuredModels = Array.isArray(profile?.models)
-          ? profile.models.flatMap((candidate) => {
-              const result = ConfiguredLlmModelSchema.safeParse(candidate)
-              if (!result.success) return []
-              const model = result.data
-              return [
-                {
-                  id: model.id,
-                  name: model.name ?? model.id,
-                  ...(model.contextWindow === undefined ? {} : { contextWindow: model.contextWindow }),
-                  ...(model.maxTokens === undefined ? {} : { maxTokens: model.maxTokens }),
-                },
-              ]
-            })
-          : []
-        const liveModels = active.has(entry.provider)
-          ? (await this.#context.llm.listModels(entry.provider)).map((model) => ({ id: model.id, name: model.name }))
-          : []
-        return {
-          provider: entry.provider,
-          displayName: entry.displayName,
-          settingsNs: entry.settingsNs,
-          settingsPath: [...entry.settingsPath],
-          settingsRevision: descriptor.revision,
-          declared: entry.declared === true,
-          active: active.has(entry.provider),
-          configured,
-          ...(typeof profile?.baseURL === 'string' ? { baseURL: profile.baseURL } : {}),
-          ...(typeof profile?.api === 'string' ? { api: profile.api } : {}),
-          ...(credential === undefined
-            ? {}
-            : {
-                credential: {
-                  configured: credential.configured,
-                  writable: credential.writable,
-                  ...(credential.source === undefined ? {} : { source: credential.source }),
-                },
-              }),
-          models: configuredModels.length > 0 ? configuredModels : liveModels,
-        }
-      }),
-    )
-    return { writable: this.#context.settings.writable, protocols: [...LlmPiAi.supportedProtocols()], providers }
+    return this.#modelSettings.getLlmProviderSettings()
   }
 
-  /** Project Web Provider readiness through the same DSH settings/credentials seams used at execution time. */
-  async getWebSearchCapabilityStatus(): Promise<WebSearchCapabilityStatus> {
+  getWebSearchCapabilityStatus(): Promise<WebSearchCapabilityStatus> {
     this.#assertActive()
-    const fallback: WebSearchCapabilityStatus = {
-      provider: 'deepseek-official',
-      available: false,
-      credentialConfigured: false,
-      credentialReference: 'DEEPSEEK_API_KEY',
-      maxUsesPerCall: 2,
-      maxResultsPerCall: 5,
-      timeoutMs: 60_000,
-    }
-    if (!this.#hasLlmSettings) return fallback
-    const descriptor = this.#context.settings
-      .describe({ redactSecrets: true })
-      .find((candidate) => candidate.ns === settingsNamespace('web-search-deepseek'))
-    const valuesResult = WebSearchSettingsSchema.safeParse(descriptor?.value)
-    const values = valuesResult.success ? valuesResult.data : undefined
-    const credentialReference = typeof values?.apiKeyEnv === 'string' ? values.apiKeyEnv : fallback.credentialReference
-    const credential = await this.#context.credentials.describe(credentialRef(credentialReference))
-    const inlineSecretConfigured =
-      descriptor?.secrets?.some((secret) => secret.set && secret.path.length === 1 && secret.path[0] === 'apiKey') ===
-      true
-    const credentialConfigured = credential.configured || inlineSecretConfigured
-    return { ...fallback, available: credentialConfigured, credentialConfigured, credentialReference }
+    return this.#modelSettings.getWebSearchCapabilityStatus()
   }
 
-  /** Project the fixed product-visible DSH package roster without inventing a compatibility rating. */
   listDshPlugins(): readonly DshPluginCatalogEntry[] {
     this.#assertActive()
-    const liveNamespaces = new Set(
-      this.#hasLlmSettings
-        ? this.#context.settings
-            .describe({ redactSecrets: true })
-            .filter((descriptor) => isDshSettingsSchemaWireSafe(descriptor.schema))
-            .map((descriptor) => String(descriptor.ns))
-        : [],
-    )
-    return DSH_BUILTIN_EXTENSION_ROSTER.map((entry) => {
-      const expectedNamespaces = entry.settingsNamespaces ?? []
-      return {
-        packageName: entry.packageName,
-        packageVersion: HOST_DSH_PACKAGE_VERSIONS[entry.packageName],
-        origin: 'builtin',
-        settingsNamespaces: expectedNamespaces.filter((ns) => liveNamespaces.has(ns)),
-      }
-    })
+    return this.#modelSettings.listDshPlugins()
   }
 
   activateInstalledDshPlugin(
@@ -3740,147 +3279,51 @@ export class DshHostRuntime implements AgentSessionDriver, ExtensionActivationHo
     if (!this.#dshPluginLifecycle) return Promise.reject(new Error('DSH 用户插件生命周期未配置。'))
     return this.#dshPluginLifecycle.disablePackage(packageId)
   }
-
-  /** Return every live DSH Settings namespace without exposing secret values. */
   listDshSettings(): readonly DshSettingsNamespaceView[] {
     this.#assertActive()
-    if (!this.#hasLlmSettings) return []
-    return this.#context.settings
-      .describe({ redactSecrets: true })
-      .filter((descriptor) => isDshSettingsSchemaWireSafe(descriptor.schema))
-      .map((descriptor) => this.#projectDshSettingsDescriptor(descriptor))
+    return this.#modelSettings.listDshSettings()
   }
 
-  async mutateDshSettings(
+  mutateDshSettings(
     ns: string,
     expectedRevision: number,
     ops: readonly DshSettingsPathOperation[],
   ): Promise<DshSettingsNamespaceView> {
     this.#assertActive()
-    if (!this.#hasLlmSettings) throw new Error('DSH 设置服务未启用。')
-    const branded = settingsNamespace(ns)
-    const before = this.#context.settings
-      .describe({ redactSecrets: true })
-      .find((candidate) => candidate.ns === branded)
-    if (!before) throw new Error(`DSH Settings namespace 不存在：${ns}`)
-    if (!isDshSettingsSchemaWireSafe(before.schema)) {
-      throw new Error(`DSH Settings namespace 含有 0.1.1-rc.2 无法安全脱敏的 Schema：${ns}`)
-    }
-    await this.#context.settings.mutate(branded, ops, expectedRevision)
-    const descriptor = this.#context.settings
-      .describe({ redactSecrets: true })
-      .find((candidate) => candidate.ns === branded)
-    if (!descriptor) throw new Error(`DSH Settings namespace 在保存后已卸载：${ns}`)
-    return this.#projectDshSettingsDescriptor(descriptor)
+    return this.#modelSettings.mutateDshSettings(ns, expectedRevision, ops)
   }
 
-  async describeDshCredentials(refs: readonly string[]): Promise<Readonly<Record<string, DshCredentialView>>> {
+  describeDshCredentials(refs: readonly string[]): Promise<Readonly<Record<string, DshCredentialView>>> {
     this.#assertActive()
-    if (!this.#hasLlmSettings) return {}
-    return Object.fromEntries(
-      await Promise.all(
-        refs.map(async (ref) => {
-          const info = await this.#context.credentials.describe(credentialRef(ref))
-          return [ref, info] as const
-        }),
-      ),
-    )
+    return this.#modelSettings.describeDshCredentials(refs)
   }
 
-  async setDshCredential(ref: string, value: string): Promise<DshCredentialView> {
+  setDshCredential(ref: string, value: string): Promise<DshCredentialView> {
     this.#assertActive()
-    if (!this.#hasLlmSettings) throw new Error('DSH 凭据服务未启用。')
-    const branded = credentialRef(ref)
-    await this.#context.credentials.set(branded, value)
-    return await this.#context.credentials.describe(branded)
+    return this.#modelSettings.setDshCredential(ref, value)
   }
 
-  async unsetDshCredential(ref: string): Promise<DshCredentialView> {
+  unsetDshCredential(ref: string): Promise<DshCredentialView> {
     this.#assertActive()
-    if (!this.#hasLlmSettings) throw new Error('DSH 凭据服务未启用。')
-    const branded = credentialRef(ref)
-    await this.#context.credentials.unset(branded)
-    return await this.#context.credentials.describe(branded)
+    return this.#modelSettings.unsetDshCredential(ref)
   }
 
   onDshSettingsChanged(listener: (ns: string, revision: number) => void): () => void {
     this.#assertActive()
-    return this.#context.on('settings/document-updated', (ns, revision) => {
-      listener(String(ns), revision)
-    })
+    return this.#modelSettings.onDshSettingsChanged(listener)
   }
 
   onDshCredentialChanged(listener: (ref: string) => void): () => void {
     this.#assertActive()
-    return this.#context.on('credentials/reference-updated', (ref) => {
-      listener(String(ref))
-    })
+    return this.#modelSettings.onDshCredentialChanged(listener)
   }
 
-  #projectDshSettingsDescriptor(
-    descriptor: ReturnType<Context['settings']['describe']>[number],
-  ): DshSettingsNamespaceView {
-    const ns = String(descriptor.ns)
-    const owner = DSH_SETTINGS_OWNER.get(ns)
-    return {
-      ns,
-      schema: descriptor.schema,
-      resolved: descriptor.value,
-      ...(descriptor.base === undefined ? {} : { base: descriptor.base }),
-      ...(descriptor.user === undefined ? {} : { user: descriptor.user }),
-      applies: descriptor.applies,
-      secrets: (descriptor.secrets ?? []).map((secret) => ({ path: [...secret.path], set: secret.set })),
-      revision: descriptor.revision,
-      writable: this.#context.settings.writable,
-      ...(owner === undefined
-        ? {}
-        : { owner: { packageName: owner, packageVersion: HOST_DSH_PACKAGE_VERSIONS[owner] } }),
-    }
-  }
-
-  /** Persist one DSH provider profile, then store a supplied key through the write-only credential seam. */
-  async saveLlmProvider(input: SaveLlmProviderInput): Promise<LlmProviderSettingsView> {
+  saveLlmProvider(input: SaveLlmProviderInput): Promise<LlmProviderSettingsView> {
     this.#assertActive()
-    if (!this.#hasLlmSettings) throw new Error('DSH 模型设置服务未启用。')
-    if (!/^[a-z][a-z0-9-]*$/u.test(input.provider)) throw new Error('Provider ID 必须以小写字母开头。')
-    const directory = this.#context.llm.listConfigurableProviders()
-    const entry = directory.find((candidate) => candidate.provider === input.provider)
-    const settingsNs = entry?.settingsNs ?? 'llm-pi-ai'
-    const settingsPath = entry?.settingsPath ?? ['providers', input.provider]
-    const descriptor = this.#context.settings
-      .describe({ redactSecrets: true })
-      .find((candidate) => candidate.ns === settingsNamespace(settingsNs))
-    if (!descriptor) throw new Error(`DSH 模型设置 namespace 未注册：${settingsNs}`)
-    const rawCurrent = readObjectPath(descriptor.value, settingsPath)
-    const current = rawCurrent === undefined ? undefined : LlmProviderProfileSchema.parse(rawCurrent)
-    const credentialRefName =
-      typeof current?.apiKeyEnv === 'string' ? current.apiKeyEnv : credentialReferenceForProvider(input.provider)
-    const fields: Record<string, unknown> = {}
-    if (input.displayName !== undefined) fields['displayName'] = input.displayName
-    if (input.baseURL !== undefined) fields['baseURL'] = input.baseURL
-    if (input.api !== undefined) fields['api'] = input.api
-    if (input.models !== undefined) fields['models'] = input.models.map((model) => ({ ...model }))
-    if (input.apiKey !== undefined || typeof current?.apiKeyEnv === 'string') fields['apiKeyEnv'] = credentialRefName
-    if (entry === undefined) {
-      if (!input.displayName || !input.baseURL || !input.api || !input.models?.length) {
-        throw new Error('自定义供应商需要名称、API 地址、协议和至少一个模型。')
-      }
-    }
-    const ops: SettingsPathOp[] =
-      current === undefined
-        ? [{ op: 'set', path: settingsPath, value: fields }]
-        : Object.entries(fields).map(([key, value]) => ({ op: 'set' as const, path: [...settingsPath, key], value }))
-    if (ops.length === 0 && current === undefined) ops.push({ op: 'set', path: settingsPath, value: {} })
-    if (ops.length > 0) {
-      await this.#context.settings.mutate(settingsNamespace(settingsNs), ops, input.expectedRevision)
-    }
-    if (input.apiKey !== undefined) {
-      await this.#context.credentials.set(credentialRef(credentialRefName), input.apiKey)
-    }
-    return this.getLlmProviderSettings()
+    return this.#modelSettings.saveLlmProvider(input)
   }
 
-  async discoverLlmProviderModels(input: {
+  discoverLlmProviderModels(input: {
     readonly provider?: string
     readonly settingsNs?: string
     readonly baseURL?: string
@@ -3895,93 +3338,12 @@ export class DshHostRuntime implements AgentSessionDriver, ExtensionActivationHo
     }[]
   > {
     this.#assertActive()
-    const settingsNs =
-      input.settingsNs ??
-      this.#context.llm.listConfigurableProviders().find((entry) => entry.provider === input.provider)?.settingsNs ??
-      'llm-pi-ai'
-    return this.#context.llm.discoverModels(settingsNs, input)
+    return this.#modelSettings.discoverLlmProviderModels(input)
   }
 
-  /** Make one minimal provider request from either the live registry or an isolated page-draft adapter. */
-  async testLlmProvider(input: TestLlmProviderInput): Promise<{ readonly provider: string; readonly model: string }> {
+  testLlmProvider(input: TestLlmProviderInput): Promise<{ readonly provider: string; readonly model: string }> {
     this.#assertActive()
-    const hasDraft =
-      input.settingsNs !== undefined ||
-      input.apiKey !== undefined ||
-      input.baseURL !== undefined ||
-      input.api !== undefined ||
-      input.models !== undefined
-    if (!hasDraft) {
-      await this.#runLlmConnectionProbe(this.#context.llm, input.provider, input.model)
-      return { provider: input.provider, model: input.model }
-    }
-    if (!this.#hasLlmSettings) throw new Error('DSH 模型设置服务未启用。')
-    const directoryEntry = this.#context.llm
-      .listConfigurableProviders()
-      .find((candidate) => candidate.provider === input.provider)
-    const settingsNs = input.settingsNs ?? directoryEntry?.settingsNs ?? 'llm-pi-ai'
-    if (settingsNs !== 'llm-pi-ai') throw new Error(`当前不支持测试此模型适配器：${settingsNs}`)
-    const descriptor = this.#context.settings
-      .describe({ redactSecrets: true })
-      .find((candidate) => candidate.ns === settingsNamespace(settingsNs))
-    if (!descriptor) throw new Error(`DSH 模型设置 namespace 未注册：${settingsNs}`)
-    const settingsPath = directoryEntry?.settingsPath ?? ['providers', input.provider]
-    const rawCurrent = readObjectPath(descriptor.value, settingsPath)
-    const current = rawCurrent === undefined ? {} : LlmProviderProfileSchema.parse(rawCurrent)
-    const profile: Record<string, unknown> = { ...current }
-    if (input.baseURL !== undefined) profile['baseURL'] = input.baseURL
-    if (input.api !== undefined) profile['api'] = input.api
-    if (input.models !== undefined) profile['models'] = input.models.map((model) => ({ ...model }))
-
-    const storedRef = typeof current['apiKeyEnv'] === 'string' ? current['apiKeyEnv'] : undefined
-    const storedApiKey =
-      input.apiKey === undefined && storedRef !== undefined
-        ? (await this.#context.credentials.resolve(credentialRef(storedRef)))?.value
-        : undefined
-    const draftApiKey = input.apiKey ?? storedApiKey
-    if (input.apiKey !== undefined || storedRef !== undefined) profile['apiKeyEnv'] = DRAFT_LLM_CREDENTIAL_REF
-
-    const draftContext = new Context()
-    try {
-      await draftContext.plugin(DraftLlmCredentialProvider, {
-        ...(draftApiKey === undefined ? {} : { apiKey: draftApiKey }),
-      })
-      await draftContext.plugin(LlmRuntime)
-      await draftContext.plugin(LlmPiAi, {
-        // The saved section was already validated by DSH; this isolated plugin validates the merged draft again.
-        providers: { [input.provider]: profile },
-      })
-      await this.#runLlmConnectionProbe(draftContext.llm, input.provider, input.model)
-    } catch (cause) {
-      const message = cause instanceof Error ? cause.message : String(cause)
-      if (draftApiKey && message.includes(draftApiKey)) throw new Error('模型供应商连接测试失败。')
-      throw cause
-    } finally {
-      await draftContext.fiber.dispose()
-    }
-    return { provider: input.provider, model: input.model }
-  }
-
-  async #runLlmConnectionProbe(llm: Pick<LlmRuntime, 'stream'>, provider: string, model: string): Promise<void> {
-    let finished = false
-    for await (const chunk of llm.stream({
-      provider,
-      model,
-      system: '这是一次连接测试。请只回复 OK。',
-      messages: [createUserMessage({ content: [{ type: 'text', text: 'OK' }], source: { kind: 'user' } })],
-      maxTokens: 16,
-    })) {
-      if (chunk.type !== 'finish') continue
-      finished = true
-      if (chunk.reason.kind === 'error' || chunk.reason.kind === 'aborted') {
-        const code = chunk.reason.failure.code
-        if (code === 'AUTH' || code === 'MISSING_CREDENTIAL') throw new Error('认证失败，请更新 API 密钥。')
-        if (code === 'QUOTA') throw new Error('供应商额度不足或订阅限制。')
-        if (code === 'RATE_LIMIT') throw new Error('供应商限流，请稍后再试。')
-        throw new Error(`模型请求失败（${code}）：${chunk.reason.failure.message}`)
-      }
-    }
-    if (!finished) throw new Error('供应商没有返回完整结果。')
+    return this.#modelSettings.testLlmProvider(input)
   }
 
   async createSession(input: Parameters<AgentSessionDriver['createSession']>[0]): Promise<string> {
@@ -4041,16 +3403,13 @@ export class DshHostRuntime implements AgentSessionDriver, ExtensionActivationHo
     }> = []
     const setup = async (agentContext: Context): Promise<void> => {
       agentContext.effect(() => {
-        this.#productAgentBySession.set(sessionId, revision.agentId)
-        this.#channelBySession.set(sessionId, input.channelId)
-        this.#episodeBySession.set(sessionId, input.episodeId)
-        this.#revisionBySession.set(sessionId, revision)
-        return () => {
-          this.#productAgentBySession.delete(sessionId)
-          this.#channelBySession.delete(sessionId)
-          this.#episodeBySession.delete(sessionId)
-          this.#revisionBySession.delete(sessionId)
-        }
+        const record = this.#sessions.register({
+          sessionId,
+          revision,
+          channelId: input.channelId,
+          episodeId: input.episodeId,
+        })
+        return () => this.#sessions.remove(sessionId, record)
       }, 'nekro-nxt: product Agent ownership')
       const compiledPersona = compilePersonaDocument({
         document: revision.personaDocument,
@@ -4263,13 +3622,14 @@ export class DshHostRuntime implements AgentSessionDriver, ExtensionActivationHo
         await dynamicContext.plugin(CordisTool)
         agentContext.tools.register(nekroNxtExtensionDefineTool(runner, sessionId))
         dynamicContext.effect(() => {
-          if (this.#dynamicSessions.has(sessionId)) {
+          if (this.#sessions.get(sessionId)?.dynamic !== undefined) {
             throw new Error(`Dynamic creation is already mounted for DSH Session: ${sessionId}`)
           }
           const owned = { context: dynamicContext, runner }
-          this.#dynamicSessions.set(sessionId, owned)
+          this.#sessions.require(sessionId).dynamic = owned
           return () => {
-            if (this.#dynamicSessions.get(sessionId) === owned) this.#dynamicSessions.delete(sessionId)
+            const record = this.#sessions.get(sessionId)
+            if (record?.dynamic === owned) delete record.dynamic
           }
         }, 'nekro-nxt: dynamic session ownership')
       }
@@ -4292,7 +3652,7 @@ export class DshHostRuntime implements AgentSessionDriver, ExtensionActivationHo
           agentOptions: { provider: revision.model.provider, model: revision.model.model },
           setup,
         })
-    this.#handles.set(sessionId, handle)
+    this.#sessions.require(sessionId).handle = handle
     for (const recovered of recoveredAuthoringPackages) {
       if (!recovered.shouldRun) continue
       const run = this.runDynamicPackage(sessionId, recovered.pluginId, recovered.packageId, 'run')
@@ -4304,7 +3664,7 @@ export class DshHostRuntime implements AgentSessionDriver, ExtensionActivationHo
         })
       }
     }
-    if (supportsImage) this.#imageInputSessions.add(sessionId)
+    if (supportsImage) this.#sessions.require(sessionId).imageInput = true
     await this.#restoreLatestPendingVisualContext(handle.agent)
     const hasHandoffMessage =
       input.handoff !== undefined &&
@@ -4404,7 +3764,7 @@ export class DshHostRuntime implements AgentSessionDriver, ExtensionActivationHo
     this.#channelReplyGuard.rememberAdmission(agent, input.admissionId, input.replyRequired)
     if (input.mode === 'inject') agent.inject(message)
     else {
-      this.#dynamicSessions.get(input.dshSessionId)?.runner.beginOrdinaryTurn()
+      this.#sessions.get(input.dshSessionId)?.dynamic?.runner.beginOrdinaryTurn()
       agent.followup(message)
     }
     if (imageStats.imageCount > 0 || imageStats.skippedCount > 0) {
@@ -4578,7 +3938,7 @@ export class DshHostRuntime implements AgentSessionDriver, ExtensionActivationHo
   async cancelSession(dshSessionId: string, reason: EpisodeCloseReason): Promise<void> {
     this.#assertActive()
     const sessionId = SessionId(dshSessionId)
-    const handle = this.#handles.get(sessionId)
+    const handle = this.#sessions.get(sessionId)?.handle
     if (!handle) throw new Error(`DSH Agent Session is not owned by this Host: ${dshSessionId}`)
     let drainError: unknown
     try {
@@ -4593,12 +3953,7 @@ export class DshHostRuntime implements AgentSessionDriver, ExtensionActivationHo
     } catch (error) {
       disposeError = error
     } finally {
-      this.#handles.delete(sessionId)
-      this.#imageInputSessions.delete(sessionId)
-      this.#dynamicSessions.delete(sessionId)
-      this.#productAgentBySession.delete(sessionId)
-      this.#channelBySession.delete(sessionId)
-      this.#episodeBySession.delete(sessionId)
+      this.#sessions.remove(sessionId)
     }
     if (drainError !== undefined && disposeError !== undefined) {
       throw new AggregateError([drainError, disposeError], `DSH Session teardown failed: ${dshSessionId}`)
@@ -4643,99 +3998,31 @@ export class DshHostRuntime implements AgentSessionDriver, ExtensionActivationHo
     throw new Error('智能体扩展开发收尾没有静止，暂时不能保存候选。')
   }
 
-  /** Aggregate the public DSH status of every live Session owned by one product intelligent-agent. */
   runtimeStatus(agentId: AgentRevisionRecord['agentId']): AgentStatus {
     this.#assertActive()
-    for (const [sessionId, ownedAgentId] of this.#productAgentBySession) {
-      if (ownedAgentId === agentId && this.#context.agents.get(SessionId(sessionId))?.status === 'running') {
-        return 'running'
-      }
-    }
-    return 'idle'
+    return this.#runtimeProjection.runtimeStatus(agentId)
   }
 
-  /** Notify the product projection when DSH enters or leaves active turn processing. */
   subscribeRuntimeStatus(
     listener: (change: { readonly agentId: AgentRevisionRecord['agentId']; readonly status: AgentStatus }) => void,
   ): () => boolean {
     this.#assertActive()
-    return this.#context.on('agent/status', ({ agent }) => {
-      const agentId = this.#productAgentBySession.get(agent.id)
-      if (agentId === undefined) return
-      listener({ agentId, status: this.runtimeStatus(agentId) })
-    })
+    return this.#runtimeProjection.subscribeRuntimeStatus(listener)
   }
 
-  tryLiveSession(
-    dshSessionId: string,
-  ): { readonly status: AgentStatus; readonly events: readonly SessionEvent[] } | undefined {
+  tryLiveSession(dshSessionId: string) {
     this.#assertActive()
-    const agent = this.#context.agents.get(SessionId(dshSessionId))
-    if (!agent) return undefined
-    return { status: agent.status, events: agent.session.events }
+    return this.#runtimeProjection.tryLiveSession(dshSessionId)
   }
 
-  sessionRuntimeMetrics(
-    dshSessionId: string,
-  ):
-    | { readonly occupancy?: ChannelRuntimeOccupancy; readonly performanceTotals?: RuntimePerformanceTotals }
-    | undefined {
+  sessionRuntimeMetrics(dshSessionId: string) {
     this.#assertActive()
-    const agent = this.#context.agents.get(SessionId(dshSessionId))
-    if (!agent) return undefined
-    const snapshot = this.#context.sessionProjections.snapshot(agent.session)
-    const occupancy = projectSessionOccupancy({
-      projectedTokens: snapshot.values.contextPressure?.projectedTokens,
-      contextWindow: snapshot.values.contextPressure?.contextWindow,
-      systemTokens: snapshot.values.contextBreakdown?.systemTokens,
-      toolsTokens: snapshot.values.contextBreakdown?.toolsTokens,
-      messageTokens: snapshot.values.contextBreakdown?.messageTokens,
-    })
-    const performanceTotals = snapshot.values.sessionStats
-    if (occupancy === undefined && performanceTotals === undefined) return undefined
-    return {
-      ...(occupancy === undefined ? {} : { occupancy }),
-      ...(performanceTotals === undefined ? {} : { performanceTotals }),
-    }
+    return this.#runtimeProjection.sessionRuntimeMetrics(dshSessionId)
   }
 
   subscribeChannelRuntime(listener: (channelId: ChannelId) => void): () => void {
     this.#assertActive()
-    const offStatus = this.#context.on('agent/status', ({ agent }) => {
-      const channelId = this.#channelBySession.get(String(agent.id))
-      if (channelId !== undefined) notify(channelId)
-    })
-    const pending = new Set<ChannelId>()
-    let timer: ReturnType<typeof setTimeout> | undefined
-    const flush = (): void => {
-      timer = undefined
-      const channelIds = [...pending]
-      pending.clear()
-      for (const channelId of channelIds) listener(channelId)
-    }
-    const notify = (channelId: ChannelId): void => {
-      pending.add(channelId)
-      timer ??= setTimeout(flush, 100)
-    }
-    const offEvent = this.#context.on(
-      'session/event',
-      (session: { readonly id: string }, event?: { readonly type?: string }) => {
-        if (!shouldBroadcastChannelRuntime(event?.type)) return
-        const channelId = this.#channelBySession.get(String(session.id))
-        if (channelId !== undefined) notify(channelId)
-      },
-    )
-    const offOccupancy = this.#context.sessionProjections.onChanged((session, key) => {
-      if (key !== 'contextPressure' && key !== 'contextBreakdown' && key !== 'sessionStats') return
-      const channelId = this.#channelBySession.get(String(session.id))
-      if (channelId !== undefined) notify(channelId)
-    })
-    return () => {
-      if (timer !== undefined) clearTimeout(timer)
-      offStatus()
-      offEvent()
-      offOccupancy()
-    }
+    return this.#runtimeProjection.subscribeChannelRuntime(listener)
   }
 
   sessionEvents(dshSessionId: string) {
@@ -4831,7 +4118,7 @@ export class DshHostRuntime implements AgentSessionDriver, ExtensionActivationHo
     pluginId: string,
     packageId: string,
   ): Promise<DynamicAuthoringSnapshot | undefined> {
-    const episodeId = this.#episodeBySession.get(dshSessionId)
+    const episodeId = this.#sessions.get(dshSessionId)?.episodeId
     if (!this.#authoring || !episodeId) return Promise.resolve(undefined)
     return this.#authoring.service.snapshotForRunnerPackage(episodeId, pluginId, packageId)
   }
@@ -4841,7 +4128,7 @@ export class DshHostRuntime implements AgentSessionDriver, ExtensionActivationHo
     if (!this.#authoring) throw new Error('动态创造账本未启用。')
     const task = this.#authoring.service.getTask(taskId)
     if (!task) return false
-    const dshSessionId = [...this.#episodeBySession].find(([, episodeId]) => episodeId === task.episodeId)?.[0]
+    const dshSessionId = [...this.#sessions.records()].find((record) => record.episodeId === task.episodeId)?.sessionId
     if (dshSessionId !== undefined) {
       const stopped = await this.stopDynamicPlugin(dshSessionId, task.pluginKey)
       if (!stopped.ok && stopped.reason !== 'plugin-missing' && stopped.reason !== 'not-running') {
@@ -5003,7 +4290,7 @@ export class DshHostRuntime implements AgentSessionDriver, ExtensionActivationHo
   }
 
   async #completeAuthoringVerification(dshSessionId: string, pluginId: string, packageId: string): Promise<void> {
-    const episodeId = this.#episodeBySession.get(dshSessionId)
+    const episodeId = this.#sessions.get(dshSessionId)?.episodeId
     if (!this.#authoring || !episodeId) return
     const verified = await this.verifyDynamicPackage(dshSessionId, pluginId, packageId)
     const snapshot = await this.dynamicAuthoringSnapshot(dshSessionId, pluginId, packageId)
@@ -5131,7 +4418,7 @@ export class DshHostRuntime implements AgentSessionDriver, ExtensionActivationHo
       return
     }
     const task = this.#authoring.service.taskForRunner(episodeId, row.pluginId)
-    const dshSessionId = [...this.#episodeBySession].find(([, ownedEpisodeId]) => ownedEpisodeId === episodeId)?.[0]
+    const dshSessionId = [...this.#sessions.records()].find((record) => record.episodeId === episodeId)?.sessionId
     const agent = dshSessionId === undefined ? undefined : this.#context.agents.get(SessionId(dshSessionId))
     if (!task || !agent) return
     const messageId = createHash('sha256')
@@ -5223,7 +4510,7 @@ export class DshHostRuntime implements AgentSessionDriver, ExtensionActivationHo
       approveFutureVersions,
     )
     const row = runner.inventory().find((candidate) => candidate.pluginId === pluginId)
-    const episodeId = this.#episodeBySession.get(dshSessionId)
+    const episodeId = this.#sessions.get(dshSessionId)?.episodeId
     if (row && episodeId) this.#syncAuthoringRow(episodeId, row, packageId)
     return result
   }
@@ -5245,7 +4532,7 @@ export class DshHostRuntime implements AgentSessionDriver, ExtensionActivationHo
     if (!owned?.latestRun) throw new Error('Dynamic Client approval request is not owned by this DSH Session.')
     const result = await runner.resolveRequestRun(ApprovalRequestId(requestId), resolution)
     const row = runner.inventory().find((candidate) => candidate.pluginId === owned.pluginId)
-    const episodeId = this.#episodeBySession.get(dshSessionId)
+    const episodeId = this.#sessions.get(dshSessionId)?.episodeId
     if (row && episodeId) this.#syncAuthoringRow(episodeId, row, owned.latestRun.packageId)
     return result
   }
@@ -5258,7 +4545,7 @@ export class DshHostRuntime implements AgentSessionDriver, ExtensionActivationHo
     const { agent, runner } = this.#dynamicRuntime(dshSessionId)
     const result = await runner.settleUserRun(agent, CordisDynamicPluginId(pluginId), resolution)
     const row = runner.inventory().find((candidate) => candidate.pluginId === pluginId)
-    const episodeId = this.#episodeBySession.get(dshSessionId)
+    const episodeId = this.#sessions.get(dshSessionId)?.episodeId
     if (row?.latestRun && episodeId) {
       this.#syncAuthoringRow(episodeId, row, row.latestRun.packageId)
       this.#queueAuthoringContinuation(episodeId, row)
@@ -5298,7 +4585,7 @@ export class DshHostRuntime implements AgentSessionDriver, ExtensionActivationHo
       failure,
     )
     const row = runner.inventory().find((candidate) => candidate.pluginId === pluginId)
-    const episodeId = this.#episodeBySession.get(dshSessionId)
+    const episodeId = this.#sessions.get(dshSessionId)?.episodeId
     if (row?.latestRun && episodeId) {
       this.#syncAuthoringRow(episodeId, row, row.latestRun.packageId)
       this.#queueAuthoringContinuation(episodeId, row)
@@ -5358,7 +4645,7 @@ export class DshHostRuntime implements AgentSessionDriver, ExtensionActivationHo
         navigationEntries,
         permissions,
       )
-      const episodeId = this.#episodeBySession.get(dshSessionId)
+      const episodeId = this.#sessions.get(dshSessionId)?.episodeId
       await this.#completeAuthoringVerification(dshSessionId, pluginId, packageId)
       const row = runner.inventory().find((candidate) => candidate.pluginId === pluginId)
       if (row && episodeId) {
@@ -5375,7 +4662,7 @@ export class DshHostRuntime implements AgentSessionDriver, ExtensionActivationHo
           ...(error instanceof Error && error.stack ? { stack: error.stack } : {}),
         },
       )
-      const episodeId = this.#episodeBySession.get(dshSessionId)
+      const episodeId = this.#sessions.get(dshSessionId)?.episodeId
       const row = runner.inventory().find((candidate) => candidate.pluginId === pluginId)
       if (row?.latestRun && episodeId) {
         this.#syncAuthoringRow(episodeId, row, row.latestRun.packageId)
@@ -5399,7 +4686,7 @@ export class DshHostRuntime implements AgentSessionDriver, ExtensionActivationHo
       failure,
     )
     const row = runner.inventory().find((candidate) => candidate.pluginId === pluginId)
-    const episodeId = this.#episodeBySession.get(dshSessionId)
+    const episodeId = this.#sessions.get(dshSessionId)?.episodeId
     if (row?.latestRun && episodeId) {
       this.#syncAuthoringRow(episodeId, row, row.latestRun.packageId)
       this.#queueAuthoringContinuation(episodeId, row)
@@ -5426,7 +4713,7 @@ export class DshHostRuntime implements AgentSessionDriver, ExtensionActivationHo
     input: JsonValue = null,
   ): Promise<JsonValue> {
     this.#assertActive()
-    const agentId = this.#productAgentBySession.get(dshSessionId)
+    const agentId = this.#sessions.get(dshSessionId)?.revision.agentId
     if (!agentId) throw new Error(`DSH Agent Session is not live: ${dshSessionId}`)
     const registration = [...this.#persistentExtensions.values()].find(
       (candidate) => candidate.agentId === agentId && candidate.revision.id === extensionRevisionId,
@@ -5473,8 +4760,8 @@ export class DshHostRuntime implements AgentSessionDriver, ExtensionActivationHo
 
   async waitUntilSafe(agentId: AgentRevisionRecord['agentId']): Promise<void> {
     this.#assertActive()
-    const handles = [...this.#handles.entries()].filter(
-      ([sessionId]) => this.#productAgentBySession.get(sessionId) === agentId,
+    const handles = [...this.#sessions.handles()].filter(
+      ([sessionId]) => this.#sessions.get(sessionId)?.revision.agentId === agentId,
     )
     await Promise.all(handles.map(([, handle]) => handle.agent.whenIdle()))
     const sessionIds = new Set(handles.map(([sessionId]) => sessionId))
@@ -5565,8 +4852,8 @@ export class DshHostRuntime implements AgentSessionDriver, ExtensionActivationHo
     this.#persistentExtensions.set(key, registration)
     try {
       await Promise.all(
-        [...this.#handles.entries()]
-          .filter(([sessionId]) => this.#productAgentBySession.get(sessionId) === agentId)
+        [...this.#sessions.handles()]
+          .filter(([sessionId]) => this.#sessions.get(sessionId)?.revision.agentId === agentId)
           .map(([sessionId, handle]) =>
             this.#mountPersistentExtensionInSession(registration, sessionId, handle.agent.ctx),
           ),
@@ -5597,7 +4884,7 @@ export class DshHostRuntime implements AgentSessionDriver, ExtensionActivationHo
       [...this.#persistentExtensions.values()].map((entry) => this.#unmountPersistentExtension(entry)),
     )
     for (const result of extensions) if (result.status === 'rejected') failures.push(result.reason)
-    const handles = [...this.#handles.values()]
+    const handles = [...this.#sessions.handles()].map(([, handle]) => handle)
     try {
       await this.#context.subagents.drainContinuableDescendants(handles.map((handle) => handle.agent))
     } catch (error) {
@@ -5610,12 +4897,8 @@ export class DshHostRuntime implements AgentSessionDriver, ExtensionActivationHo
     } catch (error) {
       failures.push(error)
     }
-    this.#handles.clear()
-    this.#imageInputSessions.clear()
-    this.#dynamicSessions.clear()
-    this.#productAgentBySession.clear()
-    this.#channelBySession.clear()
-    this.#episodeBySession.clear()
+    this.#runtimeProjection.dispose()
+    this.#sessions.clear()
     this.#persistentExtensions.clear()
     this.#dynamicApprovalListeners.clear()
     try {
@@ -5638,7 +4921,7 @@ export class DshHostRuntime implements AgentSessionDriver, ExtensionActivationHo
     this.#assertActive()
     const agent = this.#context.agents.get(SessionId(dshSessionId))
     if (!agent) throw new Error(`DSH Agent Session is not live: ${dshSessionId}`)
-    const owned = this.#dynamicSessions.get(dshSessionId)
+    const owned = this.#sessions.get(dshSessionId)?.dynamic
     if (!owned) {
       throw new Error('Dynamic creation is not granted to this Agent Revision.')
     }
@@ -5662,17 +4945,17 @@ export class DshHostRuntime implements AgentSessionDriver, ExtensionActivationHo
       throw new Error('Dynamic authoring is only available to a direct child of the owning root Session.')
     }
     const owner = this.#context.agents.get(rootSessionId)
-    if (!owner || this.#handles.get(rootSessionId)?.agent !== owner) {
+    if (!owner || this.#sessions.get(rootSessionId)?.handle?.agent !== owner) {
       throw new Error('Dynamic authoring root Session is stale or offline.')
     }
-    if (this.#dynamicSessions.get(rootSessionId)?.runner !== runner) {
+    if (this.#sessions.get(rootSessionId)?.dynamic?.runner !== runner) {
       throw new Error('Dynamic authoring Runner is not owned by the expected root Session.')
     }
-    const mappedRevision = this.#revisionBySession.get(rootSessionId)
+    const mappedRevision = this.#sessions.get(rootSessionId)?.revision
     if (
-      this.#productAgentBySession.get(rootSessionId) !== revision.agentId ||
-      this.#channelBySession.get(rootSessionId) !== channelId ||
-      this.#episodeBySession.get(rootSessionId) !== episodeId ||
+      this.#sessions.get(rootSessionId)?.revision.agentId !== revision.agentId ||
+      this.#sessions.get(rootSessionId)?.channelId !== channelId ||
+      this.#sessions.get(rootSessionId)?.episodeId !== episodeId ||
       mappedRevision?.id !== revision.id ||
       mappedRevision.agentId !== revision.agentId ||
       mappedRevision.capabilities.dynamicCreation !== true
@@ -5767,10 +5050,10 @@ export class DshHostRuntime implements AgentSessionDriver, ExtensionActivationHo
 
   async #restoreVisualContext(agent: Agent, compactionId: string): Promise<void> {
     const sessionId = String(agent.session.id)
-    if (!this.#imageInputSessions.has(sessionId)) return
-    const channelId = this.#channelBySession.get(sessionId)
-    const episodeId = this.#episodeBySession.get(sessionId)
-    const revision = this.#revisionBySession.get(sessionId)
+    if (!this.#sessions.get(sessionId)?.imageInput) return
+    const channelId = this.#sessions.get(sessionId)?.channelId
+    const episodeId = this.#sessions.get(sessionId)?.episodeId
+    const revision = this.#sessions.get(sessionId)?.revision
     if (!channelId || !episodeId || !revision) return
     if (
       agent.session.events.some(
@@ -5955,7 +5238,7 @@ export class DshHostRuntime implements AgentSessionDriver, ExtensionActivationHo
         return
       }
       if (imageStats) imageStats.imageCount += 1
-      if (this.#imageInputSessions.has(sessionId)) {
+      if (this.#sessions.get(sessionId)?.imageInput) {
         if (visibleDigests.has(asset.contentDigest)) {
           if (imageStats) imageStats.duplicateCount += 1
           blocks.push({
@@ -5964,7 +5247,7 @@ export class DshHostRuntime implements AgentSessionDriver, ExtensionActivationHo
           })
           return
         }
-        const detail = this.#revisionBySession.get(String(sessionId))?.imagePolicy.history.detail ?? 'auto'
+        const detail = this.#sessions.get(String(sessionId))?.revision?.imagePolicy.history.detail ?? 'auto'
         const attachment = await requireNekroAssetAttachmentStore(this.#context.attachments).refForAsset(
           asset,
           alt,
