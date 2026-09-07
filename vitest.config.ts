@@ -33,6 +33,8 @@ export default defineConfig({
         'apps/server/src/sse-hub.ts',
         'apps/server/src/host-model-settings.ts',
         'apps/server/src/dsh-roster.ts',
+        'apps/server/src/persistent-extension-mounts.ts',
+        'apps/server/src/extension-context.ts',
         'apps/server/src/session-registry.ts',
         'apps/server/src/session-runtime-projection.ts',
         'apps/web/src/dsh-dynamic-client.ts',

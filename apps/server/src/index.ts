@@ -1,5 +1,4 @@
-import { HOST_DSH_PACKAGE_VERSIONS } from './dsh-roster.js'
-import { Context, Service, type Fiber } from '@deepseek-ai/cordis'
+import { Context, Service } from '@deepseek-ai/cordis'
 import { AgentRegistry, type Agent, type AgentStatus } from '@deepseek-ai/dsh-agent'
 import AgentLoop from '@deepseek-ai/dsh-agent-loop'
 import AttachmentStore, {
@@ -164,12 +163,6 @@ import {
 import {
   NEKRO_NXT_EXTENSION_AUTHORING_REFERENCE,
   renderNekroNxtExtensionDevelopmentSkill,
-  type ExtensionHostContext,
-  type ExtensionHostEnvironment,
-  type ExtensionJsonValue,
-  type ExtensionPluginDefinition,
-  type ExtensionPluginFactory,
-  type ExtensionToolDefinition,
 } from '@nekro-nxt/extension-sdk'
 import type { DshPluginRepository } from '@nekro-nxt/storage-sqlite'
 import { Buffer } from 'node:buffer'
@@ -177,7 +170,6 @@ import { createHash } from 'node:crypto'
 import { mkdir, readFile } from 'node:fs/promises'
 import { createRequire } from 'node:module'
 import path from 'node:path'
-import { pathToFileURL } from 'node:url'
 import sharp from 'sharp'
 import { z } from 'zod'
 import {
@@ -188,9 +180,11 @@ import {
 } from './adapter-dynamic-harness.js'
 import { mountChannelReplyGuard, type ChannelReplyGuardController } from './channel-reply-guard.js'
 import { normalizeSessionEvents } from './channel-runtime-events.js'
-import { defineDshToolFromUnknown, parseDshImageAttachmentRef, parseDshToolDefinition } from './dsh-interop/unsafe.js'
+import { parseDshImageAttachmentRef } from './dsh-interop/unsafe.js'
 import { DshPluginLifecycleCoordinator } from './dsh-plugin-lifecycle.js'
+import { HOST_DSH_PACKAGE_VERSIONS } from './dsh-roster.js'
 import { QuotaLocalSpillStore } from './dsh-spill.js'
+import { EXTENSION_PRIVATE_SERVICE_KEY_SET, isolatePrivateExtensionServices } from './extension-context.js'
 import {
   HostModelSettings,
   type AvailableLlmModel,
@@ -199,6 +193,7 @@ import {
   type TestLlmProviderInput,
   type WebSearchCapabilityStatus,
 } from './host-model-settings.js'
+import { PersistentExtensionMounts } from './persistent-extension-mounts.js'
 import { SessionRegistry } from './session-registry.js'
 import { SessionRuntimeProjection } from './session-runtime-projection.js'
 export {
@@ -580,34 +575,6 @@ export const compilePersonaDocument = (input: {
   return { text: `<nxt-persona-document version="1">\n${body}\n</nxt-persona-document>`, usesReferences: true }
 }
 const jsonObjectSchema = { type: 'object', additionalProperties: true } as const
-
-const EXTENSION_PRIVATE_SERVICE_KEYS = [
-  'agentPresets',
-  'agents',
-  'attachments',
-  'compaction',
-  'llm',
-  'sandbox',
-  'sandboxPolicy',
-  'sessionProjections',
-  'sessionPersistence',
-  'sessions',
-  'shell',
-  'shellEnv',
-  'skills',
-  'subprocess',
-  'subagents',
-  'spillStore',
-  'tokenMeter',
-  'toolResultPruner',
-  'web',
-] as const
-const EXTENSION_PRIVATE_SERVICE_KEY_SET = new Set<string>(EXTENSION_PRIVATE_SERVICE_KEYS)
-const PERSISTENT_EXTENSION_HOST_SERVICES = new Set(['tools'])
-
-const isolatePrivateExtensionServices = (context: Context): Context =>
-  EXTENSION_PRIVATE_SERVICE_KEYS.reduce((isolated, key) => isolated.isolate(key), context)
-
 declare module '@deepseek-ai/cordis' {
   interface Context {
     agentPresets: NekroNxtAgentScopeInheritance
@@ -632,17 +599,6 @@ class NekroNxtAgentScopeInheritance extends Service {
     return undefined
   }
 }
-
-interface PersistentExtensionContext extends ExtensionHostContext {
-  get(service: string): ToolRuntime | undefined
-}
-
-const persistentExtensionContext = (context: Context): PersistentExtensionContext => ({
-  tools: {
-    register: (tool) => context.tools.register(parseDshToolDefinition(tool)),
-  },
-  get: (service: string) => (service === 'tools' ? context.tools : undefined),
-})
 
 const nekroNxtInspectProvider = (input: {
   readonly episodeId: EpisodeId
@@ -748,34 +704,6 @@ const nekroNxtInspectProvider = (input: {
     throw new Error(`Unknown NekroNxt inspect method: ${method}`)
   },
 })
-
-interface PersistentExtensionRegistration {
-  readonly key: string
-  readonly agentId: AgentRevisionRecord['agentId']
-  readonly revision: Revision
-  readonly artifact: ExtensionBuildArtifact
-  readonly config: JsonValue
-  readonly plugin?: ExtensionPluginDefinition
-  readonly fibers: Map<string, Fiber>
-  readonly mounting: Map<string, Promise<void>>
-  readonly handlers: Map<string, (input: ExtensionJsonValue) => ExtensionJsonValue | Promise<ExtensionJsonValue>>
-  active: boolean
-}
-
-const ExtensionHostFactorySchema = z.custom<ExtensionPluginFactory<ExtensionHostEnvironment>>(
-  (value) => typeof value === 'function',
-  'Extension Host default export must be a function.',
-)
-const ExtensionHostModuleSchema = z.object({ default: ExtensionHostFactorySchema }).passthrough()
-const ExtensionPluginDefinitionSchema = z
-  .object({
-    inject: z.array(z.string()).optional(),
-    apply: z.custom<ExtensionPluginDefinition['apply']>(
-      (value) => typeof value === 'function',
-      'Extension Host plugin apply must be a function.',
-    ),
-  })
-  .passthrough()
 const DSH_IMAGE_MEDIA_TYPES = ['image/png', 'image/jpeg', 'image/webp', 'image/gif'] as const
 const DshImageMediaTypeSchema = z.enum(DSH_IMAGE_MEDIA_TYPES)
 
@@ -2991,7 +2919,7 @@ export class DshHostRuntime implements AgentSessionDriver, ExtensionActivationHo
     readonly runner: NekroNxtDynamicCordisRunner
   }>()
   readonly #runtimeProjection: SessionRuntimeProjection
-  readonly #persistentExtensions = new Map<string, PersistentExtensionRegistration>()
+  readonly #extensionMounts = new PersistentExtensionMounts(this.#sessions)
   readonly #dshPluginLifecycle: DshPluginLifecycleCoordinator | undefined
   readonly #authoring: DshHostRuntimeOptions['authoring']
   readonly #authoringContinuationIds = new Set<string>()
@@ -3637,7 +3565,7 @@ export class DshHostRuntime implements AgentSessionDriver, ExtensionActivationHo
       await mountWebCapabilities(agentContext, revision)
       await mountDevelopmentCapabilities(agentContext, revision, developmentWorkspace)
       await this.#dshPluginLifecycle?.mountAgentSession(revision.agentId, sessionId, agentContext)
-      await this.#mountPersistentExtensionsIntoSession(revision.agentId, sessionId, agentContext)
+      await this.#extensionMounts.mountIntoSession(revision.agentId, sessionId, agentContext)
     }
     const persisted = (await this.#context.sessionPersistence.list()).some(({ id }) => id === sessionId)
     const handle = persisted
@@ -4705,37 +4633,24 @@ export class DshHostRuntime implements AgentSessionDriver, ExtensionActivationHo
     if (!agent) throw new Error(`DSH Agent Session is not live: ${dshSessionId}`)
     return this.#context.tools.schemas(scopeOf(agent.ctx)).map(({ name }) => name)
   }
-
-  async invokeExtensionHost(
+  invokeExtensionHost(
     dshSessionId: string,
     extensionRevisionId: string,
     method: string,
     input: JsonValue = null,
   ): Promise<JsonValue> {
     this.#assertActive()
-    const agentId = this.#sessions.get(dshSessionId)?.revision.agentId
-    if (!agentId) throw new Error(`DSH Agent Session is not live: ${dshSessionId}`)
-    const registration = [...this.#persistentExtensions.values()].find(
-      (candidate) => candidate.agentId === agentId && candidate.revision.id === extensionRevisionId,
-    )
-    const handler = registration?.handlers.get(method)
-    if (!handler) throw new Error(`Extension Host method is unavailable: ${method}`)
-    return parseJsonValue(JSON.parse(JSON.stringify(await handler(input))))
+    return this.#extensionMounts.invokeExtensionHost(dshSessionId, extensionRevisionId, method, input)
   }
 
-  async invokeExtensionActivation(
+  invokeExtensionActivation(
     agentId: AgentRevisionRecord['agentId'],
     extensionRevisionId: string,
     method: string,
     input: JsonValue = null,
   ): Promise<JsonValue> {
     this.#assertActive()
-    const registration = [...this.#persistentExtensions.values()].find(
-      (candidate) => candidate.agentId === agentId && candidate.revision.id === extensionRevisionId && candidate.active,
-    )
-    const handler = registration?.handlers.get(method)
-    if (!handler) throw new Error(`Extension Host method is unavailable: ${method}`)
-    return parseJsonValue(JSON.parse(JSON.stringify(await handler(input))))
+    return this.#extensionMounts.invokeExtensionActivation(agentId, extensionRevisionId, method, input)
   }
 
   queryNekroNxtInspect(
@@ -4772,118 +4687,25 @@ export class DshHostRuntime implements AgentSessionDriver, ExtensionActivationHo
     )
     await Promise.all(handles.map(([, handle]) => handle.agent.whenIdle()))
   }
-
-  async mount(
+  mount(
     agentId: AgentRevisionRecord['agentId'],
     revision: Revision,
     artifact: ExtensionBuildArtifact,
     config: JsonValue,
   ): Promise<MountedExtension> {
     this.#assertActive()
-    const key = `${agentId}\0${revision.extensionId}\0${revision.id}`
-    if (this.#persistentExtensions.has(key)) throw new Error('Extension Revision is already mounted for this Agent.')
-    const handlers = new Map<string, (input: ExtensionJsonValue) => ExtensionJsonValue | Promise<ExtensionJsonValue>>()
-    let plugin: ExtensionPluginDefinition | undefined
-    if (artifact.hostEntry) {
-      let factoryOpen = true
-      const loaded = ExtensionHostModuleSchema.parse(
-        await import(`${pathToFileURL(artifact.hostEntry).href}?build=${artifact.buildKey}`),
-      )
-      let factoryResult: unknown
-      try {
-        factoryResult = await loaded.default({
-          harness: {
-            defineTool: <Args extends Record<string, ExtensionJsonValue>, Output extends ExtensionJsonValue>(
-              options: ExtensionToolDefinition<Args, Output>,
-            ): ExtensionToolDefinition<Args, Output> => {
-              const definition = defineDshToolFromUnknown(options)
-              return Object.assign(options, definition)
-            },
-            registerTool: (context: ExtensionHostContext, tool: ExtensionToolDefinition) =>
-              context.tools.register(tool),
-            handle: (
-              method: string,
-              handler: (input: ExtensionJsonValue) => ExtensionJsonValue | Promise<ExtensionJsonValue>,
-            ) => {
-              if (!factoryOpen) {
-                throw new Error('Extension Host RPC must be registered by the Activation factory, not per Session.')
-              }
-              if (!method.trim() || typeof handler !== 'function') {
-                throw new TypeError('Invalid Extension Host handler.')
-              }
-              if (handlers.has(method)) throw new Error(`Extension Host handler is already registered: ${method}`)
-              handlers.set(method, handler)
-              // The Activation owns the handler. A Session fiber cannot retract it.
-              return () => undefined
-            },
-            registerAdapter: () => {
-              throw new Error('宿主适配器不能通过智能体 Activation 加载；请安装这个适配器 Revision。')
-            },
-          },
-          config,
-        })
-      } finally {
-        factoryOpen = false
-      }
-      const parsedPlugin = ExtensionPluginDefinitionSchema.parse(factoryResult)
-      plugin = {
-        ...(parsedPlugin.inject === undefined ? {} : { inject: parsedPlugin.inject }),
-        apply: parsedPlugin.apply,
-      }
-      const forbiddenServices = parsedPlugin.inject?.filter(
-        (service) => !PERSISTENT_EXTENSION_HOST_SERVICES.has(service),
-      )
-      if (forbiddenServices && forbiddenServices.length > 0) {
-        throw new Error(`Extension Host requested unavailable Services: ${forbiddenServices.join(', ')}`)
-      }
-    }
-    const registration: PersistentExtensionRegistration = {
-      key,
-      agentId,
-      revision,
-      artifact,
-      config,
-      ...(plugin === undefined ? {} : { plugin }),
-      fibers: new Map(),
-      mounting: new Map(),
-      handlers,
-      active: true,
-    }
-    this.#persistentExtensions.set(key, registration)
-    try {
-      await Promise.all(
-        [...this.#sessions.handles()]
-          .filter(([sessionId]) => this.#sessions.get(sessionId)?.revision.agentId === agentId)
-          .map(([sessionId, handle]) =>
-            this.#mountPersistentExtensionInSession(registration, sessionId, handle.agent.ctx),
-          ),
-      )
-    } catch (error) {
-      await this.#unmountPersistentExtension(registration)
-      throw error
-    }
-    return {
-      evidence: {
-        hostLoaded: artifact.hostEntry !== undefined,
-        clientBuilt: artifact.clientEntry !== undefined,
-        details: [
-          `revision:${revision.id}`,
-          `sessions:${registration.fibers.size}`,
-          ...(artifact.clientEntry === undefined ? [] : [`client:${path.basename(artifact.clientEntry)}`]),
-        ],
-      },
-      dispose: () => this.#unmountPersistentExtension(registration),
-    }
+    return this.#extensionMounts.mount(agentId, revision, artifact, config)
   }
 
   async dispose(): Promise<void> {
     if (this.#disposed) return
     this.#disposed = true
     const failures: unknown[] = []
-    const extensions = await Promise.allSettled(
-      [...this.#persistentExtensions.values()].map((entry) => this.#unmountPersistentExtension(entry)),
-    )
-    for (const result of extensions) if (result.status === 'rejected') failures.push(result.reason)
+    try {
+      await this.#extensionMounts.dispose()
+    } catch (error) {
+      failures.push(error)
+    }
     const handles = [...this.#sessions.handles()].map(([, handle]) => handle)
     try {
       await this.#context.subagents.drainContinuableDescendants(handles.map((handle) => handle.agent))
@@ -4899,7 +4721,6 @@ export class DshHostRuntime implements AgentSessionDriver, ExtensionActivationHo
     }
     this.#runtimeProjection.dispose()
     this.#sessions.clear()
-    this.#persistentExtensions.clear()
     this.#dynamicApprovalListeners.clear()
     try {
       await this.#context.fiber.dispose()
@@ -4963,73 +4784,6 @@ export class DshHostRuntime implements AgentSessionDriver, ExtensionActivationHo
       throw new Error('Dynamic authoring root Session ownership no longer matches its immutable Revision.')
     }
     return owner
-  }
-
-  async #mountPersistentExtensionsIntoSession(
-    agentId: AgentRevisionRecord['agentId'],
-    sessionId: string,
-    agentContext: Context,
-  ): Promise<void> {
-    for (const registration of this.#persistentExtensions.values()) {
-      if (registration.agentId === agentId && registration.active) {
-        await this.#mountPersistentExtensionInSession(registration, sessionId, agentContext)
-      }
-    }
-  }
-
-  async #mountPersistentExtensionInSession(
-    registration: PersistentExtensionRegistration,
-    sessionId: string,
-    agentContext: Context,
-  ): Promise<void> {
-    if (!registration.active || registration.fibers.has(sessionId)) return
-    const inFlight = registration.mounting.get(sessionId)
-    if (inFlight) return inFlight
-    const mounting = (async () => {
-      const plugin = registration.plugin
-      if (plugin === undefined) return
-      const apply = plugin.apply.bind(plugin)
-      const extensionContext = isolatePrivateExtensionServices(agentContext)
-      const extensionPlugin = {
-        ...(plugin.inject === undefined ? {} : { inject: [...plugin.inject] }),
-        apply: async (context: Context) => {
-          await apply(persistentExtensionContext(context))
-        },
-      }
-      const fiber = extensionContext.plugin(extensionPlugin)
-      try {
-        await fiber
-      } catch (error) {
-        await fiber.dispose()
-        throw error
-      }
-      if (!registration.active) {
-        await fiber.dispose()
-        return
-      }
-      registration.fibers.set(sessionId, fiber)
-      fiber.ctx.effect(
-        () => () => {
-          registration.fibers.delete(sessionId)
-        },
-        'nekro-nxt: Extension session mount',
-      )
-    })().finally(() => registration.mounting.delete(sessionId))
-    registration.mounting.set(sessionId, mounting)
-    return mounting
-  }
-
-  async #unmountPersistentExtension(registration: PersistentExtensionRegistration): Promise<void> {
-    if (!registration.active && !this.#persistentExtensions.has(registration.key)) return
-    registration.active = false
-    if (this.#persistentExtensions.get(registration.key) === registration) {
-      this.#persistentExtensions.delete(registration.key)
-    }
-    await Promise.allSettled([...registration.mounting.values()])
-    const fibers = [...registration.fibers.values()]
-    registration.fibers.clear()
-    registration.handlers.clear()
-    await Promise.allSettled(fibers.map((fiber) => fiber.dispose()))
   }
 
   async #restoreLatestPendingVisualContext(agent: Agent): Promise<void> {
