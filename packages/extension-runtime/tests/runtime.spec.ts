@@ -1843,6 +1843,38 @@ describe('Extension source store', () => {
 })
 
 describe('Extension import validation', () => {
+  it('applies the Adapter page limit to imported manifests as well as dynamic packages', () => {
+    const manifest = {
+      schemaVersion: 5,
+      scope: 'host-adapter',
+      extensionId: extensionId('pageLimit'),
+      revisionId: revisionId('pageLimit'),
+      entrypoints: { host: 'source/host.ts', client: 'source/client.ts' },
+      contributions: [
+        { kind: 'adapter', apiVersion: 2, key: 'synthetic', descriptorDigest: 'a'.repeat(64) },
+        ...Array.from({ length: 8 }, (_, index) => ({
+          kind: 'host-page',
+          entryId: `page${index}`,
+          title: `页面${index}`,
+          icon: { kind: 'host-icon', name: 'layout-dashboard' },
+          objectPane: 'hidden',
+          startPath: '',
+        })),
+      ],
+    }
+    const sources = { host: 'export default function () {}', client: 'export default function () {}' }
+    expect(materializeImportedRevision({ manifest, sources }).manifest.contributions).toHaveLength(9)
+    expect(() =>
+      materializeImportedRevision({
+        manifest: {
+          ...manifest,
+          contributions: [...manifest.contributions, { ...manifest.contributions[1], entryId: 'ninth' }],
+        },
+        sources,
+      }),
+    ).toThrow('最多贡献 8 个顶级页面')
+  })
+
   it('requires local build and verification before import, preserves slug ownership and records unknown DSH versions explicitly', async () => {
     const directory = await mkdtemp(path.join(tmpdir(), 'nxt-import-boundary-'))
     temporaryDirectories.push(directory)

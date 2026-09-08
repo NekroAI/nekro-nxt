@@ -79,6 +79,9 @@ export const extensionManifestSchema = z.union([
         )
         .min(1)
         .superRefine((contributions, context) => {
+          if (contributions.filter(({ kind }) => kind === 'host-page').length > 8) {
+            context.addIssue({ code: 'custom', message: '一个适配器 Revision 最多贡献 8 个顶级页面。' })
+          }
           if (contributions.filter(({ kind }) => kind === 'adapter').length !== 1) {
             context.addIssue({ code: 'custom', message: 'Host Adapter Manifest 必须且只能声明一个 Adapter。' })
           }
