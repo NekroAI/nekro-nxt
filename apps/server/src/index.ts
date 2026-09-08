@@ -1,17 +1,8 @@
 import { Context, Service } from '@deepseek-ai/cordis'
 import { AgentRegistry, type Agent, type AgentStatus } from '@deepseek-ai/dsh-agent'
 import AgentLoop from '@deepseek-ai/dsh-agent-loop'
-import AttachmentStore, {
-  AttachmentId,
-  type ImageAttachmentRef,
-  type ImageRequestPolicy,
-  type RequestImageAttachment,
-  type SaveImageAttachment,
-  type StoredImageAttachment,
-} from '@deepseek-ai/dsh-attachment'
-import { readRequestImageFile } from '@deepseek-ai/dsh-attachment-local'
+import { type ImageAttachmentRef } from '@deepseek-ai/dsh-attachment'
 import SandboxBashExecutor from '@deepseek-ai/dsh-bash-sandbox'
-import { BasicCompactionEngine } from '@deepseek-ai/dsh-compaction-basic'
 import ToolResultPruner from '@deepseek-ai/dsh-compaction-tool-result-pruner'
 import DynamicCordisRunnerService, {
   ApprovalRequestId,
@@ -59,7 +50,7 @@ import * as LlmRetry from '@deepseek-ai/dsh-llm-retry'
 import LocalSandboxProvider from '@deepseek-ai/dsh-sandbox-local'
 import SandboxPolicyService from '@deepseek-ai/dsh-sandbox-policy'
 import { bindScopeParent, scopeOf } from '@deepseek-ai/dsh-scope'
-import { SessionId, SessionStore, type SessionEvent } from '@deepseek-ai/dsh-session'
+import { SessionId, SessionStore } from '@deepseek-ai/dsh-session'
 import * as SessionCheckpointPolicy from '@deepseek-ai/dsh-session-checkpoint-policy'
 import { SqliteSessionPersistence } from '@deepseek-ai/dsh-session-persistence-sqlite'
 import SessionProjectionRegistry from '@deepseek-ai/dsh-session-projection'
@@ -87,9 +78,7 @@ import { defineTool, ToolRuntime } from '@deepseek-ai/dsh-tools'
 import WebRuntime from '@deepseek-ai/dsh-web'
 import * as DeepSeekWebSearch from '@deepseek-ai/dsh-web-search-deepseek'
 import {
-  isAdminConsoleOutbound,
   type AgentSessionDriver,
-  type ChannelHistoryEntry,
   type ChannelHistoryRepository,
   type ChannelInteractionResult,
   type ChannelRuntime,
@@ -104,10 +93,8 @@ import {
   HostUiPermissionDeclarationSchema,
   JsonValueSchema,
   LogicalMessageIdSchema,
-  messagePartAssetIds,
   parseJsonValue,
   parseMessageParts,
-  richPartContextText,
   type AdapterClientSlotName,
   type AdmissionId,
   type AgentClientSlotName,
@@ -133,16 +120,13 @@ import {
   type HostUiPermissionDeclaration,
   type JsonValue,
   type LogicalMessageId,
-  type MessagePart,
   type PromptDocumentV1,
   type PromptSegment,
 } from '@nekro-nxt/contracts'
 import type {
   AgentRevisionRecord,
-  AssetChannelGrant,
   AssetRecord,
   AssetService,
-  ChannelEventRecord,
   ChannelReferenceRecord,
   CoreRepository,
 } from '@nekro-nxt/core'
@@ -167,10 +151,9 @@ import {
 import type { DshPluginRepository } from '@nekro-nxt/storage-sqlite'
 import { Buffer } from 'node:buffer'
 import { createHash } from 'node:crypto'
-import { mkdir, readFile } from 'node:fs/promises'
+import { mkdir } from 'node:fs/promises'
 import { createRequire } from 'node:module'
 import path from 'node:path'
-import sharp from 'sharp'
 import { z } from 'zod'
 import {
   ADAPTER_DYNAMIC_EVIDENCE_METHOD,
@@ -194,6 +177,22 @@ import {
   type WebSearchCapabilityStatus,
 } from './host-model-settings.js'
 import { PersistentExtensionMounts } from './persistent-extension-mounts.js'
+import {
+  collectVisibleImageDigests,
+  collectVisibleImageResidency,
+  DirectImageInspectionValueSchema,
+  effectiveImageDetail,
+  imageDetailRank,
+  memberSummary,
+  NekroAssetAttachmentStore,
+  NekroNxtCompactionEngine,
+  requireNekroAssetAttachmentStore,
+  SessionImageContext,
+  type AgentImageDiagnostics,
+  type AssetAccessRepository,
+  type ImageProjectionStats,
+  type ProductChannelHistoryRepository,
+} from './session-image-context.js'
 import { SessionRegistry } from './session-registry.js'
 import { SessionRuntimeProjection } from './session-runtime-projection.js'
 export {
@@ -205,43 +204,10 @@ export {
   type TestLlmProviderInput,
   type WebSearchCapabilityStatus,
 } from './host-model-settings.js'
+export { type AgentImageDiagnostics, type AssetAccessRepository } from './session-image-context.js'
 type CordisDynamicPackageIdType = ReturnType<typeof CordisDynamicPackageId>
 type CordisDynamicPluginIdType = ReturnType<typeof CordisDynamicPluginId>
 type ApprovalRequestIdType = ReturnType<typeof ApprovalRequestId>
-
-export interface AssetAccessRepository {
-  getAssetById(id: AssetRecord['id']): AssetRecord | undefined
-  canAccessAsset(assetId: AssetRecord['id'], channelId: ChannelId): boolean
-  grantAssetAccess(grant: AssetChannelGrant): AssetChannelGrant
-}
-
-export interface AgentImageDiagnostics {
-  readonly route: {
-    readonly mode: 'direct' | 'delegated' | 'unavailable'
-    readonly provider?: string
-    readonly model?: string
-  }
-  readonly activeSessions: number
-  readonly residentImages: number
-  readonly duplicateImagesSkipped: number
-  readonly lastInspection?: {
-    readonly mode: 'direct' | 'delegated'
-    readonly imageCount: number
-    readonly provider?: string
-    readonly model?: string
-    readonly cacheHit: boolean
-    readonly usage?: TokenUsage
-    readonly errorCode?: string
-  }
-  readonly lastRestoration?: {
-    readonly compactionId: string
-    readonly candidateCount: number
-    readonly restoredCount: number
-    readonly skippedCount: number
-    readonly error?: string
-  }
-  readonly blockers: readonly string[]
-}
 
 declare module '@deepseek-ai/dsh-llm' {
   interface MessageSourceMap {
@@ -704,8 +670,6 @@ const nekroNxtInspectProvider = (input: {
     throw new Error(`Unknown NekroNxt inspect method: ${method}`)
   },
 })
-const DSH_IMAGE_MEDIA_TYPES = ['image/png', 'image/jpeg', 'image/webp', 'image/gif'] as const
-const DshImageMediaTypeSchema = z.enum(DSH_IMAGE_MEDIA_TYPES)
 
 export interface DynamicAuthoringPolicyState {
   readonly episodeId: EpisodeId
@@ -1511,115 +1475,6 @@ const nekroNxtExtensionDefineTool = (runner: NekroNxtDynamicCordisRunner, sessio
     },
   })
 
-const nekroImageAttachmentId = (assetId: AssetId, detail: EffectiveImageDetail): ReturnType<typeof AttachmentId> =>
-  AttachmentId(`nxt-asset:${assetId}:${detail}`)
-
-const parseNekroImageAttachmentId = (
-  attachmentId: string,
-): { readonly assetId: AssetId; readonly detail?: EffectiveImageDetail } | undefined => {
-  if (!attachmentId.startsWith('nxt-asset:')) {
-    const legacy = AssetIdSchema.safeParse(attachmentId)
-    return legacy.success ? { assetId: legacy.data } : undefined
-  }
-  const separator = attachmentId.lastIndexOf(':')
-  const detail = attachmentId.slice(separator + 1)
-  const assetId = AssetIdSchema.safeParse(attachmentId.slice('nxt-asset:'.length, separator))
-  if (!assetId.success || (detail !== 'low' && detail !== 'auto')) return undefined
-  return { assetId: assetId.data, detail }
-}
-
-class NekroAssetAttachmentStore extends AttachmentStore {
-  readonly imageLimits = {
-    maxImageBytes: 128 * 1024 * 1024,
-    maxImagesPerMessage: 20,
-    maxMessageImageBytes: 256 * 1024 * 1024,
-    maxImagePixels: 100_000_000,
-    maxImageDimension: 32_768,
-    mediaTypes: DSH_IMAGE_MEDIA_TYPES,
-  }
-  readonly assets: AssetAccessRepository
-  readonly assetService: AssetService
-  readonly requestImageRoot: string
-
-  constructor(
-    context: Context,
-    config: { assets: AssetAccessRepository; assetService: AssetService; requestImageRoot: string },
-  ) {
-    super(context)
-    this.assets = config.assets
-    this.assetService = config.assetService
-    this.requestImageRoot = config.requestImageRoot
-  }
-
-  async validateImage(input: SaveImageAttachment): Promise<void> {
-    const metadata = await sharp(input.data).metadata()
-    if (
-      !metadata.width ||
-      !metadata.height ||
-      metadata.width > this.imageLimits.maxImageDimension ||
-      metadata.height > this.imageLimits.maxImageDimension ||
-      metadata.width * metadata.height > this.imageLimits.maxImagePixels
-    ) {
-      throw new Error('Image dimensions are unavailable or exceed the configured limit.')
-    }
-  }
-
-  saveImage(): Promise<ImageAttachmentRef> {
-    return Promise.reject(new Error('NekroNxt images must enter through Asset Service before DSH projection.'))
-  }
-
-  async refForAsset(
-    asset: AssetRecord,
-    name?: string,
-    detail: 'low' | 'auto' | 'high' = 'auto',
-  ): Promise<ImageAttachmentRef> {
-    const mediaType = DshImageMediaTypeSchema.parse(asset.mediaType)
-    const metadata = await sharp(this.assetService.blobPath(asset)).metadata()
-    if (!metadata.width || !metadata.height) throw new Error(`Asset image dimensions are unavailable: ${asset.id}`)
-    return {
-      attachmentId: nekroImageAttachmentId(asset.id, effectiveImageDetail(detail)),
-      mediaType,
-      bytes: asset.byteSize,
-      width: metadata.width,
-      height: metadata.height,
-      ...(name === undefined ? {} : { name: path.basename(name) }),
-    }
-  }
-
-  async readImage(ref: ImageAttachmentRef, signal?: AbortSignal): Promise<StoredImageAttachment> {
-    signal?.throwIfAborted()
-    const decoded = parseNekroImageAttachmentId(ref.attachmentId)
-    if (!decoded) throw new Error(`Attachment ID is not a NekroNxt Asset reference: ${ref.attachmentId}`)
-    const asset = this.assets.getAssetById(decoded.assetId)
-    if (!asset) throw new Error(`Attachment Asset is unavailable: ${ref.attachmentId}`)
-    const data = new Uint8Array(await readFile(this.assetService.blobPath(asset), { signal }))
-    const digest = `sha256:${createHash('sha256').update(data).digest('hex')}`
-    if (digest !== asset.contentDigest || data.byteLength !== ref.bytes) {
-      throw new Error(`Attachment Asset failed integrity verification: ${asset.id}`)
-    }
-    return { ref, data }
-  }
-
-  override async readImageRequest(
-    ref: ImageAttachmentRef,
-    policy: ImageRequestPolicy,
-    signal?: AbortSignal,
-  ): Promise<RequestImageAttachment> {
-    const decoded = parseNekroImageAttachmentId(ref.attachmentId)
-    if (!decoded) throw new Error(`Attachment ID is not a NekroNxt Asset reference: ${ref.attachmentId}`)
-    const effectivePolicy =
-      decoded.detail === 'low' ? { ...policy, maxPixels: Math.min(policy.maxPixels, 512 * 512) } : policy
-    return readRequestImageFile(this.requestImageRoot, await this.readImage(ref, signal), effectivePolicy, signal)
-  }
-}
-
-const requireNekroAssetAttachmentStore = (store: AttachmentStore): NekroAssetAttachmentStore => {
-  if (!(store instanceof NekroAssetAttachmentStore)) {
-    throw new TypeError('NekroNxt image projection requires the Host Asset attachment store.')
-  }
-  return store
-}
-
 const ROOT_CHANNEL_MESSAGE_POLICY = `你正在通过 NekroNXT 参与一个真实频道互动。模型生成的普通 text 或 reasoning 只会作为内部运行轨迹保存，并仅在系统后台可见，频道成员完全看不到；只有成功调用 **send_channel_message**，内容才会成为频道中的用户可见发言，请在对话中根据人设给予频道用户积极及时的响应，例如在长工作流程中先调用 **send_channel_message** 说明要做什么，避免用户干等不知道你是否在工作！一次 send_channel_message 不会结束当前 Turn；发送后仍可继续使用其他工具和发送后续消息。send_message 只用于给可继续的子智能体安排后续工作，不会向频道发送内容。
 
 按频道触发策略需要你回应的消息会建立一项回应义务。该义务只能由它之后确认送达的 **send_channel_message**，或显式调用 **finish_channel_turn** 清除；更早的发送不能覆盖后来注入的新请求。任务已经完成且希望立即停止、明确无需发言，或确实无法回应时，必须把 finish_channel_turn 作为最后一个工具调用，并提供真实原因。不要用普通 text/reasoning 冒充已经回复或已经结束。
@@ -2087,16 +1942,6 @@ export const nudgeChannelMemberTool = (episodeId: EpisodeId, communication: Agen
     },
   })
 
-type ProductChannelHistoryRepository = DshHostRuntimeOptions['history']
-
-const memberSummary = (
-  history: ProductChannelHistoryRepository,
-  memberId: NonNullable<ChannelEventRecord['senderMemberId']>,
-): { readonly memberId: string; readonly displayName?: string } => {
-  const displayName = history.getChannelMember(memberId)?.displayName
-  return { memberId, ...(displayName === undefined ? {} : { displayName }) }
-}
-
 const enrichedHistoryEntry = (
   history: ProductChannelHistoryRepository,
   entry: ReturnType<ProductChannelHistoryRepository['listChannelHistory']>[number],
@@ -2107,18 +1952,6 @@ const enrichedHistoryEntry = (
     : {}),
   mentions: entry.parts.flatMap((part) => (part.type === 'mention' ? [memberSummary(history, part.memberId)] : [])),
 })
-
-const historyEntrySenderDescription = (
-  history: ProductChannelHistoryRepository,
-  entry: ChannelHistoryEntry,
-): string => {
-  if (entry.source === 'outbound-intent') {
-    return isAdminConsoleOutbound(entry.sourceTurnId) ? '，管理员此前通过机器人账号发送' : '，本频道智能体此前发送'
-  }
-  if (entry.senderMemberId === undefined) return ''
-  const sender = memberSummary(history, entry.senderMemberId)
-  return `，发送成员：${sender.displayName ?? '未知成员'}（成员标识 ${sender.memberId}）`
-}
 
 const historyTools = (
   channelId: Parameters<ChannelHistoryRepository['listChannelHistory']>[0],
@@ -2250,26 +2083,6 @@ const DelegatedImageEvidenceSchema = z
   })
   .strict()
 
-const DirectImageInspectionValueSchema = z
-  .object({
-    mode: z.literal('direct'),
-    question: z.string().optional(),
-    detail: z.enum(['low', 'auto', 'high']),
-    effectiveDetail: z.enum(['low', 'auto']),
-    images: z.array(
-      z
-        .object({
-          index: z.number().int().nonnegative(),
-          assetId: AssetIdSchema,
-          status: z.enum(['injected', 'resident', 'detail-upgraded', 'duplicate']),
-          duplicateOf: z.number().int().nonnegative().optional(),
-          attachment: z.json().optional(),
-        })
-        .strict(),
-    ),
-  })
-  .strict()
-
 const DelegatedImageInspectionValueSchema = DelegatedImageEvidenceSchema.extend({
   mode: z.literal('delegated'),
   model: z
@@ -2295,65 +2108,6 @@ type ValidatedInspectionImage = {
   readonly attachment: ImageAttachmentRef
   readonly duplicateOf?: number
 }
-
-type EffectiveImageDetail = 'low' | 'auto'
-
-type ImageProjectionStats = {
-  imageCount: number
-  injectedCount: number
-  duplicateCount: number
-  skippedCount: number
-}
-
-const effectiveImageDetail = (detail: 'low' | 'auto' | 'high'): EffectiveImageDetail =>
-  detail === 'low' ? 'low' : 'auto'
-
-const imageDetailRank = (detail: EffectiveImageDetail): number => (detail === 'low' ? 0 : 1)
-
-const collectVisibleImageResidency = (
-  agent: Agent,
-  assets: Pick<AssetAccessRepository, 'getAssetById'>,
-  baselineDetail: 'low' | 'auto' | 'high' = 'auto',
-): Map<string, EffectiveImageDetail> => {
-  const residency = new Map<string, EffectiveImageDetail>()
-  const baseline = effectiveImageDetail(baselineDetail)
-  const visit = (blocks: readonly ContentBlock[]): void => {
-    for (const block of blocks) {
-      if (block.type === 'image') {
-        const parsed = parseNekroImageAttachmentId(block.attachment.attachmentId)
-        if (!parsed) continue
-        const asset = assets.getAssetById(parsed.assetId)
-        const detail = parsed.detail ?? baseline
-        if (asset && !residency.has(asset.contentDigest)) residency.set(asset.contentDigest, detail)
-      } else if (block.type === 'tool-result') visit(block.content)
-    }
-  }
-  for (const message of agent.session.deriveMessages()) visit(message.content)
-  for (const event of agent.session.events) {
-    if (
-      event.type !== 'nekro-nxt/image-inspection' ||
-      event.data.mode !== 'direct' ||
-      event.data.result === undefined
-    ) {
-      continue
-    }
-    const result = DirectImageInspectionValueSchema.safeParse(event.data.result)
-    if (!result.success) continue
-    for (const image of result.data.images) {
-      if (image.status !== 'injected' && image.status !== 'detail-upgraded') continue
-      const digest = event.data.contentDigests[image.index]
-      if (digest === undefined || !residency.has(digest)) continue
-      const current = residency.get(digest)!
-      if (imageDetailRank(result.data.effectiveDetail) > imageDetailRank(current)) {
-        residency.set(digest, result.data.effectiveDetail)
-      }
-    }
-  }
-  return residency
-}
-
-const collectVisibleImageDigests = (agent: Agent, assets: Pick<AssetAccessRepository, 'getAssetById'>): Set<string> =>
-  new Set(collectVisibleImageResidency(agent, assets).keys())
 
 class ImageInspectionError extends Error {
   constructor(
@@ -2843,71 +2597,12 @@ const resolveAgentWorkspace = (workspaceRoot: string, agentId: AgentRevisionReco
   return path.join(workspaceRoot, agentId)
 }
 
-type NekroCompactionResult = NonNullable<Awaited<ReturnType<BasicCompactionEngine['compactIfNeeded']>>>
-
-class NekroNxtCompactionEngine extends BasicCompactionEngine {
-  private visualRestoreDepth = 0
-  private visualRestoreHandler: ((result: NekroCompactionResult, agent: Agent) => Promise<void>) | undefined
-
-  setVisualRestore(handler: (result: NekroCompactionResult, agent: Agent) => Promise<void>): void {
-    this.visualRestoreHandler = handler
-  }
-
-  override async compactIfNeeded(
-    agent: Parameters<BasicCompactionEngine['compactIfNeeded']>[0],
-    trigger: Parameters<BasicCompactionEngine['compactIfNeeded']>[1],
-    signal: Parameters<BasicCompactionEngine['compactIfNeeded']>[2],
-  ): ReturnType<BasicCompactionEngine['compactIfNeeded']> {
-    return this.runWithVisualRestore(() => super.compactIfNeeded(agent, trigger, signal), agent)
-  }
-
-  override async compactNow(
-    agent: Parameters<BasicCompactionEngine['compactNow']>[0],
-    signal: Parameters<BasicCompactionEngine['compactNow']>[1],
-    sourceCommandId?: Parameters<BasicCompactionEngine['compactNow']>[2],
-  ): ReturnType<BasicCompactionEngine['compactNow']> {
-    return this.runWithVisualRestore(() => super.compactNow(agent, signal, sourceCommandId), agent)
-  }
-
-  override async compactRegion(
-    start: Parameters<BasicCompactionEngine['compactRegion']>[0],
-    end: Parameters<BasicCompactionEngine['compactRegion']>[1],
-    agent: Parameters<BasicCompactionEngine['compactRegion']>[2],
-    signal?: Parameters<BasicCompactionEngine['compactRegion']>[3],
-  ): ReturnType<BasicCompactionEngine['compactRegion']> {
-    const result = await this.runWithVisualRestore(() => super.compactRegion(start, end, agent, signal), agent)
-    if (!result) throw new Error('DSH compactRegion unexpectedly returned no result.')
-    return result
-  }
-
-  private async runWithVisualRestore<T extends NekroCompactionResult | null>(
-    operation: () => Promise<T>,
-    agent: Agent,
-  ): Promise<T> {
-    this.visualRestoreDepth += 1
-    try {
-      const result = await operation()
-      if (this.visualRestoreDepth === 1 && result && this.visualRestoreHandler) {
-        try {
-          await this.visualRestoreHandler(result, agent)
-        } catch {
-          // The DSH compaction has already committed. Visual restoration is a
-          // best-effort append and must never make that committed compaction
-          // appear to have rolled back.
-        }
-      }
-      return result
-    } finally {
-      this.visualRestoreDepth -= 1
-    }
-  }
-}
-
 /** Owns the minimal production DSH Host roster and adapts it to Channel Runtime. */
 export class DshHostRuntime implements AgentSessionDriver, ExtensionActivationHost {
   readonly #context: Context
   readonly #communication: AgentCommunicationPort
   readonly #history: ProductChannelHistoryRepository
+  readonly #imageContext: SessionImageContext
   readonly #assets: AssetAccessRepository
   readonly #assetService: AssetService
   readonly #resolveAgentRevision: DshHostRuntimeOptions['resolveAgentRevision']
@@ -2943,6 +2638,7 @@ export class DshHostRuntime implements AgentSessionDriver, ExtensionActivationHo
     this.#resolveAdapterDisplayName = options.resolveAdapterDisplayName ?? (() => undefined)
     this.#developmentWorkspaceRoot = options.developmentWorkspaceRoot
     this.#modelSettings = new HostModelSettings(context, options.llmSettingsPath !== undefined)
+    this.#imageContext = new SessionImageContext(context, this.#sessions, options.history, options.assets)
     this.#authoring = options.authoring
     this.#channelReplyGuard = channelReplyGuard
     this.#dshPluginLifecycle =
@@ -2966,7 +2662,9 @@ export class DshHostRuntime implements AgentSessionDriver, ExtensionActivationHo
     if (!(compaction instanceof NekroNxtCompactionEngine)) {
       throw new Error('NekroNxt visual restoration requires its public DSH compaction wrapper.')
     }
-    compaction.setVisualRestore((result, agent) => this.#restoreVisualContext(agent, String(result.compactionId)))
+    compaction.setVisualRestore((result, agent) =>
+      this.#imageContext.restoreVisualContext(agent, String(result.compactionId)),
+    )
   }
 
   static async create(options: DshHostRuntimeOptions): Promise<DshHostRuntime> {
@@ -3070,103 +2768,11 @@ export class DshHostRuntime implements AgentSessionDriver, ExtensionActivationHo
     this.#assertActive()
     return this.#modelSettings.listAvailableLlmModels()
   }
-
-  async getAgentImageDiagnostics(revision: AgentRevisionRecord): Promise<AgentImageDiagnostics> {
+  getAgentImageDiagnostics(revision: AgentRevisionRecord): Promise<AgentImageDiagnostics> {
     this.#assertActive()
-    const blockers: string[] = []
-    let route: AgentImageDiagnostics['route']
-    try {
-      const primary = await this.#context.llm.resolveModelInfo(revision.model.provider, revision.model.model)
-      if (primary.inputModalities?.includes('image')) {
-        route = { mode: 'direct', provider: revision.model.provider, model: revision.model.model }
-      } else if (revision.imagePolicy.textModel.mode === 'auxiliary') {
-        const selection = revision.imagePolicy.textModel.model
-        try {
-          const auxiliary = await this.#context.llm.resolveModelInfo(selection.provider, selection.model)
-          if (auxiliary.inputModalities?.includes('image')) {
-            route = { mode: 'delegated', provider: selection.provider, model: selection.model }
-          } else {
-            route = { mode: 'unavailable' }
-            blockers.push('配置的辅助视觉模型没有明确声明支持图片输入。')
-          }
-        } catch {
-          route = { mode: 'unavailable' }
-          blockers.push('配置的辅助视觉模型当前不可用。')
-        }
-      } else {
-        route = { mode: 'unavailable' }
-        blockers.push(
-          primary.inputModalities === undefined
-            ? '主模型没有声明图片输入能力，且未配置辅助视觉模型。'
-            : '主模型仅支持文本，且未配置辅助视觉模型。',
-        )
-      }
-    } catch {
-      route = { mode: 'unavailable' }
-      blockers.push('主模型当前不可用，无法建立图片理解路由。')
-    }
-
-    const sessions = [...this.#sessions.records()]
-      .map((record) => [record.sessionId, record.revision.agentId] as const)
-      .filter(([, agentId]) => agentId === revision.agentId)
-      .flatMap(([sessionId]) => {
-        const agent = this.#context.agents.get(SessionId(sessionId))
-        return agent === undefined ? [] : [agent]
-      })
-    let residentImages = 0
-    let duplicateImagesSkipped = 0
-    let latestInspection:
-      { readonly time: number; readonly data: SessionEvent<'nekro-nxt/image-inspection'>['data'] } | undefined
-    let latestRestoration:
-      { readonly time: number; readonly data: SessionEvent<'nekro-nxt/image-restoration'>['data'] } | undefined
-    for (const agent of sessions) {
-      residentImages += collectVisibleImageResidency(agent, this.#assets, revision.imagePolicy.history.detail).size
-      for (const event of agent.session.events) {
-        if (event.type === 'nekro-nxt/image-admission') {
-          duplicateImagesSkipped += event.data.duplicateCount
-        } else if (event.type === 'nekro-nxt/image-inspection') {
-          if (latestInspection === undefined || event.time > latestInspection.time) {
-            latestInspection = { time: event.time, data: event.data }
-          }
-        } else if (event.type === 'nekro-nxt/image-restoration') {
-          if (latestRestoration === undefined || event.time > latestRestoration.time) {
-            latestRestoration = { time: event.time, data: event.data }
-          }
-        }
-      }
-    }
-    return {
-      route,
-      activeSessions: sessions.length,
-      residentImages,
-      duplicateImagesSkipped,
-      ...(latestInspection === undefined
-        ? {}
-        : {
-            lastInspection: {
-              mode: latestInspection.data.mode,
-              imageCount: latestInspection.data.assetIds.length,
-              ...(latestInspection.data.provider === undefined ? {} : { provider: latestInspection.data.provider }),
-              ...(latestInspection.data.model === undefined ? {} : { model: latestInspection.data.model }),
-              cacheHit: latestInspection.data.cacheHit,
-              ...(latestInspection.data.usage === undefined ? {} : { usage: latestInspection.data.usage }),
-              ...(latestInspection.data.errorCode === undefined ? {} : { errorCode: latestInspection.data.errorCode }),
-            },
-          }),
-      ...(latestRestoration === undefined
-        ? {}
-        : {
-            lastRestoration: {
-              compactionId: latestRestoration.data.compactionId,
-              candidateCount: latestRestoration.data.candidateCount,
-              restoredCount: latestRestoration.data.restoredAssetIds.length,
-              skippedCount: latestRestoration.data.skippedAssetIds.length,
-              ...(latestRestoration.data.error === undefined ? {} : { error: latestRestoration.data.error }),
-            },
-          }),
-      blockers,
-    }
+    return this.#imageContext.getAgentImageDiagnostics(revision)
   }
+
   getLlmProviderSettings(): Promise<LlmProviderSettingsView> {
     this.#assertActive()
     return this.#modelSettings.getLlmProviderSettings()
@@ -3593,7 +3199,7 @@ export class DshHostRuntime implements AgentSessionDriver, ExtensionActivationHo
       }
     }
     if (supportsImage) this.#sessions.require(sessionId).imageInput = true
-    await this.#restoreLatestPendingVisualContext(handle.agent)
+    await this.#imageContext.restoreLatestPendingVisualContext(handle.agent)
     const hasHandoffMessage =
       input.handoff !== undefined &&
       (handle.agent.session.events.some(
@@ -3641,7 +3247,7 @@ export class DshHostRuntime implements AgentSessionDriver, ExtensionActivationHo
               return [
                 ...blocks,
                 { type: 'text', text: `[原文 ${event.logicalMessageId}]` },
-                ...(await this.#projectEvent(sessionId, event, handoffImageDigests)),
+                ...(await this.#imageContext.projectEvent(sessionId, event, handoffImageDigests)),
               ]
             }, Promise.resolve([]))),
           ],
@@ -3677,7 +3283,9 @@ export class DshHostRuntime implements AgentSessionDriver, ExtensionActivationHo
     }
     const projectedEvents: ContentBlock[] = []
     for (const event of input.events) {
-      projectedEvents.push(...(await this.#projectEvent(sessionId, event, admissionImageDigests, imageStats)))
+      projectedEvents.push(
+        ...(await this.#imageContext.projectEvent(sessionId, event, admissionImageDigests, imageStats)),
+      )
     }
     const message = freezeMessage({
       id: dshMessageId,
@@ -3723,7 +3331,9 @@ export class DshHostRuntime implements AgentSessionDriver, ExtensionActivationHo
     ]
     const seen = collectVisibleImageDigests(agent, this.#assets)
     const stats: ImageProjectionStats = { imageCount: 0, injectedCount: 0, duplicateCount: 0, skippedCount: 0 }
-    content.push(...(await this.#projectMessageParts(sessionId, input.channelId, input.parts, seen, stats)))
+    content.push(
+      ...(await this.#imageContext.projectMessageParts(sessionId, input.channelId, input.parts, seen, stats)),
+    )
     agent.inject(
       freezeMessage({
         id: MessageId(`nxt-console-${input.logicalMessageId}`),
@@ -4803,326 +4413,6 @@ export class DshHostRuntime implements AgentSessionDriver, ExtensionActivationHo
       throw new Error('Dynamic authoring root Session ownership no longer matches its immutable Revision.')
     }
     return owner
-  }
-
-  async #restoreLatestPendingVisualContext(agent: Agent): Promise<void> {
-    const latest = [...agent.session.events]
-      .reverse()
-      .find((event) => event.type === 'compaction/end' && event.data.error === undefined)
-    if (latest?.type !== 'compaction/end') return
-    const compactionId = String(latest.data.compactionId)
-    const settled = agent.session.events.some(
-      (event) =>
-        (event.type === 'nekro-nxt/image-restoration' && event.data.compactionId === compactionId) ||
-        (event.type === 'user/message' &&
-          event.data.source.kind === 'nekro-nxt-visual-restore' &&
-          event.data.source.compactionId === compactionId),
-    )
-    if (!settled) await this.#restoreVisualContext(agent, compactionId)
-  }
-
-  async #restoreVisualContext(agent: Agent, compactionId: string): Promise<void> {
-    const sessionId = String(agent.session.id)
-    if (!this.#sessions.get(sessionId)?.imageInput) return
-    const channelId = this.#sessions.get(sessionId)?.channelId
-    const episodeId = this.#sessions.get(sessionId)?.episodeId
-    const revision = this.#sessions.get(sessionId)?.revision
-    if (!channelId || !episodeId || !revision) return
-    if (
-      agent.session.events.some(
-        (event) =>
-          (event.type === 'nekro-nxt/image-restoration' && event.data.compactionId === compactionId) ||
-          (event.type === 'user/message' &&
-            event.data.source.kind === 'nekro-nxt-visual-restore' &&
-            event.data.source.compactionId === compactionId),
-      )
-    ) {
-      return
-    }
-    const skippedAssetIds: string[] = []
-    try {
-      const policy = revision.imagePolicy.history.restoreAfterCompaction
-      const entries = [...this.#history.listEpisodeHistory(episodeId, { limit: policy.recentMessages })].reverse()
-      const byDigest = new Map<
-        string,
-        {
-          readonly asset: AssetRecord
-          readonly occurredAt: number
-          readonly ordinal: number
-          readonly sourceMessageIds: string[]
-        }
-      >()
-      let ordinal = 0
-      for (const entry of entries) {
-        for (const part of entry.parts) {
-          for (const assetId of messagePartAssetIds(part)) {
-            ordinal += 1
-            if (!this.#assets.canAccessAsset(assetId, channelId)) {
-              skippedAssetIds.push(assetId)
-              continue
-            }
-            const asset = this.#assets.getAssetById(assetId)
-            if (!asset?.mediaType.startsWith('image/')) {
-              skippedAssetIds.push(assetId)
-              continue
-            }
-            const previous = byDigest.get(asset.contentDigest)
-            byDigest.set(asset.contentDigest, {
-              asset,
-              occurredAt: entry.occurredAt,
-              ordinal,
-              sourceMessageIds: [...(previous?.sourceMessageIds ?? []), String(entry.sourceId)],
-            })
-          }
-        }
-      }
-      const visible = collectVisibleImageDigests(agent, this.#assets)
-      const candidates = [...byDigest.entries()]
-        .filter(([digest]) => !visible.has(digest))
-        .sort((left, right) => right[1].occurredAt - left[1].occurredAt || right[1].ordinal - left[1].ordinal)
-      const selected = candidates
-        .slice(0, policy.maxImages)
-        .sort((left, right) => left[1].occurredAt - right[1].occurredAt || left[1].ordinal - right[1].ordinal)
-      const prepared: Array<{
-        readonly assetId: string
-        readonly contentDigest: string
-        readonly sourceMessageIds: readonly string[]
-        readonly attachment: ImageAttachmentRef
-      }> = []
-      for (const [contentDigest, candidate] of selected) {
-        try {
-          const attachment = await requireNekroAssetAttachmentStore(this.#context.attachments).refForAsset(
-            candidate.asset,
-            undefined,
-            revision.imagePolicy.history.detail,
-          )
-          await this.#context.attachments.readImage(attachment)
-          prepared.push({
-            assetId: candidate.asset.id,
-            contentDigest,
-            sourceMessageIds: candidate.sourceMessageIds,
-            attachment,
-          })
-        } catch {
-          skippedAssetIds.push(candidate.asset.id)
-        }
-      }
-      const makeRestoreMessage = (assetsToRestore: typeof prepared): UserMessage => {
-        const sourceMessageIds = [...new Set(assetsToRestore.flatMap((asset) => asset.sourceMessageIds))]
-        const blocks: ContentBlock[] = [
-          {
-            type: 'text',
-            text: '以下原图来自当前频道最近消息，是压缩后的视觉上下文恢复，不是新的频道消息。',
-          },
-        ]
-        for (const asset of assetsToRestore) {
-          blocks.push({
-            type: 'text',
-            text: `恢复图片 ${asset.assetId}；来源消息：${asset.sourceMessageIds.join('、')}。`,
-          })
-          blocks.push({ type: 'image', attachment: asset.attachment })
-        }
-        return freezeMessage({
-          id: MessageId(`nxt-visual-${compactionId}`),
-          role: 'user',
-          content: blocks,
-          source: {
-            kind: 'nekro-nxt-visual-restore',
-            compactionId,
-            policyVersion: 1,
-            sourceMessageIds,
-            assets: assetsToRestore.map(({ assetId, contentDigest, sourceMessageIds }) => ({
-              assetId,
-              contentDigest,
-              sourceMessageIds,
-            })),
-          },
-        }) satisfies UserMessage
-      }
-      const restoredAssets = [...prepared]
-      if (restoredAssets.length > 0) {
-        const modelInfo = await this.#context.llm.resolveModelInfo(revision.model.provider, revision.model.model)
-        const contextWindow = modelInfo.context?.contextWindow
-        const compaction = this.#context.compaction
-        if (contextWindow !== undefined && compaction instanceof NekroNxtCompactionEngine) {
-          const modelPolicy = compaction.config.modelPolicies.find(
-            (candidate) => candidate.provider === revision.model.provider && candidate.model === revision.model.model,
-          )
-          const thresholdRatio = modelPolicy?.thresholdRatio ?? compaction.config.thresholdRatio
-          const thresholdTokens = Math.floor(contextWindow * thresholdRatio)
-          const currentTokens = this.#context.tokenMeter.measure(agent.session).totalTokens
-          while (
-            restoredAssets.length > 0 &&
-            currentTokens + this.#context.tokenMeter.estimateMessage(makeRestoreMessage(restoredAssets)) >
-              thresholdTokens
-          ) {
-            const omitted = restoredAssets.shift()
-            if (omitted) skippedAssetIds.push(omitted.assetId)
-          }
-        }
-      }
-      if (restoredAssets.length > 0) {
-        const message = makeRestoreMessage(restoredAssets)
-        agent.session.append('user/message', message, { surfaceOp: 'append' })
-      }
-      agent.session.append('nekro-nxt/image-restoration', {
-        compactionId,
-        candidateCount: candidates.length,
-        restoredAssetIds: restoredAssets.map(({ assetId }) => assetId),
-        skippedAssetIds,
-      })
-      await this.#context.sessions.flush(agent.session)
-    } catch (error) {
-      agent.session.append('nekro-nxt/image-restoration', {
-        compactionId,
-        candidateCount: 0,
-        restoredAssetIds: [],
-        skippedAssetIds,
-        error: error instanceof Error ? error.message : String(error),
-      })
-      await this.#context.sessions.flush(agent.session)
-    }
-  }
-
-  async #projectMessageParts(
-    sessionId: SessionId,
-    channelId: ChannelId,
-    parts: readonly MessagePart[],
-    visibleDigests: Set<string>,
-    imageStats?: ImageProjectionStats,
-    expandQuotes = true,
-  ): Promise<ContentBlock[]> {
-    const blocks: ContentBlock[] = []
-    const attachImage = async (assetId: AssetId, alt?: string): Promise<void> => {
-      if (!this.#assets.canAccessAsset(assetId, channelId)) {
-        if (imageStats) imageStats.skippedCount += 1
-        blocks.push({ type: 'text', text: `图片资源 ${assetId} 当前不可访问。` })
-        return
-      }
-      const asset = this.#assets.getAssetById(assetId)
-      if (!asset) {
-        if (imageStats) imageStats.skippedCount += 1
-        blocks.push({ type: 'text', text: `图片资源 ${assetId} 的元数据不可用。` })
-        return
-      }
-      if (!asset.mediaType.startsWith('image/')) {
-        if (imageStats) imageStats.skippedCount += 1
-        blocks.push({ type: 'text', text: `资源 ${assetId} 不是可注入的图片。` })
-        return
-      }
-      if (imageStats) imageStats.imageCount += 1
-      if (this.#sessions.get(sessionId)?.imageInput) {
-        if (visibleDigests.has(asset.contentDigest)) {
-          if (imageStats) imageStats.duplicateCount += 1
-          blocks.push({
-            type: 'text',
-            text: `图片资源 ${assetId} 与当前上下文中已驻留图片内容相同，沿用已有视觉内容。`,
-          })
-          return
-        }
-        const detail = this.#sessions.get(String(sessionId))?.revision?.imagePolicy.history.detail ?? 'auto'
-        const attachment = await requireNekroAssetAttachmentStore(this.#context.attachments).refForAsset(
-          asset,
-          alt,
-          detail,
-        )
-        blocks.push({ type: 'image', attachment })
-        visibleDigests.add(asset.contentDigest)
-        if (imageStats) imageStats.injectedCount += 1
-        return
-      }
-      blocks.push({
-        type: 'text',
-        text: `图片资源 ${asset.id} 已收到，但当前模型不直接支持图片输入；如已配置辅助视觉模型，可使用 asset_inspect_images 批量理解。`,
-      })
-    }
-    for (const part of parts) {
-      switch (part.type) {
-        case 'text':
-          blocks.push({ type: 'text', text: part.text })
-          break
-        case 'mention': {
-          const member = memberSummary(this.#history, part.memberId)
-          blocks.push({
-            type: 'text',
-            text: `@${member.displayName ?? '未知成员'}（成员标识 ${member.memberId}）`,
-          })
-          break
-        }
-        case 'image':
-          blocks.push({
-            type: 'text',
-            text: `收到图片资源 ${part.assetId}${part.alt ? `（${part.alt}）` : ''}`,
-          })
-          await attachImage(part.assetId, part.alt)
-          break
-        case 'file':
-          blocks.push({
-            type: 'text',
-            text: `收到文件资源 ${part.assetId}${part.name ? `（${part.name}）` : ''}`,
-          })
-          break
-        case 'audio':
-          blocks.push({ type: 'text', text: `收到音频资源 ${part.assetId}` })
-          break
-        case 'quote': {
-          if (!expandQuotes) {
-            blocks.push({ type: 'text', text: `引用频道消息 ${part.messageId}` })
-            break
-          }
-          const quoted = this.#history.getChannelHistoryEntryByLogicalMessageId(channelId, part.messageId)
-          if (quoted === undefined) {
-            blocks.push({
-              type: 'text',
-              text: `引用频道消息 ${part.messageId}，当前频道中无法读取该消息`,
-            })
-            break
-          }
-          blocks.push({
-            type: 'text',
-            text: `引用频道消息 ${part.messageId}${historyEntrySenderDescription(this.#history, quoted)}：`,
-          })
-          blocks.push(
-            ...(await this.#projectMessageParts(sessionId, channelId, quoted.parts, visibleDigests, imageStats, false)),
-          )
-          break
-        }
-        case 'rich': {
-          const context = richPartContextText(part)
-          const label = part.kind === 'forward' ? '收到转发' : '收到卡片'
-          blocks.push({ type: 'text', text: `${label}：${context.includes('\n') ? `\n${context}` : context}` })
-          for (const assetId of messagePartAssetIds(part)) {
-            blocks.push({ type: 'text', text: `卡片图片资源 ${assetId}` })
-            await attachImage(assetId)
-          }
-          break
-        }
-      }
-    }
-    return blocks
-  }
-
-  async #projectEvent(
-    sessionId: SessionId,
-    event: ChannelEventRecord,
-    visibleDigests?: Set<string>,
-    imageStats?: ImageProjectionStats,
-  ): Promise<ContentBlock[]> {
-    const sender = event.senderMemberId === undefined ? undefined : memberSummary(this.#history, event.senderMemberId)
-    const senderDescription =
-      sender === undefined ? '' : `，发送成员：${sender.displayName ?? '未知成员'}（成员标识 ${sender.memberId}）`
-    const mentionDescription = event.facts?.['mentionedBot'] === true ? '；该消息提及了当前智能体关联的机器人账号' : ''
-    const blocks: ContentBlock[] = [
-      { type: 'text', text: `频道消息 ${event.logicalMessageId}${senderDescription}${mentionDescription}：` },
-    ]
-    const seen =
-      visibleDigests ??
-      (() => {
-        const agent = this.#context.agents.get(sessionId)
-        return agent === undefined ? new Set<string>() : collectVisibleImageDigests(agent, this.#assets)
-      })()
-    blocks.push(...(await this.#projectMessageParts(sessionId, event.channelId, event.parts, seen, imageStats)))
-    return blocks
   }
 }
 
