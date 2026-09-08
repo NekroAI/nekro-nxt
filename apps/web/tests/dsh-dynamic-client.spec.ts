@@ -160,7 +160,7 @@ describe('DSH Dynamic Client Runtime', () => {
                       getSnapshot: () => ({ revision: 0, groups: [{ id: 'main', items: [{ id: 'overview', label: '概览', path: '' }] }] }),
                       subscribe: () => () => undefined
                     }
-                  }, ({ relativePath }) => React.createElement(ctx.ui.Section, { 'data-page': 'overview' }, relativePath || '首页'))
+                  }, ({ relativePath }) => React.createElement(ctx.ui.Section, { 'data-page': 'overview', className: styles.section }, relativePath || '首页'))
                 }
               }`,
             }),

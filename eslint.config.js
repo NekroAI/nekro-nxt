@@ -5,7 +5,7 @@ import tseslint from 'typescript-eslint'
 export default tseslint.config(
   {
     ignores: [
-      '.local/**',
+      '**/.local/**',
       'assets/**',
       'coverage/**',
       'data/**',

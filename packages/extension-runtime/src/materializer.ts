@@ -133,7 +133,7 @@ const wrapClient = (body: string, hostUi: boolean, clientCssPath?: string): stri
   normalizeSource(`${clientCssPath === undefined ? '' : `import '../${clientCssPath}?nxt-dynamic-css'\n`}
 import { ${hostUi ? 'defineHostUiClientExtension' : 'defineClientExtension'} } from '@nekro-nxt/extension-sdk'
 
-export default ${hostUi ? 'defineHostUiClientExtension' : 'defineClientExtension'}(async ({ React, host, ${hostUi ? 'ui' : 'styles'} }) => {
+export default ${hostUi ? 'defineHostUiClientExtension' : 'defineClientExtension'}(async ({ React, host, styles${hostUi ? ', ui' : ''} }) => {
 ${body}
 })`)
 
