@@ -454,7 +454,11 @@ export class HostQueries {
       extensions: projectExtensions(runtime),
       hostUi: {
         preferencesRevision: runtime.repository.getHostUiPreferencesRevision(),
-        pages: runtime.repository.listHostUiPageEntries(),
+        pages: runtime.repository.listHostUiPageEntries().filter(({ owner }) => {
+          if (owner.kind !== 'extension') return true
+          const revision = runtime.repository.getExtensionRevision(owner.revisionId)
+          return revision !== undefined && runtime.extensionService.revisionFormat(revision) === 'current'
+        }),
       },
       workTreeOrder: runtime.repository.getWorkTreeOrder(),
       dynamic: [...agentIds].flatMap((agentId) => projectDynamicInventory(runtime, agentId)),

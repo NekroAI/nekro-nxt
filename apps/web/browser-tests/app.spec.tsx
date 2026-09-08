@@ -1833,6 +1833,18 @@ test.describe('NekroNxt browser projections', () => {
       await page.route('**/api/snapshot', (request) =>
         request.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(browserSnapshot) }),
       )
+      await page.route('**/api/channels/*/messages?*', (request) => {
+        const channelId = new URL(request.request().url()).pathname.split('/')[3]
+        return request.fulfill({
+          status: 200,
+          contentType: 'application/json',
+          body: JSON.stringify({
+            cursor: { epoch: 'fixture', sequence: 0 },
+            messages: browserSnapshot.messages.filter((message) => message.channelId === channelId),
+            hasMore: false,
+          }),
+        })
+      })
       await page.route('**/api/events', (request) =>
         request.fulfill({ status: 200, contentType: 'text/event-stream', body: '' }),
       )
