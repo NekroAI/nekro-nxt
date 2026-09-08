@@ -1,3 +1,4 @@
+import { LlmProviderRemovalResultUnknown } from './host-model-settings.js'
 import {
   DshNxtHostUiSchema,
   DshPluginEntryIdSchema,
@@ -681,19 +682,44 @@ export function registerSettingsRoutes({
     path: '/api/llm/providers',
     handler: async (req, res) => {
       const url = new URL(req.url ?? '/', 'http://localhost')
-      const match = /^\/api\/llm\/providers\/([^/]+)$/.exec(url.pathname)
+      const match = /^\/api\/llm\/providers\/([^/]+)(\/removal-impact)?$/.exec(url.pathname)
       if (!match) {
         writeError(res, 404, 'not-found', `未定义路由：${req.method} ${url.pathname}。`)
         return
       }
-      if (req.method !== 'POST') {
-        writeError(res, 405, 'method-not-allowed', '只支持 POST。')
+      if (match[2] ? req.method !== 'GET' : req.method !== 'POST' && req.method !== 'DELETE') {
+        writeError(res, 405, 'method-not-allowed', match[2] ? '只支持 GET。' : '只支持 POST/DELETE。')
         return
       }
       try {
         const encodedProvider = match[1]
         if (encodedProvider === undefined) {
           writeError(res, 404, 'not-found', `未定义路由：${req.method} ${url.pathname}。`)
+          return
+        }
+        if (match[2]) {
+          const params = HostApiContracts.llmProviderRemovalImpact.parseParams({
+            provider: decodeURIComponent(encodedProvider),
+          })
+          writeContractJson(
+            res,
+            200,
+            HostApiContracts.llmProviderRemovalImpact,
+            await runtime.host.getLlmProviderRemovalImpact(params.provider),
+          )
+          return
+        }
+        if (req.method === 'DELETE') {
+          const params = HostApiContracts.llmRemoveProvider.parseParams({
+            provider: decodeURIComponent(encodedProvider),
+          })
+          const input = HostApiContracts.llmRemoveProvider.parseRequest(await readJsonBody(req))
+          writeContractJson(
+            res,
+            200,
+            HostApiContracts.llmRemoveProvider,
+            await runtime.host.removeLlmProvider(params.provider, input.expectedRevision),
+          )
           return
         }
         const params = HostApiContracts.llmSaveProvider.parseParams({ provider: decodeURIComponent(encodedProvider) })
@@ -722,8 +748,13 @@ export function registerSettingsRoutes({
           }),
         )
       } catch (error) {
-        const code = error instanceof Error && 'code' in error && error.code === 'SETTINGS_CONFLICT' ? 409 : 400
-        writeError(res, code, 'llm-provider-save-failed', error instanceof Error ? error.message : String(error))
+        const code =
+          error instanceof LlmProviderRemovalResultUnknown
+            ? 503
+            : error instanceof Error && 'code' in error && error.code === 'SETTINGS_CONFLICT'
+              ? 409
+              : 400
+        writeError(res, code, 'llm-provider-mutation-failed', error instanceof Error ? error.message : String(error))
       }
     },
   })

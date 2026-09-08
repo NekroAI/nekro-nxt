@@ -1,3 +1,9 @@
+import {
+  getLlmProviderRemovalImpact,
+  LlmProviderRemovalConflict,
+  type LlmProviderRemovalCoordinator,
+  type RemovalImpact,
+} from './llm-provider-removal.js'
 import { HOST_DSH_PACKAGE_VERSIONS, DSH_BUILTIN_EXTENSION_ROSTER, DSH_SETTINGS_OWNER } from './dsh-roster.js'
 import { Context } from '@deepseek-ai/cordis'
 import CredentialProvider, {
@@ -20,6 +26,12 @@ import {
   type DshSettingsPathOperation,
 } from '@nekro-nxt/contracts'
 import { z } from 'zod'
+export class LlmProviderRemovalResultUnknown extends Error {
+  constructor(cause: unknown) {
+    super('供应商移除已提交，但结果读取失败，请刷新核对。', { cause })
+  }
+}
+
 export interface AvailableLlmModel {
   readonly provider: string
   readonly providerName: string
@@ -251,7 +263,11 @@ const credentialReferenceForProvider = (provider: string): string =>
 export class HostModelSettings {
   readonly #context: Context
   readonly #hasLlmSettings: boolean
-  constructor(context: Context, hasSettings: boolean) {
+  constructor(
+    context: Context,
+    hasSettings: boolean,
+    readonly providerRemoval?: LlmProviderRemovalCoordinator,
+  ) {
     this.#context = context
     this.#hasLlmSettings = hasSettings
   }
@@ -468,6 +484,71 @@ export class HostModelSettings {
         ? {}
         : { owner: { packageName: owner, packageVersion: HOST_DSH_PACKAGE_VERSIONS[owner] } }),
     }
+  }
+
+  #providerRemovalBlockedReason(provider: string): string {
+    const entry = this.#context.llm.listConfigurableProviders().find((candidate) => candidate.provider === provider)
+    if (
+      !entry ||
+      entry.settingsNs !== 'llm-pi-ai' ||
+      entry.settingsPath.length !== 2 ||
+      entry.settingsPath[0] !== 'providers' ||
+      entry.settingsPath[1] !== provider
+    ) {
+      return '这是宿主固定装载的内置接入。清空设置只会恢复默认值，不能停用，因此不支持移除。'
+    }
+    const descriptor = this.#context.settings
+      .describe({ redactSecrets: true })
+      .find((candidate) => candidate.ns === settingsNamespace(entry.settingsNs))
+    if (readObjectPath(descriptor?.base, entry.settingsPath) !== undefined) {
+      return '此供应商由宿主启动配置启用，移除保存值只会恢复默认配置。请先调整宿主启动配置后再移除。'
+    }
+    return ''
+  }
+
+  #providerConfigured(provider: string): boolean {
+    const descriptor = this.#context.settings
+      .describe({ redactSecrets: true })
+      .find((candidate) => candidate.ns === settingsNamespace('llm-pi-ai'))
+    return readObjectPath(descriptor?.value, ['providers', provider]) !== undefined
+  }
+
+  async getLlmProviderRemovalImpact(provider: string): Promise<RemovalImpact> {
+    if (!this.providerRemoval) throw new Error('宿主未配置供应商引用检查，不能安全移除。')
+    const settings = await this.getLlmProviderSettings()
+    return getLlmProviderRemovalImpact(
+      this.providerRemoval.repository,
+      settings,
+      provider,
+      this.#providerRemovalBlockedReason(provider),
+    )
+  }
+
+  async removeLlmProvider(provider: string, expectedRevision: number): Promise<LlmProviderSettingsView> {
+    if (!this.providerRemoval) throw new Error('宿主未配置供应商引用检查，不能安全移除。')
+    const blockedReason = this.#providerRemovalBlockedReason(provider)
+    if (blockedReason) throw new LlmProviderRemovalConflict(blockedReason)
+    return this.providerRemoval.run(
+      provider,
+      () => this.#providerConfigured(provider),
+      async () => {
+        const impact = await this.getLlmProviderRemovalImpact(provider)
+        if (impact.expectedRevision !== expectedRevision || impact.blockedReason) {
+          throw new LlmProviderRemovalConflict(impact.blockedReason || '供应商配置已变化，请重新检查影响后确认。')
+        }
+        await this.#context.settings.mutate(
+          settingsNamespace('llm-pi-ai'),
+          [{ op: 'unset', path: ['providers', provider] }],
+          expectedRevision,
+        )
+        // Credentials may be shared. A failed response read does not undo this commit.
+        try {
+          return await this.getLlmProviderSettings()
+        } catch (cause) {
+          throw new LlmProviderRemovalResultUnknown(cause)
+        }
+      },
+    )
   }
 
   async saveLlmProvider(input: SaveLlmProviderInput): Promise<LlmProviderSettingsView> {

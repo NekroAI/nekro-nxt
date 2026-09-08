@@ -220,5 +220,36 @@
   top: -18px;
   border-bottom: 1px solid var(--nxt-border-subtle);
   padding: 18px 0 12px;
-  background: var(--nxt-bg-canvas);
+  background: var(--nxt-bg-surface);
+  backdrop-filter: var(--nxt-glass-filter);
+}
+
+.removalAction {
+  border-top: 1px solid var(--nxt-border-subtle);
+  padding-top: 12px;
+}
+
+.removalImpact {
+  display: grid;
+  gap: 16px;
+  overflow-wrap: anywhere;
+  color: var(--nxt-text-secondary);
+  font-size: 13px;
+}
+
+.removalImpact p {
+  margin: 0;
+}
+
+.removalImpact ul {
+  margin: 8px 0 0;
+  padding-left: 20px;
+}
+
+.removalImpact li + li {
+  margin-top: 10px;
+}
+
+.removalImpact [role='alert'] {
+  color: var(--nxt-warning);
 }

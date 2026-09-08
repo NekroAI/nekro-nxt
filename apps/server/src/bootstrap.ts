@@ -1,3 +1,4 @@
+import { LlmProviderRemovalCoordinator } from './llm-provider-removal.js'
 import type { Context } from '@deepseek-ai/cordis'
 import { BUILTIN_ADAPTER_CONTRIBUTIONS } from '@nekro-nxt/adapter-builtin-roster'
 import {
@@ -222,7 +223,8 @@ export class NekroRuntime {
     const nextUlid = options.nextUlid ?? monotonicFactory()
 
     const database = await openMigratedCoreDatabase(options.coreDatabasePath)
-    const repository = new SqliteCoreRepository(database)
+    const repository = new SqliteCoreRepository(database, (revision) => providerRemoval.assertReference(revision))
+    const providerRemoval = new LlmProviderRemovalCoordinator(repository)
     const hostSecurity = new SqliteHostSecurityRepository(database)
     try {
       const sessionStoragePreparation = await prepareDshSessionStorage({
@@ -276,6 +278,7 @@ export class NekroRuntime {
       const settled: { current?: ChannelRuntime } = {}
 
       const host = await DshHostRuntime.create({
+        providerRemoval,
         sessionDatabasePath: options.sessionDatabasePath,
         ...(options.developmentWorkspaceRoot === undefined
           ? {}

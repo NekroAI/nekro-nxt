@@ -2116,6 +2116,46 @@ export const HostApiContracts = {
     response: z.object({ provider: NonEmptyStringSchema, model: NonEmptyStringSchema }).strict(),
     error: HostApiErrorSchema,
   }),
+  llmProviderRemovalImpact: defineContract({
+    method: 'GET',
+    path: '/api/llm/providers/:provider/removal-impact',
+    params: llmProviderParam,
+    request: NoRequestBodySchema,
+    response: z
+      .object({
+        provider: NonEmptyStringSchema,
+        displayName: NonEmptyStringSchema,
+        declared: z.boolean(),
+        expectedRevision: z.number().int().nonnegative(),
+        models: z.array(NonEmptyStringSchema),
+        blockedReason: z.string(),
+        references: z.array(
+          z
+            .object({
+              agentId: AgentIdSchema,
+              displayName: NonEmptyStringSchema,
+              model: NonEmptyStringSchema,
+              role: z.enum(['primary', 'vision']),
+              scope: z.enum(['configuration', 'context']),
+              channelId: ChannelIdSchema.optional(),
+              channelName: z.string().optional(),
+              episodeStatus: z.enum(['opening', 'active']).optional(),
+            })
+            .strict(),
+        ),
+      })
+      .strict(),
+    error: HostApiErrorSchema,
+  }),
+  llmRemoveProvider: defineContract({
+    invalidatesSnapshot: true,
+    method: 'DELETE',
+    path: '/api/llm/providers/:provider',
+    params: llmProviderParam,
+    request: z.object({ expectedRevision: z.number().int().nonnegative() }).strict(),
+    response: LlmProviderSettingsSchema,
+    error: HostApiErrorSchema,
+  }),
   llmSaveProvider: defineContract({
     invalidatesSnapshot: true,
     method: 'POST',

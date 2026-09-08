@@ -1,3 +1,4 @@
+import type { LlmProviderRemovalCoordinator, RemovalImpact } from './llm-provider-removal.js'
 import { Context, Service } from '@deepseek-ai/cordis'
 import { AgentRegistry, type Agent, type AgentStatus } from '@deepseek-ai/dsh-agent'
 import AgentLoop from '@deepseek-ai/dsh-agent-loop'
@@ -313,6 +314,7 @@ export interface AgentCommunicationPort {
 }
 
 export interface DshHostRuntimeOptions {
+  readonly providerRemoval?: LlmProviderRemovalCoordinator
   readonly sessionDatabasePath: string
   readonly communication: AgentCommunicationPort
   readonly history: ChannelHistoryRepository &
@@ -1985,7 +1987,7 @@ export class DshHostRuntime implements AgentSessionDriver, ExtensionActivationHo
     this.#resolveAgentRevision = options.resolveAgentRevision
     this.#resolveAdapterDisplayName = options.resolveAdapterDisplayName ?? (() => undefined)
     this.#developmentWorkspaceRoot = options.developmentWorkspaceRoot
-    this.#modelSettings = new HostModelSettings(context, options.llmSettingsPath !== undefined)
+    this.#modelSettings = new HostModelSettings(context, options.llmSettingsPath !== undefined, options.providerRemoval)
     this.#imageContext = new SessionImageContext(context, this.#sessions, options.history, options.assets)
     this.#authoring = options.authoring
     this.#channelReplyGuard = channelReplyGuard
@@ -2199,6 +2201,16 @@ export class DshHostRuntime implements AgentSessionDriver, ExtensionActivationHo
   onDshCredentialChanged(listener: (ref: string) => void): () => void {
     this.#assertActive()
     return this.#modelSettings.onDshCredentialChanged(listener)
+  }
+
+  getLlmProviderRemovalImpact(provider: string): Promise<RemovalImpact> {
+    this.#assertActive()
+    return this.#modelSettings.getLlmProviderRemovalImpact(provider)
+  }
+
+  removeLlmProvider(provider: string, expectedRevision: number): Promise<LlmProviderSettingsView> {
+    this.#assertActive()
+    return this.#modelSettings.removeLlmProvider(provider, expectedRevision)
   }
 
   saveLlmProvider(input: SaveLlmProviderInput): Promise<LlmProviderSettingsView> {

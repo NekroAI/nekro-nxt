@@ -1,3 +1,4 @@
+import { LlmProviderRemovalDialog } from './llm-provider-removal.js'
 import { useProductRuntime } from './product-runtime.js'
 import { StaleHostReadError, callHostApi } from './host-api-client.js'
 import { Plus, RefreshCw } from 'lucide-react'
@@ -39,6 +40,7 @@ export function LlmProviderSettings(): React.ReactNode {
   const [selectedId, setSelectedId] = useState('')
   const [customMode, setCustomMode] = useState(false)
   const [addOpen, setAddOpen] = useState(false)
+  const [removingProvider, setRemovingProvider] = useState('')
   const [addCandidate, setAddCandidate] = useState('')
   const [displayName, setDisplayName] = useState('')
   const [baseURL, setBaseURL] = useState('')
@@ -290,7 +292,10 @@ export function LlmProviderSettings(): React.ReactNode {
             >
               <span>
                 <strong>{providerDisplayName(provider.provider, provider.displayName)}</strong>
-                <small>{provider.models.length} 个模型</small>
+                <small>
+                  {provider.declared ? '自定义接入' : provider.settingsNs === 'llm-pi-ai' ? '通用接入' : '内置固定接入'}{' '}
+                  · {provider.models.length} 个模型
+                </small>
               </span>
               <StatusBadge tone={provider.active ? 'success' : 'warning'}>
                 {provider.active ? '可用' : '待启用'}
@@ -419,6 +424,18 @@ export function LlmProviderSettings(): React.ReactNode {
                 保存供应商
               </Button>
             </div>
+            {!customMode && selected?.configured ? (
+              <div className={styles.removalAction}>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  disabled={pending !== null}
+                  onClick={() => setRemovingProvider(selected.provider)}
+                >
+                  {selected.declared ? '删除供应商' : '移除配置'}
+                </Button>
+              </div>
+            ) : null}
           </form>
         ) : (
           <div className={styles.editor}>
@@ -440,6 +457,31 @@ export function LlmProviderSettings(): React.ReactNode {
         )}
       </div>
 
+      {removingProvider ? (
+        <LlmProviderRemovalDialog
+          key={removingProvider}
+          provider={removingProvider}
+          onClose={() => setRemovingProvider('')}
+          onRemoved={(next) => {
+            useProductStore.getState().replaceLlmProviders(next)
+            setSelectedId(next.providers.find((provider) => provider.configured)?.provider ?? '')
+            setApiKey('')
+            setCustomMode(false)
+            setRemovingProvider('')
+            notify('供应商配置已移除，API 密钥已保留。', 'success', 'llm-provider-remove')
+            void useProductStore
+              .getState()
+              .refreshHost()
+              .catch((cause: unknown) => {
+                notify(
+                  `配置已移除，但页面数据刷新失败：${cause instanceof Error ? cause.message : String(cause)}`,
+                  'warning',
+                  'llm-provider-remove-refresh',
+                )
+              })
+          }}
+        />
+      ) : null}
       <Dialog
         open={addOpen}
         onOpenChange={setAddOpen}
