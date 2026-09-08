@@ -1,6 +1,9 @@
 import { chromium, expect, expect as expectPage, test, type Browser, type Page } from '@playwright/test'
 import react from '@vitejs/plugin-react'
 import { fileURLToPath } from 'node:url'
+import { mkdtemp, rm } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { createServer, type Connect, type ViteDevServer } from 'vite'
 
 const harnessModule = `
@@ -132,12 +135,15 @@ test.describe('ui-kit Dialog browser behavior', () => {
   let browser: Browser
   let page: Page
   let baseUrl: string
+  let cacheDirectory: string
   const browserErrors: string[] = []
 
   test.beforeAll(async () => {
+    cacheDirectory = await mkdtemp(join(tmpdir(), 'nxt-ui-kit-browser-'))
     server = await createServer({
       root: fileURLToPath(new URL('../', import.meta.url)),
       configFile: false,
+      cacheDir: cacheDirectory,
       logLevel: 'silent',
       plugins: [
         react(),
@@ -204,6 +210,7 @@ test.describe('ui-kit Dialog browser behavior', () => {
     await page?.close()
     await browser?.close()
     await server?.close()
+    if (cacheDirectory) await rm(cacheDirectory, { recursive: true, force: true })
   })
 
   test('closes on Escape and restores focus to the opener', async () => {
