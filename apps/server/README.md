@@ -8,7 +8,7 @@ Session 身份、固定 Revision、频道、Episode 与可选运行资源由 `Se
 
 人设 Revision 的权威内容是 `PromptDocumentV1`。无引用时 Host 继续注入原始纯文本；存在平台用户、频道或扩展引用时，Host 解析当前可用状态，使用转义后的 `<nxt-persona-document>` 内联标记，并先注入固定引用协议。展示名称和扩展描述始终作为不可信数据，引用不扩大权限、频道访问或工具目录。
 
-`NekroRuntime` 是生产组合根：它拥有 Core SQLite、Channel Runtime、Extension 恢复、本地凭据目录、统一 `AdapterRegistry`、Connection Runtime Map 和 `HostExtensionInstallationCoordinator`。第一方 Adapter 只从 `@nekro-nxt/adapter-builtin-roster` 的贡献集合注册；Server 不导入、比较或投影任何具体 Adapter 名称、key 和协议字段。内置与动态安装 Revision 走同一创建、恢复、测试和停止路径；Secret 只由 Host 凭据存储解析，Core 只保存引用。系统单例内置频道通过 Descriptor 的 `internal` kind 和 Runtime 的 `localChannel` 自动发现。Adapter Revision 切换会暂停该 key 的新入站，等待关联 Session 进入安全间隙，再停止全部 Connection Runtime；任一 `stop()` 失败会聚合上抛并恢复已停止的连接，不提交安装变化。启动顺序是内置 Registry → Host Installation → Connection → Agent Activation，关闭时反向撤销并等待静止。
+`NekroRuntime` 是生产组合根：它拥有 Core SQLite、Channel Runtime、Extension 恢复、本地凭据目录、统一 `AdapterRegistry`、`ConnectionApplicationService` 和 `HostExtensionInstallationCoordinator`。`ConnectionApplicationService` 独立持有连接运行实例、诊断、测试结果和订阅，负责创建、恢复、挂载、安全间隙与停止；组合根按依赖顺序调用其生命周期。第一方 Adapter 只从 `@nekro-nxt/adapter-builtin-roster` 的贡献集合注册；Server 不导入、比较或投影任何具体 Adapter 名称、key 和协议字段。内置与动态安装 Revision 走同一创建、恢复、测试和停止路径；Secret 只由 Host 凭据存储解析，Core 只保存引用。系统单例内置频道通过 Descriptor 的 `internal` kind 和 Runtime 的 `localChannel` 自动发现。Adapter Revision 切换会暂停该 key 的新入站，等待关联 Session 进入安全间隙，再停止全部 Connection Runtime；任一 `stop()` 失败会聚合上抛并恢复已停止的连接，不提交安装变化。启动顺序是内置 Registry → Host Installation → Connection → Agent Activation，关闭时反向撤销并等待静止。
 
 频道活动设置分两层：具体 Connection 保存默认开启列表，Binding 保存按频道的布尔覆盖；Channel Runtime 每次触发和恢复时重新解析最终值。用户 Connection 删除前先停止相关 Channel lane 与 Adapter Runtime；保留频道数据时归档原 Connection 供明确恢复，选择同时删除时再清理 Connection 范围内的频道和运行事实。系统单例不进入删除流程。
 
