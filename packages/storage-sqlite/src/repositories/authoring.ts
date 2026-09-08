@@ -180,11 +180,11 @@ export const createAuthoringRepository = (database: DrizzleCoreDatabase): Author
       .get()
     return row === undefined ? undefined : toTask(row)
   },
-  listAuthoringAttempts(taskId: AuthoringTaskId): readonly DynamicAuthoringAttempt[] {
+  listAuthoringAttempts(taskId?: AuthoringTaskId): readonly DynamicAuthoringAttempt[] {
     return database
       .select()
       .from(dynamicAuthoringAttempts)
-      .where(eq(dynamicAuthoringAttempts.taskId, taskId))
+      .where(taskId === undefined ? undefined : eq(dynamicAuthoringAttempts.taskId, taskId))
       .orderBy(asc(dynamicAuthoringAttempts.ordinal))
       .all()
       .map(toAttempt)

@@ -1,3 +1,4 @@
+import { AuthoringApplicationService } from './authoring-application.js'
 import type { Context } from '@deepseek-ai/cordis'
 import { BUILTIN_ADAPTER_CONTRIBUTIONS } from '@nekro-nxt/adapter-builtin-roster'
 import {
@@ -134,6 +135,7 @@ export class NekroRuntime {
   readonly hostSecurity: SqliteHostSecurityRepository
   readonly assetService: AssetService
   readonly core: CoreService
+  readonly authoring: AuthoringApplicationService
   readonly host: DshHostRuntime
   readonly channels: ChannelRuntime
   readonly internalConnectionId: ConnectionId
@@ -207,6 +209,7 @@ export class NekroRuntime {
     this.assetService = input.assetService
     this.core = input.core
     this.host = input.host
+    this.authoring = new AuthoringApplicationService(this)
     this.channels = input.channels
     this.internalConnectionId = input.internalConnectionId
     this.extensionService = input.extensionService
@@ -1010,6 +1013,10 @@ export class NekroRuntime {
     return this.installation.install(input)
   }
 
+  updateHostUiPagePreferences(input: Omit<Parameters<SqliteCoreRepository['updateHostUiPagePreferences']>[0], 'now'>) {
+    return this.repository.updateHostUiPagePreferences({ ...input, now: this.#now() })
+  }
+
   uninstallHostExtension(extensionId: Parameters<HostExtensionInstallationCoordinator['uninstall']>[0]): Promise<void> {
     return this.installation.uninstall(extensionId)
   }
@@ -1355,6 +1362,7 @@ export class NekroRuntime {
   async dispose(): Promise<void> {
     if (this.#disposed) return
     this.#disposed = true
+    await this.authoring.dispose()
     const failures: unknown[] = []
     this.#unsubscribeDynamicApproval()
     this.#connectionListeners.clear()

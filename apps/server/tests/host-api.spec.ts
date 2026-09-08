@@ -13,7 +13,7 @@ import { mkdir, mkdtemp, rm, stat } from 'node:fs/promises'
 import { createServer } from 'node:http'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { z } from 'zod'
 import { NekroRuntime } from '../src/bootstrap.js'
 import { createNekroHostApi, projectHistoryEntry } from '../src/host-api.js'
@@ -338,8 +338,14 @@ describe('NekroNxt Server domain API (WebServer seam)', () => {
         facts: { mentionedBot: true },
       })
 
-      // The authoritative snapshot exposes the new intelligent-agent and its internal Channel.
+      // Related collections are captured once for the whole snapshot, not once per entity.
+      const revisionReads = vi.spyOn(runtime.repository, 'listExtensionRevisions')
+      const attemptReads = vi.spyOn(runtime.repository, 'listAuthoringAttempts')
       const snapshot = HostApiContracts.snapshot.parseResponse(await (await fetch(`${origin}/api/snapshot`)).json())
+      expect(revisionReads).toHaveBeenCalledExactlyOnceWith()
+      expect(attemptReads).toHaveBeenCalledExactlyOnceWith()
+      revisionReads.mockRestore()
+      attemptReads.mockRestore()
       expect(snapshot.models.find((model) => model.id === 'chat-model')).toMatchObject({
         provider: 'test-provider',
         name: 'Chat model',

@@ -82,7 +82,7 @@ const createAuthoringMemoryRepository = (): AuthoringRepository & {
       [...tasks.values()].find((task) => task.episodeId === episodeId && task.pluginKey === pluginKey),
     listAuthoringAttempts: (taskId) =>
       [...attempts.values()]
-        .filter((attempt) => attempt.taskId === taskId)
+        .filter((attempt) => taskId === undefined || attempt.taskId === taskId)
         .sort((left, right) => left.ordinal - right.ordinal),
     getAuthoringAttempt: (id) => attempts.get(id),
     listAuthoringEvents: (taskId) => events.get(taskId) ?? [],
