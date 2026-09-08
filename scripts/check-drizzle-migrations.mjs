@@ -1,11 +1,12 @@
-import { cp, mkdtemp, readdir, readFile, rm } from 'node:fs/promises'
+import { cp, mkdtemp, readdir, readFile, rm, writeFile } from 'node:fs/promises'
 import { createHash } from 'node:crypto'
 import { spawn } from 'node:child_process'
 import os from 'node:os'
 import path from 'node:path'
 import process from 'node:process'
 
-import { readBaseline, writeBaseline } from './lib/quality-baseline.mjs'
+const readBaseline = async (root, file) => JSON.parse(await readFile(path.join(root, file), 'utf8'))
+const writeBaseline = (root, file, value) => writeFile(path.join(root, file), JSON.stringify(value, null, 2) + '\n')
 
 const root = process.cwd()
 const packageRoot = path.join(root, 'packages/storage-sqlite')

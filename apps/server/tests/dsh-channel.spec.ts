@@ -1,3 +1,4 @@
+import { SessionId } from '@deepseek-ai/dsh-session'
 import { preflightNekroNxtDynamicSource } from '../src/dynamic-authoring-runtime.js'
 import { LlmAdapter, CallId, type GenerateOptions, type StreamChunk } from '@deepseek-ai/dsh-llm'
 import { getOrCreateAnonymousUserId } from '@deepseek-ai/dsh-anonymous-user-id'
@@ -1441,7 +1442,7 @@ describe('DSH Host and internal Channel vertical slice', () => {
 
       expect(() =>
         preflightNekroNxtDynamicSource({
-          sessionId: enabledSession,
+          sessionId: SessionId(enabledSession),
           plugin: { kind: 'new', idPrefix: 'page' },
           name: '原生控件页面',
           purpose: 'UI Kit 不是运行门禁。',
