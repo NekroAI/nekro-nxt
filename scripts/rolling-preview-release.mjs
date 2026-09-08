@@ -1,5 +1,6 @@
+import { publishedPreviewCommit } from './lib/preview-changes.mjs'
 import { spawnSync } from 'node:child_process'
-import { readFile } from 'node:fs/promises'
+import { mkdir, readFile, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import {
@@ -24,6 +25,7 @@ export function previewServerImage(repository, commit) {
 
 const repositoryRoot = path.resolve(fileURLToPath(new URL('..', import.meta.url)))
 const desktopRoot = path.join(repositoryRoot, 'apps', 'desktop')
+let cancellationRequested = false
 
 export function previewArtifactName(distribution, releaseVersion, platform, arch) {
   return artifactTarget(distribution, releaseVersion, platform, arch).artifactName
@@ -101,7 +103,7 @@ export function previewReleaseTitle(release) {
   return `NekroNXT Preview ${release.version}`
 }
 
-export function previewReleaseBody(release, repository, distribution) {
+export function previewReleaseBody(release, repository, distribution, serverDigest) {
   const targets = new Map(
     previewArtifactTargets(distribution, release.version).map((target) => [
       `${target.platform}/${target.arch}`,
@@ -115,6 +117,8 @@ export function previewReleaseBody(release, repository, distribution) {
     return `[${label}](${url})`
   }
   return [
+    `<!-- nxt-preview-commit:${release.commit} -->`,
+    ...(serverDigest ? [`<!-- nxt-preview-server:${serverDigest} -->`] : []),
     '> 这是 `main` 最新通过完整 CI 的滚动预览版；下一次成功构建会更新本页面。',
     '',
     '## 客户端下载',
@@ -278,31 +282,6 @@ async function ensureRollingRelease() {
   throw new Error(`创建滚动预览版失败：${String(created.stderr || created.stdout || `exit ${created.status}`).trim()}`)
 }
 
-async function uploadPlatformAssets() {
-  const repository = requireRepository()
-  const platform = commandOption('--platform')
-  if (typeof platform !== 'string' || !PREVIEW_PLATFORMS.includes(platform)) {
-    throw new Error(`滚动预览版平台无效：${platform ?? 'undefined'}`)
-  }
-  const archOption = commandOption('--arch')
-
-  const { release, distribution } = await readContext()
-  const targets = previewUploadTargets(distribution, release.version, platform, archOption)
-  for (const target of targets) {
-    const artifactName = target.artifactName
-    const artifact = path.join(desktopRoot, 'release', 'preview', artifactName)
-    const receiptPath = `${artifact}.receipt.json`
-    const [integrity, receiptText] = await Promise.all([readArtifactIntegrity(artifact), readFile(receiptPath, 'utf8')])
-    const receipt = JSON.parse(receiptText)
-    assertPreviewReceipt(receipt, release, target.platform, artifactName, target.arch)
-    assertArtifactIntegrity(receipt, integrity, artifactName)
-
-    runGh(['release', 'upload', ROLLING_PREVIEW_TAG, artifact, '--clobber', '--repo', repository], {
-      stdio: 'inherit',
-    })
-  }
-}
-
 function deleteAssets(repository, assets) {
   for (const asset of assets) {
     runGh(['api', '--method', 'DELETE', `/repos/${repository}/releases/assets/${asset.id}`, '--silent'])
@@ -323,125 +302,236 @@ function readRollingTagCommit(repository) {
   throw new Error(`读取滚动预览版 tag 失败：${diagnostic.trim()}`)
 }
 
-function candidateAssets(rollingRelease, names) {
-  return (rollingRelease.assets ?? []).filter((asset) => names.has(asset.name))
+function docker(args, allowMissing = false) {
+  const result = spawnSync('docker', args, { cwd: repositoryRoot, encoding: 'utf8' })
+  if (result.error) throw result.error
+  if (result.status !== 0) {
+    if (allowMissing && /manifest unknown|not found/iu.test(result.stderr)) return undefined
+    throw new Error(`docker ${args[0]} failed: ${result.stderr}`)
+  }
+  return result.stdout.trim()
 }
 
-function cleanupPreviewCandidateAssets(repository, rollingRelease, names, candidateCommit, reason) {
-  const previewTagCommit = readRollingTagCommit(repository)
-  if (!shouldDeletePreviewCandidateAssets(previewTagCommit, candidateCommit)) {
-    console.log(`${reason}；preview tag 已指向当前 commit，保留已发布附件。`)
-    return
+export function assertServerPreviewReceipt(receipt, release, repository) {
+  if (
+    receipt?.commit !== release.commit ||
+    receipt.releaseId !== release.releaseId ||
+    receipt.image !== previewServerImage(repository, release.commit) ||
+    !/^sha256:[a-f0-9]{64}$/u.test(receipt.digest ?? '')
+  )
+    throw new Error('Server Preview receipt 与当前提交或镜像摘要不一致。')
+}
+
+async function recordServerCandidate() {
+  const repository = requireRepository()
+  const { release } = await readContext()
+  const image = previewServerImage(repository, release.commit)
+  const reference = docker(['image', 'inspect', image, '--format', '{{index .RepoDigests 0}}'])
+  const digest = reference?.split('@')[1]
+  const receipt = { commit: release.commit, releaseId: release.releaseId, image, digest }
+  assertServerPreviewReceipt(receipt, release, repository)
+  const output = commandOption('--output')
+  if (!output) throw new Error('Missing Server receipt output path.')
+  await mkdir(path.dirname(output), { recursive: true })
+  await writeFile(output, JSON.stringify(receipt, null, 2) + '\n')
+}
+
+/** Keeps publication side effects in one serial owner, with compensation on failure. */
+export async function publishPreviewTransaction({ isCurrent, upload, publish, rollback, cleanupCandidate }) {
+  if (!(await isCurrent())) return false
+  try {
+    await upload()
+    if (!(await isCurrent())) {
+      await cleanupCandidate()
+      return false
+    }
+    await publish()
+    return true
+  } catch (error) {
+    const failures = [error]
+    for (const compensate of [rollback, cleanupCandidate]) {
+      try {
+        await compensate()
+      } catch (failure) {
+        failures.push(failure)
+      }
+    }
+    if (failures.length > 1) throw new AggregateError(failures, 'Preview 发布失败且恢复未全部完成。')
+    throw error
   }
-  deleteAssets(repository, candidateAssets(rollingRelease, names))
-  console.log(`${reason}；已清理本次候选附件。`)
 }
 
 async function finalizeRollingRelease() {
-  const repository = requireRepository()
-  const buildResult = commandOption('--build-result')
-  if (typeof buildResult !== 'string' || !['success', 'failure', 'cancelled', 'skipped'].includes(buildResult)) {
-    throw new Error(`滚动预览版构建结果无效：${buildResult ?? 'undefined'}`)
+  if (commandOption('--build-result') !== 'success') {
+    console.log('平台候选未全部成功，保留当前 Preview。')
+    return
   }
-
+  const repository = requireRepository()
   const { release, distribution } = await readContext()
-  const expectedNames = expectedPreviewAssets(distribution, release.version)
-  const expectedSet = new Set(expectedNames)
-  let rollingRelease = readRollingRelease(repository)
-  if (!rollingRelease) throw new Error('滚动预览版不存在，无法收敛平台构建。')
-
-  if (buildResult !== 'success') {
-    cleanupPreviewCandidateAssets(
-      repository,
-      rollingRelease,
-      expectedSet,
-      release.commit,
-      `预览构建结果为 ${buildResult}`,
-    )
+  const directoryInput = commandOption('--candidates-dir')
+  if (!directoryInput) throw new Error('Missing complete Preview candidate directory.')
+  const directory = path.resolve(repositoryRoot, directoryInput)
+  const isCurrent = () =>
+    !cancellationRequested && ghJson(['api', `/repos/${repository}/git/ref/heads/main`]).object?.sha === release.commit
+  if (!isCurrent()) {
+    console.log('过期候选不更新 Preview。')
     return
   }
-
-  const receiptsDirectoryInput = commandOption('--receipts-dir')
-  if (typeof receiptsDirectoryInput !== 'string' || receiptsDirectoryInput.trim() === '') {
-    throw new Error('滚动预览版最终校验缺少内部 receipt 目录。')
+  const previousRelease = readRollingRelease(repository)
+  const previousCommit =
+    previousRelease && !previousRelease.draft
+      ? (publishedPreviewCommit(previousRelease) ?? readRollingTagCommit(repository))
+      : undefined
+  if (previousCommit === release.commit) {
+    console.log('当前提交已有完整成功 Preview，保留原产物。')
+    return
   }
-  const receiptsDirectory = path.resolve(repositoryRoot, receiptsDirectoryInput)
+  const targets = previewArtifactTargets(distribution, release.version)
   const receipts = new Map()
-  for (const target of previewArtifactTargets(distribution, release.version)) {
-    const receiptPath = path.join(receiptsDirectory, `${target.artifactName}.receipt.json`)
-    receipts.set(target.artifactName, JSON.parse(await readFile(receiptPath, 'utf8')))
+  // Verify every installer and its exact receipt before the first upload.
+  for (const target of targets) {
+    const artifact = path.join(directory, target.artifactName)
+    const receipt = JSON.parse(await readFile(`${artifact}.receipt.json`, 'utf8'))
+    assertPreviewReceipt(receipt, release, target.platform, target.artifactName, target.arch)
+    assertArtifactIntegrity(receipt, await readArtifactIntegrity(artifact), target.artifactName)
+    receipts.set(target.artifactName, receipt)
   }
-  assertPreviewCandidateAssets(rollingRelease, release, distribution, (target) => receipts.get(target.artifactName))
-
-  const remoteMain = ghJson(['api', `/repos/${repository}/git/ref/heads/main`]).object?.sha
-  if (remoteMain !== release.commit) {
-    cleanupPreviewCandidateAssets(
+  const server = JSON.parse(await readFile(path.join(directory, 'server.receipt.json'), 'utf8'))
+  assertServerPreviewReceipt(server, release, repository)
+  const imageRepository = `ghcr.io/${repository.toLowerCase()}`
+  const candidateImage = `${imageRepository}@${server.digest}`
+  const rollingImage = `${imageRepository}:preview`
+  docker(['pull', candidateImage])
+  let previousImage
+  if (previousCommit) {
+    const recordedDigest = /<!-- nxt-preview-server:(sha256:[a-f0-9]{64}) -->/u.exec(previousRelease.body ?? '')?.[1]
+    if (recordedDigest) previousImage = `${imageRepository}@${recordedDigest}`
+    else {
+      docker(['pull', rollingImage])
+      previousImage = docker(['image', 'inspect', rollingImage, '--format', '{{index .RepoDigests 0}}'])
+    }
+    if (!previousImage || !previousImage.startsWith(imageRepository + '@sha256:'))
+      throw new Error('无法确认旧 Server Preview 的恢复摘要。')
+    docker(['pull', previousImage])
+  }
+  let publishing = false
+  const expectedSet = new Set(targets.map((target) => target.artifactName))
+  const cleanupCandidate = () => {
+    const current = readRollingRelease(repository)
+    if (!current || publishedPreviewCommit(current) === release.commit) return
+    deleteAssets(
       repository,
-      rollingRelease,
-      expectedSet,
-      release.commit,
-      `当前 commit ${release.commit} 已不是 main 最新 HEAD，不会回退 Preview`,
+      (current.assets ?? []).filter((asset) => expectedSet.has(asset.name)),
     )
+  }
+  const published = await publishPreviewTransaction({
+    isCurrent,
+    upload: async () => {
+      await ensureRollingRelease()
+      for (const target of targets)
+        runGh([
+          'release',
+          'upload',
+          ROLLING_PREVIEW_TAG,
+          path.join(directory, target.artifactName),
+          '--clobber',
+          '--repo',
+          repository,
+        ])
+      assertPreviewCandidateAssets(readRollingRelease(repository), release, distribution, (target) =>
+        receipts.get(target.artifactName),
+      )
+    },
+    publish: () => {
+      publishing = true
+      docker(['tag', candidateImage, rollingImage])
+      docker(['push', rollingImage])
+      moveRollingTag(repository, release.commit)
+      const current = readRollingRelease(repository)
+      runGh([
+        'api',
+        '--method',
+        'PATCH',
+        `/repos/${repository}/releases/${current.id}`,
+        '-f',
+        `name=${previewReleaseTitle(release)}`,
+        '-f',
+        `body=${previewReleaseBody(release, repository, distribution, server.digest)}`,
+        '-F',
+        'draft=false',
+        '-F',
+        'prerelease=true',
+      ])
+    },
+    rollback: () => {
+      if (!publishing) return
+      const failures = []
+      if (previousImage) {
+        try {
+          docker(['tag', previousImage, rollingImage])
+          docker(['push', rollingImage])
+        } catch (error) {
+          failures.push(error)
+        }
+      }
+      try {
+        if (previousCommit) moveRollingTag(repository, previousCommit)
+        const current = readRollingRelease(repository)
+        if (current)
+          runGh([
+            'api',
+            '--method',
+            'PATCH',
+            `/repos/${repository}/releases/${current.id}`,
+            '-f',
+            `name=${previousRelease?.name ?? 'Preview candidate'}`,
+            '-f',
+            `body=${previousRelease?.body ?? ''}`,
+            '-F',
+            `draft=${previousRelease?.draft ?? true}`,
+            '-F',
+            'prerelease=true',
+          ])
+      } catch (error) {
+        failures.push(error)
+      }
+      if (failures.length) throw new AggregateError(failures, '恢复旧 Preview 失败。')
+    },
+    cleanupCandidate,
+  })
+  if (!published) {
+    console.log('构建期间 main 已更新，候选已清理。')
     return
   }
-
-  moveRollingTag(repository, release.commit)
-  runGh([
-    'api',
-    '--method',
-    'PATCH',
-    `/repos/${repository}/releases/${rollingRelease.id}`,
-    '-f',
-    `name=${previewReleaseTitle(release)}`,
-    '-f',
-    `body=${previewReleaseBody(release, repository, distribution)}`,
-    '-F',
-    'draft=false',
-    '-F',
-    'prerelease=true',
-  ])
-
-  rollingRelease = readRollingRelease(repository)
-  deleteAssets(
-    repository,
-    (rollingRelease.assets ?? []).filter((asset) => !expectedSet.has(asset.name)),
-  )
+  // Publication is complete. A stale-asset deletion failure must not roll back
+  // to a release whose assets have already begun to be pruned.
+  const current = readRollingRelease(repository)
+  try {
+    deleteAssets(
+      repository,
+      (current.assets ?? []).filter((asset) => !expectedSet.has(asset.name)),
+    )
+  } catch (error) {
+    console.warn('Preview 已发布，旧附件清理稍后重试：', error)
+  }
   console.log(`滚动 Preview 已发布：${release.version} (${release.commit.slice(0, 12)})`)
-}
-
-async function promoteServerImage() {
-  const repository = requireRepository()
-  const { release } = await readContext()
-  const remoteMain = ghJson(['api', `/repos/${repository}/git/ref/heads/main`]).object?.sha
-  if (remoteMain !== release.commit) {
-    console.log(`当前 commit ${release.commit} 已不是 main 最新 HEAD，不会更新服务端 Preview 镜像。`)
-    return
-  }
-
-  const candidate = previewServerImage(repository, release.commit)
-  const rolling = `ghcr.io/${repository.toLowerCase()}:${ROLLING_PREVIEW_TAG}`
-  for (const args of [
-    ['pull', candidate],
-    ['tag', candidate, rolling],
-    ['push', rolling],
-  ]) {
-    const result = spawnSync('docker', args, { cwd: repositoryRoot, stdio: 'inherit' })
-    if (result.error) throw result.error
-    if (result.status !== 0) throw new Error(`docker ${args[0]} 执行失败：${args.at(-1)}`)
-  }
-  console.log(`服务端 Preview 镜像已发布：${rolling}`)
 }
 
 async function main() {
   const command = process.argv[2]
-  if (command === 'ensure') return ensureRollingRelease()
-  if (command === 'upload') return uploadPlatformAssets()
   if (command === 'finalize') return finalizeRollingRelease()
-  if (command === 'promote-server-image') return promoteServerImage()
+  if (command === 'record-server') return recordServerCandidate()
   throw new Error(`滚动预览版命令无效：${command ?? 'undefined'}`)
 }
 
 const invokedPath = process.argv[1] ? path.resolve(process.argv[1]) : undefined
 if (invokedPath === fileURLToPath(import.meta.url)) {
+  // Graceful cancellation lets the serial publisher finish compensation.
+  process.on('SIGINT', () => {
+    cancellationRequested = true
+  })
+  process.on('SIGTERM', () => {
+    cancellationRequested = true
+  })
   await main()
 }

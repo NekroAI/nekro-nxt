@@ -55,3 +55,5 @@ pnpm desktop:preview --platform mac
 ```
 
 最后一条分发命令会同时执行最终 `appOutDir` 的 Server readiness、凭据持久化与 DSH 插件安装/恢复/关闭/移除验证；只检查 staging、依赖文件存在或安装包摘要不能替代该验证。Server 启动 pnpm 子进程时继续传递 `ELECTRON_RUN_AS_NODE=1`，确保打包后的 Electron 以 Node 模式执行内置 CLI，而不是启动浏览器进程。
+
+组件与 Trusted Fallback 的真实 DOM 测试位于 browser-tests，使用根 pnpm test:browser；纯错误映射与静态结构测试保留在 Vitest。自动 Preview 的平台任务只保存候选产物，全部平台成功后由串行最终任务校验 receipt 并发布。

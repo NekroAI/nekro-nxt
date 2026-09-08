@@ -1,6 +1,7 @@
 name: CI
 
 on:
+  workflow_dispatch:
   pull_request:
   push:
     branches: [main]
@@ -10,6 +11,9 @@ permissions:
 
 jobs:
   quality:
+    concurrency:
+      group: quality-${{ github.ref }}
+      cancel-in-progress: true
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
@@ -24,10 +28,10 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - run: pnpm exec playwright install --with-deps chromium chromium-headless-shell
       - run: pnpm check
-      - run: pnpm test
       - run: pnpm test:coverage
       - run: pnpm build
-      - run: pnpm test:journey
+      - run: pnpm test:browser
+      - run: pnpm test:journey:built
       - name: Upload product journey failure evidence
         if: failure()
         uses: actions/upload-artifact@v4
@@ -38,11 +42,14 @@ jobs:
           retention-days: 7
 
   node-compat:
+    concurrency:
+      group: node-compat-${{ github.ref }}
+      cancel-in-progress: true
     runs-on: ubuntu-latest
     timeout-minutes: 15
     strategy:
       matrix:
-        node: [22.23.2, 24]
+        node: [24]
     steps:
       - uses: actions/checkout@v4
       - uses: pnpm/action-setup@v4
@@ -54,9 +61,7 @@ jobs:
           cache: pnpm
       - run: pnpm install --frozen-lockfile
       - run: pnpm smoke:better-sqlite3
-      - run: pnpm check:drizzle
-      - run: pnpm --filter @nekro-nxt/storage-sqlite test
-      - run: pnpm exec vitest run --exclude apps/web/tests/app.spec.tsx --exclude apps/web/tests/ui-kit-browser.spec.tsx --exclude apps/desktop/tests/instance-overlay.spec.ts
+      - run: pnpm test
 
   all-checks-passed:
     if: always()
@@ -69,12 +74,14 @@ jobs:
         run: test "$RESULTS" = "success,success"
 
   preview-prepare:
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    if: (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && github.ref == 'refs/heads/main'
     needs: all-checks-passed
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     permissions:
-      contents: write
+      contents: read
+    outputs:
+      build: ${{ steps.changes.outputs.build }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -82,17 +89,19 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22.23.2
-      - name: Ensure rolling Preview prerelease
+      - name: Compare against last successful Preview
+        id: changes
         env:
           GH_TOKEN: ${{ github.token }}
-        run: node scripts/rolling-preview-release.mjs ensure
+        run: node scripts/preview-product-changes.mjs
 
   preview-desktop:
     name: preview-desktop (${{ matrix.target }})
     needs: preview-prepare
+    if: needs.preview-prepare.outputs.build == 'true'
     timeout-minutes: 90
     permissions:
-      contents: write
+      contents: read
     strategy:
       fail-fast: false
       matrix:
@@ -118,21 +127,23 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - name: Build Desktop Preview
         run: pnpm desktop:preview --platform ${{ matrix.target }}
-      - name: Store receipts for final verification
+      - name: Store complete candidates for final verification
         uses: actions/upload-artifact@v4
         with:
-          name: preview-receipts-${{ matrix.target }}-${{ github.sha }}-${{ github.run_attempt }}
-          path: apps/desktop/release/preview/*.receipt.json
+          name: preview-candidates-${{ matrix.target }}-${{ github.sha }}-${{ github.run_attempt }}
+          compression-level: 0
+          path: |
+            apps/desktop/release/preview/*.dmg
+            apps/desktop/release/preview/*.exe
+            apps/desktop/release/preview/*.AppImage
+            apps/desktop/release/preview/*.receipt.json
           if-no-files-found: error
           retention-days: 1
-      - name: Upload platform assets to rolling Preview
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: node scripts/rolling-preview-release.mjs upload --platform ${{ matrix.target }}
 
   preview-server:
     name: preview-server (linux-x64)
     needs: preview-prepare
+    if: needs.preview-prepare.outputs.build == 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 90
     permissions:
@@ -177,11 +188,23 @@ jobs:
       - name: Push Server Preview candidate
         run: docker push ghcr.io/nekroai/nekro-nxt:preview-${{ github.sha }}
 
+      - name: Record immutable Server candidate digest
+        run: node scripts/rolling-preview-release.mjs record-server --output .local/server.receipt.json
+      - uses: actions/upload-artifact@v4
+        with:
+          name: preview-candidates-server-${{ github.sha }}-${{ github.run_attempt }}
+          path: .local/server.receipt.json
+          if-no-files-found: error
+          retention-days: 1
+
   preview-finalize:
-    if: always() && needs.preview-prepare.result == 'success'
+    if: always() && needs.preview-prepare.outputs.build == 'true' && needs.preview-desktop.result == 'success' && needs.preview-server.result == 'success'
     needs: [preview-prepare, preview-desktop, preview-server]
+    concurrency:
+      group: preview-publish
+      cancel-in-progress: false
     runs-on: ubuntu-24.04
-    timeout-minutes: 10
+    timeout-minutes: 30
     permissions:
       contents: write
       packages: write
@@ -192,25 +215,18 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22.23.2
-      - name: Download receipts for final verification
-        if: needs.preview-desktop.result == 'success' && needs.preview-server.result == 'success'
+      - name: Download complete candidates
         uses: actions/download-artifact@v4
         with:
-          pattern: preview-receipts-*-${{ github.sha }}-${{ github.run_attempt }}
-          path: .local/preview-receipts
+          pattern: preview-candidates-*-${{ github.sha }}-${{ github.run_attempt }}
+          path: .local/preview-candidates
           merge-multiple: true
-      - name: Publish or clean rolling Preview
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: node scripts/rolling-preview-release.mjs finalize --receipts-dir .local/preview-receipts --build-result ${{ needs.preview-desktop.result == 'success' && needs.preview-server.result == 'success' && 'success' || 'failure' }}
       - uses: docker/login-action@v3
-        if: needs.preview-desktop.result == 'success' && needs.preview-server.result == 'success'
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
-      - name: Publish rolling Server Preview image
-        if: needs.preview-desktop.result == 'success' && needs.preview-server.result == 'success'
+      - name: Verify and publish all platforms
         env:
           GH_TOKEN: ${{ github.token }}
-        run: node scripts/rolling-preview-release.mjs promote-server-image
+        run: node scripts/rolling-preview-release.mjs finalize --candidates-dir .local/preview-candidates --build-result success

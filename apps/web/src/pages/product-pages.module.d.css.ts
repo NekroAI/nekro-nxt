@@ -136,7 +136,6 @@ declare const styles: {
   readonly creatorWorkspace: string
   readonly creatorWorkspaceTask: string
   readonly dangerSection: string
-  readonly dark: string
   readonly desktopContentStage: string
   readonly desktopPage: string
   readonly detailPage: string
@@ -144,7 +143,6 @@ declare const styles: {
   readonly dragOverlay: string
   readonly dropTarget: string
   readonly dynamicSlotSurface: string
-  readonly emptyState: string
   readonly eventInner: string
   readonly extensionActionPanel: string
   readonly extensionDangerZone: string
