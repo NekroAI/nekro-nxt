@@ -32,6 +32,7 @@ import {
 } from 'lucide-react'
 import {
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -434,6 +435,15 @@ function WorkTree() {
   const keyboardDragRef = useRef(false)
   const channelOwnerRef = useRef<Readonly<Record<string, string>>>({})
   const focusChannelAfterDialogRef = useRef('')
+  const focusedChannelActionRef = useRef('')
+  useLayoutEffect(() => {
+    // A committed binding can move the focused row after its dialog has closed.
+    // Preserve focus across that remount, while leaving deliberate focus changes alone.
+    const channelId = focusedChannelActionRef.current
+    if (channelId && document.activeElement === document.body) {
+      treeBodyRef.current?.querySelector<HTMLButtonElement>(`[data-work-tree-drag="channel:${channelId}"]`)?.focus()
+    }
+  }, [channels, agents])
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 8 } }),
     useSensor(KeyboardSensor, { coordinateGetter: workTreeKeyboardCoordinates }),
@@ -661,6 +671,13 @@ function WorkTree() {
       <div
         className={shell.treeBody}
         ref={treeBodyRef}
+        onFocusCapture={(event) => {
+          const key = event.target.closest<HTMLElement>('[data-work-tree-drag]')?.dataset['workTreeDrag']
+          focusedChannelActionRef.current = key?.startsWith('channel:') ? key.slice('channel:'.length) : ''
+        }}
+        onBlurCapture={() => {
+          focusedChannelActionRef.current = ''
+        }}
         data-work-tree-dragging={activeId ? '' : undefined}
         onPointerDownCapture={beginPointerDragAttempt}
       >

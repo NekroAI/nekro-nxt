@@ -1223,7 +1223,7 @@ test('representative product surfaces match committed visual baselines', async (
   await page.locator('html').evaluate((root) => root.setAttribute('data-reduced-motion', 'false'))
   expect(
     await stateIndicator
-      .locator('[data-runtime-state="思考中"]')
+      .locator('[data-runtime-state="thinking"]')
       .evaluate((element) => getComputedStyle(element, '::after').animationName),
   ).toMatch(/treeActivityOrbit/u)
   await page.locator('html').evaluate((root) => root.setAttribute('data-reduced-motion', 'true'))
