@@ -969,6 +969,15 @@ export class HttpProductHost implements ProductHostPort {
   }
 
   readonly actions: ProductActions = {
+    'settings.providers': (signal) => this.#call(HostApiContracts.llmProviders, {}, undefined, signal),
+    'settings.catalog': async (signal) => {
+      const [plugins, settings] = await Promise.all([
+        this.#call(HostApiContracts.dshPlugins, {}, undefined, signal),
+        this.#call(HostApiContracts.dshSettings, {}, undefined, signal),
+      ])
+      return { plugins: plugins.plugins, namespaces: settings.namespaces }
+    },
+
     'extensions.commitImport': async ({ token, ...body }) =>
       this.#mutate(HostApiContracts.commitExtensionImport, { token }, body),
     'extensions.delete': async (params) => this.#mutate(HostApiContracts.deleteLocalExtension, params, undefined),

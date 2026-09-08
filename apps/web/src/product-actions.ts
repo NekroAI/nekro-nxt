@@ -1,5 +1,5 @@
 import type { HostApiContractName, HostApiParams, HostApiRequest, HostApiResponse } from '@nekro-nxt/contracts'
-import type { ChannelRuntimeView, ConversationMessage } from './product-model.js'
+import type { ChannelRuntimeView, ConversationMessage, DshSettingsCatalog } from './product-model.js'
 
 type Request<Name extends HostApiContractName> = (HostApiParams<Name> extends Record<string, never>
   ? object
@@ -10,6 +10,9 @@ type Action<Name extends HostApiContractName> = (input: Request<Name>) => Promis
 type RenameDisplayName<T> = T extends unknown ? Omit<T, 'displayName'> : never
 
 export interface ProductActions {
+  'settings.providers': (signal?: AbortSignal) => Promise<HostApiResponse<'llmProviders'>>
+  'settings.catalog': (signal?: AbortSignal) => Promise<DshSettingsCatalog>
+
   'extensions.commitImport': Action<'commitExtensionImport'>
   'extensions.delete': Action<'deleteLocalExtension'>
   'hostUi.updatePreferences': Action<'updateHostUiPagePreferences'>

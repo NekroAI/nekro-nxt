@@ -17,6 +17,7 @@ export function createProductRuntime(events = new HostEventStream()) {
     getSnapshot: store.getState,
     resetLoads: () => {
       store.getState().cancelPlatformUserDirectory()
+      store.getState().cancelSettingsQueries()
       store.setState((state) => ({
         channelHistory: Object.fromEntries(
           Object.entries(state.channelHistory).map(([id, page]) => [

@@ -89,3 +89,5 @@
 - 启动先注册内置 Adapter Contribution，再恢复 `host_extension_installations`，随后按统一 Registry 恢复全部 Connection、处理中反馈、Channel Runtime 与 Agent Activation。单个 Connection 网络或凭据故障不阻断 Installation 或其他 Connection 恢复。
 
 一期缺口见 `04-一期开发计划与决策清单.md`。技术栈见 `decisions/accepted/2026-08-16-一期技术栈与UI基础设施.md`。
+
+模型供应商和 DSH 设置目录的读取结果、加载与错误状态统一保存在宿主数据 Store。请求控制器只拥有在途读取和取消状态，不保存数据镜像；读取期间的重复失效合并为一次后续读取，保存响应替换查询结果并使旧读取失效。

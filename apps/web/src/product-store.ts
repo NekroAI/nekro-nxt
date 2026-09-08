@@ -1,3 +1,4 @@
+import { createOwnedHostQuery } from './owned-host-query.js'
 import { StaleHostReadError } from './host-api-client.js'
 import { parseJsonValue } from '@nekro-nxt/contracts'
 import { create } from 'zustand'
@@ -26,6 +27,15 @@ export function createProductStore(
   let directoryGeneration = 0
   let directoryAbort: AbortController | undefined
   const useProductStore = create<ProductState>((set) => ({
+    llmProvidersQuery: { data: undefined, loading: false, error: '' },
+    dshCatalogQuery: { data: undefined, loading: false, error: '' },
+    loadLlmProviders: (invalidate) => providers.load(invalidate),
+    replaceLlmProviders: (data) => providers.replace(data),
+    loadDshCatalog: (invalidate) => catalog.load(invalidate),
+    cancelSettingsQueries: () => {
+      providers.cancel()
+      catalog.cancel()
+    },
     platformUserDirectory: emptyPlatformUserDirectory(),
     cancelPlatformUserDirectory: () => {
       directoryGeneration += 1
@@ -546,5 +556,13 @@ export function createProductStore(
     },
   }))
 
+  const providers = createOwnedHostQuery(
+    (signal) => requireHost().actions['settings.providers'](signal),
+    (patch) => useProductStore.setState((state) => ({ llmProvidersQuery: { ...state.llmProvidersQuery, ...patch } })),
+  )
+  const catalog = createOwnedHostQuery(
+    (signal) => requireHost().actions['settings.catalog'](signal),
+    (patch) => useProductStore.setState((state) => ({ dshCatalogQuery: { ...state.dshCatalogQuery, ...patch } })),
+  )
   return useProductStore
 }

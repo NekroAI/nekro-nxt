@@ -1,3 +1,4 @@
+import type { HostQueryState } from './owned-host-query.js'
 import type { AdapterConnectionDescriptor } from '@nekro-nxt/adapter-sdk'
 import type {
   ChannelRuntimePhase,
@@ -415,7 +416,19 @@ export const emptyPlatformUserDirectory = (key = ''): PlatformUserDirectory => (
   error: '',
 })
 
+export interface DshSettingsCatalog {
+  readonly plugins: HostApiResponse<'dshPlugins'>['plugins']
+  readonly namespaces: HostApiResponse<'dshSettings'>['namespaces']
+}
+
 export interface ProductState {
+  readonly llmProvidersQuery: HostQueryState<HostApiResponse<'llmProviders'>>
+  readonly dshCatalogQuery: HostQueryState<DshSettingsCatalog>
+  loadLlmProviders(invalidate?: boolean): Promise<HostApiResponse<'llmProviders'>>
+  replaceLlmProviders(data: HostApiResponse<'llmProviders'>): void
+  loadDshCatalog(invalidate?: boolean): Promise<DshSettingsCatalog>
+  cancelSettingsQueries(): void
+
   readonly platformUserDirectory: PlatformUserDirectory
   loadPlatformUserDirectory(input: PlatformUserFilter, older?: boolean): Promise<void>
   cancelPlatformUserDirectory(): void

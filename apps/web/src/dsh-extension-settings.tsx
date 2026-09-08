@@ -44,11 +44,6 @@ type DshSettingsNamespaceView = HostApiResponse<'dshSettings'>['namespaces'][num
 type DshCredentialView = HostApiResponse<'dshCredentialsDescribe'>['credentials'][string]
 type DshSettingsPathOperation = HostApiRequest<'dshSettingsMutate'>['ops'][number]
 
-interface DshSettingsCatalog {
-  readonly plugins: readonly DshPluginCatalogEntry[]
-  readonly namespaces: readonly DshSettingsNamespaceView[]
-}
-
 interface DshSettingsCatalogEntry {
   readonly id: string
   readonly label: string
@@ -59,14 +54,6 @@ interface DshSettingsCatalogEntry {
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === 'object' && value !== null && !Array.isArray(value)
-
-const loadCatalog = async (): Promise<DshSettingsCatalog> => {
-  const [plugins, settings] = await Promise.all([
-    callHostApi(HostApiContracts.dshPlugins, {}, undefined),
-    callHostApi(HostApiContracts.dshSettings, {}, undefined),
-  ])
-  return { plugins: plugins.plugins, namespaces: settings.namespaces }
-}
 
 const parseDshSettingsChangedEvent = (text: string) => {
   try {
@@ -957,14 +944,17 @@ function NamespaceEditor({
   )
 }
 
+const EMPTY_SETTINGS_CATALOG = { plugins: [], namespaces: [] } as const
+
 export function DshExtensionSettings() {
-  const { events } = useProductRuntime()
+  const { events, store } = useProductRuntime()
   const agents = useProductStore((state) => state.agents)
-  const [catalog, setCatalog] = useState<DshSettingsCatalog>({ plugins: [], namespaces: [] })
+  const catalogQuery = useProductStore((state) => state.dshCatalogQuery)
+  const catalog = catalogQuery.data ?? EMPTY_SETTINGS_CATALOG
+  const loading = catalogQuery.loading
+  const error = catalogQuery.error
   const [selectedEntryId, setSelectedEntryId] = useState('')
   const [selectedNamespace, setSelectedNamespace] = useState('')
-  const [loading, setLoading] = useState(true)
-  const [error, setError] = useState('')
   const [installSpec, setInstallSpec] = useState('')
   const [installInspection, setInstallInspection] = useState<HostApiResponse<'inspectDshPluginInstall'> | null>(null)
   const [approvedBuilds, setApprovedBuilds] = useState<Record<string, boolean>>({})
@@ -984,16 +974,11 @@ export function DshExtensionSettings() {
     readonly digest: string
   } | null>(null)
   const refresh = useCallback(async () => {
-    try {
-      const next = await loadCatalog()
-      setCatalog(next)
-      setError('')
-    } catch (cause) {
-      setError(cause instanceof Error ? cause.message : String(cause))
-    } finally {
-      setLoading(false)
-    }
-  }, [])
+    await store
+      .getState()
+      .loadDshCatalog(true)
+      .catch(() => undefined)
+  }, [store])
   useEffect(() => {
     void refresh()
     const settingsListener = (event: unknown): void => {
@@ -1221,7 +1206,7 @@ export function DshExtensionSettings() {
     }
   }
 
-  if (loading) return <InlineFeedback tone="info">正在读取 DSH 扩展和配置…</InlineFeedback>
+  if (loading && !catalogQuery.data) return <InlineFeedback tone="info">正在读取 DSH 扩展和配置…</InlineFeedback>
   if (error && catalog.plugins.length === 0) return <InlineFeedback tone="error">{error}</InlineFeedback>
   return (
     <div className={styles.catalog}>
