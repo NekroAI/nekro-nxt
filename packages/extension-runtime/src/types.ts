@@ -1,3 +1,4 @@
+import type { ExtensionManifest } from './manifest.js'
 import type {
   AdapterClientSlotName,
   AgentClientSlotName,
@@ -81,47 +82,7 @@ export interface HostClientSlotContributionEvidence {
   readonly key: string
 }
 
-export interface ExtensionManifestV1 {
-  readonly extensionId: ExtensionId
-  readonly revisionId: ExtensionRevisionId
-  readonly entrypoints:
-    | { readonly host: 'source/host.ts'; readonly client: 'source/client.ts' }
-    | { readonly host: 'source/host.ts' }
-    | { readonly client: 'source/client.ts' }
-}
-
-export interface ExtensionManifestV2 extends ExtensionManifestV1 {
-  readonly schemaVersion: 2
-  readonly contributions: readonly ExtensionContribution[]
-}
-
-export interface ExtensionManifestV3 {
-  readonly schemaVersion: 3
-  readonly scope: 'host-adapter'
-  readonly extensionId: ExtensionId
-  readonly revisionId: ExtensionRevisionId
-  readonly entrypoints:
-    { readonly host: 'source/host.ts'; readonly client: 'source/client.ts' } | { readonly host: 'source/host.ts' }
-  readonly clientCss?: { readonly path: string; readonly sha256: string }
-  readonly contributions: readonly [
-    HostAdapterContributionEvidence,
-    ...(HostClientSlotContributionEvidence | HostPageContribution)[],
-  ]
-}
-
-export interface ExtensionManifestV4 {
-  readonly schemaVersion: 4
-  readonly scope: 'host-ui'
-  readonly extensionId: ExtensionId
-  readonly revisionId: ExtensionRevisionId
-  readonly entrypoints:
-    { readonly host: 'source/host.ts'; readonly client: 'source/client.ts' } | { readonly client: 'source/client.ts' }
-  readonly clientCss?: { readonly path: string; readonly sha256: string }
-  readonly permissions: HostUiPermissionDeclaration
-  readonly contributions: readonly HostPageContribution[]
-}
-
-export type ExtensionManifest = ExtensionManifestV1 | ExtensionManifestV2 | ExtensionManifestV3 | ExtensionManifestV4
+export type { ExtensionManifest } from './manifest.js'
 
 export interface ExtensionRevisionVerification {
   readonly revisionId: ExtensionRevisionId

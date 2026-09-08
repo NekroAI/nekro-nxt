@@ -225,6 +225,7 @@ export function ExtensionsPage() {
   const extensions = useProductStore((state) => state.extensions)
   const [pendingAgentId, setPendingAgentId] = useState<string | null>(null)
   const [revisionByAgent, setRevisionByAgent] = useState<Record<string, string>>({})
+  const [rebuildPending, setRebuildPending] = useState(false)
   const [installationPending, setInstallationPending] = useState(false)
   const [uninstallOpen, setUninstallOpen] = useState(false)
   const [permissionRevisionId, setPermissionRevisionId] = useState('')
@@ -355,6 +356,18 @@ export function ExtensionsPage() {
       setDeletePending(false)
     }
   }
+  const rebuild = async () => {
+    if (!focusedRevision || rebuildPending) return
+    setRebuildPending(true)
+    try {
+      await hostActions['extensions.rebuild']({ revisionId: focusedRevision.id })
+      notify('重建成功，请选择新版本并重新核对权限后启用。', 'success', 'extension-rebuild')
+    } catch (error) {
+      notify(error instanceof Error ? error.message : String(error), 'error', 'extension-rebuild')
+    } finally {
+      setRebuildPending(false)
+    }
+  }
   if (!extensionId && extensionSearchParams.get('view') === 'pages') return <HostUiPageManager />
   if (!extensionId && extensions[0]) {
     return <Navigate to={`/extensions/${extensions[0].id}`} replace />
@@ -381,7 +394,9 @@ export function ExtensionsPage() {
               >
                 {selected.scope !== 'agent'
                   ? selected.installation
-                    ? '已安装到本机'
+                    ? selected.installation.runtime?.status === 'restore-failed'
+                      ? '安装记录已保留，尚未运行'
+                      : '已安装到本机'
                     : '尚未安装'
                   : extensionLabel(selected.activations.length)}
               </StatusBadge>
@@ -456,6 +471,20 @@ export function ExtensionsPage() {
                 />
               </div>
             </section>
+            {focusedRevision?.format === 'requires-rebuild' ? (
+              <InlineFeedback tone="warning">
+                这个修订需要重建。旧源码和配置已保留；重建成功后不会自动启用。
+                <Button
+                  disabled={rebuildPending}
+                  loading={rebuildPending}
+                  onClick={() => {
+                    void rebuild()
+                  }}
+                >
+                  从已有源码重建
+                </Button>
+              </InlineFeedback>
+            ) : null}
             <section className={[styles.activationSection, styles.extensionPrimarySection].join(' ')}>
               {selected.scope !== 'agent' ? (
                 <>
@@ -499,7 +528,12 @@ export function ExtensionsPage() {
                           </span>
                           <Button
                             size="small"
-                            disabled={installed || installationPending}
+                            disabled={
+                              installed ||
+                              installationPending ||
+                              revision.format === 'requires-rebuild' ||
+                              revision.format === 'unavailable'
+                            }
                             loading={installationPending}
                             loadingLabel="正在切换…"
                             onClick={() => {
@@ -532,7 +566,12 @@ export function ExtensionsPage() {
                       <div className={styles.secondaryText}>选择使用这个扩展的智能体。</div>
                     </div>
                     <span className={styles.activationCount}>
-                      {selected.activations.length}/{agents.length} 已启用
+                      {
+                        selected.activations.filter(
+                          (activation) => !activation.runtime || activation.runtime.status === 'active',
+                        ).length
+                      }
+                      /{agents.length} 正在使用
                     </span>
                   </div>
                   {agents.length > 0 ? (
@@ -556,7 +595,7 @@ export function ExtensionsPage() {
                               <small className={styles.activationMeta}>
                                 {activation
                                   ? activation.runtime && activation.runtime.status !== 'active'
-                                    ? `${activation.runtime.status === 'restore-failed' ? '恢复失败' : '停止失败'} · r${activation.revision || selected.revision}`
+                                    ? `${activation.runtime.message ?? (activation.runtime.status === 'restore-failed' ? '恢复失败' : '停止失败')} · r${activation.revision || selected.revision}`
                                     : `正在使用 r${activation.revision || selected.revision}`
                                   : `尚未启用 · 最新 r${selected.revision}`}
                               </small>
@@ -567,7 +606,12 @@ export function ExtensionsPage() {
                               disabled={pendingAgentId !== null}
                               onValueChange={(revisionId) => {
                                 setRevisionByAgent((current) => ({ ...current, [agent.id]: revisionId }))
-                                if (activation && revisionId !== activation.revisionId) {
+                                if (
+                                  activation &&
+                                  revisionId !== activation.revisionId &&
+                                  selected.revisions.find((revision) => revision.id === revisionId)?.format !==
+                                    'requires-rebuild'
+                                ) {
                                   void changeActivation(selected, agent.id, agent.name, true, revisionId)
                                 }
                               }}

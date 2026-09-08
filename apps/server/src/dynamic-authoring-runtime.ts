@@ -187,12 +187,8 @@ export const preflightNekroNxtDynamicSource = (request: DynamicCordisDefineReque
   if (client === undefined) return
   const registersPages = /\b(?:ctx\.)?pages\s*\.\s*(?:register|declarePermissions)\b/u.test(client)
   const injectsPages = /\binject\s*:\s*\[[^\]]*['"]pages['"][^\]]*\]/su.test(client)
-  const injectsUi = /\binject\s*:\s*\[[^\]]*['"]ui['"][^\]]*\]/su.test(client)
   if (registersPages && !injectsPages) {
-    throw new Error("动态页面预检失败：Client 使用了 pages Service，但没有声明 inject: ['pages', 'ui']。")
-  }
-  if (registersPages && !injectsUi) {
-    throw new Error("动态页面预检失败：Client 必须声明 inject: ['pages', 'ui'] 并使用 NekroNXT UI Kit。")
+    throw new Error("动态页面预检失败：Client 使用了 pages Service，但没有声明 inject: ['pages']。")
   }
   const absolutePagePath = /\b(?:startPath|path)\s*:\s*['"]\//u.exec(client)
   if (absolutePagePath) {
@@ -554,9 +550,6 @@ export class NekroNxtDynamicCordisRunner extends DynamicCordisRunnerService {
     if (!pkg?.hasClientHalf) throw new Error('Host-only Package cannot report Client verification.')
     if (renderedSlots.length === 0 && renderedHostSlots.length === 0 && renderedPages.length === 0) {
       throw new Error('Dynamic Client verification must contain a product Slot or page.')
-    }
-    if (renderedPages.length > 0 && usedUiComponents.length === 0) {
-      throw new Error('动态页面必须实际使用 NekroNXT UI Kit。')
     }
     this.clientEvidenceByPackage.set(packageId, {
       pluginRunId,

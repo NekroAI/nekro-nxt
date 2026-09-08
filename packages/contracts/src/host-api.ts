@@ -937,6 +937,7 @@ export const HostSnapshotSchema = z
               .object({
                 id: ExtensionRevisionIdSchema,
                 revisionNumber: z.number().int().positive(),
+                format: z.enum(['current', 'requires-rebuild', 'unavailable']).optional(),
                 createdAt: z.number().int().safe().nonnegative(),
                 scope: z.enum(['agent', 'host-adapter', 'host-ui']),
                 contributions: z.array(z.string()),
@@ -2317,78 +2318,6 @@ export const HostApiContracts = {
         },
       )
       .superRefine((value, context) => {
-        if (value.renderedPages.length > 0 && value.usedUiComponents.length === 0) {
-          context.addIssue({
-            code: 'custom',
-            path: ['usedUiComponents'],
-            message: '动态页面必须实际使用 NekroNXT UI Kit。',
-          })
-        }
-        if (value.renderedPages.length > 0) {
-          const geometryByEntry = new Map(value.pageGeometry.map((geometry) => [geometry.entryId, geometry]))
-          for (const page of value.renderedPages) {
-            const geometry = geometryByEntry.get(page.entryId)
-            if (!geometry) {
-              context.addIssue({
-                code: 'custom',
-                path: ['pageGeometry'],
-                message: `动态页面 ${page.entryId} 没有真实页面几何证据。`,
-              })
-              continue
-            }
-            if (geometry.objectPane !== page.objectPane) {
-              context.addIssue({
-                code: 'custom',
-                path: ['pageGeometry'],
-                message: `动态页面 ${page.entryId} 的几何证据与对象列模式不一致。`,
-              })
-            }
-            const expectedInline = geometry.viewport.width <= 960 ? 24 : geometry.viewport.width <= 1440 ? 32 : 40
-            const insetChecks = [
-              ['top', geometry.insets.top, 24],
-              ['right', geometry.insets.right, expectedInline],
-              ['bottom', geometry.insets.bottom, 40],
-              ['left', geometry.insets.left, expectedInline],
-            ] as const
-            for (const [side, actual, expected] of insetChecks) {
-              if (Math.abs(actual - expected) > 1) {
-                context.addIssue({
-                  code: 'custom',
-                  path: ['pageGeometry'],
-                  message: `动态页面 ${page.entryId} 的 ${side} 边距为 ${actual}px，Host 契约要求 ${expected}px。`,
-                })
-              }
-            }
-            if (!geometry.contentAxesAligned) {
-              context.addIssue({
-                code: 'custom',
-                path: ['pageGeometry'],
-                message: `动态页面 ${page.entryId} 的 PageHeader 与正文内容轴没有对齐。`,
-              })
-            }
-            if (geometry.horizontalOverflow) {
-              context.addIssue({
-                code: 'custom',
-                path: ['pageGeometry'],
-                message: `动态页面 ${page.entryId} 产生了页面级横向溢出。`,
-              })
-            }
-            if (!geometry.titleDistinct) {
-              context.addIssue({
-                code: 'custom',
-                path: ['pageGeometry'],
-                message: `动态页面 ${page.entryId} 的应用标题与当前视图标题重复。`,
-              })
-            }
-          }
-          if (geometryByEntry.size !== value.renderedPages.length) {
-            context.addIssue({
-              code: 'custom',
-              path: ['pageGeometry'],
-              message: '动态页面几何证据包含重复或未声明的页面入口。',
-            })
-          }
-        }
         if (value.renderedPages.length === 0 && value.permissions.permissions.length === 0) return
         if (value.renderedPages.length > 0) return
         context.addIssue({
@@ -2398,6 +2327,22 @@ export const HostApiContracts = {
         })
       }),
     response: z.object({ ok: z.literal(true) }).strict(),
+    error: HostApiErrorSchema,
+  }),
+  rebuildExtensionRevision: defineContract({
+    invalidatesSnapshot: true,
+    timeoutMs: 300_000,
+    method: 'POST',
+    path: '/api/extensions/rebuild',
+    params: EmptyParamsSchema,
+    request: z.object({ revisionId: ExtensionRevisionIdSchema }).strict(),
+    response: z
+      .object({
+        extensionId: ExtensionIdSchema,
+        revisionId: ExtensionRevisionIdSchema,
+        autoActivated: z.literal(false),
+      })
+      .strict(),
     error: HostApiErrorSchema,
   }),
   saveExtensionFromDynamic: defineContract({

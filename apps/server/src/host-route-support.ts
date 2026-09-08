@@ -1,3 +1,4 @@
+import { readExtensionManifestForArchive } from '@nekro-nxt/extension-runtime'
 import type { HostApiResponse, DshPluginPackageIdSchema, EpisodeIdSchema } from '@nekro-nxt/contracts'
 import type { WebRoute } from '@deepseek-ai/dsh-host-webserver'
 import { isAdminConsoleOutbound, type ChannelFact, type ChannelHistoryEntry } from '@nekro-nxt/channel-runtime'
@@ -377,19 +378,10 @@ export const createExtensionRevisionExport = async (
       if (relative === 'manifest.json') throw error
     }
   }
-  const resourceManifest = z
-    .object({
-      clientCss: z
-        .object({ path: z.string().startsWith('assets/'), sha256: z.string() })
-        .strict()
-        .optional(),
-      contributions: z.array(z.unknown()).optional(),
-    })
-    .passthrough()
-    .parse(JSON.parse(strFromU8(files['revision/manifest.json']!)))
+  const resourceManifest = readExtensionManifestForArchive(JSON.parse(strFromU8(files['revision/manifest.json']!)))
   const resourcePaths = new Set<string>()
-  if (resourceManifest.clientCss) resourcePaths.add(resourceManifest.clientCss.path)
-  for (const contribution of resourceManifest.contributions ?? []) {
+  if ('clientCss' in resourceManifest && resourceManifest.clientCss) resourcePaths.add(resourceManifest.clientCss.path)
+  for (const contribution of 'contributions' in resourceManifest ? resourceManifest.contributions : []) {
     const page = HostPageContributionSchema.safeParse(contribution)
     if (page.success && page.data.icon.kind === 'svg') resourcePaths.add(page.data.icon.path)
   }

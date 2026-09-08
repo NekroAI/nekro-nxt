@@ -234,6 +234,7 @@ const desiredClients = (extensions: readonly LocalExtensionSummary[]): readonly 
     const revision = extension.revisions.find((candidate) => candidate.id === installed.revisionId)
     const adapterContribution = revision?.contributions.find((entry) => entry.startsWith('适配器：'))
     const adapterKey = adapterContribution?.slice('适配器：'.length)
+    if (revision?.format === 'requires-rebuild' || revision?.format === 'unavailable') return []
     if (!revision?.clientBuilt || !revision.buildKey || !adapterKey || revision.hostSlots.length === 0) return []
     return [
       {

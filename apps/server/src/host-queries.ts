@@ -84,6 +84,7 @@ export const projectExtensions = (runtime: NekroRuntime) => {
         return {
           id: revision.id,
           revisionNumber: revision.revisionNumber,
+          format: runtime.extensionService.revisionFormat(revision),
           createdAt: revision.createdAt,
           scope: extension.scope,
           contributions:

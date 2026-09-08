@@ -250,6 +250,7 @@ export interface LocalExtensionSummary {
   readonly revisions: readonly {
     readonly id: string
     readonly revision: number
+    readonly format?: 'current' | 'requires-rebuild' | 'unavailable'
     readonly createdAt: number
     readonly scope: 'agent' | 'host-adapter' | 'host-ui'
     readonly contributions: readonly string[]

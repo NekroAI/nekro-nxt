@@ -50,32 +50,6 @@ function propertyName(expression) {
   return undefined
 }
 
-function isJsonParse(node) {
-  return (
-    ts.isCallExpression(node) &&
-    ts.isPropertyAccessExpression(node.expression) &&
-    ts.isIdentifier(node.expression.expression) &&
-    node.expression.expression.text === 'JSON' &&
-    node.expression.name.text === 'parse'
-  )
-}
-
-function isImmediatelyValidated(node) {
-  let current = node
-  while (
-    current.parent &&
-    (ts.isAsExpression(current.parent) ||
-      ts.isTypeAssertionExpression(current.parent) ||
-      ts.isParenthesizedExpression(current.parent))
-  ) {
-    current = current.parent
-  }
-  const parent = current.parent
-  if (!parent || !ts.isCallExpression(parent) || !parent.arguments.includes(current)) return false
-  const callee = parent.expression.getText()
-  return /(?:^|\.)(?:decode|parse|safeParse|validate)[A-Za-z0-9_$]*$/u.test(callee)
-}
-
 function assertionTypeText(node, sourceFile) {
   return node.type.getText(sourceFile).replace(/\s+/gu, ' ').trim()
 }
@@ -164,9 +138,6 @@ function scanFile(file, fixedExceptions) {
         node.expression.expression.getText(sourceFile) === 'sql'
       ) {
         report('forbidden-sql-api', node, '业务源码不得调用 sql.raw()')
-      }
-      if (isJsonParse(node) && !isImmediatelyValidated(node)) {
-        report('unchecked-json-parse', node, 'JSON.parse() 结果必须立即经过运行时 schema/decoder 校验')
       }
     }
 

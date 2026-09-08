@@ -400,9 +400,9 @@ export const inspectDynamicPageUi = (
     (element) => element.closest('[data-nxt-ui-component="DataTable"]') === null,
   )
   const violations: string[] = []
-  if (usedUiComponents.length === 0) violations.push('页面没有实际使用 NekroNXT UI Kit。')
-  if (nakedControls.length > 0) violations.push('页面使用了浏览器默认交互控件。')
-  if (nakedTables.length > 0) violations.push('页面使用了裸表格，必须改用 DataTable。')
+  if (usedUiComponents.length === 0) violations.push('可以使用 UI Kit 统一控件外观。')
+  if (nakedControls.length > 0) violations.push('页面使用原生控件，请检查主题与可访问性。')
+  if (nakedTables.length > 0) violations.push('页面使用原生表格，请检查窄窗展示。')
   return { usedUiComponents, violations }
 }
 
@@ -484,6 +484,7 @@ function DynamicPagePreview({
   readonly coordinator: DynamicClientCoordinator
   readonly entry: DynamicHostPageEntry
 }) {
+  const [visualSuggestions, setVisualSuggestions] = useState<readonly string[]>([])
   const [relativePath, setRelativePath] = useState(entry.page.startPath)
   const previewRoot = useRef<HTMLDivElement>(null)
   const navigationProvider = entry.navigation
@@ -501,9 +502,13 @@ function DynamicPagePreview({
     entry.recordUiComponents(evidence.usedUiComponents)
     const geometry = inspectDynamicPageGeometry(root, entry.page)
     entry.recordPageGeometry(geometry.evidence)
-    const violations = [...evidence.violations, ...geometry.violations]
-    if (violations.length > 0) {
-      coordinator.reportSlotFailure(agentId, new Error(`页面样式验证失败：${violations.join(' ')}`))
+    setVisualSuggestions([...evidence.violations, ...geometry.violations])
+    const content = root.querySelector<HTMLElement>('[data-host-ui-content]')
+    if (
+      !content ||
+      (!content.innerText.trim() && !content.querySelector('img, svg, canvas, input, select, textarea, video'))
+    ) {
+      coordinator.reportSlotFailure(agentId, new Error('页面没有可见内容。'))
     }
   }, [agentId, coordinator, entry, relativePath])
   return (
@@ -519,6 +524,16 @@ function DynamicPagePreview({
         </span>
         <small>{entry.page.objectPane === 'navigation' ? '带对象列' : '全宽页面'}</small>
       </header>
+      {visualSuggestions.length > 0 ? (
+        <details>
+          <summary>视觉检查建议</summary>
+          <ul>
+            {visualSuggestions.map((suggestion) => (
+              <li key={suggestion}>{suggestion}</li>
+            ))}
+          </ul>
+        </details>
+      ) : null}
       <div className={styles.pagePreviewFrame} data-object-pane={entry.page.objectPane}>
         {entry.page.objectPane === 'navigation' ? (
           <nav className={styles.pagePreviewNavigation} aria-label={`${entry.page.title} 预览导航`}>

@@ -64,6 +64,28 @@ export function registerExtensionsRoutes({
     }
   }
   registerRoute({
+    kind: 'exact',
+    path: '/api/extensions/rebuild',
+    handler: async (req, res) => {
+      if (req.method !== 'POST') {
+        writeError(res, 405, 'method-not-allowed', '重建扩展只支持 POST。')
+        return
+      }
+      try {
+        const input = HostApiContracts.rebuildExtensionRevision.parseRequest(await readJsonBody(req))
+        const result = await runtime.extensionService.rebuildRevision(input.revisionId, DEEPSEEK_HARNESS_VERSION)
+        writeContractJson(res, 200, HostApiContracts.rebuildExtensionRevision, {
+          extensionId: result.extension.id,
+          revisionId: result.revision.id,
+          autoActivated: false,
+        })
+        broadcastExtensionsChanged()
+      } catch (error) {
+        writeError(res, 409, 'extension-rebuild-failed', error instanceof Error ? error.message : String(error))
+      }
+    },
+  })
+  registerRoute({
     kind: 'prefix',
     path: '/api/host-ui',
     handler: async (req, res) => {

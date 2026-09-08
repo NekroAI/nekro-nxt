@@ -328,7 +328,7 @@ export interface NekroNxtExtensionAuthoringReference {
       readonly maxEntries: 8
       readonly requiredServices: readonly ['pages', 'ui']
       readonly uiComponents: readonly HostUiKitComponentName[]
-      readonly nativeInteractiveElements: false
+      readonly nativeInteractiveElements: true
       readonly designContract: {
         readonly version: 'nxt-host-ui-design-v1'
         readonly responsibilities: readonly {
@@ -582,7 +582,7 @@ export const NEKRO_NXT_EXTENSION_AUTHORING_REFERENCE: NekroNxtExtensionAuthoring
         'DataTable',
         'SidePane',
       ],
-      nativeInteractiveElements: false,
+      nativeInteractiveElements: true,
       designContract: {
         version: 'nxt-host-ui-design-v1',
         responsibilities: [
@@ -599,7 +599,7 @@ export const NEKRO_NXT_EXTENSION_AUTHORING_REFERENCE: NekroNxtExtensionAuthoring
           {
             owner: 'ui-kit',
             provided: ['基础控件状态', '内容表面', '表格外壳', '反馈', 'Dialog/Popover/Tooltip'],
-            forbidden: ['复制基础组件状态机', '裸交互控件', '后台指标卡片墙'],
+            forbidden: ['破坏控件可访问性或焦点管理'],
           },
         ],
         standardInsets: {
@@ -610,7 +610,7 @@ export const NEKRO_NXT_EXTENSION_AUTHORING_REFERENCE: NekroNxtExtensionAuthoring
         },
         compositionRules: [
           'Host 已提供背景、外边距和根滚动，页面组件从透明内容区开始。',
-          '对象列标题表示应用，PageHeader 表示当前视图，两者不得相同。',
+          '建议用对象列标题表示应用、PageHeader 表示当前视图；标题重复不影响运行验证。',
           '对象列已有的视图切换不得再渲染成页面主按钮。',
           'Section 默认使用间距分组，只有独立对象才使用 Surface。',
           '概览优先使用紧凑摘要、列表或表格，不默认生成等宽指标卡片墙。',
@@ -712,7 +712,7 @@ ${reference.examples.hostAdapter}
 
 ## Host Page 示例
 
-页面 Client 必须声明 \`inject: ['pages', 'ui']\`，并从 \`ctx.ui\` 使用 NekroNXT UI Kit。按钮、输入框、选择器、文本域和表格不得使用浏览器默认控件；页面必须使用语义 Token，适配明暗主题和桌面端紧凑密度。\`startPath\`、导航项 \`path\` 和 \`navigate()\` 都使用当前入口内的相对路径，不得以 \`/\` 开头。
+页面 Client 声明 \`inject: ['pages']\`；建议同时注入 \`ui\` 并使用 NekroNXT UI Kit，也允许语义正确的原生控件和表格。页面应适配明暗主题与可访问性，精确留白、标题差异和组件使用只作视觉建议。\`startPath\`、导航项 \`path\` 和 \`navigate()\` 都使用当前入口内的相对路径，不得以 \`/\` 开头。
 
 页面责任契约（${reference.supportedContributions.hostPages.designContract.version}）：
 ${reference.supportedContributions.hostPages.designContract.responsibilities
@@ -720,7 +720,7 @@ ${reference.supportedContributions.hostPages.designContract.responsibilities
   .join('\n')}
 ${reference.supportedContributions.hostPages.designContract.compositionRules.map((rule) => `- ${rule}`).join('\n')}
 
-这些职责由 Host 和验证器执行，不要求普通用户在需求中提供组件名、CSS 数值或实现步骤。Extension 不得自行补页面根背景、外边距或滚动。
+运行验证检查真实渲染、交互、资源释放和权限；几何与组件偏好只提供视觉建议，不要求普通用户在需求中提供组件名、CSS 数值或实现步骤。Extension 不得自行补页面根背景、外边距或滚动。
 把页面的完整 Contribution 放进 \`nekro_nxt_extension_define.pages\`，权限放进 \`permissions\`；CSS Module 和 SVG 通过 \`resources\` 提交，不能只把声明写在 Client 源码里。
 
 \`\`\`js

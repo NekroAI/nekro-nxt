@@ -209,7 +209,7 @@ const runPluginApply = async (
 
 const verifyAdapter = async (input: ImportedRevisionVerificationInput): ReturnType<ImportedRevisionVerifier> => {
   const manifest = input.materialized.manifest
-  if (!('schemaVersion' in manifest) || manifest.schemaVersion !== 3) throw new Error('Adapter 导入 Manifest 无效。')
+  if (manifest.scope !== 'host-adapter') throw new Error('Adapter 导入 Manifest 无效。')
   if (!input.artifact.hostEntry) throw new Error('Adapter 导入缺少 Host 构建产物。')
   const declaredAdapter = manifest.contributions.find((entry) => entry.kind === 'adapter')
   if (!declaredAdapter || declaredAdapter.kind !== 'adapter') throw new Error('Adapter Manifest 缺少适配器贡献。')
@@ -328,25 +328,23 @@ const verifyClient = async (
 ) => {
   const manifest = input.materialized.manifest
   const expectedAgentSlots =
-    'schemaVersion' in manifest && manifest.schemaVersion === 2
+    manifest.scope === 'agent'
       ? manifest.contributions.filter((entry) => entry.kind === 'client-slot').map(({ name }) => name)
       : []
   const expectedHostSlots =
-    'schemaVersion' in manifest && manifest.schemaVersion === 3
+    manifest.scope === 'host-adapter'
       ? manifest.contributions
           .filter((entry) => entry.kind === 'host-client-slot')
           .map(({ name, key }) => ({ name, key }))
       : []
   const expectedPages: readonly HostPageContribution[] =
-    'schemaVersion' in manifest && (manifest.schemaVersion === 3 || manifest.schemaVersion === 4)
+    manifest.scope === 'host-adapter' || manifest.scope === 'host-ui'
       ? manifest.contributions.flatMap((entry) =>
           entry.kind === 'host-page' ? [HostPageContributionSchema.parse(entry)] : [],
         )
       : []
   const permissions: HostUiPermissionDeclaration =
-    'schemaVersion' in manifest && manifest.schemaVersion === 4
-      ? manifest.permissions
-      : { permissions: [], networkOrigins: [] }
+    manifest.scope === 'host-ui' ? manifest.permissions : { permissions: [], networkOrigins: [] }
   if (!input.artifact.clientEntry) {
     if (expectedAgentSlots.length || expectedHostSlots.length || expectedPages.length) {
       throw new Error('Manifest 声明了 Client 贡献，但导入包缺少 Client 构建产物。')
@@ -546,14 +544,14 @@ const verifyAgentOrHostUi = async (input: ImportedRevisionVerificationInput): Re
     for (const handler of handlers.values()) JsonValueSchema.parse(await handler(null))
     const clientEvidence = await verifyClient(input, handlers)
     const declaredTools =
-      'schemaVersion' in manifest && manifest.schemaVersion === 2
+      manifest.scope === 'agent'
         ? manifest.contributions.filter((entry) => entry.kind === 'tool').map(({ name }) => name)
         : []
     const declaredRpc =
-      'schemaVersion' in manifest && manifest.schemaVersion === 2
+      manifest.scope === 'agent'
         ? manifest.contributions.filter((entry) => entry.kind === 'rpc').map(({ method }) => method)
         : []
-    const isAgentManifest = 'schemaVersion' in manifest && manifest.schemaVersion === 2
+    const isAgentManifest = manifest.scope === 'agent'
     if (isAgentManifest && (declaredTools.some((name) => !tools.has(name)) || tools.size !== declaredTools.length)) {
       throw new Error('Host 实际工具注册与 Manifest 不一致。')
     }
@@ -563,7 +561,7 @@ const verifyAgentOrHostUi = async (input: ImportedRevisionVerificationInput): Re
     ) {
       throw new Error('Host 实际 RPC 注册与 Manifest 不一致。')
     }
-    const isHostUi = 'schemaVersion' in manifest && manifest.schemaVersion === 4
+    const isHostUi = manifest.scope === 'host-ui'
     if (isHostUi && tools.size > 0) throw new Error('Host UI 导入不能注册智能体工具。')
     return {
       contractVersion: isHostUi ? 'nekro-nxt-extension-v3' : 'nekro-nxt-extension-v1',

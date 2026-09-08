@@ -537,6 +537,7 @@ const projectSnapshot = (json: SnapshotJson, successfulAt: number): ProductSnaps
       revisions: extension.revisions.map((revision) => ({
         id: revision.id,
         revision: revision.revisionNumber,
+        format: revision.format ?? 'current',
         createdAt: revision.createdAt,
         scope: revision.scope,
         contributions: revision.contributions,
@@ -628,7 +629,12 @@ const projectSnapshot = (json: SnapshotJson, successfulAt: number): ProductSnaps
           }),
       clientActivations: extension.activations.flatMap((candidate) => {
         const activeRevision = extension.revisions.find((revision) => revision.id === candidate.extensionRevisionId)
-        if (!activeRevision?.verification?.clientBuilt) return []
+        if (
+          !activeRevision?.verification?.clientBuilt ||
+          activeRevision.format === 'requires-rebuild' ||
+          activeRevision.format === 'unavailable'
+        )
+          return []
         return [
           {
             agentId: candidate.agentId,
@@ -980,6 +986,7 @@ export class HttpProductHost implements ProductHostPort {
 
     'extensions.commitImport': async ({ token, ...body }) =>
       this.#mutate(HostApiContracts.commitExtensionImport, { token }, body),
+    'extensions.rebuild': async (input) => this.#mutate(HostApiContracts.rebuildExtensionRevision, {}, input),
     'extensions.delete': async (params) => this.#mutate(HostApiContracts.deleteLocalExtension, params, undefined),
     'hostUi.updatePreferences': async (body) => this.#mutate(HostApiContracts.updateHostUiPagePreferences, {}, body),
     'host.refresh': async () => {

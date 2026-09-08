@@ -59,7 +59,14 @@ export class ConnectionApplicationService {
   constructor(
     private readonly ports: Pick<
       NekroRuntime,
-      'adapters' | 'core' | 'repository' | 'credentials' | 'channels' | 'assetService' | 'internalConnectionId'
+      | 'adapters'
+      | 'core'
+      | 'repository'
+      | 'credentials'
+      | 'channels'
+      | 'assetService'
+      | 'internalConnectionId'
+      | 'extensionService'
     >,
     readonly now: () => number,
     runtimes: Map<ConnectionId, AdapterConnectionRuntime>,
@@ -408,7 +415,18 @@ export class ConnectionApplicationService {
     if (!connection) throw new Error('Connection does not exist.')
     const contribution = this.ports.adapters.get(connection.adapterKey)
     if (!contribution) {
-      this.#adapterDiagnostics.set(connectionId, { status: 'stopped', message: '这个连接的适配器未安装。' })
+      const needsRebuild = this.ports.repository.listHostInstallations().some((installation) => {
+        const revision = this.ports.repository.getExtensionRevision(installation.extensionRevisionId)
+        return (
+          revision &&
+          this.ports.repository.getExtensionRevisionVerification(revision.id)?.adapter?.key === connection.adapterKey &&
+          this.ports.extensionService.revisionFormat(revision) === 'requires-rebuild'
+        )
+      })
+      this.#adapterDiagnostics.set(connectionId, {
+        status: 'stopped',
+        message: needsRebuild ? '这个连接的适配器需要重建；频道、消息和凭据引用已保留。' : '这个连接的适配器未安装。',
+      })
       this.#notifyConnectionChanges()
       return
     }

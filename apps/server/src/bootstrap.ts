@@ -777,6 +777,7 @@ export class NekroRuntime {
     if (this.#disposed) return
     this.#disposed = true
     await this.authoring.dispose()
+    await this.extensionService.dispose()
     const failures: unknown[] = []
     this.#unsubscribeDynamicApproval()
     this.connections.clearObservers()
