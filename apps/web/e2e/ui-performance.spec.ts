@@ -3,7 +3,7 @@ import { writeFile, mkdir } from 'node:fs/promises'
 import { join } from 'node:path'
 import { platform, release, cpus } from 'node:os'
 import { execFileSync } from 'node:child_process'
-import { productSnapshot, targetChannelId, targetAgentId } from './fixtures/product-quality.js'
+import { productSnapshot, targetChannelId, targetAgentId, imageAssetId } from './fixtures/product-quality.js'
 
 declare global {
   interface Window {
@@ -16,6 +16,7 @@ declare global {
 test.use({ trace: 'off' })
 
 const output = process.env['NEKRO_UI_PERF_OUTPUT']
+const mixed = process.env['NEKRO_UI_PERF_MIXED'] === '1'
 const base = process.env['NEKRO_UI_PERF_URL'] ?? 'http://127.0.0.1:4970'
 
 test('records repeatable production interaction costs with fictional history', async ({ page, browser }, testInfo) => {
@@ -49,6 +50,11 @@ test('records repeatable production interaction costs with fictional history', a
       route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(data) })
     // Leave the stream open. Fulfilling a finite SSE body would repeatedly reconnect
     // and reload history, contaminating steady-state interaction measurements.
+    if (url.pathname.endsWith(`/assets/${imageAssetId}`))
+      return route.fulfill({
+        contentType: 'image/svg+xml',
+        body: '<svg xmlns="http://www.w3.org/2000/svg" width="360" height="180"><rect width="360" height="180" fill="#e2e8f2"/><circle cx="90" cy="90" r="44" fill="#7390c0"/></svg>',
+      })
     if (url.pathname === '/api/events') return
     if (url.pathname === '/api/snapshot') return json(snapshot)
     if (url.pathname.endsWith('/messages'))
@@ -61,6 +67,7 @@ test('records repeatable production interaction costs with fictional history', a
           role: 'member',
           occurredAt: 1_725_000_000_000 + i,
           parts: [
+            ...(mixed && i % 10 === 0 ? [{ type: 'image', assetId: imageAssetId, alt: `虚构图示 ${i}` }] : []),
             {
               type: 'text',
               text:
@@ -91,7 +98,18 @@ test('records repeatable production interaction costs with fictional history', a
           responseState: 'finished',
           steps: Array.from({ length: 8 }, (_, j) => ({
             step: j + 1,
-            tools: [],
+            tools: mixed
+              ? [
+                  {
+                    callId: `call_perf${i}n${j}`,
+                    name: 'inspect_fixture',
+                    displayName: '检查虚构资料',
+                    state: 'succeeded',
+                    inputPreview: JSON.stringify({ document: `资料-${i}-${j}`, sections: [1, 2, 3] }),
+                    resultPreview: `已核对资料。${'这里是虚构的工具结果说明。'.repeat(32)}`,
+                  },
+                ]
+              : [],
             internalOutput: { kind: 'internal-output', text: `第 ${i + 1} 轮第 ${j + 1} 步的内部记录。` },
           })),
         })),
@@ -100,7 +118,14 @@ test('records repeatable production interaction costs with fictional history', a
   })
   const cdp = await page.context().newCDPSession(page)
   await cdp.send('Performance.enable')
-  for (const size of [50, 1000, 5000]) {
+  const requestedSize = process.env['NEKRO_UI_PERF_SIZE']
+  const sizes = requestedSize
+    ? [Number(requestedSize)]
+    : process.env['NEKRO_UI_PERF_THEME'] === '1'
+      ? [1000]
+      : [50, 1000, 5000]
+  if (sizes.some((size) => ![50, 1000, 5000].includes(size))) throw new Error('Unsupported performance size')
+  for (const size of sizes) {
     count = size
     await page.goto(`${base}/work/channels/${targetChannelId}`)
     await expect(page.locator('[data-channel-message-list] article')).toHaveCount(size, { timeout: 60_000 })
@@ -109,6 +134,11 @@ test('records repeatable production interaction costs with fictional history', a
       await page.addStyleTag({
         content:
           '[data-channel-message-list] [data-nxt-enter-kind="object"] { content-visibility: auto; contain-intrinsic-size: auto 120px; }',
+      })
+    }
+    if (process.env['NEKRO_UI_PERF_LAYOUT_CONTAIN'] === '1') {
+      await page.addStyleTag({
+        content: '[data-channel-message-list] [data-nxt-enter-kind="object"] { contain: layout; }',
       })
     }
     for (let run = 0; run < 6; run += 1) {
@@ -146,19 +176,26 @@ test('records repeatable production interaction costs with fictional history', a
           },
         })
       })
-      await page.getByRole('textbox', { name: '消息内容' }).pressSequentially('性能测试输入', { delay: 20 })
-      await page.getByRole('textbox', { name: '消息内容' }).fill('')
-      const splitter = page.getByRole('separator', { name: '调整检查器宽度' })
-      const box = await splitter.boundingBox()
-      if (!box) throw new Error('Missing inspector splitter')
-      await page.mouse.move(box.x + box.width / 2, box.y + 100)
-      await page.mouse.down()
-      await page.mouse.move(box.x - 100, box.y + 100, { steps: 30 })
-      await page.mouse.move(box.x + box.width / 2, box.y + 100, { steps: 30 })
-      await page.mouse.up()
-      await page.locator('[data-channel-message-list]').hover()
-      await page.mouse.wheel(0, -500)
-      await page.mouse.wheel(0, 500)
+      if (process.env['NEKRO_UI_PERF_THEME'] === '1') {
+        for (const name of ['主题：深色；切换为浅色', '主题：浅色；切换为深色']) {
+          await page.getByRole('button', { name }).click()
+          await page.waitForTimeout(500)
+        }
+      } else {
+        await page.getByRole('textbox', { name: '消息内容' }).pressSequentially('性能测试输入', { delay: 20 })
+        await page.getByRole('textbox', { name: '消息内容' }).fill('')
+        const splitter = page.getByRole('separator', { name: '调整检查器宽度' })
+        const box = await splitter.boundingBox()
+        if (!box) throw new Error('Missing inspector splitter')
+        await page.mouse.move(box.x + box.width / 2, box.y + 100)
+        await page.mouse.down()
+        await page.mouse.move(box.x - 100, box.y + 100, { steps: 30 })
+        await page.mouse.move(box.x + box.width / 2, box.y + 100, { steps: 30 })
+        await page.mouse.up()
+        await page.locator('[data-channel-message-list]').hover()
+        await page.mouse.wheel(0, -500)
+        await page.mouse.wheel(0, 500)
+      }
       const timings = await page.evaluate(() => {
         const stop = window.__uiPerfStop
         if (!stop) throw new Error('Missing performance recorder')
@@ -200,6 +237,9 @@ test('records repeatable production interaction costs with fictional history', a
     join(output!, 'interactions.json'),
     JSON.stringify(
       {
+        mixed,
+        layoutContainExperiment: process.env['NEKRO_UI_PERF_LAYOUT_CONTAIN'] === '1',
+        scenario: process.env['NEKRO_UI_PERF_THEME'] === '1' ? 'theme' : 'history',
         headless: testInfo.project.use.headless ?? true,
         environment,
         contentVisibilityExperiment: process.env['NEKRO_UI_PERF_CONTENT_VISIBILITY'] === '1',
