@@ -1,4 +1,4 @@
-import { memo, useLayoutEffect, useRef, type FormEvent } from 'react'
+import { memo, type FormEvent } from 'react'
 import { Info, Send } from 'lucide-react'
 import { EMPTY_CHANNEL_DRAFT } from '../channel-drafts.js'
 import {
@@ -17,27 +17,17 @@ export const ChannelComposer = memo(function ChannelComposer({
   agent,
   connection,
   webChannel,
-  onResize,
 }: {
   readonly channel: ChannelSummary
   readonly agent: AgentSummary | undefined
   readonly connection: ConnectionSummary | undefined
   readonly webChannel: ChannelSummary | undefined
-  readonly onResize: () => void
 }) {
   const runtime = useProductRuntime()
   const state = runtime.uiStore((state) => state.channelDrafts[channel.id] ?? EMPTY_CHANNEL_DRAFT)
   const draft = state.text
   const sendPending = state.pending !== undefined
   const navigate = useNxtNavigate()
-  const ref = useRef<HTMLDivElement>(null)
-  useLayoutEffect(() => {
-    const element = ref.current
-    if (!element) return
-    const observer = new ResizeObserver(onResize)
-    observer.observe(element)
-    return () => observer.disconnect()
-  }, [onResize])
   const setDraft = (text: string) => runtime.uiStore.getState().setChannelDraft(channel.id, text)
   const canSendOnWeb = channel.kind === 'internal' && Boolean(agent)
   const canSendAsRobot = channel.kind !== 'internal' && Boolean(agent && connection?.proactiveSend)
@@ -83,7 +73,6 @@ export const ChannelComposer = memo(function ChannelComposer({
 
   return (
     <div
-      ref={ref}
       className={styles.composer}
       data-channel-composer
       data-mode={channel.kind === 'internal' ? 'internal' : 'platform'}

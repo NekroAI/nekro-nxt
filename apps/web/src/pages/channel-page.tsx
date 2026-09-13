@@ -345,10 +345,6 @@ export function ChannelConversationPage() {
     if (history?.loadingMore === false) chatScroll.clearPrepend()
   }, [history?.loadingMore, messages[0]?.id, chatScroll.clearPrepend])
 
-  useLayoutEffect(() => {
-    if (canvasView === 'chat') chatScroll.reconcileLayout()
-  }, [canvasView, chatScroll.reconcileLayout])
-
   const loadOlder = (): void => {
     const list = chatScroll.ref.current
     if (!channel || !list || !history?.loaded || history.loading || history.loadingMore || history.hasMore === false)
@@ -556,13 +552,7 @@ export function ChannelConversationPage() {
                     </div>
                   ) : null}
                   {canvasView === 'chat' ? (
-                    <ChannelComposer
-                      channel={channel}
-                      agent={agent}
-                      connection={connection}
-                      webChannel={webChannel}
-                      onResize={chatScroll.reconcileLayout}
-                    />
+                    <ChannelComposer channel={channel} agent={agent} connection={connection} webChannel={webChannel} />
                   ) : null}
                 </div>
               </StageCrossfade>

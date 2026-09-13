@@ -1,3 +1,4 @@
+import { enableThemeTransitions, disableThemeTransitions } from './theme-transitions.js'
 import { useProductRuntime } from './product-runtime.js'
 import { useUiStateStore } from './product-runtime.js'
 import {
@@ -243,11 +244,36 @@ function DesktopShell() {
   const themeLabel = theme === 'light' ? '浅色' : '深色'
   const nextThemeLabel = nextTheme === 'light' ? '浅色' : '深色'
   const ThemeIcon = theme === 'light' ? Sun : Moon
+  const themeTransitionTimer = useRef<number>()
+  useEffect(
+    () => () => {
+      window.clearTimeout(themeTransitionTimer.current)
+      delete document.documentElement.dataset['themeChanging']
+      disableThemeTransitions()
+    },
+    [],
+  )
   const cycleTheme = (): void => {
     const root = document.documentElement
-    if (!reducedMotion) root.dataset['themeChanging'] = ''
+    const durationToken = getComputedStyle(root).getPropertyValue('--nxt-motion-standard').trim()
+    const duration = Number.parseFloat(durationToken) * (durationToken.endsWith('ms') ? 1 : 1000)
+    window.clearTimeout(themeTransitionTimer.current)
+    if (!reducedMotion) {
+      enableThemeTransitions()
+      root.dataset['themeChanging'] = ''
+    } else {
+      delete root.dataset['themeChanging']
+      disableThemeTransitions()
+    }
     uiStore.getState().setTheme(nextTheme)
-    if (!reducedMotion) window.setTimeout(() => delete root.dataset['themeChanging'], 240)
+    if (!reducedMotion)
+      themeTransitionTimer.current = window.setTimeout(
+        () => {
+          delete root.dataset['themeChanging']
+          disableThemeTransitions()
+        },
+        (Number.isFinite(duration) ? duration : 180) + 60,
+      )
   }
 
   return (

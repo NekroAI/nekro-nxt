@@ -805,6 +805,100 @@ test('platform-user updates stay local while persona references use the shared m
   expect(failures, failures.join('\n')).toEqual([])
 })
 
+test('rapid theme reversal keeps the newer transition alive until its own cleanup', async ({ page }) => {
+  await installProductRoutes(page)
+  await page.addInitScript(() => localStorage.setItem('nekro-nxt.theme', 'dark'))
+  await page.goto(`/work/channels/${targetChannelId}`)
+  await expect(page.getByRole('textbox', { name: '消息内容' })).toBeVisible()
+  await page.clock.install()
+  await page.clock.pauseAt(new Date())
+  await page
+    .getByRole('button', { name: '主题：深色；切换为浅色' })
+    .evaluate((element: HTMLButtonElement) => element.click())
+  await page.clock.runFor(160)
+  await page
+    .getByRole('button', { name: '主题：浅色；切换为深色' })
+    .evaluate((element: HTMLButtonElement) => element.click())
+  await page.clock.runFor(170)
+  const themeRulesEnabled = () =>
+    page.evaluate(() =>
+      [...document.styleSheets].some((sheet) =>
+        [...sheet.cssRules].some(
+          (rule) =>
+            rule instanceof CSSMediaRule &&
+            !rule.conditionText.includes('--nxt-theme-transition') &&
+            rule.cssText.includes('data-theme-changing'),
+        ),
+      ),
+    )
+  await expect(page.locator('html')).toHaveAttribute('data-theme-changing', '')
+  expect(await themeRulesEnabled()).toBe(true)
+  await page.clock.runFor(160)
+  await expect(page.locator('html')).not.toHaveAttribute('data-theme-changing', '')
+  expect(await themeRulesEnabled()).toBe(false)
+})
+
+test('theme surfaces interpolate while message layout wrappers stay unanimated', async ({ page }, testInfo) => {
+  const failures = installRuntimeFailureGate(page)
+  await installProductRoutes(page)
+  await page.addInitScript(() => localStorage.setItem('nekro-nxt.theme', 'dark'))
+  await page.goto(`/work/channels/${targetChannelId}`)
+  await expect(page.locator('[data-channel-message-list] article').first()).toBeVisible()
+  const colors = await page.evaluate(async () => {
+    const root = document.documentElement
+    const wrapper = document.querySelector<HTMLElement>('[data-channel-message-list] [data-nxt-enter-kind="object"]')
+    const paragraph = wrapper?.querySelector('p')
+    if (!wrapper || !paragraph) throw new Error('Missing theme fixture message')
+    for (const sheet of document.styleSheets) {
+      for (const rule of sheet.cssRules) {
+        if (rule instanceof CSSMediaRule && rule.conditionText.includes('(--nxt-theme-transition)'))
+          rule.media.mediaText = rule.conditionText.replaceAll('(--nxt-theme-transition)', '(min-width: 0px)')
+      }
+    }
+    root.dataset['themeChanging'] = ''
+    // Establish the old style before changing tokens, then inspect the real CSS transitions.
+    const initialColor = getComputedStyle(paragraph).color
+    root.dataset['theme'] = 'light'
+    root.classList.remove('dark')
+    await new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())))
+    const transitions = document
+      .getAnimations()
+      .filter((animation): animation is CSSTransition => animation instanceof CSSTransition)
+    for (const animation of transitions) animation.pause()
+    const at = async (time: number) => {
+      for (const animation of transitions) animation.currentTime = time
+      await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()))
+      return getComputedStyle(paragraph).color
+    }
+    const token = getComputedStyle(root).getPropertyValue('--nxt-motion-standard').trim()
+    const duration = Number.parseFloat(token) * (token.endsWith('ms') ? 1 : 1000)
+    const start = await at(0)
+    const middle = await at(duration / 2)
+    const end = await at(duration)
+    await at(duration / 2)
+    return {
+      start,
+      middle,
+      end,
+      count: transitions.length,
+      initialColor,
+      duration,
+      wrapperTransitions: wrapper.getAnimations().filter((animation) => animation instanceof CSSTransition).length,
+      durations: [...new Set(transitions.map((animation) => animation.effect?.getTiming().duration))],
+    }
+  })
+  expect(colors.start).toBe(colors.initialColor)
+  expect(colors.count).toBeGreaterThan(0)
+  expect(colors.wrapperTransitions).toBe(0)
+  expect(colors.durations).toEqual([colors.duration])
+  expect(colors.middle).not.toBe(colors.start)
+  expect(colors.middle).not.toBe(colors.end)
+  const screenshot = testInfo.outputPath('theme-midpoint.png')
+  await page.screenshot({ path: screenshot, animations: 'allow' })
+  await testInfo.attach('theme-midpoint', { path: screenshot, contentType: 'image/png' })
+  expect(failures).toEqual([])
+})
+
 test('representative product surfaces match committed visual baselines', async ({ page }, testInfo) => {
   const failures = installRuntimeFailureGate(page)
   await installProductRoutes(page)
@@ -3000,12 +3094,16 @@ test('trusted Desktop bridge renders the persistent remote-instance entry across
     await expect(statusDot).toHaveCSS('height', '7px')
     const entryGeometry = await entry.evaluate((element) => {
       const entryRect = element.getBoundingClientRect()
-      const railRect = element.closest('aside')?.getBoundingClientRect()
-      if (!railRect) throw new Error('服务实例入口缺少图标轨。')
+      const rail = element.closest('aside')
+      const railRect = rail?.getBoundingClientRect()
+      const primaryRect = rail?.querySelector('nav a')?.getBoundingClientRect()
+      if (!railRect || !primaryRect) throw new Error('服务实例入口缺少图标轨或主导航。')
       return {
         width: entryRect.width,
         height: entryRect.height,
-        horizontalCenterOffset: Math.abs(entryRect.left + entryRect.width / 2 - (railRect.left + railRect.width / 2)),
+        horizontalCenterOffset: Math.abs(
+          entryRect.left + entryRect.width / 2 - (primaryRect.left + primaryRect.width / 2),
+        ),
         bottomInset: railRect.bottom - entryRect.bottom,
       }
     })

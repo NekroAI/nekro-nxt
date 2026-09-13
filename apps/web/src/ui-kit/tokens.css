@@ -219,30 +219,29 @@
   --nxt-shadow-dialog: 0 32px 88px rgb(0 0 0 / 58%), 0 4px 16px rgb(0 0 0 / 30%);
 }
 
-:root[data-theme-changing] *,
-:root[data-theme-changing] *::before,
-:root[data-theme-changing] *::after {
-  transition:
+:root {
+  --nxt-theme-transition:
     color var(--nxt-motion-standard) var(--nxt-ease-standard),
     background-color var(--nxt-motion-standard) var(--nxt-ease-standard),
     border-color var(--nxt-motion-standard) var(--nxt-ease-standard),
     box-shadow var(--nxt-motion-standard) var(--nxt-ease-standard),
-    fill var(--nxt-motion-standard) var(--nxt-ease-standard),
-    stroke var(--nxt-motion-standard) var(--nxt-ease-standard);
+    fill var(--nxt-motion-standard) var(--nxt-ease-standard), stroke var(--nxt-motion-standard) var(--nxt-ease-standard);
+}
+
+/* Inline colors and separately loaded extension content have no host stylesheet owner. */
+:root[data-theme-changing] :is([style], [fill], [stroke]),
+:root[data-theme-changing] :is([data-host-ui-content], [data-dynamic-client-slots]) * {
+  transition: var(--nxt-theme-transition);
 }
 
 @media (prefers-reduced-motion: reduce) {
-  :root[data-theme-changing] *,
-  :root[data-theme-changing] *::before,
-  :root[data-theme-changing] *::after {
-    transition: none;
+  :root {
+    --nxt-theme-transition: none;
   }
 }
 
-:root[data-reduced-motion='true'][data-theme-changing] *,
-:root[data-reduced-motion='true'][data-theme-changing] *::before,
-:root[data-reduced-motion='true'][data-theme-changing] *::after {
-  transition: none;
+:root[data-reduced-motion='true'] {
+  --nxt-theme-transition: none;
 }
 
 @media (prefers-color-scheme: dark) {
