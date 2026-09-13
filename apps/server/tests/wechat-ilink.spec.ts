@@ -339,7 +339,10 @@ describe('WeChat iLink Server driver', () => {
       await loginOptions?.onQRCode?.('https://qr.example.invalid/login-late-fixture')
       const statusAfterLateCallbacks = runtime.getWechatIlinkLogin(started.loginId).status
       releaseMount.resolve()
-      await waitFor(() => runtime.core.listConnectionsByAdapter('wechat-ilink').length === 0)
+      await waitFor(async () => {
+        if (runtime.core.listConnectionsByAdapter('wechat-ilink').length !== 0) return false
+        return (await readdir(path.join(directory, 'credentials'))).length === 0
+      })
 
       expect(statusAfterLateCallbacks).toBe('cancelled')
       expect(runtime.getWechatIlinkLogin(started.loginId)).toMatchObject({ status: 'cancelled' })
