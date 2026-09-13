@@ -2,7 +2,7 @@ import { platformUserFilterKey, emptyPlatformUserDirectory } from '../product-mo
 import { useProductRuntime } from '../product-runtime.js'
 import type { HostApiResponse } from '@nekro-nxt/contracts'
 import { History, UsersRound } from 'lucide-react'
-import { useEffect, useState } from 'react'
+import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import { EmptyState, InlineFeedback, PageHeader } from '../components/product-feedback.js'
 import { Button, Field, Input, SelectField, Spinner } from '../ui-kit/index.js'
@@ -18,7 +18,6 @@ export function UsersPage() {
   const useProductStore = useProductRuntime().store
 
   const [searchParams, setSearchParams] = useSearchParams()
-  const revision = useProductStore((state) => state.platformUsersRevision)
   const facets = useProductStore((state) => state.platformUserFacets)
   const adapterKey = searchParams.get('adapter') ?? ''
   const connectionId = searchParams.get('connection') ?? ''
@@ -47,17 +46,49 @@ export function UsersPage() {
   }, [queryDraft, query, searchParams, setSearchParams])
 
   useEffect(() => {
-    const timer = window.setTimeout(
-      () => {
-        void useProductStore.getState().loadPlatformUserDirectory(filter)
-      },
-      revision === 0 ? 0 : 220,
-    )
-    return () => {
-      window.clearTimeout(timer)
-      useProductStore.getState().cancelPlatformUserDirectory()
+    void useProductStore.getState().loadPlatformUserDirectory(filter)
+    return () => useProductStore.getState().cancelPlatformUserDirectory()
+  }, [key, useProductStore])
+
+  const bodyRef = useRef<HTMLDivElement>(null)
+  const anchor = useRef<{ key: string; ids: string[]; index: number; offset: number }>()
+  const remember = () => {
+    const body = bodyRef.current
+    if (!body) return
+    const top = body.getBoundingClientRect().top
+    const rows = [...body.querySelectorAll<HTMLElement>('[data-user-id]')]
+    let low = 0
+    let high = rows.length
+    while (low < high) {
+      const middle = Math.floor((low + high) / 2)
+      if (rows[middle]!.getBoundingClientRect().bottom <= top) low = middle + 1
+      else high = middle
     }
-  }, [key, revision, useProductStore])
+    const first = rows[low]
+    anchor.current = first
+      ? {
+          key,
+          ids: rows.map((row) => row.dataset['userId']!),
+          index: low,
+          offset: first.getBoundingClientRect().top - top,
+        }
+      : undefined
+  }
+  useLayoutEffect(() => {
+    const body = bodyRef.current
+    const saved = anchor.current
+    if (body && saved?.key === key) {
+      const available = new Map(
+        [...body.querySelectorAll<HTMLElement>('[data-user-id]')].map((row) => [row.dataset['userId'], row]),
+      )
+      let row = available.get(saved.ids[saved.index])
+      for (let distance = 1; !row && distance < saved.ids.length; distance += 1) {
+        row = available.get(saved.ids[saved.index + distance]) ?? available.get(saved.ids[saved.index - distance])
+      }
+      if (row) body.scrollTop += row.getBoundingClientRect().top - body.getBoundingClientRect().top - saved.offset
+    }
+    remember()
+  }, [items, key])
 
   const selectedAdapter = facets.adapters.find((adapter) => adapter.key === adapterKey)
   const connectionOptions = facets.connections
@@ -79,7 +110,7 @@ export function UsersPage() {
   const renderRows = (users: readonly PlatformUser[]) => (
     <div className={styles.userRows} role="rowgroup">
       {users.map((user) => (
-        <article className={styles.userRow} key={user.identityId} role="row">
+        <article className={styles.userRow} key={user.identityId} data-user-id={user.identityId} role="row">
           <span className={styles.userAvatar} aria-hidden="true">
             {(user.displayName?.trim() || '用').slice(0, 1)}
           </span>
@@ -176,7 +207,7 @@ export function UsersPage() {
             <span role="columnheader">平台连接</span>
             <span role="columnheader">活动范围</span>
           </div>
-          <div className={styles.userTableBody} data-table-scroll-region="">
+          <div ref={bodyRef} onScroll={remember} className={styles.userTableBody} data-table-scroll-region="">
             {loading && items.length === 0 ? (
               <EmptyState loading title="正在读取用户目录" description="正在汇总已持久化的平台身份。" />
             ) : items.length === 0 ? (

@@ -61,7 +61,7 @@ export class ProductHostCoordinator implements TestProductHost {
         models: snapshot.models,
         agents: snapshot.agents,
         channels: snapshot.channels,
-        messages: snapshot.messages,
+        messagesByChannel: snapshot.messagesByChannel,
         channelRuntimes: snapshot.channelRuntimes,
         connections: snapshot.connections,
         archivedConnections: snapshot.archivedConnections,

@@ -24,7 +24,7 @@ export interface ProductSnapshot {
   readonly models: readonly ModelSummary[]
   readonly agents: readonly AgentSummary[]
   readonly channels: readonly ChannelSummary[]
-  readonly messages: readonly ConversationMessage[]
+  readonly messagesByChannel: Readonly<Record<string, readonly ConversationMessage[]>>
   readonly channelRuntimes: Readonly<Record<string, ChannelRuntimeView>>
   readonly connections: readonly ConnectionSummary[]
   readonly archivedConnections: readonly ArchivedConnectionSummary[]

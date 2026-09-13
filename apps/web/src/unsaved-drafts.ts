@@ -1,6 +1,6 @@
 import { useEffect } from 'react'
 
-const dirtyEntries = new Set<string>()
+const dirtyEntries = new Set<string | symbol>()
 
 declare global {
   interface Window {
@@ -18,4 +18,9 @@ export const useUnsavedDraft = (key: string, dirty: boolean): void => {
       dirtyEntries.delete(key)
     }
   }, [dirty, key])
+}
+
+export function setUnsavedDraftOwner(owner: symbol, dirty: boolean): void {
+  if (dirty) dirtyEntries.add(owner)
+  else dirtyEntries.delete(owner)
 }

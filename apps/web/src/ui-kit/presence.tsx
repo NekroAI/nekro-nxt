@@ -9,6 +9,7 @@ import {
   useRef,
   useState,
   type ReactNode,
+  type RefObject,
 } from 'react'
 import { useMeasuredSelection, type MeasuredSelectionBox } from './measured-selection.js'
 import {
@@ -93,6 +94,32 @@ export const Enter = forwardRef<HTMLDivElement, EnterProps>(function Enter({ kin
     </motion.div>
   )
 })
+
+/** Stable message DOM; finished entrances retain no per-frame Motion subscriptions. */
+export function MessageEnter({ incoming, children }: { readonly incoming: boolean; readonly children: ReactNode }) {
+  const ref = useRef<HTMLDivElement>(null)
+  const animation = useRef<Animation>()
+  const reduce = useNxtReducedMotion()
+  useLayoutEffect(() => {
+    if (!incoming || reduce || !ref.current) return
+    animation.current = ref.current.animate(
+      [
+        { opacity: 0, transform: 'translateY(10px)' },
+        { opacity: 1, transform: 'translateY(0)' },
+      ],
+      { duration: nxtDuration.standard * 1000, easing: `cubic-bezier(${nxtEase.enter.join(',')})` },
+    )
+    return () => animation.current?.cancel()
+  }, [])
+  useEffect(() => {
+    if (reduce) animation.current?.cancel()
+  }, [reduce])
+  return (
+    <div ref={ref} data-nxt-enter-kind="object">
+      {children}
+    </div>
+  )
+}
 
 function StageLayer({ initial, children }: { readonly initial: boolean; readonly children: ReactNode }) {
   const present = useIsPresent()
@@ -275,24 +302,29 @@ export function Disclosure({
 export function SidePane({
   collapsed,
   width,
+  widthVariable,
+  rootRef,
+  onSettled,
   className,
   children,
 }: {
   readonly collapsed: boolean
   readonly width: number
+  readonly widthVariable?: string
+  readonly rootRef?: RefObject<HTMLDivElement>
+  readonly onSettled?: (collapsed: boolean) => void
   readonly className?: string
   readonly children: ReactNode
 }) {
   const reduce = useNxtReducedMotion()
-  const prevCollapsed = useRef(collapsed)
-  const toggling = prevCollapsed.current !== collapsed
-  prevCollapsed.current = collapsed
+  const paneWidth = widthVariable ? `var(${widthVariable}, ${width}px)` : `${width}px`
   return (
     <motion.div
+      ref={rootRef}
       className={className}
       initial={false}
       animate={{
-        width: collapsed ? 0 : width,
+        '--nxt-pane-progress': collapsed ? 0 : 1,
         opacity: collapsed ? 0 : 1,
         x: collapsed ? 12 : 0,
         visibility: 'visible',
@@ -301,18 +333,19 @@ export function SidePane({
       transition={
         reduce
           ? tween(0, nxtEase.standard)
-          : toggling
-            ? tween(collapsed ? nxtDuration.standard : nxtDuration.spatial, collapsed ? nxtEase.exit : nxtEase.standard)
-            : tween(0, nxtEase.standard)
+          : tween(collapsed ? nxtDuration.standard : nxtDuration.spatial, collapsed ? nxtEase.exit : nxtEase.standard)
       }
+      onAnimationComplete={() => onSettled?.(collapsed)}
       style={{
+        ...(widthVariable ? { [widthVariable]: `${width}px` } : {}),
+        width: `calc(${paneWidth} * var(--nxt-pane-progress, ${collapsed ? 0 : 1}))`,
         overflow: 'hidden',
         pointerEvents: collapsed ? 'none' : 'auto',
         flexShrink: 0,
       }}
       aria-hidden={collapsed}
     >
-      <div style={{ width, height: '100%', minHeight: 0 }}>{children}</div>
+      <div style={{ width: paneWidth, height: '100%', minHeight: 0 }}>{children}</div>
     </motion.div>
   )
 }

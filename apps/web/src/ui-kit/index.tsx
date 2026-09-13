@@ -27,6 +27,7 @@ import {
   type PointerEvent as ReactPointerEvent,
   type ReactElement,
   type ReactNode,
+  type RefObject,
   type TextareaHTMLAttributes,
 } from 'react'
 import { canCloseDialog, type DialogCloseReason } from './dialog-policy.js'
@@ -53,6 +54,7 @@ export {
   AgentStateRing,
   Disclosure,
   Enter,
+  MessageEnter,
   NavGlyph,
   NavMark,
   NavMarkGroup,
@@ -161,6 +163,7 @@ export function ResizeHandle({
   disabled = false,
   onChange,
   onCommit,
+  previewTarget,
 }: {
   readonly label: string
   readonly value: number
@@ -170,22 +173,35 @@ export function ResizeHandle({
   readonly className?: string
   readonly side?: 'before' | 'after'
   readonly disabled?: boolean
-  readonly onChange: (value: number) => void
+  readonly onChange?: (value: number) => void
+  readonly previewTarget?: { readonly ref: RefObject<HTMLElement>; readonly property: string }
   readonly onCommit: (value: number) => void
 }) {
+  const handleRef = useRef<HTMLDivElement>(null)
+  const frame = useRef<number>()
+  const apply = (next: number): void => {
+    if (previewTarget) previewTarget.ref.current?.style.setProperty(previewTarget.property, `${next}px`)
+    else onChange?.(next)
+    handleRef.current?.setAttribute('aria-valuenow', String(next))
+  }
+  const cancelFrame = (): void => {
+    if (frame.current !== undefined) cancelAnimationFrame(frame.current)
+    frame.current = undefined
+  }
+  useEffect(() => cancelFrame, [])
   const dragStart = useRef<{ readonly x: number; readonly value: number }>()
   const currentValue = useRef(value)
-  currentValue.current = value
+  if (!dragStart.current) currentValue.current = value
   const clamp = (next: number): number => Math.min(max, Math.max(min, Math.round(next)))
   const change = (next: number): void => {
     const clamped = clamp(next)
     currentValue.current = clamped
-    onChange(clamped)
+    apply(clamped)
   }
   const commit = (next: number): void => {
     const clamped = clamp(next)
     currentValue.current = clamped
-    onChange(clamped)
+    apply(clamped)
     onCommit(clamped)
   }
   const onKeyDown = (event: ReactKeyboardEvent<HTMLDivElement>): void => {
@@ -204,12 +220,15 @@ export function ResizeHandle({
   const finishPointer = (event: ReactPointerEvent<HTMLDivElement>): void => {
     if (!dragStart.current) return
     dragStart.current = undefined
+    cancelFrame()
+    apply(currentValue.current)
     if (event.currentTarget.hasPointerCapture(event.pointerId))
       event.currentTarget.releasePointerCapture(event.pointerId)
     onCommit(currentValue.current)
   }
   return (
     <div
+      ref={handleRef}
       className={[styles.resizeHandle, className].filter(Boolean).join(' ')}
       role="separator"
       tabIndex={disabled ? -1 : 0}
@@ -232,12 +251,19 @@ export function ResizeHandle({
       onPointerMove={(event) => {
         if (!dragStart.current || !event.currentTarget.hasPointerCapture(event.pointerId)) return
         const direction = side === 'before' ? 1 : -1
-        change(dragStart.current.value + (event.clientX - dragStart.current.x) * direction)
+        currentValue.current = clamp(dragStart.current.value + (event.clientX - dragStart.current.x) * direction)
+        if (frame.current === undefined)
+          frame.current = requestAnimationFrame(() => {
+            frame.current = undefined
+            apply(currentValue.current)
+          })
       }}
       onPointerUp={finishPointer}
       onLostPointerCapture={() => {
         if (!dragStart.current) return
         dragStart.current = undefined
+        cancelFrame()
+        apply(currentValue.current)
         onCommit(currentValue.current)
       }}
     />

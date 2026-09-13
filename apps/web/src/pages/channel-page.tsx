@@ -1,18 +1,18 @@
+import { ChannelComposer } from './channel-composer.js'
+import { EMPTY_CHANNEL_MESSAGES } from '../channel-messages.js'
 import { runtimeStateLabel } from '../product-model.js'
 import { useProductRuntime } from '../product-runtime.js'
 import {
   Activity,
   ArrowDown,
   FileUp,
-  Info,
   MoreHorizontal,
   PanelRightClose,
   PanelRightOpen,
-  Send,
   Wrench,
   type LucideIcon,
 } from 'lucide-react'
-import { memo, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type FormEvent } from 'react'
+import { memo, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { Navigate, useParams } from 'react-router-dom'
 import { useNxtNavigate } from '../shell/nxt-link.js'
 import { notify } from '../components/notifications.js'
@@ -31,6 +31,7 @@ import {
   ConfirmDialog,
   DropdownMenu,
   Enter,
+  MessageEnter,
   IconButton,
   Presence,
   ResizeHandle,
@@ -39,12 +40,9 @@ import {
   StageCrossfade,
   StatusBadge,
   Tabs,
-  Textarea,
-  Tooltip,
   type StatusTone,
 } from '../ui-kit/index.js'
 import { INSPECTOR_WIDTH, useUiPreferences } from '../ui-preferences.js'
-import { useUnsavedDraft } from '../unsaved-drafts.js'
 import { BindingTaskDialog } from './binding-task.js'
 import { useStickToBottom } from './channel-scroll.js'
 import { MessageContent, resolveMessageSide, type MessageSide } from './message-content.js'
@@ -54,7 +52,7 @@ import {
   ChannelTrajectoryLedger,
   ChannelViewSwitch,
   ChannelWorkStream,
-  flattenRuntimeRecords,
+  createTrajectoryProjector,
   readChannelCanvasView,
   writeChannelCanvasView,
   type ChannelCanvasView,
@@ -161,7 +159,7 @@ function MessageRowBase({
         </div>
       </article>
     )
-  return incoming ? <Enter kind="object">{body}</Enter> : body
+  return <MessageEnter incoming={incoming}>{body}</MessageEnter>
 }
 
 export const MessageRow = memo(MessageRowBase)
@@ -169,6 +167,7 @@ export const MessageRow = memo(MessageRowBase)
 export const appendedMessageIds = (
   messages: readonly Pick<ConversationMessage, 'id'>[],
   knownIds: ReadonlySet<string>,
+  emptyHistoryLoaded = false,
 ): ReadonlySet<string> => {
   let lastKnownIndex = -1
   for (let index = messages.length - 1; index >= 0; index -= 1) {
@@ -176,7 +175,8 @@ export const appendedMessageIds = (
     lastKnownIndex = index
     break
   }
-  if (lastKnownIndex < 0) return new Set()
+  if (lastKnownIndex < 0)
+    return new Set(emptyHistoryLoaded && knownIds.size === 0 ? messages.map((message) => message.id) : [])
   return new Set(
     messages
       .slice(lastKnownIndex + 1)
@@ -203,18 +203,22 @@ function ChannelMessageListBase({
   readonly channelKind: ChannelSummary['kind']
   readonly history: ChannelHistoryState | undefined
 }) {
-  const knownChannelRef = useRef<string | undefined>(undefined)
-  const knownIdsRef = useRef<Set<string> | null>(null)
-  if (knownChannelRef.current !== channelId) {
-    knownChannelRef.current = channelId
-    knownIdsRef.current = new Set(messages.map((message) => message.id))
-  }
-  const knownIds = knownIdsRef.current ?? new Set<string>()
-  const arriving = appendedMessageIds(messages, knownIds)
-  for (const message of messages) {
-    knownIds.add(message.id)
-  }
-  knownIdsRef.current = knownIds
+  const known = useRef<{ channelId: string; ids: ReadonlySet<string>; loaded: boolean }>({
+    channelId,
+    ids: new Set(messages.map((message) => message.id)),
+    loaded: false,
+  })
+  const arriving =
+    known.current.channelId === channelId
+      ? appendedMessageIds(
+          messages,
+          known.current.ids,
+          known.current.loaded && !history?.loading && !history?.loadingMore,
+        )
+      : new Set<string>()
+  useLayoutEffect(() => {
+    known.current = { channelId, ids: new Set(messages.map((message) => message.id)), loaded: Boolean(history?.loaded) }
+  }, [channelId, messages, history])
 
   return (
     <>
@@ -257,8 +261,6 @@ export function ChannelConversationPage() {
   const host = useProductStore((state) => state.host)
   const channels = useProductStore((state) => state.channels)
   const agents = useProductStore((state) => state.agents)
-  const allMessages = useProductStore((state) => state.messages)
-  const channelHistory = useProductStore((state) => state.channelHistory)
   const connections = useProductStore((state) => state.connections)
   const dynamic = useProductStore((state) => state.dynamic)
   const authoringTasks = useProductStore((state) => state.authoringTasks)
@@ -276,37 +278,40 @@ export function ChannelConversationPage() {
   const runtime = useProductStore((state) => (channel ? state.channelRuntimes[channel.id] : undefined))
   const livePhase = runtime?.phase ?? channel?.runtimePhase ?? agent?.state ?? 'idle'
   const activeChannelId = channel?.id
-  const messages = useMemo(
-    () => (activeChannelId ? allMessages.filter((message) => message.channelId === activeChannelId) : []),
-    [allMessages, activeChannelId],
+  const messages = useProductStore((state) =>
+    activeChannelId ? (state.messagesByChannel[activeChannelId] ?? EMPTY_CHANNEL_MESSAGES) : EMPTY_CHANNEL_MESSAGES,
   )
-  const history = activeChannelId ? channelHistory[activeChannelId] : undefined
-  const [draft, setDraft] = useState('')
-  useUnsavedDraft(`channel-composer:${channel?.id ?? 'none'}`, draft.trim().length > 0)
+  const history = useProductStore((state) => (activeChannelId ? state.channelHistory[activeChannelId] : undefined))
   const [bindingOpen, setBindingOpen] = useState(false)
   const [contextResetMode, setContextResetMode] = useState<'clear' | 'compact' | null>(null)
   const [channelDeleteOpen, setChannelDeleteOpen] = useState(false)
-  const [sendPending, setSendPending] = useState(false)
   const inspectorPaneRef = useRef<HTMLDivElement>(null)
   const [canvasView, setCanvasView] = useState<ChannelCanvasView>(readChannelCanvasView)
   const [trajectorySearch, setTrajectorySearch] = useState('')
   const [selectedRecordId, setSelectedRecordId] = useState('')
   const savedInspectorWidth = useUiPreferences((state) => state.layout.inspectorWidth)
   const inspectorCollapsed = useUiPreferences((state) => state.layout.inspectorCollapsed)
-  const [inspectorWidth, setInspectorWidth] = useState(savedInspectorWidth)
+  const inspectorWidth = savedInspectorWidth
+  const inspectorResizeRef = useRef<HTMLDivElement>(null)
+  const [inspectorHidden, setInspectorHidden] = useState(inspectorCollapsed)
+  useEffect(() => {
+    if (!inspectorCollapsed) setInspectorHidden(false)
+  }, [inspectorCollapsed])
   const chatScroll = useStickToBottom(`${channel?.id ?? ''}:chat`, Boolean(channel) && canvasView === 'chat')
   const trajScroll = useStickToBottom(
     `${channel?.id ?? ''}:trajectory`,
     Boolean(channel) && canvasView === 'trajectory',
   )
 
-  const records = useMemo(() => flattenRuntimeRecords(runtime), [runtime])
+  const projectTrajectory = useMemo(createTrajectoryProjector, [])
+  const records = useMemo(
+    () => (canvasView === 'trajectory' ? projectTrajectory(runtime) : []),
+    [runtime, canvasView, projectTrajectory],
+  )
   const selectedRecord = records.find((record) => record.id === selectedRecordId) ?? records.at(-1)
   const scrollAway = canvasView === 'chat' ? chatScroll.away : trajScroll.away
   const webChannel = agent ? channels.find((item) => item.kind === 'internal' && item.agentId === agent.id) : undefined
   const connection = channel ? connections.find((item) => item.id === channel.connectionId) : undefined
-  const canSendOnWeb = channel?.kind === 'internal' && Boolean(agent)
-  const canSendAsRobot = Boolean(channel && channel.kind !== 'internal' && agent && connection?.proactiveSend)
   const toggleInspector = (): void => {
     useProductRuntimeUi.getState().setInspectorCollapsed(!inspectorCollapsed)
   }
@@ -329,8 +334,6 @@ export function ChannelConversationPage() {
     setSelectedRecordId((current) => (records.some((record) => record.id === current) ? current : lastId))
   }, [channel?.id, records])
 
-  useEffect(() => setInspectorWidth(savedInspectorWidth), [savedInspectorWidth])
-
   useEffect(() => {
     const pane = inspectorPaneRef.current
     if (!pane) return
@@ -344,7 +347,7 @@ export function ChannelConversationPage() {
 
   useLayoutEffect(() => {
     if (canvasView === 'chat') chatScroll.reconcileLayout()
-  }, [canvasView, draft, chatScroll.reconcileLayout])
+  }, [canvasView, chatScroll.reconcileLayout])
 
   const loadOlder = (): void => {
     const list = chatScroll.ref.current
@@ -361,24 +364,6 @@ export function ChannelConversationPage() {
     return <Navigate to={workHomePath({ channels, agents })} replace />
   }
 
-  const submit = async (event: FormEvent): Promise<void> => {
-    event.preventDefault()
-    const value = draft.trim()
-    if (!channel || !value || sendPending) return
-    setSendPending(true)
-    try {
-      await useProductStore.getState().sendMessage(channel.id, value)
-      setDraft('')
-    } catch (error) {
-      notify(
-        `发送失败：${error instanceof Error ? error.message : String(error)}。草稿已保留。`,
-        'error',
-        `channel-send:${channel.id}`,
-      )
-    } finally {
-      setSendPending(false)
-    }
-  }
   const resetContext = async (mode: 'clear' | 'compact'): Promise<boolean> => {
     if (!channel || !runtime?.episodeId) return false
     try {
@@ -410,35 +395,10 @@ export function ChannelConversationPage() {
       return false
     }
   }
-  const conversationStyle: CSSProperties & {
-    '--nxt-inspector-width': string
-  } = {
-    '--nxt-inspector-width': `${inspectorWidth}px`,
-  }
-  const composerMode =
-    channel?.kind === 'internal'
-      ? agent
-        ? '发给智能体'
-        : '请先绑定智能体'
-      : !agent
-        ? '请先绑定智能体'
-        : connection?.proactiveSend
-          ? '发到频道'
-          : '连接未允许主动发送'
-  const composerExplanation =
-    channel?.kind === 'internal'
-      ? agent
-        ? `内容会作为当前内置频道的入站消息交给“${agent.name}”。`
-        : '请先绑定智能体，再将输入内容作为当前内置频道的入站消息。'
-      : !agent
-        ? `此频道来自“${channel?.connectionName ?? '当前连接'}”；请先绑定智能体，再以机器人账号发言。`
-        : connection?.proactiveSend
-          ? `“${channel?.connectionName ?? '当前连接'}”会向平台频道发出内容，并标记为管理员从客户端发出。`
-          : `“${channel?.connectionName ?? '当前连接'}”尚未允许主动发送。`
 
   return (
     <>
-      <div className={styles.conversationPage} style={conversationStyle}>
+      <div className={styles.conversationPage}>
         {!channel ? (
           <div className={styles.conversationEmpty}>
             <EmptyState
@@ -596,80 +556,13 @@ export function ChannelConversationPage() {
                     </div>
                   ) : null}
                   {canvasView === 'chat' ? (
-                    <div
-                      className={styles.composer}
-                      data-channel-composer
-                      data-mode={channel.kind === 'internal' ? 'internal' : 'platform'}
-                    >
-                      <form onSubmit={(event) => void submit(event)}>
-                        <Textarea
-                          className={styles.composerInput}
-                          value={draft}
-                          onChange={(event) => {
-                            setDraft(event.target.value)
-                          }}
-                          onKeyDown={(event) => {
-                            if (event.key !== 'Enter' || event.shiftKey || event.nativeEvent.isComposing) return
-                            event.preventDefault()
-                            if (draft.trim() && !sendPending) event.currentTarget.form?.requestSubmit()
-                          }}
-                          aria-label="消息内容"
-                          aria-describedby="channel-composer-mode"
-                          rows={1}
-                          placeholder={
-                            channel.kind === 'internal'
-                              ? agent
-                                ? '输入消息'
-                                : '请先绑定智能体'
-                              : canSendAsRobot
-                                ? '输入消息'
-                                : !agent
-                                  ? '请先绑定智能体'
-                                  : '当前连接不允许主动发言'
-                          }
-                          disabled={sendPending || (channel.kind === 'internal' ? !canSendOnWeb : !canSendAsRobot)}
-                        />
-                        <div className={styles.composerModeRow}>
-                          <Tooltip.Root>
-                            <Tooltip.Trigger asChild>
-                              <span className={styles.composerInfo} tabIndex={0} role="img" aria-label="发送方式说明">
-                                <Info size={14} aria-hidden="true" />
-                              </span>
-                            </Tooltip.Trigger>
-                            <Tooltip.Portal>
-                              <Tooltip.Content side="top" align="start" sideOffset={8} collisionPadding={12}>
-                                {composerExplanation}
-                              </Tooltip.Content>
-                            </Tooltip.Portal>
-                          </Tooltip.Root>
-                          <span className={styles.composerMode}>{composerMode}</span>
-                          <span className={styles.composerModeSpacer} aria-hidden="true" />
-                          {channel.kind !== 'internal' && webChannel ? (
-                            <Button
-                              variant="ghost"
-                              size="small"
-                              className={styles.composerWebAction}
-                              onClick={() => void navigate(`/work/channels/${webChannel.id}`)}
-                            >
-                              去内置频道
-                            </Button>
-                          ) : null}
-                          <IconButton
-                            label={channel.kind === 'internal' ? '发送给智能体' : '发到频道'}
-                            className={styles.composerSend}
-                            type="submit"
-                            loading={sendPending}
-                            loadingLabel="发送中…"
-                            disabled={!draft.trim() || (channel.kind === 'internal' ? !canSendOnWeb : !canSendAsRobot)}
-                          >
-                            <Send size={14} aria-hidden="true" />
-                          </IconButton>
-                        </div>
-                        <span className={styles.srOnly} id="channel-composer-mode">
-                          {composerExplanation}
-                        </span>
-                      </form>
-                    </div>
+                    <ChannelComposer
+                      channel={channel}
+                      agent={agent}
+                      connection={connection}
+                      webChannel={webChannel}
+                      onResize={chatScroll.reconcileLayout}
+                    />
                   ) : null}
                 </div>
               </StageCrossfade>
@@ -684,10 +577,17 @@ export function ChannelConversationPage() {
               defaultValue={INSPECTOR_WIDTH.default}
               side="after"
               disabled={inspectorCollapsed}
-              onChange={setInspectorWidth}
+              previewTarget={{ ref: inspectorResizeRef, property: '--nxt-inspector-width' }}
               onCommit={(value) => useProductRuntimeUi.getState().setInspectorWidth(value)}
             />
-            <SidePane collapsed={inspectorCollapsed} width={inspectorWidth} className={styles.inspectorPane}>
+            <SidePane
+              collapsed={inspectorCollapsed}
+              width={inspectorWidth}
+              widthVariable="--nxt-inspector-width"
+              rootRef={inspectorResizeRef}
+              onSettled={setInspectorHidden}
+              className={styles.inspectorPane}
+            >
               <div ref={inspectorPaneRef} className={styles.inspectorChrome}>
                 <header className={styles.inspectorChromeHeader}>
                   <div>
@@ -712,6 +612,7 @@ export function ChannelConversationPage() {
                           channel={channel}
                           agent={agent}
                           runtime={runtime}
+                          metricsVisible={!inspectorCollapsed || !inspectorHidden}
                           onBind={() => setBindingOpen(true)}
                           onReassign={() => setBindingOpen(true)}
                           onDelete={() => setChannelDeleteOpen(true)}

@@ -15,6 +15,7 @@ import {
   OutboundIntentIdSchema,
   PlatformIdentityIdSchema,
 } from '@nekro-nxt/contracts'
+import { StaleHostReadError } from '../src/host-api-client.js'
 import { HttpProductHost, renderConversationBody } from '../src/http-host.ts'
 import { connectionDisplayName } from '../src/product-runtime.ts'
 
@@ -581,9 +582,13 @@ describe('HttpProductHost', () => {
       agentId: webAgentId,
       trigger: '始终响应',
     })
-    expect(snapshot.messages).toHaveLength(2)
-    expect(snapshot.messages[0]).toMatchObject({ role: 'member', author: '你', body: '你好' })
-    expect(snapshot.messages[1]).toMatchObject({
+    expect(Object.values(snapshot.messagesByChannel).flat()).toHaveLength(2)
+    expect(Object.values(snapshot.messagesByChannel).flat()[0]).toMatchObject({
+      role: 'member',
+      author: '你',
+      body: '你好',
+    })
+    expect(Object.values(snapshot.messagesByChannel).flat()[1]).toMatchObject({
       role: 'agent',
       author: '小奈',
       body: '这是通信工具确认发送的回复。',
@@ -659,12 +664,12 @@ describe('HttpProductHost', () => {
     const unsubscribe = host.subscribe(() => {})
     await flush()
 
-    expect(host.getSnapshot().messages[0]).toMatchObject({
+    expect(Object.values(host.getSnapshot().messagesByChannel).flat()[0]).toMatchObject({
       author: '成员甲',
       body: '@机器人账号 [表情] 请看 @成员乙',
     })
-    expect(host.getSnapshot().messages[0]?.body).not.toContain('mbr_')
-    expect(host.getSnapshot().messages[0]?.body).not.toContain('faceType')
+    expect(Object.values(host.getSnapshot().messagesByChannel).flat()[0]?.body).not.toContain('mbr_')
+    expect(Object.values(host.getSnapshot().messagesByChannel).flat()[0]?.body).not.toContain('faceType')
     expect(host.getSnapshot().channels[0]?.connectionName).toBe('项目机器人')
     expect(connectionDisplayName(host.getSnapshot().connections[0]!)).toBe('项目机器人')
     unsubscribe()
@@ -705,7 +710,7 @@ describe('HttpProductHost', () => {
     const unsubscribe = host.subscribe(() => undefined)
     await flush()
 
-    expect(host.getSnapshot().messages[0]).toMatchObject({
+    expect(Object.values(host.getSnapshot().messagesByChannel).flat()[0]).toMatchObject({
       role: 'system',
       activityKey: 'member-joined',
       author: '频道事件',
@@ -760,7 +765,7 @@ describe('HttpProductHost', () => {
 
     const page = await host.actions['channels.listMessages']({ channelId: webChannelId, mode: 'initial', limit: 24 })
     expect(page).toMatchObject({ hasMore: true })
-    expect(host.getSnapshot().messages[0]).toMatchObject({
+    expect(Object.values(host.getSnapshot().messagesByChannel).flat()[0]).toMatchObject({
       body: '附件如下',
       resources: [
         {
@@ -833,8 +838,15 @@ describe('HttpProductHost', () => {
     await loading
     await flush()
 
-    expect(host.getSnapshot().messages.map((message) => message.id)).toEqual([initialEventId, secondReplyIntentId])
-    expect(host.getSnapshot().messages.at(-1)).toMatchObject({ body: '请求期间发送的回复。', delivery: '已发送' })
+    expect(
+      Object.values(host.getSnapshot().messagesByChannel)
+        .flat()
+        .map((message) => message.id),
+    ).toEqual([initialEventId, secondReplyIntentId])
+    expect(Object.values(host.getSnapshot().messagesByChannel).flat().at(-1)).toMatchObject({
+      body: '请求期间发送的回复。',
+      delivery: '已发送',
+    })
     unsubscribe()
   })
 
@@ -1348,7 +1360,7 @@ describe('HttpProductHost', () => {
     const unsubscribe = host.subscribe(listener)
     await flush()
     expect(listener).toHaveBeenCalledTimes(1)
-    expect(host.getSnapshot().messages).toHaveLength(2)
+    expect(Object.values(host.getSnapshot().messagesByChannel).flat()).toHaveLength(2)
 
     const source = FakeEventSource.instances[0]
     expect(source).toBeDefined()
@@ -1373,10 +1385,99 @@ describe('HttpProductHost', () => {
     await flush()
 
     expect(listener).toHaveBeenCalledTimes(2)
-    expect(host.getSnapshot().messages).toHaveLength(3)
-    expect(host.getSnapshot().messages.at(-1)).toMatchObject({ role: 'agent', body: '第二条回复。' })
+    expect(Object.values(host.getSnapshot().messagesByChannel).flat()).toHaveLength(3)
+    expect(Object.values(host.getSnapshot().messagesByChannel).flat().at(-1)).toMatchObject({
+      role: 'agent',
+      body: '第二条回复。',
+    })
     expect(requests.filter((url) => url.includes('/messages'))).toEqual([])
     unsubscribe()
+  })
+
+  it('does not restore a deleted channel projection from a late history response', async () => {
+    let snapshot = snapshotBody()
+    const messages = snapshot.messages.filter((message) => message.channelId === webChannelId)
+    let finish!: (value: ReturnType<typeof stubResponse>) => void
+    vi.stubGlobal(
+      'fetch',
+      vi.fn((url: string) =>
+        url === '/api/snapshot'
+          ? Promise.resolve(stubResponse(200, snapshot))
+          : new Promise((resolve) => {
+              finish = resolve
+            }),
+      ),
+    )
+    vi.stubGlobal('EventSource', FakeEventSource)
+    const host = new HttpProductHost()
+    const stop = host.subscribe(() => undefined)
+    await flush()
+    const pending = host.actions['channels.listMessages']({
+      channelId: webChannelId,
+      mode: 'initial',
+      limit: 24,
+    }).catch((cause: unknown) => cause)
+    snapshot = {
+      ...snapshot,
+      channels: snapshot.channels.filter((channel) => channel.id !== webChannelId),
+      messages: snapshot.messages.filter((message) => message.channelId !== webChannelId),
+    }
+    await host.actions['host.refresh']()
+    finish(stubResponse(200, { cursor: { epoch: 'fixture', sequence: 0 }, hasMore: false, messages }))
+    expect(await pending).toBeInstanceOf(StaleHostReadError)
+    expect(host.getSnapshot().messagesByChannel[webChannelId]).toBeUndefined()
+    stop()
+  })
+
+  it('preserves another loaded channel array and message objects when a fact arrives', async () => {
+    const snapshot = snapshotBody()
+    const original = snapshot.messages[0]!
+    const channel = snapshot.channels[0]!
+    snapshot.channels.push({
+      ...channel,
+      id: externalChannelId,
+      platformChannelId: 'fixture-other',
+      bindings: channel.bindings.map((binding) => ({ ...binding, channelId: externalChannelId })),
+    })
+    snapshot.messages.push({
+      ...original,
+      id: ChannelEventIdSchema.parse('evt_otherloaded'),
+      channelId: externalChannelId,
+    })
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(() => Promise.resolve(stubResponse(200, snapshot))),
+    )
+    vi.stubGlobal('EventSource', FakeEventSource)
+    const host = new HttpProductHost()
+    const stop = host.subscribe(() => undefined)
+    await flush()
+    const before = host.getSnapshot().messagesByChannel
+    FakeEventSource.instances[0]?.emit('channel-fact', {
+      channelId: externalChannelId,
+      revision: 1,
+      items: [
+        {
+          kind: 'outbound',
+          sourceId: secondReplyIntentId,
+          message: {
+            id: secondReplyIntentId,
+            channelId: externalChannelId,
+            role: 'agent',
+            parts: [{ type: 'text', text: '其他频道的新消息' }],
+            occurredAt: 1_700_000_002_000,
+            deliveryState: 'sent',
+          },
+        },
+      ],
+    })
+    await flush()
+    const after = host.getSnapshot().messagesByChannel
+    expect(after[webChannelId]).toBe(before[webChannelId])
+    expect(after[webChannelId]?.[0]).toBe(before[webChannelId]?.[0])
+    expect(after[externalChannelId]).not.toBe(before[externalChannelId])
+    expect(after[externalChannelId]).toHaveLength(2)
+    stop()
   })
 
   it('updates delivery state when the same outbound fact is pushed again', async () => {
@@ -1428,7 +1529,9 @@ describe('HttpProductHost', () => {
       ],
     })
     await flush()
-    const pushed = host.getSnapshot().messages.filter((message) => message.id === secondReplyIntentId)
+    const pushed = Object.values(host.getSnapshot().messagesByChannel)
+      .flat()
+      .filter((message) => message.id === secondReplyIntentId)
     expect(pushed).toHaveLength(1)
     expect(pushed[0]?.delivery).toBe('已发送')
     unsubscribe()
@@ -1991,7 +2094,11 @@ describe('HttpProductHost', () => {
     const snapshot = host.getSnapshot()
     expect(snapshot.agents[0]?.name).toBe('未命名智能体')
     expect(snapshot.agents[0]?.model).toBe('未命名模型')
-    expect(snapshot.messages.find((message) => message.role === 'agent')?.author).toBe('未命名智能体')
+    expect(
+      Object.values(snapshot.messagesByChannel)
+        .flat()
+        .find((message) => message.role === 'agent')?.author,
+    ).toBe('未命名智能体')
     expect(snapshot.channels[0]).toMatchObject({
       name: '未命名群聊',
       connectionName: '未命名连接',

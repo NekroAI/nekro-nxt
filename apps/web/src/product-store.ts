@@ -1,3 +1,4 @@
+import { createPlatformUserDirectoryLoader } from './platform-user-directory.js'
 import { createOwnedHostQuery } from './owned-host-query.js'
 import { StaleHostReadError } from './host-api-client.js'
 import { parseJsonValue } from '@nekro-nxt/contracts'
@@ -6,7 +7,6 @@ import type { ProductHostPort } from './product-port.js'
 import { createDynamicClientApprovalBridge } from './dynamic-client-bridge.js'
 import {
   ProductActionError,
-  platformUserFilterKey,
   emptyPlatformUserDirectory,
   defaultImageUnderstandingPolicy,
   CHANNEL_MESSAGE_INITIAL_PAGE_SIZE,
@@ -24,9 +24,7 @@ export function createProductStore(
   requireHost: () => ProductHostPort,
   approvals = createDynamicClientApprovalBridge(),
 ) {
-  let directoryGeneration = 0
-  let directoryAbort: AbortController | undefined
-  const useProductStore = create<ProductState>((set) => ({
+  const useProductStore = create<ProductState>(() => ({
     llmProvidersQuery: { data: undefined, loading: false, error: '' },
     dshCatalogQuery: { data: undefined, loading: false, error: '' },
     loadLlmProviders: (invalidate) => providers.load(invalidate),
@@ -37,58 +35,8 @@ export function createProductStore(
       catalog.cancel()
     },
     platformUserDirectory: emptyPlatformUserDirectory(),
-    cancelPlatformUserDirectory: () => {
-      directoryGeneration += 1
-      directoryAbort?.abort()
-      set((state) => ({
-        platformUserDirectory: { ...state.platformUserDirectory, loading: false, loadingMore: false },
-      }))
-    },
-    loadPlatformUserDirectory: async (input, older = false) => {
-      const key = platformUserFilterKey(input)
-      const previous = useProductStore.getState().platformUserDirectory
-      if (older && (previous.key !== key || previous.loading || previous.loadingMore || !previous.nextCursor)) return
-      const generation = ++directoryGeneration
-      directoryAbort?.abort()
-      const controller = new AbortController()
-      directoryAbort = controller
-      const initial = previous.key === key ? previous : emptyPlatformUserDirectory(key)
-      set({ platformUserDirectory: { ...initial, loading: !older, loadingMore: older, error: '' } })
-      try {
-        const result = await requireHost().actions['platformUsers.list'](
-          {
-            ...input,
-            limit: 50,
-            ...(older ? { cursor: previous.nextCursor } : {}),
-          },
-          controller.signal,
-        )
-        if (generation !== directoryGeneration) return
-        const items = older ? [...previous.items, ...result.items] : result.items
-        set({
-          platformUserFacets: result.facets,
-          platformUserDirectory: {
-            key,
-            items: [...new Map(items.map((item) => [item.identityId, item])).values()],
-            total: result.total,
-            nextCursor: result.nextCursor,
-            loading: false,
-            loadingMore: false,
-            error: '',
-          },
-        })
-      } catch (cause) {
-        if (generation !== directoryGeneration || cause instanceof StaleHostReadError) return
-        set({
-          platformUserDirectory: {
-            ...initial,
-            loading: false,
-            loadingMore: false,
-            error: cause instanceof Error ? cause.message : String(cause),
-          },
-        })
-      }
-    },
+    cancelPlatformUserDirectory: () => directory.cancel(),
+    loadPlatformUserDirectory: (input, older = false) => directory.load(input, older),
     host: { status: 'initializing', error: null, lastSuccessfulAt: null },
     productMetadata: undefined,
     connectionAdapters: [],
@@ -107,7 +55,7 @@ export function createProductStore(
     models: [],
     agents: [],
     channels: [],
-    messages: [],
+    messagesByChannel: {},
     channelHistory: {},
     channelRuntimes: {},
     connections: [],
@@ -282,7 +230,7 @@ export function createProductStore(
       const history = currentState.channelHistory[normalizedChannelId]
       if (mode === 'initial' && (history?.loaded || history?.loading)) return
       if (mode === 'older' && (history?.loadingMore || history?.hasMore === false)) return
-      const existing = currentState.messages.filter((message) => message.channelId === normalizedChannelId)
+      const existing = currentState.messagesByChannel[normalizedChannelId] ?? []
       const oldest = existing[0]
       useProductStore.setState((state) => ({
         channelHistory: {
@@ -556,6 +504,15 @@ export function createProductStore(
     },
   }))
 
+  const directory = createPlatformUserDirectoryLoader({
+    read: (input, signal) => requireHost().actions['platformUsers.list'](input, signal),
+    get: () => useProductStore.getState().platformUserDirectory,
+    write: (value, facets) =>
+      useProductStore.setState({ platformUserDirectory: value, ...(facets ? { platformUserFacets: facets } : {}) }),
+  })
+  useProductStore.subscribe((state, previous) => {
+    if (state.platformUsersRevision !== previous.platformUsersRevision) directory.invalidate()
+  })
   const providers = createOwnedHostQuery(
     (signal) => requireHost().actions['settings.providers'](signal),
     (patch) => useProductStore.setState((state) => ({ llmProvidersQuery: { ...state.llmProvidersQuery, ...patch } })),

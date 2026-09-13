@@ -7,15 +7,29 @@ import { join } from 'node:path'
 import { createServer, type Connect, type ViteDevServer } from 'vite'
 
 const harnessModule = `
-  import React, { useState } from 'react'
+  import React, { useRef, useState } from 'react'
   import { createRoot } from 'react-dom/client'
   import { NotificationCenter, notify } from '/src/components/notifications.tsx'
   import { installStableCursorIntent } from '/src/cursor-stability.ts'
-  import { Button, Dialog, IconButton, NxtMotionProvider, Tooltip } from '/src/ui-kit/index.tsx'
+  import { Button, Dialog, IconButton, MessageEnter, ResizeHandle, NxtMotionProvider, Tooltip } from '/src/ui-kit/index.tsx'
   import '/src/ui-kit/tokens.css'
 
   installStableCursorIntent()
 
+  function PerformanceHarness() {
+    const ref = useRef(null)
+    const [width, setWidth] = useState(240)
+    const [updates, setUpdates] = useState(0)
+    const [arrived, setArrived] = useState(false)
+    return <div ref={ref} id="resize-target" style={{ '--test-width': width + 'px' }}>
+      <span id="committed-width">{width}</span>
+      <ResizeHandle label="性能测试分栏" value={width} min={180} max={400} defaultValue={240}
+        previewTarget={{ ref, property: '--test-width' }} onCommit={setWidth} />
+      <button id="arrive" onClick={() => setArrived(true)}>到达</button>
+      <button id="revise" onClick={() => setUpdates(updates + 1)}>修订</button>
+      {arrived && <MessageEnter incoming={updates === 0}><audio id="stable-media" controls /><span>{updates}</span></MessageEnter>}
+    </div>
+  }
   function Harness() {
     const [open, setOpen] = useState(false)
     const [pending, setPending] = useState(false)
@@ -23,6 +37,7 @@ const harnessModule = `
     const [notificationSequence, setNotificationSequence] = useState(0)
     return <Tooltip.Provider>
       <main>
+      <PerformanceHarness />
       <Button id="dialog-trigger" onClick={() => { setLongContent(true); setPending(false); setOpen(true) }}>打开对话框</Button>
       <IconButton id="icon-button" label="新建内置频道"><span>+</span></IconButton>
       <IconButton id="silent-icon-button" label="主题切换" tooltip={false}><span>◐</span></IconButton>
@@ -211,6 +226,44 @@ test.describe('ui-kit Dialog browser behavior', () => {
     await browser?.close()
     await server?.close()
     if (cacheDirectory) await rm(cacheDirectory, { recursive: true, force: true })
+  })
+
+  test('previews splitter width locally and commits the final pointer and keyboard positions', async () => {
+    await page.goto(`${baseUrl}/__ui-kit_harness__`)
+    const handle = page.getByRole('separator', { name: '性能测试分栏' })
+    await handle.evaluate((element) => {
+      if (!(element instanceof HTMLElement)) throw new Error('Missing splitter element')
+      const target = element
+      target.setPointerCapture = () => undefined
+      target.hasPointerCapture = () => true
+      target.releasePointerCapture = () => undefined
+      target.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, pointerId: 1, clientX: 100, button: 0 }))
+      for (const clientX of [110, 130, 160])
+        target.dispatchEvent(new PointerEvent('pointermove', { bubbles: true, pointerId: 1, clientX }))
+    })
+    await expect(page.locator('#committed-width')).toHaveText('240')
+    await expect(handle).toHaveAttribute('aria-valuenow', '300')
+    await handle.dispatchEvent('lostpointercapture', { pointerId: 1 })
+    await expect(page.locator('#committed-width')).toHaveText('300')
+    await handle.press('Shift+ArrowRight')
+    await expect(page.locator('#committed-width')).toHaveText('310')
+    await handle.dispatchEvent('dblclick')
+    await expect(handle).toHaveAttribute('aria-valuenow', '240')
+  })
+
+  test('keeps message media and wrapper identity after arrival revisions', async () => {
+    await page.goto(`${baseUrl}/__ui-kit_harness__`)
+    await page.locator('#arrive').click()
+    const media = await page.locator('#stable-media').elementHandle()
+    const wrapper = await page.locator('#stable-media').evaluateHandle((element) => element.parentElement)
+    await page.locator('#revise').click()
+    expect(await media.evaluate((element) => element === document.querySelector('#stable-media'))).toBe(true)
+    expect(
+      await wrapper.evaluate((element) => element === document.querySelector('#stable-media')?.parentElement),
+    ).toBe(true)
+    await expect.poll(() => wrapper.evaluate((element) => element?.getAnimations().length)).toBe(0)
+    await page.locator('#revise').click()
+    expect(await wrapper.evaluate((element) => element?.getAnimations().length)).toBe(0)
   })
 
   test('closes on Escape and restores focus to the opener', async () => {

@@ -50,6 +50,20 @@ const installRuntimeFailureGate = (page: Page): string[] => {
 }
 
 const installProductRoutes = async (page: Page): Promise<void> => {
+  if (process.env['NEKRO_UI_PERF_CONTENT_VISIBILITY'] === '1') {
+    await page.addInitScript(() => {
+      document.addEventListener(
+        'DOMContentLoaded',
+        () => {
+          const style = document.createElement('style')
+          style.textContent =
+            '[data-channel-message-list] [data-nxt-enter-kind="object"] { content-visibility: auto; contain-intrinsic-size: auto 120px; }'
+          document.head.append(style)
+        },
+        { once: true },
+      )
+    })
+  }
   await page.route('**/api/snapshot', (route) =>
     route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(productSnapshot) }),
   )
@@ -566,7 +580,7 @@ test('three desktop viewports remain usable in both themes and reduced motion', 
         await expect(chartTooltip).toHaveAttribute('data-pointer-x', '76')
         await page.mouse.move(ringBox.x + 94, ringBox.y + 40)
         await expect(chartTooltip).toHaveAttribute('data-pointer-x', '94')
-        await expect(chartTooltip).toHaveCSS('left', '94px')
+        await expect(chartTooltip).toHaveCSS('translate', /^94px /u)
         const chartSurface = await chartTooltip.evaluate((element) => {
           const style = getComputedStyle(element)
           return { background: style.backgroundColor, radius: Number.parseFloat(style.borderRadius) }
@@ -1071,6 +1085,40 @@ test('channel tabs, running tools, and trajectory rows remain keyboard operable'
   await capture(page, testInfo, 'channel-trajectory-keyboard-selection')
 
   expect(failures, failures.join('\n')).toEqual([])
+})
+
+test('pending sends remain bound to their original channel across navigation', async ({ page }) => {
+  const failures = installRuntimeFailureGate(page)
+  await installProductRoutes(page)
+  let complete: (() => void) | undefined
+  await page.route(`**/api/channels/${targetChannelId}/messages`, async (route) => {
+    if (route.request().method() !== 'POST') return route.fallback()
+    await new Promise<void>((resolve) => {
+      complete = resolve
+    })
+    await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ inserted: true }) })
+  })
+  await page.goto(`/work/channels/${targetChannelId}`)
+  const input = page.getByRole('textbox', { name: '消息内容' })
+  await input.fill('频道甲的待发送内容')
+  await input.press('Enter')
+  await expect(input).toBeDisabled()
+  await page.locator(`a[href="/work/channels/${sourceChannelId}"]`).first().click()
+  await expect(input).toBeEnabled()
+  await input.fill('频道乙的新草稿')
+  expect(complete).toBeDefined()
+  complete?.()
+  await expect(input).toHaveValue('频道乙的新草稿')
+  await page.locator(`a[href="/work/channels/${targetChannelId}"]`).first().click()
+  await expect(input).toBeEnabled()
+  await expect(input).toHaveValue('')
+  await page.locator('a[href="/settings"]').first().click()
+  await expect(page).toHaveURL(/\/settings$/u)
+  expect(await page.evaluate(() => window.__nxtHasUnsavedDrafts?.())).toBe(true)
+  await page.locator(`a[href="/work"]`).first().click()
+  await page.locator(`a[href="/work/channels/${sourceChannelId}"]`).first().click()
+  await expect(input).toHaveValue('频道乙的新草稿')
+  expect(failures).toEqual([])
 })
 
 test('desktop splitters and appearance preferences persist and recover defaults', async ({ page }, testInfo) => {
@@ -3213,6 +3261,9 @@ test('message composer sends with Enter and keeps Shift+Enter for a new line', a
   await page.goto(`/work/channels/${targetChannelId}`)
   const composer = page.getByLabel('消息内容')
   await composer.fill('第一行')
+  await composer.dispatchEvent('keydown', { key: 'Enter', isComposing: true })
+  expect(submitted).toEqual([])
+  await expect(composer).toHaveValue('第一行')
   await composer.press('Shift+Enter')
   await expect(composer).toHaveValue('第一行\n')
   expect(submitted).toEqual([])
@@ -3356,6 +3407,11 @@ test('long message history stays above a growing multiline composer', async ({ p
   await input.fill(Array.from({ length: 5 }, (_, index) => `输入内容第 ${index + 1} 行`).join('\n'))
   await expect.poll(async () => (await composer.boundingBox())?.height ?? 0).toBeGreaterThan(initialComposerHeight + 60)
 
+  // ResizeObserver coordinates the changed Composer height before the next paint.
+  await expect
+    .poll(() => messageList.evaluate((element) => element.scrollHeight - element.clientHeight - element.scrollTop))
+    .toBeLessThanOrEqual(1)
+
   const geometry = await page.evaluate(() => {
     const list = document.querySelector<HTMLElement>('[data-channel-message-list]')!
     const composer = document.querySelector<HTMLElement>('[data-channel-composer]')!
@@ -3390,5 +3446,68 @@ test('long message history stays above a growing multiline composer', async ({ p
   const jumpBox = await page.getByRole('button', { name: '回到底部' }).boundingBox()
   const grownComposerBox = await composer.boundingBox()
   expect((jumpBox?.y ?? 0) + (jumpBox?.height ?? 0)).toBeLessThan(grownComposerBox?.y ?? 0)
+  if (process.env['NEKRO_UI_PERF_CONTENT_VISIBILITY'] === '1' || process.env['NEKRO_UI_PERF_NATIVE_CHECK'] === '1') {
+    const native = await messageList.evaluate(async (element) => {
+      const messages = element.querySelectorAll('article')
+      const first = messages[0]!
+      const last = messages[messages.length - 1]!
+      const range = document.createRange()
+      range.setStartBefore(first)
+      range.setEndAfter(last)
+      const selection = window.getSelection()!
+      selection.removeAllRanges()
+      selection.addRange(range)
+      const text = selection.toString()
+      const firstNeedle = first.textContent?.match(/长记录 \d+：/u)?.[0]
+      const lastNeedle = last.textContent?.match(/长记录 \d+：/u)?.[0]
+      if (!firstNeedle || !lastNeedle) throw new Error('Missing fictional message text')
+      const selectedAcrossScreens = text.includes(firstNeedle) && text.includes(lastNeedle)
+      selection.removeAllRanges()
+      const find: unknown = Reflect.get(window, 'find')
+      const found: unknown =
+        typeof find === 'function' ? Reflect.apply(find, window, [firstNeedle, false, false, true]) : false
+      selection.removeAllRanges()
+      // A fictional silent PCM sample verifies that skipping paint does not stop media.
+      const bytes = new Uint8Array(44 + 16000)
+      const view = new DataView(bytes.buffer)
+      const write = (offset: number, value: string) => {
+        for (let i = 0; i < value.length; i += 1) bytes[offset + i] = value.charCodeAt(i)
+      }
+      write(0, 'RIFF')
+      view.setUint32(4, bytes.length - 8, true)
+      write(8, 'WAVEfmt ')
+      view.setUint32(16, 16, true)
+      view.setUint16(20, 1, true)
+      view.setUint16(22, 1, true)
+      view.setUint32(24, 8000, true)
+      view.setUint32(28, 8000, true)
+      view.setUint16(32, 1, true)
+      view.setUint16(34, 8, true)
+      write(36, 'data')
+      view.setUint32(40, 16000, true)
+      bytes.fill(128, 44)
+      const url = URL.createObjectURL(new Blob([bytes], { type: 'audio/wav' }))
+      const audio = new Audio(url)
+      audio.muted = true
+      audio.loop = true
+      first.append(audio)
+      try {
+        await audio.play()
+        const before = audio.currentTime
+        element.scrollTop = element.scrollHeight
+        await new Promise<void>((resolve) => setTimeout(resolve, 150))
+        return {
+          selectedAcrossScreens,
+          found,
+          playing: !audio.paused && audio.currentTime > before && audio.isConnected,
+        }
+      } finally {
+        audio.pause()
+        audio.remove()
+        URL.revokeObjectURL(url)
+      }
+    })
+    expect(native).toEqual({ selectedAcrossScreens: true, found: true, playing: true })
+  }
   expect(failures, failures.join('\n')).toEqual([])
 })

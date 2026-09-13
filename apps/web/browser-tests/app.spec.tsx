@@ -1301,6 +1301,84 @@ test.describe('NekroNxt browser projections', () => {
     )
   })
 
+  test('commits only the Composer while typing a channel draft', async () => {
+    await withProductPage(
+      `/work/channels/${browserChannelId}`,
+      async (page) => {
+        await playwrightExpect(page.getByLabel('上下文占用')).toBeVisible()
+        await page.evaluate(() => window.dispatchEvent(new Event('reset-ui-render-counts')))
+        await page.getByRole('textbox', { name: '消息内容' }).pressSequentially('连续输入测试')
+        const counts = await page.evaluate(() => {
+          const counts: unknown = Reflect.get(window, '__nxtRenderCounts')
+          return counts
+        })
+        expect(counts, JSON.stringify(counts)).toMatchObject({
+          ChannelComposer: 6,
+          ChannelMessageListBase: 0,
+          MessageRowBase: 0,
+          ChannelRuntimeMetrics: 0,
+        })
+      },
+      browserSnapshot,
+      async (page) => {
+        await page.route('**/api/events', () => undefined)
+        await page.addInitScript(() => {
+          type Fiber = { type?: { name?: string }; flags: number; child?: Fiber; sibling?: Fiber }
+          const counts: Record<string, number> = {
+            ChannelComposer: 0,
+            ChannelMessageListBase: 0,
+            MessageRowBase: 0,
+            ChannelRuntimeMetrics: 0,
+          }
+          window.addEventListener('reset-ui-render-counts', () => {
+            for (const name of Object.keys(counts)) counts[name] = 0
+          })
+          Object.assign(window, {
+            __nxtRenderCounts: counts,
+            __REACT_DEVTOOLS_GLOBAL_HOOK__: {
+              supportsFiber: true,
+              renderers: new Map(),
+              inject: () => 1,
+              onCommitFiberRoot: (_id: number, root: { current: Fiber }) => {
+                const visit = (fiber: Fiber | undefined): void => {
+                  if (!fiber) return
+                  const name = fiber.type?.name?.replace(/\d+$/u, '')
+                  if (name && Object.hasOwn(counts, name) && (fiber.flags & 1) !== 0)
+                    counts[name] = (counts[name] ?? 0) + 1
+                  visit(fiber.child)
+                  visit(fiber.sibling)
+                }
+                visit(root.current)
+              },
+              onCommitFiberUnmount: () => undefined,
+            },
+          })
+        })
+      },
+    )
+  })
+
+  test('retains independent channel drafts across views and navigation without replacing history DOM', async () => {
+    await withProductPage(`/work/channels/${browserChannelId}`, async (page) => {
+      const input = page.getByRole('textbox', { name: '消息内容' })
+      const message = await page.getByText('只属于当前频道', { exact: true }).elementHandle()
+      await input.fill('频道甲的草稿')
+      expect(await message.evaluate((element) => element.isConnected)).toBe(true)
+      await page.getByRole('tab', { name: '工作轨迹' }).click()
+      await page.getByRole('tab', { name: '会话', exact: true }).click()
+      await playwrightExpect(input).toHaveValue('频道甲的草稿')
+      await page.locator(`a[href="/work/channels/${externalChannelId}"]`).first().click()
+      await playwrightExpect(input).toHaveValue('')
+      await input.fill('频道乙的草稿')
+      await page.locator(`a[href="/work/channels/${browserChannelId}"]`).first().click()
+      await playwrightExpect(input).toHaveValue('频道甲的草稿')
+      await page.locator('a[href="/settings"]').first().click()
+      await playwrightExpect(page).toHaveURL(/\/settings$/u)
+      await page.goBack()
+      await playwrightExpect(input).toHaveValue('频道甲的草稿')
+    })
+  })
+
   test('isolates Channel messages, renders a true empty state, and names the send target', async () => {
     await withProductPage(`/work/channels/${browserChannelId}`, async (page) => {
       await playwrightExpect(page.getByText('只属于当前频道', { exact: true })).toBeVisible()

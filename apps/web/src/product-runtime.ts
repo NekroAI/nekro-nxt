@@ -1,4 +1,5 @@
-import { createContext, createElement, useContext, type ReactNode } from 'react'
+import { setUnsavedDraftOwner } from './unsaved-drafts.js'
+import { createContext, createElement, useContext, useEffect, type ReactNode } from 'react'
 import { useStore } from 'zustand'
 import type { ProductState } from './product-model.js'
 import type { UiState } from './ui-state.js'
@@ -11,6 +12,7 @@ export * from './product-model.js'
 
 /** Each instance owns its data and transport. Product actions close over this host, never a replaceable global. */
 export function createProductRuntime(events = new HostEventStream()) {
+  const uiStore = createUiStateStore()
   const approvals = createDynamicClientApprovalBridge()
   const store = createProductStore(() => host, approvals)
   const host = new HttpProductHost(events, {
@@ -28,20 +30,44 @@ export function createProductRuntime(events = new HostEventStream()) {
         connections: state.connections.map((connection) => ({ ...connection, eventsLoading: false })),
       }))
     },
-    applySnapshot: (snapshot) =>
+    applySnapshot: (snapshot) => {
+      const liveIds =
+        snapshot.host.status === 'ready' ? new Set(snapshot.channels.map((channel) => channel.id)) : undefined
+      if (liveIds) uiStore.getState().retainChannelDrafts(liveIds)
+      const history = store.getState().channelHistory
+      const channelHistory =
+        liveIds && Object.keys(history).some((id) => !liveIds.has(id))
+          ? Object.fromEntries(Object.entries(history).filter(([id]) => liveIds.has(id)))
+          : history
       store.setState({
+        channelHistory,
         ...snapshot,
         hostUi: snapshot.hostUi ?? { preferencesRevision: 0, pages: [] },
         authoringTasks: snapshot.authoringTasks ?? [],
-      }),
+      })
+    },
   })
-  return { host, store, uiStore: createUiStateStore(), events, approvals }
+  return { host, store, uiStore, events, approvals }
 }
 
 export const defaultProductRuntime = createProductRuntime(productHostEventStream)
 export type ProductRuntime = ReturnType<typeof createProductRuntime>
 const ProductRuntimeContext = createContext<ProductRuntime | null>(null)
 export function ProductRuntimeProvider({ runtime, children }: { runtime: ProductRuntime; children: ReactNode }) {
+  useEffect(() => {
+    const owner = Symbol('channel-drafts')
+    const update = () =>
+      setUnsavedDraftOwner(
+        owner,
+        Object.values(runtime.uiStore.getState().channelDrafts).some((draft) => Boolean(draft.text.trim())),
+      )
+    update()
+    const unsubscribe = runtime.uiStore.subscribe(update)
+    return () => {
+      unsubscribe()
+      setUnsavedDraftOwner(owner, false)
+    }
+  }, [runtime])
   return createElement(ProductRuntimeContext.Provider, { value: runtime }, children)
 }
 export function useProductRuntime(): ProductRuntime {

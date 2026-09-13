@@ -30,6 +30,8 @@ describe('channel message memoization boundary', () => {
   it('animates appended messages but treats prepended history as already read', () => {
     const known = new Set(['msg_2', 'msg_3'])
     expect([...appendedMessageIds([{ id: 'msg_1' }, { id: 'msg_2' }, { id: 'msg_3' }], known)]).toEqual([])
+    expect([...appendedMessageIds([{ id: 'msg_first' }], new Set(), true)]).toEqual(['msg_first'])
+    expect([...appendedMessageIds([{ id: 'msg_first' }], new Set(), false)]).toEqual([])
     expect([...appendedMessageIds([{ id: 'msg_2' }, { id: 'msg_3' }, { id: 'msg_4' }], known)]).toEqual(['msg_4'])
   })
 

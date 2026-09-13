@@ -36,7 +36,7 @@ const resetBusinessFacts = (): void => {
     models: [],
     agents: [],
     channels: [],
-    messages: [],
+    messagesByChannel: {},
     channelRuntimes: {},
     connections: [],
     extensions: [],
@@ -71,7 +71,7 @@ describe('product store Host mutations', () => {
     expect(state.models).toEqual([])
     expect(state.agents).toEqual([])
     expect(state.channels).toEqual([])
-    expect(state.messages).toEqual([])
+    expect(state.messagesByChannel).toEqual({})
     expect(state.connections).toEqual([])
     expect(state.extensions).toEqual([])
     expect(state.approvals).toEqual([])

@@ -1,3 +1,4 @@
+import { EMPTY_CHANNEL_MESSAGES, groupChannelMessages, mergeChannelMessages } from './channel-messages.js'
 import type { ProductActions } from './product-actions.js'
 import { callHostApi, HostRequestError, StaleHostReadError } from './host-api-client.js'
 import { createStore } from 'zustand/vanilla'
@@ -142,7 +143,7 @@ const emptySnapshot = (): ProductSnapshot => ({
   models: [],
   agents: [],
   channels: [],
-  messages: [],
+  messagesByChannel: {},
   channelRuntimes: {},
   connections: [],
   archivedConnections: [],
@@ -693,7 +694,7 @@ const projectSnapshot = (json: SnapshotJson, successfulAt: number): ProductSnaps
     models,
     agents,
     channels,
-    messages,
+    messagesByChannel: groupChannelMessages(messages),
     channelRuntimes: {},
     connections,
     archivedConnections,
@@ -1181,6 +1182,12 @@ export class HttpProductHost implements ProductHostPort {
         },
         undefined,
       )
+      if (
+        this.#snapshot.host.lastSuccessfulAt !== null &&
+        !this.#snapshot.channels.some((channel) => channel.id === channelId)
+      ) {
+        throw new StaleHostReadError()
+      }
       cursor = raw.cursor
       const buffered = this.#pendingChannelFacts.get(channelId) ?? []
       if (buffered.some((entry) => entry.cursor !== undefined && entry.cursor.epoch !== raw.cursor.epoch)) {
@@ -1190,17 +1197,21 @@ export class HttpProductHost implements ProductHostPort {
       const projected = raw.messages.map((message) =>
         projectConversationMessage(message, this.#snapshot.channels, this.#snapshot.agents),
       )
-      const other = this.#snapshot.messages.filter((message) => message.channelId !== channelId)
-      const current = this.#snapshot.messages.filter((message) => message.channelId === channelId)
-      const combined =
-        mode === 'older' ? [...projected, ...current] : mode === 'latest' ? [...current, ...projected] : projected
-      const deduplicated = [...new Map(combined.map((message) => [message.id, message])).values()].sort(
-        (left, right) => (left.occurredAt ?? 0) - (right.occurredAt ?? 0),
+      const current = this.#snapshot.messagesByChannel[channelId] ?? EMPTY_CHANNEL_MESSAGES
+      // Historical pages must not overwrite newer delivery facts already in the window.
+      const existingIds = mode === 'older' ? new Set(current.map((message) => message.id)) : undefined
+      const deduplicated = mergeChannelMessages(
+        current,
+        existingIds ? projected.filter((message) => !existingIds.has(message.id)) : projected,
+        mode === 'initial',
       )
       this.#loadedChannels.add(channelId)
       this.#messageCursor.set(channelId, raw.cursor)
       this.#messageRevision.delete(channelId)
-      this.#snapshot = { ...this.#snapshot, messages: [...other, ...deduplicated] }
+      this.#snapshot = {
+        ...this.#snapshot,
+        messagesByChannel: { ...this.#snapshot.messagesByChannel, [channelId]: deduplicated },
+      }
       this.#listener?.()
       return { messages: projected, hasMore: raw.hasMore }
     } finally {
@@ -1293,10 +1304,7 @@ export class HttpProductHost implements ProductHostPort {
       this.#pendingChannelFacts.set(data.channelId, pending)
       return
     }
-    if (
-      !this.#loadedChannels.has(data.channelId) &&
-      !this.#snapshot.messages.some((message) => message.channelId === data.channelId)
-    ) {
+    if (!this.#loadedChannels.has(data.channelId) && !this.#snapshot.messagesByChannel[data.channelId]?.length) {
       this.#listener?.()
       return
     }
@@ -1319,15 +1327,14 @@ export class HttpProductHost implements ProductHostPort {
     const projected = data.items.map((item) =>
       projectConversationMessage(item.message, this.#snapshot.channels, this.#snapshot.agents),
     )
-    const other = this.#snapshot.messages.filter((message) => message.channelId !== data.channelId)
-    const current = this.#snapshot.messages.filter((message) => message.channelId === data.channelId)
-    const combined = [...current, ...projected]
-    const deduplicated = [...new Map(combined.map((message) => [message.id, message])).values()].sort(
-      (left, right) => (left.occurredAt ?? 0) - (right.occurredAt ?? 0),
-    )
+    const current = this.#snapshot.messagesByChannel[data.channelId] ?? EMPTY_CHANNEL_MESSAGES
+    const deduplicated = mergeChannelMessages(current, projected)
     this.#messageRevision.set(data.channelId, data.revision)
     if (cursor !== undefined) this.#messageCursor.set(data.channelId, cursor)
-    this.#snapshot = { ...this.#snapshot, messages: [...other, ...deduplicated] }
+    this.#snapshot = {
+      ...this.#snapshot,
+      messagesByChannel: { ...this.#snapshot.messagesByChannel, [data.channelId]: deduplicated },
+    }
     this.#listener?.()
   }
 
@@ -1545,7 +1552,14 @@ export class HttpProductHost implements ProductHostPort {
     const previousConnections = new Map(this.#snapshot.connections.map((connection) => [connection.id, connection]))
     this.#snapshot = {
       ...projected,
-      messages: this.#loadedChannels.size > 0 ? this.#snapshot.messages : projected.messages,
+      messagesByChannel: Object.fromEntries(
+        projected.channels.map((channel) => [
+          channel.id,
+          this.#loadedChannels.has(channel.id)
+            ? (this.#snapshot.messagesByChannel[channel.id] ?? EMPTY_CHANNEL_MESSAGES)
+            : (projected.messagesByChannel[channel.id] ?? EMPTY_CHANNEL_MESSAGES),
+        ]),
+      ),
       channelRuntimes: this.#snapshot.channelRuntimes,
       connections: projected.connections.map((connection) => {
         const previous = previousConnections.get(connection.id)
@@ -1561,7 +1575,17 @@ export class HttpProductHost implements ProductHostPort {
       }),
       platformUsersRevision: this.#snapshot.platformUsersRevision,
     }
-    for (const message of this.#snapshot.messages) this.#loadedChannels.add(message.channelId)
+    const liveIds = new Set(projected.channels.map((channel) => channel.id))
+    for (const id of this.#loadedChannels) {
+      if (liveIds.has(id)) continue
+      this.#loadedChannels.delete(id)
+      this.#messageCursor.delete(id)
+      this.#messageRevision.delete(id)
+      this.#messageAgain.delete(id)
+    }
+    for (const [id, messages] of Object.entries(this.#snapshot.messagesByChannel)) {
+      if (messages.length) this.#loadedChannels.add(id)
+    }
     const replay = buffered.filter(
       (entry) => entry.cursor === undefined || entry.cursor.sequence > json.cursor.sequence,
     )
