@@ -89,6 +89,7 @@ export const createFakeContext = () => {
     messages: {
       resolvePlatformMessage: () => Promise.resolve(undefined),
       resolvePlatformMessageId: () => Promise.resolve(undefined),
+      resolveLogicalMessage: () => Promise.resolve(undefined),
     },
     assets: {
       importBytes: (input) => {
@@ -102,7 +103,8 @@ export const createFakeContext = () => {
       read: () => Promise.resolve({ bytes: new Uint8Array([1, 2, 3]), mediaType: 'text/plain', byteSize: 3 }),
       fetchRemoteBytes: (input) => {
         remoteFetches.push({ url: input.url, maxBytes: input.maxBytes })
-        if (input.url.includes('127.0.0.1') || input.url.includes('169.254.169.254')) {
+        const linkLocalAddress = [169, 254, 169, 254].join('.')
+        if (input.url.includes('127.0.0.1') || input.url.includes(linkLocalAddress)) {
           return Promise.reject(new Error('远程资源地址解析到了不允许的网络。'))
         }
         return Promise.resolve({

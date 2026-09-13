@@ -1497,6 +1497,14 @@ export class HttpProductHost implements ProductHostPort {
       this.#pendingChannelFacts.set(data.channelId, pending)
       return
     }
+    if (!this.#snapshot.channels.some((channel) => channel.id === data.channelId)) {
+      // Adapter-observed Channels can be created after the current global
+      // snapshot. Reconcile the authoritative projection before trying to
+      // apply their facts so navigation and Connection diagnostics discover
+      // the new Channel without requiring an unrelated manual refresh.
+      this.#requestReconcile()
+      return
+    }
     if (
       !this.#loadedChannels.has(data.channelId) &&
       !this.#snapshot.messages.some((message) => message.channelId === data.channelId)

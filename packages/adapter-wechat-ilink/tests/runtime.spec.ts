@@ -1,5 +1,5 @@
 import type { PhysicalDeliveryRequest } from '@nekro-nxt/adapter-sdk'
-import { LogicalMessageIdSchema, PhysicalDeliveryIdSchema } from '@nekro-nxt/contracts'
+import { AssetIdSchema, ChannelIdSchema, LogicalMessageIdSchema, PhysicalDeliveryIdSchema } from '@nekro-nxt/contracts'
 import { ApiClient, MessageItemType, WeChatClient } from 'wechat-ilink-client'
 import { describe, expect, it, vi } from 'vitest'
 import {
@@ -8,6 +8,8 @@ import {
   WechatIlinkRuntime,
   classifyWechatIlinkError,
   contextTokenStateKey,
+  createWechatIlinkSdkLoginClientFactory,
+  createWechatIlinkSdkTransportFactory,
   platformChannelIdFromUserId,
   type WechatIlinkTransportConfig,
   type WechatIlinkTransportFactory,
@@ -105,6 +107,113 @@ describe('WeChat iLink Runtime', () => {
       capabilityOutcomes: { idKind: 'client_id' },
     })
     expect(transport.sent).toEqual([{ toUserId: 'wechat-user-1', text: '收到喵', contextToken: 'context-token-1' }])
+
+    transport.sendTextResult = { platformMessageId: 'wechat-platform-message-2' }
+    await expect(
+      runtime.deliver(
+        deliveryRequest({
+          connectionId: context.context.connectionId,
+          channelId,
+          parts: [{ type: 'text', text: '平台消息回执' }],
+        }),
+        new AbortController().signal,
+      ),
+    ).resolves.toEqual({
+      status: 'sent',
+      platformMessageId: 'wechat-platform-message-2',
+      capabilityOutcomes: { idKind: 'message_id' },
+    })
+
+    transport.sendTextResult = {}
+    await expect(
+      runtime.deliver(
+        deliveryRequest({
+          connectionId: context.context.connectionId,
+          channelId,
+          parts: [{ type: 'text', text: '本地投递回执' }],
+        }),
+        new AbortController().signal,
+      ),
+    ).resolves.toEqual({
+      status: 'sent',
+      platformMessageId: 'phy_WECHATRUNTIME',
+      capabilityOutcomes: { idKind: 'delivery_id' },
+    })
+    await expect(runtime.testSend(channelId)).resolves.toBe('phy_WECHATTEST')
+  })
+
+  it('forwards optional SDK routing configuration', async () => {
+    const context = createFakeContext()
+    let capturedConfig: WechatIlinkTransportConfig | undefined
+    const runtime = new WechatIlinkRuntime({
+      context: context.context,
+      config: { ...runtimeConfig, channelVersion: 'channel-version-fixture', routeTag: 'route-tag-fixture' },
+      transportFactory: (config) => {
+        capturedConfig = config
+        return new FakeWechatIlinkTransport()
+      },
+    })
+
+    await runtime.start()
+    expect(capturedConfig).toMatchObject({
+      channelVersion: 'channel-version-fixture',
+      routeTag: 'route-tag-fixture',
+    })
+    await runtime.stop()
+  })
+
+  it('rejects invalid outbound states and payloads before transport send', async () => {
+    const transport = new FakeWechatIlinkTransport()
+    const context = createFakeContext()
+    const runtime = new WechatIlinkRuntime({
+      context: context.context,
+      config: runtimeConfig,
+      transportFactory: () => transport,
+    })
+    const channelId = ChannelIdSchema.parse('chn_WECHATVALIDATION')
+    const request = (parts: Parameters<typeof deliveryRequest>[0]['parts']) =>
+      deliveryRequest({ connectionId: context.context.connectionId, channelId, parts })
+
+    await expect(
+      runtime.deliver(request([{ type: 'text', text: '尚未启动' }]), new AbortController().signal),
+    ).resolves.toMatchObject({
+      status: 'failed',
+      failure: { kind: 'transient', message: '微信 iLink 连接尚未运行。' },
+    })
+
+    await runtime.start()
+    await expect(runtime.start()).rejects.toThrow('已经在运行')
+    await expect(
+      runtime.deliver(
+        request([{ type: 'file', assetId: AssetIdSchema.parse('ast_WECHATVALIDATION') }]),
+        new AbortController().signal,
+      ),
+    ).resolves.toMatchObject({ status: 'failed', failure: { message: '微信 iLink 当前只支持纯文本消息。' } })
+    await expect(
+      runtime.deliver(request([{ type: 'text', text: '   ' }]), new AbortController().signal),
+    ).resolves.toMatchObject({
+      status: 'failed',
+      failure: { message: '微信 iLink 不能发送空文本。' },
+    })
+    await expect(
+      runtime.deliver(request([{ type: 'text', text: 'x'.repeat(4_001) }]), new AbortController().signal),
+    ).resolves.toMatchObject({ status: 'failed', failure: { message: '微信 iLink 文本超过单条字符上限。' } })
+    await expect(
+      runtime.deliver(request([{ type: 'text', text: '未知频道' }]), new AbortController().signal),
+    ).resolves.toMatchObject({
+      status: 'failed',
+      failure: { message: '微信 iLink 当前只支持已发现的私聊频道。' },
+    })
+
+    context.channels.set('direct:%', channelId)
+    await expect(
+      runtime.deliver(request([{ type: 'text', text: '无效身份' }]), new AbortController().signal),
+    ).resolves.toMatchObject({
+      status: 'failed',
+      failure: { message: '微信 iLink 私聊频道身份无法解析。' },
+    })
+    expect(transport.sent).toEqual([])
+    await runtime.stop()
   })
 
   it('imports inbound image items as channel assets', async () => {
@@ -300,7 +409,13 @@ describe('WeChat iLink Runtime', () => {
           type: 4,
           media: { encrypt_query_param: 'flat-file-query-fixture', aes_key: 'flat-file-key-fixture' },
           file_name: '扁平文件.txt',
+          name: '扁平文件别名.txt',
+          md5: 'flat-file-md5-fixture',
           len: String(fileBytes.byteLength),
+          mime_type: 'text/plain',
+          media_type: 'document',
+          content_type: 'text/plain; charset=utf-8',
+          size: fileBytes.byteLength,
         },
       ],
     })
@@ -312,10 +427,16 @@ describe('WeChat iLink Runtime', () => {
       file_item: {
         media: { encrypt_query_param: 'flat-file-query-fixture', aes_key: 'flat-file-key-fixture' },
         file_name: '扁平文件.txt',
+        name: '扁平文件别名.txt',
+        md5: 'flat-file-md5-fixture',
         len: String(fileBytes.byteLength),
+        mime_type: 'text/plain',
+        media_type: 'document',
+        content_type: 'text/plain; charset=utf-8',
+        size: fileBytes.byteLength,
       },
     })
-    expect(context.importedAssets).toEqual([{ bytes: fileBytes }])
+    expect(context.importedAssets).toEqual([{ bytes: fileBytes, declaredMediaType: 'text/plain' }])
     expect(context.events[0]).toMatchObject({
       parts: [{ type: 'file', assetId: 'ast_WECHATIMAGE1', name: '扁平文件.txt' }],
       facts: { fileItemCount: 1, downloadableFileItemCount: 1, itemTypes: [4] },
@@ -323,6 +444,59 @@ describe('WeChat iLink Runtime', () => {
     })
     expect(JSON.stringify(context.events[0]?.facts)).not.toContain('flat-file-query-fixture')
     expect(JSON.stringify(context.events[0]?.facts)).not.toContain('flat-file-key-fixture')
+  })
+
+  it('normalizes flat inbound SDK image metadata before downloading', async () => {
+    const transport = new FakeWechatIlinkTransport()
+    const context = createFakeContext()
+    const imageBytes = new Uint8Array([137, 80, 78, 71])
+    transport.downloadedMedia = { kind: 'image', data: imageBytes, fileName: '平铺图片.png' }
+    const runtime = new WechatIlinkRuntime({
+      context: context.context,
+      config: runtimeConfig,
+      transportFactory: () => transport,
+    })
+
+    await runtime.start()
+    transport.emitMessage({
+      message_id: 'wechat-flat-image-message-1',
+      from_user_id: 'wechat-user-flat-image',
+      create_time_ms: 9_360,
+      context_token: 'context-token-flat-image',
+      item_list: [
+        {
+          type: 2,
+          media: { encrypt_query_param: 'flat-image-query-fixture', aes_key: 'flat-image-key-fixture' },
+          aeskey: 'flat-image-aes-fixture',
+          file_name: '平铺图片.png',
+          name: '平铺图片别名.png',
+          mime_type: 'image/png',
+          media_type: 'image',
+          content_type: 'image/png',
+          size: imageBytes.byteLength,
+        },
+      ],
+    })
+    await waitFor(() => context.events.length === 1)
+
+    expect(transport.downloadMediaCalls).toHaveLength(1)
+    expect(transport.downloadMediaCalls[0]).toMatchObject({
+      type: 2,
+      image_item: {
+        media: { encrypt_query_param: 'flat-image-query-fixture', aes_key: 'flat-image-key-fixture' },
+        aeskey: 'flat-image-aes-fixture',
+        file_name: '平铺图片.png',
+        name: '平铺图片别名.png',
+        mime_type: 'image/png',
+        media_type: 'image',
+        content_type: 'image/png',
+        size: imageBytes.byteLength,
+      },
+    })
+    expect(context.events[0]).toMatchObject({
+      parts: [{ type: 'image', assetId: 'ast_WECHATIMAGE1', alt: '平铺图片.png' }],
+      assetOccurrences: [{ partIndex: 0, assetId: 'ast_WECHATIMAGE1' }],
+    })
   })
 
   it('keeps media placeholders when inbound media is disabled', async () => {
@@ -457,6 +631,7 @@ describe('WeChat iLink Runtime', () => {
     })
     expect(classifyWechatIlinkError(new Error('fetch failed'))).toMatchObject({ kind: 'transient' })
     expect(classifyWechatIlinkError(new Error('missing context_token'))).toMatchObject({ kind: 'transient' })
+    expect(classifyWechatIlinkError('plain failure')).toMatchObject({ kind: 'transient', message: 'plain failure' })
   })
 
   it('rejects successful HTTP responses carrying protocol send errors', async () => {
@@ -610,13 +785,14 @@ describe('WeChat iLink Runtime', () => {
     })
   })
 
-  it('maps SDK string send receipts to client IDs', async () => {
+  it('normalizes SDK send receipts and enforces send cancellation', async () => {
     const errors: unknown[] = []
+    let sdkReceipt: unknown = 'wechat-ilink:123-abcd'
     const transport = new WechatIlinkSdkTransport({
       on: vi.fn(),
       start: vi.fn(() => Promise.resolve()),
       stop: vi.fn(),
-      sendText: vi.fn(() => Promise.resolve('wechat-ilink:123-abcd')),
+      sendText: vi.fn(() => Promise.resolve(sdkReceipt)),
     })
 
     await transport.start({
@@ -636,7 +812,114 @@ describe('WeChat iLink Runtime', () => {
         signal: new AbortController().signal,
       }),
     ).resolves.toEqual({ clientId: 'wechat-ilink:123-abcd' })
+    for (const [value, expected] of [
+      ['', {}],
+      [null, {}],
+      [[], {}],
+      [{ platformMessageId: 'wechat-message-1', clientId: '' }, { platformMessageId: 'wechat-message-1' }],
+      [{ platformMessageId: '', clientId: 'wechat-client-2' }, { clientId: 'wechat-client-2' }],
+      [{ platformMessageId: 1, clientId: 2 }, {}],
+    ] as const) {
+      sdkReceipt = value
+      await expect(
+        transport.sendText({
+          toUserId: 'wechat-user-1',
+          text: '收到喵',
+          contextToken: 'context-token-1',
+          signal: new AbortController().signal,
+        }),
+      ).resolves.toEqual(expected)
+    }
+
+    const cancelledBeforeSend = new AbortController()
+    const beforeReason = new Error('cancelled before send')
+    cancelledBeforeSend.abort(beforeReason)
+    await expect(
+      transport.sendText({
+        toUserId: 'wechat-user-1',
+        text: '不会发送',
+        contextToken: 'context-token-1',
+        signal: cancelledBeforeSend.signal,
+      }),
+    ).rejects.toBe(beforeReason)
+
+    const cancelledAfterSend = new AbortController()
+    const afterReason = new Error('cancelled after send')
+    const abortingTransport = new WechatIlinkSdkTransport({
+      on: vi.fn(),
+      start: vi.fn(() => Promise.resolve()),
+      sendText: vi.fn(() => {
+        cancelledAfterSend.abort(afterReason)
+        return Promise.resolve({ clientId: 'ignored-client-id' })
+      }),
+    })
+    await expect(
+      abortingTransport.sendText({
+        toUserId: 'wechat-user-1',
+        text: '发送中取消',
+        contextToken: 'context-token-1',
+        signal: cancelledAfterSend.signal,
+      }),
+    ).rejects.toBe(afterReason)
     expect(errors).toEqual([])
+  })
+
+  it('normalizes optional SDK media downloads and enforces cancellation', async () => {
+    const transportWithoutDownload = new WechatIlinkSdkTransport({
+      on: vi.fn(),
+      start: vi.fn(() => Promise.resolve()),
+      sendText: vi.fn(),
+    })
+    await expect(transportWithoutDownload.downloadMedia({}, new AbortController().signal)).resolves.toBeNull()
+    await transportWithoutDownload.stop()
+
+    const media = { kind: 'file' as const, data: new Uint8Array([1, 2, 3]), fileName: 'fixture.txt' }
+    const transport = new WechatIlinkSdkTransport({
+      on: vi.fn(),
+      start: vi.fn(() => Promise.resolve()),
+      sendText: vi.fn(),
+      downloadMedia: vi.fn(() => Promise.resolve(media)),
+    })
+    await expect(transport.downloadMedia({}, new AbortController().signal)).resolves.toEqual(media)
+
+    const cancelledBeforeDownload = new AbortController()
+    const beforeReason = new Error('cancelled before download')
+    cancelledBeforeDownload.abort(beforeReason)
+    await expect(transport.downloadMedia({}, cancelledBeforeDownload.signal)).rejects.toBe(beforeReason)
+
+    const cancelledAfterDownload = new AbortController()
+    const afterReason = new Error('cancelled after download')
+    const abortingTransport = new WechatIlinkSdkTransport({
+      on: vi.fn(),
+      start: vi.fn(() => Promise.resolve()),
+      sendText: vi.fn(),
+      downloadMedia: vi.fn(() => {
+        cancelledAfterDownload.abort(afterReason)
+        return Promise.resolve(media)
+      }),
+    })
+    await expect(abortingTransport.downloadMedia({}, cancelledAfterDownload.signal)).rejects.toBe(afterReason)
+  })
+
+  it('guards lazy SDK factories before startup', async () => {
+    const transport = createWechatIlinkSdkTransportFactory()({
+      accountId: 'wechat-account-1',
+      token: 'token-fixture',
+      baseUrl: 'https://ilink-api.test',
+      cdnBaseUrl: 'https://ilink-cdn.test/c2c',
+    })
+
+    await transport.stop()
+    await expect(
+      transport.sendText({
+        toUserId: 'wechat-user-1',
+        text: '尚未启动',
+        contextToken: 'context-token-1',
+        signal: new AbortController().signal,
+      }),
+    ).rejects.toThrow('尚未启动')
+    await expect(transport.downloadMedia?.({}, new AbortController().signal)).rejects.toThrow('尚未启动')
+    expect(typeof createWechatIlinkSdkLoginClientFactory()().login).toBe('function')
   })
 
   it('reports SDK start loop failures after the transport has started', async () => {

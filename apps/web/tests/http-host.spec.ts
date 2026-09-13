@@ -1164,6 +1164,93 @@ describe('HttpProductHost', () => {
     unsubscribe()
   })
 
+  it('discovers an adapter-observed Channel when its first channel fact arrives', async () => {
+    let channelDiscovered = false
+    let snapshotRequests = 0
+    fetchMock = vi.fn((input: string) => {
+      if (input !== '/api/snapshot') {
+        return Promise.resolve(stubResponse(404, { error: { code: 'not-found', message: 'x' } }))
+      }
+      snapshotRequests += 1
+      const base = snapshotBody()
+      return Promise.resolve(
+        stubResponse(
+          200,
+          HostApiContracts.snapshot.response.parse({
+            ...base,
+            channels: channelDiscovered
+              ? [
+                  ...base.channels,
+                  {
+                    id: externalChannelId,
+                    connectionId: externalConnectionId,
+                    platformChannelId: 'c2c:new-private-conversation',
+                    kind: 'direct',
+                    bindings: [],
+                  },
+                ]
+              : base.channels,
+            connections: [
+              ...base.connections,
+              {
+                id: externalConnectionId,
+                adapterKey: 'fixture-beta',
+                activityTriggerDefaults: [],
+                status: {
+                  state: 'connected',
+                  proactiveSend: false,
+                  credentialConfigured: true,
+                  activities: {},
+                },
+                channelCount: channelDiscovered ? 1 : 0,
+                knownChannels: channelDiscovered ? [{ id: externalChannelId, name: '未命名私聊', kind: 'direct' }] : [],
+              },
+            ],
+          }),
+        ),
+      )
+    })
+    vi.stubGlobal('fetch', fetchMock)
+    vi.stubGlobal('EventSource', FakeEventSource)
+
+    const host = new HttpProductHost()
+    const unsubscribe = host.subscribe(() => undefined)
+    await flush()
+    expect(host.getSnapshot().channels.some((channel) => channel.id === externalChannelId)).toBe(false)
+
+    channelDiscovered = true
+    FakeEventSource.instances[0]?.emit('channel-fact', {
+      channelId: externalChannelId,
+      revision: 1,
+      items: [
+        {
+          kind: 'inbound',
+          sourceId: groupEventId,
+          message: {
+            id: groupEventId,
+            channelId: externalChannelId,
+            role: 'member',
+            parts: [{ type: 'text', text: '首次发现这个私聊。' }],
+            occurredAt: 1_700_000_003_000,
+          },
+        },
+      ],
+    })
+    await flush()
+
+    expect(snapshotRequests).toBe(2)
+    expect(host.getSnapshot().channels.find((channel) => channel.id === externalChannelId)).toMatchObject({
+      name: '未命名私聊',
+      kind: 'direct',
+      agentId: '',
+    })
+    expect(host.getSnapshot().connections.find((connection) => connection.id === externalConnectionId)).toMatchObject({
+      channels: 1,
+      knownChannels: [{ id: externalChannelId, name: '未命名私聊', kind: 'direct' }],
+    })
+    unsubscribe()
+  })
+
   it('updates delivery state when the same outbound fact is pushed again', async () => {
     fetchMock = vi.fn((input: string) => {
       if (input === '/api/snapshot') return Promise.resolve(stubResponse(200, snapshotBody()))

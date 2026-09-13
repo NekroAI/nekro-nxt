@@ -1,5 +1,12 @@
 import type { Context } from '@deepseek-ai/cordis'
-import { BUILTIN_ADAPTER_CONTRIBUTIONS } from '@nekro-nxt/adapter-builtin-roster'
+import {
+  WECHAT_ILINK_BUILTIN,
+  createBuiltinAdapterContributions,
+  parseBuiltinWechatIlinkConnectionConfiguration,
+  parseBuiltinWechatIlinkConnectionInput,
+  type BuiltinWechatIlinkLoginClientFactory,
+  type BuiltinWechatIlinkTransportFactory,
+} from '@nekro-nxt/adapter-builtin-roster'
 import {
   AdapterRegistry,
   parseAdapterCapabilities,
@@ -11,15 +18,6 @@ import {
   type AdapterTransportService,
   type RegisteredAdapterHandle,
 } from '@nekro-nxt/adapter-sdk'
-import {
-  WECHAT_ILINK_ADAPTER_KEY,
-  WechatIlinkConnectionConfigurationSchema,
-  WechatIlinkConnectionInputSchema,
-  createWechatIlinkHostContribution,
-  createWechatIlinkSdkLoginClientFactory,
-  type WechatIlinkLoginClientFactory,
-  type WechatIlinkTransportFactory,
-} from '@nekro-nxt/adapter-wechat-ilink'
 import { ChannelRuntime } from '@nekro-nxt/channel-runtime'
 import { AssetService, CoreService } from '@nekro-nxt/core'
 import type { AgentRevisionContent, ConnectionEventRecord, ConnectionRecord } from '@nekro-nxt/core'
@@ -119,8 +117,8 @@ export interface NekroRuntimeOptions {
   /** Replaced by an offline Fake for tests and AI validation; production uses fetch/ws. */
   readonly adapterTransport?: AdapterTransportService
   readonly wechatIlink?: {
-    readonly transportFactory?: WechatIlinkTransportFactory
-    readonly loginClientFactory?: WechatIlinkLoginClientFactory
+    readonly transportFactory?: BuiltinWechatIlinkTransportFactory
+    readonly loginClientFactory?: BuiltinWechatIlinkLoginClientFactory
   }
 }
 
@@ -330,17 +328,11 @@ export class NekroRuntime {
       )
       const core = new CoreService(repository, { now, nextUlid })
       const adapters = new AdapterRegistry()
-      const adapterHandles = BUILTIN_ADAPTER_CONTRIBUTIONS.map((contribution, index) => {
-        const resolved =
-          contribution.descriptor.key === WECHAT_ILINK_ADAPTER_KEY && options.wechatIlink !== undefined
-            ? createWechatIlinkHostContribution({
-                ...(options.wechatIlink.transportFactory === undefined
-                  ? {}
-                  : { transportFactory: options.wechatIlink.transportFactory }),
-              })
-            : contribution
-        return adapters.register(`builtin:${index}`, resolved)
-      })
+      const adapterHandles = createBuiltinAdapterContributions({
+        ...(options.wechatIlink?.transportFactory === undefined
+          ? {}
+          : { wechatIlinkTransportFactory: options.wechatIlink.transportFactory }),
+      }).map((contribution, index) => adapters.register(`builtin:${index}`, contribution))
       const dshPluginInstaller = new DshPluginPackageInstaller(
         repository,
         options.dshPluginRoot ?? path.join(path.dirname(options.coreDatabasePath), 'dsh'),
@@ -925,10 +917,10 @@ export class NekroRuntime {
   ): Promise<ConnectionRecord> {
     if (this.#disposed) throw new Error('NekroRuntime is disposed.')
     const connection = this.core.getConnection(connectionId)
-    if (!connection || connection.adapterKey !== WECHAT_ILINK_ADAPTER_KEY) {
+    if (!connection || connection.adapterKey !== WECHAT_ILINK_BUILTIN.key) {
       throw new Error('微信 iLink 连接不存在。')
     }
-    const parsed = WechatIlinkConnectionConfigurationSchema.parse(connection.config)
+    const parsed = parseBuiltinWechatIlinkConnectionConfiguration(connection.config)
     const storedConfig = {
       accountId: parsed.accountId,
       baseUrl: parsed.baseUrl,
@@ -990,7 +982,8 @@ export class NekroRuntime {
       rejectFirstQrOnce(error)
     }, 15_000)
 
-    const loginClientFactory = this.#wechatIlinkOptions.loginClientFactory ?? createWechatIlinkSdkLoginClientFactory()
+    const loginClientFactory =
+      this.#wechatIlinkOptions.loginClientFactory ?? WECHAT_ILINK_BUILTIN.createLoginClientFactory()
     const loginClient = loginClientFactory()
     session.done = (async () => {
       try {
@@ -1119,7 +1112,7 @@ export class NekroRuntime {
     readonly botToken: string
     readonly baseUrl?: string | undefined
   }): Promise<ConnectionRecord> {
-    const parsed = WechatIlinkConnectionInputSchema.parse({
+    const parsed = parseBuiltinWechatIlinkConnectionInput({
       accountId: input.accountId,
       botToken: input.botToken,
       ...(input.baseUrl === undefined ? {} : { baseUrl: input.baseUrl }),
@@ -1140,7 +1133,7 @@ export class NekroRuntime {
     let connection: ConnectionRecord
     try {
       connection = this.core.createConnection({
-        adapterKey: WECHAT_ILINK_ADAPTER_KEY,
+        adapterKey: WECHAT_ILINK_BUILTIN.key,
         ...(input.alias === undefined ? {} : { alias: input.alias }),
         config: storedConfig,
         credentialRefs: { botToken: credentialReference },

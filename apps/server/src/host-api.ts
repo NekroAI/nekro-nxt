@@ -1,8 +1,8 @@
 import type { WebServer, WebRoute } from '@deepseek-ai/dsh-host-webserver'
 import { strFromU8, strToU8, unzipSync, zipSync } from 'fflate'
+import { readBuiltinWechatIlinkInboundMediaSetting } from '@nekro-nxt/adapter-builtin-roster'
 import { isAdminConsoleOutbound, type ChannelFact, type ChannelHistoryEntry } from '@nekro-nxt/channel-runtime'
 import type { AgentRevisionContent, ConnectionEventRecord, ImageUnderstandingPolicy } from '@nekro-nxt/core'
-import { WECHAT_ILINK_ADAPTER_KEY, WechatIlinkConnectionConfigurationSchema } from '@nekro-nxt/adapter-wechat-ilink'
 import {
   AgentIdSchema,
   AuthoringAttemptIdSchema,
@@ -1433,10 +1433,10 @@ export const createNekroHostApi = (
       const lastInbound = runtime.lastInbound(connection.id)
       const tests = runtime.connectionTests(connection.id)
       const capabilities = runtime.connectionCapabilities(connection.id)
-      const wechatIlinkConfig =
-        connection.adapterKey === WECHAT_ILINK_ADAPTER_KEY
-          ? WechatIlinkConnectionConfigurationSchema.safeParse(connection.config)
-          : undefined
+      const wechatIlinkInboundMedia = readBuiltinWechatIlinkInboundMediaSetting(
+        connection.adapterKey,
+        connection.config,
+      )
       return {
         id: connection.id,
         adapterKey: connection.adapterKey,
@@ -1474,9 +1474,9 @@ export const createNekroHostApi = (
           : { lastInbound: { ...lastInbound, platformMessageId: lastInbound.platformMessageId } }),
         ...(tests?.receive === undefined ? {} : { receiveTest: tests.receive }),
         ...(tests?.send === undefined ? {} : { sendTest: tests.send }),
-        ...(wechatIlinkConfig?.success
-          ? { adapterSettings: { wechatIlink: { enableInboundMedia: wechatIlinkConfig.data.enableInboundMedia } } }
-          : {}),
+        ...(wechatIlinkInboundMedia === undefined
+          ? {}
+          : { adapterSettings: { wechatIlink: { enableInboundMedia: wechatIlinkInboundMedia } } }),
       }
     })
     const archivedConnections = runtime.core.listArchivedConnections().map((connection) => ({

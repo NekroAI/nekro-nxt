@@ -37,7 +37,13 @@ import path from 'node:path'
 import sharp from 'sharp'
 import { afterEach, describe, expect, it } from 'vitest'
 import { z } from 'zod'
-import { assertHostDshPackageVersions, ChannelExtensionActivationHost, DshHostRuntime } from '../src/index.ts'
+import {
+  ASSET_READ_TEXT_HARD_MAX_BYTES,
+  assertHostDshPackageVersions,
+  ChannelExtensionActivationHost,
+  DshHostRuntime,
+  readChannelAssetText,
+} from '../src/index.ts'
 import { projectChannelRuntime } from '../src/channel-runtime-projection.ts'
 
 const temporaryDirectories: string[] = []
@@ -2332,7 +2338,11 @@ describe('DSH Host and internal Channel vertical slice', () => {
       model: { provider: 'test-provider', model: 'chat-model' },
     })
     const connection = core.createConnection({ adapterKey: 'web', config: {} })
-    const channel = core.createChannel({ connectionId: connection.id, platformChannelId: 'text-file', kind: 'web' })
+    const channel = core.createChannel({
+      connectionId: connection.id,
+      platformChannelId: 'text-file',
+      kind: 'internal',
+    })
     core.createBinding({ channelId: channel.id, agentId: agent.definition.id, triggerPolicy: 'always' })
     const fileText = '# 加速器说明\n\n模型应该能读取这段 Markdown 正文。'
     const textAsset = await assetService.prepare({
@@ -2389,6 +2399,7 @@ describe('DSH Host and internal Channel vertical slice', () => {
         admissionId: AdmissionIdSchema.parse('adm_TEXTFILEREAD'),
         events: [event],
         mode: 'followup',
+        replyRequired: true,
       })
       await host.whenIdle(sessionId)
 
@@ -2400,6 +2411,77 @@ describe('DSH Host and internal Channel vertical slice', () => {
       expect(sessionEvents).not.toContain(path.join(directory, 'assets'))
     } finally {
       await host.dispose()
+      database.close()
+    }
+  })
+
+  it('rejects inaccessible, oversized, and binary text asset reads', async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), 'nekro-nxt-dsh-text-file-boundaries-'))
+    temporaryDirectories.push(directory)
+    const database = await openMigratedCoreDatabase(path.join(directory, 'core.sqlite'))
+    const repository = new SqliteCoreRepository(database)
+    const assetService = new AssetService(repository, path.join(directory, 'assets'))
+    let coreId = 0
+    const core = new CoreService(repository, { now: () => 1810, nextUlid: () => `TB${++coreId}` })
+    const connection = core.createConnection({ adapterKey: 'web', config: {} })
+    const channel = core.createChannel({
+      connectionId: connection.id,
+      platformChannelId: 'text-owner',
+      kind: 'internal',
+    })
+    const otherChannel = core.createChannel({
+      connectionId: connection.id,
+      platformChannelId: 'text-other',
+      kind: 'internal',
+    })
+    const textAsset = await assetService.prepare({
+      bytes: new TextEncoder().encode('authorized text fixture'),
+      declaredMediaType: 'text/plain',
+    })
+    const binaryAsset = await assetService.prepare({
+      bytes: new Uint8Array([0xff, 0x00, 0x01]),
+      declaredMediaType: 'application/octet-stream',
+    })
+    for (const assetId of [textAsset.asset.id, binaryAsset.asset.id]) {
+      repository.grantAssetAccess({ assetId, channelId: channel.id, source: 'agent-tool', grantedAt: 1810 })
+    }
+
+    try {
+      await expect(
+        readChannelAssetText({
+          channelId: otherChannel.id,
+          assetId: textAsset.asset.id,
+          assets: repository,
+          assetService,
+        }),
+      ).rejects.toThrow('not accessible')
+      await expect(
+        readChannelAssetText({
+          channelId: channel.id,
+          assetId: textAsset.asset.id,
+          assets: repository,
+          assetService,
+          maxBytes: textAsset.asset.byteSize - 1,
+        }),
+      ).rejects.toThrow('asset_read_text limit')
+      await expect(
+        readChannelAssetText({
+          channelId: channel.id,
+          assetId: textAsset.asset.id,
+          assets: repository,
+          assetService,
+          maxBytes: ASSET_READ_TEXT_HARD_MAX_BYTES + 1,
+        }),
+      ).rejects.toThrow('must be an integer between')
+      await expect(
+        readChannelAssetText({
+          channelId: channel.id,
+          assetId: binaryAsset.asset.id,
+          assets: repository,
+          assetService,
+        }),
+      ).rejects.toThrow()
+    } finally {
       database.close()
     }
   })

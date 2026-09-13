@@ -304,7 +304,9 @@ describe('WeChat iLink Server driver', () => {
           message: '该连接需要通过扫码登录创建，不能使用通用配置表单。',
         },
       })
-      expect(runtime.core.listConnections().filter((connection) => connection.adapterKey === 'wechat-ilink')).toEqual([])
+      expect(runtime.core.listConnections().filter((connection) => connection.adapterKey === 'wechat-ilink')).toEqual(
+        [],
+      )
     } finally {
       api.dispose()
       await webContext.fiber.dispose()

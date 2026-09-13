@@ -1,6 +1,6 @@
 import { AdapterRegistry } from '@nekro-nxt/adapter-sdk'
 import { describe, expect, it } from 'vitest'
-import { BUILTIN_ADAPTER_CONTRIBUTIONS } from '../src/index.ts'
+import { BUILTIN_ADAPTER_CONTRIBUTIONS, WECHAT_ILINK_BUILTIN, createBuiltinAdapterContributions } from '../src/index.ts'
 
 describe('first-party Adapter roster', () => {
   it('registers every V2 contribution through the generic Registry without duplicate keys', async () => {
@@ -17,5 +17,18 @@ describe('first-party Adapter roster', () => {
 
     await Promise.all(handles.map((handle) => handle.dispose()))
     expect(registry.list()).toEqual([])
+  })
+
+  it('owns the WeChat iLink provisioning seam for Server composition', () => {
+    const transportFactory = () => {
+      throw new Error('transport fixture should not be started while composing the roster')
+    }
+    const contributions = createBuiltinAdapterContributions({ wechatIlinkTransportFactory: transportFactory })
+
+    expect(Object.isFrozen(contributions)).toBe(true)
+    expect(contributions.map(({ descriptor }) => descriptor.key)).toEqual(
+      BUILTIN_ADAPTER_CONTRIBUTIONS.map(({ descriptor }) => descriptor.key),
+    )
+    expect(contributions.filter(({ descriptor }) => descriptor.key === WECHAT_ILINK_BUILTIN.key)).toHaveLength(1)
   })
 })

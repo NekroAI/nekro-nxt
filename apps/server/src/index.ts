@@ -2179,6 +2179,123 @@ export const assetCreateTool = (
     },
   })
 
+export const ASSET_READ_TEXT_DEFAULT_MAX_BYTES = 256 * 1024
+export const ASSET_READ_TEXT_HARD_MAX_BYTES = 1024 * 1024
+
+const ASSET_READ_TEXT_MEDIA_TYPES = new Set([
+  'application/javascript',
+  'application/json',
+  'application/ld+json',
+  'application/sql',
+  'application/toml',
+  'application/typescript',
+  'application/xml',
+  'application/x-javascript',
+  'application/x-ndjson',
+  'application/x-yaml',
+  'application/yaml',
+])
+
+const isTextLikeAssetMediaType = (mediaType: string): boolean =>
+  mediaType.startsWith('text/') || ASSET_READ_TEXT_MEDIA_TYPES.has(mediaType) || mediaType.endsWith('+json')
+
+const textControlCharacterRatio = (text: string): number => {
+  if (text.length === 0) return 0
+  let controlCharacters = 0
+  for (const character of text) {
+    const code = character.codePointAt(0)!
+    if ((code < 0x20 && character !== '\n' && character !== '\r' && character !== '\t') || code === 0x7f) {
+      controlCharacters += 1
+    }
+  }
+  return controlCharacters / text.length
+}
+
+const decodeReadableAssetText = (bytes: Uint8Array, mediaType: string): string => {
+  const text = new TextDecoder('utf-8', { fatal: true }).decode(bytes)
+  if (isTextLikeAssetMediaType(mediaType)) return text
+  if (mediaType === 'application/octet-stream' && textControlCharacterRatio(text) <= 0.02) return text
+  throw new Error(`Asset ${mediaType} is not a readable text resource.`)
+}
+
+export const readChannelAssetText = async (input: {
+  readonly channelId: ChannelId
+  readonly assetId: string
+  readonly assets: AssetAccessRepository
+  readonly assetService: AssetService
+  readonly maxBytes?: number
+}): Promise<{
+  readonly assetId: AssetRecord['id']
+  readonly byteSize: number
+  readonly mediaType: string
+  readonly text: string
+  readonly truncated: false
+}> => {
+  const assetId = AssetIdSchema.parse(input.assetId)
+  if (!input.assets.canAccessAsset(assetId, input.channelId)) {
+    throw new Error('Asset is not accessible from the current Channel.')
+  }
+  const asset = input.assets.getAssetById(assetId)
+  if (!asset) throw new Error(`Asset metadata is unavailable: ${assetId}`)
+  const maxBytes = input.maxBytes ?? ASSET_READ_TEXT_DEFAULT_MAX_BYTES
+  if (!Number.isSafeInteger(maxBytes) || maxBytes <= 0 || maxBytes > ASSET_READ_TEXT_HARD_MAX_BYTES) {
+    throw new Error(`asset_read_text maxBytes must be an integer between 1 and ${ASSET_READ_TEXT_HARD_MAX_BYTES}.`)
+  }
+  if (asset.byteSize > maxBytes) {
+    throw new Error(`Asset ${asset.id} is ${asset.byteSize} bytes; asset_read_text limit is ${maxBytes} bytes.`)
+  }
+  const bytes = new Uint8Array(await readFile(input.assetService.blobPath(asset)))
+  if (bytes.byteLength !== asset.byteSize) throw new Error(`Asset ${asset.id} failed size verification.`)
+  return {
+    assetId: asset.id,
+    byteSize: asset.byteSize,
+    mediaType: asset.mediaType,
+    text: decodeReadableAssetText(bytes, asset.mediaType),
+    truncated: false,
+  }
+}
+
+export const assetReadTextTool = (channelId: ChannelId, assets: AssetAccessRepository, assetService: AssetService) =>
+  defineTool({
+    name: 'asset_read_text',
+    description:
+      '读取当前频道有权访问的小型文本资源正文。只接受 assetId，不接受路径、URL 或 base64；适用于 txt、md、json、yaml 等 UTF-8 文本，默认最多 256 KiB。',
+    parameters: {
+      assetId: { type: 'string', required: true, description: '当前频道消息中出现过或已授权的 Asset ID。' },
+      maxBytes: {
+        type: 'integer',
+        description: `可选读取上限，1 到 ${ASSET_READ_TEXT_HARD_MAX_BYTES} 字节；资源超过该上限会拒绝读取。`,
+      },
+    },
+    output: {
+      schema: {
+        type: 'object',
+        additionalProperties: false,
+        properties: {
+          assetId: { type: 'string', required: true },
+          byteSize: { type: 'integer', required: true },
+          mediaType: { type: 'string', required: true },
+          text: { type: 'string', required: true },
+          truncated: { type: 'boolean', required: true },
+        },
+      },
+      render: (_arguments, value) => [
+        {
+          type: 'text',
+          text: `已读取文本资源 ${value.assetId}（${value.byteSize} bytes，${value.mediaType}）：\n${value.text}`,
+        },
+      ],
+    },
+    execute: (args) =>
+      readChannelAssetText({
+        channelId,
+        assetId: args.assetId,
+        assets,
+        assetService,
+        ...(args.maxBytes === undefined ? {} : { maxBytes: args.maxBytes }),
+      }),
+  })
+
 const FinishChannelTurnInputSchema = z
   .object({
     outcome: z.enum(['response-complete', 'no-response-needed', 'cannot-respond']),
@@ -4110,6 +4227,7 @@ export class DshHostRuntime implements AgentSessionDriver, ExtensionActivationHo
       }
       for (const tool of historyTools(input.channelId, this.#history)) agentContext.tools.register(tool)
       agentContext.tools.register(assetInspectTool(input.channelId, this.#assets))
+      agentContext.tools.register(assetReadTextTool(input.channelId, this.#assets, this.#assetService))
       if (supportsImage || auxiliary !== undefined) {
         agentContext.tools.register(
           assetInspectImagesTool({
@@ -6003,7 +6121,7 @@ export class DshHostRuntime implements AgentSessionDriver, ExtensionActivationHo
         case 'file':
           blocks.push({
             type: 'text',
-            text: `收到文件资源 ${part.assetId}${part.name ? `（${part.name}）` : ''}`,
+            text: `收到文件资源 ${part.assetId}${part.name ? `（${part.name}）` : ''}。若这是小型文本文件，可使用 asset_read_text 读取正文。`,
           })
           break
         case 'audio':

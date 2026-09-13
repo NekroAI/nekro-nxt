@@ -1609,9 +1609,9 @@ describe.sequential('NekroNxt browser projections', { timeout: 30_000 }, () => {
     await withProductPage(
       `/connections/${browserConnectionId}`,
       async (page) => {
-        const addButton = page.getByRole('button', { name: '添加平台连接' })
-        await playwrightExpect(addButton).toBeVisible()
-        await addButton.click()
+        const addLink = page.getByRole('link', { name: '添加平台连接' })
+        await playwrightExpect(addLink).toBeVisible()
+        await addLink.click()
 
         const dialog = page.getByRole('dialog')
         await playwrightExpect(dialog.getByText('选择要连接的平台账号。', { exact: true })).toBeVisible()
@@ -1677,6 +1677,7 @@ describe.sequential('NekroNxt browser projections', { timeout: 30_000 }, () => {
       ],
     })
 
+    let snapshotRequests = 0
     await withProductPage(
       '/connections/' + browserConnectionId + '?create=1&adapter=wechat-ilink',
       async (page) => {
@@ -1686,30 +1687,9 @@ describe.sequential('NekroNxt browser projections', { timeout: 30_000 }, () => {
         const qrImage = dialog.getByRole('img', { name: '微信 iLink 扫码登录二维码' })
         await playwrightExpect(qrImage).toBeVisible()
         await playwrightExpect(qrImage).toHaveAttribute('src', /^data:image\/svg\+xml;charset=UTF-8,/u)
-        await page.evaluate(async () => {
-          const isPropertyBag = (value: unknown): value is Record<string, unknown> =>
-            (typeof value === 'object' || typeof value === 'function') && value !== null
-          const isZeroArgFunction = (value: unknown): value is () => unknown => typeof value === 'function'
-          const productStoreModule = '/src/product-store.ts'
-          const store: unknown = await import(productStoreModule)
-          if (!isPropertyBag(store)) {
-            throw new Error('Product store module is unavailable.')
-          }
-          const useProductStore = store['useProductStore']
-          if (!isPropertyBag(useProductStore)) {
-            throw new Error('Product store hook is unavailable.')
-          }
-          const getState = useProductStore['getState']
-          if (!isZeroArgFunction(getState)) throw new Error('Product store state accessor is unavailable.')
-          const state: unknown = getState()
-          if (!isPropertyBag(state)) {
-            throw new Error('Host refresh action is unavailable.')
-          }
-          const refreshHost = state['refreshHost']
-          if (!isZeroArgFunction(refreshHost)) throw new Error('Host refresh action is unavailable.')
-          await refreshHost()
-        })
-        await page.waitForTimeout(250)
+        const requestsBeforeRefresh = snapshotRequests
+        await page.evaluate(() => window.dispatchEvent(new Event('online')))
+        await playwrightExpect.poll(() => snapshotRequests).toBeGreaterThan(requestsBeforeRefresh)
         await playwrightExpect(dialog.getByText('登录 微信 iLink')).toBeVisible()
         await playwrightExpect(qrImage).toBeVisible()
         await playwrightExpect(dialog).not.toContainText('选择平台')
@@ -1718,6 +1698,7 @@ describe.sequential('NekroNxt browser projections', { timeout: 30_000 }, () => {
       async (page) => {
         let loginStarted = false
         await page.route('**/api/snapshot', async (request) => {
+          snapshotRequests += 1
           await request.fulfill({
             status: 200,
             contentType: 'application/json',
