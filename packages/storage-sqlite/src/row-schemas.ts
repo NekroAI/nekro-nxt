@@ -103,6 +103,7 @@ export const AgentCurrentRevisionRowSchema = createSelectSchema(agentCurrentRevi
 })
 export const ConnectionRowSchema = createSelectSchema(connections, {
   id: ConnectionIdSchema,
+  accountKey: z.string().min(1).nullable(),
   config: JsonValueSchema,
   credentialRefs: credentialRefsSchema,
   activityTriggerDefaults: z.array(AdapterActivityKeySchema),

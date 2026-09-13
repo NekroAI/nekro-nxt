@@ -359,6 +359,40 @@ describe('Core SQLite baseline', () => {
     }
   })
 
+  it('allows only one active Connection for each Adapter account identity', async () => {
+    const { database, core } = await createFixture()
+    try {
+      const first = core.createConnection({
+        adapterKey: 'wechat-ilink',
+        accountKey: 'wx_account_unique',
+        config: { accountId: 'wx_account_unique' },
+      })
+      expect(() =>
+        core.createConnection({
+          adapterKey: 'wechat-ilink',
+          accountKey: 'wx_account_unique',
+          config: { accountId: 'wx_account_unique' },
+        }),
+      ).toThrow()
+
+      core.archiveConnection(first.id)
+      const replacement = core.createConnection({
+        adapterKey: 'wechat-ilink',
+        accountKey: 'wx_account_unique',
+        config: { accountId: 'wx_account_unique' },
+      })
+      expect(() => core.restoreConnection(first.id)).toThrow()
+
+      core.archiveConnection(replacement.id)
+      expect(core.restoreConnection(first.id)).toMatchObject({
+        id: first.id,
+        accountKey: 'wx_account_unique',
+      })
+    } finally {
+      database.close()
+    }
+  })
+
   it('upgrades schema 0018 by preserving activity keys and converting internal Channel kind atomically', async () => {
     const directory = await temporaryDirectory()
     const filename = path.join(directory, 'core.sqlite')

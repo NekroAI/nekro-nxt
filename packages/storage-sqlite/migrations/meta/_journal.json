@@ -162,6 +162,13 @@
       "when": 1788482128857,
       "tag": "0022_connection_activity_defaults_and_archive",
       "breakpoints": true
+    },
+    {
+      "idx": 23,
+      "version": "6",
+      "when": 1789279937984,
+      "tag": "0023_connection_account_key",
+      "breakpoints": true
     }
   ]
 }

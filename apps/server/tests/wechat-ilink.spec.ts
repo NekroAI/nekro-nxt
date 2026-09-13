@@ -19,6 +19,16 @@ import { createNekroHostApi } from '../src/host-api.js'
 
 const temporaryDirectories: string[] = []
 
+const deferred = <T>() => {
+  let resolve!: (value: T | PromiseLike<T>) => void
+  let reject!: (reason?: unknown) => void
+  const promise = new Promise<T>((resolvePromise, rejectPromise) => {
+    resolve = resolvePromise
+    reject = rejectPromise
+  })
+  return { promise, resolve, reject }
+}
+
 class FakeWechatIlinkTransport implements WechatIlinkTransport {
   readonly sent: Array<{ readonly toUserId: string; readonly text: string; readonly contextToken: string }> = []
   config: WechatIlinkTransportConfig | undefined
@@ -70,7 +80,7 @@ const readSnapshot = async (origin: string): Promise<ReturnType<typeof HostApiCo
   return HostApiContracts.snapshot.parseResponse(body)
 }
 
-const waitFor = async (predicate: () => Promise<boolean>, timeoutMs = 2_000): Promise<void> => {
+const waitFor = async (predicate: () => boolean | Promise<boolean>, timeoutMs = 2_000): Promise<void> => {
   const deadline = Date.now() + timeoutMs
   while (!(await predicate())) {
     if (Date.now() >= deadline) throw new Error('Timed out waiting for condition.')
@@ -155,6 +165,19 @@ describe('WeChat iLink Server driver', () => {
       expect(confirmed).toMatchObject({ status: 'confirmed', adapterKey: 'wechat-ilink' })
       expect(confirmed.connectionId).toBeDefined()
       const connectionId = confirmed.connectionId!
+      expect(() => runtime.cancelWechatIlinkLogin(started.loginId)).toThrow('登录会话已经结束')
+      expect(runtime.getWechatIlinkLogin(started.loginId)).toMatchObject({ status: 'confirmed', connectionId })
+
+      const duplicateStarted = await runtime.startWechatIlinkLogin({})
+      let duplicate = runtime.getWechatIlinkLogin(duplicateStarted.loginId)
+      await waitFor(() => {
+        duplicate = runtime.getWechatIlinkLogin(duplicateStarted.loginId)
+        return duplicate.status === 'failed' || duplicate.status === 'confirmed'
+      })
+      expect(duplicate).toMatchObject({ status: 'failed', message: '该微信账号已经存在活动连接。' })
+      expect(
+        runtime.core.listConnections().filter((connection) => connection.adapterKey === 'wechat-ilink'),
+      ).toHaveLength(1)
 
       expect(transport.config).toEqual({
         accountId: 'wx_account_fixture',
@@ -261,6 +284,68 @@ describe('WeChat iLink Server driver', () => {
     } finally {
       api.dispose()
       await webContext.fiber.dispose()
+      await runtime.dispose()
+    }
+  })
+
+  it('keeps cancellation terminal while connection mounting is in flight and rolls back durable state', async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), 'nekro-nxt-wechat-ilink-cancel-'))
+    temporaryDirectories.push(directory)
+    const loginResult = deferred<WechatIlinkLoginResult>()
+    const mountStarted = deferred<void>()
+    const releaseMount = deferred<void>()
+    let loginOptions: WechatIlinkLoginOptions | undefined
+    class BlockingWechatIlinkTransport extends FakeWechatIlinkTransport {
+      override async start(input: WechatIlinkTransportStartInput): Promise<void> {
+        this.startInput = input
+        mountStarted.resolve()
+        await releaseMount.promise
+      }
+    }
+    const runtime = await NekroRuntime.create({
+      coreDatabasePath: path.join(directory, 'core.sqlite'),
+      sessionDatabasePath: path.join(directory, 'sessions.sqlite'),
+      assetRoot: path.join(directory, 'assets'),
+      extensionDataRoot: path.join(directory, 'extension-data'),
+      extensionCacheRoot: path.join(directory, 'extension-cache'),
+      credentialRoot: path.join(directory, 'credentials'),
+      wechatIlink: {
+        loginClientFactory: () => ({
+          async login(options): Promise<WechatIlinkLoginResult> {
+            loginOptions = options
+            await options?.onQRCode?.('https://qr.example.invalid/login-cancel-fixture')
+            return loginResult.promise
+          },
+        }),
+        transportFactory: () => new BlockingWechatIlinkTransport(),
+      },
+    })
+    await runtime.start()
+
+    try {
+      const started = await runtime.startWechatIlinkLogin({})
+      loginOptions?.onStatus?.('confirmed')
+      loginResult.resolve({
+        connected: true,
+        botToken: 'credential-secret-cancelled',
+        accountId: 'wx_account_cancelled',
+        baseUrl: 'https://ilink-api.test',
+        message: 'Login successful!',
+      })
+      await mountStarted.promise
+
+      expect(runtime.cancelWechatIlinkLogin(started.loginId)).toMatchObject({ status: 'cancelled' })
+      loginOptions?.onStatus?.('scaned')
+      await loginOptions?.onQRCode?.('https://qr.example.invalid/login-late-fixture')
+      const statusAfterLateCallbacks = runtime.getWechatIlinkLogin(started.loginId).status
+      releaseMount.resolve()
+      await waitFor(() => runtime.core.listConnectionsByAdapter('wechat-ilink').length === 0)
+
+      expect(statusAfterLateCallbacks).toBe('cancelled')
+      expect(runtime.getWechatIlinkLogin(started.loginId)).toMatchObject({ status: 'cancelled' })
+      expect(await readdir(path.join(directory, 'credentials'))).toEqual([])
+    } finally {
+      releaseMount.resolve()
       await runtime.dispose()
     }
   })

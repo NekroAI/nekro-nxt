@@ -92,6 +92,7 @@ const toConnection = (input: typeof connections.$inferSelect): ConnectionRecord 
   return {
     id: row.id,
     adapterKey: row.adapterKey,
+    ...(row.accountKey === null ? {} : { accountKey: row.accountKey }),
     ...(row.alias?.trim() ? { alias: row.alias.trim() } : {}),
     config: row.config,
     credentialRefs: row.credentialRefs,

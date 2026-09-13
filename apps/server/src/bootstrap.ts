@@ -993,6 +993,7 @@ export class NekroRuntime {
           maxRefreshes: 3,
           signal: abortController.signal,
           onQRCode: (qrCodeUrl) => {
+            if (abortController.signal.aborted || session.status === 'cancelled') return
             session.qrCodeUrl = qrCodeUrl
             session.status = 'pending'
             session.message = '请使用平台应用扫码并确认登录。'
@@ -1000,6 +1001,7 @@ export class NekroRuntime {
             this.#notifyConnectionChanges()
           },
           onStatus: (status) => {
+            if (abortController.signal.aborted || session.status === 'cancelled') return
             if (status === 'scaned') {
               session.status = 'scanned'
               session.message = '已扫码，请在平台应用内确认登录。'
@@ -1016,7 +1018,7 @@ export class NekroRuntime {
             this.#notifyConnectionChanges()
           },
         })
-        if (abortController.signal.aborted || session.status === 'cancelled') return
+        if (abortController.signal.aborted) return
         if (!session.qrCodeUrl) {
           session.status = 'failed'
           session.message = '微信 iLink 登录流程未返回二维码。'
@@ -1035,18 +1037,24 @@ export class NekroRuntime {
           rejectFirstQrOnce(new Error(session.message))
           return
         }
-        const connection = await this.#createWechatIlinkConnectionFromLogin({
-          alias: input.alias,
-          accountId: result.accountId,
-          botToken: result.botToken,
-          baseUrl: result.baseUrl,
-        })
+        const connection = await this.#createWechatIlinkConnectionFromLogin(
+          {
+            alias: input.alias,
+            accountId: result.accountId,
+            botToken: result.botToken,
+            baseUrl: result.baseUrl,
+          },
+          abortController.signal,
+        )
+        if (abortController.signal.aborted) return
         session.status = 'confirmed'
         session.connectionId = connection.id
         session.adapterKey = connection.adapterKey
         session.message = '登录成功，连接已创建。'
       } catch (error) {
         if (abortController.signal.aborted || session.status === 'cancelled') {
+          session.status = 'cancelled'
+          session.message = '已取消微信 iLink 扫码登录。'
           rejectFirstQrOnce(error)
           return
         }
@@ -1078,6 +1086,10 @@ export class NekroRuntime {
   cancelWechatIlinkLogin(loginId: string): WechatIlinkLoginSessionView {
     const session = this.#wechatIlinkLoginSessions.get(loginId)
     if (!session) throw new Error('微信 iLink 登录会话不存在。')
+    if (session.status === 'cancelled') return this.#projectWechatIlinkLoginSession(session)
+    if (session.status !== 'pending' && session.status !== 'scanned') {
+      throw new Error('微信 iLink 登录会话已经结束，不能取消。')
+    }
     session.status = 'cancelled'
     session.message = '已取消微信 iLink 扫码登录。'
     session.abortController.abort(new Error(session.message))
@@ -1106,17 +1118,31 @@ export class NekroRuntime {
     }, 60_000)
   }
 
-  async #createWechatIlinkConnectionFromLogin(input: {
-    readonly alias?: string | undefined
-    readonly accountId: string
-    readonly botToken: string
-    readonly baseUrl?: string | undefined
-  }): Promise<ConnectionRecord> {
+  async #createWechatIlinkConnectionFromLogin(
+    input: {
+      readonly alias?: string | undefined
+      readonly accountId: string
+      readonly botToken: string
+      readonly baseUrl?: string | undefined
+    },
+    signal: AbortSignal,
+  ): Promise<ConnectionRecord> {
     const parsed = parseBuiltinWechatIlinkConnectionInput({
       accountId: input.accountId,
       botToken: input.botToken,
       ...(input.baseUrl === undefined ? {} : { baseUrl: input.baseUrl }),
     })
+    const duplicateMessage = '该微信账号已经存在活动连接。'
+    const findDuplicate = (): ConnectionRecord | undefined =>
+      this.core.listConnectionsByAdapter(WECHAT_ILINK_BUILTIN.key).find((candidate) => {
+        try {
+          return parseBuiltinWechatIlinkConnectionConfiguration(candidate.config).accountId === parsed.accountId
+        } catch {
+          return false
+        }
+      })
+    if (findDuplicate()) throw new Error(duplicateMessage)
+    if (signal.aborted) throw signal.reason
     const credentialReference = await this.credentials.save(parsed.botToken)
     const storedConfig = {
       accountId: parsed.accountId,
@@ -1130,20 +1156,29 @@ export class NekroRuntime {
       ...(parsed.channelVersion === undefined ? {} : { channelVersion: parsed.channelVersion }),
       ...(parsed.routeTag === undefined ? {} : { routeTag: parsed.routeTag }),
     } satisfies Readonly<Record<string, JsonValue>>
-    let connection: ConnectionRecord
+    let connection: ConnectionRecord | undefined
     try {
+      if (signal.aborted) throw signal.reason
       connection = this.core.createConnection({
         adapterKey: WECHAT_ILINK_BUILTIN.key,
+        accountKey: parsed.accountId,
         ...(input.alias === undefined ? {} : { alias: input.alias }),
         config: storedConfig,
         credentialRefs: { botToken: credentialReference },
       })
+      if (signal.aborted) throw signal.reason
+      await this.#mountAdapter(connection.id)
+      if (signal.aborted) throw signal.reason
+      return connection
     } catch (error) {
-      await this.credentials.delete(credentialReference)
+      if (connection && signal.aborted) {
+        await this.deleteConnection(connection.id, { deleteChannelData: true })
+      } else if (!connection) {
+        await this.credentials.delete(credentialReference)
+      }
+      if (!connection && findDuplicate()) throw new Error(duplicateMessage, { cause: error })
       throw error
     }
-    await this.#mountAdapter(connection.id)
-    return connection
   }
 
   async deleteConnection(
@@ -1184,6 +1219,17 @@ export class NekroRuntime {
     if (!archived) throw new Error('可恢复的连接不存在。')
     if (this.adapters.get(archived.adapterKey)?.descriptor.provisioning !== 'user-created') {
       throw new Error('这个连接当前无法恢复。')
+    }
+    if (archived.adapterKey === WECHAT_ILINK_BUILTIN.key) {
+      const accountId = parseBuiltinWechatIlinkConnectionConfiguration(archived.config).accountId
+      const duplicate = this.core.listConnectionsByAdapter(WECHAT_ILINK_BUILTIN.key).some((candidate) => {
+        try {
+          return parseBuiltinWechatIlinkConnectionConfiguration(candidate.config).accountId === accountId
+        } catch {
+          return false
+        }
+      })
+      if (duplicate) throw new Error('该微信账号已经存在活动连接。')
     }
     const connection = this.core.restoreConnection(connectionId)
     await this.#mountAdapter(connectionId)

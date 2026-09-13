@@ -59,7 +59,6 @@ describe('WeChat iLink Runtime', () => {
       from_user_id: 'wechat-user-1',
       create_time_ms: 9_000,
       context_token: 'context-token-1',
-      group_id: 'ignored-group-1',
       item_list: [
         { item_type: 1, text_item: { text: '你好' } },
         { item_type: 1, text_item: { text: '，NekroNXT' } },
@@ -86,11 +85,10 @@ describe('WeChat iLink Runtime', () => {
         { type: 'text', text: '你好' },
         { type: 'text', text: '，NekroNXT' },
       ],
-      facts: { hasContextToken: true, hasGroupId: true, itemTypes: [1, 1] },
+      facts: { hasContextToken: true, hasGroupId: false, itemTypes: [1, 1] },
     })
     expect(JSON.stringify(context.events[0]?.facts)).not.toContain('context-token-1')
-    expect(context.diagnostics.map((diagnostic) => diagnostic.status)).toEqual(['connecting', 'connected', 'connected'])
-    expect(context.diagnostics.at(-1)).toMatchObject({ details: { code: 'wechat-ilink/group-id-ignored' } })
+    expect(context.diagnostics.map((diagnostic) => diagnostic.status)).toEqual(['connecting', 'connected'])
 
     const receipt = await runtime.deliver(
       deliveryRequest({
@@ -140,6 +138,32 @@ describe('WeChat iLink Runtime', () => {
       capabilityOutcomes: { idKind: 'delivery_id' },
     })
     await expect(runtime.testSend(channelId)).resolves.toBe('phy_WECHATTEST')
+  })
+
+  it('drops group messages before creating direct state or admitting inbound', async () => {
+    const transport = new FakeWechatIlinkTransport()
+    const context = createFakeContext()
+    const runtime = new WechatIlinkRuntime({
+      context: context.context,
+      config: runtimeConfig,
+      transportFactory: () => transport,
+    })
+
+    await runtime.start()
+    transport.emitMessage({
+      message_id: 'wechat-group-message-1',
+      from_user_id: 'wechat-user-group',
+      group_id: 'wechat-group-1',
+      create_time_ms: 9_000,
+      context_token: 'context-token-group',
+      item_list: [{ item_type: 1, text_item: { text: '群聊内容' } }],
+    })
+    await waitFor(() => context.diagnostics.at(-1)?.details?.['code'] === 'wechat-ilink/group-unsupported')
+
+    expect(context.channels).toEqual(new Map())
+    expect(context.events).toEqual([])
+    expect(context.states.has(contextTokenStateKey('wechat-user-group'))).toBe(false)
+    await runtime.stop()
   })
 
   it('forwards optional SDK routing configuration', async () => {

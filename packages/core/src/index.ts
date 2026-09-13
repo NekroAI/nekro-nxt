@@ -102,6 +102,8 @@ export interface AgentRevisionRecord extends Omit<
 export interface ConnectionRecord {
   readonly id: ConnectionId
   readonly adapterKey: string
+  /** Stable Adapter-scoped account identity used to prevent duplicate active Connections. */
+  readonly accountKey?: string
   /** Optional user-facing identifier; the Adapter still owns platform identity. */
   readonly alias?: string
   readonly config: JsonValue
@@ -443,6 +445,7 @@ const connectionInputSchema = z
     config: z.json(),
     credentialRefs: z.record(z.string().min(1), z.string().trim().min(1)).default({}),
     activityTriggerDefaults: z.array(AdapterActivityKeySchema).default([]),
+    accountKey: z.string().trim().min(1).optional(),
     alias: ConnectionAliasSchema.optional(),
   })
   .strict()
@@ -738,12 +741,14 @@ export class CoreService {
     readonly config: JsonValue
     readonly credentialRefs?: Readonly<Record<string, string>>
     readonly activityTriggerDefaults?: readonly AdapterActivityKey[]
+    readonly accountKey?: string
     readonly alias?: string
   }): ConnectionRecord {
     const parsed = connectionInputSchema.parse(input)
     const record: ConnectionRecord = {
       id: ConnectionIdSchema.parse(`con_${this.#nextUlid()}`),
       adapterKey: parsed.adapterKey,
+      ...(parsed.accountKey === undefined ? {} : { accountKey: parsed.accountKey }),
       config: parsed.config,
       credentialRefs: parsed.credentialRefs,
       activityTriggerDefaults: parsed.activityTriggerDefaults,
@@ -763,6 +768,7 @@ export class CoreService {
       return {
         id: current.id,
         adapterKey: current.adapterKey,
+        ...(current.accountKey === undefined ? {} : { accountKey: current.accountKey }),
         config: current.config,
         credentialRefs: current.credentialRefs,
         activityTriggerDefaults: current.activityTriggerDefaults,
@@ -807,6 +813,7 @@ export class CoreService {
     return {
       id: archived.id,
       adapterKey: archived.adapterKey,
+      ...(archived.accountKey === undefined ? {} : { accountKey: archived.accountKey }),
       ...(archived.alias === undefined ? {} : { alias: archived.alias }),
       config: archived.config,
       credentialRefs: archived.credentialRefs,

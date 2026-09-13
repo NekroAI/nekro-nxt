@@ -149,6 +149,7 @@ class MemoryRepository implements CoreRepository {
       this.connections.set(id, {
         id: current.id,
         adapterKey: current.adapterKey,
+        ...(current.accountKey === undefined ? {} : { accountKey: current.accountKey }),
         config: current.config,
         credentialRefs: current.credentialRefs,
         activityTriggerDefaults: current.activityTriggerDefaults,
@@ -590,8 +591,14 @@ describe('CoreService', () => {
     let id = 0
     const core = new CoreService(repository, { now: () => 100, nextUlid: () => `ID${++id}` })
 
-    const created = core.createConnection({ adapterKey: 'qq-openclaw', config: {}, alias: '  工作群账号  ' })
+    const created = core.createConnection({
+      adapterKey: 'qq-openclaw',
+      accountKey: '  platform-account-1  ',
+      config: {},
+      alias: '  工作群账号  ',
+    })
     expect(created.alias).toBe('工作群账号')
+    expect(created.accountKey).toBe('platform-account-1')
     expect(core.getConnection(created.id)?.alias).toBe('工作群账号')
 
     const updated = core.updateConnectionAlias(created.id, '  备用账号  ')
@@ -599,6 +606,7 @@ describe('CoreService', () => {
     expect(core.getConnection(created.id)?.alias).toBe('备用账号')
 
     expect(core.updateConnectionAlias(created.id, '   ')).not.toHaveProperty('alias')
+    expect(core.getConnection(created.id)?.accountKey).toBe('platform-account-1')
     expect(core.getConnection(created.id)).not.toHaveProperty('alias')
     expect(() => core.createConnection({ adapterKey: 'qq-openclaw', config: {}, alias: 'a'.repeat(81) })).toThrow()
     expect(() => core.updateConnectionAlias(created.id, 'a'.repeat(81))).toThrow()

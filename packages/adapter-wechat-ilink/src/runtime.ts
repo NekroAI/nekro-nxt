@@ -278,8 +278,9 @@ export class WechatIlinkRuntime implements AdapterConnectionRuntime {
         accountReference: this.#config.accountId,
         credentialConfigured: true,
         proactiveSend: false,
-        details: { code: 'wechat-ilink/group-id-ignored' },
+        details: { code: 'wechat-ilink/group-unsupported' },
       })
+      return
     }
     const channelId = await this.#context.channels.ensure({
       platformChannelId: normalized.platformChannelId,
