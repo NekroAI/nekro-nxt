@@ -1121,6 +1121,24 @@ test('pending sends remain bound to their original channel across navigation', a
   expect(failures).toEqual([])
 })
 
+test('failed page chunks preserve the active conversation and provide a retry', async ({ page }) => {
+  await installProductRoutes(page)
+  let blocked = true
+  await page.route('**/assets/settings-page-*.js', (route) => (blocked ? route.abort('failed') : route.continue()))
+  await page.goto(`/work/channels/${targetChannelId}`)
+  const input = page.getByRole('textbox', { name: '消息内容' })
+  await input.fill('模块加载失败仍保留的草稿')
+  await page.locator('a[href="/settings"]').first().click()
+  await expect(page.getByText('页面加载失败，当前页面和草稿已保留。')).toBeVisible()
+  await expect(page).toHaveURL(new RegExp(`/work/channels/${targetChannelId}$`, 'u'))
+  await expect(input).toHaveValue('模块加载失败仍保留的草稿')
+  blocked = false
+  await page.getByRole('button', { name: '重试加载' }).click()
+  await expect(page).toHaveURL(/\/settings$/u)
+  await page.goBack()
+  await expect(input).toHaveValue('模块加载失败仍保留的草稿')
+})
+
 test('desktop splitters and appearance preferences persist and recover defaults', async ({ page }, testInfo) => {
   const failures = installRuntimeFailureGate(page)
   await installProductRoutes(page)

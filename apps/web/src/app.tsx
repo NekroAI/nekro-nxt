@@ -41,16 +41,10 @@ import { DynamicClientProvider } from './dynamic-client-coordinator.js'
 import { useDesktopInstance } from './desktop-shell.js'
 import { PersistentExtensionClientProvider } from './persistent-extension-client.js'
 import { AdapterHostClientProvider } from './adapter-host-client.js'
-import {
-  AgentManagePage,
-  AgentsPage,
-  ChannelConversationPage,
-  ConnectionsPage,
-  CreatorPage,
-  ExtensionsPage,
-  SettingsPage,
-  UsersPage,
-} from './pages/product-pages.js'
+import { ChannelConversationPage } from './pages/channel-page.js'
+import { ConnectionsPage } from './pages/connections-page.js'
+import { UsersPage } from './pages/users-page.js'
+import { DeferredProductPage, RouteLoadNotice, cancelPreparedNavigation } from './shell/route-modules.js'
 import { useProductStore, type ProductHostStatus } from './product-runtime.js'
 import { isWorkPath, workHomePath } from './shell/last-channel.js'
 import { CommandPalette } from './shell/command-palette.js'
@@ -195,7 +189,8 @@ function DesktopShell() {
   const theme = useUiStateStore((state) => state.theme)
   const reducedMotion = useUiStateStore((state) => state.reducedMotion)
   const savedObjectPaneWidth = useUiPreferences((state) => state.layout.objectPaneWidth)
-  const [objectPaneWidth, setObjectPaneWidth] = useState(savedObjectPaneWidth)
+  const objectPaneWidth = savedObjectPaneWidth
+  const shellRef = useRef<HTMLDivElement>(null)
   const desktopInstance = useDesktopInstance()
   const hostSnapshotReady = useProductStore((state) => state.host.lastSuccessfulAt !== null)
   const hostUiPages = useProductStore((state) => state.hostUi.pages)
@@ -227,6 +222,9 @@ function DesktopShell() {
   useEffect(() => {
     previousHostUiOrder.current = hostUiPages
   }, [hostUiPages])
+  useEffect(() => {
+    cancelPreparedNavigation()
+  }, [location.key])
   const [instanceSwitcherOpen, setInstanceSwitcherOpen] = useState(false)
   const instanceStatusClass = {
     connecting: styles.instanceStatus_connecting,
@@ -241,7 +239,6 @@ function DesktopShell() {
   } = {
     '--nxt-object-pane-width': `${objectPaneWidth}px`,
   }
-  useEffect(() => setObjectPaneWidth(savedObjectPaneWidth), [savedObjectPaneWidth])
   const nextTheme = theme === 'light' ? 'dark' : 'light'
   const themeLabel = theme === 'light' ? '浅色' : '深色'
   const nextThemeLabel = nextTheme === 'light' ? '浅色' : '深色'
@@ -254,7 +251,8 @@ function DesktopShell() {
   }
 
   return (
-    <div className={styles.shell} style={shellStyle} data-object-pane-hidden={objectPaneHidden ? '' : undefined}>
+    <div className={styles.shell} data-object-pane-hidden={objectPaneHidden ? '' : undefined}>
+      <RouteLoadNotice />
       <header className={styles.windowTopBar} data-window-top-bar>
         <div className={styles.windowBrand} data-window-brand>
           <img className={styles.brandMark} src="/brand/mark.svg" alt="" aria-hidden="true" />
@@ -268,7 +266,7 @@ function DesktopShell() {
           <span>CALM · PRECISE · ALIVE</span>
         </div>
       </header>
-      <div className={styles.shellBody} data-shell-body>
+      <div ref={shellRef} style={shellStyle} className={styles.shellBody} data-shell-body>
         <aside className={styles.rail} aria-label="模式">
           <NavMarkGroup id="rail">
             <nav className={styles.railSystem} aria-label="主导航">
@@ -378,7 +376,7 @@ function DesktopShell() {
           max={OBJECT_PANE_WIDTH.max}
           defaultValue={OBJECT_PANE_WIDTH.default}
           disabled={objectPaneHidden}
-          onChange={setObjectPaneWidth}
+          previewTarget={{ ref: shellRef, property: '--nxt-object-pane-width' }}
           onCommit={(value) => useProductRuntimeUi.getState().setObjectPaneWidth(value)}
         />
         <main className={styles.stage}>
@@ -481,12 +479,15 @@ export function NekroNxtApp() {
                     <Route element={<DesktopShell />}>
                       <Route index element={<RootRedirect />} />
                       <Route path="work" element={<WorkIndex />} />
-                      <Route path="work/agents/new" element={<AgentsPage />} />
-                      <Route path="work/agents/:agentId" element={<AgentManagePage />} />
+                      <Route path="work/agents/new" element={<DeferredProductPage key="agents" name="agents" />} />
+                      <Route path="work/agents/:agentId" element={<DeferredProductPage key="agent" name="agent" />} />
                       <Route path="work/channels" element={<Navigate to="/work" replace />} />
                       <Route path="work/channels/:channelId" element={<ChannelConversationPage />} />
-                      <Route path="work/creator" element={<CreatorPage />} />
-                      <Route path="work/creator/:taskId" element={<CreatorPage />} />
+                      <Route path="work/creator" element={<DeferredProductPage key="creator" name="creator" />} />
+                      <Route
+                        path="work/creator/:taskId"
+                        element={<DeferredProductPage key="creator" name="creator" />}
+                      />
                       <Route path="agents" element={<LegacyWorkRedirect kind="agents" />} />
                       <Route path="agents/:agentId" element={<LegacyWorkRedirect kind="agent" />} />
                       <Route path="channels" element={<LegacyWorkRedirect kind="channels" />} />
@@ -494,12 +495,15 @@ export function NekroNxtApp() {
                       <Route path="connections" element={<ConnectionsPage />} />
                       <Route path="connections/:connectionId" element={<ConnectionsPage />} />
                       <Route path="users" element={<UsersPage />} />
-                      <Route path="extensions" element={<ExtensionsPage />} />
-                      <Route path="extensions/:extensionId" element={<ExtensionsPage />} />
+                      <Route path="extensions" element={<DeferredProductPage key="extensions" name="extensions" />} />
+                      <Route
+                        path="extensions/:extensionId"
+                        element={<DeferredProductPage key="extensions" name="extensions" />}
+                      />
                       <Route path="apps/:pageInstanceId/*" element={<HostUiPageCanvas />} />
                       <Route path="creator" element={<LegacyWorkRedirect kind="creator" />} />
                       <Route path="runtime" element={<RuntimeRedirect />} />
-                      <Route path="settings" element={<SettingsPage />} />
+                      <Route path="settings" element={<DeferredProductPage key="settings" name="settings" />} />
                       <Route path="*" element={<NotFoundPage />} />
                     </Route>
                   </Routes>

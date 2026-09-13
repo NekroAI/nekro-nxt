@@ -1,3 +1,4 @@
+import { loadRouteModule } from '../src/shell/route-modules.js'
 import {
   AgentIdSchema,
   ChannelIdSchema,
@@ -8,7 +9,7 @@ import {
 } from '@nekro-nxt/contracts'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { MemoryRouter } from 'react-router-dom'
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 import { hostPresentation, NekroNxtApp, nextVisibleHostUiPage } from '../src/app.js'
 import { runHostRefresh } from '../src/components/product-feedback.js'
 import { dynamicClientInventoryVersion } from '../src/dynamic-client-coordinator.js'
@@ -293,4 +294,11 @@ describe('NekroNxt product shell', () => {
 
     await expect(useProductStore.getState().sendMessage(browserChannelId, '保留这段草稿')).rejects.toBe(failure)
   })
+})
+
+// Static rendering cannot execute loading effects; prepare the same route modules as navigation.
+beforeAll(async () => {
+  await Promise.all(
+    ['/settings', '/work/agents/new', '/work/agents/example', '/work/creator', '/extensions'].map(loadRouteModule),
+  )
 })

@@ -1,3 +1,10 @@
+/* The grid consumes this width locally; descendants must not inherit drag invalidations. */
+@property --nxt-object-pane-width {
+  syntax: '<length>';
+  inherits: false;
+  initial-value: 240px;
+}
+
 :root {
   interpolate-size: allow-keywords;
   color-scheme: light;
