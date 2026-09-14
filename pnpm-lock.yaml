@@ -27,7 +27,7 @@ overrides:
   react-dom: 18.3.1
 
 patchedDependencies:
-  wechat-ilink-client@0.1.0: f859662da372a64f8b5403da4958799bb5000b62d9eae41e9cce3c146e2bbc58
+  wechat-ilink-client@0.1.0: 76b1be420ca8fb4f025ad7065ce31fa0e9d31cf592fb216b324d94ccda4d7d99
 
 importers:
 
@@ -569,7 +569,7 @@ importers:
         version: link:../contracts
       wechat-ilink-client:
         specifier: 0.1.0
-        version: 0.1.0(patch_hash=f859662da372a64f8b5403da4958799bb5000b62d9eae41e9cce3c146e2bbc58)
+        version: 0.1.0(patch_hash=76b1be420ca8fb4f025ad7065ce31fa0e9d31cf592fb216b324d94ccda4d7d99)
       zod:
         specifier: 4.4.3
         version: 4.4.3
@@ -15307,7 +15307,7 @@ snapshots:
       asn1js: 3.0.10
       tslib: 2.8.1
 
-  wechat-ilink-client@0.1.0(patch_hash=f859662da372a64f8b5403da4958799bb5000b62d9eae41e9cce3c146e2bbc58):
+  wechat-ilink-client@0.1.0(patch_hash=76b1be420ca8fb4f025ad7065ce31fa0e9d31cf592fb216b324d94ccda4d7d99):
     optionalDependencies:
       qrcode-terminal: 0.12.0
 

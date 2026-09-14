@@ -1,6 +1,6 @@
 import { AdapterRegistry } from '@nekro-nxt/adapter-sdk'
 import { describe, expect, it } from 'vitest'
-import { BUILTIN_ADAPTER_CONTRIBUTIONS, WECHAT_ILINK_BUILTIN, createBuiltinAdapterContributions } from '../src/index.ts'
+import { BUILTIN_ADAPTER_CONTRIBUTIONS, createBuiltinAdapterContributions } from '../src/index.ts'
 
 describe('first-party Adapter roster', () => {
   it('registers every V2 contribution through the generic Registry without duplicate keys', async () => {
@@ -29,6 +29,9 @@ describe('first-party Adapter roster', () => {
     expect(contributions.map(({ descriptor }) => descriptor.key)).toEqual(
       BUILTIN_ADAPTER_CONTRIBUTIONS.map(({ descriptor }) => descriptor.key),
     )
-    expect(contributions.filter(({ descriptor }) => descriptor.key === WECHAT_ILINK_BUILTIN.key)).toHaveLength(1)
+    expect(contributions.filter(({ descriptor }) => descriptor.key === 'wechat-ilink')).toHaveLength(1)
+    expect(contributions.find(({ descriptor }) => descriptor.key === 'wechat-ilink')?.connectionLogin?.mode).toBe(
+      'qr-login',
+    )
   })
 })

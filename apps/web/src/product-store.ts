@@ -241,11 +241,7 @@ export interface ConnectionSummary {
   readonly eventsLoaded: boolean
   readonly eventsLoading: boolean
   readonly eventsHasMore: boolean
-  readonly adapterSettings?: {
-    readonly wechatIlink?: {
-      readonly enableInboundMedia: boolean
-    }
-  }
+  readonly configuration: HostApiResponse<'snapshot'>['connections'][number]['configuration']
 }
 
 export interface ArchivedConnectionSummary {
@@ -472,11 +468,18 @@ export interface ProductState {
     readonly credentials: Readonly<Record<string, string>>
     readonly alias?: string
   }): Promise<void>
-  startWechatIlinkLogin(input: { readonly alias?: string }): Promise<HostApiResponse<'startWechatIlinkLogin'>>
-  getWechatIlinkLogin(loginId: string): Promise<HostApiResponse<'getWechatIlinkLogin'>>
-  cancelWechatIlinkLogin(loginId: string): Promise<void>
+  startConnectionLogin(input: {
+    readonly adapterKey: string
+    readonly alias?: string
+    readonly connectionId?: string
+  }): Promise<HostApiResponse<'startConnectionLogin'>>
+  getConnectionLogin(loginId: string): Promise<HostApiResponse<'getConnectionLogin'>>
+  cancelConnectionLogin(loginId: string): Promise<void>
   updateConnectionAlias(connectionId: string, alias: string): Promise<void>
-  updateWechatIlinkInboundMedia(connectionId: string, enableInboundMedia: boolean): Promise<void>
+  updateConnectionConfiguration(
+    connectionId: string,
+    configuration: Readonly<Record<string, string | number | boolean>>,
+  ): Promise<void>
   updateConnectionActivityTriggerDefaults(connectionId: string, activityKeys: readonly string[]): Promise<void>
   deleteConnection(connectionId: string, deleteChannelData: boolean): Promise<void>
   restoreConnection(connectionId: string): Promise<void>
@@ -697,21 +700,23 @@ export const useProductStore = create<ProductState>((set) => ({
       credentials,
     })
   },
-  startWechatIlinkLogin: async ({ alias }) => {
-    const result = await requireHost().execute('connections.wechatIlinkLogin.start', {
+  startConnectionLogin: async ({ adapterKey, alias, connectionId }) => {
+    const result = await requireHost().execute('connections.login.start', {
+      adapterKey: requireValue(adapterKey, '请选择连接平台。'),
       ...(alias === undefined ? {} : { alias: alias.trim() }),
+      ...(connectionId === undefined ? {} : { connectionId: requireValue(connectionId, '缺少要重新认证的连接。') }),
     })
-    return HostApiContracts.startWechatIlinkLogin.parseResponse(result)
+    return HostApiContracts.startConnectionLogin.parseResponse(result)
   },
-  getWechatIlinkLogin: async (loginId) => {
-    const result = await requireHost().execute('connections.wechatIlinkLogin.get', {
-      loginId: requireValue(loginId, '缺少微信 iLink 登录会话，请重新扫码。'),
+  getConnectionLogin: async (loginId) => {
+    const result = await requireHost().execute('connections.login.get', {
+      loginId: requireValue(loginId, '缺少扫码登录会话，请重新扫码。'),
     })
-    return HostApiContracts.getWechatIlinkLogin.parseResponse(result)
+    return HostApiContracts.getConnectionLogin.parseResponse(result)
   },
-  cancelWechatIlinkLogin: async (loginId) => {
-    await requireHost().execute('connections.wechatIlinkLogin.cancel', {
-      loginId: requireValue(loginId, '缺少微信 iLink 登录会话，请重新扫码。'),
+  cancelConnectionLogin: async (loginId) => {
+    await requireHost().execute('connections.login.cancel', {
+      loginId: requireValue(loginId, '缺少扫码登录会话，请重新扫码。'),
     })
   },
   updateConnectionAlias: async (connectionId, alias) => {
@@ -720,10 +725,10 @@ export const useProductStore = create<ProductState>((set) => ({
       alias: alias.trim(),
     })
   },
-  updateWechatIlinkInboundMedia: async (connectionId, enableInboundMedia) => {
-    await requireHost().execute('connections.wechatIlinkInboundMedia.update', {
+  updateConnectionConfiguration: async (connectionId, configuration) => {
+    await requireHost().execute('connections.updateConfiguration', {
       connectionId: requireValue(connectionId, '缺少连接标识，请刷新页面后重试。'),
-      enableInboundMedia,
+      configuration,
     })
   },
   updateConnectionActivityTriggerDefaults: async (connectionId, activityKeys) => {

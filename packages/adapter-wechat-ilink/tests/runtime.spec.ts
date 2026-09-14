@@ -1,6 +1,6 @@
 import type { PhysicalDeliveryRequest } from '@nekro-nxt/adapter-sdk'
 import { AssetIdSchema, ChannelIdSchema, LogicalMessageIdSchema, PhysicalDeliveryIdSchema } from '@nekro-nxt/contracts'
-import { ApiClient, MessageItemType, WeChatClient } from 'wechat-ilink-client'
+import { ApiClient, MessageItemType, WeChatClient, startMonitor } from 'wechat-ilink-client'
 import { describe, expect, it, vi } from 'vitest'
 import {
   WECHAT_ILINK_SYNC_BUF_STATE_KEY,
@@ -11,6 +11,8 @@ import {
   createWechatIlinkSdkLoginClientFactory,
   createWechatIlinkSdkTransportFactory,
   platformChannelIdFromUserId,
+  type WechatIlinkDownloadedMedia,
+  type WechatIlinkMessageItem,
   type WechatIlinkTransportConfig,
   type WechatIlinkTransportFactory,
 } from '../src/index.ts'
@@ -35,6 +37,16 @@ const deliveryRequest = (
   logicalMessageId: LogicalMessageIdSchema.parse('msg_WECHATRUNTIME'),
   ...input,
 })
+
+const deferred = <T>() => {
+  let resolve!: (value: T | PromiseLike<T>) => void
+  let reject!: (reason?: unknown) => void
+  const promise = new Promise<T>((resolvePromise, rejectPromise) => {
+    resolve = resolvePromise
+    reject = rejectPromise
+  })
+  return { promise, resolve, reject }
+}
 
 describe('WeChat iLink Runtime', () => {
   it('starts with resolved credentials, persists cursor state, admits text inbound and sends reply with context token', async () => {
@@ -973,5 +985,160 @@ describe('WeChat iLink Runtime', () => {
 
     await waitFor(() => errors.includes(failure))
     await transport.stop()
+  })
+
+  it('does not persist the SDK cursor before every message in the batch is admitted', async () => {
+    const savedCursors: string[] = []
+    const observedErrors: unknown[] = []
+    const admissionFailure = new Error('admission failed')
+    const abortController = new AbortController()
+    let pollCount = 0
+    const api = new ApiClient()
+    const getUpdates = vi.spyOn(api, 'getUpdates').mockImplementation(() => {
+      pollCount += 1
+      if (pollCount === 1) {
+        return Promise.resolve({
+          ret: 0,
+          get_updates_buf: 'cursor-after-batch',
+          msgs: [{ message_id: 1 }],
+        })
+      }
+      abortController.abort()
+      return Promise.resolve({ ret: 0, msgs: [] })
+    })
+
+    await startMonitor(
+      api,
+      {
+        signal: abortController.signal,
+        loadSyncBuf: () => Promise.resolve('cursor-before-batch'),
+        saveSyncBuf: (cursor) => {
+          savedCursors.push(cursor)
+          return Promise.resolve()
+        },
+      },
+      {
+        onMessage: () => Promise.reject(admissionFailure),
+        onError: (error) => observedErrors.push(error),
+      },
+    )
+
+    expect(getUpdates).toHaveBeenNthCalledWith(1, 'cursor-before-batch', expect.any(Number), abortController.signal)
+    expect(getUpdates).toHaveBeenNthCalledWith(2, 'cursor-before-batch', expect.any(Number), abortController.signal)
+    expect(observedErrors).toEqual([admissionFailure])
+    expect(savedCursors).toEqual([])
+  })
+
+  it('waits for in-flight inbound admission before transport stop resolves', async () => {
+    const admission = deferred<void>()
+    const on = vi.fn()
+    const transport = new WechatIlinkSdkTransport({
+      on,
+      start: vi.fn(() => Promise.resolve()),
+      stop: vi.fn(),
+      sendText: vi.fn(),
+    })
+    await transport.start({
+      signal: new AbortController().signal,
+      longPollTimeoutMs: 1_234,
+      loadSyncBuf: () => Promise.resolve(undefined),
+      saveSyncBuf: () => Promise.resolve(),
+      onMessage: () => admission.promise,
+      onError: vi.fn(),
+      onSessionExpired: vi.fn(),
+    })
+
+    const messageRegistration = on.mock.calls.find(([event]) => event === 'message')
+    const registeredHandler: unknown = messageRegistration?.[1]
+    if (typeof registeredHandler !== 'function') throw new Error('Expected the SDK message handler to be registered.')
+
+    const inboundResult: unknown = Reflect.apply(registeredHandler, undefined, [{ message_id: 'in-flight-message' }])
+    const inboundTask = Promise.resolve(inboundResult)
+    let stopped = false
+    const stopTask = transport.stop().then(() => {
+      stopped = true
+    })
+    await Promise.resolve()
+    expect(stopped).toBe(false)
+    admission.resolve()
+    await Promise.all([inboundTask, stopTask])
+    expect(stopped).toBe(true)
+  })
+
+  it('still waits for in-flight inbound admission when the SDK stop call fails', async () => {
+    const admission = deferred<void>()
+    const on = vi.fn()
+    const stopFailure = new Error('SDK stop failed')
+    const transport = new WechatIlinkSdkTransport({
+      on,
+      start: vi.fn(() => Promise.resolve()),
+      stop: vi.fn(() => Promise.reject(stopFailure)),
+      sendText: vi.fn(),
+    })
+    await transport.start({
+      signal: new AbortController().signal,
+      longPollTimeoutMs: 1_234,
+      loadSyncBuf: () => Promise.resolve(undefined),
+      saveSyncBuf: () => Promise.resolve(),
+      onMessage: () => admission.promise,
+      onError: vi.fn(),
+      onSessionExpired: vi.fn(),
+    })
+
+    const messageRegistration = on.mock.calls.find(([event]) => event === 'message')
+    const registeredHandler: unknown = messageRegistration?.[1]
+    if (typeof registeredHandler !== 'function') throw new Error('Expected the SDK message handler to be registered.')
+
+    const inboundTask = Promise.resolve(
+      Reflect.apply(registeredHandler, undefined, [{ message_id: 'in-flight-message' }]),
+    )
+    let stopSettled = false
+    const stopTask = transport.stop().then(
+      () => {
+        stopSettled = true
+        return undefined
+      },
+      (error: unknown) => {
+        stopSettled = true
+        return error
+      },
+    )
+    await Promise.resolve()
+    expect(stopSettled).toBe(false)
+    admission.resolve()
+    await inboundTask
+    await expect(stopTask).resolves.toBe(stopFailure)
+    expect(stopSettled).toBe(true)
+  })
+
+  it('serializes SDK media downloads and passes the byte limit to the SDK', async () => {
+    const firstDownload = deferred<WechatIlinkDownloadedMedia | null>()
+    const calls: Array<{ readonly signal?: AbortSignal; readonly maxBytes?: number }> = []
+    const media = { kind: 'file' as const, data: new Uint8Array([1]), fileName: 'fixture.txt' }
+    const client = {
+      on: vi.fn(),
+      start: vi.fn(() => Promise.resolve()),
+      sendText: vi.fn(),
+      downloadMedia: vi.fn(
+        (_item: WechatIlinkMessageItem, signal?: AbortSignal, options?: { readonly maxBytes?: number }) => {
+          calls.push({
+            ...(signal === undefined ? {} : { signal }),
+            ...(options?.maxBytes === undefined ? {} : { maxBytes: options.maxBytes }),
+          })
+          return calls.length === 1 ? firstDownload.promise : Promise.resolve(media)
+        },
+      ),
+    }
+    const transport = new WechatIlinkSdkTransport(client)
+    const first = transport.downloadMedia({}, new AbortController().signal)
+    const second = transport.downloadMedia({}, new AbortController().signal)
+    await waitFor(() => calls.length === 1)
+    firstDownload.resolve(media)
+    await expect(first).resolves.toEqual(media)
+    await expect(second).resolves.toEqual(media)
+
+    expect(calls).toHaveLength(2)
+    expect(calls.every((call) => call.signal instanceof AbortSignal)).toBe(true)
+    expect(calls.map((call) => call.maxBytes)).toEqual([20 * 1024 * 1024, 20 * 1024 * 1024])
   })
 })

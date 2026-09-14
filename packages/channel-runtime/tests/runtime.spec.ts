@@ -163,6 +163,15 @@ class MemoryCoreRepository implements CoreRepository {
     if (!current) throw new Error(`Unknown connection: ${id}`)
     this.connections.set(id, { ...current, config })
   }
+  updateConnectionProvisioning(
+    id: ConnectionId,
+    config: JsonValue,
+    credentialRefs: Readonly<Record<string, string>>,
+  ): void {
+    const current = this.connections.get(id)
+    if (!current) throw new Error(`Unknown connection: ${id}`)
+    this.connections.set(id, { ...current, config, credentialRefs })
+  }
   updateConnectionActivityTriggerDefaults(
     id: ConnectionId,
     activityTriggerDefaults: readonly AdapterActivityKey[],

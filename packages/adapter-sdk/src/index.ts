@@ -692,10 +692,33 @@ export interface AdapterStoredConnectionConfiguration {
   readonly credentialRefs: Readonly<Record<string, string>>
 }
 
+export type AdapterConnectionLoginStatus = 'pending' | 'scanned' | 'expired'
+
+export interface AdapterConnectionLoginInput {
+  readonly signal: AbortSignal
+  readonly onQrCode: (qrCodeUrl: string) => Promise<void> | void
+  readonly onStatus: (status: AdapterConnectionLoginStatus, message?: string) => void
+}
+
+export interface AdapterConnectionLoginResult {
+  /** Stable platform account identity used to prevent duplicates and verify reauthentication. */
+  readonly accountKey: string
+  /** Complete private Adapter configuration persisted by the Host. */
+  readonly configuration: Readonly<Record<string, string | number | boolean>>
+  /** Raw write-only credentials persisted by the Host under Adapter-owned keys. */
+  readonly credentials: Readonly<Record<string, string>>
+}
+
+export interface AdapterConnectionLoginContribution {
+  readonly mode: 'qr-login'
+  start(input: AdapterConnectionLoginInput): Promise<AdapterConnectionLoginResult>
+}
+
 /** Versioned Host-wide Adapter contribution loaded from built-ins or an installed Extension Revision. */
 export interface AdapterHostContributionV2 {
   readonly apiVersion: 2
   readonly descriptor: AdapterConnectionDescriptor
+  readonly connectionLogin?: AdapterConnectionLoginContribution
   create(
     context: AdapterConnectionHostContext,
     stored: AdapterStoredConnectionConfiguration,
@@ -808,6 +831,12 @@ export class AdapterRegistry {
     if (contribution.apiVersion !== 2)
       throw new TypeError(`Unsupported Adapter Host API version: ${String(contribution.apiVersion)}`)
     assertAdapterDescriptor(contribution.descriptor)
+    if (
+      (contribution.descriptor.creation?.mode === 'qr-login') !==
+      (contribution.connectionLogin?.mode === 'qr-login')
+    ) {
+      throw new TypeError('A qr-login Adapter must provide exactly one matching connection login contribution.')
+    }
     if (this.#byOwner.has(owner)) throw new Error(`Adapter contribution owner is already registered: ${owner}`)
     if (this.#byKey.has(contribution.descriptor.key)) {
       throw new Error(`Adapter key is already registered: ${contribution.descriptor.key}`)

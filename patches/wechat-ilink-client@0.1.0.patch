@@ -1,5 +1,5 @@
 diff --git a/dist/index.d.mts b/dist/index.d.mts
-index 604ab8f2d46b506bdb7f8ec3d513432adca740ba..ca677af2722af73cde1b24384c44449b1e048023 100644
+index 604ab8f2d46b506bdb7f8ec3d513432adca740ba..352703533a7a9d0867d1fef869335aa35225ced7 100644
 --- a/dist/index.d.mts
 +++ b/dist/index.d.mts
 @@ -262,9 +262,9 @@ declare class ApiClient {
@@ -19,7 +19,7 @@ index 604ab8f2d46b506bdb7f8ec3d513432adca740ba..ca677af2722af73cde1b24384c44449b
   * Returns null if the item has no downloadable media.
   */
 -declare function downloadMediaFromItem(item: MessageItem, cdnBaseUrl: string): Promise<DownloadedMedia | null>;
-+declare function downloadMediaFromItem(item: MessageItem, cdnBaseUrl: string, signal?: AbortSignal): Promise<DownloadedMedia | null>;
++declare function downloadMediaFromItem(item: MessageItem, cdnBaseUrl: string, signal?: AbortSignal, options?: { readonly maxBytes?: number }): Promise<DownloadedMedia | null>;
  //#endregion
  //#region src/media/upload.d.ts
  interface UploadedFileInfo {
@@ -37,7 +37,7 @@ index 604ab8f2d46b506bdb7f8ec3d513432adca740ba..ca677af2722af73cde1b24384c44449b
     * Download and decrypt a media item from an inbound message.
     */
 -  downloadMedia(item: MessageItem): Promise<DownloadedMedia | null>;
-+  downloadMedia(item: MessageItem, signal?: AbortSignal): Promise<DownloadedMedia | null>;
++  downloadMedia(item: MessageItem, signal?: AbortSignal, options?: { readonly maxBytes?: number }): Promise<DownloadedMedia | null>;
    /** Extract the text body from a WeixinMessage. */
    static extractText(msg: WeixinMessage): string;
    /** Check if a message item is a media type. */
@@ -55,17 +55,17 @@ index 604ab8f2d46b506bdb7f8ec3d513432adca740ba..ca677af2722af73cde1b24384c44449b
   * Download and AES-128-ECB decrypt a CDN media file. Returns plaintext Buffer.
   */
 -declare function downloadAndDecrypt(encryptedQueryParam: string, aesKeyBase64: string, cdnBaseUrl: string): Promise<Buffer>;
-+declare function downloadAndDecrypt(encryptedQueryParam: string, aesKeyBase64: string, cdnBaseUrl: string, signal?: AbortSignal): Promise<Buffer>;
++declare function downloadAndDecrypt(encryptedQueryParam: string, aesKeyBase64: string, cdnBaseUrl: string, signal?: AbortSignal, options?: { readonly maxBytes?: number }): Promise<Buffer>;
  /**
   * Download plain (unencrypted) bytes from the CDN.
   */
 -declare function downloadPlain(encryptedQueryParam: string, cdnBaseUrl: string): Promise<Buffer>;
-+declare function downloadPlain(encryptedQueryParam: string, cdnBaseUrl: string, signal?: AbortSignal): Promise<Buffer>;
++declare function downloadPlain(encryptedQueryParam: string, cdnBaseUrl: string, signal?: AbortSignal, options?: { readonly maxBytes?: number }): Promise<Buffer>;
  //#endregion
  //#region src/cdn/cdn-upload.d.ts
  /**
 diff --git a/dist/index.mjs b/dist/index.mjs
-index 3f14dcf78912f18ecf21942326c2ec1dc96baba4..c792fc64d620ee5bf87f7050b01a01b6ca69cf62 100644
+index 3f14dcf78912f18ecf21942326c2ec1dc96baba4..2f42f60109e207072b512aeb7f65ceb4b35e7a66 100644
 --- a/dist/index.mjs
 +++ b/dist/index.mjs
 @@ -83,11 +83,15 @@ var ApiClient = class {
@@ -134,81 +134,103 @@ index 3f14dcf78912f18ecf21942326c2ec1dc96baba4..c792fc64d620ee5bf87f7050b01a01b6
  	}
  	/** Get a pre-signed CDN upload URL. */
  	async getUploadUrl(req) {
-@@ -344,8 +359,8 @@ function buildCdnUploadUrl(params) {
+@@ -344,13 +359,29 @@ function buildCdnUploadUrl(params) {
  /**
  * Download raw bytes from the CDN (no decryption).
  */
 -async function fetchCdnBytes(url) {
 -	const res = await fetch(url);
-+async function fetchCdnBytes(url, signal) {
++async function fetchCdnBytes(url, signal, options) {
 +	const res = await fetch(url, { signal });
  	if (!res.ok) {
  		const body = await res.text().catch(() => "(unreadable)");
  		throw new Error(`CDN download ${res.status} ${res.statusText}: ${body}`);
-@@ -371,15 +386,15 @@ function parseAesKey(aesKeyBase64) {
+ 	}
+-	return Buffer.from(await res.arrayBuffer());
++	const maxBytes = options?.maxBytes;
++	const contentLength = Number(res.headers.get("content-length"));
++	if (maxBytes !== void 0 && Number.isFinite(contentLength) && contentLength > maxBytes) throw new Error(`CDN download exceeds ${maxBytes} bytes`);
++	if (!res.body) {
++		const data = Buffer.from(await res.arrayBuffer());
++		if (maxBytes !== void 0 && data.byteLength > maxBytes) throw new Error(`CDN download exceeds ${maxBytes} bytes`);
++		return data;
++	}
++	const chunks = [];
++	let totalBytes = 0;
++	for await (const chunk of res.body) {
++		const bytes = Buffer.from(chunk);
++		totalBytes += bytes.byteLength;
++		if (maxBytes !== void 0 && totalBytes > maxBytes) throw new Error(`CDN download exceeds ${maxBytes} bytes`);
++		chunks.push(bytes);
++	}
++	return Buffer.concat(chunks, totalBytes);
+ }
+ /**
+ * Parse CDNMedia.aes_key into a raw 16-byte AES key.
+@@ -371,15 +402,15 @@ function parseAesKey(aesKeyBase64) {
  /**
  * Download and AES-128-ECB decrypt a CDN media file. Returns plaintext Buffer.
  */
 -async function downloadAndDecrypt(encryptedQueryParam, aesKeyBase64, cdnBaseUrl) {
-+async function downloadAndDecrypt(encryptedQueryParam, aesKeyBase64, cdnBaseUrl, signal) {
++async function downloadAndDecrypt(encryptedQueryParam, aesKeyBase64, cdnBaseUrl, signal, options) {
  	const key = parseAesKey(aesKeyBase64);
 -	return decryptAesEcb(await fetchCdnBytes(buildCdnDownloadUrl(encryptedQueryParam, cdnBaseUrl)), key);
-+	return decryptAesEcb(await fetchCdnBytes(buildCdnDownloadUrl(encryptedQueryParam, cdnBaseUrl), signal), key);
++	return decryptAesEcb(await fetchCdnBytes(buildCdnDownloadUrl(encryptedQueryParam, cdnBaseUrl), signal, options), key);
  }
  /**
  * Download plain (unencrypted) bytes from the CDN.
  */
 -async function downloadPlain(encryptedQueryParam, cdnBaseUrl) {
 -	return fetchCdnBytes(buildCdnDownloadUrl(encryptedQueryParam, cdnBaseUrl));
-+async function downloadPlain(encryptedQueryParam, cdnBaseUrl, signal) {
-+	return fetchCdnBytes(buildCdnDownloadUrl(encryptedQueryParam, cdnBaseUrl), signal);
++async function downloadPlain(encryptedQueryParam, cdnBaseUrl, signal, options) {
++	return fetchCdnBytes(buildCdnDownloadUrl(encryptedQueryParam, cdnBaseUrl), signal, options);
  }
  //#endregion
  //#region src/media/download.ts
-@@ -387,13 +402,13 @@ async function downloadPlain(encryptedQueryParam, cdnBaseUrl) {
+@@ -387,13 +418,13 @@ async function downloadPlain(encryptedQueryParam, cdnBaseUrl) {
  * Download and decrypt media from a single MessageItem.
  * Returns null if the item has no downloadable media.
  */
 -async function downloadMediaFromItem(item, cdnBaseUrl) {
-+async function downloadMediaFromItem(item, cdnBaseUrl, signal) {
++async function downloadMediaFromItem(item, cdnBaseUrl, signal, options) {
  	if (item.type === MessageItemType.IMAGE) {
  		const img = item.image_item;
  		if (!img?.media?.encrypt_query_param) return null;
  		const aesKeyBase64 = img.aeskey ? Buffer.from(img.aeskey, "hex").toString("base64") : img.media.aes_key;
  		return {
 -			data: aesKeyBase64 ? await downloadAndDecrypt(img.media.encrypt_query_param, aesKeyBase64, cdnBaseUrl) : await downloadPlain(img.media.encrypt_query_param, cdnBaseUrl),
-+			data: aesKeyBase64 ? await downloadAndDecrypt(img.media.encrypt_query_param, aesKeyBase64, cdnBaseUrl, signal) : await downloadPlain(img.media.encrypt_query_param, cdnBaseUrl, signal),
++			data: aesKeyBase64 ? await downloadAndDecrypt(img.media.encrypt_query_param, aesKeyBase64, cdnBaseUrl, signal, options) : await downloadPlain(img.media.encrypt_query_param, cdnBaseUrl, signal, options),
  			kind: "image"
  		};
  	}
-@@ -401,7 +416,7 @@ async function downloadMediaFromItem(item, cdnBaseUrl) {
+@@ -401,7 +432,7 @@ async function downloadMediaFromItem(item, cdnBaseUrl) {
  		const voice = item.voice_item;
  		if (!voice?.media?.encrypt_query_param || !voice.media.aes_key) return null;
  		return {
 -			data: await downloadAndDecrypt(voice.media.encrypt_query_param, voice.media.aes_key, cdnBaseUrl),
-+			data: await downloadAndDecrypt(voice.media.encrypt_query_param, voice.media.aes_key, cdnBaseUrl, signal),
++			data: await downloadAndDecrypt(voice.media.encrypt_query_param, voice.media.aes_key, cdnBaseUrl, signal, options),
  			kind: "voice"
  		};
  	}
-@@ -409,7 +424,7 @@ async function downloadMediaFromItem(item, cdnBaseUrl) {
+@@ -409,7 +440,7 @@ async function downloadMediaFromItem(item, cdnBaseUrl) {
  		const fileItem = item.file_item;
  		if (!fileItem?.media?.encrypt_query_param || !fileItem.media.aes_key) return null;
  		return {
 -			data: await downloadAndDecrypt(fileItem.media.encrypt_query_param, fileItem.media.aes_key, cdnBaseUrl),
-+			data: await downloadAndDecrypt(fileItem.media.encrypt_query_param, fileItem.media.aes_key, cdnBaseUrl, signal),
++			data: await downloadAndDecrypt(fileItem.media.encrypt_query_param, fileItem.media.aes_key, cdnBaseUrl, signal, options),
  			kind: "file",
  			fileName: fileItem.file_name ?? void 0
  		};
-@@ -418,7 +433,7 @@ async function downloadMediaFromItem(item, cdnBaseUrl) {
+@@ -418,7 +449,7 @@ async function downloadMediaFromItem(item, cdnBaseUrl) {
  		const videoItem = item.video_item;
  		if (!videoItem?.media?.encrypt_query_param || !videoItem.media.aes_key) return null;
  		return {
 -			data: await downloadAndDecrypt(videoItem.media.encrypt_query_param, videoItem.media.aes_key, cdnBaseUrl),
-+			data: await downloadAndDecrypt(videoItem.media.encrypt_query_param, videoItem.media.aes_key, cdnBaseUrl, signal),
++			data: await downloadAndDecrypt(videoItem.media.encrypt_query_param, videoItem.media.aes_key, cdnBaseUrl, signal, options),
  			kind: "video"
  		};
  	}
-@@ -645,7 +660,7 @@ function buildReq(params) {
+@@ -645,7 +676,7 @@ function buildReq(params) {
  /**
  * Send a text message. contextToken is required (echoed from getUpdates).
  */
@@ -217,7 +239,7 @@ index 3f14dcf78912f18ecf21942326c2ec1dc96baba4..c792fc64d620ee5bf87f7050b01a01b6
  	const clientId = generateClientId();
  	const req = { msg: {
  		from_user_id: "",
-@@ -659,7 +674,7 @@ async function sendText(api, to, text, contextToken) {
+@@ -659,7 +690,7 @@ async function sendText(api, to, text, contextToken) {
  		}] : void 0,
  		context_token: contextToken
  	} };
@@ -226,7 +248,7 @@ index 3f14dcf78912f18ecf21942326c2ec1dc96baba4..c792fc64d620ee5bf87f7050b01a01b6
  	return clientId;
  }
  /**
-@@ -817,7 +832,7 @@ async function startMonitor(api, opts, callbacks) {
+@@ -817,7 +848,7 @@ async function startMonitor(api, opts, callbacks) {
  	let nextTimeoutMs = opts.longPollTimeoutMs ?? DEFAULT_LONG_POLL_TIMEOUT_MS;
  	let consecutiveFailures = 0;
  	while (!signal?.aborted) try {
@@ -235,7 +257,31 @@ index 3f14dcf78912f18ecf21942326c2ec1dc96baba4..c792fc64d620ee5bf87f7050b01a01b6
  		if (resp.longpolling_timeout_ms != null && resp.longpolling_timeout_ms > 0) nextTimeoutMs = resp.longpolling_timeout_ms;
  		if (resp.ret !== void 0 && resp.ret !== 0 || resp.errcode !== void 0 && resp.errcode !== 0) {
  			if (resp.errcode === -14 || resp.ret === -14) {
-@@ -964,10 +979,10 @@ var WeChatClient = class extends EventEmitter {
+@@ -836,12 +867,12 @@ async function startMonitor(api, opts, callbacks) {
+ 		}
+ 		consecutiveFailures = 0;
+ 		callbacks.onPoll?.(resp);
++		const msgs = resp.msgs ?? [];
++		for (const msg of msgs) await callbacks.onMessage(msg);
+ 		if (resp.get_updates_buf != null && resp.get_updates_buf !== "") {
+ 			getUpdatesBuf = resp.get_updates_buf;
+ 			if (opts.saveSyncBuf) await opts.saveSyncBuf(getUpdatesBuf);
+ 		}
+-		const msgs = resp.msgs ?? [];
+-		for (const msg of msgs) await callbacks.onMessage(msg);
+ 	} catch (err) {
+ 		if (signal?.aborted) return;
+ 		consecutiveFailures++;
+@@ -942,7 +973,7 @@ var WeChatClient = class extends EventEmitter {
+ 		await startMonitor(this.api, monitorOpts, {
+ 			onMessage: async (msg) => {
+ 				if (msg.context_token && msg.from_user_id) this.contextTokens.set(msg.from_user_id, msg.context_token);
+-				this.emit("message", msg);
++				for (const listener of this.rawListeners("message")) await listener.call(this, msg);
+ 			},
+ 			onError: (err) => {
+ 				this.emit("error", err);
+@@ -964,10 +995,10 @@ var WeChatClient = class extends EventEmitter {
  	* Send a text message. Uses the cached context token for the target user.
  	* Pass an explicit contextToken to override.
  	*/
@@ -248,14 +294,14 @@ index 3f14dcf78912f18ecf21942326c2ec1dc96baba4..c792fc64d620ee5bf87f7050b01a01b6
  	}
  	/**
  	* Upload a local file and send it as the appropriate media type.
-@@ -1047,8 +1062,8 @@ var WeChatClient = class extends EventEmitter {
+@@ -1047,8 +1078,8 @@ var WeChatClient = class extends EventEmitter {
  	/**
  	* Download and decrypt a media item from an inbound message.
  	*/
 -	async downloadMedia(item) {
 -		return downloadMediaFromItem(item, this.api.cdnBaseUrl);
-+	async downloadMedia(item, signal) {
-+		return downloadMediaFromItem(item, this.api.cdnBaseUrl, signal);
++	async downloadMedia(item, signal, options) {
++		return downloadMediaFromItem(item, this.api.cdnBaseUrl, signal, options);
  	}
  	/** Extract the text body from a WeixinMessage. */
  	static extractText(msg) {

@@ -197,6 +197,16 @@ class MemoryRepository implements CoreRepository {
     this.connections.set(id, { ...current, config })
   }
 
+  updateConnectionProvisioning(
+    id: ConnectionId,
+    config: JsonValue,
+    credentialRefs: Readonly<Record<string, string>>,
+  ): void {
+    const current = this.connections.get(id)
+    if (!current) throw new Error(`Unknown connection: ${id}`)
+    this.connections.set(id, { ...current, config, credentialRefs })
+  }
+
   getConnection(id: ConnectionId) {
     return this.connections.get(id)
   }
@@ -627,6 +637,30 @@ describe('CoreService', () => {
       config: { enableInboundMedia: false, maxTextLength: 4000 },
     })
     expect(core.getConnection(created.id)?.config).toEqual({ enableInboundMedia: false, maxTextLength: 4000 })
+  })
+
+  it('replaces provisioning config and credential references without changing Connection identity', () => {
+    const repository = new MemoryRepository()
+    const core = new CoreService(repository, { now: () => 100, nextUlid: () => 'REAUTHCONFIG' })
+    const created = core.createConnection({
+      adapterKey: 'fixture-alpha',
+      accountKey: 'platform-account-1',
+      config: { accountId: 'platform-account-1', enabled: true },
+      credentialRefs: { token: 'credential:old' },
+    })
+
+    const updated = core.updateConnectionProvisioning(created.id, {
+      config: { accountId: 'platform-account-1', enabled: false },
+      credentialRefs: { token: 'credential:new' },
+    })
+
+    expect(updated).toMatchObject({
+      id: created.id,
+      adapterKey: 'fixture-alpha',
+      accountKey: 'platform-account-1',
+      config: { accountId: 'platform-account-1', enabled: false },
+      credentialRefs: { token: 'credential:new' },
+    })
   })
 
   it('stores Connection activity defaults and archives or restores the same durable identity', () => {

@@ -1,5 +1,6 @@
 import { Context } from '@deepseek-ai/cordis'
 import WebServer from '@deepseek-ai/dsh-host-webserver'
+import { createBuiltinAdapterContributions } from '@nekro-nxt/adapter-builtin-roster'
 import {
   type WechatIlinkLoginClient,
   type WechatIlinkLoginOptions,
@@ -59,19 +60,33 @@ class FakeWechatIlinkTransport implements WechatIlinkTransport {
 }
 
 class FakeWechatIlinkLoginClient implements WechatIlinkLoginClient {
+  constructor(
+    private readonly botToken = 'credential-secret-fixture',
+    private readonly accountId = 'wx_account_fixture',
+  ) {}
+
   async login(options?: WechatIlinkLoginOptions): Promise<WechatIlinkLoginResult> {
     await options?.onQRCode?.('https://qr.example.invalid/login-fixture')
     options?.onStatus?.('scaned')
     options?.onStatus?.('confirmed')
     return {
       connected: true,
-      botToken: 'credential-secret-fixture',
-      accountId: 'wx_account_fixture',
+      botToken: this.botToken,
+      accountId: this.accountId,
       baseUrl: 'https://ilink-api.test',
       message: 'Login successful!',
     }
   }
 }
+
+const createTestAdapterContributions = (input: {
+  readonly loginClientFactory: () => WechatIlinkLoginClient
+  readonly transportFactory: (config: WechatIlinkTransportConfig) => WechatIlinkTransport
+}) =>
+  createBuiltinAdapterContributions({
+    wechatIlinkLoginClientFactory: input.loginClientFactory,
+    wechatIlinkTransportFactory: input.transportFactory,
+  })
 
 const readSnapshot = async (origin: string): Promise<ReturnType<typeof HostApiContracts.snapshot.parseResponse>> => {
   const response = await fetch(`${origin}/api/snapshot`)
@@ -97,6 +112,7 @@ describe('WeChat iLink Server driver', () => {
     const directory = await mkdtemp(path.join(tmpdir(), 'nekro-nxt-wechat-ilink-driver-'))
     temporaryDirectories.push(directory)
     const transport = new FakeWechatIlinkTransport()
+    let loginAttempt = 0
     const runtime = await NekroRuntime.create({
       coreDatabasePath: path.join(directory, 'core.sqlite'),
       sessionDatabasePath: path.join(directory, 'sessions.sqlite'),
@@ -104,13 +120,19 @@ describe('WeChat iLink Server driver', () => {
       extensionDataRoot: path.join(directory, 'extension-data'),
       extensionCacheRoot: path.join(directory, 'extension-cache'),
       credentialRoot: path.join(directory, 'credentials'),
-      wechatIlink: {
-        loginClientFactory: () => new FakeWechatIlinkLoginClient(),
+      adapterContributions: createTestAdapterContributions({
+        loginClientFactory: () => {
+          loginAttempt += 1
+          return new FakeWechatIlinkLoginClient(
+            loginAttempt >= 3 ? 'credential-secret-reauthenticated' : 'credential-secret-fixture',
+            loginAttempt >= 4 ? 'wx_account_other' : 'wx_account_fixture',
+          )
+        },
         transportFactory: (config) => {
           transport.config = config
           return transport
         },
-      },
+      }),
     })
     await runtime.start()
 
@@ -144,37 +166,37 @@ describe('WeChat iLink Server driver', () => {
       expect(publicDescriptor).not.toContain('API 地址')
       expect(publicDescriptor).not.toContain('CDN 地址')
 
-      const loginResponse = await fetch(origin + '/api/connections/wechat-ilink/login', {
+      const loginResponse = await fetch(origin + '/api/connection-logins', {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
-        body: '{}',
+        body: JSON.stringify({ adapterKey: 'wechat-ilink' }),
       })
       expect(loginResponse.status).toBe(201)
-      const started = HostApiContracts.startWechatIlinkLogin.parseResponse(await loginResponse.json())
+      const started = HostApiContracts.startConnectionLogin.parseResponse(await loginResponse.json())
       expect(started.qrCodeUrl).toBe('https://qr.example.invalid/login-fixture')
 
-      let confirmed = HostApiContracts.getWechatIlinkLogin.parseResponse(
-        await (await fetch(origin + '/api/connections/wechat-ilink/login/' + started.loginId)).json(),
+      let confirmed = HostApiContracts.getConnectionLogin.parseResponse(
+        await (await fetch(origin + '/api/connection-logins/' + started.loginId)).json(),
       )
       await waitFor(async () => {
-        confirmed = HostApiContracts.getWechatIlinkLogin.parseResponse(
-          await (await fetch(origin + '/api/connections/wechat-ilink/login/' + started.loginId)).json(),
+        confirmed = HostApiContracts.getConnectionLogin.parseResponse(
+          await (await fetch(origin + '/api/connection-logins/' + started.loginId)).json(),
         )
         return confirmed.status === 'confirmed'
       })
       expect(confirmed).toMatchObject({ status: 'confirmed', adapterKey: 'wechat-ilink' })
       expect(confirmed.connectionId).toBeDefined()
       const connectionId = confirmed.connectionId!
-      expect(() => runtime.cancelWechatIlinkLogin(started.loginId)).toThrow('登录会话已经结束')
-      expect(runtime.getWechatIlinkLogin(started.loginId)).toMatchObject({ status: 'confirmed', connectionId })
+      expect(() => runtime.cancelConnectionLogin(started.loginId)).toThrow('扫码登录会话已经结束')
+      expect(runtime.getConnectionLogin(started.loginId)).toMatchObject({ status: 'confirmed', connectionId })
 
-      const duplicateStarted = await runtime.startWechatIlinkLogin({})
-      let duplicate = runtime.getWechatIlinkLogin(duplicateStarted.loginId)
+      const duplicateStarted = await runtime.startConnectionLogin({ adapterKey: 'wechat-ilink' })
+      let duplicate = runtime.getConnectionLogin(duplicateStarted.loginId)
       await waitFor(() => {
-        duplicate = runtime.getWechatIlinkLogin(duplicateStarted.loginId)
+        duplicate = runtime.getConnectionLogin(duplicateStarted.loginId)
         return duplicate.status === 'failed' || duplicate.status === 'confirmed'
       })
-      expect(duplicate).toMatchObject({ status: 'failed', message: '该微信账号已经存在活动连接。' })
+      expect(duplicate).toMatchObject({ status: 'failed', message: '该平台账号已经存在活动连接。' })
       expect(
         runtime.core.listConnections().filter((connection) => connection.adapterKey === 'wechat-ilink'),
       ).toHaveLength(1)
@@ -191,31 +213,31 @@ describe('WeChat iLink Server driver', () => {
       expect(storedConnection?.credentialRefs['botToken']).toMatch(/^credential:local:/u)
       expect(JSON.stringify(storedConnection)).not.toContain('credential-secret-fixture')
 
-      let mediaResponse = await fetch(origin + '/api/connections/' + connectionId + '/wechat-ilink/inbound-media', {
+      let mediaResponse = await fetch(origin + '/api/connections/' + connectionId + '/configuration', {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ enableInboundMedia: false }),
+        body: JSON.stringify({ configuration: { enableInboundMedia: false } }),
       })
       expect(mediaResponse.status).toBe(200)
-      expect(HostApiContracts.updateWechatIlinkInboundMedia.parseResponse(await mediaResponse.json())).toEqual({
+      expect(HostApiContracts.updateConnectionConfiguration.parseResponse(await mediaResponse.json())).toEqual({
         connectionId,
-        enableInboundMedia: false,
+        configuration: { enableInboundMedia: false },
       })
       expect(runtime.core.getConnection(connectionId)?.config).toMatchObject({ enableInboundMedia: false })
       snapshot = await readSnapshot(origin)
-      expect(snapshot.connections.find((connection) => connection.id === connectionId)?.adapterSettings).toEqual({
-        wechatIlink: { enableInboundMedia: false },
+      expect(snapshot.connections.find((connection) => connection.id === connectionId)?.configuration).toEqual({
+        enableInboundMedia: false,
       })
 
-      mediaResponse = await fetch(origin + '/api/connections/' + connectionId + '/wechat-ilink/inbound-media', {
+      mediaResponse = await fetch(origin + '/api/connections/' + connectionId + '/configuration', {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ enableInboundMedia: true }),
+        body: JSON.stringify({ configuration: { enableInboundMedia: true } }),
       })
       expect(mediaResponse.status).toBe(200)
-      expect(HostApiContracts.updateWechatIlinkInboundMedia.parseResponse(await mediaResponse.json())).toEqual({
+      expect(HostApiContracts.updateConnectionConfiguration.parseResponse(await mediaResponse.json())).toEqual({
         connectionId,
-        enableInboundMedia: true,
+        configuration: { enableInboundMedia: true },
       })
       expect(runtime.core.getConnection(connectionId)?.config).toMatchObject({ enableInboundMedia: true })
 
@@ -270,6 +292,56 @@ describe('WeChat iLink Server driver', () => {
         },
       ])
 
+      const channelsBeforeReauthentication = runtime.core
+        .listChannelsByConnection(connectionId)
+        .map((channel) => channel.id)
+      const reauthentication = await runtime.startConnectionLogin({
+        adapterKey: 'wechat-ilink',
+        connectionId,
+      })
+      let reauthenticated = runtime.getConnectionLogin(reauthentication.loginId)
+      await waitFor(() => {
+        reauthenticated = runtime.getConnectionLogin(reauthentication.loginId)
+        return reauthenticated.status === 'confirmed' || reauthenticated.status === 'failed'
+      })
+      expect(reauthenticated).toMatchObject({ status: 'confirmed', connectionId, adapterKey: 'wechat-ilink' })
+      expect(runtime.core.listConnectionsByAdapter('wechat-ilink').map((connection) => connection.id)).toEqual([
+        connectionId,
+      ])
+      expect(runtime.core.listChannelsByConnection(connectionId).map((channel) => channel.id)).toEqual(
+        channelsBeforeReauthentication,
+      )
+      const reauthenticatedCredentialFiles = await readdir(path.join(directory, 'credentials'))
+      expect(reauthenticatedCredentialFiles).toHaveLength(1)
+      expect(await readFile(path.join(directory, 'credentials', reauthenticatedCredentialFiles[0]!), 'utf8')).toBe(
+        'credential-secret-reauthenticated',
+      )
+
+      const mismatchedReauthentication = await runtime.startConnectionLogin({
+        adapterKey: 'wechat-ilink',
+        connectionId,
+      })
+      let mismatched = runtime.getConnectionLogin(mismatchedReauthentication.loginId)
+      await waitFor(() => {
+        mismatched = runtime.getConnectionLogin(mismatchedReauthentication.loginId)
+        return mismatched.status === 'confirmed' || mismatched.status === 'failed'
+      })
+      expect(mismatched).toMatchObject({
+        status: 'failed',
+        message: '扫码账号与原连接账号不一致，未替换凭据。',
+      })
+      expect(runtime.core.listConnectionsByAdapter('wechat-ilink').map((connection) => connection.id)).toEqual([
+        connectionId,
+      ])
+      expect(runtime.core.listChannelsByConnection(connectionId).map((channel) => channel.id)).toEqual(
+        channelsBeforeReauthentication,
+      )
+      const credentialsAfterMismatch = await readdir(path.join(directory, 'credentials'))
+      expect(credentialsAfterMismatch).toHaveLength(1)
+      expect(await readFile(path.join(directory, 'credentials', credentialsAfterMismatch[0]!), 'utf8')).toBe(
+        'credential-secret-reauthenticated',
+      )
+
       snapshot = await readSnapshot(origin)
       const projected = snapshot.connections.find((connection) => connection.id === connectionId)
       expect(projected).toMatchObject({
@@ -280,10 +352,75 @@ describe('WeChat iLink Server driver', () => {
         sendTest: { status: 'sent', platformMessageId: 'wechat-client-fixture' },
       })
       expect(JSON.stringify(snapshot)).not.toContain('credential-secret-fixture')
+      expect(JSON.stringify(snapshot)).not.toContain('credential-secret-reauthenticated')
       expect(JSON.stringify(snapshot)).not.toContain('ctx_redacted_fixture')
     } finally {
       api.dispose()
       await webContext.fiber.dispose()
+      await runtime.dispose()
+    }
+  })
+
+  it('allows only one active reauthentication session per connection', async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), 'nekro-nxt-wechat-ilink-reauth-race-'))
+    temporaryDirectories.push(directory)
+    const reauthenticationResult = deferred<WechatIlinkLoginResult>()
+    let loginAttempt = 0
+    const runtime = await NekroRuntime.create({
+      coreDatabasePath: path.join(directory, 'core.sqlite'),
+      sessionDatabasePath: path.join(directory, 'sessions.sqlite'),
+      assetRoot: path.join(directory, 'assets'),
+      extensionDataRoot: path.join(directory, 'extension-data'),
+      extensionCacheRoot: path.join(directory, 'extension-cache'),
+      credentialRoot: path.join(directory, 'credentials'),
+      adapterContributions: createTestAdapterContributions({
+        loginClientFactory: () => {
+          loginAttempt += 1
+          if (loginAttempt === 1) return new FakeWechatIlinkLoginClient()
+          return {
+            async login(options): Promise<WechatIlinkLoginResult> {
+              await options?.onQRCode?.('https://qr.example.invalid/login-reauth-race')
+              return reauthenticationResult.promise
+            },
+          }
+        },
+        transportFactory: () => new FakeWechatIlinkTransport(),
+      }),
+    })
+    await runtime.start()
+
+    try {
+      const initialLogin = await runtime.startConnectionLogin({ adapterKey: 'wechat-ilink' })
+      let initial = runtime.getConnectionLogin(initialLogin.loginId)
+      await waitFor(() => {
+        initial = runtime.getConnectionLogin(initialLogin.loginId)
+        return initial.status === 'confirmed' || initial.status === 'failed'
+      })
+      expect(initial.status).toBe('confirmed')
+      const connectionId = initial.connectionId!
+
+      const reauthentication = await runtime.startConnectionLogin({ adapterKey: 'wechat-ilink', connectionId })
+      await expect(runtime.startConnectionLogin({ adapterKey: 'wechat-ilink', connectionId })).rejects.toThrow(
+        '该连接已有进行中的重新认证会话。',
+      )
+
+      expect(runtime.cancelConnectionLogin(reauthentication.loginId)).toMatchObject({ status: 'cancelled' })
+      reauthenticationResult.resolve({
+        connected: true,
+        botToken: 'credential-secret-unused',
+        accountId: 'wx_account_fixture',
+        baseUrl: 'https://ilink-api.test',
+        message: 'Login successful!',
+      })
+      await waitFor(() => runtime.getConnectionLogin(reauthentication.loginId).status === 'cancelled')
+    } finally {
+      reauthenticationResult.resolve({
+        connected: true,
+        botToken: 'credential-secret-unused',
+        accountId: 'wx_account_fixture',
+        baseUrl: 'https://ilink-api.test',
+        message: 'Login successful!',
+      })
       await runtime.dispose()
     }
   })
@@ -309,7 +446,7 @@ describe('WeChat iLink Server driver', () => {
       extensionDataRoot: path.join(directory, 'extension-data'),
       extensionCacheRoot: path.join(directory, 'extension-cache'),
       credentialRoot: path.join(directory, 'credentials'),
-      wechatIlink: {
+      adapterContributions: createTestAdapterContributions({
         loginClientFactory: () => ({
           async login(options): Promise<WechatIlinkLoginResult> {
             loginOptions = options
@@ -318,12 +455,12 @@ describe('WeChat iLink Server driver', () => {
           },
         }),
         transportFactory: () => new BlockingWechatIlinkTransport(),
-      },
+      }),
     })
     await runtime.start()
 
     try {
-      const started = await runtime.startWechatIlinkLogin({})
+      const started = await runtime.startConnectionLogin({ adapterKey: 'wechat-ilink' })
       loginOptions?.onStatus?.('confirmed')
       loginResult.resolve({
         connected: true,
@@ -334,10 +471,10 @@ describe('WeChat iLink Server driver', () => {
       })
       await mountStarted.promise
 
-      expect(runtime.cancelWechatIlinkLogin(started.loginId)).toMatchObject({ status: 'cancelled' })
+      expect(runtime.cancelConnectionLogin(started.loginId)).toMatchObject({ status: 'cancelled' })
       loginOptions?.onStatus?.('scaned')
       await loginOptions?.onQRCode?.('https://qr.example.invalid/login-late-fixture')
-      const statusAfterLateCallbacks = runtime.getWechatIlinkLogin(started.loginId).status
+      const statusAfterLateCallbacks = runtime.getConnectionLogin(started.loginId).status
       releaseMount.resolve()
       await waitFor(async () => {
         if (runtime.core.listConnectionsByAdapter('wechat-ilink').length !== 0) return false
@@ -345,7 +482,7 @@ describe('WeChat iLink Server driver', () => {
       })
 
       expect(statusAfterLateCallbacks).toBe('cancelled')
-      expect(runtime.getWechatIlinkLogin(started.loginId)).toMatchObject({ status: 'cancelled' })
+      expect(runtime.getConnectionLogin(started.loginId)).toMatchObject({ status: 'cancelled' })
       expect(await readdir(path.join(directory, 'credentials'))).toEqual([])
     } finally {
       releaseMount.resolve()
@@ -363,10 +500,10 @@ describe('WeChat iLink Server driver', () => {
       extensionDataRoot: path.join(directory, 'extension-data'),
       extensionCacheRoot: path.join(directory, 'extension-cache'),
       credentialRoot: path.join(directory, 'credentials'),
-      wechatIlink: {
+      adapterContributions: createTestAdapterContributions({
         loginClientFactory: () => new FakeWechatIlinkLoginClient(),
         transportFactory: () => new FakeWechatIlinkTransport(),
-      },
+      }),
     })
     await runtime.start()
 

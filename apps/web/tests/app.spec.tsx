@@ -1634,12 +1634,13 @@ describe.sequential('NekroNxt browser projections', { timeout: 30_000 }, () => {
       },
       snapshot,
       async (page) => {
-        await page.route('**/api/connections/wechat-ilink/login', async (request) => {
+        await page.route('**/api/connection-logins', async (request) => {
           await request.fulfill({
             status: 201,
             contentType: 'application/json',
             body: JSON.stringify({
               loginId: 'login-fixture',
+              adapterKey: 'wechat-ilink',
               status: 'pending',
               qrCodeUrl: 'https://qr.example.invalid/login-fixture',
               message: '请使用平台应用扫码并确认登录。',
@@ -1705,25 +1706,27 @@ describe.sequential('NekroNxt browser projections', { timeout: 30_000 }, () => {
             body: JSON.stringify(loginStarted ? browserSnapshot : snapshot),
           })
         })
-        await page.route('**/api/connections/wechat-ilink/login', async (request) => {
+        await page.route('**/api/connection-logins', async (request) => {
           loginStarted = true
           await request.fulfill({
             status: 201,
             contentType: 'application/json',
             body: JSON.stringify({
               loginId: 'login-fixture',
+              adapterKey: 'wechat-ilink',
               status: 'pending',
               qrCodeUrl: 'https://qr.example.invalid/login-fixture',
               message: '请使用平台应用扫码并确认登录。',
             }),
           })
         })
-        await page.route('**/api/connections/wechat-ilink/login/login-fixture', async (request) => {
+        await page.route('**/api/connection-logins/login-fixture', async (request) => {
           await request.fulfill({
             status: 200,
             contentType: 'application/json',
             body: JSON.stringify({
               loginId: 'login-fixture',
+              adapterKey: 'wechat-ilink',
               status: 'pending',
               qrCodeUrl: 'https://qr.example.invalid/login-fixture',
               message: '请使用平台应用扫码并确认登录。',
@@ -1768,7 +1771,7 @@ describe.sequential('NekroNxt browser projections', { timeout: 30_000 }, () => {
           status: { state: 'connected', credentialConfigured: true, proactiveSend: false, activities: {} },
           channelCount: 0,
           knownChannels: [],
-          adapterSettings: { wechatIlink: { enableInboundMedia: false } },
+          configuration: { enableInboundMedia: false },
         },
       ],
     })
@@ -1778,7 +1781,7 @@ describe.sequential('NekroNxt browser projections', { timeout: 30_000 }, () => {
     await withProductPage(
       '/connections/' + wechatConnectionId,
       async (page) => {
-        await playwrightExpect(page.getByText('微信 iLink 设置', { exact: true })).toBeVisible()
+        await playwrightExpect(page.getByText('连接设置', { exact: true })).toBeVisible()
         await playwrightExpect(page.getByText('入站媒体接收', { exact: true })).toBeVisible()
         const toggle = page.getByRole('switch', { name: '入站媒体接收' })
         await playwrightExpect(toggle).toHaveAttribute('aria-checked', 'false')
@@ -1797,29 +1800,33 @@ describe.sequential('NekroNxt browser projections', { timeout: 30_000 }, () => {
                 connection.id === wechatConnectionId
                   ? {
                       ...connection,
-                      adapterSettings: { wechatIlink: { enableInboundMedia: inboundMediaEnabled } },
+                      configuration: { enableInboundMedia: inboundMediaEnabled },
                     }
                   : connection,
               ),
             }),
           })
         })
-        await page.route(
-          '**/api/connections/' + wechatConnectionId + '/wechat-ilink/inbound-media',
-          async (request) => {
-            updateRequestBody = request.request().postDataJSON()
-            inboundMediaEnabled =
-              HostApiContracts.updateWechatIlinkInboundMedia.parseRequest(updateRequestBody).enableInboundMedia
-            await request.fulfill({
-              status: 200,
-              contentType: 'application/json',
-              body: JSON.stringify({ connectionId: wechatConnectionId, enableInboundMedia: inboundMediaEnabled }),
-            })
-          },
-        )
+        await page.route('**/api/connections/' + wechatConnectionId + '/configuration', async (request) => {
+          updateRequestBody = request.request().postDataJSON()
+          const value =
+            HostApiContracts.updateConnectionConfiguration.parseRequest(updateRequestBody).configuration[
+              'enableInboundMedia'
+            ]
+          if (typeof value !== 'boolean') throw new Error('Expected a boolean inbound-media setting.')
+          inboundMediaEnabled = value
+          await request.fulfill({
+            status: 200,
+            contentType: 'application/json',
+            body: JSON.stringify({
+              connectionId: wechatConnectionId,
+              configuration: { enableInboundMedia: inboundMediaEnabled },
+            }),
+          })
+        })
       },
     )
-    expect(updateRequestBody).toEqual({ enableInboundMedia: true })
+    expect(updateRequestBody).toEqual({ configuration: { enableInboundMedia: true } })
   })
 
   it('isolates Channel messages, renders a true empty state, and names the send target', async () => {

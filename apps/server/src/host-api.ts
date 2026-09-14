@@ -1,6 +1,5 @@
 import type { WebServer, WebRoute } from '@deepseek-ai/dsh-host-webserver'
 import { strFromU8, strToU8, unzipSync, zipSync } from 'fflate'
-import { readBuiltinWechatIlinkInboundMediaSetting } from '@nekro-nxt/adapter-builtin-roster'
 import { isAdminConsoleOutbound, type ChannelFact, type ChannelHistoryEntry } from '@nekro-nxt/channel-runtime'
 import type { AgentRevisionContent, ConnectionEventRecord, ImageUnderstandingPolicy } from '@nekro-nxt/core'
 import {
@@ -1433,9 +1432,19 @@ export const createNekroHostApi = (
       const lastInbound = runtime.lastInbound(connection.id)
       const tests = runtime.connectionTests(connection.id)
       const capabilities = runtime.connectionCapabilities(connection.id)
-      const wechatIlinkInboundMedia = readBuiltinWechatIlinkInboundMediaSetting(
-        connection.adapterKey,
-        connection.config,
+      const descriptor = runtime.adapters.get(connection.adapterKey)?.descriptor
+      const storedConfiguration =
+        typeof connection.config === 'object' && connection.config !== null && !Array.isArray(connection.config)
+          ? connection.config
+          : {}
+      const configuration = Object.fromEntries(
+        Object.entries(descriptor?.configSchema.properties ?? {}).flatMap(([key, property]) => {
+          if (property?.type === 'credential-reference') return []
+          const value = storedConfiguration[key] ?? property?.default
+          return typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean'
+            ? [[key, value] as const]
+            : []
+        }),
       )
       return {
         id: connection.id,
@@ -1474,9 +1483,7 @@ export const createNekroHostApi = (
           : { lastInbound: { ...lastInbound, platformMessageId: lastInbound.platformMessageId } }),
         ...(tests?.receive === undefined ? {} : { receiveTest: tests.receive }),
         ...(tests?.send === undefined ? {} : { sendTest: tests.send }),
-        ...(wechatIlinkInboundMedia === undefined
-          ? {}
-          : { adapterSettings: { wechatIlink: { enableInboundMedia: wechatIlinkInboundMedia } } }),
+        configuration,
       }
     })
     const archivedConnections = runtime.core.listArchivedConnections().map((connection) => ({
@@ -3966,27 +3973,27 @@ export const createNekroHostApi = (
     },
   })
 
-  // POST/GET/DELETE /api/connections/wechat-ilink/login → Host-owned QR login.
+  // POST/GET/DELETE /api/connection-logins → Host-owned, Adapter-implemented QR login.
   registerRoute({
     kind: 'prefix',
-    path: '/api/connections/wechat-ilink/login',
+    path: '/api/connection-logins',
     handler: async (req, res) => {
       const url = new URL(req.url ?? '/', 'http://localhost')
-      if (url.pathname === '/api/connections/wechat-ilink/login') {
+      if (url.pathname === '/api/connection-logins') {
         if (req.method !== 'POST') {
           writeError(res, 405, 'method-not-allowed', '只支持 POST。')
           return
         }
         try {
-          const body = HostApiContracts.startWechatIlinkLogin.parseRequest(await readJsonBody(req))
-          writeContractJson(res, 201, HostApiContracts.startWechatIlinkLogin, await runtime.startWechatIlinkLogin(body))
+          const body = HostApiContracts.startConnectionLogin.parseRequest(await readJsonBody(req))
+          writeContractJson(res, 201, HostApiContracts.startConnectionLogin, await runtime.startConnectionLogin(body))
         } catch (error) {
-          writeError(res, 400, 'wechat-ilink-login-failed', error instanceof Error ? error.message : String(error))
+          writeError(res, 400, 'connection-login-failed', error instanceof Error ? error.message : String(error))
         }
         return
       }
 
-      const match = /^\/api\/connections\/wechat-ilink\/login\/([^/]+)$/u.exec(url.pathname)
+      const match = /^\/api\/connection-logins\/([^/]+)$/u.exec(url.pathname)
       if (!match?.[1]) {
         writeError(res, 404, 'not-found', '未定义路由：' + req.method + ' ' + url.pathname + '。')
         return
@@ -3994,14 +4001,14 @@ export const createNekroHostApi = (
       const loginId = decodeURIComponent(match[1])
       try {
         if (req.method === 'GET') {
-          const params = HostApiContracts.getWechatIlinkLogin.parseParams({ loginId })
-          writeContractJson(res, 200, HostApiContracts.getWechatIlinkLogin, runtime.getWechatIlinkLogin(params.loginId))
+          const params = HostApiContracts.getConnectionLogin.parseParams({ loginId })
+          writeContractJson(res, 200, HostApiContracts.getConnectionLogin, runtime.getConnectionLogin(params.loginId))
           return
         }
         if (req.method === 'DELETE') {
-          const params = HostApiContracts.cancelWechatIlinkLogin.parseParams({ loginId })
-          const cancelled = runtime.cancelWechatIlinkLogin(params.loginId)
-          writeContractJson(res, 200, HostApiContracts.cancelWechatIlinkLogin, {
+          const params = HostApiContracts.cancelConnectionLogin.parseParams({ loginId })
+          const cancelled = runtime.cancelConnectionLogin(params.loginId)
+          writeContractJson(res, 200, HostApiContracts.cancelConnectionLogin, {
             loginId: cancelled.loginId,
             status: 'cancelled',
           })
@@ -4009,7 +4016,7 @@ export const createNekroHostApi = (
         }
         writeError(res, 405, 'method-not-allowed', '只支持 GET 或 DELETE。')
       } catch (error) {
-        writeError(res, 400, 'wechat-ilink-login-failed', error instanceof Error ? error.message : String(error))
+        writeError(res, 400, 'connection-login-failed', error instanceof Error ? error.message : String(error))
       }
     },
   })
@@ -4144,15 +4151,13 @@ export const createNekroHostApi = (
         }
         return
       }
-      const wechatIlinkInboundMediaMatch = /^\/api\/connections\/([^/]+)\/wechat-ilink\/inbound-media$/.exec(
-        url.pathname,
-      )
-      if (wechatIlinkInboundMediaMatch) {
+      const configurationMatch = /^\/api\/connections\/([^/]+)\/configuration$/.exec(url.pathname)
+      if (configurationMatch) {
         if (req.method !== 'POST') {
           writeError(res, 405, 'method-not-allowed', '只支持 POST。')
           return
         }
-        const encodedConnectionId = wechatIlinkInboundMediaMatch[1]
+        const encodedConnectionId = configurationMatch[1]
         if (encodedConnectionId === undefined) {
           writeError(res, 404, 'not-found', `未定义路由：${req.method} ${url.pathname}。`)
           return
@@ -4165,18 +4170,18 @@ export const createNekroHostApi = (
           return
         }
         try {
-          const params = HostApiContracts.updateWechatIlinkInboundMedia.parseParams({ connectionId })
-          const body = HostApiContracts.updateWechatIlinkInboundMedia.parseRequest(await readJsonBody(req))
-          const updated = await runtime.updateWechatIlinkInboundMedia(params.connectionId, body.enableInboundMedia)
-          writeContractJson(res, 200, HostApiContracts.updateWechatIlinkInboundMedia, {
+          const params = HostApiContracts.updateConnectionConfiguration.parseParams({ connectionId })
+          const body = HostApiContracts.updateConnectionConfiguration.parseRequest(await readJsonBody(req))
+          const updated = await runtime.updateConnectionConfiguration(params.connectionId, body.configuration)
+          writeContractJson(res, 200, HostApiContracts.updateConnectionConfiguration, {
             connectionId: updated.id,
-            enableInboundMedia: body.enableInboundMedia,
+            configuration: body.configuration,
           })
         } catch (error) {
           writeError(
             res,
             400,
-            'wechat-ilink-inbound-media-failed',
+            'connection-configuration-failed',
             error instanceof Error ? error.message : String(error),
           )
         }

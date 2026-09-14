@@ -62,12 +62,12 @@ export const friendlyKnownChannelLabel = (channel: { readonly name: string; read
   return channel.name
 }
 
-type WechatIlinkLoginView = HostApiResponse<'startWechatIlinkLogin'> | HostApiResponse<'getWechatIlinkLogin'>
+type ConnectionLoginView = HostApiResponse<'startConnectionLogin'> | HostApiResponse<'getConnectionLogin'>
 
-const isWechatIlinkLoginActive = (login: WechatIlinkLoginView | null): login is WechatIlinkLoginView =>
+const isConnectionLoginActive = (login: ConnectionLoginView | null): login is ConnectionLoginView =>
   login?.status === 'pending' || login?.status === 'scanned'
 
-const isWechatIlinkLoginRestartable = (login: WechatIlinkLoginView | null): boolean =>
+const isConnectionLoginRestartable = (login: ConnectionLoginView | null): boolean =>
   login === null || login.status === 'failed' || login.status === 'expired' || login.status === 'cancelled'
 
 const collectConnectionDefaults = (
@@ -111,7 +111,8 @@ export function ConnectionsPage() {
   const [createAlias, setCreateAlias] = useState('')
   const [createError, setCreateError] = useState('')
   const [createPlatform, setCreatePlatform] = useState<AdapterConnectionDescriptor | null>(null)
-  const [wechatLogin, setWechatLogin] = useState<WechatIlinkLoginView | null>(null)
+  const [connectionLogin, setConnectionLogin] = useState<ConnectionLoginView | null>(null)
+  const [reauthConnectionId, setReauthConnectionId] = useState('')
   const [testPending, setTestPending] = useState<'receive' | 'send' | null>(null)
   const [testChannelByConnection, setTestChannelByConnection] = useState<Record<string, string>>({})
   const [testsOpen, setTestsOpen] = useState(false)
@@ -119,7 +120,7 @@ export function ConnectionsPage() {
   const [aliasDraft, setAliasDraft] = useState('')
   const [aliasPending, setAliasPending] = useState(false)
   const [activityDefaultsPending, setActivityDefaultsPending] = useState(false)
-  const [mediaSettingsPending, setMediaSettingsPending] = useState(false)
+  const [configurationPending, setConfigurationPending] = useState(false)
   const [deleteOpen, setDeleteOpen] = useState(false)
   const [deleteChannelData, setDeleteChannelData] = useState(false)
 
@@ -136,7 +137,7 @@ export function ConnectionsPage() {
     setCreateOpen(true)
     setCreateAlias('')
     setCreateError('')
-    setWechatLogin(null)
+    setConnectionLogin(null)
     if (platform) {
       setCreatePlatform(platform)
       setSelectedPlatformKey(platform.key)
@@ -187,7 +188,9 @@ export function ConnectionsPage() {
   const selectedChannels = selected ? channels.filter((channel) => channel.connectionId === selected.id) : []
   const bindingCount = selectedChannels.reduce((count, channel) => count + channel.bindings.length, 0)
   const firstBoundChannel = selectedChannels.find((channel) => channel.bindings.length > 0)
-  const wechatIlinkSettings = selected?.adapterSettings?.wechatIlink
+  const editableBooleanSettings = Object.entries(selectedDescriptor?.configSchema.properties ?? {}).flatMap(
+    ([key, property]) => (property?.type === 'boolean' ? [{ key, property }] : []),
+  )
 
   const saveAlias = async (alias: string): Promise<void> => {
     if (!selected || aliasPending) return
@@ -202,20 +205,16 @@ export function ConnectionsPage() {
     }
   }
 
-  const updateWechatIlinkInboundMedia = async (enabled: boolean): Promise<void> => {
-    if (!selected || mediaSettingsPending) return
-    setMediaSettingsPending(true)
+  const updateConnectionBooleanSetting = async (key: string, enabled: boolean): Promise<void> => {
+    if (!selected || configurationPending) return
+    setConfigurationPending(true)
     try {
-      await useProductStore.getState().updateWechatIlinkInboundMedia(selected.id, enabled)
-      notify(
-        enabled ? '微信 iLink 入站媒体接收已开启。' : '微信 iLink 入站媒体接收已关闭。',
-        'success',
-        'connection-media:' + selected.id,
-      )
+      await useProductStore.getState().updateConnectionConfiguration(selected.id, { [key]: enabled })
+      notify('连接设置已保存。', 'success', 'connection-configuration:' + selected.id)
     } catch (error) {
-      notify(error instanceof Error ? error.message : String(error), 'error', 'connection-media:' + selected.id)
+      notify(error instanceof Error ? error.message : String(error), 'error', 'connection-configuration:' + selected.id)
     } finally {
-      setMediaSettingsPending(false)
+      setConfigurationPending(false)
     }
   }
 
@@ -225,13 +224,14 @@ export function ConnectionsPage() {
     setCreatePlatform(platform ?? null)
     setConfiguration(collectConnectionDefaults(platform))
     setCredentials({})
-    setWechatLogin(null)
+    setConnectionLogin(null)
   }
 
   const openCreate = (adapterKey?: string): void => {
     setCreateAlias('')
     setCreateError('')
-    setWechatLogin(null)
+    setConnectionLogin(null)
+    setReauthConnectionId('')
     if (adapterKey && creatablePlatforms.some((item) => item.key === adapterKey)) {
       applyPlatformDefaults(adapterKey)
       setCreateStage('configuration')
@@ -242,10 +242,24 @@ export function ConnectionsPage() {
     setCreateOpen(true)
   }
 
+  const openReauthenticate = (): void => {
+    if (!selected || selectedDescriptor?.creation?.mode !== 'qr-login') return
+    setCreateAlias('')
+    setCreateError('')
+    setConnectionLogin(null)
+    setReauthConnectionId(selected.id)
+    setSelectedPlatformKey(selectedDescriptor.key)
+    setCreatePlatform(selectedDescriptor)
+    setCreateStage('configuration')
+    setConfiguration(collectConnectionDefaults(selectedDescriptor))
+    setCredentials({})
+    setCreateOpen(true)
+  }
+
   const selectedCreationMode = selectedPlatform?.creation?.mode ?? 'schema-form'
   const isQrLoginCreate = createStage === 'configuration' && selectedCreationMode === 'qr-login'
-  const wechatLoginActive = isWechatIlinkLoginActive(wechatLogin)
-  const wechatLoginQrImage = wechatLogin?.qrCodeUrl ? createQrCodeSvgDataUrl(wechatLogin.qrCodeUrl) : ''
+  const connectionLoginActive = isConnectionLoginActive(connectionLogin)
+  const connectionLoginQrImage = connectionLogin?.qrCodeUrl ? createQrCodeSvgDataUrl(connectionLogin.qrCodeUrl) : ''
 
   const clearCreateSearchParams = (): void => {
     if (searchParams.get('create') !== '1' && !searchParams.get('adapter')) return
@@ -262,41 +276,46 @@ export function ConnectionsPage() {
     setConfiguration({})
     setCredentials({})
     setCreatePlatform(null)
-    setWechatLogin(null)
+    setConnectionLogin(null)
+    setReauthConnectionId('')
   }
 
   const handleCreateOpenChange = (open: boolean): void => {
     setCreateOpen(open)
     if (open) return
-    const activeLogin = wechatLogin
-    if (isWechatIlinkLoginActive(activeLogin)) {
+    const activeLogin = connectionLogin
+    if (isConnectionLoginActive(activeLogin)) {
       void useProductStore
         .getState()
-        .cancelWechatIlinkLogin(activeLogin.loginId)
+        .cancelConnectionLogin(activeLogin.loginId)
         .catch(() => undefined)
     }
     resetCreateState()
     clearCreateSearchParams()
   }
 
-  const startWechatLogin = async (): Promise<WechatIlinkLoginView> => {
-    const login = await useProductStore.getState().startWechatIlinkLogin({})
-    setWechatLogin(login)
+  const startQrLogin = async (): Promise<ConnectionLoginView> => {
+    if (!selectedPlatform) throw new Error('请选择连接平台。')
+    const login = await useProductStore.getState().startConnectionLogin({
+      adapterKey: selectedPlatform.key,
+      ...(reauthConnectionId ? { connectionId: reauthConnectionId } : { alias: createAlias }),
+    })
+    setConnectionLogin(login)
     return login
   }
 
   useEffect(() => {
-    const activeLogin = wechatLogin
-    if (!createOpen || !isQrLoginCreate || !isWechatIlinkLoginActive(activeLogin)) return
+    const activeLogin = connectionLogin
+    if (!createOpen || !isQrLoginCreate || !isConnectionLoginActive(activeLogin)) return
     const loginId = activeLogin.loginId
     const timer = window.setInterval(() => {
       void useProductStore
         .getState()
-        .getWechatIlinkLogin(loginId)
+        .getConnectionLogin(loginId)
         .then((next) => {
-          setWechatLogin((current) => (current?.loginId === loginId ? next : current))
+          setConnectionLogin((current) => (current?.loginId === loginId ? next : current))
           if (next.status === 'confirmed') {
-            notify('连接已创建', 'success', 'connection-create')
+            notify(reauthConnectionId ? '连接已重新认证' : '连接已创建', 'success', 'connection-login')
             setCreateOpen(false)
             resetCreateState()
             clearCreateSearchParams()
@@ -305,13 +324,13 @@ export function ConnectionsPage() {
         .catch((error) => {
           const message = error instanceof Error ? error.message : String(error)
           setCreateError(message)
-          setWechatLogin((current) =>
+          setConnectionLogin((current) =>
             current?.loginId === loginId ? { ...current, status: 'failed', message } : current,
           )
         })
     }, 1500)
     return () => window.clearInterval(timer)
-  }, [createOpen, isQrLoginCreate, searchParams, setSearchParams, wechatLogin])
+  }, [connectionLogin, createOpen, isQrLoginCreate, reauthConnectionId, searchParams, setSearchParams])
 
   if (!connectionId && connections[0]) {
     const query = searchParams.toString()
@@ -398,6 +417,11 @@ export function ConnectionsPage() {
             selected ? (
               <>
                 <StatusBadge tone={connectionTone(selected.state)}>{selected.state}</StatusBadge>
+                {selected.userManaged && selectedDescriptor?.creation?.mode === 'qr-login' ? (
+                  <Button size="small" variant="ghost" onClick={openReauthenticate}>
+                    <RotateCcw size={14} aria-hidden="true" /> 重新认证
+                  </Button>
+                ) : null}
                 {selectedAdapterCreatable ? (
                   <Button variant="primary" onClick={() => openCreate(selected.adapterKey)}>
                     <Plus size={15} aria-hidden="true" /> 再添加一个账号
@@ -593,18 +617,25 @@ export function ConnectionsPage() {
                   </div>
                   <small className={styles.inlineFieldHint}>可选，用于区分同适配器频道连接</small>
                 </div>
-                {wechatIlinkSettings ? (
+                {editableBooleanSettings.length > 0 ? (
                   <>
                     <div className={styles.sectionDivider} />
                     <div className={styles.connectionAliasEditor}>
-                      <div className={styles.sectionHeading}>微信 iLink 设置</div>
-                      <SwitchField
-                        label="入站媒体接收"
-                        description="开启后，微信 iLink 收到的图片和文件会下载并导入为频道资源；关闭时只记录可解释的占位内容。"
-                        checked={wechatIlinkSettings.enableInboundMedia}
-                        disabled={mediaSettingsPending}
-                        onCheckedChange={(checked) => void updateWechatIlinkInboundMedia(checked)}
-                      />
+                      <div className={styles.sectionHeading}>连接设置</div>
+                      {editableBooleanSettings.map(({ key, property }) => (
+                        <SwitchField
+                          key={key}
+                          label={property.title}
+                          description={property.description}
+                          checked={
+                            typeof selected.configuration[key] === 'boolean'
+                              ? selected.configuration[key]
+                              : (property.default ?? false)
+                          }
+                          disabled={configurationPending}
+                          onCheckedChange={(checked) => void updateConnectionBooleanSetting(key, checked)}
+                        />
+                      ))}
                     </div>
                   </>
                 ) : null}
@@ -743,14 +774,16 @@ export function ConnectionsPage() {
           createStage === 'platform'
             ? '选择平台'
             : isQrLoginCreate
-              ? ('登录 ' + (selectedPlatform?.displayName ?? '')).trim()
+              ? ((reauthConnectionId ? '重新认证 ' : '登录 ') + (selectedPlatform?.displayName ?? '')).trim()
               : ('配置 ' + (selectedPlatform?.displayName ?? '')).trim()
         }
         description={
           createStage === 'platform'
             ? '选择要连接的平台账号。'
             : isQrLoginCreate
-              ? '使用平台应用扫码登录。登录成功后会自动创建平台连接。'
+              ? reauthConnectionId
+                ? '使用平台应用扫码，并确认登录的是原连接账号。成功后会保留现有连接与频道身份。'
+                : '使用平台应用扫码登录。登录成功后会自动创建平台连接。'
               : (selectedPlatform?.description ?? '填写平台账号需要的配置。')
         }
         confirmLabel={
@@ -759,15 +792,17 @@ export function ConnectionsPage() {
               ? (selectedPlatform.creation.actionLabel ?? '扫码登录')
               : '填写连接信息'
             : isQrLoginCreate
-              ? wechatLoginActive
+              ? connectionLoginActive
                 ? (selectedPlatform?.creation?.pendingLabel ?? '等待扫码确认…')
-                : (selectedPlatform?.creation?.actionLabel ?? '扫码登录')
+                : reauthConnectionId
+                  ? '重新扫码认证'
+                  : (selectedPlatform?.creation?.actionLabel ?? '扫码登录')
               : '创建连接'
         }
         confirmLoadingLabel={
           isQrLoginCreate || selectedPlatform?.creation?.mode === 'qr-login' ? '正在生成二维码…' : '处理中…'
         }
-        confirmDisabled={isQrLoginCreate && wechatLoginActive}
+        confirmDisabled={isQrLoginCreate && connectionLoginActive}
         onConfirm={async () => {
           if (!selectedPlatform) {
             setCreateError('请选择连接平台。')
@@ -778,10 +813,10 @@ export function ConnectionsPage() {
             setCredentials({})
             setCreateStage('configuration')
             setCreateError('')
-            setWechatLogin(null)
+            setConnectionLogin(null)
             if (selectedPlatform.creation?.mode === 'qr-login') {
               try {
-                const login = await startWechatLogin()
+                const login = await startQrLogin()
                 if (login.status === 'confirmed') {
                   notify('连接已创建', 'success', 'connection-create')
                   resetCreateState()
@@ -797,12 +832,12 @@ export function ConnectionsPage() {
             return false
           }
           if (isQrLoginCreate) {
-            if (!isWechatIlinkLoginRestartable(wechatLogin)) return false
+            if (!isConnectionLoginRestartable(connectionLogin)) return false
             setCreateError('')
             try {
-              const login = await startWechatLogin()
+              const login = await startQrLogin()
               if (login.status === 'confirmed') {
-                notify('连接已创建', 'success', 'connection-create')
+                notify(reauthConnectionId ? '连接已重新认证' : '连接已创建', 'success', 'connection-login')
                 resetCreateState()
                 clearCreateSearchParams()
                 return true
@@ -880,19 +915,21 @@ export function ConnectionsPage() {
               {isQrLoginCreate ? (
                 <div className={styles.qrLoginPanel}>
                   <InlineFeedback tone="info">请使用平台应用扫描二维码并确认登录。</InlineFeedback>
-                  {wechatLoginQrImage ? (
+                  {connectionLoginQrImage ? (
                     <div className={styles.qrLoginCode}>
                       <img
-                        src={wechatLoginQrImage}
+                        src={connectionLoginQrImage}
                         alt={(selectedPlatform?.displayName ?? '平台') + ' 扫码登录二维码'}
                       />
                     </div>
                   ) : null}
-                  {wechatLogin?.message ? (
+                  {connectionLogin?.message ? (
                     <InlineFeedback
-                      tone={wechatLogin.status === 'failed' || wechatLogin.status === 'expired' ? 'error' : 'info'}
+                      tone={
+                        connectionLogin.status === 'failed' || connectionLogin.status === 'expired' ? 'error' : 'info'
+                      }
                     >
-                      {wechatLogin.message}
+                      {connectionLogin.message}
                     </InlineFeedback>
                   ) : null}
                 </div>

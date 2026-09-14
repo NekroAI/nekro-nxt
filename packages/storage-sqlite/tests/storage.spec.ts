@@ -716,6 +716,38 @@ describe('Core SQLite baseline', () => {
     }
   })
 
+  it('atomically persists replacement Connection provisioning', async () => {
+    const { database, repository, core, connection } = await createFixture()
+    try {
+      const updated = core.updateConnectionProvisioning(connection.id, {
+        config: { accountId: 'account-fixture', enableInboundMedia: false },
+        credentialRefs: { botToken: 'credential:replacement' },
+      })
+      expect(updated).toMatchObject({
+        id: connection.id,
+        config: { accountId: 'account-fixture', enableInboundMedia: false },
+        credentialRefs: { botToken: 'credential:replacement' },
+      })
+      expect(repository.getConnection(connection.id)).toMatchObject({
+        id: connection.id,
+        config: { accountId: 'account-fixture', enableInboundMedia: false },
+        credentialRefs: { botToken: 'credential:replacement' },
+      })
+      expect(
+        database.db
+          .select({ config: connections.config, credentialRefs: connections.credentialRefs })
+          .from(connections)
+          .where(eq(connections.id, connection.id))
+          .get(),
+      ).toEqual({
+        config: { accountId: 'account-fixture', enableInboundMedia: false },
+        credentialRefs: { botToken: 'credential:replacement' },
+      })
+    } finally {
+      database.close()
+    }
+  })
+
   it('rejects a non-baseline development database instead of upgrading it', async () => {
     const directory = await temporaryDirectory()
     const filename = path.join(directory, 'legacy.sqlite')

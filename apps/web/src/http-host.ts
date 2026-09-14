@@ -474,10 +474,6 @@ const projectSnapshot = (json: SnapshotJson, successfulAt: number): ProductSnaps
     const adapterName = connectionAdapterName(connection)
     const descriptor = json.connectionAdapters.find(({ key }) => key === connection.adapterKey)
     const runtimeState = connection.status.state
-    const adapterSettings =
-      connection.adapterSettings?.wechatIlink === undefined
-        ? undefined
-        : { wechatIlink: connection.adapterSettings.wechatIlink }
     return {
       id: connection.id,
       ...(connection.alias === undefined ? {} : { alias: connection.alias }),
@@ -503,7 +499,7 @@ const projectSnapshot = (json: SnapshotJson, successfulAt: number): ProductSnaps
       ...(connection.status.processingFeedback === undefined
         ? {}
         : { processingFeedbackCapability: connection.status.processingFeedback }),
-      ...(adapterSettings === undefined ? {} : { adapterSettings }),
+      configuration: connection.configuration,
       channels: connection.channelCount ?? 0,
       knownChannels: (connection.knownChannels ?? []).map((channel) => ({
         ...channel,
@@ -1090,25 +1086,31 @@ export class HttpProductHost implements ProductHostPort {
       await this.#refreshAndNotify()
       return result
     }
-    if (command === 'connections.wechatIlinkLogin.start') {
+    if (command === 'connections.login.start') {
+      const adapterKey = typeof input?.['adapterKey'] === 'string' ? input['adapterKey'] : ''
       const alias = typeof input?.['alias'] === 'string' ? input['alias'] : undefined
+      const connectionId = typeof input?.['connectionId'] === 'string' ? input['connectionId'] : undefined
       return await this.#call(
-        HostApiContracts.startWechatIlinkLogin,
+        HostApiContracts.startConnectionLogin,
         {},
-        HostApiContracts.startWechatIlinkLogin.parseRequest({ ...(alias === undefined ? {} : { alias }) }),
+        HostApiContracts.startConnectionLogin.parseRequest({
+          adapterKey,
+          ...(alias === undefined ? {} : { alias }),
+          ...(connectionId === undefined ? {} : { connectionId }),
+        }),
       )
     }
-    if (command === 'connections.wechatIlinkLogin.get') {
+    if (command === 'connections.login.get') {
       const loginId = typeof input?.['loginId'] === 'string' ? input['loginId'] : ''
-      if (!loginId.trim()) throw new Error('缺少微信 iLink 登录会话，请重新扫码。')
-      const result = await this.#call(HostApiContracts.getWechatIlinkLogin, { loginId }, undefined)
+      if (!loginId.trim()) throw new Error('缺少扫码登录会话，请重新扫码。')
+      const result = await this.#call(HostApiContracts.getConnectionLogin, { loginId }, undefined)
       if (result.status === 'confirmed') await this.#refreshAndNotify()
       return result
     }
-    if (command === 'connections.wechatIlinkLogin.cancel') {
+    if (command === 'connections.login.cancel') {
       const loginId = typeof input?.['loginId'] === 'string' ? input['loginId'] : ''
       if (!loginId.trim()) return null
-      return await this.#call(HostApiContracts.cancelWechatIlinkLogin, { loginId }, undefined)
+      return await this.#call(HostApiContracts.cancelConnectionLogin, { loginId }, undefined)
     }
     if (command === 'connections.updateAlias') {
       const connectionId = typeof input?.['connectionId'] === 'string' ? input['connectionId'] : ''
@@ -1119,15 +1121,15 @@ export class HttpProductHost implements ProductHostPort {
       await this.#refreshAndNotify()
       return result
     }
-    if (command === 'connections.wechatIlinkInboundMedia.update') {
+    if (command === 'connections.updateConfiguration') {
       const connectionId = typeof input?.['connectionId'] === 'string' ? input['connectionId'] : ''
-      const enableInboundMedia = input?.['enableInboundMedia']
+      const configuration = isRecord(input?.['configuration']) ? input['configuration'] : undefined
       if (!connectionId.trim()) throw new Error('缺少连接标识，请刷新页面后重试。')
-      if (typeof enableInboundMedia !== 'boolean') throw new Error('入站媒体接收设置格式无效，请重新操作。')
+      if (configuration === undefined) throw new Error('连接配置格式无效，请重新操作。')
       const result = await this.#call(
-        HostApiContracts.updateWechatIlinkInboundMedia,
+        HostApiContracts.updateConnectionConfiguration,
         { connectionId },
-        { enableInboundMedia },
+        HostApiContracts.updateConnectionConfiguration.parseRequest({ configuration }),
       )
       await this.#refreshAndNotify()
       return result

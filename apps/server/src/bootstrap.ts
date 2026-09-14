@@ -1,15 +1,9 @@
 import type { Context } from '@deepseek-ai/cordis'
-import {
-  WECHAT_ILINK_BUILTIN,
-  createBuiltinAdapterContributions,
-  parseBuiltinWechatIlinkConnectionConfiguration,
-  parseBuiltinWechatIlinkConnectionInput,
-  type BuiltinWechatIlinkLoginClientFactory,
-  type BuiltinWechatIlinkTransportFactory,
-} from '@nekro-nxt/adapter-builtin-roster'
+import { BUILTIN_ADAPTER_CONTRIBUTIONS } from '@nekro-nxt/adapter-builtin-roster'
 import {
   AdapterRegistry,
   parseAdapterCapabilities,
+  type AdapterConnectionLoginStatus,
   type AdapterConnectionHostContext,
   type AdapterConnectionDiagnostic,
   type AdapterConnectionRuntime,
@@ -116,10 +110,8 @@ export interface NekroRuntimeOptions {
   readonly notifications?: { readonly fetch?: typeof fetch }
   /** Replaced by an offline Fake for tests and AI validation; production uses fetch/ws. */
   readonly adapterTransport?: AdapterTransportService
-  readonly wechatIlink?: {
-    readonly transportFactory?: BuiltinWechatIlinkTransportFactory
-    readonly loginClientFactory?: BuiltinWechatIlinkLoginClientFactory
-  }
+  /** Overrides first-party Adapter composition for isolated tests and custom hosts. */
+  readonly adapterContributions?: readonly AdapterHostContributionV2[]
 }
 
 export type ConnectionTestResult =
@@ -131,24 +123,25 @@ export type ConnectionTestResult =
     }
   | { readonly status: 'failed'; readonly kind: string; readonly message: string; readonly retryAfterMs?: number }
 
-export type WechatIlinkLoginSessionStatus = 'pending' | 'scanned' | 'confirmed' | 'expired' | 'failed' | 'cancelled'
+export type ConnectionLoginSessionStatus = AdapterConnectionLoginStatus | 'confirmed' | 'failed' | 'cancelled'
 
-export interface WechatIlinkLoginSessionView {
+export interface ConnectionLoginSessionView {
   readonly loginId: string
-  readonly status: WechatIlinkLoginSessionStatus
+  readonly status: ConnectionLoginSessionStatus
   readonly qrCodeUrl?: string
   readonly connectionId?: ConnectionId
-  readonly adapterKey?: string
+  readonly adapterKey: string
   readonly message?: string
 }
 
-interface WechatIlinkLoginSession {
+interface ConnectionLoginSession {
   readonly loginId: string
+  readonly adapterKey: string
+  readonly targetConnectionId?: ConnectionId
   readonly abortController: AbortController
-  status: WechatIlinkLoginSessionStatus
+  status: ConnectionLoginSessionStatus
   qrCodeUrl?: string
   connectionId?: ConnectionId
-  adapterKey?: string
   message?: string
   done: Promise<void>
 }
@@ -207,8 +200,7 @@ export class NekroRuntime {
   readonly #connectionListeners = new Set<(event?: ConnectionEventRecord) => void>()
   readonly #agents = new Map<AgentId, AgentEntity>()
   readonly #unsubscribeDynamicApproval: () => void
-  readonly #wechatIlinkOptions: NonNullable<NekroRuntimeOptions['wechatIlink']>
-  readonly #wechatIlinkLoginSessions = new Map<string, WechatIlinkLoginSession>()
+  readonly #connectionLoginSessions = new Map<string, ConnectionLoginSession>()
   #started = false
   #disposed = false
 
@@ -235,7 +227,6 @@ export class NekroRuntime {
     readonly adapterHandles: readonly RegisteredAdapterHandle[]
     readonly adapterRuntimes: Map<ConnectionId, AdapterConnectionRuntime>
     readonly adapterTransport: AdapterTransportService
-    readonly wechatIlinkOptions: NonNullable<NekroRuntimeOptions['wechatIlink']>
   }) {
     this.#database = input.database
     this.repository = input.repository
@@ -258,7 +249,6 @@ export class NekroRuntime {
     this.#adapterHandles.push(...input.adapterHandles)
     this.#adapterRuntimes = input.adapterRuntimes
     this.#adapterTransport = input.adapterTransport
-    this.#wechatIlinkOptions = input.wechatIlinkOptions
     this.#adapterDiagnostics.set(input.internalConnectionId, {
       status: 'connected',
       credentialConfigured: true,
@@ -328,11 +318,9 @@ export class NekroRuntime {
       )
       const core = new CoreService(repository, { now, nextUlid })
       const adapters = new AdapterRegistry()
-      const adapterHandles = createBuiltinAdapterContributions({
-        ...(options.wechatIlink?.transportFactory === undefined
-          ? {}
-          : { wechatIlinkTransportFactory: options.wechatIlink.transportFactory }),
-      }).map((contribution, index) => adapters.register(`builtin:${index}`, contribution))
+      const adapterHandles = (options.adapterContributions ?? BUILTIN_ADAPTER_CONTRIBUTIONS).map(
+        (contribution, index) => adapters.register(`builtin:${index}`, contribution),
+      )
       const dshPluginInstaller = new DshPluginPackageInstaller(
         repository,
         options.dshPluginRoot ?? path.join(path.dirname(options.coreDatabasePath), 'dsh'),
@@ -515,7 +503,6 @@ export class NekroRuntime {
         adapterHandles,
         adapterRuntimes,
         adapterTransport: options.adapterTransport ?? createProductionAdapterTransport(),
-        wechatIlinkOptions: options.wechatIlink ?? {},
       })
       return runtime
     } catch (error) {
@@ -911,28 +898,30 @@ export class NekroRuntime {
     return updated
   }
 
-  async updateWechatIlinkInboundMedia(
+  async updateConnectionConfiguration(
     connectionId: ConnectionId,
-    enableInboundMedia: boolean,
+    configurationPatch: Readonly<Record<string, unknown>>,
   ): Promise<ConnectionRecord> {
     if (this.#disposed) throw new Error('NekroRuntime is disposed.')
     const connection = this.core.getConnection(connectionId)
-    if (!connection || connection.adapterKey !== WECHAT_ILINK_BUILTIN.key) {
-      throw new Error('微信 iLink 连接不存在。')
+    if (!connection) throw new Error('连接不存在。')
+    const contribution = this.adapters.get(connection.adapterKey)
+    if (!contribution) throw new Error('这个连接的适配器未安装，无法修改配置。')
+    const storedConfig = { ...parseStoredAdapterConfiguration(connection.config) }
+    for (const [key, value] of Object.entries(configurationPatch)) {
+      const property = contribution.descriptor.configSchema.properties[key]
+      if (!property || property.type === 'credential-reference') throw new Error(`连接配置包含未知字段：${key}`)
+      if (property.type === 'string') {
+        if (typeof value !== 'string') throw new Error(`${property.title}的类型无效。`)
+        storedConfig[key] = value
+      } else if (property.type === 'boolean') {
+        if (typeof value !== 'boolean') throw new Error(`${property.title}的类型无效。`)
+        storedConfig[key] = value
+      } else {
+        if (typeof value !== 'number' || !Number.isFinite(value)) throw new Error(`${property.title}的类型无效。`)
+        storedConfig[key] = value
+      }
     }
-    const parsed = parseBuiltinWechatIlinkConnectionConfiguration(connection.config)
-    const storedConfig = {
-      accountId: parsed.accountId,
-      baseUrl: parsed.baseUrl,
-      cdnBaseUrl: parsed.cdnBaseUrl,
-      botType: parsed.botType,
-      longPollTimeoutMs: parsed.longPollTimeoutMs,
-      enableInboundMedia,
-      enableOutboundMedia: parsed.enableOutboundMedia,
-      maxTextLength: parsed.maxTextLength,
-      ...(parsed.channelVersion === undefined ? {} : { channelVersion: parsed.channelVersion }),
-      ...(parsed.routeTag === undefined ? {} : { routeTag: parsed.routeTag }),
-    } satisfies Readonly<Record<string, JsonValue>>
     const updated = this.core.updateConnectionConfig(connectionId, storedConfig)
     const mounted = this.#adapterRuntimes.get(connectionId)
     if (mounted) {
@@ -944,17 +933,40 @@ export class NekroRuntime {
     return updated
   }
 
-  async startWechatIlinkLogin(input: { readonly alias?: string | undefined }): Promise<WechatIlinkLoginSessionView> {
+  async startConnectionLogin(input: {
+    readonly adapterKey: string
+    readonly alias?: string | undefined
+    readonly connectionId?: ConnectionId | undefined
+  }): Promise<ConnectionLoginSessionView> {
     if (!this.#started || this.#disposed) throw new Error('NekroRuntime is not accepting new Connections.')
-    const loginId = 'wechat-ilink-login-' + randomUUID()
+    const contribution = this.adapters.get(input.adapterKey)
+    if (contribution?.descriptor.provisioning !== 'user-created') throw new Error('该连接平台不可由用户创建。')
+    const connectionLogin = contribution.connectionLogin
+    if (contribution.descriptor.creation?.mode !== 'qr-login' || !connectionLogin) {
+      throw new Error('该连接平台不支持扫码登录。')
+    }
+    if (input.connectionId !== undefined) {
+      const existing = this.core.getConnection(input.connectionId)
+      if (!existing || existing.adapterKey !== input.adapterKey) throw new Error('要重新认证的连接不存在。')
+      if (!existing.accountKey) throw new Error('原连接没有可核对的账号身份，无法安全重新认证。')
+      const alreadyReauthenticating = [...this.#connectionLoginSessions.values()].some(
+        (session) =>
+          session.targetConnectionId === input.connectionId &&
+          (session.status === 'pending' || session.status === 'scanned'),
+      )
+      if (alreadyReauthenticating) throw new Error('该连接已有进行中的重新认证会话。')
+    }
+    const loginId = 'connection-login-' + randomUUID()
     const abortController = new AbortController()
-    const session: WechatIlinkLoginSession = {
+    const session: ConnectionLoginSession = {
       loginId,
+      adapterKey: input.adapterKey,
+      ...(input.connectionId === undefined ? {} : { targetConnectionId: input.connectionId }),
       abortController,
       status: 'pending',
       done: Promise.resolve(),
     }
-    this.#wechatIlinkLoginSessions.set(loginId, session)
+    this.#connectionLoginSessions.set(loginId, session)
 
     let firstQrSettled = false
     let settleFirstQr: (() => void) | undefined
@@ -975,24 +987,18 @@ export class NekroRuntime {
     }
     const firstQrTimeout = setTimeout(() => {
       if (firstQrSettled) return
-      const error = new Error('微信 iLink 登录超时，未生成二维码。')
+      const error = new Error('扫码登录超时，未生成二维码。')
       session.status = 'failed'
       session.message = error.message
       abortController.abort(error)
       rejectFirstQrOnce(error)
     }, 15_000)
 
-    const loginClientFactory =
-      this.#wechatIlinkOptions.loginClientFactory ?? WECHAT_ILINK_BUILTIN.createLoginClientFactory()
-    const loginClient = loginClientFactory()
     session.done = (async () => {
       try {
-        const result = await loginClient.login({
-          botType: '3',
-          timeoutMs: 480_000,
-          maxRefreshes: 3,
+        const result = await connectionLogin.start({
           signal: abortController.signal,
-          onQRCode: (qrCodeUrl) => {
+          onQrCode: (qrCodeUrl) => {
             if (abortController.signal.aborted || session.status === 'cancelled') return
             session.qrCodeUrl = qrCodeUrl
             session.status = 'pending'
@@ -1000,61 +1006,33 @@ export class NekroRuntime {
             resolveFirstQrOnce()
             this.#notifyConnectionChanges()
           },
-          onStatus: (status) => {
+          onStatus: (status, message) => {
             if (abortController.signal.aborted || session.status === 'cancelled') return
-            if (status === 'scaned') {
-              session.status = 'scanned'
-              session.message = '已扫码，请在平台应用内确认登录。'
-            } else if (status === 'expired') {
-              session.status = 'expired'
-              session.message = '二维码已过期，请重新扫码登录。'
-            } else if (status === 'confirmed') {
-              session.status = 'scanned'
-              session.message = '已确认登录，正在创建连接。'
-            } else {
-              session.status = 'pending'
-              session.message = '请使用平台应用扫码并确认登录。'
-            }
+            session.status = status
+            session.message =
+              message ??
+              (status === 'scanned'
+                ? '已扫码，请在平台应用内确认登录。'
+                : status === 'expired'
+                  ? '二维码已过期，请重新扫码登录。'
+                  : '请使用平台应用扫码并确认登录。')
             this.#notifyConnectionChanges()
           },
         })
         if (abortController.signal.aborted) return
-        if (!session.qrCodeUrl) {
-          session.status = 'failed'
-          session.message = '微信 iLink 登录流程未返回二维码。'
-          rejectFirstQrOnce(new Error(session.message))
-          return
-        }
-        if (!result.connected) {
-          session.status = session.status === 'expired' ? 'expired' : 'failed'
-          session.message = result.message || '微信 iLink 扫码登录失败。'
-          rejectFirstQrOnce(new Error(session.message))
-          return
-        }
-        if (!result.botToken?.trim() || !result.accountId?.trim()) {
-          session.status = 'failed'
-          session.message = '微信 iLink 登录结果缺少必要凭据。'
-          rejectFirstQrOnce(new Error(session.message))
-          return
-        }
-        const connection = await this.#createWechatIlinkConnectionFromLogin(
-          {
-            alias: input.alias,
-            accountId: result.accountId,
-            botToken: result.botToken,
-            baseUrl: result.baseUrl,
-          },
-          abortController.signal,
-        )
+        if (!session.qrCodeUrl) throw new Error('扫码登录流程未返回二维码。')
+        const connection =
+          input.connectionId === undefined
+            ? await this.#createConnectionFromLogin(input.adapterKey, input.alias, result, abortController.signal)
+            : await this.#reauthenticateConnectionFromLogin(input.connectionId, result, abortController.signal)
         if (abortController.signal.aborted) return
         session.status = 'confirmed'
         session.connectionId = connection.id
-        session.adapterKey = connection.adapterKey
-        session.message = '登录成功，连接已创建。'
+        session.message = input.connectionId === undefined ? '登录成功，连接已创建。' : '登录成功，原连接已重新认证。'
       } catch (error) {
         if (abortController.signal.aborted || session.status === 'cancelled') {
           session.status = 'cancelled'
-          session.message = '已取消微信 iLink 扫码登录。'
+          session.message = '已取消扫码登录。'
           rejectFirstQrOnce(error)
           return
         }
@@ -1064,7 +1042,7 @@ export class NekroRuntime {
       } finally {
         this.#notifyConnectionChanges()
         if (session.status !== 'pending' && session.status !== 'scanned') {
-          this.#scheduleWechatIlinkLoginSessionRemoval(loginId)
+          this.#scheduleConnectionLoginSessionRemoval(loginId)
         }
       }
     })()
@@ -1074,109 +1052,155 @@ export class NekroRuntime {
     } finally {
       clearTimeout(firstQrTimeout)
     }
-    return this.#projectWechatIlinkLoginSession(session)
+    return this.#projectConnectionLoginSession(session)
   }
 
-  getWechatIlinkLogin(loginId: string): WechatIlinkLoginSessionView {
-    const session = this.#wechatIlinkLoginSessions.get(loginId)
-    if (!session) throw new Error('微信 iLink 登录会话不存在。')
-    return this.#projectWechatIlinkLoginSession(session)
+  getConnectionLogin(loginId: string): ConnectionLoginSessionView {
+    const session = this.#connectionLoginSessions.get(loginId)
+    if (!session) throw new Error('扫码登录会话不存在。')
+    return this.#projectConnectionLoginSession(session)
   }
 
-  cancelWechatIlinkLogin(loginId: string): WechatIlinkLoginSessionView {
-    const session = this.#wechatIlinkLoginSessions.get(loginId)
-    if (!session) throw new Error('微信 iLink 登录会话不存在。')
-    if (session.status === 'cancelled') return this.#projectWechatIlinkLoginSession(session)
+  cancelConnectionLogin(loginId: string): ConnectionLoginSessionView {
+    const session = this.#connectionLoginSessions.get(loginId)
+    if (!session) throw new Error('扫码登录会话不存在。')
+    if (session.status === 'cancelled') return this.#projectConnectionLoginSession(session)
     if (session.status !== 'pending' && session.status !== 'scanned') {
-      throw new Error('微信 iLink 登录会话已经结束，不能取消。')
+      throw new Error('扫码登录会话已经结束，不能取消。')
     }
     session.status = 'cancelled'
-    session.message = '已取消微信 iLink 扫码登录。'
+    session.message = '已取消扫码登录。'
     session.abortController.abort(new Error(session.message))
     this.#notifyConnectionChanges()
-    this.#scheduleWechatIlinkLoginSessionRemoval(loginId)
-    return this.#projectWechatIlinkLoginSession(session)
+    this.#scheduleConnectionLoginSessionRemoval(loginId)
+    return this.#projectConnectionLoginSession(session)
   }
 
-  #projectWechatIlinkLoginSession(session: WechatIlinkLoginSession): WechatIlinkLoginSessionView {
+  #projectConnectionLoginSession(session: ConnectionLoginSession): ConnectionLoginSessionView {
     return {
       loginId: session.loginId,
       status: session.status,
+      adapterKey: session.adapterKey,
       ...(session.qrCodeUrl === undefined ? {} : { qrCodeUrl: session.qrCodeUrl }),
       ...(session.connectionId === undefined ? {} : { connectionId: session.connectionId }),
-      ...(session.adapterKey === undefined ? {} : { adapterKey: session.adapterKey }),
       ...(session.message === undefined ? {} : { message: session.message }),
     }
   }
 
-  #scheduleWechatIlinkLoginSessionRemoval(loginId: string): void {
+  #scheduleConnectionLoginSessionRemoval(loginId: string): void {
     setTimeout(() => {
-      const session = this.#wechatIlinkLoginSessions.get(loginId)
+      const session = this.#connectionLoginSessions.get(loginId)
       if (!session) return
       if (session.status === 'pending' || session.status === 'scanned') return
-      this.#wechatIlinkLoginSessions.delete(loginId)
+      this.#connectionLoginSessions.delete(loginId)
     }, 60_000)
   }
 
-  async #createWechatIlinkConnectionFromLogin(
-    input: {
-      readonly alias?: string | undefined
-      readonly accountId: string
-      readonly botToken: string
-      readonly baseUrl?: string | undefined
+  async #saveProvisionedCredentials(credentials: Readonly<Record<string, string>>): Promise<Record<string, string>> {
+    const credentialRefs: Record<string, string> = {}
+    try {
+      for (const [key, value] of Object.entries(credentials)) {
+        if (!key.trim() || !value.trim()) throw new Error('扫码登录结果包含无效凭据。')
+        credentialRefs[key] = await this.credentials.save(value)
+      }
+      return credentialRefs
+    } catch (error) {
+      await Promise.allSettled(Object.values(credentialRefs).map((reference) => this.credentials.delete(reference)))
+      throw error
+    }
+  }
+
+  async #createConnectionFromLogin(
+    adapterKey: string,
+    alias: string | undefined,
+    result: {
+      readonly accountKey: string
+      readonly configuration: Readonly<Record<string, string | number | boolean>>
+      readonly credentials: Readonly<Record<string, string>>
     },
     signal: AbortSignal,
   ): Promise<ConnectionRecord> {
-    const parsed = parseBuiltinWechatIlinkConnectionInput({
-      accountId: input.accountId,
-      botToken: input.botToken,
-      ...(input.baseUrl === undefined ? {} : { baseUrl: input.baseUrl }),
-    })
-    const duplicateMessage = '该微信账号已经存在活动连接。'
+    const accountKey = result.accountKey.trim()
+    if (!accountKey) throw new Error('扫码登录结果缺少账号身份。')
+    const configuration = parseStoredAdapterConfiguration(result.configuration)
+    const duplicateMessage = '该平台账号已经存在活动连接。'
     const findDuplicate = (): ConnectionRecord | undefined =>
-      this.core.listConnectionsByAdapter(WECHAT_ILINK_BUILTIN.key).find((candidate) => {
-        try {
-          return parseBuiltinWechatIlinkConnectionConfiguration(candidate.config).accountId === parsed.accountId
-        } catch {
-          return false
-        }
-      })
+      this.core.listConnectionsByAdapter(adapterKey).find((candidate) => candidate.accountKey === accountKey)
     if (findDuplicate()) throw new Error(duplicateMessage)
     if (signal.aborted) throw signal.reason
-    const credentialReference = await this.credentials.save(parsed.botToken)
-    const storedConfig = {
-      accountId: parsed.accountId,
-      baseUrl: parsed.baseUrl,
-      cdnBaseUrl: parsed.cdnBaseUrl,
-      botType: parsed.botType,
-      longPollTimeoutMs: parsed.longPollTimeoutMs,
-      enableInboundMedia: parsed.enableInboundMedia,
-      enableOutboundMedia: parsed.enableOutboundMedia,
-      maxTextLength: parsed.maxTextLength,
-      ...(parsed.channelVersion === undefined ? {} : { channelVersion: parsed.channelVersion }),
-      ...(parsed.routeTag === undefined ? {} : { routeTag: parsed.routeTag }),
-    } satisfies Readonly<Record<string, JsonValue>>
+    const credentialRefs = await this.#saveProvisionedCredentials(result.credentials)
     let connection: ConnectionRecord | undefined
     try {
       if (signal.aborted) throw signal.reason
       connection = this.core.createConnection({
-        adapterKey: WECHAT_ILINK_BUILTIN.key,
-        accountKey: parsed.accountId,
-        ...(input.alias === undefined ? {} : { alias: input.alias }),
-        config: storedConfig,
-        credentialRefs: { botToken: credentialReference },
+        adapterKey,
+        accountKey,
+        ...(alias === undefined ? {} : { alias }),
+        config: configuration,
+        credentialRefs,
       })
       if (signal.aborted) throw signal.reason
       await this.#mountAdapter(connection.id)
+      const diagnostic = this.#adapterDiagnostics.get(connection.id)
+      if (diagnostic?.status === 'failed') throw new Error(diagnostic.message ?? '连接挂载失败。')
       if (signal.aborted) throw signal.reason
       return connection
     } catch (error) {
-      if (connection && signal.aborted) {
+      if (connection) {
         await this.deleteConnection(connection.id, { deleteChannelData: true })
-      } else if (!connection) {
-        await this.credentials.delete(credentialReference)
+      } else {
+        await Promise.allSettled(Object.values(credentialRefs).map((reference) => this.credentials.delete(reference)))
       }
       if (!connection && findDuplicate()) throw new Error(duplicateMessage, { cause: error })
+      throw error
+    }
+  }
+
+  async #reauthenticateConnectionFromLogin(
+    connectionId: ConnectionId,
+    result: {
+      readonly accountKey: string
+      readonly configuration: Readonly<Record<string, string | number | boolean>>
+      readonly credentials: Readonly<Record<string, string>>
+    },
+    signal: AbortSignal,
+  ): Promise<ConnectionRecord> {
+    const current = this.core.getConnection(connectionId)
+    if (!current) throw new Error('要重新认证的连接不存在。')
+    if (!current.accountKey || current.accountKey !== result.accountKey.trim()) {
+      throw new Error('扫码账号与原连接账号不一致，未替换凭据。')
+    }
+    const configuration = parseStoredAdapterConfiguration(result.configuration)
+    if (signal.aborted) throw signal.reason
+    const credentialRefs = await this.#saveProvisionedCredentials(result.credentials)
+    const mounted = this.#adapterRuntimes.get(connectionId)
+    try {
+      if (signal.aborted) throw signal.reason
+      if (mounted) {
+        await mounted.stop()
+        this.#adapterRuntimes.delete(connectionId)
+      }
+      if (signal.aborted) throw signal.reason
+      const updated = this.core.updateConnectionProvisioning(connectionId, { config: configuration, credentialRefs })
+      if (this.#started) {
+        await this.#mountAdapter(connectionId)
+        const diagnostic = this.#adapterDiagnostics.get(connectionId)
+        if (diagnostic?.status === 'failed') throw new Error(diagnostic.message ?? '重新挂载连接失败。')
+      }
+      if (signal.aborted) throw signal.reason
+      await Promise.allSettled(
+        Object.values(current.credentialRefs).map((reference) => this.credentials.delete(reference)),
+      )
+      this.#notifyConnectionChanges()
+      return updated
+    } catch (error) {
+      this.core.updateConnectionProvisioning(connectionId, {
+        config: current.config,
+        credentialRefs: current.credentialRefs,
+      })
+      this.#adapterRuntimes.delete(connectionId)
+      if (this.#started) await this.#mountAdapter(connectionId)
+      await Promise.allSettled(Object.values(credentialRefs).map((reference) => this.credentials.delete(reference)))
       throw error
     }
   }
@@ -1220,16 +1244,13 @@ export class NekroRuntime {
     if (this.adapters.get(archived.adapterKey)?.descriptor.provisioning !== 'user-created') {
       throw new Error('这个连接当前无法恢复。')
     }
-    if (archived.adapterKey === WECHAT_ILINK_BUILTIN.key) {
-      const accountId = parseBuiltinWechatIlinkConnectionConfiguration(archived.config).accountId
-      const duplicate = this.core.listConnectionsByAdapter(WECHAT_ILINK_BUILTIN.key).some((candidate) => {
-        try {
-          return parseBuiltinWechatIlinkConnectionConfiguration(candidate.config).accountId === accountId
-        } catch {
-          return false
-        }
-      })
-      if (duplicate) throw new Error('该微信账号已经存在活动连接。')
+    if (
+      archived.accountKey !== undefined &&
+      this.core
+        .listConnectionsByAdapter(archived.adapterKey)
+        .some((candidate) => candidate.accountKey === archived.accountKey)
+    ) {
+      throw new Error('该平台账号已经存在活动连接。')
     }
     const connection = this.core.restoreConnection(connectionId)
     await this.#mountAdapter(connectionId)
@@ -1682,7 +1703,7 @@ export class NekroRuntime {
     const failures: unknown[] = []
     this.#unsubscribeDynamicApproval()
     this.#connectionListeners.clear()
-    for (const session of this.#wechatIlinkLoginSessions.values()) {
+    for (const session of this.#connectionLoginSessions.values()) {
       session.status = 'cancelled'
       session.message = '运行时正在关闭。'
       session.abortController.abort(new Error(session.message))
@@ -1701,10 +1722,10 @@ export class NekroRuntime {
     const stopped = await Promise.allSettled([...this.#adapterRuntimes.values()].map((runtime) => runtime.stop()))
     for (const outcome of stopped) if (outcome.status === 'rejected') failures.push(outcome.reason)
     const loginSessions = await Promise.allSettled(
-      [...this.#wechatIlinkLoginSessions.values()].map((session) => session.done),
+      [...this.#connectionLoginSessions.values()].map((session) => session.done),
     )
     for (const outcome of loginSessions) if (outcome.status === 'rejected') failures.push(outcome.reason)
-    this.#wechatIlinkLoginSessions.clear()
+    this.#connectionLoginSessions.clear()
     try {
       await this.host.dispose()
     } catch (error) {

@@ -255,6 +255,11 @@ export interface CoreRepository {
   createConnection(record: ConnectionRecord): void
   updateConnectionAlias(id: ConnectionId, alias?: string): void
   updateConnectionConfig(id: ConnectionId, config: JsonValue): void
+  updateConnectionProvisioning(
+    id: ConnectionId,
+    config: JsonValue,
+    credentialRefs: Readonly<Record<string, string>>,
+  ): void
   updateConnectionActivityTriggerDefaults(id: ConnectionId, activityKeys: readonly AdapterActivityKey[]): void
   archiveConnection(id: ConnectionId, archivedAt: number): void
   restoreConnection(id: ConnectionId): void
@@ -784,6 +789,24 @@ export class CoreService {
     const parsedConfig = JsonValueSchema.parse(config)
     this.#repository.updateConnectionConfig(connectionId, parsedConfig)
     return { ...current, config: parsedConfig }
+  }
+
+  updateConnectionProvisioning(
+    connectionId: ConnectionId,
+    input: { readonly config: JsonValue; readonly credentialRefs: Readonly<Record<string, string>> },
+  ): ConnectionRecord {
+    const current = this.#repository.getConnection(connectionId)
+    if (!current) throw new Error('Unknown connection: ' + connectionId)
+    const parsed = connectionInputSchema.parse({
+      adapterKey: current.adapterKey,
+      ...(current.accountKey === undefined ? {} : { accountKey: current.accountKey }),
+      config: input.config,
+      credentialRefs: input.credentialRefs,
+      activityTriggerDefaults: current.activityTriggerDefaults,
+      ...(current.alias === undefined ? {} : { alias: current.alias }),
+    })
+    this.#repository.updateConnectionProvisioning(connectionId, parsed.config, parsed.credentialRefs)
+    return { ...current, config: parsed.config, credentialRefs: parsed.credentialRefs }
   }
 
   updateConnectionActivityTriggerDefaults(

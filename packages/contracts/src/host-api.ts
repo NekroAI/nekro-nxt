@@ -907,12 +907,7 @@ export const HostSnapshotSchema = z
             .optional(),
           receiveTest: z.lazy(() => ConnectionTestResultSchema).optional(),
           sendTest: z.lazy(() => ConnectionTestResultSchema).optional(),
-          adapterSettings: z
-            .object({
-              wechatIlink: z.object({ enableInboundMedia: z.boolean() }).strict().optional(),
-            })
-            .strict()
-            .optional(),
+          configuration: z.record(z.string(), z.union([z.string(), z.number(), z.boolean()])).default({}),
         })
         .strict(),
     ),
@@ -1782,14 +1777,21 @@ export const HostApiContracts = {
     response: z.object({ connectionId: ConnectionIdSchema, adapterKey: NonEmptyStringSchema }).strict(),
     error: HostApiErrorSchema,
   }),
-  startWechatIlinkLogin: defineContract({
+  startConnectionLogin: defineContract({
     method: 'POST',
-    path: '/api/connections/wechat-ilink/login',
+    path: '/api/connection-logins',
     params: EmptyParamsSchema,
-    request: z.object({ alias: ConnectionAliasInputSchema.optional() }).strict(),
+    request: z
+      .object({
+        adapterKey: NonEmptyStringSchema,
+        alias: ConnectionAliasInputSchema.optional(),
+        connectionId: ConnectionIdSchema.optional(),
+      })
+      .strict(),
     response: z
       .object({
         loginId: NonEmptyStringSchema,
+        adapterKey: NonEmptyStringSchema,
         status: z.enum(['pending', 'scanned', 'confirmed', 'expired', 'failed', 'cancelled']),
         qrCodeUrl: NonEmptyStringSchema,
         message: z.string().optional(),
@@ -1797,9 +1799,9 @@ export const HostApiContracts = {
       .strict(),
     error: HostApiErrorSchema,
   }),
-  getWechatIlinkLogin: defineContract({
+  getConnectionLogin: defineContract({
     method: 'GET',
-    path: '/api/connections/wechat-ilink/login/:loginId',
+    path: '/api/connection-logins/:loginId',
     params: z.object({ loginId: NonEmptyStringSchema }).strict(),
     request: NoRequestBodySchema,
     response: z
@@ -1808,15 +1810,15 @@ export const HostApiContracts = {
         status: z.enum(['pending', 'scanned', 'confirmed', 'expired', 'failed', 'cancelled']),
         qrCodeUrl: NonEmptyStringSchema.optional(),
         connectionId: ConnectionIdSchema.optional(),
-        adapterKey: NonEmptyStringSchema.optional(),
+        adapterKey: NonEmptyStringSchema,
         message: z.string().optional(),
       })
       .strict(),
     error: HostApiErrorSchema,
   }),
-  cancelWechatIlinkLogin: defineContract({
+  cancelConnectionLogin: defineContract({
     method: 'DELETE',
-    path: '/api/connections/wechat-ilink/login/:loginId',
+    path: '/api/connection-logins/:loginId',
     params: z.object({ loginId: NonEmptyStringSchema }).strict(),
     request: NoRequestBodySchema,
     response: z
@@ -1848,12 +1850,17 @@ export const HostApiContracts = {
     response: z.object({ connectionId: ConnectionIdSchema, activityKeys: z.array(AdapterActivityKeySchema) }).strict(),
     error: HostApiErrorSchema,
   }),
-  updateWechatIlinkInboundMedia: defineContract({
+  updateConnectionConfiguration: defineContract({
     method: 'POST',
-    path: '/api/connections/:connectionId/wechat-ilink/inbound-media',
+    path: '/api/connections/:connectionId/configuration',
     params: connectionParam,
-    request: z.object({ enableInboundMedia: z.boolean() }).strict(),
-    response: z.object({ connectionId: ConnectionIdSchema, enableInboundMedia: z.boolean() }).strict(),
+    request: z.object({ configuration: z.record(z.string(), z.union([z.string(), z.number(), z.boolean()])) }).strict(),
+    response: z
+      .object({
+        connectionId: ConnectionIdSchema,
+        configuration: z.record(z.string(), z.union([z.string(), z.number(), z.boolean()])),
+      })
+      .strict(),
     error: HostApiErrorSchema,
   }),
   deleteConnection: defineContract({
