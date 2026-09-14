@@ -1,10 +1,11 @@
+import { workspaceBoundariesRule } from './scripts/lib/eslint-workspace-boundaries.mjs'
 import eslint from '@eslint/js'
 import tseslint from 'typescript-eslint'
 
 export default tseslint.config(
   {
     ignores: [
-      '.local/**',
+      '**/.local/**',
       'assets/**',
       'coverage/**',
       'data/**',
@@ -30,7 +31,10 @@ export default tseslint.config(
         tsconfigRootDir: import.meta.dirname,
       },
     },
+    plugins: { workspace: { rules: { boundaries: workspaceBoundariesRule } } },
+    linterOptions: { reportUnusedDisableDirectives: 'error' },
     rules: {
+      'workspace/boundaries': 'error',
       '@typescript-eslint/consistent-type-imports': 'error',
       '@typescript-eslint/no-explicit-any': 'error',
       '@typescript-eslint/no-floating-promises': 'error',

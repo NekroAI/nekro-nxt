@@ -1,19 +1,35 @@
+import { chromium, expect, expect as expectPage, test, type Browser, type Page } from '@playwright/test'
 import react from '@vitejs/plugin-react'
-import { chromium, expect as expectPage, type Browser, type Page } from '@playwright/test'
 import { fileURLToPath } from 'node:url'
-import { afterAll, beforeAll, describe, expect, it } from 'vitest'
+import { mkdtemp, rm } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { createServer, type Connect, type ViteDevServer } from 'vite'
 
 const harnessModule = `
-  import React, { useState } from 'react'
+  import React, { useRef, useState } from 'react'
   import { createRoot } from 'react-dom/client'
   import { NotificationCenter, notify } from '/src/components/notifications.tsx'
   import { installStableCursorIntent } from '/src/cursor-stability.ts'
-  import { Button, Dialog, IconButton, NxtMotionProvider, Tooltip } from '/src/ui-kit/index.tsx'
+  import { Button, Dialog, IconButton, MessageEnter, ResizeHandle, NxtMotionProvider, Tooltip } from '/src/ui-kit/index.tsx'
   import '/src/ui-kit/tokens.css'
 
   installStableCursorIntent()
 
+  function PerformanceHarness() {
+    const ref = useRef(null)
+    const [width, setWidth] = useState(240)
+    const [updates, setUpdates] = useState(0)
+    const [arrived, setArrived] = useState(false)
+    return <div ref={ref} id="resize-target" style={{ '--test-width': width + 'px' }}>
+      <span id="committed-width">{width}</span>
+      <ResizeHandle label="性能测试分栏" value={width} min={180} max={400} defaultValue={240}
+        previewTarget={{ ref, property: '--test-width' }} onCommit={setWidth} />
+      <button id="arrive" onClick={() => setArrived(true)}>到达</button>
+      <button id="revise" onClick={() => setUpdates(updates + 1)}>修订</button>
+      {arrived && <MessageEnter incoming={updates === 0}><audio id="stable-media" controls /><span>{updates}</span></MessageEnter>}
+    </div>
+  }
   function Harness() {
     const [open, setOpen] = useState(false)
     const [pending, setPending] = useState(false)
@@ -21,6 +37,7 @@ const harnessModule = `
     const [notificationSequence, setNotificationSequence] = useState(0)
     return <Tooltip.Provider>
       <main>
+      <PerformanceHarness />
       <Button id="dialog-trigger" onClick={() => { setLongContent(true); setPending(false); setOpen(true) }}>打开对话框</Button>
       <IconButton id="icon-button" label="新建内置频道"><span>+</span></IconButton>
       <IconButton id="silent-icon-button" label="主题切换" tooltip={false}><span>◐</span></IconButton>
@@ -127,17 +144,21 @@ const motionHarnessModule = `
   createRoot(document.querySelector('#root')).render(<StrictMode><Harness /></StrictMode>)
 `
 
-describe.sequential('ui-kit Dialog browser behavior', { timeout: 30_000 }, () => {
+test.describe('ui-kit Dialog browser behavior', () => {
+  test.describe.configure({ mode: 'default', timeout: 30_000 })
   let server: ViteDevServer
   let browser: Browser
   let page: Page
   let baseUrl: string
+  let cacheDirectory: string
   const browserErrors: string[] = []
 
-  beforeAll(async () => {
+  test.beforeAll(async () => {
+    cacheDirectory = await mkdtemp(join(tmpdir(), 'nxt-ui-kit-browser-'))
     server = await createServer({
       root: fileURLToPath(new URL('../', import.meta.url)),
       configFile: false,
+      cacheDir: cacheDirectory,
       logLevel: 'silent',
       plugins: [
         react(),
@@ -198,15 +219,56 @@ describe.sequential('ui-kit Dialog browser behavior', { timeout: 30_000 }, () =>
         browserErrors.push(text)
       }
     })
-  }, 30_000)
+  })
 
-  afterAll(async () => {
+  test.afterAll(async () => {
     await page?.close()
     await browser?.close()
     await server?.close()
+    if (cacheDirectory) await rm(cacheDirectory, { recursive: true, force: true })
   })
 
-  it('closes on Escape and restores focus to the opener', async () => {
+  test('previews splitter width locally and commits the final pointer and keyboard positions', async () => {
+    await page.goto(`${baseUrl}/__ui-kit_harness__`)
+    const handle = page.getByRole('separator', { name: '性能测试分栏' })
+    await handle.evaluate((element) => {
+      if (!(element instanceof HTMLElement)) throw new Error('Missing splitter element')
+      const target = element
+      target.setPointerCapture = () => undefined
+      target.hasPointerCapture = () => true
+      target.releasePointerCapture = () => undefined
+      target.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, pointerId: 1, clientX: 100, button: 0 }))
+      for (const clientX of [110, 130, 160])
+        target.dispatchEvent(new PointerEvent('pointermove', { bubbles: true, pointerId: 1, clientX }))
+    })
+    await expect(page.locator('#committed-width')).toHaveText('240')
+    await expect(handle).toHaveAttribute('aria-valuenow', '300')
+    await handle.dispatchEvent('lostpointercapture', { pointerId: 1 })
+    await expect(page.locator('#committed-width')).toHaveText('300')
+    await handle.press('Shift+ArrowRight')
+    await expect(page.locator('#committed-width')).toHaveText('310')
+    await handle.dispatchEvent('dblclick')
+    await expect(handle).toHaveAttribute('aria-valuenow', '240')
+  })
+
+  test('keeps message media and wrapper identity after arrival revisions', async () => {
+    await page.goto(`${baseUrl}/__ui-kit_harness__`)
+    await page.locator('#arrive').click()
+    const media = await page.locator('#stable-media').elementHandle()
+    const wrapper = await page.locator('#stable-media').evaluateHandle((element) => element.parentElement)
+    await page.locator('#revise').click()
+    expect(await media.evaluate((element) => element === document.querySelector('#stable-media'))).toBe(true)
+    expect(
+      await wrapper.evaluate((element) => element === document.querySelector('#stable-media')?.parentElement),
+    ).toBe(true)
+    await expect.poll(() => wrapper.evaluate((element) => element?.getAnimations().length)).toBe(0)
+    await page.locator('#revise').click()
+    expect(await wrapper.evaluate((element) => element?.getAnimations().length)).toBe(0)
+  })
+
+  test('closes on Escape and restores focus to the opener', async () => {
+    test.setTimeout(20_000)
+
     await page.goto(`${baseUrl}/__ui-kit_harness__`, { waitUntil: 'domcontentloaded' })
     try {
       await page.waitForSelector('#dialog-trigger', { state: 'visible', timeout: 3_000 })
@@ -224,9 +286,11 @@ describe.sequential('ui-kit Dialog browser behavior', { timeout: 30_000 }, () =>
     await page.keyboard.press('Escape')
     await expectPage(page.getByRole('dialog')).toBeHidden()
     await expectPage(trigger).toBeFocused()
-  }, 20_000)
+  })
 
-  it('keeps one cursor intent across control descendants and state changes', async () => {
+  test('keeps one cursor intent across control descendants and state changes', async () => {
+    test.setTimeout(20_000)
+
     const control = page.locator('#cursor-control')
     const copy = page.locator('#cursor-control-copy')
     await copy.hover()
@@ -241,9 +305,11 @@ describe.sequential('ui-kit Dialog browser behavior', { timeout: 30_000 }, () =>
     await page.getByLabel('指针测试输入框').hover()
     await expectPage(page.locator('html')).toHaveAttribute('data-nxt-cursor', 'text')
     await expectPage(page.getByLabel('指针测试输入框')).toHaveCSS('cursor', 'text')
-  }, 20_000)
+  })
 
-  it('renders an independently scrollable body inside a viewport-bounded surface', async () => {
+  test('renders an independently scrollable body inside a viewport-bounded surface', async () => {
+    test.setTimeout(20_000)
+
     await page.locator('#dialog-trigger').click()
     const dialog = page.getByRole('dialog')
     const body = dialog.locator('[data-nxt-dialog-region="body"]')
@@ -257,26 +323,32 @@ describe.sequential('ui-kit Dialog browser behavior', { timeout: 30_000 }, () =>
     await expectPage(body).toHaveAttribute('role', 'region')
     expect(await dialog.evaluate((element) => getComputedStyle(element).maxHeight)).not.toBe('none')
     await page.keyboard.press('Escape')
-  }, 20_000)
+  })
 
-  it('does not add a Tab stop when the dialog body does not overflow', async () => {
+  test('does not add a Tab stop when the dialog body does not overflow', async () => {
+    test.setTimeout(20_000)
+
     await page.locator('#short-dialog-trigger').click()
     const body = page.getByRole('dialog').locator('[data-nxt-dialog-region="body"]')
     expect(await body.evaluate((element) => element.scrollHeight <= element.clientHeight)).toBe(true)
     expect(await body.getAttribute('tabindex')).toBeNull()
     expect(await body.getAttribute('role')).toBeNull()
     await page.keyboard.press('Escape')
-  }, 20_000)
+  })
 
-  it('does not close from Escape while pending', async () => {
+  test('does not close from Escape while pending', async () => {
+    test.setTimeout(20_000)
+
     await page.locator('#pending-trigger').click()
     const dialog = page.getByRole('dialog')
     await page.keyboard.press('Escape')
     await expectPage(dialog).toBeVisible()
     await expectPage(dialog.getByRole('button', { name: '关闭对话框' })).toBeDisabled()
-  }, 20_000)
+  })
 
-  it('opens and closes dialogs without a fade when app Reduced Motion is enabled', async () => {
+  test('opens and closes dialogs without a fade when app Reduced Motion is enabled', async () => {
+    test.setTimeout(20_000)
+
     await page.goto(`${baseUrl}/__ui-kit_harness__`, { waitUntil: 'domcontentloaded' })
     await page.locator('#reduce-ui').click()
     await page.locator('#short-dialog-trigger').click()
@@ -289,26 +361,32 @@ describe.sequential('ui-kit Dialog browser behavior', { timeout: 30_000 }, () =>
     ).toBe(false)
     await page.keyboard.press('Escape')
     await expectPage(dialog).toHaveCount(0)
-  }, 20_000)
+  })
 
-  it('forwards the tooltip content ref so IconButton hover does not warn', async () => {
+  test('forwards the tooltip content ref so IconButton hover does not warn', async () => {
+    test.setTimeout(20_000)
+
     await page.goto(`${baseUrl}/__ui-kit_harness__`, { waitUntil: 'domcontentloaded' })
     const trigger = page.locator('#icon-button')
     await trigger.hover()
     await expectPage(page.getByRole('tooltip', { name: '新建内置频道' })).toBeVisible()
     expect(browserErrors.filter((message) => message.includes('Function components cannot be given refs'))).toEqual([])
-  }, 20_000)
+  })
 
-  it('can keep an icon button accessible without rendering hover text', async () => {
+  test('can keep an icon button accessible without rendering hover text', async () => {
+    test.setTimeout(20_000)
+
     await page.goto(`${baseUrl}/__ui-kit_harness__`, { waitUntil: 'domcontentloaded' })
     const trigger = page.locator('#silent-icon-button')
     await expectPage(trigger).toHaveAccessibleName('主题切换')
     await trigger.hover()
     await page.waitForTimeout(600)
     await expectPage(page.getByRole('tooltip', { name: '主题切换' })).toHaveCount(0)
-  }, 20_000)
+  })
 
-  it('keeps a pointer cursor across interactive controls and their icon descendants', async () => {
+  test('keeps a pointer cursor across interactive controls and their icon descendants', async () => {
+    test.setTimeout(20_000)
+
     await page.goto(`${baseUrl}/__ui-kit_harness__`, { waitUntil: 'domcontentloaded' })
     for (const selector of ['#dialog-trigger', '#icon-button', '#icon-button span', '#silent-icon-button span']) {
       await expectPage(page.locator(selector)).toHaveCSS('cursor', 'pointer')
@@ -316,9 +394,11 @@ describe.sequential('ui-kit Dialog browser behavior', { timeout: 30_000 }, () =>
     await page.goto(`${baseUrl}/__motion_harness__`, { waitUntil: 'domcontentloaded' })
     await expectPage(page.locator('#inside-a')).toHaveCSS('cursor', 'pointer')
     await expectPage(page.getByRole('tab', { name: '配置' })).toHaveCSS('cursor', 'pointer')
-  }, 20_000)
+  })
 
-  it('groups repeated notifications, exposes live semantics, and supports manual dismissal', async () => {
+  test('groups repeated notifications, exposes live semantics, and supports manual dismissal', async () => {
+    test.setTimeout(20_000)
+
     await page.goto(`${baseUrl}/__ui-kit_harness__`, { waitUntil: 'domcontentloaded' })
     const grouped = page.locator('#grouped-notification')
     await grouped.click()
@@ -335,15 +415,19 @@ describe.sequential('ui-kit Dialog browser behavior', { timeout: 30_000 }, () =>
     await alert.getByRole('button', { name: '关闭通知' }).click()
     await expectPage(alert).toHaveCount(0)
     expect(browserErrors).toEqual([])
-  }, 20_000)
+  })
 
-  it('automatically dismisses transient success notifications', async () => {
+  test('automatically dismisses transient success notifications', async () => {
+    test.setTimeout(20_000)
+
     await page.locator('#grouped-notification').click()
     await expectPage(page.getByRole('status')).toBeVisible()
     await expectPage(page.getByRole('status')).toHaveCount(0, { timeout: 5_000 })
-  }, 20_000)
+  })
 
-  it('actually interpolates opacity when the route key changes', async () => {
+  test('actually interpolates opacity when the route key changes', async () => {
+    test.setTimeout(20_000)
+
     await page.emulateMedia({ reducedMotion: 'no-preference' })
     await page.goto(`${baseUrl}/__motion_harness__`, { waitUntil: 'domcontentloaded' })
     await expectPage(page.getByText('页面甲')).toBeVisible()
@@ -375,9 +459,11 @@ describe.sequential('ui-kit Dialog browser behavior', { timeout: 30_000 }, () =>
       samples.some((value) => value > 0.02 && value < 0.97),
       `expected a mid-transition opacity, got ${samples.join(', ')}`,
     ).toBe(true)
-  }, 20_000)
+  })
 
-  it('animates the first tab click on a fresh mount with one persistent indicator', async () => {
+  test('animates the first tab click on a fresh mount with one persistent indicator', async () => {
+    test.setTimeout(20_000)
+
     await page.emulateMedia({ reducedMotion: 'no-preference' })
     await page.goto(`${baseUrl}/__motion_harness__`, { waitUntil: 'domcontentloaded' })
     const indicator = page.locator('[data-nxt-tabs-indicator]')
@@ -418,9 +504,11 @@ describe.sequential('ui-kit Dialog browser behavior', { timeout: 30_000 }, () =>
     expect(Math.abs((finalBox?.x ?? 0) + (finalBox?.width ?? 0) / 2 - end)).toBeLessThanOrEqual(1)
     await expectPage(page.getByRole('tabpanel')).toContainText('频道内容')
     expect(browserErrors).toEqual([])
-  }, 20_000)
+  })
 
-  it('animates the first NavMark click on a fresh StrictMode mount with one persistent indicator', async () => {
+  test('animates the first NavMark click on a fresh StrictMode mount with one persistent indicator', async () => {
+    test.setTimeout(20_000)
+
     await page.emulateMedia({ reducedMotion: 'no-preference' })
     await page.goto(`${baseUrl}/__motion_harness__`, { waitUntil: 'domcontentloaded' })
     const indicator = page.locator('[data-nav-mark="test-nav"]')
@@ -458,9 +546,11 @@ describe.sequential('ui-kit Dialog browser behavior', { timeout: 30_000 }, () =>
     const finalBox = await indicator.boundingBox()
     expect(Math.abs((finalBox?.y ?? 0) + (finalBox?.height ?? 0) / 2 - end)).toBeLessThanOrEqual(1)
     expect(browserErrors).toEqual([])
-  }, 20_000)
+  })
 
-  it('immediately realigns active Tab and NavMark indicators after same-key resize', async () => {
+  test('immediately realigns active Tab and NavMark indicators after same-key resize', async () => {
+    test.setTimeout(20_000)
+
     await page.emulateMedia({ reducedMotion: 'no-preference' })
     await page.goto(`${baseUrl}/__motion_harness__`, { waitUntil: 'domcontentloaded' })
     const tab = page.getByRole('tab', { name: '频道与平台连接' })
@@ -506,9 +596,11 @@ describe.sequential('ui-kit Dialog browser behavior', { timeout: 30_000 }, () =>
           elements.some((element) => element.getAnimations().some((animation) => animation.playState === 'running')),
         ),
     ).toBe(false)
-  }, 20_000)
+  })
 
-  it('moves both persistent indicators immediately when Reduced Motion is enabled', async () => {
+  test('moves both persistent indicators immediately when Reduced Motion is enabled', async () => {
+    test.setTimeout(20_000)
+
     await page.goto(`${baseUrl}/__motion_harness__`, { waitUntil: 'domcontentloaded' })
     const tabIndicator = page.locator('[data-nxt-tabs-indicator]')
     const navIndicator = page.locator('[data-nav-mark="test-nav"]')
@@ -562,18 +654,22 @@ describe.sequential('ui-kit Dialog browser behavior', { timeout: 30_000 }, () =>
           elements.some((element) => element.getAnimations().some((animation) => animation.playState === 'running')),
         ),
     ).toBe(false)
-  }, 20_000)
+  })
 
-  it('preserves the outgoing subtree and removes it from interaction and accessibility', async () => {
+  test('preserves the outgoing subtree and removes it from interaction and accessibility', async () => {
+    test.setTimeout(20_000)
+
     await page.goto(`${baseUrl}/__motion_harness__`, { waitUntil: 'domcontentloaded' })
     await page.locator('#to-b').click()
     const outgoing = page.locator('[data-stage-layer="out"]')
     await expectPage(outgoing).toHaveAttribute('inert', '')
     await expectPage(outgoing).toHaveAttribute('aria-hidden', 'true')
     expect(await page.evaluate(() => document.documentElement.dataset['motionMounts'] ?? '')).toBe('{"a":2,"b":2}')
-  }, 20_000)
+  })
 
-  it('makes stage changes instant when the app Reduced Motion setting is enabled', async () => {
+  test('makes stage changes instant when the app Reduced Motion setting is enabled', async () => {
+    test.setTimeout(20_000)
+
     await page.goto(`${baseUrl}/__motion_harness__`, { waitUntil: 'domcontentloaded' })
     await page.locator('#reduce').click()
     await page.locator('#to-b').click()
@@ -582,9 +678,11 @@ describe.sequential('ui-kit Dialog browser behavior', { timeout: 30_000 }, () =>
     await expectPage(page.locator('[data-stage-layer="in"]')).toHaveCount(1)
     await expectPage(page.locator('[data-stage-layer="out"]')).toHaveCount(0)
     await expectPage(page.locator('[data-stage-layer="in"]')).toHaveCSS('opacity', '1')
-  }, 20_000)
+  })
 
-  it('keeps the latest route mounted after rapid key changes', async () => {
+  test('keeps the latest route mounted after rapid key changes', async () => {
+    test.setTimeout(20_000)
+
     await page.emulateMedia({ reducedMotion: 'no-preference' })
     await page.goto(`${baseUrl}/__motion_harness__`, { waitUntil: 'domcontentloaded' })
     await expectPage(page.getByText('页面甲')).toBeVisible()
@@ -596,5 +694,5 @@ describe.sequential('ui-kit Dialog browser behavior', { timeout: 30_000 }, () =>
     await expectPage(page.locator('[data-stage-layer="in"] #label')).toHaveText('页面乙', { timeout: 3_000 })
     expect(await page.locator('[data-stage-layer="in"]').count()).toBe(1)
     await expectPage(page.locator('[data-stage-layer="out"]')).toHaveCount(0, { timeout: 3_000 })
-  }, 20_000)
+  })
 })

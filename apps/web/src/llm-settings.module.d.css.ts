@@ -16,6 +16,8 @@ declare const styles: {
   readonly providerButtonActive: string
   readonly providerList: string
   readonly providerSettings: string
+  readonly removalAction: string
+  readonly removalImpact: string
   readonly secondaryActions: string
   readonly toolbar: string
 }

@@ -18,6 +18,8 @@ docs-private
 **/node_modules
 **/dist
 **/lib
+!scripts/lib
+!scripts/lib/**
 **/*.tsbuildinfo
 apps/desktop/release
 apps/*/data

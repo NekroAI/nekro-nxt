@@ -7,13 +7,16 @@ import {
   ChannelIdSchema,
   ChannelMemberIdSchema,
   HostApiContracts,
+  ExtensionIdSchema,
+  ExtensionRevisionIdSchema,
+  HostUiPageInstanceIdSchema,
   LogicalMessageIdSchema,
 } from '@nekro-nxt/contracts'
-import { mkdir, mkdtemp, rm, stat } from 'node:fs/promises'
+import { mkdir, mkdtemp, rm, stat, writeFile } from 'node:fs/promises'
 import { createServer } from 'node:http'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { z } from 'zod'
 import { NekroRuntime } from '../src/bootstrap.js'
 import { createNekroHostApi, projectHistoryEntry } from '../src/host-api.js'
@@ -192,6 +195,84 @@ describe('NekroNxt Server domain API (WebServer seam)', () => {
     }
   })
 
+  it('keeps legacy Host UI preferences but excludes its pages from the runnable snapshot', async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), 'nxt-legacy-page-snapshot-'))
+    temporaryDirectories.push(directory)
+    const runtime = await NekroRuntime.create({
+      coreDatabasePath: path.join(directory, 'core.sqlite'),
+      sessionDatabasePath: path.join(directory, 'sessions.sqlite'),
+      assetRoot: path.join(directory, 'assets'),
+      extensionDataRoot: path.join(directory, 'extension-data'),
+      extensionCacheRoot: path.join(directory, 'extension-cache'),
+    })
+    const webContext = new Context()
+    await webContext.plugin(WebServer, { host: '127.0.0.1', port: 0 })
+    const api = createNekroHostApi(webContext.webServer, runtime)
+    try {
+      const extension = {
+        id: ExtensionIdSchema.parse('ext_legacy'),
+        scope: 'host-ui' as const,
+        slug: 'legacy-ui',
+        displayName: '旧页面',
+        description: '',
+        createdAt: 1,
+      }
+      const revision = {
+        id: ExtensionRevisionIdSchema.parse('xrv_legacy'),
+        extensionId: extension.id,
+        revisionNumber: 1,
+        contentDigest: 'a'.repeat(64),
+        payloadDigest: 'b'.repeat(64),
+        createdAt: 1,
+      }
+      runtime.repository.saveExtensionRevision({ extension, revision })
+      const pages = [
+        {
+          kind: 'host-page' as const,
+          entryId: 'overview',
+          title: '保留的页面',
+          icon: { kind: 'host-icon' as const, name: 'layout-dashboard' as const },
+          objectPane: 'hidden' as const,
+          startPath: '',
+        },
+      ]
+      runtime.repository.replaceHostUiExtensionPages({
+        extensionId: extension.id,
+        revisionId: revision.id,
+        pages,
+        clientBuildKey: 'a'.repeat(64),
+        now: 1,
+        nextPageInstanceId: () => HostUiPageInstanceIdSchema.parse('hup_legacy'),
+      })
+      const sourceDirectory = runtime.extensionService.revisionSourceDirectory(revision)
+      await mkdir(sourceDirectory, { recursive: true })
+      await writeFile(
+        path.join(sourceDirectory, 'manifest.json'),
+        JSON.stringify({
+          schemaVersion: 4,
+          scope: 'host-ui',
+          extensionId: extension.id,
+          revisionId: revision.id,
+          entrypoints: { client: 'source/client.ts' },
+          permissions: { permissions: [], networkOrigins: [] },
+          contributions: pages,
+        }),
+      )
+      const preserved = runtime.repository.listHostUiPageEntries()
+      expect(preserved).toHaveLength(1)
+      const snapshot = HostApiContracts.snapshot.parseResponse(
+        await (await fetch(`http://127.0.0.1:${api.port}/api/snapshot`)).json(),
+      )
+      expect(snapshot.hostUi.pages).toEqual([])
+      expect(snapshot.extensions[0]?.revisions[0]?.format).toBe('requires-rebuild')
+      expect(runtime.repository.listHostUiPageEntries()).toEqual(preserved)
+    } finally {
+      api.dispose()
+      await webContext.fiber.dispose()
+      await runtime.dispose()
+    }
+  })
+
   it('rejects oversized JSON requests without buffering the full body', async () => {
     const directory = await mkdtemp(path.join(tmpdir(), 'nekro-nxt-host-api-body-limit-'))
     temporaryDirectories.push(directory)
@@ -338,8 +419,14 @@ describe('NekroNxt Server domain API (WebServer seam)', () => {
         facts: { mentionedBot: true },
       })
 
-      // The authoritative snapshot exposes the new intelligent-agent and its internal Channel.
+      // Related collections are captured once for the whole snapshot, not once per entity.
+      const revisionReads = vi.spyOn(runtime.repository, 'listExtensionRevisions')
+      const attemptReads = vi.spyOn(runtime.repository, 'listAuthoringAttempts')
       const snapshot = HostApiContracts.snapshot.parseResponse(await (await fetch(`${origin}/api/snapshot`)).json())
+      expect(revisionReads).toHaveBeenCalledExactlyOnceWith()
+      expect(attemptReads).toHaveBeenCalledExactlyOnceWith()
+      revisionReads.mockRestore()
+      attemptReads.mockRestore()
       expect(snapshot.models.find((model) => model.id === 'chat-model')).toMatchObject({
         provider: 'test-provider',
         name: 'Chat model',

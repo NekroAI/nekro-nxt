@@ -1,11 +1,8 @@
+import { LlmProviderRemovalCoordinator } from './llm-provider-removal.js'
 import type { Context } from '@deepseek-ai/cordis'
 import { BUILTIN_ADAPTER_CONTRIBUTIONS } from '@nekro-nxt/adapter-builtin-roster'
 import {
   AdapterRegistry,
-  parseAdapterCapabilities,
-  type AdapterConnectionLoginStatus,
-  type AdapterConnectionHostContext,
-  type AdapterConnectionDiagnostic,
   type AdapterConnectionRuntime,
   type AdapterHostContributionV2,
   type AdapterLocalChannelPort,
@@ -13,26 +10,22 @@ import {
   type RegisteredAdapterHandle,
 } from '@nekro-nxt/adapter-sdk'
 import { ChannelRuntime } from '@nekro-nxt/channel-runtime'
-import { AssetService, CoreService } from '@nekro-nxt/core'
-import type { AgentRevisionContent, ConnectionEventRecord, ConnectionRecord } from '@nekro-nxt/core'
 import {
-  LogicalMessageIdSchema,
   DshNxtHostUiSchema,
   HostUiPageInstanceIdSchema,
-  PhysicalDeliveryIdSchema,
   type AgentId,
-  type AdapterActivityKey,
   type ChannelId,
   type ConnectionId,
+  type DshPluginPackageId,
   type ExtensionId,
   type ExtensionRevisionId,
-  type DshPluginPackageId,
-  type JsonValue,
 } from '@nekro-nxt/contracts'
+import type { AgentRevisionContent } from '@nekro-nxt/core'
+import { AssetService, CoreService } from '@nekro-nxt/core'
 import {
-  ExtensionActivationCoordinator,
   AuthoringArtifactStore,
   DynamicAuthoringService,
+  ExtensionActivationCoordinator,
   ExtensionBuilder,
   ExtensionService,
   ExtensionSourceStore,
@@ -48,32 +41,20 @@ import {
   type CoreDatabase,
   type DshSessionStoragePreparation,
 } from '@nekro-nxt/storage-sqlite'
-import { mkdir, readFile } from 'node:fs/promises'
 import { randomUUID } from 'node:crypto'
+import { mkdir } from 'node:fs/promises'
 import path from 'node:path'
 import { monotonicFactory } from 'ulid'
-import { ChannelExtensionActivationHost, DshHostRuntime } from './index.js'
-import { fetchAdapterRemoteBytes } from './adapter-remote-assets.js'
-import { LocalCredentialStore } from './credentials.js'
-import { NotificationService } from './notifications.js'
-import { ServerAdapterHostInstallationHost } from './host-extension-installation.js'
 import { createProductionAdapterTransport } from './adapter-transport.js'
-import { verifyImportedExtensionRevision } from './imported-extension-verifier.js'
+import { AuthoringApplicationService } from './authoring-application.js'
+import { ConnectionApplicationService } from './connection-application.js'
+import { LocalCredentialStore } from './credentials.js'
 import { DshPluginPackageInstaller } from './dsh-plugin-installer.js'
-
-const parseStoredAdapterConfiguration = (value: JsonValue): Readonly<Record<string, string | number | boolean>> => {
-  if (typeof value !== 'object' || value === null || Array.isArray(value)) {
-    throw new TypeError('连接配置必须是对象。')
-  }
-  const configuration: Record<string, string | number | boolean> = {}
-  for (const [key, entry] of Object.entries(value)) {
-    if (typeof entry !== 'string' && typeof entry !== 'number' && typeof entry !== 'boolean') {
-      throw new TypeError(`连接配置字段 ${key} 的持久格式无效。`)
-    }
-    configuration[key] = entry
-  }
-  return configuration
-}
+import { ServerAdapterHostInstallationHost } from './host-extension-installation.js'
+import { verifyImportedExtensionRevision } from './imported-extension-verifier.js'
+import { ChannelExtensionActivationHost, DshHostRuntime } from './index.js'
+import { NotificationService } from './notifications.js'
+export type { ConnectionTestResult } from './connection-application.js'
 /**
  * Single source of truth for the NekroNxt Server main assembly. Extracts the
  * inline composition previously duplicated across tests into one reusable
@@ -114,38 +95,6 @@ export interface NekroRuntimeOptions {
   readonly adapterContributions?: readonly AdapterHostContributionV2[]
 }
 
-export type ConnectionTestResult =
-  | { readonly status: 'received'; readonly channelId: ChannelId; readonly platformMessageId: string }
-  | { readonly status: 'sent'; readonly channelId: ChannelId; readonly platformMessageId?: string }
-  | {
-      readonly status: 'waiting-for-message' | 'needs-channel' | 'needs-target' | 'not-connected'
-      readonly message: string
-    }
-  | { readonly status: 'failed'; readonly kind: string; readonly message: string; readonly retryAfterMs?: number }
-
-export type ConnectionLoginSessionStatus = AdapterConnectionLoginStatus | 'confirmed' | 'failed' | 'cancelled'
-
-export interface ConnectionLoginSessionView {
-  readonly loginId: string
-  readonly status: ConnectionLoginSessionStatus
-  readonly qrCodeUrl?: string
-  readonly connectionId?: ConnectionId
-  readonly adapterKey: string
-  readonly message?: string
-}
-
-interface ConnectionLoginSession {
-  readonly loginId: string
-  readonly adapterKey: string
-  readonly targetConnectionId?: ConnectionId
-  readonly abortController: AbortController
-  status: ConnectionLoginSessionStatus
-  qrCodeUrl?: string
-  connectionId?: ConnectionId
-  message?: string
-  done: Promise<void>
-}
-
 /** One deliberate entity registry the domain API reads for its authoritative projection. */
 export interface AgentEntity {
   readonly agentId: AgentId
@@ -160,6 +109,7 @@ export class NekroRuntime {
   readonly hostSecurity: SqliteHostSecurityRepository
   readonly assetService: AssetService
   readonly core: CoreService
+  readonly authoring: AuthoringApplicationService
   readonly host: DshHostRuntime
   readonly channels: ChannelRuntime
   readonly internalConnectionId: ConnectionId
@@ -174,16 +124,8 @@ export class NekroRuntime {
     { readonly episodesClosed: number; readonly admissionsReleased: number } | undefined
   readonly #database: CoreDatabase
   readonly #now: () => number
+  readonly connections: ConnectionApplicationService
   readonly adapters: AdapterRegistry
-  readonly #adapterHandles: RegisteredAdapterHandle[] = []
-  readonly #adapterRuntimes: Map<ConnectionId, AdapterConnectionRuntime>
-  readonly #quiescingAdapterKeys = new Set<string>()
-  readonly #adapterTransport: AdapterTransportService
-  readonly #adapterDiagnostics = new Map<ConnectionId, AdapterConnectionDiagnostic>()
-  readonly #connectionTests = new Map<
-    ConnectionId,
-    { readonly receive?: ConnectionTestResult; readonly send?: ConnectionTestResult }
-  >()
   readonly #hostClientDiagnostics = new Map<
     ExtensionId,
     {
@@ -193,14 +135,8 @@ export class NekroRuntime {
       readonly observedAt: number
     }
   >()
-  readonly #lastInboundByConnection = new Map<
-    ConnectionId,
-    { readonly channelId: ChannelId; readonly platformMessageId?: string; readonly receivedAt: number }
-  >()
-  readonly #connectionListeners = new Set<(event?: ConnectionEventRecord) => void>()
   readonly #agents = new Map<AgentId, AgentEntity>()
   readonly #unsubscribeDynamicApproval: () => void
-  readonly #connectionLoginSessions = new Map<string, ConnectionLoginSession>()
   #started = false
   #disposed = false
 
@@ -234,6 +170,7 @@ export class NekroRuntime {
     this.assetService = input.assetService
     this.core = input.core
     this.host = input.host
+    this.authoring = new AuthoringApplicationService(this)
     this.channels = input.channels
     this.internalConnectionId = input.internalConnectionId
     this.extensionService = input.extensionService
@@ -246,14 +183,14 @@ export class NekroRuntime {
     this.sessionStorageRetirement = input.sessionStorageRetirement
     this.#now = input.now
     this.adapters = input.adapters
-    this.#adapterHandles.push(...input.adapterHandles)
-    this.#adapterRuntimes = input.adapterRuntimes
-    this.#adapterTransport = input.adapterTransport
-    this.#adapterDiagnostics.set(input.internalConnectionId, {
-      status: 'connected',
-      credentialConfigured: true,
-      proactiveSend: true,
-    })
+    this.connections = new ConnectionApplicationService(
+      this,
+      input.now,
+      input.adapterRuntimes,
+      input.adapterTransport,
+      input.adapterHandles,
+      () => ({ started: this.#started, disposed: this.#disposed }),
+    )
     this.installation = new HostExtensionInstallationCoordinator(
       this.repository,
       this.extensionService,
@@ -277,13 +214,7 @@ export class NekroRuntime {
         register: (owner, contribution) => this.registerAdapter(owner, contribution),
         mountConnections: (adapterKey) => this.mountAdapterConnections(adapterKey),
         waitUntilSafe: async (adapterKey) => {
-          this.#quiescingAdapterKeys.add(adapterKey)
-          try {
-            await this.channels.waitUntilConnectionsSafe(this.repository.listConnectionIdsByAdapter(adapterKey))
-          } catch (error) {
-            this.#quiescingAdapterKeys.delete(adapterKey)
-            throw error
-          }
+          await this.connections.waitUntilSafe(adapterKey)
         },
       }),
       { now: this.#now },
@@ -295,7 +226,8 @@ export class NekroRuntime {
     const nextUlid = options.nextUlid ?? monotonicFactory()
 
     const database = await openMigratedCoreDatabase(options.coreDatabasePath)
-    const repository = new SqliteCoreRepository(database)
+    const repository = new SqliteCoreRepository(database, (revision) => providerRemoval.assertReference(revision))
+    const providerRemoval = new LlmProviderRemovalCoordinator(repository)
     const hostSecurity = new SqliteHostSecurityRepository(database)
     try {
       const sessionStoragePreparation = await prepareDshSessionStorage({
@@ -349,6 +281,7 @@ export class NekroRuntime {
       const settled: { current?: ChannelRuntime } = {}
 
       const host = await DshHostRuntime.create({
+        providerRemoval,
         sessionDatabasePath: options.sessionDatabasePath,
         ...(options.developmentWorkspaceRoot === undefined
           ? {}
@@ -518,15 +451,15 @@ export class NekroRuntime {
     this.#started = true
     for (const connection of this.core.listConnections()) {
       const descriptor = this.adapters.get(connection.adapterKey)?.descriptor
-      if (descriptor?.provisioning === 'system-singleton') await this.#mountAdapter(connection.id)
+      if (descriptor?.provisioning === 'system-singleton') await this.connections.mountAdapter(connection.id)
     }
-    if (!this.#adapterRuntimes.get(this.internalConnectionId)?.localChannel) {
+    if (!this.connections.localChannel(this.internalConnectionId)) {
       throw new Error('The internal Channel Adapter did not provide a localChannel port.')
     }
   }
 
   get internalChannel(): AdapterLocalChannelPort {
-    const port = this.#adapterRuntimes.get(this.internalConnectionId)?.localChannel
+    const port = this.connections.localChannel(this.internalConnectionId)
     if (!port) throw new Error('The internal Channel runtime is unavailable.')
     return port
   }
@@ -688,7 +621,7 @@ export class NekroRuntime {
     await this.installation.restore()
     await this.#restoreDshHostUiPages()
     for (const connection of this.core.listConnections()) {
-      await this.#mountAdapter(connection.id)
+      await this.connections.mountAdapter(connection.id)
     }
     await this.channels.recoverProcessingFeedback()
     await this.channels.recover()
@@ -759,22 +692,20 @@ export class NekroRuntime {
       }
     }
   }
-
-  subscribeConnectionChanges(listener: (event?: ConnectionEventRecord) => void): () => void {
-    this.#connectionListeners.add(listener)
-    return () => this.#connectionListeners.delete(listener)
+  subscribeConnectionChanges(...args: Parameters<ConnectionApplicationService['subscribeConnectionChanges']>) {
+    return this.connections.subscribeConnectionChanges(...args)
   }
 
-  adapterConnectionDiagnostic(connectionId: ConnectionId): AdapterConnectionDiagnostic | undefined {
-    return this.#adapterDiagnostics.get(connectionId)
+  adapterConnectionDiagnostic(...args: Parameters<ConnectionApplicationService['adapterConnectionDiagnostic']>) {
+    return this.connections.adapterConnectionDiagnostic(...args)
   }
 
-  lastInbound(connectionId: ConnectionId) {
-    return this.#lastInboundByConnection.get(connectionId)
+  lastInbound(...args: Parameters<ConnectionApplicationService['lastInbound']>) {
+    return this.connections.lastInbound(...args)
   }
 
-  connectionTests(connectionId: ConnectionId) {
-    return this.#connectionTests.get(connectionId)
+  connectionTests(...args: Parameters<ConnectionApplicationService['connectionTests']>) {
+    return this.connections.connectionTests(...args)
   }
 
   hostClientDiagnostic(extensionId: ExtensionId) {
@@ -791,923 +722,87 @@ export class NekroRuntime {
   ): void {
     this.#hostClientDiagnostics.set(extensionId, { ...diagnostic, observedAt: this.#now() })
   }
-
-  listConnectionAdapters() {
-    return this.adapters.list().map(({ descriptor }) => descriptor)
+  listConnectionAdapters(...args: Parameters<ConnectionApplicationService['listConnectionAdapters']>) {
+    return this.connections.listConnectionAdapters(...args)
   }
 
-  async createConnection(input: {
-    readonly adapterKey: string
-    readonly alias?: string | undefined
-    readonly configuration?: Readonly<Record<string, unknown>>
-    readonly credentials?: Readonly<Record<string, unknown>>
-  }) {
-    if (!this.#started || this.#disposed) throw new Error('NekroRuntime is not accepting new Connections.')
-    const contribution = this.adapters.get(input.adapterKey)
-    if (contribution?.descriptor.provisioning !== 'user-created') throw new Error('该连接平台不可由用户创建。')
-    if (contribution.descriptor.creation?.mode === 'qr-login') {
-      throw new Error('该连接需要通过扫码登录创建，不能使用通用配置表单。')
-    }
-    const descriptor = contribution.descriptor
-    const configurationInput = input.configuration ?? {}
-    const credentialsInput = input.credentials ?? {}
-    const configuration: Record<string, string | number | boolean> = {}
-    const rawCredentials: Array<{ readonly key: string; readonly value: string }> = []
-    for (const key of Object.keys(configurationInput)) {
-      const property = descriptor.configSchema.properties[key]
-      if (!property || property.type === 'credential-reference') throw new TypeError(`连接配置包含未知字段：${key}`)
-    }
-    for (const key of Object.keys(credentialsInput)) {
-      const property = descriptor.configSchema.properties[key]
-      if (!property || property.type !== 'credential-reference') throw new TypeError(`连接凭据包含未知字段：${key}`)
-    }
-    for (const [key, property] of Object.entries(descriptor.configSchema.properties)) {
-      if (property.type === 'credential-reference') {
-        const raw = credentialsInput[key]
-        if (raw === undefined && descriptor.configSchema.required.includes(key))
-          throw new TypeError(`请填写${property.title}。`)
-        if (raw !== undefined) {
-          if (typeof raw !== 'string' || !raw.trim()) throw new TypeError(`请填写${property.title}。`)
-          rawCredentials.push({ key: property.credentialKey?.trim() || key, value: raw })
-        }
-        continue
-      }
-      const value = configurationInput[key] ?? property.default
-      if (value === undefined) {
-        if (descriptor.configSchema.required.includes(key)) throw new TypeError(`请填写${property.title}。`)
-        continue
-      }
-      if (property.type === 'string' && typeof value === 'string') configuration[key] = value
-      else if (property.type === 'number' && typeof value === 'number') configuration[key] = value
-      else if (property.type === 'boolean' && typeof value === 'boolean') configuration[key] = value
-      else throw new TypeError(`${property.title}的类型无效。`)
-    }
-    const credentialRefs: Record<string, string> = {}
-    try {
-      for (const credential of rawCredentials)
-        credentialRefs[credential.key] = await this.credentials.save(credential.value)
-      const connection = this.core.createConnection({
-        adapterKey: descriptor.key,
-        ...(input.alias === undefined ? {} : { alias: input.alias }),
-        config: configuration,
-        credentialRefs,
-      })
-      await this.#mountAdapter(connection.id)
-      return connection
-    } catch (error) {
-      await Promise.allSettled(Object.values(credentialRefs).map((reference) => this.credentials.delete(reference)))
-      throw error
-    }
+  createConnection(...args: Parameters<ConnectionApplicationService['createConnection']>) {
+    return this.connections.createConnection(...args)
   }
 
-  updateConnectionAlias(connectionId: ConnectionId, alias?: string): ConnectionRecord {
-    if (this.#disposed) throw new Error('NekroRuntime is disposed.')
-    const connection = this.core.getConnection(connectionId)
-    if (!connection) throw new Error('连接不存在。')
-    const descriptor = this.adapters.get(connection.adapterKey)?.descriptor
-    if (!descriptor?.aliasEditable) throw new Error('系统托管连接不需要编辑别名。')
-    const updated = this.core.updateConnectionAlias(connectionId, alias)
-    this.#notifyConnectionChanges()
-    return updated
+  updateConnectionAlias(...args: Parameters<ConnectionApplicationService['updateConnectionAlias']>) {
+    return this.connections.updateConnectionAlias(...args)
   }
 
   updateConnectionActivityTriggerDefaults(
-    connectionId: ConnectionId,
-    activityKeys: readonly AdapterActivityKey[],
-  ): ConnectionRecord {
-    if (this.#disposed) throw new Error('NekroRuntime is disposed.')
-    const connection = this.core.getConnection(connectionId)
-    if (!connection) throw new Error('连接不存在。')
-    const descriptor = this.adapters.get(connection.adapterKey)?.descriptor
-    if (!descriptor) throw new Error('这个连接的适配器未安装，无法修改活动默认值。')
-    if (new Set(activityKeys).size !== activityKeys.length) throw new Error('连接活动默认值不能包含重复项。')
-    for (const activityKey of activityKeys) {
-      const definition = descriptor.activities.find((activity) => activity.key === activityKey)
-      const capability = this.connectionCapabilities(connectionId)?.activities[activityKey]
-      if (
-        definition?.scope !== 'channel' ||
-        !definition.triggerable ||
-        capability?.state === 'disabled' ||
-        capability?.state === 'unsupported'
-      ) {
-        throw new Error(`当前连接不支持活动触发：${activityKey}`)
-      }
-    }
-    const updated = this.core.updateConnectionActivityTriggerDefaults(connectionId, activityKeys)
-    this.#notifyConnectionChanges()
-    return updated
+    ...args: Parameters<ConnectionApplicationService['updateConnectionActivityTriggerDefaults']>
+  ) {
+    return this.connections.updateConnectionActivityTriggerDefaults(...args)
   }
 
-  async updateConnectionConfiguration(
-    connectionId: ConnectionId,
-    configurationPatch: Readonly<Record<string, unknown>>,
-  ): Promise<ConnectionRecord> {
-    if (this.#disposed) throw new Error('NekroRuntime is disposed.')
-    const connection = this.core.getConnection(connectionId)
-    if (!connection) throw new Error('连接不存在。')
-    const contribution = this.adapters.get(connection.adapterKey)
-    if (!contribution) throw new Error('这个连接的适配器未安装，无法修改配置。')
-    const storedConfig = { ...parseStoredAdapterConfiguration(connection.config) }
-    for (const [key, value] of Object.entries(configurationPatch)) {
-      const property = contribution.descriptor.configSchema.properties[key]
-      if (!property || property.type === 'credential-reference') throw new Error(`连接配置包含未知字段：${key}`)
-      if (property.type === 'string') {
-        if (typeof value !== 'string') throw new Error(`${property.title}的类型无效。`)
-        storedConfig[key] = value
-      } else if (property.type === 'boolean') {
-        if (typeof value !== 'boolean') throw new Error(`${property.title}的类型无效。`)
-        storedConfig[key] = value
-      } else {
-        if (typeof value !== 'number' || !Number.isFinite(value)) throw new Error(`${property.title}的类型无效。`)
-        storedConfig[key] = value
-      }
-    }
-    const updated = this.core.updateConnectionConfig(connectionId, storedConfig)
-    const mounted = this.#adapterRuntimes.get(connectionId)
-    if (mounted) {
-      await mounted.stop()
-      this.#adapterRuntimes.delete(connectionId)
-      if (this.#started) await this.#mountAdapter(connectionId)
-    }
-    this.#notifyConnectionChanges()
-    return updated
+  updateConnectionConfiguration(...args: Parameters<ConnectionApplicationService['updateConnectionConfiguration']>) {
+    return this.connections.updateConnectionConfiguration(...args)
   }
 
-  async startConnectionLogin(input: {
-    readonly adapterKey: string
-    readonly alias?: string | undefined
-    readonly connectionId?: ConnectionId | undefined
-  }): Promise<ConnectionLoginSessionView> {
-    if (!this.#started || this.#disposed) throw new Error('NekroRuntime is not accepting new Connections.')
-    const contribution = this.adapters.get(input.adapterKey)
-    if (contribution?.descriptor.provisioning !== 'user-created') throw new Error('该连接平台不可由用户创建。')
-    const connectionLogin = contribution.connectionLogin
-    if (contribution.descriptor.creation?.mode !== 'qr-login' || !connectionLogin) {
-      throw new Error('该连接平台不支持扫码登录。')
-    }
-    if (input.connectionId !== undefined) {
-      const existing = this.core.getConnection(input.connectionId)
-      if (!existing || existing.adapterKey !== input.adapterKey) throw new Error('要重新认证的连接不存在。')
-      if (!existing.accountKey) throw new Error('原连接没有可核对的账号身份，无法安全重新认证。')
-      const alreadyReauthenticating = [...this.#connectionLoginSessions.values()].some(
-        (session) =>
-          session.targetConnectionId === input.connectionId &&
-          (session.status === 'pending' || session.status === 'scanned'),
-      )
-      if (alreadyReauthenticating) throw new Error('该连接已有进行中的重新认证会话。')
-    }
-    const loginId = 'connection-login-' + randomUUID()
-    const abortController = new AbortController()
-    const session: ConnectionLoginSession = {
-      loginId,
-      adapterKey: input.adapterKey,
-      ...(input.connectionId === undefined ? {} : { targetConnectionId: input.connectionId }),
-      abortController,
-      status: 'pending',
-      done: Promise.resolve(),
-    }
-    this.#connectionLoginSessions.set(loginId, session)
-
-    let firstQrSettled = false
-    let settleFirstQr: (() => void) | undefined
-    let rejectFirstQr: ((error: unknown) => void) | undefined
-    const firstQr = new Promise<void>((resolve, reject) => {
-      settleFirstQr = resolve
-      rejectFirstQr = reject
-    })
-    const resolveFirstQrOnce = (): void => {
-      if (firstQrSettled) return
-      firstQrSettled = true
-      settleFirstQr?.()
-    }
-    const rejectFirstQrOnce = (error: unknown): void => {
-      if (firstQrSettled) return
-      firstQrSettled = true
-      rejectFirstQr?.(error)
-    }
-    const firstQrTimeout = setTimeout(() => {
-      if (firstQrSettled) return
-      const error = new Error('扫码登录超时，未生成二维码。')
-      session.status = 'failed'
-      session.message = error.message
-      abortController.abort(error)
-      rejectFirstQrOnce(error)
-    }, 15_000)
-
-    session.done = (async () => {
-      try {
-        const result = await connectionLogin.start({
-          signal: abortController.signal,
-          onQrCode: (qrCodeUrl) => {
-            if (abortController.signal.aborted || session.status === 'cancelled') return
-            session.qrCodeUrl = qrCodeUrl
-            session.status = 'pending'
-            session.message = '请使用平台应用扫码并确认登录。'
-            resolveFirstQrOnce()
-            this.#notifyConnectionChanges()
-          },
-          onStatus: (status, message) => {
-            if (abortController.signal.aborted || session.status === 'cancelled') return
-            session.status = status
-            session.message =
-              message ??
-              (status === 'scanned'
-                ? '已扫码，请在平台应用内确认登录。'
-                : status === 'expired'
-                  ? '二维码已过期，请重新扫码登录。'
-                  : '请使用平台应用扫码并确认登录。')
-            this.#notifyConnectionChanges()
-          },
-        })
-        if (abortController.signal.aborted) return
-        if (!session.qrCodeUrl) throw new Error('扫码登录流程未返回二维码。')
-        const connection =
-          input.connectionId === undefined
-            ? await this.#createConnectionFromLogin(input.adapterKey, input.alias, result, abortController.signal)
-            : await this.#reauthenticateConnectionFromLogin(input.connectionId, result, abortController.signal)
-        if (abortController.signal.aborted) return
-        session.status = 'confirmed'
-        session.connectionId = connection.id
-        session.message = input.connectionId === undefined ? '登录成功，连接已创建。' : '登录成功，原连接已重新认证。'
-      } catch (error) {
-        if (abortController.signal.aborted || session.status === 'cancelled') {
-          session.status = 'cancelled'
-          session.message = '已取消扫码登录。'
-          rejectFirstQrOnce(error)
-          return
-        }
-        session.status = 'failed'
-        session.message = error instanceof Error ? error.message : String(error)
-        rejectFirstQrOnce(error)
-      } finally {
-        this.#notifyConnectionChanges()
-        if (session.status !== 'pending' && session.status !== 'scanned') {
-          this.#scheduleConnectionLoginSessionRemoval(loginId)
-        }
-      }
-    })()
-
-    try {
-      await firstQr
-    } finally {
-      clearTimeout(firstQrTimeout)
-    }
-    return this.#projectConnectionLoginSession(session)
+  startConnectionLogin(...args: Parameters<ConnectionApplicationService['startConnectionLogin']>) {
+    return this.connections.startConnectionLogin(...args)
   }
 
-  getConnectionLogin(loginId: string): ConnectionLoginSessionView {
-    const session = this.#connectionLoginSessions.get(loginId)
-    if (!session) throw new Error('扫码登录会话不存在。')
-    return this.#projectConnectionLoginSession(session)
+  getConnectionLogin(...args: Parameters<ConnectionApplicationService['getConnectionLogin']>) {
+    return this.connections.getConnectionLogin(...args)
   }
 
-  cancelConnectionLogin(loginId: string): ConnectionLoginSessionView {
-    const session = this.#connectionLoginSessions.get(loginId)
-    if (!session) throw new Error('扫码登录会话不存在。')
-    if (session.status === 'cancelled') return this.#projectConnectionLoginSession(session)
-    if (session.status !== 'pending' && session.status !== 'scanned') {
-      throw new Error('扫码登录会话已经结束，不能取消。')
-    }
-    session.status = 'cancelled'
-    session.message = '已取消扫码登录。'
-    session.abortController.abort(new Error(session.message))
-    this.#notifyConnectionChanges()
-    this.#scheduleConnectionLoginSessionRemoval(loginId)
-    return this.#projectConnectionLoginSession(session)
+  cancelConnectionLogin(...args: Parameters<ConnectionApplicationService['cancelConnectionLogin']>) {
+    return this.connections.cancelConnectionLogin(...args)
   }
 
-  #projectConnectionLoginSession(session: ConnectionLoginSession): ConnectionLoginSessionView {
-    return {
-      loginId: session.loginId,
-      status: session.status,
-      adapterKey: session.adapterKey,
-      ...(session.qrCodeUrl === undefined ? {} : { qrCodeUrl: session.qrCodeUrl }),
-      ...(session.connectionId === undefined ? {} : { connectionId: session.connectionId }),
-      ...(session.message === undefined ? {} : { message: session.message }),
-    }
+  deleteConnection(...args: Parameters<ConnectionApplicationService['deleteConnection']>) {
+    return this.connections.deleteConnection(...args)
   }
 
-  #scheduleConnectionLoginSessionRemoval(loginId: string): void {
-    setTimeout(() => {
-      const session = this.#connectionLoginSessions.get(loginId)
-      if (!session) return
-      if (session.status === 'pending' || session.status === 'scanned') return
-      this.#connectionLoginSessions.delete(loginId)
-    }, 60_000)
+  restoreConnection(...args: Parameters<ConnectionApplicationService['restoreConnection']>) {
+    return this.connections.restoreConnection(...args)
   }
 
-  async #saveProvisionedCredentials(credentials: Readonly<Record<string, string>>): Promise<Record<string, string>> {
-    const credentialRefs: Record<string, string> = {}
-    try {
-      for (const [key, value] of Object.entries(credentials)) {
-        if (!key.trim() || !value.trim()) throw new Error('扫码登录结果包含无效凭据。')
-        credentialRefs[key] = await this.credentials.save(value)
-      }
-      return credentialRefs
-    } catch (error) {
-      await Promise.allSettled(Object.values(credentialRefs).map((reference) => this.credentials.delete(reference)))
-      throw error
-    }
+  testConnection(...args: Parameters<ConnectionApplicationService['testConnection']>) {
+    return this.connections.testConnection(...args)
   }
 
-  async #createConnectionFromLogin(
-    adapterKey: string,
-    alias: string | undefined,
-    result: {
-      readonly accountKey: string
-      readonly configuration: Readonly<Record<string, string | number | boolean>>
-      readonly credentials: Readonly<Record<string, string>>
-    },
-    signal: AbortSignal,
-  ): Promise<ConnectionRecord> {
-    const accountKey = result.accountKey.trim()
-    if (!accountKey) throw new Error('扫码登录结果缺少账号身份。')
-    const configuration = parseStoredAdapterConfiguration(result.configuration)
-    const duplicateMessage = '该平台账号已经存在活动连接。'
-    const findDuplicate = (): ConnectionRecord | undefined =>
-      this.core.listConnectionsByAdapter(adapterKey).find((candidate) => candidate.accountKey === accountKey)
-    if (findDuplicate()) throw new Error(duplicateMessage)
-    if (signal.aborted) throw signal.reason
-    const credentialRefs = await this.#saveProvisionedCredentials(result.credentials)
-    let connection: ConnectionRecord | undefined
-    try {
-      if (signal.aborted) throw signal.reason
-      connection = this.core.createConnection({
-        adapterKey,
-        accountKey,
-        ...(alias === undefined ? {} : { alias }),
-        config: configuration,
-        credentialRefs,
-      })
-      if (signal.aborted) throw signal.reason
-      await this.#mountAdapter(connection.id)
-      const diagnostic = this.#adapterDiagnostics.get(connection.id)
-      if (diagnostic?.status === 'failed') throw new Error(diagnostic.message ?? '连接挂载失败。')
-      if (signal.aborted) throw signal.reason
-      return connection
-    } catch (error) {
-      if (connection) {
-        await this.deleteConnection(connection.id, { deleteChannelData: true })
-      } else {
-        await Promise.allSettled(Object.values(credentialRefs).map((reference) => this.credentials.delete(reference)))
-      }
-      if (!connection && findDuplicate()) throw new Error(duplicateMessage, { cause: error })
-      throw error
-    }
+  connectionCapabilities(...args: Parameters<ConnectionApplicationService['connectionCapabilities']>) {
+    return this.connections.connectionCapabilities(...args)
   }
 
-  async #reauthenticateConnectionFromLogin(
-    connectionId: ConnectionId,
-    result: {
-      readonly accountKey: string
-      readonly configuration: Readonly<Record<string, string | number | boolean>>
-      readonly credentials: Readonly<Record<string, string>>
-    },
-    signal: AbortSignal,
-  ): Promise<ConnectionRecord> {
-    const current = this.core.getConnection(connectionId)
-    if (!current) throw new Error('要重新认证的连接不存在。')
-    if (!current.accountKey || current.accountKey !== result.accountKey.trim()) {
-      throw new Error('扫码账号与原连接账号不一致，未替换凭据。')
-    }
-    const configuration = parseStoredAdapterConfiguration(result.configuration)
-    if (signal.aborted) throw signal.reason
-    const credentialRefs = await this.#saveProvisionedCredentials(result.credentials)
-    const mounted = this.#adapterRuntimes.get(connectionId)
-    try {
-      if (signal.aborted) throw signal.reason
-      if (mounted) {
-        await mounted.stop()
-        this.#adapterRuntimes.delete(connectionId)
-      }
-      if (signal.aborted) throw signal.reason
-      const updated = this.core.updateConnectionProvisioning(connectionId, { config: configuration, credentialRefs })
-      if (this.#started) {
-        await this.#mountAdapter(connectionId)
-        const diagnostic = this.#adapterDiagnostics.get(connectionId)
-        if (diagnostic?.status === 'failed') throw new Error(diagnostic.message ?? '重新挂载连接失败。')
-      }
-      if (signal.aborted) throw signal.reason
-      await Promise.allSettled(
-        Object.values(current.credentialRefs).map((reference) => this.credentials.delete(reference)),
-      )
-      this.#notifyConnectionChanges()
-      return updated
-    } catch (error) {
-      this.core.updateConnectionProvisioning(connectionId, {
-        config: current.config,
-        credentialRefs: current.credentialRefs,
-      })
-      this.#adapterRuntimes.delete(connectionId)
-      if (this.#started) await this.#mountAdapter(connectionId)
-      await Promise.allSettled(Object.values(credentialRefs).map((reference) => this.credentials.delete(reference)))
-      throw error
-    }
-  }
-
-  async deleteConnection(
-    connectionId: ConnectionId,
-    options: { readonly deleteChannelData: boolean },
-  ): Promise<{ readonly archived: boolean }> {
-    if (this.#disposed) throw new Error('NekroRuntime is disposed.')
-    if (connectionId === this.internalConnectionId) throw new Error('系统托管连接不能删除。')
-    const connection = this.core.getConnection(connectionId) ?? this.repository.getArchivedConnection(connectionId)
-    if (!connection) throw new Error('连接不存在。')
-    const active = this.core.getConnection(connectionId)
-    if (active) {
-      for (const channel of this.core.listChannelsByConnection(connectionId))
-        await this.channels.suspendChannel(channel.id)
-      await this.channels.waitUntilConnectionsSafe([connectionId])
-      const runtime = this.#adapterRuntimes.get(connectionId)
-      await runtime?.stop()
-      this.#adapterRuntimes.delete(connectionId)
-    }
-    this.#adapterDiagnostics.delete(connectionId)
-    this.#connectionTests.delete(connectionId)
-    if (options.deleteChannelData) {
-      this.core.purgeConnection(connectionId)
-      await Promise.allSettled(
-        Object.values(connection.credentialRefs).map((reference) => this.credentials.delete(reference)),
-      )
-      this.#notifyConnectionChanges()
-      return { archived: false }
-    }
-    if (active) this.core.archiveConnection(connectionId)
-    this.#notifyConnectionChanges()
-    return { archived: true }
-  }
-
-  async restoreConnection(connectionId: ConnectionId): Promise<ConnectionRecord> {
-    if (!this.#started || this.#disposed) throw new Error('NekroRuntime is not accepting restored Connections.')
-    const archived = this.repository.getArchivedConnection(connectionId)
-    if (!archived) throw new Error('可恢复的连接不存在。')
-    if (this.adapters.get(archived.adapterKey)?.descriptor.provisioning !== 'user-created') {
-      throw new Error('这个连接当前无法恢复。')
-    }
-    if (
-      archived.accountKey !== undefined &&
-      this.core
-        .listConnectionsByAdapter(archived.adapterKey)
-        .some((candidate) => candidate.accountKey === archived.accountKey)
-    ) {
-      throw new Error('该平台账号已经存在活动连接。')
-    }
-    const connection = this.core.restoreConnection(connectionId)
-    await this.#mountAdapter(connectionId)
-    this.#notifyConnectionChanges()
-    return connection
-  }
-
-  async testConnection(
-    connectionId: ConnectionId,
-    direction: 'send' | 'receive',
-    targetChannelId?: ChannelId,
-  ): Promise<ConnectionTestResult> {
-    const connection = this.core.listConnections().find((candidate) => candidate.id === connectionId)
-    if (!connection) throw new Error('Connection does not exist.')
-    const descriptor = this.adapters.get(connection.adapterKey)?.descriptor
-    if (!descriptor?.diagnostics[direction]) throw new Error('该连接平台不提供这个测试流程。')
-    const runtime = this.#adapterRuntimes.get(connectionId)
-    const diagnostic = this.#adapterDiagnostics.get(connectionId)
-    if (!runtime || diagnostic?.status !== 'connected') {
-      return { status: 'not-connected', message: diagnostic?.message ?? '尚未连接到该平台。' }
-    }
-    if (direction === 'receive') {
-      const inbound = this.#lastInboundByConnection.get(connectionId)
-      const result: ConnectionTestResult = inbound?.platformMessageId
-        ? {
-            status: 'received',
-            channelId: inbound.channelId,
-            platformMessageId: inbound.platformMessageId,
-          }
-        : { status: 'waiting-for-message', message: '请先从平台发送一条消息，再重新测试接收。' }
-      this.#recordConnectionTest(connectionId, direction, result)
-      return result
-    }
-    const channels = this.core.listChannelsByConnection(connectionId)
-    if (targetChannelId !== undefined && !channels.some(({ id }) => id === targetChannelId)) {
-      throw new Error('测试目标不属于这个连接。')
-    }
-    const channelId = targetChannelId ?? (channels.length === 1 ? channels[0]?.id : undefined)
-    if (!channelId) {
-      return channels.length === 0
-        ? { status: 'needs-channel', message: '尚未发现频道；请先从平台发送一条消息。' }
-        : { status: 'needs-target', message: '该连接发现了多个频道，请选择发送测试的目标频道。' }
-    }
-    try {
-      const parts = [{ type: 'text' as const, text: 'NekroNXT 连接诊断测试消息。' }]
-      const plans = runtime.planOutbound ? await runtime.planOutbound({ connectionId, channelId, parts }) : [{ parts }]
-      let platformMessageId: string | undefined
-      for (const [index, plan] of plans.entries()) {
-        const receipt = await runtime.deliver(
-          {
-            deliveryId: PhysicalDeliveryIdSchema.parse(`phy_TEST${this.#now()}${index}`),
-            logicalMessageId: LogicalMessageIdSchema.parse(`msg_TEST${this.#now()}${index}`),
-            connectionId,
-            channelId,
-            parts: plan.parts,
-            ...(plan.adapterContext === undefined ? {} : { adapterContext: plan.adapterContext }),
-          },
-          AbortSignal.timeout(15_000),
-        )
-        if (receipt.status === 'failed') {
-          return { status: 'failed', kind: receipt.failure.kind, message: receipt.failure.message }
-        }
-        if (receipt.status === 'unknown') return { status: 'failed', kind: 'transient', message: receipt.message }
-        platformMessageId = receipt.platformMessageId ?? platformMessageId
-      }
-      const result: ConnectionTestResult = {
-        status: 'sent',
-        channelId,
-        ...(platformMessageId === undefined ? {} : { platformMessageId }),
-      }
-      this.#recordConnectionTest(connectionId, direction, result)
-      return result
-    } catch (error) {
-      return { status: 'failed', kind: 'transient', message: error instanceof Error ? error.message : String(error) }
-    }
-  }
-
-  connectionCapabilities(connectionId: ConnectionId) {
-    return this.#adapterRuntimes.get(connectionId)?.capabilities
-  }
-
-  #recordConnectionTest(connectionId: ConnectionId, direction: 'send' | 'receive', result: ConnectionTestResult): void {
-    this.#connectionTests.set(connectionId, { ...this.#connectionTests.get(connectionId), [direction]: result })
-    this.#notifyConnectionChanges()
-  }
-
-  registerAdapter(owner: string, contribution: AdapterHostContributionV2): Promise<RegisteredAdapterHandle> {
-    const registered = this.adapters.register(owner, contribution)
-    this.#cleanAdapterBindings(contribution.descriptor.key)
-    this.#notifyConnectionChanges()
-    return Promise.resolve({
-      ...registered,
-      dispose: async () => {
-        await this.stopAdapterConnections(contribution.descriptor.key)
-        await registered.dispose()
-        this.#notifyConnectionChanges()
-      },
-    })
+  registerAdapter(...args: Parameters<ConnectionApplicationService['registerAdapter']>) {
+    return this.connections.registerAdapter(...args)
   }
 
   installHostExtension(input: Parameters<HostExtensionInstallationCoordinator['install']>[0]) {
     return this.installation.install(input)
   }
 
+  updateHostUiPagePreferences(input: Omit<Parameters<SqliteCoreRepository['updateHostUiPagePreferences']>[0], 'now'>) {
+    return this.repository.updateHostUiPagePreferences({ ...input, now: this.#now() })
+  }
+
   uninstallHostExtension(extensionId: Parameters<HostExtensionInstallationCoordinator['uninstall']>[0]): Promise<void> {
     return this.installation.uninstall(extensionId)
   }
-
-  async mountAdapterConnections(adapterKey: string): Promise<void> {
-    this.#quiescingAdapterKeys.delete(adapterKey)
-    for (const connectionId of this.repository.listConnectionIdsByAdapter(adapterKey))
-      await this.#mountAdapter(connectionId)
+  mountAdapterConnections(...args: Parameters<ConnectionApplicationService['mountAdapterConnections']>) {
+    return this.connections.mountAdapterConnections(...args)
   }
 
-  async stopAdapterConnections(adapterKey: string): Promise<void> {
-    const connectionIds = this.repository.listConnectionIdsByAdapter(adapterKey)
-    const outcomes = await Promise.allSettled(
-      connectionIds.map(async (connectionId) => {
-        const runtime = this.#adapterRuntimes.get(connectionId)
-        await runtime?.stop()
-        this.#adapterRuntimes.delete(connectionId)
-        this.#adapterDiagnostics.set(connectionId, { status: 'stopped', message: '这个连接的适配器未安装。' })
-      }),
-    )
-    this.#notifyConnectionChanges()
-    const failures = outcomes
-      .map((outcome, index) => ({ outcome, connectionId: connectionIds[index]! }))
-      .filter(
-        (item): item is { outcome: PromiseRejectedResult; connectionId: ConnectionId } =>
-          item.outcome.status === 'rejected',
-      )
-    if (failures.length) {
-      this.#quiescingAdapterKeys.delete(adapterKey)
-      for (const { connectionId, outcome } of failures) {
-        this.#adapterDiagnostics.set(connectionId, {
-          status: 'failed',
-          message: outcome.reason instanceof Error ? outcome.reason.message : String(outcome.reason),
-        })
-      }
-      const remounts = await Promise.allSettled(
-        outcomes.flatMap((outcome, index) =>
-          outcome.status === 'fulfilled' ? [this.#mountAdapter(connectionIds[index]!)] : [],
-        ),
-      )
-      const remountFailures = remounts
-        .filter((outcome): outcome is PromiseRejectedResult => outcome.status === 'rejected')
-        .map((outcome): unknown => outcome.reason)
-      this.#notifyConnectionChanges()
-      throw new AggregateError(
-        [
-          ...failures.map(({ outcome }) =>
-            outcome.reason instanceof Error ? outcome.reason : new Error(String(outcome.reason)),
-          ),
-          ...remountFailures,
-        ],
-        '适配器连接未能全部静止；安装状态保持不变。',
-      )
-    }
-  }
-
-  async #mountAdapter(connectionId: ConnectionId): Promise<void> {
-    if (this.#adapterRuntimes.has(connectionId)) return
-    const connection = this.core.getConnection(connectionId)
-    if (!connection) throw new Error('Connection does not exist.')
-    const contribution = this.adapters.get(connection.adapterKey)
-    if (!contribution) {
-      this.#adapterDiagnostics.set(connectionId, { status: 'stopped', message: '这个连接的适配器未安装。' })
-      this.#notifyConnectionChanges()
-      return
-    }
-    this.#cleanConnectionBindings(connectionId, contribution)
-    let credentialsAvailable = true
-    try {
-      for (const reference of Object.values(connection.credentialRefs)) {
-        let available = false
-        try {
-          available = await this.credentials.has(reference)
-        } catch {
-          available = false
-        }
-        if (!available) {
-          credentialsAvailable = false
-          throw new Error('这个连接的凭据不可用。')
-        }
-      }
-      const configuration = parseStoredAdapterConfiguration(connection.config)
-      const runtime = await contribution.create(this.#adapterContext(connectionId), {
-        configuration,
-        credentialRefs: connection.credentialRefs,
-      })
-      const capabilities = parseAdapterCapabilities(runtime.capabilities)
-      const declaredActivityKeys = new Set(contribution.descriptor.activities.map((activity) => activity.key))
-      const capabilityKeys = Object.keys(capabilities.activities)
-      if (
-        capabilityKeys.some((key) => !declaredActivityKeys.has(key)) ||
-        contribution.descriptor.activities.some((activity) => capabilities.activities[activity.key] === undefined)
-      ) {
-        throw new Error('Adapter runtime activity capabilities do not match its Descriptor.')
-      }
-      if (
-        (contribution.descriptor.features.processingFeedback === undefined) !==
-        (capabilities.processingFeedback === undefined)
-      ) {
-        throw new Error('Adapter runtime processing-feedback capability does not match its Descriptor.')
-      }
-      this.#adapterRuntimes.set(connectionId, runtime)
-      this.#adapterDiagnostics.set(connectionId, {
-        status: 'connecting',
-        credentialConfigured: Object.keys(connection.credentialRefs).length > 0,
-        proactiveSend: runtime.capabilities.outbound.proactiveSend,
-      })
-      await runtime.start()
-      if (this.#adapterDiagnostics.get(connectionId)?.status === 'connecting') {
-        this.#adapterDiagnostics.set(connectionId, {
-          status: 'connected',
-          credentialConfigured: Object.keys(connection.credentialRefs).length > 0,
-          proactiveSend: runtime.capabilities.outbound.proactiveSend,
-        })
-      }
-    } catch (error) {
-      const runtime = this.#adapterRuntimes.get(connectionId)
-      this.#adapterRuntimes.delete(connectionId)
-      await runtime?.stop().catch(() => undefined)
-      this.#adapterDiagnostics.set(connectionId, {
-        status: 'failed',
-        message: error instanceof Error ? error.message : String(error),
-        credentialConfigured: credentialsAvailable && Object.keys(connection.credentialRefs).length > 0,
-      })
-    }
-    this.#notifyConnectionChanges()
-  }
-
-  #cleanAdapterBindings(adapterKey: string): void {
-    const contribution = this.adapters.get(adapterKey)
-    if (!contribution) return
-    for (const connectionId of this.repository.listConnectionIdsByAdapter(adapterKey)) {
-      this.#cleanConnectionBindings(connectionId, contribution)
-    }
-  }
-
-  #cleanConnectionBindings(connectionId: ConnectionId, contribution: AdapterHostContributionV2): void {
-    const connection = this.core.getConnection(connectionId)
-    if (connection) {
-      const activityTriggerDefaults = connection.activityTriggerDefaults.filter((key) => {
-        const definition = contribution.descriptor.activities.find((activity) => activity.key === key)
-        return definition?.scope === 'channel' && definition.triggerable
-      })
-      if (activityTriggerDefaults.length !== connection.activityTriggerDefaults.length) {
-        this.repository.updateConnectionActivityTriggerDefaults(connectionId, activityTriggerDefaults)
-      }
-    }
-    for (const channel of this.core.listChannelsByConnection(connectionId)) {
-      const binding = this.repository.getBinding(channel.id)
-      if (!binding) continue
-      const activityTriggerOverrides = Object.fromEntries(
-        Object.entries(binding.activityTriggerOverrides).filter(([key]) => {
-          const definition = contribution.descriptor.activities.find((activity) => activity.key === key)
-          return (
-            definition?.scope === 'channel' &&
-            definition.triggerable &&
-            definition.channelKinds?.includes(channel.kind) === true
-          )
-        }),
-      )
-      if (Object.keys(activityTriggerOverrides).length !== Object.keys(binding.activityTriggerOverrides).length) {
-        this.repository.replaceBinding({ ...binding, activityTriggerOverrides })
-      }
-    }
-  }
-
-  #adapterContext(connectionId: ConnectionId): AdapterConnectionHostContext {
-    const rejectEvent = (message: string): never => {
-      const current = this.#adapterDiagnostics.get(connectionId)
-      this.#adapterDiagnostics.set(connectionId, {
-        status: current?.status ?? 'connected',
-        message,
-        credentialConfigured: current?.credentialConfigured ?? false,
-        proactiveSend: current?.proactiveSend ?? false,
-        details: { eventRejected: true },
-      })
-      this.#notifyConnectionChanges()
-      throw new Error(message)
-    }
-    const resolveOwnedDescriptor = (adapterKey: string) => {
-      const connection = this.core.getConnection(connectionId)
-      if (!connection || connection.adapterKey !== adapterKey) {
-        return rejectEvent('适配器提交的事件不属于当前连接。')
-      }
-      const descriptor = this.adapters.get(connection.adapterKey)?.descriptor
-      if (!descriptor) return rejectEvent('提交事件的适配器当前未注册。')
-      return descriptor
-    }
-    return {
-      connectionId,
-      now: this.#now,
-      acceptChannelInbound: async (event) => {
-        if (event.connectionId !== connectionId) return rejectEvent('适配器提交了其他连接的频道事件。')
-        const adapterKey = this.core.getConnection(connectionId)?.adapterKey
-        if (adapterKey && this.#quiescingAdapterKeys.has(adapterKey)) {
-          throw new Error('适配器正在进入安全间隙，暂不接收新的频道事件。')
-        }
-        const descriptor = resolveOwnedDescriptor(event.adapterKey)
-        const channel = this.core.getChannel(event.channelId)
-        if (!channel || channel.connectionId !== connectionId) {
-          return rejectEvent('适配器提交的频道事件不属于当前连接。')
-        }
-        if (event.activityKey !== undefined) {
-          const activity = descriptor.activities.find((candidate) => candidate.key === event.activityKey)
-          if (activity?.scope !== 'channel') return rejectEvent(`适配器提交了未声明的频道活动：${event.activityKey}`)
-          if (activity.channelKinds?.includes(channel.kind) !== true) {
-            return rejectEvent(`频道活动 ${event.activityKey} 不适用于当前频道类型。`)
-          }
-        }
-        this.#lastInboundByConnection.set(connectionId, {
-          channelId: event.channelId,
-          ...(event.platformMessageId === undefined ? {} : { platformMessageId: event.platformMessageId }),
-          receivedAt: event.receivedAt,
-        })
-        return this.channels.acceptChannelInbound(event)
-      },
-      acceptConnectionInbound: (event) => {
-        if (event.connectionId !== connectionId) return rejectEvent('适配器提交了其他连接的连接活动。')
-        const descriptor = resolveOwnedDescriptor(event.adapterKey)
-        const activity = descriptor.activities.find((candidate) => candidate.key === event.activityKey)
-        if (activity?.scope !== 'connection') {
-          return rejectEvent(`适配器提交了未声明的连接活动：${event.activityKey}`)
-        }
-        const commit = this.core.appendConnectionInbound(event)
-        if (commit.inserted) this.#notifyConnectionChanges(commit.event)
-        return Promise.resolve({ connectionEventId: commit.event.id, inserted: commit.inserted })
-      },
-      channels: {
-        ensure: (input) =>
-          Promise.resolve(
-            this.core.ensureChannel({
-              connectionId,
-              platformChannelId: input.platformChannelId,
-              kind: input.kind,
-              ...(input.displayName === undefined ? {} : { displayName: input.displayName }),
-              observedAt: input.observedAt,
-            }).id,
-          ),
-        updateDisplayName: (channelId, displayName) => {
-          const channel = this.core.getChannel(channelId)
-          if (channel?.connectionId !== connectionId)
-            throw new Error('Adapter cannot update another Connection channel.')
-          this.core.updateChannelDisplayName(channelId, displayName)
-          return Promise.resolve()
-        },
-        resolvePlatformChannelId: (channelId) => {
-          const channel = this.core.getChannel(channelId)
-          return Promise.resolve(channel?.connectionId === connectionId ? channel.platformChannelId : undefined)
-        },
-        resolveKind: (channelId) => {
-          const channel = this.core.getChannel(channelId)
-          return Promise.resolve(
-            channel?.connectionId !== connectionId || channel.kind === 'internal' ? undefined : channel.kind,
-          )
-        },
-      },
-      identities: {
-        ensure: (input) =>
-          Promise.resolve(
-            this.core.ensurePlatformIdentity({
-              connectionId,
-              platformUserId: input.platformUserId,
-              ...(input.displayName === undefined ? {} : { displayName: input.displayName }),
-              observedAt: input.observedAt,
-            }).id,
-          ),
-      },
-      members: {
-        ensure: (input) =>
-          Promise.resolve(
-            this.core.observeChannelMember({
-              connectionId,
-              channelId: input.channelId,
-              platformUserId: input.platformUserId,
-              ...(input.displayName === undefined ? {} : { displayName: input.displayName }),
-              observedAt: input.observedAt,
-            }).member.id,
-          ),
-        resolvePlatformUserId: (channelId, memberId) =>
-          Promise.resolve(this.core.resolveChannelMemberIdentity(connectionId, channelId, memberId)?.platformUserId),
-      },
-      messages: {
-        resolvePlatformMessage: (channelId, platformMessageId) =>
-          Promise.resolve(this.core.resolvePlatformMessage(connectionId, channelId, platformMessageId)),
-        resolvePlatformMessageId: (channelId, logicalMessageId) =>
-          Promise.resolve(this.core.resolveLogicalMessagePlatformId(connectionId, channelId, logicalMessageId)),
-        resolveLogicalMessage: (channelId, logicalMessageId) =>
-          Promise.resolve(this.repository.resolveLogicalMessage(connectionId, channelId, logicalMessageId)),
-      },
-      assets: {
-        importBytes: async (input) => {
-          const prepared = await this.assetService.prepare(input)
-          return {
-            assetId: prepared.asset.id,
-            mediaType: prepared.asset.mediaType,
-            byteSize: prepared.asset.byteSize,
-          }
-        },
-        read: async ({ assetId, channelId }) => {
-          if (!this.repository.canAccessAsset(assetId, channelId)) {
-            throw new Error('Adapter Asset is not authorized for this Channel.')
-          }
-          const asset = this.repository.getAssetById(assetId)
-          if (!asset) throw new Error('Adapter Asset is unavailable.')
-          return {
-            bytes: new Uint8Array(await readFile(this.assetService.blobPath(asset))),
-            mediaType: asset.mediaType,
-            byteSize: asset.byteSize,
-          }
-        },
-        fetchRemoteBytes: fetchAdapterRemoteBytes,
-      },
-      credentials: { resolve: (reference) => this.credentials.resolve(reference) },
-      state: {
-        load: (key) => this.repository.load(connectionId, key),
-        save: (key, value) => this.repository.save(connectionId, key, value, this.#now()),
-        clear: (key) => this.repository.clear(connectionId, key),
-      },
-      diagnostics: {
-        publish: (diagnostic) => {
-          this.#adapterDiagnostics.set(connectionId, {
-            ...diagnostic,
-            credentialConfigured: Object.keys(this.core.getConnection(connectionId)?.credentialRefs ?? {}).length > 0,
-            proactiveSend: this.#adapterRuntimes.get(connectionId)?.capabilities.outbound.proactiveSend ?? false,
-          })
-          this.#notifyConnectionChanges()
-        },
-      },
-      transport: this.#adapterTransport,
-    }
-  }
-
-  #notifyConnectionChanges(event?: ConnectionEventRecord): void {
-    for (const listener of this.#connectionListeners) {
-      try {
-        listener(event)
-      } catch {
-        // A diagnostic observer cannot interrupt the owned Connection lifecycle.
-      }
-    }
+  stopAdapterConnections(...args: Parameters<ConnectionApplicationService['stopAdapterConnections']>) {
+    return this.connections.stopAdapterConnections(...args)
   }
 
   async dispose(): Promise<void> {
     if (this.#disposed) return
     this.#disposed = true
+    await this.authoring.dispose()
+    await this.extensionService.dispose()
     const failures: unknown[] = []
     this.#unsubscribeDynamicApproval()
-    this.#connectionListeners.clear()
-    for (const session of this.#connectionLoginSessions.values()) {
-      session.status = 'cancelled'
-      session.message = '运行时正在关闭。'
-      session.abortController.abort(new Error(session.message))
-    }
+    this.connections.clearObservers()
     for (const operation of [
       () => this.channels.stopProcessingFeedback(),
       () => this.activation.dispose(),
@@ -1719,13 +814,8 @@ export class NekroRuntime {
         failures.push(error)
       }
     }
-    const stopped = await Promise.allSettled([...this.#adapterRuntimes.values()].map((runtime) => runtime.stop()))
+    const stopped = await this.connections.stopAll()
     for (const outcome of stopped) if (outcome.status === 'rejected') failures.push(outcome.reason)
-    const loginSessions = await Promise.allSettled(
-      [...this.#connectionLoginSessions.values()].map((session) => session.done),
-    )
-    for (const outcome of loginSessions) if (outcome.status === 'rejected') failures.push(outcome.reason)
-    this.#connectionLoginSessions.clear()
     try {
       await this.host.dispose()
     } catch (error) {
@@ -1736,14 +826,9 @@ export class NekroRuntime {
     } catch (error) {
       failures.push(error)
     }
-    const handles = await Promise.allSettled(this.#adapterHandles.map((handle) => handle.dispose()))
+    const handles = await this.connections.disposeRegistrations()
     for (const outcome of handles) if (outcome.status === 'rejected') failures.push(outcome.reason)
-    this.#adapterHandles.length = 0
-    this.#adapterDiagnostics.clear()
-    this.#connectionTests.clear()
     this.#hostClientDiagnostics.clear()
-    this.#lastInboundByConnection.clear()
-    this.#adapterRuntimes.clear()
     this.#database.close()
     if (failures.length) throw new AggregateError(failures, 'Nekro Runtime disposal failed.')
   }

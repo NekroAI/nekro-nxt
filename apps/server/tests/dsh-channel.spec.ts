@@ -1,3 +1,5 @@
+import { SessionId } from '@deepseek-ai/dsh-session'
+import { preflightNekroNxtDynamicSource } from '../src/dynamic-authoring-runtime.js'
 import { LlmAdapter, CallId, type GenerateOptions, type StreamChunk } from '@deepseek-ai/dsh-llm'
 import { getOrCreateAnonymousUserId } from '@deepseek-ai/dsh-anonymous-user-id'
 import {
@@ -1515,28 +1517,16 @@ describe('DSH Host and internal Channel vertical slice', () => {
       await expect(host.loadNekroNxtExtensionSkill(deniedSession)).rejects.toThrow('not granted')
 
       expect(() =>
-        host.defineDynamicAuthoringPackage(enabledSession, {
+        preflightNekroNxtDynamicSource({
+          sessionId: SessionId(enabledSession),
           plugin: { kind: 'new', idPrefix: 'page' },
-          name: '默认控件页面',
-          purpose: '验证页面必须注入 NekroNXT UI Kit。',
-          scope: 'host-ui',
+          name: '原生控件页面',
+          purpose: 'UI Kit 不是运行门禁。',
           code: {
             client: `return { inject: ['pages'], apply(ctx) { ctx.pages.register({ page: { kind: 'host-page', entryId: 'main', title: '页面', icon: { kind: 'host-icon', name: 'puzzle' }, objectPane: 'hidden', startPath: '' } }, () => React.createElement('button', null, '操作')) } }`,
           },
-          resources: {},
-          permissions: { permissions: [], networkOrigins: [] },
-          contributions: [
-            {
-              kind: 'host-page',
-              entryId: 'main',
-              title: '页面',
-              icon: { kind: 'host-icon', name: 'puzzle' },
-              objectPane: 'hidden',
-              startPath: '',
-            },
-          ],
         }),
-      ).toThrow("inject: ['pages', 'ui']")
+      ).not.toThrow()
 
       expect(() =>
         host.defineDynamicAuthoringPackage(enabledSession, {

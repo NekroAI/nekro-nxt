@@ -166,8 +166,15 @@
     {
       "idx": 23,
       "version": "6",
-      "when": 1789279937984,
-      "tag": "0023_connection_account_key",
+      "when": 1788796147073,
+      "tag": "0023_channel_history_index",
+      "breakpoints": true
+    },
+    {
+      "idx": 24,
+      "version": "6",
+      "when": 1789371196899,
+      "tag": "0024_connection_account_key",
       "breakpoints": true
     }
   ]

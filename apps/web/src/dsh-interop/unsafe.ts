@@ -41,6 +41,7 @@ const requireMethods = (value: unknown, label: string, methods: readonly string[
   return record
 }
 
+// eslint-disable-next-line @typescript-eslint/no-unsafe-type-assertion -- 调用方先通过对应协议 Schema 校验；DSH 品牌 ID 仅存在于类型声明中。
 const unsafeDshIdAfterSchemaValidation = <Id extends string>(value: string): Id => value as Id
 
 /** Validate a classic DSH bundle handoff before invoking its factory. */
@@ -83,6 +84,7 @@ export const requireConstructorExport = <Constructor>(
       throw new TypeError(`DSH export ${exportName}.prototype.${method} must be a function.`)
     }
   }
+  // eslint-disable-next-line @typescript-eslint/no-unsafe-type-assertion -- 动态模块的构造函数及公开原型方法已逐项校验。
   return candidate as Constructor
 }
 
@@ -91,6 +93,7 @@ export const requireObjectWithMethods = <Face extends object>(
   value: unknown,
   label: string,
   methods: readonly string[],
+  // eslint-disable-next-line @typescript-eslint/no-unsafe-type-assertion -- requireMethods 已校验当前调用方要求的全部公开方法。
 ): Face => requireMethods(value, label, methods) as Face
 
 /** Validate the Cordis plugin shapes accepted by Context.plugin(). */
@@ -138,6 +141,7 @@ export const requireExtensionPluginFactory = <Environment = ExtensionClientEnvir
   value: unknown,
 ): ExtensionPluginFactory<Environment> => {
   if (typeof value !== 'function') throw new TypeError('Extension Client artifact has no default factory.')
+  // eslint-disable-next-line @typescript-eslint/no-unsafe-type-assertion -- 扩展工厂的函数与对象结构已在此边界校验。
   return value as ExtensionPluginFactory<Environment>
 }
 
@@ -169,6 +173,7 @@ export const requireProductSlotComponent = <Props extends object>(
   label: string,
 ): ((props: Props) => ReactNode) => {
   if (typeof value !== 'function') throw new TypeError(`${label} must be a function.`)
+  // eslint-disable-next-line @typescript-eslint/no-unsafe-type-assertion -- 槽位组件已通过函数检查，Props 由受控注册入口提供。
   return value as (props: Props) => ReactNode
 }
 

@@ -1,4 +1,4 @@
-import type { AgentSummary } from './product-store.js'
+import type { AgentSummary } from './product-runtime.js'
 
 export type AgentAccessLevel = 0 | 1 | 2 | 3
 export type AgentAccessPreset = AgentAccessLevel | 'custom'

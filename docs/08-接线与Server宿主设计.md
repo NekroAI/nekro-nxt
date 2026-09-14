@@ -8,7 +8,7 @@
 - HTTP、SSE 和静态托管复用 DSH WebServer / frontend-static，不引入第二套 HTTP 框架；NekroNXT 在同一 WebServer 上显式注册产品 SPA 页面前缀，因为 DSH 0.1.1-rc.2 的静态 fallback 对未知路径返回 404；
 - 领域 API 由 `NekroHostApi` 定义，只经过 Core、Channel Runtime、Asset 和 Extension 公开服务，不把数据库或 DSH `Context` 暴露到 wire；
 - 普通 JSON 请求体统一限制为 2 MiB，超过限制后停止缓冲并返回明确错误；Extension 分享包限制为 16 MiB，DSH tgz/分享包限制为 64 MiB，各二进制协议再执行自身的解压体积、文件数和文件大小校验；
-- Web 不复制业务事实。`ProductHostPort.getSnapshot()` / `subscribe()` / `execute()` 消费 Server 权威投影；Zustand 只保留主题、减少动效和草稿。
+- Web 通过类型化 `ProductHostPort.actions` 消费 Server API。每个产品运行实例只有一份 Zustand 宿主数据缓存，HTTP 与 SSE 共同更新；`getSnapshot()` 直接读取该 Store。主题、减少动效和分栏/外观偏好由同一独立 UI Store 保存，保留既有偏好格式。入口创建 `ProductRuntime` 并通过 React Context 注入，动态审批与三类扩展 Client 跟随同一实例。运行状态存协议枚举，中文通过 selector 生成。
 
 ## 2. 领域 API
 
@@ -70,11 +70,14 @@
 - `runtime` 携带与 `GET /runtime` 相同的裁剪投影（工具预览 160 字、最近 24 轮、可选 occupancy、步骤耗时与用量）和该频道轨迹面 `revision`。占用从 DSH `sessionProjections` 的 `contextPressure` / `tokenUsage` / `contextBreakdown` 投影；缺少窗口或用量样本时省略。服务端在 100ms 合并后再组装。UTF-8 序列化超过约 48 KiB 时只推 `phase` / `summary` / `occupancy` 并标 `truncated`，前端对已打开的工作轨迹回退一次 REST。
 - 可回放事件带 `Host epoch:序号` 形式的 SSE `id:`。Web 的共享 `HostEventStream` 先保留浏览器原生重连，使普通网络短断继续自动携带 `Last-Event-ID`；`EventSource` 进入永久关闭状态时按 1、2、4、8、16、30 秒上限退避重建，原生重连超过 5 秒未恢复时也由应用层重建。浏览器重新联网和用户点击「重新连接」会立即重建同一条共享流。连接每次重新打开都刷新权威快照，并对已加载频道重新读取历史与轨迹，因此代理返回 5xx、Host 重启或重建对象丢失浏览器内部游标时也不会留下数据缺口。Host 在内存里保留最近 512 帧；同一 epoch 的窗口内帧补发，窗口外、Host 重启和未来游标都返回 `status.replay = expired`，前端再次执行相同对账。慢客户端最多排队 512 KiB，超过预算就断开并依赖重连对账。权威事实仍是频道 Event Log 和当前 Session 投影，不是这份环形缓冲。
 - `status` / `extensions-changed` / `binding-change` / DSH 设置与凭据变更仍是信号，前端刷新对应快照或进度。`dsh-plugin-operation` 使用进程内 Operation ID 报告下载、依赖、构建脚本、校验和提交阶段；进程重启后未提交操作视为中断，staging 在启动时清理。
+- 快照、频道历史和频道轨迹读取携带采集游标 `cursor: { epoch, sequence }`。快照先读取异步辅助信息，再在没有 `await` 的连续执行段采集领域事实及游标；`diagnosticsSampledAt` 表示辅助信息采样时间，智能体图片诊断按 Revision 关联。客户端读取期间保留事件，应用读取结果后重放游标之后的事件；旧游标事件不能覆盖新状态。连接事实和 `snapshot-changed` 失效事件也进入回放缓冲。影响快照的 HTTP 修改在契约中声明 `invalidatesSnapshot`，成功响应后发布失效；诊断和只读 RPC 不触发。已包含在快照采集游标内的失效不重复读取。
+- 快照读取串行执行，期间多次失效合并为一次后续读取；频道轨迹共享在途读取，历史分页按频道串行。每个读取绑定运行实例生命周期，卸载时取消请求，即使传输没有响应取消，迟到的成功或失败也不能写入缓存。
+- JSON、安装包上传与扩展下载共用 `host-api-client.ts` 的传输及边界解析。普通读取默认 30 秒、修改默认 60 秒；安装、导入和导出由契约显式设定 300 秒。网络中断、超时或无效成功响应造成的修改结果标记为未知，修改不自动重试。
 - 不按频道再建 SSE，不把 `assistant/chunk` 或资源二进制推进帧。
 
 ## 3. Web 与 Server
 
-- `apps/web/src/http-host.ts` 实现 `ProductHostPort`。`apps/web/src/host-event-stream.ts` 是浏览器 SSE 的唯一生命周期所有者，产品快照、DSH 设置和动态 Client 只订阅这条共享流，不各自建立连接。`execute` 覆盖创建/删除智能体、删除频道、两种上下文操作、发消息、改能力、扩展启停、Authoring 决策/停止/保存、创建/测试连接、修改连接别名和动态审批；决策先提交 Task revision，再由浏览器运行候选，Client evaluate/apply/render 或结算失败必须 reject，不能清空错误或发布成功提示。状态变更成功后重新读取权威快照；`host.refresh` 同时重建共享流和读取快照。
+- `apps/web/src/http-host.ts` 实现 `ProductHostPort`。`apps/web/src/host-event-stream.ts` 是浏览器 SSE 的唯一生命周期所有者，产品快照、DSH 设置和动态 Client 只订阅这条共享流，不各自建立连接。类型化 `actions` 覆盖创建/删除智能体、删除频道、两种上下文操作、发消息、改能力、扩展启停、Authoring 决策/停止/保存、创建/测试连接、修改连接别名和动态审批；决策先提交 Task revision，再由浏览器运行候选，Client evaluate/apply/render 或结算失败必须 reject，不能清空错误或发布成功提示。修改响应明确成功即完成提交，随后由数据层同步快照；同步失败显示“已保存，界面同步失败”，不能诱导重复提交。`host.refresh` 只读取快照，`host.reconnect` 才重建共享流。审批失败不自动重发修改。
 - 每个智能体使用独立产品 SlotCore。Snapshot/SSE 变化驱动 Client Activation 对账；Revision 更新先 dispose 后 mount，刷新与 Server 重启按权威 Activation 恢复。动态 Client 同样按 Host 的 `activeRun` 恢复精确源码和页面，对账键包含 `pluginRunId`，所以同一 Plugin 和 Package 在 Server 重启或重新运行后会先卸载旧 Client 再加载新 Run，不重复执行 Host half、审批或结算。Host Adapter Client 使用独立全局 Runtime，加载当前已安装 Revision 的 Artifact，并接受 Catalog 中的富消息、连接和频道检查器 Slot。Host UI Client 使用第三个独立 Runtime，按 Client Artifact 共享模块实例，每个页面拥有独立错误边界、滚动根和声明式导航 Provider；三类 Registry 不互相注册。
 - Host UI 页面路由固定为 `/apps/:pageInstanceId/*`。Web 使用快照中的 `routeBase`，入口隐藏、Activation 关闭或 Extension 删除后跳转到其他可见扩展页面；没有可见页面时进入对应 Extension 或 DSH 详情。系统图标组和底部工具组不参与扩展排序。
 - 添加平台连接先选用户可创建的平台；默认按版本化 schema 渲染表单，声明 `qr-login` 的 Adapter 必须同时贡献 `connectionLogin`，Web 和 Server 只消费通用契约，不按 `adapterKey` 分支。从连接详情可重新认证同一账号，凭据与私有配置成功挂载后原子替换，Connection ID、Channel ID 和历史不变。系统托管内置 Adapter 不出现在创建目录。
@@ -88,3 +91,5 @@
 - 启动先注册内置 Adapter Contribution，再恢复 `host_extension_installations`，随后按统一 Registry 恢复全部 Connection、处理中反馈、Channel Runtime 与 Agent Activation。单个 Connection 网络或凭据故障不阻断 Installation 或其他 Connection 恢复。
 
 一期缺口见 `04-一期开发计划与决策清单.md`。技术栈见 `decisions/accepted/2026-08-16-一期技术栈与UI基础设施.md`。
+
+模型供应商和 DSH 设置目录的读取结果、加载与错误状态统一保存在宿主数据 Store。请求控制器只拥有在途读取和取消状态，不保存数据镜像；读取期间的重复失效合并为一次后续读取，保存响应替换查询结果并使旧读取失效。

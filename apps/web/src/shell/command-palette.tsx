@@ -1,7 +1,7 @@
 import { Search } from 'lucide-react'
 import { useEffect, useMemo, useRef, useState, type KeyboardEvent } from 'react'
 import styles from '../app.module.css'
-import { useProductStore } from '../product-store.js'
+import { useProductStore } from '../product-runtime.js'
 import { Button, Dialog, Input } from '../ui-kit/index.js'
 import { useNxtNavigate } from './nxt-link.js'
 

@@ -1142,3 +1142,71 @@ describe('WeChat iLink Runtime', () => {
     expect(calls.map((call) => call.maxBytes)).toEqual([20 * 1024 * 1024, 20 * 1024 * 1024])
   })
 })
+
+it('preserves the cursor when stopped during channel discovery', async () => {
+  const fixture = createFakeContext()
+  fixture.states.set(WECHAT_ILINK_SYNC_BUF_STATE_KEY, 'cursor-before')
+  let releaseEnsure!: () => void
+  const gate = new Promise<void>((resolve) => {
+    releaseEnsure = resolve
+  })
+  let ensuring = false
+  const originalEnsure = fixture.context.channels.ensure.bind(fixture.context.channels)
+  const context = {
+    ...fixture.context,
+    channels: {
+      ...fixture.context.channels,
+      ensure: async (input: Parameters<typeof originalEnsure>[0]) => {
+        ensuring = true
+        await gate
+        return originalEnsure(input)
+      },
+    },
+  }
+  let returnUpdates!: (response: Response) => void
+  vi.stubGlobal(
+    'fetch',
+    vi.fn(
+      () =>
+        new Promise<Response>((resolve) => {
+          returnUpdates = resolve
+        }),
+    ),
+  )
+  const runtime = new WechatIlinkRuntime({
+    context,
+    config: {
+      accountId: 'fixture-bot',
+      botTokenCredentialRef: 'credential:fixture',
+    },
+  })
+  try {
+    await runtime.start()
+    await waitFor(() => Boolean(returnUpdates))
+    returnUpdates(
+      new Response(
+        JSON.stringify({
+          ret: 0,
+          get_updates_buf: 'cursor-after',
+          msgs: [
+            {
+              message_id: 'fixture-message',
+              from_user_id: 'fixture-user',
+              create_time_ms: 9000,
+              item_list: [{ type: 1, text_item: { text: 'fixture' } }],
+            },
+          ],
+        }),
+      ),
+    )
+    await waitFor(() => ensuring)
+    const stopping = runtime.stop()
+    releaseEnsure()
+    await stopping
+    expect(fixture.events).toHaveLength(0)
+    expect(fixture.states.get(WECHAT_ILINK_SYNC_BUF_STATE_KEY)).toBe('cursor-before')
+  } finally {
+    releaseEnsure?.()
+    vi.unstubAllGlobals()
+  }
+})

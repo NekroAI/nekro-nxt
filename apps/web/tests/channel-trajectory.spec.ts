@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
   cacheInputTokens,
+  createTrajectoryProjector,
   cacheReadShare,
   flattenRuntimeRecords,
   formatDurationMs,
@@ -13,13 +14,13 @@ import {
   sampleTokenRate,
   weightedCacheReadShare,
 } from '../src/pages/channel-trajectory.js'
-import type { ChannelRuntimeView } from '../src/product-store.js'
+import type { ChannelRuntimeView } from './product-fixture.js'
 
 describe('flattenRuntimeRecords', () => {
   it('turns internal output and tools into ledger rows without treating send as a second bubble', () => {
     const runtime: ChannelRuntimeView = {
       channelId: 'chn_web',
-      phase: '空闲',
+      phase: 'idle',
       summary: '智能体当前空闲。',
       pendingInjectCount: 0,
       turns: [
@@ -63,6 +64,47 @@ describe('flattenRuntimeRecords', () => {
     expect(rows[1]?.turnStart).toBe(false)
     expect(rows[2]?.wroteToChannel).toBe(true)
     expect(rows[2]?.deliveryState).toBe('sent')
+  })
+
+  it('reuses unchanged step records and invalidates boundaries when earlier output disappears', () => {
+    const project = createTrajectoryProjector()
+    const runtime: ChannelRuntimeView = {
+      channelId: 'chn_test',
+      phase: 'idle',
+      summary: '',
+      pendingInjectCount: 0,
+      turns: [
+        {
+          turn: 1,
+          state: 'completed',
+          responseState: 'finished',
+          producedReply: false,
+          steps: [
+            { step: 1, tools: [], internalOutput: { kind: 'internal-output', text: '步骤甲' } },
+            { step: 2, tools: [], internalOutput: { kind: 'internal-output', text: '步骤乙' } },
+          ],
+        },
+      ],
+    }
+    const first = project(runtime)
+    expect(project(structuredClone(runtime))).toBe(first)
+    const changed: ChannelRuntimeView = {
+      ...runtime,
+      turns: [{ ...runtime.turns[0]!, steps: [{ step: 1, tools: [] }, runtime.turns[0]!.steps[1]!] }],
+    }
+    const second = project(changed)
+    expect(second).toHaveLength(1)
+    expect(second[0]?.turnStart).toBe(true)
+    const appended: ChannelRuntimeView = {
+      ...runtime,
+      turns: [
+        ...runtime.turns,
+        { turn: 2, state: 'completed', responseState: 'finished', producedReply: false, steps: [] },
+      ],
+    }
+    const restored = project(runtime)
+    expect(project(appended)).toBe(restored)
+    expect(project({ ...runtime, channelId: 'chn_other' })[0]).not.toBe(restored[0])
   })
 
   it('marks plot turn boundaries on visible turn changes, skipping the first row', () => {

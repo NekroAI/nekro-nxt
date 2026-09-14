@@ -1,10 +1,9 @@
 import type {
+  AdapterChannelInboundEvent,
   AdapterConnectionRuntime,
   AdapterDeliveryReceipt,
-  AdapterChannelInboundEvent,
   AdapterRuntimeStateStore,
   InboundCommitResult,
-  PhysicalDeliveryRequest,
 } from '@nekro-nxt/adapter-sdk'
 import type {
   AdmissionId,
@@ -14,27 +13,15 @@ import type {
   ChannelId,
   ChannelMemberId,
   ConnectionId,
-  EpisodeId,
   EpisodeHandoffId,
+  EpisodeId,
   JsonValue,
   LogicalMessageId,
   MessagePart,
   OutboundIntentId,
   PhysicalDeliveryId,
 } from '@nekro-nxt/contracts'
-import {
-  AdmissionIdSchema,
-  AgentIdSchema,
-  ChannelIdSchema,
-  ConnectionIdSchema,
-  EpisodeHandoffIdSchema,
-  EpisodeIdSchema,
-  JsonValueSchema,
-  LogicalMessageIdSchema,
-  OutboundIntentIdSchema,
-  PhysicalDeliveryIdSchema,
-  parseJsonValue,
-} from '@nekro-nxt/contracts'
+import { AdmissionIdSchema, EpisodeHandoffIdSchema, EpisodeIdSchema } from '@nekro-nxt/contracts'
 import type {
   AgentRevisionRecord,
   BindingRecord,
@@ -44,6 +31,9 @@ import type {
 } from '@nekro-nxt/core'
 import { canonicalJson } from '@nekro-nxt/core'
 import { monotonicFactory } from 'ulid'
+import { ChannelDelivery } from './channel-delivery.js'
+import { ChannelInteractions } from './channel-interactions.js'
+import { ProcessingFeedback } from './processing-feedback.js'
 
 export type EpisodeStatus = 'opening' | 'active' | 'closed' | 'failed'
 
@@ -332,39 +322,8 @@ export interface ContextResetResult {
 }
 
 const HANDOFF_RECENT_EVENT_LIMIT = 12
-const FEEDBACK_STATE_KEY = 'host/processing-feedback-leases'
-const FEEDBACK_RETRY_DELAYS_MS = [1_000, 2_000, 4_000, 8_000, 16_000, 30_000] as const
-const FEEDBACK_MAX_AGE_MS = 24 * 60 * 60 * 1000
-const INTERACTION_STATE_KEY = 'host/interaction-intents'
-
-interface ProcessingFeedbackLease {
-  readonly id: string
-  readonly connectionId: ConnectionId
-  readonly channelId: ChannelId
-  readonly episodeId: EpisodeId
-  readonly platformMessageId: string
-  readonly state: 'planned' | 'active' | 'cleanup-pending'
-  readonly attempts: number
-  readonly createdAt: number
-  readonly updatedAt: number
-}
 
 type ChannelInteractionStatus = 'succeeded' | 'partially-succeeded' | 'failed' | 'unknown'
-
-interface DurableInteractionIntent {
-  readonly id: string
-  readonly connectionId: ConnectionId
-  readonly channelId: ChannelId
-  readonly episodeId: EpisodeId
-  readonly agentId: AgentId
-  readonly clientRequestId: string
-  readonly kind: 'retract-message' | 'nudge-member'
-  readonly targetId: string
-  readonly state: 'planned' | 'sending' | ChannelInteractionStatus
-  readonly result?: JsonValue
-  readonly createdAt: number
-  readonly updatedAt: number
-}
 
 export interface ChannelInteractionResult {
   readonly intentId: string
@@ -375,124 +334,6 @@ export interface ChannelInteractionResult {
     readonly status: string
     readonly message?: string
   }[]
-}
-
-const parseFeedbackLease = (candidate: unknown): ProcessingFeedbackLease | undefined => {
-  const parsed = JsonValueSchema.safeParse(candidate)
-  if (!parsed.success || typeof parsed.data !== 'object' || parsed.data === null || Array.isArray(parsed.data))
-    return undefined
-  const row = parsed.data
-  const connectionId = ConnectionIdSchema.safeParse(row['connectionId'])
-  const channelId = ChannelIdSchema.safeParse(row['channelId'])
-  const episodeId = EpisodeIdSchema.safeParse(row['episodeId'])
-  const state = row['state']
-  if (
-    typeof row['id'] !== 'string' ||
-    !connectionId.success ||
-    !channelId.success ||
-    !episodeId.success ||
-    typeof row['platformMessageId'] !== 'string' ||
-    (state !== 'planned' && state !== 'active' && state !== 'cleanup-pending') ||
-    typeof row['attempts'] !== 'number' ||
-    typeof row['createdAt'] !== 'number' ||
-    typeof row['updatedAt'] !== 'number'
-  )
-    return undefined
-  return {
-    id: row['id'],
-    connectionId: connectionId.data,
-    channelId: channelId.data,
-    episodeId: episodeId.data,
-    platformMessageId: row['platformMessageId'],
-    state,
-    attempts: row['attempts'],
-    createdAt: row['createdAt'],
-    updatedAt: row['updatedAt'],
-  }
-}
-
-const parseChannelInteractionResult = (candidate: JsonValue | undefined): ChannelInteractionResult | undefined => {
-  if (typeof candidate !== 'object' || candidate === null || Array.isArray(candidate)) return undefined
-  const status = candidate['status']
-  if (
-    typeof candidate['intentId'] !== 'string' ||
-    (status !== 'succeeded' && status !== 'partially-succeeded' && status !== 'failed' && status !== 'unknown') ||
-    typeof candidate['message'] !== 'string'
-  )
-    return undefined
-  const rawOutcomes = candidate['outcomes']
-  const outcomes = Array.isArray(rawOutcomes)
-    ? rawOutcomes.flatMap((outcome) => {
-        if (
-          typeof outcome !== 'object' ||
-          outcome === null ||
-          Array.isArray(outcome) ||
-          typeof outcome['platformMessageId'] !== 'string' ||
-          typeof outcome['status'] !== 'string'
-        )
-          return []
-        const message = outcome['message']
-        return [
-          {
-            platformMessageId: outcome['platformMessageId'],
-            status: outcome['status'],
-            ...(typeof message === 'string' ? { message } : {}),
-          },
-        ]
-      })
-    : undefined
-  return {
-    intentId: candidate['intentId'],
-    status,
-    message: candidate['message'],
-    ...(outcomes === undefined ? {} : { outcomes }),
-  }
-}
-
-const parseInteractionIntent = (candidate: unknown): DurableInteractionIntent | undefined => {
-  const parsed = JsonValueSchema.safeParse(candidate)
-  if (!parsed.success || typeof parsed.data !== 'object' || parsed.data === null || Array.isArray(parsed.data))
-    return undefined
-  const row = parsed.data
-  const connectionId = ConnectionIdSchema.safeParse(row['connectionId'])
-  const channelId = ChannelIdSchema.safeParse(row['channelId'])
-  const episodeId = EpisodeIdSchema.safeParse(row['episodeId'])
-  const agentId = AgentIdSchema.safeParse(row['agentId'])
-  const kind = row['kind']
-  const state = row['state']
-  if (
-    typeof row['id'] !== 'string' ||
-    !connectionId.success ||
-    !channelId.success ||
-    !episodeId.success ||
-    !agentId.success ||
-    typeof row['clientRequestId'] !== 'string' ||
-    (kind !== 'retract-message' && kind !== 'nudge-member') ||
-    typeof row['targetId'] !== 'string' ||
-    (state !== 'planned' &&
-      state !== 'sending' &&
-      state !== 'succeeded' &&
-      state !== 'partially-succeeded' &&
-      state !== 'failed' &&
-      state !== 'unknown') ||
-    typeof row['createdAt'] !== 'number' ||
-    typeof row['updatedAt'] !== 'number'
-  )
-    return undefined
-  return {
-    id: row['id'],
-    connectionId: connectionId.data,
-    channelId: channelId.data,
-    episodeId: episodeId.data,
-    agentId: agentId.data,
-    clientRequestId: row['clientRequestId'],
-    kind,
-    targetId: row['targetId'],
-    state,
-    ...(row['result'] === undefined ? {} : { result: parseJsonValue(row['result']) }),
-    createdAt: row['createdAt'],
-    updatedAt: row['updatedAt'],
-  }
 }
 
 const deterministicHandoffFallback = (
@@ -559,25 +400,6 @@ const isTriggered = (
   }
 }
 
-const supportsPart = (adapter: AdapterConnectionRuntime, part: MessagePart): boolean => {
-  switch (part.type) {
-    case 'text':
-      return adapter.capabilities.outbound.text
-    case 'mention':
-      return adapter.capabilities.outbound.mentions
-    case 'image':
-      return adapter.capabilities.outbound.images
-    case 'file':
-      return adapter.capabilities.outbound.files
-    case 'audio':
-      return adapter.capabilities.outbound.audio
-    case 'quote':
-      return adapter.capabilities.outbound.replies
-    case 'rich':
-      return false
-  }
-}
-
 /** Only display-name changes are model/runtime neutral in M1; every other change requires M2 rollover. */
 export const isSessionCompatibleRevision = (previous: AgentRevisionRecord, target: AgentRevisionRecord): boolean =>
   previous.agentId === target.agentId &&
@@ -589,6 +411,9 @@ export const isSessionCompatibleRevision = (previous: AgentRevisionRecord, targe
 
 /** Single-lane M1 Runtime. M2 extends the same persisted states with injection and recovery. */
 export class ChannelRuntime {
+  readonly #feedback: ProcessingFeedback
+  readonly #interactions: ChannelInteractions
+  readonly #delivery: ChannelDelivery
   readonly #core: CoreService
   readonly #coreRepository: CoreRepository
   readonly #runtimeRepository: RuntimeRepository
@@ -600,22 +425,9 @@ export class ChannelRuntime {
   readonly #now: () => number
   readonly #nextUlid: () => string
   readonly #idleRolloverMs: number | false
-  readonly #adapterState: AdapterRuntimeStateStore | undefined
   readonly #lanes = new Map<string, Promise<void>>()
   readonly #bindingTransitions = new Map<ChannelId, Promise<void>>()
   readonly #factListeners = new Set<(fact: ChannelFact) => void>()
-  readonly #feedbackLeases = new Map<string, ProcessingFeedbackLease>()
-  readonly #feedbackDisabledConnections = new Set<ConnectionId>()
-  readonly #feedbackTasks = new Set<Promise<void>>()
-  readonly #feedbackCleanups = new Map<string, Promise<void>>()
-  readonly #feedbackEndReasons = new Map<
-    EpisodeId,
-    'idle' | 'error' | 'cancelled' | 'timeout' | 'shutdown' | 'recovery'
-  >()
-  readonly #feedbackPersistence = new Map<ConnectionId, Promise<void>>()
-  readonly #interactionIntents = new Map<string, DurableInteractionIntent>()
-  readonly #interactionLoadedConnections = new Set<ConnectionId>()
-  readonly #interactionPersistence = new Map<ConnectionId, Promise<void>>()
 
   constructor(
     core: CoreService,
@@ -635,7 +447,27 @@ export class ChannelRuntime {
     this.#now = options.now ?? Date.now
     this.#nextUlid = options.nextUlid ?? monotonicFactory()
     this.#idleRolloverMs = options.idleRolloverMs ?? 6 * 60 * 60 * 1000
-    this.#adapterState = options.adapterState
+    this.#interactions = new ChannelInteractions(
+      core,
+      coreRepository,
+      runtimeRepository,
+      options.resolveAdapter,
+      options.adapterState,
+      () => this.#timestamp(),
+      this.#nextUlid,
+    )
+    this.#feedback = new ProcessingFeedback(coreRepository, options.resolveAdapter, options.adapterState, () =>
+      this.#timestamp(),
+    )
+    this.#delivery = new ChannelDelivery(
+      coreRepository,
+      runtimeRepository,
+      options.resolveAdapter,
+      this.#feedback,
+      () => this.#timestamp(),
+      this.#nextUlid,
+      (fact) => this.#publishFact(fact),
+    )
     if (this.#idleRolloverMs !== false && (!Number.isSafeInteger(this.#idleRolloverMs) || this.#idleRolloverMs <= 0)) {
       throw new TypeError('idleRolloverMs must be a positive integer or false.')
     }
@@ -674,29 +506,14 @@ export class ChannelRuntime {
       inserted: commit.inserted,
     }
   }
-
-  /** Loads durable leases and removes stale platform feedback once Adapters are mounted. */
   async recoverProcessingFeedback(): Promise<void> {
-    if (!this.#adapterState) return
-    for (const connectionId of this.#coreRepository.listConnectionIdsByAdapter()) {
-      await this.#ensureInteractionsLoaded(connectionId)
-      const raw = await this.#adapterState.load(connectionId, FEEDBACK_STATE_KEY)
-      if (!Array.isArray(raw)) continue
-      for (const candidate of raw) {
-        const lease = parseFeedbackLease(candidate)
-        if (!lease) continue
-        if (lease.connectionId !== connectionId) continue
-        this.#feedbackLeases.set(lease.id, lease)
-        this.#trackFeedbackTask(this.#cleanupFeedbackLease(lease.id, 'recovery'))
-      }
-    }
+    for (const connectionId of this.#coreRepository.listConnectionIdsByAdapter())
+      await this.#interactions.ensureInteractionsLoaded(connectionId)
+    await this.#feedback.recoverProcessingFeedback()
   }
 
-  /** Best-effort feedback cleanup before Adapter shutdown, then waits for owned cleanup tasks. */
   async stopProcessingFeedback(): Promise<void> {
-    for (const lease of this.#feedbackLeases.values())
-      this.#trackFeedbackTask(this.#cleanupFeedbackLease(lease.id, 'shutdown'))
-    await Promise.allSettled([...this.#feedbackTasks])
+    await this.#feedback.stopProcessingFeedback()
   }
 
   /** Waits for all current Session work on the supplied Connections to reach an idle checkpoint. */
@@ -725,149 +542,20 @@ export class ChannelRuntime {
       .map((outcome): unknown => outcome.reason)
     if (failures.length) throw new AggregateError(failures, 'Adapter 连接无法进入安全间隙。')
   }
-
-  async retractChannelMessage(input: {
+  retractChannelMessage(input: {
     readonly episodeId: EpisodeId
     readonly logicalMessageId: LogicalMessageId
     readonly clientRequestId: string
   }): Promise<ChannelInteractionResult> {
-    const episode = this.#requireInteractionEpisode(input.episodeId)
-    const channel = this.#coreRepository.getChannel(episode.channelId)!
-    await this.#ensureInteractionsLoaded(channel.connectionId)
-    const existing = this.#findInteraction(episode, input.clientRequestId)
-    if (existing) return this.#interactionResult(existing)
-    const outbound = this.#runtimeRepository.findOutboundByLogicalMessageId(channel.id, input.logicalMessageId)
-    if (!outbound) throw new Error('当前频道找不到这条智能体消息。')
-    const sourceEpisode = this.#runtimeRepository.getEpisode(outbound.intent.episodeId)
-    if (!sourceEpisode || sourceEpisode.channelId !== channel.id || sourceEpisode.agentId !== episode.agentId) {
-      throw new Error('只能撤回当前频道中该智能体自己发送的消息。')
-    }
-    const adapter = this.#resolveAdapter(channel.connectionId)
-    if (!adapter?.interactions?.retractOwnMessage) throw new Error('当前连接不支持消息撤回。')
-    const intent = await this.#planInteraction({
-      episode,
-      connectionId: channel.connectionId,
-      clientRequestId: input.clientRequestId,
-      kind: 'retract-message',
-      targetId: input.logicalMessageId,
-    })
-    const deliveries = outbound.deliveries.flatMap((delivery) =>
-      delivery.receipt?.status === 'sent' && delivery.receipt.platformMessageId !== undefined
-        ? [{ deliveryId: delivery.id, platformMessageId: delivery.receipt.platformMessageId }]
-        : [],
-    )
-    if (deliveries.length === 0) {
-      return this.#settleInteraction(intent, 'failed', '这条消息没有可撤回的已确认平台投递。')
-    }
-    const outcomes = [] as Array<{ platformMessageId: string; status: string; message?: string }>
-    for (const delivery of deliveries) {
-      const outcome = await adapter.interactions
-        .retractOwnMessage({
-          channelId: channel.id,
-          platformMessageId: delivery.platformMessageId,
-          clientRequestId: `${input.clientRequestId}:${delivery.deliveryId}`,
-        })
-        .catch((error: unknown) => ({
-          status: 'failed' as const,
-          message: error instanceof Error ? error.message : String(error),
-        }))
-      outcomes.push({
-        platformMessageId: delivery.platformMessageId,
-        status: outcome.status,
-        ...('message' in outcome ? { message: outcome.message } : {}),
-      })
-      if (outcome.status === 'succeeded') {
-        this.#core.appendInbound({
-          connectionId: channel.connectionId,
-          channelId: channel.id,
-          adapterKey: this.#coreRepository.getConnection(channel.connectionId)!.adapterKey,
-          kind: 'message-deleted',
-          activityKey: 'message-recalled',
-          targetPlatformMessageId: delivery.platformMessageId,
-          parts: [
-            {
-              type: 'rich',
-              adapterKey: this.#coreRepository.getConnection(channel.connectionId)!.adapterKey,
-              kind: 'message-recalled',
-              summary: '智能体撤回了自己发送的一条消息。',
-            },
-          ],
-          platformTimestamp: this.#timestamp(),
-          receivedAt: this.#timestamp(),
-          dedupeKey: `interaction:${intent.id}:${delivery.deliveryId}`,
-          facts: { selfInteraction: true, interactionIntentId: intent.id },
-        })
-      }
-    }
-    const succeeded = outcomes.filter(({ status }) => status === 'succeeded').length
-    const unknown = outcomes.some(({ status }) => status === 'unknown')
-    const status: ChannelInteractionStatus =
-      succeeded === outcomes.length
-        ? 'succeeded'
-        : succeeded > 0
-          ? 'partially-succeeded'
-          : unknown
-            ? 'unknown'
-            : 'failed'
-    return this.#settleInteraction(
-      intent,
-      status,
-      status === 'succeeded'
-        ? '消息已撤回。'
-        : status === 'partially-succeeded'
-          ? '消息只撤回了部分平台投递。'
-          : status === 'unknown'
-            ? '平台结果不明确；为避免重复副作用，不会自动重试。'
-            : '消息撤回失败。',
-      outcomes,
-    )
+    return this.#interactions.retractChannelMessage(input)
   }
 
-  async nudgeChannelMember(input: {
+  nudgeChannelMember(input: {
     readonly episodeId: EpisodeId
     readonly memberId: ChannelMemberId
     readonly clientRequestId: string
   }): Promise<ChannelInteractionResult> {
-    const episode = this.#requireInteractionEpisode(input.episodeId)
-    const channel = this.#coreRepository.getChannel(episode.channelId)!
-    const member = this.#coreRepository.getChannelMember(input.memberId)
-    if (!member || member.channelId !== channel.id) throw new Error('只能戳一戳当前频道中的已知成员。')
-    await this.#ensureInteractionsLoaded(channel.connectionId)
-    const existing = this.#findInteraction(episode, input.clientRequestId)
-    if (existing) return this.#interactionResult(existing)
-    const now = this.#timestamp()
-    const recent = [...this.#interactionIntents.values()].filter(
-      (intent) => intent.channelId === channel.id && intent.kind === 'nudge-member' && now - intent.createdAt < 60_000,
-    )
-    if (recent.some((intent) => intent.targetId === input.memberId && now - intent.createdAt < 30_000)) {
-      throw new Error('同一成员 30 秒内只能戳一次。')
-    }
-    if (recent.length >= 3) throw new Error('当前频道每分钟最多戳三次。')
-    const adapter = this.#resolveAdapter(channel.connectionId)
-    if (!adapter?.interactions?.nudgeMember) throw new Error('当前连接不支持戳一戳。')
-    const intent = await this.#planInteraction({
-      episode,
-      connectionId: channel.connectionId,
-      clientRequestId: input.clientRequestId,
-      kind: 'nudge-member',
-      targetId: input.memberId,
-    })
-    const outcome = await adapter.interactions
-      .nudgeMember({
-        channelId: channel.id,
-        memberId: input.memberId,
-        clientRequestId: input.clientRequestId,
-      })
-      .catch((error: unknown) => ({
-        status: 'failed' as const,
-        message: error instanceof Error ? error.message : String(error),
-      }))
-    const status = outcome.status === 'succeeded' ? 'succeeded' : outcome.status === 'unknown' ? 'unknown' : 'failed'
-    return this.#settleInteraction(
-      intent,
-      status,
-      outcome.status === 'succeeded' ? '已戳一戳该成员。' : 'message' in outcome ? outcome.message : '戳一戳失败。',
-    )
+    return this.#interactions.nudgeChannelMember(input)
   }
 
   subscribeFacts(listener: (fact: ChannelFact) => void): () => void {
@@ -891,9 +579,9 @@ export class ChannelRuntime {
         if (current !== undefined && current.agentId !== input.agentId) {
           const episode = this.#runtimeRepository.getActiveEpisode(input.channelId, current.agentId)
           if (episode?.dshSessionId !== undefined) {
-            this.#feedbackEndReasons.set(episode.id, 'cancelled')
+            this.#feedback.markEndReason(episode.id, 'cancelled')
             await this.#sessionDriver.cancelSession(episode.dshSessionId, 'binding-replaced')
-            await this.#cleanupEpisodeFeedback(episode.id)
+            await this.#feedback.cleanupEpisodeFeedback(episode.id)
             this.#runtimeRepository.closeEpisode(
               episode.id,
               'binding-replaced',
@@ -918,9 +606,9 @@ export class ChannelRuntime {
       await this.#withLane(channelId, current.agentId, async () => {
         const episode = this.#runtimeRepository.getActiveEpisode(channelId, current.agentId)
         if (episode?.status === 'active' && episode.dshSessionId !== undefined) {
-          this.#feedbackEndReasons.set(episode.id, 'cancelled')
+          this.#feedback.markEndReason(episode.id, 'cancelled')
           await this.#sessionDriver.cancelSession(episode.dshSessionId, 'stopped')
-          await this.#cleanupEpisodeFeedback(episode.id)
+          await this.#feedback.cleanupEpisodeFeedback(episode.id)
           this.#runtimeRepository.closeEpisode(
             episode.id,
             'stopped',
@@ -941,9 +629,9 @@ export class ChannelRuntime {
       await this.#withLane(channelId, current.agentId, async () => {
         const episode = this.#runtimeRepository.getActiveEpisode(channelId, current.agentId)
         if (episode?.dshSessionId !== undefined) {
-          this.#feedbackEndReasons.set(episode.id, 'cancelled')
+          this.#feedback.markEndReason(episode.id, 'cancelled')
           await this.#sessionDriver.cancelSession(episode.dshSessionId, 'stopped')
-          await this.#cleanupEpisodeFeedback(episode.id)
+          await this.#feedback.cleanupEpisodeFeedback(episode.id)
         }
         if (episode !== undefined) {
           this.#runtimeRepository.closeEpisode(
@@ -969,9 +657,9 @@ export class ChannelRuntime {
       await this.#withLane(channelId, current.agentId, async () => {
         const episode = this.#runtimeRepository.getActiveEpisode(channelId, current.agentId)
         if (episode?.dshSessionId !== undefined) {
-          this.#feedbackEndReasons.set(episode.id, 'cancelled')
+          this.#feedback.markEndReason(episode.id, 'cancelled')
           await this.#sessionDriver.cancelSession(episode.dshSessionId, 'channel-deleted')
-          await this.#cleanupEpisodeFeedback(episode.id)
+          await this.#feedback.cleanupEpisodeFeedback(episode.id)
         }
         if (episode !== undefined) {
           this.#runtimeRepository.closeEpisode(
@@ -985,114 +673,8 @@ export class ChannelRuntime {
       })
     })
   }
-
-  async sendMessage(input: SendMessageInput): Promise<SendMessageResult> {
-    const episode = this.#runtimeRepository.getEpisode(input.episodeId)
-    if (!episode || episode.status !== 'active') throw new Error(`Unknown or inactive Episode: ${input.episodeId}`)
-    const channel = this.#coreRepository.getChannel(episode.channelId)
-    if (!channel) throw new Error(`Episode channel no longer exists: ${episode.channelId}`)
-    const adapter = this.#resolveAdapter(channel.connectionId)
-    if (!adapter) throw new Error(`Connection adapter is not running: ${channel.connectionId}`)
-    if (input.parts.length === 0) throw new Error('send_channel_message requires at least one content part.')
-    for (const part of input.parts) {
-      if (!supportsPart(adapter, part)) throw new Error(`Adapter does not support message part: ${part.type}`)
-    }
-
-    if (input.clientRequestId !== undefined) {
-      const existing = this.#runtimeRepository.findOutboundByClientRequest(
-        episode.agentId,
-        episode.channelId,
-        input.clientRequestId,
-      )
-      if (existing) return this.#sendResult(existing)
-    }
-
-    const intentId = OutboundIntentIdSchema.parse(`out_${this.#nextUlid()}`)
-    const logicalMessageId = LogicalMessageIdSchema.parse(`msg_${this.#nextUlid()}`)
-    const originEvent =
-      episode.lastAdmittedEventId === undefined
-        ? undefined
-        : this.#coreRepository.getChannelEvent(episode.lastAdmittedEventId)
-    const activeFeedback = [...this.#feedbackLeases.values()]
-      .filter((lease) => lease.episodeId === episode.id && lease.state === 'active')
-      .sort((left, right) => right.createdAt - left.createdAt)[0]
-    const plans = adapter.planOutbound
-      ? await adapter.planOutbound({
-          connectionId: channel.connectionId,
-          channelId: channel.id,
-          parts: input.parts,
-          ...(input.replyTo === undefined ? {} : { replyTo: input.replyTo }),
-          ...(originEvent === undefined
-            ? {}
-            : {
-                origin: {
-                  ...(originEvent.platformMessageId === undefined
-                    ? {}
-                    : { platformMessageId: originEvent.platformMessageId }),
-                  ...(originEvent.activityKey === undefined ? {} : { activityKey: originEvent.activityKey }),
-                  receivedAt: originEvent.receivedAt,
-                },
-              }),
-          ...(activeFeedback === undefined
-            ? {}
-            : {
-                processingFeedback: {
-                  leaseId: activeFeedback.id,
-                  platformMessageId: activeFeedback.platformMessageId,
-                },
-              }),
-        })
-      : adapter.capabilities.outbound.mixedContent
-        ? [{ parts: input.parts }]
-        : input.parts.map((part) => ({ parts: [part] }))
-    if (plans.length === 0 || plans.some(({ parts }) => parts.length === 0)) {
-      throw new Error('Adapter outbound planner returned an empty PhysicalDelivery.')
-    }
-    const feedbackConsumers = plans.filter(({ consumesProcessingFeedback }) => consumesProcessingFeedback === true)
-    if (feedbackConsumers.length > 1 || (feedbackConsumers.length === 1 && activeFeedback === undefined)) {
-      throw new Error('Adapter outbound planner returned an invalid processing-feedback consumer.')
-    }
-    for (const { parts } of plans) {
-      for (const part of parts) {
-        if (!supportsPart(adapter, part)) throw new Error(`Adapter planner produced an unsupported part: ${part.type}`)
-        if (
-          part.type === 'text' &&
-          adapter.capabilities.outbound.maxTextLength !== undefined &&
-          [...part.text].length > adapter.capabilities.outbound.maxTextLength
-        ) {
-          throw new Error('Adapter outbound planner produced over-limit text.')
-        }
-      }
-    }
-    const intent: OutboundIntentRecord = {
-      id: intentId,
-      logicalMessageId,
-      agentRevisionId: episode.agentRevisionId,
-      episodeId: episode.id,
-      ...(input.sourceTurnId === undefined ? {} : { sourceTurnId: input.sourceTurnId }),
-      parts: input.parts,
-      ...(input.replyTo === undefined ? {} : { replyTo: input.replyTo }),
-      ...(input.clientRequestId === undefined ? {} : { clientRequestId: input.clientRequestId }),
-      state: 'planned',
-      createdAt: this.#timestamp(),
-    }
-    const deliveries: PhysicalDeliveryRecord[] = plans.map(
-      ({ parts, adapterContext, consumesProcessingFeedback }, sequence) => ({
-        id: PhysicalDeliveryIdSchema.parse(`phy_${this.#nextUlid()}`),
-        intentId,
-        sequence,
-        parts,
-        ...(adapterContext === undefined ? {} : { adapterContext }),
-        ...(consumesProcessingFeedback === true && activeFeedback !== undefined
-          ? { processingFeedbackLeaseId: activeFeedback.id }
-          : {}),
-        state: 'planned',
-      }),
-    )
-    this.#runtimeRepository.createOutboundPlan(intent, deliveries)
-    this.#publishFact({ channelId: channel.id, kind: 'outbound', sourceId: intent.id })
-    const settled = await this.#dispatchOutbound(intent.id, input.signal ?? new AbortController().signal)
-    return this.#sendResult(settled.snapshot)
+  sendMessage(input: SendMessageInput): Promise<SendMessageResult> {
+    return this.#delivery.sendMessage(input)
   }
 
   async sendAdminConsoleMessage(input: {
@@ -1153,9 +735,9 @@ export class ChannelRuntime {
         if (episode.status === 'opening' && handoff !== undefined) {
           const previous = this.#runtimeRepository.getEpisode(handoff.fromEpisodeId)
           if (previous?.dshSessionId !== undefined) {
-            this.#feedbackEndReasons.set(previous.id, 'cancelled')
+            this.#feedback.markEndReason(previous.id, 'cancelled')
             await this.#sessionDriver.cancelSession(previous.dshSessionId, previous.closeReason ?? 'manual')
-            await this.#cleanupEpisodeFeedback(previous.id)
+            await this.#feedback.cleanupEpisodeFeedback(previous.id)
           }
         }
         const recentEvents =
@@ -1228,7 +810,7 @@ export class ChannelRuntime {
     }
 
     for (const outboundId of this.#runtimeRepository.listUnsettledOutboundIds()) {
-      const result = await this.#dispatchOutbound(outboundId, new AbortController().signal)
+      const result = await this.#delivery.dispatchOutbound(outboundId, new AbortController().signal)
       report.recoveredOutbounds += 1
       report.unknownDeliveries += result.unknownDeliveries
     }
@@ -1246,9 +828,9 @@ export class ChannelRuntime {
       if (!episode || episode.status !== 'active' || !episode.dshSessionId) {
         throw new Error(`Episode is not active: ${episodeId}`)
       }
-      this.#feedbackEndReasons.set(episode.id, 'cancelled')
+      this.#feedback.markEndReason(episode.id, 'cancelled')
       await this.#sessionDriver.cancelSession(episode.dshSessionId, reason)
-      await this.#cleanupEpisodeFeedback(episode.id)
+      await this.#feedback.cleanupEpisodeFeedback(episode.id)
       return this.#runtimeRepository.closeEpisode(
         episode.id,
         reason,
@@ -1282,9 +864,9 @@ export class ChannelRuntime {
       if (!anchor) throw new Error(`Episode anchor Event no longer exists: ${anchorId}`)
       const reason = mode === 'clear' ? 'context-cleared' : 'context-compacted'
 
-      this.#feedbackEndReasons.set(episode.id, 'cancelled')
+      this.#feedback.markEndReason(episode.id, 'cancelled')
       await this.#sessionDriver.cancelSession(episode.dshSessionId, reason)
-      await this.#cleanupEpisodeFeedback(episode.id)
+      await this.#feedback.cleanupEpisodeFeedback(episode.id)
       if (mode === 'clear') {
         return {
           mode,
@@ -1465,7 +1047,7 @@ export class ChannelRuntime {
     episode = await this.#applyCurrentCompatibleRevision(episode)
     const dshSessionId = episode.dshSessionId
     if (dshSessionId === undefined) throw new Error(`Episode has no DSH Session after revision switch: ${episode.id}`)
-    const feedbackLeaseId = await this.#startProcessingFeedback(binding, episode, event)
+    const feedbackLeaseId = await this.#feedback.startProcessingFeedback(binding, episode, event)
     const candidateEvents = this.#candidateTriggeredEvents(binding, event)
     const existingAdmission = this.#runtimeRepository
       .listRecoverableAdmissions(episode.id)
@@ -1508,295 +1090,11 @@ export class ChannelRuntime {
       if (lastEventId === undefined) throw new Error(`Admission has no events: ${admission.id}`)
       this.#runtimeRepository.completeAdmission(admission.id, result.dshMessageId, lastEventId)
       if (feedbackLeaseId !== undefined) {
-        this.#trackFeedbackTask(
-          (this.#sessionDriver.whenIdle?.(dshSessionId) ?? Promise.resolve()).then(() =>
-            this.#cleanupEpisodeFeedback(episode.id),
-          ),
-        )
+        this.#feedback.finishWhenIdle(episode.id, this.#sessionDriver.whenIdle?.(dshSessionId) ?? Promise.resolve())
       }
     } catch (error) {
-      if (feedbackLeaseId !== undefined) await this.#cleanupFeedbackLease(feedbackLeaseId, 'error')
+      if (feedbackLeaseId !== undefined) await this.#feedback.cleanupFeedbackLease(feedbackLeaseId, 'error')
       throw error
-    }
-  }
-
-  async #startProcessingFeedback(
-    binding: BindingRecord,
-    episode: EpisodeRecord,
-    event: ChannelEventRecord,
-  ): Promise<string | undefined> {
-    if (
-      binding.processingFeedback !== 'auto' ||
-      event.kind !== 'message-created' ||
-      event.activityKey !== undefined ||
-      event.platformMessageId === undefined
-    )
-      return undefined
-    const channel = this.#coreRepository.getChannel(event.channelId)
-    if (!channel || channel.kind !== 'group' || this.#feedbackDisabledConnections.has(channel.connectionId))
-      return undefined
-    const adapter = this.#resolveAdapter(channel.connectionId)
-    if (!adapter?.interactions?.startProcessingFeedback) return undefined
-    const now = this.#timestamp()
-    const lease: ProcessingFeedbackLease = {
-      id: `feedback:${episode.id}:${event.id}`,
-      connectionId: channel.connectionId,
-      channelId: channel.id,
-      episodeId: episode.id,
-      platformMessageId: event.platformMessageId,
-      state: 'planned',
-      attempts: 0,
-      createdAt: now,
-      updatedAt: now,
-    }
-    this.#feedbackLeases.set(lease.id, lease)
-    await this.#persistFeedbackLeases(channel.connectionId)
-    const outcome = await adapter.interactions
-      .startProcessingFeedback({ leaseId: lease.id, channelId: channel.id, platformMessageId: event.platformMessageId })
-      .catch((error: unknown) => ({
-        status: 'failed' as const,
-        message: error instanceof Error ? error.message : String(error),
-      }))
-    if (outcome.status === 'unsupported') {
-      this.#feedbackDisabledConnections.add(channel.connectionId)
-      this.#feedbackLeases.delete(lease.id)
-      await this.#persistFeedbackLeases(channel.connectionId)
-      return undefined
-    }
-    this.#feedbackLeases.set(lease.id, {
-      ...lease,
-      state: outcome.status === 'succeeded' ? 'active' : 'cleanup-pending',
-      updatedAt: this.#timestamp(),
-    })
-    await this.#persistFeedbackLeases(channel.connectionId)
-    return lease.id
-  }
-
-  async #cleanupEpisodeFeedback(
-    episodeId: EpisodeId,
-    reason?: 'idle' | 'error' | 'cancelled' | 'timeout' | 'shutdown' | 'recovery',
-  ): Promise<void> {
-    if (reason !== undefined) this.#feedbackEndReasons.set(episodeId, reason)
-    const resolvedReason = this.#feedbackEndReasons.get(episodeId) ?? 'idle'
-    const leases = [...this.#feedbackLeases.values()].filter((lease) => lease.episodeId === episodeId)
-    await Promise.allSettled(leases.map((lease) => this.#cleanupFeedbackLease(lease.id, resolvedReason)))
-    if (![...this.#feedbackLeases.values()].some((lease) => lease.episodeId === episodeId)) {
-      this.#feedbackEndReasons.delete(episodeId)
-    }
-  }
-
-  async #cleanupFeedbackLease(
-    leaseId: string,
-    reason: 'idle' | 'error' | 'cancelled' | 'timeout' | 'shutdown' | 'recovery',
-  ): Promise<void> {
-    const current = this.#feedbackCleanups.get(leaseId)
-    if (current) return current
-    const cleanup = this.#performFeedbackCleanup(leaseId, reason)
-    const tracked = cleanup.finally(() => {
-      if (this.#feedbackCleanups.get(leaseId) === tracked) this.#feedbackCleanups.delete(leaseId)
-    })
-    this.#feedbackCleanups.set(leaseId, tracked)
-    return tracked
-  }
-
-  async #performFeedbackCleanup(
-    leaseId: string,
-    reason: 'idle' | 'error' | 'cancelled' | 'timeout' | 'shutdown' | 'recovery',
-  ): Promise<void> {
-    const lease = this.#feedbackLeases.get(leaseId)
-    if (!lease) return
-    if (this.#timestamp() - lease.createdAt >= FEEDBACK_MAX_AGE_MS) return
-    const adapter = this.#resolveAdapter(lease.connectionId)
-    if (!adapter?.interactions?.finishProcessingFeedback) return
-    const outcome = await adapter.interactions
-      .finishProcessingFeedback({
-        leaseId: lease.id,
-        channelId: lease.channelId,
-        platformMessageId: lease.platformMessageId,
-        reason,
-      })
-      .catch((error: unknown) => ({
-        status: 'failed' as const,
-        message: error instanceof Error ? error.message : String(error),
-      }))
-    if (outcome.status === 'succeeded' || outcome.status === 'unsupported') {
-      if (outcome.status === 'unsupported') this.#feedbackDisabledConnections.add(lease.connectionId)
-      this.#feedbackLeases.delete(lease.id)
-      await this.#persistFeedbackLeases(lease.connectionId)
-      return
-    }
-    const attempts = lease.attempts + 1
-    this.#feedbackLeases.set(lease.id, {
-      ...lease,
-      state: 'cleanup-pending',
-      attempts,
-      updatedAt: this.#timestamp(),
-    })
-    await this.#persistFeedbackLeases(lease.connectionId)
-    const delay = FEEDBACK_RETRY_DELAYS_MS[attempts - 1]
-    if (delay === undefined) {
-      this.#feedbackDisabledConnections.add(lease.connectionId)
-      return
-    }
-    this.#trackFeedbackTask(
-      new Promise<void>((resolve) => setTimeout(resolve, delay)).then(() =>
-        this.#cleanupFeedbackLease(lease.id, reason),
-      ),
-    )
-  }
-
-  async #persistFeedbackLeases(connectionId: ConnectionId): Promise<void> {
-    if (!this.#adapterState) return
-    const previous = this.#feedbackPersistence.get(connectionId) ?? Promise.resolve()
-    const next = previous
-      .catch(() => undefined)
-      .then(async () => {
-        const leases = [...this.#feedbackLeases.values()].filter((lease) => lease.connectionId === connectionId)
-        if (leases.length === 0) await this.#adapterState!.clear(connectionId, FEEDBACK_STATE_KEY)
-        else await this.#adapterState!.save(connectionId, FEEDBACK_STATE_KEY, parseJsonValue(leases), this.#timestamp())
-      })
-    this.#feedbackPersistence.set(connectionId, next)
-    try {
-      await next
-    } finally {
-      if (this.#feedbackPersistence.get(connectionId) === next) this.#feedbackPersistence.delete(connectionId)
-    }
-  }
-
-  #trackFeedbackTask(task: Promise<void>): void {
-    this.#feedbackTasks.add(task)
-    void task.finally(() => this.#feedbackTasks.delete(task)).catch(() => undefined)
-  }
-
-  #requireInteractionEpisode(episodeId: EpisodeId): EpisodeRecord {
-    const episode = this.#runtimeRepository.getEpisode(episodeId)
-    if (!episode || episode.status !== 'active') throw new Error('互动工具需要当前活动频道会话。')
-    const binding = this.#coreRepository.getBinding(episode.channelId)
-    if (!binding || binding.agentId !== episode.agentId) throw new Error('当前会话已不再拥有这个频道。')
-    if (!this.#coreRepository.getChannel(episode.channelId)) throw new Error('当前频道不存在。')
-    return episode
-  }
-
-  async #planInteraction(input: {
-    readonly episode: EpisodeRecord
-    readonly connectionId: ConnectionId
-    readonly clientRequestId: string
-    readonly kind: DurableInteractionIntent['kind']
-    readonly targetId: string
-  }): Promise<DurableInteractionIntent> {
-    if (!input.clientRequestId.trim()) throw new Error('互动请求必须提供 clientRequestId。')
-    const now = this.#timestamp()
-    const planned: DurableInteractionIntent = {
-      id: `interaction:${input.episode.id}:${this.#nextUlid()}`,
-      connectionId: input.connectionId,
-      channelId: input.episode.channelId,
-      episodeId: input.episode.id,
-      agentId: input.episode.agentId,
-      clientRequestId: input.clientRequestId,
-      kind: input.kind,
-      targetId: input.targetId,
-      state: 'planned',
-      createdAt: now,
-      updatedAt: now,
-    }
-    this.#interactionIntents.set(planned.id, planned)
-    await this.#persistInteractionIntents(input.connectionId)
-    const sending = { ...planned, state: 'sending' as const, updatedAt: this.#timestamp() }
-    this.#interactionIntents.set(sending.id, sending)
-    await this.#persistInteractionIntents(input.connectionId)
-    return sending
-  }
-
-  async #settleInteraction(
-    intent: DurableInteractionIntent,
-    status: ChannelInteractionStatus,
-    message: string,
-    outcomes?: readonly { readonly platformMessageId: string; readonly status: string; readonly message?: string }[],
-  ): Promise<ChannelInteractionResult> {
-    const result: ChannelInteractionResult = {
-      intentId: intent.id,
-      status,
-      message,
-      ...(outcomes === undefined ? {} : { outcomes }),
-    }
-    this.#interactionIntents.set(intent.id, {
-      ...intent,
-      state: status,
-      result: parseJsonValue(result),
-      updatedAt: this.#timestamp(),
-    })
-    await this.#persistInteractionIntents(intent.connectionId)
-    return result
-  }
-
-  #findInteraction(episode: EpisodeRecord, clientRequestId: string): DurableInteractionIntent | undefined {
-    return [...this.#interactionIntents.values()].find(
-      (intent) =>
-        intent.agentId === episode.agentId &&
-        intent.channelId === episode.channelId &&
-        intent.clientRequestId === clientRequestId,
-    )
-  }
-
-  #interactionResult(intent: DurableInteractionIntent): ChannelInteractionResult {
-    const result = parseChannelInteractionResult(intent.result)
-    if (result) return result
-    return {
-      intentId: intent.id,
-      status: 'unknown',
-      message: '该互动请求已经提交但尚未得到确定结果；不会重复执行。',
-    }
-  }
-
-  async #ensureInteractionsLoaded(connectionId: ConnectionId): Promise<void> {
-    if (this.#interactionLoadedConnections.has(connectionId) || !this.#adapterState) return
-    this.#interactionLoadedConnections.add(connectionId)
-    const raw = await this.#adapterState.load(connectionId, INTERACTION_STATE_KEY)
-    if (!Array.isArray(raw)) return
-    let changed = false
-    for (const candidate of raw) {
-      let intent = parseInteractionIntent(candidate)
-      if (!intent || intent.connectionId !== connectionId) continue
-      if (intent.state === 'planned' || intent.state === 'sending') {
-        const result: ChannelInteractionResult = {
-          intentId: intent.id,
-          status: 'unknown',
-          message: 'NekroNXT 重启时该互动仍未得到确定回执；不会自动重试。',
-        }
-        intent = {
-          ...intent,
-          state: 'unknown',
-          result: parseJsonValue(result),
-          updatedAt: this.#timestamp(),
-        }
-        changed = true
-      }
-      this.#interactionIntents.set(intent.id, intent)
-    }
-    if (changed) await this.#persistInteractionIntents(connectionId)
-  }
-
-  async #persistInteractionIntents(connectionId: ConnectionId): Promise<void> {
-    if (!this.#adapterState) return
-    const previous = this.#interactionPersistence.get(connectionId) ?? Promise.resolve()
-    const next = previous
-      .catch(() => undefined)
-      .then(async () => {
-        const intents = [...this.#interactionIntents.values()].filter((intent) => intent.connectionId === connectionId)
-        if (intents.length === 0) await this.#adapterState!.clear(connectionId, INTERACTION_STATE_KEY)
-        else
-          await this.#adapterState!.save(
-            connectionId,
-            INTERACTION_STATE_KEY,
-            parseJsonValue(intents),
-            this.#timestamp(),
-          )
-      })
-    this.#interactionPersistence.set(connectionId, next)
-    try {
-      await next
-    } finally {
-      if (this.#interactionPersistence.get(connectionId) === next) this.#interactionPersistence.delete(connectionId)
     }
   }
 
@@ -1896,9 +1194,9 @@ export class ChannelRuntime {
       nextEpisode,
       handoff,
     })
-    this.#feedbackEndReasons.set(episode.id, reason === 'idle-timeout' ? 'timeout' : 'cancelled')
+    this.#feedback.markEndReason(episode.id, reason === 'idle-timeout' ? 'timeout' : 'cancelled')
     await this.#sessionDriver.cancelSession(episode.dshSessionId, reason)
-    await this.#cleanupEpisodeFeedback(episode.id)
+    await this.#feedback.cleanupEpisodeFeedback(episode.id)
     const dshSessionId = await this.#sessionDriver.createSession({
       episodeId: nextEpisode.id,
       channelId: nextEpisode.channelId,
@@ -1939,88 +1237,6 @@ export class ChannelRuntime {
     return this.#runtimeRepository.updateEpisodeRevision(episode.id, episode.agentRevisionId, current.revision.id)
   }
 
-  async #dispatchOutbound(
-    id: OutboundIntentId,
-    signal: AbortSignal,
-  ): Promise<{ readonly snapshot: OutboundSnapshot; readonly unknownDeliveries: number }> {
-    let snapshot = this.#runtimeRepository.getOutbound(id)
-    const episode = this.#runtimeRepository.getEpisode(snapshot.intent.episodeId)
-    if (!episode) throw new Error(`Outbound Episode no longer exists: ${snapshot.intent.episodeId}`)
-    const channel = this.#coreRepository.getChannel(episode.channelId)
-    if (!channel) throw new Error(`Outbound channel no longer exists: ${episode.channelId}`)
-    const adapter = this.#resolveAdapter(channel.connectionId)
-    if (!adapter) throw new Error(`Connection adapter is not running: ${channel.connectionId}`)
-    if (snapshot.intent.state === 'planned') {
-      this.#runtimeRepository.markIntentSending(id)
-      snapshot = this.#runtimeRepository.getOutbound(id)
-    }
-    if (snapshot.intent.state !== 'sending') return { snapshot, unknownDeliveries: 0 }
-
-    let unknownDeliveries = 0
-    for (const delivery of snapshot.deliveries) {
-      if (delivery.state === 'sending') {
-        this.#runtimeRepository.recordDeliveryReceipt(
-          delivery.id,
-          {
-            status: 'unknown',
-            message: 'Host restarted after dispatch began and before an authoritative receipt was committed.',
-          },
-          this.#timestamp(),
-        )
-        if (delivery.processingFeedbackLeaseId !== undefined) {
-          await this.#settleConsumedFeedback(delivery.processingFeedbackLeaseId)
-        }
-        unknownDeliveries += 1
-        continue
-      }
-      if (delivery.state !== 'planned') continue
-      this.#runtimeRepository.markDeliverySending(delivery.id)
-      let receipt: AdapterDeliveryReceipt
-      try {
-        const request: PhysicalDeliveryRequest = {
-          deliveryId: delivery.id,
-          logicalMessageId: snapshot.intent.logicalMessageId,
-          connectionId: channel.connectionId,
-          channelId: channel.id,
-          parts: delivery.parts,
-          ...(snapshot.intent.replyTo === undefined ? {} : { replyTo: snapshot.intent.replyTo }),
-          ...(delivery.adapterContext === undefined ? {} : { adapterContext: delivery.adapterContext }),
-          ...(delivery.processingFeedbackLeaseId === undefined
-            ? {}
-            : (() => {
-                const lease = this.#feedbackLeases.get(delivery.processingFeedbackLeaseId)
-                return lease === undefined
-                  ? {}
-                  : {
-                      processingFeedback: {
-                        leaseId: lease.id,
-                        platformMessageId: lease.platformMessageId,
-                      },
-                    }
-              })()),
-        }
-        receipt = await adapter.deliver(request, signal)
-      } catch (error) {
-        receipt = {
-          status: 'unknown',
-          message: `Adapter delivery threw before an authoritative receipt: ${error instanceof Error ? error.message : String(error)}`,
-        }
-      }
-      this.#runtimeRepository.recordDeliveryReceipt(delivery.id, receipt, this.#timestamp())
-      if (delivery.processingFeedbackLeaseId !== undefined) {
-        if (receipt.status === 'sent' || receipt.status === 'unknown') {
-          await this.#settleConsumedFeedback(delivery.processingFeedbackLeaseId)
-        } else {
-          await this.#cleanupFeedbackLease(delivery.processingFeedbackLeaseId, 'error')
-        }
-      }
-    }
-    const state = this.#aggregate(this.#runtimeRepository.getOutbound(id).receipts)
-    this.#runtimeRepository.completeOutboundIntent(id, state)
-    this.#publishFact({ channelId: channel.id, kind: 'outbound', sourceId: id })
-    return { snapshot: this.#runtimeRepository.getOutbound(id), unknownDeliveries }
-  }
-
   #publishFact(fact: ChannelFact): void {
     for (const listener of this.#factListeners) {
       try {
@@ -2028,40 +1244,6 @@ export class ChannelRuntime {
       } catch {
         // A projection listener must never roll back an already committed fact.
       }
-    }
-  }
-
-  async #settleConsumedFeedback(leaseId: string): Promise<void> {
-    const lease = this.#feedbackLeases.get(leaseId)
-    if (!lease) return
-    this.#feedbackLeases.delete(leaseId)
-    await this.#persistFeedbackLeases(lease.connectionId)
-  }
-
-  #aggregate(receipts: readonly DeliveryReceiptRecord[]): OutboundState {
-    const statuses = receipts.map(({ receipt }) => receipt.status)
-    const sent = statuses.filter((status) => status === 'sent').length
-    if (sent === statuses.length) return 'sent'
-    if (sent > 0) return 'partially-sent'
-    if (statuses.includes('unknown')) return 'unknown'
-    return 'failed'
-  }
-
-  #sendResult(snapshot: OutboundSnapshot): SendMessageResult {
-    const status = snapshot.intent.state
-    switch (status) {
-      case 'sent':
-      case 'partially-sent':
-      case 'failed':
-      case 'unknown':
-        return {
-          logicalMessageId: snapshot.intent.logicalMessageId,
-          status,
-          receipts: snapshot.receipts,
-        }
-      case 'planned':
-      case 'sending':
-        throw new Error(`Outbound intent has not settled: ${snapshot.intent.id}`)
     }
   }
 

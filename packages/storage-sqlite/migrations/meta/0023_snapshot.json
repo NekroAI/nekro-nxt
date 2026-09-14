@@ -1,7 +1,7 @@
 {
   "version": "6",
   "dialect": "sqlite",
-  "id": "52059ee6-02a9-43a1-8f1b-7bef2cabf89f",
+  "id": "7833ac4f-79a3-44e0-9f83-4c0fcec6322e",
   "prevId": "2010b150-bf45-4eaf-aa13-a040fb8438eb",
   "tables": {
     "admission_events": {
@@ -1426,13 +1426,6 @@
           "notNull": true,
           "autoincrement": false
         },
-        "account_key": {
-          "name": "account_key",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false,
-          "autoincrement": false
-        },
         "alias": {
           "name": "alias",
           "type": "text",
@@ -1485,15 +1478,6 @@
             "created_at"
           ],
           "isUnique": false
-        },
-        "connections_adapter_account_uq": {
-          "name": "connections_adapter_account_uq",
-          "columns": [
-            "adapter_key",
-            "account_key"
-          ],
-          "isUnique": true,
-          "where": "\"connections\".\"account_key\" IS NOT NULL AND \"connections\".\"archived_at\" IS NULL"
         }
       },
       "foreignKeys": {},
@@ -2659,6 +2643,14 @@
           "columns": [
             "agent_id",
             "created_at"
+          ],
+          "isUnique": false
+        },
+        "episodes_channel_history_idx": {
+          "name": "episodes_channel_history_idx",
+          "columns": [
+            "channel_id",
+            "id"
           ],
           "isUnique": false
         }

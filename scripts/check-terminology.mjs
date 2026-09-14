@@ -85,7 +85,23 @@ function inspectSource(relativePath, source, { includeTerms = true } = {}) {
   const displayedCollections = new Set()
   const displayedVariables = new Set()
 
+  const isTechnicalDiagnostic = (node) => {
+    for (let parent = node.parent; parent; parent = parent.parent) {
+      if (!ts.isJsxElement(parent)) continue
+      const opening = parent.openingElement
+      if (['code', 'pre'].includes(opening.tagName.getText(file))) return true
+      if (
+        opening.attributes.properties.some(
+          (attribute) => ts.isJsxAttribute(attribute) && attribute.name.getText(file) === 'data-technical-diagnostic',
+        )
+      )
+        return true
+    }
+    return false
+  }
+
   const addTextFinding = (node, text, context) => {
+    if (isTechnicalDiagnostic(node)) return
     const normalizedText = normalizeVisibleText(text)
     if (includeTerms) {
       for (const [term, pattern] of forbiddenTerms) {
@@ -104,6 +120,7 @@ function inspectSource(relativePath, source, { includeTerms = true } = {}) {
   }
 
   const inspectTextExpression = (node, context) => {
+    if (isTechnicalDiagnostic(node)) return
     if (ts.isStringLiteralLike(node) || ts.isNoSubstitutionTemplateLiteral(node)) {
       addTextFinding(node, node.text, context)
       return

@@ -1,3 +1,4 @@
+import { useProductRuntime, type ProductRuntime } from './product-runtime.js'
 import { Context, Service } from '@deepseek-ai/cordis'
 import type {
   AdapterChannelInspectorSlotProps,
@@ -29,7 +30,7 @@ import {
   requireModuleRecord,
   requireProductSlotComponent,
 } from './dsh-interop/unsafe.js'
-import { useProductStore, type LocalExtensionSummary } from './product-store.js'
+import { type LocalExtensionSummary } from './product-runtime.js'
 import { hostUiKit } from './host-ui-client.js'
 import { DEFAULT_EXTENSION_CLIENT_STYLES } from './extension-client.js'
 
@@ -233,6 +234,7 @@ const desiredClients = (extensions: readonly LocalExtensionSummary[]): readonly 
     const revision = extension.revisions.find((candidate) => candidate.id === installed.revisionId)
     const adapterContribution = revision?.contributions.find((entry) => entry.startsWith('适配器：'))
     const adapterKey = adapterContribution?.slice('适配器：'.length)
+    if (revision?.format === 'requires-rebuild' || revision?.format === 'unavailable') return []
     if (!revision?.clientBuilt || !revision.buildKey || !adapterKey || revision.hostSlots.length === 0) return []
     return [
       {
@@ -250,6 +252,7 @@ const desiredClients = (extensions: readonly LocalExtensionSummary[]): readonly 
   })
 
 class AdapterHostClientCoordinator {
+  constructor(readonly product: ProductRuntime) {}
   readonly runtime = new AdapterHostClientRuntime()
   readonly #mounted = new Map<string, string>()
   #queue: Promise<void> = Promise.resolve()
@@ -279,7 +282,7 @@ class AdapterHostClientCoordinator {
   }
 
   async disableOwner(owner: string): Promise<void> {
-    const extension = useProductStore.getState().extensions.find((candidate) => candidate.id === owner)
+    const extension = this.product.store.getState().extensions.find((candidate) => candidate.id === owner)
     if (extension?.installation) {
       void this.#report(owner, extension.installation.revisionId, 'failed', new Error('富消息组件渲染失败。')).catch(
         () => undefined,
@@ -297,7 +300,7 @@ class AdapterHostClientCoordinator {
 
   async #report(owner: string, revisionId: string, status: 'loaded' | 'failed', error?: unknown): Promise<void> {
     const message = error instanceof Error ? error.message : typeof error === 'string' ? error : '未知界面错误'
-    await useProductStore.getState().reportHostExtensionClientDiagnostic({
+    await this.product.store.getState().reportHostExtensionClientDiagnostic({
       extensionId: owner,
       revisionId,
       status,
@@ -309,7 +312,10 @@ class AdapterHostClientCoordinator {
 const AdapterHostClientContext = createContext<AdapterHostClientCoordinator | null>(null)
 
 export function AdapterHostClientProvider({ children }: { readonly children: ReactNode }) {
-  const coordinator = useMemo(() => new AdapterHostClientCoordinator(), [])
+  const useProductStore = useProductRuntime().store
+
+  const product = useProductRuntime()
+  const coordinator = useMemo(() => new AdapterHostClientCoordinator(product), [product])
   const disposeTimer = useRef<number | undefined>(undefined)
   const installationVersion = useProductStore((state) =>
     state.extensions

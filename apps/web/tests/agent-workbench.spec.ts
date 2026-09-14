@@ -6,7 +6,7 @@ import {
   type AgentSummary,
   type CapabilityAvailability,
   type ChannelSummary,
-} from '../src/product-store.js'
+} from './product-fixture.js'
 
 const agentId = AgentIdSchema.parse('agt_workbench')
 const availability = (available: boolean): CapabilityAvailability => ({
@@ -26,7 +26,7 @@ const agent = (overrides: Partial<AgentSummary> = {}): AgentSummary => ({
   id: agentId,
   name: '资料员',
   description: '',
-  state: '空闲',
+  state: 'idle',
   model: 'GPT-5',
   dynamicClientApprovalPolicy: 'manual',
   personaDocument: { version: 1, segments: [] },
@@ -59,7 +59,7 @@ const channel = (bound: boolean): ChannelSummary => ({
   connectionName: '内置频道',
   agentId: bound ? agentId : '',
   trigger: '始终响应',
-  runtimePhase: '空闲',
+  runtimePhase: 'idle',
   bindings: bound
     ? [{ id: 'binding', agentId, triggerPolicy: 'always', processingFeedback: 'auto', activityTriggerOverrides: {} }]
     : [],

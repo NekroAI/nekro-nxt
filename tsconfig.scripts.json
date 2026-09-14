@@ -14,5 +14,11 @@
     "noUnusedParameters": false,
     "sourceMap": false
   },
-  "include": ["eslint.config.js", "playwright.config.ts", "vitest.config.ts", "scripts/**/*.mjs"]
+  "include": [
+    "eslint.config.js",
+    "playwright.config.ts",
+    "playwright.browser.config.ts",
+    "vitest.config.ts",
+    "scripts/**/*.mjs"
+  ]
 }

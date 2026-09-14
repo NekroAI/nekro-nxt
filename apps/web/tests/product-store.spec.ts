@@ -1,3 +1,4 @@
+import { ProductHostCoordinator } from './product-fixture.js'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
   AgentIdSchema,
@@ -8,13 +9,12 @@ import {
   ExtensionIdSchema,
   ExtensionRevisionIdSchema,
 } from '@nekro-nxt/contracts'
-import { ProductHostCoordinator } from '../src/product-port.ts'
 import {
   defaultImageUnderstandingPolicy,
   ProductActionError,
   setActiveProductHost,
   useProductStore,
-} from '../src/product-store.ts'
+} from './product-fixture.js'
 
 const resetBusinessFacts = (): void => {
   setActiveProductHost(null)
@@ -36,7 +36,7 @@ const resetBusinessFacts = (): void => {
     models: [],
     agents: [],
     channels: [],
-    messages: [],
+    messagesByChannel: {},
     channelRuntimes: {},
     connections: [],
     extensions: [],
@@ -71,7 +71,7 @@ describe('product store Host mutations', () => {
     expect(state.models).toEqual([])
     expect(state.agents).toEqual([])
     expect(state.channels).toEqual([])
-    expect(state.messages).toEqual([])
+    expect(state.messagesByChannel).toEqual({})
     expect(state.connections).toEqual([])
     expect(state.extensions).toEqual([])
     expect(state.approvals).toEqual([])
@@ -140,7 +140,7 @@ describe('product store Host mutations', () => {
           id: agentId,
           name: '测试智能体',
           description: '',
-          state: '空闲',
+          state: 'idle',
           model: '测试模型',
           dynamicClientApprovalPolicy: 'manual',
           personaDocument: { version: 1, segments: [] },
@@ -216,7 +216,7 @@ describe('product store Host mutations', () => {
     expect(useProductStore.getState().extensions[0]?.activations).toEqual([])
   })
 
-  it('retries approval once when the same immutable authoring attempt advances its task revision', async () => {
+  it('does not retry an approval mutation after a rejected or unknown response', async () => {
     const taskId = AuthoringTaskIdSchema.parse('aut_STOREAPPROVAL')
     const attemptId = AuthoringAttemptIdSchema.parse('aua_STOREAPPROVAL')
     const channelId = ChannelIdSchema.parse('chn_storeapproval')
@@ -286,17 +286,10 @@ describe('product store Host mutations', () => {
         agentId,
         approved: true,
       }),
-    ).resolves.toBeUndefined()
+    ).rejects.toThrow('创造任务状态已更新')
 
-    expect(execute.mock.calls.map(([command]) => command)).toEqual([
-      'authoring.decide',
-      'host.refresh',
-      'authoring.decide',
-      'dynamic.approve',
-      'host.refresh',
-    ])
+    expect(execute.mock.calls.map(([command]) => command)).toEqual(['authoring.decide'])
     expect(execute.mock.calls[0]?.[1]).toMatchObject({ expectedRevision: 2, attemptId })
-    expect(execute.mock.calls[2]?.[1]).toMatchObject({ expectedRevision: 3, attemptId })
   })
 
   it('sends Extension activation changes to the explicitly selected intelligent-agent', async () => {

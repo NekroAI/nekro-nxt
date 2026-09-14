@@ -1,3 +1,4 @@
+import { useProductRuntime, type ProductRuntime } from './product-runtime.js'
 import type {
   ExtensionActivationSlotProps,
   ExtensionDetailsSlotProps,
@@ -23,7 +24,7 @@ import {
   type ClientActivationSource,
   type ProductClientSlotEntry,
 } from './extension-client.js'
-import { useProductStore, type LocalExtensionSummary } from './product-store.js'
+import { useProductStore, type LocalExtensionSummary } from './product-runtime.js'
 import { Button } from './ui-kit/index.js'
 
 interface PersistentClientActivation {
@@ -70,6 +71,7 @@ const projectActivations = (extensions: readonly LocalExtensionSummary[]): reado
   )
 
 class PersistentExtensionClientCoordinator {
+  constructor(readonly product: ProductRuntime) {}
   readonly #agents = new Map<string, AgentClientRuntime>()
   readonly #listeners = new Set<() => void>()
   #activations: readonly PersistentClientActivation[] = []
@@ -179,7 +181,7 @@ class PersistentExtensionClientCoordinator {
       moduleUrl: `/api/extensions/${extensionId}/revisions/${revisionId}/client/${activation.buildKey}.mjs?agentId=${agentId}`,
       host: {
         call: (method, input) =>
-          useProductStore.getState().callExtensionClient({
+          this.product.store.getState().callExtensionClient({
             agentId: activation.agentId,
             extensionId: activation.extensionId,
             revisionId: activation.revisionId,
@@ -202,7 +204,7 @@ class PersistentExtensionClientCoordinator {
             0,
             4096,
           )
-    await useProductStore
+    await this.product.store
       .getState()
       .reportExtensionClientDiagnostic({
         agentId: activation.agentId,
@@ -233,7 +235,10 @@ class PersistentExtensionClientCoordinator {
 const PersistentExtensionClientContext = createContext<PersistentExtensionClientCoordinator | null>(null)
 
 export function PersistentExtensionClientProvider({ children }: { readonly children: ReactNode }) {
-  const coordinator = useMemo(() => new PersistentExtensionClientCoordinator(), [])
+  const useProductStore = useProductRuntime().store
+
+  const product = useProductRuntime()
+  const coordinator = useMemo(() => new PersistentExtensionClientCoordinator(product), [product])
   const disposeTimer = useRef<number | undefined>(undefined)
   const activationVersion = useProductStore((state) =>
     state.extensions

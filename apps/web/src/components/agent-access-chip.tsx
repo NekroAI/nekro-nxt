@@ -1,5 +1,5 @@
 import { agentAccessPresentation } from '../agent-access-level.js'
-import type { AgentSummary } from '../product-store.js'
+import type { AgentSummary } from '../product-runtime.js'
 import { Tooltip } from '../ui-kit/index.js'
 import styles from './agent-access-chip.module.css'
 

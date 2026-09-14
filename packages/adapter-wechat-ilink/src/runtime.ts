@@ -295,9 +295,11 @@ export class WechatIlinkRuntime implements AdapterConnectionRuntime {
     if (normalized.contextToken !== undefined) {
       await this.#context.state.save(contextTokenStateKey(normalized.platformUserId), normalized.contextToken)
     }
-    if (!this.#running || generation !== this.#generation || signal.aborted) return
+    signal.throwIfAborted()
+    if (!this.#running || generation !== this.#generation) throw new Error('微信 iLink 入站处理已停止。')
     const resolved = await this.#resolveInboundParts(normalized, signal)
-    if (!this.#running || generation !== this.#generation || signal.aborted) return
+    signal.throwIfAborted()
+    if (!this.#running || generation !== this.#generation) throw new Error('微信 iLink 入站处理已停止。')
     await this.#context.acceptChannelInbound(
       createWechatIlinkInboundEvent({
         connectionId: this.#context.connectionId,

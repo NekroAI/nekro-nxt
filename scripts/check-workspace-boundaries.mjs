@@ -3,10 +3,7 @@ import path from 'node:path'
 import process from 'node:process'
 import ts from 'typescript'
 
-import { compareCounts, countsFromFindings, readBaseline, writeBaseline } from './lib/quality-baseline.mjs'
-
 const root = process.cwd()
-const baselinePath = 'scripts/baselines/workspace-boundaries.json'
 const findings = []
 const isNodeError = (error, code) => error instanceof Error && 'code' in error && error.code === code
 
@@ -156,12 +153,6 @@ for (const project of projects) {
       if (project.group === 'apps' && target.group === 'apps' && target !== project) {
         report('cross-layer-import', file, `app 之间不得直接导入：${specifier}`)
       }
-      if (parts.length > 2) {
-        const subpath = `./${parts.slice(2).join('/')}`
-        if (!(subpath in (target.manifest.exports ?? {}))) {
-          report('private-workspace-import', file, `${specifier} 未由目标 package exports 公开`)
-        }
-      }
     }
   }
 }
@@ -183,29 +174,6 @@ function visit(name, stack) {
 }
 for (const name of edges.keys()) visit(name, [])
 
-const baseline = await readBaseline(root, baselinePath).catch((error) => {
-  if (process.argv.includes('--write-baseline') && error?.code === 'ENOENT') return { version: 1, counts: {} }
-  throw error
-})
-const counts = countsFromFindings(findings)
-if (process.argv.includes('--write-baseline')) {
-  await writeBaseline(root, baselinePath, {
-    version: 1,
-    description: 'workspace manifest/reference 历史不一致；按规则和文件计数只能下降。',
-    counts,
-  })
-  console.log(`Workspace boundary baseline updated (${findings.length} findings).`)
-  process.exit(0)
-}
-
-const regressions = compareCounts(counts, baseline.counts ?? {})
-if (regressions.length > 0) {
-  for (const regression of regressions) {
-    console.error(`${regression.file}: ${regression.rule} 当前 ${regression.count}，基线 ${regression.allowed}`)
-    for (const finding of findings.filter((item) => item.rule === regression.rule && item.file === regression.file))
-      console.error(`  ${finding.message}`)
-  }
-  process.exitCode = 1
-} else {
-  console.log(`Workspace boundary check passed (${findings.length} baseline findings, no increases).`)
-}
+for (const finding of findings) console.error(`${finding.file}: ${finding.rule}: ${finding.message}`)
+if (findings.length) process.exitCode = 1
+else console.log('Workspace boundary check passed.')

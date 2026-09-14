@@ -1,10 +1,12 @@
-import { useEffect, useId, useLayoutEffect, useMemo, useState, type KeyboardEvent, type RefObject } from 'react'
+import { usePointerPosition } from '../ui-kit/pointer-position.js'
+import { useProductRuntime } from '../product-runtime.js'
+import { memo, useEffect, useId, useLayoutEffect, useMemo, useState, type KeyboardEvent, type RefObject } from 'react'
 import { Activity, ChevronDown, Link2, Trash2 } from 'lucide-react'
 import { useNxtNavigate } from '../shell/nxt-link.js'
 import { Cell, Pie, PieChart } from 'recharts'
 import { notify } from '../components/notifications.js'
 import { InlineFeedback } from '../components/product-feedback.js'
-import { useProductStore, type AgentSummary, type ChannelRuntimeView, type ChannelSummary } from '../product-store.js'
+import { type AgentSummary, type ChannelRuntimeView, type ChannelSummary } from '../product-runtime.js'
 import {
   ChannelInspectorAgentExtensionSlots,
   ConversationToolCardExtensionSlots,
@@ -158,22 +160,29 @@ function ContextRing({
   readonly data: readonly { readonly name: string; readonly value: number; readonly color: string }[]
 }) {
   const total = data.reduce((sum, item) => sum + item.value, 0)
-  const [hover, setHover] = useState<{ readonly index: number; readonly x: number; readonly y: number }>()
-  const active = hover ? data[hover.index] : undefined
+  const [hover, setHover] = useState<number>()
+  const pointer = usePointerPosition()
+  const active = hover === undefined ? undefined : data[hover]
   const activeRatio = active && total > 0 ? Math.round((active.value / total) * 100) : 0
   return (
     <figure
       className={styles.contextFigure}
       tabIndex={0}
       aria-label={label}
-      onFocus={() => setHover((current) => current ?? { index: 0, x: 82, y: 20 })}
+      onFocus={() => {
+        pointer.onFocus()
+        setHover((current) => current ?? 0)
+      }}
       onBlur={(event) => {
         if (!event.currentTarget.contains(event.relatedTarget)) setHover(undefined)
       }}
     >
       <div
         className={styles.contextRing}
+        ref={pointer.rootRef}
+        onPointerEnter={pointer.onPointerEnter}
         onPointerMove={(event) => {
+          pointer.onPointerMove(event)
           const path =
             event.target instanceof Element ? event.target.closest<SVGPathElement>('[data-recharts-item-index]') : null
           const index = Number(path?.dataset['rechartsItemIndex'])
@@ -181,8 +190,7 @@ function ContextRing({
             setHover(undefined)
             return
           }
-          const rect = event.currentTarget.getBoundingClientRect()
-          setHover({ index, x: event.clientX - rect.left, y: event.clientY - rect.top })
+          setHover(index)
         }}
         onPointerLeave={() => setHover(undefined)}
       >
@@ -199,7 +207,7 @@ function ContextRing({
             {data.map((item, index) => (
               <Cell
                 key={item.name}
-                className={[styles.contextSector, hover?.index === index ? styles.contextSectorActive : '']
+                className={[styles.contextSector, hover === index ? styles.contextSectorActive : '']
                   .filter(Boolean)
                   .join(' ')}
                 fill={item.color}
@@ -210,15 +218,14 @@ function ContextRing({
         </PieChart>
         <strong>{center}</strong>
         <Presence>
-          {active && hover ? (
+          {active && hover !== undefined ? (
             <Enter
               kind="fade"
+              ref={pointer.tooltipRef}
               className={styles.contextTooltip}
-              data-side={hover.x > 56 ? 'left' : 'right'}
-              data-pointer-x={Math.round(hover.x)}
-              data-pointer-y={Math.round(hover.y)}
+              data-side="left"
               role="tooltip"
-              style={{ left: hover.x, top: hover.y }}
+              style={{ left: 0, top: 0, translate: 'var(--nxt-pointer-x, 82px) var(--nxt-pointer-y, 20px)' }}
             >
               {active.name} · {formatTokenCount(active.value)} · {activeRatio}%
             </Enter>
@@ -536,6 +543,60 @@ export const writeChannelCanvasView = (view: ChannelCanvasView): void => {
   window.localStorage.setItem(VIEW_KEY, view)
 }
 
+const recordSearchText = new WeakMap<TrajectoryRecord, string>()
+const searchTextFor = (record: TrajectoryRecord): string => {
+  let text = recordSearchText.get(record)
+  if (text === undefined) {
+    text =
+      `${record.kindLabel} ${record.name} ${record.summary} ${record.input ?? ''} ${record.output ?? ''}`.toLowerCase()
+    recordSearchText.set(record, text)
+  }
+  return text
+}
+
+/** Owned by the conversation component; retain only the active episode's steps. */
+export function createTrajectoryProjector() {
+  type Step = RuntimeTurn['steps'][number]
+  type CachedStep = { step: Step; signature: string; turnStart: boolean; rows: TrajectoryRecord[] }
+  let scope = ''
+  let previous: TrajectoryRecord[] = []
+  let steps = new Map<string, CachedStep>()
+  return (runtime: ChannelRuntimeView | undefined): TrajectoryRecord[] => {
+    const nextScope = runtime ? `${runtime.channelId}:${runtime.episodeId ?? ''}` : ''
+    if (scope !== nextScope) {
+      scope = nextScope
+      steps.clear()
+      previous = []
+    }
+    if (!runtime) return previous
+    const next = new Map<string, CachedStep>()
+    const rows: TrajectoryRecord[] = []
+    for (const turn of runtime.turns) {
+      let turnStart = true
+      for (const step of turn.steps) {
+        const key = `${turn.turn}:${step.step}`
+        const old = steps.get(key)
+        const signature = old?.step === step ? old.signature : JSON.stringify(step)
+        const projected =
+          old?.signature === signature && old.turnStart === turnStart
+            ? old.rows
+            : flattenRuntimeRecords({ ...runtime, turns: [{ ...turn, steps: [step] }] }).map((row) => {
+                const result = row.turnStart && !turnStart ? { ...row, turnStart: false } : row
+                searchTextFor(result)
+                return result
+              })
+        next.set(key, { step, signature, turnStart, rows: projected })
+        rows.push(...projected)
+        if (projected.length) turnStart = false
+      }
+    }
+    steps = next
+    if (rows.length === previous.length && rows.every((row, index) => row === previous[index])) return previous
+    previous = rows
+    return rows
+  }
+}
+
 export const flattenRuntimeRecords = (runtime: ChannelRuntimeView | undefined): TrajectoryRecord[] => {
   if (!runtime) return []
   const rows: TrajectoryRecord[] = []
@@ -831,11 +892,7 @@ export function ChannelTrajectoryLedger({
   const visible = useMemo(() => {
     const query = search.trim().toLowerCase()
     if (!query) return records
-    return records.filter((record) =>
-      `${record.kindLabel} ${record.name} ${record.summary} ${record.input ?? ''} ${record.output ?? ''}`
-        .toLowerCase()
-        .includes(query),
-    )
+    return records.filter((record) => searchTextFor(record).includes(query))
   }, [records, search])
   const count = Math.max(visible.length, 1)
   const focusableId = visible.some((record) => record.id === selectedId) ? selectedId : (visible[0]?.id ?? '')
@@ -988,7 +1045,80 @@ export function ChannelTrajectoryLedger({
   )
 }
 
+const ChannelRuntimeMetrics = memo(
+  function ChannelRuntimeMetrics({
+    runtime,
+    agent,
+    phase,
+  }: {
+    readonly runtime: ChannelRuntimeView | undefined
+    readonly agent: AgentSummary | undefined
+    readonly phase: ChannelSummary['runtimePhase']
+    readonly visible: boolean
+  }) {
+    const currentTool = workTools(latestTurn(runtime)).find((tool) => tool.state === 'running')
+    const hasRuntimeDetails = Boolean(
+      phase !== 'idle' ||
+      currentTool ||
+      (runtime?.pendingInjectCount ?? 0) > 0 ||
+      runtime?.occupancy ||
+      runtime?.performance ||
+      runtime?.cache,
+    )
+    const runtimeEmpty = !agent
+      ? {
+          title: '尚未绑定智能体',
+          description: '绑定后，这里会显示运行状态、上下文占用、生成表现和缓存情况。',
+        }
+      : runtime?.episodeId
+        ? {
+            title: '当前没有运行中的任务',
+            description: '收到新消息或开始处理后，运行数据会在这里更新。',
+          }
+        : {
+            title: '等待首次对话',
+            description: '发送第一条消息后，这里会开始记录当前会话的运行数据。',
+          }
+
+    return (
+      <section className={styles.inspectorPanel}>
+        <div className={styles.inspectorSectionHead}>
+          <h2>运行</h2>
+        </div>
+        {runtime?.summary && phase !== 'idle' ? <p className={styles.trajectorySummary}>{runtime.summary}</p> : null}
+        {currentTool ? (
+          <p className={styles.secondaryText}>
+            {currentTool.displayName}
+            {currentTool.inputPreview ? ` · ${currentTool.inputPreview}` : ''}
+          </p>
+        ) : null}
+        {runtime && runtime.pendingInjectCount > 0 ? (
+          <InlineFeedback tone="info">{runtime.pendingInjectCount} 条新消息已收录。</InlineFeedback>
+        ) : null}
+        {runtime?.occupancy ? <ContextUsageCard occupancy={runtime.occupancy} /> : null}
+        {runtime?.cache ? <CacheUsageCard cache={runtime.cache} /> : null}
+        {runtime?.performance ? <GenerationPerformanceCard performance={runtime.performance} /> : null}
+        {!hasRuntimeDetails ? (
+          <div className={styles.runtimeEmpty}>
+            <span className={styles.runtimeEmptyIcon} aria-hidden="true">
+              <Activity size={17} />
+            </span>
+            <span>
+              <strong>{runtimeEmpty.title}</strong>
+              <small>{runtimeEmpty.description}</small>
+            </span>
+          </div>
+        ) : null}
+      </section>
+    )
+  },
+  (previous, next) =>
+    !next.visible ||
+    (previous.runtime === next.runtime && previous.agent === next.agent && previous.phase === next.phase),
+)
+
 export function ChannelSessionInspector({
+  metricsVisible = true,
   channel,
   agent,
   runtime,
@@ -996,6 +1126,7 @@ export function ChannelSessionInspector({
   onReassign,
   onDelete,
 }: {
+  readonly metricsVisible?: boolean
   readonly channel: ChannelSummary
   readonly agent: AgentSummary | undefined
   readonly runtime: ChannelRuntimeView | undefined
@@ -1003,6 +1134,8 @@ export function ChannelSessionInspector({
   readonly onReassign: () => void
   readonly onDelete: () => void
 }) {
+  const useProductStore = useProductRuntime().store
+
   const navigate = useNxtNavigate()
   const connection = useProductStore((state) =>
     state.connections.find((candidate) => candidate.id === channel.connectionId),
@@ -1034,29 +1167,6 @@ export function ChannelSessionInspector({
   const [channelName, setChannelName] = useState(channel.name)
   const currentBinding = channel.bindings[0]
   const currentTrigger = currentBinding?.triggerPolicy ?? 'mentioned-or-replied'
-  const currentTool = workTools(latestTurn(runtime)).find((tool) => tool.state === 'running')
-  const hasRuntimeDetails = Boolean(
-    phase !== '空闲' ||
-    currentTool ||
-    (runtime?.pendingInjectCount ?? 0) > 0 ||
-    runtime?.occupancy ||
-    runtime?.performance ||
-    runtime?.cache,
-  )
-  const runtimeEmpty = !agent
-    ? {
-        title: '尚未绑定智能体',
-        description: '绑定后，这里会显示运行状态、上下文占用、生成表现和缓存情况。',
-      }
-    : runtime?.episodeId
-      ? {
-          title: '当前没有运行中的任务',
-          description: '收到新消息或开始处理后，运行数据会在这里更新。',
-        }
-      : {
-          title: '等待首次对话',
-          description: '发送第一条消息后，这里会开始记录当前会话的运行数据。',
-        }
 
   useEffect(() => {
     setChannelName(channel.name)
@@ -1118,52 +1228,14 @@ export function ChannelSessionInspector({
 
   return (
     <aside className={[styles.inspector, styles.channelSessionInspector].join(' ')} aria-label="频道">
-      <section className={styles.inspectorPanel}>
-        <div className={styles.inspectorSectionHead}>
-          <h2>运行</h2>
-        </div>
-        {runtime?.summary && phase !== '空闲' ? <p className={styles.trajectorySummary}>{runtime.summary}</p> : null}
-        {currentTool ? (
-          <p className={styles.secondaryText}>
-            {currentTool.displayName}
-            {currentTool.inputPreview ? ` · ${currentTool.inputPreview}` : ''}
-          </p>
-        ) : null}
-        {runtime && runtime.pendingInjectCount > 0 ? (
-          <InlineFeedback tone="info">{runtime.pendingInjectCount} 条新消息已收录。</InlineFeedback>
-        ) : null}
-        {runtime?.occupancy ? <ContextUsageCard occupancy={runtime.occupancy} /> : null}
-        {runtime?.cache ? <CacheUsageCard cache={runtime.cache} /> : null}
-        {runtime?.performance ? <GenerationPerformanceCard performance={runtime.performance} /> : null}
-        {!hasRuntimeDetails ? (
-          <div className={styles.runtimeEmpty}>
-            <span className={styles.runtimeEmptyIcon} aria-hidden="true">
-              <Activity size={17} />
-            </span>
-            <span>
-              <strong>{runtimeEmpty.title}</strong>
-              <small>{runtimeEmpty.description}</small>
-            </span>
-          </div>
-        ) : null}
-      </section>
+      <ChannelRuntimeMetrics runtime={runtime} agent={agent} phase={phase} visible={metricsVisible} />
       {agent ? (
         <ChannelInspectorAgentExtensionSlots
           agentId={agent.id}
           channelId={channel.id}
           connectionId={channel.connectionId}
           {...(runtime?.episodeId === undefined ? {} : { episodeId: runtime.episodeId })}
-          runtimePhase={
-            phase === '思考中'
-              ? 'thinking'
-              : phase === '使用工具'
-                ? 'using-tool'
-                : phase === '等待输入'
-                  ? 'waiting-input'
-                  : phase === '空闲'
-                    ? 'idle'
-                    : 'unavailable'
-          }
+          runtimePhase={phase}
         />
       ) : null}
       {connection ? (

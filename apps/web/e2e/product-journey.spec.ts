@@ -781,6 +781,7 @@ test("an intelligent-agent can add another channel while replacing that channel'
       status: 200,
       contentType: 'application/json',
       body: JSON.stringify({
+        cursor: { epoch: 'fixture', sequence: 0 },
         channelId,
         ...(channel?.boundAgentId === undefined ? {} : { agentId: channel.boundAgentId }),
         phase: channel?.runtimePhase ?? 'idle',
@@ -1243,14 +1244,20 @@ test('external channel exposes processing feedback and per-event trigger control
     route.fulfill({
       status: 200,
       contentType: 'application/json',
-      body: JSON.stringify({ messages: [], hasMore: false }),
+      body: JSON.stringify({ cursor: { epoch: 'fixture', sequence: 0 }, messages: [], hasMore: false }),
     }),
   )
   await page.route(`**/api/channels/${channelId}/runtime`, (route) =>
     route.fulfill({
       status: 200,
       contentType: 'application/json',
-      body: JSON.stringify({ channelId, phase: 'idle', pendingInjectCount: 0, turns: [] }),
+      body: JSON.stringify({
+        cursor: { epoch: 'fixture', sequence: 0 },
+        channelId,
+        phase: 'idle',
+        pendingInjectCount: 0,
+        turns: [],
+      }),
     }),
   )
   await page.route('**/api/bindings', async (route) => {
@@ -1505,7 +1512,7 @@ test('channel context controls and intelligent-agent deletion are guarded and re
     route.fulfill({
       status: 200,
       contentType: 'application/json',
-      body: JSON.stringify({ messages: [], hasMore: false }),
+      body: JSON.stringify({ cursor: { epoch: 'fixture', sequence: 0 }, messages: [], hasMore: false }),
     }),
   )
   await page.route(`**/api/channels/${channelId}/runtime`, (route) =>
@@ -1513,6 +1520,7 @@ test('channel context controls and intelligent-agent deletion are guarded and re
       status: 200,
       contentType: 'application/json',
       body: JSON.stringify({
+        cursor: { epoch: 'fixture', sequence: 0 },
         channelId,
         agentId,
         episodeId,
@@ -1527,7 +1535,7 @@ test('channel context controls and intelligent-agent deletion are guarded and re
     route.fulfill({
       status: 200,
       contentType: 'application/json',
-      body: JSON.stringify({ messages: [], hasMore: false }),
+      body: JSON.stringify({ cursor: { epoch: 'fixture', sequence: 0 }, messages: [], hasMore: false }),
     }),
   )
   await page.route(`**/api/channels/${externalChannelId}/runtime`, (route) =>
@@ -1535,6 +1543,7 @@ test('channel context controls and intelligent-agent deletion are guarded and re
       status: 200,
       contentType: 'application/json',
       body: JSON.stringify({
+        cursor: { epoch: 'fixture', sequence: 0 },
         channelId: externalChannelId,
         phase: 'idle',
         pendingInjectCount: 0,
@@ -1631,4 +1640,90 @@ test('channel context controls and intelligent-agent deletion are guarded and re
     },
   ])
   expect(failures, failures.join('\n')).toEqual([])
+})
+
+test('legacy extension rebuild preserves failure feedback and requires explicit activation of the new revision', async ({
+  page,
+  request,
+}, testInfo) => {
+  const base = HostApiContracts.snapshot.parseResponse(await (await request.get('/api/snapshot')).json())
+  const extensionId = ExtensionIdSchema.parse('ext_rebuildjourney')
+  const oldId = ExtensionRevisionIdSchema.parse('xrv_rebuildold')
+  const newId = ExtensionRevisionIdSchema.parse('xrv_rebuildnew')
+  let rebuilt = false
+  let attempts = 0
+  const snapshot = () =>
+    HostApiContracts.snapshot.parseResponse({
+      ...base,
+      extensions: [
+        {
+          id: extensionId,
+          scope: 'host-ui',
+          slug: 'rebuild-journey',
+          displayName: '待重建的合成页面',
+          description: '旧源码和配置保留，重建后手动安装。',
+          activations: [],
+          clientDiagnostics: [],
+          revisions: [
+            {
+              id: oldId,
+              revisionNumber: 1,
+              createdAt: 1725000000000,
+              scope: 'host-ui',
+              contributions: ['页面：演示'],
+              format: 'requires-rebuild',
+            },
+            ...(rebuilt
+              ? [
+                  {
+                    id: newId,
+                    revisionNumber: 2,
+                    createdAt: 1725000001000,
+                    scope: 'host-ui',
+                    contributions: ['页面：演示'],
+                    format: 'current',
+                  },
+                ]
+              : []),
+          ],
+        },
+      ],
+    })
+  await page.route('**/api/snapshot', (route) =>
+    route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(snapshot()) }),
+  )
+  await page.route('**/api/extensions/rebuild', async (route) => {
+    expect(HostApiContracts.rebuildExtensionRevision.parseRequest(route.request().postDataJSON())).toEqual({
+      revisionId: oldId,
+    })
+    attempts += 1
+    if (attempts === 1) {
+      await route.fulfill({
+        status: 409,
+        contentType: 'application/json',
+        body: JSON.stringify({
+          error: { code: 'extension-rebuild-failed', message: '合成运行验证失败，旧源码仍然保留。' },
+        }),
+      })
+      return
+    }
+    rebuilt = true
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({ extensionId, revisionId: newId, autoActivated: false }),
+    })
+  })
+  await page.goto(`/extensions/${extensionId}`)
+  await expect(page.getByRole('button', { name: '从已有源码重建' })).toBeVisible()
+  await expect(page.getByRole('button', { name: '安装到本机', exact: true })).toBeDisabled()
+  await expect(page.getByText('正在读取扩展', { exact: true })).not.toBeVisible()
+  await testInfo.attach('legacy-extension-rebuild', { body: await page.screenshot(), contentType: 'image/png' })
+  await page.getByRole('button', { name: '从已有源码重建' }).click()
+  await expect(page.getByText('合成运行验证失败，旧源码仍然保留。')).toBeVisible()
+  await page.getByRole('button', { name: '从已有源码重建' }).click()
+  await expect(page.getByText('重建成功，请选择新版本并重新核对权限后启用。')).toBeVisible()
+  await expect(page.getByRole('button', { name: '安装到本机', exact: true }).first()).toBeEnabled()
+  expect(attempts).toBe(2)
+  await testInfo.attach('rebuilt-extension-awaits-install', { body: await page.screenshot(), contentType: 'image/png' })
 })

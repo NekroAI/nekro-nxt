@@ -1,6 +1,6 @@
 import type { AdapterRuntimeStateStore } from '@nekro-nxt/adapter-sdk'
-import type { ChannelReferenceRecord, CoreRepository } from '@nekro-nxt/core'
-import type { ChannelId, JsonValue } from '@nekro-nxt/contracts'
+import type { AgentRevisionRecord, ChannelReferenceRecord, CoreRepository } from '@nekro-nxt/core'
+import type { AgentRevisionId, ChannelId, JsonValue } from '@nekro-nxt/contracts'
 import type { AssetAccessRepository } from '@nekro-nxt/core'
 import type { ChannelHistoryRepository, RuntimeRepository } from '@nekro-nxt/channel-runtime'
 import type { AuthoringRepository, ExtensionRepository, HostUiRepository } from '@nekro-nxt/extension-runtime'
@@ -64,7 +64,10 @@ export class SqliteCoreRepository implements CurrentRepository {
   readonly #dshPlugins
   readonly #authoring
 
-  constructor(database: CoreDatabase) {
+  constructor(
+    database: CoreDatabase,
+    readonly beforeModelReferenceCommit?: (revision: AgentRevisionRecord) => void,
+  ) {
     this.#db = database.db
     this.#agents = createAgentsRepository(database.db)
     this.#channels = createChannelsRepository(database.db)
@@ -147,9 +150,14 @@ export class SqliteCoreRepository implements CurrentRepository {
     })
   }
 
-  readonly createAgent = (...args: Parameters<CoreRepository['createAgent']>) => this.#agents.createAgent(...args)
-  readonly createAgentWithChannel = (...args: Parameters<CoreRepository['createAgentWithChannel']>) =>
-    this.#agents.createAgentWithChannel(...args)
+  readonly createAgent = (...args: Parameters<CoreRepository['createAgent']>) => {
+    this.beforeModelReferenceCommit?.(args[0].revision)
+    return this.#agents.createAgent(...args)
+  }
+  readonly createAgentWithChannel = (...args: Parameters<CoreRepository['createAgentWithChannel']>) => {
+    this.beforeModelReferenceCommit?.(args[0].revision)
+    return this.#agents.createAgentWithChannel(...args)
+  }
   readonly tombstoneAgent = (...args: Parameters<CoreRepository['tombstoneAgent']>) =>
     this.#agents.tombstoneAgent(...args)
   readonly getAgent = (...args: Parameters<CoreRepository['getAgent']>) => this.#agents.getAgent(...args)
@@ -162,10 +170,14 @@ export class SqliteCoreRepository implements CurrentRepository {
     this.#agents.listAgentRevisions(...args)
   readonly getNextAgentRevisionNumber = (...args: Parameters<CoreRepository['getNextAgentRevisionNumber']>) =>
     this.#agents.getNextAgentRevisionNumber(...args)
-  readonly appendAgentRevision = (...args: Parameters<CoreRepository['appendAgentRevision']>) =>
-    this.#agents.appendAgentRevision(...args)
-  readonly activateAgentRevision = (...args: Parameters<CoreRepository['activateAgentRevision']>) =>
-    this.#agents.activateAgentRevision(...args)
+  readonly appendAgentRevision = (...args: Parameters<CoreRepository['appendAgentRevision']>) => {
+    this.beforeModelReferenceCommit?.(args[1])
+    return this.#agents.appendAgentRevision(...args)
+  }
+  readonly activateAgentRevision = (...args: Parameters<CoreRepository['activateAgentRevision']>) => {
+    this.beforeModelReferenceCommit?.(args[1])
+    return this.#agents.activateAgentRevision(...args)
+  }
 
   readonly createConnection = (...args: Parameters<CoreRepository['createConnection']>) =>
     this.#channels.createConnection(...args)
@@ -241,6 +253,13 @@ export class SqliteCoreRepository implements CurrentRepository {
   readonly resolveLogicalMessagePlatformId = (...args: Parameters<CoreRepository['resolveLogicalMessagePlatformId']>) =>
     this.#channels.resolveLogicalMessagePlatformId(...args)
 
+  #assertEpisodeModelReference(revisionId: AgentRevisionId): void {
+    if (!this.beforeModelReferenceCommit) return
+    const revision = this.#agents.getAgentRevision(revisionId)
+    if (!revision) throw new Error(`Agent revision does not exist: ${revisionId}`)
+    this.beforeModelReferenceCommit(revision)
+  }
+
   readonly getEpisode = (...args: Parameters<RuntimeRepository['getEpisode']>) => this.#runtime.getEpisode(...args)
   readonly getActiveEpisode = (...args: Parameters<RuntimeRepository['getActiveEpisode']>) =>
     this.#runtime.getActiveEpisode(...args)
@@ -251,16 +270,22 @@ export class SqliteCoreRepository implements CurrentRepository {
   readonly retireDshSessionEpisodes = (closedAt: number) => this.#runtime.retireDshSessionEpisodes(closedAt)
   readonly getEpisodeHandoffTo = (...args: Parameters<RuntimeRepository['getEpisodeHandoffTo']>) =>
     this.#runtime.getEpisodeHandoffTo(...args)
-  readonly createEpisode = (...args: Parameters<RuntimeRepository['createEpisode']>) =>
-    this.#runtime.createEpisode(...args)
+  readonly createEpisode = (...args: Parameters<RuntimeRepository['createEpisode']>) => {
+    this.#assertEpisodeModelReference(args[0].agentRevisionId)
+    return this.#runtime.createEpisode(...args)
+  }
   readonly activateEpisode = (...args: Parameters<RuntimeRepository['activateEpisode']>) =>
     this.#runtime.activateEpisode(...args)
-  readonly updateEpisodeRevision = (...args: Parameters<RuntimeRepository['updateEpisodeRevision']>) =>
-    this.#runtime.updateEpisodeRevision(...args)
+  readonly updateEpisodeRevision = (...args: Parameters<RuntimeRepository['updateEpisodeRevision']>) => {
+    this.#assertEpisodeModelReference(args[2])
+    return this.#runtime.updateEpisodeRevision(...args)
+  }
   readonly closeEpisode = (...args: Parameters<RuntimeRepository['closeEpisode']>) =>
     this.#runtime.closeEpisode(...args)
-  readonly commitEpisodeRollover = (...args: Parameters<RuntimeRepository['commitEpisodeRollover']>) =>
-    this.#runtime.commitEpisodeRollover(...args)
+  readonly commitEpisodeRollover = (...args: Parameters<RuntimeRepository['commitEpisodeRollover']>) => {
+    this.#assertEpisodeModelReference(args[0].nextEpisode.agentRevisionId)
+    return this.#runtime.commitEpisodeRollover(...args)
+  }
   readonly failEpisode = (...args: Parameters<RuntimeRepository['failEpisode']>) => this.#runtime.failEpisode(...args)
   readonly createAdmission = (...args: Parameters<RuntimeRepository['createAdmission']>) =>
     this.#runtime.createAdmission(...args)

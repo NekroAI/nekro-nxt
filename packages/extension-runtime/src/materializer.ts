@@ -1,8 +1,7 @@
+import { extensionManifestSchema, extensionEntrypointsSchema, clientCssSchema } from './manifest.js'
 import {
   AdapterClientSlotNameSchema,
   AgentClientSlotNameSchema,
-  ExtensionIdSchema,
-  ExtensionRevisionIdSchema,
   HostPageContributionSchema,
   HostUiPermissionDeclarationSchema,
   JsonValueSchema,
@@ -87,63 +86,11 @@ const sourcesSchema = z.union([
   z.object({ client: z.string() }).strict(),
 ])
 
-const extensionEntrypointsSchema = z.union([
-  z.object({ host: z.literal('source/host.ts'), client: z.literal('source/client.ts') }).strict(),
-  z.object({ host: z.literal('source/host.ts') }).strict(),
-  z.object({ client: z.literal('source/client.ts') }).strict(),
-])
-
-const clientCssSchema = z
-  .object({
-    path: z.string().regex(/^assets\/[a-z0-9][a-z0-9/_-]*\.module\.css$/u),
-    sha256: z.string().regex(/^[a-f0-9]{64}$/u),
-  })
-  .strict()
-
 const resourcesSchema = z.record(z.string().regex(/^assets\/[a-z0-9][a-z0-9/_.-]*$/u), z.string().max(256 * 1024))
-
-const extensionManifestSchema = z
-  .object({
-    schemaVersion: z.literal(2),
-    extensionId: ExtensionIdSchema,
-    revisionId: ExtensionRevisionIdSchema,
-    entrypoints: extensionEntrypointsSchema,
-    contributions: inputSchema.shape.snapshot.shape.contributions,
-  })
-  .strict()
-
-const hostAdapterManifestSchema = extensionManifestSchema
-  .omit({ schemaVersion: true, entrypoints: true, contributions: true })
-  .extend({
-    schemaVersion: z.literal(3),
-    scope: z.literal('host-adapter'),
-    entrypoints: z.union([
-      z.object({ host: z.literal('source/host.ts'), client: z.literal('source/client.ts') }).strict(),
-      z.object({ host: z.literal('source/host.ts') }).strict(),
-    ]),
-    clientCss: clientCssSchema.optional(),
-    contributions: inputSchema.shape.snapshot.shape.contributions,
-  })
-  .strict()
-
-const hostUiManifestSchema = extensionManifestSchema
-  .omit({ schemaVersion: true, entrypoints: true, contributions: true })
-  .extend({
-    schemaVersion: z.literal(4),
-    scope: z.literal('host-ui'),
-    entrypoints: z.union([
-      z.object({ host: z.literal('source/host.ts'), client: z.literal('source/client.ts') }).strict(),
-      z.object({ client: z.literal('source/client.ts') }).strict(),
-    ]),
-    clientCss: clientCssSchema.optional(),
-    permissions: HostUiPermissionDeclarationSchema,
-    contributions: z.array(HostPageContributionSchema).min(1).max(8),
-  })
-  .strict()
 
 const digestInputSchema = z
   .object({
-    manifest: z.union([extensionManifestSchema, hostAdapterManifestSchema, hostUiManifestSchema]),
+    manifest: extensionManifestSchema,
     sources: sourcesSchema,
     resources: resourcesSchema,
   })
@@ -153,8 +100,8 @@ const payloadDigestInputSchema = z
   .object({
     manifest: z
       .object({
-        schemaVersion: z.union([z.literal(2), z.literal(3), z.literal(4)]),
-        scope: z.enum(['host-adapter', 'host-ui']).optional(),
+        schemaVersion: z.literal(5),
+        scope: z.enum(['agent', 'host-adapter', 'host-ui']),
         entrypoints: extensionEntrypointsSchema,
         contributions: inputSchema.shape.snapshot.shape.contributions,
         permissions: HostUiPermissionDeclarationSchema.optional(),
@@ -186,7 +133,7 @@ const wrapClient = (body: string, hostUi: boolean, clientCssPath?: string): stri
   normalizeSource(`${clientCssPath === undefined ? '' : `import '../${clientCssPath}?nxt-dynamic-css'\n`}
 import { ${hostUi ? 'defineHostUiClientExtension' : 'defineClientExtension'} } from '@nekro-nxt/extension-sdk'
 
-export default ${hostUi ? 'defineHostUiClientExtension' : 'defineClientExtension'}(async ({ React, host, ${hostUi ? 'ui' : 'styles'} }) => {
+export default ${hostUi ? 'defineHostUiClientExtension' : 'defineClientExtension'}(async ({ React, host, styles${hostUi ? ', ui' : ''} }) => {
 ${body}
 })`)
 
@@ -225,8 +172,8 @@ export function materializeDynamicPackage(input: {
       : { client: wrapClient(parsed.snapshot.clientCode, isHostUi, parsed.snapshot.clientCss?.path) }),
   })
   const manifest = isHostAdapter
-    ? hostAdapterManifestSchema.parse({
-        schemaVersion: 3,
+    ? extensionManifestSchema.parse({
+        schemaVersion: 5,
         scope: 'host-adapter',
         extensionId: input.extensionId,
         revisionId: input.revisionId,
@@ -238,8 +185,8 @@ export function materializeDynamicPackage(input: {
         contributions: parsed.snapshot.contributions,
       })
     : isHostUi
-      ? hostUiManifestSchema.parse({
-          schemaVersion: 4,
+      ? extensionManifestSchema.parse({
+          schemaVersion: 5,
           scope: 'host-ui',
           extensionId: input.extensionId,
           revisionId: input.revisionId,
@@ -252,7 +199,8 @@ export function materializeDynamicPackage(input: {
           contributions: hostPages,
         })
       : extensionManifestSchema.parse({
-          schemaVersion: 2,
+          schemaVersion: 5,
+          scope: 'agent',
           extensionId: input.extensionId,
           revisionId: input.revisionId,
           entrypoints: {
@@ -311,9 +259,7 @@ export function materializeImportedRevision(input: {
   readonly sources: { readonly host?: string; readonly client?: string }
   readonly resources?: Readonly<Record<string, string>>
 }): MaterializedExtensionRevision {
-  const manifest = z
-    .union([extensionManifestSchema, hostAdapterManifestSchema, hostUiManifestSchema])
-    .parse(input.manifest)
+  const manifest = extensionManifestSchema.parse(input.manifest)
   const sources = sourcesSchema.parse({
     ...(input.sources.host === undefined ? {} : { host: normalizeSource(input.sources.host) }),
     ...(input.sources.client === undefined ? {} : { client: normalizeSource(input.sources.client) }),
@@ -361,6 +307,6 @@ export function materializeImportedRevision(input: {
     resources,
     contentDigest: createHash('sha256').update(digestInput).digest('hex'),
     payloadDigest: createHash('sha256').update(payloadDigestInput).digest('hex'),
-    scope: manifest.schemaVersion === 3 ? 'host-adapter' : manifest.schemaVersion === 4 ? 'host-ui' : 'agent',
+    scope: manifest.scope,
   }
 }

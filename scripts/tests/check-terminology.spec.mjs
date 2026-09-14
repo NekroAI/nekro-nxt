@@ -44,6 +44,11 @@ test('terminology CLI preserves hard gates without blocking natural Chinese or A
   assert.match(clean.output, /terminology check passed/u)
   assert.doesNotMatch(clean.output, /copy:|warning/iu)
 
+  await put(
+    uiFile,
+    '<pre>Session Revision Adapter</pre><section data-technical-diagnostic><span>{model.name ?? model.id}</span><p>Agent</p></section>',
+  )
+  assert.equal(run().status, 0)
   await put(uiFile, `${natural}<p>Agent 示例</p><span>{model.name ?? model.id}</span>`)
   const rejected = run()
   assert.equal(rejected.status, 1, rejected.output)

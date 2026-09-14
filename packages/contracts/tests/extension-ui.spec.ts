@@ -143,7 +143,7 @@ describe('Host UI contracts', () => {
     ).toBe(false)
   })
 
-  it('requires real UI Kit evidence for a dynamic page verification', () => {
+  it('keeps visual evidence optional and does not reject a rendered page for geometry', () => {
     const request = {
       episodeId: 'eps_project',
       pluginId: 'plugin-project',
@@ -155,7 +155,7 @@ describe('Host UI contracts', () => {
       navigationEntries: ['overview'],
       permissions: { permissions: [], networkOrigins: [] },
     }
-    expect(HostApiContracts.dynamicReportClientVerification.request.safeParse(request).success).toBe(false)
+    expect(HostApiContracts.dynamicReportClientVerification.request.safeParse(request).success).toBe(true)
     expect(
       HostApiContracts.dynamicReportClientVerification.request.parse({
         ...request,
@@ -189,6 +189,6 @@ describe('Host UI contracts', () => {
           },
         ],
       }).success,
-    ).toBe(false)
+    ).toBe(true)
   })
 })

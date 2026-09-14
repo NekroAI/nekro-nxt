@@ -15,8 +15,9 @@ import {
   OutboundIntentIdSchema,
   PlatformIdentityIdSchema,
 } from '@nekro-nxt/contracts'
+import { StaleHostReadError } from '../src/host-api-client.js'
 import { HttpProductHost, renderConversationBody } from '../src/http-host.ts'
-import { connectionDisplayName } from '../src/product-store.ts'
+import { connectionDisplayName } from '../src/product-runtime.ts'
 
 /** Minimal EventSource stand-in: captures registered listeners and lets tests emit events. */
 class FakeEventSource {
@@ -43,8 +44,8 @@ class FakeEventSource {
     for (const listener of this.listeners.get('open') ?? []) listener(new Event('open'))
   }
 
-  emit(type: string, data: unknown): void {
-    for (const listener of this.listeners.get(type) ?? []) listener({ data: JSON.stringify(data) })
+  emit(type: string, data: unknown, lastEventId = ''): void {
+    for (const listener of this.listeners.get(type) ?? []) listener({ data: JSON.stringify(data), lastEventId })
   }
 
   fail(): void {
@@ -56,7 +57,14 @@ class FakeEventSource {
 const stubResponse = (status: number, body: unknown) => ({
   ok: status >= 200 && status < 300,
   status,
-  json: () => Promise.resolve(body),
+  json: () =>
+    Promise.resolve(
+      typeof body === 'object' &&
+        body !== null &&
+        (('channelId' in body && 'turns' in body) || ('messages' in body && 'hasMore' in body))
+        ? { cursor: { epoch: 'fixture', sequence: 0 }, ...body }
+        : body,
+    ),
 })
 
 const webAgentId = AgentIdSchema.parse('agt_webagent')
@@ -86,6 +94,8 @@ const fileAssetId = AssetIdSchema.parse('ast_file')
 
 const snapshotBody = () =>
   HostApiContracts.snapshot.response.parse({
+    cursor: { epoch: 'fixture', sequence: 0 },
+    diagnosticsSampledAt: 0,
     capabilityAvailability: {
       subagents: { available: true },
       webSearch: {
@@ -312,6 +322,249 @@ describe('HttpProductHost', () => {
     FakeEventSource.instances = []
   })
 
+  it('coalesces invalidations into one trailing snapshot read', async () => {
+    const responses: ((value: ReturnType<typeof stubResponse>) => void)[] = []
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(() => new Promise((resolve) => responses.push(resolve))),
+    )
+    const host = new HttpProductHost()
+    const older = host.actions['host.refresh']()
+    const newer = host.actions['host.refresh']()
+    const fresh = snapshotBody()
+    fresh.agents[0]!.displayName = '新名称'
+    const third = host.actions['host.refresh']()
+    expect(responses).toHaveLength(1)
+    responses[0]!(stubResponse(200, snapshotBody()))
+    await flush()
+    expect(responses).toHaveLength(2)
+    responses[1]!(stubResponse(200, fresh))
+    await Promise.all([older, newer, third])
+    expect(host.getSnapshot().agents[0]?.name).toBe('新名称')
+  })
+
+  it('replays runtime changes newer than a snapshot capture cursor', async () => {
+    let resolve!: (value: ReturnType<typeof stubResponse>) => void
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(
+        () =>
+          new Promise((done) => {
+            resolve = done
+          }),
+      ),
+    )
+    vi.stubGlobal('EventSource', FakeEventSource)
+    const host = new HttpProductHost()
+    const unsubscribe = host.subscribe(() => undefined)
+    resolve(stubResponse(200, snapshotBody()))
+    await flush()
+    const refresh = host.actions['host.refresh']()
+    FakeEventSource.instances[0]!.emit(
+      'runtime',
+      {
+        channelId: webChannelId,
+        agentId: webAgentId,
+        phase: 'using-tool',
+        summary: '工具正在运行。',
+        pendingInjectCount: 0,
+        turns: [],
+        revision: 1,
+      },
+      'fixture:1',
+    )
+    resolve(stubResponse(200, snapshotBody()))
+    await refresh
+    expect(host.getSnapshot().channels.find((channel) => channel.id === webChannelId)?.runtimePhase).toBe('using-tool')
+    unsubscribe()
+  })
+
+  it('does not repeat a snapshot read for an invalidation already included in its capture', async () => {
+    let resolveSnapshot!: (value: ReturnType<typeof stubResponse>) => void
+    const fetch = vi.fn(
+      () =>
+        new Promise((resolve) => {
+          resolveSnapshot = resolve
+        }),
+    )
+    vi.stubGlobal('fetch', fetch)
+    vi.stubGlobal('EventSource', FakeEventSource)
+    const host = new HttpProductHost()
+    const unsubscribe = host.subscribe(() => undefined)
+    FakeEventSource.instances[0]!.emit('snapshot-changed', { changed: true }, 'fixture:1')
+    resolveSnapshot(stubResponse(200, { ...snapshotBody(), cursor: { epoch: 'fixture', sequence: 1 } }))
+    await flush()
+    expect(fetch).toHaveBeenCalledTimes(1)
+    FakeEventSource.instances[0]!.emit('snapshot-changed', { changed: true }, 'fixture:1')
+    await flush()
+    expect(fetch).toHaveBeenCalledTimes(1)
+    unsubscribe()
+  })
+
+  it('does not wait for snapshot synchronization after a committed mutation', async () => {
+    let rejectSnapshot!: (cause: Error) => void
+    vi.stubGlobal(
+      'fetch',
+      vi.fn((url: string) =>
+        url === '/api/snapshot'
+          ? new Promise((_resolve, reject) => {
+              rejectSnapshot = reject
+            })
+          : Promise.resolve(stubResponse(200, { channelId: webChannelId, displayName: '新频道名' })),
+      ),
+    )
+    const host = new HttpProductHost()
+    await expect(
+      host.actions['channels.rename']({ channelId: webChannelId, displayName: '新频道名' }),
+    ).resolves.toMatchObject({ displayName: '新频道名' })
+    rejectSnapshot(new Error('offline'))
+    await flush()
+    expect(host.getSnapshot().host.error?.message).toContain('已保存，界面同步失败')
+  })
+
+  it('does not wait for snapshot synchronization after a confirmed login', async () => {
+    let rejectSnapshot!: (cause: Error) => void
+    vi.stubGlobal(
+      'fetch',
+      vi.fn((url: string) =>
+        url === '/api/snapshot'
+          ? new Promise((_resolve, reject) => {
+              rejectSnapshot = reject
+            })
+          : Promise.resolve(
+              stubResponse(200, {
+                loginId: 'fixture-login',
+                adapterKey: 'fixture-alpha',
+                status: 'confirmed',
+                connectionId: externalConnectionId,
+              }),
+            ),
+      ),
+    )
+    const host = new HttpProductHost()
+    await expect(host.actions['connections.login.get']({ loginId: 'fixture-login' })).resolves.toMatchObject({
+      status: 'confirmed',
+      connectionId: externalConnectionId,
+    })
+    rejectSnapshot(new Error('offline'))
+    await flush()
+    expect(host.getSnapshot().host.error?.message).toContain('已保存，界面同步失败')
+  })
+
+  it('replays newer runtime frames after a shared in-flight trajectory read', async () => {
+    let resolveRuntime!: (value: ReturnType<typeof stubResponse>) => void
+    const fetch = vi.fn((url: string) =>
+      url === '/api/snapshot'
+        ? Promise.resolve(stubResponse(200, snapshotBody()))
+        : new Promise((resolve) => {
+            resolveRuntime = resolve
+          }),
+    )
+    vi.stubGlobal('fetch', fetch)
+    vi.stubGlobal('EventSource', FakeEventSource)
+    const host = new HttpProductHost()
+    const unsubscribe = host.subscribe(() => undefined)
+    await flush()
+    const first = host.actions['channels.getRuntime']({ channelId: webChannelId })
+    const second = host.actions['channels.getRuntime']({ channelId: webChannelId })
+    FakeEventSource.instances[0]!.emit(
+      'runtime',
+      {
+        channelId: webChannelId,
+        agentId: webAgentId,
+        phase: 'using-tool',
+        summary: '较新轨迹。',
+        pendingInjectCount: 0,
+        turns: [],
+        revision: 2,
+      },
+      'fixture:2',
+    )
+    resolveRuntime(
+      stubResponse(200, {
+        cursor: { epoch: 'fixture', sequence: 1 },
+        channelId: webChannelId,
+        agentId: webAgentId,
+        phase: 'idle',
+        summary: '较旧轨迹。',
+        pendingInjectCount: 0,
+        turns: [],
+      }),
+    )
+    await Promise.all([first, second])
+    expect(fetch.mock.calls.filter(([url]) => url.includes('/runtime'))).toHaveLength(1)
+    expect(host.getSnapshot().channelRuntimes[webChannelId]?.summary).toBe('较新轨迹。')
+    FakeEventSource.instances[0]!.emit(
+      'runtime',
+      {
+        channelId: webChannelId,
+        agentId: webAgentId,
+        phase: 'idle',
+        summary: '迟到旧事件。',
+        pendingInjectCount: 0,
+        turns: [],
+        revision: 1,
+      },
+      'fixture:1',
+    )
+    expect(host.getSnapshot().channelRuntimes[webChannelId]?.summary).toBe('较新轨迹。')
+    unsubscribe()
+  })
+
+  it('discards a trajectory response after its runtime is unsubscribed', async () => {
+    let resolveRuntime!: (value: ReturnType<typeof stubResponse>) => void
+    vi.stubGlobal(
+      'fetch',
+      vi.fn((url: string) =>
+        url === '/api/snapshot'
+          ? Promise.resolve(stubResponse(200, snapshotBody()))
+          : new Promise((resolve) => {
+              resolveRuntime = resolve
+            }),
+      ),
+    )
+    vi.stubGlobal('EventSource', FakeEventSource)
+    const host = new HttpProductHost()
+    const unsubscribe = host.subscribe(() => undefined)
+    await flush()
+    const read = host.actions['channels.getRuntime']({ channelId: webChannelId }).catch((cause: unknown) => cause)
+    unsubscribe()
+    const snapshot = host.getSnapshot()
+    resolveRuntime(
+      stubResponse(200, {
+        channelId: webChannelId,
+        phase: 'idle',
+        summary: '迟到结果。',
+        pendingInjectCount: 0,
+        turns: [],
+      }),
+    )
+    expect(await read).toHaveProperty('name', 'StaleHostReadError')
+    expect(host.getSnapshot()).toBe(snapshot)
+  })
+
+  it('ignores responses from an unsubscribed lifecycle', async () => {
+    let resolve!: (value: ReturnType<typeof stubResponse>) => void
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(
+        () =>
+          new Promise((done) => {
+            resolve = done
+          }),
+      ),
+    )
+    vi.stubGlobal('EventSource', FakeEventSource)
+    const host = new HttpProductHost()
+    const listener = vi.fn()
+    const unsubscribe = host.subscribe(listener)
+    unsubscribe()
+    resolve(stubResponse(200, snapshotBody()))
+    await flush()
+    expect(host.getSnapshot().host.status).toBe('initializing')
+    expect(listener).not.toHaveBeenCalled()
+  })
+
   it('projects the authoritative Server snapshot onto the Shell product shape', async () => {
     fetchMock = vi.fn((input: string) => {
       if (input === '/api/snapshot') return Promise.resolve(stubResponse(200, snapshotBody()))
@@ -339,7 +592,7 @@ describe('HttpProductHost', () => {
       modelRef: { provider: 'deepseek', model: 'deepseek-chat', reasoningEffort: 'high' },
       persona: '谨慎复核证据。',
       currentRevisionId: webAgentRevisionId,
-      state: '思考中',
+      state: 'thinking',
       capabilities: {
         subagents: false,
         fileTools: false,
@@ -358,9 +611,13 @@ describe('HttpProductHost', () => {
       agentId: webAgentId,
       trigger: '始终响应',
     })
-    expect(snapshot.messages).toHaveLength(2)
-    expect(snapshot.messages[0]).toMatchObject({ role: 'member', author: '你', body: '你好' })
-    expect(snapshot.messages[1]).toMatchObject({
+    expect(Object.values(snapshot.messagesByChannel).flat()).toHaveLength(2)
+    expect(Object.values(snapshot.messagesByChannel).flat()[0]).toMatchObject({
+      role: 'member',
+      author: '你',
+      body: '你好',
+    })
+    expect(Object.values(snapshot.messagesByChannel).flat()[1]).toMatchObject({
       role: 'agent',
       author: '小奈',
       body: '这是通信工具确认发送的回复。',
@@ -436,12 +693,12 @@ describe('HttpProductHost', () => {
     const unsubscribe = host.subscribe(() => {})
     await flush()
 
-    expect(host.getSnapshot().messages[0]).toMatchObject({
+    expect(Object.values(host.getSnapshot().messagesByChannel).flat()[0]).toMatchObject({
       author: '成员甲',
       body: '@机器人账号 [表情] 请看 @成员乙',
     })
-    expect(host.getSnapshot().messages[0]?.body).not.toContain('mbr_')
-    expect(host.getSnapshot().messages[0]?.body).not.toContain('faceType')
+    expect(Object.values(host.getSnapshot().messagesByChannel).flat()[0]?.body).not.toContain('mbr_')
+    expect(Object.values(host.getSnapshot().messagesByChannel).flat()[0]?.body).not.toContain('faceType')
     expect(host.getSnapshot().channels[0]?.connectionName).toBe('项目机器人')
     expect(connectionDisplayName(host.getSnapshot().connections[0]!)).toBe('项目机器人')
     unsubscribe()
@@ -482,7 +739,7 @@ describe('HttpProductHost', () => {
     const unsubscribe = host.subscribe(() => undefined)
     await flush()
 
-    expect(host.getSnapshot().messages[0]).toMatchObject({
+    expect(Object.values(host.getSnapshot().messagesByChannel).flat()[0]).toMatchObject({
       role: 'system',
       activityKey: 'member-joined',
       author: '频道事件',
@@ -535,9 +792,9 @@ describe('HttpProductHost', () => {
     const unsubscribe = host.subscribe(() => undefined)
     await flush()
 
-    const page = await host.execute('channels.listMessages', { channelId: webChannelId, mode: 'initial', limit: 24 })
+    const page = await host.actions['channels.listMessages']({ channelId: webChannelId, mode: 'initial', limit: 24 })
     expect(page).toMatchObject({ hasMore: true })
-    expect(host.getSnapshot().messages[0]).toMatchObject({
+    expect(Object.values(host.getSnapshot().messagesByChannel).flat()[0]).toMatchObject({
       body: '附件如下',
       resources: [
         {
@@ -586,7 +843,7 @@ describe('HttpProductHost', () => {
     const unsubscribe = host.subscribe(() => undefined)
     await flush()
 
-    const loading = host.execute('channels.listMessages', { channelId: webChannelId, mode: 'initial', limit: 24 })
+    const loading = host.actions['channels.listMessages']({ channelId: webChannelId, mode: 'initial', limit: 24 })
     await flush()
     FakeEventSource.instances[0]?.emit('channel-fact', {
       channelId: webChannelId,
@@ -610,8 +867,15 @@ describe('HttpProductHost', () => {
     await loading
     await flush()
 
-    expect(host.getSnapshot().messages.map((message) => message.id)).toEqual([initialEventId, secondReplyIntentId])
-    expect(host.getSnapshot().messages.at(-1)).toMatchObject({ body: '请求期间发送的回复。', delivery: '已发送' })
+    expect(
+      Object.values(host.getSnapshot().messagesByChannel)
+        .flat()
+        .map((message) => message.id),
+    ).toEqual([initialEventId, secondReplyIntentId])
+    expect(Object.values(host.getSnapshot().messagesByChannel).flat().at(-1)).toMatchObject({
+      body: '请求期间发送的回复。',
+      delivery: '已发送',
+    })
     unsubscribe()
   })
 
@@ -630,7 +894,7 @@ describe('HttpProductHost', () => {
     const host = new HttpProductHost()
     const unsubscribe = host.subscribe(() => undefined)
     await flush()
-    await host.execute('channels.rename', { channelId: webChannelId, displayName: '研发讨论群' })
+    await host.actions['channels.rename']({ channelId: webChannelId, displayName: '研发讨论群' })
     const call = requests.find((request) => request.url === `/api/channels/${webChannelId}/display-name`)
     const body = call?.init?.body
     if (typeof body !== 'string') throw new TypeError('rename request body must be JSON text.')
@@ -661,7 +925,7 @@ describe('HttpProductHost', () => {
     const unsubscribe = host.subscribe(() => undefined)
     await flush()
 
-    const result = await host.execute('agents.create', {
+    const result = await host.actions['agents.create']({
       displayName: '资料员',
       model: { provider: 'test-provider', model: 'chat-model' },
     })
@@ -680,14 +944,6 @@ describe('HttpProductHost', () => {
       displayName: '资料员',
       persona: '',
       model: { provider: 'test-provider', model: 'chat-model' },
-      capabilities: {
-        subagents: false,
-        fileTools: false,
-        webSearch: false,
-        dynamicCreation: false,
-        developmentShell: false,
-        unrestrictedFileAccess: false,
-      },
     })
     unsubscribe()
   })
@@ -708,7 +964,7 @@ describe('HttpProductHost', () => {
     const host = new HttpProductHost()
     const unsubscribe = host.subscribe(() => undefined)
     await flush()
-    await host.execute('agents.revise', {
+    await host.actions['agents.revise']({
       agentId: webAgentId,
       expectedCurrentRevisionId: webAgentRevisionId,
       displayName: '新小奈',
@@ -764,17 +1020,17 @@ describe('HttpProductHost', () => {
     const host = new HttpProductHost()
     const unsubscribe = host.subscribe(() => undefined)
     await flush()
-    await host.execute('channels.resetContext', {
+    await host.actions['channels.resetContext']({
       channelId: webChannelId,
       expectedEpisodeId: webEpisodeId,
       mode: 'compact',
     })
-    await host.execute('agents.delete', {
+    await host.actions['agents.delete']({
       agentId: webAgentId,
       expectedCurrentRevisionId: webAgentRevisionId,
       confirmationName: '小奈',
     })
-    await host.execute('channels.delete', {
+    await host.actions['channels.delete']({
       channelId: webChannelId,
       expectedBoundAgentId: webAgentId,
     })
@@ -840,7 +1096,7 @@ describe('HttpProductHost', () => {
     const unsubscribe = host.subscribe(() => undefined)
     await flush()
 
-    await host.execute('extensions.activate', {
+    await host.actions['extensions.activate']({
       extensionId: summaryExtensionId,
       agentId: webAgentId,
       revisionId: summaryRevisionId,
@@ -857,7 +1113,7 @@ describe('HttpProductHost', () => {
       revisionId: summaryRevisionId,
     })
 
-    await host.execute('extensions.deactivate', { extensionId: summaryExtensionId, agentId: webAgentId })
+    await host.actions['extensions.deactivate']({ extensionId: summaryExtensionId, agentId: webAgentId })
     const deactivateCall = requests.find(
       (request) =>
         request.url === `/api/agents/${webAgentId}/extensions/${summaryExtensionId}/activation` &&
@@ -887,7 +1143,7 @@ describe('HttpProductHost', () => {
     const unsubscribe = host.subscribe(() => undefined)
     await flush()
 
-    await host.execute('connections.create', {
+    await host.actions['connections.create']({
       adapterKey: 'fixture-beta',
       alias: '主群机器人',
       configuration: { appId: 'app-1', proactiveSend: true },
@@ -903,7 +1159,7 @@ describe('HttpProductHost', () => {
       configuration: { appId: 'app-1', proactiveSend: true },
       credentials: { clientSecretCredentialRef: 'secret-fixture-1' },
     })
-    await host.execute('connections.updateAlias', { connectionId: externalConnectionId, alias: '新主群机器人' })
+    await host.actions['connections.updateAlias']({ connectionId: externalConnectionId, alias: '新主群机器人' })
     const aliasCall = requests.find(
       (request) => request.url === `/api/connections/${externalConnectionId}/alias` && request.init?.method === 'POST',
     )
@@ -936,7 +1192,7 @@ describe('HttpProductHost', () => {
     vi.stubGlobal('EventSource', FakeEventSource)
 
     const host = new HttpProductHost()
-    await host.execute('bindings.create', {
+    await host.actions['bindings.create']({
       agentId: webAgentId,
       channelId: createdChannelId,
       triggerPolicy: 'mentioned-or-replied',
@@ -980,7 +1236,7 @@ describe('HttpProductHost', () => {
     const unsubscribe = host.subscribe(() => undefined)
     await flush()
 
-    await host.execute('agents.updateCapabilities', { agentId: webAgentId, dynamicCreation: true })
+    await host.actions['agents.updateCapabilities']({ agentId: webAgentId, dynamicCreation: true })
     const capCall = requests.find(
       (request) => request.url === `/api/agents/${webAgentId}/capabilities` && request.init?.method === 'POST',
     )
@@ -1016,7 +1272,7 @@ describe('HttpProductHost', () => {
     const unsubscribe = host.subscribe(() => undefined)
     await flush()
 
-    const result = await host.execute('connections.test', {
+    const result = await host.actions['connections.test']({
       connectionId: externalConnectionId,
       direction: 'send',
       channelId: externalChannelId,
@@ -1052,7 +1308,7 @@ describe('HttpProductHost', () => {
     const unsubscribe = host.subscribe(() => undefined)
     await flush()
 
-    const result = await host.execute('dynamic.approve', {
+    const result = await host.actions['dynamic.approve']({
       agentId: webAgentId,
       episodeId: webEpisodeId,
       requestId: 'approval-1',
@@ -1092,7 +1348,7 @@ describe('HttpProductHost', () => {
     const unsubscribe = host.subscribe(() => undefined)
     await flush()
 
-    const result = await host.execute('extensions.saveFromDynamic', {
+    const result = await host.actions['extensions.saveFromDynamic']({
       agentId: webAgentId,
       episodeId: webEpisodeId,
       pluginId: 'plugin-save',
@@ -1133,7 +1389,7 @@ describe('HttpProductHost', () => {
     const unsubscribe = host.subscribe(listener)
     await flush()
     expect(listener).toHaveBeenCalledTimes(1)
-    expect(host.getSnapshot().messages).toHaveLength(2)
+    expect(Object.values(host.getSnapshot().messagesByChannel).flat()).toHaveLength(2)
 
     const source = FakeEventSource.instances[0]
     expect(source).toBeDefined()
@@ -1158,10 +1414,99 @@ describe('HttpProductHost', () => {
     await flush()
 
     expect(listener).toHaveBeenCalledTimes(2)
-    expect(host.getSnapshot().messages).toHaveLength(3)
-    expect(host.getSnapshot().messages.at(-1)).toMatchObject({ role: 'agent', body: '第二条回复。' })
+    expect(Object.values(host.getSnapshot().messagesByChannel).flat()).toHaveLength(3)
+    expect(Object.values(host.getSnapshot().messagesByChannel).flat().at(-1)).toMatchObject({
+      role: 'agent',
+      body: '第二条回复。',
+    })
     expect(requests.filter((url) => url.includes('/messages'))).toEqual([])
     unsubscribe()
+  })
+
+  it('does not restore a deleted channel projection from a late history response', async () => {
+    let snapshot = snapshotBody()
+    const messages = snapshot.messages.filter((message) => message.channelId === webChannelId)
+    let finish!: (value: ReturnType<typeof stubResponse>) => void
+    vi.stubGlobal(
+      'fetch',
+      vi.fn((url: string) =>
+        url === '/api/snapshot'
+          ? Promise.resolve(stubResponse(200, snapshot))
+          : new Promise((resolve) => {
+              finish = resolve
+            }),
+      ),
+    )
+    vi.stubGlobal('EventSource', FakeEventSource)
+    const host = new HttpProductHost()
+    const stop = host.subscribe(() => undefined)
+    await flush()
+    const pending = host.actions['channels.listMessages']({
+      channelId: webChannelId,
+      mode: 'initial',
+      limit: 24,
+    }).catch((cause: unknown) => cause)
+    snapshot = {
+      ...snapshot,
+      channels: snapshot.channels.filter((channel) => channel.id !== webChannelId),
+      messages: snapshot.messages.filter((message) => message.channelId !== webChannelId),
+    }
+    await host.actions['host.refresh']()
+    finish(stubResponse(200, { cursor: { epoch: 'fixture', sequence: 0 }, hasMore: false, messages }))
+    expect(await pending).toBeInstanceOf(StaleHostReadError)
+    expect(host.getSnapshot().messagesByChannel[webChannelId]).toBeUndefined()
+    stop()
+  })
+
+  it('preserves another loaded channel array and message objects when a fact arrives', async () => {
+    const snapshot = snapshotBody()
+    const original = snapshot.messages[0]!
+    const channel = snapshot.channels[0]!
+    snapshot.channels.push({
+      ...channel,
+      id: externalChannelId,
+      platformChannelId: 'fixture-other',
+      bindings: channel.bindings.map((binding) => ({ ...binding, channelId: externalChannelId })),
+    })
+    snapshot.messages.push({
+      ...original,
+      id: ChannelEventIdSchema.parse('evt_otherloaded'),
+      channelId: externalChannelId,
+    })
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(() => Promise.resolve(stubResponse(200, snapshot))),
+    )
+    vi.stubGlobal('EventSource', FakeEventSource)
+    const host = new HttpProductHost()
+    const stop = host.subscribe(() => undefined)
+    await flush()
+    const before = host.getSnapshot().messagesByChannel
+    FakeEventSource.instances[0]?.emit('channel-fact', {
+      channelId: externalChannelId,
+      revision: 1,
+      items: [
+        {
+          kind: 'outbound',
+          sourceId: secondReplyIntentId,
+          message: {
+            id: secondReplyIntentId,
+            channelId: externalChannelId,
+            role: 'agent',
+            parts: [{ type: 'text', text: '其他频道的新消息' }],
+            occurredAt: 1_700_000_002_000,
+            deliveryState: 'sent',
+          },
+        },
+      ],
+    })
+    await flush()
+    const after = host.getSnapshot().messagesByChannel
+    expect(after[webChannelId]).toBe(before[webChannelId])
+    expect(after[webChannelId]?.[0]).toBe(before[webChannelId]?.[0])
+    expect(after[externalChannelId]).not.toBe(before[externalChannelId])
+    expect(after[externalChannelId]).toHaveLength(2)
+    stop()
   })
 
   it('discovers an adapter-observed Channel when its first channel fact arrives', async () => {
@@ -1300,7 +1645,9 @@ describe('HttpProductHost', () => {
       ],
     })
     await flush()
-    const pushed = host.getSnapshot().messages.filter((message) => message.id === secondReplyIntentId)
+    const pushed = Object.values(host.getSnapshot().messagesByChannel)
+      .flat()
+      .filter((message) => message.id === secondReplyIntentId)
     expect(pushed).toHaveLength(1)
     expect(pushed[0]?.delivery).toBe('已发送')
     unsubscribe()
@@ -1347,7 +1694,7 @@ describe('HttpProductHost', () => {
     await flush()
     expect(requests.filter((url) => url === '/api/snapshot')).toHaveLength(snapshotCallsAfterSubscribe)
     expect(requests.filter((url) => url.startsWith(`/api/channels/${webChannelId}/runtime`))).toEqual([])
-    expect(host.getSnapshot().channels.find((channel) => channel.id === webChannelId)?.runtimePhase).toBe('使用工具')
+    expect(host.getSnapshot().channels.find((channel) => channel.id === webChannelId)?.runtimePhase).toBe('using-tool')
     unsubscribe()
   })
 
@@ -1376,7 +1723,7 @@ describe('HttpProductHost', () => {
     const host = new HttpProductHost()
     const unsubscribe = host.subscribe(() => undefined)
     await flush()
-    await host.execute('channels.getRuntime', { channelId: webChannelId })
+    await host.actions['channels.getRuntime']({ channelId: webChannelId })
     const runtimeCallsAfterLoad = requests.filter((url) => String(url).includes('/runtime')).length
     FakeEventSource.instances[0]?.emit('runtime', {
       channelId: webChannelId,
@@ -1411,7 +1758,7 @@ describe('HttpProductHost', () => {
     await flush()
     expect(requests.filter((url) => String(url).includes('/runtime'))).toHaveLength(runtimeCallsAfterLoad)
     expect(host.getSnapshot().channelRuntimes[webChannelId]?.turns).toHaveLength(1)
-    expect(host.getSnapshot().channels.find((channel) => channel.id === webChannelId)?.runtimePhase).toBe('使用工具')
+    expect(host.getSnapshot().channels.find((channel) => channel.id === webChannelId)?.runtimePhase).toBe('using-tool')
     unsubscribe()
   })
   it('keeps channels and agents projections stable across phase-constant runtime frames', async () => {
@@ -1439,7 +1786,7 @@ describe('HttpProductHost', () => {
     const host = new HttpProductHost()
     const unsubscribe = host.subscribe(() => undefined)
     await flush()
-    await host.execute('channels.getRuntime', { channelId: webChannelId })
+    await host.actions['channels.getRuntime']({ channelId: webChannelId })
     const runtimeCallsAfterLoad = requests.filter((url) => String(url).includes('/runtime')).length
     const source = FakeEventSource.instances[0]
     // The first frame flips the projected phase onto the channel/agent arrays.
@@ -1455,7 +1802,7 @@ describe('HttpProductHost', () => {
     await flush()
     const phaseStableChannels = host.getSnapshot().channels
     const phaseStableAgents = host.getSnapshot().agents
-    expect(host.getSnapshot().channels.find((channel) => channel.id === webChannelId)?.runtimePhase).toBe('使用工具')
+    expect(host.getSnapshot().channels.find((channel) => channel.id === webChannelId)?.runtimePhase).toBe('using-tool')
 
     // Phase-constant frames keep the whole channels/agents array references
     // stable, so narrow selectors / memoized consumers are not re-cloned on
@@ -1474,7 +1821,7 @@ describe('HttpProductHost', () => {
     await flush()
     expect(host.getSnapshot().channels).toBe(phaseStableChannels)
     expect(host.getSnapshot().agents).toBe(phaseStableAgents)
-    expect(host.getSnapshot().channelRuntimes[webChannelId]?.phase).toBe('使用工具')
+    expect(host.getSnapshot().channelRuntimes[webChannelId]?.phase).toBe('using-tool')
     expect(host.getSnapshot().channelRuntimes[webChannelId]?.summary).toBe('摘要更新 26')
     expect(requests.filter((url) => String(url).includes('/runtime'))).toHaveLength(runtimeCallsAfterLoad)
 
@@ -1491,7 +1838,7 @@ describe('HttpProductHost', () => {
     await flush()
     expect(host.getSnapshot().channels).not.toBe(phaseStableChannels)
     expect(host.getSnapshot().agents).not.toBe(phaseStableAgents)
-    expect(host.getSnapshot().channels.find((channel) => channel.id === webChannelId)?.runtimePhase).toBe('思考中')
+    expect(host.getSnapshot().channels.find((channel) => channel.id === webChannelId)?.runtimePhase).toBe('thinking')
     unsubscribe()
   })
 
@@ -1639,14 +1986,14 @@ describe('HttpProductHost', () => {
     })
     expect(host.getSnapshot().agents).toEqual([])
     await expect(
-      host.execute('agents.create', {
+      host.actions['agents.create']({
         displayName: 'x',
         model: { provider: 'test-provider', model: 'chat-model' },
       }),
     ).rejects.toThrow('network down: /api/agents')
     expect(host.getSnapshot().host).toMatchObject({
       status: 'error',
-      error: { code: 'network', message: 'network down: /api/agents' },
+      error: { code: 'network', message: 'network down: /api/agents 操作结果未知，请先刷新确认。' },
     })
     unsubscribe()
   })
@@ -1672,7 +2019,7 @@ describe('HttpProductHost', () => {
     expect(host.getSnapshot().agents).toHaveLength(1)
 
     snapshotMode = 'failed'
-    await expect(host.execute('host.refresh')).rejects.toThrow('Server 正在升级。')
+    await expect(host.actions['host.refresh']()).rejects.toThrow('Server 正在升级。')
     expect(host.getSnapshot().host).toEqual({
       status: 'stale',
       error: { code: 'http', message: 'Server 正在升级。' },
@@ -1689,7 +2036,7 @@ describe('HttpProductHost', () => {
     unsubscribe()
   })
 
-  it('makes host.refresh replace the realtime stream and reconciles loaded channels after open', async () => {
+  it('makes host.reconnect replace the realtime stream and reconciles loaded channels after open', async () => {
     const requests: string[] = []
     fetchMock = vi.fn((input: string) => {
       requests.push(String(input))
@@ -1708,7 +2055,7 @@ describe('HttpProductHost', () => {
     const firstSource = FakeEventSource.instances[0]
     if (!firstSource) throw new Error('测试缺少初始 EventSource。')
 
-    await host.execute('host.refresh')
+    await host.actions['host.reconnect']()
     const replacement = FakeEventSource.instances[0]
     expect(replacement).toBeDefined()
     expect(replacement).not.toBe(firstSource)
@@ -1742,7 +2089,7 @@ describe('HttpProductHost', () => {
     await flush()
 
     validSnapshot = false
-    await expect(host.execute('host.refresh')).rejects.toThrow('数据格式无效')
+    await expect(host.actions['host.refresh']()).rejects.toThrow('数据格式无效')
     expect(host.getSnapshot().host).toMatchObject({
       status: 'stale',
       error: { code: 'invalid-snapshot' },
@@ -1756,17 +2103,12 @@ describe('HttpProductHost', () => {
     unsubscribe()
   })
 
-  it('rejects invalid input for supported and unknown commands instead of returning null', async () => {
+  it('rejects invalid boundary input before transport and exposes only typed actions', async () => {
     vi.stubGlobal('fetch', vi.fn())
-    vi.stubGlobal('EventSource', FakeEventSource)
     const host = new HttpProductHost()
-
-    await expect(host.execute('channels.sendMessage', { channelId: '', body: 'hello' })).rejects.toThrow('缺少目标频道')
-    await expect(host.execute('agents.updateCapabilities', { agentId: webAgentId })).rejects.toThrow('至少一项')
-    await expect(host.execute('extensions.activate', { extensionId: summaryExtensionId })).rejects.toThrow(
-      '缺少目标智能体',
-    )
-    await expect(host.execute('unknown.command')).rejects.toThrow('不支持操作')
+    await expect(host.actions['channels.sendMessage']({ channelId: '', body: 'hello' })).rejects.toThrow()
+    await expect(host.actions['agents.updateCapabilities']({ agentId: webAgentId })).rejects.toThrow()
+    expect(host.actions).not.toHaveProperty('unknown.command')
     expect(fetch).not.toHaveBeenCalled()
   })
 
@@ -1803,7 +2145,7 @@ describe('HttpProductHost', () => {
     const host = new HttpProductHost()
     const unsubscribe = host.subscribe(() => undefined)
     await flush()
-    const page = await host.execute('connections.listEvents', {
+    const page = await host.actions['connections.listEvents']({
       connectionId: internalConnectionId,
       limit: 30,
     })
@@ -1868,7 +2210,11 @@ describe('HttpProductHost', () => {
     const snapshot = host.getSnapshot()
     expect(snapshot.agents[0]?.name).toBe('未命名智能体')
     expect(snapshot.agents[0]?.model).toBe('未命名模型')
-    expect(snapshot.messages.find((message) => message.role === 'agent')?.author).toBe('未命名智能体')
+    expect(
+      Object.values(snapshot.messagesByChannel)
+        .flat()
+        .find((message) => message.role === 'agent')?.author,
+    ).toBe('未命名智能体')
     expect(snapshot.channels[0]).toMatchObject({
       name: '未命名群聊',
       connectionName: '未命名连接',
@@ -1947,7 +2293,7 @@ describe('HttpProductHost', () => {
 
     const host = new HttpProductHost()
     await expect(
-      host.execute('connections.create', {
+      host.actions['connections.create']({
         adapterKey: 'fixture-beta',
         configuration: { appId: 'app-1', proactiveSend: false },
         credentials: { clientSecretCredentialRef: 'bad-secret' },

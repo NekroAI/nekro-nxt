@@ -1,3 +1,4 @@
+import { cssModuleDeclaration } from './lib/css-module-types.mjs'
 import { readdir, readFile, unlink, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 import process from 'node:process'
@@ -16,23 +17,15 @@ async function cssFiles(directory) {
   return files
 }
 
-const declaration = (source) => {
-  const names = new Set()
-  for (const match of source.matchAll(/\.([A-Za-z_][A-Za-z0-9_-]*)/gu)) names.add(match[1])
-  const properties = [...names]
-    .sort()
-    .map((name) => `  readonly ${/^[A-Za-z_$][A-Za-z0-9_$]*$/u.test(name) ? name : JSON.stringify(name)}: string`)
-    .join('\n')
-  return `declare const styles: {\n${properties}\n}\n\nexport default styles\n`
-}
-
 const declarationPath = (cssFile) => `${cssFile.slice(0, -'.css'.length)}.d.css.ts`
 
 const mismatches = []
 for (const cssFile of await cssFiles(webSource)) {
   const target = declarationPath(cssFile)
   const legacyTarget = `${cssFile}.d.ts`
-  const expected = cssFile.endsWith('.module.css') ? declaration(await readFile(cssFile, 'utf8')) : 'export {}\n'
+  const expected = cssFile.endsWith('.module.css')
+    ? cssModuleDeclaration(await readFile(cssFile, 'utf8'))
+    : 'export {}\n'
   if (write) {
     await writeFile(target, expected)
     await unlink(legacyTarget).catch((error) => {

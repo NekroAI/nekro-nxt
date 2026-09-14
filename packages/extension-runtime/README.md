@@ -18,12 +18,20 @@ SQLite 实现位于 `storage-sqlite`，DSH/Cordis 挂载位于 Server 组合根�
 
 导入只接受经过分享协议检查的单 Revision，并在本机重新物化、构建和执行 Runtime 验证；来源验证证据不成为本机有效 Verification。智能体扩展会真实执行 Host factory、Tool、RPC、Client Slot 和 dispose；Host UI 会执行 Host RPC、页面注册、组件、Navigation 与 dispose；Adapter 会使用完整 Fake Host Context 验证注册、启动、入站、出站、凭据引用、状态、Transport 静止和 Client Slot。只有本机证据成功后才提交 Revision，导入后仍没有 Activation 或 Installation。删除 Extension 时，Server 先等待全部 Activation 或 Installation 静止，再把整个源码目录移动到 `extension-data/trash/`，删除数据库事实和 Revision 构建缓存；提交失败时恢复源码与原运行关系。连接、频道和消息不是 Extension 私有数据，不参与删除。
 
-Manifest V3 固定 `scope: host-adapter`，必须有一个 Host entry、恰好一个 Adapter Contribution，并可附带 Adapter 产品 Slot 与最多 8 个 `host-page`；Tool、Agent RPC 和智能体 Slot 混装会在物化和验证阶段失败。V1/V2 继续只读兼容并走 `AgentActivation`。同一 Extension 的后续 Adapter Revision 不能改变 key。
+Manifest V5 的 `host-adapter` scope，必须有一个 Host entry、恰好一个 Adapter Contribution，并可附带 Adapter 产品 Slot 与最多 8 个 `host-page`；Tool、Agent RPC 和智能体 Slot 混装会在物化和验证阶段失败。V1–V4 只供展示、导出和重建，不能进入新运行时。同一 Extension 的后续 Adapter Revision 不能改变 key。
 
-`HostExtensionInstallationCoordinator` 按 scope 分派 Adapter Driver 或 Host UI Driver。Host UI 使用 `nekro-nxt-extension-v3`、Manifest V4、精确权限摘要和 1–8 个页面贡献；新增权限未批准时旧版本不停止。Installation、权限批准和页面目录由 Repository 在一个 SQLite 事务中发布或撤销，任何一表失败都保留原事实。冷启动重建页面目录失败时会 dispose 已挂载的候选 Runtime，再记录 `restore-failed`，不会留下未受安装状态拥有的挂载。页面实例按稳定 `entryId` 保留 Host 级顺序和显隐，Client 失败只写诊断。Adapter 安装继续在 `adapterKey` 级别串行，内置 Registry 或其他 Extension 已占用 key 时在停止连接 Runtime 前拒绝变更。
+`HostExtensionInstallationCoordinator` 按 scope 分派 Adapter Driver 或 Host UI Driver。Host UI 使用 `nekro-nxt-extension-v3`、Manifest V5、精确权限摘要和 1–8 个页面贡献；新增权限未批准时旧版本不停止。Installation、权限批准和页面目录由 Repository 在一个 SQLite 事务中发布或撤销，任何一表失败都保留原事实。冷启动重建页面目录失败时会 dispose 已挂载的候选 Runtime，再记录 `restore-failed`，不会留下未受安装状态拥有的挂载。页面实例按稳定 `entryId` 保留 Host 级顺序和显隐，Client 失败只写诊断。Adapter 安装继续在 `adapterKey` 级别串行，内置 Registry 或其他 Extension 已占用 key 时在停止连接 Runtime 前拒绝变更。
 
-Revision 目录保存 `manifest.json`、`source/`、可选 `assets/`，以及用于并发发布校验的 `content.sha256` 和 `payload.sha256`。智能体 Revision 使用 Manifest V2，Adapter Revision 使用 Manifest V3，纯页面 Revision 使用 Manifest V4；旧 V1 继续只读且不重写。Builder 严格校验 Manifest、CSS/SVG 声明和摘要后按 entrypoint 构建当前 Host/Client。Client CSS 必须是受作用域约束的 CSS Module；PostCSS 检查拒绝产品根选择器、裸全局选择器、`:global`、外部 URL、`@import` 和 `@font-face`，Server 交付时再把所有选择器固定到精确 Artifact 的 `data-host-ui-owner` 页面根。SVG 作为单色 mask 使用，拒绝脚本、样式、事件属性、外部引用及可嵌入内容。
+Revision 目录保存 `manifest.json`、`source/`、可选 `assets/`，以及用于并发发布校验的 `content.sha256` 和 `payload.sha256`。三类 Revision 统一使用 Manifest V5，`scope` 显式声明 `agent | host-adapter | host-ui`。`manifest.ts` 是唯一运行格式 Schema，Builder、Materializer 与导入共用，类型从 Schema 推导；旧 V1–V4 不原地重写。Builder 严格校验 Manifest、CSS/SVG 声明和摘要后按 entrypoint 构建当前 Host/Client。Client CSS 必须是受作用域约束的 CSS Module；PostCSS 检查拒绝产品根选择器、裸全局选择器、`:global`、外部 URL、`@import` 和 `@font-face`，Server 交付时再把所有选择器固定到精确 Artifact 的 `data-host-ui-owner` 页面根。SVG 作为单色 mask 使用，拒绝脚本、样式、事件属性、外部引用及可嵌入内容。
 
 `build.json` 是可丢弃缓存清单，只保存 `revisionId`、由固定 Builder/Node ABI/Revision digest 计算的 `buildKey` 和相对产物名；缓存目录和绝对产物路径由 Builder 推导，并在命中前检查产物文件仍存在。Verification 保留验证发生时的构建证据，产品快照和 Client Artifact 地址使用当前 Builder 对同一 Revision 计算出的 key；Builder 升级后会重建并切换地址，不把历史缓存 key 当成当前实现。损坏的 Manifest 会拒绝构建，损坏或不完整的缓存会重新构建。
 
 Host factory 每个 Activation 执行一次，RPC handler 也归 Activation 所有；返回的 Cordis Plugin 按该智能体的每个 DSH Session 挂载 Tool Fiber。Session dispose 不能撤销 RPC，停用或切换 Activation 会同时撤销所有 Tool Fiber、RPC 和 Client Artifact 授权。智能体 Client 可注册 Catalog 中的 `agent.workbench.sections`、`extension.activation.panels`、`channel.inspector.agent.sections` 和 keyed `conversation.tool.card`；`extension.details.panels` 保留兼容映射。每个智能体拥有独立 SlotCore，加载失败写诊断并保留 Host Activation。Adapter Client 使用独立 Host Runtime，可注册富消息、连接创建/状态/测试和频道检查器 Slot；页面 Client 使用独立 Host UI Runtime，不与前两者共享 Registry。
+
+## 旧版本重建
+
+页面 Client 物化后的 factory 显式接收 `React`、`host`、`styles` 和 `ui`，与动态预览可用的样式映射一致。新保存的 Revision 使用修正后的包装；已经保存的不可变源码不会被自动改写。若旧源码因包装缺少 `styles` 而运行失败，应回到创造任务生成并保存新 Revision，再更新安装。只清理构建缓存或重新构建同一旧源码不能修复包装中的缺失参数。
+
+扩展详情对旧格式显示“需要重建”，通过“从已有源码重建”生成同一 Extension 的新 Revision，旧源码、版本记录、配置和启用/安装记录保留。重建必须通过本机构建与运行验证，失败显示原因且不发布新版本；重复或并发重建复用已验证的同内容版本。成功后不自动启用，用户选择新版本并重新核对权限。旧页面从可运行页面目录中隐藏，原显示顺序、显隐偏好与安装记录继续保留。旧 Adapter 不能挂载时连接保留频道、消息和凭据引用并显示诊断。冷启动动态候选会重置运行证据为 pending，重新运行与验证。
+
+页面几何与 UI Kit 使用情况保留为预览建议和历史证据，不决定 `ready`；原生控件允许使用。空白页面、渲染/RPC/导航失败、释放失败及权限越界仍阻断，CSS 作用域和资源隔离不变。

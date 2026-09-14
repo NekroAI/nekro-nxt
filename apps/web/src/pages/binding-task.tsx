@@ -1,12 +1,8 @@
+import { useProductRuntime } from '../product-runtime.js'
 import { useEffect, useMemo, useState } from 'react'
 import { notify } from '../components/notifications.js'
 import { InlineFeedback } from '../components/product-feedback.js'
-import {
-  connectionDisplayName,
-  useProductStore,
-  type ChannelSummary,
-  type ConnectionSummary,
-} from '../product-store.js'
+import { connectionDisplayName, type ChannelSummary, type ConnectionSummary } from '../product-runtime.js'
 import { ConfirmDialog, SelectField } from '../ui-kit/index.js'
 import styles from './product-pages.module.css'
 
@@ -65,6 +61,8 @@ export function BindingTaskDialog({
   readonly title?: string
   readonly description?: string
 }) {
+  const useProductStore = useProductRuntime().store
+
   const agents = useProductStore((state) => state.agents)
   const channels = useProductStore((state) => state.channels)
   const connections = useProductStore((state) => state.connections)

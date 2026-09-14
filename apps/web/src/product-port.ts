@@ -1,3 +1,4 @@
+import type { ProductActions } from './product-actions.js'
 import type {
   AgentSummary,
   CapabilityAvailability,
@@ -11,9 +12,9 @@ import type {
   ModelSummary,
   ProductMetadataView,
   ProductHostState,
-} from './product-store.js'
+} from './product-model.js'
 import type { AdapterConnectionDescriptor } from '@nekro-nxt/adapter-sdk'
-import { useProductStore, type ProductState } from './product-store.js'
+import type { ProductState } from './product-model.js'
 
 export interface ProductSnapshot {
   readonly host: ProductHostState
@@ -23,7 +24,7 @@ export interface ProductSnapshot {
   readonly models: readonly ModelSummary[]
   readonly agents: readonly AgentSummary[]
   readonly channels: readonly ChannelSummary[]
-  readonly messages: readonly ConversationMessage[]
+  readonly messagesByChannel: Readonly<Record<string, readonly ConversationMessage[]>>
   readonly channelRuntimes: Readonly<Record<string, ChannelRuntimeView>>
   readonly connections: readonly ConnectionSummary[]
   readonly archivedConnections: readonly ArchivedConnectionSummary[]
@@ -104,66 +105,5 @@ interface DynamicHalfStateSummary {
 export interface ProductHostPort {
   getSnapshot(): ProductSnapshot
   subscribe(listener: () => void): () => void
-  execute(command: string, input?: Readonly<Record<string, unknown>>): Promise<unknown>
-}
-
-/** Applies authoritative Host projections to the Shell without exposing transport or database details to pages. */
-export class ProductHostCoordinator implements ProductHostPort {
-  readonly #host: ProductHostPort
-  #unsubscribe: (() => void) | undefined
-
-  constructor(host: ProductHostPort) {
-    this.#host = host
-  }
-
-  /** The latest authoritative projection (delegated to the underlying Host). */
-  getSnapshot(): ProductSnapshot {
-    return this.#host.getSnapshot()
-  }
-
-  /** Subscribes the listener to Host updates (delegated to the underlying Host). */
-  subscribe(listener: () => void): () => void {
-    return this.#host.subscribe(listener)
-  }
-
-  /** Delegates product actions to the underlying Host and preserves rejection semantics. */
-  execute(command: string, input?: Readonly<Record<string, unknown>>): Promise<unknown> {
-    return this.#host.execute(command, input)
-  }
-
-  start(): void {
-    if (this.#unsubscribe) throw new Error('Product Host coordinator is already started.')
-    const apply = (): void => {
-      const snapshot = this.#host.getSnapshot()
-      useProductStore.setState({
-        host: snapshot.host,
-        productMetadata: snapshot.productMetadata,
-        connectionAdapters: snapshot.connectionAdapters,
-        capabilityAvailability: snapshot.capabilityAvailability,
-        models: snapshot.models,
-        agents: snapshot.agents,
-        channels: snapshot.channels,
-        messages: snapshot.messages,
-        channelRuntimes: snapshot.channelRuntimes,
-        connections: snapshot.connections,
-        archivedConnections: snapshot.archivedConnections,
-        extensions: snapshot.extensions,
-        hostUi: snapshot.hostUi ?? { preferencesRevision: 0, pages: [] },
-        platformUsersRevision: snapshot.platformUsersRevision,
-        approvals: snapshot.approvals,
-        dynamic: snapshot.dynamic,
-        authoringTasks: snapshot.authoringTasks ?? [],
-        notificationSettings: snapshot.notificationSettings,
-        diagnosticNote: snapshot.diagnosticNote,
-        workTreeOrder: snapshot.workTreeOrder,
-      })
-    }
-    apply()
-    this.#unsubscribe = this.#host.subscribe(apply)
-  }
-
-  dispose(): void {
-    this.#unsubscribe?.()
-    this.#unsubscribe = undefined
-  }
+  readonly actions: ProductActions
 }

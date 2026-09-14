@@ -6,7 +6,7 @@ import {
   nearestAgentAccessLevel,
   type AgentAccessLevel,
 } from '../src/agent-access-level.js'
-import type { AgentSummary } from '../src/product-store.js'
+import type { AgentSummary } from './product-fixture.js'
 
 const capabilities = (
   access: Pick<AgentSummary['capabilities'], 'fileTools' | 'developmentShell' | 'unrestrictedFileAccess'>,

@@ -1,10 +1,12 @@
+import { useProductRuntime } from '../product-runtime.js'
+import { useUiStateStore } from '../product-runtime.js'
 import { Settings } from 'lucide-react'
 import { useEffect, useState } from 'react'
 import { LlmProviderSettings } from '../llm-settings.js'
 import { DshExtensionSettings } from '../dsh-extension-settings.js'
 import { InlineFeedback, PageHeader } from '../components/product-feedback.js'
 import { notify } from '../components/notifications.js'
-import { useProductStore, type ThemeChoice } from '../product-store.js'
+import { useProductStore, type ThemeChoice } from '../product-runtime.js'
 import {
   Button,
   Field,
@@ -53,6 +55,8 @@ function SystemExtensionsPanel() {
 }
 
 function NotificationsPanel() {
+  const useProductStore = useProductRuntime().store
+
   const settings = useProductStore((state) => state.notificationSettings)
   const [systemEnabled, setSystemEnabled] = useState(settings.system.enabled)
   const [enabled, setEnabled] = useState(settings.bark.enabled)
@@ -234,10 +238,13 @@ const isContrastChoice = (value: string): value is ContrastChoice =>
   value === 'system' || value === 'standard' || value === 'more'
 
 export function SettingsPage() {
+  const useProductRuntimeUi = useProductRuntime().uiStore
+
+  const uiStore = useProductRuntime().uiStore
   const productMetadata = useProductStore((state) => state.productMetadata)
   const [searchParams] = useSearchParams()
-  const theme = useProductStore((state) => state.theme)
-  const reducedMotion = useProductStore((state) => state.reducedMotion)
+  const theme = useUiStateStore((state) => state.theme)
+  const reducedMotion = useUiStateStore((state) => state.reducedMotion)
   const reducedTransparency = useUiPreferences((state) => state.appearance.reducedTransparency)
   const contrast = useUiPreferences((state) => state.appearance.contrast)
   const inspectorCollapsed = useUiPreferences((state) => state.layout.inspectorCollapsed)
@@ -292,7 +299,7 @@ export function SettingsPage() {
                 label="主题"
                 value={theme}
                 onValueChange={(value) => {
-                  if (isThemeChoice(value)) useProductStore.getState().setTheme(value)
+                  if (isThemeChoice(value)) uiStore.getState().setTheme(value)
                 }}
                 options={[
                   { value: 'light', label: '浅色' },
@@ -303,19 +310,19 @@ export function SettingsPage() {
                 label="减少动态效果"
                 description="关闭页面衔接、选中块滑动和对话框过渡。"
                 checked={reducedMotion}
-                onCheckedChange={(enabled) => useProductStore.getState().setReducedMotion(enabled)}
+                onCheckedChange={(enabled) => uiStore.getState().setReducedMotion(enabled)}
               />
               <SwitchField
                 label="减少透明效果"
                 description="将浮层、侧栏和状态背景改为更明确的实色与边框。"
                 checked={reducedTransparency}
-                onCheckedChange={(enabled) => useUiPreferences.getState().setReducedTransparency(enabled)}
+                onCheckedChange={(enabled) => useProductRuntimeUi.getState().setReducedTransparency(enabled)}
               />
               <SelectField
                 label="对比度"
                 value={contrast}
                 onValueChange={(value) => {
-                  if (isContrastChoice(value)) useUiPreferences.getState().setContrast(value)
+                  if (isContrastChoice(value)) useProductRuntimeUi.getState().setContrast(value)
                 }}
                 options={[
                   { value: 'system', label: '跟随系统' },
@@ -330,9 +337,9 @@ export function SettingsPage() {
                 label="默认隐藏检查器"
                 description="打开频道或智能体工作台时优先显示主画布；主画布右边缘的检查器按钮可随时重新展开。"
                 checked={inspectorCollapsed}
-                onCheckedChange={(enabled) => useUiPreferences.getState().setInspectorCollapsed(enabled)}
+                onCheckedChange={(enabled) => useProductRuntimeUi.getState().setInspectorCollapsed(enabled)}
               />
-              <Button onClick={() => useUiPreferences.getState().resetLayout()}>恢复默认分栏</Button>
+              <Button onClick={() => useProductRuntimeUi.getState().resetLayout()}>恢复默认分栏</Button>
             </div>
           </section>
         ) : null}

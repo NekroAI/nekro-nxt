@@ -2,418 +2,43 @@ import { expect, test, type Locator, type Page, type TestInfo } from '@playwrigh
 import { AxeBuilder } from '@axe-core/playwright'
 import {
   AgentIdSchema,
-  AgentRevisionIdSchema,
-  AssetIdSchema,
-  AuthoringAttemptIdSchema,
-  AuthoringTaskIdSchema,
   ChannelEventIdSchema,
-  ChannelIdSchema,
-  ChannelMemberIdSchema,
-  ConnectionIdSchema,
   ConnectionEventIdSchema,
-  EpisodeIdSchema,
   ExtensionIdSchema,
   ExtensionRevisionIdSchema,
   HostApiContracts,
-  HostUiPageInstanceIdSchema,
-  OutboundIntentIdSchema,
-  PlatformIdentityIdSchema,
 } from '@nekro-nxt/contracts'
 
-const targetAgentId = AgentIdSchema.parse('agt_targetinternalid')
-const sourceAgentId = AgentIdSchema.parse('agt_sourceinternalid')
-const targetRevisionId = AgentRevisionIdSchema.parse('arev_targetinternal')
-const sourceRevisionId = AgentRevisionIdSchema.parse('arev_sourceinternal')
-const targetChannelId = ChannelIdSchema.parse('chn_target')
-const sourceChannelId = ChannelIdSchema.parse('chn_source')
-const externalChannelId = ChannelIdSchema.parse('chn_external')
-const internalConnectionId = ConnectionIdSchema.parse('con_internal')
-const externalConnectionId = ConnectionIdSchema.parse('con_external')
-const summaryExtensionId = ExtensionIdSchema.parse('ext_summary')
-const summaryRevisionId = ExtensionRevisionIdSchema.parse('xrv_summary')
-const dashboardExtensionId = ExtensionIdSchema.parse('ext_dashboard')
-const dashboardRevisionId = ExtensionRevisionIdSchema.parse('xrv_dashboard')
-const overviewPageId = HostUiPageInstanceIdSchema.parse('hup_DASHBOARD')
-const reportsPageId = HostUiPageInstanceIdSchema.parse('hup_REPORTS')
-const targetEpisodeId = EpisodeIdSchema.parse('eps_target')
-const previewAuthoringTaskId = AuthoringTaskIdSchema.parse('aut_PREVIEWPROBE')
-const previewAuthoringAttemptId = AuthoringAttemptIdSchema.parse('aua_PREVIEWPROBE')
-const saveAuthoringTaskId = AuthoringTaskIdSchema.parse('aut_SAVEPROBE')
-const saveAuthoringAttemptId = AuthoringAttemptIdSchema.parse('aua_SAVEPROBE')
-const visibleEventId = ChannelEventIdSchema.parse('evt_visible')
-const externalEventId = ChannelEventIdSchema.parse('evt_externalvisible')
-const externalSystemEventId = ChannelEventIdSchema.parse('evt_externalsystem')
-const externalCardEventId = ChannelEventIdSchema.parse('evt_externalcard')
-const externalImageEventId = ChannelEventIdSchema.parse('evt_externalimage')
-const sentEventId = ChannelEventIdSchema.parse('evt_sent')
-const resourceIntentId = OutboundIntentIdSchema.parse('out_resources')
-const senderMemberId = ChannelMemberIdSchema.parse('mbr_sender')
-const targetMemberId = ChannelMemberIdSchema.parse('mbr_target')
-const imageAssetId = AssetIdSchema.parse('ast_image')
-const imagePolicy = {
-  history: {
-    mode: 'persistent-distinct' as const,
-    detail: 'auto' as const,
-    restoreAfterCompaction: { recentMessages: 32, maxImages: 20 },
-  },
-  textModel: { mode: 'disabled' as const },
-}
-const imageDiagnostics = {
-  route: { mode: 'direct' as const, provider: 'deepseek', model: 'deepseek-v4-flash' },
-  activeSessions: 1,
-  residentImages: 6,
-  duplicateImagesSkipped: 4,
-  lastInspection: {
-    mode: 'direct' as const,
-    imageCount: 3,
-    cacheHit: false,
-    usage: { inputTokens: 1280, outputTokens: 220 },
-  },
-  lastRestoration: {
-    compactionId: 'cmp_visual_demo',
-    candidateCount: 9,
-    restoredCount: 6,
-    skippedCount: 3,
-  },
-  blockers: [],
-}
-const fileAssetId = AssetIdSchema.parse('ast_file')
-const connectionActorId = PlatformIdentityIdSchema.parse('pid_VISUALACTOR')
-const connectionSubjectId = PlatformIdentityIdSchema.parse('pid_VISUALSUBJECT')
-const connectionEvents = Array.from({ length: 35 }, (_, index) => ({
-  id: ConnectionEventIdSchema.parse(`cev_VISUAL${String(index + 1).padStart(2, '0')}`),
-  connectionId: externalConnectionId,
-  activityKey: 'account-signal',
-  summary:
-    index === 0 ? '账号资料收到一条较长的连接活动摘要，用于确认较多事实仍保持紧凑可读。' : `连接活动 ${index + 1}`,
-  actor: { identityId: connectionActorId, displayName: '参与者甲' },
-  ...(index % 2 === 0 ? { subject: { identityId: connectionSubjectId, displayName: '相关对象乙' } } : {}),
-  occurredAt: 1_725_000_100_000 - index * 1_000,
-}))
-
-const productSnapshot = HostApiContracts.snapshot.response.parse({
-  productMetadata: {
-    displayName: 'NekroNXT Preview',
-    organizationName: 'NekroAI',
-    version: '0.1.0',
-    releaseId: '0.1.0-visual-review',
-    repositoryUrl: 'https://github.com/NekroAI/nekro-nxt',
-    licenseSpdx: 'AGPL-3.0-only',
-    dshVersion: '0.1.1-rc.2',
-  },
-  capabilityAvailability: {
-    subagents: { available: true },
-    webSearch: {
-      provider: 'deepseek-official',
-      available: false,
-      credentialConfigured: false,
-      credentialReference: 'DEEPSEEK_API_KEY',
-      maxUsesPerCall: 2,
-      maxResultsPerCall: 5,
-      timeoutMs: 60_000,
-    },
-  },
-  notificationSettings: {
-    system: { enabled: true },
-    bark: { enabled: false, serverUrl: 'https://api.day.app', deviceKeyConfigured: false },
-    events: { 'dynamic-client-approval-requested': true },
-  },
-  connectionAdapters: [
-    {
-      key: 'fixture-alpha',
-      displayName: '内置频道',
-      description: '内置频道',
-      provisioning: 'system-singleton',
-      channelKinds: ['internal'],
-      activities: [],
-      features: {},
-      aliasEditable: false,
-      channelDiscovery: 'host-created',
-      diagnostics: { receive: false, send: false },
-      configSchema: { schemaVersion: 1, type: 'object', required: [], properties: {} },
-    },
-    {
-      key: 'fixture-beta',
-      displayName: '示例群聊平台',
-      description: '连接示例平台账号',
-      provisioning: 'user-created',
-      channelKinds: ['direct', 'group'],
-      activities: [],
-      features: {},
-      aliasEditable: true,
-      channelDiscovery: 'adapter-observed',
-      diagnostics: { receive: true, send: true },
-      configSchema: {
-        schemaVersion: 1,
-        type: 'object',
-        required: ['accountCode', 'secret'],
-        properties: {
-          accountCode: { type: 'string', title: '账号代码' },
-          secret: { type: 'credential-reference', title: '访问密钥' },
-          markdown: { type: 'boolean', title: '使用 Markdown', description: '允许发送 Markdown 消息。', default: true },
-        },
-      },
-    },
-  ],
-  models: [
-    {
-      provider: 'deepseek',
-      providerName: 'deepseek',
-      id: 'deepseek-v4-flash',
-      name: 'DeepSeek V4 Flash',
-      inputModalities: ['text', 'image'],
-    },
-    {
-      provider: 'test-provider',
-      providerName: '测试供应商',
-      id: 'text-model',
-      name: '纯文本模型',
-      inputModalities: ['text'],
-    },
-    {
-      provider: 'unknown-provider',
-      providerName: '能力未声明供应商',
-      id: 'unknown-model',
-      name: '能力未声明模型',
-    },
-  ],
-  agents: [
-    {
-      id: targetAgentId,
-      displayName: '资料员',
-      persona: '严谨、简洁',
-      personaDocument: { version: 1, segments: [{ type: 'text', text: '严谨、简洁' }] },
-      currentRevisionId: targetRevisionId,
-      createdAt: 1_725_000_000_000,
-      runtimeStatus: 'running',
-      runtimePhase: 'thinking',
-      model: { provider: 'deepseek', model: 'deepseek-v4-flash' },
-      dynamicClientApprovalPolicy: 'manual',
-      imagePolicy,
-      imageDiagnostics,
-      capabilities: {
-        subagents: false,
-        fileTools: false,
-        webSearch: false,
-        dynamicCreation: true,
-        developmentShell: false,
-        unrestrictedFileAccess: false,
-      },
-      channels: [targetChannelId],
-    },
-    {
-      id: sourceAgentId,
-      displayName: '记录员',
-      persona: '',
-      personaDocument: { version: 1, segments: [] },
-      currentRevisionId: sourceRevisionId,
-      createdAt: 1_725_000_000_100,
-      runtimeStatus: 'idle',
-      model: { provider: 'deepseek', model: 'deepseek-v4-flash' },
-      dynamicClientApprovalPolicy: 'manual',
-      imagePolicy,
-      imageDiagnostics,
-      capabilities: {
-        subagents: false,
-        fileTools: false,
-        webSearch: false,
-        dynamicCreation: false,
-        developmentShell: false,
-        unrestrictedFileAccess: false,
-      },
-      channels: [sourceChannelId],
-    },
-  ],
-  channels: [
-    {
-      id: targetChannelId,
-      connectionId: internalConnectionId,
-      platformChannelId: 'platform-target',
-      kind: 'internal',
-      displayName: '资料员的内置频道',
-      boundAgentId: targetAgentId,
-      bindings: [
-        { channelId: targetChannelId, agentId: targetAgentId, triggerPolicy: 'always', boundAt: 1_725_000_000_000 },
-      ],
-    },
-    {
-      id: sourceChannelId,
-      connectionId: internalConnectionId,
-      platformChannelId: 'platform-source',
-      kind: 'internal',
-      displayName: '记录员的内置频道',
-      boundAgentId: sourceAgentId,
-      bindings: [
-        { channelId: sourceChannelId, agentId: sourceAgentId, triggerPolicy: 'always', boundAt: 1_725_000_000_100 },
-      ],
-    },
-    {
-      id: externalChannelId,
-      connectionId: externalConnectionId,
-      platformChannelId: 'opaque-group-alpha',
-      kind: 'group',
-      displayName: '产品讨论群',
-      bindings: [],
-    },
-  ],
-  messages: [],
-  connections: [
-    {
-      id: internalConnectionId,
-      adapterKey: 'fixture-alpha',
-      status: { state: 'connected', proactiveSend: false, credentialConfigured: true, activities: {} },
-      channelCount: 2,
-      knownChannels: [],
-    },
-    {
-      id: externalConnectionId,
-      adapterKey: 'fixture-beta',
-      status: {
-        state: 'connected',
-        proactiveSend: false,
-        credentialConfigured: true,
-        accountReference: '示例账号',
-        activities: {},
-      },
-      channelCount: 1,
-      knownChannels: [{ id: externalChannelId, name: '产品讨论群', kind: 'group' }],
-      lastInbound: {
-        channelId: externalChannelId,
-        platformMessageId: 'fixture-inbound',
-        receivedAt: 1_725_000_010_000,
-      },
-      receiveTest: { status: 'received', channelId: externalChannelId, platformMessageId: 'fixture-inbound' },
-      sendTest: { status: 'sent', channelId: externalChannelId, platformMessageId: 'fixture-outbound' },
-    },
-  ],
-  extensions: [
-    {
-      id: summaryExtensionId,
-      slug: 'group-summary',
-      displayName: '群聊摘要',
-      description: '把群聊讨论整理为可继续跟进的摘要。',
-      createdByAgentId: targetAgentId,
-      scope: 'agent',
-      revisions: [
-        {
-          id: summaryRevisionId,
-          revisionNumber: 2,
-          createdAt: 1_725_000_000_000,
-          scope: 'agent',
-          contributions: [],
-        },
-      ],
-      activations: [
-        {
-          agentId: targetAgentId,
-          extensionRevisionId: summaryRevisionId,
-          config: {},
-          activatedAt: 1_725_000_000_000,
-        },
-      ],
-      clientDiagnostics: [],
-    },
-  ],
-  dynamic: [
-    {
-      agentId: targetAgentId,
-      episodeId: targetEpisodeId,
-      pluginId: 'dynamic-plugin-internal-id',
-      packageId: 'dynamic-package-internal-id',
-      status: 'running',
-      packages: [
-        {
-          packageId: 'dynamic-package-internal-id',
-          name: '动态摘要',
-          purpose: '整理当前频道摘要。',
-          hasHostHalf: true,
-          hasClientHalf: false,
-        },
-      ],
-      policy: { turn: 1, consecutiveFailures: 0, repeatedFingerprintCount: 0 },
-    },
-  ],
-})
-
-const channelMessages = HostApiContracts.listChannelMessages.response.parse({
-  messages: [
-    {
-      id: visibleEventId,
-      channelId: targetChannelId,
-      role: 'member',
-      parts: [{ type: 'text', text: '请复核今天的记录。' }],
-      occurredAt: 1_725_000_000_000,
-    },
-    {
-      id: externalEventId,
-      channelId: externalChannelId,
-      role: 'member',
-      sender: { memberId: senderMemberId, displayName: '成员甲' },
-      mentionedConnectionAccount: true,
-      parts: [
-        { type: 'mention', memberId: ChannelMemberIdSchema.parse('mbr_bot'), displayName: '机器人账号' },
-        { type: 'text', text: '请和' },
-        { type: 'mention', memberId: targetMemberId, displayName: '成员乙' },
-        { type: 'text', text: '一起复核。' },
-      ],
-      occurredAt: 1_725_000_010_000,
-    },
-    {
-      id: externalSystemEventId,
-      channelId: externalChannelId,
-      role: 'system',
-      sender: { memberId: senderMemberId, displayName: '成员甲' },
-      activityKey: 'member-joined',
-      parts: [
-        { type: 'mention', memberId: senderMemberId, displayName: '新成员' },
-        { type: 'text', text: ' 受 ' },
-        { type: 'mention', memberId: targetMemberId, displayName: '邀请人' },
-        { type: 'text', text: ' 邀请加入了频道。' },
-      ],
-      occurredAt: 1_725_000_012_000,
-    },
-    {
-      id: externalCardEventId,
-      channelId: externalChannelId,
-      role: 'member',
-      sender: { memberId: senderMemberId, displayName: '成员甲' },
-      parts: [
-        {
-          type: 'rich',
-          adapterKey: 'fixture-beta',
-          kind: 'miniapp',
-          summary: '示例来源 · 示例分享',
-          title: '示例分享',
-          source: '示例来源',
-          targetUrl: 'https://example.test/share/fixture-card',
-          previewAssetId: imageAssetId,
-        },
-      ],
-      occurredAt: 1_725_000_015_000,
-    },
-    {
-      id: externalImageEventId,
-      channelId: externalChannelId,
-      role: 'member',
-      sender: { memberId: senderMemberId, displayName: '成员甲' },
-      parts: [{ type: 'image', assetId: imageAssetId, alt: '讨论截图' }],
-      occurredAt: 1_725_000_016_000,
-    },
-    {
-      id: resourceIntentId,
-      channelId: targetChannelId,
-      role: 'agent',
-      parts: [
-        { type: 'text', text: '这是本次交付的资源。' },
-        { type: 'image', assetId: imageAssetId, alt: '界面预览图' },
-        { type: 'file', assetId: fileAssetId, name: '验收记录.txt' },
-      ],
-      occurredAt: 1_725_000_020_000,
-      deliveryState: 'sent',
-    },
-  ],
-  hasMore: false,
-}).messages
+import {
+  targetAgentId,
+  sourceAgentId,
+  targetChannelId,
+  sourceChannelId,
+  externalChannelId,
+  internalConnectionId,
+  externalConnectionId,
+  summaryExtensionId,
+  summaryRevisionId,
+  dashboardExtensionId,
+  dashboardRevisionId,
+  overviewPageId,
+  reportsPageId,
+  targetEpisodeId,
+  previewAuthoringTaskId,
+  previewAuthoringAttemptId,
+  saveAuthoringTaskId,
+  saveAuthoringAttemptId,
+  sentEventId,
+  senderMemberId,
+  targetMemberId,
+  imageAssetId,
+  imagePolicy,
+  fileAssetId,
+  connectionActorId,
+  connectionEvents,
+  productSnapshot,
+  channelMessages,
+} from './fixtures/product-quality.js'
 
 const installRuntimeFailureGate = (page: Page): string[] => {
   const failures: string[] = []
@@ -425,6 +50,20 @@ const installRuntimeFailureGate = (page: Page): string[] => {
 }
 
 const installProductRoutes = async (page: Page): Promise<void> => {
+  if (process.env['NEKRO_UI_PERF_CONTENT_VISIBILITY'] === '1') {
+    await page.addInitScript(() => {
+      document.addEventListener(
+        'DOMContentLoaded',
+        () => {
+          const style = document.createElement('style')
+          style.textContent =
+            '[data-channel-message-list] [data-nxt-enter-kind="object"] { content-visibility: auto; contain-intrinsic-size: auto 120px; }'
+          document.head.append(style)
+        },
+        { once: true },
+      )
+    })
+  }
   await page.route('**/api/snapshot', (route) =>
     route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(productSnapshot) }),
   )
@@ -435,6 +74,7 @@ const installProductRoutes = async (page: Page): Promise<void> => {
       status: 200,
       contentType: 'application/json',
       body: JSON.stringify({
+        cursor: { epoch: 'fixture', sequence: 0 },
         channelId,
         ...(channel?.boundAgentId === undefined ? {} : { agentId: channel.boundAgentId }),
         phase: channel?.runtimePhase ?? 'idle',
@@ -481,7 +121,7 @@ const installProductRoutes = async (page: Page): Promise<void> => {
     return route.fulfill({
       status: 200,
       contentType: 'application/json',
-      body: JSON.stringify({ messages, hasMore: false }),
+      body: JSON.stringify({ cursor: { epoch: 'fixture', sequence: 0 }, messages, hasMore: false }),
     })
   })
   await page.route('**/api/connections/*/events?*', (route) => {
@@ -940,7 +580,7 @@ test('three desktop viewports remain usable in both themes and reduced motion', 
         await expect(chartTooltip).toHaveAttribute('data-pointer-x', '76')
         await page.mouse.move(ringBox.x + 94, ringBox.y + 40)
         await expect(chartTooltip).toHaveAttribute('data-pointer-x', '94')
-        await expect(chartTooltip).toHaveCSS('left', '94px')
+        await expect(chartTooltip).toHaveCSS('translate', /^94px /u)
         const chartSurface = await chartTooltip.evaluate((element) => {
           const style = getComputedStyle(element)
           return { background: style.backgroundColor, radius: Number.parseFloat(style.borderRadius) }
@@ -1165,6 +805,100 @@ test('platform-user updates stay local while persona references use the shared m
   expect(failures, failures.join('\n')).toEqual([])
 })
 
+test('rapid theme reversal keeps the newer transition alive until its own cleanup', async ({ page }) => {
+  await installProductRoutes(page)
+  await page.addInitScript(() => localStorage.setItem('nekro-nxt.theme', 'dark'))
+  await page.goto(`/work/channels/${targetChannelId}`)
+  await expect(page.getByRole('textbox', { name: '消息内容' })).toBeVisible()
+  await page.clock.install()
+  await page.clock.pauseAt(new Date())
+  await page
+    .getByRole('button', { name: '主题：深色；切换为浅色' })
+    .evaluate((element: HTMLButtonElement) => element.click())
+  await page.clock.runFor(160)
+  await page
+    .getByRole('button', { name: '主题：浅色；切换为深色' })
+    .evaluate((element: HTMLButtonElement) => element.click())
+  await page.clock.runFor(170)
+  const themeRulesEnabled = () =>
+    page.evaluate(() =>
+      [...document.styleSheets].some((sheet) =>
+        [...sheet.cssRules].some(
+          (rule) =>
+            rule instanceof CSSMediaRule &&
+            !rule.conditionText.includes('--nxt-theme-transition') &&
+            rule.cssText.includes('data-theme-changing'),
+        ),
+      ),
+    )
+  await expect(page.locator('html')).toHaveAttribute('data-theme-changing', '')
+  expect(await themeRulesEnabled()).toBe(true)
+  await page.clock.runFor(160)
+  await expect(page.locator('html')).not.toHaveAttribute('data-theme-changing', '')
+  expect(await themeRulesEnabled()).toBe(false)
+})
+
+test('theme surfaces interpolate while message layout wrappers stay unanimated', async ({ page }, testInfo) => {
+  const failures = installRuntimeFailureGate(page)
+  await installProductRoutes(page)
+  await page.addInitScript(() => localStorage.setItem('nekro-nxt.theme', 'dark'))
+  await page.goto(`/work/channels/${targetChannelId}`)
+  await expect(page.locator('[data-channel-message-list] article').first()).toBeVisible()
+  const colors = await page.evaluate(async () => {
+    const root = document.documentElement
+    const wrapper = document.querySelector<HTMLElement>('[data-channel-message-list] [data-nxt-enter-kind="object"]')
+    const paragraph = wrapper?.querySelector('p')
+    if (!wrapper || !paragraph) throw new Error('Missing theme fixture message')
+    for (const sheet of document.styleSheets) {
+      for (const rule of sheet.cssRules) {
+        if (rule instanceof CSSMediaRule && rule.conditionText.includes('(--nxt-theme-transition)'))
+          rule.media.mediaText = rule.conditionText.replaceAll('(--nxt-theme-transition)', '(min-width: 0px)')
+      }
+    }
+    root.dataset['themeChanging'] = ''
+    // Establish the old style before changing tokens, then inspect the real CSS transitions.
+    const initialColor = getComputedStyle(paragraph).color
+    root.dataset['theme'] = 'light'
+    root.classList.remove('dark')
+    await new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())))
+    const transitions = document
+      .getAnimations()
+      .filter((animation): animation is CSSTransition => animation instanceof CSSTransition)
+    for (const animation of transitions) animation.pause()
+    const at = async (time: number) => {
+      for (const animation of transitions) animation.currentTime = time
+      await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()))
+      return getComputedStyle(paragraph).color
+    }
+    const token = getComputedStyle(root).getPropertyValue('--nxt-motion-standard').trim()
+    const duration = Number.parseFloat(token) * (token.endsWith('ms') ? 1 : 1000)
+    const start = await at(0)
+    const middle = await at(duration / 2)
+    const end = await at(duration)
+    await at(duration / 2)
+    return {
+      start,
+      middle,
+      end,
+      count: transitions.length,
+      initialColor,
+      duration,
+      wrapperTransitions: wrapper.getAnimations().filter((animation) => animation instanceof CSSTransition).length,
+      durations: [...new Set(transitions.map((animation) => animation.effect?.getTiming().duration))],
+    }
+  })
+  expect(colors.start).toBe(colors.initialColor)
+  expect(colors.count).toBeGreaterThan(0)
+  expect(colors.wrapperTransitions).toBe(0)
+  expect(colors.durations).toEqual([colors.duration])
+  expect(colors.middle).not.toBe(colors.start)
+  expect(colors.middle).not.toBe(colors.end)
+  const screenshot = testInfo.outputPath('theme-midpoint.png')
+  await page.screenshot({ path: screenshot, animations: 'allow' })
+  await testInfo.attach('theme-midpoint', { path: screenshot, contentType: 'image/png' })
+  expect(failures).toEqual([])
+})
+
 test('representative product surfaces match committed visual baselines', async ({ page }, testInfo) => {
   const failures = installRuntimeFailureGate(page)
   await installProductRoutes(page)
@@ -1219,7 +953,7 @@ test('representative product surfaces match committed visual baselines', async (
   await page.locator('html').evaluate((root) => root.setAttribute('data-reduced-motion', 'false'))
   expect(
     await stateIndicator
-      .locator('[data-runtime-state="思考中"]')
+      .locator('[data-runtime-state="thinking"]')
       .evaluate((element) => getComputedStyle(element, '::after').animationName),
   ).toMatch(/treeActivityOrbit/u)
   await page.locator('html').evaluate((root) => root.setAttribute('data-reduced-motion', 'true'))
@@ -1335,6 +1069,7 @@ test('channel tabs, running tools, and trajectory rows remain keyboard operable'
       status: 200,
       contentType: 'application/json',
       body: JSON.stringify({
+        cursor: { epoch: 'fixture', sequence: 0 },
         channelId: targetChannelId,
         agentId: targetAgentId,
         phase: 'using-tool',
@@ -1444,6 +1179,58 @@ test('channel tabs, running tools, and trajectory rows remain keyboard operable'
   await capture(page, testInfo, 'channel-trajectory-keyboard-selection')
 
   expect(failures, failures.join('\n')).toEqual([])
+})
+
+test('pending sends remain bound to their original channel across navigation', async ({ page }) => {
+  const failures = installRuntimeFailureGate(page)
+  await installProductRoutes(page)
+  let complete: (() => void) | undefined
+  await page.route(`**/api/channels/${targetChannelId}/messages`, async (route) => {
+    if (route.request().method() !== 'POST') return route.fallback()
+    await new Promise<void>((resolve) => {
+      complete = resolve
+    })
+    await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ inserted: true }) })
+  })
+  await page.goto(`/work/channels/${targetChannelId}`)
+  const input = page.getByRole('textbox', { name: '消息内容' })
+  await input.fill('频道甲的待发送内容')
+  await input.press('Enter')
+  await expect(input).toBeDisabled()
+  await page.locator(`a[href="/work/channels/${sourceChannelId}"]`).first().click()
+  await expect(input).toBeEnabled()
+  await input.fill('频道乙的新草稿')
+  expect(complete).toBeDefined()
+  complete?.()
+  await expect(input).toHaveValue('频道乙的新草稿')
+  await page.locator(`a[href="/work/channels/${targetChannelId}"]`).first().click()
+  await expect(input).toBeEnabled()
+  await expect(input).toHaveValue('')
+  await page.locator('a[href="/settings"]').first().click()
+  await expect(page).toHaveURL(/\/settings$/u)
+  expect(await page.evaluate(() => window.__nxtHasUnsavedDrafts?.())).toBe(true)
+  await page.locator(`a[href="/work"]`).first().click()
+  await page.locator(`a[href="/work/channels/${sourceChannelId}"]`).first().click()
+  await expect(input).toHaveValue('频道乙的新草稿')
+  expect(failures).toEqual([])
+})
+
+test('failed page chunks preserve the active conversation and provide a retry', async ({ page }) => {
+  await installProductRoutes(page)
+  let blocked = true
+  await page.route('**/assets/settings-page-*.js', (route) => (blocked ? route.abort('failed') : route.continue()))
+  await page.goto(`/work/channels/${targetChannelId}`)
+  const input = page.getByRole('textbox', { name: '消息内容' })
+  await input.fill('模块加载失败仍保留的草稿')
+  await page.locator('a[href="/settings"]').first().click()
+  await expect(page.getByText('页面加载失败，当前页面和草稿已保留。')).toBeVisible()
+  await expect(page).toHaveURL(new RegExp(`/work/channels/${targetChannelId}$`, 'u'))
+  await expect(input).toHaveValue('模块加载失败仍保留的草稿')
+  blocked = false
+  await page.getByRole('button', { name: '重试加载' }).click()
+  await expect(page).toHaveURL(/\/settings$/u)
+  await page.goBack()
+  await expect(input).toHaveValue('模块加载失败仍保留的草稿')
 })
 
 test('desktop splitters and appearance preferences persist and recover defaults', async ({ page }, testInfo) => {
@@ -2008,6 +1795,7 @@ test('the product Client runtime approves, restores after reload, and retracts a
       status: 200,
       contentType: 'application/json',
       body: JSON.stringify({
+        cursor: { epoch: 'fixture', sequence: 0 },
         channelId,
         phase: 'idle',
         summary: '智能体当前空闲。',
@@ -2644,6 +2432,7 @@ test('a verified Client extension restores across product pages and retracts whe
       status: 200,
       contentType: 'application/json',
       body: JSON.stringify({
+        cursor: { epoch: 'fixture', sequence: 0 },
         channelId,
         agentId: targetAgentId,
         phase: 'idle',
@@ -3305,12 +3094,16 @@ test('trusted Desktop bridge renders the persistent remote-instance entry across
     await expect(statusDot).toHaveCSS('height', '7px')
     const entryGeometry = await entry.evaluate((element) => {
       const entryRect = element.getBoundingClientRect()
-      const railRect = element.closest('aside')?.getBoundingClientRect()
-      if (!railRect) throw new Error('服务实例入口缺少图标轨。')
+      const rail = element.closest('aside')
+      const railRect = rail?.getBoundingClientRect()
+      const primaryRect = rail?.querySelector('nav a')?.getBoundingClientRect()
+      if (!railRect || !primaryRect) throw new Error('服务实例入口缺少图标轨或主导航。')
       return {
         width: entryRect.width,
         height: entryRect.height,
-        horizontalCenterOffset: Math.abs(entryRect.left + entryRect.width / 2 - (railRect.left + railRect.width / 2)),
+        horizontalCenterOffset: Math.abs(
+          entryRect.left + entryRect.width / 2 - (primaryRect.left + primaryRect.width / 2),
+        ),
         bottomInset: railRect.bottom - entryRect.bottom,
       }
     })
@@ -3384,6 +3177,7 @@ test('an initial Host failure is explicit and can recover without reloading', as
       status: 200,
       contentType: 'application/json',
       body: JSON.stringify({
+        cursor: { epoch: 'fixture', sequence: 0 },
         channelId,
         phase: 'idle',
         summary: '智能体当前空闲。',
@@ -3396,7 +3190,7 @@ test('an initial Host failure is explicit and can recover without reloading', as
     route.fulfill({
       status: 200,
       contentType: 'application/json',
-      body: JSON.stringify({ messages: [], hasMore: false }),
+      body: JSON.stringify({ cursor: { epoch: 'fixture', sequence: 0 }, messages: [], hasMore: false }),
     }),
   )
   await page.goto('/connections')
@@ -3583,6 +3377,9 @@ test('message composer sends with Enter and keeps Shift+Enter for a new line', a
   await page.goto(`/work/channels/${targetChannelId}`)
   const composer = page.getByLabel('消息内容')
   await composer.fill('第一行')
+  await composer.dispatchEvent('keydown', { key: 'Enter', isComposing: true })
+  expect(submitted).toEqual([])
+  await expect(composer).toHaveValue('第一行')
   await composer.press('Shift+Enter')
   await expect(composer).toHaveValue('第一行\n')
   expect(submitted).toEqual([])
@@ -3615,6 +3412,7 @@ test('long message history stays above a growing multiline composer', async ({ p
     '```',
   ].join('\n')
   const longMessages = HostApiContracts.listChannelMessages.response.parse({
+    cursor: { epoch: 'fixture', sequence: 0 },
     messages: Array.from({ length: 32 }, (_, index) => ({
       id: ChannelEventIdSchema.parse(`evt_longhistory${String(index).padStart(2, '0')}`),
       channelId: targetChannelId,
@@ -3642,7 +3440,11 @@ test('long message history stays above a growing multiline composer', async ({ p
     return route.fulfill({
       status: 200,
       contentType: 'application/json',
-      body: JSON.stringify({ messages, hasMore: available.length > messages.length }),
+      body: JSON.stringify({
+        cursor: { epoch: 'fixture', sequence: 0 },
+        messages,
+        hasMore: available.length > messages.length,
+      }),
     })
   })
   await page.setViewportSize({ width: 1100, height: 720 })
@@ -3721,6 +3523,11 @@ test('long message history stays above a growing multiline composer', async ({ p
   await input.fill(Array.from({ length: 5 }, (_, index) => `输入内容第 ${index + 1} 行`).join('\n'))
   await expect.poll(async () => (await composer.boundingBox())?.height ?? 0).toBeGreaterThan(initialComposerHeight + 60)
 
+  // ResizeObserver coordinates the changed Composer height before the next paint.
+  await expect
+    .poll(() => messageList.evaluate((element) => element.scrollHeight - element.clientHeight - element.scrollTop))
+    .toBeLessThanOrEqual(1)
+
   const geometry = await page.evaluate(() => {
     const list = document.querySelector<HTMLElement>('[data-channel-message-list]')!
     const composer = document.querySelector<HTMLElement>('[data-channel-composer]')!
@@ -3755,5 +3562,68 @@ test('long message history stays above a growing multiline composer', async ({ p
   const jumpBox = await page.getByRole('button', { name: '回到底部' }).boundingBox()
   const grownComposerBox = await composer.boundingBox()
   expect((jumpBox?.y ?? 0) + (jumpBox?.height ?? 0)).toBeLessThan(grownComposerBox?.y ?? 0)
+  if (process.env['NEKRO_UI_PERF_CONTENT_VISIBILITY'] === '1' || process.env['NEKRO_UI_PERF_NATIVE_CHECK'] === '1') {
+    const native = await messageList.evaluate(async (element) => {
+      const messages = element.querySelectorAll('article')
+      const first = messages[0]!
+      const last = messages[messages.length - 1]!
+      const range = document.createRange()
+      range.setStartBefore(first)
+      range.setEndAfter(last)
+      const selection = window.getSelection()!
+      selection.removeAllRanges()
+      selection.addRange(range)
+      const text = selection.toString()
+      const firstNeedle = first.textContent?.match(/长记录 \d+：/u)?.[0]
+      const lastNeedle = last.textContent?.match(/长记录 \d+：/u)?.[0]
+      if (!firstNeedle || !lastNeedle) throw new Error('Missing fictional message text')
+      const selectedAcrossScreens = text.includes(firstNeedle) && text.includes(lastNeedle)
+      selection.removeAllRanges()
+      const find: unknown = Reflect.get(window, 'find')
+      const found: unknown =
+        typeof find === 'function' ? Reflect.apply(find, window, [firstNeedle, false, false, true]) : false
+      selection.removeAllRanges()
+      // A fictional silent PCM sample verifies that skipping paint does not stop media.
+      const bytes = new Uint8Array(44 + 16000)
+      const view = new DataView(bytes.buffer)
+      const write = (offset: number, value: string) => {
+        for (let i = 0; i < value.length; i += 1) bytes[offset + i] = value.charCodeAt(i)
+      }
+      write(0, 'RIFF')
+      view.setUint32(4, bytes.length - 8, true)
+      write(8, 'WAVEfmt ')
+      view.setUint32(16, 16, true)
+      view.setUint16(20, 1, true)
+      view.setUint16(22, 1, true)
+      view.setUint32(24, 8000, true)
+      view.setUint32(28, 8000, true)
+      view.setUint16(32, 1, true)
+      view.setUint16(34, 8, true)
+      write(36, 'data')
+      view.setUint32(40, 16000, true)
+      bytes.fill(128, 44)
+      const url = URL.createObjectURL(new Blob([bytes], { type: 'audio/wav' }))
+      const audio = new Audio(url)
+      audio.muted = true
+      audio.loop = true
+      first.append(audio)
+      try {
+        await audio.play()
+        const before = audio.currentTime
+        element.scrollTop = element.scrollHeight
+        await new Promise<void>((resolve) => setTimeout(resolve, 150))
+        return {
+          selectedAcrossScreens,
+          found,
+          playing: !audio.paused && audio.currentTime > before && audio.isConnected,
+        }
+      } finally {
+        audio.pause()
+        audio.remove()
+        URL.revokeObjectURL(url)
+      }
+    })
+    expect(native).toEqual({ selectedAcrossScreens: true, found: true, playing: true })
+  }
   expect(failures, failures.join('\n')).toEqual([])
 })

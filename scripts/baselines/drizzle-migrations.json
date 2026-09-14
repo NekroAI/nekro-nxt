@@ -25,7 +25,8 @@
     "0020_platform_identity_connection_owner_index.sql": "d754dcc58f94accdaa8dcc2d915369a315a01e6b74e01f90b54f916839cb1908",
     "0021_connection_event_identity_ownership.sql": "266531677df91b1e0e7cacd648500d4f80f9be5fe729bd4aff15a6ea1f75f809",
     "0022_connection_activity_defaults_and_archive.sql": "002a5b5cb86bb9fd0a8e542bbfe408b5daed20dbca91a7bc00c68f42fbafbe8e",
-    "0023_connection_account_key.sql": "6d29019cae1728eeacc131a81676761d8b4530edc9c0b3165da93143d8427dab",
+    "0023_channel_history_index.sql": "0950cce56b0afad6579ddceccf38a4140d8e47d3b8318852389c01b9cd3de580",
+    "0024_connection_account_key.sql": "9d809865825a3b59c8edfa8b96ad8a9c9ac146d21f6611f9a2831c969bb39cfd",
     "meta/0000_snapshot.json": "03573ed4ecfb276bfad4bd1d6041564c11d3c52e1fcb35fc3dd278da7b55448d",
     "meta/0001_snapshot.json": "48b7a1cd91c44d75a394c94af554fc85621fe5fda2dd680d4bc25b68679d4ee5",
     "meta/0002_snapshot.json": "aa0ed0d69885976c1ce596d468657ac121e8cae5ac9e09aa9843be0b3b3127c9",
@@ -49,7 +50,8 @@
     "meta/0020_snapshot.json": "72910f0f794541b80e924bfc9e1a229f906e22a8cb1dd115572fc47f1fdec4f6",
     "meta/0021_snapshot.json": "e4da9177bf77e55d5c72dc2220ab94eed5a78c311810ac54d3d751ee4e672ebb",
     "meta/0022_snapshot.json": "67aae2b69402f77ce49b05b2a085a97753a7639377fa15a12f0052ee776ed942",
-    "meta/0023_snapshot.json": "76ef6838e62082b3f3d753652a11dbcbf6ccd76342217238b3449ed8081774f0",
-    "meta/_journal.json": "1e4ebb3cf3e1efca261a9d7fced8579f339b15e327493e02a59184939d2f3a17"
+    "meta/0023_snapshot.json": "e2c98dbf80c49272bda437a5ffa5cd230528ce86da043ad0de1b3027fbe06ea0",
+    "meta/0024_snapshot.json": "2cd6e1d585713ca331c0f426b2c067479d95b623d88b81e0060175d941657a62",
+    "meta/_journal.json": "9cbdc2e5cd9ac20b284abf644e906c3f7b9dbe3934777668d4c127f94bb18546"
   }
 }

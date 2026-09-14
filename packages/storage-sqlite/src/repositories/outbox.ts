@@ -1,3 +1,4 @@
+import { createHistoryRepository } from './history.js'
 import { and, asc, eq, inArray } from 'drizzle-orm'
 import type { AdapterDeliveryReceipt } from '@nekro-nxt/adapter-sdk'
 import { AdapterDeliveryReceiptSchema } from '@nekro-nxt/adapter-sdk'
@@ -20,13 +21,8 @@ import {
   type RuntimeRepository,
 } from '@nekro-nxt/channel-runtime'
 import type { DrizzleCoreDatabase } from '../database.js'
-import { admissionEvents, admissions, channelEvents, episodes, outboundIntents, physicalDeliveries } from '../schema.js'
-import {
-  ChannelEventRowSchema,
-  EpisodeRowSchema,
-  OutboundIntentRowSchema,
-  PhysicalDeliveryRowSchema,
-} from '../row-schemas.js'
+import { channelEvents, episodes, outboundIntents, physicalDeliveries } from '../schema.js'
+import { ChannelEventRowSchema, OutboundIntentRowSchema, PhysicalDeliveryRowSchema } from '../row-schemas.js'
 
 type OutboxSlice = Pick<
   RuntimeRepository,
@@ -104,12 +100,6 @@ const toReceipt = (delivery: PhysicalDeliveryRecord): DeliveryReceiptRecord | un
   delivery.receipt === undefined || delivery.completedAt === undefined
     ? undefined
     : { physicalDeliveryId: delivery.id, receipt: delivery.receipt, completedAt: delivery.completedAt }
-
-const searchLimit = (limit: number | undefined): number => {
-  const value = limit ?? 50
-  if (!Number.isSafeInteger(value) || value < 1 || value > 100) throw new TypeError('History limit must be 1–100.')
-  return value
-}
 
 export function createOutboxRepository(database: DrizzleCoreDatabase): OutboxSlice & ChannelHistoryRepository {
   const getOutbound = (id: OutboundIntentId): OutboundSnapshot => {
@@ -301,166 +291,6 @@ export function createOutboxRepository(database: DrizzleCoreDatabase): OutboxSli
       }
       return isConsoleAnchorHistory(entry) ? undefined : entry
     },
-    listChannelHistory(channelId, options = {}): readonly ChannelHistoryEntry[] {
-      const limit = searchLimit(options.limit)
-      const before = options.before
-      const inbound = database
-        .select()
-        .from(channelEvents)
-        .where(eq(channelEvents.channelId, channelId))
-        .all()
-        .map((input): ChannelHistoryEntry => {
-          const row = ChannelEventRowSchema.parse(input)
-          return {
-            source: 'channel-event',
-            sourceId: row.id,
-            logicalMessageId: row.logicalMessageId,
-            channelId: row.channelId,
-            occurredAt: row.receivedAt,
-            ...(row.senderMemberId === null ? {} : { senderMemberId: row.senderMemberId }),
-            ...(row.activityKey === null ? {} : { activityKey: row.activityKey }),
-            ...(row.targetLogicalMessageId === null ? {} : { targetLogicalMessageId: row.targetLogicalMessageId }),
-            parts: row.parts,
-            ...(row.facts === null ? {} : { facts: row.facts }),
-          }
-        })
-        .filter((entry) => !isConsoleAnchorHistory(entry))
-      const outbound = database
-        .select({ intent: outboundIntents, channelId: episodes.channelId })
-        .from(outboundIntents)
-        .innerJoin(episodes, eq(episodes.id, outboundIntents.episodeId))
-        .where(eq(episodes.channelId, channelId))
-        .all()
-        .map(({ intent: input, channelId: projectedChannelId }): ChannelHistoryEntry => {
-          const intent = OutboundIntentRowSchema.parse(input)
-          return {
-            source: 'outbound-intent',
-            sourceId: intent.id,
-            logicalMessageId: intent.logicalMessageId,
-            channelId: projectedChannelId,
-            occurredAt: intent.createdAt,
-            parts: intent.parts,
-            state: intent.state,
-            ...(intent.sourceTurnId === null ? {} : { sourceTurnId: intent.sourceTurnId }),
-          }
-        })
-      return [...inbound, ...outbound]
-        .filter(
-          (entry) =>
-            before === undefined ||
-            entry.occurredAt < before.occurredAt ||
-            (entry.occurredAt === before.occurredAt && entry.sourceId < before.sourceId),
-        )
-        .sort((left, right) => right.occurredAt - left.occurredAt || right.sourceId.localeCompare(left.sourceId))
-        .slice(0, limit)
-    },
-    listEpisodeHistory(episodeId, options = {}): readonly ChannelHistoryEntry[] {
-      const limit = searchLimit(options.limit)
-      const episodeCandidate = database.select().from(episodes).where(eq(episodes.id, episodeId)).get()
-      if (episodeCandidate === undefined) return []
-      const episode = EpisodeRowSchema.parse(episodeCandidate)
-      const admittedIds = database
-        .select({ id: admissionEvents.eventId })
-        .from(admissionEvents)
-        .innerJoin(admissions, eq(admissions.id, admissionEvents.admissionId))
-        .where(eq(admissions.episodeId, episodeId))
-        .all()
-        .map(({ id }) => id)
-      const inbound =
-        admittedIds.length === 0
-          ? []
-          : database
-              .select()
-              .from(channelEvents)
-              .where(inArray(channelEvents.id, admittedIds))
-              .all()
-              .map((input): ChannelHistoryEntry => {
-                const row = ChannelEventRowSchema.parse(input)
-                return {
-                  source: 'channel-event',
-                  sourceId: row.id,
-                  logicalMessageId: row.logicalMessageId,
-                  channelId: row.channelId,
-                  occurredAt: row.receivedAt,
-                  ...(row.senderMemberId === null ? {} : { senderMemberId: row.senderMemberId }),
-                  ...(row.activityKey === null ? {} : { activityKey: row.activityKey }),
-                  ...(row.targetLogicalMessageId === null
-                    ? {}
-                    : { targetLogicalMessageId: row.targetLogicalMessageId }),
-                  parts: row.parts,
-                  ...(row.facts === null ? {} : { facts: row.facts }),
-                }
-              })
-              .filter((entry) => !isConsoleAnchorHistory(entry))
-      const outbound = database
-        .select()
-        .from(outboundIntents)
-        .where(eq(outboundIntents.episodeId, episodeId))
-        .all()
-        .map((input): ChannelHistoryEntry => {
-          const row = OutboundIntentRowSchema.parse(input)
-          return {
-            source: 'outbound-intent',
-            sourceId: row.id,
-            logicalMessageId: row.logicalMessageId,
-            channelId: episode.channelId,
-            occurredAt: row.createdAt,
-            parts: row.parts,
-            state: row.state,
-            ...(row.sourceTurnId === null ? {} : { sourceTurnId: row.sourceTurnId }),
-          }
-        })
-      return [...inbound, ...outbound]
-        .sort((left, right) => right.occurredAt - left.occurredAt || right.sourceId.localeCompare(left.sourceId))
-        .slice(0, limit)
-    },
-    searchChannelHistory(channelId, query, options = {}) {
-      const normalized = query.trim().toLocaleLowerCase()
-      if (normalized.length === 0) return []
-      const limit = searchLimit(options.limit)
-      const hits: { readonly entry: ChannelHistoryEntry; readonly rank: number }[] = []
-      let cursor: { readonly occurredAt: number; readonly sourceId: string } | undefined
-      while (hits.length < limit) {
-        const page = this.listChannelHistory(channelId, {
-          ...(cursor === undefined ? {} : { before: cursor }),
-          limit: 100,
-        })
-        if (page.length === 0) break
-        const inboundIds = page.flatMap((entry) => (entry.source === 'channel-event' ? [entry.sourceId] : []))
-        const outboundIds = page.flatMap((entry) => (entry.source === 'outbound-intent' ? [entry.sourceId] : []))
-        const inboundText = new Map(
-          inboundIds.length === 0
-            ? []
-            : database
-                .select({ id: channelEvents.id, searchText: channelEvents.searchText })
-                .from(channelEvents)
-                .where(and(eq(channelEvents.channelId, channelId), inArray(channelEvents.id, inboundIds)))
-                .all()
-                .map(({ id, searchText }) => [id, searchText] as const),
-        )
-        const outboundText = new Map(
-          outboundIds.length === 0
-            ? []
-            : database
-                .select({ id: outboundIntents.id, searchText: outboundIntents.searchText })
-                .from(outboundIntents)
-                .innerJoin(episodes, eq(episodes.id, outboundIntents.episodeId))
-                .where(and(eq(episodes.channelId, channelId), inArray(outboundIntents.id, outboundIds)))
-                .all()
-                .map(({ id, searchText }) => [id, searchText] as const),
-        )
-        for (const entry of page) {
-          const text = (
-            entry.source === 'channel-event' ? inboundText.get(entry.sourceId) : outboundText.get(entry.sourceId)
-          )?.toLocaleLowerCase()
-          if (text?.includes(normalized) === true) hits.push({ entry, rank: 1 })
-          if (hits.length === limit) break
-        }
-        const last = page.at(-1)
-        if (last === undefined || page.length < 100) break
-        cursor = { occurredAt: last.occurredAt, sourceId: last.sourceId }
-      }
-      return hits
-    },
+    ...createHistoryRepository(database),
   }
 }

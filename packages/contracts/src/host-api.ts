@@ -723,8 +723,17 @@ const AdapterCapabilityStateSchema = z
 
 const ActivityTriggerOverridesSchema = z.record(AdapterActivityKeySchema, z.boolean())
 
+export const HostSyncCursorSchema = z
+  .object({
+    epoch: z.string().regex(/^[a-zA-Z0-9_-]{1,100}$/u),
+    sequence: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER),
+  })
+  .strict()
+
 export const HostSnapshotSchema = z
   .object({
+    cursor: HostSyncCursorSchema,
+    diagnosticsSampledAt: z.number().int().nonnegative(),
     productMetadata: z
       .object({
         displayName: NonEmptyStringSchema,
@@ -938,6 +947,7 @@ export const HostSnapshotSchema = z
               .object({
                 id: ExtensionRevisionIdSchema,
                 revisionNumber: z.number().int().positive(),
+                format: z.enum(['current', 'requires-rebuild', 'unavailable']).optional(),
                 createdAt: z.number().int().safe().nonnegative(),
                 scope: z.enum(['agent', 'host-adapter', 'host-ui']),
                 contributions: z.array(z.string()),
@@ -1303,6 +1313,7 @@ export const DshPluginOperationSseDataSchema = z
   .strict()
 
 export const HostSseEventSchema = z.discriminatedUnion('event', [
+  z.object({ event: z.literal('snapshot-changed'), data: z.object({ changed: z.literal(true) }).strict() }).strict(),
   z.object({ event: z.literal('channel-fact'), data: ChannelFactSseDataSchema }).strict(),
   z.object({ event: z.literal('connection-fact'), data: HostConnectionEventSchema }).strict(),
   z.object({ event: z.literal('runtime'), data: ChannelRuntimeSseDataSchema }).strict(),
@@ -1421,6 +1432,13 @@ export interface HostApiContract<
   ErrorSchema extends AnySchema = AnySchema,
 > {
   readonly method: Method
+  readonly timeoutMs?: number
+  readonly responseFormat?: 'json' | 'bytes'
+  readonly invalidatesSnapshot?: boolean
+  encodeRequest?(input: z.output<Request>): {
+    readonly body: string | Uint8Array
+    readonly headers: Readonly<Record<string, string>>
+  }
   readonly path: string
   readonly params: Params
   readonly request: Request
@@ -1466,6 +1484,45 @@ const llmProviderParam = z.object({ provider: NonEmptyStringSchema }).strict()
 const authoringTaskParam = z.object({ taskId: AuthoringTaskIdSchema }).strict()
 const authoringAttemptParam = z.object({ taskId: AuthoringTaskIdSchema, attemptId: AuthoringAttemptIdSchema }).strict()
 
+const DshPluginInstallInspectionSchema = z
+  .object({
+    token: NonEmptyStringSchema,
+    operationId: z.string().uuid().optional(),
+    packageName: NonEmptyStringSchema,
+    packageVersion: NonEmptyStringSchema,
+    packageDigest: z.string().regex(/^[a-f0-9]{64}$/u),
+    lockfileDigest: z.string().regex(/^[a-f0-9]{64}$/u),
+    blockedBuilds: z.array(NonEmptyStringSchema),
+    clientUiDetected: z.boolean(),
+    hostUi: DshNxtHostUiSchema.optional(),
+    entries: z.array(
+      z
+        .object({
+          entryKey: NonEmptyStringSchema,
+          moduleName: NonEmptyStringSchema,
+          suggestedScope: z.enum(['host', 'agent']),
+        })
+        .strict(),
+    ),
+  })
+  .strict()
+
+const BinaryUploadRequestSchema = z
+  .object({
+    bytes: z.instanceof(Uint8Array),
+    fileName: z.string().max(255).optional(),
+    operationId: z.string().uuid().optional(),
+  })
+  .strict()
+const encodeBinaryUpload = (input: z.output<typeof BinaryUploadRequestSchema>) => ({
+  body: input.bytes,
+  headers: {
+    'content-type': 'application/octet-stream',
+    ...(input.fileName === undefined ? {} : { 'x-file-name': input.fileName }),
+    ...(input.operationId === undefined ? {} : { 'x-operation-id': input.operationId }),
+  },
+})
+
 export const HostApiContracts = {
   snapshot: defineContract({
     method: 'GET',
@@ -1500,6 +1557,7 @@ export const HostApiContracts = {
     error: HostApiErrorSchema,
   }),
   decideAuthoringAttempt: defineContract({
+    invalidatesSnapshot: true,
     method: 'POST',
     path: '/api/authoring/tasks/:taskId/attempts/:attemptId/decision',
     params: authoringAttemptParam,
@@ -1512,6 +1570,7 @@ export const HostApiContracts = {
     error: HostApiErrorSchema,
   }),
   stopAuthoringTask: defineContract({
+    invalidatesSnapshot: true,
     method: 'POST',
     path: '/api/authoring/tasks/:taskId/stop',
     params: authoringTaskParam,
@@ -1520,6 +1579,7 @@ export const HostApiContracts = {
     error: HostApiErrorSchema,
   }),
   deleteAuthoringTask: defineContract({
+    invalidatesSnapshot: true,
     method: 'DELETE',
     path: '/api/authoring/tasks/:taskId',
     params: authoringTaskParam,
@@ -1536,6 +1596,7 @@ export const HostApiContracts = {
     error: HostApiErrorSchema,
   }),
   updateNotificationSettings: defineContract({
+    invalidatesSnapshot: true,
     method: 'PUT',
     path: '/api/settings/notifications',
     params: EmptyParamsSchema,
@@ -1591,6 +1652,7 @@ export const HostApiContracts = {
     error: HostApiErrorSchema,
   }),
   createAgent: defineContract({
+    invalidatesSnapshot: true,
     method: 'POST',
     path: '/api/agents',
     params: EmptyParamsSchema,
@@ -1601,6 +1663,7 @@ export const HostApiContracts = {
     error: HostApiErrorSchema,
   }),
   reviseAgent: defineContract({
+    invalidatesSnapshot: true,
     method: 'POST',
     path: '/api/agents/:agentId/revision',
     params: agentParam,
@@ -1609,6 +1672,7 @@ export const HostApiContracts = {
     error: HostApiErrorSchema,
   }),
   updateAgentCapabilities: defineContract({
+    invalidatesSnapshot: true,
     method: 'POST',
     path: '/api/agents/:agentId/capabilities',
     params: agentParam,
@@ -1617,6 +1681,7 @@ export const HostApiContracts = {
     error: HostApiErrorSchema,
   }),
   deleteAgent: defineContract({
+    invalidatesSnapshot: true,
     method: 'DELETE',
     path: '/api/agents/:agentId',
     params: agentParam,
@@ -1638,6 +1703,7 @@ export const HostApiContracts = {
     error: HostApiErrorSchema,
   }),
   createInternalChannel: defineContract({
+    invalidatesSnapshot: true,
     method: 'POST',
     path: '/api/channels',
     params: EmptyParamsSchema,
@@ -1646,6 +1712,7 @@ export const HostApiContracts = {
     error: HostApiErrorSchema,
   }),
   deleteChannel: defineContract({
+    invalidatesSnapshot: true,
     method: 'DELETE',
     path: '/api/channels/:channelId',
     params: channelParam,
@@ -1654,6 +1721,7 @@ export const HostApiContracts = {
     error: HostApiErrorSchema,
   }),
   createBinding: defineContract({
+    invalidatesSnapshot: true,
     method: 'POST',
     path: '/api/bindings',
     params: EmptyParamsSchema,
@@ -1679,6 +1747,7 @@ export const HostApiContracts = {
     error: HostApiErrorSchema,
   }),
   clearBinding: defineContract({
+    invalidatesSnapshot: true,
     method: 'DELETE',
     path: '/api/bindings/:channelId',
     params: channelParam,
@@ -1687,6 +1756,7 @@ export const HostApiContracts = {
     error: HostApiErrorSchema,
   }),
   putWorkTreeOrder: defineContract({
+    invalidatesSnapshot: true,
     method: 'PUT',
     path: '/api/work-tree-order',
     params: EmptyParamsSchema,
@@ -1710,7 +1780,9 @@ export const HostApiContracts = {
         '频道历史游标必须完整提供。',
       ),
     request: NoRequestBodySchema,
-    response: z.object({ messages: z.array(HostSnapshotMessageSchema), hasMore: z.boolean() }).strict(),
+    response: z
+      .object({ messages: z.array(HostSnapshotMessageSchema), hasMore: z.boolean(), cursor: HostSyncCursorSchema })
+      .strict(),
     error: HostApiErrorSchema,
   }),
   sendChannelMessage: defineContract({
@@ -1728,6 +1800,7 @@ export const HostApiContracts = {
     error: HostApiErrorSchema,
   }),
   renameChannel: defineContract({
+    invalidatesSnapshot: true,
     method: 'POST',
     path: '/api/channels/:channelId/display-name',
     params: channelParam,
@@ -1740,10 +1813,11 @@ export const HostApiContracts = {
     path: '/api/channels/:channelId/runtime',
     params: channelParam,
     request: NoRequestBodySchema,
-    response: ChannelRuntimeProjectionSchema,
+    response: ChannelRuntimeProjectionSchema.extend({ cursor: HostSyncCursorSchema }),
     error: HostApiErrorSchema,
   }),
   resetChannelContext: defineContract({
+    invalidatesSnapshot: true,
     method: 'POST',
     path: '/api/channels/:channelId/context-reset',
     params: channelParam,
@@ -1763,6 +1837,7 @@ export const HostApiContracts = {
     error: HostApiErrorSchema,
   }),
   createConnection: defineContract({
+    invalidatesSnapshot: true,
     method: 'POST',
     path: '/api/connections',
     params: EmptyParamsSchema,
@@ -1830,6 +1905,7 @@ export const HostApiContracts = {
     error: HostApiErrorSchema,
   }),
   updateConnectionAlias: defineContract({
+    invalidatesSnapshot: true,
     method: 'POST',
     path: '/api/connections/:connectionId/alias',
     params: connectionParam,
@@ -1843,6 +1919,7 @@ export const HostApiContracts = {
     error: HostApiErrorSchema,
   }),
   updateConnectionActivityTriggerDefaults: defineContract({
+    invalidatesSnapshot: true,
     method: 'POST',
     path: '/api/connections/:connectionId/activity-trigger-defaults',
     params: connectionParam,
@@ -1851,6 +1928,7 @@ export const HostApiContracts = {
     error: HostApiErrorSchema,
   }),
   updateConnectionConfiguration: defineContract({
+    invalidatesSnapshot: true,
     method: 'POST',
     path: '/api/connections/:connectionId/configuration',
     params: connectionParam,
@@ -1864,6 +1942,7 @@ export const HostApiContracts = {
     error: HostApiErrorSchema,
   }),
   deleteConnection: defineContract({
+    invalidatesSnapshot: true,
     method: 'DELETE',
     path: '/api/connections/:connectionId',
     params: connectionParam,
@@ -1872,6 +1951,7 @@ export const HostApiContracts = {
     error: HostApiErrorSchema,
   }),
   restoreConnection: defineContract({
+    invalidatesSnapshot: true,
     method: 'POST',
     path: '/api/connections/:connectionId/restore',
     params: connectionParam,
@@ -1887,36 +1967,38 @@ export const HostApiContracts = {
     response: z.object({ plugins: z.array(DshPluginCatalogEntrySchema) }).strict(),
     error: HostApiErrorSchema,
   }),
+  inspectDshPluginTarball: defineContract({
+    method: 'POST',
+    timeoutMs: 300_000,
+    path: '/api/dsh/plugin-installs/inspect-tarball',
+    params: EmptyParamsSchema,
+    request: BinaryUploadRequestSchema,
+    encodeRequest: encodeBinaryUpload,
+    response: DshPluginInstallInspectionSchema,
+    error: HostApiErrorSchema,
+  }),
+  exportExtensionRevision: defineContract({
+    method: 'GET',
+    timeoutMs: 300_000,
+    path: '/api/extensions/:extensionId/revisions/:revisionId/export',
+    params: extensionRevisionParam,
+    request: NoRequestBodySchema,
+    responseFormat: 'bytes',
+    response: z.instanceof(Uint8Array),
+    error: HostApiErrorSchema,
+  }),
   inspectDshPluginInstall: defineContract({
+    timeoutMs: 300_000,
     method: 'POST',
     path: '/api/dsh/plugin-installs/inspect',
     params: EmptyParamsSchema,
     request: z.object({ spec: NonEmptyStringSchema.max(500), operationId: z.string().uuid().optional() }).strict(),
-    response: z
-      .object({
-        token: NonEmptyStringSchema,
-        operationId: z.string().uuid().optional(),
-        packageName: NonEmptyStringSchema,
-        packageVersion: NonEmptyStringSchema,
-        packageDigest: z.string().regex(/^[a-f0-9]{64}$/u),
-        lockfileDigest: z.string().regex(/^[a-f0-9]{64}$/u),
-        blockedBuilds: z.array(NonEmptyStringSchema),
-        clientUiDetected: z.boolean(),
-        hostUi: DshNxtHostUiSchema.optional(),
-        entries: z.array(
-          z
-            .object({
-              entryKey: NonEmptyStringSchema,
-              moduleName: NonEmptyStringSchema,
-              suggestedScope: z.enum(['host', 'agent']),
-            })
-            .strict(),
-        ),
-      })
-      .strict(),
+    response: DshPluginInstallInspectionSchema,
     error: HostApiErrorSchema,
   }),
   commitDshPluginInstall: defineContract({
+    invalidatesSnapshot: true,
+    timeoutMs: 300_000,
     method: 'POST',
     path: '/api/dsh/plugin-installs',
     params: EmptyParamsSchema,
@@ -1969,6 +2051,7 @@ export const HostApiContracts = {
     error: HostApiErrorSchema,
   }),
   removeDshPluginPackage: defineContract({
+    invalidatesSnapshot: true,
     method: 'DELETE',
     path: '/api/dsh/plugin-installs/:packageId',
     params: dshPluginPackageParam,
@@ -1977,10 +2060,12 @@ export const HostApiContracts = {
     error: HostApiErrorSchema,
   }),
   inspectExtensionImport: defineContract({
+    timeoutMs: 300_000,
     method: 'POST',
     path: '/api/extensions/imports/inspect',
     params: EmptyParamsSchema,
-    request: NoRequestBodySchema,
+    request: BinaryUploadRequestSchema,
+    encodeRequest: encodeBinaryUpload,
     response: z
       .object({
         token: NonEmptyStringSchema,
@@ -1996,6 +2081,8 @@ export const HostApiContracts = {
     error: HostApiErrorSchema,
   }),
   commitExtensionImport: defineContract({
+    invalidatesSnapshot: true,
+    timeoutMs: 300_000,
     method: 'POST',
     path: '/api/extensions/imports/:token/commit',
     params: z.object({ token: NonEmptyStringSchema }).strict(),
@@ -2014,6 +2101,7 @@ export const HostApiContracts = {
     error: HostApiErrorSchema,
   }),
   dshSettingsMutate: defineContract({
+    invalidatesSnapshot: true,
     method: 'POST',
     path: '/api/dsh/settings/:namespace/mutate',
     params: dshSettingsParam,
@@ -2030,6 +2118,7 @@ export const HostApiContracts = {
     error: HostApiErrorSchema,
   }),
   dshCredentialSet: defineContract({
+    invalidatesSnapshot: true,
     method: 'PUT',
     path: '/api/dsh/credentials/:ref',
     params: dshCredentialParam,
@@ -2045,6 +2134,7 @@ export const HostApiContracts = {
     error: HostApiErrorSchema,
   }),
   dshCredentialUnset: defineContract({
+    invalidatesSnapshot: true,
     method: 'DELETE',
     path: '/api/dsh/credentials/:ref',
     params: dshCredentialParam,
@@ -2102,7 +2192,48 @@ export const HostApiContracts = {
     response: z.object({ provider: NonEmptyStringSchema, model: NonEmptyStringSchema }).strict(),
     error: HostApiErrorSchema,
   }),
+  llmProviderRemovalImpact: defineContract({
+    method: 'GET',
+    path: '/api/llm/providers/:provider/removal-impact',
+    params: llmProviderParam,
+    request: NoRequestBodySchema,
+    response: z
+      .object({
+        provider: NonEmptyStringSchema,
+        displayName: NonEmptyStringSchema,
+        declared: z.boolean(),
+        expectedRevision: z.number().int().nonnegative(),
+        models: z.array(NonEmptyStringSchema),
+        blockedReason: z.string(),
+        references: z.array(
+          z
+            .object({
+              agentId: AgentIdSchema,
+              displayName: NonEmptyStringSchema,
+              model: NonEmptyStringSchema,
+              role: z.enum(['primary', 'vision']),
+              scope: z.enum(['configuration', 'context']),
+              channelId: ChannelIdSchema.optional(),
+              channelName: z.string().optional(),
+              episodeStatus: z.enum(['opening', 'active']).optional(),
+            })
+            .strict(),
+        ),
+      })
+      .strict(),
+    error: HostApiErrorSchema,
+  }),
+  llmRemoveProvider: defineContract({
+    invalidatesSnapshot: true,
+    method: 'DELETE',
+    path: '/api/llm/providers/:provider',
+    params: llmProviderParam,
+    request: z.object({ expectedRevision: z.number().int().nonnegative() }).strict(),
+    response: LlmProviderSettingsSchema,
+    error: HostApiErrorSchema,
+  }),
   llmSaveProvider: defineContract({
+    invalidatesSnapshot: true,
     method: 'POST',
     path: '/api/llm/providers/:provider',
     params: llmProviderParam,
@@ -2124,6 +2255,7 @@ export const HostApiContracts = {
     error: HostApiErrorSchema,
   }),
   testConnection: defineContract({
+    invalidatesSnapshot: true,
     method: 'POST',
     path: '/api/connections/:connectionId/test',
     params: connectionParam,
@@ -2140,6 +2272,7 @@ export const HostApiContracts = {
     error: HostApiErrorSchema,
   }),
   dynamicApprove: defineContract({
+    invalidatesSnapshot: true,
     method: 'POST',
     path: '/api/dynamic/:agentId/approve',
     params: agentParam,
@@ -2150,6 +2283,7 @@ export const HostApiContracts = {
     error: HostApiErrorSchema,
   }),
   dynamicDecline: defineContract({
+    invalidatesSnapshot: true,
     method: 'POST',
     path: '/api/dynamic/:agentId/decline',
     params: agentParam,
@@ -2300,78 +2434,6 @@ export const HostApiContracts = {
         },
       )
       .superRefine((value, context) => {
-        if (value.renderedPages.length > 0 && value.usedUiComponents.length === 0) {
-          context.addIssue({
-            code: 'custom',
-            path: ['usedUiComponents'],
-            message: '动态页面必须实际使用 NekroNXT UI Kit。',
-          })
-        }
-        if (value.renderedPages.length > 0) {
-          const geometryByEntry = new Map(value.pageGeometry.map((geometry) => [geometry.entryId, geometry]))
-          for (const page of value.renderedPages) {
-            const geometry = geometryByEntry.get(page.entryId)
-            if (!geometry) {
-              context.addIssue({
-                code: 'custom',
-                path: ['pageGeometry'],
-                message: `动态页面 ${page.entryId} 没有真实页面几何证据。`,
-              })
-              continue
-            }
-            if (geometry.objectPane !== page.objectPane) {
-              context.addIssue({
-                code: 'custom',
-                path: ['pageGeometry'],
-                message: `动态页面 ${page.entryId} 的几何证据与对象列模式不一致。`,
-              })
-            }
-            const expectedInline = geometry.viewport.width <= 960 ? 24 : geometry.viewport.width <= 1440 ? 32 : 40
-            const insetChecks = [
-              ['top', geometry.insets.top, 24],
-              ['right', geometry.insets.right, expectedInline],
-              ['bottom', geometry.insets.bottom, 40],
-              ['left', geometry.insets.left, expectedInline],
-            ] as const
-            for (const [side, actual, expected] of insetChecks) {
-              if (Math.abs(actual - expected) > 1) {
-                context.addIssue({
-                  code: 'custom',
-                  path: ['pageGeometry'],
-                  message: `动态页面 ${page.entryId} 的 ${side} 边距为 ${actual}px，Host 契约要求 ${expected}px。`,
-                })
-              }
-            }
-            if (!geometry.contentAxesAligned) {
-              context.addIssue({
-                code: 'custom',
-                path: ['pageGeometry'],
-                message: `动态页面 ${page.entryId} 的 PageHeader 与正文内容轴没有对齐。`,
-              })
-            }
-            if (geometry.horizontalOverflow) {
-              context.addIssue({
-                code: 'custom',
-                path: ['pageGeometry'],
-                message: `动态页面 ${page.entryId} 产生了页面级横向溢出。`,
-              })
-            }
-            if (!geometry.titleDistinct) {
-              context.addIssue({
-                code: 'custom',
-                path: ['pageGeometry'],
-                message: `动态页面 ${page.entryId} 的应用标题与当前视图标题重复。`,
-              })
-            }
-          }
-          if (geometryByEntry.size !== value.renderedPages.length) {
-            context.addIssue({
-              code: 'custom',
-              path: ['pageGeometry'],
-              message: '动态页面几何证据包含重复或未声明的页面入口。',
-            })
-          }
-        }
         if (value.renderedPages.length === 0 && value.permissions.permissions.length === 0) return
         if (value.renderedPages.length > 0) return
         context.addIssue({
@@ -2383,7 +2445,25 @@ export const HostApiContracts = {
     response: z.object({ ok: z.literal(true) }).strict(),
     error: HostApiErrorSchema,
   }),
+  rebuildExtensionRevision: defineContract({
+    invalidatesSnapshot: true,
+    timeoutMs: 300_000,
+    method: 'POST',
+    path: '/api/extensions/rebuild',
+    params: EmptyParamsSchema,
+    request: z.object({ revisionId: ExtensionRevisionIdSchema }).strict(),
+    response: z
+      .object({
+        extensionId: ExtensionIdSchema,
+        revisionId: ExtensionRevisionIdSchema,
+        autoActivated: z.literal(false),
+      })
+      .strict(),
+    error: HostApiErrorSchema,
+  }),
   saveExtensionFromDynamic: defineContract({
+    invalidatesSnapshot: true,
+    timeoutMs: 300_000,
     method: 'POST',
     path: '/api/extensions/save-from-dynamic',
     params: EmptyParamsSchema,
@@ -2460,6 +2540,7 @@ export const HostApiContracts = {
     error: HostApiErrorSchema,
   }),
   activateExtension: defineContract({
+    invalidatesSnapshot: true,
     method: 'POST',
     path: '/api/agents/:agentId/extensions/:extensionId/activation',
     params: agentExtensionParam,
@@ -2480,6 +2561,7 @@ export const HostApiContracts = {
     error: HostApiErrorSchema,
   }),
   deactivateExtension: defineContract({
+    invalidatesSnapshot: true,
     method: 'DELETE',
     path: '/api/agents/:agentId/extensions/:extensionId/activation',
     params: agentExtensionParam,
@@ -2488,6 +2570,8 @@ export const HostApiContracts = {
     error: HostApiErrorSchema,
   }),
   installHostExtension: defineContract({
+    invalidatesSnapshot: true,
+    timeoutMs: 300_000,
     method: 'PUT',
     path: '/api/extensions/:extensionId/installation',
     params: extensionParam,
@@ -2514,6 +2598,8 @@ export const HostApiContracts = {
     error: HostApiErrorSchema,
   }),
   uninstallHostExtension: defineContract({
+    invalidatesSnapshot: true,
+    timeoutMs: 300_000,
     method: 'DELETE',
     path: '/api/extensions/:extensionId/installation',
     params: extensionParam,
@@ -2522,6 +2608,7 @@ export const HostApiContracts = {
     error: HostApiErrorSchema,
   }),
   updateHostUiPagePreferences: defineContract({
+    invalidatesSnapshot: true,
     method: 'PUT',
     path: '/api/host-ui/page-preferences',
     params: EmptyParamsSchema,
@@ -2556,6 +2643,7 @@ export const HostApiContracts = {
     error: HostApiErrorSchema,
   }),
   deleteLocalExtension: defineContract({
+    invalidatesSnapshot: true,
     method: 'DELETE',
     path: '/api/extensions/:extensionId',
     params: extensionParam,

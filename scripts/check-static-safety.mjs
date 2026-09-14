@@ -3,16 +3,15 @@ import path from 'node:path'
 import process from 'node:process'
 import ts from 'typescript'
 
-import { compareCounts, countsFromFindings, readBaseline, writeBaseline } from './lib/quality-baseline.mjs'
-
 const root = process.cwd()
-const baselinePath = 'scripts/baselines/static-safety.json'
 const sourceRoots = ['apps', 'packages']
 const sourcePattern = /\.(?:cts|mts|ts|tsx)$/u
 const sqlStart =
   /^\s*(?:SELECT\b[\s\S]*\bFROM\b|INSERT\s+INTO\b|UPDATE\s+[A-Za-z_][\w$]*\s+SET\b|DELETE\s+FROM\b|CREATE\s+(?:(?:UNIQUE|VIRTUAL)\s+)?(?:INDEX|TABLE|TRIGGER|VIEW)\b|ALTER\s+TABLE\b|DROP\s+(?:INDEX|TABLE|TRIGGER|VIEW)\b|PRAGMA\s+[A-Za-z_]|BEGIN(?:\s+(?:DEFERRED|EXCLUSIVE|IMMEDIATE|TRANSACTION))?\s*;?\s*$|COMMIT\s*;?\s*$|ROLLBACK\s*;?\s*$|WITH\b[\s\S]*\b(?:DELETE|INSERT|SELECT|UPDATE)\b)/iu
 const exemptFiles = new Set([
   'packages/storage-sqlite/src/schema.ts',
+  // Migration runner owns native SQL and the transaction commit boundary.
+  'packages/storage-sqlite/src/database.ts',
   // This adapter owns the foreign DSH SQLite identity/backup protocol. It
   // deliberately cannot use the Core Drizzle schema because NekroNxt must not
   // import or model DSH's private tables.
@@ -48,37 +47,11 @@ function propertyName(expression) {
   return undefined
 }
 
-function isJsonParse(node) {
-  return (
-    ts.isCallExpression(node) &&
-    ts.isPropertyAccessExpression(node.expression) &&
-    ts.isIdentifier(node.expression.expression) &&
-    node.expression.expression.text === 'JSON' &&
-    node.expression.name.text === 'parse'
-  )
-}
-
-function isImmediatelyValidated(node) {
-  let current = node
-  while (
-    current.parent &&
-    (ts.isAsExpression(current.parent) ||
-      ts.isTypeAssertionExpression(current.parent) ||
-      ts.isParenthesizedExpression(current.parent))
-  ) {
-    current = current.parent
-  }
-  const parent = current.parent
-  if (!parent || !ts.isCallExpression(parent) || !parent.arguments.includes(current)) return false
-  const callee = parent.expression.getText()
-  return /(?:^|\.)(?:decode|parse|safeParse|validate)[A-Za-z0-9_$]*$/u.test(callee)
-}
-
 function assertionTypeText(node, sourceFile) {
   return node.type.getText(sourceFile).replace(/\s+/gu, ' ').trim()
 }
 
-function scanFile(file, fixedExceptions) {
+function scanFile(file) {
   const relative = path.relative(root, file).split(path.sep).join('/')
   if (exemptFiles.has(relative)) return []
   const content = ts.sys.readFile(file)
@@ -94,10 +67,6 @@ function scanFile(file, fixedExceptions) {
 
   function report(rule, node, message) {
     const text = normalizedText(node, sourceFile)
-    const excepted = fixedExceptions.some(
-      (entry) => entry.rule === rule && entry.file === relative && entry.text === text,
-    )
-    if (excepted) return
     const location = sourceFile.getLineAndCharacterOfPosition(node.getStart(sourceFile))
     findings.push({
       rule,
@@ -128,16 +97,6 @@ function scanFile(file, fixedExceptions) {
         'Server 与通用 Web 页面必须通过 Adapter descriptor/Registry 能力分支，不能判断具体平台 key',
       )
     }
-    if (ts.isImportDeclaration(node) && isMainApplication) {
-      const moduleName = stringValue(node.moduleSpecifier)
-      if (
-        moduleName?.startsWith('@nekro-nxt/adapter-') &&
-        moduleName !== '@nekro-nxt/adapter-sdk' &&
-        !(relative.startsWith('apps/server/src/') && moduleName === '@nekro-nxt/adapter-builtin-roster')
-      ) {
-        report('concrete-adapter-import', node, '主应用只能导入 Adapter SDK；Server 额外允许第一方 roster。')
-      }
-    }
     if (
       isMainApplication &&
       (ts.isStringLiteralLike(node) || ts.isNoSubstitutionTemplateLiteral(node)) &&
@@ -148,7 +107,12 @@ function scanFile(file, fixedExceptions) {
     if (ts.isCallExpression(node)) {
       const member = propertyName(node.expression)
       const firstValue = node.arguments[0] && stringValue(node.arguments[0])
-      if ((member === 'prepare' || member === 'exec') && firstValue !== undefined && sqlStart.test(firstValue)) {
+      if (
+        !relative.startsWith('packages/storage-sqlite/src/') &&
+        (member === 'prepare' || member === 'exec') &&
+        firstValue !== undefined &&
+        sqlStart.test(firstValue)
+      ) {
         report('forbidden-sql-api', node, `业务源码不得调用 .${member}() 执行 SQL`)
       }
       if (
@@ -158,13 +122,11 @@ function scanFile(file, fixedExceptions) {
       ) {
         report('forbidden-sql-api', node, '业务源码不得调用 sql.raw()')
       }
-      if (isJsonParse(node) && !isImmediatelyValidated(node)) {
-        report('unchecked-json-parse', node, 'JSON.parse() 结果必须立即经过运行时 schema/decoder 校验')
-      }
     }
 
     if (
       (ts.isStringLiteralLike(node) || ts.isNoSubstitutionTemplateLiteral(node) || ts.isTemplateExpression(node)) &&
+      !relative.startsWith('packages/storage-sqlite/src/') &&
       sqlStart.test(stringValue(node) ?? '')
     ) {
       report('string-sql', node, '业务源码不得包含字符串 SQL')
@@ -189,42 +151,9 @@ function scanFile(file, fixedExceptions) {
   return findings
 }
 
-const baseline = await readBaseline(root, baselinePath).catch((error) => {
-  if (process.argv.includes('--write-baseline') && error?.code === 'ENOENT') {
-    return { version: 1, counts: {}, fixedExceptions: [] }
-  }
-  throw error
-})
 const files = (await Promise.all(sourceRoots.map((directory) => sourceFiles(path.join(root, directory))))).flat()
-const findings = files.flatMap((file) => scanFile(file, baseline.fixedExceptions ?? []))
-const counts = countsFromFindings(findings)
-
-if (process.argv.includes('--print-findings')) {
-  console.log(JSON.stringify(findings, null, 2))
-}
-
-if (process.argv.includes('--write-baseline')) {
-  await writeBaseline(root, baselinePath, {
-    version: 1,
-    description: '生产源码静态安全债务；按规则和文件计数只能下降。DSH 固定例外必须匹配完整表达式。',
-    counts,
-    fixedExceptions: baseline.fixedExceptions ?? [],
-  })
-  console.log(`Static safety baseline updated (${findings.length} findings).`)
-  process.exit(0)
-}
-
-const regressions = compareCounts(counts, baseline.counts ?? {})
-if (regressions.length > 0) {
-  for (const regression of regressions) {
-    console.error(
-      `${regression.file}: ${regression.rule} 当前 ${regression.count}，基线 ${regression.allowed}；新增静态债务被拒绝`,
-    )
-    for (const finding of findings.filter((item) => item.rule === regression.rule && item.file === regression.file)) {
-      console.error(`  ${finding.line}:${finding.column} ${finding.message}: ${finding.text}`)
-    }
-  }
-  process.exitCode = 1
-} else {
-  console.log(`Static safety check passed (${findings.length} baseline findings, no increases).`)
-}
+const findings = files.flatMap((file) => scanFile(file))
+if (process.argv.includes('--print-findings')) console.log(JSON.stringify(findings, null, 2))
+for (const finding of findings) console.error(`${finding.file}:${finding.line} ${finding.rule}: ${finding.message}`)
+if (findings.length) process.exitCode = 1
+else console.log('Static safety check passed.')

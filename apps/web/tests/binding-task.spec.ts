@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { ChannelIdSchema, ConnectionIdSchema } from '@nekro-nxt/contracts'
 import { listBindingChannels, type TriggerPolicy } from '../src/pages/binding-task.js'
-import type { ChannelSummary } from '../src/product-store.js'
+import type { ChannelSummary } from './product-fixture.js'
 
 const webConnection = ConnectionIdSchema.parse('con_web')
 const externalConnection = ConnectionIdSchema.parse('con_external')
@@ -19,7 +19,7 @@ const channel = (
   connectionName: connectionId === webConnection ? '内置频道' : '官方机器人',
   agentId,
   trigger: triggerPolicy === 'always' ? '始终响应' : '被提及或回复时',
-  runtimePhase: '空闲',
+  runtimePhase: 'idle',
   bindings: agentId
     ? [{ id: `${id}:${agentId}`, agentId, triggerPolicy, processingFeedback: 'auto', activityTriggerOverrides: {} }]
     : [],

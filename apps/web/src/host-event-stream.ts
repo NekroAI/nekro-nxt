@@ -1,4 +1,5 @@
 export const HOST_EVENT_STREAM_EVENTS = [
+  'snapshot-changed',
   'channel-fact',
   'connection-fact',
   'runtime',
@@ -158,7 +159,13 @@ export class HostEventStream {
   }
 
   #publish(type: HostEventStreamEvent, event: unknown): void {
-    for (const handlers of this.#subscriptions) handlers[type]?.(event)
+    for (const handlers of this.#subscriptions) {
+      try {
+        handlers[type]?.(event)
+      } catch (cause) {
+        console.error('Host event subscriber failed', cause)
+      }
+    }
   }
 }
 

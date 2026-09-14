@@ -1,3 +1,6 @@
+import { enableThemeTransitions, disableThemeTransitions } from './theme-transitions.js'
+import { useProductRuntime } from './product-runtime.js'
+import { useUiStateStore } from './product-runtime.js'
 import {
   AppWindow,
   BarChart3,
@@ -39,17 +42,11 @@ import { DynamicClientProvider } from './dynamic-client-coordinator.js'
 import { useDesktopInstance } from './desktop-shell.js'
 import { PersistentExtensionClientProvider } from './persistent-extension-client.js'
 import { AdapterHostClientProvider } from './adapter-host-client.js'
-import {
-  AgentManagePage,
-  AgentsPage,
-  ChannelConversationPage,
-  ConnectionsPage,
-  CreatorPage,
-  ExtensionsPage,
-  SettingsPage,
-  UsersPage,
-} from './pages/product-pages.js'
-import { useProductStore, type ProductHostStatus } from './product-store.js'
+import { ChannelConversationPage } from './pages/channel-page.js'
+import { ConnectionsPage } from './pages/connections-page.js'
+import { UsersPage } from './pages/users-page.js'
+import { DeferredProductPage, RouteLoadNotice, cancelPreparedNavigation } from './shell/route-modules.js'
+import { useProductStore, type ProductHostStatus } from './product-runtime.js'
 import { isWorkPath, workHomePath } from './shell/last-channel.js'
 import { CommandPalette } from './shell/command-palette.js'
 import { NxtNavLink } from './shell/nxt-link.js'
@@ -185,12 +182,16 @@ function RuntimeRedirect() {
 }
 
 function DesktopShell() {
+  const useProductRuntimeUi = useProductRuntime().uiStore
+
+  const uiStore = useProductRuntime().uiStore
   const location = useLocation()
   const navigate = useNavigate()
-  const theme = useProductStore((state) => state.theme)
-  const reducedMotion = useProductStore((state) => state.reducedMotion)
+  const theme = useUiStateStore((state) => state.theme)
+  const reducedMotion = useUiStateStore((state) => state.reducedMotion)
   const savedObjectPaneWidth = useUiPreferences((state) => state.layout.objectPaneWidth)
-  const [objectPaneWidth, setObjectPaneWidth] = useState(savedObjectPaneWidth)
+  const objectPaneWidth = savedObjectPaneWidth
+  const shellRef = useRef<HTMLDivElement>(null)
   const desktopInstance = useDesktopInstance()
   const hostSnapshotReady = useProductStore((state) => state.host.lastSuccessfulAt !== null)
   const hostUiPages = useProductStore((state) => state.hostUi.pages)
@@ -222,6 +223,9 @@ function DesktopShell() {
   useEffect(() => {
     previousHostUiOrder.current = hostUiPages
   }, [hostUiPages])
+  useEffect(() => {
+    cancelPreparedNavigation()
+  }, [location.key])
   const [instanceSwitcherOpen, setInstanceSwitcherOpen] = useState(false)
   const instanceStatusClass = {
     connecting: styles.instanceStatus_connecting,
@@ -236,20 +240,45 @@ function DesktopShell() {
   } = {
     '--nxt-object-pane-width': `${objectPaneWidth}px`,
   }
-  useEffect(() => setObjectPaneWidth(savedObjectPaneWidth), [savedObjectPaneWidth])
   const nextTheme = theme === 'light' ? 'dark' : 'light'
   const themeLabel = theme === 'light' ? '浅色' : '深色'
   const nextThemeLabel = nextTheme === 'light' ? '浅色' : '深色'
   const ThemeIcon = theme === 'light' ? Sun : Moon
+  const themeTransitionTimer = useRef<number>()
+  useEffect(
+    () => () => {
+      window.clearTimeout(themeTransitionTimer.current)
+      delete document.documentElement.dataset['themeChanging']
+      disableThemeTransitions()
+    },
+    [],
+  )
   const cycleTheme = (): void => {
     const root = document.documentElement
-    if (!reducedMotion) root.dataset['themeChanging'] = ''
-    useProductStore.getState().setTheme(nextTheme)
-    if (!reducedMotion) window.setTimeout(() => delete root.dataset['themeChanging'], 240)
+    const durationToken = getComputedStyle(root).getPropertyValue('--nxt-motion-standard').trim()
+    const duration = Number.parseFloat(durationToken) * (durationToken.endsWith('ms') ? 1 : 1000)
+    window.clearTimeout(themeTransitionTimer.current)
+    if (!reducedMotion) {
+      enableThemeTransitions()
+      root.dataset['themeChanging'] = ''
+    } else {
+      delete root.dataset['themeChanging']
+      disableThemeTransitions()
+    }
+    uiStore.getState().setTheme(nextTheme)
+    if (!reducedMotion)
+      themeTransitionTimer.current = window.setTimeout(
+        () => {
+          delete root.dataset['themeChanging']
+          disableThemeTransitions()
+        },
+        (Number.isFinite(duration) ? duration : 180) + 60,
+      )
   }
 
   return (
-    <div className={styles.shell} style={shellStyle} data-object-pane-hidden={objectPaneHidden ? '' : undefined}>
+    <div className={styles.shell} data-object-pane-hidden={objectPaneHidden ? '' : undefined}>
+      <RouteLoadNotice />
       <header className={styles.windowTopBar} data-window-top-bar>
         <div className={styles.windowBrand} data-window-brand>
           <img className={styles.brandMark} src="/brand/mark.svg" alt="" aria-hidden="true" />
@@ -263,7 +292,7 @@ function DesktopShell() {
           <span>CALM · PRECISE · ALIVE</span>
         </div>
       </header>
-      <div className={styles.shellBody} data-shell-body>
+      <div ref={shellRef} style={shellStyle} className={styles.shellBody} data-shell-body>
         <aside className={styles.rail} aria-label="模式">
           <NavMarkGroup id="rail">
             <nav className={styles.railSystem} aria-label="主导航">
@@ -373,8 +402,8 @@ function DesktopShell() {
           max={OBJECT_PANE_WIDTH.max}
           defaultValue={OBJECT_PANE_WIDTH.default}
           disabled={objectPaneHidden}
-          onChange={setObjectPaneWidth}
-          onCommit={(value) => useUiPreferences.getState().setObjectPaneWidth(value)}
+          previewTarget={{ ref: shellRef, property: '--nxt-object-pane-width' }}
+          onCommit={(value) => useProductRuntimeUi.getState().setObjectPaneWidth(value)}
         />
         <main className={styles.stage}>
           <CommandPalette />
@@ -396,8 +425,8 @@ function DesktopShell() {
 }
 
 function ThemeEffects() {
-  const theme = useProductStore((state) => state.theme)
-  const reducedMotion = useProductStore((state) => state.reducedMotion)
+  const theme = useUiStateStore((state) => state.theme)
+  const reducedMotion = useUiStateStore((state) => state.reducedMotion)
   const reducedTransparency = useUiPreferences((state) => state.appearance.reducedTransparency)
   const contrast = useUiPreferences((state) => state.appearance.contrast)
 
@@ -457,7 +486,7 @@ class ProductErrorBoundary extends Component<{ readonly children: ReactNode }, P
 }
 
 function MotionRoot({ children }: { readonly children: ReactNode }) {
-  const reducedMotion = useProductStore((state) => state.reducedMotion)
+  const reducedMotion = useUiStateStore((state) => state.reducedMotion)
   return <NxtMotionProvider reducedMotion={reducedMotion}>{children}</NxtMotionProvider>
 }
 
@@ -476,12 +505,15 @@ export function NekroNxtApp() {
                     <Route element={<DesktopShell />}>
                       <Route index element={<RootRedirect />} />
                       <Route path="work" element={<WorkIndex />} />
-                      <Route path="work/agents/new" element={<AgentsPage />} />
-                      <Route path="work/agents/:agentId" element={<AgentManagePage />} />
+                      <Route path="work/agents/new" element={<DeferredProductPage key="agents" name="agents" />} />
+                      <Route path="work/agents/:agentId" element={<DeferredProductPage key="agent" name="agent" />} />
                       <Route path="work/channels" element={<Navigate to="/work" replace />} />
                       <Route path="work/channels/:channelId" element={<ChannelConversationPage />} />
-                      <Route path="work/creator" element={<CreatorPage />} />
-                      <Route path="work/creator/:taskId" element={<CreatorPage />} />
+                      <Route path="work/creator" element={<DeferredProductPage key="creator" name="creator" />} />
+                      <Route
+                        path="work/creator/:taskId"
+                        element={<DeferredProductPage key="creator" name="creator" />}
+                      />
                       <Route path="agents" element={<LegacyWorkRedirect kind="agents" />} />
                       <Route path="agents/:agentId" element={<LegacyWorkRedirect kind="agent" />} />
                       <Route path="channels" element={<LegacyWorkRedirect kind="channels" />} />
@@ -489,12 +521,15 @@ export function NekroNxtApp() {
                       <Route path="connections" element={<ConnectionsPage />} />
                       <Route path="connections/:connectionId" element={<ConnectionsPage />} />
                       <Route path="users" element={<UsersPage />} />
-                      <Route path="extensions" element={<ExtensionsPage />} />
-                      <Route path="extensions/:extensionId" element={<ExtensionsPage />} />
+                      <Route path="extensions" element={<DeferredProductPage key="extensions" name="extensions" />} />
+                      <Route
+                        path="extensions/:extensionId"
+                        element={<DeferredProductPage key="extensions" name="extensions" />}
+                      />
                       <Route path="apps/:pageInstanceId/*" element={<HostUiPageCanvas />} />
                       <Route path="creator" element={<LegacyWorkRedirect kind="creator" />} />
                       <Route path="runtime" element={<RuntimeRedirect />} />
-                      <Route path="settings" element={<SettingsPage />} />
+                      <Route path="settings" element={<DeferredProductPage key="settings" name="settings" />} />
                       <Route path="*" element={<NotFoundPage />} />
                     </Route>
                   </Routes>

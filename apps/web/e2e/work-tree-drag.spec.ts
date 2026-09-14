@@ -219,6 +219,7 @@ test('work tree keeps titles stable while full rows and keyboard handles cover o
       status: 200,
       contentType: 'application/json',
       body: JSON.stringify({
+        cursor: snapshot.cursor,
         channelId,
         phase: 'idle',
         summary: '智能体当前空闲。',
@@ -231,7 +232,7 @@ test('work tree keeps titles stable while full rows and keyboard handles cover o
     route.fulfill({
       status: 200,
       contentType: 'application/json',
-      body: JSON.stringify({ messages: [], hasMore: false }),
+      body: JSON.stringify({ cursor: snapshot.cursor, messages: [], hasMore: false }),
     }),
   )
   await page.route('**/api/channels', async (route) => {
@@ -516,5 +517,6 @@ test('work tree keeps titles stable while full rows and keyboard handles cover o
   await page.screenshot({ path: screenshot, animations: 'disabled' })
   await testInfo.attach('work-tree-hover-drag-handle', { path: screenshot, contentType: 'image/png' })
 
+  await expect(page.getByText(/历史消息加载失败/u)).toHaveCount(0)
   expect(failures, failures.join('\n')).toEqual([])
 })

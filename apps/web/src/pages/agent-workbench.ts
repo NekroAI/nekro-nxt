@@ -1,5 +1,5 @@
 import { listBindingChannels } from './binding-task.js'
-import type { AgentSummary, CapabilityAvailability, ChannelSummary, ModelSummary } from '../product-store.js'
+import type { AgentSummary, CapabilityAvailability, ChannelSummary, ModelSummary } from '../product-runtime.js'
 
 export type AgentWorkbenchTab = 'profile' | 'channels' | 'capabilities' | 'extensions' | 'creator'
 

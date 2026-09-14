@@ -1,7 +1,6 @@
+import { callHostApi } from './host-api-client.js'
 import {
   HostApiContracts,
-  HostApiErrorSchema,
-  buildHostApiContractPath,
   parseJsonValue,
   type HostApiContract,
   type HostApiContractParams,
@@ -249,25 +248,7 @@ export class HttpDynamicClientHost implements DynamicClientHostPort {
     params: HostApiContractParams<Contract>,
     body: HostApiContractRequest<Contract>,
   ): Promise<Output> {
-    const requestBody = contract.parseRequest(body)
-    const response = await fetch(buildHostApiContractPath(contract, params), {
-      method: contract.method,
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify(requestBody),
-    })
-    const json: unknown = await response.json().catch(() => null)
-    if (!response.ok) {
-      const parsedError = HostApiErrorSchema.safeParse(json)
-      throw new Error(
-        parsedError.success ? parsedError.data.error.message : `Dynamic Host 请求失败：${response.status}`,
-      )
-    }
-    try {
-      const parseResponse: (input: unknown) => Output = contract.parseResponse
-      return parseResponse(json)
-    } catch (cause) {
-      throw new Error(`Dynamic Host 返回的数据格式无效：${cause instanceof Error ? cause.message : String(cause)}`)
-    }
+    return callHostApi(contract, params, body)
   }
 }
 

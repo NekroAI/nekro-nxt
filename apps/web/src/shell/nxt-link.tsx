@@ -1,3 +1,4 @@
+import { navigateWithRouteModule, prefetchRoute } from './route-modules.js'
 import { forwardRef, type MouseEvent } from 'react'
 import { Link, NavLink, useHref, useLocation, useNavigate, type LinkProps, type NavLinkProps } from 'react-router-dom'
 import { useNxtReducedMotion } from '../ui-kit/index.js'
@@ -15,26 +16,63 @@ const useNxtLinkClick = (to: LinkProps['to'], onClick?: LinkProps['onClick']) =>
     if (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return
     event.preventDefault()
     const nextPath = href.split('?')[0] ?? href
-    runNxtNavigation(
-      () => {
-        void navigate(href)
-      },
-      !reduce && needsCanvasMorph(location.pathname, nextPath),
+    navigateWithRouteModule(href, () =>
+      runNxtNavigation(
+        () => {
+          void navigate(href)
+        },
+        !reduce && needsCanvasMorph(location.pathname, nextPath),
+      ),
     )
   }
 }
 
 export const NxtNavLink = forwardRef<HTMLAnchorElement, NavLinkProps>(function NxtNavLink(
-  { onClick, to, ...props },
+  { onClick, onMouseEnter, onFocus, to, ...props },
   ref,
 ) {
   const handleClick = useNxtLinkClick(to, onClick)
-  return <NavLink {...props} ref={ref} to={to} onClick={handleClick} />
+  const href = useHref(to)
+  return (
+    <NavLink
+      onMouseEnter={(event) => {
+        onMouseEnter?.(event)
+        prefetchRoute(href)
+      }}
+      onFocus={(event) => {
+        onFocus?.(event)
+        prefetchRoute(href)
+      }}
+      {...props}
+      ref={ref}
+      to={to}
+      onClick={handleClick}
+    />
+  )
 })
 
-export const NxtLink = forwardRef<HTMLAnchorElement, LinkProps>(function NxtLink({ onClick, to, ...props }, ref) {
+export const NxtLink = forwardRef<HTMLAnchorElement, LinkProps>(function NxtLink(
+  { onClick, onMouseEnter, onFocus, to, ...props },
+  ref,
+) {
   const handleClick = useNxtLinkClick(to, onClick)
-  return <Link {...props} ref={ref} to={to} onClick={handleClick} />
+  const href = useHref(to)
+  return (
+    <Link
+      onMouseEnter={(event) => {
+        onMouseEnter?.(event)
+        prefetchRoute(href)
+      }}
+      onFocus={(event) => {
+        onFocus?.(event)
+        prefetchRoute(href)
+      }}
+      {...props}
+      ref={ref}
+      to={to}
+      onClick={handleClick}
+    />
+  )
 })
 
 export function useNxtNavigate() {
@@ -43,11 +81,13 @@ export function useNxtNavigate() {
   const reduce = useNxtReducedMotion()
   return (to: string) => {
     const nextPath = to.split('?')[0] ?? to
-    runNxtNavigation(
-      () => {
-        void navigate(to)
-      },
-      !reduce && needsCanvasMorph(location.pathname, nextPath),
+    navigateWithRouteModule(to, () =>
+      runNxtNavigation(
+        () => {
+          void navigate(to)
+        },
+        !reduce && needsCanvasMorph(location.pathname, nextPath),
+      ),
     )
   }
 }

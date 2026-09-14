@@ -1,0 +1,2 @@
+ALTER TABLE `connections` ADD `account_key` text;--> statement-breakpoint
+CREATE UNIQUE INDEX `connections_adapter_account_uq` ON `connections` (`adapter_key`,`account_key`) WHERE "connections"."account_key" IS NOT NULL AND "connections"."archived_at" IS NULL;

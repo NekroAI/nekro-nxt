@@ -1,9 +1,10 @@
+import { platformUserFilterKey, emptyPlatformUserDirectory } from '../product-model.js'
+import { useProductRuntime } from '../product-runtime.js'
 import type { HostApiResponse } from '@nekro-nxt/contracts'
 import { History, UsersRound } from 'lucide-react'
-import { useEffect, useState } from 'react'
+import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import { EmptyState, InlineFeedback, PageHeader } from '../components/product-feedback.js'
-import { useProductStore } from '../product-store.js'
 import { Button, Field, Input, SelectField, Spinner } from '../ui-kit/index.js'
 import styles from './product-pages.module.css'
 
@@ -14,19 +15,23 @@ const channelLabel = (channel: PlatformUser['channelPreview'][number]): string =
   (channel.kind === 'group' ? '未命名群聊' : channel.kind === 'direct' ? '未命名私聊' : '未命名内置频道')
 
 export function UsersPage() {
+  const useProductStore = useProductRuntime().store
+
   const [searchParams, setSearchParams] = useSearchParams()
-  const revision = useProductStore((state) => state.platformUsersRevision)
   const facets = useProductStore((state) => state.platformUserFacets)
   const adapterKey = searchParams.get('adapter') ?? ''
   const connectionId = searchParams.get('connection') ?? ''
   const query = searchParams.get('query') ?? ''
   const [queryDraft, setQueryDraft] = useState(query)
-  const [items, setItems] = useState<readonly PlatformUser[]>([])
-  const [total, setTotal] = useState(0)
-  const [nextCursor, setNextCursor] = useState<string | undefined>()
-  const [loading, setLoading] = useState(true)
-  const [loadingMore, setLoadingMore] = useState(false)
-  const [error, setError] = useState('')
+  const filter = {
+    ...(query ? { query } : {}),
+    ...(adapterKey ? { adapterKey } : {}),
+    ...(connectionId ? { connectionId } : {}),
+  }
+  const key = platformUserFilterKey(filter)
+  const directory = useProductStore((state) => state.platformUserDirectory)
+  const { items, total, nextCursor, loading, loadingMore, error } =
+    directory.key === key ? directory : { ...emptyPlatformUserDirectory(key), loading: true }
 
   useEffect(() => setQueryDraft(query), [query])
   useEffect(() => {
@@ -41,39 +46,49 @@ export function UsersPage() {
   }, [queryDraft, query, searchParams, setSearchParams])
 
   useEffect(() => {
-    let active = true
-    const timer = window.setTimeout(
-      () => {
-        setLoading(true)
-        setError('')
-        void useProductStore
-          .getState()
-          .listPlatformUsers({
-            ...(query ? { query } : {}),
-            ...(adapterKey ? { adapterKey } : {}),
-            ...(connectionId ? { connectionId } : {}),
-            limit: 50,
-          })
-          .then((result) => {
-            if (!active) return
-            setItems(result.items)
-            setTotal(result.total)
-            setNextCursor(result.nextCursor)
-          })
-          .catch((cause: unknown) => {
-            if (active) setError(cause instanceof Error ? cause.message : String(cause))
-          })
-          .finally(() => {
-            if (active) setLoading(false)
-          })
-      },
-      revision === 0 ? 0 : 220,
-    )
-    return () => {
-      active = false
-      window.clearTimeout(timer)
+    void useProductStore.getState().loadPlatformUserDirectory(filter)
+    return () => useProductStore.getState().cancelPlatformUserDirectory()
+  }, [key, useProductStore])
+
+  const bodyRef = useRef<HTMLDivElement>(null)
+  const anchor = useRef<{ key: string; ids: string[]; index: number; offset: number }>()
+  const remember = () => {
+    const body = bodyRef.current
+    if (!body) return
+    const top = body.getBoundingClientRect().top
+    const rows = [...body.querySelectorAll<HTMLElement>('[data-user-id]')]
+    let low = 0
+    let high = rows.length
+    while (low < high) {
+      const middle = Math.floor((low + high) / 2)
+      if (rows[middle]!.getBoundingClientRect().bottom <= top) low = middle + 1
+      else high = middle
     }
-  }, [adapterKey, connectionId, query, revision])
+    const first = rows[low]
+    anchor.current = first
+      ? {
+          key,
+          ids: rows.map((row) => row.dataset['userId']!),
+          index: low,
+          offset: first.getBoundingClientRect().top - top,
+        }
+      : undefined
+  }
+  useLayoutEffect(() => {
+    const body = bodyRef.current
+    const saved = anchor.current
+    if (body && saved?.key === key) {
+      const available = new Map(
+        [...body.querySelectorAll<HTMLElement>('[data-user-id]')].map((row) => [row.dataset['userId'], row]),
+      )
+      let row = available.get(saved.ids[saved.index])
+      for (let distance = 1; !row && distance < saved.ids.length; distance += 1) {
+        row = available.get(saved.ids[saved.index + distance]) ?? available.get(saved.ids[saved.index - distance])
+      }
+      if (row) body.scrollTop += row.getBoundingClientRect().top - body.getBoundingClientRect().top - saved.offset
+    }
+    remember()
+  }, [items, key])
 
   const selectedAdapter = facets.adapters.find((adapter) => adapter.key === adapterKey)
   const connectionOptions = facets.connections
@@ -90,32 +105,12 @@ export function UsersPage() {
     setSearchParams(next, { replace: true })
   }
 
-  const loadMore = async (): Promise<void> => {
-    if (!nextCursor || loadingMore) return
-    setLoadingMore(true)
-    setError('')
-    try {
-      const result = await useProductStore.getState().listPlatformUsers({
-        ...(query ? { query } : {}),
-        ...(adapterKey ? { adapterKey } : {}),
-        ...(connectionId ? { connectionId } : {}),
-        cursor: nextCursor,
-        limit: 50,
-      })
-      setItems((current) => [...current, ...result.items])
-      setTotal(result.total)
-      setNextCursor(result.nextCursor)
-    } catch (cause) {
-      setError(cause instanceof Error ? cause.message : String(cause))
-    } finally {
-      setLoadingMore(false)
-    }
-  }
+  const loadMore = (): Promise<void> => useProductStore.getState().loadPlatformUserDirectory(filter, true)
 
   const renderRows = (users: readonly PlatformUser[]) => (
     <div className={styles.userRows} role="rowgroup">
       {users.map((user) => (
-        <article className={styles.userRow} key={user.identityId} role="row">
+        <article className={styles.userRow} key={user.identityId} data-user-id={user.identityId} role="row">
           <span className={styles.userAvatar} aria-hidden="true">
             {(user.displayName?.trim() || '用').slice(0, 1)}
           </span>
@@ -212,7 +207,7 @@ export function UsersPage() {
             <span role="columnheader">平台连接</span>
             <span role="columnheader">活动范围</span>
           </div>
-          <div className={styles.userTableBody} data-table-scroll-region="">
+          <div ref={bodyRef} onScroll={remember} className={styles.userTableBody} data-table-scroll-region="">
             {loading && items.length === 0 ? (
               <EmptyState loading title="正在读取用户目录" description="正在汇总已持久化的平台身份。" />
             ) : items.length === 0 ? (

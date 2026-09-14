@@ -1,7 +1,6 @@
 import BetterSqlite3 from 'better-sqlite3'
 import { desc } from 'drizzle-orm'
 import { drizzle, type BetterSQLite3Database } from 'drizzle-orm/better-sqlite3'
-import { migrate } from 'drizzle-orm/better-sqlite3/migrator'
 import { readMigrationFiles } from 'drizzle-orm/migrator'
 import { integer, sqliteTable } from 'drizzle-orm/sqlite-core'
 import { fileURLToPath } from 'node:url'
@@ -53,6 +52,9 @@ export class CoreDatabase {
     this.#native.pragma('foreign_keys = ON')
     this.#native.pragma('journal_mode = WAL')
     this.#native.pragma('busy_timeout = 5000')
+    this.#native.function('nxt_casefold', { deterministic: true }, (value) =>
+      typeof value === 'string' ? value.toLocaleLowerCase() : '',
+    )
     this.db = drizzle(this.#native, { schema: coreSchema })
   }
 
@@ -71,21 +73,42 @@ export class CoreDatabase {
           .limit(1)
           .get()?.createdAt
       : undefined
-    const hasPendingMigrations = readMigrationFiles({ migrationsFolder: migrationFolder }).some(
-      ({ folderMillis }) => lastApplied === undefined || folderMillis > lastApplied,
-    )
-    if (!hasPendingMigrations) return
-    // SQLite cannot change PRAGMA foreign_keys inside the transaction opened by
-    // Drizzle's migrator. Table-rebuild migrations therefore need enforcement
-    // disabled before that transaction starts, followed by a full integrity
-    // check before normal repository traffic is allowed.
-    this.#native.pragma('foreign_keys = OFF')
-    try {
-      migrate(this.db, { migrationsFolder: migrationFolder })
+    const migrations = readMigrationFiles({ migrationsFolder: migrationFolder })
+    const latestKnown = Math.max(...migrations.map(({ folderMillis }) => folderMillis))
+    // Drizzle historically advances by the latest timestamp. Existing development
+    // journals may contain older timestamps no longer listed in today's files;
+    // rejecting those would strand already-supported data. Refuse future schemas.
+    if (lastApplied !== undefined && lastApplied > latestKnown) {
+      throw new Error('Core SQLite 包含当前版本未知迁移，拒绝降级启动。')
+    }
+    const pending = migrations.filter(({ folderMillis }) => lastApplied === undefined || folderMillis > lastApplied)
+    const checkIntegrity = (): void => {
       const violations = foreignKeyViolationSchema.parse(this.#native.pragma('foreign_key_check'))
       if (violations.length > 0) {
-        throw new Error(`Core SQLite 迁移后存在 ${violations.length} 条外键违规，拒绝启动。`)
+        throw new Error(`Core SQLite 存在 ${violations.length} 条外键违规，拒绝启动。`)
       }
+    }
+    if (pending.length === 0) {
+      checkIntegrity()
+      return
+    }
+    // Keep Drizzle's file and journal format, but own the commit so integrity
+    // failure rolls back both schema changes and migration metadata.
+    this.#native.pragma('foreign_keys = OFF')
+    try {
+      this.#native
+        .transaction(() => {
+          this.#native.exec(
+            'CREATE TABLE IF NOT EXISTS __drizzle_migrations (id SERIAL PRIMARY KEY, hash text NOT NULL, created_at numeric)',
+          )
+          const record = this.#native.prepare('INSERT INTO __drizzle_migrations (hash, created_at) VALUES (?, ?)')
+          for (const migration of pending) {
+            for (const statement of migration.sql) this.#native.exec(statement)
+            record.run(migration.hash, migration.folderMillis)
+          }
+          checkIntegrity()
+        })
+        .immediate()
     } finally {
       this.#native.pragma('foreign_keys = ON')
     }

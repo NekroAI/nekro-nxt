@@ -2,9 +2,13 @@
 
 该应用拥有 NekroNXT 的生产 DSH Host roster，并把 DSH Agent Loop 适配到 Channel Runtime。当前 roster 装配 Session、SQLite Persistence、System Prompt、Tool Runtime、Agent Loop、checkpoint、Session compaction、LLM retry、工具结果裁剪、工具超时、Spill、官方 in-process 子智能体、DeepSeek Web Provider、通用 pi-ai 模型路由和官方 DeepSeek 多模态路由；频道通信、历史、Asset、批量图片检查、子智能体控制、网页搜索、文件和 Shell 工具都按智能体 Revision 在根 Session Scope 注册，不照搬 DSH CLI 的全局工具面。Host 使用 DSH 公开 Scope 父链让 foreground/continuable child 加入精确父 Scope；child 自动继承父 Revision 的非沟通工具，频道发送、结束回应义务、撤回、戳一戳和子智能体协调仍由根 Session 独占。
 
+Session 身份、固定 Revision、频道、Episode 与可选运行资源由 `SessionRegistry` 的同一记录持有。`SessionRuntimeProjection` 读取该记录并拥有运行状态订阅、频道通知合并与计时器释放；`HostModelSettings` 通过 DSH 公开服务处理模型目录、配置、凭据和隔离连接测试。`PersistentExtensionMounts` 拥有持久扩展工厂、Session 挂载和 RPC 注册；同一版本初始化互斥，关闭等待进行中的初始化和卸载，释放失败向调用方上报。创造任务批准、停止的并发检查和状态提交由共享 `DynamicAuthoringService` 执行；HTTP 仅解析契约、调用宿主入口并投影结果，服务的提交通知供各入口共同订阅。`SessionImageContext` 负责图片投影、驻留诊断和压缩后恢复，共用同一 Session 注册表；附件读取继续核对频道访问范围。`DshHostRuntime` 保留对外适配入口，固定包版本与内置设置所有者来自 `dsh-roster.ts`。
+
+`DynamicAuthoringRuntime` 拥有动态候选续接与审批订阅；`AuthoringApplicationService` 协调验证、保存及任务提交，并在关闭时等待保存结束。`HostQueries` 批量读取快照关联事实，HTTP 按创造、连接、扩展、设置和工作区注册路由；共享契约读取与错误响应由 `host-route-support.ts` 提供。
+
 人设 Revision 的权威内容是 `PromptDocumentV1`。无引用时 Host 继续注入原始纯文本；存在平台用户、频道或扩展引用时，Host 解析当前可用状态，使用转义后的 `<nxt-persona-document>` 内联标记，并先注入固定引用协议。展示名称和扩展描述始终作为不可信数据，引用不扩大权限、频道访问或工具目录。
 
-`NekroRuntime` 是生产组合根：它拥有 Core SQLite、Channel Runtime、Extension 恢复、本地凭据目录、统一 `AdapterRegistry`、Connection Runtime Map 和 `HostExtensionInstallationCoordinator`。第一方 Adapter 只从 `@nekro-nxt/adapter-builtin-roster` 的贡献集合注册；Server 不导入、比较或投影任何具体 Adapter 名称、key 和协议字段。内置与动态安装 Revision 走同一创建、恢复、测试和停止路径；Secret 只由 Host 凭据存储解析，Core 只保存引用。系统单例内置频道通过 Descriptor 的 `internal` kind 和 Runtime 的 `localChannel` 自动发现。Adapter Revision 切换会暂停该 key 的新入站，等待关联 Session 进入安全间隙，再停止全部 Connection Runtime；任一 `stop()` 失败会聚合上抛并恢复已停止的连接，不提交安装变化。启动顺序是内置 Registry → Host Installation → Connection → Agent Activation，关闭时反向撤销并等待静止。
+`NekroRuntime` 是生产组合根：它拥有 Core SQLite、Channel Runtime、Extension 恢复、本地凭据目录、统一 `AdapterRegistry`、`ConnectionApplicationService` 和 `HostExtensionInstallationCoordinator`。`ConnectionApplicationService` 独立持有连接运行实例、诊断、测试结果和订阅，负责创建、恢复、挂载、安全间隙与停止；组合根按依赖顺序调用其生命周期。第一方 Adapter 只从 `@nekro-nxt/adapter-builtin-roster` 的贡献集合注册；Server 不导入、比较或投影任何具体 Adapter 名称、key 和协议字段。内置与动态安装 Revision 走同一创建、恢复、测试和停止路径；Secret 只由 Host 凭据存储解析，Core 只保存引用。系统单例内置频道通过 Descriptor 的 `internal` kind 和 Runtime 的 `localChannel` 自动发现。Adapter Revision 切换会暂停该 key 的新入站，等待关联 Session 进入安全间隙，再停止全部 Connection Runtime；任一 `stop()` 失败会聚合上抛并恢复已停止的连接，不提交安装变化。启动顺序是内置 Registry → Host Installation → Connection → Agent Activation，关闭时反向撤销并等待静止。
 
 频道活动设置分两层：具体 Connection 保存默认开启列表，Binding 保存按频道的布尔覆盖；Channel Runtime 每次触发和恢复时重新解析最终值。用户 Connection 删除前先停止相关 Channel lane 与 Adapter Runtime；保留频道数据时归档原 Connection 供明确恢复，选择同时删除时再清理 Connection 范围内的频道和运行事实。系统单例不进入删除流程。
 

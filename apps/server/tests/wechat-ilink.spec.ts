@@ -539,3 +539,89 @@ describe('WeChat iLink Server driver', () => {
     }
   })
 })
+
+it('reauthentication preserves the user media setting', async () => {
+  const directory = await mkdtemp(path.join(tmpdir(), 'nxt-review-setting-'))
+  temporaryDirectories.push(directory)
+  const runtime = await NekroRuntime.create({
+    coreDatabasePath: path.join(directory, 'core.sqlite'),
+    sessionDatabasePath: path.join(directory, 'sessions.sqlite'),
+    assetRoot: path.join(directory, 'assets'),
+    extensionDataRoot: path.join(directory, 'extension-data'),
+    extensionCacheRoot: path.join(directory, 'extension-cache'),
+    credentialRoot: path.join(directory, 'credentials'),
+    adapterContributions: createTestAdapterContributions({
+      loginClientFactory: () => new FakeWechatIlinkLoginClient(),
+      transportFactory: () => new FakeWechatIlinkTransport(),
+    }),
+  })
+  await runtime.start()
+  try {
+    const initial = await runtime.startConnectionLogin({ adapterKey: 'wechat-ilink' })
+    await waitFor(() => runtime.getConnectionLogin(initial.loginId).status === 'confirmed')
+    const connectionId = runtime.getConnectionLogin(initial.loginId).connectionId!
+    await runtime.updateConnectionConfiguration(connectionId, { enableInboundMedia: false })
+    expect(runtime.core.getConnection(connectionId)?.config).toMatchObject({ enableInboundMedia: false })
+    const login = await runtime.startConnectionLogin({ adapterKey: 'wechat-ilink', connectionId })
+    await waitFor(() => runtime.getConnectionLogin(login.loginId).status === 'confirmed')
+    expect(runtime.core.getConnection(connectionId)?.config).toMatchObject({ enableInboundMedia: false })
+  } finally {
+    await runtime.dispose()
+  }
+})
+
+it('cancelled reauthentication stops the replacement transport before rollback', async () => {
+  const directory = await mkdtemp(path.join(tmpdir(), 'nxt-review-rollback-'))
+  temporaryDirectories.push(directory)
+  const mounting = deferred<void>()
+  const releaseMount = deferred<void>()
+  const transports: Array<{ stopCount: number; signal?: AbortSignal }> = []
+  const runtime = await NekroRuntime.create({
+    coreDatabasePath: path.join(directory, 'core.sqlite'),
+    sessionDatabasePath: path.join(directory, 'sessions.sqlite'),
+    assetRoot: path.join(directory, 'assets'),
+    extensionDataRoot: path.join(directory, 'extension-data'),
+    extensionCacheRoot: path.join(directory, 'extension-cache'),
+    credentialRoot: path.join(directory, 'credentials'),
+    adapterContributions: createTestAdapterContributions({
+      loginClientFactory: () => new FakeWechatIlinkLoginClient(),
+      transportFactory: () => {
+        const index = transports.length
+        const record: { stopCount: number; signal?: AbortSignal } = { stopCount: 0 }
+        transports.push(record)
+        return {
+          async start(input) {
+            record.signal = input.signal
+            if (index === 1) {
+              mounting.resolve()
+              await releaseMount.promise
+            }
+          },
+          stop() {
+            record.stopCount++
+            return Promise.resolve()
+          },
+          sendText() {
+            return Promise.resolve({ clientId: 'fixture-send' })
+          },
+        }
+      },
+    }),
+  })
+  await runtime.start()
+  try {
+    const initial = await runtime.startConnectionLogin({ adapterKey: 'wechat-ilink' })
+    await waitFor(() => runtime.getConnectionLogin(initial.loginId).status === 'confirmed')
+    const connectionId = runtime.getConnectionLogin(initial.loginId).connectionId!
+    const login = await runtime.startConnectionLogin({ adapterKey: 'wechat-ilink', connectionId })
+    await mounting.promise
+    runtime.cancelConnectionLogin(login.loginId)
+    releaseMount.resolve()
+    await waitFor(() => transports.length === 3)
+    expect(transports[1]!.stopCount).toBe(1)
+    expect(transports[1]!.signal?.aborted).toBe(true)
+  } finally {
+    releaseMount.resolve()
+    await runtime.dispose()
+  }
+})

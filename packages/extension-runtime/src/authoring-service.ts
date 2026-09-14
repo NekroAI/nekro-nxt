@@ -544,6 +544,116 @@ export class DynamicAuthoringService {
     this.#publish({ taskId: current.id, agentId: current.agentId })
   }
 
+  decideAttempt(input: {
+    readonly taskId: DynamicAuthoringTask['id']
+    readonly attemptId: AuthoringAttemptId
+    readonly expectedRevision: number
+    readonly approved: boolean
+    readonly approveRiskStable: boolean
+  }) {
+    const current = this.#repository.getAuthoringTask(input.taskId)
+    const currentAttempt = this.#repository.getAuthoringAttempt(input.attemptId)
+    if (!current) throw new Error('创造任务状态已更新，请刷新后重试。')
+    const latestAttempt = this.#repository.listAuthoringAttempts(current.id).at(-1)
+    if (!currentAttempt || currentAttempt.taskId !== current.id || latestAttempt?.id !== currentAttempt.id) {
+      throw new Error('候选内容已经更新，请检查新的运行内容。')
+    }
+    if (
+      current.revision !== input.expectedRevision &&
+      (current.status !== 'awaiting-approval' || currentAttempt.state !== 'awaiting-approval')
+    ) {
+      throw new Error('创造任务状态已更新，请刷新后重试。')
+    }
+    const now = this.#now()
+    const task = {
+      ...current,
+      status: input.approved ? ('running' as const) : ('working' as const),
+      ...(input.approved && (input.approveRiskStable || current.approvalPolicy === 'fully-automatic')
+        ? { approvedRiskDigest: currentAttempt.riskDigest }
+        : {}),
+      revision: current.revision + 1,
+      updatedAt: now,
+    }
+    const attempt = {
+      ...currentAttempt,
+      state: input.approved ? ('starting-host' as const) : ('rejected' as const),
+      ...(input.approved ? {} : { settledAt: now }),
+    }
+    this.#repository.updateAuthoringAttempt({
+      task,
+      expectedRevision: current.revision,
+      attempt,
+      event: {
+        taskId: task.id,
+        sequence: task.revision,
+        kind: input.approved ? 'approval-accepted' : 'approval-rejected',
+        attemptId: attempt.id,
+        payload: { approved: input.approved },
+        createdAt: now,
+      },
+    })
+    this.#publish({ taskId: task.id, agentId: task.agentId })
+    return { accepted: true as const, taskRevision: task.revision, executionRequired: input.approved }
+  }
+
+  async stopTask(
+    input: {
+      readonly taskId: DynamicAuthoringTask['id']
+      readonly expectedRevision: number
+    },
+    stopRuntime: (task: DynamicAuthoringTask) => Promise<void>,
+  ): Promise<DynamicAuthoringTask> {
+    const current = this.#repository.getAuthoringTask(input.taskId)
+    if (!current || current.revision !== input.expectedRevision) throw new Error('创造任务状态已更新，请刷新后重试。')
+    await stopRuntime(current)
+    const fresh = this.#repository.getAuthoringTask(input.taskId)
+    if (!fresh || fresh.revision !== current.revision) throw new Error('创造任务状态已更新，请刷新后重试。')
+    const now = this.#now()
+    const task = { ...current, status: 'stopped' as const, revision: current.revision + 1, updatedAt: now }
+    const attempt = this.#repository.listAuthoringAttempts(current.id).at(-1)
+    if (attempt) {
+      this.#repository.updateAuthoringAttempt({
+        task,
+        expectedRevision: current.revision,
+        attempt: {
+          ...attempt,
+          state: 'stopped',
+          host: {
+            status: attempt.host.status === 'absent' ? 'absent' : 'stopped',
+            waitingFor: [],
+          },
+          client: {
+            status: attempt.client.status === 'absent' ? 'absent' : 'stopped',
+            waitingFor: [],
+          },
+          settledAt: now,
+        },
+        event: {
+          taskId: task.id,
+          sequence: task.revision,
+          kind: 'task-stopped',
+          attemptId: attempt.id,
+          payload: {},
+          createdAt: now,
+        },
+      })
+    } else {
+      this.#repository.updateAuthoringTask({
+        task,
+        expectedRevision: current.revision,
+        event: {
+          taskId: task.id,
+          sequence: task.revision,
+          kind: 'task-stopped',
+          payload: {},
+          createdAt: now,
+        },
+      })
+    }
+    this.#publish({ taskId: task.id, agentId: task.agentId })
+    return task
+  }
+
   async deleteTask(taskId: DynamicAuthoringTask['id']): Promise<boolean> {
     const task = this.#repository.getAuthoringTask(taskId)
     if (!task) return false

@@ -82,7 +82,7 @@ const createAuthoringMemoryRepository = (): AuthoringRepository & {
       [...tasks.values()].find((task) => task.episodeId === episodeId && task.pluginKey === pluginKey),
     listAuthoringAttempts: (taskId) =>
       [...attempts.values()]
-        .filter((attempt) => attempt.taskId === taskId)
+        .filter((attempt) => taskId === undefined || attempt.taskId === taskId)
         .sort((left, right) => left.ordinal - right.ordinal),
     getAuthoringAttempt: (id) => attempts.get(id),
     listAuthoringEvents: (taskId) => events.get(taskId) ?? [],
@@ -153,6 +153,64 @@ describe('Dynamic authoring artifacts', () => {
     expect(stagedAgain).toBeDefined()
     await store.discardTaskDeletion(stagedAgain!)
     expect(await store.stageTaskDeletion(agentId, taskId)).toBeUndefined()
+  })
+
+  it('shares approval commits and refuses to overwrite a candidate created while stopping', async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), 'nxt-authoring-actions-'))
+    temporaryDirectories.push(directory)
+    const repository = createAuthoringMemoryRepository()
+    const service = new DynamicAuthoringService(repository, new AuthoringArtifactStore(directory))
+    const definition = {
+      agentId: AgentIdSchema.parse('agt_ACTIONS'),
+      channelId: ChannelIdSchema.parse('chn_ACTIONS'),
+      episodeId: EpisodeIdSchema.parse('eps_ACTIONS'),
+      initiatingEventId: ChannelEventIdSchema.parse('evt_ACTIONS'),
+      approvalPolicy: 'risk-stable' as const,
+      pluginKey: 'actions',
+      runnerPackageId: 'package-one',
+      snapshot: {
+        name: '测试操作',
+        purpose: '测试状态提交',
+        scope: 'agent' as const,
+        code: { host: 'return { apply() {} }' },
+        resources: {},
+        permissions: { permissions: [], networkOrigins: [] },
+        contributions: [],
+      },
+    }
+    const first = await service.recordDefinition(definition)
+    const decision = service.decideAttempt({
+      taskId: first.task.id,
+      attemptId: first.attempt.id,
+      expectedRevision: first.task.revision,
+      approved: true,
+      approveRiskStable: true,
+    })
+    expect(decision).toMatchObject({ accepted: true, executionRequired: true })
+    expect(service.getTask(first.task.id)?.approvedRiskDigest).toBe(first.attempt.riskDigest)
+    await expect(
+      service.stopTask({ taskId: first.task.id, expectedRevision: decision.taskRevision }, async () => {
+        await service.recordDefinition({
+          ...definition,
+          runnerPackageId: 'package-two',
+          snapshot: { ...definition.snapshot, name: '新的候选' },
+        })
+      }),
+    ).rejects.toThrow('状态已更新')
+    const current = service.getTask(first.task.id)!
+    expect(current.status).not.toBe('stopped')
+    expect(() =>
+      service.decideAttempt({
+        taskId: first.task.id,
+        attemptId: first.attempt.id,
+        expectedRevision: current.revision,
+        approved: true,
+        approveRiskStable: false,
+      }),
+    ).toThrow('候选内容已经更新')
+    const stopped = await service.stopTask({ taskId: current.id, expectedRevision: current.revision }, async () => {})
+    expect(stopped.status).toBe('stopped')
+    expect(repository.listAuthoringAttempts(current.id).at(-1)?.state).toBe('stopped')
   })
 
   it('keeps task revisions idempotent, restores runner identities, and rolls back failed deletion', async () => {
@@ -529,7 +587,8 @@ const revisionId = (value: string): ExtensionRevisionId => ExtensionRevisionIdSc
 
 const manifestRevisionSchema = z
   .object({
-    schemaVersion: z.literal(2),
+    schemaVersion: z.literal(5),
+    scope: z.literal('agent'),
     extensionId: ExtensionIdSchema,
     revisionId: ExtensionRevisionIdSchema,
     entrypoints: z
@@ -930,7 +989,7 @@ const materialize = (hostCode: string) =>
   })
 
 describe('Extension save', () => {
-  it('materializes a Host UI Manifest V4 with stable pages and an explicit permission set', () => {
+  it('materializes a Host UI Manifest V5 with stable pages and an explicit permission set', () => {
     const materialized = materializeDynamicPackage({
       extensionId: extensionId('hostui'),
       revisionId: revisionId('hostui'),
@@ -953,7 +1012,7 @@ describe('Extension save', () => {
     })
     expect(materialized.scope).toBe('host-ui')
     expect(materialized.manifest).toMatchObject({
-      schemaVersion: 4,
+      schemaVersion: 5,
       scope: 'host-ui',
       permissions: { permissions: ['agents.read'], networkOrigins: [] },
       contributions: [{ kind: 'host-page', entryId: 'overview' }],
@@ -1002,6 +1061,219 @@ describe('Extension save', () => {
     expect(await readFile(artifact.clientCssEntry!, 'utf8')).toContain('.panel')
   })
 
+  it.each([0, 1, 2, 3, 4])(
+    'preserves legacy case %s source and configuration through failed and repeated rebuilds',
+    async (legacyCase) => {
+      const version = legacyCase || 1
+      const directory = await mkdtemp(path.join(tmpdir(), 'nxt-legacy-rebuild-'))
+      temporaryDirectories.push(directory)
+      const repository = new MemoryExtensionRepository()
+      const sources = new ExtensionSourceStore(path.join(directory, 'data'))
+      const extension = {
+        ...localExtension(extensionId('legacy')),
+        scope: version === 3 ? ('host-adapter' as const) : version === 4 ? ('host-ui' as const) : ('agent' as const),
+      }
+      const previous = {
+        ...revision(revisionId('legacy'), extension.id, 1),
+        contentDigest: 'a'.repeat(64),
+        payloadDigest: 'b'.repeat(64),
+      }
+      repository.saveExtensionRevision({
+        extension,
+        revision: previous,
+        ...(legacyCase === 1
+          ? {
+              verification: {
+                revisionId: previous.id,
+                verifiedAt: 1,
+                dshVersion: 'legacy',
+                contractVersion: 'nekro-nxt-extension-v1',
+                origin: { episodeId: 'eps_legacy', pluginId: 'legacy', packageId: 'legacy', pluginRunId: 'legacy' },
+                hostBuild: { built: true, buildKey: 'a'.repeat(64) },
+                clientBuild: { built: false, buildKey: 'a'.repeat(64) },
+                toolInvocations: [{ name: 'synthetic', succeeded: true }],
+                rpcMethods: ['synthetic.read'],
+                renderedSlots: ['extension.details.panels'],
+              },
+            }
+          : {}),
+      })
+      const sourceDirectory = sources.revisionSourceDirectory(extension.id, previous.id)
+      await mkdir(path.join(sourceDirectory, 'source'), { recursive: true })
+      const manifest = JSON.stringify({
+        ...(version === 1 ? {} : { schemaVersion: version }),
+        ...(version >= 3 ? { scope: extension.scope } : {}),
+        ...(version === 4
+          ? {
+              permissions: { permissions: [], networkOrigins: [] },
+              clientCss: {
+                path: 'assets/page.module.css',
+                sha256: createHash('sha256').update('.panel { color: red; }').digest('hex'),
+              },
+            }
+          : {}),
+        extensionId: extension.id,
+        revisionId: previous.id,
+        entrypoints: version === 4 ? { client: 'source/client.ts' } : { host: 'source/host.ts' },
+        ...(version === 1
+          ? {}
+          : {
+              contributions:
+                version === 3
+                  ? [{ kind: 'adapter', apiVersion: 2, key: 'synthetic', descriptorDigest: 'a'.repeat(64) }]
+                  : version === 4
+                    ? [
+                        {
+                          kind: 'host-page',
+                          entryId: 'overview',
+                          title: '测试页面',
+                          icon: {
+                            kind: 'svg',
+                            path: 'assets/icon.svg',
+                            sha256: createHash('sha256')
+                              .update(
+                                '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M0 0h24v24H0z"/></svg>',
+                              )
+                              .digest('hex'),
+                          },
+                          objectPane: 'hidden',
+                          startPath: '',
+                        },
+                      ]
+                    : [],
+            }),
+      })
+      await writeFile(path.join(sourceDirectory, 'manifest.json'), manifest)
+      await writeFile(path.join(sourceDirectory, 'source/host.ts'), 'export default async function () {}')
+      await writeFile(
+        path.join(sourceDirectory, 'source/client.ts'),
+        "import '../assets/page.module.css'; export default function () {}",
+      )
+      await mkdir(path.join(sourceDirectory, 'assets'), { recursive: true })
+      await writeFile(
+        path.join(sourceDirectory, 'assets/icon.svg'),
+        '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M0 0h24v24H0z"/></svg>',
+      )
+      await writeFile(path.join(sourceDirectory, 'assets/page.module.css'), '.panel { color: red; }')
+      repository.upsertActivation({
+        agentId: agentId('legacy'),
+        extensionId: extension.id,
+        extensionRevisionId: previous.id,
+        config: { greeting: '保留设置' },
+        activatedAt: 1,
+      })
+      let fails = true
+      let validations = 0
+      const builder = new ExtensionBuilder(path.join(directory, 'cache'))
+      const service = new ExtensionService(repository, sources, {
+        builder,
+        importVerifier: () => {
+          validations += 1
+          if (fails) return Promise.reject(new Error('本机运行验证失败'))
+          return Promise.resolve({
+            contractVersion: 'nekro-nxt-extension-v1',
+            origin: { episodeId: 'eps_rebuild', pluginId: 'rebuild', packageId: 'rebuild', pluginRunId: 'rebuild' },
+            toolInvocations: [],
+            rpcMethods: [],
+            renderedSlots: [],
+          })
+        },
+      })
+      await expect(service.rebuildRevision(revisionId('missing'), 'test-dsh')).rejects.toThrow('找不到')
+      expect(service.revisionFormat(previous)).toBe('requires-rebuild')
+      await expect(service.buildRevision(previous)).rejects.toThrow('需要从已有源码重建')
+      await expect(service.rebuildRevision(previous.id, 'test-dsh')).rejects.toThrow('本机运行验证失败')
+      expect(repository.listExtensionRevisions(extension.id)).toEqual([previous])
+      fails = false
+      const [first, repeated] = await Promise.all([
+        service.rebuildRevision(previous.id, 'test-dsh'),
+        service.rebuildRevision(previous.id, 'test-dsh'),
+      ])
+      expect(first.revision.id).not.toBe(previous.id)
+      expect(repeated).toEqual(first)
+      expect(validations).toBe(2)
+      expect(service.revisionFormat(first.revision)).toBe('current')
+      await expect(service.rebuildRevision(first.revision.id, 'test-dsh')).resolves.toEqual(first)
+      await service.dispose()
+      await expect(service.rebuildRevision(previous.id, 'test-dsh')).rejects.toThrow('正在关闭')
+      expect(repository.listExtensionRevisions(extension.id)).toHaveLength(2)
+      expect(repository.getActivation(agentId('legacy'), extension.id)).toMatchObject({
+        extensionRevisionId: previous.id,
+        config: { greeting: '保留设置' },
+      })
+      expect(await readFile(path.join(sourceDirectory, 'manifest.json'), 'utf8')).toBe(manifest)
+    },
+  )
+
+  it('does not cache missing or invalid source and rejects rebuilding without local validation', async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), 'nxt-rebuild-source-'))
+    temporaryDirectories.push(directory)
+    const repository = new MemoryExtensionRepository()
+    const sources = new ExtensionSourceStore(directory)
+    const extension = localExtension(extensionId('source'))
+    const previous = revision(revisionId('source'), extension.id, 1)
+    repository.saveExtensionRevision({ extension, revision: previous })
+    const service = new ExtensionService(repository, sources)
+    expect(service.revisionFormat(previous)).toBe('unavailable')
+    const sourceDirectory = sources.revisionSourceDirectory(extension.id, previous.id)
+    await mkdir(sourceDirectory, { recursive: true })
+    await writeFile(path.join(sourceDirectory, 'manifest.json'), '{}')
+    expect(service.revisionFormat(previous)).toBe('unavailable')
+    await writeFile(
+      path.join(sourceDirectory, 'manifest.json'),
+      JSON.stringify({
+        extensionId: extension.id,
+        revisionId: previous.id,
+        entrypoints: { host: 'source/host.ts' },
+      }),
+    )
+    expect(service.revisionFormat(previous)).toBe('requires-rebuild')
+    await expect(service.rebuildRevision(previous.id, 'test')).rejects.toThrow('本机构建器与运行验证器')
+    const guarded = new ExtensionService(repository, sources, {
+      builder: new ExtensionBuilder(path.join(directory, 'cache')),
+      importVerifier: () => Promise.reject(new Error('verification must not run')),
+    })
+    await writeFile(
+      path.join(sourceDirectory, 'manifest.json'),
+      JSON.stringify({
+        extensionId: extension.id,
+        revisionId: revisionId('different'),
+        entrypoints: { host: 'source/host.ts' },
+      }),
+    )
+    await expect(guarded.rebuildRevision(previous.id, 'test')).rejects.toThrow('源码身份与版本记录不一致')
+    await guarded.dispose()
+    const incomplete = new ExtensionService(repository, sources, {
+      builder: new ExtensionBuilder(path.join(directory, 'cache')),
+    })
+    await expect(incomplete.rebuildRevision(previous.id, 'test')).rejects.toThrow('本机构建器与运行验证器')
+    await incomplete.dispose()
+
+    await service.dispose()
+  })
+
+  it.each(['', '/outside.module.css', '../outside.module.css'])(
+    'rejects unsafe rebuilt resource path %j and removes staging data',
+    async (resourcePath) => {
+      const directory = await mkdtemp(path.join(tmpdir(), 'nxt-rebuild-resource-'))
+      temporaryDirectories.push(directory)
+      const sources = new ExtensionSourceStore(directory)
+      const materialized = materialize('export default async function () {}')
+      await expect(
+        sources.publish(materialized.manifest.extensionId, materialized.manifest.revisionId, {
+          ...materialized,
+          resources: { [resourcePath]: 'synthetic' },
+        }),
+      ).rejects.toThrow('Unsafe Extension storage path')
+      expect(await readdir(path.join(directory, 'staging'))).toEqual([])
+      expect(
+        existsSync(
+          sources.revisionSourceDirectory(materialized.manifest.extensionId, materialized.manifest.revisionId),
+        ),
+      ).toBe(false)
+    },
+  )
+
   it('publishes a complete source directory before atomically saving LocalExtension and Revision', async () => {
     const directory = await mkdtemp(path.join(tmpdir(), 'nekro-nxt-extension-save-'))
     temporaryDirectories.push(directory)
@@ -1040,7 +1312,8 @@ describe('Extension save', () => {
     const sourceDirectory = service.revisionSourceDirectory(saved.revision)
     expect(manifest.revisionId).toBe(saved.revision.id)
     expect(manifest).toEqual({
-      schemaVersion: 2,
+      schemaVersion: 5,
+      scope: 'agent',
       extensionId: saved.extension.id,
       revisionId: saved.revision.id,
       entrypoints: { host: 'source/host.ts' },
@@ -1570,6 +1843,84 @@ describe('Extension source store', () => {
 })
 
 describe('Extension import validation', () => {
+  it('applies the Adapter page limit to imported manifests as well as dynamic packages', () => {
+    const manifest = {
+      schemaVersion: 5,
+      scope: 'host-adapter',
+      extensionId: extensionId('pageLimit'),
+      revisionId: revisionId('pageLimit'),
+      entrypoints: { host: 'source/host.ts', client: 'source/client.ts' },
+      contributions: [
+        { kind: 'adapter', apiVersion: 2, key: 'synthetic', descriptorDigest: 'a'.repeat(64) },
+        ...Array.from({ length: 8 }, (_, index) => ({
+          kind: 'host-page',
+          entryId: `page${index}`,
+          title: `页面${index}`,
+          icon: { kind: 'host-icon', name: 'layout-dashboard' },
+          objectPane: 'hidden',
+          startPath: '',
+        })),
+      ],
+    }
+    const sources = { host: 'export default function () {}', client: 'export default function () {}' }
+    expect(materializeImportedRevision({ manifest, sources }).manifest.contributions).toHaveLength(9)
+    expect(() =>
+      materializeImportedRevision({
+        manifest: {
+          ...manifest,
+          contributions: [...manifest.contributions, { ...manifest.contributions[1], entryId: 'ninth' }],
+        },
+        sources,
+      }),
+    ).toThrow('最多贡献 8 个顶级页面')
+  })
+
+  it('requires local build and verification before import, preserves slug ownership and records unknown DSH versions explicitly', async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), 'nxt-import-boundary-'))
+    temporaryDirectories.push(directory)
+    const incoming = materialize('return { apply() {} }')
+    const repository = new MemoryExtensionRepository()
+    const sources = new ExtensionSourceStore(path.join(directory, 'data'))
+    const input = {
+      extension: { ...localExtension(incoming.manifest.extensionId), slug: 'import-boundary' },
+      revision: {
+        id: incoming.manifest.revisionId,
+        contentDigest: incoming.contentDigest,
+        payloadDigest: incoming.payloadDigest,
+      },
+      manifest: incoming.manifest,
+      sources: incoming.sources,
+    }
+    await expect(new ExtensionService(repository, sources).importRevision(input)).rejects.toThrow('本机构建器')
+    const builder = new ExtensionBuilder(path.join(directory, 'cache'))
+    await expect(new ExtensionService(repository, sources, { builder }).importRevision(input)).rejects.toThrow(
+      '本机 Runtime 验证器',
+    )
+    expect(repository.listExtensionRevisions()).toEqual([])
+    const owner = { ...localExtension(extensionId('slugowner')), slug: input.extension.slug }
+    repository.extensions.set(owner.id, owner)
+    const service = new ExtensionService(repository, sources, {
+      builder,
+      importVerifier: ({ dshVersion }) => {
+        expect(dshVersion).toBe('unknown')
+        return Promise.resolve({
+          contractVersion: 'nekro-nxt-extension-v1',
+          origin: { episodeId: 'eps_import', pluginId: 'import', packageId: 'import', pluginRunId: 'import' },
+          toolInvocations: [],
+          rpcMethods: [],
+          renderedSlots: [],
+        })
+      },
+    })
+    await expect(service.importRevision(input)).rejects.toThrow('Extension slug already exists')
+    repository.extensions.delete(owner.id)
+    const imported = await service.importRevision(input)
+    expect(imported.idempotent).toBe(false)
+    expect(repository.getExtensionRevisionVerification(imported.revision.id)?.dshVersion).toBe('unknown')
+    await expect(service.importRevision(input)).resolves.toMatchObject({ idempotent: true })
+    await service.dispose()
+  })
+
   it('validates declared Host UI CSS and SVG resources and includes them in the immutable build', async () => {
     const directory = await mkdtemp(path.join(tmpdir(), 'nekro-nxt-extension-ui-resources-'))
     temporaryDirectories.push(directory)
@@ -1577,7 +1928,7 @@ describe('Extension import validation', () => {
     const svg = '<svg viewBox="0 0 24 24"><path d="M4 4h16v16H4z" fill="currentColor"/></svg>\n'
     const digest = (value: string): string => createHash('sha256').update(value).digest('hex')
     const manifest = {
-      schemaVersion: 4 as const,
+      schemaVersion: 5 as const,
       scope: 'host-ui' as const,
       extensionId: extensionId('importUiAssets'),
       revisionId: revisionId('importUiAssets'),
@@ -1703,7 +2054,8 @@ describe('Extension materialization and build policy', () => {
     expect(first.contentDigest).toBe(second.contentDigest)
     expect(first.sources.host).toContain("from '@nekro-nxt/extension-sdk'")
     expect(first.manifest).toEqual({
-      schemaVersion: 2,
+      schemaVersion: 5,
+      scope: 'agent',
       extensionId: extensionId('test'),
       revisionId: revisionId('test'),
       entrypoints: { host: 'source/host.ts' },

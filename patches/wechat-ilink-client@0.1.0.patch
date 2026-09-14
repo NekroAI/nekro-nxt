@@ -1,5 +1,5 @@
 diff --git a/dist/index.d.mts b/dist/index.d.mts
-index 604ab8f2d46b506bdb7f8ec3d513432adca740ba..352703533a7a9d0867d1fef869335aa35225ced7 100644
+index 604ab8f2d46b506bdb7f8ec3d513432adca740ba..4f93a9887cc022cbc7a435c5c5b75bc318f46504 100644
 --- a/dist/index.d.mts
 +++ b/dist/index.d.mts
 @@ -262,9 +262,9 @@ declare class ApiClient {
@@ -65,7 +65,7 @@ index 604ab8f2d46b506bdb7f8ec3d513432adca740ba..352703533a7a9d0867d1fef869335aa3
  //#region src/cdn/cdn-upload.d.ts
  /**
 diff --git a/dist/index.mjs b/dist/index.mjs
-index 3f14dcf78912f18ecf21942326c2ec1dc96baba4..2f42f60109e207072b512aeb7f65ceb4b35e7a66 100644
+index 3f14dcf78912f18ecf21942326c2ec1dc96baba4..c178cd2434ae9e3b6882e7d36ef2859eabe51c35 100644
 --- a/dist/index.mjs
 +++ b/dist/index.mjs
 @@ -83,11 +83,15 @@ var ApiClient = class {
@@ -257,22 +257,27 @@ index 3f14dcf78912f18ecf21942326c2ec1dc96baba4..2f42f60109e207072b512aeb7f65ceb4
  		if (resp.longpolling_timeout_ms != null && resp.longpolling_timeout_ms > 0) nextTimeoutMs = resp.longpolling_timeout_ms;
  		if (resp.ret !== void 0 && resp.ret !== 0 || resp.errcode !== void 0 && resp.errcode !== 0) {
  			if (resp.errcode === -14 || resp.ret === -14) {
-@@ -836,12 +867,12 @@ async function startMonitor(api, opts, callbacks) {
+@@ -836,12 +867,16 @@ async function startMonitor(api, opts, callbacks) {
  		}
  		consecutiveFailures = 0;
  		callbacks.onPoll?.(resp);
 +		const msgs = resp.msgs ?? [];
-+		for (const msg of msgs) await callbacks.onMessage(msg);
++		for (const msg of msgs) {
++			signal?.throwIfAborted();
++			await callbacks.onMessage(msg);
++		}
++		signal?.throwIfAborted();
  		if (resp.get_updates_buf != null && resp.get_updates_buf !== "") {
++			if (opts.saveSyncBuf) await opts.saveSyncBuf(resp.get_updates_buf);
  			getUpdatesBuf = resp.get_updates_buf;
- 			if (opts.saveSyncBuf) await opts.saveSyncBuf(getUpdatesBuf);
+-			if (opts.saveSyncBuf) await opts.saveSyncBuf(getUpdatesBuf);
  		}
 -		const msgs = resp.msgs ?? [];
 -		for (const msg of msgs) await callbacks.onMessage(msg);
  	} catch (err) {
  		if (signal?.aborted) return;
  		consecutiveFailures++;
-@@ -942,7 +973,7 @@ var WeChatClient = class extends EventEmitter {
+@@ -942,7 +977,7 @@ var WeChatClient = class extends EventEmitter {
  		await startMonitor(this.api, monitorOpts, {
  			onMessage: async (msg) => {
  				if (msg.context_token && msg.from_user_id) this.contextTokens.set(msg.from_user_id, msg.context_token);
@@ -281,7 +286,7 @@ index 3f14dcf78912f18ecf21942326c2ec1dc96baba4..2f42f60109e207072b512aeb7f65ceb4
  			},
  			onError: (err) => {
  				this.emit("error", err);
-@@ -964,10 +995,10 @@ var WeChatClient = class extends EventEmitter {
+@@ -964,10 +999,10 @@ var WeChatClient = class extends EventEmitter {
  	* Send a text message. Uses the cached context token for the target user.
  	* Pass an explicit contextToken to override.
  	*/
@@ -294,7 +299,7 @@ index 3f14dcf78912f18ecf21942326c2ec1dc96baba4..2f42f60109e207072b512aeb7f65ceb4
  	}
  	/**
  	* Upload a local file and send it as the appropriate media type.
-@@ -1047,8 +1078,8 @@ var WeChatClient = class extends EventEmitter {
+@@ -1047,8 +1082,8 @@ var WeChatClient = class extends EventEmitter {
  	/**
  	* Download and decrypt a media item from an inbound message.
  	*/

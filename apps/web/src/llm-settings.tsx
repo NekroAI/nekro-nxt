@@ -1,15 +1,11 @@
+import { LlmProviderRemovalDialog } from './llm-provider-removal.js'
+import { useProductRuntime } from './product-runtime.js'
+import { StaleHostReadError, callHostApi } from './host-api-client.js'
 import { Plus, RefreshCw } from 'lucide-react'
 import { useEffect, useMemo, useState, type FormEvent, type ReactNode } from 'react'
-import {
-  HostApiContracts,
-  HostApiErrorSchema,
-  buildHostApiContractPath,
-  type HostApiContract,
-  type HostApiResponse,
-} from '@nekro-nxt/contracts'
+import { HostApiContracts, type HostApiResponse } from '@nekro-nxt/contracts'
 import { notify } from './components/notifications.js'
 import { EmptyState } from './components/product-feedback.js'
-import { useProductStore } from './product-store.js'
 import { providerDisplayName } from './provider-labels.js'
 import { Button, Dialog, Field, Input, SecretInput, SelectField, StatusBadge, Textarea } from './ui-kit/index.js'
 import styles from './llm-settings.module.css'
@@ -17,27 +13,6 @@ import styles from './llm-settings.module.css'
 type ProviderSettingsView = HostApiResponse<'llmProviders'>
 type ProviderView = ProviderSettingsView['providers'][number]
 type DiscoveredModelView = HostApiResponse<'llmDiscoverModels'>['models'][number]
-
-const requestHostApi = async <Output,>(
-  contract: HostApiContract,
-  responseSchema: { parse(input: unknown): Output },
-  params: unknown,
-  request: unknown,
-): Promise<Output> => {
-  const url = buildHostApiContractPath(contract, params)
-  const requestBody = contract.parseRequest(request)
-  const response = await fetch(url, {
-    method: contract.method,
-    headers: { 'content-type': 'application/json' },
-    ...(contract.method === 'GET' || contract.method === 'DELETE' ? {} : { body: JSON.stringify(requestBody) }),
-  })
-  const responseBody: unknown = await response.json()
-  if (!response.ok) {
-    const parsedError = HostApiErrorSchema.safeParse(responseBody)
-    throw new Error(parsedError.success ? parsedError.data.error.message : `请求失败（HTTP ${response.status}）`)
-  }
-  return responseSchema.parse(responseBody)
-}
 
 const modelLines = (models: readonly { readonly id: string }[]): string => models.map((model) => model.id).join('\n')
 
@@ -58,10 +33,14 @@ const customProviderKey = (displayName: string, providers: readonly ProviderView
 }
 
 export function LlmProviderSettings(): React.ReactNode {
-  const [settings, setSettings] = useState<ProviderSettingsView | null>(null)
+  const useProductStore = useProductRuntime().store
+
+  const query = useProductStore((state) => state.llmProvidersQuery)
+  const settings = query.data ?? null
   const [selectedId, setSelectedId] = useState('')
   const [customMode, setCustomMode] = useState(false)
   const [addOpen, setAddOpen] = useState(false)
+  const [removingProvider, setRemovingProvider] = useState('')
   const [addCandidate, setAddCandidate] = useState('')
   const [displayName, setDisplayName] = useState('')
   const [baseURL, setBaseURL] = useState('')
@@ -69,8 +48,10 @@ export function LlmProviderSettings(): React.ReactNode {
   const [apiKey, setApiKey] = useState('')
   const [models, setModels] = useState('')
   const [discovered, setDiscovered] = useState<readonly DiscoveredModelView[]>([])
-  const [pending, setPending] = useState<'load' | 'save' | 'discover' | 'test' | null>('load')
-  const [error, setError] = useState('')
+  const [operation, setPending] = useState<'save' | 'discover' | 'test' | null>(null)
+  const pending = operation ?? (query.loading ? 'load' : null)
+  const [actionError, setError] = useState('')
+  const error = actionError || query.error
   const [submitted, setSubmitted] = useState(false)
 
   const selected = useMemo(
@@ -97,27 +78,17 @@ export function LlmProviderSettings(): React.ReactNode {
 
   const load = async (): Promise<void> => {
     if (pending === 'load' && settings) return
-    setPending('load')
-    setError('')
     try {
-      const next = await requestHostApi(
-        HostApiContracts.llmProviders,
-        HostApiContracts.llmProviders.response,
-        {},
-        undefined,
-      )
-      setSettings(next)
+      const next = await useProductStore.getState().loadLlmProviders()
       setSelectedId((current) =>
         next.providers.some((provider) => provider.provider === current && provider.configured)
           ? current
           : (next.providers.find((provider) => provider.configured)?.provider ?? ''),
       )
     } catch (cause) {
+      if (cause instanceof StaleHostReadError) return
       const message = cause instanceof Error ? cause.message : String(cause)
-      setError(message)
       if (settings) notify(`模型供应商刷新失败：${message}`, 'error', 'llm-provider-refresh')
-    } finally {
-      setPending(null)
     }
   }
 
@@ -161,9 +132,8 @@ export function LlmProviderSettings(): React.ReactNode {
     setPending('discover')
     setError('')
     try {
-      const result = await requestHostApi(
+      const result = await callHostApi(
         HostApiContracts.llmDiscoverModels,
-        HostApiContracts.llmDiscoverModels.response,
         {},
         {
           provider: providerId,
@@ -200,9 +170,8 @@ export function LlmProviderSettings(): React.ReactNode {
     setPending('save')
     setError('')
     try {
-      const next = await requestHostApi(
+      const next = await callHostApi(
         HostApiContracts.llmSaveProvider,
-        HostApiContracts.llmSaveProvider.response,
         { provider: providerId },
         {
           expectedRevision: revision,
@@ -211,7 +180,7 @@ export function LlmProviderSettings(): React.ReactNode {
           ...(customEditor ? { displayName: displayName.trim(), api, models: parsedModels } : {}),
         },
       )
-      setSettings(next)
+      useProductStore.getState().replaceLlmProviders(next)
       setSelectedId(providerId)
       setCustomMode(false)
       setApiKey('')
@@ -238,9 +207,8 @@ export function LlmProviderSettings(): React.ReactNode {
     setPending('test')
     setError('')
     try {
-      await requestHostApi(
+      await callHostApi(
         HostApiContracts.llmTestProvider,
-        HostApiContracts.llmTestProvider.response,
         {},
         {
           provider: providerId,
@@ -271,7 +239,7 @@ export function LlmProviderSettings(): React.ReactNode {
   const canTest =
     Boolean(providerId && testModel) && (!customEditor || Boolean(baseURL.trim() && api && parsedModels.length > 0))
 
-  if (!settings && pending === 'load') {
+  if (!settings && !query.error) {
     return <EmptyState loading title="正在读取模型供应商" description="加载完成后可管理 API 密钥和模型。" />
   }
 
@@ -324,7 +292,10 @@ export function LlmProviderSettings(): React.ReactNode {
             >
               <span>
                 <strong>{providerDisplayName(provider.provider, provider.displayName)}</strong>
-                <small>{provider.models.length} 个模型</small>
+                <small>
+                  {provider.declared ? '自定义接入' : provider.settingsNs === 'llm-pi-ai' ? '通用接入' : '内置固定接入'}{' '}
+                  · {provider.models.length} 个模型
+                </small>
               </span>
               <StatusBadge tone={provider.active ? 'success' : 'warning'}>
                 {provider.active ? '可用' : '待启用'}
@@ -453,6 +424,18 @@ export function LlmProviderSettings(): React.ReactNode {
                 保存供应商
               </Button>
             </div>
+            {!customMode && selected?.configured ? (
+              <div className={styles.removalAction}>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  disabled={pending !== null}
+                  onClick={() => setRemovingProvider(selected.provider)}
+                >
+                  {selected.declared ? '删除供应商' : '移除配置'}
+                </Button>
+              </div>
+            ) : null}
           </form>
         ) : (
           <div className={styles.editor}>
@@ -474,6 +457,31 @@ export function LlmProviderSettings(): React.ReactNode {
         )}
       </div>
 
+      {removingProvider ? (
+        <LlmProviderRemovalDialog
+          key={removingProvider}
+          provider={removingProvider}
+          onClose={() => setRemovingProvider('')}
+          onRemoved={(next) => {
+            useProductStore.getState().replaceLlmProviders(next)
+            setSelectedId(next.providers.find((provider) => provider.configured)?.provider ?? '')
+            setApiKey('')
+            setCustomMode(false)
+            setRemovingProvider('')
+            notify('供应商配置已移除，API 密钥已保留。', 'success', 'llm-provider-remove')
+            void useProductStore
+              .getState()
+              .refreshHost()
+              .catch((cause: unknown) => {
+                notify(
+                  `配置已移除，但页面数据刷新失败：${cause instanceof Error ? cause.message : String(cause)}`,
+                  'warning',
+                  'llm-provider-remove-refresh',
+                )
+              })
+          }}
+        />
+      ) : null}
       <Dialog
         open={addOpen}
         onOpenChange={setAddOpen}
@@ -518,31 +526,26 @@ export function LlmProviderSettings(): React.ReactNode {
 }
 
 export function AddModelProviderForm({ onSaved }: { readonly onSaved?: () => void }): ReactNode {
-  const [settings, setSettings] = useState<ProviderSettingsView | null>(null)
+  const useProductStore = useProductRuntime().store
+
+  const query = useProductStore((state) => state.llmProvidersQuery)
+  const settings = query.data ?? null
   const [providerId, setProviderId] = useState('')
   const [apiKey, setApiKey] = useState('')
-  const [pending, setPending] = useState<'load' | 'save' | null>('load')
-  const [error, setError] = useState('')
+  const [operation, setPending] = useState<'save' | null>(null)
+  const pending = operation ?? (query.loading ? 'load' : null)
+  const [actionError, setError] = useState('')
+  const error = actionError || query.error
 
   const load = async (): Promise<void> => {
-    setPending('load')
-    setError('')
     try {
-      const next = await requestHostApi(
-        HostApiContracts.llmProviders,
-        HostApiContracts.llmProviders.response,
-        {},
-        undefined,
-      )
-      setSettings(next)
+      const next = await useProductStore.getState().loadLlmProviders()
       setProviderId((current) => {
         if (next.providers.some((provider) => provider.provider === current)) return current
         return next.providers.find((provider) => !provider.configured)?.provider ?? next.providers[0]?.provider ?? ''
       })
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : String(cause))
-    } finally {
-      setPending(null)
+      if (cause instanceof StaleHostReadError) return
     }
   }
 
@@ -561,15 +564,15 @@ export function AddModelProviderForm({ onSaved }: { readonly onSaved?: () => voi
     setPending('save')
     setError('')
     try {
-      await requestHostApi(
+      const next = await callHostApi(
         HostApiContracts.llmSaveProvider,
-        HostApiContracts.llmSaveProvider.response,
         { provider: selected.provider },
         {
           expectedRevision: selected.settingsRevision,
           ...(apiKey.trim() ? { apiKey: apiKey.trim() } : {}),
         },
       )
+      useProductStore.getState().replaceLlmProviders(next)
       setApiKey('')
       try {
         await useProductStore.getState().refreshHost()
@@ -589,7 +592,7 @@ export function AddModelProviderForm({ onSaved }: { readonly onSaved?: () => voi
     }
   }
 
-  if (!settings && pending === 'load') {
+  if (!settings && !query.error) {
     return <EmptyState loading title="正在读取模型供应商" description="加载完成后可在此保存凭据。" />
   }
 

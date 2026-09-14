@@ -62,17 +62,6 @@ export const useStickToBottom = (key: string, enabled: boolean) => {
     commitPosition(element, isNearBottom(element))
   }, [commitPosition])
 
-  const reconcileLayout = useCallback(() => {
-    const element = ref.current
-    if (!enabled || !element) return
-    if (followRef.current) {
-      element.scrollTop = element.scrollHeight
-      commitPosition(element, true)
-      return
-    }
-    commitPosition(element, isNearBottom(element))
-  }, [commitPosition, enabled])
-
   useLayoutEffect(() => {
     if (!enabled) return
     const element = ref.current
@@ -94,18 +83,21 @@ export const useStickToBottom = (key: string, enabled: boolean) => {
         return
       }
       if (followRef.current) {
-        element.scrollTop = element.scrollHeight
+        const bottom = Math.max(0, element.scrollHeight - element.clientHeight)
+        if (Math.abs(element.scrollTop - bottom) > 0.5) element.scrollTop = bottom
         commitPosition(element, true)
         return
       }
       commitPosition(element, isNearBottom(element))
     }
     apply()
+    // One owner observes both the viewport (including Composer height changes) and
+    // content (history/media). Composer must not establish a second scroll writer.
     const observer = new ResizeObserver(apply)
     observer.observe(element)
     if (element.firstElementChild) observer.observe(element.firstElementChild)
     return () => observer.disconnect()
   }, [commitPosition, enabled, key])
 
-  return { ref, away, onScroll, jumpToBottom, markPrepend, clearPrepend, reconcileLayout }
+  return { ref, away, onScroll, jumpToBottom, markPrepend, clearPrepend }
 }

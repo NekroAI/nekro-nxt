@@ -1,4 +1,4 @@
-import type { AgentSummary, ModelSummary } from '../product-store.js'
+import type { AgentSummary, ModelSummary } from '../product-runtime.js'
 
 export const agentModelKey = (model: Pick<ModelSummary, 'provider' | 'id'>): string =>
   `${encodeURIComponent(model.provider)}/${encodeURIComponent(model.id)}`

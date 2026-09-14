@@ -150,7 +150,7 @@ export interface AuthoringRepository {
   listRecoverableAuthoringTasks(): readonly DynamicAuthoringTask[]
   getAuthoringTask(id: AuthoringTaskId): DynamicAuthoringTask | undefined
   getAuthoringTaskByPlugin(episodeId: EpisodeId, pluginKey: string): DynamicAuthoringTask | undefined
-  listAuthoringAttempts(taskId: AuthoringTaskId): readonly DynamicAuthoringAttempt[]
+  listAuthoringAttempts(taskId?: AuthoringTaskId): readonly DynamicAuthoringAttempt[]
   getAuthoringAttempt(id: AuthoringAttemptId): DynamicAuthoringAttempt | undefined
   listAuthoringEvents(taskId: AuthoringTaskId): readonly DynamicAuthoringEvent[]
   createAuthoringTask(input: {

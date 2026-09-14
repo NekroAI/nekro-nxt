@@ -1,3 +1,4 @@
+import { callHostApi } from './host-api-client.js'
 import * as Cordis from '@deepseek-ai/cordis'
 import { Context, Service, type Fiber } from '@deepseek-ai/cordis'
 import clientRunnerBundle from '@deepseek-ai/dsh-cordis-client-runner/client?raw'
@@ -16,16 +17,13 @@ import {
   DshSettingsChangedSseDataSchema,
   HostPageContributionSchema,
   HostApiContracts,
-  HostApiErrorSchema,
   HostUiNavigationModelSchema,
   HostUiPermissionDeclarationSchema,
-  buildHostApiContractPath,
   parseJsonValue,
   type HostPageContribution,
   type HostUiKitComponentName,
   type HostUiPageGeometryEvidence,
   type HostUiPermissionDeclaration,
-  type HostApiContract,
   type HostApiResponse,
 } from '@nekro-nxt/contracts'
 import type {
@@ -50,7 +48,7 @@ import {
   type ClientPluginHandoff,
   type SlotRegistryFace,
 } from './dsh-interop/unsafe.js'
-import { productHostEventStream } from './host-event-stream.js'
+import { productHostEventStream, type HostEventStream } from './host-event-stream.js'
 import { hostUiKit } from './host-ui-client.js'
 
 export interface DynamicHostPageEntry {
@@ -367,30 +365,6 @@ class DshRemoteBridge implements RemoteBridgeFace {
 
 const rpcOk = <T>(value: T) => ({ rpcId: 'nekro-nxt-dsh-bridge', result: { ok: true as const, value } })
 
-const requestHostApi = async <Output>(
-  contract: HostApiContract,
-  responseSchema: { parse(input: unknown): Output },
-  params: unknown,
-  request: unknown,
-): Promise<Output> => {
-  const url = buildHostApiContractPath(contract, params)
-  const requestBody = contract.parseRequest(request)
-  const response = await fetch(url, {
-    method: contract.method,
-    headers: { 'content-type': 'application/json' },
-    ...(contract.method === 'GET' || contract.method === 'DELETE' ? {} : { body: JSON.stringify(requestBody) }),
-  })
-  const responseBody: unknown = await response.json()
-  if (!response.ok) {
-    const parsedError = HostApiErrorSchema.safeParse(responseBody)
-    throw Object.assign(
-      new Error(parsedError.success ? parsedError.data.error.message : `DSH Bridge HTTP ${response.status}`),
-      { status: response.status },
-    )
-  }
-  return responseSchema.parse(responseBody)
-}
-
 const parseDshSettingsChangedEvent = (text: string) => {
   try {
     return DshSettingsChangedSseDataSchema.parse(parseJsonValue(JSON.parse(text)))
@@ -417,12 +391,7 @@ const createDshConnectionBridge = () => ({
   api: {
     settings: {
       describe: async () => {
-        const response = await requestHostApi(
-          HostApiContracts.dshSettings,
-          HostApiContracts.dshSettings.response,
-          {},
-          undefined,
-        )
+        const response = await callHostApi(HostApiContracts.dshSettings, {}, undefined)
         return rpcOk({
           writable: response.namespaces.every((namespace) => namespace.writable !== false),
           hasDocument: true,
@@ -443,11 +412,13 @@ const createDshConnectionBridge = () => ({
         readonly ops: readonly unknown[]
         readonly expectedRevision?: number
       }) => {
-        const value = await requestHostApi(
+        const value = await callHostApi(
           HostApiContracts.dshSettingsMutate,
-          HostApiContracts.dshSettingsMutate.response,
           { namespace: payload.ns },
-          { expectedRevision: payload.expectedRevision ?? 0, ops: payload.ops },
+          HostApiContracts.dshSettingsMutate.parseRequest({
+            expectedRevision: payload.expectedRevision ?? 0,
+            ops: payload.ops,
+          }),
         )
         return rpcOk({
           ns: value.ns,
@@ -463,30 +434,13 @@ const createDshConnectionBridge = () => ({
     },
     credentials: {
       describe: async (payload: { readonly refs: readonly string[] }) =>
-        rpcOk(
-          await requestHostApi(
-            HostApiContracts.dshCredentialsDescribe,
-            HostApiContracts.dshCredentialsDescribe.response,
-            {},
-            payload,
-          ),
-        ),
+        rpcOk(await callHostApi(HostApiContracts.dshCredentialsDescribe, {}, { refs: [...payload.refs] })),
       set: async (payload: { readonly ref: string; readonly value: string }) => {
-        await requestHostApi(
-          HostApiContracts.dshCredentialSet,
-          HostApiContracts.dshCredentialSet.response,
-          { ref: payload.ref },
-          { value: payload.value },
-        )
+        await callHostApi(HostApiContracts.dshCredentialSet, { ref: payload.ref }, { value: payload.value })
         return rpcOk({})
       },
       unset: async (payload: { readonly ref: string }) => {
-        await requestHostApi(
-          HostApiContracts.dshCredentialUnset,
-          HostApiContracts.dshCredentialUnset.response,
-          { ref: payload.ref },
-          undefined,
-        )
+        await callHostApi(HostApiContracts.dshCredentialUnset, { ref: payload.ref }, undefined)
         return rpcOk({})
       },
     },
@@ -689,7 +643,11 @@ export class DshClientRuntime {
     this.#moduleLoader = moduleLoader
   }
 
-  static async create(host: DynamicClientHostPort, documentValue: unknown = document): Promise<DshClientRuntime> {
+  static async create(
+    host: DynamicClientHostPort,
+    documentValue: unknown = document,
+    events: HostEventStream = productHostEventStream,
+  ): Promise<DshClientRuntime> {
     const { modules, moduleSystem, moduleLoader } = await loadDynamicClientModules(documentValue)
     const dynamicContext = new Context()
     let unsubscribeHostEvents: (() => void) | undefined
@@ -745,7 +703,7 @@ export class DshClientRuntime {
         },
       })
       const orchestrator = new modules.CordisRunOrchestrator({ runner, host })
-      unsubscribeHostEvents = productHostEventStream.subscribe({
+      unsubscribeHostEvents = events.subscribe({
         'dsh-settings-changed': (event) => {
           if (!(event instanceof MessageEvent) || typeof event.data !== 'string') return
           const value = parseDshSettingsChangedEvent(event.data)

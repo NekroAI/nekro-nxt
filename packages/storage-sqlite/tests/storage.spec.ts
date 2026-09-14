@@ -38,6 +38,7 @@ import {
   coreSchema,
   createSqliteBackupSet,
   openMigratedCoreDatabase,
+  openCoreDatabase,
   SqliteBackupManifestSchema,
   SqliteCoreRepository,
   agentDefinitions,
@@ -2688,7 +2689,8 @@ describe('Extension and backup', () => {
         'bad-connection-id',
         channel.id,
       )
-      const brandedDatabase = await openMigratedCoreDatabase(filename)
+      await expect(openMigratedCoreDatabase(filename)).rejects.toThrow('外键违规')
+      const brandedDatabase = openCoreDatabase(filename)
       try {
         expect(() => new SqliteCoreRepository(brandedDatabase).getChannel(channel.id)).toThrow()
       } finally {

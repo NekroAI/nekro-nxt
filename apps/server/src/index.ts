@@ -1,61 +1,34 @@
-import { AgentRegistry, type Agent, type AgentHandle, type AgentStatus } from '@deepseek-ai/dsh-agent'
+import { readFile } from 'node:fs/promises'
+import type { LlmProviderRemovalCoordinator, RemovalImpact } from './llm-provider-removal.js'
+import { Context, Service } from '@deepseek-ai/cordis'
+import { AgentRegistry, type Agent, type AgentStatus } from '@deepseek-ai/dsh-agent'
 import AgentLoop from '@deepseek-ai/dsh-agent-loop'
-import AttachmentStore, {
-  AttachmentId,
-  type ImageRequestPolicy,
-  type ImageAttachmentRef,
-  type RequestImageAttachment,
-  type SaveImageAttachment,
-  type StoredImageAttachment,
-} from '@deepseek-ai/dsh-attachment'
-import { readRequestImageFile } from '@deepseek-ai/dsh-attachment-local'
+import { type ImageAttachmentRef } from '@deepseek-ai/dsh-attachment'
 import SandboxBashExecutor from '@deepseek-ai/dsh-bash-sandbox'
-import { BasicCompactionEngine } from '@deepseek-ai/dsh-compaction-basic'
 import ToolResultPruner from '@deepseek-ai/dsh-compaction-tool-result-pruner'
-import { Context, Service, type Fiber } from '@deepseek-ai/cordis'
-import CredentialProvider, {
-  credentialRef,
-  type CredentialInfo,
-  type CredentialKey,
-  type CredentialRecord,
-  type CredentialRecordEntry,
-  type CredentialRecordInfo,
-  type CredentialRef,
-  type ResolvedCredential,
-} from '@deepseek-ai/dsh-credentials'
-import LocalCredentialProvider from '@deepseek-ai/dsh-credentials-local'
-import DynamicCordisRunnerService, {
-  ApprovalRequestId,
-  CordisDynamicPackageId,
-  CordisDynamicPluginId,
-  CordisDynamicPluginRunId,
+import {
   type CordisDynamicRunMode,
   type CordisErrorDetails,
   type DynamicCordisClientSource,
-  type DynamicCordisDefineRequest,
   type DynamicCordisDefineReceipt,
   type DynamicCordisHostHalfResult,
   type DynamicCordisInventoryRow,
   type DynamicCordisInvokeResult,
   type DynamicCordisPackageInspection,
-  type DynamicCordisPluginInspection,
-  type DynamicCordisReference,
   type DynamicCordisRenderFailure,
   type DynamicCordisResolveAck,
   type DynamicCordisRunRequest,
   type DynamicCordisRunResolution,
   type DynamicCordisRunResponse,
-  type DynamicCordisSnapshotRow,
   type DynamicCordisStopResponse,
   type DynamicCordisUndefineReceipt,
   type HostCordisInspectProviderRegistration,
 } from '@deepseek-ai/dsh-cordis-host-runner'
-type CordisDynamicPackageIdType = ReturnType<typeof CordisDynamicPackageId>
-type CordisDynamicPluginIdType = ReturnType<typeof CordisDynamicPluginId>
-type ApprovalRequestIdType = ReturnType<typeof ApprovalRequestId>
+import LocalCredentialProvider from '@deepseek-ai/dsh-credentials-local'
+import * as FsObservationPolicy from '@deepseek-ai/dsh-fs-observation-policy'
+import SandboxedFileSystem from '@deepseek-ai/dsh-fs-sandbox'
 import {
   BlockAssembler,
-  CallId,
   createUserMessage,
   freezeMessage,
   LlmRuntime,
@@ -66,28 +39,27 @@ import {
   type TokenUsage,
   type UserMessage,
 } from '@deepseek-ai/dsh-llm'
-import * as LlmPiAi from '@deepseek-ai/dsh-llm-pi-ai'
 import * as LlmRetry from '@deepseek-ai/dsh-llm-retry'
-import * as FsObservationPolicy from '@deepseek-ai/dsh-fs-observation-policy'
-import SandboxedFileSystem from '@deepseek-ai/dsh-fs-sandbox'
 import LocalSandboxProvider from '@deepseek-ai/dsh-sandbox-local'
 import SandboxPolicyService from '@deepseek-ai/dsh-sandbox-policy'
-import { SessionId, SessionStore, type SessionEvent } from '@deepseek-ai/dsh-session'
-import SessionProjectionRegistry from '@deepseek-ai/dsh-session-projection'
-import * as SessionStats from '@deepseek-ai/dsh-session-stats'
 import { bindScopeParent, scopeOf } from '@deepseek-ai/dsh-scope'
+import { SessionId, SessionStore } from '@deepseek-ai/dsh-session'
 import * as SessionCheckpointPolicy from '@deepseek-ai/dsh-session-checkpoint-policy'
 import { SqliteSessionPersistence } from '@deepseek-ai/dsh-session-persistence-sqlite'
-import { settingsNamespace, type SettingsPathOp } from '@deepseek-ai/dsh-settings'
+import SessionProjectionRegistry from '@deepseek-ai/dsh-session-projection'
+import * as SessionStats from '@deepseek-ai/dsh-session-stats'
 import FileSettingsProvider from '@deepseek-ai/dsh-settings-file'
+import * as ShellEnv from '@deepseek-ai/dsh-shell-env'
 import SkillRegistry from '@deepseek-ai/dsh-skill'
-import { PERSONA_ORDER, PERSONA_SECTION, SystemPrompt } from '@deepseek-ai/dsh-system-prompt'
-import TokenMeter from '@deepseek-ai/dsh-token-meter'
+import * as SpillPolicy from '@deepseek-ai/dsh-spill-policy'
 import SubagentRuntime, { type SubagentListEntry } from '@deepseek-ai/dsh-subagent'
 import * as SubagentSpawnInProcess from '@deepseek-ai/dsh-subagent-spawn-in-process'
-import * as CordisTool from '@deepseek-ai/dsh-tool-cordis'
+import LocalSubprocessRuntime from '@deepseek-ai/dsh-subprocess-local'
+import { PERSONA_ORDER, PERSONA_SECTION, SystemPrompt } from '@deepseek-ai/dsh-system-prompt'
+import TokenMeter from '@deepseek-ai/dsh-token-meter'
 import * as BashTool from '@deepseek-ai/dsh-tool-bash'
 import * as ToolCallTimeoutPolicy from '@deepseek-ai/dsh-tool-call-timeout-policy'
+import * as CordisTool from '@deepseek-ai/dsh-tool-cordis'
 import * as FsTool from '@deepseek-ai/dsh-tool-fs'
 import * as SkillTool from '@deepseek-ai/dsh-tool-skill'
 import * as ToolSubagent from '@deepseek-ai/dsh-tool-subagent'
@@ -98,16 +70,11 @@ import * as ToolWeb from '@deepseek-ai/dsh-tool-web'
 import { defineTool, ToolRuntime } from '@deepseek-ai/dsh-tools'
 import WebRuntime from '@deepseek-ai/dsh-web'
 import * as DeepSeekWebSearch from '@deepseek-ai/dsh-web-search-deepseek'
-import * as SpillPolicy from '@deepseek-ai/dsh-spill-policy'
-import * as ShellEnv from '@deepseek-ai/dsh-shell-env'
-import LocalSubprocessRuntime from '@deepseek-ai/dsh-subprocess-local'
 import {
-  isAdminConsoleOutbound,
   type AgentSessionDriver,
-  type ChannelHistoryEntry,
-  type ChannelRuntime,
   type ChannelHistoryRepository,
   type ChannelInteractionResult,
+  type ChannelRuntime,
   type EpisodeCloseReason,
   type SendMessageInput,
   type SendMessageResult,
@@ -119,21 +86,18 @@ import {
   HostUiPermissionDeclarationSchema,
   JsonValueSchema,
   LogicalMessageIdSchema,
-  messagePartAssetIds,
   parseJsonValue,
   parseMessageParts,
-  richPartContextText,
-  type AdmissionId,
   type AdapterClientSlotName,
-  type AgentId,
+  type AdmissionId,
   type AgentClientSlotName,
+  type AgentId,
   type AgentRevisionId,
-  type AuthoringTaskId,
   type AssetId,
+  type AuthoringTaskId,
   type ChannelEventId,
   type ChannelId,
   type ChannelMemberId,
-  type ChannelRuntimeOccupancy,
   type ConnectionId,
   type DshCredentialView,
   type DshPluginActivationRecord,
@@ -149,24 +113,17 @@ import {
   type HostUiPermissionDeclaration,
   type JsonValue,
   type LogicalMessageId,
-  type MessagePart,
   type PromptDocumentV1,
   type PromptSegment,
 } from '@nekro-nxt/contracts'
 import type {
   AgentRevisionRecord,
-  AssetChannelGrant,
   AssetRecord,
   AssetService,
-  ChannelEventRecord,
   ChannelReferenceRecord,
   CoreRepository,
 } from '@nekro-nxt/core'
-import { canonicalJson } from '@nekro-nxt/core'
 import {
-  scopeHostUiCss,
-  validateHostUiCss,
-  validateHostUiSvg,
   type Activation,
   type DynamicAuthoringService,
   type DynamicAuthoringSnapshot,
@@ -176,80 +133,76 @@ import {
   type MountedExtension,
   type Revision,
 } from '@nekro-nxt/extension-runtime'
-import type { DshPluginRepository } from '@nekro-nxt/storage-sqlite'
-import { DshPluginLifecycleCoordinator } from './dsh-plugin-lifecycle.js'
-import { normalizeSessionEvents, shouldBroadcastChannelRuntime } from './channel-runtime-events.js'
-import { mountChannelReplyGuard, type ChannelReplyGuardController } from './channel-reply-guard.js'
-import { projectSessionOccupancy, type RuntimePerformanceTotals } from './channel-runtime-projection.js'
 import {
   NEKRO_NXT_EXTENSION_AUTHORING_REFERENCE,
   renderNekroNxtExtensionDevelopmentSkill,
-  type ExtensionHostContext,
-  type ExtensionHostEnvironment,
-  type ExtensionJsonValue,
-  type ExtensionPluginDefinition,
-  type ExtensionPluginFactory,
-  type ExtensionToolDefinition,
 } from '@nekro-nxt/extension-sdk'
+import type { DshPluginRepository } from '@nekro-nxt/storage-sqlite'
 import { Buffer } from 'node:buffer'
 import { createHash } from 'node:crypto'
-import { mkdir, readFile } from 'node:fs/promises'
+import { mkdir } from 'node:fs/promises'
 import { createRequire } from 'node:module'
 import path from 'node:path'
-import { pathToFileURL } from 'node:url'
-import sharp from 'sharp'
 import { z } from 'zod'
-import { defineDshToolFromUnknown, parseDshImageAttachmentRef, parseDshToolDefinition } from './dsh-interop/unsafe.js'
+import { mountChannelReplyGuard, type ChannelReplyGuardController } from './channel-reply-guard.js'
+import { normalizeSessionEvents } from './channel-runtime-events.js'
+import { parseDshImageAttachmentRef } from './dsh-interop/unsafe.js'
+import { DshPluginLifecycleCoordinator } from './dsh-plugin-lifecycle.js'
+import { HOST_DSH_PACKAGE_VERSIONS } from './dsh-roster.js'
 import { QuotaLocalSpillStore } from './dsh-spill.js'
 import {
-  ADAPTER_DYNAMIC_EVIDENCE_METHOD,
-  AdapterDynamicEvidenceSchema,
-  isLegacyAdapterDynamicHostSource,
-  wrapAdapterDynamicHostSource,
-} from './adapter-dynamic-harness.js'
-
-export interface AssetAccessRepository {
-  getAssetById(id: AssetRecord['id']): AssetRecord | undefined
-  canAccessAsset(assetId: AssetRecord['id'], channelId: ChannelId): boolean
-  grantAssetAccess(grant: AssetChannelGrant): AssetChannelGrant
-}
-
-export interface AvailableLlmModel {
-  readonly provider: string
-  readonly providerName: string
-  readonly id: string
-  readonly name: string
-  readonly description?: string
-  readonly inputModalities?: readonly string[]
-}
-
-export interface AgentImageDiagnostics {
-  readonly route: {
-    readonly mode: 'direct' | 'delegated' | 'unavailable'
-    readonly provider?: string
-    readonly model?: string
-  }
-  readonly activeSessions: number
-  readonly residentImages: number
-  readonly duplicateImagesSkipped: number
-  readonly lastInspection?: {
-    readonly mode: 'direct' | 'delegated'
-    readonly imageCount: number
-    readonly provider?: string
-    readonly model?: string
-    readonly cacheHit: boolean
-    readonly usage?: TokenUsage
-    readonly errorCode?: string
-  }
-  readonly lastRestoration?: {
-    readonly compactionId: string
-    readonly candidateCount: number
-    readonly restoredCount: number
-    readonly skippedCount: number
-    readonly error?: string
-  }
-  readonly blockers: readonly string[]
-}
+  DynamicAuthoringRuntime,
+  NekroNxtDynamicCordisRunner,
+  preflightNekroNxtAuthoringDefinition,
+  type DynamicApprovalRequestEvent,
+  type DynamicAuthoringPackageDefinitionInput,
+  type DynamicAuthoringPolicyState,
+  type DynamicPackageDefinitionInput,
+} from './dynamic-authoring-runtime.js'
+import { isolatePrivateExtensionServices } from './extension-context.js'
+import {
+  HostModelSettings,
+  type AvailableLlmModel,
+  type LlmProviderSettingsView,
+  type SaveLlmProviderInput,
+  type TestLlmProviderInput,
+  type WebSearchCapabilityStatus,
+} from './host-model-settings.js'
+import { PersistentExtensionMounts } from './persistent-extension-mounts.js'
+import {
+  collectVisibleImageDigests,
+  collectVisibleImageResidency,
+  DirectImageInspectionValueSchema,
+  effectiveImageDetail,
+  imageDetailRank,
+  memberSummary,
+  NekroAssetAttachmentStore,
+  NekroNxtCompactionEngine,
+  requireNekroAssetAttachmentStore,
+  SessionImageContext,
+  type AgentImageDiagnostics,
+  type AssetAccessRepository,
+  type ImageProjectionStats,
+  type ProductChannelHistoryRepository,
+} from './session-image-context.js'
+import { SessionRegistry } from './session-registry.js'
+import { SessionRuntimeProjection } from './session-runtime-projection.js'
+export {
+  type DynamicApprovalRequestEvent,
+  type DynamicAuthoringPackageDefinitionInput,
+  type DynamicAuthoringPolicyState,
+  type DynamicPackageDefinitionInput,
+} from './dynamic-authoring-runtime.js'
+export {
+  isDshSettingsSchemaWireSafe,
+  type AvailableLlmModel,
+  type ConfigurableLlmProviderView,
+  type LlmProviderSettingsView,
+  type SaveLlmProviderInput,
+  type TestLlmProviderInput,
+  type WebSearchCapabilityStatus,
+} from './host-model-settings.js'
+export { type AgentImageDiagnostics, type AssetAccessRepository } from './session-image-context.js'
 
 declare module '@deepseek-ai/dsh-llm' {
   interface MessageSourceMap {
@@ -322,145 +275,6 @@ declare module '@deepseek-ai/dsh-session/types' {
     }
   }
 }
-
-const HOST_DSH_PACKAGE_VERSIONS = {
-  '@deepseek-ai/cordis': '4.0.1',
-  '@deepseek-ai/dsh-agent': '0.1.1-rc.2',
-  '@deepseek-ai/dsh-agent-loop': '0.1.1-rc.2',
-  '@deepseek-ai/dsh-attachment': '0.1.1-rc.2',
-  '@deepseek-ai/dsh-attachment-local': '0.1.1-rc.2',
-  '@deepseek-ai/dsh-bash-sandbox': '0.1.1-rc.2',
-  '@deepseek-ai/dsh-compaction-basic': '0.1.1-rc.2',
-  '@deepseek-ai/dsh-compaction-tool-result-pruner': '0.1.1-rc.2',
-  '@deepseek-ai/dsh-cordis-host-runner': '0.1.1-rc.2',
-  '@deepseek-ai/dsh-credentials': '0.1.1-rc.2',
-  '@deepseek-ai/dsh-credentials-local': '0.1.1-rc.2',
-  '@deepseek-ai/dsh-launch-environment': '0.1.1-rc.2',
-  '@deepseek-ai/dsh-llm': '0.1.1-rc.2',
-  '@deepseek-ai/dsh-llm-deepseek': '0.1.1-rc.2',
-  '@deepseek-ai/dsh-llm-pi-ai': '0.1.1-rc.2',
-  '@deepseek-ai/dsh-llm-retry': '0.1.1-rc.2',
-  '@deepseek-ai/dsh-output-retention': '0.1.1-rc.2',
-  '@deepseek-ai/dsh-fs-observation-policy': '0.1.1-rc.2',
-  '@deepseek-ai/dsh-fs-sandbox': '0.1.1-rc.2',
-  '@deepseek-ai/dsh-sandbox-local': '0.1.1-rc.2',
-  '@deepseek-ai/dsh-sandbox-policy': '0.1.1-rc.2',
-  '@deepseek-ai/dsh-scope': '0.1.1-rc.2',
-  '@deepseek-ai/dsh-session': '0.1.1-rc.2',
-  '@deepseek-ai/dsh-session-checkpoint-policy': '0.1.1-rc.2',
-  '@deepseek-ai/dsh-session-persistence-sqlite': '0.1.1-rc.2',
-  '@deepseek-ai/dsh-session-projection': '0.1.1-rc.2',
-  '@deepseek-ai/dsh-session-stats': '0.1.1-rc.2',
-  '@deepseek-ai/dsh-settings': '0.1.1-rc.2',
-  '@deepseek-ai/dsh-settings-file': '0.1.1-rc.2',
-  '@deepseek-ai/dsh-skill': '0.1.1-rc.2',
-  '@deepseek-ai/dsh-system-prompt': '0.1.1-rc.2',
-  '@deepseek-ai/dsh-shell-env': '0.1.1-rc.2',
-  '@deepseek-ai/dsh-subprocess-local': '0.1.1-rc.2',
-  '@deepseek-ai/dsh-token-meter': '0.1.1-rc.2',
-  '@deepseek-ai/dsh-spill': '0.1.1-rc.2',
-  '@deepseek-ai/dsh-spill-local': '0.1.1-rc.2',
-  '@deepseek-ai/dsh-spill-policy': '0.1.1-rc.2',
-  '@deepseek-ai/dsh-subagent': '0.1.1-rc.2',
-  '@deepseek-ai/dsh-subagent-spawn-in-process': '0.1.1-rc.2',
-  '@deepseek-ai/dsh-tool-bash': '0.1.1-rc.2',
-  '@deepseek-ai/dsh-tool-call-timeout-policy': '0.1.1-rc.2',
-  '@deepseek-ai/dsh-tool-cordis': '0.1.1-rc.2',
-  '@deepseek-ai/dsh-tool-fs': '0.1.1-rc.2',
-  '@deepseek-ai/dsh-tool-skill': '0.1.1-rc.2',
-  '@deepseek-ai/dsh-tool-subagent': '0.1.1-rc.2',
-  '@deepseek-ai/dsh-tool-subagent-control': '0.1.1-rc.2',
-  '@deepseek-ai/dsh-tool-subagent-report': '0.1.1-rc.2',
-  '@deepseek-ai/dsh-tool-web': '0.1.1-rc.2',
-  '@deepseek-ai/dsh-tools': '0.1.1-rc.2',
-  '@deepseek-ai/dsh-web': '0.1.1-rc.2',
-  '@deepseek-ai/dsh-web-search-deepseek': '0.1.1-rc.2',
-} as const
-
-interface DshBuiltinExtensionEntry {
-  readonly packageName: keyof typeof HOST_DSH_PACKAGE_VERSIONS
-  readonly settingsNamespaces?: readonly string[]
-}
-
-/** Product-visible identities for the fixed DSH packages composed by this Host. */
-const DSH_BUILTIN_EXTENSION_ROSTER: readonly DshBuiltinExtensionEntry[] = [
-  {
-    packageName: '@deepseek-ai/dsh-llm-pi-ai',
-    settingsNamespaces: ['llm-pi-ai'],
-  },
-  {
-    packageName: '@deepseek-ai/dsh-llm-deepseek',
-    settingsNamespaces: ['llm-deepseek'],
-  },
-  {
-    packageName: '@deepseek-ai/dsh-agent-loop',
-    settingsNamespaces: ['agent-loop'],
-  },
-  {
-    packageName: '@deepseek-ai/dsh-bash-sandbox',
-    settingsNamespaces: ['shell'],
-  },
-  {
-    packageName: '@deepseek-ai/dsh-subagent',
-  },
-  {
-    packageName: '@deepseek-ai/dsh-subagent-spawn-in-process',
-  },
-  {
-    packageName: '@deepseek-ai/dsh-tool-subagent',
-  },
-  {
-    packageName: '@deepseek-ai/dsh-tool-subagent-control',
-  },
-  {
-    packageName: '@deepseek-ai/dsh-web',
-  },
-  {
-    packageName: '@deepseek-ai/dsh-web-search-deepseek',
-    settingsNamespaces: ['web-search-deepseek'],
-  },
-  {
-    packageName: '@deepseek-ai/dsh-tool-web',
-  },
-  {
-    packageName: '@deepseek-ai/dsh-compaction-tool-result-pruner',
-  },
-  {
-    packageName: '@deepseek-ai/dsh-llm-retry',
-  },
-  {
-    packageName: '@deepseek-ai/dsh-tool-call-timeout-policy',
-  },
-  {
-    packageName: '@deepseek-ai/dsh-spill-policy',
-  },
-  {
-    packageName: '@deepseek-ai/dsh-cordis-host-runner',
-  },
-] as const
-
-const DSH_SETTINGS_OWNER = new Map(
-  DSH_BUILTIN_EXTENSION_ROSTER.flatMap((entry) =>
-    (entry.settingsNamespaces ?? []).map((ns) => [ns, entry.packageName] as const),
-  ),
-)
-
-const JsonObjectSchema = z.record(z.string(), z.unknown())
-const SerializedSchemaNodeSchema = z
-  .object({
-    type: z.unknown().optional(),
-    meta: z.object({ role: z.unknown().optional(), default: z.unknown().optional() }).passthrough().optional(),
-    inner: z.unknown().optional(),
-    dict: JsonObjectSchema.optional(),
-    list: z.array(z.unknown()).optional(),
-  })
-  .passthrough()
-const SerializedSchemaEnvelopeSchema = z
-  .object({
-    uid: z.number(),
-    refs: JsonObjectSchema,
-  })
-  .passthrough()
 const PackageManifestSchema = z
   .object({
     version: z.unknown().optional(),
@@ -472,53 +286,6 @@ const PackageManifestSchema = z
       .optional(),
   })
   .passthrough()
-
-/**
- * 0.1.1-rc.2 redaction only walks object/dict/array containers and serialized
- * schemas retain Secret defaults. Refuse descriptors whose Secret nodes can
- * escape either rule instead of treating prompt/UI behavior as a wire bound.
- */
-export function isDshSettingsSchemaWireSafe(serialized: unknown): boolean {
-  const envelopeResult = SerializedSchemaEnvelopeSchema.safeParse(serialized)
-  if (!envelopeResult.success) return false
-  const envelope = envelopeResult.data
-  const nodeCache = new WeakMap<object, z.infer<typeof SerializedSchemaNodeSchema>>()
-  const resolveNode = (reference: unknown): z.infer<typeof SerializedSchemaNodeSchema> | undefined => {
-    const candidate = typeof reference === 'number' ? envelope.refs[String(reference)] : reference
-    if (typeof candidate !== 'object' || candidate === null) return undefined
-    const cached = nodeCache.get(candidate)
-    if (cached) return cached
-    const result = SerializedSchemaNodeSchema.safeParse(candidate)
-    if (!result.success) return undefined
-    nodeCache.set(candidate, result.data)
-    return result.data
-  }
-  const visited = new WeakMap<object, number>()
-  let safe = true
-  const visit = (reference: unknown, redactorCanReach: boolean): void => {
-    const node = resolveNode(reference)
-    if (!node || !safe) return
-    const bit = redactorCanReach ? 1 : 2
-    const previous = visited.get(node) ?? 0
-    if ((previous & bit) !== 0) return
-    visited.set(node, previous | bit)
-    if (node.meta?.role === 'secret') {
-      if (!redactorCanReach || Object.prototype.hasOwnProperty.call(node.meta, 'default')) safe = false
-    }
-    const type = typeof node.type === 'string' ? node.type : ''
-    if (node.dict) {
-      const supported = redactorCanReach && type === 'object'
-      for (const child of Object.values(node.dict)) visit(child, supported)
-    }
-    if (node.inner !== undefined) {
-      const supported = redactorCanReach && (type === 'dict' || type === 'array')
-      visit(node.inner, supported)
-    }
-    for (const child of node.list ?? []) visit(child, false)
-  }
-  visit(envelope.uid, true)
-  return safe
-}
 
 export function assertHostDshPackageVersions(): void {
   const require = createRequire(import.meta.url)
@@ -548,6 +315,7 @@ export interface AgentCommunicationPort {
 }
 
 export interface DshHostRuntimeOptions {
+  readonly providerRemoval?: LlmProviderRemovalCoordinator
   readonly sessionDatabasePath: string
   readonly communication: AgentCommunicationPort
   readonly history: ChannelHistoryRepository &
@@ -582,185 +350,8 @@ export interface DshHostRuntimeOptions {
   }
 }
 
-export interface ConfigurableLlmProviderView {
-  readonly provider: string
-  readonly displayName: string
-  readonly settingsNs: string
-  readonly settingsPath: readonly string[]
-  readonly settingsRevision: number
-  readonly declared: boolean
-  readonly active: boolean
-  readonly configured: boolean
-  readonly baseURL?: string
-  readonly api?: string
-  readonly credential?: { readonly configured: boolean; readonly source?: string; readonly writable: boolean }
-  readonly models: readonly {
-    readonly id: string
-    readonly name: string
-    readonly contextWindow?: number
-    readonly maxTokens?: number
-  }[]
-}
-
-export interface LlmProviderSettingsView {
-  readonly writable: boolean
-  readonly protocols: readonly string[]
-  readonly providers: readonly ConfigurableLlmProviderView[]
-}
-
-export interface WebSearchCapabilityStatus {
-  readonly provider: 'deepseek-official'
-  readonly available: boolean
-  readonly credentialConfigured: boolean
-  readonly credentialReference: string
-  readonly maxUsesPerCall: number
-  readonly maxResultsPerCall: number
-  readonly timeoutMs: number
-}
-
-export interface SaveLlmProviderInput {
-  readonly provider: string
-  readonly expectedRevision: number
-  readonly apiKey?: string
-  readonly displayName?: string
-  readonly baseURL?: string
-  readonly api?: string
-  readonly models?: readonly {
-    readonly id: string
-    readonly name?: string
-    readonly contextWindow?: number
-    readonly maxTokens?: number
-  }[]
-}
-
-export interface TestLlmProviderInput {
-  readonly provider: string
-  readonly model: string
-  readonly settingsNs?: string
-  readonly apiKey?: string
-  readonly baseURL?: string
-  readonly api?: string
-  readonly models?: SaveLlmProviderInput['models']
-}
-
-const DRAFT_LLM_CREDENTIAL_REF = 'NEKRO_NXT_DRAFT_API_KEY'
-
-class DraftLlmCredentialProvider extends CredentialProvider {
-  readonly apiKey: string | undefined
-
-  constructor(context: Context, config: { readonly apiKey?: string }) {
-    super(context)
-    this.apiKey = config.apiKey
-  }
-
-  async resolve(ref: CredentialRef): Promise<ResolvedCredential | undefined> {
-    await Promise.resolve()
-    return ref === DRAFT_LLM_CREDENTIAL_REF && this.apiKey
-      ? { value: this.apiKey, source: 'nekro-nxt-draft' }
-      : undefined
-  }
-
-  async describe(ref: CredentialRef): Promise<CredentialInfo> {
-    await Promise.resolve()
-    return {
-      configured: ref === DRAFT_LLM_CREDENTIAL_REF && Boolean(this.apiKey),
-      source: 'nekro-nxt-draft',
-      writable: false,
-    }
-  }
-
-  set(): Promise<void> {
-    return Promise.reject(new Error('连接测试的临时凭据只读。'))
-  }
-
-  unset(): Promise<void> {
-    return Promise.reject(new Error('连接测试的临时凭据只读。'))
-  }
-
-  async readRecord(): Promise<CredentialRecord | undefined> {
-    await Promise.resolve()
-    return undefined
-  }
-
-  async describeRecord(): Promise<CredentialRecordInfo> {
-    await Promise.resolve()
-    return { configured: false, writable: false }
-  }
-
-  async listRecords(): Promise<readonly CredentialRecordEntry[]> {
-    await Promise.resolve()
-    return []
-  }
-
-  modifyRecord(
-    key: CredentialKey,
-    mutate: (current: CredentialRecord | undefined) => Promise<CredentialRecord | undefined>,
-  ): Promise<CredentialRecord | undefined> {
-    void key
-    void mutate
-    return Promise.reject(new Error('连接测试的临时凭据不支持授权记录写入。'))
-  }
-
-  async deleteRecord(): Promise<void> {
-    await Promise.resolve()
-  }
-}
-
-const ConfiguredLlmModelSchema = z
-  .object({
-    id: z.string(),
-    name: z.string().optional(),
-    contextWindow: z.number().optional(),
-    maxTokens: z.number().optional(),
-  })
-  .passthrough()
-const LlmProviderProfileSchema = z
-  .object({
-    apiKeyEnv: z.unknown().optional(),
-    displayName: z.unknown().optional(),
-    baseURL: z.unknown().optional(),
-    api: z.unknown().optional(),
-    models: z.unknown().optional(),
-  })
-  .passthrough()
-const WebSearchSettingsSchema = z.object({ apiKeyEnv: z.unknown().optional() }).passthrough()
-
-const readObjectPath = (value: unknown, pathSegments: readonly string[]): Record<string, unknown> | undefined => {
-  let current: unknown = value
-  for (const segment of pathSegments) {
-    const result = JsonObjectSchema.safeParse(current)
-    if (!result.success) return undefined
-    current = result.data[segment]
-  }
-  const result = JsonObjectSchema.safeParse(current)
-  return result.success ? result.data : undefined
-}
-
-const credentialReferenceForProvider = (provider: string): string =>
-  `${provider.toUpperCase().replaceAll('-', '_')}_API_KEY`
-
 const errorFromUnknown = (cause: unknown, message: string): Error =>
   cause instanceof Error ? cause : new Error(message, { cause })
-
-export interface DynamicPackageDefinitionInput {
-  readonly plugin:
-    | { readonly kind: 'new'; readonly idPrefix: string }
-    | {
-        readonly kind: 'existing'
-        readonly pluginId: string
-      }
-  readonly name: string
-  readonly purpose: string
-  readonly code: { readonly host?: string; readonly client?: string }
-}
-
-export interface DynamicAuthoringPackageDefinitionInput extends DynamicPackageDefinitionInput {
-  readonly scope: DynamicAuthoringSnapshot['scope']
-  readonly resources: Readonly<Record<string, string>>
-  readonly clientCss?: { readonly path: string; readonly sha256: string }
-  readonly permissions: HostUiPermissionDeclaration
-  readonly contributions: readonly JsonValue[]
-}
 
 const noFieldsSchema = { type: 'object', properties: {}, additionalProperties: false } as const
 
@@ -926,34 +517,6 @@ export const compilePersonaDocument = (input: {
   return { text: `<nxt-persona-document version="1">\n${body}\n</nxt-persona-document>`, usesReferences: true }
 }
 const jsonObjectSchema = { type: 'object', additionalProperties: true } as const
-
-const EXTENSION_PRIVATE_SERVICE_KEYS = [
-  'agentPresets',
-  'agents',
-  'attachments',
-  'compaction',
-  'llm',
-  'sandbox',
-  'sandboxPolicy',
-  'sessionProjections',
-  'sessionPersistence',
-  'sessions',
-  'shell',
-  'shellEnv',
-  'skills',
-  'subprocess',
-  'subagents',
-  'spillStore',
-  'tokenMeter',
-  'toolResultPruner',
-  'web',
-] as const
-const EXTENSION_PRIVATE_SERVICE_KEY_SET = new Set<string>(EXTENSION_PRIVATE_SERVICE_KEYS)
-const PERSISTENT_EXTENSION_HOST_SERVICES = new Set(['tools'])
-
-const isolatePrivateExtensionServices = (context: Context): Context =>
-  EXTENSION_PRIVATE_SERVICE_KEYS.reduce((isolated, key) => isolated.isolate(key), context)
-
 declare module '@deepseek-ai/cordis' {
   interface Context {
     agentPresets: NekroNxtAgentScopeInheritance
@@ -978,17 +541,6 @@ class NekroNxtAgentScopeInheritance extends Service {
     return undefined
   }
 }
-
-interface PersistentExtensionContext extends ExtensionHostContext {
-  get(service: string): ToolRuntime | undefined
-}
-
-const persistentExtensionContext = (context: Context): PersistentExtensionContext => ({
-  tools: {
-    register: (tool) => context.tools.register(parseDshToolDefinition(tool)),
-  },
-  get: (service: string) => (service === 'tools' ? context.tools : undefined),
-})
 
 const nekroNxtInspectProvider = (input: {
   readonly episodeId: EpisodeId
@@ -1095,64 +647,6 @@ const nekroNxtInspectProvider = (input: {
   },
 })
 
-interface PersistentExtensionRegistration {
-  readonly key: string
-  readonly agentId: AgentRevisionRecord['agentId']
-  readonly revision: Revision
-  readonly artifact: ExtensionBuildArtifact
-  readonly config: JsonValue
-  readonly plugin?: ExtensionPluginDefinition
-  readonly fibers: Map<string, Fiber>
-  readonly mounting: Map<string, Promise<void>>
-  readonly handlers: Map<string, (input: ExtensionJsonValue) => ExtensionJsonValue | Promise<ExtensionJsonValue>>
-  active: boolean
-}
-
-const ExtensionHostFactorySchema = z.custom<ExtensionPluginFactory<ExtensionHostEnvironment>>(
-  (value) => typeof value === 'function',
-  'Extension Host default export must be a function.',
-)
-const ExtensionHostModuleSchema = z.object({ default: ExtensionHostFactorySchema }).passthrough()
-const ExtensionPluginDefinitionSchema = z
-  .object({
-    inject: z.array(z.string()).optional(),
-    apply: z.custom<ExtensionPluginDefinition['apply']>(
-      (value) => typeof value === 'function',
-      'Extension Host plugin apply must be a function.',
-    ),
-  })
-  .passthrough()
-const DSH_IMAGE_MEDIA_TYPES = ['image/png', 'image/jpeg', 'image/webp', 'image/gif'] as const
-const DshImageMediaTypeSchema = z.enum(DSH_IMAGE_MEDIA_TYPES)
-
-export interface DynamicAuthoringPolicyState {
-  readonly episodeId: EpisodeId
-  readonly turn: number
-  readonly primaryPluginId?: string
-  readonly consecutiveFailures: number
-  readonly repeatedFingerprintCount: number
-  readonly lastErrorFingerprint?: string
-  readonly blockedReason?: string
-}
-
-export interface DynamicApprovalRequestEvent {
-  readonly requestId: string
-  readonly agentId: AgentId
-  readonly channelId: ChannelId
-  readonly episodeId: EpisodeId
-  readonly pluginId: string
-  readonly packageId: string
-  readonly name: string
-  readonly purpose: string
-}
-
-const normalizeDynamicFailure = (phase: string, message: string): string =>
-  `${phase}:${message}`
-    .toLowerCase()
-    .replace(/[a-z]{3,6}-\d+|package-\d+|run-\d+/gu, '<id>')
-    .replace(/\s+/gu, ' ')
-    .trim()
-
 const DynamicAuthoringFacadeInputSchema = z
   .object({
     plugin: z.discriminatedUnion('kind', [
@@ -1195,71 +689,6 @@ const DynamicAuthoringFacadeInputSchema = z
   })
   .strict()
 
-const preflightNekroNxtAuthoringDefinition = (
-  input: DynamicAuthoringPackageDefinitionInput,
-): DynamicAuthoringPackageDefinitionInput => {
-  const resourceEntries = Object.entries(input.resources)
-  const resourcePaths = new Set(resourceEntries.map(([resourcePath]) => resourcePath))
-  if (resourcePaths.size !== resourceEntries.length) throw new Error('动态页面预检失败：资源路径不能重复。')
-  if (input.contributions.length > 8) throw new Error('动态页面预检失败：一个 Revision 最多声明 8 个页面入口。')
-  const pages = input.contributions.map((contribution) => HostPageContributionSchema.parse(contribution))
-  if (new Set(pages.map(({ entryId }) => entryId)).size !== pages.length) {
-    throw new Error('动态页面预检失败：页面 entryId 不能重复。')
-  }
-  HostUiPermissionDeclarationSchema.parse(input.permissions)
-  if (pages.length === 0 && (input.permissions.permissions.length > 0 || input.permissions.networkOrigins.length > 0)) {
-    throw new Error('动态页面预检失败：没有页面贡献时不能声明 Host UI 权限。')
-  }
-  if (input.scope === 'host-ui' && pages.length === 0) {
-    throw new Error('动态页面预检失败：host-ui 候选必须声明至少一个页面入口。')
-  }
-  if (input.scope === 'agent' && pages.length > 0) {
-    throw new Error('动态页面预检失败：智能体候选不能贡献顶级页面。')
-  }
-  if (input.scope === 'host-adapter' && input.code.host === undefined) {
-    throw new Error('动态 Adapter 预检失败：host-adapter 候选必须包含 Host 源码。')
-  }
-  if (
-    (pages.length > 0 || resourceEntries.length > 0 || input.clientCss !== undefined) &&
-    input.code.client === undefined
-  ) {
-    throw new Error('动态页面预检失败：页面声明和 Client 资源必须配套 Client 源码。')
-  }
-  const referencedResources = new Set<string>()
-  if (input.clientCss) {
-    const source = input.resources[input.clientCss.path]
-    if (source === undefined) throw new Error(`动态页面预检失败：缺少 CSS 资源 ${input.clientCss.path}。`)
-    const actualDigest = createHash('sha256').update(source).digest('hex')
-    if (actualDigest !== input.clientCss.sha256)
-      throw new Error(`动态页面预检失败：CSS 摘要不匹配 ${input.clientCss.path}。`)
-    validateHostUiCss(source)
-    referencedResources.add(input.clientCss.path)
-  }
-  for (const page of pages) {
-    if (page.icon.kind !== 'svg') continue
-    const source = input.resources[page.icon.path]
-    if (source === undefined) throw new Error(`动态页面预检失败：缺少图标资源 ${page.icon.path}。`)
-    const actualDigest = createHash('sha256').update(source).digest('hex')
-    if (actualDigest !== page.icon.sha256) throw new Error(`动态页面预检失败：SVG 摘要不匹配 ${page.icon.path}。`)
-    validateHostUiSvg(source)
-    referencedResources.add(page.icon.path)
-  }
-  for (const [resourcePath] of resourceEntries) {
-    if (!referencedResources.has(resourcePath)) {
-      throw new Error(`动态页面预检失败：资源没有被 CSS 或页面图标声明引用：${resourcePath}。`)
-    }
-  }
-  return input
-}
-
-const dynamicPreviewClientCode = (input: DynamicAuthoringPackageDefinitionInput): string | undefined => {
-  const source = input.code.client
-  if (source === undefined || input.clientCss === undefined) return source
-  const css = input.resources[input.clientCss.path]
-  if (css === undefined) throw new Error(`动态页面预览缺少 CSS 资源 ${input.clientCss.path}。`)
-  return `styles.insert(${JSON.stringify(scopeHostUiCss(css, 'dynamic-preview'))})\n${source}`
-}
-
 const authoringDefinitionFromFacade = (raw: unknown): DynamicAuthoringPackageDefinitionInput => {
   const parsed = DynamicAuthoringFacadeInputSchema.parse(raw)
   const resources: Record<string, string> = {}
@@ -1291,536 +720,6 @@ const authoringDefinitionFromFacade = (raw: unknown): DynamicAuthoringPackageDef
     permissions: parsed.permissions,
     contributions: parsed.pages.map((page) => JsonValueSchema.parse(page)),
   })
-}
-
-const preflightNekroNxtDynamicSource = (request: DynamicCordisDefineRequest): void => {
-  const client = request.code.client
-  if (client === undefined) return
-  const registersPages = /\b(?:ctx\.)?pages\s*\.\s*(?:register|declarePermissions)\b/u.test(client)
-  const injectsPages = /\binject\s*:\s*\[[^\]]*['"]pages['"][^\]]*\]/su.test(client)
-  const injectsUi = /\binject\s*:\s*\[[^\]]*['"]ui['"][^\]]*\]/su.test(client)
-  if (registersPages && !injectsPages) {
-    throw new Error("动态页面预检失败：Client 使用了 pages Service，但没有声明 inject: ['pages', 'ui']。")
-  }
-  if (registersPages && !injectsUi) {
-    throw new Error("动态页面预检失败：Client 必须声明 inject: ['pages', 'ui'] 并使用 NekroNXT UI Kit。")
-  }
-  const absolutePagePath = /\b(?:startPath|path)\s*:\s*['"]\//u.exec(client)
-  if (absolutePagePath) {
-    throw new Error('动态页面预检失败：startPath、导航 path 和 navigate() 必须使用入口内相对路径，不能以 / 开头。')
-  }
-}
-
-/** DSH public Runner with NekroNxt's per-Episode authoring budget. */
-class NekroNxtDynamicCordisRunner extends DynamicCordisRunnerService {
-  private state: DynamicAuthoringPolicyState | undefined
-  private readonly runtimeContext: Context
-  private readonly toolNamesByPackage = new Map<string, readonly string[]>()
-  private readonly clientEvidenceByPackage = new Map<
-    string,
-    {
-      readonly pluginRunId: string
-      readonly renderedSlots: readonly AgentClientSlotName[]
-      readonly renderedHostSlots: readonly { readonly name: AdapterClientSlotName; readonly key: string }[]
-      readonly renderedPages: readonly HostPageContribution[]
-      readonly usedUiComponents: readonly HostUiKitComponentName[]
-      readonly pageGeometry: readonly HostUiPageGeometryEvidence[]
-      readonly navigationEntries: readonly string[]
-      readonly permissions: HostUiPermissionDeclaration
-    }
-  >()
-  private readonly clientRpcMethodsByPackage = new Map<
-    string,
-    { readonly pluginRunId: string; readonly methods: Set<string> }
-  >()
-  private readonly adapterPackages = new Set<string>()
-  private readonly originalHostByPackage = new Map<string, string>()
-  private readonly authoringPersistenceByPackage = new Map<string, Promise<void>>()
-  private authoringPersistenceTail: Promise<void> = Promise.resolve()
-  private definingAuthoringSnapshot: DynamicAuthoringSnapshot | undefined
-  private suppressAuthoringPersistence = false
-  private onAuthoringDefinition:
-    | ((
-        request: DynamicCordisDefineRequest,
-        receipt: DynamicCordisDefineReceipt,
-        snapshot: DynamicAuthoringSnapshot,
-      ) => Promise<void>)
-    | undefined
-  private onAuthoringRun:
-    ((pluginId: string, packageId: string, result: DynamicCordisRunResponse) => Promise<void>) | undefined
-  private rootSessionId: SessionId | undefined
-  private ownerResolver: ((agent: Agent) => Agent) | undefined
-  private sessionOwnerResolver: ((sessionId: SessionId) => Agent) | undefined
-
-  constructor(context: Context, config: { readonly vmTimeoutMs?: number }) {
-    super(context, config)
-    this.runtimeContext = context
-  }
-
-  bindEpisode(episodeId: EpisodeId): void {
-    if (this.state && this.state.episodeId !== episodeId) throw new Error('Dynamic Runner crossed Episode ownership.')
-    this.state ??= {
-      episodeId,
-      turn: 0,
-      consecutiveFailures: 0,
-      repeatedFingerprintCount: 0,
-    }
-  }
-
-  configureDynamicAuthoringOwner(input: {
-    readonly rootSessionId: SessionId
-    readonly resolveAgent: (agent: Agent) => Agent
-    readonly resolveSession: (sessionId: SessionId) => Agent
-  }): void {
-    if (this.rootSessionId !== undefined && this.rootSessionId !== input.rootSessionId) {
-      throw new Error('Dynamic Runner crossed root Session ownership.')
-    }
-    this.rootSessionId = input.rootSessionId
-    this.ownerResolver = input.resolveAgent
-    this.sessionOwnerResolver = input.resolveSession
-  }
-
-  resolveDynamicAuthoringOwner(agent: Agent): Agent {
-    const rootSessionId = this.requireRootSessionId()
-    if (agent.id === rootSessionId) return agent
-    if (!this.ownerResolver) throw new Error('Dynamic authoring owner resolver is unavailable.')
-    return this.ownerResolver(agent)
-  }
-
-  configureAuthoringLedger(callbacks: {
-    readonly definition: (
-      request: DynamicCordisDefineRequest,
-      receipt: DynamicCordisDefineReceipt,
-      snapshot: DynamicAuthoringSnapshot,
-    ) => Promise<void>
-    readonly run: (pluginId: string, packageId: string, result: DynamicCordisRunResponse) => Promise<void>
-  }): void {
-    this.onAuthoringDefinition = callbacks.definition
-    this.onAuthoringRun = callbacks.run
-  }
-
-  defineAuthoringPackage(sessionId: string, input: DynamicAuthoringPackageDefinitionInput): DynamicCordisDefineReceipt {
-    const parsed = preflightNekroNxtAuthoringDefinition(input)
-    const previewClient = dynamicPreviewClientCode(parsed)
-    const request: DynamicCordisDefineRequest = {
-      sessionId: SessionId(sessionId),
-      plugin:
-        parsed.plugin.kind === 'new'
-          ? { kind: 'new', idPrefix: parsed.plugin.idPrefix }
-          : { kind: 'existing', pluginId: CordisDynamicPluginId(parsed.plugin.pluginId) },
-      name: parsed.name,
-      purpose: parsed.purpose,
-      code: {
-        ...(parsed.code.host === undefined ? {} : { host: parsed.code.host }),
-        ...(previewClient === undefined ? {} : { client: previewClient }),
-      },
-    }
-    this.definingAuthoringSnapshot = {
-      name: parsed.name,
-      purpose: parsed.purpose,
-      scope: parsed.scope,
-      code: parsed.code,
-      resources: parsed.resources,
-      ...(parsed.clientCss === undefined ? {} : { clientCss: parsed.clientCss }),
-      permissions: parsed.permissions,
-      contributions: parsed.contributions,
-    }
-    try {
-      return this.define(request)
-    } finally {
-      this.definingAuthoringSnapshot = undefined
-    }
-  }
-
-  restoreAuthoringPackage(sessionId: string, snapshot: DynamicAuthoringSnapshot): DynamicCordisDefineReceipt {
-    preflightNekroNxtAuthoringDefinition({
-      plugin: { kind: 'new', idPrefix: 'rest' },
-      name: snapshot.name,
-      purpose: snapshot.purpose,
-      scope: snapshot.scope,
-      code: snapshot.code,
-      resources: snapshot.resources,
-      ...(snapshot.clientCss === undefined ? {} : { clientCss: snapshot.clientCss }),
-      permissions: snapshot.permissions,
-      contributions: snapshot.contributions,
-    })
-    const previewClient = dynamicPreviewClientCode({
-      plugin: { kind: 'new', idPrefix: 'rest' },
-      name: snapshot.name,
-      purpose: snapshot.purpose,
-      scope: snapshot.scope,
-      code: snapshot.code,
-      resources: snapshot.resources,
-      ...(snapshot.clientCss === undefined ? {} : { clientCss: snapshot.clientCss }),
-      permissions: snapshot.permissions,
-      contributions: snapshot.contributions,
-    })
-    const code = {
-      ...(snapshot.code.host === undefined ? {} : { host: snapshot.code.host }),
-      ...(previewClient === undefined ? {} : { client: previewClient }),
-    }
-    this.suppressAuthoringPersistence = true
-    this.definingAuthoringSnapshot = snapshot
-    try {
-      return this.define({
-        sessionId: SessionId(sessionId),
-        plugin: { kind: 'new', idPrefix: 'rest' },
-        name: snapshot.name,
-        purpose: snapshot.purpose,
-        code,
-      })
-    } finally {
-      this.definingAuthoringSnapshot = undefined
-      this.suppressAuthoringPersistence = false
-    }
-  }
-
-  beginOrdinaryTurn(): void {
-    const state = this.requireState()
-    this.state = {
-      episodeId: state.episodeId,
-      turn: state.turn + 1,
-      ...(state.primaryPluginId === undefined ? {} : { primaryPluginId: state.primaryPluginId }),
-      consecutiveFailures: 0,
-      repeatedFingerprintCount: 0,
-    }
-  }
-
-  policySnapshot(): DynamicAuthoringPolicyState {
-    return { ...this.requireState() }
-  }
-
-  override define(request: DynamicCordisDefineRequest): DynamicCordisDefineReceipt {
-    const ownedRequest = this.normalizeDefineRequest(request)
-    this.assertWritable('define')
-    preflightNekroNxtDynamicSource(ownedRequest)
-    const state = this.requireState()
-    if (ownedRequest.plugin.kind === 'new' && state.primaryPluginId !== undefined) {
-      throw new Error(`当前 Episode 已拥有 Plugin ${state.primaryPluginId}；修复必须使用 kind:existing。`)
-    }
-    if (ownedRequest.plugin.kind === 'existing' && ownedRequest.plugin.pluginId !== state.primaryPluginId) {
-      throw new Error(`只能向当前 Episode 的 Plugin ${state.primaryPluginId ?? '（尚未创建）'} 追加 Package。`)
-    }
-    try {
-      const adapterHost =
-        this.definingAuthoringSnapshot?.scope === 'host-adapter'
-          ? ownedRequest.code.host
-          : this.definingAuthoringSnapshot === undefined && isLegacyAdapterDynamicHostSource(ownedRequest.code.host)
-            ? ownedRequest.code.host
-            : undefined
-      const receipt = super.define(
-        adapterHost === undefined
-          ? ownedRequest
-          : {
-              ...ownedRequest,
-              code: { ...ownedRequest.code, host: wrapAdapterDynamicHostSource(adapterHost) },
-            },
-      )
-      if (adapterHost !== undefined) {
-        this.adapterPackages.add(receipt.packageId)
-        this.originalHostByPackage.set(receipt.packageId, adapterHost)
-      }
-      if (ownedRequest.plugin.kind === 'new') this.state = { ...state, primaryPluginId: receipt.pluginId }
-      if (this.onAuthoringDefinition && !this.suppressAuthoringPersistence) {
-        const persistDefinition = this.onAuthoringDefinition
-        const snapshot = this.definingAuthoringSnapshot ?? {
-          name: ownedRequest.name,
-          purpose: ownedRequest.purpose,
-          scope: adapterHost === undefined ? 'agent' : 'host-adapter',
-          code: ownedRequest.code,
-          resources: {},
-          permissions: { permissions: [], networkOrigins: [] },
-          contributions: [],
-        }
-        const persistence = this.authoringPersistenceTail.then(() => persistDefinition(ownedRequest, receipt, snapshot))
-        this.authoringPersistenceTail = persistence.catch(() => undefined)
-        this.authoringPersistenceByPackage.set(receipt.packageId, persistence)
-        void persistence.catch((error: unknown) => {
-          console.error('[nekro-nxt] 动态创造账本写入失败：', error)
-        })
-      }
-      return receipt
-    } catch (error) {
-      this.recordFailure('define', error instanceof Error ? error.message : String(error))
-      throw error
-    }
-  }
-
-  override inspectPackage(
-    agent: Agent,
-    pluginId: CordisDynamicPluginIdType,
-    packageId: CordisDynamicPackageIdType,
-  ): DynamicCordisPackageInspection {
-    const inspection = super.inspectPackage(this.resolveDynamicAuthoringOwner(agent), pluginId, packageId)
-    const originalHost = this.originalHostByPackage.get(packageId)
-    if (originalHost === undefined) return inspection
-    return { ...inspection, code: { ...inspection.code, host: originalHost } }
-  }
-
-  isAdapterPackage(packageId: string): boolean {
-    return this.adapterPackages.has(packageId)
-  }
-
-  override async run(
-    agent: Agent,
-    pluginId: CordisDynamicPluginIdType,
-    packageId: CordisDynamicPackageIdType,
-    mode: CordisDynamicRunMode,
-    signal?: AbortSignal,
-  ): Promise<DynamicCordisRunResponse> {
-    const owner = this.resolveDynamicAuthoringOwner(agent)
-    this.assertWritable('run')
-    await this.authoringPersistenceByPackage.get(packageId)
-    const tools = this.runtimeContext.get('tools')
-    const before =
-      tools instanceof ToolRuntime ? new Set(tools.schemas(scopeOf(owner.ctx)).map(({ name }) => name)) : new Set()
-    const result = await super.run(owner, pluginId, packageId, mode, signal)
-    if (result.ok && result.status === 'running') {
-      if (tools instanceof ToolRuntime) {
-        this.toolNamesByPackage.set(
-          packageId,
-          tools
-            .schemas(scopeOf(owner.ctx))
-            .map(({ name }) => name)
-            .filter((name) => !before.has(name)),
-        )
-      }
-      const privateServices = result.waitingFor.filter((service) => EXTENSION_PRIVATE_SERVICE_KEY_SET.has(service))
-      if (privateServices.length > 0) {
-        this.recordFailure(
-          'private-service',
-          `Dynamic Extension requested a private Host Service: ${privateServices.join(', ')}`,
-        )
-      } else {
-        this.clearFailures()
-      }
-    } else if (!result.ok) this.recordFailure(result.reason, result.message)
-    await this.onAuthoringRun?.(pluginId, packageId, result)
-    return result
-  }
-
-  verificationSnapshot(
-    agent: Agent,
-    pluginId: string,
-    packageId: string,
-  ): {
-    readonly pluginRunId: string
-    readonly toolNames: readonly string[]
-    readonly rpcMethods: readonly string[]
-    readonly renderedSlots: readonly AgentClientSlotName[]
-    readonly renderedHostSlots: readonly { readonly name: AdapterClientSlotName; readonly key: string }[]
-    readonly renderedPages: readonly HostPageContribution[]
-    readonly usedUiComponents: readonly HostUiKitComponentName[]
-    readonly pageGeometry: readonly HostUiPageGeometryEvidence[]
-    readonly navigationEntries: readonly string[]
-    readonly permissions: HostUiPermissionDeclaration
-  } {
-    const row = this.snapshot(agent).find((candidate) => candidate.pluginId === pluginId)
-    if (row?.activeRun?.packageId !== packageId) throw new Error('Dynamic Package is not the active verified Run.')
-    const pkg = row.packages.find((candidate) => candidate.packageId === packageId)
-    const clientEvidence = this.clientEvidenceByPackage.get(packageId)
-    if (pkg?.hasClientHalf && clientEvidence?.pluginRunId !== row.activeRun.pluginRunId) {
-      throw new Error('Dynamic Client half has not rendered in a NekroNxt product Slot for this Run.')
-    }
-    const clientRpcEvidence = this.clientRpcMethodsByPackage.get(packageId)
-    const clientRpcMethods =
-      clientRpcEvidence?.pluginRunId === row.activeRun.pluginRunId ? clientRpcEvidence.methods : new Set<string>()
-    const clientCallableHandlers = this.isAdapterPackage(packageId)
-      ? row.activeRun.handlers.filter((method) => method !== ADAPTER_DYNAMIC_EVIDENCE_METHOD)
-      : row.activeRun.handlers
-    if (pkg?.hasClientHalf && clientCallableHandlers.some((method) => !clientRpcMethods.has(method))) {
-      throw new Error('Dynamic Client preview has not called every registered Host RPC for this Run.')
-    }
-    return {
-      pluginRunId: row.activeRun.pluginRunId,
-      toolNames: this.toolNamesByPackage.get(packageId) ?? [],
-      rpcMethods: row.activeRun.handlers,
-      renderedSlots: clientEvidence?.renderedSlots ?? [],
-      renderedHostSlots: clientEvidence?.renderedHostSlots ?? [],
-      renderedPages: clientEvidence?.renderedPages ?? [],
-      usedUiComponents: clientEvidence?.usedUiComponents ?? [],
-      pageGeometry: clientEvidence?.pageGeometry ?? [],
-      navigationEntries: clientEvidence?.navigationEntries ?? [],
-      permissions: clientEvidence?.permissions ?? { permissions: [], networkOrigins: [] },
-    }
-  }
-
-  recordClientVerification(
-    agent: Agent,
-    pluginId: string,
-    packageId: string,
-    pluginRunId: string,
-    renderedSlots: readonly AgentClientSlotName[],
-    renderedHostSlots: readonly { readonly name: AdapterClientSlotName; readonly key: string }[],
-    renderedPages: readonly HostPageContribution[],
-    usedUiComponents: readonly HostUiKitComponentName[],
-    pageGeometry: readonly HostUiPageGeometryEvidence[],
-    navigationEntries: readonly string[],
-    permissions: HostUiPermissionDeclaration,
-  ): void {
-    const row = this.snapshot(agent).find((candidate) => candidate.pluginId === pluginId)
-    if (row?.activeRun?.packageId !== packageId || row.activeRun.pluginRunId !== pluginRunId) {
-      throw new Error('Dynamic Client verification does not match the active Package Run.')
-    }
-    const pkg = row.packages.find((candidate) => candidate.packageId === packageId)
-    if (!pkg?.hasClientHalf) throw new Error('Host-only Package cannot report Client verification.')
-    if (renderedSlots.length === 0 && renderedHostSlots.length === 0 && renderedPages.length === 0) {
-      throw new Error('Dynamic Client verification must contain a product Slot or page.')
-    }
-    if (renderedPages.length > 0 && usedUiComponents.length === 0) {
-      throw new Error('动态页面必须实际使用 NekroNXT UI Kit。')
-    }
-    this.clientEvidenceByPackage.set(packageId, {
-      pluginRunId,
-      renderedSlots: [...new Set(renderedSlots)],
-      renderedHostSlots: [...new Map(renderedHostSlots.map((slot) => [slot.key, slot])).values()],
-      renderedPages,
-      usedUiComponents: [...new Set(usedUiComponents)],
-      pageGeometry,
-      navigationEntries: [...new Set(navigationEntries)],
-      permissions,
-    })
-  }
-
-  recordClientRpcInvocation(agent: Agent, pluginId: string, pluginRunId: string, method: string): void {
-    const row = this.snapshot(agent).find((candidate) => candidate.pluginId === pluginId)
-    if (!row?.activeRun || row.activeRun.pluginRunId !== pluginRunId || !row.activeRun.handlers.includes(method)) {
-      throw new Error('Dynamic Client RPC evidence does not match the active Package Run.')
-    }
-    const current = this.clientRpcMethodsByPackage.get(row.activeRun.packageId)
-    if (current?.pluginRunId === pluginRunId) current.methods.add(method)
-    else this.clientRpcMethodsByPackage.set(row.activeRun.packageId, { pluginRunId, methods: new Set([method]) })
-  }
-
-  override async runHostHalf(
-    agent: Agent,
-    pluginId: CordisDynamicPluginIdType,
-    packageId: CordisDynamicPackageIdType,
-    mode: CordisDynamicRunMode,
-    requestId: ApprovalRequestIdType | null,
-    approveFutureVersions: boolean,
-  ): Promise<DynamicCordisHostHalfResult> {
-    const owner = this.resolveDynamicAuthoringOwner(agent)
-    this.assertWritable('run-host-half')
-    const tools = this.runtimeContext.get('tools')
-    const before =
-      tools instanceof ToolRuntime ? new Set(tools.schemas(scopeOf(owner.ctx)).map(({ name }) => name)) : new Set()
-    const result = await super.runHostHalf(owner, pluginId, packageId, mode, requestId, approveFutureVersions)
-    if (!result.ok) {
-      this.recordFailure('host-half', result.message)
-      return result
-    }
-    if (tools instanceof ToolRuntime && result.startedHere) {
-      this.toolNamesByPackage.set(
-        packageId,
-        tools
-          .schemas(scopeOf(owner.ctx))
-          .map(({ name }) => name)
-          .filter((name) => !before.has(name)),
-      )
-    }
-    return result
-  }
-
-  override async undefine(agent: Agent, pluginId: CordisDynamicPluginIdType): Promise<DynamicCordisUndefineReceipt> {
-    const owner = this.resolveDynamicAuthoringOwner(agent)
-    const packages = this.snapshot(owner).find((candidate) => candidate.pluginId === pluginId)?.packages ?? []
-    const result = await super.undefine(owner, pluginId)
-    if (result.ok) {
-      for (const pkg of packages) {
-        this.toolNamesByPackage.delete(pkg.packageId)
-        this.clientEvidenceByPackage.delete(pkg.packageId)
-        this.clientRpcMethodsByPackage.delete(pkg.packageId)
-        this.adapterPackages.delete(pkg.packageId)
-        this.originalHostByPackage.delete(pkg.packageId)
-      }
-    }
-    const state = this.requireState()
-    if (result.ok && state.primaryPluginId === pluginId) {
-      this.state = {
-        episodeId: state.episodeId,
-        turn: state.turn,
-        consecutiveFailures: 0,
-        repeatedFingerprintCount: 0,
-      }
-    }
-    return result
-  }
-
-  override listPlugins(agent: Agent): DynamicCordisPluginInspection[] {
-    return super.listPlugins(this.resolveDynamicAuthoringOwner(agent))
-  }
-
-  override inspectPlugin(agent: Agent, pluginId: CordisDynamicPluginIdType): DynamicCordisPluginInspection {
-    return super.inspectPlugin(this.resolveDynamicAuthoringOwner(agent), pluginId)
-  }
-
-  override snapshot(agent: Agent): DynamicCordisSnapshotRow[] {
-    return super.snapshot(this.resolveDynamicAuthoringOwner(agent))
-  }
-
-  override reference(agent: Agent, pluginId: CordisDynamicPluginIdType): DynamicCordisReference | undefined {
-    return super.reference(this.resolveDynamicAuthoringOwner(agent), pluginId)
-  }
-
-  override stop(agent: Agent, pluginId: CordisDynamicPluginIdType): Promise<DynamicCordisStopResponse> {
-    return super.stop(this.resolveDynamicAuthoringOwner(agent), pluginId)
-  }
-
-  private recordFailure(phase: string, message: string): void {
-    const state = this.requireState()
-    const fingerprint = normalizeDynamicFailure(phase, message)
-    const repeated = state.lastErrorFingerprint === fingerprint ? state.repeatedFingerprintCount + 1 : 1
-    const consecutive = state.consecutiveFailures + 1
-    const blockedReason =
-      repeated >= 2
-        ? '相同动态扩展错误已连续出现两次，请停止修改并向用户报告诊断。'
-        : consecutive >= 3
-          ? '本轮动态扩展已连续失败三次，请停止修改并向用户报告诊断。'
-          : undefined
-    this.state = {
-      ...state,
-      consecutiveFailures: consecutive,
-      repeatedFingerprintCount: repeated,
-      lastErrorFingerprint: fingerprint,
-      ...(blockedReason === undefined ? {} : { blockedReason }),
-    }
-  }
-
-  private clearFailures(): void {
-    const state = this.requireState()
-    this.state = {
-      episodeId: state.episodeId,
-      turn: state.turn,
-      ...(state.primaryPluginId === undefined ? {} : { primaryPluginId: state.primaryPluginId }),
-      consecutiveFailures: 0,
-      repeatedFingerprintCount: 0,
-    }
-  }
-
-  private assertWritable(operation: string): void {
-    const blockedReason = this.requireState().blockedReason
-    if (blockedReason) throw new Error(`动态创造已熔断，拒绝 ${operation}：${blockedReason}`)
-  }
-
-  private requireState(): DynamicAuthoringPolicyState {
-    if (!this.state) throw new Error('Dynamic authoring policy is not bound to an Episode.')
-    return this.state
-  }
-
-  private requireRootSessionId(): SessionId {
-    if (this.rootSessionId === undefined) throw new Error('Dynamic authoring root Session is not configured.')
-    return this.rootSessionId
-  }
-
-  private normalizeDefineRequest(request: DynamicCordisDefineRequest): DynamicCordisDefineRequest {
-    const rootSessionId = this.requireRootSessionId()
-    if (request.sessionId === rootSessionId) return request
-    if (!this.sessionOwnerResolver) throw new Error('Dynamic authoring Session owner resolver is unavailable.')
-    const owner = this.sessionOwnerResolver(request.sessionId)
-    if (owner.id !== rootSessionId) throw new Error('Dynamic authoring Session resolved to the wrong root owner.')
-    return { ...request, sessionId: rootSessionId }
-  }
 }
 
 const nekroNxtExtensionDefineTool = (runner: NekroNxtDynamicCordisRunner, sessionId: string) =>
@@ -1928,115 +827,6 @@ const nekroNxtExtensionDefineTool = (runner: NekroNxtDynamicCordisRunner, sessio
       return Promise.resolve(runner.defineAuthoringPackage(sessionId, definition))
     },
   })
-
-const nekroImageAttachmentId = (assetId: AssetId, detail: EffectiveImageDetail): ReturnType<typeof AttachmentId> =>
-  AttachmentId(`nxt-asset:${assetId}:${detail}`)
-
-const parseNekroImageAttachmentId = (
-  attachmentId: string,
-): { readonly assetId: AssetId; readonly detail?: EffectiveImageDetail } | undefined => {
-  if (!attachmentId.startsWith('nxt-asset:')) {
-    const legacy = AssetIdSchema.safeParse(attachmentId)
-    return legacy.success ? { assetId: legacy.data } : undefined
-  }
-  const separator = attachmentId.lastIndexOf(':')
-  const detail = attachmentId.slice(separator + 1)
-  const assetId = AssetIdSchema.safeParse(attachmentId.slice('nxt-asset:'.length, separator))
-  if (!assetId.success || (detail !== 'low' && detail !== 'auto')) return undefined
-  return { assetId: assetId.data, detail }
-}
-
-class NekroAssetAttachmentStore extends AttachmentStore {
-  readonly imageLimits = {
-    maxImageBytes: 128 * 1024 * 1024,
-    maxImagesPerMessage: 20,
-    maxMessageImageBytes: 256 * 1024 * 1024,
-    maxImagePixels: 100_000_000,
-    maxImageDimension: 32_768,
-    mediaTypes: DSH_IMAGE_MEDIA_TYPES,
-  }
-  readonly assets: AssetAccessRepository
-  readonly assetService: AssetService
-  readonly requestImageRoot: string
-
-  constructor(
-    context: Context,
-    config: { assets: AssetAccessRepository; assetService: AssetService; requestImageRoot: string },
-  ) {
-    super(context)
-    this.assets = config.assets
-    this.assetService = config.assetService
-    this.requestImageRoot = config.requestImageRoot
-  }
-
-  async validateImage(input: SaveImageAttachment): Promise<void> {
-    const metadata = await sharp(input.data).metadata()
-    if (
-      !metadata.width ||
-      !metadata.height ||
-      metadata.width > this.imageLimits.maxImageDimension ||
-      metadata.height > this.imageLimits.maxImageDimension ||
-      metadata.width * metadata.height > this.imageLimits.maxImagePixels
-    ) {
-      throw new Error('Image dimensions are unavailable or exceed the configured limit.')
-    }
-  }
-
-  saveImage(): Promise<ImageAttachmentRef> {
-    return Promise.reject(new Error('NekroNxt images must enter through Asset Service before DSH projection.'))
-  }
-
-  async refForAsset(
-    asset: AssetRecord,
-    name?: string,
-    detail: 'low' | 'auto' | 'high' = 'auto',
-  ): Promise<ImageAttachmentRef> {
-    const mediaType = DshImageMediaTypeSchema.parse(asset.mediaType)
-    const metadata = await sharp(this.assetService.blobPath(asset)).metadata()
-    if (!metadata.width || !metadata.height) throw new Error(`Asset image dimensions are unavailable: ${asset.id}`)
-    return {
-      attachmentId: nekroImageAttachmentId(asset.id, effectiveImageDetail(detail)),
-      mediaType,
-      bytes: asset.byteSize,
-      width: metadata.width,
-      height: metadata.height,
-      ...(name === undefined ? {} : { name: path.basename(name) }),
-    }
-  }
-
-  async readImage(ref: ImageAttachmentRef, signal?: AbortSignal): Promise<StoredImageAttachment> {
-    signal?.throwIfAborted()
-    const decoded = parseNekroImageAttachmentId(ref.attachmentId)
-    if (!decoded) throw new Error(`Attachment ID is not a NekroNxt Asset reference: ${ref.attachmentId}`)
-    const asset = this.assets.getAssetById(decoded.assetId)
-    if (!asset) throw new Error(`Attachment Asset is unavailable: ${ref.attachmentId}`)
-    const data = new Uint8Array(await readFile(this.assetService.blobPath(asset), { signal }))
-    const digest = `sha256:${createHash('sha256').update(data).digest('hex')}`
-    if (digest !== asset.contentDigest || data.byteLength !== ref.bytes) {
-      throw new Error(`Attachment Asset failed integrity verification: ${asset.id}`)
-    }
-    return { ref, data }
-  }
-
-  override async readImageRequest(
-    ref: ImageAttachmentRef,
-    policy: ImageRequestPolicy,
-    signal?: AbortSignal,
-  ): Promise<RequestImageAttachment> {
-    const decoded = parseNekroImageAttachmentId(ref.attachmentId)
-    if (!decoded) throw new Error(`Attachment ID is not a NekroNxt Asset reference: ${ref.attachmentId}`)
-    const effectivePolicy =
-      decoded.detail === 'low' ? { ...policy, maxPixels: Math.min(policy.maxPixels, 512 * 512) } : policy
-    return readRequestImageFile(this.requestImageRoot, await this.readImage(ref, signal), effectivePolicy, signal)
-  }
-}
-
-const requireNekroAssetAttachmentStore = (store: AttachmentStore): NekroAssetAttachmentStore => {
-  if (!(store instanceof NekroAssetAttachmentStore)) {
-    throw new TypeError('NekroNxt image projection requires the Host Asset attachment store.')
-  }
-  return store
-}
 
 const ROOT_CHANNEL_MESSAGE_POLICY = `你正在通过 NekroNXT 参与一个真实频道互动。模型生成的普通 text 或 reasoning 只会作为内部运行轨迹保存，并仅在系统后台可见，频道成员完全看不到；只有成功调用 **send_channel_message**，内容才会成为频道中的用户可见发言，请在对话中根据人设给予频道用户积极及时的响应，例如在长工作流程中先调用 **send_channel_message** 说明要做什么，避免用户干等不知道你是否在工作！一次 send_channel_message 不会结束当前 Turn；发送后仍可继续使用其他工具和发送后续消息。send_message 只用于给可继续的子智能体安排后续工作，不会向频道发送内容。
 
@@ -2622,16 +1412,6 @@ export const nudgeChannelMemberTool = (episodeId: EpisodeId, communication: Agen
     },
   })
 
-type ProductChannelHistoryRepository = DshHostRuntimeOptions['history']
-
-const memberSummary = (
-  history: ProductChannelHistoryRepository,
-  memberId: NonNullable<ChannelEventRecord['senderMemberId']>,
-): { readonly memberId: string; readonly displayName?: string } => {
-  const displayName = history.getChannelMember(memberId)?.displayName
-  return { memberId, ...(displayName === undefined ? {} : { displayName }) }
-}
-
 const enrichedHistoryEntry = (
   history: ProductChannelHistoryRepository,
   entry: ReturnType<ProductChannelHistoryRepository['listChannelHistory']>[number],
@@ -2642,18 +1422,6 @@ const enrichedHistoryEntry = (
     : {}),
   mentions: entry.parts.flatMap((part) => (part.type === 'mention' ? [memberSummary(history, part.memberId)] : [])),
 })
-
-const historyEntrySenderDescription = (
-  history: ProductChannelHistoryRepository,
-  entry: ChannelHistoryEntry,
-): string => {
-  if (entry.source === 'outbound-intent') {
-    return isAdminConsoleOutbound(entry.sourceTurnId) ? '，管理员此前通过机器人账号发送' : '，本频道智能体此前发送'
-  }
-  if (entry.senderMemberId === undefined) return ''
-  const sender = memberSummary(history, entry.senderMemberId)
-  return `，发送成员：${sender.displayName ?? '未知成员'}（成员标识 ${sender.memberId}）`
-}
 
 const historyTools = (
   channelId: Parameters<ChannelHistoryRepository['listChannelHistory']>[0],
@@ -2785,26 +1553,6 @@ const DelegatedImageEvidenceSchema = z
   })
   .strict()
 
-const DirectImageInspectionValueSchema = z
-  .object({
-    mode: z.literal('direct'),
-    question: z.string().optional(),
-    detail: z.enum(['low', 'auto', 'high']),
-    effectiveDetail: z.enum(['low', 'auto']),
-    images: z.array(
-      z
-        .object({
-          index: z.number().int().nonnegative(),
-          assetId: AssetIdSchema,
-          status: z.enum(['injected', 'resident', 'detail-upgraded', 'duplicate']),
-          duplicateOf: z.number().int().nonnegative().optional(),
-          attachment: z.json().optional(),
-        })
-        .strict(),
-    ),
-  })
-  .strict()
-
 const DelegatedImageInspectionValueSchema = DelegatedImageEvidenceSchema.extend({
   mode: z.literal('delegated'),
   model: z
@@ -2830,65 +1578,6 @@ type ValidatedInspectionImage = {
   readonly attachment: ImageAttachmentRef
   readonly duplicateOf?: number
 }
-
-type EffectiveImageDetail = 'low' | 'auto'
-
-type ImageProjectionStats = {
-  imageCount: number
-  injectedCount: number
-  duplicateCount: number
-  skippedCount: number
-}
-
-const effectiveImageDetail = (detail: 'low' | 'auto' | 'high'): EffectiveImageDetail =>
-  detail === 'low' ? 'low' : 'auto'
-
-const imageDetailRank = (detail: EffectiveImageDetail): number => (detail === 'low' ? 0 : 1)
-
-const collectVisibleImageResidency = (
-  agent: Agent,
-  assets: Pick<AssetAccessRepository, 'getAssetById'>,
-  baselineDetail: 'low' | 'auto' | 'high' = 'auto',
-): Map<string, EffectiveImageDetail> => {
-  const residency = new Map<string, EffectiveImageDetail>()
-  const baseline = effectiveImageDetail(baselineDetail)
-  const visit = (blocks: readonly ContentBlock[]): void => {
-    for (const block of blocks) {
-      if (block.type === 'image') {
-        const parsed = parseNekroImageAttachmentId(block.attachment.attachmentId)
-        if (!parsed) continue
-        const asset = assets.getAssetById(parsed.assetId)
-        const detail = parsed.detail ?? baseline
-        if (asset && !residency.has(asset.contentDigest)) residency.set(asset.contentDigest, detail)
-      } else if (block.type === 'tool-result') visit(block.content)
-    }
-  }
-  for (const message of agent.session.deriveMessages()) visit(message.content)
-  for (const event of agent.session.events) {
-    if (
-      event.type !== 'nekro-nxt/image-inspection' ||
-      event.data.mode !== 'direct' ||
-      event.data.result === undefined
-    ) {
-      continue
-    }
-    const result = DirectImageInspectionValueSchema.safeParse(event.data.result)
-    if (!result.success) continue
-    for (const image of result.data.images) {
-      if (image.status !== 'injected' && image.status !== 'detail-upgraded') continue
-      const digest = event.data.contentDigests[image.index]
-      if (digest === undefined || !residency.has(digest)) continue
-      const current = residency.get(digest)!
-      if (imageDetailRank(result.data.effectiveDetail) > imageDetailRank(current)) {
-        residency.set(digest, result.data.effectiveDetail)
-      }
-    }
-  }
-  return residency
-}
-
-const collectVisibleImageDigests = (agent: Agent, assets: Pick<AssetAccessRepository, 'getAssetById'>): Set<string> =>
-  new Set(collectVisibleImageResidency(agent, assets).keys())
 
 class ImageInspectionError extends Error {
   constructor(
@@ -3378,93 +2067,27 @@ const resolveAgentWorkspace = (workspaceRoot: string, agentId: AgentRevisionReco
   return path.join(workspaceRoot, agentId)
 }
 
-type NekroCompactionResult = NonNullable<Awaited<ReturnType<BasicCompactionEngine['compactIfNeeded']>>>
-
-class NekroNxtCompactionEngine extends BasicCompactionEngine {
-  private visualRestoreDepth = 0
-  private visualRestoreHandler: ((result: NekroCompactionResult, agent: Agent) => Promise<void>) | undefined
-
-  setVisualRestore(handler: (result: NekroCompactionResult, agent: Agent) => Promise<void>): void {
-    this.visualRestoreHandler = handler
-  }
-
-  override async compactIfNeeded(
-    agent: Parameters<BasicCompactionEngine['compactIfNeeded']>[0],
-    trigger: Parameters<BasicCompactionEngine['compactIfNeeded']>[1],
-    signal: Parameters<BasicCompactionEngine['compactIfNeeded']>[2],
-  ): ReturnType<BasicCompactionEngine['compactIfNeeded']> {
-    return this.runWithVisualRestore(() => super.compactIfNeeded(agent, trigger, signal), agent)
-  }
-
-  override async compactNow(
-    agent: Parameters<BasicCompactionEngine['compactNow']>[0],
-    signal: Parameters<BasicCompactionEngine['compactNow']>[1],
-    sourceCommandId?: Parameters<BasicCompactionEngine['compactNow']>[2],
-  ): ReturnType<BasicCompactionEngine['compactNow']> {
-    return this.runWithVisualRestore(() => super.compactNow(agent, signal, sourceCommandId), agent)
-  }
-
-  override async compactRegion(
-    start: Parameters<BasicCompactionEngine['compactRegion']>[0],
-    end: Parameters<BasicCompactionEngine['compactRegion']>[1],
-    agent: Parameters<BasicCompactionEngine['compactRegion']>[2],
-    signal?: Parameters<BasicCompactionEngine['compactRegion']>[3],
-  ): ReturnType<BasicCompactionEngine['compactRegion']> {
-    const result = await this.runWithVisualRestore(() => super.compactRegion(start, end, agent, signal), agent)
-    if (!result) throw new Error('DSH compactRegion unexpectedly returned no result.')
-    return result
-  }
-
-  private async runWithVisualRestore<T extends NekroCompactionResult | null>(
-    operation: () => Promise<T>,
-    agent: Agent,
-  ): Promise<T> {
-    this.visualRestoreDepth += 1
-    try {
-      const result = await operation()
-      if (this.visualRestoreDepth === 1 && result && this.visualRestoreHandler) {
-        try {
-          await this.visualRestoreHandler(result, agent)
-        } catch {
-          // The DSH compaction has already committed. Visual restoration is a
-          // best-effort append and must never make that committed compaction
-          // appear to have rolled back.
-        }
-      }
-      return result
-    } finally {
-      this.visualRestoreDepth -= 1
-    }
-  }
-}
-
 /** Owns the minimal production DSH Host roster and adapts it to Channel Runtime. */
 export class DshHostRuntime implements AgentSessionDriver, ExtensionActivationHost {
   readonly #context: Context
   readonly #communication: AgentCommunicationPort
   readonly #history: ProductChannelHistoryRepository
+  readonly #imageContext: SessionImageContext
+  readonly #dynamic: DynamicAuthoringRuntime
   readonly #assets: AssetAccessRepository
   readonly #assetService: AssetService
   readonly #resolveAgentRevision: DshHostRuntimeOptions['resolveAgentRevision']
   readonly #resolveAdapterDisplayName: NonNullable<DshHostRuntimeOptions['resolveAdapterDisplayName']>
   readonly #developmentWorkspaceRoot: string | undefined
-  readonly #hasLlmSettings: boolean
-  readonly #handles = new Map<string, AgentHandle>()
-  readonly #imageInputSessions = new Set<string>()
-  readonly #dynamicSessions = new Map<
-    string,
-    { readonly context: Context; readonly runner: NekroNxtDynamicCordisRunner }
-  >()
-  readonly #productAgentBySession = new Map<string, AgentRevisionRecord['agentId']>()
-  readonly #channelBySession = new Map<string, ChannelId>()
-  readonly #episodeBySession = new Map<string, EpisodeId>()
-  readonly #revisionBySession = new Map<string, AgentRevisionRecord>()
-  readonly #persistentExtensions = new Map<string, PersistentExtensionRegistration>()
+  readonly #modelSettings: HostModelSettings
+  readonly #sessions = new SessionRegistry<{
+    readonly context: Context
+    readonly runner: NekroNxtDynamicCordisRunner
+  }>()
+  readonly #runtimeProjection: SessionRuntimeProjection
+  readonly #extensionMounts = new PersistentExtensionMounts(this.#sessions)
   readonly #dshPluginLifecycle: DshPluginLifecycleCoordinator | undefined
   readonly #authoring: DshHostRuntimeOptions['authoring']
-  readonly #authoringContinuationIds = new Set<string>()
-  readonly #authoringContinuationPending = new Map<string, Promise<void>>()
-  readonly #dynamicApprovalListeners = new Set<(event: DynamicApprovalRequestEvent) => void>()
   readonly #channelReplyGuard: ChannelReplyGuardController
   #disposed = false
 
@@ -3474,6 +2097,7 @@ export class DshHostRuntime implements AgentSessionDriver, ExtensionActivationHo
     channelReplyGuard: ChannelReplyGuardController,
   ) {
     this.#context = context
+    this.#runtimeProjection = new SessionRuntimeProjection(context, this.#sessions)
     this.#communication = options.communication
     this.#history = options.history
     this.#assets = options.assets
@@ -3481,9 +2105,11 @@ export class DshHostRuntime implements AgentSessionDriver, ExtensionActivationHo
     this.#resolveAgentRevision = options.resolveAgentRevision
     this.#resolveAdapterDisplayName = options.resolveAdapterDisplayName ?? (() => undefined)
     this.#developmentWorkspaceRoot = options.developmentWorkspaceRoot
-    this.#hasLlmSettings = options.llmSettingsPath !== undefined
+    this.#modelSettings = new HostModelSettings(context, options.llmSettingsPath !== undefined, options.providerRemoval)
+    this.#imageContext = new SessionImageContext(context, this.#sessions, options.history, options.assets)
     this.#authoring = options.authoring
     this.#channelReplyGuard = channelReplyGuard
+    this.#dynamic = new DynamicAuthoringRuntime(context, this.#sessions, options.authoring, () => this.#assertActive())
     this.#dshPluginLifecycle =
       options.dshPlugins === undefined
         ? undefined
@@ -3493,8 +2119,8 @@ export class DshHostRuntime implements AgentSessionDriver, ExtensionActivationHo
             isolateContext: isolatePrivateExtensionServices,
             resolveModule: options.dshPlugins.resolveModule,
             listAgentSessions: (agentId) =>
-              [...this.#handles.entries()]
-                .filter(([sessionId]) => this.#productAgentBySession.get(sessionId) === agentId)
+              [...this.#sessions.handles()]
+                .filter(([sessionId]) => this.#sessions.get(sessionId)?.revision.agentId === agentId)
                 .map(([sessionId, handle]) => ({
                   sessionId,
                   context: handle.agent.ctx,
@@ -3505,7 +2131,9 @@ export class DshHostRuntime implements AgentSessionDriver, ExtensionActivationHo
     if (!(compaction instanceof NekroNxtCompactionEngine)) {
       throw new Error('NekroNxt visual restoration requires its public DSH compaction wrapper.')
     }
-    compaction.setVisualRestore((result, agent) => this.#restoreVisualContext(agent, String(result.compactionId)))
+    compaction.setVisualRestore((result, agent) =>
+      this.#imageContext.restoreVisualContext(agent, String(result.compactionId)),
+    )
   }
 
   static async create(options: DshHostRuntimeOptions): Promise<DshHostRuntime> {
@@ -3600,236 +2228,33 @@ export class DshHostRuntime implements AgentSessionDriver, ExtensionActivationHo
       throw error
     }
   }
-
   registerLlmAdapter(providers: string[], adapter: LlmAdapter): () => void {
     this.#assertActive()
-    return this.#context.llm.registerAdapter(providers, adapter)
+    return this.#modelSettings.registerLlmAdapter(providers, adapter)
   }
 
-  /** Read the live DSH adapter registry; NekroNxt does not maintain a second provider catalog. */
-  async listAvailableLlmModels(): Promise<readonly AvailableLlmModel[]> {
+  listAvailableLlmModels(): Promise<readonly AvailableLlmModel[]> {
     this.#assertActive()
-    const groups = await Promise.all(
-      this.#context.llm.listProviders().map(async (provider) =>
-        (await this.#context.llm.listModels(provider.id)).map((model) => ({
-          provider: provider.id,
-          providerName: provider.name,
-          id: model.id,
-          name: model.name,
-          ...(model.description === undefined ? {} : { description: model.description }),
-          ...(model.inputModalities === undefined ? {} : { inputModalities: [...model.inputModalities] }),
-        })),
-      ),
-    )
-    return groups.flat()
+    return this.#modelSettings.listAvailableLlmModels()
   }
-
-  async getAgentImageDiagnostics(revision: AgentRevisionRecord): Promise<AgentImageDiagnostics> {
+  getAgentImageDiagnostics(revision: AgentRevisionRecord): Promise<AgentImageDiagnostics> {
     this.#assertActive()
-    const blockers: string[] = []
-    let route: AgentImageDiagnostics['route']
-    try {
-      const primary = await this.#context.llm.resolveModelInfo(revision.model.provider, revision.model.model)
-      if (primary.inputModalities?.includes('image')) {
-        route = { mode: 'direct', provider: revision.model.provider, model: revision.model.model }
-      } else if (revision.imagePolicy.textModel.mode === 'auxiliary') {
-        const selection = revision.imagePolicy.textModel.model
-        try {
-          const auxiliary = await this.#context.llm.resolveModelInfo(selection.provider, selection.model)
-          if (auxiliary.inputModalities?.includes('image')) {
-            route = { mode: 'delegated', provider: selection.provider, model: selection.model }
-          } else {
-            route = { mode: 'unavailable' }
-            blockers.push('配置的辅助视觉模型没有明确声明支持图片输入。')
-          }
-        } catch {
-          route = { mode: 'unavailable' }
-          blockers.push('配置的辅助视觉模型当前不可用。')
-        }
-      } else {
-        route = { mode: 'unavailable' }
-        blockers.push(
-          primary.inputModalities === undefined
-            ? '主模型没有声明图片输入能力，且未配置辅助视觉模型。'
-            : '主模型仅支持文本，且未配置辅助视觉模型。',
-        )
-      }
-    } catch {
-      route = { mode: 'unavailable' }
-      blockers.push('主模型当前不可用，无法建立图片理解路由。')
-    }
-
-    const sessions = [...this.#productAgentBySession.entries()]
-      .filter(([, agentId]) => agentId === revision.agentId)
-      .flatMap(([sessionId]) => {
-        const agent = this.#context.agents.get(SessionId(sessionId))
-        return agent === undefined ? [] : [agent]
-      })
-    let residentImages = 0
-    let duplicateImagesSkipped = 0
-    let latestInspection:
-      { readonly time: number; readonly data: SessionEvent<'nekro-nxt/image-inspection'>['data'] } | undefined
-    let latestRestoration:
-      { readonly time: number; readonly data: SessionEvent<'nekro-nxt/image-restoration'>['data'] } | undefined
-    for (const agent of sessions) {
-      residentImages += collectVisibleImageResidency(agent, this.#assets, revision.imagePolicy.history.detail).size
-      for (const event of agent.session.events) {
-        if (event.type === 'nekro-nxt/image-admission') {
-          duplicateImagesSkipped += event.data.duplicateCount
-        } else if (event.type === 'nekro-nxt/image-inspection') {
-          if (latestInspection === undefined || event.time > latestInspection.time) {
-            latestInspection = { time: event.time, data: event.data }
-          }
-        } else if (event.type === 'nekro-nxt/image-restoration') {
-          if (latestRestoration === undefined || event.time > latestRestoration.time) {
-            latestRestoration = { time: event.time, data: event.data }
-          }
-        }
-      }
-    }
-    return {
-      route,
-      activeSessions: sessions.length,
-      residentImages,
-      duplicateImagesSkipped,
-      ...(latestInspection === undefined
-        ? {}
-        : {
-            lastInspection: {
-              mode: latestInspection.data.mode,
-              imageCount: latestInspection.data.assetIds.length,
-              ...(latestInspection.data.provider === undefined ? {} : { provider: latestInspection.data.provider }),
-              ...(latestInspection.data.model === undefined ? {} : { model: latestInspection.data.model }),
-              cacheHit: latestInspection.data.cacheHit,
-              ...(latestInspection.data.usage === undefined ? {} : { usage: latestInspection.data.usage }),
-              ...(latestInspection.data.errorCode === undefined ? {} : { errorCode: latestInspection.data.errorCode }),
-            },
-          }),
-      ...(latestRestoration === undefined
-        ? {}
-        : {
-            lastRestoration: {
-              compactionId: latestRestoration.data.compactionId,
-              candidateCount: latestRestoration.data.candidateCount,
-              restoredCount: latestRestoration.data.restoredAssetIds.length,
-              skippedCount: latestRestoration.data.skippedAssetIds.length,
-              ...(latestRestoration.data.error === undefined ? {} : { error: latestRestoration.data.error }),
-            },
-          }),
-      blockers,
-    }
+    return this.#imageContext.getAgentImageDiagnostics(revision)
   }
 
-  /** Project DSH's configurable-provider directory and redacted settings/credential facts. */
-  async getLlmProviderSettings(): Promise<LlmProviderSettingsView> {
+  getLlmProviderSettings(): Promise<LlmProviderSettingsView> {
     this.#assertActive()
-    if (!this.#hasLlmSettings) throw new Error('DSH 模型设置服务未启用。')
-    const descriptors = new Map(
-      this.#context.settings.describe({ redactSecrets: true }).map((descriptor) => [descriptor.ns, descriptor]),
-    )
-    const active = new Map(this.#context.llm.listProviders().map((provider) => [provider.id, provider]))
-    const providers = await Promise.all(
-      this.#context.llm.listConfigurableProviders().map(async (entry): Promise<ConfigurableLlmProviderView> => {
-        const descriptor = descriptors.get(settingsNamespace(entry.settingsNs))
-        if (!descriptor) throw new Error(`DSH 模型设置 namespace 未注册：${entry.settingsNs}`)
-        const rawProfile = readObjectPath(descriptor.value, entry.settingsPath)
-        const profile = rawProfile === undefined ? undefined : LlmProviderProfileSchema.parse(rawProfile)
-        const configured = rawProfile !== undefined
-        const apiKeyEnv = typeof profile?.apiKeyEnv === 'string' ? profile.apiKeyEnv : undefined
-        const credential =
-          apiKeyEnv === undefined ? undefined : await this.#context.credentials.describe(credentialRef(apiKeyEnv))
-        const configuredModels = Array.isArray(profile?.models)
-          ? profile.models.flatMap((candidate) => {
-              const result = ConfiguredLlmModelSchema.safeParse(candidate)
-              if (!result.success) return []
-              const model = result.data
-              return [
-                {
-                  id: model.id,
-                  name: model.name ?? model.id,
-                  ...(model.contextWindow === undefined ? {} : { contextWindow: model.contextWindow }),
-                  ...(model.maxTokens === undefined ? {} : { maxTokens: model.maxTokens }),
-                },
-              ]
-            })
-          : []
-        const liveModels = active.has(entry.provider)
-          ? (await this.#context.llm.listModels(entry.provider)).map((model) => ({ id: model.id, name: model.name }))
-          : []
-        return {
-          provider: entry.provider,
-          displayName: entry.displayName,
-          settingsNs: entry.settingsNs,
-          settingsPath: [...entry.settingsPath],
-          settingsRevision: descriptor.revision,
-          declared: entry.declared === true,
-          active: active.has(entry.provider),
-          configured,
-          ...(typeof profile?.baseURL === 'string' ? { baseURL: profile.baseURL } : {}),
-          ...(typeof profile?.api === 'string' ? { api: profile.api } : {}),
-          ...(credential === undefined
-            ? {}
-            : {
-                credential: {
-                  configured: credential.configured,
-                  writable: credential.writable,
-                  ...(credential.source === undefined ? {} : { source: credential.source }),
-                },
-              }),
-          models: configuredModels.length > 0 ? configuredModels : liveModels,
-        }
-      }),
-    )
-    return { writable: this.#context.settings.writable, protocols: [...LlmPiAi.supportedProtocols()], providers }
+    return this.#modelSettings.getLlmProviderSettings()
   }
 
-  /** Project Web Provider readiness through the same DSH settings/credentials seams used at execution time. */
-  async getWebSearchCapabilityStatus(): Promise<WebSearchCapabilityStatus> {
+  getWebSearchCapabilityStatus(): Promise<WebSearchCapabilityStatus> {
     this.#assertActive()
-    const fallback: WebSearchCapabilityStatus = {
-      provider: 'deepseek-official',
-      available: false,
-      credentialConfigured: false,
-      credentialReference: 'DEEPSEEK_API_KEY',
-      maxUsesPerCall: 2,
-      maxResultsPerCall: 5,
-      timeoutMs: 60_000,
-    }
-    if (!this.#hasLlmSettings) return fallback
-    const descriptor = this.#context.settings
-      .describe({ redactSecrets: true })
-      .find((candidate) => candidate.ns === settingsNamespace('web-search-deepseek'))
-    const valuesResult = WebSearchSettingsSchema.safeParse(descriptor?.value)
-    const values = valuesResult.success ? valuesResult.data : undefined
-    const credentialReference = typeof values?.apiKeyEnv === 'string' ? values.apiKeyEnv : fallback.credentialReference
-    const credential = await this.#context.credentials.describe(credentialRef(credentialReference))
-    const inlineSecretConfigured =
-      descriptor?.secrets?.some((secret) => secret.set && secret.path.length === 1 && secret.path[0] === 'apiKey') ===
-      true
-    const credentialConfigured = credential.configured || inlineSecretConfigured
-    return { ...fallback, available: credentialConfigured, credentialConfigured, credentialReference }
+    return this.#modelSettings.getWebSearchCapabilityStatus()
   }
 
-  /** Project the fixed product-visible DSH package roster without inventing a compatibility rating. */
   listDshPlugins(): readonly DshPluginCatalogEntry[] {
     this.#assertActive()
-    const liveNamespaces = new Set(
-      this.#hasLlmSettings
-        ? this.#context.settings
-            .describe({ redactSecrets: true })
-            .filter((descriptor) => isDshSettingsSchemaWireSafe(descriptor.schema))
-            .map((descriptor) => String(descriptor.ns))
-        : [],
-    )
-    return DSH_BUILTIN_EXTENSION_ROSTER.map((entry) => {
-      const expectedNamespaces = entry.settingsNamespaces ?? []
-      return {
-        packageName: entry.packageName,
-        packageVersion: HOST_DSH_PACKAGE_VERSIONS[entry.packageName],
-        origin: 'builtin',
-        settingsNamespaces: expectedNamespaces.filter((ns) => liveNamespaces.has(ns)),
-      }
-    })
+    return this.#modelSettings.listDshPlugins()
   }
 
   activateInstalledDshPlugin(
@@ -3857,147 +2282,61 @@ export class DshHostRuntime implements AgentSessionDriver, ExtensionActivationHo
     if (!this.#dshPluginLifecycle) return Promise.reject(new Error('DSH 用户插件生命周期未配置。'))
     return this.#dshPluginLifecycle.disablePackage(packageId)
   }
-
-  /** Return every live DSH Settings namespace without exposing secret values. */
   listDshSettings(): readonly DshSettingsNamespaceView[] {
     this.#assertActive()
-    if (!this.#hasLlmSettings) return []
-    return this.#context.settings
-      .describe({ redactSecrets: true })
-      .filter((descriptor) => isDshSettingsSchemaWireSafe(descriptor.schema))
-      .map((descriptor) => this.#projectDshSettingsDescriptor(descriptor))
+    return this.#modelSettings.listDshSettings()
   }
 
-  async mutateDshSettings(
+  mutateDshSettings(
     ns: string,
     expectedRevision: number,
     ops: readonly DshSettingsPathOperation[],
   ): Promise<DshSettingsNamespaceView> {
     this.#assertActive()
-    if (!this.#hasLlmSettings) throw new Error('DSH 设置服务未启用。')
-    const branded = settingsNamespace(ns)
-    const before = this.#context.settings
-      .describe({ redactSecrets: true })
-      .find((candidate) => candidate.ns === branded)
-    if (!before) throw new Error(`DSH Settings namespace 不存在：${ns}`)
-    if (!isDshSettingsSchemaWireSafe(before.schema)) {
-      throw new Error(`DSH Settings namespace 含有 0.1.1-rc.2 无法安全脱敏的 Schema：${ns}`)
-    }
-    await this.#context.settings.mutate(branded, ops, expectedRevision)
-    const descriptor = this.#context.settings
-      .describe({ redactSecrets: true })
-      .find((candidate) => candidate.ns === branded)
-    if (!descriptor) throw new Error(`DSH Settings namespace 在保存后已卸载：${ns}`)
-    return this.#projectDshSettingsDescriptor(descriptor)
+    return this.#modelSettings.mutateDshSettings(ns, expectedRevision, ops)
   }
 
-  async describeDshCredentials(refs: readonly string[]): Promise<Readonly<Record<string, DshCredentialView>>> {
+  describeDshCredentials(refs: readonly string[]): Promise<Readonly<Record<string, DshCredentialView>>> {
     this.#assertActive()
-    if (!this.#hasLlmSettings) return {}
-    return Object.fromEntries(
-      await Promise.all(
-        refs.map(async (ref) => {
-          const info = await this.#context.credentials.describe(credentialRef(ref))
-          return [ref, info] as const
-        }),
-      ),
-    )
+    return this.#modelSettings.describeDshCredentials(refs)
   }
 
-  async setDshCredential(ref: string, value: string): Promise<DshCredentialView> {
+  setDshCredential(ref: string, value: string): Promise<DshCredentialView> {
     this.#assertActive()
-    if (!this.#hasLlmSettings) throw new Error('DSH 凭据服务未启用。')
-    const branded = credentialRef(ref)
-    await this.#context.credentials.set(branded, value)
-    return await this.#context.credentials.describe(branded)
+    return this.#modelSettings.setDshCredential(ref, value)
   }
 
-  async unsetDshCredential(ref: string): Promise<DshCredentialView> {
+  unsetDshCredential(ref: string): Promise<DshCredentialView> {
     this.#assertActive()
-    if (!this.#hasLlmSettings) throw new Error('DSH 凭据服务未启用。')
-    const branded = credentialRef(ref)
-    await this.#context.credentials.unset(branded)
-    return await this.#context.credentials.describe(branded)
+    return this.#modelSettings.unsetDshCredential(ref)
   }
 
   onDshSettingsChanged(listener: (ns: string, revision: number) => void): () => void {
     this.#assertActive()
-    return this.#context.on('settings/document-updated', (ns, revision) => {
-      listener(String(ns), revision)
-    })
+    return this.#modelSettings.onDshSettingsChanged(listener)
   }
 
   onDshCredentialChanged(listener: (ref: string) => void): () => void {
     this.#assertActive()
-    return this.#context.on('credentials/reference-updated', (ref) => {
-      listener(String(ref))
-    })
+    return this.#modelSettings.onDshCredentialChanged(listener)
   }
 
-  #projectDshSettingsDescriptor(
-    descriptor: ReturnType<Context['settings']['describe']>[number],
-  ): DshSettingsNamespaceView {
-    const ns = String(descriptor.ns)
-    const owner = DSH_SETTINGS_OWNER.get(ns)
-    return {
-      ns,
-      schema: descriptor.schema,
-      resolved: descriptor.value,
-      ...(descriptor.base === undefined ? {} : { base: descriptor.base }),
-      ...(descriptor.user === undefined ? {} : { user: descriptor.user }),
-      applies: descriptor.applies,
-      secrets: (descriptor.secrets ?? []).map((secret) => ({ path: [...secret.path], set: secret.set })),
-      revision: descriptor.revision,
-      writable: this.#context.settings.writable,
-      ...(owner === undefined
-        ? {}
-        : { owner: { packageName: owner, packageVersion: HOST_DSH_PACKAGE_VERSIONS[owner] } }),
-    }
-  }
-
-  /** Persist one DSH provider profile, then store a supplied key through the write-only credential seam. */
-  async saveLlmProvider(input: SaveLlmProviderInput): Promise<LlmProviderSettingsView> {
+  getLlmProviderRemovalImpact(provider: string): Promise<RemovalImpact> {
     this.#assertActive()
-    if (!this.#hasLlmSettings) throw new Error('DSH 模型设置服务未启用。')
-    if (!/^[a-z][a-z0-9-]*$/u.test(input.provider)) throw new Error('Provider ID 必须以小写字母开头。')
-    const directory = this.#context.llm.listConfigurableProviders()
-    const entry = directory.find((candidate) => candidate.provider === input.provider)
-    const settingsNs = entry?.settingsNs ?? 'llm-pi-ai'
-    const settingsPath = entry?.settingsPath ?? ['providers', input.provider]
-    const descriptor = this.#context.settings
-      .describe({ redactSecrets: true })
-      .find((candidate) => candidate.ns === settingsNamespace(settingsNs))
-    if (!descriptor) throw new Error(`DSH 模型设置 namespace 未注册：${settingsNs}`)
-    const rawCurrent = readObjectPath(descriptor.value, settingsPath)
-    const current = rawCurrent === undefined ? undefined : LlmProviderProfileSchema.parse(rawCurrent)
-    const credentialRefName =
-      typeof current?.apiKeyEnv === 'string' ? current.apiKeyEnv : credentialReferenceForProvider(input.provider)
-    const fields: Record<string, unknown> = {}
-    if (input.displayName !== undefined) fields['displayName'] = input.displayName
-    if (input.baseURL !== undefined) fields['baseURL'] = input.baseURL
-    if (input.api !== undefined) fields['api'] = input.api
-    if (input.models !== undefined) fields['models'] = input.models.map((model) => ({ ...model }))
-    if (input.apiKey !== undefined || typeof current?.apiKeyEnv === 'string') fields['apiKeyEnv'] = credentialRefName
-    if (entry === undefined) {
-      if (!input.displayName || !input.baseURL || !input.api || !input.models?.length) {
-        throw new Error('自定义供应商需要名称、API 地址、协议和至少一个模型。')
-      }
-    }
-    const ops: SettingsPathOp[] =
-      current === undefined
-        ? [{ op: 'set', path: settingsPath, value: fields }]
-        : Object.entries(fields).map(([key, value]) => ({ op: 'set' as const, path: [...settingsPath, key], value }))
-    if (ops.length === 0 && current === undefined) ops.push({ op: 'set', path: settingsPath, value: {} })
-    if (ops.length > 0) {
-      await this.#context.settings.mutate(settingsNamespace(settingsNs), ops, input.expectedRevision)
-    }
-    if (input.apiKey !== undefined) {
-      await this.#context.credentials.set(credentialRef(credentialRefName), input.apiKey)
-    }
-    return this.getLlmProviderSettings()
+    return this.#modelSettings.getLlmProviderRemovalImpact(provider)
   }
 
-  async discoverLlmProviderModels(input: {
+  removeLlmProvider(provider: string, expectedRevision: number): Promise<LlmProviderSettingsView> {
+    this.#assertActive()
+    return this.#modelSettings.removeLlmProvider(provider, expectedRevision)
+  }
+
+  saveLlmProvider(input: SaveLlmProviderInput): Promise<LlmProviderSettingsView> {
+    this.#assertActive()
+    return this.#modelSettings.saveLlmProvider(input)
+  }
+
+  discoverLlmProviderModels(input: {
     readonly provider?: string
     readonly settingsNs?: string
     readonly baseURL?: string
@@ -4012,93 +2351,12 @@ export class DshHostRuntime implements AgentSessionDriver, ExtensionActivationHo
     }[]
   > {
     this.#assertActive()
-    const settingsNs =
-      input.settingsNs ??
-      this.#context.llm.listConfigurableProviders().find((entry) => entry.provider === input.provider)?.settingsNs ??
-      'llm-pi-ai'
-    return this.#context.llm.discoverModels(settingsNs, input)
+    return this.#modelSettings.discoverLlmProviderModels(input)
   }
 
-  /** Make one minimal provider request from either the live registry or an isolated page-draft adapter. */
-  async testLlmProvider(input: TestLlmProviderInput): Promise<{ readonly provider: string; readonly model: string }> {
+  testLlmProvider(input: TestLlmProviderInput): Promise<{ readonly provider: string; readonly model: string }> {
     this.#assertActive()
-    const hasDraft =
-      input.settingsNs !== undefined ||
-      input.apiKey !== undefined ||
-      input.baseURL !== undefined ||
-      input.api !== undefined ||
-      input.models !== undefined
-    if (!hasDraft) {
-      await this.#runLlmConnectionProbe(this.#context.llm, input.provider, input.model)
-      return { provider: input.provider, model: input.model }
-    }
-    if (!this.#hasLlmSettings) throw new Error('DSH 模型设置服务未启用。')
-    const directoryEntry = this.#context.llm
-      .listConfigurableProviders()
-      .find((candidate) => candidate.provider === input.provider)
-    const settingsNs = input.settingsNs ?? directoryEntry?.settingsNs ?? 'llm-pi-ai'
-    if (settingsNs !== 'llm-pi-ai') throw new Error(`当前不支持测试此模型适配器：${settingsNs}`)
-    const descriptor = this.#context.settings
-      .describe({ redactSecrets: true })
-      .find((candidate) => candidate.ns === settingsNamespace(settingsNs))
-    if (!descriptor) throw new Error(`DSH 模型设置 namespace 未注册：${settingsNs}`)
-    const settingsPath = directoryEntry?.settingsPath ?? ['providers', input.provider]
-    const rawCurrent = readObjectPath(descriptor.value, settingsPath)
-    const current = rawCurrent === undefined ? {} : LlmProviderProfileSchema.parse(rawCurrent)
-    const profile: Record<string, unknown> = { ...current }
-    if (input.baseURL !== undefined) profile['baseURL'] = input.baseURL
-    if (input.api !== undefined) profile['api'] = input.api
-    if (input.models !== undefined) profile['models'] = input.models.map((model) => ({ ...model }))
-
-    const storedRef = typeof current['apiKeyEnv'] === 'string' ? current['apiKeyEnv'] : undefined
-    const storedApiKey =
-      input.apiKey === undefined && storedRef !== undefined
-        ? (await this.#context.credentials.resolve(credentialRef(storedRef)))?.value
-        : undefined
-    const draftApiKey = input.apiKey ?? storedApiKey
-    if (input.apiKey !== undefined || storedRef !== undefined) profile['apiKeyEnv'] = DRAFT_LLM_CREDENTIAL_REF
-
-    const draftContext = new Context()
-    try {
-      await draftContext.plugin(DraftLlmCredentialProvider, {
-        ...(draftApiKey === undefined ? {} : { apiKey: draftApiKey }),
-      })
-      await draftContext.plugin(LlmRuntime)
-      await draftContext.plugin(LlmPiAi, {
-        // The saved section was already validated by DSH; this isolated plugin validates the merged draft again.
-        providers: { [input.provider]: profile },
-      })
-      await this.#runLlmConnectionProbe(draftContext.llm, input.provider, input.model)
-    } catch (cause) {
-      const message = cause instanceof Error ? cause.message : String(cause)
-      if (draftApiKey && message.includes(draftApiKey)) throw new Error('模型供应商连接测试失败。')
-      throw cause
-    } finally {
-      await draftContext.fiber.dispose()
-    }
-    return { provider: input.provider, model: input.model }
-  }
-
-  async #runLlmConnectionProbe(llm: Pick<LlmRuntime, 'stream'>, provider: string, model: string): Promise<void> {
-    let finished = false
-    for await (const chunk of llm.stream({
-      provider,
-      model,
-      system: '这是一次连接测试。请只回复 OK。',
-      messages: [createUserMessage({ content: [{ type: 'text', text: 'OK' }], source: { kind: 'user' } })],
-      maxTokens: 16,
-    })) {
-      if (chunk.type !== 'finish') continue
-      finished = true
-      if (chunk.reason.kind === 'error' || chunk.reason.kind === 'aborted') {
-        const code = chunk.reason.failure.code
-        if (code === 'AUTH' || code === 'MISSING_CREDENTIAL') throw new Error('认证失败，请更新 API 密钥。')
-        if (code === 'QUOTA') throw new Error('供应商额度不足或订阅限制。')
-        if (code === 'RATE_LIMIT') throw new Error('供应商限流，请稍后再试。')
-        throw new Error(`模型请求失败（${code}）：${chunk.reason.failure.message}`)
-      }
-    }
-    if (!finished) throw new Error('供应商没有返回完整结果。')
+    return this.#modelSettings.testLlmProvider(input)
   }
 
   async createSession(input: Parameters<AgentSessionDriver['createSession']>[0]): Promise<string> {
@@ -4158,16 +2416,13 @@ export class DshHostRuntime implements AgentSessionDriver, ExtensionActivationHo
     }> = []
     const setup = async (agentContext: Context): Promise<void> => {
       agentContext.effect(() => {
-        this.#productAgentBySession.set(sessionId, revision.agentId)
-        this.#channelBySession.set(sessionId, input.channelId)
-        this.#episodeBySession.set(sessionId, input.episodeId)
-        this.#revisionBySession.set(sessionId, revision)
-        return () => {
-          this.#productAgentBySession.delete(sessionId)
-          this.#channelBySession.delete(sessionId)
-          this.#episodeBySession.delete(sessionId)
-          this.#revisionBySession.delete(sessionId)
-        }
+        const record = this.#sessions.register({
+          sessionId,
+          revision,
+          channelId: input.channelId,
+          episodeId: input.episodeId,
+        })
+        return () => this.#sessions.remove(sessionId, record)
       }, 'nekro-nxt: product Agent ownership')
       const compiledPersona = compilePersonaDocument({
         document: revision.personaDocument,
@@ -4264,7 +2519,7 @@ export class DshHostRuntime implements AgentSessionDriver, ExtensionActivationHo
         }
         runner.bindEpisode(input.episodeId)
         const resolveOwner = (caller: Agent): Agent =>
-          this.#resolveDynamicAuthoringOwner({
+          this.#dynamic.resolveDynamicAuthoringOwner({
             caller,
             rootSessionId: sessionId,
             runner,
@@ -4301,13 +2556,13 @@ export class DshHostRuntime implements AgentSessionDriver, ExtensionActivationHo
             run: async (pluginId, packageId) => {
               const row = runner.inventory().find((candidate) => candidate.pluginId === pluginId)
               if (row) {
-                this.#syncAuthoringRow(input.episodeId, row, packageId)
+                this.#dynamic.syncAuthoringRow(input.episodeId, row, packageId)
                 if (row.latestRun?.status === 'running' && row.latestRun.client.status === 'absent') {
-                  await this.#completeAuthoringVerification(sessionId, pluginId, packageId)
+                  await this.#dynamic.completeAuthoringVerification(sessionId, pluginId, packageId)
                   const verifiedRow = runner.inventory().find((candidate) => candidate.pluginId === pluginId)
-                  if (verifiedRow) this.#queueAuthoringContinuation(input.episodeId, verifiedRow)
+                  if (verifiedRow) this.#dynamic.queueAuthoringContinuation(input.episodeId, verifiedRow)
                 } else if (row.latestRun?.status === 'failed' || row.latestRun?.status === 'cancelled') {
-                  this.#queueAuthoringContinuation(input.episodeId, row)
+                  this.#dynamic.queueAuthoringContinuation(input.episodeId, row)
                 }
               }
             },
@@ -4353,13 +2608,7 @@ export class DshHostRuntime implements AgentSessionDriver, ExtensionActivationHo
                 name: request.name,
                 purpose: request.purpose,
               }
-              for (const listener of this.#dynamicApprovalListeners) {
-                try {
-                  listener(event)
-                } catch {
-                  // Product observers cannot interrupt the DSH approval round trip.
-                }
-              }
+              this.#dynamic.publishApproval(event)
             }),
           'nekro-nxt: dynamic approval projection',
         )
@@ -4381,13 +2630,14 @@ export class DshHostRuntime implements AgentSessionDriver, ExtensionActivationHo
         await dynamicContext.plugin(CordisTool)
         agentContext.tools.register(nekroNxtExtensionDefineTool(runner, sessionId))
         dynamicContext.effect(() => {
-          if (this.#dynamicSessions.has(sessionId)) {
+          if (this.#sessions.get(sessionId)?.dynamic !== undefined) {
             throw new Error(`Dynamic creation is already mounted for DSH Session: ${sessionId}`)
           }
           const owned = { context: dynamicContext, runner }
-          this.#dynamicSessions.set(sessionId, owned)
+          this.#sessions.require(sessionId).dynamic = owned
           return () => {
-            if (this.#dynamicSessions.get(sessionId) === owned) this.#dynamicSessions.delete(sessionId)
+            const record = this.#sessions.get(sessionId)
+            if (record?.dynamic === owned) delete record.dynamic
           }
         }, 'nekro-nxt: dynamic session ownership')
       }
@@ -4395,7 +2645,7 @@ export class DshHostRuntime implements AgentSessionDriver, ExtensionActivationHo
       await mountWebCapabilities(agentContext, revision)
       await mountDevelopmentCapabilities(agentContext, revision, developmentWorkspace)
       await this.#dshPluginLifecycle?.mountAgentSession(revision.agentId, sessionId, agentContext)
-      await this.#mountPersistentExtensionsIntoSession(revision.agentId, sessionId, agentContext)
+      await this.#extensionMounts.mountIntoSession(revision.agentId, sessionId, agentContext)
     }
     const persisted = (await this.#context.sessionPersistence.list()).some(({ id }) => id === sessionId)
     const handle = persisted
@@ -4410,7 +2660,7 @@ export class DshHostRuntime implements AgentSessionDriver, ExtensionActivationHo
           agentOptions: { provider: revision.model.provider, model: revision.model.model },
           setup,
         })
-    this.#handles.set(sessionId, handle)
+    this.#sessions.require(sessionId).handle = handle
     for (const recovered of recoveredAuthoringPackages) {
       if (!recovered.shouldRun) continue
       const run = this.runDynamicPackage(sessionId, recovered.pluginId, recovered.packageId, 'run')
@@ -4422,8 +2672,8 @@ export class DshHostRuntime implements AgentSessionDriver, ExtensionActivationHo
         })
       }
     }
-    if (supportsImage) this.#imageInputSessions.add(sessionId)
-    await this.#restoreLatestPendingVisualContext(handle.agent)
+    if (supportsImage) this.#sessions.require(sessionId).imageInput = true
+    await this.#imageContext.restoreLatestPendingVisualContext(handle.agent)
     const hasHandoffMessage =
       input.handoff !== undefined &&
       (handle.agent.session.events.some(
@@ -4471,7 +2721,7 @@ export class DshHostRuntime implements AgentSessionDriver, ExtensionActivationHo
               return [
                 ...blocks,
                 { type: 'text', text: `[原文 ${event.logicalMessageId}]` },
-                ...(await this.#projectEvent(sessionId, event, handoffImageDigests)),
+                ...(await this.#imageContext.projectEvent(sessionId, event, handoffImageDigests)),
               ]
             }, Promise.resolve([]))),
           ],
@@ -4507,7 +2757,9 @@ export class DshHostRuntime implements AgentSessionDriver, ExtensionActivationHo
     }
     const projectedEvents: ContentBlock[] = []
     for (const event of input.events) {
-      projectedEvents.push(...(await this.#projectEvent(sessionId, event, admissionImageDigests, imageStats)))
+      projectedEvents.push(
+        ...(await this.#imageContext.projectEvent(sessionId, event, admissionImageDigests, imageStats)),
+      )
     }
     const message = freezeMessage({
       id: dshMessageId,
@@ -4522,7 +2774,7 @@ export class DshHostRuntime implements AgentSessionDriver, ExtensionActivationHo
     this.#channelReplyGuard.rememberAdmission(agent, input.admissionId, input.replyRequired)
     if (input.mode === 'inject') agent.inject(message)
     else {
-      this.#dynamicSessions.get(input.dshSessionId)?.runner.beginOrdinaryTurn()
+      this.#sessions.get(input.dshSessionId)?.dynamic?.runner.beginOrdinaryTurn()
       agent.followup(message)
     }
     if (imageStats.imageCount > 0 || imageStats.skippedCount > 0) {
@@ -4553,7 +2805,9 @@ export class DshHostRuntime implements AgentSessionDriver, ExtensionActivationHo
     ]
     const seen = collectVisibleImageDigests(agent, this.#assets)
     const stats: ImageProjectionStats = { imageCount: 0, injectedCount: 0, duplicateCount: 0, skippedCount: 0 }
-    content.push(...(await this.#projectMessageParts(sessionId, input.channelId, input.parts, seen, stats)))
+    content.push(
+      ...(await this.#imageContext.projectMessageParts(sessionId, input.channelId, input.parts, seen, stats)),
+    )
     agent.inject(
       freezeMessage({
         id: MessageId(`nxt-console-${input.logicalMessageId}`),
@@ -4696,7 +2950,7 @@ export class DshHostRuntime implements AgentSessionDriver, ExtensionActivationHo
   async cancelSession(dshSessionId: string, reason: EpisodeCloseReason): Promise<void> {
     this.#assertActive()
     const sessionId = SessionId(dshSessionId)
-    const handle = this.#handles.get(sessionId)
+    const handle = this.#sessions.get(sessionId)?.handle
     if (!handle) throw new Error(`DSH Agent Session is not owned by this Host: ${dshSessionId}`)
     let drainError: unknown
     try {
@@ -4711,12 +2965,7 @@ export class DshHostRuntime implements AgentSessionDriver, ExtensionActivationHo
     } catch (error) {
       disposeError = error
     } finally {
-      this.#handles.delete(sessionId)
-      this.#imageInputSessions.delete(sessionId)
-      this.#dynamicSessions.delete(sessionId)
-      this.#productAgentBySession.delete(sessionId)
-      this.#channelBySession.delete(sessionId)
-      this.#episodeBySession.delete(sessionId)
+      this.#sessions.remove(sessionId)
     }
     if (drainError !== undefined && disposeError !== undefined) {
       throw new AggregateError([drainError, disposeError], `DSH Session teardown failed: ${dshSessionId}`)
@@ -4741,119 +2990,35 @@ export class DshHostRuntime implements AgentSessionDriver, ExtensionActivationHo
     if (!agent) throw new Error(`DSH Agent Session is not live: ${dshSessionId}`)
     await agent.whenIdle()
   }
-
-  async whenAuthoringSettled(dshSessionId: string): Promise<void> {
-    const agent = this.#context.agents.get(SessionId(dshSessionId))
-    if (!agent) throw new Error(`DSH Agent Session is not live: ${dshSessionId}`)
-    const continuationPrefix = `${agent.id}:`
-    for (let round = 0; round < 16; round += 1) {
-      const pending = [...this.#authoringContinuationPending]
-        .filter(([continuationId]) => continuationId.startsWith(continuationPrefix))
-        .map(([, continuation]) => continuation)
-      await Promise.all(pending)
-      await agent.whenIdle()
-      await Promise.resolve()
-      const hasPending = [...this.#authoringContinuationPending.keys()].some((continuationId) =>
-        continuationId.startsWith(continuationPrefix),
-      )
-      if (!hasPending && agent.status !== 'running') return
-    }
-    throw new Error('智能体扩展开发收尾没有静止，暂时不能保存候选。')
+  whenAuthoringSettled(dshSessionId: string): Promise<void> {
+    return this.#dynamic.whenAuthoringSettled(dshSessionId)
   }
 
-  /** Aggregate the public DSH status of every live Session owned by one product intelligent-agent. */
   runtimeStatus(agentId: AgentRevisionRecord['agentId']): AgentStatus {
     this.#assertActive()
-    for (const [sessionId, ownedAgentId] of this.#productAgentBySession) {
-      if (ownedAgentId === agentId && this.#context.agents.get(SessionId(sessionId))?.status === 'running') {
-        return 'running'
-      }
-    }
-    return 'idle'
+    return this.#runtimeProjection.runtimeStatus(agentId)
   }
 
-  /** Notify the product projection when DSH enters or leaves active turn processing. */
   subscribeRuntimeStatus(
     listener: (change: { readonly agentId: AgentRevisionRecord['agentId']; readonly status: AgentStatus }) => void,
   ): () => boolean {
     this.#assertActive()
-    return this.#context.on('agent/status', ({ agent }) => {
-      const agentId = this.#productAgentBySession.get(agent.id)
-      if (agentId === undefined) return
-      listener({ agentId, status: this.runtimeStatus(agentId) })
-    })
+    return this.#runtimeProjection.subscribeRuntimeStatus(listener)
   }
 
-  tryLiveSession(
-    dshSessionId: string,
-  ): { readonly status: AgentStatus; readonly events: readonly SessionEvent[] } | undefined {
+  tryLiveSession(dshSessionId: string) {
     this.#assertActive()
-    const agent = this.#context.agents.get(SessionId(dshSessionId))
-    if (!agent) return undefined
-    return { status: agent.status, events: agent.session.events }
+    return this.#runtimeProjection.tryLiveSession(dshSessionId)
   }
 
-  sessionRuntimeMetrics(
-    dshSessionId: string,
-  ):
-    | { readonly occupancy?: ChannelRuntimeOccupancy; readonly performanceTotals?: RuntimePerformanceTotals }
-    | undefined {
+  sessionRuntimeMetrics(dshSessionId: string) {
     this.#assertActive()
-    const agent = this.#context.agents.get(SessionId(dshSessionId))
-    if (!agent) return undefined
-    const snapshot = this.#context.sessionProjections.snapshot(agent.session)
-    const occupancy = projectSessionOccupancy({
-      projectedTokens: snapshot.values.contextPressure?.projectedTokens,
-      contextWindow: snapshot.values.contextPressure?.contextWindow,
-      systemTokens: snapshot.values.contextBreakdown?.systemTokens,
-      toolsTokens: snapshot.values.contextBreakdown?.toolsTokens,
-      messageTokens: snapshot.values.contextBreakdown?.messageTokens,
-    })
-    const performanceTotals = snapshot.values.sessionStats
-    if (occupancy === undefined && performanceTotals === undefined) return undefined
-    return {
-      ...(occupancy === undefined ? {} : { occupancy }),
-      ...(performanceTotals === undefined ? {} : { performanceTotals }),
-    }
+    return this.#runtimeProjection.sessionRuntimeMetrics(dshSessionId)
   }
 
   subscribeChannelRuntime(listener: (channelId: ChannelId) => void): () => void {
     this.#assertActive()
-    const offStatus = this.#context.on('agent/status', ({ agent }) => {
-      const channelId = this.#channelBySession.get(String(agent.id))
-      if (channelId !== undefined) notify(channelId)
-    })
-    const pending = new Set<ChannelId>()
-    let timer: ReturnType<typeof setTimeout> | undefined
-    const flush = (): void => {
-      timer = undefined
-      const channelIds = [...pending]
-      pending.clear()
-      for (const channelId of channelIds) listener(channelId)
-    }
-    const notify = (channelId: ChannelId): void => {
-      pending.add(channelId)
-      timer ??= setTimeout(flush, 100)
-    }
-    const offEvent = this.#context.on(
-      'session/event',
-      (session: { readonly id: string }, event?: { readonly type?: string }) => {
-        if (!shouldBroadcastChannelRuntime(event?.type)) return
-        const channelId = this.#channelBySession.get(String(session.id))
-        if (channelId !== undefined) notify(channelId)
-      },
-    )
-    const offOccupancy = this.#context.sessionProjections.onChanged((session, key) => {
-      if (key !== 'contextPressure' && key !== 'contextBreakdown' && key !== 'sessionStats') return
-      const channelId = this.#channelBySession.get(String(session.id))
-      if (channelId !== undefined) notify(channelId)
-    })
-    return () => {
-      if (timer !== undefined) clearTimeout(timer)
-      offStatus()
-      offEvent()
-      offOccupancy()
-    }
+    return this.#runtimeProjection.subscribeChannelRuntime(listener)
   }
 
   sessionEvents(dshSessionId: string) {
@@ -4882,27 +3047,15 @@ export class DshHostRuntime implements AgentSessionDriver, ExtensionActivationHo
     if (!agent) throw new Error(`DSH Agent Session is not live: ${dshSessionId}`)
     return this.#context.subagents.listChildren(agent.id, signal)
   }
-
   defineDynamicPackage(dshSessionId: string, input: DynamicPackageDefinitionInput): DynamicCordisDefineReceipt {
-    const { agent, runner } = this.#dynamicRuntime(dshSessionId)
-    return runner.define({
-      sessionId: agent.id,
-      plugin:
-        input.plugin.kind === 'new'
-          ? { kind: 'new', idPrefix: input.plugin.idPrefix }
-          : { kind: 'existing', pluginId: CordisDynamicPluginId(input.plugin.pluginId) },
-      name: input.name,
-      purpose: input.purpose,
-      code: input.code,
-    })
+    return this.#dynamic.defineDynamicPackage(dshSessionId, input)
   }
 
   defineDynamicAuthoringPackage(
     dshSessionId: string,
     input: DynamicAuthoringPackageDefinitionInput,
   ): DynamicCordisDefineReceipt {
-    const { agent, runner } = this.#dynamicRuntime(dshSessionId)
-    return runner.defineAuthoringPackage(agent.id, input)
+    return this.#dynamic.defineDynamicAuthoringPackage(dshSessionId, input)
   }
 
   runDynamicPackage(
@@ -4912,36 +3065,19 @@ export class DshHostRuntime implements AgentSessionDriver, ExtensionActivationHo
     mode: CordisDynamicRunMode,
     signal?: AbortSignal,
   ): Promise<DynamicCordisRunResponse> {
-    const { agent, runner } = this.#dynamicRuntime(dshSessionId)
-    return runner
-      .run(agent, CordisDynamicPluginId(pluginId), CordisDynamicPackageId(packageId), mode, signal)
-      .then(async (result) => {
-        if (result.ok && result.waitingFor.some((service) => EXTENSION_PRIVATE_SERVICE_KEY_SET.has(service))) {
-          await runner.stop(agent, CordisDynamicPluginId(pluginId))
-          const message = `Dynamic Extension requested a private Host Service: ${result.waitingFor.join(', ')}`
-          return {
-            ok: false,
-            reason: 'host-half-failed',
-            message,
-          }
-        }
-        return result
-      })
+    return this.#dynamic.runDynamicPackage(dshSessionId, pluginId, packageId, mode, signal)
   }
 
   stopDynamicPlugin(dshSessionId: string, pluginId: string): Promise<DynamicCordisStopResponse> {
-    const { agent, runner } = this.#dynamicRuntime(dshSessionId)
-    return runner.stop(agent, CordisDynamicPluginId(pluginId))
+    return this.#dynamic.stopDynamicPlugin(dshSessionId, pluginId)
   }
 
   undefineDynamicPlugin(dshSessionId: string, pluginId: string): Promise<DynamicCordisUndefineReceipt> {
-    const { agent, runner } = this.#dynamicRuntime(dshSessionId)
-    return runner.undefine(agent, CordisDynamicPluginId(pluginId))
+    return this.#dynamic.undefineDynamicPlugin(dshSessionId, pluginId)
   }
 
   inspectDynamicPackage(dshSessionId: string, pluginId: string, packageId: string): DynamicCordisPackageInspection {
-    const { agent, runner } = this.#dynamicRuntime(dshSessionId)
-    return runner.inspectPackage(agent, CordisDynamicPluginId(pluginId), CordisDynamicPackageId(packageId))
+    return this.#dynamic.inspectDynamicPackage(dshSessionId, pluginId, packageId)
   }
 
   dynamicAuthoringSnapshot(
@@ -4949,381 +3085,44 @@ export class DshHostRuntime implements AgentSessionDriver, ExtensionActivationHo
     pluginId: string,
     packageId: string,
   ): Promise<DynamicAuthoringSnapshot | undefined> {
-    const episodeId = this.#episodeBySession.get(dshSessionId)
-    if (!this.#authoring || !episodeId) return Promise.resolve(undefined)
-    return this.#authoring.service.snapshotForRunnerPackage(episodeId, pluginId, packageId)
+    return this.#dynamic.dynamicAuthoringSnapshot(dshSessionId, pluginId, packageId)
   }
 
-  async deleteAuthoringTask(taskId: AuthoringTaskId): Promise<boolean> {
-    this.#assertActive()
-    if (!this.#authoring) throw new Error('动态创造账本未启用。')
-    const task = this.#authoring.service.getTask(taskId)
-    if (!task) return false
-    const dshSessionId = [...this.#episodeBySession].find(([, episodeId]) => episodeId === task.episodeId)?.[0]
-    if (dshSessionId !== undefined) {
-      const stopped = await this.stopDynamicPlugin(dshSessionId, task.pluginKey)
-      if (!stopped.ok && stopped.reason !== 'plugin-missing' && stopped.reason !== 'not-running') {
-        throw new Error(stopped.message)
-      }
-      const stoppedRow = this.dynamicInventory(dshSessionId).find((row) => row.pluginId === task.pluginKey)
-      if (stoppedRow?.latestRun) {
-        this.#syncAuthoringRow(task.episodeId, stoppedRow, stoppedRow.latestRun.packageId)
-      }
-      const undefinedPlugin = await this.undefineDynamicPlugin(dshSessionId, task.pluginKey)
-      if (!undefinedPlugin.ok && undefinedPlugin.reason !== 'plugin-missing') {
-        throw new Error(undefinedPlugin.message)
-      }
-    }
-    const settledTask = this.#authoring.service.getTask(taskId)
-    if (settledTask && !['interrupted', 'stopped', 'completed'].includes(settledTask.status)) {
-      this.#authoring.service.interruptTask(settledTask, '删除前未找到可继续运行的临时 Plugin。')
-    }
-    return this.#authoring.service.deleteTask(taskId)
+  decideAuthoringAttempt(input: Parameters<DynamicAuthoringService['decideAttempt']>[0]) {
+    return this.#dynamic.decideAuthoringAttempt(input)
   }
 
-  async verifyDynamicPackage(dshSessionId: string, pluginId: string, packageId: string) {
-    const { agent, runner } = this.#dynamicRuntime(dshSessionId)
-    const evidence = runner.verificationSnapshot(agent, pluginId, packageId)
-    const visibleTools = this.#context.tools.schemas(scopeOf(agent.ctx))
-    const toolInvocations = [] as Array<{ readonly name: string; readonly succeeded: boolean }>
-    const contributions = [] as Array<
-      | { readonly kind: 'tool'; readonly name: string; readonly description: string }
-      | { readonly kind: 'rpc'; readonly method: string }
-      | { readonly kind: 'client-slot'; readonly name: AgentClientSlotName }
-      | { readonly kind: 'host-client-slot'; readonly name: AdapterClientSlotName; readonly key: string }
-      | HostPageContribution
-      | {
-          readonly kind: 'adapter'
-          readonly apiVersion: 2
-          readonly key: string
-          readonly descriptorDigest: string
-        }
-    >
-    if (runner.isAdapterPackage(packageId)) {
-      if (evidence.toolNames.length > 0 || evidence.renderedSlots.length > 0) {
-        throw new Error('适配器 Revision 不能混装智能体工具或智能体 Slot，请拆分为两个扩展。')
-      }
-      const foreignRpc = evidence.rpcMethods.filter((method) => method !== ADAPTER_DYNAMIC_EVIDENCE_METHOD)
-      if (foreignRpc.length > 0) throw new Error('适配器 Revision 不能混装智能体 RPC，请拆分为两个扩展。')
-      const result = await runner.invoke(
-        CordisDynamicPluginId(pluginId),
-        CordisDynamicPluginRunId(evidence.pluginRunId),
-        ADAPTER_DYNAMIC_EVIDENCE_METHOD,
-        null,
-      )
-      if (!result.ok) throw new Error(`Adapter synthetic verification failed: ${result.message}`)
-      const observed = AdapterDynamicEvidenceSchema.parse(result.value)
-      if (
-        !observed.started ||
-        !observed.stopped ||
-        !observed.credentialIsolated ||
-        !observed.inboundCommitted ||
-        !observed.channelDiscovered ||
-        observed.outboundReceipt !== 'sent' ||
-        !observed.transportIdle
-      ) {
-        throw new Error('适配器验证未完整通过创建、入站、出站、凭据隔离和停止静止检查。')
-      }
-      const descriptorDigest = createHash('sha256')
-        .update(canonicalJson(JsonValueSchema.parse(observed.descriptor)))
-        .digest('hex')
-      const adapter = {
-        apiVersion: 2 as const,
-        key: observed.descriptor.key,
-        descriptorDigest,
-        registered: true,
-        started: observed.started,
-        stopped: observed.stopped,
-        inboundCommitted: observed.inboundCommitted,
-        outboundReceipt: observed.outboundReceipt,
-      }
-      const renderedHostSlots = evidence.renderedHostSlots.filter((slot) =>
-        slot.name === 'conversation.message.rich'
-          ? slot.key.startsWith(`${adapter.key}:`) && slot.key.length > adapter.key.length + 1
-          : slot.key === adapter.key,
-      )
-      if (renderedHostSlots.length !== evidence.renderedHostSlots.length) {
-        throw new Error(`适配器 Client Slot 没有使用 ${adapter.key} 的稳定 key。`)
-      }
-      for (const slot of renderedHostSlots) {
-        contributions.push({ kind: 'host-client-slot', name: slot.name, key: slot.key })
-      }
-      contributions.push(...evidence.renderedPages)
-      contributions.push({ kind: 'adapter', apiVersion: 2, key: adapter.key, descriptorDigest })
-      return {
-        ...evidence,
-        renderedHostSlots,
-        rpcMethods: [],
-        renderedSlots: [],
-        contributions,
-        toolInvocations,
-        scope: 'host-adapter' as const,
-        adapter,
-      }
-    }
-    if (evidence.renderedPages.length > 0) {
-      if (evidence.toolNames.length > 0 || evidence.renderedSlots.length > 0 || evidence.renderedHostSlots.length > 0) {
-        throw new Error('页面 Extension 不能混装智能体工具、智能体 Slot 或 Adapter Slot，请拆分为两个扩展。')
-      }
-      for (const method of evidence.rpcMethods) {
-        const result = await runner.invoke(
-          CordisDynamicPluginId(pluginId),
-          CordisDynamicPluginRunId(evidence.pluginRunId),
-          method,
-          null,
-        )
-        if (!result.ok) throw new Error(`Dynamic RPC synthetic verification failed: ${method}: ${result.message}`)
-        if (JSON.stringify(result.value).length > 16 * 1024) {
-          throw new Error(`Dynamic RPC verification exceeded 16 KiB: ${method}`)
-        }
-      }
-      return {
-        ...evidence,
-        contributions: evidence.renderedPages,
-        toolInvocations,
-        scope: 'host-ui' as const,
-      }
-    }
-    if (evidence.renderedHostSlots.length > 0) {
-      throw new Error('智能体 Extension 不能注册 Host Adapter rich Slot，请拆分为两个扩展。')
-    }
-    for (const name of evidence.toolNames) {
-      const schema = visibleTools.find((candidate) => candidate.name === name)
-      if (!schema) throw new Error(`Dynamic Tool disappeared before verification: ${name}`)
-      const result = await this.#context.tools.execute({
-        callId: CallId(`verify-${packageId}-${name}`),
-        name,
-        arguments: {},
-        agent,
-        signal: new AbortController().signal,
-      })
-      if (result.isError)
-        throw new Error(`Dynamic Tool synthetic verification failed: ${name}: ${result.error.message}`)
-      if (JSON.stringify(result.value).length > 16 * 1024)
-        throw new Error(`Dynamic Tool verification exceeded 16 KiB: ${name}`)
-      toolInvocations.push({ name, succeeded: true })
-      contributions.push({ kind: 'tool', name, description: schema.description })
-    }
-    for (const method of evidence.rpcMethods) {
-      const result = await runner.invoke(
-        CordisDynamicPluginId(pluginId),
-        CordisDynamicPluginRunId(evidence.pluginRunId),
-        method,
-        null,
-      )
-      if (!result.ok) throw new Error(`Dynamic RPC synthetic verification failed: ${method}: ${result.message}`)
-      if (JSON.stringify(result.value).length > 16 * 1024)
-        throw new Error(`Dynamic RPC verification exceeded 16 KiB: ${method}`)
-      contributions.push({ kind: 'rpc', method })
-    }
-    for (const name of evidence.renderedSlots) contributions.push({ kind: 'client-slot', name })
-    return { ...evidence, contributions, toolInvocations }
+  stopAuthoringTask(input: Parameters<DynamicAuthoringService['stopTask']>[0]) {
+    return this.#dynamic.stopAuthoringTask(input)
   }
 
-  async #completeAuthoringVerification(dshSessionId: string, pluginId: string, packageId: string): Promise<void> {
-    const episodeId = this.#episodeBySession.get(dshSessionId)
-    if (!this.#authoring || !episodeId) return
-    const verified = await this.verifyDynamicPackage(dshSessionId, pluginId, packageId)
-    const snapshot = await this.dynamicAuthoringSnapshot(dshSessionId, pluginId, packageId)
-    const row = this.dynamicInventory(dshSessionId).find((candidate) => candidate.pluginId === pluginId)
-    const latest = row?.latestRun
-    if (!latest || latest.packageId !== packageId || latest.status !== 'running') {
-      throw new Error('动态扩展验证完成时，候选已经不再是当前运行版本。')
-    }
-    this.#authoring.service.syncAttempt({
-      episodeId,
-      pluginKey: pluginId,
-      runnerPackageId: packageId,
-      runnerRunId: verified.pluginRunId,
-      state: 'active',
-      taskStatus: 'ready',
-      host: {
-        status: latest.host.status,
-        waitingFor: latest.host.waitingFor,
-        ...(latest.host.error === undefined ? {} : { error: latest.host.error }),
-      },
-      client: {
-        status: latest.client.status,
-        waitingFor: latest.client.waitingFor,
-        ...(latest.client.error === undefined ? {} : { error: latest.client.error }),
-      },
-      verification: {
-        hostStarted: latest.host.status === 'running' || latest.host.status === 'absent',
-        clientLoaded: latest.client.status === 'running' || latest.client.status === 'absent',
-        renderedSlots: verified.renderedSlots,
-        renderedPages: verified.renderedPages,
-        usedUiComponents: verified.usedUiComponents,
-        pageGeometry: verified.pageGeometry,
-        rpcCalls: verified.rpcMethods,
-        toolInvocations: verified.toolInvocations,
-        navigationChecks: verified.navigationEntries,
-        resourceChecks: Object.keys(snapshot?.resources ?? {}).sort(),
-        stoppedCleanly: false,
-      },
-      eventKind: 'verification-completed',
-      eventPayload: {
-        renderedSlots: [...verified.renderedSlots],
-        renderedPages: verified.renderedPages.map((page) => page.entryId),
-        toolInvocations: verified.toolInvocations.map(({ name }) => name),
-      },
-    })
+  deleteAuthoringTask(taskId: AuthoringTaskId): Promise<boolean> {
+    return this.#dynamic.deleteAuthoringTask(taskId)
+  }
+
+  verifyDynamicPackage(dshSessionId: string, pluginId: string, packageId: string) {
+    return this.#dynamic.verifyDynamicPackage(dshSessionId, pluginId, packageId)
   }
 
   dynamicInventory(dshSessionId: string): readonly DynamicCordisInventoryRow[] {
-    const { agent, runner } = this.#dynamicRuntime(dshSessionId)
-    return runner.inventory().filter(({ agentId }) => agentId === agent.id)
-  }
-
-  #syncAuthoringRow(episodeId: EpisodeId, row: DynamicCordisInventoryRow, packageId: string): void {
-    const latest = row.latestRun
-    if (!this.#authoring || !latest || latest.packageId !== packageId) return
-    const state =
-      latest.status === 'awaiting-approval'
-        ? 'awaiting-approval'
-        : latest.status === 'starting-host'
-          ? 'starting-host'
-          : latest.status === 'client-pending'
-            ? 'loading-client'
-            : latest.status === 'running' || latest.status === 'waiting'
-              ? 'active'
-              : latest.status === 'rejected'
-                ? 'rejected'
-                : latest.status === 'stopped'
-                  ? 'stopped'
-                  : 'failed'
-    const taskStatus =
-      latest.status === 'awaiting-approval'
-        ? 'awaiting-approval'
-        : latest.status === 'failed' || latest.status === 'cancelled'
-          ? 'failed'
-          : latest.status === 'rejected'
-            ? 'working'
-            : latest.status === 'stopped'
-              ? 'stopped'
-              : 'running'
-    const eventKind =
-      latest.status === 'awaiting-approval'
-        ? 'approval-requested'
-        : latest.status === 'failed' || latest.status === 'cancelled'
-          ? 'attempt-failed'
-          : latest.status === 'rejected'
-            ? 'approval-rejected'
-            : latest.status === 'stopped'
-              ? 'task-stopped'
-              : 'phase-changed'
-    this.#authoring.service.syncAttempt({
-      episodeId,
-      pluginKey: row.pluginId,
-      runnerPackageId: latest.packageId,
-      runnerRunId: latest.pluginRunId,
-      state,
-      taskStatus,
-      host: {
-        status: latest.host.status,
-        waitingFor: latest.host.waitingFor,
-        ...(latest.host.error === undefined ? {} : { error: latest.host.error }),
-      },
-      client: {
-        status: latest.client.status,
-        waitingFor: latest.client.waitingFor,
-        ...(latest.client.error === undefined ? {} : { error: latest.client.error }),
-      },
-      ...(latest.error === undefined
-        ? {}
-        : {
-            error: {
-              phase: latest.error.phase,
-              message: latest.error.message,
-              ...(latest.error.stack === undefined ? {} : { stack: latest.error.stack }),
-              repairable: latest.error.phase !== 'approval',
-            },
-          }),
-      eventKind,
-      eventPayload: { status: latest.status },
-    })
-  }
-
-  #queueAuthoringContinuation(episodeId: EpisodeId, row: DynamicCordisInventoryRow): void {
-    const latest = row.latestRun
-    if (!this.#authoring || !latest || !['running', 'failed', 'cancelled'].includes(latest.status)) {
-      return
-    }
-    const task = this.#authoring.service.taskForRunner(episodeId, row.pluginId)
-    const dshSessionId = [...this.#episodeBySession].find(([, ownedEpisodeId]) => ownedEpisodeId === episodeId)?.[0]
-    const agent = dshSessionId === undefined ? undefined : this.#context.agents.get(SessionId(dshSessionId))
-    if (!task || !agent) return
-    const messageId = createHash('sha256')
-      .update(`${task.id}:${latest.packageId}:${latest.pluginRunId ?? 'pending'}:${latest.status}`)
-      .digest('hex')
-      .slice(0, 24)
-    const continuationId = `${agent.id}:${messageId}`
-    if (this.#authoringContinuationIds.has(continuationId)) return
-    this.#authoringContinuationIds.add(continuationId)
-    const content = [
-      '这是 NekroNXT Host 产生的扩展开发状态事件，不是用户的新需求。',
-      `任务：${task.title}（${task.id}）`,
-      `候选：${latest.packageId}；状态：${latest.status}。`,
-      latest.error === undefined
-        ? '运行链路已经返回结果。请核对真实预览和验证证据；成功时向用户清楚说明可见成果，失败时继续修复同一 Plugin。'
-        : `失败阶段：${latest.error.phase}；错误：${latest.error.message}。请读取当前诊断，向同一 Plugin 追加修复候选并继续验证。`,
-      '不需要等待用户再发送“继续”，也不要把定义、审批或 Host 启动误报为最终成功。',
-    ].join('\n')
-    const pending = (async () => {
-      try {
-        await agent.whenIdle()
-        if (this.#context.agents.get(agent.id) !== agent) {
-          this.#authoringContinuationIds.delete(continuationId)
-          return
-        }
-        agent.inject(
-          freezeMessage({
-            id: MessageId(`nxt-authoring-${messageId}`),
-            role: 'user',
-            content: [{ type: 'text', text: content }],
-            source: {
-              kind: 'nekro-nxt-authoring-event',
-              taskId: task.id,
-              pluginId: row.pluginId,
-              packageId: latest.packageId,
-              status: latest.status,
-            },
-          }),
-        )
-        await this.#context.sessions.flush(agent.session)
-      } catch (error) {
-        if (
-          error instanceof Error &&
-          error.message.includes(`message "nxt-authoring-${messageId}" is already pending`)
-        ) {
-          return
-        }
-        this.#authoringContinuationIds.delete(continuationId)
-        console.error('[nekro-nxt] 扩展开发自动续跑事件注入失败：', error)
-      } finally {
-        this.#authoringContinuationPending.delete(continuationId)
-      }
-    })()
-    this.#authoringContinuationPending.set(continuationId, pending)
+    return this.#dynamic.dynamicInventory(dshSessionId)
   }
 
   subscribeDynamicApprovalRequests(listener: (event: DynamicApprovalRequestEvent) => void): () => void {
-    this.#assertActive()
-    this.#dynamicApprovalListeners.add(listener)
-    return () => this.#dynamicApprovalListeners.delete(listener)
+    return this.#dynamic.subscribeDynamicApprovalRequests(listener)
   }
 
   subscribeAuthoringChanges(
     listener: (change: { readonly taskId: AuthoringTaskId; readonly agentId: AgentId }) => void,
   ): () => void {
-    this.#assertActive()
-    return this.#authoring?.service.subscribe(listener) ?? (() => undefined)
+    return this.#dynamic.subscribeAuthoringChanges(listener)
   }
 
   dynamicAuthoringPolicy(dshSessionId: string): DynamicAuthoringPolicyState {
-    return this.#dynamicRuntime(dshSessionId).runner.policySnapshot()
+    return this.#dynamic.dynamicAuthoringPolicy(dshSessionId)
   }
 
-  async runDynamicHostHalf(
+  runDynamicHostHalf(
     dshSessionId: string,
     pluginId: string,
     packageId: string,
@@ -5331,57 +3130,27 @@ export class DshHostRuntime implements AgentSessionDriver, ExtensionActivationHo
     requestId: string | null,
     approveFutureVersions: boolean,
   ): Promise<DynamicCordisHostHalfResult> {
-    const { agent, runner } = this.#dynamicRuntime(dshSessionId)
-    const result = await runner.runHostHalf(
-      agent,
-      CordisDynamicPluginId(pluginId),
-      CordisDynamicPackageId(packageId),
-      mode,
-      requestId === null ? null : ApprovalRequestId(requestId),
-      approveFutureVersions,
-    )
-    const row = runner.inventory().find((candidate) => candidate.pluginId === pluginId)
-    const episodeId = this.#episodeBySession.get(dshSessionId)
-    if (row && episodeId) this.#syncAuthoringRow(episodeId, row, packageId)
-    return result
+    return this.#dynamic.runDynamicHostHalf(dshSessionId, pluginId, packageId, mode, requestId, approveFutureVersions)
   }
 
   getDynamicClientCode(dshSessionId: string, pluginId: string, pluginRunId: string): DynamicCordisClientSource {
-    const { agent, runner } = this.#dynamicRuntime(dshSessionId)
-    return runner.getClientCode(agent, CordisDynamicPluginId(pluginId), CordisDynamicPluginRunId(pluginRunId))
+    return this.#dynamic.getDynamicClientCode(dshSessionId, pluginId, pluginRunId)
   }
 
-  async resolveDynamicRunRequest(
+  resolveDynamicRunRequest(
     dshSessionId: string,
     requestId: string,
     resolution: DynamicCordisRunResolution,
   ): Promise<DynamicCordisResolveAck> {
-    const { agent, runner } = this.#dynamicRuntime(dshSessionId)
-    const owned = runner
-      .inventory()
-      .find((row) => row.agentId === agent.id && row.latestRun?.approvalRequestId === ApprovalRequestId(requestId))
-    if (!owned?.latestRun) throw new Error('Dynamic Client approval request is not owned by this DSH Session.')
-    const result = await runner.resolveRequestRun(ApprovalRequestId(requestId), resolution)
-    const row = runner.inventory().find((candidate) => candidate.pluginId === owned.pluginId)
-    const episodeId = this.#episodeBySession.get(dshSessionId)
-    if (row && episodeId) this.#syncAuthoringRow(episodeId, row, owned.latestRun.packageId)
-    return result
+    return this.#dynamic.resolveDynamicRunRequest(dshSessionId, requestId, resolution)
   }
 
-  async settleDynamicUserRun(
+  settleDynamicUserRun(
     dshSessionId: string,
     pluginId: string,
     resolution: DynamicCordisRunResolution,
   ): Promise<DynamicCordisRunResponse> {
-    const { agent, runner } = this.#dynamicRuntime(dshSessionId)
-    const result = await runner.settleUserRun(agent, CordisDynamicPluginId(pluginId), resolution)
-    const row = runner.inventory().find((candidate) => candidate.pluginId === pluginId)
-    const episodeId = this.#episodeBySession.get(dshSessionId)
-    if (row?.latestRun && episodeId) {
-      this.#syncAuthoringRow(episodeId, row, row.latestRun.packageId)
-      this.#queueAuthoringContinuation(episodeId, row)
-    }
-    return result
+    return this.#dynamic.settleDynamicUserRun(dshSessionId, pluginId, resolution)
   }
 
   invokeDynamicHost(
@@ -5391,40 +3160,19 @@ export class DshHostRuntime implements AgentSessionDriver, ExtensionActivationHo
     method: string,
     input: JsonValue = null,
   ): Promise<DynamicCordisInvokeResult> {
-    const { agent, runner } = this.#dynamicRuntime(dshSessionId)
-    const owned = runner.inventory().some((row) => row.agentId === agent.id && row.pluginId === pluginId)
-    if (!owned) throw new Error('Dynamic Extension is not owned by this DSH Session.')
-    return runner
-      .invoke(CordisDynamicPluginId(pluginId), CordisDynamicPluginRunId(pluginRunId), method, input)
-      .then((result) => {
-        if (result.ok) runner.recordClientRpcInvocation(agent, pluginId, pluginRunId, method)
-        return result
-      })
+    return this.#dynamic.invokeDynamicHost(dshSessionId, pluginId, pluginRunId, method, input)
   }
 
-  async reportDynamicRenderFailure(
+  reportDynamicRenderFailure(
     dshSessionId: string,
     pluginId: string,
     pluginRunId: string,
     failure: DynamicCordisRenderFailure,
   ): Promise<null> {
-    const { agent, runner } = this.#dynamicRuntime(dshSessionId)
-    const result = await runner.reportRenderFailure(
-      agent,
-      CordisDynamicPluginId(pluginId),
-      CordisDynamicPluginRunId(pluginRunId),
-      failure,
-    )
-    const row = runner.inventory().find((candidate) => candidate.pluginId === pluginId)
-    const episodeId = this.#episodeBySession.get(dshSessionId)
-    if (row?.latestRun && episodeId) {
-      this.#syncAuthoringRow(episodeId, row, row.latestRun.packageId)
-      this.#queueAuthoringContinuation(episodeId, row)
-    }
-    return result
+    return this.#dynamic.reportDynamicRenderFailure(dshSessionId, pluginId, pluginRunId, failure)
   }
 
-  async recordDynamicClientVerification(
+  recordDynamicClientVerification(
     dshSessionId: string,
     pluginId: string,
     packageId: string,
@@ -5437,285 +3185,95 @@ export class DshHostRuntime implements AgentSessionDriver, ExtensionActivationHo
     permissions: HostUiPermissionDeclaration = { permissions: [], networkOrigins: [] },
     navigationEntries: readonly string[] = [],
   ): Promise<void> {
-    const { agent, runner } = this.#dynamicRuntime(dshSessionId)
-    try {
-      const declared = await this.dynamicAuthoringSnapshot(dshSessionId, pluginId, packageId)
-      if (declared) {
-        const declaredPages = declared.contributions.map((contribution) =>
-          HostPageContributionSchema.parse(contribution),
-        )
-        if (JSON.stringify(declaredPages) !== JSON.stringify(renderedPages)) {
-          throw new Error('动态 Client 实际注册的页面与候选声明不一致。')
-        }
-        if (JSON.stringify(declared.permissions) !== JSON.stringify(permissions)) {
-          throw new Error('动态 Client 实际声明的权限与候选风险摘要不一致。')
-        }
-      }
-      const navigationEntrySet = new Set(navigationEntries)
-      for (const page of renderedPages) {
-        if (page.objectPane === 'navigation' && !navigationEntrySet.has(page.entryId)) {
-          throw new Error(`动态页面 ${page.entryId} 声明对象列，但没有注册 Navigation Provider。`)
-        }
-        if (page.objectPane === 'hidden' && navigationEntrySet.has(page.entryId)) {
-          throw new Error(`动态页面 ${page.entryId} 隐藏对象列，不能注册 Navigation Provider。`)
-        }
-      }
-      if (navigationEntries.some((entryId) => !renderedPages.some((page) => page.entryId === entryId))) {
-        throw new Error('动态 Client 上报了不属于当前页面声明的 Navigation Provider。')
-      }
-      runner.recordClientVerification(
-        agent,
-        pluginId,
-        packageId,
-        pluginRunId,
-        renderedSlots,
-        renderedHostSlots,
-        renderedPages,
-        usedUiComponents,
-        pageGeometry,
-        navigationEntries,
-        permissions,
-      )
-      const episodeId = this.#episodeBySession.get(dshSessionId)
-      await this.#completeAuthoringVerification(dshSessionId, pluginId, packageId)
-      const row = runner.inventory().find((candidate) => candidate.pluginId === pluginId)
-      if (row && episodeId) {
-        this.#queueAuthoringContinuation(episodeId, row)
-      }
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error)
-      await runner.reportClientGuardFailure(
-        agent,
-        CordisDynamicPluginId(pluginId),
-        CordisDynamicPluginRunId(pluginRunId),
-        {
-          message,
-          ...(error instanceof Error && error.stack ? { stack: error.stack } : {}),
-        },
-      )
-      const episodeId = this.#episodeBySession.get(dshSessionId)
-      const row = runner.inventory().find((candidate) => candidate.pluginId === pluginId)
-      if (row?.latestRun && episodeId) {
-        this.#syncAuthoringRow(episodeId, row, row.latestRun.packageId)
-        this.#queueAuthoringContinuation(episodeId, row)
-      }
-      throw error
-    }
+    return this.#dynamic.recordDynamicClientVerification(
+      dshSessionId,
+      pluginId,
+      packageId,
+      pluginRunId,
+      renderedSlots,
+      renderedHostSlots,
+      renderedPages,
+      usedUiComponents,
+      pageGeometry,
+      permissions,
+      navigationEntries,
+    )
   }
 
-  async reportDynamicGuardFailure(
+  reportDynamicGuardFailure(
     dshSessionId: string,
     pluginId: string,
     pluginRunId: string,
     failure: CordisErrorDetails,
   ): Promise<null> {
-    const { agent, runner } = this.#dynamicRuntime(dshSessionId)
-    const result = await runner.reportClientGuardFailure(
-      agent,
-      CordisDynamicPluginId(pluginId),
-      CordisDynamicPluginRunId(pluginRunId),
-      failure,
-    )
-    const row = runner.inventory().find((candidate) => candidate.pluginId === pluginId)
-    const episodeId = this.#episodeBySession.get(dshSessionId)
-    if (row?.latestRun && episodeId) {
-      this.#syncAuthoringRow(episodeId, row, row.latestRun.packageId)
-      this.#queueAuthoringContinuation(episodeId, row)
-    }
-    return result
+    return this.#dynamic.reportDynamicGuardFailure(dshSessionId, pluginId, pluginRunId, failure)
   }
 
   dynamicToolNames(dshSessionId: string): readonly string[] {
-    this.#dynamicRuntime(dshSessionId)
-    return this.toolNames(dshSessionId)
+    return this.#dynamic.dynamicToolNames(dshSessionId)
   }
 
   toolNames(dshSessionId: string): readonly string[] {
-    this.#assertActive()
-    const agent = this.#context.agents.get(SessionId(dshSessionId))
-    if (!agent) throw new Error(`DSH Agent Session is not live: ${dshSessionId}`)
-    return this.#context.tools.schemas(scopeOf(agent.ctx)).map(({ name }) => name)
+    return this.#dynamic.toolNames(dshSessionId)
   }
 
-  async invokeExtensionHost(
+  invokeExtensionHost(
     dshSessionId: string,
     extensionRevisionId: string,
     method: string,
     input: JsonValue = null,
   ): Promise<JsonValue> {
     this.#assertActive()
-    const agentId = this.#productAgentBySession.get(dshSessionId)
-    if (!agentId) throw new Error(`DSH Agent Session is not live: ${dshSessionId}`)
-    const registration = [...this.#persistentExtensions.values()].find(
-      (candidate) => candidate.agentId === agentId && candidate.revision.id === extensionRevisionId,
-    )
-    const handler = registration?.handlers.get(method)
-    if (!handler) throw new Error(`Extension Host method is unavailable: ${method}`)
-    return parseJsonValue(JSON.parse(JSON.stringify(await handler(input))))
+    return this.#extensionMounts.invokeExtensionHost(dshSessionId, extensionRevisionId, method, input)
   }
 
-  async invokeExtensionActivation(
+  invokeExtensionActivation(
     agentId: AgentRevisionRecord['agentId'],
     extensionRevisionId: string,
     method: string,
     input: JsonValue = null,
   ): Promise<JsonValue> {
     this.#assertActive()
-    const registration = [...this.#persistentExtensions.values()].find(
-      (candidate) => candidate.agentId === agentId && candidate.revision.id === extensionRevisionId && candidate.active,
-    )
-    const handler = registration?.handlers.get(method)
-    if (!handler) throw new Error(`Extension Host method is unavailable: ${method}`)
-    return parseJsonValue(JSON.parse(JSON.stringify(await handler(input))))
+    return this.#extensionMounts.invokeExtensionActivation(agentId, extensionRevisionId, method, input)
   }
-
   queryNekroNxtInspect(
     dshSessionId: string,
     method: 'currentContext' | 'supportedContributions' | 'developmentExample' | 'extensionLifecycle',
   ): Promise<JsonValue> {
-    const { agent, context } = this.#dynamicRuntime(dshSessionId)
-    const registry = context.get('cordisInspect')
-    if (!registry) throw new Error('Cordis Inspect registry is unavailable in this DSH Session.')
-    return registry.query('host', 'nekro-nxt-runtime', method, {}, agent, new AbortController().signal)
+    return this.#dynamic.queryNekroNxtInspect(dshSessionId, method)
   }
 
-  async loadNekroNxtExtensionSkill(dshSessionId: string): Promise<{
+  loadNekroNxtExtensionSkill(dshSessionId: string): Promise<{
     readonly provider: string
     readonly content: string
   }> {
-    const { agent } = this.#dynamicRuntime(dshSessionId)
-    const skill = await this.#context.skills.get('cordis-plugin-development', { scope: agent })
-    if (!skill) throw new Error('NekroNxt extension development skill is unavailable in this DSH Session.')
-    return { provider: skill.provider, content: skill.content }
+    return this.#dynamic.loadNekroNxtExtensionSkill(dshSessionId)
   }
 
-  async waitUntilSafe(agentId: AgentRevisionRecord['agentId']): Promise<void> {
-    this.#assertActive()
-    const handles = [...this.#handles.entries()].filter(
-      ([sessionId]) => this.#productAgentBySession.get(sessionId) === agentId,
-    )
-    await Promise.all(handles.map(([, handle]) => handle.agent.whenIdle()))
-    const sessionIds = new Set(handles.map(([sessionId]) => sessionId))
-    await Promise.all(
-      [...this.#authoringContinuationPending.entries()]
-        .filter(([continuationId]) => sessionIds.has(continuationId.slice(0, continuationId.indexOf(':'))))
-        .map(([, continuation]) => continuation),
-    )
-    await Promise.all(handles.map(([, handle]) => handle.agent.whenIdle()))
+  waitUntilSafe(agentId: AgentRevisionRecord['agentId']): Promise<void> {
+    return this.#dynamic.waitUntilSafe(agentId)
   }
 
-  async mount(
+  mount(
     agentId: AgentRevisionRecord['agentId'],
     revision: Revision,
     artifact: ExtensionBuildArtifact,
     config: JsonValue,
   ): Promise<MountedExtension> {
     this.#assertActive()
-    const key = `${agentId}\0${revision.extensionId}\0${revision.id}`
-    if (this.#persistentExtensions.has(key)) throw new Error('Extension Revision is already mounted for this Agent.')
-    const handlers = new Map<string, (input: ExtensionJsonValue) => ExtensionJsonValue | Promise<ExtensionJsonValue>>()
-    let plugin: ExtensionPluginDefinition | undefined
-    if (artifact.hostEntry) {
-      let factoryOpen = true
-      const loaded = ExtensionHostModuleSchema.parse(
-        await import(`${pathToFileURL(artifact.hostEntry).href}?build=${artifact.buildKey}`),
-      )
-      let factoryResult: unknown
-      try {
-        factoryResult = await loaded.default({
-          harness: {
-            defineTool: <Args extends Record<string, ExtensionJsonValue>, Output extends ExtensionJsonValue>(
-              options: ExtensionToolDefinition<Args, Output>,
-            ): ExtensionToolDefinition<Args, Output> => {
-              const definition = defineDshToolFromUnknown(options)
-              return Object.assign(options, definition)
-            },
-            registerTool: (context: ExtensionHostContext, tool: ExtensionToolDefinition) =>
-              context.tools.register(tool),
-            handle: (
-              method: string,
-              handler: (input: ExtensionJsonValue) => ExtensionJsonValue | Promise<ExtensionJsonValue>,
-            ) => {
-              if (!factoryOpen) {
-                throw new Error('Extension Host RPC must be registered by the Activation factory, not per Session.')
-              }
-              if (!method.trim() || typeof handler !== 'function') {
-                throw new TypeError('Invalid Extension Host handler.')
-              }
-              if (handlers.has(method)) throw new Error(`Extension Host handler is already registered: ${method}`)
-              handlers.set(method, handler)
-              // The Activation owns the handler. A Session fiber cannot retract it.
-              return () => undefined
-            },
-            registerAdapter: () => {
-              throw new Error('宿主适配器不能通过智能体 Activation 加载；请安装这个适配器 Revision。')
-            },
-          },
-          config,
-        })
-      } finally {
-        factoryOpen = false
-      }
-      const parsedPlugin = ExtensionPluginDefinitionSchema.parse(factoryResult)
-      plugin = {
-        ...(parsedPlugin.inject === undefined ? {} : { inject: parsedPlugin.inject }),
-        apply: parsedPlugin.apply,
-      }
-      const forbiddenServices = parsedPlugin.inject?.filter(
-        (service) => !PERSISTENT_EXTENSION_HOST_SERVICES.has(service),
-      )
-      if (forbiddenServices && forbiddenServices.length > 0) {
-        throw new Error(`Extension Host requested unavailable Services: ${forbiddenServices.join(', ')}`)
-      }
-    }
-    const registration: PersistentExtensionRegistration = {
-      key,
-      agentId,
-      revision,
-      artifact,
-      config,
-      ...(plugin === undefined ? {} : { plugin }),
-      fibers: new Map(),
-      mounting: new Map(),
-      handlers,
-      active: true,
-    }
-    this.#persistentExtensions.set(key, registration)
-    try {
-      await Promise.all(
-        [...this.#handles.entries()]
-          .filter(([sessionId]) => this.#productAgentBySession.get(sessionId) === agentId)
-          .map(([sessionId, handle]) =>
-            this.#mountPersistentExtensionInSession(registration, sessionId, handle.agent.ctx),
-          ),
-      )
-    } catch (error) {
-      await this.#unmountPersistentExtension(registration)
-      throw error
-    }
-    return {
-      evidence: {
-        hostLoaded: artifact.hostEntry !== undefined,
-        clientBuilt: artifact.clientEntry !== undefined,
-        details: [
-          `revision:${revision.id}`,
-          `sessions:${registration.fibers.size}`,
-          ...(artifact.clientEntry === undefined ? [] : [`client:${path.basename(artifact.clientEntry)}`]),
-        ],
-      },
-      dispose: () => this.#unmountPersistentExtension(registration),
-    }
+    return this.#extensionMounts.mount(agentId, revision, artifact, config)
   }
 
   async dispose(): Promise<void> {
     if (this.#disposed) return
     this.#disposed = true
     const failures: unknown[] = []
-    const extensions = await Promise.allSettled(
-      [...this.#persistentExtensions.values()].map((entry) => this.#unmountPersistentExtension(entry)),
-    )
-    for (const result of extensions) if (result.status === 'rejected') failures.push(result.reason)
-    const handles = [...this.#handles.values()]
+    try {
+      await this.#extensionMounts.dispose()
+    } catch (error) {
+      failures.push(error)
+    }
+    const handles = [...this.#sessions.handles()].map(([, handle]) => handle)
     try {
       await this.#context.subagents.drainContinuableDescendants(handles.map((handle) => handle.agent))
     } catch (error) {
@@ -5728,14 +3286,9 @@ export class DshHostRuntime implements AgentSessionDriver, ExtensionActivationHo
     } catch (error) {
       failures.push(error)
     }
-    this.#handles.clear()
-    this.#imageInputSessions.clear()
-    this.#dynamicSessions.clear()
-    this.#productAgentBySession.clear()
-    this.#channelBySession.clear()
-    this.#episodeBySession.clear()
-    this.#persistentExtensions.clear()
-    this.#dynamicApprovalListeners.clear()
+    this.#runtimeProjection.dispose()
+    this.#sessions.clear()
+    this.#dynamic.clearObservers()
     try {
       await this.#context.fiber.dispose()
     } catch (error) {
@@ -5746,445 +3299,6 @@ export class DshHostRuntime implements AgentSessionDriver, ExtensionActivationHo
 
   #assertActive(): void {
     if (this.#disposed) throw new Error('DSH Host Runtime is disposed.')
-  }
-
-  #dynamicRuntime(dshSessionId: string): {
-    readonly agent: Agent
-    readonly context: Context
-    readonly runner: NekroNxtDynamicCordisRunner
-  } {
-    this.#assertActive()
-    const agent = this.#context.agents.get(SessionId(dshSessionId))
-    if (!agent) throw new Error(`DSH Agent Session is not live: ${dshSessionId}`)
-    const owned = this.#dynamicSessions.get(dshSessionId)
-    if (!owned) {
-      throw new Error('Dynamic creation is not granted to this Agent Revision.')
-    }
-    return { agent, ...owned }
-  }
-
-  #resolveDynamicAuthoringOwner(input: {
-    readonly caller: Agent
-    readonly rootSessionId: SessionId
-    readonly runner: NekroNxtDynamicCordisRunner
-    readonly revision: AgentRevisionRecord
-    readonly channelId: ChannelId
-    readonly episodeId: EpisodeId
-  }): Agent {
-    const { caller, rootSessionId, runner, revision, channelId, episodeId } = input
-    if (this.#context.agents.get(caller.id) !== caller) {
-      throw new Error('Dynamic authoring caller Agent is stale or offline.')
-    }
-    const header = caller.session.header
-    if (header.origin !== 'subagent' || header.delegationDepth !== 1 || header.parentSession !== rootSessionId) {
-      throw new Error('Dynamic authoring is only available to a direct child of the owning root Session.')
-    }
-    const owner = this.#context.agents.get(rootSessionId)
-    if (!owner || this.#handles.get(rootSessionId)?.agent !== owner) {
-      throw new Error('Dynamic authoring root Session is stale or offline.')
-    }
-    if (this.#dynamicSessions.get(rootSessionId)?.runner !== runner) {
-      throw new Error('Dynamic authoring Runner is not owned by the expected root Session.')
-    }
-    const mappedRevision = this.#revisionBySession.get(rootSessionId)
-    if (
-      this.#productAgentBySession.get(rootSessionId) !== revision.agentId ||
-      this.#channelBySession.get(rootSessionId) !== channelId ||
-      this.#episodeBySession.get(rootSessionId) !== episodeId ||
-      mappedRevision?.id !== revision.id ||
-      mappedRevision.agentId !== revision.agentId ||
-      mappedRevision.capabilities.dynamicCreation !== true
-    ) {
-      throw new Error('Dynamic authoring root Session ownership no longer matches its immutable Revision.')
-    }
-    return owner
-  }
-
-  async #mountPersistentExtensionsIntoSession(
-    agentId: AgentRevisionRecord['agentId'],
-    sessionId: string,
-    agentContext: Context,
-  ): Promise<void> {
-    for (const registration of this.#persistentExtensions.values()) {
-      if (registration.agentId === agentId && registration.active) {
-        await this.#mountPersistentExtensionInSession(registration, sessionId, agentContext)
-      }
-    }
-  }
-
-  async #mountPersistentExtensionInSession(
-    registration: PersistentExtensionRegistration,
-    sessionId: string,
-    agentContext: Context,
-  ): Promise<void> {
-    if (!registration.active || registration.fibers.has(sessionId)) return
-    const inFlight = registration.mounting.get(sessionId)
-    if (inFlight) return inFlight
-    const mounting = (async () => {
-      const plugin = registration.plugin
-      if (plugin === undefined) return
-      const apply = plugin.apply.bind(plugin)
-      const extensionContext = isolatePrivateExtensionServices(agentContext)
-      const extensionPlugin = {
-        ...(plugin.inject === undefined ? {} : { inject: [...plugin.inject] }),
-        apply: async (context: Context) => {
-          await apply(persistentExtensionContext(context))
-        },
-      }
-      const fiber = extensionContext.plugin(extensionPlugin)
-      try {
-        await fiber
-      } catch (error) {
-        await fiber.dispose()
-        throw error
-      }
-      if (!registration.active) {
-        await fiber.dispose()
-        return
-      }
-      registration.fibers.set(sessionId, fiber)
-      fiber.ctx.effect(
-        () => () => {
-          registration.fibers.delete(sessionId)
-        },
-        'nekro-nxt: Extension session mount',
-      )
-    })().finally(() => registration.mounting.delete(sessionId))
-    registration.mounting.set(sessionId, mounting)
-    return mounting
-  }
-
-  async #unmountPersistentExtension(registration: PersistentExtensionRegistration): Promise<void> {
-    if (!registration.active && !this.#persistentExtensions.has(registration.key)) return
-    registration.active = false
-    if (this.#persistentExtensions.get(registration.key) === registration) {
-      this.#persistentExtensions.delete(registration.key)
-    }
-    await Promise.allSettled([...registration.mounting.values()])
-    const fibers = [...registration.fibers.values()]
-    registration.fibers.clear()
-    registration.handlers.clear()
-    await Promise.allSettled(fibers.map((fiber) => fiber.dispose()))
-  }
-
-  async #restoreLatestPendingVisualContext(agent: Agent): Promise<void> {
-    const latest = [...agent.session.events]
-      .reverse()
-      .find((event) => event.type === 'compaction/end' && event.data.error === undefined)
-    if (latest?.type !== 'compaction/end') return
-    const compactionId = String(latest.data.compactionId)
-    const settled = agent.session.events.some(
-      (event) =>
-        (event.type === 'nekro-nxt/image-restoration' && event.data.compactionId === compactionId) ||
-        (event.type === 'user/message' &&
-          event.data.source.kind === 'nekro-nxt-visual-restore' &&
-          event.data.source.compactionId === compactionId),
-    )
-    if (!settled) await this.#restoreVisualContext(agent, compactionId)
-  }
-
-  async #restoreVisualContext(agent: Agent, compactionId: string): Promise<void> {
-    const sessionId = String(agent.session.id)
-    if (!this.#imageInputSessions.has(sessionId)) return
-    const channelId = this.#channelBySession.get(sessionId)
-    const episodeId = this.#episodeBySession.get(sessionId)
-    const revision = this.#revisionBySession.get(sessionId)
-    if (!channelId || !episodeId || !revision) return
-    if (
-      agent.session.events.some(
-        (event) =>
-          (event.type === 'nekro-nxt/image-restoration' && event.data.compactionId === compactionId) ||
-          (event.type === 'user/message' &&
-            event.data.source.kind === 'nekro-nxt-visual-restore' &&
-            event.data.source.compactionId === compactionId),
-      )
-    ) {
-      return
-    }
-    const skippedAssetIds: string[] = []
-    try {
-      const policy = revision.imagePolicy.history.restoreAfterCompaction
-      const entries = [...this.#history.listEpisodeHistory(episodeId, { limit: policy.recentMessages })].reverse()
-      const byDigest = new Map<
-        string,
-        {
-          readonly asset: AssetRecord
-          readonly occurredAt: number
-          readonly ordinal: number
-          readonly sourceMessageIds: string[]
-        }
-      >()
-      let ordinal = 0
-      for (const entry of entries) {
-        for (const part of entry.parts) {
-          for (const assetId of messagePartAssetIds(part)) {
-            ordinal += 1
-            if (!this.#assets.canAccessAsset(assetId, channelId)) {
-              skippedAssetIds.push(assetId)
-              continue
-            }
-            const asset = this.#assets.getAssetById(assetId)
-            if (!asset?.mediaType.startsWith('image/')) {
-              skippedAssetIds.push(assetId)
-              continue
-            }
-            const previous = byDigest.get(asset.contentDigest)
-            byDigest.set(asset.contentDigest, {
-              asset,
-              occurredAt: entry.occurredAt,
-              ordinal,
-              sourceMessageIds: [...(previous?.sourceMessageIds ?? []), String(entry.sourceId)],
-            })
-          }
-        }
-      }
-      const visible = collectVisibleImageDigests(agent, this.#assets)
-      const candidates = [...byDigest.entries()]
-        .filter(([digest]) => !visible.has(digest))
-        .sort((left, right) => right[1].occurredAt - left[1].occurredAt || right[1].ordinal - left[1].ordinal)
-      const selected = candidates
-        .slice(0, policy.maxImages)
-        .sort((left, right) => left[1].occurredAt - right[1].occurredAt || left[1].ordinal - right[1].ordinal)
-      const prepared: Array<{
-        readonly assetId: string
-        readonly contentDigest: string
-        readonly sourceMessageIds: readonly string[]
-        readonly attachment: ImageAttachmentRef
-      }> = []
-      for (const [contentDigest, candidate] of selected) {
-        try {
-          const attachment = await requireNekroAssetAttachmentStore(this.#context.attachments).refForAsset(
-            candidate.asset,
-            undefined,
-            revision.imagePolicy.history.detail,
-          )
-          await this.#context.attachments.readImage(attachment)
-          prepared.push({
-            assetId: candidate.asset.id,
-            contentDigest,
-            sourceMessageIds: candidate.sourceMessageIds,
-            attachment,
-          })
-        } catch {
-          skippedAssetIds.push(candidate.asset.id)
-        }
-      }
-      const makeRestoreMessage = (assetsToRestore: typeof prepared): UserMessage => {
-        const sourceMessageIds = [...new Set(assetsToRestore.flatMap((asset) => asset.sourceMessageIds))]
-        const blocks: ContentBlock[] = [
-          {
-            type: 'text',
-            text: '以下原图来自当前频道最近消息，是压缩后的视觉上下文恢复，不是新的频道消息。',
-          },
-        ]
-        for (const asset of assetsToRestore) {
-          blocks.push({
-            type: 'text',
-            text: `恢复图片 ${asset.assetId}；来源消息：${asset.sourceMessageIds.join('、')}。`,
-          })
-          blocks.push({ type: 'image', attachment: asset.attachment })
-        }
-        return freezeMessage({
-          id: MessageId(`nxt-visual-${compactionId}`),
-          role: 'user',
-          content: blocks,
-          source: {
-            kind: 'nekro-nxt-visual-restore',
-            compactionId,
-            policyVersion: 1,
-            sourceMessageIds,
-            assets: assetsToRestore.map(({ assetId, contentDigest, sourceMessageIds }) => ({
-              assetId,
-              contentDigest,
-              sourceMessageIds,
-            })),
-          },
-        }) satisfies UserMessage
-      }
-      const restoredAssets = [...prepared]
-      if (restoredAssets.length > 0) {
-        const modelInfo = await this.#context.llm.resolveModelInfo(revision.model.provider, revision.model.model)
-        const contextWindow = modelInfo.context?.contextWindow
-        const compaction = this.#context.compaction
-        if (contextWindow !== undefined && compaction instanceof NekroNxtCompactionEngine) {
-          const modelPolicy = compaction.config.modelPolicies.find(
-            (candidate) => candidate.provider === revision.model.provider && candidate.model === revision.model.model,
-          )
-          const thresholdRatio = modelPolicy?.thresholdRatio ?? compaction.config.thresholdRatio
-          const thresholdTokens = Math.floor(contextWindow * thresholdRatio)
-          const currentTokens = this.#context.tokenMeter.measure(agent.session).totalTokens
-          while (
-            restoredAssets.length > 0 &&
-            currentTokens + this.#context.tokenMeter.estimateMessage(makeRestoreMessage(restoredAssets)) >
-              thresholdTokens
-          ) {
-            const omitted = restoredAssets.shift()
-            if (omitted) skippedAssetIds.push(omitted.assetId)
-          }
-        }
-      }
-      if (restoredAssets.length > 0) {
-        const message = makeRestoreMessage(restoredAssets)
-        agent.session.append('user/message', message, { surfaceOp: 'append' })
-      }
-      agent.session.append('nekro-nxt/image-restoration', {
-        compactionId,
-        candidateCount: candidates.length,
-        restoredAssetIds: restoredAssets.map(({ assetId }) => assetId),
-        skippedAssetIds,
-      })
-      await this.#context.sessions.flush(agent.session)
-    } catch (error) {
-      agent.session.append('nekro-nxt/image-restoration', {
-        compactionId,
-        candidateCount: 0,
-        restoredAssetIds: [],
-        skippedAssetIds,
-        error: error instanceof Error ? error.message : String(error),
-      })
-      await this.#context.sessions.flush(agent.session)
-    }
-  }
-
-  async #projectMessageParts(
-    sessionId: SessionId,
-    channelId: ChannelId,
-    parts: readonly MessagePart[],
-    visibleDigests: Set<string>,
-    imageStats?: ImageProjectionStats,
-    expandQuotes = true,
-  ): Promise<ContentBlock[]> {
-    const blocks: ContentBlock[] = []
-    const attachImage = async (assetId: AssetId, alt?: string): Promise<void> => {
-      if (!this.#assets.canAccessAsset(assetId, channelId)) {
-        if (imageStats) imageStats.skippedCount += 1
-        blocks.push({ type: 'text', text: `图片资源 ${assetId} 当前不可访问。` })
-        return
-      }
-      const asset = this.#assets.getAssetById(assetId)
-      if (!asset) {
-        if (imageStats) imageStats.skippedCount += 1
-        blocks.push({ type: 'text', text: `图片资源 ${assetId} 的元数据不可用。` })
-        return
-      }
-      if (!asset.mediaType.startsWith('image/')) {
-        if (imageStats) imageStats.skippedCount += 1
-        blocks.push({ type: 'text', text: `资源 ${assetId} 不是可注入的图片。` })
-        return
-      }
-      if (imageStats) imageStats.imageCount += 1
-      if (this.#imageInputSessions.has(sessionId)) {
-        if (visibleDigests.has(asset.contentDigest)) {
-          if (imageStats) imageStats.duplicateCount += 1
-          blocks.push({
-            type: 'text',
-            text: `图片资源 ${assetId} 与当前上下文中已驻留图片内容相同，沿用已有视觉内容。`,
-          })
-          return
-        }
-        const detail = this.#revisionBySession.get(String(sessionId))?.imagePolicy.history.detail ?? 'auto'
-        const attachment = await requireNekroAssetAttachmentStore(this.#context.attachments).refForAsset(
-          asset,
-          alt,
-          detail,
-        )
-        blocks.push({ type: 'image', attachment })
-        visibleDigests.add(asset.contentDigest)
-        if (imageStats) imageStats.injectedCount += 1
-        return
-      }
-      blocks.push({
-        type: 'text',
-        text: `图片资源 ${asset.id} 已收到，但当前模型不直接支持图片输入；如已配置辅助视觉模型，可使用 asset_inspect_images 批量理解。`,
-      })
-    }
-    for (const part of parts) {
-      switch (part.type) {
-        case 'text':
-          blocks.push({ type: 'text', text: part.text })
-          break
-        case 'mention': {
-          const member = memberSummary(this.#history, part.memberId)
-          blocks.push({
-            type: 'text',
-            text: `@${member.displayName ?? '未知成员'}（成员标识 ${member.memberId}）`,
-          })
-          break
-        }
-        case 'image':
-          blocks.push({
-            type: 'text',
-            text: `收到图片资源 ${part.assetId}${part.alt ? `（${part.alt}）` : ''}`,
-          })
-          await attachImage(part.assetId, part.alt)
-          break
-        case 'file':
-          blocks.push({
-            type: 'text',
-            text: `收到文件资源 ${part.assetId}${part.name ? `（${part.name}）` : ''}。若这是小型文本文件，可使用 asset_read_text 读取正文。`,
-          })
-          break
-        case 'audio':
-          blocks.push({ type: 'text', text: `收到音频资源 ${part.assetId}` })
-          break
-        case 'quote': {
-          if (!expandQuotes) {
-            blocks.push({ type: 'text', text: `引用频道消息 ${part.messageId}` })
-            break
-          }
-          const quoted = this.#history.getChannelHistoryEntryByLogicalMessageId(channelId, part.messageId)
-          if (quoted === undefined) {
-            blocks.push({
-              type: 'text',
-              text: `引用频道消息 ${part.messageId}，当前频道中无法读取该消息`,
-            })
-            break
-          }
-          blocks.push({
-            type: 'text',
-            text: `引用频道消息 ${part.messageId}${historyEntrySenderDescription(this.#history, quoted)}：`,
-          })
-          blocks.push(
-            ...(await this.#projectMessageParts(sessionId, channelId, quoted.parts, visibleDigests, imageStats, false)),
-          )
-          break
-        }
-        case 'rich': {
-          const context = richPartContextText(part)
-          const label = part.kind === 'forward' ? '收到转发' : '收到卡片'
-          blocks.push({ type: 'text', text: `${label}：${context.includes('\n') ? `\n${context}` : context}` })
-          for (const assetId of messagePartAssetIds(part)) {
-            blocks.push({ type: 'text', text: `卡片图片资源 ${assetId}` })
-            await attachImage(assetId)
-          }
-          break
-        }
-      }
-    }
-    return blocks
-  }
-
-  async #projectEvent(
-    sessionId: SessionId,
-    event: ChannelEventRecord,
-    visibleDigests?: Set<string>,
-    imageStats?: ImageProjectionStats,
-  ): Promise<ContentBlock[]> {
-    const sender = event.senderMemberId === undefined ? undefined : memberSummary(this.#history, event.senderMemberId)
-    const senderDescription =
-      sender === undefined ? '' : `，发送成员：${sender.displayName ?? '未知成员'}（成员标识 ${sender.memberId}）`
-    const mentionDescription = event.facts?.['mentionedBot'] === true ? '；该消息提及了当前智能体关联的机器人账号' : ''
-    const blocks: ContentBlock[] = [
-      { type: 'text', text: `频道消息 ${event.logicalMessageId}${senderDescription}${mentionDescription}：` },
-    ]
-    const seen =
-      visibleDigests ??
-      (() => {
-        const agent = this.#context.agents.get(sessionId)
-        return agent === undefined ? new Set<string>() : collectVisibleImageDigests(agent, this.#assets)
-      })()
-    blocks.push(...(await this.#projectMessageParts(sessionId, event.channelId, event.parts, seen, imageStats)))
-    return blocks
   }
 }
 

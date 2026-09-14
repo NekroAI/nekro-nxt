@@ -6,8 +6,8 @@
 
 - 产品名 `NekroNXT`，受限空间简称 `NXT`，根包与仓库名 `nekro-nxt`。这是以 DSH 为核心引擎、原生群聊、兼具娱乐与生产力、可由智能体参与扩展开发的聊天系统。
 - TypeScript 主栈、ESM 优先、pnpm workspace 单仓库；Desktop、Server、Web 与共享包共用领域实现。常用命令是 `pnpm dev`、`pnpm check`、`pnpm test`、`pnpm build`。
-- 默认直接在 `main` 开发和提交；只有用户明确要求时才创建分支。保留用户已有改动，不在子目录创建嵌套 Git 仓库。
-- 提交使用英文类型与中文主题：`type(scope): 中文动词短语`，类型为 `feat`、`fix`、`refactor`、`docs`、`test`、`merge`。
+- 默认直接在 `main` 开发和提交；有并行或隔离需要时可按工程判断使用分支，正式发布仍从 `main`。保留用户已有改动，不在子目录创建嵌套 Git 仓库。
+- 提交使用英文类型与中文主题：`type(scope): 中文动词短语`，类型为 `feat`、`fix`、`refactor`、`docs`、`test`、`merge`；复杂取舍可在正文解释。
 - 抽象、包和配置必须有当前所有者与消费者；成熟、低风险的主流依赖可直接用于已授权需求，重要选型写入对应契约。不为未来可能复用提前创建空层。
 
 ## 产品边界

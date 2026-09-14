@@ -1,16 +1,12 @@
 import type { AdapterConnectionDescriptor } from '@nekro-nxt/adapter-sdk'
 import type { HostApiResponse } from '@nekro-nxt/contracts'
+import { useProductRuntime } from '../product-runtime.js'
 import { ArrowRight, Cable, Check, Circle, Plus, Radio, RotateCcw, Send, Trash2 } from 'lucide-react'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { Navigate, useParams, useSearchParams } from 'react-router-dom'
 import { notify } from '../components/notifications.js'
 import { EmptyState, InlineFeedback, PageHeader } from '../components/product-feedback.js'
-import {
-  connectionDisplayName,
-  useProductStore,
-  type ConnectionState,
-  type ConnectionSummary,
-} from '../product-store.js'
+import { connectionDisplayName, type ConnectionState, type ConnectionSummary } from '../product-runtime.js'
 import { BindingTaskDialog } from './binding-task.js'
 import { useNxtNavigate } from '../shell/nxt-link.js'
 import { useUnsavedDraft } from '../unsaved-drafts.js'
@@ -84,6 +80,8 @@ const collectConnectionDefaults = (
 }
 
 export function ConnectionsPage() {
+  const useProductStore = useProductRuntime().store
+
   const { connectionId = '' } = useParams()
   const [searchParams, setSearchParams] = useSearchParams()
   const host = useProductStore((state) => state.host)
@@ -628,8 +626,8 @@ export function ConnectionsPage() {
                           label={property.title}
                           description={property.description}
                           checked={
-                            typeof selected.configuration[key] === 'boolean'
-                              ? selected.configuration[key]
+                            typeof selected.configuration?.[key] === 'boolean'
+                              ? selected.configuration?.[key]
                               : (property.default ?? false)
                           }
                           disabled={configurationPending}

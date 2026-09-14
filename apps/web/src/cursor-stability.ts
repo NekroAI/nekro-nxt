@@ -24,11 +24,12 @@ export const installStableCursorIntent = (targetDocument: Document = document): 
   const root = targetDocument.documentElement
   const update = (event: PointerEvent): void => {
     const intent = cursorIntentFor(event.target, event.buttons)
+    if (root.dataset['nxtCursor'] === intent) return
     if (intent === undefined) delete root.dataset['nxtCursor']
     else root.dataset['nxtCursor'] = intent
   }
   const clear = (): void => {
-    delete root.dataset['nxtCursor']
+    if (root.dataset['nxtCursor'] !== undefined) delete root.dataset['nxtCursor']
   }
 
   targetDocument.addEventListener('pointerover', update, true)

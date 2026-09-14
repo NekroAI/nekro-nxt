@@ -33,6 +33,7 @@ interface RuntimeCheckedDefineToolOptions {
   readonly presentResult?: (...args: readonly unknown[]) => unknown
 }
 
+// eslint-disable-next-line @typescript-eslint/no-unsafe-type-assertion -- DSH defineTool 的泛型声明无法表达经 assertDefineToolOptions 校验后的动态工具签名。
 const invokeRuntimeCheckedDefineTool = defineTool as (options: RuntimeCheckedDefineToolOptions) => unknown
 
 export function parseDshImageAttachmentRef(input: unknown): ImageAttachmentRef {

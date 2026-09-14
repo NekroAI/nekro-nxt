@@ -1,3 +1,4 @@
+import { callHostApi } from './host-api-client.js'
 import type {
   ExtensionJsonValue,
   HostUiClientEnvironment,
@@ -6,6 +7,7 @@ import type {
   HostUiPageProps,
 } from '@nekro-nxt/extension-sdk'
 import {
+  HostApiContracts,
   AdapterClientSlotNameSchema,
   HostUiNavigationModelSchema,
   parseJsonValue,
@@ -32,9 +34,14 @@ import {
   Tooltip,
 } from './ui-kit/index.js'
 import { EmptyState, InlineFeedback, PageHeader } from './components/product-feedback.js'
-import { useProductStore } from './product-store.js'
+import { useProductStore, useProductRuntime } from './product-runtime.js'
 import { DEFAULT_EXTENSION_CLIENT_STYLES } from './extension-client.js'
-import { productHostEventStream, type HostEventStreamEvent, type HostEventStreamHandlers } from './host-event-stream.js'
+import {
+  productHostEventStream,
+  type HostEventStream,
+  type HostEventStreamEvent,
+  type HostEventStreamHandlers,
+} from './host-event-stream.js'
 import styles from './host-ui-client.module.css'
 
 const markHostUiComponent = (name: string, Component: React.ElementType): React.ElementType => {
@@ -58,11 +65,14 @@ const reportHostUiDiagnostic = (
   status: 'ready' | 'load-failed' | 'navigation-failed',
   message?: string,
 ): Promise<void> =>
-  fetch(`/api/host-ui/pages/${encodeURIComponent(pageInstanceId)}/diagnostic`, {
-    method: 'POST',
-    headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ status, ...(message === undefined ? {} : { message }) }),
-  })
+  callHostApi(
+    HostApiContracts.reportHostUiPageDiagnostic,
+    { pageInstanceId },
+    {
+      status,
+      ...(message === undefined ? {} : { message }),
+    },
+  )
     .then(() => undefined)
     .catch(() => undefined)
 
@@ -79,9 +89,9 @@ const toRelativePath = (value: string): string => {
 }
 
 const HOST_UI_TOPIC_EVENTS: ReadonlyMap<string, readonly HostEventStreamEvent[]> = new Map([
-  ['agents', ['status']],
+  ['agents', ['status', 'snapshot-changed']],
   ['channels', ['channel-fact', 'binding-change']],
-  ['connections', ['status']],
+  ['connections', ['status', 'snapshot-changed']],
   ['extensions', ['extensions-changed']],
   ['dsh-plugins', ['dsh-plugins-changed', 'dsh-plugin-operation']],
   ['runtime', ['runtime', 'status']],
@@ -184,7 +194,10 @@ export class HostUiModuleRuntime {
     revision: 0,
   }
 
-  constructor(pages: readonly HostUiPageEntry[]) {
+  constructor(
+    pages: readonly HostUiPageEntry[],
+    readonly events: HostEventStream = productHostEventStream,
+  ) {
     this.#pages = pages
   }
 
@@ -367,21 +380,15 @@ export class HostUiModuleRuntime {
   }
 
   async #call(page: HostUiPageEntry, method: string, input: ExtensionJsonValue): Promise<ExtensionJsonValue> {
-    const response = await fetch(`/api/host-ui/pages/${encodeURIComponent(page.pageInstanceId)}/call`, {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ method, input }),
-    })
-    const body: unknown = await response.json().catch(() => undefined)
-    if (!response.ok) {
-      const message =
-        isRecord(body) && isRecord(body['error']) && typeof body['error']['message'] === 'string'
-          ? body['error']['message']
-          : `页面 RPC 请求失败（HTTP ${response.status}）。`
-      throw new Error(message)
-    }
-    if (!isRecord(body) || !('value' in body)) throw new Error('页面 RPC 返回格式无效。')
-    return parseJsonValue(body['value'])
+    const result = await callHostApi(
+      HostApiContracts.callHostUiPage,
+      { pageInstanceId: page.pageInstanceId },
+      {
+        method,
+        input: parseJsonValue(input),
+      },
+    )
+    return result.value
   }
 
   #subscribe(page: HostUiPageEntry, topic: string, listener: (value: ExtensionJsonValue) => void): () => void {
@@ -405,7 +412,7 @@ export class HostUiModuleRuntime {
             },
           ]),
         )
-        unsubscribe = productHostEventStream.subscribe(handlers)
+        unsubscribe = this.events.subscribe(handlers)
       })
       .catch(() => undefined)
     return () => {
@@ -415,11 +422,7 @@ export class HostUiModuleRuntime {
   }
 
   async #report(page: HostUiPageEntry, status: 'ready' | 'load-failed', message?: string): Promise<void> {
-    await fetch(`/api/host-ui/pages/${encodeURIComponent(page.pageInstanceId)}/diagnostic`, {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ status, ...(message === undefined ? {} : { message }) }),
-    }).catch(() => undefined)
+    await reportHostUiDiagnostic(page.pageInstanceId, status, message)
   }
 
   #emit(): void {
@@ -440,6 +443,7 @@ type HostUiRuntimeContextValue = {
 const HostUiRuntimeContext = React.createContext<HostUiRuntimeContextValue | null>(null)
 
 export function HostUiClientProvider({ children }: { readonly children: ReactNode }) {
+  const product = useProductRuntime()
   const pages = useProductStore((state) => state.hostUi.pages)
   const runtimes = useMemo(() => new Map<string, HostUiModuleRuntime>(), [])
   const value = useMemo<HostUiRuntimeContextValue>(
@@ -453,13 +457,13 @@ export function HostUiClientProvider({ children }: { readonly children: ReactNod
               candidate.client.moduleUrl === page.client.moduleUrl &&
               candidate.client.buildKey === page.client.buildKey,
           )
-          runtime = new HostUiModuleRuntime(ownerPages)
+          runtime = new HostUiModuleRuntime(ownerPages, product.events)
           runtimes.set(key, runtime)
         }
         return runtime
       },
     }),
-    [pages, runtimes],
+    [pages, runtimes, product],
   )
   useEffect(() => {
     const activeKeys = new Set(pages.map((page) => `${page.client.moduleUrl}:${page.client.buildKey}`))
@@ -529,14 +533,11 @@ function MountedPageCanvas({ page, wildcard }: { readonly page: HostUiPageEntry;
   const location = useLocation()
   useEffect(() => {
     void runtime.ensureLoaded().catch(async (error: unknown) => {
-      await fetch(`/api/host-ui/pages/${encodeURIComponent(page.pageInstanceId)}/diagnostic`, {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({
-          status: 'load-failed',
-          message: error instanceof Error ? error.message : String(error),
-        }),
-      }).catch(() => undefined)
+      await reportHostUiDiagnostic(
+        page.pageInstanceId,
+        'load-failed',
+        error instanceof Error ? error.message : String(error),
+      )
     })
   }, [page.pageInstanceId, runtime])
   const registration = runtime.registration(page.entryId)

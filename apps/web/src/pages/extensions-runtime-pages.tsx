@@ -1,3 +1,6 @@
+import { useProductRuntime } from '../product-runtime.js'
+import { callHostApi } from '../host-api-client.js'
+import { useHostActions } from '../product-runtime.js'
 import { DndContext, KeyboardSensor, PointerSensor, closestCenter, useSensor, useSensors } from '@dnd-kit/core'
 import {
   SortableContext,
@@ -8,13 +11,13 @@ import {
 } from '@dnd-kit/sortable'
 import { CSS } from '@dnd-kit/utilities'
 import { ArrowRight, Boxes, Download, FileArchive, GripVertical, Save, Sparkles, Trash2, Upload } from 'lucide-react'
-import { HostApiContracts, HostApiErrorSchema, type HostApiResponse, type HostUiPageEntry } from '@nekro-nxt/contracts'
+import { HostApiContracts, type HostApiResponse, type HostUiPageEntry } from '@nekro-nxt/contracts'
 import { useEffect, useState } from 'react'
 import { Navigate, useParams, useSearchParams } from 'react-router-dom'
 import { useNxtNavigate } from '../shell/nxt-link.js'
 import { notify } from '../components/notifications.js'
 import { EmptyState, InlineFeedback, PageHeader } from '../components/product-feedback.js'
-import { useProductStore, type LocalExtensionSummary } from '../product-store.js'
+import { type LocalExtensionSummary } from '../product-runtime.js'
 import type { DynamicPackageSummary } from '../product-port.js'
 import {
   Button,
@@ -100,6 +103,9 @@ function SortableHostUiPageRow({
 }
 
 function HostUiPageManager() {
+  const useProductStore = useProductRuntime().store
+
+  const hostActions = useHostActions()
   const hostUi = useProductStore((state) => state.hostUi)
   const extensions = useProductStore((state) => state.extensions)
   const [pages, setPages] = useState<readonly HostUiPageEntry[]>(hostUi.pages)
@@ -114,21 +120,10 @@ function HostUiPageManager() {
     setPages(next)
     setPending(true)
     try {
-      const response = await fetch('/api/host-ui/page-preferences', {
-        method: 'PUT',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({
-          expectedRevision: hostUi.preferencesRevision,
-          entries: next.map(({ pageInstanceId, visible }) => ({ pageInstanceId, visible })),
-        }),
+      await hostActions['hostUi.updatePreferences']({
+        expectedRevision: hostUi.preferencesRevision,
+        entries: next.map(({ pageInstanceId, visible }) => ({ pageInstanceId, visible })),
       })
-      const body: unknown = await response.json()
-      if (!response.ok) {
-        const parsed = HostApiErrorSchema.safeParse(body)
-        throw new Error(parsed.success ? parsed.data.error.message : `保存页面入口失败（HTTP ${response.status}）。`)
-      }
-      HostApiContracts.updateHostUiPagePreferences.parseResponse(body)
-      await useProductStore.getState().refreshHost()
     } catch (error) {
       setPages(hostUi.pages)
       notify(error instanceof Error ? error.message : String(error), 'error', 'host-ui-page-preferences')
@@ -219,6 +214,9 @@ export const contractVersionLabel = (version: string): string =>
   version === 'nekro-nxt-extension-v1' ? 'NekroNXT 扩展 v1' : version
 
 export function ExtensionsPage() {
+  const useProductStore = useProductRuntime().store
+
+  const hostActions = useHostActions()
   const { extensionId = '' } = useParams()
   const [extensionSearchParams] = useSearchParams()
   const navigate = useNxtNavigate()
@@ -227,6 +225,7 @@ export function ExtensionsPage() {
   const extensions = useProductStore((state) => state.extensions)
   const [pendingAgentId, setPendingAgentId] = useState<string | null>(null)
   const [revisionByAgent, setRevisionByAgent] = useState<Record<string, string>>({})
+  const [rebuildPending, setRebuildPending] = useState(false)
   const [installationPending, setInstallationPending] = useState(false)
   const [uninstallOpen, setUninstallOpen] = useState(false)
   const [permissionRevisionId, setPermissionRevisionId] = useState('')
@@ -307,13 +306,13 @@ export function ExtensionsPage() {
     setImportPending(true)
     setImportFileName(file.name)
     try {
-      const response = await fetch('/api/extensions/imports/inspect', { method: 'POST', body: file })
-      const body: unknown = await response.json()
-      if (!response.ok) {
-        const parsed = HostApiErrorSchema.safeParse(body)
-        throw new Error(parsed.success ? parsed.data.error.message : `导入检查失败（HTTP ${response.status}）。`)
-      }
-      const inspection = HostApiContracts.inspectExtensionImport.parseResponse(body)
+      const inspection = await callHostApi(
+        HostApiContracts.inspectExtensionImport,
+        {},
+        {
+          bytes: new Uint8Array(await file.arrayBuffer()),
+        },
+      )
       setImportInspection(inspection)
       setImportSlug(inspection.slugConflict ? `${inspection.slug}-imported` : inspection.slug)
     } catch (error) {
@@ -328,18 +327,10 @@ export function ExtensionsPage() {
     if (!importInspection || importPending) return
     setImportPending(true)
     try {
-      const response = await fetch(`/api/extensions/imports/${encodeURIComponent(importInspection.token)}/commit`, {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify(importInspection.slugConflict ? { localSlug: importSlug } : {}),
+      const result = await hostActions['extensions.commitImport']({
+        token: importInspection.token,
+        ...(importInspection.slugConflict ? { localSlug: importSlug } : {}),
       })
-      const body: unknown = await response.json()
-      if (!response.ok) {
-        const parsed = HostApiErrorSchema.safeParse(body)
-        throw new Error(parsed.success ? parsed.data.error.message : `导入提交失败（HTTP ${response.status}）。`)
-      }
-      const result = HostApiContracts.commitExtensionImport.parseResponse(body)
-      await useProductStore.getState().refreshHost()
       setImportInspection(null)
       setImportFileName('')
       notify(result.idempotent ? '相同的扩展修订已存在，未重复导入。' : '扩展修订已导入，当前未启用。', 'success')
@@ -354,22 +345,27 @@ export function ExtensionsPage() {
     if (!selected || deletePending) return false
     setDeletePending(true)
     try {
-      const response = await fetch(`/api/extensions/${encodeURIComponent(selected.id)}`, { method: 'DELETE' })
-      const body: unknown = await response.json()
-      if (!response.ok) {
-        const parsed = HostApiErrorSchema.safeParse(body)
-        throw new Error(parsed.success ? parsed.data.error.message : `删除扩展失败（HTTP ${response.status}）。`)
-      }
-      HostApiContracts.deleteLocalExtension.parseResponse(body)
+      await hostActions['extensions.delete']({ extensionId: selected.id })
       notify(`已删除本地扩展“${selected.name}”。`, 'success', `extension-delete:${selected.id}`)
       void navigate('/extensions')
-      await useProductStore.getState().refreshHost()
       return true
     } catch (error) {
       notify(error instanceof Error ? error.message : String(error), 'error', `extension-delete:${selected.id}`)
       return false
     } finally {
       setDeletePending(false)
+    }
+  }
+  const rebuild = async () => {
+    if (!focusedRevision || rebuildPending) return
+    setRebuildPending(true)
+    try {
+      await hostActions['extensions.rebuild']({ revisionId: focusedRevision.id })
+      notify('重建成功，请选择新版本并重新核对权限后启用。', 'success', 'extension-rebuild')
+    } catch (error) {
+      notify(error instanceof Error ? error.message : String(error), 'error', 'extension-rebuild')
+    } finally {
+      setRebuildPending(false)
     }
   }
   if (!extensionId && extensionSearchParams.get('view') === 'pages') return <HostUiPageManager />
@@ -398,7 +394,9 @@ export function ExtensionsPage() {
               >
                 {selected.scope !== 'agent'
                   ? selected.installation
-                    ? '已安装到本机'
+                    ? selected.installation.runtime?.status === 'restore-failed'
+                      ? '安装记录已保留，尚未运行'
+                      : '已安装到本机'
                     : '尚未安装'
                   : extensionLabel(selected.activations.length)}
               </StatusBadge>
@@ -473,6 +471,20 @@ export function ExtensionsPage() {
                 />
               </div>
             </section>
+            {focusedRevision?.format === 'requires-rebuild' ? (
+              <InlineFeedback tone="warning">
+                这个修订需要重建。旧源码和配置已保留；重建成功后不会自动启用。
+                <Button
+                  disabled={rebuildPending}
+                  loading={rebuildPending}
+                  onClick={() => {
+                    void rebuild()
+                  }}
+                >
+                  从已有源码重建
+                </Button>
+              </InlineFeedback>
+            ) : null}
             <section className={[styles.activationSection, styles.extensionPrimarySection].join(' ')}>
               {selected.scope !== 'agent' ? (
                 <>
@@ -516,7 +528,12 @@ export function ExtensionsPage() {
                           </span>
                           <Button
                             size="small"
-                            disabled={installed || installationPending}
+                            disabled={
+                              installed ||
+                              installationPending ||
+                              revision.format === 'requires-rebuild' ||
+                              revision.format === 'unavailable'
+                            }
                             loading={installationPending}
                             loadingLabel="正在切换…"
                             onClick={() => {
@@ -549,7 +566,12 @@ export function ExtensionsPage() {
                       <div className={styles.secondaryText}>选择使用这个扩展的智能体。</div>
                     </div>
                     <span className={styles.activationCount}>
-                      {selected.activations.length}/{agents.length} 已启用
+                      {
+                        selected.activations.filter(
+                          (activation) => !activation.runtime || activation.runtime.status === 'active',
+                        ).length
+                      }
+                      /{agents.length} 正在使用
                     </span>
                   </div>
                   {agents.length > 0 ? (
@@ -573,7 +595,7 @@ export function ExtensionsPage() {
                               <small className={styles.activationMeta}>
                                 {activation
                                   ? activation.runtime && activation.runtime.status !== 'active'
-                                    ? `${activation.runtime.status === 'restore-failed' ? '恢复失败' : '停止失败'} · r${activation.revision || selected.revision}`
+                                    ? `${activation.runtime.message ?? (activation.runtime.status === 'restore-failed' ? '恢复失败' : '停止失败')} · r${activation.revision || selected.revision}`
                                     : `正在使用 r${activation.revision || selected.revision}`
                                   : `尚未启用 · 最新 r${selected.revision}`}
                               </small>
@@ -584,7 +606,12 @@ export function ExtensionsPage() {
                               disabled={pendingAgentId !== null}
                               onValueChange={(revisionId) => {
                                 setRevisionByAgent((current) => ({ ...current, [agent.id]: revisionId }))
-                                if (activation && revisionId !== activation.revisionId) {
+                                if (
+                                  activation &&
+                                  revisionId !== activation.revisionId &&
+                                  selected.revisions.find((revision) => revision.id === revisionId)?.format !==
+                                    'requires-rebuild'
+                                ) {
                                   void changeActivation(selected, agent.id, agent.name, true, revisionId)
                                 }
                               }}
@@ -741,9 +768,27 @@ export function ExtensionsPage() {
                     disabled={!focusedRevision}
                     onClick={() => {
                       if (!focusedRevision) return
-                      window.location.assign(
-                        `/api/extensions/${encodeURIComponent(selected.id)}/revisions/${encodeURIComponent(focusedRevision.id)}/export`,
+                      void callHostApi(
+                        HostApiContracts.exportExtensionRevision,
+                        {
+                          extensionId: selected.id,
+                          revisionId: focusedRevision.id,
+                        },
+                        undefined,
                       )
+                        .then((bytes) => {
+                          const url = URL.createObjectURL(
+                            new Blob([new Uint8Array(bytes)], { type: 'application/zip' }),
+                          )
+                          const anchor = document.createElement('a')
+                          anchor.href = url
+                          anchor.download = `${selected.id}-${focusedRevision.id}.zip`
+                          anchor.click()
+                          setTimeout(() => URL.revokeObjectURL(url), 1000)
+                        })
+                        .catch((error: unknown) =>
+                          notify(error instanceof Error ? error.message : String(error), 'error'),
+                        )
                     }}
                   >
                     <Download size={14} aria-hidden="true" /> 导出 r{focusedRevision?.revision ?? selected.revision}
@@ -915,6 +960,8 @@ const dynamicHalfLabel = (
 }
 
 export function CreatorPage() {
+  const useProductStore = useProductRuntime().store
+
   const { taskId: routeTaskId } = useParams()
   const host = useProductStore((state) => state.host)
   const dynamic = useProductStore((state) => state.dynamic)
@@ -943,7 +990,7 @@ export function CreatorPage() {
     visibleDynamic.find((item) => `${item.episodeId}:${item.pluginId}:${item.packageId ?? ''}` === selectedKey) ??
     visibleDynamic[0]
   const selectedAgent = selectedItem ? agents.find((agent) => agent.id === selectedItem.agentId) : undefined
-  const agentIsSettling = selectedAgent !== undefined && selectedAgent.state !== '空闲'
+  const agentIsSettling = selectedAgent !== undefined && selectedAgent.state !== 'idle'
   const selectedPackageAvailable = selectedItem?.packageId !== undefined
   const eligibleAgents = agents.filter((agent) => agent.capabilities.dynamicCreation)
   const requestedAgent = agents.find((agent) => agent.id === requestedAgentId)

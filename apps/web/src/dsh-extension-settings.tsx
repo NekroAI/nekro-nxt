@@ -1,4 +1,4 @@
-/// <reference types="vite/client" />
+import { callHostApi } from './host-api-client.js'
 
 import {
   deletePath,
@@ -8,14 +8,12 @@ import {
   validateDraft,
   type SchemaNode,
 } from '@deepseek-ai/dsh-client-schema-form'
-import type { HostApiContract, HostApiRequest, HostApiResponse } from '@nekro-nxt/contracts'
+import type { HostApiRequest, HostApiResponse } from '@nekro-nxt/contracts'
 import {
   DshCredentialsChangedSseDataSchema,
   DshPluginOperationSseDataSchema,
   DshSettingsChangedSseDataSchema,
   HostApiContracts,
-  HostApiErrorSchema,
-  buildHostApiContractPath,
   JsonValueSchema,
   parseJsonValue,
 } from '@nekro-nxt/contracts'
@@ -23,8 +21,8 @@ import { ChevronDown, ChevronUp, KeyRound, RotateCcw, Trash2, Upload } from 'luc
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { notify } from './components/notifications.js'
 import { InlineFeedback } from './components/product-feedback.js'
-import { productHostEventStream } from './host-event-stream.js'
-import { useProductStore } from './product-store.js'
+import { useProductRuntime } from './product-runtime.js'
+import { useProductStore } from './product-runtime.js'
 import { useUnsavedDraft } from './unsaved-drafts.js'
 import {
   Button,
@@ -46,11 +44,6 @@ type DshSettingsNamespaceView = HostApiResponse<'dshSettings'>['namespaces'][num
 type DshCredentialView = HostApiResponse<'dshCredentialsDescribe'>['credentials'][string]
 type DshSettingsPathOperation = HostApiRequest<'dshSettingsMutate'>['ops'][number]
 
-interface DshSettingsCatalog {
-  readonly plugins: readonly DshPluginCatalogEntry[]
-  readonly namespaces: readonly DshSettingsNamespaceView[]
-}
-
 interface DshSettingsCatalogEntry {
   readonly id: string
   readonly label: string
@@ -61,38 +54,6 @@ interface DshSettingsCatalogEntry {
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === 'object' && value !== null && !Array.isArray(value)
-
-const requestHostApi = async <Output,>(
-  contract: HostApiContract,
-  responseSchema: { parse(input: unknown): Output },
-  params: unknown,
-  request: unknown,
-): Promise<Output> => {
-  const url = buildHostApiContractPath(contract, params)
-  const requestBody = contract.parseRequest(request)
-  const response = await fetch(url, {
-    method: contract.method,
-    headers: { 'content-type': 'application/json' },
-    ...(contract.method === 'GET' || requestBody === undefined ? {} : { body: JSON.stringify(requestBody) }),
-  })
-  const responseBody: unknown = await response.json()
-  if (!response.ok) {
-    const parsedError = HostApiErrorSchema.safeParse(responseBody)
-    throw Object.assign(
-      new Error(parsedError.success ? parsedError.data.error.message : `请求失败（HTTP ${response.status}）。`),
-      { status: response.status },
-    )
-  }
-  return responseSchema.parse(responseBody)
-}
-
-const loadCatalog = async (): Promise<DshSettingsCatalog> => {
-  const [plugins, settings] = await Promise.all([
-    requestHostApi(HostApiContracts.dshPlugins, HostApiContracts.dshPlugins.response, {}, undefined),
-    requestHostApi(HostApiContracts.dshSettings, HostApiContracts.dshSettings.response, {}, undefined),
-  ])
-  return { plugins: plugins.plugins, namespaces: settings.namespaces }
-}
 
 const parseDshSettingsChangedEvent = (text: string) => {
   try {
@@ -699,31 +660,27 @@ function CredentialEditor({ refName, onChanged }: { readonly refName: string; re
   const [clearError, setClearError] = useState('')
   const credentialInputRef = useRef<HTMLInputElement>(null)
   const clearedRef = useRef(false)
+  const infoRevision = useRef(0)
   const load = useCallback(async () => {
-    const result = await requestHostApi(
-      HostApiContracts.dshCredentialsDescribe,
-      HostApiContracts.dshCredentialsDescribe.response,
-      {},
-      { refs: [refName] },
-    )
+    const revision = ++infoRevision.current
+    const result = await callHostApi(HostApiContracts.dshCredentialsDescribe, {}, { refs: [refName] })
+    if (revision !== infoRevision.current) return
     setInfo(result.credentials[refName] ?? { configured: false, writable: false })
   }, [refName])
   useEffect(() => {
     void load().catch((cause) => setError(cause instanceof Error ? cause.message : String(cause)))
+    return () => {
+      infoRevision.current += 1
+    }
   }, [load])
   const save = async (): Promise<void> => {
     if (!value || pending) return
     setPending(true)
     setError('')
     try {
-      setInfo(
-        await requestHostApi(
-          HostApiContracts.dshCredentialSet,
-          HostApiContracts.dshCredentialSet.response,
-          { ref: refName },
-          { value },
-        ),
-      )
+      const next = await callHostApi(HostApiContracts.dshCredentialSet, { ref: refName }, { value })
+      infoRevision.current += 1
+      setInfo(next)
       setValue('')
       onChanged()
     } catch (cause) {
@@ -789,13 +746,9 @@ function CredentialEditor({ refName, onChanged }: { readonly refName: string; re
         onConfirm={async () => {
           setClearError('')
           try {
-            const next = await requestHostApi(
-              HostApiContracts.dshCredentialUnset,
-              HostApiContracts.dshCredentialUnset.response,
-              { ref: refName },
-              undefined,
-            )
+            const next = await callHostApi(HostApiContracts.dshCredentialUnset, { ref: refName }, undefined)
             clearedRef.current = true
+            infoRevision.current += 1
             setInfo(next)
             setValue('')
             onChanged()
@@ -880,9 +833,8 @@ function NamespaceEditor({
         const validation = validateDraft(schema, rootValue)
         if (validation) throw new Error(validation)
       }
-      const saved = await requestHostApi(
+      const saved = await callHostApi(
         HostApiContracts.dshSettingsMutate,
-        HostApiContracts.dshSettingsMutate.response,
         { namespace: authority.ns },
         { expectedRevision: authority.revision, ops: [...ops.values()] },
       )
@@ -896,12 +848,7 @@ function NamespaceEditor({
       if (status === 409) {
         setConflict(true)
         try {
-          const latest = await requestHostApi(
-            HostApiContracts.dshSettings,
-            HostApiContracts.dshSettings.response,
-            {},
-            undefined,
-          )
+          const latest = await callHostApi(HostApiContracts.dshSettings, {}, undefined)
           const descriptor = latest.namespaces.find((item) => item.ns === authority.ns)
           if (descriptor) setAuthority(descriptor)
         } catch {
@@ -997,13 +944,17 @@ function NamespaceEditor({
   )
 }
 
+const EMPTY_SETTINGS_CATALOG = { plugins: [], namespaces: [] } as const
+
 export function DshExtensionSettings() {
+  const { events, store } = useProductRuntime()
   const agents = useProductStore((state) => state.agents)
-  const [catalog, setCatalog] = useState<DshSettingsCatalog>({ plugins: [], namespaces: [] })
+  const catalogQuery = useProductStore((state) => state.dshCatalogQuery)
+  const catalog = catalogQuery.data ?? EMPTY_SETTINGS_CATALOG
+  const loading = catalogQuery.loading
+  const error = catalogQuery.error
   const [selectedEntryId, setSelectedEntryId] = useState('')
   const [selectedNamespace, setSelectedNamespace] = useState('')
-  const [loading, setLoading] = useState(true)
-  const [error, setError] = useState('')
   const [installSpec, setInstallSpec] = useState('')
   const [installInspection, setInstallInspection] = useState<HostApiResponse<'inspectDshPluginInstall'> | null>(null)
   const [approvedBuilds, setApprovedBuilds] = useState<Record<string, boolean>>({})
@@ -1023,16 +974,11 @@ export function DshExtensionSettings() {
     readonly digest: string
   } | null>(null)
   const refresh = useCallback(async () => {
-    try {
-      const next = await loadCatalog()
-      setCatalog(next)
-      setError('')
-    } catch (cause) {
-      setError(cause instanceof Error ? cause.message : String(cause))
-    } finally {
-      setLoading(false)
-    }
-  }, [])
+    await store
+      .getState()
+      .loadDshCatalog(true)
+      .catch(() => undefined)
+  }, [store])
   useEffect(() => {
     void refresh()
     const settingsListener = (event: unknown): void => {
@@ -1058,13 +1004,13 @@ export function DshExtensionSettings() {
         // Ignore malformed or unrelated operation frames; the HTTP request remains authoritative.
       }
     }
-    return productHostEventStream.subscribe({
+    return events.subscribe({
       'dsh-settings-changed': settingsListener,
       'dsh-credentials-changed': credentialsListener,
       'dsh-plugins-changed': pluginsListener,
       'dsh-plugin-operation': operationListener,
     })
-  }, [activeOperationId, refresh])
+  }, [activeOperationId, refresh, events])
   const entries = useMemo<readonly DshSettingsCatalogEntry[]>(() => {
     const claimed = new Set(catalog.plugins.flatMap((plugin) => plugin.settingsNamespaces))
     return [
@@ -1116,9 +1062,8 @@ export function DshExtensionSettings() {
     setOperationError('')
     setOperationNotice('')
     try {
-      const inspection = await requestHostApi(
+      const inspection = await callHostApi(
         HostApiContracts.inspectDshPluginInstall,
-        HostApiContracts.inspectDshPluginInstall.response,
         {},
         { spec: installSpec.trim(), operationId },
       )
@@ -1140,22 +1085,15 @@ export function DshExtensionSettings() {
     setOperationError('')
     setOperationNotice('')
     try {
-      const response = await fetch('/api/dsh/plugin-installs/inspect-tarball', {
-        method: 'POST',
-        headers: {
-          'content-type': 'application/octet-stream',
-          'x-file-name': file.name,
-          'x-operation-id': operationId,
+      const parsed = await callHostApi(
+        HostApiContracts.inspectDshPluginTarball,
+        {},
+        {
+          bytes: new Uint8Array(await file.arrayBuffer()),
+          fileName: file.name,
+          operationId,
         },
-        body: file,
-      })
-      const body: unknown = await response.json()
-      if (!response.ok) {
-        const parsedError = HostApiErrorSchema.safeParse(body)
-        throw new Error(parsedError.success ? parsedError.data.error.message : `请求失败（HTTP ${response.status}）。`)
-      }
-      setInstallInspection(HostApiContracts.inspectDshPluginInstall.parseResponse(body))
-      const parsed = HostApiContracts.inspectDshPluginInstall.parseResponse(body)
+      )
       setInstallInspection(parsed)
       setApprovedBuilds(Object.fromEntries(parsed.blockedBuilds.map((name) => [name, false])))
     } catch (cause) {
@@ -1175,9 +1113,8 @@ export function DshExtensionSettings() {
     setOperationError('')
     setOperationNotice('')
     try {
-      await requestHostApi(
+      await callHostApi(
         HostApiContracts.commitDshPluginInstall,
-        HostApiContracts.commitDshPluginInstall.response,
         {},
         {
           token: installInspection.token,
@@ -1219,9 +1156,8 @@ export function DshExtensionSettings() {
     setOperationNotice('')
     try {
       const config = parseJsonValue(JSON.parse(entryConfig[entry.id] ?? JSON.stringify(entry.config)))
-      await requestHostApi(
+      await callHostApi(
         HostApiContracts.activateDshPluginEntry,
-        HostApiContracts.activateDshPluginEntry.response,
         { entryId: entry.id },
         {
           target,
@@ -1249,12 +1185,7 @@ export function DshExtensionSettings() {
     setConfigInspecting((current) => ({ ...current, [entryId]: true }))
     setOperationError('')
     try {
-      const inspection = await requestHostApi(
-        HostApiContracts.inspectDshPluginEntryConfig,
-        HostApiContracts.inspectDshPluginEntryConfig.response,
-        { entryId },
-        undefined,
-      )
+      const inspection = await callHostApi(HostApiContracts.inspectDshPluginEntryConfig, { entryId }, undefined)
       setConfigInspections((current) => ({ ...current, [entryId]: inspection }))
     } catch (cause) {
       setOperationError(cause instanceof Error ? cause.message : String(cause))
@@ -1267,12 +1198,7 @@ export function DshExtensionSettings() {
     setOperationError('')
     setOperationNotice('')
     try {
-      await requestHostApi(
-        HostApiContracts.deactivateDshPluginEntry,
-        HostApiContracts.deactivateDshPluginEntry.response,
-        { entryId },
-        { targetKey },
-      )
+      await callHostApi(HostApiContracts.deactivateDshPluginEntry, { entryId }, { targetKey })
       setOperationNotice('入口已关闭并完成资源清理。')
       await refresh()
     } catch (cause) {
@@ -1280,7 +1206,7 @@ export function DshExtensionSettings() {
     }
   }
 
-  if (loading) return <InlineFeedback tone="info">正在读取 DSH 扩展和配置…</InlineFeedback>
+  if (loading && !catalogQuery.data) return <InlineFeedback tone="info">正在读取 DSH 扩展和配置…</InlineFeedback>
   if (error && catalog.plugins.length === 0) return <InlineFeedback tone="error">{error}</InlineFeedback>
   return (
     <div className={styles.catalog}>
@@ -1517,9 +1443,8 @@ export function DshExtensionSettings() {
                   onConfirm={async () => {
                     if (!selected.packageId) return false
                     try {
-                      await requestHostApi(
+                      await callHostApi(
                         HostApiContracts.removeDshPluginPackage,
-                        HostApiContracts.removeDshPluginPackage.response,
                         { packageId: selected.packageId },
                         undefined,
                       )

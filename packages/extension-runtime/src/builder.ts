@@ -1,13 +1,6 @@
-import {
-  AdapterClientSlotNameSchema,
-  AgentClientSlotNameSchema,
-  ExtensionIdSchema,
-  ExtensionRevisionIdSchema,
-  HostPageContributionSchema,
-  HostUiPermissionDeclarationSchema,
-  type ExtensionId,
-  type ExtensionRevisionId,
-} from '@nekro-nxt/contracts'
+import { ExtensionRebuildRequiredError, legacyExtensionManifestSchema } from './legacy-manifest.js'
+import { extensionManifestSchema } from './manifest.js'
+import { ExtensionRevisionIdSchema, type ExtensionId, type ExtensionRevisionId } from '@nekro-nxt/contracts'
 import { EXTENSION_SDK_BUNDLE_SOURCE } from '@nekro-nxt/extension-sdk'
 import { createHash, randomUUID } from 'node:crypto'
 import { mkdir, readFile, rename, rm, rmdir, stat, writeFile } from 'node:fs/promises'
@@ -17,7 +10,7 @@ import { z } from 'zod'
 import type { ExtensionBuildArtifact } from './types.js'
 import { validateHostUiCss, validateHostUiSvg } from './ui-assets.js'
 
-const BUILDER_VERSION = 'nekro-nxt-esbuild-v3'
+const BUILDER_VERSION = 'nekro-nxt-esbuild-v5'
 
 const getNodeErrorCode = (error: unknown): string | undefined => {
   if (!(error instanceof Error) || !('code' in error) || typeof error.code !== 'string') return undefined
@@ -36,99 +29,6 @@ const extensionBuildCacheSchema = z
   .refine(({ hostEntry, clientEntry }) => hostEntry !== undefined || clientEntry !== undefined, {
     message: 'Extension build cache has no artifact entrypoint.',
   })
-
-const extensionEntrypointsSchema = z.union([
-  z.object({ host: z.literal('source/host.ts'), client: z.literal('source/client.ts') }).strict(),
-  z.object({ host: z.literal('source/host.ts') }).strict(),
-  z.object({ client: z.literal('source/client.ts') }).strict(),
-])
-
-const clientCssSchema = z
-  .object({
-    path: z.string().regex(/^assets\/[a-z0-9][a-z0-9/_-]*\.module\.css$/u),
-    sha256: z.string().regex(/^[a-f0-9]{64}$/u),
-  })
-  .strict()
-
-const extensionManifestV1Schema = z
-  .object({
-    extensionId: ExtensionIdSchema,
-    revisionId: ExtensionRevisionIdSchema,
-    entrypoints: extensionEntrypointsSchema,
-  })
-  .strict()
-
-const extensionManifestSchema = z.union([
-  extensionManifestV1Schema,
-  extensionManifestV1Schema
-    .extend({
-      schemaVersion: z.literal(2),
-      contributions: z.array(
-        z.discriminatedUnion('kind', [
-          z.object({ kind: z.literal('tool'), name: z.string(), description: z.string() }).strict(),
-          z.object({ kind: z.literal('rpc'), method: z.string() }).strict(),
-          z
-            .object({
-              kind: z.literal('client-slot'),
-              name: AgentClientSlotNameSchema,
-            })
-            .strict(),
-        ]),
-      ),
-    })
-    .strict(),
-  extensionManifestV1Schema
-    .extend({
-      schemaVersion: z.literal(3),
-      scope: z.literal('host-adapter'),
-      entrypoints: z.union([
-        z.object({ host: z.literal('source/host.ts'), client: z.literal('source/client.ts') }).strict(),
-        z.object({ host: z.literal('source/host.ts') }).strict(),
-      ]),
-      clientCss: clientCssSchema.optional(),
-      contributions: z
-        .array(
-          z.discriminatedUnion('kind', [
-            z
-              .object({
-                kind: z.literal('adapter'),
-                apiVersion: z.literal(2),
-                key: z.string().trim().min(1),
-                descriptorDigest: z.string().regex(/^[a-f0-9]{64}$/u),
-              })
-              .strict(),
-            z
-              .object({
-                kind: z.literal('host-client-slot'),
-                name: AdapterClientSlotNameSchema,
-                key: z.string().trim().min(1),
-              })
-              .strict(),
-            HostPageContributionSchema,
-          ]),
-        )
-        .min(1)
-        .superRefine((contributions, context) => {
-          if (contributions.filter(({ kind }) => kind === 'adapter').length !== 1) {
-            context.addIssue({ code: 'custom', message: 'Host Adapter Manifest 必须且只能声明一个 Adapter。' })
-          }
-        }),
-    })
-    .strict(),
-  extensionManifestV1Schema
-    .extend({
-      schemaVersion: z.literal(4),
-      scope: z.literal('host-ui'),
-      entrypoints: z.union([
-        z.object({ host: z.literal('source/host.ts'), client: z.literal('source/client.ts') }).strict(),
-        z.object({ client: z.literal('source/client.ts') }).strict(),
-      ]),
-      clientCss: clientCssSchema.optional(),
-      permissions: HostUiPermissionDeclarationSchema,
-      contributions: z.array(HostPageContributionSchema).min(1).max(8),
-    })
-    .strict(),
-])
 
 const importPolicy: Plugin = {
   name: 'nekro-nxt-extension-import-policy',
@@ -183,9 +83,9 @@ export class ExtensionBuilder {
     const buildKey = this.buildKey(input.contentDigest)
     const directory = path.join(this.#cacheRoot, input.revisionId, buildKey)
     const manifestPath = path.join(directory, 'build.json')
-    const manifest = extensionManifestSchema.parse(
-      JSON.parse(await readFile(path.join(input.sourceDirectory, 'manifest.json'), 'utf8')),
-    )
+    const raw: unknown = JSON.parse(await readFile(path.join(input.sourceDirectory, 'manifest.json'), 'utf8'))
+    if (legacyExtensionManifestSchema.safeParse(raw).success) throw new ExtensionRebuildRequiredError()
+    const manifest = extensionManifestSchema.parse(raw)
     if (manifest.revisionId !== input.revisionId) {
       throw new Error('Extension Manifest revision does not match build input.')
     }
