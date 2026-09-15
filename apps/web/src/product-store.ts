@@ -1,3 +1,4 @@
+import { HostApiContracts } from '@nekro-nxt/contracts'
 import { createPlatformUserDirectoryLoader } from './platform-user-directory.js'
 import { createOwnedHostQuery } from './owned-host-query.js'
 import { StaleHostReadError } from './host-api-client.js'
@@ -144,6 +145,25 @@ export function createProductStore(
         credentials,
       })
     },
+    startConnectionLogin: async ({ adapterKey, alias, connectionId }) => {
+      const result = await requireHost().actions['connections.login.start']({
+        adapterKey: requireValue(adapterKey, '请选择连接平台。'),
+        ...(alias === undefined ? {} : { alias: alias.trim() }),
+        ...(connectionId === undefined ? {} : { connectionId: requireValue(connectionId, '缺少要重新认证的连接。') }),
+      })
+      return HostApiContracts.startConnectionLogin.parseResponse(result)
+    },
+    getConnectionLogin: async (loginId) => {
+      const result = await requireHost().actions['connections.login.get']({
+        loginId: requireValue(loginId, '缺少扫码登录会话，请重新扫码。'),
+      })
+      return HostApiContracts.getConnectionLogin.parseResponse(result)
+    },
+    cancelConnectionLogin: async (loginId) => {
+      await requireHost().actions['connections.login.cancel']({
+        loginId: requireValue(loginId, '缺少扫码登录会话，请重新扫码。'),
+      })
+    },
     updateConnectionAlias: async (connectionId, alias) => {
       await requireHost().actions['connections.updateAlias']({
         connectionId: requireValue(connectionId, '缺少连接标识，请刷新页面后重试。'),
@@ -154,6 +174,12 @@ export function createProductStore(
       await requireHost().actions['connections.updateActivityTriggerDefaults']({
         connectionId: requireValue(connectionId, '缺少连接标识，请刷新页面后重试。'),
         activityKeys: [...activityKeys],
+      })
+    },
+    updateConnectionConfiguration: async (connectionId, configuration) => {
+      await requireHost().actions['connections.updateConfiguration']({
+        connectionId: requireValue(connectionId, '缺少连接标识，请刷新页面后重试。'),
+        configuration,
       })
     },
     deleteConnection: async (connectionId, deleteChannelData) => {

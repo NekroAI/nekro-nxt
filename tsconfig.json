@@ -10,6 +10,7 @@
     { "path": "packages/adapter-onebot-11" },
     { "path": "packages/adapter-wecom-ai-bot" },
     { "path": "packages/adapter-qq-openclaw" },
+    { "path": "packages/adapter-wechat-ilink" },
     { "path": "packages/adapter-web" },
     { "path": "packages/core" },
     { "path": "packages/channel-runtime" },

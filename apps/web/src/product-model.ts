@@ -203,6 +203,7 @@ export interface ChannelHistoryState {
 }
 
 export interface ConnectionSummary {
+  readonly configuration?: Readonly<Record<string, string | number | boolean>>
   readonly id: string
   /** Optional user-facing name; the Adapter name remains the platform identity. */
   readonly alias?: string
@@ -491,8 +492,19 @@ export interface ProductState {
     readonly credentials: Readonly<Record<string, string>>
     readonly alias?: string
   }): Promise<void>
+  startConnectionLogin(input: {
+    readonly adapterKey: string
+    readonly alias?: string
+    readonly connectionId?: string
+  }): Promise<HostApiResponse<'startConnectionLogin'>>
+  getConnectionLogin(loginId: string): Promise<HostApiResponse<'getConnectionLogin'>>
+  cancelConnectionLogin(loginId: string): Promise<void>
   updateConnectionAlias(connectionId: string, alias: string): Promise<void>
   updateConnectionActivityTriggerDefaults(connectionId: string, activityKeys: readonly string[]): Promise<void>
+  updateConnectionConfiguration(
+    connectionId: string,
+    configuration: Readonly<Record<string, string | number | boolean>>,
+  ): Promise<void>
   deleteConnection(connectionId: string, deleteChannelData: boolean): Promise<void>
   restoreConnection(connectionId: string): Promise<void>
   workTreeOrder: {

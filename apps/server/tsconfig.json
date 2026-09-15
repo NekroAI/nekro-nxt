@@ -17,6 +17,7 @@
     { "path": "../../packages/client-migrations" },
     { "path": "../../packages/adapter-builtin-roster" },
     { "path": "../../packages/adapter-sdk" },
+    { "path": "../../packages/adapter-wechat-ilink" },
     { "path": "../../packages/storage-sqlite" },
     { "path": "../../packages/test-harness" }
   ]

@@ -4,6 +4,7 @@ import { BUILTIN_ADAPTER_CONTRIBUTIONS } from '@nekro-nxt/adapter-builtin-roster
 import {
   AdapterRegistry,
   type AdapterConnectionRuntime,
+  type AdapterHostContributionV2,
   type AdapterLocalChannelPort,
   type AdapterTransportService,
   type RegisteredAdapterHandle,
@@ -90,6 +91,8 @@ export interface NekroRuntimeOptions {
   readonly notifications?: { readonly fetch?: typeof fetch }
   /** Replaced by an offline Fake for tests and AI validation; production uses fetch/ws. */
   readonly adapterTransport?: AdapterTransportService
+  /** Overrides first-party Adapter composition for isolated tests and custom hosts. */
+  readonly adapterContributions?: readonly AdapterHostContributionV2[]
 }
 
 /** One deliberate entity registry the domain API reads for its authoritative projection. */
@@ -247,8 +250,8 @@ export class NekroRuntime {
       )
       const core = new CoreService(repository, { now, nextUlid })
       const adapters = new AdapterRegistry()
-      const adapterHandles = BUILTIN_ADAPTER_CONTRIBUTIONS.map((contribution, index) =>
-        adapters.register(`builtin:${index}`, contribution),
+      const adapterHandles = (options.adapterContributions ?? BUILTIN_ADAPTER_CONTRIBUTIONS).map(
+        (contribution, index) => adapters.register(`builtin:${index}`, contribution),
       )
       const dshPluginInstaller = new DshPluginPackageInstaller(
         repository,
@@ -735,6 +738,22 @@ export class NekroRuntime {
     ...args: Parameters<ConnectionApplicationService['updateConnectionActivityTriggerDefaults']>
   ) {
     return this.connections.updateConnectionActivityTriggerDefaults(...args)
+  }
+
+  updateConnectionConfiguration(...args: Parameters<ConnectionApplicationService['updateConnectionConfiguration']>) {
+    return this.connections.updateConnectionConfiguration(...args)
+  }
+
+  startConnectionLogin(...args: Parameters<ConnectionApplicationService['startConnectionLogin']>) {
+    return this.connections.startConnectionLogin(...args)
+  }
+
+  getConnectionLogin(...args: Parameters<ConnectionApplicationService['getConnectionLogin']>) {
+    return this.connections.getConnectionLogin(...args)
+  }
+
+  cancelConnectionLogin(...args: Parameters<ConnectionApplicationService['cancelConnectionLogin']>) {
+    return this.connections.cancelConnectionLogin(...args)
   }
 
   deleteConnection(...args: Parameters<ConnectionApplicationService['deleteConnection']>) {

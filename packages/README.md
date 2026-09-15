@@ -7,6 +7,7 @@
 - [`adapter-builtin-roster`](adapter-builtin-roster/README.md)：第一方 Adapter 的唯一静态组合入口；
 - [`adapter-onebot-11`](adapter-onebot-11/README.md)：协议端无关的 OneBot 11 正向 Universal WebSocket、消息映射、特殊事件和可选互动；
 - [`adapter-wecom-ai-bot`](adapter-wecom-ai-bot/README.md)：企业微信官方智能机器人长连接、媒体上传、流式处理中状态和反馈事件；
+- [`adapter-wechat-ilink`](adapter-wechat-ilink/README.md)：实验性微信 iLink 私聊文本通道、扫码登录和入站媒体导入；
 - [`core`](core/README.md)：智能体 Revision、Connection、Channel、Binding、Event 与 Asset Service；
 - [`channel-runtime`](channel-runtime/README.md)：Episode、Admission、Outbox、回执和当前频道历史契约；
 - [`client-migrations`](client-migrations/README.md)：纯函数客户端状态迁移与宿主升级步骤协调；

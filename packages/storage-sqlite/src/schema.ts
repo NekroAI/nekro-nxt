@@ -106,6 +106,7 @@ export const connections = sqliteTable(
   {
     id: text().$type<ConnectionId>().primaryKey(),
     adapterKey: text('adapter_key').notNull(),
+    accountKey: text('account_key'),
     alias: text('alias'),
     config: jsonText<JsonValue>('config').notNull(),
     credentialRefs: jsonText<Readonly<Record<string, string>>>('credential_refs').notNull(),
@@ -113,7 +114,12 @@ export const connections = sqliteTable(
     createdAt: integer('created_at').notNull(),
     archivedAt: integer('archived_at'),
   },
-  (table) => [index('connections_adapter_idx').on(table.adapterKey, table.createdAt)],
+  (table) => [
+    index('connections_adapter_idx').on(table.adapterKey, table.createdAt),
+    uniqueIndex('connections_adapter_account_uq')
+      .on(table.adapterKey, table.accountKey)
+      .where(sql`${table.accountKey} IS NOT NULL AND ${table.archivedAt} IS NULL`),
+  ],
 )
 
 export const connectionState = sqliteTable('connection_state', {

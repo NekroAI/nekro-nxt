@@ -8,6 +8,54 @@ import {
   type HostRouteContext,
 } from './host-route-support.js'
 export function registerConnectionsRoutes({ runtime, registerRoute }: HostRouteContext): () => void {
+  // POST/GET/DELETE /api/connection-logins → Host-owned, Adapter-implemented QR login.
+  registerRoute({
+    kind: 'prefix',
+    path: '/api/connection-logins',
+    handler: async (req, res) => {
+      const url = new URL(req.url ?? '/', 'http://localhost')
+      if (url.pathname === '/api/connection-logins') {
+        if (req.method !== 'POST') {
+          writeError(res, 405, 'method-not-allowed', '只支持 POST。')
+          return
+        }
+        try {
+          const body = HostApiContracts.startConnectionLogin.parseRequest(await readJsonBody(req))
+          writeContractJson(res, 201, HostApiContracts.startConnectionLogin, await runtime.startConnectionLogin(body))
+        } catch (error) {
+          writeError(res, 400, 'connection-login-failed', error instanceof Error ? error.message : String(error))
+        }
+        return
+      }
+
+      const match = /^\/api\/connection-logins\/([^/]+)$/u.exec(url.pathname)
+      if (!match?.[1]) {
+        writeError(res, 404, 'not-found', '未定义路由：' + req.method + ' ' + url.pathname + '。')
+        return
+      }
+      const loginId = decodeURIComponent(match[1])
+      try {
+        if (req.method === 'GET') {
+          const params = HostApiContracts.getConnectionLogin.parseParams({ loginId })
+          writeContractJson(res, 200, HostApiContracts.getConnectionLogin, runtime.getConnectionLogin(params.loginId))
+          return
+        }
+        if (req.method === 'DELETE') {
+          const params = HostApiContracts.cancelConnectionLogin.parseParams({ loginId })
+          const cancelled = runtime.cancelConnectionLogin(params.loginId)
+          writeContractJson(res, 200, HostApiContracts.cancelConnectionLogin, {
+            loginId: cancelled.loginId,
+            status: 'cancelled',
+          })
+          return
+        }
+        writeError(res, 405, 'method-not-allowed', '只支持 GET 或 DELETE。')
+      } catch (error) {
+        writeError(res, 400, 'connection-login-failed', error instanceof Error ? error.message : String(error))
+      }
+    },
+  })
+
   registerRoute({
     kind: 'exact',
     path: '/api/platform-users',
@@ -180,6 +228,42 @@ export function registerConnectionsRoutes({ runtime, registerRoute }: HostRouteC
           })
         } catch (error) {
           writeError(res, 400, 'connection-events-failed', error instanceof Error ? error.message : String(error))
+        }
+        return
+      }
+      const configurationMatch = /^\/api\/connections\/([^/]+)\/configuration$/.exec(url.pathname)
+      if (configurationMatch) {
+        if (req.method !== 'POST') {
+          writeError(res, 405, 'method-not-allowed', '只支持 POST。')
+          return
+        }
+        const encodedConnectionId = configurationMatch[1]
+        if (encodedConnectionId === undefined) {
+          writeError(res, 404, 'not-found', `未定义路由：${req.method} ${url.pathname}。`)
+          return
+        }
+        let connectionId: ReturnType<typeof ConnectionIdSchema.parse>
+        try {
+          connectionId = ConnectionIdSchema.parse(decodeURIComponent(encodedConnectionId))
+        } catch {
+          writeError(res, 400, 'invalid-connection', '无效的连接 ID。')
+          return
+        }
+        try {
+          const params = HostApiContracts.updateConnectionConfiguration.parseParams({ connectionId })
+          const body = HostApiContracts.updateConnectionConfiguration.parseRequest(await readJsonBody(req))
+          const updated = await runtime.updateConnectionConfiguration(params.connectionId, body.configuration)
+          writeContractJson(res, 200, HostApiContracts.updateConnectionConfiguration, {
+            connectionId: updated.id,
+            configuration: body.configuration,
+          })
+        } catch (error) {
+          writeError(
+            res,
+            400,
+            'connection-configuration-failed',
+            error instanceof Error ? error.message : String(error),
+          )
         }
         return
       }

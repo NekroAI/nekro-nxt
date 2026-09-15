@@ -37,6 +37,10 @@ export interface ProductActions {
   'channels.rename': Action<'renameChannel'>
   'agents.updateCapabilities': Action<'updateAgentCapabilities'>
   'connections.create': Action<'createConnection'>
+  'connections.login.start': Action<'startConnectionLogin'>
+  'connections.login.get': Action<'getConnectionLogin'>
+  'connections.login.cancel': Action<'cancelConnectionLogin'>
+  'connections.updateConfiguration': Action<'updateConnectionConfiguration'>
   'connections.updateAlias': Action<'updateConnectionAlias'>
   'connections.updateActivityTriggerDefaults': Action<'updateConnectionActivityTriggerDefaults'>
   'connections.delete': Action<'deleteConnection'>

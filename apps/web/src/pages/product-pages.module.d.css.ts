@@ -246,6 +246,8 @@ declare const styles: {
   readonly plotSegTool: string
   readonly plotTrack: string
   readonly plotTurn: string
+  readonly qrLoginCode: string
+  readonly qrLoginPanel: string
   readonly railEmpty: string
   readonly revisionNotice: string
   readonly riskLabel: string

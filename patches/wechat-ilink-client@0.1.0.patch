@@ -1,0 +1,312 @@
+diff --git a/dist/index.d.mts b/dist/index.d.mts
+index 604ab8f2d46b506bdb7f8ec3d513432adca740ba..4f93a9887cc022cbc7a435c5c5b75bc318f46504 100644
+--- a/dist/index.d.mts
++++ b/dist/index.d.mts
+@@ -262,9 +262,9 @@ declare class ApiClient {
+    * Long-poll for new messages. Returns empty response on client-side timeout
+    * (normal for long-poll).
+    */
+-  getUpdates(getUpdatesBuf: string, timeoutMs?: number): Promise<GetUpdatesResp>;
++  getUpdates(getUpdatesBuf: string, timeoutMs?: number, signal?: AbortSignal): Promise<GetUpdatesResp>;
+   /** Send a message downstream. */
+-  sendMessage(req: SendMessageReq): Promise<void>;
++  sendMessage(req: SendMessageReq, signal?: AbortSignal): Promise<SendMessageResp>;
+   /** Get a pre-signed CDN upload URL. */
+   getUploadUrl(req: GetUploadUrlReq): Promise<GetUploadUrlResp>;
+   /** Fetch bot config (includes typing_ticket) for a given user. */
+@@ -327,7 +327,7 @@ interface DownloadedMedia {
+  * Download and decrypt media from a single MessageItem.
+  * Returns null if the item has no downloadable media.
+  */
+-declare function downloadMediaFromItem(item: MessageItem, cdnBaseUrl: string): Promise<DownloadedMedia | null>;
++declare function downloadMediaFromItem(item: MessageItem, cdnBaseUrl: string, signal?: AbortSignal, options?: { readonly maxBytes?: number }): Promise<DownloadedMedia | null>;
+ //#endregion
+ //#region src/media/upload.d.ts
+ interface UploadedFileInfo {
+@@ -449,7 +449,7 @@ declare class WeChatClient extends EventEmitter {
+    * Send a text message. Uses the cached context token for the target user.
+    * Pass an explicit contextToken to override.
+    */
+-  sendText(to: string, text: string, contextToken?: string): Promise<string>;
++  sendText(to: string, text: string, contextToken?: string, signal?: AbortSignal): Promise<string>;
+   /**
+    * Upload a local file and send it as the appropriate media type.
+    * (image/*, video/*, or file attachment based on MIME type.)
+@@ -482,7 +482,7 @@ declare class WeChatClient extends EventEmitter {
+   /**
+    * Download and decrypt a media item from an inbound message.
+    */
+-  downloadMedia(item: MessageItem): Promise<DownloadedMedia | null>;
++  downloadMedia(item: MessageItem, signal?: AbortSignal, options?: { readonly maxBytes?: number }): Promise<DownloadedMedia | null>;
+   /** Extract the text body from a WeixinMessage. */
+   static extractText(msg: WeixinMessage): string;
+   /** Check if a message item is a media type. */
+@@ -493,7 +493,7 @@ declare class WeChatClient extends EventEmitter {
+ /**
+  * Send a text message. contextToken is required (echoed from getUpdates).
+  */
+-declare function sendText(api: ApiClient, to: string, text: string, contextToken: string): Promise<string>;
++declare function sendText(api: ApiClient, to: string, text: string, contextToken: string, signal?: AbortSignal): Promise<string>;
+ /**
+  * Send an image message with a previously uploaded file.
+  */
+@@ -537,11 +537,11 @@ declare function parseAesKey(aesKeyBase64: string): Buffer;
+ /**
+  * Download and AES-128-ECB decrypt a CDN media file. Returns plaintext Buffer.
+  */
+-declare function downloadAndDecrypt(encryptedQueryParam: string, aesKeyBase64: string, cdnBaseUrl: string): Promise<Buffer>;
++declare function downloadAndDecrypt(encryptedQueryParam: string, aesKeyBase64: string, cdnBaseUrl: string, signal?: AbortSignal, options?: { readonly maxBytes?: number }): Promise<Buffer>;
+ /**
+  * Download plain (unencrypted) bytes from the CDN.
+  */
+-declare function downloadPlain(encryptedQueryParam: string, cdnBaseUrl: string): Promise<Buffer>;
++declare function downloadPlain(encryptedQueryParam: string, cdnBaseUrl: string, signal?: AbortSignal, options?: { readonly maxBytes?: number }): Promise<Buffer>;
+ //#endregion
+ //#region src/cdn/cdn-upload.d.ts
+ /**
+diff --git a/dist/index.mjs b/dist/index.mjs
+index 3f14dcf78912f18ecf21942326c2ec1dc96baba4..c178cd2434ae9e3b6882e7d36ef2859eabe51c35 100644
+--- a/dist/index.mjs
++++ b/dist/index.mjs
+@@ -83,11 +83,15 @@ var ApiClient = class {
+ 				method: "POST",
+ 				headers,
+ 				body: params.body,
+-				signal: controller.signal
++				signal: params.signal ? AbortSignal.any([controller.signal, params.signal]) : controller.signal
+ 			});
+ 			clearTimeout(timer);
+ 			const rawText = await res.text();
+-			if (!res.ok) throw new Error(`API ${params.endpoint} ${res.status}: ${rawText}`);
++			if (!res.ok) {
++				const error = new Error(`API ${params.endpoint} ${res.status}: ${rawText}`);
++				error.status = res.status;
++				throw error;
++			}
+ 			return rawText;
+ 		} catch (err) {
+ 			clearTimeout(timer);
+@@ -98,7 +102,7 @@ var ApiClient = class {
+ 	* Long-poll for new messages. Returns empty response on client-side timeout
+ 	* (normal for long-poll).
+ 	*/
+-	async getUpdates(getUpdatesBuf, timeoutMs) {
++	async getUpdates(getUpdatesBuf, timeoutMs, signal) {
+ 		const timeout = timeoutMs ?? DEFAULT_LONG_POLL_TIMEOUT_MS$1;
+ 		try {
+ 			const rawText = await this.apiFetch({
+@@ -107,7 +111,8 @@ var ApiClient = class {
+ 					get_updates_buf: getUpdatesBuf,
+ 					base_info: this.buildBaseInfo()
+ 				}),
+-				timeoutMs: timeout
++				timeoutMs: timeout,
++				signal
+ 			});
+ 			return JSON.parse(rawText);
+ 		} catch (err) {
+@@ -120,15 +125,25 @@ var ApiClient = class {
+ 		}
+ 	}
+ 	/** Send a message downstream. */
+-	async sendMessage(req) {
+-		await this.apiFetch({
++	async sendMessage(req, signal) {
++		const rawText = await this.apiFetch({
+ 			endpoint: "ilink/bot/sendmessage",
+ 			body: JSON.stringify({
+ 				...req,
+ 				base_info: this.buildBaseInfo()
+ 			}),
+-			timeoutMs: DEFAULT_API_TIMEOUT_MS
++			timeoutMs: DEFAULT_API_TIMEOUT_MS,
++			signal
+ 		});
++		const response = rawText.trim() ? JSON.parse(rawText) : {};
++		const failed = [response.ret, response.errcode].some((code) => code !== void 0 && code !== 0);
++		if (failed) {
++			const error = new Error(`sendMessage failed: ret=${response.ret} errcode=${response.errcode} errmsg=${response.errmsg ?? ""}`);
++			error.ret = response.ret;
++			error.errcode = response.errcode;
++			throw error;
++		}
++		return response;
+ 	}
+ 	/** Get a pre-signed CDN upload URL. */
+ 	async getUploadUrl(req) {
+@@ -344,13 +359,29 @@ function buildCdnUploadUrl(params) {
+ /**
+ * Download raw bytes from the CDN (no decryption).
+ */
+-async function fetchCdnBytes(url) {
+-	const res = await fetch(url);
++async function fetchCdnBytes(url, signal, options) {
++	const res = await fetch(url, { signal });
+ 	if (!res.ok) {
+ 		const body = await res.text().catch(() => "(unreadable)");
+ 		throw new Error(`CDN download ${res.status} ${res.statusText}: ${body}`);
+ 	}
+-	return Buffer.from(await res.arrayBuffer());
++	const maxBytes = options?.maxBytes;
++	const contentLength = Number(res.headers.get("content-length"));
++	if (maxBytes !== void 0 && Number.isFinite(contentLength) && contentLength > maxBytes) throw new Error(`CDN download exceeds ${maxBytes} bytes`);
++	if (!res.body) {
++		const data = Buffer.from(await res.arrayBuffer());
++		if (maxBytes !== void 0 && data.byteLength > maxBytes) throw new Error(`CDN download exceeds ${maxBytes} bytes`);
++		return data;
++	}
++	const chunks = [];
++	let totalBytes = 0;
++	for await (const chunk of res.body) {
++		const bytes = Buffer.from(chunk);
++		totalBytes += bytes.byteLength;
++		if (maxBytes !== void 0 && totalBytes > maxBytes) throw new Error(`CDN download exceeds ${maxBytes} bytes`);
++		chunks.push(bytes);
++	}
++	return Buffer.concat(chunks, totalBytes);
+ }
+ /**
+ * Parse CDNMedia.aes_key into a raw 16-byte AES key.
+@@ -371,15 +402,15 @@ function parseAesKey(aesKeyBase64) {
+ /**
+ * Download and AES-128-ECB decrypt a CDN media file. Returns plaintext Buffer.
+ */
+-async function downloadAndDecrypt(encryptedQueryParam, aesKeyBase64, cdnBaseUrl) {
++async function downloadAndDecrypt(encryptedQueryParam, aesKeyBase64, cdnBaseUrl, signal, options) {
+ 	const key = parseAesKey(aesKeyBase64);
+-	return decryptAesEcb(await fetchCdnBytes(buildCdnDownloadUrl(encryptedQueryParam, cdnBaseUrl)), key);
++	return decryptAesEcb(await fetchCdnBytes(buildCdnDownloadUrl(encryptedQueryParam, cdnBaseUrl), signal, options), key);
+ }
+ /**
+ * Download plain (unencrypted) bytes from the CDN.
+ */
+-async function downloadPlain(encryptedQueryParam, cdnBaseUrl) {
+-	return fetchCdnBytes(buildCdnDownloadUrl(encryptedQueryParam, cdnBaseUrl));
++async function downloadPlain(encryptedQueryParam, cdnBaseUrl, signal, options) {
++	return fetchCdnBytes(buildCdnDownloadUrl(encryptedQueryParam, cdnBaseUrl), signal, options);
+ }
+ //#endregion
+ //#region src/media/download.ts
+@@ -387,13 +418,13 @@ async function downloadPlain(encryptedQueryParam, cdnBaseUrl) {
+ * Download and decrypt media from a single MessageItem.
+ * Returns null if the item has no downloadable media.
+ */
+-async function downloadMediaFromItem(item, cdnBaseUrl) {
++async function downloadMediaFromItem(item, cdnBaseUrl, signal, options) {
+ 	if (item.type === MessageItemType.IMAGE) {
+ 		const img = item.image_item;
+ 		if (!img?.media?.encrypt_query_param) return null;
+ 		const aesKeyBase64 = img.aeskey ? Buffer.from(img.aeskey, "hex").toString("base64") : img.media.aes_key;
+ 		return {
+-			data: aesKeyBase64 ? await downloadAndDecrypt(img.media.encrypt_query_param, aesKeyBase64, cdnBaseUrl) : await downloadPlain(img.media.encrypt_query_param, cdnBaseUrl),
++			data: aesKeyBase64 ? await downloadAndDecrypt(img.media.encrypt_query_param, aesKeyBase64, cdnBaseUrl, signal, options) : await downloadPlain(img.media.encrypt_query_param, cdnBaseUrl, signal, options),
+ 			kind: "image"
+ 		};
+ 	}
+@@ -401,7 +432,7 @@ async function downloadMediaFromItem(item, cdnBaseUrl) {
+ 		const voice = item.voice_item;
+ 		if (!voice?.media?.encrypt_query_param || !voice.media.aes_key) return null;
+ 		return {
+-			data: await downloadAndDecrypt(voice.media.encrypt_query_param, voice.media.aes_key, cdnBaseUrl),
++			data: await downloadAndDecrypt(voice.media.encrypt_query_param, voice.media.aes_key, cdnBaseUrl, signal, options),
+ 			kind: "voice"
+ 		};
+ 	}
+@@ -409,7 +440,7 @@ async function downloadMediaFromItem(item, cdnBaseUrl) {
+ 		const fileItem = item.file_item;
+ 		if (!fileItem?.media?.encrypt_query_param || !fileItem.media.aes_key) return null;
+ 		return {
+-			data: await downloadAndDecrypt(fileItem.media.encrypt_query_param, fileItem.media.aes_key, cdnBaseUrl),
++			data: await downloadAndDecrypt(fileItem.media.encrypt_query_param, fileItem.media.aes_key, cdnBaseUrl, signal, options),
+ 			kind: "file",
+ 			fileName: fileItem.file_name ?? void 0
+ 		};
+@@ -418,7 +449,7 @@ async function downloadMediaFromItem(item, cdnBaseUrl) {
+ 		const videoItem = item.video_item;
+ 		if (!videoItem?.media?.encrypt_query_param || !videoItem.media.aes_key) return null;
+ 		return {
+-			data: await downloadAndDecrypt(videoItem.media.encrypt_query_param, videoItem.media.aes_key, cdnBaseUrl),
++			data: await downloadAndDecrypt(videoItem.media.encrypt_query_param, videoItem.media.aes_key, cdnBaseUrl, signal, options),
+ 			kind: "video"
+ 		};
+ 	}
+@@ -645,7 +676,7 @@ function buildReq(params) {
+ /**
+ * Send a text message. contextToken is required (echoed from getUpdates).
+ */
+-async function sendText(api, to, text, contextToken) {
++async function sendText(api, to, text, contextToken, signal) {
+ 	const clientId = generateClientId();
+ 	const req = { msg: {
+ 		from_user_id: "",
+@@ -659,7 +690,7 @@ async function sendText(api, to, text, contextToken) {
+ 		}] : void 0,
+ 		context_token: contextToken
+ 	} };
+-	await api.sendMessage(req);
++	await api.sendMessage(req, signal);
+ 	return clientId;
+ }
+ /**
+@@ -817,7 +848,7 @@ async function startMonitor(api, opts, callbacks) {
+ 	let nextTimeoutMs = opts.longPollTimeoutMs ?? DEFAULT_LONG_POLL_TIMEOUT_MS;
+ 	let consecutiveFailures = 0;
+ 	while (!signal?.aborted) try {
+-		const resp = await api.getUpdates(getUpdatesBuf, nextTimeoutMs);
++		const resp = await api.getUpdates(getUpdatesBuf, nextTimeoutMs, signal);
+ 		if (resp.longpolling_timeout_ms != null && resp.longpolling_timeout_ms > 0) nextTimeoutMs = resp.longpolling_timeout_ms;
+ 		if (resp.ret !== void 0 && resp.ret !== 0 || resp.errcode !== void 0 && resp.errcode !== 0) {
+ 			if (resp.errcode === -14 || resp.ret === -14) {
+@@ -836,12 +867,16 @@ async function startMonitor(api, opts, callbacks) {
+ 		}
+ 		consecutiveFailures = 0;
+ 		callbacks.onPoll?.(resp);
++		const msgs = resp.msgs ?? [];
++		for (const msg of msgs) {
++			signal?.throwIfAborted();
++			await callbacks.onMessage(msg);
++		}
++		signal?.throwIfAborted();
+ 		if (resp.get_updates_buf != null && resp.get_updates_buf !== "") {
++			if (opts.saveSyncBuf) await opts.saveSyncBuf(resp.get_updates_buf);
+ 			getUpdatesBuf = resp.get_updates_buf;
+-			if (opts.saveSyncBuf) await opts.saveSyncBuf(getUpdatesBuf);
+ 		}
+-		const msgs = resp.msgs ?? [];
+-		for (const msg of msgs) await callbacks.onMessage(msg);
+ 	} catch (err) {
+ 		if (signal?.aborted) return;
+ 		consecutiveFailures++;
+@@ -942,7 +977,7 @@ var WeChatClient = class extends EventEmitter {
+ 		await startMonitor(this.api, monitorOpts, {
+ 			onMessage: async (msg) => {
+ 				if (msg.context_token && msg.from_user_id) this.contextTokens.set(msg.from_user_id, msg.context_token);
+-				this.emit("message", msg);
++				for (const listener of this.rawListeners("message")) await listener.call(this, msg);
+ 			},
+ 			onError: (err) => {
+ 				this.emit("error", err);
+@@ -964,10 +999,10 @@ var WeChatClient = class extends EventEmitter {
+ 	* Send a text message. Uses the cached context token for the target user.
+ 	* Pass an explicit contextToken to override.
+ 	*/
+-	async sendText(to, text, contextToken) {
++	async sendText(to, text, contextToken, signal) {
+ 		const ct = contextToken ?? this.contextTokens.get(to);
+ 		if (!ct) throw new Error(`No context_token for user ${to}. Receive a message from them first.`);
+-		return sendText(this.api, to, text, ct);
++		return sendText(this.api, to, text, ct, signal);
+ 	}
+ 	/**
+ 	* Upload a local file and send it as the appropriate media type.
+@@ -1047,8 +1082,8 @@ var WeChatClient = class extends EventEmitter {
+ 	/**
+ 	* Download and decrypt a media item from an inbound message.
+ 	*/
+-	async downloadMedia(item) {
+-		return downloadMediaFromItem(item, this.api.cdnBaseUrl);
++	async downloadMedia(item, signal, options) {
++		return downloadMediaFromItem(item, this.api.cdnBaseUrl, signal, options);
+ 	}
+ 	/** Extract the text body from a WeixinMessage. */
+ 	static extractText(msg) {

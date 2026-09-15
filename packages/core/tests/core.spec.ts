@@ -6,6 +6,7 @@ import type {
   ChannelId,
   ChannelMemberId,
   ConnectionId,
+  JsonValue,
   PlatformIdentityId,
 } from '@nekro-nxt/contracts'
 import {
@@ -148,6 +149,7 @@ class MemoryRepository implements CoreRepository {
       this.connections.set(id, {
         id: current.id,
         adapterKey: current.adapterKey,
+        ...(current.accountKey === undefined ? {} : { accountKey: current.accountKey }),
         config: current.config,
         credentialRefs: current.credentialRefs,
         activityTriggerDefaults: current.activityTriggerDefaults,
@@ -187,6 +189,22 @@ class MemoryRepository implements CoreRepository {
   }
   listArchivedConnections() {
     return [...this.archivedConnections.values()].map(({ record, archivedAt }) => ({ ...record, archivedAt }))
+  }
+
+  updateConnectionConfig(id: ConnectionId, config: JsonValue): void {
+    const current = this.connections.get(id)
+    if (!current) throw new Error(`Unknown connection: ${id}`)
+    this.connections.set(id, { ...current, config })
+  }
+
+  updateConnectionProvisioning(
+    id: ConnectionId,
+    config: JsonValue,
+    credentialRefs: Readonly<Record<string, string>>,
+  ): void {
+    const current = this.connections.get(id)
+    if (!current) throw new Error(`Unknown connection: ${id}`)
+    this.connections.set(id, { ...current, config, credentialRefs })
   }
 
   getConnection(id: ConnectionId) {
@@ -583,8 +601,14 @@ describe('CoreService', () => {
     let id = 0
     const core = new CoreService(repository, { now: () => 100, nextUlid: () => `ID${++id}` })
 
-    const created = core.createConnection({ adapterKey: 'qq-openclaw', config: {}, alias: '  工作群账号  ' })
+    const created = core.createConnection({
+      adapterKey: 'qq-openclaw',
+      accountKey: '  platform-account-1  ',
+      config: {},
+      alias: '  工作群账号  ',
+    })
     expect(created.alias).toBe('工作群账号')
+    expect(created.accountKey).toBe('platform-account-1')
     expect(core.getConnection(created.id)?.alias).toBe('工作群账号')
 
     const updated = core.updateConnectionAlias(created.id, '  备用账号  ')
@@ -592,9 +616,51 @@ describe('CoreService', () => {
     expect(core.getConnection(created.id)?.alias).toBe('备用账号')
 
     expect(core.updateConnectionAlias(created.id, '   ')).not.toHaveProperty('alias')
+    expect(core.getConnection(created.id)?.accountKey).toBe('platform-account-1')
     expect(core.getConnection(created.id)).not.toHaveProperty('alias')
     expect(() => core.createConnection({ adapterKey: 'qq-openclaw', config: {}, alias: 'a'.repeat(81) })).toThrow()
     expect(() => core.updateConnectionAlias(created.id, 'a'.repeat(81))).toThrow()
+  })
+
+  it('updates Connection config without changing the durable identity', () => {
+    const repository = new MemoryRepository()
+    let id = 0
+    const core = new CoreService(repository, { now: () => 100, nextUlid: () => `CFG${++id}` })
+    const created = core.createConnection({
+      adapterKey: 'fixture-alpha',
+      config: { enableInboundMedia: true },
+    })
+    const updated = core.updateConnectionConfig(created.id, { enableInboundMedia: false, maxTextLength: 4000 })
+    expect(updated).toMatchObject({
+      id: created.id,
+      adapterKey: 'fixture-alpha',
+      config: { enableInboundMedia: false, maxTextLength: 4000 },
+    })
+    expect(core.getConnection(created.id)?.config).toEqual({ enableInboundMedia: false, maxTextLength: 4000 })
+  })
+
+  it('replaces provisioning config and credential references without changing Connection identity', () => {
+    const repository = new MemoryRepository()
+    const core = new CoreService(repository, { now: () => 100, nextUlid: () => 'REAUTHCONFIG' })
+    const created = core.createConnection({
+      adapterKey: 'fixture-alpha',
+      accountKey: 'platform-account-1',
+      config: { accountId: 'platform-account-1', enabled: true },
+      credentialRefs: { token: 'credential:old' },
+    })
+
+    const updated = core.updateConnectionProvisioning(created.id, {
+      config: { accountId: 'platform-account-1', enabled: false },
+      credentialRefs: { token: 'credential:new' },
+    })
+
+    expect(updated).toMatchObject({
+      id: created.id,
+      adapterKey: 'fixture-alpha',
+      accountKey: 'platform-account-1',
+      config: { accountId: 'platform-account-1', enabled: false },
+      credentialRefs: { token: 'credential:new' },
+    })
   })
 
   it('stores Connection activity defaults and archives or restores the same durable identity', () => {

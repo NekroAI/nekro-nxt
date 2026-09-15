@@ -279,6 +279,23 @@ describe('AdapterRegistry', () => {
       'schema must be an object',
     )
     expect(() =>
+      register({
+        ...descriptor,
+        creation: { mode: 'qr-login', actionLabel: 'Log in' },
+      }),
+    ).toThrow('must provide exactly one matching connection login contribution')
+
+    expect(() => {
+      const registry = new AdapterRegistry()
+      registry.register('unexpected-login', {
+        ...contribution,
+        connectionLogin: {
+          mode: 'qr-login',
+          start: () => Promise.reject(new Error('not used')),
+        },
+      })
+    }).toThrow('must provide exactly one matching connection login contribution')
+    expect(() =>
       register({ ...descriptor, configSchema: { ...descriptor.configSchema, schemaVersion: Number.NaN } }),
     ).toThrow('version must be a positive integer')
     expect(() => register({ ...descriptor, configSchema: { ...descriptor.configSchema, schemaVersion: 0 } })).toThrow(

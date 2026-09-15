@@ -389,6 +389,20 @@ export class HostQueries {
       const lastInbound = runtime.lastInbound(connection.id)
       const tests = runtime.connectionTests(connection.id)
       const capabilities = runtime.connectionCapabilities(connection.id)
+      const descriptor = runtime.adapters.get(connection.adapterKey)?.descriptor
+      const storedConfiguration =
+        typeof connection.config === 'object' && connection.config !== null && !Array.isArray(connection.config)
+          ? connection.config
+          : {}
+      const configuration = Object.fromEntries(
+        Object.entries(descriptor?.configSchema.properties ?? {}).flatMap(([key, property]) => {
+          if (property?.type === 'credential-reference') return []
+          const value = storedConfiguration[key] ?? property?.default
+          return typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean'
+            ? [[key, value] as const]
+            : []
+        }),
+      )
       return {
         id: connection.id,
         adapterKey: connection.adapterKey,
@@ -426,6 +440,7 @@ export class HostQueries {
           : { lastInbound: { ...lastInbound, platformMessageId: lastInbound.platformMessageId } }),
         ...(tests?.receive === undefined ? {} : { receiveTest: tests.receive }),
         ...(tests?.send === undefined ? {} : { sendTest: tests.send }),
+        configuration,
       }
     })
     const archivedConnections = runtime.core.listArchivedConnections().map((connection) => ({

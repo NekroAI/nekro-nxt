@@ -13,6 +13,7 @@
     { "path": "../adapter-web" },
     { "path": "../adapter-onebot-11" },
     { "path": "../adapter-wecom-ai-bot" },
+    { "path": "../adapter-wechat-ilink" },
     { "path": "../adapter-qq-openclaw" }
   ]
 }

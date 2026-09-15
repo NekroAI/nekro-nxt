@@ -243,6 +243,15 @@ const projectAdapterDescriptor = (
       ? {}
       : { processingFeedback: { channelKinds: descriptor.features.processingFeedback.channelKinds } },
   diagnostics: descriptor.diagnostics,
+  ...(descriptor.creation === undefined
+    ? {}
+    : {
+        creation: {
+          mode: descriptor.creation.mode,
+          ...(descriptor.creation.actionLabel === undefined ? {} : { actionLabel: descriptor.creation.actionLabel }),
+          ...(descriptor.creation.pendingLabel === undefined ? {} : { pendingLabel: descriptor.creation.pendingLabel }),
+        },
+      }),
   configSchema: {
     schemaVersion: descriptor.configSchema.schemaVersion,
     type: 'object',
@@ -495,6 +504,7 @@ const projectSnapshot = (json: SnapshotJson, successfulAt: number): ProductSnaps
       ...(connection.status.processingFeedback === undefined
         ? {}
         : { processingFeedbackCapability: connection.status.processingFeedback }),
+      ...(connection.configuration === undefined ? {} : { configuration: connection.configuration }),
       channels: connection.channelCount ?? 0,
       knownChannels: (connection.knownChannels ?? []).map((channel) => ({
         ...channel,
@@ -1018,6 +1028,19 @@ export class HttpProductHost implements ProductHostPort {
     'agents.updateCapabilities': async ({ agentId, ...body }) =>
       this.#mutate(HostApiContracts.updateAgentCapabilities, { agentId }, body),
     'connections.create': async (body) => this.#mutate(HostApiContracts.createConnection, {}, body),
+    'connections.login.start': async (body) => this.#call(HostApiContracts.startConnectionLogin, {}, body),
+    'connections.login.get': async (params) => {
+      const lifecycle = this.#lifecycle
+      const result = await this.#call(HostApiContracts.getConnectionLogin, params, undefined)
+      if (result.status === 'confirmed' && lifecycle === this.#lifecycle) {
+        this.#syncAfterCommit = true
+        void this.#refreshAndNotify()
+      }
+      return result
+    },
+    'connections.login.cancel': async (params) => this.#call(HostApiContracts.cancelConnectionLogin, params, undefined),
+    'connections.updateConfiguration': async ({ connectionId, ...body }) =>
+      this.#mutate(HostApiContracts.updateConnectionConfiguration, { connectionId }, body),
     'connections.updateAlias': async ({ connectionId, ...body }) =>
       this.#mutate(HostApiContracts.updateConnectionAlias, { connectionId }, body),
     'connections.updateActivityTriggerDefaults': async ({ connectionId, ...body }) =>
@@ -1302,6 +1325,10 @@ export class HttpProductHost implements ProductHostPort {
       }
       pending.push({ data, cursor })
       this.#pendingChannelFacts.set(data.channelId, pending)
+      return
+    }
+    if (!this.#snapshot.channels.some((channel) => channel.id === data.channelId)) {
+      this.#requestReconcile()
       return
     }
     if (!this.#loadedChannels.has(data.channelId) && !this.#snapshot.messagesByChannel[data.channelId]?.length) {

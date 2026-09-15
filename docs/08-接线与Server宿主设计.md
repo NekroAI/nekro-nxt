@@ -29,6 +29,8 @@
 | 频道资源 | `GET /api/channels/:channelId/assets/:assetId` | 校验频道访问权后同源读取 |
 | 频道本地名称 | `POST /api/channels/:channelId/display-name` | 只改展示名 |
 | 创建连接 | `POST /api/connections` | 按已安装 Adapter schema 创建，可选保存 80 字符以内的连接别名 |
+| 扫码登录 / 重新认证 | `POST/GET/DELETE /api/connection-logins` | Adapter 贡献具体登录协议，Host 维护通用会话、凭据和 Connection 提交；传入 `connectionId` 时保留原连接与频道身份 |
+| 修改连接配置 | `POST /api/connections/:connectionId/configuration` | 按 Adapter 公开 schema 更新非凭据字段并重新挂载 Runtime |
 | 修改连接别名 | `POST /api/connections/:connectionId/alias` | trim 后保存或清除用户连接的别名；系统托管连接拒绝编辑 |
 | 修改连接活动默认值 | `POST /api/connections/:connectionId/activity-trigger-defaults` | 保存这个具体 Connection 的可触发频道活动默认开启列表 |
 | 删除连接 | `DELETE /api/connections/:connectionId` | 显式提交 `deleteChannelData`；归档保留频道数据，永久删除则清理 Connection 范围事实 |
@@ -78,7 +80,7 @@
 - `apps/web/src/http-host.ts` 实现 `ProductHostPort`。`apps/web/src/host-event-stream.ts` 是浏览器 SSE 的唯一生命周期所有者，产品快照、DSH 设置和动态 Client 只订阅这条共享流，不各自建立连接。类型化 `actions` 覆盖创建/删除智能体、删除频道、两种上下文操作、发消息、改能力、扩展启停、Authoring 决策/停止/保存、创建/测试连接、修改连接别名和动态审批；决策先提交 Task revision，再由浏览器运行候选，Client evaluate/apply/render 或结算失败必须 reject，不能清空错误或发布成功提示。修改响应明确成功即完成提交，随后由数据层同步快照；同步失败显示“已保存，界面同步失败”，不能诱导重复提交。`host.refresh` 只读取快照，`host.reconnect` 才重建共享流。审批失败不自动重发修改。
 - 每个智能体使用独立产品 SlotCore。Snapshot/SSE 变化驱动 Client Activation 对账；Revision 更新先 dispose 后 mount，刷新与 Server 重启按权威 Activation 恢复。动态 Client 同样按 Host 的 `activeRun` 恢复精确源码和页面，对账键包含 `pluginRunId`，所以同一 Plugin 和 Package 在 Server 重启或重新运行后会先卸载旧 Client 再加载新 Run，不重复执行 Host half、审批或结算。Host Adapter Client 使用独立全局 Runtime，加载当前已安装 Revision 的 Artifact，并接受 Catalog 中的富消息、连接和频道检查器 Slot。Host UI Client 使用第三个独立 Runtime，按 Client Artifact 共享模块实例，每个页面拥有独立错误边界、滚动根和声明式导航 Provider；三类 Registry 不互相注册。
 - Host UI 页面路由固定为 `/apps/:pageInstanceId/*`。Web 使用快照中的 `routeBase`，入口隐藏、Activation 关闭或 Extension 删除后跳转到其他可见扩展页面；没有可见页面时进入对应 Extension 或 DSH 详情。系统图标组和底部工具组不参与扩展排序。
-- 添加平台连接先选用户可创建的平台，再按版本化 schema 渲染表单；从某适配器详情「再添加一个账号」可跳过选平台。系统托管内置 Adapter 不出现在创建目录。
+- 添加平台连接先选用户可创建的平台；默认按版本化 schema 渲染表单，声明 `qr-login` 的 Adapter 必须同时贡献 `connectionLogin`，Web 和 Server 只消费通用契约，不按 `adapterKey` 分支。从连接详情可重新认证同一账号，凭据与私有配置成功挂载后原子替换，Connection ID、Channel ID 和历史不变。系统托管内置 Adapter 不出现在创建目录。
 - `/api/snapshot` 只携带智能体的结构化人设文档，不承载平台用户全集。`/api/platform-users` 从持久身份与活动频道关系独立分页；Web 在 `channel-fact` 后使目录查询失效并防抖刷新。
 - 外部频道未发现时说明先向机器人账号发一条消息。`POST /api/channels/:id/messages`：内置频道入站交给智能体；外部频道在已绑定且允许主动发送时，以机器人账号出站，并注入管理员从客户端发出的系统事实。
 - `apps/server/src/main.ts` 使用 `NEKRO_DATA`、`NEKRO_PORT`（默认 4960）与可选 `NEKRO_MANAGEMENT_KEY`。开发工作区为 `<dataRoot>/workspaces/<agentId>/`。

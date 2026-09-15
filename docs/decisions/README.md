@@ -44,6 +44,7 @@
 
 - OneBot 11 正向 WebSocket、特殊事件、处理中反馈和安全互动：[OneBot 11 正向 WebSocket 适配器](implemented/2026-08-26-OneBot11正向WebSocket适配器.md)。
 - 企业微信官方长连接、流式反馈、媒体安全和无消息 ID 回执：[企业微信智能机器人长连接适配器](implemented/2026-08-27-企业微信智能机器人长连接适配器.md)。
+- 实验性微信 iLink 私聊、扫码登录和入站媒体：[微信 iLink 实验通道适配器](implemented/2026-09-07-微信iLink实验通道适配器.md)。
 - QQ OpenClaw 平台协议与真实验收边界：[首个 QQ OpenClaw Adapter](accepted/2026-08-15-首个QQ-OpenClaw-Adapter.md)。
 - 凭据存储、QQ Connection 和宿主职责：[本地凭据与 QQ 连接宿主](implemented/2026-08-17-本地凭据与QQ连接宿主.md)。
 - 平台目录与通用 Connection 表单：[连接平台目录与通用配置表单](implemented/2026-08-17-连接平台目录与通用配置表单.md)。

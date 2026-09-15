@@ -40,6 +40,8 @@ QQ 接入可选择以下方式：
 - [QQ 官方机器人](connections/qq-official-bot.md)：通过 QQ 开放平台创建机器人，使用 AppID 与 AppSecret 接入；
 - [OneBot V11](connections/onebot-11.md)：连接独立部署的 SnowLuma、NapCat 或 LLBot。
 
+微信私聊可选择[微信 iLink](connections/wechat-ilink.md)：使用平台应用扫码登录，当前仅支持已发现的私聊文本与可选入站媒体。
+
 其他平台及通用流程见[连接频道](connections.md)。
 
 ## 6. 可选：创造扩展

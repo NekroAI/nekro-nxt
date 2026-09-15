@@ -712,7 +712,7 @@ export class SessionImageContext {
         case 'file':
           blocks.push({
             type: 'text',
-            text: `收到文件资源 ${part.assetId}${part.name ? `（${part.name}）` : ''}`,
+            text: `收到文件资源 ${part.assetId}${part.name ? `（${part.name}）` : ''}。若这是小型文本文件，可使用 asset_read_text 读取正文。`,
           })
           break
         case 'audio':

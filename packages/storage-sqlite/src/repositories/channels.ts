@@ -49,6 +49,8 @@ type ChannelRepository = Pick<
   CoreRepository,
   | 'createConnection'
   | 'updateConnectionAlias'
+  | 'updateConnectionConfig'
+  | 'updateConnectionProvisioning'
   | 'updateConnectionActivityTriggerDefaults'
   | 'archiveConnection'
   | 'restoreConnection'
@@ -91,6 +93,7 @@ const toConnection = (input: typeof connections.$inferSelect): ConnectionRecord 
   return {
     id: row.id,
     adapterKey: row.adapterKey,
+    ...(row.accountKey === null ? {} : { accountKey: row.accountKey }),
     ...(row.alias?.trim() ? { alias: row.alias.trim() } : {}),
     config: row.config,
     credentialRefs: row.credentialRefs,
@@ -261,6 +264,28 @@ export function createChannelsRepository(database: DrizzleCoreDatabase): Channel
         database
           .update(connections)
           .set({ alias: normalizeConnectionAlias(alias) ?? null })
+          .where(and(eq(connections.id, id), isNull(connections.archivedAt)))
+          .run().changes !== 1
+      ) {
+        throw new Error(`Unknown connection: ${id}`)
+      }
+    },
+    updateConnectionConfig(id, config): void {
+      if (
+        database
+          .update(connections)
+          .set({ config })
+          .where(and(eq(connections.id, id), isNull(connections.archivedAt)))
+          .run().changes !== 1
+      ) {
+        throw new Error(`Unknown connection: ${id}`)
+      }
+    },
+    updateConnectionProvisioning(id, config, credentialRefs): void {
+      if (
+        database
+          .update(connections)
+          .set({ config, credentialRefs })
           .where(and(eq(connections.id, id), isNull(connections.archivedAt)))
           .run().changes !== 1
       ) {

@@ -39,7 +39,13 @@ import path from 'node:path'
 import sharp from 'sharp'
 import { afterEach, describe, expect, it } from 'vitest'
 import { z } from 'zod'
-import { assertHostDshPackageVersions, ChannelExtensionActivationHost, DshHostRuntime } from '../src/index.ts'
+import {
+  ASSET_READ_TEXT_HARD_MAX_BYTES,
+  assertHostDshPackageVersions,
+  ChannelExtensionActivationHost,
+  DshHostRuntime,
+  readChannelAssetText,
+} from '../src/index.ts'
 import { projectChannelRuntime } from '../src/channel-runtime-projection.ts'
 
 const temporaryDirectories: string[] = []
@@ -444,6 +450,76 @@ class FinalOnlyCommunicationModel extends ScriptedCommunicationModel {
       return
     }
     const text = '最终结果发送后的内部结束文字。'
+    yield { type: 'block-start', index: 0, blockType: 'text' }
+    yield { type: 'text-delta', index: 0, text }
+    yield { type: 'block-end', index: 0, block: { type: 'text', text } }
+    yield { type: 'finish', reason: { kind: 'stop' } }
+  }
+}
+
+class TextAssetReadProbeModel extends ScriptedCommunicationModel {
+  constructor(
+    private readonly assetId: string,
+    private readonly expectedSnippet: string,
+  ) {
+    super(false)
+  }
+
+  override async *stream(options: GenerateOptions): AsyncIterable<StreamChunk> {
+    await Promise.resolve()
+    this.calls.push(options)
+    const hasResult = (callId: string): boolean =>
+      options.messages.some((message) =>
+        message.content.some((block) => block.type === 'tool-result' && String(block.toolCallId) === callId),
+      )
+    if (!hasResult('scripted-asset-read-text')) {
+      const callId = CallId('scripted-asset-read-text')
+      const toolCall = {
+        type: 'tool-call' as const,
+        id: callId,
+        name: 'asset_read_text',
+        arguments: JSON.stringify({ assetId: this.assetId }),
+      }
+      yield { type: 'block-start', index: 0, blockType: 'tool-call' }
+      yield {
+        type: 'tool-call-delta',
+        index: 0,
+        id: callId,
+        name: toolCall.name,
+        argumentsDelta: toolCall.arguments,
+      }
+      yield { type: 'block-end', index: 0, block: toolCall }
+      yield { type: 'finish', reason: { kind: 'tool-calls' } }
+      return
+    }
+    if (!hasResult('scripted-text-file-response')) {
+      const toolResultText = JSON.stringify(options.messages)
+      if (!toolResultText.includes(this.expectedSnippet)) {
+        throw new Error(`asset_read_text result did not contain expected snippet: ${this.expectedSnippet}`)
+      }
+      const callId = CallId('scripted-text-file-response')
+      const toolCall = {
+        type: 'tool-call' as const,
+        id: callId,
+        name: 'send_channel_message',
+        arguments: JSON.stringify({
+          target: { type: 'current' },
+          parts: [{ text: `已读到文件正文：${this.expectedSnippet}` }],
+        }),
+      }
+      yield { type: 'block-start', index: 0, blockType: 'tool-call' }
+      yield {
+        type: 'tool-call-delta',
+        index: 0,
+        id: callId,
+        name: toolCall.name,
+        argumentsDelta: toolCall.arguments,
+      }
+      yield { type: 'block-end', index: 0, block: toolCall }
+      yield { type: 'finish', reason: { kind: 'tool-calls' } }
+      return
+    }
+    const text = '文本文件读取后的内部结束文字。'
     yield { type: 'block-start', index: 0, blockType: 'text' }
     yield { type: 'text-delta', index: 0, text }
     yield { type: 'block-end', index: 0, block: { type: 'text', text } }
@@ -2121,6 +2197,7 @@ describe('DSH Host and internal Channel vertical slice', () => {
       expect(model.calls[0]?.tools?.map(({ name }) => name)).toEqual([
         'asset_create',
         'asset_inspect',
+        'asset_read_text',
         'conversation_history_read',
         'conversation_history_search',
         'finish_channel_turn',
@@ -2155,6 +2232,7 @@ describe('DSH Host and internal Channel vertical slice', () => {
       expect(eventText).toContain(`收到图片资源 ${quotedImage.asset.id}（引用图片）`)
       expect(eventText).toContain('当前模型不直接支持图片输入')
       expect(eventText).toContain(`收到文件资源 ${quotedFileId}（引用资料.txt）`)
+      expect(eventText).toContain('可使用 asset_read_text 读取正文')
       expect(eventText).toContain(`收到音频资源 ${quotedAudioId}`)
       expect(eventText).toContain('引用卡片摘要')
       expect(eventText).toContain(`引用频道消息 ${staleEvent.logicalMessageId}`)
@@ -2232,6 +2310,168 @@ describe('DSH Host and internal Channel vertical slice', () => {
     } finally {
       await web.stop()
       await Promise.allSettled(hosts.map((ownedHost) => ownedHost.dispose()))
+      database.close()
+    }
+  })
+
+  it('lets the model read authorized small text file assets without workspace paths', async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), 'nekro-nxt-dsh-text-file-'))
+    temporaryDirectories.push(directory)
+    const database = await openMigratedCoreDatabase(path.join(directory, 'core.sqlite'))
+    const repository = new SqliteCoreRepository(database)
+    const assetService = new AssetService(repository, path.join(directory, 'assets'))
+    let coreId = 0
+    const core = new CoreService(repository, { now: () => 1800, nextUlid: () => `T${++coreId}` })
+    const agent = core.createAgent({
+      displayName: '读文件智能体',
+      persona: '',
+      model: { provider: 'test-provider', model: 'chat-model' },
+    })
+    const connection = core.createConnection({ adapterKey: 'web', config: {} })
+    const channel = core.createChannel({
+      connectionId: connection.id,
+      platformChannelId: 'text-file',
+      kind: 'internal',
+    })
+    core.createBinding({ channelId: channel.id, agentId: agent.definition.id, triggerPolicy: 'always' })
+    const fileText = '# 加速器说明\n\n模型应该能读取这段 Markdown 正文。'
+    const textAsset = await assetService.prepare({
+      bytes: new TextEncoder().encode(fileText),
+      declaredMediaType: 'application/octet-stream',
+    })
+    expect(textAsset.asset.mediaType).toBe('application/octet-stream')
+    const event = core.appendInbound({
+      connectionId: connection.id,
+      channelId: channel.id,
+      adapterKey: 'web',
+      platformEventId: 'text-file-event',
+      kind: 'message-created',
+      parts: [
+        { type: 'text', text: '请看看这个文件写了什么。' },
+        { type: 'file', assetId: textAsset.asset.id, name: 'mimec加速器.md' },
+      ],
+      assetOccurrences: [{ partIndex: 1, assetId: textAsset.asset.id }],
+      platformTimestamp: 1800,
+      receivedAt: 1800,
+      dedupeKey: 'web:text-file-event',
+    }).event
+    const observed: unknown[] = []
+    const model = new TextAssetReadProbeModel(textAsset.asset.id, 'Markdown 正文')
+    const host = await DshHostRuntime.create({
+      sessionDatabasePath: path.join(directory, 'sessions.sqlite'),
+      communication: {
+        sendMessage: (input) => {
+          observed.push(input.parts)
+          return Promise.resolve({
+            logicalMessageId: LogicalMessageIdSchema.parse('msg_TEXTFILEREPLY'),
+            status: 'sent',
+            receipts: [],
+          })
+        },
+      },
+      history: repository,
+      assets: repository,
+      assetService,
+      resolveAgentRevision: (revisionId) => repository.getAgentRevision(revisionId),
+      configureLlm: (context: Context) => {
+        context.llm.registerAdapter(['test-provider'], model)
+      },
+    })
+    try {
+      const sessionId = await host.createSession({
+        episodeId: EpisodeIdSchema.parse('eps_TEXTFILEREAD'),
+        channelId: channel.id,
+        agentId: agent.definition.id,
+        agentRevisionId: agent.revision.id,
+      })
+      await host.admit({
+        dshSessionId: sessionId,
+        admissionId: AdmissionIdSchema.parse('adm_TEXTFILEREAD'),
+        events: [event],
+        mode: 'followup',
+        replyRequired: true,
+      })
+      await host.whenIdle(sessionId)
+
+      expect(model.calls[0]?.tools?.map(({ name }) => name)).toContain('asset_read_text')
+      expect(observed).toEqual([[{ type: 'text', text: '已读到文件正文：Markdown 正文' }]])
+      const sessionEvents = JSON.stringify(host.sessionEvents(sessionId))
+      expect(sessionEvents).toContain('可使用 asset_read_text 读取正文')
+      expect(sessionEvents).toContain(JSON.stringify(fileText).slice(1, -1))
+      expect(sessionEvents).not.toContain(path.join(directory, 'assets'))
+    } finally {
+      await host.dispose()
+      database.close()
+    }
+  })
+
+  it('rejects inaccessible, oversized, and binary text asset reads', async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), 'nekro-nxt-dsh-text-file-boundaries-'))
+    temporaryDirectories.push(directory)
+    const database = await openMigratedCoreDatabase(path.join(directory, 'core.sqlite'))
+    const repository = new SqliteCoreRepository(database)
+    const assetService = new AssetService(repository, path.join(directory, 'assets'))
+    let coreId = 0
+    const core = new CoreService(repository, { now: () => 1810, nextUlid: () => `TB${++coreId}` })
+    const connection = core.createConnection({ adapterKey: 'web', config: {} })
+    const channel = core.createChannel({
+      connectionId: connection.id,
+      platformChannelId: 'text-owner',
+      kind: 'internal',
+    })
+    const otherChannel = core.createChannel({
+      connectionId: connection.id,
+      platformChannelId: 'text-other',
+      kind: 'internal',
+    })
+    const textAsset = await assetService.prepare({
+      bytes: new TextEncoder().encode('authorized text fixture'),
+      declaredMediaType: 'text/plain',
+    })
+    const binaryAsset = await assetService.prepare({
+      bytes: new Uint8Array([0xff, 0x00, 0x01]),
+      declaredMediaType: 'application/octet-stream',
+    })
+    for (const assetId of [textAsset.asset.id, binaryAsset.asset.id]) {
+      repository.grantAssetAccess({ assetId, channelId: channel.id, source: 'agent-tool', grantedAt: 1810 })
+    }
+
+    try {
+      await expect(
+        readChannelAssetText({
+          channelId: otherChannel.id,
+          assetId: textAsset.asset.id,
+          assets: repository,
+          assetService,
+        }),
+      ).rejects.toThrow('not accessible')
+      await expect(
+        readChannelAssetText({
+          channelId: channel.id,
+          assetId: textAsset.asset.id,
+          assets: repository,
+          assetService,
+          maxBytes: textAsset.asset.byteSize - 1,
+        }),
+      ).rejects.toThrow('asset_read_text limit')
+      await expect(
+        readChannelAssetText({
+          channelId: channel.id,
+          assetId: textAsset.asset.id,
+          assets: repository,
+          assetService,
+          maxBytes: ASSET_READ_TEXT_HARD_MAX_BYTES + 1,
+        }),
+      ).rejects.toThrow('must be an integer between')
+      await expect(
+        readChannelAssetText({
+          channelId: channel.id,
+          assetId: binaryAsset.asset.id,
+          assets: repository,
+          assetService,
+        }),
+      ).rejects.toThrow()
+    } finally {
       database.close()
     }
   })

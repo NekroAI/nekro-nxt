@@ -22,7 +22,8 @@
     "@nekro-nxt/adapter-qq-openclaw": "workspace:*",
     "@nekro-nxt/adapter-sdk": "workspace:*",
     "@nekro-nxt/adapter-web": "workspace:*",
-    "@nekro-nxt/adapter-wecom-ai-bot": "workspace:*"
+    "@nekro-nxt/adapter-wecom-ai-bot": "workspace:*",
+    "@nekro-nxt/adapter-wechat-ilink": "workspace:*"
   },
   "devDependencies": {
     "vitest": "^4.1.8"

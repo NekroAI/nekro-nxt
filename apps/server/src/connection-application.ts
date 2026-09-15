@@ -1,5 +1,7 @@
+import { randomUUID } from 'node:crypto'
 import {
   parseAdapterCapabilities,
+  type AdapterConnectionLoginStatus,
   type AdapterConnectionDiagnostic,
   type AdapterConnectionHostContext,
   type AdapterConnectionRuntime,
@@ -41,7 +43,32 @@ export type ConnectionTestResult =
     }
   | { readonly status: 'failed'; readonly kind: string; readonly message: string; readonly retryAfterMs?: number }
 
+export type ConnectionLoginSessionStatus = AdapterConnectionLoginStatus | 'confirmed' | 'failed' | 'cancelled'
+
+export interface ConnectionLoginSessionView {
+  readonly loginId: string
+  readonly status: ConnectionLoginSessionStatus
+  readonly qrCodeUrl?: string
+  readonly connectionId?: ConnectionId
+  readonly adapterKey: string
+  readonly message?: string
+}
+
+interface ConnectionLoginSession {
+  readonly loginId: string
+  readonly adapterKey: string
+  readonly targetConnectionId?: ConnectionId
+  readonly abortController: AbortController
+  status: ConnectionLoginSessionStatus
+  qrCodeUrl?: string
+  connectionId?: ConnectionId
+  message?: string
+  done: Promise<void>
+}
+
 export class ConnectionApplicationService {
+  readonly #loginCleanupTimers = new Set<ReturnType<typeof setTimeout>>()
+  readonly #connectionLoginSessions = new Map<string, ConnectionLoginSession>()
   readonly #adapterHandles: RegisteredAdapterHandle[] = []
   readonly #adapterRuntimes: Map<ConnectionId, AdapterConnectionRuntime>
   readonly #quiescingAdapterKeys = new Set<string>()
@@ -89,7 +116,13 @@ export class ConnectionApplicationService {
   clearObservers() {
     this.#connectionListeners.clear()
   }
-  stopAll() {
+  async stopAll() {
+    for (const session of this.#connectionLoginSessions.values())
+      session.abortController.abort(new Error('Host disposed.'))
+    await Promise.allSettled([...this.#connectionLoginSessions.values()].map((session) => session.done))
+    this.#connectionLoginSessions.clear()
+    for (const timer of this.#loginCleanupTimers) clearTimeout(timer)
+    this.#loginCleanupTimers.clear()
     return Promise.allSettled([...this.#adapterRuntimes.values()].map((runtime) => runtime.stop()))
   }
   async disposeRegistrations() {
@@ -136,6 +169,8 @@ export class ConnectionApplicationService {
       throw new Error('NekroRuntime is not accepting new Connections.')
     const contribution = this.ports.adapters.get(input.adapterKey)
     if (contribution?.descriptor.provisioning !== 'user-created') throw new Error('该连接平台不可由用户创建。')
+    if (contribution.descriptor.creation?.mode === 'qr-login')
+      throw new Error('该连接需要通过扫码登录创建，不能使用通用配置表单。')
     const descriptor = contribution.descriptor
     const configurationInput = input.configuration ?? {}
     const credentialsInput = input.credentials ?? {}
@@ -225,6 +260,338 @@ export class ConnectionApplicationService {
     this.#notifyConnectionChanges()
     return updated
   }
+  async updateConnectionConfiguration(
+    connectionId: ConnectionId,
+    configurationPatch: Readonly<Record<string, unknown>>,
+  ): Promise<ConnectionRecord> {
+    if (this.lifecycle().disposed) throw new Error('NekroRuntime is disposed.')
+    const connection = this.ports.core.getConnection(connectionId)
+    if (!connection) throw new Error('连接不存在。')
+    const contribution = this.ports.adapters.get(connection.adapterKey)
+    if (!contribution) throw new Error('这个连接的适配器未安装，无法修改配置。')
+    const storedConfig = { ...parseStoredAdapterConfiguration(connection.config) }
+    for (const [key, value] of Object.entries(configurationPatch)) {
+      const property = contribution.descriptor.configSchema.properties[key]
+      if (!property || property.type === 'credential-reference') throw new Error(`连接配置包含未知字段：${key}`)
+      if (property.type === 'string') {
+        if (typeof value !== 'string') throw new Error(`${property.title}的类型无效。`)
+        storedConfig[key] = value
+      } else if (property.type === 'boolean') {
+        if (typeof value !== 'boolean') throw new Error(`${property.title}的类型无效。`)
+        storedConfig[key] = value
+      } else {
+        if (typeof value !== 'number' || !Number.isFinite(value)) throw new Error(`${property.title}的类型无效。`)
+        storedConfig[key] = value
+      }
+    }
+    const updated = this.ports.core.updateConnectionConfig(connectionId, storedConfig)
+    const mounted = this.#adapterRuntimes.get(connectionId)
+    if (mounted) {
+      await mounted.stop()
+      this.#adapterRuntimes.delete(connectionId)
+      if (this.lifecycle().started) await this.mountAdapter(connectionId)
+    }
+    this.#notifyConnectionChanges()
+    return updated
+  }
+
+  async startConnectionLogin(input: {
+    readonly adapterKey: string
+    readonly alias?: string | undefined
+    readonly connectionId?: ConnectionId | undefined
+  }): Promise<ConnectionLoginSessionView> {
+    if (!this.lifecycle().started || this.lifecycle().disposed)
+      throw new Error('NekroRuntime is not accepting new Connections.')
+    const contribution = this.ports.adapters.get(input.adapterKey)
+    if (contribution?.descriptor.provisioning !== 'user-created') throw new Error('该连接平台不可由用户创建。')
+    const connectionLogin = contribution.connectionLogin
+    if (contribution.descriptor.creation?.mode !== 'qr-login' || !connectionLogin) {
+      throw new Error('该连接平台不支持扫码登录。')
+    }
+    if (input.connectionId !== undefined) {
+      const existing = this.ports.core.getConnection(input.connectionId)
+      if (!existing || existing.adapterKey !== input.adapterKey) throw new Error('要重新认证的连接不存在。')
+      if (!existing.accountKey) throw new Error('原连接没有可核对的账号身份，无法安全重新认证。')
+      const alreadyReauthenticating = [...this.#connectionLoginSessions.values()].some(
+        (session) =>
+          session.targetConnectionId === input.connectionId &&
+          (session.status === 'pending' || session.status === 'scanned'),
+      )
+      if (alreadyReauthenticating) throw new Error('该连接已有进行中的重新认证会话。')
+    }
+    const loginId = 'connection-login-' + randomUUID()
+    const abortController = new AbortController()
+    const session: ConnectionLoginSession = {
+      loginId,
+      adapterKey: input.adapterKey,
+      ...(input.connectionId === undefined ? {} : { targetConnectionId: input.connectionId }),
+      abortController,
+      status: 'pending',
+      done: Promise.resolve(),
+    }
+    this.#connectionLoginSessions.set(loginId, session)
+
+    let firstQrSettled = false
+    let settleFirstQr: (() => void) | undefined
+    let rejectFirstQr: ((error: unknown) => void) | undefined
+    const firstQr = new Promise<void>((resolve, reject) => {
+      settleFirstQr = resolve
+      rejectFirstQr = reject
+    })
+    const resolveFirstQrOnce = (): void => {
+      if (firstQrSettled) return
+      firstQrSettled = true
+      settleFirstQr?.()
+    }
+    const rejectFirstQrOnce = (error: unknown): void => {
+      if (firstQrSettled) return
+      firstQrSettled = true
+      rejectFirstQr?.(error)
+    }
+    const firstQrTimeout = setTimeout(() => {
+      if (firstQrSettled) return
+      const error = new Error('扫码登录超时，未生成二维码。')
+      session.status = 'failed'
+      session.message = error.message
+      abortController.abort(error)
+      rejectFirstQrOnce(error)
+    }, 15_000)
+
+    session.done = (async () => {
+      try {
+        const result = await connectionLogin.start({
+          signal: abortController.signal,
+          onQrCode: (qrCodeUrl) => {
+            if (abortController.signal.aborted || session.status === 'cancelled') return
+            session.qrCodeUrl = qrCodeUrl
+            session.status = 'pending'
+            session.message = '请使用平台应用扫码并确认登录。'
+            resolveFirstQrOnce()
+            this.#notifyConnectionChanges()
+          },
+          onStatus: (status, message) => {
+            if (abortController.signal.aborted || session.status === 'cancelled') return
+            session.status = status
+            session.message =
+              message ??
+              (status === 'scanned'
+                ? '已扫码，请在平台应用内确认登录。'
+                : status === 'expired'
+                  ? '二维码已过期，请重新扫码登录。'
+                  : '请使用平台应用扫码并确认登录。')
+            this.#notifyConnectionChanges()
+          },
+        })
+        if (abortController.signal.aborted) return
+        if (!session.qrCodeUrl) throw new Error('扫码登录流程未返回二维码。')
+        const connection =
+          input.connectionId === undefined
+            ? await this.#createConnectionFromLogin(input.adapterKey, input.alias, result, abortController.signal)
+            : await this.#reauthenticateConnectionFromLogin(input.connectionId, result, abortController.signal)
+        if (abortController.signal.aborted) return
+        session.status = 'confirmed'
+        session.connectionId = connection.id
+        session.message = input.connectionId === undefined ? '登录成功，连接已创建。' : '登录成功，原连接已重新认证。'
+      } catch (error) {
+        if (abortController.signal.aborted || session.status === 'cancelled') {
+          session.status = 'cancelled'
+          session.message = '已取消扫码登录。'
+          rejectFirstQrOnce(error)
+          return
+        }
+        session.status = 'failed'
+        session.message = error instanceof Error ? error.message : String(error)
+        rejectFirstQrOnce(error)
+      } finally {
+        this.#notifyConnectionChanges()
+        if (session.status !== 'pending' && session.status !== 'scanned') {
+          this.#scheduleConnectionLoginSessionRemoval(loginId)
+        }
+      }
+    })()
+
+    try {
+      await firstQr
+    } finally {
+      clearTimeout(firstQrTimeout)
+    }
+    return this.#projectConnectionLoginSession(session)
+  }
+
+  getConnectionLogin(loginId: string): ConnectionLoginSessionView {
+    const session = this.#connectionLoginSessions.get(loginId)
+    if (!session) throw new Error('扫码登录会话不存在。')
+    return this.#projectConnectionLoginSession(session)
+  }
+
+  cancelConnectionLogin(loginId: string): ConnectionLoginSessionView {
+    const session = this.#connectionLoginSessions.get(loginId)
+    if (!session) throw new Error('扫码登录会话不存在。')
+    if (session.status === 'cancelled') return this.#projectConnectionLoginSession(session)
+    if (session.status !== 'pending' && session.status !== 'scanned') {
+      throw new Error('扫码登录会话已经结束，不能取消。')
+    }
+    session.status = 'cancelled'
+    session.message = '已取消扫码登录。'
+    session.abortController.abort(new Error(session.message))
+    this.#notifyConnectionChanges()
+    this.#scheduleConnectionLoginSessionRemoval(loginId)
+    return this.#projectConnectionLoginSession(session)
+  }
+
+  #projectConnectionLoginSession(session: ConnectionLoginSession): ConnectionLoginSessionView {
+    return {
+      loginId: session.loginId,
+      status: session.status,
+      adapterKey: session.adapterKey,
+      ...(session.qrCodeUrl === undefined ? {} : { qrCodeUrl: session.qrCodeUrl }),
+      ...(session.connectionId === undefined ? {} : { connectionId: session.connectionId }),
+      ...(session.message === undefined ? {} : { message: session.message }),
+    }
+  }
+
+  #scheduleConnectionLoginSessionRemoval(loginId: string): void {
+    const timer = setTimeout(() => {
+      this.#loginCleanupTimers.delete(timer)
+      const session = this.#connectionLoginSessions.get(loginId)
+      if (!session) return
+      if (session.status === 'pending' || session.status === 'scanned') return
+      this.#connectionLoginSessions.delete(loginId)
+    }, 60_000)
+    this.#loginCleanupTimers.add(timer)
+    timer.unref?.()
+  }
+
+  async #saveProvisionedCredentials(credentials: Readonly<Record<string, string>>): Promise<Record<string, string>> {
+    const credentialRefs: Record<string, string> = {}
+    try {
+      for (const [key, value] of Object.entries(credentials)) {
+        if (!key.trim() || !value.trim()) throw new Error('扫码登录结果包含无效凭据。')
+        credentialRefs[key] = await this.ports.credentials.save(value)
+      }
+      return credentialRefs
+    } catch (error) {
+      await Promise.allSettled(
+        Object.values(credentialRefs).map((reference) => this.ports.credentials.delete(reference)),
+      )
+      throw error
+    }
+  }
+
+  async #createConnectionFromLogin(
+    adapterKey: string,
+    alias: string | undefined,
+    result: {
+      readonly accountKey: string
+      readonly configuration: Readonly<Record<string, string | number | boolean>>
+      readonly credentials: Readonly<Record<string, string>>
+    },
+    signal: AbortSignal,
+  ): Promise<ConnectionRecord> {
+    const accountKey = result.accountKey.trim()
+    if (!accountKey) throw new Error('扫码登录结果缺少账号身份。')
+    const configuration = parseStoredAdapterConfiguration(result.configuration)
+    const duplicateMessage = '该平台账号已经存在活动连接。'
+    const findDuplicate = (): ConnectionRecord | undefined =>
+      this.ports.core.listConnectionsByAdapter(adapterKey).find((candidate) => candidate.accountKey === accountKey)
+    if (findDuplicate()) throw new Error(duplicateMessage)
+    if (signal.aborted) throw signal.reason
+    const credentialRefs = await this.#saveProvisionedCredentials(result.credentials)
+    let connection: ConnectionRecord | undefined
+    try {
+      if (signal.aborted) throw signal.reason
+      connection = this.ports.core.createConnection({
+        adapterKey,
+        accountKey,
+        ...(alias === undefined ? {} : { alias }),
+        config: configuration,
+        credentialRefs,
+      })
+      if (signal.aborted) throw signal.reason
+      await this.mountAdapter(connection.id)
+      const diagnostic = this.#adapterDiagnostics.get(connection.id)
+      if (diagnostic?.status === 'failed') throw new Error(diagnostic.message ?? '连接挂载失败。')
+      if (signal.aborted) throw signal.reason
+      return connection
+    } catch (error) {
+      if (connection) {
+        await this.deleteConnection(connection.id, { deleteChannelData: true })
+      } else {
+        await Promise.allSettled(
+          Object.values(credentialRefs).map((reference) => this.ports.credentials.delete(reference)),
+        )
+      }
+      if (!connection && findDuplicate()) throw new Error(duplicateMessage, { cause: error })
+      throw error
+    }
+  }
+
+  async #reauthenticateConnectionFromLogin(
+    connectionId: ConnectionId,
+    result: {
+      readonly accountKey: string
+      readonly configuration: Readonly<Record<string, string | number | boolean>>
+      readonly credentials: Readonly<Record<string, string>>
+    },
+    signal: AbortSignal,
+  ): Promise<ConnectionRecord> {
+    const current = this.ports.core.getConnection(connectionId)
+    if (!current) throw new Error('要重新认证的连接不存在。')
+    if (!current.accountKey || current.accountKey !== result.accountKey.trim()) {
+      throw new Error('扫码账号与原连接账号不一致，未替换凭据。')
+    }
+    const configuration = { ...parseStoredAdapterConfiguration(result.configuration) }
+    const savedConfiguration = parseStoredAdapterConfiguration(current.config)
+    const descriptor = this.ports.adapters.get(current.adapterKey)?.descriptor
+    // Login refreshes protocol routing and credentials, not the user's public settings.
+    for (const [key, property] of Object.entries(descriptor?.configSchema.properties ?? {})) {
+      if (property.type !== 'credential-reference' && savedConfiguration[key] !== undefined) {
+        configuration[key] = savedConfiguration[key]
+      }
+    }
+    if (signal.aborted) throw signal.reason
+    const credentialRefs = await this.#saveProvisionedCredentials(result.credentials)
+    const mounted = this.#adapterRuntimes.get(connectionId)
+    try {
+      if (signal.aborted) throw signal.reason
+      if (mounted) {
+        await mounted.stop()
+        this.#adapterRuntimes.delete(connectionId)
+      }
+      if (signal.aborted) throw signal.reason
+      const updated = this.ports.core.updateConnectionProvisioning(connectionId, {
+        config: configuration,
+        credentialRefs,
+      })
+      if (this.lifecycle().started) {
+        await this.mountAdapter(connectionId)
+        const diagnostic = this.#adapterDiagnostics.get(connectionId)
+        if (diagnostic?.status === 'failed') throw new Error(diagnostic.message ?? '重新挂载连接失败。')
+      }
+      if (signal.aborted) throw signal.reason
+      await Promise.allSettled(
+        Object.values(current.credentialRefs).map((reference) => this.ports.credentials.delete(reference)),
+      )
+      this.#notifyConnectionChanges()
+      return updated
+    } catch (error) {
+      // A cancelled mount may already be running. Drain it before losing ownership.
+      const replacement = this.#adapterRuntimes.get(connectionId)
+      if (replacement && replacement !== mounted) await replacement.stop()
+      this.#adapterRuntimes.delete(connectionId)
+      this.ports.core.updateConnectionProvisioning(connectionId, {
+        config: current.config,
+        credentialRefs: current.credentialRefs,
+      })
+      this.#adapterRuntimes.delete(connectionId)
+      if (this.lifecycle().started) await this.mountAdapter(connectionId)
+      await Promise.allSettled(
+        Object.values(credentialRefs).map((reference) => this.ports.credentials.delete(reference)),
+      )
+      throw error
+    }
+  }
+
   async deleteConnection(
     connectionId: ConnectionId,
     options: { readonly deleteChannelData: boolean },

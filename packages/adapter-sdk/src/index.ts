@@ -337,15 +337,19 @@ type AdapterConnectionWireSchema = {
   readonly properties: Readonly<Record<string, AdapterConfigurationProperty>>
 }
 
+type KnownObjectKeys<T> = {
+  [Key in keyof T]: string extends Key ? never : number extends Key ? never : Key
+}[keyof T]
+
 type AdapterConnectionProperties<
   ConfigurationSchema extends AdapterSchemaObject,
   CredentialsSchema extends AdapterSchemaObject,
 > = {
-  [Key in Extract<keyof z.output<ConfigurationSchema>, string>]: AdapterConfigurationPropertyFor<
+  [Key in Extract<KnownObjectKeys<z.output<ConfigurationSchema>>, string>]: AdapterConfigurationPropertyFor<
     z.output<ConfigurationSchema>[Key]
   >
 } & {
-  [Key in Extract<keyof z.output<CredentialsSchema>, string>]: AdapterCredentialPropertyFor<
+  [Key in Extract<KnownObjectKeys<z.output<CredentialsSchema>>, string>]: AdapterCredentialPropertyFor<
     z.output<CredentialsSchema>[Key]
   >
 }
@@ -413,6 +417,12 @@ export type AdapterConnectionDescriptor<
     readonly receive: boolean
     readonly send: boolean
   }
+  /** Optional product-owned Connection creation flow. Schema-form remains the default. */
+  readonly creation?: {
+    readonly mode: 'schema-form' | 'qr-login'
+    readonly actionLabel?: string
+    readonly pendingLabel?: string
+  }
   readonly configSchema: [ConfigurationSchema] extends [never]
     ? AdapterConnectionWireSchema
     : [CredentialsSchema] extends [never]
@@ -453,6 +463,7 @@ export function defineAdapterConnection<
   readonly activities?: readonly AdapterActivityDefinition[]
   readonly features?: AdapterConnectionDescriptor['features']
   readonly diagnostics?: { readonly receive: boolean; readonly send: boolean }
+  readonly creation?: AdapterConnectionDescriptor['creation']
   readonly configurationSchema: ConfigurationSchema
   readonly credentialsSchema: CredentialsSchema
   readonly configSchema: AdapterConnectionUiSchema<ConfigurationSchema, CredentialsSchema>
@@ -474,6 +485,7 @@ export function defineAdapterConnection<
         receive: input.provisioning === 'user-created',
         send: input.provisioning === 'user-created',
       },
+      ...(input.creation === undefined ? {} : { creation: input.creation }),
       configSchema: input.configSchema,
     },
     configurationSchema: input.configurationSchema,
@@ -680,10 +692,33 @@ export interface AdapterStoredConnectionConfiguration {
   readonly credentialRefs: Readonly<Record<string, string>>
 }
 
+export type AdapterConnectionLoginStatus = 'pending' | 'scanned' | 'expired'
+
+export interface AdapterConnectionLoginInput {
+  readonly signal: AbortSignal
+  readonly onQrCode: (qrCodeUrl: string) => Promise<void> | void
+  readonly onStatus: (status: AdapterConnectionLoginStatus, message?: string) => void
+}
+
+export interface AdapterConnectionLoginResult {
+  /** Stable platform account identity used to prevent duplicates and verify reauthentication. */
+  readonly accountKey: string
+  /** Complete private Adapter configuration persisted by the Host. */
+  readonly configuration: Readonly<Record<string, string | number | boolean>>
+  /** Raw write-only credentials persisted by the Host under Adapter-owned keys. */
+  readonly credentials: Readonly<Record<string, string>>
+}
+
+export interface AdapterConnectionLoginContribution {
+  readonly mode: 'qr-login'
+  start(input: AdapterConnectionLoginInput): Promise<AdapterConnectionLoginResult>
+}
+
 /** Versioned Host-wide Adapter contribution loaded from built-ins or an installed Extension Revision. */
 export interface AdapterHostContributionV2 {
   readonly apiVersion: 2
   readonly descriptor: AdapterConnectionDescriptor
+  readonly connectionLogin?: AdapterConnectionLoginContribution
   create(
     context: AdapterConnectionHostContext,
     stored: AdapterStoredConnectionConfiguration,
@@ -796,6 +831,12 @@ export class AdapterRegistry {
     if (contribution.apiVersion !== 2)
       throw new TypeError(`Unsupported Adapter Host API version: ${String(contribution.apiVersion)}`)
     assertAdapterDescriptor(contribution.descriptor)
+    if (
+      (contribution.descriptor.creation?.mode === 'qr-login') !==
+      (contribution.connectionLogin?.mode === 'qr-login')
+    ) {
+      throw new TypeError('A qr-login Adapter must provide exactly one matching connection login contribution.')
+    }
     if (this.#byOwner.has(owner)) throw new Error(`Adapter contribution owner is already registered: ${owner}`)
     if (this.#byKey.has(contribution.descriptor.key)) {
       throw new Error(`Adapter key is already registered: ${contribution.descriptor.key}`)

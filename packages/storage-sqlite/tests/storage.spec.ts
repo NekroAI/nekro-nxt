@@ -360,6 +360,40 @@ describe('Core SQLite baseline', () => {
     }
   })
 
+  it('allows only one active Connection for each Adapter account identity', async () => {
+    const { database, core } = await createFixture()
+    try {
+      const first = core.createConnection({
+        adapterKey: 'wechat-ilink',
+        accountKey: 'wx_account_unique',
+        config: { accountId: 'wx_account_unique' },
+      })
+      expect(() =>
+        core.createConnection({
+          adapterKey: 'wechat-ilink',
+          accountKey: 'wx_account_unique',
+          config: { accountId: 'wx_account_unique' },
+        }),
+      ).toThrow()
+
+      core.archiveConnection(first.id)
+      const replacement = core.createConnection({
+        adapterKey: 'wechat-ilink',
+        accountKey: 'wx_account_unique',
+        config: { accountId: 'wx_account_unique' },
+      })
+      expect(() => core.restoreConnection(first.id)).toThrow()
+
+      core.archiveConnection(replacement.id)
+      expect(core.restoreConnection(first.id)).toMatchObject({
+        id: first.id,
+        accountKey: 'wx_account_unique',
+      })
+    } finally {
+      database.close()
+    }
+  })
+
   it('upgrades schema 0018 by preserving activity keys and converting internal Channel kind atomically', async () => {
     const directory = await temporaryDirectory()
     const filename = path.join(directory, 'core.sqlite')
@@ -643,6 +677,75 @@ describe('Core SQLite baseline', () => {
       }
     } finally {
       if (!databaseClosed) database.close()
+    }
+  })
+
+  it('persists and reloads an updated Connection config without changing identity', async () => {
+    const { directory, database, core, connection } = await createFixture()
+    const filename = path.join(directory, 'core.sqlite')
+    let databaseClosed = false
+    try {
+      const updated = core.updateConnectionConfig(connection.id, {
+        enableInboundMedia: false,
+        maxTextLength: 4000,
+      })
+      expect(updated).toMatchObject({
+        id: connection.id,
+        adapterKey: 'fixture-alpha',
+        config: { enableInboundMedia: false, maxTextLength: 4000 },
+      })
+      expect(database.db.select({ config: connections.config }).from(connections).get()?.config).toEqual({
+        enableInboundMedia: false,
+        maxTextLength: 4000,
+      })
+      database.close()
+      databaseClosed = true
+
+      const reopened = await openMigratedCoreDatabase(filename)
+      try {
+        const reopenedRepository = new SqliteCoreRepository(reopened)
+        expect(reopenedRepository.getConnection(connection.id)).toMatchObject({
+          id: connection.id,
+          adapterKey: 'fixture-alpha',
+          config: { enableInboundMedia: false, maxTextLength: 4000 },
+        })
+      } finally {
+        reopened.close()
+      }
+    } finally {
+      if (!databaseClosed) database.close()
+    }
+  })
+
+  it('atomically persists replacement Connection provisioning', async () => {
+    const { database, repository, core, connection } = await createFixture()
+    try {
+      const updated = core.updateConnectionProvisioning(connection.id, {
+        config: { accountId: 'account-fixture', enableInboundMedia: false },
+        credentialRefs: { botToken: 'credential:replacement' },
+      })
+      expect(updated).toMatchObject({
+        id: connection.id,
+        config: { accountId: 'account-fixture', enableInboundMedia: false },
+        credentialRefs: { botToken: 'credential:replacement' },
+      })
+      expect(repository.getConnection(connection.id)).toMatchObject({
+        id: connection.id,
+        config: { accountId: 'account-fixture', enableInboundMedia: false },
+        credentialRefs: { botToken: 'credential:replacement' },
+      })
+      expect(
+        database.db
+          .select({ config: connections.config, credentialRefs: connections.credentialRefs })
+          .from(connections)
+          .where(eq(connections.id, connection.id))
+          .get(),
+      ).toEqual({
+        config: { accountId: 'account-fixture', enableInboundMedia: false },
+        credentialRefs: { botToken: 'credential:replacement' },
+      })
+    } finally {
+      database.close()
     }
   })
 

@@ -663,6 +663,14 @@ const AdapterConfigurationPropertySchema = z.discriminatedUnion('type', [
     .strict(),
 ])
 
+const AdapterConnectionCreationSchema = z
+  .object({
+    mode: z.enum(['schema-form', 'qr-login']),
+    actionLabel: z.string().trim().min(1).optional(),
+    pendingLabel: z.string().trim().min(1).optional(),
+  })
+  .strict()
+
 const AdapterConnectionDescriptorSchema = z
   .object({
     key: NonEmptyStringSchema,
@@ -694,6 +702,7 @@ const AdapterConnectionDescriptorSchema = z
       })
       .strict(),
     diagnostics: z.object({ receive: z.boolean(), send: z.boolean() }).strict(),
+    creation: AdapterConnectionCreationSchema.optional(),
     configSchema: z
       .object({
         schemaVersion: z.number().int().nonnegative(),
@@ -907,6 +916,7 @@ export const HostSnapshotSchema = z
             .optional(),
           receiveTest: z.lazy(() => ConnectionTestResultSchema).optional(),
           sendTest: z.lazy(() => ConnectionTestResultSchema).optional(),
+          configuration: z.record(z.string(), z.union([z.string(), z.number(), z.boolean()])).default({}),
         })
         .strict(),
     ),
@@ -1842,6 +1852,58 @@ export const HostApiContracts = {
     response: z.object({ connectionId: ConnectionIdSchema, adapterKey: NonEmptyStringSchema }).strict(),
     error: HostApiErrorSchema,
   }),
+  startConnectionLogin: defineContract({
+    method: 'POST',
+    path: '/api/connection-logins',
+    params: EmptyParamsSchema,
+    request: z
+      .object({
+        adapterKey: NonEmptyStringSchema,
+        alias: ConnectionAliasInputSchema.optional(),
+        connectionId: ConnectionIdSchema.optional(),
+      })
+      .strict(),
+    response: z
+      .object({
+        loginId: NonEmptyStringSchema,
+        adapterKey: NonEmptyStringSchema,
+        status: z.enum(['pending', 'scanned', 'confirmed', 'expired', 'failed', 'cancelled']),
+        qrCodeUrl: NonEmptyStringSchema,
+        message: z.string().optional(),
+      })
+      .strict(),
+    error: HostApiErrorSchema,
+  }),
+  getConnectionLogin: defineContract({
+    method: 'GET',
+    path: '/api/connection-logins/:loginId',
+    params: z.object({ loginId: NonEmptyStringSchema }).strict(),
+    request: NoRequestBodySchema,
+    response: z
+      .object({
+        loginId: NonEmptyStringSchema,
+        status: z.enum(['pending', 'scanned', 'confirmed', 'expired', 'failed', 'cancelled']),
+        qrCodeUrl: NonEmptyStringSchema.optional(),
+        connectionId: ConnectionIdSchema.optional(),
+        adapterKey: NonEmptyStringSchema,
+        message: z.string().optional(),
+      })
+      .strict(),
+    error: HostApiErrorSchema,
+  }),
+  cancelConnectionLogin: defineContract({
+    method: 'DELETE',
+    path: '/api/connection-logins/:loginId',
+    params: z.object({ loginId: NonEmptyStringSchema }).strict(),
+    request: NoRequestBodySchema,
+    response: z
+      .object({
+        loginId: NonEmptyStringSchema,
+        status: z.literal('cancelled'),
+      })
+      .strict(),
+    error: HostApiErrorSchema,
+  }),
   updateConnectionAlias: defineContract({
     invalidatesSnapshot: true,
     method: 'POST',
@@ -1863,6 +1925,20 @@ export const HostApiContracts = {
     params: connectionParam,
     request: z.object({ activityKeys: z.array(AdapterActivityKeySchema) }).strict(),
     response: z.object({ connectionId: ConnectionIdSchema, activityKeys: z.array(AdapterActivityKeySchema) }).strict(),
+    error: HostApiErrorSchema,
+  }),
+  updateConnectionConfiguration: defineContract({
+    invalidatesSnapshot: true,
+    method: 'POST',
+    path: '/api/connections/:connectionId/configuration',
+    params: connectionParam,
+    request: z.object({ configuration: z.record(z.string(), z.union([z.string(), z.number(), z.boolean()])) }).strict(),
+    response: z
+      .object({
+        connectionId: ConnectionIdSchema,
+        configuration: z.record(z.string(), z.union([z.string(), z.number(), z.boolean()])),
+      })
+      .strict(),
     error: HostApiErrorSchema,
   }),
   deleteConnection: defineContract({

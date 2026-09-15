@@ -1,0 +1,40 @@
+{
+  "name": "@nekro-nxt/adapter-wechat-ilink",
+  "version": "0.0.0",
+  "private": true,
+  "license": "AGPL-3.0-only",
+  "type": "module",
+  "exports": {
+    ".": {
+      "types": "./lib/types/index.d.ts",
+      "import": "./dist/index.mjs",
+      "source": "./src/index.ts"
+    }
+  },
+  "scripts": {
+    "build": "tsdown",
+    "dev": "tsdown --watch --no-clean",
+    "test": "vitest run --root ../.. packages/adapter-wechat-ilink/tests",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@nekro-nxt/adapter-sdk": "workspace:*",
+    "@nekro-nxt/contracts": "workspace:*",
+    "wechat-ilink-client": "0.1.0",
+    "zod": "4.4.3"
+  },
+  "devDependencies": {
+    "@nekro-nxt/test-harness": "workspace:*"
+  },
+  "description": "NekroNXT experimental WeChat iLink Adapter",
+  "author": "NekroAI contributors",
+  "homepage": "https://github.com/NekroAI/nekro-nxt#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/NekroAI/nekro-nxt.git",
+    "directory": "packages/adapter-wechat-ilink"
+  },
+  "bugs": {
+    "url": "https://github.com/NekroAI/nekro-nxt/issues"
+  }
+}
