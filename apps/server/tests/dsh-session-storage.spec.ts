@@ -1,7 +1,9 @@
+import { spawn } from 'node:child_process'
 import { mkdir, mkdtemp, readFile, readdir, rename, rm, stat, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
+import { pathToFileURL } from 'node:url'
 import { afterEach, describe, expect, it } from 'vitest'
 import {
   completeDshSessionStoragePreparation,
@@ -34,6 +36,52 @@ const fixture = async (schema?: number, applicationId = DSH_SESSION_APPLICATION_
     database.close()
   }
   return { directory, databasePath, sessionRoot }
+}
+
+/** Kill after COMMIT, without SQLite close/checkpoint, and wait for all OS handles to leave. */
+const leaveCommittedWalAfterCrash = async (databasePath: string): Promise<void> => {
+  const child = spawn(
+    process.execPath,
+    [
+      '--input-type=module',
+      '--eval',
+      `import { DatabaseSync } from 'node:sqlite'
+       const database = new DatabaseSync(process.argv[1])
+       database.exec('PRAGMA journal_mode=WAL; PRAGMA synchronous=FULL; PRAGMA wal_autocheckpoint=0')
+       database.exec("INSERT INTO synthetic_events VALUES ('committed-in-wal')")
+       process.send('wal-committed')
+       setInterval(() => { if (!database.isOpen) process.exit(2) }, 1000)`,
+      databasePath,
+    ],
+    { stdio: ['ignore', 'ignore', 'pipe', 'ipc'] },
+  )
+  await new Promise<void>((resolve, reject) => {
+    let committed = false
+    let timedOut = false
+    let stderr = ''
+    child.stderr?.setEncoding('utf8').on('data', (chunk: string) => {
+      stderr += chunk
+    })
+    const deadline = setTimeout(() => {
+      timedOut = true
+      child.kill('SIGKILL')
+    }, 10_000)
+    child.once('error', (error) => {
+      clearTimeout(deadline)
+      reject(error)
+    })
+    child.on('message', (message) => {
+      if (message !== 'wal-committed') return
+      committed = true
+      child.kill('SIGKILL')
+    })
+    child.once('close', (code, signal) => {
+      clearTimeout(deadline)
+      if (committed && !timedOut && (code !== 0 || signal !== null)) resolve()
+      else
+        reject(new Error(`WAL crash fixture failed (timeout=${timedOut}, code=${code}, signal=${signal}): ${stderr}`))
+    })
+  })
 }
 
 describe('DSH Session storage preparation', () => {
@@ -126,24 +174,31 @@ describe('DSH Session storage preparation', () => {
 
   it('includes uncheckpointed WAL data in the verified standalone snapshot', async () => {
     const { databasePath } = await fixture(15)
-    const source = new DatabaseSync(databasePath)
-    source.exec('PRAGMA journal_mode = WAL; PRAGMA wal_autocheckpoint = 0')
-    source.exec("INSERT INTO synthetic_events VALUES ('committed-in-wal')")
+    await leaveCommittedWalAfterCrash(databasePath)
+    expect((await stat(`${databasePath}-wal`)).size).toBeGreaterThan(32)
+    // Immutable reads only the main file, proving the second row still lives in WAL.
+    const mainUri = pathToFileURL(databasePath)
+    mainUri.search = '?mode=ro&immutable=1'
+    const source = new DatabaseSync(mainUri.href, { readOnly: true })
     try {
-      const result = await prepareDshSessionStorage({ databasePath })
-      if (result.kind !== 'archived') throw new Error('Expected archive')
-      expect(result.manifest.sourceFiles.map(({ suffix }) => suffix)).toEqual(['', '-wal'])
-      const snapshot = new DatabaseSync(path.join(result.archivePath, 'sessions.sqlite'), { readOnly: true })
-      try {
-        expect(snapshot.prepare('SELECT count(*) AS count FROM synthetic_events').get()).toEqual({ count: 2 })
-      } finally {
-        snapshot.close()
-      }
-      await expect(stat(path.join(result.archivePath, 'original-sessions.sqlite-wal'))).resolves.toBeDefined()
+      expect(source.prepare('SELECT count(*) AS count FROM synthetic_events').get()).toEqual({ count: 1 })
     } finally {
       source.close()
     }
-  })
+    const result = await prepareDshSessionStorage({ databasePath })
+    if (result.kind !== 'archived') throw new Error('Expected archive')
+    expect(result.manifest.sourceFiles.map(({ suffix }) => suffix)).toEqual(['', '-wal'])
+    const snapshot = new DatabaseSync(path.join(result.archivePath, 'sessions.sqlite'), { readOnly: true })
+    try {
+      expect(snapshot.prepare('SELECT value FROM synthetic_events ORDER BY rowid').all()).toEqual([
+        { value: 'synthetic-session-event' },
+        { value: 'committed-in-wal' },
+      ])
+    } finally {
+      snapshot.close()
+    }
+    await expect(stat(path.join(result.archivePath, 'original-sessions.sqlite-wal'))).resolves.toBeDefined()
+  }, 30_000)
 
   it.each(['archive-published', 'reset-pending', 'source-retired', 'target-prepared'] as const)(
     'resumes after interruption at %s without creating a second archive',

@@ -392,10 +392,8 @@ export async function createUpgradeBackup(options: UpgradeBackupOptions): Promis
   options.signal?.throwIfAborted()
   const backupRoot = await prepareUpgradeBackupDirectory(options.dataRoot)
   const roots = await rootsFor(options)
-  const backupId = `runtime-${digest(JSON.stringify([options.migrationId ?? options.releaseId, options.runtimeFingerprint, roots])).slice(0, 32)}`
-  const destination = path.join(backupRoot, backupId)
-  if (await exists(destination)) {
-    const existing = await verifyUpgradeBackup(destination)
+  let backupId = `runtime-${digest(JSON.stringify([options.migrationId ?? options.releaseId, options.runtimeFingerprint, roots])).slice(0, 32)}`
+  const assertIdentity = (existing: UpgradeBackupManifest): void => {
     if (
       existing.backupId !== backupId ||
       existing.runtimeFingerprint !== options.runtimeFingerprint ||
@@ -404,8 +402,33 @@ export async function createUpgradeBackup(options: UpgradeBackupOptions): Promis
       (options.migrationId === undefined && existing.releaseId !== options.releaseId)
     )
       throw new Error('恢复点身份与本次升级不匹配。')
+  }
+  // A completed rollback ends this point's reuse lifetime. Follow immutable restore IDs
+  // so reinstalling the same release captures data written by the old program afterwards.
+  while (true) {
+    options.signal?.throwIfAborted()
+    const directory = path.join(backupRoot, backupId)
+    const journalPath = path.join(backupRoot, `restore-${backupId}.json`)
+    if (await exists(journalPath)) {
+      const journal = restoreJournalSchema.parse(await readCheckedJson(journalPath))
+      if (journal.backupId !== backupId || !sameRoots(journal.roots, roots))
+        throw new Error('恢复 journal 身份不匹配，不能复用恢复点。')
+      if (journal.phase !== 'complete') throw new Error('恢复尚未完成，请先完成恢复后再升级。')
+      await realDirectory(directory)
+      const manifestPath = path.join(directory, 'manifest.json')
+      // Only prior manifests are needed to traverse generations; no live-data or old payload scan.
+      if (journal.manifestSha256 !== (await fileDigest(manifestPath)))
+        throw new Error('恢复 journal 与恢复点清单不匹配。')
+      assertIdentity(UpgradeBackupManifestSchema.parse(await readCheckedJson(manifestPath)))
+      backupId = `runtime-${digest(JSON.stringify(['after-restore', backupId, journal.restoreId])).slice(0, 32)}`
+      continue
+    }
+    if (!(await exists(directory))) break
+    const existing = await verifyUpgradeBackup(directory)
+    assertIdentity(existing)
     return existing
   }
+  const destination = path.join(backupRoot, backupId)
   const initial = await inventory(roots, true)
   const entries = initial.entries.map((entry) => ({ ...entry }))
   const total =

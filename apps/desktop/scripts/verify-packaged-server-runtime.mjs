@@ -4,6 +4,7 @@ import { createServer } from 'node:net'
 import os from 'node:os'
 import path from 'node:path'
 import { setTimeout as delay } from 'node:timers/promises'
+import { verifyNativeSessionPersistence } from '../../../scripts/lib/runtime-native-smoke.mjs'
 import {
   installManagedPluginSmoke,
   verifyRestoredManagedPluginAndRemove,
@@ -34,6 +35,7 @@ await requireFile(serverEntryPath, 'Desktop Server 入口')
 await requireFile(distIndexPath, 'Desktop Web 入口')
 const serverEntry = await realpath(serverEntryPath)
 const distIndex = await realpath(distIndexPath)
+verifyNativeSessionPersistence(executable, path.join(resources, 'server-runtime'))
 
 const reservePort = () =>
   new Promise((resolve, reject) => {
@@ -161,6 +163,15 @@ try {
   await stop(running)
   running = launch()
   await waitUntilReady(running)
+  const restoredSnapshot = await globalThis.fetch(`http://127.0.0.1:${port}/api/snapshot`, {
+    signal: globalThis.AbortSignal.timeout(5_000),
+  })
+  if (
+    !restoredSnapshot.ok ||
+    (await restoredSnapshot.json())?.notificationSettings?.bark?.deviceKeyConfigured !== true
+  ) {
+    throw new Error('Desktop credential reference did not survive restart.')
+  }
   await verifyRestoredManagedPluginAndRemove(`http://127.0.0.1:${port}`, managedPlugin)
   console.log(
     `[desktop-runtime] 最终打包目录已通过 Server 就绪、凭据持久化与 DSH 插件安装/恢复/关闭/移除验证：${releaseId}`,

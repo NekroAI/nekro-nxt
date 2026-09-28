@@ -35,6 +35,10 @@ const importPolicy: Plugin = {
   name: 'nekro-nxt-extension-import-policy',
   setup(buildContext) {
     buildContext.onResolve({ filter: /^[^./]|^@/ }, (args) => {
+      // esbuild presents a Windows entry as C:\..., which also matches the bare
+      // import filter. Only the Builder-selected entry bypasses this check;
+      // absolute imports written inside extension source remain forbidden.
+      if (args.kind === 'entry-point' && path.isAbsolute(args.path)) return undefined
       if (args.path === '@nekro-nxt/extension-sdk') return { path: args.path, namespace: 'nekro-nxt-sdk' }
       return { errors: [{ text: `Extension import is not allowed: ${args.path}` }] }
     })

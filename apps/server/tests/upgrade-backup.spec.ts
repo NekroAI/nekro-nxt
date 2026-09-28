@@ -5,6 +5,7 @@ import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
 import { afterEach, describe, expect, it, vi } from 'vitest'
+import { z } from 'zod'
 import {
   createUpgradeBackup,
   restoreUpgradeBackup,
@@ -63,7 +64,16 @@ describe('complete upgrade recovery points', () => {
     expect(first.entries.some((entry) => entry.path.startsWith('backups'))).toBe(false)
     expect(await createUpgradeBackup(options)).toEqual(first)
     const directory = path.join(options.dataRoot, 'backups', first.backupId)
-    expect((await stat(path.join(directory, 'roots/data/dsh/.credentials.yaml'))).mode & 0o777).toBe(0o600)
+    const credentials = path.join(directory, 'roots/data/dsh/.credentials.yaml')
+    const credentialsInfo = await stat(credentials)
+    expect(credentialsInfo.isFile()).toBe(true)
+    expect(credentialsInfo.nlink).toBe(1)
+    expect(await readFile(credentials, 'utf8')).toBe('synthetic-credential-reference')
+    // Windows inherits the configured data root's ACL; stat.mode cannot prove ACL privacy.
+    if (process.platform !== 'win32') {
+      expect((await stat(directory)).mode & 0o777).toBe(0o700)
+      expect(credentialsInfo.mode & 0o777).toBe(0o600)
+    }
     await writeFile(path.join(directory, 'roots/data/dsh/.credentials.yaml'), 'corrupt')
     await expect(createUpgradeBackup(options)).rejects.toThrow('校验失败')
     expect(await readFile(path.join(options.dataRoot, 'dsh/.credentials.yaml'), 'utf8')).toBe(
@@ -73,12 +83,14 @@ describe('complete upgrade recovery points', () => {
 
   it('preserves symlinks without reading their targets and rejects modified parent links in a backup', async () => {
     const options = await fixture()
-    await symlink('/synthetic/unmanaged/target', path.join(options.dataRoot, 'workspaces', 'external-link'))
+    const sourceLink = path.join(options.dataRoot, 'workspaces', 'external-link')
+    await symlink('/synthetic/unmanaged/target', sourceLink)
+    const sourceTarget = await readlink(sourceLink)
     const manifest = await createUpgradeBackup(options)
     const directory = path.join(options.dataRoot, 'backups', manifest.backupId)
-    expect(await readlink(path.join(directory, 'roots/data/workspaces/external-link'))).toBe(
-      '/synthetic/unmanaged/target',
-    )
+    expect(await readlink(path.join(directory, 'roots/data/workspaces/external-link'))).toBe(sourceTarget)
+    await restoreUpgradeBackup({ dataRoot: options.dataRoot, backupId: manifest.backupId })
+    expect(await readlink(sourceLink)).toBe(sourceTarget)
     await rm(path.join(directory, 'roots/data/dsh'), { recursive: true })
     await symlink(path.join(options.dataRoot, 'dsh'), path.join(directory, 'roots/data/dsh'))
     await expect(verifyUpgradeBackup(directory)).rejects.toThrow('校验失败')
@@ -130,6 +142,96 @@ describe('complete upgrade recovery points', () => {
     expect(await readFile(path.join(options.dataRoot, 'workspaces/synthetic-agent/note.txt'), 'utf8')).toBe(
       'before upgrade',
     )
+  })
+})
+
+describe('reinstalling a release after rollback', () => {
+  it('captures post-restore data, reuses that new point on restart, and advances again after its restore', async () => {
+    const options = await fixture()
+    const backupRoot = path.join(options.dataRoot, 'backups')
+    const note = path.join(options.dataRoot, 'workspaces/synthetic-agent/note.txt')
+    const first = await createUpgradeBackup(options)
+    const firstManifest = await readFile(path.join(backupRoot, first.backupId, 'manifest.json'), 'utf8')
+    await restoreUpgradeBackup({ dataRoot: options.dataRoot, backupId: first.backupId })
+    await writeFile(note, 'data B written by the old program')
+    const database = new DatabaseSync(path.join(options.dataRoot, 'core.sqlite'))
+    try {
+      database.exec("INSERT INTO facts VALUES ('post-restore-fact-B');")
+    } finally {
+      database.close()
+    }
+
+    const second = await createUpgradeBackup(options)
+    expect(second.backupId).not.toBe(first.backupId)
+    expect(
+      await readFile(path.join(backupRoot, second.backupId, 'roots/data/workspaces/synthetic-agent/note.txt'), 'utf8'),
+    ).toBe('data B written by the old program')
+    await writeFile(note, 'candidate changes after the second backup')
+    expect(await createUpgradeBackup(options)).toEqual(second)
+    expect(await readFile(path.join(backupRoot, first.backupId, 'manifest.json'), 'utf8')).toBe(firstManifest)
+    expect(await verifyUpgradeBackup(path.join(backupRoot, first.backupId))).toEqual(first)
+
+    await restoreUpgradeBackup({ dataRoot: options.dataRoot, backupId: second.backupId })
+    expect(await readFile(note, 'utf8')).toBe('data B written by the old program')
+    const restored = new DatabaseSync(path.join(options.dataRoot, 'core.sqlite'), { readOnly: true })
+    try {
+      expect(restored.prepare('SELECT value FROM facts').all()).toContainEqual({ value: 'post-restore-fact-B' })
+    } finally {
+      restored.close()
+    }
+    await writeFile(note, 'data C after the second rollback')
+    const third = await createUpgradeBackup(options)
+    expect([first.backupId, second.backupId]).not.toContain(third.backupId)
+    expect(await createUpgradeBackup(options)).toEqual(third)
+    expect(
+      await readFile(path.join(backupRoot, third.backupId, 'roots/data/workspaces/synthetic-agent/note.txt'), 'utf8'),
+    ).toBe('data C after the second rollback')
+    expect(await verifyUpgradeBackup(path.join(backupRoot, second.backupId))).toEqual(second)
+  })
+
+  it.each(['preparing', 'displacing', 'restoring'])(
+    'refuses to reuse or create a point while restore is %s',
+    async (phase) => {
+      const options = await fixture()
+      const first = await createUpgradeBackup(options)
+      const stopAt =
+        phase === 'preparing' ? 'stage:data/core.sqlite' : phase === 'displacing' ? 'prepared' : 'displaced'
+      await expect(
+        restoreUpgradeBackup({
+          dataRoot: options.dataRoot,
+          backupId: first.backupId,
+          onCheckpoint: (step) => {
+            if (step === stopAt) throw new Error('interrupted rollback')
+          },
+        }),
+      ).rejects.toThrow('interrupted rollback')
+      await expect(createUpgradeBackup(options)).rejects.toThrow('恢复尚未完成')
+      expect(
+        (await readdir(path.join(options.dataRoot, 'backups'))).filter((name) => /^runtime-[a-f0-9]{32}$/u.test(name)),
+      ).toEqual([first.backupId])
+    },
+  )
+
+  it.each([
+    { field: 'version', value: 99 },
+    { field: 'phase', value: 'unknown' },
+    { field: 'backupId', value: `runtime-${'f'.repeat(32)}` },
+    { field: 'roots', value: [] },
+    { field: 'manifestSha256', value: '0'.repeat(64) },
+  ])('refuses unknown or mismatched restore metadata: $field', async ({ field, value }) => {
+    const options = await fixture()
+    const first = await createUpgradeBackup(options)
+    await restoreUpgradeBackup({ dataRoot: options.dataRoot, backupId: first.backupId })
+    const journalPath = path.join(options.dataRoot, 'backups', `restore-${first.backupId}.json`)
+    const journal = z.record(z.string(), z.unknown()).parse(JSON.parse(await readFile(journalPath, 'utf8')))
+    await writeUpgradeJson(journalPath, { ...journal, [field]: value })
+    const note = path.join(options.dataRoot, 'workspaces/synthetic-agent/note.txt')
+    await writeFile(note, 'post-restore data must remain intact')
+    await expect(createUpgradeBackup(options)).rejects.toThrow()
+    expect(await readFile(note, 'utf8')).toBe('post-restore data must remain intact')
+    expect(
+      (await readdir(path.join(options.dataRoot, 'backups'))).filter((name) => /^runtime-[a-f0-9]{32}$/u.test(name)),
+    ).toEqual([first.backupId])
   })
 })
 
@@ -354,12 +456,17 @@ describe('backup validation boundaries', () => {
     )
   })
 
-  it('backs up committed WAL data and restores symlinks and executable modes', async () => {
+  it('backs up committed WAL data and restores symlinks and platform file modes', async () => {
     const options = await fixture()
-    await writeFile(path.join(options.dataRoot, 'workspaces/synthetic-agent/run.sh'), '#!/bin/sh\nexit 0\n', {
+    const script = path.join(options.dataRoot, 'workspaces/synthetic-agent/run.sh')
+    const sourceLink = path.join(options.dataRoot, 'workspaces/synthetic-agent/run-link')
+    await writeFile(script, '#!/bin/sh\nexit 0\n', {
       mode: 0o700,
     })
-    await symlink('run.sh', path.join(options.dataRoot, 'workspaces/synthetic-agent/run-link'))
+    const sourceMode = (await stat(script)).mode & 0o777
+    if (process.platform !== 'win32') expect(sourceMode).toBe(0o700)
+    await symlink('run.sh', sourceLink)
+    const sourceTarget = await readlink(sourceLink)
     const database = new DatabaseSync(path.join(options.dataRoot, 'core.sqlite'))
     database.exec("PRAGMA wal_autocheckpoint=0; INSERT INTO facts VALUES ('wal-fact');")
     let manifest
@@ -375,8 +482,8 @@ describe('backup validation boundaries', () => {
     } finally {
       restored.close()
     }
-    expect((await stat(path.join(options.dataRoot, 'workspaces/synthetic-agent/run.sh'))).mode & 0o777).toBe(0o700)
-    expect(await readlink(path.join(options.dataRoot, 'workspaces/synthetic-agent/run-link'))).toBe('run.sh')
+    expect((await stat(script)).mode & 0o777).toBe(sourceMode)
+    expect(await readlink(sourceLink)).toBe(sourceTarget)
   })
 })
 

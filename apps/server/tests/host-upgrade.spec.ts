@@ -16,7 +16,8 @@ import {
 import { DSH_RUNTIME_FINGERPRINT } from '@nekro-nxt/dsh-compat/release'
 import { openCoreDatabase, SqliteCoreRepository } from '@nekro-nxt/storage-sqlite'
 import { createHash } from 'node:crypto'
-import { mkdir, mkdtemp, readFile, readdir, realpath, rm, stat, writeFile } from 'node:fs/promises'
+import { constants } from 'node:fs'
+import { access, mkdir, mkdtemp, readFile, readdir, realpath, rm, stat, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
@@ -106,18 +107,34 @@ const createLegacyFixture = async () => {
   const journal = z
     .object({ entries: z.array(z.object({ idx: z.number(), when: z.number(), tag: z.string() })) })
     .parse(JSON.parse(await readFile(path.join(migrations, 'meta/_journal.json'), 'utf8')))
-  const legacy = new DatabaseSync(path.join(dataRoot, 'core.sqlite'))
-  legacy.exec(
-    'PRAGMA foreign_keys=OFF; CREATE TABLE __drizzle_migrations (id SERIAL PRIMARY KEY, hash TEXT NOT NULL, created_at NUMERIC)',
+  // Load disk inputs before opening SQLite. A test timeout must not race an
+  // awaited fixture read while teardown is trying to remove an open Windows DB.
+  const sources = await Promise.all(
+    journal.entries
+      .filter(({ idx }) => idx <= 24)
+      .map(async (entry) => ({
+        ...entry,
+        sql: await readFile(path.join(migrations, `${entry.tag}.sql`), 'utf8'),
+      })),
   )
-  for (const entry of journal.entries.filter(({ idx }) => idx <= 24)) {
-    const sql = await readFile(path.join(migrations, `${entry.tag}.sql`), 'utf8')
-    legacy.exec(sql)
-    legacy
-      .prepare('INSERT INTO __drizzle_migrations(hash, created_at) VALUES (?, ?)')
-      .run(createHash('sha256').update(sql).digest('hex'), entry.when)
+  const sessionSql = await readFile(new URL('./fixtures/dsh-sqlite-schema17.sql', import.meta.url), 'utf8')
+  const legacy = new DatabaseSync(path.join(dataRoot, 'core.sqlite'))
+  try {
+    // Match Core's transactional migration setup, avoiding hundreds of fixture-only fsyncs.
+    legacy.exec(
+      'PRAGMA foreign_keys=OFF; BEGIN IMMEDIATE; CREATE TABLE __drizzle_migrations (id SERIAL PRIMARY KEY, hash TEXT NOT NULL, created_at NUMERIC)',
+    )
+    for (const entry of sources) {
+      legacy.exec(entry.sql)
+      legacy
+        .prepare('INSERT INTO __drizzle_migrations(hash, created_at) VALUES (?, ?)')
+        .run(createHash('sha256').update(entry.sql).digest('hex'), entry.when)
+    }
+    expect(legacy.prepare('PRAGMA foreign_key_check').all()).toEqual([])
+    legacy.exec('COMMIT')
+  } finally {
+    legacy.close()
   }
-  legacy.close()
   const database = openCoreDatabase(path.join(dataRoot, 'core.sqlite'))
   const repository = new SqliteCoreRepository(database)
   let sequence = 0
@@ -251,10 +268,13 @@ const createLegacyFixture = async () => {
   repository.grantAssetAccess({ assetId: asset.id, channelId: agent.channel.id, source: 'agent-tool', grantedAt: 1000 })
   database.close()
   const sessions = new DatabaseSync(path.join(dataRoot, 'sessions.sqlite'))
-  sessions.exec('PRAGMA foreign_keys=OFF')
-  sessions.exec(await readFile(new URL('./fixtures/dsh-sqlite-schema17.sql', import.meta.url), 'utf8'))
-  expect(sessions.prepare('PRAGMA foreign_key_check').all()).toEqual([])
-  sessions.close()
+  try {
+    sessions.exec('PRAGMA foreign_keys=OFF')
+    sessions.exec(sessionSql)
+    expect(sessions.prepare('PRAGMA foreign_key_check').all()).toEqual([])
+  } finally {
+    sessions.close()
+  }
   const files = {
     'dsh/settings.yaml': '{}\n',
     'dsh/.credentials.yaml': '{}\n',
@@ -393,6 +413,7 @@ describe('production Host DSH upgrade', () => {
         { status: 'active' },
       ])
     },
+    30_000,
   )
 
   it('backs up legacy data, resets only old context, runs Tools, reloads JSONL and restores the complete old generation', async () => {
@@ -450,10 +471,14 @@ describe('production Host DSH upgrade', () => {
     expect(backup.entries.some((entry) => entry.path.includes('disposable') || entry.path.startsWith('backups/'))).toBe(
       false,
     )
+    const credentialBackup = path.join(fixture.dataRoot, 'backups', backup.backupId, 'roots/data/dsh/.credentials.yaml')
+    if (process.platform !== 'win32') expect((await stat(credentialBackup)).mode & 0o777).toBe(0o600)
+    // Windows access follows ACLs, not POSIX mode bits. Verify usability without
+    // claiming that stat.mode establishes an ACL or exposing secrets in metadata.
+    await access(credentialBackup, constants.R_OK)
     expect(
-      (await stat(path.join(fixture.dataRoot, 'backups', backup.backupId, 'roots/data/dsh/.credentials.yaml'))).mode &
-        0o777,
-    ).toBe(0o600)
+      await readFile(path.join(fixture.dataRoot, 'backups', backup.backupId, 'manifest.json'), 'utf8'),
+    ).not.toContain('synthetic-upgrade-secret')
     await send(origin, fixture.agent.channel.id, 'new-after-upgrade', '新引擎首条消息。')
     await expect.poll(() => sentCount(origin, fixture.agent.channel.id), { timeout: 10_000 }).toBe(2)
     await expect
