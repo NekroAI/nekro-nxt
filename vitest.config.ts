@@ -7,6 +7,9 @@ export default defineConfig({
     alias: workspaceSourceAliases,
   },
   test: {
+    // SQLite/restore fixtures are CPU and disk intensive under V8 coverage.
+    // Bound contention without weakening individual timeout or coverage gates.
+    maxWorkers: 4,
     include: ['apps/*/tests/**/*.spec.{ts,tsx}', 'packages/*/tests/**/*.spec.{ts,tsx}', 'scripts/**/*.spec.{ts,tsx}'],
     server: {
       deps: {
