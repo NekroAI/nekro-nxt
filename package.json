@@ -47,7 +47,9 @@
     "check:references": "node scripts/sync-workspace-references.mjs",
     "sync:references": "node scripts/sync-workspace-references.mjs --write",
     "test:browser": "playwright test --config playwright.browser.config.ts",
-    "test:journey:built": "playwright test"
+    "test:journey:built": "playwright test",
+    "dsh:plan-upgrade": "node scripts/plan-dsh-upgrade.mjs",
+    "test:upgrade": "vitest run packages/client-migrations/tests/upgrade.spec.ts apps/server/tests/host-upgrade.spec.ts apps/server/tests/upgrade-backup.spec.ts apps/server/tests/upgrade-progress.spec.ts apps/server/tests/data-root-lease.spec.ts apps/server/tests/runtime-compatibility.spec.ts apps/server/tests/session-shutdown-inbox.spec.ts apps/server/tests/dsh-session-storage.spec.ts packages/storage-sqlite/tests/backup-files.spec.ts apps/desktop/tests/host-startup.spec.ts"
   },
   "devDependencies": {
     "@axe-core/playwright": "^4.13.0",

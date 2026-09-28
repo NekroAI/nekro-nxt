@@ -1,5 +1,8 @@
 FROM node:22-bookworm-slim AS build
 
+ARG NEKRO_RELEASE_ID=0.0.0+local
+ENV NEKRO_RELEASE_ID=${NEKRO_RELEASE_ID}
+
 RUN apt-get update \
   && apt-get install --yes --no-install-recommends build-essential ca-certificates python3 \
   && rm -rf /var/lib/apt/lists/*

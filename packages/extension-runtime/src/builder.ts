@@ -1,3 +1,4 @@
+import { DSH_RUNTIME_FINGERPRINT } from '@nekro-nxt/dsh-compat/release'
 import { ExtensionRebuildRequiredError, legacyExtensionManifestSchema } from './legacy-manifest.js'
 import { extensionManifestSchema } from './manifest.js'
 import { ExtensionRevisionIdSchema, type ExtensionId, type ExtensionRevisionId } from '@nekro-nxt/contracts'
@@ -71,7 +72,9 @@ export class ExtensionBuilder {
       .string()
       .regex(/^[a-f0-9]{64}$/u)
       .parse(contentDigest)
-    return createHash('sha256').update(`${BUILDER_VERSION}\0node-${process.versions.modules}\0${digest}`).digest('hex')
+    return createHash('sha256')
+      .update(`${BUILDER_VERSION}\0${DSH_RUNTIME_FINGERPRINT}\0node-${process.versions.modules}\0${digest}`)
+      .digest('hex')
   }
 
   async build(input: {

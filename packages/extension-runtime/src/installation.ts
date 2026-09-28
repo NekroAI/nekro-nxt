@@ -1,3 +1,4 @@
+import type { ExtensionCompatibilityPort, ExtensionCompatibilityIdentity } from './compatibility.js'
 import {
   HostUiPermissionDeclarationSchema,
   HostUiPageInstanceIdSchema,
@@ -60,6 +61,7 @@ export class HostExtensionInstallationCoordinator {
   readonly #service: RevisionSourceResolver
   readonly #builder: ArtifactBuilder
   readonly #host: HostExtensionInstallationHost
+  readonly #compatibility: ExtensionCompatibilityPort | undefined
   readonly #now: () => number
   readonly #mounted = new Map<ExtensionId, MountedHostExtension>()
   readonly #mountedHostUi = new Map<ExtensionId, MountedHostUiExtension>()
@@ -73,7 +75,7 @@ export class HostExtensionInstallationCoordinator {
     service: RevisionSourceResolver,
     builder: ArtifactBuilder,
     host: HostExtensionInstallationHost,
-    options: { readonly now?: () => number } = {},
+    options: { readonly now?: () => number; readonly compatibility?: ExtensionCompatibilityPort } = {},
   ) {
     this.#repository = repository
     this.#hostUiRepository = repository
@@ -81,6 +83,7 @@ export class HostExtensionInstallationCoordinator {
     this.#builder = builder
     this.#host = host
     this.#now = options.now ?? Date.now
+    this.#compatibility = options.compatibility
   }
 
   async install(input: {
@@ -188,6 +191,10 @@ export class HostExtensionInstallationCoordinator {
         }
         this.#mounted.set(input.extensionId, mounted)
         this.#diagnostics.set(input.extensionId, { status: 'active', observedAt: this.#timestamp() })
+        this.#compatibility?.record(
+          { objectKind: 'adapter', objectId: input.extensionId, objectVersion: revision.id, configurationRevision: '' },
+          { status: 'compatible', phase: 'restore', retryable: true },
+        )
         return installation
       })
     })
@@ -305,87 +312,120 @@ export class HostExtensionInstallationCoordinator {
     }
     this.#mountedHostUi.set(input.extensionId, mounted)
     this.#diagnostics.set(input.extensionId, { status: 'active', observedAt: this.#timestamp() })
+    this.#compatibility?.record(
+      { objectKind: 'client-page', objectId: input.extensionId, objectVersion: revision.id, configurationRevision: '' },
+      { status: 'compatible', phase: 'restore', retryable: true },
+    )
     return installation
   }
 
-  async restore(): Promise<{ readonly restored: number; readonly failed: number }> {
+  async restore(
+    retry = false,
+    extensionId?: ExtensionId,
+  ): Promise<{ readonly restored: number; readonly failed: number }> {
     this.#assertAvailable()
-    const outcomes = await Promise.all(
-      this.#repository.listHostInstallations().map(async (installation) => {
-        try {
-          return await this.#exclusive(installation.extensionId, async () => {
-            this.#assertAvailable()
-            if (this.#mounted.has(installation.extensionId) || this.#mountedHostUi.has(installation.extensionId)) {
-              return 'skipped' as const
-            }
-            const revision = this.#requireRevision(installation.extensionId, installation.extensionRevisionId)
-            if (this.#repository.getExtension(installation.extensionId)?.scope === 'host-ui') {
-              await this.#restoreHostUiInstallation(installation.extensionId, revision)
-              return 'restored' as const
-            }
-            const verification = this.#repository.getExtensionRevisionVerification(revision.id)
-            if (verification?.scope !== 'host-adapter' || !verification.adapter) {
-              throw new Error('Host 安装只接受完成适配器验证的 Extension Revision。')
-            }
-            const expectedKey = verification.adapter.key
-            const artifact = await this.#build(revision)
-            if (!artifact.hostEntry) throw new Error('适配器 Extension Revision 缺少 Host 构建产物。')
-            await this.#exclusiveAdapter(expectedKey, async () => {
-              await this.#assertAdapterKeyAvailable(installation.extensionId, expectedKey)
-              const mounted = await this.#host.mount(revision, artifact)
-              try {
-                if (mounted.adapterKey !== expectedKey) {
-                  throw new Error('适配器 Host 实际注册的 key 与验证证据不一致。')
-                }
-                if ((verification.renderedPages ?? []).length > 0) {
-                  if (!artifact.clientEntry) throw new Error('带页面入口的适配器扩展缺少 Client 构建产物。')
-                  const requirement = this.getHostUiPermissionRequirement(installation.extensionId, revision.id)
-                  const grant = this.#hostUiRepository.getHostUiPermissionGrant(
-                    extensionOwnerKey(installation.extensionId),
-                  )
-                  if (
-                    !requirement ||
-                    grant?.artifactDigest !== revision.payloadDigest ||
-                    grant.permissionDigest !== requirement.permissionDigest
-                  ) {
-                    throw new Error('permission-approval-required')
-                  }
-                  this.#hostUiRepository.replaceHostUiExtensionPages({
-                    extensionId: installation.extensionId,
-                    revisionId: revision.id,
-                    pages: verification.renderedPages ?? [],
-                    clientBuildKey: artifact.buildKey,
-                    now: this.#timestamp(),
-                    nextPageInstanceId: () =>
-                      HostUiPageInstanceIdSchema.parse(`hup_${randomUUID().replaceAll('-', '')}`),
-                  })
-                }
-              } catch (error) {
-                try {
-                  await mounted.dispose()
-                } catch (disposeError) {
-                  throw new AggregateError([error, disposeError], '适配器恢复失败，且候选 Runtime 未完整静止。')
-                }
-                throw error
+    const results = await Promise.allSettled(
+      this.#repository
+        .listHostInstallations()
+        .filter((installation) => extensionId === undefined || installation.extensionId === extensionId)
+        .map(async (installation) => {
+          const identity: ExtensionCompatibilityIdentity = {
+            objectKind:
+              this.#repository.getExtension(installation.extensionId)?.scope === 'host-ui' ? 'client-page' : 'adapter',
+            objectId: installation.extensionId,
+            objectVersion: installation.extensionRevisionId,
+            configurationRevision: '',
+          }
+          try {
+            const previous = this.#compatibility?.read(identity)
+            if (!retry && previous?.status === 'isolated') throw new Error(previous.reason ?? '扩展等待兼容性修复。')
+            return await this.#exclusive(installation.extensionId, async () => {
+              this.#assertAvailable()
+              if (this.#mounted.has(installation.extensionId) || this.#mountedHostUi.has(installation.extensionId)) {
+                return 'skipped' as const
               }
-              this.#mounted.set(installation.extensionId, mounted)
-              this.#diagnostics.set(installation.extensionId, {
-                status: 'active',
-                observedAt: this.#timestamp(),
+              const revision = this.#requireRevision(installation.extensionId, installation.extensionRevisionId)
+              if (this.#repository.getExtension(installation.extensionId)?.scope === 'host-ui') {
+                await this.#restoreHostUiInstallation(installation.extensionId, revision)
+                this.#compatibility?.record(identity, { status: 'compatible', phase: 'restore', retryable: true })
+                return 'restored' as const
+              }
+              const verification = this.#repository.getExtensionRevisionVerification(revision.id)
+              if (verification?.scope !== 'host-adapter' || !verification.adapter) {
+                throw new Error('Host 安装只接受完成适配器验证的 Extension Revision。')
+              }
+              const expectedKey = verification.adapter.key
+              const artifact = await this.#build(revision)
+              if (!artifact.hostEntry) throw new Error('适配器 Extension Revision 缺少 Host 构建产物。')
+              await this.#exclusiveAdapter(expectedKey, async () => {
+                await this.#assertAdapterKeyAvailable(installation.extensionId, expectedKey)
+                const mounted = await this.#host.mount(revision, artifact)
+                try {
+                  if (mounted.adapterKey !== expectedKey) {
+                    throw new Error('适配器 Host 实际注册的 key 与验证证据不一致。')
+                  }
+                  if ((verification.renderedPages ?? []).length > 0) {
+                    if (!artifact.clientEntry) throw new Error('带页面入口的适配器扩展缺少 Client 构建产物。')
+                    const requirement = this.getHostUiPermissionRequirement(installation.extensionId, revision.id)
+                    const grant = this.#hostUiRepository.getHostUiPermissionGrant(
+                      extensionOwnerKey(installation.extensionId),
+                    )
+                    if (
+                      !requirement ||
+                      grant?.artifactDigest !== revision.payloadDigest ||
+                      grant.permissionDigest !== requirement.permissionDigest
+                    ) {
+                      throw new Error('permission-approval-required')
+                    }
+                    this.#hostUiRepository.replaceHostUiExtensionPages({
+                      extensionId: installation.extensionId,
+                      revisionId: revision.id,
+                      pages: verification.renderedPages ?? [],
+                      clientBuildKey: artifact.buildKey,
+                      now: this.#timestamp(),
+                      nextPageInstanceId: () =>
+                        HostUiPageInstanceIdSchema.parse(`hup_${randomUUID().replaceAll('-', '')}`),
+                    })
+                  }
+                } catch (error) {
+                  try {
+                    await mounted.dispose()
+                  } catch (disposeError) {
+                    throw new AggregateError([error, disposeError], '适配器恢复失败，且候选 Runtime 未完整静止。')
+                  }
+                  throw error
+                }
+                this.#mounted.set(installation.extensionId, mounted)
+                this.#diagnostics.set(installation.extensionId, {
+                  status: 'active',
+                  observedAt: this.#timestamp(),
+                })
               })
+              this.#compatibility?.record(identity, { status: 'compatible', phase: 'restore', retryable: true })
+              return 'restored' as const
             })
-            return 'restored' as const
-          })
-        } catch (error) {
-          this.#diagnostics.set(installation.extensionId, {
-            status: 'restore-failed',
-            message: error instanceof Error ? error.message : String(error),
-            observedAt: this.#timestamp(),
-          })
-          return 'failed' as const
-        }
-      }),
+          } catch (error) {
+            if (error instanceof AggregateError) throw error
+            this.#compatibility?.record(identity, {
+              status: 'isolated',
+              phase: 'restore',
+              retryable: true,
+              reason: error instanceof Error ? error.message.slice(0, 2048) : '扩展恢复失败。',
+            })
+            this.#diagnostics.set(installation.extensionId, {
+              status: 'restore-failed',
+              message: error instanceof Error ? error.message : String(error),
+              observedAt: this.#timestamp(),
+            })
+            return 'failed' as const
+          }
+        }),
     )
+    const failures = results
+      .filter((result): result is PromiseRejectedResult => result.status === 'rejected')
+      .map((result): unknown => result.reason)
+    if (failures.length) throw new AggregateError(failures, '扩展恢复未能完成资源释放。')
+    const outcomes = results.flatMap((result) => (result.status === 'fulfilled' ? [result.value] : []))
     return {
       restored: outcomes.filter((outcome) => outcome === 'restored').length,
       failed: outcomes.filter((outcome) => outcome === 'failed').length,

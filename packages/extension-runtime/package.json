@@ -25,7 +25,8 @@
     "fflate": "0.8.3",
     "postcss": "8.5.26",
     "ulid": "3.0.2",
-    "zod": "4.4.3"
+    "zod": "4.4.3",
+    "@nekro-nxt/dsh-compat": "workspace:*"
   },
   "description": "@nekro-nxt/extension-runtime workspace package",
   "author": "NekroAI contributors",

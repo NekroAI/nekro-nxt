@@ -1,3 +1,4 @@
+import { hostReleaseGuard } from './host-release-guard.js'
 export const HOST_EVENT_STREAM_EVENTS = [
   'snapshot-changed',
   'channel-fact',
@@ -116,6 +117,7 @@ export class HostEventStream {
       if (source !== this.#source) return
       this.#clearReconnectTimer()
       this.#reconnectAttempt = 0
+      hostReleaseGuard.reconnect()
       this.#publish('open', event)
     })
     source.addEventListener('error', (event) => {

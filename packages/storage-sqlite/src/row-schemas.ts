@@ -53,6 +53,8 @@ import {
   assetOccurrences,
   assets,
   channelBindings,
+  bindingAdmissionCutoffs,
+  dshSessionResets,
   channelEvents,
   channelMembers,
   channels,
@@ -285,7 +287,24 @@ export const ManagementDeviceRowSchema = createSelectSchema(managementDevices, {
   secretDigest: z.string().min(1),
 })
 
+export const DshSessionResetRowSchema = createSelectSchema(dshSessionResets, {
+  migrationId: z.string().min(1),
+  closedAt: z.number().int().nonnegative(),
+  episodesClosed: z.number().int().nonnegative(),
+  admissionsCancelled: z.number().int().nonnegative(),
+  bindingsCutOff: z.number().int().nonnegative(),
+  authoringTasksInterrupted: z.number().int().nonnegative(),
+})
+export const BindingAdmissionCutoffRowSchema = createSelectSchema(bindingAdmissionCutoffs, {
+  channelId: ChannelIdSchema,
+  agentId: AgentIdSchema,
+  eventId: ChannelEventIdSchema,
+  migrationId: z.string().min(1),
+})
+
 export const CoreRowSchemas = {
+  dshSessionResets: DshSessionResetRowSchema,
+  bindingAdmissionCutoffs: BindingAdmissionCutoffRowSchema,
   agentDefinitions: AgentDefinitionRowSchema,
   agentRevisions: AgentRevisionRowSchema,
   agentCurrentRevisions: AgentCurrentRevisionRowSchema,

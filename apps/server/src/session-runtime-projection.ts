@@ -1,3 +1,4 @@
+import { sessionEvents } from './session-event-history.js'
 import type { Context } from '@deepseek-ai/cordis'
 import type { AgentStatus } from '@deepseek-ai/dsh-agent'
 import { SessionId, type SessionEvent } from '@deepseek-ai/dsh-session'
@@ -53,7 +54,7 @@ export class SessionRuntimeProjection {
   ): { readonly status: AgentStatus; readonly events: readonly SessionEvent[] } | undefined {
     const agent = this.#context.agents.get(SessionId(dshSessionId))
     if (!agent) return undefined
-    return { status: agent.status, events: agent.session.events }
+    return { status: agent.status, events: sessionEvents(agent.session) }
   }
 
   sessionRuntimeMetrics(

@@ -1,5 +1,5 @@
 import type { Context } from '@deepseek-ai/cordis'
-import { CallId, LlmAdapter, type GenerateOptions, type StreamChunk } from '@deepseek-ai/dsh-llm'
+import { ToolCallId, LlmAdapter, type GenerateOptions, type StreamChunk } from '@deepseek-ai/dsh-llm'
 import { credentialRef } from '@deepseek-ai/dsh-credentials'
 import { SessionId } from '@deepseek-ai/dsh-session'
 import { sessionDir } from '@deepseek-ai/dsh-spill-local'
@@ -21,6 +21,14 @@ import {
 } from '../src/dsh-spill.ts'
 import { DshHostRuntime } from '../src/index.ts'
 
+const systemText = (options: GenerateOptions | undefined): string =>
+  options?.messages
+    .filter((message) => message.role === 'system')
+    .flatMap((message) => message.content)
+    .filter((block) => block.type === 'text')
+    .map((block) => block.text)
+    .join('\n') ?? ''
+
 const temporaryDirectories: string[] = []
 
 afterEach(async () => {
@@ -29,7 +37,7 @@ afterEach(async () => {
 })
 
 const toolCallChunks = function* (name: string, id: string, argumentsValue: unknown): Generator<StreamChunk> {
-  const callId = CallId(id)
+  const callId = ToolCallId(id)
   const argumentsText = JSON.stringify(argumentsValue)
   const block = { type: 'tool-call' as const, id: callId, name, arguments: argumentsText }
   yield { type: 'block-start', index: 0, blockType: 'tool-call' }
@@ -49,12 +57,24 @@ const textChunks = function* (text: string): Generator<StreamChunk> {
 
 const toolResultText = (options: GenerateOptions): string =>
   options.messages
+    .filter((message) => message.role === 'tool')
     .flatMap((message) => message.content)
-    .filter((block) => block.type === 'tool-result')
-    .flatMap((block) => block.content)
     .filter((block) => block.type === 'text')
     .map((block) => block.text)
     .join('\n')
+
+const toolReceipt = (options: GenerateOptions, callId: string): unknown => {
+  const result = options.messages.find((message) => message.role === 'tool' && message.toolCallId === callId)
+  expect(result?.role).toBe('tool')
+  if (result?.role !== 'tool') throw new Error(`Missing tool receipt: ${callId}`)
+  expect(result.isError).not.toBe(true)
+  return JSON.parse(
+    result.content
+      .filter((block) => block.type === 'text')
+      .map((block) => block.text)
+      .join('\n'),
+  )
+}
 
 const deferred = <T = void>(): { readonly promise: Promise<T>; readonly resolve: (value: T) => void } => {
   let resolve!: (value: T) => void
@@ -110,7 +130,7 @@ class DelegationModel extends LlmAdapter {
       if (this.followupChildId !== undefined && !this.#followupSent) {
         this.#followupSent = true
         yield* toolCallChunks('send_message', 'delegate-followup', {
-          subagent_id: this.followupChildId,
+          agent_id: this.followupChildId,
           message: '恢复后再核对一次。',
         })
         return
@@ -156,9 +176,7 @@ class WebSearchModel extends LlmAdapter {
   override async *stream(options: GenerateOptions): AsyncIterable<StreamChunk> {
     await Promise.resolve()
     this.calls.push(options)
-    const hasToolResult = options.messages.some((message) =>
-      message.content.some((block) => block.type === 'tool-result'),
-    )
+    const hasToolResult = options.messages.some((message) => message.role === 'tool')
     if (!hasToolResult) {
       yield* toolCallChunks('web_search', 'web-search-call', { queries: ['NekroNxt test'] })
       return
@@ -236,10 +254,11 @@ class DynamicDelegationModel extends LlmAdapter {
       return
     }
     if (this.childStep === 2) {
-      const receipt = /Defined ([^/\s]+)\/([^\s]+) \(/u.exec(resultText)
-      if (!receipt) throw new Error(`Cannot parse dynamic receipt from: ${resultText}`)
-      this.pluginId = receipt[1]
-      this.packageId = receipt[2]
+      const receipt = z
+        .object({ pluginId: z.string().min(1), packageId: z.string().min(1) })
+        .parse(toolReceipt(options, 'dynamic-define-v1'))
+      this.pluginId = receipt.pluginId
+      this.packageId = receipt.packageId
       this.childStep += 1
       yield* toolCallChunks('cordis_run', 'dynamic-run-v1', {
         pluginId: this.pluginId,
@@ -249,7 +268,7 @@ class DynamicDelegationModel extends LlmAdapter {
       return
     }
     if (this.childStep === 3) {
-      expect(resultText).toContain('is running')
+      expect(toolReceipt(options, 'dynamic-run-v1')).toMatchObject({ status: 'running' })
       this.childStep += 1
       yield* toolCallChunks('cordis_inspect_self', 'dynamic-inspect-v1', {
         pluginId: this.pluginId,
@@ -264,7 +283,7 @@ class DynamicDelegationModel extends LlmAdapter {
       return
     }
     if (this.childStep === 5) {
-      expect(resultText).toContain('is stopped')
+      expect(toolReceipt(options, 'dynamic-stop-v1')).toEqual({ ok: true })
       this.childStep += 1
       yield* toolCallChunks('cordis_define', 'dynamic-define-v2', {
         plugin: { kind: 'existing', pluginId: this.pluginId },
@@ -275,9 +294,12 @@ class DynamicDelegationModel extends LlmAdapter {
       return
     }
     if (this.childStep === 6) {
-      const receipt = [...resultText.matchAll(/Defined ([^/\s]+)\/([^\s]+) \(/gu)].at(-1)
-      if (!receipt || receipt[1] !== this.pluginId) throw new Error(`Cannot parse updated receipt from: ${resultText}`)
-      this.packageId = receipt[2]
+      const receipt = z
+        .object({ pluginId: z.string().min(1), packageId: z.string().min(1) })
+        .parse(toolReceipt(options, 'dynamic-define-v2'))
+      expect(receipt.pluginId).toBe(this.pluginId)
+      expect(receipt.packageId).not.toBe(this.packageId)
+      this.packageId = receipt.packageId
       this.childStep += 1
       yield* toolCallChunks('cordis_run', 'dynamic-run-v2', {
         pluginId: this.pluginId,
@@ -287,7 +309,7 @@ class DynamicDelegationModel extends LlmAdapter {
       return
     }
     if (this.childStep === 7) {
-      expect(resultText).toContain('is running')
+      expect(toolReceipt(options, 'dynamic-run-v2')).toMatchObject({ status: 'running' })
       this.childStep += 1
       yield* toolCallChunks('cordis_inspect_self', 'dynamic-inspect-v2', {
         pluginId: this.pluginId,
@@ -364,7 +386,7 @@ class DenylistRecoveryModel extends LlmAdapter {
     if (this.followupChildId !== undefined && !this.followupSent) {
       this.followupSent = true
       yield* toolCallChunks('send_message', 'denylist-followup', {
-        subagent_id: this.followupChildId,
+        agent_id: this.followupChildId,
         message: '在频道动作能力变化后继续。',
       })
       return
@@ -384,7 +406,7 @@ class DenylistRecoveryModel extends LlmAdapter {
   }
 }
 
-describe('DSH 0.1.1-rc.2 official capability composition', () => {
+describe('DSH 0.1.7-rc.2 official capability composition', () => {
   it('caps DeepSeek search cost and results while keeping external text inside the tool result', async () => {
     const directory = await mkdtemp(path.join(tmpdir(), 'nekro-nxt-dsh-web-search-'))
     temporaryDirectories.push(directory)
@@ -488,7 +510,7 @@ describe('DSH 0.1.1-rc.2 official capability composition', () => {
       expect(serializedMessages).toContain(malicious)
       expect(serializedMessages).toContain('https://source-5.test')
       expect(serializedMessages).not.toContain('https://source-6.test')
-      expect(secondRequest?.system).not.toContain(malicious)
+      expect(systemText(secondRequest)).not.toContain(malicious)
     } finally {
       await host.dispose()
       database.close()
@@ -666,7 +688,7 @@ describe('DSH 0.1.1-rc.2 official capability composition', () => {
       const childToolNames = model.childRequests[0]?.tools?.map((tool) => tool.name) ?? []
       expect(childToolNames).toEqual(
         expect.arrayContaining([
-          'report',
+          'send_message',
           'nekro_nxt_channel_context',
           'conversation_history_read',
           'conversation_history_search',
@@ -691,23 +713,21 @@ describe('DSH 0.1.1-rc.2 official capability composition', () => {
           'retract_channel_message',
           'nudge_channel_member',
           'subagent',
-          'send_message',
           'interrupt_agent',
           'list_agents',
         ]),
       )
-      expect(model.rootRequestOptions[0]?.system).toContain('上下文管理：当前频道对话')
-      expect(model.rootRequestOptions[0]?.system).toContain('只有成功调用 **send_channel_message**')
-      expect(model.childRequests[0]?.system).toContain('完整继承人设：只报告已经核验的事实。')
-      expect(model.childRequests[0]?.system).toContain('你是主智能体委派的子智能体')
-      expect(model.childRequests[0]?.system).not.toContain('上下文管理：当前频道对话')
-      expect(model.childRequests[0]?.system).not.toContain('只有成功调用 **send_channel_message**')
+      expect(systemText(model.rootRequestOptions[0])).toContain('上下文管理：当前频道对话')
+      expect(systemText(model.rootRequestOptions[0])).toContain('只有成功调用 **send_channel_message**')
+      expect(systemText(model.childRequests[0])).toContain('完整继承人设：只报告已经核验的事实。')
+      expect(systemText(model.childRequests[0])).toContain('你是主智能体委派的子智能体')
+      expect(systemText(model.childRequests[0])).not.toContain('上下文管理：当前频道对话')
+      expect(systemText(model.childRequests[0])).not.toContain('只有成功调用 **send_channel_message**')
       expect(JSON.stringify(model.childRequests[0]?.messages)).not.toContain('启动后台子任务。')
 
       const liveChildren = await host.listSubagents(sessionId)
-      expect(liveChildren).toEqual([
-        expect.objectContaining({ kind: 'child', mode: 'continuable', activity: 'running' }),
-      ])
+      expect(liveChildren).toEqual([expect.objectContaining({ mode: 'continuable', label: '核对官方组合' })])
+      expect(host.sessionStatus(liveChildren[0]!.id)).toBe('running')
       expect(await host.listSubagents(siblingSessionId)).toEqual([])
       model.initialChildGate.resolve()
       await model.initialChildFinished.promise
@@ -722,11 +742,10 @@ describe('DSH 0.1.1-rc.2 official capability composition', () => {
         agentRevisionId: definition.revision.id,
       })
       const restoredChildren = await host.listSubagents(sessionId)
-      expect(restoredChildren).toEqual([
-        expect.objectContaining({ kind: 'child', mode: 'continuable', activity: 'inactive' }),
-      ])
+      expect(restoredChildren).toEqual([expect.objectContaining({ mode: 'continuable', label: '核对官方组合' })])
+      expect(() => host.sessionStatus(restoredChildren[0]!.id)).toThrow('DSH Agent Session is not live')
       const child = restoredChildren[0]
-      if (child?.kind !== 'child') throw new Error('Expected a restored continuable child.')
+      if (child?.mode !== 'continuable') throw new Error('Expected a restored continuable child.')
       model.followupChildId = child.id
       await host.admit({
         dshSessionId: sessionId,
@@ -930,7 +949,7 @@ describe('DSH 0.1.1-rc.2 official capability composition', () => {
       await model.firstChildFinished.promise
       await host.whenIdle(sessionId)
       const child = (await host.listSubagents(sessionId))[0]
-      if (child?.kind !== 'child') throw new Error('Expected the initial continuable child.')
+      if (child?.mode !== 'continuable') throw new Error('Expected the initial continuable child.')
       model.followupChildId = child.id
       await host.dispose()
 
@@ -971,7 +990,7 @@ describe('DSH 0.1.1-rc.2 official capability composition', () => {
     try {
       const saved = await context.spillStore.saveText({
         owner: { sessionId: SessionId('spill-session') },
-        source: { toolName: 'probe', callId: CallId('spill-call'), label: 'result' },
+        source: { kind: 'tool', toolName: 'probe', callId: ToolCallId('spill-call'), label: 'result' },
         suggestedName: '../result.txt',
         content: '可恢复的 Spill 内容',
       })
@@ -980,7 +999,7 @@ describe('DSH 0.1.1-rc.2 official capability composition', () => {
       await expect(
         context.spillStore.saveText({
           owner: { sessionId: SessionId('spill-session') },
-          source: { toolName: 'probe', callId: CallId('spill-large'), label: 'result' },
+          source: { kind: 'tool', toolName: 'probe', callId: ToolCallId('spill-large'), label: 'result' },
           suggestedName: 'large.txt',
           content: 'x'.repeat(SPILL_ARTIFACT_MAX_BYTES + 1),
         }),
@@ -995,7 +1014,7 @@ describe('DSH 0.1.1-rc.2 official capability composition', () => {
       await expect(
         context.spillStore.saveText({
           owner: { sessionId: fullSession },
-          source: { toolName: 'probe', callId: CallId('spill-session-limit'), label: 'result' },
+          source: { kind: 'tool', toolName: 'probe', callId: ToolCallId('spill-session-limit'), label: 'result' },
           suggestedName: 'overflow.txt',
           content: 'x',
         }),
@@ -1015,7 +1034,7 @@ describe('DSH 0.1.1-rc.2 official capability composition', () => {
       await expect(
         hostContext.spillStore.saveText({
           owner: { sessionId: SessionId('another-session') },
-          source: { toolName: 'probe', callId: CallId('spill-host-limit'), label: 'result' },
+          source: { kind: 'tool', toolName: 'probe', callId: ToolCallId('spill-host-limit'), label: 'result' },
           suggestedName: 'overflow.txt',
           content: 'x',
         }),

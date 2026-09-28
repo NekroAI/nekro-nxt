@@ -148,7 +148,7 @@ describe('NekroNxt domain API — save a running dynamic Package as a local Exte
         extensionId: saved.extensionId,
       })
       expect(runtime.repository.getExtensionRevisionVerification(saved.revisionId)).toMatchObject({
-        dshVersion: '0.1.1-rc.2',
+        dshVersion: '0.1.7-rc.2',
         contractVersion: 'nekro-nxt-extension-v1',
         origin: {
           episodeId: episode!.id,
@@ -219,7 +219,7 @@ describe('NekroNxt domain API — save a running dynamic Package as a local Exte
         expect(importedRuntime.repository.getHostInstallation(saved.extensionId)).toBeUndefined()
         expect(importedRuntime.repository.getExtensionRevisionVerification(saved.revisionId)).toMatchObject({
           revisionId: saved.revisionId,
-          dshVersion: '0.1.1-rc.2',
+          dshVersion: '0.1.7-rc.2',
           origin: { pluginRunId: 'local-runtime-verification' },
           toolInvocations: [{ name: 'saved_probe', succeeded: true }],
         })

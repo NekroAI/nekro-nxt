@@ -1,3 +1,4 @@
+import { installSnapshotHealthRoutes } from './fixtures/host-release.js'
 import { test, expect } from '@playwright/test'
 import { writeFile, mkdir } from 'node:fs/promises'
 import { join } from 'node:path'
@@ -44,6 +45,7 @@ test('records repeatable production interaction costs with fictional history', a
     localStorage.setItem('nekro-nxt.theme', 'dark')
     localStorage.setItem('nekro-nxt.reduced-motion', 'false')
   })
+  await installSnapshotHealthRoutes(page, snapshot)
   await page.route('**/api/**', async (route) => {
     const url = new URL(route.request().url())
     const json = (data: unknown) =>

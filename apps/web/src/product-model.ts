@@ -435,6 +435,7 @@ export interface ProductState {
   loadPlatformUserDirectory(input: PlatformUserFilter, older?: boolean): Promise<void>
   cancelPlatformUserDirectory(): void
   readonly host: ProductHostState
+  readonly upgrade?: HostApiResponse<'snapshot'>['upgrade']
   readonly productMetadata: ProductMetadataView | undefined
   readonly connectionAdapters: readonly AdapterConnectionDescriptor[]
   readonly capabilityAvailability: CapabilityAvailability

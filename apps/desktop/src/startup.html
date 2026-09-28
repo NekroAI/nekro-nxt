@@ -1,0 +1,35 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self'" />
+    <title>NekroNXT</title>
+    <link rel="stylesheet" href="./startup.css" />
+    <script src="./startup.js" defer></script>
+  </head>
+  <body>
+    <header class="titlebar"><strong>NekroNXT</strong><span>本地服务</span></header>
+    <main>
+      <p id="eyebrow">准备工作区</p>
+      <h1 id="title">正在启动</h1>
+      <p id="body" role="status" aria-live="polite">正在检查本地服务。</p>
+      <section id="progress-section" hidden aria-label="升级进度">
+        <progress id="progress" aria-label="已完成的升级工作"></progress>
+        <p id="progress-label"></p>
+      </section>
+      <p id="notice" hidden></p>
+      <div class="actions">
+        <button type="button" data-action="retry" class="primary" hidden>重试启动</button>
+        <button type="button" data-action="restore" hidden>恢复升级前备份</button>
+        <button type="button" data-action="cancel" hidden>安全取消</button>
+        <button type="button" data-action="exit" hidden>退出</button>
+      </div>
+      <details>
+        <summary>查看诊断</summary>
+        <pre id="diagnostics"></pre>
+      </details>
+      <p id="action-error" role="alert" hidden></p>
+    </main>
+  </body>
+</html>

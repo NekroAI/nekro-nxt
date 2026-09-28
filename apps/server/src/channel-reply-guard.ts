@@ -1,3 +1,4 @@
+import { sessionEvents } from './session-event-history.js'
 import type { Agent, PreStepDecision } from '@deepseek-ai/dsh-agent'
 import type { Context } from '@deepseek-ai/cordis'
 import { createUserMessage } from '@deepseek-ai/dsh-llm'
@@ -53,9 +54,9 @@ export type CorrectionCountResolver = (admissionId: string) => number
 
 const successfulToolResult = (event: SessionEvent): { readonly callId: string } | undefined => {
   if (event.type !== 'tool/result' || event.data.error !== undefined) return undefined
-  const block = event.data.message.content[0]
-  if (block?.type !== 'tool-result' || block.isError === true) return undefined
-  return { callId: String(block.toolCallId) }
+  const message = event.data.message
+  if (message.isError) return undefined
+  return { callId: String(message.toolCallId) }
 }
 
 export const deliveryStateFromToolResult = (event: SessionEvent): ChannelDeliveryState | undefined => {
@@ -197,7 +198,7 @@ const withReminder = (
   correctionCount: CorrectionCountResolver,
   recordCorrection: (admissionId: string) => void,
 ): readonly UserMessage[] => {
-  const before = responseObligationState(agent.session.events, turn, [], replyRequired, correctionCount)
+  const before = responseObligationState(sessionEvents(agent.session), turn, [], replyRequired, correctionCount)
   const includesCurrentReminder = messages.some((message) => message.source.kind === 'nekro-nxt-channel-reply-guard')
   const includesNewRequiredAdmission = messages.some((message) => {
     const admissionId = channelAdmissionId(message)
@@ -241,7 +242,11 @@ export const mountChannelReplyGuard = (context: Context): ChannelReplyGuardContr
     }
   const offPreStep = context.on('agent/pre-step', async ({ agent, turn, step }, next): Promise<PreStepDecision> => {
     const decision = await next()
-    if (decision.kind === 'reject' || step <= 1 || !previousStepAttemptedToStop(agent.session.events, turn, step - 1)) {
+    if (
+      decision.kind === 'reject' ||
+      step <= 1 ||
+      !previousStepAttemptedToStop(sessionEvents(agent.session), turn, step - 1)
+    ) {
       return decision
     }
     return {
@@ -261,7 +266,7 @@ export const mountChannelReplyGuard = (context: Context): ChannelReplyGuardContr
   const offStopping = context.on('agent/turn-stopping', ({ agent, turn, signal }) => {
     signal.throwIfAborted()
     const state = responseObligationState(
-      agent.session.events,
+      sessionEvents(agent.session),
       turn,
       [],
       resolverFor(agent),
@@ -281,7 +286,13 @@ export const mountChannelReplyGuard = (context: Context): ChannelReplyGuardContr
       correctionsByAgent.set(agent, corrections)
     },
     responseState(agent, turn) {
-      return responseObligationState(agent.session.events, turn, [], resolverFor(agent), correctionResolverFor(agent))
+      return responseObligationState(
+        sessionEvents(agent.session),
+        turn,
+        [],
+        resolverFor(agent),
+        correctionResolverFor(agent),
+      )
     },
     dispose() {
       offPreStep()

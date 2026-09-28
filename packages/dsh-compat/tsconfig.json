@@ -5,7 +5,8 @@
     "rootDir": "src",
     "outDir": "lib/types",
     "emitDeclarationOnly": true,
-    "tsBuildInfoFile": "lib/types.tsbuildinfo"
+    "tsBuildInfoFile": "lib/types.tsbuildinfo",
+    "resolveJsonModule": true
   },
-  "include": ["src/**/*.ts"]
+  "include": ["src/**/*.ts", "src/**/*.json"]
 }

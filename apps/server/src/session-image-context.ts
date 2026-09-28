@@ -1,10 +1,11 @@
+import { sessionEvents } from './session-event-history.js'
 import type { DshHostRuntimeOptions } from './index.js'
 import type { Context } from '@deepseek-ai/cordis'
 import { type Agent } from '@deepseek-ai/dsh-agent'
 import AttachmentStore, {
   AttachmentId,
   type ImageAttachmentRef,
-  type ImageRequestPolicy,
+  type ImageRequestTarget,
   type RequestImageAttachment,
   type SaveImageAttachment,
   type StoredImageAttachment,
@@ -166,13 +167,15 @@ export class NekroAssetAttachmentStore extends AttachmentStore {
 
   override async readImageRequest(
     ref: ImageAttachmentRef,
-    policy: ImageRequestPolicy,
+    policy: ImageRequestTarget,
     signal?: AbortSignal,
   ): Promise<RequestImageAttachment> {
     const decoded = parseNekroImageAttachmentId(ref.attachmentId)
     if (!decoded) throw new Error(`Attachment ID is not a NekroNxt Asset reference: ${ref.attachmentId}`)
     const effectivePolicy =
-      decoded.detail === 'low' ? { ...policy, maxPixels: Math.min(policy.maxPixels, 512 * 512) } : policy
+      decoded.detail === 'low'
+        ? { ...policy, width: Math.min(policy.width, 512), height: Math.min(policy.height, 512) }
+        : policy
     return readRequestImageFile(this.requestImageRoot, await this.readImage(ref, signal), effectivePolicy, signal)
   }
 }
@@ -255,11 +258,11 @@ export const collectVisibleImageResidency = (
         const asset = assets.getAssetById(parsed.assetId)
         const detail = parsed.detail ?? baseline
         if (asset && !residency.has(asset.contentDigest)) residency.set(asset.contentDigest, detail)
-      } else if (block.type === 'tool-result') visit(block.content)
+      }
     }
   }
   for (const message of agent.session.deriveMessages()) visit(message.content)
-  for (const event of agent.session.events) {
+  for (const event of sessionEvents(agent.session)) {
     if (
       event.type !== 'nekro-nxt/image-inspection' ||
       event.data.mode !== 'direct' ||
@@ -411,7 +414,7 @@ export class SessionImageContext {
       { readonly time: number; readonly data: SessionEvent<'nekro-nxt/image-restoration'>['data'] } | undefined
     for (const agent of sessions) {
       residentImages += collectVisibleImageResidency(agent, this.#assets, revision.imagePolicy.history.detail).size
-      for (const event of agent.session.events) {
+      for (const event of sessionEvents(agent.session)) {
         if (event.type === 'nekro-nxt/image-admission') {
           duplicateImagesSkipped += event.data.duplicateCount
         } else if (event.type === 'nekro-nxt/image-inspection') {
@@ -459,12 +462,12 @@ export class SessionImageContext {
   }
 
   async restoreLatestPendingVisualContext(agent: Agent): Promise<void> {
-    const latest = [...agent.session.events]
+    const latest = [...sessionEvents(agent.session)]
       .reverse()
       .find((event) => event.type === 'compaction/end' && event.data.error === undefined)
     if (latest?.type !== 'compaction/end') return
     const compactionId = String(latest.data.compactionId)
-    const settled = agent.session.events.some(
+    const settled = sessionEvents(agent.session).some(
       (event) =>
         (event.type === 'nekro-nxt/image-restoration' && event.data.compactionId === compactionId) ||
         (event.type === 'user/message' &&
@@ -482,7 +485,7 @@ export class SessionImageContext {
     const revision = this.#sessions.get(sessionId)?.revision
     if (!channelId || !episodeId || !revision) return
     if (
-      agent.session.events.some(
+      sessionEvents(agent.session).some(
         (event) =>
           (event.type === 'nekro-nxt/image-restoration' && event.data.compactionId === compactionId) ||
           (event.type === 'user/message' &&

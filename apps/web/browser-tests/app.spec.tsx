@@ -1,3 +1,4 @@
+import { fixtureReleaseId, installSnapshotHealthRoutes } from '../e2e/fixtures/host-release.js'
 import {
   AgentIdSchema,
   AgentRevisionIdSchema,
@@ -58,6 +59,14 @@ const hostUiPage = (id: string, visible = true) =>
 const browserSnapshot = HostApiContracts.snapshot.response.parse({
   cursor: { epoch: 'fixture', sequence: 0 },
   diagnosticsSampledAt: 0,
+  productMetadata: {
+    displayName: 'NekroNXT',
+    organizationName: 'NekroAI',
+    version: '0.0.0',
+    releaseId: fixtureReleaseId,
+    repositoryUrl: 'https://github.com/NekroAI/nekro-nxt',
+    licenseSpdx: 'AGPL-3.0-only',
+  },
   capabilityAvailability: {
     subagents: { available: true },
     webSearch: {
@@ -373,6 +382,7 @@ test.describe('NekroNxt browser projections', () => {
       }
     })
     const parsedSnapshot = HostApiContracts.snapshot.response.parse(snapshot)
+    await installSnapshotHealthRoutes(page, parsedSnapshot)
     await page.route('**/api/snapshot', (request) =>
       request.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(parsedSnapshot) }),
     )
@@ -1565,6 +1575,7 @@ test.describe('NekroNxt browser projections', () => {
     const firstCredentialDelete = new Promise<void>((resolve) => {
       releaseFirstCredentialDelete = resolve
     })
+    await installSnapshotHealthRoutes(page, browserSnapshot)
     await page.route('**/api/snapshot', (request) =>
       request.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(browserSnapshot) }),
     )
@@ -1798,6 +1809,7 @@ test.describe('NekroNxt browser projections', () => {
       revision: 3,
       writable: true,
     }
+    await installSnapshotHealthRoutes(page, browserSnapshot)
     await page.route('**/api/snapshot', (route) =>
       route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(browserSnapshot) }),
     )
@@ -1850,6 +1862,7 @@ test.describe('NekroNxt browser projections', () => {
     const page = await browser.newPage({ viewport: { width: 1440, height: 900 } })
     const pageErrors: string[] = []
     let snapshotRequests = 0
+    await installSnapshotHealthRoutes(page, browserSnapshot)
     page.on('pageerror', (error) => pageErrors.push(error.message))
     await page.route('**/api/snapshot', (request) => {
       snapshotRequests += 1
@@ -1918,6 +1931,7 @@ test.describe('NekroNxt browser projections', () => {
         colorScheme: 'colorScheme' in scenario ? scenario.colorScheme : 'light',
         reducedMotion: 'reducedMotion' in scenario ? scenario.reducedMotion : 'no-preference',
       })
+      await installSnapshotHealthRoutes(page, browserSnapshot)
       await page.route('**/api/snapshot', (request) =>
         request.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(browserSnapshot) }),
       )

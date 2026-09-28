@@ -1,6 +1,6 @@
 # SQLite storage
 
-该包拥有 NekroNXT Core SQLite 的唯一结构事实源、Drizzle Repository、迁移执行和在线备份。DSH Session SQLite 继续由 DSH 自己拥有；本包只协调备份文件，不读取 DSH 私有表。
+该包拥有 NekroNXT Core SQLite 的唯一结构事实源、Drizzle Repository、迁移执行和在线备份。DSH Session 由 DSH 的 JSONL Provider 拥有；本包只识别旧 SQLite 的 application ID / schema、协调归档和 Core 上下文重置，不读取或改写 DSH 私有表。
 
 当前基线使用 `better-sqlite3 13.x + drizzle-orm 0.45.x`。`CoreDatabase` 只公开 typed Drizzle DB、迁移、事务、pragma、backup 和 close；领域代码不得获得原生连接。存储查询可以使用 Drizzle 参数化 SQL；原生 SQL 执行仅由迁移所有者负责，不拼接外部输入。WAL、foreign keys、busy timeout 与在线备份分别使用驱动的 `pragma()` 和 `backup()` API。
 
@@ -25,3 +25,15 @@ Binding 只表达每个频道的当前归属，以 `channel_id` 为主键；历�
 `0022_connection_activity_defaults_and_archive` 增加 `connections.activity_trigger_defaults`、`connections.archived_at` 和 `channel_bindings.activity_trigger_suppressions`。原 `activity_triggers` 数组继续保存显式开启覆盖，新列保存显式关闭覆盖，二者投影成领域层的布尔映射；因此无需改写旧 JSON。归档 Connection 保留所有关联行但退出活动查询，恢复时复用原 ID；永久删除按外键依赖顺序清理 Connection、Channel、成员、事件、Binding、Episode、Admission、Outbound 和连接状态。
 
 `0014_host_extension_installations` 只创建空表和索引，不重建旧表、不回填、不扫描扩展源码。已有用户首次启动新 Release 时由 Drizzle 自动应用，现有 Agent、Connection、Channel、消息、Revision 和 Activation 不变；内置 Adapter 不写入该表。迁移后统一执行 `foreign_key_check`，失败则回滚并拒绝启动。
+
+`0025_dsh_session_reset_receipts` 增加 Admission 的 `cancelled` 终态、`dsh_session_resets` 提交凭据和 `binding_admission_cutoffs` 入站截止点。`retireDshSessionEpisodes({ migrationId, closedAt })` 在单个 immediate transaction 内关闭旧活动 Episode、取消未完成 Admission、中断未完成创造任务并追加事件、停止相关候选运行并清除旧 run ID、记录每个现有 Binding 的入站边界及迁移 receipt。聊天、附件、Revision、Binding 创建时间、已提交 Outbound 和候选源码路径均保留。重复 migrationId 只返回原 receipt，不修改随后创建的 Session；`getDshSessionStorageRetirement(migrationId)` 用于读取该提交凭据。Admission 与事件关联不删除，已取消的 Admission 不再认领或写回；新入站按 `(received_at, id)` 严格超过绑定截止点才进入自动 Admission。解绑删除该绑定的截止点，新绑定不继承它。
+
+`prepareDshSessionStorage({ databasePath, sessionRoot?, sessionCompatibilityId?, now?, onProgress? })` 需要 Host 已独占数据根并完成完整备份。它只接受 DSH application ID `1146308688` 下的 schema 15/17，使用 SQLite backup API 生成并校验独立快照，发布归档与重置标记后才逐个移走旧文件。新根默认为旧库同级的 `dsh/sessions`，以 `dsh/session-storage.json` 持久化 `jsonl-v4` 身份；未知数据库、未来身份或没有身份的非空 JSONL 根拒绝启动。归档、重置标记与源文件保留校验信息；中断后检查归档和剩余源文件，不能因重试覆盖损坏归档或新写入。`onProgress` 报告四个已完成阶段，可由宿主推进 journal 或由测试注入中断。
+
+准备结果返回 `sessionRoot`、`sessionCompatibilityId` 与 `new/compatible/archived` 状态。仅 `archived` 返回稳定 `migrationId`，其依据是源存储身份和目标兼容格式，与产品 commit 无关。调用方提交 Core 重置事务后，再调用 `completeDshSessionStoragePreparation(databasePath, migrationId)` 清除待重置标记；重复完成安全，身份不匹配拒绝。未来升级必须为新兼容格式登记明确迁移，不按产品版本变化自动清空会话。
+
+Host 的完整恢复点通过本包公开的 `readBackupAgentIds(databasePath)` 枚举外置工作区所有者；它只读旧 Core，无 `agent_definitions` 表返回空列表，非法智能体 ID 拒绝。`createSqliteFileSnapshot(source, destination)` 使用 SQLite backup API 将已提交 WAL 合入独立快照；`verifySqliteSnapshot(path)` 用只读连接执行 `quick_check`。这些接口不执行迁移，也不创建缺失源库，Server 和 Desktop 无需自行持有原生 SQLite 连接。
+
+宿主必须先调用只读 `preflightDshSessionStorage({ databasePath })`，再创建完整恢复点、执行 Core 迁移和 Session 准备。Preflight 不创建数据根、不归档、不发布身份或重置标记；已存在的身份、待重置标记及已知旧 schema 都需通过检查，未知未来格式在改变 Core 前拒绝。只读 SQLite 检查在没有未合入 WAL 时使用 immutable URI，避免产生 sidecar；存在 WAL 时不能忽略其提交内容，必须有可读的现有共享内存文件，否则拒绝并要求先恢复源库。目标快照由创建者转换成 DELETE journal，`verifySqliteSnapshot` 使用 immutable 连接验证，不改写被验证文件。
+
+`acquireSqliteFileLease(path)` 以固定 SQLite 文件持有操作系统级排他事务锁，返回可重复调用的同步释放函数。释放只回滚并关闭连接，不 unlink 锁库；进程退出由操作系统释放锁。数据根身份、跨宿主诊断和锁文件元数据仍由 Host 管理。

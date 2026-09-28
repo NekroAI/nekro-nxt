@@ -17,6 +17,7 @@ import type { AdapterConnectionDescriptor } from '@nekro-nxt/adapter-sdk'
 import type { ProductState } from './product-model.js'
 
 export interface ProductSnapshot {
+  readonly upgrade?: ProductState['upgrade']
   readonly host: ProductHostState
   readonly productMetadata?: ProductMetadataView | undefined
   readonly connectionAdapters: readonly AdapterConnectionDescriptor[]

@@ -12,6 +12,7 @@
     "build": "node scripts/clean-server-runtime.mjs && tsdown && node scripts/copy-renderer-assets.mjs && node scripts/write-product-release.mjs",
     "dist": "node scripts/dist.mjs",
     "test": "vitest run --root ../.. apps/desktop/tests",
+    "test:electron": "playwright test --config playwright.electron.config.ts",
     "typecheck": "tsc --noEmit"
   },
   "devDependencies": {

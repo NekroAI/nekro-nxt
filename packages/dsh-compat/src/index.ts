@@ -1,8 +1,9 @@
 import { createRequire } from 'node:module'
+import { DSH_RUNTIME_RELEASE } from './release.js'
 
 /** Exact DSH packages imported by the current production Client facade. */
 export const DSH_PACKAGE_VERSIONS = {
-  '@deepseek-ai/dsh-client-ui-slots': '0.1.1-rc.2',
+  '@deepseek-ai/dsh-client-ui-slots': DSH_RUNTIME_RELEASE.dshVersion,
 } as const
 
 export type DshPackageName = keyof typeof DSH_PACKAGE_VERSIONS

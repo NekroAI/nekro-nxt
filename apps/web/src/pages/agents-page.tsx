@@ -1,3 +1,4 @@
+import { UpgradeNotice } from '../components/upgrade-notice.js'
 import { runtimeStateLabel } from '../product-model.js'
 import { useProductRuntime } from '../product-runtime.js'
 import { ChevronDown, ChevronUp, PanelRightClose, PanelRightOpen, Plus, Save, ShieldAlert, Trash2 } from 'lucide-react'
@@ -1013,6 +1014,7 @@ export function AgentManagePage() {
               </>
             }
           />
+          <UpgradeNotice agentId={agent.id} providerId={agent.modelRef?.provider} />
           <p className={styles.secondaryText} id="agent-save-reason">
             {!displayName.trim()
               ? '请输入智能体名称。'

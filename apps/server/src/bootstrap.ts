@@ -1,3 +1,5 @@
+import { RuntimeCompatibilityRegistry } from './runtime-compatibility.js'
+import type { DshSessionStorageRetirementReport } from '@nekro-nxt/storage-sqlite'
 import { LlmProviderRemovalCoordinator } from './llm-provider-removal.js'
 import type { Context } from '@deepseek-ai/cordis'
 import { BUILTIN_ADAPTER_CONTRIBUTIONS } from '@nekro-nxt/adapter-builtin-roster'
@@ -12,6 +14,8 @@ import {
 import { ChannelRuntime } from '@nekro-nxt/channel-runtime'
 import {
   DshNxtHostUiSchema,
+  HostApiContracts,
+  ExtensionIdSchema,
   HostUiPageInstanceIdSchema,
   type AgentId,
   type ChannelId,
@@ -63,6 +67,8 @@ export type { ConnectionTestResult } from './connection-application.js'
  * reverse order (docs/06).
  */
 export interface NekroRuntimeOptions {
+  /** Production startup keeps inbound facts durable while migration and recovery settle. */
+  readonly deferAdmission?: boolean
   /** Core domain SQLite file path (opened + migrated). */
   readonly coreDatabasePath: string
   /** DSH Session SQLite file path (host-owned). */
@@ -105,7 +111,9 @@ export interface AgentEntity {
 }
 
 export class NekroRuntime {
+  upgradeBackupId: string | undefined
   readonly repository: SqliteCoreRepository
+  readonly compatibility: RuntimeCompatibilityRegistry
   readonly hostSecurity: SqliteHostSecurityRepository
   readonly assetService: AssetService
   readonly core: CoreService
@@ -120,8 +128,7 @@ export class NekroRuntime {
   readonly notifications: NotificationService
   readonly dshPluginInstaller: DshPluginPackageInstaller
   readonly sessionStoragePreparation: DshSessionStoragePreparation
-  readonly sessionStorageRetirement:
-    { readonly episodesClosed: number; readonly admissionsReleased: number } | undefined
+  readonly sessionStorageRetirement: DshSessionStorageRetirementReport | undefined
   readonly #database: CoreDatabase
   readonly #now: () => number
   readonly connections: ConnectionApplicationService
@@ -139,9 +146,11 @@ export class NekroRuntime {
   readonly #unsubscribeDynamicApproval: () => void
   #started = false
   #disposed = false
+  #disposePromise: Promise<void> | undefined
 
   private constructor(input: {
     readonly database: CoreDatabase
+    readonly compatibility: RuntimeCompatibilityRegistry
     readonly repository: SqliteCoreRepository
     readonly hostSecurity: SqliteHostSecurityRepository
     readonly assetService: AssetService
@@ -157,7 +166,7 @@ export class NekroRuntime {
     readonly dshPluginInstaller: DshPluginPackageInstaller
     readonly unsubscribeDynamicApproval: () => void
     readonly sessionStoragePreparation: DshSessionStoragePreparation
-    readonly sessionStorageRetirement?: { readonly episodesClosed: number; readonly admissionsReleased: number }
+    readonly sessionStorageRetirement?: DshSessionStorageRetirementReport
     readonly now: () => number
     readonly adapters: AdapterRegistry
     readonly adapterHandles: readonly RegisteredAdapterHandle[]
@@ -179,6 +188,7 @@ export class NekroRuntime {
     this.notifications = input.notifications
     this.dshPluginInstaller = input.dshPluginInstaller
     this.#unsubscribeDynamicApproval = input.unsubscribeDynamicApproval
+    this.compatibility = input.compatibility
     this.sessionStoragePreparation = input.sessionStoragePreparation
     this.sessionStorageRetirement = input.sessionStorageRetirement
     this.#now = input.now
@@ -217,7 +227,7 @@ export class NekroRuntime {
           await this.connections.waitUntilSafe(adapterKey)
         },
       }),
-      { now: this.#now },
+      { now: this.#now, compatibility: this.compatibility },
     )
   }
 
@@ -235,9 +245,11 @@ export class NekroRuntime {
         now: () => new Date(now()),
       })
       const sessionStorageRetirement =
-        sessionStoragePreparation.kind === 'archived' ? repository.retireDshSessionEpisodes(now()) : undefined
+        sessionStoragePreparation.kind === 'archived'
+          ? repository.retireDshSessionEpisodes({ migrationId: sessionStoragePreparation.migrationId, closedAt: now() })
+          : undefined
       if (sessionStoragePreparation.kind === 'archived') {
-        await completeDshSessionStoragePreparation(options.sessionDatabasePath)
+        await completeDshSessionStoragePreparation(options.sessionDatabasePath, sessionStoragePreparation.migrationId)
       }
       const assetService = new AssetService(repository, options.assetRoot)
       const authoringWorkspaceRoot =
@@ -332,6 +344,8 @@ export class NekroRuntime {
       })
 
       const channels = new ChannelRuntime(core, repository, repository, host, {
+        deferAdmission: options.deferAdmission ?? false,
+        canAdmitAgent: (agentId) => host.canRunAgent(agentId),
         now,
         nextUlid,
         idleRolloverMs: options.idleRolloverMs ?? 6 * 60 * 60 * 1000,
@@ -377,6 +391,7 @@ export class NekroRuntime {
       })
       settled.current = channels
 
+      const compatibility = new RuntimeCompatibilityRegistry(repository)
       const sourceStore = new ExtensionSourceStore(options.extensionDataRoot)
       const extensionBuilder = new ExtensionBuilder(options.extensionCacheRoot)
       const extensionService = new ExtensionService(repository, sourceStore, {
@@ -390,7 +405,7 @@ export class NekroRuntime {
         extensionService,
         extensionBuilder,
         new ChannelExtensionActivationHost(channels, host),
-        { now },
+        { now, compatibility },
       )
       const credentials = new LocalCredentialStore(
         options.credentialRoot ?? path.join(path.dirname(options.coreDatabasePath), 'credentials'),
@@ -414,6 +429,7 @@ export class NekroRuntime {
       })
 
       const runtime = new NekroRuntime({
+        compatibility,
         database,
         repository,
         hostSecurity,
@@ -617,15 +633,58 @@ export class NekroRuntime {
   }
 
   /** Resume persisted Episodes, Admissions, Outbounds and active Extensions after a cold start. */
-  async recover(): Promise<void> {
+  async recover(options: { readonly openAdmission?: boolean } = {}): Promise<void> {
     await this.installation.restore()
     await this.#restoreDshHostUiPages()
     for (const connection of this.core.listConnections()) {
       await this.connections.mountAdapter(connection.id)
     }
+    await this.checkAgentCompatibility()
     await this.channels.recoverProcessingFeedback()
     await this.channels.recover()
     await this.activation.restore()
+    if (options.openAdmission !== false) await this.channels.openAdmission()
+  }
+
+  async retryCompatibility(input: Parameters<typeof HostApiContracts.retryRuntimeCompatibility.parseRequest>[0]) {
+    const request = HostApiContracts.retryRuntimeCompatibility.parseRequest(input)
+    if (request.objectKind === 'model-provider' || request.objectKind === 'dsh-plugin') {
+      await this.host.retryCompatibility(request.objectKind, request.objectId)
+    } else if (request.objectKind === 'extension') {
+      await this.activation.restore(true, ExtensionIdSchema.parse(request.objectId))
+    } else if (request.objectKind === 'adapter' || request.objectKind === 'client-page') {
+      await this.installation.restore(true, ExtensionIdSchema.parse(request.objectId))
+      for (const connection of this.core.listConnections()) await this.connections.mountAdapter(connection.id)
+    } else if (!this.core.listAgents().some(({ definition }) => definition.id === request.objectId)) {
+      throw new Error('智能体不存在。')
+    }
+    await this.checkAgentCompatibility()
+    await this.channels.openAdmission()
+    return { diagnostics: [...this.host.compatibilityDiagnostics(), ...this.compatibility.listCurrent()] }
+  }
+
+  async checkAgentCompatibility(): Promise<void> {
+    for (const { revision } of this.core.listAgents()) {
+      const identity = {
+        objectKind: 'agent' as const,
+        objectId: revision.agentId,
+        objectVersion: revision.id,
+        configurationRevision: JSON.stringify(revision.model),
+      }
+      const check = await this.host.checkModelCompatibility(revision)
+      if (check === undefined) {
+        this.host.setAgentCompatibility(revision.agentId, true)
+        this.compatibility.record(identity, { status: 'compatible', phase: 'configuration', retryable: true })
+      } else {
+        this.host.setAgentCompatibility(revision.agentId, false)
+        this.compatibility.record(identity, {
+          status: 'isolated',
+          phase: 'configuration',
+          reason: check,
+          retryable: true,
+        })
+      }
+    }
   }
 
   async #restoreDshHostUiPages(): Promise<void> {
@@ -795,8 +854,11 @@ export class NekroRuntime {
     return this.connections.stopAdapterConnections(...args)
   }
 
-  async dispose(): Promise<void> {
-    if (this.#disposed) return
+  dispose(): Promise<void> {
+    return (this.#disposePromise ??= this.#dispose())
+  }
+
+  async #dispose(): Promise<void> {
     this.#disposed = true
     await this.authoring.dispose()
     await this.extensionService.dispose()
@@ -804,7 +866,7 @@ export class NekroRuntime {
     this.#unsubscribeDynamicApproval()
     this.connections.clearObservers()
     for (const operation of [
-      () => this.channels.stopProcessingFeedback(),
+      () => this.channels.dispose(),
       () => this.activation.dispose(),
       () => this.installation.dispose(),
     ]) {

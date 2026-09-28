@@ -1,6 +1,6 @@
 import { callHostApi } from './host-api-client.js'
 import * as Cordis from '@deepseek-ai/cordis'
-import { Context, Service, type Fiber } from '@deepseek-ai/cordis'
+import { Context, Service, type Fiber, type Plugin } from '@deepseek-ai/cordis'
 import clientRunnerBundle from '@deepseek-ai/dsh-cordis-client-runner/client?raw'
 import type {
   ApprovalRequestId,
@@ -8,10 +8,9 @@ import type {
   DynamicCordisLivePackage,
 } from '@deepseek-ai/dsh-cordis-client-runner/client'
 import clientModulesBundle from '@deepseek-ai/dsh-client-modules/client?raw'
-import clientRuntimeBundle from '@deepseek-ai/dsh-client-runtime/client?raw'
-import * as SchemaFormModule from '@deepseek-ai/dsh-client-schema-form'
+import clientUiRendererBundle from '@deepseek-ai/dsh-client-ui-renderer/client?raw'
 import * as SlotModule from '@deepseek-ai/dsh-client-ui-slots'
-import { createSlotRenderer } from '@deepseek-ai/dsh-client-web-react'
+import { DSH_RUNTIME_FINGERPRINT } from '@nekro-nxt/dsh-compat/release'
 import {
   DshCredentialsChangedSseDataSchema,
   DshSettingsChangedSseDataSchema,
@@ -35,6 +34,8 @@ import type {
 } from '@nekro-nxt/extension-sdk'
 import type { AdapterClientSlotName, AgentClientSlotName } from '@nekro-nxt/contracts'
 import * as React from 'react'
+import * as ReactDom from 'react-dom'
+import * as ReactDomClient from 'react-dom/client'
 import * as ReactJsxRuntime from 'react/jsx-runtime'
 import type { ReactNode } from 'react'
 import {
@@ -290,37 +291,10 @@ interface RunOrchestratorConstructor {
   }): RunOrchestratorFace
 }
 
-interface SlotRegistryConstructor {
-  new (context: Context): SlotRegistryFace
-}
-
 const staticObservable = <T>(snapshot: T) => ({
   getSnapshot: (): T => snapshot,
   subscribe: (): (() => void) => () => undefined,
 })
-
-/** Minimal object-layer feeds required by the official Slot renderer host. */
-const installSlotRendererShellFeeds = (context: Context): void => {
-  const provideInfo = staticObservable({ sessionId: undefined, hooks: {}, props: {} })
-  context.reflect.provide('sessions', {
-    list: staticObservable({ phase: 'ready', ids: [], byId: {}, current: undefined }),
-    currentProvideInfo: provideInfo,
-    // rc.2 runtime calls this feed currentProvideInfo while the retained rc.7
-    // React renderer consumes the public renderer-host alias provideInfo.
-    provideInfo,
-  })
-  context.reflect.provide('workspaces', {
-    list: staticObservable({
-      items: [],
-      archivedSessionIds: [],
-      state: 'idle',
-      phase: 'ready',
-      error: null,
-      baselinesReady: true,
-      recentWorkspaceId: undefined,
-    }),
-  })
-}
 
 interface DynamicProductRootProps {
   readonly agentId: string
@@ -456,7 +430,7 @@ const createDshConnectionBridge = () => ({
 
 interface DynamicClientModules {
   readonly ClientModuleSystem: ClientModuleSystemConstructor
-  readonly SlotRegistry: SlotRegistryConstructor
+  readonly uiRenderer: Plugin
   readonly DynamicCordisPackageRunner: DynamicPackageRunnerConstructor
   readonly CordisRunOrchestrator: RunOrchestratorConstructor
 }
@@ -559,35 +533,29 @@ const loadDynamicClientModules = async (
     const registrationTarget = createRegistrationTarget()
     moduleWindow['__ModuleLoader__'] = registrationTarget
     const moduleSystem = new ClientModuleSystem({
-      manifest: { rev: 'nekro-nxt-dynamic-client', modules: [], plugins: [] },
+      manifest: { rev: DSH_RUNTIME_FINGERPRINT, modules: [], plugins: [] },
       staticModules: {
         react: React,
         'react/jsx-runtime': ReactJsxRuntime,
         '@deepseek-ai/cordis': Cordis,
-        '@deepseek-ai/dsh-client-schema-form': SchemaFormModule,
-        '@deepseek-ai/dsh-client-ui-primitives': await import('@deepseek-ai/dsh-client-ui-primitives'),
+        'react-dom': ReactDom,
+        'react-dom/client': ReactDomClient,
         '@deepseek-ai/dsh-client-ui-slots': SlotModule,
       },
       registrationTarget,
       bootstrapModule: { id: bootstrap.handoff.id, exports: bootstrap.exports },
       loadBundle: () => Promise.reject(new Error('Unexpected external DSH Client bundle load.')),
     })
-    evaluateClientBundle(clientRuntimeBundle, moduleWindow, documentValue)
+    evaluateClientBundle(clientUiRendererBundle, moduleWindow, documentValue)
     evaluateClientBundle(clientRunnerBundle, moduleWindow, documentValue)
-    const runtime = requireModuleRecord(
-      await moduleSystem.import('@deepseek-ai/dsh-client-runtime'),
-      'DSH Client Runtime module',
+    const uiRenderer = requireCordisPlugin(
+      await moduleSystem.import('@deepseek-ai/dsh-client-ui-renderer'),
+      'DSH Client UI renderer',
     )
     const runner = requireModuleRecord(
       await moduleSystem.import('@deepseek-ai/dsh-cordis-client-runner'),
       'DSH Cordis Client Runner module',
     )
-    const SlotRegistry = requireConstructorExport<SlotRegistryConstructor>(runtime, 'SlotRegistry', [
-      'entriesOfSlot',
-      'register',
-      'install',
-      'renderSlot',
-    ])
     const DynamicCordisPackageRunner = requireConstructorExport<DynamicPackageRunnerConstructor>(
       runner,
       'DynamicCordisPackageRunner',
@@ -601,13 +569,78 @@ const loadDynamicClientModules = async (
     return {
       moduleSystem,
       moduleLoader: registrationTarget,
-      modules: { ClientModuleSystem, SlotRegistry, DynamicCordisPackageRunner, CordisRunOrchestrator },
+      modules: { ClientModuleSystem, uiRenderer, DynamicCordisPackageRunner, CordisRunOrchestrator },
     }
   } catch (error) {
     Reflect.deleteProperty(moduleWindow, '__ModuleLoader__')
     throw error
   }
 }
+
+/** Gate late network responses and wait until all accepted work has settled. */
+class ClientLifecycle {
+  #closed = false
+  #approvalRequests = new Set<string>()
+  readonly #pending = new Set<Promise<unknown>>()
+
+  assertActive(): void {
+    if (this.#closed) throw new Error('DSH Client Runtime is disposed.')
+  }
+
+  setInventory(rows: readonly DynamicInventoryRow[]): void {
+    this.#approvalRequests = new Set(
+      rows.flatMap((row) => (row.latestRun?.approvalRequestId ? [row.latestRun.approvalRequestId] : [])),
+    )
+  }
+
+  hasApproval(requestId: string): boolean {
+    return this.#approvalRequests.has(requestId)
+  }
+
+  run<T>(operation: () => Promise<T>, current: () => boolean = () => true): Promise<T> {
+    const pending = Promise.resolve().then(async () => {
+      this.assertActive()
+      if (!current()) throw new Error('动态审批已失效。')
+      const result = await operation()
+      this.assertActive()
+      if (!current()) throw new Error('动态审批已失效。')
+      return result
+    })
+    this.#pending.add(pending)
+    void pending.then(
+      () => this.#pending.delete(pending),
+      () => this.#pending.delete(pending),
+    )
+    return pending
+  }
+
+  close(): void {
+    this.#closed = true
+  }
+
+  async drain(): Promise<void> {
+    while (this.#pending.size > 0) await Promise.allSettled([...this.#pending])
+  }
+}
+
+const scopedHost = (host: DynamicClientHostPort, lifecycle: ClientLifecycle): DynamicClientHostPort => ({
+  runHostHalf: (...args) =>
+    lifecycle.run(
+      () => host.runHostHalf(...args),
+      () => args[4] === null || lifecycle.hasApproval(args[4]),
+    ),
+  getClientCode: (...args) => lifecycle.run(() => host.getClientCode(...args)),
+  resolveRequestRun: (...args) =>
+    lifecycle.run(
+      () => host.resolveRequestRun(...args),
+      () => lifecycle.hasApproval(args[0]),
+    ),
+  settleUserRun: (...args) => lifecycle.run(() => host.settleUserRun(...args)),
+  invoke: (...args) => lifecycle.run(() => host.invoke(...args)),
+  reportRenderFailure: (...args) => lifecycle.run(() => host.reportRenderFailure(...args)),
+  reportGuardFailure: (...args) => lifecycle.run(() => host.reportGuardFailure(...args)),
+  reportClientVerification: (...args) => lifecycle.run(() => host.reportClientVerification(...args)),
+})
 
 /** Single browser owner for NekroNXT dynamic Client Packages. */
 export class DshClientRuntime {
@@ -622,6 +655,10 @@ export class DshClientRuntime {
   readonly #agentByPlugin = new Map<string, string>()
   readonly #pluginByApprovalRequest = new Map<string, string>()
   #disposed = false
+  #disposePromise: Promise<void> | undefined
+  #queue: Promise<void> = Promise.resolve()
+  #inventoryRevision = 0
+  readonly #lifecycle: ClientLifecycle
 
   private constructor(
     dynamicContext: Context,
@@ -632,6 +669,7 @@ export class DshClientRuntime {
     unsubscribeHostEvents: () => void,
     host: DynamicClientHostPort,
     moduleLoader: ClientModuleRegistrationTarget,
+    lifecycle: ClientLifecycle,
   ) {
     this.#dynamicContext = dynamicContext
     this.slots = slots
@@ -641,6 +679,7 @@ export class DshClientRuntime {
     this.#unsubscribeHostEvents = unsubscribeHostEvents
     this.#host = host
     this.#moduleLoader = moduleLoader
+    this.#lifecycle = lifecycle
   }
 
   static async create(
@@ -650,10 +689,12 @@ export class DshClientRuntime {
   ): Promise<DshClientRuntime> {
     const { modules, moduleSystem, moduleLoader } = await loadDynamicClientModules(documentValue)
     const dynamicContext = new Context()
+    const lifecycle = new ClientLifecycle()
+    host = scopedHost(host, lifecycle)
+    let createdRunner: DynamicPackageRunnerFace | undefined
     let unsubscribeHostEvents: (() => void) | undefined
     try {
       const dynamicLoader = new BrowserDynamicLoader(dynamicContext, moduleSystem)
-      installSlotRendererShellFeeds(dynamicContext)
       await dynamicContext.plugin(DynamicHostPagesRegistry)
       const pagesValue: unknown = dynamicContext.get('pages')
       if (!(pagesValue instanceof DynamicHostPagesRegistry)) throw new Error('Dynamic Host pages Service 未挂载。')
@@ -663,13 +704,11 @@ export class DshClientRuntime {
       const connection = createDshConnectionBridge()
       dynamicContext.reflect.provide('connection', connection)
       dynamicContext.reflect.provide('remote', remote)
-      await dynamicContext.plugin(modules.SlotRegistry)
+      await dynamicContext.plugin(modules.uiRenderer)
       const slots = requireSlotRegistry(dynamicContext.get('slots'), 'DSH Dynamic SlotRegistry')
-      slots.install(createSlotRenderer())
-      // The official renderer requires a stable shell-owned root registration.
-      // Dynamic root entries receive negative priorities and temporarily win;
-      // this null shell entry prevents a transient empty-root crash while a
-      // retraction notification propagates through React.
+      // Apply installs only the renderer and registry. NXT owns the React root:
+      // never call uiRenderer.mount(), which would assemble DSH's native WebUI.
+      // Declare only NXT product slots beneath this private composition root.
       slots.register(
         {
           name: 'root',
@@ -696,13 +735,25 @@ export class DshClientRuntime {
         slots,
         invoke: (pluginId, pluginRunId, method, args) => host.invoke(pluginId, pluginRunId, method, args),
         reportRenderFailure: (agentId, pluginId, pluginRunId, failure) => {
-          void host.reportRenderFailure(agentId, pluginId, pluginRunId, failure)
+          void host.reportRenderFailure(agentId, pluginId, pluginRunId, failure).catch(() => undefined)
         },
         reportGuardFailure: (agentId, pluginId, pluginRunId, failure) => {
-          void host.reportGuardFailure(agentId, pluginId, pluginRunId, failure)
+          void host.reportGuardFailure(agentId, pluginId, pluginRunId, failure).catch(() => undefined)
         },
       })
-      const orchestrator = new modules.CordisRunOrchestrator({ runner, host })
+      createdRunner = runner
+      const orchestrator = new modules.CordisRunOrchestrator({
+        host,
+        runner: {
+          renderFailures: runner.renderFailures,
+          load: (half) => lifecycle.run(() => runner.load(half)),
+          retract: (pluginId, pluginRunId) => runner.retract(pluginId, pluginRunId),
+          subscribe: (listener) => runner.subscribe(listener),
+          getSnapshot: () => runner.getSnapshot(),
+          isLoaded: (pluginId) => runner.isLoaded(pluginId),
+          dispose: () => runner.dispose(),
+        },
+      })
       unsubscribeHostEvents = events.subscribe({
         'dsh-settings-changed': (event) => {
           if (!(event instanceof MessageEvent) || typeof event.data !== 'string') return
@@ -724,10 +775,17 @@ export class DshClientRuntime {
         unsubscribeHostEvents,
         host,
         moduleLoader,
+        lifecycle,
       )
     } catch (error) {
+      lifecycle.close()
       unsubscribeHostEvents?.()
-      await dynamicContext.fiber.dispose()
+      await lifecycle.drain()
+      try {
+        await createdRunner?.dispose()
+      } finally {
+        await dynamicContext.fiber.dispose()
+      }
       if (Reflect.get(globalThis, '__ModuleLoader__') === moduleLoader) {
         Reflect.deleteProperty(globalThis, '__ModuleLoader__')
       }
@@ -735,8 +793,15 @@ export class DshClientRuntime {
     }
   }
 
-  async reconcile(rows: readonly DynamicInventoryRow[]): Promise<void> {
+  reconcile(rows: readonly DynamicInventoryRow[]): Promise<void> {
+    const revision = ++this.#inventoryRevision
+    this.#lifecycle.setInventory(rows)
+    return this.#enqueue(() => this.#reconcile(rows, revision))
+  }
+
+  async #reconcile(rows: readonly DynamicInventoryRow[], revision: number): Promise<void> {
     this.#assertActive()
+    if (revision !== this.#inventoryRevision) return
     this.#agentByPlugin.clear()
     this.#pluginByApprovalRequest.clear()
     for (const row of rows) {
@@ -765,6 +830,8 @@ export class DshClientRuntime {
       }
     }
     await Promise.all(retractions)
+    this.#assertActive()
+    if (revision !== this.#inventoryRevision) return
     for (const row of rows) {
       const activeRun = row.activeRun
       if (activeRun === undefined || this.#runner.isLoaded(row.pluginId)) continue
@@ -774,6 +841,7 @@ export class DshClientRuntime {
       }
       if (!activePackage.hasClientHalf) continue
       const source = await this.#host.getClientCode(row.agentId, row.pluginId, activeRun.pluginRunId)
+      if (revision !== this.#inventoryRevision) return
       if (
         source.pluginId !== row.pluginId ||
         source.packageId !== activeRun.packageId ||
@@ -800,18 +868,22 @@ export class DshClientRuntime {
     await this.#rejectUnsupportedSlots()
   }
 
-  async approve(requestId: string, approveFutureVersions = false): Promise<void> {
+  approve(requestId: string, approveFutureVersions = false): Promise<void> {
+    return this.#enqueue(() => this.#approve(requestId, approveFutureVersions))
+  }
+
+  async #approve(requestId: string, approveFutureVersions: boolean): Promise<void> {
     this.#assertActive()
     const pluginId = this.#pluginByApprovalRequest.get(requestId)
     await this.#orchestrator.approve(requireApprovalRequestId(requestId), approveFutureVersions)
+    this.#assertActive()
     await this.#rejectUnsupportedSlots()
     const failure = pluginId === undefined ? undefined : this.#orchestrator.lastRunError.getSnapshot().get(pluginId)
     if (failure) throw new Error(failure.message ?? `动态 Client ${failure.reason}。`)
   }
 
   decline(requestId: string): Promise<void> {
-    this.#assertActive()
-    return this.#orchestrator.decline(requireApprovalRequestId(requestId))
+    return this.#enqueue(() => this.#orchestrator.decline(requireApprovalRequestId(requestId)))
   }
 
   loaded(): readonly DynamicCordisLivePackage[] {
@@ -865,16 +937,35 @@ export class DshClientRuntime {
     return this.slots.renderSlot('root', { agentId, displayName })
   }
 
-  async dispose(): Promise<void> {
-    if (this.#disposed) return
+  dispose(): Promise<void> {
+    if (this.#disposePromise) return this.#disposePromise
     this.#disposed = true
+    this.#lifecycle.close()
     this.#unsubscribeHostEvents()
+    this.#disposePromise = this.#dispose()
+    return this.#disposePromise
+  }
+
+  async #dispose(): Promise<void> {
+    await this.#queue.catch(() => undefined)
+    await this.#lifecycle.drain()
+    try {
+      await this.#runner.dispose()
+    } finally {
+      this.pages.clear()
+      await this.#dynamicContext.fiber.dispose()
+    }
+    // Keep ownership until resources are quiet. A failed teardown must not
+    // allow a second runtime to reuse a still-live module loader.
     if (Reflect.get(globalThis, '__ModuleLoader__') === this.#moduleLoader) {
       Reflect.deleteProperty(globalThis, '__ModuleLoader__')
     }
-    await this.#runner.dispose()
-    this.pages.clear()
-    await this.#dynamicContext.fiber.dispose()
+  }
+
+  #enqueue(operation: () => Promise<void>): Promise<void> {
+    const next = this.#queue.then(() => this.#lifecycle.run(operation))
+    this.#queue = next.catch(() => undefined)
+    return next
   }
 
   #assertActive(): void {

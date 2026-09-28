@@ -1,6 +1,6 @@
 import { SessionId } from '@deepseek-ai/dsh-session'
 import { preflightNekroNxtDynamicSource } from '../src/dynamic-authoring-runtime.js'
-import { LlmAdapter, CallId, type GenerateOptions, type StreamChunk } from '@deepseek-ai/dsh-llm'
+import { LlmAdapter, ToolCallId, type GenerateOptions, type StreamChunk } from '@deepseek-ai/dsh-llm'
 import { getOrCreateAnonymousUserId } from '@deepseek-ai/dsh-anonymous-user-id'
 import {
   DeepSeekAdapter,
@@ -12,6 +12,7 @@ import { Context } from '@deepseek-ai/cordis'
 import { AttachmentId } from '@deepseek-ai/dsh-attachment'
 import ToolResultPruner from '@deepseek-ai/dsh-compaction-tool-result-pruner'
 import TokenMeter from '@deepseek-ai/dsh-token-meter'
+import SessionProjections from '@deepseek-ai/dsh-session-projection'
 import { createFakeLocalChannelConnection } from '@nekro-nxt/test-harness'
 import { ChannelRuntime } from '@nekro-nxt/channel-runtime'
 import { AssetService, CoreService, type AssetRecord } from '@nekro-nxt/core'
@@ -48,6 +49,14 @@ import {
 } from '../src/index.ts'
 import { projectChannelRuntime } from '../src/channel-runtime-projection.ts'
 
+const systemText = (options: GenerateOptions | undefined): string =>
+  options?.messages
+    .filter((message) => message.role === 'system')
+    .flatMap((message) => message.content)
+    .filter((block) => block.type === 'text')
+    .map((block) => block.text)
+    .join('\n') ?? ''
+
 const temporaryDirectories: string[] = []
 
 const DeepSeekWireRequestSchema = z.object({
@@ -56,7 +65,7 @@ const DeepSeekWireRequestSchema = z.object({
 
 const isDeepSeekWireImagePart = (part: unknown): boolean => {
   if (typeof part !== 'object' || part === null || !('type' in part)) return false
-  return part.type === 'file' || part.type === 'image_url'
+  return part.type === 'image'
 }
 
 afterEach(async () => {
@@ -110,7 +119,7 @@ class ScriptedCommunicationModel extends LlmAdapter {
       yield { type: 'finish', reason: { kind: 'stop' } }
       return
     }
-    if (options.system?.startsWith('你是对话交接摘要器')) {
+    if (systemText(options).startsWith('你是对话交接摘要器')) {
       yield { type: 'block-start', index: 0, blockType: 'text' }
       yield { type: 'text-delta', index: 0, text: '用户希望继续当前频道任务，并保持简洁准确。' }
       yield {
@@ -122,18 +131,16 @@ class ScriptedCommunicationModel extends LlmAdapter {
       yield { type: 'finish', reason: { kind: 'stop' } }
       return
     }
-    const hasToolResult = options.messages.some((message) =>
-      message.content.some((block) => block.type === 'tool-result'),
-    )
+    const hasToolResult = options.messages.some((message) => message.role === 'tool')
     if (!hasToolResult) {
-      const contextCallId = CallId('scripted-channel-context')
+      const contextCallId = ToolCallId('scripted-channel-context')
       const contextToolCall = {
         type: 'tool-call' as const,
         id: contextCallId,
         name: 'nekro_nxt_channel_context',
         arguments: '{}',
       }
-      const sendCallId = CallId('scripted-send-message')
+      const sendCallId = ToolCallId('scripted-send-message')
       const sendToolCall = {
         type: 'tool-call' as const,
         id: sendCallId,
@@ -202,14 +209,14 @@ class ReplyGuardThenSendModel extends ScriptedCommunicationModel {
   override async *stream(options: GenerateOptions): AsyncIterable<StreamChunk> {
     await Promise.resolve()
     this.calls.push(options)
-    const hasGuardReminder = options.messages.some((message) => message.source.kind === 'nekro-nxt-channel-reply-guard')
-    const hasSendResult = options.messages.some((message) =>
-      message.content.some(
-        (block) => block.type === 'tool-result' && block.toolCallId === CallId('guard-recovery-send'),
-      ),
+    const hasGuardReminder = options.messages.some(
+      (message) => message.source?.kind === 'nekro-nxt-channel-reply-guard',
+    )
+    const hasSendResult = options.messages.some(
+      (message) => message.role === 'tool' && message.toolCallId === ToolCallId('guard-recovery-send'),
     )
     if (hasGuardReminder && !hasSendResult) {
-      const callId = CallId('guard-recovery-send')
+      const callId = ToolCallId('guard-recovery-send')
       const toolCall = {
         type: 'tool-call' as const,
         id: callId,
@@ -260,22 +267,20 @@ class FinishChannelTurnModel extends ScriptedCommunicationModel {
     await Promise.resolve()
     this.calls.push(options)
     const hasResult = (callId: string): boolean =>
-      options.messages.some((message) =>
-        message.content.some((block) => block.type === 'tool-result' && String(block.toolCallId) === callId),
-      )
-    let callId: ReturnType<typeof CallId>
+      options.messages.some((message) => message.role === 'tool' && String(message.toolCallId) === callId)
+    let callId: ReturnType<typeof ToolCallId>
     let name: string
     let argumentsText: string
     if (this.sendUnknownFirst && !hasResult('finish-unknown-send')) {
-      callId = CallId('finish-unknown-send')
+      callId = ToolCallId('finish-unknown-send')
       name = 'send_channel_message'
       argumentsText = JSON.stringify({ target: { type: 'current' }, parts: [{ text: '投递状态未知。' }] })
     } else if (this.invalidFirst && !hasResult('finish-invalid')) {
-      callId = CallId('finish-invalid')
+      callId = ToolCallId('finish-invalid')
       name = 'finish_channel_turn'
       argumentsText = JSON.stringify({ outcome: 'no-response-needed', reason: '   ' })
     } else {
-      callId = CallId('finish-valid')
+      callId = ToolCallId('finish-valid')
       name = 'finish_channel_turn'
       argumentsText = JSON.stringify({ outcome: 'no-response-needed', reason: '测试场景明确保持静默。' })
     }
@@ -310,12 +315,10 @@ class LateRequiredAdmissionModel extends ScriptedCommunicationModel {
   override async *stream(options: GenerateOptions): AsyncIterable<StreamChunk> {
     this.calls.push(options)
     const hasResult = (callId: string): boolean =>
-      options.messages.some((message) =>
-        message.content.some((block) => block.type === 'tool-result' && String(block.toolCallId) === callId),
-      )
-    const hasGuard = options.messages.some((message) => message.source.kind === 'nekro-nxt-channel-reply-guard')
+      options.messages.some((message) => message.role === 'tool' && String(message.toolCallId) === callId)
+    const hasGuard = options.messages.some((message) => message.source?.kind === 'nekro-nxt-channel-reply-guard')
     const send = (callIdText: string, text: string) => {
-      const id = CallId(callIdText)
+      const id = ToolCallId(callIdText)
       const argumentsText = JSON.stringify({ target: { type: 'current' }, parts: [{ text }] })
       return {
         id,
@@ -368,26 +371,24 @@ class MultiStageCommunicationModel extends ScriptedCommunicationModel {
     await Promise.resolve()
     this.calls.push(options)
     const hasResult = (callId: string): boolean =>
-      options.messages.some((message) =>
-        message.content.some((block) => block.type === 'tool-result' && String(block.toolCallId) === callId),
-      )
-    let callId: ReturnType<typeof CallId> | undefined
+      options.messages.some((message) => message.role === 'tool' && String(message.toolCallId) === callId)
+    let callId: ReturnType<typeof ToolCallId> | undefined
     let name = ''
     let argumentsText = ''
     if (!hasResult('multi-stage-opening')) {
-      callId = CallId('multi-stage-opening')
+      callId = ToolCallId('multi-stage-opening')
       name = 'send_channel_message'
       argumentsText = JSON.stringify({ target: { type: 'current' }, parts: [{ text: '我已经开始处理。' }] })
     } else if (!hasResult('multi-stage-context')) {
-      callId = CallId('multi-stage-context')
+      callId = ToolCallId('multi-stage-context')
       name = 'nekro_nxt_channel_context'
       argumentsText = '{}'
     } else if (!hasResult('multi-stage-progress')) {
-      callId = CallId('multi-stage-progress')
+      callId = ToolCallId('multi-stage-progress')
       name = 'send_channel_message'
       argumentsText = JSON.stringify({ target: { type: 'current' }, parts: [{ text: '已经确认当前频道。' }] })
     } else if (!hasResult('multi-stage-final')) {
-      callId = CallId('multi-stage-final')
+      callId = ToolCallId('multi-stage-final')
       name = 'send_channel_message'
       argumentsText = JSON.stringify({ target: { type: 'current' }, parts: [{ text: '处理完成。' }] })
     }
@@ -419,14 +420,14 @@ class FinalOnlyCommunicationModel extends ScriptedCommunicationModel {
   override async *stream(options: GenerateOptions): AsyncIterable<StreamChunk> {
     await Promise.resolve()
     this.calls.push(options)
-    if (!options.system?.includes(this.expectedPersonaText)) {
+    if (!systemText(options).includes(this.expectedPersonaText)) {
       throw new Error(`Expected persona text was not present: ${this.expectedPersonaText}`)
     }
-    const hasResult = options.messages.some((message) =>
-      message.content.some((block) => block.type === 'tool-result' && String(block.toolCallId) === this.callId),
+    const hasResult = options.messages.some(
+      (message) => message.role === 'tool' && String(message.toolCallId) === this.callId,
     )
     if (!hasResult) {
-      const callId = CallId(this.callId)
+      const callId = ToolCallId(this.callId)
       const argumentsText = JSON.stringify({
         target: { type: 'current' },
         parts: [{ text: this.visibleText }],
@@ -469,11 +470,9 @@ class TextAssetReadProbeModel extends ScriptedCommunicationModel {
     await Promise.resolve()
     this.calls.push(options)
     const hasResult = (callId: string): boolean =>
-      options.messages.some((message) =>
-        message.content.some((block) => block.type === 'tool-result' && String(block.toolCallId) === callId),
-      )
+      options.messages.some((message) => message.role === 'tool' && String(message.toolCallId) === callId)
     if (!hasResult('scripted-asset-read-text')) {
-      const callId = CallId('scripted-asset-read-text')
+      const callId = ToolCallId('scripted-asset-read-text')
       const toolCall = {
         type: 'tool-call' as const,
         id: callId,
@@ -497,7 +496,7 @@ class TextAssetReadProbeModel extends ScriptedCommunicationModel {
       if (!toolResultText.includes(this.expectedSnippet)) {
         throw new Error(`asset_read_text result did not contain expected snippet: ${this.expectedSnippet}`)
       }
-      const callId = CallId('scripted-text-file-response')
+      const callId = ToolCallId('scripted-text-file-response')
       const toolCall = {
         type: 'tool-call' as const,
         id: callId,
@@ -535,15 +534,13 @@ class ImageInspectionProbeModel extends ScriptedCommunicationModel {
   override async *stream(options: GenerateOptions): AsyncIterable<StreamChunk> {
     await Promise.resolve()
     this.calls.push(options)
-    const hasInspectionResult = options.messages.some((message) =>
-      message.content.some(
-        (block) =>
-          block.type === 'tool-result' &&
-          block.content.some((child) => child.type === 'text' && child.text.includes('批量图片问题')),
-      ),
+    const hasInspectionResult = options.messages.some(
+      (message) =>
+        message.role === 'tool' &&
+        message.content.some((block) => block.type === 'text' && block.text.includes('批量图片问题')),
     )
     if (!hasInspectionResult) {
-      const callId = CallId('scripted-image-inspection')
+      const callId = ToolCallId('scripted-image-inspection')
       const toolCall = {
         type: 'tool-call' as const,
         id: callId,
@@ -585,7 +582,7 @@ class TextInspectionProbeModel extends ScriptedCommunicationModel {
     await Promise.resolve()
     this.calls.push(options)
     if (this.calls.length % 2 === 1) {
-      const callId = CallId('scripted-delegated-image-inspection')
+      const callId = ToolCallId('scripted-delegated-image-inspection')
       const toolCall = {
         type: 'tool-call' as const,
         id: callId,
@@ -655,7 +652,7 @@ class InvalidImageInspectionProbeModel extends ScriptedCommunicationModel {
     this.calls.push(options)
     if (this.calls.length % 2 === 1) {
       const invocation = Math.floor((this.calls.length - 1) / 2)
-      const callId = CallId(`invalid-image-inspection-${invocation}`)
+      const callId = ToolCallId(`invalid-image-inspection-${invocation}`)
       const toolCall = {
         type: 'tool-call' as const,
         id: callId,
@@ -880,7 +877,7 @@ describe('DSH Host and internal Channel vertical slice', () => {
         producedReply: false,
       })
       const invalidResult = invalidThenFinished.events.find((event) => event.type === 'tool/result')
-      expect(invalidResult?.type === 'tool/result' ? invalidResult.data.message.content[0] : undefined).toMatchObject({
+      expect(invalidResult?.type === 'tool/result' ? invalidResult.data.message : undefined).toMatchObject({
         isError: true,
       })
       expect(invalidThenFinished.events.filter((event) => event.type === 'step/start')).toHaveLength(2)
@@ -1149,6 +1146,7 @@ describe('DSH Host and internal Channel vertical slice', () => {
   it('keeps ImageBlock entries when the rc.2 tool-result pruner trims long text', async () => {
     const context = new Context()
     try {
+      await context.plugin(SessionProjections)
       await context.plugin(TokenMeter)
       await context.plugin(ToolResultPruner, { thresholdChars: 120, headChars: 30, tailChars: 30 })
       const image = {
@@ -1233,6 +1231,8 @@ describe('DSH Host and internal Channel vertical slice', () => {
       const firstHost = await createHost()
       hosts.push(firstHost)
       const sessionId = await firstHost.createSession(sessionInput)
+      await firstHost.dispose()
+      hosts.pop()
 
       const resumedHost = await createHost()
       hosts.push(resumedHost)
@@ -1247,6 +1247,8 @@ describe('DSH Host and internal Channel vertical slice', () => {
       })
       expect(resumedHost.findAdmissionMessage(sessionId, admissionId)).toBe(`nxt-${admissionId}`)
 
+      await resumedHost.dispose()
+      hosts.pop()
       const secondResume = await createHost()
       hosts.push(secondResume)
       await expect(secondResume.createSession(sessionInput)).resolves.toBe(sessionId)
@@ -2204,13 +2206,13 @@ describe('DSH Host and internal Channel vertical slice', () => {
         'nekro_nxt_channel_context',
         'send_channel_message',
       ])
-      expect(model.calls[0]?.system).toContain(channel.id)
-      expect(model.calls[0]?.system).toContain('主测试频道')
-      expect(model.calls[0]?.system).toContain('普通 text 或 reasoning 只会作为内部运行轨迹保存')
-      expect(model.calls[0]?.system).toContain('一次 send_channel_message 不会结束当前 Turn')
-      expect(model.calls[0]?.system).toContain('更早的发送不能覆盖后来注入的新请求')
-      expect(model.calls[0]?.system).toContain('通常适合先简短说明你理解的任务和马上要做的事')
-      expect(model.calls[0]?.system).toContain('沟通篇幅和频率应结合当前智能体人设')
+      expect(systemText(model.calls[0])).toContain(channel.id)
+      expect(systemText(model.calls[0])).toContain('主测试频道')
+      expect(systemText(model.calls[0])).toContain('普通 text 或 reasoning 只会作为内部运行轨迹保存')
+      expect(systemText(model.calls[0])).toContain('一次 send_channel_message 不会结束当前 Turn')
+      expect(systemText(model.calls[0])).toContain('更早的发送不能覆盖后来注入的新请求')
+      expect(systemText(model.calls[0])).toContain('通常适合先简短说明你理解的任务和马上要做的事')
+      expect(systemText(model.calls[0])).toContain('沟通篇幅和频率应结合当前智能体人设')
       expect(model.calls[0]?.tools?.find(({ name }) => name === 'send_channel_message')?.description).toContain(
         '可在同一 Turn 中多次调用',
       )
@@ -2581,11 +2583,9 @@ describe('DSH Host and internal Channel vertical slice', () => {
       expect(after).toBeGreaterThan(image)
       expect(model.calls[0]?.tools?.map(({ name }) => name)).toContain('asset_inspect_images')
       expect(model.calls[0]?.tools?.map(({ name }) => name)).not.toContain('asset_view_image')
-      const inspectionResult = model.calls[1]?.messages
-        .flatMap((message) => message.content)
-        .find((block) => block.type === 'tool-result')
-      expect(inspectionResult?.type).toBe('tool-result')
-      if (inspectionResult?.type === 'tool-result') {
+      const inspectionResult = model.calls[1]?.messages.find((message) => message.role === 'tool')
+      expect(inspectionResult?.role).toBe('tool')
+      if (inspectionResult?.role === 'tool') {
         expect(inspectionResult.content.filter((block) => block.type === 'image')).toHaveLength(2)
         expect(inspectionResult.content.map((block) => block.type)).toEqual(['text', 'text', 'image', 'text', 'image'])
         expect(inspectionResult.content[0]).toMatchObject({ type: 'text', text: '批量图片问题：比较两张图片' })
@@ -2661,61 +2661,61 @@ describe('DSH Host and internal Channel vertical slice', () => {
           request.once('end', resolve)
           request.once('error', reject)
         })
-        if (request.url === '/files') {
+        if (request.url === '/v1/files') {
           response.writeHead(500, { 'content-type': 'application/json' })
           response.end(JSON.stringify({ error: { message: 'synthetic Files API fallback' } }))
           return
         }
-        if (request.url !== '/chat/completions') {
+        if (request.url !== '/v1/messages') {
           response.writeHead(404)
           response.end()
           return
         }
         const body = DeepSeekWireRequestSchema.parse(JSON.parse(Buffer.concat(chunks).toString('utf8')))
         chatBodies.push(body)
-        const payloads =
-          chatBodies.length === 1
-            ? [
-                {
-                  choices: [
-                    {
-                      delta: {
-                        tool_calls: [
-                          {
-                            index: 0,
-                            id: 'deepseek-image-call',
-                            type: 'function',
-                            function: {
-                              name: 'asset_inspect_images',
-                              arguments: JSON.stringify({
-                                images: prepared.map((asset, index) => ({
-                                  assetId: asset.id,
-                                  focus: `关注第 ${index + 1} 张`,
-                                })),
-                                question: '比较四张图片',
-                              }),
-                            },
-                          },
-                        ],
-                      },
-                      finish_reason: null,
-                    },
-                  ],
-                },
-                {
-                  choices: [{ delta: {}, finish_reason: 'tool_calls' }],
-                  usage: { prompt_tokens: 32, completion_tokens: 8 },
-                },
-              ]
-            : [
-                { choices: [{ delta: { content: '多图协议检查完成。' }, finish_reason: null }] },
-                {
-                  choices: [{ delta: {}, finish_reason: 'stop' }],
-                  usage: { prompt_tokens: 48, completion_tokens: 8 },
-                },
-              ]
+        const toolUse = chatBodies.length === 1
+        const payloads = [
+          {
+            type: 'message_start',
+            message: {
+              id: `synthetic-${chatBodies.length}`,
+              type: 'message',
+              role: 'assistant',
+              model: 'vision-model',
+              content: [],
+              usage: { input_tokens: toolUse ? 32 : 48, output_tokens: 0 },
+            },
+          },
+          {
+            type: 'content_block_start',
+            index: 0,
+            content_block: toolUse
+              ? { type: 'tool_use', id: 'deepseek-image-call', name: 'asset_inspect_images', input: {} }
+              : { type: 'text', text: '' },
+          },
+          {
+            type: 'content_block_delta',
+            index: 0,
+            delta: toolUse
+              ? {
+                  type: 'input_json_delta',
+                  partial_json: JSON.stringify({
+                    images: prepared.map((asset, index) => ({ assetId: asset.id, focus: `关注第 ${index + 1} 张` })),
+                    question: '比较四张图片',
+                  }),
+                }
+              : { type: 'text_delta', text: '多图协议检查完成。' },
+          },
+          { type: 'content_block_stop', index: 0 },
+          {
+            type: 'message_delta',
+            delta: { stop_reason: toolUse ? 'tool_use' : 'end_turn' },
+            usage: { output_tokens: 8 },
+          },
+          { type: 'message_stop' },
+        ]
         response.writeHead(200, { 'content-type': 'text/event-stream' })
-        response.end(`${payloads.map((payload) => `data: ${JSON.stringify(payload)}\n\n`).join('')}data: [DONE]\n\n`)
+        response.end(payloads.map((payload) => `event: ${payload.type}\ndata: ${JSON.stringify(payload)}\n\n`).join(''))
       })().catch((cause: unknown) => {
         response.destroy(cause instanceof Error ? cause : new Error(String(cause)))
       })
@@ -2754,7 +2754,8 @@ describe('DSH Host and internal Channel vertical slice', () => {
         })
         const adapter = new DeepSeekAdapter({
           options: () => resolved,
-          resolveApiKey: () => Promise.resolve('sk-synthetic-api-key'),
+          resolveAuth: () => Promise.resolve({ headers: { 'x-api-key': 'sk-synthetic-api-key' } }),
+          prepareExtensions: () => Promise.resolve({ fields: {}, accept: () => Promise.resolve() }),
           resolveUserId: () => getOrCreateAnonymousUserId({ env: { DSH_HOME: directory } }),
           resolveAttachments: () => context.attachments,
           resolveFiles: () =>
@@ -2796,14 +2797,53 @@ describe('DSH Host and internal Channel vertical slice', () => {
       expect(
         Array.isArray(firstMultimodal?.content) ? firstMultimodal.content.filter(isDeepSeekWireImagePart) : [],
       ).toHaveLength(2)
-      const toolIndex = chatBodies[1]!.messages.findIndex((message) => message.role === 'tool')
-      expect(toolIndex).toBeGreaterThanOrEqual(0)
-      const toolImages = chatBodies[1]!.messages
-        .slice(toolIndex + 1)
-        .find((message) => Array.isArray(message.content) && message.content.some(isDeepSeekWireImagePart))
-      expect(Array.isArray(toolImages?.content) ? toolImages.content.filter(isDeepSeekWireImagePart) : []).toHaveLength(
-        2,
+      const toolMessage = chatBodies[1]!.messages.find(
+        (message) =>
+          message.role === 'user' &&
+          Array.isArray(message.content) &&
+          message.content.some(
+            (block: unknown) =>
+              typeof block === 'object' && block !== null && 'type' in block && block.type === 'tool_result',
+          ),
       )
+      const toolResults = z
+        .array(
+          z
+            .object({ type: z.string(), tool_use_id: z.string().optional(), content: z.unknown().optional() })
+            .passthrough(),
+        )
+        .parse(toolMessage?.content)
+      const toolResult = toolResults.find((block) => block.type === 'tool_result')
+      expect(toolResult?.tool_use_id).toBe('deepseek-image-call')
+      const toolContent = z.array(z.object({ type: z.string() }).passthrough()).parse(toolResult?.content)
+      expect(toolContent.filter(isDeepSeekWireImagePart)).toHaveLength(2)
+      const toolImages = z
+        .array(
+          z.object({
+            source: z.object({
+              type: z.literal('base64'),
+              media_type: z.literal('image/png'),
+              data: z.string().min(1),
+            }),
+          }),
+        )
+        .parse(toolContent.filter(isDeepSeekWireImagePart))
+      for (const [index, image] of toolImages.entries()) {
+        const metadata = await sharp(Buffer.from(image.source.data, 'base64')).metadata()
+        expect(metadata.width).toBe(index + 3)
+        expect(metadata.height).toBe(1)
+      }
+      expect(toolContent.map((block) => block.type)).toEqual([
+        'text',
+        'text',
+        'text',
+        'text',
+        'text',
+        'image',
+        'text',
+        'text',
+        'image',
+      ])
       expect(JSON.stringify(chatBodies[2])).toContain('finish_channel_turn')
       expect(JSON.stringify(chatBodies[3])).toContain('finish_channel_turn')
       expect(
@@ -2938,17 +2978,15 @@ describe('DSH Host and internal Channel vertical slice', () => {
         'asset-forbidden',
         'asset-not-image',
       ])
-      const errorResults = events.filter(
-        (event) => event.type === 'tool/result' && event.data.message.content[0]?.type === 'tool-result',
-      )
+      const errorResults = events.filter((event) => event.type === 'tool/result' && event.data.message.role === 'tool')
       expect(errorResults).toHaveLength(7)
       expect(
         errorResults.every(
           (event) =>
             event.type === 'tool/result' &&
-            event.data.message.content[0]?.type === 'tool-result' &&
-            event.data.message.content[0].isError === true &&
-            event.data.message.content[0].content.every((block) => block.type !== 'image'),
+            event.data.message.role === 'tool' &&
+            event.data.message.isError === true &&
+            event.data.message.content.every((block) => block.type !== 'image'),
         ),
       ).toBe(true)
     } finally {
@@ -3046,11 +3084,9 @@ describe('DSH Host and internal Channel vertical slice', () => {
       expect(
         auxiliary.calls[0]?.messages.flatMap((message) => message.content).filter((block) => block.type === 'image'),
       ).toHaveLength(1)
-      const result = primary.calls[1]?.messages
-        .flatMap((message) => message.content)
-        .find((block) => block.type === 'tool-result')
-      expect(result?.type).toBe('tool-result')
-      if (result?.type === 'tool-result') {
+      const result = primary.calls[1]?.messages.find((message) => message.role === 'tool')
+      expect(result?.role).toBe('tool')
+      if (result?.role === 'tool') {
         expect(result.content.every((block) => block.type === 'text')).toBe(true)
         expect(result.content[0]).toMatchObject({ type: 'text' })
         expect(result.content[0]?.type === 'text' ? JSON.parse(result.content[0].text) : null).toMatchObject({
@@ -3066,12 +3102,9 @@ describe('DSH Host and internal Channel vertical slice', () => {
       })
       await host.whenIdle(episode.dshSessionId!)
       expect(auxiliary.calls).toHaveLength(1)
-      const cachedResult = primary.calls[3]?.messages
-        .flatMap((message) => message.content)
-        .filter((block) => block.type === 'tool-result')
-        .at(-1)
-      expect(cachedResult?.type).toBe('tool-result')
-      if (cachedResult?.type === 'tool-result') {
+      const cachedResult = primary.calls[3]?.messages.filter((message) => message.role === 'tool').at(-1)
+      expect(cachedResult?.role).toBe('tool')
+      if (cachedResult?.role === 'tool') {
         const text = cachedResult.content.find((block) => block.type === 'text')
         expect(text?.type === 'text' ? JSON.parse(text.text) : null).toMatchObject({
           mode: 'delegated',

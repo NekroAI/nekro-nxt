@@ -1,4 +1,5 @@
 import { z } from 'zod'
+import { HostUpgradeSummarySchema, RuntimeCompatibilityDiagnosticSchema } from './runtime-compatibility.js'
 import {
   AgentIdSchema,
   AgentRevisionIdSchema,
@@ -732,6 +733,7 @@ export const HostSyncCursorSchema = z
 
 export const HostSnapshotSchema = z
   .object({
+    upgrade: HostUpgradeSummarySchema.optional(),
     cursor: HostSyncCursorSchema,
     diagnosticsSampledAt: z.number().int().nonnegative(),
     productMetadata: z
@@ -1524,6 +1526,17 @@ const encodeBinaryUpload = (input: z.output<typeof BinaryUploadRequestSchema>) =
 })
 
 export const HostApiContracts = {
+  retryRuntimeCompatibility: defineContract({
+    method: 'POST',
+    path: '/api/runtime/compatibility/retry',
+    params: EmptyParamsSchema,
+    request: z
+      .object({ objectKind: RuntimeCompatibilityDiagnosticSchema.shape.objectKind, objectId: z.string().min(1) })
+      .strict(),
+    response: z.object({ diagnostics: z.array(RuntimeCompatibilityDiagnosticSchema) }).strict(),
+    error: HostApiErrorSchema,
+    invalidatesSnapshot: true,
+  }),
   snapshot: defineContract({
     method: 'GET',
     path: '/api/snapshot',

@@ -169,7 +169,7 @@ const appendTextEvent = (
 
 describe('Core SQLite baseline', () => {
   it('accepts better-sqlite3 table_list metadata and migrates a clean database', async () => {
-    expect(Object.keys(coreSchema)).toHaveLength(39)
+    expect(Object.keys(coreSchema)).toHaveLength(41)
     expect(channelEvents.logicalMessageId.name).toBe('logical_message_id')
     expect('logicalMessageId' in channels).toBe(false)
 
@@ -180,6 +180,69 @@ describe('Core SQLite baseline', () => {
       expect(core.listConnections()).toHaveLength(1)
     } finally {
       database.close()
+    }
+  })
+
+  it('upgrades migration 24 with referenced Admissions without dropping their event links', async () => {
+    const filename = path.join(await temporaryDirectory(), 'core.sqlite')
+    await createDatabaseAtMigration(filename, 24)
+    const old = openCoreDatabase(filename)
+    const repository = new SqliteCoreRepository(old)
+    let sequence = 0
+    const core = new CoreService(repository, { now: () => 100, nextUlid: () => `LEGACY${++sequence}` })
+    const agent = createAgent(core)
+    const connection = core.createConnection({ adapterKey: 'fixture-alpha', config: {} })
+    const channel = core.createChannel({
+      connectionId: connection.id,
+      platformChannelId: 'upgrade-links',
+      kind: 'internal',
+    })
+    const event = appendTextEvent(core, connection.id, channel.id, 'migration-inbound', '保留旧消息', 100)
+    const episodeId = EpisodeIdSchema.parse('eps_MIGRATION25')
+    repository.createEpisode({
+      id: episodeId,
+      channelId: channel.id,
+      agentId: agent.definition.id,
+      agentRevisionId: agent.revision.id,
+      status: 'opening',
+      openedAtEventId: event.id,
+      createdAt: 101,
+    })
+    const admissionId = AdmissionIdSchema.parse('adm_MIGRATION25')
+    repository.createAdmission({
+      id: admissionId,
+      episodeId,
+      mode: 'followup',
+      state: 'claimed',
+      eventIds: [event.id],
+      createdAt: 101,
+    })
+    old.close()
+    const migrated = await openMigratedCoreDatabase(filename)
+    try {
+      const current = new SqliteCoreRepository(migrated)
+      expect(current.listRecoverableAdmissions(episodeId)).toEqual([
+        { id: admissionId, episodeId, mode: 'followup', state: 'claimed', eventIds: [event.id], createdAt: 101 },
+      ])
+      expect(current.getChannelEvent(event.id)).toEqual(event)
+      expect(current.retireDshSessionEpisodes({ migrationId: 'migration25-fixture', closedAt: 102 })).toMatchObject({
+        admissionsCancelled: 1,
+      })
+      expect(current.getEpisode(episodeId)?.status).toBe('closed')
+    } finally {
+      migrated.close()
+    }
+    const native = new BetterSqlite3(filename)
+    try {
+      expect(native.pragma('foreign_key_check')).toEqual([])
+      expect(native.prepare('SELECT state FROM admissions WHERE id = ?').get(admissionId)).toEqual({
+        state: 'cancelled',
+      })
+      expect(native.prepare('SELECT event_id FROM admission_events WHERE admission_id = ?').get(admissionId)).toEqual({
+        event_id: event.id,
+      })
+    } finally {
+      native.close()
     }
   })
 
@@ -2738,7 +2801,7 @@ describe('Extension and backup', () => {
     ).toEqual(manifest)
   })
 
-  it('retires every live Episode and releases unresolved Admissions after DSH storage replacement', async () => {
+  it('retires live Episodes and preserves cancelled Admissions after DSH storage replacement', async () => {
     const { database, repository, core, connection } = await createFixture()
     try {
       const firstAgent = createAgent(core)
@@ -2788,7 +2851,11 @@ describe('Extension and backup', () => {
       })
       repository.activateEpisode(secondEpisodeId, 'synthetic-old-session')
 
-      expect(repository.retireDshSessionEpisodes(6)).toEqual({ episodesClosed: 2, admissionsReleased: 1 })
+      expect(repository.retireDshSessionEpisodes({ migrationId: 'synthetic-reset', closedAt: 6 })).toMatchObject({
+        episodesClosed: 2,
+        admissionsCancelled: 1,
+        alreadyApplied: false,
+      })
       expect(repository.getEpisode(firstEpisodeId)).toMatchObject({
         status: 'closed',
         closeReason: 'incompatible-session-storage',
@@ -2804,9 +2871,13 @@ describe('Extension and backup', () => {
       expect(repository.listRecoverableEpisodes()).toEqual([])
       expect(repository.listRecoverableAdmissions(firstEpisodeId)).toEqual([])
       expect(repository.listUnadmittedEvents(firstChannel.id, firstAgent.definition.id, 0).map(({ id }) => id)).toEqual(
-        [firstEvent.id],
+        [],
       )
-      expect(repository.retireDshSessionEpisodes(7)).toEqual({ episodesClosed: 0, admissionsReleased: 0 })
+      expect(repository.retireDshSessionEpisodes({ migrationId: 'synthetic-reset', closedAt: 7 })).toMatchObject({
+        episodesClosed: 2,
+        admissionsCancelled: 1,
+        alreadyApplied: true,
+      })
     } finally {
       database.close()
     }

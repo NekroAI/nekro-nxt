@@ -24,7 +24,7 @@ import DynamicCordisRunnerService, {
   type DynamicCordisStopResponse,
   type DynamicCordisUndefineReceipt,
 } from '@deepseek-ai/dsh-cordis-host-runner'
-import { CallId, freezeMessage, MessageId } from '@deepseek-ai/dsh-llm'
+import { ToolCallId, freezeMessage, MessageId } from '@deepseek-ai/dsh-llm'
 import { scopeOf } from '@deepseek-ai/dsh-scope'
 import { SessionId } from '@deepseek-ai/dsh-session'
 import { ToolRuntime } from '@deepseek-ai/dsh-tools'
@@ -980,7 +980,7 @@ export class DynamicAuthoringRuntime {
       const schema = visibleTools.find((candidate) => candidate.name === name)
       if (!schema) throw new Error(`Dynamic Tool disappeared before verification: ${name}`)
       const result = await this.#context.tools.execute({
-        callId: CallId(`verify-${packageId}-${name}`),
+        callId: ToolCallId(`verify-${packageId}-${name}`),
         name,
         arguments: {},
         agent,

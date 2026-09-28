@@ -1,13 +1,6 @@
 import { callHostApi } from './host-api-client.js'
 
-import {
-  deletePath,
-  getPath,
-  rehydrateSchema,
-  setPath,
-  validateDraft,
-  type SchemaNode,
-} from '@deepseek-ai/dsh-client-schema-form'
+import { deletePath, getPath, rehydrateSchema, setPath, validateDraft, type SchemaNode } from './settings-schema.js'
 import type { HostApiRequest, HostApiResponse } from '@nekro-nxt/contracts'
 import {
   DshCredentialsChangedSseDataSchema,
@@ -177,11 +170,8 @@ const mergeSettingsLayers = (base: unknown, user: unknown): unknown => {
   return result
 }
 
-const applySettingsOps = (
-  user: unknown,
-  ops: ReadonlyMap<string, DshSettingsPathOperation>,
-): Record<string, unknown> => {
-  let result = isRecord(user) ? { ...user } : {}
+const applySettingsOps = (user: unknown, ops: ReadonlyMap<string, DshSettingsPathOperation>): unknown => {
+  let result: unknown = isRecord(user) ? { ...user } : {}
   for (const operation of ops.values()) {
     result =
       operation.op === 'set' ? setPath(result, operation.path, operation.value) : deletePath(result, operation.path)
@@ -864,7 +854,7 @@ function NamespaceEditor({
     if (!schema) return authority.resolved
     const user = applySettingsOps(authority.user, ops)
     try {
-      return parseJsonValue(schema(mergeSettingsLayers(authority.base ?? {}, user)))
+      return parseJsonValue(schema.parse(mergeSettingsLayers(authority.base ?? {}, user)))
     } catch {
       return mergeSettingsLayers(authority.resolved, user)
     }

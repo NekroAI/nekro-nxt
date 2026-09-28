@@ -79,7 +79,7 @@ export interface EpisodeHandoffRecord {
   readonly createdAt: number
 }
 
-export type AdmissionState = 'pending' | 'claimed' | 'logged-to-session'
+export type AdmissionState = 'pending' | 'claimed' | 'logged-to-session' | 'cancelled'
 
 export interface AdmissionRecord {
   readonly id: AdmissionId
@@ -300,6 +300,10 @@ export interface AgentSessionDriver {
 }
 
 export interface ChannelRuntimeOptions {
+  /** Persist inbound facts while Host restores required services and optional extensions. */
+  readonly deferAdmission?: boolean
+  /** A compatibility quarantine must not create a failed Episode or processing feedback. */
+  readonly canAdmitAgent?: (agentId: AgentId) => boolean
   readonly now?: () => number
   readonly nextUlid?: () => string
   readonly resolveAdapter: (connectionId: ConnectionId) => AdapterConnectionRuntime | undefined
@@ -411,6 +415,11 @@ export const isSessionCompatibleRevision = (previous: AgentRevisionRecord, targe
 
 /** Single-lane M1 Runtime. M2 extends the same persisted states with injection and recovery. */
 export class ChannelRuntime {
+  #admissionState: 'closed' | 'opening' | 'open' | 'disposed'
+  readonly #canAdmitAgent: (agentId: AgentId) => boolean
+  readonly #deferredRecoveryEpisodes = new Set<EpisodeId>()
+  #openingAdmission: Promise<void> | undefined
+  #disposing: Promise<void> | undefined
   readonly #feedback: ProcessingFeedback
   readonly #interactions: ChannelInteractions
   readonly #delivery: ChannelDelivery
@@ -436,6 +445,8 @@ export class ChannelRuntime {
     sessionDriver: AgentSessionDriver,
     options: ChannelRuntimeOptions,
   ) {
+    this.#admissionState = options.deferAdmission === true ? 'closed' : 'open'
+    this.#canAdmitAgent = options.canAdmitAgent ?? (() => true)
     this.#core = core
     this.#coreRepository = coreRepository
     this.#runtimeRepository = runtimeRepository
@@ -481,6 +492,7 @@ export class ChannelRuntime {
         this.#coreRepository
           .listBindings(event.channelId)
           .filter((binding) => {
+            if (this.#admissionState !== 'open' || !this.#canAdmitAgent(binding.agentId)) return false
             if (
               isTriggered(
                 binding,
@@ -506,6 +518,72 @@ export class ChannelRuntime {
       inserted: commit.inserted,
     }
   }
+  /** Reopens admission and sweeps durable backlog; repeat after repairing an Agent quarantine. */
+  openAdmission(): Promise<void> {
+    if (this.#admissionState === 'disposed') return Promise.reject(new Error('Channel Runtime is disposed.'))
+    if (this.#openingAdmission !== undefined) return this.#openingAdmission
+    const wasClosed = this.#admissionState === 'closed'
+    this.#admissionState = 'opening'
+    const opening = (async () => {
+      try {
+        // Persisted Admissions must be reconciled before new inbound can enter their lane.
+        await this.#recover(!wasClosed)
+        if (this.#admissionState === 'disposed') return
+        this.#admissionState = 'open'
+        const lanes = this.#coreRepository.listConnectionIdsByAdapter().flatMap((connectionId) =>
+          this.#coreRepository.listChannelIdsByConnection(connectionId).flatMap((channelId) => {
+            const binding = this.#coreRepository.getBinding(channelId)
+            if (!binding || !this.#canAdmitAgent(binding.agentId)) return []
+            return [
+              this.#withLane(channelId, binding.agentId, () =>
+                this.#recoverTriggeredBacklog(channelId, binding.agentId),
+              ),
+            ]
+          }),
+        )
+        const outcomes = await Promise.allSettled(lanes)
+        const failures = outcomes
+          .filter((result): result is PromiseRejectedResult => result.status === 'rejected')
+          .map((result): unknown => result.reason)
+        if (failures.length) throw new AggregateError(failures, 'Unable to open Channel admission.')
+      } catch (error) {
+        if (this.#admissionState !== 'disposed') this.#admissionState = 'closed'
+        throw error
+      }
+    })()
+    this.#openingAdmission = opening
+    void opening
+      .finally(() => {
+        if (this.#openingAdmission === opening) this.#openingAdmission = undefined
+      })
+      .catch(() => undefined)
+    return opening
+  }
+
+  /** Close the gate synchronously, then wait for admitted work and feedback cleanup to settle. */
+  dispose(): Promise<void> {
+    if (this.#disposing !== undefined) return this.#disposing
+    this.#admissionState = 'disposed'
+    this.#disposing = (async () => {
+      await Promise.allSettled([
+        ...(this.#openingAdmission === undefined ? [] : [this.#openingAdmission]),
+        ...this.#bindingTransitions.values(),
+        ...this.#lanes.values(),
+      ])
+      await this.#feedback.stopProcessingFeedback()
+      this.#factListeners.clear()
+    })()
+    return this.#disposing
+  }
+
+  #runtimeAdmissionOpen(): boolean {
+    return this.#admissionState !== 'closed' && this.#admissionState !== 'disposed'
+  }
+
+  #admissionAllowed(agentId: AgentId): boolean {
+    return this.#runtimeAdmissionOpen() && this.#canAdmitAgent(agentId)
+  }
+
   async recoverProcessingFeedback(): Promise<void> {
     for (const connectionId of this.#coreRepository.listConnectionIdsByAdapter())
       await this.#interactions.ensureInteractionsLoaded(connectionId)
@@ -720,15 +798,25 @@ export class ChannelRuntime {
     })
   }
 
-  async recover(): Promise<RuntimeRecoveryReport> {
+  recover(): Promise<RuntimeRecoveryReport> {
+    return this.#recover()
+  }
+
+  async #recover(onlyDeferred = false): Promise<RuntimeRecoveryReport> {
     const report = {
       resumedEpisodes: 0,
       recoveredAdmissions: 0,
       recoveredOutbounds: 0,
       unknownDeliveries: 0,
     }
+    if (this.#admissionState === 'closed' || this.#admissionState === 'disposed') return report
     for (const recoverable of this.#runtimeRepository.listRecoverableEpisodes()) {
+      if (onlyDeferred && !this.#deferredRecoveryEpisodes.has(recoverable.id)) continue
       await this.#withLane(recoverable.channelId, recoverable.agentId, async () => {
+        if (!this.#admissionAllowed(recoverable.agentId)) {
+          this.#deferredRecoveryEpisodes.add(recoverable.id)
+          return
+        }
         let episode = recoverable
         const handoff = this.#runtimeRepository.getEpisodeHandoffTo(episode.id)
         const recoverableAdmissions = this.#runtimeRepository.listRecoverableAdmissions(episode.id)
@@ -771,6 +859,10 @@ export class ChannelRuntime {
         report.resumedEpisodes += 1
 
         for (const admission of recoverableAdmissions) {
+          if (!this.#admissionAllowed(episode.agentId)) {
+            this.#deferredRecoveryEpisodes.add(episode.id)
+            return
+          }
           if (admission.state === 'pending') this.#runtimeRepository.claimAdmission(admission.id)
           const existing = this.#sessionDriver.findAdmissionMessage(dshSessionId, admission.id)
           const lastEventId = admission.eventIds.at(-1)
@@ -806,10 +898,13 @@ export class ChannelRuntime {
           report.recoveredAdmissions += 1
         }
         await this.#recoverTriggeredBacklog(episode.channelId, episode.agentId)
+        this.#deferredRecoveryEpisodes.delete(episode.id)
       })
     }
 
+    if (onlyDeferred) return report
     for (const outboundId of this.#runtimeRepository.listUnsettledOutboundIds()) {
+      if (!this.#runtimeAdmissionOpen()) break
       const result = await this.#delivery.dispatchOutbound(outboundId, new AbortController().signal)
       report.recoveredOutbounds += 1
       report.unknownDeliveries += result.unknownDeliveries
@@ -1007,6 +1102,7 @@ export class ChannelRuntime {
   }
 
   async #ensureActiveEpisode(binding: BindingRecord, openedAtEvent: ChannelEventRecord): Promise<EpisodeRecord> {
+    if (!this.#admissionAllowed(binding.agentId)) throw new Error('Agent admission is unavailable.')
     const current = this.#runtimeRepository.getActiveEpisode(binding.channelId, binding.agentId)
     if (current) {
       if (current.status === 'active' && current.dshSessionId !== undefined) return current
@@ -1038,8 +1134,18 @@ export class ChannelRuntime {
     }
   }
 
-  async #admit(binding: BindingRecord, event: ChannelEventRecord): Promise<void> {
+  async #admit(
+    binding: BindingRecord,
+    event: ChannelEventRecord,
+    backlog?: readonly ChannelEventRecord[],
+  ): Promise<void> {
+    if (!this.#admissionAllowed(binding.agentId)) return
+    const currentBinding = this.#coreRepository.getBinding(binding.channelId)
+    if (!currentBinding || currentBinding.agentId !== binding.agentId || currentBinding.boundAt !== binding.boundAt)
+      return
+    binding = currentBinding
     let episode = await this.#ensureActiveEpisode(binding, event)
+    if (!this.#admissionAllowed(binding.agentId)) return
     if (episode.status !== 'active' || episode.dshSessionId === undefined) {
       throw new Error(`Episode is not ready for admission: ${episode.id}`)
     }
@@ -1047,8 +1153,13 @@ export class ChannelRuntime {
     episode = await this.#applyCurrentCompatibleRevision(episode)
     const dshSessionId = episode.dshSessionId
     if (dshSessionId === undefined) throw new Error(`Episode has no DSH Session after revision switch: ${episode.id}`)
+    if (!this.#admissionAllowed(binding.agentId)) return
     const feedbackLeaseId = await this.#feedback.startProcessingFeedback(binding, episode, event)
-    const candidateEvents = this.#candidateTriggeredEvents(binding, event)
+    if (!this.#admissionAllowed(binding.agentId)) {
+      if (feedbackLeaseId !== undefined) await this.#feedback.cleanupFeedbackLease(feedbackLeaseId, 'cancelled')
+      return
+    }
+    const candidateEvents = backlog ?? this.#candidateTriggeredEvents(binding, event)
     const existingAdmission = this.#runtimeRepository
       .listRecoverableAdmissions(episode.id)
       .find((candidate) => candidate.eventIds.includes(event.id))
@@ -1104,15 +1215,15 @@ export class ChannelRuntime {
   }
 
   async #recoverTriggeredBacklog(channelId: ChannelId, agentId: AgentId): Promise<void> {
+    if (!this.#admissionAllowed(agentId)) return
     const binding = this.#coreRepository.getBinding(channelId)
-    const episode = this.#runtimeRepository.getActiveEpisode(channelId, agentId)
-    if (!binding || !episode) return
+    if (!binding || binding.agentId !== agentId) return
     const events = this.#runtimeRepository.listUnadmittedEvents(channelId, agentId, binding.boundAt)
-    for (const event of events) {
-      if (isTriggered(binding, event, this.#isActivityTriggerAllowed, this.#isActivityTriggerEnabledByDefault)) {
-        await this.#admit(binding, event)
-      }
-    }
+    const event = events.find((candidate) =>
+      isTriggered(binding, candidate, this.#isActivityTriggerAllowed, this.#isActivityTriggerEnabledByDefault),
+    )
+    // One Admission batches the whole eligible backlog. Replaying the stale list would duplicate it.
+    if (event !== undefined) await this.#admit(binding, event, events)
   }
 
   async #rolloverIfNeeded(

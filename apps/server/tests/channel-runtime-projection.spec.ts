@@ -1,3 +1,5 @@
+import { createAssistantMessage } from '@deepseek-ai/dsh-llm'
+import { SessionSeq } from '@deepseek-ai/dsh-session'
 import { AgentIdSchema, ChannelIdSchema, EpisodeIdSchema } from '@nekro-nxt/contracts'
 import { describe, expect, it } from 'vitest'
 import { normalizeSessionEvents, shouldBroadcastChannelRuntime } from '../src/channel-runtime-events.ts'
@@ -167,7 +169,9 @@ describe('channel runtime projection', () => {
   })
 
   it('does not broadcast runtime frames for streaming chunks', () => {
-    expect(shouldBroadcastChannelRuntime('assistant/chunk')).toBe(false)
+    expect(shouldBroadcastChannelRuntime('agent/assistant-stream')).toBe(false)
+    expect(shouldBroadcastChannelRuntime('assistant/attempt')).toBe(false)
+    expect(shouldBroadcastChannelRuntime('assistant/message')).toBe(true)
     expect(shouldBroadcastChannelRuntime(undefined)).toBe(false)
     expect(shouldBroadcastChannelRuntime('tool/call')).toBe(true)
     expect(shouldBroadcastChannelRuntime('turn/end')).toBe(true)
@@ -178,25 +182,51 @@ describe('channel runtime projection', () => {
   it('uses DSH token-delta semantics for the first-token boundary', () => {
     const events = normalizeSessionEvents([
       {
-        type: 'assistant/chunk',
-        seq: 0,
-        time: 100,
-        data: { turn: 1, step: 1, chunk: { type: 'block-start', index: 0, blockType: 'text' } },
-      },
-      {
-        type: 'assistant/chunk',
-        seq: 1,
-        time: 110,
-        data: { turn: 1, step: 1, chunk: { type: 'text-delta', index: 0, text: '' } },
-      },
-      {
-        type: 'assistant/chunk',
-        seq: 2,
-        time: 140,
-        data: { turn: 1, step: 1, chunk: { type: 'text-delta', index: 0, text: '好' } },
+        type: 'assistant/attempt',
+        seq: SessionSeq(1),
+        time: 150,
+        data: {
+          turn: 1,
+          step: 1,
+          stream: [
+            { type: 'chunk', time: 100, chunk: { type: 'block-start', index: 0, blockType: 'text' } },
+            { type: 'chunk', time: 110, chunk: { type: 'text-delta', index: 0, text: '' } },
+            { type: 'chunk', time: 140, chunk: { type: 'text-delta', index: 0, text: '好' } },
+          ],
+        },
       },
     ])
     expect(events).toEqual([{ type: 'assistant/first-token', turn: 1, step: 1, at: 140 }])
+  })
+
+  it('reads first-token timing from a committed assistant message stream', () => {
+    const events = normalizeSessionEvents([
+      {
+        type: 'assistant/message',
+        seq: SessionSeq(1),
+        time: 200,
+        surfaceOp: 'append',
+        data: {
+          turn: 1,
+          step: 1,
+          message: createAssistantMessage({
+            source: { provider: 'synthetic-provider', model: 'synthetic-model' },
+            content: [{ type: 'text', text: '好' }],
+          }),
+          stream: [
+            { type: 'chunk', time: 100, chunk: { type: 'block-start', index: 0, blockType: 'text' } },
+            { type: 'chunk', time: 110, chunk: { type: 'text-delta', index: 0, text: '' } },
+            { type: 'chunk', time: 140, chunk: { type: 'text-delta', index: 0, text: '好' } },
+            { type: 'chunk', time: 180, chunk: { type: 'block-end', index: 0, block: { type: 'text', text: '好' } } },
+            { type: 'chunk', time: 190, chunk: { type: 'finish', reason: { kind: 'stop' } } },
+          ],
+        },
+      },
+    ])
+    expect(events).toEqual([
+      { type: 'assistant/first-token', turn: 1, step: 1, at: 140 },
+      { type: 'assistant/message', turn: 1, step: 1, at: 200, text: '好' },
+    ])
   })
 
   it('omits occupancy until both projected tokens and a context window exist', () => {

@@ -1,8 +1,20 @@
+import SqliteSessionQueryEngine from '@deepseek-ai/dsh-session-query-sqlite'
+import { checkpointShutdownInbox, restoreShutdownInbox } from './session-shutdown-inbox.js'
+import {
+  prepareDshHostProfile,
+  activateDshHostProfile,
+  getDshHostProfileDiagnostics,
+  registerDshHostProfileEntry,
+  retryDshHostProfileCompatibility,
+  runDshSettingsMaintenance,
+} from './dsh-host-profile.js'
+import { mountDynamicCordisTools } from './dynamic-cordis-tools.js'
+import { mountSessionEventHistory, sessionEvents } from './session-event-history.js'
 import { readFile } from 'node:fs/promises'
 import type { LlmProviderRemovalCoordinator, RemovalImpact } from './llm-provider-removal.js'
 import { Context, Service } from '@deepseek-ai/cordis'
 import { AgentRegistry, type Agent, type AgentStatus } from '@deepseek-ai/dsh-agent'
-import AgentLoop from '@deepseek-ai/dsh-agent-loop'
+import '@deepseek-ai/dsh-agent-loop'
 import { type ImageAttachmentRef } from '@deepseek-ai/dsh-attachment'
 import SandboxBashExecutor from '@deepseek-ai/dsh-bash-sandbox'
 import ToolResultPruner from '@deepseek-ai/dsh-compaction-tool-result-pruner'
@@ -24,7 +36,6 @@ import {
   type DynamicCordisUndefineReceipt,
   type HostCordisInspectProviderRegistration,
 } from '@deepseek-ai/dsh-cordis-host-runner'
-import LocalCredentialProvider from '@deepseek-ai/dsh-credentials-local'
 import * as FsObservationPolicy from '@deepseek-ai/dsh-fs-observation-policy'
 import SandboxedFileSystem from '@deepseek-ai/dsh-fs-sandbox'
 import {
@@ -45,17 +56,15 @@ import SandboxPolicyService from '@deepseek-ai/dsh-sandbox-policy'
 import { bindScopeParent, scopeOf } from '@deepseek-ai/dsh-scope'
 import { SessionId, SessionStore } from '@deepseek-ai/dsh-session'
 import * as SessionCheckpointPolicy from '@deepseek-ai/dsh-session-checkpoint-policy'
-import { SqliteSessionPersistence } from '@deepseek-ai/dsh-session-persistence-sqlite'
+import { NekroJsonlSessionPersistence } from './dsh-session-persistence.js'
 import SessionProjectionRegistry from '@deepseek-ai/dsh-session-projection'
 import * as SessionStats from '@deepseek-ai/dsh-session-stats'
-import FileSettingsProvider from '@deepseek-ai/dsh-settings-file'
 import * as ShellEnv from '@deepseek-ai/dsh-shell-env'
 import SkillRegistry from '@deepseek-ai/dsh-skill'
-import * as SpillPolicy from '@deepseek-ai/dsh-spill-policy'
-import SubagentRuntime, { type SubagentListEntry } from '@deepseek-ai/dsh-subagent'
+import type { SubagentCatalogEntry } from '@deepseek-ai/dsh-subagent'
 import * as SubagentSpawnInProcess from '@deepseek-ai/dsh-subagent-spawn-in-process'
 import LocalSubprocessRuntime from '@deepseek-ai/dsh-subprocess-local'
-import { PERSONA_ORDER, PERSONA_SECTION, SystemPrompt } from '@deepseek-ai/dsh-system-prompt'
+import { PERSONA_PREFIX_SECTION, SystemPrompt } from '@deepseek-ai/dsh-system-prompt'
 import TokenMeter from '@deepseek-ai/dsh-token-meter'
 import * as BashTool from '@deepseek-ai/dsh-tool-bash'
 import * as ToolCallTimeoutPolicy from '@deepseek-ai/dsh-tool-call-timeout-policy'
@@ -65,11 +74,9 @@ import * as SkillTool from '@deepseek-ai/dsh-tool-skill'
 import * as ToolSubagent from '@deepseek-ai/dsh-tool-subagent'
 import * as ToolSubagentControl from '@deepseek-ai/dsh-tool-subagent-control'
 import * as ToolSubagentListAgents from '@deepseek-ai/dsh-tool-subagent-control/list-agents'
-import * as ToolSubagentReport from '@deepseek-ai/dsh-tool-subagent-report'
 import * as ToolWeb from '@deepseek-ai/dsh-tool-web'
 import { defineTool, ToolRuntime } from '@deepseek-ai/dsh-tools'
 import WebRuntime from '@deepseek-ai/dsh-web'
-import * as DeepSeekWebSearch from '@deepseek-ai/dsh-web-search-deepseek'
 import {
   type AgentSessionDriver,
   type ChannelHistoryRepository,
@@ -81,6 +88,7 @@ import {
 } from '@nekro-nxt/channel-runtime'
 import {
   AssetIdSchema,
+  DshPluginEntryIdSchema,
   ChannelMemberIdSchema,
   HostPageContributionSchema,
   HostUiPermissionDeclarationSchema,
@@ -147,7 +155,7 @@ import { z } from 'zod'
 import { mountChannelReplyGuard, type ChannelReplyGuardController } from './channel-reply-guard.js'
 import { normalizeSessionEvents } from './channel-runtime-events.js'
 import { parseDshImageAttachmentRef } from './dsh-interop/unsafe.js'
-import { DshPluginLifecycleCoordinator } from './dsh-plugin-lifecycle.js'
+import { DshPluginLifecycleCoordinator, disposeDshPluginFiber } from './dsh-plugin-lifecycle.js'
 import { HOST_DSH_PACKAGE_VERSIONS } from './dsh-roster.js'
 import { QuotaLocalSpillStore } from './dsh-spill.js'
 import {
@@ -206,6 +214,7 @@ export { type AgentImageDiagnostics, type AssetAccessRepository } from './sessio
 
 declare module '@deepseek-ai/dsh-llm' {
   interface MessageSourceMap {
+    'nekro-nxt-handoff-summary': { readonly kind: 'nekro-nxt-handoff-summary' }
     'nekro-nxt-channel': {
       readonly kind: 'nekro-nxt-channel'
       readonly admissionId: string
@@ -534,6 +543,9 @@ class NekroNxtAgentScopeInheritance extends Service {
     const parent = scopeOf(parentContext)
     if (!child || !parent) throw new Error('Subagent Scope inheritance requires scoped parent and child contexts.')
     bindScopeParent(child, parent)
+    const denied = visibleChildDeniedToolNames(childContext, true)
+    if (denied.length) childContext.tools.restrict({ deny: denied })
+    childContext.on('agent/request', async (_payload, next) => ({ ...(await next()), maxTokens: CHILD_MAX_TOKENS }))
     return undefined
   }
 
@@ -836,7 +848,7 @@ const ROOT_CHANNEL_MESSAGE_POLICY = `你正在通过 NekroNXT 参与一个真实
 
 沟通篇幅和频率应结合当前智能体人设以及频道成员的明确偏好。对方要求安静执行、减少过程消息或只看最终结果时，可以减少或省略过程更新；这不会改变频道的投递方式，任何希望频道成员看到的内容仍需通过 **send_channel_message** 发送。`
 
-const CHILD_CHANNEL_MESSAGE_POLICY = `你是主智能体委派的子智能体，不能直接向当前频道产生用户可见行为，也不负责清除主智能体的频道回应义务。请在普通最终输出中返回完整结果；如果当前工具列表包含 report，可以在有阶段结果、重要发现、风险或阻塞时用它向父级回报。不要把普通 text/reasoning 当成已经向频道发言。`
+const CHILD_CHANNEL_MESSAGE_POLICY = `你是主智能体委派的子智能体，不能直接向当前频道产生用户可见行为，也不负责清除主智能体的频道回应义务。请在普通最终输出中返回完整结果；如果当前工具列表包含 send_message，可以向当前父智能体发送阶段结果、重要发现、风险或阻塞；使用委派上下文中的父智能体标识，不得猜测其他会话。不要把普通 text/reasoning 当成已经向频道发言。`
 
 const ROOT_CONTEXT_MANAGEMENT_POLICY = `上下文管理：当前频道对话、成员关系、用户意图、历史承诺和最终决策优先保留在主上下文。网页搜索、大量历史读取、文件扫描、Shell 操作、扩展开发和反复构建验证等高噪声工作优先委派给 spawn 子智能体；简单问答、低延迟操作或你判断直接执行更合适时，继续使用原工具。委派说明必须自足，不需要复制完整对话，子智能体可以按需查询当前频道历史。相互独立的任务可以在同一轮并行委派；共享同一动态 Runner 或 Plugin 的任务不得并行修改。`
 
@@ -1851,7 +1863,7 @@ const assetInspectImagesTool = (input: {
           protocol: 1,
         })
         const cacheKey = createHash('sha256').update(cachePayload).digest('hex')
-        const cached = [...exec.agent.session.events]
+        const cached = [...sessionEvents(exec.agent.session)]
           .reverse()
           .find(
             (event) =>
@@ -2023,7 +2035,6 @@ const CHILD_DENIED_TOOL_NAMES = [
   'retract_channel_message',
   'nudge_channel_member',
   'subagent',
-  'send_message',
   'interrupt_agent',
   'list_agents',
 ] as const
@@ -2079,6 +2090,8 @@ export class DshHostRuntime implements AgentSessionDriver, ExtensionActivationHo
   readonly #resolveAgentRevision: DshHostRuntimeOptions['resolveAgentRevision']
   readonly #resolveAdapterDisplayName: NonNullable<DshHostRuntimeOptions['resolveAdapterDisplayName']>
   readonly #developmentWorkspaceRoot: string | undefined
+  readonly #shutdownInboxRoot: string
+  readonly #incompatibleAgents = new Set<AgentId>()
   readonly #modelSettings: HostModelSettings
   readonly #sessions = new SessionRegistry<{
     readonly context: Context
@@ -2090,6 +2103,7 @@ export class DshHostRuntime implements AgentSessionDriver, ExtensionActivationHo
   readonly #authoring: DshHostRuntimeOptions['authoring']
   readonly #channelReplyGuard: ChannelReplyGuardController
   #disposed = false
+  #disposePromise: Promise<void> | undefined
 
   private constructor(
     context: Context,
@@ -2105,6 +2119,7 @@ export class DshHostRuntime implements AgentSessionDriver, ExtensionActivationHo
     this.#resolveAgentRevision = options.resolveAgentRevision
     this.#resolveAdapterDisplayName = options.resolveAdapterDisplayName ?? (() => undefined)
     this.#developmentWorkspaceRoot = options.developmentWorkspaceRoot
+    this.#shutdownInboxRoot = path.join(path.dirname(options.sessionDatabasePath), 'dsh', 'shutdown-inbox')
     this.#modelSettings = new HostModelSettings(context, options.llmSettingsPath !== undefined, options.providerRemoval)
     this.#imageContext = new SessionImageContext(context, this.#sessions, options.history, options.assets)
     this.#authoring = options.authoring
@@ -2160,44 +2175,39 @@ export class DshHostRuntime implements AgentSessionDriver, ExtensionActivationHo
         assetService: options.assetService,
         requestImageRoot: path.join(path.dirname(options.sessionDatabasePath), 'dsh', 'request-images'),
       })
-      if (options.llmSettingsPath !== undefined && options.llmCredentialPath !== undefined) {
-        await context.plugin(FileSettingsProvider, { path: options.llmSettingsPath })
-        await context.plugin(LocalCredentialProvider, { path: options.llmCredentialPath })
-      }
+      await prepareDshHostProfile(context, {
+        ...(options.llmSettingsPath === undefined ? {} : { settingsPath: options.llmSettingsPath }),
+        ...(options.llmCredentialPath === undefined ? {} : { credentialPath: options.llmCredentialPath }),
+      })
       await context.plugin(LlmRuntime)
       await options.configureLlm?.(context)
       await context.plugin(SessionStore)
-      await context.plugin(SqliteSessionPersistence, {
-        path: options.sessionDatabasePath,
-        writeBatchMaxDelayMs: 1,
+      await context.plugin(NekroJsonlSessionPersistence, {
+        root: path.join(path.dirname(options.sessionDatabasePath), 'dsh', 'sessions'),
+      })
+      mountSessionEventHistory(context)
+      context.on('agent/created', async ({ agent }) => {
+        await restoreShutdownInbox(
+          path.join(path.dirname(options.sessionDatabasePath), 'dsh', 'shutdown-inbox'),
+          context,
+          agent,
+        )
+        return undefined
       })
       await context.plugin(SessionProjectionRegistry)
+      await context.plugin(SqliteSessionQueryEngine, { path: ':memory:', openAt: 'never' })
       await context.plugin(SessionStats)
-      await context.plugin(SystemPrompt, { persona: '' })
+      await context.plugin(SystemPrompt, { personaPrefix: '' })
       await context.plugin(ToolRuntime, { mode: 'native' })
       await context.plugin(SkillRegistry)
       await context.plugin(AgentRegistry)
       await context.plugin(NekroNxtAgentScopeInheritance)
-      await context.plugin(SubagentRuntime)
-      await context.plugin(SubagentSpawnInProcess, { providerName: 'spawn' })
-      await context.plugin(ToolSubagentReport, { reportDelivery: 'next-step' })
-      context.effect(
-        () =>
-          context.subagents.registerContinuableSetup((childContext) => {
-            const denied = visibleChildDeniedToolNames(childContext, false)
-            const disposeRestriction =
-              denied.length === 0 ? () => undefined : childContext.tools.restrict({ deny: denied })
-            const disposeRequestLimit = childContext.on('agent/request', async (_payload, next) => ({
-              ...(await next()),
-              maxTokens: CHILD_MAX_TOKENS,
-            }))
-            return () => {
-              disposeRequestLimit()
-              disposeRestriction()
-            }
-          }),
-        'nekro-nxt: continuable child request limit',
-      )
+      registerDshHostProfileEntry(context, {
+        id: 'subagent',
+        name: '@deepseek-ai/dsh-subagent',
+        config: { maxDepth: 1, maxActiveSubagents: 8 },
+        required: true,
+      })
       await context.plugin(TokenMeter)
       await context.plugin(ToolResultPruner, {
         thresholdChars: 8192,
@@ -2205,32 +2215,111 @@ export class DshHostRuntime implements AgentSessionDriver, ExtensionActivationHo
         tailChars: 1024,
       })
       await context.plugin(NekroNxtCompactionEngine, { auto: true })
-      await context.plugin(AgentLoop, { agents: [] })
+      registerDshHostProfileEntry(context, {
+        id: 'agent-loop',
+        name: '@deepseek-ai/dsh-agent-loop',
+        config: { agents: [] },
+        required: true,
+      })
       const channelReplyGuard = mountChannelReplyGuard(context)
       await context.plugin(LlmRetry)
       await context.plugin(ToolCallTimeoutPolicy)
       await context.plugin(QuotaLocalSpillStore, {
         root: path.join(path.dirname(options.sessionDatabasePath), 'dsh', 'spill'),
       })
-      await context.plugin(SpillPolicy, { maxInlineBytes: 50_000 })
+      registerDshHostProfileEntry(context, {
+        id: 'spill-policy',
+        name: '@deepseek-ai/dsh-spill-policy',
+        config: { maxInlineTokens: 12_500 },
+        required: true,
+      })
       await context.plugin(WebRuntime, { searchProvider: 'deepseek-official' })
-      await context.plugin(DeepSeekWebSearch, {
-        apiKeyEnv: 'DEEPSEEK_API_KEY',
-        maxTokens: 1024,
-        maxUses: 2,
+      registerDshHostProfileEntry(context, {
+        id: 'web-search-deepseek',
+        name: '@deepseek-ai/dsh-web-search-deepseek',
+        config: { apiKeyEnv: 'DEEPSEEK_API_KEY', maxTokens: 1024, maxUses: 2 },
+        required: true,
       })
       await context.plugin(SessionCheckpointPolicy)
+      await activateDshHostProfile(context)
+      await context.plugin(SubagentSpawnInProcess, { providerName: 'spawn' })
       const runtime = new DshHostRuntime(context, options, channelReplyGuard)
       await runtime.#dshPluginLifecycle?.initialize()
       return runtime
     } catch (error) {
-      await context.fiber.dispose()
+      try {
+        await disposeDshPluginFiber(context, context.fiber)
+      } catch (disposeError) {
+        throw new AggregateError([error, disposeError], 'DSH Host 启动失败，且资源未完整静止。')
+      }
       throw error
     }
   }
   registerLlmAdapter(providers: string[], adapter: LlmAdapter): () => void {
     this.#assertActive()
     return this.#modelSettings.registerLlmAdapter(providers, adapter)
+  }
+
+  canRunAgent(agentId: AgentId): boolean {
+    return !this.#incompatibleAgents.has(agentId)
+  }
+
+  setAgentCompatibility(agentId: AgentId, compatible: boolean): void {
+    if (compatible) this.#incompatibleAgents.delete(agentId)
+    else this.#incompatibleAgents.add(agentId)
+  }
+
+  async checkModelCompatibility(revision: AgentRevisionRecord): Promise<string | undefined> {
+    const diagnostics = getDshHostProfileDiagnostics(this.#context)
+    if (
+      diagnostics.some(
+        (item) =>
+          item.objectKind === 'model-provider' &&
+          (item.objectId === revision.model.provider || item.objectId === 'llm-pi-ai'),
+      )
+    ) {
+      return '模型供应商配置需要适配当前引擎。请修复设置后重试；原模型未被替换。'
+    }
+    try {
+      await this.#context.llm.resolveModelInfo(revision.model.provider, revision.model.model)
+      return undefined
+    } catch (error) {
+      const code = error instanceof Error && 'code' in error ? error.code : undefined
+      if (
+        typeof code === 'string' &&
+        [
+          'TRANSPORT',
+          'NETWORK',
+          'TIMEOUT',
+          'AUTH',
+          'RATE_LIMIT',
+          'SERVER',
+          'MISSING_CREDENTIAL',
+          'INVALID_CREDENTIAL',
+        ].includes(code)
+      )
+        return undefined
+      return '当前引擎无法解析此智能体的模型配置。请在模型设置中检查供应商和模型后重试。'
+    }
+  }
+
+  compatibilityDiagnostics() {
+    return [
+      ...getDshHostProfileDiagnostics(this.#context),
+      ...(this.#dshPluginLifecycle?.compatibilityDiagnostics() ?? []),
+    ]
+  }
+
+  async retryCompatibility(kind: 'model-provider' | 'dsh-plugin', objectId: string): Promise<void> {
+    const profileIssue = getDshHostProfileDiagnostics(this.#context).some(
+      (item) => item.objectKind === kind && item.objectId === objectId,
+    )
+    if (kind === 'model-provider' || profileIssue) {
+      await runDshSettingsMaintenance(this.#context, () => retryDshHostProfileCompatibility(this.#context, objectId))
+    } else {
+      if (!this.#dshPluginLifecycle) throw new Error('DSH 插件管理未就绪。')
+      await this.#dshPluginLifecycle.retry(DshPluginEntryIdSchema.parse(objectId))
+    }
   }
 
   listAvailableLlmModels(): Promise<readonly AvailableLlmModel[]> {
@@ -2293,7 +2382,10 @@ export class DshHostRuntime implements AgentSessionDriver, ExtensionActivationHo
     ops: readonly DshSettingsPathOperation[],
   ): Promise<DshSettingsNamespaceView> {
     this.#assertActive()
-    return this.#modelSettings.mutateDshSettings(ns, expectedRevision, ops)
+    return runDshSettingsMaintenance(this.#context, async () => {
+      this.#assertActive()
+      return this.#modelSettings.mutateDshSettings(ns, expectedRevision, ops)
+    })
   }
 
   describeDshCredentials(refs: readonly string[]): Promise<Readonly<Record<string, DshCredentialView>>> {
@@ -2435,13 +2527,13 @@ export class DshHostRuntime implements AgentSessionDriver, ExtensionActivationHo
       if (compiledPersona.usesReferences) {
         agentContext.systemPrompt.section({
           name: 'nekro-nxt:persona-reference-protocol',
-          order: PERSONA_ORDER - 1,
+          order: agentContext.systemPrompt.getSectionOrder('DEPLOYMENT_PERSONA_PREFIX') - 1,
           text: PERSONA_REFERENCE_PROTOCOL,
         })
       }
       agentContext.systemPrompt.section({
-        name: PERSONA_SECTION,
-        order: PERSONA_ORDER,
+        name: PERSONA_PREFIX_SECTION,
+        order: agentContext.systemPrompt.getSectionOrder('DEPLOYMENT_PERSONA_PREFIX'),
         text: compiledPersona.text,
       })
       agentContext.systemPrompt.section({
@@ -2628,6 +2720,7 @@ export class DshHostRuntime implements AgentSessionDriver, ExtensionActivationHo
           'nekro-nxt: inspect provider',
         )
         await dynamicContext.plugin(CordisTool)
+        mountDynamicCordisTools(dynamicContext, runner)
         agentContext.tools.register(nekroNxtExtensionDefineTool(runner, sessionId))
         dynamicContext.effect(() => {
           if (this.#sessions.get(sessionId)?.dynamic !== undefined) {
@@ -2647,7 +2740,7 @@ export class DshHostRuntime implements AgentSessionDriver, ExtensionActivationHo
       await this.#dshPluginLifecycle?.mountAgentSession(revision.agentId, sessionId, agentContext)
       await this.#extensionMounts.mountIntoSession(revision.agentId, sessionId, agentContext)
     }
-    const persisted = (await this.#context.sessionPersistence.list()).some(({ id }) => id === sessionId)
+    const persisted = (await this.#context.sessionPersistence.list()).some(({ header }) => header.id === sessionId)
     const handle = persisted
       ? await this.#context.agents.resume({
           resumeSessionId: sessionId,
@@ -2676,7 +2769,7 @@ export class DshHostRuntime implements AgentSessionDriver, ExtensionActivationHo
     await this.#imageContext.restoreLatestPendingVisualContext(handle.agent)
     const hasHandoffMessage =
       input.handoff !== undefined &&
-      (handle.agent.session.events.some(
+      (sessionEvents(handle.agent.session).some(
         (event) =>
           event.type === 'user/message' &&
           event.data.source.kind === 'nekro-nxt-handoff' &&
@@ -2839,7 +2932,7 @@ export class DshHostRuntime implements AgentSessionDriver, ExtensionActivationHo
     this.#assertActive()
     const agent = this.#context.agents.get(SessionId(dshSessionId))
     if (!agent) throw new Error(`DSH Agent Session is not live: ${dshSessionId}`)
-    for (const event of agent.session.events) {
+    for (const event of sessionEvents(agent.session)) {
       if (
         event.type === 'user/message' &&
         event.data.source.kind === 'nekro-nxt-channel' &&
@@ -2910,7 +3003,7 @@ export class DshHostRuntime implements AgentSessionDriver, ExtensionActivationHo
             ].join('\n'),
           },
         ],
-        source: { kind: 'plugin', plugin: 'nekro-nxt-channel-runtime', form: 'recall' },
+        source: { kind: 'nekro-nxt-handoff-summary' },
       })
       let summary = ''
       let completed = false
@@ -3024,13 +3117,15 @@ export class DshHostRuntime implements AgentSessionDriver, ExtensionActivationHo
   sessionEvents(dshSessionId: string) {
     const agent = this.#context.agents.get(SessionId(dshSessionId))
     if (!agent) throw new Error(`DSH Agent Session is not live: ${dshSessionId}`)
-    return agent.session.events
+    return sessionEvents(agent.session)
   }
 
   normalizedSessionEvents(dshSessionId: string) {
     const agent = this.#context.agents.get(SessionId(dshSessionId))
     if (!agent) throw new Error(`DSH Agent Session is not live: ${dshSessionId}`)
-    return normalizeSessionEvents(agent.session.events, (turn) => this.#channelReplyGuard.responseState(agent, turn))
+    return normalizeSessionEvents(sessionEvents(agent.session), (turn) =>
+      this.#channelReplyGuard.responseState(agent, turn),
+    )
   }
 
   async compactSessionNow(dshSessionId: string, signal?: AbortSignal): Promise<boolean> {
@@ -3041,7 +3136,7 @@ export class DshHostRuntime implements AgentSessionDriver, ExtensionActivationHo
   }
 
   /** Read DSH's durable direct-child projection without resuming cold children. */
-  listSubagents(dshSessionId: string, signal?: AbortSignal): Promise<readonly SubagentListEntry[]> {
+  listSubagents(dshSessionId: string, signal?: AbortSignal): Promise<readonly SubagentCatalogEntry[]> {
     this.#assertActive()
     const agent = this.#context.agents.get(SessionId(dshSessionId))
     if (!agent) throw new Error(`DSH Agent Session is not live: ${dshSessionId}`)
@@ -3264,16 +3359,24 @@ export class DshHostRuntime implements AgentSessionDriver, ExtensionActivationHo
     return this.#extensionMounts.mount(agentId, revision, artifact, config)
   }
 
-  async dispose(): Promise<void> {
-    if (this.#disposed) return
+  dispose(): Promise<void> {
+    return (this.#disposePromise ??= this.#dispose())
+  }
+
+  async #dispose(): Promise<void> {
     this.#disposed = true
     const failures: unknown[] = []
+    const handles = [...this.#sessions.handles()].map(([, handle]) => handle)
+    for (const handle of handles) handle.agent.cancel({ kind: 'disposed' }, { keepInbox: true })
+    for (const handle of handles) {
+      await handle.agent.whenIdle()
+      await checkpointShutdownInbox(this.#shutdownInboxRoot, handle.agent)
+    }
     try {
       await this.#extensionMounts.dispose()
     } catch (error) {
       failures.push(error)
     }
-    const handles = [...this.#sessions.handles()].map(([, handle]) => handle)
     try {
       await this.#context.subagents.drainContinuableDescendants(handles.map((handle) => handle.agent))
     } catch (error) {

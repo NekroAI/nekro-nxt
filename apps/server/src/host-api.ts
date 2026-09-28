@@ -68,6 +68,7 @@ export const createNekroHostApi = (
     licenseSpdx: 'AGPL-3.0-only',
     dshVersion: DEEPSEEK_HARNESS_VERSION,
   },
+  isReady: () => boolean = () => true,
 ): NekroHostApi => {
   const disposers: Array<() => void> = []
 
@@ -82,6 +83,20 @@ export const createNekroHostApi = (
       webServer.register({
         ...route,
         handler: (req, res) => {
+          if (!isReady()) {
+            writeError(res, 503, 'host-upgrading', '宿主正在完成升级检查，请稍后重试。')
+            return
+          }
+          const clientRelease = req.headers['x-nekro-client-release']
+          if (
+            req.method !== 'GET' &&
+            req.method !== 'HEAD' &&
+            typeof clientRelease === 'string' &&
+            clientRelease !== productMetadata.releaseId
+          ) {
+            writeError(res, 409, 'release-mismatch', '页面版本与当前服务不一致，请保留草稿并刷新页面。')
+            return
+          }
           const segments = new URL(req.url ?? '/', 'http://localhost').pathname.split('/')
           if (
             snapshotMutations.some(

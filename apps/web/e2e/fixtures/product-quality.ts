@@ -1,3 +1,4 @@
+import { fixtureReleaseId } from './host-release.js'
 import {
   AgentIdSchema,
   AgentRevisionIdSchema,
@@ -96,7 +97,7 @@ export const productSnapshot = HostApiContracts.snapshot.response.parse({
     displayName: 'NekroNXT Preview',
     organizationName: 'NekroAI',
     version: '0.1.0',
-    releaseId: '0.1.0-visual-review',
+    releaseId: fixtureReleaseId,
     repositoryUrl: 'https://github.com/NekroAI/nekro-nxt',
     licenseSpdx: 'AGPL-3.0-only',
     dshVersion: '0.1.1-rc.2',

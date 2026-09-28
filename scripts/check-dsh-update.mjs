@@ -20,6 +20,7 @@ try {
   console.log(`当前 DSH：${DSH_RELEASE_VERSION}`)
   console.log(`GitHub Release：${release?.tag_name ?? '未找到'}（${publishedAt}）`)
   console.log(`npm next：${typeof npmNext === 'string' ? npmNext : '未找到'}`)
+  console.log(`npm dist-tags：${JSON.stringify(metadata?.['dist-tags'] ?? {})}`)
 } catch (error) {
   console.warn(`无法检查 DSH 更新：${error instanceof Error ? error.message : String(error)}`)
 }

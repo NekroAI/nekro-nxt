@@ -387,3 +387,240 @@ describe('DSH Dynamic Client Runtime', () => {
     }
   })
 })
+
+const syntheticAgent = AgentIdSchema.parse('agt_lifecycle')
+const syntheticEpisode = EpisodeIdSchema.parse('eps_lifecycle')
+const runningRow = (run = 'run-lifecycle'): DynamicInventoryRow => ({
+  agentId: syntheticAgent,
+  pluginId: 'plugin-lifecycle',
+  packages: [
+    {
+      packageId: 'package-lifecycle',
+      name: '生命周期测试',
+      purpose: '合成测试',
+      hasHostHalf: false,
+      hasClientHalf: true,
+    },
+  ],
+  activeRun: { pluginRunId: run, packageId: 'package-lifecycle' },
+})
+const clientSource = (code: string, run = 'run-lifecycle') => ({
+  pluginId: 'plugin-lifecycle',
+  packageId: 'package-lifecycle',
+  pluginRunId: run,
+  name: '生命周期测试',
+  code,
+})
+const productSlotSource = `return {
+  inject: ['slots'],
+  apply(ctx) {
+    ctx.slots.register({ name: 'agent.workbench.sections', id: 'lifecycle' },
+      () => React.createElement('section', null, '生命周期测试'))
+  }
+}`
+
+const deferred = <T>() => {
+  let resolve!: (value: T) => void
+  const promise = new Promise<T>((done) => {
+    resolve = done
+  })
+  return { promise, resolve }
+}
+
+describe('DSH Client lifecycle on the published UI renderer', () => {
+  afterEach(() => {
+    vi.restoreAllMocks()
+    vi.unstubAllGlobals()
+    Reflect.deleteProperty(globalThis, '__ModuleLoader__')
+  })
+
+  it('preserves one module owner and releases it only after the shared disposal completes', async () => {
+    const host = new HttpDynamicClientHost(syntheticAgent, syntheticEpisode)
+    const runtime = await DshDynamicClientRuntime.create(host, { querySelectorAll: () => [] })
+    const owner: unknown = Reflect.get(globalThis, '__ModuleLoader__')
+    await expect(DshDynamicClientRuntime.create(host, { querySelectorAll: () => [] })).rejects.toThrow(
+      'already installed',
+    )
+    expect(Reflect.get(globalThis, '__ModuleLoader__')).toBe(owner)
+    const disposal = runtime.dispose()
+    expect(runtime.dispose()).toBe(disposal)
+    await disposal
+    expect(Reflect.get(globalThis, '__ModuleLoader__')).toBeUndefined()
+    await expect(runtime.reconcile([])).rejects.toThrow('disposed')
+    const refreshed = await DshDynamicClientRuntime.create(host, { querySelectorAll: () => [] })
+    await refreshed.dispose()
+  })
+
+  it('uses the product SlotCore without mounting the native WebUI or fake Session services', async () => {
+    const Slots = await import('@deepseek-ai/dsh-client-ui-slots')
+    const registry = vi.spyOn(Slots.SlotCore.prototype, 'register')
+    // There is deliberately no document root or createElement available here.
+    const runtime = await DshDynamicClientRuntime.create(new HttpDynamicClientHost(syntheticAgent, syntheticEpisode), {
+      querySelectorAll: () => [],
+    })
+    try {
+      expect(registry).toHaveBeenCalled()
+      expect(runtime.renderRoot(syntheticAgent, '测试')).toBeDefined()
+    } finally {
+      await runtime.dispose()
+    }
+  })
+
+  it('cleans a partially registered plugin after activation throws and can load a fixed run', async () => {
+    let broken = true
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(() =>
+        Promise.resolve(
+          stubResponse(
+            200,
+            clientSource(
+              broken
+                ? productSlotSource.replace('\n  }\n}', '\n    throw new Error("synthetic activation failure")\n  }\n}')
+                : productSlotSource,
+              broken ? 'run-lifecycle' : 'run-fixed',
+            ),
+          ),
+        ),
+      ),
+    )
+    const runtime = await DshDynamicClientRuntime.create(new HttpDynamicClientHost(syntheticAgent, syntheticEpisode), {
+      querySelectorAll: () => [],
+    })
+    try {
+      await expect(runtime.reconcile([runningRow()])).rejects.toThrow('synthetic activation failure')
+      expect(runtime.loaded()).toEqual([])
+      expect(runtime.entries('agent.workbench.sections')).toEqual([])
+      broken = false
+      await runtime.reconcile([runningRow('run-fixed')])
+      expect(runtime.loaded()).toHaveLength(1)
+    } finally {
+      await runtime.dispose()
+    }
+  })
+
+  it('discards an obsolete source response after a newer inventory has removed the run', async () => {
+    const requested = deferred<void>()
+    const response = deferred<ReturnType<typeof stubResponse>>()
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(() => {
+        requested.resolve()
+        return response.promise
+      }),
+    )
+    const runtime = await DshDynamicClientRuntime.create(new HttpDynamicClientHost(syntheticAgent, syntheticEpisode), {
+      querySelectorAll: () => [],
+    })
+    try {
+      const restoring = runtime.reconcile([runningRow()])
+      await requested.promise
+      const reset = runtime.reconcile([])
+      response.resolve(stubResponse(200, clientSource(productSlotSource)))
+      await Promise.all([restoring, reset])
+      expect(runtime.loaded()).toEqual([])
+      expect(runtime.entries('agent.workbench.sections')).toEqual([])
+    } finally {
+      await runtime.dispose()
+    }
+  })
+
+  it('waits for in-flight loading on disposal and rejects its late result', async () => {
+    const requested = deferred<void>()
+    const response = deferred<ReturnType<typeof stubResponse>>()
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(() => {
+        requested.resolve()
+        return response.promise
+      }),
+    )
+    const runtime = await DshDynamicClientRuntime.create(new HttpDynamicClientHost(syntheticAgent, syntheticEpisode), {
+      querySelectorAll: () => [],
+    })
+    const restoring = runtime.reconcile([runningRow()])
+    const rejected = expect(restoring).rejects.toThrow('disposed')
+    await requested.promise
+    const owner: unknown = Reflect.get(globalThis, '__ModuleLoader__')
+    let disposed = false
+    const disposal = runtime.dispose().then(() => {
+      disposed = true
+    })
+    await Promise.resolve()
+    expect(disposed).toBe(false)
+    expect(Reflect.get(globalThis, '__ModuleLoader__')).toBe(owner)
+    response.resolve(stubResponse(200, clientSource(productSlotSource)))
+    await rejected
+    await disposal
+    expect(runtime.slots.entriesOfSlot('agent.workbench.sections')).toEqual([])
+    expect(Reflect.get(globalThis, '__ModuleLoader__')).toBeUndefined()
+  })
+
+  it.each(['dispose', 'retract'] as const)(
+    'does not settle an old approval after %s during the Host half request',
+    async (action) => {
+      const requested = deferred<void>()
+      const response = deferred<ReturnType<typeof stubResponse>>()
+      const fetch = vi.fn((url: string) => {
+        if (!url.endsWith('/run-host-half')) throw new Error(`Unexpected late request: ${url}`)
+        requested.resolve()
+        return response.promise
+      })
+      vi.stubGlobal('fetch', fetch)
+      const runtime = await DshDynamicClientRuntime.create(
+        new HttpDynamicClientHost(syntheticAgent, syntheticEpisode),
+        {
+          querySelectorAll: () => [],
+        },
+      )
+      await runtime.reconcile([
+        {
+          ...runningRow(),
+          activeRun: undefined,
+          latestRun: {
+            pluginRunId: 'run-lifecycle',
+            packageId: 'package-lifecycle',
+            mode: 'run',
+            status: 'awaiting-approval',
+            approvalRequestId: 'approval-lifecycle',
+            requiresApproval: true,
+          },
+        },
+      ])
+      const approving = runtime.approve('approval-lifecycle')
+      const rejected = expect(approving).rejects.toThrow(action === 'dispose' ? 'disposed' : '动态审批已失效')
+      await requested.promise
+      const disposal = action === 'dispose' ? runtime.dispose() : runtime.reconcile([])
+      response.resolve(
+        stubResponse(200, {
+          ok: true,
+          pluginId: 'plugin-lifecycle',
+          packageId: 'package-lifecycle',
+          pluginRunId: 'run-lifecycle',
+          waitingFor: [],
+          startedHere: true,
+        }),
+      )
+      await rejected
+      await disposal
+      expect(fetch).toHaveBeenCalledTimes(1)
+      await runtime.dispose()
+    },
+  )
+
+  it('rejects a source for another run before evaluating it', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(() => Promise.resolve(stubResponse(200, clientSource(productSlotSource, 'run-obsolete')))),
+    )
+    const runtime = await DshDynamicClientRuntime.create(new HttpDynamicClientHost(syntheticAgent, syntheticEpisode), {
+      querySelectorAll: () => [],
+    })
+    try {
+      await expect(runtime.reconcile([runningRow()])).rejects.toThrow('不一致')
+      expect(runtime.loaded()).toEqual([])
+    } finally {
+      await runtime.dispose()
+    }
+  })
+})

@@ -1,3 +1,4 @@
+import { ReleaseNotice } from './components/release-notice.js'
 import { enableThemeTransitions, disableThemeTransitions } from './theme-transitions.js'
 import { useProductRuntime } from './product-runtime.js'
 import { useUiStateStore } from './product-runtime.js'
@@ -409,6 +410,7 @@ function DesktopShell() {
           <CommandPalette />
           <NotificationCenter />
           <HostNotice />
+          <ReleaseNotice />
           <div className={styles.stageView}>
             <RouteTransition
               className={styles.routeView}

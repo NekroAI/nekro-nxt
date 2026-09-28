@@ -10,7 +10,7 @@ import { systemSettings, workTreeOrder } from './schema.js'
 import { createAgentsRepository } from './repositories/agents.js'
 import { createChannelsRepository } from './repositories/channels.js'
 import { createOutboxRepository } from './repositories/outbox.js'
-import { createRuntimeRepository } from './repositories/runtime.js'
+import { createRuntimeRepository, type DshSessionStorageRetirementInput } from './repositories/runtime.js'
 import { createExtensionsRepository } from './repositories/extensions.js'
 import { createAssetsRepository } from './repositories/assets.js'
 import { createDshPluginRepository, type DshPluginRepository } from './repositories/dsh-plugins.js'
@@ -22,6 +22,7 @@ export * from './dsh-session-storage.js'
 export * from './host-security.js'
 export * from './schema.js'
 export * from './row-schemas.js'
+export type { DshSessionStorageRetirementInput, DshSessionStorageRetirementReport } from './repositories/runtime.js'
 export type { DshPluginRepository } from './repositories/dsh-plugins.js'
 
 type CurrentRepository = CoreRepository &
@@ -267,7 +268,10 @@ export class SqliteCoreRepository implements CurrentRepository {
     this.#runtime.listRecoverableEpisodes(...args)
   readonly listActiveEpisodesForAgent = (...args: Parameters<RuntimeRepository['listActiveEpisodesForAgent']>) =>
     this.#runtime.listActiveEpisodesForAgent(...args)
-  readonly retireDshSessionEpisodes = (closedAt: number) => this.#runtime.retireDshSessionEpisodes(closedAt)
+  readonly retireDshSessionEpisodes = (input: DshSessionStorageRetirementInput) =>
+    this.#runtime.retireDshSessionEpisodes(input)
+  readonly getDshSessionStorageRetirement = (migrationId: string) =>
+    this.#runtime.getDshSessionStorageRetirement(migrationId)
   readonly getEpisodeHandoffTo = (...args: Parameters<RuntimeRepository['getEpisodeHandoffTo']>) =>
     this.#runtime.getEpisodeHandoffTo(...args)
   readonly createEpisode = (...args: Parameters<RuntimeRepository['createEpisode']>) => {

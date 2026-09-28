@@ -73,6 +73,51 @@ jobs:
           RESULTS: ${{ join(needs.*.result, ',') }}
         run: test "$RESULTS" = "success,success"
 
+  upgrade-candidates:
+    name: Upgrade candidate (${{ matrix.target }})
+    if: github.event_name == 'workflow_dispatch' && github.ref != 'refs/heads/main'
+    needs: [quality, node-compat]
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 90
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: mac
+            runner: macos-15
+          - target: win
+            runner: windows-2025
+          - target: linux
+            runner: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11.7.0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22.23.2
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm test:upgrade
+      - name: Build and verify the bundled Desktop runtime
+        run: pnpm desktop:preview --platform ${{ matrix.target }}
+      - uses: actions/upload-artifact@v4
+        with:
+          name: upgrade-candidate-${{ matrix.target }}-${{ github.sha }}
+          compression-level: 0
+          path: |
+            apps/desktop/release/preview/*.dmg
+            apps/desktop/release/preview/*.exe
+            apps/desktop/release/preview/*.AppImage
+            apps/desktop/release/preview/*.receipt.json
+          if-no-files-found: error
+          retention-days: 3
+
   preview-prepare:
     if: (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && github.ref == 'refs/heads/main'
     needs: all-checks-passed

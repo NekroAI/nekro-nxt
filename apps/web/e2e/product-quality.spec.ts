@@ -1,3 +1,4 @@
+import { installSnapshotHealthRoutes } from './fixtures/host-release.js'
 import { expect, test, type Locator, type Page, type TestInfo } from '@playwright/test'
 import { AxeBuilder } from '@axe-core/playwright'
 import {
@@ -39,6 +40,13 @@ import {
   productSnapshot,
   channelMessages,
 } from './fixtures/product-quality.js'
+
+// Every scenario in this file replaces productMetadata, including the Client
+// lifecycle scenarios that install their own API routes rather than the common
+// product fixture. Their health endpoint must represent that same synthetic Host.
+test.beforeEach(async ({ page }) => {
+  await installSnapshotHealthRoutes(page, productSnapshot)
+})
 
 const installRuntimeFailureGate = (page: Page): string[] => {
   const failures: string[] = []
@@ -324,7 +332,7 @@ test('about identity stays readable across supported desktop sizes and themes', 
       await page.emulateMedia({ colorScheme, reducedMotion: 'reduce' })
       await page.goto('/settings?tab=about')
       await expect(page.getByRole('heading', { name: 'NekroNXT Preview' })).toBeVisible()
-      await expect(page.getByText('0.1.0-visual-review', { exact: true })).toBeVisible()
+      await expect(page.getByText(productSnapshot.productMetadata!.releaseId, { exact: true })).toBeVisible()
       await expect(page.getByText('0.1.1-rc.2', { exact: true })).toBeVisible()
       await expect(page.getByText('AGPL-3.0-only', { exact: true })).toBeVisible()
       const logo = page.getByRole('img', { name: 'NekroNXT Logo' })
@@ -845,6 +853,14 @@ test('theme surfaces interpolate while message layout wrappers stay unanimated',
   await page.goto(`/work/channels/${targetChannelId}`)
   await expect(page.locator('[data-channel-message-list] article').first()).toBeVisible()
   const colors = await page.evaluate(async () => {
+    // The first successful snapshot dismisses the connection notice with its
+    // own opacity transition. Let that settle before measuring theme changes.
+    await Promise.all(
+      document
+        .getAnimations()
+        .filter((animation) => animation instanceof CSSTransition)
+        .map((animation) => animation.finished.catch(() => undefined)),
+    )
     const root = document.documentElement
     const wrapper = document.querySelector<HTMLElement>('[data-channel-message-list] [data-nxt-enter-kind="object"]')
     const paragraph = wrapper?.querySelector('p')

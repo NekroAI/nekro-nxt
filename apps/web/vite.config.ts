@@ -16,10 +16,13 @@ if (!productVersion) throw new Error('根 package.json 缺少产品版本。')
 
 export default defineConfig({
   plugins: [react()],
-  define: { __NEKRO_PRODUCT_VERSION__: JSON.stringify(productVersion) },
+  define: {
+    __NEKRO_PRODUCT_VERSION__: JSON.stringify(productVersion),
+    __NEKRO_PRODUCT_RELEASE_ID__: JSON.stringify(process.env['NEKRO_RELEASE_ID'] ?? ''),
+  },
   resolve: {
     alias: workspaceSourceAliases,
-    dedupe: ['react', 'react-dom'],
+    dedupe: ['react', 'react-dom', '@deepseek-ai/cordis', '@deepseek-ai/dsh-client-ui-slots'],
   },
   server: {
     host: '127.0.0.1',
@@ -28,6 +31,7 @@ export default defineConfig({
     proxy: {
       // 开发模式下把领域 API 转发到本机 NekroNxt Server（apps/server，默认 4960）。
       // 生产构建由 server 通过 dsh-host-frontend-static 同源托管，无需代理。
+      '/health': { target: apiProxyTarget, changeOrigin: true },
       '/api': {
         target: apiProxyTarget,
         changeOrigin: true,

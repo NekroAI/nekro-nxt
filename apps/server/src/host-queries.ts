@@ -1,3 +1,4 @@
+import { DSH_RUNTIME_RELEASE } from '@nekro-nxt/dsh-compat/release'
 import type { HostApiResponse } from '@nekro-nxt/contracts'
 import {
   HostApiContracts,
@@ -453,6 +454,13 @@ export class HostQueries {
     return HostApiContracts.snapshot.parseResponse({
       cursor: this.#cursor(),
       diagnosticsSampledAt,
+      upgrade: {
+        ...(runtime.upgradeBackupId === undefined ? {} : { backupId: runtime.upgradeBackupId }),
+        runtimeVersion: DSH_RUNTIME_RELEASE.dshVersion,
+        sessionCompatibilityId: DSH_RUNTIME_RELEASE.sessionCompatibilityId,
+        resetContexts: runtime.sessionStoragePreparation.kind === 'archived',
+        diagnostics: [...runtime.host.compatibilityDiagnostics(), ...runtime.compatibility.listCurrent()],
+      },
       productMetadata,
       models,
       capabilityAvailability: {

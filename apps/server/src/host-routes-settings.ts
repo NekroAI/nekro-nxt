@@ -27,6 +27,29 @@ export function registerSettingsRoutes({
   broadcast,
   broadcastExtensionsChanged,
 }: HostRouteContext): () => void {
+  registerRoute({
+    kind: 'exact',
+    path: '/api/runtime/compatibility/retry',
+    handler: async (req, res) => {
+      if (req.method !== 'POST') {
+        writeError(res, 405, 'method-not-allowed', '只支持 POST。')
+        return
+      }
+      try {
+        const input = HostApiContracts.retryRuntimeCompatibility.parseRequest(await readJsonBody(req))
+        const result = await runtime.retryCompatibility(input)
+        broadcast({ event: 'snapshot-changed', data: { changed: true } })
+        writeContractJson(res, 200, HostApiContracts.retryRuntimeCompatibility, result)
+      } catch (error) {
+        writeError(
+          res,
+          400,
+          'compatibility-retry-failed',
+          error instanceof Error ? error.message : '兼容性检查未通过。',
+        )
+      }
+    },
+  })
   const dshPluginOperation = (
     operationId: string,
     kind: 'inspect' | 'install',

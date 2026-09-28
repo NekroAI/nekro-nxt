@@ -24,3 +24,5 @@ export function setUnsavedDraftOwner(owner: symbol, dirty: boolean): void {
   if (dirty) dirtyEntries.add(owner)
   else dirtyEntries.delete(owner)
 }
+
+export const hasUnsavedFormDrafts = (): boolean => [...dirtyEntries].some((key) => typeof key === 'string')

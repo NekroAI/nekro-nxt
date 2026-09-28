@@ -4,6 +4,7 @@ import path from 'node:path'
 import test from 'node:test'
 import { fileURLToPath } from 'node:url'
 import desktopDistributions from '../../apps/desktop/distributions.json' with { type: 'json' }
+import { DSH_RUNTIME_RELEASE } from '../lib/dsh-release.mjs'
 import { artifactTarget } from '../product-release.mjs'
 import { assertStableReceipt, stableReleaseBody } from '../stable-release-ci.mjs'
 import {
@@ -20,7 +21,7 @@ const release = {
   version: '1.4.0',
   commit: '0123456789abcdef0123456789abcdef01234567',
   releaseId: '1.4.0+0123456789ab',
-  dshVersion: '0.1.1-rc.2',
+  dshVersion: DSH_RUNTIME_RELEASE.dshVersion,
 }
 const repositoryRoot = path.resolve(fileURLToPath(new URL('../..', import.meta.url)))
 
@@ -110,7 +111,7 @@ test('stable Release body combines reviewed notes with generated distribution fa
   assert.match(body, /## 🐳 服务端部署/u)
   assert.match(body, /nekro-nxt-mac-arm64-v1\.4\.0\.dmg/u)
   assert.match(body, /ghcr\.io\/nekroai\/nekro-nxt:1\.4\.0/u)
-  assert.match(body, /0\.1\.1-rc\.2/u)
+  assert.ok(body.includes(`- DSH：\`${DSH_RUNTIME_RELEASE.dshVersion}\``))
   assert.match(body, /1\.4\.0\+0123456789ab/u)
   assert.match(body, /AGPL-3\.0-only/u)
   assert.doesNotMatch(body, /receipt\.json/u)

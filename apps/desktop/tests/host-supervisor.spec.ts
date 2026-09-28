@@ -188,4 +188,32 @@ describe('Desktop Host supervisor', () => {
     await stop
     expect(stopped).toBe(true)
   })
+
+  it('does not commit readiness after safe cancellation and waits for child exit', async () => {
+    const process = new FakeHostProcess({ exitOnKill: false })
+    let ready!: () => void
+    const supervisor = new HostSupervisor({
+      origin: 'http://127.0.0.1:41239',
+      spawnHost: () => process,
+      waitUntilReady: () =>
+        new Promise<void>((resolve) => {
+          ready = resolve
+        }),
+    })
+    const start = supervisor.start()
+    const rejected = expect(start).rejects.toThrow('failed to start')
+    const stop = supervisor.stop()
+    ready()
+    await rejected
+    expect(process.killCalls).toBe(1)
+    let stopped = false
+    void stop.then(() => {
+      stopped = true
+    })
+    await Promise.resolve()
+    expect(stopped).toBe(false)
+    process.exit(0)
+    await stop
+    expect(stopped).toBe(true)
+  })
 })

@@ -1,5 +1,5 @@
 import type { SessionEvent } from '@deepseek-ai/dsh-session'
-import { isTokenDelta } from '@deepseek-ai/dsh-llm/message'
+import { assistantStreamFirstTokenTime } from '@deepseek-ai/dsh-llm'
 import {
   deliveryStateFromToolResult,
   responseObligationState,
@@ -88,36 +88,31 @@ export const normalizeSessionEvents = (
       continue
     }
     if (event.type === 'tool/result') {
-      const block = event.data.message.content[0]
-      const callId = block?.type === 'tool-result' ? String(block.toolCallId) : ''
+      const message = event.data.message
+      const callId = String(message.toolCallId)
       if (!callId) continue
-      const nested = block.type === 'tool-result' ? block.content : []
-      const resultPreview = textFromBlocks(nested)
+      const resultPreview = textFromBlocks(message.content)
       const deliveryState = deliveryStateFromToolResult(event)
       result.push({
         type: 'tool/result',
         turn: event.data.turn,
         step: event.data.step,
         callId,
-        failed: event.data.error !== undefined || (block.type === 'tool-result' && block.isError === true),
+        failed: event.data.error !== undefined || message.isError === true,
         at,
         ...(resultPreview === undefined ? {} : { resultPreview }),
         ...(deliveryState === undefined ? {} : { deliveryState }),
       })
       continue
     }
-    if (event.type === 'assistant/chunk') {
-      if (!isTokenDelta(event.data.chunk)) continue
+    if (event.type === 'assistant/attempt' || event.type === 'assistant/message') {
+      const firstTokenAt = assistantStreamFirstTokenTime(event.data.stream)
       const key = `${event.data.turn}:${event.data.step}`
-      if (firstTokenKeys.has(key)) continue
-      firstTokenKeys.add(key)
-      result.push({
-        type: 'assistant/first-token',
-        turn: event.data.turn,
-        step: event.data.step,
-        at,
-      })
-      continue
+      if (firstTokenAt !== undefined && !firstTokenKeys.has(key)) {
+        firstTokenKeys.add(key)
+        result.push({ type: 'assistant/first-token', turn: event.data.turn, step: event.data.step, at: firstTokenAt })
+      }
+      if (event.type === 'assistant/attempt') continue
     }
     if (event.type === 'llm/retry') {
       result.push({

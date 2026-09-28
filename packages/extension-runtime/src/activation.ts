@@ -1,3 +1,4 @@
+import type { ExtensionCompatibilityPort, ExtensionCompatibilityIdentity } from './compatibility.js'
 import type { AgentId, ExtensionId, ExtensionRevisionId, JsonValue } from '@nekro-nxt/contracts'
 import type { ExtensionBuilder } from './builder.js'
 import type { ExtensionService } from './service.js'
@@ -36,6 +37,7 @@ export class ExtensionActivationCoordinator {
   readonly #service: RevisionSourceResolver
   readonly #builder: ArtifactBuilder
   readonly #host: ExtensionActivationHost
+  readonly #compatibility: ExtensionCompatibilityPort | undefined
   readonly #now: () => number
   readonly #mounted = new Map<string, MountedExtension>()
   readonly #diagnostics = new Map<string, ExtensionRuntimeDiagnostic>()
@@ -48,13 +50,14 @@ export class ExtensionActivationCoordinator {
     service: RevisionSourceResolver,
     builder: ArtifactBuilder,
     host: ExtensionActivationHost,
-    options: { readonly now?: () => number } = {},
+    options: { readonly now?: () => number; readonly compatibility?: ExtensionCompatibilityPort } = {},
   ) {
     this.#repository = repository
     this.#service = service
     this.#builder = builder
     this.#host = host
     this.#now = options.now ?? Date.now
+    this.#compatibility = options.compatibility
   }
 
   async activate(input: {
@@ -106,24 +109,49 @@ export class ExtensionActivationCoordinator {
       try {
         this.#repository.upsertActivation(activation)
       } catch (error) {
-        await mounted.dispose().catch(() => undefined)
+        try {
+          await mounted.dispose()
+        } catch (disposeError) {
+          throw new AggregateError([error, disposeError], 'Extension commit and cleanup failed.')
+        }
         await this.#restorePrevious(key, rollback, error)
         throw error
       }
       this.#mounted.set(key, mounted)
       this.#diagnostics.set(key, { status: 'active', observedAt: this.#timestamp() })
+      this.#compatibility?.record(
+        {
+          objectKind: 'extension',
+          objectId: activation.extensionId,
+          objectVersion: activation.extensionRevisionId,
+          configurationRevision: JSON.stringify([activation.agentId, activation.config]),
+        },
+        { status: 'compatible', phase: 'restore', retryable: true },
+      )
       return activation
     })
   }
 
   /** Mounts the repository's committed current Activations without inventing failure states. */
-  async restore(): Promise<{ readonly restored: number; readonly failed: number }> {
+  async restore(
+    retry = false,
+    extensionId?: ExtensionId,
+  ): Promise<{ readonly restored: number; readonly failed: number }> {
     this.#assertAvailable()
     let restored = 0
     let failed = 0
     for (const activation of this.#repository.listActivations()) {
+      if (extensionId !== undefined && activation.extensionId !== extensionId) continue
       const key = this.#key(activation.agentId, activation.extensionId)
+      const identity: ExtensionCompatibilityIdentity = {
+        objectKind: 'extension',
+        objectId: activation.extensionId,
+        objectVersion: activation.extensionRevisionId,
+        configurationRevision: JSON.stringify([activation.agentId, activation.config]),
+      }
       try {
+        const previous = this.#compatibility?.read(identity)
+        if (!retry && previous?.status === 'isolated') throw new Error(previous.reason ?? '扩展等待兼容性修复。')
         const mounted = await this.#exclusive(key, async () => {
           this.#assertAvailable()
           if (this.#mounted.has(key)) return false
@@ -137,7 +165,15 @@ export class ExtensionActivationCoordinator {
           return true
         })
         if (mounted) restored += 1
+        this.#compatibility?.record(identity, { status: 'compatible', phase: 'restore', retryable: true })
       } catch (error) {
+        if (error instanceof AggregateError) throw error
+        this.#compatibility?.record(identity, {
+          status: 'isolated',
+          phase: 'restore',
+          retryable: true,
+          reason: error instanceof Error ? error.message.slice(0, 2048) : '扩展恢复失败。',
+        })
         this.#diagnostics.set(key, {
           status: 'restore-failed',
           message: error instanceof Error ? error.message : String(error),

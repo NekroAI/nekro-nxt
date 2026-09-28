@@ -18,7 +18,7 @@ import CredentialProvider, {
 } from '@deepseek-ai/dsh-credentials'
 import { createUserMessage, LlmRuntime, type LlmAdapter } from '@deepseek-ai/dsh-llm'
 import * as LlmPiAi from '@deepseek-ai/dsh-llm-pi-ai'
-import { settingsNamespace, type SettingsPathOp } from '@deepseek-ai/dsh-settings'
+import { type SettingsPathOp } from '@deepseek-ai/dsh-settings'
 import {
   type DshCredentialView,
   type DshPluginCatalogEntry,
@@ -93,10 +93,10 @@ export function isDshSettingsSchemaWireSafe(serialized: unknown): boolean {
       for (const child of Object.values(node.dict)) visit(child, supported)
     }
     if (node.inner !== undefined) {
-      const supported = redactorCanReach && (type === 'dict' || type === 'array')
+      const supported = redactorCanReach && (type === 'dict' || type === 'array' || type === 'transform')
       visit(node.inner, supported)
     }
-    for (const child of node.list ?? []) visit(child, false)
+    for (const child of node.list ?? []) visit(child, redactorCanReach && (type === 'union' || type === 'intersect'))
   }
   visit(envelope.uid, true)
   return safe
@@ -294,12 +294,12 @@ export class HostModelSettings {
   async getLlmProviderSettings(): Promise<LlmProviderSettingsView> {
     if (!this.#hasLlmSettings) throw new Error('DSH 模型设置服务未启用。')
     const descriptors = new Map(
-      this.#context.settings.describe({ redactSecrets: true }).map((descriptor) => [descriptor.ns, descriptor]),
+      this.#context.settings.describe({ redactSecrets: true }).map((descriptor) => [String(descriptor.ns), descriptor]),
     )
     const active = new Map(this.#context.llm.listProviders().map((provider) => [provider.id, provider]))
     const providers = await Promise.all(
       this.#context.llm.listConfigurableProviders().map(async (entry): Promise<ConfigurableLlmProviderView> => {
-        const descriptor = descriptors.get(settingsNamespace(entry.settingsNs))
+        const descriptor = descriptors.get(entry.settingsNs)
         if (!descriptor) throw new Error(`DSH 模型设置 namespace 未注册：${entry.settingsNs}`)
         const rawProfile = readObjectPath(descriptor.value, entry.settingsPath)
         const profile = rawProfile === undefined ? undefined : LlmProviderProfileSchema.parse(rawProfile)
@@ -365,7 +365,7 @@ export class HostModelSettings {
     if (!this.#hasLlmSettings) return fallback
     const descriptor = this.#context.settings
       .describe({ redactSecrets: true })
-      .find((candidate) => candidate.ns === settingsNamespace('web-search-deepseek'))
+      .find((candidate) => candidate.ns === 'web-search-deepseek')
     const valuesResult = WebSearchSettingsSchema.safeParse(descriptor?.value)
     const values = valuesResult.success ? valuesResult.data : undefined
     const credentialReference = typeof values?.apiKeyEnv === 'string' ? values.apiKeyEnv : fallback.credentialReference
@@ -411,13 +411,13 @@ export class HostModelSettings {
     ops: readonly DshSettingsPathOperation[],
   ): Promise<DshSettingsNamespaceView> {
     if (!this.#hasLlmSettings) throw new Error('DSH 设置服务未启用。')
-    const branded = settingsNamespace(ns)
+    const branded = ns
     const before = this.#context.settings
       .describe({ redactSecrets: true })
       .find((candidate) => candidate.ns === branded)
     if (!before) throw new Error(`DSH Settings namespace 不存在：${ns}`)
     if (!isDshSettingsSchemaWireSafe(before.schema)) {
-      throw new Error(`DSH Settings namespace 含有 0.1.1-rc.2 无法安全脱敏的 Schema：${ns}`)
+      throw new Error(`DSH Settings namespace 含有无法安全脱敏的 Schema：${ns}`)
     }
     await this.#context.settings.mutate(branded, ops, expectedRevision)
     const descriptor = this.#context.settings
@@ -499,7 +499,7 @@ export class HostModelSettings {
     }
     const descriptor = this.#context.settings
       .describe({ redactSecrets: true })
-      .find((candidate) => candidate.ns === settingsNamespace(entry.settingsNs))
+      .find((candidate) => candidate.ns === entry.settingsNs)
     if (readObjectPath(descriptor?.base, entry.settingsPath) !== undefined) {
       return '此供应商由宿主启动配置启用，移除保存值只会恢复默认配置。请先调整宿主启动配置后再移除。'
     }
@@ -509,7 +509,7 @@ export class HostModelSettings {
   #providerConfigured(provider: string): boolean {
     const descriptor = this.#context.settings
       .describe({ redactSecrets: true })
-      .find((candidate) => candidate.ns === settingsNamespace('llm-pi-ai'))
+      .find((candidate) => candidate.ns === 'llm-pi-ai')
     return readObjectPath(descriptor?.value, ['providers', provider]) !== undefined
   }
 
@@ -537,7 +537,7 @@ export class HostModelSettings {
           throw new LlmProviderRemovalConflict(impact.blockedReason || '供应商配置已变化，请重新检查影响后确认。')
         }
         await this.#context.settings.mutate(
-          settingsNamespace('llm-pi-ai'),
+          'llm-pi-ai',
           [{ op: 'unset', path: ['providers', provider] }],
           expectedRevision,
         )
@@ -560,7 +560,7 @@ export class HostModelSettings {
     const settingsPath = entry?.settingsPath ?? ['providers', input.provider]
     const descriptor = this.#context.settings
       .describe({ redactSecrets: true })
-      .find((candidate) => candidate.ns === settingsNamespace(settingsNs))
+      .find((candidate) => candidate.ns === settingsNs)
     if (!descriptor) throw new Error(`DSH 模型设置 namespace 未注册：${settingsNs}`)
     const rawCurrent = readObjectPath(descriptor.value, settingsPath)
     const current = rawCurrent === undefined ? undefined : LlmProviderProfileSchema.parse(rawCurrent)
@@ -583,7 +583,7 @@ export class HostModelSettings {
         : Object.entries(fields).map(([key, value]) => ({ op: 'set' as const, path: [...settingsPath, key], value }))
     if (ops.length === 0 && current === undefined) ops.push({ op: 'set', path: settingsPath, value: {} })
     if (ops.length > 0) {
-      await this.#context.settings.mutate(settingsNamespace(settingsNs), ops, input.expectedRevision)
+      await this.#context.settings.mutate(settingsNs, ops, input.expectedRevision)
     }
     if (input.apiKey !== undefined) {
       await this.#context.credentials.set(credentialRef(credentialRefName), input.apiKey)
@@ -631,7 +631,7 @@ export class HostModelSettings {
     if (settingsNs !== 'llm-pi-ai') throw new Error(`当前不支持测试此模型适配器：${settingsNs}`)
     const descriptor = this.#context.settings
       .describe({ redactSecrets: true })
-      .find((candidate) => candidate.ns === settingsNamespace(settingsNs))
+      .find((candidate) => candidate.ns === settingsNs)
     if (!descriptor) throw new Error(`DSH 模型设置 namespace 未注册：${settingsNs}`)
     const settingsPath = directoryEntry?.settingsPath ?? ['providers', input.provider]
     const rawCurrent = readObjectPath(descriptor.value, settingsPath)

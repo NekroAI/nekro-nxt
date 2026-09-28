@@ -46,7 +46,9 @@ describe('LLM provider removal', () => {
     llmSettingsPath: path.join(directory, 'dsh/settings.yaml'),
     llmCredentialPath: path.join(directory, 'dsh/credentials.yaml'),
     configureLlm: async (ctx: Context) => {
-      settingsService = ctx.settings
+      ctx.inject(['settings'], (injected) => {
+        settingsService = injected.settings
+      })
       await configureDshLlmProviders(startupRoutes)(ctx)
     },
   })

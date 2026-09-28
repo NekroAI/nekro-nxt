@@ -1,6 +1,6 @@
 import { Context } from '@deepseek-ai/cordis'
 import Loader from '@deepseek-ai/cordis-plugin-loader'
-import { assertEntriesActivated, composeEntries } from '@deepseek-ai/dsh-app-boot'
+import { auditStartupEntries, composeEntries } from '@deepseek-ai/dsh-app-boot'
 import PluginInventory from '@deepseek-ai/dsh-host-plugin-inventory'
 import { describe, expect, it } from 'vitest'
 import { z } from 'zod'
@@ -24,13 +24,13 @@ const PluginInventorySnapshotSchema = z
 const PluginEntryIdSchema = z.string().min(1)
 
 interface PluginInventoryService {
-  readonly list: () => unknown
+  readonly list: () => Promise<unknown>
 }
 
 const isPluginInventoryService = (value: unknown): value is PluginInventoryService =>
   typeof value === 'object' && value !== null && 'list' in value && typeof value.list === 'function'
 
-describe('DSH 0.1.1-rc.2 Loader/Profile compatibility spike', () => {
+describe('DSH 0.1.7-rc.2 Loader/Profile compatibility spike', () => {
   it('loads, updates, inventories, removes, and fully retracts a public Cordis plugin entry', async () => {
     const context = new Context()
     await context.plugin(Loader, { baseUrl: import.meta.url })
@@ -39,7 +39,7 @@ describe('DSH 0.1.1-rc.2 Loader/Profile compatibility spike', () => {
     if (!isPluginInventoryService(inventory)) {
       throw new TypeError('DSH plugin inventory service is unavailable.')
     }
-    const listInventory = () => PluginInventorySnapshotSchema.parse(inventory.list())
+    const listInventory = async () => PluginInventorySnapshotSchema.parse(await inventory.list())
     const name = moduleUrl(`
       export default function apply(ctx, config) {
         ctx.reflect.provide('nxtSpike', { value: config.value })
@@ -48,26 +48,28 @@ describe('DSH 0.1.1-rc.2 Loader/Profile compatibility spike', () => {
     try {
       const id = PluginEntryIdSchema.parse(await context.loader.create({ name, config: { value: 1 } }))
       await context.loader.await()
-      await assertEntriesActivated(context, 'nekro-nxt-loader-spike')
+      await auditStartupEntries(context, 'nekro-nxt-loader-spike')
       expect(context.get('nxtSpike')).toEqual({ value: 1 })
-      expect(listInventory().entries).toEqual([
+      expect((await listInventory()).entries).toEqual([
         expect.objectContaining({ entryId: id, moduleName: name, enabled: true, fiberPhase: 'active' }),
       ])
 
       await context.loader.update(id, { config: { value: 2 } })
       await context.loader.await()
-      await assertEntriesActivated(context, 'nekro-nxt-loader-spike')
+      await auditStartupEntries(context, 'nekro-nxt-loader-spike')
       expect(context.get('nxtSpike')).toEqual({ value: 2 })
 
-      await context.loader.remove(id)
+      await context.loader.resolve(id).fiber?.dispose()
+      context.loader.remove(id)
+      await context.loader.await()
       expect(context.get('nxtSpike')).toBeUndefined()
-      expect(listInventory().entries).toEqual([])
+      expect((await listInventory()).entries).toEqual([])
     } finally {
       await context.fiber.dispose()
     }
   })
 
-  it('rolls back a failed activation and does not publish its provisional service', async () => {
+  it('detects a failed activation and fully retracts the provisional entry', async () => {
     const context = new Context()
     await context.plugin(Loader, { baseUrl: import.meta.url })
     const name = moduleUrl(`
@@ -77,11 +79,17 @@ describe('DSH 0.1.1-rc.2 Loader/Profile compatibility spike', () => {
       }
     `)
     try {
-      await expect(context.loader.create({ name })).rejects.toThrow('intentional loader spike failure')
+      const id = PluginEntryIdSchema.parse(await context.loader.create({ name }))
+      await context.loader.await()
+      const warnings: string[] = []
+      await auditStartupEntries(context, 'nekro-nxt-loader-spike', (line) => warnings.push(line))
+      expect(warnings.join('\n')).toContain('intentional loader spike failure')
+      // Loader 1.0.5 retains failed entries for diagnostics. The owner must await
+      // disposal before removing the entry; create() no longer rejects.
+      await context.loader.resolve(id).fiber?.dispose()
+      context.loader.remove(id)
       await context.loader.await()
       expect(context.get('nxtFailedSpike')).toBeUndefined()
-      // 0.1.1-rc.2 create() retracts the failed provisional entry as part of the
-      // rejected activation; callers do not receive an id to clean up.
       expect([...context.loader.entries()]).toEqual([])
     } finally {
       await context.fiber.dispose()

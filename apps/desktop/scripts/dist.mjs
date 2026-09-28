@@ -1,7 +1,12 @@
 import { spawnSync } from 'node:child_process'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { desktopPlatforms, electronBuilderArguments, receiptTargets } from '../../../scripts/product-release.mjs'
+import {
+  desktopPlatforms,
+  electronBuilderArguments,
+  receiptTargets,
+  readProductRelease,
+} from '../../../scripts/product-release.mjs'
 
 const args = process.argv.slice(2)
 const option = (name) => {
@@ -31,7 +36,13 @@ const appRoot = fileURLToPath(new URL('..', import.meta.url))
 const repositoryRoot = path.resolve(appRoot, '../..')
 const pnpmCli = process.env['npm_execpath']
 if (!pnpmCli) throw new Error('Desktop 分发必须通过 pnpm script 启动。')
-const buildEnvironment = { ...process.env, CI: 'true', NEKRO_DESKTOP_CHANNEL: channel }
+const release = await readProductRelease(repositoryRoot, channel)
+const buildEnvironment = {
+  ...process.env,
+  CI: 'true',
+  NEKRO_DESKTOP_CHANNEL: channel,
+  NEKRO_RELEASE_ID: release.releaseId,
+}
 const runPnpm = (commandArgs) =>
   run(process.execPath, [pnpmCli, '--config.verify-deps-before-run=false', ...commandArgs], appRoot, buildEnvironment)
 

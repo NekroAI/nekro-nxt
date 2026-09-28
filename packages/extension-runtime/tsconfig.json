@@ -8,5 +8,10 @@
     "tsBuildInfoFile": "lib/types.tsbuildinfo"
   },
   "include": ["src/**/*.ts"],
-  "references": [{ "path": "../contracts" }, { "path": "../core" }, { "path": "../extension-sdk" }]
+  "references": [
+    { "path": "../contracts" },
+    { "path": "../core" },
+    { "path": "../dsh-compat" },
+    { "path": "../extension-sdk" }
+  ]
 }

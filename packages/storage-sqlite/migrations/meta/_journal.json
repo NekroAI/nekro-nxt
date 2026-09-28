@@ -176,6 +176,13 @@
       "when": 1789371196899,
       "tag": "0024_connection_account_key",
       "breakpoints": true
+    },
+    {
+      "idx": 25,
+      "version": "6",
+      "when": 1790580453710,
+      "tag": "0025_dsh_session_reset_receipts",
+      "breakpoints": true
     }
   ]
 }

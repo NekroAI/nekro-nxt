@@ -1,3 +1,4 @@
+import { saveChannelDraftRecovery } from './channel-draft-recovery.js'
 import { setUnsavedDraftOwner } from './unsaved-drafts.js'
 import { createContext, createElement, useContext, useEffect, type ReactNode } from 'react'
 import { useStore } from 'zustand'
@@ -56,11 +57,13 @@ const ProductRuntimeContext = createContext<ProductRuntime | null>(null)
 export function ProductRuntimeProvider({ runtime, children }: { runtime: ProductRuntime; children: ReactNode }) {
   useEffect(() => {
     const owner = Symbol('channel-drafts')
-    const update = () =>
+    const update = () => {
+      saveChannelDraftRecovery(runtime.uiStore.getState().channelDrafts)
       setUnsavedDraftOwner(
         owner,
         Object.values(runtime.uiStore.getState().channelDrafts).some((draft) => Boolean(draft.text.trim())),
       )
+    }
     update()
     const unsubscribe = runtime.uiStore.subscribe(update)
     return () => {

@@ -1,3 +1,4 @@
+import { UpgradeNotice } from '../components/upgrade-notice.js'
 import { useProductRuntime } from '../product-runtime.js'
 import { callHostApi } from '../host-api-client.js'
 import { useHostActions } from '../product-runtime.js'
@@ -404,6 +405,7 @@ export function ExtensionsPage() {
           ) : undefined
         }
       />
+      <UpgradeNotice extensionId={selected?.id} />
       <StageCrossfade className={styles.desktopContentStage} swapKey={selected?.id ?? 'empty'}>
         {extensions.length === 0 ? (
           <EmptyState

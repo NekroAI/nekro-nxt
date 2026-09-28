@@ -6,6 +6,33 @@ const settings = async (request: APIRequestContext) => {
   expect(response.ok()).toBe(true)
   return HostApiContracts.llmProviders.parseResponse(await response.json())
 }
+const customProviderLabels: Readonly<Record<string, string>> = {
+  'journey-removal-light': '浅色移除测试网关',
+  'journey-removal-dark': '深色移除测试网关',
+  'journey-removal-unknown-retry': '失败对账测试网关',
+  'journey-removal-unknown-read': '响应丢失测试网关',
+}
+const referenceAgentName = '供应商引用测试智能体'
+
+// The Playwright Host data root survives reruns. Remove only this scenario's
+// exact synthetic agent, including its auto-created channel, before recreating
+// the reference. Other existing provider references must remain real blockers.
+const removeReferenceFixtureAgents = async (request: APIRequestContext): Promise<void> => {
+  const snapshot = HostApiContracts.snapshot.parseResponse(await (await request.get('/api/snapshot')).json())
+  for (const agent of snapshot.agents) {
+    if (agent.displayName !== referenceAgentName || agent.persona !== '' || agent.model.provider !== 'deepseek')
+      continue
+    const response = await request.delete(`/api/agents/${agent.id}`, {
+      data: {
+        expectedCurrentRevisionId: agent.currentRevisionId,
+        confirmationName: referenceAgentName,
+        deleteAutoCreatedBuiltInChannels: true,
+      },
+    })
+    expect(response.ok(), await response.text()).toBe(true)
+  }
+}
+
 const saveProvider = async (request: APIRequestContext, provider: string, custom: boolean) => {
   const before = await settings(request)
   const response = await request.post(`/api/llm/providers/${provider}`, {
@@ -14,7 +41,7 @@ const saveProvider = async (request: APIRequestContext, provider: string, custom
       apiKey: 'synthetic-journey-key',
       ...(custom
         ? {
-            displayName: '旅程测试网关',
+            displayName: customProviderLabels[provider],
             baseURL: 'https://gateway.example.test/v1',
             api: 'openai-completions',
             models: [{ id: 'synthetic-chat' }],
@@ -36,11 +63,12 @@ for (const theme of ['light', 'dark'] as const) {
       if (message.type() === 'error') failures.push(message.text())
     })
     const provider = `journey-removal-${theme}`
+    const providerName = new RegExp(`^${customProviderLabels[provider]} `, 'u')
     await saveProvider(request, provider, true)
     await page.addInitScript((value) => localStorage.setItem('nekro-nxt.theme', value), theme)
     await page.goto('/settings')
-    await page.getByRole('button', { name: /旅程测试网关/u }).click()
-    await expect(page.getByRole('button', { name: /旅程测试网关/u })).toContainText('自定义接入')
+    await page.getByRole('button', { name: providerName }).click()
+    await expect(page.getByRole('button', { name: providerName })).toContainText('自定义接入')
     await page.getByRole('button', { name: '删除供应商', exact: true }).click()
     const dialog = page.getByRole('dialog', { name: '检查供应商移除影响' })
     await expect(dialog.getByText('synthetic-chat', { exact: true })).toBeVisible()
@@ -54,11 +82,11 @@ for (const theme of ['light', 'dark'] as const) {
     await page.getByRole('button', { name: '删除供应商', exact: true }).click()
     await dialog.getByRole('button', { name: '确认删除供应商' }).click()
     await expect(dialog).toBeHidden()
-    await expect(page.getByRole('button', { name: /旅程测试网关/u })).toHaveCount(0)
+    await expect(page.getByRole('button', { name: providerName })).toHaveCount(0)
     expect((await settings(request)).providers.some((entry) => entry.provider === provider)).toBe(false)
     await page.reload()
     await expect(page.getByRole('heading', { name: '供应商配置', exact: true })).toBeVisible()
-    await expect(page.getByRole('button', { name: /旅程测试网关/u })).toHaveCount(0)
+    await expect(page.getByRole('button', { name: providerName })).toHaveCount(0)
     expect(failures).toEqual([])
   })
 }
@@ -69,6 +97,7 @@ test('built-in removal blocks references, requires a fresh preview after conflic
 }) => {
   const failures: string[] = []
   page.on('pageerror', (error) => failures.push(error.message))
+  await removeReferenceFixtureAgents(request)
   await saveProvider(request, 'deepseek', false)
   const before = await settings(request)
   const model = before.providers.find((entry) => entry.provider === 'deepseek')!.models[0]!.id
@@ -91,7 +120,11 @@ test('built-in removal blocks references, requires a fresh preview after conflic
     const snapshot = HostApiContracts.snapshot.parseResponse(await (await request.get('/api/snapshot')).json())
     const revision = snapshot.agents.find((entry) => entry.id === agent.agentId)!.currentRevisionId
     const removedAgent = await request.delete(`/api/agents/${agent.agentId}`, {
-      data: { expectedCurrentRevisionId: revision, confirmationName: '供应商引用测试智能体' },
+      data: {
+        expectedCurrentRevisionId: revision,
+        confirmationName: referenceAgentName,
+        deleteAutoCreatedBuiltInChannels: true,
+      },
     })
     expect(removedAgent.ok(), await removedAgent.text()).toBe(true)
     await dialog.getByRole('button', { name: '重新检查影响' }).click()
@@ -126,7 +159,11 @@ test('built-in removal blocks references, requires a fresh preview after conflic
     const remaining = snapshot.agents.find((entry) => entry.id === agent.agentId)
     if (remaining)
       await request.delete(`/api/agents/${agent.agentId}`, {
-        data: { expectedCurrentRevisionId: remaining.currentRevisionId, confirmationName: remaining.displayName },
+        data: {
+          expectedCurrentRevisionId: remaining.currentRevisionId,
+          confirmationName: remaining.displayName,
+          deleteAutoCreatedBuiltInChannels: true,
+        },
       })
   }
 })
@@ -137,6 +174,7 @@ for (const failReconciliation of [false, true]) {
     request,
   }) => {
     const provider = `journey-removal-unknown-${failReconciliation ? 'retry' : 'read'}`
+    const providerName = new RegExp(`^${customProviderLabels[provider]} `, 'u')
     await saveProvider(request, provider, true)
     let committed = false
     let failedRead = false
@@ -161,7 +199,7 @@ for (const failReconciliation of [false, true]) {
       await route.continue()
     })
     await page.goto('/settings')
-    await page.getByRole('button', { name: /旅程测试网关/u }).click()
+    await page.getByRole('button', { name: providerName }).click()
     await page.getByRole('button', { name: '删除供应商', exact: true }).click()
     const dialog = page.getByRole('dialog', { name: '检查供应商移除影响' })
     await dialog.getByRole('button', { name: '确认删除供应商' }).click()
@@ -171,7 +209,7 @@ for (const failReconciliation of [false, true]) {
       await dialog.getByRole('button', { name: '重新检查影响' }).click()
     }
     await expect(dialog).toBeHidden()
-    await expect(page.getByRole('button', { name: /旅程测试网关/u })).toHaveCount(0)
+    await expect(page.getByRole('button', { name: providerName })).toHaveCount(0)
     expect((await settings(request)).providers.some((entry) => entry.provider === provider)).toBe(false)
     expect(deletes).toBe(1)
   })

@@ -1,3 +1,4 @@
+import { UpgradeNotice } from '../components/upgrade-notice.js'
 import { useProductRuntime } from '../product-runtime.js'
 import { useUiStateStore } from '../product-runtime.js'
 import { Settings } from 'lucide-react'
@@ -273,6 +274,7 @@ export function SettingsPage() {
   return (
     <div className={[styles.page, styles.desktopPage, styles.settingsPage].join(' ')} data-product-page="settings">
       <PageHeader icon={Settings} title={title} quiet />
+      <UpgradeNotice />
       <StageCrossfade className={styles.desktopContentStage} swapKey={activeTab}>
         {activeTab === 'models' ? <LlmProviderSettings /> : null}
         {activeTab === 'dsh-extensions' ? <DshExtensionSettings /> : null}

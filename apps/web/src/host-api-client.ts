@@ -1,3 +1,4 @@
+import { hostReleaseGuard, type HostReleaseGuard } from './host-release-guard.js'
 import {
   HostApiErrorSchema,
   buildHostApiContractPath,
@@ -9,6 +10,7 @@ import {
 export interface HostRequestOptions {
   readonly signal?: AbortSignal
   readonly timeoutMs?: number
+  readonly releaseGuard?: HostReleaseGuard
 }
 
 /** Signals that a read belongs to a disposed runtime; callers must not publish its result or error. */
@@ -21,7 +23,7 @@ export class StaleHostReadError extends Error {
 
 export class HostRequestError extends Error {
   constructor(
-    readonly kind: 'network' | 'http' | 'invalid-response' | 'timeout' | 'aborted',
+    readonly kind: 'network' | 'http' | 'invalid-response' | 'timeout' | 'aborted' | 'release-mismatch',
     message: string,
     readonly status?: number,
     readonly commitState: 'not-applicable' | 'rejected' | 'unknown' = 'not-applicable',
@@ -50,6 +52,20 @@ export async function callHostApi<Contract extends HostApiContract, Output>(
   const requestBody = contract.parseRequest(body)
   const serialized = contract.encodeRequest?.(requestBody)
   const mutation = contract.method !== 'GET'
+  const releaseGuard = options.releaseGuard ?? hostReleaseGuard
+  if (mutation) {
+    try {
+      await releaseGuard.beforeMutation()
+    } catch (cause) {
+      throw new HostRequestError(
+        releaseGuard.getSnapshot().mismatch ? 'release-mismatch' : 'network',
+        cause instanceof Error ? cause.message : '尚未确认服务版本，此操作未发送。',
+        undefined,
+        'rejected',
+      )
+    }
+    if (options.signal?.aborted) throw new HostRequestError('aborted', '服务请求已取消。', undefined, 'rejected')
+  }
   const controller = new AbortController()
   let timedOut = false
   const abort = (): void => controller.abort(options.signal?.reason)
@@ -71,6 +87,9 @@ export async function callHostApi<Contract extends HostApiContract, Output>(
         headers: {
           accept: contract.responseFormat === 'bytes' ? 'application/octet-stream' : 'application/json',
           ...(requestBody === undefined ? {} : { 'content-type': 'application/json' }),
+          ...(releaseGuard.getSnapshot().expected
+            ? { 'x-nekro-client-release': releaseGuard.getSnapshot().expected! }
+            : {}),
           ...serialized?.headers,
         },
         ...(serialized !== undefined
@@ -105,12 +124,33 @@ export async function callHostApi<Contract extends HostApiContract, Output>(
     }
     if (!response.ok) {
       const error = HostApiErrorSchema.safeParse(json)
+      // Host can reject a release that changed after our preflight probe.
+      if (error.success && error.data.error.code === 'release-mismatch') {
+        releaseGuard.rejectCurrentRelease()
+        throw new HostRequestError(
+          'release-mismatch',
+          error.data.error.message,
+          response.status,
+          mutation ? 'rejected' : 'not-applicable',
+        )
+      }
       throw new HostRequestError(
         'http',
         error.success ? error.data.error.message : `服务请求失败：${response.status}`,
         response.status,
         mutation ? (response.status >= 500 ? 'unknown' : 'rejected') : 'not-applicable',
       )
+    }
+    if (path === '/api/snapshot' && typeof json === 'object' && json !== null && 'productMetadata' in json) {
+      const metadata = json.productMetadata
+      if (typeof metadata === 'object' && metadata !== null && 'releaseId' in metadata) {
+        releaseGuard.observe(metadata.releaseId)
+        try {
+          releaseGuard.assertCompatible()
+        } catch (cause) {
+          throw new HostRequestError('release-mismatch', cause instanceof Error ? cause.message : '页面需要刷新。')
+        }
+      }
     }
     try {
       const decode: (input: unknown) => Output = contract.parseResponse

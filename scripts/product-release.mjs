@@ -141,20 +141,39 @@ export function releaseVersionForChannel(baseVersion, channel, commitTimestamp, 
   return `${baseVersion}-${readableBuildTime}.g${commit.slice(0, 12)}`
 }
 
+/** Resolve artifact identity from the candidate repository's single runtime release manifest. */
+export async function readDshReleaseVersion(repositoryRoot) {
+  const [runtimeRelease, serverPackage] = await Promise.all([
+    readFile(path.join(repositoryRoot, 'packages/dsh-compat/src/release.json'), 'utf8').then(JSON.parse),
+    readPackage(repositoryRoot, 'apps/server'),
+  ])
+  const dshVersion = runtimeRelease.dshVersion
+  if (
+    runtimeRelease.format !== 'nxt.dsh-runtime-release' ||
+    runtimeRelease.version !== 1 ||
+    typeof dshVersion !== 'string' ||
+    !/^\d+\.\d+\.\d+(?:-[\w.-]+)?$/u.test(dshVersion) ||
+    runtimeRelease.packages?.['@deepseek-ai/dsh-agent'] !== dshVersion ||
+    serverPackage.dependencies?.['@deepseek-ai/dsh-agent'] !== dshVersion
+  ) {
+    throw new Error('DSH Release 清单无效或与 Server 依赖不一致，不能生成产品 Release。')
+  }
+  return dshVersion
+}
+
 export async function readProductRelease(
   repositoryRoot,
   channelInput = process.env['NEKRO_DESKTOP_CHANNEL'] ?? 'stable',
 ) {
   const channel = parseReleaseChannel(channelInput)
-  const [rootPackage, serverPackage] = await Promise.all([
+  const [rootPackage, dshVersion] = await Promise.all([
     readPackage(repositoryRoot, '.'),
-    readPackage(repositoryRoot, 'apps/server'),
+    readDshReleaseVersion(repositoryRoot),
   ])
   const commit = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: repositoryRoot, encoding: 'utf8' }).trim()
   const commitTimestamp = Number(
     execFileSync('git', ['show', '-s', '--format=%ct', 'HEAD'], { cwd: repositoryRoot, encoding: 'utf8' }).trim(),
   )
-  const dshVersion = serverPackage.dependencies?.['@deepseek-ai/dsh-session-persistence-sqlite']
   if (typeof rootPackage.version !== 'string' || typeof dshVersion !== 'string' || !/^[a-f0-9]{40}$/u.test(commit)) {
     throw new Error('无法生成 NekroNXT 产品 Release 清单。')
   }

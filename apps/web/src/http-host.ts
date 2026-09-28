@@ -698,6 +698,7 @@ const projectSnapshot = (json: SnapshotJson, successfulAt: number): ProductSnaps
   })
   return {
     host: { status: 'ready', error: null, lastSuccessfulAt: successfulAt },
+    upgrade: json.upgrade,
     ...(json.productMetadata === undefined ? {} : { productMetadata: json.productMetadata }),
     connectionAdapters: json.connectionAdapters.map(projectAdapterDescriptor),
     capabilityAvailability: json.capabilityAvailability,

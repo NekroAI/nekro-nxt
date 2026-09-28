@@ -1397,7 +1397,8 @@ test('external channel exposes processing feedback and per-event trigger control
   const deleteDialog = page.getByRole('alertdialog', { name: '删除连接' })
   await expect(deleteDialog.getByRole('switch', { name: '同时删除频道数据' })).not.toBeChecked()
   await deleteDialog.getByRole('button', { name: '移除连接并保留频道数据' }).click()
-  expect(deleteRequests).toEqual([{ deleteChannelData: false }])
+  await expect.poll(() => deleteRequests).toEqual([{ deleteChannelData: false }])
+  await expect(deleteDialog).toBeHidden()
 
   await page.goto('/connections?create=1')
   await expect(page.getByRole('dialog').getByText('测试协议端')).toBeVisible()
@@ -1603,8 +1604,9 @@ test('channel context controls and intelligent-agent deletion are guarded and re
   await expect(channelDeleteDialog.getByRole('heading', { name: '从 NekroNXT 移除此频道？' })).toBeVisible()
   await expect(channelDeleteDialog.getByText(/频道会解除绑定并从列表中移除/u)).toBeVisible()
   await channelDeleteDialog.getByRole('button', { name: '从 NekroNXT 移除' }).click()
+  await expect.poll(() => channelDeleteRequests).toEqual([{ expectedBoundAgentId: null }])
+  await expect(page).not.toHaveURL(new RegExp(`/work/channels/${externalChannelId}$`, 'u'))
   await expect(page).toHaveURL(/\/work(?:\/|$)/u)
-  expect(channelDeleteRequests).toEqual([{ expectedBoundAgentId: null }])
 
   await page.goto(`/work/channels/${channelId}`)
   await page.getByRole('button', { name: '上下文操作' }).click()
@@ -1631,14 +1633,17 @@ test('channel context controls and intelligent-agent deletion are guarded and re
   await deleteDialog.getByLabel(`输入“${agentName}”以确认`).fill(agentName)
   await expect(deleteButton).toBeEnabled()
   await deleteButton.click()
+  await expect
+    .poll(() => deleteRequests)
+    .toEqual([
+      {
+        expectedCurrentRevisionId: revisionId,
+        confirmationName: agentName,
+        deleteAutoCreatedBuiltInChannels: true,
+      },
+    ])
+  await expect(page).not.toHaveURL(new RegExp(`/work/agents/${agentId}$`, 'u'))
   await expect(page).toHaveURL(/\/work(?:\/|$)/u)
-  expect(deleteRequests).toEqual([
-    {
-      expectedCurrentRevisionId: revisionId,
-      confirmationName: agentName,
-      deleteAutoCreatedBuiltInChannels: true,
-    },
-  ])
   expect(failures, failures.join('\n')).toEqual([])
 })
 

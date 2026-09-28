@@ -1,3 +1,8 @@
+import { configureDshLlmProviders } from './dsh-host-profile.js'
+import { DSH_RUNTIME_FINGERPRINT, DSH_RUNTIME_RELEASE } from '@nekro-nxt/dsh-compat/release'
+import { acquireDataRootLease } from './data-root-lease.js'
+import { createUpgradeBackup, restoreUpgradeBackup, writeUpgradeJson } from './upgrade-backup.js'
+import { createUpgradeProgress, markUpgradeProgressFailure } from './upgrade-progress.js'
 /**
  * NekroNxt Server executable entry — assembles the domain runtime (NekroRuntime),
  * mounts the DSH WebServer seam as the single HTTP/SSE host, and serves the Web
@@ -9,18 +14,17 @@
  * caller supplies absolute inputs.
  */
 import { Context } from '@deepseek-ai/cordis'
-import {
-  apply as frontendStaticApply,
-  inject as frontendStaticInject,
-  name as frontendStaticName,
-} from '@deepseek-ai/dsh-host-frontend-static'
+import { serveStatic } from '@deepseek-ai/dsh-host-frontend-static'
 import WebServer from '@deepseek-ai/dsh-host-webserver'
-import * as LlmDeepSeek from '@deepseek-ai/dsh-llm-deepseek'
-import * as LlmPiAi from '@deepseek-ai/dsh-llm-pi-ai'
 import type { Context as LlmContext } from '@deepseek-ai/cordis'
 import { HostUpgradeCoordinator, type UpgradeJournal } from '@nekro-nxt/client-migrations'
 import { InstanceDescriptorSchema } from '@nekro-nxt/contracts'
-import { createSqliteBackupSet, type SqliteBackupSource } from '@nekro-nxt/storage-sqlite'
+import {
+  createSqliteBackupSet,
+  readBackupAgentIds,
+  preflightDshSessionStorage,
+  type SqliteBackupSource,
+} from '@nekro-nxt/storage-sqlite'
 import { createHash, randomUUID } from 'node:crypto'
 import { existsSync } from 'node:fs'
 import { mkdir, mkdtemp, open, readFile, rename, rm, stat, writeFile } from 'node:fs/promises'
@@ -85,16 +89,7 @@ export const parseLlmProviderRoutes = (input: string | undefined): readonly stri
   return routes
 }
 
-/** Mount DSH's generic provider plugin; NekroNxt does not copy provider endpoints or model catalogs. */
-export const configureDshLlmProviders =
-  (routes: readonly string[]): NonNullable<StartServerOptions['configureLlm']> =>
-  async (context) => {
-    const providers: Record<string, LlmPiAi.PiAiProviderProfile> = Object.fromEntries(
-      routes.filter((route) => route !== 'deepseek-official').map((route) => [route, {}]),
-    )
-    await context.plugin(LlmPiAi, { providers })
-    await context.plugin(LlmDeepSeek, {})
-  }
+export { configureDshLlmProviders } from './dsh-host-profile.js'
 
 export const defaultWebDistIndex = (): string => fileURLToPath(new URL('../../web/dist/index.html', import.meta.url))
 export const defaultDataRoot = (): string => fileURLToPath(new URL('../../../data', import.meta.url))
@@ -399,7 +394,7 @@ const acquireUpgradeFileLock = async (backupRoot: string, releaseId: string): Pr
       const handle = await open(lockPath, 'wx', 0o600)
       try {
         await handle.writeFile(
-          `${JSON.stringify({ format: 'nxt.server-upgrade-lock', version: 1, releaseId, pid: process.pid, token })}\n`,
+          `${JSON.stringify({ format: 'nxt.server-upgrade-lock', version: 2, releaseId, pid: process.pid, token })}\n`,
           'utf8',
         )
       } catch (error) {
@@ -421,17 +416,17 @@ const acquireUpgradeFileLock = async (backupRoot: string, releaseId: string): Pr
       const current = z
         .object({
           format: z.literal('nxt.server-upgrade-lock'),
-          version: z.literal(1),
+          version: z.union([z.literal(1), z.literal(2)]),
           releaseId: z.string(),
           pid: z.number().int().positive(),
           token: z.string().uuid(),
         })
         .strict()
         .parse(JSON.parse(await readFile(lockPath, 'utf8')))
-      if (processIsAlive(current.pid)) {
+      if (current.version === 1 && current.pid !== process.pid && processIsAlive(current.pid)) {
         throw new Error(`数据根正在由另一个 Host 执行升级：PID ${current.pid}，Release ${current.releaseId}`)
       }
-      await rm(lockPath, { force: true })
+      await rename(lockPath, `${lockPath}.stale-${current.token}`)
     }
   }
   throw new Error('无法获取 Host 升级锁。')
@@ -441,21 +436,53 @@ const createRuntimeThroughUpgradeCoordinator = async (
   dataRoot: string,
   releaseId: string,
   options: Parameters<typeof NekroRuntime.create>[0],
+  signal?: AbortSignal,
+  onCreated?: (runtime: NekroRuntime) => void,
+  prepareNetwork?: (runtime: NekroRuntime) => Promise<void>,
 ): Promise<NekroRuntime> => {
   const backupRoot = path.join(dataRoot, 'backups')
   await mkdir(backupRoot, { recursive: true, mode: 0o700 })
   let backupId: string | undefined
   let runtime: NekroRuntime | undefined
+  let sourceRuntimeFingerprint: string | undefined
   const journal = await createServerUpgradeJournal(backupRoot, releaseId, () => backupId)
+  const progress = createUpgradeProgress(dataRoot, releaseId)
+  await progress.update({ phase: 'preflight' })
   const coordinator = new HostUpgradeCoordinator({
     lock: { acquire: () => acquireUpgradeFileLock(backupRoot, releaseId) },
     preflight: async () => {
       const info = await stat(dataRoot)
       if (!info.isDirectory()) throw new Error(`Host 数据根不是目录：${dataRoot}`)
       await existingSqliteSources(dataRoot)
+      await preflightDshSessionStorage({ databasePath: options.sessionDatabasePath })
+      try {
+        const identity = z
+          .object({
+            format: z.literal('nxt.runtime-identity'),
+            version: z.literal(1),
+            runtimeFingerprint: z.string(),
+            releaseId: z.string(),
+            sessionCompatibilityId: z.string(),
+            settingsFormatVersion: z.number().int(),
+          })
+          .strict()
+          .parse(JSON.parse(await readFile(path.join(dataRoot, 'dsh', 'runtime-identity.json'), 'utf8')))
+        sourceRuntimeFingerprint = identity.runtimeFingerprint
+      } catch (error) {
+        if (!isMissing(error)) throw error
+      }
     },
     createBackup: async () => {
-      const backup = await ensureReleaseSqliteBackup(dataRoot, releaseId)
+      const externalRoots = externalWorkspaceBackupRoots(dataRoot, options.developmentWorkspaceRoot)
+      const backup = await createUpgradeBackup({
+        dataRoot,
+        releaseId,
+        runtimeFingerprint: DSH_RUNTIME_FINGERPRINT,
+        ...(sourceRuntimeFingerprint === undefined ? {} : { sourceRuntimeFingerprint }),
+        externalRoots,
+        ...(signal === undefined ? {} : { signal }),
+        onProgress: (completed, total) => progress.progress(completed, total),
+      })
       backupId = backup.backupId
       return { id: backup.backupId }
     },
@@ -464,27 +491,63 @@ const createRuntimeThroughUpgradeCoordinator = async (
         id: 'storage-owners-open-v1',
         run: async () => {
           runtime = await NekroRuntime.create(options)
+          onCreated?.(runtime)
         },
       },
       {
         id: 'runtime-recovery-v1',
+        phase: 'checking',
         run: async () => {
           if (!runtime) throw new Error('Host Runtime storage step did not produce a Runtime.')
           await runtime.start()
-          await runtime.recover()
+          await runtime.recover({ openAdmission: false })
+        },
+      },
+      {
+        id: 'network-prepare-v1',
+        phase: 'checking',
+        run: async () => {
+          if (!runtime) throw new Error('Host Runtime has not recovered.')
+          await prepareNetwork?.(runtime)
+        },
+      },
+      {
+        id: 'runtime-activation-v1',
+        phase: 'activating',
+        run: async () => {
+          if (!runtime) throw new Error('Host Runtime has not recovered.')
+          await runtime.channels.openAdmission()
         },
       },
     ],
     journal,
+    ...(signal === undefined ? {} : { signal }),
   })
-  const status = await coordinator.run()
+  const offProgress = coordinator.subscribe(() => {
+    void progress.update(coordinator.getSnapshot()).catch(() => undefined)
+  })
+  let status
+  try {
+    status = await coordinator.run()
+  } finally {
+    offProgress()
+    await progress.close()
+  }
   if (status.phase !== 'ready' || !runtime) {
     const summary = status.errorSummary ?? 'Host 升级未进入 ready。'
     await journal.finish('recovery', summary)
-    await runtime?.dispose().catch(() => undefined)
     throw new Error(`Host 升级失败：${summary}`)
   }
   await journal.finish('ready')
+  await writeUpgradeJson(path.join(dataRoot, 'dsh', 'runtime-identity.json'), {
+    format: 'nxt.runtime-identity',
+    version: 1,
+    releaseId,
+    runtimeFingerprint: DSH_RUNTIME_FINGERPRINT,
+    sessionCompatibilityId: DSH_RUNTIME_RELEASE.sessionCompatibilityId,
+    settingsFormatVersion: DSH_RUNTIME_RELEASE.settingsFormatVersion,
+  })
+  runtime.upgradeBackupId = backupId
   return runtime
 }
 
@@ -502,6 +565,7 @@ export interface StartServerOptions {
   readonly port?: number
   /** Non-secret immutable image/application release identity exposed by readiness. */
   readonly releaseId?: string
+  readonly signal?: AbortSignal
   /** Enables the automatic TLS edge and device authentication. Never persisted. */
   readonly managementKey?: string
   /** Optional real LLM adapter wiring for a non-test server. */
@@ -514,7 +578,10 @@ export interface NekroServerHandle {
   stop(): Promise<void>
 }
 
-export const startNekroServer = async (options: StartServerOptions): Promise<NekroServerHandle> => {
+const startLeasedServer = async (
+  options: StartServerOptions,
+  owner: { runtime?: NekroRuntime; web?: Context; edge?: ManagementEdgeHandle },
+): Promise<NekroServerHandle> => {
   const requestedHost = options.host ?? '127.0.0.1'
   const port = options.port ?? 0
   const managementKey = parseManagementKey(options.managementKey, !isLoopbackListenHost(requestedHost))
@@ -527,137 +594,236 @@ export const startNekroServer = async (options: StartServerOptions): Promise<Nek
   const developmentWorkspaceRoot = resolveRoot(options.developmentWorkspaceRoot ?? path.join(dataRoot, 'workspaces'))
   await mkdir(dataRoot, { recursive: true, mode: 0o700 })
   await mkdir(developmentWorkspaceRoot, { recursive: true, mode: 0o700 })
-  const runtime = await createRuntimeThroughUpgradeCoordinator(dataRoot, releaseId, {
-    coreDatabasePath: path.join(dataRoot, 'core.sqlite'),
-    sessionDatabasePath: path.join(dataRoot, 'sessions.sqlite'),
-    assetRoot: path.join(dataRoot, 'assets'),
-    extensionDataRoot: path.join(dataRoot, 'extension-data'),
-    extensionCacheRoot: path.join(dataRoot, 'extension-cache'),
-    credentialRoot: path.join(dataRoot, 'credentials'),
-    llmSettingsPath: path.join(dataRoot, 'dsh', 'settings.yaml'),
-    llmCredentialPath: path.join(dataRoot, 'dsh', '.credentials.yaml'),
-    developmentWorkspaceRoot,
-    ...(options.configureLlm === undefined ? {} : { configureLlm: options.configureLlm }),
-  })
-  // The HTTP/SSE host owns a narrow Cordis Context with the WebServer seam and
-  // the static dist fallback. The DSH Session runtime stays inside NekroRuntime.
-  const webContext = new Context()
-  await webContext.plugin(WebServer, {
-    host: managementKey === undefined ? host : '127.0.0.1',
-    port: managementKey === undefined ? port : 0,
-  })
-  // Function-style Cordis plugin that claims the webserver fallback seat and
-  // serves real dist files. Since DSH rc.2 intentionally 404s unknown paths,
-  // NekroNxt separately owns its known SPA route prefixes.
-  const distIndex = resolveRoot(options.distIndex)
-  await webContext.plugin(
-    { name: frontendStaticName, inject: frontendStaticInject, apply: frontendStaticApply },
-    { distIndex },
-  )
-  const disposeSpaRoutes = registerNekroSpaRoutes(webContext.webServer, distIndex)
-  const api = createNekroHostApi(webContext.webServer, runtime, {
-    displayName: 'NekroNXT',
-    organizationName: 'NekroAI',
-    version: SERVER_PACKAGE_VERSION,
+  let ready = false
+  let network: NekroServerHandle | undefined
+  await createRuntimeThroughUpgradeCoordinator(
+    dataRoot,
     releaseId,
-    repositoryUrl: 'https://github.com/NekroAI/nekro-nxt',
-    licenseSpdx: 'AGPL-3.0-only',
-    dshVersion: DEEPSEEK_HARNESS_VERSION,
-  })
-  const registerHealthRoute = (routePath: '/health/live' | '/health/ready', status: 'live' | 'ready'): (() => void) =>
-    webContext.webServer.register({
-      kind: 'exact',
-      path: routePath,
-      handler: (request, response) => {
-        if (request.method !== 'GET' && request.method !== 'HEAD') {
-          response.writeHead(405, { allow: 'GET, HEAD', 'cache-control': 'no-store' })
-          response.end()
-          return
-        }
-        const body = JSON.stringify({ status, releaseId })
-        response.writeHead(200, {
-          'content-type': 'application/json; charset=utf-8',
-          'cache-control': 'no-store',
-          'content-length': Buffer.byteLength(body),
-        })
-        response.end(request.method === 'HEAD' ? undefined : body)
-      },
+    {
+      deferAdmission: true,
+      coreDatabasePath: path.join(dataRoot, 'core.sqlite'),
+      sessionDatabasePath: path.join(dataRoot, 'sessions.sqlite'),
+      assetRoot: path.join(dataRoot, 'assets'),
+      extensionDataRoot: path.join(dataRoot, 'extension-data'),
+      extensionCacheRoot: path.join(dataRoot, 'extension-cache'),
+      credentialRoot: path.join(dataRoot, 'credentials'),
+      llmSettingsPath: path.join(dataRoot, 'dsh', 'settings.yaml'),
+      llmCredentialPath: path.join(dataRoot, 'dsh', '.credentials.yaml'),
+      developmentWorkspaceRoot,
+      ...(options.configureLlm === undefined ? {} : { configureLlm: options.configureLlm }),
+    },
+    options.signal,
+    (created) => {
+      owner.runtime = created
+    },
+    async (created) => {
+      network = await prepareNetwork(created)
+    },
+  )
+  options.signal?.throwIfAborted()
+  if (!network) throw new Error('Host network was not prepared.')
+  ready = true
+  return network
+
+  async function prepareNetwork(runtime: NekroRuntime): Promise<NekroServerHandle> {
+    options.signal?.throwIfAborted()
+    // The HTTP/SSE host owns a narrow Cordis Context with the WebServer seam and
+    // the static dist fallback. The DSH Session runtime stays inside NekroRuntime.
+    const webContext = new Context()
+    owner.web = webContext
+    await webContext.plugin(WebServer, {
+      host: managementKey === undefined ? host : '127.0.0.1',
+      port: managementKey === undefined ? port : 0,
     })
-  const disposeLive = registerHealthRoute('/health/live', 'live')
-  const disposeReady = registerHealthRoute('/health/ready', 'ready')
-
-  const disposeLoopbackDescriptor =
-    managementKey === undefined
-      ? webContext.webServer.register({
-          kind: 'exact',
-          path: '/.well-known/nekro-nxt',
-          handler: (request, response) => {
-            if (request.method !== 'GET' && request.method !== 'HEAD') {
-              response.writeHead(405, { allow: 'GET, HEAD', 'cache-control': 'no-store' })
-              response.end()
-              return
-            }
-            const descriptor = InstanceDescriptorSchema.parse({
-              format: 'nxt.instance-descriptor',
-              descriptorVersion: 1,
-              instanceId: initializeServerIdentity(runtime.hostSecurity, undefined, Date.now()),
-              releaseId,
-              productVersion: SERVER_PACKAGE_VERSION,
-              managementProtocol: 1,
-              desktopChromeProtocol: 1,
-              transport: 'loopback-http',
-            })
-            const body = JSON.stringify(descriptor)
-            response.writeHead(200, {
-              'content-type': 'application/json; charset=utf-8',
-              'cache-control': 'no-store',
-              'content-length': Buffer.byteLength(body),
-            })
-            response.end(request.method === 'HEAD' ? undefined : body)
-          },
-        })
-      : undefined
-
-  let managementEdge: ManagementEdgeHandle | undefined
-  if (managementKey !== undefined) {
-    try {
-      managementEdge = await startManagementEdge({
-        host,
-        port,
-        internalPort: webContext.webServer.port,
-        dataRoot,
-        managementKey,
+    // Public static helper; NXT's management edge owns authentication. The upstream
+    // plugin now injects its native Connection service, which this Host does not use.
+    const distIndex = resolveRoot(options.distIndex)
+    webContext.effect(
+      () =>
+        webContext.webServer.registerFallback(async (request, response) => {
+          if (request.method !== 'GET' && request.method !== 'HEAD') {
+            response.writeHead(405, { allow: 'GET, HEAD' })
+            response.end()
+            return
+          }
+          let pathname: string
+          try {
+            pathname = decodeURIComponent(new URL(request.url ?? '/', 'http://localhost').pathname)
+          } catch {
+            response.writeHead(400)
+            response.end()
+            return
+          }
+          await serveStatic(
+            pathname,
+            response,
+            path.dirname(distIndex),
+            distIndex,
+            () => true,
+            async () => webContext.webServer.renderIndex(await readFile(distIndex, 'utf8')),
+          )
+        }),
+      'nekro-nxt: static product frontend',
+    )
+    const disposeSpaRoutes = registerNekroSpaRoutes(webContext.webServer, distIndex)
+    webContext.effect(() => disposeSpaRoutes, 'nekro-nxt: product SPA routes')
+    const api = createNekroHostApi(
+      webContext.webServer,
+      runtime,
+      {
+        displayName: 'NekroNXT',
+        organizationName: 'NekroAI',
+        version: SERVER_PACKAGE_VERSION,
         releaseId,
-        productVersion: SERVER_PACKAGE_VERSION,
-        repository: runtime.hostSecurity,
+        repositoryUrl: 'https://github.com/NekroAI/nekro-nxt',
+        licenseSpdx: 'AGPL-3.0-only',
+        dshVersion: DEEPSEEK_HARNESS_VERSION,
+      },
+      () => ready,
+    )
+    webContext.effect(() => () => api.dispose(), 'nekro-nxt: product HTTP API')
+    const registerHealthRoute = (routePath: '/health/live' | '/health/ready', status: 'live' | 'ready'): (() => void) =>
+      webContext.webServer.register({
+        kind: 'exact',
+        path: routePath,
+        handler: (request, response) => {
+          if (request.method !== 'GET' && request.method !== 'HEAD') {
+            response.writeHead(405, { allow: 'GET, HEAD', 'cache-control': 'no-store' })
+            response.end()
+            return
+          }
+          const available = status === 'live' || ready
+          const body = JSON.stringify({ status: available ? status : 'starting', releaseId })
+          response.writeHead(available ? 200 : 503, {
+            'content-type': 'application/json; charset=utf-8',
+            'cache-control': 'no-store',
+            'content-length': Buffer.byteLength(body),
+          })
+          response.end(request.method === 'HEAD' ? undefined : body)
+        },
       })
-    } catch (error) {
+    const disposeLive = registerHealthRoute('/health/live', 'live')
+    const disposeReady = registerHealthRoute('/health/ready', 'ready')
+
+    const disposeLoopbackDescriptor =
+      managementKey === undefined
+        ? webContext.webServer.register({
+            kind: 'exact',
+            path: '/.well-known/nekro-nxt',
+            handler: (request, response) => {
+              if (request.method !== 'GET' && request.method !== 'HEAD') {
+                response.writeHead(405, { allow: 'GET, HEAD', 'cache-control': 'no-store' })
+                response.end()
+                return
+              }
+              const descriptor = InstanceDescriptorSchema.parse({
+                format: 'nxt.instance-descriptor',
+                descriptorVersion: 1,
+                instanceId: initializeServerIdentity(runtime.hostSecurity, undefined, Date.now()),
+                releaseId,
+                productVersion: SERVER_PACKAGE_VERSION,
+                managementProtocol: 1,
+                desktopChromeProtocol: 1,
+                transport: 'loopback-http',
+              })
+              const body = JSON.stringify(descriptor)
+              response.writeHead(200, {
+                'content-type': 'application/json; charset=utf-8',
+                'cache-control': 'no-store',
+                'content-length': Buffer.byteLength(body),
+              })
+              response.end(request.method === 'HEAD' ? undefined : body)
+            },
+          })
+        : undefined
+
+    let managementEdge: ManagementEdgeHandle | undefined
+    if (managementKey !== undefined) {
+      try {
+        managementEdge = await startManagementEdge({
+          host,
+          port,
+          internalPort: webContext.webServer.port,
+          dataRoot,
+          managementKey,
+          releaseId,
+          productVersion: SERVER_PACKAGE_VERSION,
+          repository: runtime.hostSecurity,
+        })
+        owner.edge = managementEdge
+      } catch (error) {
+        disposeReady()
+        disposeLive()
+        disposeLoopbackDescriptor?.()
+        api.dispose()
+        disposeSpaRoutes()
+        await webContext.fiber.dispose()
+        await runtime.dispose()
+        throw error
+      }
+    }
+
+    let stopped = false
+    const stop = async (): Promise<void> => {
+      if (stopped) return
+      stopped = true
+      await managementEdge?.stop()
+      disposeLoopbackDescriptor?.()
       disposeReady()
       disposeLive()
-      disposeLoopbackDescriptor?.()
       api.dispose()
       disposeSpaRoutes()
       await webContext.fiber.dispose()
       await runtime.dispose()
-      throw error
     }
-  }
 
-  let stopped = false
-  const stop = async (): Promise<void> => {
-    if (stopped) return
-    stopped = true
-    await managementEdge?.stop()
-    disposeLoopbackDescriptor?.()
-    disposeReady()
-    disposeLive()
-    api.dispose()
-    disposeSpaRoutes()
-    await webContext.fiber.dispose()
-    await runtime.dispose()
+    options.signal?.throwIfAborted()
+    return { port: managementEdge?.port ?? webContext.webServer.port, secure: managementEdge !== undefined, stop }
   }
+}
 
-  return { port: managementEdge?.port ?? webContext.webServer.port, secure: managementEdge !== undefined, stop }
+/** One lease covers backup, migration, serving, and quiescent teardown. */
+export const startNekroServer = async (options: StartServerOptions): Promise<NekroServerHandle> => {
+  const requestedHost = options.host ?? '127.0.0.1'
+  parseManagementKey(options.managementKey, !isLoopbackListenHost(requestedHost))
+  const release = await acquireDataRootLease(resolveRoot(options.dataRoot))
+  const owner: { runtime?: NekroRuntime; web?: Context; edge?: ManagementEdgeHandle } = {}
+  try {
+    const server = await startLeasedServer(options, owner)
+    options.signal?.throwIfAborted()
+    let stopping: Promise<void> | undefined
+    return { ...server, stop: () => (stopping ??= server.stop().then(() => release())) }
+  } catch (error) {
+    let progressFailure: unknown
+    await markUpgradeProgressFailure(
+      resolveRoot(options.dataRoot),
+      parseReleaseId(options.releaseId),
+      error instanceof Error ? error.message.slice(0, 512) : 'Host 启动失败。',
+    ).catch((failure: unknown) => {
+      progressFailure = failure
+    })
+    const cleanup = await Promise.allSettled([owner.edge?.stop(), owner.web?.fiber.dispose(), owner.runtime?.dispose()])
+    const failures = cleanup
+      .filter((result): result is PromiseRejectedResult => result.status === 'rejected')
+      .map((result): unknown => result.reason)
+    if (failures.length) throw new AggregateError([error, ...failures], 'Host 启动失败且资源未静止，数据根锁保持占用。')
+    await release()
+    if (progressFailure !== undefined)
+      throw new AggregateError([error, progressFailure], 'Host 启动失败，诊断写入也未完成。')
+    throw error
+  }
+}
+
+const externalWorkspaceBackupRoots = (dataRoot: string, workspaceRoot?: string) => {
+  if (workspaceRoot === undefined || path.resolve(workspaceRoot) === path.join(path.resolve(dataRoot), 'workspaces'))
+    return []
+  const root = path.resolve(workspaceRoot)
+  const databasePath = path.join(dataRoot, 'core.sqlite')
+  if (!existsSync(databasePath)) return []
+  return readBackupAgentIds(databasePath).flatMap((id, index) => {
+    const target = path.join(root, id)
+    return existsSync(target) ? [{ key: `workspace-${index}`, target }] : []
+  })
 }
 
 const isEntryPoint = (): boolean => {
@@ -675,6 +841,23 @@ if (isEntryPoint()) {
     try {
       const dataRoot = process.env['NEKRO_DATA'] ?? defaultDataRoot()
       const developmentWorkspaceRoot = process.env['NEKRO_DEVELOPMENT_WORKSPACE_ROOT']
+      const restoreIndex = process.argv.indexOf('--restore-upgrade')
+      if (restoreIndex >= 0) {
+        const backupId = process.argv[restoreIndex + 1]
+        if (!backupId) throw new Error('--restore-upgrade 需要恢复点 ID。')
+        const release = await acquireDataRootLease(resolveRoot(dataRoot))
+        try {
+          await restoreUpgradeBackup({
+            dataRoot: resolveRoot(dataRoot),
+            backupId,
+            ...(developmentWorkspaceRoot === undefined ? {} : { externalWorkspaceRoot: developmentWorkspaceRoot }),
+          })
+          console.log('升级前数据已恢复。请退出新版本并启动匹配的旧程序包。')
+        } finally {
+          await release()
+        }
+        return
+      }
       const distIndexEnv = process.env['NEKRO_DIST_INDEX']
       const portEnv = process.env['NEKRO_PORT']
       const host = parseListenHost(process.env['NEKRO_HOST'])
@@ -691,7 +874,31 @@ if (isEntryPoint()) {
           `Web dist/index.html 不存在：${distIndex}。请先运行 ` + '`pnpm --filter @nekro-nxt/web build`。',
         )
       }
+      const startup = new AbortController()
+      const cancelStartup = () => startup.abort(new Error('用户取消升级启动。'))
+      const parentPort = 'parentPort' in process ? process.parentPort : undefined
+      const control = z.object({
+        format: z.literal('nxt.host-control'),
+        version: z.literal(1),
+        action: z.literal('cancel'),
+        runId: z.string(),
+      })
+      const receiveControl = (event: { readonly data?: unknown }) => {
+        const parsed = control.safeParse(event.data)
+        if (parsed.success && parsed.data.runId === process.env['NEKRO_UPGRADE_RUN_ID']) cancelStartup()
+      }
+      if (
+        typeof parentPort === 'object' &&
+        parentPort !== null &&
+        'on' in parentPort &&
+        typeof parentPort.on === 'function'
+      ) {
+        parentPort.on('message', receiveControl)
+      }
+      process.on('SIGTERM', cancelStartup)
+      process.on('SIGINT', cancelStartup)
       const handle = await startNekroServer({
+        signal: startup.signal,
         dataRoot,
         distIndex,
         host,
@@ -703,6 +910,8 @@ if (isEntryPoint()) {
           : { developmentWorkspaceRoot }),
         configureLlm: configureDshLlmProviders(llmProviderRoutes),
       })
+      process.removeListener('SIGTERM', cancelStartup)
+      process.removeListener('SIGINT', cancelStartup)
       console.log(`[nekro-nxt] Server ${releaseId} 已监听 ${handle.secure ? 'https' : 'http'}://${host}:${handle.port}`)
       if (llmProviderRoutes.length > 0) {
         console.log(`[nekro-nxt] DSH 模型供应商已启用：${llmProviderRoutes.join(', ')}`)

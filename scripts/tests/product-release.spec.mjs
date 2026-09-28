@@ -1,9 +1,17 @@
 import assert from 'node:assert/strict'
-import { readFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
 import path from 'node:path'
 import test from 'node:test'
 import { fileURLToPath } from 'node:url'
-import { assertCleanGitStatus, readProductRelease, releaseVersionForChannel } from '../product-release.mjs'
+import {
+  assertCleanGitStatus,
+  readDshReleaseVersion,
+  readProductRelease,
+  releaseVersionForChannel,
+} from '../product-release.mjs'
+
+import { DSH_RUNTIME_RELEASE } from '../lib/dsh-release.mjs'
 
 const repositoryRoot = path.resolve(fileURLToPath(new URL('../..', import.meta.url)))
 
@@ -14,7 +22,7 @@ test('stable product Release binds Desktop, Host and DSH to the root version and
   assert.equal(release.version, release.baseVersion)
   assert.match(release.commit, /^[a-f0-9]{40}$/u)
   assert.equal(release.releaseId, `${release.version}+${release.commit.slice(0, 12)}`)
-  assert.equal(release.dshVersion, '0.1.1-rc.2')
+  assert.equal(release.dshVersion, DSH_RUNTIME_RELEASE.dshVersion)
 })
 
 test('preview version is deterministic, derived from the root version and newer than its earlier preview', () => {
@@ -68,3 +76,39 @@ test('Server image carries the software license and reserved-brand notice', asyn
     /COPY --from=build --chown=root:root \/workspace\/LICENSE \/workspace\/NOTICE \/opt\/nekro\//u,
   )
 })
+
+async function runtimeFixture(context, runtimeRelease, agentVersion) {
+  const root = await mkdtemp(path.join(tmpdir(), 'nxt-product-release-'))
+  context.after(() => rm(root, { recursive: true, force: true }))
+  await mkdir(path.join(root, 'packages/dsh-compat/src'), { recursive: true })
+  await mkdir(path.join(root, 'apps/server'), { recursive: true })
+  await writeFile(path.join(root, 'packages/dsh-compat/src/release.json'), JSON.stringify(runtimeRelease))
+  await writeFile(
+    path.join(root, 'apps/server/package.json'),
+    JSON.stringify({ dependencies: { '@deepseek-ai/dsh-agent': agentVersion } }),
+  )
+  return root
+}
+
+test('artifact DSH identity comes from the candidate repository manifest, without a legacy SQLite dependency', async (context) => {
+  const version = '9.0.0-fixture'
+  const runtime = { ...DSH_RUNTIME_RELEASE, dshVersion: version, packages: { '@deepseek-ai/dsh-agent': version } }
+  const root = await runtimeFixture(context, runtime, version)
+  assert.equal(await readDshReleaseVersion(root), version)
+})
+
+test('artifact identity refuses a Server dependency that differs from the central release', async (context) => {
+  const root = await runtimeFixture(context, DSH_RUNTIME_RELEASE, '0.0.0-fixture')
+  await assert.rejects(readDshReleaseVersion(root), /清单无效或与 Server 依赖不一致/u)
+})
+
+for (const replacement of [{ format: 'unknown' }, { version: 2 }, { dshVersion: 'next' }, { packages: {} }]) {
+  test(`artifact identity rejects invalid runtime release metadata ${JSON.stringify(replacement)}`, async (context) => {
+    const root = await runtimeFixture(
+      context,
+      { ...DSH_RUNTIME_RELEASE, ...replacement },
+      DSH_RUNTIME_RELEASE.dshVersion,
+    )
+    await assert.rejects(readDshReleaseVersion(root), /清单无效/u)
+  })
+}

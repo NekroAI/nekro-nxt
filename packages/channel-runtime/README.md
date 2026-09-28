@@ -19,3 +19,7 @@ Channel Runtime 在每次调用 `AgentSessionDriver.admit()` 时，根据当前 
 `ChannelInteractions` 独立持有撤回与戳一戳的耐久意图、连接恢复及持久化队列。同一频道的交互按顺序检查和提交，重复请求返回已提交结果；不同频道可以并行。首次连接读取合并为单次请求，读取失败不会把连接误记为已恢复。
 
 `ChannelDelivery` 负责投递计划、平台回执提交和未完成投递恢复；`ChannelRuntime` 保留会话推进、Binding 变更和管理员消息协调。发送开始后缺少确认回执的投递仍恢复为结果未知，不自动重发。
+
+Host 启动时可传入 `deferAdmission: true`：入站仍提交 Core 并发布消息事实，但不创建 Episode、不启动反馈、不恢复 Admission 或投递。完成所有恢复检查后调用 `openAdmission()`，先接续持久 Episode / Admission / Outbound，再按当前绑定扫描可接入的积压；持久 Repository 负责应用升级的入站截止点。`canAdmitAgent(agentId)` 可跳过模型或运行配置不兼容的智能体，跳过时不产生失败 Episode。修复后可再次调用 `openAdmission()`，只重试此前跳过的 Session 和积压，不重做正在投递的 Outbound 恢复。并发开启合并；扫描使用固定事件批次，避免扫描期间收到的新消息被重复接入。默认不延迟，保留现有独立 Runtime 用法。
+
+`dispose()` 先同步关闭接入门禁，禁止重开，然后等待当前绑定操作、lane 与反馈清理完成；它不隐式取消工具，DSH Session 的最终关闭仍由 Host 所有者执行。Admission 的 `cancelled` 是升级重置的保留事实终态，不能再次认领或写入 Session。

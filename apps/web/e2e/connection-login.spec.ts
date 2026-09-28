@@ -1,3 +1,4 @@
+import { installSnapshotHealthRoutes } from './fixtures/host-release.js'
 import { expect, test } from '@playwright/test'
 import { ConnectionIdSchema, HostApiContracts } from '@nekro-nxt/contracts'
 import { productSnapshot } from './fixtures/product-quality.js'
@@ -27,6 +28,7 @@ const descriptor = {
 }
 
 test('production QR login and reauthentication retain the connection settings', async ({ page }, testInfo) => {
+  await installSnapshotHealthRoutes(page, productSnapshot)
   const errors: string[] = []
   page.on('pageerror', (error) => errors.push(error.message))
   let created = false

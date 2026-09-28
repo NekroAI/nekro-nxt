@@ -1,4 +1,4 @@
-import { LlmAdapter, CallId, type GenerateOptions, type StreamChunk } from '@deepseek-ai/dsh-llm'
+import { LlmAdapter, ToolCallId, type GenerateOptions, type StreamChunk } from '@deepseek-ai/dsh-llm'
 import { credentialRef } from '@deepseek-ai/dsh-credentials'
 import { Context } from '@deepseek-ai/cordis'
 import WebServer from '@deepseek-ai/dsh-host-webserver'
@@ -23,6 +23,14 @@ import { createNekroHostApi, projectHistoryEntry } from '../src/host-api.js'
 import { PRODUCT_VERSION } from '../src/product-version.js'
 import { DEEPSEEK_HARNESS_VERSION } from '../src/dsh-version.js'
 import { configureDshLlmProviders } from '../src/main.js'
+
+const systemText = (options: GenerateOptions | undefined): string =>
+  options?.messages
+    .filter((message) => message.role === 'system')
+    .flatMap((message) => message.content)
+    .filter((block) => block.type === 'text')
+    .map((block) => block.text)
+    .join('\n') ?? ''
 
 const temporaryDirectories: string[] = []
 
@@ -111,7 +119,7 @@ class ScriptedCommunicationModel extends LlmAdapter {
 
   override async *stream(options: GenerateOptions): AsyncIterable<StreamChunk> {
     await Promise.resolve()
-    if (options.system?.startsWith('你是对话交接摘要器')) {
+    if (systemText(options).startsWith('你是对话交接摘要器')) {
       yield { type: 'block-start', index: 0, blockType: 'text' }
       yield { type: 'text-delta', index: 0, text: '用户希望继续当前频道任务。' }
       yield { type: 'block-end', index: 0, block: { type: 'text', text: '用户希望继续当前频道任务。' } }
@@ -119,8 +127,8 @@ class ScriptedCommunicationModel extends LlmAdapter {
       yield { type: 'finish', reason: { kind: 'stop' } }
       return
     }
-    if (!options.messages.some((message) => message.content.some((block) => block.type === 'tool-result'))) {
-      const callId = CallId('scripted-send-message')
+    if (!options.messages.some((message) => message.role === 'tool')) {
+      const callId = ToolCallId('scripted-send-message')
       const toolCall = {
         type: 'tool-call' as const,
         id: callId,

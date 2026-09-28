@@ -10,3 +10,5 @@ export * from './authoring.js'
 export * from './authoring-service.js'
 export * from './manifest.js'
 export { ExtensionRebuildRequiredError, readExtensionManifestForArchive } from './legacy-manifest.js'
+
+export type { ExtensionCompatibilityPort, ExtensionCompatibilityIdentity } from './compatibility.js'

@@ -11,6 +11,8 @@ import {
   ChannelMemberIdSchema,
   EpisodeIdSchema,
   LogicalMessageIdSchema,
+  OutboundIntentIdSchema,
+  PhysicalDeliveryIdSchema,
 } from '@nekro-nxt/contracts'
 import type {
   AdmissionId,
@@ -48,6 +50,7 @@ import { FakeAdapterConnection, FAKE_ADAPTER_CAPABILITIES } from '@nekro-nxt/tes
 import { describe, expect, it, vi } from 'vitest'
 import type {
   AdmissionRecord,
+  ChannelRuntimeOptions,
   AgentSessionDriver,
   DeliveryReceiptRecord,
   EpisodeCloseReason,
@@ -588,6 +591,7 @@ const setup = async (
   idleRolloverMs?: number | false,
   handoffSummary?: AgentSessionDriver['createHandoffSummary'],
   feedbackInteractions?: AdapterConnectionInteractions,
+  admissionOptions: Pick<ChannelRuntimeOptions, 'deferAdmission' | 'canAdmitAgent'> = {},
 ) => {
   const coreRepository = new MemoryCoreRepository()
   const runtimeRepository = new MemoryRuntimeRepository(coreRepository)
@@ -681,6 +685,7 @@ const setup = async (
       },
     },
     ...(idleRolloverMs === undefined ? {} : { idleRolloverMs }),
+    ...admissionOptions,
   })
   return {
     runtime,
@@ -728,6 +733,229 @@ const inbound = (
 })
 
 describe('ChannelRuntime M1 lane', () => {
+  it('stores startup inbound facts without Session creation or feedback until admission opens', async () => {
+    const feedback = vi.fn(() => Promise.resolve({ status: 'succeeded' as const }))
+    const context = await setup(
+      true,
+      undefined,
+      undefined,
+      { startProcessingFeedback: feedback },
+      { deferAdmission: true },
+    )
+    const facts: string[] = []
+    context.runtime.subscribeFacts((fact) => facts.push(fact.sourceId))
+    await context.runtime.acceptChannelInbound({
+      ...inbound(context.connection.id, context.channel.id, 'deferred-one'),
+      platformMessageId: 'synthetic-feedback-one',
+    })
+    await context.runtime.acceptChannelInbound(inbound(context.connection.id, context.channel.id, 'deferred-two'))
+    expect(context.coreRepository.events.size).toBe(2)
+    expect(facts).toHaveLength(2)
+    expect(context.sessionCalls).toEqual([])
+    expect(context.runtimeRepository.episodes.size).toBe(0)
+    expect(feedback).not.toHaveBeenCalled()
+    expect(await context.runtime.recover()).toEqual({
+      resumedEpisodes: 0,
+      recoveredAdmissions: 0,
+      recoveredOutbounds: 0,
+      unknownDeliveries: 0,
+    })
+    await Promise.all([context.runtime.openAdmission(), context.runtime.openAdmission()])
+    expect(context.admissionCalls).toHaveLength(1)
+    expect(context.admissionCalls[0]?.events).toHaveLength(2)
+    expect(feedback).toHaveBeenCalledOnce()
+    await context.runtime.openAdmission()
+    expect(context.admissionCalls).toHaveLength(1)
+    await context.runtime.dispose()
+    await expect(context.runtime.openAdmission()).rejects.toThrow('disposed')
+  })
+
+  it('skips quarantined Agents without failed Episodes and replays their backlog after repair', async () => {
+    let compatible = false
+    const context = await setup(true, undefined, undefined, undefined, {
+      deferAdmission: true,
+      canAdmitAgent: () => compatible,
+    })
+    await context.runtime.acceptChannelInbound(inbound(context.connection.id, context.channel.id, 'quarantined'))
+    await context.runtime.openAdmission()
+    expect(context.runtimeRepository.episodes.size).toBe(0)
+    await context.runtime.acceptChannelInbound(inbound(context.connection.id, context.channel.id, 'still-quarantined'))
+    expect(context.runtimeRepository.episodes.size).toBe(0)
+    compatible = true
+    await context.runtime.openAdmission()
+    expect(context.admissionCalls).toHaveLength(1)
+    expect(context.admissionCalls[0]?.events).toHaveLength(2)
+    expect([...context.runtimeRepository.episodes.values()].map(({ status }) => status)).toEqual(['active'])
+  })
+
+  it('dispatches startup Outbounds once and never reclassifies a live delivery on repeated open', async () => {
+    const context = await setup()
+    await context.runtime.acceptChannelInbound(inbound(context.connection.id, context.channel.id, 'outbox-seed'))
+    const episode = [...context.runtimeRepository.episodes.values()][0]!
+    context.adapter.queueReceipt({ status: 'sent', platformMessageId: 'already-sent' })
+    await context.runtime.sendMessage({ episodeId: episode.id, parts: [{ type: 'text', text: '已送达' }] })
+    const base = [...context.runtimeRepository.outbounds.values()][0]!
+    const plannedId = OutboundIntentIdSchema.parse('out_STARTUPPLANNED')
+    context.runtimeRepository.createOutboundPlan(
+      {
+        ...base.intent,
+        id: plannedId,
+        logicalMessageId: LogicalMessageIdSchema.parse('msg_STARTUPPLANNED'),
+        state: 'planned',
+      },
+      [
+        {
+          ...base.deliveries[0]!,
+          id: PhysicalDeliveryIdSchema.parse('phy_STARTUPPLANNED'),
+          intentId: plannedId,
+          state: 'planned',
+        },
+      ],
+    )
+    const inflightId = OutboundIntentIdSchema.parse('out_STARTUPINFLIGHT')
+    context.runtimeRepository.createOutboundPlan(
+      {
+        ...base.intent,
+        id: inflightId,
+        logicalMessageId: LogicalMessageIdSchema.parse('msg_STARTUPINFLIGHT'),
+        state: 'sending',
+      },
+      [
+        {
+          ...base.deliveries[0]!,
+          id: PhysicalDeliveryIdSchema.parse('phy_STARTUPINFLIGHT'),
+          intentId: inflightId,
+          state: 'sending',
+        },
+      ],
+    )
+    const runtime = new ChannelRuntime(
+      context.core,
+      context.coreRepository,
+      context.runtimeRepository,
+      context.sessionDriver,
+      { deferAdmission: true, resolveAdapter: () => context.adapter },
+    )
+    const before = context.adapter.deliveries.length
+    await runtime.recover()
+    expect(context.adapter.deliveries).toHaveLength(before)
+    expect(context.runtimeRepository.getOutbound(inflightId).intent.state).toBe('sending')
+    context.adapter.queueReceipt({ status: 'sent', platformMessageId: 'startup-planned-sent' })
+    await runtime.openAdmission()
+    expect(context.adapter.deliveries).toHaveLength(before + 1)
+    expect(context.runtimeRepository.getOutbound(plannedId).intent.state).toBe('sent')
+    expect(context.runtimeRepository.getOutbound(inflightId).intent.state).toBe('unknown')
+    expect(context.runtimeRepository.getOutbound(base.intent.id)).toEqual(base)
+    const liveId = OutboundIntentIdSchema.parse('out_CURRENTINFLIGHT')
+    context.runtimeRepository.createOutboundPlan(
+      {
+        ...base.intent,
+        id: liveId,
+        logicalMessageId: LogicalMessageIdSchema.parse('msg_CURRENTINFLIGHT'),
+        state: 'sending',
+      },
+      [
+        {
+          ...base.deliveries[0]!,
+          id: PhysicalDeliveryIdSchema.parse('phy_CURRENTINFLIGHT'),
+          intentId: liveId,
+          state: 'sending',
+        },
+      ],
+    )
+    await runtime.openAdmission()
+    expect(context.adapter.deliveries).toHaveLength(before + 1)
+    expect(context.runtimeRepository.getOutbound(liveId).intent.state).toBe('sending')
+    await runtime.dispose()
+  })
+
+  it('preserves quarantined persisted Admissions until their Agent becomes compatible', async () => {
+    const context = await setup()
+    await context.runtime.acceptChannelInbound(inbound(context.connection.id, context.channel.id, 'before-restart'))
+    const admission = [...context.runtimeRepository.admissions.values()][0]!
+    context.runtimeRepository.admissions.set(admission.id, { ...admission, state: 'claimed' })
+    let compatible = false
+    const runtime = new ChannelRuntime(
+      context.core,
+      context.coreRepository,
+      context.runtimeRepository,
+      context.sessionDriver,
+      { deferAdmission: true, canAdmitAgent: () => compatible, resolveAdapter: () => context.adapter },
+    )
+    const callsBefore = context.sessionCalls.length
+    await runtime.openAdmission()
+    expect(context.sessionCalls).toHaveLength(callsBefore)
+    expect(context.runtimeRepository.admissions.get(admission.id)?.state).toBe('claimed')
+    compatible = true
+    await runtime.openAdmission()
+    expect(context.runtimeRepository.admissions.get(admission.id)?.state).toBe('logged-to-session')
+    expect(context.admissionCalls).toHaveLength(2)
+    await runtime.openAdmission()
+    expect(context.admissionCalls).toHaveLength(2)
+    await runtime.dispose()
+  })
+
+  it('waits for an opening lane on dispose and never admits its queued input', async () => {
+    const context = await setup(true, undefined, undefined, undefined, { deferAdmission: true })
+    await context.runtime.acceptChannelInbound(inbound(context.connection.id, context.channel.id, 'held'))
+    let created!: () => void
+    const started = new Promise<void>((resolve) => {
+      created = resolve
+    })
+    let finish!: () => void
+    const pending = new Promise<void>((resolve) => {
+      finish = resolve
+    })
+    context.sessionDriver.createSession = async ({ episodeId }) => {
+      created()
+      await pending
+      return `dsh-${episodeId}`
+    }
+    const opening = context.runtime.openAdmission()
+    await started
+    let disposed = false
+    const disposal = context.runtime.dispose().then(() => {
+      disposed = true
+    })
+    await Promise.resolve()
+    expect(disposed).toBe(false)
+    await context.runtime.acceptChannelInbound(inbound(context.connection.id, context.channel.id, 'during-disposal'))
+    finish()
+    await Promise.all([opening, disposal])
+    expect(context.admissionCalls).toHaveLength(0)
+    expect(context.coreRepository.events.size).toBe(2)
+    await expect(context.runtime.openAdmission()).rejects.toThrow('disposed')
+  })
+
+  it('keeps messages arriving during the startup sweep exactly once', async () => {
+    const context = await setup(true, undefined, undefined, undefined, { deferAdmission: true })
+    await context.runtime.acceptChannelInbound(inbound(context.connection.id, context.channel.id, 'startup-first'))
+    let created!: () => void
+    const started = new Promise<void>((resolve) => {
+      created = resolve
+    })
+    let finish!: () => void
+    const pending = new Promise<void>((resolve) => {
+      finish = resolve
+    })
+    const createSession = context.sessionDriver.createSession.bind(context.sessionDriver)
+    context.sessionDriver.createSession = async (input) => {
+      created()
+      await pending
+      return createSession(input)
+    }
+    const opening = context.runtime.openAdmission()
+    await started
+    const lateInbound = context.runtime.acceptChannelInbound(
+      inbound(context.connection.id, context.channel.id, 'startup-late'),
+    )
+    finish()
+    await Promise.all([opening, lateInbound])
+    const eventIds = context.admissionCalls.flatMap(({ events }) => events.map(({ id }) => id))
+    expect(eventIds).toHaveLength(2)
+    expect(new Set(eventIds).size).toBe(2)
+  })
+
   it('persists group processing feedback and removes it after the Session becomes idle', async () => {
     const calls: string[] = []
     const context = await setup(true, undefined, undefined, {

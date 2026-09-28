@@ -138,7 +138,7 @@ export class AuthoringApplicationService {
       ...(input.targetExtensionId === undefined ? {} : { extensionId: input.targetExtensionId }),
       createdByAgentId: identity.agentId,
       verification: {
-        dshVersion: '0.1.1-rc.2',
+        dshVersion: DSH_RUNTIME_RELEASE.dshVersion,
         contractVersion: hasHostPages
           ? 'nekro-nxt-extension-v3'
           : adapterVerification
@@ -194,3 +194,4 @@ export class AuthoringApplicationService {
     return saved
   }
 }
+import { DSH_RUNTIME_RELEASE } from '@nekro-nxt/dsh-compat/release'

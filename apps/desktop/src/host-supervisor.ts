@@ -102,6 +102,7 @@ export class HostSupervisor {
       launch = this.#launch()
       this.#current = launch
       await this.#waitUntilReady(launch, lifecycle.signal)
+      lifecycle.signal.throwIfAborted()
     } catch (cause) {
       const failed = this.#current
       this.#current = undefined
@@ -141,6 +142,7 @@ export class HostSupervisor {
   }
 
   async #waitUntilReady(launch: HostLaunch, lifecycleSignal: AbortSignal): Promise<void> {
+    lifecycleSignal.throwIfAborted()
     const readiness = new AbortController()
     const abortReadiness = (): void => readiness.abort(lifecycleSignal.reason)
     lifecycleSignal.addEventListener('abort', abortReadiness, { once: true })
@@ -181,6 +183,7 @@ export class HostSupervisor {
           candidate = this.#launch()
           this.#current = candidate
           await this.#waitUntilReady(candidate, signal)
+          signal.throwIfAborted()
           active = candidate
           this.#options.onRecovered?.(restart.attempt)
           break

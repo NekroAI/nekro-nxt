@@ -1,3 +1,4 @@
+import { installSnapshotHealthRoutes } from './fixtures/host-release.js'
 import { expect, test, type Page } from '@playwright/test'
 import { createServer, type ServerResponse } from 'node:http'
 import { mkdir, writeFile } from 'node:fs/promises'
@@ -56,6 +57,7 @@ async function withEventFixture(page: Page, use: (emit: (channel: number) => voi
     localStorage.setItem('nekro-nxt.theme', 'dark')
     localStorage.setItem('nekro-nxt.reduced-motion', 'false')
   })
+  await installSnapshotHealthRoutes(page, snapshot)
   await page.route('**/api/**', (route) => {
     const url = new URL(route.request().url())
     const json = (data: unknown) =>

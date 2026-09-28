@@ -1519,7 +1519,6 @@ describe('Extension Activation lifecycle', () => {
     const coordinator = activationCoordinator(repository, host)
     await coordinator.restore()
     repository.failActivationUpsert = true
-    host.failDisposeRevisionId = nextRevision.id
 
     await expect(
       coordinator.activate({
@@ -1530,6 +1529,33 @@ describe('Extension Activation lifecycle', () => {
     ).rejects.toThrow('Activation transaction failed.')
     expect(repository.getActivation(previous.agentId, extension.id)).toEqual(previous)
     expect(host.mounted.get(`${previous.agentId}\0${extension.id}`)).toBe(oldRevision.id)
+  })
+
+  it('refuses to remount the old Revision when a failed commit cannot release its candidate', async () => {
+    const repository = new MemoryExtensionRepository()
+    const extension = localExtension(extensionId('unsafeRollback'))
+    const oldRevision = revision(revisionId('unsafeOld'), extension.id, 1)
+    const nextRevision = revision(revisionId('unsafeNext'), extension.id, 2)
+    repository.saveExtensionRevision({ extension, revision: oldRevision })
+    repository.saveExtensionRevision({ extension, revision: nextRevision })
+    const previous: Activation = {
+      agentId: agentId('unsafeRollback'),
+      extensionId: extension.id,
+      extensionRevisionId: oldRevision.id,
+      config: {},
+      activatedAt: 1,
+    }
+    repository.upsertActivation(previous)
+    const host = new FakeActivationHost()
+    const coordinator = activationCoordinator(repository, host)
+    await coordinator.restore()
+    repository.failActivationUpsert = true
+    host.failDisposeRevisionId = nextRevision.id
+    await expect(
+      coordinator.activate({ agentId: previous.agentId, extensionId: extension.id, revisionId: nextRevision.id }),
+    ).rejects.toThrow('Extension commit and cleanup failed.')
+    expect(repository.getActivation(previous.agentId, extension.id)).toEqual(previous)
+    expect(host.mounted.get(`${previous.agentId}\0${extension.id}`)).not.toBe(oldRevision.id)
   })
 
   it('activates a first Revision with defaults and cleanly switches to the next Revision', async () => {

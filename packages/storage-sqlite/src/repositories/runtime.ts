@@ -1,4 +1,4 @@
-import { and, asc, desc, eq, gt, gte, inArray, notExists, or, sql } from 'drizzle-orm'
+import { and, asc, desc, eq, gt, gte, inArray, notExists, notInArray, or, sql } from 'drizzle-orm'
 import type { AdapterRuntimeStateStore } from '@nekro-nxt/adapter-sdk'
 import type { ChannelEventRecord } from '@nekro-nxt/core'
 import type {
@@ -22,6 +22,12 @@ import {
   admissionEvents,
   admissions,
   channelEvents,
+  channelBindings,
+  bindingAdmissionCutoffs,
+  dshSessionResets,
+  dynamicAuthoringTasks,
+  dynamicAuthoringAttempts,
+  dynamicAuthoringEvents,
   connectionState,
   episodeHandoffEvents,
   episodeHandoffs,
@@ -29,6 +35,8 @@ import {
 } from '../schema.js'
 import {
   AdmissionRowSchema,
+  DshSessionResetRowSchema,
+  BindingAdmissionCutoffRowSchema,
   ChannelEventRowSchema,
   ConnectionStateRowSchema,
   EpisodeHandoffEventRowSchema,
@@ -57,13 +65,22 @@ type RuntimeSlice = Pick<
   | 'completeAdmission'
 >
 
-export interface DshSessionStorageRetirementReport {
+export interface DshSessionStorageRetirementInput {
+  readonly migrationId: string
+  readonly closedAt: number
+}
+
+export interface DshSessionStorageRetirementReport extends DshSessionStorageRetirementInput {
   readonly episodesClosed: number
-  readonly admissionsReleased: number
+  readonly admissionsCancelled: number
+  readonly bindingsCutOff: number
+  readonly authoringTasksInterrupted: number
+  readonly alreadyApplied: boolean
 }
 
 export interface DshSessionStorageMaintenance {
-  retireDshSessionEpisodes(closedAt: number): DshSessionStorageRetirementReport
+  retireDshSessionEpisodes(input: DshSessionStorageRetirementInput): DshSessionStorageRetirementReport
+  getDshSessionStorageRetirement(migrationId: string): DshSessionStorageRetirementReport | undefined
 }
 
 const toEpisode = (input: typeof episodes.$inferSelect): EpisodeRecord => {
@@ -183,44 +200,151 @@ export function createRuntimeRepository(
         .all()
         .map(toEpisode)
     },
-    retireDshSessionEpisodes(closedAt): DshSessionStorageRetirementReport {
+    getDshSessionStorageRetirement(migrationId) {
+      const receipt = database
+        .select()
+        .from(dshSessionResets)
+        .where(eq(dshSessionResets.migrationId, migrationId))
+        .get()
+      return receipt === undefined ? undefined : { ...DshSessionResetRowSchema.parse(receipt), alreadyApplied: true }
+    },
+    retireDshSessionEpisodes({ migrationId, closedAt }): DshSessionStorageRetirementReport {
+      if (!migrationId.trim()) throw new TypeError('Session reset requires a stable migration ID.')
       if (!Number.isSafeInteger(closedAt) || closedAt < 0)
         throw new TypeError('Episode close time must be non-negative.')
       return database.transaction(
         (tx) => {
+          const receipt = tx.select().from(dshSessionResets).where(eq(dshSessionResets.migrationId, migrationId)).get()
+          if (receipt !== undefined) return { ...DshSessionResetRowSchema.parse(receipt), alreadyApplied: true }
           const live = tx
             .select()
             .from(episodes)
             .where(inArray(episodes.status, ['opening', 'active']))
-            .orderBy(asc(episodes.createdAt), asc(episodes.id))
             .all()
             .map(toEpisode)
-          if (live.length === 0) return { episodesClosed: 0, admissionsReleased: 0 }
-          const episodeIds = live.map(({ id }) => id)
-          const unresolved = tx
-            .select({ id: admissions.id })
-            .from(admissions)
-            .where(and(inArray(admissions.episodeId, episodeIds), inArray(admissions.state, ['pending', 'claimed'])))
-            .all()
-          const admissionIds = unresolved.map(({ id }) => id)
-          if (admissionIds.length > 0) {
-            tx.delete(admissionEvents).where(inArray(admissionEvents.admissionId, admissionIds)).run()
-            tx.delete(admissions).where(inArray(admissions.id, admissionIds)).run()
-          }
+          // Keep admission/event facts. Cancel even orphaned work on already closed Episodes.
+          const admissionsCancelled = tx
+            .update(admissions)
+            .set({ state: 'cancelled' })
+            .where(inArray(admissions.state, ['pending', 'claimed']))
+            .run().changes
           for (const episode of live) {
-            const changed = tx
-              .update(episodes)
+            tx.update(episodes)
               .set({
                 status: 'closed',
                 closeReason: 'incompatible-session-storage',
                 closedAtEventId: episode.lastAdmittedEventId ?? episode.openedAtEventId,
                 closedAt,
               })
-              .where(and(eq(episodes.id, episode.id), inArray(episodes.status, ['opening', 'active'])))
-              .run().changes
-            if (changed !== 1) throw new Error(`Episode storage-reset conflict: ${episode.id}`)
+              .where(eq(episodes.id, episode.id))
+              .run()
           }
-          return { episodesClosed: live.length, admissionsReleased: admissionIds.length }
+          const tasks = tx
+            .select()
+            .from(dynamicAuthoringTasks)
+            .where(notInArray(dynamicAuthoringTasks.status, ['completed', 'stopped', 'interrupted']))
+            .all()
+          for (const task of tasks) {
+            const interruptedAt = Math.max(closedAt, task.updatedAt)
+            tx.update(dynamicAuthoringTasks)
+              .set({
+                status: 'interrupted',
+                revision: task.revision + 1,
+                updatedAt: interruptedAt,
+                approvedRiskDigest: null,
+              })
+              .where(eq(dynamicAuthoringTasks.id, task.id))
+              .run()
+            const attempts = tx
+              .select()
+              .from(dynamicAuthoringAttempts)
+              .where(
+                and(
+                  eq(dynamicAuthoringAttempts.taskId, task.id),
+                  notInArray(dynamicAuthoringAttempts.state, ['preflight-failed', 'failed', 'rejected', 'stopped']),
+                ),
+              )
+              .all()
+            for (const attempt of attempts) {
+              tx.update(dynamicAuthoringAttempts)
+                .set({
+                  state: 'stopped',
+                  settledAt: interruptedAt,
+                  host: attempt.host.status === 'absent' ? attempt.host : { status: 'stopped', waitingFor: [] },
+                  client: attempt.client.status === 'absent' ? attempt.client : { status: 'stopped', waitingFor: [] },
+                  runnerRunId: null,
+                })
+                .where(eq(dynamicAuthoringAttempts.id, attempt.id))
+                .run()
+            }
+            const sequence = tx
+              .select({ value: sql<number>`coalesce(max(${dynamicAuthoringEvents.sequence}), 0) + 1` })
+              .from(dynamicAuthoringEvents)
+              .where(eq(dynamicAuthoringEvents.taskId, task.id))
+              .get()?.value
+            if (sequence === undefined) throw new Error('Unable to determine authoring event sequence.')
+            tx.insert(dynamicAuthoringEvents)
+              .values({
+                taskId: task.id,
+                sequence,
+                kind: 'task-interrupted',
+                payload: {
+                  reason: 'incompatible-session-storage',
+                  migrationId,
+                  message: '上下文已因引擎升级归档，创造任务已中断。',
+                },
+                createdAt: interruptedAt,
+              })
+              .run()
+          }
+          const cutoffs = tx
+            .select()
+            .from(channelBindings)
+            .all()
+            .flatMap((binding) => {
+              const latest = tx
+                .select({ eventId: channelEvents.id })
+                .from(channelEvents)
+                .where(
+                  and(
+                    eq(channelEvents.channelId, binding.channelId),
+                    inArray(channelEvents.kind, ['message-created', 'message-edited', 'control']),
+                  ),
+                )
+                .orderBy(desc(channelEvents.receivedAt), desc(channelEvents.id))
+                .limit(1)
+                .get()
+              return latest === undefined
+                ? []
+                : [
+                    {
+                      channelId: binding.channelId,
+                      agentId: binding.agentId,
+                      boundAt: binding.boundAt,
+                      eventId: latest.eventId,
+                      migrationId,
+                    },
+                  ]
+            })
+          const report = {
+            migrationId,
+            closedAt,
+            episodesClosed: live.length,
+            admissionsCancelled,
+            bindingsCutOff: cutoffs.length,
+            authoringTasksInterrupted: tasks.length,
+          }
+          tx.insert(dshSessionResets).values(report).run()
+          for (const cutoff of cutoffs) {
+            tx.insert(bindingAdmissionCutoffs)
+              .values(cutoff)
+              .onConflictDoUpdate({
+                target: bindingAdmissionCutoffs.channelId,
+                set: cutoff,
+              })
+              .run()
+          }
+          return { ...report, alreadyApplied: false }
         },
         { behavior: 'immediate' },
       )
@@ -382,7 +506,7 @@ export function createRuntimeRepository(
         .from(admissionEvents)
         .innerJoin(admissions, eq(admissions.id, admissionEvents.admissionId))
         .innerJoin(channelEvents, eq(channelEvents.id, admissionEvents.eventId))
-        .where(eq(admissions.episodeId, episodeId))
+        .where(and(eq(admissions.episodeId, episodeId), notInArray(admissions.state, ['cancelled'])))
         .orderBy(desc(channelEvents.receivedAt), desc(channelEvents.id))
         .limit(limit)
         .all()
@@ -390,6 +514,25 @@ export function createRuntimeRepository(
         .map(({ event }) => toChannelEvent(event))
     },
     listUnadmittedEvents(channelId, agentId, boundAt): readonly ChannelEventRecord[] {
+      const storedCutoff = database
+        .select()
+        .from(bindingAdmissionCutoffs)
+        .where(
+          and(
+            eq(bindingAdmissionCutoffs.channelId, channelId),
+            eq(bindingAdmissionCutoffs.agentId, agentId),
+            eq(bindingAdmissionCutoffs.boundAt, boundAt),
+          ),
+        )
+        .get()
+      const cutoff =
+        storedCutoff === undefined
+          ? undefined
+          : database
+              .select()
+              .from(channelEvents)
+              .where(eq(channelEvents.id, BindingAdmissionCutoffRowSchema.parse(storedCutoff).eventId))
+              .get()
       const pageSize = 200
       const result: ChannelEventRecord[] = []
       let cursor: { readonly receivedAt: number; readonly id: ChannelEventId } | undefined
@@ -415,6 +558,12 @@ export function createRuntimeRepository(
               inArray(channelEvents.kind, ['message-created', 'message-edited', 'control']),
               gte(channelEvents.receivedAt, boundAt),
               notExists(alreadyAdmitted),
+              cutoff === undefined
+                ? undefined
+                : or(
+                    gt(channelEvents.receivedAt, cutoff.receivedAt),
+                    and(eq(channelEvents.receivedAt, cutoff.receivedAt), gt(channelEvents.id, cutoff.id)),
+                  ),
               cursor === undefined
                 ? undefined
                 : or(

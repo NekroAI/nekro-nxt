@@ -100,7 +100,11 @@ export class MigrationRegistry<T> {
 /** One idempotent Host upgrade step with a stable journal identity. */
 export interface UpgradeStep {
   readonly id: string
-  readonly run: () => Promise<void>
+  /** Runtime construction always runs; only verified durable steps may be skipped. */
+  readonly checkpoint?: { readonly inputVersion: string; readonly outputVersion: string }
+  readonly verify?: () => Promise<boolean>
+  readonly phase?: 'migrating' | 'checking' | 'activating'
+  readonly run: (signal?: AbortSignal) => Promise<void>
 }
 
 /** Durable journal operations supplied by the Host storage owner. */
@@ -108,22 +112,46 @@ export interface UpgradeJournal {
   readonly begin: (id: string) => Promise<void>
   readonly complete: (id: string) => Promise<void>
   readonly fail: (id: string, error: unknown) => Promise<void>
+  readonly readCheckpoint?: (id: string) => Promise<UpgradeStep['checkpoint'] | undefined>
+  readonly commitCheckpoint?: (id: string, checkpoint: NonNullable<UpgradeStep['checkpoint']>) => Promise<void>
 }
 
 /** Runs ordered upgrade steps and publishes completion only after each step succeeds. */
-export async function runUpgradePlan(steps: readonly UpgradeStep[], journal: UpgradeJournal): Promise<void> {
+export async function runUpgradePlan(
+  steps: readonly UpgradeStep[],
+  journal: UpgradeJournal,
+  signal?: AbortSignal,
+): Promise<void> {
   const ids = new Set<string>()
   for (const step of steps) {
     if (step.id.length === 0 || ids.has(step.id)) {
       throw new MigrationError('invalid-registry', `Upgrade step id must be non-empty and unique: ${step.id}`)
     }
     ids.add(step.id)
+    if (step.checkpoint && (!step.verify || !journal.readCheckpoint || !journal.commitCheckpoint)) {
+      throw new MigrationError(
+        'invalid-registry',
+        `Durable step ${step.id} requires verification and a checkpoint journal.`,
+      )
+    }
   }
 
   for (const step of steps) {
+    signal?.throwIfAborted()
+    if (step.checkpoint) {
+      const previous = await journal.readCheckpoint?.(step.id)
+      if (
+        previous?.inputVersion === step.checkpoint.inputVersion &&
+        previous.outputVersion === step.checkpoint.outputVersion &&
+        (await step.verify?.())
+      )
+        continue
+    }
     await journal.begin(step.id)
     try {
-      await step.run()
+      await step.run(signal)
+      if (step.verify && !(await step.verify())) throw new Error(`Upgrade step ${step.id} did not verify.`)
+      if (step.checkpoint) await journal.commitCheckpoint?.(step.id, step.checkpoint)
       await journal.complete(step.id)
     } catch (error) {
       await journal.fail(step.id, error)
@@ -132,13 +160,15 @@ export async function runUpgradePlan(steps: readonly UpgradeStep[], journal: Upg
   }
 }
 
-export type HostUpgradePhase = 'idle' | 'preflight' | 'backup' | 'migrating' | 'ready' | 'recovery'
+export type HostUpgradePhase =
+  'idle' | 'preflight' | 'backup' | 'migrating' | 'checking' | 'activating' | 'ready' | 'recovery'
 
 export interface HostUpgradeStatus {
   readonly phase: HostUpgradePhase
   readonly backupId?: string
   readonly currentStepId?: string
   readonly errorSummary?: string
+  readonly progress?: { readonly completed: number; readonly total?: number; readonly unit: 'bytes' | 'items' }
 }
 
 export interface HostUpgradeLock {
@@ -151,6 +181,7 @@ export interface HostUpgradeCoordinatorOptions {
   readonly createBackup: () => Promise<{ readonly id: string }>
   readonly steps: readonly UpgradeStep[]
   readonly journal: UpgradeJournal
+  readonly signal?: AbortSignal
 }
 
 /** Coordinates all owner migrations without pretending they share one transaction. */
@@ -182,9 +213,11 @@ export class HostUpgradeCoordinator {
   }
 
   async #run(): Promise<HostUpgradeStatus> {
-    const release = await this.#options.lock.acquire()
+    let release: (() => Promise<void>) | undefined
     let backupId: string | undefined
     try {
+      release = await this.#options.lock.acquire()
+      this.#options.signal?.throwIfAborted()
       this.#publish({ phase: 'preflight' })
       await this.#options.preflight()
       this.#publish({ phase: 'backup' })
@@ -193,13 +226,24 @@ export class HostUpgradeCoordinator {
       this.#publish({ phase: 'migrating', backupId })
       const journal: UpgradeJournal = {
         begin: async (id) => {
-          this.#publish({ phase: 'migrating', backupId: backup.id, currentStepId: id })
+          this.#publish({
+            phase: this.#options.steps.find((step) => step.id === id)?.phase ?? 'migrating',
+            backupId: backup.id,
+            currentStepId: id,
+          })
           await this.#options.journal.begin(id)
         },
         complete: (id) => this.#options.journal.complete(id),
         fail: (id, error) => this.#options.journal.fail(id, error),
+        ...(this.#options.journal.readCheckpoint === undefined
+          ? {}
+          : { readCheckpoint: this.#options.journal.readCheckpoint }),
+        ...(this.#options.journal.commitCheckpoint === undefined
+          ? {}
+          : { commitCheckpoint: this.#options.journal.commitCheckpoint }),
       }
-      await runUpgradePlan(this.#options.steps, journal)
+      await runUpgradePlan(this.#options.steps, journal, this.#options.signal)
+      this.#options.signal?.throwIfAborted()
       this.#publish({ phase: 'ready', backupId })
       return this.#status
     } catch (error) {
@@ -210,7 +254,7 @@ export class HostUpgradeCoordinator {
       })
       return this.#status
     } finally {
-      await release()
+      await release?.()
     }
   }
 

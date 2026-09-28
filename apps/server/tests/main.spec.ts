@@ -173,6 +173,20 @@ describe('Server executable defaults', () => {
       const missingAsset = await fetch(`${origin}/assets/missing.js`)
       expect(missingAsset.status).toBe(404)
 
+      const rootResponse = await fetch(`${origin}/`)
+      expect(rootResponse.status).toBe(200)
+      expect(await rootResponse.text()).toContain('NekroNxt')
+      const indexResponse = await fetch(`${origin}/index.html`)
+      expect(indexResponse.status).toBe(200)
+
+      const staleMutation = await fetch(`${origin}/api/agents`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', 'x-nekro-client-release': 'synthetic-old-release' },
+        body: '{}',
+      })
+      expect(staleMutation.status).toBe(409)
+      expect(await staleMutation.json()).toMatchObject({ error: { code: 'release-mismatch' } })
+
       const rejectedMethod = await fetch(`${origin}/work`, { method: 'POST' })
       expect(rejectedMethod.status).toBe(405)
       expect(rejectedMethod.headers.get('allow')).toBe('GET, HEAD')

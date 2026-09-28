@@ -3,7 +3,7 @@ declare module '@deepseek-ai/dsh-client-modules/client?raw' {
   export default source
 }
 
-declare module '@deepseek-ai/dsh-client-runtime/client?raw' {
+declare module '@deepseek-ai/dsh-client-ui-renderer/client?raw' {
   const source: string
   export default source
 }

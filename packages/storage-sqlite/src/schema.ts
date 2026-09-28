@@ -565,14 +565,14 @@ export const admissions = sqliteTable(
       .notNull()
       .references(() => episodes.id, { onDelete: 'restrict' }),
     mode: text({ enum: ['followup', 'inject'] }).notNull(),
-    state: text({ enum: ['pending', 'claimed', 'logged-to-session'] }).notNull(),
+    state: text({ enum: ['pending', 'claimed', 'logged-to-session', 'cancelled'] }).notNull(),
     dshMessageId: text('dsh_message_id'),
     createdAt: integer('created_at').notNull(),
   },
   (table) => [
     index('admissions_recovery_idx').on(table.episodeId, table.state, table.createdAt),
     check('admissions_mode_ck', sql`${table.mode} IN ('followup', 'inject')`),
-    check('admissions_state_ck', sql`${table.state} IN ('pending', 'claimed', 'logged-to-session')`),
+    check('admissions_state_ck', sql`${table.state} IN ('pending', 'claimed', 'logged-to-session', 'cancelled')`),
   ],
 )
 
@@ -1023,6 +1023,44 @@ export const systemSettings = sqliteTable(
   (table) => [check('system_settings_revision_ck', sql`${table.revision} > 0`)],
 )
 
+/** A reset belongs to the source storage identity, never to a product build. */
+export const dshSessionResets = sqliteTable(
+  'dsh_session_resets',
+  {
+    migrationId: text('migration_id').primaryKey(),
+    closedAt: integer('closed_at').notNull(),
+    episodesClosed: integer('episodes_closed').notNull(),
+    admissionsCancelled: integer('admissions_cancelled').notNull(),
+    bindingsCutOff: integer('bindings_cut_off').notNull(),
+    authoringTasksInterrupted: integer('authoring_tasks_interrupted').notNull(),
+  },
+  (table) => [check('dsh_session_resets_time_ck', sql`${table.closedAt} >= 0`)],
+)
+
+/** Preserve the Binding's creation time while excluding pre-upgrade inbound backlog. */
+export const bindingAdmissionCutoffs = sqliteTable(
+  'binding_admission_cutoffs',
+  {
+    channelId: text('channel_id')
+      .$type<ChannelId>()
+      .primaryKey()
+      .references(() => channelBindings.channelId, { onDelete: 'cascade' }),
+    agentId: text('agent_id').$type<AgentId>().notNull(),
+    boundAt: integer('bound_at').notNull(),
+    eventId: text('event_id').$type<ChannelEventId>().notNull(),
+    migrationId: text('migration_id')
+      .notNull()
+      .references(() => dshSessionResets.migrationId, { onDelete: 'restrict' }),
+  },
+  (table) => [
+    foreignKey({
+      name: 'binding_admission_cutoffs_event_fk',
+      columns: [table.eventId, table.channelId],
+      foreignColumns: [channelEvents.id, channelEvents.channelId],
+    }).onDelete('restrict'),
+  ],
+)
+
 export const coreSchema = {
   agentDefinitions,
   agentRevisions,
@@ -1063,4 +1101,6 @@ export const coreSchema = {
   managementDevices,
   workTreeOrder,
   systemSettings,
+  dshSessionResets,
+  bindingAdmissionCutoffs,
 } as const

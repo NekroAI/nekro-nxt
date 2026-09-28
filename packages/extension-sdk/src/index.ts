@@ -1,3 +1,4 @@
+import { DSH_RUNTIME_RELEASE } from '@nekro-nxt/dsh-compat/release'
 import type { AdapterHostContributionV2 } from '@nekro-nxt/adapter-sdk'
 import type { ElementType, ReactNode } from 'react'
 import type {
@@ -319,7 +320,7 @@ export type ExtensionPluginFactory<Environment, Context = ExtensionHostContext> 
 
 export interface NekroNxtExtensionAuthoringReference {
   readonly contractVersion: 'nekro-nxt-extension-v3'
-  readonly dshVersion: '0.1.1-rc.2'
+  readonly dshVersion: string
   readonly supportedContributions: {
     readonly hostTool: true
     readonly hostRpc: true
@@ -544,7 +545,7 @@ const HOST_PAGE_EXAMPLE = `return {
 
 export const NEKRO_NXT_EXTENSION_AUTHORING_REFERENCE: NekroNxtExtensionAuthoringReference = {
   contractVersion: 'nekro-nxt-extension-v3',
-  dshVersion: '0.1.1-rc.2',
+  dshVersion: DSH_RUNTIME_RELEASE.dshVersion,
   supportedContributions: {
     hostTool: true,
     hostRpc: true,
