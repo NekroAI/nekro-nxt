@@ -61,7 +61,7 @@ export interface UpgradeBackupOptions {
   readonly onProgress?: (completed: number, total: number) => void
 }
 
-const EXCLUDED = ['backups', 'extension-cache', 'dsh/plugin-staging', 'dsh/request-images'] as const
+const EXCLUDED = ['backups', 'extension-cache', 'dsh/plugin-staging', 'dsh/request-images', 'dsh/pnpm-store'] as const
 const errorCode = (error: unknown): unknown => (error instanceof Error && 'code' in error ? error.code : undefined)
 const exists = async (filename: string): Promise<boolean> => {
   try {
