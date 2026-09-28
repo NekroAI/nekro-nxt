@@ -1389,6 +1389,10 @@ test('DSH settings remain legible without loading native WebUI across desktop th
 })
 
 test('clearing a DSH credential requires an explicit dangerous confirmation', async ({ page }, testInfo) => {
+  // This scenario uses the real snapshot/settings API, so its health identity
+  // must also come from that real Host instead of the synthetic fixture.
+  await page.unroute('**/health/live')
+  await page.unroute('**/health/ready')
   const failures = installRuntimeFailureGate(page)
   await page.route('**/api/dsh/credentials/describe', (route) =>
     route.fulfill({
