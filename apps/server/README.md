@@ -28,7 +28,7 @@ Host UI 页面由独立 Runtime 承载。页面实例、显隐、跨扩展顺序
 
 持久 Extension Host factory 每个 Activation 执行一次并拥有 RPC；返回的 Cordis Plugin 只负责向该智能体的每个 Session 挂载 Tool Fiber。Client Artifact、Activation RPC 和最近一次加载诊断分别通过 Revision 精确路由；stale build、错误智能体和已停用 Revision 都被拒绝，Client 失败不回滚 Host Tool。
 
-生产入口用 `backups/host.lock` 持有整个进程生命周期的数据根独占权，正常运行和离线恢复都不能与另一实例共享可写数据根；`backups/upgrade.lock` 另行约束升级协调。共享 `HostUpgradeCoordinator` 在存储所有者打开前完成 preflight 与完整恢复点，journal 分别记录打开存储、检查并恢复 Runtime、开放 Admission 的结果。必需步骤失败进入 `recovery`，不开放业务 HTTP；Runtime 恢复完成后才装配 HTTP 与 readiness，Desktop 还需核对同包 Release。当前 Admission 在独立 activation 步骤开放，因此不能把后续 HTTP 启动失败当作可以无条件回退数据的理由。
+生产入口用 `backups/host.lock` 持有整个进程生命周期的数据根独占权，正常运行和离线恢复都不能与另一实例共享可写数据根；`backups/upgrade.lock` 另行约束升级协调。共享 `HostUpgradeCoordinator` 在存储所有者打开前完成 preflight 与完整恢复点，journal 分别记录打开存储、检查并恢复 Runtime、准备 HTTP/TLS、开放 Admission 的结果。必需步骤失败进入 `recovery`；HTTP/TLS 准备完成后才开放 Admission，业务接口与 readiness 在最终就绪前返回 503，Desktop 还需核对同包 Release。开放运行后不能无条件回退数据。
 
 `prepareDshSessionStorage()` 检查旧 `sessions.sqlite` 的 application id、schema 15/17 与 `quick_check`，通过 SQLite backup 发布 `dsh/session-archives/schema<版本>-<源摘要>/` 后才退休源文件；不写 DSH 私有表。归档包含数据库快照、原始伴生文件和带内容身份的 manifest。新会话使用公开 JSONL Provider，目录为 `dsh/sessions/`，由 `dsh/session-storage.json` 标明 `jsonl-v4` 身份。未知版本、错误所有权或无法识别的非空目录拒绝启动，不静默重置。
 
@@ -74,9 +74,9 @@ DSH Settings 使用现有路径级 mutate 与 Credentials；普通 Cordis Config
 
 生产容器使用 `/data`，本地由 `NEKRO_DATA` 或宿主参数指定数据根。组合根当前管理 `core.sqlite`、仅用于旧格式归档的 `sessions.sqlite`、`assets/`、`credentials/`、`dsh/`、`extension-data/`、`extension-cache/`、`workspaces/`、`backups/` 和公开入口的 `host/tls/`。Core 拥有 SQLite 格式，DSH Provider 拥有 JSONL Session 格式；Asset Service、本地凭据存储、DSH 服务、Extension Runtime、工作区和 Host 升级/安全入口各自拥有对应目录。`extension-cache/` 与 `dsh/request-images/` 可重建；扩展源码、Spill、工作区和凭据是持久数据，不能按缓存清理。
 
-SQLite 的 `-wal`、`-shm` 是运行期伴生文件，不是独立数据分区，不得手工移动或删除。自动恢复点覆盖主要数据根的持久文件，包括 JSONL、Profile、凭据、插件项目、扩展源码、Asset、Spill、工作区、TLS 与 `dsh/shutdown-inbox/`；明确配置的外置智能体工作区另列根目录。排除 `backups/`、`extension-cache/`、`dsh/request-images/`、`dsh/plugin-staging/` 和 socket；SQLite 主库通过 backup API 快照，符号链接只复制链接本身。
+SQLite 的 `-wal`、`-shm` 是运行期伴生文件，不是独立数据分区，不得手工移动或删除。自动恢复点覆盖主要数据根的持久文件，包括 JSONL、Profile、凭据、插件项目、扩展源码、Asset、Spill、工作区、TLS 与 `dsh/shutdown-inbox/`；明确配置的外置智能体工作区另列根目录。排除 `backups/`、`extension-cache/`、`dsh/request-images/`、`dsh/plugin-staging/`、`dsh/pnpm-store/` 和 socket；SQLite 主库通过 backup API 快照，符号链接只复制链接本身。
 
-恢复点按目标 Release 与运行环境指纹复用，先校验内容再原子发布。离线入口 `--restore-upgrade <backupId>` 必须持有数据根锁；它先保留失败现场，再按 manifest 与恢复 journal 重建数据，成功退出后要求使用匹配的旧程序。该清单目前不自动记录或选择旧程序版本；外置工作区恢复还要求当前推导的根目录与 manifest 一致。操作说明见[升级、备份与恢复](../../docs/guide/upgrade-backup.md)，可复用流程、验收与剩余限制见 [DSH 升级维护指南](../../docs/dsh-upgrade.md)。
+恢复点按目标 Release 与运行环境指纹复用，先校验内容再原子发布；完成恢复后重新升级会创建下一代恢复点。离线入口 `--restore-upgrade <backupId>` 必须持有数据根锁；它先保留失败现场，再按 manifest 与恢复 journal 重建数据，成功退出后要求使用匹配的旧程序。该清单目前不自动选择旧程序；外置工作区恢复从 manifest 读取范围并以显式工作区父目录验证，不依赖当前 Core。操作说明见[升级、备份与恢复](../../docs/guide/upgrade-backup.md)，可复用流程、验收与剩余限制见 [DSH 升级维护指南](../../docs/dsh-upgrade.md)。
 
 新增顶层项必须记录唯一所有者、当前消费者及持久/缓存和恢复语义；现有布局归并需作为有迁移、备份与恢复验证的独立任务，不能随局部功能静默搬移用户数据。测试使用临时根或本地专用分区，不写常驻 `data/`。`data/` 及其中的工作区副本不属于产品源码，ESLint、Prettier 和类型检查 include 必须排除；公开边界检查禁止 Git 跟踪该目录，不把未跟踪运行产物按产品源码扫描。
 
