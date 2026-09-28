@@ -454,7 +454,10 @@ const createRuntimeThroughUpgradeCoordinator = async (
       const info = await stat(dataRoot)
       if (!info.isDirectory()) throw new Error(`Host 数据根不是目录：${dataRoot}`)
       await existingSqliteSources(dataRoot)
-      await preflightDshSessionStorage({ databasePath: options.sessionDatabasePath })
+      await preflightDshSessionStorage({
+        databasePath: options.sessionDatabasePath,
+        sessionCompatibilityId: DSH_RUNTIME_RELEASE.sessionCompatibilityId,
+      })
       try {
         const identity = z
           .object({
