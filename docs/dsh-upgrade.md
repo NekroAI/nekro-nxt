@@ -27,7 +27,7 @@ DSH 仍在预览期。每次升级都使用固定目标版本，在隔离工作�
 6. **验收候选。** 先跑相关所有者测试和 `test:upgrade`，再执行 `verify:product`、升级/恢复生产旅程和双宿主产物检查。安装依赖后完整重启 Web 与 Server，避免 `?raw` bundle 残留旧解析路径。
 7. **切换与检查。** 停止旧宿主，保留原完整程序包和独立备份；新宿主创建恢复点并恢复 Runtime。检查匹配 Release 的 `/health/ready`、认证快照、隔离原因与实际聊天。正式发布仍走[发布规范](09-正式发布与更新日志规范.md)。
 
-跨平台候选验证复用 CI 的 `upgrade-candidates`。在非 `main` 升级分支手动触发 CI，质量和 Node 兼容检查通过后，会在 macOS、Windows、Linux 分别运行 `test:upgrade` 并构建完整 Desktop Preview，执行最终打包目录的 Host 验证。候选只保存为短期 Actions artifact，不创建产品 Release；`main` 的既有 Preview 与正式发布流程保持独立。
+跨平台候选验证复用 CI 的 `upgrade-candidates`。在非 `main` 升级分支手动触发 CI，候选与质量、Node 兼容检查并行，在 macOS、Windows、Linux 分别运行 `test:upgrade` 并构建完整 Desktop Preview，执行最终打包目录的 Host 验证；交付仍须全部通过。候选只保存为短期 Actions artifact，不创建产品 Release；`main` 的既有 Preview 与正式发布流程保持独立。
 
 ## 3. 当前 Session 与设置迁移
 
