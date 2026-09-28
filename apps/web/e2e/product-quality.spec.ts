@@ -876,13 +876,29 @@ test('theme surfaces interpolate while message layout wrappers stay unanimated',
     const initialColor = getComputedStyle(paragraph).color
     root.dataset['theme'] = 'light'
     root.classList.remove('dark')
-    await new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())))
+    // Flush styles synchronously so a busy worker cannot finish a short
+    // transition before the test captures and pauses it.
+    getComputedStyle(paragraph).getPropertyValue('color')
     const transitions = document
       .getAnimations()
       .filter((animation): animation is CSSTransition => animation instanceof CSSTransition)
+    let paintOwner: HTMLElement | null = paragraph
+    let colorTransition: CSSTransition | undefined
+    while (paintOwner && !colorTransition) {
+      colorTransition = transitions.find(
+        (animation) =>
+          animation.transitionProperty === 'color' &&
+          animation.effect instanceof KeyframeEffect &&
+          animation.effect.target === paintOwner,
+      )
+      if (!colorTransition) paintOwner = paintOwner.parentElement
+    }
+    if (!colorTransition) throw new Error('Missing message foreground transition')
     for (const animation of transitions) animation.pause()
+    await colorTransition.ready
+    const sampledTransition = colorTransition
     const at = async (time: number) => {
-      for (const animation of transitions) animation.currentTime = time
+      sampledTransition.currentTime = time
       await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()))
       return getComputedStyle(paragraph).color
     }
