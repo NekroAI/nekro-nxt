@@ -1,5 +1,5 @@
 import { Context } from '@deepseek-ai/cordis'
-import { Session, SessionId } from '@deepseek-ai/dsh-session'
+import SessionStore, { Session, SessionId } from '@deepseek-ai/dsh-session'
 import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
@@ -7,6 +7,46 @@ import { describe, expect, it } from 'vitest'
 import { NekroJsonlSessionPersistence } from '../src/dsh-session-persistence.js'
 
 describe('NXT public JSONL persistence adapter', () => {
+  it.each(['session', 'provider', 'close'] as const)(
+    'retains live routed audit events after %s flush and a cold provider restart',
+    async (flushBy) => {
+      const root = await mkdtemp(path.join(tmpdir(), 'nxt-jsonl-live-audit-'))
+      const first = new Context()
+      const second = new Context()
+      try {
+        await first.plugin(SessionStore)
+        await first.plugin(NekroJsonlSessionPersistence, { root })
+        const session = first.sessions.create(SessionId('synthetic-live-audit-session'))
+        const handle = await first.sessionPersistence.create(session.header)
+        const event = session.append('nekro-nxt/image-admission', {
+          admissionId: 'synthetic-live-admission',
+          imageCount: 1,
+          injectedCount: 1,
+          duplicateCount: 0,
+          skippedCount: 0,
+        })
+        if (flushBy === 'session') await first.sessions.flush(session)
+        if (flushBy === 'provider') await first.sessionPersistence.flush()
+        await handle.close()
+        await first.fiber.dispose()
+        await second.plugin(NekroJsonlSessionPersistence, { root })
+        const restored = await second.sessionPersistence.open(session.id, 'read')
+        try {
+          expect((await restored.read()).events).toEqual([
+            expect.objectContaining({ type: event.type, ignorable: true, data: event.data }),
+          ])
+          expect(event.ignorable).toBeUndefined()
+        } finally {
+          await restored.close()
+        }
+      } finally {
+        await first.fiber.dispose()
+        await second.fiber.dispose()
+        await rm(root, { recursive: true, force: true })
+      }
+    },
+  )
+
   it('retains owned audit events across a provider restart without editing private storage', async () => {
     const root = await mkdtemp(path.join(tmpdir(), 'nxt-jsonl-audit-'))
     const first = new Context()
