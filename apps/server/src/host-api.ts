@@ -112,7 +112,14 @@ export const createNekroHostApi = (
               }
             })
           }
-          return route.handler(req, res)
+          return Promise.resolve()
+            .then(() => route.handler(req, res))
+            .catch((error: unknown) => {
+              // An uncaught domain error would otherwise reach the WebServer seam as a bodiless 400, hiding the
+              // reason from the client. Keep the status, add the contract error body.
+              if (res.headersSent) throw error
+              writeError(res, 400, 'request-failed', error instanceof Error ? error.message : String(error))
+            })
         },
       }),
     )

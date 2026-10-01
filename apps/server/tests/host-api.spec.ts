@@ -7,6 +7,7 @@ import {
   ChannelIdSchema,
   ChannelMemberIdSchema,
   HostApiContracts,
+  HostApiErrorSchema,
   HostSseEventSchema,
   ExtensionIdSchema,
   ExtensionRevisionIdSchema,
@@ -351,6 +352,9 @@ describe('NekroNxt Server domain API (WebServer seam)', () => {
         }),
       })
       expect(invalidModelResponse.status).toBe(400)
+      const invalidModelError = HostApiErrorSchema.parse(await invalidModelResponse.json()).error
+      expect(invalidModelError.code).toBe('request-failed')
+      expect(invalidModelError.message).toContain('test-provider/missing-model')
       expect(
         HostApiContracts.snapshot.parseResponse(await (await fetch(`${origin}/api/snapshot`)).json()).agents,
       ).toEqual([])
