@@ -10,6 +10,7 @@ import {
   plotTurnStarts,
   projectContextUsage,
   recordLane,
+  usageCaption,
   responseStateNotice,
   sampleTokenRate,
   weightedCacheReadShare,
@@ -178,5 +179,14 @@ describe('flattenRuntimeRecords', () => {
     expect(cacheReadShare(miss)).toBe(0)
     expect(cacheReadShare(unknown)).toBeUndefined()
     expect(weightedCacheReadShare([hit, miss, unknown])).toBe(0.5)
+  })
+
+  it('shows the reported full-call total and restores cached input when no total is reported', () => {
+    expect(usageCaption({ inputTokens: 100, outputTokens: 20, totalTokens: 920, cacheReadTokens: 800 })).toBe(
+      '本步 合计 920 · 输入 100 · 输出 20 · 缓存读取 800',
+    )
+    expect(usageCaption({ inputTokens: 100, outputTokens: 20, cacheReadTokens: 800, cacheWriteTokens: 80 })).toBe(
+      '本步 合计 1k · 输入 100 · 输出 20 · 缓存读取 800',
+    )
   })
 })

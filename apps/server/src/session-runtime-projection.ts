@@ -86,12 +86,23 @@ export class SessionRuntimeProjection {
       if (channelId !== undefined) notify(channelId)
     })
     const pending = new Set<ChannelId>()
+    // A deterministic failure would repeat on every event; report it once until the channel recovers.
+    const failing = new Set<ChannelId>()
     let timer: ReturnType<typeof setTimeout> | undefined
     const flush = (): void => {
       timer = undefined
       const channelIds = [...pending]
       pending.clear()
-      for (const channelId of channelIds) listener(channelId)
+      for (const channelId of channelIds) {
+        try {
+          listener(channelId)
+          failing.delete(channelId)
+        } catch (error) {
+          if (failing.has(channelId)) continue
+          failing.add(channelId)
+          this.#context.logger.error('频道运行状态推送失败（%s）：%s', channelId, error)
+        }
+      }
     }
     const notify = (channelId: ChannelId): void => {
       pending.add(channelId)
@@ -113,6 +124,7 @@ export class SessionRuntimeProjection {
     const dispose = () => {
       this.#subscriptions.delete(dispose)
       pending.clear()
+      failing.clear()
       if (timer !== undefined) clearTimeout(timer)
       offStatus()
       offEvent()

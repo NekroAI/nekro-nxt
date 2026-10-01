@@ -1,6 +1,12 @@
 import { createAssistantMessage } from '@deepseek-ai/dsh-llm'
 import { SessionSeq } from '@deepseek-ai/dsh-session'
-import { AgentIdSchema, ChannelIdSchema, EpisodeIdSchema } from '@nekro-nxt/contracts'
+import {
+  AgentIdSchema,
+  ChannelIdSchema,
+  EpisodeIdSchema,
+  HostApiContracts,
+  HostSseEventSchema,
+} from '@nekro-nxt/contracts'
 import { describe, expect, it } from 'vitest'
 import { normalizeSessionEvents, shouldBroadcastChannelRuntime } from '../src/channel-runtime-events.ts'
 import {
@@ -11,12 +17,68 @@ import {
   projectSessionOccupancy,
   worstChannelRuntimePhase,
 } from '../src/channel-runtime-projection.ts'
+import { renderSse } from '../src/sse-hub.ts'
 
 const channelId = ChannelIdSchema.parse('chn_webmain')
 const agentId = AgentIdSchema.parse('agt_observer')
 const episodeId = EpisodeIdSchema.parse('eps_observer')
 
 describe('channel runtime projection', () => {
+  it('preserves authoritative DSH totals across REST and SSE without leaking provider fields', () => {
+    // DSH inputTokens excludes cache hits, so totalTokens cannot be reconstructed as input + output.
+    const usage = {
+      inputTokens: 100,
+      outputTokens: 20,
+      totalTokens: 920,
+      cacheReadTokens: 800,
+      cacheWriteTokens: 0,
+      reasoningTokens: 5,
+      providerExtra: 'synthetic-provider-metadata',
+    }
+    const events = normalizeSessionEvents([
+      {
+        type: 'assistant/message',
+        seq: SessionSeq(1),
+        time: 200,
+        surfaceOp: 'append',
+        data: {
+          turn: 1,
+          step: 1,
+          message: createAssistantMessage({
+            source: { provider: 'synthetic-provider', model: 'synthetic-model' },
+            content: [],
+          }),
+          stream: [],
+          usage,
+        },
+      },
+    ])
+    const projection = projectChannelRuntime({ channelId, sessionStatus: 'idle', pendingInjectCount: 0, events })
+    const expectedUsage = {
+      inputTokens: 100,
+      outputTokens: 20,
+      totalTokens: 920,
+      cacheReadTokens: 800,
+      cacheWriteTokens: 0,
+      reasoningTokens: 5,
+    }
+    const rest = HostApiContracts.getChannelRuntime.parseResponse({
+      ...projection,
+      cursor: { epoch: 'synthetic-host', sequence: 0 },
+    })
+    expect(rest.turns[0]?.steps[0]?.usage).toEqual(expectedUsage)
+    const frame = renderSse({ event: 'runtime', data: { ...projection, revision: 1 } })
+    const data = JSON.parse(
+      frame
+        .split('\n')
+        .find((line) => line.startsWith('data: '))!
+        .slice(6),
+    ) as unknown
+    const sse = HostSseEventSchema.parse({ event: 'runtime', data })
+    expect(sse.event).toBe('runtime')
+    if (sse.event === 'runtime') expect(sse.data.turns[0]?.steps[0]?.usage).toEqual(expectedUsage)
+  })
+
   it('keeps an idle channel honest when no session is live', () => {
     const projection = projectChannelRuntime({
       channelId,

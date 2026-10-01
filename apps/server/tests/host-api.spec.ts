@@ -7,6 +7,7 @@ import {
   ChannelIdSchema,
   ChannelMemberIdSchema,
   HostApiContracts,
+  HostSseEventSchema,
   ExtensionIdSchema,
   ExtensionRevisionIdSchema,
   HostUiPageInstanceIdSchema,
@@ -123,7 +124,7 @@ class ScriptedCommunicationModel extends LlmAdapter {
       yield { type: 'block-start', index: 0, blockType: 'text' }
       yield { type: 'text-delta', index: 0, text: '用户希望继续当前频道任务。' }
       yield { type: 'block-end', index: 0, block: { type: 'text', text: '用户希望继续当前频道任务。' } }
-      yield { type: 'usage', usage: { inputTokens: 8, outputTokens: 4 } }
+      yield { type: 'usage', usage: { inputTokens: 8, outputTokens: 4, totalTokens: 12 } }
       yield { type: 'finish', reason: { kind: 'stop' } }
       return
     }
@@ -150,14 +151,14 @@ class ScriptedCommunicationModel extends LlmAdapter {
         argumentsDelta: toolCall.arguments,
       }
       yield { type: 'block-end', index: 1, block: toolCall }
-      yield { type: 'usage', usage: { inputTokens: 16, outputTokens: 8 } }
+      yield { type: 'usage', usage: { inputTokens: 16, outputTokens: 8, totalTokens: 24 } }
       yield { type: 'finish', reason: { kind: 'tool-calls' } }
       return
     }
     yield { type: 'block-start', index: 0, blockType: 'text' }
     yield { type: 'text-delta', index: 0, text: '工具完成后的原始结束文字也不会发送。' }
     yield { type: 'block-end', index: 0, block: { type: 'text', text: '工具完成后的原始结束文字也不会发送。' } }
-    yield { type: 'usage', usage: { inputTokens: 8, outputTokens: 4 } }
+    yield { type: 'usage', usage: { inputTokens: 8, outputTokens: 4, totalTokens: 12 } }
     yield { type: 'finish', reason: { kind: 'stop' } }
   }
 }
@@ -1645,9 +1646,26 @@ describe('NekroNxt Server domain API (WebServer seam)', () => {
         body: JSON.stringify({ parts: [{ type: 'text', text: 'SSE 直接推送。' }], clientEventId: 'sse-1' }),
       })
       expect(admitted.status).toBe(200)
-      const liveEvents = await readSseEvents(live, (events) =>
-        events.some((event) => event.name === 'channel-fact' && JSON.stringify(event.data).includes('SSE 直接推送。')),
+      const liveEvents = await readSseEvents(
+        live,
+        (events) =>
+          events.some(
+            (event) => event.name === 'channel-fact' && JSON.stringify(event.data).includes('SSE 直接推送。'),
+          ) && events.some((event) => event.name === 'runtime' && JSON.stringify(event.data).includes('"totalTokens"')),
       )
+      const runtimeEvent = liveEvents.find(
+        (event) => event.name === 'runtime' && JSON.stringify(event.data).includes('"totalTokens"'),
+      )
+      const runtimePayload = HostSseEventSchema.parse({ event: 'runtime', data: runtimeEvent?.data })
+      if (runtimePayload.event !== 'runtime') throw new Error('Expected a runtime SSE frame.')
+      expect(
+        runtimePayload.data.turns.flatMap((turn) => turn.steps).some((step) => step.usage?.totalTokens === 24),
+      ).toBe(true)
+      const runtimeResponse = await fetch(`${origin}/api/channels/${created.channelId}/runtime`)
+      expect(runtimeResponse.status).toBe(200)
+      const trajectory = HostApiContracts.getChannelRuntime.parseResponse(await runtimeResponse.json())
+      expect(trajectory.turns.flatMap((turn) => turn.steps).some((step) => step.usage?.totalTokens === 24)).toBe(true)
+      expect((await fetch(`${origin}/api/snapshot`)).status).toBe(200)
       const hello = liveEvents.find((event) => event.name === 'status')
       expect(hello?.data).toMatchObject({ ok: true, replay: 'none' })
       const fact = liveEvents.find((event) => event.name === 'channel-fact')

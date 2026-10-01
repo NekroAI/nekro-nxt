@@ -6,6 +6,7 @@ import {
   type ResponseObligationState,
 } from './channel-reply-guard.js'
 import type { RuntimeProjectionEvent } from './channel-runtime-projection.js'
+import { projectTokenUsage } from './token-usage.js'
 
 /** Session log types that change the product runtime projection. Streaming chunks do not. */
 export const CHANNEL_RUNTIME_SSE_EVENT_TYPES = new Set([
@@ -150,7 +151,7 @@ export const normalizeSessionEvents = (
         at,
         ...(text === undefined ? {} : { text }),
         ...(reasoning === undefined ? {} : { reasoning }),
-        ...(usage === undefined ? {} : { usage }),
+        ...(usage === undefined ? {} : { usage: projectTokenUsage(usage) }),
       })
     }
   }

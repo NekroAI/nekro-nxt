@@ -195,6 +195,7 @@ import {
 } from './session-image-context.js'
 import { SessionRegistry } from './session-registry.js'
 import { SessionRuntimeProjection } from './session-runtime-projection.js'
+import { mergeTokenUsage } from './token-usage.js'
 export {
   type DynamicApprovalRequestEvent,
   type DynamicAuthoringPackageDefinitionInput,
@@ -1640,25 +1641,6 @@ const assembleLlmText = async (
     .trim()
   if (!text) throw new ImageInspectionError('auxiliary-empty-result', '辅助图片理解模型没有返回文本结果。')
   return { text, ...(assembler.usage === undefined ? {} : { usage: assembler.usage }) }
-}
-
-const mergeTokenUsage = (left: TokenUsage | undefined, right: TokenUsage | undefined): TokenUsage | undefined => {
-  if (left === undefined) return right
-  if (right === undefined) return left
-  const addOptional = (key: 'cacheReadTokens' | 'cacheWriteTokens' | 'reasoningTokens'): number | undefined => {
-    const value = (left[key] ?? 0) + (right[key] ?? 0)
-    return value === 0 && left[key] === undefined && right[key] === undefined ? undefined : value
-  }
-  const cacheReadTokens = addOptional('cacheReadTokens')
-  const cacheWriteTokens = addOptional('cacheWriteTokens')
-  const reasoningTokens = addOptional('reasoningTokens')
-  return {
-    inputTokens: left.inputTokens + right.inputTokens,
-    outputTokens: left.outputTokens + right.outputTokens,
-    ...(cacheReadTokens === undefined ? {} : { cacheReadTokens }),
-    ...(cacheWriteTokens === undefined ? {} : { cacheWriteTokens }),
-    ...(reasoningTokens === undefined ? {} : { reasoningTokens }),
-  }
 }
 
 const parseDelegatedEvidence = (

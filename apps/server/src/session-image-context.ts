@@ -12,7 +12,7 @@ import AttachmentStore, {
 } from '@deepseek-ai/dsh-attachment'
 import { readRequestImageFile } from '@deepseek-ai/dsh-attachment-local'
 import { BasicCompactionEngine } from '@deepseek-ai/dsh-compaction-basic'
-import { freezeMessage, MessageId, type ContentBlock, type TokenUsage, type UserMessage } from '@deepseek-ai/dsh-llm'
+import { freezeMessage, MessageId, type ContentBlock, type UserMessage } from '@deepseek-ai/dsh-llm'
 import { SessionId, type SessionEvent } from '@deepseek-ai/dsh-session'
 import { isAdminConsoleOutbound, type ChannelHistoryEntry } from '@nekro-nxt/channel-runtime'
 import {
@@ -21,6 +21,7 @@ import {
   richPartContextText,
   type AssetId,
   type ChannelId,
+  type ChannelRuntimeUsage,
   type MessagePart,
 } from '@nekro-nxt/contracts'
 import type {
@@ -36,6 +37,7 @@ import path from 'node:path'
 import sharp from 'sharp'
 import { z } from 'zod'
 import type { SessionRegistry } from './session-registry.js'
+import { projectTokenUsage } from './token-usage.js'
 export interface AssetAccessRepository {
   getAssetById(id: AssetRecord['id']): AssetRecord | undefined
   canAccessAsset(assetId: AssetRecord['id'], channelId: ChannelId): boolean
@@ -57,7 +59,7 @@ export interface AgentImageDiagnostics {
     readonly provider?: string
     readonly model?: string
     readonly cacheHit: boolean
-    readonly usage?: TokenUsage
+    readonly usage?: ChannelRuntimeUsage
     readonly errorCode?: string
   }
   readonly lastRestoration?: {
@@ -442,7 +444,9 @@ export class SessionImageContext {
               ...(latestInspection.data.provider === undefined ? {} : { provider: latestInspection.data.provider }),
               ...(latestInspection.data.model === undefined ? {} : { model: latestInspection.data.model }),
               cacheHit: latestInspection.data.cacheHit,
-              ...(latestInspection.data.usage === undefined ? {} : { usage: latestInspection.data.usage }),
+              ...(latestInspection.data.usage === undefined
+                ? {}
+                : { usage: projectTokenUsage(latestInspection.data.usage) }),
               ...(latestInspection.data.errorCode === undefined ? {} : { errorCode: latestInspection.data.errorCode }),
             },
           }),

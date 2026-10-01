@@ -49,6 +49,7 @@ import {
   type StatusTone,
 } from '../ui-kit/index.js'
 import { INSPECTOR_WIDTH, useUiPreferences } from '../ui-preferences.js'
+import { usageTotalTokens } from '../token-usage.js'
 import { useUnsavedDraft } from '../unsaved-drafts.js'
 import { agentWorkbenchHref, listAgentBlockers } from './agent-workbench.js'
 import { BindingTaskDialog, isTriggerPolicy, listBindingChannels, TRIGGER_POLICY_OPTIONS } from './binding-task.js'
@@ -1409,7 +1410,7 @@ export function AgentManagePage() {
                     <dt>最近图片检查</dt>
                     <dd>
                       {agent.imageDiagnostics.lastInspection
-                        ? `${agent.imageDiagnostics.lastInspection.mode === 'direct' ? '直接注入' : '辅助理解'} · ${agent.imageDiagnostics.lastInspection.imageCount} 张 · ${agent.imageDiagnostics.lastInspection.cacheHit ? '缓存命中' : '实时调用'}${agent.imageDiagnostics.lastInspection.usage ? ` · ${agent.imageDiagnostics.lastInspection.usage.inputTokens + agent.imageDiagnostics.lastInspection.usage.outputTokens} Token` : ''}`
+                        ? `${agent.imageDiagnostics.lastInspection.mode === 'direct' ? '直接注入' : '辅助理解'} · ${agent.imageDiagnostics.lastInspection.imageCount} 张 · ${agent.imageDiagnostics.lastInspection.cacheHit ? '缓存命中' : '实时调用'}${agent.imageDiagnostics.lastInspection.usage ? ` · ${usageTotalTokens(agent.imageDiagnostics.lastInspection.usage)} Token` : ''}`
                         : '暂无记录'}
                     </dd>
                   </div>

@@ -144,43 +144,51 @@ export const createNekroHostApi = (
       broadcast({ event: 'dynamic-changed', data: { agentId: change.agentId } })
     }),
   )
+  const publishChannelFacts = (channelId: ChannelId, facts: readonly ChannelFact[]): void => {
+    const itemsBySource = new Map<
+      string,
+      { kind: ChannelFact['kind']; sourceId: ChannelFact['sourceId']; message: HostSnapshotMessage }
+    >()
+    for (const fact of facts) {
+      const message = projectChannelFact(runtime, fact)
+      if (message === undefined) continue
+      itemsBySource.set(fact.sourceId, { kind: fact.kind, sourceId: fact.sourceId, message })
+    }
+    const items = [...itemsBySource.values()]
+    if (items.length === 0) return
+    const chunks: (typeof items)[] = []
+    let chunk: typeof items = []
+    for (const item of items) {
+      const candidate = [...chunk, item]
+      const candidateBytes = Buffer.byteLength(
+        JSON.stringify({ channelId, revision: Number.MAX_SAFE_INTEGER, items: candidate }),
+        'utf8',
+      )
+      if (chunk.length > 0 && candidateBytes > SSE_FACT_FRAME_BUDGET) {
+        chunks.push(chunk)
+        chunk = [item]
+      } else {
+        chunk = candidate
+      }
+    }
+    if (chunk.length > 0) chunks.push(chunk)
+    for (const batch of chunks) {
+      broadcast({
+        event: 'channel-fact',
+        data: { channelId, revision: nextRevision(messageRevision, channelId), items: batch },
+      })
+    }
+  }
   const flushPendingFacts = (): void => {
     factTimer = undefined
     const batches = [...pendingFacts.entries()]
     pendingFacts.clear()
     for (const [channelId, facts] of batches) {
-      const itemsBySource = new Map<
-        string,
-        { kind: ChannelFact['kind']; sourceId: ChannelFact['sourceId']; message: HostSnapshotMessage }
-      >()
-      for (const fact of facts) {
-        const message = projectChannelFact(runtime, fact)
-        if (message === undefined) continue
-        itemsBySource.set(fact.sourceId, { kind: fact.kind, sourceId: fact.sourceId, message })
-      }
-      const items = [...itemsBySource.values()]
-      if (items.length === 0) continue
-      const chunks: (typeof items)[] = []
-      let chunk: typeof items = []
-      for (const item of items) {
-        const candidate = [...chunk, item]
-        const candidateBytes = Buffer.byteLength(
-          JSON.stringify({ channelId, revision: Number.MAX_SAFE_INTEGER, items: candidate }),
-          'utf8',
-        )
-        if (chunk.length > 0 && candidateBytes > SSE_FACT_FRAME_BUDGET) {
-          chunks.push(chunk)
-          chunk = [item]
-        } else {
-          chunk = candidate
-        }
-      }
-      if (chunk.length > 0) chunks.push(chunk)
-      for (const batch of chunks) {
-        broadcast({
-          event: 'channel-fact',
-          data: { channelId, revision: nextRevision(messageRevision, channelId), items: batch },
-        })
+      // Isolate channels: one failing projection must not crash the timer or drop sibling batches.
+      try {
+        publishChannelFacts(channelId, facts)
+      } catch (error) {
+        console.error(`[nekro-nxt] 频道消息推送失败（${channelId}）：`, error)
       }
     }
   }

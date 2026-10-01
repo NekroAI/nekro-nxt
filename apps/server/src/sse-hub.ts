@@ -98,9 +98,9 @@ export class HostSseHub {
       return undefined
     }
     const id = this.#nextId
-    this.#nextId += 1
     const cursor = `${this.#epoch}:${id}`
     const frame = renderSse(event, cursor)
+    this.#nextId += 1
     this.#buffer.push({ id, frame })
     if (this.#buffer.length > this.#limit) this.#buffer.shift()
     this.#writeAll(frame)

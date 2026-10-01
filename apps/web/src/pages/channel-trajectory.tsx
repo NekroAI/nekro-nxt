@@ -12,6 +12,7 @@ import {
   ConversationToolCardExtensionSlots,
 } from '../persistent-extension-client.js'
 import { AdapterChannelInspectorExtensionSlots } from '../adapter-host-client.js'
+import { usageTotalTokens } from '../token-usage.js'
 import {
   Button,
   Disclosure,
@@ -525,8 +526,12 @@ const recordStateLabel = (record: TrajectoryRecord): string => {
   return duration
 }
 
-const usageCaption = (usage: NonNullable<TrajectoryRecord['usage']>): string => {
-  const parts = [`输入 ${formatTokenCount(usage.inputTokens)}`, `输出 ${formatTokenCount(usage.outputTokens)}`]
+export const usageCaption = (usage: NonNullable<TrajectoryRecord['usage']>): string => {
+  const parts = [
+    `合计 ${formatTokenCount(usageTotalTokens(usage))}`,
+    `输入 ${formatTokenCount(usage.inputTokens)}`,
+    `输出 ${formatTokenCount(usage.outputTokens)}`,
+  ]
   if (usage.cacheReadTokens !== undefined && usage.cacheReadTokens > 0) {
     parts.push(`缓存读取 ${formatTokenCount(usage.cacheReadTokens)}`)
   }

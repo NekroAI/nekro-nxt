@@ -42,6 +42,29 @@ const channelId = ChannelIdSchema.parse('chn_ssehub')
 const inboundEventId = ChannelEventIdSchema.parse('evt_one')
 
 describe('HostSseHub', () => {
+  it('does not advance the replay cursor or deliver a frame when validation fails', () => {
+    const hub = new HostSseHub(SSE_REPLAY_LIMIT, 'host-a')
+    const client = new MemoryResponse()
+    hub.add(client)
+    expect(() =>
+      hub.publish({
+        event: 'runtime',
+        data: {
+          channelId,
+          phase: 'idle',
+          summary: '智能体当前空闲。',
+          pendingInjectCount: -1,
+          turns: [],
+          revision: 1,
+        },
+      }),
+    ).toThrow()
+    expect(hub.cursor).toEqual({ epoch: 'host-a', sequence: 0 })
+    expect(client.chunks).toEqual([])
+    expect(hub.publish({ event: 'snapshot-changed', data: { changed: true } })).toBe('host-a:1')
+    expect(client.chunks).toHaveLength(1)
+  })
+
   it('parses Last-Event-ID and ignores junk', () => {
     expect(parseLastEventId('host-a:12')).toEqual({ epoch: 'host-a', sequence: 12 })
     expect(parseLastEventId(['host-a:12', 'host-a:13'])).toEqual({ epoch: 'host-a', sequence: 12 })

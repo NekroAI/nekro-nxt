@@ -1117,6 +1117,7 @@ test('channel tabs, running tools, and trajectory rows remain keyboard operable'
               {
                 step: 1,
                 internalOutput: { kind: 'internal-output', text: '先核对版本，再检查发布记录。' },
+                usage: { inputTokens: 100, outputTokens: 20, totalTokens: 920, cacheReadTokens: 800 },
                 tools: [
                   {
                     callId: 'call_read_release',
@@ -1209,6 +1210,13 @@ test('channel tabs, running tools, and trajectory rows remain keyboard operable'
   await expect(runningRow).toHaveAttribute('aria-current', 'true')
   await expect(page.locator('aside[aria-label="工作轨迹"]').getByRole('heading', { name: '输入' })).toBeVisible()
   await capture(page, testInfo, 'channel-trajectory-keyboard-selection')
+
+  const outputRow = page.getByRole('row').filter({ hasText: '先核对版本，再检查发布记录。' })
+  await outputRow.click()
+  await expect(page.locator('aside[aria-label="工作轨迹"]')).toContainText(
+    '本步 合计 920 · 输入 100 · 输出 20 · 缓存读取 800',
+  )
+  await capture(page, testInfo, 'channel-trajectory-step-usage')
 
   expect(failures, failures.join('\n')).toEqual([])
 })
