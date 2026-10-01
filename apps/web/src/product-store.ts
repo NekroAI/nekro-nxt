@@ -430,6 +430,13 @@ export function createProductStore(
         expectedRevision,
       })
     },
+    restoreAuthoringAttempt: async (taskId, attemptId, expectedRevision) => {
+      await requireHost().actions['authoring.restore']({
+        taskId: requireValue(taskId, '缺少创造任务标识，请刷新页面后重试。'),
+        attemptId: requireValue(attemptId, '缺少候选标识，请刷新页面后重试。'),
+        expectedRevision,
+      })
+    },
     deleteAuthoringTask: async (taskId) => {
       await requireHost().actions['authoring.delete']({
         taskId: requireValue(taskId, '缺少创造任务标识，请刷新页面后重试。'),

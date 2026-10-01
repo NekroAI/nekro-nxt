@@ -5,6 +5,7 @@ import {
   ExtensionRevisionIdSchema,
   HostPageContributionSchema,
   HostUiPermissionDeclarationSchema,
+  JsonValueSchema,
 } from '@nekro-nxt/contracts'
 import { z } from 'zod'
 export const extensionEntrypointsSchema = z.union([
@@ -18,6 +19,38 @@ export const clientCssSchema = z
     path: z.string().regex(/^assets\/[a-z0-9][a-z0-9/_-]*\.module\.css$/u),
     sha256: z.string().regex(/^[a-f0-9]{64}$/u),
   })
+  .strict()
+
+export const VERIFICATION_INPUT_MAX_BYTES = 16 * 1024
+
+/**
+ * Representative, side-effect-free input used to really call a Tool or RPC during verification (dynamic run, save
+ * and import). Absent means the historical empty call: `{}` for Tools and `null` for RPC.
+ */
+export const verificationInputSchema = JsonValueSchema.refine(
+  (value) => Buffer.byteLength(JSON.stringify(value), 'utf8') <= VERIFICATION_INPUT_MAX_BYTES,
+  `验证样例不能超过 ${VERIFICATION_INPUT_MAX_BYTES} 字节。`,
+)
+
+/** Tool arguments are always a JSON object. */
+export const toolVerificationInputSchema = z
+  .record(z.string(), JsonValueSchema)
+  .refine(
+    (value) => Buffer.byteLength(JSON.stringify(value), 'utf8') <= VERIFICATION_INPUT_MAX_BYTES,
+    `验证样例不能超过 ${VERIFICATION_INPUT_MAX_BYTES} 字节。`,
+  )
+
+export const toolContributionSchema = z
+  .object({
+    kind: z.literal('tool'),
+    name: z.string(),
+    description: z.string(),
+    verificationInput: toolVerificationInputSchema.optional(),
+  })
+  .strict()
+
+export const rpcContributionSchema = z
+  .object({ kind: z.literal('rpc'), method: z.string(), verificationInput: verificationInputSchema.optional() })
   .strict()
 
 const manifestIdentitySchema = z
@@ -35,8 +68,8 @@ export const extensionManifestSchema = z.union([
       scope: z.literal('agent'),
       contributions: z.array(
         z.discriminatedUnion('kind', [
-          z.object({ kind: z.literal('tool'), name: z.string(), description: z.string() }).strict(),
-          z.object({ kind: z.literal('rpc'), method: z.string() }).strict(),
+          toolContributionSchema,
+          rpcContributionSchema,
           z
             .object({
               kind: z.literal('client-slot'),

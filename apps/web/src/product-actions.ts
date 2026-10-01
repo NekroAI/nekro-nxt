@@ -54,6 +54,7 @@ export interface ProductActions {
   'dynamic.decline': Action<'dynamicDecline'>
   'authoring.decide': Action<'decideAuthoringAttempt'>
   'authoring.stop': Action<'stopAuthoringTask'>
+  'authoring.restore': Action<'restoreAuthoringAttempt'>
   'authoring.delete': Action<'deleteAuthoringTask'>
   'extensions.activate': Action<'activateExtension'>
   'extensions.uninstall': Action<'uninstallHostExtension'>

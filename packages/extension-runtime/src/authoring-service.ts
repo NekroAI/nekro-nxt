@@ -17,6 +17,7 @@ import { mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 import { monotonicFactory } from 'ulid'
 import { z } from 'zod'
+import { toolVerificationInputSchema, verificationInputSchema } from './manifest.js'
 import type {
   AuthoringApprovalPolicy,
   AuthoringAttemptFailure,
@@ -59,6 +60,13 @@ const SnapshotSchema = z
       .optional(),
     permissions: HostUiPermissionDeclarationSchema,
     contributions: z.array(JsonValueSchema),
+    verificationInputs: z
+      .object({
+        tools: z.record(z.string().min(1), toolVerificationInputSchema),
+        rpc: z.record(z.string().min(1), verificationInputSchema),
+      })
+      .strict()
+      .optional(),
   })
   .strict()
 
@@ -76,6 +84,7 @@ const parseSnapshot = (input: unknown): DynamicAuthoringSnapshot => {
     ...(parsed.clientCss === undefined ? {} : { clientCss: parsed.clientCss }),
     permissions: parsed.permissions,
     contributions: parsed.contributions,
+    ...(parsed.verificationInputs === undefined ? {} : { verificationInputs: parsed.verificationInputs }),
   }
 }
 
@@ -230,6 +239,12 @@ export interface SyncAuthoringAttemptInput {
   readonly eventPayload?: JsonValue
 }
 
+/**
+ * Unsaved candidates are not restored forever. A restart re-runs and re-verifies every recoverable task, so a task
+ * whose latest candidate was produced longer ago than this window is interrupted instead of restored.
+ */
+export const AUTHORING_RECOVERY_WINDOW_MS = 72 * 60 * 60 * 1000
+
 export interface DynamicAuthoringChange {
   readonly taskId: DynamicAuthoringTask['id']
   readonly agentId: AgentId
@@ -240,17 +255,23 @@ export class DynamicAuthoringService {
   readonly #artifacts: AuthoringArtifactStore
   readonly #now: () => number
   readonly #nextUlid: () => string
+  readonly #recoveryWindowMs: number
   readonly #listeners = new Set<(change: DynamicAuthoringChange) => void>()
 
   constructor(
     repository: AuthoringRepository,
     artifacts: AuthoringArtifactStore,
-    options: { readonly now?: () => number; readonly nextUlid?: () => string } = {},
+    options: {
+      readonly now?: () => number
+      readonly nextUlid?: () => string
+      readonly recoveryWindowMs?: number
+    } = {},
   ) {
     this.#repository = repository
     this.#artifacts = artifacts
     this.#now = options.now ?? Date.now
     this.#nextUlid = options.nextUlid ?? monotonicFactory()
+    this.#recoveryWindowMs = options.recoveryWindowMs ?? AUTHORING_RECOVERY_WINDOW_MS
   }
 
   async recordDefinition(input: RecordAuthoringDefinitionInput): Promise<{
@@ -360,6 +381,19 @@ export class DynamicAuthoringService {
       .listAuthoringAttempts(currentTask.id)
       .find((attempt) => attempt.runnerPackageId === input.runnerPackageId)
     if (!currentAttempt) return undefined
+    // A phase resync of the same live run (for example after a rejected cordis_run command) must not discard the
+    // verification that already made it ready; only a new run or a real state change replaces that evidence.
+    if (
+      currentTask.status === 'ready' &&
+      currentAttempt.state === 'active' &&
+      currentAttempt.verification !== undefined &&
+      input.verification === undefined &&
+      input.state === 'active' &&
+      input.runnerRunId !== undefined &&
+      input.runnerRunId === currentAttempt.runnerRunId
+    ) {
+      return currentAttempt
+    }
     const approvedRiskDigest =
       currentTask.approvalPolicy === 'fully-automatic' || currentTask.approvedRiskDigest === currentAttempt.riskDigest
         ? currentAttempt.riskDigest
@@ -437,6 +471,15 @@ export class DynamicAuthoringService {
     return attempt === undefined ? undefined : this.#artifacts.read(attempt.sourcePath)
   }
 
+  /** Exact persisted source of one attempt, used to restore an earlier verified candidate. */
+  snapshotForAttempt(attempt: DynamicAuthoringAttempt): Promise<DynamicAuthoringSnapshot> {
+    return this.#artifacts.read(attempt.sourcePath)
+  }
+
+  listAttempts(taskId: DynamicAuthoringTask['id']): readonly DynamicAuthoringAttempt[] {
+    return this.#repository.listAuthoringAttempts(taskId)
+  }
+
   taskForRunner(episodeId: EpisodeId, pluginKey: string): DynamicAuthoringTask | undefined {
     return this.#repository.getAuthoringTaskByPlugin(episodeId, pluginKey)
   }
@@ -469,6 +512,15 @@ export class DynamicAuthoringService {
       const attempt = this.#repository.listAuthoringAttempts(task.id).at(-1)
       if (!attempt) {
         this.interruptTask(task, '恢复时没有找到任何候选记录。')
+        continue
+      }
+      // Restores refresh task.updatedAt, so the candidate's creation time is the activity clock.
+      if (this.#now() - attempt.createdAt > this.#recoveryWindowMs) {
+        this.interruptTask(
+          task,
+          '候选生成后超过 72 小时仍未保存，已停止自动恢复；需要时请在频道里让智能体重新运行。',
+          attempt.id,
+        )
         continue
       }
       try {

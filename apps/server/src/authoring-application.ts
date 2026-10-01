@@ -18,6 +18,13 @@ export class AuthoringApplicationService {
   stop(input: Parameters<NekroRuntime['host']['stopAuthoringTask']>[0]) {
     return this.#runtime.host.stopAuthoringTask(input)
   }
+  async restore(input: Parameters<NekroRuntime['host']['restoreAuthoringAttempt']>[0]) {
+    if (this.#disposed) throw new Error('创造服务正在关闭。')
+    await this.#runtime.host.restoreAuthoringAttempt(input)
+    const task = this.#runtime.repository.getAuthoringTask(input.taskId)
+    if (!task) throw new Error('创造任务不存在。')
+    return task
+  }
   async save(input: SaveInput): Promise<SaveResult> {
     if (this.#disposed) throw new Error('创造服务正在关闭。')
     const key =

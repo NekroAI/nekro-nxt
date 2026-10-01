@@ -62,6 +62,11 @@ describe('NekroNxt domain API — local Extension lifecycle (M4 slice)', () => {
           )
         }
       }`,
+        contributions: [
+          { kind: 'tool', name: 'summary_tool', description: 'summary' },
+          { kind: 'rpc', method: 'summary' },
+          { kind: 'client-slot', name: 'extension.details.panels' },
+        ],
       },
       slug: 'channel-summary',
       displayName: '频道摘要',

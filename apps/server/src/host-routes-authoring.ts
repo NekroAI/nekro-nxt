@@ -25,6 +25,7 @@ export function registerAuthoringRoutes({ runtime, registerRoute, broadcast }: H
       const url = new URL(req.url ?? '/', 'http://localhost')
       const decisionMatch = /^\/api\/authoring\/tasks\/([^/]+)\/attempts\/([^/]+)\/decision$/.exec(url.pathname)
       const stopMatch = /^\/api\/authoring\/tasks\/([^/]+)\/stop$/.exec(url.pathname)
+      const restoreMatch = /^\/api\/authoring\/tasks\/([^/]+)\/attempts\/([^/]+)\/restore$/.exec(url.pathname)
       const taskMatch = /^\/api\/authoring\/tasks\/([^/]+)$/.exec(url.pathname)
       try {
         if (decisionMatch) {
@@ -35,6 +36,16 @@ export function registerAuthoringRoutes({ runtime, registerRoute, broadcast }: H
           const body = HostApiContracts.decideAuthoringAttempt.parseRequest(await readJsonBody(req))
           const result = runtime.authoring.decide({ ...params, ...body })
           writeContractJson(res, 200, HostApiContracts.decideAuthoringAttempt, result)
+          return
+        }
+        if (restoreMatch) {
+          if (req.method !== 'POST') throw new Error('回到旧候选只支持 POST。')
+          const taskId = AuthoringTaskIdSchema.parse(decodeURIComponent(restoreMatch[1] ?? ''))
+          const attemptId = AuthoringAttemptIdSchema.parse(decodeURIComponent(restoreMatch[2] ?? ''))
+          const params = HostApiContracts.restoreAuthoringAttempt.parseParams({ taskId, attemptId })
+          const body = HostApiContracts.restoreAuthoringAttempt.parseRequest(await readJsonBody(req))
+          const task = await runtime.authoring.restore({ ...params, ...body })
+          writeContractJson(res, 200, HostApiContracts.restoreAuthoringAttempt, projectAuthoringTask(runtime, task))
           return
         }
         if (stopMatch) {

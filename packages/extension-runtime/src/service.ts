@@ -155,6 +155,18 @@ export class ExtensionService {
     if (input.verification && artifact === undefined) {
       throw new Error('Extension verification requires a configured Builder.')
     }
+    // A Revision that claims verification must have run as saved: the dynamic run verified the preview wrapping, not
+    // this materialized artifact. Use the import verifier before the Revision becomes visible; a failure leaves only
+    // an unreferenced source directory, which the publish order already tolerates.
+    if (input.verification && artifact !== undefined && this.#importVerifier) {
+      await this.#importVerifier({
+        extension,
+        revision,
+        materialized,
+        artifact,
+        dshVersion: input.verification?.dshVersion ?? 'unknown',
+      })
+    }
     const verification =
       input.verification === undefined || artifact === undefined
         ? undefined

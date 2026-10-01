@@ -43,6 +43,7 @@ import {
   type StatusTone,
 } from '../ui-kit/index.js'
 import { INSPECTOR_WIDTH, useUiPreferences } from '../ui-preferences.js'
+import { authoringTaskPresentation } from '../authoring-task-status.js'
 import { BindingTaskDialog } from './binding-task.js'
 import { useStickToBottom } from './channel-scroll.js'
 import { MessageContent, resolveMessageSide, type MessageSide } from './message-content.js'
@@ -64,15 +65,6 @@ const deliveryTone = (state: DeliveryState): StatusTone => {
   if (state === '部分发送') return 'warning'
   if (state === '失败') return 'error'
   return 'unknown'
-}
-
-const authoringTaskPresentation = (status: string): { readonly label: string; readonly tone: StatusTone } => {
-  if (status === 'awaiting-approval') return { label: '等待确认', tone: 'warning' }
-  if (status === 'ready') return { label: '可以预览', tone: 'success' }
-  if (status === 'failed' || status === 'interrupted') return { label: '需要处理', tone: 'error' }
-  if (status === 'stopped' || status === 'completed') return { label: '已结束', tone: 'neutral' }
-  if (status === 'repairing') return { label: '正在修复', tone: 'info' }
-  return { label: '正在开发', tone: 'info' }
 }
 
 export const isBubblelessMessage = (message: Pick<ConversationMessage, 'parts'>): boolean => {
@@ -275,6 +267,7 @@ export function ChannelConversationPage() {
     (item) => item.packageId === (pendingDynamicApproval.packageId ?? pendingDynamicApproval.nextPackageId),
   )?.name
   const authoringTask = authoringTasks.find((item) => item.channelId === channel?.id)
+  const authoringTaskStatus = authoringTask ? authoringTaskPresentation(authoringTask) : undefined
   const runtime = useProductStore((state) => (channel ? state.channelRuntimes[channel.id] : undefined))
   const livePhase = runtime?.phase ?? channel?.runtimePhase ?? agent?.state ?? 'idle'
   const activeChannelId = channel?.id
@@ -497,15 +490,13 @@ export function ChannelConversationPage() {
                             channelKind={channel.kind}
                             history={history}
                           />
-                          {authoringTask ? (
+                          {authoringTask && authoringTaskStatus ? (
                             <div className={styles.approvalNotice} role="status">
                               <span>
-                                扩展开发“{authoringTask.title}”：{authoringTaskPresentation(authoringTask.status).label}
-                                。
+                                扩展开发“{authoringTask.title}”：{authoringTaskStatus.label}。
+                                {authoringTaskStatus.nextStep?.channel ?? ''}
                               </span>
-                              <StatusBadge tone={authoringTaskPresentation(authoringTask.status).tone}>
-                                {authoringTaskPresentation(authoringTask.status).label}
-                              </StatusBadge>
+                              <StatusBadge tone={authoringTaskStatus.tone}>{authoringTaskStatus.label}</StatusBadge>
                               <Button
                                 size="small"
                                 variant="secondary"

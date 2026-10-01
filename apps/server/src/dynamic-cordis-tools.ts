@@ -92,7 +92,16 @@ export function mountDynamicCordisTools(context: Context, runner: NekroNxtDynami
           args.mode === 'update' ? 'update' : 'run',
           execution.signal,
         )
-        return parseJsonValue(JSON.parse(JSON.stringify(result)))
+        // An interface candidate finishes only after a browser confirms and renders it; say so, so the model can
+        // direct the user to the task page and wait for the Host result instead of re-running or claiming success.
+        const nextStep =
+          result.ok && result.status === 'awaiting-approval'
+            ? {
+                nextStep:
+                  '候选包含界面，需要用户在频道的扩展开发任务中打开任务页面确认运行，浏览器加载界面并完成验证后，结果会自动发给你。在此之前不要重复运行或声称已完成。',
+              }
+            : {}
+        return parseJsonValue(JSON.parse(JSON.stringify({ ...result, ...nextStep })))
       },
     }),
   )

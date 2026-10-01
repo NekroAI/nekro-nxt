@@ -536,12 +536,25 @@ const verifyAgentOrHostUi = async (input: ImportedRevisionVerificationInput): Re
       },
     })
   }
+  // Use the same representative inputs that verified the dynamic run; absent means the historical empty call.
+  const toolInputs = new Map<string, Readonly<Record<string, JsonValue>>>()
+  const rpcInputs = new Map<string, JsonValue>()
+  if (manifest.scope === 'agent') {
+    for (const contribution of manifest.contributions) {
+      if (contribution.kind === 'tool' && contribution.verificationInput !== undefined) {
+        toolInputs.set(contribution.name, contribution.verificationInput)
+      }
+      if (contribution.kind === 'rpc' && contribution.verificationInput !== undefined) {
+        rpcInputs.set(contribution.method, contribution.verificationInput)
+      }
+    }
+  }
   try {
     for (const tool of tools.values()) {
-      JsonValueSchema.parse(await tool.execute({}))
+      JsonValueSchema.parse(await tool.execute(toolInputs.get(tool.name) ?? {}))
       toolInvocations.push({ name: tool.name, succeeded: true })
     }
-    for (const handler of handlers.values()) JsonValueSchema.parse(await handler(null))
+    for (const [method, handler] of handlers) JsonValueSchema.parse(await handler(rpcInputs.get(method) ?? null))
     const clientEvidence = await verifyClient(input, handlers)
     const declaredTools =
       manifest.scope === 'agent'

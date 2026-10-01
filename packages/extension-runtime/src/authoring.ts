@@ -187,6 +187,13 @@ export interface DynamicAuthoringSnapshot {
   readonly clientCss?: { readonly path: string; readonly sha256: string }
   readonly permissions: HostUiPermissionDeclaration
   readonly contributions: readonly JsonValue[]
+  /** Representative inputs the Host uses to really call each Tool and RPC during verification. */
+  readonly verificationInputs?: DynamicAuthoringVerificationInputs
+}
+
+export interface DynamicAuthoringVerificationInputs {
+  readonly tools: Readonly<Record<string, Readonly<Record<string, JsonValue>>>>
+  readonly rpc: Readonly<Record<string, JsonValue>>
 }
 
 export const AuthoringHalfStateSchema = z

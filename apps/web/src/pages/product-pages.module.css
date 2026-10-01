@@ -3703,6 +3703,16 @@
   font-size: 13px;
 }
 
+/* The explanation wraps; the status badge and action keep their intrinsic width. */
+.approvalNotice > * {
+  flex: none;
+}
+
+.approvalNotice > :first-child {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
 .notificationActions {
   display: flex;
   flex-wrap: wrap;

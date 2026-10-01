@@ -535,6 +535,7 @@ export interface ProductState {
   loadConnectionEvents(connectionId: string, older?: boolean): Promise<void>
   resolveApproval(input: { requestId: string; agentId: string; approved: boolean }): Promise<void>
   stopAuthoringTask(taskId: string, expectedRevision: number): Promise<void>
+  restoreAuthoringAttempt(taskId: string, attemptId: string, expectedRevision: number): Promise<void>
   deleteAuthoringTask(taskId: string): Promise<void>
   saveDynamicExtension(input: {
     readonly taskId?: string

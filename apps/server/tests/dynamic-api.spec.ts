@@ -17,6 +17,7 @@ afterEach(async () => {
 
 class SettledModel extends LlmAdapter {
   streamCalls = 0
+  readonly requests: GenerateOptions[] = []
   override providerInfo(provider: string) {
     return { id: provider, name: 'settled model' }
   }
@@ -32,10 +33,10 @@ class SettledModel extends LlmAdapter {
       context: { contextWindow: 128_000 },
     })
   }
-  override async *stream(_: GenerateOptions): AsyncIterable<StreamChunk> {
+  override async *stream(options: GenerateOptions): AsyncIterable<StreamChunk> {
     this.streamCalls += 1
+    this.requests.push(options)
     await Promise.resolve()
-    void _
     yield { type: 'block-start', index: 0, blockType: 'text' }
     yield { type: 'text-delta', index: 0, text: '内部结束。' }
     yield { type: 'block-end', index: 0, block: { type: 'text', text: '内部结束。' } }
@@ -247,6 +248,16 @@ describe('NekroNxt domain API — browser dynamic client circuit', () => {
       expect(clientVerificationResponse.ok).toBe(true)
       const repeatedClientVerificationResponse = await clientVerificationRequest()
       expect(repeatedClientVerificationResponse.ok).toBe(true)
+      // The browser reports after the Agent turn ended; the Host result must wake the idle Agent.
+      const sawAuthoringEvent = () =>
+        model.requests.some((request) =>
+          request.messages.some(
+            (message) =>
+              message.role === 'user' &&
+              message.content.some((block) => block.type === 'text' && block.text.includes('扩展开发状态事件')),
+          ),
+        )
+      await expect.poll(sawAuthoringEvent).toBe(true)
       const settleSpy = vi.spyOn(runtime.host, 'whenAuthoringSettled')
       const saveResponse = await fetch(`${origin}/api/extensions/save-from-dynamic`, {
         method: 'POST',

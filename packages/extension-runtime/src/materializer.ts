@@ -1,4 +1,10 @@
-import { extensionManifestSchema, extensionEntrypointsSchema, clientCssSchema } from './manifest.js'
+import {
+  clientCssSchema,
+  extensionEntrypointsSchema,
+  extensionManifestSchema,
+  rpcContributionSchema,
+  toolContributionSchema,
+} from './manifest.js'
 import {
   AdapterClientSlotNameSchema,
   AgentClientSlotNameSchema,
@@ -43,8 +49,8 @@ const inputSchema = z
         contributions: z
           .array(
             z.discriminatedUnion('kind', [
-              z.object({ kind: z.literal('tool'), name: z.string(), description: z.string() }).strict(),
-              z.object({ kind: z.literal('rpc'), method: z.string() }).strict(),
+              toolContributionSchema,
+              rpcContributionSchema,
               z
                 .object({
                   kind: z.literal('client-slot'),
@@ -137,6 +143,16 @@ export default ${hostUi ? 'defineHostUiClientExtension' : 'defineClientExtension
 ${body}
 })`)
 
+/**
+ * Client CSS is a page resource. Shared by dynamic preflight and materialization so a candidate that cannot be
+ * saved is rejected before it runs, not after verification.
+ */
+export const assertClientCssScope = (input: { readonly hasClientCss: boolean; readonly pageCount: number }): void => {
+  if (input.hasClientCss && input.pageCount === 0) {
+    throw new Error('Client CSS 只用于包含顶级页面的 Revision；智能体 Slot 请在 Client 源码中使用内联样式。')
+  }
+}
+
 export function materializeDynamicPackage(input: {
   readonly extensionId: ExtensionId
   readonly revisionId: ExtensionRevisionId
@@ -162,9 +178,7 @@ export function materializeDynamicPackage(input: {
   if (isHostUi && (agentContributions.length > 0 || !parsed.snapshot.clientCode)) {
     throw new Error('Host UI Revision 必须包含 Client，且不能混装智能体工具、RPC 或 Slot。')
   }
-  if (parsed.snapshot.clientCss !== undefined && hostPages.length === 0) {
-    throw new Error('Client CSS 只用于包含顶级页面的 Revision。')
-  }
+  assertClientCssScope({ hasClientCss: parsed.snapshot.clientCss !== undefined, pageCount: hostPages.length })
   const sources = sourcesSchema.parse({
     ...(parsed.snapshot.hostCode === undefined ? {} : { host: wrapHost(parsed.snapshot.hostCode, isHostUi) }),
     ...(parsed.snapshot.clientCode === undefined

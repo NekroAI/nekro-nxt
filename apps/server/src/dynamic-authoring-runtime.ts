@@ -35,6 +35,7 @@ import {
   type AdapterClientSlotName,
   type AgentClientSlotName,
   type AgentId,
+  type AuthoringAttemptId,
   type AuthoringTaskId,
   type ChannelId,
   type EpisodeId,
@@ -47,6 +48,7 @@ import {
 import type { AgentRevisionRecord } from '@nekro-nxt/core'
 import { canonicalJson } from '@nekro-nxt/core'
 import {
+  assertClientCssScope,
   scopeHostUiCss,
   validateHostUiCss,
   validateHostUiSvg,
@@ -87,6 +89,7 @@ export interface DynamicAuthoringPackageDefinitionInput extends DynamicPackageDe
   readonly clientCss?: { readonly path: string; readonly sha256: string }
   readonly permissions: HostUiPermissionDeclaration
   readonly contributions: readonly JsonValue[]
+  readonly verificationInputs?: DynamicAuthoringSnapshot['verificationInputs']
 }
 
 export interface DynamicAuthoringPolicyState {
@@ -109,6 +112,32 @@ export interface DynamicApprovalRequestEvent {
   readonly name: string
   readonly purpose: string
 }
+
+/**
+ * Runner answers that only correct how a command was issued (wrong mode, unknown id, busy transition). The Runner
+ * message already says what to do, so these must not consume the repair budget or trip the breaker.
+ */
+const DYNAMIC_RUN_USAGE_REASONS = new Set<string>([
+  'invalid-mode',
+  'plugin-missing',
+  'package-missing',
+  'transition-in-flight',
+])
+
+/** Verification failures tell the model which input was used, so it can supply a representative sample. */
+const verificationFailure = (
+  kind: 'Tool' | 'RPC',
+  name: string,
+  message: string,
+  input: JsonValue | undefined,
+): string =>
+  input === undefined
+    ? `Dynamic ${kind} synthetic verification failed: ${name}: ${message}. It was called with ${
+        kind === 'Tool' ? '{}' : 'null'
+      } because no verification input was declared; pass a representative, side-effect-free sample in nekro_nxt_extension_define.verification.${
+        kind === 'Tool' ? 'tools' : 'rpc'
+      }["${name}"].`
+    : `Dynamic ${kind} synthetic verification failed: ${name}: ${message}. Declared verification input: ${JSON.stringify(input)}.`
 
 export const normalizeDynamicFailure = (phase: string, message: string): string =>
   `${phase}:${message}`
@@ -147,6 +176,7 @@ export const preflightNekroNxtAuthoringDefinition = (
   ) {
     throw new Error('动态页面预检失败：页面声明和 Client 资源必须配套 Client 源码。')
   }
+  assertClientCssScope({ hasClientCss: input.clientCss !== undefined, pageCount: pages.length })
   const referencedResources = new Set<string>()
   if (input.clientCss) {
     const source = input.resources[input.clientCss.path]
@@ -223,6 +253,7 @@ export class NekroNxtDynamicCordisRunner extends DynamicCordisRunnerService {
   private authoringPersistenceTail: Promise<void> = Promise.resolve()
   private definingAuthoringSnapshot: DynamicAuthoringSnapshot | undefined
   private suppressAuthoringPersistence = false
+  private userOperationDepth = 0
   private onAuthoringDefinition:
     | ((
         request: DynamicCordisDefineRequest,
@@ -308,6 +339,7 @@ export class NekroNxtDynamicCordisRunner extends DynamicCordisRunnerService {
       ...(parsed.clientCss === undefined ? {} : { clientCss: parsed.clientCss }),
       permissions: parsed.permissions,
       contributions: parsed.contributions,
+      ...(parsed.verificationInputs === undefined ? {} : { verificationInputs: parsed.verificationInputs }),
     }
     try {
       return this.define(request)
@@ -356,6 +388,19 @@ export class NekroNxtDynamicCordisRunner extends DynamicCordisRunnerService {
     } finally {
       this.definingAuthoringSnapshot = undefined
       this.suppressAuthoringPersistence = false
+    }
+  }
+
+  /**
+   * Run a user-initiated workbench command (such as restoring a verified candidate). The repair budget and breaker
+   * limit the Agent's own attempts; they must not block an explicit user action.
+   */
+  asUserOperation<T>(operation: () => T): T {
+    this.userOperationDepth += 1
+    try {
+      return operation()
+    } finally {
+      this.userOperationDepth -= 1
     }
   }
 
@@ -456,9 +501,9 @@ export class NekroNxtDynamicCordisRunner extends DynamicCordisRunnerService {
     this.assertWritable('run')
     await this.authoringPersistenceByPackage.get(packageId)
     const tools = this.runtimeContext.get('tools')
-    const before =
-      tools instanceof ToolRuntime ? new Set(tools.schemas(scopeOf(owner.ctx)).map(({ name }) => name)) : new Set()
+    const before = this.toolBaseline(owner, pluginId, tools)
     const result = await super.run(owner, pluginId, packageId, mode, signal)
+    let startedCleanly = false
     if (result.ok && result.status === 'running') {
       if (tools instanceof ToolRuntime) {
         this.toolNamesByPackage.set(
@@ -476,10 +521,19 @@ export class NekroNxtDynamicCordisRunner extends DynamicCordisRunnerService {
           `Dynamic Extension requested a private Host Service: ${privateServices.join(', ')}`,
         )
       } else {
-        this.clearFailures()
+        startedCleanly = true
       }
-    } else if (!result.ok) this.recordFailure(result.reason, result.message)
-    await this.onAuthoringRun?.(pluginId, packageId, result)
+    } else if (!result.ok && !DYNAMIC_RUN_USAGE_REASONS.has(result.reason)) {
+      this.recordFailure(result.reason, result.message)
+    }
+    try {
+      await this.onAuthoringRun?.(pluginId, packageId, result)
+    } catch (error) {
+      this.recordFailure('verification', error instanceof Error ? error.message : String(error))
+      throw error
+    }
+    // Only a run that also passed product verification resets the repair budget.
+    if (startedCleanly) this.clearFailures()
     return result
   }
 
@@ -584,8 +638,7 @@ export class NekroNxtDynamicCordisRunner extends DynamicCordisRunnerService {
     const owner = this.resolveDynamicAuthoringOwner(agent)
     this.assertWritable('run-host-half')
     const tools = this.runtimeContext.get('tools')
-    const before =
-      tools instanceof ToolRuntime ? new Set(tools.schemas(scopeOf(owner.ctx)).map(({ name }) => name)) : new Set()
+    const before = this.toolBaseline(owner, pluginId, tools)
     const result = await super.runHostHalf(owner, pluginId, packageId, mode, requestId, approveFutureVersions)
     if (!result.ok) {
       this.recordFailure('host-half', result.message)
@@ -618,12 +671,11 @@ export class NekroNxtDynamicCordisRunner extends DynamicCordisRunnerService {
     }
     const state = this.requireState()
     if (result.ok && state.primaryPluginId === pluginId) {
-      this.state = {
-        episodeId: state.episodeId,
-        turn: state.turn,
-        consecutiveFailures: 0,
-        repeatedFingerprintCount: 0,
-      }
+      // Releasing the Plugin slot must not reset the repair budget; otherwise undefine + define escapes the breaker.
+      // Only a new ordinary user turn (beginOrdinaryTurn) clears failures.
+      const { primaryPluginId: _released, ...rest } = state
+      void _released
+      this.state = rest
     }
     return result
   }
@@ -646,6 +698,22 @@ export class NekroNxtDynamicCordisRunner extends DynamicCordisRunnerService {
 
   override stop(agent: Agent, pluginId: CordisDynamicPluginIdType): Promise<DynamicCordisStopResponse> {
     return super.stop(this.resolveDynamicAuthoringOwner(agent), pluginId)
+  }
+
+  /**
+   * Tool names visible before a run, excluding Tools owned by this Plugin's live Package. An update replaces that
+   * Package, so a same-named Tool in the new Package is a new registration and must be verified again.
+   */
+  private toolBaseline(owner: Agent, pluginId: CordisDynamicPluginIdType, tools: unknown): Set<string> {
+    if (!(tools instanceof ToolRuntime)) return new Set()
+    const livePackageId = super.snapshot(owner).find((row) => row.pluginId === pluginId)?.activeRun?.packageId
+    const replaced = new Set(livePackageId === undefined ? [] : (this.toolNamesByPackage.get(livePackageId) ?? []))
+    return new Set(
+      tools
+        .schemas(scopeOf(owner.ctx))
+        .map(({ name }) => name)
+        .filter((name) => !replaced.has(name)),
+    )
   }
 
   private recordFailure(phase: string, message: string): void {
@@ -680,6 +748,7 @@ export class NekroNxtDynamicCordisRunner extends DynamicCordisRunnerService {
   }
 
   private assertWritable(operation: string): void {
+    if (this.userOperationDepth > 0) return
     const blockedReason = this.requireState().blockedReason
     if (blockedReason) throw new Error(`动态创造已熔断，拒绝 ${operation}：${blockedReason}`)
   }
@@ -843,6 +912,71 @@ export class DynamicAuthoringRuntime {
     })
   }
 
+  /**
+   * Make an earlier verified attempt the task's latest candidate again by redefining its exact persisted source and
+   * running it. Saving keeps its "latest verified candidate only" rule; this is the explicit way back to one.
+   */
+  async restoreAuthoringAttempt(input: {
+    readonly taskId: AuthoringTaskId
+    readonly attemptId: AuthoringAttemptId
+    readonly expectedRevision: number
+  }): Promise<void> {
+    this.#assertActive()
+    if (!this.#authoring) throw new Error('动态创造账本未启用。')
+    const service = this.#authoring.service
+    const task = service.getTask(input.taskId)
+    if (!task || task.revision !== input.expectedRevision) throw new Error('创造任务状态已更新，请刷新后重试。')
+    const attempts = service.listAttempts(task.id)
+    const attempt = attempts.find((candidate) => candidate.id === input.attemptId)
+    if (!attempt?.verification) throw new Error('只能回到已经通过验证的候选。')
+    if (attempts.at(-1)?.id === attempt.id) throw new Error('该候选已经是当前候选。')
+    const dshSessionId = [...this.#sessions.records()].find((record) => record.episodeId === task.episodeId)?.sessionId
+    if (dshSessionId === undefined) throw new Error('该任务所在的会话已经结束，不能回到旧候选。')
+    const { agent, runner } = this.dynamicRuntime(dshSessionId)
+    const snapshot = await service.snapshotForAttempt(attempt)
+    const receipt = runner.asUserOperation(() =>
+      runner.defineAuthoringPackage(agent.id, {
+        plugin: { kind: 'existing', pluginId: task.pluginKey },
+        ...snapshot,
+      }),
+    )
+    const current = this.dynamicInventory(dshSessionId).find((row) => row.pluginId === task.pluginKey)?.currentPackageId
+    const run = runner.asUserOperation(() =>
+      runner.run(
+        agent,
+        CordisDynamicPluginId(task.pluginKey),
+        CordisDynamicPackageId(receipt.packageId),
+        current === undefined ? 'run' : 'update',
+      ),
+    )
+    // Context only: the Agent sees the restore on its next turn; it is not woken for a user's own action.
+    agent.inject(
+      freezeMessage({
+        id: MessageId(`nxt-authoring-restore-${receipt.packageId}`),
+        role: 'user',
+        content: [
+          {
+            type: 'text',
+            text: `这是 NekroNXT Host 产生的扩展开发状态事件，不是用户的新需求。\n用户已在创造工作台把任务“${task.title}”回到第 ${attempt.ordinal} 次候选，以候选 ${receipt.packageId} 重新运行验证。后续修复请基于该候选。`,
+          },
+        ],
+        source: {
+          kind: 'nekro-nxt-authoring-event',
+          taskId: task.id,
+          pluginId: task.pluginKey,
+          packageId: receipt.packageId,
+          status: 'restored',
+        },
+      }),
+    )
+    if (snapshot.code.client !== undefined) {
+      // Interface candidates finish only after browser confirmation; failures are recorded on the task ledger.
+      void run.catch((error: unknown) => console.error('[nekro-nxt] 回到旧候选的运行失败：', error))
+      return
+    }
+    await run.catch((error: unknown) => console.error('[nekro-nxt] 回到旧候选的运行失败：', error))
+  }
+
   async deleteAuthoringTask(taskId: AuthoringTaskId): Promise<boolean> {
     this.#assertActive()
     if (!this.#authoring) throw new Error('动态创造账本未启用。')
@@ -873,11 +1007,18 @@ export class DynamicAuthoringRuntime {
   async verifyDynamicPackage(dshSessionId: string, pluginId: string, packageId: string) {
     const { agent, runner } = this.dynamicRuntime(dshSessionId)
     const evidence = runner.verificationSnapshot(agent, pluginId, packageId)
+    const inputs = (await this.dynamicAuthoringSnapshot(dshSessionId, pluginId, packageId))?.verificationInputs
+    const rpcInput = (method: string): JsonValue => inputs?.rpc[method] ?? null
     const visibleTools = this.#context.tools.schemas(scopeOf(agent.ctx))
     const toolInvocations = [] as Array<{ readonly name: string; readonly succeeded: boolean }>
     const contributions = [] as Array<
-      | { readonly kind: 'tool'; readonly name: string; readonly description: string }
-      | { readonly kind: 'rpc'; readonly method: string }
+      | {
+          readonly kind: 'tool'
+          readonly name: string
+          readonly description: string
+          readonly verificationInput?: Readonly<Record<string, JsonValue>>
+        }
+      | { readonly kind: 'rpc'; readonly method: string; readonly verificationInput?: JsonValue }
       | { readonly kind: 'client-slot'; readonly name: AgentClientSlotName }
       | { readonly kind: 'host-client-slot'; readonly name: AdapterClientSlotName; readonly key: string }
       | HostPageContribution
@@ -959,9 +1100,9 @@ export class DynamicAuthoringRuntime {
           CordisDynamicPluginId(pluginId),
           CordisDynamicPluginRunId(evidence.pluginRunId),
           method,
-          null,
+          rpcInput(method),
         )
-        if (!result.ok) throw new Error(`Dynamic RPC synthetic verification failed: ${method}: ${result.message}`)
+        if (!result.ok) throw new Error(verificationFailure('RPC', method, result.message, inputs?.rpc[method]))
         if (JSON.stringify(result.value).length > 16 * 1024) {
           throw new Error(`Dynamic RPC verification exceeded 16 KiB: ${method}`)
         }
@@ -979,31 +1120,37 @@ export class DynamicAuthoringRuntime {
     for (const name of evidence.toolNames) {
       const schema = visibleTools.find((candidate) => candidate.name === name)
       if (!schema) throw new Error(`Dynamic Tool disappeared before verification: ${name}`)
+      const verificationInput = inputs?.tools[name]
       const result = await this.#context.tools.execute({
         callId: ToolCallId(`verify-${packageId}-${name}`),
         name,
-        arguments: {},
+        arguments: verificationInput ?? {},
         agent,
         signal: new AbortController().signal,
       })
-      if (result.isError)
-        throw new Error(`Dynamic Tool synthetic verification failed: ${name}: ${result.error.message}`)
+      if (result.isError) throw new Error(verificationFailure('Tool', name, result.error.message, verificationInput))
       if (JSON.stringify(result.value).length > 16 * 1024)
         throw new Error(`Dynamic Tool verification exceeded 16 KiB: ${name}`)
       toolInvocations.push({ name, succeeded: true })
-      contributions.push({ kind: 'tool', name, description: schema.description })
+      contributions.push({
+        kind: 'tool',
+        name,
+        description: schema.description,
+        ...(verificationInput === undefined ? {} : { verificationInput }),
+      })
     }
     for (const method of evidence.rpcMethods) {
+      const verificationInput = inputs?.rpc[method]
       const result = await runner.invoke(
         CordisDynamicPluginId(pluginId),
         CordisDynamicPluginRunId(evidence.pluginRunId),
         method,
-        null,
+        verificationInput ?? null,
       )
-      if (!result.ok) throw new Error(`Dynamic RPC synthetic verification failed: ${method}: ${result.message}`)
+      if (!result.ok) throw new Error(verificationFailure('RPC', method, result.message, verificationInput))
       if (JSON.stringify(result.value).length > 16 * 1024)
         throw new Error(`Dynamic RPC verification exceeded 16 KiB: ${method}`)
-      contributions.push({ kind: 'rpc', method })
+      contributions.push({ kind: 'rpc', method, ...(verificationInput === undefined ? {} : { verificationInput }) })
     }
     for (const name of evidence.renderedSlots) contributions.push({ kind: 'client-slot', name })
     return { ...evidence, contributions, toolInvocations }
@@ -1055,6 +1202,42 @@ export class DynamicAuthoringRuntime {
         renderedPages: verified.renderedPages.map((page) => page.entryId),
         toolInvocations: verified.toolInvocations.map(({ name }) => name),
       },
+    })
+  }
+
+  /**
+   * A run that started but failed product verification must not stay live: its Tools would remain callable while the
+   * ledger still claimed the attempt was active. Stop it and record the exact verification failure.
+   */
+  async failAuthoringVerification(
+    dshSessionId: string,
+    pluginId: string,
+    packageId: string,
+    error: unknown,
+  ): Promise<void> {
+    const episodeId = this.#sessions.get(dshSessionId)?.episodeId
+    const stopped = await this.stopDynamicPlugin(dshSessionId, pluginId)
+    if (!stopped.ok && stopped.reason !== 'not-running') throw new Error(stopped.message)
+    const latest = this.dynamicInventory(dshSessionId).find((row) => row.pluginId === pluginId)?.latestRun
+    if (!this.#authoring || !episodeId || latest?.packageId !== packageId) return
+    const message = error instanceof Error ? error.message : String(error)
+    this.#authoring.service.syncAttempt({
+      episodeId,
+      pluginKey: pluginId,
+      runnerPackageId: packageId,
+      ...(latest.pluginRunId === undefined ? {} : { runnerRunId: latest.pluginRunId }),
+      state: 'failed',
+      taskStatus: 'failed',
+      host: { status: latest.host.status, waitingFor: latest.host.waitingFor },
+      client: { status: latest.client.status, waitingFor: latest.client.waitingFor },
+      error: {
+        phase: 'verification',
+        message,
+        ...(error instanceof Error && error.stack ? { stack: error.stack } : {}),
+        repairable: true,
+      },
+      eventKind: 'attempt-failed',
+      eventPayload: { phase: 'verification' },
     })
   }
 
@@ -1137,45 +1320,63 @@ export class DynamicAuthoringRuntime {
     if (!this.#authoring || !latest || !['running', 'failed', 'cancelled'].includes(latest.status)) {
       return
     }
-    const task = this.#authoring.service.taskForRunner(episodeId, row.pluginId)
+    this.#steerAuthoringEvent(
+      episodeId,
+      row.pluginId,
+      latest.packageId,
+      latest.status,
+      `${latest.packageId}:${latest.pluginRunId ?? 'pending'}:${latest.status}`,
+      (task) =>
+        [
+          '这是 NekroNXT Host 产生的扩展开发状态事件，不是用户的新需求。',
+          `任务：${task.title}（${task.id}）`,
+          `候选：${latest.packageId}；状态：${latest.status}。`,
+          latest.error === undefined
+            ? '运行链路已经返回结果。请核对真实预览和验证证据；成功时向用户清楚说明可见成果，失败时继续修复同一 Plugin。'
+            : `失败阶段：${latest.error.phase}；错误：${latest.error.message}。请读取当前诊断，向同一 Plugin 追加修复候选并继续验证。`,
+          '不需要等待用户再发送“继续”，也不要把定义、审批或 Host 启动误报为最终成功。',
+        ].join('\n'),
+    )
+  }
+
+  /**
+   * Deliver one Host authoring event to the owning Agent exactly once. DSH's own Runner notifications cannot reach
+   * the Agent here: the Runner lives in a Context that isolates the private `agents` Service from extension code, so
+   * NekroNXT is the single owner of these events.
+   */
+  #steerAuthoringEvent(
+    episodeId: EpisodeId,
+    pluginId: string,
+    packageId: string,
+    status: string,
+    identity: string,
+    render: (task: { readonly id: AuthoringTaskId; readonly title: string }) => string,
+  ): void {
+    if (!this.#authoring) return
+    const task = this.#authoring.service.taskForRunner(episodeId, pluginId)
     const dshSessionId = [...this.#sessions.records()].find((record) => record.episodeId === episodeId)?.sessionId
     const agent = dshSessionId === undefined ? undefined : this.#context.agents.get(SessionId(dshSessionId))
     if (!task || !agent) return
-    const messageId = createHash('sha256')
-      .update(`${task.id}:${latest.packageId}:${latest.pluginRunId ?? 'pending'}:${latest.status}`)
-      .digest('hex')
-      .slice(0, 24)
+    const messageId = createHash('sha256').update(`${task.id}:${identity}`).digest('hex').slice(0, 24)
     const continuationId = `${agent.id}:${messageId}`
     if (this.#authoringContinuationIds.has(continuationId)) return
     this.#authoringContinuationIds.add(continuationId)
-    const content = [
-      '这是 NekroNXT Host 产生的扩展开发状态事件，不是用户的新需求。',
-      `任务：${task.title}（${task.id}）`,
-      `候选：${latest.packageId}；状态：${latest.status}。`,
-      latest.error === undefined
-        ? '运行链路已经返回结果。请核对真实预览和验证证据；成功时向用户清楚说明可见成果，失败时继续修复同一 Plugin。'
-        : `失败阶段：${latest.error.phase}；错误：${latest.error.message}。请读取当前诊断，向同一 Plugin 追加修复候选并继续验证。`,
-      '不需要等待用户再发送“继续”，也不要把定义、审批或 Host 启动误报为最终成功。',
-    ].join('\n')
+    const content = render(task)
     const pending = (async () => {
       try {
-        await agent.whenIdle()
+        await Promise.resolve()
         if (this.#context.agents.get(agent.id) !== agent) {
           this.#authoringContinuationIds.delete(continuationId)
           return
         }
-        agent.inject(
+        // Browser-side results arrive after the Agent turn has usually ended. DSH `inject` never wakes an idle
+        // driver, so steer: an idle Agent starts a turn, a running one consumes it at the next step boundary.
+        agent.steer(
           freezeMessage({
             id: MessageId(`nxt-authoring-${messageId}`),
             role: 'user',
             content: [{ type: 'text', text: content }],
-            source: {
-              kind: 'nekro-nxt-authoring-event',
-              taskId: task.id,
-              pluginId: row.pluginId,
-              packageId: latest.packageId,
-              status: latest.status,
-            },
+            source: { kind: 'nekro-nxt-authoring-event', taskId: task.id, pluginId, packageId, status },
           }),
         )
         await this.#context.sessions.flush(agent.session)
@@ -1287,8 +1488,39 @@ export class DynamicAuthoringRuntime {
       .invoke(CordisDynamicPluginId(pluginId), CordisDynamicPluginRunId(pluginRunId), method, input)
       .then((result) => {
         if (result.ok) runner.recordClientRpcInvocation(agent, pluginId, pluginRunId, method)
+        else this.#reportClientRpcFailure(dshSessionId, pluginId, pluginRunId, method, result.message)
         return result
       })
+  }
+
+  /**
+   * Client verification requires every Host RPC to succeed, so a failing handler would otherwise leave the task
+   * waiting on a browser while the Agent never learns why.
+   */
+  #reportClientRpcFailure(
+    dshSessionId: string,
+    pluginId: string,
+    pluginRunId: string,
+    method: string,
+    message: string,
+  ): void {
+    const episodeId = this.#sessions.get(dshSessionId)?.episodeId
+    const latest = this.dynamicInventory(dshSessionId).find((row) => row.pluginId === pluginId)?.latestRun
+    if (!episodeId || latest?.pluginRunId !== pluginRunId) return
+    this.#steerAuthoringEvent(
+      episodeId,
+      pluginId,
+      latest.packageId,
+      'rpc-failed',
+      `${pluginRunId}:rpc:${method}:${message}`,
+      (task) =>
+        [
+          '这是 NekroNXT Host 产生的扩展开发状态事件，不是用户的新需求。',
+          `任务：${task.title}（${task.id}）`,
+          `候选：${latest.packageId}；界面调用 Host RPC ${method} 失败：${message}。`,
+          '界面验证要求每个 Host RPC 都调用成功，当前候选无法完成验证。请修复同一 Plugin 后用 update 重新运行。',
+        ].join('\n'),
+    )
   }
 
   async reportDynamicRenderFailure(

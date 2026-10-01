@@ -258,6 +258,7 @@ export const projectAuthoringTask = (
 ) => {
   const active = attempts.findLast((attempt) => attempt.state === 'active')
   const candidate = attempts.at(-1)
+  const verified = attempts.findLast((attempt) => attempt.verification !== undefined)
   return {
     id: task.id,
     agentId: task.agentId,
@@ -271,6 +272,7 @@ export const projectAuthoringTask = (
     revision: task.revision,
     ...(active === undefined ? {} : { activeAttempt: projectAuthoringAttempt(active) }),
     ...(candidate === undefined ? {} : { candidateAttempt: projectAuthoringAttempt(candidate) }),
+    ...(verified === undefined ? {} : { verifiedAttempt: projectAuthoringAttempt(verified) }),
     createdAt: task.createdAt,
     updatedAt: task.updatedAt,
   }

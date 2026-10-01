@@ -382,13 +382,16 @@ const HOST_TOOL_EXAMPLE = `return {
   apply(ctx) {
     const tool = harness.defineTool({
       name: 'project_status',
-      description: 'Return a synthetic project status.',
-      parameters: {},
+      description: 'Return a synthetic status for one project.',
+      // parameters maps each argument name to its schema; mark required arguments with required: true.
+      parameters: {
+        project: { type: 'string', required: true, description: 'Project name to look up.' }
+      },
       output: {
         schema: { type: 'string' },
         render(_args, value) { return [{ type: 'text', text: value }] }
       },
-      execute() { return 'ready' }
+      execute({ project }) { return project + ': ready' }
     })
     harness.registerTool(ctx, tool)
   }
@@ -672,6 +675,8 @@ export const NEKRO_NXT_EXTENSION_AUTHORING_REFERENCE: NekroNxtExtensionAuthoring
     'agent.workbench.sections 接收当前智能体的 agentId/displayName，位于智能体配置宿主区块之后；多个贡献按注册顺序排列。',
     'extension.activation.panels 只接收用户明确选中的 active Activation；动态预览使用 synthetic 标识，不代表已保存、已安装或已启用。',
     'Host 或 Client 失败后先读取 Inspect 诊断，再修复同一 Plugin；不要静默新建替代 Plugin。',
+    '每次 define 都会成为任务的最新候选，只有最新候选通过验证后才能保存。不要提交探针或试验性候选；查看状态使用 cordis_inspect_self。',
+    'Plugin 已有运行版本时，新 Package 用 mode:update 运行；Runner 返回的 invalid-mode 提示会说明应使用的模式。',
     '只使用 NekroNXT Inspect 公布的 Contribution 和 Slot；禁止注册 root 或 DSH 官方 WebUI Slot。',
   ],
 }
@@ -692,6 +697,7 @@ export const renderNekroNxtExtensionDevelopmentSkill = (
 - 禁止注册 root、DSH 官方页面 Slot、Composer 或频道顶栏；顶级页面只能使用 Host Page Contribution。
 - 动态运行、保存不可变扩展 Revision、给智能体启用扩展彼此独立；每一步都必须等待真实结果。
 - Host Tool 必须通过真实 Tool Runtime 调用验证；RPC 必须由 Client 预览真实调用；Client 必须在相同产品 Slot 与合成 Props 中渲染成功。
+- 运行验证会用 \`nekro_nxt_extension_define.verification\` 中的样例真实调用每个 Tool 和 RPC，例如 \`{ tools: { project_status: { project: '示例项目' } } }\`；未提供时 Tool 用 \`{}\`、RPC 用 \`null\` 调用。带必填参数的 Tool 必须提供代表真实用途、没有外部副作用的样例，不要为了通过验证而让工具接受空输入。
 
 ## Host Tool 示例
 

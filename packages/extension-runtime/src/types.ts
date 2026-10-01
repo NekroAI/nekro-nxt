@@ -59,8 +59,13 @@ export interface DynamicPackageSnapshot {
 }
 
 export type ExtensionContribution =
-  | { readonly kind: 'tool'; readonly name: string; readonly description: string }
-  | { readonly kind: 'rpc'; readonly method: string }
+  | {
+      readonly kind: 'tool'
+      readonly name: string
+      readonly description: string
+      readonly verificationInput?: Readonly<Record<string, JsonValue>>
+    }
+  | { readonly kind: 'rpc'; readonly method: string; readonly verificationInput?: JsonValue }
   | {
       readonly kind: 'client-slot'
       readonly name: AgentClientSlotName

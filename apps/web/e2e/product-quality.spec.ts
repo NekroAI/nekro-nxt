@@ -2177,6 +2177,127 @@ test('the creator saves the exact running Package and selects the resulting exte
   expect(failures, failures.join('\n')).toEqual([])
 })
 
+test('the creator returns to an earlier verified candidate when a newer one is unverified', async ({
+  page,
+}, testInfo) => {
+  const failures = installRuntimeFailureGate(page)
+  let restoreRequest: { readonly url: string; readonly body: unknown } | undefined
+  const attempt = (ordinal: number, state: string, id: string) => ({
+    id,
+    ordinal,
+    name: ordinal === 1 ? '待回退摘要工具' : '探针',
+    purpose: ordinal === 1 ? '已经通过验证的版本。' : '尚未运行的候选。',
+    state,
+    riskDigest: 'a'.repeat(64),
+    host: { status: state === 'active' ? 'running' : 'pending', waitingFor: [] },
+    client: { status: 'absent', waitingFor: [] },
+    createdAt: 1_725_000_000_000 + ordinal,
+  })
+  const verifiedAttempt = attempt(1, 'active', saveAuthoringAttemptId)
+  const task = {
+    id: saveAuthoringTaskId,
+    agentId: targetAgentId,
+    channelId: targetChannelId,
+    episodeId: targetEpisodeId,
+    title: '待回退摘要工具',
+    requirementSummary: '验证回到已验证候选。',
+    status: 'repairing',
+    approvalPolicy: 'risk-stable',
+    revision: 6,
+    activeAttempt: verifiedAttempt,
+    candidateAttempt: attempt(2, 'drafting', 'aua_NEWERPROBE'),
+    verifiedAttempt,
+    createdAt: 1_725_000_000_000,
+    updatedAt: 1_725_000_000_100,
+  }
+  const run = {
+    pluginRunId: 'run-restore-probe',
+    packageId: 'package-restore-one',
+    mode: 'run',
+    status: 'running',
+    host: { status: 'running', waitingFor: [] },
+    client: { status: 'absent', waitingFor: [] },
+  }
+  const packages = ['package-restore-one', 'package-restore-two'].map((packageId) => ({
+    packageId,
+    name: '待回退摘要工具',
+    purpose: '验证回到已验证候选。',
+    hasHostHalf: true,
+    hasClientHalf: false,
+  }))
+  await page.route('**/api/snapshot', (route) =>
+    route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify(
+        HostApiContracts.snapshot.response.parse({
+          ...productSnapshot,
+          agents: productSnapshot.agents.map((agent) =>
+            agent.id === targetAgentId ? { ...agent, runtimeStatus: 'idle', runtimePhase: 'idle' } : agent,
+          ),
+          dynamic: [
+            {
+              agentId: targetAgentId,
+              episodeId: targetEpisodeId,
+              pluginId: 'plugin-restore-probe',
+              packageId: 'package-restore-two',
+              currentPackageId: 'package-restore-one',
+              status: 'running',
+              activeRun: { pluginRunId: run.pluginRunId, packageId: run.packageId },
+              latestRun: run,
+              packages,
+              policy: { turn: 2, consecutiveFailures: 0, repeatedFingerprintCount: 0 },
+            },
+          ],
+          authoringTasks: [task],
+        }),
+      ),
+    }),
+  )
+  await page.route('**/api/dynamic/*/inventory', (route) =>
+    route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({
+        rows: [
+          {
+            pluginId: 'plugin-restore-probe',
+            agentId: targetAgentId,
+            packages,
+            currentPackageId: 'package-restore-one',
+            activeRun: { pluginRunId: run.pluginRunId, packageId: run.packageId },
+            latestRun: run,
+          },
+        ],
+      }),
+    }),
+  )
+  await page.route('**/api/authoring/tasks/*/attempts/*/restore', (route) => {
+    restoreRequest = { url: route.request().url(), body: route.request().postDataJSON() }
+    return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(task) })
+  })
+
+  for (const theme of ['light', 'dark'] as const) {
+    await page.setViewportSize({ width: 1440, height: 900 })
+    await page.emulateMedia({ colorScheme: theme, reducedMotion: 'reduce' })
+    await page.goto(`/work/creator/${saveAuthoringTaskId}`)
+    await page.evaluate((nextTheme) => window.localStorage.setItem('nekro-nxt.theme', nextTheme), theme)
+    await page.goto(`/work/creator/${saveAuthoringTaskId}`)
+    await expect(page.getByText('第 1 次尝试已通过验证', { exact: true })).toBeVisible()
+    await expect(page.getByText('最新的第 2 次尝试尚未通过验证', { exact: false })).toBeVisible()
+    await expect(page.getByRole('button', { name: '保存为本地扩展', exact: true })).toBeDisabled()
+    await assertViewportIntegrity(page)
+    await capture(page, testInfo, `authoring-restore-candidate-1440x900-${theme}`)
+  }
+  await page.getByRole('button', { name: '回到第 1 次候选', exact: true }).click()
+  await expect.poll(() => restoreRequest).toBeDefined()
+  expect(restoreRequest?.url).toContain(
+    `/api/authoring/tasks/${saveAuthoringTaskId}/attempts/${saveAuthoringAttemptId}/restore`,
+  )
+  expect(HostApiContracts.restoreAuthoringAttempt.request.parse(restoreRequest?.body)).toEqual({ expectedRevision: 6 })
+  expect(failures, failures.join('\n')).toEqual([])
+})
+
 test('Host UI pages load through the production shell and share sidebar preferences', async ({ page }, testInfo) => {
   const failures = installRuntimeFailureGate(page)
   const buildKey = 'e'.repeat(64)

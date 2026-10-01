@@ -1061,6 +1061,8 @@ export class HttpProductHost implements ProductHostPort {
     'authoring.decide': async ({ taskId, attemptId, ...body }) =>
       this.#mutate(HostApiContracts.decideAuthoringAttempt, { taskId, attemptId }, body),
     'authoring.stop': async ({ taskId, ...body }) => this.#mutate(HostApiContracts.stopAuthoringTask, { taskId }, body),
+    'authoring.restore': async ({ taskId, attemptId, ...body }) =>
+      this.#mutate(HostApiContracts.restoreAuthoringAttempt, { taskId, attemptId }, body),
     'authoring.delete': async ({ taskId }) => this.#mutate(HostApiContracts.deleteAuthoringTask, { taskId }, undefined),
     'extensions.activate': async ({ agentId, extensionId, ...body }) =>
       this.#mutate(HostApiContracts.activateExtension, { agentId, extensionId }, body),

@@ -35,3 +35,5 @@ Host factory 每个 Activation 执行一次，RPC handler 也归 Activation 所�
 扩展详情对旧格式显示“需要重建”，通过“从已有源码重建”生成同一 Extension 的新 Revision，旧源码、版本记录、配置和启用/安装记录保留。重建必须通过本机构建与运行验证，失败显示原因且不发布新版本；重复或并发重建复用已验证的同内容版本。成功后不自动启用，用户选择新版本并重新核对权限。旧页面从可运行页面目录中隐藏，原显示顺序、显隐偏好与安装记录继续保留。旧 Adapter 不能挂载时连接保留频道、消息和凭据引用并显示诊断。冷启动动态候选会重置运行证据为 pending，重新运行与验证。
 
 页面几何与 UI Kit 使用情况保留为预览建议和历史证据，不决定 `ready`；原生控件允许使用。空白页面、渲染/RPC/导航失败、释放失败及权限越界仍阻断，CSS 作用域和资源隔离不变。
+
+Agent Manifest 的 Tool 与 RPC Contribution 可以携带 `verificationInput`：动态运行验证、保存和导入都用它真实调用对应 Tool 或 RPC，缺省时分别使用 `{}` 与 `null`。样例来自 Authoring 快照的 `verificationInputs`，单个样例不超过 16 KiB；它不参与风险摘要。带验证证据的 `saveDynamicPackage` 在发布源码并构建后，用导入验证器执行物化产物，通过后才提交 Revision；不带证据的低层保存仅发布并构建。`assertClientCssScope` 是 Client CSS 只用于含顶级页面 Revision 的共享规则，动态预检与物化共用。

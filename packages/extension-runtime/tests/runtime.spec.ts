@@ -213,6 +213,42 @@ describe('Dynamic authoring artifacts', () => {
     expect(repository.listAuthoringAttempts(current.id).at(-1)?.state).toBe('stopped')
   })
 
+  it('interrupts instead of restoring a candidate left unsaved beyond the recovery window', async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), 'nekro-nxt-authoring-expiry-'))
+    temporaryDirectories.push(directory)
+    const repository = createAuthoringMemoryRepository()
+    let clock = 1_000
+    const service = new DynamicAuthoringService(repository, new AuthoringArtifactStore(directory), {
+      now: () => clock,
+      recoveryWindowMs: 60_000,
+    })
+    const episodeId = EpisodeIdSchema.parse('eps_AUTHORINGEXPIRY')
+    const { task } = await service.recordDefinition({
+      agentId: AgentIdSchema.parse('agt_AUTHORINGEXPIRY'),
+      channelId: ChannelIdSchema.parse('chn_AUTHORINGEXPIRY'),
+      episodeId,
+      initiatingEventId: ChannelEventIdSchema.parse('evt_AUTHORINGEXPIRY'),
+      approvalPolicy: 'risk-stable',
+      pluginKey: 'plugin-expiry',
+      runnerPackageId: 'package-expiry',
+      snapshot: {
+        name: '过期候选',
+        purpose: '验证恢复窗口。',
+        scope: 'agent',
+        code: { host: 'return { apply() {} }' },
+        resources: {},
+        permissions: { permissions: [], networkOrigins: [] },
+        contributions: [],
+      },
+    })
+    clock += 60_000
+    expect(await service.recoveryCandidates(episodeId)).toHaveLength(1)
+    clock += 1
+    expect(await service.recoveryCandidates(episodeId)).toEqual([])
+    expect(repository.getAuthoringTask(task.id)?.status).toBe('interrupted')
+    expect(repository.listAuthoringEvents(task.id).at(-1)).toMatchObject({ kind: 'task-interrupted' })
+  })
+
   it('keeps task revisions idempotent, restores runner identities, and rolls back failed deletion', async () => {
     const directory = await mkdtemp(path.join(tmpdir(), 'nekro-nxt-authoring-service-'))
     temporaryDirectories.push(directory)
@@ -376,6 +412,20 @@ describe('Dynamic authoring artifacts', () => {
     })
     expect(repository.getAuthoringTask(first.task.id)?.revision).toBe(readyRevision)
     expect(changes).toHaveLength(changesBeforeVerification + 1)
+    // A phase resync of the same live run keeps the verified, saveable state.
+    service.syncAttempt({
+      episodeId,
+      pluginKey: base.pluginKey,
+      runnerPackageId: 'package-two',
+      runnerRunId: 'run-two',
+      state: 'active',
+      taskStatus: 'running',
+      host: { status: 'running', waitingFor: [] },
+      client: { status: 'absent', waitingFor: [] },
+      eventKind: 'phase-changed',
+    })
+    expect(repository.getAuthoringTask(first.task.id)).toMatchObject({ status: 'ready', revision: readyRevision })
+    expect(repository.listAuthoringAttempts(first.task.id).at(-1)?.verification).toEqual(verification)
     expect(service.taskForRunner(episodeId, base.pluginKey)?.id).toBe(first.task.id)
     await expect(service.snapshotForRunnerPackage(episodeId, base.pluginKey, 'missing')).resolves.toBeUndefined()
 

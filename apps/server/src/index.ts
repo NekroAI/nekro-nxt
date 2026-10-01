@@ -140,6 +140,8 @@ import {
   type LocalExtension,
   type MountedExtension,
   type Revision,
+  toolVerificationInputSchema,
+  verificationInputSchema,
 } from '@nekro-nxt/extension-runtime'
 import {
   NEKRO_NXT_EXTENSION_AUTHORING_REFERENCE,
@@ -699,6 +701,13 @@ const DynamicAuthoringFacadeInputSchema = z
       .optional(),
     pages: z.array(HostPageContributionSchema).max(8).default([]),
     permissions: HostUiPermissionDeclarationSchema.default({ permissions: [], networkOrigins: [] }),
+    verification: z
+      .object({
+        tools: z.record(z.string().min(1), toolVerificationInputSchema).default({}),
+        rpc: z.record(z.string().min(1), verificationInputSchema).default({}),
+      })
+      .strict()
+      .optional(),
   })
   .strict()
 
@@ -732,6 +741,7 @@ const authoringDefinitionFromFacade = (raw: unknown): DynamicAuthoringPackageDef
     ...(clientCss === undefined ? {} : { clientCss }),
     permissions: parsed.permissions,
     contributions: parsed.pages.map((page) => JsonValueSchema.parse(page)),
+    ...(parsed.verification === undefined ? {} : { verificationInputs: parsed.verification }),
   })
 }
 
@@ -797,7 +807,8 @@ const nekroNxtExtensionDefineTool = (runner: NekroNxtDynamicCordisRunner, sessio
       },
       clientCssPath: {
         type: 'string',
-        description: 'resources 中作为 Client CSS Module 的路径，必须以 .module.css 结尾。',
+        description:
+          'resources 中作为 Client CSS Module 的路径，必须以 .module.css 结尾；只用于带 pages 的顶级页面，智能体 Slot 使用内联样式。',
       },
       pages: {
         type: 'array',
@@ -812,6 +823,11 @@ const nekroNxtExtensionDefineTool = (runner: NekroNxtDynamicCordisRunner, sessio
           networkOrigins: { type: 'array', items: { type: 'string' }, required: true },
         },
         description: 'Client 需要的完整 Host UI 权限和 HTTP(S) origin 清单。',
+      },
+      verification: {
+        type: 'json',
+        description:
+          '验证样例：{ tools?: { 工具名: 参数对象 }, rpc?: { 方法名: 输入 } }。运行验证时 Host 会用这些样例真实调用每个 Tool 和 RPC；未提供时 Tool 用 {}、RPC 用 null 调用。带必填参数的 Tool 必须提供能代表真实用途、且没有外部副作用的样例；样例会随保存的扩展一起用于导入验证。',
       },
     },
     output: {
@@ -2629,14 +2645,23 @@ export class DshHostRuntime implements AgentSessionDriver, ExtensionActivationHo
             },
             run: async (pluginId, packageId) => {
               const row = runner.inventory().find((candidate) => candidate.pluginId === pluginId)
+              // Runs come from the Agent's own cordis_run (the result is already in its tool output) or from
+              // cold-start recovery; neither needs a continuation turn. Browser-side results queue their own.
               if (row) {
                 this.#dynamic.syncAuthoringRow(input.episodeId, row, packageId)
-                if (row.latestRun?.status === 'running' && row.latestRun.client.status === 'absent') {
-                  await this.#dynamic.completeAuthoringVerification(sessionId, pluginId, packageId)
-                  const verifiedRow = runner.inventory().find((candidate) => candidate.pluginId === pluginId)
-                  if (verifiedRow) this.#dynamic.queueAuthoringContinuation(input.episodeId, verifiedRow)
-                } else if (row.latestRun?.status === 'failed' || row.latestRun?.status === 'cancelled') {
-                  this.#dynamic.queueAuthoringContinuation(input.episodeId, row)
+                // A rejected run (for example an invalid mode) leaves the previous Package as latestRun; verifying
+                // that row against this packageId would mask the Runner's own diagnostic.
+                if (
+                  row.latestRun?.packageId === packageId &&
+                  row.latestRun.status === 'running' &&
+                  row.latestRun.client.status === 'absent'
+                ) {
+                  try {
+                    await this.#dynamic.completeAuthoringVerification(sessionId, pluginId, packageId)
+                  } catch (error) {
+                    await this.#dynamic.failAuthoringVerification(sessionId, pluginId, packageId, error)
+                    throw error
+                  }
                 }
               }
             },
@@ -2740,7 +2765,10 @@ export class DshHostRuntime implements AgentSessionDriver, ExtensionActivationHo
       if (!recovered.shouldRun) continue
       const run = this.runDynamicPackage(sessionId, recovered.pluginId, recovered.packageId, 'run')
       if (!recovered.hasClient) {
-        await run
+        // A recovered candidate that no longer verifies is recorded on its task; it must not block the Session.
+        await run.catch((error: unknown) => {
+          console.error('[nekro-nxt] 动态创造候选恢复验证失败：', error)
+        })
       } else {
         void run.catch((error: unknown) => {
           this.#authoring?.service.interruptTask(recovered.task, error instanceof Error ? error.message : String(error))
@@ -3167,6 +3195,10 @@ export class DshHostRuntime implements AgentSessionDriver, ExtensionActivationHo
 
   decideAuthoringAttempt(input: Parameters<DynamicAuthoringService['decideAttempt']>[0]) {
     return this.#dynamic.decideAuthoringAttempt(input)
+  }
+
+  restoreAuthoringAttempt(input: Parameters<DynamicAuthoringRuntime['restoreAuthoringAttempt']>[0]) {
+    return this.#dynamic.restoreAuthoringAttempt(input)
   }
 
   stopAuthoringTask(input: Parameters<DynamicAuthoringService['stopTask']>[0]) {

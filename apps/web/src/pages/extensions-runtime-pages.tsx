@@ -36,6 +36,7 @@ import {
 import styles from './product-pages.module.css'
 import { DynamicClientSlots } from '../dynamic-client-coordinator.js'
 import { ExtensionActivationExtensionSlots } from '../persistent-extension-client.js'
+import { authoringTaskPresentation } from '../authoring-task-status.js'
 
 const extensionLabel = (activeAgentCount: number): string =>
   activeAgentCount > 0 ? `${activeAgentCount} 个智能体正在使用` : '尚未启用'
@@ -209,6 +210,36 @@ export const contributionLabel = (contribution: string): string => {
   if (name === 'agent.workbench.sections' || name === '智能体工作台') return '智能体工作台面板'
   if (name === 'extension.details.panels' || name === '扩展详情') return '扩展详情面板'
   return `产品界面 · ${name}`
+}
+
+/**
+ * Mirrors the Host save gate: only the task's latest candidate, once it has passed real verification, can be saved.
+ * Returns why saving is unavailable, or undefined when it is.
+ */
+export const creatorSaveBlockedReason = (input: {
+  readonly task?: {
+    readonly status: string
+    readonly candidateAttempt?: { readonly ordinal: number; readonly state: string } | undefined
+    readonly activeAttempt?: { readonly ordinal: number } | undefined
+  }
+  readonly runStatus: string
+  readonly packageAvailable: boolean
+  readonly agentIsSettling: boolean
+}): string | undefined => {
+  if (input.task) {
+    const candidate = input.task.candidateAttempt
+    if (!candidate) return '智能体尚未生成候选内容。'
+    if (input.task.status !== 'ready' || candidate.state !== 'active') {
+      const active = input.task.activeAttempt
+      return active !== undefined && active.ordinal !== candidate.ordinal
+        ? `正在运行的是第 ${active.ordinal} 次尝试；最新的第 ${candidate.ordinal} 次尝试尚未通过验证，只能保存最新且已验证的候选。`
+        : '最新候选尚未完成真实运行与验证。'
+    }
+  } else if (input.runStatus !== 'running' || !input.packageAvailable) {
+    return '只有正在运行的候选可以保存。'
+  }
+  if (input.agentIsSettling) return '智能体正在核对结果，收尾完成后可以保存。'
+  return undefined
 }
 
 export const contractVersionLabel = (version: string): string =>
@@ -984,6 +1015,7 @@ export function CreatorPage() {
   const [savePending, setSavePending] = useState(false)
   const [declinePending, setDeclinePending] = useState(false)
   const [approvePending, setApprovePending] = useState(false)
+  const [restorePending, setRestorePending] = useState(false)
   const selectedTask = routeTaskId ? authoringTasks.find((task) => task.id === routeTaskId) : undefined
   const visibleDynamic = selectedTask
     ? dynamic.filter((item) => item.agentId === selectedTask.agentId && item.episodeId === selectedTask.episodeId)
@@ -994,6 +1026,18 @@ export function CreatorPage() {
   const selectedAgent = selectedItem ? agents.find((agent) => agent.id === selectedItem.agentId) : undefined
   const agentIsSettling = selectedAgent !== undefined && selectedAgent.state !== 'idle'
   const selectedPackageAvailable = selectedItem?.packageId !== undefined
+  const restorableAttempt =
+    selectedTask?.verifiedAttempt !== undefined &&
+    selectedTask.verifiedAttempt.id !== selectedTask.candidateAttempt?.id &&
+    !['completed', 'stopped', 'interrupted'].includes(selectedTask.status)
+      ? selectedTask.verifiedAttempt
+      : undefined
+  const saveBlockedReason = creatorSaveBlockedReason({
+    ...(selectedTask === undefined ? {} : { task: selectedTask }),
+    runStatus: selectedItem?.status ?? '',
+    packageAvailable: selectedPackageAvailable,
+    agentIsSettling,
+  })
   const eligibleAgents = agents.filter((agent) => agent.capabilities.dynamicCreation)
   const requestedAgent = agents.find((agent) => agent.id === requestedAgentId)
 
@@ -1079,6 +1123,21 @@ export function CreatorPage() {
     }
   }
 
+  const restoreCandidate = async () => {
+    if (!selectedTask || !restorableAttempt) return
+    setRestorePending(true)
+    try {
+      await useProductStore
+        .getState()
+        .restoreAuthoringAttempt(selectedTask.id, restorableAttempt.id, selectedTask.revision)
+      notify(`已回到第 ${restorableAttempt.ordinal} 次候选，正在重新运行验证。`, 'success', 'authoring-restore')
+    } catch (error) {
+      notify(error instanceof Error ? error.message : String(error), 'error', 'authoring-restore')
+    } finally {
+      setRestorePending(false)
+    }
+  }
+
   return (
     <div className={[styles.page, styles.creatorPage].join(' ')}>
       <PageHeader
@@ -1132,7 +1191,8 @@ export function CreatorPage() {
                 ? '候选内容已经通过验证，智能体正在核对结果；收尾完成后可以保存。'
                 : selectedTask.status === 'ready'
                   ? '候选内容已经完成真实运行与界面验证，可以检查效果并保存。'
-                  : '任务状态会随预检、运行确认、宿主启动、界面加载和结果验证自动更新。'}
+                  : (authoringTaskPresentation(selectedTask).nextStep?.creator ??
+                    '任务状态会随预检、运行确认、宿主启动、界面加载和结果验证自动更新。')}
             </InlineFeedback>
           )}
         </section>
@@ -1345,20 +1405,43 @@ export function CreatorPage() {
                 </div>
               ) : (
                 <InlineFeedback tone="info">
-                  {selectedItem.status === 'running'
+                  {selectedItem.status === 'running' && saveBlockedReason === undefined
                     ? '运行结果已经通过实际加载与调用验证；保存会生成本地扩展修订。'
                     : `当前阶段：${dynamicRunSummary(selectedItem)}。`}
                 </InlineFeedback>
               )}
+              {restorableAttempt ? (
+                <div className={styles.sectionActionRow}>
+                  <span>
+                    <strong>第 {restorableAttempt.ordinal} 次尝试已通过验证</strong>
+                    <small>
+                      {agentIsSettling
+                        ? '智能体正在处理，空闲后可以回到这次候选。'
+                        : '回到这次候选会以相同内容重新运行验证，通过后即可保存。'}
+                    </small>
+                  </span>
+                  <span className={styles.rowActions}>
+                    <Button
+                      variant="secondary"
+                      loading={restorePending}
+                      loadingLabel="正在回到候选…"
+                      disabled={agentIsSettling}
+                      onClick={() => void restoreCandidate()}
+                    >
+                      回到第 {restorableAttempt.ordinal} 次候选
+                    </Button>
+                  </span>
+                </div>
+              ) : null}
               <div className={styles.sectionActionRow}>
                 <span>
                   <strong>保存到本地扩展</strong>
-                  <small>保存内容成为新的不可变修订；动态运行由创造工作台独立管理。</small>
+                  <small>{saveBlockedReason ?? '保存内容成为新的不可变修订；动态运行由创造工作台独立管理。'}</small>
                 </span>
                 <span className={styles.rowActions}>
                   <Button
                     variant="primary"
-                    disabled={selectedItem.status !== 'running' || !selectedPackageAvailable || agentIsSettling}
+                    disabled={saveBlockedReason !== undefined}
                     onClick={() => {
                       setTargetExtensionId('')
                       setExtensionName(`${selectedAgent?.name ?? '智能体'}的新扩展`)

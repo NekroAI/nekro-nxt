@@ -166,6 +166,8 @@ const AuthoringTaskSummarySchema = z
     revision: z.number().int().positive(),
     activeAttempt: AuthoringAttemptSummarySchema.optional(),
     candidateAttempt: AuthoringAttemptSummarySchema.optional(),
+    /** Latest attempt that still carries product verification evidence; it can be restored as the candidate. */
+    verifiedAttempt: AuthoringAttemptSummarySchema.optional(),
     createdAt: z.number().int().nonnegative(),
     updatedAt: z.number().int().nonnegative(),
   })
@@ -1572,6 +1574,15 @@ export const HostApiContracts = {
     response: z
       .object({ accepted: z.boolean(), taskRevision: z.number().int().positive(), executionRequired: z.boolean() })
       .strict(),
+    error: HostApiErrorSchema,
+  }),
+  restoreAuthoringAttempt: defineContract({
+    invalidatesSnapshot: true,
+    method: 'POST',
+    path: '/api/authoring/tasks/:taskId/attempts/:attemptId/restore',
+    params: authoringAttemptParam,
+    request: z.object({ expectedRevision: z.number().int().positive() }).strict(),
+    response: AuthoringTaskSummarySchema,
     error: HostApiErrorSchema,
   }),
   stopAuthoringTask: defineContract({
