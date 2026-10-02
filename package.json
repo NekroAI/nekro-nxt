@@ -1,6 +1,6 @@
 {
   "name": "nekro-nxt",
-  "version": "0.1.1",
+  "version": "0.2.0",
   "private": true,
   "license": "AGPL-3.0-only",
   "description": "NekroNXT：基于 DeepSeek Harness（DSH）的多平台群聊智能体系统｜A DSH-powered multi-platform group-chat agent system",
