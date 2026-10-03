@@ -1,0 +1,193 @@
+import { Activity, Bell, Cable, MessagesSquare, Search, Server, Settings, Sparkles, Wrench } from 'lucide-react'
+import { useEffect, useRef, useState, type CSSProperties } from 'react'
+import { Link, NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom'
+import { useDesktopInstance } from '../../desktop-shell.js'
+import { useProductStore } from '../../product-runtime.js'
+import { Kbd, StatusDot, useIndicator, type Tone } from '../../ui-kit/next/index.js'
+import { useAttention } from '../model/attention.js'
+import { agentAccent, connectionLabel, connectionTone, isAgentWorking } from '../model/identity.js'
+import { CommandPalette } from './command-palette.js'
+import { useCurrentCrumb } from './crumb.js'
+import styles from './shell.module.css'
+
+export const SPACES = [
+  { path: '/live', label: '现场', icon: Activity },
+  { path: '/channels', label: '频道', icon: MessagesSquare },
+  { path: '/agents', label: '智能体', icon: Sparkles },
+  { path: '/workshop', label: '工坊', icon: Wrench },
+  { path: '/wiring', label: '接线', icon: Cable },
+] as const
+
+const spaceOf = (pathname: string): string => `/${pathname.split('/')[1] ?? ''}`
+
+const hostTone: Record<string, Tone> = { ready: 'ok', initializing: 'warn', stale: 'warn', error: 'bad' }
+const hostLabel: Record<string, string> = { ready: '运行正常', initializing: '正在连接', stale: '连接不稳定', error: '无法连接' }
+
+function Rail() {
+  const location = useLocation()
+  const space = spaceOf(location.pathname)
+  const ref = useRef<HTMLElement>(null)
+  const { geometry, ready } = useIndicator(ref, '[aria-current="page"]', space)
+  return (
+    <nav ref={ref} className={styles.rail} aria-label="主导航">
+      <span
+        className={[styles.railIndicator, ready ? styles.railIndicatorReady : ''].join(' ')}
+        style={{
+          opacity: geometry.visible ? 1 : 0,
+          width: geometry.width,
+          height: geometry.height,
+          transform: `translate(${geometry.x}px, ${geometry.y}px)`,
+        }}
+        aria-hidden="true"
+      />
+      {SPACES.map(({ path, label, icon: Icon }) => (
+        <NavLink key={path} to={path} className={styles.railItem} aria-current={space === path ? 'page' : undefined}>
+          <Icon aria-hidden="true" strokeWidth={1.7} />
+          <span>{label}</span>
+        </NavLink>
+      ))}
+      <span className={styles.railSpacer} />
+      <NavLink to="/settings" className={styles.railItem} aria-current={space === '/settings' ? 'page' : undefined}>
+        <Settings aria-hidden="true" strokeWidth={1.7} />
+        <span>设置</span>
+      </NavLink>
+    </nav>
+  )
+}
+
+function TopBar({ onSearch }: { readonly onSearch: () => void }) {
+  const crumb = useCurrentCrumb()
+  const attention = useAttention()
+  const desktop = useDesktopInstance()
+  const hostStatus = useProductStore((state) => state.host.status)
+  const instanceTone: Tone = desktop.enabled
+    ? desktop.presentation.status === 'ready'
+      ? 'ok'
+      : desktop.presentation.status === 'connecting' || desktop.presentation.status === 'unstable'
+        ? 'warn'
+        : 'bad'
+    : (hostTone[hostStatus] ?? 'warn')
+  const instance = (
+    <>
+      <Server aria-hidden="true" />
+      <span>{desktop.enabled ? desktop.presentation.displayName : '本机'}</span>
+      <StatusDot tone={instanceTone} />
+    </>
+  )
+  return (
+    <header className={styles.top}>
+      <div className={styles.brand}>
+        <img src="/brand/mark.svg" alt="" />
+        NekroNXT
+      </div>
+      {desktop.enabled ? (
+        <button
+          type="button"
+          className={styles.instance}
+          onClick={() => void window.nekroDesktopShell?.openInstanceSwitcher()}
+          aria-label={`服务实例：${desktop.presentation.displayName}`}
+        >
+          {instance}
+        </button>
+      ) : (
+        <span className={styles.instance}>{instance}</span>
+      )}
+      <div className={styles.crumb}>
+        {crumb.map((part, index) => (
+          <span key={`${index}:${part}`} style={{ display: 'contents' }}>
+            {index > 0 ? <span className={styles.crumbSep}>/</span> : null}
+            {index === crumb.length - 1 ? <b>{part}</b> : <span>{part}</span>}
+          </span>
+        ))}
+      </div>
+      <button type="button" className={styles.search} onClick={onSearch} aria-label="搜索">
+        <Search aria-hidden="true" />
+        <span>搜索</span>
+        <Kbd>⌘K</Kbd>
+      </button>
+      <Link to="/live" className={styles.bell} aria-label={attention.length ? `${attention.length} 项需要关注` : '没有需要关注的事项'}>
+        <Bell aria-hidden="true" strokeWidth={1.7} />
+        {attention.length ? <span className={styles.bellCount}>{attention.length}</span> : null}
+      </Link>
+    </header>
+  )
+}
+
+function Clock() {
+  const [now, setNow] = useState(() => new Date())
+  useEffect(() => {
+    const timer = setInterval(() => setNow(new Date()), 1000)
+    return () => clearInterval(timer)
+  }, [])
+  return <span className={styles.statusClock}>{now.toLocaleTimeString('zh-CN', { hour12: false })}</span>
+}
+
+function StatusBar() {
+  const navigate = useNavigate()
+  const hostStatus = useProductStore((state) => state.host.status)
+  const connections = useProductStore((state) => state.connections)
+  const agents = useProductStore((state) => state.agents)
+  const working = agents.filter(isAgentWorking)
+  const external = connections.filter((connection) => connection.userManaged)
+  return (
+    <footer className={styles.status}>
+      <button type="button" className={styles.statusItem} onClick={() => navigate('/settings/about')}>
+        <StatusDot tone={hostTone[hostStatus] ?? 'warn'} />
+        本机 {hostStatus === 'ready' ? '' : hostLabel[hostStatus]}
+      </button>
+      {external.length ? <span className={styles.statusSep} /> : null}
+      {external.map((connection) => {
+        const tone = connectionTone(connection.state)
+        return (
+          <button
+            key={connection.id}
+            type="button"
+            className={styles.statusItem}
+            onClick={() => navigate(`/wiring/connections/${connection.id}`)}
+          >
+            <StatusDot tone={tone} pulse={tone === 'warn'} />
+            {connectionLabel(connection)}
+            {tone === 'ok' ? '' : ` ${connection.state}`}
+          </button>
+        )
+      })}
+      {working.length ? <span className={styles.statusSep} /> : null}
+      {working.map((agent) => (
+        <button key={agent.id} type="button" className={styles.statusItem} onClick={() => navigate(`/agents/${agent.id}`)}>
+          <i className={styles.runDot} style={{ '--run-color': agentAccent(agent) } as CSSProperties} />
+          {agent.name}
+        </button>
+      ))}
+      <Clock />
+    </footer>
+  )
+}
+
+export function AppShell() {
+  const location = useLocation()
+  const space = spaceOf(location.pathname)
+  const [paletteOpen, setPaletteOpen] = useState(false)
+  useEffect(() => {
+    const onKey = (event: KeyboardEvent) => {
+      if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'k') {
+        event.preventDefault()
+        setPaletteOpen((open) => !open)
+      }
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [])
+  return (
+    <div className={styles.app}>
+      <TopBar onSearch={() => setPaletteOpen(true)} />
+      <Rail />
+      <main className={styles.main}>
+        <div key={space} className={[styles.canvas, styles.canvasEnter].join(' ')}>
+          <Outlet />
+        </div>
+      </main>
+      <StatusBar />
+      <CommandPalette open={paletteOpen} onOpenChange={setPaletteOpen} />
+    </div>
+  )
+}

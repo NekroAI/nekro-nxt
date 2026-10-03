@@ -2,11 +2,20 @@ import { StrictMode } from 'react'
 import { createRoot } from 'react-dom/client'
 import { BrowserRouter } from 'react-router-dom'
 import { NekroNxtApp } from './app.js'
+import { NextApp } from './app/next-app.js'
 import { installStableCursorIntent } from './cursor-stability.js'
 import { createProductRuntime, ProductRuntimeProvider } from './product-runtime.js'
 import { applyThemeChoice, readInitialThemeChoice } from './theme-preference.js'
 import '@glinui/tokens/theme.css'
 import './ui-kit/tokens.css'
+import './ui-kit/next/tokens.css'
+
+// Development switch until the redesigned client replaces the classic one (Decision 2026-10-04 §9).
+const UI_STORAGE_KEY = 'nekro-nxt.ui'
+const requestedUi = new URLSearchParams(window.location.search).get('ui')
+if (requestedUi === 'next' || requestedUi === 'classic') window.localStorage.setItem(UI_STORAGE_KEY, requestedUi)
+const nextUi = window.localStorage.getItem(UI_STORAGE_KEY) === 'next'
+if (nextUi) document.documentElement.dataset['ui'] = 'next'
 
 const reducedMotion = window.localStorage.getItem('nekro-nxt.reduced-motion') === 'true'
 applyThemeChoice(document.documentElement, readInitialThemeChoice())
@@ -25,7 +34,7 @@ createRoot(root).render(
   <StrictMode>
     <ProductRuntimeProvider runtime={runtime}>
       <BrowserRouter>
-        <NekroNxtApp />
+        {nextUi ? <NextApp /> : <NekroNxtApp />}
       </BrowserRouter>
     </ProductRuntimeProvider>
   </StrictMode>,
