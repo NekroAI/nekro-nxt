@@ -78,10 +78,18 @@ export interface AgentRevisionContent {
   readonly dynamicClientApprovalPolicy?: DynamicClientApprovalPolicy
 }
 
+/** Non-versioned presentation of an intelligent agent; never part of an AgentRevision. */
+export interface AgentAppearance {
+  /** Identity hue in degrees, 0–359. */
+  readonly hue?: number
+  readonly avatarAssetId?: AssetId
+}
+
 export interface AgentDefinitionRecord {
   readonly id: AgentId
   readonly currentRevisionId: AgentRevisionId
   readonly createdAt: number
+  readonly appearance?: AgentAppearance
 }
 
 export interface AgentRevisionRecord extends Omit<
@@ -236,6 +244,7 @@ export interface CoreRepository {
   createAgent(commit: CreateAgentCommit): void
   createAgentWithChannel(commit: CreateAgentWithChannelCommit): void
   tombstoneAgent(id: AgentId, deletedAt: number): void
+  updateAgentAppearance(id: AgentId, appearance: AgentAppearance, updatedAt: number): void
   getAgent(id: AgentId): CreateAgentCommit | undefined
   listAgents(): readonly CreateAgentCommit[]
   getAgentRevision(id: AgentRevisionId): AgentRevisionRecord | undefined
@@ -733,6 +742,35 @@ export class CoreService {
     const definition = { ...current.definition, currentRevisionId: revision.id }
     this.#repository.appendAgentRevision(definition, revision, expectedCurrentRevisionId)
     return { definition, revision }
+  }
+
+  /**
+   * Replaces the agent's presentation fields. `null` clears a field; `undefined` keeps it. Appearance is
+   * deliberately outside AgentRevision, so it never rolls Sessions over.
+   */
+  updateAgentAppearance(
+    agentId: AgentId,
+    patch: { readonly hue?: number | null; readonly avatarAssetId?: AssetId | null },
+  ): AgentAppearance {
+    const current = this.#repository.getAgent(agentId)
+    if (!current) throw new Error(`Unknown agent: ${agentId}`)
+    if (
+      patch.hue !== undefined &&
+      patch.hue !== null &&
+      (!Number.isInteger(patch.hue) || patch.hue < 0 || patch.hue > 359)
+    ) {
+      throw new TypeError('Agent hue must be an integer between 0 and 359.')
+    }
+    const previous = current.definition.appearance ?? {}
+    const hue = patch.hue === undefined ? previous.hue : (patch.hue ?? undefined)
+    const avatarAssetId =
+      patch.avatarAssetId === undefined ? previous.avatarAssetId : (patch.avatarAssetId ?? undefined)
+    const appearance: AgentAppearance = {
+      ...(hue === undefined ? {} : { hue }),
+      ...(avatarAssetId === undefined ? {} : { avatarAssetId }),
+    }
+    this.#repository.updateAgentAppearance(agentId, appearance, this.#timestamp())
+    return appearance
   }
 
   /** Removes an intelligent-agent from active product state while preserving immutable history. */

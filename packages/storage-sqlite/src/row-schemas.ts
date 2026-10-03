@@ -46,6 +46,7 @@ import {
   admissionEvents,
   admissions,
   agentActivations,
+  agentAppearances,
   agentCurrentRevisions,
   agentDefinitions,
   agentRevisions,
@@ -83,6 +84,7 @@ import {
   localExtensions,
   managementDevices,
   outboundIntents,
+  outboundResolutions,
   physicalDeliveries,
   platformIdentities,
 } from './schema.js'
@@ -91,6 +93,11 @@ const jsonObjectSchema = z.record(z.string(), JsonValueSchema)
 const credentialRefsSchema = z.record(z.string().min(1), z.string().min(1))
 
 export const AgentDefinitionRowSchema = createSelectSchema(agentDefinitions, { id: AgentIdSchema })
+export const AgentAppearanceRowSchema = createSelectSchema(agentAppearances, {
+  agentId: AgentIdSchema,
+  hue: z.number().int().min(0).max(359).nullable(),
+  avatarAssetId: AssetIdSchema.nullable(),
+})
 export const AgentRevisionRowSchema = createSelectSchema(agentRevisions, {
   id: AgentRevisionIdSchema,
   agentId: AgentIdSchema,
@@ -302,7 +309,14 @@ export const BindingAdmissionCutoffRowSchema = createSelectSchema(bindingAdmissi
   migrationId: z.string().min(1),
 })
 
+export const OutboundResolutionRowSchema = createSelectSchema(outboundResolutions, {
+  intentId: OutboundIntentIdSchema,
+  previousDeliveries: JsonValueSchema,
+  viewerKey: z.string().min(1).max(200),
+})
+
 export const CoreRowSchemas = {
+  outboundResolutions: OutboundResolutionRowSchema,
   dshSessionResets: DshSessionResetRowSchema,
   bindingAdmissionCutoffs: BindingAdmissionCutoffRowSchema,
   agentDefinitions: AgentDefinitionRowSchema,

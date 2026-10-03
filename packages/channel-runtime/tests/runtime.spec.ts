@@ -30,6 +30,7 @@ import type {
   PlatformIdentityId,
 } from '@nekro-nxt/contracts'
 import type {
+  AgentAppearance,
   AgentDefinitionRecord,
   AgentRevisionRecord,
   AppendChannelEventCommit,
@@ -90,6 +91,15 @@ class MemoryCoreRepository implements CoreRepository {
     for (let index = this.bindings.length - 1; index >= 0; index -= 1) {
       if (this.bindings[index]?.agentId === id) this.bindings.splice(index, 1)
     }
+  }
+  updateAgentAppearance(id: AgentId, appearance: AgentAppearance): void {
+    const current = this.agents.get(id)
+    if (!current) throw new Error(`Unknown agent: ${id}`)
+    const { appearance: _previous, ...definition } = current.definition
+    this.agents.set(id, {
+      ...current,
+      definition: Object.keys(appearance).length === 0 ? definition : { ...definition, appearance },
+    })
   }
   getAgent(id: AgentId) {
     return this.agents.get(id)
