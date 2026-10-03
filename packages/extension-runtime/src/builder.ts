@@ -1,5 +1,4 @@
 import { DSH_RUNTIME_FINGERPRINT } from '@nekro-nxt/dsh-compat/release'
-import { ExtensionRebuildRequiredError, legacyExtensionManifestSchema } from './legacy-manifest.js'
 import { extensionManifestSchema } from './manifest.js'
 import { ExtensionRevisionIdSchema, type ExtensionId, type ExtensionRevisionId } from '@nekro-nxt/contracts'
 import { EXTENSION_SDK_BUNDLE_SOURCE } from '@nekro-nxt/extension-sdk'
@@ -91,7 +90,6 @@ export class ExtensionBuilder {
     const directory = path.join(this.#cacheRoot, input.revisionId, buildKey)
     const manifestPath = path.join(directory, 'build.json')
     const raw: unknown = JSON.parse(await readFile(path.join(input.sourceDirectory, 'manifest.json'), 'utf8'))
-    if (legacyExtensionManifestSchema.safeParse(raw).success) throw new ExtensionRebuildRequiredError()
     const manifest = extensionManifestSchema.parse(raw)
     if (manifest.revisionId !== input.revisionId) {
       throw new Error('Extension Manifest revision does not match build input.')

@@ -8,7 +8,7 @@ import type {
   InboundCommitResult,
   PhysicalDeliveryRequest,
 } from '@nekro-nxt/adapter-sdk'
-import { defineAdapterConnection } from '@nekro-nxt/adapter-sdk'
+import { configSchema, defineAdapterConnection } from '@nekro-nxt/adapter-sdk'
 import type {
   AssetId,
   ChannelId,
@@ -44,7 +44,7 @@ export const QQOpenClawConnectionConfigurationSchema = z
 
 export const QQOpenClawCredentialsSchema = z
   .object({
-    clientSecretCredentialRef: z.string().trim().min(1),
+    clientSecret: z.string().trim().min(1),
   })
   .strict()
 
@@ -55,7 +55,7 @@ export const QQOpenClawConnectionInputSchema = QQOpenClawConnectionConfiguration
 export type QQOpenClawConnectionInput = z.input<typeof QQOpenClawConnectionInputSchema>
 
 export const QQOpenClawConfigSchema = QQOpenClawConnectionConfigurationSchema.extend({
-  ...QQOpenClawCredentialsSchema.shape,
+  clientSecretCredentialRef: z.string().trim().min(1),
   maxAssetBytes: z
     .number()
     .int()
@@ -85,26 +85,17 @@ export const QQ_OPENCLAW_CONNECTION_DEFINITION = defineAdapterConnection({
   diagnostics: { receive: true, send: true },
   configurationSchema: QQOpenClawConnectionConfigurationSchema,
   credentialsSchema: QQOpenClawCredentialsSchema,
-  configSchema: {
-    schemaVersion: 1,
-    type: 'object',
-    required: ['appId', 'clientSecretCredentialRef'],
-    properties: {
-      appId: { type: 'string', title: 'App ID' },
-      clientSecretCredentialRef: {
-        type: 'credential-reference',
-        credentialKey: 'clientSecret',
-        title: 'Client Secret',
-      },
-      proactiveSend: { type: 'boolean', title: '允许主动发送', default: false },
-      markdown: { type: 'boolean', title: '使用 Markdown', default: true },
-      maxTextLength: { type: 'number', title: '单条字符上限', default: 1800 },
-      maxTextBytes: { type: 'number', title: '单条 UTF-8 字节上限', default: 7200 },
-    },
-  },
+  configSchema: configSchema.object({
+    appId: configSchema.string('App ID', { required: true }),
+    clientSecret: configSchema.secret('Client Secret', { required: true }),
+    proactiveSend: configSchema.boolean('允许主动发送', { default: false }),
+    markdown: configSchema.boolean('使用 Markdown', { default: true }),
+    maxTextLength: configSchema.number('单条字符上限', { default: 1800, integer: true, min: 1, advanced: true }),
+    maxTextBytes: configSchema.number('单条 UTF-8 字节上限', { default: 7200, integer: true, min: 1, advanced: true }),
+  }),
   create: (configuration, credentials) => ({
     ...configuration,
-    clientSecret: credentials.clientSecretCredentialRef,
+    clientSecret: credentials.clientSecret,
   }),
 })
 

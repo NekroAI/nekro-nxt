@@ -1,5 +1,4 @@
 import {
-  AgentClientSlotNameSchema,
   AuthoringAttemptIdSchema,
   AuthoringTaskIdSchema,
   HostPageContributionSchema,
@@ -8,7 +7,6 @@ import {
   JsonValueSchema,
 } from '@nekro-nxt/contracts'
 import type {
-  AgentClientSlotName,
   AgentId,
   AuthoringAttemptId,
   AuthoringTaskId,
@@ -74,7 +72,9 @@ export interface AuthoringAttemptFailure {
 export interface DynamicAuthoringVerification {
   readonly hostStarted: boolean
   readonly clientLoaded: boolean
-  readonly renderedSlots: readonly AgentClientSlotName[]
+  readonly renderedPanels: readonly string[]
+  readonly renderedToolViews: readonly string[]
+  readonly renderedMessageRenderers: readonly string[]
   readonly renderedPages: readonly HostPageContribution[]
   readonly usedUiComponents: readonly HostUiKitComponentName[]
   readonly pageGeometry: readonly HostUiPageGeometryEvidence[]
@@ -228,7 +228,9 @@ export const DynamicAuthoringVerificationSchema = z
   .object({
     hostStarted: z.boolean(),
     clientLoaded: z.boolean(),
-    renderedSlots: z.array(AgentClientSlotNameSchema),
+    renderedPanels: z.array(z.string()).default([]),
+    renderedToolViews: z.array(z.string()).default([]),
+    renderedMessageRenderers: z.array(z.string()).default([]),
     renderedPages: z.array(HostPageContributionSchema),
     usedUiComponents: z.array(HostUiKitComponentNameSchema).default([]),
     pageGeometry: z.array(HostUiPageGeometryEvidenceSchema).default([]),
@@ -238,7 +240,8 @@ export const DynamicAuthoringVerificationSchema = z
     resourceChecks: z.array(z.string()),
     stoppedCleanly: z.boolean(),
   })
-  .strict()
+  // Unknown keys from attempts recorded before contract v4 are dropped instead of failing the task ledger.
+  .strip()
 
 export const DynamicAuthoringEventSchema = z
   .object({

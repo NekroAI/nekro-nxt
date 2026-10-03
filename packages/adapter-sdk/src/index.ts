@@ -5,6 +5,7 @@ import type {
   ChannelId,
   ChannelMemberId,
   ConnectionId,
+  ConfigSchemaDocument,
   ConnectionEventId,
   HostIconName,
   JsonValue,
@@ -16,6 +17,8 @@ import type {
 import {
   AssetIdSchema,
   AdapterActivityKeySchema,
+  ConfigSchemaDocumentSchema,
+  configFields,
   ChannelIdSchema,
   ChannelMemberIdSchema,
   ConnectionIdSchema,
@@ -270,103 +273,7 @@ export interface AdapterDiagnosticPublisher {
   publish(diagnostic: AdapterConnectionDiagnostic): void
 }
 
-export type AdapterConfigurationProperty =
-  | {
-      readonly type: 'string' | 'credential-reference'
-      readonly title: string
-      readonly description?: string
-      readonly default?: string
-      /** Durable credential reference key; defaults to the public property key. */
-      readonly credentialKey?: string
-    }
-  | {
-      readonly type: 'boolean'
-      readonly title: string
-      readonly description?: string
-      readonly default?: boolean
-    }
-  | {
-      readonly type: 'number'
-      readonly title: string
-      readonly description?: string
-      readonly default?: number
-    }
-
 type AdapterSchemaObject = z.ZodObject
-
-type RequiredKeys<T> = {
-  [Key in keyof T]-?: T extends Required<Pick<T, Key>> ? Key : never
-}[keyof T]
-
-type AdapterConfigurationPropertyFor<Value> = [Exclude<Value, undefined>] extends [string]
-  ? {
-      readonly type: 'string'
-      readonly title: string
-      readonly description?: string
-      readonly default?: string
-    }
-  : [Exclude<Value, undefined>] extends [boolean]
-    ? {
-        readonly type: 'boolean'
-        readonly title: string
-        readonly description?: string
-        readonly default?: boolean
-      }
-    : [Exclude<Value, undefined>] extends [number]
-      ? {
-          readonly type: 'number'
-          readonly title: string
-          readonly description?: string
-          readonly default?: number
-        }
-      : never
-
-type AdapterCredentialPropertyFor<Value> = [Exclude<Value, undefined>] extends [string]
-  ? {
-      readonly type: 'credential-reference'
-      readonly title: string
-      readonly description?: string
-      readonly credentialKey?: string
-    }
-  : never
-
-type AdapterConnectionWireSchema = {
-  readonly schemaVersion: number
-  readonly type: 'object'
-  readonly required: readonly string[]
-  readonly properties: Readonly<Record<string, AdapterConfigurationProperty>>
-}
-
-type KnownObjectKeys<T> = {
-  [Key in keyof T]: string extends Key ? never : number extends Key ? never : Key
-}[keyof T]
-
-type AdapterConnectionProperties<
-  ConfigurationSchema extends AdapterSchemaObject,
-  CredentialsSchema extends AdapterSchemaObject,
-> = {
-  [Key in Extract<KnownObjectKeys<z.output<ConfigurationSchema>>, string>]: AdapterConfigurationPropertyFor<
-    z.output<ConfigurationSchema>[Key]
-  >
-} & {
-  [Key in Extract<KnownObjectKeys<z.output<CredentialsSchema>>, string>]: AdapterCredentialPropertyFor<
-    z.output<CredentialsSchema>[Key]
-  >
-}
-
-/** The serializable, product-facing setup metadata contributed by an Adapter. */
-export type AdapterConnectionUiSchema<
-  ConfigurationSchema extends AdapterSchemaObject,
-  CredentialsSchema extends AdapterSchemaObject,
-> = {
-  readonly schemaVersion: number
-  readonly type: 'object'
-  readonly required: readonly Extract<
-    RequiredKeys<z.input<ConfigurationSchema>> | RequiredKeys<z.input<CredentialsSchema>>,
-    string
-  >[]
-  readonly properties: AdapterConnectionProperties<ConfigurationSchema, CredentialsSchema>
-}
 
 /** Product-facing, versioned Connection setup metadata contributed by an Adapter. */
 export type AdapterChannelKind = 'internal' | 'direct' | 'group'
@@ -393,10 +300,7 @@ export const AdapterCapabilityStateSchema = z
   })
   .strict()
 
-export type AdapterConnectionDescriptor<
-  ConfigurationSchema extends AdapterSchemaObject = never,
-  CredentialsSchema extends AdapterSchemaObject = never,
-> = {
+export type AdapterConnectionDescriptor = {
   readonly key: string
   readonly displayName: string
   readonly description: string
@@ -423,11 +327,11 @@ export type AdapterConnectionDescriptor<
     readonly actionLabel?: string
     readonly pendingLabel?: string
   }
-  readonly configSchema: [ConfigurationSchema] extends [never]
-    ? AdapterConnectionWireSchema
-    : [CredentialsSchema] extends [never]
-      ? AdapterConnectionWireSchema
-      : AdapterConnectionUiSchema<ConfigurationSchema, CredentialsSchema>
+  /**
+   * Serialized Schemastery document for the Connection form. Fields with `meta.role: 'secret'` are credentials:
+   * their raw values go to the credential store and the durable reference is keyed by the field name.
+   */
+  readonly configSchema: ConfigSchemaDocument
 }
 
 export type AdapterConnectionCreator<Configuration, Credentials, Created> = (
@@ -441,7 +345,7 @@ export interface AdapterConnectionDefinition<
   CredentialsSchema extends AdapterSchemaObject = AdapterSchemaObject,
   Created = unknown,
 > {
-  readonly descriptor: AdapterConnectionDescriptor<ConfigurationSchema, CredentialsSchema> & { readonly key: Key }
+  readonly descriptor: AdapterConnectionDescriptor & { readonly key: Key }
   readonly configurationSchema: ConfigurationSchema
   readonly credentialsSchema: CredentialsSchema
   readonly create: AdapterConnectionCreator<z.output<ConfigurationSchema>, z.output<CredentialsSchema>, Created>
@@ -466,9 +370,17 @@ export function defineAdapterConnection<
   readonly creation?: AdapterConnectionDescriptor['creation']
   readonly configurationSchema: ConfigurationSchema
   readonly credentialsSchema: CredentialsSchema
-  readonly configSchema: AdapterConnectionUiSchema<ConfigurationSchema, CredentialsSchema>
+  readonly configSchema: ConfigSchemaDocument
   readonly create: AdapterConnectionCreator<z.output<ConfigurationSchema>, z.output<CredentialsSchema>, Created>
 }): AdapterConnectionDefinition<Key, ConfigurationSchema, CredentialsSchema, Created> {
+  for (const field of configFields(input.configSchema)) {
+    const owner = field.kind === 'secret' ? input.credentialsSchema : input.configurationSchema
+    if (!Object.hasOwn(owner.shape, field.key)) {
+      throw new TypeError(
+        `Adapter config field ${field.key} is not declared by the ${field.kind === 'secret' ? 'credentials' : 'configuration'} schema.`,
+      )
+    }
+  }
   return {
     descriptor: {
       key: input.key,
@@ -532,15 +444,14 @@ export function parseAdapterConnectionConfiguration<
     throw new TypeError(`连接配置包含未知字段：${unknownConfiguration ?? unknownCredential}`)
   }
 
-  const uiSchema: AdapterConnectionWireSchema = definition.descriptor.configSchema
-  const missingCredential = Object.entries(uiSchema.properties).find(
-    ([key, property]) =>
-      property.type === 'credential-reference' &&
-      uiSchema.required.includes(key) &&
-      (typeof credentialInput[key] !== 'string' || credentialInput[key].trim().length === 0),
+  const missingCredential = configFields(definition.descriptor.configSchema).find(
+    (field) =>
+      field.kind === 'secret' &&
+      field.required &&
+      (typeof credentialInput[field.key] !== 'string' || String(credentialInput[field.key]).trim().length === 0),
   )
   if (missingCredential) {
-    throw new TypeError(`请填写${missingCredential[1].title}。`)
+    throw new TypeError(`请填写${missingCredential.title}。`)
   }
   return {
     configuration: definition.configurationSchema.parse(configurationInput),
@@ -790,34 +701,18 @@ const assertAdapterDescriptor = (descriptor: AdapterConnectionDescriptor): void 
   if (feedbackKinds.some((kind) => !channelKinds.has(kind))) {
     throw new TypeError('Processing feedback uses an unsupported Channel kind.')
   }
-  if (descriptor.configSchema.type !== 'object') throw new TypeError('Adapter config schema must be an object.')
-  if (!Number.isSafeInteger(descriptor.configSchema.schemaVersion) || descriptor.configSchema.schemaVersion < 1) {
-    throw new TypeError('Adapter config schema version must be a positive integer.')
-  }
-  const credentialKeys = new Set<string>()
-  const requiredKeys = new Set<string>()
-  for (const key of descriptor.configSchema.required) {
-    if (requiredKeys.has(key)) throw new TypeError(`Adapter required property is duplicated: ${key}`)
-    requiredKeys.add(key)
-  }
-  for (const [key, property] of Object.entries(descriptor.configSchema.properties)) {
-    if (!key.trim() || !property.title.trim())
-      throw new TypeError('Adapter config properties need stable keys and titles.')
-    if (property.default !== undefined && property.type === 'credential-reference') {
-      throw new TypeError(`Adapter credential property cannot declare a default: ${key}`)
+  const parsedSchema = ConfigSchemaDocumentSchema.safeParse(descriptor.configSchema)
+  if (!parsedSchema.success) throw new TypeError('Adapter config schema must be a serialized Schemastery object.')
+  for (const field of configFields(descriptor.configSchema)) {
+    if (!field.key.trim() || !field.title.trim())
+      throw new TypeError('Adapter config fields need stable keys and titles.')
+    if (field.kind === 'object' || field.kind === 'array') {
+      throw new TypeError(`Adapter config field must be a scalar: ${field.key}`)
     }
-    if (property.default !== undefined && typeof property.default !== property.type) {
-      throw new TypeError(`Adapter config property default has the wrong type: ${key}`)
+    if (field.kind === 'secret' && field.default !== undefined) {
+      throw new TypeError(`Adapter credential field cannot declare a default: ${field.key}`)
     }
-    if (property.type !== 'credential-reference') continue
-    const credentialKey = property.credentialKey?.trim() || key
-    if (credentialKeys.has(credentialKey)) throw new TypeError(`Adapter credential key is duplicated: ${credentialKey}`)
-    credentialKeys.add(credentialKey)
   }
-  const unknownRequired = descriptor.configSchema.required.find(
-    (key) => !Object.hasOwn(descriptor.configSchema.properties, key),
-  )
-  if (unknownRequired) throw new TypeError(`Adapter required property is not declared: ${unknownRequired}`)
 }
 
 /** Single authoritative catalog for built-in and installed Host Adapter contributions. */
@@ -903,3 +798,6 @@ export function parseAdapterCapabilities(input: unknown): AdapterRuntimeCapabili
 export function parseAdapterDeliveryReceipt(input: unknown): AdapterDeliveryReceipt {
   return AdapterDeliveryReceiptSchema.parse(input)
 }
+
+export { configSchema, configFields, EMPTY_CONFIG_SCHEMA } from '@nekro-nxt/contracts'
+export type { ConfigField, ConfigSchemaDocument, ConfigSchemaNode } from '@nekro-nxt/contracts'

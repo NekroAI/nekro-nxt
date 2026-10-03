@@ -1,4 +1,4 @@
-import { defineAdapterConnection, type AdapterOutboundCapabilities } from '@nekro-nxt/adapter-sdk'
+import { configSchema, defineAdapterConnection, type AdapterOutboundCapabilities } from '@nekro-nxt/adapter-sdk'
 import { z } from 'zod'
 
 export const ONEBOT_11_ADAPTER_KEY = 'onebot-11'
@@ -187,26 +187,15 @@ export const ONEBOT_11_CONNECTION_DEFINITION = defineAdapterConnection({
   diagnostics: { receive: true, send: true },
   configurationSchema: OneBot11ConnectionConfigurationSchema,
   credentialsSchema: OneBot11CredentialsSchema,
-  configSchema: {
-    schemaVersion: 1,
-    type: 'object',
-    required: ['endpoint'],
-    properties: {
-      endpoint: {
-        type: 'string',
-        title: 'WebSocket Endpoint',
-        description: '协议端提供的正向 Universal WebSocket 地址，保留完整路径。',
-      },
-      accessToken: {
-        type: 'credential-reference',
-        credentialKey: 'accessToken',
-        title: 'Access Token',
-        description: '可选。以 Authorization: Bearer 头发送。',
-      },
-      capturePokeEvents: { type: 'boolean', title: '记录戳一戳事件', default: true },
-      captureMessageReactionEvents: { type: 'boolean', title: '记录普通消息回应', default: false },
-    },
-  },
+  configSchema: configSchema.object({
+    endpoint: configSchema.string('WebSocket Endpoint', {
+      required: true,
+      hint: '协议端提供的正向 Universal WebSocket 地址，保留完整路径。',
+    }),
+    accessToken: configSchema.secret('Access Token', { hint: '可选。以 Authorization: Bearer 头发送。' }),
+    capturePokeEvents: configSchema.boolean('记录戳一戳事件', { default: true, advanced: true }),
+    captureMessageReactionEvents: configSchema.boolean('记录普通消息回应', { default: false, advanced: true }),
+  }),
   create: (configuration, credentials) => ({ ...configuration, accessToken: credentials.accessToken }),
 })
 

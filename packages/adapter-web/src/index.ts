@@ -7,7 +7,7 @@ import type {
   InboundCommitResult,
   PhysicalDeliveryRequest,
 } from '@nekro-nxt/adapter-sdk'
-import { AdapterEmptyObjectSchema, defineAdapterConnection } from '@nekro-nxt/adapter-sdk'
+import { AdapterEmptyObjectSchema, EMPTY_CONFIG_SCHEMA, defineAdapterConnection } from '@nekro-nxt/adapter-sdk'
 import type { ChannelId, ChannelMemberId, ConnectionId, MessagePart } from '@nekro-nxt/contracts'
 
 export const WEB_ADAPTER_KEY = 'web'
@@ -25,7 +25,7 @@ export const WEB_CONNECTION_DEFINITION = defineAdapterConnection({
   diagnostics: { receive: false, send: false },
   configurationSchema: AdapterEmptyObjectSchema,
   credentialsSchema: AdapterEmptyObjectSchema,
-  configSchema: { schemaVersion: 1, type: 'object', required: [], properties: {} },
+  configSchema: EMPTY_CONFIG_SCHEMA,
   create: () => undefined,
 })
 

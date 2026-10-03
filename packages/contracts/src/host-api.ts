@@ -28,10 +28,13 @@ import {
   promptDocumentPlainText,
 } from './domain.js'
 import { ClientNotificationSchema } from './management-api.js'
+import { ConfigSchemaDocumentSchema } from './config-schema.js'
 import {
-  AdapterClientSlotNameSchema,
-  AgentClientSlotNameSchema,
   DshNxtHostUiSchema,
+  EMPTY_EXTENSION_UI_CONTRIBUTIONS,
+  ExtensionUiContributionsSchema,
+  PanelContributionSchema,
+  RichKindSchema,
   HostPageContributionSchema,
   HostIconNameSchema,
   HostUiKitComponentNameSchema,
@@ -639,34 +642,6 @@ export type ChannelRuntimeProjection = z.output<typeof ChannelRuntimeProjectionS
 export type ChannelRuntimeSseData = z.output<typeof ChannelRuntimeSseDataSchema>
 export type ChannelFactSseData = z.output<typeof ChannelFactSseDataSchema>
 
-const AdapterConfigurationPropertySchema = z.discriminatedUnion('type', [
-  z
-    .object({
-      type: z.enum(['string', 'credential-reference']),
-      title: z.string(),
-      description: z.string().optional(),
-      default: z.string().optional(),
-      credentialKey: z.string().trim().min(1).optional(),
-    })
-    .strict(),
-  z
-    .object({
-      type: z.literal('boolean'),
-      title: z.string(),
-      description: z.string().optional(),
-      default: z.boolean().optional(),
-    })
-    .strict(),
-  z
-    .object({
-      type: z.literal('number'),
-      title: z.string(),
-      description: z.string().optional(),
-      default: z.number().finite().optional(),
-    })
-    .strict(),
-])
-
 const AdapterConnectionCreationSchema = z
   .object({
     mode: z.enum(['schema-form', 'qr-login']),
@@ -707,14 +682,7 @@ const AdapterConnectionDescriptorSchema = z
       .strict(),
     diagnostics: z.object({ receive: z.boolean(), send: z.boolean() }).strict(),
     creation: AdapterConnectionCreationSchema.optional(),
-    configSchema: z
-      .object({
-        schemaVersion: z.number().int().nonnegative(),
-        type: z.literal('object'),
-        required: z.array(z.string()),
-        properties: z.record(z.string(), AdapterConfigurationPropertySchema),
-      })
-      .strict(),
+    configSchema: ConfigSchemaDocumentSchema,
   })
   .strict()
 
@@ -943,7 +911,9 @@ export const HostSnapshotSchema = z
               .object({
                 id: ExtensionRevisionIdSchema,
                 revisionNumber: z.number().int().positive(),
-                format: z.enum(['current', 'requires-rebuild', 'unavailable']).optional(),
+                format: z.enum(['current', 'unavailable']).optional(),
+                ui: ExtensionUiContributionsSchema.default(EMPTY_EXTENSION_UI_CONTRIBUTIONS),
+                configSchema: ConfigSchemaDocumentSchema.optional(),
                 createdAt: z.number().int().safe().nonnegative(),
                 scope: z.enum(['agent', 'host-adapter', 'host-ui']),
                 contributions: z.array(z.string()),
@@ -957,10 +927,9 @@ export const HostSnapshotSchema = z
                     buildKey: z.string(),
                     toolInvocationCount: z.number().int().nonnegative(),
                     rpcMethods: z.array(z.string()),
-                    renderedSlots: z.array(z.string()),
-                    renderedHostSlots: z
-                      .array(z.object({ name: AdapterClientSlotNameSchema, key: NonEmptyStringSchema }).strict())
-                      .optional(),
+                    renderedPanels: z.array(z.string()).default([]),
+                    renderedToolViews: z.array(z.string()).default([]),
+                    renderedMessageRenderers: z.array(z.string()).default([]),
                     renderedPages: z.array(HostPageContributionSchema).max(8).optional(),
                     usedUiComponents: z.array(HostUiKitComponentNameSchema).optional(),
                     pageGeometry: z.array(HostUiPageGeometryEvidenceSchema).max(8).optional(),
@@ -1010,6 +979,7 @@ export const HostSnapshotSchema = z
             .object({
               extensionRevisionId: ExtensionRevisionIdSchema,
               installedAt: z.number().int().safe().nonnegative(),
+              config: JsonValueSchema.default({}),
               runtime: z
                 .object({
                   status: z.enum(['active', 'restore-failed', 'dispose-failed']),
@@ -2427,11 +2397,9 @@ export const HostApiContracts = {
         pluginId: DynamicIdSchema,
         packageId: DynamicIdSchema,
         pluginRunId: DynamicIdSchema,
-        renderedSlots: z.array(AgentClientSlotNameSchema).max(5),
-        renderedHostSlots: z
-          .array(z.object({ name: AdapterClientSlotNameSchema, key: NonEmptyStringSchema }).strict())
-          .max(16)
-          .default([]),
+        renderedPanels: z.array(PanelContributionSchema).max(16).default([]),
+        renderedToolViews: z.array(z.string().trim().min(1).max(64)).max(32).default([]),
+        renderedMessageRenderers: z.array(RichKindSchema).max(32).default([]),
         renderedPages: z.array(HostPageContributionSchema).max(8).default([]),
         usedUiComponents: z
           .array(HostUiKitComponentNameSchema)
@@ -2444,37 +2412,15 @@ export const HostApiContracts = {
       .strict()
       .refine(
         (value) =>
-          value.renderedSlots.length > 0 || value.renderedHostSlots.length > 0 || value.renderedPages.length > 0,
+          value.renderedPanels.length > 0 ||
+          value.renderedToolViews.length > 0 ||
+          value.renderedMessageRenderers.length > 0 ||
+          value.renderedPages.length > 0,
         {
-          message: '动态 Client 必须提供至少一个真实渲染的产品 Slot 或页面。',
+          message: '动态 Client 必须真实渲染至少一个面板、工具视图、富消息渲染器或页面。',
         },
-      )
-      .superRefine((value, context) => {
-        if (value.renderedPages.length === 0 && value.permissions.permissions.length === 0) return
-        if (value.renderedPages.length > 0) return
-        context.addIssue({
-          code: 'custom',
-          path: ['permissions'],
-          message: '没有页面贡献时不能声明 Host UI 权限。',
-        })
-      }),
+      ),
     response: z.object({ ok: z.literal(true) }).strict(),
-    error: HostApiErrorSchema,
-  }),
-  rebuildExtensionRevision: defineContract({
-    invalidatesSnapshot: true,
-    timeoutMs: 300_000,
-    method: 'POST',
-    path: '/api/extensions/rebuild',
-    params: EmptyParamsSchema,
-    request: z.object({ revisionId: ExtensionRevisionIdSchema }).strict(),
-    response: z
-      .object({
-        extensionId: ExtensionIdSchema,
-        revisionId: ExtensionRevisionIdSchema,
-        autoActivated: z.literal(false),
-      })
-      .strict(),
     error: HostApiErrorSchema,
   }),
   saveExtensionFromDynamic: defineContract({
@@ -2560,7 +2506,15 @@ export const HostApiContracts = {
     method: 'POST',
     path: '/api/agents/:agentId/extensions/:extensionId/activation',
     params: agentExtensionParam,
-    request: z.object({ revisionId: ExtensionRevisionIdSchema }).strict(),
+    request: z
+      .object({
+        revisionId: ExtensionRevisionIdSchema,
+        permissionApproval: z
+          .object({ permissionDigest: z.string().regex(/^[a-f0-9]{64}$/u) })
+          .strict()
+          .optional(),
+      })
+      .strict(),
     response: z
       .object({
         activation: z
@@ -2583,6 +2537,25 @@ export const HostApiContracts = {
     params: agentExtensionParam,
     request: NoRequestBodySchema,
     response: z.object({ disabled: z.literal(true) }).strict(),
+    error: HostApiErrorSchema,
+  }),
+  updateExtensionActivationConfig: defineContract({
+    invalidatesSnapshot: true,
+    method: 'PUT',
+    path: '/api/agents/:agentId/extensions/:extensionId/activation/config',
+    params: agentExtensionParam,
+    request: z.object({ config: JsonValueSchema }).strict(),
+    response: z.object({ config: JsonValueSchema }).strict(),
+    error: HostApiErrorSchema,
+  }),
+  updateHostExtensionConfig: defineContract({
+    invalidatesSnapshot: true,
+    timeoutMs: 300_000,
+    method: 'PUT',
+    path: '/api/extensions/:extensionId/installation/config',
+    params: extensionParam,
+    request: z.object({ config: JsonValueSchema }).strict(),
+    response: z.object({ config: JsonValueSchema }).strict(),
     error: HostApiErrorSchema,
   }),
   installHostExtension: defineContract({

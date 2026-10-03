@@ -1,29 +1,6 @@
 import { z } from 'zod'
 import { ExtensionIdSchema, ExtensionRevisionIdSchema, HostUiPageInstanceIdSchema } from './domain.js'
-
-export const AGENT_CLIENT_SLOT_NAMES = [
-  'agent.workbench.sections',
-  'extension.activation.panels',
-  'extension.details.panels',
-  'channel.inspector.agent.sections',
-  'conversation.tool.card',
-] as const
-
-export const AgentClientSlotNameSchema = z.enum(AGENT_CLIENT_SLOT_NAMES)
-
-export type AgentClientSlotName = z.output<typeof AgentClientSlotNameSchema>
-
-export const ADAPTER_CLIENT_SLOT_NAMES = [
-  'conversation.message.rich',
-  'connection.adapter.setup',
-  'connection.adapter.status',
-  'connection.adapter.test',
-  'channel.inspector.adapter.sections',
-] as const
-
-export const AdapterClientSlotNameSchema = z.enum(ADAPTER_CLIENT_SLOT_NAMES)
-
-export type AdapterClientSlotName = z.output<typeof AdapterClientSlotNameSchema>
+import { ConfigSchemaDocumentSchema } from './config-schema.js'
 
 export const HostUiPermissionSchema = z.enum([
   'agents.read',
@@ -322,3 +299,121 @@ export const DshNxtHostUiSchema = z
   .strict()
 
 export type DshNxtHostUi = z.output<typeof DshNxtHostUiSchema>
+
+/** Where the product shell may place an extension panel. The Host decides the concrete page and position. */
+export const ExtensionPanelAnchorSchema = z.enum(['agent', 'channel', 'extension', 'connection'])
+export type ExtensionPanelAnchor = z.output<typeof ExtensionPanelAnchorSchema>
+
+export const AGENT_PANEL_ANCHORS = ['agent', 'channel', 'extension'] as const satisfies readonly ExtensionPanelAnchor[]
+export const ADAPTER_PANEL_ANCHORS = ['connection', 'channel'] as const satisfies readonly ExtensionPanelAnchor[]
+
+export const PanelDensitySchema = z.enum(['compact', 'full'])
+export type PanelDensity = z.output<typeof PanelDensitySchema>
+
+export const ConnectionPanelRoleSchema = z.enum(['setup', 'status', 'diagnostics'])
+export type ConnectionPanelRole = z.output<typeof ConnectionPanelRoleSchema>
+
+export const ToolViewDensitySchema = z.enum(['chip', 'card'])
+export type ToolViewDensity = z.output<typeof ToolViewDensitySchema>
+
+const ContributionIdSchema = z
+  .string()
+  .trim()
+  .regex(/^[a-z](?:[a-z0-9-]{0,62}[a-z0-9])?$/u)
+
+const panelFields = {
+  id: ContributionIdSchema,
+  anchor: ExtensionPanelAnchorSchema,
+  title: z.string().trim().min(1).max(24),
+  icon: HostIconNameSchema.optional(),
+  densities: z.array(PanelDensitySchema).min(1).max(2),
+  role: ConnectionPanelRoleSchema.optional(),
+  when: z
+    .object({
+      channelKinds: z
+        .array(z.enum(['internal', 'direct', 'group']))
+        .min(1)
+        .max(3)
+        .optional(),
+    })
+    .strict()
+    .optional(),
+}
+
+const checkPanel = (
+  value: {
+    readonly anchor: ExtensionPanelAnchor
+    readonly densities: readonly PanelDensity[]
+    readonly role?: ConnectionPanelRole | undefined
+    readonly when?: { readonly channelKinds?: readonly string[] | undefined } | undefined
+  },
+  context: z.RefinementCtx,
+): void => {
+  if (new Set(value.densities).size !== value.densities.length) {
+    context.addIssue({ code: 'custom', path: ['densities'], message: '面板密度不能重复。' })
+  }
+  if (value.anchor === 'connection' && value.role === undefined) {
+    context.addIssue({
+      code: 'custom',
+      path: ['role'],
+      message: '连接面板必须声明 setup、status 或 diagnostics 角色。',
+    })
+  }
+  if (value.anchor !== 'connection' && value.role !== undefined) {
+    context.addIssue({ code: 'custom', path: ['role'], message: '只有连接面板可以声明角色。' })
+  }
+  if (value.when?.channelKinds !== undefined && value.anchor !== 'channel') {
+    context.addIssue({ code: 'custom', path: ['when'], message: '只有频道面板可以按频道类型限定。' })
+  }
+  if (
+    value.when?.channelKinds !== undefined &&
+    new Set(value.when.channelKinds).size !== value.when.channelKinds.length
+  ) {
+    context.addIssue({ code: 'custom', path: ['when', 'channelKinds'], message: '频道类型不能重复。' })
+  }
+}
+
+/** Client-side registration options for one panel; identical to the Manifest contribution without `kind`. */
+export const ExtensionPanelDeclarationSchema = z.object(panelFields).strict().superRefine(checkPanel)
+export type ExtensionPanelDeclaration = z.output<typeof ExtensionPanelDeclarationSchema>
+
+export const PanelContributionSchema = z
+  .object({ kind: z.literal('panel'), ...panelFields })
+  .strict()
+  .superRefine(checkPanel)
+export type PanelContribution = z.output<typeof PanelContributionSchema>
+
+export const ToolViewContributionSchema = z
+  .object({ kind: z.literal('tool-view'), tool: z.string().trim().min(1).max(64) })
+  .strict()
+export type ToolViewContribution = z.output<typeof ToolViewContributionSchema>
+
+export const RichKindSchema = z
+  .string()
+  .trim()
+  .regex(/^[a-z0-9][a-z0-9._-]{0,62}$/u)
+
+export const MessageRendererContributionSchema = z
+  .object({ kind: z.literal('message-renderer'), richKind: RichKindSchema })
+  .strict()
+export type MessageRendererContribution = z.output<typeof MessageRendererContributionSchema>
+
+/** Optional configuration surface shared by every extension scope. */
+export const ExtensionConfigDeclarationSchema = z.object({ schema: ConfigSchemaDocumentSchema }).strict()
+export type ExtensionConfigDeclaration = z.output<typeof ExtensionConfigDeclarationSchema>
+
+/** Product projection of what one Revision contributes to the shell. */
+export const ExtensionUiContributionsSchema = z
+  .object({
+    panels: z.array(PanelContributionSchema).max(16),
+    toolViews: z.array(z.string().trim().min(1).max(64)).max(32),
+    messageRenderers: z.array(RichKindSchema).max(32),
+  })
+  .strict()
+export type ExtensionUiContributions = z.output<typeof ExtensionUiContributionsSchema>
+
+export const EMPTY_EXTENSION_UI_CONTRIBUTIONS: ExtensionUiContributions = {
+  panels: [],
+  toolViews: [],
+  messageRenderers: [],
+}

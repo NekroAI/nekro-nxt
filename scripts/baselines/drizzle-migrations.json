@@ -28,6 +28,7 @@
     "0023_channel_history_index.sql": "0950cce56b0afad6579ddceccf38a4140d8e47d3b8318852389c01b9cd3de580",
     "0024_connection_account_key.sql": "9d809865825a3b59c8edfa8b96ad8a9c9ac146d21f6611f9a2831c969bb39cfd",
     "0025_dsh_session_reset_receipts.sql": "9da39abe0e1ad1f56aacc7603a2fdc4226d62b58b0378a97b3b083ef7ca4b095",
+    "0026_host_installation_config.sql": "694c82074507dcbcb71ef29ba691bec2ef8274b05fcf26bd3e4c83609e5fea69",
     "meta/0000_snapshot.json": "03573ed4ecfb276bfad4bd1d6041564c11d3c52e1fcb35fc3dd278da7b55448d",
     "meta/0001_snapshot.json": "48b7a1cd91c44d75a394c94af554fc85621fe5fda2dd680d4bc25b68679d4ee5",
     "meta/0002_snapshot.json": "aa0ed0d69885976c1ce596d468657ac121e8cae5ac9e09aa9843be0b3b3127c9",
@@ -54,6 +55,7 @@
     "meta/0023_snapshot.json": "e2c98dbf80c49272bda437a5ffa5cd230528ce86da043ad0de1b3027fbe06ea0",
     "meta/0024_snapshot.json": "2cd6e1d585713ca331c0f426b2c067479d95b623d88b81e0060175d941657a62",
     "meta/0025_snapshot.json": "938e06c78fb1e20d1758c64118a5d531f2a6bba5c76d62a6fe928ef555887bfa",
-    "meta/_journal.json": "6abfc9006fa6645bfba6e10ee683a650bf9df25b5e442ef251841fc45be4635c"
+    "meta/0026_snapshot.json": "5ff5262de575c1de04204397d5257e4a9196f97688b2dec29c562fd188a02138",
+    "meta/_journal.json": "3214fb8d8373638aedfaee054d1e869a39248ffbcc74df22867707b5c7c8047d"
   }
 }

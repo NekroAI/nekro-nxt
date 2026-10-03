@@ -183,6 +183,13 @@
       "when": 1790580453710,
       "tag": "0025_dsh_session_reset_receipts",
       "breakpoints": true
+    },
+    {
+      "idx": 26,
+      "version": "6",
+      "when": 1791066969088,
+      "tag": "0026_host_installation_config",
+      "breakpoints": true
     }
   ]
 }

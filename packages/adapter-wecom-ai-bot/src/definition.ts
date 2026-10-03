@@ -1,4 +1,4 @@
-import { defineAdapterConnection, type AdapterOutboundCapabilities } from '@nekro-nxt/adapter-sdk'
+import { configSchema, defineAdapterConnection, type AdapterOutboundCapabilities } from '@nekro-nxt/adapter-sdk'
 import { z } from 'zod'
 
 export const WECOM_AI_BOT_ADAPTER_KEY = 'wecom-ai-bot'
@@ -66,20 +66,10 @@ export const WECOM_AI_BOT_CONNECTION_DEFINITION = defineAdapterConnection({
   diagnostics: { receive: true, send: true },
   configurationSchema: WeComAiBotConnectionConfigurationSchema,
   credentialsSchema: WeComAiBotCredentialsSchema,
-  configSchema: {
-    schemaVersion: 1,
-    type: 'object',
-    required: ['botId', 'secret'],
-    properties: {
-      botId: { type: 'string', title: 'BotID', description: '企业微信智能机器人配置页提供的 BotID。' },
-      secret: {
-        type: 'credential-reference',
-        credentialKey: 'secret',
-        title: 'Secret',
-        description: '开启长连接 API 模式后提供的专用 Secret。',
-      },
-    },
-  },
+  configSchema: configSchema.object({
+    botId: configSchema.string('BotID', { required: true, hint: '企业微信智能机器人配置页提供的 BotID。' }),
+    secret: configSchema.secret('Secret', { required: true, hint: '开启长连接 API 模式后提供的专用 Secret。' }),
+  }),
   create: (configuration, credentials) => ({ ...configuration, secret: credentials.secret }),
 })
 

@@ -1,8 +1,6 @@
 import { and, asc, eq, notInArray } from 'drizzle-orm'
 import {
   DshPluginEntryIdSchema,
-  AdapterClientSlotNameSchema,
-  AgentClientSlotNameSchema,
   ExtensionIdSchema,
   ExtensionRevisionIdSchema,
   HostPageContributionSchema,
@@ -92,6 +90,7 @@ const toHostInstallation = (input: typeof hostExtensionInstallations.$inferSelec
     extensionId: row.extensionId,
     extensionRevisionId: row.extensionRevisionId,
     installedAt: row.installedAt,
+    config: row.config,
   }
 }
 
@@ -156,7 +155,7 @@ const toHostUiDiagnostic = (input: typeof hostUiDiagnostics.$inferSelect): HostU
 const ExtensionRevisionVerificationSchema = z.object({
   revisionId: ExtensionRevisionIdSchema,
   dshVersion: z.string().trim().min(1),
-  contractVersion: z.enum(['nekro-nxt-extension-v1', 'nekro-nxt-extension-v2', 'nekro-nxt-extension-v3']),
+  contractVersion: z.literal('nekro-nxt-extension-v4'),
   scope: z.enum(['host-adapter', 'host-ui']).optional(),
   origin: z.object({ episodeId: z.string(), pluginId: z.string(), packageId: z.string(), pluginRunId: z.string() }),
   verifiedAt: z.number().int().nonnegative(),
@@ -164,7 +163,9 @@ const ExtensionRevisionVerificationSchema = z.object({
   clientBuild: z.object({ built: z.boolean(), buildKey: z.string() }),
   toolInvocations: z.array(z.object({ name: z.string(), succeeded: z.boolean() })),
   rpcMethods: z.array(z.string()),
-  renderedSlots: z.array(AgentClientSlotNameSchema),
+  renderedPanels: z.array(z.string()),
+  renderedToolViews: z.array(z.string()),
+  renderedMessageRenderers: z.array(z.string()),
   renderedPages: z.array(HostPageContributionSchema).max(8).optional(),
   usedUiComponents: z.array(HostUiKitComponentNameSchema).optional(),
   pageGeometry: z.array(HostUiPageGeometryEvidenceSchema).max(8).optional(),
@@ -181,20 +182,13 @@ const ExtensionRevisionVerificationSchema = z.object({
       outboundReceipt: z.enum(['sent', 'failed', 'unknown']),
     })
     .optional(),
-  renderedHostSlots: z
-    .array(
-      z
-        .object({
-          name: AdapterClientSlotNameSchema,
-          key: z.string().trim().min(1),
-        })
-        .strict(),
-    )
-    .optional(),
 })
 
-const parseExtensionRevisionVerification = (input: unknown): ExtensionRevisionVerification => {
-  const parsed = ExtensionRevisionVerificationSchema.parse(input)
+/** Evidence from earlier contract versions is not current verification; such Revisions read as unverified. */
+const parseExtensionRevisionVerification = (input: unknown): ExtensionRevisionVerification | undefined => {
+  const result = ExtensionRevisionVerificationSchema.safeParse(input)
+  if (!result.success) return undefined
+  const parsed = result.data
   return {
     revisionId: parsed.revisionId,
     dshVersion: parsed.dshVersion,
@@ -205,14 +199,15 @@ const parseExtensionRevisionVerification = (input: unknown): ExtensionRevisionVe
     clientBuild: parsed.clientBuild,
     toolInvocations: parsed.toolInvocations,
     rpcMethods: parsed.rpcMethods,
-    renderedSlots: parsed.renderedSlots,
+    renderedPanels: parsed.renderedPanels,
+    renderedToolViews: parsed.renderedToolViews,
+    renderedMessageRenderers: parsed.renderedMessageRenderers,
     ...(parsed.scope === undefined ? {} : { scope: parsed.scope }),
     ...(parsed.renderedPages === undefined ? {} : { renderedPages: parsed.renderedPages }),
     ...(parsed.usedUiComponents === undefined ? {} : { usedUiComponents: parsed.usedUiComponents }),
     ...(parsed.pageGeometry === undefined ? {} : { pageGeometry: parsed.pageGeometry }),
     ...(parsed.permissions === undefined ? {} : { permissions: parsed.permissions }),
     ...(parsed.adapter === undefined ? {} : { adapter: parsed.adapter }),
-    ...(parsed.renderedHostSlots === undefined ? {} : { renderedHostSlots: parsed.renderedHostSlots }),
   }
 }
 
@@ -413,6 +408,7 @@ export function createExtensionsRepository(database: DrizzleCoreDatabase): Exten
           set: {
             extensionRevisionId: installation.extensionRevisionId,
             installedAt: installation.installedAt,
+            config: installation.config,
           },
         })
         .run()
@@ -431,6 +427,7 @@ export function createExtensionsRepository(database: DrizzleCoreDatabase): Exten
               set: {
                 extensionRevisionId: input.installation.extensionRevisionId,
                 installedAt: input.installation.installedAt,
+                config: input.installation.config,
               },
             })
             .run()
