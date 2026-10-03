@@ -379,6 +379,14 @@ export const HostSnapshotMessageSchema = z
     targetLogicalMessageId: LogicalMessageIdSchema.optional(),
     occurredAt: z.number().finite(),
     deliveryState: z.enum(['planned', 'sending', 'sent', 'partially-sent', 'failed', 'unknown']).optional(),
+    /** Latest administrator resolution of an unsettled delivery; history keeps the original receipt state. */
+    deliveryResolution: z
+      .object({
+        action: z.enum(['retry', 'confirm-delivered']),
+        resolvedAt: z.number().int().safe().nonnegative(),
+      })
+      .strict()
+      .optional(),
     origin: z.enum(['admin-console']).optional(),
   })
   .strict()
@@ -734,6 +742,164 @@ export const HostSyncCursorSchema = z
   })
   .strict()
 
+export const AgentAppearanceSchema = z
+  .object({
+    hue: z.number().int().min(0).max(359).optional(),
+    avatarAssetId: AssetIdSchema.optional(),
+  })
+  .strict()
+
+export type AgentAppearance = z.output<typeof AgentAppearanceSchema>
+
+/** Upper bound of a reported unread count; `unreadCapped` marks that more exist. */
+export const CHANNEL_UNREAD_COUNT_CAP = 99
+
+export const ChannelActivitySummarySchema = z
+  .object({
+    lastActivityAt: z.number().int().safe().nonnegative().optional(),
+    lastMessage: z
+      .object({
+        role: z.enum(['member', 'agent', 'admin', 'system']),
+        author: z.string().max(120),
+        preview: z.string().max(160),
+        occurredAt: z.number().int().safe().nonnegative(),
+      })
+      .strict()
+      .optional(),
+    unreadCount: z.number().int().nonnegative().max(CHANNEL_UNREAD_COUNT_CAP),
+    unreadCapped: z.boolean(),
+  })
+  .strict()
+
+export type ChannelActivitySummary = z.output<typeof ChannelActivitySummarySchema>
+
+export const AttentionItemSchema = z
+  .object({
+    /** Stable fingerprint; a recurrence of the same condition gets a new fingerprint. */
+    id: z.string().min(1).max(200),
+    kind: z.enum([
+      'delivery-unconfirmed',
+      'delivery-failed',
+      'turn-failed',
+      'authoring-approval',
+      'connection-unhealthy',
+      'agent-model-unavailable',
+      'agent-vision-unavailable',
+    ]),
+    severity: z.enum(['critical', 'warning', 'info']),
+    subject: z
+      .object({
+        kind: z.enum(['outbound', 'channel', 'authoring-task', 'connection', 'agent']),
+        id: NonEmptyStringSchema,
+      })
+      .strict(),
+    related: z
+      .object({
+        channelId: ChannelIdSchema.optional(),
+        agentId: AgentIdSchema.optional(),
+        connectionId: ConnectionIdSchema.optional(),
+        taskId: AuthoringTaskIdSchema.optional(),
+        outboundId: OutboundIntentIdSchema.optional(),
+      })
+      .strict(),
+    title: z.string().min(1).max(120),
+    detail: z.string().max(400),
+    action: z
+      .object({
+        kind: z.enum(['open-channel', 'resolve-delivery', 'open-authoring-task', 'open-connection', 'open-agent']),
+        label: z.string().min(1).max(40),
+      })
+      .strict(),
+    occurredAt: z.number().int().safe().nonnegative(),
+  })
+  .strict()
+
+export type AttentionItem = z.output<typeof AttentionItemSchema>
+
+export const AttentionListSchema = z
+  .object({
+    revision: z.string().min(1),
+    items: z.array(AttentionItemSchema).max(200),
+  })
+  .strict()
+
+export const ChannelPendingContextSchema = z
+  .object({
+    channelId: ChannelIdSchema,
+    episodeId: EpisodeIdSchema.optional(),
+    items: z.array(
+      z
+        .object({
+          admissionId: NonEmptyStringSchema,
+          /** `next-step`: injected at the next safe step boundary; `next-turn`: waits for a later turn. */
+          target: z.enum(['next-step', 'next-turn']),
+          events: z.array(
+            z
+              .object({
+                eventId: ChannelEventIdSchema,
+                author: z.string().max(120),
+                preview: z.string().max(160),
+                receivedAt: z.number().int().safe().nonnegative(),
+              })
+              .strict(),
+          ),
+        })
+        .strict(),
+    ),
+  })
+  .strict()
+
+export type ChannelPendingContext = z.output<typeof ChannelPendingContextSchema>
+
+export const ACTIVITY_MAX_WINDOW_MS = 24 * 60 * 60 * 1000
+export const ACTIVITY_MIN_BUCKET_MS = 60 * 1000
+export const ACTIVITY_MAX_BUCKETS = 288
+
+const ActivityDurationSchema = z.string().regex(/^[1-9][0-9]{0,4}[mh]$/u)
+
+export const activityDurationMs = (value: string): number => {
+  const amount = Number(value.slice(0, -1))
+  return value.endsWith('h') ? amount * 60 * 60 * 1000 : amount * 60 * 1000
+}
+
+export const ActivityQuerySchema = z
+  .object({
+    window: ActivityDurationSchema.default('2h'),
+    bucket: ActivityDurationSchema.default('5m'),
+  })
+  .strict()
+  .superRefine((value, context) => {
+    const window = activityDurationMs(value.window)
+    const bucket = activityDurationMs(value.bucket)
+    if (window > ACTIVITY_MAX_WINDOW_MS)
+      context.addIssue({ code: 'custom', path: ['window'], message: '统计窗口不能超过 24 小时。' })
+    if (bucket < ACTIVITY_MIN_BUCKET_MS)
+      context.addIssue({ code: 'custom', path: ['bucket'], message: '统计间隔不能小于 1 分钟。' })
+    if (bucket > window) context.addIssue({ code: 'custom', path: ['bucket'], message: '统计间隔不能大于统计窗口。' })
+    if (window / bucket > ACTIVITY_MAX_BUCKETS) {
+      context.addIssue({ code: 'custom', path: ['bucket'], message: `统计桶不能超过 ${ACTIVITY_MAX_BUCKETS} 个。` })
+    }
+  })
+
+export const ChannelActivitySeriesSchema = z
+  .object({
+    from: z.number().int().safe().nonnegative(),
+    to: z.number().int().safe().nonnegative(),
+    bucketMs: z.number().int().positive(),
+    channels: z.array(
+      z
+        .object({
+          channelId: ChannelIdSchema,
+          counts: z.array(z.number().int().nonnegative()).max(ACTIVITY_MAX_BUCKETS),
+          total: z.number().int().nonnegative(),
+        })
+        .strict(),
+    ),
+  })
+  .strict()
+
+export type ChannelActivitySeries = z.output<typeof ChannelActivitySeriesSchema>
+
 export const HostSnapshotSchema = z
   .object({
     upgrade: HostUpgradeSummarySchema.optional(),
@@ -834,6 +1000,7 @@ export const HostSnapshotSchema = z
           runtimePhase: ChannelRuntimePhaseSchema.default('idle'),
           createdAt: z.number().finite(),
           channels: z.array(ChannelIdSchema),
+          appearance: AgentAppearanceSchema.default({}),
         })
         .strict(),
     ),
@@ -847,6 +1014,7 @@ export const HostSnapshotSchema = z
           displayName: z.string().optional(),
           boundAgentId: AgentIdSchema.optional(),
           runtimePhase: ChannelRuntimePhaseSchema.default('idle'),
+          activity: ChannelActivitySummarySchema.default({ unreadCount: 0, unreadCapped: false }),
           bindings: z.array(
             z
               .object({
@@ -1321,6 +1489,9 @@ export const HostSseEventSchema = z.discriminatedUnion('event', [
   z.object({ event: z.literal('dsh-credentials-changed'), data: DshCredentialsChangedSseDataSchema }).strict(),
   z.object({ event: z.literal('status'), data: HostSseStatusDataSchema }).strict(),
   z
+    .object({ event: z.literal('attention-changed'), data: z.object({ revision: z.string().min(1) }).strict() })
+    .strict(),
+  z
     .object({
       event: z.literal('binding-change'),
       data: z
@@ -1417,7 +1588,7 @@ export const ConnectionTestResultSchema = z.discriminatedUnion('status', [
     .strict(),
 ])
 
-type HttpMethod = 'GET' | 'POST' | 'PUT' | 'DELETE'
+type HttpMethod = 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE'
 type AnySchema = z.ZodType
 
 export interface HostApiContract<
@@ -2656,6 +2827,109 @@ export const HostApiContracts = {
       })
       .strict(),
     response: z.object({ recorded: z.literal(true) }).strict(),
+    error: HostApiErrorSchema,
+  }),
+  markChannelRead: defineContract({
+    method: 'POST',
+    path: '/api/channels/:channelId/read',
+    params: channelParam,
+    request: z
+      .object({
+        /** Defaults to the newest inbound fact visible now. */
+        upTo: z
+          .object({ occurredAt: z.number().int().safe().nonnegative(), sourceId: ChannelEventIdSchema })
+          .strict()
+          .optional(),
+      })
+      .strict(),
+    response: z.object({ channelId: ChannelIdSchema, activity: ChannelActivitySummarySchema }).strict(),
+    error: HostApiErrorSchema,
+  }),
+  listAttention: defineContract({
+    method: 'GET',
+    path: '/api/attention',
+    params: EmptyParamsSchema,
+    request: NoRequestBodySchema,
+    response: AttentionListSchema,
+    error: HostApiErrorSchema,
+  }),
+  dismissAttention: defineContract({
+    method: 'POST',
+    path: '/api/attention/:attentionId/dismiss',
+    params: z.object({ attentionId: z.string().min(1).max(200) }).strict(),
+    request: NoRequestBodySchema,
+    response: z.object({ dismissed: z.literal(true), revision: z.string().min(1) }).strict(),
+    error: HostApiErrorSchema,
+  }),
+  getChannelPending: defineContract({
+    method: 'GET',
+    path: '/api/channels/:channelId/pending',
+    params: channelParam,
+    request: NoRequestBodySchema,
+    response: ChannelPendingContextSchema,
+    error: HostApiErrorSchema,
+  }),
+  stopChannelTask: defineContract({
+    method: 'POST',
+    path: '/api/channels/:channelId/stop',
+    params: channelParam,
+    request: z.object({ expectedEpisodeId: EpisodeIdSchema.optional() }).strict(),
+    response: z
+      .object({
+        result: z.enum(['stopped', 'idle']),
+        episodeId: EpisodeIdSchema.optional(),
+        /** Admitted messages that were not yet consumed and remain queued for the next turn. */
+        retainedPending: z.number().int().nonnegative(),
+      })
+      .strict(),
+    error: HostApiErrorSchema,
+  }),
+  resolveOutbound: defineContract({
+    method: 'POST',
+    path: '/api/outbound/:outboundId/resolve',
+    params: z.object({ outboundId: OutboundIntentIdSchema }).strict(),
+    request: z.object({ action: z.enum(['retry', 'confirm-delivered']) }).strict(),
+    response: z
+      .object({
+        outboundId: OutboundIntentIdSchema,
+        action: z.enum(['retry', 'confirm-delivered']),
+        deliveryState: z.enum(['planned', 'sending', 'sent', 'partially-sent', 'failed', 'unknown']),
+        resolvedAt: z.number().int().safe().nonnegative(),
+      })
+      .strict(),
+    error: HostApiErrorSchema,
+  }),
+  getChannelActivity: defineContract({
+    method: 'GET',
+    path: '/api/activity',
+    params: ActivityQuerySchema,
+    request: NoRequestBodySchema,
+    response: ChannelActivitySeriesSchema,
+    error: HostApiErrorSchema,
+  }),
+  updateAgentAppearance: defineContract({
+    invalidatesSnapshot: true,
+    method: 'PATCH',
+    path: '/api/agents/:agentId/appearance',
+    params: agentParam,
+    request: z
+      .object({
+        hue: z.number().int().min(0).max(359).nullable().optional(),
+        /** `null` removes the avatar; uploading uses `uploadAgentAvatar`. */
+        avatarAssetId: z.null().optional(),
+      })
+      .strict(),
+    response: z.object({ agentId: AgentIdSchema, appearance: AgentAppearanceSchema }).strict(),
+    error: HostApiErrorSchema,
+  }),
+  uploadAgentAvatar: defineContract({
+    invalidatesSnapshot: true,
+    method: 'POST',
+    path: '/api/agents/:agentId/avatar',
+    params: agentParam,
+    request: BinaryUploadRequestSchema,
+    encodeRequest: encodeBinaryUpload,
+    response: z.object({ agentId: AgentIdSchema, appearance: AgentAppearanceSchema }).strict(),
     error: HostApiErrorSchema,
   }),
   deleteLocalExtension: defineContract({
