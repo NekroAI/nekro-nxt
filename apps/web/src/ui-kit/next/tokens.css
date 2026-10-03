@@ -1,0 +1,155 @@
+/* NekroNXT 新设计系统 Token。作用域为 html[data-ui='next']，与旧界面并存到 M6 替换完成。 */
+html[data-ui='next'] {
+  color-scheme: light;
+  --bg: #f3f1ec;
+  --bg-glow: #e6ebf5;
+  --side: #eceef2;
+  --surface: #fffefb;
+  --surface-2: #f7f7f8;
+  --inset: #f0f1f4;
+  --hover: rgb(23 42 69 / 0.055);
+  --line: rgb(23 42 69 / 0.09);
+  --line-2: rgb(23 42 69 / 0.16);
+  --line-3: rgb(23 42 69 / 0.26);
+  --fg: #14243d;
+  --fg-2: #44536a;
+  --muted: #6b7689;
+  --faint: #8a94a6;
+  --accent: #3f5b8f;
+  --accent-2: #2f4a7a;
+  --accent-soft: rgb(63 91 143 / 0.1);
+  --accent-line: rgb(63 91 143 / 0.35);
+  --on-accent: #ffffff;
+  --brass: #b4884a;
+  --focus: #0b73b4;
+  --ok: #217a4f;
+  --ok-soft: rgb(33 122 79 / 0.1);
+  --warn: #956111;
+  --warn-soft: rgb(196 140 40 / 0.14);
+  --bad: #b03a30;
+  --bad-soft: rgb(176 58 48 / 0.09);
+  --mem-bg: 93%;
+  --mem-fg: 34%;
+  --sh-1: 0 1px 2px rgb(20 36 61 / 0.05), 0 1px 1px rgb(20 36 61 / 0.03);
+  --sh-2: 0 1px 2px rgb(20 36 61 / 0.04), 0 6px 18px -6px rgb(20 36 61 / 0.14);
+  --sh-3: 0 24px 60px -18px rgb(20 36 61 / 0.35), 0 4px 14px rgb(20 36 61 / 0.08);
+  --hl: inset 0 1px 0 rgb(255 255 255 / 0.7);
+  --r-1: 8px;
+  --r-2: 12px;
+  --r-3: 16px;
+  --font-sans: 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', system-ui, -apple-system, 'Segoe UI', sans-serif;
+  --font-mono: 'SF Mono', 'SFMono-Regular', 'Cascadia Code', 'JetBrains Mono', ui-monospace, monospace;
+  --fs-xs: 12px;
+  --fs-sm: 13px;
+  --fs-md: 14px;
+  --fs-lg: 16px;
+  --fs-xl: 20px;
+  --fs-2xl: 24px;
+  --fs-3xl: 30px;
+  --ease: cubic-bezier(0.2, 0.8, 0.2, 1);
+  --dur-1: 160ms;
+  --dur-2: 280ms;
+  --dur-3: 420ms;
+  --hue-agent: 230;
+}
+
+html[data-ui='next'][data-theme='dark'] {
+  color-scheme: dark;
+  --bg: #0b1524;
+  --bg-glow: #15274a;
+  --side: #0e1a2c;
+  --surface: #12223a;
+  --surface-2: #172a46;
+  --inset: #0f1d33;
+  --hover: rgb(190 210 240 / 0.06);
+  --line: rgb(190 210 240 / 0.09);
+  --line-2: rgb(190 210 240 / 0.15);
+  --line-3: rgb(190 210 240 / 0.26);
+  --fg: #eef2f8;
+  --fg-2: #c3cddc;
+  --muted: #8e9bb0;
+  --faint: #73819a;
+  --accent: #a3bae2;
+  --accent-2: #c3d4f0;
+  --accent-soft: rgb(163 186 226 / 0.12);
+  --accent-line: rgb(163 186 226 / 0.4);
+  --on-accent: #0b1524;
+  --brass: #d8af73;
+  --focus: #6bc3f4;
+  --ok: #6dcf98;
+  --ok-soft: rgb(109 207 152 / 0.12);
+  --warn: #e9bd68;
+  --warn-soft: rgb(233 189 104 / 0.12);
+  --bad: #f08f83;
+  --bad-soft: rgb(240 143 131 / 0.12);
+  --mem-bg: 24%;
+  --mem-fg: 82%;
+  --sh-1: 0 1px 2px rgb(0 0 0 / 0.3);
+  --sh-2: 0 1px 2px rgb(0 0 0 / 0.25), 0 8px 22px -8px rgb(0 0 0 / 0.5);
+  --sh-3: 0 28px 70px -20px rgb(0 0 0 / 0.7), 0 4px 16px rgb(0 0 0 / 0.35);
+  --hl: inset 0 1px 0 rgb(255 255 255 / 0.05);
+}
+
+html[data-ui='next'],
+html[data-ui='next'] body {
+  height: 100%;
+  margin: 0;
+  background: var(--bg);
+  color: var(--fg);
+  font: var(--fs-md) / 1.6 var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+html[data-ui='next'] *,
+html[data-ui='next'] *::before,
+html[data-ui='next'] *::after {
+  box-sizing: border-box;
+}
+
+html[data-ui='next'] button,
+html[data-ui='next'] input,
+html[data-ui='next'] select,
+html[data-ui='next'] textarea {
+  font: inherit;
+  color: inherit;
+}
+
+html[data-ui='next'] :focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
+}
+
+html[data-ui='next'] [hidden] {
+  display: none !important;
+}
+
+html[data-ui='next'].theming *,
+html[data-ui='next'].theming *::before,
+html[data-ui='next'].theming *::after {
+  transition:
+    background-color 0.35s ease,
+    color 0.35s ease,
+    border-color 0.35s ease,
+    fill 0.35s ease,
+    stroke 0.35s ease,
+    box-shadow 0.35s ease !important;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  html[data-ui='next'] *,
+  html[data-ui='next'] *::before,
+  html[data-ui='next'] *::after {
+    animation-duration: 1ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 1ms !important;
+  }
+}
+
+html[data-ui='next'][data-nxt-motion='off'] *,
+html[data-ui='next'][data-nxt-motion='off'] *::before,
+html[data-ui='next'][data-nxt-motion='off'] *::after {
+  animation-duration: 1ms !important;
+  animation-iteration-count: 1 !important;
+  transition-duration: 1ms !important;
+}

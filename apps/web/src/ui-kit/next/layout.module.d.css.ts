@@ -1,0 +1,37 @@
+declare const styles: {
+  readonly bad: string
+  readonly banner: string
+  readonly bannerText: string
+  readonly disclosure: string
+  readonly disclosureInner: string
+  readonly empty: string
+  readonly emptyIcon: string
+  readonly emptyText: string
+  readonly emptyTitle: string
+  readonly gauge: string
+  readonly gaugeLegend: string
+  readonly gaugeTrack: string
+  readonly gaugeValue: string
+  readonly info: string
+  readonly panel: string
+  readonly section: string
+  readonly sectionHead: string
+  readonly sectionTitle: string
+  readonly skeleton: string
+  readonly small: string
+  readonly step: string
+  readonly stepDone: string
+  readonly stepFill: string
+  readonly stepKey: string
+  readonly stepNow: string
+  readonly stepTrack: string
+  readonly stepper: string
+  readonly timeline: string
+  readonly timelineCurrent: string
+  readonly timelineItem: string
+  readonly timelineMeta: string
+  readonly timelineTag: string
+  readonly warn: string
+}
+
+export default styles

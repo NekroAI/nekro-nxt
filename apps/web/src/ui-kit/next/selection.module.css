@@ -1,0 +1,114 @@
+.segmented {
+  position: relative;
+  display: grid;
+  grid-auto-columns: minmax(0, 1fr);
+  grid-auto-flow: column;
+  padding: 3px;
+  border-radius: 10px;
+  background: var(--inset);
+  box-shadow: inset 0 1px 2px rgb(0 0 0 / 0.04);
+}
+
+.segmentedIndicator {
+  position: absolute;
+  top: 0;
+  left: 0;
+  border-radius: 7px;
+  background: var(--surface);
+  box-shadow: var(--sh-1), inset 0 0 0 1px var(--line);
+  pointer-events: none;
+}
+
+.segmentedItem {
+  position: relative;
+  z-index: 1;
+  padding: 4px 10px;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--muted);
+  font-size: var(--fs-xs);
+  font-weight: 550;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: color var(--dur-2);
+}
+
+.segmentedItem:hover,
+.segmentedItem[aria-checked='true'] {
+  color: var(--fg);
+}
+
+.tabs {
+  position: relative;
+  display: flex;
+  gap: 4px;
+  border-bottom: 1px solid var(--line);
+}
+
+.tab {
+  position: relative;
+  padding: 8px 12px 10px;
+  border: 0;
+  background: transparent;
+  color: var(--muted);
+  font-size: var(--fs-sm);
+  font-weight: 550;
+  cursor: pointer;
+  transition: color var(--dur-1);
+}
+
+.tab:hover,
+.tab[aria-selected='true'] {
+  color: var(--fg);
+}
+
+.tabIndicator {
+  position: absolute;
+  bottom: -1px;
+  left: 0;
+  height: 2px;
+  border-radius: 2px;
+  background: var(--accent);
+  pointer-events: none;
+}
+
+.listIndicator {
+  position: absolute;
+  top: 0;
+  left: 0;
+  z-index: 0;
+  border-radius: 10px;
+  background: var(--surface);
+  box-shadow: var(--sh-2), inset 0 0 0 1px var(--line);
+  pointer-events: none;
+}
+
+.listIndicator::before {
+  content: '';
+  position: absolute;
+  top: 10px;
+  bottom: 10px;
+  left: 4px;
+  width: 3px;
+  border-radius: 3px;
+  background: var(--indicator-accent, var(--accent));
+  transition: background var(--dur-2);
+}
+
+.animated {
+  transition:
+    transform var(--dur-3) var(--ease),
+    width var(--dur-3) var(--ease),
+    height var(--dur-3) var(--ease),
+    opacity var(--dur-1);
+}
+
+.list {
+  position: relative;
+}
+
+.list > :not(.listIndicator) {
+  position: relative;
+  z-index: 1;
+}
