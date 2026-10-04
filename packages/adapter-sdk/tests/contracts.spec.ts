@@ -2,7 +2,9 @@ import { z } from 'zod'
 import { describe, expect, expectTypeOf, it } from 'vitest'
 import {
   AdapterRegistry,
+  configSchema,
   defineAdapterConnection,
+  EMPTY_CONFIG_SCHEMA,
   parseAdapterCapabilities,
   parseAdapterConnectionConfiguration,
   parseAdapterChannelInboundEvent,
@@ -31,16 +33,11 @@ const EXAMPLE_CONNECTION_DEFINITION = defineAdapterConnection({
   features: {},
   configurationSchema: ExampleConfigurationSchema,
   credentialsSchema: ExampleCredentialsSchema,
-  configSchema: {
-    schemaVersion: 1,
-    type: 'object',
-    required: ['account', 'secretRef'],
-    properties: {
-      account: { type: 'string', title: '账号' },
-      secretRef: { type: 'credential-reference', title: '密钥' },
-      enabled: { type: 'boolean', title: '启用', default: true },
-    },
-  },
+  configSchema: configSchema.object({
+    account: configSchema.string('账号', { required: true }),
+    secretRef: configSchema.secret('密钥', { required: true }),
+    enabled: configSchema.boolean('启用', { default: true }),
+  }),
   create: (configuration, credentials) => ({
     ...configuration,
     secretRef: credentials.secretRef,
@@ -198,7 +195,7 @@ describe('AdapterRegistry', () => {
       ],
       features: { processingFeedback: { channelKinds: ['group'] as const } },
       diagnostics: { receive: true, send: true },
-      configSchema: { schemaVersion: 1, type: 'object' as const, required: [], properties: {} },
+      configSchema: EMPTY_CONFIG_SCHEMA,
     },
     create: () => Promise.reject(new Error('not used')),
   }
@@ -230,7 +227,7 @@ describe('AdapterRegistry', () => {
       channelKinds: ['internal'],
       configurationSchema: z.object({}).strict(),
       credentialsSchema: z.object({}).strict(),
-      configSchema: { schemaVersion: 1, type: 'object', required: [], properties: {} },
+      configSchema: EMPTY_CONFIG_SCHEMA,
       create: () => undefined,
     })
     expect(definition.descriptor).toMatchObject({
@@ -275,8 +272,8 @@ describe('AdapterRegistry', () => {
         activities: [{ ...descriptor.activities[0], channelKinds: ['direct', 'internal'] }],
       }),
     ).toThrow('unsupported Channel kind')
-    expect(() => register({ ...descriptor, configSchema: { ...descriptor.configSchema, type: 'array' } })).toThrow(
-      'schema must be an object',
+    expect(() => register({ ...descriptor, configSchema: { type: 'array', inner: { type: 'string' } } })).toThrow(
+      'serialized Schemastery object',
     )
     expect(() =>
       register({
@@ -296,75 +293,32 @@ describe('AdapterRegistry', () => {
       })
     }).toThrow('must provide exactly one matching connection login contribution')
     expect(() =>
-      register({ ...descriptor, configSchema: { ...descriptor.configSchema, schemaVersion: Number.NaN } }),
-    ).toThrow('version must be a positive integer')
-    expect(() => register({ ...descriptor, configSchema: { ...descriptor.configSchema, schemaVersion: 0 } })).toThrow(
-      'version must be a positive integer',
-    )
-    expect(() =>
       register({
         ...descriptor,
-        configSchema: { ...descriptor.configSchema, required: ['account', 'account'] },
+        configSchema: configSchema.object({ nested: { type: 'object', dict: {} } }),
       }),
-    ).toThrow('required property is duplicated')
+    ).toThrow('must be a scalar')
     expect(() =>
       register({
         ...descriptor,
-        configSchema: {
-          ...descriptor.configSchema,
-          properties: { '': { type: 'string', title: 'Account' } },
-        },
-      }),
-    ).toThrow('stable keys and titles')
-    expect(() =>
-      register({
-        ...descriptor,
-        configSchema: {
-          ...descriptor.configSchema,
-          properties: { account: { type: 'string', title: ' ' } },
-        },
-      }),
-    ).toThrow('stable keys and titles')
-    expect(() =>
-      register({
-        ...descriptor,
-        configSchema: {
-          ...descriptor.configSchema,
-          properties: { secret: { type: 'credential-reference', title: 'Secret', default: 'forbidden' } },
-        },
+        configSchema: configSchema.object({
+          secret: { type: 'string', meta: { description: 'Secret', role: 'secret', default: 'forbidden' } },
+        }),
       }),
     ).toThrow('cannot declare a default')
     expect(() =>
-      register({
-        ...descriptor,
-        configSchema: {
-          ...descriptor.configSchema,
-          properties: { enabled: { type: 'boolean', title: 'Enabled', default: 'true' } },
-        },
+      defineAdapterConnection({
+        key: 'mismatch',
+        displayName: 'Mismatch',
+        description: 'Config field without a zod owner.',
+        provisioning: 'user-created',
+        channelKinds: ['group'],
+        configurationSchema: z.object({}).strict(),
+        credentialsSchema: z.object({}).strict(),
+        configSchema: configSchema.object({ token: configSchema.secret('Token') }),
+        create: () => undefined,
       }),
-    ).toThrow('default has the wrong type')
-    expect(() =>
-      register({
-        ...descriptor,
-        configSchema: {
-          ...descriptor.configSchema,
-          properties: {
-            first: { type: 'credential-reference', title: 'First', credentialKey: 'shared' },
-            second: { type: 'credential-reference', title: 'Second', credentialKey: 'shared' },
-          },
-        },
-      }),
-    ).toThrow('credential key is duplicated')
-    expect(() =>
-      register({
-        ...descriptor,
-        configSchema: {
-          ...descriptor.configSchema,
-          required: ['missing'],
-          properties: { secret: { type: 'credential-reference', title: 'Secret' } },
-        },
-      }),
-    ).toThrow('required property is not declared')
+    ).toThrow('not declared by the credentials schema')
 
     const registry = new AdapterRegistry()
     registry.register('fixture-owner', contribution)

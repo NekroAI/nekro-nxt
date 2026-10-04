@@ -1,4 +1,5 @@
 import {
+  configFields,
   parseAdapterConnectionConfiguration,
   type AdapterConnectionContext,
   type AdapterChannelInboundEvent,
@@ -39,7 +40,7 @@ describe('QQ OpenClaw Adapter', () => {
   it('derives QQ configuration, credentials, UI fields, and creator inputs from the same definition', () => {
     const parsed = parseAdapterConnectionConfiguration(QQ_OPENCLAW_CONNECTION_DEFINITION, {
       configuration: { appId: ' app-id ', proactiveSend: true },
-      credentials: { clientSecretCredentialRef: 'client-secret' },
+      credentials: { clientSecret: 'client-secret' },
     })
     expect(parsed).toEqual({
       configuration: {
@@ -49,25 +50,26 @@ describe('QQ OpenClaw Adapter', () => {
         maxTextLength: 1800,
         maxTextBytes: 7200,
       },
-      credentials: { clientSecretCredentialRef: 'client-secret' },
+      credentials: { clientSecret: 'client-secret' },
     })
-    expect(QQ_OPENCLAW_CONNECTION_DESCRIPTOR.configSchema).toEqual({
-      schemaVersion: 1,
-      type: 'object',
-      required: ['appId', 'clientSecretCredentialRef'],
-      properties: {
-        appId: { type: 'string', title: 'App ID' },
-        clientSecretCredentialRef: {
-          type: 'credential-reference',
-          credentialKey: 'clientSecret',
-          title: 'Client Secret',
-        },
-        proactiveSend: { type: 'boolean', title: '允许主动发送', default: false },
-        markdown: { type: 'boolean', title: '使用 Markdown', default: true },
-        maxTextLength: { type: 'number', title: '单条字符上限', default: 1800 },
-        maxTextBytes: { type: 'number', title: '单条 UTF-8 字节上限', default: 7200 },
-      },
-    })
+    expect(
+      configFields(QQ_OPENCLAW_CONNECTION_DESCRIPTOR.configSchema).map(
+        ({ key, kind, title, required, default: value }) => ({
+          key,
+          kind,
+          title,
+          required,
+          default: value,
+        }),
+      ),
+    ).toEqual([
+      { key: 'appId', kind: 'string', title: 'App ID', required: true, default: undefined },
+      { key: 'clientSecret', kind: 'secret', title: 'Client Secret', required: true, default: undefined },
+      { key: 'proactiveSend', kind: 'boolean', title: '允许主动发送', required: false, default: false },
+      { key: 'markdown', kind: 'boolean', title: '使用 Markdown', required: false, default: true },
+      { key: 'maxTextLength', kind: 'number', title: '单条字符上限', required: false, default: 1800 },
+      { key: 'maxTextBytes', kind: 'number', title: '单条 UTF-8 字节上限', required: false, default: 7200 },
+    ])
     expectTypeOf(parsed.configuration).toEqualTypeOf<ReturnType<typeof QQOpenClawConnectionConfigurationSchema.parse>>()
     expectTypeOf(parsed.credentials).toEqualTypeOf<ReturnType<typeof QQOpenClawCredentialsSchema.parse>>()
     expect(QQ_OPENCLAW_CONNECTION_DEFINITION.create(parsed.configuration, parsed.credentials)).toEqual({

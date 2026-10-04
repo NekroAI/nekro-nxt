@@ -15,12 +15,7 @@ describe('Internal Web Adapter', () => {
       configuration: {},
       credentials: {},
     })
-    expect(WEB_CONNECTION_DESCRIPTOR.configSchema).toEqual({
-      schemaVersion: 1,
-      type: 'object',
-      required: [],
-      properties: {},
-    })
+    expect(WEB_CONNECTION_DESCRIPTOR.configSchema).toEqual({ type: 'object', dict: {} })
   })
 
   it('normalizes browser messages and commits them through Core', async () => {

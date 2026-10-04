@@ -28,12 +28,11 @@ describe('WeChat iLink Adapter descriptor', () => {
         pendingLabel: '等待扫码确认…',
       },
       configSchema: {
-        required: [],
-        properties: {
+        type: 'object',
+        dict: {
           enableInboundMedia: {
             type: 'boolean',
-            title: '入站媒体接收',
-            default: true,
+            meta: { description: '入站媒体接收', default: true },
           },
         },
       },
