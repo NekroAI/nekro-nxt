@@ -417,3 +417,13 @@ export const EMPTY_EXTENSION_UI_CONTRIBUTIONS: ExtensionUiContributions = {
   toolViews: [],
   messageRenderers: [],
 }
+
+/** Read permission each Client data hook requires; the host enforces it in every runtime that renders a Client. */
+export const EXTENSION_DATA_HOOK_PERMISSIONS = {
+  useAgent: 'agents.read',
+  useChannel: 'channels.read',
+  useConnection: 'connections.read',
+  useChannelRuntime: 'runtime.read',
+} as const satisfies Readonly<Record<string, HostUiPermission>>
+
+export type ExtensionDataHookName = keyof typeof EXTENSION_DATA_HOOK_PERMISSIONS

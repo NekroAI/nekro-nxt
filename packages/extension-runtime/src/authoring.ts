@@ -7,6 +7,7 @@ import {
   JsonValueSchema,
 } from '@nekro-nxt/contracts'
 import type {
+  ExtensionConfigDeclaration,
   AgentId,
   AuthoringAttemptId,
   AuthoringTaskId,
@@ -187,6 +188,8 @@ export interface DynamicAuthoringSnapshot {
   readonly clientCss?: { readonly path: string; readonly sha256: string }
   readonly permissions: HostUiPermissionDeclaration
   readonly contributions: readonly JsonValue[]
+  /** Optional serialized Schemastery configuration surface carried into the saved Manifest. */
+  readonly config?: ExtensionConfigDeclaration
   /** Representative inputs the Host uses to really call each Tool and RPC during verification. */
   readonly verificationInputs?: DynamicAuthoringVerificationInputs
 }

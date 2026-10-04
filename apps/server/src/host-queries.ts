@@ -2,12 +2,18 @@ import { DSH_RUNTIME_RELEASE } from '@nekro-nxt/dsh-compat/release'
 import type { HostApiResponse } from '@nekro-nxt/contracts'
 import {
   HostApiContracts,
+  configFields,
   type AgentId,
   type ChannelId,
   type ChannelRuntimeProjection,
   type HostSnapshotMessage,
 } from '@nekro-nxt/contracts'
-import { type DynamicAuthoringAttempt, type DynamicAuthoringTask } from '@nekro-nxt/extension-runtime'
+import {
+  extensionUiContributions,
+  permissionRequirement,
+  type DynamicAuthoringAttempt,
+  type DynamicAuthoringTask,
+} from '@nekro-nxt/extension-runtime'
 import type { NekroRuntime } from './bootstrap.js'
 import {
   emptyChannelRuntimeProjection,
@@ -66,7 +72,9 @@ export const projectExtensions = (runtime: NekroRuntime) => {
     const permissions = new Map(
       revisions.map((revision) => [
         revision.id,
-        runtime.installation.getHostUiPermissionRequirement(extension.id, revision.id),
+        extension.scope === 'agent'
+          ? permissionRequirement(runtime.repository.getExtensionRevisionVerification(revision.id)?.permissions, undefined)
+          : runtime.installation.getHostUiPermissionRequirement(extension.id, revision.id),
       ]),
     )
     const hostClientDiagnostic = runtime.hostClientDiagnostic(extension.id)
@@ -82,10 +90,13 @@ export const projectExtensions = (runtime: NekroRuntime) => {
       revisions: revisions.map((revision) => {
         const verification = runtime.repository.getExtensionRevisionVerification(revision.id)
         const permissionRequirement = permissions.get(revision.id)
+        const manifest = runtime.extensionService.revisionManifest(revision)
         return {
           id: revision.id,
           revisionNumber: revision.revisionNumber,
-          format: runtime.extensionService.revisionFormat(revision),
+          format: manifest === undefined ? ('unavailable' as const) : ('current' as const),
+          ui: extensionUiContributions(manifest),
+          ...(manifest?.config === undefined ? {} : { configSchema: manifest.config.schema }),
           createdAt: revision.createdAt,
           scope: extension.scope,
           contributions:
@@ -94,9 +105,10 @@ export const projectExtensions = (runtime: NekroRuntime) => {
               : [
                   ...verification.toolInvocations.map(({ name }) => `工具：${name}`),
                   ...verification.rpcMethods.map((method) => `RPC：${method}`),
-                  ...verification.renderedSlots.map((slot) => `界面：${slot}`),
+                  ...verification.renderedPanels.map((panel) => `面板：${panel}`),
+                  ...verification.renderedToolViews.map((tool) => `工具视图：${tool}`),
                   ...(verification.adapter === undefined ? [] : [`适配器：${verification.adapter.key}`]),
-                  ...(verification.renderedHostSlots ?? []).map(({ key }) => `界面：${key}`),
+                  ...verification.renderedMessageRenderers.map((kind) => `富消息：${kind}`),
                   ...(verification.renderedPages ?? []).map(({ title }) => `页面：${title}`),
                 ],
           ...(verification === undefined
@@ -111,10 +123,9 @@ export const projectExtensions = (runtime: NekroRuntime) => {
                   buildKey: runtime.extensionService.currentBuildKey(revision),
                   toolInvocationCount: verification.toolInvocations.length,
                   rpcMethods: verification.rpcMethods,
-                  renderedSlots: verification.renderedSlots,
-                  ...(verification.renderedHostSlots === undefined
-                    ? {}
-                    : { renderedHostSlots: verification.renderedHostSlots }),
+                  renderedPanels: verification.renderedPanels,
+                  renderedToolViews: verification.renderedToolViews,
+                  renderedMessageRenderers: verification.renderedMessageRenderers,
                   ...(verification.renderedPages === undefined ? {} : { renderedPages: verification.renderedPages }),
                   ...(verification.usedUiComponents === undefined
                     ? {}
@@ -147,6 +158,7 @@ export const projectExtensions = (runtime: NekroRuntime) => {
             installation: {
               extensionRevisionId: installation.extensionRevisionId,
               installedAt: installation.installedAt,
+              config: installation.config,
               ...(runtime.installation.getDiagnostic(extension.id) === undefined
                 ? {}
                 : { runtime: runtime.installation.getDiagnostic(extension.id) }),
@@ -398,9 +410,10 @@ export class HostQueries {
           ? connection.config
           : {}
       const configuration = Object.fromEntries(
-        Object.entries(descriptor?.configSchema.properties ?? {}).flatMap(([key, property]) => {
-          if (property?.type === 'credential-reference') return []
-          const value = storedConfiguration[key] ?? property?.default
+        (descriptor === undefined ? [] : configFields(descriptor.configSchema)).flatMap((field) => {
+          if (field.kind === 'secret') return []
+          const key = field.key
+          const value = storedConfiguration[key] ?? field.default
           return typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean'
             ? [[key, value] as const]
             : []

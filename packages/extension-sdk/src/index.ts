@@ -1,6 +1,7 @@
 import { DSH_RUNTIME_RELEASE } from '@nekro-nxt/dsh-compat/release'
 import type { AdapterHostContributionV2 } from '@nekro-nxt/adapter-sdk'
 import type { ElementType, ReactNode } from 'react'
+import { EXTENSION_DATA_HOOK_PERMISSIONS } from '@nekro-nxt/contracts'
 import type {
   ConfigSchemaDocument,
   ConnectionPanelRole,
@@ -584,12 +585,7 @@ export const NEKRO_NXT_EXTENSION_AUTHORING_REFERENCE: NekroNxtExtensionAuthoring
     panelDensities: ['compact', 'full'],
     toolViewDensities: ['chip', 'card'],
     dataHooks: ['useAgent', 'useChannel', 'useConnection', 'useChannelRuntime'],
-    hookPermissions: {
-      useAgent: 'agents.read',
-      useChannel: 'channels.read',
-      useConnection: 'connections.read',
-      useChannelRuntime: 'runtime.read',
-    },
+    hookPermissions: EXTENSION_DATA_HOOK_PERMISSIONS,
     designContract: {
       version: 'nxt-host-ui-design-v2',
       responsibilities: [

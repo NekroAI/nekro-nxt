@@ -2407,7 +2407,6 @@ export const HostApiContracts = {
           .default([]),
         pageGeometry: z.array(HostUiPageGeometryEvidenceSchema).max(8).default([]),
         navigationEntries: z.array(z.string().trim().min(1).max(64)).max(8).default([]),
-        permissions: HostUiPermissionDeclarationSchema.default({ permissions: [], networkOrigins: [] }),
       })
       .strict()
       .refine(

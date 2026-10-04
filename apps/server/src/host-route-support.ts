@@ -1,4 +1,4 @@
-import { readExtensionManifestForArchive } from '@nekro-nxt/extension-runtime'
+import { extensionManifestSchema } from '@nekro-nxt/extension-runtime'
 import type { HostApiResponse, DshPluginPackageIdSchema, EpisodeIdSchema } from '@nekro-nxt/contracts'
 import type { WebRoute } from '@deepseek-ai/dsh-host-webserver'
 import { isAdminConsoleOutbound, type ChannelFact, type ChannelHistoryEntry } from '@nekro-nxt/channel-runtime'
@@ -378,7 +378,7 @@ export const createExtensionRevisionExport = async (
       if (relative === 'manifest.json') throw error
     }
   }
-  const resourceManifest = readExtensionManifestForArchive(JSON.parse(strFromU8(files['revision/manifest.json']!)))
+  const resourceManifest = extensionManifestSchema.parse(JSON.parse(strFromU8(files['revision/manifest.json']!)))
   const resourcePaths = new Set<string>()
   if ('clientCss' in resourceManifest && resourceManifest.clientCss) resourcePaths.add(resourceManifest.clientCss.path)
   for (const contribution of 'contributions' in resourceManifest ? resourceManifest.contributions : []) {

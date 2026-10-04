@@ -159,6 +159,7 @@ export class PersistentExtensionMounts {
             registerAdapter: () => {
               throw new Error('宿主适配器不能通过智能体 Activation 加载；请安装这个适配器 Revision。')
             },
+            config: () => config,
           },
           config,
         })

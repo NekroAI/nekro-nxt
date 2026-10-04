@@ -2,6 +2,7 @@ import {
   AgentIdSchema,
   AuthoringAttemptIdSchema,
   AuthoringTaskIdSchema,
+  ExtensionConfigDeclarationSchema,
   HostUiPermissionDeclarationSchema,
   JsonValueSchema,
   type AgentId,
@@ -60,6 +61,7 @@ const SnapshotSchema = z
       .optional(),
     permissions: HostUiPermissionDeclarationSchema,
     contributions: z.array(JsonValueSchema),
+    config: ExtensionConfigDeclarationSchema.optional(),
     verificationInputs: z
       .object({
         tools: z.record(z.string().min(1), toolVerificationInputSchema),
@@ -84,6 +86,7 @@ const parseSnapshot = (input: unknown): DynamicAuthoringSnapshot => {
     ...(parsed.clientCss === undefined ? {} : { clientCss: parsed.clientCss }),
     permissions: parsed.permissions,
     contributions: parsed.contributions,
+    ...(parsed.config === undefined ? {} : { config: parsed.config }),
     ...(parsed.verificationInputs === undefined ? {} : { verificationInputs: parsed.verificationInputs }),
   }
 }
@@ -298,6 +301,7 @@ export class DynamicAuthoringService {
       client: parsedSnapshot.code.client !== undefined,
       permissions: parsedSnapshot.permissions,
       contributions: parsedSnapshot.contributions,
+      config: parsedSnapshot.config ?? null,
       resourceKinds: Object.keys(parsedSnapshot.resources)
         .map((value) => path.extname(value))
         .sort(),

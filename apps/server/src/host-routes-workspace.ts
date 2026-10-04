@@ -30,7 +30,7 @@ export function registerWorkspaceRoutes({
 }: HostRouteContext): () => void {
   const handleExtensionActivationRoute = async (req: IncomingMessage, res: ServerResponse): Promise<void> => {
     const url = new URL(req.url ?? '/', 'http://localhost')
-    const match = /^\/api\/agents\/([^/]+)\/extensions\/([^/]+)\/activation$/.exec(url.pathname)
+    const match = /^\/api\/agents\/([^/]+)\/extensions\/([^/]+)\/activation(\/config)?$/.exec(url.pathname)
     if (!match) {
       writeError(res, 404, 'not-found', `未定义路由：${req.method} ${url.pathname}。`)
       return
@@ -50,6 +50,25 @@ export function registerWorkspaceRoutes({
       writeError(res, 400, 'invalid-activation-target', '无效的智能体或扩展 ID。')
       return
     }
+    if (match[3] === '/config') {
+      if (req.method !== 'PUT') {
+        writeError(res, 405, 'method-not-allowed', '智能体扩展配置只支持 PUT。')
+        return
+      }
+      try {
+        const input = HostApiContracts.updateExtensionActivationConfig.parseRequest(await readJsonBody(req))
+        const activation = await runtime.activation.updateConfig(params.agentId, params.extensionId, input.config)
+        writeJson(
+          res,
+          200,
+          HostApiContracts.updateExtensionActivationConfig.parseResponse({ config: activation.config }),
+        )
+        broadcastExtensionsChanged()
+      } catch (error) {
+        writeError(res, 400, 'extension-config-invalid', error instanceof Error ? error.message : String(error))
+      }
+      return
+    }
     if (req.method === 'POST') {
       let parsed: ReturnType<typeof HostApiContracts.activateExtension.parseRequest>
       try {
@@ -63,6 +82,7 @@ export function registerWorkspaceRoutes({
           agentId: params.agentId,
           extensionId: params.extensionId,
           revisionId: parsed.revisionId,
+          ...(parsed.permissionApproval === undefined ? {} : { permissionApproval: parsed.permissionApproval }),
         })
         writeJson(res, 200, HostApiContracts.activateExtension.parseResponse({ activation }))
         broadcastExtensionsChanged()
@@ -260,7 +280,7 @@ export function registerWorkspaceRoutes({
     path: '/api/agents',
     handler: async (req, res) => {
       const url = new URL(req.url ?? '/', 'http://localhost')
-      if (/^\/api\/agents\/[^/]+\/extensions\/[^/]+\/activation$/u.test(url.pathname)) {
+      if (/^\/api\/agents\/[^/]+\/extensions\/[^/]+\/activation(?:\/config)?$/u.test(url.pathname)) {
         await handleExtensionActivationRoute(req, res)
         return
       }

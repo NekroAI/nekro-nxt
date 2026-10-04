@@ -130,6 +130,8 @@ export const configFieldKind = (node: ConfigSchemaNode): ConfigFieldKind => {
 }
 
 /** Flattens the top level of a document into product form fields (order preserved). */
+const jsonLabel = (value: JsonValue): string => (typeof value === 'string' ? value : JSON.stringify(value))
+
 export const configFields = (document: ConfigSchemaDocument): readonly ConfigField[] =>
   Object.entries(document.dict).map(([key, node]) => {
     const kind = configFieldKind(node)
@@ -138,10 +140,10 @@ export const configFields = (document: ConfigSchemaDocument): readonly ConfigFie
       node.type === 'union' && isEnumUnion(node)
         ? node.list.map((option) => ({
             value: option.type === 'const' ? option.value : null,
-            label: configDescription(option.meta) ?? String(option.type === 'const' ? option.value : ''),
+            label: configDescription(option.meta) ?? (option.type === 'const' ? jsonLabel(option.value) : ''),
           }))
         : node.type === 'const'
-          ? [{ value: node.value, label: configDescription(node.meta) ?? String(node.value) }]
+          ? [{ value: node.value, label: configDescription(node.meta) ?? jsonLabel(node.value) }]
           : undefined
     return {
       key,

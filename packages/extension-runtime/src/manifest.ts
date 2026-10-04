@@ -11,6 +11,8 @@ import {
   PanelContributionSchema,
   ToolViewContributionSchema,
   configSecretKeys,
+  EMPTY_EXTENSION_UI_CONTRIBUTIONS,
+  type ExtensionUiContributions,
 } from '@nekro-nxt/contracts'
 import { z } from 'zod'
 export const extensionEntrypointsSchema = z.union([
@@ -201,3 +203,14 @@ export const extensionManifestSchema = z.union([
 
 export type ExtensionManifest = z.infer<typeof extensionManifestSchema>
 export type ExtensionManifestContribution = ExtensionManifest['contributions'][number]
+
+/** Product projection of the UI a Revision contributes; empty for an unreadable Revision. */
+export const extensionUiContributions = (manifest: ExtensionManifest | undefined): ExtensionUiContributions => {
+  if (manifest === undefined) return EMPTY_EXTENSION_UI_CONTRIBUTIONS
+  const contributions: readonly ExtensionManifestContribution[] = manifest.contributions
+  return {
+    panels: contributions.flatMap((entry) => (entry.kind === 'panel' ? [entry] : [])),
+    toolViews: contributions.flatMap((entry) => (entry.kind === 'tool-view' ? [entry.tool] : [])),
+    messageRenderers: contributions.flatMap((entry) => (entry.kind === 'message-renderer' ? [entry.richKind] : [])),
+  }
+}
