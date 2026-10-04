@@ -22,7 +22,13 @@ export const useStickToBottom = (key: string, enabled: boolean) => {
   const ref = useRef<HTMLDivElement | null>(null)
   const followRef = useRef(true)
   const prependRef = useRef<{ key: string; height: number; top: number } | null>(null)
+  /** Last scrollTop this hook wrote; the scroll event it causes is not a user decision to leave the bottom. */
+  const writtenTopRef = useRef<number | null>(null)
   const [away, setAway] = useState(false)
+  const write = (element: HTMLDivElement, top: number): void => {
+    element.scrollTop = top
+    writtenTopRef.current = element.scrollTop
+  }
 
   const commitPosition = useCallback(
     (element: HTMLDivElement, atBottom: boolean) => {
@@ -43,7 +49,7 @@ export const useStickToBottom = (key: string, enabled: boolean) => {
     const element = ref.current
     const prepend = prependRef.current
     if (element && prepend?.key === key) {
-      element.scrollTop = prepend.top + (element.scrollHeight - prepend.height)
+      write(element, prepend.top + (element.scrollHeight - prepend.height))
       commitPosition(element, isNearBottom(element))
     }
     prependRef.current = null
@@ -52,13 +58,21 @@ export const useStickToBottom = (key: string, enabled: boolean) => {
   const jumpToBottom = useCallback(() => {
     const element = ref.current
     if (!element) return
-    element.scrollTop = element.scrollHeight
+    write(element, element.scrollHeight)
     commitPosition(element, true)
   }, [commitPosition])
 
   const onScroll = useCallback(() => {
     const element = ref.current
     if (!element) return
+    // Content can grow (images, history) between our write and its scroll event; keep following in that case.
+    const written = writtenTopRef.current
+    writtenTopRef.current = null
+    if (written !== null && Math.abs(element.scrollTop - written) < 1 && followRef.current) {
+      const bottom = Math.max(0, element.scrollHeight - element.clientHeight)
+      if (Math.abs(element.scrollTop - bottom) > 0.5) write(element, bottom)
+      return
+    }
     commitPosition(element, isNearBottom(element))
   }, [commitPosition])
 
@@ -69,7 +83,7 @@ export const useStickToBottom = (key: string, enabled: boolean) => {
     const remembered = scrollMemory.get(key)
     followRef.current = remembered?.atBottom ?? true
     setAway(Boolean(remembered && !remembered.atBottom))
-    element.scrollTop = remembered && !remembered.atBottom ? remembered.top : element.scrollHeight
+    write(element, remembered && !remembered.atBottom ? remembered.top : element.scrollHeight)
   }, [enabled, key])
 
   useLayoutEffect(() => {
@@ -79,12 +93,12 @@ export const useStickToBottom = (key: string, enabled: boolean) => {
     const apply = (): void => {
       const prepend = prependRef.current
       if (prepend?.key === key) {
-        element.scrollTop = prepend.top + (element.scrollHeight - prepend.height)
+        write(element, prepend.top + (element.scrollHeight - prepend.height))
         return
       }
       if (followRef.current) {
         const bottom = Math.max(0, element.scrollHeight - element.clientHeight)
-        if (Math.abs(element.scrollTop - bottom) > 0.5) element.scrollTop = bottom
+        if (Math.abs(element.scrollTop - bottom) > 0.5) write(element, bottom)
         commitPosition(element, true)
         return
       }
