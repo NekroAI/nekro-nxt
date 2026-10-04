@@ -72,7 +72,8 @@ class ControlledModel extends LlmAdapter {
       await new Promise<void>((_resolve, reject) => {
         const abort = (): void => {
           this.generationAborted = true
-          reject(options.signal?.reason ?? new Error('aborted'))
+          const reason: unknown = options.signal?.reason
+          reject(reason instanceof Error ? reason : new Error('aborted'))
         }
         if (options.signal?.aborted) abort()
         options.signal?.addEventListener('abort', abort, { once: true })

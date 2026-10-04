@@ -86,7 +86,8 @@ class MemoryRepository implements CoreRepository {
   updateAgentAppearance(id: AgentId, appearance: AgentAppearance): void {
     const current = this.agents.get(id)
     if (!current) throw new Error(`Unknown agent: ${id}`)
-    const { appearance: _previous, ...definition } = current.definition
+    const definition = { ...current.definition }
+    delete definition.appearance
     this.agents.set(id, {
       ...current,
       definition: Object.keys(appearance).length === 0 ? definition : { ...definition, appearance },
