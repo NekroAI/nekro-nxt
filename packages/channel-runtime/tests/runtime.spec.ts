@@ -9,6 +9,7 @@ import {
   ChannelEventIdSchema,
   ChannelIdSchema,
   ChannelMemberIdSchema,
+  AdmissionIdSchema,
   EpisodeIdSchema,
   LogicalMessageIdSchema,
   OutboundIntentIdSchema,
@@ -63,7 +64,7 @@ import type {
   PhysicalDeliveryRecord,
   RuntimeRepository,
 } from '../src/index.ts'
-import { ChannelRuntime, isTriggered } from '../src/index.ts'
+import { ChannelRuntime, ChannelStopConflictError, isTriggered } from '../src/index.ts'
 
 class MemoryCoreRepository implements CoreRepository {
   readonly agents = new Map<AgentId, CreateAgentCommit>()
@@ -625,6 +626,7 @@ const setup = async (
   let maxActiveAdmissions = 0
   const persistedAdmissionMessages = new Map<AdmissionId, string>()
   const handoffInputs: Parameters<AgentSessionDriver['createHandoffSummary']>[0][] = []
+  let pendingAdmissions: ReturnType<AgentSessionDriver['listPendingAdmissions']> = []
   const sessionDriver: AgentSessionDriver = {
     createSession: ({ episodeId }) => {
       sessionCalls.push(`create:${episodeId}`)
@@ -648,6 +650,13 @@ const setup = async (
           })
     },
     cancelSession: () => Promise.resolve(),
+    interruptTurn: (sessionId, reason) => {
+      sessionCalls.push(`interrupt:${sessionId}:${reason}`)
+      const interrupted = sessionStatus === 'running'
+      sessionStatus = 'idle'
+      return Promise.resolve({ interrupted, retainedPending: pendingAdmissions.length })
+    },
+    listPendingAdmissions: () => pendingAdmissions,
     notifyConsoleOutbound: ({ logicalMessageId }) => {
       sessionCalls.push(`console-outbound:${logicalMessageId}`)
       return Promise.resolve()
@@ -717,6 +726,9 @@ const setup = async (
       currentTime = value
     },
     maxActiveAdmissions: () => maxActiveAdmissions,
+    setPendingAdmissions: (value: ReturnType<AgentSessionDriver['listPendingAdmissions']>) => {
+      pendingAdmissions = value
+    },
     markAdmissionPersisted: (admissionId: AdmissionId, dshMessageId: string) => {
       persistedAdmissionMessages.set(admissionId, dshMessageId)
     },
@@ -2331,6 +2343,51 @@ describe('ChannelRuntime M1 lane', () => {
     expect(context.runtimeRepository.handoffs).toHaveLength(1)
     expect(context.runtimeRepository.handoffs[0]?.summary).toContain('模型交接摘要不可用')
     expect(context.handoffInputs).toHaveLength(1)
+  })
+
+  it('stops only the live turn, keeps the Episode and queued input, and reports idle channels', async () => {
+    const context = await setup(true)
+    await expect(context.runtime.stopCurrentTurn(context.channel.id)).resolves.toEqual({
+      result: 'idle',
+      retainedPending: 0,
+    })
+    await context.runtime.acceptChannelInbound(inbound(context.connection.id, context.channel.id, 'stop-target'))
+    const episode = [...context.runtimeRepository.episodes.values()][0]!
+    const queued = [...context.coreRepository.events.values()].find(
+      ({ dedupeKey }) => dedupeKey === 'event:stop-target',
+    )!
+    context.setPendingAdmissions([
+      { admissionId: AdmissionIdSchema.parse('adm_QUEUED'), target: 'next-step', channelEventIds: [queued.id] },
+    ])
+    expect(context.runtime.listPendingContext(context.channel.id)).toEqual({
+      episodeId: episode.id,
+      items: [{ admissionId: 'adm_QUEUED', target: 'next-step', events: [queued] }],
+    })
+
+    context.setSessionStatus('idle')
+    await expect(context.runtime.stopCurrentTurn(context.channel.id)).resolves.toEqual({
+      result: 'idle',
+      episodeId: episode.id,
+      retainedPending: 1,
+    })
+    expect(context.sessionCalls.filter((call) => call.startsWith('interrupt:'))).toEqual([])
+
+    context.setSessionStatus('running')
+    await expect(
+      context.runtime.stopCurrentTurn(context.channel.id, EpisodeIdSchema.parse('eps_STALE')),
+    ).rejects.toThrow(ChannelStopConflictError)
+    await expect(context.runtime.stopCurrentTurn(context.channel.id, episode.id)).resolves.toEqual({
+      result: 'stopped',
+      episodeId: episode.id,
+      retainedPending: 1,
+    })
+    expect(context.sessionCalls).toContain(`interrupt:dsh-${episode.id}:stopped-by-administrator`)
+    expect(context.runtimeRepository.getEpisode(episode.id)).toMatchObject({ status: 'active' })
+
+    context.setPendingAdmissions([])
+    await context.runtime.acceptChannelInbound(inbound(context.connection.id, context.channel.id, 'after-stop', 120))
+    expect(context.admissionCalls.at(-1)?.events.map(({ dedupeKey }) => dedupeKey)).toEqual(['event:after-stop'])
+    expect([...context.runtimeRepository.episodes.values()]).toHaveLength(1)
   })
 
   it('validates outbound targets and sends every structured part with reply metadata', async () => {

@@ -750,7 +750,7 @@ export class CoreService {
    */
   updateAgentAppearance(
     agentId: AgentId,
-    patch: { readonly hue?: number | null; readonly avatarAssetId?: AssetId | null },
+    patch: { readonly hue?: number | null | undefined; readonly avatarAssetId?: AssetId | null | undefined },
   ): AgentAppearance {
     const current = this.#repository.getAgent(agentId)
     if (!current) throw new Error(`Unknown agent: ${agentId}`)
