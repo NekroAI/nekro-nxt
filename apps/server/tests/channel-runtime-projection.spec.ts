@@ -1,4 +1,4 @@
-import { createAssistantMessage } from '@deepseek-ai/dsh-llm'
+import { createAssistantMessage, createUserMessage } from '@deepseek-ai/dsh-llm'
 import { SessionSeq } from '@deepseek-ai/dsh-session'
 import {
   AgentIdSchema,
@@ -24,6 +24,70 @@ const agentId = AgentIdSchema.parse('agt_observer')
 const episodeId = EpisodeIdSchema.parse('eps_observer')
 
 describe('channel runtime projection', () => {
+  it('places each turn on the timeline with its open/close times and the channel event that opened it', () => {
+    const channelMessage = (admissionId: string, channelEventIds: readonly string[]) =>
+      createUserMessage({
+        content: [{ type: 'text', text: admissionId }],
+        source: { kind: 'nekro-nxt-channel', admissionId, channelEventIds: [...channelEventIds] },
+      })
+    let seq = 0
+    const at = (time: number) => ({ seq: SessionSeq(++seq), time })
+    const events = normalizeSessionEvents([
+      // The first admission is logged before its turn opens; the backlog's newest event triggered it.
+      {
+        type: 'user/message',
+        ...at(100),
+        surfaceOp: 'append',
+        data: channelMessage('adm_A', ['evt_BACKLOG', 'evt_FIRST']),
+      },
+      { type: 'turn/start', ...at(110), data: { turn: 1 } },
+      { type: 'step/start', ...at(120), data: { turn: 1, step: 1 } },
+      {
+        type: 'assistant/message',
+        ...at(125),
+        surfaceOp: 'append',
+        data: {
+          turn: 1,
+          step: 1,
+          message: createAssistantMessage({
+            source: { provider: 'synthetic-provider', model: 'synthetic-model' },
+            content: [{ type: 'text', text: '处理中' }],
+          }),
+          stream: [],
+        },
+      },
+      { type: 'step/end', ...at(130), data: { turn: 1, step: 1 } },
+      { type: 'step/start', ...at(135), data: { turn: 1, step: 2 } },
+      // Injected while the turn is already working: context for the next step, not a new trigger.
+      { type: 'user/message', ...at(136), surfaceOp: 'append', data: channelMessage('adm_B', ['evt_INJECTED']) },
+      { type: 'step/end', ...at(140), data: { turn: 1, step: 2 } },
+      { type: 'turn/end', ...at(150), data: { turn: 1, reason: { kind: 'completed' } } },
+      { type: 'turn/start', ...at(200), data: { turn: 2 } },
+      // DSH splices the inbox at step start, so the trigger is logged after the first `step/start`.
+      { type: 'step/start', ...at(205), data: { turn: 2, step: 1 } },
+      { type: 'user/message', ...at(210), surfaceOp: 'append', data: channelMessage('adm_C', ['evt_SECOND']) },
+      // A non-channel turn has no trigger.
+    ])
+    const projection = projectChannelRuntime({ channelId, sessionStatus: 'running', pendingInjectCount: 0, events })
+    expect(
+      projection.turns.map(({ turn, startedAt, endedAt, triggerEventId }) => ({
+        turn,
+        startedAt,
+        endedAt,
+        triggerEventId,
+      })),
+    ).toEqual([
+      { turn: 1, startedAt: 110, endedAt: 150, triggerEventId: 'evt_FIRST' },
+      { turn: 2, startedAt: 200, endedAt: undefined, triggerEventId: 'evt_SECOND' },
+    ])
+    expect(
+      HostApiContracts.getChannelRuntime.parseResponse({
+        ...projection,
+        cursor: { epoch: 'synthetic-host', sequence: 0 },
+      }).turns[1],
+    ).not.toHaveProperty('endedAt')
+  })
+
   it('preserves authoritative DSH totals across REST and SSE without leaking provider fields', () => {
     // DSH inputTokens excludes cache hits, so totalTokens cannot be reconstructed as input + output.
     const usage = {

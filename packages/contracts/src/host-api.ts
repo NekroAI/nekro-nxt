@@ -526,6 +526,12 @@ export const ChannelRuntimeTurnSchema = z
     error: z.object({ code: NonEmptyStringSchema, message: z.string() }).strict().optional(),
     steps: z.array(ChannelRuntimeStepSchema),
     durationMs: z.number().int().nonnegative().optional(),
+    /** Session log time the turn opened. */
+    startedAt: z.number().int().safe().nonnegative().optional(),
+    /** Session log time the turn closed; absent while it is still running. */
+    endedAt: z.number().int().safe().nonnegative().optional(),
+    /** Newest Channel Event of the admission that opened this turn; absent for non-channel turns. */
+    triggerEventId: ChannelEventIdSchema.optional(),
   })
   .strict()
 

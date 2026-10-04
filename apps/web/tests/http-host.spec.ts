@@ -1735,6 +1735,8 @@ describe('HttpProductHost', () => {
       turns: [
         {
           turn: 1,
+          startedAt: 1_700_000_000_000,
+          triggerEventId: groupEventId,
           state: 'in-progress',
           producedReply: false,
           responseState: 'pending',
@@ -1758,6 +1760,12 @@ describe('HttpProductHost', () => {
     await flush()
     expect(requests.filter((url) => String(url).includes('/runtime'))).toHaveLength(runtimeCallsAfterLoad)
     expect(host.getSnapshot().channelRuntimes[webChannelId]?.turns).toHaveLength(1)
+    // Turn timing and its triggering channel event come from the Host projection unchanged.
+    expect(host.getSnapshot().channelRuntimes[webChannelId]?.turns[0]).toMatchObject({
+      startedAt: 1_700_000_000_000,
+      triggerEventId: groupEventId,
+    })
+    expect(host.getSnapshot().channelRuntimes[webChannelId]?.turns[0]).not.toHaveProperty('endedAt')
     expect(host.getSnapshot().channels.find((channel) => channel.id === webChannelId)?.runtimePhase).toBe('using-tool')
     unsubscribe()
   })

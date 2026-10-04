@@ -226,6 +226,26 @@ describe('workspace runtime controls', () => {
     expect(attention.items.filter(({ kind }) => kind === 'turn-failed')).toEqual([])
   })
 
+  it('times each turn from the real Session log and links the channel event that opened it', async () => {
+    const f = await fixture()
+    f.model.mode = 'reply'
+    const first = await f.admit('请回复一次')
+    await waitFor(() => f.model.calls.length >= 2 && f.sessionStatus() === 'idle')
+    const second = await f.admit('再回复一次')
+    await waitFor(() => f.model.calls.length >= 4 && f.sessionStatus() === 'idle')
+    const runtime = HostApiContracts.getChannelRuntime.parseResponse(
+      await (await fetch(`${f.origin}/api/channels/${f.seeded.channel.id}/runtime`)).json(),
+    )
+    expect(runtime.turns.map(({ triggerEventId }) => triggerEventId)).toEqual([
+      first.channelEventId,
+      second.channelEventId,
+    ])
+    for (const turn of runtime.turns) {
+      expect(turn.startedAt).toBeTypeOf('number')
+      expect(turn.endedAt).toBeGreaterThanOrEqual(turn.startedAt!)
+    }
+  })
+
   it('stops a running tool through its abort signal without closing the Session', async () => {
     const f = await fixture()
     f.model.mode = 'reply'
