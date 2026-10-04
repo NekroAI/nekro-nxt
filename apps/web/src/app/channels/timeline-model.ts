@@ -99,3 +99,55 @@ export function formatDuration(ms: number | undefined): string {
   if (ms < 60_000) return `${(ms / 1000).toFixed(ms < 10_000 ? 1 : 0)}s`
   return `${Math.floor(ms / 60_000)}m${Math.round((ms % 60_000) / 1000)}s`
 }
+
+export interface ToolInputView {
+  /** Plain text the tool sent to the channel, when it is a messaging tool. */
+  readonly message?: string
+  /** Readable key/value pairs for structured input. */
+  readonly fields?: readonly (readonly [string, string])[]
+  /** Fallback when the preview is neither. */
+  readonly raw?: string
+}
+
+const unescapeJsonString = (value: string): string => {
+  try {
+    return JSON.parse(`"${value}"`) as string
+  } catch {
+    return value.replace(/\\n/g, '\n').replace(/\\"/g, '"')
+  }
+}
+
+const compact = (value: unknown): string => {
+  if (value === null || value === undefined) return ''
+  if (typeof value === 'string') return value
+  if (typeof value === 'number' || typeof value === 'boolean') return String(value)
+  const text = JSON.stringify(value)
+  return text.length > 160 ? `${text.slice(0, 157)}…` : text
+}
+
+/**
+ * Turns a tool input preview (often JSON, sometimes truncated) into something a person can read.
+ * Messaging tools show the text they sent; other JSON objects become fields; anything else stays as is.
+ */
+export function presentToolInput(preview: string | undefined, writesToChannel: boolean): ToolInputView | undefined {
+  if (!preview) return undefined
+  const trimmed = preview.trim()
+  if (writesToChannel) {
+    const texts = [...trimmed.matchAll(/"text"\s*:\s*"((?:[^"\\]|\\.)*)"?/g)].map((match) => unescapeJsonString(match[1] ?? ''))
+    if (texts.length) return { message: texts.join('') }
+  }
+  if (trimmed.startsWith('{')) {
+    try {
+      const parsed = JSON.parse(trimmed) as Record<string, unknown>
+      if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+        const fields = Object.entries(parsed)
+          .filter(([, value]) => value !== undefined && value !== null && value !== '')
+          .map(([key, value]) => [key, compact(value)] as const)
+        if (fields.length) return { fields }
+      }
+    } catch {
+      // Truncated or not JSON; fall through.
+    }
+  }
+  return { raw: trimmed }
+}

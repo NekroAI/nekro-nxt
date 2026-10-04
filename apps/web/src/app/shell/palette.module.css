@@ -44,6 +44,10 @@
   height: 18px;
 }
 
+.input input:focus-visible {
+  outline: none;
+}
+
 .input input {
   flex: 1;
   min-width: 0;

@@ -115,7 +115,7 @@ html[data-ui='next'] textarea {
   color: inherit;
 }
 
-html[data-ui='next'] :focus-visible {
+html[data-ui='next'] :where(:focus-visible) {
   outline: 2px solid var(--focus);
   outline-offset: 2px;
 }

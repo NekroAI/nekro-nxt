@@ -1,12 +1,12 @@
 import { Check, CircleAlert, Square, X } from 'lucide-react'
-import { memo, useEffect, useState, type CSSProperties } from 'react'
+import { Fragment, memo, useEffect, useState, type CSSProperties } from 'react'
 import { MessageContent, resolveMessageSide } from '../../pages/message-content.js'
 import type { AgentSummary, ChannelSummary, ConversationMessage } from '../../product-runtime.js'
 import { AgentAvatar, Button, Chip, Spinner } from '../../ui-kit/next/index.js'
 import { MemberAvatar } from '../../ui-kit/next/avatar.js'
 import { agentAccent, agentHue } from '../model/identity.js'
 import styles from './channels.module.css'
-import { formatDuration, formatTokens, isTurnRunning, isUnconfirmed, type RuntimeTurn } from './timeline-model.js'
+import { formatDuration, formatTokens, isTurnRunning, isUnconfirmed, presentToolInput, type RuntimeTurn } from './timeline-model.js'
 
 type RuntimeStep = RuntimeTurn['steps'][number]
 type RuntimeTool = RuntimeStep['tools'][number]
@@ -92,17 +92,20 @@ const toolState = (tool: RuntimeTool) => {
 
 function ToolChip({ tool }: { readonly tool: RuntimeTool }) {
   const state = toolState(tool)
+  const view = presentToolInput(tool.inputPreview, tool.wroteToChannel === true || /send|message/i.test(tool.name))
+  const chipArg = view?.message ?? view?.fields?.map(([, value]) => value).join(' · ') ?? view?.raw
   return (
     <span className={[styles.step, state.className].join(' ')}>
       {state.icon}
       <b>{tool.displayName}</b>
-      {tool.inputPreview ? <span className={styles.stepArg}>{tool.inputPreview}</span> : null}
+      {chipArg ? <span className={styles.stepArg}>{chipArg}</span> : null}
       {tool.durationMs !== undefined ? <span className={styles.stepTime}>{formatDuration(tool.durationMs)}</span> : null}
     </span>
   )
 }
 
 function ToolCard({ tool, index }: { readonly tool: RuntimeTool; readonly index: number }) {
+  const input = presentToolInput(tool.inputPreview, tool.wroteToChannel === true || /send|message/i.test(tool.name))
   return (
     <div className={styles.card} style={{ '--i': index } as CSSProperties}>
       <div className={styles.cardHead}>
@@ -126,10 +129,22 @@ function ToolCard({ tool, index }: { readonly tool: RuntimeTool; readonly index:
         </span>
       </div>
       <dl className={styles.kv}>
-        {tool.inputPreview ? (
+        {input?.message !== undefined ? (
+          <>
+            <dt>内容</dt>
+            <dd>{input.message}</dd>
+          </>
+        ) : null}
+        {input?.fields?.map(([key, value]) => (
+          <Fragment key={key}>
+            <dt>{key}</dt>
+            <dd>{value}</dd>
+          </Fragment>
+        ))}
+        {input?.raw !== undefined ? (
           <>
             <dt>输入</dt>
-            <dd>{tool.inputPreview}</dd>
+            <dd>{input.raw}</dd>
           </>
         ) : null}
         {tool.resultPreview ? (
