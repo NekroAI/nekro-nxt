@@ -114,12 +114,19 @@ export interface ConfigurableLlmProviderView {
   readonly baseURL?: string
   readonly api?: string
   readonly credential?: { readonly configured: boolean; readonly source?: string; readonly writable: boolean }
-  readonly models: readonly {
-    readonly id: string
-    readonly name: string
-    readonly contextWindow?: number
-    readonly maxTokens?: number
-  }[]
+  readonly models: readonly LlmModelView[]
+  readonly modelsCustomized: boolean
+  readonly discoverable: boolean
+}
+
+export type LlmModelModality = 'text' | 'image'
+
+export interface LlmModelView {
+  readonly id: string
+  readonly name: string
+  readonly contextWindow?: number
+  readonly maxTokens?: number
+  readonly inputModalities?: readonly LlmModelModality[]
 }
 
 export interface LlmProviderSettingsView {
@@ -150,8 +157,11 @@ export interface SaveLlmProviderInput {
     readonly name?: string
     readonly contextWindow?: number
     readonly maxTokens?: number
+    readonly inputModalities?: readonly LlmModelModality[]
   }[]
 }
+
+export type SaveLlmProviderModel = NonNullable<SaveLlmProviderInput['models']>[number]
 
 export interface TestLlmProviderInput {
   readonly provider: string
@@ -232,8 +242,42 @@ const ConfiguredLlmModelSchema = z
     name: z.string().optional(),
     contextWindow: z.number().optional(),
     maxTokens: z.number().optional(),
+    input: z.array(z.string()).optional(),
+    inputModalities: z.array(z.string()).optional(),
   })
   .passthrough()
+
+/**
+ * Each DSH model adapter names the per-model modality list differently. Only adapters listed here expose an editable
+ * model catalog through product settings.
+ */
+const MODEL_MODALITY_FIELD: Readonly<Record<string, 'input' | 'inputModalities'>> = {
+  'llm-pi-ai': 'input',
+  'llm-deepseek': 'inputModalities',
+}
+
+const normalizeModalities = (value: readonly string[] | undefined): readonly LlmModelModality[] | undefined => {
+  if (value === undefined) return undefined
+  const known = value.filter((modality): modality is LlmModelModality => modality === 'text' || modality === 'image')
+  return known.length === 0 ? undefined : [...new Set(known)]
+}
+
+const modelView = (model: {
+  readonly id: string
+  readonly name?: string | undefined
+  readonly contextWindow?: number | undefined
+  readonly maxTokens?: number | undefined
+  readonly inputModalities?: readonly string[] | undefined
+}): LlmModelView => {
+  const inputModalities = normalizeModalities(model.inputModalities)
+  return {
+    id: model.id,
+    name: model.name || model.id,
+    ...(model.contextWindow === undefined ? {} : { contextWindow: model.contextWindow }),
+    ...(model.maxTokens === undefined ? {} : { maxTokens: model.maxTokens }),
+    ...(inputModalities === undefined ? {} : { inputModalities }),
+  }
+}
 
 const LlmProviderProfileSchema = z
   .object({
@@ -242,6 +286,7 @@ const LlmProviderProfileSchema = z
     baseURL: z.unknown().optional(),
     api: z.unknown().optional(),
     models: z.unknown().optional(),
+    modelOverrides: z.unknown().optional(),
   })
   .passthrough()
 
@@ -312,19 +357,13 @@ export class HostModelSettings {
               const result = ConfiguredLlmModelSchema.safeParse(candidate)
               if (!result.success) return []
               const model = result.data
-              return [
-                {
-                  id: model.id,
-                  name: model.name ?? model.id,
-                  ...(model.contextWindow === undefined ? {} : { contextWindow: model.contextWindow }),
-                  ...(model.maxTokens === undefined ? {} : { maxTokens: model.maxTokens }),
-                },
-              ]
+              return [modelView({ ...model, inputModalities: model.input ?? model.inputModalities })]
             })
           : []
-        const liveModels = active.has(entry.provider)
-          ? (await this.#context.llm.listModels(entry.provider)).map((model) => ({ id: model.id, name: model.name }))
-          : []
+        const liveModels = active.has(entry.provider) ? await this.#liveModels(entry.provider) : []
+        // `value` merges adapter defaults; only the user layer says whether this host edited the model list.
+        const userProfile = readObjectPath(descriptor.user, entry.settingsPath)
+        const modelsCustomized = userProfile?.['models'] !== undefined || userProfile?.['modelOverrides'] !== undefined
         return {
           provider: entry.provider,
           displayName: entry.displayName,
@@ -346,10 +385,42 @@ export class HostModelSettings {
                 },
               }),
           models: configuredModels.length > 0 ? configuredModels : liveModels,
+          modelsCustomized,
+          discoverable: await this.#hasModelDiscovery(entry.settingsNs),
         }
       }),
     )
     return { writable: this.#context.settings.writable, protocols: [...LlmPiAi.supportedProtocols()], providers }
+  }
+
+  /** Effective models served by an active route, including the capacity and modalities the adapter resolves. */
+  async #liveModels(provider: string): Promise<readonly LlmModelView[]> {
+    const models = await this.#context.llm.listModels(provider)
+    return Promise.all(
+      models.map(async (model) => {
+        const resolved = await this.#context.llm.resolveModelInfo(provider, model.id).catch(() => undefined)
+        return modelView({
+          id: model.id,
+          name: model.name,
+          contextWindow: resolved?.context?.contextWindow,
+          maxTokens: resolved?.defaultMaxTokens,
+          inputModalities: resolved?.inputModalities ?? model.inputModalities,
+        })
+      }),
+    )
+  }
+
+  /**
+   * DSH has no public "is discovery registered" query. An empty request is rejected with NO_DISCOVERY before anything
+   * else when no discovery is registered, and with INVALID_DISCOVERY before any network call when one is.
+   */
+  async #hasModelDiscovery(settingsNs: string): Promise<boolean> {
+    try {
+      await this.#context.llm.discoverModels(settingsNs, {})
+      return true
+    } catch (error) {
+      return !(error instanceof Error && 'code' in error && Reflect.get(error, 'code') === 'NO_DISCOVERY')
+    }
   }
 
   async getWebSearchCapabilityStatus(): Promise<WebSearchCapabilityStatus> {
@@ -570,7 +641,14 @@ export class HostModelSettings {
     if (input.displayName !== undefined) fields['displayName'] = input.displayName
     if (input.baseURL !== undefined) fields['baseURL'] = input.baseURL
     if (input.api !== undefined) fields['api'] = input.api
-    if (input.models !== undefined) fields['models'] = input.models.map((model) => ({ ...model }))
+    if (input.models !== undefined) {
+      fields['models'] = this.#modelEntries(
+        settingsNs,
+        input.models,
+        current,
+        readObjectPath(descriptor.base, settingsPath),
+      )
+    }
     if (input.apiKey !== undefined || typeof current?.apiKeyEnv === 'string') fields['apiKeyEnv'] = credentialRefName
     if (entry === undefined) {
       if (!input.displayName || !input.baseURL || !input.api || !input.models?.length) {
@@ -582,12 +660,83 @@ export class HostModelSettings {
         ? [{ op: 'set', path: settingsPath, value: fields }]
         : Object.entries(fields).map(([key, value]) => ({ op: 'set' as const, path: [...settingsPath, key], value }))
     if (ops.length === 0 && current === undefined) ops.push({ op: 'set', path: settingsPath, value: {} })
+    // DSH refuses catalog overrides beside an explicit model list; the list now carries every customization.
+    if (input.models !== undefined && current?.modelOverrides !== undefined) {
+      ops.push({ op: 'unset', path: [...settingsPath, 'modelOverrides'] })
+    }
     if (ops.length > 0) {
-      await this.#context.settings.mutate(settingsNs, ops, input.expectedRevision)
+      try {
+        await this.#context.settings.mutate(settingsNs, ops, input.expectedRevision)
+      } catch (error) {
+        if (
+          error instanceof Error &&
+          /needs an? (?:api|baseURL); the installed catalog does not describe/u.test(error.message)
+        ) {
+          throw new Error(
+            '新增的模型不在供应商自带目录中：请在高级设置中填写 API 地址并选择 API 协议。指定后该供应商的全部模型都使用这组设置。',
+            { cause: error },
+          )
+        }
+        throw error
+      }
     }
     if (input.apiKey !== undefined) {
       await this.#context.credentials.set(credentialRef(credentialRefName), input.apiKey)
     }
+    return this.getLlmProviderSettings()
+  }
+
+  /**
+   * Map product model rows onto the adapter's own model entries. Fields the product does not edit (for example a
+   * DeepSeek model's prompt-update or image-budget hints) are kept from the current entry with the same id.
+   */
+  #modelEntries(
+    settingsNs: string,
+    models: NonNullable<SaveLlmProviderInput['models']>,
+    current: z.infer<typeof LlmProviderProfileSchema> | undefined,
+    base: Record<string, unknown> | undefined,
+  ): Record<string, unknown>[] {
+    const modalityField = MODEL_MODALITY_FIELD[settingsNs]
+    if (modalityField === undefined) throw new Error('此供应商的模型列表不支持在设置中编辑。')
+    if (models.length === 0) throw new Error('模型列表至少需要一个模型。')
+    const ids = models.map((model) => model.id.trim())
+    if (ids.some((id) => id.length === 0)) throw new Error('模型 ID 不能为空。')
+    if (new Set(ids).size !== ids.length) throw new Error('模型 ID 不能重复。')
+    const existing = new Map<string, Record<string, unknown>>()
+    for (const source of [base?.['models'], current?.models]) {
+      if (!Array.isArray(source)) continue
+      for (const entry of source) {
+        const parsed = ConfiguredLlmModelSchema.safeParse(entry)
+        if (parsed.success) existing.set(parsed.data.id, { ...parsed.data })
+      }
+    }
+    return models.map((model) => {
+      const id = model.id.trim()
+      const entry: Record<string, unknown> = { ...existing.get(id), id }
+      if (model.name !== undefined) entry['name'] = model.name
+      if (model.contextWindow !== undefined) entry['contextWindow'] = model.contextWindow
+      if (model.maxTokens !== undefined) entry['maxTokens'] = model.maxTokens
+      const modalities = normalizeModalities(model.inputModalities)
+      if (modalities !== undefined) entry[modalityField] = [...modalities]
+      return entry
+    })
+  }
+
+  /** Drop this host's model-list edits so a built-in provider serves its own catalog again. */
+  async restoreLlmProviderModels(provider: string, expectedRevision: number): Promise<LlmProviderSettingsView> {
+    if (!this.#hasLlmSettings) throw new Error('DSH 模型设置服务未启用。')
+    const entry = this.#context.llm.listConfigurableProviders().find((candidate) => candidate.provider === provider)
+    if (!entry) throw new Error(`未知模型供应商：${provider}`)
+    if (entry.declared === true) throw new Error('自定义供应商没有可恢复的默认模型列表。')
+    const descriptor = this.#context.settings
+      .describe({ redactSecrets: true })
+      .find((candidate) => candidate.ns === entry.settingsNs)
+    if (!descriptor) throw new Error(`DSH 模型设置 namespace 未注册：${entry.settingsNs}`)
+    const userProfile = readObjectPath(descriptor.user, entry.settingsPath)
+    const ops: SettingsPathOp[] = (['models', 'modelOverrides'] as const)
+      .filter((key) => userProfile?.[key] !== undefined)
+      .map((key) => ({ op: 'unset', path: [...entry.settingsPath, key] }))
+    if (ops.length > 0) await this.#context.settings.mutate(entry.settingsNs, ops, expectedRevision)
     return this.getLlmProviderSettings()
   }
 
@@ -597,19 +746,29 @@ export class HostModelSettings {
     readonly baseURL?: string
     readonly api?: string
     readonly apiKey?: string
-  }): Promise<
-    readonly {
-      readonly id: string
-      readonly name?: string
-      readonly contextWindow?: number
-      readonly maxTokens?: number
-    }[]
-  > {
+  }): Promise<readonly SaveLlmProviderModel[]> {
     const settingsNs =
       input.settingsNs ??
       this.#context.llm.listConfigurableProviders().find((entry) => entry.provider === input.provider)?.settingsNs ??
       'llm-pi-ai'
-    return this.#context.llm.discoverModels(settingsNs, input)
+    try {
+      // Project the product contract explicitly; adapter-specific discovery fields must not reach the wire.
+      return (await this.#context.llm.discoverModels(settingsNs, input)).map((model) => {
+        const inputModalities = normalizeModalities(model.inputModalities)
+        return {
+          id: model.id,
+          ...(model.name === undefined || model.name === '' ? {} : { name: model.name }),
+          ...(model.contextWindow === undefined ? {} : { contextWindow: model.contextWindow }),
+          ...(model.maxTokens === undefined ? {} : { maxTokens: model.maxTokens }),
+          ...(inputModalities === undefined ? {} : { inputModalities }),
+        }
+      })
+    } catch (error) {
+      if (error instanceof Error && 'code' in error && Reflect.get(error, 'code') === 'NO_DISCOVERY') {
+        throw new Error('此供应商不提供可用模型查询，请手动添加模型。', { cause: error })
+      }
+      throw error
+    }
   }
 
   async testLlmProvider(input: TestLlmProviderInput): Promise<{ readonly provider: string; readonly model: string }> {
@@ -639,7 +798,12 @@ export class HostModelSettings {
     const profile: Record<string, unknown> = { ...current }
     if (input.baseURL !== undefined) profile['baseURL'] = input.baseURL
     if (input.api !== undefined) profile['api'] = input.api
-    if (input.models !== undefined) profile['models'] = input.models.map((model) => ({ ...model }))
+    if (input.models !== undefined) {
+      profile['models'] = input.models.map(({ inputModalities, ...model }) => ({
+        ...model,
+        ...(inputModalities === undefined ? {} : { input: [...inputModalities] }),
+      }))
+    }
 
     const storedRef = typeof current['apiKeyEnv'] === 'string' ? current['apiKeyEnv'] : undefined
     const storedApiKey =

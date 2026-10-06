@@ -4,9 +4,23 @@ import type { AgentSummary, CapabilityAvailability, ChannelSummary, ModelSummary
 export type AgentWorkbenchTab = 'profile' | 'channels' | 'capabilities' | 'extensions' | 'creator'
 
 export interface AgentBlocker {
-  readonly kind: 'no-model' | 'no-channel' | 'search-pending' | 'creation-running' | 'unbound-channels'
+  readonly kind:
+    'no-model' | 'model-missing' | 'no-channel' | 'search-pending' | 'creation-running' | 'unbound-channels'
   readonly label: string
   readonly tab: AgentWorkbenchTab
+}
+
+/**
+ * The saved default model when its provider no longer lists it (for example a retired model name). The Agent may
+ * still run, but its image capability can no longer be confirmed, so the workbench asks for a replacement.
+ */
+export const missingAgentModel = (
+  agent: Pick<AgentSummary, 'modelRef'>,
+  models: readonly Pick<ModelSummary, 'provider' | 'id'>[],
+): { readonly provider: string; readonly model: string } | undefined => {
+  const ref = agent.modelRef
+  if (!ref) return undefined
+  return models.some((model) => model.provider === ref.provider && model.id === ref.model) ? undefined : ref
 }
 
 export const listAgentBlockers = (input: {
@@ -27,6 +41,10 @@ export const listAgentBlockers = (input: {
 
   if (input.models.length === 0) {
     blockers.push({ kind: 'no-model', label: '还没有可用模型', tab: 'profile' })
+  } else {
+    const missing = missingAgentModel(input.agent, input.models)
+    if (missing)
+      blockers.push({ kind: 'model-missing', label: `默认模型 ${missing.model} 已不在模型列表中`, tab: 'profile' })
   }
   if (boundCount === 0) {
     blockers.push({ kind: 'no-channel', label: '还没有绑定频道', tab: 'channels' })

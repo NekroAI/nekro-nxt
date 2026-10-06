@@ -2426,6 +2426,11 @@ export class DshHostRuntime implements AgentSessionDriver, ExtensionActivationHo
     return this.#modelSettings.saveLlmProvider(input)
   }
 
+  restoreLlmProviderModels(provider: string, expectedRevision: number): Promise<LlmProviderSettingsView> {
+    this.#assertActive()
+    return this.#modelSettings.restoreLlmProviderModels(provider, expectedRevision)
+  }
+
   discoverLlmProviderModels(input: {
     readonly provider?: string
     readonly settingsNs?: string

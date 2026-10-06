@@ -143,6 +143,91 @@
   font-size: 11px;
 }
 
+.modelSectionHeading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.modelSectionHeading > span {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.modelHint {
+  margin: 0;
+  color: var(--nxt-text-muted);
+  font-size: 11px;
+}
+
+.modelEditor {
+  display: grid;
+  gap: 10px;
+}
+
+.modelTable {
+  display: grid;
+  gap: 6px;
+}
+
+.modelHeaderRow,
+.modelRow {
+  display: grid;
+  grid-template-columns: minmax(130px, 1.4fr) minmax(110px, 1.2fr) minmax(84px, 0.7fr) minmax(84px, 0.7fr) 64px 32px;
+  gap: 8px;
+  align-items: center;
+}
+
+.modelHeaderRow {
+  color: var(--nxt-text-muted);
+  font-size: 11px;
+  font-weight: 650;
+}
+
+.modelRow > * {
+  min-width: 0;
+}
+
+.modelSwitch {
+  display: flex;
+  justify-content: center;
+}
+
+.modelError {
+  margin: 0;
+  color: var(--nxt-danger);
+  font-size: 12px;
+}
+
+.modelToolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.discoveredModels {
+  display: grid;
+  gap: 8px;
+  border-radius: var(--nxt-radius-md);
+  padding: 10px 12px;
+  background: var(--nxt-bg-subtle);
+}
+
+@media (width < 1180px) {
+  .modelHeaderRow {
+    display: none;
+  }
+
+  .modelRow {
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) 64px 32px;
+    border-bottom: 1px solid var(--nxt-border-subtle);
+    padding-bottom: 8px;
+  }
+}
+
 .advanced {
   border-radius: var(--nxt-radius-md);
   padding: 12px 14px;

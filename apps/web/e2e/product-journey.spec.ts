@@ -137,6 +137,8 @@ const installDeepSeekProviderRoutes = async (
         configured: true,
         credential: { configured: saved, writable: true },
         models: [{ id: 'deepseek-v4-flash', name: 'DeepSeek V4 Flash' }],
+        modelsCustomized: false,
+        discoverable: true,
       },
     ],
   })
@@ -364,7 +366,8 @@ test('provider connection test uses the unsaved page draft without saving it', a
   await page.getByLabel('API 地址').fill('https://draft.example.test/v1')
   await page.getByLabel('API 协议').click()
   await page.getByRole('option', { name: 'openai-completions' }).click()
-  await page.getByLabel('模型').fill('draft-model')
+  await page.getByRole('button', { name: '添加模型' }).click()
+  await page.getByRole('textbox', { name: '模型 ID' }).fill('draft-model')
   await page.getByRole('button', { name: '测试连接' }).click()
 
   await expect(page.getByText('当前页面配置测试通过，可使用 draft-model。', { exact: true })).toBeVisible()
@@ -376,12 +379,12 @@ test('provider connection test uses the unsaved page draft without saving it', a
       apiKey: 'unsaved-draft-key',
       baseURL: 'https://draft.example.test/v1',
       api: 'openai-completions',
-      models: [{ id: 'draft-model' }],
+      models: [{ id: 'draft-model', inputModalities: ['text'] }],
     },
   ])
   expect(saveRequests).toEqual([])
   await expect(page.getByLabel('API 密钥')).toHaveValue('unsaved-draft-key')
-  await expect(page.getByLabel('模型')).toHaveValue('draft-model')
+  await expect(page.getByRole('textbox', { name: '模型 ID' })).toHaveValue('draft-model')
   expect(failures, failures.join('\n')).toEqual([])
 })
 

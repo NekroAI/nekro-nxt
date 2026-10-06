@@ -7,14 +7,25 @@ import { HostApiContracts, type HostApiResponse } from '@nekro-nxt/contracts'
 import { notify } from './components/notifications.js'
 import { EmptyState } from './components/product-feedback.js'
 import { providerDisplayName } from './provider-labels.js'
-import { Button, Dialog, Field, Input, SecretInput, SelectField, StatusBadge, Textarea } from './ui-kit/index.js'
+import {
+  ModelListEditor,
+  modelPayload,
+  modelRowFromModel,
+  modelRowsError,
+  modelsToAdd,
+  type ModelRow,
+} from './llm-model-editor.js'
+import { Button, ConfirmDialog, Dialog, Field, Input, SecretInput, SelectField, StatusBadge } from './ui-kit/index.js'
 import styles from './llm-settings.module.css'
 
 type ProviderSettingsView = HostApiResponse<'llmProviders'>
 type ProviderView = ProviderSettingsView['providers'][number]
 type DiscoveredModelView = HostApiResponse<'llmDiscoverModels'>['models'][number]
 
-const modelLines = (models: readonly { readonly id: string }[]): string => models.map((model) => model.id).join('\n')
+/** DSH model adapters whose per-route model list product settings can edit. */
+const EDITABLE_MODEL_NAMESPACES = new Set(['llm-pi-ai', 'llm-deepseek'])
+/** Select value standing for "no route-wide protocol": each catalog model keeps its own. */
+const CATALOG_PROTOCOL = '__catalog__'
 
 const customProviderKey = (displayName: string, providers: readonly ProviderView[]): string => {
   const base =
@@ -46,9 +57,11 @@ export function LlmProviderSettings(): React.ReactNode {
   const [baseURL, setBaseURL] = useState('')
   const [api, setApi] = useState('')
   const [apiKey, setApiKey] = useState('')
-  const [models, setModels] = useState('')
+  const [rows, setRows] = useState<readonly ModelRow[]>([])
+  const [modelsDirty, setModelsDirty] = useState(false)
+  const [restoreOpen, setRestoreOpen] = useState(false)
   const [discovered, setDiscovered] = useState<readonly DiscoveredModelView[]>([])
-  const [operation, setPending] = useState<'save' | 'discover' | 'test' | null>(null)
+  const [operation, setPending] = useState<'save' | 'discover' | 'test' | 'restore' | null>(null)
   const pending = operation ?? (query.loading ? 'load' : null)
   const [actionError, setError] = useState('')
   const error = actionError || query.error
@@ -67,12 +80,14 @@ export function LlmProviderSettings(): React.ReactNode {
       ? customProviderKey(displayName, settings.providers)
       : ''
     : (selected?.provider ?? '')
-  const parsedModels = models
-    .split(/\r?\n/u)
-    .map((id) => id.trim())
-    .filter(Boolean)
-    .map((id) => ({ id }))
-  const testModels = customEditor ? parsedModels : selected?.models.length ? selected.models : discovered
+  const modelsEditable = customEditor || (selected !== undefined && EDITABLE_MODEL_NAMESPACES.has(selected.settingsNs))
+  const discoverable = customMode || selected?.discoverable === true
+  const submitsModels = customEditor || modelsDirty
+  const catalogRoute = !customEditor && selected?.settingsNs === 'llm-pi-ai'
+  const restorable = !customMode && selected?.declared === false && selected.modelsCustomized
+  const modelsError = modelsEditable && submitsModels ? modelRowsError(rows) : undefined
+  const submittedModels = modelPayload(rows)
+  const testModels = submitsModels ? submittedModels : selected?.models.length ? selected.models : discovered
   const testModel = testModels[0]
   const testModelName = testModel && 'name' in testModel ? (testModel.name ?? testModel.id) : testModel?.id
 
@@ -102,7 +117,8 @@ export function LlmProviderSettings(): React.ReactNode {
     setDisplayName(providerDisplayName(selected.provider, selected.displayName))
     setBaseURL(selected.baseURL ?? '')
     setApi(selected.api ?? '')
-    setModels(modelLines(selected.models))
+    setRows(selected.models.map(modelRowFromModel))
+    setModelsDirty(false)
     setApiKey('')
     setDiscovered([])
     setSubmitted(false)
@@ -113,7 +129,8 @@ export function LlmProviderSettings(): React.ReactNode {
     setDisplayName('')
     setBaseURL('')
     setApi(settings?.protocols[0] ?? '')
-    setModels('')
+    setRows([])
+    setModelsDirty(false)
     setApiKey('')
     setDiscovered([])
     setError('')
@@ -144,8 +161,18 @@ export function LlmProviderSettings(): React.ReactNode {
         },
       )
       setDiscovered(result.models)
-      if (customEditor && result.models.length > 0) setModels(modelLines(result.models))
-      notify(`已找到 ${result.models.length} 个可用模型。`, 'success', `llm-provider-discover:${providerId}`)
+      if (customEditor && rows.length === 0 && result.models.length > 0) {
+        setRows(result.models.map(modelRowFromModel))
+        setModelsDirty(true)
+      }
+      const missing = modelsToAdd(rows, result.models).length
+      notify(
+        missing > 0
+          ? `已找到 ${result.models.length} 个可用模型，其中 ${missing} 个尚未加入列表。`
+          : `已找到 ${result.models.length} 个可用模型，均已在列表中。`,
+        'success',
+        `llm-provider-discover:${providerId}`,
+      )
     } catch (cause) {
       notify(cause instanceof Error ? cause.message : String(cause), 'error', `llm-provider-discover:${providerId}`)
     } finally {
@@ -159,7 +186,8 @@ export function LlmProviderSettings(): React.ReactNode {
     if (
       !settings ||
       !providerId ||
-      (customEditor && (!displayName.trim() || !baseURL.trim() || !api || parsedModels.length === 0))
+      (customEditor && (!displayName.trim() || !baseURL.trim() || !api)) ||
+      modelsError !== undefined
     ) {
       return
     }
@@ -177,13 +205,16 @@ export function LlmProviderSettings(): React.ReactNode {
           expectedRevision: revision,
           ...(apiKey ? { apiKey } : {}),
           ...(baseURL.trim() ? { baseURL: baseURL.trim() } : {}),
-          ...(customEditor ? { displayName: displayName.trim(), api, models: parsedModels } : {}),
+          ...(customEditor ? { displayName: displayName.trim() } : {}),
+          ...(api && (customEditor || catalogRoute) ? { api } : {}),
+          ...(submitsModels ? { models: submittedModels } : {}),
         },
       )
       useProductStore.getState().replaceLlmProviders(next)
       setSelectedId(providerId)
       setCustomMode(false)
       setApiKey('')
+      setModelsDirty(false)
       setSubmitted(false)
       try {
         await useProductStore.getState().refreshHost()
@@ -197,6 +228,35 @@ export function LlmProviderSettings(): React.ReactNode {
       }
     } catch (cause) {
       notify(cause instanceof Error ? cause.message : String(cause), 'error', `llm-provider-save:${providerId}`)
+    } finally {
+      setPending(null)
+    }
+  }
+
+  const restoreModels = async (): Promise<boolean> => {
+    if (!selected || pending) return false
+    setPending('restore')
+    try {
+      const next = await callHostApi(
+        HostApiContracts.llmRestoreProviderModels,
+        { provider: selected.provider },
+        { expectedRevision: selected.settingsRevision },
+      )
+      useProductStore.getState().replaceLlmProviders(next)
+      setModelsDirty(false)
+      notify('已恢复供应商自带的模型列表。', 'success', `llm-provider-restore:${selected.provider}`)
+      void useProductStore
+        .getState()
+        .refreshHost()
+        .catch(() => undefined)
+      return true
+    } catch (cause) {
+      notify(
+        cause instanceof Error ? cause.message : String(cause),
+        'error',
+        `llm-provider-restore:${selected.provider}`,
+      )
+      return false
     } finally {
       setPending(null)
     }
@@ -231,13 +291,13 @@ export function LlmProviderSettings(): React.ReactNode {
   const displayNameError = submitted && customEditor && !displayName.trim() ? '请输入供应商名称。' : undefined
   const baseUrlError = submitted && customEditor && !baseURL.trim() ? '请输入 API 地址。' : undefined
   const apiError = submitted && customEditor && !api ? '请选择 API 协议。' : undefined
-  const modelsError = submitted && customEditor && parsedModels.length === 0 ? '请至少填写一个模型。' : undefined
   const canSave =
     settings?.writable === true &&
     Boolean(providerId) &&
-    (!customEditor || Boolean(displayName.trim() && baseURL.trim() && api && parsedModels.length > 0))
+    modelsError === undefined &&
+    (!customEditor || Boolean(displayName.trim() && baseURL.trim() && api))
   const canTest =
-    Boolean(providerId && testModel) && (!customEditor || Boolean(baseURL.trim() && api && parsedModels.length > 0))
+    Boolean(providerId && testModel) && modelsError === undefined && (!customEditor || Boolean(baseURL.trim() && api))
 
   if (!settings && !query.error) {
     return <EmptyState loading title="正在读取模型供应商" description="加载完成后可管理 API 密钥和模型。" />
@@ -341,26 +401,49 @@ export function LlmProviderSettings(): React.ReactNode {
               <SecretInput value={apiKey} onChange={(event) => setApiKey(event.target.value)} />
             </Field>
 
-            {selected?.models.length ? (
-              <div className={styles.modelSection}>
-                <div className={styles.fieldLabel}>可用模型</div>
-                <div className={styles.modelList}>
-                  {selected.models.map((model) => (
-                    <span key={model.id}>{model.name}</span>
-                  ))}
-                </div>
+            <div className={styles.modelSection}>
+              <div className={styles.modelSectionHeading}>
+                <span>
+                  <span className={styles.fieldLabel}>模型</span>
+                  {restorable ? <StatusBadge tone="info">已自定义</StatusBadge> : null}
+                </span>
+                {restorable ? (
+                  <Button size="small" variant="ghost" disabled={pending !== null} onClick={() => setRestoreOpen(true)}>
+                    恢复默认模型
+                  </Button>
+                ) : null}
               </div>
-            ) : null}
-            {discovered.length > 0 && !customEditor ? (
-              <div className={styles.modelSection}>
-                <div className={styles.fieldLabel}>刚刚获取</div>
-                <div className={styles.modelList}>
-                  {discovered.map((model) => (
-                    <span key={model.id}>{model.name || '未命名模型'}</span>
-                  ))}
-                </div>
-              </div>
-            ) : null}
+              {modelsEditable ? (
+                <>
+                  <ModelListEditor
+                    rows={rows}
+                    discovered={discovered}
+                    disabled={pending !== null}
+                    error={modelsError}
+                    onChange={(next) => {
+                      setRows(next)
+                      setModelsDirty(true)
+                    }}
+                  />
+                  <p className={styles.modelHint}>
+                    打开“支持图片”的模型可直接理解频道中的图片。
+                    {catalogRoute ? '新增供应商目录之外的模型时，需要在高级设置中填写 API 地址并选择 API 协议。' : ''}
+                  </p>
+                </>
+              ) : (
+                <>
+                  <div className={styles.modelList}>
+                    {selected?.models.map((model) => (
+                      <span key={model.id}>
+                        {model.name}
+                        {model.inputModalities?.includes('image') ? ' · 图片' : ''}
+                      </span>
+                    ))}
+                  </div>
+                  <p className={styles.modelHint}>此供应商的模型由其适配器固定提供，暂不支持在这里修改。</p>
+                </>
+              )}
+            </div>
 
             <details className={styles.advanced} open={customMode}>
               <summary>高级设置</summary>
@@ -384,26 +467,34 @@ export function LlmProviderSettings(): React.ReactNode {
                     options={settings.protocols.map((protocol) => ({ value: protocol, label: protocol }))}
                     error={apiError}
                   />
-                ) : null}
-                {customEditor ? (
-                  <Field label="模型" hint="每行一个模型名；也可以先获取可用模型。" error={modelsError}>
-                    <Textarea value={models} onChange={(event) => setModels(event.target.value)} />
-                  </Field>
+                ) : catalogRoute ? (
+                  <SelectField
+                    label="API 协议"
+                    helper="选择后该供应商的全部模型都使用此协议；新增目录外的模型时必须选择。"
+                    value={api || CATALOG_PROTOCOL}
+                    onValueChange={(value) => setApi(value === CATALOG_PROTOCOL ? '' : value)}
+                    options={[
+                      { value: CATALOG_PROTOCOL, label: '沿用各模型自带协议' },
+                      ...settings.protocols.map((protocol) => ({ value: protocol, label: protocol })),
+                    ]}
+                  />
                 ) : null}
               </div>
             </details>
 
             <div className={styles.actions}>
               <div className={styles.secondaryActions}>
-                <Button
-                  type="button"
-                  onClick={() => void discover()}
-                  loading={pending === 'discover'}
-                  loadingLabel="获取中…"
-                  disabled={!providerId || pending !== null}
-                >
-                  获取可用模型
-                </Button>
+                {discoverable ? (
+                  <Button
+                    type="button"
+                    onClick={() => void discover()}
+                    loading={pending === 'discover'}
+                    loadingLabel="获取中…"
+                    disabled={!providerId || pending !== null}
+                  >
+                    获取可用模型
+                  </Button>
+                ) : null}
                 <Button
                   type="button"
                   onClick={() => void testConnection()}
@@ -482,6 +573,15 @@ export function LlmProviderSettings(): React.ReactNode {
           }}
         />
       ) : null}
+      <ConfirmDialog
+        open={restoreOpen}
+        onOpenChange={setRestoreOpen}
+        title="恢复默认模型"
+        description={`${selectedDisplayName ?? '此供应商'}将改回供应商自带的模型列表，在这里新增或修改的模型会被移除。使用被移除模型的智能体需要重新选择模型。`}
+        confirmLabel="恢复默认模型"
+        confirmLoadingLabel="恢复中…"
+        onConfirm={restoreModels}
+      />
       <Dialog
         open={addOpen}
         onOpenChange={setAddOpen}

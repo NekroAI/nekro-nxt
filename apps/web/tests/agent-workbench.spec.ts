@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { AgentIdSchema, ChannelIdSchema, ConnectionIdSchema } from '@nekro-nxt/contracts'
-import { agentWorkbenchHref, listAgentBlockers } from '../src/pages/agent-workbench.js'
+import { agentWorkbenchHref, listAgentBlockers, missingAgentModel } from '../src/pages/agent-workbench.js'
 import {
   defaultImageUnderstandingPolicy,
   type AgentSummary,
@@ -98,5 +98,25 @@ describe('listAgentBlockers', () => {
     expect(blockers.map((item) => item.kind)).toEqual(['search-pending', 'creation-running'])
     expect(agentWorkbenchHref(agentId, 'creator')).toBe(`/work/creator?agent=${agentId}`)
     expect(agentWorkbenchHref(agentId, 'capabilities')).toBe(`/work/agents/${agentId}?tab=capabilities`)
+  })
+
+  it('asks for a replacement when the saved model left its provider list', () => {
+    const models = [{ provider: 'deepseek-official', providerName: 'DeepSeek', id: 'deepseek-flash', name: 'Flash' }]
+    const retired = agent({ modelRef: { provider: 'deepseek-official', model: 'deepseek-retired-vision' } })
+    expect(missingAgentModel(retired, models)).toEqual({
+      provider: 'deepseek-official',
+      model: 'deepseek-retired-vision',
+    })
+    expect(
+      missingAgentModel(agent({ modelRef: { provider: 'deepseek-official', model: 'deepseek-flash' } }), models),
+    ).toBe(undefined)
+    const blockers = listAgentBlockers({
+      agent: retired,
+      models,
+      channels: [channel(true)],
+      capabilityAvailability: availability(true),
+      dynamic: [],
+    })
+    expect(blockers[0]).toMatchObject({ kind: 'model-missing', tab: 'profile' })
   })
 })

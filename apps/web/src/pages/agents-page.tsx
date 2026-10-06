@@ -51,7 +51,7 @@ import {
 import { INSPECTOR_WIDTH, useUiPreferences } from '../ui-preferences.js'
 import { usageTotalTokens } from '../token-usage.js'
 import { useUnsavedDraft } from '../unsaved-drafts.js'
-import { agentWorkbenchHref, listAgentBlockers } from './agent-workbench.js'
+import { agentWorkbenchHref, listAgentBlockers, missingAgentModel } from './agent-workbench.js'
 import { BindingTaskDialog, isTriggerPolicy, listBindingChannels, TRIGGER_POLICY_OPTIONS } from './binding-task.js'
 import { agentModelKey, createAgentDraft } from './agent-create-draft.js'
 import styles from './product-pages.module.css'
@@ -788,6 +788,13 @@ export function AgentManagePage() {
   }, [inspectorCollapsed])
 
   const selectedModel = models.find((model) => modelKey(model) === selectedModelKey)
+  // Only warn while the draft still points at the saved model that its provider no longer lists.
+  const missingModel =
+    agent && selectedModelKey === modelValueForAgent(agent) ? missingAgentModel(agent, models) : undefined
+  const replacementModel = missingModel
+    ? (models.find((model) => model.provider === missingModel.provider && model.inputModalities?.includes('image')) ??
+      models.find((model) => model.provider === missingModel.provider))
+    : undefined
   const boundChannels = useMemo(
     () => (agent ? channels.filter((channel) => channel.bindings.some((binding) => binding.agentId === agent.id)) : []),
     [agent, channels],
@@ -1042,6 +1049,25 @@ export function AgentManagePage() {
                   }}
                   description="描述它的身份、表达方式和工作边界。输入 @ 可引用用户、频道或扩展。"
                 />
+                {missingModel ? (
+                  <InlineFeedback tone="warning">
+                    <span>
+                      当前配置的模型 {missingModel.model}{' '}
+                      已不在供应商的模型列表中，可能已被供应商停用；图片能力也无法确认。
+                      请改选一个可用模型，或在模型设置中把它加回供应商的模型列表。
+                    </span>
+                    <span className={styles.rowActions}>
+                      {replacementModel ? (
+                        <Button size="small" onClick={() => setSelectedModelKey(modelKey(replacementModel))}>
+                          改用 {replacementModel.name}
+                        </Button>
+                      ) : null}
+                      <Button size="small" variant="ghost" onClick={() => void navigate('/settings')}>
+                        前往模型设置
+                      </Button>
+                    </span>
+                  </InlineFeedback>
+                ) : null}
                 {models.length > 0 ? (
                   <SelectField
                     label="默认模型"
@@ -1387,7 +1413,13 @@ export function AgentManagePage() {
                 <dl className={styles.inspectorFacts}>
                   <div>
                     <dt>默认模型</dt>
-                    <dd>{selectedModel ? `${selectedModel.providerName} · ${selectedModel.name}` : '未配置'}</dd>
+                    <dd>
+                      {selectedModel
+                        ? `${selectedModel.providerName} · ${selectedModel.name}`
+                        : missingModel
+                          ? `${missingModel.model}（已不在模型列表中）`
+                          : '未配置'}
+                    </dd>
                   </div>
                   <div>
                     <dt>图片路由</dt>
