@@ -120,6 +120,14 @@
 .disclosureInner {
   min-height: 0;
   overflow: hidden;
+  /* Closed content leaves the text layer (innerText, find-in-page), after the collapse finishes animating. */
+  visibility: hidden;
+  transition: visibility 0s linear var(--dur-3);
+}
+
+.disclosure[data-open='true'] > .disclosureInner {
+  visibility: visible;
+  transition: none;
 }
 
 .skeleton {
