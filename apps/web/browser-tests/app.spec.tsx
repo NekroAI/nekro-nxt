@@ -1351,7 +1351,7 @@ test.describe('NekroNxt browser projections', () => {
   test('renders platform accounts with product labels and a masked account', async () => {
     await withProductPage('/wiring', async (page) => {
       await page
-        .getByRole('link', { name: /示例群聊平台/u })
+        .getByRole('button', { name: /^示例群聊平台/u })
         .first()
         .click()
       await playwrightExpect(page).toHaveURL(new RegExp(`/wiring/connections/${externalConnectionId}$`, 'u'))
@@ -1409,13 +1409,15 @@ test.describe('NekroNxt browser projections', () => {
       async (page) => {
         const detail = page.locator('aside').last()
         await playwrightExpect(detail.getByRole('heading', { name: '项目机器人' })).toBeVisible()
-        await detail.getByLabel('名称').fill('研发机器人')
-        await detail.getByRole('button', { name: '保存', exact: true }).click()
+        await detail.getByRole('button', { name: '修改名称' }).click()
+        await detail.getByRole('textbox', { name: '名称' }).fill('研发机器人')
+        await detail.getByRole('textbox', { name: '名称' }).press('Enter')
         await playwrightExpect(detail.getByRole('heading', { name: '研发机器人' })).toBeVisible()
-        await detail.getByLabel('名称').fill('')
-        await detail.getByRole('button', { name: '保存', exact: true }).click()
+        await detail.getByRole('button', { name: '修改名称' }).click()
+        await detail.getByRole('textbox', { name: '名称' }).fill('')
+        await detail.getByRole('textbox', { name: '名称' }).press('Enter')
         await playwrightExpect(detail.getByRole('heading', { name: '示例群聊平台' })).toBeVisible()
-        await playwrightExpect(detail.getByLabel('名称')).toHaveValue('')
+        await playwrightExpect(detail.getByRole('button', { name: '修改名称' })).toBeVisible()
       },
       aliased(),
       async (page) => {
