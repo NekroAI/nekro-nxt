@@ -342,7 +342,7 @@ test('writes the four public product screenshots from fictional production data'
 
   await page.setViewportSize({ width: 1600, height: 900 })
   await page.goto(`/agents/${targetAgentId}`)
-  await expect(page.getByRole('heading', { name: '资料员', level: 1 })).toBeVisible()
+  await expect(page.getByRole('heading', { name: '资料员', exact: true })).toBeVisible()
   await settle(page)
   await page.screenshot({ path: `${outputDirectory}/agent-workbench.png`, animations: 'disabled' })
 
@@ -425,7 +425,7 @@ test('representative product surfaces match committed visual baselines', async (
     expect(page.getByText('一起复核。')).toBeVisible(),
   )
   await shoot('agent-profile', `/agents/${targetAgentId}`, 'light', () =>
-    expect(page.getByRole('heading', { name: '资料员', level: 1 })).toBeVisible(),
+    expect(page.getByRole('heading', { name: '资料员', exact: true })).toBeVisible(),
   )
   await shoot('wiring', `/wiring/connections/${externalConnectionId}`, 'dark', () =>
     expect(
@@ -633,7 +633,7 @@ test('a failed space chunk keeps the shell and the draft and recovers through re
   // A browser keeps a failed module import: the in-place retry fails once more, then the page reloads.
   await failure.getByRole('button', { name: '重试' }).click()
   const reloadButton = page.getByRole('button', { name: '重新加载页面' })
-  const heading = page.getByRole('heading', { name: '资料员', level: 1 })
+  const heading = page.getByRole('heading', { name: '资料员', exact: true })
   await expect(reloadButton.or(heading)).toBeVisible()
   if (await reloadButton.isVisible()) await reloadButton.click()
   await expect(heading).toBeVisible()
