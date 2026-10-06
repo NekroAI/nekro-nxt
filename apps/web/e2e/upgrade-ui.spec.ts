@@ -2,6 +2,7 @@ import { expect, test, type Page } from '@playwright/test'
 import { HostApiContracts, type HostApiResponse, type RuntimeCompatibilityDiagnostic } from '@nekro-nxt/contracts'
 import { DSH_RUNTIME_RELEASE } from '@nekro-nxt/dsh-compat/release'
 import { installSnapshotHealthRoutes } from './fixtures/host-release.js'
+import { installWorkspaceRoutes } from './fixtures/workspace.js'
 import {
   productSnapshot,
   targetAgentId,
@@ -113,6 +114,7 @@ async function installUpgradeHost(page: Page, diagnostics: RuntimeCompatibilityD
       json: { error: { code: 'unexpected-fixture-request', message: '此合成宿主没有该接口。' } },
     })
   })
+  await installWorkspaceRoutes(page, () => snapshot)
   return {
     retries,
     messages,
@@ -136,23 +138,25 @@ test('upgrade summary keeps reset context visible and retries an isolated extens
     issue('extension', summaryExtensionId, '合成扩展需要重新检查加载兼容性。'),
     issue('model-provider', 'deepseek', '合成模型配置需要重新检查。'),
   ])
-  await page.goto(`/work/agents/${targetAgentId}`)
-  const agentNotice = page.locator('[data-upgrade-notice]')
-  await expect(agentNotice).toContainText('旧上下文已归档，聊天记录已保留')
+  await page.goto('/live')
+  await expect(page.locator('[data-compatibility-notices]')).toContainText('旧上下文已归档，聊天记录保留')
+  await page.goto(`/agents/${targetAgentId}`)
+  const agentNotice = page.locator('[data-compatibility-notices]')
   await expect(agentNotice).toContainText('合成扩展需要重新检查加载兼容性。')
   await expect(agentNotice).toContainText('合成模型配置需要重新检查。')
-  await page.goto(`/extensions/${summaryExtensionId}`)
-  const notice = page.locator('[data-upgrade-notice]')
+  await page.goto(`/workshop/extensions/${summaryExtensionId}`)
+  const notice = page.locator('[data-compatibility-notices]')
   await expect(notice).toContainText('群聊摘要已暂停')
   await expect(notice).not.toContainText('合成模型配置需要重新检查。')
   const before = fixture.snapshots()
-  await notice.getByRole('button', { name: '重新检查兼容性' }).click()
+  await notice.getByRole('button', { name: '重新检查' }).click()
   await expect.poll(() => fixture.retries).toEqual([{ objectKind: 'extension', objectId: summaryExtensionId }])
   await expect.poll(fixture.snapshots).toBeGreaterThan(before)
-  await expect(page.locator('[data-upgrade-notice]')).toHaveCount(0)
-  await page.goto('/settings?tab=about')
-  await expect(page.locator('[data-upgrade-notice]')).toContainText('旧上下文已归档，聊天记录已保留')
-  await expect(page.locator('[data-upgrade-notice]')).toContainText('合成模型配置需要重新检查。')
+  await expect(page.locator('[data-compatibility-notices]')).toHaveCount(0)
+  await page.goto('/settings/about')
+  const settingsNotice = page.locator('[data-compatibility-notices]')
+  await expect(settingsNotice).toContainText('旧上下文已归档，聊天记录保留')
+  await expect(settingsNotice).toContainText('合成模型配置需要重新检查。')
   await testInfo.attach('upgrade-summary', { body: await page.screenshot(), contentType: 'image/png' })
   expect(fixture.pageErrors).toEqual([])
   expect(fixture.unexpected).toEqual([])
@@ -162,12 +166,12 @@ test('failed provider retry keeps the saved model and the isolation reason visib
   const fixture = await installUpgradeHost(page, [issue('model-provider', 'deepseek', '合成供应商配置尚不兼容。')])
   const originalModel = fixture.snapshot().agents.find((agent) => agent.id === targetAgentId)!.model
   fixture.failRetry('当前保存的配置仍不兼容，请修复后重试。')
-  await page.goto('/settings?tab=about')
-  const notice = page.locator('[data-upgrade-notice]')
-  await notice.getByRole('button', { name: '重新检查兼容性' }).click()
-  await expect(notice.getByRole('alert')).toHaveText('当前保存的配置仍不兼容，请修复后重试。')
+  await page.goto('/settings/about')
+  const notice = page.locator('[data-compatibility-notices]')
+  await notice.getByRole('button', { name: '重新检查' }).click()
+  await expect(notice.locator('[data-retry-error]')).toHaveText('当前保存的配置仍不兼容，请修复后重试。')
   await expect(notice).toContainText('合成供应商配置尚不兼容。')
-  await expect(notice.getByRole('button', { name: '重新检查兼容性' })).toBeEnabled()
+  await expect(notice.getByRole('button', { name: '重新检查' })).toBeEnabled()
   expect(fixture.retries).toEqual([{ objectKind: 'model-provider', objectId: 'deepseek' }])
   expect(fixture.snapshot().agents.find((agent) => agent.id === targetAgentId)!.model).toEqual(originalModel)
   expect(fixture.pageErrors).toEqual([])
@@ -176,12 +180,12 @@ test('failed provider retry keeps the saved model and the isolation reason visib
 
 test('an upgraded Host blocks an old page mutation and preserves the channel draft', async ({ page }, testInfo) => {
   const fixture = await installUpgradeHost(page)
-  await page.goto(`/work/channels/${targetChannelId}`)
-  const input = page.getByRole('textbox', { name: '消息内容' })
+  await page.goto(`/channels/${targetChannelId}`)
+  const input = page.getByRole('textbox', { name: '消息' })
   await input.fill('升级期间尚未发送的合成草稿')
   fixture.changeRelease(`${fixture.snapshot().productMetadata!.releaseId}-next`)
   await input.press('Enter')
-  await expect(page.locator('[data-release-mismatch]')).toContainText('服务已升级，请刷新页面')
+  await expect(page.locator('[data-release-mismatch]')).toContainText('服务已升级')
   await expect(input).toBeEnabled()
   await expect(input).toHaveValue('升级期间尚未发送的合成草稿')
   expect(fixture.messages).toEqual([])
@@ -192,8 +196,8 @@ test('an upgraded Host blocks an old page mutation and preserves the channel dra
 
 test('a same-release refresh restores a draft and permits its first real send', async ({ page }) => {
   const fixture = await installUpgradeHost(page)
-  await page.goto(`/work/channels/${targetChannelId}`)
-  const input = page.getByRole('textbox', { name: '消息内容' })
+  await page.goto(`/channels/${targetChannelId}`)
+  const input = page.getByRole('textbox', { name: '消息' })
   await input.fill('刷新后继续编辑的合成草稿')
   await page.reload()
   await expect(input).toHaveValue('刷新后继续编辑的合成草稿')

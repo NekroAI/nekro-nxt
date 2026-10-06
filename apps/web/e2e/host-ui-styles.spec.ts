@@ -45,8 +45,9 @@ test('materialized Host UI styles survive durable save, installation and refresh
     for (let load = 0; load < 2; load += 1) {
       if (load > 0) await page.reload()
       await expect(probe).toBeVisible()
-      await expect(probe.getByRole('heading', { name: '样式回归页面' })).toHaveClass('nxt-extension-section-heading')
-      await expect(probe.getByText('保存后样式正常')).toHaveClass('nxt-extension-secondary-text')
+      // V6 inserts the page's own stylesheet; the probe keeps the declared geometry after save and refresh.
+      await expect(probe.getByRole('heading', { name: '样式回归页面' })).toBeVisible()
+      await expect(probe.getByText('保存后样式正常')).toBeVisible()
       await expect(probe).toHaveCSS('padding-top', '23px')
       await expect(probe).toHaveCSS('border-radius', '17px')
       // The first click commits to the Host's owner-scoped state. After a real

@@ -131,7 +131,7 @@ export const productSnapshot = HostApiContracts.snapshot.response.parse({
       aliasEditable: false,
       channelDiscovery: 'host-created',
       diagnostics: { receive: false, send: false },
-      configSchema: { schemaVersion: 1, type: 'object', required: [], properties: {} },
+      configSchema: { type: 'object', dict: {} },
     },
     {
       key: 'fixture-beta',
@@ -145,13 +145,14 @@ export const productSnapshot = HostApiContracts.snapshot.response.parse({
       channelDiscovery: 'adapter-observed',
       diagnostics: { receive: true, send: true },
       configSchema: {
-        schemaVersion: 1,
         type: 'object',
-        required: ['accountCode', 'secret'],
-        properties: {
-          accountCode: { type: 'string', title: '账号代码' },
-          secret: { type: 'credential-reference', title: '访问密钥' },
-          markdown: { type: 'boolean', title: '使用 Markdown', description: '允许发送 Markdown 消息。', default: true },
+        dict: {
+          accountCode: { type: 'string', meta: { description: '账号代码', required: true } },
+          secret: { type: 'string', meta: { description: '访问密钥', required: true, role: 'secret' } },
+          markdown: {
+            type: 'boolean',
+            meta: { description: '使用 Markdown', hint: '允许发送 Markdown 消息。', default: true },
+          },
         },
       },
     },
