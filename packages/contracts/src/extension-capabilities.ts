@@ -5,7 +5,7 @@ import { z } from 'zod'
  * import with an "upgrade NekroNXT" message instead of an opaque schema error. Bump only when a new optional
  * Manifest capability ships; never reuse a level for a different meaning.
  */
-export const EXTENSION_SDK_LEVEL = 2
+export const EXTENSION_SDK_LEVEL = 3
 
 export const ExtensionRequiresSchema = z.object({ sdk: z.number().int().min(1).max(1000) }).strict()
 export type ExtensionRequires = z.output<typeof ExtensionRequiresSchema>
@@ -79,6 +79,17 @@ export const ExtensionContextContributionSchema = z
   )
 export type ExtensionContextContribution = z.output<typeof ExtensionContextContributionSchema>
 
+export const EXTENSION_LLM_MAX_CALLS_PER_TURN = 20
+export const EXTENSION_LLM_MAX_OUTPUT_TOKENS = 8192
+
+export const ExtensionLlmCapabilitySchema = z
+  .object({
+    maxCallsPerTurn: z.number().int().min(1).max(EXTENSION_LLM_MAX_CALLS_PER_TURN),
+    maxOutputTokens: z.number().int().min(64).max(EXTENSION_LLM_MAX_OUTPUT_TOKENS),
+  })
+  .strict()
+export type ExtensionLlmCapability = z.output<typeof ExtensionLlmCapabilitySchema>
+
 /**
  * Optional Host capabilities of an agent-scope Revision. Every field is additive to Manifest V6: an absent field
  * means the Revision cannot use that capability, exactly as before the field existed.
@@ -95,6 +106,7 @@ export const ExtensionCapabilitiesSchema = z
       .object({ read: z.literal(true) })
       .strict()
       .optional(),
+    llm: ExtensionLlmCapabilitySchema.optional(),
     context: z
       .array(ExtensionContextContributionSchema)
       .max(8)
@@ -138,6 +150,14 @@ export const extensionCapabilitiesExpand = (
   if (next.storage?.scopes.some((scope) => !(previous?.storage?.scopes ?? []).includes(scope))) return true
   if (next.assets !== undefined && previous?.assets === undefined) return true
   if (next.history !== undefined && previous?.history === undefined) return true
+  if (
+    next.llm !== undefined &&
+    (previous?.llm === undefined ||
+      next.llm.maxCallsPerTurn > previous.llm.maxCallsPerTurn ||
+      next.llm.maxOutputTokens > previous.llm.maxOutputTokens)
+  ) {
+    return true
+  }
   return false
 }
 
@@ -177,6 +197,14 @@ export const summarizeExtensionCapabilities = (
     items.push({ key: 'assets', risk: 'normal', label: '在当前频道生成图片或文件' })
   if (capabilities.history !== undefined)
     items.push({ key: 'history', risk: 'normal', label: '读取当前频道的聊天记录' })
+  if (capabilities.llm !== undefined) {
+    items.push({
+      key: 'llm',
+      risk: 'sensitive',
+      label: '使用这个智能体的模型',
+      detail: `每轮最多 ${capabilities.llm.maxCallsPerTurn} 次，计入智能体用量`,
+    })
+  }
   if (capabilities.context !== undefined && capabilities.context.length > 0) {
     items.push({
       key: 'context',

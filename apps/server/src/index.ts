@@ -183,6 +183,7 @@ import {
   NXT_HOST_SERVICE_NAME,
   type NxtServiceBackends,
 } from './extension-host-service.js'
+import type { NxtLlmRequest, NxtLlmResponse } from '@nekro-nxt/extension-sdk'
 import { PersistentExtensionMounts } from './persistent-extension-mounts.js'
 import {
   collectVisibleImageDigests,
@@ -223,6 +224,7 @@ export { type AgentImageDiagnostics, type AssetAccessRepository } from './sessio
 declare module '@deepseek-ai/dsh-llm' {
   interface MessageSourceMap {
     'nekro-nxt-handoff-summary': { readonly kind: 'nekro-nxt-handoff-summary' }
+    'nekro-nxt-extension-llm': { readonly kind: 'nekro-nxt-extension-llm' }
     'nekro-nxt-channel': {
       readonly kind: 'nekro-nxt-channel'
       readonly admissionId: string
@@ -3332,6 +3334,60 @@ export class DshHostRuntime implements AgentSessionDriver, ExtensionActivationHo
 
   verifyDynamicPackage(dshSessionId: string, pluginId: string, packageId: string) {
     return this.#dynamic.verifyDynamicPackage(dshSessionId, pluginId, packageId)
+  }
+
+  /** One completion for an extension with the agent's current model; budgets are enforced by the `nxt` service. */
+  async completeForExtension(input: {
+    readonly agentId: AgentId
+    readonly extensionName: string
+    readonly request: NxtLlmRequest
+    readonly maxOutputTokens: number
+  }): Promise<NxtLlmResponse> {
+    this.#assertActive()
+    const agent = [...this.#sessions.records()].find((record) => record.revision.agentId === input.agentId)
+    const revision = agent?.revision
+    if (!revision) throw new Error('这个智能体当前没有运行中的会话，暂时不能调用模型。')
+    const system = [
+      `你在为扩展「${input.extensionName}」完成一次辅助任务。只按下面的要求输出结果，不要调用工具，不要向频道发言。`,
+      input.request.system?.trim() ?? '',
+    ]
+      .filter((part) => part !== '')
+      .join('\n\n')
+    // Folded into one user message: extension transcripts are plain text and need no assistant-turn structure.
+    const transcript =
+      input.request.messages.length === 1 && input.request.messages[0]?.role === 'user'
+        ? input.request.messages[0].text
+        : input.request.messages.map(({ role, text }) => `${role === 'user' ? '用户' : '助手'}：${text}`).join('\n\n')
+    const messages = [
+      freezeMessage({
+        id: MessageId(`extension-llm-${Date.now()}`),
+        role: 'user',
+        content: [{ type: 'text', text: transcript }],
+        source: { kind: 'nekro-nxt-extension-llm' },
+      }),
+    ]
+    let text = ''
+    let usage: TokenUsage | undefined
+    let finish: string | undefined
+    for await (const chunk of this.#context.llm.stream({
+      provider: revision.model.provider,
+      model: revision.model.model,
+      system,
+      messages,
+      maxTokens: input.maxOutputTokens,
+      signal: AbortSignal.timeout(60_000),
+    })) {
+      if (chunk.type === 'text-delta') text += chunk.text
+      if (chunk.type === 'usage') usage = chunk.usage
+      if (chunk.type === 'finish') finish = chunk.reason.kind
+    }
+    if (finish !== 'stop' && finish !== 'length') throw new Error(`模型调用没有正常完成（${finish ?? '无结果'}）。`)
+    return {
+      text: text.trim(),
+      ...(usage === undefined
+        ? {}
+        : { usage: { inputTokens: usage.inputTokens ?? 0, outputTokens: usage.outputTokens ?? 0 } }),
+    }
   }
 
   dynamicInventory(dshSessionId: string): readonly DynamicCordisInventoryRow[] {

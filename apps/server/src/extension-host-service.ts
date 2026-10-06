@@ -17,6 +17,8 @@ import type {
   NxtFetchResponse,
   NxtHistoryMessage,
   NxtHostService,
+  NxtLlmRequest,
+  NxtLlmResponse,
   NxtPromptRenderApi,
   NxtStorageEntry,
   NxtStorageListOptions,
@@ -67,6 +69,12 @@ export interface NxtServiceBackends {
   readonly secret: (binding: NxtServiceBinding, key: string) => Promise<string | undefined>
   readonly createAsset: (channelId: string, input: NxtAssetCreateInput) => Promise<NxtAssetRecord>
   readonly callContext: (binding: NxtServiceBinding) => Promise<NxtCallContext>
+  /** One model completion for the binding's agent; the service enforces the declared caps first. */
+  readonly complete: (
+    binding: NxtServiceBinding,
+    request: NxtLlmRequest,
+    maxOutputTokens: number,
+  ) => Promise<NxtLlmResponse>
   readonly history: {
     list(
       channelId: string,
@@ -271,6 +279,13 @@ export const createNxtHostService = (
     return rendered
   }
 
+  // Model calls are budgeted per turn; outside a live Session (dynamic runs, verification) the budget never resets.
+  let llmCallsThisTurn = 0
+  // The listener lives as long as the Session Fiber whose Context registered it.
+  prompt?.onTurnStart(() => {
+    llmCallsThisTurn = 0
+    return Promise.resolve()
+  })
   let offTurnStart: (() => void) | undefined
   const ensureTurnListener = (): void => {
     if (offTurnStart !== undefined || prompt === undefined) return
@@ -324,6 +339,25 @@ export const createNxtHostService = (
         if (!query.trim()) throw new NxtCapabilityError('搜索内容不能为空。')
         const limit = Math.min(Math.max(Math.trunc(options?.limit ?? 20), 1), 100)
         return backends.history.search(binding.channelId, query, limit)
+      },
+    },
+    llm: {
+      async complete(request) {
+        const llm = requireCapability(binding, 'llm', 'llm（使用智能体的模型）')
+        if (!Array.isArray(request.messages) || request.messages.length === 0) {
+          throw new NxtCapabilityError('llm.complete 至少需要一条 messages。')
+        }
+        if (llmCallsThisTurn >= llm.maxCallsPerTurn) {
+          throw new NxtCapabilityError(
+            `本轮已调用模型 ${llmCallsThisTurn} 次，达到声明的上限 ${llm.maxCallsPerTurn}；请合并请求或在下一轮再试。`,
+          )
+        }
+        llmCallsThisTurn += 1
+        const maxOutputTokens = Math.min(
+          Math.trunc(request.maxOutputTokens ?? llm.maxOutputTokens),
+          llm.maxOutputTokens,
+        )
+        return backends.complete(binding, request, Math.max(1, maxOutputTokens))
       },
     },
     prompt: {
@@ -401,6 +435,9 @@ export const createNxtDynamicFacade = (resolve: () => NxtHostService): NxtHostSe
   },
   get history() {
     return resolve().history
+  },
+  get llm() {
+    return resolve().llm
   },
   get prompt() {
     return resolve().prompt

@@ -312,6 +312,7 @@ export class NekroRuntime {
 
       // Adapter inbound and Channel Runtime delivery reference each other lazily.
       const settled: { current?: ChannelRuntime } = {}
+      const hostReference: { current?: DshHostRuntime } = {}
       const credentials = new LocalCredentialStore(
         options.credentialRoot ?? path.join(path.dirname(options.coreDatabasePath), 'credentials'),
       )
@@ -340,13 +341,25 @@ export class NekroRuntime {
       }
       const nxtFetch: NxtServiceBackends['fetch'] = (policy, url, init) =>
         createExtensionEgress({ policy }).fetch(url, init)
+      // The model runtime lives in the DSH Host created below; extension calls only happen after it exists.
+      const nxtComplete: NxtServiceBackends['complete'] = (binding, request, maxOutputTokens) => {
+        if (!hostReference.current) return Promise.reject(new Error('DSH Host is not ready.'))
+        return hostReference.current.completeForExtension({
+          agentId: AgentIdSchema.parse(binding.agentId),
+          extensionName: binding.displayName,
+          request,
+          maxOutputTokens,
+        })
+      }
       const extensionHost = {
         activationBackends: createNxtProductBackends(nxtFacts, {
           fetch: nxtFetch,
+          complete: nxtComplete,
           storage: sqliteNxtStorage(repository, now),
         }),
         dynamicBackends: createNxtProductBackends(nxtFacts, {
           fetch: nxtFetch,
+          complete: nxtComplete,
           storage: memoryNxtStorage(now),
         }),
         describeRevision: (revision: Revision) => ({
@@ -406,6 +419,7 @@ export class NekroRuntime {
         },
         extensionHost,
       })
+      hostReference.current = host
 
       const channels = new ChannelRuntime(core, repository, repository, host, {
         deferAdmission: options.deferAdmission ?? false,

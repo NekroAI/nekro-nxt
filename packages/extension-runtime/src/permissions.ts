@@ -39,6 +39,7 @@ const canonicalCapabilities = (capabilities: ExtensionCapabilities): ExtensionCa
         }),
     ...(capabilities.assets === undefined ? {} : { assets: capabilities.assets }),
     ...(capabilities.history === undefined ? {} : { history: capabilities.history }),
+    ...(capabilities.llm === undefined ? {} : { llm: capabilities.llm }),
     ...(capabilities.context === undefined
       ? {}
       : { context: [...capabilities.context].sort((left, right) => left.name.localeCompare(right.name)) }),

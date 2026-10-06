@@ -184,6 +184,19 @@ export interface NxtHistoryMessage {
   readonly cursor: string
 }
 
+export interface NxtLlmRequest {
+  /** Task instructions for this call; the Host prefixes that it serves the extension and must not call tools. */
+  readonly system?: string
+  readonly messages: readonly { readonly role: 'user' | 'assistant'; readonly text: string }[]
+  /** Capped by the declared `maxOutputTokens`. */
+  readonly maxOutputTokens?: number
+}
+
+export interface NxtLlmResponse {
+  readonly text: string
+  readonly usage?: { readonly inputTokens: number; readonly outputTokens: number }
+}
+
 /** Read-only view handed to dynamic context renderers; it cannot reach the network or the model. */
 export interface NxtPromptRenderApi {
   readonly storage: Pick<NxtHostService['storage'], 'get' | 'list'>
@@ -227,6 +240,13 @@ export interface NxtHostService {
       readonly before?: string
     }): Promise<{ readonly messages: readonly NxtHistoryMessage[]; readonly next?: string }>
     search(query: string, options?: { readonly limit?: number }): Promise<readonly NxtHistoryMessage[]>
+  }
+  readonly llm: {
+    /**
+     * One completion with the agent's configured model, counted in the agent's usage. Requires
+     * `permissions.capabilities.llm`; calls beyond `maxCallsPerTurn` in one turn are rejected.
+     */
+    complete(request: NxtLlmRequest): Promise<NxtLlmResponse>
   }
   readonly prompt: {
     /** Fixed text added to the system prompt; declare `{ name, kind: 'static' }` in `permissions.capabilities.context`. */
@@ -869,6 +889,7 @@ export const NEKRO_NXT_EXTENSION_AUTHORING_REFERENCE: NekroNxtExtensionAuthoring
       'ctx.nxt.storage.get/set/delete/list：JSON 键值存储；需要 storage: { scopes }，scope 为 agent（默认）、channel、member（必须传 memberId）或 shared（跨智能体共享）。单值不超过 256 KiB，默认配额 8 MiB。',
       'ctx.nxt.context.current() → { agent, channel, latestInbound?: { sender, text } }：当前智能体、频道和最近一条入站消息。',
       'ctx.nxt.history.list({ limit, before }) / search(query)：读取当前频道聊天记录；需要 history: { read: true }。',
+      "ctx.nxt.llm.complete({ system, messages: [{ role: 'user', text }], maxOutputTokens }) → { text }：用智能体当前的模型完成一次辅助任务（分析、分类、改写），计入智能体用量；需要 llm: { maxCallsPerTurn, maxOutputTokens }。不能流式输出，也不能调用工具。",
       "ctx.nxt.prompt.static(name, text) / dynamic(name, render)：向智能体提供补充说明；需要在 context 中按名称声明 { name, kind: 'static' | 'dynamic', maxChars }。",
     ],
     rules: [

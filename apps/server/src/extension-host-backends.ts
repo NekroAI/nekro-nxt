@@ -111,7 +111,7 @@ export const resolveExtensionSecret = async (
  */
 export const createNxtProductBackends = (
   facts: NxtProductFacts,
-  infrastructure: Pick<NxtServiceBackends, 'fetch' | 'storage' | 'diagnostic'>,
+  infrastructure: Pick<NxtServiceBackends, 'fetch' | 'storage' | 'diagnostic' | 'complete'>,
 ): NxtServiceBackends => ({
   ...infrastructure,
   secret: (binding: NxtServiceBinding, key: string) => resolveExtensionSecret(facts, binding.config(), key),

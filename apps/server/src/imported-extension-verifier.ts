@@ -536,6 +536,8 @@ const createVerificationNxt = (capabilities: ExtensionCapabilities | undefined, 
       fetch: (policy, url, init) => createExtensionEgress({ policy }).fetch(url, init),
       storage: memoryNxtStorage(),
       secret: () => Promise.resolve(undefined),
+      // Verification never spends the user's model quota; a fixed reply exercises the call path.
+      complete: () => Promise.resolve({ text: '验证模型回复' }),
       createAsset: (_channelId, asset) =>
         Promise.resolve({
           assetId: 'ast_VERIFY',

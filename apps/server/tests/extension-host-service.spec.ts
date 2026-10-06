@@ -40,8 +40,12 @@ const fixture = (capabilities: ExtensionCapabilities | undefined, config: JsonVa
       mediaType: 'text/plain',
     }),
   )
+  const complete = vi.fn<NxtServiceBackends['complete']>((_binding, request, maxOutputTokens) =>
+    Promise.resolve({ text: `reply:${request.messages.length}:${maxOutputTokens}` }),
+  )
   const backends: NxtServiceBackends = {
     fetch,
+    complete,
     storage: memoryNxtStorage(() => 1),
     secret: (binding, key) =>
       resolveExtensionSecret(
@@ -67,7 +71,7 @@ const fixture = (capabilities: ExtensionCapabilities | undefined, config: JsonVa
   }
   const sections: { name: string; text: string }[] = []
   const contexts = new Map<string, () => string>()
-  let turnStart: (() => Promise<void>) | undefined
+  const turnStarts = new Set<() => Promise<void>>()
   const prompt: NxtPromptRegistry = {
     section: (section) => {
       sections.push(section)
@@ -78,19 +82,20 @@ const fixture = (capabilities: ExtensionCapabilities | undefined, config: JsonVa
       return () => contexts.delete(entry.name)
     },
     onTurnStart: (listener) => {
-      turnStart = listener
-      return () => {
-        turnStart = undefined
-      }
+      turnStarts.add(listener)
+      return () => turnStarts.delete(listener)
     },
   }
   return {
     nxt: createNxtHostService(binding, backends, prompt),
     fetch,
+    complete,
     createAsset,
     sections,
     contexts,
-    startTurn: () => turnStart?.() ?? Promise.resolve(),
+    startTurn: async () => {
+      for (const listener of turnStarts) await listener()
+    },
   }
 }
 
@@ -188,6 +193,25 @@ describe('nxt Host service', () => {
     fail = true
     await startTurn()
     expect([...contexts.values()][0]?.()).toBe('[扩展：示例扩展]\n稳定')
+  })
+
+  it('budgets model calls per turn and caps the output length to the declaration', async () => {
+    const missing = fixture(undefined)
+    await expect(missing.nxt.llm.complete({ messages: [{ role: 'user', text: '分类' }] })).rejects.toThrow(/llm/u)
+
+    const { nxt, complete, startTurn } = fixture({ llm: { maxCallsPerTurn: 2, maxOutputTokens: 256 } })
+    await startTurn()
+    expect(await nxt.llm.complete({ messages: [{ role: 'user', text: '分类' }], maxOutputTokens: 9999 })).toEqual({
+      text: 'reply:1:256',
+    })
+    await nxt.llm.complete({ messages: [{ role: 'user', text: '再分类' }], maxOutputTokens: 64 })
+    expect(complete.mock.calls.map(([, , tokens]) => tokens)).toEqual([256, 64])
+    await expect(nxt.llm.complete({ messages: [{ role: 'user', text: '第三次' }] })).rejects.toThrow(/上限 2/u)
+    await expect(nxt.llm.complete({ messages: [] })).rejects.toThrow(/messages/u)
+    await startTurn()
+    await expect(nxt.llm.complete({ messages: [{ role: 'user', text: '新一轮' }] })).resolves.toMatchObject({
+      text: 'reply:1:256',
+    })
   })
 
   it('reads secrets only from Host credential references', async () => {
