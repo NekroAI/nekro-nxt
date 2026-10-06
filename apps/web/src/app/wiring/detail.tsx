@@ -23,7 +23,6 @@ import { useProductApi } from '../model/store.js'
 import { useMemberDirectory } from './member-directory.js'
 import styles from './wiring.module.css'
 
-
 /** Platform account ids are personal identifiers: show only the last four characters. */
 export const maskedAccount = (reference: string): string => {
   const trimmed = reference.trim()
