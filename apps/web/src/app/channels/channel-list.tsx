@@ -59,7 +59,7 @@ import {
   toast,
   cssVars,
   Pressable,
-} from '../../ui-kit/next/index.js'
+} from '../../ui-kit/index.js'
 import { useAttention } from '../model/attention.js'
 import { agentAccent, agentHue, agentPhase, isAgentWorking } from '../model/identity.js'
 import { BindDialog, type BindIntent } from './bind-dialog.js'

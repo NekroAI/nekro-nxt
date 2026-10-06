@@ -107,7 +107,7 @@ const createClientHarness = () => {
     },
   }
   const ui = {
-    version: 'ui-kit@1',
+    version: 'ui-kit@2',
     ...Object.fromEntries(HOST_UI_KIT_COMPONENT_NAMES.map((name) => [name, compoundComponent])),
   }
   return {

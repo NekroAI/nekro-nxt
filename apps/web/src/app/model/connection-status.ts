@@ -1,4 +1,4 @@
-import type { Tone } from '../../ui-kit/next/index.js'
+import type { Tone } from '../../ui-kit/index.js'
 import type { ConnectionSummary } from '../../product-runtime.js'
 
 /**

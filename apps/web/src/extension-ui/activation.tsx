@@ -1,6 +1,6 @@
 import { useState, type ReactNode } from 'react'
 import { useProductRuntime, type LocalExtensionSummary } from '../product-runtime.js'
-import { ConfirmDialog } from '../ui-kit/next/index.js'
+import { ConfirmDialog } from '../ui-kit/index.js'
 import { permissionLines } from './permissions.js'
 import styles from './activation.module.css'
 

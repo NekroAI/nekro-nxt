@@ -1,7 +1,7 @@
 .field {
   display: grid;
   align-content: start;
-  gap: 6px;
+  gap: var(--s-1);
   min-width: 0;
 }
 
@@ -89,8 +89,13 @@
 }
 
 .selectValue {
+  display: grid;
   flex: 1;
   min-width: 0;
+}
+
+/* Radix drops a className on its value span, so the truncation sits on that span itself. */
+.selectValue > span {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -233,13 +238,13 @@
 .switchRow {
   display: flex;
   align-items: center;
-  gap: 12px;
+  gap: var(--s-3);
 }
 
 .switchText {
   display: grid;
   flex: 1;
-  gap: 2px;
+  gap: calc(var(--s-1) / 2);
   min-width: 0;
 }
 
@@ -251,7 +256,7 @@
 
 .secret {
   display: flex;
-  gap: 8px;
+  gap: var(--s-2);
   align-items: center;
 }
 

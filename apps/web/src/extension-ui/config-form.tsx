@@ -9,7 +9,7 @@ import {
 } from '@nekro-nxt/contracts'
 import { ChevronDown } from 'lucide-react'
 import { useId, useMemo, useState, type ReactNode } from 'react'
-import { Disclosure, Field, Input, Pressable, SecretInput, Select, SwitchRow, Textarea } from '../ui-kit/next/index.js'
+import { Disclosure, Field, Input, Pressable, SecretInput, Select, SwitchRow, Textarea } from '../ui-kit/index.js'
 import styles from './config-form.module.css'
 
 export type ConfigValue = Readonly<Record<string, JsonValue>>

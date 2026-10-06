@@ -10,16 +10,7 @@ import {
   useProductStore,
   type ChannelSummary,
 } from '../../product-runtime.js'
-import {
-  AgentAvatar,
-  BoardPage,
-  Chip,
-  MemberAvatar,
-  Panel,
-  Sparkline,
-  cssVars,
-  Pressable,
-} from '../../ui-kit/next/index.js'
+import { AgentAvatar, BoardPage, Chip, MemberAvatar, Panel, Sparkline, cssVars, Pressable } from '../../ui-kit/index.js'
 import { relativeTime } from '../channels/timeline-model.js'
 import { AttentionList } from '../attention/attention-list.js'
 import { useAttention } from '../model/attention.js'

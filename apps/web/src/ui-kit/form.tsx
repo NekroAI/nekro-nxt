@@ -128,6 +128,7 @@ export const Select = forwardRef<
   const known = (candidate: string | undefined) =>
     candidate !== undefined && options.some((option) => option.value === candidate) ? toKey(candidate) : undefined
   const controlled = value === undefined ? {} : { value: known(value) ?? '' }
+  const selected = value === undefined ? undefined : options.find((option) => option.value === value)
   const initial = defaultValue === undefined ? {} : { defaultValue: known(defaultValue) ?? '' }
   return (
     <RadixSelect.Root
@@ -143,7 +144,10 @@ export const Select = forwardRef<
         className={[styles.control, styles.select, className ?? ''].join(' ')}
         {...trigger}
       >
-        <RadixSelect.Value className={styles.selectValue} placeholder={placeholder ?? '请选择'} />
+        {/* The chosen label is rendered here, so it shows on the first paint instead of after the list mounts. */}
+        <span className={styles.selectValue}>
+          <RadixSelect.Value placeholder={placeholder ?? '请选择'}>{selected?.label}</RadixSelect.Value>
+        </span>
         <RadixSelect.Icon className={styles.selectIcon}>
           <ChevronDown aria-hidden="true" />
         </RadixSelect.Icon>

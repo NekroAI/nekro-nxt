@@ -14,7 +14,7 @@ import {
   PropertyRow,
   Select,
   toast,
-} from '../../ui-kit/next/index.js'
+} from '../../ui-kit/index.js'
 import { useGo } from '../model/nav.js'
 import { useProductApi } from '../model/store.js'
 import { agentModelKey, createAgentDraft } from './agent-create-draft.js'
@@ -126,8 +126,8 @@ export function AgentCreate() {
           <PromptReferenceEditor
             value={persona.document}
             label="设定"
-            description="她是谁、怎么说话、在群里负责什么"
-            placeholder="她是谁、怎么说话、在群里负责什么"
+            description="它是谁、怎么说话、在群里负责什么"
+            placeholder="它是谁、怎么说话、在群里负责什么"
             onChange={(document, text) => setPersona({ document, text })}
           />
         </PropertyGroup>

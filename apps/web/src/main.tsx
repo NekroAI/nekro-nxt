@@ -6,7 +6,6 @@ import { installStableCursorIntent } from './cursor-stability.js'
 import { createProductRuntime, ProductRuntimeProvider } from './product-runtime.js'
 import { applyThemeChoice, readInitialThemeChoice } from './theme-preference.js'
 import './ui-kit/tokens.css'
-import './ui-kit/next/tokens.css'
 
 const reducedMotion = window.localStorage.getItem('nekro-nxt.reduced-motion') === 'true'
 applyThemeChoice(document.documentElement, readInitialThemeChoice())

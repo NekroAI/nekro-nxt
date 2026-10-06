@@ -45,7 +45,8 @@ export const HOST_UI_KIT_COMPONENT_NAMES = [
   'Stack',
   'Grid',
   'DataTable',
-  'SidePane',
+  'PropertyList',
+  'PropertyRow',
 ] as const
 
 export const HostUiKitComponentNameSchema = z.enum(HOST_UI_KIT_COMPONENT_NAMES)

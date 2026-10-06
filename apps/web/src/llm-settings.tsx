@@ -33,7 +33,7 @@ import {
   Skeleton,
   toast,
   type Tone,
-} from './ui-kit/next/index.js'
+} from './ui-kit/index.js'
 import styles from './llm-settings.module.css'
 
 type ProviderSettingsView = HostApiResponse<'llmProviders'>

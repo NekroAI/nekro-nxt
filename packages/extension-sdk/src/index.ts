@@ -245,19 +245,22 @@ export type HostUiReactFacade = {
   ): Snapshot
 }
 
-/** `ui-kit@1`: the versioned component surface every UI contribution renders with. */
+/**
+ * `ui-kit@2`: the versioned component surface every UI contribution renders with. It renders with the product's own
+ * components and tokens, so contributions follow the theme, density and focus behaviour of the rest of the client.
+ */
 export interface HostUiKit {
-  readonly version: 'ui-kit@1'
+  readonly version: 'ui-kit@2'
   readonly Button: ElementType
   readonly IconButton: ElementType
   readonly Input: ElementType
   readonly Textarea: ElementType
   readonly Select: ElementType
   readonly Switch: ElementType
-  readonly Tabs: object
+  readonly Tabs: ElementType
   readonly Dialog: ElementType
-  readonly Popover: object
-  readonly Tooltip: object
+  readonly Popover: ElementType
+  readonly Tooltip: ElementType
   readonly Field: ElementType
   readonly StatusBadge: ElementType
   readonly InlineFeedback: ElementType
@@ -270,7 +273,8 @@ export interface HostUiKit {
   readonly Stack: ElementType
   readonly Grid: ElementType
   readonly DataTable: ElementType
-  readonly SidePane: ElementType
+  readonly PropertyList: ElementType
+  readonly PropertyRow: ElementType
 }
 
 export interface ExtensionClientHost {
@@ -310,7 +314,8 @@ export interface NekroNxtExtensionAuthoringReference {
     readonly hostUi: { readonly contributions: readonly ['host-page']; readonly maxPages: 8 }
   }
   readonly ui: {
-    readonly kitVersion: 'ui-kit@1'
+    readonly kitVersion: 'ui-kit@2'
+    readonly componentProps: Readonly<Record<HostUiKitComponentName, string>>
     readonly components: readonly HostUiKitComponentName[]
     readonly panelDensities: readonly PanelDensity[]
     readonly toolViewDensities: readonly ToolViewDensity[]
@@ -335,6 +340,35 @@ export interface NekroNxtExtensionAuthoringReference {
     readonly hostPage: string
   }
   readonly recoveryRules: readonly string[]
+}
+
+/** One line per `ui-kit@2` component: the props a contribution passes. Rendered into the authoring skill. */
+const UI_KIT_COMPONENT_PROPS: Readonly<Record<HostUiKitComponentName, string>> = {
+  Button:
+    "children、onClick、variant（'default' | 'primary' | 'ghost' | 'danger'）、size（'default' | 'small'）、busy、disabled、icon",
+  IconButton: 'label（必填，读屏与悬停提示）、children（图标）、onClick、size',
+  Input: '原生 input 属性：value、onChange、placeholder、type、disabled',
+  Textarea: '原生 textarea 属性：value、onChange、placeholder、rows',
+  Select: 'options（{ value, label, disabled? }[]）、value、onValueChange(value)、placeholder、disabled、aria-label',
+  Switch: 'checked、onCheckedChange(checked)、label（必填）、disabled',
+  Tabs: 'label（必填）、options（{ value, label }[]）、value、onChange(value)；只渲染标签条，内容由调用方按 value 切换',
+  Dialog: 'open、onOpenChange(open)、title、children、actions（底部按钮）、wide',
+  Popover: 'trigger（触发按钮元素）、label（必填）、children、align',
+  Tooltip: 'content、children（单个可聚焦元素）、side',
+  Field: 'label、hint、error、children（单个输入控件，自动关联标签）',
+  StatusBadge: "tone（'neutral' | 'success' | 'warning' | 'error' | 'info'）、children",
+  InlineFeedback: "tone（'info' | 'success' | 'warning' | 'error'）、children、action",
+  EmptyState: 'title、description、action、loading',
+  Spinner: '无参数',
+  PageHeader: 'title、meta（一行说明）、actions；只用于 host-page，面板标题由宿主绘制',
+  MetricStrip: 'children（若干 Metric）',
+  Metric: 'label、value、detail',
+  Section: 'title、children',
+  Stack: 'children（纵向间距一致的内容）',
+  Grid: 'children（自动换列的卡片或指标）',
+  DataTable: 'children（thead 与 tbody）；宿主负责边框、表头与滚动',
+  PropertyList: 'children（若干 PropertyRow）、framed',
+  PropertyRow: "label、description、children（值或控件）、layout（'inline' | 'stacked'）",
 }
 
 const HOST_TOOL_EXAMPLE = `return {
@@ -556,7 +590,7 @@ export const NEKRO_NXT_EXTENSION_AUTHORING_REFERENCE: NekroNxtExtensionAuthoring
     hostUi: { contributions: ['host-page'], maxPages: 8 },
   },
   ui: {
-    kitVersion: 'ui-kit@1',
+    kitVersion: 'ui-kit@2',
     components: [
       'Button',
       'IconButton',
@@ -580,8 +614,10 @@ export const NEKRO_NXT_EXTENSION_AUTHORING_REFERENCE: NekroNxtExtensionAuthoring
       'Stack',
       'Grid',
       'DataTable',
-      'SidePane',
+      'PropertyList',
+      'PropertyRow',
     ],
+    componentProps: UI_KIT_COMPONENT_PROPS,
     panelDensities: ['compact', 'full'],
     toolViewDensities: ['chip', 'card'],
     dataHooks: ['useAgent', 'useChannel', 'useConnection', 'useChannelRuntime'],
@@ -658,6 +694,12 @@ export const renderNekroNxtExtensionDevelopmentSkill = (
 - 禁止注册 root、DSH 官方页面 Slot、Composer 或频道顶栏。
 - 动态运行、保存不可变扩展 Revision、给智能体启用扩展彼此独立；每一步都必须等待真实结果。
 - 运行验证会用 \`nekro_nxt_extension_define.verification\` 中的样例真实调用每个 Tool 和 RPC；未提供时 Tool 用 \`{}\`、RPC 用 \`null\` 调用。
+
+## 界面组件（${reference.ui.kitVersion}）
+
+通过 \`ctx.ui\` 取用，只使用下列组件和属性；颜色、间距与主题由宿主决定，不要自行绘制按钮、输入框或表格外框。
+
+${reference.ui.components.map((name) => `- \`${name}\`：${reference.ui.componentProps[name]}`).join('\n')}
 
 ## 界面责任契约（${reference.ui.designContract.version}）
 

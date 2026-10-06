@@ -1,6 +1,6 @@
 import { Plus, Trash2 } from 'lucide-react'
 import type { ReactNode } from 'react'
-import { Button, DataTable, IconButton, Input, Switch, type Column } from './ui-kit/next/index.js'
+import { Button, DataTable, IconButton, Input, Switch, type Column } from './ui-kit/index.js'
 import styles from './llm-settings.module.css'
 
 export interface EditableModel {

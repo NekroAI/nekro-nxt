@@ -1,6 +1,5 @@
 declare const styles: {
   readonly body: string
-  readonly dialog: string
   readonly download: string
   readonly frame: string
   readonly image: string

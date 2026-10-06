@@ -1,368 +1,239 @@
-/* The grid consumes this width locally; descendants must not inherit drag invalidations. */
-@property --nxt-object-pane-width {
-  syntax: '<length>';
-  inherits: false;
-  initial-value: 240px;
+/* NekroNXT 新设计系统 Token。作用域为 html[data-ui='next']，与旧界面并存到 M6 替换完成。 */
+html[data-ui='next'],
+html[data-ui='next'] [data-nxt-theme='light'] {
+  color-scheme: light;
+  --bg: #f3f1ec;
+  --bg-glow: #e6ebf5;
+  --side: #eceef2;
+  --surface: #fffefb;
+  --surface-2: #f7f7f8;
+  --inset: #f0f1f4;
+  --hover: rgb(23 42 69 / 0.055);
+  --line: rgb(23 42 69 / 0.09);
+  --line-2: rgb(23 42 69 / 0.16);
+  --line-3: rgb(23 42 69 / 0.26);
+  --fg: #14243d;
+  --fg-2: #44536a;
+  --muted: #566275;
+  --faint: #5d687b;
+  --accent: #3f5b8f;
+  --accent-2: #2f4a7a;
+  --accent-soft: rgb(63 91 143 / 0.1);
+  --accent-line: rgb(63 91 143 / 0.35);
+  --on-accent: #ffffff;
+  /* Fills carry text on top; --accent itself is for text, icons and thin lines. */
+  --accent-fill: #3f5b8f;
+  --accent-fill-hover: #2f4a7a;
+  --on-accent-fill: #ffffff;
+  --bad-fill: #b03a30;
+  --bad-fill-hover: #962f26;
+  --on-bad-fill: #ffffff;
+  --knob: #ffffff;
+  --knob-shadow: 0 1px 3px rgb(0 0 0 / 0.25);
+  --scrim: rgb(8 15 27 / 0.42);
+  --ok-fill: #217a4f;
+  --on-ok-fill: #ffffff;
+  --sh-inset: inset 0 1px 2px rgb(0 0 0 / 0.04);
+  --sheen: rgb(255 255 255 / 0.9);
+  --on-toast-action: rgb(255 255 255 / 0.14);
+  /* Risk ladder: none → limited → high → full. */
+  --risk-0: #6b7689;
+  --risk-1: #3f6fb0;
+  --risk-2: #a8721a;
+  --risk-3: #b03a30;
+  --brass: #b4884a;
+  --focus: #0b73b4;
+  --ok: #1b6843;
+  --ok-soft: rgb(33 122 79 / 0.1);
+  --warn: #87570d;
+  --warn-soft: rgb(196 140 40 / 0.14);
+  --bad: #b03a30;
+  --bad-soft: rgb(176 58 48 / 0.09);
+  --mem-bg: 93%;
+  --mem-fg: 34%;
+  --sh-1: 0 1px 2px rgb(20 36 61 / 0.05), 0 1px 1px rgb(20 36 61 / 0.03);
+  --sh-2: 0 1px 2px rgb(20 36 61 / 0.04), 0 6px 18px -6px rgb(20 36 61 / 0.14);
+  --sh-3: 0 24px 60px -18px rgb(20 36 61 / 0.35), 0 4px 14px rgb(20 36 61 / 0.08);
+  --hl: inset 0 1px 0 rgb(255 255 255 / 0.7);
+  --r-1: 8px;
+  --r-2: 12px;
+  --r-3: 16px;
+  --font-sans: 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', system-ui, -apple-system, 'Segoe UI', sans-serif;
+  --font-mono: 'SF Mono', 'SFMono-Regular', 'Cascadia Code', 'JetBrains Mono', ui-monospace, monospace;
+  --fs-xs: 12px;
+  --fs-sm: 13px;
+  --fs-md: 14px;
+  --fs-lg: 16px;
+  --fs-xl: 20px;
+  --fs-2xl: 24px;
+  --fs-3xl: 30px;
+  --ease: cubic-bezier(0.2, 0.8, 0.2, 1);
+  --dur-1: 160ms;
+  --dur-2: 280ms;
+  --dur-3: 420ms;
+  --hue-agent: 230;
 }
 
-:root,
-[data-nxt-theme='light'] {
-  interpolate-size: allow-keywords;
-  color-scheme: light;
-  --nxt-moon-50: #f0f5fd;
-  --nxt-moon-100: #dee9f9;
-  --nxt-moon-200: #bdcfec;
-  --nxt-moon-300: #96afd8;
-  --nxt-moon-400: #7390c0;
-  --nxt-moon-500: #5575a9;
-  --nxt-moon-600: #466394;
-  --nxt-moon-700: #375079;
-  --nxt-moon-800: #253857;
-  --nxt-moon-900: #172a45;
-  --nxt-moon-950: #0a121f;
-  --nxt-lumen-300: #6bc3f4;
-  --nxt-lumen-400: #3fb1ea;
-  --nxt-lumen-600: #0b73b4;
-  --nxt-brass-400: #d0a66c;
-  --nxt-brass-500: #b98c4a;
-  --nxt-brass-700: #77572d;
-  --nxt-pearl-0: #fffdf9;
-  --nxt-pearl-100: #f5f2ee;
-  --nxt-mist-100: #edeff4;
-  /* 一个迁移周期的兼容别名；产品源码只使用 moon/lumen 或语义 Token。 */
-  --nxt-cyan-300: var(--nxt-lumen-300);
-  --nxt-cyan-400: var(--nxt-lumen-400);
-  --nxt-cyan-500: var(--nxt-lumen-400);
-  --nxt-cyan-600: var(--nxt-moon-600);
-  --nxt-cyan-700: var(--nxt-moon-700);
-  --nxt-cyan-800: var(--nxt-moon-800);
-  --nxt-bg-canvas: var(--nxt-pearl-100);
-  --nxt-bg-sidebar: var(--nxt-mist-100);
-  --nxt-bg-surface: var(--nxt-pearl-0);
-  --nxt-bg-subtle: #f5f6f8;
-  --nxt-bg-elevated: var(--nxt-pearl-0);
-  --nxt-bg-hover: #e8ecf3;
-  --nxt-bg-pressed: #dce3ee;
-  --nxt-border-subtle: #e0e3e8;
-  --nxt-border-default: #cdd3dd;
-  --nxt-border-strong: #a7b0bf;
-  --nxt-text-primary: #172a45;
-  --nxt-text-secondary: #46556c;
-  --nxt-text-muted: #5a6679;
-  --nxt-text-disabled: #9099a9;
-  --nxt-accent: var(--nxt-moon-600);
-  --nxt-accent-hover: var(--nxt-moon-700);
-  --nxt-accent-pressed: var(--nxt-moon-800);
-  --nxt-accent-soft: #e2e8f2;
-  --nxt-accent-foreground: #fff;
-  --nxt-focus-ring: var(--nxt-lumen-600);
-  --nxt-info: var(--nxt-lumen-600);
-  --nxt-brand-lumen: var(--nxt-lumen-400);
-  --nxt-brand-brass: var(--nxt-brass-500);
-  --nxt-brand-line: color-mix(in srgb, var(--nxt-moon-600) 32%, transparent);
-  --nxt-brand-ornament: color-mix(in srgb, var(--nxt-brass-500) 66%, transparent);
-  --nxt-rail-bg: var(--nxt-moon-900);
-  --nxt-rail-hover: var(--nxt-moon-800);
-  --nxt-rail-pressed: #2b4261;
-  --nxt-rail-text: #a9b4c4;
-  --nxt-rail-text-strong: #f2f4f7;
-  --nxt-window-controls-left: 0px;
-  --nxt-window-controls-right: 0px;
-  --nxt-success: #157347;
-  --nxt-success-soft: #e7f6ee;
-  --nxt-warning: #9a5b00;
-  --nxt-warning-soft: #fff3d8;
-  --nxt-danger: #b4232d;
-  --nxt-danger-soft: #fff0f1;
-  --nxt-unknown: #655b7b;
-  --nxt-unknown-soft: #f1eef7;
-  --nxt-space-1: 4px;
-  --nxt-space-2: 8px;
-  --nxt-space-3: 12px;
-  --nxt-space-4: 16px;
-  --nxt-space-5: 20px;
-  --nxt-space-6: 24px;
-  --nxt-space-8: 32px;
-  --nxt-space-10: 40px;
-  --nxt-space-12: 48px;
-  --nxt-space-16: 64px;
-  --nxt-radius-control: 8px;
-  --nxt-radius-sm: 4px;
-  --nxt-radius-panel: 12px;
-  --nxt-radius-popover: 10px;
-  --nxt-radius-dialog: 14px;
-  --nxt-radius-md: var(--nxt-radius-panel);
-  --nxt-radius-lg: var(--nxt-radius-dialog);
-  --nxt-radius-round: 999px;
-  --nxt-shadow-control: 0 1px 2px rgb(23 42 69 / 7%);
-  --nxt-shadow-popover: 0 18px 44px rgb(23 42 69 / 16%), 0 2px 8px rgb(23 42 69 / 8%);
-  --nxt-shadow-dialog: 0 28px 72px rgb(23 42 69 / 22%), 0 4px 14px rgb(23 42 69 / 10%);
-  --nxt-shadow-float: var(--nxt-shadow-popover);
-  --nxt-layer-content: 0;
-  --nxt-layer-sticky: 20;
-  --nxt-layer-floating: 60;
-  --nxt-layer-drag: 70;
-  --nxt-layer-modal-base: 80;
-  --nxt-layer-modal-step: 4;
-  --nxt-layer-notification: 1000;
-  --nxt-font-sans:
-    Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Microsoft YaHei',
-    sans-serif;
-  --nxt-font-mono: 'SFMono-Regular', 'Cascadia Code', 'Roboto Mono', ui-monospace, monospace;
-  --nxt-motion-instant: 80ms;
-  --nxt-motion-fast: 120ms;
-  --nxt-motion-standard: 180ms;
-  --nxt-motion-spatial: 280ms;
-  --nxt-motion-emphasis: 340ms;
-  --nxt-motion-spinner: 720ms;
-  --nxt-ease-standard: cubic-bezier(0.2, 0.7, 0.2, 1);
-  --nxt-ease-enter: cubic-bezier(0.16, 1, 0.3, 1);
-  --nxt-ease-exit: cubic-bezier(0.4, 0, 1, 1);
-  font-family: var(--nxt-font-sans);
-  font-synthesis: none;
+html[data-ui='next'][data-theme='dark'],
+html[data-ui='next'] [data-nxt-theme='dark'] {
+  color-scheme: dark;
+  --bg: #0b1524;
+  --bg-glow: #15274a;
+  --side: #0e1a2c;
+  --surface: #12223a;
+  --surface-2: #172a46;
+  --inset: #0f1d33;
+  --hover: rgb(190 210 240 / 0.06);
+  --line: rgb(190 210 240 / 0.09);
+  --line-2: rgb(190 210 240 / 0.15);
+  --line-3: rgb(190 210 240 / 0.26);
+  --fg: #eef2f8;
+  --fg-2: #c3cddc;
+  --muted: #8e9bb0;
+  --faint: #7f8ca4;
+  --accent: #a3bae2;
+  --accent-2: #c3d4f0;
+  --accent-soft: rgb(163 186 226 / 0.12);
+  --accent-line: rgb(163 186 226 / 0.4);
+  --on-accent: #0b1524;
+  --accent-fill: #4a6aa8;
+  --accent-fill-hover: #5a7bbb;
+  --on-accent-fill: #f4f7fc;
+  --bad-fill: #b9483d;
+  --bad-fill-hover: #c85a4f;
+  --on-bad-fill: #fff6f5;
+  --knob: #eef2f8;
+  --knob-shadow: 0 1px 3px rgb(0 0 0 / 0.5);
+  --scrim: rgb(0 0 0 / 0.55);
+  --ok-fill: #2f8a5c;
+  --on-ok-fill: #f2fbf6;
+  --sh-inset: inset 0 1px 2px rgb(0 0 0 / 0.25);
+  --sheen: rgb(255 255 255 / 0.35);
+  --on-toast-action: rgb(255 255 255 / 0.12);
+  --risk-0: #8e9bb0;
+  --risk-1: #7fa6e0;
+  --risk-2: #e9bd68;
+  --risk-3: #f08f83;
+  --brass: #d8af73;
+  --focus: #6bc3f4;
+  --ok: #6dcf98;
+  --ok-soft: rgb(109 207 152 / 0.12);
+  --warn: #e9bd68;
+  --warn-soft: rgb(233 189 104 / 0.12);
+  --bad: #f08f83;
+  --bad-soft: rgb(240 143 131 / 0.12);
+  --mem-bg: 24%;
+  --mem-fg: 82%;
+  --sh-1: 0 1px 2px rgb(0 0 0 / 0.3);
+  --sh-2: 0 1px 2px rgb(0 0 0 / 0.25), 0 8px 22px -8px rgb(0 0 0 / 0.5);
+  --sh-3: 0 28px 70px -20px rgb(0 0 0 / 0.7), 0 4px 16px rgb(0 0 0 / 0.35);
+  --hl: inset 0 1px 0 rgb(255 255 255 / 0.05);
+}
+
+/*
+ * Scales shared by both themes (Decision 2026-10-06 §3). Components use these instead of raw numbers.
+ * Density switches control and row sizes only; spacing stays the same.
+ */
+html[data-ui='next'] {
+  --s-1: 4px;
+  --s-2: 8px;
+  --s-3: 12px;
+  --s-4: 16px;
+  --s-5: 20px;
+  --s-6: 24px;
+  --s-7: 32px;
+  --s-8: 48px;
+  --s-9: 64px;
+  --control-sm: 28px;
+  --control: 32px;
+  --control-lg: 40px;
+  --row-compact: 32px;
+  --row: 40px;
+  --row-tall: 56px;
+  --icon-sm: 14px;
+  --icon: 16px;
+  --icon-lg: 20px;
+  --target: 32px;
+  /* Matches the Desktop caption overlay height (apps/desktop window-chrome TITLE_BAR_HEIGHT). */
+  --topbar-height: 48px;
+  --statusbar-height: 32px;
+  --pane-list: 272px;
+  --pane-detail: 360px;
+  --reader-width: 840px;
+  --t-page: 650 var(--fs-2xl) / 1.25 var(--font-sans);
+  --t-section: 650 var(--fs-lg) / 1.4 var(--font-sans);
+  --t-title: 600 var(--fs-md) / 1.45 var(--font-sans);
+  --t-body: 400 var(--fs-md) / 1.6 var(--font-sans);
+  --t-note: 400 var(--fs-sm) / 1.5 var(--font-sans);
+  --t-label: 500 var(--fs-sm) / 1.4 var(--font-sans);
+  --t-caption: 400 var(--fs-xs) / 1.4 var(--font-sans);
+  --t-mono: 400 var(--fs-sm) / 1.5 var(--font-mono);
+  /* Identity fills (avatars, wires) are mid-tone in both themes, so white marks read on them. */
+  --on-identity: #ffffff;
+  /* QR codes must stay dark-on-white to scan, whatever the theme. */
+  --qr-bg: #ffffff;
+  --identity-sheen: inset 0 1px 0 rgb(255 255 255 / 0.3), inset 0 -2px 4px rgb(0 0 0 / 0.08);
+  --identity-sheen-lg: inset 0 2px 0 rgb(255 255 255 / 0.35);
+  --identity-text-shadow: 0 1px 1px rgb(0 0 0 / 0.18);
+}
+
+html[data-ui='next'][data-density='compact'] {
+  --control: 28px;
+  --control-lg: 36px;
+  --row: 32px;
+  --row-tall: 48px;
+}
+
+html[data-ui='next'],
+html[data-ui='next'] body {
+  height: 100%;
+  margin: 0;
+  background: var(--bg);
+  color: var(--fg);
+  font: var(--fs-md) / 1.6 var(--font-sans);
+  -webkit-font-smoothing: antialiased;
   text-rendering: optimizeLegibility;
 }
 
-.nxt-extension-section {
-  display: grid;
-  gap: var(--nxt-space-3);
-  margin-block: var(--nxt-space-4);
-  padding: var(--nxt-space-4);
-  border: 1px solid var(--nxt-border-subtle);
-  border-radius: var(--nxt-radius-lg);
-  background: var(--nxt-bg-subtle);
-}
-
-.nxt-extension-section-heading {
-  margin: 0;
-  color: var(--nxt-text-primary);
-  font-size: 0.95rem;
-  font-weight: 650;
-}
-
-.nxt-extension-secondary-text {
-  margin: 0;
-  color: var(--nxt-text-secondary);
-  font-size: 0.85rem;
-  line-height: 1.55;
-}
-
-.nxt-extension-action-row {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: var(--nxt-space-2);
-}
-
-.nxt-extension-button {
-  min-height: 32px;
-  padding: 0 var(--nxt-space-3);
-  border: 1px solid var(--nxt-border-strong);
-  border-radius: var(--nxt-radius-md);
-  color: var(--nxt-text-primary);
-  background: var(--nxt-bg-surface);
-  font: inherit;
-  cursor: pointer;
-}
-
-.nxt-extension-button:hover {
-  background: var(--nxt-bg-hover);
-}
-
-.nxt-extension-badge {
-  display: inline-flex;
-  align-items: center;
-  min-height: 22px;
-  padding-inline: var(--nxt-space-2);
-  border-radius: 999px;
-  color: var(--nxt-text-secondary);
-  background: var(--nxt-bg-hover);
-  font-size: 0.75rem;
-}
-
-:root[data-theme='dark'],
-[data-nxt-theme='dark'] {
-  color-scheme: dark;
-  --nxt-bg-canvas: #0f1a2c;
-  --nxt-bg-sidebar: #12233a;
-  --nxt-bg-surface: #182d4a;
-  --nxt-bg-subtle: #203653;
-  --nxt-bg-elevated: #29425f;
-  --nxt-bg-hover: #2c4666;
-  --nxt-bg-pressed: #365473;
-  --nxt-border-subtle: #2a4160;
-  --nxt-border-default: #3d5878;
-  --nxt-border-strong: #607895;
-  --nxt-text-primary: #f2f4f7;
-  --nxt-text-secondary: #d0d7e2;
-  --nxt-text-muted: #a9b4c4;
-  --nxt-text-disabled: #7b899e;
-  --nxt-accent: var(--nxt-moon-300);
-  --nxt-accent-hover: var(--nxt-moon-200);
-  --nxt-accent-pressed: var(--nxt-moon-400);
-  --nxt-accent-soft: var(--nxt-moon-800);
-  --nxt-accent-foreground: var(--nxt-moon-950);
-  --nxt-focus-ring: var(--nxt-lumen-300);
-  --nxt-info: var(--nxt-lumen-300);
-  --nxt-brand-lumen: var(--nxt-lumen-300);
-  --nxt-brand-brass: var(--nxt-brass-400);
-  --nxt-brand-line: color-mix(in srgb, var(--nxt-moon-300) 34%, transparent);
-  --nxt-brand-ornament: color-mix(in srgb, var(--nxt-brass-400) 72%, transparent);
-  --nxt-success: #6fd3a0;
-  --nxt-success-soft: #112d22;
-  --nxt-warning: #f1bb5d;
-  --nxt-warning-soft: #332711;
-  --nxt-danger: #ff8e96;
-  --nxt-danger-soft: #35191c;
-  --nxt-unknown: #c2b3df;
-  --nxt-unknown-soft: #282337;
-  --nxt-shadow-control: 0 1px 2px rgb(0 0 0 / 18%);
-  --nxt-shadow-popover: 0 20px 52px rgb(0 0 0 / 44%), 0 2px 10px rgb(0 0 0 / 25%);
-  --nxt-shadow-dialog: 0 32px 88px rgb(0 0 0 / 58%), 0 4px 16px rgb(0 0 0 / 30%);
-}
-
-:root {
-  --nxt-theme-transition:
-    color var(--nxt-motion-standard) var(--nxt-ease-standard),
-    background-color var(--nxt-motion-standard) var(--nxt-ease-standard),
-    border-color var(--nxt-motion-standard) var(--nxt-ease-standard),
-    box-shadow var(--nxt-motion-standard) var(--nxt-ease-standard),
-    fill var(--nxt-motion-standard) var(--nxt-ease-standard), stroke var(--nxt-motion-standard) var(--nxt-ease-standard);
-}
-
-/* Inline colors and separately loaded extension content have no host stylesheet owner. */
-:root[data-theme-changing] :is([style], [fill], [stroke]),
-:root[data-theme-changing] :is([data-host-ui-content], [data-dynamic-client-slots]) * {
-  transition: var(--nxt-theme-transition);
-}
-
-@media (prefers-reduced-motion: reduce) {
-  :root {
-    --nxt-theme-transition: none;
-  }
-}
-
-:root[data-reduced-motion='true'] {
-  --nxt-theme-transition: none;
-}
-
-@media (prefers-color-scheme: dark) {
-  :root:not([data-theme]) {
-    color-scheme: dark;
-    --nxt-bg-canvas: #0f1a2c;
-    --nxt-bg-sidebar: #12233a;
-    --nxt-bg-surface: #182d4a;
-    --nxt-bg-subtle: #203653;
-    --nxt-bg-elevated: #29425f;
-    --nxt-bg-hover: #2c4666;
-    --nxt-bg-pressed: #365473;
-    --nxt-border-subtle: #2a4160;
-    --nxt-border-default: #3d5878;
-    --nxt-border-strong: #607895;
-    --nxt-text-primary: #f2f4f7;
-    --nxt-text-secondary: #d0d7e2;
-    --nxt-text-muted: #a9b4c4;
-    --nxt-text-disabled: #7b899e;
-    --nxt-accent: var(--nxt-moon-300);
-    --nxt-accent-hover: var(--nxt-moon-200);
-    --nxt-accent-pressed: var(--nxt-moon-400);
-    --nxt-accent-soft: var(--nxt-moon-800);
-    --nxt-accent-foreground: var(--nxt-moon-950);
-    --nxt-focus-ring: var(--nxt-lumen-300);
-    --nxt-info: var(--nxt-lumen-300);
-    --nxt-brand-lumen: var(--nxt-lumen-300);
-    --nxt-brand-brass: var(--nxt-brass-400);
-    --nxt-brand-line: color-mix(in srgb, var(--nxt-moon-300) 34%, transparent);
-    --nxt-brand-ornament: color-mix(in srgb, var(--nxt-brass-400) 72%, transparent);
-    --nxt-success: #6fd3a0;
-    --nxt-success-soft: #112d22;
-    --nxt-warning: #f1bb5d;
-    --nxt-warning-soft: #332711;
-    --nxt-danger: #ff8e96;
-    --nxt-danger-soft: #35191c;
-    --nxt-unknown: #c2b3df;
-    --nxt-unknown-soft: #282337;
-    --nxt-shadow-control: 0 1px 2px rgb(0 0 0 / 18%);
-    --nxt-shadow-popover: 0 20px 52px rgb(0 0 0 / 44%), 0 2px 10px rgb(0 0 0 / 25%);
-    --nxt-shadow-dialog: 0 32px 88px rgb(0 0 0 / 58%), 0 4px 16px rgb(0 0 0 / 30%);
-  }
-}
-
-:root[data-reduced-transparency='true'] {
-  --nxt-bg-elevated: var(--nxt-bg-surface);
-  --nxt-shadow-control: none;
-  --nxt-shadow-popover: 0 0 0 1px var(--nxt-border-strong);
-  --nxt-shadow-dialog: 0 0 0 1px var(--nxt-border-strong);
-  --nxt-shadow-float: var(--nxt-shadow-popover);
-}
-
-:root[data-contrast='more'] {
-  --nxt-border-subtle: var(--nxt-border-default);
-  --nxt-border-default: var(--nxt-border-strong);
-  --nxt-text-muted: var(--nxt-text-secondary);
-  --nxt-text-disabled: var(--nxt-text-secondary);
-  --nxt-focus-ring: var(--nxt-accent);
-}
-
-@media (prefers-contrast: more) {
-  :root[data-contrast='system'] {
-    --nxt-border-subtle: var(--nxt-border-default);
-    --nxt-border-default: var(--nxt-border-strong);
-    --nxt-text-muted: var(--nxt-text-secondary);
-    --nxt-text-disabled: var(--nxt-text-secondary);
-    --nxt-focus-ring: var(--nxt-accent);
-  }
-}
-
-* {
+html[data-ui='next'] *,
+html[data-ui='next'] *::before,
+html[data-ui='next'] *::after {
   box-sizing: border-box;
 }
 
-html,
-body,
-#root {
-  width: 100%;
+html[data-ui='next'] #root {
   height: 100%;
-  margin: 0;
 }
 
-body {
-  overflow: auto;
-  color: var(--nxt-text-primary);
-  background: var(--nxt-bg-canvas);
-  font-size: 14px;
-  line-height: 1.55;
+html[data-ui='next'] ::selection {
+  background: var(--accent-soft);
+  color: var(--fg);
 }
 
-button,
-input,
-textarea,
-select {
-  font: inherit;
-}
-
-button,
-a {
+:where(html[data-ui='next']) :where(button, a) {
   -webkit-tap-highlight-color: transparent;
 }
 
-:where(
-  button:not(:disabled),
-  a[href],
-  [role='button']:not([aria-disabled='true']),
-  [role='tab']:not([aria-disabled='true']),
-  [role='menuitem']:not([aria-disabled='true']),
-  [role='option']:not([aria-disabled='true']):not([data-disabled]),
-  input[type='checkbox']:not(:disabled),
-  input[type='radio']:not(:disabled),
-  input[type='range']:not(:disabled),
-  label[for],
-  summary
-) {
+/* Every enabled control shows the hand; its icons and labels inherit it instead of resetting to the arrow. */
+:where(html[data-ui='next'])
+  :where(
+    button:not(:disabled),
+    a[href],
+    [role='button']:not([aria-disabled='true']),
+    [role='tab']:not([aria-disabled='true']),
+    [role='menuitem']:not([aria-disabled='true']),
+    [role='option']:not([aria-disabled='true']):not([data-disabled]),
+    input[type='checkbox']:not(:disabled),
+    input[type='radio']:not(:disabled),
+    input[type='range']:not(:disabled),
+    label[for],
+    summary
+  ) {
   cursor: pointer;
 }
 
-:where(
+:where(html[data-ui='next'])
+  :where(
     button:not(:disabled),
     a[href],
     [role='button']:not([aria-disabled='true']),
@@ -376,8 +247,10 @@ a {
   cursor: inherit;
 }
 
-/* Electron WebContentsView 在控件重绘时可能短暂回落为默认箭头；当前命中目标
-   由入口脚本锁定为一个稳定意图，控件内部和状态切换期间不再互相抢 cursor。 */
+/*
+ * Electron's WebContentsView can briefly fall back to the arrow while a control repaints. The entry script locks one
+ * cursor intent for the current hit target (cursor-stability.ts); these rules apply it to the whole page.
+ */
 :root[data-nxt-cursor='pointer'] body,
 :root[data-nxt-cursor='pointer'] body * {
   cursor: pointer !important;
@@ -403,138 +276,47 @@ a {
   cursor: col-resize !important;
 }
 
-::selection {
-  color: var(--nxt-text-primary);
-  background: var(--nxt-accent-soft);
+/* Zero specificity: a reset must never beat a component's own colour or font (e.g. text on a primary fill). */
+:where(html[data-ui='next']) :where(button, input, select, textarea) {
+  font: inherit;
+  color: inherit;
 }
 
-:focus-visible {
-  outline: 2px solid var(--nxt-focus-ring);
+html[data-ui='next'] :where(:focus-visible) {
+  outline: 2px solid var(--focus);
   outline-offset: 2px;
 }
 
+html[data-ui='next'] [hidden] {
+  display: none !important;
+}
+
+html[data-ui='next'].theming *,
+html[data-ui='next'].theming *::before,
+html[data-ui='next'].theming *::after {
+  transition:
+    background-color 0.35s ease,
+    color 0.35s ease,
+    border-color 0.35s ease,
+    fill 0.35s ease,
+    stroke 0.35s ease,
+    box-shadow 0.35s ease !important;
+}
+
 @media (prefers-reduced-motion: reduce) {
-  html {
-    scroll-behavior: auto;
+  html[data-ui='next'] *,
+  html[data-ui='next'] *::before,
+  html[data-ui='next'] *::after {
+    animation-duration: 1ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 1ms !important;
   }
 }
 
-:root[data-reduced-motion='true'] *,
-:root[data-reduced-motion='true'] *::before,
-:root[data-reduced-motion='true'] *::after {
-  scroll-behavior: auto !important;
+html[data-ui='next'][data-nxt-motion='off'] *,
+html[data-ui='next'][data-nxt-motion='off'] *::before,
+html[data-ui='next'][data-nxt-motion='off'] *::after {
   animation-duration: 1ms !important;
   animation-iteration-count: 1 !important;
   transition-duration: 1ms !important;
-}
-
-@keyframes nxt-enter {
-  from {
-    opacity: 0;
-    transform: translateY(18px);
-  }
-}
-
-@keyframes nxt-overlay-in {
-  from {
-    opacity: 0;
-  }
-}
-
-@keyframes nxt-dialog-in {
-  from {
-    opacity: 0;
-    transform: scale(0.985);
-  }
-}
-
-@keyframes nxt-vt-out {
-  to {
-    opacity: 0;
-    transform: translateY(-4px);
-  }
-}
-
-@keyframes nxt-vt-in {
-  from {
-    opacity: 0;
-    transform: translateY(6px);
-  }
-}
-
-@keyframes nxt-vt-tree-out {
-  to {
-    opacity: 0;
-  }
-}
-
-@keyframes nxt-vt-tree-in {
-  from {
-    opacity: 0;
-  }
-}
-
-::view-transition-old(root),
-::view-transition-new(root) {
-  animation: none;
-}
-
-::view-transition {
-  pointer-events: none;
-}
-
-::view-transition-group(nxt-stage) {
-  animation-duration: var(--nxt-motion-spatial);
-}
-
-::view-transition-group(nxt-tree) {
-  animation-duration: var(--nxt-motion-fast);
-}
-
-::view-transition-image-pair(nxt-stage),
-::view-transition-image-pair(nxt-tree) {
-  isolation: isolate;
-}
-
-::view-transition-old(nxt-stage),
-::view-transition-new(nxt-stage),
-::view-transition-old(nxt-tree),
-::view-transition-new(nxt-tree) {
-  mix-blend-mode: normal;
-  animation-fill-mode: both;
-}
-
-::view-transition-old(nxt-stage) {
-  animation-name: nxt-vt-out;
-  animation-duration: var(--nxt-motion-standard);
-  animation-timing-function: var(--nxt-ease-exit);
-  z-index: 2;
-}
-
-::view-transition-new(nxt-stage) {
-  animation-name: nxt-vt-in;
-  animation-duration: var(--nxt-motion-spatial);
-  animation-timing-function: var(--nxt-ease-standard);
-  z-index: 1;
-}
-
-::view-transition-old(nxt-tree) {
-  animation-name: nxt-vt-tree-out;
-  animation-duration: var(--nxt-motion-fast);
-  animation-timing-function: var(--nxt-ease-exit);
-  z-index: 2;
-}
-
-::view-transition-new(nxt-tree) {
-  animation-name: nxt-vt-tree-in;
-  animation-duration: var(--nxt-motion-fast);
-  animation-timing-function: var(--nxt-ease-standard);
-  z-index: 1;
-}
-
-:root[data-reduced-motion='true'] ::view-transition-old(nxt-stage),
-:root[data-reduced-motion='true'] ::view-transition-new(nxt-stage),
-:root[data-reduced-motion='true'] ::view-transition-old(nxt-tree),
-:root[data-reduced-motion='true'] ::view-transition-new(nxt-tree) {
-  animation: none !important;
 }

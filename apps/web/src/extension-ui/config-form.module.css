@@ -1,12 +1,12 @@
 .form {
   display: grid;
-  gap: 14px;
+  gap: var(--s-3);
   min-width: 0;
 }
 
 .group {
   display: grid;
-  gap: 14px;
+  gap: var(--s-3);
   min-width: 0;
   margin: 0;
   padding: 0;
@@ -14,32 +14,32 @@
 }
 
 .legend {
-  margin-bottom: 2px;
+  margin-bottom: calc(var(--s-1) / 2);
   padding: 0;
-  color: var(--muted, var(--nxt-text-muted));
+  color: var(--muted, var(--muted));
   font-size: 12px;
   font-weight: 650;
   letter-spacing: 0.04em;
 }
 
 .switch[data-invalid='true'] {
-  color: var(--bad, var(--nxt-status-danger));
+  color: var(--bad, var(--bad));
 }
 
 .advanced {
   display: grid;
-  gap: 10px;
+  gap: var(--s-2);
 }
 
 .advancedToggle {
   display: inline-flex;
   align-items: center;
   justify-self: start;
-  gap: 6px;
-  padding: 2px 0;
+  gap: var(--s-1);
+  padding: calc(var(--s-1) / 2) 0;
   border: 0;
   background: transparent;
-  color: var(--muted, var(--nxt-text-muted));
+  color: var(--muted, var(--muted));
   font: inherit;
   font-size: 13px;
   cursor: pointer;
@@ -55,22 +55,22 @@
 
 .nested {
   display: grid;
-  gap: 12px;
+  gap: var(--s-3);
   min-width: 0;
   margin: 0;
-  padding: 12px 14px;
-  border: 1px solid var(--line, var(--nxt-border-subtle));
+  padding: var(--s-3) var(--s-4);
+  border: 1px solid var(--line, var(--line));
   border-radius: 12px;
 }
 
 .hint {
   margin: 0;
-  color: var(--muted, var(--nxt-text-muted));
+  color: var(--muted, var(--muted));
   font-size: 12px;
 }
 
 .issue {
   margin: 0;
-  color: var(--bad, var(--nxt-status-danger));
+  color: var(--bad, var(--bad));
   font-size: 12px;
 }

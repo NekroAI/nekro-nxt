@@ -24,7 +24,7 @@ import {
   ReaderPage,
   Spinner,
   toast,
-} from '../../ui-kit/next/index.js'
+} from '../../ui-kit/index.js'
 import { useGo } from '../model/nav.js'
 import { useProductApi } from '../model/store.js'
 import styles from './wiring.module.css'

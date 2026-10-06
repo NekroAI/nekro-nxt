@@ -23,7 +23,7 @@ import {
   Switch,
   SwitchRow,
   toast,
-} from '../../ui-kit/next/index.js'
+} from '../../ui-kit/index.js'
 import { BindDialog, type BindIntent } from '../channels/bind-dialog.js'
 import { connectionStatus, testOutcome } from '../model/connection-status.js'
 import { agentHue, agentPhase, connectionFullLabel, triggerLabel } from '../model/identity.js'

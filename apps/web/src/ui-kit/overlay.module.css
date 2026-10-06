@@ -20,11 +20,11 @@
   left: 50%;
   z-index: 51;
   display: grid;
-  gap: 16px;
+  gap: var(--s-4);
   width: min(440px, calc(100vw - 32px));
   max-height: 80vh;
   overflow: auto;
-  padding: 22px;
+  padding: var(--s-6);
   border: 1px solid var(--line);
   border-radius: 18px;
   outline: none;
@@ -45,8 +45,35 @@
   width: min(620px, calc(100vw - 32px));
 }
 
+.media {
+  top: 5vh;
+  grid-template-rows: auto minmax(0, 1fr) auto;
+  width: min(920px, calc(100vw - 48px));
+  max-height: 90vh;
+  overflow: hidden;
+}
+
+.media .body {
+  min-height: 0;
+  overflow: auto;
+}
+
+.titleRow {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--s-3);
+  min-width: 0;
+}
+
+.titleRow > :last-child:not(:first-child) {
+  margin: calc(var(--s-1) * -1) calc(var(--s-1) * -1) 0 0;
+}
+
 .title {
+  min-width: 0;
   margin: 0;
+  overflow-wrap: anywhere;
   color: var(--fg);
   font-size: 18px;
   font-weight: 650;
@@ -55,7 +82,7 @@
 
 .body {
   display: grid;
-  gap: 12px;
+  gap: var(--s-3);
   color: var(--fg-2);
   font-size: var(--fs-md);
   line-height: 1.7;
@@ -68,7 +95,7 @@
 .actions {
   display: flex;
   justify-content: flex-end;
-  gap: 8px;
+  gap: var(--s-2);
 }
 
 .sheet {
@@ -97,8 +124,8 @@
 .sheetHead {
   display: flex;
   align-items: center;
-  gap: 10px;
-  padding: 16px 18px;
+  gap: var(--s-2);
+  padding: var(--s-4) var(--s-5);
   border-bottom: 1px solid var(--line);
 }
 
@@ -111,25 +138,25 @@
   display: grid;
   flex: 1;
   align-content: start;
-  gap: 18px;
+  gap: var(--s-4);
   overflow: auto;
-  padding: 18px;
+  padding: var(--s-5);
 }
 
 .sheetFoot {
   display: flex;
   justify-content: flex-end;
-  gap: 8px;
-  padding: 12px 18px;
+  gap: var(--s-2);
+  padding: var(--s-3) var(--s-5);
   border-top: 1px solid var(--line);
 }
 
 .menu {
   z-index: 60;
   display: grid;
-  gap: 2px;
+  gap: calc(var(--s-1) / 2);
   min-width: 200px;
-  padding: 6px;
+  padding: var(--s-2);
   border: 1px solid var(--line-2);
   border-radius: 12px;
   background: var(--surface);
@@ -140,7 +167,6 @@
 .popover {
   z-index: 60;
   display: grid;
-  text-align: left;
   width: min(420px, calc(100vw - 24px));
   max-height: min(560px, var(--radix-popover-content-available-height));
   overflow: auto;
@@ -167,8 +193,8 @@
 .menuItem {
   display: flex;
   align-items: center;
-  gap: 9px;
-  padding: 7px 9px;
+  gap: var(--s-2);
+  padding: var(--s-2) var(--s-2);
   border-radius: 8px;
   outline: none;
   color: var(--fg);
@@ -199,12 +225,12 @@
 
 .menuSeparator {
   height: 1px;
-  margin: 4px 6px;
+  margin: var(--s-1) var(--s-1);
   background: var(--line);
 }
 
 .menuLabel {
-  padding: 5px 9px 3px;
+  padding: var(--s-1) var(--s-2) calc(var(--s-1) * 0.75);
   color: var(--muted);
   font-size: var(--fs-xs);
 }
@@ -212,7 +238,7 @@
 .tooltip {
   z-index: 70;
   max-width: 280px;
-  padding: 6px 9px;
+  padding: var(--s-2) var(--s-2);
   border-radius: 8px;
   background: var(--fg);
   box-shadow: var(--sh-2);
@@ -233,7 +259,7 @@
   z-index: 80;
   display: grid;
   justify-items: center;
-  gap: 8px;
+  gap: var(--s-2);
   translate: -50% 0;
   pointer-events: none;
 }
@@ -241,9 +267,9 @@
 .toast {
   display: flex;
   align-items: center;
-  gap: 9px;
+  gap: var(--s-2);
   max-width: min(520px, calc(100vw - 32px));
-  padding: 9px 14px 9px 10px;
+  padding: var(--s-2) var(--s-4) var(--s-2) var(--s-3);
   border-radius: 12px;
   background: var(--fg);
   box-shadow: var(--sh-3);
@@ -283,7 +309,7 @@
   display: grid;
   width: 22px;
   height: 22px;
-  margin-right: -4px;
+  margin-right: calc(var(--s-1) * -1);
   place-items: center;
   border: 0;
   border-radius: 6px;
@@ -306,8 +332,8 @@
 }
 
 .toastAction {
-  margin-left: 4px;
-  padding: 2px 8px;
+  margin-left: var(--s-1);
+  padding: calc(var(--s-1) / 2) var(--s-2);
   border: 0;
   border-radius: 6px;
   background: var(--on-toast-action);

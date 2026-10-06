@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react'
 import type { AgentRevisionHistory } from '@nekro-nxt/contracts'
 import { workspaceApi } from '../../host-api-client.js'
 import type { AgentSummary } from '../../product-runtime.js'
-import { Button, Dialog, Spinner, toast } from '../../ui-kit/next/index.js'
+import { Button, Dialog, Spinner, toast } from '../../ui-kit/index.js'
 import { useProductApi } from '../model/store.js'
 import styles from './agents.module.css'
 

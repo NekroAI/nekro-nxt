@@ -3,7 +3,7 @@
   display: grid;
   grid-auto-columns: minmax(0, 1fr);
   grid-auto-flow: column;
-  padding: 2px;
+  padding: calc(var(--s-1) / 2);
   border-radius: 10px;
   background: var(--inset);
   box-shadow: var(--sh-inset);
@@ -52,13 +52,13 @@
 .tabs {
   position: relative;
   display: flex;
-  gap: 4px;
+  gap: var(--s-1);
   border-bottom: 1px solid var(--line);
 }
 
 .tab {
   position: relative;
-  padding: 8px 12px 10px;
+  padding: var(--s-2) var(--s-3) var(--s-3);
   border: 0;
   background: transparent;
   color: var(--muted);

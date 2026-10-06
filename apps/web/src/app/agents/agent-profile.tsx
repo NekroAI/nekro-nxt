@@ -17,7 +17,7 @@ import {
   SwitchRow,
   cssVars,
   toast,
-} from '../../ui-kit/next/index.js'
+} from '../../ui-kit/index.js'
 import { BindDialog, type BindIntent } from '../channels/bind-dialog.js'
 import { agentAccent, agentHue, agentPhase, isAgentWorking } from '../model/identity.js'
 import { useGo } from '../model/nav.js'
@@ -70,23 +70,51 @@ function useAgentDraft(agent: AgentSummary) {
   return { base, draft, update, reset: () => setDraft(base) }
 }
 
-/** Highlights the section currently in view in the sticky section bar. */
+const scrollParent = (element: HTMLElement): HTMLElement | null => {
+  for (let node = element.parentElement; node; node = node.parentElement) {
+    const overflow = getComputedStyle(node).overflowY
+    if (overflow === 'auto' || overflow === 'scroll') return node
+  }
+  return null
+}
+
+/**
+ * Highlights the section being read in the sticky section bar: the last one whose top has passed a reading line
+ * near the top of the scroll area. At the top that is always the first section, at the bottom the last one, so a
+ * tall window never skips ahead to a section that merely fits on screen.
+ */
 function useActiveSection(): string {
   const [active, setActive] = useState<string>(SECTIONS[0].id)
   useEffect(() => {
-    const observer = new IntersectionObserver(
-      (entries) => {
-        const visible = entries.filter((entry) => entry.isIntersecting)
-        const top = visible.sort((left, right) => left.boundingClientRect.top - right.boundingClientRect.top)[0]
-        if (top) setActive(top.target.id)
-      },
-      { rootMargin: '-30% 0px -60% 0px' },
-    )
-    for (const section of SECTIONS) {
-      const element = document.getElementById(section.id)
-      if (element) observer.observe(element)
+    const first = document.getElementById(SECTIONS[0].id)
+    const scroller = first ? scrollParent(first) : null
+    if (!scroller) return
+    let frame = 0
+    const update = () => {
+      frame = 0
+      const elements = SECTIONS.flatMap((section) => {
+        const element = document.getElementById(section.id)
+        return element ? [element] : []
+      })
+      if (elements.length === 0) return
+      const atBottom = scroller.scrollTop + scroller.clientHeight >= scroller.scrollHeight - 2
+      const line = scroller.getBoundingClientRect().top + Math.min(160, scroller.clientHeight * 0.3)
+      const passed = elements.filter((element) => element.getBoundingClientRect().top <= line)
+      const current = atBottom && scroller.scrollTop > 0 ? elements.at(-1) : (passed.at(-1) ?? elements[0])
+      if (current) setActive(current.id)
     }
-    return () => observer.disconnect()
+    const schedule = () => {
+      if (!frame) frame = requestAnimationFrame(update)
+    }
+    update()
+    scroller.addEventListener('scroll', schedule, { passive: true })
+    const observer = new ResizeObserver(schedule)
+    observer.observe(scroller)
+    return () => {
+      scroller.removeEventListener('scroll', schedule)
+      observer.disconnect()
+      cancelAnimationFrame(frame)
+    }
   }, [])
   return active
 }
@@ -158,12 +186,7 @@ export function AgentProfile({ agent }: { readonly agent: AgentSummary }) {
       <div className={styles.profile} style={cssVars({ '--agent-accent': agentAccent(agent) })}>
         <ObjectHeader
           visual={
-            <AgentAvatar
-              name={draft.name || agent.name}
-              hue={agentHue(agent)}
-              size="default"
-              live={isAgentWorking(agent)}
-            />
+            <AgentAvatar name={draft.name || agent.name} hue={agentHue(agent)} size="lg" live={isAgentWorking(agent)} />
           }
           title={
             renaming ? (

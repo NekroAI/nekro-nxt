@@ -53,7 +53,7 @@ import {
   type PromptSegment,
 } from '@nekro-nxt/contracts'
 import { useProductStore } from '../product-runtime.js'
-import { Button, Enter, Presence, Tooltip } from '../ui-kit/index.js'
+import { Pressable, Tooltip } from '../ui-kit/index.js'
 import styles from './prompt-reference-editor.module.css'
 
 type ReferenceSegment = Extract<PromptSegment, { type: 'reference' }>
@@ -128,16 +128,11 @@ function ReferenceChip({
   }
   if (invalid) detail = `已失效的${kind === 'platform-user' ? '用户' : kind === 'channel' ? '频道' : '扩展'}`
   return (
-    <Tooltip.Root>
-      <Tooltip.Trigger asChild>
-        <span className={styles.referenceChip} data-invalid={invalid ? '' : undefined} contentEditable={false}>
-          @{label}
-        </span>
-      </Tooltip.Trigger>
-      <Tooltip.Portal>
-        <Tooltip.Content sideOffset={6}>{detail}</Tooltip.Content>
-      </Tooltip.Portal>
-    </Tooltip.Root>
+    <Tooltip content={detail}>
+      <span className={styles.referenceChip} data-invalid={invalid ? '' : undefined} contentEditable={false}>
+        @{label}
+      </span>
+    </Tooltip>
   )
 }
 
@@ -487,77 +482,63 @@ function EditorController({
           inspectTrigger(state)
         }}
       />
-      <Presence>
-        {trigger ? (
-          <Enter
-            key="reference-menu"
-            kind="popover"
-            className={styles.referenceMenu}
-            style={{
-              top: trigger.top,
-              left: trigger.left,
-              transformOrigin: `${trigger.originX}px ${trigger.placement === 'below' ? 'top' : 'bottom'}`,
-            }}
-            data-reference-menu-placement={trigger.placement}
-            role="listbox"
-            aria-label="可引用对象"
-            aria-activedescendant={candidates[activeIndex] ? `prompt-reference-${activeIndex}` : undefined}
-            onMouseDown={(event) => event.preventDefault()}
-          >
-            <div className={styles.referenceCategories} aria-label="引用分类">
-              {(
-                [
-                  ['all', '全部'],
-                  ['platform-user', '用户'],
-                  ['channel', '频道'],
-                  ['extension', '扩展'],
-                ] as const
-              ).map(([key, label]) => (
-                <Button
-                  key={key}
-                  type="button"
-                  size="small"
-                  variant="ghost"
-                  data-active={category === key ? '' : undefined}
-                  onClick={() => setCategory(key)}
-                >
-                  {label}
-                </Button>
-              ))}
-            </div>
-            <div className={styles.referenceOptions}>
-              {candidates.length > 0 ? (
-                candidates.map((candidate, index) => {
-                  const Icon =
-                    candidate.kind === 'platform-user' ? UserRound : candidate.kind === 'channel' ? Hash : PackageOpen
-                  return (
-                    <Button
-                      id={`prompt-reference-${index}`}
-                      type="button"
-                      size="small"
-                      variant="ghost"
-                      role="option"
-                      aria-selected={activeIndex === index}
-                      data-active={activeIndex === index ? '' : undefined}
-                      key={`${candidate.kind}:${candidate.targetId}`}
-                      onMouseEnter={() => setActiveIndex(index)}
-                      onClick={() => choose(candidate)}
-                    >
-                      <Icon size={15} aria-hidden="true" />
-                      <span>
-                        <strong>{candidate.label}</strong>
-                        <small>{candidate.detail}</small>
-                      </span>
-                    </Button>
-                  )
-                })
-              ) : (
-                <p>没有匹配的可引用对象。</p>
-              )}
-            </div>
-          </Enter>
-        ) : null}
-      </Presence>
+      {trigger ? (
+        <div
+          className={styles.referenceMenu}
+          style={{
+            top: trigger.top,
+            left: trigger.left,
+            transformOrigin: `${trigger.originX}px ${trigger.placement === 'below' ? 'top' : 'bottom'}`,
+          }}
+          data-reference-menu-placement={trigger.placement}
+          role="listbox"
+          aria-label="可引用对象"
+          aria-activedescendant={candidates[activeIndex] ? `prompt-reference-${activeIndex}` : undefined}
+          onMouseDown={(event) => event.preventDefault()}
+        >
+          <div className={styles.referenceCategories} aria-label="引用分类">
+            {(
+              [
+                ['all', '全部'],
+                ['platform-user', '用户'],
+                ['channel', '频道'],
+                ['extension', '扩展'],
+              ] as const
+            ).map(([key, label]) => (
+              <Pressable key={key} data-active={category === key ? '' : undefined} onClick={() => setCategory(key)}>
+                {label}
+              </Pressable>
+            ))}
+          </div>
+          <div className={styles.referenceOptions}>
+            {candidates.length > 0 ? (
+              candidates.map((candidate, index) => {
+                const Icon =
+                  candidate.kind === 'platform-user' ? UserRound : candidate.kind === 'channel' ? Hash : PackageOpen
+                return (
+                  <Pressable
+                    id={`prompt-reference-${index}`}
+                    role="option"
+                    aria-selected={activeIndex === index}
+                    data-active={activeIndex === index ? '' : undefined}
+                    key={`${candidate.kind}:${candidate.targetId}`}
+                    onMouseEnter={() => setActiveIndex(index)}
+                    onClick={() => choose(candidate)}
+                  >
+                    <Icon size={15} aria-hidden="true" />
+                    <span>
+                      <strong>{candidate.label}</strong>
+                      <small>{candidate.detail}</small>
+                    </span>
+                  </Pressable>
+                )
+              })
+            ) : (
+              <p>没有匹配的可引用对象。</p>
+            )}
+          </div>
+        </div>
+      ) : null}
     </>
   )
 }
@@ -569,6 +550,7 @@ export function PromptReferenceEditor({
   label = '人设',
   description = '引用会将所选对象加入人设。',
   placeholder,
+  fill = false,
 }: {
   readonly value: PromptDocumentV1
   readonly onChange: (document: PromptDocumentV1, plainText: string) => void
@@ -576,6 +558,8 @@ export function PromptReferenceEditor({
   readonly label?: string
   readonly description?: string
   readonly placeholder?: string
+  /** Stretch to the parent's height (full-screen editing) instead of capping at twenty lines. */
+  readonly fill?: boolean
 }) {
   const useProductStore = useProductRuntime().store
 
@@ -706,7 +690,7 @@ export function PromptReferenceEditor({
   )
 
   return (
-    <div className={styles.field}>
+    <div className={styles.field} data-fill={fill || undefined}>
       <label id={`${fieldId}-label`} htmlFor={fieldId}>
         {label}
       </label>

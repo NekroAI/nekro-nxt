@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { connectionDisplayName, useProductStore } from '../../product-runtime.js'
-import { AgentAvatar, ConfirmDialog, Field, Select, toast, cssVars } from '../../ui-kit/next/index.js'
+import { AgentAvatar, ConfirmDialog, Field, Select, toast, cssVars } from '../../ui-kit/index.js'
 import { agentAccent, agentHue, triggerLabel, isTriggerPolicy, type TriggerPolicy } from '../model/identity.js'
 import { useProductApi } from '../model/store.js'
 import styles from './channels.module.css'

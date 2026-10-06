@@ -16,8 +16,7 @@ import * as React from 'react'
 import { useEffect, useMemo, useSyncExternalStore, type ReactNode, type Ref } from 'react'
 import { useLocation, useNavigate, useParams } from 'react-router-dom'
 import { AlertTriangle, RefreshCw } from 'lucide-react'
-import { Button, Spinner, StatusBadge } from './ui-kit/index.js'
-import { EmptyState, PageHeader } from './components/product-feedback.js'
+import { Button, Chip, EmptyState, Pressable, Spinner, type Tone } from './ui-kit/index.js'
 import { useProductStore, useProductRuntime, type ProductRuntime } from './product-runtime.js'
 import { createExtensionData } from './extension-ui/data.js'
 import { extensionReactFacade, extensionUiKit } from './extension-ui/ui-kit.js'
@@ -28,6 +27,14 @@ import {
   type HostEventStreamHandlers,
 } from './host-event-stream.js'
 import styles from './host-ui-client.module.css'
+
+const navigationTone = {
+  neutral: 'neutral',
+  info: 'accent',
+  success: 'ok',
+  warning: 'warn',
+  error: 'bad',
+} as const satisfies Record<string, Tone>
 
 type PageComponent = (props: HostUiPageProps) => ReactNode
 type PageRegistration = {
@@ -430,9 +437,10 @@ class PageErrorBoundary extends React.Component<
     return (
       <EmptyState
         title="页面运行失败"
-        description={this.state.error.message}
         action={<Button onClick={() => this.setState({ error: null })}>重新加载页面</Button>}
-      />
+      >
+        {this.state.error.message}
+      </EmptyState>
     )
   }
 }
@@ -443,7 +451,7 @@ export function HostUiPageCanvas() {
     state.hostUi.pages.find((candidate) => candidate.pageInstanceId === pageInstanceId),
   )
   if (!page) {
-    return <EmptyState title="页面入口已撤销" description="扩展已更新、关闭或移除。" />
+    return <EmptyState title="页面入口已撤销">扩展已更新、关闭或移除。</EmptyState>
   }
   return <MountedPageCanvas key={`${page.pageInstanceId}:${page.client.buildKey}`} page={page} wildcard={wildcard} />
 }
@@ -467,19 +475,20 @@ function MountedPageCanvas({ page, wildcard }: { readonly page: HostUiPageEntry;
     return (
       <EmptyState
         title="无法加载扩展页面"
-        description={snapshot.error.message}
         action={
-          <Button onClick={() => runtime.retry()}>
-            <RefreshCw size={14} aria-hidden="true" /> 重试
+          <Button icon={<RefreshCw size={14} />} onClick={() => runtime.retry()}>
+            重试
           </Button>
         }
-      />
+      >
+        {snapshot.error.message}
+      </EmptyState>
     )
   }
   if (!registration) {
     return (
       <div className={styles.loading}>
-        <Spinner size={22} />
+        <Spinner />
         <span>正在加载 {page.title}</span>
       </div>
     )
@@ -523,7 +532,7 @@ export function HostUiObjectPane({ page }: { readonly page: HostUiPageEntry }) {
   if (!registration?.navigation)
     return (
       <div className={styles.navigationLoading}>
-        <Spinner size={18} />
+        <Spinner />
       </div>
     )
   return <HostUiNavigation page={page} provider={registration.navigation} />
@@ -586,15 +595,16 @@ function HostUiNavigation({
   const { model } = state
   return (
     <nav className={styles.navigation} aria-label={`${page.title}导航`}>
-      <PageHeader title={page.title} meta={page.description} quiet />
+      <header className={styles.navigationHead}>
+        <h1>{page.title}</h1>
+        {page.description ? <p>{page.description}</p> : null}
+      </header>
       {model.groups.map((group) => (
         <section key={group.id} className={styles.navigationGroup}>
           {group.label ? <h2>{group.label}</h2> : null}
           {group.items.map((item) => (
-            <Button
+            <Pressable
               key={item.id}
-              variant="ghost"
-              size="small"
               aria-current={
                 toRelativePath(location.pathname.slice(page.routeBase.length)) === item.path ? 'page' : undefined
               }
@@ -610,11 +620,11 @@ function HostUiNavigation({
                 {item.description ? <small>{item.description}</small> : null}
               </span>
               {item.badge ? (
-                <StatusBadge tone={item.status === 'error' ? 'error' : (item.status ?? 'neutral')}>
+                <Chip tone={navigationTone[item.status ?? 'neutral']} dot>
                   {item.badge}
-                </StatusBadge>
+                </Chip>
               ) : null}
-            </Button>
+            </Pressable>
           ))}
         </section>
       ))}

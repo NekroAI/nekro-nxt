@@ -13,6 +13,7 @@ declare const styles: {
   readonly gaugeTrack: string
   readonly gaugeValue: string
   readonly info: string
+  readonly ok: string
   readonly panel: string
   readonly section: string
   readonly sectionHead: string

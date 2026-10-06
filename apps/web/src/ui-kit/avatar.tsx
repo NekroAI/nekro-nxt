@@ -3,7 +3,7 @@ import styles from './avatar.module.css'
 
 export type AvatarSize = 'xs' | 'sm' | 'md' | 'default' | 'lg'
 
-const sizePx: Record<AvatarSize, number> = { xs: 18, sm: 22, md: 28, default: 34, lg: 92 }
+const sizePx: Record<AvatarSize, number> = { xs: 18, sm: 22, md: 28, default: 34, lg: 48 }
 const sizeClass: Record<AvatarSize, string | undefined> = {
   xs: styles.xs,
   sm: styles.sm,

@@ -1,6 +1,6 @@
 import { Download, File } from 'lucide-react'
 import { useEffect, useState } from 'react'
-import { Dialog, Enter, Spinner } from '../../ui-kit/index.js'
+import { Dialog, Spinner } from '../../ui-kit/index.js'
 import styles from './resource-preview.module.css'
 
 export type ResourceKind = 'image' | 'audio' | 'video' | 'pdf' | 'text' | 'file'
@@ -89,7 +89,7 @@ function TextPreview({ url, name }: { readonly url: string; readonly name: strin
   if (state === 'loading') {
     return (
       <div className={styles.status}>
-        <Spinner size={18} /> 正在读取 {name}
+        <Spinner /> 正在读取 {name}
       </div>
     )
   }
@@ -115,15 +115,15 @@ export function ResourcePreviewDialog({
       open={open}
       onOpenChange={onOpenChange}
       title={title}
-      className={styles.dialog}
+      media
       closeLabel="关闭预览"
-      footer={
+      actions={
         <a className={styles.download} href={resource.url} download={resource.name || undefined}>
           <Download size={14} aria-hidden="true" /> 下载
         </a>
       }
     >
-      <Enter kind="fade" className={styles.body}>
+      <div className={styles.body}>
         {kind === 'image' ? <img className={styles.image} src={resource.url} alt={title} /> : null}
         {kind === 'audio' ? (
           <audio className={styles.media} controls src={resource.url}>
@@ -142,7 +142,7 @@ export function ResourcePreviewDialog({
             <File size={16} aria-hidden="true" /> 此类型暂不在应用内预览，可下载后查看。
           </p>
         ) : null}
-      </Enter>
+      </div>
     </Dialog>
   )
 }

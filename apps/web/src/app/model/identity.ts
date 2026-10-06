@@ -1,4 +1,4 @@
-import { hueOf, type Tone } from '../../ui-kit/next/index.js'
+import { hueOf, type Tone } from '../../ui-kit/index.js'
 import {
   connectionDisplayName,
   type AgentSummary,

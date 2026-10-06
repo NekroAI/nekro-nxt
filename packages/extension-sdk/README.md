@@ -26,7 +26,7 @@ Client factory 接收 `{ React, host, styles }`，返回带 `inject` 与 `apply(
 - `ctx.messageRenderers.register(richKind, Component)`：组件收到 `{ part, messageId, channelId }`，渲染失败或卸载时宿主恢复默认卡片。
 - `ctx.pages.register({ page, navigation? }, Component)`：页面使用 Host 分配的 `routeBase`，主画布接收 `relativePath`、只读查询参数和受控 `navigate()`。
 - `ctx.data.useAgent/useChannel/useConnection/useChannelRuntime`：订阅产品数据的只读 Hook，分别需要 `agents.read`、`channels.read`、`connections.read`、`runtime.read` 权限，缺少权限时抛错。
-- `ctx.ui`：版本化 UI Kit `ui-kit@1`（`HOST_UI_KIT_COMPONENT_NAMES` 中的组件）。
+- `ctx.ui`：版本化 UI Kit `ui-kit@2`（`HOST_UI_KIT_COMPONENT_NAMES` 中的组件，由产品组件库实现）；各组件的属性见 `NEKRO_NXT_EXTENSION_AUTHORING_REFERENCE.ui.componentProps`。
 
 `host.call(method, input?)` 调用本 Revision 的 Host RPC，或权限允许的产品读写。Client CSS 随 Revision 提交，交付时选择器固定到该构建的 `data-host-ui-owner` 作用域；动态预览通过 `styles.insert(css)` 注入同一作用域的样式，安装后由宿主加载，同一份源码在两处都可用。不再提供 `styles` 类名映射，组件直接使用自己 CSS 中的类名。
 

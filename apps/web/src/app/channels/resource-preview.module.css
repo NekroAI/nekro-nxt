@@ -1,13 +1,14 @@
-.dialog {
-  width: min(920px, calc(100vw - 48px));
-  max-height: min(90dvh, 900px);
-}
-
 .body {
   display: grid;
   min-height: 240px;
   place-items: center;
-  overflow: auto;
+  animation: bodyIn var(--dur-2) var(--ease) both;
+}
+
+@keyframes bodyIn {
+  from {
+    opacity: 0;
+  }
 }
 
 .image {
@@ -26,9 +27,9 @@
 
 .frame {
   min-height: min(64dvh, 680px);
-  border: 1px solid var(--nxt-border-subtle);
-  border-radius: var(--nxt-radius-md);
-  background: var(--nxt-bg-canvas);
+  border: 1px solid var(--line);
+  border-radius: var(--r-2);
+  background: var(--bg);
 }
 
 .textPreview {
@@ -36,12 +37,12 @@
   max-height: min(64dvh, 680px);
   margin: 0;
   overflow: auto;
-  border: 1px solid var(--nxt-border-subtle);
-  border-radius: var(--nxt-radius-md);
+  border: 1px solid var(--line);
+  border-radius: var(--r-2);
   padding: var(--s-3) var(--s-4);
-  background: var(--nxt-bg-subtle);
-  color: var(--nxt-text-primary);
-  font-family: var(--nxt-font-mono);
+  background: var(--surface-2);
+  color: var(--fg);
+  font-family: var(--font-mono);
   font-size: 12px;
   line-height: 18px;
   white-space: pre-wrap;
@@ -53,7 +54,7 @@
   align-items: center;
   gap: var(--s-2);
   margin: 0;
-  color: var(--nxt-text-secondary);
+  color: var(--fg-2);
   font-size: 13px;
   line-height: 20px;
 }
@@ -62,7 +63,7 @@
   display: inline-flex;
   align-items: center;
   gap: var(--s-2);
-  color: var(--nxt-text-primary);
+  color: var(--fg);
   font-size: 13px;
   font-weight: 620;
   text-decoration: none;

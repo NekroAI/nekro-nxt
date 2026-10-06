@@ -33,7 +33,7 @@ import {
   Textarea,
   toast,
   type Tone,
-} from './ui-kit/next/index.js'
+} from './ui-kit/index.js'
 import styles from './dsh-extension-settings.module.css'
 
 type DshPluginCatalogEntry = HostApiResponse<'dshPlugins'>['plugins'][number]

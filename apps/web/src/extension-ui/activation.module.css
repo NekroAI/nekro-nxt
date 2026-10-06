@@ -1,6 +1,6 @@
 .permissions {
   display: grid;
-  gap: 4px;
+  gap: var(--s-1);
   margin: 0;
-  padding-left: 18px;
+  padding-left: var(--s-5);
 }

@@ -46,7 +46,7 @@ import {
   toast,
   WorkbenchPage,
   type Column,
-} from '../../ui-kit/next/index.js'
+} from '../../ui-kit/index.js'
 import { useDensity } from '../model/density.js'
 import { useProductApi } from '../model/store.js'
 import { useGo } from '../model/nav.js'

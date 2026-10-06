@@ -1,64 +1,101 @@
-/* ui-kit@1 layout primitives shared by every extension contribution. */
-.stack {
-  display: flex;
-  flex-direction: column;
-  gap: var(--nxt-space-4);
-}
-
+/* ui-kit@2 layout primitives shared by every extension contribution. */
 .uiComponentMarker {
   display: contents;
 }
 
+.stack {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-4);
+}
+
 .section {
-  min-width: 0;
   display: grid;
-  gap: var(--nxt-space-3);
+  gap: var(--s-3);
+  min-width: 0;
 }
 
 .section > :where(h1, h2, h3, p) {
   margin: 0;
 }
 
-.metricStrip {
+.sectionTitle {
+  font: var(--t-section);
+}
+
+.pageHeader {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--s-5);
+}
+
+.pageHeaderText {
+  display: grid;
+  gap: var(--s-1);
   min-width: 0;
+}
+
+.pageHeaderText h1 {
+  margin: 0;
+  font: var(--t-page);
+}
+
+.pageHeaderText p {
+  margin: 0;
+  color: var(--muted);
+  font: var(--t-note);
+}
+
+.pageHeaderActions {
   display: flex;
   flex-wrap: wrap;
-  gap: var(--nxt-space-6);
-  padding: var(--nxt-space-3) 0;
-  border-top: 1px solid var(--nxt-border-subtle);
-  border-bottom: 1px solid var(--nxt-border-subtle);
+  align-items: center;
+  justify-content: flex-end;
+  gap: var(--s-2);
+}
+
+.metricStrip {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--s-7);
+  min-width: 0;
+  padding: var(--s-3) 0;
+  border-top: 1px solid var(--line);
+  border-bottom: 1px solid var(--line);
 }
 
 .metric {
-  min-width: 120px;
   display: grid;
-  gap: 2px;
+  gap: calc(var(--s-1) / 2);
+  min-width: 120px;
 }
 
 .metric > span,
 .metric > small {
-  color: var(--nxt-text-muted);
-  font-size: 12px;
-  line-height: 18px;
+  color: var(--muted);
+  font: var(--t-caption);
 }
 
 .metric > strong {
-  color: var(--nxt-text-primary);
-  font-size: 22px;
+  color: var(--fg);
+  font: var(--t-section);
+  font-size: var(--fs-2xl);
   font-variant-numeric: tabular-nums;
-  font-weight: 720;
-  line-height: 28px;
 }
 
 .grid {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
-  gap: var(--nxt-space-4);
+  gap: var(--s-4);
 }
 
 .tableScroll {
-  overflow: auto;
   max-width: 100%;
+  overflow: auto;
+  border: 1px solid var(--line);
+  border-radius: var(--r-2);
+  background: var(--surface);
 }
 
 .tableScroll table {
@@ -67,20 +104,18 @@
 }
 
 .tableScroll :where(th, td) {
-  padding: var(--nxt-space-3);
-  border-bottom: 1px solid var(--nxt-border-subtle);
-  color: var(--nxt-text-secondary);
-  font-size: 13px;
-  line-height: 1.45;
+  padding: var(--s-2) var(--s-4);
+  border-bottom: 1px solid var(--line);
+  color: var(--fg-2);
+  font: var(--t-body);
   text-align: left;
   vertical-align: middle;
 }
 
 .tableScroll th {
-  color: var(--nxt-text-muted);
-  background: var(--nxt-bg-subtle);
-  font-size: 12px;
-  font-weight: 650;
+  background: var(--surface-2);
+  color: var(--muted);
+  font: var(--t-label);
 }
 
 .tableScroll tbody tr:last-child td {
@@ -88,5 +123,5 @@
 }
 
 .tableScroll tbody tr:hover td {
-  background: var(--nxt-bg-hover);
+  background: var(--hover);
 }

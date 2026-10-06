@@ -2,14 +2,7 @@ import { Plus } from 'lucide-react'
 import { useState } from 'react'
 import { Link, Navigate, useParams } from 'react-router-dom'
 import { useProductStore } from '../../product-runtime.js'
-import {
-  AgentAvatar,
-  IconButton,
-  ListPane,
-  SearchField,
-  SelectionList,
-  WorkbenchPage,
-} from '../../ui-kit/next/index.js'
+import { AgentAvatar, IconButton, ListPane, SearchField, SelectionList, WorkbenchPage } from '../../ui-kit/index.js'
 import { agentAccent, agentHue, agentPhase, isAgentWorking } from '../model/identity.js'
 import { useGo } from '../model/nav.js'
 import { useCrumb } from '../shell/crumb.js'

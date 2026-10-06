@@ -1,7 +1,7 @@
 import { Bot, CheckCircle2, Plug, TriangleAlert, Wrench, X } from 'lucide-react'
 import { useMemo } from 'react'
 import { useProductRuntime } from '../../product-runtime.js'
-import { Button, IconButton } from '../../ui-kit/next/index.js'
+import { Button, IconButton } from '../../ui-kit/index.js'
 import { attentionSource, useAttention, type AttentionItem } from '../model/attention.js'
 import { useGo } from '../model/nav.js'
 import styles from './attention-list.module.css'

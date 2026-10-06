@@ -1,6 +1,6 @@
 import { RotateCcw } from 'lucide-react'
 import { Component, type ReactNode } from 'react'
-import { Button, EmptyState } from '../../ui-kit/next/index.js'
+import { Button, EmptyState } from '../../ui-kit/index.js'
 import { useLocation } from 'react-router-dom'
 import { SPACES } from '../shell/app-shell.js'
 import { useCrumb } from '../shell/crumb.js'

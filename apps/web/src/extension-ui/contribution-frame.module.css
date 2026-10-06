@@ -1,8 +1,8 @@
 .frame {
   min-width: 0;
-  border: 1px solid var(--nxt-border-subtle);
+  border: 1px solid var(--line);
   border-radius: 12px;
-  background: var(--nxt-bg-surface);
+  background: var(--surface);
   animation: enter 280ms cubic-bezier(0.2, 0.8, 0.2, 1) both;
 }
 
@@ -21,20 +21,20 @@
   display: flex;
   flex: 1;
   align-items: center;
-  gap: 8px;
+  gap: var(--s-2);
   min-width: 0;
-  padding: 10px 12px;
+  padding: var(--s-3) var(--s-3);
   border: 0;
   border-radius: 12px;
   background: transparent;
-  color: var(--nxt-text-primary);
+  color: var(--fg);
   font: inherit;
   text-align: left;
   cursor: pointer;
 }
 
 .toggle:hover {
-  background: var(--nxt-bg-hover);
+  background: var(--hover);
 }
 
 .title {
@@ -47,7 +47,7 @@
 
 .source {
   overflow: hidden;
-  color: var(--nxt-text-muted);
+  color: var(--muted);
   font-size: 12px;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -56,7 +56,7 @@
 .chevron {
   flex: none;
   margin-left: auto;
-  color: var(--nxt-text-muted);
+  color: var(--muted);
   transition: transform 200ms ease;
 }
 
@@ -66,28 +66,28 @@
 
 .content {
   min-width: 0;
-  padding: 0 12px 12px;
+  padding: 0 var(--s-3) var(--s-3);
 }
 
 .frame[data-density='full'] .content {
-  padding: 2px 16px 16px;
+  padding: calc(var(--s-1) / 2) var(--s-4) var(--s-4);
 }
 
 .failure {
   display: flex;
   align-items: center;
-  gap: 8px;
-  color: var(--nxt-text-muted);
+  gap: var(--s-2);
+  color: var(--muted);
   font-size: 13px;
 }
 
 .retry {
   margin-left: auto;
-  padding: 2px 10px;
-  border: 1px solid var(--nxt-border-subtle);
+  padding: calc(var(--s-1) / 2) var(--s-3);
+  border: 1px solid var(--line);
   border-radius: 8px;
   background: transparent;
-  color: var(--nxt-text-primary);
+  color: var(--fg);
   font: inherit;
   font-size: 12px;
   cursor: pointer;

@@ -62,9 +62,8 @@
   padding: var(--s-2);
   border: 1px solid var(--line-2);
   border-radius: var(--r-2);
-  background: color-mix(in srgb, var(--surface) 92%, transparent);
-  box-shadow: var(--sh-2);
-  backdrop-filter: blur(12px);
+  background: var(--surface);
+  box-shadow: var(--sh-3);
 }
 
 .actionBarStart {

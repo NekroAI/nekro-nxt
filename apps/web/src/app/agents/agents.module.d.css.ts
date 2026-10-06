@@ -20,7 +20,7 @@ declare const styles: {
   readonly personaEditorFoot: string
   readonly personaFolded: string
   readonly personaFoot: string
-  readonly personaFullscreen: string
+  readonly personaOverlay: string
   readonly profile: string
   readonly renameForm: string
   readonly restoreList: string

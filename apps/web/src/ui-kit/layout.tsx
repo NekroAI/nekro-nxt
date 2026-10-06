@@ -1,5 +1,5 @@
 import { cssVars } from './css-vars.js'
-import { Info, OctagonAlert, TriangleAlert } from 'lucide-react'
+import { CircleCheck, Info, OctagonAlert, TriangleAlert } from 'lucide-react'
 import { useEffect, useRef, type ElementType, type ReactNode } from 'react'
 import styles from './layout.module.css'
 
@@ -40,7 +40,7 @@ export function Section({
   )
 }
 
-const bannerIcon = { warn: TriangleAlert, bad: OctagonAlert, info: Info } as const
+const bannerIcon = { warn: TriangleAlert, bad: OctagonAlert, info: Info, ok: CircleCheck } as const
 
 /** A state that needs the user's action, with the action inline. */
 export function Banner({
@@ -48,13 +48,16 @@ export function Banner({
   children,
   action,
 }: {
-  readonly tone?: 'warn' | 'bad' | 'info'
+  readonly tone?: 'warn' | 'bad' | 'info' | 'ok'
   readonly children: ReactNode
   readonly action?: ReactNode
 }) {
   const Icon = bannerIcon[tone]
   return (
-    <div className={[styles.banner, styles[tone]].join(' ')} role={tone === 'info' ? 'status' : 'alert'}>
+    <div
+      className={[styles.banner, styles[tone]].join(' ')}
+      role={tone === 'bad' || tone === 'warn' ? 'alert' : 'status'}
+    >
       <Icon aria-hidden="true" />
       <span className={styles.bannerText}>{children}</span>
       {action}

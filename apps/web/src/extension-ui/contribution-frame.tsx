@@ -1,7 +1,7 @@
 import type { HostIconName, PanelDensity } from '@nekro-nxt/contracts'
 import { ChevronDown, TriangleAlert } from 'lucide-react'
 import { Component, useId, useState, type ReactNode } from 'react'
-import { Disclosure, Pressable } from '../ui-kit/next/index.js'
+import { Disclosure, Pressable } from '../ui-kit/index.js'
 import { HOST_ICONS } from './icons.js'
 import styles from './contribution-frame.module.css'
 

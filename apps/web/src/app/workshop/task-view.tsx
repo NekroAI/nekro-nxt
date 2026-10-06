@@ -18,7 +18,7 @@ import {
   PropertyGroup,
   Spinner,
   toast,
-} from '../../ui-kit/next/index.js'
+} from '../../ui-kit/index.js'
 import { relativeTime } from '../channels/timeline-model.js'
 import { agentHue } from '../model/identity.js'
 import { useExtensionActivation } from '../../extension-ui/index.js'

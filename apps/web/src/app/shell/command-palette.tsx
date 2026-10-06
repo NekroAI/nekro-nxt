@@ -18,7 +18,7 @@ import type { HostApiResponse } from '@nekro-nxt/contracts'
 
 import { connectionDisplayName, useProductStore } from '../../product-runtime.js'
 import { useProductApi } from '../model/store.js'
-import { Kbd, Pressable, Input, Overlay } from '../../ui-kit/next/index.js'
+import { Kbd, Pressable, Input, Overlay } from '../../ui-kit/index.js'
 import { agentPhase } from '../model/identity.js'
 import { useDensity } from '../model/density.js'
 import { useToggleTheme } from '../model/theme.js'

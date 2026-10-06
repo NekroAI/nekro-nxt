@@ -5,7 +5,7 @@ import ReactMarkdown, { defaultUrlTransform, type Components } from 'react-markd
 import rehypeSanitize from 'rehype-sanitize'
 import remarkGfm from 'remark-gfm'
 import type { ChannelSummary, ConversationMessage, ConversationPart } from '../../product-runtime.js'
-import { Button } from '../../ui-kit/index.js'
+import { Pressable } from '../../ui-kit/index.js'
 import contentStyles from './message-content.module.css'
 import { detectResourceKind, ResourcePreviewDialog, type PreviewResource } from './resource-preview.js'
 import { MessageRendererSlot } from '../../extension-ui/index.js'
@@ -132,9 +132,7 @@ function HostRichCard({
               })()
             : null}
           {item.imageUrl ? (
-            <Button
-              variant="ghost"
-              type="button"
+            <Pressable
               className={contentStyles.previewTrigger}
               onClick={() => onPreview({ name: item.imageName ?? '图片', url: item.imageUrl!, kind: 'image' })}
             >
@@ -144,7 +142,7 @@ function HostRichCard({
                 alt={item.imageName ?? '图片'}
                 loading="lazy"
               />
-            </Button>
+            </Pressable>
           ) : null}
         </div>
       ))}
@@ -203,14 +201,12 @@ function StructuredPart({
   }
   if (part.type === 'image') {
     return (
-      <Button
-        variant="ghost"
-        type="button"
+      <Pressable
         className={contentStyles.previewTrigger}
         onClick={() => onPreview({ name: part.alt, url: part.url, kind: 'image' })}
       >
         <img className={contentStyles.messageImage} src={part.url} alt={part.alt} loading="lazy" />
-      </Button>
+      </Pressable>
     )
   }
   if (part.type === 'audio') {
@@ -225,14 +221,12 @@ function StructuredPart({
   }
   if (part.type === 'file') {
     return (
-      <Button
-        variant="ghost"
-        type="button"
+      <Pressable
         className={contentStyles.fileTrigger}
         onClick={() => onPreview({ name: part.name, url: part.url, kind: detectResourceKind(part.name) })}
       >
         <File size={15} aria-hidden="true" /> {part.name}
-      </Button>
+      </Pressable>
     )
   }
   if (part.type === 'quote') {

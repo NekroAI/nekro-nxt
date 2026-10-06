@@ -11,7 +11,7 @@ import {
   Select,
   Toolbar,
   WorkbenchPage,
-} from '../../ui-kit/next/index.js'
+} from '../../ui-kit/index.js'
 import { BindDialog, type BindIntent } from '../channels/bind-dialog.js'
 import { useGo } from '../model/nav.js'
 import { useCrumb } from '../shell/crumb.js'

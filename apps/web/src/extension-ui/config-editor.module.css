@@ -1,17 +1,17 @@
 .editor {
   display: grid;
-  gap: 14px;
+  gap: var(--s-3);
 }
 
 .actions {
   display: flex;
   flex-wrap: wrap;
   justify-content: flex-end;
-  gap: 8px;
+  gap: var(--s-2);
 }
 
 .error {
   margin: 0;
-  color: var(--bad, var(--nxt-status-danger));
+  color: var(--bad, var(--bad));
   font-size: 13px;
 }

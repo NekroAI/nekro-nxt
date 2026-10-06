@@ -28,7 +28,7 @@ import {
   StatusDot,
   Switch,
   toast,
-} from '../../ui-kit/next/index.js'
+} from '../../ui-kit/index.js'
 import { agentHue, isAgentWorking, triggerLabel, isTriggerPolicy, type TriggerPolicy } from '../model/identity.js'
 import { connectionStatus } from '../model/connection-status.js'
 import { BindDialog, type BindIntent } from './bind-dialog.js'

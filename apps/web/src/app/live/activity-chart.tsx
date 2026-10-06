@@ -1,7 +1,7 @@
 import { useMemo, useState } from 'react'
 import type { ChannelActivitySeries } from '@nekro-nxt/contracts'
 import type { ChannelSummary } from '../../product-runtime.js'
-import { Panel, Pressable, cssVars } from '../../ui-kit/next/index.js'
+import { Panel, Pressable, cssVars } from '../../ui-kit/index.js'
 import styles from './activity-chart.module.css'
 
 const SHOWN = 5

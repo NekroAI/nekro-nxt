@@ -1,6 +1,5 @@
 import { AgentIdSchema, ChannelIdSchema, EpisodeIdSchema } from '@nekro-nxt/contracts'
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { runHostRefresh } from '../src/components/product-feedback.js'
+import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { dynamicClientInventoryVersion } from '../src/dynamic-client-coordinator.js'
 import { type DynamicPackageSummary, type ProductSnapshot } from '../src/product-port.js'
 import { ProductHostCoordinator, setActiveProductHost, useProductStore, useUiStateStore } from './product-fixture.js'
@@ -56,36 +55,6 @@ describe('product host wiring', () => {
     expect(dynamicClientInventoryVersion([current], current.agentId)).not.toBe(
       dynamicClientInventoryVersion([replacement], current.agentId),
     )
-  })
-
-  it('settles reconnect pending state and exposes a rejected refresh as local feedback', async () => {
-    const pendingStates: boolean[] = []
-    const errors: string[] = []
-
-    await expect(
-      runHostRefresh(
-        vi.fn(() => Promise.reject(new Error('连接仍不可用'))),
-        (pending) => pendingStates.push(pending),
-        (message) => errors.push(message),
-      ),
-    ).resolves.toBeUndefined()
-
-    expect(pendingStates).toEqual([true, false])
-    expect(errors).toEqual(['', '连接仍不可用'])
-  })
-
-  it('settles reconnect pending state after a successful refresh', async () => {
-    const pendingStates: boolean[] = []
-    const errors: string[] = []
-
-    await runHostRefresh(
-      vi.fn(() => Promise.resolve()),
-      (pending) => pendingStates.push(pending),
-      (message) => errors.push(message),
-    )
-
-    expect(pendingStates).toEqual([true, false])
-    expect(errors).toEqual([''])
   })
 
   it('subscribes the Shell to authoritative Host projections through a narrow Port', () => {

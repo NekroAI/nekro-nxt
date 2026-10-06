@@ -246,17 +246,19 @@
 }
 
 /* Full screen lifts the editor's own height cap so long personas read as a document. */
-.personaFullscreen {
+.personaOverlay {
   position: fixed;
-  z-index: 40;
+  z-index: 51;
   inset: var(--s-6);
-  grid-template-rows: auto minmax(0, 1fr) auto;
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  gap: var(--s-3);
+  padding: var(--s-4);
+  border: 1px solid var(--line-2);
+  border-radius: var(--r-3);
+  outline: none;
+  background: var(--surface);
   box-shadow: var(--sh-3);
-}
-
-.personaFullscreen [contenteditable] {
-  max-height: none;
-  height: 100%;
 }
 
 /* —— 恢复之前的配置 —— */

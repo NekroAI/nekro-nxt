@@ -25,7 +25,7 @@ import {
   toast,
   Pressable,
   Textarea,
-} from '../../ui-kit/next/index.js'
+} from '../../ui-kit/index.js'
 import { connectionStatus } from '../model/connection-status.js'
 import { agentHue, agentPhase, triggerLabel } from '../model/identity.js'
 import { useProductApi } from '../model/store.js'

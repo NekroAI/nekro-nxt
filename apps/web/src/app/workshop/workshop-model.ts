@@ -1,5 +1,5 @@
 import type { HostApiResponse } from '@nekro-nxt/contracts'
-import type { Tone } from '../../ui-kit/next/index.js'
+import type { Tone } from '../../ui-kit/index.js'
 import type { LocalExtensionSummary } from '../../product-runtime.js'
 
 export type AuthoringTask = HostApiResponse<'snapshot'>['authoringTasks'][number]

@@ -71,12 +71,13 @@
   font: var(--t-body);
 }
 
-[data-align='end'] {
+/* Scoped to table cells: Radix menus and popovers carry their own `data-align` attribute. */
+:is(.headCell, .cell)[data-align='end'] {
   justify-content: flex-end;
   text-align: right;
 }
 
-[data-align='center'] {
+:is(.headCell, .cell)[data-align='center'] {
   justify-content: center;
 }
 
@@ -105,7 +106,7 @@
     grid-template-columns: var(--table-columns-md);
   }
 
-  [data-priority='3'] {
+  :is(.headCell, .cell)[data-priority='3'] {
     display: none;
   }
 }
@@ -116,7 +117,7 @@
     grid-template-columns: var(--table-columns-sm);
   }
 
-  [data-priority='2'] {
+  :is(.headCell, .cell)[data-priority='2'] {
     display: none;
   }
 }
@@ -194,9 +195,9 @@
   padding: var(--s-2) var(--s-2) var(--s-2) var(--s-4);
   border: 1px solid var(--line-2);
   border-radius: var(--r-2);
-  background: color-mix(in srgb, var(--surface) 92%, transparent);
+  /* Opaque: text scrolling underneath must not show through the actions. */
+  background: var(--surface);
   box-shadow: var(--sh-3);
-  backdrop-filter: blur(14px);
   animation: saveIn var(--dur-2) var(--ease) both;
 }
 

@@ -5,7 +5,7 @@ import { callHostApi } from '../../host-api-client.js'
 import { hostReleaseGuard } from '../../host-release-guard.js'
 import { useProductRuntime, useProductStore } from '../../product-runtime.js'
 import { hasUnsavedFormDrafts } from '../../unsaved-drafts.js'
-import { Banner, Button, ConfirmDialog, toast } from '../../ui-kit/next/index.js'
+import { Banner, Button, ConfirmDialog, toast } from '../../ui-kit/index.js'
 import { useGo } from '../model/nav.js'
 import styles from './system.module.css'
 

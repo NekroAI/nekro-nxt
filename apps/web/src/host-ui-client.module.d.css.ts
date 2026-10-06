@@ -3,6 +3,7 @@ declare const styles: {
   readonly navigation: string
   readonly navigationFeedback: string
   readonly navigationGroup: string
+  readonly navigationHead: string
   readonly navigationLoading: string
   readonly pageContent: string
   readonly pageFrame: string

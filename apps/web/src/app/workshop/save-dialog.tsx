@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { useProductStore } from '../../product-runtime.js'
-import { Button, Dialog, Field, Input, Select, Textarea, toast } from '../../ui-kit/next/index.js'
+import { Button, Dialog, Field, Input, Select, Textarea, toast } from '../../ui-kit/index.js'
 import { useProductApi } from '../model/store.js'
 import { SLUG_PATTERN, proposeSlug, type AuthoringTask } from './workshop-model.js'
 

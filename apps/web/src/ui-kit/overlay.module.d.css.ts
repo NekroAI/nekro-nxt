@@ -3,6 +3,7 @@ declare const styles: {
   readonly bad: string
   readonly body: string
   readonly dialog: string
+  readonly media: string
   readonly menu: string
   readonly menuDanger: string
   readonly menuItem: string
@@ -16,6 +17,7 @@ declare const styles: {
   readonly sheetHead: string
   readonly srOnly: string
   readonly title: string
+  readonly titleRow: string
   readonly toast: string
   readonly toastAction: string
   readonly toastClose: string

@@ -1,4 +1,4 @@
-import { chromium, expect, expect as expectPage, test, type Browser, type Page } from '@playwright/test'
+import { chromium, expect, test, type Browser, type Page } from '@playwright/test'
 import react from '@vitejs/plugin-react'
 import { fileURLToPath } from 'node:url'
 import { mkdtemp, rm } from 'node:fs/promises'
@@ -6,146 +6,65 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { createServer, type Connect, type ViteDevServer } from 'vite'
 
+/** Behaviour of the redesigned kit (Decision 2026-10-06 §7) in a real browser, outside the product. */
 const harnessModule = `
-  import React, { useRef, useState } from 'react'
+  import React, { useState } from 'react'
   import { createRoot } from 'react-dom/client'
-  import { notify } from '/src/components/notifications.tsx'
-  import { Toaster } from '/src/ui-kit/next/index.ts'
   import { installStableCursorIntent } from '/src/cursor-stability.ts'
-  import { Button, Dialog, IconButton, MessageEnter, ResizeHandle, NxtMotionProvider, Tooltip } from '/src/ui-kit/index.tsx'
+  import {
+    Button, ConfirmDialog, Dialog, IconButton, Popover, Segmented, Select, Toaster, TooltipProvider, toast,
+  } from '/src/ui-kit/index.ts'
   import '/src/ui-kit/tokens.css'
 
   installStableCursorIntent()
+  document.documentElement.dataset.ui = 'next'
 
-  function PerformanceHarness() {
-    const ref = useRef(null)
-    const [width, setWidth] = useState(240)
-    const [updates, setUpdates] = useState(0)
-    const [arrived, setArrived] = useState(false)
-    return <div ref={ref} id="resize-target" style={{ '--test-width': width + 'px' }}>
-      <span id="committed-width">{width}</span>
-      <ResizeHandle label="性能测试分栏" value={width} min={180} max={400} defaultValue={240}
-        previewTarget={{ ref, property: '--test-width' }} onCommit={setWidth} />
-      <button id="arrive" onClick={() => setArrived(true)}>到达</button>
-      <button id="revise" onClick={() => setUpdates(updates + 1)}>修订</button>
-      {arrived && <MessageEnter incoming={updates === 0}><audio id="stable-media" controls /><span>{updates}</span></MessageEnter>}
-    </div>
-  }
   function Harness() {
-    const [open, setOpen] = useState(false)
-    const [pending, setPending] = useState(false)
-    const [longContent, setLongContent] = useState(true)
-    const [notificationSequence, setNotificationSequence] = useState(0)
-    return <Tooltip.Provider>
-      <main>
-      <PerformanceHarness />
-      <Button id="dialog-trigger" onClick={() => { setLongContent(true); setPending(false); setOpen(true) }}>打开对话框</Button>
-      <IconButton id="icon-button" label="新建内置频道"><span>+</span></IconButton>
-      <IconButton id="silent-icon-button" label="主题切换" tooltip={false}><span>◐</span></IconButton>
-      <Button id="cursor-control"><span id="cursor-control-copy">稳定指针</span></Button>
+    const [dialog, setDialog] = useState(false)
+    const [media, setMedia] = useState(false)
+    const [confirm, setConfirm] = useState(false)
+    const [fail, setFail] = useState(true)
+    const [choice, setChoice] = useState('')
+    const [mode, setMode] = useState('a')
+    const [sequence, setSequence] = useState(0)
+    return <TooltipProvider><main style={{ padding: 24, display: 'grid', gap: 12, justifyItems: 'start' }}>
+      <Button id="open-dialog" onClick={() => setDialog(true)}>打开对话框</Button>
+      <Button id="open-media" onClick={() => setMedia(true)}>打开预览</Button>
+      <Button id="open-confirm" onClick={() => setConfirm(true)}>删除</Button>
+      <Button id="cursor-control"><span id="cursor-copy">稳定指针</span></Button>
       <input id="cursor-text" aria-label="指针测试输入框" />
-      <Button id="short-dialog-trigger" onClick={() => { setLongContent(false); setPending(false); setOpen(true) }}>打开短对话框</Button>
-      <Button id="pending-trigger" onClick={() => { setLongContent(true); setPending(true); setOpen(true) }}>打开待处理对话框</Button>
-      <Button id="grouped-notification" onClick={() => {
-        const next = notificationSequence + 1
-        setNotificationSequence(next)
-        notify('同步结果 ' + next, 'success', 'sync-result')
-      }}>显示分组通知</Button>
-      <Button id="error-notification" onClick={() => notify('保存失败', 'error', 'save-error')}>显示错误通知</Button>
-      <Dialog
-        open={open}
-        onOpenChange={setOpen}
-        title="测试对话框"
-        description="验证键盘和滚动行为。"
-        pending={pending}
-        footer={<Button onClick={() => setOpen(false)}>完成</Button>}
-      >
-        <div style={{ height: longContent ? 1200 : 20 }}>{longContent ? '可滚动内容' : '短内容'}</div>
+      <IconButton id="icon" label="新建内置频道"><span>+</span></IconButton>
+      <div style={{ width: 240 }}>
+        <Select aria-label="识图模型" value={choice} onValueChange={setChoice}
+          options={[{ value: '', label: '跟随主模型' }, { value: 'vision', label: '识图模型甲' }, { value: 'off', label: '不识图', disabled: true }]} />
+      </div>
+      <output id="choice">{choice === '' ? '空' : choice}</output>
+      <Popover label="需要关注" trigger={<Button id="popover-trigger">关注</Button>}>
+        <p>一条提醒</p><Button id="inside-popover">处理</Button>
+      </Popover>
+      <Segmented label="范围" value={mode} onChange={setMode}
+        options={[{ value: 'a', label: '全部频道' }, { value: 'b', label: '只看未接线的频道' }]} />
+      <Button id="grouped" onClick={() => { const next = sequence + 1; setSequence(next); toast('同步结果 ' + next, { group: 'sync' }) }}>分组通知</Button>
+      <Button id="failure" onClick={() => toast('保存失败', { tone: 'bad', group: 'save' })}>错误通知</Button>
+      <Dialog open={dialog} onOpenChange={setDialog} title="测试对话框"
+        actions={<Button onClick={() => setDialog(false)}>完成</Button>}>
+        <p>短内容</p>
       </Dialog>
+      <Dialog open={media} onOpenChange={setMedia} title="很长的文件名.pdf" media closeLabel="关闭预览">
+        <div id="tall" style={{ height: 3000 }}>可滚动内容</div>
+      </Dialog>
+      <ConfirmDialog open={confirm} onOpenChange={setConfirm} title="删除这个频道？" confirmLabel="删除" danger
+        onConfirm={() => new Promise((resolve, reject) => setTimeout(() => fail ? (setFail(false), reject(new Error('频道正在使用'))) : resolve(undefined), 300))}>
+        <p>删除后无法恢复。</p>
+      </ConfirmDialog>
       <Toaster />
-    </main>
-    </Tooltip.Provider>
+    </main></TooltipProvider>
   }
 
-  function Root() {
-    const [reduce, setReduce] = useState(false)
-    return <NxtMotionProvider reducedMotion={reduce}>
-      <Button id="reduce-ui" onClick={() => setReduce(true)}>减少动态</Button>
-      <Harness />
-    </NxtMotionProvider>
-  }
-
-  createRoot(document.querySelector('#root')).render(<Root />)
+  createRoot(document.querySelector('#root')).render(<Harness />)
 `
 
-const motionHarnessModule = `
-  import React, { StrictMode, useEffect, useState } from 'react'
-  import { createRoot } from 'react-dom/client'
-  import { Button, NavMarkGroup, NxtMotionProvider, StageCrossfade, Tabs } from '/src/ui-kit/index.tsx'
-  import '/src/ui-kit/tokens.css'
-
-  function TrackedPage({ page }) {
-    useEffect(() => {
-      window.__motionMounts ??= {}
-      window.__motionMounts[page] = (window.__motionMounts[page] ?? 0) + 1
-      document.documentElement.dataset.motionMounts = JSON.stringify(window.__motionMounts)
-    }, [page])
-    return <div><p id="label" style={{ fontSize: 28 }}>{page === 'a' ? '页面甲' : '页面乙'}</p><button id={'inside-' + page}>页内操作</button></div>
-  }
-
-  function Harness() {
-    const [page, setPage] = useState('a')
-    const [tab, setTab] = useState('profile')
-    const [wideTab, setWideTab] = useState(false)
-    const [nav, setNav] = useState('overview')
-    const [wideNav, setWideNav] = useState(false)
-    const [reduce, setReduce] = useState(false)
-    return (
-      <NxtMotionProvider reducedMotion={reduce}>
-        <Button id="to-a" onClick={() => setPage('a')}>去A</Button>
-        <Button id="to-b" onClick={() => setPage('b')}>去B</Button>
-        <Button id="reduce" onClick={() => setReduce(true)}>减少动态</Button>
-        <Button id="resize-tab" onClick={() => setWideTab((current) => !current)}>调整页签</Button>
-        <Button id="resize-nav" onClick={() => setWideNav((current) => !current)}>调整导航</Button>
-        <Tabs.Root value={tab} onValueChange={setTab}>
-          <Tabs.List aria-label="测试页签">
-            <Tabs.Trigger value="profile">配置</Tabs.Trigger>
-            <Tabs.Trigger value="channels" style={{ width: wideTab ? 260 : 180 }}>频道与平台连接</Tabs.Trigger>
-          </Tabs.List>
-          <Tabs.Content value="profile">配置内容</Tabs.Content>
-          <Tabs.Content value="channels">频道内容</Tabs.Content>
-        </Tabs.Root>
-        <NavMarkGroup id="test-nav">
-          <nav aria-label="测试导航" style={{ display: 'grid', gap: 8, width: 320 }}>
-            <button
-              type="button"
-              data-nav-anchor="overview"
-              data-nav-active={nav === 'overview' ? '' : undefined}
-              style={{ width: 120, height: 36 }}
-              onClick={() => setNav('overview')}
-            >概览</button>
-            <button
-              type="button"
-              data-nav-anchor="details"
-              data-nav-active={nav === 'details' ? '' : undefined}
-              style={{ width: wideNav ? 260 : 180, height: 36 }}
-              onClick={() => setNav('details')}
-            >详情</button>
-          </nav>
-        </NavMarkGroup>
-        <div style={{ height: 240, overflow: 'hidden' }}>
-          <StageCrossfade swapKey={page}>
-            <TrackedPage page={page} />
-          </StageCrossfade>
-        </div>
-      </NxtMotionProvider>
-    )
-  }
-
-  createRoot(document.querySelector('#root')).render(<StrictMode><Harness /></StrictMode>)
-`
-
-test.describe('ui-kit Dialog browser behavior', () => {
+test.describe('ui-kit browser behaviour', () => {
   test.describe.configure({ mode: 'default', timeout: 30_000 })
   let server: ViteDevServer
   let browser: Browser
@@ -166,40 +85,22 @@ test.describe('ui-kit Dialog browser behavior', () => {
         {
           name: 'ui-kit-browser-harness',
           configureServer(viteServer) {
-            const page =
-              (path: string, script: string): Connect.NextHandleFunction =>
-              (_request, response, next) => {
-                void viteServer
-                  .transformIndexHtml(
-                    path,
-                    '<!doctype html><html><body><div id="root"></div><script type="module" src="' +
-                      script +
-                      '"></script></body></html>',
-                  )
-                  .then((html) => {
-                    response.setHeader('Content-Type', 'text/html')
-                    response.end(html)
-                  })
-                  .catch(next)
-              }
-            viteServer.middlewares.use(
-              '/__ui-kit_harness__',
-              page('/__ui-kit_harness__', '/virtual-ui-kit-harness.tsx'),
-            )
-            viteServer.middlewares.use(
-              '/__motion_harness__',
-              page('/__motion_harness__', '/virtual-motion-harness.tsx'),
-            )
+            const handler: Connect.NextHandleFunction = (_request, response, next) => {
+              void viteServer
+                .transformIndexHtml(
+                  '/__ui-kit_harness__',
+                  '<!doctype html><html><body><div id="root"></div><script type="module" src="/virtual-ui-kit-harness.tsx"></script></body></html>',
+                )
+                .then((html) => {
+                  response.setHeader('Content-Type', 'text/html')
+                  response.end(html)
+                })
+                .catch(next)
+            }
+            viteServer.middlewares.use('/__ui-kit_harness__', handler)
           },
-          resolveId(id) {
-            if (id === '/virtual-ui-kit-harness.tsx' || id === '/virtual-motion-harness.tsx') return id
-            return undefined
-          },
-          load(id) {
-            if (id === '/virtual-ui-kit-harness.tsx') return harnessModule
-            if (id === '/virtual-motion-harness.tsx') return motionHarnessModule
-            return undefined
-          },
+          resolveId: (id) => (id === '/virtual-ui-kit-harness.tsx' ? id : undefined),
+          load: (id) => (id === '/virtual-ui-kit-harness.tsx' ? harnessModule : undefined),
         },
       ],
       server: { host: '127.0.0.1', port: 0 },
@@ -209,17 +110,16 @@ test.describe('ui-kit Dialog browser behavior', () => {
     if (!address || typeof address === 'string') throw new Error('Vite test server did not expose a TCP port.')
     baseUrl = `http://127.0.0.1:${address.port}`
     browser = await chromium.launch({ headless: true })
-    page = await browser.newPage()
+    page = await browser.newPage({ viewport: { width: 1280, height: 800 } })
     page.on('pageerror', (error) => browserErrors.push(error.message))
     page.on('console', (message) => {
-      const text = message.text()
-      if (
-        (message.type() === 'error' || message.type() === 'warning') &&
-        !text.startsWith('You have Reduced Motion enabled on your device.')
-      ) {
-        browserErrors.push(text)
-      }
+      if (message.type() === 'error' || message.type() === 'warning') browserErrors.push(message.text())
     })
+  })
+
+  test.beforeEach(async () => {
+    await page.goto(`${baseUrl}/__ui-kit_harness__`)
+    await expect(page.locator('#open-dialog')).toBeVisible()
   })
 
   test.afterAll(async () => {
@@ -229,471 +129,123 @@ test.describe('ui-kit Dialog browser behavior', () => {
     if (cacheDirectory) await rm(cacheDirectory, { recursive: true, force: true })
   })
 
-  test('previews splitter width locally and commits the final pointer and keyboard positions', async () => {
-    await page.goto(`${baseUrl}/__ui-kit_harness__`)
-    const handle = page.getByRole('separator', { name: '性能测试分栏' })
-    await handle.evaluate((element) => {
-      if (!(element instanceof HTMLElement)) throw new Error('Missing splitter element')
-      const target = element
-      target.setPointerCapture = () => undefined
-      target.hasPointerCapture = () => true
-      target.releasePointerCapture = () => undefined
-      target.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, pointerId: 1, clientX: 100, button: 0 }))
-      for (const clientX of [110, 130, 160])
-        target.dispatchEvent(new PointerEvent('pointermove', { bubbles: true, pointerId: 1, clientX }))
-    })
-    await expect(page.locator('#committed-width')).toHaveText('240')
-    await expect(handle).toHaveAttribute('aria-valuenow', '300')
-    await handle.dispatchEvent('lostpointercapture', { pointerId: 1 })
-    await expect(page.locator('#committed-width')).toHaveText('300')
-    await handle.press('Shift+ArrowRight')
-    await expect(page.locator('#committed-width')).toHaveText('310')
-    await handle.dispatchEvent('dblclick')
-    await expect(handle).toHaveAttribute('aria-valuenow', '240')
-  })
-
-  test('keeps message media and wrapper identity after arrival revisions', async () => {
-    await page.goto(`${baseUrl}/__ui-kit_harness__`)
-    await page.locator('#arrive').click()
-    const media = await page.locator('#stable-media').elementHandle()
-    const wrapper = await page.locator('#stable-media').evaluateHandle((element) => element.parentElement)
-    await page.locator('#revise').click()
-    expect(await media.evaluate((element) => element === document.querySelector('#stable-media'))).toBe(true)
-    expect(
-      await wrapper.evaluate((element) => element === document.querySelector('#stable-media')?.parentElement),
-    ).toBe(true)
-    await expect.poll(() => wrapper.evaluate((element) => element?.getAnimations().length)).toBe(0)
-    await page.locator('#revise').click()
-    expect(await wrapper.evaluate((element) => element?.getAnimations().length)).toBe(0)
-  })
-
-  test('closes on Escape and restores focus to the opener', async () => {
-    test.setTimeout(20_000)
-
-    await page.goto(`${baseUrl}/__ui-kit_harness__`, { waitUntil: 'domcontentloaded' })
-    try {
-      await page.waitForSelector('#dialog-trigger', { state: 'visible', timeout: 3_000 })
-    } catch (error) {
-      const moduleResponse = await page.request.get(`${baseUrl}/virtual-ui-kit-harness.tsx`)
-      throw new Error(
-        `${String(error)}\nBrowser errors: ${browserErrors.join('\n')}\nModule response: ${await moduleResponse.text()}\n${await page.content()}`,
-      )
-    }
-    expect(browserErrors).toEqual([])
-    const trigger = page.locator('#dialog-trigger')
-    await trigger.click()
-    await expectPage(page.getByRole('dialog')).toBeVisible()
-
+  test('a dialog closes on Escape and gives focus back to its opener', async () => {
+    await page.locator('#open-dialog').click()
+    await expect(page.getByRole('dialog', { name: '测试对话框' })).toBeVisible()
     await page.keyboard.press('Escape')
-    await expectPage(page.getByRole('dialog')).toBeHidden()
-    await expectPage(trigger).toBeFocused()
+    await expect(page.getByRole('dialog')).toHaveCount(0)
+    await expect(page.locator('#open-dialog')).toBeFocused()
+    expect(browserErrors).toEqual([])
   })
 
-  test('keeps one cursor intent across control descendants and state changes', async () => {
-    test.setTimeout(20_000)
-
-    const control = page.locator('#cursor-control')
-    const copy = page.locator('#cursor-control-copy')
-    await copy.hover()
-    await expectPage(page.locator('html')).toHaveAttribute('data-nxt-cursor', 'pointer')
-    await expectPage(control).toHaveCSS('cursor', 'pointer')
-    await expectPage(copy).toHaveCSS('cursor', 'pointer')
-
-    await control.evaluate((element) => element.setAttribute('disabled', ''))
-    await expectPage(control).toHaveCSS('cursor', 'pointer')
-    await expectPage(copy).toHaveCSS('cursor', 'pointer')
-
-    await page.getByLabel('指针测试输入框').hover()
-    await expectPage(page.locator('html')).toHaveAttribute('data-nxt-cursor', 'text')
-    await expectPage(page.getByLabel('指针测试输入框')).toHaveCSS('cursor', 'text')
-  })
-
-  test('renders an independently scrollable body inside a viewport-bounded surface', async () => {
-    test.setTimeout(20_000)
-
-    await page.locator('#dialog-trigger').click()
-    const dialog = page.getByRole('dialog')
-    const body = dialog.locator('[data-nxt-dialog-region="body"]')
-
-    await expectPage(dialog.locator('[data-nxt-dialog-region="header"]')).toBeVisible()
-    await expectPage(body).toBeVisible()
-    await expectPage(dialog.locator('[data-nxt-dialog-region="footer"]')).toBeVisible()
-    expect(await body.evaluate((element) => getComputedStyle(element).overflowY)).toBe('auto')
+  test('a media dialog stays inside the window, scrolls its body and closes from its title row', async () => {
+    await page.locator('#open-media').click()
+    const dialog = page.getByRole('dialog', { name: '很长的文件名.pdf' })
+    await expect(dialog).toBeVisible()
+    const box = await dialog.boundingBox()
+    expect(box && box.y + box.height).toBeLessThanOrEqual(800)
+    const body = page.locator('#tall').locator('..')
     expect(await body.evaluate((element) => element.scrollHeight > element.clientHeight)).toBe(true)
-    await expectPage(body).toHaveAttribute('tabindex', '0')
-    await expectPage(body).toHaveAttribute('role', 'region')
-    expect(await dialog.evaluate((element) => getComputedStyle(element).maxHeight)).not.toBe('none')
+    await dialog.getByRole('button', { name: '关闭预览' }).click()
+    await expect(dialog).toHaveCount(0)
+    await expect(page.locator('#open-media')).toBeFocused()
+  })
+
+  test('a confirmation stays open while it runs and shows a failure in place', async () => {
+    await page.locator('#open-confirm').click()
+    const dialog = page.getByRole('dialog', { name: '删除这个频道？' })
+    await dialog.getByRole('button', { name: '删除' }).click()
+    // While confirming, Escape does not dismiss the dialog.
     await page.keyboard.press('Escape')
+    await expect(dialog).toBeVisible()
+    await expect(dialog.getByRole('alert')).toHaveText('频道正在使用')
+    await dialog.getByRole('button', { name: '删除' }).click()
+    await expect(dialog).toHaveCount(0)
   })
 
-  test('does not add a Tab stop when the dialog body does not overflow', async () => {
-    test.setTimeout(20_000)
-
-    await page.locator('#short-dialog-trigger').click()
-    const body = page.getByRole('dialog').locator('[data-nxt-dialog-region="body"]')
-    expect(await body.evaluate((element) => element.scrollHeight <= element.clientHeight)).toBe(true)
-    expect(await body.getAttribute('tabindex')).toBeNull()
-    expect(await body.getAttribute('role')).toBeNull()
-    await page.keyboard.press('Escape')
+  test('a select opens the product list, chooses by keyboard and keeps an empty value as a real option', async () => {
+    const select = page.getByRole('combobox', { name: '识图模型' })
+    await expect(select).toHaveText('跟随主模型')
+    await select.click()
+    await expect(page.getByRole('option', { name: '不识图' })).toHaveAttribute('data-disabled', '')
+    // Radix ignores keys for a moment after a pointer open (it guards against a drag selecting on release).
+    const first = page.getByRole('option', { name: '跟随主模型' })
+    const vision = page.getByRole('option', { name: '识图模型甲' })
+    await expect(async () => {
+      if (await first.evaluate((element) => element === document.activeElement)) await page.keyboard.press('ArrowDown')
+      await expect(vision).toBeFocused({ timeout: 100 })
+    }).toPass()
+    await page.keyboard.press('Enter')
+    await expect(page.locator('#choice')).toHaveText('vision')
+    await expect(select).toHaveText('识图模型甲')
+    await select.click()
+    await page.getByRole('option', { name: '跟随主模型' }).click()
+    await expect(page.locator('#choice')).toHaveText('空')
+    await expect(select).toBeFocused()
   })
 
-  test('does not close from Escape while pending', async () => {
-    test.setTimeout(20_000)
-
-    await page.locator('#pending-trigger').click()
-    const dialog = page.getByRole('dialog')
-    await page.keyboard.press('Escape')
-    await expectPage(dialog).toBeVisible()
-    await expectPage(dialog.getByRole('button', { name: '关闭对话框' })).toBeDisabled()
-  })
-
-  test('opens and closes dialogs without a fade when app Reduced Motion is enabled', async () => {
-    test.setTimeout(20_000)
-
-    await page.goto(`${baseUrl}/__ui-kit_harness__`, { waitUntil: 'domcontentloaded' })
-    await page.locator('#reduce-ui').click()
-    await page.locator('#short-dialog-trigger').click()
-    const dialog = page.getByRole('dialog')
-    await expectPage(dialog).toBeVisible()
-    expect(
-      await dialog.evaluate((element) =>
-        element.getAnimations({ subtree: true }).some((animation) => animation.playState === 'running'),
-      ),
-    ).toBe(false)
-    await page.keyboard.press('Escape')
-    await expectPage(dialog).toHaveCount(0)
-  })
-
-  test('forwards the tooltip content ref so IconButton hover does not warn', async () => {
-    test.setTimeout(20_000)
-
-    await page.goto(`${baseUrl}/__ui-kit_harness__`, { waitUntil: 'domcontentloaded' })
-    const trigger = page.locator('#icon-button')
-    await trigger.hover()
-    await expectPage(page.getByRole('tooltip', { name: '新建内置频道' })).toBeVisible()
-    expect(browserErrors.filter((message) => message.includes('Function components cannot be given refs'))).toEqual([])
-  })
-
-  test('can keep an icon button accessible without rendering hover text', async () => {
-    test.setTimeout(20_000)
-
-    await page.goto(`${baseUrl}/__ui-kit_harness__`, { waitUntil: 'domcontentloaded' })
-    const trigger = page.locator('#silent-icon-button')
-    await expectPage(trigger).toHaveAccessibleName('主题切换')
-    await trigger.hover()
-    await page.waitForTimeout(600)
-    await expectPage(page.getByRole('tooltip', { name: '主题切换' })).toHaveCount(0)
-  })
-
-  test('keeps a pointer cursor across interactive controls and their icon descendants', async () => {
-    test.setTimeout(20_000)
-
-    await page.goto(`${baseUrl}/__ui-kit_harness__`, { waitUntil: 'domcontentloaded' })
-    for (const selector of ['#dialog-trigger', '#icon-button', '#icon-button span', '#silent-icon-button span']) {
-      await expectPage(page.locator(selector)).toHaveCSS('cursor', 'pointer')
-    }
-    await page.goto(`${baseUrl}/__motion_harness__`, { waitUntil: 'domcontentloaded' })
-    await expectPage(page.locator('#inside-a')).toHaveCSS('cursor', 'pointer')
-    await expectPage(page.getByRole('tab', { name: '配置' })).toHaveCSS('cursor', 'pointer')
-  })
-
-  test('groups repeated notifications, exposes live semantics, and supports manual dismissal', async () => {
-    test.setTimeout(20_000)
-
-    await page.goto(`${baseUrl}/__ui-kit_harness__`, { waitUntil: 'domcontentloaded' })
-    const grouped = page.locator('#grouped-notification')
-    await grouped.click()
-    await grouped.click()
-
-    const status = page.getByRole('status')
-    await expectPage(status).toHaveCount(1)
-    await expectPage(status).toContainText('同步结果 2')
-    await expectPage(status).not.toContainText('同步结果 1')
-
-    await page.locator('#error-notification').click()
-    const alert = page.getByRole('alert')
-    await expectPage(alert).toContainText('保存失败')
-    await alert.getByRole('button', { name: '关闭通知' }).click()
-    await expectPage(alert).toHaveCount(0)
-    expect(browserErrors).toEqual([])
-  })
-
-  test('automatically dismisses transient success notifications', async () => {
-    test.setTimeout(20_000)
-
-    await page.locator('#grouped-notification').click()
-    await expectPage(page.getByRole('status')).toBeVisible()
-    await expectPage(page.getByRole('status')).toHaveCount(0, { timeout: 5_000 })
-  })
-
-  test('actually interpolates opacity when the route key changes', async () => {
-    test.setTimeout(20_000)
-
-    await page.emulateMedia({ reducedMotion: 'no-preference' })
-    await page.goto(`${baseUrl}/__motion_harness__`, { waitUntil: 'domcontentloaded' })
-    await expectPage(page.getByText('页面甲')).toBeVisible()
-    await page.locator('#to-b').click()
-    const samples: number[] = []
-    let overlap = false
-    let outgoingOnTop = false
-    for (let step = 0; step < 20; step += 1) {
-      await page.waitForTimeout(16)
-      const layers = await page.locator('[data-stage-layer]').evaluateAll((nodes) =>
-        nodes.map((node) => ({
-          phase: node.getAttribute('data-stage-layer'),
-          opacity: Number(getComputedStyle(node).opacity),
-          zIndex: Number(getComputedStyle(node).zIndex),
-        })),
-      )
-      samples.push(...layers.map((layer) => layer.opacity))
-      const outgoing = layers.find((layer) => layer.phase === 'out')
-      const incoming = layers.find((layer) => layer.phase === 'in')
-      if (outgoing && incoming) {
-        overlap = true
-        if (outgoing.zIndex > incoming.zIndex) outgoingOnTop = true
-      }
-    }
-    await expectPage(page.getByText('页面乙')).toBeVisible()
-    expect(overlap, 'expected outgoing and incoming layers to overlap').toBe(true)
-    expect(outgoingOnTop, 'expected the outgoing layer to sit above the incoming layer').toBe(true)
-    expect(
-      samples.some((value) => value > 0.02 && value < 0.97),
-      `expected a mid-transition opacity, got ${samples.join(', ')}`,
-    ).toBe(true)
-  })
-
-  test('animates the first tab click on a fresh mount with one persistent indicator', async () => {
-    test.setTimeout(20_000)
-
-    await page.emulateMedia({ reducedMotion: 'no-preference' })
-    await page.goto(`${baseUrl}/__motion_harness__`, { waitUntil: 'domcontentloaded' })
-    const indicator = page.locator('[data-nxt-tabs-indicator]')
-    const destination = page.getByRole('tab', { name: '频道与平台连接' })
-    await expectPage(indicator).toHaveAttribute('data-ready', '')
-    const [initialBox, destinationBox] = await Promise.all([indicator.boundingBox(), destination.boundingBox()])
-    if (!initialBox || !destinationBox) throw new Error('Tab harness did not render both indicator positions.')
-    const start = initialBox.x + initialBox.width / 2
-    const end = destinationBox.x + destinationBox.width / 2
-    const identity = await indicator.evaluate((element) => {
-      const value = crypto.randomUUID()
-      element.setAttribute('data-test-identity', value)
-      return value
-    })
-    await destination.click()
-    const samples = await page.evaluate(async () => {
-      const readCenter = (element: Element) => {
-        const rect = element.getBoundingClientRect()
-        return rect.left + rect.width / 2
-      }
-      const indicator = () => document.querySelector('[data-nxt-tabs-indicator]')
-      const samples: number[] = []
-      const startedAt = performance.now()
-      while (performance.now() - startedAt < 340) {
-        await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()))
-        const current = indicator()
-        if (current) samples.push(readCenter(current))
-      }
-      return samples
-    })
-
-    expect(await page.locator('[data-nxt-tabs-indicator]').count()).toBe(1)
-    expect(await indicator.getAttribute('data-test-identity')).toBe(identity)
-    expect(samples.some((position) => position > Math.min(start, end) + 2 && position < Math.max(start, end) - 2)).toBe(
-      true,
+  test('a popover opens under its trigger and Escape returns focus to it', async () => {
+    const trigger = page.locator('#popover-trigger')
+    await trigger.click()
+    const panel = page.getByRole('dialog', { name: '需要关注' })
+    await expect(panel.getByText('一条提醒')).toBeVisible()
+    const [panelBox, triggerBox] = [await panel.boundingBox(), await trigger.boundingBox()]
+    expect(panelBox && triggerBox && panelBox.y).toBeGreaterThanOrEqual(
+      (triggerBox?.y ?? 0) + (triggerBox?.height ?? 0),
     )
-    const finalBox = await indicator.boundingBox()
-    expect(Math.abs((finalBox?.x ?? 0) + (finalBox?.width ?? 0) / 2 - end)).toBeLessThanOrEqual(1)
-    await expectPage(page.getByRole('tabpanel')).toContainText('频道内容')
-    expect(browserErrors).toEqual([])
+    await page.keyboard.press('Escape')
+    await expect(panel).toHaveCount(0)
+    await expect(trigger).toBeFocused()
   })
 
-  test('animates the first NavMark click on a fresh StrictMode mount with one persistent indicator', async () => {
-    test.setTimeout(20_000)
-
-    await page.emulateMedia({ reducedMotion: 'no-preference' })
-    await page.goto(`${baseUrl}/__motion_harness__`, { waitUntil: 'domcontentloaded' })
-    const indicator = page.locator('[data-nav-mark="test-nav"]')
-    const destination = page.locator('[data-nav-anchor="details"]')
-    await expectPage(indicator).toHaveAttribute('data-ready', '')
-    const [initialBox, destinationBox] = await Promise.all([indicator.boundingBox(), destination.boundingBox()])
-    if (!initialBox || !destinationBox) throw new Error('Nav harness did not render both indicator positions.')
-    const start = initialBox.y + initialBox.height / 2
-    const end = destinationBox.y + destinationBox.height / 2
-    const identity = await indicator.evaluate((element) => {
-      const value = crypto.randomUUID()
-      element.setAttribute('data-test-identity', value)
-      return value
-    })
-    await destination.click()
-    const samples = await page.evaluate(async () => {
-      const samples: number[] = []
-      const startedAt = performance.now()
-      while (performance.now() - startedAt < 340) {
-        await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()))
-        const current = document.querySelector('[data-nav-mark="test-nav"]')
-        if (current) {
-          const rect = current.getBoundingClientRect()
-          samples.push(rect.top + rect.height / 2)
-        }
-      }
-      return samples
-    })
-
-    expect(await page.locator('[data-nav-mark="test-nav"]').count()).toBe(1)
-    expect(await indicator.getAttribute('data-test-identity')).toBe(identity)
-    expect(samples.some((position) => position > Math.min(start, end) + 2 && position < Math.max(start, end) - 2)).toBe(
-      true,
-    )
-    const finalBox = await indicator.boundingBox()
-    expect(Math.abs((finalBox?.y ?? 0) + (finalBox?.height ?? 0) / 2 - end)).toBeLessThanOrEqual(1)
-    expect(browserErrors).toEqual([])
+  test('notifications of one group replace each other, announce themselves and close by hand', async () => {
+    await page.locator('#grouped').click()
+    await page.locator('#grouped').click()
+    await expect(page.getByRole('status').filter({ hasText: '同步结果' })).toHaveCount(1)
+    await expect(page.getByRole('status').filter({ hasText: '同步结果 2' })).toBeVisible()
+    await page.locator('#failure').click()
+    const failure = page.getByRole('alert').filter({ hasText: '保存失败' })
+    await expect(failure).toBeVisible()
+    await failure.getByRole('button', { name: '关闭通知' }).click()
+    await expect(failure).toHaveCount(0)
+    // Confirmations leave on their own; failures stay longer for reading.
+    await expect(page.getByRole('status').filter({ hasText: '同步结果' })).toHaveCount(0, { timeout: 5_000 })
   })
 
-  test('immediately realigns active Tab and NavMark indicators after same-key resize', async () => {
-    test.setTimeout(20_000)
-
-    await page.emulateMedia({ reducedMotion: 'no-preference' })
-    await page.goto(`${baseUrl}/__motion_harness__`, { waitUntil: 'domcontentloaded' })
-    const tab = page.getByRole('tab', { name: '频道与平台连接' })
-    const tabIndicator = page.locator('[data-nxt-tabs-indicator]')
-    const nav = page.locator('[data-nav-anchor="details"]')
-    const navIndicator = page.locator('[data-nav-mark="test-nav"]')
-
-    await tab.click()
-    await nav.click()
-    await page.waitForTimeout(340)
-    const tabIdentity = await tabIndicator.evaluate((element) => {
-      element.setAttribute('data-test-identity', 'tab-resize')
-      return element.getAttribute('data-test-identity')
-    })
-    const navIdentity = await navIndicator.evaluate((element) => {
-      element.setAttribute('data-test-identity', 'nav-resize')
-      return element.getAttribute('data-test-identity')
-    })
-
-    await page.locator('#resize-tab').click()
-    await page.locator('#resize-nav').click()
-    await page.waitForFunction(() => {
-      const tab = document.querySelector('[role="tab"][data-state="active"]')?.getBoundingClientRect()
-      const tabIndicator = document.querySelector('[data-nxt-tabs-indicator]')?.getBoundingClientRect()
-      const nav = document.querySelector('[data-nav-anchor="details"]')?.getBoundingClientRect()
-      const navIndicator = document.querySelector('[data-nav-mark="test-nav"]')?.getBoundingClientRect()
-      return Boolean(
-        tab &&
-        tabIndicator &&
-        nav &&
-        navIndicator &&
-        Math.abs(tab.width - tabIndicator.width) <= 1 &&
-        Math.abs(nav.width - navIndicator.width) <= 1,
-      )
-    })
-
-    expect(await tabIndicator.getAttribute('data-test-identity')).toBe(tabIdentity)
-    expect(await navIndicator.getAttribute('data-test-identity')).toBe(navIdentity)
-    expect(
-      await page
-        .locator('[data-nxt-tabs-indicator], [data-nav-mark="test-nav"]')
-        .evaluateAll((elements) =>
-          elements.some((element) => element.getAnimations().some((animation) => animation.playState === 'running')),
-        ),
-    ).toBe(false)
+  test('the segmented indicator animates its move and lands on the new option', async () => {
+    const indicator = page.getByRole('radiogroup', { name: '范围' }).locator('span[aria-hidden="true"]')
+    const target = page.getByRole('radio', { name: '只看未接线的频道' })
+    // Frame-by-frame sliding is covered by the motion audit; here the move must be a transition, not a jump.
+    // Transitions switch on two frames after mount, so the first paint never slides in from the corner.
+    await expect(async () => {
+      const transition = await indicator.evaluate((element) => {
+        const style = getComputedStyle(element)
+        return { property: style.transitionProperty, duration: style.transitionDuration }
+      })
+      expect(transition.property).toMatch(/transform|all/u)
+      expect(Number.parseFloat(transition.duration)).toBeGreaterThan(0)
+    }).toPass()
+    await target.click()
+    await expect(target).toHaveAttribute('aria-checked', 'true')
+    await expect(async () => {
+      const [indicatorBox, targetBox] = [await indicator.boundingBox(), await target.boundingBox()]
+      expect(Math.abs((indicatorBox?.x ?? 0) - (targetBox?.x ?? 0))).toBeLessThan(2)
+      expect(Math.abs((indicatorBox?.width ?? 0) - (targetBox?.width ?? 0))).toBeLessThan(2)
+    }).toPass()
   })
 
-  test('moves both persistent indicators immediately when Reduced Motion is enabled', async () => {
-    test.setTimeout(20_000)
-
-    await page.goto(`${baseUrl}/__motion_harness__`, { waitUntil: 'domcontentloaded' })
-    const tabIndicator = page.locator('[data-nxt-tabs-indicator]')
-    const navIndicator = page.locator('[data-nav-mark="test-nav"]')
-    const tabIdentity = await tabIndicator.evaluate((element) => {
-      element.setAttribute('data-test-identity', 'tab-reduced')
-      return element.getAttribute('data-test-identity')
-    })
-    const navIdentity = await navIndicator.evaluate((element) => {
-      element.setAttribute('data-test-identity', 'nav-reduced')
-      return element.getAttribute('data-test-identity')
-    })
-    await page.locator('#reduce').click()
-    await page.getByRole('tab', { name: '频道与平台连接' }).click()
-    await page.locator('[data-nav-anchor="details"]').click()
-    const destination = page.getByRole('tab', { name: '频道与平台连接' })
-    const navDestination = page.locator('[data-nav-anchor="details"]')
-    await expectPage(destination).toHaveAttribute('aria-selected', 'true')
-    await page.waitForFunction(() => {
-      const destination = document.querySelector('[data-nav-anchor="details"]')?.getBoundingClientRect()
-      const indicator = document.querySelector('[data-nav-mark="test-nav"]')?.getBoundingClientRect()
-      return Boolean(
-        destination &&
-        indicator &&
-        Math.abs(destination.top + destination.height / 2 - (indicator.top + indicator.height / 2)) <= 1,
-      )
-    })
-    const destinationBox = await destination.boundingBox()
-    const indicatorBox = await tabIndicator.boundingBox()
-    const navDestinationBox = await navDestination.boundingBox()
-    const navIndicatorBox = await navIndicator.boundingBox()
-    expect(
-      Math.abs(
-        (indicatorBox?.x ?? 0) +
-          (indicatorBox?.width ?? 0) / 2 -
-          ((destinationBox?.x ?? 0) + (destinationBox?.width ?? 0) / 2),
-      ),
-    ).toBeLessThanOrEqual(1)
-    expect(
-      Math.abs(
-        (navIndicatorBox?.y ?? 0) +
-          (navIndicatorBox?.height ?? 0) / 2 -
-          ((navDestinationBox?.y ?? 0) + (navDestinationBox?.height ?? 0) / 2),
-      ),
-    ).toBeLessThanOrEqual(1)
-    expect(await tabIndicator.getAttribute('data-test-identity')).toBe(tabIdentity)
-    expect(await navIndicator.getAttribute('data-test-identity')).toBe(navIdentity)
-    expect(
-      await page
-        .locator('[data-nxt-tabs-indicator], [data-nav-mark="test-nav"]')
-        .evaluateAll((elements) =>
-          elements.some((element) => element.getAnimations().some((animation) => animation.playState === 'running')),
-        ),
-    ).toBe(false)
+  test('controls keep the hand cursor across their descendants and text fields keep the caret', async () => {
+    await page.locator('#cursor-copy').hover()
+    await expect(page.locator('html')).toHaveAttribute('data-nxt-cursor', 'pointer')
+    expect(await page.locator('#cursor-copy').evaluate((element) => getComputedStyle(element).cursor)).toBe('pointer')
+    await page.locator('#cursor-text').hover()
+    await expect(page.locator('html')).toHaveAttribute('data-nxt-cursor', 'text')
+    expect(await page.locator('#cursor-text').evaluate((element) => getComputedStyle(element).cursor)).toBe('text')
   })
 
-  test('preserves the outgoing subtree and removes it from interaction and accessibility', async () => {
-    test.setTimeout(20_000)
-
-    await page.goto(`${baseUrl}/__motion_harness__`, { waitUntil: 'domcontentloaded' })
-    await page.locator('#to-b').click()
-    const outgoing = page.locator('[data-stage-layer="out"]')
-    await expectPage(outgoing).toHaveAttribute('inert', '')
-    await expectPage(outgoing).toHaveAttribute('aria-hidden', 'true')
-    expect(await page.evaluate(() => document.documentElement.dataset['motionMounts'] ?? '')).toBe('{"a":2,"b":2}')
-  })
-
-  test('makes stage changes instant when the app Reduced Motion setting is enabled', async () => {
-    test.setTimeout(20_000)
-
-    await page.goto(`${baseUrl}/__motion_harness__`, { waitUntil: 'domcontentloaded' })
-    await page.locator('#reduce').click()
-    await page.locator('#to-b').click()
-    await expectPage(page.getByText('页面乙')).toBeVisible()
-    await expectPage(page.getByText('页面甲')).toHaveCount(0)
-    await expectPage(page.locator('[data-stage-layer="in"]')).toHaveCount(1)
-    await expectPage(page.locator('[data-stage-layer="out"]')).toHaveCount(0)
-    await expectPage(page.locator('[data-stage-layer="in"]')).toHaveCSS('opacity', '1')
-  })
-
-  test('keeps the latest route mounted after rapid key changes', async () => {
-    test.setTimeout(20_000)
-
-    await page.emulateMedia({ reducedMotion: 'no-preference' })
-    await page.goto(`${baseUrl}/__motion_harness__`, { waitUntil: 'domcontentloaded' })
-    await expectPage(page.getByText('页面甲')).toBeVisible()
-    for (let step = 0; step < 12; step += 1) {
-      await page.locator('#to-b').click()
-      await page.locator('#to-a').click()
-    }
-    await page.locator('#to-b').click()
-    await expectPage(page.locator('[data-stage-layer="in"] #label')).toHaveText('页面乙', { timeout: 3_000 })
-    expect(await page.locator('[data-stage-layer="in"]').count()).toBe(1)
-    await expectPage(page.locator('[data-stage-layer="out"]')).toHaveCount(0, { timeout: 3_000 })
+  test('an icon button names itself for screen readers and on hover', async () => {
+    const button = page.getByRole('button', { name: '新建内置频道' })
+    await expect(button).toHaveAttribute('title', '新建内置频道')
+    await expect(button).toHaveAttribute('type', 'button')
   })
 })

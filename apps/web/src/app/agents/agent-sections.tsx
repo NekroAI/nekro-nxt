@@ -14,6 +14,7 @@ import {
   DataTable,
   IconButton,
   Menu,
+  Overlay,
   PropertyGroup,
   PropertyList,
   PropertyRow,
@@ -23,7 +24,7 @@ import {
   Switch,
   toast,
   type RiskStep,
-} from '../../ui-kit/next/index.js'
+} from '../../ui-kit/index.js'
 import type { BindIntent } from '../channels/bind-dialog.js'
 import { relativeTime } from '../channels/timeline-model.js'
 import { isTriggerPolicy, triggerLabel } from '../model/identity.js'
@@ -532,36 +533,54 @@ export function PersonaSection({
     update((current) => ({ ...current, persona, personaText }))
   let body: ReactNode
   if (editing) {
+    const editor = (
+      <PromptReferenceEditor
+        value={draft.persona}
+        currentAgentId={agent.id}
+        label="设定"
+        description="它是谁、怎么说话、在群里负责什么"
+        onChange={setPersona}
+      />
+    )
     body = (
-      <div className={[styles.personaEditor, fullscreen ? styles.personaFullscreen : ''].join(' ')}>
+      <div className={styles.personaEditor}>
         <div className={styles.personaEditorBar}>
           <span className={styles.note}>输入 @ 可以引用成员、频道或扩展</span>
-          <IconButton
-            label={fullscreen ? '退出全屏' : '全屏编辑'}
-            size="small"
-            onClick={() => setFullscreen(!fullscreen)}
-          >
-            {fullscreen ? <Minimize2 size={15} /> : <Maximize2 size={15} />}
+          <IconButton label="全屏编辑" size="small" onClick={() => setFullscreen(true)}>
+            <Maximize2 size={15} />
           </IconButton>
         </div>
-        <PromptReferenceEditor
-          value={draft.persona}
-          currentAgentId={agent.id}
-          label="设定"
-          description="她是谁、怎么说话、在群里负责什么"
-          onChange={setPersona}
-        />
+        {fullscreen ? <p className={styles.note}>正在全屏编辑设定。</p> : editor}
         <div className={styles.personaEditorFoot}>
-          <Button
-            size="small"
-            onClick={() => {
-              setFullscreen(false)
-              onEditingChange(false)
-            }}
-          >
+          <Button size="small" onClick={() => onEditingChange(false)}>
             完成
           </Button>
         </div>
+        <Overlay
+          open={fullscreen}
+          onOpenChange={setFullscreen}
+          label="全屏编辑设定"
+          className={styles.personaOverlay}
+          onEscapeKeyDown={(event) => {
+            // An open @ menu closes first; the next Escape leaves full screen.
+            if (document.querySelector('[data-reference-menu-placement]')) event.preventDefault()
+          }}
+        >
+          <div className={styles.personaEditorBar}>
+            <span className={styles.note}>输入 @ 可以引用成员、频道或扩展</span>
+            <IconButton label="退出全屏" size="small" onClick={() => setFullscreen(false)}>
+              <Minimize2 size={15} />
+            </IconButton>
+          </div>
+          <PromptReferenceEditor
+            value={draft.persona}
+            currentAgentId={agent.id}
+            label="设定"
+            description="它是谁、怎么说话、在群里负责什么"
+            fill
+            onChange={setPersona}
+          />
+        </Overlay>
       </div>
     )
   } else {

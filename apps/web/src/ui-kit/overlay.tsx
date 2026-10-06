@@ -42,6 +42,8 @@ export function Dialog({
   children,
   actions,
   wide = false,
+  media = false,
+  closeLabel,
 }: {
   readonly open: boolean
   readonly onOpenChange: (open: boolean) => void
@@ -49,6 +51,10 @@ export function Dialog({
   readonly children?: ReactNode
   readonly actions?: ReactNode
   readonly wide?: boolean
+  /** Large viewer for images, documents and video; the body scrolls inside the window height. */
+  readonly media?: boolean
+  /** Shows a close button in the title row, for dialogs without a cancelling action. */
+  readonly closeLabel?: string
 }) {
   const returnFocus = useReturnFocus(open)
   return (
@@ -56,11 +62,20 @@ export function Dialog({
       <RadixDialog.Portal>
         <RadixDialog.Overlay className={styles.scrim} />
         <RadixDialog.Content
-          className={[styles.dialog, wide ? styles.wide : ''].join(' ')}
+          className={[styles.dialog, wide ? styles.wide : '', media ? styles.media : ''].join(' ')}
           aria-describedby={undefined}
           onCloseAutoFocus={returnFocus}
         >
-          <RadixDialog.Title className={styles.title}>{title}</RadixDialog.Title>
+          <div className={styles.titleRow}>
+            <RadixDialog.Title className={styles.title}>{title}</RadixDialog.Title>
+            {closeLabel ? (
+              <RadixDialog.Close asChild>
+                <IconButton label={closeLabel} size="small">
+                  <X size={15} />
+                </IconButton>
+              </RadixDialog.Close>
+            ) : null}
+          </div>
           {children ? <div className={styles.body}>{children}</div> : null}
           {actions ? <div className={styles.actions}>{actions}</div> : null}
         </RadixDialog.Content>
@@ -145,6 +160,7 @@ export function Overlay({
   label,
   className,
   onKeyDown,
+  onEscapeKeyDown,
   children,
 }: {
   readonly open: boolean
@@ -152,6 +168,8 @@ export function Overlay({
   readonly label: string
   readonly className?: string
   readonly onKeyDown?: (event: KeyboardEvent<HTMLDivElement>) => void
+  /** Runs before Escape closes the layer; `preventDefault()` keeps it open (e.g. to close an inner menu first). */
+  readonly onEscapeKeyDown?: (event: globalThis.KeyboardEvent) => void
   readonly children: ReactNode
 }) {
   const returnFocus = useReturnFocus(open)
@@ -163,6 +181,7 @@ export function Overlay({
           className={className}
           aria-describedby={undefined}
           onKeyDown={onKeyDown}
+          {...(onEscapeKeyDown ? { onEscapeKeyDown } : {})}
           onCloseAutoFocus={returnFocus}
         >
           <RadixDialog.Title className={styles.srOnly}>{label}</RadixDialog.Title>

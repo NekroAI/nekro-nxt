@@ -35,10 +35,10 @@ describe('ConfigForm', () => {
 
   it('shows the chosen enum label in the closed field', () => {
     const html = renderToStaticMarkup(
-      <ConfigForm schema={schema} value={{ mode: 'verbose' }} onChange={() => undefined} />,
+      <ConfigForm schema={schema} value={{ mode: 'quiet' }} onChange={() => undefined} />,
     )
-    expect(html).toContain('详细')
-    expect(html).not.toContain('安静')
+    expect(html).toContain('>安静<')
+    expect(html).not.toContain('>详细<')
   })
 
   it('shows secrets as write-only fields when secrets are managed', () => {

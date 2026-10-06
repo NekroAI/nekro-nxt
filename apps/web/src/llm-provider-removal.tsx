@@ -3,7 +3,7 @@ import { useEffect, useRef, useState } from 'react'
 import { HostApiContracts, type HostApiResponse } from '@nekro-nxt/contracts'
 import { callHostApi } from './host-api-client.js'
 import { providerDisplayName } from './provider-labels.js'
-import { Banner, Button, Dialog, Spinner } from './ui-kit/next/index.js'
+import { Banner, Button, Dialog, Spinner } from './ui-kit/index.js'
 import styles from './llm-settings.module.css'
 
 type RemovalImpact = HostApiResponse<'llmProviderRemovalImpact'>

@@ -15,7 +15,7 @@ import {
   type ChannelSummary,
   type ConnectionSummary,
 } from '../../product-runtime.js'
-import { AgentAvatar, StatusDot, cssVars, Pressable } from '../../ui-kit/next/index.js'
+import { AgentAvatar, StatusDot, cssVars, Pressable } from '../../ui-kit/index.js'
 import { BindDialog, type BindIntent } from '../channels/bind-dialog.js'
 import { connectionStatus } from '../model/connection-status.js'
 import { agentAccent, agentHue, isAgentWorking, triggerLabel } from '../model/identity.js'

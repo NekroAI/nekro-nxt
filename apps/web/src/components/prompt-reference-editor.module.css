@@ -1,20 +1,36 @@
 .field {
   display: grid;
-  gap: 7px;
+  gap: var(--s-2);
 }
 
 .field > label {
-  color: var(--nxt-text-primary);
+  color: var(--fg);
   font-size: 12px;
   font-weight: 650;
   line-height: 18px;
 }
 
 .field > p {
-  margin: -2px 0 1px;
-  color: var(--nxt-text-muted);
+  margin: calc(var(--s-1) / 2 * -1) 0 calc(var(--s-1) / 4);
+  color: var(--muted);
   font-size: 12px;
   line-height: 18px;
+}
+
+.field[data-fill] {
+  grid-template-rows: auto auto minmax(0, 1fr);
+  height: 100%;
+  min-height: 0;
+}
+
+.field[data-fill] .editorFrame {
+  display: grid;
+  min-height: 0;
+}
+
+.field[data-fill] .editor {
+  height: 100%;
+  max-height: none;
 }
 
 .editorFrame {
@@ -23,8 +39,8 @@
   border-radius: var(--r-1);
   background: var(--surface);
   transition:
-    border-color var(--nxt-motion-fast) var(--nxt-ease-standard),
-    box-shadow var(--nxt-motion-fast) var(--nxt-ease-standard);
+    border-color var(--dur-1) var(--ease),
+    box-shadow var(--dur-1) var(--ease);
 }
 
 .editorFrame:focus-within {
@@ -37,8 +53,8 @@
   min-height: calc(10 * 22px + 24px);
   max-height: calc(20 * 22px + 24px);
   overflow: auto;
-  padding: 12px 13px;
-  color: var(--nxt-text-primary);
+  padding: var(--s-3) var(--s-3);
+  color: var(--fg);
   font: inherit;
   font-size: 14px;
   line-height: 22px;
@@ -62,7 +78,7 @@
   top: 12px;
   left: 13px;
   pointer-events: none;
-  color: var(--nxt-text-disabled);
+  color: var(--faint);
   font-size: 14px;
   line-height: 22px;
 }
@@ -77,12 +93,12 @@
   align-items: center;
   height: 18px;
   max-width: min(260px, 70vw);
-  border: 1px solid color-mix(in srgb, var(--nxt-accent) 34%, var(--nxt-border-default));
-  border-radius: var(--nxt-radius-round);
-  margin: 0 1px;
-  padding: 0 6px;
-  color: var(--nxt-accent);
-  background: var(--nxt-accent-soft);
+  border: 1px solid color-mix(in srgb, var(--accent) 34%, var(--line-2));
+  border-radius: 999px;
+  margin: 0 calc(var(--s-1) / 4);
+  padding: 0 var(--s-2);
+  color: var(--accent);
+  background: var(--accent-soft);
   font-size: 12px;
   font-weight: 620;
   line-height: 16px;
@@ -91,35 +107,43 @@
 }
 
 .referenceChip[data-invalid] {
-  border-color: color-mix(in srgb, var(--nxt-warning) 55%, var(--nxt-border-default));
-  color: var(--nxt-warning);
-  background: var(--nxt-warning-soft);
+  border-color: color-mix(in srgb, var(--warn) 55%, var(--line-2));
+  color: var(--warn);
+  background: var(--warn-soft);
 }
 
 .referenceMenu {
   position: absolute;
-  z-index: var(--nxt-layer-floating, 40);
+  z-index: 60;
   width: min(360px, calc(100% - 16px));
   overflow: hidden;
-  border: 1px solid var(--nxt-border-default);
-  border-radius: var(--nxt-radius-lg);
-  background: var(--nxt-bg-elevated);
-  box-shadow: var(--nxt-shadow-float);
+  border: 1px solid var(--line-2);
+  border-radius: var(--r-2);
+  background: var(--surface);
+  box-shadow: var(--sh-3);
+  animation: menuIn var(--dur-2) var(--ease) both;
+}
+
+@keyframes menuIn {
+  from {
+    opacity: 0;
+    transform: translateY(-4px) scale(0.98);
+  }
 }
 
 .referenceCategories {
   display: flex;
-  gap: 3px;
-  border-bottom: 1px solid var(--nxt-border-subtle);
-  padding: 7px;
+  gap: calc(var(--s-1) * 0.75);
+  border-bottom: 1px solid var(--line);
+  padding: var(--s-2);
 }
 
 .referenceCategories button {
-  min-height: 26px;
+  min-height: var(--control-sm);
   border: 0;
-  border-radius: var(--nxt-radius-sm);
-  padding: 0 9px;
-  color: var(--nxt-text-secondary);
+  border-radius: var(--r-1);
+  padding: 0 var(--s-2);
+  color: var(--fg-2);
   background: transparent;
   font: inherit;
   font-size: 12px;
@@ -128,27 +152,27 @@
 
 .referenceCategories button:hover,
 .referenceCategories button[data-active] {
-  color: var(--nxt-text-primary);
-  background: var(--nxt-bg-hover);
+  color: var(--fg);
+  background: var(--hover);
 }
 
 .referenceOptions {
   max-height: 280px;
   overflow: auto;
-  padding: 5px;
+  padding: var(--s-1);
 }
 
 .referenceOptions > button {
   display: grid;
   grid-template-columns: 18px minmax(0, 1fr);
-  gap: 8px;
+  gap: var(--s-2);
   align-items: center;
   width: 100%;
   min-height: 48px;
   border: 0;
-  border-radius: var(--nxt-radius-md);
-  padding: 6px 9px;
-  color: var(--nxt-text-secondary);
+  border-radius: var(--r-2);
+  padding: var(--s-2) var(--s-2);
+  color: var(--fg-2);
   text-align: left;
   background: transparent;
   cursor: pointer;
@@ -156,14 +180,14 @@
 
 .referenceOptions > button:hover,
 .referenceOptions > button[data-active] {
-  color: var(--nxt-text-primary);
-  background: var(--nxt-bg-hover);
+  color: var(--fg);
+  background: var(--hover);
 }
 
 .referenceOptions span {
   display: grid;
   min-width: 0;
-  gap: 1px;
+  gap: calc(var(--s-1) / 4);
 }
 
 .referenceOptions strong,
@@ -179,15 +203,15 @@
 }
 
 .referenceOptions small {
-  color: var(--nxt-text-muted);
+  color: var(--muted);
   font-size: 11px;
   line-height: 17px;
 }
 
 .referenceOptions p {
   margin: 0;
-  padding: 22px 12px;
-  color: var(--nxt-text-muted);
+  padding: var(--s-6) var(--s-3);
+  color: var(--muted);
   text-align: center;
   font-size: 12px;
 }

@@ -1,7 +1,7 @@
 import { parseJsonValue, type ConfigSchemaDocument, type JsonValue } from '@nekro-nxt/contracts'
 import { useEffect, useMemo, useState } from 'react'
 import { useProductRuntime, type LocalExtensionSummary } from '../product-runtime.js'
-import { Button } from '../ui-kit/next/index.js'
+import { Button } from '../ui-kit/index.js'
 import { ConfigForm, configDefaults, configIssues, type ConfigValue } from './config-form.js'
 import styles from './config-editor.module.css'
 
