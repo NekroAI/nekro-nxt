@@ -1,10 +1,11 @@
 .button {
+  position: relative;
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  gap: 6px;
-  min-height: 32px;
-  padding: 0 13px;
+  gap: var(--s-2);
+  min-height: var(--control);
+  padding: 0 var(--s-3);
   border: 1px solid var(--line-2);
   border-radius: 9px;
   background: var(--surface);
@@ -87,10 +88,17 @@
 }
 
 .small {
-  min-height: 26px;
-  padding: 0 10px;
+  min-height: var(--control-sm);
+  padding: 0 var(--s-3);
   border-radius: 8px;
   font-size: var(--fs-xs);
+}
+
+/* Compact controls keep their look but receive a hit area of at least --target (Decision 2026-10-06 §3). */
+.small::after {
+  content: '';
+  position: absolute;
+  inset: calc((var(--control-sm) - var(--target)) / 2);
 }
 
 .small svg {
@@ -99,12 +107,12 @@
 }
 
 .icon {
-  width: 32px;
+  width: var(--control);
   padding: 0;
 }
 
 .icon.small {
-  width: 26px;
+  width: var(--control-sm);
 }
 
 .chip {

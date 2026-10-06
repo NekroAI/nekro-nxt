@@ -23,9 +23,18 @@
 
 .titleRow {
   display: flex;
-  flex-wrap: wrap;
   align-items: center;
   gap: var(--s-2);
+  min-width: 0;
+}
+
+.titleRow > * {
+  flex: none;
+}
+
+/* The title (or its inline editor) is the one item that shrinks and ellipsises. */
+.titleRow > :first-child {
+  flex: 0 1 auto;
   min-width: 0;
 }
 
@@ -50,6 +59,17 @@
   gap: var(--s-1) var(--s-3);
   color: var(--muted);
   font: var(--t-note);
+}
+
+/* Links in the meta line (owner, channel) keep the line compact but get a full-size hit area. */
+.meta a {
+  position: relative;
+}
+
+.meta a::after {
+  content: '';
+  position: absolute;
+  inset: calc((100% - var(--target)) / 2) 0;
 }
 
 .actions {
@@ -149,6 +169,7 @@
 /* —— 属性行 —— */
 .list {
   display: grid;
+  grid-template-columns: minmax(0, 1fr);
   min-width: 0;
 }
 
@@ -238,6 +259,16 @@
   cursor: pointer;
 }
 
+.diagnosticsToggle {
+  position: relative;
+}
+
+.diagnosticsToggle::after {
+  content: '';
+  position: absolute;
+  inset: calc((var(--control-sm) - var(--target)) / 2) 0;
+}
+
 .diagnosticsToggle:hover {
   background: var(--hover);
   color: var(--fg-2);
@@ -283,6 +314,7 @@
 /* —— 就地编辑 —— */
 .inlineView {
   display: inline-flex;
+  min-width: 0;
   align-items: center;
   gap: var(--s-2);
   max-width: 100%;

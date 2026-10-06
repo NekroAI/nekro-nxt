@@ -201,3 +201,14 @@
   display: flex;
   justify-content: flex-end;
 }
+
+/* Hit area reaches the 32px target without changing the visible size. */
+.disclosureToggle {
+  position: relative;
+}
+
+.disclosureToggle::after {
+  content: '';
+  position: absolute;
+  inset: min(0px, calc((100% - var(--target)) / 2)) 0;
+}

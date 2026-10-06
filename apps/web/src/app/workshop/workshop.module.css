@@ -644,3 +644,14 @@
     grid-template-columns: minmax(0, 1fr);
   }
 }
+
+/* Hit area reaches the 32px target without changing the visible size. */
+.cellAgent {
+  position: relative;
+}
+
+.cellAgent::after {
+  content: '';
+  position: absolute;
+  inset: min(0px, calc((100% - var(--target)) / 2)) 0;
+}

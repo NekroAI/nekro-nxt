@@ -130,6 +130,16 @@
   cursor: pointer;
 }
 
+.manualToggle {
+  position: relative;
+}
+
+.manualToggle::after {
+  content: '';
+  position: absolute;
+  inset: calc((var(--control-sm) - var(--target)) / 2) 0;
+}
+
 .manualToggle:hover {
   background: var(--hover);
   color: var(--fg-2);

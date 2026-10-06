@@ -79,6 +79,7 @@
 }
 
 .sectionLink {
+  position: relative;
   min-height: var(--control-sm);
   padding: 0 var(--s-3);
   border: 0;
@@ -90,6 +91,12 @@
   transition:
     background var(--dur-1),
     color var(--dur-1);
+}
+
+.sectionLink::after {
+  content: '';
+  position: absolute;
+  inset: calc((var(--control-sm) - var(--target)) / 2) 0;
 }
 
 .sectionLink:hover {

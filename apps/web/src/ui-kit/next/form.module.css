@@ -91,6 +91,12 @@
   transition: background var(--dur-2) var(--ease);
 }
 
+.switch::after {
+  content: '';
+  position: absolute;
+  inset: calc((21px - var(--target)) / 2) calc((36px - 48px) / 2);
+}
+
 .switch[data-state='checked'] {
   background: var(--accent-fill);
 }

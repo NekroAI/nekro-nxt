@@ -239,8 +239,20 @@
   white-space: nowrap;
 }
 
+/* Both parts of the subline shrink and ellipsise; neither may push the header's controls out of view. */
+.subline > span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.subline > span:not(.responder) {
+  flex: 0 1 auto;
+}
+
 .responder {
   display: inline-flex;
+  flex: 0 2 auto;
   align-items: center;
   gap: var(--s-2);
   color: var(--fg-2);

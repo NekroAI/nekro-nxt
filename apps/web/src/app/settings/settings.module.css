@@ -209,3 +209,14 @@
 .link:hover {
   text-decoration: underline;
 }
+
+/* Hit area reaches the 32px target without changing the visible size. */
+.link {
+  position: relative;
+}
+
+.link::after {
+  content: '';
+  position: absolute;
+  inset: min(0px, calc((100% - var(--target)) / 2)) 0;
+}

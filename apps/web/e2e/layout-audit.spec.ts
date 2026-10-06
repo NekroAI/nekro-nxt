@@ -130,8 +130,14 @@ const auditScreen = (page: Page) =>
       const ownText = [...element.childNodes].some(
         (node) => node.nodeType === Node.TEXT_NODE && (node.textContent ?? '').trim(),
       )
+      // Visually hidden text for screen readers (1px boxes clipped to nothing) is meant to be cut.
+      const visuallyHidden =
+        element.getBoundingClientRect().width <= 1 ||
+        style.clipPath === 'inset(50%)' ||
+        style.clip === 'rect(0px, 0px, 0px, 0px)'
       if (
         ownText &&
+        !visuallyHidden &&
         horizontallyOverflowing &&
         ['hidden', 'clip'].includes(overflowX) &&
         style.textOverflow !== 'ellipsis' &&
@@ -179,11 +185,21 @@ const auditScreen = (page: Page) =>
         [...(element.parentElement?.childNodes ?? [])].some(
           (node) => node !== element && node.nodeType === Node.TEXT_NODE && (node.textContent ?? '').trim(),
         )
-      if (!inlineLink && (rect.width < 32 || rect.height < 32) && !element.closest('[role="option"]'))
+      // Compact controls may extend their hit area with an absolutely positioned ::after (ui-kit `.small`, switch).
+      const hit = getComputedStyle(element, '::after')
+      const grow = (value: string) => Math.max(0, -(Number.parseFloat(value) || 0))
+      const hitArea =
+        hit.content !== 'none' && hit.position === 'absolute'
+          ? {
+              width: rect.width + grow(hit.left) + grow(hit.right),
+              height: rect.height + grow(hit.top) + grow(hit.bottom),
+            }
+          : { width: rect.width, height: rect.height }
+      if (!inlineLink && (hitArea.width < 31.5 || hitArea.height < 31.5) && !element.closest('[role="option"]'))
         found.push({
           kind: 'small-target',
           element: describe(element),
-          detail: `${Math.round(rect.width)}×${Math.round(rect.height)}`,
+          detail: `${Math.round(hitArea.width)}×${Math.round(hitArea.height)}`,
         })
       const x = rect.left + rect.width / 2
       const y = rect.top + rect.height / 2
@@ -201,7 +217,15 @@ const auditScreen = (page: Page) =>
       }
       if (!reachable) continue
       const top = document.elementFromPoint(x, y)
-      if (top && top !== element && !element.contains(top) && !top.contains(element))
+      // Sticky and fixed bars (save bars, section navigation) cover content only until it is scrolled clear.
+      const pinnedBar = (node: Element | null): boolean => {
+        for (let current = node; current; current = current.parentElement) {
+          const position = getComputedStyle(current).position
+          if (position === 'sticky' || position === 'fixed') return true
+        }
+        return false
+      }
+      if (top && top !== element && !element.contains(top) && !top.contains(element) && !pinnedBar(top))
         found.push({ kind: 'covered', element: describe(element), detail: `被 ${describe(top)} 覆盖` })
     }
 

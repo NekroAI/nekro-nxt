@@ -3,7 +3,7 @@
   display: grid;
   grid-auto-columns: minmax(0, 1fr);
   grid-auto-flow: column;
-  padding: 3px;
+  padding: 2px;
   border-radius: 10px;
   background: var(--inset);
   box-shadow: var(--sh-inset);
@@ -24,7 +24,8 @@
 .segmentedItem {
   position: relative;
   z-index: 1;
-  padding: 4px 10px;
+  min-height: var(--control-sm);
+  padding: 0 var(--s-3);
   border: 0;
   border-radius: 7px;
   background: transparent;
@@ -34,6 +35,13 @@
   white-space: nowrap;
   cursor: pointer;
   transition: color var(--dur-2);
+}
+
+/* Hit area reaches --target although the segment itself stays compact. */
+.segmentedItem::after {
+  content: '';
+  position: absolute;
+  inset: calc((var(--control-sm) - var(--target)) / 2) 0;
 }
 
 .segmentedItem:hover,

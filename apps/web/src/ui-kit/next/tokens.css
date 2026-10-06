@@ -156,7 +156,7 @@ html[data-ui='next'] {
   --target: 32px;
   /* Matches the Desktop caption overlay height (apps/desktop window-chrome TITLE_BAR_HEIGHT). */
   --topbar-height: 48px;
-  --statusbar-height: 30px;
+  --statusbar-height: 32px;
   --pane-list: 272px;
   --pane-detail: 360px;
   --reader-width: 840px;

@@ -39,6 +39,7 @@
   position: relative;
   z-index: 1;
   display: grid;
+  grid-template-columns: minmax(0, 1fr);
   align-content: start;
   gap: var(--s-2);
   min-width: 0;
@@ -49,6 +50,8 @@
   position: sticky;
   top: var(--s-2);
   display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  min-width: 0;
   align-content: start;
   gap: var(--s-2);
 }
@@ -62,8 +65,11 @@
 .node {
   position: relative;
   display: grid;
+  /* A single shrinkable track: long names ellipsise instead of widening the node past its column. */
+  grid-template-columns: minmax(0, 1fr);
   gap: 0;
   width: 100%;
+  min-width: 0;
   min-height: var(--row-tall);
   padding: var(--s-2) var(--s-3);
   border: 1px solid var(--line);
@@ -103,6 +109,7 @@
 }
 
 .nodeName > span:last-child {
+  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
 }
@@ -131,6 +138,11 @@
   gap: var(--s-3);
 }
 
+.agentNode > :last-child {
+  flex: 1;
+  min-width: 0;
+}
+
 .agentText {
   display: grid;
   min-width: 0;
@@ -151,6 +163,7 @@
 /* 频道分组 */
 .group {
   display: grid;
+  grid-template-columns: minmax(0, 1fr);
   gap: var(--s-2);
   margin-bottom: var(--s-2);
 }
@@ -207,6 +220,7 @@
 
 .channelSlot {
   position: relative;
+  min-width: 0;
 }
 
 .noMatch {
@@ -231,6 +245,14 @@
   transition:
     transform var(--dur-1) var(--ease),
     box-shadow var(--dur-1);
+}
+
+/* Ports are small dots; their hit area reaches --target. */
+.port::after {
+  content: '';
+  position: absolute;
+  inset: calc((100% - var(--target)) / 2);
+  border-radius: 50%;
 }
 
 .portLeft {
@@ -259,14 +281,6 @@
   touch-action: none;
 }
 
-/* The visible port stays small; the hit area reaches the 32px target. */
-.portOut::before {
-  content: '';
-  position: absolute;
-  inset: -11px;
-  border-radius: 50%;
-}
-
 .portOut:hover,
 .portOut:focus-visible {
   transform: scale(1.35);
@@ -283,7 +297,7 @@
   border-color: var(--accent);
 }
 
-.portOpen::after {
+.portOpen::before {
   content: '';
   position: absolute;
   inset: -2px;
@@ -515,6 +529,7 @@
   align-items: center;
   gap: var(--s-2);
   width: 100%;
+  min-width: 0;
   min-height: var(--row);
   padding: var(--s-2) var(--s-1);
   border: 0;
@@ -552,11 +567,19 @@
 
 .listAgent {
   display: inline-flex;
-  flex: none;
+  flex: 0 1 auto;
   align-items: center;
+  min-width: 0;
+  max-width: 50%;
   gap: var(--s-1);
   color: var(--fg-2);
   font: var(--t-caption);
+}
+
+.listAgent > span:last-child {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .listMeta {

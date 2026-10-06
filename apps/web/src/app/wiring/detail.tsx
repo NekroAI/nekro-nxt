@@ -274,7 +274,7 @@ function ConnectionDetail({ connection }: { readonly connection: ConnectionSumma
                   {agent ? (
                     <span className={styles.listAgent}>
                       <AgentAvatar name={agent.name} hue={agentHue(agent)} size="xs" />
-                      {agent.name}
+                      <span>{agent.name}</span>
                     </span>
                   ) : (
                     <span className={styles.listMeta}>未接线</span>

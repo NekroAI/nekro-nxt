@@ -99,6 +99,11 @@ button.instance {
 }
 
 .crumbLink {
+  display: inline-flex;
+  align-items: center;
+  min-width: var(--target);
+  min-height: var(--target);
+  justify-content: center;
   color: var(--muted);
   text-decoration: none;
 }
@@ -313,9 +318,15 @@ button.instance {
 
 .statusItem {
   display: flex;
+  flex: 0 1 auto;
   align-items: center;
+  align-self: stretch;
   gap: var(--s-2);
-  padding: var(--s-1) var(--s-2);
+  min-width: 0;
+  min-height: var(--target);
+  padding: 0 var(--s-2);
+  overflow: hidden;
+  text-overflow: ellipsis;
   border: 0;
   border-radius: 6px;
   background: transparent;
@@ -341,6 +352,7 @@ button.instance {
 }
 
 .statusClock {
+  flex: none;
   margin-left: auto;
   color: var(--faint);
   font: 11px var(--font-mono);
