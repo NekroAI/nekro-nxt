@@ -1,5 +1,18 @@
 import { useGo } from '../model/nav.js'
-import { AppWindow, MessagesSquare, Moon, Plus, Search, Settings, Sparkles, Sun, UserRound } from 'lucide-react'
+import {
+  AppWindow,
+  Cable,
+  MessagesSquare,
+  Moon,
+  Plus,
+  Rows3,
+  Search,
+  Settings,
+  Sparkles,
+  Sun,
+  UserRound,
+  Wrench,
+} from 'lucide-react'
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import type { HostApiResponse } from '@nekro-nxt/contracts'
 
@@ -7,6 +20,7 @@ import { connectionDisplayName, useProductStore } from '../../product-runtime.js
 import { useProductApi } from '../model/store.js'
 import { Kbd, Pressable, Input, Overlay } from '../../ui-kit/next/index.js'
 import { agentPhase } from '../model/identity.js'
+import { useDensity } from '../model/density.js'
 import { useToggleTheme } from '../model/theme.js'
 import { SPACES } from './app-shell.js'
 import styles from './palette.module.css'
@@ -22,6 +36,36 @@ interface Command {
 }
 
 type Member = HostApiResponse<'listPlatformUsers'>['items'][number]
+
+const RECENT_KEY = 'nekro-nxt.palette-recent'
+const RECENT_LIMIT = 5
+
+const readRecent = (): readonly string[] => {
+  try {
+    const value: unknown = JSON.parse(window.localStorage.getItem(RECENT_KEY) ?? '[]')
+    return Array.isArray(value) ? value.filter((item): item is string => typeof item === 'string') : []
+  } catch {
+    return []
+  }
+}
+
+const rememberRecent = (id: string): void => {
+  try {
+    const next = [id, ...readRecent().filter((item) => item !== id)].slice(0, RECENT_LIMIT)
+    window.localStorage.setItem(RECENT_KEY, JSON.stringify(next))
+  } catch {
+    // Convenience only.
+  }
+}
+
+const SETTINGS_SECTIONS = [
+  { key: 'models', label: '模型' },
+  { key: 'adapters', label: '平台适配器' },
+  { key: 'dsh', label: 'DSH 插件' },
+  { key: 'notifications', label: '通知' },
+  { key: 'appearance', label: '外观' },
+  { key: 'about', label: '关于' },
+] as const
 
 /** Debounced Host search over platform members; empty input clears the results. */
 function useMemberSearch(query: string): readonly Member[] {
@@ -64,9 +108,11 @@ export function CommandPalette({
   const [query, setQuery] = useState('')
   const members = useMemberSearch(open ? query : '')
   const [index, setIndex] = useState(0)
+  const [recentIds, setRecentIds] = useState<readonly string[]>(readRecent)
   const listRef = useRef<HTMLDivElement>(null)
 
   const toggleTheme = useToggleTheme()
+  const [density, setDensity] = useDensity()
   const commands = useMemo<readonly Command[]>(() => {
     const go = (path: string) => () => navigate(path)
     const connectionName = new Map(connections.map((connection) => [connection.id, connection]))
@@ -118,6 +164,30 @@ export function CommandPalette({
         keywords: `${page.title} ${page.description ?? ''}`,
         run: go(`${page.routeBase}${page.startPath ? `/${page.startPath}` : ''}`),
       })),
+      ...SETTINGS_SECTIONS.map((section) => ({
+        id: `settings:${section.key}`,
+        group: '设置',
+        label: `设置 · ${section.label}`,
+        icon: <Settings />,
+        keywords: `设置 ${section.label}`,
+        run: go(`/settings/${section.key}`),
+      })),
+      {
+        id: 'action:add-account',
+        group: '操作',
+        label: '添加平台账号',
+        icon: <Cable />,
+        keywords: '添加 账号 连接 接线 平台',
+        run: go('/wiring/new'),
+      },
+      {
+        id: 'action:create-extension',
+        group: '操作',
+        label: '创造扩展',
+        icon: <Wrench />,
+        keywords: '创造 扩展 工坊 新能力',
+        run: go('/workshop'),
+      },
       {
         id: 'action:new-agent',
         group: '操作',
@@ -134,12 +204,28 @@ export function CommandPalette({
         keywords: '主题 外观 深色 浅色 theme',
         run: toggleTheme,
       },
+      {
+        id: 'action:density',
+        group: '操作',
+        label: density === 'compact' ? '切换到标准密度' : '切换到紧凑密度',
+        icon: <Rows3 />,
+        keywords: '密度 紧凑 标准 行高 density',
+        run: () => setDensity(density === 'compact' ? 'comfortable' : 'compact'),
+      },
     ]
-  }, [agents, channels, connections, navigate, pages, toggleTheme])
+  }, [agents, channels, connections, density, navigate, pages, setDensity, toggleTheme])
 
   const visible = useMemo(() => {
     const needle = query.trim().toLowerCase()
-    if (!needle) return commands
+    if (!needle) {
+      // Recently used commands lead the list; they stay in their own groups further down too.
+      const byId = new Map(commands.map((command) => [command.id, command]))
+      const recent = recentIds.flatMap((id) => {
+        const command = byId.get(id)
+        return command ? [{ ...command, id: `recent:${command.id}`, group: '最近使用' }] : []
+      })
+      return [...recent, ...commands]
+    }
     const matched = commands.filter((command) =>
       `${command.label} ${command.keywords} ${command.group}`.toLowerCase().includes(needle),
     )
@@ -161,12 +247,13 @@ export function CommandPalette({
           ),
       })),
     ]
-  }, [commands, members, navigate, query])
+  }, [commands, members, navigate, query, recentIds])
 
   useEffect(() => {
     if (open) {
       setQuery('')
       setIndex(0)
+      setRecentIds(readRecent())
     }
   }, [open])
   useEffect(() => setIndex(0), [query])
@@ -176,6 +263,7 @@ export function CommandPalette({
 
   const run = (command: Command | undefined) => {
     if (!command) return
+    if (!command.id.startsWith('member:')) rememberRecent(command.id.replace(/^recent:/u, ''))
     onOpenChange(false)
     command.run()
   }

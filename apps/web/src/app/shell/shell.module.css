@@ -1,21 +1,25 @@
 .app {
   display: grid;
   grid-template-columns: 72px minmax(0, 1fr);
-  grid-template-rows: 46px minmax(0, 1fr) 30px;
+  grid-template-rows: var(--topbar-height) minmax(0, 1fr) var(--statusbar-height);
   height: 100vh;
   height: 100dvh;
   overflow: hidden;
 }
 
 .top {
+  /* Desktop injects the native window-control insets (macOS traffic lights, Windows caption buttons). */
+  --wc-left: var(--window-controls-left, 0px);
+  --wc-right: var(--window-controls-right, 0px);
+
   position: relative;
   z-index: 3;
   display: flex;
   grid-column: 1 / -1;
   align-items: center;
-  gap: 14px;
+  gap: var(--s-4);
   min-width: 0;
-  padding: 0 12px 0 16px;
+  padding: 0 calc(var(--s-3) + var(--wc-right)) 0 calc(var(--s-4) + var(--wc-left));
   border-bottom: 1px solid var(--line);
   background: color-mix(in srgb, var(--side) 88%, transparent);
   backdrop-filter: saturate(1.4) blur(14px);
@@ -23,14 +27,16 @@
 }
 
 .top button,
-.top a {
+.top a,
+.top input,
+.top [role='button'] {
   -webkit-app-region: no-drag;
 }
 
 .brand {
   display: flex;
   align-items: center;
-  gap: 9px;
+  gap: var(--s-2);
   color: var(--fg);
   font-size: 15px;
   font-weight: 650;
@@ -45,8 +51,8 @@
 .instance {
   display: flex;
   align-items: center;
-  gap: 7px;
-  padding: 3px 10px 3px 8px;
+  gap: var(--s-2);
+  padding: var(--s-1) var(--s-2) var(--s-1) var(--s-2);
   border: 1px solid var(--line);
   border-radius: 999px;
   background: var(--surface);
@@ -69,7 +75,7 @@ button.instance {
   display: flex;
   flex: 1;
   align-items: center;
-  gap: 7px;
+  gap: var(--s-2);
   min-width: 0;
   overflow: hidden;
   color: var(--muted);
@@ -88,12 +94,27 @@ button.instance {
   color: var(--faint);
 }
 
+.crumbPart {
+  display: contents;
+}
+
+.crumbLink {
+  color: var(--muted);
+  text-decoration: none;
+}
+
+.crumbLink:hover {
+  color: var(--fg);
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
 .search {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: var(--s-2);
   min-width: 240px;
-  padding: 6px 8px 6px 11px;
+  padding: var(--s-2) var(--s-2) var(--s-2) var(--s-3);
   border: 1px solid var(--line);
   border-radius: 9px;
   background: var(--surface);
@@ -149,7 +170,7 @@ button.instance {
   right: 2px;
   min-width: 16px;
   height: 16px;
-  padding: 0 4px;
+  padding: 0 var(--s-1);
   border-radius: 8px;
   background: var(--bad-fill);
   box-shadow: 0 0 0 2px var(--side);
@@ -167,8 +188,8 @@ button.instance {
   grid-row: 2;
   flex-direction: column;
   align-items: center;
-  gap: 2px;
-  padding: 12px 0;
+  gap: calc(var(--s-1) / 2);
+  padding: var(--s-3) 0;
   border-right: 1px solid var(--line);
   background: var(--side);
 }
@@ -211,9 +232,9 @@ button.instance {
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 3px;
+  gap: var(--s-1);
   width: 58px;
-  padding: 8px 0 6px;
+  padding: var(--s-2) 0 var(--s-2);
   border-radius: 12px;
   color: var(--muted);
   font-size: var(--fs-xs);
@@ -247,7 +268,7 @@ button.instance {
 .railDivider {
   width: 28px;
   height: 1px;
-  margin: 6px 0;
+  margin: var(--s-2) 0;
   background: var(--line-2);
 }
 
@@ -280,9 +301,9 @@ button.instance {
   display: flex;
   grid-column: 1 / -1;
   align-items: center;
-  gap: 2px;
+  gap: calc(var(--s-1) / 2);
   overflow: hidden;
-  padding: 0 10px;
+  padding: 0 var(--s-2);
   border-top: 1px solid var(--line);
   background: var(--side);
   color: var(--muted);
@@ -293,8 +314,8 @@ button.instance {
 .statusItem {
   display: flex;
   align-items: center;
-  gap: 7px;
-  padding: 3px 8px;
+  gap: var(--s-2);
+  padding: var(--s-1) var(--s-2);
   border: 0;
   border-radius: 6px;
   background: transparent;
@@ -315,7 +336,7 @@ button.instance {
 .statusSep {
   width: 1px;
   height: 13px;
-  margin: 0 6px;
+  margin: 0 var(--s-2);
   background: var(--line-2);
 }
 
@@ -368,7 +389,7 @@ button.instance {
 @media (max-width: 760px) {
   .app {
     grid-template-columns: minmax(0, 1fr);
-    grid-template-rows: 46px minmax(0, 1fr) 60px;
+    grid-template-rows: var(--topbar-height) minmax(0, 1fr) calc(var(--statusbar-height) * 2);
   }
 
   .rail {
@@ -376,7 +397,7 @@ button.instance {
     grid-row: 3;
     grid-column: 1;
     justify-content: space-around;
-    padding: 5px 4px;
+    padding: var(--s-1) var(--s-1);
     border-top: 1px solid var(--line);
     border-right: 0;
   }
@@ -410,6 +431,6 @@ button.instance {
 
   .search {
     min-width: 0;
-    padding: 7px;
+    padding: var(--s-2);
   }
 }

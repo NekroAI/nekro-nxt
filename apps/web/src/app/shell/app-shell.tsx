@@ -7,7 +7,8 @@ import { useDesktopInstance, type DesktopInstanceStatus } from '../../desktop-sh
 import { useProductStore } from '../../product-runtime.js'
 import { Kbd, StatusDot, useIndicator, type Tone, cssVars, Pressable } from '../../ui-kit/next/index.js'
 import { useAttention } from '../model/attention.js'
-import { agentAccent, connectionLabel, connectionTone, isAgentWorking } from '../model/identity.js'
+import { connectionStatus } from '../model/connection-status.js'
+import { agentAccent, connectionLabel, isAgentWorking } from '../model/identity.js'
 import { CommandPalette } from './command-palette.js'
 import { useCurrentCrumb } from './crumb.js'
 import styles from './shell.module.css'
@@ -73,6 +74,7 @@ const desktopStatusLabel: Record<DesktopInstanceStatus, string> = {
 
 function TopBar({ onSearch }: { readonly onSearch: () => void }) {
   const crumb = useCurrentCrumb()
+  const space = spaceOf(useLocation().pathname)
   const attention = useAttention()
   const desktop = useDesktopInstance()
   const [switcherOpen, setSwitcherOpen] = useState(false)
@@ -119,14 +121,25 @@ function TopBar({ onSearch }: { readonly onSearch: () => void }) {
       ) : (
         <span className={styles.instance}>{instance}</span>
       )}
-      <div className={styles.crumb}>
-        {crumb.map((part, index) => (
-          <span key={`${index}:${part}`} style={{ display: 'contents' }}>
-            {index > 0 ? <span className={styles.crumbSep}>/</span> : null}
-            {index === crumb.length - 1 ? <b>{part}</b> : <span>{part}</span>}
-          </span>
-        ))}
-      </div>
+      {/* The rail already names the space; the path only appears below it, with the space as the way back. */}
+      <nav className={styles.crumb} aria-label="位置">
+        {crumb.length > 1
+          ? crumb.map((part, index) => (
+              <span key={`${index}:${part}`} className={styles.crumbPart}>
+                {index > 0 ? <span className={styles.crumbSep}>/</span> : null}
+                {index === 0 ? (
+                  <Link to={space} className={styles.crumbLink}>
+                    {part}
+                  </Link>
+                ) : index === crumb.length - 1 ? (
+                  <b aria-current="page">{part}</b>
+                ) : (
+                  <span>{part}</span>
+                )}
+              </span>
+            ))
+          : null}
+      </nav>
       <Pressable type="button" className={styles.search} onClick={onSearch} aria-label="搜索">
         <Search aria-hidden="true" />
         <span>搜索</span>
@@ -168,17 +181,18 @@ function StatusBar() {
       </Pressable>
       {external.length ? <span className={styles.statusSep} /> : null}
       {external.map((connection) => {
-        const tone = connectionTone(connection.state)
+        const status = connectionStatus(connection)
         return (
           <Pressable
             key={connection.id}
             type="button"
             className={styles.statusItem}
+            title={status.reason ?? status.label}
             onClick={() => navigate(`/wiring/connections/${connection.id}`)}
           >
-            <StatusDot tone={tone} pulse={tone === 'warn'} />
+            <StatusDot tone={status.tone} pulse={status.health === 'connecting'} />
             {connectionLabel(connection)}
-            {tone === 'ok' ? '' : ` ${connection.state}`}
+            {status.health === 'ok' ? '' : ` ${status.label}`}
           </Pressable>
         )
       })}

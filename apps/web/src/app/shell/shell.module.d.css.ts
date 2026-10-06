@@ -6,6 +6,8 @@ declare const styles: {
   readonly canvas: string
   readonly canvasEnter: string
   readonly crumb: string
+  readonly crumbLink: string
+  readonly crumbPart: string
   readonly crumbSep: string
   readonly hostBanner: string
   readonly instance: string

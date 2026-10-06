@@ -1,6 +1,6 @@
 .stack {
   display: grid;
-  gap: 8px;
+  gap: var(--s-2);
 }
 
 .shellNotice {
@@ -24,6 +24,6 @@
 
 .failure {
   display: block;
-  margin-top: 4px;
+  margin-top: var(--s-1);
   color: var(--bad);
 }
