@@ -8,7 +8,7 @@ import type {
   PhysicalDeliveryRequest,
 } from '@nekro-nxt/adapter-sdk'
 import type { AssetId, ChannelId, ChannelMemberId, JsonValue, MessagePart } from '@nekro-nxt/contracts'
-import { LogicalMessageIdSchema } from '@nekro-nxt/contracts'
+import { ChannelMemberIdSchema, LogicalMessageIdSchema, parseJsonValue } from '@nekro-nxt/contracts'
 import { createHash } from 'node:crypto'
 import { z } from 'zod'
 import {
@@ -167,6 +167,155 @@ export class OneBot11Runtime implements AdapterConnectionRuntime {
             ...(target.kind === 'group' ? { group_id: target.id } : {}),
           })
           return { status: 'succeeded' }
+        } catch (error) {
+          return actionOutcome(error)
+        }
+      },
+      invokePlatformAction: async (input) => {
+        try {
+          switch (input.action) {
+            case 'like_member': {
+              const times = typeof input.args['times'] === 'number' ? input.args['times'] : 1
+              if (!Number.isInteger(times) || times < 1 || times > 10) {
+                return { status: 'failed', message: '点赞次数必须是 1-10 之间的整数。' }
+              }
+              const memberIdParsed = ChannelMemberIdSchema.safeParse(input.args['memberId'])
+              if (!memberIdParsed.success) {
+                return { status: 'failed', message: '缺少或无效的 memberId 参数。' }
+              }
+              const platformUserId = await this.#context.members.resolvePlatformUserId(
+                input.channelId,
+                memberIdParsed.data,
+              )
+              if (!platformUserId) return { status: 'failed', message: '当前频道找不到该成员的平台身份。' }
+              const target = await this.#resolveTarget(input.channelId)
+              if (!target) return { status: 'failed', message: '当前频道不是有效的 OneBot 频道。' }
+              const result = await this.#requireClient().callOptional('send_like', {
+                user_id: platformUserId,
+                times,
+                ...(target.kind === 'group' ? { group_id: target.id } : {}),
+              })
+              return { status: 'succeeded', result: parseJsonValue(result) }
+            }
+            case 'mute_member': {
+              const target = await this.#resolveTarget(input.channelId)
+              if (target?.kind !== 'group') {
+                return { status: 'failed', message: '禁言只在群聊中可用。' }
+              }
+              const seconds = typeof input.args['seconds'] === 'number' ? input.args['seconds'] : undefined
+              if (seconds === undefined || !Number.isInteger(seconds) || seconds < 0 || seconds > 2592000) {
+                return { status: 'failed', message: '禁言时长必须是 0-2592000 之间的整数。' }
+              }
+              const memberIdParsed = ChannelMemberIdSchema.safeParse(input.args['memberId'])
+              if (!memberIdParsed.success) {
+                return { status: 'failed', message: '缺少或无效的 memberId 参数。' }
+              }
+              const platformUserId = await this.#context.members.resolvePlatformUserId(
+                input.channelId,
+                memberIdParsed.data,
+              )
+              if (!platformUserId) return { status: 'failed', message: '当前频道找不到该成员的平台身份。' }
+              const result = await this.#requireClient().callOptional('set_group_ban', {
+                group_id: target.id,
+                user_id: platformUserId,
+                duration: seconds,
+              })
+              return { status: 'succeeded', result: parseJsonValue(result) }
+            }
+            case 'kick_member': {
+              const target = await this.#resolveTarget(input.channelId)
+              if (target?.kind !== 'group') {
+                return { status: 'failed', message: '移出成员只在群聊中可用。' }
+              }
+              const memberIdParsed = ChannelMemberIdSchema.safeParse(input.args['memberId'])
+              if (!memberIdParsed.success) {
+                return { status: 'failed', message: '缺少或无效的 memberId 参数。' }
+              }
+              const platformUserId = await this.#context.members.resolvePlatformUserId(
+                input.channelId,
+                memberIdParsed.data,
+              )
+              if (!platformUserId) return { status: 'failed', message: '当前频道找不到该成员的平台身份。' }
+              const reject_add_request =
+                typeof input.args['rejectRejoin'] === 'boolean' ? input.args['rejectRejoin'] : false
+              const result = await this.#requireClient().callOptional('set_group_kick', {
+                group_id: target.id,
+                user_id: platformUserId,
+                reject_add_request,
+              })
+              return { status: 'succeeded', result: parseJsonValue(result) }
+            }
+            case 'set_member_card': {
+              const target = await this.#resolveTarget(input.channelId)
+              if (target?.kind !== 'group') {
+                return { status: 'failed', message: '设置名片只在群聊中可用。' }
+              }
+              const memberIdParsed = ChannelMemberIdSchema.safeParse(input.args['memberId'])
+              const card = input.args['card']
+              if (!memberIdParsed.success) {
+                return { status: 'failed', message: '缺少或无效的 memberId 参数。' }
+              }
+              if (typeof card !== 'string') {
+                return { status: 'failed', message: '缺少或无效的 card 参数。' }
+              }
+              const platformUserId = await this.#context.members.resolvePlatformUserId(
+                input.channelId,
+                memberIdParsed.data,
+              )
+              if (!platformUserId) return { status: 'failed', message: '当前频道找不到该成员的平台身份。' }
+              const result = await this.#requireClient().callOptional('set_group_card', {
+                group_id: target.id,
+                user_id: platformUserId,
+                card,
+              })
+              return { status: 'succeeded', result: parseJsonValue(result) }
+            }
+            case 'set_essence_message': {
+              const target = await this.#resolveTarget(input.channelId)
+              if (target?.kind !== 'group') {
+                return { status: 'failed', message: '设为精华只在群聊中可用。' }
+              }
+              const messageId = input.args['messageId']
+              if (typeof messageId !== 'string') {
+                return { status: 'failed', message: '缺少或无效的 messageId 参数。' }
+              }
+              const result = await this.#requireClient().callOptional('set_essence_msg', {
+                message_id: messageId,
+              })
+              return { status: 'succeeded', result: parseJsonValue(result) }
+            }
+            default:
+              return { status: 'unsupported', message: `未知的平台动作：${input.action}` }
+          }
+        } catch (error) {
+          return actionOutcome(error)
+        }
+      },
+      invokeRawApi: async (input) => {
+        try {
+          const target = await this.#resolveTarget(input.channelId)
+          const params: Record<string, unknown> = { ...input.params }
+          // Auto-fill group_id if not present and current channel is a group
+          if (target?.kind === 'group' && !('group_id' in params)) {
+            params['group_id'] = target.id
+          }
+          // Blacklist of APIs that modify connection state (these should not be called by extensions)
+          const blacklist = new Set([
+            'set_restart', // 重启协议端
+            'clean_cache', // 清空缓存
+            'set_login_info', // 修改登录信息
+            'set_self_profile', // 修改自身资料
+            'set_self_nickname', // 修改自身昵称
+            'set_self_remark', // 修改自身备注
+          ])
+          if (blacklist.has(input.api)) {
+            return {
+              status: 'failed',
+              message: `禁止调用会修改连接状态的 API：${input.api}`,
+            }
+          }
+          const result = await this.#requireClient().callOptional(input.api, params)
+          return { status: 'succeeded', result: parseJsonValue(result) }
         } catch (error) {
           return actionOutcome(error)
         }

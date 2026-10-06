@@ -300,6 +300,19 @@ export const AdapterCapabilityStateSchema = z
   })
   .strict()
 
+export interface PlatformActionDefinition {
+  readonly name: string
+  readonly title: string
+  readonly description: string
+  readonly risk: 'low' | 'admin'
+  readonly channelKinds: readonly ('direct' | 'group')[]
+  readonly parameters: {
+    readonly type: 'object'
+    readonly properties: Readonly<Record<string, JsonValue>>
+    readonly required?: readonly string[]
+  }
+}
+
 export type AdapterConnectionDescriptor = {
   readonly key: string
   readonly displayName: string
@@ -326,6 +339,12 @@ export type AdapterConnectionDescriptor = {
     readonly mode: 'schema-form' | 'qr-login'
     readonly actionLabel?: string
     readonly pendingLabel?: string
+  }
+  /** Platform actions the Adapter can invoke on behalf of the Extension. */
+  readonly platformActions?: readonly PlatformActionDefinition[]
+  /** Raw API passthrough capability metadata. */
+  readonly rawApi?: {
+    readonly description: string
   }
   /**
    * Serialized Schemastery document for the Connection form. Fields with `meta.role: 'secret'` are credentials:
@@ -368,6 +387,8 @@ export function defineAdapterConnection<
   readonly features?: AdapterConnectionDescriptor['features']
   readonly diagnostics?: { readonly receive: boolean; readonly send: boolean }
   readonly creation?: AdapterConnectionDescriptor['creation']
+  readonly platformActions?: readonly PlatformActionDefinition[]
+  readonly rawApi?: { readonly description: string }
   readonly configurationSchema: ConfigurationSchema
   readonly credentialsSchema: CredentialsSchema
   readonly configSchema: ConfigSchemaDocument
@@ -398,6 +419,8 @@ export function defineAdapterConnection<
         send: input.provisioning === 'user-created',
       },
       ...(input.creation === undefined ? {} : { creation: input.creation }),
+      ...(input.platformActions === undefined ? {} : { platformActions: input.platformActions }),
+      ...(input.rawApi === undefined ? {} : { rawApi: input.rawApi }),
       configSchema: input.configSchema,
     },
     configurationSchema: input.configurationSchema,
@@ -585,6 +608,18 @@ export interface AdapterConnectionInteractions {
     readonly memberId: ChannelMemberId
     readonly clientRequestId: string
   }): Promise<AdapterInteractionOutcome>
+  invokePlatformAction?(input: {
+    readonly channelId: ChannelId
+    readonly action: string
+    readonly args: Readonly<Record<string, JsonValue>>
+    readonly clientRequestId: string
+  }): Promise<AdapterInteractionOutcome & { readonly result?: JsonValue }>
+  invokeRawApi?(input: {
+    readonly channelId: ChannelId
+    readonly api: string
+    readonly params: Readonly<Record<string, JsonValue>>
+    readonly clientRequestId: string
+  }): Promise<AdapterInteractionOutcome & { readonly result?: JsonValue }>
 }
 
 export interface AdapterPhysicalPlan {
@@ -712,6 +747,37 @@ const assertAdapterDescriptor = (descriptor: AdapterConnectionDescriptor): void 
     if (field.kind === 'secret' && field.default !== undefined) {
       throw new TypeError(`Adapter credential field cannot declare a default: ${field.key}`)
     }
+  }
+  const actionNames = new Set<string>()
+  for (const action of descriptor.platformActions ?? []) {
+    if (!action.name.trim() || !/^[a-z0-9_]+$/u.test(action.name)) {
+      throw new TypeError(
+        `Adapter platform action name must contain only lowercase letters, numbers, and underscores: ${action.name}`,
+      )
+    }
+    if (actionNames.has(action.name)) throw new TypeError(`Adapter platform action name is duplicated: ${action.name}`)
+    actionNames.add(action.name)
+    if (!action.title.trim() || !action.description.trim()) {
+      throw new TypeError(`Adapter platform action requires title and description: ${action.name}`)
+    }
+    if (action.risk !== 'low' && action.risk !== 'admin') {
+      throw new TypeError(`Adapter platform action has invalid risk level: ${action.name}`)
+    }
+    if (action.channelKinds.length === 0) {
+      throw new TypeError(`Adapter platform action must declare at least one channel kind: ${action.name}`)
+    }
+    if (action.channelKinds.some((kind) => kind !== 'direct' && kind !== 'group')) {
+      throw new TypeError(`Adapter platform action has invalid channel kind: ${action.name}`)
+    }
+    if (new Set(action.channelKinds).size !== action.channelKinds.length) {
+      throw new TypeError(`Adapter platform action channel kinds must not contain duplicates: ${action.name}`)
+    }
+    if (action.parameters.type !== 'object') {
+      throw new TypeError(`Adapter platform action parameters must have type 'object': ${action.name}`)
+    }
+  }
+  if (descriptor.rawApi && !descriptor.rawApi.description.trim()) {
+    throw new TypeError('Adapter rawApi must have a description.')
   }
 }
 

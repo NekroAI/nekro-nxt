@@ -31,6 +31,83 @@ export const OneBot11RuntimeConfigSchema = OneBot11ConnectionConfigurationSchema
 
 export type OneBot11RuntimeConfig = z.output<typeof OneBot11RuntimeConfigSchema>
 
+const ONEBOT_11_PLATFORM_ACTIONS = [
+  {
+    name: 'like_member',
+    title: '点赞',
+    description: '为成员点赞',
+    risk: 'low' as const,
+    channelKinds: ['direct', 'group'] as const,
+    parameters: {
+      type: 'object' as const,
+      properties: {
+        memberId: { type: 'string' },
+        times: { type: 'number', minimum: 1, maximum: 10 },
+      },
+      required: ['memberId', 'times'],
+    },
+  },
+  {
+    name: 'mute_member',
+    title: '禁言',
+    description: '禁言成员',
+    risk: 'admin' as const,
+    channelKinds: ['group'] as const,
+    parameters: {
+      type: 'object' as const,
+      properties: {
+        memberId: { type: 'string' },
+        seconds: { type: 'number', minimum: 0, maximum: 2592000 },
+      },
+      required: ['memberId', 'seconds'],
+    },
+  },
+  {
+    name: 'kick_member',
+    title: '移出',
+    description: '移出成员',
+    risk: 'admin' as const,
+    channelKinds: ['group'] as const,
+    parameters: {
+      type: 'object' as const,
+      properties: {
+        memberId: { type: 'string' },
+        rejectRejoin: { type: 'boolean' },
+      },
+      required: ['memberId'],
+    },
+  },
+  {
+    name: 'set_member_card',
+    title: '设置名片',
+    description: '设置成员频道名片',
+    risk: 'admin' as const,
+    channelKinds: ['group'] as const,
+    parameters: {
+      type: 'object' as const,
+      properties: {
+        memberId: { type: 'string' },
+        card: { type: 'string' },
+      },
+      required: ['memberId', 'card'],
+    },
+  },
+  {
+    name: 'set_essence_message',
+    title: '设为精华',
+    description: '设置消息为精华',
+    risk: 'admin' as const,
+    channelKinds: ['group'] as const,
+    parameters: {
+      type: 'object' as const,
+      properties: {
+        messageId: { type: 'string' },
+      },
+      required: ['messageId'],
+    },
+  },
+] as const
+
 export const ONEBOT_11_CONNECTION_DEFINITION = defineAdapterConnection({
   key: ONEBOT_11_ADAPTER_KEY,
   displayName: 'OneBot 11',
@@ -39,6 +116,8 @@ export const ONEBOT_11_CONNECTION_DEFINITION = defineAdapterConnection({
   aliasEditable: true,
   channelDiscovery: 'adapter-observed',
   channelKinds: ['direct', 'group'],
+  platformActions: ONEBOT_11_PLATFORM_ACTIONS,
+  rawApi: { description: '直接调用 OneBot 11 API' },
   activities: [
     {
       key: 'member-poked',

@@ -391,6 +391,7 @@ export interface ChannelInteractionResult {
     readonly status: string
     readonly message?: string
   }[]
+  readonly value?: JsonValue
 }
 
 const deterministicHandoffFallback = (
@@ -781,6 +782,24 @@ export class ChannelRuntime {
     readonly clientRequestId: string
   }): Promise<ChannelInteractionResult> {
     return this.#interactions.nudgeChannelMember(input)
+  }
+
+  invokeChannelPlatformAction(input: {
+    readonly episodeId: EpisodeId
+    readonly action: string
+    readonly args: Readonly<Record<string, JsonValue>>
+    readonly clientRequestId: string
+  }): Promise<ChannelInteractionResult> {
+    return this.#interactions.invokeChannelPlatformAction(input)
+  }
+
+  invokeChannelRawApi(input: {
+    readonly episodeId: EpisodeId
+    readonly api: string
+    readonly params: Readonly<Record<string, JsonValue>>
+    readonly clientRequestId: string
+  }): Promise<ChannelInteractionResult> {
+    return this.#interactions.invokeChannelRawApi(input)
   }
 
   subscribeFacts(listener: (fact: ChannelFact) => void): () => void {

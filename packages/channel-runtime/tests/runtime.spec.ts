@@ -2624,6 +2624,83 @@ describe('ChannelRuntime M1 lane', () => {
     expect(context.runtimeRepository.admissions).toHaveLength(2)
     expect([...context.runtimeRepository.admissions.values()][1]).toMatchObject({ state: 'logged-to-session' })
   })
+
+  it('invokes platform actions and respects rate limits', async () => {
+    let actionCalls = 0
+    const context = await setup(true, undefined, undefined, {
+      invokePlatformAction: () => {
+        actionCalls += 1
+        return Promise.resolve({ status: 'succeeded' })
+      },
+    })
+    await context.runtime.acceptChannelInbound(inbound(context.connection.id, context.channel.id, 'platform-action'))
+    const episode = context.runtimeRepository.getActiveEpisode(context.channel.id, context.agent.definition.id)!
+
+    // Test successful platform action invocation
+    const result = await context.runtime.invokeChannelPlatformAction({
+      episodeId: episode.id,
+      action: 'test_action',
+      args: { param: 'value' },
+      clientRequestId: 'action-1',
+    })
+    expect(result).toMatchObject({ status: 'succeeded', message: '平台动作已完成。' })
+    expect(actionCalls).toBe(1)
+
+    // Test concurrent requests with different clientRequestIds (should both succeed)
+    const results = await Promise.all([
+      context.runtime.invokeChannelPlatformAction({
+        episodeId: episode.id,
+        action: 'test_action',
+        args: { param: 'value' },
+        clientRequestId: 'action-2',
+      }),
+      context.runtime.invokeChannelPlatformAction({
+        episodeId: episode.id,
+        action: 'test_action',
+        args: { param: 'value' },
+        clientRequestId: 'action-3',
+      }),
+    ])
+    expect(results[0]).toMatchObject({ status: 'succeeded' })
+    expect(results[1]).toMatchObject({ status: 'succeeded' })
+    expect(actionCalls).toBe(3)
+
+    // Test invalid episode
+    await expect(
+      context.runtime.invokeChannelPlatformAction({
+        episodeId: EpisodeIdSchema.parse('eps_MISSING'),
+        action: 'test_action',
+        args: {},
+        clientRequestId: 'invalid-episode',
+      }),
+    ).rejects.toThrow('活动频道会话')
+  })
+
+  it('invokes raw API with unsupported adapter', async () => {
+    const context = await setup(true)
+    await context.runtime.acceptChannelInbound(inbound(context.connection.id, context.channel.id, 'raw-api'))
+    const episode = context.runtimeRepository.getActiveEpisode(context.channel.id, context.agent.definition.id)!
+
+    // Test unsupported raw API (default adapter doesn't have invokeRawApi)
+    await expect(
+      context.runtime.invokeChannelRawApi({
+        episodeId: episode.id,
+        api: 'test_api',
+        params: {},
+        clientRequestId: 'unsupported-api',
+      }),
+    ).rejects.toThrow('不支持')
+
+    // Test invalid episode
+    await expect(
+      context.runtime.invokeChannelRawApi({
+        episodeId: EpisodeIdSchema.parse('eps_MISSING'),
+        api: 'test_api',
+        params: {},
+        clientRequestId: 'missing-episode',
+      }),
+    ).rejects.toThrow('活动频道会话')
+  })
 })
 
 describe('ChannelRuntime extension inbound hooks and scheduled jobs', () => {

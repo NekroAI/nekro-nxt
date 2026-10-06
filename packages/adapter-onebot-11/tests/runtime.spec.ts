@@ -730,4 +730,197 @@ describe('OneBot 11 normalized inbound', () => {
       }),
     ).resolves.toMatchObject({ status: 'failed' })
   })
+
+  it('invokes platform actions with parameter validation', async () => {
+    const protocol = await protocolEndpoint()
+    const fake = createFakeContext()
+    const runtime = new OneBot11Runtime({
+      context: fake.context,
+      config: { endpoint: protocol.endpoint, capturePokeEvents: true, captureMessageReactionEvents: false },
+      transport: { reconnectDelaysMs: [5] },
+    })
+    await runtime.start()
+    await waitFor(() => fake.diagnostics.some(({ status }) => status === 'connected'))
+
+    const socket = [...protocol.server.clients][0]!
+    socket.send(
+      JSON.stringify({
+        post_type: 'message',
+        message_type: 'group',
+        group_id: '12001',
+        user_id: '13001',
+        message_id: 'test-anchor',
+        message: [{ type: 'text', data: { text: 'test' } }],
+      }),
+    )
+    await waitFor(() => fake.events.length === 1)
+    const channelId = [...fake.channels.values()][0]!
+    const memberId = [...fake.members.values()][0]!
+
+    // Test like_member action
+    await expect(
+      runtime.interactions.invokePlatformAction!({
+        channelId,
+        action: 'like_member',
+        args: { memberId, times: 5 },
+        clientRequestId: 'like-1',
+      }),
+    ).resolves.toMatchObject({ status: 'succeeded' })
+
+    // Test like_member with invalid times
+    const invalidTimesResult = await runtime.interactions.invokePlatformAction!({
+      channelId,
+      action: 'like_member',
+      args: { memberId, times: 15 },
+      clientRequestId: 'like-invalid',
+    })
+    expect(invalidTimesResult.status).toBe('failed')
+    if (invalidTimesResult.status !== 'succeeded') {
+      expect((invalidTimesResult as { message?: string }).message).toContain('1-10')
+    }
+
+    // Test mute_member action
+    await expect(
+      runtime.interactions.invokePlatformAction!({
+        channelId,
+        action: 'mute_member',
+        args: { memberId, seconds: 600 },
+        clientRequestId: 'mute-1',
+      }),
+    ).resolves.toMatchObject({ status: 'succeeded' })
+
+    // Test kick_member action
+    await expect(
+      runtime.interactions.invokePlatformAction!({
+        channelId,
+        action: 'kick_member',
+        args: { memberId, rejectRejoin: true },
+        clientRequestId: 'kick-1',
+      }),
+    ).resolves.toMatchObject({ status: 'succeeded' })
+
+    // Test set_member_card action
+    await expect(
+      runtime.interactions.invokePlatformAction!({
+        channelId,
+        action: 'set_member_card',
+        args: { memberId, card: '新名片' },
+        clientRequestId: 'card-1',
+      }),
+    ).resolves.toMatchObject({ status: 'succeeded' })
+
+    // Test set_essence_message action
+    await expect(
+      runtime.interactions.invokePlatformAction!({
+        channelId,
+        action: 'set_essence_message',
+        args: { messageId: 'test-anchor' },
+        clientRequestId: 'essence-1',
+      }),
+    ).resolves.toMatchObject({ status: 'succeeded' })
+
+    // Test unknown action
+    await expect(
+      runtime.interactions.invokePlatformAction!({
+        channelId,
+        action: 'unknown_action',
+        args: {},
+        clientRequestId: 'unknown-1',
+      }),
+    ).resolves.toMatchObject({ status: 'unsupported' })
+
+    // Test member resolution failure
+    Object.defineProperty(fake.context.members, 'resolvePlatformUserId', {
+      value: () => Promise.resolve(undefined),
+    })
+    const missingMemberResult = await runtime.interactions.invokePlatformAction!({
+      channelId,
+      action: 'like_member',
+      args: { memberId, times: 1 },
+      clientRequestId: 'like-missing-member',
+    })
+    expect(missingMemberResult.status).toBe('failed')
+    if (missingMemberResult.status !== 'succeeded') {
+      expect((missingMemberResult as { message?: string }).message).toContain('找不到')
+    }
+
+    await runtime.stop()
+  })
+
+  it('invokes raw API with blacklist and auto-fill group_id', async () => {
+    const protocol = await protocolEndpoint()
+    const fake = createFakeContext()
+    const runtime = new OneBot11Runtime({
+      context: fake.context,
+      config: { endpoint: protocol.endpoint, capturePokeEvents: true, captureMessageReactionEvents: false },
+      transport: { reconnectDelaysMs: [5] },
+    })
+    await runtime.start()
+    await waitFor(() => fake.diagnostics.some(({ status }) => status === 'connected'))
+
+    const socket = [...protocol.server.clients][0]!
+    socket.send(
+      JSON.stringify({
+        post_type: 'message',
+        message_type: 'group',
+        group_id: '22001',
+        user_id: '23001',
+        message_id: 'raw-anchor',
+        message: [{ type: 'text', data: { text: 'raw' } }],
+      }),
+    )
+    await waitFor(() => fake.events.length === 1)
+    const channelId = [...fake.channels.values()][0]!
+
+    // Test raw API call with auto-filled group_id
+    await expect(
+      runtime.interactions.invokeRawApi!({
+        channelId,
+        api: 'send_msg',
+        params: { message: 'hello' },
+        clientRequestId: 'raw-1',
+      }),
+    ).resolves.toMatchObject({ status: 'succeeded' })
+
+    // Verify group_id was auto-filled
+    const sendMsgRequest = protocol.requests.find(({ action }) => action === 'send_msg')
+    expect(sendMsgRequest).toBeDefined()
+    expect(sendMsgRequest).toHaveProperty('params.group_id', '22001')
+
+    // Test blacklisted API
+    const blacklistResult = await runtime.interactions.invokeRawApi!({
+      channelId,
+      api: 'set_restart',
+      params: {},
+      clientRequestId: 'raw-blacklist',
+    })
+    expect(blacklistResult.status).toBe('failed')
+    if (blacklistResult.status !== 'succeeded') {
+      expect((blacklistResult as { message?: string }).message).toContain('禁止')
+    }
+
+    // Test another blacklisted API
+    const blacklistResult2 = await runtime.interactions.invokeRawApi!({
+      channelId,
+      api: 'set_login_info',
+      params: {},
+      clientRequestId: 'raw-blacklist-2',
+    })
+    expect(blacklistResult2.status).toBe('failed')
+    if (blacklistResult2.status !== 'succeeded') {
+      expect((blacklistResult2 as { message?: string }).message).toContain('禁止')
+    }
+
+    // Test raw API with explicit group_id (should not be overridden)
+    await expect(
+      runtime.interactions.invokeRawApi!({
+        channelId,
+        api: 'send_msg',
+        params: { message: 'test', group_id: '33001' },
+        clientRequestId: 'raw-explicit-id',
+      }),
+    ).resolves.toMatchObject({ status: 'succeeded' })
+
+    await runtime.stop()
+  })
 })

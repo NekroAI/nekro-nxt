@@ -29,9 +29,10 @@ interface DurableInteractionIntent {
   readonly episodeId: EpisodeId
   readonly agentId: AgentId
   readonly clientRequestId: string
-  readonly kind: 'retract-message' | 'nudge-member'
+  readonly kind: 'retract-message' | 'nudge-member' | 'platform-action' | 'raw-api'
   readonly targetId: string
   readonly state: 'planned' | 'sending' | ChannelInteractionStatus
+  readonly args?: JsonValue
   readonly result?: JsonValue
   readonly createdAt: number
   readonly updatedAt: number
@@ -93,7 +94,7 @@ const parseInteractionIntent = (candidate: unknown): DurableInteractionIntent | 
     !episodeId.success ||
     !agentId.success ||
     typeof row['clientRequestId'] !== 'string' ||
-    (kind !== 'retract-message' && kind !== 'nudge-member') ||
+    (kind !== 'retract-message' && kind !== 'nudge-member' && kind !== 'platform-action' && kind !== 'raw-api') ||
     typeof row['targetId'] !== 'string' ||
     (state !== 'planned' &&
       state !== 'sending' &&
@@ -115,6 +116,7 @@ const parseInteractionIntent = (candidate: unknown): DurableInteractionIntent | 
     kind,
     targetId: row['targetId'],
     state,
+    ...(row['args'] === undefined ? {} : { args: parseJsonValue(row['args']) }),
     ...(row['result'] === undefined ? {} : { result: parseJsonValue(row['result']) }),
     createdAt: row['createdAt'],
     updatedAt: row['updatedAt'],
@@ -312,6 +314,149 @@ export class ChannelInteractions {
     )
   }
 
+  async invokeChannelPlatformAction(input: {
+    readonly episodeId: EpisodeId
+    readonly action: string
+    readonly args: Readonly<Record<string, JsonValue>>
+    readonly clientRequestId: string
+  }): Promise<ChannelInteractionResult> {
+    const episode = this.#requireInteractionEpisode(input.episodeId)
+    return this.#withChannel(episode.channelId, () => this.#invokeChannelPlatformAction(input))
+  }
+
+  async #invokeChannelPlatformAction(input: {
+    readonly episodeId: EpisodeId
+    readonly action: string
+    readonly args: Readonly<Record<string, JsonValue>>
+    readonly clientRequestId: string
+  }): Promise<ChannelInteractionResult> {
+    const episode = this.#requireInteractionEpisode(input.episodeId)
+    const channel = this.#coreRepository.getChannel(episode.channelId)!
+    await this.ensureInteractionsLoaded(channel.connectionId)
+    const existing = this.#findInteraction(episode, input.clientRequestId)
+    if (existing) return this.#interactionResult(existing)
+    const adapter = this.#resolveAdapter(channel.connectionId)
+    if (!adapter?.interactions?.invokePlatformAction) {
+      throw new Error('当前连接不支持平台动作。')
+    }
+    const now = this.#timestamp()
+    const recent = [...this.#interactionIntents.values()].filter(
+      (intent) =>
+        intent.channelId === channel.id && intent.kind === 'platform-action' && now - intent.createdAt < 60_000,
+    )
+    // Rate limiting for platform actions: max 10 per minute
+    // (Risk level classification is handled by the Adapter Descriptor, we just enforce the limit)
+    if (recent.length >= 10) {
+      throw new Error('平台动作每频道每分钟最多 10 次。')
+    }
+    const intent = await this.#planInteraction({
+      episode,
+      connectionId: channel.connectionId,
+      clientRequestId: input.clientRequestId,
+      kind: 'platform-action',
+      targetId: input.action,
+      args: input.args,
+    })
+    const outcome = await adapter.interactions
+      .invokePlatformAction({
+        channelId: channel.id,
+        action: input.action,
+        args: input.args,
+        clientRequestId: input.clientRequestId,
+      })
+      .catch((error: unknown) => ({
+        status: 'failed' as const,
+        message: error instanceof Error ? error.message : String(error),
+      }))
+    const status = outcome.status === 'succeeded' ? 'succeeded' : outcome.status === 'unknown' ? 'unknown' : 'failed'
+    const resultValue = 'result' in outcome ? outcome.result : undefined
+    const result: ChannelInteractionResult = {
+      intentId: intent.id,
+      status,
+      message:
+        'message' in outcome ? outcome.message : status === 'succeeded' ? '平台动作已完成。' : '平台动作执行失败。',
+      ...(resultValue === undefined ? {} : { value: resultValue }),
+    }
+    this.#interactionIntents.set(intent.id, {
+      ...intent,
+      state: status,
+      ...(resultValue === undefined ? {} : { result: resultValue }),
+      updatedAt: this.#timestamp(),
+    })
+    await this.#persistInteractionIntents(channel.connectionId)
+    return result
+  }
+
+  async invokeChannelRawApi(input: {
+    readonly episodeId: EpisodeId
+    readonly api: string
+    readonly params: Readonly<Record<string, JsonValue>>
+    readonly clientRequestId: string
+  }): Promise<ChannelInteractionResult> {
+    const episode = this.#requireInteractionEpisode(input.episodeId)
+    return this.#withChannel(episode.channelId, () => this.#invokeChannelRawApi(input))
+  }
+
+  async #invokeChannelRawApi(input: {
+    readonly episodeId: EpisodeId
+    readonly api: string
+    readonly params: Readonly<Record<string, JsonValue>>
+    readonly clientRequestId: string
+  }): Promise<ChannelInteractionResult> {
+    const episode = this.#requireInteractionEpisode(input.episodeId)
+    const channel = this.#coreRepository.getChannel(episode.channelId)!
+    await this.ensureInteractionsLoaded(channel.connectionId)
+    const existing = this.#findInteraction(episode, input.clientRequestId)
+    if (existing) return this.#interactionResult(existing)
+    const adapter = this.#resolveAdapter(channel.connectionId)
+    if (!adapter?.interactions?.invokeRawApi) {
+      throw new Error('当前连接不支持原始 API 透传。')
+    }
+    const now = this.#timestamp()
+    const recent = [...this.#interactionIntents.values()].filter(
+      (intent) => intent.channelId === channel.id && intent.kind === 'raw-api' && now - intent.createdAt < 60_000,
+    )
+    if (recent.length >= 20) {
+      throw new Error('原始 API 每频道每分钟最多 20 次。')
+    }
+    const intent = await this.#planInteraction({
+      episode,
+      connectionId: channel.connectionId,
+      clientRequestId: input.clientRequestId,
+      kind: 'raw-api',
+      targetId: input.api,
+      args: input.params,
+    })
+    const outcome = await adapter.interactions
+      .invokeRawApi({
+        channelId: channel.id,
+        api: input.api,
+        params: input.params,
+        clientRequestId: input.clientRequestId,
+      })
+      .catch((error: unknown) => ({
+        status: 'failed' as const,
+        message: error instanceof Error ? error.message : String(error),
+      }))
+    const status = outcome.status === 'succeeded' ? 'succeeded' : outcome.status === 'unknown' ? 'unknown' : 'failed'
+    const resultValue = 'result' in outcome ? outcome.result : undefined
+    const result: ChannelInteractionResult = {
+      intentId: intent.id,
+      status,
+      message:
+        'message' in outcome ? outcome.message : status === 'succeeded' ? '原始 API 已调用。' : '原始 API 调用失败。',
+      ...(resultValue === undefined ? {} : { value: resultValue }),
+    }
+    this.#interactionIntents.set(intent.id, {
+      ...intent,
+      state: status,
+      ...(resultValue === undefined ? {} : { result: resultValue }),
+      updatedAt: this.#timestamp(),
+    })
+    await this.#persistInteractionIntents(channel.connectionId)
+    return result
+  }
+
   #requireInteractionEpisode(episodeId: EpisodeId): EpisodeRecord {
     const episode = this.#runtimeRepository.getEpisode(episodeId)
     if (!episode || episode.status !== 'active') throw new Error('互动工具需要当前活动频道会话。')
@@ -327,6 +472,7 @@ export class ChannelInteractions {
     readonly clientRequestId: string
     readonly kind: DurableInteractionIntent['kind']
     readonly targetId: string
+    readonly args?: JsonValue
   }): Promise<DurableInteractionIntent> {
     if (!input.clientRequestId.trim()) throw new Error('互动请求必须提供 clientRequestId。')
     const now = this.#timestamp()
@@ -340,6 +486,7 @@ export class ChannelInteractions {
       kind: input.kind,
       targetId: input.targetId,
       state: 'planned',
+      ...(input.args === undefined ? {} : { args: input.args }),
       createdAt: now,
       updatedAt: now,
     }
