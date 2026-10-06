@@ -1,11 +1,17 @@
 import { Check, ChevronRight, Copy, Pencil, X } from 'lucide-react'
-import { useEffect, useId, useRef, useState, type ReactNode } from 'react'
+import { createContext, useContext, useEffect, useId, useRef, useState, type ReactNode } from 'react'
 import { Input } from './form.js'
 import { IconButton, Pressable } from './primitives.js'
 import { Disclosure } from './layout.js'
 import styles from './detail.module.css'
 
-/** Header of any object page or pane: identity, state, a short meta line and its actions. */
+/** Heading level for object headers: the main area owns the page's h1, detail panes sit one level below. */
+const HeadingLevel = createContext<1 | 2>(1)
+
+/**
+ * Header of any object page or pane: identity, state, a short meta line and its actions. The title is an h1 in the
+ * main area and an h2 inside a DetailPane, unless `level` says otherwise.
+ */
 export function ObjectHeader({
   visual,
   title,
@@ -13,7 +19,9 @@ export function ObjectHeader({
   meta,
   actions,
   size = 'default',
+  level,
 }: {
+  readonly level?: 1 | 2
   readonly visual?: ReactNode
   readonly title: ReactNode
   readonly status?: ReactNode
@@ -21,12 +29,14 @@ export function ObjectHeader({
   readonly actions?: ReactNode
   readonly size?: 'default' | 'compact'
 }) {
+  const contextLevel = useContext(HeadingLevel)
+  const Heading = (level ?? contextLevel) === 1 ? 'h1' : 'h2'
   return (
     <header className={[styles.header, size === 'compact' ? styles.headerCompact : ''].join(' ')}>
       {visual ? <div className={styles.visual}>{visual}</div> : null}
       <div className={styles.identity}>
         <div className={styles.titleRow}>
-          <h2 className={styles.title}>{title}</h2>
+          <Heading className={styles.title}>{title}</Heading>
           {status}
         </div>
         {meta ? <div className={styles.meta}>{meta}</div> : null}
@@ -56,7 +66,9 @@ export function DetailPane({
   return (
     <aside className={styles.pane} aria-label={label} data-detail-pane="">
       <div className={styles.paneHead}>
-        <div className={styles.paneHeadMain}>{header}</div>
+        <div className={styles.paneHeadMain}>
+          <HeadingLevel.Provider value={2}>{header}</HeadingLevel.Provider>
+        </div>
         {onClose ? (
           <IconButton label="关闭详情" size="small" onClick={onClose}>
             <X size={16} />
