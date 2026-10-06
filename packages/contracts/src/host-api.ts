@@ -696,6 +696,28 @@ const AdapterConnectionDescriptorSchema = z
       .strict(),
     diagnostics: z.object({ receive: z.boolean(), send: z.boolean() }).strict(),
     creation: AdapterConnectionCreationSchema.optional(),
+    /** Typed platform actions the Adapter offers to agent extensions (`ctx.nxt.platform`). */
+    platformActions: z
+      .array(
+        z
+          .object({
+            name: z.string().regex(/^[a-z0-9_]{1,64}$/u),
+            title: z.string(),
+            description: z.string(),
+            risk: z.enum(['low', 'admin']),
+            channelKinds: z.array(z.enum(['direct', 'group'])).min(1),
+            parameters: z
+              .object({
+                type: z.literal('object'),
+                properties: z.record(z.string(), JsonValueSchema),
+                required: z.array(z.string()).optional(),
+              })
+              .strict(),
+          })
+          .strict(),
+      )
+      .optional(),
+    rawApi: z.object({ description: z.string() }).strict().optional(),
     configSchema: ConfigSchemaDocumentSchema,
   })
   .strict()
