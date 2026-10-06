@@ -43,9 +43,9 @@ html[data-ui='next'] [data-nxt-theme='light'] {
   --risk-3: #b03a30;
   --brass: #b4884a;
   --focus: #0b73b4;
-  --ok: #217a4f;
+  --ok: #1b6843;
   --ok-soft: rgb(33 122 79 / 0.1);
-  --warn: #956111;
+  --warn: #87570d;
   --warn-soft: rgb(196 140 40 / 0.14);
   --bad: #b03a30;
   --bad-soft: rgb(176 58 48 / 0.09);
@@ -201,10 +201,8 @@ html[data-ui='next'] *::after {
   box-sizing: border-box;
 }
 
-html[data-ui='next'] button,
-html[data-ui='next'] input,
-html[data-ui='next'] select,
-html[data-ui='next'] textarea {
+/* Zero specificity: a reset must never beat a component's own colour or font (e.g. text on a primary fill). */
+:where(html[data-ui='next']) :where(button, input, select, textarea) {
   font: inherit;
   color: inherit;
 }
