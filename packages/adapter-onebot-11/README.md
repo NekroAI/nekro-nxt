@@ -11,3 +11,5 @@ Descriptor 分别声明 Channel 活动和 Connection 活动。好友新增、账
 这些 Channel 活动的触发默认值属于具体 Connection，不属于 OneBot Adapter 类型本身；同一 Adapter 创建的两个连接可以分别设置。单个群聊或私聊使用三态覆盖，缺省跟随所属 Connection。
 
 首版只支持正向 WebSocket，不支持反向 WebSocket、HTTP + Webhook、OneBot 12 或 raw Action 透传。
+
+平台动作：`like_member`（`send_like`，私聊与群聊）、`mute_member`（`set_group_ban`，0 秒解除）、`kick_member`（`set_group_kick`）、`set_member_card`（`set_group_card`）和 `set_essence_message`（`set_essence_msg`），除点赞外均为 `admin` 级。原始透传调用 OneBot 动作，群聊中缺少 `group_id` 时补上当前群号；会改变连接本身的动作（重启、清缓存、修改登录信息与账号资料等）在黑名单中直接拒绝。

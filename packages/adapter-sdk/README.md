@@ -11,3 +11,5 @@ Descriptor 声明 `provisioning`、可编辑别名、频道发现方式、`inter
 配置 Schema 是序列化 Schemastery（可用 `configSchema` 构建器生成），产品表单直接渲染。`meta.role: 'secret'` 的字段是只写凭据：原始值只经过 Host 只写通道，以字段名为键存入 `credentialRefs`，Connection 配置和 Adapter factory 只接收引用。配置更新只替换 Schema 声明的非凭据字段，Adapter 写入的其他私有字段保持不变。`transport` 是可替换的 HTTP/WebSocket 边界：生产使用 Server 网络实现，测试和动态验证使用无网络 Fake。远程 Asset 默认只允许 HTTPS；协议明确需要 HTTP 时可为单次抓取开启公网 HTTP，Host 仍拒绝 URL 凭据、重定向和私网目标。
 
 `AdapterConnectionRuntime.localChannel` 是可选的应用内消息端口。Host 通过 Descriptor 的系统单例与 `internal` 能力发现唯一内置实现，不比较 Adapter key。
+
+Adapter Descriptor 可选声明 `platformActions`（名称、标题、说明、风险等级 `low | admin`、适用的频道 kind 与参数对象 Schema）和 `rawApi`；对应地，`AdapterConnectionInteractions` 可选实现 `invokePlatformAction` 与 `invokeRawApi`，返回互动结果并可附带平台返回值。成员参数统一用频道成员 ID（`memberId`），由 Adapter 自行解析为平台账号。缺省字段不改变已有 Descriptor 的摘要。智能体扩展经 `ctx.nxt.platform` 调用，宿主只开放扩展声明过且当前频道 kind 适用的动作。

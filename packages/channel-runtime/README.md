@@ -18,6 +18,10 @@ Channel Runtime 在每次调用 `AgentSessionDriver.admit()` 时，根据当前 
 
 撤回与戳一戳使用耐久 Interaction Intent。提交平台前依次保存 `planned` 和 `sending`，写入后结果不明时保存 `unknown` 且不自动重试；`clientRequestId` 在智能体、频道范围内去重。撤回只允许同一智能体在当前频道的成功物理投递，戳一戳只允许当前频道成员并执行 30 秒成员冷却和每频道每分钟三次限制。
 
+平台动作与原始接口透传沿用同一耐久意图：`invokeChannelPlatformAction` 和 `invokeChannelRawApi` 只作用于 Episode 的当前频道，意图类型分别为 `platform-action` 与 `raw-api`，`targetId` 为动作名或接口名并保存参数；按 `clientRequestId` 去重，结果不明记为 `unknown` 不重试；平台动作每频道每分钟最多 10 次，原始透传最多 20 次。Adapter 未实现时抛出可读错误；平台返回值放在结果的 `value` 中。
+
+可选的 `inboundHooks`（`InboundHookGate`）在入站事实提交之后、创建 Admission 之前对每个覆盖到的绑定求一次决定：`suppress` 不触发、`force` 在非 `observe-only` 绑定上强制触发、`hidden` 让事件不进入交给 Session 的事件列表、`annotation` 随对应事件交给 Session。决定由网关持久保存；触发判定、`replyRequired` 和恢复都只读取已保存的决定，崩溃导致未决定的积压在恢复时补做一次。被隐藏的事件仍随后续可见事件推进 Admission 游标，但不会单独形成 Admission。`fireExtensionJob` 把到期的定时任务以 `kind: 'control'`、`facts.extensionJob` 的事实写入频道，去重键为任务 ID 与计划时间，因此重复触发同一时刻不会产生第二条事实；它在非 `observe-only` 绑定上唤醒智能体，但不计入 `replyRequired`。
+
 `ChannelInteractions` 独立持有撤回与戳一戳的耐久意图、连接恢复及持久化队列。同一频道的交互按顺序检查和提交，重复请求返回已提交结果；不同频道可以并行。首次连接读取合并为单次请求，读取失败不会把连接误记为已恢复。
 
 `ChannelDelivery` 负责投递计划、平台回执提交和未完成投递恢复；`ChannelRuntime` 保留会话推进、Binding 变更和管理员消息协调。发送开始后缺少确认回执的投递仍恢复为结果未知，不自动重发。
