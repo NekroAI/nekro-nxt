@@ -402,8 +402,13 @@ describe('dynamic authoring closed loop', () => {
         code: {
           host: "harness.handle('broken_summary', () => { throw new Error('synthetic rpc failure') }); return { apply() {} }",
           client: `return {
-            inject: ['slots'],
-            apply(ctx) { ctx.slots.register({ name: 'agent.workbench.sections', id: 'main' }, () => React.createElement('div')) }
+            inject: ['panels'],
+            apply(ctx) {
+              ctx.panels.register(
+                { id: 'main', anchor: 'agent', title: '接口面板', densities: ['full'] },
+                () => React.createElement('div'),
+              )
+            }
           }`,
         },
         resources: {},

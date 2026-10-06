@@ -269,9 +269,10 @@ button.instance {
   animation: canvasIn 260ms ease both;
 }
 
+/* Starts partly visible: switching spaces must never show an empty canvas frame. */
 @keyframes canvasIn {
   from {
-    opacity: 0;
+    opacity: 0.45;
   }
 }
 

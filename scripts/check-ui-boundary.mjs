@@ -108,6 +108,33 @@ export function Fixture() {
   console.log('UI boundary self-test passed (Radix/Motion/native controls rejected; ui-kit and hidden submit allowed).')
 }
 
+/**
+ * Extension UI V6 (Decision 2026-10-04 §5) replaced page-position Slots with semantic anchors. Their names must not
+ * return in product code or tests; archived docs keep them as history.
+ */
+const RETIRED_SLOT_NAMES =
+  /\b(?:agent\.workbench\.sections|extension\.details\.panels|connection\.adapter\.(?:setup|status|test))\b/u
+const retiredSlotRoots = [
+  'apps/web/src',
+  'apps/web/tests',
+  'apps/web/browser-tests',
+  'apps/server/src',
+  'apps/server/tests',
+]
+
+const retiredSlotFindings = async () => {
+  const findings = []
+  for (const directory of retiredSlotRoots) {
+    for (const relativePath of await filesUnder(directory)) {
+      const lines = (await readFile(path.join(root, relativePath), 'utf8')).split('\n')
+      lines.forEach((line, index) => {
+        if (RETIRED_SLOT_NAMES.test(line)) findings.push(`${relativePath}:${index + 1} 使用了已退役的 V5 Slot 名`)
+      })
+    }
+  }
+  return findings
+}
+
 if (process.argv.includes('--self-test')) {
   runSelfTest()
 } else {
@@ -116,6 +143,11 @@ if (process.argv.includes('--self-test')) {
   for (const relativePath of sourceFiles) {
     const source = await readFile(path.join(root, relativePath), 'utf8')
     findings.push(...inspectSource(relativePath, source))
+  }
+  const retired = await retiredSlotFindings()
+  if (retired.length > 0) {
+    console.error(['发现已退役的扩展 Slot：', ...retired].join('\n'))
+    process.exitCode = 1
   }
   if (findings.length > 0) {
     console.error(
