@@ -204,6 +204,13 @@
       "when": 1791314965699,
       "tag": "0028_extension_storage",
       "breakpoints": true
+    },
+    {
+      "idx": 29,
+      "version": "6",
+      "when": 1791316400244,
+      "tag": "0029_extension_jobs_hooks",
+      "breakpoints": true
     }
   ]
 }

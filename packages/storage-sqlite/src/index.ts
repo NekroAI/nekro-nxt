@@ -16,6 +16,8 @@ import { createAssetsRepository } from './repositories/assets.js'
 import { createDshPluginRepository, type DshPluginRepository } from './repositories/dsh-plugins.js'
 import { createAuthoringRepository } from './repositories/authoring.js'
 import { createExtensionStorageRepository, type ExtensionStorageRepository } from './repositories/extension-storage.js'
+import { createExtensionJobsRepository, type ExtensionJobsRepository } from './repositories/extension-jobs.js'
+import { createInboundHooksRepository, type InboundHooksRepository } from './repositories/inbound-hooks.js'
 import { createProjectionRepository, type ProjectionRepository } from './repositories/projections.js'
 
 export * from './backup.js'
@@ -28,6 +30,8 @@ export type { DshSessionStorageRetirementInput, DshSessionStorageRetirementRepor
 export type { DshPluginRepository } from './repositories/dsh-plugins.js'
 export type { ExtensionStorageRepository } from './repositories/extension-storage.js'
 export { ExtensionStorageQuotaError } from './repositories/extension-storage.js'
+export type { ExtensionJobsRepository, ExtensionJobRecord } from './repositories/extension-jobs.js'
+export type { InboundHooksRepository, InboundHookDecisionRecord } from './repositories/inbound-hooks.js'
 export { OutboundResolutionError } from './repositories/projections.js'
 export type {
   ChannelReadPosition,
@@ -76,6 +80,8 @@ export class SqliteCoreRepository implements CurrentRepository {
   readonly #dshPlugins
   readonly #authoring
   readonly #extensionStorage
+  readonly #extensionJobs
+  readonly #inboundHooks
   /** Client workspace read models: read positions, activity, attention dismissals and delivery resolutions. */
   readonly projections: ProjectionRepository
 
@@ -93,6 +99,8 @@ export class SqliteCoreRepository implements CurrentRepository {
     this.#dshPlugins = createDshPluginRepository(database.db)
     this.#authoring = createAuthoringRepository(database.db)
     this.#extensionStorage = createExtensionStorageRepository(database.db)
+    this.#extensionJobs = createExtensionJobsRepository(database.db)
+    this.#inboundHooks = createInboundHooksRepository(database.db)
     this.projections = createProjectionRepository(database.db)
   }
 
@@ -510,4 +518,30 @@ export class SqliteCoreRepository implements CurrentRepository {
   ) => this.#extensionStorage.listExtensionStorageEntries(...args)
   readonly extensionStorageUsage = (...args: Parameters<ExtensionStorageRepository['extensionStorageUsage']>) =>
     this.#extensionStorage.extensionStorageUsage(...args)
+
+  readonly createExtensionJob = (...args: Parameters<ExtensionJobsRepository['createExtensionJob']>) =>
+    this.#extensionJobs.createExtensionJob(...args)
+  readonly getExtensionJob = (...args: Parameters<ExtensionJobsRepository['getExtensionJob']>) =>
+    this.#extensionJobs.getExtensionJob(...args)
+  readonly listExtensionJobs = (...args: Parameters<ExtensionJobsRepository['listExtensionJobs']>) =>
+    this.#extensionJobs.listExtensionJobs(...args)
+  readonly deleteExtensionJob = (...args: Parameters<ExtensionJobsRepository['deleteExtensionJob']>) =>
+    this.#extensionJobs.deleteExtensionJob(...args)
+  readonly deleteDeclaredJobsExcept = (...args: Parameters<ExtensionJobsRepository['deleteDeclaredJobsExcept']>) =>
+    this.#extensionJobs.deleteDeclaredJobsExcept(...args)
+  readonly listDueExtensionJobs = (...args: Parameters<ExtensionJobsRepository['listDueExtensionJobs']>) =>
+    this.#extensionJobs.listDueExtensionJobs(...args)
+  readonly recordExtensionJobFired = (...args: Parameters<ExtensionJobsRepository['recordExtensionJobFired']>) =>
+    this.#extensionJobs.recordExtensionJobFired(...args)
+  readonly setExtensionJobsPaused = (...args: Parameters<ExtensionJobsRepository['setExtensionJobsPaused']>) =>
+    this.#extensionJobs.setExtensionJobsPaused(...args)
+  readonly countExtensionJobs = (...args: Parameters<ExtensionJobsRepository['countExtensionJobs']>) =>
+    this.#extensionJobs.countExtensionJobs(...args)
+
+  readonly getInboundHookDecision = (...args: Parameters<InboundHooksRepository['getInboundHookDecision']>) =>
+    this.#inboundHooks.getInboundHookDecision(...args)
+  readonly saveInboundHookDecision = (...args: Parameters<InboundHooksRepository['saveInboundHookDecision']>) =>
+    this.#inboundHooks.saveInboundHookDecision(...args)
+  readonly listInboundHookDecisions = (...args: Parameters<InboundHooksRepository['listInboundHookDecisions']>) =>
+    this.#inboundHooks.listInboundHookDecisions(...args)
 }

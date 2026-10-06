@@ -31,6 +31,7 @@
     "0026_ui_projections.sql": "30b4d246cf464310dd267cb55bb8b89494b21daf661ce2c6ddcc8671ba5cb7c1",
     "0027_host_installation_config.sql": "694c82074507dcbcb71ef29ba691bec2ef8274b05fcf26bd3e4c83609e5fea69",
     "0028_extension_storage.sql": "45e143b7f1f6de831971dbb47fcfdb7254be9c1c9ba12d71a655d218fb615dbb",
+    "0029_extension_jobs_hooks.sql": "6a4b5cf37dc070fcd250d2c6f3a7af736888e1548742a7ba9813f07fb8705134",
     "meta/0000_snapshot.json": "03573ed4ecfb276bfad4bd1d6041564c11d3c52e1fcb35fc3dd278da7b55448d",
     "meta/0001_snapshot.json": "48b7a1cd91c44d75a394c94af554fc85621fe5fda2dd680d4bc25b68679d4ee5",
     "meta/0002_snapshot.json": "aa0ed0d69885976c1ce596d468657ac121e8cae5ac9e09aa9843be0b3b3127c9",
@@ -60,6 +61,7 @@
     "meta/0026_snapshot.json": "e5206cf28d92234a851152ff048784cad457709ebe7f360852e290a8efb87907",
     "meta/0027_snapshot.json": "556a6eeeae935922d6e133ca7f923c75a6fef073f4e8311d5dd4385f98e8c29f",
     "meta/0028_snapshot.json": "feb71703af6a6af53955bfdef9724bf8483e0e99cda9a7ead6e860c01b349e0a",
-    "meta/_journal.json": "4b2611e449b9b77e8d535d43a741b9af07465bf69ef7912d293b301ada5ee149"
+    "meta/0029_snapshot.json": "2b077dfb7b406b786853f8f9695010fba549444ebfb9c7550a0fcd0afa3a6613",
+    "meta/_journal.json": "5f974297679448829eccbc9830ad99c7350bfe34ac4efbc1db616bfe6238c27a"
   }
 }

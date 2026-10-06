@@ -1172,6 +1172,85 @@ export const extensionStorageEntries = sqliteTable(
   ],
 )
 
+export const extensionJobs = sqliteTable(
+  'extension_jobs',
+  {
+    id: text().primaryKey(),
+    agentId: text('agent_id')
+      .$type<AgentId>()
+      .notNull()
+      .references(() => agentDefinitions.id, { onDelete: 'cascade' }),
+    extensionId: text('extension_id')
+      .$type<ExtensionId>()
+      .references(() => localExtensions.id, { onDelete: 'cascade' }),
+    channelId: text('channel_id')
+      .$type<ChannelId>()
+      .notNull()
+      .references(() => channels.id, { onDelete: 'cascade' }),
+    source: text('source', { enum: ['declared', 'runtime', 'reminder'] }).notNull(),
+    declaredKey: text('declared_key'),
+    label: text().notNull(),
+    scheduleKind: text('schedule_kind', { enum: ['once', 'cron'] }).notNull(),
+    runAt: integer('run_at'),
+    cron: text(),
+    timezone: text(),
+    payloadJson: jsonText<JsonValue>('payload_json').notNull(),
+    nextRunAt: integer('next_run_at'),
+    lastFiredAt: integer('last_fired_at'),
+    paused: integer().notNull().default(0),
+    createdAt: integer('created_at').notNull(),
+  },
+  (table) => [
+    index('extension_jobs_paused_next_run_idx').on(table.paused, table.nextRunAt),
+    index('extension_jobs_agent_extension_idx').on(table.agentId, table.extensionId),
+    uniqueIndex('extension_jobs_declared_unique')
+      .on(table.agentId, table.extensionId, table.channelId, table.declaredKey)
+      .where(sql`${table.source} = 'declared'`),
+    check('extension_jobs_id_ck', sql`${table.id} LIKE 'job_%'`),
+    check('extension_jobs_label_length_ck', sql`LENGTH(${table.label}) BETWEEN 1 AND 200`),
+    check(
+      'extension_jobs_schedule_kind_ck',
+      sql`(${table.scheduleKind} = 'once' AND ${table.runAt} IS NOT NULL AND ${table.cron} IS NULL AND ${table.timezone} IS NULL) OR (${table.scheduleKind} = 'cron' AND ${table.runAt} IS NULL AND ${table.cron} IS NOT NULL AND ${table.timezone} IS NOT NULL)`,
+    ),
+    check(
+      'extension_jobs_declared_key_ck',
+      sql`(${table.source} = 'declared' AND ${table.declaredKey} IS NOT NULL) OR (${table.source} != 'declared' AND ${table.declaredKey} IS NULL)`,
+    ),
+    check(
+      'extension_jobs_extension_id_ck',
+      sql`(${table.source} = 'declared' OR ${table.source} = 'runtime') AND ${table.extensionId} IS NOT NULL OR (${table.source} = 'reminder' AND ${table.extensionId} IS NULL)`,
+    ),
+  ],
+)
+
+export const inboundHookDecisions = sqliteTable(
+  'inbound_hook_decisions',
+  {
+    channelEventId: text('channel_event_id')
+      .$type<ChannelEventId>()
+      .notNull()
+      .references(() => channelEvents.id, { onDelete: 'cascade' }),
+    agentId: text('agent_id')
+      .$type<AgentId>()
+      .notNull()
+      .references(() => agentDefinitions.id, { onDelete: 'cascade' }),
+    trigger: text('trigger', { enum: ['default', 'suppress', 'force'] }).notNull(),
+    hidden: integer().notNull(),
+    annotation: text(),
+    decidedBy: jsonText<ExtensionId[]>('decided_by').notNull(),
+    diagnostics: jsonText<JsonValue>('diagnostics'),
+    decidedAt: integer('decided_at').notNull(),
+  },
+  (table) => [
+    primaryKey({ columns: [table.channelEventId, table.agentId] }),
+    check(
+      'inbound_hook_decisions_annotation_length_ck',
+      sql`${table.annotation} IS NULL OR LENGTH(${table.annotation}) <= 2000`,
+    ),
+    check('inbound_hook_decisions_decided_at_ck', sql`${table.decidedAt} > 0`),
+  ],
+)
+
 export const coreSchema = {
   agentDefinitions,
   agentRevisions,
@@ -1220,4 +1299,6 @@ export const coreSchema = {
   attentionDismissals,
   outboundResolutions,
   extensionStorageEntries,
+  extensionJobs,
+  inboundHookDecisions,
 } as const
