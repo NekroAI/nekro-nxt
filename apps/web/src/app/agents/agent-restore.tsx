@@ -68,8 +68,13 @@ export function RestoreDialog({
     }
   }, [agent.id, agent.currentRevisionId, open])
 
-  const earlier = history?.revisions.filter((config) => !config.current) ?? []
   const oldest = history?.revisions.at(-1)?.id
+  const earlier = (history?.revisions.filter((config) => !config.current) ?? []).map((config) => ({
+    config,
+    summary: changeSummary(config, config.id === oldest),
+    busy: restoring === config.id,
+    locked: restoring !== '' && restoring !== config.id,
+  }))
   const restore = async (config: SavedConfig) => {
     if (!history) return
     setRestoring(config.id)
@@ -106,20 +111,15 @@ export function RestoreDialog({
       {history && earlier.length === 0 ? <p className={styles.note}>还没有更早的配置。</p> : null}
       {earlier.length > 0 ? (
         <ol className={styles.restoreList}>
-          {earlier.map((config) => (
+          {earlier.map(({ config, summary, busy, locked }) => (
             <li key={config.id} className={styles.restoreRow}>
               <span className={styles.cellStack}>
                 <span className={styles.cellTitle}>{savedAt(config.createdAt)}</span>
                 <span className={styles.cellSub}>
-                  {changeSummary(config, config.id === oldest)} · {config.displayName} · {config.model.model}
+                  {summary} · {config.displayName} · {config.model.model}
                 </span>
               </span>
-              <Button
-                size="small"
-                busy={restoring === config.id}
-                disabled={blocked || (restoring !== '' && restoring !== config.id)}
-                onClick={() => void restore(config)}
-              >
+              <Button size="small" busy={busy} disabled={blocked || locked} onClick={() => void restore(config)}>
                 恢复
               </Button>
             </li>

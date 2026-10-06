@@ -57,7 +57,7 @@ export function ModelSection({
   const replacement = missing ? replacementModel(missing, models) : undefined
   const options = models.map((item) => ({ value: agentModelKey(item), label: modelLabel(item) }))
   return (
-    <PropertyGroup id="agent-model" title="模型">
+    <PropertyGroup id="profile-model" title="模型">
       {models.length === 0 ? (
         <Banner
           tone="bad"
@@ -161,7 +161,7 @@ export function ChannelsSection({
   }
   return (
     <PropertyGroup
-      id="agent-channels"
+      id="profile-channels"
       title="频道"
       description="触发方式修改后立即生效"
       actions={
@@ -374,7 +374,7 @@ export function CapabilitiesSection({
     update((current) => ({ ...current, capabilities: { ...current.capabilities, [key]: enabled } }))
 
   return (
-    <PropertyGroup id="agent-capabilities" title="能力">
+    <PropertyGroup id="profile-capabilities" title="能力">
       <PropertyList>
         <PropertyRow label="系统访问" description="逐级递进，级别越高能做的事越多，风险也越高" layout="stacked">
           <RiskLadder
@@ -472,7 +472,7 @@ export function ExtensionsSection({ agent }: { readonly agent: AgentSummary }) {
   }
   return (
     <PropertyGroup
-      id="agent-extensions"
+      id="profile-extensions"
       title="扩展"
       description="开关立即生效"
       actions={
@@ -583,7 +583,7 @@ export function PersonaSection({
     )
   }
   return (
-    <PropertyGroup id="agent-persona" title="设定">
+    <PropertyGroup id="profile-persona" title="设定">
       {body}
     </PropertyGroup>
   )

@@ -44,11 +44,11 @@ import {
 import styles from './agents.module.css'
 
 const SECTIONS = [
-  { id: 'agent-model', label: '模型' },
-  { id: 'agent-channels', label: '频道' },
-  { id: 'agent-capabilities', label: '能力' },
-  { id: 'agent-extensions', label: '扩展' },
-  { id: 'agent-persona', label: '设定' },
+  { id: 'profile-model', label: '模型' },
+  { id: 'profile-channels', label: '频道' },
+  { id: 'profile-capabilities', label: '能力' },
+  { id: 'profile-extensions', label: '扩展' },
+  { id: 'profile-persona', label: '设定' },
 ] as const
 
 const modelLabel = (model: ModelSummary) => `${model.providerName} · ${model.name}`
