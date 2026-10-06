@@ -924,13 +924,14 @@ test.describe('NekroNxt browser projections', () => {
     await withProductPage(
       `/agents/${browserAgentId}`,
       async (page) => {
-        await page.getByRole('button', { name: '编辑' }).click()
-        const name = page.getByLabel('名称')
-        const editor = page.getByRole('textbox', { name: '设定' })
+        await page.getByRole('button', { name: '修改名称' }).click()
+        const name = page.getByLabel('名称', { exact: true })
         await playwrightExpect(name).toHaveValue('资料员')
-        await playwrightExpect(editor).toHaveText('严谨、简洁')
-
         await name.fill('资料员草稿')
+        await name.press('Enter')
+        await page.getByRole('button', { name: '编辑设定' }).click()
+        const editor = page.getByRole('textbox', { name: '设定' })
+        await playwrightExpect(editor).toHaveText('严谨、简洁')
         await editor.fill('草稿内容保持在这里')
         const selectionBefore = await editor.evaluate((element) => {
           element.focus()
@@ -952,9 +953,11 @@ test.describe('NekroNxt browser projections', () => {
         await page.evaluate(() => window.dispatchEvent(new Event('online')))
         await playwrightExpect.poll(() => snapshotRequests).toBeGreaterThan(requestsBeforeRefresh)
 
-        await playwrightExpect(name).toHaveValue('资料员草稿')
+        await playwrightExpect(page.getByRole('heading', { name: '资料员草稿' })).toBeVisible()
         await playwrightExpect(editor).toHaveText('草稿内容保持在这里')
-        await playwrightExpect(page.getByRole('button', { name: '发布新版本' })).toBeEnabled()
+        const saveBar = page.getByRole('region', { name: '未保存的修改' })
+        await playwrightExpect(saveBar).toContainText('2 项未保存的修改')
+        await playwrightExpect(saveBar.getByRole('button', { name: '保存' })).toBeEnabled()
         expect(
           await editor.evaluate(() => {
             const selection = window.getSelection()
@@ -976,7 +979,8 @@ test.describe('NekroNxt browser projections', () => {
     await withProductPage('/agents', async (page) => {
       await playwrightExpect(page).toHaveURL(new RegExp(`/agents/${browserAgentId}$`, 'u'))
       await playwrightExpect(page.getByRole('heading', { name: '资料员' })).toBeVisible()
-      await playwrightExpect(page.getByRole('heading', { name: '版本' })).toBeVisible()
+      await playwrightExpect(page.getByRole('heading', { name: '设定' })).toBeVisible()
+      await playwrightExpect(page.locator('main')).not.toContainText('版本')
       await playwrightExpect(page.locator('main')).not.toContainText(browserAgentId)
       await playwrightExpect(page.locator('main')).not.toContainText(browserRevisionId)
     })
@@ -1312,6 +1316,9 @@ test.describe('NekroNxt browser projections', () => {
         await playwrightExpect(confirm).toBeVisible()
         expect(capabilityRequests).toHaveLength(0)
         await confirm.getByRole('button', { name: '允许' }).click()
+        // Capabilities are saved together with the rest of the configuration.
+        expect(capabilityRequests).toHaveLength(0)
+        await page.getByRole('region', { name: '未保存的修改' }).getByRole('button', { name: '保存' }).click()
         await playwrightExpect.poll(() => capabilityRequests.length).toBe(1)
         expect(capabilityRequests[0]).toMatchObject({
           fileTools: true,
