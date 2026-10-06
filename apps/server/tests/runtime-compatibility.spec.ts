@@ -322,6 +322,7 @@ describe('NekroRuntime compatibility recovery', () => {
         name: '手动修复扩展',
         purpose: '验证普通启用提交兼容性证据',
         hostCode: "harness.handle('probe', () => 'recovered'); return { apply() {} }",
+        config: { schema: { type: 'object', dict: { option: { type: 'string', meta: { description: '选项' } } } } },
       },
     })
     const config = { option: 'unchanged' }

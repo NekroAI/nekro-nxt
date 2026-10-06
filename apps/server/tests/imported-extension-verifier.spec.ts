@@ -80,12 +80,108 @@ describe('imported Extension Runtime verification', () => {
     await expect(
       verifyImportedExtensionRevision({ extension, revision, materialized, artifact, dshVersion: '0.1.1-rc.2' }),
     ).resolves.toMatchObject({
-      contractVersion: 'nekro-nxt-extension-v3',
+      contractVersion: 'nekro-nxt-extension-v4',
       scope: 'host-ui',
       origin: { pluginRunId: 'local-runtime-verification' },
       rpcMethods: ['status'],
       renderedPages: [page],
       permissions: { permissions: ['runtime.read'], networkOrigins: [] },
     })
+  })
+
+  const verifyAgent = async (name: string, clientCode: string, permissions: readonly string[]) => {
+    const directory = await mkdtemp(path.join(tmpdir(), 'nekro-nxt-import-agent-'))
+    directories.push(directory)
+    const extensionId = ExtensionIdSchema.parse(`ext_IMPORT${name.toUpperCase()}`)
+    const revisionId = ExtensionRevisionIdSchema.parse(`xrv_IMPORT${name.toUpperCase()}`)
+    const materialized = materializeDynamicPackage({
+      extensionId,
+      revisionId,
+      snapshot: {
+        name: '导入面板验证',
+        purpose: '验证面板与工具视图。',
+        hostCode: `return {
+  inject: ['tools'],
+  apply(ctx) {
+    ctx.tools.register(harness.defineTool({
+      name: 'weather_lookup',
+      description: '查询天气。',
+      parameters: {},
+      execute() { return 'sunny' }
+    }))
+  }
+}`,
+        clientCode,
+        permissions: { permissions: [...permissions], networkOrigins: [] },
+        contributions: [
+          { kind: 'tool', name: 'weather_lookup', description: '查询天气。' },
+          { kind: 'panel', id: 'status', anchor: 'agent', title: '状态', densities: ['compact', 'full'] },
+          { kind: 'tool-view', tool: 'weather_lookup' },
+        ],
+      },
+    })
+    const sourceStore = new ExtensionSourceStore(path.join(directory, 'sources'))
+    await sourceStore.publish(extensionId, revisionId, materialized)
+    const artifact = await new ExtensionBuilder(path.join(directory, 'cache')).build({
+      extensionId,
+      revisionId,
+      contentDigest: materialized.contentDigest,
+      sourceDirectory: sourceStore.revisionSourceDirectory(extensionId, revisionId),
+    })
+    return verifyImportedExtensionRevision({
+      extension: {
+        id: extensionId,
+        scope: 'agent',
+        slug: `import-${name}`,
+        displayName: '导入面板验证',
+        description: '',
+        createdAt: 1,
+      },
+      revision: {
+        id: revisionId,
+        extensionId,
+        revisionNumber: 1,
+        contentDigest: materialized.contentDigest,
+        payloadDigest: materialized.payloadDigest,
+        createdAt: 1,
+      },
+      materialized,
+      artifact,
+      dshVersion: '0.1.1-rc.2',
+    })
+  }
+
+  const panelClient = `const densities = []
+const views = []
+return {
+  apply(ctx) {
+    ctx.panels.register(
+      { id: 'status', anchor: 'agent', title: '状态', densities: ['compact', 'full'] },
+      ({ anchor, density }) => {
+        densities.push(density)
+        const agent = ctx.data.useAgent(anchor.id)
+        return React.createElement(ctx.ui.Section, null, agent ? agent.name : '')
+      },
+    )
+    ctx.toolViews.register('weather_lookup', ({ call, density }) => {
+      views.push(density)
+      return React.createElement(ctx.ui.StatusBadge, null, call.toolName)
+    })
+  }
+}`
+
+  it('renders every declared panel density and both tool-view densities for an Agent Extension', async () => {
+    await expect(verifyAgent('panel', panelClient, ['agents.read'])).resolves.toMatchObject({
+      contractVersion: 'nekro-nxt-extension-v4',
+      toolInvocations: [{ name: 'weather_lookup', succeeded: true }],
+      renderedPanels: ['status'],
+      renderedToolViews: ['weather_lookup'],
+      renderedMessageRenderers: [],
+      permissions: { permissions: ['agents.read'], networkOrigins: [] },
+    })
+  })
+
+  it('rejects a data hook whose permission the Manifest did not declare', async () => {
+    await expect(verifyAgent('nopermission', panelClient, [])).rejects.toThrow('agents.read')
   })
 })

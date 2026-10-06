@@ -150,12 +150,11 @@ describe('WeChat iLink Server driver', () => {
         provisioning: 'user-created',
         creation: { mode: 'qr-login', actionLabel: '扫码登录' },
         configSchema: {
-          required: [],
-          properties: {
+          type: 'object',
+          dict: {
             enableInboundMedia: {
               type: 'boolean',
-              title: '入站媒体接收',
-              default: true,
+              meta: { description: '入站媒体接收', default: true },
             },
           },
         },

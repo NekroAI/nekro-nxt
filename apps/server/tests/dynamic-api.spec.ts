@@ -116,9 +116,12 @@ describe('NekroNxt domain API — browser dynamic client circuit', () => {
           }
         }`,
         client: `return {
-          inject: ['slots'],
+          inject: ['panels'],
           apply(ctx) {
-            ctx.slots.register({ name: 'agent.workbench.sections', id: 'main' }, () => React.createElement('div'))
+            ctx.panels.register(
+              { id: 'main', anchor: 'agent', title: '概览', densities: ['full'] },
+              () => React.createElement('div'),
+            )
           }
         }`,
       },
@@ -240,7 +243,9 @@ describe('NekroNxt domain API — browser dynamic client circuit', () => {
             pluginId: defined.pluginId,
             packageId: defined.packageId,
             pluginRunId,
-            renderedSlots: ['agent.workbench.sections'],
+            renderedPanels: [{ kind: 'panel', id: 'main', anchor: 'agent', title: '概览', densities: ['full'] }],
+            renderedToolViews: [],
+            renderedMessageRenderers: [],
           }),
         })
       const continuationErrors = vi.spyOn(console, 'error').mockImplementation(() => undefined)
@@ -285,7 +290,7 @@ describe('NekroNxt domain API — browser dynamic client circuit', () => {
       expect(verification).toMatchObject({
         toolNames: ['dynamic_client_probe'],
         toolInvocations: [{ name: 'dynamic_client_probe', succeeded: true }],
-        renderedSlots: ['agent.workbench.sections'],
+        renderedPanels: [expect.objectContaining({ id: 'main', anchor: 'agent' })],
       })
       expect(
         verification.contributions.some(

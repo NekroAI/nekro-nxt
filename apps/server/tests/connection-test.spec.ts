@@ -39,7 +39,7 @@ describe('generic Adapter Connection assembly', () => {
         ],
         features: {},
         diagnostics: { receive: true, send: true },
-        configSchema: { schemaVersion: 1, type: 'object', required: [], properties: {} },
+        configSchema: { type: 'object', dict: {} },
       },
       create: (host) => {
         context = host

@@ -274,18 +274,22 @@ export class ConnectionApplicationService {
     for (const key of Object.keys(configurationPatch)) {
       if (!Object.hasOwn(schema.dict, key) || secretKeys.includes(key)) throw new Error(`连接配置包含未知字段：${key}`)
     }
+    // Only declared, non-secret fields are validated and replaced. Undeclared keys stay: Adapters keep private
+    // state there (an account id from a login, credential references).
     const nextConfig = parseStoredAdapterConfiguration(
       parseConfigValue(
         schema,
         JsonValueSchema.parse({
-          // Keys a newer Adapter Revision no longer declares are dropped instead of blocking the edit.
-          ...Object.fromEntries(Object.entries(storedConfig).filter(([key]) => Object.hasOwn(schema.dict, key))),
+          ...Object.fromEntries(
+            Object.entries(storedConfig).filter(
+              ([key]) => Object.hasOwn(schema.dict, key) && !secretKeys.includes(key),
+            ),
+          ),
           ...configurationPatch,
         }),
         { skipKeys: secretKeys },
       ),
     )
-    for (const key of Object.keys(storedConfig)) delete storedConfig[key]
     Object.assign(storedConfig, nextConfig)
     const updated = this.ports.core.updateConnectionConfig(connectionId, storedConfig)
     const mounted = this.#adapterRuntimes.get(connectionId)

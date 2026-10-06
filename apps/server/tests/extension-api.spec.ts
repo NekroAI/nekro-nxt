@@ -54,18 +54,25 @@ describe('NekroNxt domain API — local Extension lifecycle (M4 slice)', () => {
         }
       }`,
         clientCode: `return {
-        inject: ['slots'],
+        inject: ['panels', 'data'],
         apply(ctx) {
-          ctx.slots.register(
-            { name: 'extension.details.panels', id: 'summary-panel' },
-            (props) => React.createElement('section', { 'data-extension-panel': props.extensionId }, '摘要面板')
+          ctx.panels.register(
+            { id: 'summary-panel', anchor: 'extension', title: '摘要', densities: ['full'] },
+            ({ anchor }) => React.createElement('section', { 'data-extension-panel': anchor.id }, '摘要面板')
           )
         }
       }`,
+        permissions: { permissions: ['agents.read'], networkOrigins: [] },
+        config: {
+          schema: {
+            type: 'object',
+            dict: { length: { type: 'natural', meta: { description: '摘要长度', default: 3 } } },
+          },
+        },
         contributions: [
           { kind: 'tool', name: 'summary_tool', description: 'summary' },
           { kind: 'rpc', method: 'summary' },
-          { kind: 'client-slot', name: 'extension.details.panels' },
+          { kind: 'panel', id: 'summary-panel', anchor: 'extension', title: '摘要', densities: ['full'] },
         ],
       },
       slug: 'channel-summary',
@@ -74,7 +81,7 @@ describe('NekroNxt domain API — local Extension lifecycle (M4 slice)', () => {
       createdByAgentId: agent.definition.id,
       verification: {
         dshVersion: '0.1.1-rc.2',
-        contractVersion: 'nekro-nxt-extension-v1',
+        contractVersion: 'nekro-nxt-extension-v4',
         origin: {
           episodeId: 'eps_synthetic_extension_api',
           pluginId: 'plugin-synthetic-extension-api',
@@ -83,7 +90,10 @@ describe('NekroNxt domain API — local Extension lifecycle (M4 slice)', () => {
         },
         toolInvocations: [{ name: 'summary_tool', succeeded: true }],
         rpcMethods: ['summary'],
-        renderedSlots: ['extension.details.panels'],
+        renderedPanels: ['summary-panel'],
+        renderedToolViews: [],
+        renderedMessageRenderers: [],
+        permissions: { permissions: ['agents.read'], networkOrigins: [] },
       },
     })
 
@@ -106,6 +116,8 @@ describe('NekroNxt domain API — local Extension lifecycle (M4 slice)', () => {
           {
             id: saved.revision.id,
             revisionNumber: 1,
+            format: 'current',
+            ui: { panels: [expect.objectContaining({ id: 'summary-panel', anchor: 'extension' })] },
             verification: { buildKey: projectedBuildKey },
           },
         ],
@@ -113,21 +125,43 @@ describe('NekroNxt domain API — local Extension lifecycle (M4 slice)', () => {
       })
       buildKeyProjection.mockRestore()
 
-      // Activate it for the intelligent-agent through the API.
-      const activationResponse = await fetch(
-        `${origin}/api/agents/${agent.definition.id}/extensions/${saved.extension.id}/activation`,
-        {
-          method: 'POST',
-          headers: { 'content-type': 'application/json' },
-          body: JSON.stringify({ revisionId: saved.revision.id }),
-        },
-      )
+      // Activation asks for permission approval first, then accepts the exact digest.
+      const activationUrl = `${origin}/api/agents/${agent.definition.id}/extensions/${saved.extension.id}/activation`
+      const unapproved = await fetch(activationUrl, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ revisionId: saved.revision.id }),
+      })
+      expect(unapproved.status).toBe(400)
+      const unapprovedJson: unknown = await unapproved.json()
+      const digest = /permission-approval-required:([a-f0-9]{64})/u.exec(JSON.stringify(unapprovedJson))?.[1]
+      expect(digest).toBeDefined()
+      const activationResponse = await fetch(activationUrl, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ revisionId: saved.revision.id, permissionApproval: { permissionDigest: digest } }),
+      })
       expect(activationResponse.ok).toBe(true)
       const activationJson = HostApiContracts.activateExtension.parseResponse(await activationResponse.json())
       expect(activationJson.activation).toMatchObject({
         agentId: agent.definition.id,
         extensionId: saved.extension.id,
         extensionRevisionId: saved.revision.id,
+        config: { length: 3 },
+      })
+      const invalidConfig = await fetch(`${activationUrl}/config`, {
+        method: 'PUT',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ config: { length: -1 } }),
+      })
+      expect(invalidConfig.status).toBe(400)
+      const configResponse = await fetch(`${activationUrl}/config`, {
+        method: 'PUT',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ config: { length: 5 } }),
+      })
+      expect(HostApiContracts.updateExtensionActivationConfig.parseResponse(await configResponse.json())).toEqual({
+        config: { length: 5 },
       })
 
       const artifact = await runtime.extensionService.buildRevision(saved.revision)

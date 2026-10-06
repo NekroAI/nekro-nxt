@@ -2579,6 +2579,7 @@ export const HostApiContracts = {
             extensionId: ExtensionIdSchema,
             extensionRevisionId: ExtensionRevisionIdSchema,
             installedAt: z.number().int().safe().nonnegative(),
+            config: JsonValueSchema,
           })
           .strict(),
       })

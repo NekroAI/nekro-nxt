@@ -73,7 +73,10 @@ export const projectExtensions = (runtime: NekroRuntime) => {
       revisions.map((revision) => [
         revision.id,
         extension.scope === 'agent'
-          ? permissionRequirement(runtime.repository.getExtensionRevisionVerification(revision.id)?.permissions, undefined)
+          ? permissionRequirement(
+              runtime.repository.getExtensionRevisionVerification(revision.id)?.permissions,
+              undefined,
+            )
           : runtime.installation.getHostUiPermissionRequirement(extension.id, revision.id),
       ]),
     )

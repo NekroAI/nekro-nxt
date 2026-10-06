@@ -1075,7 +1075,8 @@ export class DynamicAuthoringRuntime {
         outboundReceipt: observed.outboundReceipt,
       }
       contributions.push(...evidence.renderedPanels)
-      for (const richKind of evidence.renderedMessageRenderers) contributions.push({ kind: 'message-renderer', richKind })
+      for (const richKind of evidence.renderedMessageRenderers)
+        contributions.push({ kind: 'message-renderer', richKind })
       contributions.push(...evidence.renderedPages)
       contributions.push({ kind: 'adapter', apiVersion: 2, key: adapter.key, descriptorDigest })
       return {
