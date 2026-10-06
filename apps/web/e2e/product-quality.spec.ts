@@ -342,7 +342,7 @@ test('writes the four public product screenshots from fictional production data'
 
   await page.setViewportSize({ width: 1600, height: 900 })
   await page.goto(`/agents/${targetAgentId}`)
-  await expect(page.getByRole('heading', { name: '资料员', exact: true })).toBeVisible()
+  await expect(page.getByRole('heading', { name: '资料员', exact: true, level: 1 })).toBeVisible()
   await settle(page)
   await page.screenshot({ path: `${outputDirectory}/agent-workbench.png`, animations: 'disabled' })
 
@@ -425,7 +425,7 @@ test('representative product surfaces match committed visual baselines', async (
     expect(page.getByText('一起复核。')).toBeVisible(),
   )
   await shoot('agent-profile', `/agents/${targetAgentId}`, 'light', () =>
-    expect(page.getByRole('heading', { name: '资料员', exact: true })).toBeVisible(),
+    expect(page.getByRole('heading', { name: '资料员', exact: true, level: 1 })).toBeVisible(),
   )
   await shoot('wiring', `/wiring/connections/${externalConnectionId}`, 'dark', () =>
     expect(
@@ -444,6 +444,76 @@ test('representative product surfaces match committed visual baselines', async (
   await shoot('settings-notifications', '/settings/notifications', 'light', () =>
     expect(page.getByRole('switch', { name: '系统通知' })).toBeVisible(),
   )
+  expect(failures, failures.join('\n')).toEqual([])
+})
+
+test('every space matches its baseline at 1280 and 1920 in both themes', async ({ page }) => {
+  test.setTimeout(240_000)
+  const failures = installRuntimeFailureGate(page)
+  let snapshot = productSnapshot
+  await installProductRoutes(page, () => snapshot)
+  await page.route(`**/api/authoring/tasks/${taskId}`, (route) =>
+    route.fulfill({
+      json: { task: snapshot.authoringTasks[0], attempts: [attempt(firstAttemptId, 1, 'active')], events: [] },
+    }),
+  )
+  await page.clock.setFixedTime(new Date(1_725_000_060_000))
+  const surfaces: readonly {
+    readonly name: string
+    readonly path: string
+    readonly authoring?: true
+    readonly ready: () => Promise<void>
+  }[] = [
+    { name: 'live', path: '/live', ready: () => expect(page.getByRole('heading', { name: '概览' })).toBeVisible() },
+    {
+      name: 'channel',
+      path: `/channels/${targetChannelId}`,
+      ready: () => expect(page.getByText('这是本次交付的资源。')).toBeVisible(),
+    },
+    {
+      name: 'agent',
+      path: `/agents/${targetAgentId}`,
+      ready: () => expect(page.getByRole('heading', { name: '资料员', exact: true, level: 1 })).toBeVisible(),
+    },
+    {
+      name: 'wiring',
+      path: `/wiring/connections/${externalConnectionId}`,
+      ready: () =>
+        expect(
+          page.getByRole('complementary', { name: '详情' }).getByRole('heading', { name: '示例群聊平台' }),
+        ).toBeVisible(),
+    },
+    {
+      name: 'workshop',
+      path: `/workshop/tasks/${taskId}`,
+      authoring: true,
+      ready: () => expect(page.getByRole('heading', { name: '群聊摘要卡片', level: 1 })).toBeVisible(),
+    },
+    {
+      name: 'models',
+      path: '/settings/models',
+      ready: () => expect(page.getByRole('heading', { name: '模型', level: 1 })).toBeVisible(),
+    },
+  ]
+  for (const width of [1280, 1920] as const) {
+    await page.setViewportSize({ width, height: width === 1920 ? 1080 : 800 })
+    for (const theme of ['light', 'dark'] as const) {
+      await page.addInitScript((value) => window.localStorage.setItem('nekro-nxt.theme', value), theme)
+      await page.emulateMedia({ colorScheme: theme, reducedMotion: 'reduce' })
+      for (const surface of surfaces) {
+        snapshot = surface.authoring ? authoringSnapshot('ready') : productSnapshot
+        await page.goto(surface.path)
+        await surface.ready()
+        await settle(page)
+        await expect(page).toHaveScreenshot(`space-${surface.name}-${theme}-${width}.png`, {
+          animations: 'disabled',
+          caret: 'hide',
+          mask: clockMasks(page),
+          maxDiffPixelRatio: 0.01,
+        })
+      }
+    }
+  }
   expect(failures, failures.join('\n')).toEqual([])
 })
 
@@ -634,7 +704,7 @@ test('a failed space chunk keeps the shell and the draft and recovers through re
   // A browser keeps a failed module import: the in-place retry fails once more, then the page reloads.
   await failure.getByRole('button', { name: '重试' }).click()
   const reloadButton = page.getByRole('button', { name: '重新加载页面' })
-  const heading = page.getByRole('heading', { name: '资料员', exact: true })
+  const heading = page.getByRole('heading', { name: '资料员', exact: true, level: 1 })
   await expect(reloadButton.or(heading)).toBeVisible()
   if (await reloadButton.isVisible()) await reloadButton.click()
   await expect(heading).toBeVisible()

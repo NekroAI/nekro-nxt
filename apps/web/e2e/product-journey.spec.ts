@@ -1626,7 +1626,7 @@ test('channel context controls and intelligent-agent deletion are guarded and re
   expect(resetRequests).toEqual([{ expectedEpisodeId: 'eps_contextjourney', mode: 'compact' }])
 
   await page.goto(`/agents/${agentId}`)
-  await expect(page.getByRole('heading', { name: agentName, exact: true })).toBeVisible()
+  await expect(page.getByRole('heading', { name: agentName, exact: true, level: 1 })).toBeVisible()
   await page.getByRole('button', { name: '更多操作' }).click()
   await page.getByRole('menuitem', { name: '删除智能体' }).click()
   const deleteDialog = page.getByRole('dialog', { name: `删除${agentName}？` })

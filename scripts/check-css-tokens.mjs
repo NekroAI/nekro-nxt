@@ -10,8 +10,8 @@ import path from 'node:path'
  */
 
 const root = process.cwd()
-const scanRoots = ['apps/web/src/app', 'apps/web/src/ui-kit/next']
-const tokenFiles = new Set(['apps/web/src/ui-kit/next/tokens.css'])
+const scanRoots = ['apps/web/src']
+const tokenFiles = new Set(['apps/web/src/ui-kit/tokens.css'])
 
 const COLOR_KEYWORDS = [
   'white',
@@ -30,6 +30,8 @@ const COLOR_KEYWORDS = [
 ]
 const HEX = /#[0-9a-f]{3,8}\b/iu
 const COLOR_FUNCTION = /\b(?:rgba?|hsla?|hwb|lab|lch|oklab|oklch)\(/iu
+/** Identity colours are computed per object from its hue variable (`--h`); the lightness still comes from Tokens. */
+const IDENTITY_COLOR = /^(?:[^()]*\s)?hsla?\(var\(--h\)(?:[^()]|\([^()]*\))*\)$/u
 const COLOR_KEYWORD = new RegExp(`(?<![\\w-])(?:${COLOR_KEYWORDS.join('|')})(?![\\w-])`, 'iu')
 const SPACING_PROPERTY =
   /^(?:margin|padding|gap|row-gap|column-gap)(?:-(?:top|right|bottom|left|block|inline|block-start|block-end|inline-start|inline-end))?$/u
@@ -81,11 +83,53 @@ function validSpacing(part) {
   return false
 }
 
+/** Top-level comma parts of a selector list, keeping `:is(a, b)` and `:where(a, b)` whole. */
+function selectorParts(selector) {
+  const parts = []
+  let depth = 0
+  let current = ''
+  for (const char of selector) {
+    if (char === '(') depth += 1
+    if (char === ')') depth -= 1
+    if (char === ',' && depth === 0) {
+      parts.push(current)
+      current = ''
+    } else current += char
+  }
+  parts.push(current)
+  return parts
+}
+
+/**
+ * CSS Modules scope class names only. A selector part without a class (`[data-align='end']`, `button`) matches
+ * every element in the document, including Radix portals, so each part must name a module class.
+ */
+function unscopedSelectors(css) {
+  const source = stripComments(css).replace(/@keyframes[^{]*\{(?:[^{}]*\{[^{}]*\})*[^{}]*\}/gu, (block) =>
+    block.replace(/[^\n]/gu, ' '),
+  )
+  const output = []
+  for (const match of source.matchAll(/([^{};]+)\{/gu)) {
+    const selector = (match[1] ?? '').trim()
+    if (!selector || selector.startsWith('@')) continue
+    const line = source.slice(0, (match.index ?? 0) + (match[1] ?? '').indexOf(selector)).split('\n').length
+    for (const part of selectorParts(selector)) {
+      const trimmed = part.trim()
+      if (trimmed && !/\.[\w-]/u.test(trimmed) && !trimmed.includes(':global')) output.push({ line, text: trimmed })
+    }
+  }
+  return output
+}
+
 export function inspectCss(relativePath, css) {
   const findings = []
+  if (relativePath.endsWith('.module.css'))
+    for (const { line, text } of unscopedSelectors(css))
+      findings.push({ file: relativePath, line, rule: 'scope', text: `${text} 没有限定到本模块的类名` })
   const tokensFile = tokenFiles.has(relativePath)
   for (const { property, value, line } of declarations(css)) {
-    if (!tokensFile && (HEX.test(value) || COLOR_FUNCTION.test(value) || COLOR_KEYWORD.test(value))) {
+    const identity = IDENTITY_COLOR.test(value) && !HEX.test(value)
+    if (!tokensFile && !identity && (HEX.test(value) || COLOR_FUNCTION.test(value) || COLOR_KEYWORD.test(value))) {
       if (!(property === 'white-space' || property === 'content'))
         findings.push({ file: relativePath, line, rule: 'color', text: `${property}: ${value}` })
     }
@@ -129,7 +173,21 @@ function runSelfTest() {
       [8, 'spacing'],
     ],
   )
-  assert.deepEqual(inspectCss('apps/web/src/ui-kit/next/tokens.css', '.x { color: #000; }'), [])
+  assert.deepEqual(inspectCss('apps/web/src/ui-kit/tokens.css', '.x { color: #000; }'), [])
+  assert.deepEqual(
+    inspectCss(
+      'apps/web/src/ui-kit/data.module.css',
+      `[data-align='end'] { gap: 0; }\n.cell[data-align='end'] { gap: 0; }\n.a :where(h1, h2) { gap: 0; }\n@media (max-width: 9px) { button { gap: 0; } }\n@keyframes k { from { opacity: 0; } }`,
+    ).map(({ line, rule }) => [line, rule]),
+    [
+      [1, 'scope'],
+      [4, 'scope'],
+    ],
+  )
+  assert.deepEqual(
+    inspectCss('apps/web/src/ui-kit/avatar.module.css', '.m { color: hsl(var(--h) 38% var(--mem-fg)); }'),
+    [],
+  )
   assert.equal(validSpacing('calc(var(--s-4) + 2px)'), false)
   assert.equal(validSpacing('calc(var(--s-4) * 2)'), true)
   console.log('CSS token self-test passed (colors, spacing shorthands, calc over Tokens, comments and tokens.css).')
@@ -147,7 +205,7 @@ if (process.argv.includes('--self-test')) {
     console.log(`CSS token check passed (${files.length} CSS Module files).`)
   } else {
     const lines = findings.map(({ file, line, rule, text }) => `${file}:${line} [${rule}] ${text}`)
-    const summary = `CSS token check: ${findings.length} findings in ${new Set(findings.map((f) => f.file)).size} files (color ${byRule('color')}, spacing ${byRule('spacing')}).`
+    const summary = `CSS token check: ${findings.length} findings in ${new Set(findings.map((f) => f.file)).size} files (color ${byRule('color')}, spacing ${byRule('spacing')}, scope ${byRule('scope')}).`
     if (strict) {
       console.error(['组件样式必须只使用 Token：', ...lines, summary].join('\n'))
       process.exitCode = 1

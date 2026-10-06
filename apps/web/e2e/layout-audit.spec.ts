@@ -14,10 +14,10 @@ import {
 /**
  * Layout audit (Decision 2026-10-06 §9). Visits every space and key sub-page with realistic-volume fictional data
  * at four desktop widths in both themes, and records layout defects that screenshots at one size miss.
- * Report mode by default; NEKRO_LAYOUT_AUDIT_STRICT=1 turns findings into failures.
+ * Every finding fails the run (R5); NEKRO_LAYOUT_AUDIT_REPORT=1 only writes the report, for exploring a large change.
  */
 
-const strict = Boolean(process.env['NEKRO_LAYOUT_AUDIT_STRICT'])
+const strict = !process.env['NEKRO_LAYOUT_AUDIT_REPORT']
 const reportDirectory = path.resolve(process.cwd(), '.local/layout-audit')
 
 const PAGES = [
@@ -315,7 +315,7 @@ for (const theme of THEMES) {
 }
 
 test.afterAll(async () => {
-  if (allIssues.length === 0 && !strict) return
+  if (allIssues.length === 0) return
   await mkdir(reportDirectory, { recursive: true })
   // Rank defect groups by severity, then by how many elements, sizes and themes show them. A group is one page, one
   // kind and one element class (for clipping: one clipping container), so forty clipped switches read as one problem.

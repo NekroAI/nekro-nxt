@@ -135,6 +135,21 @@ const retiredSlotFindings = async () => {
   return findings
 }
 
+/**
+ * Decision 2026-10-06 §6.1: every space entry renders one of the three page layouts, so width, scrolling and the
+ * list/detail split behave the same everywhere.
+ */
+const SPACE_LAYOUT = /<(?:ReaderPage|WorkbenchPage|BoardPage)\b/u
+const spaceLayoutFindings = async () => {
+  const spaces = (await filesUnder(`${webSourceRoot}/app`)).filter((file) => /\/[a-z-]+-space\.tsx$/u.test(file))
+  const findings = []
+  for (const relativePath of spaces) {
+    if (!SPACE_LAYOUT.test(await readFile(path.join(root, relativePath), 'utf8')))
+      findings.push(`${relativePath} 没有使用 ReaderPage、WorkbenchPage 或 BoardPage`)
+  }
+  return { spaces: spaces.length, findings }
+}
+
 if (process.argv.includes('--self-test')) {
   runSelfTest()
 } else {
@@ -143,6 +158,11 @@ if (process.argv.includes('--self-test')) {
   for (const relativePath of sourceFiles) {
     const source = await readFile(path.join(root, relativePath), 'utf8')
     findings.push(...inspectSource(relativePath, source))
+  }
+  const layouts = await spaceLayoutFindings()
+  if (layouts.spaces === 0 || layouts.findings.length > 0) {
+    console.error(['空间入口必须使用三种页面版式之一：', ...layouts.findings].join('\n'))
+    process.exitCode = 1
   }
   const retired = await retiredSlotFindings()
   if (retired.length > 0) {
