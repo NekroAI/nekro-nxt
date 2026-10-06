@@ -23,6 +23,8 @@ const crowded = (): Snapshot => {
     connectionId: externalConnectionId,
     platformChannelId: `opaque-crowd-${index}`,
     kind: 'group' as const,
+    runtimePhase: 'idle' as const,
+    activity: { unreadCount: 0, unreadCapped: false },
     displayName: `示例群 ${index + 1}`,
     bindings: [],
   }))
