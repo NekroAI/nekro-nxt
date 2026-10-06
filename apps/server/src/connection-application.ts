@@ -10,6 +10,10 @@ import {
   type RegisteredAdapterHandle,
 } from '@nekro-nxt/adapter-sdk'
 import {
+  configFields,
+  configSecretKeys,
+  parseConfigValue,
+  JsonValueSchema,
   LogicalMessageIdSchema,
   PhysicalDeliveryIdSchema,
   type AdapterActivityKey,
@@ -176,35 +180,30 @@ export class ConnectionApplicationService {
     const credentialsInput = input.credentials ?? {}
     const configuration: Record<string, string | number | boolean> = {}
     const rawCredentials: Array<{ readonly key: string; readonly value: string }> = []
+    const fields = configFields(descriptor.configSchema)
+    const secretKeys = configSecretKeys(descriptor.configSchema)
     for (const key of Object.keys(configurationInput)) {
-      const property = descriptor.configSchema.properties[key]
-      if (!property || property.type === 'credential-reference') throw new TypeError(`连接配置包含未知字段：${key}`)
+      if (!fields.some((field) => field.key === key) || secretKeys.includes(key))
+        throw new TypeError(`连接配置包含未知字段：${key}`)
     }
     for (const key of Object.keys(credentialsInput)) {
-      const property = descriptor.configSchema.properties[key]
-      if (!property || property.type !== 'credential-reference') throw new TypeError(`连接凭据包含未知字段：${key}`)
+      if (!secretKeys.includes(key)) throw new TypeError(`连接凭据包含未知字段：${key}`)
     }
-    for (const [key, property] of Object.entries(descriptor.configSchema.properties)) {
-      if (property.type === 'credential-reference') {
-        const raw = credentialsInput[key]
-        if (raw === undefined && descriptor.configSchema.required.includes(key))
-          throw new TypeError(`请填写${property.title}。`)
-        if (raw !== undefined) {
-          if (typeof raw !== 'string' || !raw.trim()) throw new TypeError(`请填写${property.title}。`)
-          rawCredentials.push({ key: property.credentialKey?.trim() || key, value: raw })
-        }
-        continue
+    for (const field of fields) {
+      if (field.kind !== 'secret') continue
+      const raw = credentialsInput[field.key]
+      if (raw === undefined && field.required) throw new TypeError(`请填写${field.title}。`)
+      if (raw !== undefined) {
+        if (typeof raw !== 'string' || !raw.trim()) throw new TypeError(`请填写${field.title}。`)
+        rawCredentials.push({ key: field.key, value: raw })
       }
-      const value = configurationInput[key] ?? property.default
-      if (value === undefined) {
-        if (descriptor.configSchema.required.includes(key)) throw new TypeError(`请填写${property.title}。`)
-        continue
-      }
-      if (property.type === 'string' && typeof value === 'string') configuration[key] = value
-      else if (property.type === 'number' && typeof value === 'number') configuration[key] = value
-      else if (property.type === 'boolean' && typeof value === 'boolean') configuration[key] = value
-      else throw new TypeError(`${property.title}的类型无效。`)
     }
+    Object.assign(
+      configuration,
+      parseStoredAdapterConfiguration(
+        parseConfigValue(descriptor.configSchema, JsonValueSchema.parse(configurationInput), { skipKeys: secretKeys }),
+      ),
+    )
     const credentialRefs: Record<string, string> = {}
     try {
       for (const credential of rawCredentials)
@@ -270,20 +269,28 @@ export class ConnectionApplicationService {
     const contribution = this.ports.adapters.get(connection.adapterKey)
     if (!contribution) throw new Error('这个连接的适配器未安装，无法修改配置。')
     const storedConfig = { ...parseStoredAdapterConfiguration(connection.config) }
-    for (const [key, value] of Object.entries(configurationPatch)) {
-      const property = contribution.descriptor.configSchema.properties[key]
-      if (!property || property.type === 'credential-reference') throw new Error(`连接配置包含未知字段：${key}`)
-      if (property.type === 'string') {
-        if (typeof value !== 'string') throw new Error(`${property.title}的类型无效。`)
-        storedConfig[key] = value
-      } else if (property.type === 'boolean') {
-        if (typeof value !== 'boolean') throw new Error(`${property.title}的类型无效。`)
-        storedConfig[key] = value
-      } else {
-        if (typeof value !== 'number' || !Number.isFinite(value)) throw new Error(`${property.title}的类型无效。`)
-        storedConfig[key] = value
-      }
+    const schema = contribution.descriptor.configSchema
+    const secretKeys = configSecretKeys(schema)
+    for (const key of Object.keys(configurationPatch)) {
+      if (!Object.hasOwn(schema.dict, key) || secretKeys.includes(key)) throw new Error(`连接配置包含未知字段：${key}`)
     }
+    // Only declared, non-secret fields are validated and replaced. Undeclared keys stay: Adapters keep private
+    // state there (an account id from a login, credential references).
+    const nextConfig = parseStoredAdapterConfiguration(
+      parseConfigValue(
+        schema,
+        JsonValueSchema.parse({
+          ...Object.fromEntries(
+            Object.entries(storedConfig).filter(
+              ([key]) => Object.hasOwn(schema.dict, key) && !secretKeys.includes(key),
+            ),
+          ),
+          ...configurationPatch,
+        }),
+        { skipKeys: secretKeys },
+      ),
+    )
+    Object.assign(storedConfig, nextConfig)
     const updated = this.ports.core.updateConnectionConfig(connectionId, storedConfig)
     const mounted = this.#adapterRuntimes.get(connectionId)
     if (mounted) {
@@ -544,8 +551,9 @@ export class ConnectionApplicationService {
     const savedConfiguration = parseStoredAdapterConfiguration(current.config)
     const descriptor = this.ports.adapters.get(current.adapterKey)?.descriptor
     // Login refreshes protocol routing and credentials, not the user's public settings.
-    for (const [key, property] of Object.entries(descriptor?.configSchema.properties ?? {})) {
-      if (property.type !== 'credential-reference' && savedConfiguration[key] !== undefined) {
+    for (const field of descriptor === undefined ? [] : configFields(descriptor.configSchema)) {
+      const key = field.key
+      if (field.kind !== 'secret' && savedConfiguration[key] !== undefined) {
         configuration[key] = savedConfiguration[key]
       }
     }
@@ -782,17 +790,19 @@ export class ConnectionApplicationService {
     if (!connection) throw new Error('Connection does not exist.')
     const contribution = this.ports.adapters.get(connection.adapterKey)
     if (!contribution) {
-      const needsRebuild = this.ports.repository.listHostInstallations().some((installation) => {
+      const unavailable = this.ports.repository.listHostInstallations().some((installation) => {
         const revision = this.ports.repository.getExtensionRevision(installation.extensionRevisionId)
         return (
           revision &&
           this.ports.repository.getExtensionRevisionVerification(revision.id)?.adapter?.key === connection.adapterKey &&
-          this.ports.extensionService.revisionFormat(revision) === 'requires-rebuild'
+          this.ports.extensionService.revisionFormat(revision) === 'unavailable'
         )
       })
       this.#adapterDiagnostics.set(connectionId, {
         status: 'stopped',
-        message: needsRebuild ? '这个连接的适配器需要重建；频道、消息和凭据引用已保留。' : '这个连接的适配器未安装。',
+        message: unavailable
+          ? '这个连接的适配器版本已不可用，请安装新版适配器；频道、消息和凭据引用已保留。'
+          : '这个连接的适配器未安装。',
       })
       this.#notifyConnectionChanges()
       return

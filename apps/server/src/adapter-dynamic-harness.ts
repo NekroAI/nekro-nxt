@@ -126,12 +126,17 @@ harness.registerAdapter = (contribution) => {
     }
     const configuration = {}
     const credentialRefs = {}
-    for (const [key, property] of Object.entries(descriptor.configSchema.properties)) {
-      if (property.type === 'credential-reference') {
-        credentialRefs[property.credentialKey || key] = 'cred_' + key
-      } else if (property.type === 'string') configuration[key] = property.default === undefined ? 'example' : property.default
-      else if (property.type === 'number') configuration[key] = property.default === undefined ? 1 : property.default
-      else if (property.type === 'boolean') configuration[key] = property.default === undefined ? false : property.default
+    for (const [key, node] of Object.entries(descriptor.configSchema.dict || {})) {
+      const meta = node.meta || {}
+      if (meta.role === 'secret') {
+        credentialRefs[key] = 'cred_' + key
+      } else if (meta.default !== undefined) configuration[key] = meta.default
+      else if (node.type === 'string') configuration[key] = 'example'
+      else if (node.type === 'number' || node.type === 'natural') configuration[key] = 1
+      else if (node.type === 'percent') configuration[key] = 0.5
+      else if (node.type === 'boolean') configuration[key] = false
+      else if (node.type === 'const') configuration[key] = node.value
+      else if (node.type === 'union' && node.list[0] && node.list[0].type === 'const') configuration[key] = node.list[0].value
     }
     const credentialIsolated = Object.values(configuration).every((value) => value !== 'synthetic-secret') &&
       Object.values(credentialRefs).every((value) => typeof value === 'string' && value.startsWith('cred_'))

@@ -22,7 +22,7 @@ Host Adapter 产物先在候选 Registry 执行 factory，实际 key、API 版�
 
 Task 的候选可以在智能体收尾前短暂进入 `ready`。Task 身份保存会先等待该 Session 的 Authoring continuation 和 Agent Loop 全部静止，再重新核对最新 Attempt；期间出现新候选时拒绝保存旧 Attempt。这个等待只保护 Task/Attempt 精确保存，不把动态运行、保存 Revision 和安装/启用合并成一个提交点。
 
-智能体、Adapter 与 Host Page 使用共享 Catalog 中彼此隔离的名称集合；未知名称、错误 key 和跨作用域混装会被拒绝。含 Client 半边的候选必须在产品 Slot 或创造工作台页面画布中真实渲染，实际页面和权限必须与 Define 时的风险声明完全一致；Host-only 候选也必须完成真实 Tool/RPC 调用。验证成功后 Task 才进入 `ready`。保存 API 优先使用 `taskId + attemptId`，只接受当前最后一个已验证候选；旧 `agentId + episodeId + pluginId + packageId` 暂时保留兼容。页面证据包含入口、对象列、权限和资源，Adapter 验证还覆盖注册、启动、入站、出站、凭据隔离、WebSocket/HTTP/状态存储和停止静止。扩展 Revision 的验证证据保留生成证据时的实际 DSH 版本；升级不会改写或拒绝旧版本证据，新验证使用当前锁定的 rc.2。
+智能体、Adapter 与 Host Page 的贡献按 Manifest V6 的 scope 规则隔离；未知贡献、错误 key 和跨作用域混装会被拒绝。含 Client 半边的候选必须在创造工作台中真实渲染：面板覆盖每种声明密度与明暗主题，工具视图覆盖 chip 与 card，并渲染富消息渲染器与页面，实际页面和权限必须与 Define 时的风险声明完全一致；Host-only 候选也必须完成真实 Tool/RPC 调用。验证成功后 Task 才进入 `ready`。保存 API 优先使用 `taskId + attemptId`，只接受当前最后一个已验证候选；旧 `agentId + episodeId + pluginId + packageId` 暂时保留兼容。页面证据包含入口、对象列、权限和资源，Adapter 验证还覆盖注册、启动、入站、出站、凭据隔离、WebSocket/HTTP/状态存储和停止静止。扩展 Revision 的验证证据保留生成证据时的实际 DSH 版本；升级不会改写或拒绝旧版本证据，新验证使用当前锁定的 rc.2。
 
 Host UI 页面由独立 Runtime 承载。页面实例、显隐、跨扩展顺序和权限批准来自 Host 快照；Server 为精确 Artifact 提供页面 Client/CSS/SVG、类型化产品服务、扩展命名空间状态、事件订阅和受控网络请求。网络请求逐跳校验获准 origin，并把已验证的公网地址固定到实际 socket，阻断私网、loopback、链路本地和 DNS 重绑定。Credential 明文不进入 SQLite，也不返回 Client；`credentials.write` 生成五分钟、owner 与 Adapter 绑定的一次性 token。Client 加载失败写页面诊断，不撤销已成功的 Host Installation 或 DSH Loader Activation。
 

@@ -16,7 +16,7 @@ import {
   type ModelSummary,
   type ProductHostError,
 } from './product-model.js'
-import type { AdapterConnectionDescriptor, AdapterConfigurationProperty } from '@nekro-nxt/adapter-sdk'
+import type { AdapterConnectionDescriptor } from '@nekro-nxt/adapter-sdk'
 import {
   HostApiContracts,
   ChannelFactSseDataSchema,
@@ -191,34 +191,6 @@ const safeExternalTargetUrl = (value: unknown): string | undefined => {
   }
 }
 
-const projectAdapterProperty = (
-  property: SnapshotJson['connectionAdapters'][number]['configSchema']['properties'][string],
-): AdapterConfigurationProperty => {
-  if (property.type === 'boolean') {
-    return {
-      type: property.type,
-      title: property.title,
-      ...(property.description === undefined ? {} : { description: property.description }),
-      ...(property.default === undefined ? {} : { default: property.default }),
-    }
-  }
-  if (property.type === 'number') {
-    return {
-      type: property.type,
-      title: property.title,
-      ...(property.description === undefined ? {} : { description: property.description }),
-      ...(property.default === undefined ? {} : { default: property.default }),
-    }
-  }
-  return {
-    type: property.type,
-    title: property.title,
-    ...(property.description === undefined ? {} : { description: property.description }),
-    ...(property.default === undefined ? {} : { default: property.default }),
-    ...(property.credentialKey === undefined ? {} : { credentialKey: property.credentialKey }),
-  }
-}
-
 const projectAdapterDescriptor = (
   descriptor: SnapshotJson['connectionAdapters'][number],
 ): AdapterConnectionDescriptor => ({
@@ -252,17 +224,7 @@ const projectAdapterDescriptor = (
           ...(descriptor.creation.pendingLabel === undefined ? {} : { pendingLabel: descriptor.creation.pendingLabel }),
         },
       }),
-  configSchema: {
-    schemaVersion: descriptor.configSchema.schemaVersion,
-    type: 'object',
-    required: descriptor.configSchema.required,
-    properties: Object.fromEntries(
-      Object.entries(descriptor.configSchema.properties).map(([key, property]) => [
-        key,
-        projectAdapterProperty(property),
-      ]),
-    ),
-  },
+  configSchema: descriptor.configSchema,
 })
 
 const projectConversationMessage = (
@@ -563,7 +525,8 @@ const projectSnapshot = (json: SnapshotJson, successfulAt: number): ProductSnaps
         contributions: revision.contributions,
         clientBuilt: revision.verification?.clientBuilt ?? false,
         ...(revision.verification === undefined ? {} : { buildKey: revision.verification.buildKey }),
-        hostSlots: revision.verification?.renderedHostSlots ?? [],
+        ui: revision.ui,
+        ...(revision.configSchema === undefined ? {} : { configSchema: revision.configSchema }),
         pages: json.hostUi.pages.filter(
           (page) => page.owner.kind === 'extension' && page.owner.revisionId === revision.id,
         ),
@@ -579,7 +542,9 @@ const projectSnapshot = (json: SnapshotJson, successfulAt: number): ProductSnaps
                 buildKey: revision.verification.buildKey,
                 toolInvocationCount: revision.verification.toolInvocationCount,
                 rpcMethods: revision.verification.rpcMethods,
-                renderedSlots: revision.verification.renderedSlots,
+                renderedPanels: revision.verification.renderedPanels,
+                renderedToolViews: revision.verification.renderedToolViews,
+                renderedMessageRenderers: revision.verification.renderedMessageRenderers,
                 ...(revision.verification.permissions === undefined
                   ? {}
                   : { permissions: revision.verification.permissions }),
@@ -611,6 +576,7 @@ const projectSnapshot = (json: SnapshotJson, successfulAt: number): ProductSnaps
           revisionId: candidate.extensionRevisionId,
           revision: activeRevision?.revisionNumber ?? 0,
           activatedAt: candidate.activatedAt,
+          config: candidate.config,
           ...(candidate.runtime === undefined
             ? {}
             : {
@@ -635,7 +601,9 @@ const projectSnapshot = (json: SnapshotJson, successfulAt: number): ProductSnaps
               buildKey: latestRevision.verification.buildKey,
               toolInvocationCount: latestRevision.verification.toolInvocationCount,
               rpcMethods: latestRevision.verification.rpcMethods,
-              renderedSlots: latestRevision.verification.renderedSlots,
+              renderedPanels: latestRevision.verification.renderedPanels,
+              renderedToolViews: latestRevision.verification.renderedToolViews,
+              renderedMessageRenderers: latestRevision.verification.renderedMessageRenderers,
               ...(latestRevision.verification.permissions === undefined
                 ? {}
                 : { permissions: latestRevision.verification.permissions }),
@@ -649,12 +617,7 @@ const projectSnapshot = (json: SnapshotJson, successfulAt: number): ProductSnaps
           }),
       clientActivations: extension.activations.flatMap((candidate) => {
         const activeRevision = extension.revisions.find((revision) => revision.id === candidate.extensionRevisionId)
-        if (
-          !activeRevision?.verification?.clientBuilt ||
-          activeRevision.format === 'requires-rebuild' ||
-          activeRevision.format === 'unavailable'
-        )
-          return []
+        if (!activeRevision?.verification?.clientBuilt || activeRevision.format === 'unavailable') return []
         return [
           {
             agentId: candidate.agentId,
@@ -676,6 +639,7 @@ const projectSnapshot = (json: SnapshotJson, successfulAt: number): ProductSnaps
             installation: {
               revisionId: extension.installation.extensionRevisionId,
               installedAt: extension.installation.installedAt,
+              config: extension.installation.config,
               ...(extension.installation.runtime === undefined
                 ? {}
                 : {
@@ -1007,7 +971,6 @@ export class HttpProductHost implements ProductHostPort {
 
     'extensions.commitImport': async ({ token, ...body }) =>
       this.#mutate(HostApiContracts.commitExtensionImport, { token }, body),
-    'extensions.rebuild': async (input) => this.#mutate(HostApiContracts.rebuildExtensionRevision, {}, input),
     'extensions.delete': async (params) => this.#mutate(HostApiContracts.deleteLocalExtension, params, undefined),
     'hostUi.updatePreferences': async (body) => this.#mutate(HostApiContracts.updateHostUiPagePreferences, {}, body),
     'host.refresh': async () => {
@@ -1079,6 +1042,10 @@ export class HttpProductHost implements ProductHostPort {
       this.#mutate(HostApiContracts.uninstallHostExtension, { extensionId }, undefined),
     'extensions.hostClientDiagnostic': async ({ extensionId, revisionId, ...body }) =>
       this.#call(HostApiContracts.hostExtensionClientDiagnostic, { extensionId, revisionId }, body),
+    'extensions.activationConfig': async ({ agentId, extensionId, ...body }) =>
+      this.#mutate(HostApiContracts.updateExtensionActivationConfig, { agentId, extensionId }, body),
+    'extensions.installationConfig': async ({ extensionId, ...body }) =>
+      this.#mutate(HostApiContracts.updateHostExtensionConfig, { extensionId }, body),
     'extensions.deactivate': async ({ agentId, extensionId }) =>
       this.#mutate(HostApiContracts.deactivateExtension, { agentId, extensionId }, undefined),
     'extensions.clientDiagnostic': async ({ extensionId, revisionId, ...body }) =>

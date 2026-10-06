@@ -275,7 +275,7 @@ describe('NekroNxt Server domain API (WebServer seam)', () => {
         await (await fetch(`http://127.0.0.1:${api.port}/api/snapshot`)).json(),
       )
       expect(snapshot.hostUi.pages).toEqual([])
-      expect(snapshot.extensions[0]?.revisions[0]?.format).toBe('requires-rebuild')
+      expect(snapshot.extensions[0]?.revisions[0]?.format).toBe('unavailable')
       expect(runtime.repository.listHostUiPageEntries()).toEqual(preserved)
     } finally {
       api.dispose()

@@ -21,6 +21,12 @@ import {
 } from '../../ui-kit/next/index.js'
 import { relativeTime } from '../channels/timeline-model.js'
 import { agentHue } from '../model/identity.js'
+import {
+  ExtensionConfigEditor,
+  PanelSlot,
+  activeConfigSchema,
+  useExtensionActivation,
+} from '../../extension-ui/index.js'
 import { useProductApi } from '../model/store.js'
 import { contributionParts, extensionUsage, scopeLabel } from './workshop-model.js'
 import styles from './workshop.module.css'
@@ -28,11 +34,6 @@ import styles from './workshop.module.css'
 type Revision = LocalExtensionSummary['revisions'][number]
 
 const failure = (error: unknown) => toast(error instanceof Error ? error.message : String(error), { tone: 'bad' })
-
-const SLOT_NAMES: Record<string, string> = {
-  'agent.workbench.sections': '智能体面板',
-  'extension.details.panels': '扩展详情面板',
-}
 
 const download = async (extension: LocalExtensionSummary, revision: Revision) => {
   const bytes = await callHostApi(
@@ -88,6 +89,8 @@ export function ExtensionView({ extension }: { readonly extension: LocalExtensio
 
         {extension.scope === 'agent' ? <AgentUsage extension={extension} /> : <Installation extension={extension} />}
 
+        <ExtensionSettings extension={extension} />
+
         <Section title="版本">
           <Panel className={styles.versions}>
             {extension.revisions.toReversed().map((revision) => (
@@ -137,18 +140,71 @@ export function ExtensionView({ extension }: { readonly extension: LocalExtensio
   )
 }
 
+/**
+ * Configuration and the extension's own panels. Agent extensions are configured per enabled agent; Host extensions
+ * once for their installation.
+ */
+function ExtensionSettings({ extension }: { readonly extension: LocalExtensionSummary }) {
+  const enabledAgents = extension.activations.map((activation) => ({
+    id: activation.agentId,
+    name: activation.agentName,
+  }))
+  const [chosen, setChosen] = useState(enabledAgents[0]?.id ?? '')
+  const agentId =
+    extension.scope === 'agent'
+      ? (enabledAgents.find((agent) => agent.id === chosen)?.id ?? enabledAgents[0]?.id)
+      : undefined
+  if (extension.scope === 'agent' && agentId === undefined) return null
+  const hasConfig = activeConfigSchema(extension, agentId) !== undefined
+  return (
+    <>
+      {hasConfig ? (
+        <Section
+          title="配置"
+          actions={
+            extension.scope === 'agent' && enabledAgents.length > 1 ? (
+              <Select
+                aria-label="配置哪个智能体"
+                value={agentId}
+                onChange={(event) => setChosen(event.target.value)}
+                options={enabledAgents.map((agent) => ({ value: agent.id, label: agent.name }))}
+              />
+            ) : undefined
+          }
+        >
+          <Panel className={styles.config}>
+            <ExtensionConfigEditor
+              key={agentId ?? 'host'}
+              extension={extension}
+              {...(agentId === undefined ? {} : { agentId })}
+            />
+          </Panel>
+        </Section>
+      ) : null}
+      {extension.scope === 'agent' && agentId !== undefined ? (
+        <PanelSlot anchor={{ kind: 'extension', id: extension.id }} density="full" agentId={agentId} />
+      ) : null}
+    </>
+  )
+}
+
 /** Agent-scoped extensions: one row per agent with its revision and an on/off switch. */
 function AgentUsage({ extension }: { readonly extension: LocalExtensionSummary }) {
-  const api = useProductApi()
   const agents = useProductStore((state) => state.agents)
   const [pending, setPending] = useState('')
+  const activation = useExtensionActivation()
   const usable = extension.revisions.filter((item) => item.format === undefined || item.format === 'current')
   const latestUsable = usable.at(-1)
 
   const change = async (agentId: string, enabled: boolean, revisionId?: string) => {
     setPending(agentId)
     try {
-      await api.getState().setExtensionActive(extension.id, agentId, enabled, revisionId)
+      await activation.setActive({
+        extensionId: extension.id,
+        agentId,
+        enabled,
+        ...(revisionId === undefined ? {} : { revisionId }),
+      })
     } catch (error) {
       failure(error)
     } finally {
@@ -158,6 +214,7 @@ function AgentUsage({ extension }: { readonly extension: LocalExtensionSummary }
 
   return (
     <Section title="使用">
+      {activation.dialog}
       {agents.length === 0 ? (
         <Panel className={styles.quiet}>还没有智能体。</Panel>
       ) : (
@@ -352,7 +409,7 @@ function RevisionRow({
                 return (
                   <li key={item}>
                     <span>{part.kind}</span>
-                    {SLOT_NAMES[part.name] ?? part.name}
+                    {part.name}
                   </li>
                 )
               })}

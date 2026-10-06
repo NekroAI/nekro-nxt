@@ -134,8 +134,9 @@ export class AuthoringApplicationService {
         purpose: inspection.purpose,
         ...(sourceCode.host === undefined ? {} : { hostCode: sourceCode.host }),
         ...(sourceCode.client === undefined ? {} : { clientCode: sourceCode.client }),
-        ...(hasHostPages ? { permissions: verified.permissions } : {}),
+        permissions: verified.permissions,
         contributions: verified.contributions,
+        ...(authoringSnapshot?.config === undefined ? {} : { config: authoringSnapshot.config }),
         ...(authoringSnapshot === undefined ? {} : { resources: authoringSnapshot.resources }),
         ...(authoringSnapshot?.clientCss === undefined ? {} : { clientCss: authoringSnapshot.clientCss }),
       },
@@ -146,11 +147,7 @@ export class AuthoringApplicationService {
       createdByAgentId: identity.agentId,
       verification: {
         dshVersion: DSH_RUNTIME_RELEASE.dshVersion,
-        contractVersion: hasHostPages
-          ? 'nekro-nxt-extension-v3'
-          : adapterVerification
-            ? 'nekro-nxt-extension-v2'
-            : 'nekro-nxt-extension-v1',
+        contractVersion: 'nekro-nxt-extension-v4',
         ...(scopedVerification === undefined ? {} : { scope: scopedVerification.scope }),
         ...(adapterVerification === undefined ? {} : { adapter: adapterVerification.adapter }),
         origin: {
@@ -161,14 +158,15 @@ export class AuthoringApplicationService {
         },
         toolInvocations: verified.toolInvocations,
         rpcMethods: verified.rpcMethods,
-        renderedSlots: verified.renderedSlots,
-        ...(verified.renderedHostSlots.length === 0 ? {} : { renderedHostSlots: verified.renderedHostSlots }),
+        renderedPanels: verified.renderedPanels.map((panel) => panel.id),
+        renderedToolViews: verified.renderedToolViews,
+        renderedMessageRenderers: verified.renderedMessageRenderers,
+        permissions: verified.permissions,
         ...(hasHostPages
           ? {
               renderedPages: verified.renderedPages,
               usedUiComponents: verified.usedUiComponents,
               pageGeometry: verified.pageGeometry,
-              permissions: verified.permissions,
             }
           : {}),
       },

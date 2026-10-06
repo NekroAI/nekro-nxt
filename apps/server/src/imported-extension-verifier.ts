@@ -1,15 +1,16 @@
 import { AdapterRegistry, type AdapterHostContributionV2 } from '@nekro-nxt/adapter-sdk'
 import {
-  AdapterClientSlotNameSchema,
-  AgentClientSlotNameSchema,
+  configFields,
+  EXTENSION_DATA_HOOK_PERMISSIONS,
+  ExtensionPanelDeclarationSchema,
+  HOST_UI_KIT_COMPONENT_NAMES,
   HostPageContributionSchema,
   HostUiNavigationModelSchema,
-  HostUiPermissionDeclarationSchema,
   JsonValueSchema,
   LogicalMessageIdSchema,
   PhysicalDeliveryIdSchema,
-  type AdapterClientSlotName,
-  type AgentClientSlotName,
+  validateConfigValue,
+  type ExtensionDataHookName,
   type HostPageContribution,
   type HostUiPermissionDeclaration,
   type JsonValue,
@@ -106,39 +107,12 @@ const createClientHarness = () => {
     },
   }
   const ui = {
-    Button: component,
-    IconButton: component,
-    Input: component,
-    Textarea: component,
-    Select: component,
-    Switch: component,
-    Tabs: compoundComponent,
-    Dialog: compoundComponent,
-    Popover: compoundComponent,
-    Tooltip: compoundComponent,
-    Field: component,
-    StatusBadge: component,
-    InlineFeedback: component,
-    EmptyState: component,
-    Spinner: component,
-    PageHeader: component,
-    Section: component,
-    Stack: component,
-    Grid: component,
-    DataTable: component,
-    SidePane: component,
+    version: 'ui-kit@1',
+    ...Object.fromEntries(HOST_UI_KIT_COMPONENT_NAMES.map((name) => [name, compoundComponent])),
   }
   return {
     React,
     ui,
-    styles: {
-      section: 'section',
-      sectionHeading: 'sectionHeading',
-      secondaryText: 'secondaryText',
-      actionRow: 'actionRow',
-      button: 'button',
-      badge: 'badge',
-    },
     dispose: async () => {
       for (const cleanup of [...effectCleanups].reverse()) await cleanup()
       for (const unsubscribe of [...subscriptions].reverse()) unsubscribe()
@@ -146,49 +120,48 @@ const createClientHarness = () => {
   }
 }
 
-const syntheticSlotProps = (name: AgentClientSlotName | AdapterClientSlotName): Record<string, unknown> => {
-  switch (name) {
-    case 'agent.workbench.sections':
-      return { agentId: 'agt_IMPORT', displayName: '导入验证智能体' }
-    case 'extension.activation.panels':
-    case 'extension.details.panels':
-      return {
-        agentId: 'agt_IMPORT',
-        extensionId: 'ext_IMPORT',
-        revisionId: 'xrv_IMPORT',
-        activation: 'active',
-        activationId: 'activation:import',
-        runtimeStatus: 'active',
-      }
-    case 'channel.inspector.agent.sections':
-      return {
-        agentId: 'agt_IMPORT',
-        channelId: 'chn_IMPORT',
+/** Declared defaults stand in for user configuration; required fields without defaults stay absent. */
+const defaultConfig = (input: ImportedRevisionVerificationInput): JsonValue => {
+  const declaration = input.materialized.manifest.config
+  return declaration === undefined ? {} : validateConfigValue(declaration.schema, {}).value
+}
+
+const SYNTHETIC_ANCHOR_IDS = {
+  agent: 'agt_IMPORT',
+  channel: 'chn_IMPORT',
+  extension: 'ext_IMPORT',
+  connection: 'con_IMPORT',
+} as const
+
+const syntheticToolCall = (toolName: string) => ({
+  callId: 'call_IMPORT',
+  toolName,
+  state: 'succeeded' as const,
+  input: '{}',
+  result: '{"ok":true}',
+  durationMs: 12,
+})
+
+/** Synthetic read model for verification; hooks throw unless the Manifest declared their permission. */
+const syntheticData = (granted: ReadonlySet<string>) => {
+  const guard = <Value>(hook: ExtensionDataHookName, value: Value) => {
+    const permission = EXTENSION_DATA_HOOK_PERMISSIONS[hook]
+    if (!granted.has(permission)) throw new Error(`Client 调用 ${hook} 需要在 Manifest 声明权限 ${permission}。`)
+    return value
+  }
+  return {
+    useAgent: (id: string) => guard('useAgent', { id, name: '导入验证智能体', phase: 'idle' }),
+    useChannel: (id: string) =>
+      guard('useChannel', {
+        id,
+        name: '导入验证频道',
+        kind: 'group',
         connectionId: 'con_IMPORT',
-        runtimePhase: 'idle',
-      }
-    case 'conversation.tool.card':
-      return {
         agentId: 'agt_IMPORT',
-        channelId: 'chn_IMPORT',
-        callId: 'call_IMPORT',
-        toolName: 'import_probe',
-        displayName: '导入工具',
-        state: 'succeeded',
-        surface: 'trajectory',
-      }
-    case 'conversation.message.rich':
-      return {
-        part: { type: 'rich', adapterKey: 'import', kind: 'probe', summary: '导入验证' },
-        messageId: 'msg_IMPORT',
-        channelId: 'chn_IMPORT',
-      }
-    case 'connection.adapter.setup':
-    case 'connection.adapter.status':
-    case 'connection.adapter.test':
-      return { adapterKey: 'import', phase: 'active' }
-    case 'channel.inspector.adapter.sections':
-      return { adapterKey: 'import', connectionId: 'con_IMPORT', channelId: 'chn_IMPORT', channelKind: 'group' }
+      }),
+    useConnection: (id: string) =>
+      guard('useConnection', { id, name: '导入验证连接', adapterKey: 'import', state: 'connected' }),
+    useChannelRuntime: (channelId: string) => guard('useChannelRuntime', { channelId, phase: 'idle' }),
   }
 }
 
@@ -225,13 +198,14 @@ const verifyAdapter = async (input: ImportedRevisionVerificationInput): ReturnTy
         defineTool: () => forbidden('智能体工具'),
         registerTool: () => forbidden('智能体工具'),
         handle: () => forbidden('智能体 RPC'),
+        config: () => defaultConfig(input),
         registerAdapter: (contribution: AdapterHostContributionV2) => {
           if (registered) throw new Error('Adapter Host 只能注册一个适配器贡献。')
           registered = registry.register(`import:${input.revision.id}`, contribution)
           return () => void registered?.dispose()
         },
       },
-      config: {},
+      config: defaultConfig(input),
     },
   ])
   recordOf(definition, 'Adapter Host factory 结果')
@@ -245,15 +219,24 @@ const verifyAdapter = async (input: ImportedRevisionVerificationInput): ReturnTy
   const fake = createFakeAdapterHostContext()
   const configuration: Record<string, string | number | boolean> = {}
   const credentialRefs: Record<string, string> = {}
-  for (const [key, property] of Object.entries(contribution.descriptor.configSchema.properties)) {
-    if (property.type === 'credential-reference') {
-      const reference = `import-credential:${key}`
-      credentialRefs[property.credentialKey?.trim() || key] = reference
+  for (const field of configFields(contribution.descriptor.configSchema)) {
+    if (field.kind === 'secret') {
+      const reference = `import-credential:${field.key}`
+      credentialRefs[field.key] = reference
       fake.credentials.set(reference, 'synthetic-import-secret')
-    } else if (property.default !== undefined) configuration[key] = property.default
-    else if (property.type === 'string') configuration[key] = 'https://adapter.example.test'
-    else if (property.type === 'number') configuration[key] = 1
-    else configuration[key] = false
+    } else if (
+      typeof field.default === 'string' ||
+      typeof field.default === 'number' ||
+      typeof field.default === 'boolean'
+    )
+      configuration[field.key] = field.default
+    else if (field.kind === 'enum' && field.options?.[0] !== undefined) {
+      const value = field.options[0].value
+      if (typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean')
+        configuration[field.key] = value
+    } else if (field.kind === 'string') configuration[field.key] = 'https://adapter.example.test'
+    else if (field.kind === 'number') configuration[field.key] = 1
+    else if (field.kind === 'boolean') configuration[field.key] = false
   }
   const runtime = await contribution.create(fake.context, { configuration, credentialRefs })
   let started = false
@@ -300,15 +283,16 @@ const verifyAdapter = async (input: ImportedRevisionVerificationInput): ReturnTy
 
   const clientEvidence = await verifyClient(input, new Map())
   return {
-    contractVersion: clientEvidence.renderedPages.length > 0 ? 'nekro-nxt-extension-v3' : 'nekro-nxt-extension-v2',
+    contractVersion: 'nekro-nxt-extension-v4',
     scope: 'host-adapter',
     origin: IMPORT_ORIGIN,
     toolInvocations: [],
     rpcMethods: [],
-    renderedSlots: [],
-    renderedHostSlots: clientEvidence.renderedHostSlots,
+    renderedPanels: clientEvidence.renderedPanels,
+    renderedToolViews: [],
+    renderedMessageRenderers: clientEvidence.renderedMessageRenderers,
     ...(clientEvidence.renderedPages.length === 0 ? {} : { renderedPages: clientEvidence.renderedPages }),
-    ...(clientEvidence.renderedPages.length === 0 ? {} : { permissions: clientEvidence.permissions }),
+    permissions: clientEvidence.permissions,
     adapter: {
       apiVersion: 2,
       key: contribution.descriptor.key,
@@ -322,40 +306,44 @@ const verifyAdapter = async (input: ImportedRevisionVerificationInput): ReturnTy
   }
 }
 
+interface ClientEvidence {
+  readonly renderedPanels: readonly string[]
+  readonly renderedToolViews: readonly string[]
+  readonly renderedMessageRenderers: readonly string[]
+  readonly renderedPages: readonly HostPageContribution[]
+  readonly permissions: HostUiPermissionDeclaration
+}
+
+const sameSet = (left: readonly string[], right: readonly string[]) =>
+  left.length === right.length && left.every((entry) => right.includes(entry))
+
 const verifyClient = async (
   input: ImportedRevisionVerificationInput,
   handlers: ReadonlyMap<string, (value: JsonValue) => JsonValue | Promise<JsonValue>>,
-) => {
+): Promise<ClientEvidence> => {
   const manifest = input.materialized.manifest
-  const expectedAgentSlots =
-    manifest.scope === 'agent'
-      ? manifest.contributions.filter((entry) => entry.kind === 'client-slot').map(({ name }) => name)
-      : []
-  const expectedHostSlots =
-    manifest.scope === 'host-adapter'
-      ? manifest.contributions
-          .filter((entry) => entry.kind === 'host-client-slot')
-          .map(({ name, key }) => ({ name, key }))
-      : []
-  const expectedPages: readonly HostPageContribution[] =
-    manifest.scope === 'host-adapter' || manifest.scope === 'host-ui'
-      ? manifest.contributions.flatMap((entry) =>
-          entry.kind === 'host-page' ? [HostPageContributionSchema.parse(entry)] : [],
-        )
-      : []
-  const permissions: HostUiPermissionDeclaration =
-    manifest.scope === 'host-ui' ? manifest.permissions : { permissions: [], networkOrigins: [] }
+  const contributions = manifest.contributions
+  const expectedPanels = contributions.flatMap((entry) => (entry.kind === 'panel' ? [entry] : []))
+  const expectedToolViews = contributions.flatMap((entry) => (entry.kind === 'tool-view' ? [entry.tool] : []))
+  const expectedRenderers = contributions.flatMap((entry) =>
+    entry.kind === 'message-renderer' ? [entry.richKind] : [],
+  )
+  const expectedPages: readonly HostPageContribution[] = contributions.flatMap((entry) =>
+    entry.kind === 'host-page' ? [HostPageContributionSchema.parse(entry)] : [],
+  )
+  const permissions: HostUiPermissionDeclaration = manifest.permissions
   if (!input.artifact.clientEntry) {
-    if (expectedAgentSlots.length || expectedHostSlots.length || expectedPages.length) {
+    if (expectedPanels.length || expectedToolViews.length || expectedRenderers.length || expectedPages.length) {
       throw new Error('Manifest 声明了 Client 贡献，但导入包缺少 Client 构建产物。')
     }
-    return { renderedSlots: [], renderedHostSlots: [], renderedPages: [], permissions }
+    return { renderedPanels: [], renderedToolViews: [], renderedMessageRenderers: [], renderedPages: [], permissions }
   }
 
   const harness = createClientHarness()
   const registrations: Array<() => void> = []
-  const renderedSlots: AgentClientSlotName[] = []
-  const renderedHostSlots: Array<{ name: AdapterClientSlotName; key: string }> = []
+  const renderedPanels = new Set<string>()
+  const renderedToolViews = new Set<string>()
+  const renderedRenderers = new Set<string>()
   const renderedPages: HostPageContribution[] = []
   const subscriptionsCleanup: Array<() => void> = []
   let dispose: (() => void | Promise<void>) | undefined
@@ -364,64 +352,83 @@ const verifyClient = async (
     if (!handler) throw new Error(`Client 调用了未注册的 Host RPC：${method}`)
     return JsonValueSchema.parse(await handler(value))
   }
-  let evidence:
-    | {
-        readonly renderedSlots: readonly AgentClientSlotName[]
-        readonly renderedHostSlots: readonly { readonly name: AdapterClientSlotName; readonly key: string }[]
-        readonly renderedPages: readonly HostPageContribution[]
-        readonly permissions: HostUiPermissionDeclaration
-      }
-    | undefined
+  const track = (unregister: () => void) => {
+    let active = true
+    registrations.push(() => {
+      active = false
+    })
+    return () => {
+      if (!active) return
+      active = false
+      unregister()
+    }
+  }
+  let evidence: ClientEvidence | undefined
   let verificationError: unknown
   try {
     const factory = await importFactory(input.artifact.clientEntry, input.artifact.buildKey, 'Extension Client')
     const definition = await factory(undefined, [
-      {
-        React: harness.React,
-        ui: harness.ui,
-        styles: harness.styles,
-        host: { call, subscribe: () => () => undefined },
-      },
+      { React: harness.React, styles: {}, host: { call, subscribe: () => () => undefined } },
     ])
     dispose = await runPluginApply(definition, {
       ui: harness.ui,
-      slots: {
-        register: (options: unknown, slotComponent: unknown) => {
-          const record = recordOf(options, 'Client Slot 参数')
-          const nameValue = record['name']
-          const componentFunction = callableOf(slotComponent, 'Client Slot 组件')
-          const agent = AgentClientSlotNameSchema.safeParse(nameValue)
-          if (agent.success) {
-            if (!expectedAgentSlots.includes(agent.data))
-              throw new Error(`Client 注册了未声明的智能体 Slot：${agent.data}`)
-            componentFunction(undefined, [syntheticSlotProps(agent.data)])
-            renderedSlots.push(agent.data)
-          } else {
-            const name = AdapterClientSlotNameSchema.parse(nameValue)
-            const key = record['id']
-            if (typeof key !== 'string' || !expectedHostSlots.some((slot) => slot.name === name && slot.key === key)) {
-              throw new Error(`Client 注册了未声明的 Adapter Slot：${name}:${String(key)}`)
-            }
-            componentFunction(undefined, [syntheticSlotProps(name)])
-            renderedHostSlots.push({ name, key })
+      data: syntheticData(new Set(permissions.permissions)),
+      panels: {
+        register: (value: unknown, panelComponent: unknown) => {
+          const declaration = ExtensionPanelDeclarationSchema.parse(value)
+          const declared = expectedPanels.find(({ id }) => id === declaration.id)
+          if (
+            !declared ||
+            canonicalJson(JsonValueSchema.parse({ ...declaration, kind: 'panel' })) !==
+              canonicalJson(JsonValueSchema.parse(declared))
+          ) {
+            throw new Error(`Client 面板与 Manifest 不一致：${declaration.id}`)
           }
-          let active = true
-          const unregister = () => {
-            active = false
+          const render = callableOf(panelComponent, `面板 ${declaration.id} 组件`)
+          // Every declared density renders once; the browser verification adds both themes and real geometry.
+          for (const density of declared.densities) {
+            render(undefined, [
+              {
+                anchor: { kind: declared.anchor, id: SYNTHETIC_ANCHOR_IDS[declared.anchor] },
+                density,
+                ...(declared.role === undefined ? {} : { role: declared.role }),
+              },
+            ])
           }
-          registrations.push(unregister)
-          return () => {
-            if (active) unregister()
+          renderedPanels.add(declared.id)
+          return track(() => undefined)
+        },
+      },
+      toolViews: {
+        register: (tool: unknown, viewComponent: unknown) => {
+          if (typeof tool !== 'string' || !expectedToolViews.includes(tool)) {
+            throw new Error(`Client 注册了未声明的工具视图：${String(tool)}`)
           }
+          const render = callableOf(viewComponent, `工具视图 ${tool} 组件`)
+          for (const density of ['chip', 'card'] as const)
+            render(undefined, [{ call: syntheticToolCall(tool), density }])
+          renderedToolViews.add(tool)
+          return track(() => undefined)
+        },
+      },
+      messageRenderers: {
+        register: (richKind: unknown, rendererComponent: unknown) => {
+          if (typeof richKind !== 'string' || !expectedRenderers.includes(richKind)) {
+            throw new Error(`Client 注册了未声明的富消息渲染器：${String(richKind)}`)
+          }
+          const render = callableOf(rendererComponent, `富消息 ${richKind} 渲染器`)
+          render(undefined, [
+            {
+              part: { type: 'rich', adapterKey: 'import', kind: richKind, summary: '导入验证' },
+              messageId: 'msg_IMPORT',
+              channelId: 'chn_IMPORT',
+            },
+          ])
+          renderedRenderers.add(richKind)
+          return track(() => undefined)
         },
       },
       pages: {
-        declarePermissions: (value: unknown) => {
-          const declared = HostUiPermissionDeclarationSchema.parse(value)
-          if (canonicalJson(JsonValueSchema.parse(declared)) !== canonicalJson(JsonValueSchema.parse(permissions))) {
-            throw new Error('Client 声明的页面权限与 Manifest 不一致。')
-          }
-        },
         register: (options: unknown, pageComponent: unknown) => {
           const record = recordOf(options, '页面注册参数')
           const page = HostPageContributionSchema.parse(record['page'])
@@ -453,23 +460,21 @@ const verifyClient = async (
             },
           ])
           renderedPages.push(page)
-          const unregister = () => undefined
-          registrations.push(unregister)
-          return unregister
+          return track(() => undefined)
         },
       },
     })
-    const uniqueAgent = [...new Set(renderedSlots)]
-    const uniqueHost = [...new Map(renderedHostSlots.map((slot) => [`${slot.name}\0${slot.key}`, slot])).values()]
     const uniquePages = [...new Map(renderedPages.map((page) => [page.entryId, page])).values()]
-    if (uniqueAgent.length !== expectedAgentSlots.length)
-      throw new Error('Client 未注册 Manifest 声明的全部智能体 Slot。')
-    if (uniqueHost.length !== expectedHostSlots.length)
-      throw new Error('Client 未注册 Manifest 声明的全部 Adapter Slot。')
+    if (renderedPanels.size !== expectedPanels.length) throw new Error('Client 未注册 Manifest 声明的全部面板。')
+    if (!sameSet([...renderedToolViews], expectedToolViews))
+      throw new Error('Client 未注册 Manifest 声明的全部工具视图。')
+    if (!sameSet([...renderedRenderers], expectedRenderers))
+      throw new Error('Client 未注册 Manifest 声明的全部富消息渲染器。')
     if (uniquePages.length !== expectedPages.length) throw new Error('Client 未注册 Manifest 声明的全部页面。')
     evidence = {
-      renderedSlots: uniqueAgent,
-      renderedHostSlots: uniqueHost,
+      renderedPanels: [...renderedPanels],
+      renderedToolViews: [...renderedToolViews],
+      renderedMessageRenderers: [...renderedRenderers],
       renderedPages: uniquePages,
       permissions,
     }
@@ -523,8 +528,9 @@ const verifyAgentOrHostUi = async (input: ImportedRevisionVerificationInput): Re
             return () => handlers.delete(method)
           },
           registerAdapter: forbiddenAdapter,
+          config: () => defaultConfig(input),
         },
-        config: {},
+        config: defaultConfig(input),
       },
     ])
     disposePlugin = await runPluginApply(definition, {
@@ -577,14 +583,16 @@ const verifyAgentOrHostUi = async (input: ImportedRevisionVerificationInput): Re
     const isHostUi = manifest.scope === 'host-ui'
     if (isHostUi && tools.size > 0) throw new Error('Host UI 导入不能注册智能体工具。')
     return {
-      contractVersion: isHostUi ? 'nekro-nxt-extension-v3' : 'nekro-nxt-extension-v1',
+      contractVersion: 'nekro-nxt-extension-v4',
       ...(isHostUi ? { scope: 'host-ui' as const } : {}),
       origin: IMPORT_ORIGIN,
       toolInvocations,
       rpcMethods: [...handlers.keys()],
-      renderedSlots: clientEvidence.renderedSlots,
+      renderedPanels: clientEvidence.renderedPanels,
+      renderedToolViews: clientEvidence.renderedToolViews,
+      renderedMessageRenderers: [],
       ...(clientEvidence.renderedPages.length === 0 ? {} : { renderedPages: clientEvidence.renderedPages }),
-      ...(clientEvidence.renderedPages.length === 0 ? {} : { permissions: clientEvidence.permissions }),
+      permissions: clientEvidence.permissions,
     }
   } finally {
     await disposePlugin?.()

@@ -702,11 +702,12 @@ describe('Core SQLite baseline', () => {
         payloadDigest: 'a'.repeat(64),
       })
       expect(repository.listHostInstallations()).toEqual([])
-      repository.upsertHostInstallation({ extensionId, extensionRevisionId: revisionId, installedAt: 3 })
+      repository.upsertHostInstallation({ extensionId, extensionRevisionId: revisionId, installedAt: 3, config: {} })
       expect(repository.getHostInstallation(extensionId)).toEqual({
         extensionId,
         extensionRevisionId: revisionId,
         installedAt: 3,
+        config: {},
       })
       repository.deleteHostInstallation(extensionId)
       expect(repository.getHostInstallation(extensionId)).toBeUndefined()
@@ -2413,7 +2414,7 @@ describe('Extension and backup', () => {
 
       repository.deleteHostUiExtensionPages(extensionId)
       const committed = repository.commitHostInstallationState({
-        installation: { extensionId, extensionRevisionId: firstRevisionId, installedAt: 15 },
+        installation: { extensionId, extensionRevisionId: firstRevisionId, installedAt: 15, config: {} },
         hostUi: {
           grant: {
             ownerKey,
@@ -2441,7 +2442,7 @@ describe('Extension and backup', () => {
       expect(repository.getHostInstallation(extensionId)?.extensionRevisionId).toBe(firstRevisionId)
       expect(() =>
         repository.commitHostInstallationState({
-          installation: { extensionId, extensionRevisionId: secondRevisionId, installedAt: 16 },
+          installation: { extensionId, extensionRevisionId: secondRevisionId, installedAt: 16, config: {} },
           hostUi: {
             grant: {
               ownerKey,
@@ -2551,7 +2552,7 @@ describe('Extension and backup', () => {
         verification: {
           revisionId,
           dshVersion: '0.1.1-rc.1',
-          contractVersion: 'nekro-nxt-extension-v1',
+          contractVersion: 'nekro-nxt-extension-v4',
           origin: {
             episodeId: 'eps_history',
             pluginId: 'plugin_history',
@@ -2563,7 +2564,9 @@ describe('Extension and backup', () => {
           clientBuild: { built: false, buildKey: 'client-history' },
           toolInvocations: [],
           rpcMethods: [],
-          renderedSlots: [],
+          renderedPanels: [],
+          renderedToolViews: [],
+          renderedMessageRenderers: [],
         },
       })
 
@@ -3023,7 +3026,9 @@ describe('Extension and backup', () => {
         verification: {
           hostStarted: true,
           clientLoaded: false,
-          renderedSlots: [],
+          renderedPanels: [],
+          renderedToolViews: [],
+          renderedMessageRenderers: [],
           renderedPages: [],
           usedUiComponents: [],
           pageGeometry: [],

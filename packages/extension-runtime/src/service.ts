@@ -1,8 +1,6 @@
 import { readFileSync } from 'node:fs'
-import { readFile } from 'node:fs/promises'
 import path from 'node:path'
-import { extensionManifestSchema } from './manifest.js'
-import { readLegacyManifest, legacyExtensionManifestSchema } from './legacy-manifest.js'
+import { extensionManifestSchema, type ExtensionManifest } from './manifest.js'
 import { ExtensionIdSchema, ExtensionRevisionIdSchema, type AgentId, type ExtensionId } from '@nekro-nxt/contracts'
 import { monotonicFactory } from 'ulid'
 import { z } from 'zod'
@@ -45,14 +43,7 @@ const textSchema = z.object({
 
 export class ExtensionService {
   #closing = false
-  readonly #formats = new Map<
-    Revision['id'],
-    { readonly digest: string; readonly format: 'current' | 'requires-rebuild' }
-  >()
-  readonly #rebuilds = new Map<
-    ExtensionId,
-    Promise<{ readonly extension: LocalExtension; readonly revision: Revision }>
-  >()
+  readonly #manifests = new Map<Revision['id'], { readonly digest: string; readonly manifest: ExtensionManifest }>()
   readonly #repository: ExtensionRepository
   readonly #sources: ExtensionSourceStore
   readonly #now: () => number
@@ -90,6 +81,7 @@ export class ExtensionService {
       'revisionId' | 'verifiedAt' | 'hostBuild' | 'clientBuild'
     >
   }): Promise<{ readonly extension: LocalExtension; readonly revision: Revision }> {
+    if (this.#closing) throw new Error('扩展服务正在关闭。')
     const slug = slugSchema.parse(input.slug)
     const metadata = textSchema.parse({ displayName: input.displayName, description: input.description })
     const existing = input.extensionId ? this.#repository.getExtension(input.extensionId) : undefined
@@ -204,6 +196,7 @@ export class ExtensionService {
     readonly localSlug?: string
     readonly dshVersion?: string
   }): Promise<{ readonly extension: LocalExtension; readonly revision: Revision; readonly idempotent: boolean }> {
+    if (this.#closing) throw new Error('扩展服务正在关闭。')
     const slug = slugSchema.parse(input.localSlug ?? input.extension.slug)
     const metadata = textSchema.parse(input.extension)
     const materialized = materializeImportedRevision({
@@ -294,128 +287,31 @@ export class ExtensionService {
     return { extension, revision, idempotent: false }
   }
 
-  revisionFormat(revision: Revision): 'current' | 'requires-rebuild' | 'unavailable' {
-    const cached = this.#formats.get(revision.id)
-    if (cached?.digest === revision.contentDigest) return cached.format
+  /** Current-format Manifest of an immutable Revision; `undefined` when the source is missing or not V6. */
+  revisionManifest(revision: Revision): ExtensionManifest | undefined {
+    const cached = this.#manifests.get(revision.id)
+    if (cached?.digest === revision.contentDigest) return cached.manifest
     try {
       const value: unknown = JSON.parse(
         readFileSync(path.join(this.revisionSourceDirectory(revision), 'manifest.json'), 'utf8'),
       )
-      const format = extensionManifestSchema.safeParse(value).success
-        ? 'current'
-        : legacyExtensionManifestSchema.safeParse(value).success
-          ? 'requires-rebuild'
-          : 'unavailable'
-      if (format !== 'unavailable') this.#formats.set(revision.id, { digest: revision.contentDigest, format })
-      return format
+      const parsed = extensionManifestSchema.safeParse(value)
+      if (!parsed.success) return undefined
+      this.#manifests.set(revision.id, { digest: revision.contentDigest, manifest: parsed.data })
+      return parsed.data
     } catch {
-      return 'unavailable'
+      return undefined
     }
   }
 
-  rebuildRevision(
-    revisionId: Revision['id'],
-    dshVersion: string,
-  ): Promise<{ readonly extension: LocalExtension; readonly revision: Revision }> {
-    if (this.#closing) return Promise.reject(new Error('扩展服务正在关闭。'))
-    const revision = this.#repository.getExtensionRevision(revisionId)
-    if (!revision) return Promise.reject(new Error('找不到需要重建的扩展版本。'))
-    const pending = this.#rebuilds.get(revision.extensionId)
-    if (pending) return pending.then(() => this.rebuildRevision(revisionId, dshVersion))
-    const operation = this.#rebuildRevision(revision, dshVersion).finally(() => {
-      if (this.#rebuilds.get(revision.extensionId) === operation) this.#rebuilds.delete(revision.extensionId)
-    })
-    this.#rebuilds.set(revision.extensionId, operation)
-    return operation
+  revisionFormat(revision: Revision): 'current' | 'unavailable' {
+    return this.revisionManifest(revision) === undefined ? 'unavailable' : 'current'
   }
 
-  async dispose(): Promise<void> {
+  dispose(): Promise<void> {
     this.#closing = true
-    await Promise.allSettled(this.#rebuilds.values())
-    this.#formats.clear()
-  }
-
-  async #rebuildRevision(previous: Revision, dshVersion: string) {
-    const extension = this.#requireExtension(previous.extensionId)
-    if (this.revisionFormat(previous) === 'current') return { extension, revision: previous }
-    if (!this.#builder || !this.#importVerifier) throw new Error('重建扩展需要本机构建器与运行验证器。')
-    const directory = this.revisionSourceDirectory(previous)
-    const legacy = readLegacyManifest(JSON.parse(await readFile(path.join(directory, 'manifest.json'), 'utf8')))
-    if (legacy.extensionId !== extension.id || legacy.revisionId !== previous.id)
-      throw new Error('旧扩展源码身份与版本记录不一致。')
-    const oldVerification = this.#repository.getExtensionRevisionVerification(previous.id)
-    const contributions =
-      'contributions' in legacy
-        ? legacy.contributions
-        : [
-            ...(oldVerification?.toolInvocations ?? []).map(({ name }) => ({
-              kind: 'tool' as const,
-              name,
-              description: '',
-            })),
-            ...(oldVerification?.rpcMethods ?? []).map((method) => ({ kind: 'rpc' as const, method })),
-            ...(oldVerification?.renderedSlots ?? []).map((name) => ({ kind: 'client-slot' as const, name })),
-          ]
-    const revisionId = ExtensionRevisionIdSchema.parse(`xrv_${this.#nextUlid()}`)
-    const manifest = extensionManifestSchema.parse({
-      ...legacy,
-      schemaVersion: 5,
-      scope: extension.scope,
-      revisionId,
-      contributions,
-    })
-    const resources: Record<string, string> = {}
-    if ('clientCss' in manifest && manifest.clientCss)
-      resources[manifest.clientCss.path] = await readFile(path.join(directory, manifest.clientCss.path), 'utf8')
-    for (const contribution of manifest.contributions) {
-      if (contribution.kind === 'host-page' && contribution.icon.kind === 'svg')
-        resources[contribution.icon.path] = await readFile(path.join(directory, contribution.icon.path), 'utf8')
-    }
-    const materialized = materializeImportedRevision({
-      manifest,
-      sources: {
-        ...('host' in manifest.entrypoints
-          ? { host: await readFile(path.join(directory, manifest.entrypoints.host), 'utf8') }
-          : {}),
-        ...('client' in manifest.entrypoints
-          ? { client: await readFile(path.join(directory, manifest.entrypoints.client), 'utf8') }
-          : {}),
-      },
-      resources,
-    })
-    const duplicate = this.#repository.getExtensionRevisionByPayloadDigest(extension.id, materialized.payloadDigest)
-    if (duplicate && this.#repository.getExtensionRevisionVerification(duplicate.id))
-      return { extension, revision: duplicate }
-    const now = this.#timestamp()
-    const revision: Revision = {
-      id: revisionId,
-      extensionId: extension.id,
-      revisionNumber: this.#repository.nextExtensionRevisionNumber(extension.id),
-      contentDigest: materialized.contentDigest,
-      payloadDigest: materialized.payloadDigest,
-      createdAt: now,
-    }
-    await this.#sources.publish(extension.id, revision.id, materialized)
-    const artifact = await this.#builder.build({
-      extensionId: extension.id,
-      revisionId: revision.id,
-      contentDigest: revision.contentDigest,
-      sourceDirectory: this.revisionSourceDirectory(revision),
-    })
-    const verified = await this.#importVerifier({ extension, revision, materialized, artifact, dshVersion })
-    this.#repository.saveExtensionRevision({
-      extension,
-      revision,
-      verification: {
-        ...verified,
-        revisionId,
-        verifiedAt: now,
-        dshVersion,
-        hostBuild: { built: artifact.hostEntry !== undefined, buildKey: artifact.buildKey },
-        clientBuild: { built: artifact.clientEntry !== undefined, buildKey: artifact.buildKey },
-      },
-    })
-    return { extension, revision }
+    this.#manifests.clear()
+    return Promise.resolve()
   }
 
   #requireExtension(extensionId: ExtensionId): LocalExtension {

@@ -95,21 +95,22 @@ const startAuthoringSession = async (model = new QuietModel()) => {
 }
 
 describe('dynamic authoring closed loop', () => {
-  it('rejects an agent-scope candidate whose Client CSS could never be saved', () => {
+  it('accepts Client CSS beside an agent-scope Client and rejects it without one', () => {
     const css = '.panel { color: var(--nxt-text); }'
-    expect(() =>
+    const candidate = (code: { readonly client?: string }) =>
       preflightNekroNxtAuthoringDefinition({
         plugin: { kind: 'new', idPrefix: 'css' },
         name: '带样式的面板',
-        purpose: '智能体 Slot 不能使用页面 CSS。',
+        purpose: 'V6 面板通过自带 CSS 设定样式。',
         scope: 'agent',
-        code: { client: 'return { apply() {} }' },
+        code,
         resources: { 'assets/panel.module.css': css },
         clientCss: { path: 'assets/panel.module.css', sha256: createHash('sha256').update(css).digest('hex') },
         permissions: { permissions: [], networkOrigins: [] },
         contributions: [],
-      }),
-    ).toThrow('Client CSS 只用于包含顶级页面')
+      })
+    expect(() => candidate({ client: 'return { apply() {} }' })).not.toThrow()
+    expect(() => candidate({})).toThrow('必须配套 Client 源码')
   })
 
   it('stops a run that fails verification and records the failure on its attempt', async () => {
@@ -313,11 +314,13 @@ describe('dynamic authoring closed loop', () => {
           },
           verification: {
             dshVersion: 'synthetic',
-            contractVersion: 'nekro-nxt-extension-v1',
+            contractVersion: 'nekro-nxt-extension-v4',
             origin: { episodeId: 'eps_synthetic', pluginId: 'p', packageId: 'pkg', pluginRunId: 'run' },
             toolInvocations: [],
             rpcMethods: [],
-            renderedSlots: [],
+            renderedPanels: [],
+            renderedToolViews: [],
+            renderedMessageRenderers: [],
           },
         }),
       ).rejects.toThrow('materialized factory failure')

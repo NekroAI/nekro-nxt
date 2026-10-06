@@ -8,7 +8,7 @@ import type {
   Revision,
 } from '@nekro-nxt/extension-runtime'
 import type { ExtensionHostEnvironment, ExtensionRpcHandler } from '@nekro-nxt/extension-sdk'
-import { JsonValueSchema } from '@nekro-nxt/contracts'
+import { JsonValueSchema, type JsonValue } from '@nekro-nxt/contracts'
 import { createHash } from 'node:crypto'
 import { pathToFileURL } from 'node:url'
 
@@ -44,7 +44,7 @@ export class ServerAdapterHostInstallationHost implements HostExtensionInstallat
     return this.#callbacks.waitUntilSafe(adapterKey)
   }
 
-  async mount(revision: Revision, artifact: ExtensionBuildArtifact): Promise<MountedHostExtension> {
+  async mount(revision: Revision, artifact: ExtensionBuildArtifact, config: JsonValue): Promise<MountedHostExtension> {
     if (!artifact.hostEntry) throw new Error('适配器 Extension Revision 缺少 Host 构建产物。')
     const expected = this.#callbacks.expectedAdapter(revision)
     const candidate = new AdapterRegistry()
@@ -65,8 +65,9 @@ export class ServerAdapterHostInstallationHost implements HostExtensionInstallat
         candidateHandle = candidate.register(`candidate:${revision.id}`, contribution)
         return () => void candidateHandle?.dispose()
       },
+      config: () => config,
     }
-    const environment: ExtensionHostEnvironment = { harness, config: {} }
+    const environment: ExtensionHostEnvironment = { harness, config }
     await Reflect.apply(hostFactory, undefined, [environment])
     const contribution = candidate.list()[0]
     if (!contribution || candidate.list().length !== 1) {
@@ -93,7 +94,11 @@ export class ServerAdapterHostInstallationHost implements HostExtensionInstallat
     return { adapterKey: expected.key, dispose: () => registered.dispose() }
   }
 
-  async mountHostUi(_revision: Revision, artifact: ExtensionBuildArtifact): Promise<MountedHostUiExtension> {
+  async mountHostUi(
+    _revision: Revision,
+    artifact: ExtensionBuildArtifact,
+    config: JsonValue,
+  ): Promise<MountedHostUiExtension> {
     if (!artifact.hostEntry) {
       return {
         call: () => Promise.reject(new Error('这个页面扩展没有声明 Host RPC。')),
@@ -119,8 +124,9 @@ export class ServerAdapterHostInstallationHost implements HostExtensionInstallat
         handlers.set(normalized, handler)
         return () => handlers.delete(normalized)
       },
+      config: () => config,
     }
-    const definition: unknown = await Reflect.apply(hostFactory, undefined, [{ harness, config: {} }])
+    const definition: unknown = await Reflect.apply(hostFactory, undefined, [{ harness, config }])
     if (isUnknownRecord(definition) && typeof definition['apply'] === 'function') {
       const dispose: unknown = await Reflect.apply(definition['apply'], definition, [
         { tools: { register: () => forbidden('智能体工具') } },

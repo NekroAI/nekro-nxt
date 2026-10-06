@@ -764,6 +764,7 @@ export const hostExtensionInstallations = sqliteTable(
       .references(() => localExtensions.id, { onDelete: 'restrict' }),
     extensionRevisionId: text('extension_revision_id').$type<ExtensionRevisionId>().notNull(),
     installedAt: integer('installed_at').notNull(),
+    config: jsonText<JsonValue>('config').notNull().default({}),
   },
   (table) => [
     uniqueIndex('host_extension_installations_revision_uq').on(table.extensionId, table.extensionRevisionId),

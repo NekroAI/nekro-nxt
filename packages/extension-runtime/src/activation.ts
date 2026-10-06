@@ -1,12 +1,21 @@
 import type { ExtensionCompatibilityPort, ExtensionCompatibilityIdentity } from './compatibility.js'
 import type { AgentId, ExtensionId, ExtensionRevisionId, JsonValue } from '@nekro-nxt/contracts'
 import type { ExtensionBuilder } from './builder.js'
+import {
+  activationOwnerKey,
+  carryExtensionConfig,
+  permissionApprovalError,
+  permissionRequirement,
+  resolveExtensionConfig,
+  type PermissionRequirement,
+} from './permissions.js'
 import type { ExtensionService } from './service.js'
 import type {
   Activation,
   ExtensionBuildArtifact,
   ExtensionRepository,
   ExtensionRuntimeDiagnostic,
+  HostUiRepository,
   Revision,
 } from './types.js'
 
@@ -30,7 +39,11 @@ export interface ExtensionActivationHost {
 }
 
 type ArtifactBuilder = Pick<ExtensionBuilder, 'build'>
-type RevisionSourceResolver = Pick<ExtensionService, 'revisionSourceDirectory'>
+type RevisionSourceResolver = Pick<ExtensionService, 'revisionSourceDirectory' | 'revisionManifest'>
+type PermissionGrants = Pick<
+  HostUiRepository,
+  'getHostUiPermissionGrant' | 'upsertHostUiPermissionGrant' | 'deleteHostUiPermissionGrant'
+>
 
 export class ExtensionActivationCoordinator {
   readonly #repository: ExtensionRepository
@@ -38,6 +51,7 @@ export class ExtensionActivationCoordinator {
   readonly #builder: ArtifactBuilder
   readonly #host: ExtensionActivationHost
   readonly #compatibility: ExtensionCompatibilityPort | undefined
+  readonly #grants: PermissionGrants | undefined
   readonly #now: () => number
   readonly #mounted = new Map<string, MountedExtension>()
   readonly #diagnostics = new Map<string, ExtensionRuntimeDiagnostic>()
@@ -50,7 +64,12 @@ export class ExtensionActivationCoordinator {
     service: RevisionSourceResolver,
     builder: ArtifactBuilder,
     host: ExtensionActivationHost,
-    options: { readonly now?: () => number; readonly compatibility?: ExtensionCompatibilityPort } = {},
+    options: {
+      readonly now?: () => number
+      readonly compatibility?: ExtensionCompatibilityPort
+      /** Permission grants are shared with Host UI installations; omit only in isolated tests. */
+      readonly grants?: PermissionGrants
+    } = {},
   ) {
     this.#repository = repository
     this.#service = service
@@ -58,6 +77,19 @@ export class ExtensionActivationCoordinator {
     this.#host = host
     this.#now = options.now ?? Date.now
     this.#compatibility = options.compatibility
+    this.#grants = options.grants
+  }
+
+  /** What the user must approve before this Revision can be enabled for the agent. */
+  getPermissionRequirement(
+    agentId: AgentId,
+    extensionId: ExtensionId,
+    revisionId: ExtensionRevisionId,
+  ): PermissionRequirement {
+    return permissionRequirement(
+      this.#repository.getExtensionRevisionVerification(revisionId)?.permissions,
+      this.#grants?.getHostUiPermissionGrant(activationOwnerKey(agentId, extensionId)),
+    )
   }
 
   async activate(input: {
@@ -65,6 +97,7 @@ export class ExtensionActivationCoordinator {
     readonly extensionId: ExtensionId
     readonly revisionId: ExtensionRevisionId
     readonly config?: JsonValue
+    readonly permissionApproval?: { readonly permissionDigest: string }
   }): Promise<Activation> {
     const key = this.#key(input.agentId, input.extensionId)
     return this.#exclusive(key, async () => {
@@ -80,8 +113,17 @@ export class ExtensionActivationCoordinator {
         throw new Error('Only Agent-scoped Extensions can be activated for an intelligent agent.')
       }
 
+      const requirement = this.getPermissionRequirement(input.agentId, input.extensionId, revision.id)
+      if (requirement.approvalRequired && input.permissionApproval?.permissionDigest !== requirement.permissionDigest) {
+        throw permissionApprovalError(requirement)
+      }
       const artifact = await this.#build(revision)
       const previous = this.#repository.getActivation(input.agentId, input.extensionId)
+      const manifest = this.#service.revisionManifest(revision)
+      const config =
+        input.config === undefined
+          ? carryExtensionConfig(manifest, previous?.config)
+          : resolveExtensionConfig(manifest, input.config)
       const previousInstance = this.#mounted.get(key)
       const rollback = previousInstance && previous ? await this.#prepareRollback(previous) : undefined
       await this.#host.waitUntilSafe(input.agentId)
@@ -93,7 +135,7 @@ export class ExtensionActivationCoordinator {
 
       let mounted: MountedExtension
       try {
-        mounted = await this.#host.mount(input.agentId, revision, artifact, input.config ?? {})
+        mounted = await this.#host.mount(input.agentId, revision, artifact, config)
       } catch (error) {
         await this.#restorePrevious(key, rollback, error)
         throw error
@@ -103,11 +145,20 @@ export class ExtensionActivationCoordinator {
         agentId: input.agentId,
         extensionId: input.extensionId,
         extensionRevisionId: input.revisionId,
-        config: input.config ?? {},
+        config,
         activatedAt: this.#timestamp(),
       }
       try {
         this.#repository.upsertActivation(activation)
+        if (requirement.declaration.permissions.length > 0 || requirement.declaration.networkOrigins.length > 0) {
+          this.#grants?.upsertHostUiPermissionGrant({
+            ownerKey: activationOwnerKey(input.agentId, input.extensionId),
+            artifactDigest: revision.payloadDigest,
+            permissionDigest: requirement.permissionDigest,
+            declaration: requirement.declaration,
+            approvedAt: activation.activatedAt,
+          })
+        }
       } catch (error) {
         try {
           await mounted.dispose()
@@ -129,6 +180,44 @@ export class ExtensionActivationCoordinator {
         { status: 'compatible', phase: 'restore', retryable: true },
       )
       return activation
+    })
+  }
+
+  /** Applies a new configuration to an existing Activation by remounting it at the next safe gap. */
+  async updateConfig(agentId: AgentId, extensionId: ExtensionId, value: JsonValue): Promise<Activation> {
+    const key = this.#key(agentId, extensionId)
+    return this.#exclusive(key, async () => {
+      this.#assertAvailable()
+      const current = this.#repository.getActivation(agentId, extensionId)
+      if (!current) throw new Error('这个扩展尚未启用给该智能体。')
+      const revision = this.#repository.getExtensionRevision(current.extensionRevisionId)
+      if (!revision || revision.extensionId !== extensionId) throw new Error('当前启用的扩展版本不可用。')
+      const config = resolveExtensionConfig(this.#service.revisionManifest(revision), value)
+      const artifact = await this.#build(revision)
+      const rollback = { activation: current, revision, artifact }
+      await this.#host.waitUntilSafe(agentId)
+      const previousInstance = this.#mounted.get(key)
+      if (previousInstance) {
+        await previousInstance.dispose()
+        this.#mounted.delete(key)
+      }
+      let mounted: MountedExtension
+      try {
+        mounted = await this.#host.mount(agentId, revision, artifact, config)
+      } catch (error) {
+        await this.#restorePrevious(key, rollback, error)
+        throw error
+      }
+      const next: Activation = { ...current, config }
+      try {
+        this.#repository.upsertActivation(next)
+      } catch (error) {
+        await mounted.dispose().catch(() => undefined)
+        await this.#restorePrevious(key, rollback, error)
+        throw error
+      }
+      this.#mounted.set(key, mounted)
+      return next
     })
   }
 
@@ -213,6 +302,7 @@ export class ExtensionActivationCoordinator {
         await this.#restorePrevious(key, rollback, error)
         throw error
       }
+      this.#grants?.deleteHostUiPermissionGrant(activationOwnerKey(agentId, extensionId))
       this.#diagnostics.delete(key)
     })
   }

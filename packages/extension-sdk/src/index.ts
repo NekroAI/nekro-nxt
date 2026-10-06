@@ -1,26 +1,37 @@
 import { DSH_RUNTIME_RELEASE } from '@nekro-nxt/dsh-compat/release'
 import type { AdapterHostContributionV2 } from '@nekro-nxt/adapter-sdk'
 import type { ElementType, ReactNode } from 'react'
+import { EXTENSION_DATA_HOOK_PERMISSIONS } from '@nekro-nxt/contracts'
 import type {
-  AdapterClientSlotName,
-  AgentClientSlotName,
+  ConfigSchemaDocument,
+  ConnectionPanelRole,
+  ExtensionPanelAnchor,
+  ExtensionPanelDeclaration,
   HostPageContribution,
   HostUiKitComponentName,
   HostUiNavigationModel,
-  HostUiPermissionDeclaration,
+  HostUiPermission,
   MessagePart,
+  PanelDensity,
+  ToolViewDensity,
 } from '@nekro-nxt/contracts'
 
 export type {
-  AdapterClientSlotName,
-  AgentClientSlotName,
+  ConfigSchemaDocument,
+  ConnectionPanelRole,
+  ExtensionPanelAnchor,
+  ExtensionPanelDeclaration,
   HostIconName,
   HostPageContribution,
   HostUiKitComponentName,
   HostUiNavigationModel,
   HostUiPermission,
   HostUiPermissionDeclaration,
+  PanelDensity,
+  ToolViewDensity,
 } from '@nekro-nxt/contracts'
+
+export { configSchema } from '@nekro-nxt/contracts'
 
 export type {
   AdapterConnectionHostContext,
@@ -96,136 +107,55 @@ export interface ExtensionHostEnvironment {
     handle(method: string, handler: ExtensionRpcHandler): () => void
     /** Host-scoped Adapter Revisions register exactly one contribution during factory evaluation. */
     registerAdapter(contribution: AdapterHostContributionV2): () => void
+    /**
+     * Current configuration validated against the Manifest config schema. Dynamic runs have no saved configuration;
+     * read it as `harness.config?.() ?? {}` so the same source works before and after saving.
+     */
+    config(): ExtensionJsonValue
   }
   readonly config: ExtensionJsonValue
 }
 
-export type NekroNxtClientSlotName = AgentClientSlotName
-
-export interface AgentWorkbenchSlotProps {
-  readonly agentId: string
-  readonly displayName: string
-}
-
-export interface ExtensionDetailsSlotProps {
-  readonly agentId: string
-  readonly extensionId: string
-  readonly revisionId: string
-  readonly activation: 'active' | 'inactive'
-}
-
-export interface ExtensionActivationSlotProps extends ExtensionDetailsSlotProps {
-  readonly activationId: string
-  readonly runtimeStatus: 'active' | 'restore-failed' | 'dispose-failed'
-}
-
-export interface ChannelInspectorAgentSlotProps {
-  readonly agentId: string
-  readonly channelId: string
-  readonly connectionId: string
-  readonly episodeId?: string
-  readonly runtimePhase: 'idle' | 'thinking' | 'using-tool' | 'waiting-input' | 'unavailable'
-}
-
-export interface ConversationToolCardSlotProps {
-  readonly agentId: string
-  readonly channelId: string
-  readonly callId: string
-  readonly toolName: string
-  readonly displayName: string
-  readonly state: 'running' | 'succeeded' | 'failed'
-  readonly surface: 'stream' | 'trajectory'
-  readonly inputPresentation?: string
-  readonly resultPresentation?: string
-  readonly durationMs?: number
-  readonly wroteToChannel?: boolean
-}
-
-export interface NekroNxtClientSlotPropsMap {
-  readonly 'agent.workbench.sections': AgentWorkbenchSlotProps
-  readonly 'extension.activation.panels': ExtensionActivationSlotProps
-  readonly 'extension.details.panels': ExtensionDetailsSlotProps
-  readonly 'channel.inspector.agent.sections': ChannelInspectorAgentSlotProps
-  readonly 'conversation.tool.card': ConversationToolCardSlotProps
-}
-
 export type AdapterRichMessagePart = Extract<MessagePart, { readonly type: 'rich' }>
 
-export interface AdapterRichMessageSlotProps {
+/** Props of every panel. The panel reads the object it is anchored to through `ctx.data`. */
+export interface ExtensionPanelProps {
+  readonly anchor: { readonly kind: ExtensionPanelAnchor; readonly id: string }
+  readonly density: PanelDensity
+  readonly role?: ConnectionPanelRole
+}
+
+export interface ExtensionToolCall {
+  readonly callId: string
+  readonly toolName: string
+  readonly state: 'running' | 'succeeded' | 'failed'
+  readonly input?: string
+  readonly result?: string
+  readonly durationMs?: number
+}
+
+/** `chip` is the one-line summary in the conversation; `card` is the expanded x-ray view. */
+export interface ExtensionToolViewProps {
+  readonly call: ExtensionToolCall
+  readonly density: ToolViewDensity
+}
+
+export interface ExtensionMessageRendererProps {
   readonly part: AdapterRichMessagePart
   readonly messageId: string
   readonly channelId: string
 }
 
-export interface AdapterConnectionSlotProps {
-  readonly adapterKey: string
-  readonly connectionId?: string
-  readonly phase: 'setup' | 'active' | 'testing'
-  readonly diagnostic?: ExtensionJsonObject
+export interface ExtensionPanelRegistry {
+  register(declaration: ExtensionPanelDeclaration, component: (props: ExtensionPanelProps) => ReactNode): () => void
 }
 
-export interface AdapterChannelInspectorSlotProps {
-  readonly adapterKey: string
-  readonly connectionId: string
-  readonly channelId: string
-  readonly channelKind: 'internal' | 'group' | 'direct'
+export interface ExtensionToolViewRegistry {
+  register(tool: string, component: (props: ExtensionToolViewProps) => ReactNode): () => void
 }
 
-export interface AdapterClientSlotPropsMap {
-  readonly 'conversation.message.rich': AdapterRichMessageSlotProps
-  readonly 'connection.adapter.setup': AdapterConnectionSlotProps
-  readonly 'connection.adapter.status': AdapterConnectionSlotProps
-  readonly 'connection.adapter.test': AdapterConnectionSlotProps
-  readonly 'channel.inspector.adapter.sections': AdapterChannelInspectorSlotProps
-}
-
-export interface AdapterHostClientSlotRegistry {
-  register<Name extends AdapterClientSlotName>(
-    options: { readonly name: Name; readonly id: string },
-    component: (props: AdapterClientSlotPropsMap[Name]) => ReactNode,
-  ): () => void
-}
-
-export interface AdapterHostClientContext {
-  readonly slots: AdapterHostClientSlotRegistry
-  readonly pages: HostUiPageRegistry
-  readonly ui: HostUiKit
-}
-
-export type AdapterHostClientEnvironment = Pick<ExtensionClientEnvironment, 'React' | 'styles' | 'host'> & {
-  readonly ui: HostUiKit
-}
-
-export interface ExtensionClientStyles {
-  readonly section: string
-  readonly sectionHeading: string
-  readonly secondaryText: string
-  readonly actionRow: string
-  readonly button: string
-  readonly badge: string
-}
-
-export interface ExtensionClientHost {
-  call(method: string, input?: ExtensionJsonValue): Promise<ExtensionJsonValue>
-}
-
-export interface ExtensionClientSlotRegistry {
-  register<Name extends NekroNxtClientSlotName>(
-    options: { readonly name: Name; readonly id?: string },
-    component: (props: NekroNxtClientSlotPropsMap[Name]) => ReactNode,
-  ): () => void
-}
-
-export interface ExtensionClientContext {
-  readonly slots: ExtensionClientSlotRegistry
-}
-
-export interface ExtensionClientEnvironment {
-  readonly React: {
-    createElement(type: ElementType, props?: object | null, ...children: ReactNode[]): ReactNode
-  }
-  readonly host: ExtensionClientHost
-  readonly styles: ExtensionClientStyles
+export interface ExtensionMessageRendererRegistry {
+  register(richKind: string, component: (props: ExtensionMessageRendererProps) => ReactNode): () => void
 }
 
 export interface HostUiPageProps {
@@ -242,7 +172,6 @@ export interface HostUiNavigationProvider {
 }
 
 export interface HostUiPageRegistry {
-  declarePermissions(declaration: HostUiPermissionDeclaration): void
   register(
     options: {
       readonly page: HostPageContribution
@@ -252,15 +181,57 @@ export interface HostUiPageRegistry {
   ): () => void
 }
 
-export interface HostUiClientContext {
+export interface ExtensionAgentView {
+  readonly id: string
+  readonly name: string
+  readonly phase: 'idle' | 'thinking' | 'using-tool' | 'waiting-input' | 'unavailable'
+}
+
+export interface ExtensionChannelView {
+  readonly id: string
+  readonly name: string
+  readonly kind: 'internal' | 'direct' | 'group'
+  readonly connectionId: string
+  readonly agentId?: string
+}
+
+export interface ExtensionConnectionView {
+  readonly id: string
+  readonly adapterKey: string
+  readonly name: string
+  readonly state: 'stopped' | 'connecting' | 'connected' | 'reconnecting' | 'failed'
+}
+
+export interface ExtensionChannelRuntimeView {
+  readonly channelId: string
+  readonly phase: 'idle' | 'thinking' | 'using-tool' | 'waiting-input' | 'unavailable'
+  readonly contextTokens?: number
+  readonly contextWindow?: number
+}
+
+/**
+ * Read-only product data for UI contributions. Each Hook re-renders on product events and requires the matching
+ * permission (`agents.read`, `channels.read`, `connections.read`, `runtime.read`); without it the Hook throws.
+ */
+export interface ExtensionClientData {
+  useAgent(agentId: string): ExtensionAgentView | undefined
+  useChannel(channelId: string): ExtensionChannelView | undefined
+  useConnection(connectionId: string): ExtensionConnectionView | undefined
+  useChannelRuntime(channelId: string): ExtensionChannelRuntimeView | undefined
+}
+
+/** Everything one Client half can register. Unused registries are simply ignored. */
+export interface ExtensionClientContext {
+  readonly panels: ExtensionPanelRegistry
+  readonly toolViews: ExtensionToolViewRegistry
+  readonly messageRenderers: ExtensionMessageRendererRegistry
   readonly pages: HostUiPageRegistry
-  /** Present for a host-adapter Revision that also contributes pages; page-only clients leave it unused. */
-  readonly slots: AdapterHostClientSlotRegistry
-  /** Mirrors the environment facade so dynamic preview and installed pages use the same component surface. */
+  readonly data: ExtensionClientData
   readonly ui: HostUiKit
 }
 
-export type HostUiReactFacade = ExtensionClientEnvironment['React'] & {
+export type HostUiReactFacade = {
+  createElement(type: ElementType, props?: object | null, ...children: ReactNode[]): ReactNode
   readonly Fragment: unknown
   useState<Value>(initial: Value | (() => Value)): [Value, (value: Value | ((current: Value) => Value)) => void]
   useEffect(effect: () => void | (() => void), dependencies?: readonly unknown[]): void
@@ -274,7 +245,9 @@ export type HostUiReactFacade = ExtensionClientEnvironment['React'] & {
   ): Snapshot
 }
 
+/** `ui-kit@1`: the versioned component surface every UI contribution renders with. */
 export interface HostUiKit {
+  readonly version: 'ui-kit@1'
   readonly Button: ElementType
   readonly IconButton: ElementType
   readonly Input: ElementType
@@ -300,18 +273,17 @@ export interface HostUiKit {
   readonly SidePane: ElementType
 }
 
-export interface HostUiClientEnvironment {
-  readonly React: HostUiReactFacade
-  readonly ui: HostUiKit
-  readonly styles: ExtensionClientStyles
-  readonly host: ExtensionClientHost & {
-    subscribe(topic: string, listener: (value: ExtensionJsonValue) => void): () => void
-  }
+export interface ExtensionClientHost {
+  /** Calls a Host RPC of this Revision, or a product method allowed by the declared permissions. */
+  call(method: string, input?: ExtensionJsonValue): Promise<ExtensionJsonValue>
+  subscribe(topic: string, listener: (value: ExtensionJsonValue) => void): () => void
 }
 
-export interface HostUiExtensionDefinition {
-  readonly pages: readonly HostPageContribution[]
-  readonly permissions: HostUiPermissionDeclaration
+export interface ExtensionClientEnvironment {
+  readonly React: HostUiReactFacade
+  readonly host: ExtensionClientHost
+  /** Owned by the dynamic runner during previews; installed Revisions load their CSS Module automatically. */
+  readonly styles: unknown
 }
 
 export type ExtensionPluginFactory<Environment, Context = ExtensionHostContext> = (
@@ -319,58 +291,46 @@ export type ExtensionPluginFactory<Environment, Context = ExtensionHostContext> 
 ) => ExtensionPluginDefinition<Context> | Promise<ExtensionPluginDefinition<Context>>
 
 export interface NekroNxtExtensionAuthoringReference {
-  readonly contractVersion: 'nekro-nxt-extension-v3'
+  readonly contractVersion: 'nekro-nxt-extension-v4'
   readonly dshVersion: string
-  readonly supportedContributions: {
-    readonly hostTool: true
-    readonly hostRpc: true
-    readonly clientSlots: readonly NekroNxtClientSlotName[]
-    readonly hostPages: {
-      readonly maxEntries: 8
-      readonly requiredServices: readonly ['pages', 'ui']
-      readonly uiComponents: readonly HostUiKitComponentName[]
-      readonly nativeInteractiveElements: true
-      readonly designContract: {
-        readonly version: 'nxt-host-ui-design-v1'
-        readonly responsibilities: readonly {
-          readonly owner: 'host' | 'extension' | 'ui-kit'
-          readonly provided: readonly string[]
-          readonly forbidden: readonly string[]
-        }[]
-        readonly standardInsets: {
-          readonly blockStart: 24
-          readonly blockEnd: 40
-          readonly inline: readonly [24, 32, 40]
-          readonly contentBreakpoints: readonly [960, 1440]
-        }
-        readonly compositionRules: readonly string[]
-      }
+  readonly scopes: {
+    readonly agent: {
+      readonly contributions: readonly ['tool', 'rpc', 'panel', 'tool-view']
+      readonly panelAnchors: readonly ExtensionPanelAnchor[]
     }
     readonly hostAdapter: {
       readonly apiVersion: 2
-      readonly scope: 'host-adapter'
       readonly registration: 'harness.registerAdapter'
-      readonly oneStableKey: true
-      readonly clientSlots: readonly AdapterClientSlotName[]
-      readonly allowedHostServices: readonly [
-        'channels',
-        'identities',
-        'members',
-        'messages',
-        'assets',
-        'credentials',
-        'state',
-        'diagnostics',
-        'transport',
-      ]
-      readonly configSchemaExample: AdapterHostContributionV2['descriptor']['configSchema']
-      readonly cannotMixWith: readonly ['tool', 'rpc', 'agent-client-slot']
+      readonly contributions: readonly ['adapter', 'panel', 'message-renderer', 'host-page']
+      readonly panelAnchors: readonly ExtensionPanelAnchor[]
+      readonly connectionPanelRoles: readonly ConnectionPanelRole[]
+      readonly allowedHostServices: readonly string[]
+      readonly configSchemaExample: ConfigSchemaDocument
     }
-    readonly dshNativeWebUi: false
+    readonly hostUi: { readonly contributions: readonly ['host-page']; readonly maxPages: 8 }
   }
+  readonly ui: {
+    readonly kitVersion: 'ui-kit@1'
+    readonly components: readonly HostUiKitComponentName[]
+    readonly panelDensities: readonly PanelDensity[]
+    readonly toolViewDensities: readonly ToolViewDensity[]
+    readonly dataHooks: readonly (keyof ExtensionClientData)[]
+    readonly hookPermissions: Readonly<Record<keyof ExtensionClientData, HostUiPermission>>
+    readonly designContract: {
+      readonly version: 'nxt-host-ui-design-v2'
+      readonly responsibilities: readonly {
+        readonly owner: 'host' | 'extension' | 'ui-kit'
+        readonly provided: readonly string[]
+        readonly forbidden: readonly string[]
+      }[]
+      readonly compositionRules: readonly string[]
+    }
+  }
+  readonly dshNativeWebUi: false
   readonly examples: {
     readonly hostTool: string
-    readonly hostRpcAndClientSlot: string
+    readonly hostRpcAndPanel: string
+    readonly toolView: string
     readonly hostAdapter: string
     readonly hostPage: string
   }
@@ -391,34 +351,60 @@ const HOST_TOOL_EXAMPLE = `return {
         schema: { type: 'string' },
         render(_args, value) { return [{ type: 'text', text: value }] }
       },
-      execute({ project }) { return project + ': ready' }
+      execute({ project }) {
+        const settings = harness.config?.() ?? {}
+        return project + (settings.verbose ? ': ready (verbose)' : ': ready')
+      }
     })
     harness.registerTool(ctx, tool)
   }
 }`
 
-const HOST_RPC_AND_CLIENT_SLOT_EXAMPLE = `// Host half
+const HOST_RPC_AND_PANEL_EXAMPLE = `// Host half
 // RPC belongs to the Activation, so register it in the factory before returning the per-Session plugin.
 harness.handle('summary', () => ({ text: 'Synthetic extension summary' }))
 return {
   apply() {}
 }
 
-// Client half: use only a Slot returned by NekroNXT Inspect.
+// Client half: declare where the panel belongs; the Host decides the page, frame and title bar.
 return {
-  inject: ['slots'],
+  inject: ['panels', 'data', 'ui'],
   apply(ctx) {
-    ctx.slots.register(
-      { name: 'agent.workbench.sections', id: 'main' },
-      (props) => React.createElement(
-        'section',
-        { className: styles.section },
-        React.createElement('h3', { className: styles.sectionHeading }, props.displayName),
-        React.createElement('button', {
-          className: styles.button,
-          onClick: async () => { await host.call('summary', {}) }
-        }, 'Refresh')
+    const { Button, Stack } = ctx.ui
+    const SummaryPanel = ({ anchor, density }) => {
+      const agent = ctx.data.useAgent(anchor.id)
+      const [text, setText] = React.useState('')
+      return React.createElement(
+        Stack,
+        null,
+        React.createElement('p', null, (agent ? agent.name : '智能体') + (density === 'compact' ? '' : ' 的摘要')),
+        text ? React.createElement('p', null, text) : null,
+        React.createElement(Button, {
+          onClick: async () => setText((await host.call('summary')).text)
+        }, '刷新摘要')
       )
+    }
+    ctx.panels.register(
+      { id: 'summary', anchor: 'agent', title: '摘要', icon: 'file-text', densities: ['full', 'compact'] },
+      SummaryPanel
+    )
+  }
+}`
+
+const TOOL_VIEW_EXAMPLE = `// Client half of an agent extension that declares the Tool project_status.
+return {
+  inject: ['toolViews', 'ui'],
+  apply(ctx) {
+    const { StatusBadge } = ctx.ui
+    ctx.toolViews.register('project_status', ({ call, density }) =>
+      density === 'chip'
+        ? React.createElement('span', null, call.result ?? '查询中')
+        : React.createElement(
+            StatusBadge,
+            { tone: call.state === 'failed' ? 'error' : 'success' },
+            call.result ?? '查询中'
+          )
     )
   }
 }`
@@ -434,13 +420,13 @@ const HOST_ADAPTER_EXAMPLE = `const descriptor = {
   activities: [],
   features: {},
   diagnostics: { receive: true, send: true },
+  // Serialized Schemastery. role: 'secret' fields are write-only credentials keyed by the field name.
   configSchema: {
-    schemaVersion: 1,
     type: 'object',
-    required: ['endpoint', 'token'],
-    properties: {
-      endpoint: { type: 'string', title: 'Endpoint', default: 'wss://chat.example.invalid/events' },
-      token: { type: 'credential-reference', credentialKey: 'token', title: 'Token' }
+    dict: {
+      endpoint: { type: 'string', meta: { description: 'Endpoint', required: true, default: 'wss://chat.example.invalid/events' } },
+      token: { type: 'string', meta: { description: 'Token', required: true, role: 'secret' } },
+      verbose: { type: 'boolean', meta: { description: '详细日志', default: false, advanced: true } }
     }
   }
 }
@@ -475,8 +461,7 @@ const HOST_PAGE_EXAMPLE = `return {
       }),
       subscribe: () => () => undefined
     }
-    ctx.pages.declarePermissions({ permissions: [], networkOrigins: [] })
-    const AcceptancePage = ({ relativePath, navigate }) => {
+    const AcceptancePage = ({ relativePath }) => {
       const details = relativePath === 'details'
       return React.createElement(
         Stack,
@@ -492,21 +477,15 @@ const HOST_PAGE_EXAMPLE = `return {
               React.createElement(
                 DataTable,
                 null,
-                React.createElement(
-                  'thead',
-                  null,
+                React.createElement('thead', null,
                   React.createElement('tr', null,
                     React.createElement('th', null, '验收项'),
                     React.createElement('th', null, '负责人'),
                     React.createElement('th', null, '状态')
                   )
                 ),
-                React.createElement(
-                  'tbody',
-                  null,
-                  ...records.map((record) => React.createElement(
-                    'tr',
-                    { key: record.name },
+                React.createElement('tbody', null,
+                  ...records.map((record) => React.createElement('tr', { key: record.name },
                     React.createElement('td', null, record.name),
                     React.createElement('td', null, record.owner),
                     React.createElement('td', null, React.createElement(
@@ -521,14 +500,12 @@ const HOST_PAGE_EXAMPLE = `return {
           : React.createElement(
               Section,
               null,
-              React.createElement('h2', null, '当前进展'),
               React.createElement(
                 MetricStrip,
                 null,
                 React.createElement(Metric, { label: '验收项', value: String(records.length) }),
                 React.createElement(Metric, { label: '已通过', value: '1' })
-              ),
-              React.createElement(StatusBadge, { tone: 'info' }, '验收中')
+              )
             )
       )
     }
@@ -547,94 +524,16 @@ const HOST_PAGE_EXAMPLE = `return {
 }`
 
 export const NEKRO_NXT_EXTENSION_AUTHORING_REFERENCE: NekroNxtExtensionAuthoringReference = {
-  contractVersion: 'nekro-nxt-extension-v3',
+  contractVersion: 'nekro-nxt-extension-v4',
   dshVersion: DSH_RUNTIME_RELEASE.dshVersion,
-  supportedContributions: {
-    hostTool: true,
-    hostRpc: true,
-    clientSlots: [
-      'agent.workbench.sections',
-      'extension.activation.panels',
-      'channel.inspector.agent.sections',
-      'conversation.tool.card',
-    ],
-    hostPages: {
-      maxEntries: 8,
-      requiredServices: ['pages', 'ui'],
-      uiComponents: [
-        'Button',
-        'IconButton',
-        'Input',
-        'Textarea',
-        'Select',
-        'Switch',
-        'Tabs',
-        'Dialog',
-        'Popover',
-        'Tooltip',
-        'Field',
-        'StatusBadge',
-        'InlineFeedback',
-        'EmptyState',
-        'Spinner',
-        'PageHeader',
-        'MetricStrip',
-        'Metric',
-        'Section',
-        'Stack',
-        'Grid',
-        'DataTable',
-        'SidePane',
-      ],
-      nativeInteractiveElements: true,
-      designContract: {
-        version: 'nxt-host-ui-design-v1',
-        responsibilities: [
-          {
-            owner: 'host',
-            provided: ['产品外壳', '页面背景', '页面安全边距', '根滚动', '声明式对象列', 'Portal 层级'],
-            forbidden: ['不得把背景、外边距或根滚动交给 Extension'],
-          },
-          {
-            owner: 'extension',
-            provided: ['当前视图标题', '业务数据', '业务操作', '内容区块顺序', '局部受作用域样式'],
-            forbidden: ['页面根背景', '页面根 padding', '负边距越界', '100vw/100vh', '重复对象列导航'],
-          },
-          {
-            owner: 'ui-kit',
-            provided: ['基础控件状态', '内容表面', '表格外壳', '反馈', 'Dialog/Popover/Tooltip'],
-            forbidden: ['破坏控件可访问性或焦点管理'],
-          },
-        ],
-        standardInsets: {
-          blockStart: 24,
-          blockEnd: 40,
-          inline: [24, 32, 40],
-          contentBreakpoints: [960, 1440],
-        },
-        compositionRules: [
-          'Host 已提供背景、外边距和根滚动，页面组件从透明内容区开始。',
-          '建议用对象列标题表示应用、PageHeader 表示当前视图；标题重复不影响运行验证。',
-          '对象列已有的视图切换不得再渲染成页面主按钮。',
-          'Section 默认使用间距分组，只有独立对象才使用 Surface。',
-          '概览优先使用紧凑摘要、列表或表格，不默认生成等宽指标卡片墙。',
-          'StatusBadge 贴合文字，不拉伸成无进度语义的横条。',
-          '状态名称、汇总数量、日期和表格数据必须互相一致。',
-        ],
-      },
-    },
+  scopes: {
+    agent: { contributions: ['tool', 'rpc', 'panel', 'tool-view'], panelAnchors: ['agent', 'channel', 'extension'] },
     hostAdapter: {
       apiVersion: 2,
-      scope: 'host-adapter',
       registration: 'harness.registerAdapter',
-      oneStableKey: true,
-      clientSlots: [
-        'conversation.message.rich',
-        'connection.adapter.setup',
-        'connection.adapter.status',
-        'connection.adapter.test',
-        'channel.inspector.adapter.sections',
-      ],
+      contributions: ['adapter', 'panel', 'message-renderer', 'host-page'],
+      panelAnchors: ['connection', 'channel'],
+      connectionPanelRoles: ['setup', 'status', 'diagnostics'],
       allowedHostServices: [
         'channels',
         'identities',
@@ -647,21 +546,79 @@ export const NEKRO_NXT_EXTENSION_AUTHORING_REFERENCE: NekroNxtExtensionAuthoring
         'transport',
       ],
       configSchemaExample: {
-        schemaVersion: 1,
         type: 'object',
-        required: ['endpoint', 'token'],
-        properties: {
-          endpoint: { type: 'string', title: 'Endpoint', default: 'wss://chat.example.invalid/events' },
-          token: { type: 'credential-reference', credentialKey: 'token', title: 'Token' },
+        dict: {
+          endpoint: { type: 'string', meta: { description: 'Endpoint', required: true } },
+          token: { type: 'string', meta: { description: 'Token', required: true, role: 'secret' } },
         },
       },
-      cannotMixWith: ['tool', 'rpc', 'agent-client-slot'],
     },
-    dshNativeWebUi: false,
+    hostUi: { contributions: ['host-page'], maxPages: 8 },
   },
+  ui: {
+    kitVersion: 'ui-kit@1',
+    components: [
+      'Button',
+      'IconButton',
+      'Input',
+      'Textarea',
+      'Select',
+      'Switch',
+      'Tabs',
+      'Dialog',
+      'Popover',
+      'Tooltip',
+      'Field',
+      'StatusBadge',
+      'InlineFeedback',
+      'EmptyState',
+      'Spinner',
+      'PageHeader',
+      'MetricStrip',
+      'Metric',
+      'Section',
+      'Stack',
+      'Grid',
+      'DataTable',
+      'SidePane',
+    ],
+    panelDensities: ['compact', 'full'],
+    toolViewDensities: ['chip', 'card'],
+    dataHooks: ['useAgent', 'useChannel', 'useConnection', 'useChannelRuntime'],
+    hookPermissions: EXTENSION_DATA_HOOK_PERMISSIONS,
+    designContract: {
+      version: 'nxt-host-ui-design-v2',
+      responsibilities: [
+        {
+          owner: 'host',
+          provided: ['面板外框、标题、图标与折叠', '页面背景、安全边距与根滚动', '加载与失败回退', '进出场动效'],
+          forbidden: ['不得把外框、背景、外边距或根滚动交给 Extension'],
+        },
+        {
+          owner: 'extension',
+          provided: ['业务数据', '业务操作', '内容区块顺序', '局部受作用域样式'],
+          forbidden: ['重复绘制标题栏或卡片外框', '页面根背景与 padding', '负边距越界', '100vw/100vh', '固定定位'],
+        },
+        {
+          owner: 'ui-kit',
+          provided: ['基础控件状态', '内容表面', '表格外壳', '反馈', 'Dialog/Popover/Tooltip'],
+          forbidden: ['破坏控件可访问性或焦点管理'],
+        },
+      ],
+      compositionRules: [
+        '面板只渲染内容：标题与图标写在注册声明里，不在组件里再画一次。',
+        'compact 密度用于检查器等窄栏：只放一两行关键信息和至多一个操作；full 密度用于资料页。',
+        '工具视图的 chip 是一行摘要，card 是展开后的结构化结果；不要直接输出原始 JSON。',
+        '解释性文字只写用户需要的结论，不描述内部运行机制。',
+        '状态名称、汇总数量、日期和表格数据必须互相一致。',
+      ],
+    },
+  },
+  dshNativeWebUi: false,
   examples: {
     hostTool: HOST_TOOL_EXAMPLE,
-    hostRpcAndClientSlot: HOST_RPC_AND_CLIENT_SLOT_EXAMPLE,
+    hostRpcAndPanel: HOST_RPC_AND_PANEL_EXAMPLE,
+    toolView: TOOL_VIEW_EXAMPLE,
     hostAdapter: HOST_ADAPTER_EXAMPLE,
     hostPage: HOST_PAGE_EXAMPLE,
   },
@@ -669,15 +626,17 @@ export const NEKRO_NXT_EXTENSION_AUTHORING_REFERENCE: NekroNxtExtensionAuthoring
     '一个 Episode 同时只维护一个动态 Plugin；修复必须向同一 Plugin 追加 kind:existing Package。',
     'define、run、保存和启用是四个独立提交点；不得把动态运行声称为已保存或已启用。',
     '适配器使用 registerAdapter 在隔离 Host Harness 中验证；保存后仍是未安装，必须再执行安装到本机。',
-    '一个适配器 Revision 只允许一个稳定 adapterKey，且不能混装智能体 Tool、RPC 或智能体 Client Slot。',
-    'ctx.effect 的回调会立即执行；Tool 和 Slot 按示例直接注册，禁止在 effect 回调中立即调用注册返回的 disposer。自管资源必须由 effect 回调返回 teardown。',
-    'Host RPC 必须在 Activation factory 注册；浏览器 RPC 没有 Agent Loop initiator，禁止依赖 currentInitiator 读取产品智能体身份。需要的稳定生成期数据应写入当前 Revision 源码或显式配置。',
-    'agent.workbench.sections 接收当前智能体的 agentId/displayName，位于智能体配置宿主区块之后；多个贡献按注册顺序排列。',
-    'extension.activation.panels 只接收用户明确选中的 active Activation；动态预览使用 synthetic 标识，不代表已保存、已安装或已启用。',
+    '一个适配器 Revision 只允许一个稳定 adapterKey，且不能混装智能体 Tool、RPC 或工具视图。',
+    '智能体扩展不能贡献顶级页面；需要页面时拆成独立的页面扩展。',
+    'ctx.effect 的回调会立即执行；面板、工具视图和页面按示例直接注册，禁止在 effect 回调中立即调用注册返回的 disposer。',
+    'Host RPC 必须在 Activation factory 注册；浏览器 RPC 没有 Agent Loop initiator，禁止依赖 currentInitiator 读取产品智能体身份。',
+    '读取配置使用 harness.config?.() ?? {}；动态运行阶段没有保存的配置，使用 Schema 默认值。',
+    '面板读取对象数据使用 ctx.data 的 Hook，并在 nekro_nxt_extension_define.permissions 中声明对应读取权限。',
+    '验证会在每种声明的密度和明暗两种主题下真实渲染面板，并渲染工具视图的 chip 与 card；任一渲染失败都不能保存。',
     'Host 或 Client 失败后先读取 Inspect 诊断，再修复同一 Plugin；不要静默新建替代 Plugin。',
-    '每次 define 都会成为任务的最新候选，只有最新候选通过验证后才能保存。不要提交探针或试验性候选；查看状态使用 cordis_inspect_self。',
+    '每次 define 都会成为任务的最新候选，只有最新候选通过验证后才能保存。查看状态使用 cordis_inspect_self。',
     'Plugin 已有运行版本时，新 Package 用 mode:update 运行；Runner 返回的 invalid-mode 提示会说明应使用的模式。',
-    '只使用 NekroNXT Inspect 公布的 Contribution 和 Slot；禁止注册 root 或 DSH 官方 WebUI Slot。',
+    '只使用本参考公布的贡献类型；禁止注册 root、DSH 官方 WebUI Slot、Composer 或频道顶栏。',
   ],
 }
 
@@ -689,15 +648,23 @@ export const renderNekroNxtExtensionDevelopmentSkill = (
 
 ## 强制边界
 
-- 只能使用 cordis_inspect_list / cordis_inspect_query 公布的 NekroNXT Host Contribution 与 Client Slot。
-- 定义候选默认使用 \`nekro_nxt_extension_define\`。它会把页面、权限和资源写入持久任务账本并在运行前预检；旧 \`cordis_define\` 只用于不带页面和资源的 DSH ABI 兼容场景。
-- \`scope\` 按真实产物选择：智能体 Tool/RPC/局部 Slot 使用 \`agent\`，平台 Adapter 使用 \`host-adapter\`，顶级专属页面使用 \`host-ui\`。不要依赖源码字符串让 Host 猜类型。
-- Client 只允许：${reference.supportedContributions.clientSlots.map((slot) => `\`${slot}\``).join('、')}。
-- Adapter Client 还可使用：${reference.supportedContributions.hostAdapter.clientSlots.map((slot) => `\`${slot}\``).join('、')}；除富消息外，稳定 id 等于 adapterKey。
-- 禁止注册 root、DSH 官方页面 Slot、Composer 或频道顶栏；顶级页面只能使用 Host Page Contribution。
+- 定义候选使用 \`nekro_nxt_extension_define\`：页面、权限、配置 Schema 和资源都写入持久任务账本并在运行前预检。
+- \`scope\` 按真实产物选择：智能体 Tool/RPC/面板/工具视图使用 \`agent\`，平台 Adapter 使用 \`host-adapter\`，顶级专属页面使用 \`host-ui\`。
+- 智能体面板锚点：${reference.scopes.agent.panelAnchors.map((anchor) => `\`${anchor}\``).join('、')}；适配器面板锚点：${reference.scopes.hostAdapter.panelAnchors.map((anchor) => `\`${anchor}\``).join('、')}，连接面板必须声明角色 ${reference.scopes.hostAdapter.connectionPanelRoles.map((role) => `\`${role}\``).join('、')}。
+- 面板声明 \`densities\`（${reference.ui.panelDensities.join('、')}），宿主决定放在哪个页面、绘制标题栏与外框。
+- 工具视图按 Tool 名注册，渲染 \`chip\` 与 \`card\` 两种密度；适配器用 \`message-renderer\` 按 rich kind 渲染富消息。
+- 数据 Hook：${reference.ui.dataHooks.map((hook) => `\`${hook}\`（${reference.ui.hookPermissions[hook]}）`).join('、')}。
+- 配置 Schema 是序列化 Schemastery；\`meta.advanced\` 默认折叠，\`meta.hint\` 是帮助文字。扩展配置暂不支持 secret 字段。
+- 禁止注册 root、DSH 官方页面 Slot、Composer 或频道顶栏。
 - 动态运行、保存不可变扩展 Revision、给智能体启用扩展彼此独立；每一步都必须等待真实结果。
-- Host Tool 必须通过真实 Tool Runtime 调用验证；RPC 必须由 Client 预览真实调用；Client 必须在相同产品 Slot 与合成 Props 中渲染成功。
-- 运行验证会用 \`nekro_nxt_extension_define.verification\` 中的样例真实调用每个 Tool 和 RPC，例如 \`{ tools: { project_status: { project: '示例项目' } } }\`；未提供时 Tool 用 \`{}\`、RPC 用 \`null\` 调用。带必填参数的 Tool 必须提供代表真实用途、没有外部副作用的样例，不要为了通过验证而让工具接受空输入。
+- 运行验证会用 \`nekro_nxt_extension_define.verification\` 中的样例真实调用每个 Tool 和 RPC；未提供时 Tool 用 \`{}\`、RPC 用 \`null\` 调用。
+
+## 界面责任契约（${reference.ui.designContract.version}）
+
+${reference.ui.designContract.responsibilities
+  .map(({ owner, provided, forbidden }) => `- ${owner} 提供：${provided.join('、')}；禁止：${forbidden.join('、')}。`)
+  .join('\n')}
+${reference.ui.designContract.compositionRules.map((rule) => `- ${rule}`).join('\n')}
 
 ## Host Tool 示例
 
@@ -705,10 +672,16 @@ export const renderNekroNxtExtensionDevelopmentSkill = (
 ${reference.examples.hostTool}
 \`\`\`
 
-## Host RPC + NekroNXT Client Slot 示例
+## Host RPC + 面板示例
 
 \`\`\`js
-${reference.examples.hostRpcAndClientSlot}
+${reference.examples.hostRpcAndPanel}
+\`\`\`
+
+## 工具视图示例
+
+\`\`\`js
+${reference.examples.toolView}
 \`\`\`
 
 ## Host Adapter 示例
@@ -719,16 +692,7 @@ ${reference.examples.hostAdapter}
 
 ## Host Page 示例
 
-页面 Client 声明 \`inject: ['pages']\`；建议同时注入 \`ui\` 并使用 NekroNXT UI Kit，也允许语义正确的原生控件和表格。页面应适配明暗主题与可访问性，精确留白、标题差异和组件使用只作视觉建议。\`startPath\`、导航项 \`path\` 和 \`navigate()\` 都使用当前入口内的相对路径，不得以 \`/\` 开头。
-
-页面责任契约（${reference.supportedContributions.hostPages.designContract.version}）：
-${reference.supportedContributions.hostPages.designContract.responsibilities
-  .map(({ owner, provided, forbidden }) => `- ${owner} 提供：${provided.join('、')}；禁止：${forbidden.join('、')}。`)
-  .join('\n')}
-${reference.supportedContributions.hostPages.designContract.compositionRules.map((rule) => `- ${rule}`).join('\n')}
-
-运行验证检查真实渲染、交互、资源释放和权限；几何与组件偏好只提供视觉建议，不要求普通用户在需求中提供组件名、CSS 数值或实现步骤。Extension 不得自行补页面根背景、外边距或滚动。
-把页面的完整 Contribution 放进 \`nekro_nxt_extension_define.pages\`，权限放进 \`permissions\`；CSS Module 和 SVG 通过 \`resources\` 提交，不能只把声明写在 Client 源码里。
+\`startPath\`、导航项 \`path\` 和 \`navigate()\` 都使用当前入口内的相对路径，不得以 \`/\` 开头。把页面的完整 Contribution 放进 \`nekro_nxt_extension_define.pages\`，权限放进 \`permissions\`；CSS Module 和 SVG 通过 \`resources\` 提交。
 
 \`\`\`js
 ${reference.examples.hostPage}
@@ -744,36 +708,15 @@ ${reference.recoveryRules.map((rule) => `- ${rule}`).join('\n')}
 export const EXTENSION_SDK_BUNDLE_SOURCE = `
 export const defineHostExtension = (factory) => factory
 export const defineClientExtension = (factory) => factory
-export const defineAdapterClientExtension = (factory) => factory
-export const defineHostUiExtension = (factory) => factory
-export const defineHostUiClientExtension = (factory) => factory
 `
 
 /** Marks a Host entry factory without executing it during build or import. */
 export const defineHostExtension = <T extends ExtensionPluginFactory<ExtensionHostEnvironment>>(factory: T): T =>
   factory
 
-/** Marks a Client entry factory without executing it during build or import. */
+/** Marks the single Client entry factory of any scope without executing it during build or import. */
 export const defineClientExtension = <
   T extends ExtensionPluginFactory<ExtensionClientEnvironment, ExtensionClientContext>,
->(
-  factory: T,
-): T => factory
-
-/** Marks a Host Adapter Client factory; V1 only receives the keyed rich-message Slot. */
-export const defineAdapterClientExtension = <
-  T extends ExtensionPluginFactory<AdapterHostClientEnvironment, AdapterHostClientContext>,
->(
-  factory: T,
-): T => factory
-
-/** Marks a Host UI server factory without executing it during build or import. */
-export const defineHostUiExtension = <T extends ExtensionPluginFactory<ExtensionHostEnvironment>>(factory: T): T =>
-  factory
-
-/** Marks a Host UI Client factory; page registrations are owned by one Host installation. */
-export const defineHostUiClientExtension = <
-  T extends ExtensionPluginFactory<HostUiClientEnvironment, HostUiClientContext>,
 >(
   factory: T,
 ): T => factory

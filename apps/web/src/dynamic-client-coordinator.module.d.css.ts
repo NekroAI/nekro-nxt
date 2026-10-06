@@ -4,6 +4,10 @@ declare const styles: {
   readonly pagePreviewFrame: string
   readonly pagePreviewHeader: string
   readonly pagePreviewNavigation: string
+  readonly preview: string
+  readonly toolPreview: string
+  readonly verification: string
+  readonly verificationCase: string
 }
 
 export default styles

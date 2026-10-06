@@ -146,7 +146,8 @@ export const extensionUsage = (extension: LocalExtensionSummary): { readonly lab
     : { label: '未启用', tone: 'neutral' }
 }
 
-const CONTRIBUTION = /^(工具|RPC|界面|页面|适配器)[：:]\s*(.+)$/u
+// Longest prefix first: `工具视图` must not be read as `工具`.
+const CONTRIBUTION = /^(工具视图|工具|RPC|面板|富消息|页面|适配器)[：:]\s*(.+)$/u
 
 /** Splits the Host's `类型：名称` contribution strings into a kind label and a name. */
 export const contributionParts = (value: string): { readonly kind: string; readonly name: string } => {

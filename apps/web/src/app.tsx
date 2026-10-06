@@ -39,10 +39,9 @@ import { Navigate, Outlet, Route, Routes, useLocation, useNavigate, useParams } 
 import styles from './app.module.css'
 import { NotificationCenter, notify } from './components/notifications.js'
 import { EmptyState, HostNotice } from './components/product-feedback.js'
+import { ExtensionUiProvider } from './extension-ui/index.js'
 import { DynamicClientProvider } from './dynamic-client-coordinator.js'
 import { useDesktopInstance } from './desktop-shell.js'
-import { PersistentExtensionClientProvider } from './persistent-extension-client.js'
-import { AdapterHostClientProvider } from './adapter-host-client.js'
 import { ChannelConversationPage } from './pages/channel-page.js'
 import { ConnectionsPage } from './pages/connections-page.js'
 import { UsersPage } from './pages/users-page.js'
@@ -498,47 +497,42 @@ export function NekroNxtApp() {
     <ProductErrorBoundary>
       <MotionRoot>
         <DynamicClientProvider>
-          <AdapterHostClientProvider>
-            <PersistentExtensionClientProvider>
-              <HostUiClientProvider>
-                <Tooltip.Provider {...tooltipProps}>
-                  <ThemeEffects />
-                  <Routes>
-                    <Route element={<DesktopShell />}>
-                      <Route index element={<RootRedirect />} />
-                      <Route path="work" element={<WorkIndex />} />
-                      <Route path="work/agents/new" element={<DeferredProductPage key="agents" name="agents" />} />
-                      <Route path="work/agents/:agentId" element={<DeferredProductPage key="agent" name="agent" />} />
-                      <Route path="work/channels" element={<Navigate to="/work" replace />} />
-                      <Route path="work/channels/:channelId" element={<ChannelConversationPage />} />
-                      <Route path="work/creator" element={<DeferredProductPage key="creator" name="creator" />} />
-                      <Route
-                        path="work/creator/:taskId"
-                        element={<DeferredProductPage key="creator" name="creator" />}
-                      />
-                      <Route path="agents" element={<LegacyWorkRedirect kind="agents" />} />
-                      <Route path="agents/:agentId" element={<LegacyWorkRedirect kind="agent" />} />
-                      <Route path="channels" element={<LegacyWorkRedirect kind="channels" />} />
-                      <Route path="channels/:channelId" element={<LegacyWorkRedirect kind="channel" />} />
-                      <Route path="connections" element={<ConnectionsPage />} />
-                      <Route path="connections/:connectionId" element={<ConnectionsPage />} />
-                      <Route path="users" element={<UsersPage />} />
-                      <Route path="extensions" element={<DeferredProductPage key="extensions" name="extensions" />} />
-                      <Route
-                        path="extensions/:extensionId"
-                        element={<DeferredProductPage key="extensions" name="extensions" />}
-                      />
-                      <Route path="apps/:pageInstanceId/*" element={<HostUiPageCanvas />} />
-                      <Route path="creator" element={<LegacyWorkRedirect kind="creator" />} />
-                      <Route path="runtime" element={<RuntimeRedirect />} />
-                      <Route path="settings" element={<DeferredProductPage key="settings" name="settings" />} />
-                      <Route path="*" element={<NotFoundPage />} />
-                    </Route>
-                  </Routes>
-                </Tooltip.Provider>
-              </HostUiClientProvider>
-            </PersistentExtensionClientProvider>
-          </AdapterHostClientProvider>
+          <ExtensionUiProvider>
+            <HostUiClientProvider>
+              <Tooltip.Provider {...tooltipProps}>
+                <ThemeEffects />
+                <Routes>
+                  <Route element={<DesktopShell />}>
+                    <Route index element={<RootRedirect />} />
+                    <Route path="work" element={<WorkIndex />} />
+                    <Route path="work/agents/new" element={<DeferredProductPage key="agents" name="agents" />} />
+                    <Route path="work/agents/:agentId" element={<DeferredProductPage key="agent" name="agent" />} />
+                    <Route path="work/channels" element={<Navigate to="/work" replace />} />
+                    <Route path="work/channels/:channelId" element={<ChannelConversationPage />} />
+                    <Route path="work/creator" element={<DeferredProductPage key="creator" name="creator" />} />
+                    <Route path="work/creator/:taskId" element={<DeferredProductPage key="creator" name="creator" />} />
+                    <Route path="agents" element={<LegacyWorkRedirect kind="agents" />} />
+                    <Route path="agents/:agentId" element={<LegacyWorkRedirect kind="agent" />} />
+                    <Route path="channels" element={<LegacyWorkRedirect kind="channels" />} />
+                    <Route path="channels/:channelId" element={<LegacyWorkRedirect kind="channel" />} />
+                    <Route path="connections" element={<ConnectionsPage />} />
+                    <Route path="connections/:connectionId" element={<ConnectionsPage />} />
+                    <Route path="users" element={<UsersPage />} />
+                    <Route path="extensions" element={<DeferredProductPage key="extensions" name="extensions" />} />
+                    <Route
+                      path="extensions/:extensionId"
+                      element={<DeferredProductPage key="extensions" name="extensions" />}
+                    />
+                    <Route path="apps/:pageInstanceId/*" element={<HostUiPageCanvas />} />
+                    <Route path="creator" element={<LegacyWorkRedirect kind="creator" />} />
+                    <Route path="runtime" element={<RuntimeRedirect />} />
+                    <Route path="settings" element={<DeferredProductPage key="settings" name="settings" />} />
+                    <Route path="*" element={<NotFoundPage />} />
+                  </Route>
+                </Routes>
+              </Tooltip.Provider>
+            </HostUiClientProvider>
+          </ExtensionUiProvider>
         </DynamicClientProvider>
       </MotionRoot>
     </ProductErrorBoundary>

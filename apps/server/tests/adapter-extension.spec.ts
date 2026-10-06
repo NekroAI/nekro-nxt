@@ -51,10 +51,8 @@ const descriptor = {
   features: {},
   diagnostics: { receive: true, send: true },
   configSchema: {
-    schemaVersion: 1,
     type: 'object',
-    required: [],
-    properties: { failFirstStop: { type: 'boolean', title: '首次停止失败', default: false } }
+    dict: { failFirstStop: { type: 'boolean', meta: { description: '首次停止失败', default: false } } }
   }
 }
 harness.registerAdapter({
@@ -107,17 +105,17 @@ return { apply() {} }
 `
 
 const CLIENT_CODE = `return {
-  inject: ['slots'],
+  inject: ['messageRenderers'],
   apply(ctx) {
-    ctx.slots.register(
-      { name: 'conversation.message.rich', id: 'synthetic-chat:card' },
+    ctx.messageRenderers.register(
+      'synthetic-chat.card',
       ({ part }) => React.createElement('article', { 'data-synthetic-card': '' }, part.summary)
     )
   }
 }`
 
 describe('Host Adapter Extension end-to-end', () => {
-  it('runs with the offline harness, saves V3, installs, creates a Connection, and uninstalls without data loss', async () => {
+  it('runs with the offline harness, saves V6, installs, creates a Connection, and uninstalls without data loss', async () => {
     const directory = await mkdtemp(path.join(tmpdir(), 'nekro-nxt-adapter-extension-'))
     temporaryDirectories.push(directory)
     const runtime = await NekroRuntime.create({
@@ -181,8 +179,15 @@ describe('Host Adapter Extension end-to-end', () => {
       defined.pluginId,
       defined.packageId,
       hostHalf.pluginRunId,
-      [],
-      [{ name: 'conversation.message.rich', key: 'synthetic-chat:card' }],
+      {
+        renderedPanels: [],
+        renderedToolViews: [],
+        renderedMessageRenderers: ['synthetic-chat.card'],
+        renderedPages: [],
+        usedUiComponents: [],
+        pageGeometry: [],
+        navigationEntries: [],
+      },
     )
     await expect(pendingRun).resolves.toMatchObject({ ok: true })
 
@@ -207,9 +212,9 @@ describe('Host Adapter Extension end-to-end', () => {
       expect(save.ok, await save.clone().text()).toBe(true)
       const saved = HostApiContracts.saveExtensionFromDynamic.parseResponse(await save.json())
       expect(runtime.repository.getExtensionRevisionVerification(saved.revisionId)).toMatchObject({
-        contractVersion: 'nekro-nxt-extension-v2',
+        contractVersion: 'nekro-nxt-extension-v4',
         scope: 'host-adapter',
-        renderedHostSlots: [{ name: 'conversation.message.rich', key: 'synthetic-chat:card' }],
+        renderedMessageRenderers: ['synthetic-chat.card'],
         adapter: { key: 'synthetic-chat', registered: true, started: true, stopped: true },
       })
 
@@ -257,7 +262,7 @@ describe('Host Adapter Extension end-to-end', () => {
             inboundCommitted: true,
             outboundReceipt: 'sent',
           },
-          renderedHostSlots: [{ name: 'conversation.message.rich', key: 'synthetic-chat:card' }],
+          renderedMessageRenderers: ['synthetic-chat.card'],
         })
         expect(importedRuntime.repository.getHostInstallation(saved.extensionId)).toBeUndefined()
         const importedInstall = await fetch(`${importOrigin}/api/extensions/${saved.extensionId}/installation`, {

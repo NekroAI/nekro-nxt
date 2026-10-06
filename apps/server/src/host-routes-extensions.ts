@@ -8,6 +8,7 @@ import {
   HostApiContracts,
   HostPageContributionSchema,
   JsonValueSchema,
+  configSecretKeys,
   type AgentId,
   type HostUiPermission,
 } from '@nekro-nxt/contracts'
@@ -63,28 +64,6 @@ export function registerExtensionsRoutes({
       if (pending.expiresAt <= now) pendingExtensionImports.delete(token)
     }
   }
-  registerRoute({
-    kind: 'exact',
-    path: '/api/extensions/rebuild',
-    handler: async (req, res) => {
-      if (req.method !== 'POST') {
-        writeError(res, 405, 'method-not-allowed', '重建扩展只支持 POST。')
-        return
-      }
-      try {
-        const input = HostApiContracts.rebuildExtensionRevision.parseRequest(await readJsonBody(req))
-        const result = await runtime.extensionService.rebuildRevision(input.revisionId, DEEPSEEK_HARNESS_VERSION)
-        writeContractJson(res, 200, HostApiContracts.rebuildExtensionRevision, {
-          extensionId: result.extension.id,
-          revisionId: result.revision.id,
-          autoActivated: false,
-        })
-        broadcastExtensionsChanged()
-      } catch (error) {
-        writeError(res, 409, 'extension-rebuild-failed', error instanceof Error ? error.message : String(error))
-      }
-    },
-  })
   registerRoute({
     kind: 'prefix',
     path: '/api/host-ui',
@@ -292,8 +271,9 @@ export function registerExtensionsRoutes({
                 .parse(input.input)
               const descriptor = runtime.adapters.get(request.adapterKey)?.descriptor
               if (descriptor?.provisioning !== 'user-created') throw new Error('这个 Adapter 不能创建用户连接。')
+              const secretKeys = new Set(configSecretKeys(descriptor.configSchema))
               for (const key of Object.keys(request.values)) {
-                if (descriptor.configSchema.properties[key]?.type !== 'credential-reference') {
+                if (!secretKeys.has(key)) {
                   throw new Error(`连接凭据包含未知字段：${key}`)
                 }
               }
@@ -655,6 +635,25 @@ export function registerExtensionsRoutes({
         }
         return
       }
+      const installationConfigMatch = /^\/api\/extensions\/([^/]+)\/installation\/config$/u.exec(url.pathname)
+      if (installationConfigMatch) {
+        if (req.method !== 'PUT') {
+          writeError(res, 405, 'method-not-allowed', '本机扩展配置只支持 PUT。')
+          return
+        }
+        try {
+          const params = HostApiContracts.updateHostExtensionConfig.parseParams({
+            extensionId: decodeURIComponent(installationConfigMatch[1] ?? ''),
+          })
+          const input = HostApiContracts.updateHostExtensionConfig.parseRequest(await readJsonBody(req))
+          const installation = await runtime.updateHostExtensionConfig(params.extensionId, input.config)
+          writeContractJson(res, 200, HostApiContracts.updateHostExtensionConfig, { config: installation.config })
+          broadcastExtensionsChanged()
+        } catch (error) {
+          writeError(res, 400, 'extension-config-invalid', error instanceof Error ? error.message : String(error))
+        }
+        return
+      }
       const installationMatch = /^\/api\/extensions\/([^/]+)\/installation$/u.exec(url.pathname)
       if (installationMatch) {
         let extensionId: z.output<typeof ExtensionIdSchema>
@@ -775,7 +774,7 @@ export function registerExtensionsRoutes({
         return
       }
       const match =
-        /^\/api\/extensions\/([^/]+)\/revisions\/([^/]+)\/(call|client-diagnostic|host-client-diagnostic|client\/([a-f0-9]{64})\.mjs)$/u.exec(
+        /^\/api\/extensions\/([^/]+)\/revisions\/([^/]+)\/(call|client-diagnostic|host-client-diagnostic|client\/([a-f0-9]{64})\.(mjs|css))$/u.exec(
           url.pathname,
         )
       if (!match) {
@@ -828,9 +827,15 @@ export function registerExtensionsRoutes({
           if (!artifact.clientEntry || artifact.buildKey !== match[4]) {
             throw new Error('Client buildKey 已过期或该 Revision 没有 Client Artifact。')
           }
-          const source = await readFile(artifact.clientEntry, 'utf8')
+          // The stylesheet is scoped to this build, matching the frame the shell draws around its contributions.
+          const css = match[5] === 'css'
+          const source = css
+            ? artifact.clientCssEntry
+              ? scopeHostUiCss(await readFile(artifact.clientCssEntry, 'utf8'), artifact.buildKey)
+              : ''
+            : await readFile(artifact.clientEntry, 'utf8')
           res.writeHead(200, {
-            'content-type': 'text/javascript; charset=utf-8',
+            'content-type': css ? 'text/css; charset=utf-8' : 'text/javascript; charset=utf-8',
             'cache-control': 'private, no-cache',
           })
           res.end(source)

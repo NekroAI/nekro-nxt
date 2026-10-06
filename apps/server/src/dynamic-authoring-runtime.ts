@@ -29,11 +29,12 @@ import { scopeOf } from '@deepseek-ai/dsh-scope'
 import { SessionId } from '@deepseek-ai/dsh-session'
 import { ToolRuntime } from '@deepseek-ai/dsh-tools'
 import {
+  ExtensionConfigDeclarationSchema,
   HostPageContributionSchema,
   HostUiPermissionDeclarationSchema,
   JsonValueSchema,
-  type AdapterClientSlotName,
-  type AgentClientSlotName,
+  configSecretKeys,
+  type PanelContribution,
   type AgentId,
   type AuthoringAttemptId,
   type AuthoringTaskId,
@@ -54,6 +55,7 @@ import {
   validateHostUiSvg,
   type DynamicAuthoringService,
   type DynamicAuthoringSnapshot,
+  type ExtensionContribution,
 } from '@nekro-nxt/extension-runtime'
 import { createHash } from 'node:crypto'
 import {
@@ -89,6 +91,7 @@ export interface DynamicAuthoringPackageDefinitionInput extends DynamicPackageDe
   readonly clientCss?: { readonly path: string; readonly sha256: string }
   readonly permissions: HostUiPermissionDeclaration
   readonly contributions: readonly JsonValue[]
+  readonly config?: DynamicAuthoringSnapshot['config']
   readonly verificationInputs?: DynamicAuthoringSnapshot['verificationInputs']
 }
 
@@ -158,8 +161,12 @@ export const preflightNekroNxtAuthoringDefinition = (
     throw new Error('动态页面预检失败：页面 entryId 不能重复。')
   }
   HostUiPermissionDeclarationSchema.parse(input.permissions)
-  if (pages.length === 0 && (input.permissions.permissions.length > 0 || input.permissions.networkOrigins.length > 0)) {
-    throw new Error('动态页面预检失败：没有页面贡献时不能声明 Host UI 权限。')
+  if (input.config !== undefined) {
+    const config = ExtensionConfigDeclarationSchema.safeParse(input.config)
+    if (!config.success) throw new Error('动态扩展预检失败：config.schema 必须是序列化 Schemastery 对象。')
+    if (configSecretKeys(config.data.schema).length > 0) {
+      throw new Error('动态扩展预检失败：扩展配置暂不支持 secret 字段。')
+    }
   }
   if (input.scope === 'host-ui' && pages.length === 0) {
     throw new Error('动态页面预检失败：host-ui 候选必须声明至少一个页面入口。')
@@ -176,7 +183,7 @@ export const preflightNekroNxtAuthoringDefinition = (
   ) {
     throw new Error('动态页面预检失败：页面声明和 Client 资源必须配套 Client 源码。')
   }
-  assertClientCssScope({ hasClientCss: input.clientCss !== undefined, pageCount: pages.length })
+  assertClientCssScope({ hasClientCss: input.clientCss !== undefined, hasClient: input.code.client !== undefined })
   const referencedResources = new Set<string>()
   if (input.clientCss) {
     const source = input.resources[input.clientCss.path]
@@ -215,7 +222,7 @@ export const dynamicPreviewClientCode = (input: DynamicAuthoringPackageDefinitio
 export const preflightNekroNxtDynamicSource = (request: DynamicCordisDefineRequest): void => {
   const client = request.code.client
   if (client === undefined) return
-  const registersPages = /\b(?:ctx\.)?pages\s*\.\s*(?:register|declarePermissions)\b/u.test(client)
+  const registersPages = /\b(?:ctx\.)?pages\s*\.\s*register\b/u.test(client)
   const injectsPages = /\binject\s*:\s*\[[^\]]*['"]pages['"][^\]]*\]/su.test(client)
   if (registersPages && !injectsPages) {
     throw new Error("动态页面预检失败：Client 使用了 pages Service，但没有声明 inject: ['pages']。")
@@ -234,13 +241,13 @@ export class NekroNxtDynamicCordisRunner extends DynamicCordisRunnerService {
     string,
     {
       readonly pluginRunId: string
-      readonly renderedSlots: readonly AgentClientSlotName[]
-      readonly renderedHostSlots: readonly { readonly name: AdapterClientSlotName; readonly key: string }[]
+      readonly renderedPanels: readonly PanelContribution[]
+      readonly renderedToolViews: readonly string[]
+      readonly renderedMessageRenderers: readonly string[]
       readonly renderedPages: readonly HostPageContribution[]
       readonly usedUiComponents: readonly HostUiKitComponentName[]
       readonly pageGeometry: readonly HostUiPageGeometryEvidence[]
       readonly navigationEntries: readonly string[]
-      readonly permissions: HostUiPermissionDeclaration
     }
   >()
   private readonly clientRpcMethodsByPackage = new Map<
@@ -339,6 +346,7 @@ export class NekroNxtDynamicCordisRunner extends DynamicCordisRunnerService {
       ...(parsed.clientCss === undefined ? {} : { clientCss: parsed.clientCss }),
       permissions: parsed.permissions,
       contributions: parsed.contributions,
+      ...(parsed.config === undefined ? {} : { config: parsed.config }),
       ...(parsed.verificationInputs === undefined ? {} : { verificationInputs: parsed.verificationInputs }),
     }
     try {
@@ -359,6 +367,7 @@ export class NekroNxtDynamicCordisRunner extends DynamicCordisRunnerService {
       ...(snapshot.clientCss === undefined ? {} : { clientCss: snapshot.clientCss }),
       permissions: snapshot.permissions,
       contributions: snapshot.contributions,
+      ...(snapshot.config === undefined ? {} : { config: snapshot.config }),
     })
     const previewClient = dynamicPreviewClientCode({
       plugin: { kind: 'new', idPrefix: 'rest' },
@@ -545,20 +554,20 @@ export class NekroNxtDynamicCordisRunner extends DynamicCordisRunnerService {
     readonly pluginRunId: string
     readonly toolNames: readonly string[]
     readonly rpcMethods: readonly string[]
-    readonly renderedSlots: readonly AgentClientSlotName[]
-    readonly renderedHostSlots: readonly { readonly name: AdapterClientSlotName; readonly key: string }[]
+    readonly renderedPanels: readonly PanelContribution[]
+    readonly renderedToolViews: readonly string[]
+    readonly renderedMessageRenderers: readonly string[]
     readonly renderedPages: readonly HostPageContribution[]
     readonly usedUiComponents: readonly HostUiKitComponentName[]
     readonly pageGeometry: readonly HostUiPageGeometryEvidence[]
     readonly navigationEntries: readonly string[]
-    readonly permissions: HostUiPermissionDeclaration
   } {
     const row = this.snapshot(agent).find((candidate) => candidate.pluginId === pluginId)
     if (row?.activeRun?.packageId !== packageId) throw new Error('Dynamic Package is not the active verified Run.')
     const pkg = row.packages.find((candidate) => candidate.packageId === packageId)
     const clientEvidence = this.clientEvidenceByPackage.get(packageId)
     if (pkg?.hasClientHalf && clientEvidence?.pluginRunId !== row.activeRun.pluginRunId) {
-      throw new Error('Dynamic Client half has not rendered in a NekroNxt product Slot for this Run.')
+      throw new Error('Dynamic Client half has not rendered its NekroNxt UI contributions for this Run.')
     }
     const clientRpcEvidence = this.clientRpcMethodsByPackage.get(packageId)
     const clientRpcMethods =
@@ -573,13 +582,13 @@ export class NekroNxtDynamicCordisRunner extends DynamicCordisRunnerService {
       pluginRunId: row.activeRun.pluginRunId,
       toolNames: this.toolNamesByPackage.get(packageId) ?? [],
       rpcMethods: row.activeRun.handlers,
-      renderedSlots: clientEvidence?.renderedSlots ?? [],
-      renderedHostSlots: clientEvidence?.renderedHostSlots ?? [],
+      renderedPanels: clientEvidence?.renderedPanels ?? [],
+      renderedToolViews: clientEvidence?.renderedToolViews ?? [],
+      renderedMessageRenderers: clientEvidence?.renderedMessageRenderers ?? [],
       renderedPages: clientEvidence?.renderedPages ?? [],
       usedUiComponents: clientEvidence?.usedUiComponents ?? [],
       pageGeometry: clientEvidence?.pageGeometry ?? [],
       navigationEntries: clientEvidence?.navigationEntries ?? [],
-      permissions: clientEvidence?.permissions ?? { permissions: [], networkOrigins: [] },
     }
   }
 
@@ -588,13 +597,15 @@ export class NekroNxtDynamicCordisRunner extends DynamicCordisRunnerService {
     pluginId: string,
     packageId: string,
     pluginRunId: string,
-    renderedSlots: readonly AgentClientSlotName[],
-    renderedHostSlots: readonly { readonly name: AdapterClientSlotName; readonly key: string }[],
-    renderedPages: readonly HostPageContribution[],
-    usedUiComponents: readonly HostUiKitComponentName[],
-    pageGeometry: readonly HostUiPageGeometryEvidence[],
-    navigationEntries: readonly string[],
-    permissions: HostUiPermissionDeclaration,
+    ui: {
+      readonly renderedPanels: readonly PanelContribution[]
+      readonly renderedToolViews: readonly string[]
+      readonly renderedMessageRenderers: readonly string[]
+      readonly renderedPages: readonly HostPageContribution[]
+      readonly usedUiComponents: readonly HostUiKitComponentName[]
+      readonly pageGeometry: readonly HostUiPageGeometryEvidence[]
+      readonly navigationEntries: readonly string[]
+    },
   ): void {
     const row = this.snapshot(agent).find((candidate) => candidate.pluginId === pluginId)
     if (row?.activeRun?.packageId !== packageId || row.activeRun.pluginRunId !== pluginRunId) {
@@ -602,18 +613,23 @@ export class NekroNxtDynamicCordisRunner extends DynamicCordisRunnerService {
     }
     const pkg = row.packages.find((candidate) => candidate.packageId === packageId)
     if (!pkg?.hasClientHalf) throw new Error('Host-only Package cannot report Client verification.')
-    if (renderedSlots.length === 0 && renderedHostSlots.length === 0 && renderedPages.length === 0) {
-      throw new Error('Dynamic Client verification must contain a product Slot or page.')
+    if (
+      ui.renderedPanels.length === 0 &&
+      ui.renderedToolViews.length === 0 &&
+      ui.renderedMessageRenderers.length === 0 &&
+      ui.renderedPages.length === 0
+    ) {
+      throw new Error('Dynamic Client verification must contain a panel, tool view, message renderer or page.')
     }
     this.clientEvidenceByPackage.set(packageId, {
       pluginRunId,
-      renderedSlots: [...new Set(renderedSlots)],
-      renderedHostSlots: [...new Map(renderedHostSlots.map((slot) => [slot.key, slot])).values()],
-      renderedPages,
-      usedUiComponents: [...new Set(usedUiComponents)],
-      pageGeometry,
-      navigationEntries: [...new Set(navigationEntries)],
-      permissions,
+      renderedPanels: [...new Map(ui.renderedPanels.map((panel) => [panel.id, panel])).values()],
+      renderedToolViews: [...new Set(ui.renderedToolViews)],
+      renderedMessageRenderers: [...new Set(ui.renderedMessageRenderers)],
+      renderedPages: ui.renderedPages,
+      usedUiComponents: [...new Set(ui.usedUiComponents)],
+      pageGeometry: ui.pageGeometry,
+      navigationEntries: [...new Set(ui.navigationEntries)],
     })
   }
 
@@ -1011,27 +1027,18 @@ export class DynamicAuthoringRuntime {
     const rpcInput = (method: string): JsonValue => inputs?.rpc[method] ?? null
     const visibleTools = this.#context.tools.schemas(scopeOf(agent.ctx))
     const toolInvocations = [] as Array<{ readonly name: string; readonly succeeded: boolean }>
-    const contributions = [] as Array<
-      | {
-          readonly kind: 'tool'
-          readonly name: string
-          readonly description: string
-          readonly verificationInput?: Readonly<Record<string, JsonValue>>
-        }
-      | { readonly kind: 'rpc'; readonly method: string; readonly verificationInput?: JsonValue }
-      | { readonly kind: 'client-slot'; readonly name: AgentClientSlotName }
-      | { readonly kind: 'host-client-slot'; readonly name: AdapterClientSlotName; readonly key: string }
-      | HostPageContribution
-      | {
-          readonly kind: 'adapter'
-          readonly apiVersion: 2
-          readonly key: string
-          readonly descriptorDigest: string
-        }
-    >
+    const permissions = (await this.dynamicAuthoringSnapshot(dshSessionId, pluginId, packageId))?.permissions ?? {
+      permissions: [],
+      networkOrigins: [],
+    }
+    const contributions: ExtensionContribution[] = []
+    const agentPanels = evidence.renderedPanels.filter((panel) => panel.anchor !== 'connection')
     if (runner.isAdapterPackage(packageId)) {
-      if (evidence.toolNames.length > 0 || evidence.renderedSlots.length > 0) {
-        throw new Error('适配器 Revision 不能混装智能体工具或智能体 Slot，请拆分为两个扩展。')
+      if (evidence.toolNames.length > 0 || evidence.renderedToolViews.length > 0) {
+        throw new Error('适配器 Revision 不能混装智能体工具或工具视图，请拆分为两个扩展。')
+      }
+      if (evidence.renderedPanels.some((panel) => panel.anchor !== 'connection' && panel.anchor !== 'channel')) {
+        throw new Error('适配器面板只能放在连接或频道上。')
       }
       const foreignRpc = evidence.rpcMethods.filter((method) => method !== ADAPTER_DYNAMIC_EVIDENCE_METHOD)
       if (foreignRpc.length > 0) throw new Error('适配器 Revision 不能混装智能体 RPC，请拆分为两个扩展。')
@@ -1067,33 +1074,31 @@ export class DynamicAuthoringRuntime {
         inboundCommitted: observed.inboundCommitted,
         outboundReceipt: observed.outboundReceipt,
       }
-      const renderedHostSlots = evidence.renderedHostSlots.filter((slot) =>
-        slot.name === 'conversation.message.rich'
-          ? slot.key.startsWith(`${adapter.key}:`) && slot.key.length > adapter.key.length + 1
-          : slot.key === adapter.key,
-      )
-      if (renderedHostSlots.length !== evidence.renderedHostSlots.length) {
-        throw new Error(`适配器 Client Slot 没有使用 ${adapter.key} 的稳定 key。`)
-      }
-      for (const slot of renderedHostSlots) {
-        contributions.push({ kind: 'host-client-slot', name: slot.name, key: slot.key })
-      }
+      contributions.push(...evidence.renderedPanels)
+      for (const richKind of evidence.renderedMessageRenderers)
+        contributions.push({ kind: 'message-renderer', richKind })
       contributions.push(...evidence.renderedPages)
       contributions.push({ kind: 'adapter', apiVersion: 2, key: adapter.key, descriptorDigest })
       return {
         ...evidence,
-        renderedHostSlots,
+        permissions,
         rpcMethods: [],
-        renderedSlots: [],
         contributions,
         toolInvocations,
         scope: 'host-adapter' as const,
         adapter,
       }
     }
+    if (evidence.renderedMessageRenderers.length > 0) {
+      throw new Error('富消息渲染器只属于适配器扩展，请拆分为两个扩展。')
+    }
     if (evidence.renderedPages.length > 0) {
-      if (evidence.toolNames.length > 0 || evidence.renderedSlots.length > 0 || evidence.renderedHostSlots.length > 0) {
-        throw new Error('页面 Extension 不能混装智能体工具、智能体 Slot 或 Adapter Slot，请拆分为两个扩展。')
+      if (
+        evidence.toolNames.length > 0 ||
+        evidence.renderedPanels.length > 0 ||
+        evidence.renderedToolViews.length > 0
+      ) {
+        throw new Error('页面扩展不能混装智能体工具、面板或工具视图，请拆分为两个扩展。')
       }
       for (const method of evidence.rpcMethods) {
         const result = await runner.invoke(
@@ -1109,13 +1114,14 @@ export class DynamicAuthoringRuntime {
       }
       return {
         ...evidence,
+        permissions,
         contributions: evidence.renderedPages,
         toolInvocations,
         scope: 'host-ui' as const,
       }
     }
-    if (evidence.renderedHostSlots.length > 0) {
-      throw new Error('智能体 Extension 不能注册 Host Adapter rich Slot，请拆分为两个扩展。')
+    if (agentPanels.length !== evidence.renderedPanels.length) {
+      throw new Error('智能体扩展的面板只能放在智能体、频道或扩展上。')
     }
     for (const name of evidence.toolNames) {
       const schema = visibleTools.find((candidate) => candidate.name === name)
@@ -1152,8 +1158,12 @@ export class DynamicAuthoringRuntime {
         throw new Error(`Dynamic RPC verification exceeded 16 KiB: ${method}`)
       contributions.push({ kind: 'rpc', method, ...(verificationInput === undefined ? {} : { verificationInput }) })
     }
-    for (const name of evidence.renderedSlots) contributions.push({ kind: 'client-slot', name })
-    return { ...evidence, contributions, toolInvocations }
+    contributions.push(...evidence.renderedPanels)
+    for (const tool of evidence.renderedToolViews) {
+      if (!evidence.toolNames.includes(tool)) throw new Error(`工具视图只能渲染本扩展声明的工具：${tool}`)
+      contributions.push({ kind: 'tool-view', tool })
+    }
+    return { ...evidence, permissions, contributions, toolInvocations }
   }
 
   async completeAuthoringVerification(dshSessionId: string, pluginId: string, packageId: string): Promise<void> {
@@ -1186,7 +1196,9 @@ export class DynamicAuthoringRuntime {
       verification: {
         hostStarted: latest.host.status === 'running' || latest.host.status === 'absent',
         clientLoaded: latest.client.status === 'running' || latest.client.status === 'absent',
-        renderedSlots: verified.renderedSlots,
+        renderedPanels: verified.renderedPanels.map((panel) => panel.id),
+        renderedToolViews: verified.renderedToolViews,
+        renderedMessageRenderers: verified.renderedMessageRenderers,
         renderedPages: verified.renderedPages,
         usedUiComponents: verified.usedUiComponents,
         pageGeometry: verified.pageGeometry,
@@ -1198,7 +1210,8 @@ export class DynamicAuthoringRuntime {
       },
       eventKind: 'verification-completed',
       eventPayload: {
-        renderedSlots: [...verified.renderedSlots],
+        renderedPanels: verified.renderedPanels.map((panel) => panel.id),
+        renderedToolViews: [...verified.renderedToolViews],
         renderedPages: verified.renderedPages.map((page) => page.entryId),
         toolInvocations: verified.toolInvocations.map(({ name }) => name),
       },
@@ -1550,14 +1563,17 @@ export class DynamicAuthoringRuntime {
     pluginId: string,
     packageId: string,
     pluginRunId: string,
-    renderedSlots: readonly AgentClientSlotName[],
-    renderedHostSlots: readonly { readonly name: AdapterClientSlotName; readonly key: string }[] = [],
-    renderedPages: readonly HostPageContribution[] = [],
-    usedUiComponents: readonly HostUiKitComponentName[] = [],
-    pageGeometry: readonly HostUiPageGeometryEvidence[] = [],
-    permissions: HostUiPermissionDeclaration = { permissions: [], networkOrigins: [] },
-    navigationEntries: readonly string[] = [],
+    ui: {
+      readonly renderedPanels: readonly PanelContribution[]
+      readonly renderedToolViews: readonly string[]
+      readonly renderedMessageRenderers: readonly string[]
+      readonly renderedPages: readonly HostPageContribution[]
+      readonly usedUiComponents: readonly HostUiKitComponentName[]
+      readonly pageGeometry: readonly HostUiPageGeometryEvidence[]
+      readonly navigationEntries: readonly string[]
+    },
   ): Promise<void> {
+    const { renderedPages, navigationEntries } = ui
     const { agent, runner } = this.dynamicRuntime(dshSessionId)
     try {
       const declared = await this.dynamicAuthoringSnapshot(dshSessionId, pluginId, packageId)
@@ -1567,9 +1583,6 @@ export class DynamicAuthoringRuntime {
         )
         if (JSON.stringify(declaredPages) !== JSON.stringify(renderedPages)) {
           throw new Error('动态 Client 实际注册的页面与候选声明不一致。')
-        }
-        if (JSON.stringify(declared.permissions) !== JSON.stringify(permissions)) {
-          throw new Error('动态 Client 实际声明的权限与候选风险摘要不一致。')
         }
       }
       const navigationEntrySet = new Set(navigationEntries)
@@ -1584,19 +1597,7 @@ export class DynamicAuthoringRuntime {
       if (navigationEntries.some((entryId) => !renderedPages.some((page) => page.entryId === entryId))) {
         throw new Error('动态 Client 上报了不属于当前页面声明的 Navigation Provider。')
       }
-      runner.recordClientVerification(
-        agent,
-        pluginId,
-        packageId,
-        pluginRunId,
-        renderedSlots,
-        renderedHostSlots,
-        renderedPages,
-        usedUiComponents,
-        pageGeometry,
-        navigationEntries,
-        permissions,
-      )
+      runner.recordClientVerification(agent, pluginId, packageId, pluginRunId, ui)
       const episodeId = this.#sessions.get(dshSessionId)?.episodeId
       await this.completeAuthoringVerification(dshSessionId, pluginId, packageId)
       const row = runner.inventory().find((candidate) => candidate.pluginId === pluginId)

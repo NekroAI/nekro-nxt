@@ -14,7 +14,6 @@ export interface ProductActions {
   'settings.catalog': (signal?: AbortSignal) => Promise<DshSettingsCatalog>
 
   'extensions.commitImport': Action<'commitExtensionImport'>
-  'extensions.rebuild': Action<'rebuildExtensionRevision'>
   'extensions.delete': Action<'deleteLocalExtension'>
   'hostUi.updatePreferences': Action<'updateHostUiPagePreferences'>
   'host.refresh': () => Promise<null>
@@ -60,6 +59,8 @@ export interface ProductActions {
   'extensions.uninstall': Action<'uninstallHostExtension'>
   'extensions.hostClientDiagnostic': Action<'hostExtensionClientDiagnostic'>
   'extensions.deactivate': Action<'deactivateExtension'>
+  'extensions.activationConfig': Action<'updateExtensionActivationConfig'>
+  'extensions.installationConfig': Action<'updateHostExtensionConfig'>
   'extensions.clientDiagnostic': Action<'extensionClientDiagnostic'>
   'channels.sendMessage': (
     input: HostApiParams<'sendChannelMessage'> & { body: string },

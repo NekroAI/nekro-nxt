@@ -3,6 +3,8 @@ import { renderToStaticMarkup } from 'react-dom/server'
 import { AgentIdSchema, EpisodeIdSchema, HostApiContracts } from '@nekro-nxt/contracts'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { DshDynamicClientRuntime, type DynamicInventoryRow } from '../src/dsh-dynamic-client.ts'
+import { HostEventStream } from '../src/host-event-stream.ts'
+import { createProductRuntime } from '../src/product-runtime.ts'
 import { HttpDynamicClientHost } from '../src/http-dynamic-host.ts'
 
 const stubResponse = (status: number, body: unknown) => ({
@@ -10,6 +12,8 @@ const stubResponse = (status: number, body: unknown) => ({
   status,
   json: () => Promise.resolve(body),
 })
+
+const testStore = () => createProductRuntime(new HostEventStream()).store
 
 describe('HttpDynamicClientHost (browser dynamic Client circuit)', () => {
   const agentId = AgentIdSchema.parse('agt_dynamicbrowser')
@@ -102,14 +106,15 @@ describe('HttpDynamicClientHost (browser dynamic Client circuit)', () => {
       args: null,
     })
 
-    await host.reportClientVerification(
-      agentId,
-      'plugin-1',
-      'package-1',
-      'run-7',
-      [],
-      [{ name: 'conversation.message.rich', key: 'synthetic-chat:card' }],
-    )
+    await host.reportClientVerification(agentId, 'plugin-1', 'package-1', 'run-7', {
+      renderedPanels: [],
+      renderedToolViews: [],
+      renderedMessageRenderers: ['card'],
+      renderedPages: [],
+      usedUiComponents: [],
+      pageGeometry: [],
+      navigationEntries: [],
+    })
     const verificationCall = requests.find((r) => r.url.endsWith('/report-client-verification'))
     const verificationBody = verificationCall?.init?.body
     if (typeof verificationBody !== 'string') throw new TypeError('verification request body must be JSON text.')
@@ -118,13 +123,13 @@ describe('HttpDynamicClientHost (browser dynamic Client circuit)', () => {
       pluginId: 'plugin-1',
       packageId: 'package-1',
       pluginRunId: 'run-7',
-      renderedSlots: [],
-      renderedHostSlots: [{ name: 'conversation.message.rich', key: 'synthetic-chat:card' }],
+      renderedPanels: [],
+      renderedToolViews: [],
+      renderedMessageRenderers: ['card'],
       renderedPages: [],
       usedUiComponents: [],
       pageGeometry: [],
       navigationEntries: [],
-      permissions: { permissions: [], networkOrigins: [] },
     })
   })
 
@@ -169,10 +174,10 @@ describe('HttpDynamicClientHost (browser dynamic Client circuit)', () => {
             pluginRunId: 'run-1',
             name: '动态界面',
             code: `return {
-              inject: ['slots'],
+              inject: ['panels'],
               apply(ctx) {
-                ctx.slots.register(
-                  { name: 'agent.workbench.sections', id: 'main' },
+                ctx.panels.register(
+                  { id: 'main', anchor: 'agent', title: '动态界面', densities: ['full'] },
                   () => {
                     const [label] = React.useState('动态界面已加载')
                     return React.createElement('section', { 'data-dynamic': 'probe' }, label)
@@ -189,7 +194,7 @@ describe('HttpDynamicClientHost (browser dynamic Client circuit)', () => {
     vi.stubGlobal('fetch', fetchMock)
 
     const host = new HttpDynamicClientHost(agentId, episodeId)
-    const runtime = await DshDynamicClientRuntime.create(host, { querySelectorAll: () => [] })
+    const runtime = await DshDynamicClientRuntime.create(host, testStore(), { querySelectorAll: () => [] })
     const pending: DynamicInventoryRow = {
       pluginId: 'plugin-1',
       agentId,
@@ -215,17 +220,20 @@ describe('HttpDynamicClientHost (browser dynamic Client circuit)', () => {
       await runtime.reconcile([pending])
       await runtime.approve('approval-1')
       expect(runtime.loaded()).toHaveLength(1)
-      const [entry] = runtime.entries('agent.workbench.sections')
-      if (typeof entry?.component !== 'function') throw new TypeError('Dynamic product Slot must be callable.')
-      const rendered: unknown = createElement(entry.component, { agentId, displayName: '动态测试智能体' })
-      if (!isValidElement(rendered)) throw new TypeError('Dynamic product Slot must return a React element.')
+      const [entry] = runtime.previews.panels()
+      if (typeof entry?.component !== 'function') throw new TypeError('Dynamic panel must be callable.')
+      const rendered: unknown = createElement(entry.component, {
+        anchor: { kind: 'agent', id: agentId },
+        density: 'full',
+      })
+      if (!isValidElement(rendered)) throw new TypeError('Dynamic panel must return a React element.')
       expect(renderToStaticMarkup(rendered)).toBe('<section data-dynamic="probe">动态界面已加载</section>')
     } finally {
       await runtime.dispose()
     }
   })
 
-  it('loads and renders a dynamic Adapter rich-message Slot through the product registry', async () => {
+  it('loads and renders a dynamic message renderer through the preview registry', async () => {
     fetchMock = vi.fn((input: string) => {
       if (input.endsWith('/run-host-half')) {
         return Promise.resolve(
@@ -247,10 +255,10 @@ describe('HttpDynamicClientHost (browser dynamic Client circuit)', () => {
             pluginRunId: 'run-adapter',
             name: '动态适配器界面',
             code: `return {
-              inject: ['slots'],
+              inject: ['messageRenderers'],
               apply(ctx) {
-                ctx.slots.register(
-                  { name: 'conversation.message.rich', id: 'synthetic-chat:card' },
+                ctx.messageRenderers.register(
+                  'card',
                   ({ part }) => React.createElement('article', { 'data-dynamic-adapter-card': '' }, part.summary)
                 )
               }
@@ -262,7 +270,7 @@ describe('HttpDynamicClientHost (browser dynamic Client circuit)', () => {
       return Promise.resolve(stubResponse(404, { error: { code: 'not-found', message: 'x' } }))
     })
     vi.stubGlobal('fetch', fetchMock)
-    const runtime = await DshDynamicClientRuntime.create(new HttpDynamicClientHost(agentId, episodeId), {
+    const runtime = await DshDynamicClientRuntime.create(new HttpDynamicClientHost(agentId, episodeId), testStore(), {
       querySelectorAll: () => [],
     })
     const pending: DynamicInventoryRow = {
@@ -289,8 +297,9 @@ describe('HttpDynamicClientHost (browser dynamic Client circuit)', () => {
     try {
       await runtime.reconcile([pending])
       await runtime.approve('approval-adapter')
-      const [entry] = runtime.entries('conversation.message.rich')
-      if (!entry) throw new TypeError('Dynamic Adapter rich Slot must be registered.')
+      const [entry] = runtime.previews.messageRenderers()
+      if (!entry) throw new TypeError('Dynamic message renderer must be registered.')
+      expect(entry).toMatchObject({ richKind: 'card', owner: { kind: 'dynamic', pluginId: 'plugin-adapter' } })
       const rendered = createElement(entry.component, {
         part: { type: 'rich', adapterKey: 'synthetic-chat', kind: 'card', summary: '合成卡片' },
         messageId: 'msg_SYNTHETIC',

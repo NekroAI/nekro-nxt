@@ -35,7 +35,7 @@ import {
 } from '../ui-kit/index.js'
 import styles from './product-pages.module.css'
 import { DynamicClientSlots } from '../dynamic-client-coordinator.js'
-import { ExtensionActivationExtensionSlots } from '../persistent-extension-client.js'
+import { PanelSlot, useExtensionActivation } from '../extension-ui/index.js'
 import { authoringTaskPresentation } from '../authoring-task-status.js'
 
 const extensionLabel = (activeAgentCount: number): string =>
@@ -201,15 +201,16 @@ export const extensionDescription = (description: string): string =>
     .replace(/([\p{Script=Han}])\s+([与和及、，。；])/gu, '$1$2')
 
 export const contributionLabel = (contribution: string): string => {
-  const match = /^(工具|RPC|界面|页面)[：:]\s*(.+)$/u.exec(contribution)
+  const match = /^(工具视图|工具|RPC|面板|富消息|页面|适配器)[：:]\s*(.+)$/u.exec(contribution)
   if (!match) return contribution
   const [, kind, name = ''] = match
   if (kind === '工具') return `智能体工具 · ${name}`
   if (kind === 'RPC') return `界面数据接口 · ${name}`
   if (kind === '页面') return `专属页面 · ${name}`
-  if (name === 'agent.workbench.sections' || name === '智能体工作台') return '智能体工作台面板'
-  if (name === 'extension.details.panels' || name === '扩展详情') return '扩展详情面板'
-  return `产品界面 · ${name}`
+  if (kind === '面板') return `面板 · ${name}`
+  if (kind === '工具视图') return `工具视图 · ${name}`
+  if (kind === '富消息') return `富消息 · ${name}`
+  return `平台适配器 · ${name}`
 }
 
 /**
@@ -247,6 +248,7 @@ export const contractVersionLabel = (version: string): string =>
 
 export function ExtensionsPage() {
   const useProductStore = useProductRuntime().store
+  const activation = useExtensionActivation()
 
   const hostActions = useHostActions()
   const { extensionId = '' } = useParams()
@@ -257,7 +259,6 @@ export function ExtensionsPage() {
   const extensions = useProductStore((state) => state.extensions)
   const [pendingAgentId, setPendingAgentId] = useState<string | null>(null)
   const [revisionByAgent, setRevisionByAgent] = useState<Record<string, string>>({})
-  const [rebuildPending, setRebuildPending] = useState(false)
   const [installationPending, setInstallationPending] = useState(false)
   const [uninstallOpen, setUninstallOpen] = useState(false)
   const [permissionRevisionId, setPermissionRevisionId] = useState('')
@@ -282,12 +283,18 @@ export function ExtensionsPage() {
     if (pendingAgentId) return
     setPendingAgentId(agentId)
     try {
-      await useProductStore.getState().setExtensionActive(extension.id, agentId, enabled, revisionId)
-      notify(
-        `${enabled ? '已为' : '已停止让'}${agentName}${enabled ? '启用' : '使用'}“${extension.name}”。`,
-        'success',
-        `extension-activation:${extension.id}:${agentId}`,
-      )
+      const changed = await activation.setActive({
+        extensionId: extension.id,
+        agentId,
+        enabled,
+        ...(revisionId === undefined ? {} : { revisionId }),
+      })
+      if (changed)
+        notify(
+          `${enabled ? '已为' : '已停止让'}${agentName}${enabled ? '启用' : '使用'}“${extension.name}”。`,
+          'success',
+          `extension-activation:${extension.id}:${agentId}`,
+        )
     } catch (error) {
       notify(
         error instanceof Error ? error.message : String(error),
@@ -388,18 +395,6 @@ export function ExtensionsPage() {
       setDeletePending(false)
     }
   }
-  const rebuild = async () => {
-    if (!focusedRevision || rebuildPending) return
-    setRebuildPending(true)
-    try {
-      await hostActions['extensions.rebuild']({ revisionId: focusedRevision.id })
-      notify('重建成功，请选择新版本并重新核对权限后启用。', 'success', 'extension-rebuild')
-    } catch (error) {
-      notify(error instanceof Error ? error.message : String(error), 'error', 'extension-rebuild')
-    } finally {
-      setRebuildPending(false)
-    }
-  }
   if (!extensionId && extensionSearchParams.get('view') === 'pages') return <HostUiPageManager />
   if (!extensionId && extensions[0]) {
     return <Navigate to={`/extensions/${extensions[0].id}`} replace />
@@ -407,6 +402,7 @@ export function ExtensionsPage() {
 
   return (
     <div className={[styles.page, styles.desktopPage, styles.extensionsPage].join(' ')} data-product-page="extensions">
+      {activation.dialog}
       <PageHeader
         icon={Boxes}
         title={selected?.name ?? '扩展库'}
@@ -504,19 +500,8 @@ export function ExtensionsPage() {
                 />
               </div>
             </section>
-            {focusedRevision?.format === 'requires-rebuild' ? (
-              <InlineFeedback tone="warning">
-                这个修订需要重建。旧源码和配置已保留；重建成功后不会自动启用。
-                <Button
-                  disabled={rebuildPending}
-                  loading={rebuildPending}
-                  onClick={() => {
-                    void rebuild()
-                  }}
-                >
-                  从已有源码重建
-                </Button>
-              </InlineFeedback>
+            {focusedRevision?.format === 'unavailable' ? (
+              <InlineFeedback tone="warning">这个版本的格式不再受支持，无法启用或安装。</InlineFeedback>
             ) : null}
             <section className={[styles.activationSection, styles.extensionPrimarySection].join(' ')}>
               {selected.scope !== 'agent' ? (
@@ -561,12 +546,7 @@ export function ExtensionsPage() {
                           </span>
                           <Button
                             size="small"
-                            disabled={
-                              installed ||
-                              installationPending ||
-                              revision.format === 'requires-rebuild' ||
-                              revision.format === 'unavailable'
-                            }
+                            disabled={installed || installationPending || revision.format === 'unavailable'}
                             loading={installationPending}
                             loadingLabel="正在切换…"
                             onClick={() => {
@@ -643,7 +623,7 @@ export function ExtensionsPage() {
                                   activation &&
                                   revisionId !== activation.revisionId &&
                                   selected.revisions.find((revision) => revision.id === revisionId)?.format !==
-                                    'requires-rebuild'
+                                    'unavailable'
                                 ) {
                                   void changeActivation(selected, agent.id, agent.name, true, revisionId)
                                 }
@@ -857,13 +837,10 @@ export function ExtensionsPage() {
               ) : null}
             </section>
             {selected.scope === 'agent' && detailsActivation ? (
-              <ExtensionActivationExtensionSlots
+              <PanelSlot
+                anchor={{ kind: 'extension', id: selected.id }}
+                density="full"
                 agentId={detailsActivation.agentId}
-                extensionId={selected.id}
-                revisionId={detailsActivation.revisionId}
-                activation="active"
-                activationId={`${detailsActivation.agentId}:${selected.id}`}
-                runtimeStatus={detailsActivation.runtime?.status ?? 'active'}
               />
             ) : null}
             <section className={styles.extensionDangerZone} aria-labelledby="extension-danger-heading">

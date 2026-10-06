@@ -120,7 +120,7 @@ const snapshotBody = () =>
         aliasEditable: false,
         channelDiscovery: 'host-created',
         diagnostics: { receive: false, send: false },
-        configSchema: { schemaVersion: 1, type: 'object', required: [], properties: {} },
+        configSchema: { type: 'object', dict: {} },
       },
       {
         key: 'fixture-beta',
@@ -134,12 +134,10 @@ const snapshotBody = () =>
         channelDiscovery: 'adapter-observed',
         diagnostics: { receive: true, send: true },
         configSchema: {
-          schemaVersion: 1,
           type: 'object',
-          required: ['appId', 'clientSecretCredentialRef'],
-          properties: {
-            appId: { type: 'string', title: 'App ID' },
-            clientSecretCredentialRef: { type: 'credential-reference', title: 'Client Secret' },
+          dict: {
+            appId: { type: 'string', meta: { description: 'App ID', required: true } },
+            clientSecret: { type: 'string', meta: { description: 'Client Secret', required: true, role: 'secret' } },
           },
         },
       },

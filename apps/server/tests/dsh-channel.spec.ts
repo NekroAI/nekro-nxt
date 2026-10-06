@@ -1494,14 +1494,17 @@ describe('DSH Host and internal Channel vertical slice', () => {
       await expect(host.queryNekroNxtInspect(enabledSession, 'supportedContributions')).resolves.toEqual({
         contractVersion: NEKRO_NXT_EXTENSION_AUTHORING_REFERENCE.contractVersion,
         dshVersion: NEKRO_NXT_EXTENSION_AUTHORING_REFERENCE.dshVersion,
-        ...NEKRO_NXT_EXTENSION_AUTHORING_REFERENCE.supportedContributions,
+        scopes: NEKRO_NXT_EXTENSION_AUTHORING_REFERENCE.scopes,
+        ui: NEKRO_NXT_EXTENSION_AUTHORING_REFERENCE.ui,
+        dshNativeWebUi: NEKRO_NXT_EXTENSION_AUTHORING_REFERENCE.dshNativeWebUi,
       })
       const developmentExample = await host.queryNekroNxtInspect(enabledSession, 'developmentExample')
       if (typeof developmentExample !== 'object' || developmentExample === null || Array.isArray(developmentExample)) {
         throw new TypeError('developmentExample must be an object.')
       }
       expect(developmentExample['hostTool']).toContain("name: 'project_status'")
-      expect(developmentExample['hostRpcAndClientSlot']).toContain("name: 'agent.workbench.sections'")
+      expect(developmentExample['hostRpcAndPanel']).toContain('ctx.panels.register(')
+      expect(developmentExample['toolView']).toContain('ctx.toolViews.register(')
       expect(developmentExample['hostPage']).toContain("inject: ['pages', 'ui']")
       expect(developmentExample['hostPage']).toContain('ctx.ui')
       expect(developmentExample['hostPage']).not.toContain("React.createElement('button'")
@@ -1513,8 +1516,9 @@ describe('DSH Host and internal Channel vertical slice', () => {
       expect(extensionSkill.provider).toBe('nekro-nxt-runtime')
       expect(extensionSkill.content).toContain('宿主是 NekroNXT')
       expect(extensionSkill.content).toContain('nekro_nxt_extension_define')
-      expect(extensionSkill.content).toContain('nxt-host-ui-design-v1')
-      expect(extensionSkill.content).toContain('Host 已提供背景、外边距和根滚动')
+      expect(extensionSkill.content).toContain('nxt-host-ui-design-v2')
+      expect(extensionSkill.content).toContain('页面背景、安全边距与根滚动')
+      expect(extensionSkill.content).toContain('ctx.toolViews.register(')
       expect(extensionSkill.content).not.toContain('actions: React.createElement(\n            Button')
       await expect(host.loadNekroNxtExtensionSkill(deniedSession)).rejects.toThrow('not granted')
 

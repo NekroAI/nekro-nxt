@@ -6,7 +6,7 @@ import {
   type HostApiContractParams,
   type HostApiContractRequest,
 } from '@nekro-nxt/contracts'
-import type { DynamicClientHostPort, DynamicInventoryRow } from './dsh-dynamic-client.js'
+import type { DynamicClientEvidence, DynamicClientHostPort, DynamicInventoryRow } from './dsh-dynamic-client.js'
 import { requireDynamicPackageId, requireDynamicPluginId, requireDynamicPluginRunId } from './dsh-interop/unsafe.js'
 
 // Derive the exact Host-seam types from the interface so we never import a DSH
@@ -212,16 +212,7 @@ export class HttpDynamicClientHost implements DynamicClientHostPort {
     pluginId: string,
     packageId: string,
     pluginRunId: string,
-    renderedSlots: Parameters<DynamicClientHostPort['reportClientVerification']>[4],
-    renderedHostSlots: Parameters<DynamicClientHostPort['reportClientVerification']>[5],
-    renderedPages: Parameters<DynamicClientHostPort['reportClientVerification']>[6] = [],
-    usedUiComponents: Parameters<DynamicClientHostPort['reportClientVerification']>[7] = [],
-    pageGeometry: Parameters<DynamicClientHostPort['reportClientVerification']>[8] = [],
-    permissions: Parameters<DynamicClientHostPort['reportClientVerification']>[9] = {
-      permissions: [],
-      networkOrigins: [],
-    },
-    navigationEntries: Parameters<DynamicClientHostPort['reportClientVerification']>[10] = [],
+    evidence: DynamicClientEvidence,
   ): Promise<void> {
     void agentId
     await this.#post(
@@ -232,13 +223,13 @@ export class HttpDynamicClientHost implements DynamicClientHostPort {
         pluginId,
         packageId,
         pluginRunId,
-        renderedSlots: [...renderedSlots],
-        renderedHostSlots: [...renderedHostSlots],
-        renderedPages: [...renderedPages],
-        usedUiComponents: [...usedUiComponents],
-        pageGeometry: [...pageGeometry],
-        permissions,
-        navigationEntries: [...navigationEntries],
+        renderedPanels: [...evidence.renderedPanels],
+        renderedToolViews: [...evidence.renderedToolViews],
+        renderedMessageRenderers: [...evidence.renderedMessageRenderers],
+        renderedPages: [...evidence.renderedPages],
+        usedUiComponents: [...evidence.usedUiComponents],
+        pageGeometry: [...evidence.pageGeometry],
+        navigationEntries: [...evidence.navigationEntries],
       },
     )
   }

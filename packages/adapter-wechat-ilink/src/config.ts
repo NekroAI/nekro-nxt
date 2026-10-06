@@ -1,4 +1,4 @@
-import { AdapterEmptyObjectSchema, defineAdapterConnection } from '@nekro-nxt/adapter-sdk'
+import { AdapterEmptyObjectSchema, configSchema, defineAdapterConnection } from '@nekro-nxt/adapter-sdk'
 import { z } from 'zod'
 import { WECHAT_ILINK_ADAPTER_KEY } from './types.js'
 
@@ -55,19 +55,12 @@ export const WECHAT_ILINK_CONNECTION_DEFINITION = defineAdapterConnection({
   },
   configurationSchema: WechatIlinkPublicConfigurationSchema,
   credentialsSchema: AdapterEmptyObjectSchema,
-  configSchema: {
-    schemaVersion: 1,
-    type: 'object',
-    required: [],
-    properties: {
-      enableInboundMedia: {
-        type: 'boolean',
-        title: '入站媒体接收',
-        description: '开启后，微信 iLink 收到的图片和文件会下载并导入为频道资源。',
-        default: true,
-      },
-    },
-  },
+  configSchema: configSchema.object({
+    enableInboundMedia: configSchema.boolean('入站媒体接收', {
+      default: true,
+      hint: '开启后，收到的图片和文件会下载并导入为频道资源。',
+    }),
+  }),
   create: (configuration) => configuration,
 })
 

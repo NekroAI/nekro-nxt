@@ -8,6 +8,6 @@ Descriptor 声明 `provisioning`、可编辑别名、频道发现方式、`inter
 
 `AdapterConnectionHostContext` 按当前 Connection 暴露 `channels`、`identities`、`members`、`messages`、`assets`、`credentials`、`state`、`diagnostics` 和 `transport`。`acceptChannelInbound` 只提交属于具体频道的消息或活动；`acceptConnectionInbound` 提交账号和关系事实，不创建 Channel/ChannelMember，也不进入智能体运行时。
 
-`credential-reference` 可用 `credentialKey` 指定持久引用字段；原始值只经过 Host 只写通道，Connection 配置和 Adapter factory 只接收引用。`transport` 是可替换的 HTTP/WebSocket 边界：生产使用 Server 网络实现，测试和动态验证使用无网络 Fake。远程 Asset 默认只允许 HTTPS；协议明确需要 HTTP 时可为单次抓取开启公网 HTTP，Host 仍拒绝 URL 凭据、重定向和私网目标。
+配置 Schema 是序列化 Schemastery（可用 `configSchema` 构建器生成），产品表单直接渲染。`meta.role: 'secret'` 的字段是只写凭据：原始值只经过 Host 只写通道，以字段名为键存入 `credentialRefs`，Connection 配置和 Adapter factory 只接收引用。配置更新只替换 Schema 声明的非凭据字段，Adapter 写入的其他私有字段保持不变。`transport` 是可替换的 HTTP/WebSocket 边界：生产使用 Server 网络实现，测试和动态验证使用无网络 Fake。远程 Asset 默认只允许 HTTPS；协议明确需要 HTTP 时可为单次抓取开启公网 HTTP，Host 仍拒绝 URL 凭据、重定向和私网目标。
 
 `AdapterConnectionRuntime.localChannel` 是可选的应用内消息端口。Host 通过 Descriptor 的系统单例与 `internal` 能力发现唯一内置实现，不比较 Adapter key。

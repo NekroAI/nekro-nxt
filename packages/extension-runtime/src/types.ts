@@ -1,8 +1,7 @@
-import type { ExtensionManifest } from './manifest.js'
+import type { ExtensionManifest, ExtensionManifestContribution } from './manifest.js'
 import type {
-  AdapterClientSlotName,
-  AgentClientSlotName,
   AgentId,
+  ExtensionConfigDeclaration,
   DshPluginEntryId,
   ExtensionId,
   ExtensionRevisionId,
@@ -54,38 +53,14 @@ export interface DynamicPackageSnapshot {
   readonly clientCode?: string
   readonly permissions?: HostUiPermissionDeclaration
   readonly contributions?: readonly ExtensionContribution[]
+  readonly config?: ExtensionConfigDeclaration
   readonly resources?: Readonly<Record<string, string>>
   readonly clientCss?: { readonly path: string; readonly sha256: string }
 }
 
-export type ExtensionContribution =
-  | {
-      readonly kind: 'tool'
-      readonly name: string
-      readonly description: string
-      readonly verificationInput?: Readonly<Record<string, JsonValue>>
-    }
-  | { readonly kind: 'rpc'; readonly method: string; readonly verificationInput?: JsonValue }
-  | {
-      readonly kind: 'client-slot'
-      readonly name: AgentClientSlotName
-    }
-  | HostAdapterContributionEvidence
-  | HostClientSlotContributionEvidence
-  | HostPageContribution
+export type ExtensionContribution = ExtensionManifestContribution
 
-export interface HostAdapterContributionEvidence {
-  readonly kind: 'adapter'
-  readonly apiVersion: 2
-  readonly key: string
-  readonly descriptorDigest: string
-}
-
-export interface HostClientSlotContributionEvidence {
-  readonly kind: 'host-client-slot'
-  readonly name: AdapterClientSlotName
-  readonly key: string
-}
+export type HostAdapterContributionEvidence = Extract<ExtensionContribution, { readonly kind: 'adapter' }>
 
 export type { ExtensionManifest } from './manifest.js'
 
@@ -93,7 +68,7 @@ export interface ExtensionRevisionVerification {
   readonly revisionId: ExtensionRevisionId
   /** Exact DSH release used when this immutable verification evidence was produced. */
   readonly dshVersion: string
-  readonly contractVersion: 'nekro-nxt-extension-v1' | 'nekro-nxt-extension-v2' | 'nekro-nxt-extension-v3'
+  readonly contractVersion: 'nekro-nxt-extension-v4'
   readonly scope?: 'host-adapter' | 'host-ui'
   readonly origin: {
     readonly episodeId: string
@@ -106,7 +81,10 @@ export interface ExtensionRevisionVerification {
   readonly clientBuild: { readonly built: boolean; readonly buildKey: string }
   readonly toolInvocations: readonly { readonly name: string; readonly succeeded: boolean }[]
   readonly rpcMethods: readonly string[]
-  readonly renderedSlots: readonly AgentClientSlotName[]
+  /** Panel ids, Tool names and rich kinds that really rendered during verification. */
+  readonly renderedPanels: readonly string[]
+  readonly renderedToolViews: readonly string[]
+  readonly renderedMessageRenderers: readonly string[]
   readonly renderedPages?: readonly HostPageContribution[]
   readonly usedUiComponents?: readonly HostUiKitComponentName[]
   readonly pageGeometry?: readonly HostUiPageGeometryEvidence[]
@@ -121,10 +99,6 @@ export interface ExtensionRevisionVerification {
     readonly inboundCommitted: boolean
     readonly outboundReceipt: 'sent' | 'failed' | 'unknown'
   }
-  readonly renderedHostSlots?: readonly {
-    readonly name: AdapterClientSlotName
-    readonly key: string
-  }[]
 }
 
 /** The single currently installed Host-scoped Revision for one Extension. */
@@ -132,6 +106,8 @@ export interface HostInstallation {
   readonly extensionId: ExtensionId
   readonly extensionRevisionId: ExtensionRevisionId
   readonly installedAt: number
+  /** Validated against the installed Revision's config schema; `{}` when it declares none. */
+  readonly config: JsonValue
 }
 
 export interface ExtensionClientDiagnostic {

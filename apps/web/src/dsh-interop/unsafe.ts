@@ -6,8 +6,7 @@ import type {
   CordisDynamicPluginRunId,
 } from '@deepseek-ai/dsh-cordis-client-runner/client'
 import type { StoredEntry } from '@deepseek-ai/dsh-client-ui-slots'
-import { AgentClientSlotNameSchema, HostApiContracts } from '@nekro-nxt/contracts'
-import type { ExtensionClientEnvironment, ExtensionPluginFactory } from '@nekro-nxt/extension-sdk'
+import { HostApiContracts } from '@nekro-nxt/contracts'
 import type { ReactNode } from 'react'
 
 export interface ClientPluginHandoff {
@@ -137,37 +136,6 @@ export const requireDynamicPluginRunId = (value: unknown): CordisDynamicPluginRu
   )
 
 /** Validate a dynamically imported Extension Client factory before invoking it. */
-export const requireExtensionPluginFactory = <Environment = ExtensionClientEnvironment>(
-  value: unknown,
-): ExtensionPluginFactory<Environment> => {
-  if (typeof value !== 'function') throw new TypeError('Extension Client artifact has no default factory.')
-  // eslint-disable-next-line @typescript-eslint/no-unsafe-type-assertion -- 扩展工厂的函数与对象结构已在此边界校验。
-  return value as ExtensionPluginFactory<Environment>
-}
-
-interface DynamicSlotCoreFace {
-  register(options: unknown, component: unknown): unknown
-}
-
-export interface ProductSlotCoreFace {
-  register(options: unknown, component: unknown): () => void
-  entriesOfSlot(name: string): readonly {
-    readonly component: unknown
-    readonly options: { readonly id?: string }
-    readonly registrant?: string
-  }[]
-  subscribe(name: string, listener: () => void): () => void
-  getVersion(name: string): number
-}
-
-export const requireProductSlotCore = (value: unknown): ProductSlotCoreFace =>
-  requireObjectWithMethods<ProductSlotCoreFace>(value, 'NekroNxt product SlotCore', [
-    'register',
-    'entriesOfSlot',
-    'subscribe',
-    'getVersion',
-  ])
-
 export const requireProductSlotComponent = <Props extends object>(
   value: unknown,
   label: string,
@@ -175,38 +143,4 @@ export const requireProductSlotComponent = <Props extends object>(
   if (typeof value !== 'function') throw new TypeError(`${label} must be a function.`)
   // eslint-disable-next-line @typescript-eslint/no-unsafe-type-assertion -- 槽位组件已通过函数检查，Props 由受控注册入口提供。
   return value as (props: Props) => ReactNode
-}
-
-/**
- * Bridge the intentionally open Extension SDK registration into DSH's declaration-merged SlotCore.
- * SlotCore performs its own full slot-kind validation after these minimum shape checks.
- */
-export const registerDynamicSlot = (
-  core: unknown,
-  options: unknown,
-  component: unknown,
-  registrationId: string,
-): (() => void) => {
-  const coreFace = requireObjectWithMethods<DynamicSlotCoreFace>(core, 'DSH SlotCore', ['register'])
-  const registration = requireRecord(options, 'Extension Client slot options')
-  const name = registration['name']
-  if (!AgentClientSlotNameSchema.safeParse(name).success) {
-    throw new TypeError(`Extension Client slot is not supported by NekroNxt: ${String(name)}`)
-  }
-  if (Object.keys(registration).some((key) => key !== 'name' && key !== 'id')) {
-    throw new TypeError('Extension Client slot options may only contain the NekroNxt slot name and stable id.')
-  }
-  const requestedId = registration['id']
-  if (requestedId !== undefined && (typeof requestedId !== 'string' || !requestedId.trim())) {
-    throw new TypeError('Extension Client slot options.id must be a non-empty string when provided.')
-  }
-  if (typeof component !== 'function') throw new TypeError('Extension Client slot component must be a function.')
-  const dispose = coreFace.register(
-    { name, id: `${registrationId}:${requestedId ?? 'entry'}`, registrant: registrationId },
-    component,
-  )
-  if (typeof dispose !== 'function') throw new TypeError('DSH SlotCore.register() must return a disposer.')
-  return () => {
-    Reflect.apply(dispose, undefined, [])
-  }
 }

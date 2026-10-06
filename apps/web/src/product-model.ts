@@ -6,7 +6,10 @@ import type {
   HostApiRequest,
   HostApiResponse,
   AdapterActivityKey,
+  ConfigSchemaDocument,
+  ExtensionUiContributions,
   HostUiPermissionDeclaration,
+  JsonValue,
   PromptDocumentV1,
 } from '@nekro-nxt/contracts'
 import type { ExtensionJsonValue } from '@nekro-nxt/extension-sdk'
@@ -257,13 +260,15 @@ export interface LocalExtensionSummary {
   readonly revisions: readonly {
     readonly id: string
     readonly revision: number
-    readonly format?: 'current' | 'requires-rebuild' | 'unavailable'
+    readonly format?: 'current' | 'unavailable'
     readonly createdAt: number
     readonly scope: 'agent' | 'host-adapter' | 'host-ui'
     readonly contributions: readonly string[]
     readonly clientBuilt: boolean
     readonly buildKey?: string
-    readonly hostSlots: readonly { readonly name: string; readonly key: string }[]
+    /** Panels, tool views and message renderers this Revision contributes to the shell. */
+    readonly ui: ExtensionUiContributions
+    readonly configSchema?: ConfigSchemaDocument
     readonly pages: HostApiResponse<'snapshot'>['hostUi']['pages']
     readonly verification?: {
       readonly verifiedAt: number
@@ -274,7 +279,9 @@ export interface LocalExtensionSummary {
       readonly buildKey: string
       readonly toolInvocationCount: number
       readonly rpcMethods: readonly string[]
-      readonly renderedSlots: readonly string[]
+      readonly renderedPanels: readonly string[]
+      readonly renderedToolViews: readonly string[]
+      readonly renderedMessageRenderers: readonly string[]
       readonly permissions?: HostUiPermissionDeclaration
       readonly permissionDigest?: string
       readonly permissionApprovalRequired?: boolean
@@ -288,6 +295,8 @@ export interface LocalExtensionSummary {
     readonly revisionId: string
     readonly revision: number
     readonly activatedAt: number
+    /** Configuration saved for this agent and extension, validated against the Revision's config schema. */
+    readonly config: JsonValue
     readonly runtime?: {
       readonly status: 'active' | 'restore-failed' | 'dispose-failed'
       readonly message?: string
@@ -304,7 +313,9 @@ export interface LocalExtensionSummary {
     readonly buildKey: string
     readonly toolInvocationCount: number
     readonly rpcMethods: readonly string[]
-    readonly renderedSlots: readonly string[]
+    readonly renderedPanels: readonly string[]
+    readonly renderedToolViews: readonly string[]
+    readonly renderedMessageRenderers: readonly string[]
     readonly permissions?: HostUiPermissionDeclaration
     readonly permissionDigest?: string
     readonly permissionApprovalRequired?: boolean
@@ -324,6 +335,7 @@ export interface LocalExtensionSummary {
   readonly installation?: {
     readonly revisionId: string
     readonly installedAt: number
+    readonly config: JsonValue
     readonly runtime?: {
       readonly status: 'active' | 'restore-failed' | 'dispose-failed'
       readonly message?: string
@@ -496,7 +508,7 @@ export interface ProductState {
   ): Promise<void>
   createConnection(input: {
     readonly adapterKey: string
-    readonly configuration: Readonly<Record<string, string | number | boolean>>
+    readonly configuration: Readonly<Record<string, JsonValue>>
     readonly credentials: Readonly<Record<string, string>>
     readonly alias?: string
   }): Promise<void>
@@ -556,7 +568,26 @@ export interface ProductState {
     readonly description: string
     readonly targetExtensionId?: string
   }): Promise<SavedDynamicExtension>
-  setExtensionActive(id: string, agentId: string, enabled: boolean, revisionId?: string): Promise<void>
+  /**
+   * Enables or disables an agent extension. `permissionDigest` is the user's approval of exactly the permissions
+   * that Revision declares; the Host refuses activation without it when approval is required.
+   */
+  setExtensionActive(
+    id: string,
+    agentId: string,
+    enabled: boolean,
+    revisionId?: string,
+    permissionDigest?: string,
+  ): Promise<void>
+  /**
+   * Saves extension configuration: per agent for agent extensions (takes effect at the next safe point), or for the
+   * installation of a Host extension.
+   */
+  updateExtensionConfig(input: {
+    readonly extensionId: string
+    readonly agentId?: string
+    readonly config: JsonValue
+  }): Promise<void>
   setHostExtensionInstalled(id: string, revisionId: string | null, permissionDigest?: string): Promise<void>
   reportHostExtensionClientDiagnostic(input: {
     readonly extensionId: string

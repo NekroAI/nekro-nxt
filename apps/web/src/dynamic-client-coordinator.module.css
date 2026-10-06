@@ -96,3 +96,26 @@
     border-bottom: 1px solid var(--nxt-border-subtle);
   }
 }
+
+.preview {
+  display: grid;
+  gap: 12px;
+}
+
+.toolPreview {
+  display: grid;
+  gap: 8px;
+}
+
+/* Out of sight but laid out, so overflow and render errors are real. */
+.verification {
+  position: fixed;
+  top: 0;
+  left: -10000px;
+  visibility: hidden;
+  pointer-events: none;
+}
+
+.verificationCase {
+  overflow: hidden;
+}

@@ -233,6 +233,7 @@ export function registerAuthoringRoutes({ runtime, registerRoute, broadcast }: H
         const parsed = HostApiContracts.dynamicGetClientCode.parseRequest(body)
         try {
           const client = runtime.host.getDynamicClientCode(dshSessionId, parsed.pluginId, parsed.pluginRunId)
+          const snapshot = await runtime.host.dynamicAuthoringSnapshot(dshSessionId, client.pluginId, client.packageId)
           writeJson(
             res,
             200,
@@ -242,6 +243,7 @@ export function registerAuthoringRoutes({ runtime, registerRoute, broadcast }: H
               pluginRunId: client.pluginRunId,
               name: client.name,
               code: client.code,
+              ...(snapshot === undefined ? {} : { permissions: snapshot.permissions }),
             }),
           )
         } catch (error) {
@@ -273,13 +275,15 @@ export function registerAuthoringRoutes({ runtime, registerRoute, broadcast }: H
             parsed.pluginId,
             parsed.packageId,
             parsed.pluginRunId,
-            parsed.renderedSlots,
-            parsed.renderedHostSlots,
-            parsed.renderedPages,
-            parsed.usedUiComponents,
-            parsed.pageGeometry,
-            parsed.permissions,
-            parsed.navigationEntries,
+            {
+              renderedPanels: parsed.renderedPanels,
+              renderedToolViews: parsed.renderedToolViews,
+              renderedMessageRenderers: parsed.renderedMessageRenderers,
+              renderedPages: parsed.renderedPages,
+              usedUiComponents: parsed.usedUiComponents,
+              pageGeometry: parsed.pageGeometry,
+              navigationEntries: parsed.navigationEntries,
+            },
           )
           writeJson(res, 200, HostApiContracts.dynamicReportClientVerification.parseResponse({ ok: true }))
         } catch (error) {

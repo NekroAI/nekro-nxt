@@ -4,13 +4,39 @@
 
 运行时能力通过 Activation Host 注入；新增 SDK 面必须有已实现 Extension 消费者、兼容版本和卸载测试。
 
-旧 Manifest 只读保留并需重建后运行；当前 Client 契约是 `nekro-nxt-extension-v3`。Manifest V5 的 `host-ui` Revision 必须包含 Client、1–8 个 `host-page` 和完整权限声明。页面通过 `defineHostUiClientExtension()` 注册，使用 Host 分配的 `routeBase`、React Hooks 子集和 NXT UI Kit，不接管产品外壳。
+## Manifest V6
 
-Adapter Client 的 `conversation.message.rich` id 使用 `<adapterKey>:<kind>`；`connection.adapter.setup/status/test` 与 `channel.inspector.adapter.sections` 的 id 等于当前 `adapterKey`。Props 是裁剪后的连接、频道或富消息展示投影，不包含 Core、宿主路径、Secret 或平台原始事件。组件加载失败、抛错、未命中或卸载时撤销当前贡献；富消息恢复宿主卡片，局部增强恢复宿主原有界面。
+扩展只有 Manifest V6（`schemaVersion: 6`），旧格式不再读取或重建。`scope` 为 `agent | host-adapter | host-ui`，每种 scope 都声明 `permissions`（可为空），可选 `config: { schema }` 使用序列化 Schemastery。贡献与放置规则见[客户端体验重构与扩展界面统一 §5](../../docs/decisions/accepted/2026-10-04-客户端体验重构与扩展界面统一.md)：
 
-Host UI 页面使用 `ctx.pages.register({ page, navigation? }, component)` 注册 Manifest 已声明的入口。`navigation` 返回版本化声明对象，路径限制在 Host 分配的 `routeBase` 内；主画布接收 `relativePath`、只读查询参数和受控 `navigate()`。`host.call()` 提供权限绑定的产品服务、扩展命名空间状态、事件订阅和受控网络请求。权限批准绑定精确 Artifact；凭据通过短期写入 token 交给 Connection 创建，不提供明文读取。Client CSS 和 SVG 必须通过 Manifest 资源清单、摘要与 Runtime 安全校验。
+| 贡献               | scope                                                                               | 放置                               |
+| ------------------ | ----------------------------------------------------------------------------------- | ---------------------------------- |
+| `tool` / `rpc`     | agent                                                                               | 智能体工具与界面数据接口           |
+| `panel`            | agent（锚点 `agent`/`channel`/`extension`）、host-adapter（`connection`/`channel`） | 宿主按锚点决定页面与位置           |
+| `tool-view`        | agent                                                                               | 本 Revision 声明的 Tool 的调用视图 |
+| `message-renderer` | host-adapter                                                                        | 本 Adapter 的 `rich` 消息 kind     |
+| `adapter`          | host-adapter                                                                        | 恰好一个                           |
+| `page`             | host-adapter、host-ui                                                               | 最多 8 个顶级页面                  |
 
-页面 Client 声明 `inject: ['pages', 'ui']`，并从 `ctx.ui` 使用 NXT UI Kit。`supportedContributions.hostPages.designContract` 使用 `nxt-host-ui-design-v1` 明确 Host 提供页面背景、安全边距、根滚动、对象列和 Portal，Extension 只提供当前视图内容与局部样式；普通用户不需要在需求中给出组件名或 CSS 数值。概览数字使用 `MetricStrip + Metric` 形成紧凑数字带，不用 `Grid + Section` 生成卡片墙。允许语义正确的原生控件和表格。动态预览采集 UI Kit 和页面几何证据作为视觉建议；留白、标题重复或未使用某个组件不阻断运行验证。空白页面、渲染和交互失败以及权限越界仍然阻断。
+## Client
+
+Client factory 接收 `{ React, host, styles }`，返回带 `inject` 与 `apply(ctx)` 的插件。`ctx` 提供：
+
+- `ctx.panels.register(declaration, Component)`：声明 `id`、`anchor`、`title`（≤24）、可选 `icon`、`densities`（`compact`/`full`）；连接面板另有 `role: setup | status | diagnostics`，频道面板可用 `when.channelKinds` 限定。组件收到 `{ anchor: { kind, id }, density, role? }`，只渲染内容；外框、标题、折叠、加载与失败回退由宿主的 ContributionFrame 绘制。
+- `ctx.toolViews.register(tool, Component)`：组件收到 `{ call, density }`，`chip` 是一行摘要，`card` 是展开后的结构化结果。
+- `ctx.messageRenderers.register(richKind, Component)`：组件收到 `{ part, messageId, channelId }`，渲染失败或卸载时宿主恢复默认卡片。
+- `ctx.pages.register({ page, navigation? }, Component)`：页面使用 Host 分配的 `routeBase`，主画布接收 `relativePath`、只读查询参数和受控 `navigate()`。
+- `ctx.data.useAgent/useChannel/useConnection/useChannelRuntime`：订阅产品数据的只读 Hook，分别需要 `agents.read`、`channels.read`、`connections.read`、`runtime.read` 权限，缺少权限时抛错。
+- `ctx.ui`：版本化 UI Kit `ui-kit@1`（`HOST_UI_KIT_COMPONENT_NAMES` 中的组件）。
+
+`host.call(method, input?)` 调用本 Revision 的 Host RPC，或权限允许的产品读写。Client CSS 随 Revision 提交，交付时选择器固定到该构建的 `data-host-ui-owner` 作用域；动态预览通过 `styles.insert(css)` 注入同一作用域的样式，安装后由宿主加载，同一份源码在两处都可用。不再提供 `styles` 类名映射，组件直接使用自己 CSS 中的类名。
+
+## 权限与验证
+
+权限批准绑定精确 Artifact 摘要：智能体扩展在给智能体启用时批准，Host 扩展在安装时批准；凭据只写不读。动态预览、保存与导入会在每种声明的密度与明暗两种主题下真实渲染每个面板，以 `chip` 和 `card` 渲染每个工具视图，渲染每个富消息渲染器，并对页面执行注册与 Navigation；渲染失败、横向溢出或未捕获错误都阻止 `ready`。
+
+## 配置
+
+`config.schema` 是序列化 Schemastery 的产品子集：object、string、number、natural、percent、boolean、const、const 组成的 union 和原始值 array。`meta.role: 'secret'` 表示只写凭据；`hint`、`advanced`、`group` 与 `visibleWhen` 控制表单展示。Host 侧读取当前配置使用 `harness.config?.() ?? {}`，动态运行阶段没有已保存配置，使用 Schema 默认值。智能体扩展的配置按 `(agentId, extensionId)` 随 Activation 保存并在安全间隙生效，Host 扩展的配置随 Installation 保存。
 
 ## Host 工具注册与 `ctx.effect`
 
@@ -37,25 +63,4 @@ const disposeTool = harness.registerTool(ctx, tool)
 ctx.effect(() => disposeTool()) // 错误：effect 现在执行，Tool 随即被注销
 ```
 
-Client Slot 遵循同一规则：按 Authoring Reference 直接调用 `ctx.slots.register(...)`。Host RPC 则属于 Activation，必须在 factory 返回 per-Session Plugin 之前调用 `harness.handle(...)`。浏览器 RPC 请求不处于 DSH Agent Loop initiator 中，handler 不得依赖 `ctx.agents.currentInitiator()` 获取产品智能体身份；生成期稳定数据写入不可变 Revision 源码，需要运行期变化的数据通过明确的 SDK 契约或配置传入。
-
-## Client Slot 宿主契约
-
-`agent.workbench.sections` 位于智能体配置页“可用扩展”之后、“危险操作”之前。它在该智能体存在已加载的 Client Activation 时渲染，接收 `{ agentId, displayName }`。这是 `list` 槽：多个贡献按注册顺序纵向排列，每个贡献自行使用 `styles.section` 建立与宿主一致的区块，不得接管页头、保存动作、危险操作或右侧检查器。
-
-`extension.activation.panels` 位于扩展详情的“使用范围”之后。用户明确选择一个 active Activation 后，宿主传入对应 `agentId`、`extensionId`、`revisionId`、`activationId` 和运行状态。旧 `extension.details.panels` 只作为 V1 兼容映射。
-
-```text
-智能体配置页                         扩展详情页
-├─ 人设、模型、频道与授权             ├─ 修订与验证信息
-├─ 可用扩展                          ├─ 使用范围 / Activation
-├─ agent.workbench.sections[]        └─ extension.activation.panels[]
-│  └─ 按 Client 注册顺序纵向追加          └─ 按 Client 注册顺序纵向追加
-└─ 危险操作
-```
-
-`channel.inspector.agent.sections` 位于频道检查器“运行”与“绑定”之间，接收当前频道、绑定智能体和裁剪后的运行状态。`conversation.tool.card` 按 Tool name keyed，在会话工作流和工作轨迹详情中共享同一展示投影；参数和结果经过长度限制与脱敏，不传 DSH 内部对象。Catalog 未列出的名称、跨作用域注册和 Adapter id 不匹配都会立即失败。
-
-持久 Client 的生命周期跟随 `agentId + Extension Activation Revision`：Snapshot/SSE 对账发现新增或换版时加载，换版先 dispose 旧注册再挂载新注册，停用、删除或 Provider 卸载时撤销全部 Slot 与 RPC。单个贡献渲染异常由 Slot Error Boundary 隔离；持久 Client 加载失败时宿主显示“扩展界面加载失败”和重新加载动作，其他扩展及宿主页保持可用。动态预览的加载、Host/Client 半边失败会回写动态运行诊断，不会伪造验证成功。
-
-新增 Slot 必须同时具备真实宿主位置和至少一个当前消费者。实施顺序是：在 `NekroNxtClientSlotName`、Props Map 和 SlotCore 声明中增加类型；在 DSH interop allowlist 与动态 Client 验证中放行；在产品页面加入明确的 `renderSlot` 宿主；把名称、Props 和示例写入 `NEKRO_NXT_EXTENSION_AUTHORING_REFERENCE`；最后覆盖注册顺序、Props、dispose、未知槽拒绝、失败 fallback、动态预览与生产页面真实渲染。缺少任一环节时不得只预声明空槽。
+面板、工具视图、富消息渲染器和页面遵循同一规则：按 Authoring Reference 直接注册。Host RPC 属于 Activation，必须在 factory 返回 per-Session Plugin 之前调用 `harness.handle(...)`。浏览器 RPC 请求不处于 DSH Agent Loop initiator 中，handler 不得依赖 `ctx.agents.currentInitiator()` 获取产品智能体身份；生成期稳定数据写入不可变 Revision 源码，需要运行期变化的数据通过配置传入。

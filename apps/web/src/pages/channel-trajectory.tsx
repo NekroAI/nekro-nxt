@@ -7,11 +7,7 @@ import { Cell, Pie, PieChart } from 'recharts'
 import { notify } from '../components/notifications.js'
 import { InlineFeedback } from '../components/product-feedback.js'
 import { type AgentSummary, type ChannelRuntimeView, type ChannelSummary } from '../product-runtime.js'
-import {
-  ChannelInspectorAgentExtensionSlots,
-  ConversationToolCardExtensionSlots,
-} from '../persistent-extension-client.js'
-import { AdapterChannelInspectorExtensionSlots } from '../adapter-host-client.js'
+import { PanelSlot, ToolView } from '../extension-ui/index.js'
 import { usageTotalTokens } from '../token-usage.js'
 import {
   Button,
@@ -810,16 +806,15 @@ function WorkToolRow({
       <div className={styles.toolRow}>
         {row}
         {agentId && channelId ? (
-          <ConversationToolCardExtensionSlots
+          <ToolView
             agentId={agentId}
-            channelId={channelId}
-            callId={tool.callId}
-            toolName={tool.name}
-            displayName={tool.displayName}
-            state={tool.state}
-            surface="stream"
-            {...(tool.durationMs === undefined ? {} : { durationMs: tool.durationMs })}
-            {...(tool.wroteToChannel === undefined ? {} : { wroteToChannel: tool.wroteToChannel })}
+            density="chip"
+            call={{
+              callId: tool.callId,
+              toolName: tool.name,
+              state: tool.state,
+              ...(tool.durationMs === undefined ? {} : { durationMs: tool.durationMs }),
+            }}
           />
         ) : null}
       </div>
@@ -842,18 +837,17 @@ function WorkToolRow({
           {tool.inputPreview ? <pre>{tool.inputPreview}</pre> : null}
           {tool.resultPreview ? <pre>{tool.resultPreview}</pre> : null}
           {agentId && channelId ? (
-            <ConversationToolCardExtensionSlots
+            <ToolView
               agentId={agentId}
-              channelId={channelId}
-              callId={tool.callId}
-              toolName={tool.name}
-              displayName={tool.displayName}
-              state={tool.state}
-              surface="stream"
-              {...(tool.inputPreview === undefined ? {} : { inputPresentation: tool.inputPreview })}
-              {...(tool.resultPreview === undefined ? {} : { resultPresentation: tool.resultPreview })}
-              {...(tool.durationMs === undefined ? {} : { durationMs: tool.durationMs })}
-              {...(tool.wroteToChannel === undefined ? {} : { wroteToChannel: tool.wroteToChannel })}
+              density="card"
+              call={{
+                callId: tool.callId,
+                toolName: tool.name,
+                state: tool.state,
+                ...(tool.inputPreview === undefined ? {} : { input: tool.inputPreview }),
+                ...(tool.resultPreview === undefined ? {} : { result: tool.resultPreview }),
+                ...(tool.durationMs === undefined ? {} : { durationMs: tool.durationMs }),
+              }}
             />
           ) : null}
         </div>
@@ -1234,23 +1228,7 @@ export function ChannelSessionInspector({
   return (
     <aside className={[styles.inspector, styles.channelSessionInspector].join(' ')} aria-label="频道">
       <ChannelRuntimeMetrics runtime={runtime} agent={agent} phase={phase} visible={metricsVisible} />
-      {agent ? (
-        <ChannelInspectorAgentExtensionSlots
-          agentId={agent.id}
-          channelId={channel.id}
-          connectionId={channel.connectionId}
-          {...(runtime?.episodeId === undefined ? {} : { episodeId: runtime.episodeId })}
-          runtimePhase={phase}
-        />
-      ) : null}
-      {connection ? (
-        <AdapterChannelInspectorExtensionSlots
-          adapterKey={connection.adapterKey}
-          connectionId={connection.id}
-          channelId={channel.id}
-          channelKind={channel.kind}
-        />
-      ) : null}
+      <PanelSlot anchor={{ kind: 'channel', id: channel.id }} density="compact" />
       <section className={styles.inspectorPanel}>
         <div className={styles.inspectorSectionHead}>
           <h2>绑定</h2>
@@ -1429,7 +1407,6 @@ function InspectorRegion({ label, text }: { readonly label: string; readonly tex
 export function ChannelTrajectoryInspector({
   record,
   agentId,
-  channelId,
 }: {
   readonly record: TrajectoryRecord | undefined
   readonly agentId?: string
@@ -1486,18 +1463,17 @@ export function ChannelTrajectoryInspector({
               />
             ) : null}
             {lane === 'tool' && agentId && record.toolName && record.state ? (
-              <ConversationToolCardExtensionSlots
+              <ToolView
                 agentId={agentId}
-                channelId={channelId}
-                callId={record.id}
-                toolName={record.toolName}
-                displayName={record.name}
-                state={record.state}
-                surface="trajectory"
-                {...(record.input === undefined ? {} : { inputPresentation: record.input })}
-                {...(record.output === undefined ? {} : { resultPresentation: record.output })}
-                {...(record.durationMs === undefined ? {} : { durationMs: record.durationMs })}
-                {...(record.wroteToChannel === undefined ? {} : { wroteToChannel: record.wroteToChannel })}
+                density="card"
+                call={{
+                  callId: record.id,
+                  toolName: record.toolName,
+                  state: record.state,
+                  ...(record.input === undefined ? {} : { input: record.input }),
+                  ...(record.output === undefined ? {} : { result: record.output }),
+                  ...(record.durationMs === undefined ? {} : { durationMs: record.durationMs }),
+                }}
               />
             ) : null}
           </>

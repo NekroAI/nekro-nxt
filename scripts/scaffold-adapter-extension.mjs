@@ -33,7 +33,7 @@ const moduleFrom = 'from'
 const files = new Map([
   [
     'source/definition.ts',
-    `import type { AdapterHostContributionV2 } from '@nekro-nxt/extension-sdk'
+    `import { configSchema, type AdapterHostContributionV2 } from '@nekro-nxt/extension-sdk'
 ${moduleImport} { createRuntime } ${moduleFrom} './runtime.js'
 
 export const ADAPTER_KEY = ${q(key)}
@@ -48,16 +48,12 @@ export const descriptor: AdapterHostContributionV2['descriptor'] = {
   activities: [],
   features: {},
   diagnostics: { receive: true, send: true },
-  configSchema: {
-    schemaVersion: 1,
-    type: 'object',
-    required: ['websocketUrl', 'apiBaseUrl', 'token'],
-    properties: {
-      websocketUrl: { type: 'string', title: 'WebSocket 地址', default: 'wss://${key}.example.invalid/events' },
-      apiBaseUrl: { type: 'string', title: 'API 地址', default: 'https://${key}.example.invalid/api' },
-      token: { type: 'credential-reference', credentialKey: 'token', title: '访问令牌' },
-    },
-  },
+  // Serialized Schemastery: the connection form renders it; secret fields become credential references.
+  configSchema: configSchema.object({
+    websocketUrl: configSchema.string('WebSocket 地址', { required: true, default: 'wss://${key}.example.invalid/events' }),
+    apiBaseUrl: configSchema.string('API 地址', { required: true, default: 'https://${key}.example.invalid/api' }),
+    token: configSchema.secret('访问令牌', { required: true }),
+  }),
 }
 
 export const contribution: AdapterHostContributionV2 = {
@@ -281,7 +277,7 @@ describe('${displayName} Adapter scaffold', () => {
 
 这是由 NekroNXT 适配器脚手架生成的离线起点。示例主机只使用 example.invalid，测试通过 Fake Host/HTTP/WebSocket 运行，不连接真实平台。
 
-实现顺序：完善 definition.ts 的版本化 Schema；在 transport.ts 使用 Host Transport；在 inbound.ts 严格校验平台事件；在 runtime.ts 完成频道发现、入站提交、出站回执和可等待的 stop。动态运行、保存 Revision、安装到本机仍是三个独立动作。
+实现顺序：在 definition.ts 用 configSchema 声明连接配置（role 为 secret 的字段只写凭据）；在 transport.ts 使用 Host Transport；在 inbound.ts 严格校验平台事件；在 runtime.ts 完成频道发现、入站提交、出站回执和可等待的 stop。动态运行、保存 Revision、安装到本机仍是三个独立动作。使用 --rich 时，source/client.ts 为本 Adapter 的 rich 消息注册富消息渲染器；需要账号页面板时改用 ctx.panels.register，锚点为 connection 并声明 setup、status 或 diagnostics 角色。
 `,
   ],
 ])
@@ -289,14 +285,14 @@ describe('${displayName} Adapter scaffold', () => {
 if (rich) {
   files.set(
     'source/client.ts',
-    `import { defineAdapterClientExtension } from '@nekro-nxt/extension-sdk'
+    `import { defineClientExtension } from '@nekro-nxt/extension-sdk'
 
-export default defineAdapterClientExtension(async ({ React }) => ({
-  inject: ['slots'],
+// Renders this Adapter's \`rich\` parts of kind example-card; the shell picks the renderer by Adapter and kind.
+export default defineClientExtension(async ({ React }) => ({
+  inject: ['messageRenderers'],
   apply(ctx) {
-    ctx.slots.register(
-      { name: 'conversation.message.rich', id: '${key}:example-card' },
-      ({ part }) => React.createElement('article', null, part.title ?? part.summary),
+    ctx.messageRenderers.register('example-card', ({ part }) =>
+      React.createElement('article', null, part.title ?? part.summary),
     )
   },
 }))

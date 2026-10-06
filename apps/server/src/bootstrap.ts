@@ -415,7 +415,7 @@ export class NekroRuntime {
         extensionService,
         extensionBuilder,
         new ChannelExtensionActivationHost(channels, host),
-        { now, compatibility },
+        { now, compatibility, grants: repository },
       )
       const credentials = new LocalCredentialStore(
         options.credentialRoot ?? path.join(path.dirname(options.coreDatabasePath), 'credentials'),
@@ -851,6 +851,10 @@ export class NekroRuntime {
 
   installHostExtension(input: Parameters<HostExtensionInstallationCoordinator['install']>[0]) {
     return this.installation.install(input)
+  }
+
+  updateHostExtensionConfig(...args: Parameters<HostExtensionInstallationCoordinator['updateConfig']>) {
+    return this.installation.updateConfig(...args)
   }
 
   updateHostUiPagePreferences(input: Omit<Parameters<SqliteCoreRepository['updateHostUiPagePreferences']>[0], 'now'>) {

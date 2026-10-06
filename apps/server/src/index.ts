@@ -92,15 +92,14 @@ import {
   ChannelEventIdSchema,
   DshPluginEntryIdSchema,
   ChannelMemberIdSchema,
+  ExtensionConfigDeclarationSchema,
   HostPageContributionSchema,
   HostUiPermissionDeclarationSchema,
   JsonValueSchema,
   LogicalMessageIdSchema,
   parseJsonValue,
   parseMessageParts,
-  type AdapterClientSlotName,
   type AdmissionId,
-  type AgentClientSlotName,
   type AgentId,
   type AgentRevisionId,
   type AssetId,
@@ -117,10 +116,6 @@ import {
   type DshSettingsNamespaceView,
   type DshSettingsPathOperation,
   type EpisodeId,
-  type HostPageContribution,
-  type HostUiKitComponentName,
-  type HostUiPageGeometryEvidence,
-  type HostUiPermissionDeclaration,
   type JsonValue,
   type LogicalMessageId,
   type PromptDocumentV1,
@@ -579,13 +574,13 @@ const nekroNxtInspectProvider = (input: {
       },
       {
         name: 'supportedContributions',
-        description: '读取 NekroNxt 当前允许的 Host Tool、Host RPC、产品 Client Slot 与 Adapter Host API。',
+        description: '读取 NekroNxt 当前允许的扩展类型、贡献、面板锚点、权限与 Adapter Host API。',
         inputSchema: noFieldsSchema,
         outputSchema: jsonObjectSchema,
       },
       {
         name: 'developmentExample',
-        description: '读取与当前契约同源的 Host Tool、RPC、产品 Client Slot 和 Adapter 完整示例。',
+        description: '读取与当前契约同源的 Host Tool、RPC、面板、工具视图、Adapter 和页面完整示例。',
         inputSchema: noFieldsSchema,
         outputSchema: jsonObjectSchema,
       },
@@ -632,7 +627,9 @@ const nekroNxtInspectProvider = (input: {
         JsonValueSchema.parse({
           contractVersion: NEKRO_NXT_EXTENSION_AUTHORING_REFERENCE.contractVersion,
           dshVersion: NEKRO_NXT_EXTENSION_AUTHORING_REFERENCE.dshVersion,
-          ...NEKRO_NXT_EXTENSION_AUTHORING_REFERENCE.supportedContributions,
+          scopes: NEKRO_NXT_EXTENSION_AUTHORING_REFERENCE.scopes,
+          ui: NEKRO_NXT_EXTENSION_AUTHORING_REFERENCE.ui,
+          dshNativeWebUi: NEKRO_NXT_EXTENSION_AUTHORING_REFERENCE.dshNativeWebUi,
         }),
       )
     }
@@ -703,6 +700,7 @@ const DynamicAuthoringFacadeInputSchema = z
       .optional(),
     pages: z.array(HostPageContributionSchema).max(8).default([]),
     permissions: HostUiPermissionDeclarationSchema.default({ permissions: [], networkOrigins: [] }),
+    config: ExtensionConfigDeclarationSchema.optional(),
     verification: z
       .object({
         tools: z.record(z.string().min(1), toolVerificationInputSchema).default({}),
@@ -743,6 +741,7 @@ const authoringDefinitionFromFacade = (raw: unknown): DynamicAuthoringPackageDef
     ...(clientCss === undefined ? {} : { clientCss }),
     permissions: parsed.permissions,
     contributions: parsed.pages.map((page) => JsonValueSchema.parse(page)),
+    ...(parsed.config === undefined ? {} : { config: parsed.config }),
     ...(parsed.verification === undefined ? {} : { verificationInputs: parsed.verification }),
   })
 }
@@ -751,7 +750,7 @@ const nekroNxtExtensionDefineTool = (runner: NekroNxtDynamicCordisRunner, sessio
   defineTool({
     name: 'nekro_nxt_extension_define',
     description:
-      '定义一个 NekroNXT 动态扩展候选，并在执行前完成页面、权限、CSS 和 SVG 的宿主预检。普通 Host Tool、RPC 或 Slot 也可使用；开发专属页面或携带资源时必须使用本工具。定义不会运行代码，成功后使用 cordis_run 启动返回的精确 Package。',
+      '定义一个 NekroNXT 动态扩展候选，并在执行前完成页面、权限、配置、CSS 和 SVG 的宿主预检。Tool、RPC、面板、工具视图、富消息渲染器和页面都使用本工具。定义不会运行代码，成功后使用 cordis_run 启动返回的精确 Package。',
     parameters: {
       plugin: {
         required: true,
@@ -784,7 +783,7 @@ const nekroNxtExtensionDefineTool = (runner: NekroNxtDynamicCordisRunner, sessio
         type: 'string',
         enum: ['agent', 'host-adapter', 'host-ui'],
         required: true,
-        description: '智能体工具/局部界面使用 agent，平台适配器使用 host-adapter，专属页面使用 host-ui。',
+        description: '智能体工具、面板和工具视图使用 agent，平台适配器使用 host-adapter，专属页面使用 host-ui。',
       },
       code: {
         type: 'object',
@@ -810,7 +809,7 @@ const nekroNxtExtensionDefineTool = (runner: NekroNxtDynamicCordisRunner, sessio
       clientCssPath: {
         type: 'string',
         description:
-          'resources 中作为 Client CSS Module 的路径，必须以 .module.css 结尾；只用于带 pages 的顶级页面，智能体 Slot 使用内联样式。',
+          'resources 中作为 Client CSS Module 的路径，必须以 .module.css 结尾；样式只作用于本扩展的面板、工具视图和页面。',
       },
       pages: {
         type: 'array',
@@ -824,7 +823,12 @@ const nekroNxtExtensionDefineTool = (runner: NekroNxtDynamicCordisRunner, sessio
           permissions: { type: 'array', items: { type: 'string' }, required: true },
           networkOrigins: { type: 'array', items: { type: 'string' }, required: true },
         },
-        description: 'Client 需要的完整 Host UI 权限和 HTTP(S) origin 清单。',
+        description: 'Client 需要的完整权限和 HTTP(S) origin 清单；使用 ctx.data 的 Hook 也要声明对应读取权限。',
+      },
+      config: {
+        type: 'json',
+        description:
+          '可选配置界面：{ schema: 序列化 Schemastery 对象 }。用户在启用后可修改；Host 通过 harness.config?.() 读取，动态运行阶段使用默认值。',
       },
       verification: {
         type: 'json',
@@ -2595,7 +2599,7 @@ export class DshHostRuntime implements AgentSessionDriver, ExtensionActivationHo
           name: 'cordis-plugin-development',
           provider: 'nekro-nxt-runtime',
           source: 'bundled',
-          description: '开发、修复并验证 NekroNxt Host Tool、Host RPC 与产品 Client Slot 扩展。',
+          description: '开发、修复并验证 NekroNxt Host Tool、Host RPC、面板、工具视图、Adapter 与页面扩展。',
           metadata: { title: 'NekroNxt Extension Development' },
           invocation: { modelInvocable: true, userInvocable: true },
           content: renderNekroNxtExtensionDevelopmentSkill(),
@@ -3327,27 +3331,9 @@ export class DshHostRuntime implements AgentSessionDriver, ExtensionActivationHo
     pluginId: string,
     packageId: string,
     pluginRunId: string,
-    renderedSlots: readonly AgentClientSlotName[],
-    renderedHostSlots: readonly { readonly name: AdapterClientSlotName; readonly key: string }[] = [],
-    renderedPages: readonly HostPageContribution[] = [],
-    usedUiComponents: readonly HostUiKitComponentName[] = [],
-    pageGeometry: readonly HostUiPageGeometryEvidence[] = [],
-    permissions: HostUiPermissionDeclaration = { permissions: [], networkOrigins: [] },
-    navigationEntries: readonly string[] = [],
+    ui: Parameters<DynamicAuthoringRuntime['recordDynamicClientVerification']>[4],
   ): Promise<void> {
-    return this.#dynamic.recordDynamicClientVerification(
-      dshSessionId,
-      pluginId,
-      packageId,
-      pluginRunId,
-      renderedSlots,
-      renderedHostSlots,
-      renderedPages,
-      usedUiComponents,
-      pageGeometry,
-      permissions,
-      navigationEntries,
-    )
+    return this.#dynamic.recordDynamicClientVerification(dshSessionId, pluginId, packageId, pluginRunId, ui)
   }
 
   reportDynamicGuardFailure(

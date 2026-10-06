@@ -1,4 +1,5 @@
 import {
+  adapterContributionSchema,
   clientCssSchema,
   extensionEntrypointsSchema,
   extensionManifestSchema,
@@ -6,14 +7,15 @@ import {
   toolContributionSchema,
 } from './manifest.js'
 import {
-  AdapterClientSlotNameSchema,
-  AgentClientSlotNameSchema,
+  ExtensionConfigDeclarationSchema,
   HostPageContributionSchema,
   HostUiPermissionDeclarationSchema,
+  MessageRendererContributionSchema,
+  PanelContributionSchema,
+  ToolViewContributionSchema,
   JsonValueSchema,
   type ExtensionId,
   type ExtensionRevisionId,
-  type HostPageContribution,
   type JsonValue,
 } from '@nekro-nxt/contracts'
 import { createHash } from 'node:crypto'
@@ -46,32 +48,16 @@ const inputSchema = z
           })
           .strict()
           .optional(),
+        config: ExtensionConfigDeclarationSchema.optional(),
         contributions: z
           .array(
-            z.discriminatedUnion('kind', [
+            z.union([
               toolContributionSchema,
               rpcContributionSchema,
-              z
-                .object({
-                  kind: z.literal('client-slot'),
-                  name: AgentClientSlotNameSchema,
-                })
-                .strict(),
-              z
-                .object({
-                  kind: z.literal('adapter'),
-                  apiVersion: z.literal(2),
-                  key: z.string().trim().min(1),
-                  descriptorDigest: z.string().regex(/^[a-f0-9]{64}$/u),
-                })
-                .strict(),
-              z
-                .object({
-                  kind: z.literal('host-client-slot'),
-                  name: AdapterClientSlotNameSchema,
-                  key: z.string().trim().min(1),
-                })
-                .strict(),
+              PanelContributionSchema,
+              ToolViewContributionSchema,
+              MessageRendererContributionSchema,
+              adapterContributionSchema,
               HostPageContributionSchema,
             ]),
           )
@@ -106,11 +92,12 @@ const payloadDigestInputSchema = z
   .object({
     manifest: z
       .object({
-        schemaVersion: z.literal(5),
+        schemaVersion: z.literal(6),
         scope: z.enum(['agent', 'host-adapter', 'host-ui']),
         entrypoints: extensionEntrypointsSchema,
         contributions: inputSchema.shape.snapshot.shape.contributions,
-        permissions: HostUiPermissionDeclarationSchema.optional(),
+        permissions: HostUiPermissionDeclarationSchema,
+        config: ExtensionConfigDeclarationSchema.optional(),
         clientCss: clientCssSchema.optional(),
       })
       .strict(),
@@ -128,29 +115,26 @@ const canonicalJson = (value: JsonValue): string => {
     .join(',')}}`
 }
 
-const wrapHost = (body: string, hostUi: boolean): string =>
-  normalizeSource(`import { ${hostUi ? 'defineHostUiExtension' : 'defineHostExtension'} } from '@nekro-nxt/extension-sdk'
+const wrapHost = (body: string): string =>
+  normalizeSource(`import { defineHostExtension } from '@nekro-nxt/extension-sdk'
 
-export default ${hostUi ? 'defineHostUiExtension' : 'defineHostExtension'}(async ({ harness }) => {
+export default defineHostExtension(async ({ harness }) => {
 ${body}
 })`)
 
-const wrapClient = (body: string, hostUi: boolean, clientCssPath?: string): string =>
+const wrapClient = (body: string, clientCssPath?: string): string =>
   normalizeSource(`${clientCssPath === undefined ? '' : `import '../${clientCssPath}?nxt-dynamic-css'\n`}
-import { ${hostUi ? 'defineHostUiClientExtension' : 'defineClientExtension'} } from '@nekro-nxt/extension-sdk'
+import { defineClientExtension } from '@nekro-nxt/extension-sdk'
 
-export default ${hostUi ? 'defineHostUiClientExtension' : 'defineClientExtension'}(async ({ React, host, styles${hostUi ? ', ui' : ''} }) => {
+export default defineClientExtension(async ({ React, host, styles }) => {
 ${body}
 })`)
 
-/**
- * Client CSS is a page resource. Shared by dynamic preflight and materialization so a candidate that cannot be
- * saved is rejected before it runs, not after verification.
- */
-export const assertClientCssScope = (input: { readonly hasClientCss: boolean; readonly pageCount: number }): void => {
-  if (input.hasClientCss && input.pageCount === 0) {
-    throw new Error('Client CSS 只用于包含顶级页面的 Revision；智能体 Slot 请在 Client 源码中使用内联样式。')
-  }
+const AGENT_KINDS = new Set(['tool', 'rpc', 'panel', 'tool-view'])
+
+/** Client CSS is scoped to this Revision's rendered UI, so it is only meaningful with a Client half. */
+export const assertClientCssScope = (input: { readonly hasClientCss: boolean; readonly hasClient: boolean }): void => {
+  if (input.hasClientCss && !input.hasClient) throw new Error('Client CSS 需要同时提交 Client 源码。')
 }
 
 export function materializeDynamicPackage(input: {
@@ -161,68 +145,43 @@ export function materializeDynamicPackage(input: {
   const parsed = inputSchema.parse({
     snapshot: input.snapshot,
   })
-  const adapters = parsed.snapshot.contributions.filter(({ kind }) => kind === 'adapter')
-  const hostSlots = parsed.snapshot.contributions.filter(({ kind }) => kind === 'host-client-slot')
-  const hostPages = parsed.snapshot.contributions.filter(
-    (contribution): contribution is HostPageContribution => contribution.kind === 'host-page',
-  )
-  const agentContributions = parsed.snapshot.contributions.filter(
-    ({ kind }) => kind !== 'adapter' && kind !== 'host-client-slot' && kind !== 'host-page',
-  )
-  const isHostAdapter = adapters.length > 0 || hostSlots.length > 0
-  const isHostUi = !isHostAdapter && hostPages.length > 0
-  if (isHostAdapter && (adapters.length !== 1 || agentContributions.length > 0 || !parsed.snapshot.hostCode)) {
-    throw new Error('适配器 Revision 必须包含一个 Host Adapter，且不能混装智能体工具、RPC 或 Slot。')
+  const contributions = parsed.snapshot.contributions
+  const isHostAdapter = contributions.some(({ kind }) => kind === 'adapter' || kind === 'message-renderer')
+  const hasAgentContribution = contributions.some(({ kind }) => AGENT_KINDS.has(kind))
+  const isHostUi = !isHostAdapter && !hasAgentContribution && contributions.some(({ kind }) => kind === 'host-page')
+  if (isHostAdapter && !parsed.snapshot.hostCode) throw new Error('适配器 Revision 必须包含 Host Adapter。')
+  if (isHostAdapter && contributions.some(({ kind }) => kind === 'tool' || kind === 'rpc' || kind === 'tool-view')) {
+    throw new Error('适配器 Revision 不能混装智能体工具、RPC 或工具视图，请拆分为两个扩展。')
   }
-  if (isHostAdapter && hostPages.length > 8) throw new Error('一个适配器 Revision 最多贡献 8 个顶级页面。')
-  if (isHostUi && (agentContributions.length > 0 || !parsed.snapshot.clientCode)) {
-    throw new Error('Host UI Revision 必须包含 Client，且不能混装智能体工具、RPC 或 Slot。')
+  if (!isHostAdapter && hasAgentContribution && contributions.some(({ kind }) => kind === 'host-page')) {
+    throw new Error('智能体扩展不能贡献顶级页面，请拆分为两个扩展。')
   }
-  assertClientCssScope({ hasClientCss: parsed.snapshot.clientCss !== undefined, pageCount: hostPages.length })
+  if (isHostUi && !parsed.snapshot.clientCode) throw new Error('页面 Revision 必须包含 Client。')
+  assertClientCssScope({
+    hasClientCss: parsed.snapshot.clientCss !== undefined,
+    hasClient: parsed.snapshot.clientCode !== undefined,
+  })
   const sources = sourcesSchema.parse({
-    ...(parsed.snapshot.hostCode === undefined ? {} : { host: wrapHost(parsed.snapshot.hostCode, isHostUi) }),
+    ...(parsed.snapshot.hostCode === undefined ? {} : { host: wrapHost(parsed.snapshot.hostCode) }),
     ...(parsed.snapshot.clientCode === undefined
       ? {}
-      : { client: wrapClient(parsed.snapshot.clientCode, isHostUi, parsed.snapshot.clientCss?.path) }),
+      : { client: wrapClient(parsed.snapshot.clientCode, parsed.snapshot.clientCss?.path) }),
   })
-  const manifest = isHostAdapter
-    ? extensionManifestSchema.parse({
-        schemaVersion: 5,
-        scope: 'host-adapter',
-        extensionId: input.extensionId,
-        revisionId: input.revisionId,
-        entrypoints: {
-          host: 'source/host.ts',
-          ...('client' in sources ? { client: 'source/client.ts' } : {}),
-        },
-        ...(parsed.snapshot.clientCss === undefined ? {} : { clientCss: parsed.snapshot.clientCss }),
-        contributions: parsed.snapshot.contributions,
-      })
-    : isHostUi
-      ? extensionManifestSchema.parse({
-          schemaVersion: 5,
-          scope: 'host-ui',
-          extensionId: input.extensionId,
-          revisionId: input.revisionId,
-          entrypoints: {
-            ...('host' in sources ? { host: 'source/host.ts' } : {}),
-            client: 'source/client.ts',
-          },
-          ...(parsed.snapshot.clientCss === undefined ? {} : { clientCss: parsed.snapshot.clientCss }),
-          permissions: parsed.snapshot.permissions ?? { permissions: [], networkOrigins: [] },
-          contributions: hostPages,
-        })
-      : extensionManifestSchema.parse({
-          schemaVersion: 5,
-          scope: 'agent',
-          extensionId: input.extensionId,
-          revisionId: input.revisionId,
-          entrypoints: {
-            ...('host' in sources ? { host: 'source/host.ts' } : {}),
-            ...('client' in sources ? { client: 'source/client.ts' } : {}),
-          },
-          contributions: parsed.snapshot.contributions,
-        })
+  const scope = isHostAdapter ? 'host-adapter' : isHostUi ? 'host-ui' : 'agent'
+  const manifest = extensionManifestSchema.parse({
+    schemaVersion: 6,
+    scope,
+    extensionId: input.extensionId,
+    revisionId: input.revisionId,
+    entrypoints: {
+      ...('host' in sources ? { host: 'source/host.ts' } : {}),
+      ...('client' in sources ? { client: 'source/client.ts' } : {}),
+    },
+    ...(parsed.snapshot.clientCss === undefined ? {} : { clientCss: parsed.snapshot.clientCss }),
+    permissions: parsed.snapshot.permissions ?? { permissions: [], networkOrigins: [] },
+    ...(parsed.snapshot.config === undefined ? {} : { config: parsed.snapshot.config }),
+    contributions,
+  })
   const resources = resourcesSchema.parse(parsed.snapshot.resources ?? {})
   const expectedResources = new Map<string, { readonly digest: string; readonly kind: 'css' | 'svg' }>()
   if (parsed.snapshot.clientCss) {
@@ -248,11 +207,12 @@ export function materializeDynamicPackage(input: {
   const digestInput = canonicalJson(JsonValueSchema.parse(digestInputSchema.parse({ manifest, sources, resources })))
   const payloadManifest = {
     schemaVersion: manifest.schemaVersion,
-    ...('scope' in manifest ? { scope: manifest.scope } : {}),
+    scope: manifest.scope,
     entrypoints: manifest.entrypoints,
     contributions: manifest.contributions,
-    ...('permissions' in manifest ? { permissions: manifest.permissions } : {}),
-    ...('clientCss' in manifest && manifest.clientCss ? { clientCss: manifest.clientCss } : {}),
+    permissions: manifest.permissions,
+    ...(manifest.config === undefined ? {} : { config: manifest.config }),
+    ...(manifest.clientCss ? { clientCss: manifest.clientCss } : {}),
   }
   const payloadDigestInput = canonicalJson(
     JsonValueSchema.parse(payloadDigestInputSchema.parse({ manifest: payloadManifest, sources, resources })),
@@ -263,7 +223,7 @@ export function materializeDynamicPackage(input: {
     resources,
     contentDigest: createHash('sha256').update(digestInput).digest('hex'),
     payloadDigest: createHash('sha256').update(payloadDigestInput).digest('hex'),
-    scope: isHostAdapter ? 'host-adapter' : isHostUi ? 'host-ui' : 'agent',
+    scope,
   }
 }
 
@@ -286,9 +246,8 @@ export function materializeImportedRevision(input: {
     throw new Error('导入扩展的 Manifest entrypoints 与源码文件不一致。')
   }
   const expectedResources = new Map<string, string>()
-  if ('clientCss' in manifest && manifest.clientCss)
-    expectedResources.set(manifest.clientCss.path, manifest.clientCss.sha256)
-  for (const page of 'contributions' in manifest ? manifest.contributions : []) {
+  if (manifest.clientCss) expectedResources.set(manifest.clientCss.path, manifest.clientCss.sha256)
+  for (const page of manifest.contributions) {
     if (page.kind === 'host-page' && page.icon.kind === 'svg') expectedResources.set(page.icon.path, page.icon.sha256)
   }
   if (expectedResources.size !== Object.keys(resources).length) {
@@ -306,11 +265,12 @@ export function materializeImportedRevision(input: {
   const digestInput = canonicalJson(JsonValueSchema.parse(digestInputSchema.parse({ manifest, sources, resources })))
   const payloadManifest = {
     schemaVersion: manifest.schemaVersion,
-    ...('scope' in manifest ? { scope: manifest.scope } : {}),
+    scope: manifest.scope,
     entrypoints: manifest.entrypoints,
     contributions: manifest.contributions,
-    ...('permissions' in manifest ? { permissions: manifest.permissions } : {}),
-    ...('clientCss' in manifest && manifest.clientCss ? { clientCss: manifest.clientCss } : {}),
+    permissions: manifest.permissions,
+    ...(manifest.config === undefined ? {} : { config: manifest.config }),
+    ...(manifest.clientCss ? { clientCss: manifest.clientCss } : {}),
   }
   const payloadDigestInput = canonicalJson(
     JsonValueSchema.parse(payloadDigestInputSchema.parse({ manifest: payloadManifest, sources, resources })),

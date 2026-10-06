@@ -1,11 +1,18 @@
 import {
-  AdapterClientSlotNameSchema,
-  AgentClientSlotNameSchema,
+  AGENT_PANEL_ANCHORS,
+  ADAPTER_PANEL_ANCHORS,
+  ExtensionConfigDeclarationSchema,
   ExtensionIdSchema,
   ExtensionRevisionIdSchema,
   HostPageContributionSchema,
   HostUiPermissionDeclarationSchema,
   JsonValueSchema,
+  MessageRendererContributionSchema,
+  PanelContributionSchema,
+  ToolViewContributionSchema,
+  configSecretKeys,
+  EMPTY_EXTENSION_UI_CONTRIBUTIONS,
+  type ExtensionUiContributions,
 } from '@nekro-nxt/contracts'
 import { z } from 'zod'
 export const extensionEntrypointsSchema = z.union([
@@ -61,79 +68,149 @@ const manifestIdentitySchema = z
   })
   .strict()
 
+export const adapterContributionSchema = z
+  .object({
+    kind: z.literal('adapter'),
+    apiVersion: z.literal(2),
+    key: z.string().trim().min(1),
+    descriptorDigest: z.string().regex(/^[a-f0-9]{64}$/u),
+  })
+  .strict()
+
+const scopeShared = {
+  schemaVersion: z.literal(6),
+  clientCss: clientCssSchema.optional(),
+  permissions: HostUiPermissionDeclarationSchema.default({ permissions: [], networkOrigins: [] }),
+  config: ExtensionConfigDeclarationSchema.optional(),
+}
+
+type Issue = (message: string) => void
+
+const checkPanels = (
+  contributions: readonly { readonly kind: string; readonly id?: string; readonly anchor?: string }[],
+  anchors: readonly string[],
+  issue: Issue,
+): void => {
+  const panels = contributions.filter((entry) => entry.kind === 'panel')
+  if (panels.length > 16) issue('一个 Revision 最多贡献 16 个面板。')
+  const ids = new Set<string>()
+  for (const panel of panels) {
+    if (panel.anchor === undefined || !anchors.includes(panel.anchor)) {
+      issue(`这个扩展类型不能把面板放在 ${String(panel.anchor)}。`)
+    }
+    if (panel.id !== undefined && ids.has(panel.id)) issue(`面板 id 重复：${panel.id}`)
+    if (panel.id !== undefined) ids.add(panel.id)
+  }
+}
+
+const checkPages = (contributions: readonly { readonly kind: string }[], issue: Issue): void => {
+  if (contributions.filter(({ kind }) => kind === 'host-page').length > 8)
+    issue('一个 Revision 最多贡献 8 个顶级页面。')
+}
+
+const checkClientNeeded = (
+  value: {
+    readonly entrypoints: object
+    readonly clientCss?: unknown
+    readonly contributions: readonly { readonly kind: string }[]
+  },
+  issue: Issue,
+): void => {
+  const needsClient = value.contributions.some(({ kind }) =>
+    ['panel', 'tool-view', 'message-renderer', 'host-page'].includes(kind),
+  )
+  const hasClient = 'client' in value.entrypoints
+  if (needsClient && !hasClient) issue('界面贡献需要 Client 源码。')
+  if (!needsClient && hasClient) issue('Client 源码必须至少贡献一个面板、工具视图、富消息渲染器或页面。')
+  if (value.clientCss !== undefined && !hasClient) issue('Client CSS 需要 Client 源码。')
+}
+
+const checkConfig = (value: { readonly config?: { readonly schema: unknown } | undefined }, issue: Issue): void => {
+  if (value.config === undefined) return
+  const parsed = ExtensionConfigDeclarationSchema.safeParse(value.config)
+  if (parsed.success && configSecretKeys(parsed.data.schema).length > 0) {
+    issue('扩展配置暂不支持 secret 字段；凭据请通过适配器连接或 DSH 凭据管理。')
+  }
+}
+
 export const extensionManifestSchema = z.union([
   manifestIdentitySchema
     .extend({
-      schemaVersion: z.literal(5),
+      ...scopeShared,
       scope: z.literal('agent'),
       contributions: z.array(
-        z.discriminatedUnion('kind', [
-          toolContributionSchema,
-          rpcContributionSchema,
-          z
-            .object({
-              kind: z.literal('client-slot'),
-              name: AgentClientSlotNameSchema,
-            })
-            .strict(),
-        ]),
+        z.union([toolContributionSchema, rpcContributionSchema, PanelContributionSchema, ToolViewContributionSchema]),
       ),
     })
-    .strict(),
+    .strict()
+    .superRefine((value, context) => {
+      const issue: Issue = (message) => context.addIssue({ code: 'custom', message })
+      checkPanels(value.contributions, AGENT_PANEL_ANCHORS, issue)
+      checkClientNeeded(value, issue)
+      checkConfig(value, issue)
+      const tools = new Set(value.contributions.flatMap((entry) => (entry.kind === 'tool' ? [entry.name] : [])))
+      for (const entry of value.contributions) {
+        if (entry.kind === 'tool-view' && !tools.has(entry.tool)) {
+          issue(`工具视图只能渲染本扩展声明的工具：${entry.tool}`)
+        }
+      }
+    }),
   manifestIdentitySchema
     .extend({
-      schemaVersion: z.literal(5),
+      ...scopeShared,
       scope: z.literal('host-adapter'),
       entrypoints: z.union([
         z.object({ host: z.literal('source/host.ts'), client: z.literal('source/client.ts') }).strict(),
         z.object({ host: z.literal('source/host.ts') }).strict(),
       ]),
-      clientCss: clientCssSchema.optional(),
       contributions: z
         .array(
-          z.discriminatedUnion('kind', [
-            z
-              .object({
-                kind: z.literal('adapter'),
-                apiVersion: z.literal(2),
-                key: z.string().trim().min(1),
-                descriptorDigest: z.string().regex(/^[a-f0-9]{64}$/u),
-              })
-              .strict(),
-            z
-              .object({
-                kind: z.literal('host-client-slot'),
-                name: AdapterClientSlotNameSchema,
-                key: z.string().trim().min(1),
-              })
-              .strict(),
+          z.union([
+            adapterContributionSchema,
+            PanelContributionSchema,
+            MessageRendererContributionSchema,
             HostPageContributionSchema,
           ]),
         )
-        .min(1)
-        .superRefine((contributions, context) => {
-          if (contributions.filter(({ kind }) => kind === 'host-page').length > 8) {
-            context.addIssue({ code: 'custom', message: '一个适配器 Revision 最多贡献 8 个顶级页面。' })
-          }
-          if (contributions.filter(({ kind }) => kind === 'adapter').length !== 1) {
-            context.addIssue({ code: 'custom', message: 'Host Adapter Manifest 必须且只能声明一个 Adapter。' })
-          }
-        }),
+        .min(1),
     })
-    .strict(),
+    .strict()
+    .superRefine((value, context) => {
+      const issue: Issue = (message) => context.addIssue({ code: 'custom', message })
+      if (value.contributions.filter(({ kind }) => kind === 'adapter').length !== 1) {
+        issue('Host Adapter Manifest 必须且只能声明一个 Adapter。')
+      }
+      checkPanels(value.contributions, ADAPTER_PANEL_ANCHORS, issue)
+      checkPages(value.contributions, issue)
+      checkClientNeeded(value, issue)
+      checkConfig(value, issue)
+    }),
   manifestIdentitySchema
     .extend({
-      schemaVersion: z.literal(5),
+      ...scopeShared,
       scope: z.literal('host-ui'),
       entrypoints: z.union([
         z.object({ host: z.literal('source/host.ts'), client: z.literal('source/client.ts') }).strict(),
         z.object({ client: z.literal('source/client.ts') }).strict(),
       ]),
-      clientCss: clientCssSchema.optional(),
-      permissions: HostUiPermissionDeclarationSchema,
       contributions: z.array(HostPageContributionSchema).min(1).max(8),
     })
-    .strict(),
+    .strict()
+    .superRefine((value, context) => {
+      checkConfig(value, (message) => context.addIssue({ code: 'custom', message }))
+    }),
 ])
 
 export type ExtensionManifest = z.infer<typeof extensionManifestSchema>
+export type ExtensionManifestContribution = ExtensionManifest['contributions'][number]
+
+/** Product projection of the UI a Revision contributes; empty for an unreadable Revision. */
+export const extensionUiContributions = (manifest: ExtensionManifest | undefined): ExtensionUiContributions => {
+  if (manifest === undefined) return EMPTY_EXTENSION_UI_CONTRIBUTIONS
+  const contributions: readonly ExtensionManifestContribution[] = manifest.contributions
+  return {
+    panels: contributions.flatMap((entry) => (entry.kind === 'panel' ? [entry] : [])),
+    toolViews: contributions.flatMap((entry) => (entry.kind === 'tool-view' ? [entry.tool] : [])),
+    messageRenderers: contributions.flatMap((entry) => (entry.kind === 'message-renderer' ? [entry.richKind] : [])),
+  }
+}

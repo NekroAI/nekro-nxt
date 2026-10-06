@@ -1,0 +1,1 @@
+ALTER TABLE `host_extension_installations` ADD `config` text DEFAULT '{}' NOT NULL;

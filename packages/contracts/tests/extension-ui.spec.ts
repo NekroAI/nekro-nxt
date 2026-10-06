@@ -149,11 +149,11 @@ describe('Host UI contracts', () => {
       pluginId: 'plugin-project',
       packageId: 'package-project',
       pluginRunId: 'run-project',
-      renderedSlots: [],
-      renderedHostSlots: [],
+      renderedPanels: [],
+      renderedToolViews: [],
+      renderedMessageRenderers: [],
       renderedPages: [hostPage],
       navigationEntries: ['overview'],
-      permissions: { permissions: [], networkOrigins: [] },
     }
     expect(HostApiContracts.dynamicReportClientVerification.request.safeParse(request).success).toBe(true)
     expect(
