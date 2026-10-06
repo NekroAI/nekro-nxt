@@ -157,9 +157,9 @@
   .workbench > [data-detail-pane] {
     position: fixed;
     z-index: 30;
-    top: 46px;
+    top: var(--topbar-height);
     right: 0;
-    bottom: 26px;
+    bottom: var(--statusbar-height);
     width: min(var(--pane-detail), 92vw);
     box-shadow: var(--sh-3);
   }
