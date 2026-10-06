@@ -55,8 +55,8 @@ function CompactBindings() {
                   { value: '', label: '未接线' },
                   ...agents.map((agent) => ({ value: agent.id, label: agent.name })),
                 ]}
-                onChange={(event) => {
-                  const agentId = event.target.value
+                onValueChange={(value) => {
+                  const agentId = value
                   if (!agentId) setIntent({ kind: 'unbind', channelId: channel.id })
                   else setIntent({ kind: channel.agentId ? 'replace' : 'bind', channelId: channel.id, agentId })
                 }}
@@ -100,7 +100,7 @@ export default function WiringSpace() {
   if (creating) return <ConnectionCreate />
   return (
     <WorkbenchPage detail={<WiringDetail selected={selected} />}>
-      <MainContent>
+      <MainContent fill>
         <header className={styles.head}>
           <h1 className={styles.title}>接线</h1>
           <Button size="small" icon={<Plus size={14} />} onClick={() => go('/wiring/new')}>

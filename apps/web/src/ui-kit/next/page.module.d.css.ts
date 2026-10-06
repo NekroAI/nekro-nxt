@@ -1,5 +1,6 @@
 declare const styles: {
   readonly board: string
+  readonly fill: string
   readonly list: string
   readonly listActions: string
   readonly listBody: string

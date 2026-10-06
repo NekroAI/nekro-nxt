@@ -45,7 +45,9 @@ import styles from './workshop.module.css'
 
 type Inspection = HostApiResponse<'inspectExtensionImport'>
 
-const parse = (path: string): { readonly kind: 'task' | 'extension'; readonly id: string } | undefined => {
+type Route = { readonly kind: 'task' | 'extension'; readonly id: string }
+
+const parse = (path: string): Route | undefined => {
   const match = /^\/workshop\/(tasks|extensions)\/([^/]+)/u.exec(path)
   return match
     ? { kind: match[1] === 'tasks' ? 'task' : 'extension', id: decodeURIComponent(match[2] ?? '') }
@@ -63,7 +65,22 @@ export default function WorkshopSpace() {
   const tasks = useMemo(() => sortTasks(allTasks), [allTasks])
   const extensions = useProductStore((state) => state.extensions)
   const agents = useProductStore((state) => state.agents)
-  const route = parse(pathname)
+  const requested = parse(pathname)
+  // Opening the space without an item shows the first open task (or extension) in this same frame; the address
+  // follows afterwards. A <Navigate> here would render an empty canvas for a frame first.
+  const fallback: Route | undefined =
+    requested || hostStatus === 'initializing'
+      ? undefined
+      : (() => {
+          const first = tasks.find(isTaskOpen) ?? tasks[0]
+          if (first) return { kind: 'task', id: first.id }
+          return extensions[0] ? { kind: 'extension', id: extensions[0].id } : undefined
+        })()
+  const route = requested ?? fallback
+  useEffect(() => {
+    if (fallback)
+      navigate(`/workshop/${fallback.kind === 'task' ? 'tasks' : 'extensions'}/${fallback.id}`, { replace: true })
+  }, [navigate, fallback?.kind, fallback?.id])
   const [query, setQuery] = useState('')
   const [dragging, setDragging] = useState(false)
   const [dropped, setDropped] = useState<File>()
@@ -72,11 +89,6 @@ export default function WorkshopSpace() {
   const extension = route?.kind === 'extension' ? extensions.find((item) => item.id === route.id) : undefined
   useCrumb('工坊', task?.title ?? extension?.name)
 
-  if (!route && hostStatus !== 'initializing') {
-    const first = tasks.find(isTaskOpen) ?? tasks[0]
-    if (first) return <Navigate to={`/workshop/tasks/${first.id}`} replace />
-    if (extensions[0]) return <Navigate to={`/workshop/extensions/${extensions[0].id}`} replace />
-  }
   if (route && !task && !extension && hostStatus === 'ready') return <Navigate to="/workshop" replace />
 
   const selected = task ? `task:${task.id}` : extension ? `extension:${extension.id}` : undefined

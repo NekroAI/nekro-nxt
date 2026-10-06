@@ -19,7 +19,14 @@
 
 /* —— 接线板 —— */
 .board {
+  display: flex;
+  flex-direction: column;
   min-width: 0;
+}
+
+/* The canvas reaches the bottom of the pane, so collapsing a group never shrinks the dotted background. */
+.board > :first-child {
+  flex: 1;
 }
 
 .patch {

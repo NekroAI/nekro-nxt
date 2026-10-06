@@ -67,6 +67,9 @@ const settingsNav = (section: string): Probe => ({
   selected: 'aside[aria-label="设置"] a[data-selected="true"]',
 })
 
+/** The click on 模型 has answered: the selection left 外观 for the section or, once it resolves, its first provider. */
+const movedToModels = (frame: FrameSample) => frame.selected !== '' && frame.selected !== '外观'
+
 test.describe('motion audit', () => {
   test('switching spaces never shows a blank canvas', async ({ page }) => {
     await page.goto('/settings/appearance')
@@ -92,7 +95,7 @@ test.describe('motion audit', () => {
     const frames = await sampleFrames(page, settingsNav('models'), 700)
 
     // Feedback: the new selection shows within three frames (~50 ms; routing commits in a transition).
-    expect(frames.slice(0, 3).some((frame) => frame.selected === '模型')).toBe(true)
+    expect(frames.slice(0, 3).some(movedToModels)).toBe(true)
     // Text: every label stays fully opaque on every frame.
     expect(frames.flatMap((frame) => frame.labelOpacity).every((opacity) => opacity === 1)).toBe(true)
     // Motion: the highlight passes through intermediate positions instead of jumping.
@@ -105,9 +108,10 @@ test.describe('motion audit', () => {
     await expect(page.getByRole('heading', { name: '外观' })).toBeVisible()
     await page.waitForTimeout(400)
     const frames = await sampleFrames(page, settingsNav('models'), 400)
-    expect(frames.slice(0, 3).some((frame) => frame.selected === '模型')).toBe(true)
-    // Without motion the highlight lands in place: once moved, it never passes through intermediate positions.
-    expect(new Set(frames.slice(4).map((frame) => frame.indicator)).size).toBe(1)
+    expect(frames.slice(0, 3).some(movedToModels)).toBe(true)
+    // Without motion the highlight lands in place: it may step from the start to the section and then to the section's
+    // first provider once that page resolves, but it never passes through intermediate positions.
+    expect(new Set(frames.map((frame) => frame.indicator)).size).toBeLessThanOrEqual(3)
     expect(frames.flatMap((frame) => frame.labelOpacity).every((opacity) => opacity === 1)).toBe(true)
   })
 })

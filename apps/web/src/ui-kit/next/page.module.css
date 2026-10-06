@@ -85,8 +85,19 @@
   padding: var(--s-6) var(--s-7) var(--s-8);
 }
 
+.fill {
+  display: flex;
+  flex-direction: column;
+  min-height: 100%;
+}
+
+.fill > :last-child {
+  flex: 1;
+}
+
 .readable {
   max-width: calc(var(--reader-width) + 2 * var(--s-7));
+  margin-inline: auto;
 }
 
 /* 列表栏 */
