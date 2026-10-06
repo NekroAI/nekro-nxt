@@ -9,8 +9,10 @@ declare const styles: {
   readonly emptyText: string
   readonly emptyTitle: string
   readonly gauge: string
+  readonly gaugeBar: string
+  readonly gaugeHead: string
   readonly gaugeLegend: string
-  readonly gaugeTrack: string
+  readonly gaugeShare: string
   readonly gaugeValue: string
   readonly info: string
   readonly ok: string

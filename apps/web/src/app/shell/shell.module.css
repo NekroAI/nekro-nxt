@@ -52,6 +52,7 @@
   display: flex;
   align-items: center;
   gap: var(--s-2);
+  min-height: var(--target);
   padding: var(--s-1) var(--s-2) var(--s-1) var(--s-2);
   border: 1px solid var(--line);
   border-radius: 999px;
@@ -62,8 +63,18 @@
   white-space: nowrap;
 }
 
-button.instance {
+button.instance,
+a.instance {
   cursor: pointer;
+  text-decoration: none;
+}
+
+.instance:hover {
+  border-color: var(--line-2);
+}
+
+.instanceState {
+  color: var(--warn);
 }
 
 .instance svg {

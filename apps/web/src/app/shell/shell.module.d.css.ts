@@ -14,6 +14,7 @@ declare const styles: {
   readonly crumbSep: string
   readonly hostBanner: string
   readonly instance: string
+  readonly instanceState: string
   readonly main: string
   readonly rail: string
   readonly railDivider: string

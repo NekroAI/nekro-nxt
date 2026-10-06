@@ -602,9 +602,11 @@
   margin-left: auto;
 }
 
+/* One step per line, in the order they ran; wrapping let a short step slip beside a long one. */
 .steps {
   display: flex;
-  flex-wrap: wrap;
+  flex-direction: column;
+  align-items: flex-start;
   gap: var(--s-2);
 }
 

@@ -299,29 +299,15 @@
 }
 
 .gauge {
+  display: grid;
+  gap: var(--s-2);
+}
+
+.gaugeHead {
   display: flex;
-  align-items: center;
-  gap: var(--s-4);
-}
-
-.gauge svg {
-  width: 78px;
-  height: 78px;
-  flex: none;
-  transform: rotate(-90deg);
-}
-
-.gauge circle {
-  fill: none;
-  stroke-linecap: round;
-  stroke-width: 7;
-  transition:
-    stroke-dasharray var(--dur-3) var(--ease),
-    stroke-dashoffset var(--dur-3) var(--ease);
-}
-
-.gaugeTrack {
-  stroke: var(--inset);
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--s-3);
 }
 
 .gaugeValue {
@@ -337,22 +323,60 @@
   font-weight: 500;
 }
 
+.gaugeShare {
+  color: var(--muted);
+  font: var(--t-note);
+  font-variant-numeric: tabular-nums;
+}
+
+.gaugeShare[data-high] {
+  color: var(--warn);
+  font-weight: 600;
+}
+
+/* The track is the whole window; segments keep at least a sliver so a small source stays visible. */
+.gaugeBar {
+  display: flex;
+  gap: calc(var(--s-1) / 4);
+  height: 8px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: var(--surface-2);
+  box-shadow: inset 0 0 0 1px var(--line);
+}
+
+.gaugeBar span {
+  flex-grow: 0;
+  flex-shrink: 0;
+  min-width: 2px;
+  transition: flex-basis var(--dur-3) var(--ease);
+}
+
 .gaugeLegend {
   display: grid;
-  gap: calc(var(--s-1) * 0.75);
-  margin-top: var(--s-1);
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--s-1) var(--s-3);
   color: var(--muted);
-  font-size: var(--fs-xs);
+  font: var(--t-caption);
 }
 
 .gaugeLegend span {
   display: flex;
   align-items: center;
   gap: var(--s-1);
+  min-width: 0;
+}
+
+.gaugeLegend b {
+  margin-left: auto;
+  color: var(--fg-2);
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
 }
 
 .gaugeLegend i {
-  width: 7px;
-  height: 7px;
+  flex: none;
+  width: 8px;
+  height: 8px;
   border-radius: 2px;
 }

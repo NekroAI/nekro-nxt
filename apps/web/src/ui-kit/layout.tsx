@@ -200,7 +200,10 @@ export interface GaugeSegment {
   readonly color: string
 }
 
-/** Context window occupancy: segments by source, value and total beside the ring. */
+/**
+ * Context window occupancy as one bar: the full width is the window, each source fills its real share in order.
+ * A ring could not show a small share (5 % of a large window shrank to a dot); the bar and the percentage do.
+ */
 export function Gauge({
   segments,
   total,
@@ -212,44 +215,45 @@ export function Gauge({
   readonly capacity: number
   readonly format: (value: number) => string
 }) {
-  const radius = 31
-  const circumference = 2 * Math.PI * radius
-  const share = capacity > 0 ? Math.min(1, total / capacity) : 0
-  const visible = Math.max(share, total > 0 ? 0.04 : 0)
-  let offset = 0
+  const share = capacity > 0 ? total / capacity : 0
+  const percent = Math.round(share * 100)
   return (
     <div className={styles.gauge}>
-      <svg viewBox="0 0 78 78" aria-hidden="true">
-        <circle className={styles.gaugeTrack} cx="39" cy="39" r={radius} />
-        {segments.map((segment) => {
-          const portion = total > 0 ? (segment.value / total) * visible * circumference : 0
-          const node = (
-            <circle
-              key={segment.label}
-              cx="39"
-              cy="39"
-              r={radius}
-              style={{ stroke: segment.color }}
-              strokeDasharray={`${Math.max(portion - 3, 0.5)} ${circumference}`}
-              strokeDashoffset={-offset}
-            />
-          )
-          offset += portion
-          return node
-        })}
-      </svg>
-      <div>
-        <div className={styles.gaugeValue}>
+      <div className={styles.gaugeHead}>
+        <span className={styles.gaugeValue}>
           {format(total)} <small>/ {format(capacity)}</small>
-        </div>
-        <div className={styles.gaugeLegend}>
-          {segments.map((segment) => (
-            <span key={segment.label}>
-              <i style={{ background: segment.color }} />
-              {segment.label} {format(segment.value)}
-            </span>
-          ))}
-        </div>
+        </span>
+        <span className={styles.gaugeShare} data-high={share >= 0.8 || undefined}>
+          {share > 0 && percent === 0 ? '<1' : percent}%
+        </span>
+      </div>
+      <div
+        className={styles.gaugeBar}
+        role="meter"
+        aria-label="上下文用量"
+        aria-valuemin={0}
+        aria-valuemax={capacity}
+        aria-valuenow={Math.min(total, capacity)}
+        aria-valuetext={`${format(total)} / ${format(capacity)}`}
+      >
+        {segments.map((segment) => (
+          <span
+            key={segment.label}
+            style={{
+              flexBasis: `${capacity > 0 ? Math.min(100, (segment.value / capacity) * 100) : 0}%`,
+              background: segment.color,
+            }}
+          />
+        ))}
+      </div>
+      <div className={styles.gaugeLegend}>
+        {segments.map((segment) => (
+          <span key={segment.label}>
+            <i style={{ background: segment.color }} />
+            {segment.label}
+            <b>{format(segment.value)}</b>
+          </span>
+        ))}
       </div>
     </div>
   )

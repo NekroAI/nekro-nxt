@@ -4,7 +4,7 @@ import { Activity, Bell, Cable, MessagesSquare, Search, Server, Settings, Sparkl
 import { useEffect, useRef, useState } from 'react'
 import { Link, NavLink, Outlet, useLocation } from 'react-router-dom'
 import { useDesktopInstance, type DesktopInstanceStatus } from '../../desktop-shell.js'
-import { useProductStore } from '../../product-runtime.js'
+import { useProductStore, type ProductHostStatus } from '../../product-runtime.js'
 import { Kbd, Popover, StatusDot, useIndicator, type Tone, cssVars, Pressable } from '../../ui-kit/index.js'
 import { AttentionList } from '../attention/attention-list.js'
 import { useAttention } from '../model/attention.js'
@@ -24,8 +24,8 @@ export const SPACES = [
 
 const spaceOf = (pathname: string): string => `/${pathname.split('/')[1] ?? ''}`
 
-const hostTone: Record<string, Tone> = { ready: 'ok', initializing: 'warn', stale: 'warn', error: 'bad' }
-const hostLabel: Record<string, string> = {
+const hostTone: Record<ProductHostStatus, Tone> = { ready: 'ok', initializing: 'warn', stale: 'warn', error: 'bad' }
+const hostLabel: Record<ProductHostStatus, string> = {
   ready: '运行正常',
   initializing: '正在连接',
   stale: '连接不稳定',
@@ -88,11 +88,14 @@ function TopBar({ onSearch }: { readonly onSearch: () => void }) {
       : desktop.presentation.status === 'connecting' || desktop.presentation.status === 'unstable'
         ? 'warn'
         : 'bad'
-    : (hostTone[hostStatus] ?? 'warn')
+    : hostTone[hostStatus]
   const instance = (
     <>
       <Server aria-hidden="true" />
       <span>{desktop.enabled ? desktop.presentation.displayName : '本机'}</span>
+      {!desktop.enabled && hostStatus !== 'ready' ? (
+        <span className={styles.instanceState}>{hostLabel[hostStatus]}</span>
+      ) : null}
       <StatusDot tone={instanceTone} />
     </>
   )
@@ -122,7 +125,9 @@ function TopBar({ onSearch }: { readonly onSearch: () => void }) {
           {instance}
         </Pressable>
       ) : (
-        <span className={styles.instance}>{instance}</span>
+        <Link to="/settings/about" className={styles.instance} aria-label={`服务状态：本机 · ${hostLabel[hostStatus]}`}>
+          {instance}
+        </Link>
       )}
       {/* The rail already names the space; the path only appears below it, with the space as the way back. */}
       <nav className={styles.crumb} aria-label="位置">
@@ -189,18 +194,12 @@ function Clock() {
 
 function StatusBar() {
   const navigate = useGo()
-  const hostStatus = useProductStore((state) => state.host.status)
   const connections = useProductStore((state) => state.connections)
   const agents = useProductStore((state) => state.agents)
   const working = agents.filter(isAgentWorking)
   const external = connections.filter((connection) => connection.userManaged)
   return (
     <footer className={styles.status}>
-      <Pressable type="button" className={styles.statusItem} onClick={() => navigate('/settings/about')}>
-        <StatusDot tone={hostTone[hostStatus] ?? 'warn'} />
-        本机 {hostStatus === 'ready' ? '' : hostLabel[hostStatus]}
-      </Pressable>
-      {external.length ? <span className={styles.statusSep} /> : null}
       {external.map((connection) => {
         const status = connectionStatus(connection)
         return (
@@ -217,7 +216,7 @@ function StatusBar() {
           </Pressable>
         )
       })}
-      {working.length ? <span className={styles.statusSep} /> : null}
+      {external.length && working.length ? <span className={styles.statusSep} /> : null}
       {working.map((agent) => (
         <Pressable
           key={agent.id}
