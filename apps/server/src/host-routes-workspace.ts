@@ -11,7 +11,8 @@ import type { AgentRevisionContent } from '@nekro-nxt/core'
 import { readFile } from 'node:fs/promises'
 import type { IncomingMessage, ServerResponse } from 'node:http'
 import type { z } from 'zod'
-import { assembleChannelRuntime, assembleChannelToolCall } from './host-queries.js'
+import { commitExtensionConfigWithSecrets, maskExtensionSecrets } from './extension-secret-config.js'
+import { activationManifest, assembleChannelRuntime, assembleChannelToolCall } from './host-queries.js'
 import {
   assertAuxiliaryImageModel,
   buildSnapshotMessage,
@@ -58,11 +59,22 @@ export function registerWorkspaceRoutes({
       }
       try {
         const input = HostApiContracts.updateExtensionActivationConfig.parseRequest(await readJsonBody(req))
-        const activation = await runtime.activation.updateConfig(params.agentId, params.extensionId, input.config)
+        const current = runtime.repository.getActivation(params.agentId, params.extensionId)
+        const manifest = activationManifest(runtime, current?.extensionRevisionId)
+        const activation = await commitExtensionConfigWithSecrets({
+          manifest,
+          previous: current?.config,
+          config: input.config,
+          secrets: input.secrets,
+          credentials: runtime.credentials,
+          commit: (config) => runtime.activation.updateConfig(params.agentId, params.extensionId, config),
+        })
         writeJson(
           res,
           200,
-          HostApiContracts.updateExtensionActivationConfig.parseResponse({ config: activation.config }),
+          HostApiContracts.updateExtensionActivationConfig.parseResponse(
+            maskExtensionSecrets(manifest, activation.config),
+          ),
         )
         broadcastExtensionsChanged()
       } catch (error) {
@@ -85,7 +97,16 @@ export function registerWorkspaceRoutes({
           revisionId: parsed.revisionId,
           ...(parsed.permissionApproval === undefined ? {} : { permissionApproval: parsed.permissionApproval }),
         })
-        writeJson(res, 200, HostApiContracts.activateExtension.parseResponse({ activation }))
+        writeJson(
+          res,
+          200,
+          HostApiContracts.activateExtension.parseResponse({
+            activation: {
+              ...activation,
+              ...maskExtensionSecrets(activationManifest(runtime, activation.extensionRevisionId), activation.config),
+            },
+          }),
+        )
         broadcastExtensionsChanged()
       } catch (error) {
         writeError(res, 400, 'activation-failed', error instanceof Error ? error.message : String(error))

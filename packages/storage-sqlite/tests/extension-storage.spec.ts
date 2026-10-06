@@ -4,11 +4,12 @@ import { migrate } from 'drizzle-orm/better-sqlite3/migrator'
 import { drizzle } from 'drizzle-orm/better-sqlite3'
 import { createExtensionStorageRepository, ExtensionStorageQuotaError } from '../src/repositories/extension-storage.js'
 import { AgentIdSchema, ExtensionIdSchema } from '@nekro-nxt/contracts'
+import type { DrizzleCoreDatabase } from '../src/database.js'
 import { coreSchema } from '../src/schema.js'
 import path from 'path'
 
 describe('Extension Storage Repository', () => {
-  let db: ReturnType<typeof drizzle>
+  let db: DrizzleCoreDatabase
   let sqlite: Database.Database
   let repo: ReturnType<typeof createExtensionStorageRepository>
 
@@ -427,7 +428,7 @@ describe('Extension Storage Repository', () => {
       })
 
       expect(result.entries).toHaveLength(1)
-      expect(result.entries[0].key).toBe('key%with_wildcard')
+      expect(result.entries[0]?.key).toBe('key%with_wildcard')
     })
 
     it('should support pagination', () => {
@@ -459,11 +460,11 @@ describe('Extension Storage Repository', () => {
         owner: sharedOwner,
         partition,
         limit: 2,
-        after: page1.next,
+        ...(page1.next === undefined ? {} : { after: page1.next }),
       })
 
       expect(page2.entries).toHaveLength(2)
-      expect(page1.entries[1].key < page2.entries[0].key).toBe(true)
+      expect((page1.entries[1]?.key ?? '') < (page2.entries[0]?.key ?? '')).toBe(true)
     })
   })
 

@@ -1,4 +1,9 @@
-import type { HostUiPermission, HostUiPermissionDeclaration } from '@nekro-nxt/contracts'
+import {
+  summarizeExtensionCapabilities,
+  type ExtensionCapabilitySummaryItem,
+  type HostUiPermission,
+  type HostUiPermissionDeclaration,
+} from '@nekro-nxt/contracts'
 
 /** What each permission lets an extension do, phrased for the person approving it. */
 export const PERMISSION_LABELS: Readonly<Record<HostUiPermission, string>> = {
@@ -19,10 +24,22 @@ export const PERMISSION_LABELS: Readonly<Record<HostUiPermission, string>> = {
   'network.request': '访问外部网络',
 }
 
-/** One line per permission, network origins last. */
+const capabilityLine = (item: ExtensionCapabilitySummaryItem): string =>
+  item.detail === undefined ? item.label : `${item.label}：${item.detail}`
+
+/** One line per permission, network origins and ordinary Host capabilities last. */
 export const permissionLines = (declaration: HostUiPermissionDeclaration | undefined): readonly string[] => [
   ...(declaration?.permissions ?? [])
     .filter((item) => item !== 'network.request')
     .map((item) => PERMISSION_LABELS[item]),
   ...(declaration?.networkOrigins ?? []).map((origin) => `访问 ${origin}`),
+  ...summarizeExtensionCapabilities(declaration?.capabilities)
+    .filter((item) => item.risk !== 'high')
+    .map(capabilityLine),
 ]
+
+/** High-risk capabilities the user must accept one by one before enabling. */
+export const highRiskCapabilities = (
+  declaration: HostUiPermissionDeclaration | undefined,
+): readonly ExtensionCapabilitySummaryItem[] =>
+  summarizeExtensionCapabilities(declaration?.capabilities).filter((item) => item.risk === 'high')

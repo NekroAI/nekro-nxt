@@ -1,4 +1,5 @@
 import { z } from 'zod'
+import { ExtensionCapabilitiesSchema } from './extension-capabilities.js'
 import { ExtensionIdSchema, ExtensionRevisionIdSchema, HostUiPageInstanceIdSchema } from './domain.js'
 import { ConfigSchemaDocumentSchema } from './config-schema.js'
 
@@ -192,6 +193,8 @@ export const HostUiPermissionDeclarationSchema = z
   .object({
     permissions: z.array(HostUiPermissionSchema).max(HostUiPermissionSchema.options.length),
     networkOrigins: z.array(HostUiNetworkOriginSchema).max(32).default([]),
+    /** Host capabilities of an agent-scope Revision; absent keeps the pre-capability digest unchanged. */
+    capabilities: ExtensionCapabilitiesSchema.optional(),
   })
   .strict()
   .superRefine((value, context) => {

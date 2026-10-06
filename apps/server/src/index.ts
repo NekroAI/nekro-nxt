@@ -87,6 +87,7 @@ import {
   type SendMessageResult,
 } from '@nekro-nxt/channel-runtime'
 import {
+  type ExtensionCapabilities,
   AdmissionIdSchema,
   AssetIdSchema,
   ChannelEventIdSchema,
@@ -175,6 +176,13 @@ import {
   type TestLlmProviderInput,
   type WebSearchCapabilityStatus,
 } from './host-model-settings.js'
+import {
+  createNxtDynamicFacade,
+  createNxtHostService,
+  dshPromptRegistry,
+  NXT_HOST_SERVICE_NAME,
+  type NxtServiceBackends,
+} from './extension-host-service.js'
 import { PersistentExtensionMounts } from './persistent-extension-mounts.js'
 import {
   collectVisibleImageDigests,
@@ -356,6 +364,15 @@ export interface DshHostRuntimeOptions {
   readonly dshPlugins?: {
     readonly repository: DshPluginRepository
     readonly resolveModule: (packageId: DshPluginPackageId, moduleName: string) => string
+  }
+  /** Backends of the `nxt` Service agent extensions inject; absent hosts reject `inject: ['nxt']`. */
+  readonly extensionHost?: {
+    readonly activationBackends: NxtServiceBackends
+    readonly dynamicBackends: NxtServiceBackends
+    readonly describeRevision: (revision: Revision) => {
+      readonly displayName: string
+      readonly capabilities: ExtensionCapabilities | undefined
+    }
   }
 }
 
@@ -822,8 +839,14 @@ const nekroNxtExtensionDefineTool = (runner: NekroNxtDynamicCordisRunner, sessio
         properties: {
           permissions: { type: 'array', items: { type: 'string' }, required: true },
           networkOrigins: { type: 'array', items: { type: 'string' }, required: true },
+          capabilities: {
+            type: 'json',
+            description:
+              '智能体扩展 Host 通过 ctx.nxt 使用的能力：network、storage、assets、history、context。格式见 cordis-plugin-development 技能的“宿主能力”一节。',
+          },
         },
-        description: 'Client 需要的完整权限和 HTTP(S) origin 清单；使用 ctx.data 的 Hook 也要声明对应读取权限。',
+        description:
+          'Client 需要的完整权限和 HTTP(S) origin 清单；使用 ctx.data 的 Hook 也要声明对应读取权限。Host 端能力写在 capabilities。',
       },
       config: {
         type: 'json',
@@ -2102,7 +2125,8 @@ export class DshHostRuntime implements AgentSessionDriver, ExtensionActivationHo
     readonly runner: NekroNxtDynamicCordisRunner
   }>()
   readonly #runtimeProjection: SessionRuntimeProjection
-  readonly #extensionMounts = new PersistentExtensionMounts(this.#sessions)
+  readonly #extensionMounts: PersistentExtensionMounts
+  readonly #extensionHost: DshHostRuntimeOptions['extensionHost']
   readonly #dshPluginLifecycle: DshPluginLifecycleCoordinator | undefined
   readonly #authoring: DshHostRuntimeOptions['authoring']
   readonly #channelReplyGuard: ChannelReplyGuardController
@@ -2129,6 +2153,31 @@ export class DshHostRuntime implements AgentSessionDriver, ExtensionActivationHo
     this.#authoring = options.authoring
     this.#channelReplyGuard = channelReplyGuard
     this.#dynamic = new DynamicAuthoringRuntime(context, this.#sessions, options.authoring, () => this.#assertActive())
+    this.#extensionHost = options.extensionHost
+    const extensionHost = options.extensionHost
+    this.#extensionMounts = new PersistentExtensionMounts(
+      this.#sessions,
+      extensionHost === undefined
+        ? {}
+        : {
+            nxt: ({ agentId, revision, config, sessionId, context: fiberContext }) => {
+              const described = extensionHost.describeRevision(revision)
+              return createNxtHostService(
+                {
+                  mode: 'activation',
+                  agentId,
+                  ownerKey: revision.extensionId,
+                  displayName: described.displayName,
+                  channelId: this.#sessions.require(sessionId).channelId,
+                  capabilities: () => described.capabilities,
+                  config: () => config,
+                },
+                extensionHost.activationBackends,
+                dshPromptRegistry(fiberContext, sessionId),
+              )
+            },
+          },
+    )
     this.#dshPluginLifecycle =
       options.dshPlugins === undefined
         ? undefined
@@ -2613,12 +2662,34 @@ export class DshHostRuntime implements AgentSessionDriver, ExtensionActivationHo
         const dynamicContext = isolatePrivateExtensionServices(agentContext)
           .isolate('dynamicCordisRunner')
           .isolate('cordisInspect')
+          // Each dynamic Session owns its `nxt`; without isolation the second Session would collide on the name.
+          .isolate(NXT_HOST_SERVICE_NAME)
         await dynamicContext.plugin(NekroNxtDynamicCordisRunner, { vmTimeoutMs: 5000 })
         const runner = dynamicContext.get('dynamicCordisRunner')
         if (!(runner instanceof NekroNxtDynamicCordisRunner)) {
           throw new Error('Dynamic Cordis runner did not publish its isolated Service.')
         }
         runner.bindEpisode(input.episodeId)
+        const extensionHost = this.#extensionHost
+        if (extensionHost !== undefined) {
+          const dynamicNxt = createNxtHostService(
+            {
+              mode: 'dynamic',
+              agentId: revision.agentId,
+              ownerKey: `authoring-${input.episodeId}`,
+              displayName: '创造中的扩展',
+              channelId: input.channelId,
+              capabilities: () => runner.activeCandidateCapabilities(),
+              // A candidate has no saved configuration yet; it reads Schema defaults like `harness.config()`.
+              config: () => ({}),
+            },
+            extensionHost.dynamicBackends,
+          )
+          dynamicContext.provide(
+            NXT_HOST_SERVICE_NAME,
+            createNxtDynamicFacade(() => dynamicNxt),
+          )
+        }
         const resolveOwner = (caller: Agent): Agent =>
           this.#dynamic.resolveDynamicAuthoringOwner({
             caller,

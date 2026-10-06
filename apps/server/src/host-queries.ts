@@ -6,6 +6,7 @@ import {
   type AgentId,
   type ChannelId,
   type ChannelRuntimeProjection,
+  type ExtensionRevisionId,
   type HostSnapshotMessage,
 } from '@nekro-nxt/contracts'
 import {
@@ -14,6 +15,7 @@ import {
   type DynamicAuthoringAttempt,
   type DynamicAuthoringTask,
 } from '@nekro-nxt/extension-runtime'
+import { maskExtensionSecrets } from './extension-secret-config.js'
 import type { NekroRuntime } from './bootstrap.js'
 import type { WorkspaceProjections } from './workspace-projections.js'
 import {
@@ -70,6 +72,13 @@ export const assembleChannelToolCall = (runtime: NekroRuntime, channelId: Channe
   const episode = runtime.repository.getActiveEpisode(channelId, binding.agentId)
   if (episode?.dshSessionId === undefined || !runtime.host.tryLiveSession(episode.dshSessionId)) return undefined
   return findToolCallDetail(runtime.host.normalizedSessionEvents(episode.dshSessionId), callId)
+}
+
+/** The Manifest of the Revision an Activation runs, when that Revision is still readable. */
+export const activationManifest = (runtime: NekroRuntime, revisionId: ExtensionRevisionId | undefined) => {
+  if (revisionId === undefined) return undefined
+  const revision = runtime.repository.getExtensionRevision(revisionId)
+  return revision === undefined ? undefined : runtime.extensionService.revisionManifest(revision)
 }
 
 export const projectExtensions = (runtime: NekroRuntime) => {
@@ -160,7 +169,7 @@ export const projectExtensions = (runtime: NekroRuntime) => {
       activations: activations.map((activation) => ({
         agentId: activation.agentId,
         extensionRevisionId: activation.extensionRevisionId,
-        config: activation.config,
+        ...maskExtensionSecrets(activationManifest(runtime, activation.extensionRevisionId), activation.config),
         activatedAt: activation.activatedAt,
         ...(runtime.activation.getDiagnostic(activation.agentId, extension.id) === undefined
           ? {}

@@ -6,7 +6,7 @@
 
 ## Manifest V6
 
-扩展只有 Manifest V6（`schemaVersion: 6`），旧格式不再读取或重建。`scope` 为 `agent | host-adapter | host-ui`，每种 scope 都声明 `permissions`（可为空），可选 `config: { schema }` 使用序列化 Schemastery。贡献与放置规则见[客户端体验重构与扩展界面统一 §5](../../docs/decisions/accepted/2026-10-04-客户端体验重构与扩展界面统一.md)：
+扩展只有 Manifest V6（`schemaVersion: 6`），旧格式不再读取或重建。`scope` 为 `agent | host-adapter | host-ui`，每种 scope 都声明 `permissions`（可为空），可选 `config: { schema }` 使用序列化 Schemastery，可选 `requires: { sdk }`；智能体扩展的 `permissions` 另可包含 `capabilities`（见“宿主能力”）。贡献与放置规则见[客户端体验重构与扩展界面统一 §5](../../docs/decisions/accepted/2026-10-04-客户端体验重构与扩展界面统一.md)：
 
 | 贡献               | scope                                                                               | 放置                               |
 | ------------------ | ----------------------------------------------------------------------------------- | ---------------------------------- |
@@ -34,9 +34,25 @@ Client factory 接收 `{ React, host, styles }`，返回带 `inject` 与 `apply(
 
 权限批准绑定精确 Artifact 摘要：智能体扩展在给智能体启用时批准，Host 扩展在安装时批准；凭据只写不读。动态预览、保存与导入会在每种声明的密度与明暗两种主题下真实渲染每个面板，以 `chip` 和 `card` 渲染每个工具视图，渲染每个富消息渲染器，并对页面执行注册与 Navigation；渲染失败、横向溢出或未捕获错误都阻止 `ready`。
 
+## 宿主能力（`ctx.nxt`）
+
+智能体扩展的 Host 半边在 `inject` 中加入 `nxt` 后，通过 `ctx.nxt` 使用宿主能力；能力在 `permissions.capabilities` 声明，未声明的调用抛出指明缺失字段的错误。正式启用、动态运行和保存/导入验证提供同一接口：动态运行使用临时存储，验证使用临时存储、合成调用上下文和空凭据，网络请求真实发出。设计取舍见[扩展宿主能力与生态移植](../../docs/decisions/accepted/2026-10-07-扩展宿主能力与生态移植.md)。
+
+| 接口                          | 需要声明                                              | 说明                                                                                                                                                                                                                 |
+| ----------------------------- | ----------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `http.fetch(url, init)`       | `network`                                             | `domains`（含 `*.` 子域通配）、`config`（主机取自所列配置字段的当前值，允许用户填写的内网地址）或 `unrestricted`（启用时用户确认风险）；所有模式拦截私网并逐跳校验重定向，跨域重定向去掉 `authorization` 与 `cookie` |
+| `secrets.get(key)`            | 配置中 `meta.role: 'secret'` 字段                     | 值保存在宿主凭据存储，Activation 配置只存引用；不能有默认值，客户端只看到“已设置”                                                                                                                                    |
+| `assets.create` / `fromUrl`   | `assets: { write: true }`（`fromUrl` 另需 `network`） | 生成当前频道 Asset 并返回 `assetId`，由智能体经通信工具发送                                                                                                                                                          |
+| `storage.get/set/delete/list` | `storage: { scopes, quotaBytes? }`                    | JSON 键值；`agent`（默认）、`channel`、`member`（需 `memberId`）、`shared`；单值 256 KiB，默认配额 8 MiB                                                                                                             |
+| `context.current()`           | 无                                                    | 当前智能体、频道和最近一条入站消息                                                                                                                                                                                   |
+| `history.list` / `search`     | `history: { read: true }`                             | 只读当前频道已入库的对话消息                                                                                                                                                                                         |
+| `prompt.static` / `dynamic`   | `context: [{ name, kind, maxChars }]`                 | 静态段是固定字符串；动态上下文每轮开始渲染一次，只读存储与调用上下文，变化时才追加；保存验证要求两次渲染逐字节一致                                                                                                   |
+
+`requires: { sdk }` 声明最低宿主能力等级（当前为 `EXTENSION_SDK_LEVEL`），过旧的宿主在导入时提示升级。能力扩大（新增键、网络模式升级或新增域名/字段、新增存储作用域）需要重新批准，存储配额变化不需要。
+
 ## 配置
 
-`config.schema` 是序列化 Schemastery 的产品子集：object、string、number、natural、percent、boolean、const、const 组成的 union 和原始值 array。`meta.role: 'secret'` 表示只写凭据；`hint`、`advanced`、`group` 与 `visibleWhen` 控制表单展示。Host 侧读取当前配置使用 `harness.config?.() ?? {}`，动态运行阶段没有已保存配置，使用 Schema 默认值。智能体扩展的配置按 `(agentId, extensionId)` 随 Activation 保存并在安全间隙生效，Host 扩展的配置随 Installation 保存。
+`config.schema` 是序列化 Schemastery 的产品子集：object、string、number、natural、percent、boolean、const、const 组成的 union 和原始值 array。`meta.role: 'secret'` 表示只写凭据，只允许智能体扩展声明；`hint`、`advanced`、`group` 与 `visibleWhen` 控制表单展示。Host 侧读取当前配置使用 `harness.config?.() ?? {}`，动态运行阶段没有已保存配置，使用 Schema 默认值。智能体扩展的配置按 `(agentId, extensionId)` 随 Activation 保存并在安全间隙生效，Host 扩展的配置随 Installation 保存。
 
 ## Host 工具注册与 `ctx.effect`
 

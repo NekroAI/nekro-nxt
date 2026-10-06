@@ -31,6 +31,13 @@ const agentManifest = (contributions: readonly unknown[], extra: Record<string, 
   ...extra,
 })
 
+const withCapabilities = (capabilities: Record<string, unknown>) => ({
+  permissions: { permissions: [], networkOrigins: [], capabilities },
+})
+
+const hostAgentManifest = (extra: Record<string, unknown> = {}) =>
+  agentManifest([], { entrypoints: { host: 'source/host.ts' }, ...extra })
+
 const adapterManifest = (contributions: readonly unknown[]) => ({
   ...identity,
   scope: 'host-adapter',
@@ -89,13 +96,65 @@ describe('Extension Manifest V6', () => {
     ).toThrow()
   })
 
-  it('rejects older schema versions and secret fields in extension config', () => {
+  it('rejects older schema versions and keeps credential fields to agent extensions without defaults', () => {
     expect(() => extensionManifestSchema.parse({ ...agentManifest([]), schemaVersion: 5 })).toThrow()
+    const secretConfig = { config: { schema: configSchema.object({ token: configSchema.secret('令牌') }) } }
+    expect(extensionManifestSchema.parse(hostAgentManifest(secretConfig)).config).toBeDefined()
+    expect(() =>
+      extensionManifestSchema.parse({
+        ...adapterManifest([]),
+        ...secretConfig,
+      }),
+    ).toThrow(/凭据字段/u)
+    const withDefault = configSchema.object({ token: configSchema.secret('令牌') })
+    const tokenNode = withDefault.dict['token']
+    if (tokenNode === undefined) throw new Error('fixture token field missing')
+    const defaulted = {
+      ...withDefault,
+      dict: { token: { ...tokenNode, meta: { ...tokenNode.meta, default: 'fixture-default' } } },
+    }
+    expect(() => extensionManifestSchema.parse(hostAgentManifest({ config: { schema: defaulted } }))).toThrow(/默认值/u)
+  })
+
+  it('accepts additive capabilities and rejects Revisions that need a newer Host', () => {
+    const manifest = extensionManifestSchema.parse(
+      hostAgentManifest({
+        requires: { sdk: 2 },
+        permissions: {
+          permissions: [],
+          networkOrigins: [],
+          capabilities: {
+            network: { mode: 'domains', domains: ['api.example.com', '*.cdn.example.com'] },
+            storage: { scopes: ['agent', 'member'] },
+            assets: { write: true },
+            context: [{ name: 'mood', kind: 'dynamic', maxChars: 200 }],
+          },
+        },
+      }),
+    )
+    expect(manifest.permissions.capabilities?.network).toEqual({
+      mode: 'domains',
+      domains: ['api.example.com', '*.cdn.example.com'],
+    })
+    expect(() => extensionManifestSchema.parse(hostAgentManifest({ requires: { sdk: 999 } }))).toThrow(/升级/u)
     expect(() =>
       extensionManifestSchema.parse(
-        agentManifest([], { config: { schema: configSchema.object({ token: configSchema.secret('令牌') }) } }),
+        hostAgentManifest(withCapabilities({ network: { mode: 'domains', domains: ['https://api.example.com'] } })),
       ),
     ).toThrow()
+    expect(() =>
+      extensionManifestSchema.parse(
+        hostAgentManifest(withCapabilities({ network: { mode: 'config', fields: ['baseUrl'] } })),
+      ),
+    ).toThrow(/文本字段/u)
+    expect(
+      extensionManifestSchema.parse(
+        hostAgentManifest({
+          config: { schema: configSchema.object({ baseUrl: configSchema.string('服务地址') }) },
+          ...withCapabilities({ network: { mode: 'config', fields: ['baseUrl'] } }),
+        }),
+      ).scope,
+    ).toBe('agent')
   })
 })
 

@@ -13,6 +13,8 @@ import {
 } from '@nekro-nxt/adapter-sdk'
 import { ChannelRuntime } from '@nekro-nxt/channel-runtime'
 import {
+  AgentIdSchema,
+  ConnectionIdSchema,
   DshNxtHostUiSchema,
   HostApiContracts,
   ExtensionIdSchema,
@@ -35,6 +37,7 @@ import {
   ExtensionSourceStore,
   HostExtensionInstallationCoordinator,
   hostUiPermissionDigest,
+  type Revision,
 } from '@nekro-nxt/extension-runtime'
 import {
   completeDshSessionStoragePreparation,
@@ -56,7 +59,15 @@ import { LocalCredentialStore } from './credentials.js'
 import { DshPluginPackageInstaller } from './dsh-plugin-installer.js'
 import { ServerAdapterHostInstallationHost } from './host-extension-installation.js'
 import { verifyImportedExtensionRevision } from './imported-extension-verifier.js'
-import { ChannelExtensionActivationHost, DshHostRuntime } from './index.js'
+import { createExtensionEgress } from './extension-egress.js'
+import {
+  createNxtProductBackends,
+  memoryNxtStorage,
+  sqliteNxtStorage,
+  type NxtProductFacts,
+} from './extension-host-backends.js'
+import type { NxtServiceBackends } from './extension-host-service.js'
+import { ChannelExtensionActivationHost, createChannelAsset, DshHostRuntime } from './index.js'
 import { NotificationService } from './notifications.js'
 export type { ConnectionTestResult } from './connection-application.js'
 /**
@@ -301,6 +312,48 @@ export class NekroRuntime {
 
       // Adapter inbound and Channel Runtime delivery reference each other lazily.
       const settled: { current?: ChannelRuntime } = {}
+      const credentials = new LocalCredentialStore(
+        options.credentialRoot ?? path.join(path.dirname(options.coreDatabasePath), 'credentials'),
+      )
+      const nxtFacts: NxtProductFacts = {
+        history: repository,
+        getConnectionName: (connectionId) => {
+          const connection = repository.getConnection(ConnectionIdSchema.parse(connectionId))
+          return connection === undefined
+            ? undefined
+            : (connection.alias ?? adapters.get(connection.adapterKey)?.descriptor.displayName)
+        },
+        getAgentName: (agentId) =>
+          repository.getAgent(AgentIdSchema.parse(agentId))?.revision.displayName ?? '未命名智能体',
+        createAsset: async (channelId, input) => {
+          const asset = await createChannelAsset({
+            channelId,
+            encoding: input.base64 === undefined ? 'utf8' : 'base64',
+            content: input.base64 ?? input.text ?? '',
+            assets: repository,
+            assetService,
+            grantedAt: now(),
+          })
+          return { assetId: asset.assetId, byteSize: asset.byteSize, mediaType: asset.mediaType }
+        },
+        resolveCredential: (reference) => credentials.resolve(reference),
+      }
+      const nxtFetch: NxtServiceBackends['fetch'] = (policy, url, init) =>
+        createExtensionEgress({ policy }).fetch(url, init)
+      const extensionHost = {
+        activationBackends: createNxtProductBackends(nxtFacts, {
+          fetch: nxtFetch,
+          storage: sqliteNxtStorage(repository, now),
+        }),
+        dynamicBackends: createNxtProductBackends(nxtFacts, {
+          fetch: nxtFetch,
+          storage: memoryNxtStorage(now),
+        }),
+        describeRevision: (revision: Revision) => ({
+          displayName: repository.getExtension(revision.extensionId)?.displayName ?? '扩展',
+          capabilities: repository.getExtensionRevisionVerification(revision.id)?.permissions?.capabilities,
+        }),
+      }
 
       const host = await DshHostRuntime.create({
         providerRemoval,
@@ -351,6 +404,7 @@ export class NekroRuntime {
           repository,
           resolveModule: (packageId, moduleName) => dshPluginInstaller.resolveModule(packageId, moduleName),
         },
+        extensionHost,
       })
 
       const channels = new ChannelRuntime(core, repository, repository, host, {
@@ -416,9 +470,6 @@ export class NekroRuntime {
         extensionBuilder,
         new ChannelExtensionActivationHost(channels, host),
         { now, compatibility, grants: repository },
-      )
-      const credentials = new LocalCredentialStore(
-        options.credentialRoot ?? path.join(path.dirname(options.coreDatabasePath), 'credentials'),
       )
       const notifications = new NotificationService(repository, credentials, {
         ...(options.notifications?.fetch === undefined ? {} : { fetch: options.notifications.fetch }),

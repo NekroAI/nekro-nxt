@@ -1137,7 +1137,9 @@ export const HostSnapshotSchema = z
               .object({
                 agentId: AgentIdSchema,
                 extensionRevisionId: ExtensionRevisionIdSchema,
+                /** Secret fields are removed; `configuredSecrets` lists those the Host stores. */
                 config: JsonValueSchema,
+                configuredSecrets: z.array(z.string()).optional(),
                 activatedAt: z.number().int().safe().nonnegative(),
                 runtime: z
                   .object({
@@ -2773,6 +2775,7 @@ export const HostApiContracts = {
             extensionId: ExtensionIdSchema,
             extensionRevisionId: ExtensionRevisionIdSchema,
             config: JsonValueSchema,
+            configuredSecrets: z.array(z.string()).optional(),
             activatedAt: z.number().int().safe().nonnegative(),
           })
           .strict(),
@@ -2794,8 +2797,14 @@ export const HostApiContracts = {
     method: 'PUT',
     path: '/api/agents/:agentId/extensions/:extensionId/activation/config',
     params: agentExtensionParam,
-    request: z.object({ config: JsonValueSchema }).strict(),
-    response: z.object({ config: JsonValueSchema }).strict(),
+    request: z
+      .object({
+        config: JsonValueSchema,
+        /** Write-only credential drafts keyed by secret field; an absent or empty draft keeps the stored one. */
+        secrets: z.record(z.string(), z.string().max(8192)).optional(),
+      })
+      .strict(),
+    response: z.object({ config: JsonValueSchema, configuredSecrets: z.array(z.string()).optional() }).strict(),
     error: HostApiErrorSchema,
   }),
   updateHostExtensionConfig: defineContract({

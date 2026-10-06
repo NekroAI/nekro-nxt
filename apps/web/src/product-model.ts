@@ -297,6 +297,8 @@ export interface LocalExtensionSummary {
     readonly activatedAt: number
     /** Configuration saved for this agent and extension, validated against the Revision's config schema. */
     readonly config: JsonValue
+    /** Secret fields the Host stores for this Activation; their values never reach the client. */
+    readonly configuredSecrets: readonly string[]
     readonly runtime?: {
       readonly status: 'active' | 'restore-failed' | 'dispose-failed'
       readonly message?: string
@@ -587,6 +589,8 @@ export interface ProductState {
     readonly extensionId: string
     readonly agentId?: string
     readonly config: JsonValue
+    /** Write-only credential drafts of an agent extension; empty drafts keep the stored credential. */
+    readonly secrets?: Readonly<Record<string, string>>
   }): Promise<void>
   setHostExtensionInstalled(id: string, revisionId: string | null, permissionDigest?: string): Promise<void>
   reportHostExtensionClientDiagnostic(input: {

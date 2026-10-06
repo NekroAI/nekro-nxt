@@ -514,13 +514,18 @@ export function createProductStore(
         agentId: targetAgentId,
       })
     },
-    updateExtensionConfig: async ({ extensionId, agentId, config }) => {
+    updateExtensionConfig: async ({ extensionId, agentId, config, secrets }) => {
       const id = requireValue(extensionId, '缺少本地扩展标识，请刷新页面后重试。')
       if (agentId === undefined) {
         await requireHost().actions['extensions.installationConfig']({ extensionId: id, config })
         return
       }
-      await requireHost().actions['extensions.activationConfig']({ extensionId: id, agentId, config })
+      await requireHost().actions['extensions.activationConfig']({
+        extensionId: id,
+        agentId,
+        config,
+        ...(secrets === undefined ? {} : { secrets }),
+      })
     },
     setHostExtensionInstalled: async (id, revisionId, permissionDigest) => {
       const extensionId = requireValue(id, '缺少本地扩展标识，请刷新页面后重试。')

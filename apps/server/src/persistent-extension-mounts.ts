@@ -11,25 +11,37 @@ import {
   type ExtensionPluginDefinition,
   type ExtensionPluginFactory,
   type ExtensionToolDefinition,
+  type NxtHostService,
 } from '@nekro-nxt/extension-sdk'
 import path from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { z } from 'zod'
 import { defineDshToolFromUnknown, parseDshToolDefinition } from './dsh-interop/unsafe.js'
 import { isolatePrivateExtensionServices } from './extension-context.js'
+import { NXT_HOST_SERVICE_NAME } from './extension-host-service.js'
 import type { SessionRegistry } from './session-registry.js'
-const PERSISTENT_EXTENSION_HOST_SERVICES = new Set(['tools'])
+const PERSISTENT_EXTENSION_HOST_SERVICES = new Set(['tools', NXT_HOST_SERVICE_NAME])
 
 interface PersistentExtensionContext extends ExtensionHostContext {
-  get(service: string): ToolRuntime | undefined
+  get(service: string): ToolRuntime | NxtHostService | undefined
 }
 
-const persistentExtensionContext = (context: Context): PersistentExtensionContext => ({
+const persistentExtensionContext = (context: Context, nxt: NxtHostService | undefined): PersistentExtensionContext => ({
   tools: {
     register: (tool) => context.tools.register(parseDshToolDefinition(tool)),
   },
-  get: (service: string) => (service === 'tools' ? context.tools : undefined),
+  ...(nxt === undefined ? {} : { nxt }),
+  get: (service: string) => (service === 'tools' ? context.tools : service === NXT_HOST_SERVICE_NAME ? nxt : undefined),
 })
+
+/** Builds the Session-bound `nxt` instance of one Activation; the Server composition root owns the backends. */
+export type PersistentNxtFactory = (input: {
+  readonly agentId: AgentRevisionRecord['agentId']
+  readonly revision: Revision
+  readonly config: JsonValue
+  readonly sessionId: string
+  readonly context: Context
+}) => NxtHostService
 
 interface PersistentExtensionRegistration {
   readonly key: string
@@ -67,8 +79,10 @@ export class PersistentExtensionMounts {
   readonly #unmounting = new WeakMap<PersistentExtensionRegistration, Promise<void>>()
   readonly #pendingUnmounts = new Set<Promise<void>>()
   #disposal: Promise<void> | undefined
-  constructor(sessions: SessionRegistry<unknown>) {
+  readonly #nxt: PersistentNxtFactory | undefined
+  constructor(sessions: SessionRegistry<unknown>, options: { readonly nxt?: PersistentNxtFactory } = {}) {
     this.#sessions = sessions
+    this.#nxt = options.nxt
   }
   async invokeExtensionHost(
     dshSessionId: string,
@@ -246,10 +260,26 @@ export class PersistentExtensionMounts {
       if (plugin === undefined) return
       const apply = plugin.apply.bind(plugin)
       const extensionContext = isolatePrivateExtensionServices(agentContext)
+      const wantsNxt = plugin.inject?.includes(NXT_HOST_SERVICE_NAME) === true
+      const nxtFactory = this.#nxt
+      if (wantsNxt && nxtFactory === undefined) throw new Error('This Host does not provide the nxt Service.')
       const extensionPlugin = {
-        ...(plugin.inject === undefined ? {} : { inject: [...plugin.inject] }),
+        // `nxt` is handed to apply directly; Cordis must not wait for a Context Service of that name.
+        ...(plugin.inject === undefined
+          ? {}
+          : { inject: plugin.inject.filter((service) => service !== NXT_HOST_SERVICE_NAME) }),
         apply: async (context: Context) => {
-          await apply(persistentExtensionContext(context))
+          const nxt =
+            wantsNxt && nxtFactory !== undefined
+              ? nxtFactory({
+                  agentId: registration.agentId,
+                  revision: registration.revision,
+                  config: registration.config,
+                  sessionId,
+                  context,
+                })
+              : undefined
+          await apply(persistentExtensionContext(context, nxt))
         },
       }
       const fiber = extensionContext.plugin(extensionPlugin)

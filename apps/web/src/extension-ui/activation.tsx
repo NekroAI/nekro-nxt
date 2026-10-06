@@ -1,7 +1,7 @@
 import { useState, type ReactNode } from 'react'
 import { useProductRuntime, type LocalExtensionSummary } from '../product-runtime.js'
-import { ConfirmDialog } from '../ui-kit/index.js'
-import { permissionLines } from './permissions.js'
+import { ConfirmDialog, SwitchRow } from '../ui-kit/index.js'
+import { highRiskCapabilities, permissionLines } from './permissions.js'
 import styles from './activation.module.css'
 
 interface PendingApproval {
@@ -29,6 +29,7 @@ export function useExtensionActivation(): {
 } {
   const product = useProductRuntime()
   const [pending, setPending] = useState<PendingApproval>()
+  const [acceptedRisks, setAcceptedRisks] = useState<ReadonlySet<string>>(new Set())
 
   const setActive = async (input: {
     readonly extensionId: string
@@ -47,6 +48,7 @@ export function useExtensionActivation(): {
     }
     const digest = verification.permissionDigest
     if (!digest) throw new Error('这个扩展版本缺少权限摘要，无法批准。')
+    setAcceptedRisks(new Set())
     const approved = await new Promise<boolean>((resolve) =>
       setPending({
         extension,
@@ -60,6 +62,7 @@ export function useExtensionActivation(): {
     return approved
   }
 
+  const risks = pending === undefined ? [] : highRiskCapabilities(pending.revision.verification?.permissions)
   const dialog = pending ? (
     <ConfirmDialog
       open
@@ -70,6 +73,7 @@ export function useExtensionActivation(): {
       }}
       title={`允许「${pending.extension.name}」为${pending.agentName}工作？`}
       confirmLabel="允许并启用"
+      confirmDisabled={risks.some((risk) => !acceptedRisks.has(risk.key))}
       onConfirm={async () => {
         await product.store
           .getState()
@@ -83,6 +87,22 @@ export function useExtensionActivation(): {
           <li key={line}>{line}</li>
         ))}
       </ul>
+      {risks.map((risk) => (
+        <SwitchRow
+          key={risk.key}
+          title={risk.label}
+          description={`${risk.detail === undefined ? '' : `用途：${risk.detail}。`}这项能力不受范围限制，打开开关表示你了解并接受风险。`}
+          checked={acceptedRisks.has(risk.key)}
+          onCheckedChange={(checked) =>
+            setAcceptedRisks((current) => {
+              const next = new Set(current)
+              if (checked) next.add(risk.key)
+              else next.delete(risk.key)
+              return next
+            })
+          }
+        />
+      ))}
     </ConfirmDialog>
   ) : null
 

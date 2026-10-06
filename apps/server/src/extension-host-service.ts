@@ -1,0 +1,410 @@
+import type { Context } from '@deepseek-ai/cordis'
+import {
+  EXTENSION_CONTEXT_DYNAMIC_MAX_CHARS,
+  EXTENSION_STORAGE_DEFAULT_QUOTA_BYTES,
+  JsonValueSchema,
+  type ExtensionCapabilities,
+  type ExtensionContextContribution,
+  type ExtensionStorageScope,
+  type JsonValue,
+} from '@nekro-nxt/contracts'
+import type {
+  ExtensionJsonValue,
+  NxtAssetCreateInput,
+  NxtAssetRecord,
+  NxtCallContext,
+  NxtFetchInit,
+  NxtFetchResponse,
+  NxtHistoryMessage,
+  NxtHostService,
+  NxtPromptRenderApi,
+  NxtStorageEntry,
+  NxtStorageListOptions,
+  NxtStorageOptions,
+} from '@nekro-nxt/extension-sdk'
+
+/** Service name extensions declare in `inject`. Not a DSH private Service, so isolation never hides it. */
+export const NXT_HOST_SERVICE_NAME = 'nxt'
+
+/** Where an `nxt` instance runs and which product facts it may touch. */
+export interface NxtServiceBinding {
+  readonly mode: 'activation' | 'dynamic' | 'verification'
+  readonly agentId: string
+  /** `extensionId` for Activations; the authoring task owner key for dynamic runs. */
+  readonly ownerKey: string
+  readonly displayName: string
+  readonly channelId: string
+  /** Approved capabilities; `undefined` means none. Dynamic runs read the current candidate's declaration. */
+  readonly capabilities: () => ExtensionCapabilities | undefined
+  readonly config: () => JsonValue
+}
+
+export interface NxtStoragePartition {
+  readonly owner: string
+  readonly partition: string
+}
+
+export interface NxtStorageBackend {
+  get(ownerKey: string, location: NxtStoragePartition, key: string): Promise<JsonValue | undefined>
+  set(ownerKey: string, location: NxtStoragePartition, key: string, value: JsonValue, quotaBytes: number): Promise<void>
+  delete(ownerKey: string, location: NxtStoragePartition, key: string): Promise<boolean>
+  list(
+    ownerKey: string,
+    location: NxtStoragePartition,
+    options: { readonly prefix?: string; readonly limit: number; readonly after?: string },
+  ): Promise<{ readonly entries: readonly NxtStorageEntry[]; readonly next?: string }>
+}
+
+export type NxtEgressPolicy =
+  | { readonly mode: 'domains'; readonly domains: readonly string[] }
+  | { readonly mode: 'config'; readonly hosts: readonly string[] }
+  | { readonly mode: 'unrestricted' }
+
+/** Product facts the service reads or writes; wired by the Server composition root or a verification fake. */
+export interface NxtServiceBackends {
+  readonly fetch: (policy: NxtEgressPolicy, url: string, init: NxtFetchInit | undefined) => Promise<NxtFetchResponse>
+  readonly storage: NxtStorageBackend
+  readonly secret: (binding: NxtServiceBinding, key: string) => Promise<string | undefined>
+  readonly createAsset: (channelId: string, input: NxtAssetCreateInput) => Promise<NxtAssetRecord>
+  readonly callContext: (binding: NxtServiceBinding) => Promise<NxtCallContext>
+  readonly history: {
+    list(
+      channelId: string,
+      options: { readonly limit: number; readonly before?: string },
+    ): Promise<{ readonly messages: readonly NxtHistoryMessage[]; readonly next?: string }>
+    search(channelId: string, query: string, limit: number): Promise<readonly NxtHistoryMessage[]>
+  }
+  readonly diagnostic?: (binding: NxtServiceBinding, message: string) => void
+}
+
+/** The DSH system prompt registry an `nxt` instance writes static sections and dynamic context into. */
+export interface NxtPromptRegistry {
+  section(section: { readonly name: string; readonly order: number; readonly text: string }): () => void
+  context(context: { readonly name: string; readonly order: number; readonly text: () => string }): () => void
+  /** Subscribes to the first step of every turn; resolves before the step assembles its prompt. */
+  onTurnStart(listener: () => Promise<void>): () => void
+}
+
+export class NxtCapabilityError extends Error {
+  override readonly name = 'NxtCapabilityError'
+}
+
+const DYNAMIC_RENDER_TIMEOUT_MS = 2000
+/** Extension static sections sit after the product's own channel and communication policy sections. */
+const STATIC_SECTION_ORDER = 30
+const DYNAMIC_CONTEXT_ORDER = 900
+
+const requireCapability = <Key extends keyof ExtensionCapabilities>(
+  binding: NxtServiceBinding,
+  key: Key,
+  manifestHint: string,
+): NonNullable<ExtensionCapabilities[Key]> => {
+  const value = binding.capabilities()?.[key]
+  if (value === undefined) {
+    throw new NxtCapabilityError(`这个扩展没有声明 ${manifestHint}，请在 Manifest 的 permissions.capabilities 中声明。`)
+  }
+  return value
+}
+
+const configHosts = (binding: NxtServiceBinding, fields: readonly string[]): readonly string[] => {
+  const config = binding.config()
+  if (config === null || typeof config !== 'object' || Array.isArray(config)) return []
+  return fields.flatMap((field) => {
+    const raw = (config as Readonly<Record<string, JsonValue>>)[field]
+    if (typeof raw !== 'string' || raw.trim() === '') return []
+    try {
+      return [new URL(raw.includes('://') ? raw : `https://${raw}`).host.toLowerCase()]
+    } catch {
+      return []
+    }
+  })
+}
+
+const egressPolicy = (binding: NxtServiceBinding): NxtEgressPolicy => {
+  const network = requireCapability(binding, 'network', 'network（出站网络）')
+  if (network.mode === 'domains') return { mode: 'domains', domains: network.domains }
+  if (network.mode === 'config') return { mode: 'config', hosts: configHosts(binding, network.fields) }
+  return { mode: 'unrestricted' }
+}
+
+const STORAGE_KEY_PATTERN = /^[\p{L}\p{N}._:/-]{1,256}$/u
+
+const storageLocation = (
+  binding: NxtServiceBinding,
+  options: NxtStorageOptions | undefined,
+): { readonly scope: ExtensionStorageScope; readonly location: NxtStoragePartition } => {
+  const storage = requireCapability(binding, 'storage', 'storage（私有存储）')
+  const scope = options?.scope ?? 'agent'
+  if (!storage.scopes.includes(scope)) {
+    throw new NxtCapabilityError(
+      `这个扩展没有声明 ${scope} 存储作用域，请加入 permissions.capabilities.storage.scopes。`,
+    )
+  }
+  switch (scope) {
+    case 'agent':
+      return { scope, location: { owner: binding.agentId, partition: '' } }
+    case 'channel':
+      return { scope, location: { owner: binding.agentId, partition: binding.channelId } }
+    case 'member': {
+      const memberId = options?.memberId?.trim()
+      if (!memberId)
+        throw new NxtCapabilityError('member 作用域需要 memberId，可从 context.current() 或历史消息中取得。')
+      return { scope, location: { owner: binding.agentId, partition: `${binding.channelId}:${memberId}` } }
+    }
+    case 'shared':
+      return { scope, location: { owner: 'shared', partition: '' } }
+  }
+}
+
+const checkedKey = (key: string): string => {
+  if (!STORAGE_KEY_PATTERN.test(key)) {
+    throw new NxtCapabilityError('存储键必须是 1–256 个字母、数字或 . _ : / - 字符。')
+  }
+  return key
+}
+
+const jsonValue = (value: unknown): JsonValue => JsonValueSchema.parse(JSON.parse(JSON.stringify(value)))
+
+const contextDeclaration = (
+  binding: NxtServiceBinding,
+  name: string,
+  kind: ExtensionContextContribution['kind'],
+): ExtensionContextContribution => {
+  const declared = binding.capabilities()?.context?.find((entry) => entry.name === name)
+  if (declared?.kind !== kind) {
+    throw new NxtCapabilityError(
+      `上下文 ${name} 没有以 ${kind} 声明，请在 permissions.capabilities.context 中加入 { name: '${name}', kind: '${kind}', maxChars }。`,
+    )
+  }
+  return declared
+}
+
+const truncate = (text: string, maxChars: number): string =>
+  text.length <= maxChars ? text : `${text.slice(0, Math.max(0, maxChars - 1))}…`
+
+const withTimeout = async <Value>(promise: Promise<Value>, timeoutMs: number, message: string): Promise<Value> => {
+  let timer: NodeJS.Timeout | undefined
+  try {
+    return await Promise.race([
+      promise,
+      new Promise<never>((_resolve, reject) => {
+        timer = setTimeout(() => reject(new Error(message)), timeoutMs)
+      }),
+    ])
+  } finally {
+    if (timer !== undefined) clearTimeout(timer)
+  }
+}
+
+/**
+ * One `nxt` instance per (agent, extension owner, Session). `prompt` is optional because verification renders
+ * dynamic context directly instead of registering into a live DSH Session.
+ */
+export const createNxtHostService = (
+  binding: NxtServiceBinding,
+  backends: NxtServiceBackends,
+  prompt?: NxtPromptRegistry,
+): NxtHostService & { readonly renderDynamicContext: () => Promise<readonly string[]> } => {
+  const storageQuota = (): number =>
+    binding.capabilities()?.storage?.quotaBytes ?? EXTENSION_STORAGE_DEFAULT_QUOTA_BYTES
+  const dynamicRenderers = new Map<
+    string,
+    {
+      readonly render: (api: NxtPromptRenderApi) => string | Promise<string>
+      readonly maxChars: number
+      current: string
+    }
+  >()
+
+  const storage: NxtHostService['storage'] = {
+    async get(key, options) {
+      const { location } = storageLocation(binding, options)
+      return backends.storage.get(binding.ownerKey, location, checkedKey(key))
+    },
+    async set(key, value, options) {
+      const { location } = storageLocation(binding, options)
+      await backends.storage.set(binding.ownerKey, location, checkedKey(key), jsonValue(value), storageQuota())
+    },
+    async delete(key, options) {
+      const { location } = storageLocation(binding, options)
+      return backends.storage.delete(binding.ownerKey, location, checkedKey(key))
+    },
+    async list(options?: NxtStorageListOptions) {
+      const { location } = storageLocation(binding, options)
+      const limit = Math.min(Math.max(Math.trunc(options?.limit ?? 50), 1), 200)
+      return backends.storage.list(binding.ownerKey, location, {
+        limit,
+        ...(options?.prefix === undefined ? {} : { prefix: options.prefix }),
+        ...(options?.after === undefined ? {} : { after: options.after }),
+      })
+    },
+  }
+
+  // Async so a missing declaration rejects like every other `nxt` call instead of throwing synchronously.
+  const fetchWithPolicy = async (url: string, init?: NxtFetchInit): Promise<NxtFetchResponse> =>
+    backends.fetch(egressPolicy(binding), url, init)
+
+  const renderApi = async (): Promise<NxtPromptRenderApi> => ({
+    storage: { get: (key, options) => storage.get(key, options), list: (options) => storage.list(options) },
+    context: await backends.callContext(binding),
+  })
+
+  const renderDynamicContext = async (): Promise<readonly string[]> => {
+    if (dynamicRenderers.size === 0) return []
+    const api = await renderApi()
+    const rendered: string[] = []
+    for (const [name, renderer] of dynamicRenderers) {
+      try {
+        const text = await withTimeout(
+          Promise.resolve(renderer.render(api)),
+          DYNAMIC_RENDER_TIMEOUT_MS,
+          `动态上下文 ${name} 渲染超过 ${DYNAMIC_RENDER_TIMEOUT_MS}ms。`,
+        )
+        if (typeof text !== 'string') throw new TypeError(`动态上下文 ${name} 必须返回字符串。`)
+        renderer.current = truncate(text.trim(), renderer.maxChars)
+      } catch (error) {
+        // Keep the previous snapshot: an unchanged value appends nothing to the Session history.
+        backends.diagnostic?.(binding, error instanceof Error ? error.message : String(error))
+      }
+      rendered.push(renderer.current)
+    }
+    return rendered
+  }
+
+  let offTurnStart: (() => void) | undefined
+  const ensureTurnListener = (): void => {
+    if (offTurnStart !== undefined || prompt === undefined) return
+    offTurnStart = prompt.onTurnStart(async () => {
+      await renderDynamicContext()
+    })
+  }
+
+  const label = `[扩展：${binding.displayName}]`
+
+  return {
+    http: { fetch: fetchWithPolicy },
+    secrets: {
+      async get(key) {
+        return backends.secret(binding, key)
+      },
+    },
+    assets: {
+      async create(input) {
+        requireCapability(binding, 'assets', 'assets（生成频道文件）')
+        return backends.createAsset(binding.channelId, input)
+      },
+      async fromUrl(url, options) {
+        requireCapability(binding, 'assets', 'assets（生成频道文件）')
+        const response = await fetchWithPolicy(url)
+        if (response.status < 200 || response.status >= 300) {
+          throw new Error(`下载失败：HTTP ${response.status}`)
+        }
+        return backends.createAsset(binding.channelId, {
+          ...(response.base64 === undefined ? { text: response.text ?? '' } : { base64: response.base64 }),
+          mediaType: response.contentType,
+          ...(options?.name === undefined ? {} : { name: options.name }),
+        })
+      },
+    },
+    storage,
+    context: {
+      current: () => backends.callContext(binding),
+    },
+    history: {
+      async list(options) {
+        requireCapability(binding, 'history', 'history（读取频道聊天记录）')
+        const limit = Math.min(Math.max(Math.trunc(options?.limit ?? 20), 1), 100)
+        return backends.history.list(binding.channelId, {
+          limit,
+          ...(options?.before === undefined ? {} : { before: options.before }),
+        })
+      },
+      async search(query, options) {
+        requireCapability(binding, 'history', 'history（读取频道聊天记录）')
+        if (!query.trim()) throw new NxtCapabilityError('搜索内容不能为空。')
+        const limit = Math.min(Math.max(Math.trunc(options?.limit ?? 20), 1), 100)
+        return backends.history.search(binding.channelId, query, limit)
+      },
+    },
+    prompt: {
+      static(name, text) {
+        const declaration = contextDeclaration(binding, name, 'static')
+        if (typeof text !== 'string') throw new NxtCapabilityError('静态上下文必须是固定字符串。')
+        if (prompt === undefined) return () => undefined
+        return prompt.section({
+          name: `nekro-nxt:extension:${binding.ownerKey}:${name}`,
+          order: STATIC_SECTION_ORDER,
+          text: `${label}\n${truncate(text.trim(), declaration.maxChars)}`,
+        })
+      },
+      dynamic(name, render) {
+        const declaration = contextDeclaration(binding, name, 'dynamic')
+        if (typeof render !== 'function') throw new NxtCapabilityError('动态上下文需要渲染函数。')
+        if (dynamicRenderers.has(name)) throw new NxtCapabilityError(`动态上下文已注册：${name}`)
+        const renderer = {
+          render,
+          maxChars: Math.min(declaration.maxChars, EXTENSION_CONTEXT_DYNAMIC_MAX_CHARS),
+          current: '',
+        }
+        dynamicRenderers.set(name, renderer)
+        ensureTurnListener()
+        const offContext =
+          prompt?.context({
+            name: `nekro-nxt:extension:${binding.ownerKey}:${name}`,
+            order: DYNAMIC_CONTEXT_ORDER,
+            text: () => (renderer.current === '' ? '' : `${label}\n${renderer.current}`),
+          }) ?? (() => undefined)
+        return () => {
+          offContext()
+          dynamicRenderers.delete(name)
+          if (dynamicRenderers.size === 0) {
+            offTurnStart?.()
+            offTurnStart = undefined
+          }
+        }
+      },
+    },
+    renderDynamicContext,
+  }
+}
+
+/** Adapts a DSH agent Context to {@link NxtPromptRegistry}; registrations are effects of that Context. */
+export const dshPromptRegistry = (context: Context, sessionId: string): NxtPromptRegistry => ({
+  section: (section) => context.systemPrompt.section(section),
+  context: (entry) => context.systemPrompt.context(entry),
+  onTurnStart: (listener) =>
+    context.on('agent/pre-step', async ({ agent, step }, next) => {
+      if (step <= 1 && agent.id === sessionId) await listener()
+      return next()
+    }),
+})
+
+/**
+ * `nxt` facade for dynamic runs, published with `context.set('nxt', …)`. The DSH dynamic sandbox lets a host half
+ * reach Services it lists in `inject` and proxies their members; resolving per access follows the current candidate.
+ */
+export const createNxtDynamicFacade = (resolve: () => NxtHostService): NxtHostService => ({
+  get http() {
+    return resolve().http
+  },
+  get secrets() {
+    return resolve().secrets
+  },
+  get assets() {
+    return resolve().assets
+  },
+  get storage() {
+    return resolve().storage
+  },
+  get context() {
+    return resolve().context
+  },
+  get history() {
+    return resolve().history
+  },
+  get prompt() {
+    return resolve().prompt
+  },
+})
+
+export type { ExtensionJsonValue }

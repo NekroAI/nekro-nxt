@@ -5,7 +5,7 @@ import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { createServer, type ViteDevServer } from 'vite'
 import { installSnapshotHealthRoutes } from '../e2e/fixtures/host-release.js'
-import { productSnapshot, targetChannelId } from '../e2e/fixtures/product-quality.js'
+import { productSnapshot, summaryExtensionId, targetAgentId, targetChannelId } from '../e2e/fixtures/product-quality.js'
 
 /** Workshop journeys against a stubbed Host: every `/api` call is answered here, never by a real service. */
 test.describe('workshop', () => {
@@ -52,6 +52,146 @@ test.describe('workshop', () => {
     await page.goto(`${baseUrl}/workshop`)
     return page
   }
+
+  test('edits an agent extension credential without ever receiving the stored value', async () => {
+    const snapshot = {
+      ...productSnapshot,
+      extensions: productSnapshot.extensions.map((extension) =>
+        extension.id !== summaryExtensionId
+          ? extension
+          : {
+              ...extension,
+              revisions: extension.revisions.map((revision) => ({
+                ...revision,
+                configSchema: {
+                  type: 'object' as const,
+                  dict: {
+                    city: { type: 'string' as const, meta: { description: '默认城市', default: '示例市' } },
+                    apiKey: {
+                      type: 'string' as const,
+                      meta: { description: 'API Key', role: 'secret', required: true },
+                    },
+                  },
+                },
+              })),
+              activations: extension.activations.map((activation) => ({
+                ...activation,
+                config: { city: '示例市' },
+                configuredSecrets: ['apiKey'],
+              })),
+            },
+      ),
+    }
+    const page = await openWorkshop(snapshot)
+    let saved: unknown
+    await page.route(
+      `**/api/agents/${targetAgentId}/extensions/${summaryExtensionId}/activation/config`,
+      async (route) => {
+        saved = route.request().postDataJSON()
+        await route.fulfill({ json: { config: { city: '另一市' }, configuredSecrets: ['apiKey'] } })
+      },
+    )
+    try {
+      await page.goto(`${baseUrl}/workshop/extensions/${summaryExtensionId}`)
+      const secret = page.getByLabel('API Key')
+      await expect(secret).toHaveValue('')
+      await expect(secret).toHaveAttribute('placeholder', '已保存，留空则不修改')
+      await page.getByLabel('默认城市').fill('另一市')
+      await page.screenshot({ path: '.local/browser-test-results/extension-secret-config.png' })
+      await page.getByRole('button', { name: '保存配置' }).click()
+      await expect.poll(() => saved).toEqual({ config: { city: '另一市' } })
+
+      await secret.fill('fixture-new-key')
+      await page.getByRole('button', { name: '保存配置' }).click()
+      // The stubbed snapshot still holds the original values, so the editor resets to them after each save.
+      await expect.poll(() => saved).toEqual({ config: { city: '示例市' }, secrets: { apiKey: 'fixture-new-key' } })
+    } finally {
+      await page.close()
+    }
+  })
+
+  test('lists Host capabilities on enable approval and holds high-risk ones until accepted one by one', async () => {
+    const digest = 'd'.repeat(64)
+    const snapshot = {
+      ...productSnapshot,
+      extensions: productSnapshot.extensions.map((extension) =>
+        extension.id !== summaryExtensionId
+          ? extension
+          : {
+              ...extension,
+              activations: [],
+              revisions: extension.revisions.map((revision) => ({
+                ...revision,
+                verification: {
+                  verifiedAt: 1_725_000_000_000,
+                  dshVersion: 'fixture',
+                  contractVersion: 'nekro-nxt-extension-v4',
+                  hostBuilt: true,
+                  clientBuilt: false,
+                  buildKey: 'fixture',
+                  toolInvocationCount: 1,
+                  rpcMethods: [],
+                  renderedPanels: [],
+                  renderedToolViews: [],
+                  renderedMessageRenderers: [],
+                  permissions: {
+                    permissions: [],
+                    networkOrigins: [],
+                    capabilities: {
+                      network: { mode: 'unrestricted' as const, purpose: '打开群友分享的任意链接并生成摘要' },
+                      storage: { scopes: ['agent' as const] },
+                      history: { read: true as const },
+                    },
+                  },
+                  permissionDigest: digest,
+                  permissionApprovalRequired: true,
+                },
+              })),
+            },
+      ),
+    }
+    const page = await openWorkshop(snapshot)
+    let approvedDigest: unknown
+    await page.route(`**/api/agents/${targetAgentId}/extensions/${summaryExtensionId}/activation`, async (route) => {
+      const body: unknown = route.request().postDataJSON()
+      approvedDigest =
+        typeof body === 'object' && body !== null && 'permissionApproval' in body ? body.permissionApproval : undefined
+      await route.fulfill({
+        json: {
+          activation: {
+            agentId: targetAgentId,
+            extensionId: summaryExtensionId,
+            extensionRevisionId: snapshot.extensions[0]?.revisions[0]?.id,
+            config: {},
+            activatedAt: 1_725_000_100_000,
+          },
+        },
+      })
+    })
+    try {
+      await page.goto(`${baseUrl}/workshop/extensions/${summaryExtensionId}`)
+      await page
+        .getByRole('switch', { name: /使用「群聊摘要」/u })
+        .first()
+        .click()
+      const dialog = page.getByRole('dialog')
+      await expect(dialog.getByText('为这个智能体保存数据')).toBeVisible()
+      await expect(dialog.getByText('读取当前频道的聊天记录')).toBeVisible()
+      const confirm = dialog.getByRole('button', { name: '允许并启用' })
+      await expect(confirm).toBeDisabled()
+      const risk = dialog.getByRole('switch', { name: '访问任意公网地址' })
+      await risk.click()
+      await expect(risk).toHaveAttribute('data-state', 'checked')
+      await expect(confirm).toBeEnabled()
+      await page.waitForTimeout(300)
+      await page.screenshot({ path: '.local/browser-test-results/capability-approval.png' })
+      await confirm.click()
+      await expect(dialog).toBeHidden()
+      expect(approvedDigest).toEqual({ permissionDigest: digest })
+    } finally {
+      await page.close()
+    }
+  })
 
   test('explains the empty workshop and starts an example in a creator channel with the request typed', async () => {
     const page = await openWorkshop({ ...productSnapshot, authoringTasks: [], extensions: [] })

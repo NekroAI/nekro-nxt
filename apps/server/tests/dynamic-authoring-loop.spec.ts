@@ -1,7 +1,7 @@
 import { Context } from '@deepseek-ai/cordis'
 import WebServer from '@deepseek-ai/dsh-host-webserver'
 import { LlmAdapter, type GenerateOptions, type StreamChunk } from '@deepseek-ai/dsh-llm'
-import { HostApiContracts } from '@nekro-nxt/contracts'
+import { HostApiContracts, type ExtensionCapabilities } from '@nekro-nxt/contracts'
 import { NEKRO_NXT_EXTENSION_AUTHORING_REFERENCE } from '@nekro-nxt/extension-sdk'
 import { createHash } from 'node:crypto'
 import { mkdtemp, rm } from 'node:fs/promises'
@@ -294,6 +294,93 @@ describe('dynamic authoring closed loop', () => {
       await webContext.fiber.dispose()
       await importContext.fiber.dispose()
       await imported.dispose()
+      await runtime.dispose()
+    }
+  })
+
+  it('lets a dynamic candidate use ctx.nxt and carries its capabilities through save and enable approval', async () => {
+    const { runtime, entity, dshSessionId } = await startAuthoringSession()
+    const host = `return {
+  inject: ['tools', 'nxt'],
+  apply(ctx) {
+    ctx.nxt.prompt.dynamic('visits', async ({ storage }) => '访问次数等级：' + ((await storage.get('visits')) ? '有' : '无'))
+    harness.registerTool(ctx, harness.defineTool({
+      name: 'visit_counter',
+      description: 'Count visits in extension storage.',
+      parameters: { label: { type: 'string', required: true, description: 'Visit label.' } },
+      output: { schema: { type: 'json' }, render(_args, value) { return [{ type: 'text', text: JSON.stringify(value) }] } },
+      async execute({ label }) {
+        const previous = (await ctx.nxt.storage.get('visits')) ?? 0
+        await ctx.nxt.storage.set('visits', previous + 1)
+        const context = await ctx.nxt.context.current()
+        let denied = ''
+        try { await ctx.nxt.http.fetch('https://api.example.com/') } catch (error) { denied = String(error.message) }
+        return { label, visits: previous + 1, channelKind: context.channel.kind, apiKey: (await ctx.nxt.secrets.get('apiKey')) ?? null, denied }
+      }
+    }))
+  }
+}`
+    const capabilities: ExtensionCapabilities = {
+      storage: { scopes: ['agent'] },
+      context: [{ name: 'visits', kind: 'dynamic', maxChars: 100 }],
+    }
+    try {
+      const defined = runtime.host.defineDynamicAuthoringPackage(dshSessionId, {
+        plugin: { kind: 'new', idPrefix: 'visit' },
+        name: '访问计数',
+        purpose: '验证 nxt 宿主能力。',
+        scope: 'agent' as const,
+        code: { host },
+        resources: {},
+        permissions: { permissions: [], networkOrigins: [], capabilities },
+        config: {
+          schema: {
+            type: 'object',
+            dict: { apiKey: { type: 'string', meta: { description: 'API Key', role: 'secret' } } },
+          },
+        },
+        contributions: [],
+        verificationInputs: { tools: { visit_counter: { label: '示例' } }, rpc: {} },
+      })
+      await expect(
+        runtime.host.runDynamicPackage(dshSessionId, defined.pluginId, defined.packageId, 'run'),
+      ).resolves.toMatchObject({ ok: true, status: 'running' })
+      const task = runtime.repository.listAuthoringTasks(entity.agentId)[0]!
+      const attempt = runtime.repository.listAuthoringAttempts(task.id).at(-1)!
+      expect(runtime.repository.getAuthoringTask(task.id)?.status).toBe('ready')
+      expect(attempt.verification?.toolInvocations).toEqual([{ name: 'visit_counter', succeeded: true }])
+
+      const saved = await runtime.authoring.save({
+        taskId: task.id,
+        attemptId: attempt.id,
+        displayName: '访问计数',
+        slug: 'visit-counter',
+        description: '使用 nxt 存储与上下文的工具。',
+      })
+      const verification = runtime.repository.getExtensionRevisionVerification(saved.revision.id)
+      expect(verification?.permissions?.capabilities).toEqual(capabilities)
+      const requirement = runtime.activation.getPermissionRequirement(
+        entity.agentId,
+        saved.extension.id,
+        saved.revision.id,
+      )
+      expect(requirement.approvalRequired).toBe(true)
+      await expect(
+        runtime.activation.activate({
+          agentId: entity.agentId,
+          extensionId: saved.extension.id,
+          revisionId: saved.revision.id,
+        }),
+      ).rejects.toThrow('permission-approval-required')
+      await expect(
+        runtime.activation.activate({
+          agentId: entity.agentId,
+          extensionId: saved.extension.id,
+          revisionId: saved.revision.id,
+          permissionApproval: { permissionDigest: requirement.permissionDigest },
+        }),
+      ).resolves.toMatchObject({ extensionRevisionId: saved.revision.id })
+    } finally {
       await runtime.dispose()
     }
   })

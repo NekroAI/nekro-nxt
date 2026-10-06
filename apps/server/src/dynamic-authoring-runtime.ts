@@ -34,6 +34,7 @@ import {
   HostUiPermissionDeclarationSchema,
   JsonValueSchema,
   configSecretKeys,
+  type ExtensionCapabilities,
   type PanelContribution,
   type AgentId,
   type AuthoringAttemptId,
@@ -164,8 +165,8 @@ export const preflightNekroNxtAuthoringDefinition = (
   if (input.config !== undefined) {
     const config = ExtensionConfigDeclarationSchema.safeParse(input.config)
     if (!config.success) throw new Error('动态扩展预检失败：config.schema 必须是序列化 Schemastery 对象。')
-    if (configSecretKeys(config.data.schema).length > 0) {
-      throw new Error('动态扩展预检失败：扩展配置暂不支持 secret 字段。')
+    if (input.scope !== 'agent' && configSecretKeys(config.data.schema).length > 0) {
+      throw new Error('动态扩展预检失败：只有智能体扩展的配置可以声明凭据字段。')
     }
   }
   if (input.scope === 'host-ui' && pages.length === 0) {
@@ -255,6 +256,9 @@ export class NekroNxtDynamicCordisRunner extends DynamicCordisRunnerService {
     { readonly pluginRunId: string; readonly methods: Set<string> }
   >()
   private readonly adapterPackages = new Set<string>()
+  /** Capabilities each candidate Package declared; `nxt` calls of a running candidate check against these. */
+  private readonly capabilitiesByPackage = new Map<string, ExtensionCapabilities | undefined>()
+  private runningPackageId: string | undefined
   private readonly originalHostByPackage = new Map<string, string>()
   private readonly authoringPersistenceByPackage = new Map<string, Promise<void>>()
   private authoringPersistenceTail: Promise<void> = Promise.resolve()
@@ -300,6 +304,11 @@ export class NekroNxtDynamicCordisRunner extends DynamicCordisRunnerService {
     this.rootSessionId = input.rootSessionId
     this.ownerResolver = input.resolveAgent
     this.sessionOwnerResolver = input.resolveSession
+  }
+
+  /** Capabilities of the candidate this runner most recently started; `nxt` checks dynamic calls against them. */
+  activeCandidateCapabilities(): ExtensionCapabilities | undefined {
+    return this.runningPackageId === undefined ? undefined : this.capabilitiesByPackage.get(this.runningPackageId)
   }
 
   resolveDynamicAuthoringOwner(agent: Agent): Agent {
@@ -458,6 +467,7 @@ export class NekroNxtDynamicCordisRunner extends DynamicCordisRunnerService {
         this.adapterPackages.add(receipt.packageId)
         this.originalHostByPackage.set(receipt.packageId, adapterHost)
       }
+      this.capabilitiesByPackage.set(receipt.packageId, this.definingAuthoringSnapshot?.permissions.capabilities)
       if (ownedRequest.plugin.kind === 'new') this.state = { ...state, primaryPluginId: receipt.pluginId }
       if (this.onAuthoringDefinition && !this.suppressAuthoringPersistence) {
         const persistDefinition = this.onAuthoringDefinition
@@ -509,6 +519,7 @@ export class NekroNxtDynamicCordisRunner extends DynamicCordisRunnerService {
     const owner = this.resolveDynamicAuthoringOwner(agent)
     this.assertWritable('run')
     await this.authoringPersistenceByPackage.get(packageId)
+    this.runningPackageId = packageId
     const tools = this.runtimeContext.get('tools')
     const before = this.toolBaseline(owner, pluginId, tools)
     const result = await super.run(owner, pluginId, packageId, mode, signal)
@@ -653,6 +664,7 @@ export class NekroNxtDynamicCordisRunner extends DynamicCordisRunnerService {
   ): Promise<DynamicCordisHostHalfResult> {
     const owner = this.resolveDynamicAuthoringOwner(agent)
     this.assertWritable('run-host-half')
+    this.runningPackageId = packageId
     const tools = this.runtimeContext.get('tools')
     const before = this.toolBaseline(owner, pluginId, tools)
     const result = await super.runHostHalf(owner, pluginId, packageId, mode, requestId, approveFutureVersions)

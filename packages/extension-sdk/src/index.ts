@@ -1,7 +1,7 @@
 import { DSH_RUNTIME_RELEASE } from '@nekro-nxt/dsh-compat/release'
 import type { AdapterHostContributionV2 } from '@nekro-nxt/adapter-sdk'
 import type { ElementType, ReactNode } from 'react'
-import { EXTENSION_DATA_HOOK_PERMISSIONS } from '@nekro-nxt/contracts'
+import { EXTENSION_DATA_HOOK_PERMISSIONS, EXTENSION_SDK_LEVEL } from '@nekro-nxt/contracts'
 import type {
   ConfigSchemaDocument,
   ConnectionPanelRole,
@@ -89,6 +89,154 @@ export interface ExtensionToolRegistry {
 
 export interface ExtensionHostContext {
   readonly tools: ExtensionToolRegistry
+  /** Present when the plugin declares `inject: ['tools', 'nxt']`; see {@link NxtHostService}. */
+  readonly nxt?: NxtHostService
+}
+
+/** Request accepted by `ctx.nxt.http.fetch`; `body` and `bodyBase64` are mutually exclusive. */
+export interface NxtFetchInit {
+  readonly method?: 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE' | 'HEAD'
+  readonly headers?: Readonly<Record<string, string>>
+  readonly body?: string
+  readonly bodyBase64?: string
+}
+
+export interface NxtFetchResponse {
+  /** Final URL after redirects. */
+  readonly url: string
+  readonly status: number
+  /** Lower-case header names; `set-cookie` is removed. */
+  readonly headers: Readonly<Record<string, string>>
+  readonly contentType: string
+  /** Present for textual responses (text, JSON, XML, JavaScript). */
+  readonly text?: string
+  /** Present for every other response. */
+  readonly base64?: string
+}
+
+export interface NxtAssetCreateInput {
+  readonly text?: string
+  readonly base64?: string
+  readonly mediaType?: string
+  readonly name?: string
+}
+
+export interface NxtAssetRecord {
+  /** Pass to the agent so it can send the asset with `send_channel_message` image/file/audio parts. */
+  readonly assetId: string
+  readonly byteSize: number
+  readonly mediaType: string
+}
+
+export type NxtStorageScope = 'agent' | 'channel' | 'member' | 'shared'
+
+export interface NxtStorageOptions {
+  /** Defaults to `agent`. Must be listed in `permissions.capabilities.storage.scopes`. */
+  readonly scope?: NxtStorageScope
+  /** Required for `member` scope: a channel member ID from `context.current()` or history. */
+  readonly memberId?: string
+}
+
+export interface NxtStorageListOptions extends NxtStorageOptions {
+  readonly prefix?: string
+  /** 1–200, default 50. */
+  readonly limit?: number
+  /** `next` from the previous page. */
+  readonly after?: string
+}
+
+export interface NxtStorageEntry {
+  readonly key: string
+  readonly value: ExtensionJsonValue
+  readonly updatedAt: number
+}
+
+export interface NxtMemberSummary {
+  readonly memberId: string
+  readonly displayName?: string
+}
+
+export interface NxtCallContext {
+  readonly agent: { readonly id: string; readonly name: string }
+  readonly channel: {
+    readonly id: string
+    readonly kind: 'internal' | 'direct' | 'group'
+    readonly displayName?: string
+    /** Connection display name, e.g. the platform account the channel belongs to. */
+    readonly connectionName?: string
+  }
+  /** The newest inbound message in this channel when the call started, if any. */
+  readonly latestInbound?: {
+    readonly logicalMessageId: string
+    readonly sender?: NxtMemberSummary
+    readonly text: string
+    readonly receivedAt: number
+  }
+}
+
+export interface NxtHistoryMessage {
+  readonly logicalMessageId: string
+  readonly direction: 'inbound' | 'outbound'
+  readonly sender?: NxtMemberSummary
+  readonly text: string
+  readonly occurredAt: number
+  /** Opaque pagination cursor for `history.list({ before })`. */
+  readonly cursor: string
+}
+
+/** Read-only view handed to dynamic context renderers; it cannot reach the network or the model. */
+export interface NxtPromptRenderApi {
+  readonly storage: Pick<NxtHostService['storage'], 'get' | 'list'>
+  readonly context: NxtCallContext
+}
+
+/**
+ * NekroNXT Host capabilities for agent-scope extensions. Every call is async and JSON in, JSON out; a call that
+ * needs an undeclared or unapproved capability throws an error naming the Manifest field to add.
+ */
+export interface NxtHostService {
+  readonly http: {
+    /** Requires `permissions.capabilities.network`. */
+    fetch(url: string, init?: NxtFetchInit): Promise<NxtFetchResponse>
+  }
+  readonly secrets: {
+    /** Reads a `meta.role: 'secret'` config field; `undefined` until the user sets it. */
+    get(key: string): Promise<string | undefined>
+  }
+  readonly assets: {
+    /** Requires `permissions.capabilities.assets`. Saves a current-channel Asset (max 8 MiB). */
+    create(input: NxtAssetCreateInput): Promise<NxtAssetRecord>
+    /** Requires `assets` and `network`; downloads through the controlled fetch. */
+    fromUrl(url: string, options?: { readonly name?: string }): Promise<NxtAssetRecord>
+  }
+  readonly storage: {
+    get(key: string, options?: NxtStorageOptions): Promise<ExtensionJsonValue | undefined>
+    set(key: string, value: ExtensionJsonValue, options?: NxtStorageOptions): Promise<void>
+    delete(key: string, options?: NxtStorageOptions): Promise<boolean>
+    list(
+      options?: NxtStorageListOptions,
+    ): Promise<{ readonly entries: readonly NxtStorageEntry[]; readonly next?: string }>
+  }
+  readonly context: {
+    current(): Promise<NxtCallContext>
+  }
+  readonly history: {
+    /** Requires `permissions.capabilities.history`. Newest first, current channel only. */
+    list(options?: {
+      readonly limit?: number
+      readonly before?: string
+    }): Promise<{ readonly messages: readonly NxtHistoryMessage[]; readonly next?: string }>
+    search(query: string, options?: { readonly limit?: number }): Promise<readonly NxtHistoryMessage[]>
+  }
+  readonly prompt: {
+    /** Fixed text added to the system prompt; declare `{ name, kind: 'static' }` in `permissions.capabilities.context`. */
+    static(name: string, text: string): () => void
+    /**
+     * Rendered once at the start of each turn and appended to the runtime context only when it changes. Keep it
+     * coarse: no timestamps, random values or exact counters. Declare `{ name, kind: 'dynamic' }`.
+     */
+    dynamic(name: string, render: (api: NxtPromptRenderApi) => string | Promise<string>): () => void
+  }
 }
 
 export type ExtensionRpcHandler = (input: ExtensionJsonValue) => ExtensionJsonValue | Promise<ExtensionJsonValue>
@@ -332,8 +480,15 @@ export interface NekroNxtExtensionAuthoringReference {
     }
   }
   readonly dshNativeWebUi: false
+  readonly hostCapabilities: {
+    readonly sdkLevel: number
+    readonly declaration: string
+    readonly services: readonly string[]
+    readonly rules: readonly string[]
+  }
   readonly examples: {
     readonly hostTool: string
+    readonly hostCapabilities: string
     readonly hostRpcAndPanel: string
     readonly toolView: string
     readonly hostAdapter: string
@@ -440,6 +595,50 @@ return {
             call.result ?? '查询中'
           )
     )
+  }
+}`
+
+const HOST_CAPABILITIES_EXAMPLE = `// nekro_nxt_extension_define arguments (abridged):
+// config: { schema: { type: 'object', dict: {
+//   city: { type: 'string', meta: { description: '默认城市', default: '示例市' } },
+//   apiKey: { type: 'string', meta: { description: 'API Key', role: 'secret' } } } } }
+// permissions: { permissions: [], networkOrigins: [], capabilities: {
+//   network: { mode: 'domains', domains: ['api.example.com'] },
+//   storage: { scopes: ['member'] },
+//   assets: { write: true },
+//   context: [{ name: 'usage', kind: 'static', maxChars: 300 }, { name: 'favorite', kind: 'dynamic', maxChars: 200 }] } }
+return {
+  inject: ['tools', 'nxt'],
+  apply(ctx) {
+    ctx.nxt.prompt.static('usage', '用户问天气时调用 weather_today；结果里的 assetId 用 send_channel_message 的 image 块发送。')
+    ctx.nxt.prompt.dynamic('favorite', async ({ storage, context }) => {
+      const sender = context.latestInbound?.sender
+      if (!sender) return ''
+      const city = await storage.get('favorite-city', { scope: 'member', memberId: sender.memberId })
+      return typeof city === 'string' ? sender.displayName + ' 常查的城市：' + city : ''
+    })
+    harness.registerTool(ctx, harness.defineTool({
+      name: 'weather_today',
+      description: 'Look up today weather for a city and render a poster asset.',
+      parameters: { city: { type: 'string', description: 'City name; defaults to the configured city.' } },
+      output: {
+        schema: { type: 'json' },
+        render(_args, value) { return [{ type: 'text', text: JSON.stringify(value) }] }
+      },
+      async execute({ city }) {
+        const apiKey = await ctx.nxt.secrets.get('apiKey')
+        if (!apiKey) return { ok: false, message: '请先在扩展配置中填写 API Key。' }
+        const target = city || (harness.config?.() ?? {}).city || '示例市'
+        const response = await ctx.nxt.http.fetch('https://api.example.com/weather?city=' + encodeURIComponent(target), {
+          headers: { authorization: 'Bearer ' + apiKey }
+        })
+        if (response.status !== 200) return { ok: false, message: '天气服务返回 ' + response.status }
+        const sender = (await ctx.nxt.context.current()).latestInbound?.sender
+        if (sender) await ctx.nxt.storage.set('favorite-city', target, { scope: 'member', memberId: sender.memberId })
+        const poster = await ctx.nxt.assets.create({ text: target + '：' + response.text, mediaType: 'text/plain' })
+        return { ok: true, summary: response.text, assetId: poster.assetId }
+      }
+    }))
   }
 }`
 
@@ -653,10 +852,33 @@ export const NEKRO_NXT_EXTENSION_AUTHORING_REFERENCE: NekroNxtExtensionAuthoring
   dshNativeWebUi: false,
   examples: {
     hostTool: HOST_TOOL_EXAMPLE,
+    hostCapabilities: HOST_CAPABILITIES_EXAMPLE,
     hostRpcAndPanel: HOST_RPC_AND_PANEL_EXAMPLE,
     toolView: TOOL_VIEW_EXAMPLE,
     hostAdapter: HOST_ADAPTER_EXAMPLE,
     hostPage: HOST_PAGE_EXAMPLE,
+  },
+  hostCapabilities: {
+    sdkLevel: EXTENSION_SDK_LEVEL,
+    declaration:
+      '在 nekro_nxt_extension_define.permissions.capabilities 声明，并在 Host 插件 inject 中加入 nxt；未声明的能力调用会抛出指明缺失字段的错误。',
+    services: [
+      "ctx.nxt.http.fetch(url, { method, headers, body | bodyBase64 }) → { status, headers, contentType, text | base64 }；需要 network：{ mode: 'domains', domains: ['api.example.com', '*.cdn.example.com'] }、{ mode: 'config', fields: ['baseUrl'] }（地址取自用户配置）或 { mode: 'unrestricted', purpose }（启用时用户需确认风险）。",
+      "ctx.nxt.secrets.get(key)：读取 config.schema 中 meta.role: 'secret' 的字段；用户未填写时返回 undefined。凭据字段不能有默认值，也不能出现在 harness.config() 中。",
+      'ctx.nxt.assets.create({ text | base64, mediaType, name }) / fromUrl(url)：生成当前频道 Asset 并返回 assetId；需要 assets: { write: true }，fromUrl 还需要 network。把 assetId 交给智能体，由它用 send_channel_message 的 image/file/audio 块发送。',
+      'ctx.nxt.storage.get/set/delete/list：JSON 键值存储；需要 storage: { scopes }，scope 为 agent（默认）、channel、member（必须传 memberId）或 shared（跨智能体共享）。单值不超过 256 KiB，默认配额 8 MiB。',
+      'ctx.nxt.context.current() → { agent, channel, latestInbound?: { sender, text } }：当前智能体、频道和最近一条入站消息。',
+      'ctx.nxt.history.list({ limit, before }) / search(query)：读取当前频道聊天记录；需要 history: { read: true }。',
+      "ctx.nxt.prompt.static(name, text) / dynamic(name, render)：向智能体提供补充说明；需要在 context 中按名称声明 { name, kind: 'static' | 'dynamic', maxChars }。",
+    ],
+    rules: [
+      '静态说明只能是固定字符串，只在版本或配置切换时变化；会变化的状态放进 dynamic，宿主每轮开始渲染一次，内容不变就不会追加新的上下文。',
+      '动态上下文禁止写入时间戳、随机数和精确计数，写“好感度：友好”这类粗粒度描述；保存时宿主会用相同输入渲染两次，结果不同则拒绝保存。',
+      'render 只能读存储和调用上下文，不能联网或调用模型；大块内容改为提供查询工具，让智能体按需调用。',
+      '缺少凭据、网络失败或外部服务报错时，工具应返回 { ok: false, message } 这样可读的结果，而不是抛出异常；保存验证会真实调用工具，凭据此时为空。',
+      'verification 样例必须没有副作用：验证会真实发出网络请求，样例应是查询而不是提交、发送或付款。',
+      '扩展本身不能在频道发言；要发送图片、文件或语音时，返回 assetId 让智能体调用 send_channel_message。',
+    ],
   },
   recoveryRules: [
     '一个 Episode 同时只维护一个动态 Plugin；修复必须向同一 Plugin 追加 kind:existing Package。',
@@ -690,7 +912,7 @@ export const renderNekroNxtExtensionDevelopmentSkill = (
 - 面板声明 \`densities\`（${reference.ui.panelDensities.join('、')}），宿主决定放在哪个页面、绘制标题栏与外框。
 - 工具视图按 Tool 名注册，渲染 \`chip\` 与 \`card\` 两种密度；适配器用 \`message-renderer\` 按 rich kind 渲染富消息。
 - 数据 Hook：${reference.ui.dataHooks.map((hook) => `\`${hook}\`（${reference.ui.hookPermissions[hook]}）`).join('、')}。
-- 配置 Schema 是序列化 Schemastery；\`meta.advanced\` 默认折叠，\`meta.hint\` 是帮助文字。扩展配置暂不支持 secret 字段。
+- 配置 Schema 是序列化 Schemastery；\`meta.advanced\` 默认折叠，\`meta.hint\` 是帮助文字。只有智能体扩展可以声明 \`meta.role: 'secret'\` 凭据字段，Host 用 \`ctx.nxt.secrets.get(key)\` 读取。
 - 禁止注册 root、DSH 官方页面 Slot、Composer 或频道顶栏。
 - 动态运行、保存不可变扩展 Revision、给智能体启用扩展彼此独立；每一步都必须等待真实结果。
 - 运行验证会用 \`nekro_nxt_extension_define.verification\` 中的样例真实调用每个 Tool 和 RPC；未提供时 Tool 用 \`{}\`、RPC 用 \`null\` 调用。
@@ -712,6 +934,18 @@ ${reference.ui.designContract.compositionRules.map((rule) => `- ${rule}`).join('
 
 \`\`\`js
 ${reference.examples.hostTool}
+\`\`\`
+
+## 宿主能力（ctx.nxt，能力等级 ${reference.hostCapabilities.sdkLevel}）
+
+${reference.hostCapabilities.declaration}
+
+${reference.hostCapabilities.services.map((line) => `- ${line}`).join('\n')}
+
+${reference.hostCapabilities.rules.map((rule) => `- ${rule}`).join('\n')}
+
+\`\`\`js
+${reference.examples.hostCapabilities}
 \`\`\`
 
 ## Host RPC + 面板示例

@@ -95,6 +95,7 @@ export function ConfirmDialog({
   children,
   confirmLabel,
   danger = false,
+  confirmDisabled = false,
   onConfirm,
 }: {
   readonly open: boolean
@@ -103,6 +104,8 @@ export function ConfirmDialog({
   readonly children?: ReactNode
   readonly confirmLabel: string
   readonly danger?: boolean
+  /** Keeps the confirm action unavailable until the content says the user may proceed. */
+  readonly confirmDisabled?: boolean
   readonly onConfirm: () => Promise<void> | void
 }) {
   const [busy, setBusy] = useState(false)
@@ -134,7 +137,13 @@ export function ConfirmDialog({
           <Button onClick={() => change(false)} disabled={busy}>
             取消
           </Button>
-          <Button variant={danger ? 'danger-solid' : 'primary'} busy={busy} onClick={() => void confirm()} autoFocus>
+          <Button
+            variant={danger ? 'danger-solid' : 'primary'}
+            busy={busy}
+            disabled={confirmDisabled}
+            onClick={() => void confirm()}
+            autoFocus
+          >
             {confirmLabel}
           </Button>
         </>

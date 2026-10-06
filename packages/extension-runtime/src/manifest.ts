@@ -10,8 +10,12 @@ import {
   MessageRendererContributionSchema,
   PanelContributionSchema,
   ToolViewContributionSchema,
+  configFields,
   configSecretKeys,
   EMPTY_EXTENSION_UI_CONTRIBUTIONS,
+  EXTENSION_SDK_LEVEL,
+  ExtensionRequiresSchema,
+  type ExtensionCapabilities,
   type ExtensionUiContributions,
 } from '@nekro-nxt/contracts'
 import { z } from 'zod'
@@ -79,6 +83,7 @@ export const adapterContributionSchema = z
 
 const scopeShared = {
   schemaVersion: z.literal(6),
+  requires: ExtensionRequiresSchema.optional(),
   clientCss: clientCssSchema.optional(),
   permissions: HostUiPermissionDeclarationSchema.default({ permissions: [], networkOrigins: [] }),
   config: ExtensionConfigDeclarationSchema.optional(),
@@ -125,12 +130,56 @@ const checkClientNeeded = (
   if (value.clientCss !== undefined && !hasClient) issue('Client CSS 需要 Client 源码。')
 }
 
-const checkConfig = (value: { readonly config?: { readonly schema: unknown } | undefined }, issue: Issue): void => {
+const checkRequires = (value: { readonly requires?: { readonly sdk: number } | undefined }, issue: Issue): void => {
+  if (value.requires !== undefined && value.requires.sdk > EXTENSION_SDK_LEVEL) {
+    issue(
+      `这个扩展需要扩展能力等级 ${value.requires.sdk}，当前 NekroNXT 只支持到 ${EXTENSION_SDK_LEVEL}，请先升级 NekroNXT。`,
+    )
+  }
+}
+
+const checkConfig = (
+  value: { readonly config?: { readonly schema: unknown } | undefined },
+  issue: Issue,
+  secrets: 'allowed' | 'forbidden',
+): void => {
   if (value.config === undefined) return
   const parsed = ExtensionConfigDeclarationSchema.safeParse(value.config)
-  if (parsed.success && configSecretKeys(parsed.data.schema).length > 0) {
-    issue('扩展配置暂不支持 secret 字段；凭据请通过适配器连接或 DSH 凭据管理。')
+  if (!parsed.success) return
+  const secretFields = configFields(parsed.data.schema).filter((field) => field.kind === 'secret')
+  if (secrets === 'forbidden' && configSecretKeys(parsed.data.schema).length > 0) {
+    issue('这类扩展的配置不支持凭据字段；凭据请通过适配器连接或 DSH 凭据管理。')
   }
+  for (const field of secretFields) {
+    if (field.default !== undefined) issue(`凭据字段不能声明默认值：${field.key}`)
+  }
+}
+
+const checkCapabilities = (
+  value: {
+    readonly config?: { readonly schema: unknown } | undefined
+    readonly permissions: { readonly capabilities?: ExtensionCapabilities | undefined }
+  },
+  issue: Issue,
+): void => {
+  const network = value.permissions.capabilities?.network
+  if (network?.mode !== 'config') return
+  const parsed = value.config === undefined ? undefined : ExtensionConfigDeclarationSchema.safeParse(value.config)
+  const fields = new Map(
+    parsed?.success === true ? configFields(parsed.data.schema).map((field) => [field.key, field.kind]) : [],
+  )
+  for (const field of network.fields) {
+    if (fields.get(field) !== 'string') {
+      issue(`permissions.capabilities.network.fields 只能引用 config.schema 中的文本字段：${field}`)
+    }
+  }
+}
+
+const checkNoCapabilities = (
+  value: { readonly permissions: { readonly capabilities?: ExtensionCapabilities | undefined } },
+  issue: Issue,
+): void => {
+  if (value.permissions.capabilities !== undefined) issue('只有智能体扩展可以声明 permissions.capabilities。')
 }
 
 export const extensionManifestSchema = z.union([
@@ -147,7 +196,9 @@ export const extensionManifestSchema = z.union([
       const issue: Issue = (message) => context.addIssue({ code: 'custom', message })
       checkPanels(value.contributions, AGENT_PANEL_ANCHORS, issue)
       checkClientNeeded(value, issue)
-      checkConfig(value, issue)
+      checkRequires(value, issue)
+      checkConfig(value, issue, 'allowed')
+      checkCapabilities(value, issue)
       const tools = new Set(value.contributions.flatMap((entry) => (entry.kind === 'tool' ? [entry.name] : [])))
       for (const entry of value.contributions) {
         if (entry.kind === 'tool-view' && !tools.has(entry.tool)) {
@@ -183,7 +234,9 @@ export const extensionManifestSchema = z.union([
       checkPanels(value.contributions, ADAPTER_PANEL_ANCHORS, issue)
       checkPages(value.contributions, issue)
       checkClientNeeded(value, issue)
-      checkConfig(value, issue)
+      checkRequires(value, issue)
+      checkConfig(value, issue, 'forbidden')
+      checkNoCapabilities(value, issue)
     }),
   manifestIdentitySchema
     .extend({
@@ -197,7 +250,10 @@ export const extensionManifestSchema = z.union([
     })
     .strict()
     .superRefine((value, context) => {
-      checkConfig(value, (message) => context.addIssue({ code: 'custom', message }))
+      const issue: Issue = (message) => context.addIssue({ code: 'custom', message })
+      checkRequires(value, issue)
+      checkConfig(value, issue, 'forbidden')
+      checkNoCapabilities(value, issue)
     }),
 ])
 

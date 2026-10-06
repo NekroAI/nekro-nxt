@@ -577,6 +577,7 @@ const projectSnapshot = (json: SnapshotJson, successfulAt: number): ProductSnaps
           revision: activeRevision?.revisionNumber ?? 0,
           activatedAt: candidate.activatedAt,
           config: candidate.config,
+          configuredSecrets: candidate.configuredSecrets ?? [],
           ...(candidate.runtime === undefined
             ? {}
             : {

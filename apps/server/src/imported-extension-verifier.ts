@@ -10,6 +10,7 @@ import {
   LogicalMessageIdSchema,
   PhysicalDeliveryIdSchema,
   validateConfigValue,
+  type ExtensionCapabilities,
   type ExtensionDataHookName,
   type HostPageContribution,
   type HostUiPermissionDeclaration,
@@ -17,10 +18,13 @@ import {
 } from '@nekro-nxt/contracts'
 import { canonicalJson } from '@nekro-nxt/core'
 import type { ImportedRevisionVerificationInput, ImportedRevisionVerifier } from '@nekro-nxt/extension-runtime'
-import type { ExtensionToolDefinition } from '@nekro-nxt/extension-sdk'
+import type { ExtensionToolDefinition, NxtCallContext } from '@nekro-nxt/extension-sdk'
 import { createFakeAdapterHostContext } from '@nekro-nxt/test-harness'
 import { createHash } from 'node:crypto'
 import { pathToFileURL } from 'node:url'
+import { createExtensionEgress } from './extension-egress.js'
+import { memoryNxtStorage } from './extension-host-backends.js'
+import { createNxtHostService } from './extension-host-service.js'
 
 const IMPORT_ORIGIN = {
   episodeId: 'import',
@@ -502,12 +506,64 @@ const verifyClient = async (
   return evidence
 }
 
+const VERIFICATION_CALL_CONTEXT: NxtCallContext = {
+  agent: { id: 'agt_VERIFY', name: '验证智能体' },
+  channel: { id: 'chn_VERIFY', kind: 'group', displayName: '验证频道' },
+  latestInbound: {
+    logicalMessageId: 'msg_VERIFY',
+    sender: { memberId: 'mbr_VERIFY', displayName: '验证成员' },
+    text: '验证消息',
+    receivedAt: 1,
+  },
+}
+
+/**
+ * `nxt` for save/import verification: throwaway storage, synthetic call context and assets, no saved secrets.
+ * Network requests are real, which is why `verificationInput` samples must be side-effect free.
+ */
+const createVerificationNxt = (capabilities: ExtensionCapabilities | undefined, config: () => JsonValue) =>
+  createNxtHostService(
+    {
+      mode: 'verification',
+      agentId: 'agt_VERIFY',
+      ownerKey: 'verification',
+      displayName: '验证扩展',
+      channelId: 'chn_VERIFY',
+      capabilities: () => capabilities,
+      config,
+    },
+    {
+      fetch: (policy, url, init) => createExtensionEgress({ policy }).fetch(url, init),
+      storage: memoryNxtStorage(),
+      secret: () => Promise.resolve(undefined),
+      createAsset: (_channelId, asset) =>
+        Promise.resolve({
+          assetId: 'ast_VERIFY',
+          byteSize: Buffer.byteLength(asset.base64 ?? asset.text ?? '', asset.base64 === undefined ? 'utf8' : 'base64'),
+          mediaType: asset.mediaType ?? 'application/octet-stream',
+        }),
+      callContext: () => Promise.resolve(VERIFICATION_CALL_CONTEXT),
+      history: {
+        list: () => Promise.resolve({ messages: [] }),
+        search: () => Promise.resolve([]),
+      },
+    },
+    {
+      section: () => () => undefined,
+      context: () => () => undefined,
+      onTurnStart: () => () => undefined,
+    },
+  )
+
 const verifyAgentOrHostUi = async (input: ImportedRevisionVerificationInput): ReturnType<ImportedRevisionVerifier> => {
   const manifest = input.materialized.manifest
   const handlers = new Map<string, (value: JsonValue) => JsonValue | Promise<JsonValue>>()
   const tools = new Map<string, ExtensionToolDefinition>()
   const toolInvocations: Array<{ name: string; succeeded: boolean }> = []
   let disposePlugin: (() => void | Promise<void>) | undefined
+  const nxt = createVerificationNxt(manifest.scope === 'agent' ? manifest.permissions.capabilities : undefined, () =>
+    defaultConfig(input),
+  )
   if (input.artifact.hostEntry) {
     const factory = await importFactory(input.artifact.hostEntry, input.artifact.buildKey, 'Extension Host')
     const forbiddenAdapter = (): never => {
@@ -540,6 +596,7 @@ const verifyAgentOrHostUi = async (input: ImportedRevisionVerificationInput): Re
           return () => tools.delete(tool.name)
         },
       },
+      ...(manifest.scope === 'agent' ? { nxt } : {}),
     })
   }
   // Use the same representative inputs that verified the dynamic run; absent means the historical empty call.
@@ -561,6 +618,14 @@ const verifyAgentOrHostUi = async (input: ImportedRevisionVerificationInput): Re
       toolInvocations.push({ name: tool.name, succeeded: true })
     }
     for (const [method, handler] of handlers) JsonValueSchema.parse(await handler(rpcInputs.get(method) ?? null))
+    // Context cache discipline: the same storage and call context must render byte-identical dynamic context.
+    const first = await nxt.renderDynamicContext()
+    const second = await nxt.renderDynamicContext()
+    if (JSON.stringify(first) !== JSON.stringify(second)) {
+      throw new Error(
+        '动态上下文在相同输入下两次渲染结果不同；请去掉时间戳、随机数或精确计数，否则会破坏模型上下文缓存。',
+      )
+    }
     const clientEvidence = await verifyClient(input, handlers)
     const declaredTools =
       manifest.scope === 'agent'
