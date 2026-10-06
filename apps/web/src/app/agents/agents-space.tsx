@@ -1,9 +1,17 @@
-import { useGo } from '../model/nav.js'
 import { Plus } from 'lucide-react'
+import { useState } from 'react'
 import { Link, Navigate, useParams } from 'react-router-dom'
 import { useProductStore } from '../../product-runtime.js'
-import { AgentAvatar, IconButton, SelectionList } from '../../ui-kit/next/index.js'
+import {
+  AgentAvatar,
+  IconButton,
+  ListPane,
+  SearchField,
+  SelectionList,
+  WorkbenchPage,
+} from '../../ui-kit/next/index.js'
 import { agentAccent, agentHue, agentPhase, isAgentWorking } from '../model/identity.js'
+import { useGo } from '../model/nav.js'
 import { useCrumb } from '../shell/crumb.js'
 import { AgentCreate } from './agent-create.js'
 import { AgentProfile } from './agent-profile.js'
@@ -14,6 +22,7 @@ export default function AgentsSpace() {
   const navigate = useGo()
   const agents = useProductStore((state) => state.agents)
   const hostStatus = useProductStore((state) => state.host.status)
+  const [query, setQuery] = useState('')
   const creating = agentId === 'new'
   const agent = creating ? undefined : agents.find((item) => item.id === agentId)
   useCrumb('智能体', creating ? '新建' : agent?.name)
@@ -23,18 +32,24 @@ export default function AgentsSpace() {
   }
   if (agentId && !creating && !agent && hostStatus === 'ready') return <Navigate to="/agents" replace />
 
+  const needle = query.trim().toLowerCase()
+  const visible = needle ? agents.filter((item) => item.name.toLowerCase().includes(needle)) : agents
+
   return (
-    <div className={styles.space}>
-      <aside className={styles.list} aria-label="智能体">
-        <div className={styles.listHead}>
-          <h2>智能体</h2>
-          <IconButton label="新建智能体" size="small" onClick={() => navigate('/agents/new')}>
-            <Plus size={16} />
-          </IconButton>
-        </div>
-        <div className={styles.listBody}>
+    <WorkbenchPage
+      list={
+        <ListPane
+          title="智能体"
+          label="智能体"
+          actions={
+            <IconButton label="新建智能体" size="small" onClick={() => navigate('/agents/new')}>
+              <Plus size={16} />
+            </IconButton>
+          }
+          toolbar={<SearchField value={query} onChange={setQuery} label="搜索智能体" placeholder="搜索智能体" />}
+        >
           <SelectionList selectedKey={agent?.id} accent={agent ? agentAccent(agent) : undefined}>
-            {agents.map((item) => (
+            {visible.map((item) => (
               <Link
                 key={item.id}
                 to={`/agents/${item.id}`}
@@ -49,9 +64,13 @@ export default function AgentsSpace() {
               </Link>
             ))}
           </SelectionList>
-        </div>
-      </aside>
-      {creating ? <AgentCreate /> : agent ? <AgentProfile agent={agent} /> : <div />}
-    </div>
+          {needle && visible.length === 0 ? (
+            <p className={styles.listEmpty}>没有名称包含“{query.trim()}”的智能体</p>
+          ) : null}
+        </ListPane>
+      }
+    >
+      {creating ? <AgentCreate /> : agent ? <AgentProfile key={agent.id} agent={agent} /> : null}
+    </WorkbenchPage>
   )
 }

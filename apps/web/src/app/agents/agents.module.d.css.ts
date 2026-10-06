@@ -1,51 +1,37 @@
 declare const styles: {
-  readonly accessRow: string
-  readonly body: string
+  readonly cellStack: string
   readonly cellSub: string
   readonly cellTitle: string
   readonly create: string
   readonly createActions: string
-  readonly createHead: string
   readonly createProvider: string
-  readonly danger: string
-  readonly diff: string
-  readonly diffAdd: string
-  readonly diffDel: string
-  readonly diffField: string
-  readonly editor: string
-  readonly editorRow: string
-  readonly enter: string
-  readonly hero: string
-  readonly heroActions: string
-  readonly heroInner: string
-  readonly heroText: string
-  readonly list: string
-  readonly listBody: string
-  readonly listHead: string
-  readonly metaChips: string
-  readonly name: string
+  readonly createTitle: string
+  readonly credential: string
+  readonly extensionLabel: string
+  readonly listEmpty: string
+  readonly modelSelect: string
+  readonly nameInput: string
+  readonly note: string
+  readonly noteWarn: string
   readonly persona: string
+  readonly personaCard: string
+  readonly personaEditor: string
+  readonly personaEditorBar: string
+  readonly personaEditorFoot: string
+  readonly personaFolded: string
+  readonly personaFoot: string
+  readonly personaFullscreen: string
   readonly profile: string
+  readonly renameForm: string
+  readonly restoreList: string
+  readonly restoreRow: string
   readonly row: string
   readonly rowName: string
   readonly rowState: string
   readonly rowSub: string
-  readonly saveBar: string
-  readonly skill: string
-  readonly skillDesc: string
-  readonly skillIcon: string
-  readonly skillText: string
-  readonly skillTitle: string
-  readonly skills: string
-  readonly space: string
-  readonly subTitle: string
-  readonly table: string
-  readonly tableRow: string
-  readonly tagline: string
-  readonly versionChanges: string
-  readonly versionKey: string
-  readonly versionRow: string
-  readonly versionsEmpty: string
+  readonly sectionLink: string
+  readonly sectionNav: string
+  readonly srOnly: string
 }
 
 export default styles

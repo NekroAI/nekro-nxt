@@ -1,13 +1,24 @@
-import { useGo } from '../model/nav.js'
 import { useMemo, useState } from 'react'
-
 import { promptDocumentFromText, type PromptDocumentV1 } from '@nekro-nxt/contracts'
 import { PromptReferenceEditor } from '../../components/prompt-reference-editor.js'
-import { agentModelKey, createAgentDraft } from './agent-create-draft.js'
-import { useProductStore } from '../../product-runtime.js'
 import { AddModelProviderForm } from '../../llm-settings.js'
-import { Banner, Button, Field, Input, Panel, Select, toast } from '../../ui-kit/next/index.js'
+import { useProductStore } from '../../product-runtime.js'
+import {
+  Banner,
+  Button,
+  Chip,
+  Input,
+  MainContent,
+  PropertyGroup,
+  PropertyList,
+  PropertyRow,
+  Select,
+  toast,
+} from '../../ui-kit/next/index.js'
+import { useGo } from '../model/nav.js'
 import { useProductApi } from '../model/store.js'
+import { agentModelKey, createAgentDraft } from './agent-create-draft.js'
+import { supportsImages } from './agent-draft.js'
 import styles from './agents.module.css'
 
 export function AgentCreate() {
@@ -48,65 +59,88 @@ export function AgentCreate() {
   }
 
   return (
-    <form
-      className={styles.create}
-      onSubmit={(event) => {
-        event.preventDefault()
-        void create()
-      }}
-    >
-      <div className={styles.createHead}>
-        <h1>新建智能体</h1>
-      </div>
+    <MainContent width="readable">
+      <form
+        className={styles.create}
+        onSubmit={(event) => {
+          event.preventDefault()
+          void create()
+        }}
+      >
+        <h1 className={styles.createTitle}>新建智能体</h1>
 
-      <Field label="名称">
-        <Input
-          value={name}
-          onChange={(event) => setName(event.target.value)}
-          maxLength={40}
-          placeholder="比如：小奈"
-          autoFocus
-        />
-      </Field>
-      <PromptReferenceEditor
-        value={persona.document}
-        label="设定"
-        description="一两句话就够，之后随时可以改。"
-        placeholder="她是谁、怎么说话、在群里负责什么"
-        onChange={(document, text) => setPersona({ document, text })}
-      />
-      {models.length === 0 ? (
-        <Panel className={styles.createProvider}>
-          <Banner tone="warn">当前没有可用模型。请先保存一个供应商。</Banner>
-          {/* Saving here keeps the name and persona already typed above. */}
-          <AddModelProviderForm
-            onSaved={() => {
-              const first = api.getState().models[0]
-              if (first) setModelKey(agentModelKey(first))
-            }}
+        <PropertyGroup title="基本信息">
+          <PropertyList>
+            <PropertyRow label="名称" htmlFor="agent-create-name" description="频道里显示的名字，之后可以改">
+              <Input
+                id="agent-create-name"
+                className={styles.nameInput}
+                value={name}
+                onChange={(event) => setName(event.target.value)}
+                maxLength={40}
+                placeholder="比如：小奈"
+                autoFocus
+              />
+            </PropertyRow>
+            {models.length > 0 ? (
+              <PropertyRow
+                label="主模型"
+                description="负责理解消息、思考和回复"
+                badge={
+                  model ? (
+                    <Chip tone={supportsImages(model) ? 'ok' : 'neutral'}>
+                      {supportsImages(model) ? '能看图' : '不能看图'}
+                    </Chip>
+                  ) : undefined
+                }
+              >
+                <Select
+                  className={styles.modelSelect}
+                  aria-label="主模型"
+                  value={model ? agentModelKey(model) : ''}
+                  {...(model ? {} : { placeholder: '选择模型' })}
+                  options={models.map((item) => ({
+                    value: agentModelKey(item),
+                    label: `${item.providerName} · ${item.name}`,
+                  }))}
+                  onChange={(event) => setModelKey(event.target.value)}
+                />
+              </PropertyRow>
+            ) : null}
+          </PropertyList>
+          {models.length === 0 ? (
+            <div className={styles.createProvider}>
+              <Banner tone="warn">当前没有可用模型。请先保存一个供应商。</Banner>
+              {/* Saving here keeps the name and persona already typed above. */}
+              <AddModelProviderForm
+                onSaved={() => {
+                  const first = api.getState().models[0]
+                  if (first) setModelKey(agentModelKey(first))
+                }}
+              />
+            </div>
+          ) : null}
+        </PropertyGroup>
+
+        <PropertyGroup title="设定" description="一两句话就够，之后随时可以改">
+          <PromptReferenceEditor
+            value={persona.document}
+            label="设定"
+            description="她是谁、怎么说话、在群里负责什么"
+            placeholder="她是谁、怎么说话、在群里负责什么"
+            onChange={(document, text) => setPersona({ document, text })}
           />
-        </Panel>
-      ) : (
-        <Field label="模型">
-          <Select
-            value={model ? agentModelKey(model) : ''}
-            {...(model ? {} : { placeholder: '选择模型' })}
-            options={models.map((item) => ({
-              value: agentModelKey(item),
-              label: `${item.providerName} · ${item.name}`,
-            }))}
-            onChange={(event) => setModelKey(event.target.value)}
-          />
-        </Field>
-      )}
-      <div className={styles.createActions}>
-        <Button variant="ghost" onClick={() => window.history.back()}>
-          取消
-        </Button>
-        <Button type="submit" variant="primary" busy={creating} disabled={!name.trim() || !model}>
-          创建并开始对话
-        </Button>
-      </div>
-    </form>
+        </PropertyGroup>
+
+        <div className={styles.createActions}>
+          <Button variant="ghost" onClick={() => window.history.back()}>
+            取消
+          </Button>
+          <Button type="submit" variant="primary" busy={creating} disabled={!name.trim() || !model}>
+            创建并开始对话
+          </Button>
+        </div>
+      </form>
+    </MainContent>
   )
 }
