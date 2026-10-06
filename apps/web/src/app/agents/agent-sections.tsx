@@ -1,4 +1,4 @@
-import { Boxes, ExternalLink, Maximize2, MessagesSquare, Minimize2, Plus, Unlink } from 'lucide-react'
+import { Boxes, ExternalLink, Maximize2, MessagesSquare, Minimize2, Plus, Unplug } from 'lucide-react'
 import { useState, type ReactNode } from 'react'
 import { HostApiContracts, type PromptDocumentV1 } from '@nekro-nxt/contracts'
 import { AGENT_ACCESS_LEVELS, agentAccessPreset, type AgentAccessLevel } from '../../agent-access-level.js'
@@ -247,7 +247,7 @@ export function ChannelsSection({
                   size="small"
                   onClick={() => onBind({ kind: 'unbind', channelId: channel.id })}
                 >
-                  <Unlink size={15} />
+                  <Unplug size={15} />
                 </IconButton>
               </>
             ),

@@ -60,10 +60,15 @@
   min-width: 0;
 }
 
+/* Jumping to a section keeps its heading below the sticky section bar. */
+.profile [id^='profile-'] {
+  scroll-margin-top: var(--s-8);
+}
+
 .sectionNav {
   position: sticky;
   z-index: 4;
-  top: calc(-1 * var(--s-6));
+  top: 0;
   display: flex;
   gap: var(--s-1);
   margin: 0 calc(-1 * var(--s-2));
