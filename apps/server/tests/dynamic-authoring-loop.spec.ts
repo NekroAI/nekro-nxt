@@ -7,7 +7,7 @@ import { createHash } from 'node:crypto'
 import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { NekroRuntime } from '../src/bootstrap.js'
 import { createNekroHostApi } from '../src/host-api.js'
 import { preflightNekroNxtAuthoringDefinition } from '../src/dynamic-authoring-runtime.js'
@@ -354,6 +354,8 @@ describe('dynamic authoring closed loop', () => {
         code: { host: 'return { apply() {} }' },
       })
       const task = runtime.repository.listAuthoringTasks(entity.agentId)[0]!
+      // The probe's attempt is recorded asynchronously; assert only once it has replaced the candidate.
+      await vi.waitFor(() => expect(runtime.repository.listAuthoringAttempts(task.id)).toHaveLength(2))
       const [first] = runtime.repository.listAuthoringAttempts(task.id)
       await expect(
         runtime.authoring.save({
