@@ -4,7 +4,7 @@ import { expect, test, type Page } from '@playwright/test'
 import { createServer, type ServerResponse } from 'node:http'
 import { mkdir, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
-import { ChannelFactSseDataSchema } from '@nekro-nxt/contracts'
+import { ChannelFactSseDataSchema, HostApiContracts } from '@nekro-nxt/contracts'
 import {
   productSnapshot,
   targetChannelId,
@@ -87,7 +87,8 @@ async function withEventFixture(page: Page, use: (emit: (channel: number) => voi
       })
     return json({})
   })
-  await installWorkspaceRoutes(page, () => snapshot)
+  const typedSnapshot = HostApiContracts.snapshot.parseResponse(snapshot)
+  await installWorkspaceRoutes(page, () => typedSnapshot)
   let sequence = 0
   const revisions = new Map<number, number>()
   try {

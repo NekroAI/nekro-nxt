@@ -407,14 +407,6 @@ test('channel list keeps rows stable while pointer and keyboard drags reorder, b
   const savedChannelTop = await top(mapleChannel)
   rejectNextOrder = true
   allowOrderFailureConsole = true
-  const box = await mapleChannel.boundingBox()
-  const hit = await page.evaluate(
-    ([x, y]) => {
-      const el = document.elementFromPoint(x, y)
-      return el ? el.outerHTML.slice(0, 160) : 'none'
-    },
-    [box!.x + box!.width / 2, box!.y + box!.height / 2],
-  )
   await dragTo(page, mapleChannel, mapleSpare)
   await expect.poll(() => rejectedOrderRequests).toBe(1)
   await expect(page.getByText('测试拒绝保存顺序。')).toBeVisible()

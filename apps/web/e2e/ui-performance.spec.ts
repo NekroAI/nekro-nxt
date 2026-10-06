@@ -1,6 +1,7 @@
 import { installSnapshotHealthRoutes } from './fixtures/host-release.js'
 import { installWorkspaceRoutes } from './fixtures/workspace.js'
 import { test, expect } from '@playwright/test'
+import { HostApiContracts } from '@nekro-nxt/contracts'
 import { writeFile, mkdir } from 'node:fs/promises'
 import { join } from 'node:path'
 import { platform, release, cpus } from 'node:os'
@@ -119,7 +120,8 @@ test('records repeatable production interaction costs with fictional history', a
       })
     return json({})
   })
-  await installWorkspaceRoutes(page, () => snapshot)
+  const typedSnapshot = HostApiContracts.snapshot.parseResponse(snapshot)
+  await installWorkspaceRoutes(page, () => typedSnapshot)
   const toggleTheme = async () => {
     await page.keyboard.press('ControlOrMeta+k')
     await page.getByRole('combobox', { name: '搜索' }).fill('切换浅色或深色')
