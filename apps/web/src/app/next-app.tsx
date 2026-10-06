@@ -7,6 +7,7 @@ import { Skeleton, Toaster, TooltipProvider } from '../ui-kit/next/index.js'
 import { AppShell } from './shell/app-shell.js'
 import { CrumbProvider } from './shell/crumb.js'
 import { ExtensionPage } from './system/extension-page.js'
+import { SpaceBoundary } from './system/space-boundary.js'
 import { useAppearanceEffects } from './model/theme.js'
 
 /**
@@ -20,11 +21,18 @@ function preloadable(load: () => Promise<{ readonly default: ComponentType }>) {
       Loaded = module.default
       return module
     })
-  const Lazy = lazy(remember)
+  // React.lazy keeps a rejected import forever; a retry needs a fresh lazy component.
+  let Lazy = lazy(remember)
   function Space() {
     return Loaded ? <Loaded /> : <Lazy />
   }
-  return { Space, preload: () => remember().then(() => undefined) }
+  return {
+    Space,
+    preload: () => remember().then(() => undefined),
+    reset: () => {
+      if (!Loaded) Lazy = lazy(remember)
+    },
+  }
 }
 
 const live = preloadable(() => import('./live/live-space.js'))
@@ -66,7 +74,15 @@ function Loading() {
   )
 }
 
-const space = (node: ReactNode) => <Suspense fallback={<Loading />}>{node}</Suspense>
+const retrySpaces = () => {
+  for (const item of [live, channels, agents, workshop, wiring, settings]) item.reset()
+}
+
+const space = (node: ReactNode) => (
+  <SpaceBoundary onRetry={retrySpaces}>
+    <Suspense fallback={<Loading />}>{node}</Suspense>
+  </SpaceBoundary>
+)
 
 /**
  * The redesigned client (Decision 2026-10-04). Extension runtimes stay mounted for the whole session so dynamic
