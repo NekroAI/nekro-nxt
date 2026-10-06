@@ -1049,6 +1049,7 @@ describe('HttpProductHost', () => {
       expectedCurrentRevisionId: webAgentRevisionId,
       confirmationName: '小奈',
       deleteAutoCreatedBuiltInChannels: true,
+      deleteWorkspace: false,
     })
     const channelDeleteCall = requests.find(
       (request) => request.url === `/api/channels/${webChannelId}` && request.init?.method === 'DELETE',

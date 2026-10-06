@@ -125,7 +125,13 @@ export function createProductStore(
     testSystemNotification: async () => {
       await requireHost().actions['notifications.testSystem']()
     },
-    deleteAgent: async (agentId, expectedCurrentRevisionId, confirmationName, deleteAutoCreatedBuiltInChannels) => {
+    deleteAgent: async (
+      agentId,
+      expectedCurrentRevisionId,
+      confirmationName,
+      deleteAutoCreatedBuiltInChannels,
+      deleteWorkspace = false,
+    ) => {
       await requireHost().actions['agents.delete']({
         agentId: requireValue(agentId, '缺少智能体标识，请刷新页面后重试。'),
         expectedCurrentRevisionId: requireValue(
@@ -135,6 +141,7 @@ export function createProductStore(
         ),
         confirmationName,
         deleteAutoCreatedBuiltInChannels,
+        deleteWorkspace,
       })
     },
     createConnection: async ({ adapterKey, alias, configuration, credentials }) => {

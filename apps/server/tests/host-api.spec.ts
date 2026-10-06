@@ -14,6 +14,7 @@ import {
   HostUiPageInstanceIdSchema,
   LogicalMessageIdSchema,
 } from '@nekro-nxt/contracts'
+import { existsSync } from 'node:fs'
 import { mkdir, mkdtemp, rm, stat, writeFile } from 'node:fs/promises'
 import { createServer } from 'node:http'
 import { tmpdir } from 'node:os'
@@ -1007,6 +1008,9 @@ describe('NekroNxt Server domain API (WebServer seam)', () => {
         triggerPolicy: 'always',
       })
       runtime.core.createBinding({ channelId: external.id, agentId: mixed.definition.id, triggerPolicy: 'always' })
+      const mixedWorkspace = path.join(runtime.workspaceRoot, mixed.definition.id)
+      await mkdir(mixedWorkspace, { recursive: true })
+      await writeFile(path.join(mixedWorkspace, 'note.txt'), '虚构样本')
       const mixedDelete = await fetch(`${origin}/api/agents/${mixed.definition.id}`, {
         method: 'DELETE',
         headers: { 'content-type': 'application/json' },
@@ -1014,6 +1018,7 @@ describe('NekroNxt Server domain API (WebServer seam)', () => {
           expectedCurrentRevisionId: mixed.revision.id,
           confirmationName: mixed.revision.displayName,
           deleteAutoCreatedBuiltInChannels: true,
+          deleteWorkspace: true,
         }),
       })
       expect(mixedDelete.status, await mixedDelete.clone().text()).toBe(200)
@@ -1024,6 +1029,7 @@ describe('NekroNxt Server domain API (WebServer seam)', () => {
         deletedChannelIds: [mixed.channel.id],
       })
       expect(runtime.repository.getChannel(mixed.channel.id)).toBeUndefined()
+      expect(existsSync(mixedWorkspace)).toBe(false)
       expect(runtime.repository.getChannel(manualBuiltIn.id)).toBeDefined()
       expect(runtime.repository.getChannel(external.id)).toBeDefined()
       expect(runtime.repository.getBinding(manualBuiltIn.id)).toBeUndefined()
@@ -1037,6 +1043,8 @@ describe('NekroNxt Server domain API (WebServer seam)', () => {
         },
         { connectionId: runtime.internalConnectionId, kind: 'internal', triggerPolicy: 'always' },
       )
+      const keptWorkspace = path.join(runtime.workspaceRoot, kept.definition.id)
+      await mkdir(keptWorkspace, { recursive: true })
       const keptDelete = await fetch(`${origin}/api/agents/${kept.definition.id}`, {
         method: 'DELETE',
         headers: { 'content-type': 'application/json' },
@@ -1054,6 +1062,7 @@ describe('NekroNxt Server domain API (WebServer seam)', () => {
         deletedChannelIds: [],
       })
       expect(runtime.repository.getChannel(kept.channel.id)).toBeDefined()
+      expect(existsSync(keptWorkspace)).toBe(true)
       expect(runtime.repository.getBinding(kept.channel.id)).toBeUndefined()
     } finally {
       api.dispose()

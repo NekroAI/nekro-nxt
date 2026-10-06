@@ -492,6 +492,7 @@ export interface ProductState {
     expectedCurrentRevisionId: string,
     confirmationName: string,
     deleteAutoCreatedBuiltInChannels: boolean,
+    deleteWorkspace?: boolean,
   ): Promise<void>
   createConnection(input: {
     readonly adapterKey: string

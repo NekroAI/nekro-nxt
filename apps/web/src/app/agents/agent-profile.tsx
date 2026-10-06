@@ -373,6 +373,7 @@ export function AgentProfile({ agent }: { readonly agent: AgentSummary }) {
   const [deleting, setDeleting] = useState(false)
   const [confirmName, setConfirmName] = useState('')
   const [deleteBuiltIn, setDeleteBuiltIn] = useState(true)
+  const [deleteWorkspace, setDeleteWorkspace] = useState(false)
   useEffect(() => setEditing(false), [agent.id])
 
   const phase = agentPhase[agent.state]
@@ -532,13 +533,24 @@ export function AgentProfile({ agent }: { readonly agent: AgentSummary }) {
         danger
         onConfirm={async () => {
           if (confirmName.trim() !== agent.name) throw new Error('输入的名称不一致。')
-          await api.getState().deleteAgent(agent.id, agent.currentRevisionId ?? '', confirmName.trim(), deleteBuiltIn)
+          await api
+            .getState()
+            .deleteAgent(agent.id, agent.currentRevisionId ?? '', confirmName.trim(), deleteBuiltIn, deleteWorkspace)
           toast(`${agent.name}已删除`)
           navigate('/agents')
         }}
       >
-        <p>{agent.name}会停止所有频道的工作。聊天记录、扩展和工作区文件保留。</p>
+        <p>
+          {agent.name}会停止所有频道的工作。聊天记录与已保存的扩展保留
+          {deleteWorkspace ? '。' : '，工作区文件也保留。'}
+        </p>
         <SwitchRow title="同时删除它的内置频道" checked={deleteBuiltIn} onCheckedChange={setDeleteBuiltIn} />
+        <SwitchRow
+          title="同时删除工作区"
+          description="永久删除它的文件、开发产物和未保存的创造候选"
+          checked={deleteWorkspace}
+          onCheckedChange={setDeleteWorkspace}
+        />
         <Field label={`输入“${agent.name}”确认`}>
           <Input value={confirmName} onChange={(event) => setConfirmName(event.target.value)} autoComplete="off" />
         </Field>

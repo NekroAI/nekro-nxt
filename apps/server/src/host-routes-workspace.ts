@@ -312,6 +312,7 @@ export function registerWorkspaceRoutes({
           }
           const { unboundChannelIds, deletedChannelIds } = await runtime.deleteAgent(agentId, {
             deleteAutoCreatedBuiltInChannels: parsed.deleteAutoCreatedBuiltInChannels,
+            deleteWorkspace: parsed.deleteWorkspace,
           })
           writeContractJson(res, 200, HostApiContracts.deleteAgent, {
             agentId,

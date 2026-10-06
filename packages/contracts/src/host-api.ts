@@ -1883,6 +1883,8 @@ export const HostApiContracts = {
         expectedCurrentRevisionId: AgentRevisionIdSchema,
         confirmationName: z.string().min(1).max(80),
         deleteAutoCreatedBuiltInChannels: z.boolean().default(true),
+        /** Also remove `workspaces/<agentId>/` (files, development shell output, creation candidates). */
+        deleteWorkspace: z.boolean().default(false),
       })
       .strict(),
     response: z

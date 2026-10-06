@@ -715,6 +715,7 @@ export function AgentManagePage() {
   const [deleteOpen, setDeleteOpen] = useState(false)
   const [deleteConfirmation, setDeleteConfirmation] = useState('')
   const [deleteAutoCreatedBuiltInChannels, setDeleteAutoCreatedBuiltInChannels] = useState(true)
+  const [deleteWorkspace, setDeleteWorkspace] = useState(false)
   const savedInspectorWidth = useUiPreferences((state) => state.layout.inspectorWidth)
   const inspectorCollapsed = useUiPreferences((state) => state.layout.inspectorCollapsed)
   const inspectorPaneRef = useRef<HTMLDivElement>(null)
@@ -953,7 +954,13 @@ export function AgentManagePage() {
     try {
       await useProductStore
         .getState()
-        .deleteAgent(agent.id, agent.currentRevisionId, deleteConfirmation, deleteAutoCreatedBuiltInChannels)
+        .deleteAgent(
+          agent.id,
+          agent.currentRevisionId,
+          deleteConfirmation,
+          deleteAutoCreatedBuiltInChannels,
+          deleteWorkspace,
+        )
       notify(
         deleteAutoCreatedBuiltInChannels ? '智能体及其自动创建的内置频道已删除。' : '智能体已删除；频道已解除绑定。',
         'success',
@@ -1317,7 +1324,7 @@ export function AgentManagePage() {
               if (!open) setDeleteConfirmation('')
             }}
             title={`删除“${agent.name}”？`}
-            description="智能体将从列表中移除，所有频道中的当前生成和工具调用会立即中止。历史配置、消息和审计记录用于追溯；扩展、图片和工作区文件归原位置管理。"
+            description="智能体将从列表中移除，所有频道中的当前生成和工具调用会立即中止。历史配置、消息和审计记录用于追溯；扩展与图片归原位置管理；工作区文件默认保留。"
             confirmLabel="删除智能体"
             confirmVariant="danger"
             confirmLoadingLabel="正在删除…"
@@ -1337,6 +1344,12 @@ export function AgentManagePage() {
                 description="范围限于当前绑定给这个智能体、并在创建智能体时自动生成的内置频道；已换绑频道、手工创建的内置频道和外部频道不在此范围。"
                 checked={deleteAutoCreatedBuiltInChannels}
                 onCheckedChange={setDeleteAutoCreatedBuiltInChannels}
+              />
+              <SwitchField
+                label="同时删除工作区"
+                description="永久删除这个智能体的工作区文件、开发产物和未保存的创造候选；已保存的扩展不受影响。"
+                checked={deleteWorkspace}
+                onCheckedChange={setDeleteWorkspace}
               />
               {deleteConfirmation && deleteConfirmation !== agent.name ? (
                 <InlineFeedback tone="error">名称不匹配。</InlineFeedback>
