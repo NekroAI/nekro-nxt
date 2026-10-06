@@ -1,29 +1,38 @@
 declare const styles: {
-  readonly catalog: string
-  readonly collapsibleBody: string
-  readonly collectionActions: string
+  readonly addRow: string
+  readonly bannerList: string
   readonly collectionRow: string
-  readonly credentialEditor: string
-  readonly credentialHeading: string
+  readonly control: string
+  readonly controlHint: string
+  readonly controlLabel: string
+  readonly controlRow: string
+  readonly credential: string
+  readonly credentialHead: string
+  readonly credentialTitle: string
+  readonly dangerRow: string
   readonly detail: string
-  readonly detailHeader: string
-  readonly dictAddRow: string
-  readonly editorFooter: string
-  readonly fieldGroup: string
-  readonly fieldHintMeta: string
+  readonly entry: string
+  readonly entryFields: string
+  readonly entryHead: string
+  readonly group: string
+  readonly groupBody: string
+  readonly groupTitle: string
+  readonly hintMeta: string
   readonly inlineActions: string
-  readonly inputWithReset: string
-  readonly installFileButton: string
-  readonly installFileInput: string
+  readonly inspection: string
+  readonly inspectionHead: string
+  readonly install: string
+  readonly installOr: string
+  readonly installRow: string
   readonly jsonField: string
-  readonly listHeading: string
-  readonly namespaceEditor: string
-  readonly namespaceMeta: string
-  readonly pluginButton: string
-  readonly pluginButtonActive: string
-  readonly pluginList: string
+  readonly loading: string
+  readonly muted: string
+  readonly namespace: string
+  readonly notice: string
+  readonly saveRow: string
   readonly schemaBadge: string
-  readonly unionField: string
+  readonly schemaRoot: string
+  readonly union: string
 }
 
 export default styles

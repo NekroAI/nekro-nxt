@@ -1,310 +1,271 @@
-.catalog {
-  display: grid;
-  grid-template-columns: minmax(220px, 280px) minmax(0, 1fr);
-  min-height: 520px;
-  gap: var(--nxt-space-5);
-  overflow: visible;
-  background: transparent;
-}
-
-.pluginList {
-  display: flex;
-  flex-direction: column;
-  gap: var(--nxt-space-1);
-  min-width: 0;
-  padding: 0;
-  overflow: auto;
-  background: transparent;
-}
-
-.listHeading {
-  padding: var(--nxt-space-2);
-  color: var(--nxt-text-muted);
-  font-size: 12px;
-  font-weight: 600;
-}
-
-.installFileButton {
-  display: inline-flex;
-  min-height: 36px;
-  align-items: center;
-  justify-content: center;
-  gap: 7px;
-  border: 1px solid var(--nxt-border-default);
-  border-radius: var(--nxt-radius-control);
-  padding: 0 13px;
-  color: var(--nxt-text-primary);
-  background: var(--nxt-bg-surface);
-  box-shadow: var(--nxt-shadow-control);
-  font-size: 12px;
-  font-weight: 650;
-  cursor: pointer;
-  transition:
-    border-color var(--nxt-motion-fast) var(--nxt-ease-standard),
-    background var(--nxt-motion-fast) var(--nxt-ease-standard);
-}
-
-.installFileButton:hover {
-  border-color: var(--nxt-border-strong);
-  background: var(--nxt-bg-hover);
-}
-
-.installFileButton:has(.installFileInput:focus-visible) {
-  outline: 2px solid var(--nxt-accent);
-  outline-offset: 2px;
-}
-
-.installFileButton[data-disabled] {
-  opacity: 0.56;
-  cursor: not-allowed;
-}
-
-.installFileInput {
-  position: absolute;
-  width: 1px;
-  height: 1px;
-  overflow: hidden;
-  clip: rect(0 0 0 0);
-  clip-path: inset(50%);
-  white-space: nowrap;
-}
-
-.pluginButton {
-  justify-content: space-between;
-  min-height: 54px;
-  height: auto;
-  text-align: left;
-}
-
-.pluginButton > span:first-child {
-  display: grid;
-  min-width: 0;
-}
-
-.pluginButton strong,
-.pluginButton small {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.pluginButton small {
-  color: var(--nxt-text-muted);
-  font-size: 11px;
-}
-
-.pluginButtonActive {
-  background: var(--nxt-accent-soft);
-  box-shadow: inset 2px 0 var(--nxt-accent);
-}
-
+/* —— 插件详情 —— */
 .detail {
-  display: flex;
-  flex-direction: column;
-  gap: var(--nxt-space-4);
-  min-width: 0;
-  padding: var(--nxt-space-5);
-  overflow: auto;
-  border-radius: var(--nxt-radius-panel);
-  background: var(--nxt-bg-surface);
-  box-shadow: var(--nxt-shadow-control);
-}
-
-.detailHeader,
-.credentialHeading,
-.editorFooter {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: var(--nxt-space-3);
-}
-
-.detailHeader {
-  align-items: flex-start;
-  padding-bottom: var(--nxt-space-4);
-  border-bottom: 1px solid var(--nxt-border-subtle);
-}
-
-.detailHeader > div {
   display: grid;
+  align-content: start;
+  gap: var(--s-6);
   min-width: 0;
-  gap: var(--nxt-space-1);
 }
 
-.detailHeader > :last-child {
-  flex: 0 0 auto;
-  margin-top: 2px;
+.loading {
+  display: grid;
+  gap: var(--s-3);
 }
 
-.detailHeader h2,
-.detailHeader p {
+.muted {
   margin: 0;
+  color: var(--muted);
+  font: var(--t-note);
 }
 
-.detailHeader h2 {
-  color: var(--nxt-text-primary);
-  font-size: 16px;
+.notice {
+  color: var(--ok);
+  font: var(--t-note);
 }
 
-.detailHeader p {
-  color: var(--nxt-text-muted);
-  font-family: var(--nxt-font-mono);
-  font-size: 11px;
-  overflow-wrap: anywhere;
+.bannerList {
+  display: grid;
+  gap: var(--s-1);
+  margin: 0;
+  padding-left: var(--s-4);
 }
 
-.namespaceEditor {
-  display: flex;
-  flex-direction: column;
-  gap: var(--nxt-space-4);
+.bannerList > span {
+  display: list-item;
 }
 
-.namespaceMeta {
+.dangerRow {
   display: flex;
   flex-wrap: wrap;
-  gap: var(--nxt-space-3);
-  color: var(--nxt-text-muted);
-  font-size: 12px;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--s-3);
+  padding: var(--s-3) var(--s-4);
+  border: 1px solid var(--line);
+  border-radius: var(--r-2);
 }
 
-.fieldGroup {
+.inlineActions {
   display: flex;
-  flex-direction: column;
-  gap: var(--nxt-space-4);
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--s-2);
+}
+
+/* —— 入口 —— */
+.entry {
+  display: grid;
+  gap: var(--s-3);
+  padding: var(--s-4);
+  border: 1px solid var(--line);
+  border-radius: var(--r-2);
+}
+
+.entryHead {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--s-2);
+}
+
+.entryFields {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: var(--s-3);
+  max-width: 640px;
+}
+
+/* —— 配置表单 —— */
+.namespace {
+  display: grid;
+  gap: var(--s-4);
   min-width: 0;
+}
+
+.schemaRoot {
+  display: grid;
+  gap: var(--s-4);
+  max-width: 720px;
+}
+
+.control {
+  display: grid;
+  gap: var(--s-1);
+  min-width: 0;
+}
+
+.controlLabel {
+  color: var(--fg-2);
+  font: var(--t-label);
+}
+
+.controlRow {
+  display: flex;
+  align-items: center;
+  gap: var(--s-2);
+}
+
+.controlRow > :first-child {
+  flex: 1;
+  min-width: 0;
+}
+
+.controlHint {
   margin: 0;
-  padding: var(--nxt-space-4);
-  border: 0;
-  border-radius: var(--nxt-radius-md);
-  background: var(--nxt-bg-subtle);
+  color: var(--muted);
+  font: var(--t-caption);
 }
 
-.fieldGroup legend {
-  padding: 0 var(--nxt-space-2);
-  color: var(--nxt-text-primary);
-  font-weight: 600;
-}
-
-.fieldGroup summary {
-  cursor: pointer;
-  color: var(--nxt-text-primary);
-  font-weight: 600;
-}
-
-.collapsibleBody {
-  display: grid;
-  gap: var(--nxt-space-4);
-}
-
-.fieldGroup p {
-  margin: 0;
-  color: var(--nxt-text-muted);
-  font-size: 12px;
-}
-
-.inputWithReset {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  gap: var(--nxt-space-2);
-}
-
-.jsonField,
-.unionField {
-  display: grid;
-  gap: var(--nxt-space-2);
-}
-
-.fieldHintMeta {
+.hintMeta {
   display: inline-flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: var(--nxt-space-2);
+  gap: var(--s-2);
 }
 
-.fieldHintMeta a {
-  color: var(--nxt-accent);
+.hintMeta a {
+  color: var(--accent);
 }
 
 .schemaBadge {
-  padding: 1px 6px;
-  border-radius: var(--nxt-radius-round);
-  color: var(--nxt-text-secondary);
-  background: var(--nxt-bg-hover);
-  font-size: 11px;
+  padding: 0 var(--s-2);
+  border: 1px solid var(--line);
+  border-radius: var(--r-1);
+  font: var(--t-caption);
 }
 
-.dictAddRow {
+.schemaBadge[data-type='warning'],
+.schemaBadge[data-type='danger'] {
+  border-color: var(--warn);
+  color: var(--warn);
+}
+
+.group {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  align-items: end;
-  gap: var(--nxt-space-2);
+  gap: var(--s-3);
+  min-width: 0;
+  margin: 0;
+  padding: var(--s-3) var(--s-4) var(--s-4);
+  border: 1px solid var(--line);
+  border-radius: var(--r-2);
+}
+
+.groupTitle {
+  padding: 0 var(--s-1);
+  color: var(--fg);
+  font: var(--t-label);
+  cursor: default;
+}
+
+summary.groupTitle {
+  cursor: pointer;
+}
+
+.groupBody {
+  display: grid;
+  gap: var(--s-4);
+  min-width: 0;
 }
 
 .collectionRow {
   display: grid;
-  gap: var(--nxt-space-2);
-  padding: var(--nxt-space-3);
-  border-radius: var(--nxt-radius-sm);
-  background: var(--nxt-bg-subtle);
+  gap: var(--s-3);
+  padding: var(--s-3);
+  border-radius: var(--r-1);
+  background: var(--surface-2);
 }
 
-.collectionActions,
-.inlineActions {
+.addRow {
   display: flex;
   flex-wrap: wrap;
-  justify-content: flex-end;
-  gap: var(--nxt-space-2);
+  align-items: flex-end;
+  gap: var(--s-2);
 }
 
-.credentialEditor {
+.addRow > :first-child {
+  flex: 1 1 200px;
+}
+
+.jsonField,
+.union {
   display: grid;
-  gap: var(--nxt-space-3);
-  padding: var(--nxt-space-4);
-  border: 1px solid color-mix(in srgb, var(--nxt-accent) 30%, var(--nxt-border-default));
-  border-radius: var(--nxt-radius-md);
-  background: var(--nxt-accent-soft);
+  gap: var(--s-3);
 }
 
-.credentialHeading {
-  justify-content: flex-start;
+.saveRow {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--s-3);
 }
 
-.credentialHeading > span:nth-child(2) {
+/* —— 凭据 —— */
+.credential {
   display: grid;
+  gap: var(--s-3);
+  max-width: 720px;
+  padding: var(--s-4);
+  border: 1px solid var(--line);
+  border-radius: var(--r-2);
+}
+
+.credentialHead {
+  display: flex;
+  align-items: center;
+  gap: var(--s-2);
+}
+
+.credentialTitle {
+  display: inline-flex;
   flex: 1;
+  align-items: baseline;
+  gap: var(--s-2);
+  min-width: 0;
 }
 
-.credentialHeading small {
-  color: var(--nxt-text-muted);
+.credentialTitle code {
+  overflow: hidden;
+  color: var(--muted);
+  font: var(--t-mono);
+  text-overflow: ellipsis;
 }
 
-.editorFooter {
-  position: static;
-  padding: var(--nxt-space-4) 0 0;
-  border-top: 1px solid var(--nxt-border-subtle);
-  color: var(--nxt-text-muted);
-  background: transparent;
-  font-size: 12px;
+/* —— 安装 —— */
+.install {
+  display: grid;
+  gap: var(--s-4);
 }
 
-@media (max-width: 1180px) {
-  .catalog {
-    grid-template-columns: 260px minmax(0, 1fr);
-  }
+.installRow {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: var(--s-2);
 }
 
-@media (prefers-reduced-motion: reduce) {
-  .catalog *,
-  .catalog *::before,
-  .catalog *::after {
-    animation-duration: 1ms !important;
-    transition-duration: 1ms !important;
-  }
+.installRow > :first-child {
+  flex: 1 1 260px;
 }
 
-:global([data-reduced-motion='true']) .catalog *,
-:global([data-reduced-motion='true']) .catalog *::before,
-:global([data-reduced-motion='true']) .catalog *::after {
-  animation-duration: 1ms !important;
-  transition-duration: 1ms !important;
+.installOr {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--s-3);
+  color: var(--muted);
+  font: var(--t-note);
+}
+
+.inspection {
+  display: grid;
+  gap: var(--s-3);
+  padding: var(--s-4);
+  border: 1px solid var(--line);
+  border-radius: var(--r-2);
+}
+
+.inspectionHead {
+  display: grid;
+  gap: var(--s-1);
 }

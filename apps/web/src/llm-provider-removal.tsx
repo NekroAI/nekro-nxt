@@ -3,11 +3,15 @@ import { useEffect, useRef, useState } from 'react'
 import { HostApiContracts, type HostApiResponse } from '@nekro-nxt/contracts'
 import { callHostApi } from './host-api-client.js'
 import { providerDisplayName } from './provider-labels.js'
-import { Button, Dialog } from './ui-kit/index.js'
+import { Banner, Button, Dialog, Spinner } from './ui-kit/next/index.js'
 import styles from './llm-settings.module.css'
 
 type RemovalImpact = HostApiResponse<'llmProviderRemovalImpact'>
 
+/**
+ * Removal always starts from a fresh impact preview; a failed commit drops the preview so the next confirmation is
+ * never blind.
+ */
 export function LlmProviderRemovalDialog({
   provider,
   onClose,
@@ -67,7 +71,6 @@ export function LlmProviderRemovalDialog({
     } catch (cause) {
       if (!mounted.current) return
       setError(cause instanceof Error ? cause.message : String(cause))
-      // A failed commit requires a fresh preview, never another blind confirmation.
       setImpact(null)
     } finally {
       if (mounted.current) setPending(null)
@@ -77,13 +80,12 @@ export function LlmProviderRemovalDialog({
   return (
     <Dialog
       open
+      wide
       onOpenChange={(open) => {
-        if (!open) onClose()
+        if (!open && pending !== 'delete') onClose()
       }}
       title="检查供应商移除影响"
-      description="确认前请检查模型、智能体和频道上下文的影响。"
-      pending={pending === 'delete'}
-      footer={
+      actions={
         <>
           <Button variant="ghost" disabled={pending === 'delete'} onClick={onClose}>
             取消
@@ -92,9 +94,8 @@ export function LlmProviderRemovalDialog({
             重新检查影响
           </Button>
           <Button
-            variant="danger"
-            loading={pending === 'delete'}
-            loadingLabel="移除中…"
+            variant="danger-solid"
+            busy={pending === 'delete'}
             disabled={!impact || Boolean(impact.blockedReason) || pending !== null}
             onClick={() => void remove()}
           >
@@ -103,52 +104,63 @@ export function LlmProviderRemovalDialog({
         </>
       }
     >
-      <div className={styles.removalImpact}>
-        {pending === 'preview' ? <p role="status">正在检查影响…</p> : null}
-        {error ? <p role="alert">{error}</p> : null}
+      <div className={styles.removal}>
+        {pending === 'preview' ? (
+          <p className={styles.muted} role="status">
+            <Spinner /> 正在检查影响…
+          </p>
+        ) : null}
+        {error ? (
+          <p className={styles.fieldError} role="alert">
+            {error}
+          </p>
+        ) : null}
         {impact ? (
           <>
             <p>
-              <strong>{providerDisplayName(impact.provider, impact.displayName)}</strong>（{impact.provider}）
-            </p>
-            <p>
+              <strong>{providerDisplayName(impact.provider, impact.displayName)}</strong>
               {impact.declared
-                ? '删除此自定义供应商的名称、地址、协议和模型配置。恢复时需要重新添加。'
-                : '移除此供应商的已保存配置。内置目录项会保留，之后可从“添加供应商”重新配置。'}
+                ? '：删除这个自定义供应商的名称、地址、协议和模型。之后需要重新添加。'
+                : '：移除已保存的配置。供应商仍留在目录里，之后可以从“添加供应商”重新配置。'}
             </p>
-            <div>
-              <strong>涉及的模型（{impact.models.length}）</strong>
-              <div className={styles.modelList}>
+            <div className={styles.removalBlock}>
+              <span className={styles.removalTitle}>涉及的模型（{impact.models.length}）</span>
+              <div className={styles.chipList}>
                 {impact.models.map((model) => (
-                  <span key={model}>{model}</span>
+                  <span className={styles.tag} key={model}>
+                    {model}
+                  </span>
                 ))}
               </div>
             </div>
-            <p>
-              API
-              密钥保留在本机凭据存储，不会删除，以免影响共用密钥的其他供应商或功能。智能体配置、频道绑定和聊天记录不会删除。
-            </p>
-            <div>
-              <strong>智能体与频道引用（{impact.references.length}）</strong>
+            <div className={styles.removalBlock}>
+              <span className={styles.removalTitle}>引用它的智能体与频道（{impact.references.length}）</span>
               {impact.references.length === 0 ? (
-                <p>没有智能体当前配置或活动频道上下文引用此供应商。</p>
+                <p className={styles.muted}>没有智能体当前配置或活动频道上下文引用此供应商。</p>
               ) : (
-                <ul>
+                <ul className={styles.referenceList}>
                   {impact.references.map((reference, index) => (
                     <li key={`${reference.agentId}:${reference.channelId ?? 'config'}:${reference.role}:${index}`}>
-                      <strong>{reference.displayName}</strong> ·{' '}
-                      {reference.role === 'primary' ? '主模型' : '辅助视觉模型'} · {reference.model}
-                      <br />
-                      {reference.scope === 'configuration'
-                        ? '智能体当前配置'
-                        : `频道“${reference.channelName}”的${reference.episodeStatus === 'opening' ? '建立中' : '活动'}上下文（可能仍使用旧配置）`}
+                      <strong>{reference.displayName}</strong>
+                      <span className={styles.muted}>
+                        {reference.role === 'primary' ? '主模型' : '看图模型'} · {reference.model}
+                      </span>
+                      <span className={styles.muted}>
+                        {reference.scope === 'configuration'
+                          ? '智能体当前配置'
+                          : `频道“${reference.channelName}”的${reference.episodeStatus === 'opening' ? '建立中' : '活动'}上下文（可能仍使用旧配置）`}
+                      </span>
                     </li>
                   ))}
                 </ul>
               )}
             </div>
+            <p className={styles.muted}>
+              API
+              密钥保留在本机凭据存储，不会删除，以免影响共用密钥的其他供应商或功能。智能体配置、频道绑定和聊天记录也不会删除。
+            </p>
             {impact.blockedReason ? (
-              <p role="alert">{impact.blockedReason}</p>
+              <Banner tone="bad">{impact.blockedReason}</Banner>
             ) : (
               <p>确认后，此供应商及其模型将退出可用列表。</p>
             )}

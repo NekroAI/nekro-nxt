@@ -1,340 +1,203 @@
-.providerSettings {
+/* —— 供应商详情 —— */
+.detail {
   display: grid;
-  gap: 20px;
+  align-content: start;
+  gap: var(--s-6);
+  min-width: 0;
 }
 
-.toolbar,
-.editorHeading,
-.actions,
-.secondaryActions {
-  display: flex;
+.fields {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  gap: var(--s-4);
+  max-width: 720px;
+}
+
+.loading {
+  display: grid;
+  gap: var(--s-3);
+}
+
+.disclosureToggle {
+  display: inline-flex;
   align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-}
-
-.compactForm,
-.compactActions {
-  display: grid;
-  gap: 12px;
-}
-
-.compactActions {
-  justify-items: start;
-}
-
-.toolbar h2,
-.editorHeading h3 {
-  margin: 0;
-  color: var(--nxt-text-primary);
-  font-size: 15px;
-}
-
-.toolbar p,
-.editorHeading p {
-  margin: 3px 0 0;
-  color: var(--nxt-text-muted);
-  font-size: 11px;
-}
-
-.layout {
-  display: grid;
-  grid-template-columns: minmax(260px, 0.68fr) minmax(440px, 1.32fr);
-  gap: 18px;
-  align-items: start;
-}
-
-.providerList {
-  display: grid;
-  gap: 4px;
-  border: 1px solid var(--nxt-border-subtle);
-  border-radius: var(--nxt-radius-panel);
-  padding: 8px;
-  background: var(--nxt-bg-surface);
-  box-shadow: var(--nxt-shadow-control);
-  overflow: hidden;
-}
-
-.providerButton {
-  width: 100%;
-  min-height: 60px;
-  justify-content: space-between;
+  gap: var(--s-1);
+  padding: 0;
   border: 0;
-  border: 1px solid transparent;
-  border-radius: var(--nxt-radius-control);
-  padding: 8px 10px;
-  text-align: left;
-}
-
-.providerButton > span:first-child {
-  display: grid;
-  min-width: 0;
-  gap: 3px;
-}
-
-.providerButton strong {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.providerButton small {
-  color: var(--nxt-text-muted);
-  font-size: 11px;
-  font-weight: 400;
-}
-
-.providerButtonActive {
-  border-color: color-mix(in srgb, var(--nxt-accent) 34%, var(--nxt-border-subtle));
-  background: var(--nxt-accent-soft);
-  box-shadow: inset 2px 0 var(--nxt-accent);
-}
-
-.addProvider {
-  justify-content: flex-start;
-  margin-top: 6px;
-}
-
-.listEmpty {
-  padding: 20px 12px;
-  color: var(--nxt-text-muted);
-  font-size: 12px;
-}
-
-.editor {
-  position: relative;
-  display: grid;
-  gap: 16px;
-  border: 1px solid var(--nxt-border-subtle);
-  border-radius: var(--nxt-radius-panel);
-  padding: 22px;
-  background: var(--nxt-bg-surface);
-  box-shadow: var(--nxt-shadow-control);
-  overflow: hidden;
-}
-
-.editor::before {
-  display: none;
-}
-
-.modelSection {
-  display: grid;
-  gap: 8px;
-}
-
-.fieldLabel {
-  color: var(--nxt-text-secondary);
-  font-size: 12px;
-  font-weight: 650;
-}
-
-.modelList {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
-}
-
-.modelList span {
-  border: 1px solid var(--nxt-border-subtle);
-  border-radius: var(--nxt-radius-round);
-  padding: 3px 8px;
-  color: var(--nxt-text-secondary);
-  background: var(--nxt-bg-subtle);
-  font-size: 11px;
-}
-
-.modelSectionHeading {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-}
-
-.modelSectionHeading > span {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
-
-.modelHint {
-  margin: 0;
-  color: var(--nxt-text-muted);
-  font-size: 11px;
-}
-
-.modelEditor {
-  display: grid;
-  gap: 10px;
-}
-
-.modelTable {
-  display: grid;
-  gap: 6px;
-}
-
-.modelHeaderRow,
-.modelRow {
-  display: grid;
-  grid-template-columns: minmax(130px, 1.4fr) minmax(110px, 1.2fr) minmax(84px, 0.7fr) minmax(84px, 0.7fr) 64px 32px;
-  gap: 8px;
-  align-items: center;
-}
-
-.modelHeaderRow {
-  color: var(--nxt-text-muted);
-  font-size: 11px;
-  font-weight: 650;
-}
-
-.modelRow > * {
-  min-width: 0;
-}
-
-.modelSwitch {
-  display: flex;
-  justify-content: center;
-}
-
-.modelError {
-  margin: 0;
-  color: var(--nxt-danger);
-  font-size: 12px;
-}
-
-.modelToolbar {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 8px;
-}
-
-.discoveredModels {
-  display: grid;
-  gap: 8px;
-  border-radius: var(--nxt-radius-md);
-  padding: 10px 12px;
-  background: var(--nxt-bg-subtle);
-}
-
-@media (width < 1180px) {
-  .modelHeaderRow {
-    display: none;
-  }
-
-  .modelRow {
-    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) 64px 32px;
-    border-bottom: 1px solid var(--nxt-border-subtle);
-    padding-bottom: 8px;
-  }
-}
-
-.advanced {
-  border-radius: var(--nxt-radius-md);
-  padding: 12px 14px;
-  background: var(--nxt-bg-subtle);
-}
-
-.advanced summary {
-  color: var(--nxt-text-secondary);
-  font-size: 12px;
-  font-weight: 650;
+  background: transparent;
+  color: inherit;
+  font: inherit;
   cursor: pointer;
 }
 
-.advancedFields {
-  display: grid;
-  gap: 16px;
-  padding-top: 16px;
+.chevron {
+  color: var(--muted);
+  transition: transform var(--dur-1) var(--ease);
 }
 
-@media (width < 1180px) {
-  .layout {
-    grid-template-columns: minmax(230px, 0.65fr) minmax(390px, 1.35fr);
-    gap: 16px;
-  }
+.chevron[data-open='true'] {
+  transform: rotate(90deg);
 }
 
-:global(:root[data-glin-experiment]) .providerSettings {
-  height: 100%;
-  min-height: 0;
-  grid-template-rows: auto minmax(0, 1fr);
-  gap: 0;
+.dangerRow {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--s-3);
+  padding: var(--s-3) var(--s-4);
+  border: 1px solid var(--line);
+  border-radius: var(--r-2);
 }
 
-:global(:root[data-glin-experiment]) .toolbar {
-  flex: 0 0 auto;
-  border-bottom: 1px solid var(--nxt-border-subtle);
-  padding: 0 0 14px;
-}
-
-:global(:root[data-glin-experiment]) .layout {
-  min-height: 0;
-  grid-template-columns: minmax(230px, 0.56fr) minmax(420px, 1.44fr);
-  gap: 0;
-  align-items: stretch;
-  overflow: hidden;
-}
-
-:global(:root[data-glin-experiment]) .providerList {
-  align-content: start;
-  overflow-x: hidden;
-  overflow-y: auto;
-  border: 0;
-  border-right: 1px solid var(--nxt-border-subtle);
-  border-radius: 0;
-  padding: 12px 14px 24px 0;
-  background: transparent;
-  box-shadow: none;
-}
-
-:global(:root[data-glin-experiment]) .editor {
-  align-content: start;
-  overflow-x: hidden;
-  overflow-y: auto;
-  border: 0;
-  border-radius: 0;
-  padding: 18px 0 36px 24px;
-  background: transparent;
-  box-shadow: none;
-  scrollbar-gutter: stable;
-}
-
-:global(:root[data-glin-experiment]) .editorHeading {
+/* Sticky actions so saving never scrolls out of reach on long catalogs. */
+.actionBar {
   position: sticky;
-  z-index: var(--nxt-layer-sticky);
-  top: -18px;
-  border-bottom: 1px solid var(--nxt-border-subtle);
-  padding: 18px 0 12px;
-  background: var(--nxt-bg-surface);
-  backdrop-filter: var(--nxt-glass-filter);
+  z-index: 4;
+  bottom: var(--s-4);
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--s-2);
+  padding: var(--s-2);
+  border: 1px solid var(--line-2);
+  border-radius: var(--r-2);
+  background: color-mix(in srgb, var(--surface) 92%, transparent);
+  box-shadow: var(--sh-2);
+  backdrop-filter: blur(12px);
 }
 
-.removalAction {
-  border-top: 1px solid var(--nxt-border-subtle);
-  padding-top: 12px;
+.actionBarStart {
+  display: flex;
+  flex: 1;
+  flex-wrap: wrap;
+  gap: var(--s-2);
 }
 
-.removalImpact {
+/* —— 模型表 —— */
+.modelEditor {
   display: grid;
-  gap: 16px;
-  overflow-wrap: anywhere;
-  color: var(--nxt-text-secondary);
-  font-size: 13px;
+  gap: var(--s-3);
+  min-width: 0;
 }
 
-.removalImpact p {
+.numberCell {
+  display: flex;
+  align-items: center;
+  gap: var(--s-2);
+  min-width: 0;
+}
+
+.numberCell > input {
+  flex: 1;
+  min-width: 0;
+}
+
+.numberHint {
+  flex: none;
+  min-width: 40px;
+  color: var(--muted);
+  font: var(--t-caption);
+  text-align: right;
+}
+
+.discovered {
+  display: grid;
+  gap: var(--s-2);
+  padding: var(--s-3) var(--s-4);
+  border: 1px dashed var(--line-2);
+  border-radius: var(--r-2);
+}
+
+.discoveredHead {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--s-3);
+  color: var(--fg-2);
+  font: var(--t-label);
+}
+
+.chipList {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--s-1);
+}
+
+.tag {
+  padding: 0 var(--s-2);
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--surface-2);
+  font: var(--t-mono);
+}
+
+.fieldError {
+  margin: 0;
+  color: var(--bad);
+  font: var(--t-note);
+}
+
+.muted {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--s-2);
+  margin: 0;
+  color: var(--muted);
+  font: var(--t-note);
+}
+
+.srOnly {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+/* —— 移除影响 —— */
+.removal {
+  display: grid;
+  gap: var(--s-4);
+}
+
+.removal p {
   margin: 0;
 }
 
-.removalImpact ul {
-  margin: 8px 0 0;
-  padding-left: 20px;
+.removalBlock {
+  display: grid;
+  gap: var(--s-2);
 }
 
-.removalImpact li + li {
-  margin-top: 10px;
+.removalTitle {
+  font: var(--t-label);
 }
 
-.removalImpact [role='alert'] {
-  color: var(--nxt-warning);
+.referenceList {
+  display: grid;
+  gap: var(--s-2);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.referenceList li {
+  display: grid;
+  gap: var(--s-1);
+  padding: var(--s-2) var(--s-3);
+  border: 1px solid var(--line);
+  border-radius: var(--r-1);
+}
+
+/* —— 新建智能体内的简表 —— */
+.compactForm {
+  display: grid;
+  gap: var(--s-3);
+}
+
+.compactActions {
+  display: flex;
+  justify-content: flex-end;
 }

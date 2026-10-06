@@ -1,184 +1,149 @@
-.space {
-  display: grid;
-  grid-template-columns: 220px minmax(0, 1fr);
-  height: 100%;
-  min-height: 0;
-}
-
-.list {
-  display: flex;
-  flex-direction: column;
-  min-height: 0;
-  border-right: 1px solid var(--line);
-  background: color-mix(in srgb, var(--side) 60%, var(--bg));
-}
-
-.listHead {
-  min-height: 52px;
-  padding: 14px 16px 8px;
-}
-
-.listHead h2 {
-  margin: 0;
-  font-size: 15px;
-  font-weight: 650;
-}
-
-.listBody {
-  flex: 1;
-  min-height: 0;
-  overflow: auto;
-  padding: 0 10px 14px;
-}
-
+/* —— 设置列表 —— */
 .row {
   position: relative;
   display: flex;
   align-items: center;
-  gap: 10px;
-  padding: 9px 12px 9px 14px;
-  border-radius: 10px;
+  gap: var(--s-3);
+  min-height: var(--row);
+  padding: 0 var(--s-3) 0 var(--s-4);
+  border-radius: var(--r-2);
   color: var(--fg-2);
-  font-weight: 550;
+  font: var(--t-label);
   text-decoration: none;
   transition:
     background var(--dur-1),
     color var(--dur-1);
 }
 
-.row:hover {
+.row:hover,
+.childRow:hover {
   background: var(--hover);
   color: var(--fg);
 }
 
-.row[data-selected='true'] {
+.row[data-selected='true'],
+.childRow[data-selected='true'] {
   color: var(--fg);
 }
 
-.row[data-selected='true']:hover {
+.row[data-selected='true']:hover,
+.childRow[data-selected='true']:hover {
   background: transparent;
 }
 
-.page {
-  height: 100%;
-  min-height: 0;
-  overflow: auto;
-}
-
-.body {
+/* Objects of the current section, indented under it. */
+.children {
   display: grid;
-  gap: 26px;
-  max-width: 860px;
-  margin: 0 auto;
-  padding: 30px 40px 56px;
-  animation: rise 360ms var(--ease) both;
+  gap: var(--s-1);
+  margin: var(--s-1) 0 var(--s-2) var(--s-6);
+  padding-left: var(--s-2);
+  border-left: 1px solid var(--line);
 }
 
-@keyframes rise {
-  from {
-    opacity: 0;
-    transform: translateY(6px);
+.childGroup {
+  padding: var(--s-2) var(--s-3) var(--s-1);
+  color: var(--faint);
+  font: var(--t-caption);
+}
+
+.childRow {
+  position: relative;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: center;
+  gap: 0 var(--s-2);
+  padding: var(--s-2) var(--s-3);
+  border-radius: var(--r-2);
+  color: var(--fg-2);
+  text-decoration: none;
+  transition:
+    background var(--dur-1),
+    color var(--dur-1);
+}
+
+.childName {
+  overflow: hidden;
+  font: var(--t-label);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.childMeta {
+  grid-column: 2;
+  overflow: hidden;
+  color: var(--muted);
+  font: var(--t-caption);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Below 1100px the list pane collapses; these selectors take its place. */
+.narrowNav {
+  display: none;
+}
+
+@media (max-width: 1099px) {
+  .narrowNav {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--s-2);
+  }
+
+  .narrowNav > * {
+    flex: 1 1 200px;
   }
 }
 
-.title {
-  margin: 0;
-  font-size: var(--fs-2xl);
-  font-weight: 650;
-  letter-spacing: -0.01em;
-}
-
-.group {
-  display: grid;
-  gap: 4px;
-  padding: 6px 16px;
-}
-
-.group > * + * {
-  border-top: 1px solid var(--line);
-}
-
-.line {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 16px;
-  padding: 12px 0;
-  font-weight: 550;
-}
-
-.barkFields {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
-  align-items: start;
-  gap: 12px;
-  padding: 14px 0 12px;
-}
-
-.barkFields > div:last-child:nth-child(3) {
-  grid-column: 1 / -1;
-}
-
-.saveBar {
-  position: sticky;
-  bottom: 16px;
-  z-index: 3;
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  padding: 10px 10px 10px 16px;
-  border: 1px solid var(--line-2);
-  border-radius: 14px;
-  background: color-mix(in srgb, var(--surface) 88%, transparent);
-  box-shadow: var(--sh-3);
-  backdrop-filter: blur(14px);
-  animation: rise 300ms var(--ease) both;
-}
-
-.saveBar span {
-  flex: 1;
-  color: var(--fg-2);
-  font-size: var(--fs-sm);
-}
-
-.cards {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
-  gap: 14px;
-}
-
-.card {
-  display: grid;
-  grid-template-rows: auto 1fr auto;
-  gap: 10px;
-  padding: 16px;
-}
-
-.cardHead {
+/* —— 主区 —— */
+.head {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  justify-content: space-between;
-  gap: 8px;
+  gap: var(--s-3);
 }
 
-.cardText {
+.title {
+  flex: 1;
+  min-width: 0;
   margin: 0;
-  color: var(--fg-2);
-  font-size: var(--fs-sm);
-  line-height: 1.6;
+  font: var(--t-page);
 }
 
-.cardFoot {
+.headActions {
   display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 8px;
+  gap: var(--s-2);
+}
+
+.loading {
+  display: grid;
+  gap: var(--s-3);
+}
+
+.muted {
+  color: var(--muted);
+  font: var(--t-note);
+}
+
+.srOnly {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+/* —— 平台适配器 —— */
+.adapterName {
+  display: grid;
+  gap: var(--s-1);
+  min-width: 0;
+  padding: var(--s-1) 0;
 }
 
 .source {
   color: var(--accent);
-  font-size: var(--fs-xs);
+  font: var(--t-note);
   text-decoration: none;
 }
 
@@ -186,82 +151,61 @@
   text-decoration: underline;
 }
 
-.muted {
-  color: var(--muted);
-  font-size: var(--fs-sm);
+/* —— 通知 —— */
+.rowControls {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--s-2);
 }
 
+.barkFields {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  align-items: start;
+  gap: var(--s-3);
+}
+
+.barkFields > div:last-child:nth-child(3) {
+  grid-column: 1 / -1;
+}
+
+/* —— 关于 —— */
 .brand {
   display: flex;
   align-items: center;
-  gap: 16px;
+  gap: var(--s-4);
 }
 
 .brand img {
-  width: 56px;
-  height: 56px;
+  width: 48px;
+  height: 48px;
 }
 
 .brand div {
   display: grid;
-  gap: 2px;
+  gap: var(--s-1);
 }
 
 .brand b {
-  font-size: var(--fs-xl);
+  font: var(--t-section);
 }
 
 .brand span {
   color: var(--muted);
-  font-size: var(--fs-sm);
-}
-
-.facts {
-  display: grid;
-  grid-template-columns: 96px 1fr;
-  gap: 10px 16px;
-  margin: 0;
-  padding: 12px 0;
-  font-size: var(--fs-sm);
-}
-
-.group > .facts {
-  border: 0;
-}
-
-.facts dt {
-  color: var(--muted);
-}
-
-.facts dd {
-  margin: 0;
-}
-
-.facts a {
-  color: var(--accent);
+  font: var(--t-note);
 }
 
 .notice {
   margin: 0;
   color: var(--muted);
-  font-size: var(--fs-xs);
-  line-height: 1.7;
+  font: var(--t-note);
 }
 
-@media (max-width: 760px) {
-  .space {
-    grid-template-columns: minmax(0, 1fr);
-  }
+.link {
+  color: var(--accent);
+  text-decoration: none;
+}
 
-  .list {
-    display: none;
-  }
-
-  .body {
-    padding: 20px 16px 40px;
-  }
-
-  .barkFields {
-    grid-template-columns: minmax(0, 1fr);
-  }
+.link:hover {
+  text-decoration: underline;
 }

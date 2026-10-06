@@ -1,31 +1,53 @@
 import { LlmProviderRemovalDialog } from './llm-provider-removal.js'
 import { useProductRuntime } from './product-runtime.js'
 import { StaleHostReadError, callHostApi } from './host-api-client.js'
-import { Plus, RefreshCw } from 'lucide-react'
-import { useEffect, useMemo, useState, type FormEvent, type ReactNode } from 'react'
+import { ChevronRight, RefreshCw, Trash2 } from 'lucide-react'
+import { useEffect, useId, useMemo, useState, type FormEvent, type ReactNode } from 'react'
 import { HostApiContracts, type HostApiResponse } from '@nekro-nxt/contracts'
-import { notify } from './components/notifications.js'
-import { EmptyState } from './components/product-feedback.js'
 import { providerDisplayName } from './provider-labels.js'
 import {
   ModelListEditor,
+  ModelListView,
   modelPayload,
   modelRowFromModel,
   modelRowsError,
   modelsToAdd,
   type ModelRow,
 } from './llm-model-editor.js'
-import { Button, ConfirmDialog, Dialog, Field, Input, SecretInput, SelectField, StatusBadge } from './ui-kit/index.js'
+import {
+  Banner,
+  Button,
+  Chip,
+  ConfirmDialog,
+  Diagnostics,
+  Dialog,
+  Disclosure,
+  EmptyState,
+  Field,
+  Input,
+  ObjectHeader,
+  Pressable,
+  PropertyGroup,
+  SecretInput,
+  Select,
+  Skeleton,
+  toast,
+  type Tone,
+} from './ui-kit/next/index.js'
 import styles from './llm-settings.module.css'
 
 type ProviderSettingsView = HostApiResponse<'llmProviders'>
-type ProviderView = ProviderSettingsView['providers'][number]
+export type ProviderView = ProviderSettingsView['providers'][number]
 type DiscoveredModelView = HostApiResponse<'llmDiscoverModels'>['models'][number]
 
 /** DSH model adapters whose per-route model list product settings can edit. */
 const EDITABLE_MODEL_NAMESPACES = new Set(['llm-pi-ai', 'llm-deepseek'])
 /** Select value standing for "no route-wide protocol": each catalog model keeps its own. */
 const CATALOG_PROTOCOL = '__catalog__'
+/** Selection key of a provider that does not exist yet (custom OpenAI-compatible route). */
+export const CUSTOM_PROVIDER = '__custom__'
+
+const failure = (cause: unknown): string => (cause instanceof Error ? cause.message : String(cause))
 
 const customProviderKey = (displayName: string, providers: readonly ProviderView[]): string => {
   const base =
@@ -43,16 +65,108 @@ const customProviderKey = (displayName: string, providers: readonly ProviderView
   return candidate
 }
 
-export function LlmProviderSettings(): React.ReactNode {
-  const useProductStore = useProductRuntime().store
+/** How a provider is wired: user-declared, the generic catalog route, or a fixed built-in adapter. */
+export const providerKind = (provider: ProviderView): string =>
+  provider.declared ? '自定义接入' : provider.settingsNs === 'llm-pi-ai' ? '通用接入' : '内置固定接入'
 
-  const query = useProductStore((state) => state.llmProvidersQuery)
-  const settings = query.data ?? null
-  const [selectedId, setSelectedId] = useState('')
-  const [customMode, setCustomMode] = useState(false)
-  const [addOpen, setAddOpen] = useState(false)
-  const [removingProvider, setRemovingProvider] = useState('')
-  const [addCandidate, setAddCandidate] = useState('')
+export const providerStatus = (provider: ProviderView): { readonly label: string; readonly tone: Tone } =>
+  provider.active
+    ? { label: '可用', tone: 'ok' }
+    : provider.configured
+      ? { label: '待启用', tone: 'warn' }
+      : { label: '未配置', tone: 'neutral' }
+
+/** The shared provider catalog query; the first caller loads it. */
+export function useLlmProviders() {
+  const store = useProductRuntime().store
+  const query = store((state) => state.llmProvidersQuery)
+  const load = async (): Promise<ProviderSettingsView | undefined> => {
+    try {
+      return await store.getState().loadLlmProviders()
+    } catch (cause) {
+      if (cause instanceof StaleHostReadError) return undefined
+      if (query.data) toast(`模型供应商刷新失败：${failure(cause)}`, { tone: 'bad', group: 'llm-provider-refresh' })
+      return undefined
+    }
+  }
+  return { settings: query.data ?? null, loading: query.loading, error: query.error, load }
+}
+
+/** Chooses an unconfigured catalog provider or the custom route to start configuring. */
+export function AddProviderDialog({
+  open,
+  onOpenChange,
+  providers,
+  onPick,
+}: {
+  readonly open: boolean
+  readonly onOpenChange: (open: boolean) => void
+  readonly providers: readonly ProviderView[]
+  readonly onPick: (provider: string) => void
+}) {
+  const available = providers.filter((provider) => !provider.configured)
+  const [candidate, setCandidate] = useState('')
+  useEffect(() => {
+    if (open) setCandidate(available[0]?.provider ?? CUSTOM_PROVIDER)
+    // Reset only on open; the catalog refreshing must not override the user's pick.
+  }, [open])
+  return (
+    <Dialog
+      open={open}
+      onOpenChange={onOpenChange}
+      title="添加模型供应商"
+      actions={
+        <>
+          <Button variant="ghost" onClick={() => onOpenChange(false)}>
+            取消
+          </Button>
+          <Button
+            variant="primary"
+            onClick={() => {
+              onOpenChange(false)
+              onPick(candidate)
+            }}
+          >
+            开始配置
+          </Button>
+        </>
+      }
+    >
+      <Field label="模型供应商" hint="候选项来自当前运行环境的供应商目录。">
+        <Select
+          value={candidate}
+          onChange={(event) => setCandidate(event.target.value)}
+          options={[
+            ...available.map((provider) => ({
+              value: provider.provider,
+              label: providerDisplayName(provider.provider, provider.displayName),
+            })),
+            { value: CUSTOM_PROVIDER, label: '自定义 OpenAI 兼容供应商' },
+          ]}
+        />
+      </Field>
+    </Dialog>
+  )
+}
+
+/**
+ * One provider's configuration: credential, model catalog, connection test, advanced route settings and removal.
+ * `providerId` may be {@link CUSTOM_PROVIDER} for a provider that is being created.
+ */
+export function ModelProviderDetail({
+  providerId: requested,
+  onSelect,
+}: {
+  readonly providerId: string
+  readonly onSelect: (provider: string) => void
+}): ReactNode {
+  const store = useProductRuntime().store
+  const { settings } = useLlmProviders()
+  const customMode = requested === CUSTOM_PROVIDER
+  const selected = useMemo(
+    () => (customMode ? undefined : settings?.providers.find((provider) => provider.provider === requested)),
+    [customMode, requested, settings],
+  )
   const [displayName, setDisplayName] = useState('')
   const [baseURL, setBaseURL] = useState('')
   const [api, setApi] = useState('')
@@ -60,20 +174,13 @@ export function LlmProviderSettings(): React.ReactNode {
   const [rows, setRows] = useState<readonly ModelRow[]>([])
   const [modelsDirty, setModelsDirty] = useState(false)
   const [restoreOpen, setRestoreOpen] = useState(false)
+  const [removing, setRemoving] = useState(false)
+  const [advancedOpen, setAdvancedOpen] = useState(customMode)
   const [discovered, setDiscovered] = useState<readonly DiscoveredModelView[]>([])
-  const [operation, setPending] = useState<'save' | 'discover' | 'test' | 'restore' | null>(null)
-  const pending = operation ?? (query.loading ? 'load' : null)
-  const [actionError, setError] = useState('')
-  const error = actionError || query.error
+  const [pending, setPending] = useState<'save' | 'discover' | 'test' | null>(null)
   const [submitted, setSubmitted] = useState(false)
+  const advancedId = useId()
 
-  const selected = useMemo(
-    () => settings?.providers.find((provider) => provider.provider === selectedId),
-    [selectedId, settings],
-  )
-  const selectedDisplayName = selected ? providerDisplayName(selected.provider, selected.displayName) : undefined
-  const configuredProviders = settings?.providers.filter((provider) => provider.configured) ?? []
-  const availableProviders = settings?.providers.filter((provider) => !provider.configured) ?? []
   const customEditor = customMode || selected?.declared === true
   const providerId = customMode
     ? settings
@@ -91,63 +198,36 @@ export function LlmProviderSettings(): React.ReactNode {
   const testModel = testModels[0]
   const testModelName = testModel && 'name' in testModel ? (testModel.name ?? testModel.id) : testModel?.id
 
-  const load = async (): Promise<void> => {
-    if (pending === 'load' && settings) return
-    try {
-      const next = await useProductStore.getState().loadLlmProviders()
-      setSelectedId((current) =>
-        next.providers.some((provider) => provider.provider === current && provider.configured)
-          ? current
-          : (next.providers.find((provider) => provider.configured)?.provider ?? ''),
-      )
-    } catch (cause) {
-      if (cause instanceof StaleHostReadError) return
-      const message = cause instanceof Error ? cause.message : String(cause)
-      if (settings) notify(`模型供应商刷新失败：${message}`, 'error', 'llm-provider-refresh')
+  // A different provider (or fresh data for it) resets the draft; typing never does.
+  const selectedKey = selected ? `${selected.provider}:${selected.settingsRevision}` : requested
+  useEffect(() => {
+    setSubmitted(false)
+    setDiscovered([])
+    setApiKey('')
+    setModelsDirty(false)
+    if (customMode) {
+      setDisplayName('')
+      setBaseURL('')
+      setApi(settings?.protocols[0] ?? '')
+      setRows([])
+      setAdvancedOpen(true)
+      return
     }
-  }
-
-  useEffect(() => {
-    void load()
-    // The initial request owns this effect; subsequent refreshes are explicit user actions.
-  }, [])
-
-  useEffect(() => {
-    if (!selected || customMode) return
+    if (!selected) return
     setDisplayName(providerDisplayName(selected.provider, selected.displayName))
     setBaseURL(selected.baseURL ?? '')
     setApi(selected.api ?? '')
     setRows(selected.models.map(modelRowFromModel))
-    setModelsDirty(false)
-    setApiKey('')
-    setDiscovered([])
-    setSubmitted(false)
-  }, [customMode, selected])
+  }, [selectedKey])
 
-  const enterCustomMode = (): void => {
-    setCustomMode(true)
-    setDisplayName('')
-    setBaseURL('')
-    setApi(settings?.protocols[0] ?? '')
-    setRows([])
-    setModelsDirty(false)
-    setApiKey('')
-    setDiscovered([])
-    setError('')
-    setSubmitted(false)
-  }
-
-  const selectProvider = (provider: ProviderView): void => {
-    setCustomMode(false)
-    setSelectedId(provider.provider)
-    setError('')
-    setSubmitted(false)
+  if (!settings) return null
+  if (!customMode && !selected) {
+    return <EmptyState title="没有找到这个供应商" action={<Button onClick={() => onSelect('')}>返回模型</Button>} />
   }
 
   const discover = async (): Promise<void> => {
     if (!providerId || pending) return
     setPending('discover')
-    setError('')
     try {
       const result = await callHostApi(
         HostApiContracts.llmDiscoverModels,
@@ -166,15 +246,14 @@ export function LlmProviderSettings(): React.ReactNode {
         setModelsDirty(true)
       }
       const missing = modelsToAdd(rows, result.models).length
-      notify(
+      toast(
         missing > 0
           ? `已找到 ${result.models.length} 个可用模型，其中 ${missing} 个尚未加入列表。`
           : `已找到 ${result.models.length} 个可用模型，均已在列表中。`,
-        'success',
-        `llm-provider-discover:${providerId}`,
+        { group: `llm-provider-discover:${providerId}` },
       )
     } catch (cause) {
-      notify(cause instanceof Error ? cause.message : String(cause), 'error', `llm-provider-discover:${providerId}`)
+      toast(failure(cause), { tone: 'bad', group: `llm-provider-discover:${providerId}` })
     } finally {
       setPending(null)
     }
@@ -183,20 +262,12 @@ export function LlmProviderSettings(): React.ReactNode {
   const save = async (event: FormEvent): Promise<void> => {
     event.preventDefault()
     setSubmitted(true)
-    if (
-      !settings ||
-      !providerId ||
-      (customEditor && (!displayName.trim() || !baseURL.trim() || !api)) ||
-      modelsError !== undefined
-    ) {
-      return
-    }
+    if (!providerId || (customEditor && (!displayName.trim() || !baseURL.trim() || !api)) || modelsError) return
     const revision = customMode
       ? (settings.providers.find((provider) => provider.settingsNs === 'llm-pi-ai')?.settingsRevision ?? 0)
       : selected?.settingsRevision
     if (revision === undefined || pending) return
     setPending('save')
-    setError('')
     try {
       const next = await callHostApi(
         HostApiContracts.llmSaveProvider,
@@ -210,62 +281,49 @@ export function LlmProviderSettings(): React.ReactNode {
           ...(submitsModels ? { models: submittedModels } : {}),
         },
       )
-      useProductStore.getState().replaceLlmProviders(next)
-      setSelectedId(providerId)
-      setCustomMode(false)
+      store.getState().replaceLlmProviders(next)
       setApiKey('')
       setModelsDirty(false)
       setSubmitted(false)
+      if (customMode) onSelect(providerId)
       try {
-        await useProductStore.getState().refreshHost()
-        notify('供应商配置已保存。API 密钥只写入本机凭据存储。', 'success', `llm-provider-save:${providerId}`)
+        await store.getState().refreshHost()
+        toast('供应商配置已保存。API 密钥只写入本机凭据存储。', { group: `llm-provider-save:${providerId}` })
       } catch (refreshError) {
-        notify(
-          `配置已保存，但页面数据刷新失败：${refreshError instanceof Error ? refreshError.message : String(refreshError)}`,
-          'warning',
-          `llm-provider-save:${providerId}`,
-        )
+        toast(`配置已保存，但页面数据刷新失败：${failure(refreshError)}`, {
+          tone: 'bad',
+          group: `llm-provider-save:${providerId}`,
+        })
       }
     } catch (cause) {
-      notify(cause instanceof Error ? cause.message : String(cause), 'error', `llm-provider-save:${providerId}`)
+      toast(failure(cause), { tone: 'bad', group: `llm-provider-save:${providerId}` })
     } finally {
       setPending(null)
     }
   }
 
-  const restoreModels = async (): Promise<boolean> => {
-    if (!selected || pending) return false
-    setPending('restore')
-    try {
-      const next = await callHostApi(
-        HostApiContracts.llmRestoreProviderModels,
-        { provider: selected.provider },
-        { expectedRevision: selected.settingsRevision },
-      )
-      useProductStore.getState().replaceLlmProviders(next)
-      setModelsDirty(false)
-      notify('已恢复供应商自带的模型列表。', 'success', `llm-provider-restore:${selected.provider}`)
-      void useProductStore
-        .getState()
-        .refreshHost()
-        .catch(() => undefined)
-      return true
-    } catch (cause) {
-      notify(
-        cause instanceof Error ? cause.message : String(cause),
-        'error',
-        `llm-provider-restore:${selected.provider}`,
-      )
-      return false
-    } finally {
-      setPending(null)
-    }
+  const restoreModels = async (): Promise<void> => {
+    if (!selected) return
+    const next = await callHostApi(
+      HostApiContracts.llmRestoreProviderModels,
+      { provider: selected.provider },
+      { expectedRevision: selected.settingsRevision },
+    )
+    store.getState().replaceLlmProviders(next)
+    // The restored catalog may keep the same revision; show it explicitly instead of waiting for a key change.
+    const restored = next.providers.find((provider) => provider.provider === selected.provider)
+    if (restored) setRows(restored.models.map(modelRowFromModel))
+    setModelsDirty(false)
+    toast('已恢复供应商自带的模型列表。', { group: `llm-provider-restore:${selected.provider}` })
+    void store
+      .getState()
+      .refreshHost()
+      .catch(() => undefined)
   }
 
   const testConnection = async (): Promise<void> => {
     if (!providerId || !testModel || pending) return
     setPending('test')
-    setError('')
     try {
       await callHostApi(
         HostApiContracts.llmTestProvider,
@@ -280,9 +338,9 @@ export function LlmProviderSettings(): React.ReactNode {
           models: testModels.map((model) => ({ ...model })),
         },
       )
-      notify(`当前页面配置测试通过，可使用 ${testModelName}。`, 'success', `llm-provider-test:${providerId}`)
+      toast(`当前页面配置测试通过，可使用 ${testModelName}。`, { group: `llm-provider-test:${providerId}` })
     } catch (cause) {
-      notify(cause instanceof Error ? cause.message : String(cause), 'error', `llm-provider-test:${providerId}`)
+      toast(failure(cause), { tone: 'bad', group: `llm-provider-test:${providerId}` })
     } finally {
       setPending(null)
     }
@@ -292,283 +350,214 @@ export function LlmProviderSettings(): React.ReactNode {
   const baseUrlError = submitted && customEditor && !baseURL.trim() ? '请输入 API 地址。' : undefined
   const apiError = submitted && customEditor && !api ? '请选择 API 协议。' : undefined
   const canSave =
-    settings?.writable === true &&
+    settings.writable &&
     Boolean(providerId) &&
     modelsError === undefined &&
     (!customEditor || Boolean(displayName.trim() && baseURL.trim() && api))
   const canTest =
     Boolean(providerId && testModel) && modelsError === undefined && (!customEditor || Boolean(baseURL.trim() && api))
-
-  if (!settings && !query.error) {
-    return <EmptyState loading title="正在读取模型供应商" description="加载完成后可管理 API 密钥和模型。" />
-  }
-
-  if (!settings) {
-    return (
-      <EmptyState
-        title="无法读取模型供应商"
-        description={error || '请检查连接后重试。'}
-        action={
-          <Button onClick={() => void load()}>
-            <RefreshCw size={14} aria-hidden="true" /> 重新加载
-          </Button>
-        }
-      />
-    )
-  }
+  const status = selected ? providerStatus(selected) : undefined
+  const title = selected ? providerDisplayName(selected.provider, selected.displayName) : '自定义供应商'
 
   return (
-    <div className={styles.providerSettings}>
-      <div className={styles.toolbar}>
-        <div>
-          <h2>供应商配置</h2>
-          <p>管理模型访问凭据和可用模型。</p>
-        </div>
-        <Button
-          size="small"
-          loading={pending === 'load'}
-          loadingLabel="刷新中…"
-          disabled={pending !== null}
-          onClick={() => void load()}
-        >
-          <RefreshCw size={14} aria-hidden="true" /> 刷新
-        </Button>
-      </div>
+    <form className={styles.detail} autoComplete="off" onSubmit={(event) => void save(event)}>
+      <ObjectHeader
+        level={2}
+        size="compact"
+        title={title}
+        status={status ? <Chip tone={status.tone}>{status.label}</Chip> : <Chip>新建</Chip>}
+        meta={
+          selected ? (
+            <>
+              <span>{providerKind(selected)}</span>
+              <span>{selected.models.length} 个模型</span>
+              <span>{selected.credential?.configured ? 'API 密钥已保存' : '尚未保存 API 密钥'}</span>
+            </>
+          ) : (
+            <span>连接任意 OpenAI 兼容接口</span>
+          )
+        }
+      />
 
-      <div className={styles.layout}>
-        <aside className={styles.providerList} aria-label="供应商列表">
-          {configuredProviders.length === 0 ? <div className={styles.listEmpty}>还没有已配置的供应商</div> : null}
-          {configuredProviders.map((provider) => (
-            <Button
-              className={[
-                styles.providerButton,
-                provider.provider === selectedId && !customMode ? styles.providerButtonActive : '',
-              ]
-                .filter(Boolean)
-                .join(' ')}
-              variant="ghost"
-              onClick={() => selectProvider(provider)}
-              key={provider.provider}
-            >
-              <span>
-                <strong>{providerDisplayName(provider.provider, provider.displayName)}</strong>
-                <small>
-                  {provider.declared ? '自定义接入' : provider.settingsNs === 'llm-pi-ai' ? '通用接入' : '内置固定接入'}{' '}
-                  · {provider.models.length} 个模型
-                </small>
-              </span>
-              <StatusBadge tone={provider.active ? 'success' : 'warning'}>
-                {provider.active ? '可用' : '待启用'}
-              </StatusBadge>
-            </Button>
-          ))}
-          <Button
-            className={styles.addProvider}
-            onClick={() => {
-              setAddCandidate(availableProviders[0]?.provider ?? '__custom__')
-              setAddOpen(true)
-            }}
-          >
-            <Plus size={14} aria-hidden="true" /> 添加供应商
-          </Button>
-        </aside>
-
-        {selected || customMode ? (
-          <form className={styles.editor} autoComplete="off" onSubmit={(event) => void save(event)}>
-            <div className={styles.editorHeading}>
-              <div>
-                <h3>{customMode ? '自定义供应商' : (selectedDisplayName ?? '选择供应商')}</h3>
-                {selected ? <p>{selected.credential?.configured ? 'API 密钥已保存' : '尚未保存 API 密钥'}</p> : null}
-              </div>
-              {selected ? (
-                <StatusBadge tone={selected.active ? 'success' : selected.configured ? 'warning' : 'neutral'}>
-                  {selected.active ? '可用' : selected.configured ? '待启用' : '未配置'}
-                </StatusBadge>
-              ) : null}
-            </div>
-
-            {customEditor ? (
-              <Field label="供应商名称" error={displayNameError}>
-                <Input value={displayName} onChange={(event) => setDisplayName(event.target.value)} />
-              </Field>
-            ) : null}
-            <Field
-              label="API 密钥"
-              hint={
-                selected?.credential?.configured ? '留空表示沿用当前密钥；已保存密钥无法查看。' : '保存的密钥无法查看。'
-              }
-            >
-              <SecretInput value={apiKey} onChange={(event) => setApiKey(event.target.value)} />
+      <PropertyGroup title="凭据">
+        <div className={styles.fields}>
+          {customEditor ? (
+            <Field label="供应商名称" error={displayNameError}>
+              <Input value={displayName} maxLength={80} onChange={(event) => setDisplayName(event.target.value)} />
             </Field>
+          ) : null}
+          <Field
+            label="API 密钥"
+            hint={
+              selected?.credential?.configured ? '留空表示沿用当前密钥；已保存密钥无法查看。' : '保存后的密钥无法查看。'
+            }
+          >
+            <SecretInput
+              configured={selected?.credential?.configured === true}
+              data-1p-ignore="true"
+              value={apiKey}
+              onChange={(event) => setApiKey(event.target.value)}
+            />
+          </Field>
+        </div>
+      </PropertyGroup>
 
-            <div className={styles.modelSection}>
-              <div className={styles.modelSectionHeading}>
-                <span>
-                  <span className={styles.fieldLabel}>模型</span>
-                  {restorable ? <StatusBadge tone="info">已自定义</StatusBadge> : null}
-                </span>
-                {restorable ? (
-                  <Button size="small" variant="ghost" disabled={pending !== null} onClick={() => setRestoreOpen(true)}>
-                    恢复默认模型
-                  </Button>
-                ) : null}
-              </div>
-              {modelsEditable ? (
-                <>
-                  <ModelListEditor
-                    rows={rows}
-                    discovered={discovered}
-                    disabled={pending !== null}
-                    error={modelsError}
-                    onChange={(next) => {
-                      setRows(next)
-                      setModelsDirty(true)
-                    }}
-                  />
-                  <p className={styles.modelHint}>
-                    打开“支持图片”的模型可直接理解频道中的图片。
-                    {catalogRoute ? '新增供应商目录之外的模型时，需要在高级设置中填写 API 地址并选择 API 协议。' : ''}
-                  </p>
-                </>
-              ) : (
-                <>
-                  <div className={styles.modelList}>
-                    {selected?.models.map((model) => (
-                      <span key={model.id}>
-                        {model.name}
-                        {model.inputModalities?.includes('image') ? ' · 图片' : ''}
-                      </span>
-                    ))}
-                  </div>
-                  <p className={styles.modelHint}>此供应商的模型由其适配器固定提供，暂不支持在这里修改。</p>
-                </>
-              )}
-            </div>
+      <PropertyGroup
+        title="模型"
+        description={
+          modelsEditable
+            ? `打开“看图”的模型可以直接理解频道里的图片。${catalogRoute ? '加入目录外的模型时，需要在高级设置中选择 API 协议。' : ''}`
+            : '这个供应商的模型由其适配器固定提供。'
+        }
+        actions={
+          <>
+            {restorable ? <Chip tone="accent">已自定义</Chip> : null}
+            {restorable ? (
+              <Button size="small" variant="ghost" disabled={pending !== null} onClick={() => setRestoreOpen(true)}>
+                恢复默认模型
+              </Button>
+            ) : null}
+          </>
+        }
+      >
+        {modelsEditable ? (
+          <ModelListEditor
+            rows={rows}
+            discovered={discovered}
+            disabled={pending !== null}
+            error={modelsError}
+            onChange={(next) => {
+              setRows(next)
+              setModelsDirty(true)
+            }}
+          />
+        ) : (
+          <ModelListView models={selected?.models ?? []} />
+        )}
+      </PropertyGroup>
 
-            <details className={styles.advanced} open={customMode}>
-              <summary>高级设置</summary>
-              <div className={styles.advancedFields}>
-                <Field
-                  label="API 地址"
-                  hint={!customEditor ? '留空使用供应商默认地址。' : undefined}
-                  error={baseUrlError}
-                >
-                  <Input
-                    value={baseURL}
-                    onChange={(event) => setBaseURL(event.target.value)}
-                    placeholder="https://…/v1"
+      {customEditor || catalogRoute || selected ? (
+        <PropertyGroup
+          title={
+            <Pressable
+              className={styles.disclosureToggle}
+              aria-expanded={advancedOpen}
+              aria-controls={advancedId}
+              onClick={() => setAdvancedOpen(!advancedOpen)}
+            >
+              <ChevronRight size={14} aria-hidden="true" className={styles.chevron} data-open={advancedOpen} />
+              高级设置
+            </Pressable>
+          }
+        >
+          <Disclosure open={advancedOpen} id={advancedId}>
+            <div className={styles.fields}>
+              <Field
+                label="API 地址"
+                hint={!customEditor ? '留空使用供应商默认地址。' : undefined}
+                error={baseUrlError}
+              >
+                <Input
+                  value={baseURL}
+                  spellCheck={false}
+                  placeholder="https://…/v1"
+                  onChange={(event) => setBaseURL(event.target.value)}
+                />
+              </Field>
+              {customEditor ? (
+                <Field label="API 协议" error={apiError}>
+                  <Select
+                    value={api}
+                    placeholder="选择协议"
+                    onChange={(event) => setApi(event.target.value)}
+                    options={settings.protocols.map((protocol) => ({ value: protocol, label: protocol }))}
                   />
                 </Field>
-                {customEditor ? (
-                  <SelectField
-                    label="API 协议"
-                    value={api}
-                    onValueChange={setApi}
-                    options={settings.protocols.map((protocol) => ({ value: protocol, label: protocol }))}
-                    error={apiError}
-                  />
-                ) : catalogRoute ? (
-                  <SelectField
-                    label="API 协议"
-                    helper="选择后该供应商的全部模型都使用此协议；新增目录外的模型时必须选择。"
+              ) : catalogRoute ? (
+                <Field label="API 协议" hint="选择后该供应商的全部模型都使用此协议；加入目录外的模型时必须选择。">
+                  <Select
                     value={api || CATALOG_PROTOCOL}
-                    onValueChange={(value) => setApi(value === CATALOG_PROTOCOL ? '' : value)}
+                    onChange={(event) => setApi(event.target.value === CATALOG_PROTOCOL ? '' : event.target.value)}
                     options={[
                       { value: CATALOG_PROTOCOL, label: '沿用各模型自带协议' },
                       ...settings.protocols.map((protocol) => ({ value: protocol, label: protocol })),
                     ]}
                   />
-                ) : null}
-              </div>
-            </details>
-
-            <div className={styles.actions}>
-              <div className={styles.secondaryActions}>
-                {discoverable ? (
-                  <Button
-                    type="button"
-                    onClick={() => void discover()}
-                    loading={pending === 'discover'}
-                    loadingLabel="获取中…"
-                    disabled={!providerId || pending !== null}
-                  >
-                    获取可用模型
-                  </Button>
-                ) : null}
-                <Button
-                  type="button"
-                  onClick={() => void testConnection()}
-                  loading={pending === 'test'}
-                  loadingLabel="测试中…"
-                  disabled={!canTest || pending !== null}
-                >
-                  测试连接
-                </Button>
-              </div>
-              <Button
-                type="submit"
-                variant="primary"
-                loading={pending === 'save'}
-                loadingLabel="保存中…"
-                disabled={!canSave || pending !== null}
-              >
-                保存供应商
-              </Button>
+                </Field>
+              ) : null}
             </div>
-            {!customMode && selected?.configured ? (
-              <div className={styles.removalAction}>
-                <Button
-                  type="button"
-                  variant="ghost"
-                  disabled={pending !== null}
-                  onClick={() => setRemovingProvider(selected.provider)}
-                >
-                  {selected.declared ? '删除供应商' : '移除配置'}
-                </Button>
-              </div>
-            ) : null}
-          </form>
-        ) : (
-          <div className={styles.editor}>
-            <EmptyState
-              title="还没有已配置的供应商"
-              description="从当前运行环境的供应商目录中选择一项并保存配置。"
-              action={
-                <Button
-                  onClick={() => {
-                    setAddCandidate(availableProviders[0]?.provider ?? '__custom__')
-                    setAddOpen(true)
-                  }}
-                >
-                  添加供应商
-                </Button>
-              }
-            />
-          </div>
-        )}
+          </Disclosure>
+        </PropertyGroup>
+      ) : null}
+
+      {selected ? (
+        <Diagnostics
+          items={[
+            { label: '供应商标识', value: selected.provider },
+            { label: '配置区域', value: selected.settingsNs },
+            { label: '配置版本', value: String(selected.settingsRevision) },
+          ]}
+        />
+      ) : null}
+
+      {selected?.configured ? (
+        <div className={styles.dangerRow}>
+          <span className={styles.muted}>
+            {selected.declared ? '删除这个自定义供应商及其模型。' : '移除已保存的配置，供应商仍留在目录中。'}
+          </span>
+          <Button
+            variant="danger"
+            icon={<Trash2 size={14} aria-hidden="true" />}
+            disabled={pending !== null}
+            onClick={() => setRemoving(true)}
+          >
+            {selected.declared ? '删除供应商' : '移除配置'}
+          </Button>
+        </div>
+      ) : null}
+
+      <div className={styles.actionBar}>
+        <div className={styles.actionBarStart}>
+          {discoverable ? (
+            <Button
+              busy={pending === 'discover'}
+              disabled={!providerId || pending !== null}
+              onClick={() => void discover()}
+            >
+              获取可用模型
+            </Button>
+          ) : null}
+          <Button
+            busy={pending === 'test'}
+            disabled={!canTest || pending !== null}
+            onClick={() => void testConnection()}
+          >
+            测试连接
+          </Button>
+        </div>
+        <Button type="submit" variant="primary" busy={pending === 'save'} disabled={!canSave || pending !== null}>
+          保存供应商
+        </Button>
       </div>
 
-      {removingProvider ? (
+      {removing && selected ? (
         <LlmProviderRemovalDialog
-          key={removingProvider}
-          provider={removingProvider}
-          onClose={() => setRemovingProvider('')}
+          key={selected.provider}
+          provider={selected.provider}
+          onClose={() => setRemoving(false)}
           onRemoved={(next) => {
-            useProductStore.getState().replaceLlmProviders(next)
-            setSelectedId(next.providers.find((provider) => provider.configured)?.provider ?? '')
-            setApiKey('')
-            setCustomMode(false)
-            setRemovingProvider('')
-            notify('供应商配置已移除，API 密钥已保留。', 'success', 'llm-provider-remove')
-            void useProductStore
+            store.getState().replaceLlmProviders(next)
+            setRemoving(false)
+            onSelect(next.providers.find((provider) => provider.configured)?.provider ?? '')
+            toast('供应商配置已移除，API 密钥已保留。', { group: 'llm-provider-remove' })
+            void store
               .getState()
               .refreshHost()
               .catch((cause: unknown) => {
-                notify(
-                  `配置已移除，但页面数据刷新失败：${cause instanceof Error ? cause.message : String(cause)}`,
-                  'warning',
-                  'llm-provider-remove-refresh',
-                )
+                toast(`配置已移除，但页面数据刷新失败：${failure(cause)}`, {
+                  tone: 'bad',
+                  group: 'llm-provider-remove-refresh',
+                })
               })
           }}
         />
@@ -577,167 +566,138 @@ export function LlmProviderSettings(): React.ReactNode {
         open={restoreOpen}
         onOpenChange={setRestoreOpen}
         title="恢复默认模型"
-        description={`${selectedDisplayName ?? '此供应商'}将改回供应商自带的模型列表，在这里新增或修改的模型会被移除。使用被移除模型的智能体需要重新选择模型。`}
         confirmLabel="恢复默认模型"
-        confirmLoadingLabel="恢复中…"
         onConfirm={restoreModels}
-      />
-      <Dialog
-        open={addOpen}
-        onOpenChange={setAddOpen}
-        title="添加模型供应商"
-        description="候选项来自当前运行环境的可配置供应商目录。"
-        footer={
-          <>
-            <Button variant="ghost" onClick={() => setAddOpen(false)}>
-              取消
-            </Button>
-            <Button
-              variant="primary"
-              onClick={() => {
-                setAddOpen(false)
-                if (addCandidate === '__custom__') enterCustomMode()
-                else {
-                  const provider = settings.providers.find((candidate) => candidate.provider === addCandidate)
-                  if (provider) selectProvider(provider)
-                }
-              }}
-            >
-              开始配置
-            </Button>
-          </>
-        }
       >
-        <SelectField
-          label="模型供应商"
-          value={addCandidate}
-          onValueChange={setAddCandidate}
-          options={[
-            ...availableProviders.map((provider) => ({
-              value: provider.provider,
-              label: providerDisplayName(provider.provider, provider.displayName),
-            })),
-            { value: '__custom__', label: '自定义 OpenAI 兼容供应商' },
-          ]}
-        />
-      </Dialog>
-    </div>
+        {title}将改回供应商自带的模型列表，在这里新增或修改的模型会被移除。使用被移除模型的智能体需要重新选择模型。
+      </ConfirmDialog>
+    </form>
   )
 }
 
-export function AddModelProviderForm({ onSaved }: { readonly onSaved?: () => void }): ReactNode {
-  const useProductStore = useProductRuntime().store
+/** Loading and failure states shared by the model settings views. */
+export function ProviderCatalogState({ onRetry }: { readonly onRetry: () => void }): ReactNode {
+  const { settings, error } = useLlmProviders()
+  if (settings) return null
+  if (!error) {
+    return (
+      <div className={styles.loading} role="status" aria-label="正在读取模型供应商">
+        <Skeleton height={28} width="40%" />
+        <Skeleton height={120} />
+      </div>
+    )
+  }
+  return (
+    <EmptyState
+      title="无法读取模型供应商"
+      action={
+        <Button icon={<RefreshCw size={14} aria-hidden="true" />} onClick={onRetry}>
+          重新加载
+        </Button>
+      }
+    >
+      {error || '请检查连接后重试。'}
+    </EmptyState>
+  )
+}
 
-  const query = useProductStore((state) => state.llmProvidersQuery)
-  const settings = query.data ?? null
+/** Inline credential form used where a model is needed right away (creating the first agent). */
+export function AddModelProviderForm({ onSaved }: { readonly onSaved?: () => void }): ReactNode {
+  const store = useProductRuntime().store
+  const { settings, error: queryError, load } = useLlmProviders()
   const [providerId, setProviderId] = useState('')
   const [apiKey, setApiKey] = useState('')
-  const [operation, setPending] = useState<'save' | null>(null)
-  const pending = operation ?? (query.loading ? 'load' : null)
-  const [actionError, setError] = useState('')
-  const error = actionError || query.error
-
-  const load = async (): Promise<void> => {
-    try {
-      const next = await useProductStore.getState().loadLlmProviders()
-      setProviderId((current) => {
-        if (next.providers.some((provider) => provider.provider === current)) return current
-        return next.providers.find((provider) => !provider.configured)?.provider ?? next.providers[0]?.provider ?? ''
-      })
-    } catch (cause) {
-      if (cause instanceof StaleHostReadError) return
-    }
-  }
+  const [saving, setSaving] = useState(false)
+  const [error, setError] = useState('')
 
   useEffect(() => {
-    void load()
+    void load().then((next) => {
+      if (!next) return
+      setProviderId((current) =>
+        next.providers.some((provider) => provider.provider === current)
+          ? current
+          : (next.providers.find((provider) => !provider.configured)?.provider ?? next.providers[0]?.provider ?? ''),
+      )
+    })
   }, [])
 
   const selected = settings?.providers.find((provider) => provider.provider === providerId)
+  const saveable = settings?.writable === true && providerId !== ''
 
   const save = async (): Promise<void> => {
-    if (!settings || !selected || pending) return
+    if (!settings || !selected || saving) return
     if (!apiKey.trim() && !selected.credential?.configured) {
       setError('请输入 API 密钥。')
       return
     }
-    setPending('save')
+    setSaving(true)
     setError('')
     try {
       const next = await callHostApi(
         HostApiContracts.llmSaveProvider,
         { provider: selected.provider },
-        {
-          expectedRevision: selected.settingsRevision,
-          ...(apiKey.trim() ? { apiKey: apiKey.trim() } : {}),
-        },
+        { expectedRevision: selected.settingsRevision, ...(apiKey.trim() ? { apiKey: apiKey.trim() } : {}) },
       )
-      useProductStore.getState().replaceLlmProviders(next)
+      store.getState().replaceLlmProviders(next)
       setApiKey('')
       try {
-        await useProductStore.getState().refreshHost()
-        notify('供应商配置已保存。API 密钥只写入本机凭据存储。', 'success', `llm-provider-save:${selected.provider}`)
+        await store.getState().refreshHost()
+        toast('供应商配置已保存。API 密钥只写入本机凭据存储。', { group: `llm-provider-save:${selected.provider}` })
         onSaved?.()
       } catch (refreshError) {
-        notify(
-          `配置已保存，但页面数据刷新失败：${refreshError instanceof Error ? refreshError.message : String(refreshError)}`,
-          'warning',
-          `llm-provider-save:${selected.provider}`,
-        )
+        toast(`配置已保存，但页面数据刷新失败：${failure(refreshError)}`, {
+          tone: 'bad',
+          group: `llm-provider-save:${selected.provider}`,
+        })
       }
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : String(cause))
+      setError(failure(cause))
     } finally {
-      setPending(null)
+      setSaving(false)
     }
   }
 
-  if (!settings && !query.error) {
-    return <EmptyState loading title="正在读取模型供应商" description="加载完成后可在此保存凭据。" />
-  }
-
-  if (!settings) {
+  if (!settings && !queryError) {
     return (
-      <EmptyState
-        title="无法读取模型供应商"
-        description={error || '请检查连接后重试。'}
-        action={
-          <Button onClick={() => void load()}>
-            <RefreshCw size={14} aria-hidden="true" /> 重新加载
-          </Button>
-        }
-      />
+      <div className={styles.loading} role="status" aria-label="正在读取模型供应商">
+        <Skeleton height={32} />
+        <Skeleton height={32} />
+      </div>
     )
   }
-
-  if (settings.providers.length === 0) {
-    return <EmptyState title="当前没有可配置的供应商" description="完整目录和自定义供应商位于设置。" />
+  if (!settings) {
+    return (
+      <Banner tone="bad" action={<Button onClick={() => void load()}>重新加载</Button>}>
+        无法读取模型供应商：{queryError || '请检查连接后重试。'}
+      </Banner>
+    )
   }
-
-  const providerSelected = providerId.length > 0
+  if (settings.providers.length === 0) {
+    return <Banner tone="info">当前没有可配置的供应商。完整目录和自定义供应商位于设置。</Banner>
+  }
 
   return (
     <div className={styles.compactForm}>
-      <SelectField
-        label="模型供应商"
-        value={providerId}
-        onValueChange={setProviderId}
-        options={settings.providers.map((provider) => ({
-          value: provider.provider,
-          label: providerDisplayName(provider.provider, provider.displayName),
-        }))}
-      />
-      <Field label="API 密钥" hint="保存的密钥无法查看。" error={error || undefined}>
-        <SecretInput value={apiKey} onChange={(event) => setApiKey(event.target.value)} />
+      <Field label="模型供应商">
+        <Select
+          value={providerId}
+          onChange={(event) => setProviderId(event.target.value)}
+          options={settings.providers.map((provider) => ({
+            value: provider.provider,
+            label: providerDisplayName(provider.provider, provider.displayName),
+          }))}
+        />
+      </Field>
+      <Field label="API 密钥" hint="保存后的密钥无法查看。" error={error || undefined}>
+        <SecretInput
+          configured={selected?.credential?.configured === true}
+          data-1p-ignore="true"
+          value={apiKey}
+          onChange={(event) => setApiKey(event.target.value)}
+        />
       </Field>
       <div className={styles.compactActions}>
-        <Button
-          variant="primary"
-          loading={pending === 'save'}
-          loadingLabel="保存中…"
-          disabled={pending !== null || settings.writable !== true || !providerSelected}
-          onClick={() => void save()}
-        >
+        <Button variant="primary" busy={saving} disabled={!saveable} onClick={() => void save()}>
           保存供应商
         </Button>
       </div>
