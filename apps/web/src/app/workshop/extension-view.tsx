@@ -206,7 +206,7 @@ function Overview({ revision }: { readonly revision: Revision | undefined }) {
   return (
     <PropertyGroup title="能提供什么">
       {parts.length === 0 ? (
-        <p className={styles.quiet}>这份保存记录还没有经过验证，暂时无法说明它提供的内容。</p>
+        <p className={styles.faint}>这份保存记录还没有经过验证，暂时无法说明它提供的内容。</p>
       ) : (
         <PropertyList>
           {parts.map((part) => (

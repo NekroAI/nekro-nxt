@@ -36,7 +36,7 @@
 }
 
 .inlineLink {
-  padding: 0 var(--s-1);
+  padding: 0;
   border: 0;
   background: transparent;
   color: var(--accent);
