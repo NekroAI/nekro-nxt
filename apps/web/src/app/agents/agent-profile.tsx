@@ -1,4 +1,5 @@
 import { useGo } from '../model/nav.js'
+import { PanelSlot } from '../../extension-ui/index.js'
 import { Boxes, Cable, FolderCog, Globe, MessagesSquare, PencilLine, Sparkles, Trash2, Workflow } from 'lucide-react'
 import { useEffect, useMemo, useState, type ReactNode } from 'react'
 
@@ -601,6 +602,8 @@ export function AgentProfile({ agent }: { readonly agent: AgentSummary }) {
         <Section title="技能">
           <Skills agent={agent} />
         </Section>
+
+        <PanelSlot anchor={{ kind: 'agent', id: agent.id }} density="full" />
 
         <Section title="版本">
           <Versions agent={agent} />

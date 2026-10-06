@@ -1,4 +1,5 @@
 import { useGo } from '../model/nav.js'
+import { PanelSlot } from '../../extension-ui/index.js'
 import { MessagesSquare, Trash2, Unplug, UsersRound } from 'lucide-react'
 import { useEffect, useMemo, useState } from 'react'
 
@@ -231,6 +232,9 @@ function ConnectionDetail({ connection }: { readonly connection: ConnectionSumma
           </div>
         </section>
       ) : null}
+
+      <PanelSlot anchor={{ kind: 'connection', id: connection.id }} density="full" role="status" />
+      <PanelSlot anchor={{ kind: 'connection', id: connection.id }} density="full" role="diagnostics" />
 
       {connection.userManaged ? <MemberList connectionId={connection.id} /> : null}
 

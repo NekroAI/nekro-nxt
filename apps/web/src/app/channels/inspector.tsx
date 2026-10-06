@@ -1,4 +1,5 @@
 import { useGo } from '../model/nav.js'
+import { PanelSlot } from '../../extension-ui/index.js'
 import { Cable, Trash2 } from 'lucide-react'
 import { useState } from 'react'
 
@@ -141,6 +142,9 @@ export function ChannelInspector({
           ) : null}
         </section>
       ) : null}
+
+      <PanelSlot anchor={{ kind: 'channel', id: channel.id }} density="compact" />
+      {agent ? <PanelSlot anchor={{ kind: 'agent', id: agent.id }} density="compact" /> : null}
 
       <section>
         <h3 className={styles.inspectorTitle}>来源</h3>

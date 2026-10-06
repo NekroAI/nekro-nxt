@@ -1,4 +1,5 @@
 import { Check, CircleAlert, Square, X } from 'lucide-react'
+import { ToolView } from '../../extension-ui/index.js'
 import { Fragment, memo, useEffect, useState } from 'react'
 import { MessageContent, resolveMessageSide } from '../../pages/message-content.js'
 import type { AgentSummary, ChannelSummary, ConversationMessage } from '../../product-runtime.js'
@@ -137,7 +138,25 @@ function ToolChip({ tool }: { readonly tool: RuntimeTool }) {
   )
 }
 
-function ToolCard({ tool, index }: { readonly tool: RuntimeTool; readonly index: number }) {
+/** The tool call as extension tool views receive it. */
+const toolCall = (tool: RuntimeTool, detailed: boolean) => ({
+  callId: tool.callId,
+  toolName: tool.name,
+  state: tool.state,
+  ...(detailed && tool.inputPreview !== undefined ? { input: tool.inputPreview } : {}),
+  ...(detailed && tool.resultPreview !== undefined ? { result: tool.resultPreview } : {}),
+  ...(tool.durationMs === undefined ? {} : { durationMs: tool.durationMs }),
+})
+
+function ToolCard({
+  tool,
+  index,
+  agentId,
+}: {
+  readonly tool: RuntimeTool
+  readonly index: number
+  readonly agentId: string | undefined
+}) {
   const input = presentToolInput(tool.inputPreview, tool.wroteToChannel === true || /send|message/i.test(tool.name))
   return (
     <div className={styles.card} style={cssVars({ '--i': index })}>
@@ -201,6 +220,7 @@ function ToolCard({ tool, index }: { readonly tool: RuntimeTool; readonly index:
           </>
         ) : null}
       </dl>
+      <ToolView call={toolCall(tool, true)} density="card" {...(agentId ? { agentId } : {})} />
     </div>
   )
 }
@@ -293,7 +313,8 @@ export function TurnRow({
             const nodes = []
             const thinking = stepThinking(step)
             if (thinking) nodes.push(<ThinkingCard key={`${step.step}:thinking`} text={thinking} index={cardIndex++} />)
-            for (const tool of step.tools) nodes.push(<ToolCard key={tool.callId} tool={tool} index={cardIndex++} />)
+            for (const tool of step.tools)
+              nodes.push(<ToolCard key={tool.callId} tool={tool} index={cardIndex++} agentId={agent?.id} />)
             return nodes
           })}
           {usage.input || usage.output ? (
@@ -307,7 +328,10 @@ export function TurnRow({
       ) : tools.length ? (
         <div className={styles.steps}>
           {tools.map((tool) => (
-            <ToolChip key={tool.callId} tool={tool} />
+            <Fragment key={tool.callId}>
+              <ToolChip tool={tool} />
+              <ToolView call={toolCall(tool, false)} density="chip" {...(agent ? { agentId: agent.id } : {})} />
+            </Fragment>
           ))}
         </div>
       ) : null}
