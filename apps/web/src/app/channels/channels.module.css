@@ -1178,3 +1178,14 @@
     display: none;
   }
 }
+
+.renameRow {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 10px;
+}
+
+.renameRow > input {
+  flex: 1;
+  min-width: 0;
+}

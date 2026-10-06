@@ -48,6 +48,7 @@ declare const styles: {
   readonly queueBar: string
   readonly queueList: string
   readonly queueOpen: string
+  readonly renameRow: string
   readonly responder: string
   readonly row: string
   readonly rowBadge: string
