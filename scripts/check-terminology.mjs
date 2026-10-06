@@ -121,7 +121,8 @@ function inspectSource(relativePath, source, { includeTerms = true } = {}) {
   const addTextFinding = (node, text, context) => {
     if (isTechnicalDiagnostic(node)) return
     const normalizedText = normalizeVisibleText(text)
-    for (const [rule, pattern] of informationRules) {
+    // Display collections mix option values with labels; only their labels reach the screen.
+    for (const [rule, pattern] of context.startsWith('展示集合') ? [] : informationRules) {
       if (pattern.test(normalizedText))
         addInformationFinding(node, rule, normalizedText, `用户可见${context}包含应放入诊断层的技术信息。`)
     }
@@ -236,7 +237,8 @@ function inspectSource(relativePath, source, { includeTerms = true } = {}) {
   const visit = (node) => {
     if (ts.isJsxText(node) && node.text.trim()) {
       addTextFinding(node, node.text, ' JSX 文本')
-      const siblings = ts.isJsxElement(node.parent) || ts.isJsxFragment(node.parent) ? node.parent.children : []
+      /** @type {readonly import('typescript').JsxChild[]} */
+      const siblings = ts.isJsxElement(node.parent) || ts.isJsxFragment(node.parent) ? [...node.parent.children] : []
       const next = siblings[siblings.indexOf(node) + 1]
       if (next && ts.isJsxExpression(next) && versionPrefix.test(node.text.trimEnd()) && !isTechnicalDiagnostic(node))
         addInformationFinding(
