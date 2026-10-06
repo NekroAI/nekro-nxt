@@ -1,104 +1,130 @@
-import { useMemo } from 'react'
-import { useProductStore, type ProductState } from '../../product-runtime.js'
-import { connectionLabel, connectionTone } from './identity.js'
+import { useEffect, useSyncExternalStore } from 'react'
+import type { AttentionItem as HostAttentionItem } from '@nekro-nxt/contracts'
+import { workspaceApi } from '../../host-api-client.js'
+import { useProductRuntime, type ProductRuntime } from '../../product-runtime.js'
 
 export type AttentionSeverity = 'bad' | 'warn' | 'info'
 
 export interface AttentionItem {
-  /** Stable fingerprint: the same underlying problem keeps the same id. */
+  /** Stable fingerprint from the Host; the same problem keeps the same id. */
   readonly id: string
+  readonly kind: HostAttentionItem['kind']
   readonly severity: AttentionSeverity
   readonly title: string
   readonly detail: string
   readonly actionLabel: string
   readonly href: string
+  readonly outboundId?: string
 }
 
-const severityRank: Record<AttentionSeverity, number> = { bad: 0, warn: 1, info: 2 }
+const severity: Record<HostAttentionItem['severity'], AttentionSeverity> = { critical: 'bad', warning: 'warn', info: 'info' }
 
-/**
- * Things that need the operator, derived from the Host state the client already holds.
- * Decision §7 moves this aggregation to `GET /api/attention`; consumers only depend on this hook.
- */
-export function deriveAttention(state: Pick<ProductState, 'connections' | 'agents' | 'authoringTasks' | 'channels' | 'messagesByChannel' | 'models'>): readonly AttentionItem[] {
-  const items: AttentionItem[] = []
-  const channelName = new Map(state.channels.map((channel) => [channel.id, channel.name]))
+function hrefOf(item: HostAttentionItem): string {
+  const { related } = item
+  switch (item.action.kind) {
+    case 'open-channel':
+    case 'resolve-delivery':
+      return related.channelId ? `/channels/${related.channelId}` : '/channels'
+    case 'open-authoring-task':
+      return related.taskId ? `/workshop/tasks/${related.taskId}` : '/workshop'
+    case 'open-connection':
+      return related.connectionId ? `/wiring/connections/${related.connectionId}` : '/wiring'
+    case 'open-agent':
+      return related.agentId ? `/agents/${related.agentId}` : '/agents'
+  }
+}
 
-  for (const [channelId, messages] of Object.entries(state.messagesByChannel)) {
-    const unconfirmed = messages.filter((message) => message.delivery === '结果未知' || message.delivery === '失败')
-    const last = unconfirmed.at(-1)
-    if (!last) continue
-    items.push({
-      id: `delivery:${last.id}`,
-      severity: 'bad',
-      title: channelName.get(channelId) ?? '频道',
-      detail: unconfirmed.length > 1 ? `${unconfirmed.length} 条消息未确认送达` : `${last.author}的一条消息未确认送达`,
-      actionLabel: '查看',
-      href: `/channels/${channelId}`,
-    })
+export const toAttentionItem = (item: HostAttentionItem): AttentionItem => ({
+  id: item.id,
+  kind: item.kind,
+  severity: severity[item.severity],
+  title: item.title,
+  detail: item.detail,
+  actionLabel: item.action.label,
+  href: hrefOf(item),
+  ...(item.related.outboundId ? { outboundId: item.related.outboundId } : {}),
+})
+
+/** One shared attention list per runtime: fetched once, refreshed on SSE invalidation and reconnects. */
+class AttentionSource {
+  #items: readonly AttentionItem[] = []
+  #listeners = new Set<() => void>()
+  #unsubscribe: (() => void) | undefined
+  #pending: Promise<void> | undefined
+  #again = false
+
+  constructor(private readonly runtime: ProductRuntime) {}
+
+  get items(): readonly AttentionItem[] {
+    return this.#items
   }
 
-  for (const task of state.authoringTasks) {
-    if (task.status !== 'awaiting-approval' && task.status !== 'ready') continue
-    items.push({
-      id: `authoring:${task.id}:${task.status}`,
-      severity: task.status === 'awaiting-approval' ? 'warn' : 'info',
-      title: task.title || '创造任务',
-      detail: task.status === 'awaiting-approval' ? '新版本等你试运行' : '已验证，可以保存',
-      actionLabel: task.status === 'awaiting-approval' ? '去试运行' : '去保存',
-      href: `/workshop/tasks/${task.id}`,
-    })
-  }
-
-  for (const connection of state.connections) {
-    const tone = connectionTone(connection.state)
-    if (tone === 'ok' || connection.state === '已配置') continue
-    items.push({
-      id: `connection:${connection.id}:${connection.state}`,
-      severity: tone === 'bad' ? 'bad' : 'warn',
-      title: connectionLabel(connection),
-      detail: connection.lastError ? `${connection.adapter}：${connection.lastError}` : `${connection.adapter} ${connection.state}`,
-      actionLabel: '查看连接',
-      href: `/wiring/connections/${connection.id}`,
-    })
-  }
-
-  for (const agent of state.agents) {
-    if (!agent.modelRef) {
-      items.push({
-        id: `agent-model:${agent.id}`,
-        severity: 'bad',
-        title: agent.name,
-        detail: '没有可用模型，无法回复',
-        actionLabel: '选择模型',
-        href: `/agents/${agent.id}`,
+  subscribe(listener: () => void): () => void {
+    this.#listeners.add(listener)
+    if (this.#listeners.size === 1) {
+      this.#unsubscribe = this.runtime.events.subscribe({
+        open: () => void this.refresh(),
+        'attention-changed': () => void this.refresh(),
       })
-      continue
+      void this.refresh()
     }
-    if (agent.imageDiagnostics.route.mode === 'unavailable' && agent.channels.length > 0) {
-      items.push({
-        id: `agent-vision:${agent.id}`,
-        severity: 'info',
-        title: agent.name,
-        detail: '主模型看不懂图片',
-        actionLabel: '添加视觉模型',
-        href: `/agents/${agent.id}`,
-      })
+    return () => {
+      this.#listeners.delete(listener)
+      if (this.#listeners.size === 0) this.#unsubscribe?.()
     }
   }
 
-  return items.sort((left, right) => severityRank[left.severity] - severityRank[right.severity])
+  refresh(): Promise<void> {
+    if (this.#pending) {
+      this.#again = true
+      return this.#pending
+    }
+    this.#pending = workspaceApi
+      .listAttention()
+      .then((list) => {
+        this.#items = list.items.map(toAttentionItem)
+        this.#listeners.forEach((listener) => listener())
+      })
+      .catch(() => undefined)
+      .finally(() => {
+        this.#pending = undefined
+        if (this.#again) {
+          this.#again = false
+          void this.refresh()
+        }
+      })
+    return this.#pending
+  }
+
+  async dismiss(id: string): Promise<void> {
+    this.#items = this.#items.filter((item) => item.id !== id)
+    this.#listeners.forEach((listener) => listener())
+    await workspaceApi.dismissAttention(id)
+  }
+}
+
+const sources = new WeakMap<ProductRuntime, AttentionSource>()
+export const attentionSource = (runtime: ProductRuntime): AttentionSource => {
+  let source = sources.get(runtime)
+  if (!source) {
+    source = new AttentionSource(runtime)
+    sources.set(runtime, source)
+  }
+  return source
 }
 
 export function useAttention(): readonly AttentionItem[] {
-  const connections = useProductStore((state) => state.connections)
-  const agents = useProductStore((state) => state.agents)
-  const authoringTasks = useProductStore((state) => state.authoringTasks)
-  const channels = useProductStore((state) => state.channels)
-  const messagesByChannel = useProductStore((state) => state.messagesByChannel)
-  const models = useProductStore((state) => state.models)
-  return useMemo(
-    () => deriveAttention({ connections, agents, authoringTasks, channels, messagesByChannel, models }),
-    [connections, agents, authoringTasks, channels, messagesByChannel, models],
+  const source = attentionSource(useProductRuntime())
+  return useSyncExternalStore(
+    (listener) => source.subscribe(listener),
+    () => source.items,
   )
+}
+
+/** Refresh after local actions that change attention (send, resolve) without waiting for SSE. */
+export function useAttentionRefresh(trigger: unknown): void {
+  const source = attentionSource(useProductRuntime())
+  useEffect(() => {
+    void source.refresh()
+  }, [source, trigger])
 }

@@ -1,5 +1,6 @@
-import { ArrowDown, ArrowRight, Eye, PanelRight, Plug } from 'lucide-react'
+import { ArrowDown, ArrowRight, ChevronDown, Eye, PanelRight, Plug } from 'lucide-react'
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent } from 'react'
+import { workspaceApi } from '../../host-api-client.js'
 import { useStickToBottom } from '../../pages/channel-scroll.js'
 import {
   connectionDisplayName,
@@ -9,7 +10,7 @@ import {
   type ConnectionSummary,
   type ConversationMessage,
 } from '../../product-runtime.js'
-import { AgentAvatar, Button, Chip, StatusDot, toast } from '../../ui-kit/next/index.js'
+import { AgentAvatar, Button, Chip, ConfirmDialog, Disclosure, MemberAvatar, StatusDot, toast } from '../../ui-kit/next/index.js'
 import { agentHue, agentPhase, connectionTone, triggerLabel } from '../model/identity.js'
 import { useProductApi } from '../model/store.js'
 import styles from './channels.module.css'
@@ -109,15 +110,56 @@ function Composer({ channel, agent, connection }: { readonly channel: ChannelSum
   )
 }
 
-function Queue({ count }: { readonly count: number }) {
+type Pending = Awaited<ReturnType<typeof workspaceApi.getChannelPending>>
+
+function Queue({ channelId, count }: { readonly channelId: string; readonly count: number }) {
+  const [open, setOpen] = useState(false)
+  const [pending, setPending] = useState<Pending | null>(null)
+  useEffect(() => {
+    setOpen(false)
+    setPending(null)
+  }, [channelId])
+  useEffect(() => {
+    if (!open) return
+    let current = true
+    void workspaceApi
+      .getChannelPending(channelId)
+      .then((next) => current && setPending(next))
+      .catch(() => undefined)
+    return () => {
+      current = false
+    }
+  }, [open, channelId, count])
   if (count <= 0) return null
+  const events = pending?.items.flatMap((item) => item.events) ?? []
+  const authors = [...new Set(events.map((event) => event.author))].slice(0, 3)
   return (
-    <div className={styles.queue}>
-      <div className={styles.queueBar}>
+    <div className={[styles.queue, open ? styles.queueOpen : ''].join(' ')}>
+      <button type="button" className={styles.queueBar} aria-expanded={open} onClick={() => setOpen(!open)}>
+        {authors.length ? (
+          <span className={styles.stack}>
+            {authors.map((author) => (
+              <MemberAvatar key={author} name={author} size="sm" />
+            ))}
+          </span>
+        ) : null}
         <span>
           <b>{count} 条新消息</b>排队中
         </span>
-      </div>
+        <ChevronDown className={styles.chevron} aria-hidden="true" />
+      </button>
+      <Disclosure open={open}>
+        <div className={styles.queueList}>
+          {events.map((event) => (
+            <div key={event.eventId}>
+              <span className={styles.time}>{new Date(event.receivedAt).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit', hour12: false })}</span>
+              <span>
+                <b>{event.author}</b>：{event.preview}
+              </span>
+            </div>
+          ))}
+        </div>
+      </Disclosure>
     </div>
   )
 }
@@ -128,20 +170,19 @@ export function Conversation({
   connection,
   inspectorOpen,
   onToggleInspector,
-  onStop,
 }: {
   readonly channel: ChannelSummary
   readonly agent: AgentSummary | undefined
   readonly connection: ConnectionSummary | undefined
   readonly inspectorOpen: boolean
   readonly onToggleInspector: () => void
-  readonly onStop?: (() => void) | undefined
 }) {
   const api = useProductApi()
   const messages = useProductStore((state) => state.messagesByChannel[channel.id] ?? EMPTY)
   const history = useProductStore((state) => state.channelHistory[channel.id])
   const runtime = useProductStore((state) => state.channelRuntimes[channel.id])
   const [xray, setXrayState] = useState(readXray)
+  const [stopping, setStopping] = useState(false)
   const [xrayAnimated, setXrayAnimated] = useState(false)
   const scroll = useStickToBottom(`${channel.id}:next`, true)
   const known = useRef(new Set<string>())
@@ -165,6 +206,25 @@ export function Conversation({
   useLayoutEffect(() => {
     if (history?.loadingMore === false) scroll.clearPrepend()
   }, [history?.loadingMore, messages[0]?.id, scroll.clearPrepend])
+
+  const latest = messages.at(-1)
+  useEffect(() => {
+    if (!latest || latest.occurredAt === undefined || channel.unread === 0) return
+    const timer = window.setTimeout(() => {
+      void workspaceApi.markChannelRead(channel.id, { occurredAt: latest.occurredAt ?? 0, sourceId: latest.id }).catch(() => undefined)
+    }, 400)
+    return () => window.clearTimeout(timer)
+  }, [channel.id, channel.unread, latest])
+
+  const resolve = async (messageId: string, action: 'retry' | 'confirm-delivered') => {
+    try {
+      await workspaceApi.resolveOutbound(messageId, action)
+      toast(action === 'retry' ? '已重新发送' : '已标记为送达')
+      void api.getState().loadChannelMessages(channel.id, 'latest').catch(() => undefined)
+    } catch (error) {
+      toast(error instanceof Error ? error.message : String(error), { tone: 'bad' })
+    }
+  }
 
   const items = useMemo(() => buildTimeline(messages, runtime?.turns ?? []), [messages, runtime?.turns])
   const phase = agent ? agentPhase[runtime?.phase ?? channel.runtimePhase ?? agent.state] : undefined
@@ -246,6 +306,7 @@ export function Conversation({
                 agent={agent}
                 continued={item.continued}
                 fresh={fresh.has(item.message.id)}
+                onResolve={(messageId, action) => void resolve(messageId, action)}
               />
             ) : (
               <TurnRow
@@ -254,7 +315,8 @@ export function Conversation({
                 agent={agent}
                 xray={xray}
                 animateXray={xrayAnimated}
-                onStop={item.latest ? onStop : undefined}
+                startedAt={item.turn.startedAt}
+                onStop={item.latest ? () => setStopping(true) : undefined}
               />
             ),
           )}
@@ -266,9 +328,23 @@ export function Conversation({
             回到最新
           </Button>
         ) : null}
-        <Queue count={runtime?.pendingInjectCount ?? 0} />
+        <Queue channelId={channel.id} count={runtime?.pendingInjectCount ?? 0} />
         <Composer channel={channel} agent={agent} connection={connection} />
       </div>
+      <ConfirmDialog
+        open={stopping}
+        onOpenChange={setStopping}
+        title={`停止${agent?.name ?? '智能体'}当前的任务？`}
+        confirmLabel="停止"
+        danger
+        onConfirm={async () => {
+          const result = await workspaceApi.stopChannelTask(channel.id, runtime?.episodeId)
+          toast(result.result === 'stopped' ? '已停止' : '当前没有进行中的任务')
+          void api.getState().loadChannelRuntime(channel.id).catch(() => undefined)
+        }}
+      >
+        <p>已完成的步骤不会撤回，排队的消息会保留。</p>
+      </ConfirmDialog>
     </section>
   )
 }

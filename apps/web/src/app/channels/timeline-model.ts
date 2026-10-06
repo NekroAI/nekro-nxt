@@ -85,7 +85,8 @@ export function buildTimeline(
 export const isTurnRunning = (turn: RuntimeTurn): boolean => turn.state === 'in-progress'
 
 export const isUnconfirmed = (message: ConversationMessage): boolean =>
-  message.delivery === '结果未知' || message.delivery === '失败' || message.delivery === '部分发送'
+  message.deliveryResolution !== 'confirm-delivered' &&
+  (message.delivery === '结果未知' || message.delivery === '失败' || message.delivery === '部分发送')
 
 export function formatTokens(value: number): string {
   if (value >= 1_000_000) return `${(value / 1_000_000).toFixed(value >= 10_000_000 ? 0 : 1)}M`

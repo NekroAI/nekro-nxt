@@ -2,8 +2,7 @@ import { hueOf, type Tone } from '../../ui-kit/next/index.js'
 import { connectionDisplayName, type AgentSummary, type ConnectionState, type ConnectionSummary } from '../../product-runtime.js'
 
 /** Agent identity hue: explicit appearance when the Host provides one, otherwise stable from the id. */
-export const agentHue = (agent: Pick<AgentSummary, 'id'> & { readonly appearance?: { readonly hue?: number } }): number =>
-  agent.appearance?.hue ?? hueOf(agent.id)
+export const agentHue = (agent: Pick<AgentSummary, 'id' | 'appearance'>): number => agent.appearance?.hue ?? hueOf(agent.id)
 
 /** CSS color for the agent's identity accent (lines, bars, wires). */
 export const agentAccent = (agent: Parameters<typeof agentHue>[0]): string => `hsl(${agentHue(agent)} 58% 58%)`

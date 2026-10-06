@@ -1,6 +1,6 @@
 import { EMPTY_CHANNEL_MESSAGES, groupChannelMessages, mergeChannelMessages } from './channel-messages.js'
 import type { ProductActions } from './product-actions.js'
-import { callHostApi, HostRequestError, StaleHostReadError } from './host-api-client.js'
+import { callHostApi, HostRequestError, StaleHostReadError, workspaceApi } from './host-api-client.js'
 import { createStore } from 'zustand/vanilla'
 import {
   CHANNEL_MESSAGE_INITIAL_PAGE_SIZE,
@@ -377,6 +377,7 @@ const projectConversationMessage = (
     occurredAt: message.occurredAt,
     resources,
     ...(delivery === undefined ? {} : { delivery }),
+    ...(message.deliveryResolution === undefined ? {} : { deliveryResolution: message.deliveryResolution.action }),
     ...(message.origin === 'admin-console' ? { origin: 'admin-console' as const } : {}),
   }
 }
@@ -419,6 +420,10 @@ const projectSnapshot = (json: SnapshotJson, successfulAt: number): ProductSnaps
     imagePolicy: agent.imagePolicy,
     dynamicClientApprovalPolicy: agent.dynamicClientApprovalPolicy,
     imageDiagnostics: agent.imageDiagnostics,
+    appearance: {
+      ...(agent.appearance?.hue === undefined ? {} : { hue: agent.appearance.hue }),
+      ...(agent.appearance?.avatarAssetId === undefined ? {} : { avatarUrl: workspaceApi.agentAvatarUrl(agent.id) }),
+    },
   }))
   const connectionAdapterName = (connection: SnapshotJson['connections'][number]): string =>
     nonEmptyLabel(
@@ -463,7 +468,11 @@ const projectSnapshot = (json: SnapshotJson, successfulAt: number): ProductSnaps
       processingFeedback: binding.processingFeedback,
       activityTriggerOverrides: binding.activityTriggerOverrides,
     })),
-    unread: 0,
+    unread: channel.activity?.unreadCount ?? 0,
+    ...(channel.activity?.lastActivityAt === undefined ? {} : { lastActivityAt: channel.activity.lastActivityAt }),
+    ...(channel.activity?.lastMessage === undefined
+      ? {}
+      : { lastMessage: { author: channel.activity.lastMessage.author, text: channel.activity.lastMessage.preview } }),
   }))
   const messages: ConversationMessage[] = json.messages.map((message) =>
     projectConversationMessage(message, channels, agents),

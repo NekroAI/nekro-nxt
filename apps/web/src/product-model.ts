@@ -86,6 +86,8 @@ export interface AgentSummary {
   readonly imagePolicy: ImageUnderstandingPolicy
   readonly dynamicClientApprovalPolicy: 'manual' | 'automatic'
   readonly imageDiagnostics: HostApiResponse<'snapshot'>['agents'][number]['imageDiagnostics']
+  /** Non-versioned identity look; absent fields fall back to values derived from the id. */
+  readonly appearance?: { readonly hue?: number; readonly avatarUrl?: string }
 }
 
 export interface ModelSummary {
@@ -114,6 +116,8 @@ export interface ChannelSummary {
     readonly activityTriggerOverrides: HostApiResponse<'snapshot'>['channels'][number]['bindings'][number]['activityTriggerOverrides']
   }[]
   readonly unread: number
+  readonly lastActivityAt?: number
+  readonly lastMessage?: { readonly author: string; readonly text: string }
 }
 
 export interface ChannelRuntimeToolView {
@@ -185,6 +189,8 @@ export interface ConversationMessage {
   readonly time: string
   readonly occurredAt?: number
   readonly delivery?: DeliveryState
+  /** Administrator resolution of an unsettled delivery (retry or confirmed as delivered). */
+  readonly deliveryResolution?: 'retry' | 'confirm-delivered'
   readonly origin?: 'admin-console'
   readonly resources: readonly {
     readonly assetId: string

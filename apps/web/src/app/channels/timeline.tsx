@@ -17,12 +17,14 @@ export const MessageRow = memo(function MessageRow({
   agent,
   continued,
   fresh,
+  onResolve,
 }: {
   readonly message: ConversationMessage
   readonly channelKind: ChannelSummary['kind']
   readonly agent: AgentSummary | undefined
   readonly continued: boolean
   readonly fresh: boolean
+  readonly onResolve?: ((messageId: string, action: 'retry' | 'confirm-delivered') => void) | undefined
 }) {
   const side = resolveMessageSide({ channelKind, role: message.role, ...(message.origin ? { origin: message.origin } : {}) })
   if (side === 'system') {
@@ -67,6 +69,20 @@ export const MessageRow = memo(function MessageRow({
         <div className={styles.unsentBar} role="status">
           <CircleAlert aria-hidden="true" />
           {message.delivery === '部分发送' ? '部分送达' : message.delivery === '失败' ? '发送失败' : '未确认送达'}
+          {onResolve && message.id.startsWith('out_') && message.deliveryResolution !== 'retry' ? (
+            <>
+              <Button size="small" variant="ghost" onClick={() => onResolve(message.id, 'retry')}>
+                重发
+              </Button>
+              {message.delivery !== '失败' ? (
+                <Button size="small" variant="ghost" onClick={() => onResolve(message.id, 'confirm-delivered')}>
+                  已送达
+                </Button>
+              ) : null}
+            </>
+          ) : message.deliveryResolution === 'retry' ? (
+            <span>已重新发送</span>
+          ) : null}
         </div>
       ) : message.delivery === '发送中' ? (
         <div className={styles.notice}>发送中…</div>
@@ -202,7 +218,7 @@ export function TurnRow({
   readonly agent: AgentSummary | undefined
   readonly xray: boolean
   readonly animateXray: boolean
-  readonly startedAt?: number
+  readonly startedAt?: number | undefined
   readonly onStop?: (() => void) | undefined
 }) {
   const running = isTurnRunning(turn)

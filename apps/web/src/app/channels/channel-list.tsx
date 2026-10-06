@@ -53,7 +53,7 @@ const readMode = (): ListMode => {
   }
 }
 
-type ChannelActivity = ChannelSummary & { readonly lastActivityAt?: number; readonly lastMessage?: { readonly author: string; readonly text: string } }
+type ChannelActivity = ChannelSummary
 
 const EMPTY: readonly ConversationMessage[] = []
 
@@ -216,7 +216,7 @@ export function ChannelList({ selectedId }: { readonly selectedId: string | unde
   }, [tree])
   const recent = useMemo(() => {
     const time = (channel: ChannelActivity) => channel.lastActivityAt ?? 0
-    return [...(channels as readonly ChannelActivity[])].sort((left, right) => time(right) - time(left))
+    return [...channels].sort((left, right) => time(right) - time(left))
   }, [channels])
 
   const sensors = useSensors(
