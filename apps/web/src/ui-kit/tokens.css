@@ -5,7 +5,8 @@
   initial-value: 240px;
 }
 
-:root {
+:root,
+[data-nxt-theme='light'] {
   interpolate-size: allow-keywords;
   color-scheme: light;
   --nxt-moon-50: #f0f5fd;
@@ -179,7 +180,8 @@
   font-size: 0.75rem;
 }
 
-:root[data-theme='dark'] {
+:root[data-theme='dark'],
+[data-nxt-theme='dark'] {
   color-scheme: dark;
   --nxt-bg-canvas: #0f1a2c;
   --nxt-bg-sidebar: #12233a;

@@ -8,6 +8,10 @@ import { ExtensionIdSchema, ExtensionRevisionIdSchema, HostUiPageEntrySchema } f
 import { ExtensionBuilder, ExtensionSourceStore, materializeDynamicPackage } from '@nekro-nxt/extension-runtime'
 import { stylesSnapshot, stylesPage } from '../../../packages/extension-runtime/tests/fixtures/host-ui-styles.js'
 import { HostUiModuleRuntime, readHostUiNavigation } from '../src/host-ui-client.tsx'
+import { HostEventStream } from '../src/host-event-stream.ts'
+import { createProductRuntime } from '../src/product-runtime.ts'
+
+const pageData = () => ({ store: createProductRuntime(new HostEventStream()).store, permissions: [] })
 
 describe('Host UI Client Runtime', () => {
   afterEach(() => vi.unstubAllGlobals())
@@ -77,7 +81,7 @@ describe('Host UI Client Runtime', () => {
       })
       // Recreating the runtime exercises refresh without retaining factory closure state.
       for (let mount = 0; mount < 2; mount += 1) {
-        const runtime = new HostUiModuleRuntime([entry])
+        const runtime = new HostUiModuleRuntime([entry], new HostEventStream(), pageData())
         try {
           await runtime.ensureLoaded()
           const registered = runtime.registration(stylesPage.entryId)
@@ -91,8 +95,8 @@ describe('Host UI Client Runtime', () => {
               navigate: () => undefined,
             }),
           )
-          expect(html).toContain('class="nxt-extension-section-heading"')
-          expect(html).toContain('class="nxt-extension-secondary-text"')
+          expect(html).toContain('class="stylesHeading"')
+          expect(html).toContain('class="stylesText"')
           expect(html).toContain('保存后样式正常')
           expect(links.size).toBe(1)
         } finally {
@@ -107,7 +111,7 @@ describe('Host UI Client Runtime', () => {
   })
 
   it('returns a cached external-store snapshot until runtime state changes', () => {
-    const runtime = new HostUiModuleRuntime([])
+    const runtime = new HostUiModuleRuntime([], new HostEventStream(), pageData())
     const first = runtime.snapshot()
     expect(runtime.snapshot()).toBe(first)
     expect(first).toEqual({ loading: false, revision: 0 })

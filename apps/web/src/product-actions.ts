@@ -14,7 +14,6 @@ export interface ProductActions {
   'settings.catalog': (signal?: AbortSignal) => Promise<DshSettingsCatalog>
 
   'extensions.commitImport': Action<'commitExtensionImport'>
-  'extensions.rebuild': Action<'rebuildExtensionRevision'>
   'extensions.delete': Action<'deleteLocalExtension'>
   'hostUi.updatePreferences': Action<'updateHostUiPagePreferences'>
   'host.refresh': () => Promise<null>

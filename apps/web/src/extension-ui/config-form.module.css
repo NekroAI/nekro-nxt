@@ -1,0 +1,54 @@
+.form {
+  display: grid;
+  gap: 14px;
+  min-width: 0;
+}
+
+.group {
+  display: grid;
+  gap: 14px;
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+
+.legend {
+  margin-bottom: 2px;
+  padding: 0;
+  color: var(--muted, var(--nxt-text-muted));
+  font-size: 12px;
+  font-weight: 650;
+  letter-spacing: 0.04em;
+}
+
+.switch[data-invalid='true'] {
+  color: var(--bad, var(--nxt-status-danger));
+}
+
+.advanced {
+  display: grid;
+  gap: 10px;
+}
+
+.advancedToggle {
+  display: inline-flex;
+  align-items: center;
+  justify-self: start;
+  gap: 6px;
+  padding: 2px 0;
+  border: 0;
+  background: transparent;
+  color: var(--muted, var(--nxt-text-muted));
+  font: inherit;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.advancedToggle svg {
+  transition: transform 200ms ease;
+}
+
+.advancedToggle[aria-expanded='false'] svg {
+  transform: rotate(-90deg);
+}

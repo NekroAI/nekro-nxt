@@ -314,11 +314,13 @@ describe('dynamic authoring closed loop', () => {
           },
           verification: {
             dshVersion: 'synthetic',
-            contractVersion: 'nekro-nxt-extension-v1',
+            contractVersion: 'nekro-nxt-extension-v4',
             origin: { episodeId: 'eps_synthetic', pluginId: 'p', packageId: 'pkg', pluginRunId: 'run' },
             toolInvocations: [],
             rpcMethods: [],
-            renderedSlots: [],
+            renderedPanels: [],
+            renderedToolViews: [],
+            renderedMessageRenderers: [],
           },
         }),
       ).rejects.toThrow('materialized factory failure')

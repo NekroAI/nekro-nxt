@@ -16,7 +16,6 @@ export const stylesCss = '.stylesProbe { padding: 23px; border-radius: 17px; }'
 export const stylesClientCode = `return {
   inject: ['pages', 'ui'],
   apply(ctx) {
-    ctx.pages.declarePermissions({ permissions: [], networkOrigins: [] })
     return ctx.pages.register({ page: ${JSON.stringify(stylesPage)} }, () => {
       const [state, setState] = React.useState(null)
       const [busy, setBusy] = React.useState(false)
@@ -44,10 +43,10 @@ export const stylesClientCode = `return {
         }
       }
       return React.createElement('section', { className: 'stylesProbe', 'data-styles-probe': '' },
-        React.createElement('h1', { className: styles.sectionHeading }, '样式回归页面'),
-        React.createElement('p', { className: styles.secondaryText }, '保存后样式正常'),
+        React.createElement('h1', { className: 'stylesHeading' }, '样式回归页面'),
+        React.createElement('p', { className: 'stylesText' }, '保存后样式正常'),
         React.createElement('output', { 'data-styles-counter': '' }, state ? String(state.value) : '读取中'),
-        React.createElement('button', { className: styles.button, disabled: !state || busy, onClick: increment }, '增加计数'),
+        React.createElement('button', { className: 'stylesButton', disabled: !state || busy, onClick: increment }, '增加计数'),
         error ? React.createElement('p', { role: 'alert' }, error) : null
       )
     })

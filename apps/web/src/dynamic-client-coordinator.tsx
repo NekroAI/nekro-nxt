@@ -1,45 +1,32 @@
-import {
-  Component,
-  createContext,
-  useContext,
-  useEffect,
-  useLayoutEffect,
-  useMemo,
-  useRef,
-  useState,
-  useSyncExternalStore,
-  type ReactNode,
-} from 'react'
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore, type ReactNode } from 'react'
+import { createContext, useContext } from 'react'
 import {
   DshDynamicClientRuntime,
+  type DynamicClientEvidence,
   type DynamicClientHostPort,
+  type DynamicClientSource,
   type DynamicHostPageEntry,
   type DynamicInventoryRow,
-  type DynamicProductSlotName,
-  type DynamicProductSlotPropsMap,
 } from './dsh-dynamic-client.js'
 import type {
-  AdapterClientSlotName,
-  AgentClientSlotName,
   HostPageContribution,
   HostUiKitComponentName,
   HostUiPageGeometryEvidence,
-  HostUiPermissionDeclaration,
+  PanelContribution,
+  PanelDensity,
+  ToolViewDensity,
 } from '@nekro-nxt/contracts'
-import {
-  ADAPTER_CLIENT_SLOT_NAMES,
-  AGENT_CLIENT_SLOT_NAMES,
-  HostUiKitComponentNameSchema,
-  HostUiNavigationModelSchema,
-} from '@nekro-nxt/contracts'
+import { HostUiKitComponentNameSchema, HostUiNavigationModelSchema } from '@nekro-nxt/contracts'
 import { HttpDynamicClientHost } from './http-dynamic-host.js'
 import type { DynamicPackageSummary } from './product-port.js'
 import { useProductStore, useProductRuntime, type ProductRuntime } from './product-runtime.js'
 import { Button } from './ui-kit/index.js'
 import { HostUiPageFrame } from './host-ui-client.js'
+import { ContributionBoundary, ContributionFrame } from './extension-ui/contribution-frame.js'
+import type { ContributionRegistry, PanelEntry } from './extension-ui/registry.js'
 import styles from './dynamic-client-coordinator.module.css'
 
-/** One browser ModuleLoader/SlotRegistry multiplexed across product intelligent-agents. */
+/** One browser ModuleLoader multiplexed across product intelligent-agents. */
 class MultiplexDynamicClientHost implements DynamicClientHostPort {
   readonly #hosts = new Map<string, HttpDynamicClientHost>()
   readonly #requestOwner = new Map<string, string>()
@@ -72,7 +59,7 @@ class MultiplexDynamicClientHost implements DynamicClientHostPort {
     return this.#ownedHost(owner).runHostHalf(agentId, pluginId, packageId, mode, requestId, approveFutureVersions)
   }
 
-  getClientCode(agentId: string, pluginId: string, pluginRunId: string) {
+  getClientCode(agentId: string, pluginId: string, pluginRunId: string): Promise<DynamicClientSource> {
     const owner = this.#pluginOwner.get(pluginId)
     if (!owner) return Promise.reject(new Error('找不到动态扩展所属的 Episode。'))
     return this.#ownedHost(owner).getClientCode(agentId, pluginId, pluginRunId)
@@ -113,29 +100,11 @@ class MultiplexDynamicClientHost implements DynamicClientHostPort {
     pluginId: string,
     packageId: string,
     pluginRunId: string,
-    renderedSlots: readonly AgentClientSlotName[],
-    renderedHostSlots: readonly { readonly name: AdapterClientSlotName; readonly key: string }[],
-    renderedPages: readonly HostPageContribution[],
-    usedUiComponents: readonly HostUiKitComponentName[],
-    pageGeometry: readonly HostUiPageGeometryEvidence[],
-    permissions: HostUiPermissionDeclaration,
-    navigationEntries: readonly string[],
+    evidence: DynamicClientEvidence,
   ): Promise<void> {
     const owner = this.#pluginOwner.get(pluginId)
     if (!owner) return Promise.reject(new Error('找不到动态扩展所属的 Episode。'))
-    return this.#ownedHost(owner).reportClientVerification(
-      agentId,
-      pluginId,
-      packageId,
-      pluginRunId,
-      renderedSlots,
-      renderedHostSlots,
-      renderedPages,
-      usedUiComponents,
-      pageGeometry,
-      permissions,
-      navigationEntries,
-    )
+    return this.#ownedHost(owner).reportClientVerification(agentId, pluginId, packageId, pluginRunId, evidence)
   }
 
   #host(agentId: string, episodeId: string): HttpDynamicClientHost {
@@ -159,6 +128,9 @@ class MultiplexDynamicClientHost implements DynamicClientHostPort {
   }
 }
 
+const errorMessage = (error: unknown): string => (error instanceof Error ? error.message : String(error))
+
+/** Owns the browser runtime for creation previews, approvals and verification reports. */
 class DynamicClientCoordinator {
   constructor(readonly product: ProductRuntime) {}
   readonly #host = new MultiplexDynamicClientHost()
@@ -170,7 +142,8 @@ class DynamicClientCoordinator {
   #queue: Promise<void> = Promise.resolve()
   #disposed = false
   #failure = ''
-  readonly #reportedClientRuns = new Set<string>()
+  readonly #reportedRuns = new Set<string>()
+  readonly #inspectedPages = new Set<string>()
 
   subscribe = (listener: () => void): (() => void) => {
     this.#listeners.add(listener)
@@ -209,60 +182,56 @@ class DynamicClientCoordinator {
     return this.#resolve(agentId, requestId, false)
   }
 
-  entries<Name extends DynamicProductSlotName>(name: Name) {
-    return this.#runtime?.entries(name) ?? []
+  /** Contributions of loaded candidates; empty until a candidate runs in this browser. */
+  previews(): ContributionRegistry | undefined {
+    return this.#runtime?.previews
+  }
+
+  /** Loaded candidates of one agent with the run each belongs to. */
+  candidates(agentId: string): readonly { readonly pluginId: string; readonly pluginRunId: string }[] {
+    const runtime = this.#runtime
+    if (!runtime) return []
+    return runtime
+      .loaded()
+      .filter((loaded) => runtime.agentOf(loaded.pluginId) === agentId)
+      .map((loaded) => ({ pluginId: loaded.pluginId, pluginRunId: loaded.pluginRunId }))
   }
 
   pageEntries(): readonly DynamicHostPageEntry[] {
     return this.#runtime?.pageEntries() ?? []
   }
 
-  reportSlotFailure(agentId: string, error: unknown): void {
-    this.#failure = error instanceof Error ? error.message : String(error)
-    void this.#runtime?.reportRenderFailure(agentId, error).catch(() => undefined)
+  /** A preview threw or failed a check: the run must not reach `ready`. */
+  reportPreviewFailure(pluginId: string, error: unknown): void {
+    this.#failure = errorMessage(error)
+    void this.#runtime
+      ?.reportRenderFailure(pluginId, { slot: 'preview', message: this.#failure, abdicated: false })
+      .catch(() => undefined)
     this.#publish()
   }
 
-  reportRendered(agentId: string): Promise<void> {
+  notePageInspected(pluginId: string): void {
+    if (this.#inspectedPages.has(pluginId)) return
+    this.#inspectedPages.add(pluginId)
+    this.#publish()
+  }
+
+  pageInspected(pluginId: string): boolean {
+    return this.#inspectedPages.has(pluginId)
+  }
+
+  reported(pluginId: string, pluginRunId: string): boolean {
+    return this.#reportedRuns.has(`${pluginId}:${pluginRunId}`)
+  }
+
+  /** Sends what really rendered for one run, once. */
+  reportVerified(pluginId: string, pluginRunId: string, evidence: DynamicClientEvidence): Promise<void> {
     return this.#enqueue(async () => {
-      if (this.#failure) return
-      const runtime = this.#runtime
-      if (!runtime) return
-      for (const loaded of runtime.loaded()) {
-        const key = `${loaded.pluginId}:${loaded.pluginRunId}`
-        if (this.#reportedClientRuns.has(key)) continue
-        const renderedSlots = loaded.slots.filter((slot): slot is AgentClientSlotName =>
-          AGENT_CLIENT_SLOT_NAMES.some((candidate) => candidate === slot),
-        )
-        const renderedHostSlots = ADAPTER_CLIENT_SLOT_NAMES.flatMap((name) =>
-          loaded.slots.includes(name) ? runtime.entries(name).map((entry) => ({ name, key: entry.id })) : [],
-        )
-        const renderedPages = runtime.pageEntries().map(({ page }) => page)
-        const usedUiComponents = [...new Set(runtime.pageEntries().flatMap((entry) => entry.usedUiComponents()))]
-        const pageGeometry = runtime.pageEntries().flatMap((entry) => {
-          const geometry = entry.pageGeometry()
-          return geometry === undefined ? [] : [geometry]
-        })
-        const navigationEntries = runtime
-          .pageEntries()
-          .filter(({ page, navigation }) => page.objectPane === 'navigation' && navigation !== undefined)
-          .map(({ page }) => page.entryId)
-        if (renderedSlots.length === 0 && renderedHostSlots.length === 0 && renderedPages.length === 0) continue
-        await this.#host.reportClientVerification(
-          agentId,
-          loaded.pluginId,
-          loaded.packageId,
-          loaded.pluginRunId,
-          renderedSlots,
-          renderedHostSlots,
-          renderedPages,
-          usedUiComponents,
-          pageGeometry,
-          runtime.pagePermissions(),
-          navigationEntries,
-        )
-        this.#reportedClientRuns.add(key)
-      }
+      const key = `${pluginId}:${pluginRunId}`
+      if (this.#reportedRuns.has(key) || this.#failure) return
+      await this.#runtime?.reportVerification(pluginId, evidence)
+      this.#reportedRuns.add(key)
+      this.#publish()
     })
   }
 
@@ -271,7 +240,7 @@ class DynamicClientCoordinator {
   }
 
   reportFailure(error: unknown): void {
-    this.#failure = error instanceof Error ? error.message : String(error)
+    this.#failure = errorMessage(error)
     this.#publish()
   }
 
@@ -315,8 +284,11 @@ class DynamicClientCoordinator {
   async #ensureRuntime(): Promise<DshDynamicClientRuntime> {
     if (this.#runtime) return this.#runtime
     if (this.#disposed) throw new Error('动态 Client Runtime 已停止。')
-    this.#runtime = await DshDynamicClientRuntime.create(this.#host, document, this.product.events)
-    return this.#runtime
+    const runtime = await DshDynamicClientRuntime.create(this.#host, this.product.store, document, this.product.events)
+    runtime.previews.subscribe(() => this.#publish())
+    runtime.subscribePages(() => this.#publish())
+    this.#runtime = runtime
+    return runtime
   }
 
   #enqueue(operation: () => Promise<void>): Promise<void> {
@@ -331,52 +303,287 @@ class DynamicClientCoordinator {
   }
 }
 
-class DynamicSlotBoundary extends Component<
-  { readonly entryId: string; readonly onFailure: (error: unknown) => void; readonly children: ReactNode },
-  { readonly failed: boolean }
-> {
-  override state = { failed: false }
+/** Container widths the verification renders each density at. */
+const DENSITY_WIDTH: Readonly<Record<PanelDensity, number>> = { compact: 300, full: 720 }
+const THEMES = ['light', 'dark'] as const
+const TOOL_VIEW_DENSITIES: readonly ToolViewDensity[] = ['chip', 'card']
 
-  static getDerivedStateFromError(): { readonly failed: boolean } {
-    return { failed: true }
-  }
-
-  override componentDidCatch(error: Error): void {
-    this.props.onFailure(error)
-  }
-
-  override render(): ReactNode {
-    if (!this.state.failed) return this.props.children
-    return <div role="alert">即时界面渲染失败；临时 Host 能力已停止保存验证。</div>
-  }
+interface VerificationCase {
+  readonly key: string
+  readonly width: number
+  readonly theme: (typeof THEMES)[number]
+  readonly render: () => ReactNode
 }
 
-function DynamicRuntimeSlot<Name extends DynamicProductSlotName>({
+/** Records that one case rendered; measures horizontal overflow of its container after layout. */
+function CaseProbe({
+  container,
+  onDone,
+}: {
+  readonly container: React.RefObject<HTMLDivElement | null>
+  readonly onDone: (problem?: string) => void
+}) {
+  useLayoutEffect(() => {
+    const element = container.current
+    if (!element) return onDone('预览容器缺失。')
+    onDone(element.scrollWidth > element.clientWidth + 1 ? '内容产生了横向溢出。' : undefined)
+  }, [container, onDone])
+  return null
+}
+
+function VerificationCaseView({
+  item,
+  onResult,
+}: {
+  readonly item: VerificationCase
+  readonly onResult: (key: string, problem?: string) => void
+}) {
+  const container = useRef<HTMLDivElement>(null)
+  return (
+    <div
+      ref={container}
+      className={styles.verificationCase}
+      style={{ width: item.width }}
+      data-nxt-theme={item.theme}
+      data-host-ui-owner="dynamic-preview"
+    >
+      <ContributionBoundary
+        resetKey={item.key}
+        onError={(error) => onResult(item.key, errorMessage(error))}
+        fallback={() => null}
+      >
+        {item.render()}
+        <CaseProbe container={container} onDone={(problem) => onResult(item.key, problem)} />
+      </ContributionBoundary>
+    </div>
+  )
+}
+
+const previewAnchorId = (panel: PanelContribution, agentId: string, channelId: string | undefined): string =>
+  panel.anchor === 'agent' ? agentId : panel.anchor === 'channel' ? (channelId ?? 'preview') : 'preview'
+
+/**
+ * Decision §5.3: renders every panel at each declared density in both themes, every tool view as chip and card and
+ * every message renderer, out of sight. Only contributions whose every case rendered without errors or horizontal
+ * overflow are reported; one failure stops the run from becoming ready.
+ */
+function CandidateVerification({
   coordinator,
+  registry,
+  pluginId,
+  pluginRunId,
   agentId,
-  name,
-  props,
+  channelId,
 }: {
   readonly coordinator: DynamicClientCoordinator
+  readonly registry: ContributionRegistry
+  readonly pluginId: string
+  readonly pluginRunId: string
   readonly agentId: string
-  readonly name: Name
-  readonly props: DynamicProductSlotPropsMap[Name]
+  readonly channelId: string | undefined
 }) {
+  const owner = `dynamic:${pluginId}`
+  const panels = registry.panels().filter((entry) => entry.owner.key === owner)
+  const toolViews = registry.toolViews().filter((entry) => entry.owner.key === owner)
+  const renderers = registry.messageRenderers().filter((entry) => entry.owner.key === owner)
+  const pages = coordinator.pageEntries().filter((entry) => entry.pluginId === pluginId)
+  const cases = useMemo<readonly VerificationCase[]>(
+    () => [
+      ...panels.flatMap((entry) =>
+        entry.declaration.densities.flatMap((density) =>
+          THEMES.map((theme) => ({
+            key: `panel:${entry.declaration.id}:${density}:${theme}`,
+            width: DENSITY_WIDTH[density],
+            theme,
+            render: () => (
+              <entry.component
+                anchor={{
+                  kind: entry.declaration.anchor,
+                  id: previewAnchorId({ kind: 'panel', ...entry.declaration }, agentId, channelId),
+                }}
+                density={density}
+                {...(entry.declaration.role === undefined ? {} : { role: entry.declaration.role })}
+              />
+            ),
+          })),
+        ),
+      ),
+      ...toolViews.flatMap((entry) =>
+        TOOL_VIEW_DENSITIES.flatMap((density) =>
+          THEMES.map((theme) => ({
+            key: `tool:${entry.tool}:${density}:${theme}`,
+            width: DENSITY_WIDTH.compact,
+            theme,
+            render: () => (
+              <entry.component
+                density={density}
+                call={{
+                  callId: 'verification',
+                  toolName: entry.tool,
+                  state: 'succeeded',
+                  input: '{}',
+                  result: '示例结果',
+                  durationMs: 120,
+                }}
+              />
+            ),
+          })),
+        ),
+      ),
+      ...renderers.flatMap((entry) =>
+        THEMES.map((theme) => ({
+          key: `renderer:${entry.richKind}:${theme}`,
+          width: DENSITY_WIDTH.full,
+          theme,
+          render: () => (
+            <entry.component
+              part={{ type: 'rich', adapterKey: 'preview', kind: entry.richKind, summary: '示例富消息' }}
+              messageId="verification-message"
+              channelId={channelId ?? 'preview'}
+            />
+          ),
+        })),
+      ),
+    ],
+    // Contributions are stable per run; the run identity re-creates this component.
+    [pluginRunId, panels.length, toolViews.length, renderers.length],
+  )
+  const [results, setResults] = useState<ReadonlyMap<string, string | undefined>>(new Map())
+  const record = useMemo(
+    () => (key: string, problem?: string) =>
+      setResults((current) => {
+        if (current.has(key) && current.get(key) === undefined && problem === undefined) return current
+        const next = new Map(current)
+        // A failure is final for the case; a later successful probe must not hide it.
+        if (current.get(key) !== undefined) return current
+        next.set(key, problem)
+        return next
+      }),
+    [],
+  )
+  const pagesReady = pages.every((entry) => coordinator.pageInspected(pluginId) && entry.pageGeometry() !== undefined)
+  const complete = cases.every((item) => results.has(item.key)) && pagesReady
+  useEffect(() => {
+    if (!complete || coordinator.reported(pluginId, pluginRunId)) return
+    const failures = cases.flatMap((item) => {
+      const problem = results.get(item.key)
+      return problem === undefined ? [] : [`${item.key}：${problem}`]
+    })
+    if (failures.length > 0) {
+      coordinator.reportPreviewFailure(pluginId, new Error(`界面验证未通过：${failures.join('；')}`))
+      return
+    }
+    if (cases.length === 0 && pages.length === 0) return
+    void coordinator
+      .reportVerified(pluginId, pluginRunId, {
+        renderedPanels: panels.map((entry) => ({ kind: 'panel', ...entry.declaration })),
+        renderedToolViews: toolViews.map((entry) => entry.tool),
+        renderedMessageRenderers: renderers.map((entry) => entry.richKind),
+        renderedPages: pages.map((entry) => entry.page),
+        usedUiComponents: [...new Set(pages.flatMap((entry) => entry.usedUiComponents()))],
+        pageGeometry: pages.flatMap((entry) => {
+          const geometry = entry.pageGeometry()
+          return geometry === undefined ? [] : [geometry]
+        }),
+        navigationEntries: pages
+          .filter(({ page, navigation }) => page.objectPane === 'navigation' && navigation !== undefined)
+          .map(({ page }) => page.entryId),
+      })
+      .catch((error: unknown) => coordinator.reportFailure(error))
+  }, [cases, complete, coordinator, pages, panels, pluginId, pluginRunId, renderers, results, toolViews])
   return (
-    <>
-      {coordinator.entries(name).map((entry) => {
-        const Entry = entry.component
+    <div className={styles.verification} aria-hidden="true" data-dynamic-verification={pluginId}>
+      {cases.map((item) => (
+        <VerificationCaseView key={item.key} item={item} onResult={record} />
+      ))}
+    </div>
+  )
+}
+
+/** What the user sees: each candidate panel in its frame, tool views as chip and card, renderers, pages. */
+function CandidatePreview({
+  coordinator,
+  registry,
+  panels,
+  agentId,
+  channelId,
+}: {
+  readonly coordinator: DynamicClientCoordinator
+  readonly registry: ContributionRegistry
+  readonly panels: readonly PanelEntry[]
+  readonly agentId: string
+  readonly channelId: string | undefined
+}) {
+  const toolViews = registry
+    .toolViews()
+    .filter((entry) => entry.owner.kind === 'dynamic' && entry.owner.agentId === agentId)
+  const renderers = registry
+    .messageRenderers()
+    .filter((entry) => entry.owner.kind === 'dynamic' && entry.owner.agentId === agentId)
+  return (
+    <div className={styles.preview}>
+      {panels.map((entry) => {
+        const density: PanelDensity = entry.declaration.densities.includes('full') ? 'full' : 'compact'
+        const pluginId = entry.owner.kind === 'dynamic' ? entry.owner.pluginId : ''
         return (
-          <DynamicSlotBoundary
-            entryId={entry.id}
-            key={`${name}:${entry.id}`}
-            onFailure={(error) => coordinator.reportSlotFailure(agentId, error)}
+          <ContributionFrame
+            key={entry.key}
+            title={entry.declaration.title}
+            icon={entry.declaration.icon}
+            source={entry.owner.label}
+            density={density}
+            styleScope={entry.owner.styleScope}
+            resetKey={entry.key}
+            onError={(error) => coordinator.reportPreviewFailure(pluginId, error)}
           >
-            <Entry {...props} />
-          </DynamicSlotBoundary>
+            <entry.component
+              anchor={{
+                kind: entry.declaration.anchor,
+                id: previewAnchorId({ kind: 'panel', ...entry.declaration }, agentId, channelId),
+              }}
+              density={density}
+              {...(entry.declaration.role === undefined ? {} : { role: entry.declaration.role })}
+            />
+          </ContributionFrame>
         )
       })}
-    </>
+      {toolViews.map((entry) => (
+        <div key={entry.key} className={styles.toolPreview} data-host-ui-owner={entry.owner.styleScope}>
+          {TOOL_VIEW_DENSITIES.map((density) => (
+            <ContributionBoundary
+              key={density}
+              resetKey={`${entry.key}:${density}`}
+              onError={(error) =>
+                coordinator.reportPreviewFailure(entry.owner.kind === 'dynamic' ? entry.owner.pluginId : '', error)
+              }
+              fallback={() => null}
+            >
+              <entry.component
+                density={density}
+                call={{ callId: 'preview', toolName: entry.tool, state: 'succeeded', input: '{}', result: '示例结果' }}
+              />
+            </ContributionBoundary>
+          ))}
+        </div>
+      ))}
+      {renderers.map((entry) => (
+        <div key={entry.key} data-host-ui-owner={entry.owner.styleScope}>
+          <ContributionBoundary
+            resetKey={entry.key}
+            onError={(error) =>
+              coordinator.reportPreviewFailure(entry.owner.kind === 'dynamic' ? entry.owner.pluginId : '', error)
+            }
+            fallback={() => null}
+          >
+            <entry.component
+              part={{ type: 'rich', adapterKey: 'preview', kind: entry.richKind, summary: '示例富消息' }}
+              messageId="preview-message"
+              channelId={channelId ?? 'preview'}
+            />
+          </ContributionBoundary>
+        </div>
+      ))}
+    </div>
   )
 }
 
@@ -476,11 +683,9 @@ export const inspectDynamicPageGeometry = (
 }
 
 function DynamicPagePreview({
-  agentId,
   coordinator,
   entry,
 }: {
-  readonly agentId: string
   readonly coordinator: DynamicClientCoordinator
   readonly entry: DynamicHostPageEntry
 }) {
@@ -508,9 +713,10 @@ function DynamicPagePreview({
       !content ||
       (!content.innerText.trim() && !content.querySelector('img, svg, canvas, input, select, textarea, video'))
     ) {
-      coordinator.reportSlotFailure(agentId, new Error('页面没有可见内容。'))
+      coordinator.reportPreviewFailure(entry.pluginId, new Error('页面没有可见内容。'))
     }
-  }, [agentId, coordinator, entry, relativePath])
+    coordinator.notePageInspected(entry.pluginId)
+  }, [coordinator, entry, relativePath])
   return (
     <section
       className={styles.pagePreview}
@@ -561,9 +767,10 @@ function DynamicPagePreview({
         ) : null}
         <div className={styles.pagePreviewCanvas}>
           <HostUiPageFrame viewportRef={previewRoot}>
-            <DynamicSlotBoundary
-              entryId={entry.page.entryId}
-              onFailure={(error) => coordinator.reportSlotFailure(agentId, error)}
+            <ContributionBoundary
+              resetKey={entry.page.entryId}
+              onError={(error) => coordinator.reportPreviewFailure(entry.pluginId, error)}
+              fallback={() => <div role="alert">页面渲染失败。</div>}
             >
               <Page
                 pageInstanceId={`dynamic-preview-${entry.page.entryId}`}
@@ -579,7 +786,7 @@ function DynamicPagePreview({
                   setRelativePath(normalized)
                 }}
               />
-            </DynamicSlotBoundary>
+            </ContributionBoundary>
           </HostUiPageFrame>
         </div>
       </div>
@@ -663,11 +870,15 @@ export function DynamicClientProvider({ children }: { readonly children: ReactNo
   return <DynamicClientContext.Provider value={coordinator}>{children}</DynamicClientContext.Provider>
 }
 
+/**
+ * Live preview and verification of one agent's running creation candidate. Rendered by the workshop task view;
+ * verification needs this view open because it renders in this browser.
+ */
 export function DynamicClientSlots({ agentId, episodeId }: { readonly agentId: string; readonly episodeId: string }) {
   const coordinator = useContext(DynamicClientContext)
-  if (!coordinator) throw new Error('动态 Client Slot 缺少产品级运行时。')
+  if (!coordinator) throw new Error('动态预览缺少产品级运行时。')
   const inventoryVersion = useProductStore((state) => dynamicClientInventoryVersion(state.dynamic, agentId))
-  const displayName = useProductStore((state) => state.agents.find((agent) => agent.id === agentId)?.name ?? '智能体')
+  const channelId = useProductStore((state) => state.channels.find((channel) => channel.agentId === agentId)?.id)
   useSyncExternalStore(coordinator.subscribe, coordinator.getVersion, coordinator.getVersion)
   useEffect(() => {
     void coordinator.sync(agentId, episodeId).catch((error: unknown) => coordinator.reportFailure(error))
@@ -678,131 +889,39 @@ export function DynamicClientSlots({ agentId, episodeId }: { readonly agentId: s
     }
   }, [agentId, coordinator, episodeId])
   const failure = coordinator.failure()
-  const rendered =
-    coordinator.entries('agent.workbench.sections').length > 0 ||
-    AGENT_CLIENT_SLOT_NAMES.some((name) => coordinator.entries(name).length > 0) ||
-    ADAPTER_CLIENT_SLOT_NAMES.some((name) => coordinator.entries(name).length > 0) ||
-    coordinator.pageEntries().length > 0
-  useEffect(() => {
-    if (rendered) void coordinator.reportRendered(agentId).catch((error) => coordinator.reportFailure(error))
-  }, [agentId, coordinator, inventoryVersion, rendered])
-  if (failure) return <div role="alert">即时界面加载失败：{failure}</div>
-  return rendered ? (
+  const registry = coordinator.previews()
+  const candidates = coordinator.candidates(agentId)
+  const plugins = new Set(candidates.map((candidate) => candidate.pluginId))
+  const panels =
+    registry?.panels().filter((entry) => entry.owner.kind === 'dynamic' && plugins.has(entry.owner.pluginId)) ?? []
+  const pages = coordinator.pageEntries().filter((entry) => plugins.has(entry.pluginId))
+  if (failure) return <div role="alert">界面预览失败：{failure}</div>
+  if (!registry || candidates.length === 0) return null
+  return (
     <div data-dynamic-client-slots="">
-      <DynamicRuntimeSlot
+      <CandidatePreview
         coordinator={coordinator}
+        registry={registry}
+        panels={panels}
         agentId={agentId}
-        name="agent.workbench.sections"
-        props={{ agentId, displayName }}
+        channelId={channelId}
       />
-      <DynamicRuntimeSlot
-        coordinator={coordinator}
-        agentId={agentId}
-        name="extension.details.panels"
-        props={{
-          agentId,
-          extensionId: 'dynamic-preview',
-          revisionId: 'dynamic-preview',
-          activation: 'active',
-        }}
-      />
-      <DynamicRuntimeSlot
-        coordinator={coordinator}
-        agentId={agentId}
-        name="extension.activation.panels"
-        props={{
-          agentId,
-          extensionId: 'dynamic-preview',
-          revisionId: 'dynamic-preview',
-          activation: 'active',
-          activationId: 'dynamic-preview',
-          runtimeStatus: 'active',
-        }}
-      />
-      <DynamicRuntimeSlot
-        coordinator={coordinator}
-        agentId={agentId}
-        name="channel.inspector.agent.sections"
-        props={{
-          agentId,
-          channelId: 'dynamic-preview',
-          connectionId: 'dynamic-preview',
-          episodeId,
-          runtimePhase: 'idle',
-        }}
-      />
-      <DynamicRuntimeSlot
-        coordinator={coordinator}
-        agentId={agentId}
-        name="conversation.tool.card"
-        props={{
-          agentId,
-          channelId: 'dynamic-preview',
-          callId: 'dynamic-preview',
-          toolName: 'dynamic-preview',
-          displayName: '工具卡片预览',
-          state: 'succeeded',
-          surface: 'stream',
-          inputPresentation: '{}',
-          resultPresentation: '预览结果',
-        }}
-      />
-      {coordinator.entries('conversation.message.rich').map((entry) => {
-        const separator = entry.id.indexOf(':')
-        const adapterKey = separator > 0 ? entry.id.slice(0, separator) : entry.id
-        const kind = separator > 0 ? entry.id.slice(separator + 1) : 'preview'
-        const Entry = entry.component
-        return (
-          <DynamicSlotBoundary
-            entryId={entry.id}
-            key={`conversation.message.rich:${entry.id}`}
-            onFailure={(error) => coordinator.reportSlotFailure(agentId, error)}
-          >
-            <Entry
-              part={{
-                type: 'rich',
-                adapterKey,
-                kind,
-                summary: '动态适配器富消息预览',
-              }}
-              messageId="dynamic-preview-message"
-              channelId="dynamic-preview-channel"
-            />
-          </DynamicSlotBoundary>
-        )
-      })}
-      <DynamicRuntimeSlot
-        coordinator={coordinator}
-        agentId={agentId}
-        name="connection.adapter.setup"
-        props={{ adapterKey: 'dynamic-preview', phase: 'setup' }}
-      />
-      <DynamicRuntimeSlot
-        coordinator={coordinator}
-        agentId={agentId}
-        name="connection.adapter.status"
-        props={{ adapterKey: 'dynamic-preview', connectionId: 'dynamic-preview', phase: 'active' }}
-      />
-      <DynamicRuntimeSlot
-        coordinator={coordinator}
-        agentId={agentId}
-        name="connection.adapter.test"
-        props={{ adapterKey: 'dynamic-preview', connectionId: 'dynamic-preview', phase: 'testing' }}
-      />
-      <DynamicRuntimeSlot
-        coordinator={coordinator}
-        agentId={agentId}
-        name="channel.inspector.adapter.sections"
-        props={{
-          adapterKey: 'dynamic-preview',
-          connectionId: 'dynamic-preview',
-          channelId: 'dynamic-preview',
-          channelKind: 'group',
-        }}
-      />
-      {coordinator.pageEntries().map((entry) => (
-        <DynamicPagePreview agentId={agentId} coordinator={coordinator} entry={entry} key={entry.page.entryId} />
+      {pages.map((entry) => (
+        <DynamicPagePreview coordinator={coordinator} entry={entry} key={entry.page.entryId} />
       ))}
+      {candidates
+        .filter((candidate) => !coordinator.reported(candidate.pluginId, candidate.pluginRunId))
+        .map((candidate) => (
+          <CandidateVerification
+            key={`${candidate.pluginId}:${candidate.pluginRunId}`}
+            coordinator={coordinator}
+            registry={registry}
+            pluginId={candidate.pluginId}
+            pluginRunId={candidate.pluginRunId}
+            agentId={agentId}
+            channelId={channelId}
+          />
+        ))}
     </div>
-  ) : null
+  )
 }

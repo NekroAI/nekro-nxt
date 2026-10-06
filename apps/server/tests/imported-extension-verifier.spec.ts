@@ -1,4 +1,4 @@
-import { ExtensionIdSchema, ExtensionRevisionIdSchema } from '@nekro-nxt/contracts'
+import { ExtensionIdSchema, ExtensionRevisionIdSchema, type HostUiPermission } from '@nekro-nxt/contracts'
 import {
   ExtensionBuilder,
   ExtensionSourceStore,
@@ -89,7 +89,7 @@ describe('imported Extension Runtime verification', () => {
     })
   })
 
-  const verifyAgent = async (name: string, clientCode: string, permissions: readonly string[]) => {
+  const verifyAgent = async (name: string, clientCode: string, permissions: readonly HostUiPermission[]) => {
     const directory = await mkdtemp(path.join(tmpdir(), 'nekro-nxt-import-agent-'))
     directories.push(directory)
     const extensionId = ExtensionIdSchema.parse(`ext_IMPORT${name.toUpperCase()}`)

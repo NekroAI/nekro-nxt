@@ -2414,7 +2414,7 @@ describe('Extension and backup', () => {
 
       repository.deleteHostUiExtensionPages(extensionId)
       const committed = repository.commitHostInstallationState({
-        installation: { extensionId, extensionRevisionId: firstRevisionId, installedAt: 15 },
+        installation: { extensionId, extensionRevisionId: firstRevisionId, installedAt: 15, config: {} },
         hostUi: {
           grant: {
             ownerKey,
@@ -2442,7 +2442,7 @@ describe('Extension and backup', () => {
       expect(repository.getHostInstallation(extensionId)?.extensionRevisionId).toBe(firstRevisionId)
       expect(() =>
         repository.commitHostInstallationState({
-          installation: { extensionId, extensionRevisionId: secondRevisionId, installedAt: 16 },
+          installation: { extensionId, extensionRevisionId: secondRevisionId, installedAt: 16, config: {} },
           hostUi: {
             grant: {
               ownerKey,

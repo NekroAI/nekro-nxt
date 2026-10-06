@@ -774,7 +774,7 @@ export function registerExtensionsRoutes({
         return
       }
       const match =
-        /^\/api\/extensions\/([^/]+)\/revisions\/([^/]+)\/(call|client-diagnostic|host-client-diagnostic|client\/([a-f0-9]{64})\.mjs)$/u.exec(
+        /^\/api\/extensions\/([^/]+)\/revisions\/([^/]+)\/(call|client-diagnostic|host-client-diagnostic|client\/([a-f0-9]{64})\.(mjs|css))$/u.exec(
           url.pathname,
         )
       if (!match) {
@@ -827,9 +827,15 @@ export function registerExtensionsRoutes({
           if (!artifact.clientEntry || artifact.buildKey !== match[4]) {
             throw new Error('Client buildKey 已过期或该 Revision 没有 Client Artifact。')
           }
-          const source = await readFile(artifact.clientEntry, 'utf8')
+          // The stylesheet is scoped to this build, matching the frame the shell draws around its contributions.
+          const css = match[5] === 'css'
+          const source = css
+            ? artifact.clientCssEntry
+              ? scopeHostUiCss(await readFile(artifact.clientCssEntry, 'utf8'), artifact.buildKey)
+              : ''
+            : await readFile(artifact.clientEntry, 'utf8')
           res.writeHead(200, {
-            'content-type': 'text/javascript; charset=utf-8',
+            'content-type': css ? 'text/css; charset=utf-8' : 'text/javascript; charset=utf-8',
             'cache-control': 'private, no-cache',
           })
           res.end(source)

@@ -2957,11 +2957,13 @@ describe('Host Extension Installation', () => {
       extensionId: firstExtension.id,
       extensionRevisionId: firstRevision.id,
       installedAt: 1,
+      config: {},
     })
     repository.upsertHostInstallation({
       extensionId: secondExtension.id,
       extensionRevisionId: secondRevision.id,
       installedAt: 2,
+      config: {},
     })
     const host = new FakeHostInstallationHost()
     host.keys.set(firstRevision.id, key)
@@ -3191,7 +3193,12 @@ describe('Host Extension Installation', () => {
       [missingHostExtension.id, missingHostRevision.id],
       [wrongKeyExtension.id, wrongKeyRevision.id],
     ] as const) {
-      repository.upsertHostInstallation({ extensionId: extensionIdValue, extensionRevisionId, installedAt: 1 })
+      repository.upsertHostInstallation({
+        extensionId: extensionIdValue,
+        extensionRevisionId,
+        installedAt: 1,
+        config: {},
+      })
     }
     const host = new FakeHostInstallationHost()
     host.keys.set(validRevision.id, 'restore-valid')
@@ -3228,6 +3235,7 @@ describe('Host Extension Installation', () => {
       extensionId: extension.id,
       extensionRevisionId: hostRevision.id,
       installedAt: 1,
+      config: {},
     })
     await coordinator.uninstall(extension.id)
     expect(repository.getHostInstallation(extension.id)).toBeUndefined()
@@ -3255,6 +3263,7 @@ describe('Host Extension Installation', () => {
       extensionId: extension.id,
       extensionRevisionId: hostRevision.id,
       installedAt: 1,
+      config: {},
     })
     const coordinator = installationCoordinator(repository, new FakeHostInstallationHost(), {
       build: () => Promise.reject(new Error('需要重建')),
@@ -3273,6 +3282,7 @@ describe('Host Extension Installation', () => {
       extensionId: extension.id,
       extensionRevisionId: hostRevision.id,
       installedAt: 1,
+      config: {},
     })
     const coordinator = installationCoordinator(repository, new FakeHostInstallationHost())
     await expect(coordinator.uninstall(extension.id)).rejects.toThrow('缺少适配器 key')

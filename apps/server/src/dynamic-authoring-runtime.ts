@@ -222,7 +222,7 @@ export const dynamicPreviewClientCode = (input: DynamicAuthoringPackageDefinitio
 export const preflightNekroNxtDynamicSource = (request: DynamicCordisDefineRequest): void => {
   const client = request.code.client
   if (client === undefined) return
-  const registersPages = /\b(?:ctx\.)?pages\s*\.\s*(?:register|declarePermissions)\b/u.test(client)
+  const registersPages = /\b(?:ctx\.)?pages\s*\.\s*register\b/u.test(client)
   const injectsPages = /\binject\s*:\s*\[[^\]]*['"]pages['"][^\]]*\]/su.test(client)
   if (registersPages && !injectsPages) {
     throw new Error("动态页面预检失败：Client 使用了 pages Service，但没有声明 inject: ['pages']。")

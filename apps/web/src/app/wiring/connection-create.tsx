@@ -3,39 +3,24 @@ import { useEffect, useRef, useState } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import type { AdapterConnectionDescriptor } from '@nekro-nxt/adapter-sdk'
 import type { HostApiResponse } from '@nekro-nxt/contracts'
-import { AdapterConnectionExtensionSlot } from '../../adapter-host-client.js'
+import {
+  ConfigForm,
+  PanelSlot,
+  configDefaults,
+  configIssues,
+  secretIssues,
+  type ConfigValue,
+} from '../../extension-ui/index.js'
 import { useProductStore } from '../../product-runtime.js'
 import { createQrCodeSvgDataUrl } from '../../qr-code.js'
-import {
-  Banner,
-  Button,
-  Field,
-  Input,
-  Panel,
-  Pressable,
-  SecretInput,
-  Section,
-  Spinner,
-  SwitchRow,
-  toast,
-} from '../../ui-kit/next/index.js'
+import { Banner, Button, Field, Input, Panel, Pressable, Section, Spinner, toast } from '../../ui-kit/next/index.js'
 import { useGo } from '../model/nav.js'
 import { useProductApi } from '../model/store.js'
 import styles from './wiring.module.css'
 
 type Descriptor = AdapterConnectionDescriptor
 type Login = HostApiResponse<'startConnectionLogin'> | HostApiResponse<'getConnectionLogin'>
-type Value = string | number | boolean
-
 const loginActive = (login: Login | undefined): boolean => login?.status === 'pending' || login?.status === 'scanned'
-
-const defaultsOf = (adapter: Descriptor): Record<string, Value> => {
-  const values: Record<string, Value> = {}
-  for (const [key, property] of Object.entries(adapter.configSchema.properties)) {
-    if (property.type !== 'credential-reference' && property.default !== undefined) values[key] = property.default
-  }
-  return values
-}
 
 /**
  * Adds a platform account (or re-authenticates one with `reauth`): choose a platform, then fill its form or scan its
@@ -138,13 +123,19 @@ function SchemaForm({ adapter }: { readonly adapter: Descriptor }) {
   const go = useGo()
   const connections = useProductStore((state) => state.connections)
   const [alias, setAlias] = useState('')
-  const [values, setValues] = useState<Record<string, Value>>(() => defaultsOf(adapter))
-  const [secrets, setSecrets] = useState<Record<string, string>>({})
+  const [values, setValues] = useState<ConfigValue>(() => configDefaults(adapter.configSchema))
+  const [secrets, setSecrets] = useState<Readonly<Record<string, string>>>({})
+  const [submitted, setSubmitted] = useState(false)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
   const before = useRef(new Set(connections.map((item) => item.id)))
 
   const create = async () => {
+    setSubmitted(true)
+    const invalid =
+      Object.keys(configIssues(adapter.configSchema, values)).length > 0 ||
+      Object.keys(secretIssues(adapter.configSchema, secrets)).length > 0
+    if (invalid) return
     setBusy(true)
     setError('')
     try {
@@ -171,43 +162,15 @@ function SchemaForm({ adapter }: { readonly adapter: Descriptor }) {
           onChange={(event) => setAlias(event.target.value)}
         />
       </Field>
-      <AdapterConnectionExtensionSlot
-        name="connection.adapter.setup"
-        props={{ adapterKey: adapter.key, phase: 'setup' }}
+      <PanelSlot anchor={{ kind: 'connection', id: adapter.key }} density="full" role="setup" />
+      <ConfigForm
+        schema={adapter.configSchema}
+        value={values}
+        onChange={setValues}
+        secrets={{ value: secrets, onChange: setSecrets }}
+        showIssues={submitted}
+        disabled={busy}
       />
-      {Object.entries(adapter.configSchema.properties).map(([key, property]) =>
-        property.type === 'boolean' ? (
-          <SwitchRow
-            key={key}
-            title={property.title}
-            description={property.description}
-            checked={values[key] === true}
-            onCheckedChange={(checked) => setValues((current) => ({ ...current, [key]: checked }))}
-          />
-        ) : property.type === 'credential-reference' ? (
-          <Field key={key} label={property.title} hint={property.description}>
-            <SecretInput
-              configured={false}
-              value={secrets[key] ?? ''}
-              onChange={(event) => setSecrets((current) => ({ ...current, [key]: event.target.value }))}
-            />
-          </Field>
-        ) : (
-          <Field key={key} label={property.title} hint={property.description}>
-            <Input
-              type={property.type === 'number' ? 'number' : 'text'}
-              spellCheck={false}
-              value={typeof values[key] === 'boolean' ? '' : String(values[key] ?? '')}
-              onChange={(event) =>
-                setValues((current) => ({
-                  ...current,
-                  [key]: property.type === 'number' ? Number(event.target.value) : event.target.value,
-                }))
-              }
-            />
-          </Field>
-        ),
-      )}
       {error ? <Banner tone="bad">{error}</Banner> : null}
       <div className={styles.formActions}>
         <Button onClick={() => go('/wiring')} disabled={busy}>

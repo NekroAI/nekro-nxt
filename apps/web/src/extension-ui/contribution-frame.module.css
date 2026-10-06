@@ -1,0 +1,102 @@
+.frame {
+  min-width: 0;
+  border: 1px solid var(--nxt-border-subtle);
+  border-radius: 12px;
+  background: var(--nxt-bg-surface);
+  animation: enter 280ms cubic-bezier(0.2, 0.8, 0.2, 1) both;
+}
+
+@keyframes enter {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+}
+
+.head {
+  display: flex;
+}
+
+.toggle {
+  display: flex;
+  flex: 1;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  padding: 10px 12px;
+  border: 0;
+  border-radius: 12px;
+  background: transparent;
+  color: var(--nxt-text-primary);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.toggle:hover {
+  background: var(--nxt-bg-hover);
+}
+
+.title {
+  overflow: hidden;
+  font-size: 13px;
+  font-weight: 650;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.source {
+  overflow: hidden;
+  color: var(--nxt-text-muted);
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.chevron {
+  flex: none;
+  margin-left: auto;
+  color: var(--nxt-text-muted);
+  transition: transform 200ms ease;
+}
+
+.toggle[aria-expanded='false'] .chevron {
+  transform: rotate(-90deg);
+}
+
+.content {
+  min-width: 0;
+  padding: 0 12px 12px;
+}
+
+.frame[data-density='full'] .content {
+  padding: 2px 16px 16px;
+}
+
+.failure {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--nxt-text-muted);
+  font-size: 13px;
+}
+
+.retry {
+  margin-left: auto;
+  padding: 2px 10px;
+  border: 1px solid var(--nxt-border-subtle);
+  border-radius: 8px;
+  background: transparent;
+  color: var(--nxt-text-primary);
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .frame,
+  .chevron {
+    animation: none;
+    transition: none;
+  }
+}

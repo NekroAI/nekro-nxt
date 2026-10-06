@@ -3,7 +3,11 @@ import { renderToStaticMarkup } from 'react-dom/server'
 import { AgentIdSchema, EpisodeIdSchema, HostApiContracts } from '@nekro-nxt/contracts'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { DshDynamicClientRuntime, type DynamicInventoryRow } from '../src/dsh-dynamic-client.ts'
+import { HostEventStream } from '../src/host-event-stream.ts'
 import { HttpDynamicClientHost } from '../src/http-dynamic-host.ts'
+import { createProductRuntime } from '../src/product-runtime.ts'
+
+const testStore = () => createProductRuntime(new HostEventStream()).store
 
 const stubResponse = (status: number, body: unknown) => ({
   ok: status >= 200 && status < 300,
@@ -45,10 +49,10 @@ describe('DSH Dynamic Client Runtime', () => {
               pluginRunId: 'run-1',
               name: '动态界面探针',
               code: `return {
-            inject: ['slots'],
+            inject: ['panels'],
             apply(ctx) {
-              ctx.slots.register(
-                { name: 'agent.workbench.sections', id: 'main' },
+              ctx.panels.register(
+                { id: 'main', anchor: 'agent', title: '探针', densities: ['full'] },
                 () => {
                   const [label] = React.useState('动态界面已加载')
                   return React.createElement('section', { 'data-dynamic': 'probe' }, label)
@@ -73,7 +77,7 @@ describe('DSH Dynamic Client Runtime', () => {
       }),
     )
     const host = new HttpDynamicClientHost(agentId, episodeId)
-    const runtime = await DshDynamicClientRuntime.create(host, { querySelectorAll: () => [] })
+    const runtime = await DshDynamicClientRuntime.create(host, testStore(), { querySelectorAll: () => [] })
     const pending: DynamicInventoryRow = {
       pluginId: 'plugin-1',
       agentId,
@@ -100,16 +104,21 @@ describe('DSH Dynamic Client Runtime', () => {
       await runtime.approve('approval-1')
       expect(resolutions).toEqual([{ episodeId, requestId: 'approval-1', pluginRunId: 'run-1' }])
       expect(runtime.loaded()).toHaveLength(1)
-      const [entry] = runtime.entries('agent.workbench.sections')
-      if (typeof entry?.component !== 'function') throw new TypeError('Dynamic product Slot must be callable.')
-      const rendered: unknown = createElement(entry.component, { agentId, displayName: '动态测试智能体' })
-      if (!isValidElement(rendered)) throw new TypeError('Dynamic product Slot must return a React element.')
+      const [entry] = runtime.previews.panels()
+      if (typeof entry?.component !== 'function') throw new TypeError('Dynamic panel must be callable.')
+      expect(entry.owner).toMatchObject({ kind: 'dynamic', pluginId: 'plugin-1', agentId, label: '动态界面探针' })
+      expect(entry.declaration).toMatchObject({ id: 'main', anchor: 'agent', densities: ['full'] })
+      const rendered: unknown = createElement(entry.component, {
+        anchor: { kind: 'agent', id: agentId },
+        density: 'full',
+      })
+      if (!isValidElement(rendered)) throw new TypeError('Dynamic panel must return a React element.')
       expect(renderToStaticMarkup(rendered)).toBe('<section data-dynamic="probe">动态界面已加载</section>')
 
       await runtime.reconcile([{ ...pending, activeRun: { pluginRunId: 'run-1', packageId: 'package-1' } }])
       await runtime.reconcile([])
       expect(runtime.loaded()).toEqual([])
-      expect(runtime.entries('agent.workbench.sections')).toHaveLength(0)
+      expect(runtime.previews.panels()).toHaveLength(0)
 
       const declined = {
         ...pending,
@@ -123,7 +132,7 @@ describe('DSH Dynamic Client Runtime', () => {
     }
   })
 
-  it('registers dynamic Host pages with permissions and retracts their navigation and components', async () => {
+  it('registers dynamic Host pages and retracts their navigation and components', async () => {
     vi.stubGlobal(
       'fetch',
       vi.fn((input: string) => {
@@ -149,7 +158,6 @@ describe('DSH Dynamic Client Runtime', () => {
               code: `return {
                 inject: ['pages', 'ui'],
                 apply(ctx) {
-                  ctx.pages.declarePermissions({ permissions: ['agents.read'], networkOrigins: [] })
                   ctx.pages.register({
                     page: {
                       kind: 'host-page', entryId: 'overview', title: '项目概览',
@@ -160,7 +168,7 @@ describe('DSH Dynamic Client Runtime', () => {
                       getSnapshot: () => ({ revision: 0, groups: [{ id: 'main', items: [{ id: 'overview', label: '概览', path: '' }] }] }),
                       subscribe: () => () => undefined
                     }
-                  }, ({ relativePath }) => React.createElement(ctx.ui.Section, { 'data-page': 'overview', className: styles.section }, relativePath || '首页'))
+                  }, ({ relativePath }) => React.createElement(ctx.ui.Section, { 'data-page': 'overview' }, relativePath || '首页'))
                 }
               }`,
             }),
@@ -170,7 +178,7 @@ describe('DSH Dynamic Client Runtime', () => {
         return Promise.resolve(stubResponse(404, { error: { code: 'not-found', message: 'x' } }))
       }),
     )
-    const runtime = await DshDynamicClientRuntime.create(new HttpDynamicClientHost(agentId, episodeId), {
+    const runtime = await DshDynamicClientRuntime.create(new HttpDynamicClientHost(agentId, episodeId), testStore(), {
       querySelectorAll: () => [],
     })
     const pending: DynamicInventoryRow = {
@@ -197,7 +205,6 @@ describe('DSH Dynamic Client Runtime', () => {
     try {
       await runtime.reconcile([pending])
       await runtime.approve('approval-page')
-      expect(runtime.pagePermissions()).toEqual({ permissions: ['agents.read'], networkOrigins: [] })
       const [entry] = runtime.pageEntries()
       expect(entry?.page).toMatchObject({ entryId: 'overview', objectPane: 'navigation' })
       expect(entry?.navigation?.getSnapshot()).toMatchObject({ groups: [{ id: 'main' }] })
@@ -214,7 +221,6 @@ describe('DSH Dynamic Client Runtime', () => {
       await runtime.reconcile([{ ...pending, activeRun: { pluginRunId: 'run-page', packageId: 'package-page' } }])
       await runtime.reconcile([])
       expect(runtime.pageEntries()).toEqual([])
-      expect(runtime.pagePermissions()).toEqual({ permissions: [], networkOrigins: [] })
     } finally {
       await runtime.dispose()
     }
@@ -236,7 +242,6 @@ describe('DSH Dynamic Client Runtime', () => {
               code: `return {
                 inject: ['pages', 'ui'],
                 apply(ctx) {
-                  ctx.pages.declarePermissions({ permissions: [], networkOrigins: [] })
                   ctx.pages.register({
                     page: {
                       kind: 'host-page', entryId: 'overview', title: '恢复后的项目概览',
@@ -256,7 +261,7 @@ describe('DSH Dynamic Client Runtime', () => {
         return Promise.resolve(stubResponse(404, { error: { code: 'not-found', message: 'x' } }))
       }),
     )
-    const runtime = await DshDynamicClientRuntime.create(new HttpDynamicClientHost(agentId, episodeId), {
+    const runtime = await DshDynamicClientRuntime.create(new HttpDynamicClientHost(agentId, episodeId), testStore(), {
       querySelectorAll: () => [],
     })
     const running: DynamicInventoryRow = {
@@ -303,7 +308,7 @@ describe('DSH Dynamic Client Runtime', () => {
     }
   })
 
-  it('retracts DSH WebUI root registrations and reports the product Slot guard failure', async () => {
+  it('retracts DSH Slot registrations and reports the guard failure', async () => {
     const guardReports: unknown[] = []
     vi.stubGlobal(
       'fetch',
@@ -344,7 +349,7 @@ describe('DSH Dynamic Client Runtime', () => {
         return Promise.resolve(stubResponse(404, { error: { code: 'not-found', message: 'x' } }))
       }),
     )
-    const runtime = await DshDynamicClientRuntime.create(new HttpDynamicClientHost(agentId, episodeId), {
+    const runtime = await DshDynamicClientRuntime.create(new HttpDynamicClientHost(agentId, episodeId), testStore(), {
       querySelectorAll: () => [],
     })
     const pending: DynamicInventoryRow = {
@@ -370,7 +375,7 @@ describe('DSH Dynamic Client Runtime', () => {
     }
     try {
       await runtime.reconcile([pending])
-      await expect(runtime.approve('approval-root')).rejects.toThrow('unsupported Slots: root')
+      await expect(runtime.approve('approval-root')).rejects.toThrow('不支持的 DSH Slot：root')
       expect(runtime.loaded()).toEqual([])
       expect(guardReports).toHaveLength(1)
       expect(guardReports[0]).toMatchObject({
@@ -412,9 +417,9 @@ const clientSource = (code: string, run = 'run-lifecycle') => ({
   code,
 })
 const productSlotSource = `return {
-  inject: ['slots'],
+  inject: ['panels'],
   apply(ctx) {
-    ctx.slots.register({ name: 'agent.workbench.sections', id: 'lifecycle' },
+    ctx.panels.register({ id: 'lifecycle', anchor: 'agent', title: '生命周期', densities: ['compact'] },
       () => React.createElement('section', null, '生命周期测试'))
   }
 }`
@@ -436,9 +441,9 @@ describe('DSH Client lifecycle on the published UI renderer', () => {
 
   it('preserves one module owner and releases it only after the shared disposal completes', async () => {
     const host = new HttpDynamicClientHost(syntheticAgent, syntheticEpisode)
-    const runtime = await DshDynamicClientRuntime.create(host, { querySelectorAll: () => [] })
+    const runtime = await DshDynamicClientRuntime.create(host, testStore(), { querySelectorAll: () => [] })
     const owner: unknown = Reflect.get(globalThis, '__ModuleLoader__')
-    await expect(DshDynamicClientRuntime.create(host, { querySelectorAll: () => [] })).rejects.toThrow(
+    await expect(DshDynamicClientRuntime.create(host, testStore(), { querySelectorAll: () => [] })).rejects.toThrow(
       'already installed',
     )
     expect(Reflect.get(globalThis, '__ModuleLoader__')).toBe(owner)
@@ -447,20 +452,20 @@ describe('DSH Client lifecycle on the published UI renderer', () => {
     await disposal
     expect(Reflect.get(globalThis, '__ModuleLoader__')).toBeUndefined()
     await expect(runtime.reconcile([])).rejects.toThrow('disposed')
-    const refreshed = await DshDynamicClientRuntime.create(host, { querySelectorAll: () => [] })
+    const refreshed = await DshDynamicClientRuntime.create(host, testStore(), { querySelectorAll: () => [] })
     await refreshed.dispose()
   })
 
-  it('uses the product SlotCore without mounting the native WebUI or fake Session services', async () => {
-    const Slots = await import('@deepseek-ai/dsh-client-ui-slots')
-    const registry = vi.spyOn(Slots.SlotCore.prototype, 'register')
+  it('provides V6 services without mounting the native WebUI or fake Session services', async () => {
     // There is deliberately no document root or createElement available here.
-    const runtime = await DshDynamicClientRuntime.create(new HttpDynamicClientHost(syntheticAgent, syntheticEpisode), {
-      querySelectorAll: () => [],
-    })
+    const runtime = await DshDynamicClientRuntime.create(
+      new HttpDynamicClientHost(syntheticAgent, syntheticEpisode),
+      testStore(),
+      { querySelectorAll: () => [] },
+    )
     try {
-      expect(registry).toHaveBeenCalled()
-      expect(runtime.renderRoot(syntheticAgent, '测试')).toBeDefined()
+      expect(runtime.previews.panels()).toEqual([])
+      expect(runtime.pageEntries()).toEqual([])
     } finally {
       await runtime.dispose()
     }
@@ -484,13 +489,17 @@ describe('DSH Client lifecycle on the published UI renderer', () => {
         ),
       ),
     )
-    const runtime = await DshDynamicClientRuntime.create(new HttpDynamicClientHost(syntheticAgent, syntheticEpisode), {
-      querySelectorAll: () => [],
-    })
+    const runtime = await DshDynamicClientRuntime.create(
+      new HttpDynamicClientHost(syntheticAgent, syntheticEpisode),
+      testStore(),
+      {
+        querySelectorAll: () => [],
+      },
+    )
     try {
       await expect(runtime.reconcile([runningRow()])).rejects.toThrow('synthetic activation failure')
       expect(runtime.loaded()).toEqual([])
-      expect(runtime.entries('agent.workbench.sections')).toEqual([])
+      expect(runtime.previews.panels()).toEqual([])
       broken = false
       await runtime.reconcile([runningRow('run-fixed')])
       expect(runtime.loaded()).toHaveLength(1)
@@ -509,9 +518,13 @@ describe('DSH Client lifecycle on the published UI renderer', () => {
         return response.promise
       }),
     )
-    const runtime = await DshDynamicClientRuntime.create(new HttpDynamicClientHost(syntheticAgent, syntheticEpisode), {
-      querySelectorAll: () => [],
-    })
+    const runtime = await DshDynamicClientRuntime.create(
+      new HttpDynamicClientHost(syntheticAgent, syntheticEpisode),
+      testStore(),
+      {
+        querySelectorAll: () => [],
+      },
+    )
     try {
       const restoring = runtime.reconcile([runningRow()])
       await requested.promise
@@ -519,7 +532,7 @@ describe('DSH Client lifecycle on the published UI renderer', () => {
       response.resolve(stubResponse(200, clientSource(productSlotSource)))
       await Promise.all([restoring, reset])
       expect(runtime.loaded()).toEqual([])
-      expect(runtime.entries('agent.workbench.sections')).toEqual([])
+      expect(runtime.previews.panels()).toEqual([])
     } finally {
       await runtime.dispose()
     }
@@ -535,9 +548,13 @@ describe('DSH Client lifecycle on the published UI renderer', () => {
         return response.promise
       }),
     )
-    const runtime = await DshDynamicClientRuntime.create(new HttpDynamicClientHost(syntheticAgent, syntheticEpisode), {
-      querySelectorAll: () => [],
-    })
+    const runtime = await DshDynamicClientRuntime.create(
+      new HttpDynamicClientHost(syntheticAgent, syntheticEpisode),
+      testStore(),
+      {
+        querySelectorAll: () => [],
+      },
+    )
     const restoring = runtime.reconcile([runningRow()])
     const rejected = expect(restoring).rejects.toThrow('disposed')
     await requested.promise
@@ -552,7 +569,7 @@ describe('DSH Client lifecycle on the published UI renderer', () => {
     response.resolve(stubResponse(200, clientSource(productSlotSource)))
     await rejected
     await disposal
-    expect(runtime.slots.entriesOfSlot('agent.workbench.sections')).toEqual([])
+    expect(runtime.previews.panels()).toEqual([])
     expect(Reflect.get(globalThis, '__ModuleLoader__')).toBeUndefined()
   })
 
@@ -569,6 +586,7 @@ describe('DSH Client lifecycle on the published UI renderer', () => {
       vi.stubGlobal('fetch', fetch)
       const runtime = await DshDynamicClientRuntime.create(
         new HttpDynamicClientHost(syntheticAgent, syntheticEpisode),
+        testStore(),
         {
           querySelectorAll: () => [],
         },
@@ -613,9 +631,13 @@ describe('DSH Client lifecycle on the published UI renderer', () => {
       'fetch',
       vi.fn(() => Promise.resolve(stubResponse(200, clientSource(productSlotSource, 'run-obsolete')))),
     )
-    const runtime = await DshDynamicClientRuntime.create(new HttpDynamicClientHost(syntheticAgent, syntheticEpisode), {
-      querySelectorAll: () => [],
-    })
+    const runtime = await DshDynamicClientRuntime.create(
+      new HttpDynamicClientHost(syntheticAgent, syntheticEpisode),
+      testStore(),
+      {
+        querySelectorAll: () => [],
+      },
+    )
     try {
       await expect(runtime.reconcile([runningRow()])).rejects.toThrow('不一致')
       expect(runtime.loaded()).toEqual([])

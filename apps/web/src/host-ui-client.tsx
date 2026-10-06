@@ -1,41 +1,26 @@
 import { callHostApi } from './host-api-client.js'
 import type {
+  ExtensionClientContext,
   ExtensionJsonValue,
-  HostUiClientEnvironment,
-  HostUiClientContext,
   HostUiNavigationProvider,
   HostUiPageProps,
 } from '@nekro-nxt/extension-sdk'
 import {
   HostApiContracts,
-  AdapterClientSlotNameSchema,
   HostUiNavigationModelSchema,
   parseJsonValue,
   type HostUiPageEntry,
+  type HostUiPermission,
 } from '@nekro-nxt/contracts'
 import * as React from 'react'
 import { useEffect, useMemo, useSyncExternalStore, type ReactNode, type Ref } from 'react'
 import { useLocation, useNavigate, useParams } from 'react-router-dom'
 import { AlertTriangle, RefreshCw } from 'lucide-react'
-import {
-  Button,
-  Dialog,
-  DropdownMenu,
-  Field,
-  IconButton,
-  Input,
-  SelectField,
-  SidePane,
-  Spinner,
-  StatusBadge,
-  SwitchControl,
-  Tabs,
-  Textarea,
-  Tooltip,
-} from './ui-kit/index.js'
-import { EmptyState, InlineFeedback, PageHeader } from './components/product-feedback.js'
-import { useProductStore, useProductRuntime } from './product-runtime.js'
-import { DEFAULT_EXTENSION_CLIENT_STYLES } from './extension-client.js'
+import { Button, Spinner, StatusBadge } from './ui-kit/index.js'
+import { EmptyState, PageHeader } from './components/product-feedback.js'
+import { useProductStore, useProductRuntime, type ProductRuntime } from './product-runtime.js'
+import { createExtensionData } from './extension-ui/data.js'
+import { extensionReactFacade, extensionUiKit } from './extension-ui/ui-kit.js'
 import {
   productHostEventStream,
   type HostEventStream,
@@ -43,16 +28,6 @@ import {
   type HostEventStreamHandlers,
 } from './host-event-stream.js'
 import styles from './host-ui-client.module.css'
-
-const markHostUiComponent = (name: string, Component: React.ElementType): React.ElementType => {
-  const MarkedHostUiComponent = React.forwardRef<unknown, Readonly<Record<string, unknown>>>((props, ref) => (
-    <div className={styles.uiComponentMarker} data-nxt-ui-component={name}>
-      <Component {...props} ref={ref} />
-    </div>
-  ))
-  MarkedHostUiComponent.displayName = `HostUi${name}`
-  return MarkedHostUiComponent
-}
 
 type PageComponent = (props: HostUiPageProps) => ReactNode
 type PageRegistration = {
@@ -97,58 +72,6 @@ const HOST_UI_TOPIC_EVENTS: ReadonlyMap<string, readonly HostEventStreamEvent[]>
   ['runtime', ['runtime', 'status']],
   ['messages', ['channel-fact']],
 ])
-
-export const hostUiKit: HostUiClientEnvironment['ui'] = {
-  Button: markHostUiComponent('Button', Button),
-  IconButton: markHostUiComponent('IconButton', IconButton),
-  Input: markHostUiComponent('Input', Input),
-  Textarea: markHostUiComponent('Textarea', Textarea),
-  Select: markHostUiComponent('Select', SelectField),
-  Switch: markHostUiComponent('Switch', SwitchControl),
-  Tabs,
-  Dialog: markHostUiComponent('Dialog', Dialog),
-  Popover: DropdownMenu,
-  Tooltip,
-  Field: markHostUiComponent('Field', Field),
-  StatusBadge: markHostUiComponent('StatusBadge', StatusBadge),
-  InlineFeedback: markHostUiComponent('InlineFeedback', InlineFeedback),
-  EmptyState: markHostUiComponent('EmptyState', EmptyState),
-  Spinner: markHostUiComponent('Spinner', Spinner),
-  PageHeader: markHostUiComponent('PageHeader', PageHeader),
-  MetricStrip: (props: { readonly children?: ReactNode }) => (
-    <div className={styles.metricStrip} data-nxt-ui-component="MetricStrip">
-      {props.children}
-    </div>
-  ),
-  Metric: (props: { readonly label?: ReactNode; readonly value?: ReactNode; readonly detail?: ReactNode }) => (
-    <div className={styles.metric} data-nxt-ui-component="Metric">
-      <span>{props.label}</span>
-      <strong>{props.value}</strong>
-      {props.detail === undefined ? null : <small>{props.detail}</small>}
-    </div>
-  ),
-  Section: (props: { readonly children?: ReactNode }) => (
-    <section className={styles.section} data-nxt-ui-component="Section">
-      {props.children}
-    </section>
-  ),
-  Stack: (props: { readonly children?: ReactNode }) => (
-    <div className={styles.stack} data-nxt-ui-component="Stack">
-      {props.children}
-    </div>
-  ),
-  Grid: (props: { readonly children?: ReactNode }) => (
-    <div className={styles.grid} data-nxt-ui-component="Grid">
-      {props.children}
-    </div>
-  ),
-  DataTable: (props: { readonly children?: ReactNode }) => (
-    <div className={styles.tableScroll} data-nxt-ui-component="DataTable">
-      <table>{props.children}</table>
-    </div>
-  ),
-  SidePane: markHostUiComponent('SidePane', SidePane),
-}
 
 export function HostUiPageFrame({
   children,
@@ -197,6 +120,7 @@ export class HostUiModuleRuntime {
   constructor(
     pages: readonly HostUiPageEntry[],
     readonly events: HostEventStream = productHostEventStream,
+    readonly data: { readonly store: ProductRuntime['store']; readonly permissions: readonly HostUiPermission[] },
   ) {
     this.#pages = pages
   }
@@ -262,34 +186,24 @@ export class HostUiModuleRuntime {
     const factory = isRecord(loaded) ? loaded['default'] : undefined
     if (typeof factory !== 'function') throw new Error('页面 Client 默认导出必须是 factory。')
     const allowedEntryIds = new Set(this.#pages.map(({ entryId }) => entryId))
-    const environment: HostUiClientEnvironment = {
-      React: {
-        createElement: (type, props, ...children) => React.createElement(type, props, ...children),
-        Fragment: React.Fragment,
-        useState: React.useState,
-        useEffect: React.useEffect,
-        useMemo: React.useMemo,
-        useCallback: React.useCallback,
-        useRef: React.useRef,
-        useSyncExternalStore: React.useSyncExternalStore,
-      },
-      ui: hostUiKit,
-      styles: DEFAULT_EXTENSION_CLIENT_STYLES,
+    const environment = {
+      React: extensionReactFacade,
+      styles: { insert: (): (() => void) => () => undefined },
       host: {
-        call: (method, input = {}) => this.#call(first, method, input),
-        subscribe: (topic, listener) => this.#subscribe(first, topic, listener),
+        call: (method: string, input: ExtensionJsonValue = {}) => this.#call(first, method, input),
+        subscribe: (topic: string, listener: (value: ExtensionJsonValue) => void) =>
+          this.#subscribe(first, topic, listener),
       },
     }
-    const context: HostUiClientContext = {
-      ui: hostUiKit,
-      slots: {
-        register: (options) => {
-          AdapterClientSlotNameSchema.parse(options.name)
-          return () => undefined
-        },
-      },
+    // Panels and message renderers of the same build run in the extension UI runtime; this runtime owns pages.
+    const ignore = { register: () => () => undefined }
+    const context: ExtensionClientContext = {
+      ui: extensionUiKit,
+      panels: ignore,
+      toolViews: ignore,
+      messageRenderers: ignore,
+      data: createExtensionData(this.data.store, new Set(this.data.permissions)),
       pages: {
-        declarePermissions: () => undefined,
         register: (options, component) => {
           this.#assertGeneration(generation)
           const entryId = options.page.entryId
@@ -320,8 +234,7 @@ export class HostUiModuleRuntime {
     }
     const definition: unknown = await Reflect.apply(factory, undefined, [environment])
     this.#assertGeneration(generation)
-    const definitionRecord = isRecord(definition) ? definition : undefined
-    const apply = definitionRecord?.['apply']
+    const apply = typeof definition === 'function' ? definition : isRecord(definition) ? definition['apply'] : undefined
     if (typeof apply !== 'function') throw new Error('页面 Client factory 必须返回 apply。')
     const dispose: unknown = await Reflect.apply(apply, definition, [context])
     if (generation !== this.#generation || this.#disposed) {
@@ -457,7 +370,16 @@ export function HostUiClientProvider({ children }: { readonly children: ReactNod
               candidate.client.moduleUrl === page.client.moduleUrl &&
               candidate.client.buildKey === page.client.buildKey,
           )
-          runtime = new HostUiModuleRuntime(ownerPages, product.events)
+          const owner = page.owner
+          const permissions =
+            owner.kind === 'extension'
+              ? (product.store
+                  .getState()
+                  .extensions.find((extension) => extension.id === owner.extensionId)
+                  ?.revisions.find((revision) => revision.id === owner.revisionId)?.verification?.permissions
+                  ?.permissions ?? [])
+              : []
+          runtime = new HostUiModuleRuntime(ownerPages, product.events, { store: product.store, permissions })
           runtimes.set(key, runtime)
         }
         return runtime

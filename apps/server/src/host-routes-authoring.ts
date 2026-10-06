@@ -233,6 +233,7 @@ export function registerAuthoringRoutes({ runtime, registerRoute, broadcast }: H
         const parsed = HostApiContracts.dynamicGetClientCode.parseRequest(body)
         try {
           const client = runtime.host.getDynamicClientCode(dshSessionId, parsed.pluginId, parsed.pluginRunId)
+          const snapshot = await runtime.host.dynamicAuthoringSnapshot(dshSessionId, client.pluginId, client.packageId)
           writeJson(
             res,
             200,
@@ -242,6 +243,7 @@ export function registerAuthoringRoutes({ runtime, registerRoute, broadcast }: H
               pluginRunId: client.pluginRunId,
               name: client.name,
               code: client.code,
+              ...(snapshot === undefined ? {} : { permissions: snapshot.permissions }),
             }),
           )
         } catch (error) {

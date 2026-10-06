@@ -11,7 +11,7 @@ import { PromptReferenceEditor } from '../components/prompt-reference-editor.js'
 import { EmptyState, InlineFeedback, PageHeader } from '../components/product-feedback.js'
 import { AddModelProviderForm } from '../llm-settings.js'
 import { WebSearchCredentialForm } from '../web-search-credential.js'
-import { AgentWorkbenchExtensionSlots } from '../persistent-extension-client.js'
+import { PanelSlot } from '../extension-ui/index.js'
 import {
   AGENT_ACCESS_LEVELS,
   agentAccessCapabilities,
@@ -1288,7 +1288,7 @@ export function AgentManagePage() {
               )}
             </div>
           </section>
-          <AgentWorkbenchExtensionSlots agentId={agent.id} displayName={agent.name} />
+          <PanelSlot anchor={{ kind: 'agent', id: agent.id }} density="full" />
           <section className={[styles.workbenchSection, styles.dangerSection].join(' ')}>
             <div className={styles.section}>
               <div className={styles.sectionBar}>

@@ -1,5 +1,5 @@
 import type { AdapterConnectionDescriptor } from '@nekro-nxt/adapter-sdk'
-import type { HostApiResponse } from '@nekro-nxt/contracts'
+import { configFields, type HostApiResponse } from '@nekro-nxt/contracts'
 import { useProductRuntime } from '../product-runtime.js'
 import { ArrowRight, Cable, Check, Circle, Plus, Radio, RotateCcw, Send, Trash2 } from 'lucide-react'
 import { useEffect, useMemo, useRef, useState } from 'react'
@@ -16,7 +16,6 @@ import {
   Disclosure,
   Field,
   Input,
-  SecretInput,
   SelectField,
   StageCrossfade,
   StatusBadge,
@@ -24,7 +23,7 @@ import {
   type StatusTone,
 } from '../ui-kit/index.js'
 import styles from './product-pages.module.css'
-import { AdapterConnectionExtensionSlot } from '../adapter-host-client.js'
+import { ConfigForm, PanelSlot, configDefaults, type ConfigValue } from '../extension-ui/index.js'
 import { createQrCodeSvgDataUrl } from '../qr-code.js'
 
 const connectionTone = (state: ConnectionState): StatusTone => {
@@ -66,18 +65,8 @@ const isConnectionLoginActive = (login: ConnectionLoginView | null): login is Co
 const isConnectionLoginRestartable = (login: ConnectionLoginView | null): boolean =>
   login === null || login.status === 'failed' || login.status === 'expired' || login.status === 'cancelled'
 
-const collectConnectionDefaults = (
-  platform: AdapterConnectionDescriptor | undefined,
-): Record<string, string | number | boolean> => {
-  const defaults: Record<string, string | number | boolean> = {}
-  for (const [key, property] of Object.entries(platform?.configSchema.properties ?? {})) {
-    if (property === undefined) continue
-    if (property.type !== 'credential-reference' && property.default !== undefined) {
-      defaults[key] = property.default
-    }
-  }
-  return defaults
-}
+const collectConnectionDefaults = (platform: AdapterConnectionDescriptor | undefined): ConfigValue =>
+  platform ? configDefaults(platform.configSchema) : {}
 
 export function ConnectionsPage() {
   const useProductStore = useProductRuntime().store
@@ -104,8 +93,8 @@ export function ConnectionsPage() {
     requestedCreateParam === '1' && requestedAdapterKey ? 'configuration' : 'platform',
   )
   const [selectedPlatformKey, setSelectedPlatformKey] = useState(requestedAdapterKey)
-  const [configuration, setConfiguration] = useState<Record<string, string | number | boolean>>({})
-  const [credentials, setCredentials] = useState<Record<string, string>>({})
+  const [configuration, setConfiguration] = useState<ConfigValue>({})
+  const [credentials, setCredentials] = useState<Readonly<Record<string, string>>>({})
   const [createAlias, setCreateAlias] = useState('')
   const [createError, setCreateError] = useState('')
   const [createPlatform, setCreatePlatform] = useState<AdapterConnectionDescriptor | null>(null)
@@ -186,9 +175,9 @@ export function ConnectionsPage() {
   const selectedChannels = selected ? channels.filter((channel) => channel.connectionId === selected.id) : []
   const bindingCount = selectedChannels.reduce((count, channel) => count + channel.bindings.length, 0)
   const firstBoundChannel = selectedChannels.find((channel) => channel.bindings.length > 0)
-  const editableBooleanSettings = Object.entries(selectedDescriptor?.configSchema.properties ?? {}).flatMap(
-    ([key, property]) => (property?.type === 'boolean' ? [{ key, property }] : []),
-  )
+  const editableBooleanSettings = selectedDescriptor
+    ? configFields(selectedDescriptor.configSchema).filter((field) => field.kind === 'boolean')
+    : []
 
   const saveAlias = async (alias: string): Promise<void> => {
     if (!selected || aliasPending) return
@@ -564,19 +553,7 @@ export function ConnectionsPage() {
               ) : null}
             </section>
 
-            <AdapterConnectionExtensionSlot
-              name="connection.adapter.status"
-              props={{
-                adapterKey: selected.adapterKey,
-                connectionId: selected.id,
-                phase: 'active',
-                diagnostic: {
-                  state: selected.state,
-                  receiveTest: selected.receiveTest,
-                  sendTest: selected.sendTest,
-                },
-              }}
-            />
+            <PanelSlot anchor={{ kind: 'connection', id: selected.id }} density="full" role="status" />
 
             {selected.userManaged ? (
               <>
@@ -620,15 +597,15 @@ export function ConnectionsPage() {
                     <div className={styles.sectionDivider} />
                     <div className={styles.connectionAliasEditor}>
                       <div className={styles.sectionHeading}>连接设置</div>
-                      {editableBooleanSettings.map(({ key, property }) => (
+                      {editableBooleanSettings.map(({ key, title, hint, default: fallback }) => (
                         <SwitchField
                           key={key}
-                          label={property.title}
-                          description={property.description}
+                          label={title}
+                          description={hint}
                           checked={
                             typeof selected.configuration?.[key] === 'boolean'
                               ? selected.configuration?.[key]
-                              : (property.default ?? false)
+                              : fallback === true
                           }
                           disabled={configurationPending}
                           onCheckedChange={(checked) => void updateConnectionBooleanSetting(key, checked)}
@@ -654,18 +631,7 @@ export function ConnectionsPage() {
                     收发测试
                   </Button>
                   <Disclosure open={testsOpen}>
-                    <AdapterConnectionExtensionSlot
-                      name="connection.adapter.test"
-                      props={{
-                        adapterKey: selected.adapterKey,
-                        connectionId: selected.id,
-                        phase: 'testing',
-                        diagnostic: {
-                          receiveTest: selected.receiveTest,
-                          sendTest: selected.sendTest,
-                        },
-                      }}
-                    />
+                    <PanelSlot anchor={{ kind: 'connection', id: selected.id }} density="full" role="diagnostics" />
                     {selected.knownChannels.length > 0 ? (
                       <SelectField
                         label="测试消息发送到"
@@ -944,50 +910,20 @@ export function ConnectionsPage() {
                     />
                   </Field>
                   {selectedPlatform ? (
-                    <AdapterConnectionExtensionSlot
-                      name="connection.adapter.setup"
-                      props={{ adapterKey: selectedPlatform.key, phase: 'setup' }}
-                    />
+                    <>
+                      <PanelSlot
+                        anchor={{ kind: 'connection', id: selectedPlatform.key }}
+                        density="full"
+                        role="setup"
+                      />
+                      <ConfigForm
+                        schema={selectedPlatform.configSchema}
+                        value={configuration}
+                        onChange={setConfiguration}
+                        secrets={{ value: credentials, onChange: setCredentials }}
+                      />
+                    </>
                   ) : null}
-                  {Object.entries(selectedPlatform?.configSchema.properties ?? {}).map(([key, property]) => {
-                    if (property.type === 'boolean') {
-                      return (
-                        <SwitchField
-                          key={key}
-                          label={property.title}
-                          description={property.description ?? ''}
-                          checked={configuration[key] === true}
-                          onCheckedChange={(value) => setConfiguration((current) => ({ ...current, [key]: value }))}
-                        />
-                      )
-                    }
-                    if (property.type === 'credential-reference') {
-                      return (
-                        <Field key={key} label={property.title} hint="凭据仅可覆盖，无法查看已保存值。">
-                          <SecretInput
-                            value={credentials[key] ?? ''}
-                            onChange={(event) =>
-                              setCredentials((current) => ({ ...current, [key]: event.target.value }))
-                            }
-                          />
-                        </Field>
-                      )
-                    }
-                    return (
-                      <Field key={key} label={property.title} hint={property.description}>
-                        <Input
-                          type={property.type === 'number' ? 'number' : 'text'}
-                          value={typeof configuration[key] === 'boolean' ? '' : (configuration[key] ?? '')}
-                          onChange={(event) =>
-                            setConfiguration((current) => ({
-                              ...current,
-                              [key]: property.type === 'number' ? Number(event.target.value) : event.target.value,
-                            }))
-                          }
-                        />
-                      </Field>
-                    )
-                  })}
                 </>
               )}
             </>

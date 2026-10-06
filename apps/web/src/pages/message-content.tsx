@@ -9,7 +9,7 @@ import { Button } from '../ui-kit/index.js'
 import contentStyles from './message-content.module.css'
 import styles from './product-pages.module.css'
 import { detectResourceKind, ResourcePreviewDialog, type PreviewResource } from './resource-preview.js'
-import { AdapterRichMessageRenderer } from '../adapter-host-client.js'
+import { MessageRendererSlot } from '../extension-ui/index.js'
 
 export type MessageSide = 'left' | 'right' | 'system'
 
@@ -194,11 +194,7 @@ function StructuredPart({
     })
     if (!adapterPart.success || adapterPart.data.type !== 'rich') return fallback
     return (
-      <AdapterRichMessageRenderer
-        slotKey={`${part.adapterKey}:${part.kind}`}
-        props={{ part: adapterPart.data, messageId, channelId }}
-        fallback={fallback}
-      />
+      <MessageRendererSlot part={adapterPart.data} messageId={messageId} channelId={channelId} fallback={fallback} />
     )
   }
   if (part.type === 'image') {

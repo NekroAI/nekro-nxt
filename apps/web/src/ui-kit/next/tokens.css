@@ -1,5 +1,6 @@
 /* NekroNXT 新设计系统 Token。作用域为 html[data-ui='next']，与旧界面并存到 M6 替换完成。 */
-html[data-ui='next'] {
+html[data-ui='next'],
+html[data-ui='next'] [data-nxt-theme='light'] {
   color-scheme: light;
   --bg: #f3f1ec;
   --bg-glow: #e6ebf5;
@@ -53,7 +54,8 @@ html[data-ui='next'] {
   --hue-agent: 230;
 }
 
-html[data-ui='next'][data-theme='dark'] {
+html[data-ui='next'][data-theme='dark'],
+html[data-ui='next'] [data-nxt-theme='dark'] {
   color-scheme: dark;
   --bg: #0b1524;
   --bg-glow: #15274a;

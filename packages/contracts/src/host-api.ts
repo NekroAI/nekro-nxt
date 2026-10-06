@@ -2528,6 +2528,8 @@ export const HostApiContracts = {
         pluginId: DynamicIdSchema,
         packageId: DynamicIdSchema,
         pluginRunId: DynamicIdSchema,
+        /** What the candidate declared; preview data hooks enforce exactly what the saved Revision will. */
+        permissions: HostUiPermissionDeclarationSchema.default({ permissions: [], networkOrigins: [] }),
       })
       .strict(),
     error: HostApiErrorSchema,
