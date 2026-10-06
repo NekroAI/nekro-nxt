@@ -1,4 +1,4 @@
-import { useEffect, useSyncExternalStore } from 'react'
+import { useCallback, useEffect, useSyncExternalStore } from 'react'
 import type { AttentionItem as HostAttentionItem } from '@nekro-nxt/contracts'
 import { workspaceApi } from '../../host-api-client.js'
 import { useProductRuntime, type ProductRuntime } from '../../product-runtime.js'
@@ -119,10 +119,10 @@ export const attentionSource = (runtime: ProductRuntime): AttentionSource => {
 
 export function useAttention(): readonly AttentionItem[] {
   const source = attentionSource(useProductRuntime())
-  return useSyncExternalStore(
-    (listener) => source.subscribe(listener),
-    () => source.items,
-  )
+  // A stable subscribe: a new function per render would resubscribe, refetch and re-render in a loop.
+  const subscribe = useCallback((listener: () => void) => source.subscribe(listener), [source])
+  const read = useCallback(() => source.items, [source])
+  return useSyncExternalStore(subscribe, read)
 }
 
 /** Refresh after local actions that change attention (send, resolve) without waiting for SSE. */

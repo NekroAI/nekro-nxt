@@ -42,8 +42,14 @@ import {
   type ConnectionSummary,
   type ConversationMessage,
 } from '../../product-runtime.js'
+import { Plus } from 'lucide-react'
 import {
   AgentAvatar,
+  Button,
+  Dialog,
+  Field,
+  IconButton,
+  Input,
   MemberAvatar,
   Segmented,
   SelectionList,
@@ -140,7 +146,9 @@ function SortableRow({
       className={[styles.row, isDragging ? styles.rowDragging : ''].join(' ')}
       data-selected={selected}
       aria-current={selected ? 'page' : undefined}
-      style={{ transform: CSS.Translate.toString(transform), transition }}
+      // Rows are links: without these the browser's own link drag or text selection can win over the sortable drag.
+      draggable={false}
+      style={{ transform: CSS.Translate.toString(transform), transition, userSelect: 'none', WebkitUserSelect: 'none' }}
       onClick={suppressClick}
       {...attributes}
       {...listeners}
@@ -214,6 +222,65 @@ function UnboundGroup({
   )
 }
 
+/** A new web channel starts unbound; wiring it to an agent is the next, separate step. */
+function CreateInternalChannel() {
+  const api = useProductApi()
+  const go = useGo()
+  const [open, setOpen] = useState(false)
+  const [name, setName] = useState('')
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState('')
+  const create = async () => {
+    setBusy(true)
+    setError('')
+    try {
+      const { channelId } = await api.getState().createInternalChannel({ displayName: name.trim() })
+      setOpen(false)
+      setName('')
+      toast(`已新建「${name.trim()}」`)
+      go(`/channels/${channelId}`)
+    } catch (failure) {
+      setError(failure instanceof Error ? failure.message : String(failure))
+    } finally {
+      setBusy(false)
+    }
+  }
+  return (
+    <>
+      <IconButton label="新建内置频道" size="small" onClick={() => setOpen(true)}>
+        <Plus size={15} />
+      </IconButton>
+      <Dialog
+        open={open}
+        onOpenChange={(next) => !busy && setOpen(next)}
+        title="新建内置频道"
+        actions={
+          <>
+            <Button onClick={() => setOpen(false)} disabled={busy}>
+              取消
+            </Button>
+            <Button variant="primary" busy={busy} disabled={!name.trim()} onClick={() => void create()}>
+              创建
+            </Button>
+          </>
+        }
+      >
+        <Field label="频道名称" error={error || undefined}>
+          <Input
+            value={name}
+            maxLength={80}
+            autoFocus
+            onChange={(event) => setName(event.target.value)}
+            onKeyDown={(event) => {
+              if (event.key === 'Enter' && name.trim() && !busy) void create()
+            }}
+          />
+        </Field>
+      </Dialog>
+    </>
+  )
+}
+
 export function ChannelList({ selectedId }: { readonly selectedId: string | undefined }) {
   const api = useProductApi()
   const agents = useProductStore((state) => state.agents)
@@ -275,7 +342,7 @@ export function ChannelList({ selectedId }: { readonly selectedId: string | unde
   const onDragEnd = (event: DragEndEvent) => {
     setActiveId('')
     setOverId('')
-    window.setTimeout(() => (dragged.current = false), 80)
+    swallowNextClick()
     const resolution = resolveWorkTreeDragEnd({
       activeId: String(event.active.id),
       overId: event.over ? String(event.over.id) : '',
@@ -298,8 +365,32 @@ export function ChannelList({ selectedId }: { readonly selectedId: string | unde
     }
   }
 
+  /** Spoken name of a draggable or drop target; screen readers never hear internal ids. */
+  const dragLabel = (id: string): string => {
+    if (id === UNBOUND_DROP_ID) return '「未接线」'
+    const channelId = parsePrefixedId(id, CHANNEL_SORT_PREFIX)
+    if (channelId) return `频道「${channels.find((channel) => channel.id === channelId)?.name ?? '未命名'}」`
+    const agentId = parsePrefixedId(id, AGENT_SORT_PREFIX)
+    return `智能体「${(agentId && agentById.get(agentId)?.name) ?? '未命名'}」`
+  }
+
   const suppressClick = (event: MouseEvent) => {
     if (dragged.current) event.preventDefault()
+  }
+  /**
+   * The press that ends a pointer drag also produces a click on the row link. Swallow exactly that click in the
+   * capture phase, before React Router can navigate; a keyboard drop produces none, so the guard expires.
+   */
+  const swallowNextClick = () => {
+    const swallow = (event: Event) => {
+      event.preventDefault()
+      event.stopPropagation()
+    }
+    window.addEventListener('click', swallow, { capture: true, once: true })
+    window.setTimeout(() => {
+      dragged.current = false
+      window.removeEventListener('click', swallow, { capture: true })
+    }, 120)
   }
   const activeChannelId = parsePrefixedId(activeId, CHANNEL_SORT_PREFIX)
   const activeChannel = activeChannelId ? channels.find((channel) => channel.id === activeChannelId) : undefined
@@ -318,6 +409,7 @@ export function ChannelList({ selectedId }: { readonly selectedId: string | unde
       <div className={styles.listHead}>
         <h2 className={styles.listTitle}>频道</h2>
         <span className={styles.listCount}>{channels.length}</span>
+        <CreateInternalChannel />
       </div>
       <Segmented
         className={styles.viewSwitch}
@@ -363,11 +455,24 @@ export function ChannelList({ selectedId }: { readonly selectedId: string | unde
               onDragCancel={() => {
                 setActiveId('')
                 setOverId('')
+                swallowNextClick()
               }}
               onDragEnd={onDragEnd}
               accessibility={{
                 screenReaderInstructions: {
                   draggable: '按空格开始拖动，用方向键移动，再按空格放下，按 Esc 取消。跨智能体放下会先确认。',
+                },
+                announcements: {
+                  onDragStart: ({ active }) => `已拿起${dragLabel(String(active.id))}`,
+                  onDragOver: ({ active, over }) =>
+                    over
+                      ? `${dragLabel(String(active.id))}移到${dragLabel(String(over.id))}`
+                      : `${dragLabel(String(active.id))}不在可放下的位置`,
+                  onDragEnd: ({ active, over }) =>
+                    over
+                      ? `${dragLabel(String(active.id))}放在${dragLabel(String(over.id))}`
+                      : `${dragLabel(String(active.id))}已放回原处`,
+                  onDragCancel: ({ active }) => `已取消拖动${dragLabel(String(active.id))}`,
                 },
               }}
             >
@@ -409,7 +514,11 @@ export function ChannelList({ selectedId }: { readonly selectedId: string | unde
                   ))}
                 </SortableContext>
               </UnboundGroup>
-              <DragOverlay dropAnimation={{ duration: 220, easing: 'cubic-bezier(0.2, 0.8, 0.2, 1)' }}>
+              <DragOverlay
+                // Only a picture of the dragged row: during its drop animation it must not catch the next press.
+                style={{ pointerEvents: 'none' }}
+                dropAnimation={{ duration: 220, easing: 'cubic-bezier(0.2, 0.8, 0.2, 1)' }}
+              >
                 {activeChannel ? (
                   <div className={styles.dragOverlay}>{activeChannel.name}</div>
                 ) : activeAgent ? (
