@@ -1,8 +1,10 @@
 import { useGo } from '../model/nav.js'
-import { MessagesSquare, Moon, Plus, Search, Settings, Sparkles, Sun } from 'lucide-react'
+import { AppWindow, MessagesSquare, Moon, Plus, Search, Settings, Sparkles, Sun, UserRound } from 'lucide-react'
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
+import type { HostApiResponse } from '@nekro-nxt/contracts'
 
-import { useProductStore } from '../../product-runtime.js'
+import { connectionDisplayName, useProductStore } from '../../product-runtime.js'
+import { useProductApi } from '../model/store.js'
 import { Kbd, Pressable, Input, Overlay } from '../../ui-kit/next/index.js'
 import { agentPhase } from '../model/identity.js'
 import { useToggleTheme } from '../model/theme.js'
@@ -19,6 +21,34 @@ interface Command {
   readonly run: () => void
 }
 
+type Member = HostApiResponse<'listPlatformUsers'>['items'][number]
+
+/** Debounced Host search over platform members; empty input clears the results. */
+function useMemberSearch(query: string): readonly Member[] {
+  const api = useProductApi()
+  const [items, setItems] = useState<readonly Member[]>([])
+  useEffect(() => {
+    const needle = query.trim()
+    if (!needle) {
+      setItems([])
+      return
+    }
+    let live = true
+    const timer = window.setTimeout(() => {
+      void api
+        .getState()
+        .listPlatformUsers({ query: needle, limit: 8 })
+        .then((result) => live && setItems(result.items))
+        .catch(() => live && setItems([]))
+    }, 200)
+    return () => {
+      live = false
+      window.clearTimeout(timer)
+    }
+  }, [api, query])
+  return items
+}
+
 export function CommandPalette({
   open,
   onOpenChange,
@@ -30,7 +60,9 @@ export function CommandPalette({
   const channels = useProductStore((state) => state.channels)
   const agents = useProductStore((state) => state.agents)
   const connections = useProductStore((state) => state.connections)
+  const pages = useProductStore((state) => state.hostUi.pages)
   const [query, setQuery] = useState('')
+  const members = useMemberSearch(open ? query : '')
   const [index, setIndex] = useState(0)
   const listRef = useRef<HTMLDivElement>(null)
 
@@ -57,7 +89,7 @@ export function CommandPalette({
       },
       ...channels.map((channel) => {
         const connection = connectionName.get(channel.connectionId)
-        const source = connection ? connection.alias || connection.name : channel.connectionName
+        const source = connection ? connectionDisplayName(connection) : channel.connectionName
         return {
           id: `channel:${channel.id}`,
           group: '频道',
@@ -77,6 +109,15 @@ export function CommandPalette({
         keywords: agent.name,
         run: go(`/agents/${agent.id}`),
       })),
+      ...pages.map((page) => ({
+        id: `page:${page.pageInstanceId}`,
+        group: '扩展页面',
+        label: page.title,
+        ...(page.description ? { hint: page.description } : {}),
+        icon: <AppWindow />,
+        keywords: `${page.title} ${page.description ?? ''}`,
+        run: go(`${page.routeBase}${page.startPath ? `/${page.startPath}` : ''}`),
+      })),
       {
         id: 'action:new-agent',
         group: '操作',
@@ -94,16 +135,33 @@ export function CommandPalette({
         run: toggleTheme,
       },
     ]
-  }, [agents, channels, connections, navigate, toggleTheme])
+  }, [agents, channels, connections, navigate, pages, toggleTheme])
 
   const visible = useMemo(() => {
     const needle = query.trim().toLowerCase()
-    return needle
-      ? commands.filter((command) =>
-          `${command.label} ${command.keywords} ${command.group}`.toLowerCase().includes(needle),
-        )
-      : commands
-  }, [commands, query])
+    if (!needle) return commands
+    const matched = commands.filter((command) =>
+      `${command.label} ${command.keywords} ${command.group}`.toLowerCase().includes(needle),
+    )
+    // Platform members come from the Host search; each opens the member's first channel or its account.
+    return [
+      ...matched,
+      ...members.map((member) => ({
+        id: `member:${member.identityId}`,
+        group: '成员',
+        label: member.displayName ?? '未命名成员',
+        hint: member.connection.displayName,
+        icon: <UserRound />,
+        keywords: '',
+        run: () =>
+          navigate(
+            member.channelPreview[0]
+              ? `/channels/${member.channelPreview[0].id}`
+              : `/wiring/connections/${member.connection.id}`,
+          ),
+      })),
+    ]
+  }, [commands, members, navigate, query])
 
   useEffect(() => {
     if (open) {

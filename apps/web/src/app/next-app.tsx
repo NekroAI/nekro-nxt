@@ -1,12 +1,13 @@
 import { lazy, Suspense, type ReactNode } from 'react'
-import { Navigate, Route, Routes } from 'react-router-dom'
+import { Navigate, Route, Routes, useParams } from 'react-router-dom'
+import { useProductStore } from '../product-runtime.js'
 import { AdapterHostClientProvider } from '../adapter-host-client.js'
 import { DynamicClientProvider } from '../dynamic-client-coordinator.js'
 import { HostUiClientProvider, HostUiPageCanvas } from '../host-ui-client.js'
 import { PersistentExtensionClientProvider } from '../persistent-extension-client.js'
 import { Skeleton, Toaster, TooltipProvider } from '../ui-kit/next/index.js'
 import { AppShell } from './shell/app-shell.js'
-import { CrumbProvider } from './shell/crumb.js'
+import { CrumbProvider, useCrumb } from './shell/crumb.js'
 import { useAppearanceEffects } from './model/theme.js'
 
 const LiveSpace = lazy(() => import('./live/live-space.js'))
@@ -24,6 +25,16 @@ function Loading() {
       <Skeleton width="70%" height={14} />
     </div>
   )
+}
+
+/** Extension-owned page: the Host UI runtime renders it; the shell only names it. */
+function ExtensionPage() {
+  const { pageInstanceId } = useParams()
+  const title = useProductStore(
+    (state) => state.hostUi.pages.find((page) => page.pageInstanceId === pageInstanceId)?.title,
+  )
+  useCrumb('扩展页面', title)
+  return <HostUiPageCanvas />
 }
 
 const space = (node: ReactNode) => <Suspense fallback={<Loading />}>{node}</Suspense>
@@ -50,7 +61,7 @@ export function NextApp() {
                     <Route path="workshop/*" element={space(<WorkshopSpace />)} />
                     <Route path="wiring/*" element={space(<WiringSpace />)} />
                     <Route path="settings/:section?" element={space(<SettingsSpace />)} />
-                    <Route path="apps/:pageInstanceId/*" element={<HostUiPageCanvas />} />
+                    <Route path="apps/:pageInstanceId/*" element={<ExtensionPage />} />
                     <Route path="*" element={<Navigate to="/live" replace />} />
                   </Route>
                 </Routes>
