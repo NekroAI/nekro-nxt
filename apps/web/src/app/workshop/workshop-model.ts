@@ -167,3 +167,65 @@ export const proposeSlug = (name: string, now = Date.now()): string => {
 }
 
 export const SLUG_PATTERN = /^[a-z0-9][a-z0-9-]{1,62}[a-z0-9]$/u
+
+/** Where an open or finished task sits in the list: needs the user, in progress, or done. */
+export type TaskGroup = 'attention' | 'active' | 'ended'
+
+export const TASK_GROUP_LABEL: Record<TaskGroup, string> = {
+  attention: '等你处理',
+  active: '进行中',
+  ended: '已结束',
+}
+
+export const taskGroup = (task: Pick<AuthoringTask, 'status'>): TaskGroup =>
+  task.status === 'awaiting-approval' || task.status === 'ready' || task.status === 'failed'
+    ? 'attention'
+    : isTaskOpen(task)
+      ? 'active'
+      : 'ended'
+
+export const EXTENSION_GROUPS: readonly { readonly scope: LocalExtensionSummary['scope']; readonly label: string }[] = [
+  { scope: 'agent', label: '智能体扩展' },
+  { scope: 'host-ui', label: '页面' },
+  { scope: 'host-adapter', label: '适配器' },
+]
+
+const pad = (value: number): string => String(value).padStart(2, '0')
+
+const minuteLabel = (time: number): string => {
+  const date = new Date(time)
+  return `${date.getMonth() + 1}月${date.getDate()}日 ${pad(date.getHours())}:${pad(date.getMinutes())}`
+}
+
+/**
+ * Saved records are told apart by when they were saved, never by their internal number. Records saved within the
+ * same minute also show seconds.
+ */
+export const recordLabels = (
+  records: readonly { readonly id: string; readonly createdAt: number }[],
+): ReadonlyMap<string, string> => {
+  const counts = new Map<string, number>()
+  for (const record of records)
+    counts.set(minuteLabel(record.createdAt), (counts.get(minuteLabel(record.createdAt)) ?? 0) + 1)
+  return new Map(
+    records.map((record) => {
+      const label = minuteLabel(record.createdAt)
+      return [
+        record.id,
+        (counts.get(label) ?? 0) > 1 ? `${label}:${pad(new Date(record.createdAt).getSeconds())}` : label,
+      ]
+    }),
+  )
+}
+
+/** What a contribution kind gives the user and where it appears. */
+export const CONTRIBUTION_PLACE: Record<string, string> = {
+  工具: '智能体在对话中调用',
+  工具视图: '在频道时间线里展示工具调用',
+  面板: '出现在智能体页或频道检查器',
+  页面: '可从命令面板打开的独立页面',
+  富消息: '在频道里渲染平台富消息',
+  适配器: '在接线里添加这个平台的账号',
+  数据接口: '供扩展界面读取数据',
+  内容: '扩展提供的内容',
+}

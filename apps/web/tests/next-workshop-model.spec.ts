@@ -2,6 +2,8 @@ import { describe, expect, it } from 'vitest'
 import {
   contributionParts,
   lifecyclePosition,
+  recordLabels,
+  taskGroup,
   proposeSlug,
   SLUG_PATTERN,
   sortTasks,
@@ -72,5 +74,28 @@ describe('workshop helpers', () => {
   it('proposes valid slugs for Latin and non-Latin names', () => {
     expect(proposeSlug('Weather Card!')).toBe('weather-card')
     expect(SLUG_PATTERN.test(proposeSlug('天气卡片', 1_700_000_000_000))).toBe(true)
+  })
+})
+
+describe('workshop list and records', () => {
+  it('groups tasks by what they need from the user', () => {
+    expect(taskGroup({ status: 'awaiting-approval' })).toBe('attention')
+    expect(taskGroup({ status: 'ready' })).toBe('attention')
+    expect(taskGroup({ status: 'working' })).toBe('active')
+    expect(taskGroup({ status: 'completed' })).toBe('ended')
+    expect(taskGroup({ status: 'interrupted' })).toBe('ended')
+  })
+
+  it('labels saved records by save time and adds seconds only when minutes collide', () => {
+    const base = new Date(2026, 9, 1, 14, 20, 5).getTime()
+    const labels = recordLabels([
+      { id: 'a', createdAt: base },
+      { id: 'b', createdAt: base + 20_000 },
+      { id: 'c', createdAt: base + 3_600_000 },
+    ])
+    expect(labels.get('a')).toBe('10月1日 14:20:05')
+    expect(labels.get('b')).toBe('10月1日 14:20:25')
+    expect(labels.get('c')).toBe('10月1日 15:20')
+    expect([...labels.values()].some((label) => /\br\d/u.test(label))).toBe(false)
   })
 })

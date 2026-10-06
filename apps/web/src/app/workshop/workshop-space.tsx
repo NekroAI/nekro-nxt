@@ -1,10 +1,10 @@
 import { useGo } from '../model/nav.js'
-import { Hammer, Upload } from 'lucide-react'
-import { useEffect, useRef, useState } from 'react'
+import { Hammer, LayoutPanelLeft, PanelsTopLeft, Upload, Wrench } from 'lucide-react'
+import { useEffect, useMemo, useRef, useState, type ReactNode, type RefObject } from 'react'
 import { Link, Navigate, useLocation } from 'react-router-dom'
 import { HostApiContracts, type HostApiResponse } from '@nekro-nxt/contracts'
 import { callHostApi } from '../../host-api-client.js'
-import { useHostActions, useProductStore } from '../../product-runtime.js'
+import { useHostActions, useProductRuntime, useProductStore } from '../../product-runtime.js'
 import {
   AgentAvatar,
   Button,
@@ -15,8 +15,13 @@ import {
   FileChooser,
   IconButton,
   Input,
+  ListPane,
+  MainContent,
+  Pressable,
+  SearchField,
   SelectionList,
   StatusDot,
+  WorkbenchPage,
   toast,
 } from '../../ui-kit/next/index.js'
 import { relativeTime } from '../channels/timeline-model.js'
@@ -24,7 +29,18 @@ import { agentHue } from '../model/identity.js'
 import { useCrumb } from '../shell/crumb.js'
 import { ExtensionView } from './extension-view.js'
 import { TaskView } from './task-view.js'
-import { SLUG_PATTERN, extensionUsage, isTaskOpen, scopeLabel, sortTasks, taskStatus } from './workshop-model.js'
+import {
+  EXTENSION_GROUPS,
+  SLUG_PATTERN,
+  TASK_GROUP_LABEL,
+  extensionUsage,
+  isTaskOpen,
+  scopeLabel,
+  sortTasks,
+  taskGroup,
+  taskStatus,
+  type TaskGroup,
+} from './workshop-model.js'
 import styles from './workshop.module.css'
 
 type Inspection = HostApiResponse<'inspectExtensionImport'>
@@ -36,16 +52,22 @@ const parse = (path: string): { readonly kind: 'task' | 'extension'; readonly id
     : undefined
 }
 
+const matches = (needle: string, ...values: readonly (string | undefined)[]): boolean =>
+  !needle || values.some((value) => value?.toLowerCase().includes(needle))
+
 export default function WorkshopSpace() {
   const { pathname } = useLocation()
   const navigate = useGo()
   const hostStatus = useProductStore((state) => state.host.status)
-  const tasks = sortTasks(useProductStore((state) => state.authoringTasks))
+  const allTasks = useProductStore((state) => state.authoringTasks)
+  const tasks = useMemo(() => sortTasks(allTasks), [allTasks])
   const extensions = useProductStore((state) => state.extensions)
   const agents = useProductStore((state) => state.agents)
   const route = parse(pathname)
+  const [query, setQuery] = useState('')
   const [dragging, setDragging] = useState(false)
   const [dropped, setDropped] = useState<File>()
+  const importer = useRef<HTMLInputElement>(null)
   const task = route?.kind === 'task' ? tasks.find((item) => item.id === route.id) : undefined
   const extension = route?.kind === 'extension' ? extensions.find((item) => item.id === route.id) : undefined
   useCrumb('工坊', task?.title ?? extension?.name)
@@ -59,12 +81,26 @@ export default function WorkshopSpace() {
 
   const selected = task ? `task:${task.id}` : extension ? `extension:${extension.id}` : undefined
   const agentOf = (id: string) => agents.find((item) => item.id === id)
+  const needle = query.trim().toLowerCase()
+  const visibleTasks = tasks.filter((item) => matches(needle, item.title, agentOf(item.agentId)?.name))
+  const visibleExtensions = extensions.filter((item) => matches(needle, item.name, item.description))
+  const taskGroups = (['attention', 'active', 'ended'] as const satisfies readonly TaskGroup[])
+    .map((group) => ({ group, items: visibleTasks.filter((item) => taskGroup(item) === group) }))
+    .filter((entry) => entry.items.length > 0)
 
-  return (
-    <div className={styles.space}>
-      <aside
-        className={styles.list}
-        aria-label="工坊"
+  const list = (
+    <ListPane
+      title="工坊"
+      label="工坊"
+      actions={
+        <IconButton label="导入扩展" size="small" onClick={() => importer.current?.click()}>
+          <Upload size={15} />
+        </IconButton>
+      }
+      toolbar={<SearchField value={query} onChange={setQuery} label="搜索任务和扩展" placeholder="搜索任务和扩展" />}
+    >
+      <div
+        className={styles.dropZone}
         data-extension-drop-zone=""
         data-dragging={dragging || undefined}
         onDragEnter={(event) => {
@@ -86,135 +122,225 @@ export default function WorkshopSpace() {
           if (file) setDropped(file)
         }}
       >
-        <div className={styles.listHead}>
-          <h2>工坊</h2>
-          <ImportButton dropped={dropped} onImported={(id) => navigate(`/workshop/extensions/${id}`)} />
-        </div>
-        <div className={styles.listBody}>
-          <SelectionList selectedKey={selected}>
-            {tasks.length > 0 ? <div className={styles.group}>创造任务</div> : null}
-            {tasks.map((item) => {
-              const status = taskStatus(item)
-              const agent = agentOf(item.agentId)
-              const key = `task:${item.id}`
-              return (
-                <Link
-                  key={key}
-                  to={`/workshop/tasks/${item.id}`}
-                  className={styles.row}
-                  data-selected={key === selected}
-                  aria-current={key === selected ? 'page' : undefined}
-                >
-                  {agent ? (
-                    <AgentAvatar
-                      name={agent.name}
-                      hue={agentHue(agent)}
-                      size="sm"
-                      live={isTaskOpen(item) && status.tone === 'accent'}
-                    />
-                  ) : (
-                    <span className={styles.rowGlyph}>
-                      <Hammer size={14} />
+        <SelectionList selectedKey={selected}>
+          <h3 className={styles.group}>创造任务</h3>
+          {tasks.length === 0 ? <p className={styles.groupEmpty}>还没有创造任务</p> : null}
+          {taskGroups.map(({ group, items }) => (
+            <TaskGroupRows key={group} label={tasks.length > 3 ? TASK_GROUP_LABEL[group] : undefined}>
+              {items.map((item) => {
+                const status = taskStatus(item)
+                const agent = agentOf(item.agentId)
+                const key = `task:${item.id}`
+                return (
+                  <Link
+                    key={key}
+                    to={`/workshop/tasks/${item.id}`}
+                    className={styles.row}
+                    data-selected={key === selected}
+                    aria-current={key === selected ? 'page' : undefined}
+                  >
+                    {agent ? (
+                      <AgentAvatar
+                        name={agent.name}
+                        hue={agentHue(agent)}
+                        size="sm"
+                        live={isTaskOpen(item) && status.tone === 'accent'}
+                      />
+                    ) : (
+                      <span className={styles.rowGlyph}>
+                        <Hammer size={14} />
+                      </span>
+                    )}
+                    <span className={styles.rowName}>{item.title}</span>
+                    <span className={styles.rowState}>
+                      <StatusDot tone={status.tone} />
                     </span>
-                  )}
-                  <span className={styles.rowName}>{item.title}</span>
-                  <span className={styles.rowState}>
-                    <StatusDot tone={status.tone} />
-                  </span>
-                  <span className={styles.rowSub}>
-                    {status.label} · {relativeTime(item.updatedAt)}
-                  </span>
-                </Link>
-              )
-            })}
-            {extensions.length > 0 ? <div className={styles.group}>本地扩展</div> : null}
-            {extensions.map((item) => {
-              const usage = extensionUsage(item)
-              const key = `extension:${item.id}`
-              return (
-                <Link
-                  key={key}
-                  to={`/workshop/extensions/${item.id}`}
-                  className={styles.row}
-                  data-selected={key === selected}
-                  aria-current={key === selected ? 'page' : undefined}
-                >
-                  <span className={styles.rowGlyph} data-scope={item.scope}>
-                    {[...item.name][0] ?? '扩'}
-                  </span>
-                  <span className={styles.rowName}>{item.name}</span>
-                  <span className={styles.rowState}>
-                    <StatusDot tone={usage.tone} />
-                  </span>
-                  <span className={styles.rowSub}>
-                    {scopeLabel[item.scope]} · r{item.revision}
-                  </span>
-                </Link>
-              )
-            })}
-          </SelectionList>
-        </div>
-      </aside>
+                    <span className={styles.rowSub}>
+                      {status.label} · {relativeTime(item.updatedAt)}
+                    </span>
+                  </Link>
+                )
+              })}
+            </TaskGroupRows>
+          ))}
+
+          <h3 className={styles.group}>扩展库</h3>
+          {extensions.length === 0 ? (
+            <p className={styles.groupEmpty}>
+              还没有扩展。可以
+              <Pressable className={styles.inlineLink} onClick={() => importer.current?.click()}>
+                导入
+              </Pressable>
+              一个，或把文件拖到这里。
+            </p>
+          ) : null}
+          {EXTENSION_GROUPS.map(({ scope, label }) => {
+            const items = visibleExtensions.filter((item) => item.scope === scope)
+            if (items.length === 0) return null
+            return (
+              <TaskGroupRows key={scope} label={label}>
+                {items.map((item) => {
+                  const usage = extensionUsage(item)
+                  const key = `extension:${item.id}`
+                  const latest = item.revisions.at(-1)
+                  return (
+                    <Link
+                      key={key}
+                      to={`/workshop/extensions/${item.id}`}
+                      className={styles.row}
+                      data-selected={key === selected}
+                      aria-current={key === selected ? 'page' : undefined}
+                    >
+                      <span className={styles.rowGlyph} data-scope={item.scope}>
+                        {[...item.name][0] ?? '扩'}
+                      </span>
+                      <span className={styles.rowName}>{item.name}</span>
+                      <span className={styles.rowState}>
+                        <StatusDot tone={usage.tone} />
+                      </span>
+                      <span className={styles.rowSub}>
+                        {usage.label}
+                        {latest ? ` · ${relativeTime(latest.createdAt)}保存` : ''}
+                      </span>
+                    </Link>
+                  )
+                })}
+              </TaskGroupRows>
+            )
+          })}
+          {needle && visibleTasks.length === 0 && visibleExtensions.length === 0 ? (
+            <p className={styles.groupEmpty}>没有匹配“{query.trim()}”的任务或扩展</p>
+          ) : null}
+        </SelectionList>
+      </div>
+    </ListPane>
+  )
+
+  return (
+    <WorkbenchPage list={list}>
+      <ImportFlow input={importer} dropped={dropped} onImported={(id) => navigate(`/workshop/extensions/${id}`)} />
       {task ? (
         <TaskView key={task.id} task={task} />
       ) : extension ? (
         <ExtensionView key={extension.id} extension={extension} />
-      ) : hostStatus === 'initializing' ? (
-        <div />
-      ) : (
-        <Start />
+      ) : hostStatus === 'initializing' ? null : (
+        <Start onImport={() => importer.current?.click()} />
       )}
-    </div>
+    </WorkbenchPage>
   )
 }
 
-/** Nothing made yet: creation starts by talking to an agent that may create, in one of its channels. */
-function Start() {
-  const agents = useProductStore((state) => state.agents)
-  const navigate = useGo()
-  const creators = agents.filter((agent) => agent.capabilities.dynamicCreation)
+function TaskGroupRows({ label, children }: { readonly label: string | undefined; readonly children: ReactNode }) {
   return (
-    <div className={styles.start}>
-      <EmptyState
-        icon={<Hammer size={22} />}
-        title="在频道里请智能体做一个新能力"
-        action={
-          <div className={styles.creators}>
-            {creators.length > 0 ? (
-              creators.map((agent) => (
+    <>
+      {label ? <div className={styles.subgroup}>{label}</div> : null}
+      {children}
+    </>
+  )
+}
+
+const EXAMPLES = [
+  {
+    kind: '工具',
+    icon: <Wrench size={18} />,
+    title: '让智能体多一项本领',
+    sample: '查询本周天气并整理成三行摘要',
+    request: '帮我做一个工具：查询指定城市本周天气，并整理成三行摘要发到频道里。',
+  },
+  {
+    kind: '面板',
+    icon: <LayoutPanelLeft size={18} />,
+    title: '在智能体页或频道旁边多一块信息',
+    sample: '频道今日话题统计面板',
+    request: '帮我做一个面板：在频道检查器里显示今天的话题统计和活跃成员。',
+  },
+  {
+    kind: '页面',
+    icon: <PanelsTopLeft size={18} />,
+    title: '一个独立的小应用',
+    sample: '团队采购清单页面',
+    request: '帮我做一个页面：记录团队采购清单，可以勾选已购并统计花费。',
+  },
+] as const
+
+/**
+ * Nothing made yet. Extensions are created by asking an agent in one of its channels; each example opens such a
+ * channel with the request already typed.
+ */
+function Start({ onImport }: { readonly onImport: () => void }) {
+  const agents = useProductStore((state) => state.agents)
+  const ui = useProductRuntime().uiStore
+  const navigate = useGo()
+  const creators = agents.filter((agent) => agent.capabilities.dynamicCreation && agent.channels[0] !== undefined)
+  const first = creators[0]
+  const ask = (request: string, channelId: string | undefined) => {
+    if (!channelId) return
+    ui.getState().setChannelDraft(channelId, request)
+    navigate(`/channels/${channelId}`)
+  }
+  return (
+    <MainContent width="readable">
+      <div className={styles.start}>
+        <EmptyState icon={<Hammer size={22} />} title="让智能体为你做新能力">
+          扩展能让智能体多一项本领、在界面上多一块信息，或者成为一个独立的小应用。在频道里描述需求，智能体会写好、试运行，确认后保存到这里。
+        </EmptyState>
+        <div className={styles.examples}>
+          {EXAMPLES.map((example) => (
+            <Pressable
+              key={example.kind}
+              className={styles.example}
+              disabled={!first}
+              onClick={() => ask(example.request, first?.channels[0])}
+            >
+              <span className={styles.exampleIcon}>{example.icon}</span>
+              <span className={styles.exampleKind}>{example.kind}</span>
+              <b>{example.title}</b>
+              <span className={styles.exampleSample}>例如：{example.sample}</span>
+            </Pressable>
+          ))}
+        </div>
+        <div className={styles.startFoot}>
+          {creators.length > 0 ? (
+            <div className={styles.creators}>
+              <span className={styles.faint}>可以创造的智能体</span>
+              {creators.map((agent) => (
                 <Button
                   key={agent.id}
-                  disabled={!agent.channels[0]}
+                  size="small"
                   onClick={() => agent.channels[0] && navigate(`/channels/${agent.channels[0]}`)}
                 >
                   <AgentAvatar name={agent.name} hue={agentHue(agent)} size="xs" />
                   {agent.name}
                 </Button>
-              ))
-            ) : (
-              <>
-                <span className={styles.faint}>还没有智能体开启「动态创造」</span>
-                <Button onClick={() => navigate(agents[0] ? `/agents/${agents[0].id}` : '/agents/new')}>
-                  {agents[0] ? '去开启' : '新建智能体'}
-                </Button>
-              </>
-            )}
-          </div>
-        }
-      />
-    </div>
+              ))}
+            </div>
+          ) : (
+            <div className={styles.creators}>
+              <span className={styles.faint}>还没有智能体开启“动态创造”</span>
+              <Button size="small" onClick={() => navigate(agents[0] ? `/agents/${agents[0].id}` : '/agents/new')}>
+                {agents[0] ? '去开启' : '新建智能体'}
+              </Button>
+            </div>
+          )}
+          <Button size="small" variant="ghost" icon={<Upload size={14} />} onClick={onImport}>
+            导入扩展文件
+          </Button>
+        </div>
+      </div>
+    </MainContent>
   )
 }
 
-/** Imports a `.nxt-extension` chosen with the button or dropped anywhere on the workshop list. */
-function ImportButton({
+/** Imports a `.nxt-extension` chosen with a button or dropped anywhere on the workshop list. */
+function ImportFlow({
+  input,
   dropped,
   onImported,
 }: {
+  readonly input: RefObject<HTMLInputElement>
   readonly dropped: File | undefined
   readonly onImported: (extensionId: string) => void
 }) {
-  const input = useRef<HTMLInputElement>(null)
   const hostActions = useHostActions()
   const [inspection, setInspection] = useState<Inspection>()
   const [slug, setSlug] = useState('')
@@ -246,7 +372,7 @@ function ImportButton({
         ...(inspection.slugConflict ? { localSlug: slug } : {}),
       })
       setInspection(undefined)
-      toast(result.idempotent ? '相同版本已存在' : '已导入，尚未启用')
+      toast(result.idempotent ? '本机已有相同的保存记录' : '已导入，尚未启用')
       onImported(result.extensionId)
     } catch (error) {
       toast(error instanceof Error ? error.message : String(error), { tone: 'bad' })
@@ -257,9 +383,6 @@ function ImportButton({
 
   return (
     <>
-      <IconButton label="导入扩展" size="small" onClick={() => input.current?.click()}>
-        <Upload size={15} />
-      </IconButton>
       <FileChooser ref={input} accept=".nxt-extension,.zip,application/zip" onFile={(file) => void inspect(file)} />
       <Dialog
         open={inspection !== undefined}
@@ -286,7 +409,7 @@ function ImportButton({
             <div>
               <Chip>{scopeLabel[inspection.scope]}</Chip>
             </div>
-            <p>{inspection.idempotent ? '本机已有完全相同的版本。' : '导入后不会自动启用。'}</p>
+            <p>{inspection.idempotent ? '本机已有完全相同的保存记录。' : '导入后不会自动启用。'}</p>
             {inspection.slugConflict ? (
               <Field label="标识" hint="原标识已被占用">
                 <Input value={slug} spellCheck={false} onChange={(event) => setSlug(event.target.value.trim())} />

@@ -1,3 +1,4 @@
+import { recordLabels } from '../src/app/workshop/workshop-model.js'
 import { fixtureReleaseId, installSnapshotHealthRoutes } from '../e2e/fixtures/host-release.js'
 import {
   AgentIdSchema,
@@ -979,17 +980,27 @@ test.describe('NekroNxt browser projections', () => {
       await playwrightExpect(page.locator('main')).not.toContainText(browserAgentId)
       await playwrightExpect(page.locator('main')).not.toContainText(browserRevisionId)
     })
+  })
 
+  test('renders extension data with save-time records instead of technical identifiers', async () => {
     await withProductPage(`/workshop/extensions/${browserExtensionId}`, async (page) => {
       await playwrightExpect(page.getByRole('heading', { name: '文档复核' })).toBeVisible()
       await playwrightExpect(page.getByText('1 个智能体使用', { exact: true }).first()).toBeVisible()
       await playwrightExpect(page.getByRole('listitem').filter({ hasText: 'document_review' })).toBeVisible()
-      await page.getByRole('button', { name: /^r2/u }).click()
+      // Saved records are labelled by save time, never by an internal r-number.
+      const olderRecord = recordLabels([{ id: 'older', createdAt: 1_724_000_000_000 }]).get('older') ?? ''
+      await page.getByRole('button', { name: new RegExp(`^${olderRecord}`, 'u') }).click()
       await playwrightExpect(page.getByRole('listitem').filter({ hasText: 'legacy_review' })).toBeVisible()
-      await playwrightExpect(page.getByRole('button', { name: '删除扩展' })).toBeVisible()
-      await playwrightExpect(page.getByRole('button', { name: '导入扩展' })).toBeVisible()
-      await playwrightExpect(page.locator('main')).not.toContainText(browserExtensionRevisionId)
+      await playwrightExpect(page.locator('main')).not.toContainText(/(?:^|[^a-z_])r\d+(?:[^\d]|$)/u)
       await playwrightExpect(page.locator('main')).not.toContainText('Revision')
+      // Internal identifiers stay in the collapsed diagnostics until asked for.
+      await playwrightExpect(page.getByText(browserExtensionRevisionId, { exact: false })).toBeHidden()
+      await page.getByRole('button', { name: '诊断信息' }).click()
+      await playwrightExpect(page.getByText(browserExtensionRevisionId, { exact: false })).toBeVisible()
+      await page.getByRole('button', { name: '更多' }).click()
+      await playwrightExpect(page.getByRole('menuitem', { name: '删除扩展' })).toBeVisible()
+      await page.keyboard.press('Escape')
+      await playwrightExpect(page.getByRole('button', { name: '导入扩展' })).toBeVisible()
     })
   })
 

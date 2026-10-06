@@ -8,47 +8,49 @@ declare const styles: {
   readonly attemptMeta: string
   readonly attempts: string
   readonly bad: string
-  readonly body: string
-  readonly byline: string
   readonly cellAgent: string
+  readonly cellAgentText: string
+  readonly chevron: string
   readonly config: string
+  readonly contributionName: string
   readonly contributions: string
   readonly creators: string
-  readonly danger: string
+  readonly dropZone: string
+  readonly example: string
+  readonly exampleIcon: string
+  readonly exampleKind: string
+  readonly exampleSample: string
+  readonly examples: string
   readonly facts: string
   readonly faint: string
   readonly group: string
+  readonly groupEmpty: string
   readonly grow: string
-  readonly hero: string
-  readonly heroInner: string
-  readonly heroMeta: string
-  readonly install: string
+  readonly inlineLink: string
   readonly lead: string
-  readonly lifecycle: string
-  readonly list: string
-  readonly listBody: string
-  readonly listHead: string
-  readonly page: string
+  readonly metaLink: string
+  readonly objectGlyph: string
   readonly permissions: string
+  readonly phase: string
+  readonly phaseDot: string
+  readonly phases: string
   readonly preview: string
   readonly quiet: string
+  readonly record: string
+  readonly recordBody: string
+  readonly recordCount: string
+  readonly recordHead: string
+  readonly records: string
   readonly row: string
   readonly rowGlyph: string
   readonly rowName: string
   readonly rowState: string
   readonly rowSub: string
-  readonly space: string
-  readonly split: string
   readonly start: string
-  readonly table: string
-  readonly tableRow: string
-  readonly title: string
-  readonly version: string
-  readonly versionBody: string
-  readonly versionCount: string
-  readonly versionHead: string
-  readonly versionTime: string
-  readonly versions: string
+  readonly startFoot: string
+  readonly subgroup: string
+  readonly taskGrid: string
+  readonly taskSide: string
 }
 
 export default styles

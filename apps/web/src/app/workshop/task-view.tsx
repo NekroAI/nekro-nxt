@@ -1,5 +1,5 @@
 import { useGo } from '../model/nav.js'
-import { ArrowUpRight, CircleStop, Package, RotateCcw, Save, Trash2 } from 'lucide-react'
+import { ArrowUpRight, Check, CircleStop, MoreHorizontal, Package, RotateCcw, Save, Trash2 } from 'lucide-react'
 import { useEffect, useMemo, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { HostApiContracts, type HostApiResponse } from '@nekro-nxt/contracts'
@@ -12,16 +12,15 @@ import {
   Button,
   Chip,
   ConfirmDialog,
+  MainContent,
   Menu,
-  Panel,
-  Section,
+  ObjectHeader,
+  PropertyGroup,
   Spinner,
-  Stepper,
   toast,
-  cssVars,
 } from '../../ui-kit/next/index.js'
 import { relativeTime } from '../channels/timeline-model.js'
-import { agentAccent, agentHue } from '../model/identity.js'
+import { agentHue } from '../model/identity.js'
 import { useExtensionActivation } from '../../extension-ui/index.js'
 import { useProductApi } from '../model/store.js'
 import { SaveDialog } from './save-dialog.js'
@@ -115,38 +114,42 @@ export function TaskView({ task }: { readonly task: AuthoringTask }) {
   const attempts = useMemo(() => [...(detail?.attempts ?? [])].reverse(), [detail])
 
   return (
-    <div className={styles.page} style={cssVars({ '--agent-accent': agent ? agentAccent(agent) : undefined })}>
+    <MainContent>
       {activation.dialog}
-      <header className={styles.hero}>
-        <div className={styles.heroInner}>
-          <div className={styles.heroMeta}>
+      <ObjectHeader
+        visual={agent ? <AgentAvatar name={agent.name} hue={agentHue(agent)} size="md" /> : undefined}
+        title={task.title}
+        status={
+          <Chip tone={status.tone} dot>
+            {status.label}
+          </Chip>
+        }
+        meta={
+          <>
             {agent ? (
-              <Link to={`/agents/${agent.id}`} className={styles.byline}>
-                <AgentAvatar name={agent.name} hue={agentHue(agent)} size="xs" />
+              <Link to={`/agents/${agent.id}`} className={styles.metaLink}>
                 {agent.name}
               </Link>
             ) : null}
-            <span>·</span>
             <span>{relativeTime(task.createdAt)}开始</span>
-            <Chip tone={status.tone} dot>
-              {status.label}
-            </Chip>
-            <span className={styles.grow} />
+          </>
+        }
+        actions={
+          <>
             {channel ? (
               <Button
                 size="small"
-                variant="ghost"
                 icon={<ArrowUpRight size={14} />}
                 onClick={() => navigate(`/channels/${channel.id}`)}
               >
-                {channel.name}
+                打开频道
               </Button>
             ) : null}
             <Menu
               label="任务操作"
               align="end"
               trigger={
-                <Button size="small" variant="ghost">
+                <Button size="small" variant="ghost" icon={<MoreHorizontal size={14} />}>
                   更多
                 </Button>
               }
@@ -167,71 +170,70 @@ export function TaskView({ task }: { readonly task: AuthoringTask }) {
                     },
               ]}
             />
-          </div>
-          <h1 className={styles.title}>{task.title}</h1>
-          {task.requirementSummary ? <p className={styles.lead}>{task.requirementSummary}</p> : null}
-          <div className={styles.lifecycle}>
-            <Stepper steps={LIFECYCLE} current={position.current} failed={position.failed} />
-          </div>
-        </div>
-      </header>
+          </>
+        }
+      />
+      {task.requirementSummary ? <p className={styles.lead}>{task.requirementSummary}</p> : null}
+      <PhaseBar current={position.current} failed={position.failed} />
 
-      <div className={styles.body}>
-        <NextAction
-          task={task}
-          busy={busy}
-          settling={settling}
-          approvable={dynamicItem?.approvalRequestId !== undefined}
-          savedName={saved?.name}
-          enabledForAgent={enabledForAgent}
-          agentName={agent?.name ?? '智能体'}
-          restorable={restorable}
-          onDecide={decide}
-          onSave={() => setSaveOpen(true)}
-          onRestore={() =>
-            restorable &&
-            void run(
-              'restore',
-              () => api.getState().restoreAuthoringAttempt(task.id, restorable.id, task.revision),
-              `已回到第 ${restorable.ordinal} 次候选，正在重新验证`,
-            )
-          }
-          onEnable={() =>
-            saved &&
-            void run(
-              'enable',
-              () => activation.setActive({ extensionId: saved.id, agentId: task.agentId, enabled: true }),
-              `${agent?.name ?? '智能体'}已开始使用「${saved.name}」`,
-            )
-          }
-          onOpenExtension={() => saved && navigate(`/workshop/extensions/${saved.id}`)}
-        />
+      <div className={styles.taskGrid} data-single={!open}>
+        {open ? (
+          <PropertyGroup title="预览">
+            <div className={styles.preview}>
+              {candidate === undefined ? (
+                <p className={styles.quiet}>
+                  <Spinner /> 等待第一个候选
+                </p>
+              ) : candidate.client.status === 'absent' ? (
+                <p className={styles.quiet}>这个候选只有服务端能力，没有界面。</p>
+              ) : (
+                <DynamicClientSlots agentId={task.agentId} episodeId={task.episodeId} />
+              )}
+            </div>
+          </PropertyGroup>
+        ) : null}
 
-        <div className={styles.split} data-single={!open}>
-          {open ? (
-            <Section title="预览">
-              <Panel className={styles.preview}>
-                {candidate === undefined ? (
-                  <p className={styles.quiet}>
-                    <Spinner /> 等待第一个候选
-                  </p>
-                ) : candidate.client.status === 'absent' ? (
-                  <p className={styles.quiet}>这个候选只有服务端能力，没有界面。</p>
-                ) : (
-                  <DynamicClientSlots agentId={task.agentId} episodeId={task.episodeId} />
-                )}
-              </Panel>
-            </Section>
-          ) : null}
+        <div className={styles.taskSide}>
+          <PropertyGroup title="当前要处理的事">
+            <NextAction
+              task={task}
+              busy={busy}
+              settling={settling}
+              approvable={dynamicItem?.approvalRequestId !== undefined}
+              savedName={saved?.name}
+              enabledForAgent={enabledForAgent}
+              agentName={agent?.name ?? '智能体'}
+              restorable={restorable}
+              onDecide={decide}
+              onSave={() => setSaveOpen(true)}
+              onRestore={() =>
+                restorable &&
+                void run(
+                  'restore',
+                  () => api.getState().restoreAuthoringAttempt(task.id, restorable.id, task.revision),
+                  `已回到第 ${restorable.ordinal} 次候选，正在重新验证`,
+                )
+              }
+              onEnable={() =>
+                saved &&
+                void run(
+                  'enable',
+                  () => activation.setActive({ extensionId: saved.id, agentId: task.agentId, enabled: true }),
+                  `${agent?.name ?? '智能体'}已开始使用「${saved.name}」`,
+                )
+              }
+              onOpenExtension={() => saved && navigate(`/workshop/extensions/${saved.id}`)}
+            />
+          </PropertyGroup>
 
-          <Section title="尝试" small>
+          <PropertyGroup title="尝试记录">
             <ol className={styles.attempts}>
               {attempts.length === 0 && candidate ? <AttemptRow attempt={candidate} current /> : null}
               {attempts.map((attempt) => (
                 <AttemptRow key={attempt.id} attempt={attempt} current={attempt.id === candidate?.id} />
               ))}
             </ol>
-          </Section>
+          </PropertyGroup>
         </div>
       </div>
 
@@ -266,7 +268,31 @@ export function TaskView({ task }: { readonly task: AuthoringTask }) {
       >
         任务记录与全部候选源码会被删除，已保存的扩展保留。
       </ConfirmDialog>
-    </div>
+    </MainContent>
+  )
+}
+
+/** Compact lifecycle: done, current (or stopped here) and upcoming phases on one line. */
+function PhaseBar({ current, failed }: { readonly current: number; readonly failed: boolean }) {
+  return (
+    <ol className={styles.phases} aria-label="进度">
+      {LIFECYCLE.map((phase, index) => {
+        const state = index < current ? 'done' : index === current ? (failed ? 'failed' : 'now') : 'todo'
+        return (
+          <li
+            key={phase}
+            className={styles.phase}
+            data-state={state}
+            aria-current={state === 'now' ? 'step' : undefined}
+          >
+            <span className={styles.phaseDot} aria-hidden="true">
+              {state === 'done' ? <Check size={11} /> : state === 'failed' ? '!' : null}
+            </span>
+            {phase}
+          </li>
+        )
+      })}
+    </ol>
   )
 }
 

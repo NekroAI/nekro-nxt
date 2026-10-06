@@ -66,7 +66,7 @@ export function SaveDialog({
         ...(existing ? { targetExtensionId: existing.id } : {}),
       })
       onOpenChange(false)
-      toast(existing ? `已保存为「${existing.name}」的新版本` : `已保存「${name.trim()}」`)
+      toast(existing ? `已保存到「${existing.name}」` : `已保存「${name.trim()}」`)
     } catch (failure) {
       setError(failure instanceof Error ? failure.message : String(failure))
     } finally {
@@ -90,7 +90,7 @@ export function SaveDialog({
             disabled={!slugValid || (!existing && !name.trim())}
             onClick={() => void save()}
           >
-            {existing ? `保存为 r${existing.revision + 1}` : '保存'}
+            保存
           </Button>
         </>
       }
@@ -101,7 +101,7 @@ export function SaveDialog({
           onChange={(event) => setTarget(event.target.value)}
           options={[
             { value: '', label: '新扩展' },
-            ...extensions.map((item) => ({ value: item.id, label: `${item.name} 的新版本` })),
+            ...extensions.map((item) => ({ value: item.id, label: `追加到「${item.name}」` })),
           ]}
         />
       </Field>
