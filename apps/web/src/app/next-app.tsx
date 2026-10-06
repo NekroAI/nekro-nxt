@@ -9,6 +9,7 @@ import { CrumbProvider } from './shell/crumb.js'
 import { ExtensionPage } from './system/extension-page.js'
 import { SpaceBoundary } from './system/space-boundary.js'
 import { useAppearanceEffects } from './model/theme.js'
+import { readDensity } from './model/density.js'
 
 /**
  * A space loaded on demand that renders synchronously once its module is in memory. `React.lazy` alone would still
@@ -88,6 +89,9 @@ const space = (node: ReactNode) => (
  * The redesigned client (Decision 2026-10-04). Extension runtimes stay mounted for the whole session so dynamic
  * candidates can be verified in the browser and installed pages keep their state across spaces.
  */
+// Apply the saved density before the first paint so sizes do not jump.
+if (typeof window !== 'undefined') readDensity()
+
 export function NextApp() {
   useAppearanceEffects()
   usePrefetchSpaces()
