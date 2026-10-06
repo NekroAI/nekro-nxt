@@ -19,6 +19,8 @@ import type {
   NxtHistoryMessage,
   NxtHostService,
   NxtJobRecord,
+  NxtPlatformAction,
+  NxtPlatformResult,
   NxtLlmRequest,
   NxtLlmResponse,
   NxtPromptRenderApi,
@@ -71,6 +73,20 @@ export interface NxtServiceBackends {
   readonly secret: (binding: NxtServiceBinding, key: string) => Promise<string | undefined>
   readonly createAsset: (channelId: string, input: NxtAssetCreateInput) => Promise<NxtAssetRecord>
   readonly callContext: (binding: NxtServiceBinding) => Promise<NxtCallContext>
+  readonly platform: {
+    /** The Adapter of the channel, its raw-API support and the typed actions valid for this channel kind. */
+    catalog(channelId: string): Promise<NxtPlatformCatalog>
+    invoke(
+      binding: NxtServiceBinding,
+      action: string,
+      args: Readonly<Record<string, JsonValue>>,
+    ): Promise<NxtPlatformResult>
+    raw(
+      binding: NxtServiceBinding,
+      api: string,
+      params: Readonly<Record<string, JsonValue>>,
+    ): Promise<NxtPlatformResult>
+  }
   readonly jobs: {
     schedule(binding: NxtServiceBinding, job: NxtValidatedJob, maxActive: number): Promise<NxtJobRecord>
     list(binding: NxtServiceBinding): Promise<readonly NxtJobRecord[]>
@@ -98,6 +114,12 @@ export interface NxtPromptRegistry {
   context(context: { readonly name: string; readonly order: number; readonly text: () => string }): () => void
   /** Subscribes to the first step of every turn; resolves before the step assembles its prompt. */
   onTurnStart(listener: () => Promise<void>): () => void
+}
+
+export interface NxtPlatformCatalog {
+  readonly adapterKey: string
+  readonly raw: boolean
+  readonly actions: readonly NxtPlatformAction[]
 }
 
 export type NxtJobSchedule =
@@ -226,6 +248,14 @@ const checkedKey = (key: string): string => {
 }
 
 const jsonValue = (value: unknown): JsonValue => JsonValueSchema.parse(JSON.parse(JSON.stringify(value)))
+
+const jsonRecord = (value: unknown): Readonly<Record<string, JsonValue>> => {
+  const parsed = jsonValue(value ?? {})
+  if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) {
+    throw new NxtCapabilityError('平台动作参数必须是对象。')
+  }
+  return parsed
+}
 
 const contextDeclaration = (
   binding: NxtServiceBinding,
@@ -395,6 +425,42 @@ export const createNxtHostService = (
         return backends.history.search(binding.channelId, query, limit)
       },
     },
+    platform: {
+      async actions() {
+        const platform = requireCapability(binding, 'platform', 'platform（平台动作）')
+        const catalog = await backends.platform.catalog(binding.channelId)
+        return catalog.actions.filter((action) =>
+          platform.actions.some((entry) => entry.adapter === catalog.adapterKey && entry.action === action.name),
+        )
+      },
+      async invoke(action, args) {
+        const platform = requireCapability(binding, 'platform', 'platform（平台动作）')
+        const catalog = await backends.platform.catalog(binding.channelId)
+        if (!platform.actions.some((entry) => entry.adapter === catalog.adapterKey && entry.action === action)) {
+          throw new NxtCapabilityError(
+            `没有声明平台动作 ${catalog.adapterKey}:${action}，请加入 permissions.capabilities.platform.actions。`,
+          )
+        }
+        if (!catalog.actions.some(({ name }) => name === action)) {
+          throw new NxtCapabilityError(
+            `当前频道的平台不支持动作 ${action}。可用动作：${catalog.actions.map(({ name }) => name).join('、') || '无'}`,
+          )
+        }
+        return backends.platform.invoke(binding, action, jsonRecord(args))
+      },
+      async raw(api, params) {
+        const platform = requireCapability(binding, 'platform', 'platform（平台动作）')
+        const catalog = await backends.platform.catalog(binding.channelId)
+        if (!platform.raw.includes(catalog.adapterKey)) {
+          throw new NxtCapabilityError(
+            `没有声明 ${catalog.adapterKey} 的原始接口，请加入 permissions.capabilities.platform.raw。`,
+          )
+        }
+        if (!catalog.raw) throw new NxtCapabilityError('当前频道的平台不支持原始接口透传。')
+        if (typeof api !== 'string' || api.trim() === '') throw new NxtCapabilityError('原始接口名不能为空。')
+        return backends.platform.raw(binding, api.trim(), jsonRecord(params))
+      },
+    },
     jobs: {
       async schedule(input) {
         const jobs = requireCapability(binding, 'jobs', 'jobs（定时任务）')
@@ -516,6 +582,9 @@ export const createNxtDynamicFacade = (resolve: () => NxtHostService): NxtHostSe
   },
   get history() {
     return resolve().history
+  },
+  get platform() {
+    return resolve().platform
   },
   get jobs() {
     return resolve().jobs

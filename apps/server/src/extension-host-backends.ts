@@ -18,6 +18,7 @@ import type {
   NxtCallContext,
   NxtHistoryMessage,
   NxtJobRecord,
+  NxtPlatformResult,
 } from '@nekro-nxt/extension-sdk'
 import { ExtensionStorageQuotaError } from '@nekro-nxt/storage-sqlite'
 import type {
@@ -117,7 +118,7 @@ export const resolveExtensionSecret = async (
  */
 export const createNxtProductBackends = (
   facts: NxtProductFacts,
-  infrastructure: Pick<NxtServiceBackends, 'fetch' | 'storage' | 'diagnostic' | 'complete' | 'jobs'>,
+  infrastructure: Pick<NxtServiceBackends, 'fetch' | 'storage' | 'diagnostic' | 'complete' | 'jobs' | 'platform'>,
 ): NxtServiceBackends => ({
   ...infrastructure,
   secret: (binding: NxtServiceBinding, key: string) => resolveExtensionSecret(facts, binding.config(), key),
@@ -349,3 +350,9 @@ export const memoryNxtJobs = (): NxtServiceBackends['jobs'] => {
     },
   }
 }
+
+/** Dynamic runs and verification never touch real people: the call path runs, the platform does not. */
+export const previewPlatformResult = (kind: string, name: string): NxtPlatformResult => ({
+  status: 'succeeded',
+  message: `预览模式：${kind} ${name} 未实际执行，启用后才会真正调用平台。`,
+})

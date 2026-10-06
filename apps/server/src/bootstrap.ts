@@ -14,7 +14,10 @@ import {
 import { ChannelRuntime, type InboundHookDecision } from '@nekro-nxt/channel-runtime'
 import {
   AgentIdSchema,
+  ChannelIdSchema,
   ConnectionIdSchema,
+  parseJsonValue,
+  type JsonValue,
   DshNxtHostUiSchema,
   HostApiContracts,
   ExtensionIdSchema,
@@ -67,9 +70,11 @@ import {
   memoryNxtJobs,
   messagePartsText,
   memoryNxtStorage,
+  previewPlatformResult,
   sqliteNxtStorage,
   type NxtProductFacts,
 } from './extension-host-backends.js'
+import type { NxtPlatformResult } from '@nekro-nxt/extension-sdk'
 import { createNxtHostService, type NxtServiceBackends } from './extension-host-service.js'
 import {
   ChannelExtensionActivationHost,
@@ -370,18 +375,84 @@ export class NekroRuntime {
           maxOutputTokens,
         })
       }
+      const platformCatalog: NxtServiceBackends['platform']['catalog'] = (channelId) => {
+        const channel = repository.getChannel(ChannelIdSchema.parse(channelId))
+        const connection = channel === undefined ? undefined : repository.getConnection(channel.connectionId)
+        const descriptor = connection === undefined ? undefined : adapters.get(connection.adapterKey)?.descriptor
+        if (channel === undefined || connection === undefined || descriptor === undefined) {
+          return Promise.reject(new Error('当前频道的平台连接不可用。'))
+        }
+        const kind = channel.kind
+        return Promise.resolve({
+          adapterKey: connection.adapterKey,
+          raw: descriptor.rawApi !== undefined,
+          actions: (descriptor.platformActions ?? [])
+            .filter((action) => kind !== 'internal' && action.channelKinds.includes(kind))
+            .map(({ name, title, description, risk, parameters }) => ({
+              name,
+              title,
+              description,
+              risk,
+              parameters: parseJsonValue(JSON.parse(JSON.stringify(parameters))),
+            })),
+        })
+      }
+      const activeEpisode = (binding: { readonly agentId: string; readonly channelId: string }) => {
+        const episode = repository.getActiveEpisode(
+          ChannelIdSchema.parse(binding.channelId),
+          AgentIdSchema.parse(binding.agentId),
+        )
+        if (episode === undefined) throw new Error('当前频道没有活动会话，暂时不能执行平台动作。')
+        if (!settled.current) throw new Error('Channel Runtime is not ready.')
+        return { episode, channels: settled.current }
+      }
+      const platformResult = (result: { status: NxtPlatformResult['status']; message: string; value?: JsonValue }) => ({
+        status: result.status,
+        message: result.message,
+        ...(result.value === undefined ? {} : { value: result.value }),
+      })
       const extensionHost: NonNullable<DshHostRuntimeOptions['extensionHost']> = {
         activationBackends: createNxtProductBackends(nxtFacts, {
           fetch: nxtFetch,
           complete: nxtComplete,
           storage: sqliteNxtStorage(repository, now),
           jobs: sqliteNxtJobs(repository, { now, nextId: nextUlid }),
+          platform: {
+            catalog: platformCatalog,
+            invoke: async (binding, action, args) => {
+              const { episode, channels } = activeEpisode(binding)
+              return platformResult(
+                await channels.invokeChannelPlatformAction({
+                  episodeId: episode.id,
+                  action,
+                  args,
+                  clientRequestId: `nxt-${binding.ownerKey}-${nextUlid()}`,
+                }),
+              )
+            },
+            raw: async (binding, api, params) => {
+              const { episode, channels } = activeEpisode(binding)
+              return platformResult(
+                await channels.invokeChannelRawApi({
+                  episodeId: episode.id,
+                  api,
+                  params,
+                  clientRequestId: `nxt-${binding.ownerKey}-${nextUlid()}`,
+                }),
+              )
+            },
+          },
         }),
         dynamicBackends: createNxtProductBackends(nxtFacts, {
           fetch: nxtFetch,
           complete: nxtComplete,
           storage: memoryNxtStorage(now),
           jobs: memoryNxtJobs(),
+          platform: {
+            catalog: platformCatalog,
+            invoke: (_binding, action) => Promise.resolve(previewPlatformResult('平台动作', action)),
+            raw: (_binding, api) => Promise.resolve(previewPlatformResult('原始接口', api)),
+          },
         }),
         describeRevision: (revision: Revision) => ({
           displayName: repository.getExtension(revision.extensionId)?.displayName ?? '扩展',

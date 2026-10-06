@@ -5,7 +5,7 @@ import { z } from 'zod'
  * import with an "upgrade NekroNXT" message instead of an opaque schema error. Bump only when a new optional
  * Manifest capability ships; never reuse a level for a different meaning.
  */
-export const EXTENSION_SDK_LEVEL = 4
+export const EXTENSION_SDK_LEVEL = 5
 
 export const ExtensionRequiresSchema = z.object({ sdk: z.number().int().min(1).max(1000) }).strict()
 export type ExtensionRequires = z.output<typeof ExtensionRequiresSchema>
@@ -135,6 +135,21 @@ export const ExtensionJobsCapabilitySchema = z
   .strict()
 export type ExtensionJobsCapability = z.output<typeof ExtensionJobsCapabilitySchema>
 
+const AdapterKeySchema = z.string().trim().min(1).max(64)
+
+export const ExtensionPlatformCapabilitySchema = z
+  .object({
+    /** Typed actions an Adapter declares, as `{ adapter, action }`. */
+    actions: z
+      .array(z.object({ adapter: AdapterKeySchema, action: z.string().regex(/^[a-z0-9_]{1,64}$/u) }).strict())
+      .max(32)
+      .default([]),
+    /** Adapters whose raw API passthrough the extension may call. */
+    raw: z.array(AdapterKeySchema).max(8).default([]),
+  })
+  .strict()
+export type ExtensionPlatformCapability = z.output<typeof ExtensionPlatformCapabilitySchema>
+
 /**
  * Optional Host capabilities of an agent-scope Revision. Every field is additive to Manifest V6: an absent field
  * means the Revision cannot use that capability, exactly as before the field existed.
@@ -153,6 +168,7 @@ export const ExtensionCapabilitiesSchema = z
       .optional(),
     inboundHook: ExtensionInboundHookCapabilitySchema.optional(),
     jobs: ExtensionJobsCapabilitySchema.optional(),
+    platform: ExtensionPlatformCapabilitySchema.optional(),
     llm: ExtensionLlmCapabilitySchema.optional(),
     context: z
       .array(ExtensionContextContributionSchema)
@@ -197,6 +213,11 @@ export const extensionCapabilitiesExpand = (
   if (next.storage?.scopes.some((scope) => !(previous?.storage?.scopes ?? []).includes(scope))) return true
   if (next.assets !== undefined && previous?.assets === undefined) return true
   if (next.history !== undefined && previous?.history === undefined) return true
+  const platformKey = ({ adapter, action }: { readonly adapter: string; readonly action: string }) =>
+    `${adapter}:${action}`
+  const previousActions = new Set((previous?.platform?.actions ?? []).map(platformKey))
+  if ((next.platform?.actions ?? []).some((entry) => !previousActions.has(platformKey(entry)))) return true
+  if ((next.platform?.raw ?? []).some((adapter) => !(previous?.platform?.raw ?? []).includes(adapter))) return true
   const hook = next.inboundHook
   const previousHook = previous?.inboundHook
   if (
@@ -291,6 +312,24 @@ export const summarizeExtensionCapabilities = (
       risk: 'sensitive',
       label: '创建定时任务唤醒智能体',
       detail: `同时最多 ${jobs.runtime.maxActive} 个`,
+    })
+  }
+  const platform = capabilities.platform
+  if (platform !== undefined && platform.actions.length > 0) {
+    items.push({
+      key: 'platform.actions',
+      // Actions such as muting or removing members affect other people, so every typed action is confirmed.
+      risk: 'high',
+      label: '在平台上执行操作',
+      detail: platform.actions.map(({ adapter, action }) => `${adapter} · ${action}`).join('、'),
+    })
+  }
+  if (platform !== undefined && platform.raw.length > 0) {
+    items.push({
+      key: 'platform.raw',
+      risk: 'high',
+      label: '直接调用平台原始接口',
+      detail: platform.raw.join('、'),
     })
   }
   if (capabilities.llm !== undefined) {

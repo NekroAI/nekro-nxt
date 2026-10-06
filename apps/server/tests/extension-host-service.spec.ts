@@ -48,6 +48,20 @@ const fixture = (capabilities: ExtensionCapabilities | undefined, config: JsonVa
     complete,
     storage: memoryNxtStorage(() => 1),
     jobs: memoryNxtJobs(),
+    platform: {
+      catalog: () =>
+        Promise.resolve({
+          adapterKey: 'onebot-11',
+          raw: true,
+          actions: [
+            { name: 'like_member', title: '点赞', description: '给成员点赞', risk: 'low' as const, parameters: {} },
+            { name: 'mute_member', title: '禁言', description: '禁言成员', risk: 'admin' as const, parameters: {} },
+          ],
+        }),
+      invoke: (_binding, action, args) =>
+        Promise.resolve({ status: 'succeeded' as const, message: action, value: args }),
+      raw: (_binding, api) => Promise.resolve({ status: 'succeeded' as const, message: api }),
+    },
     secret: (binding, key) =>
       resolveExtensionSecret(
         { resolveCredential: (reference) => Promise.resolve(`secret-of:${reference}`) },
@@ -234,6 +248,31 @@ describe('nxt Host service', () => {
     expect((await nxt.jobs.list()).map(({ label }) => label)).toEqual(['每日早报', '一次'])
     expect(await nxt.jobs.cancel(daily.jobId)).toBe(true)
     expect(await nxt.jobs.cancel(daily.jobId)).toBe(false)
+  })
+
+  it('runs only declared platform actions the channel supports and gates raw passthrough separately', async () => {
+    await expect(fixture(undefined).nxt.platform.invoke('like_member', {})).rejects.toThrow(/platform/u)
+    const { nxt } = fixture({
+      platform: {
+        actions: [
+          { adapter: 'onebot-11', action: 'like_member' },
+          { adapter: 'onebot-11', action: 'set_title' },
+        ],
+        raw: [],
+      },
+    })
+    expect((await nxt.platform.actions()).map(({ name }) => name)).toEqual(['like_member'])
+    await expect(nxt.platform.invoke('like_member', { memberId: 'mbr_FIXTURE', times: 1 })).resolves.toMatchObject({
+      status: 'succeeded',
+      value: { memberId: 'mbr_FIXTURE', times: 1 },
+    })
+    await expect(nxt.platform.invoke('mute_member', {})).rejects.toThrow(/没有声明平台动作/u)
+    await expect(nxt.platform.invoke('set_title', {})).rejects.toThrow(/不支持动作/u)
+    await expect(nxt.platform.raw('get_group_info', {})).rejects.toThrow(/platform\.raw/u)
+    const raw = fixture({ platform: { actions: [], raw: ['onebot-11'] } })
+    await expect(raw.nxt.platform.raw('get_group_info', { group_id: 1 })).resolves.toMatchObject({
+      status: 'succeeded',
+    })
   })
 
   it('reads secrets only from Host credential references', async () => {

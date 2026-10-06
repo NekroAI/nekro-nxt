@@ -229,6 +229,21 @@ export type NxtInboundHandler = (
   nxt: NxtHostService,
 ) => NxtInboundDecision | undefined | Promise<NxtInboundDecision | undefined>
 
+export interface NxtPlatformAction {
+  readonly name: string
+  readonly title: string
+  readonly description: string
+  readonly risk: 'low' | 'admin'
+  readonly parameters: ExtensionJsonValue
+}
+
+export interface NxtPlatformResult {
+  readonly status: 'succeeded' | 'partially-succeeded' | 'failed' | 'unknown'
+  readonly message: string
+  /** Platform response, when the Adapter returns one. */
+  readonly value?: ExtensionJsonValue
+}
+
 export interface NxtJobScheduleInput {
   readonly label: string
   /** One-off run at this epoch millisecond time; mutually exclusive with `cron`. */
@@ -292,6 +307,14 @@ export interface NxtHostService {
       readonly before?: string
     }): Promise<{ readonly messages: readonly NxtHistoryMessage[]; readonly next?: string }>
     search(query: string, options?: { readonly limit?: number }): Promise<readonly NxtHistoryMessage[]>
+  }
+  readonly platform: {
+    /** Typed actions of the current channel's Adapter that this extension declared and the channel kind allows. */
+    actions(): Promise<readonly NxtPlatformAction[]>
+    /** Runs one declared action in the current channel; members are referenced by `memberId`. */
+    invoke(action: string, args: Readonly<Record<string, ExtensionJsonValue>>): Promise<NxtPlatformResult>
+    /** Raw API of the current channel's Adapter; requires `platform.raw` to list that Adapter. */
+    raw(api: string, params: Readonly<Record<string, ExtensionJsonValue>>): Promise<NxtPlatformResult>
   }
   readonly jobs: {
     /**
@@ -959,6 +982,7 @@ export const NEKRO_NXT_EXTENSION_AUTHORING_REFERENCE: NekroNxtExtensionAuthoring
       "ctx.nxt.llm.complete({ system, messages: [{ role: 'user', text }], maxOutputTokens }) → { text }：用智能体当前的模型完成一次辅助任务（分析、分类、改写），计入智能体用量；需要 llm: { maxCallsPerTurn, maxOutputTokens }。不能流式输出，也不能调用工具。",
       "harness.onInbound((message, nxt) => decision)：在 factory 阶段（与 harness.handle 相同）注册唯一的入站处理函数，消息入库后、唤醒智能体前运行；返回 { trigger: 'default' | 'suppress' | 'force', hideFromAgent, annotation } 或不返回。需要 inboundHook: { reads: 'triggered' | 'all', mayHide, mayForceTrigger, timeoutMs }；reads: 'triggered' 只看原本会唤醒智能体的消息。nxt 参数绑定到该消息所在频道，可读写存储、调用模型，但不能注册上下文。超时或抛错按默认处理；消息始终入库，hideFromAgent 只是不让智能体看到。",
       'ctx.nxt.jobs.schedule({ label, at | cron, timezone, payload }) / list() / cancel(jobId)：在当前频道创建定时任务，到期时以“定时任务到期”事件唤醒智能体，由智能体决定是否发言；需要 jobs: { runtime: { maxActive } }。固定计划写在 jobs.declared: [{ id, label, cron, timezone }]，会在启用它的智能体绑定的每个频道触发。动态运行中创建的任务不会真的触发。',
+      'ctx.nxt.platform.actions() / invoke(action, args) / raw(api, params)：在当前频道执行平台动作（例如 OneBot 的 like_member、mute_member、kick_member、set_member_card、set_essence_message，成员用 memberId 引用）；需要 platform: { actions: [{ adapter, action }], raw: [adapterKey] }。先用 actions() 查询当前平台实际支持的动作。动态运行和保存验证只模拟执行，返回“预览模式”结果，启用后才真正调用平台。',
       "ctx.nxt.prompt.static(name, text) / dynamic(name, render)：向智能体提供补充说明；需要在 context 中按名称声明 { name, kind: 'static' | 'dynamic', maxChars }。",
     ],
     rules: [

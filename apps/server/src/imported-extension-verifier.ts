@@ -29,7 +29,7 @@ import { createHash } from 'node:crypto'
 import { pathToFileURL } from 'node:url'
 import { z } from 'zod'
 import { createExtensionEgress } from './extension-egress.js'
-import { memoryNxtJobs, memoryNxtStorage } from './extension-host-backends.js'
+import { memoryNxtJobs, memoryNxtStorage, previewPlatformResult } from './extension-host-backends.js'
 import { createNxtHostService } from './extension-host-service.js'
 
 const IMPORT_ORIGIN = {
@@ -560,6 +560,27 @@ const createVerificationNxt = (capabilities: ExtensionCapabilities | undefined, 
       fetch: (policy, url, init) => createExtensionEgress({ policy }).fetch(url, init),
       storage: memoryNxtStorage(),
       jobs: memoryNxtJobs(),
+      platform: {
+        catalog: () => {
+          const declared = capabilities?.platform
+          const adapterKey = declared?.actions[0]?.adapter ?? declared?.raw[0] ?? 'verification'
+          return Promise.resolve({
+            adapterKey,
+            raw: declared?.raw.includes(adapterKey) === true,
+            actions: (declared?.actions ?? [])
+              .filter(({ adapter }) => adapter === adapterKey)
+              .map(({ action }) => ({
+                name: action,
+                title: action,
+                description: '验证动作',
+                risk: 'low' as const,
+                parameters: {},
+              })),
+          })
+        },
+        invoke: (_binding, action) => Promise.resolve(previewPlatformResult('平台动作', action)),
+        raw: (_binding, api) => Promise.resolve(previewPlatformResult('原始接口', api)),
+      },
       secret: () => Promise.resolve(undefined),
       // Verification never spends the user's model quota; a fixed reply exercises the call path.
       complete: () => Promise.resolve({ text: '验证模型回复' }),
