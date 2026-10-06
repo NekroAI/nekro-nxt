@@ -1,4 +1,5 @@
 import { expect, test, type Page } from '@playwright/test'
+import { installWorkspaceRoutes } from './fixtures/workspace.js'
 import {
   AgentIdSchema,
   AgentRevisionIdSchema,
@@ -167,26 +168,36 @@ const installRuntimeFailureGate = (page: Page): string[] => {
   return failures
 }
 
-test('production bundle keeps every primary route usable without runtime errors', async ({ page }) => {
+test('production bundle keeps every space usable and retired links land on 现场 without runtime errors', async ({
+  page,
+}) => {
   const failures = installRuntimeFailureGate(page)
-  const routes = [
-    ['/', '工作'],
-    ['/work', '工作'],
-    ['/work/agents/new', '工作'],
-    ['/connections', '连接'],
-    ['/users', '用户'],
-    ['/extensions', '扩展'],
-    ['/work/creator', '工作'],
-    ['/runtime', '工作'],
-    ['/settings', '设置'],
-  ] as const
-
-  for (const [route, visibleText] of routes) {
+  for (const route of [
+    '/',
+    '/live',
+    '/channels',
+    '/agents',
+    '/agents/new',
+    '/workshop',
+    '/wiring',
+    '/wiring/new',
+    '/settings/models',
+    '/settings/adapters',
+    '/settings/dsh',
+    '/settings/notifications',
+    '/settings/appearance',
+    '/settings/about',
+  ]) {
     await page.goto(route)
-    await expect(page.getByRole('link', { name: visibleText }).first()).toBeVisible()
-    await expect(page.locator('#root')).not.toBeEmpty()
+    await expect(page.getByRole('navigation', { name: '主导航' }).getByRole('link', { name: '现场' })).toBeVisible()
+    await expect(page.locator('main')).not.toBeEmpty()
   }
-
+  // Retired client routes (saved Desktop routes, old bookmarks) open the app and land on its home.
+  for (const route of ['/work/channels/chn_retired', '/users', '/extensions/ext_retired', '/connections']) {
+    await page.goto(route)
+    await expect(page).toHaveURL(/\/live$/u)
+    await expect(page.getByRole('heading', { name: '现场', level: 1 })).toBeVisible()
+  }
   expect(failures, failures.join('\n')).toEqual([])
 })
 
@@ -203,8 +214,8 @@ test('the open page reconnects after the real Host restarts on the same origin',
   try {
     firstServer = spawnJourneyServer(port, dataRoot)
     await waitForJourneyServerReady(origin, firstServer)
-    await page.goto(`${origin}/settings`)
-    await expect(page.getByRole('heading', { name: '模型供应商', level: 1 })).toBeVisible()
+    await page.goto(`${origin}/settings/models`)
+    await expect(page.getByRole('heading', { name: '模型', level: 1 })).toBeVisible()
     await expect(page.getByRole('alert').filter({ hasText: '连接不稳定' })).toHaveCount(0)
 
     const marker = 'same-document-host-recovery'
@@ -223,7 +234,7 @@ test('the open page reconnects after the real Host restarts on the same origin',
 
     expect(page.url()).toBe(urlBeforeRestart)
     await expect.poll(() => page.evaluate(() => document.documentElement.dataset['hostRestartJourney'])).toBe(marker)
-    await expect(page.getByRole('heading', { name: '模型供应商', level: 1 })).toBeVisible()
+    await expect(page.getByRole('heading', { name: '模型', level: 1 })).toBeVisible()
     expect(pageErrors, pageErrors.join('\n')).toEqual([])
   } finally {
     if (recoveredServer !== undefined) await stopJourneyServer(recoveredServer)
@@ -252,7 +263,7 @@ test('the open page recovers when an intermediary returns HTTP 500 for the SSE h
     return route.fulfill({ status: 500, contentType: 'text/plain', body: '' })
   })
 
-  await page.goto('/connections')
+  await page.goto('/wiring')
   await expect(page.getByRole('alert').filter({ hasText: '无法连接' })).toBeVisible()
   await page.evaluate(() => {
     document.documentElement.dataset['sseRecoveryJourney'] = 'same-document'
@@ -264,82 +275,65 @@ test('the open page recovers when an intermediary returns HTTP 500 for the SSE h
   await expect
     .poll(() => page.evaluate(() => document.documentElement.dataset['sseRecoveryJourney']))
     .toBe('same-document')
-  await expect(page.getByRole('heading', { name: '内置频道', level: 1 })).toBeVisible()
+  await expect(page.getByRole('heading', { name: '接线', level: 1 })).toBeVisible()
   expect(pageErrors, pageErrors.join('\n')).toEqual([])
-})
-
-test('legacy work links replace into /work without dropping query or hash', async ({ page }) => {
-  const failures = installRuntimeFailureGate(page)
-
-  await page.goto('/agents?create=1#draft')
-  await expect(page).toHaveURL(/\/work\/agents\/new#draft$/u)
-  await expect(page.getByRole('heading', { name: '创建智能体' })).toBeVisible()
-
-  await page.goto('/creator?agent=agt_compat#preview')
-  await expect(page).toHaveURL(/\/work\/creator\?agent=agt_compat#preview$/u)
-
-  await page.goto('/channels')
-  await expect(page).toHaveURL(/\/work(?:\/|$)/u)
-
-  expect(failures, failures.join('\n')).toEqual([])
 })
 
 test('settings exposes the provider editor and survives real navigation', async ({ page }) => {
   const failures = installRuntimeFailureGate(page)
   await installDeepSeekProviderRoutes(page, true)
   await page.goto('/settings')
+  await expect(page).toHaveURL(/\/settings\/models$/u)
 
-  await expect(page.getByRole('heading', { name: '模型供应商', level: 1 })).toBeVisible()
+  await expect(page.getByRole('heading', { name: '模型', level: 1 })).toBeVisible()
   await page.getByRole('button', { name: /DeepSeek/u }).click()
   await expect(page.getByLabel('API 密钥')).toHaveAttribute('type', 'password')
   await expect(page.getByLabel('API 密钥')).toHaveAttribute('autocomplete', 'off')
   await expect(page.getByLabel('API 密钥')).toHaveAttribute('data-1p-ignore', 'true')
   await expect(page.getByText(/已保存密钥无法查看/u)).toBeVisible()
 
-  await page.getByRole('link', { name: /系统扩展/u }).click()
-  await expect(page.getByRole('heading', { name: '系统扩展', level: 1 })).toBeVisible()
-  await expect(page.getByRole('heading', { name: '模型供应商', level: 1 })).toHaveCount(0)
-  await expect(page.locator('[data-stage-layer="out"]')).toHaveCount(0)
-  await expect(page.locator('[data-stage-layer="in"]')).toHaveCSS('opacity', '1')
-  await expect(page.getByText('接入聊天平台。前往「连接」添加账号。', { exact: true })).toBeVisible()
+  const sections = page.getByRole('complementary', { name: '设置' })
+  await sections.getByRole('link', { name: '平台适配器' }).click()
+  await expect(page.getByRole('heading', { name: '平台适配器', level: 1 })).toBeVisible()
+  await expect(page.getByRole('heading', { name: '模型', level: 1 })).toHaveCount(0)
   await expect(page.getByText('由 NekroNXT 直接提供，用于应用内对话。', { exact: true })).toBeVisible()
 
-  await page.getByRole('link', { name: '工作' }).click()
-  await expect(page.getByRole('link', { name: '工作' })).toBeVisible()
-  await page.getByRole('link', { name: '设置' }).click()
-  await expect(page.getByRole('heading', { name: '模型供应商', level: 1 })).toBeVisible()
-
+  const rail = page.getByRole('navigation', { name: '主导航' })
+  await rail.getByRole('link', { name: '频道' }).click()
+  await expect(page).toHaveURL(/\/channels/u)
+  await rail.getByRole('link', { name: '设置' }).click()
+  await expect(page.getByRole('heading', { name: '模型', level: 1 })).toBeVisible()
   expect(failures, failures.join('\n')).toEqual([])
 })
 
-test('notification settings present system delivery before Bark and keep feature switches usable', async ({ page }) => {
+test('notification settings present channels before events and save only after a change', async ({ page, request }) => {
   const failures = installRuntimeFailureGate(page)
-  await page.goto('/settings?tab=notifications')
+  await page.goto('/settings/notifications')
 
   await expect(page.getByRole('heading', { name: '通知', level: 1 })).toBeVisible()
-  const systemHeading = page.getByText('系统通知渠道', { exact: true })
-  const barkHeading = page.getByText('Bark 通知渠道', { exact: true })
-  const eventsHeading = page.getByText('通知项目', { exact: true })
-  await expect(systemHeading).toBeVisible()
-  await expect(barkHeading).toBeVisible()
-  await expect(eventsHeading).toBeVisible()
-  const headingPositions = await Promise.all(
-    [systemHeading, barkHeading, eventsHeading].map((item) =>
-      item.evaluate((node) => node.getBoundingClientRect().top),
-    ),
-  )
-  expect(headingPositions[0]).toBeLessThan(headingPositions[1]!)
-  expect(headingPositions[1]).toBeLessThan(headingPositions[2]!)
+  const channelsHeading = page.getByRole('heading', { name: '渠道' })
+  const eventsHeading = page.getByRole('heading', { name: '通知我' })
+  expect((await channelsHeading.boundingBox())!.y).toBeLessThan((await eventsHeading.boundingBox())!.y)
+  const system = page.getByRole('switch', { name: '系统通知' })
+  await expect(system).toBeChecked()
+  await expect(page.getByRole('switch', { name: 'Bark' })).not.toBeChecked()
+  await expect(page.getByRole('button', { name: '保存', exact: true })).toHaveCount(0)
 
-  await expect(page.getByRole('switch', { name: '启用系统通知' })).toBeChecked()
-  await expect(page.getByRole('switch', { name: '启用 Bark 通知' })).not.toBeChecked()
-  await expect(page.getByRole('switch', { name: '扩展预览等待确认' })).toBeChecked()
-
-  await page.getByRole('button', { name: '发送系统测试通知' }).click()
-  await expect(page.getByText(/系统测试通知已发布/u)).toBeVisible()
-  await page.getByRole('button', { name: '保存通知设置' }).click()
-  await expect(page.getByText('通知设置已保存。', { exact: true })).toBeVisible()
-
+  await page.getByRole('button', { name: '测试' }).first().click()
+  await expect(page.getByText('测试通知已发出', { exact: true })).toBeVisible()
+  // The Playwright data root persists between runs: flip the saved value, then restore it.
+  const approval = page.getByRole('switch', { name: '创造任务等待确认运行' })
+  const stored = HostApiContracts.snapshot.response.parse(await (await request.get('/api/snapshot')).json())
+  const saved = stored.notificationSettings.events['dynamic-client-approval-requested'] === true
+  await expect(approval).toBeChecked({ checked: saved })
+  for (const expected of [!saved, saved]) {
+    await approval.click()
+    await page.getByRole('button', { name: '保存', exact: true }).click()
+    await expect(page.getByText('通知设置已保存', { exact: true }).last()).toBeVisible()
+    await expect(page.getByRole('button', { name: '保存', exact: true })).toHaveCount(0)
+    await page.reload()
+    await expect(approval).toBeChecked({ checked: expected })
+  }
   expect(failures, failures.join('\n')).toEqual([])
 })
 
@@ -356,7 +350,7 @@ test('provider connection test uses the unsaved page draft without saving it', a
       body: JSON.stringify({ provider: payload.provider, model: payload.model }),
     })
   })
-  await page.goto('/settings')
+  await page.goto('/settings/models')
   await page.getByRole('button', { name: '添加供应商' }).first().click()
   await page.getByRole('dialog').getByRole('button', { name: '开始配置' }).click()
   await page.getByLabel('供应商名称').fill('Draft Gateway')
@@ -387,7 +381,7 @@ test('provider connection test uses the unsaved page draft without saving it', a
 
 test('DSH extension settings use the NekroNXT configuration surface without loading native WebUI', async ({ page }) => {
   const failures = installRuntimeFailureGate(page)
-  await page.goto('/settings?tab=dsh-extensions')
+  await page.goto('/settings/dsh')
 
   await expect(page.getByText('DeepSeek 网页搜索', { exact: true }).first()).toBeVisible()
   await expect(page.getByText('内置', { exact: true }).first()).toBeVisible()
@@ -405,7 +399,7 @@ test('DSH extension settings use the NekroNXT configuration surface without load
 test('settings saves a built-in provider credential without exposing it again', async ({ page }) => {
   const failures = installRuntimeFailureGate(page)
   await installDeepSeekProviderRoutes(page)
-  await page.goto('/settings')
+  await page.goto('/settings/models')
 
   await page.getByRole('button', { name: /DeepSeek/u }).click()
   const apiKey = page.getByLabel('API 密钥')
@@ -441,7 +435,7 @@ test('adding a connection selects a platform before showing its fields', async (
         activities: [],
         features: {},
         diagnostics: { receive: true, send: true },
-        configSchema: { schemaVersion: 1, type: 'object', required: [], properties: {} },
+        configSchema: { type: 'object', dict: {} },
       },
       {
         key: 'fixture-gamma',
@@ -455,12 +449,10 @@ test('adding a connection selects a platform before showing its fields', async (
         features: {},
         diagnostics: { receive: true, send: true },
         configSchema: {
-          schemaVersion: 1,
           type: 'object',
-          required: ['workspaceCode', 'secret'],
-          properties: {
-            workspaceCode: { type: 'string', title: '工作区代码' },
-            secret: { type: 'credential-reference', title: '访问密钥' },
+          dict: {
+            workspaceCode: { type: 'string', meta: { description: '工作区代码', required: true } },
+            secret: { type: 'string', meta: { description: '访问密钥', required: true, role: 'secret' } },
           },
         },
       },
@@ -469,33 +461,22 @@ test('adding a connection selects a platform before showing its fields', async (
   await page.route('**/api/snapshot', (route) =>
     route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(snapshot) }),
   )
-  await page.goto('/connections')
-
-  await page
-    .getByRole('link', { name: /内置频道/u })
-    .first()
-    .click()
-  await expect(page.getByText('内置频道由 NekroNXT 直接提供。')).toBeVisible()
-  await expect(page.getByLabel('Client Secret')).toHaveCount(0)
-
-  await page.getByRole('link', { name: '添加平台连接' }).click()
-  const dialog = page.getByRole('dialog')
-  await expect(dialog.getByRole('heading', { name: '选择平台' })).toBeVisible()
-  await expect(dialog.getByText('选择要连接的平台账号。')).toBeVisible()
-  await dialog.getByLabel('平台').click()
-  await expect(page.getByRole('option', { name: '示例群聊平台' })).toBeVisible()
-  await expect(page.getByRole('option', { name: '示例协作平台' })).toBeVisible()
-  await page.getByRole('option', { name: '示例协作平台' }).click()
-  await expect(dialog.getByLabel('工作区代码')).toHaveCount(0)
-
-  await dialog.getByRole('button', { name: '填写连接信息' }).click()
-  await expect(dialog.getByRole('heading', { name: '配置 示例协作平台' })).toBeVisible()
-  await expect(dialog.getByLabel('连接别名')).toBeVisible()
-  await dialog.getByLabel('连接别名').fill('旅程测试连接')
-  await expect(dialog.getByLabel('工作区代码')).toBeVisible()
-  await expect(dialog.getByLabel('访问密钥')).toHaveAttribute('type', 'password')
-  await expect(dialog.getByLabel('访问密钥')).toHaveAttribute('autocomplete', 'off')
-  await expect(dialog.getByLabel('平台')).toHaveCount(0)
+  await page.goto('/wiring')
+  await page.getByRole('button', { name: '添加账号' }).click()
+  await expect(page).toHaveURL(/\/wiring\/new$/u)
+  await expect(page.getByRole('heading', { name: '添加平台账号' })).toBeVisible()
+  await expect(page.getByRole('button', { name: /示例群聊平台/u })).toBeVisible()
+  // System-managed platforms are not offered for new accounts.
+  await expect(page.getByRole('button', { name: /^内置频道/u })).toHaveCount(0)
+  await expect(page.getByLabel('工作区代码')).toHaveCount(0)
+  await page.getByRole('button', { name: /示例协作平台/u }).click()
+  await expect(page.getByRole('heading', { name: '添加示例协作平台账号' })).toBeVisible()
+  await page.getByLabel('名称').fill('旅程测试连接')
+  await expect(page.getByLabel('工作区代码')).toBeVisible()
+  await expect(page.getByLabel('访问密钥')).toHaveAttribute('type', 'password')
+  await expect(page.getByLabel('访问密钥')).toHaveAttribute('autocomplete', 'off')
+  await page.getByRole('button', { name: '换一个平台' }).click()
+  await expect(page.getByRole('heading', { name: '添加平台账号' })).toBeVisible()
   expect(failures, failures.join('\n')).toEqual([])
 })
 
@@ -528,16 +509,13 @@ test('a verified Adapter can install, create a schema-backed connection, roll ba
     channelDiscovery: 'adapter-observed' as const,
     diagnostics: { receive: true, send: true },
     configSchema: {
-      schemaVersion: 1,
       type: 'object' as const,
-      required: ['workspace', 'token'],
-      properties: {
-        workspace: { type: 'string' as const, title: '工作区', default: 'journey-room' },
-        token: {
-          type: 'credential-reference' as const,
-          credentialKey: 'token',
-          title: '访问令牌',
+      dict: {
+        workspace: {
+          type: 'string' as const,
+          meta: { description: '工作区', required: true, default: 'journey-room' },
         },
+        token: { type: 'string' as const, meta: { description: '访问令牌', required: true, role: 'secret' } },
       },
     },
   }
@@ -550,14 +528,15 @@ test('a verified Adapter can install, create a schema-backed connection, roll ba
     verification: {
       verifiedAt: createdAt,
       dshVersion: '0.1.1-rc.2',
-      contractVersion: 'nekro-nxt-extension-v2',
+      contractVersion: 'nekro-nxt-extension-v6',
       hostBuilt: true,
       clientBuilt: false,
       buildKey: String(revisionNumber).repeat(64),
       toolInvocationCount: 0,
       rpcMethods: [],
-      renderedSlots: [],
-      renderedHostSlots: [],
+      renderedPanels: [],
+      renderedToolViews: [],
+      renderedMessageRenderers: [],
       adapter: {
         apiVersion: 2 as const,
         key: 'synthetic-chat',
@@ -647,7 +626,12 @@ test('a verified Adapter can install, create a schema-backed connection, roll ba
       status: 200,
       contentType: 'application/json',
       body: JSON.stringify({
-        installation: { extensionId, extensionRevisionId: installedRevisionId, installedAt: 1_725_000_002_000 },
+        installation: {
+          extensionId,
+          extensionRevisionId: installedRevisionId,
+          installedAt: 1_725_000_002_000,
+          config: {},
+        },
       }),
     })
   })
@@ -666,60 +650,53 @@ test('a verified Adapter can install, create a schema-backed connection, roll ba
     })
   })
 
+  await installWorkspaceRoutes(page, snapshot)
   await page.setViewportSize({ width: 1440, height: 900 })
-  await page.goto(`/extensions/${extensionId}`)
-  await expect(page.getByRole('heading', { name: '合成聊天适配器' })).toBeVisible()
-  await expect(page.getByText('尚未安装', { exact: true }).first()).toBeVisible()
-  const version2 = page.getByRole('listitem').filter({ hasText: 'r2' })
-  await version2.getByRole('button', { name: '安装到本机' }).click()
-  await expect(page.getByText('已安装到本机', { exact: true })).toBeVisible()
+  await page.goto(`/workshop/extensions/${extensionId}`)
+  await expect(page.getByRole('heading', { name: '合成聊天适配器', level: 1 })).toBeVisible()
+  await expect(page.getByText('未安装', { exact: true }).first()).toBeVisible()
+  const version = page.getByRole('combobox', { name: '版本' })
+  await version.selectOption({ label: 'r2' })
+  await page.getByRole('button', { name: '安装', exact: true }).click()
+  await expect(page.getByText('已安装', { exact: true }).first()).toBeVisible()
   expect(installationRequests).toEqual([revisionV2])
 
-  await page.goto('/connections?create=1&adapter=synthetic-chat')
-  const createDialog = page.getByRole('dialog')
-  await expect(createDialog.getByRole('heading', { name: '配置 合成聊天平台' })).toBeVisible()
-  await createDialog.getByLabel('访问令牌').fill('synthetic-secret')
-  await createDialog.getByRole('button', { name: '创建连接' }).click()
-  await expect(page.getByText('连接已创建', { exact: true })).toBeVisible()
+  await page.goto('/wiring/new?adapter=synthetic-chat')
+  await expect(page.getByRole('heading', { name: '添加合成聊天平台账号' })).toBeVisible()
+  await expect(page.getByLabel('工作区')).toHaveValue('journey-room')
+  await page.getByLabel('访问令牌').fill('synthetic-secret')
+  await page.getByRole('button', { name: '添加账号', exact: true }).click()
+  await expect(page).toHaveURL(new RegExp(`/wiring/connections/${connectionId}$`, 'u'))
   expect(connectionRequests).toHaveLength(1)
-  await page.goto(`/connections/${connectionId}`)
-  await expect(page.getByRole('heading', { name: '旅程合成连接' })).toBeVisible()
-  await page.getByRole('button', { name: '收发测试' }).click()
-  await expect(page.getByLabel('测试消息发送到')).toContainText('合成演示频道 · 群聊')
+  const detail = page.getByRole('complementary', { name: '详情' })
+  await expect(detail.getByRole('heading', { name: '旅程合成连接' })).toBeVisible()
+  await expect(detail.getByRole('combobox', { name: '测试频道' })).toContainText('合成演示频道')
 
-  await page.goto(`/extensions/${extensionId}`)
-  await page.getByRole('listitem').filter({ hasText: 'r1' }).getByRole('button', { name: '切换到 r1' }).click()
-  await expect(page.getByRole('listitem').filter({ hasText: 'r1' })).toContainText('当前已安装')
-  await version2.getByRole('button', { name: '更新到 r2' }).click()
-  await expect(version2).toContainText('当前已安装')
+  await page.goto(`/workshop/extensions/${extensionId}`)
+  await version.selectOption({ label: 'r1' })
+  await page.getByRole('button', { name: '切换到此版本' }).click()
+  await expect(version).toHaveValue(revisionV1)
+  await expect(version.locator('option:checked')).toHaveText('r1 · 已安装')
+  await version.selectOption({ label: 'r2' })
+  await page.getByRole('button', { name: '切换到此版本' }).click()
+  await expect(version.locator('option:checked')).toHaveText('r2 · 已安装')
   expect(installationRequests).toEqual([revisionV2, revisionV1, revisionV2])
-
-  await expect(page.locator('html[data-nxt-view-transition]')).toHaveCount(0)
-  const stage = page.locator('main')
-  const pageBox = await stage.boundingBox()
-  const includedBox = await page.getByText('r2 的内容', { exact: true }).locator('..').boundingBox()
-  if (!pageBox || !includedBox) throw new Error('适配器扩展页缺少视觉验收区域。')
-  expect(await stage.evaluate((element) => element.scrollLeft)).toBe(0)
-  expect(includedBox.x).toBeGreaterThanOrEqual(pageBox.x)
+  expect(await page.locator('main').evaluate((element) => element.scrollWidth <= element.clientWidth + 1)).toBe(true)
 
   const installedScreenshot = testInfo.outputPath('adapter-installed.png')
   await page.screenshot({ path: installedScreenshot, animations: 'disabled' })
   await testInfo.attach('adapter-installed', { path: installedScreenshot, contentType: 'image/png' })
   await page.getByRole('button', { name: '卸载', exact: true }).click()
-  const uninstallDialog = page.getByRole('alertdialog')
-  await expect(uninstallDialog).toContainText('连接、频道和历史会保留')
-  const dialogScreenshot = testInfo.outputPath('adapter-uninstall-confirmation.png')
-  await page.screenshot({ path: dialogScreenshot, animations: 'disabled' })
-  await testInfo.attach('adapter-uninstall-confirmation', { path: dialogScreenshot, contentType: 'image/png' })
-  await uninstallDialog.getByRole('button', { name: '卸载适配器' }).click()
-  await expect(page.getByText('尚未安装', { exact: true }).first()).toBeVisible()
+  const uninstallDialog = page.getByRole('dialog')
+  await expect(uninstallDialog).toContainText('连接、频道和历史保留')
+  await uninstallDialog.getByRole('button', { name: '卸载', exact: true }).click()
+  await expect(uninstallDialog).toBeHidden()
+  await expect(page.getByText('未安装', { exact: true }).first()).toBeVisible()
   expect(installationRequests.at(-1)).toBe('uninstall')
 
-  await page.goto(`/connections/${connectionId}`)
-  await expect(page.getByText('这个连接的适配器未安装。')).toBeVisible()
-  await expect(page.getByText('已发现频道', { exact: true }).locator('xpath=following-sibling::dd[1]')).toHaveText(
-    '1 个',
-  )
+  await page.goto(`/wiring/connections/${connectionId}`)
+  await expect(detail).toContainText('这个连接的适配器未安装。')
+  await expect(detail.getByRole('heading', { name: /频道 1/u })).toBeVisible()
   const retainedScreenshot = testInfo.outputPath('adapter-uninstalled-connection-retained.png')
   await page.screenshot({ path: retainedScreenshot, animations: 'disabled' })
   await testInfo.attach('adapter-uninstalled-connection-retained', {
@@ -900,7 +877,8 @@ test("an intelligent-agent can add another channel while replacing that channel'
     return route.fulfill({ status: 201, contentType: 'application/json', body: JSON.stringify(binding) })
   })
 
-  await page.goto('/work')
+  await installWorkspaceRoutes(page, () => snapshot)
+  await page.goto('/live')
   const createAgent = async (displayName: string): Promise<{ agentId: string; channelId: string }> => {
     const result = await page.evaluate(
       async (input) => {
@@ -925,17 +903,15 @@ test("an intelligent-agent can add another channel while replacing that channel'
   const source = await createAgent(sourceName)
   const target = await createAgent(targetName)
 
-  await page.goto(`/work/agents/${target.agentId}`)
-  await page.getByRole('button', { name: '绑定频道' }).click()
+  await page.goto(`/agents/${target.agentId}`)
+  await page.getByRole('button', { name: '添加频道' }).click()
+  await page.getByRole('menuitem', { name: new RegExp(`^${sourceName} 的内置频道`, 'u') }).click()
   const dialog = page.getByRole('dialog')
-  await expect(dialog.getByRole('heading', { name: '新增频道绑定' })).toBeVisible()
-  await dialog.getByLabel('频道').click()
-  await page.getByRole('option', { name: `内置频道 · ${sourceName} 的内置频道`, exact: true }).click()
-  await dialog.getByLabel('响应方式').click()
-  await page.getByRole('option', { name: '仅观察' }).click()
-  await dialog.getByRole('button', { name: '绑定频道' }).click()
-
-  await expect(page.getByText('频道已绑定。')).toBeVisible()
+  await expect(dialog.getByRole('heading', { name: `让${targetName}响应「${sourceName} 的内置频道」` })).toBeVisible()
+  await dialog.getByLabel('触发').selectOption({ label: '仅观察' })
+  await dialog.getByRole('button', { name: '换绑' }).click()
+  await expect(dialog).toBeHidden()
+  await expect(page.getByText(`「${sourceName} 的内置频道」已交给${targetName}`)).toBeVisible()
   await expect(page.getByText(`${sourceName} 的内置频道`, { exact: true }).first()).toBeVisible()
   const currentResponse = await page.evaluate(async () => {
     const response = await fetch('/api/snapshot')
@@ -948,16 +924,13 @@ test("an intelligent-agent can add another channel while replacing that channel'
   expect(currentSnapshot.agents.find((agent) => agent.id === target.agentId)?.channels).toEqual(
     expect.arrayContaining([target.channelId, source.channelId]),
   )
-  expect(currentSnapshot.channels.find((channel) => channel.id === target.channelId)?.bindings).toEqual([
-    expect.objectContaining({ agentId: target.agentId }),
-  ])
   expect(currentSnapshot.channels.find((channel) => channel.id === source.channelId)?.bindings).toEqual([
     expect.objectContaining({ agentId: target.agentId, triggerPolicy: 'observe-only' }),
   ])
   expect(failures, failures.join('\n')).toEqual([])
 })
 
-test('connection workbench binds an intelligent-agent without visiting the manage page', async ({ page, request }) => {
+test('the wiring board binds an agent to an unwired channel in place', async ({ page, request }) => {
   const failures = installRuntimeFailureGate(page)
   const baseResponse = await request.get('/api/snapshot')
   expect(baseResponse.ok()).toBe(true)
@@ -1029,7 +1002,7 @@ test('connection workbench binds an intelligent-agent without visiting the manag
             aliasEditable: true,
             channelDiscovery: 'adapter-observed',
             diagnostics: { receive: true, send: true },
-            configSchema: { schemaVersion: 1, type: 'object' as const, required: [], properties: {} },
+            configSchema: { type: 'object' as const, dict: {} },
           },
         ],
     connections: [
@@ -1073,16 +1046,17 @@ test('connection workbench binds an intelligent-agent without visiting the manag
     return route.fulfill({ status: 201, contentType: 'application/json', body: JSON.stringify(binding) })
   })
 
-  await page.goto('/connections')
-  await page.getByRole('link', { name: /示例群聊平台/u }).click()
-  await page.getByRole('button', { name: '绑定智能体' }).click()
+  await installWorkspaceRoutes(page, () => snapshot)
+  await page.goto(`/wiring/connections/${connectionId}`)
+  await page.getByRole('button', { name: '把「绑定工作台群」接到智能体' }).click()
+  const picker = page.getByRole('menu', { name: '为「绑定工作台群」选择智能体' })
+  await picker.getByRole('menuitem', { name: `交给${agent.displayName}` }).click()
   const dialog = page.getByRole('dialog')
-  await expect(dialog.getByRole('heading', { name: '绑定智能体' })).toBeVisible()
-  await expect(dialog).toContainText('选择响应这个频道的智能体和触发方式。保存后立即更新频道绑定。')
-  await dialog.getByRole('button', { name: '绑定频道' }).click()
-  await expect(page.getByText('频道已绑定。')).toBeVisible()
-  await expect(page).toHaveURL(/\/connections(?:\/|$)/u)
-  await expect(page.getByRole('heading', { name: '示例群聊平台' })).toBeVisible()
+  await expect(dialog.getByRole('heading', { name: `让${agent.displayName}响应「绑定工作台群」` })).toBeVisible()
+  await dialog.getByRole('button', { name: '接线' }).click()
+  await expect(page.getByText(`「绑定工作台群」已交给${agent.displayName}`)).toBeVisible()
+  await expect(page).toHaveURL(new RegExp(`/wiring/connections/${connectionId}$`, 'u'))
+  expect(snapshot.channels.find((item) => item.id === channelId)?.bindings[0]?.agentId).toBe(agent.id)
   expect(failures, failures.join('\n')).toEqual([])
 })
 
@@ -1188,7 +1162,7 @@ test('external channel exposes processing feedback and per-event trigger control
             aliasEditable: true,
             channelDiscovery: 'adapter-observed',
             diagnostics: { receive: true, send: true },
-            configSchema: { schemaVersion: 1, type: 'object' as const, required: [], properties: {} },
+            configSchema: { type: 'object' as const, dict: {} },
           },
         ],
     agents: (baseSnapshot.agents.some(({ id }) => id === sourceAgent.id)
@@ -1351,31 +1325,30 @@ test('external channel exposes processing feedback and per-event trigger control
     })
   })
 
-  await page.goto(`/work/channels/${channelId}`)
-  const inspector = page.getByLabel('频道')
-  const feedback = inspector.getByRole('switch', { name: '显示处理中状态' })
+  await installWorkspaceRoutes(page, () => snapshot)
+  await page.goto(`/channels/${channelId}`)
+  const inspector = page.getByRole('complementary', { name: '频道信息' })
+  const feedback = inspector.getByRole('switch', { name: '处理中反馈' })
   await expect(feedback).toBeChecked()
   await feedback.click()
-  await expect(page.getByText('频道事件设置已更新。')).toBeVisible()
-  await inspector.getByRole('button', { name: '设置特殊事件' }).click()
+  await expect(feedback).not.toBeChecked()
+  const events = inspector.getByRole('button', { name: /^特殊事件/u })
+  await expect(events).toHaveText('特殊事件 · 跟随账号')
+  await events.click()
   for (const label of ['轻触成员', '负向反馈']) {
     await expect(inspector.getByRole('combobox', { name: label })).toBeVisible()
   }
   await expect(inspector.getByRole('combobox', { name: '账号资料更新' })).toHaveCount(0)
   await expect(inspector.getByRole('combobox', { name: '私聊专属活动' })).toHaveCount(0)
   const poke = inspector.getByRole('combobox', { name: '轻触成员' })
-  await expect(poke).toHaveText('跟随连接（当前开启）')
-  await poke.click()
-  await page.getByRole('option', { name: '此频道关闭' }).click()
-  await expect(poke).toHaveText('此频道关闭')
+  await expect(poke.locator('option:checked')).toHaveText('跟随账号（触发）')
+  await poke.selectOption({ label: '不触发' })
   const negativeFeedback = inspector.getByRole('combobox', { name: '负向反馈' })
-  await expect(negativeFeedback).toHaveText('跟随连接（当前关闭）')
-  await negativeFeedback.click()
-  await page.getByRole('option', { name: '此频道开启' }).click()
-  await expect(negativeFeedback).toHaveText('此频道开启')
-  await poke.click()
-  await page.getByRole('option', { name: '跟随连接（当前开启）' }).click()
-  await expect(poke).toHaveText('跟随连接（当前开启）')
+  await expect(negativeFeedback.locator('option:checked')).toHaveText('跟随账号（不触发）')
+  await negativeFeedback.selectOption({ label: '触发' })
+  await expect(events).toHaveText('特殊事件 · 2 项单独设置')
+  await poke.selectOption({ label: '跟随账号（触发）' })
+  await expect(events).toHaveText('特殊事件 · 1 项单独设置')
   expect(bindingRequests).toEqual([
     expect.objectContaining({ processingFeedback: 'off', activityTriggerOverrides: {} }),
     expect.objectContaining({ processingFeedback: 'off', activityTriggerOverrides: { 'member-poked': false } }),
@@ -1389,24 +1362,26 @@ test('external channel exposes processing feedback and per-event trigger control
     }),
   ])
 
-  await page.goto(`/connections/${connectionId}`)
-  const connectionDefault = page.getByRole('switch', { name: '轻触成员' })
+  await page.goto(`/wiring/connections/${connectionId}`)
+  const detail = page.getByRole('complementary', { name: '详情' })
+  const connectionDefault = detail.getByRole('switch', { name: '轻触成员' })
   await expect(connectionDefault).toBeChecked()
   await connectionDefault.click()
   await expect(connectionDefault).not.toBeChecked()
   expect(defaultRequests).toEqual([{ activityKeys: [] }])
 
-  await page.getByRole('button', { name: '删除连接' }).click()
-  const deleteDialog = page.getByRole('alertdialog', { name: '删除连接' })
+  await detail.getByRole('button', { name: '删除连接' }).click()
+  const deleteDialog = page.getByRole('dialog', { name: '删除「测试协议端」？' })
   await expect(deleteDialog.getByRole('switch', { name: '同时删除频道数据' })).not.toBeChecked()
-  await deleteDialog.getByRole('button', { name: '移除连接并保留频道数据' }).click()
+  await deleteDialog.getByRole('button', { name: '删除', exact: true }).click()
   await expect.poll(() => deleteRequests).toEqual([{ deleteChannelData: false }])
   await expect(deleteDialog).toBeHidden()
-
-  await page.goto('/connections?create=1')
-  await expect(page.getByRole('dialog').getByText('测试协议端')).toBeVisible()
-  await page.getByRole('dialog').getByRole('button', { name: '恢复' }).click()
-  await expect(page.getByText('连接及频道数据已恢复。')).toBeVisible()
+  await page.goto('/wiring/new')
+  const archived = page.getByText('测试协议端', { exact: true })
+  await expect(archived).toBeVisible()
+  await page.getByRole('button', { name: '恢复' }).click()
+  await expect(page.getByText('账号已恢复', { exact: true })).toBeVisible()
+  await expect(page).toHaveURL(new RegExp(`/wiring/connections/${connectionId}$`, 'u'))
   expect(failures, failures.join('\n')).toEqual([])
 })
 
@@ -1533,6 +1508,11 @@ test('channel context controls and intelligent-agent deletion are guarded and re
         phase: 'using-tool',
         summary: '智能体正在使用工具。',
         pendingInjectCount: 0,
+        occupancy: {
+          projectedTokens: 12_000,
+          contextWindow: 128_000,
+          breakdown: { systemTokens: 3_000, toolsTokens: 4_000, messageTokens: 5_000 },
+        },
         turns: [],
       }),
     }),
@@ -1598,46 +1578,39 @@ test('channel context controls and intelligent-agent deletion are guarded and re
     })
   })
 
-  await page.goto(`/work/channels/${externalChannelId}`)
-  const channelHeaderActions = page.locator('[data-conversation-header-actions]')
-  await expect(channelHeaderActions.getByRole('button', { name: '绑定智能体' })).toHaveCount(0)
-  await expect(channelHeaderActions.getByRole('button', { name: '频道操作' })).toHaveCount(0)
-  const channelInspector = page.getByLabel('频道')
-  await expect(channelInspector.getByText('尚未绑定智能体', { exact: true })).toBeVisible()
-  await channelInspector.getByRole('button', { name: '移除' }).click()
-  const channelDeleteDialog = page.getByRole('alertdialog')
-  await expect(channelDeleteDialog.getByRole('heading', { name: '从 NekroNXT 移除此频道？' })).toBeVisible()
-  await expect(channelDeleteDialog.getByText(/频道会解除绑定并从列表中移除/u)).toBeVisible()
-  await channelDeleteDialog.getByRole('button', { name: '从 NekroNXT 移除' }).click()
+  await installWorkspaceRoutes(page, () => snapshot)
+  await page.goto(`/channels/${externalChannelId}`)
+  const inspector = page.getByRole('complementary', { name: '频道信息' })
+  await expect(inspector.getByRole('combobox', { name: '智能体' })).toHaveValue('')
+  await inspector.getByRole('button', { name: '移除频道' }).click()
+  const channelDeleteDialog = page.getByRole('dialog', { name: '移除「待移除的外部频道」？' })
+  await expect(channelDeleteDialog).toContainText('聊天记录保留')
+  await channelDeleteDialog.getByRole('button', { name: '移除', exact: true }).click()
   await expect.poll(() => channelDeleteRequests).toEqual([{ expectedBoundAgentId: null }])
-  await expect(page).not.toHaveURL(new RegExp(`/work/channels/${externalChannelId}$`, 'u'))
-  await expect(page).toHaveURL(/\/work(?:\/|$)/u)
+  await expect(page).not.toHaveURL(new RegExp(`/channels/${externalChannelId}$`, 'u'))
 
-  await page.goto(`/work/channels/${channelId}`)
-  await page.getByRole('button', { name: '上下文操作' }).click()
-  await page.getByRole('menuitem', { name: '压缩上下文' }).click()
-  const compactDialog = page.getByRole('dialog')
-  await expect(compactDialog.getByRole('heading', { name: '压缩当前上下文？' })).toBeVisible()
-  await expect(compactDialog.getByText(/立即中止/u)).toBeVisible()
-  await expect(compactDialog.getByText(/以摘要开始新上下文/u)).toBeVisible()
-  await compactDialog.getByRole('button', { name: '压缩上下文' }).click()
-  await expect(page.getByText('当前上下文已压缩并完成交接。')).toBeVisible()
+  await page.goto(`/channels/${channelId}`)
+  await inspector.getByRole('button', { name: '压缩', exact: true }).click()
+  const compactDialog = page.getByRole('dialog', { name: '压缩上下文？' })
+  await expect(compactDialog).toContainText('当前任务会停止，对话整理成摘要后继续。')
+  await compactDialog.getByRole('button', { name: '压缩', exact: true }).click()
+  await expect(page.getByText('已压缩上下文', { exact: true })).toBeVisible()
   expect(resetRequests).toEqual([{ expectedEpisodeId: 'eps_contextjourney', mode: 'compact' }])
 
-  await page.goto(`/work/agents/${agentId}`)
+  await page.goto(`/agents/${agentId}`)
   await expect(page.getByRole('heading', { name: agentName, level: 1 })).toBeVisible()
-  await expect(page.getByText(/删除智能体会停止所有频道运行/u)).toBeVisible()
   await page.getByRole('button', { name: '删除智能体' }).click()
-  const deleteDialog = page.getByRole('alertdialog')
-  const deleteButton = deleteDialog.getByRole('button', { name: '删除智能体' })
-  await expect(deleteDialog.getByText(/历史配置、消息和审计记录用于追溯/u)).toBeVisible()
-  await expect(deleteDialog.getByRole('switch', { name: '同时删除自动创建的内置频道' })).toBeChecked()
-  await expect(deleteButton).toBeDisabled()
-  await deleteDialog.getByLabel(`输入“${agentName}”以确认`).fill('错误名称')
-  await expect(deleteButton).toBeDisabled()
-  await deleteDialog.getByLabel(`输入“${agentName}”以确认`).fill(agentName)
-  await expect(deleteButton).toBeEnabled()
-  await deleteButton.click()
+  const deleteDialog = page.getByRole('dialog', { name: `删除${agentName}？` })
+  await expect(deleteDialog).toContainText(`${agentName}会停止所有频道的工作`)
+  await expect(deleteDialog.getByRole('switch', { name: '同时删除它的内置频道' })).toBeChecked()
+  await expect(deleteDialog.getByRole('switch', { name: '同时删除工作区' })).not.toBeChecked()
+  const confirmName = deleteDialog.getByLabel(`输入“${agentName}”确认`)
+  await confirmName.fill('错误名称')
+  await deleteDialog.getByRole('button', { name: '删除', exact: true }).click()
+  await expect(deleteDialog).toContainText('输入的名称不一致。')
+  expect(deleteRequests).toEqual([])
+  await confirmName.fill(agentName)
+  await deleteDialog.getByRole('button', { name: '删除', exact: true }).click()
   await expect
     .poll(() => deleteRequests)
     .toEqual([
@@ -1645,9 +1618,9 @@ test('channel context controls and intelligent-agent deletion are guarded and re
         expectedCurrentRevisionId: revisionId,
         confirmationName: agentName,
         deleteAutoCreatedBuiltInChannels: true,
+        deleteWorkspace: false,
       },
     ])
-  await expect(page).not.toHaveURL(new RegExp(`/work/agents/${agentId}$`, 'u'))
-  await expect(page).toHaveURL(/\/work(?:\/|$)/u)
+  await expect(page).not.toHaveURL(new RegExp(`/agents/${agentId}$`, 'u'))
   expect(failures, failures.join('\n')).toEqual([])
 })
