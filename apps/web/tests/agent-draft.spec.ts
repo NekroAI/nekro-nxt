@@ -39,7 +39,12 @@ describe('agent draft', () => {
     }
     expect(draftChanges(base, edited)).toEqual(['名称', '系统访问', '网页搜索', '设定'])
     expect(identityChanged(base, edited)).toBe(true)
-    expect(capabilityPatch(base, edited)).toEqual({ fileTools: true, developmentShell: true, webSearch: true })
+    expect(capabilityPatch(base, edited)).toEqual({
+      fileTools: true,
+      developmentShell: true,
+      unrestrictedFileAccess: false,
+      webSearch: true,
+    })
     expect(draftChanges(base, base)).toEqual([])
     expect(identityChanged(base, { ...base, capabilities: { ...base.capabilities, subagents: false } })).toBe(false)
   })
@@ -69,7 +74,13 @@ describe('agent draft', () => {
 
   it('uses a helper model only when the main model cannot read images', () => {
     const policy = defaultImageUnderstandingPolicy()
-    const text = { provider: 'fixture', providerName: '示例', id: 'text-model', name: '文本', inputModalities: ['text'] }
+    const text = {
+      provider: 'fixture',
+      providerName: '示例',
+      id: 'text-model',
+      name: '文本',
+      inputModalities: ['text'],
+    }
     const vision = { ...text, id: 'vision-model', name: '看图', inputModalities: ['text', 'image'] }
     expect(imagePolicyFor(policy, vision, undefined).textModel).toEqual({ mode: 'disabled' })
     expect(imagePolicyFor(policy, text, undefined).textModel).toEqual({ mode: 'disabled' })

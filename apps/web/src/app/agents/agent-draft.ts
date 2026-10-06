@@ -43,6 +43,7 @@ const CAPABILITY_KEYS = [
   'unrestrictedFileAccess',
 ] as const satisfies readonly (keyof Capabilities)[]
 const OTHER_CAPABILITIES = ['subagents', 'webSearch', 'dynamicCreation'] as const
+const ACCESS_KEYS = ['fileTools', 'developmentShell', 'unrestrictedFileAccess'] as const
 
 const CAPABILITY_LABEL: Record<(typeof OTHER_CAPABILITIES)[number], string> = {
   subagents: '子智能体',
@@ -64,6 +65,10 @@ export const capabilityPatch = (base: AgentDraft, draft: AgentDraft): Partial<Ca
   const patch: Partial<Record<keyof Capabilities, boolean>> = {}
   for (const key of CAPABILITY_KEYS) {
     if (draft.capabilities[key] !== base.capabilities[key]) patch[key] = draft.capabilities[key]
+  }
+  // System access is one level: send all three switches together so the request states the whole level.
+  if (ACCESS_KEYS.some((key) => key in patch)) {
+    for (const key of ACCESS_KEYS) patch[key] = draft.capabilities[key]
   }
   return patch
 }
