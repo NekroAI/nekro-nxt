@@ -18,12 +18,17 @@ import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { createServer, type ViteDevServer } from 'vite'
 const wechatConnectionId = ConnectionIdSchema.parse('con_wechatilink')
-const wechatIlinkConfigSchemaProperties = {
-  enableInboundMedia: {
-    type: 'boolean',
-    title: '入站媒体接收',
-    description: '开启后，微信 iLink 收到的图片和文件会下载并导入为频道资源。',
-    default: true,
+const wechatIlinkConfigSchema = {
+  type: 'object',
+  dict: {
+    enableInboundMedia: {
+      type: 'boolean',
+      meta: {
+        description: '入站媒体接收',
+        hint: '开启后，收到的图片和文件会下载并导入为频道资源。',
+        default: true,
+      },
+    },
   },
 } as const
 
@@ -91,7 +96,7 @@ const browserSnapshot = HostApiContracts.snapshot.response.parse({
       aliasEditable: false,
       channelDiscovery: 'host-created',
       diagnostics: { receive: false, send: false },
-      configSchema: { schemaVersion: 1, type: 'object', required: [], properties: {} },
+      configSchema: { type: 'object', dict: {} },
     },
     {
       key: 'fixture-beta',
@@ -104,7 +109,7 @@ const browserSnapshot = HostApiContracts.snapshot.response.parse({
       aliasEditable: true,
       channelDiscovery: 'adapter-observed',
       diagnostics: { receive: true, send: true },
-      configSchema: { schemaVersion: 1, type: 'object', required: [], properties: {} },
+      configSchema: { type: 'object', dict: {} },
     },
   ],
   notificationSettings: {
@@ -263,7 +268,9 @@ const browserSnapshot = HostApiContracts.snapshot.response.parse({
             buildKey: 'b'.repeat(64),
             toolInvocationCount: 0,
             rpcMethods: [],
-            renderedSlots: [],
+            renderedPanels: [],
+            renderedToolViews: [],
+            renderedMessageRenderers: [],
           },
         },
         {
@@ -281,7 +288,9 @@ const browserSnapshot = HostApiContracts.snapshot.response.parse({
             buildKey: 'a'.repeat(64),
             toolInvocationCount: 1,
             rpcMethods: [],
-            renderedSlots: [],
+            renderedPanels: [],
+            renderedToolViews: [],
+            renderedMessageRenderers: [],
           },
         },
       ],
@@ -937,9 +946,10 @@ test.describe('NekroNxt browser projections', () => {
     }
     const moduleSource = (entry: typeof navigationPage): string => `
       export default function (environment) {
-        const { React, ui } = environment
+        const { React } = environment
         return {
           apply(ctx) {
+            const ui = ctx.ui
             const page = ${JSON.stringify({
               kind: 'host-page',
               entryId: entry.entryId,
@@ -1987,12 +1997,7 @@ test.describe('NekroNxt browser projections', () => {
           features: {},
           diagnostics: { receive: true, send: true },
           creation: { mode: 'qr-login', actionLabel: '扫码登录', pendingLabel: '等待扫码确认…' },
-          configSchema: {
-            schemaVersion: 1,
-            type: 'object',
-            required: [],
-            properties: wechatIlinkConfigSchemaProperties,
-          },
+          configSchema: wechatIlinkConfigSchema,
         },
       ],
     })
@@ -2059,12 +2064,7 @@ test.describe('NekroNxt browser projections', () => {
           features: {},
           diagnostics: { receive: true, send: true },
           creation: { mode: 'qr-login', actionLabel: '扫码登录', pendingLabel: '等待扫码确认…' },
-          configSchema: {
-            schemaVersion: 1,
-            type: 'object',
-            required: [],
-            properties: wechatIlinkConfigSchemaProperties,
-          },
+          configSchema: wechatIlinkConfigSchema,
         },
       ],
     })
@@ -2145,12 +2145,7 @@ test.describe('NekroNxt browser projections', () => {
           features: {},
           diagnostics: { receive: true, send: true },
           creation: { mode: 'qr-login', actionLabel: '扫码登录', pendingLabel: '等待扫码确认…' },
-          configSchema: {
-            schemaVersion: 1,
-            type: 'object',
-            required: [],
-            properties: wechatIlinkConfigSchemaProperties,
-          },
+          configSchema: wechatIlinkConfigSchema,
         },
       ],
       connections: [
