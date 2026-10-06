@@ -28,6 +28,11 @@ describe('connection status dictionary', () => {
     expect(connectionStatus(connection({ runtimeState: 'stopped', userManaged: false }))).toMatchObject({
       label: '已停用',
     })
+    expect(
+      connectionStatus(
+        connection({ runtimeState: 'stopped', userManaged: false, lastError: '这个连接的适配器未安装。' }),
+      ),
+    ).toMatchObject({ label: '需要处理', reason: '这个连接的适配器未安装。' })
   })
 
   it('keeps a connected account normal while surfacing a passing notice in plain words', () => {

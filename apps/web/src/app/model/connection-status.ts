@@ -129,8 +129,11 @@ export function connectionStatus(
         ...withDetail,
       }
     default:
-      if (!connection.userManaged) return { health: 'disabled', label: '已停用', tone: 'neutral', ...withDetail }
-      if (!connection.credentialConfigured) {
+      // A system-managed account that simply is not running is disabled; one stopped for a reason
+      // (for example its adapter is no longer installed) still needs the user's attention.
+      if (!connection.userManaged && !explained)
+        return { health: 'disabled', label: '已停用', tone: 'neutral', ...withDetail }
+      if (connection.userManaged && !connection.credentialConfigured) {
         return {
           health: 'attention',
           label: '需要处理',
