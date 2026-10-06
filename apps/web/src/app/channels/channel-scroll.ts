@@ -24,10 +24,13 @@ export const useStickToBottom = (key: string, enabled: boolean) => {
   const prependRef = useRef<{ key: string; height: number; top: number } | null>(null)
   /** Last scrollTop this hook wrote; the scroll event it causes is not a user decision to leave the bottom. */
   const writtenTopRef = useRef<number | null>(null)
+  /** scrollTop at the last scroll event; a resize can fire a scroll event without the user moving anything. */
+  const lastTopRef = useRef(0)
   const [away, setAway] = useState(false)
   const write = (element: HTMLDivElement, top: number): void => {
     element.scrollTop = top
     writtenTopRef.current = element.scrollTop
+    lastTopRef.current = element.scrollTop
   }
 
   const commitPosition = useCallback(
@@ -68,7 +71,11 @@ export const useStickToBottom = (key: string, enabled: boolean) => {
     // Content can grow (images, history) between our write and its scroll event; keep following in that case.
     const written = writtenTopRef.current
     writtenTopRef.current = null
-    if (written !== null && Math.abs(element.scrollTop - written) < 1 && followRef.current) {
+    // The viewport shrinking (a growing Composer) fires a scroll event without moving scrollTop; that is a layout
+    // change, not the user leaving the bottom.
+    const unmoved = Math.abs(element.scrollTop - lastTopRef.current) < 1
+    lastTopRef.current = element.scrollTop
+    if (followRef.current && (unmoved || (written !== null && Math.abs(element.scrollTop - written) < 1))) {
       const bottom = Math.max(0, element.scrollHeight - element.clientHeight)
       if (Math.abs(element.scrollTop - bottom) > 0.5) write(element, bottom)
       return
