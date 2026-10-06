@@ -970,8 +970,8 @@ test('model settings keep unconfigured providers behind the add flow', async ({ 
     }),
   )
   await page.goto('/settings/models')
-  await expect(page.getByRole('button', { name: /DeepSeek/u })).toBeVisible()
-  await expect(page.getByRole('button', { name: /未配置供应商/u })).toHaveCount(0)
+  await expect(page.getByRole('link', { name: /DeepSeek/u })).toBeVisible()
+  await expect(page.getByRole('link', { name: /未配置供应商/u })).toHaveCount(0)
   await page.getByRole('button', { name: '添加供应商' }).first().click()
   await expect(page.getByRole('dialog')).toContainText('未配置供应商')
   expect(failures, failures.join('\n')).toEqual([])

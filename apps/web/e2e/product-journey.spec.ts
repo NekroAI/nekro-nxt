@@ -288,7 +288,10 @@ test('settings exposes the provider editor and survives real navigation', async 
   await expect(page).toHaveURL(/\/settings\/models$/u)
 
   await expect(page.getByRole('heading', { name: '模型', level: 1 })).toBeVisible()
-  await page.getByRole('button', { name: /DeepSeek/u }).click()
+  await page
+    .getByRole('complementary', { name: '设置' })
+    .getByRole('link', { name: /DeepSeek/u })
+    .click()
   await expect(page.getByLabel('API 密钥')).toHaveAttribute('type', 'password')
   await expect(page.getByLabel('API 密钥')).toHaveAttribute('autocomplete', 'off')
   await expect(page.getByLabel('API 密钥')).toHaveAttribute('data-1p-ignore', 'true')
@@ -358,8 +361,7 @@ test('provider connection test uses the unsaved page draft without saving it', a
   await page.getByLabel('供应商名称').fill('Draft Gateway')
   await page.getByLabel('API 密钥').fill('unsaved-draft-key')
   await page.getByLabel('API 地址').fill('https://draft.example.test/v1')
-  await page.getByLabel('API 协议').click()
-  await page.getByRole('option', { name: 'openai-completions' }).click()
+  await page.getByLabel('API 协议').selectOption('openai-completions')
   await page.getByRole('button', { name: '添加模型' }).click()
   await page.getByRole('textbox', { name: '模型 ID' }).fill('draft-model')
   await page.getByRole('button', { name: '测试连接' }).click()
@@ -392,7 +394,10 @@ test('DSH extension settings use the NekroNXT configuration surface without load
   await expect(page.locator('body')).not.toContainText('未完整验证')
   await expect(page.locator('body')).not.toContainText('未评估归属')
   await expect(page.locator('[data-dsh-native-surface]')).toHaveCount(0)
-  await expect(page.getByText('Namespace：web-search-deepseek', { exact: true })).toBeVisible()
+  // Technical identity stays in the collapsed diagnostics.
+  await expect(page.getByText('web-search-deepseek', { exact: true })).toBeHidden()
+  await page.getByRole('button', { name: '诊断信息' }).first().click()
+  await expect(page.getByText('web-search-deepseek', { exact: true })).toBeVisible()
   await expect(page.getByLabel('新的凭据值')).toHaveAttribute('type', 'password')
   await expect(page.getByLabel('新的凭据值')).toHaveAttribute('autocomplete', 'off')
 
@@ -404,7 +409,10 @@ test('settings saves a built-in provider credential without exposing it again', 
   await installDeepSeekProviderRoutes(page)
   await page.goto('/settings/models')
 
-  await page.getByRole('button', { name: /DeepSeek/u }).click()
+  await page
+    .getByRole('complementary', { name: '设置' })
+    .getByRole('link', { name: /DeepSeek/u })
+    .click()
   const apiKey = page.getByLabel('API 密钥')
   await apiKey.fill('playwright-write-only-test-key')
   await page.getByRole('button', { name: '保存供应商', exact: true }).click()
@@ -412,7 +420,10 @@ test('settings saves a built-in provider credential without exposing it again', 
   await expect(apiKey).toHaveValue('')
 
   await page.reload()
-  await page.getByRole('button', { name: /DeepSeek/u }).click()
+  await page
+    .getByRole('complementary', { name: '设置' })
+    .getByRole('link', { name: /DeepSeek/u })
+    .click()
   await expect(page.getByText('API 密钥已保存', { exact: true })).toBeVisible()
   await expect(page.getByLabel('API 密钥')).toHaveValue('')
   expect(failures, failures.join('\n')).toEqual([])

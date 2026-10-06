@@ -1,5 +1,12 @@
 import { describe, expect, it } from 'vitest'
-import { emptyModelRow, modelPayload, modelRowFromModel, modelRowsError, modelsToAdd } from '../src/llm-model-editor.js'
+import {
+  emptyModelRow,
+  formatTokenCount,
+  modelPayload,
+  modelRowFromModel,
+  modelRowsError,
+  modelsToAdd,
+} from '../src/llm-model-editor.js'
 
 describe('model list editor', () => {
   it('round-trips a vision model and states text-only models explicitly', () => {
@@ -32,5 +39,13 @@ describe('model list editor', () => {
     expect(modelsToAdd(rows, [{ id: 'listed' }, { id: 'new-model', inputModalities: ['text', 'image'] }])).toEqual([
       { id: 'new-model', inputModalities: ['text', 'image'] },
     ])
+  })
+
+  it('reads token counts the way people say them', () => {
+    expect(formatTokenCount(1_000_000)).toBe('100 万')
+    expect(formatTokenCount('262144')).toBe('26.2 万')
+    expect(formatTokenCount(8192)).toBe('8,192')
+    expect(formatTokenCount('')).toBe('')
+    expect(formatTokenCount('abc')).toBe('')
   })
 })
