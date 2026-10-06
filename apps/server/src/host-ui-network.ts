@@ -1,8 +1,11 @@
 import { lookup } from 'node:dns/promises'
 import { request as httpRequest } from 'node:http'
 import { request as httpsRequest } from 'node:https'
-import { BlockList, isIP } from 'node:net'
+import { isIP } from 'node:net'
 import { z } from 'zod'
+import { isPrivateNetworkAddress, normalizeUrlHostname, pinnedLookup } from './network-common.js'
+
+export { isPrivateNetworkAddress }
 
 const RequestSchema = z
   .object({
@@ -19,51 +22,7 @@ const RequestSchema = z
 const allowedHeader = (name: string): boolean =>
   ['accept', 'content-type', 'if-none-match'].includes(name.toLowerCase())
 
-const urlHostname = (url: URL): string => url.hostname.toLowerCase().replace(/^\[|\]$/gu, '')
-
-const isPrivateIpv4 = (value: string): boolean => {
-  const octets = value.split('.').map(Number)
-  const [first = -1, second = -1] = octets
-  return (
-    first === 0 ||
-    first === 10 ||
-    first === 127 ||
-    (first === 169 && second === 254) ||
-    (first === 172 && second >= 16 && second <= 31) ||
-    (first === 192 && second === 168) ||
-    (first === 100 && second >= 64 && second <= 127) ||
-    first >= 224
-  )
-}
-
-const blockedIpv6 = new BlockList()
-for (const [address, prefix] of [
-  ['::', 8],
-  ['64:ff9b::', 96],
-  ['64:ff9b:1::', 48],
-  ['100::', 64],
-  ['2001::', 32],
-  ['2001:2::', 48],
-  ['2001:10::', 28],
-  ['2001:20::', 28],
-  ['2001:db8::', 32],
-  ['2002::', 16],
-  ['3fff::', 20],
-  ['fc00::', 7],
-  ['fe80::', 10],
-  ['fec0::', 10],
-  ['ff00::', 8],
-] as const) {
-  blockedIpv6.addSubnet(address, prefix, 'ipv6')
-}
-
-export const isPrivateNetworkAddress = (value: string): boolean => {
-  const normalized = value.toLowerCase().split('%')[0] ?? ''
-  const family = isIP(normalized)
-  if (family === 4) return isPrivateIpv4(normalized)
-  if (family !== 6) return true
-  return blockedIpv6.check(normalized, 'ipv6')
-}
+const urlHostname = (url: URL): string => normalizeUrlHostname(url)
 
 interface ResolvedPublicUrl {
   readonly address: string
@@ -110,7 +69,7 @@ const requestPinnedAddress = async (
       {
         method,
         headers: Object.fromEntries(headers.entries()),
-        lookup: (_hostname, _options, callback) => callback(null, resolved.address, resolved.family),
+        lookup: pinnedLookup(resolved),
         ...(url.protocol === 'https:' && !isIP(urlHostname(url)) ? { servername: urlHostname(url) } : {}),
       },
       (response) => {
