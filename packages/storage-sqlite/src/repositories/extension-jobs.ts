@@ -1,4 +1,4 @@
-import { and, asc, eq, isNull, sql } from 'drizzle-orm'
+import { and, asc, eq, isNull, notInArray, sql } from 'drizzle-orm'
 import type { AgentId, ChannelId, ExtensionId, JsonValue } from '@nekro-nxt/contracts'
 import { AgentIdSchema, ChannelIdSchema, ExtensionIdSchema } from '@nekro-nxt/contracts'
 import type { DrizzleCoreDatabase } from '../database.js'
@@ -185,9 +185,8 @@ export function createExtensionJobsRepository(database: DrizzleCoreDatabase) {
         conditions.push(eq(extensionJobs.extensionId, options.extensionId))
       }
 
-      conditions.push(
-        sql`${extensionJobs.declaredKey} NOT IN (${sql.join(options.keep.map((k) => sql.raw(`'${k}'`)))})`,
-      )
+      // An empty keep list removes every declared job; NOT IN () is not valid SQL.
+      if (options.keep.length > 0) conditions.push(notInArray(extensionJobs.declaredKey, options.keep))
 
       const result = database
         .delete(extensionJobs)

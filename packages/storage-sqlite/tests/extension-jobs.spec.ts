@@ -515,6 +515,11 @@ describe('Extension Jobs Repository', () => {
 
       const removed = repo.getExtensionJob('job_DELETE2')
       expect(removed).toBeUndefined()
+
+      // Keys are bound parameters: quotes are data, and an empty keep list removes every declared job.
+      expect(repo.deleteDeclaredJobsExcept({ agentId, extensionId, keep: ["x') OR ('1'='1"] })).toBe(1)
+      expect(repo.getExtensionJob('job_KEEP1')).toBeUndefined()
+      expect(repo.deleteDeclaredJobsExcept({ agentId, extensionId, keep: [] })).toBe(0)
     })
   })
 
