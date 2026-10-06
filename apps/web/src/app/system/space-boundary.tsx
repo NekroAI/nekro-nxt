@@ -1,11 +1,14 @@
 import { RotateCcw } from 'lucide-react'
 import { Component, type ReactNode } from 'react'
 import { Button, EmptyState } from '../../ui-kit/next/index.js'
+import { useLocation } from 'react-router-dom'
+import { SPACES } from '../shell/app-shell.js'
 import { useCrumb } from '../shell/crumb.js'
 
-/** Replaces the breadcrumb of the space that failed, which never got to set its own. */
+/** Replaces the path of the space that failed, which never got to set its own. */
 function FailedCrumb() {
-  useCrumb('页面未加载')
+  const segment = `/${useLocation().pathname.split('/')[1] ?? ''}`
+  useCrumb(SPACES.find((space) => space.path === segment)?.label ?? '设置', '页面未加载')
   return null
 }
 

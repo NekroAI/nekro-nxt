@@ -1336,9 +1336,8 @@ test('external channel exposes processing feedback and per-event trigger control
   await expect(feedback).toBeChecked()
   await feedback.click()
   await expect(feedback).not.toBeChecked()
-  const events = inspector.getByRole('button', { name: /^特殊事件/u })
-  await expect(events).toHaveText('特殊事件 · 跟随账号')
-  await events.click()
+  await expect(inspector.getByText('跟随账号', { exact: true })).toBeVisible()
+  await inspector.getByRole('button', { name: '展开特殊事件' }).click()
   for (const label of ['轻触成员', '负向反馈']) {
     await expect(inspector.getByRole('combobox', { name: label })).toBeVisible()
   }
@@ -1350,9 +1349,9 @@ test('external channel exposes processing feedback and per-event trigger control
   const negativeFeedback = inspector.getByRole('combobox', { name: '负向反馈' })
   await expect(negativeFeedback.locator('option:checked')).toHaveText('跟随账号（不触发）')
   await negativeFeedback.selectOption({ label: '触发' })
-  await expect(events).toHaveText('特殊事件 · 2 项单独设置')
+  await expect(inspector.getByText('2 项单独设置', { exact: true })).toBeVisible()
   await poke.selectOption({ label: '跟随账号（触发）' })
-  await expect(events).toHaveText('特殊事件 · 1 项单独设置')
+  await expect(inspector.getByText('1 项单独设置', { exact: true })).toBeVisible()
   expect(bindingRequests).toEqual([
     expect.objectContaining({ processingFeedback: 'off', activityTriggerOverrides: {} }),
     expect.objectContaining({ processingFeedback: 'off', activityTriggerOverrides: { 'member-poked': false } }),

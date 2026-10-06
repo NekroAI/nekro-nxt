@@ -183,7 +183,7 @@
 }
 
 .axis span:last-child {
-  color: var(--brass);
+  color: var(--fg-2);
   font-weight: 600;
 }
 
