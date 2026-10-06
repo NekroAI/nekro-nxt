@@ -201,15 +201,16 @@ export const extensionDescription = (description: string): string =>
     .replace(/([\p{Script=Han}])\s+([与和及、，。；])/gu, '$1$2')
 
 export const contributionLabel = (contribution: string): string => {
-  const match = /^(工具|RPC|界面|页面)[：:]\s*(.+)$/u.exec(contribution)
+  const match = /^(工具视图|工具|RPC|面板|富消息|页面|适配器)[：:]\s*(.+)$/u.exec(contribution)
   if (!match) return contribution
   const [, kind, name = ''] = match
   if (kind === '工具') return `智能体工具 · ${name}`
   if (kind === 'RPC') return `界面数据接口 · ${name}`
   if (kind === '页面') return `专属页面 · ${name}`
-  if (name === 'agent.workbench.sections' || name === '智能体工作台') return '智能体工作台面板'
-  if (name === 'extension.details.panels' || name === '扩展详情') return '扩展详情面板'
-  return `产品界面 · ${name}`
+  if (kind === '面板') return `面板 · ${name}`
+  if (kind === '工具视图') return `工具视图 · ${name}`
+  if (kind === '富消息') return `富消息 · ${name}`
+  return `平台适配器 · ${name}`
 }
 
 /**

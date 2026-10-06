@@ -35,11 +35,6 @@ type Revision = LocalExtensionSummary['revisions'][number]
 
 const failure = (error: unknown) => toast(error instanceof Error ? error.message : String(error), { tone: 'bad' })
 
-const SLOT_NAMES: Record<string, string> = {
-  'agent.workbench.sections': '智能体面板',
-  'extension.details.panels': '扩展详情面板',
-}
-
 const download = async (extension: LocalExtensionSummary, revision: Revision) => {
   const bytes = await callHostApi(
     HostApiContracts.exportExtensionRevision,
@@ -414,7 +409,7 @@ function RevisionRow({
                 return (
                   <li key={item}>
                     <span>{part.kind}</span>
-                    {SLOT_NAMES[part.name] ?? part.name}
+                    {part.name}
                   </li>
                 )
               })}

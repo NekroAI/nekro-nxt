@@ -64,6 +64,8 @@ describe('workshop helpers', () => {
   it('splits contribution labels', () => {
     expect(contributionParts('工具：weather_lookup')).toEqual({ kind: '工具', name: 'weather_lookup' })
     expect(contributionParts('RPC：forecast')).toEqual({ kind: '数据接口', name: 'forecast' })
+    expect(contributionParts('工具视图：weather_lookup')).toEqual({ kind: '工具视图', name: 'weather_lookup' })
+    expect(contributionParts('面板：summary')).toEqual({ kind: '面板', name: 'summary' })
     expect(contributionParts('其他')).toEqual({ kind: '内容', name: '其他' })
   })
 
