@@ -19,17 +19,17 @@
 
 .editorFrame {
   position: relative;
-  border: 1px solid var(--nxt-border-default);
-  border-radius: var(--nxt-radius-md);
-  background: var(--nxt-bg-surface);
+  border: 1px solid var(--line-2);
+  border-radius: var(--r-1);
+  background: var(--surface);
   transition:
     border-color var(--nxt-motion-fast) var(--nxt-ease-standard),
     box-shadow var(--nxt-motion-fast) var(--nxt-ease-standard);
 }
 
 .editorFrame:focus-within {
-  border-color: var(--nxt-focus-ring);
-  box-shadow: 0 0 0 2px color-mix(in srgb, var(--nxt-focus-ring) 22%, transparent);
+  border-color: var(--accent-line);
+  box-shadow: 0 0 0 3px var(--accent-soft);
 }
 
 .editor {

@@ -177,8 +177,8 @@ export function ChannelInspector({
               value={agent?.id ?? ''}
               {...(agent ? {} : { placeholder: '选择智能体' })}
               options={agents.map((item) => ({ value: item.id, label: item.name }))}
-              onChange={(event) => {
-                const next = event.target.value
+              onValueChange={(value) => {
+                const next = value
                 if (next && next !== agent?.id)
                   setIntent({ kind: agent ? 'replace' : 'bind', channelId: channel.id, agentId: next })
               }}
@@ -190,7 +190,7 @@ export function ChannelInspector({
                 aria-label="触发方式"
                 value={binding.triggerPolicy}
                 options={TRIGGERS.map((value) => ({ value, label: triggerLabel[value] ?? value }))}
-                onChange={(event) => isTriggerPolicy(event.target.value) && void changeTrigger(event.target.value)}
+                onValueChange={(value) => isTriggerPolicy(value) && void changeTrigger(value)}
               />
             </PropertyRow>
           ) : null}
@@ -243,10 +243,10 @@ export function ChannelInspector({
                           { value: 'on', label: '触发' },
                           { value: 'off', label: '不触发' },
                         ]}
-                        onChange={(event) => {
+                        onValueChange={(value) => {
                           const next = { ...binding.activityTriggerOverrides }
-                          if (event.target.value === 'inherit') delete next[activity.key]
-                          else next[activity.key] = event.target.value === 'on'
+                          if (value === 'inherit') delete next[activity.key]
+                          else next[activity.key] = value === 'on'
                           void updateBinding({ activityTriggerOverrides: next })
                         }}
                       />

@@ -306,7 +306,7 @@ function ConnectionDetail({ connection }: { readonly connection: ConnectionSumma
                   <div className={styles.testSend}>
                     <Select
                       value={testChannel}
-                      onChange={(event) => setTestChannel(event.target.value)}
+                      onValueChange={(value) => setTestChannel(value)}
                       options={connection.knownChannels.map((channel) => ({ value: channel.id, label: channel.name }))}
                       aria-label="测试频道"
                     />
@@ -415,8 +415,8 @@ function ChannelDetail({ channelId }: { readonly channelId: string }) {
                 { value: '', label: '未接线' },
                 ...agents.map((item) => ({ value: item.id, label: item.name })),
               ]}
-              onChange={(event) => {
-                const next = event.target.value
+              onValueChange={(value) => {
+                const next = value
                 if (next === channel.agentId) return
                 if (!next) setIntent({ kind: 'unbind', channelId: channel.id })
                 else setIntent({ kind: channel.agentId ? 'replace' : 'bind', channelId: channel.id, agentId: next })

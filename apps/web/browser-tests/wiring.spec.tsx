@@ -116,7 +116,7 @@ test.describe('wiring', () => {
       await detail.getByRole('button', { name: /资料员的内置频道/u }).click()
       await expect(page).toHaveURL(new RegExp(`/wiring/channels/${targetChannelId}$`, 'u'))
       await expect(detail.getByRole('heading', { name: '资料员的内置频道' })).toBeVisible()
-      await expect(detail.getByRole('combobox', { name: '资料员的内置频道 的响应智能体' })).toHaveValue(targetAgentId)
+      await expect(detail.getByRole('combobox', { name: '资料员的内置频道 的响应智能体' })).toHaveText('资料员')
 
       await page.getByRole('button', { name: /^产品讨论群/u }).click()
       await expect(page).toHaveURL(new RegExp(`/wiring/channels/${externalChannelId}$`, 'u'))

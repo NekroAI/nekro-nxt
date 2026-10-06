@@ -455,7 +455,7 @@ export function ChannelList({ selectedId }: { readonly selectedId: string | unde
               aria-label="筛选频道"
               className={styles.filter}
               value={filter}
-              onChange={(event) => setFilter(event.target.value)}
+              onValueChange={(value) => setFilter(value)}
               options={[
                 { value: 'all', label: '全部' },
                 { value: 'unread', label: '未读' },

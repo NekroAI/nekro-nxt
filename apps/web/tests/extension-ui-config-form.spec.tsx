@@ -23,13 +23,22 @@ describe('ConfigForm', () => {
     const html = renderToStaticMarkup(<ConfigForm schema={schema} value={{}} onChange={() => undefined} />)
     expect(html).toContain('连接')
     expect(html).toContain('服务地址 *')
-    expect(html).toContain('>安静<')
-    expect(html).toContain('>详细<')
+    // Enum options open in a popup; statically the field shows its label and the current choice.
+    expect(html).toContain('模式')
+    expect(html).toContain('role="combobox"')
     expect(html).toContain('代理地址')
     expect(html).toContain('高级设置')
     expect(html).toContain('aria-expanded="false"')
     // Secrets only render when the caller manages them.
     expect(html).not.toContain('访问令牌')
+  })
+
+  it('shows the chosen enum label in the closed field', () => {
+    const html = renderToStaticMarkup(
+      <ConfigForm schema={schema} value={{ mode: 'verbose' }} onChange={() => undefined} />,
+    )
+    expect(html).toContain('详细')
+    expect(html).not.toContain('安静')
   })
 
   it('shows secrets as write-only fields when secrets are managed', () => {

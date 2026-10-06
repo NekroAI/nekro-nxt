@@ -900,7 +900,7 @@
   gap: var(--s-2);
   padding: var(--s-2) var(--s-2) var(--s-2) var(--s-2);
   border: 1px solid var(--line-2);
-  border-radius: 16px;
+  border-radius: var(--r-2);
   background: var(--surface);
   box-shadow: var(--sh-2);
   transition:
@@ -912,7 +912,7 @@
   border-color: var(--accent-line);
   box-shadow:
     var(--sh-2),
-    0 0 0 4px var(--accent-soft);
+    0 0 0 3px var(--accent-soft);
 }
 
 .as {

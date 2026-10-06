@@ -137,7 +137,9 @@
 }
 
 .search:focus-within {
-  box-shadow: inset 0 0 0 1px var(--accent-line);
+  box-shadow:
+    inset 0 0 0 1px var(--accent-line),
+    0 0 0 3px var(--accent-soft);
 }
 
 .searchIcon {

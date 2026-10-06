@@ -80,7 +80,7 @@ export function BindDialog({ intent, onClose }: { readonly intent: BindIntent | 
         <Select
           value={trigger}
           options={triggerOptions}
-          onChange={(event) => isTriggerPolicy(event.target.value) && setTrigger(event.target.value)}
+          onValueChange={(value) => isTriggerPolicy(value) && setTrigger(value)}
         />
       </Field>
     </ConfirmDialog>

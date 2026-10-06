@@ -98,7 +98,7 @@ export function SaveDialog({
       <Field label="保存到">
         <Select
           value={target}
-          onChange={(event) => setTarget(event.target.value)}
+          onValueChange={(value) => setTarget(value)}
           options={[
             { value: '', label: '新扩展' },
             ...extensions.map((item) => ({ value: item.id, label: `追加到「${item.name}」` })),

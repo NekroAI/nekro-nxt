@@ -170,7 +170,7 @@ const installRuntimeFailureGate = (page: Page): string[] => {
   return failures
 }
 
-test('production bundle keeps every space usable and retired links land on 现场 without runtime errors', async ({
+test('production bundle keeps every space usable and retired links land on 概览 without runtime errors', async ({
   page,
 }) => {
   const failures = installRuntimeFailureGate(page)
@@ -191,14 +191,14 @@ test('production bundle keeps every space usable and retired links land on 现�
     '/settings/about',
   ]) {
     await page.goto(route)
-    await expect(page.getByRole('navigation', { name: '主导航' }).getByRole('link', { name: '现场' })).toBeVisible()
+    await expect(page.getByRole('navigation', { name: '主导航' }).getByRole('link', { name: '概览' })).toBeVisible()
     await expect(page.locator('main')).not.toBeEmpty()
   }
   // Retired client routes (saved Desktop routes, old bookmarks) open the app and land on its home.
   for (const route of ['/work/channels/chn_retired', '/users', '/extensions/ext_retired', '/connections']) {
     await page.goto(route)
     await expect(page).toHaveURL(/\/live$/u)
-    await expect(page.getByRole('heading', { name: '现场', level: 1 })).toBeVisible()
+    await expect(page.getByRole('heading', { name: '概览', level: 1 })).toBeVisible()
   }
   expect(failures, failures.join('\n')).toEqual([])
 })
@@ -361,7 +361,8 @@ test('provider connection test uses the unsaved page draft without saving it', a
   await page.getByLabel('供应商名称').fill('Draft Gateway')
   await page.getByLabel('API 密钥').fill('unsaved-draft-key')
   await page.getByLabel('API 地址').fill('https://draft.example.test/v1')
-  await page.getByLabel('API 协议').selectOption('openai-completions')
+  await page.getByLabel('API 协议').click()
+  await page.getByRole('option', { name: 'openai-completions', exact: true }).click()
   await page.getByRole('button', { name: '添加模型' }).click()
   await page.getByRole('textbox', { name: '模型 ID' }).fill('draft-model')
   await page.getByRole('button', { name: '测试连接' }).click()
@@ -670,7 +671,15 @@ test('a verified Adapter can install, create a schema-backed connection, roll ba
   await expect(page.getByRole('heading', { name: '合成聊天适配器', level: 1 })).toBeVisible()
   await expect(page.getByText('未安装', { exact: true }).first()).toBeVisible()
   const version = page.getByRole('combobox', { name: '保存记录' })
-  await version.selectOption(revisionV2)
+  // Records list newest first: the first option is v2, the second v1.
+  const pickRecord = async (position: number) => {
+    await version.click()
+    const option = page.getByRole('option').nth(position)
+    const label = (await option.textContent()) ?? ''
+    await option.click()
+    return label
+  }
+  await pickRecord(0)
   await page.getByRole('button', { name: '安装', exact: true }).click()
   await expect(page.getByText('已安装', { exact: true }).first()).toBeVisible()
   expect(installationRequests).toEqual([revisionV2])
@@ -687,13 +696,13 @@ test('a verified Adapter can install, create a schema-backed connection, roll ba
   await expect(detail.getByRole('combobox', { name: '测试频道' })).toContainText('合成演示频道')
 
   await page.goto(`/workshop/extensions/${extensionId}`)
-  await version.selectOption(revisionV1)
+  const v1 = await pickRecord(1)
   await page.getByRole('button', { name: '切换到这份' }).click()
-  await expect(version).toHaveValue(revisionV1)
-  await expect(version.locator('option:checked')).toHaveText(/ · 已安装$/u)
-  await version.selectOption(revisionV2)
+  await expect(version).toHaveText(`${v1} · 已安装`)
+  await pickRecord(0)
   await page.getByRole('button', { name: '切换到这份' }).click()
-  await expect(version.locator('option:checked')).toHaveText(/ · 已安装$/u)
+  await expect(version).toHaveText(/ · 已安装$/u)
+  await expect(version).not.toHaveText(`${v1} · 已安装`)
   await expect(page.locator('main')).not.toContainText(/(?:^|[^a-z_])r\d+(?:[^\d]|$)/u)
   expect(installationRequests).toEqual([revisionV2, revisionV1, revisionV2])
   expect(await page.locator('main').evaluate((element) => element.scrollWidth <= element.clientWidth + 1)).toBe(true)
@@ -923,7 +932,8 @@ test("an intelligent-agent can add another channel while replacing that channel'
   await page.getByRole('menuitem', { name: new RegExp(`^${sourceName} 的内置频道`, 'u') }).click()
   const dialog = page.getByRole('dialog')
   await expect(dialog.getByRole('heading', { name: `让${targetName}响应「${sourceName} 的内置频道」` })).toBeVisible()
-  await dialog.getByLabel('触发').selectOption({ label: '仅观察' })
+  await dialog.getByLabel('触发').click()
+  await page.getByRole('option', { name: '仅观察', exact: true }).click()
   await dialog.getByRole('button', { name: '换绑' }).click()
   await expect(dialog).toBeHidden()
   await expect(page.getByText(`「${sourceName} 的内置频道」已交给${targetName}`)).toBeVisible()
@@ -1355,13 +1365,17 @@ test('external channel exposes processing feedback and per-event trigger control
   await expect(inspector.getByRole('combobox', { name: '账号资料更新' })).toHaveCount(0)
   await expect(inspector.getByRole('combobox', { name: '私聊专属活动' })).toHaveCount(0)
   const poke = inspector.getByRole('combobox', { name: '轻触成员' })
-  await expect(poke.locator('option:checked')).toHaveText('跟随账号（触发）')
-  await poke.selectOption({ label: '不触发' })
+  const choose = async (field: typeof poke, label: string) => {
+    await field.click()
+    await page.getByRole('option', { name: label, exact: true }).click()
+  }
+  await expect(poke).toHaveText('跟随账号（触发）')
+  await choose(poke, '不触发')
   const negativeFeedback = inspector.getByRole('combobox', { name: '负向反馈' })
-  await expect(negativeFeedback.locator('option:checked')).toHaveText('跟随账号（不触发）')
-  await negativeFeedback.selectOption({ label: '触发' })
+  await expect(negativeFeedback).toHaveText('跟随账号（不触发）')
+  await choose(negativeFeedback, '触发')
   await expect(inspector.getByText('2 项单独设置', { exact: true })).toBeVisible()
-  await poke.selectOption({ label: '跟随账号（触发）' })
+  await choose(poke, '跟随账号（触发）')
   await expect(inspector.getByText('1 项单独设置', { exact: true })).toBeVisible()
   expect(bindingRequests).toEqual([
     expect.objectContaining({ processingFeedback: 'off', activityTriggerOverrides: {} }),
@@ -1595,7 +1609,7 @@ test('channel context controls and intelligent-agent deletion are guarded and re
   await installWorkspaceRoutes(page, () => snapshot)
   await page.goto(`/channels/${externalChannelId}`)
   const inspector = page.getByRole('complementary', { name: '频道信息' })
-  await expect(inspector.getByRole('combobox', { name: '智能体' })).toHaveValue('')
+  await expect(inspector.getByRole('combobox', { name: '智能体' })).toHaveText('选择智能体')
   await inspector.getByRole('button', { name: '移除频道' }).click()
   const channelDeleteDialog = page.getByRole('dialog', { name: '移除「待移除的外部频道」？' })
   await expect(channelDeleteDialog).toContainText('聊天记录保留')

@@ -103,7 +103,7 @@ export function AgentCreate() {
                     value: agentModelKey(item),
                     label: `${item.providerName} · ${item.name}`,
                   }))}
-                  onChange={(event) => setModelKey(event.target.value)}
+                  onValueChange={(value) => setModelKey(value)}
                 />
               </PropertyRow>
             ) : null}

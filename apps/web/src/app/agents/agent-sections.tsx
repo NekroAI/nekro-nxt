@@ -104,7 +104,7 @@ export function ModelSection({
             value={model ? draft.modelKey : ''}
             {...(model ? {} : { placeholder: '选择模型' })}
             options={options}
-            onChange={(event) => update((current) => ({ ...current, modelKey: event.target.value }))}
+            onValueChange={(value) => update((current) => ({ ...current, modelKey: value }))}
           />
         </PropertyRow>
         {model && !supportsImages(model) ? (
@@ -122,7 +122,7 @@ export function ModelSection({
                   .filter(supportsImages)
                   .map((item) => ({ value: agentModelKey(item), label: modelLabel(item) })),
               ]}
-              onChange={(event) => update((current) => ({ ...current, visionKey: event.target.value }))}
+              onValueChange={(value) => update((current) => ({ ...current, visionKey: value }))}
             />
           </PropertyRow>
         ) : null}
@@ -216,7 +216,7 @@ export function ChannelsSection({
                     value,
                     label: triggerLabel[value] ?? value,
                   }))}
-                  onChange={(event) => void changeTrigger(channel.id, event.target.value)}
+                  onValueChange={(value) => void changeTrigger(channel.id, value)}
                 />
               ) : null
             },

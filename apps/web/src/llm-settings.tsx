@@ -135,7 +135,7 @@ export function AddProviderDialog({
       <Field label="模型供应商" hint="候选项来自当前运行环境的供应商目录。">
         <Select
           value={candidate}
-          onChange={(event) => setCandidate(event.target.value)}
+          onValueChange={(value) => setCandidate(value)}
           options={[
             ...available.map((provider) => ({
               value: provider.provider,
@@ -469,7 +469,7 @@ export function ModelProviderDetail({
                   <Select
                     value={api}
                     placeholder="选择协议"
-                    onChange={(event) => setApi(event.target.value)}
+                    onValueChange={(value) => setApi(value)}
                     options={settings.protocols.map((protocol) => ({ value: protocol, label: protocol }))}
                   />
                 </Field>
@@ -477,7 +477,7 @@ export function ModelProviderDetail({
                 <Field label="API 协议" hint="选择后该供应商的全部模型都使用此协议；加入目录外的模型时必须选择。">
                   <Select
                     value={api || CATALOG_PROTOCOL}
-                    onChange={(event) => setApi(event.target.value === CATALOG_PROTOCOL ? '' : event.target.value)}
+                    onValueChange={(value) => setApi(value === CATALOG_PROTOCOL ? '' : value)}
                     options={[
                       { value: CATALOG_PROTOCOL, label: '沿用各模型自带协议' },
                       ...settings.protocols.map((protocol) => ({ value: protocol, label: protocol })),
@@ -681,7 +681,7 @@ export function AddModelProviderForm({ onSaved }: { readonly onSaved?: () => voi
       <Field label="模型供应商">
         <Select
           value={providerId}
-          onChange={(event) => setProviderId(event.target.value)}
+          onValueChange={(value) => setProviderId(value)}
           options={settings.providers.map((provider) => ({
             value: provider.provider,
             label: providerDisplayName(provider.provider, provider.displayName),

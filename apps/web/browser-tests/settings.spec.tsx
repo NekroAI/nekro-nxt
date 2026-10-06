@@ -117,14 +117,16 @@ test.describe('settings space', () => {
     const { page, errors } = await open('/settings/models', { width: 1000 })
     try {
       await expect(page.getByRole('complementary', { name: '设置' })).toBeHidden()
-      await page.getByRole('combobox', { name: '模型供应商' }).selectOption('example-b')
+      await page.getByRole('combobox', { name: '模型供应商' }).click()
+      await page.getByRole('option', { name: /示例供应商乙/u }).click()
       await expect(page.getByRole('heading', { name: '示例供应商乙', level: 2 })).toBeVisible()
       // The model table drops its secondary column instead of clipping the id.
       const table = page.getByRole('table', { name: '模型列表' })
       await expect(table.getByText('模型 ID', { exact: true })).toBeVisible()
       const id = table.getByRole('textbox', { name: '模型 ID' }).first()
       expect(await id.evaluate((input: HTMLInputElement) => input.scrollWidth <= input.clientWidth + 1)).toBe(true)
-      await page.getByRole('combobox', { name: '设置分节' }).selectOption('appearance')
+      await page.getByRole('combobox', { name: '设置分节' }).click()
+      await page.getByRole('option', { name: '外观', exact: true }).click()
       await expect(page.getByRole('heading', { name: '外观', level: 1 })).toBeVisible()
       expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true)
       expect(errors).toEqual([])

@@ -250,7 +250,7 @@ function ExtensionSettings({ extension }: { readonly extension: LocalExtensionSu
               <Select
                 aria-label="配置哪个智能体"
                 value={agentId}
-                onChange={(event) => setChosen(event.target.value)}
+                onValueChange={(value) => setChosen(value)}
                 options={enabledAgents.map((agent) => ({ value: agent.id, label: agent.name }))}
               />
             ) : undefined
@@ -343,7 +343,7 @@ function AgentUsage({
             aria-label={`${agent.name}使用的保存记录`}
             value={record.revisionId}
             disabled={pending !== ''}
-            onChange={(event) => void change(agent.id, true, event.target.value)}
+            onValueChange={(value) => void change(agent.id, true, value)}
             options={recordOptions}
           />
         ) : (
@@ -435,7 +435,7 @@ function Installation({
           <Select
             aria-label="保存记录"
             value={choice}
-            onChange={(event) => setChoice(event.target.value)}
+            onValueChange={(value) => setChoice(value)}
             options={extension.revisions.toReversed().map((item) => ({
               value: item.id,
               label: `${labels.get(item.id) ?? ''}${item.id === installed?.revisionId ? ' · 已安装' : ''}`,

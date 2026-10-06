@@ -214,7 +214,7 @@ function ConfigFieldControl({
             disabled={disabled}
             placeholder="请选择"
             options={options.map((option, position) => ({ value: String(position), label: option.label }))}
-            onChange={(event) => onValue(options[Number(event.target.value)]?.value)}
+            onValueChange={(value) => onValue(options[Number(value)]?.value)}
           />
         </Field>
       )

@@ -1,5 +1,6 @@
 .field {
   display: grid;
+  align-content: start;
   gap: 6px;
   min-width: 0;
 }
@@ -22,15 +23,15 @@
   line-height: 1.5;
 }
 
+/* One field surface for every text entry: inputs, selects, secrets, search and multi-line editors. */
 .control {
   width: 100%;
-  min-height: 34px;
-  padding: 6px 11px;
+  min-height: var(--control);
+  padding: 0 var(--s-3);
   border: 1px solid var(--line-2);
-  border-radius: 9px;
+  border-radius: var(--r-1);
   outline: none;
   background: var(--surface);
-  box-shadow: var(--sh-1);
   color: var(--fg);
   font-size: var(--fs-sm);
   transition:
@@ -49,9 +50,7 @@
 .control:focus-visible {
   border-color: var(--accent-line);
   outline: none;
-  box-shadow:
-    var(--sh-1),
-    0 0 0 4px var(--accent-soft);
+  box-shadow: 0 0 0 3px var(--accent-soft);
 }
 
 .control:disabled {
@@ -65,17 +64,126 @@
 
 .textarea {
   min-height: 96px;
+  padding: var(--s-2) var(--s-3);
   line-height: 1.7;
   resize: vertical;
 }
 
 .select {
-  padding-right: 32px;
-  appearance: none;
-  background: var(--surface)
-    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%238892a4' stroke-width='2' stroke-linecap='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E")
-    no-repeat right 10px center / 14px;
+  display: flex;
+  align-items: center;
+  gap: var(--s-2);
+  padding-right: var(--s-2);
+  color: var(--fg);
+  text-align: left;
   cursor: pointer;
+}
+
+.select[data-placeholder] .selectValue {
+  color: var(--faint);
+}
+
+.select[data-state='open'] {
+  border-color: var(--accent-line);
+  box-shadow: 0 0 0 3px var(--accent-soft);
+}
+
+.selectValue {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.selectIcon {
+  display: grid;
+  flex: none;
+  color: var(--muted);
+  transition: transform var(--dur-2) var(--ease);
+}
+
+.selectIcon svg {
+  width: var(--icon-sm);
+  height: var(--icon-sm);
+}
+
+.select[data-state='open'] .selectIcon {
+  transform: rotate(180deg);
+}
+
+.selectContent {
+  z-index: 70;
+  min-width: var(--radix-select-trigger-width);
+  max-width: min(480px, calc(100vw - 24px));
+  max-height: min(360px, var(--radix-select-content-available-height));
+  overflow: hidden;
+  border: 1px solid var(--line-2);
+  border-radius: var(--r-2);
+  background: var(--surface);
+  box-shadow: var(--sh-3);
+  transform-origin: var(--radix-select-content-transform-origin);
+}
+
+.selectContent[data-state='open'] {
+  animation: selectIn var(--dur-2) var(--ease) both;
+}
+
+@keyframes selectIn {
+  from {
+    opacity: 0;
+    transform: translateY(-4px) scale(0.98);
+  }
+}
+
+.selectViewport {
+  padding: var(--s-1);
+}
+
+.selectItem {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: var(--s-2);
+  min-height: var(--control);
+  padding: 0 var(--s-7) 0 var(--s-3);
+  border-radius: var(--r-1);
+  outline: none;
+  color: var(--fg);
+  font: var(--t-body);
+  cursor: pointer;
+  user-select: none;
+}
+
+.selectItem[data-highlighted] {
+  background: var(--hover);
+}
+
+/* The highlighted row is the keyboard position; a second focus ring would only repeat it. */
+.selectItem:focus-visible {
+  outline: none;
+  box-shadow: none;
+}
+
+.selectItem[data-state='checked'] {
+  color: var(--accent);
+  font-weight: 550;
+}
+
+.selectItem[data-disabled] {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.selectCheck {
+  position: absolute;
+  right: var(--s-3);
+  display: grid;
+}
+
+.selectCheck svg {
+  width: var(--icon-sm);
+  height: var(--icon-sm);
 }
 
 .switch {

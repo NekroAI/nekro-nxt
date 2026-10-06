@@ -652,8 +652,8 @@ function GenericField(props: GenericFieldProps): ReactNode {
               value: String(index),
               label: schemaChoiceLabel(candidate, index),
             }))}
-            onChange={(event) => {
-              const choice = choices[Number(event.target.value)]
+            onValueChange={(value) => {
+              const choice = choices[Number(value)]
               if (choice) onSet(path, defaultValueForNode(choice))
             }}
           />
@@ -1513,8 +1513,7 @@ export function DshPluginDetail({
                           label: item.suggestedScope === 'agent' ? '指定智能体（建议）' : '指定智能体',
                         },
                       ]}
-                      onChange={(event) => {
-                        const value = event.target.value
+                      onValueChange={(value) => {
                         if (value === 'host' || value === 'agent')
                           setEntryScope((current) => ({ ...current, [item.id]: value }))
                       }}
@@ -1525,9 +1524,7 @@ export function DshPluginDetail({
                       <Select
                         value={entryAgent[item.id] ?? fallbackAgent}
                         options={agents.map((agent) => ({ value: agent.id, label: agent.name }))}
-                        onChange={(event) =>
-                          setEntryAgent((current) => ({ ...current, [item.id]: event.target.value }))
-                        }
+                        onValueChange={(value) => setEntryAgent((current) => ({ ...current, [item.id]: value }))}
                       />
                     </Field>
                   ) : null}
@@ -1614,7 +1611,7 @@ export function DshPluginDetail({
               aria-label="配置区域"
               value={activeNamespace?.ns ?? ''}
               options={namespaces.map((item) => ({ value: item.ns, label: item.ns }))}
-              onChange={(event) => setSelectedNamespace(event.target.value)}
+              onValueChange={(value) => setSelectedNamespace(value)}
             />
           ) : undefined
         }

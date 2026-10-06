@@ -270,7 +270,7 @@ function NarrowNav({
         aria-label="设置分节"
         value={section}
         options={SECTIONS.map((item) => ({ value: item.key, label: item.label }))}
-        onChange={(event) => void navigate(`/settings/${event.target.value}`)}
+        onValueChange={(value) => void navigate(`/settings/${value}`)}
       />
       {section === 'models' && (providers.length > 0 || pendingProvider) ? (
         <Select
@@ -283,7 +283,7 @@ function NarrowNav({
             })),
             ...(pendingProvider ? [{ value: pendingProvider.key, label: pendingProvider.label }] : []),
           ]}
-          onChange={(event) => void navigate(`/settings/models?provider=${encodeURIComponent(event.target.value)}`)}
+          onValueChange={(value) => void navigate(`/settings/models?provider=${encodeURIComponent(value)}`)}
         />
       ) : null}
       {section === 'dsh' && entries.length > 0 ? (
@@ -294,7 +294,7 @@ function NarrowNav({
             value: entry.id,
             label: `${entry.label}（${DSH_GROUP_LABEL[entry.group]}）`,
           }))}
-          onChange={(event) => void navigate(`/settings/dsh?entry=${encodeURIComponent(event.target.value)}`)}
+          onValueChange={(value) => void navigate(`/settings/dsh?entry=${encodeURIComponent(value)}`)}
         />
       ) : null}
     </div>

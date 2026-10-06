@@ -1,4 +1,6 @@
+import * as RadixSelect from '@radix-ui/react-select'
 import * as RadixSwitch from '@radix-ui/react-switch'
+import { Check, ChevronDown } from 'lucide-react'
 import {
   cloneElement,
   forwardRef,
@@ -7,7 +9,7 @@ import {
   type InputHTMLAttributes,
   type ReactElement,
   type ReactNode,
-  type SelectHTMLAttributes,
+  type ButtonHTMLAttributes,
   type TextareaHTMLAttributes,
 } from 'react'
 import styles from './form.module.css'
@@ -101,26 +103,71 @@ export interface SelectOption {
   readonly disabled?: boolean
 }
 
+// Radix reserves the empty value for "nothing selected"; an option whose value is '' travels under this key instead.
+const EMPTY = '\u0000empty'
+const toKey = (value: string) => (value === '' ? EMPTY : value)
+const fromKey = (key: string) => (key === EMPTY ? '' : key)
+
+/** Single choice from a short list, drawn with the product's own popup instead of the browser's. */
 export const Select = forwardRef<
-  HTMLSelectElement,
-  Omit<SelectHTMLAttributes<HTMLSelectElement>, 'children'> & {
+  HTMLButtonElement,
+  Omit<ButtonHTMLAttributes<HTMLButtonElement>, 'value' | 'defaultValue' | 'onChange' | 'children'> & {
     readonly options: readonly SelectOption[]
+    readonly value?: string | undefined
+    readonly defaultValue?: string | undefined
+    readonly onValueChange?: (value: string) => void
     readonly placeholder?: string
+    readonly name?: string
+    readonly required?: boolean
   }
->(function Select({ className, options, placeholder, ...props }, ref) {
+>(function Select(
+  { className, options, placeholder, value, defaultValue, onValueChange, name, required, disabled, ...trigger },
+  ref,
+) {
+  // An unknown value would render as blank; show the placeholder instead.
+  const known = (candidate: string | undefined) =>
+    candidate !== undefined && options.some((option) => option.value === candidate) ? toKey(candidate) : undefined
+  const controlled = value === undefined ? {} : { value: known(value) ?? '' }
+  const initial = defaultValue === undefined ? {} : { defaultValue: known(defaultValue) ?? '' }
   return (
-    <select ref={ref} className={[styles.control, styles.select, className ?? ''].join(' ')} {...props}>
-      {placeholder !== undefined ? (
-        <option value="" disabled>
-          {placeholder}
-        </option>
-      ) : null}
-      {options.map((option) => (
-        <option key={option.value} value={option.value} disabled={option.disabled}>
-          {option.label}
-        </option>
-      ))}
-    </select>
+    <RadixSelect.Root
+      {...controlled}
+      {...initial}
+      {...(onValueChange ? { onValueChange: (key: string) => onValueChange(fromKey(key)) } : {})}
+      {...(name === undefined ? {} : { name })}
+      {...(required === undefined ? {} : { required })}
+      {...(disabled === undefined ? {} : { disabled })}
+    >
+      <RadixSelect.Trigger
+        ref={ref}
+        className={[styles.control, styles.select, className ?? ''].join(' ')}
+        {...trigger}
+      >
+        <RadixSelect.Value className={styles.selectValue} placeholder={placeholder ?? '请选择'} />
+        <RadixSelect.Icon className={styles.selectIcon}>
+          <ChevronDown aria-hidden="true" />
+        </RadixSelect.Icon>
+      </RadixSelect.Trigger>
+      <RadixSelect.Portal>
+        <RadixSelect.Content className={styles.selectContent} position="popper" sideOffset={4} collisionPadding={12}>
+          <RadixSelect.Viewport className={styles.selectViewport}>
+            {options.map((option) => (
+              <RadixSelect.Item
+                key={option.value}
+                value={toKey(option.value)}
+                disabled={option.disabled ?? false}
+                className={styles.selectItem}
+              >
+                <RadixSelect.ItemText>{option.label}</RadixSelect.ItemText>
+                <RadixSelect.ItemIndicator className={styles.selectCheck}>
+                  <Check aria-hidden="true" />
+                </RadixSelect.ItemIndicator>
+              </RadixSelect.Item>
+            ))}
+          </RadixSelect.Viewport>
+        </RadixSelect.Content>
+      </RadixSelect.Portal>
+    </RadixSelect.Root>
   )
 })
 
