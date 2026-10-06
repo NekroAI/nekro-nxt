@@ -33,9 +33,7 @@ const unsubscribeHost = runtime.host.subscribe(() => undefined)
 createRoot(root).render(
   <StrictMode>
     <ProductRuntimeProvider runtime={runtime}>
-      <BrowserRouter>
-        {nextUi ? <NextApp /> : <NekroNxtApp />}
-      </BrowserRouter>
+      <BrowserRouter>{nextUi ? <NextApp /> : <NekroNxtApp />}</BrowserRouter>
     </ProductRuntimeProvider>
   </StrictMode>,
 )

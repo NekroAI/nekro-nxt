@@ -1,6 +1,7 @@
+import { useGo } from '../model/nav.js'
 import { Boxes, Cable, FolderCog, Globe, MessagesSquare, PencilLine, Sparkles, Trash2, Workflow } from 'lucide-react'
-import { useEffect, useMemo, useState, type CSSProperties, type ReactNode } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { useEffect, useMemo, useState, type ReactNode } from 'react'
+
 import { promptDocumentPlainText, type PromptDocumentV1 } from '@nekro-nxt/contracts'
 import { AGENT_ACCESS_LEVELS, agentAccessPreset, type AgentAccessLevel } from '../../agent-access-level.js'
 import { PromptReferenceEditor } from '../../components/prompt-reference-editor.js'
@@ -27,8 +28,9 @@ import {
   Switch,
   SwitchRow,
   toast,
+  cssVars,
 } from '../../ui-kit/next/index.js'
-import { agentAccent, agentHue, agentPhase, isAgentWorking, triggerLabel } from '../model/identity.js'
+import { agentAccent, agentHue, agentPhase, isAgentWorking, isTriggerPolicy, triggerLabel } from '../model/identity.js'
 import { useProductApi } from '../model/store.js'
 import styles from './agents.module.css'
 
@@ -274,7 +276,8 @@ function Skills({ agent }: { readonly agent: AgentSummary }) {
           value={preset === 'custom' ? 'custom' : String(preset)}
           onChange={(value) => {
             if (value === 'custom') return
-            const next = Number(value) as AgentAccessLevel
+            const next = AGENT_ACCESS_LEVELS.find((option) => String(option.level) === value)?.level
+            if (next === undefined) return
             if (next >= 2) setPendingLevel(next)
             else void applyLevel(next)
           }}
@@ -362,7 +365,7 @@ function Skills({ agent }: { readonly agent: AgentSummary }) {
 
 export function AgentProfile({ agent }: { readonly agent: AgentSummary }) {
   const api = useProductApi()
-  const navigate = useNavigate()
+  const navigate = useGo()
   const models = useProductStore((state) => state.models)
   const channels = useProductStore((state) => state.channels)
   const connections = useProductStore((state) => state.connections)
@@ -392,7 +395,7 @@ export function AgentProfile({ agent }: { readonly agent: AgentSummary }) {
   }
 
   return (
-    <div className={styles.profile} style={{ '--agent-accent': agentAccent(agent) } as CSSProperties}>
+    <div className={styles.profile} style={cssVars({ '--agent-accent': agentAccent(agent) })}>
       <header className={styles.hero}>
         <div className={styles.heroInner}>
           <AgentAvatar name={agent.name} hue={agentHue(agent)} size="lg" live={isAgentWorking(agent)} />
@@ -486,7 +489,7 @@ export function AgentProfile({ agent }: { readonly agent: AgentSummary }) {
                           (value) => ({ value, label: triggerLabel[value] ?? value }),
                         )}
                         onChange={(event) =>
-                          void changeTrigger(channel.id, event.target.value as typeof binding.triggerPolicy)
+                          isTriggerPolicy(event.target.value) && void changeTrigger(channel.id, event.target.value)
                         }
                       />
                     ) : (

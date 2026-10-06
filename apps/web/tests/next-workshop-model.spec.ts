@@ -6,89 +6,58 @@ import {
   SLUG_PATTERN,
   sortTasks,
   type AuthoringAttempt,
-  type AuthoringTask,
+  type LifecycleInput,
 } from '../src/app/workshop/workshop-model.js'
 
-const half = { status: 'absent', waitingFor: [] } as const
+const at = (state: AuthoringAttempt['state'], error?: AuthoringAttempt['error']) =>
+  error === undefined ? { state } : { state, error }
 
-const attempt = (patch: Partial<AuthoringAttempt> = {}): AuthoringAttempt =>
-  ({
-    id: 'att_1',
-    ordinal: 1,
-    name: '天气卡片',
-    purpose: '示例用途',
-    state: 'drafting',
-    riskDigest: 'a'.repeat(64),
-    host: half,
-    client: half,
-    createdAt: 1,
-    ...patch,
-  }) as AuthoringAttempt
-
-const task = (patch: Partial<AuthoringTask> = {}): AuthoringTask =>
-  ({
-    id: 'task_1',
-    agentId: 'agt_1',
-    channelId: 'ch_1',
-    episodeId: 'ep_1',
-    title: '天气卡片',
-    requirementSummary: '',
-    status: 'working',
-    approvalPolicy: 'risk-stable',
-    revision: 1,
-    createdAt: 1,
-    updatedAt: 1,
-    ...patch,
-  }) as AuthoringTask
+const position = (task: LifecycleInput, enabled = false) => lifecyclePosition(task, enabled)
 
 describe('workshop lifecycle', () => {
   it('starts at candidate generation without a candidate', () => {
-    expect(lifecyclePosition(task(), false)).toEqual({ current: 0, failed: false })
+    expect(position({ status: 'working' })).toEqual({ current: 0, failed: false })
   })
 
   it('waits on run confirmation, then advances through start and interface verification', () => {
-    const at = (state: AuthoringAttempt['state']) =>
-      lifecyclePosition(task({ status: 'running', candidateAttempt: attempt({ state }) }), false).current
-    expect(at('awaiting-approval')).toBe(1)
-    expect(at('starting-host')).toBe(2)
-    expect(at('loading-client')).toBe(3)
-    expect(at('verifying')).toBe(3)
+    const step = (state: AuthoringAttempt['state']) =>
+      position({ status: 'running', candidateAttempt: at(state) }).current
+    expect(step('awaiting-approval')).toBe(1)
+    expect(step('starting-host')).toBe(2)
+    expect(step('loading-client')).toBe(3)
+    expect(step('verifying')).toBe(3)
   })
 
   it('moves to save once the latest candidate is verified', () => {
-    expect(lifecyclePosition(task({ status: 'ready', candidateAttempt: attempt({ state: 'active' }) }), false)).toEqual(
-      {
-        current: 4,
-        failed: false,
-      },
-    )
+    expect(position({ status: 'ready', candidateAttempt: at('active') })).toEqual({ current: 4, failed: false })
   })
 
   it('marks the failing phase from the attempt error', () => {
-    const failed = task({
-      status: 'failed',
-      candidateAttempt: attempt({
-        state: 'failed',
-        error: { phase: 'client-render', message: '示例错误', repairable: true },
-      }),
+    const candidate = at('failed', { phase: 'client-render', message: '示例错误', repairable: true })
+    expect(position({ status: 'failed', candidateAttempt: candidate })).toEqual({ current: 3, failed: true })
+  })
+
+  it('marks an interrupted task as stopped at its current phase', () => {
+    expect(position({ status: 'interrupted', candidateAttempt: at('loading-client') })).toEqual({
+      current: 3,
+      failed: true,
     })
-    expect(lifecyclePosition(failed, false)).toEqual({ current: 3, failed: true })
   })
 
   it('needs enabling after save and completes once the agent uses it', () => {
-    expect(lifecyclePosition(task({ status: 'completed' }), false).current).toBe(5)
-    expect(lifecyclePosition(task({ status: 'completed' }), true).current).toBe(6)
+    expect(position({ status: 'completed' }).current).toBe(5)
+    expect(position({ status: 'completed' }, true).current).toBe(6)
   })
 })
 
 describe('workshop helpers', () => {
   it('lists tasks needing the user first, then open work, then finished, newest first', () => {
     const sorted = sortTasks([
-      task({ id: 'done', status: 'completed', updatedAt: 9 }),
-      task({ id: 'busy', status: 'working', updatedAt: 8 }),
-      task({ id: 'ask', status: 'awaiting-approval', updatedAt: 1 }),
-      task({ id: 'busy2', status: 'repairing', updatedAt: 10 }),
-    ])
+      { id: 'done', status: 'completed', updatedAt: 9 },
+      { id: 'busy', status: 'working', updatedAt: 8 },
+      { id: 'ask', status: 'awaiting-approval', updatedAt: 1 },
+      { id: 'busy2', status: 'repairing', updatedAt: 10 },
+    ] as const)
     expect(sorted.map((item) => item.id)).toEqual(['ask', 'busy2', 'busy', 'done'])
   })
 
@@ -101,16 +70,5 @@ describe('workshop helpers', () => {
   it('proposes valid slugs for Latin and non-Latin names', () => {
     expect(proposeSlug('Weather Card!')).toBe('weather-card')
     expect(SLUG_PATTERN.test(proposeSlug('天气卡片', 1_700_000_000_000))).toBe(true)
-  })
-})
-
-describe('workshop halted tasks', () => {
-  it('marks an interrupted task as stopped at its current phase', () => {
-    expect(
-      lifecyclePosition(task({ status: 'interrupted', candidateAttempt: attempt({ state: 'loading-client' }) }), false),
-    ).toEqual({
-      current: 3,
-      failed: true,
-    })
   })
 })

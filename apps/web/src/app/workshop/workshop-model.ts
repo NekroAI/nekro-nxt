@@ -44,7 +44,12 @@ export interface LifecyclePosition {
  * Where the task stands on {@link LIFECYCLE}. A completed task has been saved; it is fully done once the
  * originating agent uses the saved extension.
  */
-export const lifecyclePosition = (task: AuthoringTask, enabledForAgent: boolean): LifecyclePosition => {
+export interface LifecycleInput {
+  readonly status: AuthoringTask['status']
+  readonly candidateAttempt?: Pick<AuthoringAttempt, 'state' | 'error'> | undefined
+}
+
+export const lifecyclePosition = (task: LifecycleInput, enabledForAgent: boolean): LifecyclePosition => {
   if (task.status === 'completed') return { current: enabledForAgent ? LIFECYCLE.length : 5, failed: false }
   const candidate = task.candidateAttempt
   if (!candidate) return { current: 0, failed: false }
@@ -109,8 +114,8 @@ export const attemptPhaseLabel: Record<AttemptError['phase'], string> = {
 }
 
 /** Open work first (needs the user, then in progress), then finished tasks; newest first within a group. */
-export const sortTasks = (tasks: readonly AuthoringTask[]): AuthoringTask[] => {
-  const rank = (task: AuthoringTask): number =>
+export const sortTasks = <Task extends Pick<AuthoringTask, 'status' | 'updatedAt'>>(tasks: readonly Task[]): Task[] => {
+  const rank = (task: Task): number =>
     task.status === 'awaiting-approval' || task.status === 'ready' || task.status === 'failed'
       ? 0
       : isTaskOpen(task)

@@ -13,6 +13,7 @@ declare const styles: {
   readonly sheetBody: string
   readonly sheetFoot: string
   readonly sheetHead: string
+  readonly srOnly: string
   readonly title: string
   readonly toast: string
   readonly toastAction: string

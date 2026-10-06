@@ -1,6 +1,7 @@
+import { useGo } from '../model/nav.js'
 import { Download, Trash2 } from 'lucide-react'
 import { useState } from 'react'
-import { Link, useNavigate } from 'react-router-dom'
+import { Link } from 'react-router-dom'
 import { HostApiContracts } from '@nekro-nxt/contracts'
 import { callHostApi } from '../../host-api-client.js'
 import { useHostActions, useProductStore, type LocalExtensionSummary } from '../../product-runtime.js'
@@ -16,6 +17,7 @@ import {
   Select,
   Switch,
   toast,
+  Pressable,
 } from '../../ui-kit/next/index.js'
 import { relativeTime } from '../channels/timeline-model.js'
 import { agentHue } from '../model/identity.js'
@@ -47,7 +49,7 @@ const download = async (extension: LocalExtensionSummary, revision: Revision) =>
 }
 
 export function ExtensionView({ extension }: { readonly extension: LocalExtensionSummary }) {
-  const navigate = useNavigate()
+  const navigate = useGo()
   const hostActions = useHostActions()
   const usage = extensionUsage(extension)
   const [deleteOpen, setDeleteOpen] = useState(false)
@@ -216,6 +218,7 @@ function Installation({ extension }: { readonly extension: LocalExtensionSummary
   const [approve, setApprove] = useState<Revision>()
   const [uninstallOpen, setUninstallOpen] = useState(false)
   const chosen = extension.revisions.find((item) => item.id === choice)
+  const chosenInstalled = chosen !== undefined && chosen.id === installed?.revisionId
 
   const install = async (revision: Revision, digest?: string) => {
     setBusy(true)
@@ -257,7 +260,7 @@ function Installation({ extension }: { readonly extension: LocalExtensionSummary
         <Button
           variant="primary"
           busy={busy}
-          disabled={!chosen || chosen.id === installed?.revisionId}
+          disabled={!chosen || chosenInstalled}
           onClick={() => chosen && request(chosen)}
         >
           {installed ? '切换到此版本' : '安装'}
@@ -324,7 +327,7 @@ function RevisionRow({
   const id = `revision-${revision.id}`
   return (
     <div className={styles.version} data-open={open}>
-      <button
+      <Pressable
         type="button"
         className={styles.versionHead}
         aria-expanded={open}
@@ -339,7 +342,7 @@ function RevisionRow({
         {revision.format !== undefined && revision.format !== 'current' ? <Chip tone="warn">格式不受支持</Chip> : null}
         <span className={styles.grow} />
         <span className={styles.versionCount}>{revision.contributions.length} 项能力</span>
-      </button>
+      </Pressable>
       <Disclosure open={open} id={id}>
         <div className={styles.versionBody}>
           {revision.contributions.length > 0 ? (

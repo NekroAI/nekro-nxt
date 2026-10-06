@@ -1,11 +1,6 @@
 import type { ChannelRuntimeView, ConversationMessage } from '../../product-runtime.js'
 
 export type RuntimeTurn = ChannelRuntimeView['turns'][number]
-type TimedTurn = RuntimeTurn & {
-  readonly startedAt?: number
-  readonly endedAt?: number
-  readonly triggerEventId?: string
-}
 
 export type TimelineItem =
   | { readonly kind: 'day'; readonly key: string; readonly label: string }
@@ -58,15 +53,15 @@ export function buildTimeline(
   turns: readonly RuntimeTurn[],
   now = Date.now(),
 ): readonly TimelineItem[] {
-  const timed = (turns as readonly TimedTurn[]).filter((turn) => turn.startedAt !== undefined)
-  const untimedLatest = timed.length === 0 ? (turns.at(-1) as TimedTurn | undefined) : undefined
+  const timed = turns.filter((turn) => turn.startedAt !== undefined)
+  const untimedLatest = timed.length === 0 ? turns.at(-1) : undefined
   const latestTurnNumber = turns.at(-1)?.turn
   const queue = [...timed].sort((left, right) => (left.startedAt ?? 0) - (right.startedAt ?? 0))
 
   const items: TimelineItem[] = []
   let lastDay = ''
   let previous: ConversationMessage | undefined
-  const pushTurn = (turn: TimedTurn) => {
+  const pushTurn = (turn: RuntimeTurn) => {
     items.push({ kind: 'turn', key: `turn:${turn.turn}`, turn, latest: turn.turn === latestTurnNumber })
     previous = undefined
   }
@@ -124,7 +119,8 @@ export interface ToolInputView {
 
 const unescapeJsonString = (value: string): string => {
   try {
-    return JSON.parse(`"${value}"`) as string
+    const parsed: unknown = JSON.parse(`"${value}"`)
+    return typeof parsed === 'string' ? parsed : value
   } catch {
     return value.replace(/\\n/g, '\n').replace(/\\"/g, '"')
   }
@@ -153,7 +149,7 @@ export function presentToolInput(preview: string | undefined, writesToChannel: b
   }
   if (trimmed.startsWith('{')) {
     try {
-      const parsed = JSON.parse(trimmed) as Record<string, unknown>
+      const parsed: unknown = JSON.parse(trimmed)
       if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
         const fields = Object.entries(parsed)
           .filter(([, value]) => value !== undefined && value !== null && value !== '')

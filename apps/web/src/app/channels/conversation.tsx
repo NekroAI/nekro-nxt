@@ -19,6 +19,8 @@ import {
   MemberAvatar,
   StatusDot,
   toast,
+  Pressable,
+  Textarea,
 } from '../../ui-kit/next/index.js'
 import { agentHue, agentPhase, connectionTone, triggerLabel } from '../model/identity.js'
 import { useProductApi } from '../model/store.js'
@@ -106,7 +108,8 @@ function Composer({
               {connectionDisplayName(connection)}
             </span>
           ) : null}
-          <textarea
+          <Textarea
+            bare
             ref={input}
             className={styles.input}
             rows={1}
@@ -120,14 +123,14 @@ function Composer({
           />
         </>
       )}
-      <button
+      <Pressable
         type="submit"
         className={styles.send}
         disabled={Boolean(blocked) || !draft.trim() || sending}
         aria-label="发送"
       >
         <ArrowRight aria-hidden="true" />
-      </button>
+      </Pressable>
     </form>
   )
 }
@@ -157,7 +160,7 @@ function Queue({ channelId, count }: { readonly channelId: string; readonly coun
   const authors = [...new Set(events.map((event) => event.author))].slice(0, 3)
   return (
     <div className={[styles.queue, open ? styles.queueOpen : ''].join(' ')}>
-      <button type="button" className={styles.queueBar} aria-expanded={open} onClick={() => setOpen(!open)}>
+      <Pressable type="button" className={styles.queueBar} aria-expanded={open} onClick={() => setOpen(!open)}>
         {authors.length ? (
           <span className={styles.stack}>
             {authors.map((author) => (
@@ -169,7 +172,7 @@ function Queue({ channelId, count }: { readonly channelId: string; readonly coun
           <b>{count} 条新消息</b>排队中
         </span>
         <ChevronDown className={styles.chevron} aria-hidden="true" />
-      </button>
+      </Pressable>
       <Disclosure open={open}>
         <div className={styles.queueList}>
           {events.map((event) => (
@@ -322,7 +325,7 @@ export function Conversation({
             ) : null}
           </div>
         </div>
-        <button
+        <Pressable
           type="button"
           className={styles.toggle}
           aria-pressed={xray}
@@ -332,8 +335,8 @@ export function Conversation({
           <Eye aria-hidden="true" />
           <span className={styles.toggleLabel}>透视</span>
           <span className={styles.knob} aria-hidden="true" />
-        </button>
-        <button
+        </Pressable>
+        <Pressable
           type="button"
           className={[styles.toggle, styles.iconToggle].join(' ')}
           aria-pressed={inspectorOpen}
@@ -341,7 +344,7 @@ export function Conversation({
           onClick={onToggleInspector}
         >
           <PanelRight aria-hidden="true" />
-        </button>
+        </Pressable>
       </header>
       <div ref={scroll.ref} className={styles.conv} onScroll={scroll.onScroll}>
         <div className={[styles.convInner, styles.swap].join(' ')} key={channel.id}>

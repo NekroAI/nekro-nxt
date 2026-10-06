@@ -1,4 +1,4 @@
-import type { CSSProperties } from 'react'
+import { cssVars } from './css-vars.js'
 import styles from './avatar.module.css'
 
 export type AvatarSize = 'xs' | 'sm' | 'md' | 'default' | 'lg'
@@ -12,7 +12,8 @@ const sizeClass: Record<AvatarSize, string | undefined> = {
   lg: styles.lg,
 }
 
-const segmenter = typeof Intl !== 'undefined' && 'Segmenter' in Intl ? new Intl.Segmenter('zh', { granularity: 'grapheme' }) : undefined
+const segmenter =
+  typeof Intl !== 'undefined' && 'Segmenter' in Intl ? new Intl.Segmenter('zh', { granularity: 'grapheme' }) : undefined
 
 /** First user-perceived character; never splits emoji or combining sequences. */
 export function initialOf(name: string): string {
@@ -44,7 +45,7 @@ export function AgentAvatar({
   size = 'default',
   className,
 }: AvatarProps & { readonly hue: number; readonly imageUrl?: string; readonly live?: boolean }) {
-  const style = { '--h': hue, '--size': `${sizePx[size]}px` } as CSSProperties
+  const style = cssVars({ '--h': hue, '--size': `${sizePx[size]}px` })
   return (
     <span
       className={[styles.avatar, sizeClass[size], live ? styles.live : '', className ?? ''].join(' ')}
@@ -58,9 +59,13 @@ export function AgentAvatar({
 
 /** Platform member or other person: soft tint derived from the name. */
 export function MemberAvatar({ name, size = 'default', className }: AvatarProps) {
-  const style = { '--h': hueOf(name) } as CSSProperties
+  const style = cssVars({ '--h': hueOf(name) })
   return (
-    <span className={[styles.avatar, styles.member, sizeClass[size], className ?? ''].join(' ')} style={style} aria-hidden="true">
+    <span
+      className={[styles.avatar, styles.member, sizeClass[size], className ?? ''].join(' ')}
+      style={style}
+      aria-hidden="true"
+    >
       {initialOf(name)}
     </span>
   )

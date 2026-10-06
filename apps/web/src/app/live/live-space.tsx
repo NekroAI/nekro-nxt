@@ -1,6 +1,7 @@
+import { useGo } from '../model/nav.js'
 import { Bot, CheckCircle2, Plug, TriangleAlert, Wrench, X } from 'lucide-react'
-import { useEffect, useMemo, useRef, useState, type CSSProperties } from 'react'
-import { Link, useNavigate } from 'react-router-dom'
+import { useEffect, useMemo, useRef, useState } from 'react'
+import { Link } from 'react-router-dom'
 import type { ChannelActivitySeries } from '@nekro-nxt/contracts'
 import { workspaceApi } from '../../host-api-client.js'
 import {
@@ -19,6 +20,7 @@ import {
   Panel,
   Sparkline,
   smoothPath,
+  cssVars,
 } from '../../ui-kit/next/index.js'
 import { relativeTime } from '../channels/timeline-model.js'
 import { attentionSource, useAttention, type AttentionItem } from '../model/attention.js'
@@ -279,7 +281,7 @@ const attentionIcon = (item: AttentionItem) => {
 
 export default function LiveSpace() {
   useCrumb('现场')
-  const navigate = useNavigate()
+  const navigate = useGo()
   const runtime = useProductRuntime()
   const agents = useProductStore((state) => state.agents)
   const channels = useProductStore((state) => state.channels)
@@ -312,7 +314,7 @@ export default function LiveSpace() {
   return (
     <div className={styles.live}>
       <div className={[styles.inner, styles.enter].join(' ')}>
-        <section style={{ '--i': 0 } as CSSProperties}>
+        <section style={cssVars({ '--i': 0 })}>
           <div className={styles.head}>
             <h1>现场</h1>
             <div className={styles.stats}>
@@ -341,7 +343,7 @@ export default function LiveSpace() {
           </div>
         </section>
 
-        <section style={{ '--i': 1 } as CSSProperties}>
+        <section style={cssVars({ '--i': 1 })}>
           <h2 className={styles.sectionTitle}>需要关注</h2>
           <Panel className={styles.attention}>
             {attention.length === 0 ? (
@@ -384,7 +386,7 @@ export default function LiveSpace() {
         </section>
 
         {active.length ? (
-          <section style={{ '--i': 2 } as CSSProperties}>
+          <section style={cssVars({ '--i': 2 })}>
             <h2 className={styles.sectionTitle}>正在发生</h2>
             <div className={styles.board}>
               {active.map((channel) => {
@@ -398,7 +400,7 @@ export default function LiveSpace() {
                     key={channel.id}
                     to={`/channels/${channel.id}`}
                     className={styles.card}
-                    style={agent ? ({ '--card-accent': agentAccent(agent) } as CSSProperties) : undefined}
+                    style={agent ? cssVars({ '--card-accent': agentAccent(agent) }) : undefined}
                   >
                     <div className={styles.cardHead}>
                       <div style={{ minWidth: 0 }}>
@@ -448,7 +450,7 @@ export default function LiveSpace() {
         ) : null}
 
         {quiet.length ? (
-          <section style={{ '--i': 3 } as CSSProperties}>
+          <section style={cssVars({ '--i': 3 })}>
             <h2 className={styles.sectionTitle}>其他频道</h2>
             <div className={styles.quiet}>
               {quiet.map((channel) => {

@@ -1,6 +1,7 @@
+import { useGo } from '../model/nav.js'
 import { ArrowUpRight, CircleStop, Package, RotateCcw, Save, Trash2 } from 'lucide-react'
-import { useEffect, useMemo, useState, type CSSProperties } from 'react'
-import { Link, useNavigate } from 'react-router-dom'
+import { useEffect, useMemo, useState } from 'react'
+import { Link } from 'react-router-dom'
 import { HostApiContracts, type HostApiResponse } from '@nekro-nxt/contracts'
 import { DynamicClientSlots } from '../../dynamic-client-coordinator.js'
 import { callHostApi } from '../../host-api-client.js'
@@ -17,6 +18,7 @@ import {
   Spinner,
   Stepper,
   toast,
+  cssVars,
 } from '../../ui-kit/next/index.js'
 import { relativeTime } from '../channels/timeline-model.js'
 import { agentAccent, agentHue } from '../model/identity.js'
@@ -63,7 +65,7 @@ const savedExtensionId = (detail: TaskDetail | undefined): string | undefined =>
 
 export function TaskView({ task }: { readonly task: AuthoringTask }) {
   const api = useProductApi()
-  const navigate = useNavigate()
+  const navigate = useGo()
   const agent = useProductStore((state) => state.agents.find((item) => item.id === task.agentId))
   const channel = useProductStore((state) => state.channels.find((item) => item.id === task.channelId))
   const dynamicItem = useProductStore((state) =>
@@ -111,7 +113,7 @@ export function TaskView({ task }: { readonly task: AuthoringTask }) {
   const attempts = useMemo(() => [...(detail?.attempts ?? [])].reverse(), [detail])
 
   return (
-    <div className={styles.page} style={{ '--agent-accent': agent ? agentAccent(agent) : undefined } as CSSProperties}>
+    <div className={styles.page} style={cssVars({ '--agent-accent': agent ? agentAccent(agent) : undefined })}>
       <header className={styles.hero}>
         <div className={styles.heroInner}>
           <div className={styles.heroMeta}>

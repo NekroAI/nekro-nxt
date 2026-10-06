@@ -1,3 +1,4 @@
+import { cssVars } from './css-vars.js'
 import { useRef, type CSSProperties, type KeyboardEvent, type ReactNode } from 'react'
 import { useIndicator, type IndicatorGeometry } from './indicator.js'
 import styles from './selection.module.css'
@@ -21,8 +22,9 @@ function moveSelection<Value extends string>(
   const next = options[(index + (forward ? 1 : -1) + options.length) % options.length]
   if (!next) return
   onChange(next.value)
-  const group = event.currentTarget as HTMLElement
-  requestAnimationFrame(() => group.querySelector<HTMLElement>('[tabindex="0"]')?.focus())
+  const group = event.currentTarget
+  if (group instanceof HTMLElement)
+    requestAnimationFrame(() => group.querySelector<HTMLElement>('[tabindex="0"]')?.focus())
 }
 
 const boxStyle = (geometry: IndicatorGeometry): CSSProperties => ({
@@ -151,7 +153,7 @@ export function SelectionList({
     <div ref={ref} className={[styles.list, className ?? ''].join(' ')} aria-label={label}>
       <span
         className={[styles.listIndicator, ready ? styles.animated : ''].join(' ')}
-        style={{ ...boxStyle(geometry), ...(accent ? ({ '--indicator-accent': accent } as CSSProperties) : {}) }}
+        style={{ ...boxStyle(geometry), ...(accent ? cssVars({ '--indicator-accent': accent }) : {}) }}
         aria-hidden="true"
       />
       {children}

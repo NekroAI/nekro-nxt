@@ -1,6 +1,7 @@
+import { useGo } from '../model/nav.js'
 import { MessagesSquare, Trash2, Unplug, UsersRound } from 'lucide-react'
 import { useEffect, useMemo, useState } from 'react'
-import { useNavigate } from 'react-router-dom'
+
 import type { HostApiResponse } from '@nekro-nxt/contracts'
 import { connectionDisplayName, useProductStore, type ConnectionSummary } from '../../product-runtime.js'
 import {
@@ -66,7 +67,7 @@ function MemberList({ connectionId }: { readonly connectionId: string }) {
 
 function ConnectionDetail({ connection }: { readonly connection: ConnectionSummary }) {
   const api = useProductApi()
-  const navigate = useNavigate()
+  const navigate = useGo()
   const descriptors = useProductStore((state) => state.connectionAdapters)
   const channels = useProductStore((state) => state.channels)
   const agents = useProductStore((state) => state.agents)
@@ -265,7 +266,7 @@ function ConnectionDetail({ connection }: { readonly connection: ConnectionSumma
 }
 
 function ChannelDetail({ channelId }: { readonly channelId: string }) {
-  const navigate = useNavigate()
+  const navigate = useGo()
   const channel = useProductStore((state) => state.channels.find((item) => item.id === channelId))
   const agent = useProductStore((state) =>
     channel ? state.agents.find((item) => item.id === channel.agentId) : undefined,

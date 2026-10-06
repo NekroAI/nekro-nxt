@@ -1,5 +1,6 @@
+import { useGo } from '../model/nav.js'
 import { useMemo, useState } from 'react'
-import { useNavigate } from 'react-router-dom'
+
 import { promptDocumentFromText, type PromptDocumentV1 } from '@nekro-nxt/contracts'
 import { PromptReferenceEditor } from '../../components/prompt-reference-editor.js'
 import { agentModelKey, createAgentDraft } from '../../pages/agent-create-draft.js'
@@ -10,7 +11,7 @@ import styles from './agents.module.css'
 
 export function AgentCreate() {
   const api = useProductApi()
-  const navigate = useNavigate()
+  const navigate = useGo()
   const models = useProductStore((state) => state.models)
   const availability = useProductStore((state) => state.capabilityAvailability)
   const initial = useMemo(
@@ -94,7 +95,7 @@ export function AgentCreate() {
         />
       </Field>
       <div className={styles.createActions}>
-        <Button variant="ghost" onClick={() => navigate(-1)}>
+        <Button variant="ghost" onClick={() => window.history.back()}>
           取消
         </Button>
         <Button type="submit" variant="primary" busy={creating} disabled={!name.trim() || !model}>

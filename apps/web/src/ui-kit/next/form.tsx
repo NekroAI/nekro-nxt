@@ -23,7 +23,11 @@ export function Field({
   readonly label: ReactNode
   readonly hint?: ReactNode
   readonly error?: ReactNode
-  readonly children: ReactElement<{ id?: string | undefined; 'aria-describedby'?: string | undefined; 'aria-invalid'?: boolean | undefined }>
+  readonly children: ReactElement<{
+    id?: string | undefined
+    'aria-describedby'?: string | undefined
+    'aria-invalid'?: boolean | undefined
+  }>
   readonly className?: string
 }) {
   const id = useId()
@@ -51,18 +55,44 @@ export function Field({
   )
 }
 
-export const Input = forwardRef<HTMLInputElement, InputHTMLAttributes<HTMLInputElement>>(function Input(
-  { className, ...props },
-  ref,
-) {
-  return <input ref={ref} className={[styles.control, className ?? ''].join(' ')} {...props} />
+/** `bare` drops the field chrome for inputs embedded in a custom surface (search bars, composers). */
+export const Input = forwardRef<HTMLInputElement, InputHTMLAttributes<HTMLInputElement> & { readonly bare?: boolean }>(
+  function Input({ className, bare = false, ...props }, ref) {
+    return <input ref={ref} className={[bare ? '' : styles.control, className ?? ''].join(' ')} {...props} />
+  },
+)
+
+export const Textarea = forwardRef<
+  HTMLTextAreaElement,
+  TextareaHTMLAttributes<HTMLTextAreaElement> & { readonly bare?: boolean }
+>(function Textarea({ className, bare = false, ...props }, ref) {
+  return (
+    <textarea
+      ref={ref}
+      className={[bare ? '' : `${styles.control} ${styles.textarea}`, className ?? ''].join(' ')}
+      {...props}
+    />
+  )
 })
 
-export const Textarea = forwardRef<HTMLTextAreaElement, TextareaHTMLAttributes<HTMLTextAreaElement>>(function Textarea(
-  { className, ...props },
-  ref,
-) {
-  return <textarea ref={ref} className={[styles.control, styles.textarea, className ?? ''].join(' ')} {...props} />
+/** Hidden file chooser; open it with `ref.current?.click()` from any trigger. The value resets after each pick. */
+export const FileChooser = forwardRef<
+  HTMLInputElement,
+  { readonly accept?: string; readonly onFile: (file: File) => void }
+>(function FileChooser({ accept, onFile }, ref) {
+  return (
+    <input
+      ref={ref}
+      type="file"
+      hidden
+      accept={accept}
+      onChange={(event) => {
+        const file = event.currentTarget.files?.[0]
+        event.currentTarget.value = ''
+        if (file) onFile(file)
+      }}
+    />
+  )
 })
 
 export interface SelectOption {
@@ -145,7 +175,13 @@ export function SwitchRow({
         {description ? <span className={styles.hint}>{description}</span> : null}
       </label>
       {trailing}
-      <Switch id={id} checked={checked} onCheckedChange={onCheckedChange} disabled={disabled} label={typeof title === 'string' ? title : '开关'} />
+      <Switch
+        id={id}
+        checked={checked}
+        onCheckedChange={onCheckedChange}
+        disabled={disabled}
+        label={typeof title === 'string' ? title : '开关'}
+      />
     </div>
   )
 }

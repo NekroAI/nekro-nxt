@@ -1,6 +1,7 @@
+import { useGo } from '../model/nav.js'
 import { Hammer, Upload } from 'lucide-react'
-import { useRef, useState, type ChangeEvent } from 'react'
-import { Link, Navigate, useLocation, useNavigate } from 'react-router-dom'
+import { useRef, useState } from 'react'
+import { Link, Navigate, useLocation } from 'react-router-dom'
 import { HostApiContracts, type HostApiResponse } from '@nekro-nxt/contracts'
 import { callHostApi } from '../../host-api-client.js'
 import { useHostActions, useProductStore } from '../../product-runtime.js'
@@ -11,6 +12,7 @@ import {
   Dialog,
   EmptyState,
   Field,
+  FileChooser,
   IconButton,
   Input,
   SelectionList,
@@ -36,7 +38,7 @@ const parse = (path: string): { readonly kind: 'task' | 'extension'; readonly id
 
 export default function WorkshopSpace() {
   const { pathname } = useLocation()
-  const navigate = useNavigate()
+  const navigate = useGo()
   const hostStatus = useProductStore((state) => state.host.status)
   const tasks = sortTasks(useProductStore((state) => state.authoringTasks))
   const extensions = useProductStore((state) => state.extensions)
@@ -144,7 +146,7 @@ export default function WorkshopSpace() {
 /** Nothing made yet: creation starts by talking to an agent that may create, in one of its channels. */
 function Start() {
   const agents = useProductStore((state) => state.agents)
-  const navigate = useNavigate()
+  const navigate = useGo()
   const creators = agents.filter((agent) => agent.capabilities.dynamicCreation)
   return (
     <div className={styles.start}>
@@ -186,10 +188,7 @@ function ImportButton({ onImported }: { readonly onImported: (extensionId: strin
   const [slug, setSlug] = useState('')
   const [busy, setBusy] = useState(false)
 
-  const inspect = async (event: ChangeEvent<HTMLInputElement>) => {
-    const file = event.currentTarget.files?.[0]
-    event.currentTarget.value = ''
-    if (!file) return
+  const inspect = async (file: File) => {
     try {
       const result = await callHostApi(
         HostApiContracts.inspectExtensionImport,
@@ -225,13 +224,7 @@ function ImportButton({ onImported }: { readonly onImported: (extensionId: strin
       <IconButton label="导入扩展" size="small" onClick={() => input.current?.click()}>
         <Upload size={15} />
       </IconButton>
-      <input
-        ref={input}
-        type="file"
-        hidden
-        accept=".nxt-extension,.zip,application/zip"
-        onChange={(event) => void inspect(event)}
-      />
+      <FileChooser ref={input} accept=".nxt-extension,.zip,application/zip" onFile={(file) => void inspect(file)} />
       <Dialog
         open={inspection !== undefined}
         onOpenChange={(open) => !open && !busy && setInspection(undefined)}

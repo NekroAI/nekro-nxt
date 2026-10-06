@@ -22,7 +22,17 @@ const variantClass = {
 } as const
 
 export const Button = forwardRef<HTMLButtonElement, ButtonProps>(function Button(
-  { variant = 'default', size = 'default', icon, busy = false, className, children, disabled, type = 'button', ...props },
+  {
+    variant = 'default',
+    size = 'default',
+    icon,
+    busy = false,
+    className,
+    children,
+    disabled,
+    type = 'button',
+    ...props
+  },
   ref,
 ) {
   return (
@@ -93,7 +103,15 @@ export function Chip({
   )
 }
 
-export function StatusDot({ tone = 'neutral', pulse = false, label }: { readonly tone?: Tone; readonly pulse?: boolean; readonly label?: string }) {
+export function StatusDot({
+  tone = 'neutral',
+  pulse = false,
+  label,
+}: {
+  readonly tone?: Tone
+  readonly pulse?: boolean
+  readonly label?: string
+}) {
   return (
     <i
       className={cx(styles.dot, toneClass[tone], pulse && styles.ping)}
@@ -111,3 +129,14 @@ export function Kbd({ children }: { readonly children: ReactNode }) {
 export function Spinner({ className }: { readonly className?: string }) {
   return <LoaderCircle className={cx(styles.spinner, className)} aria-hidden="true" />
 }
+
+/**
+ * Unstyled button for custom interactive surfaces (navigation rails, list rows, wire ports). It keeps native
+ * button semantics and the global focus ring; the caller owns all visual styling.
+ */
+export const Pressable = forwardRef<HTMLButtonElement, ButtonHTMLAttributes<HTMLButtonElement>>(function Pressable(
+  { type = 'button', ...props },
+  ref,
+) {
+  return <button ref={ref} type={type} {...props} />
+})

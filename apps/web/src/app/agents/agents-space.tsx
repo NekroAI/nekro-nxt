@@ -1,5 +1,6 @@
+import { useGo } from '../model/nav.js'
 import { Plus } from 'lucide-react'
-import { Link, Navigate, useNavigate, useParams } from 'react-router-dom'
+import { Link, Navigate, useParams } from 'react-router-dom'
 import { useProductStore } from '../../product-runtime.js'
 import { AgentAvatar, IconButton, SelectionList } from '../../ui-kit/next/index.js'
 import { agentAccent, agentHue, agentPhase, isAgentWorking } from '../model/identity.js'
@@ -10,7 +11,7 @@ import styles from './agents.module.css'
 
 export default function AgentsSpace() {
   const { agentId } = useParams<{ agentId: string }>()
-  const navigate = useNavigate()
+  const navigate = useGo()
   const agents = useProductStore((state) => state.agents)
   const hostStatus = useProductStore((state) => state.host.status)
   const creating = agentId === 'new'

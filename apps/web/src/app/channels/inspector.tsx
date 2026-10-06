@@ -1,6 +1,7 @@
+import { useGo } from '../model/nav.js'
 import { Cable, Trash2 } from 'lucide-react'
 import { useState } from 'react'
-import { useNavigate } from 'react-router-dom'
+
 import {
   connectionDisplayName,
   useProductStore,
@@ -9,13 +10,18 @@ import {
   type ConnectionSummary,
 } from '../../product-runtime.js'
 import { AgentAvatar, Button, ConfirmDialog, Field, Gauge, Select, StatusDot, toast } from '../../ui-kit/next/index.js'
-import { agentHue, connectionTone, isAgentWorking, triggerLabel } from '../model/identity.js'
+import {
+  agentHue,
+  connectionTone,
+  isAgentWorking,
+  triggerLabel,
+  isTriggerPolicy,
+  type TriggerPolicy,
+} from '../model/identity.js'
 import { BindDialog, type BindIntent } from './bind-dialog.js'
 import { useProductApi } from '../model/store.js'
 import styles from './channels.module.css'
 import { formatTokens } from './timeline-model.js'
-
-type TriggerPolicy = 'always' | 'mentioned-or-replied' | 'command' | 'observe-only'
 
 export function ChannelInspector({
   channel,
@@ -26,7 +32,7 @@ export function ChannelInspector({
   readonly agent: AgentSummary | undefined
   readonly connection: ConnectionSummary | undefined
 }) {
-  const navigate = useNavigate()
+  const navigate = useGo()
   const api = useProductApi()
   const agents = useProductStore((state) => state.agents)
   const runtime = useProductStore((state) => state.channelRuntimes[channel.id])
@@ -91,7 +97,7 @@ export function ChannelInspector({
                   value,
                   label: triggerLabel[value] ?? value,
                 }))}
-                onChange={(event) => void changeTrigger(event.target.value as TriggerPolicy)}
+                onChange={(event) => isTriggerPolicy(event.target.value) && void changeTrigger(event.target.value)}
               />
             </Field>
           ) : null}

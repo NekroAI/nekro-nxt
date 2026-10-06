@@ -1,6 +1,7 @@
+import { useGo } from '../model/nav.js'
 import { MessagesSquare } from 'lucide-react'
 import { useEffect, useState } from 'react'
-import { Navigate, useNavigate, useParams } from 'react-router-dom'
+import { Navigate, useParams } from 'react-router-dom'
 import { readLastChannelId, writeLastChannelId } from '../../shell/last-channel.js'
 import { useProductStore } from '../../product-runtime.js'
 import { Button, EmptyState } from '../../ui-kit/next/index.js'
@@ -21,7 +22,7 @@ const readInspector = (): boolean => {
 
 export default function ChannelsSpace() {
   const { channelId } = useParams<{ channelId: string }>()
-  const navigate = useNavigate()
+  const navigate = useGo()
   const hostStatus = useProductStore((state) => state.host.status)
   const channels = useProductStore((state) => state.channels)
   const channel = useProductStore((state) =>

@@ -1,3 +1,4 @@
+import { useGo } from '../model/nav.js'
 import {
   closestCenter,
   DndContext,
@@ -19,7 +20,7 @@ import {
 } from '@dnd-kit/sortable'
 import { CSS } from '@dnd-kit/utilities'
 import { useMemo, useRef, useState, type CSSProperties, type MouseEvent, type ReactNode } from 'react'
-import { Link, useNavigate } from 'react-router-dom'
+import { Link } from 'react-router-dom'
 import {
   agentSortId,
   applyWorkTreeDragResolution,
@@ -41,7 +42,15 @@ import {
   type ConnectionSummary,
   type ConversationMessage,
 } from '../../product-runtime.js'
-import { AgentAvatar, MemberAvatar, Segmented, SelectionList, toast } from '../../ui-kit/next/index.js'
+import {
+  AgentAvatar,
+  MemberAvatar,
+  Segmented,
+  SelectionList,
+  toast,
+  cssVars,
+  Pressable,
+} from '../../ui-kit/next/index.js'
 import { agentAccent, agentHue, agentPhase, isAgentWorking } from '../model/identity.js'
 import { BindDialog, type BindIntent } from './bind-dialog.js'
 import { useProductApi } from '../model/store.js'
@@ -94,7 +103,7 @@ function RowContent({
         <span>{channel.name}</span>
         {mode === 'recent' ? <span className={styles.rowSource}>{source}</span> : null}
         {working && agent ? (
-          <i className={styles.runDot} style={{ '--run-color': agentAccent(agent) } as CSSProperties} />
+          <i className={styles.runDot} style={cssVars({ '--run-color': agentAccent(agent) })} />
         ) : null}
       </span>
       <span className={styles.rowTime}>{relativeTime(activity.at)}</span>
@@ -151,7 +160,7 @@ function AgentGroup({
   readonly children: ReactNode
   readonly highlight: boolean
 }) {
-  const navigate = useNavigate()
+  const navigate = useGo()
   const { attributes, listeners, setNodeRef, transform, transition } = useSortable({ id: agentSortId(agent.id) })
   const phase = agentPhase[agent.state]
   return (
@@ -166,7 +175,7 @@ function AgentGroup({
         } as CSSProperties
       }
     >
-      <button
+      <Pressable
         type="button"
         className={styles.groupHead}
         onClick={() => navigate(`/agents/${agent.id}`)}
@@ -177,7 +186,7 @@ function AgentGroup({
         <AgentAvatar name={agent.name} hue={agentHue(agent)} size="sm" live={isAgentWorking(agent)} />
         {agent.name}
         <span className={styles.groupMeta}>{phase.label}</span>
-      </button>
+      </Pressable>
       {children}
     </div>
   )

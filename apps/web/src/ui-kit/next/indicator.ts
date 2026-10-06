@@ -55,7 +55,8 @@ export function useIndicator(container: RefObject<HTMLElement | null>, selector:
       )
     }
     measure()
-    if (!ready) frame.current = requestAnimationFrame(() => (frame.current = requestAnimationFrame(() => setReady(true))))
+    if (!ready)
+      frame.current = requestAnimationFrame(() => (frame.current = requestAnimationFrame(() => setReady(true))))
     const observer = new ResizeObserver(measure)
     observer.observe(root)
     const target = root.querySelector<HTMLElement>(selector)

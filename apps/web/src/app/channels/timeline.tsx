@@ -1,8 +1,8 @@
 import { Check, CircleAlert, Square, X } from 'lucide-react'
-import { Fragment, memo, useEffect, useState, type CSSProperties } from 'react'
+import { Fragment, memo, useEffect, useState } from 'react'
 import { MessageContent, resolveMessageSide } from '../../pages/message-content.js'
 import type { AgentSummary, ChannelSummary, ConversationMessage } from '../../product-runtime.js'
-import { AgentAvatar, Button, Chip, Spinner } from '../../ui-kit/next/index.js'
+import { AgentAvatar, Button, Chip, Spinner, cssVars } from '../../ui-kit/next/index.js'
 import { MemberAvatar } from '../../ui-kit/next/avatar.js'
 import { agentAccent, agentHue } from '../model/identity.js'
 import styles from './channels.module.css'
@@ -57,7 +57,7 @@ export const MessageRow = memo(function MessageRow({
         unconfirmed ? styles.unsent : '',
         fresh ? styles.fresh : '',
       ].join(' ')}
-      style={accent ? ({ '--bubble-accent': accent } as CSSProperties) : undefined}
+      style={accent ? cssVars({ '--bubble-accent': accent }) : undefined}
       data-message-id={message.id}
     >
       {fromAgent && agent ? (
@@ -140,7 +140,7 @@ function ToolChip({ tool }: { readonly tool: RuntimeTool }) {
 function ToolCard({ tool, index }: { readonly tool: RuntimeTool; readonly index: number }) {
   const input = presentToolInput(tool.inputPreview, tool.wroteToChannel === true || /send|message/i.test(tool.name))
   return (
-    <div className={styles.card} style={{ '--i': index } as CSSProperties}>
+    <div className={styles.card} style={cssVars({ '--i': index })}>
       <div className={styles.cardHead}>
         <span className={styles.cardIndex}>{index + 1}</span>
         <b>{tool.displayName}</b>
@@ -207,7 +207,7 @@ function ToolCard({ tool, index }: { readonly tool: RuntimeTool; readonly index:
 
 function ThinkingCard({ text, index }: { readonly text: string; readonly index: number }) {
   return (
-    <div className={[styles.card, styles.thinking].join(' ')} style={{ '--i': index } as CSSProperties}>
+    <div className={[styles.card, styles.thinking].join(' ')} style={cssVars({ '--i': index })}>
       <div className={styles.cardHead}>
         <span className={styles.cardIndex}>{index + 1}</span>
         <b>思考</b>
@@ -263,7 +263,7 @@ export function TurnRow({
   return (
     <div
       className={[styles.turn, running ? styles.turnRunning : ''].join(' ')}
-      style={{ '--turn-accent': agent ? agentAccent(agent) : 'var(--accent)' } as CSSProperties}
+      style={cssVars({ '--turn-accent': agent ? agentAccent(agent) : 'var(--accent)' })}
     >
       <div className={styles.turnHead}>
         <b>{agent?.name ?? '智能体'}</b>

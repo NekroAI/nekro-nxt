@@ -1,7 +1,7 @@
-import { useEffect, useState, type CSSProperties } from 'react'
+import { useEffect, useState } from 'react'
 import { connectionDisplayName, useProductStore } from '../../product-runtime.js'
-import { AgentAvatar, ConfirmDialog, Field, Select, toast } from '../../ui-kit/next/index.js'
-import { agentAccent, agentHue, triggerLabel } from '../model/identity.js'
+import { AgentAvatar, ConfirmDialog, Field, Select, toast, cssVars } from '../../ui-kit/next/index.js'
+import { agentAccent, agentHue, triggerLabel, isTriggerPolicy, type TriggerPolicy } from '../model/identity.js'
 import { useProductApi } from '../model/store.js'
 import styles from './channels.module.css'
 
@@ -9,7 +9,6 @@ export type BindIntent =
   | { readonly kind: 'bind' | 'replace'; readonly channelId: string; readonly agentId: string }
   | { readonly kind: 'unbind'; readonly channelId: string }
 
-type TriggerPolicy = 'always' | 'mentioned-or-replied' | 'command' | 'observe-only'
 const triggerOptions = (['mentioned-or-replied', 'always', 'command', 'observe-only'] as const).map((value) => ({
   value,
   label: triggerLabel[value] ?? value,
@@ -66,7 +65,7 @@ export function BindDialog({ intent, onClose }: { readonly intent: BindIntent | 
     >
       <div
         className={styles.wirePreview}
-        style={nextAgent ? ({ '--wire-accent': agentAccent(nextAgent) } as CSSProperties) : undefined}
+        style={nextAgent ? cssVars({ '--wire-accent': agentAccent(nextAgent) }) : undefined}
       >
         <b>{channel.name}</b>
         <span className="muted" style={{ color: 'var(--muted)', fontSize: 12 }}>
@@ -81,7 +80,7 @@ export function BindDialog({ intent, onClose }: { readonly intent: BindIntent | 
         <Select
           value={trigger}
           options={triggerOptions}
-          onChange={(event) => setTrigger(event.target.value as TriggerPolicy)}
+          onChange={(event) => isTriggerPolicy(event.target.value) && setTrigger(event.target.value)}
         />
       </Field>
     </ConfirmDialog>

@@ -302,7 +302,9 @@
   fill: none;
   stroke-linecap: round;
   stroke-width: 7;
-  transition: stroke-dasharray var(--dur-3) var(--ease), stroke-dashoffset var(--dur-3) var(--ease);
+  transition:
+    stroke-dasharray var(--dur-3) var(--ease),
+    stroke-dashoffset var(--dur-3) var(--ease);
 }
 
 .gaugeTrack {

@@ -6,7 +6,6 @@ import {
   useMemo,
   useRef,
   useState,
-  type CSSProperties,
   type PointerEvent as ReactPointerEvent,
 } from 'react'
 import { Link } from 'react-router-dom'
@@ -16,10 +15,13 @@ import {
   type AgentSummary,
   type ChannelSummary,
 } from '../../product-runtime.js'
-import { AgentAvatar, StatusDot } from '../../ui-kit/next/index.js'
+import { AgentAvatar, StatusDot, cssVars, Pressable } from '../../ui-kit/next/index.js'
 import { BindDialog, type BindIntent } from '../channels/bind-dialog.js'
 import { agentAccent, agentHue, connectionTone, isAgentWorking, triggerLabel } from '../model/identity.js'
 import styles from './wiring.module.css'
+
+/** DOM key used to measure a node when drawing wires. */
+const nodeKey = (kind: 'connection' | 'channel' | 'agent', id: string): string => `${kind}:${id}`
 
 interface WireGeometry {
   readonly key: string
@@ -90,8 +92,8 @@ export function PatchBay({
     const previous = seenBindings.current
     const next: WireGeometry[] = []
     for (const channel of channels) {
-      const from = point(`[data-node="connection:${channel.connectionId}"]`, 'right')
-      const to = point(`[data-node="channel:${channel.id}"]`, 'left')
+      const from = point(`[data-node="${nodeKey('connection', channel.connectionId)}"]`, 'right')
+      const to = point(`[data-node="${nodeKey('channel', channel.id)}"]`, 'left')
       if (from && to)
         next.push({
           key: `c:${channel.id}`,
@@ -105,8 +107,8 @@ export function PatchBay({
         })
       const agent = channel.agentId ? agentById.get(channel.agentId) : undefined
       if (!agent) continue
-      const a = point(`[data-node="channel:${channel.id}"]`, 'right')
-      const b = point(`[data-node="agent:${agent.id}"]`, 'left')
+      const a = point(`[data-node="${nodeKey('channel', channel.id)}"]`, 'right')
+      const b = point(`[data-node="${nodeKey('agent', agent.id)}"]`, 'left')
       if (!a || !b) continue
       next.push({
         key: `b:${channel.id}`,
@@ -137,7 +139,8 @@ export function PatchBay({
     if (!menu && !picker) return
     const close = (event: KeyboardEvent | MouseEvent) => {
       if (event instanceof KeyboardEvent && event.key !== 'Escape') return
-      if (event instanceof MouseEvent && (event.target as Element | null)?.closest('[data-wire-menu]')) return
+      if (event instanceof MouseEvent && event.target instanceof Element && event.target.closest('[data-wire-menu]'))
+        return
       setMenu(null)
       setPicker(null)
     }
@@ -255,7 +258,7 @@ export function PatchBay({
               key={connection.id}
               to={`/wiring/connections/${connection.id}`}
               className={styles.node}
-              data-node={`connection:${connection.id}`}
+              data-node={nodeKey('connection', connection.id)}
               aria-current={current('connection', connection.id)}
             >
               <span className={styles.nodeName}>
@@ -277,14 +280,14 @@ export function PatchBay({
             <div key={connection.id} className={styles.group}>
               {list.map((channel) => {
                 const agent = agentById.get(channel.agentId)
-                const accent = agent ? ({ '--node-accent': agentAccent(agent) } as CSSProperties) : undefined
+                const accent = agent ? cssVars({ '--node-accent': agentAccent(agent) }) : undefined
                 const trigger = channel.bindings[0] ? triggerLabel[channel.bindings[0].triggerPolicy] : undefined
                 return (
                   <div key={channel.id} style={{ position: 'relative' }}>
                     <Link
                       to={`/wiring/channels/${channel.id}`}
                       className={[styles.node, styles.channelNode, agent ? '' : styles.free].join(' ')}
-                      data-node={`channel:${channel.id}`}
+                      data-node={nodeKey('channel', channel.id)}
                       aria-current={current('channel', channel.id)}
                       style={accent}
                     >
@@ -294,7 +297,7 @@ export function PatchBay({
                       </span>
                       <span className={styles.nodeSub}>{agent ? trigger : '未接线'}</span>
                     </Link>
-                    <button
+                    <Pressable
                       type="button"
                       className={[
                         styles.port,
@@ -333,9 +336,9 @@ export function PatchBay({
               key={agent.id}
               to={`/agents/${agent.id}`}
               className={[styles.node, styles.agentNode, dropAgent === agent.id ? styles.target : ''].join(' ')}
-              data-node={`agent:${agent.id}`}
+              data-node={nodeKey('agent', agent.id)}
               data-agent-node={agent.id}
-              style={{ '--node-accent': agentAccent(agent) } as CSSProperties}
+              style={cssVars({ '--node-accent': agentAccent(agent) })}
             >
               <span className={[styles.port, styles.portLeft, styles.portFilled].join(' ')} />
               <AgentAvatar name={agent.name} hue={agentHue(agent)} live={isAgentWorking(agent)} />
@@ -360,7 +363,7 @@ export function PatchBay({
             {agents
               .filter((item) => item.id !== pickerChannel.agentId)
               .map((item, index) => (
-                <button
+                <Pressable
                   key={item.id}
                   type="button"
                   role="menuitem"
@@ -376,12 +379,12 @@ export function PatchBay({
                 >
                   <AgentAvatar name={item.name} hue={agentHue(item)} size="xs" />
                   交给{item.name}
-                </button>
+                </Pressable>
               ))}
             {pickerChannel.agentId ? (
               <>
                 <hr />
-                <button
+                <Pressable
                   type="button"
                   role="menuitem"
                   className={styles.danger}
@@ -392,7 +395,7 @@ export function PatchBay({
                 >
                   <Unplug />
                   断开
-                </button>
+                </Pressable>
               </>
             ) : null}
           </div>
@@ -402,7 +405,7 @@ export function PatchBay({
             {agents
               .filter((item) => item.id !== menuAgent.id)
               .map((item) => (
-                <button
+                <Pressable
                   key={item.id}
                   type="button"
                   role="menuitem"
@@ -413,10 +416,10 @@ export function PatchBay({
                 >
                   <AgentAvatar name={item.name} hue={agentHue(item)} size="xs" />
                   改由{item.name}响应
-                </button>
+                </Pressable>
               ))}
             <hr />
-            <button
+            <Pressable
               type="button"
               role="menuitem"
               className={styles.danger}
@@ -427,7 +430,7 @@ export function PatchBay({
             >
               <Unplug />
               断开
-            </button>
+            </Pressable>
           </div>
         ) : null}
       </div>

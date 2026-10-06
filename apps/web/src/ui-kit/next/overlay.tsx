@@ -2,7 +2,7 @@ import * as RadixDialog from '@radix-ui/react-dialog'
 import * as RadixMenu from '@radix-ui/react-dropdown-menu'
 import * as RadixTooltip from '@radix-ui/react-tooltip'
 import { Check, TriangleAlert, X } from 'lucide-react'
-import { useState, useSyncExternalStore, type ReactNode } from 'react'
+import { useState, useSyncExternalStore, type KeyboardEvent, type ReactNode } from 'react'
 import { Button, IconButton } from './primitives.js'
 import styles from './overlay.module.css'
 
@@ -25,7 +25,10 @@ export function Dialog({
     <RadixDialog.Root open={open} onOpenChange={onOpenChange}>
       <RadixDialog.Portal>
         <RadixDialog.Overlay className={styles.scrim} />
-        <RadixDialog.Content className={[styles.dialog, wide ? styles.wide : ''].join(' ')} aria-describedby={undefined}>
+        <RadixDialog.Content
+          className={[styles.dialog, wide ? styles.wide : ''].join(' ')}
+          aria-describedby={undefined}
+        >
           <RadixDialog.Title className={styles.title}>{title}</RadixDialog.Title>
           {children ? <div className={styles.body}>{children}</div> : null}
           {actions ? <div className={styles.actions}>{actions}</div> : null}
@@ -98,6 +101,38 @@ export function ConfirmDialog({
         </p>
       ) : null}
     </Dialog>
+  )
+}
+
+/**
+ * Modal surface without dialog chrome, for custom overlays such as the command palette. The caller styles the
+ * panel; the kit provides the scrim, focus trap, escape handling and an accessible title.
+ */
+export function Overlay({
+  open,
+  onOpenChange,
+  label,
+  className,
+  onKeyDown,
+  children,
+}: {
+  readonly open: boolean
+  readonly onOpenChange: (open: boolean) => void
+  readonly label: string
+  readonly className?: string
+  readonly onKeyDown?: (event: KeyboardEvent<HTMLDivElement>) => void
+  readonly children: ReactNode
+}) {
+  return (
+    <RadixDialog.Root open={open} onOpenChange={onOpenChange}>
+      <RadixDialog.Portal>
+        <RadixDialog.Overlay className={styles.scrim} />
+        <RadixDialog.Content className={className} aria-describedby={undefined} onKeyDown={onKeyDown}>
+          <RadixDialog.Title className={styles.srOnly}>{label}</RadixDialog.Title>
+          {children}
+        </RadixDialog.Content>
+      </RadixDialog.Portal>
+    </RadixDialog.Root>
   )
 }
 
@@ -194,7 +229,15 @@ export function TooltipProvider({ children }: { readonly children: ReactNode }) 
   )
 }
 
-export function Tooltip({ content, children, side = 'top' }: { readonly content: ReactNode; readonly children: ReactNode; readonly side?: 'top' | 'right' | 'bottom' | 'left' }) {
+export function Tooltip({
+  content,
+  children,
+  side = 'top',
+}: {
+  readonly content: ReactNode
+  readonly children: ReactNode
+  readonly side?: 'top' | 'right' | 'bottom' | 'left'
+}) {
   return (
     <RadixTooltip.Root>
       <RadixTooltip.Trigger asChild>{children}</RadixTooltip.Trigger>

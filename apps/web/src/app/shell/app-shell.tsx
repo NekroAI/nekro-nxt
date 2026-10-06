@@ -1,9 +1,10 @@
+import { useGo } from '../model/nav.js'
 import { Activity, Bell, Cable, MessagesSquare, Search, Server, Settings, Sparkles, Wrench } from 'lucide-react'
-import { useEffect, useRef, useState, type CSSProperties } from 'react'
-import { Link, NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom'
+import { useEffect, useRef, useState } from 'react'
+import { Link, NavLink, Outlet, useLocation } from 'react-router-dom'
 import { useDesktopInstance } from '../../desktop-shell.js'
 import { useProductStore } from '../../product-runtime.js'
-import { Kbd, StatusDot, useIndicator, type Tone } from '../../ui-kit/next/index.js'
+import { Kbd, StatusDot, useIndicator, type Tone, cssVars, Pressable } from '../../ui-kit/next/index.js'
 import { useAttention } from '../model/attention.js'
 import { agentAccent, connectionLabel, connectionTone, isAgentWorking } from '../model/identity.js'
 import { CommandPalette } from './command-palette.js'
@@ -86,14 +87,14 @@ function TopBar({ onSearch }: { readonly onSearch: () => void }) {
         NekroNXT
       </div>
       {desktop.enabled ? (
-        <button
+        <Pressable
           type="button"
           className={styles.instance}
           onClick={() => void window.nekroDesktopShell?.openInstanceSwitcher()}
           aria-label={`服务实例：${desktop.presentation.displayName}`}
         >
           {instance}
-        </button>
+        </Pressable>
       ) : (
         <span className={styles.instance}>{instance}</span>
       )}
@@ -105,11 +106,11 @@ function TopBar({ onSearch }: { readonly onSearch: () => void }) {
           </span>
         ))}
       </div>
-      <button type="button" className={styles.search} onClick={onSearch} aria-label="搜索">
+      <Pressable type="button" className={styles.search} onClick={onSearch} aria-label="搜索">
         <Search aria-hidden="true" />
         <span>搜索</span>
         <Kbd>⌘K</Kbd>
-      </button>
+      </Pressable>
       <Link
         to="/live"
         className={styles.bell}
@@ -132,7 +133,7 @@ function Clock() {
 }
 
 function StatusBar() {
-  const navigate = useNavigate()
+  const navigate = useGo()
   const hostStatus = useProductStore((state) => state.host.status)
   const connections = useProductStore((state) => state.connections)
   const agents = useProductStore((state) => state.agents)
@@ -140,15 +141,15 @@ function StatusBar() {
   const external = connections.filter((connection) => connection.userManaged)
   return (
     <footer className={styles.status}>
-      <button type="button" className={styles.statusItem} onClick={() => navigate('/settings/about')}>
+      <Pressable type="button" className={styles.statusItem} onClick={() => navigate('/settings/about')}>
         <StatusDot tone={hostTone[hostStatus] ?? 'warn'} />
         本机 {hostStatus === 'ready' ? '' : hostLabel[hostStatus]}
-      </button>
+      </Pressable>
       {external.length ? <span className={styles.statusSep} /> : null}
       {external.map((connection) => {
         const tone = connectionTone(connection.state)
         return (
-          <button
+          <Pressable
             key={connection.id}
             type="button"
             className={styles.statusItem}
@@ -157,20 +158,20 @@ function StatusBar() {
             <StatusDot tone={tone} pulse={tone === 'warn'} />
             {connectionLabel(connection)}
             {tone === 'ok' ? '' : ` ${connection.state}`}
-          </button>
+          </Pressable>
         )
       })}
       {working.length ? <span className={styles.statusSep} /> : null}
       {working.map((agent) => (
-        <button
+        <Pressable
           key={agent.id}
           type="button"
           className={styles.statusItem}
           onClick={() => navigate(`/agents/${agent.id}`)}
         >
-          <i className={styles.runDot} style={{ '--run-color': agentAccent(agent) } as CSSProperties} />
+          <i className={styles.runDot} style={cssVars({ '--run-color': agentAccent(agent) })} />
           {agent.name}
-        </button>
+        </Pressable>
       ))}
       <Clock />
     </footer>

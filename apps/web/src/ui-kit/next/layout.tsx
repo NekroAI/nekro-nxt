@@ -1,5 +1,6 @@
+import { cssVars } from './css-vars.js'
 import { Info, OctagonAlert, TriangleAlert } from 'lucide-react'
-import { useEffect, useRef, type CSSProperties, type ElementType, type ReactNode } from 'react'
+import { useEffect, useRef, type ElementType, type ReactNode } from 'react'
 import styles from './layout.module.css'
 
 export function Panel({
@@ -178,7 +179,7 @@ export function Timeline({
   readonly accent?: string
 }) {
   return (
-    <ol className={styles.timeline} style={accent ? ({ '--timeline-accent': accent } as CSSProperties) : undefined}>
+    <ol className={styles.timeline} style={accent ? cssVars({ '--timeline-accent': accent }) : undefined}>
       {entries.map((entry, index) => (
         <li key={entry.key} className={[styles.timelineItem, index === 0 ? styles.timelineCurrent : ''].join(' ')}>
           <span className={styles.timelineTag}>{entry.tag}</span>
