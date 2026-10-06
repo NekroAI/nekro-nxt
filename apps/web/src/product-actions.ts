@@ -59,6 +59,8 @@ export interface ProductActions {
   'extensions.uninstall': Action<'uninstallHostExtension'>
   'extensions.hostClientDiagnostic': Action<'hostExtensionClientDiagnostic'>
   'extensions.deactivate': Action<'deactivateExtension'>
+  'extensions.activationConfig': Action<'updateExtensionActivationConfig'>
+  'extensions.installationConfig': Action<'updateHostExtensionConfig'>
   'extensions.clientDiagnostic': Action<'extensionClientDiagnostic'>
   'channels.sendMessage': (
     input: HostApiParams<'sendChannelMessage'> & { body: string },

@@ -21,7 +21,12 @@ import {
 } from '../../ui-kit/next/index.js'
 import { relativeTime } from '../channels/timeline-model.js'
 import { agentHue } from '../model/identity.js'
-import { useExtensionActivation } from '../../extension-ui/index.js'
+import {
+  ExtensionConfigEditor,
+  PanelSlot,
+  activeConfigSchema,
+  useExtensionActivation,
+} from '../../extension-ui/index.js'
 import { useProductApi } from '../model/store.js'
 import { contributionParts, extensionUsage, scopeLabel } from './workshop-model.js'
 import styles from './workshop.module.css'
@@ -89,6 +94,8 @@ export function ExtensionView({ extension }: { readonly extension: LocalExtensio
 
         {extension.scope === 'agent' ? <AgentUsage extension={extension} /> : <Installation extension={extension} />}
 
+        <ExtensionSettings extension={extension} />
+
         <Section title="版本">
           <Panel className={styles.versions}>
             {extension.revisions.toReversed().map((revision) => (
@@ -135,6 +142,54 @@ export function ExtensionView({ extension }: { readonly extension: LocalExtensio
         {extension.revisions.length} 个版本、源码与验证记录会被永久删除。
       </ConfirmDialog>
     </div>
+  )
+}
+
+/**
+ * Configuration and the extension's own panels. Agent extensions are configured per enabled agent; Host extensions
+ * once for their installation.
+ */
+function ExtensionSettings({ extension }: { readonly extension: LocalExtensionSummary }) {
+  const enabledAgents = extension.activations.map((activation) => ({
+    id: activation.agentId,
+    name: activation.agentName,
+  }))
+  const [chosen, setChosen] = useState(enabledAgents[0]?.id ?? '')
+  const agentId =
+    extension.scope === 'agent'
+      ? (enabledAgents.find((agent) => agent.id === chosen)?.id ?? enabledAgents[0]?.id)
+      : undefined
+  if (extension.scope === 'agent' && agentId === undefined) return null
+  const hasConfig = activeConfigSchema(extension, agentId) !== undefined
+  return (
+    <>
+      {hasConfig ? (
+        <Section
+          title="配置"
+          actions={
+            extension.scope === 'agent' && enabledAgents.length > 1 ? (
+              <Select
+                aria-label="配置哪个智能体"
+                value={agentId}
+                onChange={(event) => setChosen(event.target.value)}
+                options={enabledAgents.map((agent) => ({ value: agent.id, label: agent.name }))}
+              />
+            ) : undefined
+          }
+        >
+          <Panel className={styles.config}>
+            <ExtensionConfigEditor
+              key={agentId ?? 'host'}
+              extension={extension}
+              {...(agentId === undefined ? {} : { agentId })}
+            />
+          </Panel>
+        </Section>
+      ) : null}
+      {extension.scope === 'agent' && agentId !== undefined ? (
+        <PanelSlot anchor={{ kind: 'extension', id: extension.id }} density="full" agentId={agentId} />
+      ) : null}
+    </>
   )
 }
 

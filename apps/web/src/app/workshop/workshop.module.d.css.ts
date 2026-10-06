@@ -11,6 +11,7 @@ declare const styles: {
   readonly body: string
   readonly byline: string
   readonly cellAgent: string
+  readonly config: string
   readonly contributions: string
   readonly creators: string
   readonly danger: string

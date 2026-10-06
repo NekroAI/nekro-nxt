@@ -1042,6 +1042,10 @@ export class HttpProductHost implements ProductHostPort {
       this.#mutate(HostApiContracts.uninstallHostExtension, { extensionId }, undefined),
     'extensions.hostClientDiagnostic': async ({ extensionId, revisionId, ...body }) =>
       this.#call(HostApiContracts.hostExtensionClientDiagnostic, { extensionId, revisionId }, body),
+    'extensions.activationConfig': async ({ agentId, extensionId, ...body }) =>
+      this.#mutate(HostApiContracts.updateExtensionActivationConfig, { agentId, extensionId }, body),
+    'extensions.installationConfig': async ({ extensionId, ...body }) =>
+      this.#mutate(HostApiContracts.updateHostExtensionConfig, { extensionId }, body),
     'extensions.deactivate': async ({ agentId, extensionId }) =>
       this.#mutate(HostApiContracts.deactivateExtension, { agentId, extensionId }, undefined),
     'extensions.clientDiagnostic': async ({ extensionId, revisionId, ...body }) =>

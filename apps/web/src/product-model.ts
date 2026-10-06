@@ -579,6 +579,15 @@ export interface ProductState {
     revisionId?: string,
     permissionDigest?: string,
   ): Promise<void>
+  /**
+   * Saves extension configuration: per agent for agent extensions (takes effect at the next safe point), or for the
+   * installation of a Host extension.
+   */
+  updateExtensionConfig(input: {
+    readonly extensionId: string
+    readonly agentId?: string
+    readonly config: JsonValue
+  }): Promise<void>
   setHostExtensionInstalled(id: string, revisionId: string | null, permissionDigest?: string): Promise<void>
   reportHostExtensionClientDiagnostic(input: {
     readonly extensionId: string
