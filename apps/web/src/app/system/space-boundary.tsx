@@ -1,9 +1,18 @@
 import { RotateCcw } from 'lucide-react'
 import { Component, type ReactNode } from 'react'
 import { Button, EmptyState } from '../../ui-kit/next/index.js'
+import { useCrumb } from '../shell/crumb.js'
+
+/** Replaces the breadcrumb of the space that failed, which never got to set its own. */
+function FailedCrumb() {
+  useCrumb('页面未加载')
+  return null
+}
 
 interface State {
   readonly failed: boolean
+  /** In-place retries already tried; a browser keeps a failed module import, so the next step reloads. */
+  readonly retries: number
 }
 
 /**
@@ -11,9 +20,9 @@ interface State {
  * drafts stay usable, and the user retries in place instead of reloading the page.
  */
 export class SpaceBoundary extends Component<{ readonly onRetry: () => void; readonly children: ReactNode }, State> {
-  override state: State = { failed: false }
+  override state: State = { failed: false, retries: 0 }
 
-  static getDerivedStateFromError(): State {
+  static getDerivedStateFromError(): Partial<State> {
     return { failed: true }
   }
 
@@ -25,17 +34,23 @@ export class SpaceBoundary extends Component<{ readonly onRetry: () => void; rea
     if (!this.state.failed) return this.props.children
     return (
       <div style={{ display: 'grid', placeItems: 'center', height: '100%', padding: 32 }} role="alert">
+        <FailedCrumb />
         <EmptyState
           title="这个页面没能加载"
           action={
             <Button
               icon={<RotateCcw size={14} />}
               onClick={() => {
+                if (this.state.retries > 0) {
+                  // Channel drafts are kept in session storage and come back after the reload.
+                  window.location.reload()
+                  return
+                }
                 this.props.onRetry()
-                this.setState({ failed: false })
+                this.setState((state) => ({ failed: false, retries: state.retries + 1 }))
               }}
             >
-              重试
+              {this.state.retries > 0 ? '重新加载页面' : '重试'}
             </Button>
           }
         >

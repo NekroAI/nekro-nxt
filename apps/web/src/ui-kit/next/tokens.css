@@ -14,8 +14,8 @@ html[data-ui='next'] [data-nxt-theme='light'] {
   --line-3: rgb(23 42 69 / 0.26);
   --fg: #14243d;
   --fg-2: #44536a;
-  --muted: #6b7689;
-  --faint: #8a94a6;
+  --muted: #566275;
+  --faint: #5d687b;
   --accent: #3f5b8f;
   --accent-2: #2f4a7a;
   --accent-soft: rgb(63 91 143 / 0.1);
@@ -70,7 +70,7 @@ html[data-ui='next'] [data-nxt-theme='dark'] {
   --fg: #eef2f8;
   --fg-2: #c3cddc;
   --muted: #8e9bb0;
-  --faint: #73819a;
+  --faint: #7f8ca4;
   --accent: #a3bae2;
   --accent-2: #c3d4f0;
   --accent-soft: rgb(163 186 226 / 0.12);

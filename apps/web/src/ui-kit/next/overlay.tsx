@@ -2,9 +2,30 @@ import * as RadixDialog from '@radix-ui/react-dialog'
 import * as RadixMenu from '@radix-ui/react-dropdown-menu'
 import * as RadixTooltip from '@radix-ui/react-tooltip'
 import { Check, TriangleAlert, X } from 'lucide-react'
-import { useState, useSyncExternalStore, type KeyboardEvent, type ReactNode } from 'react'
+import { useLayoutEffect, useRef, useState, useSyncExternalStore, type KeyboardEvent, type ReactNode } from 'react'
 import { Button, IconButton } from './primitives.js'
 import styles from './overlay.module.css'
+
+/**
+ * Our dialogs open from state, not from a Radix trigger, so Radix has nowhere to return focus. Remember the focused
+ * element when the layer opens and give focus back to it when the layer closes (keyboard users stay in place).
+ */
+function useReturnFocus(open: boolean): (event: Event) => void {
+  const opener = useRef<HTMLElement | null>(null)
+  useLayoutEffect(() => {
+    if (open && document.activeElement instanceof HTMLElement && document.activeElement !== document.body) {
+      opener.current = document.activeElement
+    }
+  }, [open])
+  return (event) => {
+    const target = opener.current
+    opener.current = null
+    if (target?.isConnected) {
+      event.preventDefault()
+      target.focus()
+    }
+  }
+}
 
 export function Dialog({
   open,
@@ -21,6 +42,7 @@ export function Dialog({
   readonly actions?: ReactNode
   readonly wide?: boolean
 }) {
+  const returnFocus = useReturnFocus(open)
   return (
     <RadixDialog.Root open={open} onOpenChange={onOpenChange}>
       <RadixDialog.Portal>
@@ -28,6 +50,7 @@ export function Dialog({
         <RadixDialog.Content
           className={[styles.dialog, wide ? styles.wide : ''].join(' ')}
           aria-describedby={undefined}
+          onCloseAutoFocus={returnFocus}
         >
           <RadixDialog.Title className={styles.title}>{title}</RadixDialog.Title>
           {children ? <div className={styles.body}>{children}</div> : null}
@@ -123,11 +146,17 @@ export function Overlay({
   readonly onKeyDown?: (event: KeyboardEvent<HTMLDivElement>) => void
   readonly children: ReactNode
 }) {
+  const returnFocus = useReturnFocus(open)
   return (
     <RadixDialog.Root open={open} onOpenChange={onOpenChange}>
       <RadixDialog.Portal>
         <RadixDialog.Overlay className={styles.scrim} />
-        <RadixDialog.Content className={className} aria-describedby={undefined} onKeyDown={onKeyDown}>
+        <RadixDialog.Content
+          className={className}
+          aria-describedby={undefined}
+          onKeyDown={onKeyDown}
+          onCloseAutoFocus={returnFocus}
+        >
           <RadixDialog.Title className={styles.srOnly}>{label}</RadixDialog.Title>
           {children}
         </RadixDialog.Content>
@@ -150,11 +179,12 @@ export function Sheet({
   readonly children: ReactNode
   readonly footer?: ReactNode
 }) {
+  const returnFocus = useReturnFocus(open)
   return (
     <RadixDialog.Root open={open} onOpenChange={onOpenChange}>
       <RadixDialog.Portal>
         <RadixDialog.Overlay className={styles.scrim} />
-        <RadixDialog.Content className={styles.sheet} aria-describedby={undefined}>
+        <RadixDialog.Content className={styles.sheet} aria-describedby={undefined} onCloseAutoFocus={returnFocus}>
           <div className={styles.sheetHead}>
             <RadixDialog.Title className={styles.title}>{title}</RadixDialog.Title>
             <RadixDialog.Close asChild>
