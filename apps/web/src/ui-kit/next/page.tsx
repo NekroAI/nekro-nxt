@@ -58,7 +58,7 @@ export function WorkbenchPage({
       data-detail={detail ? '' : undefined}
     >
       {list}
-      <main className={styles.main}>{children}</main>
+      <div className={styles.main}>{children}</div>
       {detail}
     </div>
   )
