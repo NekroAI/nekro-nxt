@@ -341,6 +341,8 @@ const providerSettingsSnapshot = {
       configured: true,
       credential: { configured: true, writable: true },
       models: [{ id: 'gpt-5', name: 'GPT-5' }],
+      modelsCustomized: false,
+      discoverable: true,
     },
   ],
 } as const
@@ -881,6 +883,8 @@ test.describe('NekroNxt browser projections', () => {
                   configured: false,
                   credential: { configured: false, writable: true },
                   models: [],
+                  modelsCustomized: false,
+                  discoverable: true,
                 },
               ],
             },
