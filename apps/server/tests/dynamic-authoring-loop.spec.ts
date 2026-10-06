@@ -351,6 +351,8 @@ describe('dynamic authoring closed loop', () => {
         code: { host: 'return { apply() {} }' },
       })
       const task = runtime.repository.listAuthoringTasks(entity.agentId)[0]!
+      // Definitions reach the ledger asynchronously; wait until the probe is the latest candidate.
+      await expect.poll(() => runtime.repository.listAuthoringAttempts(task.id).length).toBe(2)
       const [first] = runtime.repository.listAuthoringAttempts(task.id)
       await expect(
         runtime.authoring.save({
