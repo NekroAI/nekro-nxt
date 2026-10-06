@@ -1,49 +1,33 @@
 import { installSnapshotHealthRoutes } from './fixtures/host-release.js'
-import { expect, test, type Locator, type Page, type TestInfo } from '@playwright/test'
+import { installWorkspaceRoutes } from './fixtures/workspace.js'
+import { expect, test, type Page, type TestInfo } from '@playwright/test'
 import { AxeBuilder } from '@axe-core/playwright'
 import {
-  AgentIdSchema,
-  ChannelEventIdSchema,
-  ConnectionEventIdSchema,
+  AuthoringAttemptIdSchema,
+  AuthoringTaskIdSchema,
   ExtensionIdSchema,
   ExtensionRevisionIdSchema,
   HostApiContracts,
+  type HostApiResponse,
 } from '@nekro-nxt/contracts'
-
 import {
   targetAgentId,
-  sourceAgentId,
   targetChannelId,
-  sourceChannelId,
   externalChannelId,
-  internalConnectionId,
   externalConnectionId,
-  summaryExtensionId,
-  summaryRevisionId,
-  dashboardExtensionId,
-  dashboardRevisionId,
-  overviewPageId,
-  reportsPageId,
   targetEpisodeId,
-  previewAuthoringTaskId,
-  previewAuthoringAttemptId,
-  saveAuthoringTaskId,
-  saveAuthoringAttemptId,
-  sentEventId,
-  senderMemberId,
-  targetMemberId,
   imageAssetId,
-  imagePolicy,
   fileAssetId,
-  connectionActorId,
   connectionEvents,
   productSnapshot,
   channelMessages,
+  internalConnectionId,
+  sourceChannelId,
 } from './fixtures/product-quality.js'
 
-// Every scenario in this file replaces productMetadata, including the Client
-// lifecycle scenarios that install their own API routes rather than the common
-// product fixture. Their health endpoint must represent that same synthetic Host.
+type Snapshot = HostApiResponse<'snapshot'>
+
+// Every scenario replaces productMetadata; the health endpoint must represent the same synthetic Host.
 test.beforeEach(async ({ page }) => {
   await installSnapshotHealthRoutes(page, productSnapshot)
 })
@@ -57,7 +41,7 @@ const installRuntimeFailureGate = (page: Page): string[] => {
   return failures
 }
 
-const installProductRoutes = async (page: Page): Promise<void> => {
+const installProductRoutes = async (page: Page, snapshot: () => Snapshot = () => productSnapshot): Promise<void> => {
   if (process.env['NEKRO_UI_PERF_CONTENT_VISIBILITY'] === '1') {
     await page.addInitScript(() => {
       document.addEventListener(
@@ -73,11 +57,12 @@ const installProductRoutes = async (page: Page): Promise<void> => {
     })
   }
   await page.route('**/api/snapshot', (route) =>
-    route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(productSnapshot) }),
+    route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(snapshot()) }),
   )
+  await installWorkspaceRoutes(page, snapshot)
   await page.route('**/api/channels/*/runtime', (route) => {
     const channelId = new URL(route.request().url()).pathname.split('/')[3]
-    const channel = productSnapshot.channels.find((item) => item.id === channelId)
+    const channel = snapshot().channels.find((item) => item.id === channelId)
     return route.fulfill({
       status: 200,
       contentType: 'application/json',
@@ -218,39 +203,39 @@ const installProductRoutes = async (page: Page): Promise<void> => {
   )
 }
 
+const SPACES = [
+  { path: '/live', heading: '现场' },
+  { path: `/channels/${targetChannelId}`, heading: '资料员的内置频道' },
+  { path: `/agents/${targetAgentId}`, heading: '资料员' },
+  { path: '/workshop', heading: null },
+  { path: `/wiring/connections/${externalConnectionId}`, heading: '接线' },
+  { path: '/settings/adapters', heading: '平台适配器' },
+] as const
+
+/** No horizontal page scroll, the shell fills the viewport, and the primary navigation is reachable. */
 const assertViewportIntegrity = async (page: Page): Promise<void> => {
-  const geometry = await page.evaluate(() => {
-    const sidebar = document.querySelector('aside')?.getBoundingClientRect()
-    const main = document.querySelector('main')?.getBoundingClientRect()
-    const topBar = document.querySelector('[data-window-top-bar]')?.getBoundingClientRect()
-    return {
-      viewportWidth: window.innerWidth,
-      viewportHeight: window.innerHeight,
-      documentWidth: document.documentElement.scrollWidth,
-      bodyWidth: document.body.scrollWidth,
-      mainHeight: main?.height ?? 0,
-      topBarHeight: topBar?.height ?? 0,
-      overlaps: sidebar && main ? sidebar.right > main.left + 1 : false,
-    }
-  })
+  const geometry = await page.evaluate(() => ({
+    viewportWidth: window.innerWidth,
+    documentWidth: document.documentElement.scrollWidth,
+    bodyWidth: document.body.scrollWidth,
+  }))
   expect(geometry.documentWidth).toBeLessThanOrEqual(geometry.viewportWidth)
   expect(geometry.bodyWidth).toBeLessThanOrEqual(geometry.viewportWidth)
-  expect(geometry.topBarHeight).toBe(48)
-  expect(geometry.mainHeight + geometry.topBarHeight).toBeGreaterThanOrEqual(geometry.viewportHeight - 1)
-  expect(geometry.overlaps).toBe(false)
+  await expect(page.getByRole('navigation', { name: '主导航' })).toBeVisible()
+  await expect(page.getByRole('button', { name: '搜索' })).toBeVisible()
 }
 
-const capture = async (page: Page, testInfo: TestInfo, name: string): Promise<void> => {
-  const path = testInfo.outputPath(`${name}.png`)
-  await page.screenshot({ path, animations: 'disabled' })
-  await testInfo.attach(name, { path, contentType: 'image/png' })
-}
+/** Masks for values that change with the wall clock. */
+const clockMasks = (page: Page) => [page.locator('[class*="statusClock"]')]
 
-const expectProductMotionSettled = async (page: Page): Promise<void> => {
-  await expect(page.locator('html[data-nxt-view-transition]')).toHaveCount(0)
-  await expect(page.locator('[data-stage-layer="out"]')).toHaveCount(0)
-  const activeLayer = page.locator('[data-stage-layer="in"]').last()
-  if ((await activeLayer.count()) > 0) await expect(activeLayer).toHaveCSS('opacity', '1')
+const settle = async (page: Page): Promise<void> => {
+  await page.evaluate(() => document.fonts.ready)
+  // Theme cross-fades and entry animations change computed colors while they run.
+  await page.waitForFunction(() =>
+    document
+      .getAnimations()
+      .every((animation) => animation.playState !== 'running' || animation.effect?.getTiming().iterations === Infinity),
+  )
   await page.evaluate(
     () =>
       new Promise<void>((resolve) => {
@@ -259,1831 +244,79 @@ const expectProductMotionSettled = async (page: Page): Promise<void> => {
   )
 }
 
-test('writes the four public product screenshots from fictional production data', async ({ page }) => {
-  const outputDirectory = process.env['NEKRO_BRAND_SCREENSHOT_DIR']
-  test.skip(!outputDirectory, 'Only runs when refreshing committed public screenshots.')
-  const failures = installRuntimeFailureGate(page)
-  await installProductRoutes(page)
-  await page.emulateMedia({ colorScheme: 'light', reducedMotion: 'reduce' })
-
-  await page.setViewportSize({ width: 1440, height: 900 })
-  await page.goto(`/work/channels/${targetChannelId}`)
-  await expect(page.getByRole('heading', { name: '资料员的内置频道' })).toBeVisible()
-  await page.screenshot({ path: `${outputDirectory}/channel-conversation.png`, animations: 'disabled' })
-
-  await page.setViewportSize({ width: 1600, height: 900 })
-  await page.goto(`/work/agents/${targetAgentId}`)
-  await expect(page.getByText('主模型原生视觉', { exact: true })).toBeVisible()
-  await page.screenshot({ path: `${outputDirectory}/agent-workbench.png`, animations: 'disabled' })
-
-  await page.goto('/connections')
-  await page
-    .getByRole('link', { name: /示例群聊平台/u })
-    .first()
-    .click()
-  await expect(page).toHaveURL(new RegExp(`/connections/${externalConnectionId}$`, 'u'))
-  await expectProductMotionSettled(page)
-  await expect(page.locator('main').getByRole('heading', { name: '示例群聊平台' })).toBeVisible()
-  await page.screenshot({ path: `${outputDirectory}/connections.png`, animations: 'disabled' })
-
-  await page.goto('/work/creator')
-  await expect(page.getByText('与资料员协作创造', { exact: true })).toBeVisible()
-  await page.screenshot({ path: `${outputDirectory}/creator-workbench.png`, animations: 'disabled' })
-  expect(failures, failures.join('\n')).toEqual([])
-})
-
-test('connection activity updates live without entering channel settings', async ({ page }, testInfo) => {
-  const failures = installRuntimeFailureGate(page)
-  await installProductRoutes(page)
-  const liveEvent = {
-    id: ConnectionEventIdSchema.parse('cev_LIVEVISUAL'),
-    connectionId: externalConnectionId,
-    activityKey: 'account-signal',
-    summary: '实时收到连接级活动',
-    actor: { identityId: connectionActorId, displayName: '参与者甲' },
-    occurredAt: 1_725_000_200_000,
-  }
-  await page.route('**/api/events', (route) =>
-    route.fulfill({
-      status: 200,
-      contentType: 'text/event-stream',
-      body: `event: connection-fact\ndata: ${JSON.stringify(liveEvent)}\n\n`,
-    }),
-  )
-
-  await page.goto(`/connections/${externalConnectionId}`)
-  await expect(page.getByText('实时收到连接级活动')).toBeVisible()
-  await expect(page.getByText('参与者：参与者甲')).toBeVisible()
-  await expect(page.getByRole('button', { name: '加载连接活动' })).toHaveCount(0)
-  await capture(page, testInfo, 'fixture-connection-live-activity')
-  expect(failures, failures.join('\n')).toEqual([])
-})
-
-test('about identity stays readable across supported desktop sizes and themes', async ({ page }, testInfo) => {
-  const failures = installRuntimeFailureGate(page)
-  await installProductRoutes(page)
-  for (const viewport of [
-    { width: 1100, height: 720 },
-    { width: 1440, height: 900 },
-    { width: 1920, height: 1080 },
-  ]) {
-    for (const colorScheme of ['light', 'dark'] as const) {
-      await page.setViewportSize(viewport)
-      await page.emulateMedia({ colorScheme, reducedMotion: 'reduce' })
-      await page.goto('/settings?tab=about')
-      await expect(page.getByRole('heading', { name: 'NekroNXT Preview' })).toBeVisible()
-      await expect(page.getByText(productSnapshot.productMetadata!.releaseId, { exact: true })).toBeVisible()
-      await expect(page.getByText('0.1.1-rc.2', { exact: true })).toBeVisible()
-      await expect(page.getByText('AGPL-3.0-only', { exact: true })).toBeVisible()
-      const logo = page.getByRole('img', { name: 'NekroNXT Logo' })
-      await expect(logo).toBeVisible()
-      await expect.poll(() => logo.evaluate((image: HTMLImageElement) => image.naturalWidth)).toBeGreaterThan(0)
-      await assertViewportIntegrity(page)
-      await capture(page, testInfo, `about-${viewport.width}x${viewport.height}-${colorScheme}`)
-    }
-  }
-  expect(failures, failures.join('\n')).toEqual([])
-})
-
-test('notification settings and pending preview states stay legible in the current desktop system', async ({
-  page,
-}, testInfo) => {
-  const failures = installRuntimeFailureGate(page)
-  await installProductRoutes(page)
-  const pendingDynamic = productSnapshot.dynamic.map((item) => ({
-    ...item,
-    status: 'awaiting-approval' as const,
-    approvalRequestId: 'approval-visual-probe',
-  }))
-  await page.unroute('**/api/snapshot')
-  await page.route('**/api/snapshot', (route) =>
-    route.fulfill({
-      status: 200,
-      contentType: 'application/json',
-      body: JSON.stringify({ ...productSnapshot, dynamic: pendingDynamic }),
-    }),
-  )
-  await page.setViewportSize({ width: 1440, height: 900 })
-  await page.emulateMedia({ colorScheme: 'light', reducedMotion: 'reduce' })
-
-  await page.goto(`/work/channels/${targetChannelId}`)
-  await expect(page.getByText(/正在等待界面预览确认/u)).toBeVisible()
-  await expect(page.getByLabel('对象列').getByLabel('有扩展预览等待确认')).toBeVisible()
-  await assertViewportIntegrity(page)
-  await capture(page, testInfo, 'pending-client-preview-channel-light')
-
-  await page.goto(`/work/agents/${targetAgentId}`)
-  const automaticPreviewSwitch = page.getByRole('switch', { name: '自动允许扩展界面预览' })
-  await expect(automaticPreviewSwitch).toBeVisible()
-  await automaticPreviewSwitch.scrollIntoViewIfNeeded()
-  await assertViewportIntegrity(page)
-  await capture(page, testInfo, 'automatic-client-preview-policy-light')
-
-  await page.goto('/settings?tab=notifications')
-  await expect(page.getByText('系统通知渠道', { exact: true })).toBeVisible()
-  await expect(page.getByText('Bark 通知渠道', { exact: true })).toBeVisible()
-  await expect(page.getByText('通知项目', { exact: true })).toBeVisible()
-  await assertViewportIntegrity(page)
-  await capture(page, testInfo, 'notification-settings-light')
-  await page.getByText('通知项目', { exact: true }).scrollIntoViewIfNeeded()
-  await capture(page, testInfo, 'notification-events-light')
-
-  await page.evaluate(() => window.localStorage.setItem('nekro-nxt.theme', 'dark'))
-  await page.emulateMedia({ colorScheme: 'dark', reducedMotion: 'reduce' })
-  await page.reload()
-  await expect(page.getByText('系统通知渠道', { exact: true })).toBeVisible()
-  await assertViewportIntegrity(page)
-  await capture(page, testInfo, 'notification-settings-dark')
-  expect(failures, failures.join('\n')).toEqual([])
-})
-
-const dragHorizontally = async (page: Page, handle: Locator, deltaX: number): Promise<void> => {
-  await handle.evaluate(
-    () =>
-      new Promise<void>((resolve) => {
-        requestAnimationFrame(() => requestAnimationFrame(() => resolve()))
-      }),
-  )
-  const box = await handle.boundingBox()
-  if (!box) throw new Error('分隔条没有几何尺寸。')
-  const x = box.x + box.width / 2
-  const y = box.y + box.height / 2
-  await page.mouse.move(x, y)
-  await page.mouse.down()
-  await page.mouse.move(x + deltaX, y, { steps: 8 })
-  await page.mouse.up()
+const capture = async (page: Page, testInfo: TestInfo, name: string): Promise<void> => {
+  const path = testInfo.outputPath(`${name}.png`)
+  await page.screenshot({ path, animations: 'disabled' })
+  await testInfo.attach(name, { path, contentType: 'image/png' })
 }
 
-test('three desktop viewports remain usable in both themes and reduced motion', async ({ page }, testInfo) => {
-  const failures = installRuntimeFailureGate(page)
-  await installProductRoutes(page)
-  await page.goto('/work')
+const taskId = AuthoringTaskIdSchema.parse('aut_QUALITYTASK')
+const firstAttemptId = AuthoringAttemptIdSchema.parse('aua_QUALITYFIRST')
+const secondAttemptId = AuthoringAttemptIdSchema.parse('aua_QUALITYSECOND')
+const savedExtensionId = ExtensionIdSchema.parse('ext_qualitysaved')
+const savedRevisionId = ExtensionRevisionIdSchema.parse('xrv_qualitysaved')
 
-  for (const viewport of [
-    { width: 1100, height: 720 },
-    { width: 1440, height: 900 },
-    { width: 1920, height: 1080 },
-  ]) {
-    for (const colorScheme of ['light', 'dark'] as const) {
-      await page.evaluate((theme) => window.localStorage.setItem('nekro-nxt.theme', theme), colorScheme)
-      await page.setViewportSize(viewport)
-      await page.emulateMedia({ colorScheme, reducedMotion: 'reduce' })
-      await page.goto(`/work/channels/${targetChannelId}`)
-      await expect(page.getByRole('heading', { name: '资料员的内置频道' })).toBeVisible()
-      const titleStatusGeometry = await page.locator('[data-conversation-title]').evaluate((element) => {
-        const chip = element.firstElementChild
-        const heading = element.querySelector('h1')
-        return {
-          chipRight: chip?.getBoundingClientRect().right ?? Number.POSITIVE_INFINITY,
-          headingLeft: heading?.getBoundingClientRect().left ?? 0,
-        }
-      })
-      expect(titleStatusGeometry.chipRight).toBeLessThan(titleStatusGeometry.headingLeft)
-      await expect(page.locator('[data-conversation-header-actions]').getByText('空闲', { exact: true })).toHaveCount(0)
-      await expect(page.locator('aside[aria-label="频道"]').getByText('空闲', { exact: true })).toHaveCount(0)
-      const headerActionsBox = await page.locator('[data-conversation-header-actions]').boundingBox()
-      expect(headerActionsBox?.height ?? Number.POSITIVE_INFINITY).toBeLessThanOrEqual(36)
-      await expect(page.locator('[data-conversation-header-actions] > *').last()).toContainText('会话')
-      await expect(page.getByText('请复核今天的记录。')).toBeVisible()
-      await expect(page.getByRole('img', { name: '界面预览图' })).toBeVisible()
-      await expect(page.getByText('界面预览图', { exact: true })).toHaveCount(0)
-      await expect
-        .poll(() =>
-          page.getByRole('img', { name: '界面预览图' }).evaluate((image: HTMLImageElement) => image.naturalWidth),
-        )
-        .toBeGreaterThan(0)
-      await expect(page.getByText('验收记录.txt', { exact: true })).toBeVisible()
-      await expect(page.getByLabel('消息内容')).toBeVisible()
-      await expect(page.locator('[role="tabpanel"][data-state="inactive"]')).toHaveCount(0)
-      await expect(page.locator('[data-stage-layer="out"]')).toHaveCount(0)
-      await expect(page.locator('[data-stage-layer="in"]').last()).toHaveCSS('opacity', '1')
-      await expect
-        .poll(async () => {
-          const canvasBox = await page.locator('[data-channel-canvas-stage]').boundingBox()
-          const messageListBox = await page.locator('[data-channel-message-list]').boundingBox()
-          return Math.abs((canvasBox?.y ?? 0) - (messageListBox?.y ?? Number.POSITIVE_INFINITY))
-        })
-        .toBeLessThanOrEqual(1)
-      const composerFrame = await page
-        .locator('[data-channel-composer]')
-        .first()
-        .evaluate((element) => {
-          const formStyle = getComputedStyle(element)
-          const inputStyle = getComputedStyle(element.querySelector('textarea')!)
-          return {
-            formBorder: Number.parseFloat(formStyle.borderTopWidth),
-            inputBorder: Number.parseFloat(inputStyle.borderTopWidth),
-            inputBackground: inputStyle.backgroundColor,
-            formBackground: formStyle.backgroundColor,
-          }
-        })
-      expect(composerFrame.formBorder).toBeGreaterThan(0)
-      expect(composerFrame.inputBorder).toBe(0)
-      expect(composerFrame.inputBackground).toBe('rgba(0, 0, 0, 0)')
-      await expect(page.getByText('发给智能体', { exact: true })).toHaveCount(1)
-      const sendButton = page.getByRole('button', { name: '发送给智能体' })
-      expect(await sendButton.innerText()).toBe('')
-      const composerBox = await page.locator('[data-channel-composer]').first().boundingBox()
-      const infoBox = await page.getByRole('img', { name: '发送方式说明' }).boundingBox()
-      const modeBox = await page.getByText('发给智能体', { exact: true }).boundingBox()
-      const sendBox = await sendButton.boundingBox()
-      expect(infoBox?.x ?? Number.POSITIVE_INFINITY).toBeLessThan(modeBox?.x ?? 0)
-      expect(sendBox?.width ?? Number.POSITIVE_INFINITY).toBeLessThanOrEqual(30.5)
-      expect(
-        (composerBox?.x ?? 0) + (composerBox?.width ?? 0) - ((sendBox?.x ?? 0) + (sendBox?.width ?? 0)),
-      ).toBeLessThanOrEqual(16)
-      const memberContent = page
-        .locator('article[data-side="right"]')
-        .filter({ hasText: '请复核今天的记录。' })
-        .locator(':scope > div')
-        .last()
-      const agentContent = page
-        .locator('article[data-side="left"]')
-        .filter({ hasText: '这是本次交付的资源。' })
-        .locator(':scope > div')
-        .last()
-      expect((await memberContent.boundingBox())?.x).toBeGreaterThan((await agentContent.boundingBox())?.x ?? 0)
-      const bubbleSurfaces = await Promise.all(
-        [memberContent, agentContent].map((content) =>
-          content.locator('[data-message-bubble]').evaluate((element) => {
-            const style = getComputedStyle(element)
-            return {
-              background: style.backgroundColor,
-              border: style.borderTopColor,
-              radius: style.borderRadius,
-              padding: style.padding,
-              marginTop: style.marginTop,
-              fontSize: style.fontSize,
-              lineHeight: style.lineHeight,
-            }
-          }),
-        ),
-      )
-      expect(bubbleSurfaces[0]).toEqual(bubbleSurfaces[1])
-      const lastMessage = page.locator('article').last()
-      const composer = page.locator('[data-channel-composer]').first()
-      await lastMessage.scrollIntoViewIfNeeded()
-      const lastMessageBox = await lastMessage.boundingBox()
-      const composerBoxAfterScroll = await composer.boundingBox()
-      expect((lastMessageBox?.y ?? 0) + (lastMessageBox?.height ?? 0)).toBeLessThanOrEqual(
-        (composerBoxAfterScroll?.y ?? 0) - 24,
-      )
-      const hierarchy = await page.evaluate(() => {
-        const parentName = [...document.querySelectorAll('strong')].find((node) => node.textContent === '资料员')
-        const parent = parentName?.closest('a')
-        const child = [...document.querySelectorAll('a')].find((node) => node.textContent?.includes('资料员的内置频道'))
-        const group = child?.closest('section')
-        return {
-          parentLeft: parent?.getBoundingClientRect().left ?? 0,
-          childLeft: child?.getBoundingClientRect().left ?? 0,
-          guide: group ? getComputedStyle(group, '::before').content : 'none',
-        }
-      })
-      expect(hierarchy.childLeft).toBeGreaterThan(hierarchy.parentLeft)
-      expect(hierarchy.guide).not.toBe('none')
-      const cacheAnalysis = page.getByLabel('缓存分析')
-      await expect(cacheAnalysis).toBeVisible()
-      await expect(cacheAnalysis).toContainText('最近一次输入缓存覆盖')
-      await expect(cacheAnalysis).toContainText('96%')
-      await expect(cacheAnalysis).toContainText('会话加权覆盖')
-      await expect(cacheAnalysis).toContainText('数据覆盖 4/4 次请求')
-      await expect(page.getByLabel('最近 4 次模型请求的缓存读取趋势')).toBeVisible()
-      const cacheFrame = page.locator('[data-runtime-data-surface="cache"]')
-      await expect(cacheFrame).toBeVisible()
-      expect(
-        await cacheFrame.evaluate((element) => {
-          const style = getComputedStyle(element)
-          return [style.borderTopWidth, style.borderRightWidth, style.borderBottomWidth, style.borderLeftWidth]
-        }),
-      ).toEqual(['0px', '0px', '0px', '0px'])
-      await assertViewportIntegrity(page)
-      if (colorScheme === 'dark') {
-        const semanticTokens = await page.evaluate(() => {
-          const styles = getComputedStyle(document.documentElement)
-          return {
-            warning: styles.getPropertyValue('--nxt-warning-soft').trim(),
-            success: styles.getPropertyValue('--nxt-success-soft').trim(),
-            danger: styles.getPropertyValue('--nxt-danger-soft').trim(),
-          }
-        })
-        expect(semanticTokens).toEqual({ warning: '#332711', success: '#112d22', danger: '#35191c' })
-      }
-      if (viewport.width === 1440 && colorScheme === 'dark') {
-        await page.getByRole('img', { name: '发送方式说明' }).hover()
-        const composerTooltip = page.getByRole('tooltip')
-        await expect(composerTooltip).toBeVisible()
-        const floatingLayers = await page.evaluate(() => ({
-          composer: Number(getComputedStyle(document.querySelector('[data-channel-composer]')!).zIndex),
-          tooltip: Number(getComputedStyle(document.querySelector('[role="tooltip"]')!).zIndex),
-        }))
-        expect(floatingLayers.tooltip).toBeGreaterThan(floatingLayers.composer)
-
-        const ring = page.locator('figure[aria-label="上下文占用"] svg')
-        const ringBox = await ring.boundingBox()
-        if (!ringBox) throw new Error('上下文环图没有几何尺寸。')
-        await page.mouse.move(ringBox.x + 76, ringBox.y + 21)
-        const chartTooltip = page.locator('figure[aria-label="上下文占用"] [role="tooltip"]')
-        await expect(chartTooltip).toBeVisible()
-        await expect(chartTooltip).toContainText(/36%|64%/u)
-        await expect(chartTooltip).toHaveAttribute('data-pointer-x', '76')
-        await page.mouse.move(ringBox.x + 94, ringBox.y + 40)
-        await expect(chartTooltip).toHaveAttribute('data-pointer-x', '94')
-        await expect(chartTooltip).toHaveCSS('translate', /^94px /u)
-        const chartSurface = await chartTooltip.evaluate((element) => {
-          const style = getComputedStyle(element)
-          return { background: style.backgroundColor, radius: Number.parseFloat(style.borderRadius) }
-        })
-        expect(chartSurface.background).not.toBe('rgb(255, 255, 255)')
-        expect(chartSurface.radius).toBeGreaterThanOrEqual(8)
-        await expect(page.locator('figure[aria-label="上下文占用"] [class*="contextSectorActive"]')).toHaveCount(1)
-        expect(await ring.evaluate((element) => getComputedStyle(element).outlineStyle)).toBe('none')
-      }
-      await capture(page, testInfo, `channel-${viewport.width}x${viewport.height}-${colorScheme}`)
-    }
-  }
-
-  expect(failures, failures.join('\n')).toEqual([])
+const attempt = (id: string, ordinal: number, state: string, extra: Record<string, unknown> = {}) => ({
+  id,
+  ordinal,
+  name: '群聊摘要卡片',
+  purpose: '把当前讨论整理成可继续跟进的摘要。',
+  state,
+  riskDigest: 'a'.repeat(64),
+  host: { status: 'running', waitingFor: [] },
+  client: { status: 'absent', waitingFor: [] },
+  createdAt: 1_725_000_000_000 + ordinal * 1_000,
+  ...extra,
 })
 
-test('platform-user directory and persona references remain legible across desktop states', async ({
-  page,
-}, testInfo) => {
-  const failures = installRuntimeFailureGate(page)
-  await installProductRoutes(page)
-  await page.addInitScript(() => window.localStorage.setItem('nekro-nxt.reduced-motion', 'true'))
-  await page.goto('/users')
-  for (const viewport of [
-    { width: 1100, height: 720 },
-    { width: 1440, height: 900 },
-    { width: 1920, height: 1080 },
-  ]) {
-    for (const colorScheme of ['light', 'dark'] as const) {
-      await page.evaluate((theme) => window.localStorage.setItem('nekro-nxt.theme', theme), colorScheme)
-      await page.setViewportSize(viewport)
-      await page.emulateMedia({ colorScheme, reducedMotion: 'reduce' })
-      await page.goto('/users')
-      await expect(page.getByRole('heading', { name: '平台用户' })).toBeVisible()
-      await expect(page.getByText('成员甲', { exact: true })).toBeVisible()
-      await expect(page.getByText('正在连接', { exact: true })).toHaveCount(0)
-      await expectProductMotionSettled(page)
-      const workspaceGeometry = await page.evaluate(() => {
-        const stage = document.querySelector<HTMLElement>('main')
-        const root = document.querySelector<HTMLElement>('[data-product-page="users"]')
-        const toolbar = document.querySelector<HTMLElement>('[data-page-toolbar]')
-        const header = document.querySelector<HTMLElement>('[data-table-header]')
-        const body = document.querySelector<HTMLElement>('[data-table-scroll-region]')
-        const pagination = document.querySelector<HTMLElement>('[data-table-pagination]')
-        if (!stage || !root || !toolbar || !header || !body || !pagination) {
-          throw new Error('用户目录缺少桌面工作区结构。')
-        }
-        const stageRect = stage.getBoundingClientRect()
-        const rootRect = root.getBoundingClientRect()
-        const toolbarRect = toolbar.getBoundingClientRect()
-        const headerRect = header.getBoundingClientRect()
-        const paginationRect = pagination.getBoundingClientRect()
-        body.scrollTop = body.scrollHeight
-        return new Promise<{
-          rootWidthRatio: number
-          toolbarWidthRatio: number
-          bodyScrolled: boolean
-          paginationVisible: boolean
-          pageScrollTop: number
-          toolbarY: number
-          headerY: number
-          paginationY: number
-        }>((resolve) => {
-          requestAnimationFrame(() => {
-            const bodyScrolled = body.scrollTop > 0
-            body.scrollTop = 0
-            resolve({
-              rootWidthRatio: rootRect.width / stageRect.width,
-              toolbarWidthRatio: toolbarRect.width / rootRect.width,
-              bodyScrolled,
-              paginationVisible: paginationRect.top >= rootRect.top - 1 && paginationRect.bottom <= rootRect.bottom + 1,
-              pageScrollTop: root.scrollTop,
-              toolbarY: Math.abs(toolbar.getBoundingClientRect().y - toolbarRect.y),
-              headerY: Math.abs(header.getBoundingClientRect().y - headerRect.y),
-              paginationY: Math.abs(pagination.getBoundingClientRect().y - paginationRect.y),
-            })
-          })
-        })
-      })
-      expect(workspaceGeometry.rootWidthRatio).toBeGreaterThan(0.9)
-      expect(workspaceGeometry.toolbarWidthRatio).toBeGreaterThan(0.9)
-      if (viewport.height === 720) expect(workspaceGeometry.bodyScrolled).toBe(true)
-      expect(workspaceGeometry.paginationVisible).toBe(true)
-      expect(workspaceGeometry.pageScrollTop).toBe(0)
-      expect(workspaceGeometry.toolbarY).toBeLessThanOrEqual(1)
-      expect(workspaceGeometry.headerY).toBeLessThanOrEqual(1)
-      expect(workspaceGeometry.paginationY).toBeLessThanOrEqual(1)
-      await assertViewportIntegrity(page)
-      await capture(page, testInfo, `platform-users-${viewport.width}x${viewport.height}-${colorScheme}`)
-    }
-  }
-
-  await page.setViewportSize({ width: 1440, height: 900 })
-  await page.emulateMedia({ colorScheme: 'light', reducedMotion: 'reduce' })
-  await page.goto('/users')
-  await expect(page.getByText('成员甲', { exact: true })).toBeVisible()
-  await page.getByLabel('搜索名称').fill('不存在的成员')
-  const userEmpty = page.locator('[data-product-page="users"] [data-empty-state]')
-  await expect(userEmpty.getByText('当前筛选无结果', { exact: true })).toBeVisible()
-  const userEmptyGeometry = await userEmpty.evaluate((element) => {
-    const body = element.parentElement
-    if (!body) throw new Error('用户空态缺少表体区域。')
-    const style = getComputedStyle(element)
-    const bodyRect = body.getBoundingClientRect()
-    const emptyRect = element.getBoundingClientRect()
-    const bodyCenterX = bodyRect.left + body.clientLeft + body.clientWidth / 2
-    const bodyCenterY = bodyRect.top + body.clientTop + body.clientHeight / 2
-    return {
-      widthRatio: emptyRect.width / bodyRect.width,
-      heightRatio: emptyRect.height / bodyRect.height,
-      centerOffset: Math.hypot(
-        bodyCenterX - (emptyRect.left + emptyRect.width / 2),
-        bodyCenterY - (emptyRect.top + emptyRect.height / 2),
-      ),
-      background: style.backgroundColor,
-      borderWidth: style.borderTopWidth,
-      shadow: style.boxShadow,
-    }
-  })
-  expect(userEmptyGeometry.widthRatio).toBeGreaterThan(0.95)
-  expect(userEmptyGeometry.heightRatio).toBeGreaterThan(0.95)
-  expect(userEmptyGeometry.centerOffset).toBeLessThanOrEqual(1)
-  expect(userEmptyGeometry.background).toBe('rgba(0, 0, 0, 0)')
-  expect(userEmptyGeometry.borderWidth).toBe('0px')
-  expect(userEmptyGeometry.shadow).toBe('none')
-  await capture(page, testInfo, 'platform-users-empty-light')
-  await page.emulateMedia({ colorScheme: 'dark', reducedMotion: 'reduce' })
-  await capture(page, testInfo, 'platform-users-empty-dark')
-
-  await page.setViewportSize({ width: 1440, height: 900 })
-  await page.emulateMedia({ colorScheme: 'light', reducedMotion: 'reduce' })
-  await page.goto(`/work/agents/${targetAgentId}`)
-  const editor = page.getByRole('textbox', { name: '人设' })
-  await editor.focus()
-  const editorFocusMetrics = await editor.evaluate((element) => ({
-    editorOutline: getComputedStyle(element).outlineStyle,
-    frameShadow: element.parentElement ? getComputedStyle(element.parentElement).boxShadow : 'none',
-  }))
-  expect(editorFocusMetrics.editorOutline).toBe('none')
-  expect(editorFocusMetrics.frameShadow).not.toBe('none')
-  await editor.fill(`${Array.from({ length: 19 }, (_, index) => `工作边界 ${index + 1}`).join('\n')}\n引用 @成员`)
-  const referenceMenu = page.getByRole('listbox', { name: '可引用对象' })
-  await expect(referenceMenu).toBeVisible()
-  await expect(referenceMenu).toHaveAttribute('data-reference-menu-placement', 'above')
-  expect(await referenceMenu.evaluate((element) => getComputedStyle(element).transformOrigin)).toMatch(
-    /px\s+\d+(?:\.\d+)?px$/u,
-  )
-  await expect(page.getByRole('option', { name: /成员甲/u })).toBeVisible()
-  await capture(page, testInfo, 'persona-reference-candidates-20-lines-light')
-  await page.getByRole('option', { name: /成员甲/u }).click()
-  const referenceChip = editor.getByText('@成员甲')
-  await expect(referenceChip).toBeVisible()
-  const chipLineMetrics = await referenceChip.evaluate((element) => {
-    const paragraph = element.closest('p')
-    const editorElement = element.closest('[role="textbox"]')
-    return {
-      chipHeight: element.getBoundingClientRect().height,
-      paragraphHeight: paragraph?.getBoundingClientRect().height ?? 0,
-      lineHeight: editorElement ? Number.parseFloat(getComputedStyle(editorElement).lineHeight) : 0,
-    }
-  })
-  expect(chipLineMetrics.chipHeight).toBeLessThanOrEqual(chipLineMetrics.lineHeight)
-  expect(chipLineMetrics.paragraphHeight).toBe(chipLineMetrics.lineHeight * 20)
-  await assertViewportIntegrity(page)
-  await capture(page, testInfo, 'persona-reference-editor-20-lines-light')
-  await page.emulateMedia({ colorScheme: 'dark', reducedMotion: 'reduce' })
-  await capture(page, testInfo, 'persona-reference-editor-20-lines-dark')
-  expect(failures, failures.join('\n')).toEqual([])
-})
-
-test('platform-user updates stay local while persona references use the shared motion system', async ({ page }) => {
-  const failures = installRuntimeFailureGate(page)
-  await installProductRoutes(page)
-  await page.setViewportSize({ width: 1440, height: 900 })
-  await page.goto('/users')
-  await expect(page.getByRole('heading', { name: '平台用户' })).toBeVisible()
-  await expect(page.getByText('成员甲', { exact: true })).toBeVisible()
-  await expect(page.getByText('正在连接', { exact: true })).toHaveCount(0)
-
-  const stableChromeBefore = await page.evaluate(() => {
-    const toolbar = document.querySelector<HTMLElement>('[data-page-toolbar]')!
-    const header = document.querySelector<HTMLElement>('[data-table-header]')!
-    const pagination = document.querySelector<HTMLElement>('[data-table-pagination]')!
-    return [toolbar, header, pagination].map((element) => {
-      const rect = element.getBoundingClientRect()
-      return { x: rect.x, y: rect.y, width: rect.width, height: rect.height }
-    })
-  })
-  await page.getByRole('link', { name: /示例群聊平台/u }).click()
-  await expect(page.getByText('示例群聊平台 · 9 位用户', { exact: true })).toBeVisible()
-  await expect(page.locator('[data-product-page="users"] [data-stage-layer]')).toHaveCount(0)
-  const stableChromeAfter = await page.evaluate(() => {
-    const toolbar = document.querySelector<HTMLElement>('[data-page-toolbar]')!
-    const header = document.querySelector<HTMLElement>('[data-table-header]')!
-    const pagination = document.querySelector<HTMLElement>('[data-table-pagination]')!
-    return [toolbar, header, pagination].map((element) => {
-      const rect = element.getBoundingClientRect()
-      return { x: rect.x, y: rect.y, width: rect.width, height: rect.height }
-    })
-  })
-  expect(stableChromeAfter).toEqual(stableChromeBefore)
-
-  await page.goto(`/work/agents/${targetAgentId}`)
-  const editor = page.getByRole('textbox', { name: '人设' })
-  await editor.fill('引用 ')
-  await editor.press('End')
-  await editor.type('@')
-  const menu = page.getByRole('listbox', { name: '可引用对象' })
-  await expect(page.locator('html')).toHaveAttribute('data-nxt-motion', 'on')
-  await expect(menu).toHaveAttribute('data-nxt-enter-kind', 'popover')
-  await expect(menu).toHaveAttribute('data-reference-menu-placement', 'below')
-  await expect(menu).toBeVisible()
-
-  await page.evaluate(() => window.localStorage.setItem('nekro-nxt.reduced-motion', 'true'))
-  await page.reload()
-  await expect(page.locator('html')).toHaveAttribute('data-nxt-motion', 'off')
-  const reducedEditor = page.getByRole('textbox', { name: '人设' })
-  await reducedEditor.fill('引用 @')
-  const reducedMenu = page.getByRole('listbox', { name: '可引用对象' })
-  await expect(reducedMenu).toBeVisible()
-  expect(await reducedMenu.evaluate((element) => getComputedStyle(element).opacity)).toBe('1')
-  expect(failures, failures.join('\n')).toEqual([])
-})
-
-test('rapid theme reversal keeps the newer transition alive until its own cleanup', async ({ page }) => {
-  await installProductRoutes(page)
-  await page.addInitScript(() => localStorage.setItem('nekro-nxt.theme', 'dark'))
-  await page.goto(`/work/channels/${targetChannelId}`)
-  await expect(page.getByRole('textbox', { name: '消息内容' })).toBeVisible()
-  await page.clock.install()
-  await page.clock.pauseAt(new Date())
-  await page
-    .getByRole('button', { name: '主题：深色；切换为浅色' })
-    .evaluate((element: HTMLButtonElement) => element.click())
-  await page.clock.runFor(160)
-  await page
-    .getByRole('button', { name: '主题：浅色；切换为深色' })
-    .evaluate((element: HTMLButtonElement) => element.click())
-  await page.clock.runFor(170)
-  const themeRulesEnabled = () =>
-    page.evaluate(() =>
-      [...document.styleSheets].some((sheet) =>
-        [...sheet.cssRules].some(
-          (rule) =>
-            rule instanceof CSSMediaRule &&
-            !rule.conditionText.includes('--nxt-theme-transition') &&
-            rule.cssText.includes('data-theme-changing'),
-        ),
-      ),
-    )
-  await expect(page.locator('html')).toHaveAttribute('data-theme-changing', '')
-  expect(await themeRulesEnabled()).toBe(true)
-  await page.clock.runFor(160)
-  await expect(page.locator('html')).not.toHaveAttribute('data-theme-changing', '')
-  expect(await themeRulesEnabled()).toBe(false)
-})
-
-test('theme surfaces interpolate while message layout wrappers stay unanimated', async ({ page }, testInfo) => {
-  const failures = installRuntimeFailureGate(page)
-  await installProductRoutes(page)
-  await page.addInitScript(() => localStorage.setItem('nekro-nxt.theme', 'dark'))
-  await page.goto(`/work/channels/${targetChannelId}`)
-  await expect(page.locator('[data-channel-message-list] article').first()).toBeVisible()
-  const colors = await page.evaluate(async () => {
-    // The first successful snapshot dismisses the connection notice with its
-    // own opacity transition. Let that settle before measuring theme changes.
-    await Promise.all(
-      document
-        .getAnimations()
-        .filter((animation) => animation instanceof CSSTransition)
-        .map((animation) => animation.finished.catch(() => undefined)),
-    )
-    const root = document.documentElement
-    const wrapper = document.querySelector<HTMLElement>('[data-channel-message-list] [data-nxt-enter-kind="object"]')
-    const paragraph = wrapper?.querySelector('p')
-    if (!wrapper || !paragraph) throw new Error('Missing theme fixture message')
-    for (const sheet of document.styleSheets) {
-      for (const rule of sheet.cssRules) {
-        if (rule instanceof CSSMediaRule && rule.conditionText.includes('(--nxt-theme-transition)'))
-          rule.media.mediaText = rule.conditionText.replaceAll('(--nxt-theme-transition)', '(min-width: 0px)')
-      }
-    }
-    root.dataset['themeChanging'] = ''
-    // Establish the old style before changing tokens, then inspect the real CSS transitions.
-    const initialColor = getComputedStyle(paragraph).color
-    root.dataset['theme'] = 'light'
-    root.classList.remove('dark')
-    // Flush styles synchronously so a busy worker cannot finish a short
-    // transition before the test captures and pauses it.
-    getComputedStyle(paragraph).getPropertyValue('color')
-    const transitions = document
-      .getAnimations()
-      .filter((animation): animation is CSSTransition => animation instanceof CSSTransition)
-    let paintOwner: HTMLElement | null = paragraph
-    let colorTransition: CSSTransition | undefined
-    while (paintOwner && !colorTransition) {
-      colorTransition = transitions.find(
-        (animation) =>
-          animation.transitionProperty === 'color' &&
-          animation.effect instanceof KeyframeEffect &&
-          animation.effect.target === paintOwner,
-      )
-      if (!colorTransition) paintOwner = paintOwner.parentElement
-    }
-    if (!colorTransition) throw new Error('Missing message foreground transition')
-    for (const animation of transitions) animation.pause()
-    await colorTransition.ready
-    const sampledTransition = colorTransition
-    const at = async (time: number) => {
-      sampledTransition.currentTime = time
-      await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()))
-      return getComputedStyle(paragraph).color
-    }
-    const token = getComputedStyle(root).getPropertyValue('--nxt-motion-standard').trim()
-    const duration = Number.parseFloat(token) * (token.endsWith('ms') ? 1 : 1000)
-    const start = await at(0)
-    const middle = await at(duration / 2)
-    const end = await at(duration)
-    await at(duration / 2)
-    return {
-      start,
-      middle,
-      end,
-      count: transitions.length,
-      initialColor,
-      duration,
-      wrapperTransitions: wrapper.getAnimations().filter((animation) => animation instanceof CSSTransition).length,
-      durations: [...new Set(transitions.map((animation) => animation.effect?.getTiming().duration))],
-    }
-  })
-  expect(colors.start).toBe(colors.initialColor)
-  expect(colors.count).toBeGreaterThan(0)
-  expect(colors.wrapperTransitions).toBe(0)
-  expect(colors.durations).toEqual([colors.duration])
-  expect(colors.middle).not.toBe(colors.start)
-  expect(colors.middle).not.toBe(colors.end)
-  const screenshot = testInfo.outputPath('theme-midpoint.png')
-  await page.screenshot({ path: screenshot, animations: 'allow' })
-  await testInfo.attach('theme-midpoint', { path: screenshot, contentType: 'image/png' })
-  expect(failures).toEqual([])
-})
-
-test('representative product surfaces match committed visual baselines', async ({ page }, testInfo) => {
-  const failures = installRuntimeFailureGate(page)
-  await installProductRoutes(page)
-  await page.unroute('**/api/snapshot')
-  await page.route('**/api/snapshot', (route) =>
-    route.fulfill({
-      status: 200,
-      contentType: 'application/json',
-      body: JSON.stringify({
-        ...productSnapshot,
-        agents: productSnapshot.agents.map((agent) => {
-          if (agent.id === sourceAgentId) {
-            return { ...agent, runtimeStatus: 'running' as const, runtimePhase: 'thinking' as const }
-          }
-          if (agent.id === targetAgentId) {
-            return { ...agent, runtimeStatus: 'idle' as const, runtimePhase: 'idle' as const }
-          }
-          return agent
-        }),
-      }),
-    }),
-  )
-  await page.setViewportSize({ width: 1440, height: 900 })
-  await page.emulateMedia({ colorScheme: 'light', reducedMotion: 'no-preference' })
-  await page.addInitScript(() => {
-    if (window.localStorage.getItem('nekro-nxt.theme') === null) {
-      window.localStorage.setItem('nekro-nxt.theme', 'light')
-    }
-    window.localStorage.setItem('nekro-nxt.reduced-motion', 'true')
-  })
-  const runtimeReady = page.waitForResponse((response) => {
-    const url = new URL(response.url())
-    return url.pathname === `/api/channels/${targetChannelId}/runtime` && response.ok()
-  })
-  await page.goto(`/work/channels/${targetChannelId}`)
-  await runtimeReady
-  await expect(page.getByRole('heading', { name: '资料员的内置频道' })).toBeVisible()
-  await expect(page.locator('[data-conversation-title]').getByText('空闲', { exact: true })).toBeVisible()
-  const objectPane = page.getByLabel('对象列')
-  const targetAgentLink = objectPane.locator(`a[href="/work/agents/${targetAgentId}"]`)
-  const sourceAgentLink = objectPane.locator(`a[href="/work/agents/${sourceAgentId}"]`)
-  await expect(targetAgentLink.locator('[data-tree-state-indicator]')).toHaveCount(0)
-  await expect(objectPane.getByText('思考中', { exact: true })).toHaveCount(0)
-  await expect(sourceAgentLink.locator('[aria-label="运行状态：思考中"]')).toBeVisible()
-  await expect(page).toHaveScreenshot('channel-conversation-light-1440.png', {
-    animations: 'disabled',
-    maxDiffPixelRatio: 0.005,
-  })
-  const dragHandle = page.getByRole('button', { name: '拖动“记录员”及其频道排序' })
-  const stateIndicator = sourceAgentLink.locator('[data-tree-state-indicator]')
-  await expect(stateIndicator).toHaveCSS('opacity', '1')
-  await page.locator('html').evaluate((root) => root.setAttribute('data-reduced-motion', 'false'))
-  expect(
-    await stateIndicator
-      .locator('[data-runtime-state="thinking"]')
-      .evaluate((element) => getComputedStyle(element, '::after').animationName),
-  ).toMatch(/treeActivityOrbit/u)
-  await page.locator('html').evaluate((root) => root.setAttribute('data-reduced-motion', 'true'))
-  await sourceAgentLink.hover()
-  await expect(stateIndicator).toHaveCSS('opacity', '0')
-  await dragHandle.hover()
-  await expect(dragHandle).toHaveCSS('background-color', 'rgba(0, 0, 0, 0)')
-  await capture(page, testInfo, 'channel-tree-drag-hover')
-  await page.mouse.move(700, 700)
-
-  await page.emulateMedia({ colorScheme: 'dark', reducedMotion: 'no-preference' })
-  await page.evaluate(() => window.localStorage.setItem('nekro-nxt.theme', 'dark'))
-  await page.goto('/settings?tab=appearance')
-  await expect(page.getByRole('heading', { name: '外观' })).toBeVisible()
-  await expect(page.locator('html')).toHaveAttribute('data-theme', 'dark')
-  await expect(page.getByRole('combobox', { name: '主题' })).toHaveText('深色')
-  await expect(page).toHaveScreenshot('appearance-settings-dark-1440.png', {
-    animations: 'disabled',
-    maxDiffPixelRatio: 0.005,
-  })
-  expect(failures, failures.join('\n')).toEqual([])
-})
-
-test('representative pages and the command palette have no serious accessibility violations', async ({ page }) => {
-  const failures = installRuntimeFailureGate(page)
-  await installProductRoutes(page)
-  for (const route of [`/work/channels/${targetChannelId}`, '/connections', '/settings?tab=appearance']) {
-    await page.goto(route)
-    await expect(page.locator('main')).toBeVisible()
-    await expect(page.getByText('正在连接', { exact: true })).toHaveCount(0)
-    const result = await new AxeBuilder({ page }).withTags(['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa']).analyze()
-    expect(
-      result.violations.filter((violation) => violation.impact === 'critical' || violation.impact === 'serious'),
-      `${route} 存在严重无障碍问题`,
-    ).toEqual([])
-  }
-
-  await page.keyboard.press('Control+K')
-  await expect(page.getByRole('dialog', { name: '命令面板' })).toBeVisible()
-  const paletteResult = await new AxeBuilder({ page })
-    .include('[role="dialog"]')
-    .withTags(['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa'])
-    .analyze()
-  expect(
-    paletteResult.violations.filter((violation) => violation.impact === 'critical' || violation.impact === 'serious'),
-  ).toEqual([])
-  expect(failures, failures.join('\n')).toEqual([])
-})
-
-test('minimum desktop window remains reachable at 125% and 150% effective zoom', async ({ page }) => {
-  const failures = installRuntimeFailureGate(page)
-  await installProductRoutes(page)
-  for (const effectiveViewport of [
-    { width: 880, height: 576, zoom: '125%' },
-    { width: 733, height: 480, zoom: '150%' },
-  ]) {
-    await page.setViewportSize(effectiveViewport)
-    await page.goto(`/work/channels/${targetChannelId}`)
-    await expect(page.getByRole('heading', { name: '资料员的内置频道' })).toBeVisible()
-    const geometry = await page.evaluate(() => ({
-      viewportWidth: window.innerWidth,
-      viewportHeight: window.innerHeight,
-      scrollWidth: document.documentElement.scrollWidth,
-      scrollHeight: document.documentElement.scrollHeight,
-      bodyOverflow: getComputedStyle(document.body).overflow,
-    }))
-    expect(geometry.scrollWidth, `${effectiveViewport.zoom} 必须保留横向到达路径`).toBeGreaterThanOrEqual(1100)
-    expect(geometry.scrollHeight, `${effectiveViewport.zoom} 必须保留纵向到达路径`).toBeGreaterThanOrEqual(720)
-    expect(geometry.bodyOverflow).toBe('auto')
-    await page.evaluate(() =>
-      window.scrollTo(document.documentElement.scrollWidth, document.documentElement.scrollHeight),
-    )
-    expect(await page.evaluate(() => window.scrollX > 0 && window.scrollY > 0)).toBe(true)
-  }
-  expect(failures, failures.join('\n')).toEqual([])
-})
-
-test('English and long object names keep the desktop header on one line', async ({ page }) => {
-  const failures = installRuntimeFailureGate(page)
-  await installProductRoutes(page)
-  const longChannelName = 'Documentation & Research Coordination Channel — International Release Readiness Review'
-  await page.unroute('**/api/snapshot')
-  await page.route('**/api/snapshot', (route) =>
-    route.fulfill({
-      status: 200,
-      contentType: 'application/json',
-      body: JSON.stringify({
-        ...productSnapshot,
-        channels: productSnapshot.channels.map((channel) =>
-          channel.id === targetChannelId ? { ...channel, displayName: longChannelName } : channel,
-        ),
-      }),
-    }),
-  )
-  await page.setViewportSize({ width: 1100, height: 720 })
-  await page.goto(`/work/channels/${targetChannelId}`)
-  const heading = page.getByRole('heading', { name: longChannelName })
-  await expect(heading).toBeVisible()
-  const headingBox = await heading.boundingBox()
-  expect(headingBox?.height).toBeLessThanOrEqual(24)
-  const actionsBox = await page.locator('[data-conversation-header-actions]').boundingBox()
-  expect(actionsBox?.height).toBeLessThanOrEqual(36)
-  await assertViewportIntegrity(page)
-  expect(failures, failures.join('\n')).toEqual([])
-})
-
-test('channel tabs, running tools, and trajectory rows remain keyboard operable', async ({ page }, testInfo) => {
-  const failures = installRuntimeFailureGate(page)
-  await installProductRoutes(page)
-  await page.unroute('**/api/channels/*/runtime')
-  await page.route('**/api/channels/*/runtime', (route) =>
-    route.fulfill({
-      status: 200,
-      contentType: 'application/json',
-      body: JSON.stringify({
-        cursor: { epoch: 'fixture', sequence: 0 },
-        channelId: targetChannelId,
+/** A creation task whose candidate passed verification, plus an earlier verified attempt that can be restored. */
+const authoringSnapshot = (status: 'ready' | 'repairing' | 'completed'): Snapshot =>
+  HostApiContracts.snapshot.parseResponse({
+    ...productSnapshot,
+    // An agent still settling its turn blocks save and restore; this scenario starts after it went idle.
+    agents: productSnapshot.agents.map((agent) => ({ ...agent, runtimeStatus: 'idle', runtimePhase: 'idle' })),
+    authoringTasks: [
+      {
+        id: taskId,
         agentId: targetAgentId,
-        phase: 'using-tool',
-        summary: '智能体正在核对发布资料。',
-        pendingInjectCount: 0,
-        turns: [
-          {
-            turn: 1,
-            state: 'in-progress',
-            producedReply: false,
-            responseState: 'pending',
-            steps: [
-              {
-                step: 1,
-                internalOutput: { kind: 'internal-output', text: '先核对版本，再检查发布记录。' },
-                usage: { inputTokens: 100, outputTokens: 20, totalTokens: 920, cacheReadTokens: 800 },
-                tools: [
-                  {
-                    callId: 'call_read_release',
-                    name: 'read_file',
-                    displayName: '读取发布记录',
-                    state: 'succeeded',
-                    inputPreview: '发布记录.md',
-                    resultPreview: '版本 0.8.0',
-                  },
-                  {
-                    callId: 'call_verify_release',
-                    name: 'verify_release',
-                    displayName: '核对发布资料',
-                    state: 'running',
-                    inputPreview: '版本 0.8.0 · 生产构建',
-                  },
-                  {
-                    callId: 'call_send_release',
-                    name: 'send_channel_message',
-                    displayName: '发送频道消息',
-                    state: 'succeeded',
-                    wroteToChannel: true,
-                    inputPreview: '发布资料已核对。',
-                    resultPreview: 'sent',
-                  },
-                ],
-              },
-            ],
-          },
-        ],
-      }),
-    }),
-  )
-
-  await page.setViewportSize({ width: 1100, height: 720 })
-  await page.goto(`/work/channels/${targetChannelId}`)
-
-  const streamSummary = page.getByRole('button', { name: /内部输出.*核对发布资料.*2 个工具/u })
-  await expect(streamSummary).toHaveAttribute('aria-expanded', 'false')
-  await streamSummary.click()
-  await expect(streamSummary).toHaveAttribute('aria-expanded', 'true')
-  const runningTool = page.getByRole('button', { name: /^核对发布资料/u })
-  await expect(runningTool).toHaveAttribute('aria-expanded', 'true')
-  const controlledId = await runningTool.getAttribute('aria-controls')
-  expect(controlledId).toBeTruthy()
-  const controlledRegion = page.locator(`[id="${controlledId}"]`)
-  await expect(controlledRegion).toBeVisible()
-  const dotPositions = await page
-    .locator('[data-work-status-dot]')
-    .evaluateAll((dots) => dots.map((dot) => dot.getBoundingClientRect().left))
-  expect(Math.max(...dotPositions) - Math.min(...dotPositions)).toBeLessThanOrEqual(1)
-  const runningBox = await runningTool.boundingBox()
-  const streamBox = await page.locator('[data-work-stream]').boundingBox()
-  expect(runningBox?.width ?? 0).toBeLessThanOrEqual(streamBox?.width ?? Number.POSITIVE_INFINITY)
-  await capture(page, testInfo, 'channel-running-tool-expanded')
-  await runningTool.click()
-  await expect(runningTool).toHaveAttribute('aria-expanded', 'false')
-  await expect(controlledRegion).toHaveCount(0)
-  await streamSummary.click()
-  await expect(streamSummary).toHaveAttribute('aria-expanded', 'false')
-  await expect(runningTool).toBeHidden()
-
-  const chatTab = page.getByRole('tab', { name: '会话' })
-  const trajectoryTab = page.getByRole('tab', { name: '工作轨迹' })
-  await chatTab.focus()
-  await page.keyboard.press('ArrowRight')
-  await expect(trajectoryTab).toHaveAttribute('aria-selected', 'true')
-  await expect(page.getByLabel('工作轨迹记录')).toBeVisible()
-  await expect(page.getByLabel('消息内容')).toHaveCount(0)
-  const trajectoryGeometry = await page.evaluate(() => {
-    const canvas = document.querySelector('[data-channel-canvas-stage]')!
-    const ledger = document.querySelector('[aria-label="工作轨迹记录"]')!
-    return {
-      canvasRight: canvas.getBoundingClientRect().right,
-      ledgerRight: ledger.getBoundingClientRect().right,
-      scrollWidth: ledger.scrollWidth,
-      clientWidth: ledger.clientWidth,
-    }
-  })
-  expect(trajectoryGeometry.ledgerRight).toBeLessThanOrEqual(trajectoryGeometry.canvasRight + 1)
-  expect(trajectoryGeometry.scrollWidth).toBeGreaterThan(trajectoryGeometry.clientWidth)
-
-  const readRow = page.getByRole('row').filter({ hasText: '读取发布记录' })
-  await readRow.focus()
-  await page.keyboard.press('Enter')
-  await expect(readRow).toHaveAttribute('aria-current', 'true')
-  await page.keyboard.press('ArrowDown')
-  const runningRow = page.getByRole('row').filter({ hasText: '核对发布资料' })
-  await expect(runningRow).toBeFocused()
-  await expect(runningRow).toHaveAttribute('aria-current', 'true')
-  await expect(page.locator('aside[aria-label="工作轨迹"]').getByRole('heading', { name: '输入' })).toBeVisible()
-  await capture(page, testInfo, 'channel-trajectory-keyboard-selection')
-
-  const outputRow = page.getByRole('row').filter({ hasText: '先核对版本，再检查发布记录。' })
-  await outputRow.click()
-  await expect(page.locator('aside[aria-label="工作轨迹"]')).toContainText(
-    '本步 合计 920 · 输入 100 · 输出 20 · 缓存读取 800',
-  )
-  await capture(page, testInfo, 'channel-trajectory-step-usage')
-
-  expect(failures, failures.join('\n')).toEqual([])
-})
-
-test('pending sends remain bound to their original channel across navigation', async ({ page }) => {
-  const failures = installRuntimeFailureGate(page)
-  await installProductRoutes(page)
-  let complete: (() => void) | undefined
-  await page.route(`**/api/channels/${targetChannelId}/messages`, async (route) => {
-    if (route.request().method() !== 'POST') return route.fallback()
-    await new Promise<void>((resolve) => {
-      complete = resolve
-    })
-    await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ inserted: true }) })
-  })
-  await page.goto(`/work/channels/${targetChannelId}`)
-  const input = page.getByRole('textbox', { name: '消息内容' })
-  await input.fill('频道甲的待发送内容')
-  await input.press('Enter')
-  await expect(input).toBeDisabled()
-  await page.locator(`a[href="/work/channels/${sourceChannelId}"]`).first().click()
-  await expect(input).toBeEnabled()
-  await input.fill('频道乙的新草稿')
-  expect(complete).toBeDefined()
-  complete?.()
-  await expect(input).toHaveValue('频道乙的新草稿')
-  await page.locator(`a[href="/work/channels/${targetChannelId}"]`).first().click()
-  await expect(input).toBeEnabled()
-  await expect(input).toHaveValue('')
-  await page.locator('a[href="/settings"]').first().click()
-  await expect(page).toHaveURL(/\/settings$/u)
-  expect(await page.evaluate(() => window.__nxtHasUnsavedDrafts?.())).toBe(true)
-  await page.locator(`a[href="/work"]`).first().click()
-  await page.locator(`a[href="/work/channels/${sourceChannelId}"]`).first().click()
-  await expect(input).toHaveValue('频道乙的新草稿')
-  expect(failures).toEqual([])
-})
-
-test('failed page chunks preserve the active conversation and provide a retry', async ({ page }) => {
-  await installProductRoutes(page)
-  let blocked = true
-  await page.route('**/assets/settings-page-*.js', (route) => (blocked ? route.abort('failed') : route.continue()))
-  await page.goto(`/work/channels/${targetChannelId}`)
-  const input = page.getByRole('textbox', { name: '消息内容' })
-  await input.fill('模块加载失败仍保留的草稿')
-  await page.locator('a[href="/settings"]').first().click()
-  await expect(page.getByText('页面加载失败，当前页面和草稿已保留。')).toBeVisible()
-  await expect(page).toHaveURL(new RegExp(`/work/channels/${targetChannelId}$`, 'u'))
-  await expect(input).toHaveValue('模块加载失败仍保留的草稿')
-  blocked = false
-  await page.getByRole('button', { name: '重试加载' }).click()
-  await expect(page).toHaveURL(/\/settings$/u)
-  await page.goBack()
-  await expect(input).toHaveValue('模块加载失败仍保留的草稿')
-})
-
-test('desktop splitters and appearance preferences persist and recover defaults', async ({ page }, testInfo) => {
-  const failures = installRuntimeFailureGate(page)
-  await installProductRoutes(page)
-  await page.setViewportSize({ width: 1440, height: 900 })
-  await page.goto(`/work/channels/${targetChannelId}`)
-
-  const objectSplitter = page.getByRole('separator', { name: '调整对象列宽度' })
-  await expect(objectSplitter).toHaveAttribute('aria-valuenow', '240')
-  await objectSplitter.focus()
-  await page.keyboard.press('End')
-  await expect(objectSplitter).toHaveAttribute('aria-valuenow', '304')
-
-  const inspectorSplitter = page.getByRole('separator', { name: '调整检查器宽度' })
-  await expect(inspectorSplitter).toHaveAttribute('aria-valuenow', '344')
-  const inspectorDividerGeometry = await inspectorSplitter.evaluate((element) => {
-    const previous = element.previousElementSibling
-    const next = element.nextElementSibling
-    if (!(previous instanceof HTMLElement) || !(next instanceof HTMLElement)) {
-      throw new Error('检查器分隔条缺少相邻画布。')
-    }
-    const previousRect = previous.getBoundingClientRect()
-    const nextRect = next.getBoundingClientRect()
-    const splitterRect = element.getBoundingClientRect()
-    const line = getComputedStyle(element, '::after')
-    return {
-      gap: nextRect.left - previousRect.right,
-      centerOffset: Math.abs(splitterRect.left + splitterRect.width / 2 - (previousRect.right + 0.5)),
-      hitWidth: splitterRect.width,
-      lineLeft: Number.parseFloat(line.left),
-      lineWidth: Number.parseFloat(line.width),
-    }
-  })
-  expect(inspectorDividerGeometry.gap).toBe(1)
-  expect(inspectorDividerGeometry.centerOffset).toBeLessThanOrEqual(0.5)
-  expect(inspectorDividerGeometry.hitWidth).toBe(9)
-  expect(inspectorDividerGeometry.lineLeft).toBe(4.5)
-  expect(inspectorDividerGeometry.lineWidth).toBe(1)
-  await dragHorizontally(page, inspectorSplitter, -40)
-  await expect(inspectorSplitter).toHaveAttribute('aria-valuenow', '384')
-  await dragHorizontally(page, inspectorSplitter, 60)
-  await expect(inspectorSplitter).toHaveAttribute('aria-valuenow', '324')
-  await inspectorSplitter.focus()
-  await page.keyboard.press('Home')
-  await expect(inspectorSplitter).toHaveAttribute('aria-valuenow', '320')
-  await page.keyboard.press('ArrowLeft')
-  await expect(inspectorSplitter).toHaveAttribute('aria-valuenow', '321')
-  await page.keyboard.press('ArrowRight')
-  await expect(inspectorSplitter).toHaveAttribute('aria-valuenow', '320')
-  await page.reload()
-  await expect(page.getByRole('separator', { name: '调整对象列宽度' })).toHaveAttribute('aria-valuenow', '304')
-  await expect(page.getByRole('separator', { name: '调整检查器宽度' })).toHaveAttribute('aria-valuenow', '320')
-  await capture(page, testInfo, 'desktop-splitters-persisted')
-
-  await page.getByRole('separator', { name: '调整检查器宽度' }).dblclick()
-  await expect(page.getByRole('separator', { name: '调整检查器宽度' })).toHaveAttribute('aria-valuenow', '344')
-  await page.getByRole('button', { name: '收起频道检查器' }).click()
-  await expect(page.locator('div[class*="inspectorPane"]')).toHaveAttribute('aria-hidden', 'true')
-  await expect(page.getByRole('complementary', { name: '频道', includeHidden: true })).toBeHidden()
-  await page.reload()
-  await expect(page.getByRole('button', { name: '展开频道检查器' })).toBeVisible()
-  await page.getByRole('button', { name: '展开频道检查器' }).click()
-  await expect(page.getByRole('complementary', { name: '频道' })).toBeVisible()
-
-  await page.goto('/settings?tab=appearance')
-  await page.getByRole('switch', { name: '减少动态效果' }).click()
-  await page.getByRole('switch', { name: '减少透明效果' }).click()
-  await page.getByLabel('对比度').click()
-  await page.getByRole('option', { name: '更高对比度' }).click()
-  await expect(page.locator('html')).toHaveAttribute('data-reduced-motion', 'true')
-  await expect(page.locator('html')).toHaveAttribute('data-reduced-transparency', 'true')
-  await expect(page.locator('html')).toHaveAttribute('data-contrast', 'more')
-  await page.reload()
-  await expect(page.getByRole('switch', { name: '减少动态效果' })).toBeChecked()
-  await expect(page.getByRole('switch', { name: '减少透明效果' })).toBeChecked()
-  await expect(page.getByLabel('对比度')).toContainText('更高对比度')
-  await expect(page.locator('[data-route-transition] > [data-stage-layer="in"]')).toHaveCount(1)
-  const reducedMotionAlignment = await page.evaluate(() => {
-    const stage = document.querySelector<HTMLElement>('[data-product-page="settings"] [data-stage-layer="in"]')
-    const content = document.querySelector<HTMLElement>('[data-settings-content]')
-    if (!stage || !content) throw new Error('减少动效后的设置页缺少内容中心轴。')
-    const stageRect = stage.getBoundingClientRect()
-    const contentRect = content.getBoundingClientRect()
-    const stageCenter = stageRect.left + stage.clientLeft + stage.clientWidth / 2
-    return Math.abs(stageCenter - (contentRect.left + contentRect.width / 2))
-  })
-  expect(reducedMotionAlignment).toBeLessThanOrEqual(1)
-  await capture(page, testInfo, 'appearance-reduced-transparency-high-contrast')
-
-  await page.getByRole('button', { name: '恢复默认分栏' }).click()
-  await page.goto(`/work/channels/${targetChannelId}`)
-  await expect(page.getByRole('separator', { name: '调整对象列宽度' })).toHaveAttribute('aria-valuenow', '240')
-  await expect(page.getByRole('separator', { name: '调整检查器宽度' })).toHaveAttribute('aria-valuenow', '344')
-  expect(failures, failures.join('\n')).toEqual([])
-})
-
-test('DSH settings remain legible without loading native WebUI across desktop themes and viewports', async ({
-  page,
-}, testInfo) => {
-  const failures = installRuntimeFailureGate(page)
-  for (const viewport of [
-    { width: 1100, height: 720 },
-    { width: 1440, height: 900 },
-    { width: 1920, height: 1080 },
-  ]) {
-    for (const colorScheme of ['light', 'dark'] as const) {
-      await page.setViewportSize(viewport)
-      await page.emulateMedia({ colorScheme, reducedMotion: 'reduce' })
-      await page.goto('/settings?tab=dsh-extensions')
-      await page.evaluate((theme) => window.localStorage.setItem('nekro-nxt.theme', theme), colorScheme)
-      await page.reload()
-      await expect(page.getByText('DeepSeek 网页搜索', { exact: true }).first()).toBeVisible()
-      await expect(page.locator('[data-dsh-native-surface]')).toHaveCount(0)
-      await expect(page.getByText('Namespace：web-search-deepseek', { exact: true })).toBeVisible()
-      await expect(page.getByLabel('新的凭据值')).toBeVisible()
-      const detailSurface = await page.evaluate(() => {
-        const detail = document.querySelector<HTMLElement>('[data-dsh-detail]')
-        const header = document.querySelector<HTMLElement>('[data-dsh-detail-header]')
-        const footer = document.querySelector<HTMLElement>('[data-dsh-settings-footer]')
-        if (!detail || !header || !footer) throw new Error('DSH 详情表面、页头或表单底部缺失。')
-        const detailRect = detail.getBoundingClientRect()
-        const headerRect = header.getBoundingClientRect()
-        return {
-          headerBackground: getComputedStyle(header).backgroundColor,
-          footerPosition: getComputedStyle(footer).position,
-          leftInset: headerRect.left - detailRect.left,
-          rightInset: detailRect.right - headerRect.right,
-        }
-      })
-      expect(detailSurface.headerBackground).toBe('rgba(0, 0, 0, 0)')
-      expect(detailSurface.footerPosition).toBe('static')
-      expect(detailSurface.leftInset).toBeGreaterThanOrEqual(16)
-      expect(detailSurface.rightInset).toBeGreaterThanOrEqual(16)
-      await assertViewportIntegrity(page)
-      await capture(page, testInfo, `dsh-settings-${viewport.width}x${viewport.height}-${colorScheme}`)
-    }
-  }
-  expect(failures, failures.join('\n')).toEqual([])
-})
-
-test('clearing a DSH credential requires an explicit dangerous confirmation', async ({ page }, testInfo) => {
-  // This scenario uses the real snapshot/settings API, so its health identity
-  // must also come from that real Host instead of the synthetic fixture.
-  await page.unroute('**/health/live')
-  await page.unroute('**/health/ready')
-  const failures = installRuntimeFailureGate(page)
-  await page.route('**/api/dsh/credentials/describe', (route) =>
-    route.fulfill({
-      status: 200,
-      contentType: 'application/json',
-      body: JSON.stringify({ credentials: { DEEPSEEK_API_KEY: { configured: true, source: 'file', writable: true } } }),
-    }),
-  )
-  await page.setViewportSize({ width: 1100, height: 720 })
-  await page.goto('/settings?tab=dsh-extensions')
-  await expect(page.getByText('Namespace：web-search-deepseek', { exact: true })).toBeVisible()
-
-  const trigger = page.getByRole('button', { name: '清除凭据' })
-  await trigger.click()
-  const dialog = page.getByRole('alertdialog')
-  await expect(dialog.getByRole('heading', { name: '清除“DEEPSEEK_API_KEY”' })).toBeVisible()
-  await expect(dialog.getByText(/已保存值无法从浏览器恢复/u)).toBeVisible()
-  await expect(dialog.getByRole('button', { name: '保留凭据' })).toBeVisible()
-  await expect(dialog.getByRole('button', { name: '清除该凭据' })).toBeVisible()
-  await capture(page, testInfo, 'dsh-credential-clear-confirmation')
-
-  await dialog.getByRole('button', { name: '保留凭据' }).click()
-  await expect(dialog).toBeHidden()
-  await expect(trigger).toBeFocused()
-  expect(failures, failures.join('\n')).toEqual([])
-})
-
-test('group conversations preserve sender and Mention semantics without exposing internal identities', async ({
-  page,
-}, testInfo) => {
-  const failures = installRuntimeFailureGate(page)
-  await installProductRoutes(page)
-  await page.setViewportSize({ width: 1440, height: 900 })
-  await page.goto(`/work/channels/${externalChannelId}`)
-
-  await expect(page.getByText('成员甲', { exact: true }).first()).toBeVisible()
-  await expect(page.getByText('@机器人账号', { exact: true })).toBeVisible()
-  await expect(page.getByText('@成员乙', { exact: true })).toBeVisible()
-  await expect(page.getByText('新成员', { exact: true })).toBeVisible()
-  await expect(page.getByText('邀请人', { exact: true })).toBeVisible()
-  await expect(page.getByText('示例来源', { exact: true })).toBeVisible()
-  await expect(page.getByText('示例分享', { exact: true })).toBeVisible()
-  const mentionMessage = page.locator('article[data-side="left"]').filter({ hasText: '请和' })
-  const richMessage = page.locator('article[data-side="left"]').filter({ hasText: '示例分享' })
-  const richCardLink = richMessage.getByRole('link', { name: '打开卡片：示例分享' })
-  const imageMessage = page
-    .locator('article[data-side="left"]')
-    .filter({ has: page.getByRole('img', { name: '讨论截图' }) })
-  const systemEvent = page.locator('[data-activity-type="member-joined"]')
-  await expect(mentionMessage).not.toHaveAttribute('data-bubbleless', '')
-  await expect(richMessage).toHaveAttribute('data-bubbleless', '')
-  await expect(richCardLink).toHaveAttribute('href', 'https://example.test/share/fixture-card')
-  await expect(richCardLink).toHaveAttribute('target', '_blank')
-  await expect(richCardLink.getByRole('img', { name: '示例分享' })).toBeVisible()
-  await expect(richMessage.getByRole('button')).toHaveCount(0)
-  await expect(page.getByRole('dialog', { name: '示例分享' })).toHaveCount(0)
-  await expect(imageMessage).toHaveAttribute('data-bubbleless', '')
-  await expect(systemEvent).toBeVisible()
-  await expect(systemEvent).toContainText('新成员 受 邀请人 邀请加入了频道。')
-  await expect(systemEvent.locator('[data-message-bubble]')).toHaveCount(0)
-  await expect(systemEvent.locator('article')).toHaveCount(0)
-  await expect(systemEvent.locator('img')).toHaveCount(0)
-  await expect(mentionMessage).toContainText('请和')
-  await expect(page.getByText('请先绑定智能体', { exact: true })).toHaveCount(1)
-  const sendButton = page.getByRole('button', { name: '发到频道' })
-  await expect(sendButton).toBeVisible()
-  expect(await sendButton.innerText()).toBe('')
-  const visibleText = await page.locator('body').innerText()
-  expect(visibleText).not.toContain(senderMemberId)
-  expect(visibleText).not.toContain(targetMemberId)
-  expect(visibleText).not.toContain('group:opaqueidab12')
-  await assertViewportIntegrity(page)
-  await capture(page, testInfo, 'fixture-group-member-mentions')
-  expect(failures, failures.join('\n')).toEqual([])
-})
-
-test('redesigned relationship and lifecycle pages stay legible across representative themes', async ({
-  page,
-}, testInfo) => {
-  const failures = installRuntimeFailureGate(page)
-  await installProductRoutes(page)
-  const scenes = [
-    { route: '/work', text: '资料员', width: 1440, height: 900, colorScheme: 'light' },
-    {
-      route: `/work/agents/${targetAgentId}?tab=capabilities`,
-      text: '系统访问等级',
-      width: 1100,
-      height: 720,
-      colorScheme: 'dark',
-    },
-    {
-      route: '/connections',
-      text: '内置频道由 NekroNXT 直接提供。',
-      width: 1440,
-      height: 900,
-      colorScheme: 'light',
-    },
-    { route: '/work/creator', text: '与资料员协作创造', width: 1920, height: 1080, colorScheme: 'dark' },
-    { route: '/extensions', text: 'r2 的内容', width: 1920, height: 1080, colorScheme: 'light' },
-    { route: '/extensions', text: 'r2 的内容', width: 1920, height: 900, colorScheme: 'dark' },
-    { route: '/settings?tab=models', text: '供应商配置', width: 1440, height: 900, colorScheme: 'light' },
-    { route: '/settings?tab=models', text: '供应商配置', width: 1920, height: 900, colorScheme: 'dark' },
-    {
-      route: '/connections',
-      text: '内置频道由 NekroNXT 直接提供。',
-      width: 1920,
-      height: 900,
-      colorScheme: 'dark',
-    },
-    {
-      route: '/settings?tab=system-extensions',
-      text: '已安装适配器',
-      width: 1440,
-      height: 900,
-      colorScheme: 'dark',
-    },
-    { route: '/settings?tab=appearance', text: '月潮观测所', width: 1440, height: 900, colorScheme: 'light' },
-    { route: '/settings?tab=appearance', text: '月潮观测所', width: 1440, height: 900, colorScheme: 'dark' },
-    { route: '/settings?tab=about', text: '版权与品牌', width: 1440, height: 900, colorScheme: 'dark' },
-    { route: '/work/agents/new', text: '创建智能体', width: 1440, height: 900, colorScheme: 'dark' },
-    {
-      route: `/work/agents/${targetAgentId}`,
-      text: '主模型原生视觉',
-      width: 1920,
-      height: 1080,
-      colorScheme: 'light',
-    },
-  ] as const
-
-  for (const scene of scenes) {
-    await page.setViewportSize({ width: scene.width, height: scene.height })
-    await page.emulateMedia({ colorScheme: scene.colorScheme, reducedMotion: 'reduce' })
-    await page.goto(scene.route)
-    await page.evaluate((theme) => window.localStorage.setItem('nekro-nxt.theme', theme), scene.colorScheme)
-    await page.reload()
-    await expect(page.locator('html')).toHaveAttribute('data-theme', scene.colorScheme)
-    await expect(page.getByText(scene.text).first()).toBeVisible()
-    if (scene.route === '/connections' || scene.route === '/extensions' || scene.route === '/settings?tab=models') {
-      await expect(page.locator('[data-stage-layer="in"]').last()).toHaveCSS('background-color', 'rgba(0, 0, 0, 0)')
-    }
-    if (scene.route === '/work') {
-      const accessChip = page.locator('[aria-label="系统访问：Lv.0，基础权限"]').first()
-      await expect(accessChip).toBeVisible()
-      await expect(accessChip).toHaveText('Lv.0')
-      await accessChip.hover()
-      await expect(page.getByRole('tooltip').getByText('Lv.0 · 基础权限')).toBeVisible()
-      await expect(page.getByRole('tooltip').getByText('不授予文件读写、命令运行或完整访问。')).toBeVisible()
-    }
-    if (scene.route === '/connections') {
-      await expect(page.getByText('平台账号', { exact: true })).toBeVisible()
-      await expect(page.getByRole('heading', { name: '内置频道' })).toBeVisible()
-      await expect(page.getByText('连接', { exact: true })).toHaveCount(0)
-    }
-    if (scene.route === '/extensions') {
-      await expect(page.getByText('本地扩展', { exact: true })).toBeVisible()
-      await expect(page.getByRole('heading', { name: '群聊摘要' })).toBeVisible()
-      await expect(page.getByText('扩展', { exact: true })).toHaveCount(0)
-    }
-    if (scene.route === '/settings?tab=appearance') {
-      const alignment = await page.evaluate(() => {
-        const stage = document.querySelector<HTMLElement>('[data-product-page="settings"] [data-stage-layer="in"]')
-        const content = document.querySelector<HTMLElement>('[data-settings-content]')
-        if (!stage || !content) throw new Error('设置页缺少内容中心轴。')
-        const stageRect = stage.getBoundingClientRect()
-        const contentRect = content.getBoundingClientRect()
-        const stageCenter = stageRect.left + stage.clientLeft + stage.clientWidth / 2
-        return Math.abs(stageCenter - (contentRect.left + contentRect.width / 2))
-      })
-      expect(alignment).toBeLessThanOrEqual(1)
-    }
-    if (scene.route.startsWith('/work/agents/')) {
-      const sectionWidths = await page
-        .locator('section[id^="agent-"]')
-        .evaluateAll((sections) => sections.map((section) => section.getBoundingClientRect().width))
-      expect(Math.max(...sectionWidths) - Math.min(...sectionWidths)).toBeLessThanOrEqual(1)
-      if (scene.route.includes('tab=capabilities')) {
-        await page.locator('#agent-capabilities').scrollIntoViewIfNeeded()
-      }
-    }
-    await assertViewportIntegrity(page)
-    await capture(
-      page,
-      testInfo,
-      `redesign-${scene.route.split(/[/?]/u).filter(Boolean).join('-')}-${scene.colorScheme}`,
-    )
-  }
-
-  await page.unroute('**/api/snapshot')
-  await page.route('**/api/snapshot', (route) =>
-    route.fulfill({
-      status: 200,
-      contentType: 'application/json',
-      body: JSON.stringify({ ...productSnapshot, dynamic: [] }),
-    }),
-  )
-  await page.setViewportSize({ width: 1440, height: 900 })
-  await page.emulateMedia({ colorScheme: 'dark', reducedMotion: 'reduce' })
-  await page.goto(`/work/agents/${targetAgentId}?tab=capabilities`)
-  const creatorSection = page.locator('#agent-creator')
-  await creatorSection.scrollIntoViewIfNeeded()
-  const creatorChannel = page.getByRole('combobox', { name: '沟通频道' })
-  const creatorAction = page.getByRole('button', { name: '前往频道提出需求' })
-  await expect(creatorChannel).toBeVisible()
-  await expect(creatorAction).toBeVisible()
-  const creatorAlignment = await Promise.all([creatorChannel.boundingBox(), creatorAction.boundingBox()])
-  expect(
-    Math.abs((creatorAlignment[0]?.y ?? 0) - (creatorAlignment[1]?.y ?? Number.POSITIVE_INFINITY)),
-  ).toBeLessThanOrEqual(2)
-  await capture(page, testInfo, 'redesign-agent-capabilities-no-run-dark')
-
-  await page.goto('/connections')
-  await page
-    .getByRole('link', { name: /示例群聊平台/u })
-    .first()
-    .click()
-  await expect(page.locator('[data-stage-layer="out"]')).toHaveCount(0)
-  await expect(page.locator('[data-stage-layer="in"]').last()).toHaveCSS('opacity', '1')
-  await page.getByRole('button', { name: '加载连接活动' }).click()
-  await expect(page.getByText('账号资料收到一条较长的连接活动摘要，用于确认较多事实仍保持紧凑可读。')).toBeVisible()
-  await expect(page.getByText('参与者：参与者甲 · 相关对象：相关对象乙').first()).toBeVisible()
-  await page.getByRole('button', { name: '加载更早活动' }).click()
-  await expect(page.getByText('连接活动 35')).toBeVisible()
-  const optionalTests = page.getByRole('button', { name: '收发测试' })
-  await expect(optionalTests).toHaveAttribute('aria-expanded', 'false')
-  const aliasInput = page.getByLabel('辨识名')
-  const saveAliasButton = page.getByRole('button', { name: '保存别名' })
-  await expect
-    .poll(async () => {
-      const aliasBox = await aliasInput.boundingBox()
-      const saveAliasBox = await saveAliasButton.boundingBox()
-      return Math.abs(
-        (aliasBox?.y ?? 0) + (aliasBox?.height ?? 0) - ((saveAliasBox?.y ?? 0) + (saveAliasBox?.height ?? 0)),
-      )
-    })
-    .toBeLessThanOrEqual(1)
-  const saveAliasBox = await saveAliasButton.boundingBox()
-  expect(saveAliasBox?.width ?? Number.POSITIVE_INFINITY).toBeLessThan(180)
-  const scrollGeometry = await page.evaluate(() => {
-    const root = document.querySelector('[data-connection-page-scroll-root]')!
-    const stage = document.querySelector('main')!
-    return {
-      rootRight: root.getBoundingClientRect().right,
-      stageRight: stage.getBoundingClientRect().right,
-      overflowY: getComputedStyle(root).overflowY,
-    }
-  })
-  expect(Math.abs(scrollGeometry.rootRight - scrollGeometry.stageRight)).toBeLessThanOrEqual(1)
-  expect(scrollGeometry.overflowY).toBe('auto')
-  await capture(page, testInfo, 'redesign-connection-fixture-tests-collapsed-light')
-  await optionalTests.click()
-  await expect(page.getByText('产品讨论群 · 群聊')).toBeVisible()
-  const connectionText = await page.locator('body').innerText()
-  expect(connectionText).not.toContain('opaque-group-alpha')
-  await capture(page, testInfo, 'redesign-connection-fixture-light')
-
-  await page.unroute('**/api/snapshot')
-  await page.route('**/api/snapshot', (route) =>
-    route.fulfill({
-      status: 200,
-      contentType: 'application/json',
-      body: JSON.stringify({ ...productSnapshot, extensions: [] }),
-    }),
-  )
-  await page.emulateMedia({ colorScheme: 'light', reducedMotion: 'reduce' })
-  await page.goto('/extensions')
-  await expect(page.getByText('本地扩展', { exact: true })).toBeVisible()
-  await expect(page.getByRole('heading', { name: '扩展库' })).toBeVisible()
-  await expect(page.getByText('从一次动态运行开始')).toBeVisible()
-  await expect(page.getByText('还没有本地扩展', { exact: true })).toHaveCount(0)
-  await expect(page.getByRole('button', { name: '打开创造工作台' })).toBeVisible()
-  const emptySurfaceGeometry = await page.evaluate(() => {
-    const root = document.querySelector<HTMLElement>('[data-product-page="extensions"]')
-    const header = document.querySelector<HTMLElement>('[data-product-page="extensions"] [data-page-header]')
-    const empty = document.querySelector<HTMLElement>('[data-product-page="extensions"] [data-empty-state]')
-    const transition = root?.querySelector<HTMLElement>(':scope > [data-route-transition]')
-    const stage = transition?.querySelector<HTMLElement>('[data-stage-layer="in"]')
-    if (!root || !header || !empty || !transition || !stage) throw new Error('扩展空态缺少必要区域。')
-    const rootRect = root.getBoundingClientRect()
-    const headerRect = header.getBoundingClientRect()
-    const emptyRect = empty.getBoundingClientRect()
-    const transitionRect = transition.getBoundingClientRect()
-    const stageRect = stage.getBoundingClientRect()
-    const emptyStyle = getComputedStyle(empty)
-    const rootCenter = rootRect.left + rootRect.width / 2
-    const stageCenter = stageRect.left + stage.clientLeft + stage.clientWidth / 2
-    return {
-      emptyCenterOffset: Math.abs(stageCenter - (emptyRect.left + emptyRect.width / 2)),
-      emptyWidthRatio: emptyRect.width / transitionRect.width,
-      headerCenterOffset: Math.abs(rootCenter - (headerRect.left + headerRect.width / 2)),
-      transitionOverflow: getComputedStyle(transition).overflow,
-      background: emptyStyle.backgroundColor,
-      borderWidth: emptyStyle.borderTopWidth,
-      shadow: emptyStyle.boxShadow,
-    }
-  })
-  expect(emptySurfaceGeometry.emptyCenterOffset).toBeLessThanOrEqual(1)
-  expect(emptySurfaceGeometry.emptyWidthRatio).toBeGreaterThan(0.95)
-  expect(emptySurfaceGeometry.headerCenterOffset).toBeLessThanOrEqual(1)
-  expect(emptySurfaceGeometry.transitionOverflow).toBe('hidden')
-  expect(emptySurfaceGeometry.background).toBe('rgba(0, 0, 0, 0)')
-  expect(emptySurfaceGeometry.borderWidth).toBe('0px')
-  expect(emptySurfaceGeometry.shadow).toBe('none')
-  await capture(page, testInfo, 'redesign-extension-empty-light')
-  await page.emulateMedia({ colorScheme: 'dark', reducedMotion: 'reduce' })
-  await capture(page, testInfo, 'redesign-extension-empty-dark')
-  expect(failures, failures.join('\n')).toEqual([])
-})
-
-test('the product Client runtime approves, restores after reload, and retracts a live DSH interface', async ({
-  page,
-}, testInfo) => {
-  const failures = installRuntimeFailureGate(page)
-  let phase: 'pending' | 'active' | 'stopped' = 'pending'
-  let releaseStatus!: () => void
-  const statusGate = new Promise<void>((resolve) => {
-    releaseStatus = resolve
-  })
-  const calls: string[] = []
-  const dynamicSummary = () => [
-    {
-      agentId: targetAgentId,
-      episodeId: targetEpisodeId,
-      pluginId: 'client-probe-1',
-      ...(phase === 'pending' ? { approvalRequestId: 'approval-1' } : { packageId: 'package-1' }),
-      status: phase === 'pending' ? 'awaiting-approval' : phase === 'active' ? 'running' : 'stopped',
-      packages: [
-        {
-          packageId: 'package-1',
-          name: '即时界面探针',
-          purpose: '验证产品中的 DSH Client 装卸链路。',
-          hasHostHalf: false,
-          hasClientHalf: true,
-        },
-      ],
-      policy: { turn: 1, consecutiveFailures: 0, repeatedFingerprintCount: 0 },
-    },
-  ]
-  const inventoryRows = () => [
-    {
-      pluginId: 'client-probe-1',
-      agentId: targetAgentId,
-      packages: [
-        {
-          packageId: 'package-1',
-          name: '即时界面探针',
-          purpose: '验证产品中的 DSH Client 装卸链路。',
-          hasHostHalf: false,
-          hasClientHalf: true,
-        },
-      ],
-      ...(phase === 'active' ? { activeRun: { pluginRunId: 'run-1', packageId: 'package-1' } } : {}),
-      latestRun: {
-        pluginRunId: 'run-1',
-        packageId: 'package-1',
-        mode: 'run',
-        status: phase === 'pending' ? 'awaiting-approval' : phase === 'active' ? 'running' : 'stopped',
-        host: {
-          status: phase === 'pending' ? 'absent' : phase === 'active' ? 'running' : 'stopped',
-          waitingFor: [],
-        },
-        client: {
-          status: phase === 'pending' ? 'pending' : phase === 'active' ? 'running' : 'stopped',
-          waitingFor: [],
-        },
-        ...(phase === 'pending' ? { approvalRequestId: 'approval-1', requiresApproval: true } : {}),
+        channelId: targetChannelId,
+        episodeId: targetEpisodeId,
+        title: '群聊摘要卡片',
+        requirementSummary: '在频道里把讨论整理成摘要卡片。',
+        status,
+        approvalPolicy: 'risk-stable',
+        // The Host bumps the revision on every change; the page refetches task detail when it moves.
+        revision: status === 'repairing' ? 3 : status === 'ready' ? 4 : 5,
+        candidateAttempt:
+          status === 'repairing'
+            ? attempt(secondAttemptId, 2, 'failed', {
+                error: { phase: 'verification', message: '摘要结果缺少标题。', repairable: true },
+              })
+            : attempt(firstAttemptId, 1, 'active'),
+        activeAttempt: attempt(firstAttemptId, 1, 'active'),
+        verifiedAttempt: attempt(firstAttemptId, 1, 'active'),
+        createdAt: 1_725_000_000_000,
+        updatedAt: 1_725_000_005_000,
       },
-    },
-  ]
-
-  await page.route('**/api/snapshot', (route) =>
-    route.fulfill({
-      status: 200,
-      contentType: 'application/json',
-      body: JSON.stringify({
-        ...productSnapshot,
-        dynamic: dynamicSummary(),
-        authoringTasks: [
-          {
-            id: previewAuthoringTaskId,
-            agentId: targetAgentId,
-            channelId: targetChannelId,
-            episodeId: targetEpisodeId,
-            title: '即时界面探针',
-            requirementSummary: '验证产品中的动态界面装卸链路。',
-            status: 'awaiting-approval',
-            approvalPolicy: 'risk-stable',
-            revision: 2,
-            candidateAttempt: {
-              id: previewAuthoringAttemptId,
-              ordinal: 1,
-              name: '即时界面探针',
-              purpose: '验证产品中的动态界面装卸链路。',
-              state: 'awaiting-approval',
-              riskDigest: 'd'.repeat(64),
-              host: { status: 'absent', waitingFor: [] },
-              client: { status: 'pending', waitingFor: [] },
-              createdAt: 1_725_000_000_000,
-            },
-            createdAt: 1_725_000_000_000,
-            updatedAt: 1_725_000_000_100,
-          },
-        ],
-      }),
-    }),
-  )
-  await page.route('**/api/events', async (route) => {
-    await statusGate
-    await route.fulfill({
-      status: 200,
-      contentType: 'text/event-stream',
-      body: 'event: status\ndata: {}\n\n',
-    })
-  })
-  await page.route('**/api/dynamic/*/inventory', (route) =>
-    route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ rows: inventoryRows() }) }),
-  )
-  await page.route('**/api/channels/*/runtime', (route) => {
-    const channelId = new URL(route.request().url()).pathname.split('/')[3]
-    return route.fulfill({
-      status: 200,
-      contentType: 'application/json',
-      body: JSON.stringify({
-        cursor: { epoch: 'fixture', sequence: 0 },
-        channelId,
-        phase: 'idle',
-        summary: '智能体当前空闲。',
-        pendingInjectCount: 0,
-        turns: [],
-      }),
-    })
-  })
-  await page.route('**/api/dynamic/*/run-host-half', (route) => {
-    calls.push('run-host-half')
-    return route.fulfill({
-      status: 200,
-      contentType: 'application/json',
-      body: JSON.stringify({
-        ok: true,
-        pluginId: 'client-probe-1',
-        packageId: 'package-1',
-        pluginRunId: 'run-1',
-        waitingFor: [],
-        startedHere: true,
-      }),
-    })
-  })
-  await page.route('**/api/dynamic/*/get-client-code', (route) => {
-    calls.push('get-client-code')
-    return route.fulfill({
-      status: 200,
-      contentType: 'application/json',
-      body: JSON.stringify({
-        pluginId: 'client-probe-1',
-        packageId: 'package-1',
-        pluginRunId: 'run-1',
-        name: '即时界面探针',
-        code: `return {
-          inject: ['slots', 'pages', 'ui'],
-          apply(ctx) {
-            const navigationSnapshot = {
-              revision: 1,
-              groups: [{ id: 'main', label: '项目', items: [{ id: 'overview', label: '概览', path: 'overview', badge: '1' }] }]
-            }
-            ctx.slots.register(
-              { name: 'agent.workbench.sections', id: 'main' },
-              () => React.createElement('section', { 'data-live-client': 'probe' }, '即时界面已真实加载')
-            )
-            ctx.pages.declarePermissions({ permissions: ['agents.read'], networkOrigins: [] })
-            ctx.pages.register({
-              page: {
-                kind: 'host-page', entryId: 'overview', title: '项目工作台',
-                description: '在创造工作台内验证页面结构。',
-                icon: { kind: 'host-icon', name: 'layout-dashboard' },
-                objectPane: 'navigation', startPath: 'overview'
-              },
-              navigation: {
-                getSnapshot: () => navigationSnapshot,
-                subscribe: () => () => undefined
-              }
-            }, ({ relativePath }) => React.createElement(
-              ctx.ui.Stack,
-              { 'data-live-page': 'probe' },
-              React.createElement(ctx.ui.PageHeader, {
-                title: '项目概览',
-                meta: '动态页面：' + relativePath
-              }),
-              React.createElement(
-                ctx.ui.Section,
-                null,
-                React.createElement('h2', null, '即时页面内容'),
-                React.createElement(
-                  ctx.ui.MetricStrip,
-                  null,
-                  React.createElement(ctx.ui.Metric, { label: '检查项', value: '2' }),
-                  React.createElement(ctx.ui.Metric, { label: '已通过', value: '1' })
-                )
-              )
-            ))
-          }
-        }`,
-      }),
-    })
-  })
-  await page.route('**/api/authoring/tasks/*/attempts/*/decision', (route) => {
-    calls.push('authoring-decision')
-    return route.fulfill({
-      status: 200,
-      contentType: 'application/json',
-      body: JSON.stringify({ accepted: true, taskRevision: 3, executionRequired: true }),
-    })
-  })
-  await page.route('**/api/dynamic/*/approve', (route) => {
-    calls.push('approve')
-    phase = 'active'
-    return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ accepted: true }) })
-  })
-  await page.route('**/api/dynamic/*/report-client-verification', (route) => {
-    calls.push('report-client-verification')
-    expect(
-      HostApiContracts.dynamicReportClientVerification.request.parse(route.request().postDataJSON()),
-    ).toMatchObject({
-      usedUiComponents: expect.arrayContaining(['PageHeader', 'Section', 'Stack', 'MetricStrip', 'Metric']),
-    })
-    return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ ok: true }) })
-  })
-
-  await page.setViewportSize({ width: 1440, height: 900 })
-  await page.emulateMedia({ colorScheme: 'light', reducedMotion: 'reduce' })
-  await page.goto(`/work/creator/${previewAuthoringTaskId}`)
-  await expect(page.getByText('候选已通过静态检查，等待运行确认', { exact: true })).toBeVisible()
-  await expect(page.getByRole('heading', { name: '即时界面探针' })).toBeVisible()
-  await capture(page, testInfo, 'authoring-task-approval-light-1440')
-  await page.getByRole('button', { name: '允许并运行' }).click()
-  await expect(page.getByText('即时界面已真实加载')).toBeVisible()
-  await expect(page.getByRole('heading', { name: '项目概览', exact: true })).toBeVisible()
-  await expect(page.getByRole('navigation', { name: '项目工作台 预览导航' })).toBeVisible()
-  await expect(page.getByRole('button', { name: /概览/u })).toBeVisible()
-  await expect(page.getByText('动态页面：overview', { exact: true })).toBeVisible()
-  await expect(page.locator('[data-dynamic-host-page="overview"] [data-nxt-ui-component]')).not.toHaveCount(0)
-  await expect.poll(() => calls).toContain('report-client-verification')
-  expect(calls).toEqual([
-    'authoring-decision',
-    'run-host-half',
-    'get-client-code',
-    'approve',
-    'report-client-verification',
-  ])
-  await assertViewportIntegrity(page)
-  await capture(page, testInfo, 'dynamic-host-page-preview-light-1440')
-
-  await page.reload()
-  await expect(page.getByText('即时界面已真实加载')).toBeVisible()
-  await expect(page.getByText('动态页面：overview', { exact: true })).toBeVisible()
-  await expect.poll(() => calls.filter((call) => call === 'get-client-code').length).toBe(2)
-  expect(calls.filter((call) => call === 'run-host-half')).toHaveLength(1)
-  expect(calls.filter((call) => call === 'approve')).toHaveLength(1)
-  await assertViewportIntegrity(page)
-
-  phase = 'stopped'
-  releaseStatus()
-  await expect(page.getByText('即时界面已真实加载')).toBeHidden()
-  await expect(page.getByText('动态页面：overview', { exact: true })).toBeHidden()
-  await expect(page.getByText('已停止', { exact: true }).first()).toBeVisible()
-  expect(failures, failures.join('\n')).toEqual([])
-})
-
-test('the creator saves the exact running Package and selects the resulting extension', async ({ page }, testInfo) => {
-  const failures = installRuntimeFailureGate(page)
-  const savedExtensionId = ExtensionIdSchema.parse('ext_savedprobe')
-  const savedRevisionId = ExtensionRevisionIdSchema.parse('xrv_savedprobe')
-  let saved = false
-  let saveRequest: unknown
-  let clientCodeRequests = 0
-  page.on('request', (request) => {
-    if (request.url().includes('/get-client-code')) clientCodeRequests += 1
-  })
-  const dynamic = [
-    {
-      agentId: targetAgentId,
-      episodeId: targetEpisodeId,
-      pluginId: 'plugin-save-probe',
-      packageId: 'package-save-probe',
-      currentPackageId: 'package-save-probe',
-      status: 'running',
-      latestRun: {
-        pluginRunId: 'run-save-probe',
-        packageId: 'package-save-probe',
-        mode: 'run',
-        status: 'running',
-        host: { status: 'running', waitingFor: [] },
-        client: { status: 'absent', waitingFor: [] },
-      },
-      packages: [
-        {
-          packageId: 'package-save-probe',
-          name: '待保存摘要工具',
-          purpose: '验证创造工作台的精确保存。',
-          hasHostHalf: true,
-          hasClientHalf: false,
-        },
-      ],
-      policy: { turn: 1, consecutiveFailures: 0, repeatedFingerprintCount: 0 },
-    },
-  ]
-  const snapshot = () =>
-    HostApiContracts.snapshot.response.parse({
-      ...productSnapshot,
-      agents: productSnapshot.agents.map((agent) =>
-        agent.id === targetAgentId ? { ...agent, runtimeStatus: 'idle', runtimePhase: 'idle' } : agent,
-      ),
-      dynamic,
-      authoringTasks: [
-        {
-          id: saveAuthoringTaskId,
-          agentId: targetAgentId,
-          channelId: targetChannelId,
-          episodeId: targetEpisodeId,
-          title: '待保存摘要工具',
-          requirementSummary: '验证创造工作台的精确保存。',
-          status: 'ready',
-          approvalPolicy: 'risk-stable',
-          approvedRiskDigest: 'a'.repeat(64),
-          revision: 4,
-          candidateAttempt: {
-            id: saveAuthoringAttemptId,
-            ordinal: 1,
-            name: '待保存摘要工具',
-            purpose: '验证创造工作台的精确保存。',
-            state: 'active',
-            riskDigest: 'a'.repeat(64),
-            host: { status: 'running', waitingFor: [] },
-            client: { status: 'absent', waitingFor: [] },
-            createdAt: 1_725_000_000_000,
-            settledAt: 1_725_000_000_100,
-          },
-          createdAt: 1_725_000_000_000,
-          updatedAt: 1_725_000_000_100,
-        },
-      ],
-      extensions: saved
+    ],
+    extensions:
+      status === 'completed'
         ? [
             ...productSnapshot.extensions,
             {
               id: savedExtensionId,
-              slug: 'saved-summary-probe',
-              displayName: '持久摘要探针',
-              description: '验证创造工作台保存结果。',
+              slug: 'group-digest-card',
+              displayName: '群聊摘要卡片',
+              description: '',
               createdByAgentId: targetAgentId,
               scope: 'agent',
               revisions: [
                 {
                   id: savedRevisionId,
                   revisionNumber: 1,
-                  createdAt: 1_725_000_000_500,
+                  createdAt: 1_725_000_006_000,
                   scope: 'agent',
-                  contributions: ['工具：saved_summary_probe'],
-                  verification: {
-                    verifiedAt: 1_725_000_000_500,
-                    dshVersion: '0.1.1-rc.2',
-                    contractVersion: 'nekro-nxt-extension-v1',
-                    hostBuilt: true,
-                    clientBuilt: false,
-                    buildKey: 'e'.repeat(64),
-                    toolInvocationCount: 1,
-                    rpcMethods: [],
-                    renderedSlots: [],
-                  },
+                  contributions: [],
                 },
               ],
               activations: [],
@@ -2091,46 +324,52 @@ test('the creator saves the exact running Package and selects the resulting exte
             },
           ]
         : productSnapshot.extensions,
-    })
-
-  await page.route('**/api/snapshot', (route) =>
-    route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(snapshot()) }),
-  )
-  await page.route('**/api/dynamic/*/inventory', (route) =>
-    route.fulfill({
-      status: 200,
-      contentType: 'application/json',
-      body: JSON.stringify({
-        rows: [
-          {
-            pluginId: 'plugin-save-probe',
-            agentId: targetAgentId,
-            packages: dynamic[0]!.packages,
-            activeRun: { pluginRunId: 'run-save-probe', packageId: 'package-save-probe' },
-            latestRun: {
-              pluginRunId: 'run-save-probe',
-              packageId: 'package-save-probe',
-              mode: 'run',
-              status: 'running',
-              host: { status: 'running', waitingFor: [] },
-              client: { status: 'absent', waitingFor: [] },
-            },
-          },
-        ],
-      }),
-    }),
-  )
-  await page.route('**/api/extensions/save-from-dynamic', async (route) => {
-    saveRequest = route.request().postDataJSON()
-    saved = true
-    return route.fulfill({
-      status: 200,
-      contentType: 'application/json',
-      body: JSON.stringify({ extensionId: savedExtensionId, revisionId: savedRevisionId, activation: 'inactive' }),
-    })
   })
 
-  await page.goto(`/work/creator/${saveAuthoringTaskId}`)
+test('writes the four public product screenshots from fictional production data', async ({ page }) => {
+  const outputDirectory = process.env['NEKRO_BRAND_SCREENSHOT_DIR']
+  test.skip(!outputDirectory, 'Only runs when refreshing committed public screenshots.')
+  const failures = installRuntimeFailureGate(page)
+  let snapshot = productSnapshot
+  await installProductRoutes(page, () => snapshot)
+  await page.emulateMedia({ colorScheme: 'light', reducedMotion: 'reduce' })
+  await page.setViewportSize({ width: 1440, height: 900 })
+
+  await page.goto(`/channels/${targetChannelId}`)
+  await expect(page.getByRole('heading', { name: '资料员的内置频道' })).toBeVisible()
+  await settle(page)
+  await page.screenshot({ path: `${outputDirectory}/channel-conversation.png`, animations: 'disabled' })
+
+  await page.setViewportSize({ width: 1600, height: 900 })
+  await page.goto(`/agents/${targetAgentId}`)
+  await expect(page.getByRole('heading', { name: '资料员', level: 1 })).toBeVisible()
+  await settle(page)
+  await page.screenshot({ path: `${outputDirectory}/agent-workbench.png`, animations: 'disabled' })
+
+  await page.goto(`/wiring/connections/${externalConnectionId}`)
+  await expect(page.getByRole('heading', { name: '接线', level: 1 })).toBeVisible()
+  await settle(page)
+  await page.screenshot({ path: `${outputDirectory}/connections.png`, animations: 'disabled' })
+
+  snapshot = authoringSnapshot('ready')
+  await page.route(`**/api/authoring/tasks/${taskId}`, (route) =>
+    route.fulfill({
+      json: { task: snapshot.authoringTasks[0], attempts: [attempt(firstAttemptId, 1, 'active')], events: [] },
+    }),
+  )
+  await page.goto(`/workshop/tasks/${taskId}`)
+  await expect(page.getByRole('heading', { name: '群聊摘要卡片', level: 1 })).toBeVisible()
+  await settle(page)
+  await page.screenshot({ path: `${outputDirectory}/creator-workbench.png`, animations: 'disabled' })
+  expect(failures, failures.join('\n')).toEqual([])
+})
+
+test('three desktop viewports keep every space usable in both themes and with reduced motion', async ({
+  page,
+}, testInfo) => {
+  test.setTimeout(120_000)
+  const failures = installRuntimeFailureGate(page)
+  await installProductRoutes(page)
   for (const viewport of [
     { width: 1100, height: 720 },
     { width: 1440, height: 900 },
@@ -2138,1657 +377,598 @@ test('the creator saves the exact running Package and selects the resulting exte
   ]) {
     for (const theme of ['light', 'dark'] as const) {
       await page.setViewportSize(viewport)
-      await page.emulateMedia({ colorScheme: theme, reducedMotion: 'reduce' })
-      await page.evaluate((nextTheme) => window.localStorage.setItem('nekro-nxt.theme', nextTheme), theme)
-      await page.goto(`/work/creator/${saveAuthoringTaskId}`)
-      await expect(page.locator('html')).toHaveAttribute('data-theme', theme)
-      await expect(page.getByRole('heading', { name: '待保存摘要工具' })).toBeVisible()
-      await expect(page.getByText('开发任务', { exact: true })).toBeVisible()
-      await expect(page.getByText('结果验证', { exact: true })).toBeVisible()
-      await assertViewportIntegrity(page)
-      await capture(page, testInfo, `authoring-task-ready-${viewport.width}x${viewport.height}-${theme}`)
+      await page.emulateMedia({
+        colorScheme: theme,
+        reducedMotion: viewport.width === 1440 ? 'reduce' : 'no-preference',
+      })
+      await page.addInitScript((value) => window.localStorage.setItem('nekro-nxt.theme', value), theme)
+      for (const space of SPACES) {
+        await page.goto(space.path)
+        if (space.heading) await expect(page.getByRole('heading', { name: space.heading, level: 1 })).toBeVisible()
+        await expect(page.locator('html')).toHaveAttribute('data-theme', theme)
+        await assertViewportIntegrity(page)
+      }
+      await capture(page, testInfo, `settings-${viewport.width}-${theme}`)
     }
   }
-  await page.setViewportSize({ width: 1100, height: 720 })
-  await page.emulateMedia({ colorScheme: 'light', reducedMotion: 'reduce' })
-  await page.evaluate(() => window.localStorage.setItem('nekro-nxt.theme', 'light'))
-  await page.goto(`/work/creator/${saveAuthoringTaskId}`)
-  await page.getByRole('button', { name: '保存为本地扩展', exact: true }).click()
-  const savePanel = page.getByRole('region', { name: '保存为本地扩展' })
-  await expect(savePanel).toBeVisible()
-  await assertViewportIntegrity(page)
-  await capture(page, testInfo, 'authoring-save-panel-1100x720-light')
-  await savePanel.getByLabel('扩展名称').fill('持久摘要探针')
-  await savePanel.getByLabel('本地标识').fill('saved-summary-probe')
-  await savePanel.getByLabel('说明').fill('验证创造工作台保存结果。')
-  await savePanel.getByRole('button', { name: '保存本地扩展', exact: true }).click()
-
-  await expect(page).toHaveURL(new RegExp(`/extensions/${savedExtensionId}$`, 'u'))
-  await expect(page.getByRole('heading', { name: '持久摘要探针' })).toBeVisible()
-  await expect(page.getByText('智能体工具 · saved_summary_probe', { exact: true })).toBeVisible()
-  expect(HostApiContracts.saveExtensionFromDynamic.request.parse(saveRequest)).toEqual({
-    taskId: saveAuthoringTaskId,
-    attemptId: saveAuthoringAttemptId,
-    displayName: '持久摘要探针',
-    slug: 'saved-summary-probe',
-    description: '验证创造工作台保存结果。',
-  })
-  expect(clientCodeRequests).toBe(0)
   expect(failures, failures.join('\n')).toEqual([])
 })
 
-test('the creator returns to an earlier verified candidate when a newer one is unverified', async ({
-  page,
-}, testInfo) => {
+test('representative product surfaces match committed visual baselines', async ({ page }) => {
+  test.setTimeout(120_000)
   const failures = installRuntimeFailureGate(page)
-  let restoreRequest: { readonly url: string; readonly body: unknown } | undefined
-  const attempt = (ordinal: number, state: string, id: string) => ({
-    id,
-    ordinal,
-    name: ordinal === 1 ? '待回退摘要工具' : '探针',
-    purpose: ordinal === 1 ? '已经通过验证的版本。' : '尚未运行的候选。',
-    state,
-    riskDigest: 'a'.repeat(64),
-    host: { status: state === 'active' ? 'running' : 'pending', waitingFor: [] },
-    client: { status: 'absent', waitingFor: [] },
-    createdAt: 1_725_000_000_000 + ordinal,
-  })
-  const verifiedAttempt = attempt(1, 'active', saveAuthoringAttemptId)
-  const task = {
-    id: saveAuthoringTaskId,
-    agentId: targetAgentId,
-    channelId: targetChannelId,
-    episodeId: targetEpisodeId,
-    title: '待回退摘要工具',
-    requirementSummary: '验证回到已验证候选。',
-    status: 'repairing',
-    approvalPolicy: 'risk-stable',
-    revision: 6,
-    activeAttempt: verifiedAttempt,
-    candidateAttempt: attempt(2, 'drafting', 'aua_NEWERPROBE'),
-    verifiedAttempt,
-    createdAt: 1_725_000_000_000,
-    updatedAt: 1_725_000_000_100,
-  }
-  const run = {
-    pluginRunId: 'run-restore-probe',
-    packageId: 'package-restore-one',
-    mode: 'run',
-    status: 'running',
-    host: { status: 'running', waitingFor: [] },
-    client: { status: 'absent', waitingFor: [] },
-  }
-  const packages = ['package-restore-one', 'package-restore-two'].map((packageId) => ({
-    packageId,
-    name: '待回退摘要工具',
-    purpose: '验证回到已验证候选。',
-    hasHostHalf: true,
-    hasClientHalf: false,
-  }))
-  await page.route('**/api/snapshot', (route) =>
-    route.fulfill({
-      status: 200,
-      contentType: 'application/json',
-      body: JSON.stringify(
-        HostApiContracts.snapshot.response.parse({
-          ...productSnapshot,
-          agents: productSnapshot.agents.map((agent) =>
-            agent.id === targetAgentId ? { ...agent, runtimeStatus: 'idle', runtimePhase: 'idle' } : agent,
-          ),
-          dynamic: [
-            {
-              agentId: targetAgentId,
-              episodeId: targetEpisodeId,
-              pluginId: 'plugin-restore-probe',
-              packageId: 'package-restore-two',
-              currentPackageId: 'package-restore-one',
-              status: 'running',
-              activeRun: { pluginRunId: run.pluginRunId, packageId: run.packageId },
-              latestRun: run,
-              packages,
-              policy: { turn: 2, consecutiveFailures: 0, repeatedFingerprintCount: 0 },
-            },
-          ],
-          authoringTasks: [task],
-        }),
-      ),
-    }),
-  )
-  await page.route('**/api/dynamic/*/inventory', (route) =>
-    route.fulfill({
-      status: 200,
-      contentType: 'application/json',
-      body: JSON.stringify({
-        rows: [
-          {
-            pluginId: 'plugin-restore-probe',
-            agentId: targetAgentId,
-            packages,
-            currentPackageId: 'package-restore-one',
-            activeRun: { pluginRunId: run.pluginRunId, packageId: run.packageId },
-            latestRun: run,
-          },
-        ],
-      }),
-    }),
-  )
-  await page.route('**/api/authoring/tasks/*/attempts/*/restore', (route) => {
-    restoreRequest = { url: route.request().url(), body: route.request().postDataJSON() }
-    return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(task) })
-  })
-
-  for (const theme of ['light', 'dark'] as const) {
-    await page.setViewportSize({ width: 1440, height: 900 })
+  let snapshot = productSnapshot
+  await installProductRoutes(page, () => snapshot)
+  await page.emulateMedia({ reducedMotion: 'reduce' })
+  await page.setViewportSize({ width: 1440, height: 900 })
+  // Fixed wall clock: relative times and the activity window render identically on every run.
+  await page.clock.setFixedTime(new Date(1_725_000_060_000))
+  const shoot = async (name: string, path: string, theme: 'light' | 'dark', ready: () => Promise<void>) => {
+    await page.addInitScript((value) => window.localStorage.setItem('nekro-nxt.theme', value), theme)
     await page.emulateMedia({ colorScheme: theme, reducedMotion: 'reduce' })
-    await page.goto(`/work/creator/${saveAuthoringTaskId}`)
-    await page.evaluate((nextTheme) => window.localStorage.setItem('nekro-nxt.theme', nextTheme), theme)
-    await page.goto(`/work/creator/${saveAuthoringTaskId}`)
-    await expect(page.getByText('第 1 次尝试已通过验证', { exact: true })).toBeVisible()
-    await expect(page.getByText('最新的第 2 次尝试尚未通过验证', { exact: false })).toBeVisible()
-    await expect(page.getByRole('button', { name: '保存为本地扩展', exact: true })).toBeDisabled()
-    await assertViewportIntegrity(page)
-    await capture(page, testInfo, `authoring-restore-candidate-1440x900-${theme}`)
+    await page.goto(path)
+    await ready()
+    await settle(page)
+    await expect(page).toHaveScreenshot(`${name}-${theme}-1440.png`, {
+      animations: 'disabled',
+      caret: 'hide',
+      mask: clockMasks(page),
+      maxDiffPixelRatio: 0.01,
+    })
   }
-  await page.getByRole('button', { name: '回到第 1 次候选', exact: true }).click()
-  await expect.poll(() => restoreRequest).toBeDefined()
-  expect(restoreRequest?.url).toContain(
-    `/api/authoring/tasks/${saveAuthoringTaskId}/attempts/${saveAuthoringAttemptId}/restore`,
+  await shoot('live', '/live', 'light', () => expect(page.getByRole('heading', { name: '现场' })).toBeVisible())
+  await shoot('channel-conversation', `/channels/${targetChannelId}`, 'light', async () => {
+    await expect(page.getByText('这是本次交付的资源。')).toBeVisible()
+    await expect(page.getByRole('img', { name: '界面预览图' })).toBeVisible()
+  })
+  await shoot('group-conversation', `/channels/${externalChannelId}`, 'dark', () =>
+    expect(page.getByText('一起复核。')).toBeVisible(),
   )
-  expect(HostApiContracts.restoreAuthoringAttempt.request.parse(restoreRequest?.body)).toEqual({ expectedRevision: 6 })
+  await shoot('agent-profile', `/agents/${targetAgentId}`, 'light', () =>
+    expect(page.getByRole('heading', { name: '资料员', level: 1 })).toBeVisible(),
+  )
+  await shoot('wiring', `/wiring/connections/${externalConnectionId}`, 'dark', () =>
+    expect(
+      page.getByRole('complementary', { name: '详情' }).getByRole('heading', { name: '示例群聊平台' }),
+    ).toBeVisible(),
+  )
+  snapshot = authoringSnapshot('ready')
+  await page.route(`**/api/authoring/tasks/${taskId}`, (route) =>
+    route.fulfill({
+      json: { task: snapshot.authoringTasks[0], attempts: [attempt(firstAttemptId, 1, 'active')], events: [] },
+    }),
+  )
+  await shoot('workshop-task', `/workshop/tasks/${taskId}`, 'dark', () =>
+    expect(page.getByRole('heading', { name: '群聊摘要卡片', level: 1 })).toBeVisible(),
+  )
+  await shoot('settings-notifications', '/settings/notifications', 'light', () =>
+    expect(page.getByRole('switch', { name: '系统通知' })).toBeVisible(),
+  )
   expect(failures, failures.join('\n')).toEqual([])
 })
 
-test('Host UI pages load through the production shell and share sidebar preferences', async ({ page }, testInfo) => {
+test('every space and the command palette have no serious accessibility violations', async ({ page }) => {
+  test.setTimeout(120_000)
   const failures = installRuntimeFailureGate(page)
-  const buildKey = 'e'.repeat(64)
-  const overviewPage = {
-    kind: 'host-page' as const,
-    entryId: 'overview',
-    title: '项目中心',
-    description: '查看项目与任务状态。',
-    icon: { kind: 'host-icon' as const, name: 'layout-dashboard' as const },
-    objectPane: 'navigation' as const,
-    startPath: 'overview',
-  }
-  const reportsPage = {
-    kind: 'host-page' as const,
-    entryId: 'reports',
-    title: '项目报表',
-    description: '查看项目统计结果。',
-    icon: { kind: 'host-icon' as const, name: 'bar-chart' as const },
-    objectPane: 'hidden' as const,
-    startPath: 'daily',
-  }
-  let preferencesRevision = 3
-  let cssLoads = 0
-  let clientLoads = 0
-  const calls: unknown[] = []
-  let pages = [
-    {
-      pageInstanceId: overviewPageId,
-      owner: { kind: 'extension' as const, extensionId: dashboardExtensionId, revisionId: dashboardRevisionId },
-      entryId: overviewPage.entryId,
-      title: overviewPage.title,
-      description: overviewPage.description,
-      icon: overviewPage.icon,
-      objectPane: overviewPage.objectPane,
-      startPath: overviewPage.startPath,
-      visible: true,
-      sortOrder: 0,
-      routeBase: `/apps/${overviewPageId}`,
-      client: { moduleUrl: '/fixtures/host-ui-client.mjs', buildKey },
-      createdAt: 1_725_000_000_000,
-      updatedAt: 1_725_000_000_000,
-    },
-    {
-      pageInstanceId: reportsPageId,
-      owner: { kind: 'extension' as const, extensionId: dashboardExtensionId, revisionId: dashboardRevisionId },
-      entryId: reportsPage.entryId,
-      title: reportsPage.title,
-      description: reportsPage.description,
-      icon: reportsPage.icon,
-      objectPane: reportsPage.objectPane,
-      startPath: reportsPage.startPath,
-      visible: true,
-      sortOrder: 1,
-      routeBase: `/apps/${reportsPageId}`,
-      client: { moduleUrl: '/fixtures/host-ui-client.mjs', buildKey },
-      createdAt: 1_725_000_000_000,
-      updatedAt: 1_725_000_000_000,
-    },
-  ]
-  const snapshot = () =>
-    HostApiContracts.snapshot.response.parse({
-      ...productSnapshot,
-      extensions: [
-        ...productSnapshot.extensions,
-        {
-          id: dashboardExtensionId,
-          slug: 'project-dashboard',
-          displayName: '项目工作台',
-          description: '集中查看项目状态。',
-          scope: 'host-ui',
-          revisions: [
-            {
-              id: dashboardRevisionId,
-              revisionNumber: 1,
-              createdAt: 1_725_000_000_000,
-              scope: 'host-ui',
-              contributions: ['页面：项目中心', '页面：项目报表'],
-              verification: {
-                verifiedAt: 1_725_000_000_000,
-                dshVersion: '0.1.1-rc.2',
-                contractVersion: 'nekro-nxt-extension-v3',
-                hostBuilt: false,
-                clientBuilt: true,
-                buildKey,
-                toolInvocationCount: 0,
-                rpcMethods: [],
-                renderedSlots: [],
-                renderedPages: [overviewPage, reportsPage],
-                permissions: { permissions: ['runtime.read'], networkOrigins: [] },
-              },
-            },
-          ],
-          activations: [],
-          installation: {
-            extensionRevisionId: dashboardRevisionId,
-            installedAt: 1_725_000_000_000,
-            runtime: { status: 'active', observedAt: 1_725_000_000_000 },
-          },
-          hostUiPermission: {
-            declaration: { permissions: ['runtime.read'], networkOrigins: [] },
-            permissionDigest: 'a'.repeat(64),
-            approvalRequired: false,
-          },
-          clientDiagnostics: [],
-        },
-      ],
-      hostUi: { preferencesRevision, pages },
-    })
-
-  await page.route('**/api/snapshot', (route) =>
-    route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(snapshot()) }),
-  )
-  await page.route('**/fixtures/host-ui-client.css*', (route) => {
-    cssLoads += 1
-    return route.fulfill({
-      status: 200,
-      contentType: 'text/css; charset=utf-8',
-      body: '[data-host-ui-page] .fixture-page { min-height: 100%; }',
-    })
-  })
-  await page.route('**/fixtures/host-ui-client.mjs*', (route) => {
-    clientLoads += 1
-    return route.fulfill({
-      status: 200,
-      contentType: 'text/javascript; charset=utf-8',
-      body: `
-        const navigationSnapshot = {
-          revision: 1,
-          groups: [{ id: 'projects', label: '项目', items: [
-            { id: 'overview', label: '项目总览', description: '查看当前进展', path: 'overview', badge: '3' },
-            { id: 'tasks', label: '待办任务', path: 'tasks', status: 'warning', badge: '2' }
-          ] }]
-        }
-        export default ({ React, host }) => ({
-          apply(ctx) {
-            const disposeOverview = ctx.pages.register(
-              { page: ${JSON.stringify(overviewPage)}, navigation: {
-                getSnapshot: () => navigationSnapshot,
-                subscribe: () => () => undefined
-              } },
-              function Overview(props) {
-                const [runtimeCount, setRuntimeCount] = React.useState('读取中')
-                React.useEffect(() => {
-                  let active = true
-                  host.call('runtime.list', {}).then((value) => {
-                    if (active) setRuntimeCount(String(value.length))
-                  })
-                  return () => { active = false }
-                }, [])
-                return React.createElement('main', { className: 'fixture-page' },
-                  React.createElement('h1', null, '项目中心'),
-                  React.createElement('p', null, '路径：' + props.relativePath),
-                  React.createElement('p', null, '运行会话：' + runtimeCount)
-                )
-              }
-            )
-            const disposeReports = ctx.pages.register(
-              { page: ${JSON.stringify(reportsPage)} },
-              (props) => React.createElement('main', { className: 'fixture-page' },
-                React.createElement('h1', null, '项目报表'),
-                React.createElement('p', null, '报表路径：' + props.relativePath)
-              )
-            )
-            return () => { disposeReports(); disposeOverview() }
-          }
-        })
-      `,
-    })
-  })
-  await page.route('**/api/host-ui/pages/*/call', async (route) => {
-    calls.push(route.request().postDataJSON())
-    return route.fulfill({
-      status: 200,
-      contentType: 'application/json',
-      body: JSON.stringify({ value: [{ id: 'episode-fixture', status: 'active' }] }),
-    })
-  })
-  await page.route('**/api/host-ui/pages/*/diagnostic', (route) =>
-    route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ recorded: true }) }),
-  )
-  await page.route('**/api/host-ui/page-preferences', async (route) => {
-    const request = HostApiContracts.updateHostUiPagePreferences.parseRequest(route.request().postDataJSON())
-    expect(request.expectedRevision).toBe(preferencesRevision)
-    pages = request.entries.map((preference, index) => {
-      const current = pages.find(({ pageInstanceId }) => pageInstanceId === preference.pageInstanceId)
-      if (!current) throw new Error('页面偏好包含未知入口。')
-      return { ...current, visible: preference.visible, sortOrder: index, updatedAt: Date.now() }
-    })
-    preferencesRevision += 1
-    return route.fulfill({
-      status: 200,
-      contentType: 'application/json',
-      body: JSON.stringify({ revision: preferencesRevision }),
-    })
-  })
-
+  await installProductRoutes(page)
   await page.setViewportSize({ width: 1440, height: 900 })
-  await page.emulateMedia({ colorScheme: 'light', reducedMotion: 'reduce' })
-  await page.goto(`/apps/${overviewPageId}/overview`)
-  await expect(page.getByRole('link', { name: '项目中心', exact: true })).toBeVisible()
-  await expect(page.getByRole('link', { name: '项目报表', exact: true })).toBeVisible()
-  await expect(page.getByRole('navigation', { name: '项目中心导航' })).toBeVisible()
-  await expect(page.getByRole('button', { name: /项目总览/u })).toBeVisible()
-  await expect(
-    page.locator('[data-host-ui-page]').getByRole('heading', { name: '项目中心', exact: true }),
-  ).toBeVisible()
-  await expect(page.getByText('路径：overview', { exact: true })).toBeVisible()
-  await expect(page.getByText('运行会话：1', { exact: true })).toBeVisible()
-  await expect.poll(() => calls.length).toBeGreaterThan(0)
-  expect(calls[0]).toEqual({ method: 'runtime.list', input: {} })
-  await assertViewportIntegrity(page)
-  await capture(page, testInfo, 'host-ui-navigation-light-1440')
-
-  await page.getByRole('link', { name: '项目报表', exact: true }).click()
-  await expect(page).toHaveURL(new RegExp(`/apps/${reportsPageId}/daily$`, 'u'))
-  await expect(page.getByRole('heading', { name: '项目报表', exact: true })).toBeVisible()
-  await expect(page.getByText('报表路径：daily', { exact: true })).toBeVisible()
-  await expect(page.locator('[data-object-pane-hidden]')).toBeVisible()
-  await expect
-    .poll(() => page.locator('aside[aria-label="对象列"]').evaluate((element) => element.getBoundingClientRect().width))
-    .toBeLessThanOrEqual(2)
-  await expect
-    .poll(() => page.locator('[data-shell-body] > main').evaluate((element) => element.getBoundingClientRect().left))
-    .toBeLessThanOrEqual(68)
-  await page.setViewportSize({ width: 1100, height: 720 })
-  await page.emulateMedia({ colorScheme: 'dark', reducedMotion: 'reduce' })
-  await page.getByRole('button', { name: '主题：浅色；切换为深色', exact: true }).click()
-  await expect(page.locator('html')).toHaveAttribute('data-theme', 'dark')
-  await assertViewportIntegrity(page)
-  await capture(page, testInfo, 'host-ui-full-width-dark-1100')
-
-  await page.goto('/extensions?view=pages')
-  await expect(page.getByRole('heading', { name: '页面入口', exact: true })).toBeVisible()
-  await page.getByRole('switch', { name: '隐藏“项目报表”入口', exact: true }).click()
-  await expect(page.getByRole('link', { name: '项目报表', exact: true })).toBeHidden()
-  await expect(page.getByText('已隐藏', { exact: true })).toBeVisible()
-  await assertViewportIntegrity(page)
-  await capture(page, testInfo, 'host-ui-page-manager-dark-1100')
-  expect(clientLoads).toBe(1)
-  expect(cssLoads).toBe(1)
-  expect(failures, failures.join('\n')).toEqual([])
-})
-
-test('a verified Client extension restores across product pages and retracts when disabled', async ({
-  page,
-}, testInfo) => {
-  const failures = installRuntimeFailureGate(page)
-  const buildKey = 'f'.repeat(64)
-  const activeAgentIds = new Set<string>([targetAgentId])
-  let artifactLoads = 0
-  const rpcCalls: unknown[] = []
-  const diagnostics: unknown[] = []
-  const snapshot = () =>
-    HostApiContracts.snapshot.response.parse({
-      ...productSnapshot,
-      dynamic: [],
-      extensions: [
-        {
-          ...productSnapshot.extensions[0],
-          revisions: [
-            {
-              id: summaryRevisionId,
-              revisionNumber: 2,
-              createdAt: 1_725_000_000_000,
-              scope: 'agent',
-              contributions: ['工具：summary_tool', 'RPC：summary.status', '界面：智能体工作台', '界面：扩展详情'],
-              verification: {
-                verifiedAt: 1_725_000_000_000,
-                dshVersion: '0.1.1-rc.2',
-                contractVersion: 'nekro-nxt-extension-v1',
-                hostBuilt: true,
-                clientBuilt: true,
-                buildKey,
-                toolInvocationCount: 1,
-                rpcMethods: ['summary.status'],
-                renderedSlots: ['agent.workbench.sections', 'extension.details.panels'],
-              },
-            },
-          ],
-          activations: [...activeAgentIds].map((agentId) => ({
-            agentId,
-            extensionRevisionId: summaryRevisionId,
-            config: {},
-            activatedAt: 1_725_000_000_000,
-          })),
-          clientDiagnostics: [],
-        },
-      ],
-    })
-
-  await page.route('**/api/snapshot', (route) =>
-    route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(snapshot()) }),
-  )
-  await page.route('**/api/channels/*/runtime', (route) => {
-    const channelId = new URL(route.request().url()).pathname.split('/')[3]
-    return route.fulfill({
-      status: 200,
-      contentType: 'application/json',
-      body: JSON.stringify({
-        cursor: { epoch: 'fixture', sequence: 0 },
-        channelId,
-        agentId: targetAgentId,
-        phase: 'idle',
-        summary: '智能体当前空闲。',
-        pendingInjectCount: 0,
-        turns: [],
-      }),
-    })
-  })
-  await page.route(`**/api/extensions/${summaryExtensionId}/revisions/${summaryRevisionId}/client/*.mjs*`, (route) => {
-    artifactLoads += 1
-    return route.fulfill({
-      status: 200,
-      contentType: 'text/javascript; charset=utf-8',
-      body: `export default ({ React, host, styles }) => ({
-          inject: ['slots'],
-          apply(ctx) {
-            ctx.slots.register(
-              { name: 'agent.workbench.sections', id: 'workbench' },
-              function SummaryWorkbench(props) {
-                const [status, setStatus] = React.useState('正在调用持久 RPC')
-                React.useEffect(() => {
-                  let mounted = true
-                  host.call('summary.status', { agentId: props.agentId }).then((value) => {
-                    if (mounted) setStatus(value.label)
-                  }, (error) => {
-                    if (mounted) setStatus(error instanceof Error ? error.message : String(error))
-                  })
-                  return () => { mounted = false }
-                }, [props.agentId])
-                return React.createElement('section', { className: styles.section, 'data-persistent-client': 'agent' },
-                  React.createElement('h3', { className: styles.sectionHeading }, '智能体摘要面板'),
-                  React.createElement('p', { className: styles.secondaryText }, props.displayName + ' · ' + status)
-                )
-              }
-            )
-            ctx.slots.register(
-              { name: 'extension.details.panels', id: 'details' },
-              (props) => React.createElement('section', { className: styles.section, 'data-persistent-client': 'details' },
-                React.createElement('h3', { className: styles.sectionHeading }, '扩展验证面板'),
-                React.createElement('span', { className: styles.badge }, props.activation === 'active' ? '已接入产品 Slot' : '未启用')
-              )
-            )
-          }
-        })`,
-    })
-  })
-  await page.route(`**/api/extensions/${summaryExtensionId}/revisions/${summaryRevisionId}/call`, async (route) => {
-    rpcCalls.push(route.request().postDataJSON())
-    return route.fulfill({
-      status: 200,
-      contentType: 'application/json',
-      body: JSON.stringify({ value: { label: '持久 RPC 已调用' } }),
-    })
-  })
-  await page.route(
-    `**/api/extensions/${summaryExtensionId}/revisions/${summaryRevisionId}/client-diagnostic`,
-    async (route) => {
-      diagnostics.push(route.request().postDataJSON())
-      return route.fulfill({
-        status: 200,
-        contentType: 'application/json',
-        body: JSON.stringify({ accepted: true }),
-      })
-    },
-  )
-  await page.route(`**/api/agents/*/extensions/${summaryExtensionId}/activation`, (route) => {
-    const agentId = new URL(route.request().url()).pathname.split('/')[3]
-    if (!agentId) throw new Error('启用请求缺少智能体 ID。')
-    if (route.request().method() === 'POST') {
-      activeAgentIds.add(agentId)
-      return route.fulfill({
-        status: 200,
-        contentType: 'application/json',
-        body: JSON.stringify({
-          activation: {
-            agentId,
-            extensionId: summaryExtensionId,
-            extensionRevisionId: summaryRevisionId,
-            config: {},
-            activatedAt: 1_725_000_000_000,
-          },
-        }),
-      })
+  const audit = async (label: string) => {
+    await settle(page)
+    const result = await new AxeBuilder({ page }).withTags(['wcag2a', 'wcag2aa']).analyze()
+    const serious = result.violations
+      .filter((violation) => violation.impact === 'serious' || violation.impact === 'critical')
+      .map(
+        (violation) => `${label}: ${violation.id} ${violation.nodes.map((node) => node.target.join(' ')).join(', ')}`,
+      )
+    expect(serious, serious.join('\n')).toEqual([])
+  }
+  for (const theme of ['light', 'dark'] as const) {
+    await page.emulateMedia({ colorScheme: theme, reducedMotion: 'reduce' })
+    await page.addInitScript((value) => window.localStorage.setItem('nekro-nxt.theme', value), theme)
+    for (const space of SPACES) {
+      await page.goto(space.path)
+      if (space.heading) await expect(page.getByRole('heading', { name: space.heading, level: 1 })).toBeVisible()
+      await audit(`${theme} ${space.path}`)
     }
-    expect(route.request().method()).toBe('DELETE')
-    activeAgentIds.delete(agentId)
-    return route.fulfill({
-      status: 200,
-      contentType: 'application/json',
-      body: JSON.stringify({ disabled: true }),
-    })
-  })
-
-  await page.setViewportSize({ width: 1440, height: 900 })
-  await page.emulateMedia({ colorScheme: 'light', reducedMotion: 'reduce' })
-  await page.goto(`/extensions/${summaryExtensionId}`)
-  await expect(page.getByText('选择使用这个扩展的智能体。', { exact: true })).toBeVisible()
-  await expect(page.getByText('界面数据接口 · summary.status', { exact: true })).toBeVisible()
-  await expect(page.getByText('DSH 版本').locator('..')).toContainText('0.1.1-rc.2')
-  await page.getByLabel('扩展界面所属智能体').click()
-  await page.getByRole('option', { name: '资料员 · r2', exact: true }).click()
-  await expect(page.getByText('扩展验证面板', { exact: true })).toBeVisible()
-  await expect(page.getByText('已接入产品 Slot', { exact: true })).toBeVisible()
-  await expect(page.getByRole('switch', { name: '停止让资料员使用“群聊摘要”', exact: true })).toBeChecked()
-  await expect(page.getByRole('switch', { name: '允许记录员使用“群聊摘要”', exact: true })).not.toBeChecked()
-  await expect.poll(() => diagnostics.length).toBeGreaterThanOrEqual(1)
-  expect(diagnostics[0]).toEqual({ agentId: targetAgentId, status: 'loaded' })
-  const contentPanel = page.getByText('r2 的内容', { exact: true }).locator('..')
-  const verificationPanel = page.getByText('验证记录', { exact: true }).locator('..')
-  const [contentPanelBox, verificationPanelBox] = await Promise.all([
-    contentPanel.boundingBox(),
-    verificationPanel.boundingBox(),
-  ])
-  expect(contentPanelBox?.height).toBeLessThan(verificationPanelBox?.height ?? 0)
-  await assertViewportIntegrity(page)
-  await capture(page, testInfo, 'persistent-extension-details-light-1440')
-
-  await page.setViewportSize({ width: 1280, height: 800 })
-  await page.emulateMedia({ colorScheme: 'dark', reducedMotion: 'reduce' })
-  await page.getByRole('button', { name: '主题：浅色；切换为深色', exact: true }).click()
-  await expect(page.locator('html')).toHaveAttribute('data-theme', 'dark')
-  await expectProductMotionSettled(page)
-  await expect(page.getByText('r2 的内容', { exact: true })).toBeVisible()
-  await assertViewportIntegrity(page)
-  await capture(page, testInfo, 'persistent-extension-details-dark-1280')
-
-  await page.setViewportSize({ width: 1100, height: 720 })
-  await page.getByText('使用范围', { exact: true }).scrollIntoViewIfNeeded()
-  await assertViewportIntegrity(page)
-  await capture(page, testInfo, 'persistent-extension-usage-dark-1100')
-
-  await page.getByText('导入与分享', { exact: true }).scrollIntoViewIfNeeded()
-  await expect(page.getByLabel('选择 .nxt-extension 文件')).toBeVisible()
-  await expect(page.getByRole('button', { name: '删除本地扩展' })).toBeVisible()
-  await assertViewportIntegrity(page)
-  await capture(page, testInfo, 'persistent-extension-transfer-danger-dark-1100')
-  await page.getByRole('button', { name: '删除本地扩展' }).scrollIntoViewIfNeeded()
-  await capture(page, testInfo, 'persistent-extension-danger-dark-1100')
-
-  await page.setViewportSize({ width: 1920, height: 1080 })
-  await page.getByRole('heading', { name: '群聊摘要', exact: true }).scrollIntoViewIfNeeded()
-  await assertViewportIntegrity(page)
-  await capture(page, testInfo, 'persistent-extension-details-dark-1920')
-
-  await page.setViewportSize({ width: 1280, height: 800 })
-
-  await page.goto(`/work/agents/${targetAgentId}`)
-  await expect(page.getByText('智能体摘要面板', { exact: true })).toBeVisible()
-  await expect(page.getByText('资料员 · 持久 RPC 已调用', { exact: true })).toBeVisible()
-  expect(rpcCalls[0]).toEqual({
-    agentId: targetAgentId,
-    method: 'summary.status',
-    input: { agentId: targetAgentId },
-  })
-  await assertViewportIntegrity(page)
-  await page.locator('[data-persistent-client="agent"]').scrollIntoViewIfNeeded()
-  await capture(page, testInfo, 'persistent-agent-panel-dark-1280')
-
-  await page.reload()
-  await expect(page.getByText('资料员 · 持久 RPC 已调用', { exact: true })).toBeVisible()
-  await expect.poll(() => artifactLoads).toBeGreaterThanOrEqual(2)
-  await expect.poll(() => rpcCalls.length).toBeGreaterThanOrEqual(2)
-
-  await page.goto(`/extensions/${summaryExtensionId}`)
-  await page.getByRole('switch', { name: '允许记录员使用“群聊摘要”', exact: true }).click()
-  await expect(page.getByRole('switch', { name: '停止让记录员使用“群聊摘要”', exact: true })).toBeChecked()
-  await expect(page.getByText('2 个智能体正在使用', { exact: true })).toBeVisible()
-
-  await page.goto(`/work/agents/${sourceAgentId}`)
-  await expect(page.getByText('选择这个智能体可以使用的扩展。', { exact: true })).toBeVisible()
-  await expect(page.locator('body')).not.toContainText('不需要逐个进入扩展详情')
-  const sourceExtensionSwitch = page.getByRole('switch', { name: '停用“群聊摘要”', exact: true })
-  await expect(sourceExtensionSwitch).toBeChecked()
-  await page.setViewportSize({ width: 1100, height: 720 })
-  await sourceExtensionSwitch.scrollIntoViewIfNeeded()
-  await assertViewportIntegrity(page)
-  await capture(page, testInfo, 'persistent-agent-extensions-dark-1100')
-  await sourceExtensionSwitch.click()
-  await expect(page.getByRole('switch', { name: '启用“群聊摘要”', exact: true })).not.toBeChecked()
-
-  await page.goto(`/extensions/${summaryExtensionId}`)
-  await page.getByRole('switch', { name: '停止让资料员使用“群聊摘要”', exact: true }).click()
-  await expect(page.getByText('扩展验证面板', { exact: true })).toBeHidden()
-  await expect(page.getByRole('switch', { name: '允许资料员使用“群聊摘要”', exact: true })).not.toBeChecked()
-  const loadsAfterDisable = artifactLoads
-  await page.goto(`/work/agents/${targetAgentId}`)
-  await expect(page.getByText('智能体摘要面板', { exact: true })).toBeHidden()
-  expect(artifactLoads).toBe(loadsAfterDisable)
+  }
+  await page.keyboard.press('ControlOrMeta+k')
+  await expect(page.getByRole('combobox', { name: '搜索' })).toBeFocused()
+  await audit('palette')
   expect(failures, failures.join('\n')).toEqual([])
 })
 
-test('a failed Client factory stays isolated and can be reloaded without disabling Host activation', async ({
+test('the command palette searches and navigates by keyboard and returns focus on Escape', async ({ page }) => {
+  const failures = installRuntimeFailureGate(page)
+  await installProductRoutes(page)
+  await page.goto('/live')
+  const trigger = page.getByRole('button', { name: '搜索' })
+  await trigger.click()
+  const input = page.getByRole('combobox', { name: '搜索' })
+  await expect(input).toBeFocused()
+  await input.fill('产品讨论')
+  await expect(page.getByRole('option', { name: /产品讨论群/u })).toHaveAttribute('aria-selected', 'true')
+  await page.keyboard.press('Enter')
+  await expect(page).toHaveURL(new RegExp(`/channels/${externalChannelId}$`, 'u'))
+  await expect(input).toHaveCount(0)
+
+  await page.keyboard.press('ControlOrMeta+k')
+  await input.fill('资料员')
+  const options = page.getByRole('option')
+  await expect(options.first()).toHaveAttribute('aria-selected', 'true')
+  await page.keyboard.press('ArrowDown')
+  await expect(options.nth(1)).toHaveAttribute('aria-selected', 'true')
+  await page.keyboard.press('Escape')
+  await expect(input).toHaveCount(0)
+  await expect(page).toHaveURL(new RegExp(`/channels/${externalChannelId}$`, 'u'))
+
+  await trigger.click()
+  await page.keyboard.press('Escape')
+  await expect(trigger).toBeFocused()
+  expect(failures, failures.join('\n')).toEqual([])
+})
+
+test('the composer sends with Enter, keeps Shift+Enter for a new line and binds a pending send to its channel', async ({
   page,
 }) => {
   const failures = installRuntimeFailureGate(page)
-  const buildKey = 'd'.repeat(64)
-  let failedDiagnostic = false
-  let artifactLoads = 0
-  let deactivationRequests = 0
-  const diagnostics: unknown[] = []
-  const snapshot = () =>
-    HostApiContracts.snapshot.response.parse({
-      ...productSnapshot,
-      dynamic: [],
-      extensions: [
-        {
-          ...productSnapshot.extensions[0],
-          revisions: [
-            {
-              id: summaryRevisionId,
-              revisionNumber: 2,
-              createdAt: 1_725_000_000_000,
-              scope: 'agent',
-              contributions: ['工具：summary_tool', '界面：扩展详情'],
-              verification: {
-                verifiedAt: 1_725_000_000_000,
-                dshVersion: '0.1.1-rc.2',
-                contractVersion: 'nekro-nxt-extension-v1',
-                hostBuilt: true,
-                clientBuilt: true,
-                buildKey,
-                toolInvocationCount: 1,
-                rpcMethods: [],
-                renderedSlots: ['extension.details.panels'],
-              },
-            },
-          ],
-          clientDiagnostics: failedDiagnostic
-            ? [
-                {
-                  agentId: targetAgentId,
-                  revisionId: summaryRevisionId,
-                  status: 'failed',
-                  message: '合成 Client factory 失败',
-                  observedAt: 1_725_000_000_900,
-                },
-              ]
-            : [],
-        },
-      ],
-    })
+  await installProductRoutes(page)
+  const sent: { channelId: string; body: unknown }[] = []
+  let release!: () => void
+  const held = new Promise<void>((resolve) => {
+    release = resolve
+  })
+  await page.route('**/api/channels/*/messages', async (route) => {
+    if (route.request().method() !== 'POST') return route.fallback()
+    const channelId = new URL(route.request().url()).pathname.split('/')[3]!
+    sent.push({ channelId, body: route.request().postDataJSON() })
+    if (sent.length === 2) await held
+    return route.fulfill({ json: { inserted: true } })
+  })
+  await page.goto(`/channels/${targetChannelId}`)
+  const input = page.getByRole('textbox', { name: '消息' })
+  await input.fill('第一行')
+  await input.press('Shift+Enter')
+  await input.pressSequentially('第二行')
+  await expect(input).toHaveValue('第一行\n第二行')
+  await input.press('Enter')
+  await expect.poll(() => sent.length).toBe(1)
+  await expect(input).toHaveValue('')
 
+  await input.fill('慢速发送的草稿')
+  await input.press('Enter')
+  await expect.poll(() => sent.length).toBe(2)
+  // Switch channels inside the app while the send is still in flight.
+  const list = page.getByRole('complementary', { name: '频道', exact: true })
+  await list.getByRole('button', { name: /记录员的内置频道/u }).click()
+  await expect(page).toHaveURL(new RegExp(`/channels/${sourceChannelId}$`, 'u'))
+  await expect(page.getByRole('textbox', { name: '消息' })).toHaveValue('')
+  release()
+  await list.getByRole('button', { name: /资料员的内置频道/u }).click()
+  await expect(page).toHaveURL(new RegExp(`/channels/${targetChannelId}$`, 'u'))
+  await expect(page.getByRole('textbox', { name: '消息' })).toHaveValue('')
+  expect(sent.map((item) => item.channelId)).toEqual([targetChannelId, targetChannelId])
+  expect(failures, failures.join('\n')).toEqual([])
+})
+
+test('long history stays above a growing multiline composer and an empty channel says so', async ({ page }) => {
+  const failures = installRuntimeFailureGate(page)
+  await installProductRoutes(page)
+  const history = Array.from({ length: 80 }, (_, index) => ({
+    id: `evt_history${index}`,
+    channelId: targetChannelId,
+    role: 'member',
+    parts: [{ type: 'text', text: `虚构历史消息 ${index}` }],
+    occurredAt: 1_725_000_000_000 + index * 1_000,
+  }))
+  await page.route(`**/api/channels/${targetChannelId}/messages?*`, (route) =>
+    route.fulfill({ json: { cursor: { epoch: 'fixture', sequence: 0 }, messages: history, hasMore: false } }),
+  )
+  await page.setViewportSize({ width: 1100, height: 720 })
+  await page.goto(`/channels/${targetChannelId}`)
+  const last = page.getByText('虚构历史消息 79', { exact: true })
+  await expect(last).toBeInViewport()
+  const input = page.getByRole('textbox', { name: '消息' })
+  await input.fill(Array.from({ length: 6 }, (_, index) => `第 ${index + 1} 行`).join('\n'))
+  await expect(last).toBeInViewport()
+  const lastBox = await last.boundingBox()
+  const inputBox = await input.boundingBox()
+  expect(lastBox!.y + lastBox!.height).toBeLessThanOrEqual(inputBox!.y)
+
+  await page.route(`**/api/channels/${externalChannelId}/messages?*`, (route) =>
+    route.fulfill({ json: { cursor: { epoch: 'fixture', sequence: 0 }, messages: [], hasMore: false } }),
+  )
+  await page.goto(`/channels/${externalChannelId}`)
+  await expect(page.getByText('还没有消息', { exact: true })).toBeVisible()
+  expect(failures, failures.join('\n')).toEqual([])
+})
+
+test('group conversations keep sender and mention semantics without exposing internal identities', async ({ page }) => {
+  const failures = installRuntimeFailureGate(page)
+  await installProductRoutes(page)
+  await page.goto(`/channels/${externalChannelId}`)
+  const log = page.getByRole('log', { name: '消息记录' })
+  await expect(log.getByText('成员甲').first()).toBeVisible()
+  await expect(log).toContainText('成员乙')
+  await expect(log).toContainText('一起复核。')
+  await expect(log.getByRole('img', { name: '讨论截图' })).toBeVisible()
+  const text = await page.locator('body').innerText()
+  for (const prefix of ['mbr_', 'pid_', 'chn_', 'con_', 'agt_', 'evt_']) expect(text).not.toContain(prefix)
+  expect(failures, failures.join('\n')).toEqual([])
+})
+
+test('an initial Host failure is explicit and recovers without reloading the page', async ({ page }) => {
+  let available = false
+  await installProductRoutes(page)
   await page.route('**/api/snapshot', (route) =>
-    route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(snapshot()) }),
+    available
+      ? route.fulfill({ json: productSnapshot })
+      : route.fulfill({ status: 503, json: { error: { code: 'unavailable', message: '宿主正在启动。' } } }),
   )
-  await page.route(`**/api/extensions/${summaryExtensionId}/revisions/${summaryRevisionId}/client/*.mjs*`, (route) => {
-    artifactLoads += 1
-    return route.fulfill({
-      status: 200,
-      contentType: 'text/javascript; charset=utf-8',
-      body: `export default () => { throw new Error('合成 Client factory 失败') }`,
-    })
+  await page.goto('/live')
+  const banner = page.locator('[data-host-connection]')
+  await expect(banner).toContainText('无法连接')
+  await page.evaluate(() => {
+    document.documentElement.dataset['hostRecovery'] = 'same-document'
   })
-  await page.route(
-    `**/api/extensions/${summaryExtensionId}/revisions/${summaryRevisionId}/client-diagnostic`,
-    async (route) => {
-      const body: unknown = route.request().postDataJSON()
-      diagnostics.push(body)
-      if (
-        typeof body === 'object' &&
-        body !== null &&
-        !Array.isArray(body) &&
-        'status' in body &&
-        body.status === 'failed'
-      ) {
-        failedDiagnostic = true
-      }
-      return route.fulfill({
-        status: 200,
-        contentType: 'application/json',
-        body: JSON.stringify({ accepted: true }),
-      })
-    },
-  )
-  await page.route(`**/api/agents/${targetAgentId}/extensions/${summaryExtensionId}/activation`, (route) => {
-    deactivationRequests += 1
-    return route.fulfill({
-      status: 200,
-      contentType: 'application/json',
-      body: JSON.stringify({ disabled: true }),
-    })
-  })
+  available = true
+  await banner.getByRole('button', { name: '重新连接' }).click()
+  await expect(banner).toHaveCount(0)
+  await expect(page.getByRole('heading', { name: '现场', level: 1 })).toBeVisible()
+  expect(await page.evaluate(() => document.documentElement.dataset['hostRecovery'])).toBe('same-document')
+})
 
-  await page.goto(`/extensions/${summaryExtensionId}`)
-  await expect.poll(() => diagnostics.length).toBeGreaterThanOrEqual(1)
-  expect(diagnostics[0]).toEqual({
-    agentId: targetAgentId,
-    status: 'failed',
-    message: '合成 Client factory 失败',
-  })
+test('a failed space chunk keeps the shell and the draft and recovers through retry', async ({ page }) => {
+  await installProductRoutes(page)
+  let failChunks = true
+  await page.route('**/assets/agents-space-*.js', (route) => (failChunks ? route.abort('failed') : route.fallback()))
+  await page.goto(`/channels/${targetChannelId}`)
+  const input = page.getByRole('textbox', { name: '消息' })
+  await input.fill('加载失败时保留的草稿')
+  await page.getByRole('navigation', { name: '主导航' }).getByRole('link', { name: '智能体' }).click()
+  const failure = page.getByRole('alert').filter({ hasText: '这个页面没能加载' })
+  await expect(failure).toBeVisible()
+  await expect(page.getByRole('navigation', { name: '主导航' })).toBeVisible()
+  await expect(page.getByRole('banner')).toContainText('页面未加载')
+  failChunks = false
+  // A browser keeps a failed module import: the in-place retry fails once more, then the page reloads.
+  await failure.getByRole('button', { name: '重试' }).click()
+  const reloadButton = page.getByRole('button', { name: '重新加载页面' })
+  const heading = page.getByRole('heading', { name: '资料员', level: 1 })
+  await expect(reloadButton.or(heading)).toBeVisible()
+  if (await reloadButton.isVisible()) await reloadButton.click()
+  await expect(heading).toBeVisible()
+  await page.getByRole('navigation', { name: '主导航' }).getByRole('link', { name: '频道' }).click()
+  await expect(page.getByRole('textbox', { name: '消息' })).toHaveValue('加载失败时保留的草稿')
+})
 
-  await page.reload()
-  await page.getByLabel('扩展界面所属智能体').click()
-  await page.getByRole('option', { name: '资料员 · r2', exact: true }).click()
-  await expect(page.getByText('扩展界面加载失败', { exact: true })).toBeVisible()
-  await expect(page.getByText('合成 Client factory 失败', { exact: true })).toBeVisible()
-  await expect(page.getByRole('switch', { name: '停止让资料员使用“群聊摘要”', exact: true })).toBeChecked()
-  await page.getByRole('button', { name: '重新加载界面', exact: true }).click()
-  await expect.poll(() => artifactLoads).toBeGreaterThanOrEqual(3)
-  expect(deactivationRequests).toBe(0)
+test('the minimum window stays reachable at 125% and 150% effective zoom', async ({ page }) => {
+  const failures = installRuntimeFailureGate(page)
+  await installProductRoutes(page)
+  for (const zoom of [1.25, 1.5]) {
+    await page.setViewportSize({ width: Math.round(1100 / zoom), height: Math.round(720 / zoom) })
+    for (const space of SPACES) {
+      await page.goto(space.path)
+      await assertViewportIntegrity(page)
+    }
+    await page.goto(`/channels/${targetChannelId}`)
+    await expect(page.getByRole('textbox', { name: '消息' })).toBeInViewport()
+  }
   expect(failures, failures.join('\n')).toEqual([])
 })
 
-test('the creation page reuses the editor structure and submits explicit capabilities', async ({ page }, testInfo) => {
+test('long and English object names keep the top bar on one line', async ({ page }) => {
+  const failures = installRuntimeFailureGate(page)
+  const longName = 'Quarterly Planning Assistant for the Extended Operations Review Group'
+  const snapshot = HostApiContracts.snapshot.parseResponse({
+    ...productSnapshot,
+    agents: productSnapshot.agents.map((agent) =>
+      agent.id === targetAgentId ? { ...agent, displayName: longName } : agent,
+    ),
+    channels: productSnapshot.channels.map((channel) =>
+      channel.id === targetChannelId ? { ...channel, displayName: `${longName} 的内置频道` } : channel,
+    ),
+  })
+  await installProductRoutes(page, () => snapshot)
+  await page.setViewportSize({ width: 1100, height: 720 })
+  const top = page.getByRole('banner')
+  await page.goto('/live')
+  const height = (await top.boundingBox())!.height
+  for (const path of [`/channels/${targetChannelId}`, `/agents/${targetAgentId}`]) {
+    await page.goto(path)
+    await expect(top).toContainText(longName)
+    expect((await top.boundingBox())!.height).toBe(height)
+    await assertViewportIntegrity(page)
+  }
+  expect(failures, failures.join('\n')).toEqual([])
+})
+
+test('透视 opens turn details by keyboard and keeps tool input readable', async ({ page }, testInfo) => {
   const failures = installRuntimeFailureGate(page)
   await installProductRoutes(page)
-  let submitted: unknown
-  await page.route('**/api/agents', async (route) => {
-    submitted = route.request().postDataJSON()
-    await route.fulfill({
-      status: 201,
-      contentType: 'application/json',
-      body: JSON.stringify({
-        agentId: AgentIdSchema.parse('agt_created'),
+  await page.route(`**/api/channels/${targetChannelId}/runtime`, (route) =>
+    route.fulfill({
+      json: {
+        cursor: { epoch: 'fixture', sequence: 0 },
         channelId: targetChannelId,
-        connectionId: internalConnectionId,
-      }),
-    })
-  })
-  await page.setViewportSize({ width: 1100, height: 720 })
-  await page.goto('/work/agents/new')
-  await expect(page.getByRole('dialog')).toHaveCount(0)
-  await page.getByLabel('名称').fill('研究员')
-  await page.getByLabel('人设').fill('先核对证据，再给出结论。')
-  await expect(page.getByRole('combobox', { name: '默认模型' })).toContainText('DeepSeek V4 Flash')
-  await expect(
-    page.getByText('当前模型支持图片输入。频道原图会按消息顺序进入上下文，重复内容只注入一次，并支持批量主动重看。'),
-  ).toBeVisible()
-  await page.getByText('图片理解', { exact: true }).scrollIntoViewIfNeeded()
-  await capture(page, testInfo, 'agent-create-image-policy-direct')
-  await page.getByRole('combobox', { name: '默认模型' }).click()
-  await page.getByRole('option', { name: '测试供应商 · 纯文本模型' }).click()
-  await expect(page.getByRole('option')).toHaveCount(0)
-  await expect(page.getByText('图片会被保存，但当前智能体尚不能理解图片。请选择辅助视觉模型。')).toBeVisible()
-  await page.getByText('图片理解', { exact: true }).scrollIntoViewIfNeeded()
-  await capture(page, testInfo, 'agent-create-image-policy-text-unavailable')
-  await page.getByRole('combobox', { name: '辅助视觉模型' }).click()
-  await page.getByRole('option', { name: 'deepseek · DeepSeek V4 Flash' }).click()
-  await expect(page.getByRole('option')).toHaveCount(0)
-  await expect(page.getByText('当前主模型仅接收文本；图片会由配置的辅助视觉模型批量理解。')).toBeVisible()
-  await page.getByText('图片理解', { exact: true }).scrollIntoViewIfNeeded()
-  await capture(page, testInfo, 'agent-create-image-policy-delegated')
-  await page.getByRole('combobox', { name: '默认模型' }).click()
-  await page.getByRole('option', { name: '能力未声明供应商 · 能力未声明模型' }).click()
-  await expect(page.getByRole('option')).toHaveCount(0)
-  await expect(page.getByText('当前模型没有声明图片输入能力，按文本模型处理。')).toBeVisible()
-  await page.getByText('图片理解', { exact: true }).scrollIntoViewIfNeeded()
-  await capture(page, testInfo, 'agent-create-image-policy-unknown')
-  await page.getByRole('combobox', { name: '辅助视觉模型' }).click()
-  await page.getByRole('option', { name: '不启用图片理解' }).click()
-  await page.getByRole('combobox', { name: '默认模型' }).click()
-  await page.getByRole('option', { name: 'deepseek · DeepSeek V4 Flash' }).click()
-  await page.getByRole('switch', { name: '允许动态创造' }).click()
-  await page.getByRole('button', { name: '展开逐项设置' }).click()
-  await page.getByRole('switch', { name: '运行命令' }).click()
-  await expect
-    .poll(() =>
-      page
-        .locator('[data-access-granular]')
-        .evaluate((element) => element.parentElement?.getBoundingClientRect().height ?? 0),
-    )
-    .toBeGreaterThan(170)
-  await expect(page.getByRole('slider', { name: '系统访问等级' })).toHaveValue('0')
-  await expect(page.getByText('自定义权限（Lv.C）', { exact: true })).toBeVisible()
-  await capture(page, testInfo, 'agent-create-confirmation')
-  await page.getByRole('button', { name: '创建智能体' }).click()
-  await expect(page).toHaveURL(new RegExp(`/work/channels/${targetChannelId}$`, 'u'))
-  expect(submitted).toEqual({
-    displayName: '研究员',
-    persona: '先核对证据，再给出结论。',
-    personaDocument: { version: 1, segments: [{ type: 'text', text: '先核对证据，再给出结论。' }] },
-    model: { provider: 'deepseek', model: 'deepseek-v4-flash' },
-    imagePolicy,
-    capabilities: {
-      subagents: true,
-      fileTools: false,
-      webSearch: false,
-      dynamicCreation: true,
-      developmentShell: true,
-      unrestrictedFileAccess: false,
-    },
-  })
+        agentId: targetAgentId,
+        episodeId: targetEpisodeId,
+        phase: 'idle',
+        summary: '智能体当前空闲。',
+        pendingInjectCount: 0,
+        turns: [
+          {
+            turn: 1,
+            state: 'completed',
+            producedReply: true,
+            responseState: 'sent',
+            startedAt: 1_725_000_001_000,
+            endedAt: 1_725_000_004_000,
+            durationMs: 3_000,
+            steps: [
+              {
+                step: 1,
+                tools: [
+                  {
+                    callId: 'call_quality1',
+                    name: 'lookup_records',
+                    displayName: '查找记录',
+                    state: 'succeeded',
+                    durationMs: 820,
+                    inputPreview: JSON.stringify({ keyword: '今日记录', limit: 3 }),
+                    resultPreview: '找到 3 条虚构记录。',
+                  },
+                ],
+              },
+            ],
+          },
+        ],
+      },
+    }),
+  )
+  await page.goto(`/channels/${targetChannelId}`)
+  await expect(page.getByText('查找记录').first()).toBeVisible()
+  const xray = page.getByRole('button', { name: /透视/u })
+  await expect(xray).toHaveAttribute('aria-pressed', 'false')
+  await xray.focus()
+  await page.keyboard.press('Space')
+  await expect(xray).toHaveAttribute('aria-pressed', 'true')
+  await expect(page.getByText('找到 3 条虚构记录。')).toBeVisible()
+  await expect(page.getByText('今日记录')).toBeVisible()
+  await expect(page.locator('body')).not.toContainText('"keyword"')
+  await capture(page, testInfo, 'xray-open')
+  await page.keyboard.press('Enter')
+  await expect(xray).toHaveAttribute('aria-pressed', 'false')
   expect(failures, failures.join('\n')).toEqual([])
 })
 
-test('desktop shell keeps a 48px top bar and a permanently available object pane', async ({ page }, testInfo) => {
-  const failures = installRuntimeFailureGate(page)
-  await page.emulateMedia({ colorScheme: 'dark' })
-  await page.addInitScript(() => window.localStorage.removeItem('nekro-nxt.theme'))
+test('dialogs close with Escape, return focus and keep a failed action open with its reason', async ({ page }) => {
   await installProductRoutes(page)
-  await page.setViewportSize({ width: 1100, height: 720 })
-  await page.goto('/work')
-
-  const topBar = page.locator('[data-window-top-bar]')
-  const pane = page.locator('aside[aria-label="对象列"]')
-  expect((await topBar.boundingBox())?.height).toBe(48)
-  await expect(topBar.getByText('NekroNXT', { exact: true })).toBeVisible()
-  await expect(topBar.getByText('月潮观测所', { exact: true })).toBeVisible()
-  await expect(topBar.getByText('CALM · PRECISE · ALIVE', { exact: true })).toBeVisible()
-  const chromeGeometry = await page.evaluate(() => {
-    const brand = document.querySelector<HTMLElement>('[data-window-brand]')
-    const dragTitle = document.querySelector<HTMLElement>('[data-window-drag-title]')
-    const rail = document.querySelector<HTMLElement>('aside[aria-label="模式"]')
-    const tree = document.querySelector<HTMLElement>('aside[aria-label="对象列"]')
-    const stage = document.querySelector<HTMLElement>('main')
-    if (!brand || !dragTitle || !rail || !tree || !stage) throw new Error('窗口外壳缺少必要表面。')
-    const brandStyle = getComputedStyle(brand)
-    const dragTitleStyle = getComputedStyle(dragTitle)
-    const railStyle = getComputedStyle(rail)
-    const treeStyle = getComputedStyle(tree)
-    const stageStyle = getComputedStyle(stage)
-    return {
-      brandBackground: brandStyle.backgroundColor,
-      dragTitleBackground: dragTitleStyle.backgroundColor,
-      brandRadius: Number.parseFloat(brandStyle.borderTopLeftRadius),
-      dragTitleRadius: Number.parseFloat(dragTitleStyle.borderTopLeftRadius),
-      railRadii: [
-        railStyle.borderTopLeftRadius,
-        railStyle.borderTopRightRadius,
-        railStyle.borderBottomRightRadius,
-        railStyle.borderBottomLeftRadius,
-      ],
-      treeRadii: [
-        treeStyle.borderTopLeftRadius,
-        treeStyle.borderTopRightRadius,
-        treeStyle.borderBottomRightRadius,
-        treeStyle.borderBottomLeftRadius,
-      ],
-      stageRadii: [
-        stageStyle.borderTopLeftRadius,
-        stageStyle.borderTopRightRadius,
-        stageStyle.borderBottomRightRadius,
-        stageStyle.borderBottomLeftRadius,
-      ],
-    }
+  let fail = true
+  await page.route(`**/api/channels/${externalChannelId}`, (route) => {
+    if (route.request().method() !== 'DELETE') return route.fallback()
+    return fail
+      ? route.fulfill({
+          status: 409,
+          json: { error: { code: 'binding-conflict', message: '频道的响应智能体刚刚变化。' } },
+        })
+      : route.fulfill({ json: { channelId: externalChannelId, deleted: true } })
   })
-  expect(chromeGeometry.brandRadius).toBeGreaterThanOrEqual(10)
-  expect(chromeGeometry.dragTitleRadius).toBeGreaterThanOrEqual(10)
-  expect(chromeGeometry.brandBackground).toBe('rgba(0, 0, 0, 0)')
-  expect(chromeGeometry.dragTitleBackground).toBe('rgba(0, 0, 0, 0)')
-  expect(chromeGeometry.railRadii).toEqual(['0px', '0px', '0px', '0px'])
-  expect(chromeGeometry.treeRadii).toEqual(['0px', '0px', '0px', '0px'])
-  expect(chromeGeometry.stageRadii).toEqual(['0px', '0px', '0px', '0px'])
-  const shellEdges = await page.evaluate(() => {
-    const body = document.querySelector<HTMLElement>('[data-shell-body]')
-    const rail = document.querySelector<HTMLElement>('aside[aria-label="模式"]')
-    const tree = document.querySelector<HTMLElement>('aside[aria-label="对象列"]')
-    const splitter = document.querySelector<HTMLElement>('[role="separator"][aria-label="调整对象列宽度"]')
-    const stage = document.querySelector<HTMLElement>('main')
-    if (!body || !rail || !tree || !splitter || !stage) throw new Error('窗口主体缺少必要表面。')
-    const bodyRect = body.getBoundingClientRect()
-    const railRect = rail.getBoundingClientRect()
-    const treeRect = tree.getBoundingClientRect()
-    const splitterRect = splitter.getBoundingClientRect()
-    const stageRect = stage.getBoundingClientRect()
-    const splitterLine = getComputedStyle(splitter, '::after')
-    return {
-      bodyLeft: bodyRect.left,
-      bodyRight: bodyRect.right,
-      railLeft: railRect.left,
-      dividerGap: stageRect.left - treeRect.right,
-      dividerCenterOffset: Math.abs(splitterRect.left + splitterRect.width / 2 - (treeRect.right + 0.5)),
-      dividerHitWidth: splitterRect.width,
-      dividerLineLeft: Number.parseFloat(splitterLine.left),
-      dividerLineWidth: Number.parseFloat(splitterLine.width),
-      stageRight: stageRect.right,
-      viewportWidth: window.innerWidth,
-    }
-  })
-  expect(shellEdges.bodyLeft).toBe(0)
-  expect(shellEdges.railLeft).toBe(0)
-  expect(shellEdges.dividerGap).toBe(1)
-  expect(shellEdges.dividerCenterOffset).toBeLessThanOrEqual(0.5)
-  expect(shellEdges.dividerHitWidth).toBe(9)
-  expect(shellEdges.dividerLineLeft).toBe(4.5)
-  expect(shellEdges.dividerLineWidth).toBe(1)
-  expect(shellEdges.bodyRight).toBe(shellEdges.viewportWidth)
-  expect(shellEdges.stageRight).toBe(shellEdges.viewportWidth)
-  for (const selector of ['[data-window-brand]', '[data-window-drag-title]']) {
-    const chrome = await page.locator(selector).evaluate((element) => {
-      const style = getComputedStyle(element)
-      return {
-        borders: [style.borderTopWidth, style.borderRightWidth, style.borderBottomWidth, style.borderLeftWidth],
-        shadow: style.boxShadow,
-      }
-    })
-    expect(chrome.borders).toEqual(['0px', '0px', '0px', '0px'])
-    expect(chrome.shadow).toBe('none')
-  }
-  const expectSquareUnframedPerimeter = async (): Promise<void> => {
-    const perimeter = await page.evaluate(() => {
-      const read = (selector: string) => {
-        const element = document.querySelector<HTMLElement>(selector)
-        if (!element) throw new Error(`窗口外壳缺少 ${selector}。`)
-        const style = getComputedStyle(element)
-        return {
-          borders: [style.borderTopWidth, style.borderRightWidth, style.borderBottomWidth, style.borderLeftWidth],
-          radii: [
-            style.borderTopLeftRadius,
-            style.borderTopRightRadius,
-            style.borderBottomRightRadius,
-            style.borderBottomLeftRadius,
-          ],
-          shadow: style.boxShadow,
-        }
-      }
-      return {
-        topBar: read('[data-window-top-bar]'),
-        rail: read('aside[aria-label="模式"]'),
-        tree: read('aside[aria-label="对象列"]'),
-        stage: read('main'),
-      }
-    })
-    expect(perimeter.topBar.borders[0]).toBe('0px')
-    expect(perimeter.topBar.borders[1]).toBe('0px')
-    expect(perimeter.topBar.borders[3]).toBe('0px')
-    expect(perimeter.topBar.shadow).toBe('none')
-    expect(perimeter.rail.borders[0]).toBe('0px')
-    expect(perimeter.rail.borders[2]).toBe('0px')
-    expect(perimeter.rail.borders[3]).toBe('0px')
-    expect(perimeter.tree.borders[0]).toBe('0px')
-    expect(perimeter.tree.borders[2]).toBe('0px')
-    expect(perimeter.stage.borders[0]).toBe('0px')
-    expect(perimeter.stage.borders[1]).toBe('0px')
-    expect(perimeter.stage.borders[2]).toBe('0px')
-    for (const panel of [perimeter.rail, perimeter.tree, perimeter.stage]) {
-      expect(panel.radii).toEqual(['0px', '0px', '0px', '0px'])
-      expect(panel.shadow).toBe('none')
-    }
-  }
-  await expectSquareUnframedPerimeter()
-  await page.locator('html').evaluate((root) => root.style.setProperty('--nxt-window-controls-left', '84px'))
-  expect(await topBar.evaluate((element) => getComputedStyle(element).paddingLeft)).toBe('98px')
-  expect(await topBar.evaluate((element) => getComputedStyle(element, '::after').left)).toBe('0px')
-  await capture(page, testInfo, 'desktop-macos-titlebar-safe-area')
-  await page.locator('html').evaluate((root) => root.style.removeProperty('--nxt-window-controls-left'))
-  await expect(pane).toBeVisible()
-  await expect(page.getByRole('button', { name: /收起对象列|展开对象列/u })).toHaveCount(0)
-  await expect(page.getByRole('separator', { name: '调整对象列宽度' })).toBeVisible()
-  const themeButton = page.getByRole('button', { name: /^主题：/u })
-  await expect(themeButton).toBeVisible()
-  await expect(themeButton).toHaveAccessibleName('主题：深色；切换为浅色')
-  await expect(page.locator('html')).toHaveAttribute('data-theme', 'dark')
-  expect(await page.evaluate(() => window.localStorage.getItem('nekro-nxt.theme'))).toBe('dark')
-  expect(await themeButton.evaluate((element) => getComputedStyle(element).color)).toBe('rgb(247, 250, 255)')
-  await themeButton.hover()
-  await page.waitForTimeout(600)
-  await expect(page.getByRole('tooltip', { name: /^主题：/u })).toHaveCount(0)
-  await expect(page.locator('html')).toHaveAttribute('data-nxt-cursor', 'pointer')
-  await expect(themeButton).toHaveCSS('cursor', 'pointer')
-  await page.emulateMedia({ colorScheme: 'light' })
-  await expect(page.locator('html')).toHaveAttribute('data-theme', 'dark')
-  await themeButton.click()
-  await expect(page.locator('html')).toHaveAttribute('data-theme', 'light')
-  expect(await page.evaluate(() => window.localStorage.getItem('nekro-nxt.theme'))).toBe('light')
-  await expect(themeButton.locator('svg.lucide-sun')).toBeVisible()
-  await expect(themeButton.locator('span')).toHaveCSS('opacity', '1')
-  await expectSquareUnframedPerimeter()
-  await capture(page, testInfo, 'desktop-theme-light')
-  await themeButton.click()
-  await expect(page.locator('html')).toHaveAttribute('data-theme', 'dark')
-  expect(await page.evaluate(() => window.localStorage.getItem('nekro-nxt.theme'))).toBe('dark')
-  await expect(themeButton.locator('svg.lucide-moon')).toBeVisible()
-  await expect(themeButton.locator('span')).toHaveCSS('opacity', '1')
-  await expect(page.locator('[class*="railHostDot"]')).toHaveCount(0)
-  await capture(page, testInfo, 'desktop-object-pane-stable')
+  await page.goto(`/channels/${externalChannelId}`)
+  const inspector = page.getByRole('complementary', { name: '频道信息' })
+  const remove = inspector.getByRole('button', { name: '移除频道' })
+  await remove.click()
+  const dialog = page.getByRole('dialog', { name: '移除「产品讨论群」？' })
+  await expect(dialog).toBeVisible()
+  await page.keyboard.press('Escape')
+  await expect(dialog).toBeHidden()
+  await expect(remove).toBeFocused()
 
-  await page.goto('/settings?tab=appearance')
-  await page.getByRole('combobox', { name: '主题' }).click()
-  await expect(page.getByRole('option', { name: '浅色' })).toBeVisible()
-  await expect(page.getByRole('option', { name: '深色' })).toBeVisible()
-  await expect(page.getByRole('option', { name: '跟随系统' })).toHaveCount(0)
-
-  expect(failures, failures.join('\n')).toEqual([])
+  await remove.click()
+  await dialog.getByRole('button', { name: '移除', exact: true }).click()
+  await expect(dialog).toContainText('频道的响应智能体刚刚变化。')
+  await expect(dialog).toBeVisible()
+  fail = false
+  await dialog.getByRole('button', { name: '移除', exact: true }).click()
+  await expect(dialog).toBeHidden()
 })
 
-test('primary product pages render semantic Lucide page and object-pane identities', async ({ page }, testInfo) => {
-  const failures = installRuntimeFailureGate(page)
-  await installProductRoutes(page)
-  await page.setViewportSize({ width: 1440, height: 900 })
-  await page.emulateMedia({ colorScheme: 'dark', reducedMotion: 'reduce' })
-  await page.addInitScript(() => {
-    window.localStorage.setItem('nekro-nxt.theme', 'dark')
-    window.localStorage.setItem('nekro-nxt.reduced-motion', 'true')
-  })
-
-  for (const scenario of [
-    { route: '/connections', pageIcon: 'lucide-cable', paneIcon: 'lucide-cable' },
-    { route: '/users', pageIcon: 'lucide-users-round', paneIcon: 'lucide-users-round' },
-    { route: '/extensions', pageIcon: 'lucide-boxes', paneIcon: 'lucide-package-open' },
-    { route: '/settings', pageIcon: 'lucide-settings', paneIcon: 'lucide-settings' },
-  ]) {
-    await page.goto(scenario.route)
-    await expect(page.locator('html')).toHaveAttribute('data-theme', 'dark')
-    await expect(page.locator(`[data-page-header] svg.${scenario.pageIcon}`)).toBeVisible()
-    await expect(page.locator(`aside[aria-label="对象列"] .${scenario.paneIcon}`).first()).toBeVisible()
-    await expect(page.locator('[data-page-header]')).toHaveAttribute('data-has-icon', '')
-    await capture(page, testInfo, `semantic-header-${scenario.pageIcon.replace('lucide-', '')}-dark`)
-  }
-
-  expect(failures, failures.join('\n')).toEqual([])
-})
-
-test('trusted Desktop bridge renders the persistent remote-instance entry across sizes and themes', async ({
-  page,
-}, testInfo) => {
+test('the trusted Desktop bridge renders the instance entry across sizes and themes', async ({ page }, testInfo) => {
   const failures = installRuntimeFailureGate(page)
   await installProductRoutes(page)
   await page.addInitScript(() => {
-    const testWindow = window as Window & { __desktopSwitcherOpenCount?: number }
-    if (window.localStorage.getItem('nekro-nxt.theme') === null) {
-      window.localStorage.setItem('nekro-nxt.theme', 'light')
-    }
-    window.localStorage.setItem('nekro-nxt.reduced-motion', 'true')
-    testWindow.__desktopSwitcherOpenCount = 0
+    const testWindow = window as Window & { __switcherOpened?: number }
+    testWindow.__switcherOpened = 0
     Object.defineProperty(window, 'nekroDesktopShell', {
       configurable: true,
       value: {
         getCurrentInstancePresentation: () =>
           Promise.resolve({ revision: 1, displayName: '远程开发环境', status: 'ready' as const }),
         openInstanceSwitcher: () => {
-          testWindow.__desktopSwitcherOpenCount = (testWindow.__desktopSwitcherOpenCount ?? 0) + 1
+          testWindow.__switcherOpened = (testWindow.__switcherOpened ?? 0) + 1
           return Promise.resolve()
         },
+        closeInstanceSwitcher: () => Promise.resolve(),
         subscribeCurrentInstanceStatus: () => () => undefined,
       },
     })
   })
-
   for (const scene of [
-    { size: 'default', width: 1440, height: 900, theme: 'light' },
-    { size: 'default', width: 1440, height: 900, theme: 'dark' },
-    { size: 'minimum', width: 1100, height: 720, theme: 'light' },
-    { size: 'minimum', width: 1100, height: 720, theme: 'dark' },
+    { width: 1440, height: 900, theme: 'light' },
+    { width: 1100, height: 720, theme: 'dark' },
   ] as const) {
-    if (page.url() !== 'about:blank') {
-      await page.evaluate((theme) => window.localStorage.setItem('nekro-nxt.theme', theme), scene.theme)
-    }
     await page.setViewportSize({ width: scene.width, height: scene.height })
     await page.emulateMedia({ colorScheme: scene.theme, reducedMotion: 'reduce' })
+    await page.addInitScript((value) => window.localStorage.setItem('nekro-nxt.theme', value), scene.theme)
     await page.goto('/')
-    await expect(page).toHaveURL(new RegExp(`/work/channels/${targetChannelId}$`, 'u'))
-    await expect(page.locator('html')).toHaveAttribute('data-theme', scene.theme)
-
-    const entry = page.getByRole('button', { name: /^管理并添加远程服务实例：远程开发环境/u })
+    await expect(page).toHaveURL(/\/live$/u)
+    const entry = page.getByRole('button', { name: '管理并添加远程服务实例：远程开发环境 · 运行正常' })
     await expect(entry).toBeVisible()
-    await expect(entry).toHaveAccessibleName('管理并添加远程服务实例：远程开发环境 · 运行正常')
-    await expect(entry).toHaveCSS('cursor', 'pointer')
-    if (scene.size === 'default' && scene.theme === 'light') {
-      await entry.hover()
-      await page.waitForTimeout(600)
-      await expect(page.getByRole('tooltip', { name: /^管理并添加远程服务实例：/u })).toHaveCount(0)
-      await expect(page.locator('html')).toHaveAttribute('data-nxt-cursor', 'pointer')
-    }
-    const statusDot = entry.locator('[class*="instanceStatus_ready"]')
-    await expect(statusDot).toBeVisible()
-    await expect(statusDot).toHaveCSS('width', '7px')
-    await expect(statusDot).toHaveCSS('height', '7px')
-    const entryGeometry = await entry.evaluate((element) => {
-      const entryRect = element.getBoundingClientRect()
-      const rail = element.closest('aside')
-      const railRect = rail?.getBoundingClientRect()
-      const primaryRect = rail?.querySelector('nav a')?.getBoundingClientRect()
-      if (!railRect || !primaryRect) throw new Error('服务实例入口缺少图标轨或主导航。')
-      return {
-        width: entryRect.width,
-        height: entryRect.height,
-        horizontalCenterOffset: Math.abs(
-          entryRect.left + entryRect.width / 2 - (primaryRect.left + primaryRect.width / 2),
-        ),
-        bottomInset: railRect.bottom - entryRect.bottom,
-      }
-    })
-    expect(entryGeometry.width).toBe(36)
-    expect(entryGeometry.height).toBe(36)
-    expect(entryGeometry.horizontalCenterOffset).toBeLessThanOrEqual(0.5)
-    expect(entryGeometry.bottomInset).toBeGreaterThanOrEqual(10)
-    expect(entryGeometry.bottomInset).toBeLessThanOrEqual(12)
-
-    await page.getByRole('link', { name: '连接' }).click()
-    await expect(page).toHaveURL(/\/connections(?:\/[^/?#]+)?$/u)
-    await expect(page.getByText('平台账号', { exact: true })).toBeVisible()
-    await expect(page.getByRole('heading', { name: '内置频道' })).toBeVisible()
-    await expect(entry).toBeVisible()
-    await expect(page.locator('html')).toHaveAttribute('data-theme', scene.theme)
-    await capture(page, testInfo, `desktop-instance-entry-${scene.size}-${scene.theme}`)
-    await entry.click()
-    await expect
-      .poll(() =>
-        page.evaluate(() => (window as Window & { __desktopSwitcherOpenCount?: number }).__desktopSwitcherOpenCount),
-      )
-      .toBe(1)
+    await assertViewportIntegrity(page)
+    await capture(page, testInfo, `desktop-instance-${scene.width}-${scene.theme}`)
   }
-
+  await page.getByRole('button', { name: /^管理并添加远程服务实例/u }).click()
+  await expect
+    .poll(() => page.evaluate(() => (window as Window & { __switcherOpened?: number }).__switcherOpened))
+    .toBe(1)
   expect(failures, failures.join('\n')).toEqual([])
 })
 
-test('global command palette supports keyboard search and navigation', async ({ page }, testInfo) => {
-  const failures = installRuntimeFailureGate(page)
-  await installProductRoutes(page)
-  await page.goto('/work')
-
-  await page.keyboard.press('Control+K')
-  const palette = page.getByRole('dialog', { name: '命令面板' })
-  await expect(palette).toBeVisible()
-  const search = palette.getByLabel('搜索命令')
-  await expect(search).toBeFocused()
-  await search.fill('外观')
-  await expect(palette.getByRole('button', { name: /打开设置/u })).toBeVisible()
-  await capture(page, testInfo, 'global-command-palette')
-  await search.press('Enter')
-  await expect(page).toHaveURL(/\/settings$/u)
-
-  await page.keyboard.press('Control+K')
-  await palette.getByLabel('搜索命令').fill('资料员的内置频道')
-  await palette.getByLabel('搜索命令').press('ArrowDown')
-  await expect(palette.getByRole('button', { name: /资料员的内置频道/u })).toBeFocused()
-  await page.keyboard.press('Enter')
-  await expect(page).toHaveURL(new RegExp(`/work/channels/${targetChannelId}$`, 'u'))
-  expect(failures, failures.join('\n')).toEqual([])
-})
-
-test('an initial Host failure is explicit and can recover without reloading', async ({ page }, testInfo) => {
-  const failures = installRuntimeFailureGate(page)
-  let healthy = false
-  await page.setViewportSize({ width: 1100, height: 720 })
-  await page.emulateMedia({ colorScheme: 'dark', reducedMotion: 'reduce' })
-  await page.route('**/api/snapshot', (route) => {
-    if (!healthy) {
-      return route.fulfill({
-        status: 503,
-        contentType: 'application/json',
-        body: JSON.stringify({ error: { message: '测试服务暂不可用' } }),
-      })
-    }
-    return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(productSnapshot) })
-  })
-  await page.route('**/api/channels/*/runtime', (route) => {
-    const channelId = new URL(route.request().url()).pathname.split('/')[3]
-    return route.fulfill({
-      status: 200,
-      contentType: 'application/json',
-      body: JSON.stringify({
-        cursor: { epoch: 'fixture', sequence: 0 },
-        channelId,
-        phase: 'idle',
-        summary: '智能体当前空闲。',
-        pendingInjectCount: 0,
-        turns: [],
-      }),
-    })
-  })
-  await page.route('**/api/channels/*/messages?*', (route) =>
-    route.fulfill({
-      status: 200,
-      contentType: 'application/json',
-      body: JSON.stringify({ cursor: { epoch: 'fixture', sequence: 0 }, messages: [], hasMore: false }),
-    }),
-  )
-  await page.goto('/connections')
-  await expect(page.getByText('无法连接', { exact: true }).first()).toBeVisible()
-  await expect(page.getByText('添加第一个平台连接', { exact: true }).first()).toBeVisible()
-  const hostIllustration = page.locator('img[src$="/brand/illustrations/host-unreachable.svg"]')
-  await expect(hostIllustration).toBeVisible()
-  await expect.poll(() => hostIllustration.evaluate((image: HTMLImageElement) => image.naturalWidth)).toBeGreaterThan(0)
-  await assertViewportIntegrity(page)
-  await capture(page, testInfo, 'brand-host-unreachable-dark-1100')
-  healthy = true
-  await page.getByRole('button', { name: '重新连接' }).last().click()
-  await expect(page.getByText('无法连接', { exact: true }).first()).toBeHidden()
-  await expect(page.getByRole('link', { name: /示例群聊平台/u }).first()).toBeVisible()
-  await page.goto(`/work/channels/${targetChannelId}`)
-  const messageEmpty = page.locator('[data-empty-state]').filter({ hasText: '还没有消息' })
-  await expect(messageEmpty).toBeVisible()
-  const messageEmptySurface = await messageEmpty.evaluate((element) => {
-    const style = getComputedStyle(element)
-    const region = element.parentElement
-    if (!region) throw new Error('消息空态缺少滚动区域。')
-    const regionRect = region.getBoundingClientRect()
-    const emptyRect = element.getBoundingClientRect()
-    return {
-      widthRatio: emptyRect.width / regionRect.width,
-      centerOffset: Math.abs(regionRect.left + regionRect.width / 2 - (emptyRect.left + emptyRect.width / 2)),
-      background: style.backgroundColor,
-      borderWidth: style.borderTopWidth,
-      shadow: style.boxShadow,
-    }
-  })
-  expect(messageEmptySurface.widthRatio).toBeGreaterThan(0.95)
-  expect(messageEmptySurface.centerOffset).toBeLessThanOrEqual(1)
-  expect(messageEmptySurface.background).toBe('rgba(0, 0, 0, 0)')
-  expect(messageEmptySurface.borderWidth).toBe('0px')
-  expect(messageEmptySurface.shadow).toBe('none')
-  await capture(page, testInfo, 'channel-empty-dark-1100')
-  expect(
-    failures.filter((failure) => !failure.includes('503 (Service Unavailable)')),
-    failures.join('\n'),
-  ).toEqual([])
-})
-
-test('dialog floating layers, Escape, focus return, and pending failure recovery work together', async ({
+test('the workshop saves the verified candidate, enables it for its agent and can return to an earlier verified attempt', async ({
   page,
 }, testInfo) => {
   const failures = installRuntimeFailureGate(page)
-  await installProductRoutes(page)
-  await page.setViewportSize({ width: 1100, height: 720 })
-  await page.goto('/connections')
-
-  const opener = page.getByRole('link', { name: '添加平台连接' })
-  await opener.click()
-  const dialog = page.getByRole('dialog')
-  await expect(dialog).toBeVisible()
-  await dialog.getByLabel('平台').click()
-  const floating = page.locator('[data-nxt-floating-layer]').last()
-  await expect(floating).toBeVisible()
-  const layers = await page.evaluate(() => {
-    const dialogElement = document.querySelector('[role="dialog"]')
-    const floatingElement = document.querySelector('[data-nxt-floating-layer]')
+  let snapshot = authoringSnapshot('repairing')
+  await installProductRoutes(page, () => snapshot)
+  const detail = (status: Parameters<typeof authoringSnapshot>[0]) => {
+    const task = authoringSnapshot(status).authoringTasks[0]!
     return {
-      dialog: Number(dialogElement ? getComputedStyle(dialogElement).zIndex : 0),
-      floating: Number(floatingElement ? getComputedStyle(floatingElement).zIndex : 0),
+      task,
+      attempts: [attempt(firstAttemptId, 1, 'active'), ...(status === 'repairing' ? [task.candidateAttempt] : [])],
+      events:
+        status === 'completed'
+          ? [
+              {
+                sequence: 4,
+                kind: 'task-completed',
+                attemptId: firstAttemptId,
+                payload: { extensionId: savedExtensionId, revisionId: savedRevisionId },
+                createdAt: 1_725_000_006_000,
+              },
+            ]
+          : [],
     }
+  }
+  let status: Parameters<typeof authoringSnapshot>[0] = 'repairing'
+  await page.route(`**/api/authoring/tasks/${taskId}`, (route) => route.fulfill({ json: detail(status) }))
+  const restores: unknown[] = []
+  await page.route(`**/api/authoring/tasks/${taskId}/attempts/*/restore`, (route) => {
+    restores.push({
+      attempt: new URL(route.request().url()).pathname.split('/')[6],
+      body: HostApiContracts.restoreAuthoringAttempt.parseRequest(route.request().postDataJSON()),
+    })
+    status = 'ready'
+    snapshot = authoringSnapshot('ready')
+    return route.fulfill({ json: snapshot.authoringTasks[0] })
   })
-  expect(layers.floating).toBeGreaterThan(layers.dialog)
-  await capture(page, testInfo, 'connection-platform-select-layer')
-  await page.keyboard.press('Escape')
-  await expect(floating).toBeHidden()
-  await page.waitForTimeout(300)
-  await page.keyboard.press('Escape')
-  await expect(dialog).toBeHidden()
-  await expect(opener).toBeFocused()
-
-  await page.goto(`/work/agents/${targetAgentId}`)
-  await page.getByRole('button', { name: '绑定频道' }).click()
-  const bindingDialog = page.getByRole('dialog')
-  let attempts = 0
-  await page.route('**/api/bindings', async (route) => {
-    attempts += 1
-    if (attempts === 1) {
-      await new Promise((resolve) => setTimeout(resolve, 250))
-      return route.fulfill({
-        status: 500,
-        contentType: 'application/json',
-        body: JSON.stringify({ error: { code: 'binding-test-failure', message: '测试写入失败' } }),
-      })
-    }
+  const saves: unknown[] = []
+  await page.route('**/api/extensions/save-from-dynamic', (route) => {
+    saves.push(route.request().postDataJSON())
+    status = 'completed'
+    snapshot = authoringSnapshot('completed')
     return route.fulfill({
       status: 201,
-      contentType: 'application/json',
-      body: JSON.stringify({
-        channelId: sourceChannelId,
-        agentId: targetAgentId,
-        triggerPolicy: 'always',
-        boundAt: 1_725_000_001_000,
-      }),
+      json: { extensionId: savedExtensionId, revisionId: savedRevisionId, activation: 'inactive' },
+    })
+  })
+  const activations: unknown[] = []
+  await page.route(`**/api/agents/${targetAgentId}/extensions/${savedExtensionId}/activation`, (route) => {
+    activations.push(route.request().postDataJSON())
+    snapshot = HostApiContracts.snapshot.parseResponse({
+      ...snapshot,
+      extensions: snapshot.extensions.map((extension) =>
+        extension.id === savedExtensionId
+          ? {
+              ...extension,
+              activations: [
+                {
+                  agentId: targetAgentId,
+                  extensionRevisionId: savedRevisionId,
+                  config: {},
+                  activatedAt: 1_725_000_007_000,
+                },
+              ],
+            }
+          : extension,
+      ),
+    })
+    return route.fulfill({
+      json: {
+        activation: {
+          agentId: targetAgentId,
+          extensionId: savedExtensionId,
+          extensionRevisionId: savedRevisionId,
+          config: {},
+          activatedAt: 1_725_000_007_000,
+        },
+      },
     })
   })
 
-  const confirm = bindingDialog.getByRole('button', { name: '绑定频道' })
-  await confirm.click()
-  await expect(bindingDialog.getByRole('button', { name: '处理中…' })).toBeDisabled()
-  await expect(page.getByText('测试写入失败')).toBeVisible()
-  await expect(confirm).toBeEnabled()
-  await confirm.click()
-  await expect(bindingDialog).toBeHidden()
-  await expect(page.getByText('频道已绑定。')).toBeVisible()
-  await capture(page, testInfo, 'binding-toast-success')
-  expect(attempts).toBe(2)
-  expect(
-    failures.filter((failure) => !failure.includes('500 (Internal Server Error)')),
-    failures.join('\n'),
-  ).toEqual([])
+  await page.goto(`/workshop/tasks/${taskId}`)
+  await expect(page.getByRole('heading', { name: '群聊摘要卡片', level: 1 })).toBeVisible()
+  await expect(page.getByText('结果验证未通过')).toBeVisible()
+  await expect(page.getByText('摘要结果缺少标题。').first()).toBeVisible()
+  await page.getByRole('button', { name: '回到第 1 次' }).click()
+  await expect.poll(() => restores).toEqual([{ attempt: firstAttemptId, body: { expectedRevision: 3 } }])
+  await expect(page.getByText('第 1 次候选已通过验证')).toBeVisible()
+
+  await page.getByRole('button', { name: '保存为扩展' }).click()
+  const dialog = page.getByRole('dialog', { name: '保存为本地扩展' })
+  await expect(dialog.getByLabel('名称')).toHaveValue('群聊摘要卡片')
+  await dialog.getByLabel('标识').fill('group-digest-card')
+  await capture(page, testInfo, 'workshop-save')
+  await dialog.getByRole('button', { name: '保存', exact: true }).click()
+  await expect
+    .poll(() => saves)
+    .toEqual([
+      expect.objectContaining({
+        taskId,
+        attemptId: firstAttemptId,
+        displayName: '群聊摘要卡片',
+        slug: 'group-digest-card',
+      }),
+    ])
+  await expect(page.getByText('已保存为「群聊摘要卡片」')).toBeVisible()
+  await page.getByRole('button', { name: '给资料员启用' }).click()
+  await expect.poll(() => activations.length).toBe(1)
+  await expect(page.getByText('资料员正在使用')).toBeVisible()
+  await page.getByRole('button', { name: '查看扩展' }).click()
+  await expect(page).toHaveURL(new RegExp(`/workshop/extensions/${savedExtensionId}$`, 'u'))
+  await expect(page.getByRole('switch', { name: '资料员使用「群聊摘要卡片」' })).toBeChecked()
+  expect(failures, failures.join('\n')).toEqual([])
 })
 
-test('model settings hide unconfigured providers behind the DSH-backed add flow', async ({ page }, testInfo) => {
+test('model settings keep unconfigured providers behind the add flow', async ({ page }) => {
   const failures = installRuntimeFailureGate(page)
   await installProductRoutes(page)
   await page.route('**/api/llm/providers', (route) =>
     route.fulfill({
-      status: 200,
-      contentType: 'application/json',
-      body: JSON.stringify({
+      json: {
         writable: true,
         protocols: ['openai-completions'],
         providers: [
           {
-            provider: 'configured-provider',
-            displayName: '已配置供应商',
+            provider: 'deepseek',
+            displayName: 'deepseek',
             settingsNs: 'llm-pi-ai',
-            settingsPath: ['providers', 'configured-provider'],
-            settingsRevision: 3,
+            settingsPath: ['providers', 'deepseek'],
+            settingsRevision: 1,
             declared: false,
             active: true,
             configured: true,
             credential: { configured: true, writable: true },
-            models: [{ id: 'model-a', name: '模型 A' }],
+            models: [{ id: 'deepseek-v4-flash', name: 'DeepSeek V4 Flash' }],
           },
           {
-            provider: 'catalog-candidate',
-            displayName: '目录候选供应商',
+            provider: 'idle-provider',
+            displayName: '未配置供应商',
             settingsNs: 'llm-pi-ai',
-            settingsPath: ['providers', 'catalog-candidate'],
-            settingsRevision: 3,
+            settingsPath: ['providers', 'idle-provider'],
+            settingsRevision: 1,
             declared: false,
             active: false,
             configured: false,
+            credential: { configured: false, writable: true },
             models: [],
           },
         ],
-      }),
+      },
     }),
   )
-
-  await page.goto('/settings')
-  await expect(page.getByRole('button', { name: /已配置供应商/u })).toBeVisible()
-  await expect(page.getByRole('button', { name: /目录候选供应商/u })).toHaveCount(0)
+  await page.goto('/settings/models')
+  await expect(page.getByRole('button', { name: /DeepSeek/u })).toBeVisible()
+  await expect(page.getByRole('button', { name: /未配置供应商/u })).toHaveCount(0)
   await page.getByRole('button', { name: '添加供应商' }).first().click()
-  const dialog = page.getByRole('dialog')
-  await dialog.getByLabel('模型供应商').click()
-  await expect(page.getByRole('option', { name: '目录候选供应商' })).toBeVisible()
-  await expect(page.getByRole('option', { name: '自定义 OpenAI 兼容供应商' })).toBeVisible()
-  await capture(page, testInfo, 'provider-add-catalog')
-  expect(failures, failures.join('\n')).toEqual([])
-})
-
-test('message composer sends with Enter and keeps Shift+Enter for a new line', async ({ page }) => {
-  const failures = installRuntimeFailureGate(page)
-  await installProductRoutes(page)
-  const submitted: string[] = []
-  await page.route(`**/api/channels/${targetChannelId}/messages`, async (route) => {
-    const body = HostApiContracts.sendChannelMessage.request.parse(route.request().postDataJSON())
-    const textPart = body.parts.find((part) => part.type === 'text')
-    submitted.push(textPart?.text ?? '')
-    await route.fulfill({
-      status: 200,
-      contentType: 'application/json',
-      body: JSON.stringify({ channelEventId: sentEventId, inserted: true }),
-    })
-  })
-
-  await page.goto(`/work/channels/${targetChannelId}`)
-  const composer = page.getByLabel('消息内容')
-  await composer.fill('第一行')
-  await composer.dispatchEvent('keydown', { key: 'Enter', isComposing: true })
-  expect(submitted).toEqual([])
-  await expect(composer).toHaveValue('第一行')
-  await composer.press('Shift+Enter')
-  await expect(composer).toHaveValue('第一行\n')
-  expect(submitted).toEqual([])
-  await composer.type('第二行')
-  await composer.press('Enter')
-  await expect.poll(() => submitted).toEqual(['第一行\n第二行'])
-  await expect(composer).toHaveValue('')
-  expect(failures, failures.join('\n')).toEqual([])
-})
-
-test('long message history stays above a growing multiline composer', async ({ page }, testInfo) => {
-  const failures = installRuntimeFailureGate(page)
-  await installProductRoutes(page)
-  const unbroken = 'NekroNxtOverflowGuard'.repeat(80)
-  const overflowProbe = [
-    `长记录 31：${unbroken}`,
-    '',
-    `超长路径：/data/workspaces/agt_example/${'nested-directory/'.repeat(40)}artifact.json`,
-    '',
-    `行内代码：\`${unbroken}\``,
-    '',
-    `长链接：[查看记录](https://example.test/${'very-long-path/'.repeat(45)}detail)`,
-    '',
-    '| 项目 | 内容 |',
-    '| --- | --- |',
-    `| 宽表格 | ${unbroken} |`,
-    '',
-    '```text',
-    unbroken,
-    '```',
-  ].join('\n')
-  const longMessages = HostApiContracts.listChannelMessages.response.parse({
-    cursor: { epoch: 'fixture', sequence: 0 },
-    messages: Array.from({ length: 32 }, (_, index) => ({
-      id: ChannelEventIdSchema.parse(`evt_longhistory${String(index).padStart(2, '0')}`),
-      channelId: targetChannelId,
-      role: index % 2 === 0 ? ('member' as const) : ('agent' as const),
-      parts: [
-        {
-          type: 'text' as const,
-          text: index === 30 ? overflowProbe : `长记录 ${index + 1}：用于验证消息列表底部不会被输入框遮挡。`,
-        },
-      ],
-      occurredAt: 1_725_001_000_000 + index * 1_000,
-      ...(index % 2 === 0 ? {} : { deliveryState: 'sent' as const }),
-    })),
-    hasMore: false,
-  }).messages
-  const requestedLimits: number[] = []
-  await page.unroute('**/api/channels/*/messages?*')
-  await page.route('**/api/channels/*/messages?*', (route) => {
-    const url = new URL(route.request().url())
-    const channelId = url.pathname.split('/').at(-2)
-    const limit = Number(url.searchParams.get('limit'))
-    requestedLimits.push(limit)
-    const available = channelId === targetChannelId ? longMessages : []
-    const messages = available.slice(-limit)
-    return route.fulfill({
-      status: 200,
-      contentType: 'application/json',
-      body: JSON.stringify({
-        cursor: { epoch: 'fixture', sequence: 0 },
-        messages,
-        hasMore: available.length > messages.length,
-      }),
-    })
-  })
-  await page.setViewportSize({ width: 1100, height: 720 })
-  await page.goto(`/work/channels/${targetChannelId}`)
-  await expect(page.getByText(/长记录 32/u)).toBeVisible()
-
-  const composer = page.locator('[data-channel-composer]').first()
-  const messageList = page.locator('[data-channel-message-list]')
-  const input = page.getByLabel('消息内容')
-  await expect.poll(() => page.locator('article[data-side]').count()).toBeGreaterThanOrEqual(16)
-  expect([16, 24]).toContain(await page.locator('article[data-side]').count())
-  expect(requestedLimits[0]).toBe(16)
-  const jumpToBottom = page.getByRole('button', { name: '回到底部' })
-  if (await jumpToBottom.isVisible()) await jumpToBottom.click()
-  await expect(jumpToBottom).toHaveCount(0)
-
-  const overflowGeometry = await page.evaluate(() => {
-    const list = document.querySelector<HTMLElement>('[data-channel-message-list]')!
-    return {
-      listClientWidth: list.clientWidth,
-      listScrollWidth: list.scrollWidth,
-      documentClientWidth: document.documentElement.clientWidth,
-      documentScrollWidth: document.documentElement.scrollWidth,
-      bodyClientWidth: document.body.clientWidth,
-      bodyScrollWidth: document.body.scrollWidth,
-    }
-  })
-  expect(overflowGeometry.listScrollWidth).toBeLessThanOrEqual(overflowGeometry.listClientWidth)
-  expect(overflowGeometry.documentScrollWidth).toBeLessThanOrEqual(overflowGeometry.documentClientWidth)
-  expect(overflowGeometry.bodyScrollWidth).toBeLessThanOrEqual(overflowGeometry.bodyClientWidth)
-
-  await messageList.evaluate((element) => {
-    element.scrollTop = Math.max(120, element.scrollHeight / 3)
-  })
-  await expect(page.getByRole('button', { name: '回到底部' })).toBeVisible()
-  await page.getByRole('button', { name: '回到底部' }).click()
-  await expect
-    .poll(() => messageList.evaluate((element) => element.scrollHeight - element.clientHeight - element.scrollTop))
-    .toBeLessThanOrEqual(1)
-  await expect(page.getByRole('button', { name: '回到底部' })).toHaveCount(0)
-  await messageList.evaluate((element) => {
-    element.scrollTop = Math.max(120, element.scrollHeight / 3)
-  })
-  await expect(page.getByRole('button', { name: '回到底部' })).toBeVisible()
-  const rememberedAwayTop = await messageList.evaluate((element) => element.scrollTop)
-  await page.getByRole('link', { name: /记录员的内置频道/u }).click()
-  await expect(page.getByRole('heading', { name: '记录员的内置频道' })).toBeVisible()
-  await expect(page.locator('[data-stage-layer="out"]')).toHaveCount(0)
-  await expect(page.getByRole('button', { name: '回到底部' })).toHaveCount(0)
-  await page.getByRole('link', { name: /资料员的内置频道/u }).click()
-  await expect(page.getByRole('heading', { name: '资料员的内置频道' })).toBeVisible()
-  await expect(page.locator('[data-stage-layer="out"]')).toHaveCount(0)
-  await expect(page.getByRole('button', { name: '回到底部' })).toBeVisible()
-  expect(
-    await page.getByRole('button', { name: '回到底部' }).evaluate((element) => Boolean(element.closest('[inert]'))),
-  ).toBe(false)
-  expect(
-    await page
-      .getByRole('button', { name: '回到底部' })
-      .evaluate((element) =>
-        Boolean(element.closest('[data-channel-canvas-stage]')?.querySelector('[data-channel-message-list]')),
-      ),
-  ).toBe(true)
-  expect(requestedLimits[0]).toBe(16)
-  expect(requestedLimits.at(-1)).toBe(16)
-  expect(requestedLimits.filter((limit) => limit === 16)).toHaveLength(2)
-  expect(requestedLimits.every((limit) => limit === 16 || limit === 24)).toBe(true)
-  await expect.poll(() => messageList.evaluate((element) => element.scrollTop)).toBeCloseTo(rememberedAwayTop, 0)
-  await page.getByRole('button', { name: '回到底部' }).click()
-  await expect
-    .poll(() => messageList.evaluate((element) => element.scrollHeight - element.clientHeight - element.scrollTop))
-    .toBeLessThanOrEqual(1)
-  await expect(page.getByRole('button', { name: '回到底部' })).toHaveCount(0)
-
-  const initialComposerHeight = (await composer.boundingBox())?.height ?? 0
-  await input.fill(Array.from({ length: 5 }, (_, index) => `输入内容第 ${index + 1} 行`).join('\n'))
-  await expect.poll(async () => (await composer.boundingBox())?.height ?? 0).toBeGreaterThan(initialComposerHeight + 60)
-
-  // ResizeObserver coordinates the changed Composer height before the next paint.
-  await expect
-    .poll(() => messageList.evaluate((element) => element.scrollHeight - element.clientHeight - element.scrollTop))
-    .toBeLessThanOrEqual(1)
-
-  const geometry = await page.evaluate(() => {
-    const list = document.querySelector<HTMLElement>('[data-channel-message-list]')!
-    const composer = document.querySelector<HTMLElement>('[data-channel-composer]')!
-    const messages = list.querySelectorAll<HTMLElement>('article[data-side]')
-    const lastMessage = messages.item(messages.length - 1)
-    const lastRect = lastMessage.getBoundingClientRect()
-    const composerRect = composer.getBoundingClientRect()
-    const listStyle = getComputedStyle(list)
-    return {
-      lastBottom: lastRect.bottom,
-      listBottom: list.getBoundingClientRect().bottom,
-      composerTop: composerRect.top,
-      composerHeight: composerRect.height,
-      paddingBottom: Number.parseFloat(listStyle.paddingBottom),
-      scrollTop: list.scrollTop,
-      maxScrollTop: list.scrollHeight - list.clientHeight,
-    }
-  })
-  expect(geometry.paddingBottom).toBeGreaterThanOrEqual(24)
-  expect(geometry.listBottom).toBeLessThanOrEqual(geometry.composerTop)
-  expect(geometry.maxScrollTop - geometry.scrollTop).toBeLessThanOrEqual(1)
-  expect(geometry.lastBottom).toBeLessThanOrEqual(geometry.composerTop - 24)
-  await capture(page, testInfo, 'channel-long-history-multiline-composer')
-
-  await messageList.evaluate((element) => {
-    element.scrollTop = Math.max(120, element.scrollHeight / 3)
-  })
-  await expect(page.getByRole('button', { name: '回到底部' })).toBeVisible()
-  const awayTop = await messageList.evaluate((element) => element.scrollTop)
-  await input.fill(Array.from({ length: 12 }, (_, index) => `继续输入第 ${index + 1} 行`).join('\n'))
-  await expect.poll(() => messageList.evaluate((element) => element.scrollTop)).toBeCloseTo(awayTop, 0)
-  const jumpBox = await page.getByRole('button', { name: '回到底部' }).boundingBox()
-  const grownComposerBox = await composer.boundingBox()
-  expect((jumpBox?.y ?? 0) + (jumpBox?.height ?? 0)).toBeLessThan(grownComposerBox?.y ?? 0)
-  if (process.env['NEKRO_UI_PERF_CONTENT_VISIBILITY'] === '1' || process.env['NEKRO_UI_PERF_NATIVE_CHECK'] === '1') {
-    const native = await messageList.evaluate(async (element) => {
-      const messages = element.querySelectorAll('article')
-      const first = messages[0]!
-      const last = messages[messages.length - 1]!
-      const range = document.createRange()
-      range.setStartBefore(first)
-      range.setEndAfter(last)
-      const selection = window.getSelection()!
-      selection.removeAllRanges()
-      selection.addRange(range)
-      const text = selection.toString()
-      const firstNeedle = first.textContent?.match(/长记录 \d+：/u)?.[0]
-      const lastNeedle = last.textContent?.match(/长记录 \d+：/u)?.[0]
-      if (!firstNeedle || !lastNeedle) throw new Error('Missing fictional message text')
-      const selectedAcrossScreens = text.includes(firstNeedle) && text.includes(lastNeedle)
-      selection.removeAllRanges()
-      const find: unknown = Reflect.get(window, 'find')
-      const found: unknown =
-        typeof find === 'function' ? Reflect.apply(find, window, [firstNeedle, false, false, true]) : false
-      selection.removeAllRanges()
-      // A fictional silent PCM sample verifies that skipping paint does not stop media.
-      const bytes = new Uint8Array(44 + 16000)
-      const view = new DataView(bytes.buffer)
-      const write = (offset: number, value: string) => {
-        for (let i = 0; i < value.length; i += 1) bytes[offset + i] = value.charCodeAt(i)
-      }
-      write(0, 'RIFF')
-      view.setUint32(4, bytes.length - 8, true)
-      write(8, 'WAVEfmt ')
-      view.setUint32(16, 16, true)
-      view.setUint16(20, 1, true)
-      view.setUint16(22, 1, true)
-      view.setUint32(24, 8000, true)
-      view.setUint32(28, 8000, true)
-      view.setUint16(32, 1, true)
-      view.setUint16(34, 8, true)
-      write(36, 'data')
-      view.setUint32(40, 16000, true)
-      bytes.fill(128, 44)
-      const url = URL.createObjectURL(new Blob([bytes], { type: 'audio/wav' }))
-      const audio = new Audio(url)
-      audio.muted = true
-      audio.loop = true
-      first.append(audio)
-      try {
-        await audio.play()
-        const before = audio.currentTime
-        element.scrollTop = element.scrollHeight
-        await new Promise<void>((resolve) => setTimeout(resolve, 150))
-        return {
-          selectedAcrossScreens,
-          found,
-          playing: !audio.paused && audio.currentTime > before && audio.isConnected,
-        }
-      } finally {
-        audio.pause()
-        audio.remove()
-        URL.revokeObjectURL(url)
-      }
-    })
-    expect(native).toEqual({ selectedAcrossScreens: true, found: true, playing: true })
-  }
+  await expect(page.getByRole('dialog')).toContainText('未配置供应商')
   expect(failures, failures.join('\n')).toEqual([])
 })
