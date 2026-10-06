@@ -120,7 +120,7 @@ export function ModelListEditor({
     {
       key: 'id',
       header: '模型 ID',
-      width: 'minmax(200px, 1.8fr)',
+      width: 'minmax(180px, 1.8fr)',
       render: (row) => (
         <Input
           aria-label="模型 ID"
@@ -141,6 +141,7 @@ export function ModelListEditor({
         <Input
           aria-label={`${label(row)}的显示名`}
           value={row.name}
+          title={row.name || undefined}
           disabled={disabled}
           placeholder="可选"
           onChange={(event) => update(row.key, { name: event.target.value })}
@@ -150,7 +151,7 @@ export function ModelListEditor({
     {
       key: 'context',
       header: '上下文长度',
-      width: 'minmax(120px, 0.8fr)',
+      width: 'minmax(140px, 0.9fr)',
       render: (row) => (
         <span className={styles.numberCell}>
           <Input
@@ -170,7 +171,7 @@ export function ModelListEditor({
     {
       key: 'output',
       header: '最大输出',
-      width: 'minmax(80px, 0.6fr)',
+      width: 'minmax(72px, 0.6fr)',
       priority: 3,
       render: (row) => (
         <Input
