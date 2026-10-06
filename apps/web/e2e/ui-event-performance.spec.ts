@@ -1,10 +1,16 @@
 import { installSnapshotHealthRoutes } from './fixtures/host-release.js'
+import { installWorkspaceRoutes } from './fixtures/workspace.js'
 import { expect, test, type Page } from '@playwright/test'
 import { createServer, type ServerResponse } from 'node:http'
 import { mkdir, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { ChannelFactSseDataSchema } from '@nekro-nxt/contracts'
-import { productSnapshot, targetChannelId, internalConnectionId } from './fixtures/product-quality.js'
+import {
+  productSnapshot,
+  targetChannelId,
+  internalConnectionId,
+  externalConnectionId,
+} from './fixtures/product-quality.js'
 
 // Timing runs exclude Playwright tracing/snapshots; diagnostic traces are separate.
 test.use({ trace: 'off' })
@@ -81,6 +87,7 @@ async function withEventFixture(page: Page, use: (emit: (channel: number) => voi
       })
     return json({})
   })
+  await installWorkspaceRoutes(page, () => snapshot)
   let sequence = 0
   const revisions = new Map<number, number>()
   try {
@@ -120,8 +127,8 @@ test('records 200-channel event pressure through a persistent SSE connection', a
     const cdp = await page.context().newCDPSession(page)
     await cdp.send('Performance.enable')
     for (let run = 0; run < 6; run += 1) {
-      await page.goto(`${base}/work/channels/${targetChannelId}`)
-      await expect(page.getByRole('textbox', { name: '消息内容' })).toBeEnabled()
+      await page.goto(`${base}/channels/${targetChannelId}`)
+      await expect(page.getByRole('textbox', { name: '消息' })).toBeEnabled()
       const before = await cdp.send('Performance.getMetrics')
       let emitted = 0
       const started = performance.now()
@@ -153,7 +160,7 @@ test('records 200-channel event pressure through a persistent SSE connection', a
         })
         const after = await cdp.send('Performance.getMetrics')
         expect(emitted).toBe(200)
-        await expect(page.locator('[data-channel-message-list] article')).toHaveCount(60)
+        await expect(page.getByRole('log', { name: '消息记录' }).locator('[data-message-id]')).toHaveCount(60)
         results.push({ run, warmup: run === 0, emitted, timing, before, after })
       } finally {
         clearInterval(timer)
@@ -165,6 +172,7 @@ test('records 200-channel event pressure through a persistent SSE connection', a
   await writeFile(join(output!, 'events.json'), JSON.stringify({ browser: browser.version(), base, results }, null, 2))
 })
 
+// The platform-user directory now lives in the connection detail of 接线 (Decision 2026-10-04 §2.3).
 test('records three-page directory refresh under continuous invalidation', async ({ page }) => {
   test.skip(!output, 'Opt-in production performance run')
   test.setTimeout(120_000)
@@ -203,7 +211,7 @@ test('records three-page directory refresh under continuous invalidation', async
       version = 0
       started = 0
       completions.length = 0
-      await page.goto(`${base}/users`)
+      await page.goto(`${base}/wiring/connections/${externalConnectionId}`)
       await expect(page.getByText('成员 0 v0', { exact: true })).toBeVisible()
       await page.getByRole('button', { name: '加载更多' }).click()
       await expect(page.getByText('已显示 100 / 150')).toBeVisible()

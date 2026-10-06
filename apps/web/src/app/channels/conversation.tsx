@@ -354,7 +354,7 @@ export function Conversation({
           <PanelRight aria-hidden="true" />
         </Pressable>
       </header>
-      <div ref={scroll.ref} className={styles.conv} onScroll={scroll.onScroll}>
+      <div ref={scroll.ref} className={styles.conv} onScroll={scroll.onScroll} role="log" aria-label="消息记录">
         <div className={[styles.convInner, styles.swap].join(' ')} key={channel.id}>
           {history?.hasMore ? (
             <Button

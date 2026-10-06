@@ -1,4 +1,5 @@
 import { installSnapshotHealthRoutes } from './fixtures/host-release.js'
+import { installWorkspaceRoutes } from './fixtures/workspace.js'
 import { test, expect } from '@playwright/test'
 import { writeFile, mkdir } from 'node:fs/promises'
 import { join } from 'node:path'
@@ -118,6 +119,12 @@ test('records repeatable production interaction costs with fictional history', a
       })
     return json({})
   })
+  await installWorkspaceRoutes(page, () => snapshot)
+  const toggleTheme = async () => {
+    await page.keyboard.press('ControlOrMeta+k')
+    await page.getByRole('combobox', { name: '搜索' }).fill('切换浅色或深色')
+    await page.keyboard.press('Enter')
+  }
   const cdp = await page.context().newCDPSession(page)
   await cdp.send('Performance.enable')
   const requestedSize = process.env['NEKRO_UI_PERF_SIZE']
@@ -129,18 +136,19 @@ test('records repeatable production interaction costs with fictional history', a
   if (sizes.some((size) => ![50, 1000, 5000].includes(size))) throw new Error('Unsupported performance size')
   for (const size of sizes) {
     count = size
-    await page.goto(`${base}/work/channels/${targetChannelId}`)
-    await expect(page.locator('[data-channel-message-list] article')).toHaveCount(size, { timeout: 60_000 })
-    await expect(page.getByRole('textbox', { name: '消息内容' })).toBeEnabled()
+    await page.goto(`${base}/channels/${targetChannelId}`)
+    await expect(page.getByRole('log', { name: '消息记录' }).locator('[data-message-id]')).toHaveCount(size, {
+      timeout: 60_000,
+    })
+    await expect(page.getByRole('textbox', { name: '消息' })).toBeEnabled()
     if (process.env['NEKRO_UI_PERF_CONTENT_VISIBILITY'] === '1') {
       await page.addStyleTag({
-        content:
-          '[data-channel-message-list] [data-nxt-enter-kind="object"] { content-visibility: auto; contain-intrinsic-size: auto 120px; }',
+        content: '[role="log"] [data-message-id] { content-visibility: auto; contain-intrinsic-size: auto 120px; }',
       })
     }
     if (process.env['NEKRO_UI_PERF_LAYOUT_CONTAIN'] === '1') {
       await page.addStyleTag({
-        content: '[data-channel-message-list] [data-nxt-enter-kind="object"] { contain: layout; }',
+        content: '[role="log"] [data-message-id] { contain: layout; }',
       })
     }
     for (let run = 0; run < 6; run += 1) {
@@ -179,22 +187,21 @@ test('records repeatable production interaction costs with fictional history', a
         })
       })
       if (process.env['NEKRO_UI_PERF_THEME'] === '1') {
-        for (const name of ['主题：深色；切换为浅色', '主题：浅色；切换为深色']) {
-          await page.getByRole('button', { name }).click()
+        for (let flip = 0; flip < 2; flip += 1) {
+          await toggleTheme()
           await page.waitForTimeout(500)
         }
       } else {
-        await page.getByRole('textbox', { name: '消息内容' }).pressSequentially('性能测试输入', { delay: 20 })
-        await page.getByRole('textbox', { name: '消息内容' }).fill('')
-        const splitter = page.getByRole('separator', { name: '调整检查器宽度' })
-        const box = await splitter.boundingBox()
-        if (!box) throw new Error('Missing inspector splitter')
-        await page.mouse.move(box.x + box.width / 2, box.y + 100)
-        await page.mouse.down()
-        await page.mouse.move(box.x - 100, box.y + 100, { steps: 30 })
-        await page.mouse.move(box.x + box.width / 2, box.y + 100, { steps: 30 })
-        await page.mouse.up()
-        await page.locator('[data-channel-message-list]').hover()
+        await page.getByRole('textbox', { name: '消息' }).pressSequentially('性能测试输入', { delay: 20 })
+        await page.getByRole('textbox', { name: '消息' }).fill('')
+        // Layout changes that resize the history: the inspector and 透视 (expanded turns).
+        const inspector = page.getByRole('button', { name: '频道信息' })
+        const xray = page.getByRole('button', { name: /透视/u })
+        for (const toggle of [inspector, inspector, xray, xray]) {
+          await toggle.click()
+          await page.waitForTimeout(250)
+        }
+        await page.getByRole('log', { name: '消息记录' }).hover()
         await page.mouse.wheel(0, -500)
         await page.mouse.wheel(0, 500)
       }
@@ -263,8 +270,8 @@ test('records repeatable production interaction costs with fictional history', a
   if (process.env['NEKRO_UI_PERF_TRACE'] === '1') {
     // Diagnostics follow all timed samples and never contribute to their metrics.
     count = 1000
-    await page.goto(`${base}/work/channels/${targetChannelId}`)
-    await expect(page.locator('[data-channel-message-list] article')).toHaveCount(count)
+    await page.goto(`${base}/channels/${targetChannelId}`)
+    await expect(page.getByRole('log', { name: '消息记录' }).locator('[data-message-id]')).toHaveCount(count)
     const complete = new Promise<string>((resolve, reject) =>
       cdp.once('Tracing.tracingComplete', (event) => {
         if (event.stream) resolve(event.stream)
@@ -275,16 +282,11 @@ test('records repeatable production interaction costs with fictional history', a
       categories: 'devtools.timeline,blink.user_timing,cc,gpu',
       transferMode: 'ReturnAsStream',
     })
-    await page.evaluate(() => performance.mark('ui-perf:drag-start'))
-    const splitter = page.getByRole('separator', { name: '调整检查器宽度' })
-    const box = await splitter.boundingBox()
-    if (!box) throw new Error('Missing diagnostic splitter')
-    await page.mouse.move(box.x + box.width / 2, box.y + 100)
-    await page.mouse.down()
-    await page.mouse.move(box.x - 100, box.y + 100, { steps: 30 })
-    await page.mouse.up()
+    await page.evaluate(() => performance.mark('ui-perf:layout-start'))
+    await page.getByRole('button', { name: '频道信息' }).click()
+    await page.getByRole('button', { name: /透视/u }).click()
     await page.evaluate(() => performance.mark('ui-perf:theme-start'))
-    await page.getByRole('button', { name: '主题：深色；切换为浅色' }).click()
+    await toggleTheme()
     await page.evaluate(() => new Promise<void>((resolve) => setTimeout(resolve, 400)))
     await page.evaluate(() => performance.mark('ui-perf:diagnostic-end'))
     await cdp.send('Tracing.end')
