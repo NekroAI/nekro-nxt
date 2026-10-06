@@ -10,3 +10,4 @@ pnpm-lock.yaml
 prototype/
 packages/storage-sqlite/migrations/meta/
 .claude/settings.local.json
+test-results/

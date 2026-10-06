@@ -31,3 +31,4 @@ docs-private/
 *.mobileprovision
 credentials*.json
 secrets/
+test-results/
