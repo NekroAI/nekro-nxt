@@ -12,12 +12,19 @@ import styles from './overlay.module.css'
  */
 function useReturnFocus(open: boolean): (event: Event) => void {
   const opener = useRef<HTMLElement | null>(null)
+  const isOpen = useRef(open)
   useLayoutEffect(() => {
+    isOpen.current = open
     if (open && document.activeElement instanceof HTMLElement && document.activeElement !== document.body) {
       opener.current = document.activeElement
     }
   }, [open])
   return (event) => {
+    // Reopened before the exit finished (e.g. a quick shortcut): focus stays inside the open overlay.
+    if (isOpen.current) {
+      event.preventDefault()
+      return
+    }
     const target = opener.current
     opener.current = null
     if (target?.isConnected) {

@@ -492,6 +492,7 @@ test('the command palette searches and navigates by keyboard and returns focus o
   await expect(input).toHaveCount(0)
 
   await page.keyboard.press('ControlOrMeta+k')
+  await expect(input).toBeFocused()
   await input.fill('资料员')
   const options = page.getByRole('option')
   await expect(options.first()).toHaveAttribute('aria-selected', 'true')
