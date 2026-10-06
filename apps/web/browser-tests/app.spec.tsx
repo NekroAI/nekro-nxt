@@ -1180,6 +1180,101 @@ test.describe('NekroNxt browser projections', () => {
     )
   })
 
+  test('pages through account members and refreshes the loaded rows when the directory changes', async () => {
+    let generation = 1
+    const requests: URLSearchParams[] = []
+    let releaseEvent: (() => void) | undefined
+    const eventReleased = new Promise<void>((resolve) => {
+      releaseEvent = resolve
+    })
+    const memberRow = (index: number) => ({
+      identityId: `pid_member${index}`,
+      displayName: generation > 1 && index === 0 ? '改名后的成员' : `成员${index}`,
+      adapter: { key: 'fixture-beta', displayName: '示例群聊平台' },
+      connection: { id: externalConnectionId, displayName: '示例群聊平台' },
+      activeChannelCount: 1,
+      channelPreview: [],
+      historicalOnly: false,
+    })
+    await withProductPage(
+      `/wiring/connections/${externalConnectionId}`,
+      async (page) => {
+        const members = page.locator('section').filter({ has: page.getByRole('heading', { name: /^成员/u }) })
+        await playwrightExpect(members.getByText('已显示 30 / 45', { exact: true })).toBeVisible()
+        await members.getByRole('button', { name: '加载更多' }).click()
+        await playwrightExpect(members.getByText('已显示 45 / 45', { exact: true })).toBeVisible()
+        await playwrightExpect(members.getByRole('button', { name: '加载更多' })).toHaveCount(0)
+        expect(requests.at(-1)?.get('cursor')).toBe('pid_member29')
+
+        const scroller = page.locator('aside').last()
+        await scroller.evaluate((element) => {
+          element.scrollTop = 160
+        })
+        const scrolledTo = await scroller.evaluate((element) => element.scrollTop)
+        generation = 2
+        releaseEvent?.()
+        await playwrightExpect(members).toContainText('改名后的成员')
+        await playwrightExpect(members.getByText('已显示 45 / 45', { exact: true })).toBeVisible()
+        expect(requests.at(-1)?.get('limit')).toBe('45')
+        expect(await scroller.evaluate((element) => element.scrollTop)).toBe(scrolledTo)
+
+        await page.getByLabel('查找成员').fill('成员1')
+        await playwrightExpect.poll(() => requests.at(-1)?.get('query')).toBe('成员1')
+        expect(requests.at(-1)?.get('cursor')).toBeNull()
+        expect(requests.at(-1)?.get('limit')).toBe('30')
+      },
+      browserSnapshot,
+      async (page) => {
+        await page.route('**/api/platform-users*', (request) => {
+          const params = new URL(request.request().url()).searchParams
+          requests.push(params)
+          const total = 45
+          const cursor = params.get('cursor')
+          const start = cursor ? Number(cursor.slice('pid_member'.length)) + 1 : 0
+          const limit = Number(params.get('limit') ?? 30)
+          const items = Array.from({ length: Math.max(0, Math.min(limit, total - start)) }, (_, offset) =>
+            memberRow(start + offset),
+          )
+          const end = start + items.length
+          return request.fulfill({
+            json: {
+              total,
+              items,
+              facets: memberDirectory.facets,
+              ...(end < total ? { nextCursor: `pid_member${end - 1}` } : {}),
+            },
+          })
+        })
+        // One schema-valid channel fact, released by the test, marks the member directory as changed.
+        await page.route('**/api/events', async (request) => {
+          await eventReleased
+          const fact = {
+            channelId: externalChannelId,
+            revision: 2,
+            items: [
+              {
+                kind: 'inbound',
+                sourceId: 'evt_directorychange',
+                message: {
+                  id: 'evt_directorychange',
+                  channelId: externalChannelId,
+                  role: 'member',
+                  parts: [{ type: 'text', text: '新的成员发言' }],
+                  occurredAt: 1_725_000_002_000,
+                },
+              },
+            ],
+          }
+          await request.fulfill({
+            status: 200,
+            contentType: 'text/event-stream',
+            body: `id: fixture:1\nevent: channel-fact\ndata: ${JSON.stringify(fact)}\n\n`,
+          })
+        })
+      },
+    )
+  })
+
   test('keeps intelligent-agent configuration on its own page', async () => {
     await withProductPage(`/agents/${browserAgentId}`, async (page) => {
       await playwrightExpect(page.getByLabel('DeepSeek API 密钥')).toBeVisible()

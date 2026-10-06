@@ -3,7 +3,7 @@ import { PanelSlot } from '../../extension-ui/index.js'
 import { MessagesSquare, Trash2, Unplug, UsersRound } from 'lucide-react'
 import { useEffect, useMemo, useState } from 'react'
 
-import { configFields, type HostApiResponse } from '@nekro-nxt/contracts'
+import { configFields } from '@nekro-nxt/contracts'
 import { connectionDisplayName, useProductStore, type ConnectionSummary } from '../../product-runtime.js'
 import {
   AgentAvatar,
@@ -20,9 +20,9 @@ import {
 import { BindDialog, type BindIntent } from '../channels/bind-dialog.js'
 import { agentHue, connectionTone, triggerLabel } from '../model/identity.js'
 import { useProductApi } from '../model/store.js'
+import { useMemberDirectory } from './member-directory.js'
 import styles from './wiring.module.css'
 
-type Members = HostApiResponse<'listPlatformUsers'>
 
 /** Platform account ids are personal identifiers: show only the last four characters. */
 export const maskedAccount = (reference: string): string => {
@@ -33,26 +33,10 @@ export const maskedAccount = (reference: string): string => {
 const failure = (error: unknown) => toast(error instanceof Error ? error.message : String(error), { tone: 'bad' })
 
 function MemberList({ connectionId }: { readonly connectionId: string }) {
-  const api = useProductApi()
-  const [query, setQuery] = useState('')
-  const [result, setResult] = useState<Members | null>(null)
-  useEffect(() => {
-    let current = true
-    const timer = window.setTimeout(() => {
-      void api
-        .getState()
-        .listPlatformUsers({ connectionId, ...(query.trim() ? { query: query.trim() } : {}), limit: 30 })
-        .then((next) => current && setResult(next))
-        .catch(() => current && setResult(null))
-    }, 180)
-    return () => {
-      current = false
-      window.clearTimeout(timer)
-    }
-  }, [api, connectionId, query])
+  const { query, setQuery, page, loadingMore, loadMore } = useMemberDirectory(connectionId)
   return (
     <section>
-      <h3 className={styles.detailTitle}>成员 {result ? result.total : ''}</h3>
+      <h3 className={styles.detailTitle}>成员 {page ? page.total : ''}</h3>
       <Input
         value={query}
         onChange={(event) => setQuery(event.target.value)}
@@ -60,7 +44,7 @@ function MemberList({ connectionId }: { readonly connectionId: string }) {
         aria-label="查找成员"
       />
       <div className={styles.members}>
-        {result?.items.map((user) => (
+        {page?.items.map((user) => (
           <div key={user.identityId} className={styles.member}>
             <MemberAvatar name={user.displayName ?? '?'} size="sm" />
             {user.displayName ?? '未命名'}
@@ -68,6 +52,18 @@ function MemberList({ connectionId }: { readonly connectionId: string }) {
           </div>
         ))}
       </div>
+      {page && page.total > 0 ? (
+        <div className={styles.memberPaging}>
+          <span>
+            已显示 {page.items.length} / {page.total}
+          </span>
+          {page.nextCursor !== undefined ? (
+            <Button size="small" variant="ghost" busy={loadingMore} onClick={() => void loadMore()}>
+              加载更多
+            </Button>
+          ) : null}
+        </div>
+      ) : null}
     </section>
   )
 }

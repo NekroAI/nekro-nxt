@@ -27,6 +27,7 @@ declare const styles: {
   readonly group: string
   readonly inline: string
   readonly member: string
+  readonly memberPaging: string
   readonly members: string
   readonly node: string
   readonly nodeName: string
