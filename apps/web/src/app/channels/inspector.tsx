@@ -229,24 +229,26 @@ export function ChannelInspector({
         </section>
       ) : null}
 
-      {agent && occupancy ? (
+      {agent && (occupancy || runtime?.episodeId) ? (
         <section>
           <h3 className={styles.inspectorTitle}>上下文</h3>
-          <Gauge
-            total={occupancy.projectedTokens}
-            capacity={occupancy.contextWindow}
-            format={formatTokens}
-            segments={
-              breakdown
-                ? [
-                    { label: '系统', value: breakdown.systemTokens, color: 'var(--accent)' },
-                    { label: '工具', value: breakdown.toolsTokens, color: 'var(--brass)' },
-                    { label: '对话', value: breakdown.messageTokens, color: 'var(--ok)' },
-                    { label: '其他', value: other, color: 'var(--faint)' },
-                  ].filter((segment) => segment.value > 0)
-                : [{ label: '已用', value: occupancy.projectedTokens, color: 'var(--accent)' }]
-            }
-          />
+          {occupancy ? (
+            <Gauge
+              total={occupancy.projectedTokens}
+              capacity={occupancy.contextWindow}
+              format={formatTokens}
+              segments={
+                breakdown
+                  ? [
+                      { label: '系统', value: breakdown.systemTokens, color: 'var(--accent)' },
+                      { label: '工具', value: breakdown.toolsTokens, color: 'var(--brass)' },
+                      { label: '对话', value: breakdown.messageTokens, color: 'var(--ok)' },
+                      { label: '其他', value: other, color: 'var(--faint)' },
+                    ].filter((segment) => segment.value > 0)
+                  : [{ label: '已用', value: occupancy.projectedTokens, color: 'var(--accent)' }]
+              }
+            />
+          ) : null}
           {runtime?.episodeId ? (
             <div className={styles.buttons}>
               <Button size="small" onClick={() => setReset('compact')}>
