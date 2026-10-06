@@ -52,3 +52,25 @@
 .advancedToggle[aria-expanded='false'] svg {
   transform: rotate(-90deg);
 }
+
+.nested {
+  display: grid;
+  gap: 12px;
+  min-width: 0;
+  margin: 0;
+  padding: 12px 14px;
+  border: 1px solid var(--line, var(--nxt-border-subtle));
+  border-radius: 12px;
+}
+
+.hint {
+  margin: 0;
+  color: var(--muted, var(--nxt-text-muted));
+  font-size: 12px;
+}
+
+.issue {
+  margin: 0;
+  color: var(--bad, var(--nxt-status-danger));
+  font-size: 12px;
+}

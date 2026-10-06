@@ -58,13 +58,11 @@ export function ExtensionConfigEditor({
     setBusy(true)
     setError('')
     try {
-      await product.store
-        .getState()
-        .updateExtensionConfig({
-          extensionId: extension.id,
-          ...(agentId === undefined ? {} : { agentId }),
-          config: draft,
-        })
+      await product.store.getState().updateExtensionConfig({
+        extensionId: extension.id,
+        ...(agentId === undefined ? {} : { agentId }),
+        config: draft,
+      })
     } catch (failure) {
       setError(failure instanceof Error ? failure.message : String(failure))
     } finally {

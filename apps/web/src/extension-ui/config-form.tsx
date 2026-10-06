@@ -1,7 +1,6 @@
 import {
   configFields,
   configSecretKeys,
-  parseJsonValue,
   validateConfigValue,
   type ConfigField,
   type ConfigSchemaDocument,
@@ -264,26 +263,24 @@ function ConfigFieldControl({
           />
         </Field>
       )
-    case 'object':
+    case 'object': {
+      // Nested objects render as their own group; issues inside are reported on the parent field.
+      if (field.node.type !== 'object') return null
+      const nested = field.node
+      const value = current !== null && typeof current === 'object' && !Array.isArray(current) ? current : {}
       return (
-        <Field label={label} hint={field.hint ?? 'JSON 对象'} error={error}>
-          <Textarea
-            rows={4}
-            spellCheck={false}
-            disabled={disabled}
-            defaultValue={current === undefined ? '' : JSON.stringify(current, null, 2)}
-            onBlur={(event) => {
-              const raw = event.target.value.trim()
-              if (!raw) return onValue(undefined)
-              try {
-                onValue(parseJsonValue(JSON.parse(raw)))
-              } catch {
-                onValue(raw)
-              }
-            }}
-          />
-        </Field>
+        <fieldset className={styles.nested} disabled={disabled}>
+          <legend className={styles.legend}>{label}</legend>
+          {field.hint ? <p className={styles.hint}>{field.hint}</p> : null}
+          <ConfigForm schema={nested} value={value} onChange={(next) => onValue(next)} disabled={disabled} />
+          {error ? (
+            <p role="alert" className={styles.issue}>
+              {error}
+            </p>
+          ) : null}
+        </fieldset>
       )
+    }
     case 'string':
       return (
         <Field label={label} hint={field.hint} error={error}>
