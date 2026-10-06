@@ -43,7 +43,7 @@ NekroNXT 使用 `AppID` 和 `AppSecret` 向 `https://bots.qq.com` 获取访问�
 
 ## 在 NekroNXT 添加连接
 
-1. 前往「连接」，点击「添加平台连接」或「再添加一个账号」；
+1. 前往「接线」，点击「添加账号」；
 2. 选择「QQ 官方机器人」；
 3. 填写 QQ OpenClaw 入口显示的 `AppID`；
 4. 在「Client Secret」填写对应的 `AppSecret`；
