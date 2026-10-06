@@ -11,7 +11,7 @@ import type { AgentRevisionContent } from '@nekro-nxt/core'
 import { readFile } from 'node:fs/promises'
 import type { IncomingMessage, ServerResponse } from 'node:http'
 import type { z } from 'zod'
-import { assembleChannelRuntime } from './host-queries.js'
+import { assembleChannelRuntime, assembleChannelToolCall } from './host-queries.js'
 import {
   assertAuxiliaryImageModel,
   buildSnapshotMessage,
@@ -506,6 +506,7 @@ export function registerWorkspaceRoutes({
       const messageMatch = /^\/api\/channels\/([^/]+)\/messages$/.exec(url.pathname)
       const nameMatch = /^\/api\/channels\/([^/]+)\/display-name$/.exec(url.pathname)
       const runtimeMatch = /^\/api\/channels\/([^/]+)\/runtime$/.exec(url.pathname)
+      const toolCallMatch = /^\/api\/channels\/([^/]+)\/runtime\/tools\/([^/]+)$/.exec(url.pathname)
       const contextResetMatch = /^\/api\/channels\/([^/]+)\/context-reset$/.exec(url.pathname)
       const assetMatch = /^\/api\/channels\/([^/]+)\/assets\/([^/]+)$/.exec(url.pathname)
       const channelMatch = /^\/api\/channels\/([^/]+)$/.exec(url.pathname)
@@ -513,6 +514,7 @@ export function registerWorkspaceRoutes({
         messageMatch?.[1] ??
         nameMatch?.[1] ??
         runtimeMatch?.[1] ??
+        toolCallMatch?.[1] ??
         contextResetMatch?.[1] ??
         assetMatch?.[1] ??
         channelMatch?.[1]
@@ -567,6 +569,26 @@ export function registerWorkspaceRoutes({
         } catch (error) {
           writeError(res, 404, 'channel-runtime-missing', error instanceof Error ? error.message : String(error))
         }
+        return
+      }
+
+      if (toolCallMatch) {
+        if (req.method !== 'GET') {
+          writeError(res, 405, 'method-not-allowed', '只支持 GET。')
+          return
+        }
+        const callId = decodeURIComponent(toolCallMatch[2] ?? '')
+        writeContractJson(
+          res,
+          200,
+          HostApiContracts.getChannelToolCall,
+          assembleChannelToolCall(runtime, typedChannelId, callId) ?? {
+            callId,
+            available: false,
+            inputTruncated: false,
+            resultTruncated: false,
+          },
+        )
         return
       }
 

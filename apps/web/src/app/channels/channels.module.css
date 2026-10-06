@@ -633,6 +633,45 @@
   flex: none;
 }
 
+/* A step opens in place to what the tool was asked and what it returned. */
+.toolStep {
+  display: grid;
+  justify-items: start;
+  gap: var(--s-2);
+  max-width: 100%;
+}
+
+button.step {
+  font: inherit;
+  font-size: var(--fs-xs);
+  text-align: left;
+  cursor: pointer;
+  transition:
+    border-color var(--dur-1),
+    background var(--dur-1);
+}
+
+button.step:hover {
+  border-color: var(--line-3);
+  background: var(--hover);
+}
+
+.toolStep[data-open] > .step {
+  border-color: var(--accent-line);
+}
+
+.step .stepChevron {
+  width: 13px;
+  height: 13px;
+  margin-left: calc(var(--s-1) * -0.5);
+  color: var(--faint);
+  transition: transform var(--dur-2) var(--ease);
+}
+
+.toolStep[data-open] .stepChevron {
+  transform: rotate(90deg);
+}
+
 .step b {
   flex: none;
   color: var(--fg);
@@ -773,25 +812,6 @@
   color: var(--fg-2);
   font: var(--t-note);
   font-style: italic;
-  white-space: pre-wrap;
-}
-
-.kv {
-  display: grid;
-  grid-template-columns: 64px minmax(0, 1fr);
-  gap: var(--s-1) var(--s-4);
-  margin: 0;
-  padding: var(--s-2) var(--s-4);
-  font-size: var(--fs-sm);
-}
-
-.kv dt {
-  color: var(--muted);
-}
-
-.kv dd {
-  margin: 0;
-  overflow-wrap: anywhere;
   white-space: pre-wrap;
 }
 

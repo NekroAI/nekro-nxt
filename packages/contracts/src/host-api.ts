@@ -2022,6 +2022,26 @@ export const HostApiContracts = {
     response: ChannelRuntimeProjectionSchema.extend({ cursor: HostSyncCursorSchema }),
     error: HostApiErrorSchema,
   }),
+  getChannelToolCall: defineContract({
+    method: 'GET',
+    path: '/api/channels/:channelId/runtime/tools/:callId',
+    params: z.object({ channelId: ChannelIdSchema, callId: z.string().trim().min(1).max(200) }).strict(),
+    request: NoRequestBodySchema,
+    // The full arguments and result of one tool call in the live session; the runtime projection only carries previews.
+    // `available: false` when the session has left memory: the step keeps its preview, which is not an error.
+    response: z
+      .object({
+        callId: z.string(),
+        available: z.boolean(),
+        name: z.string().optional(),
+        input: z.string().optional(),
+        result: z.string().optional(),
+        inputTruncated: z.boolean(),
+        resultTruncated: z.boolean(),
+      })
+      .strict(),
+    error: HostApiErrorSchema,
+  }),
   resetChannelContext: defineContract({
     invalidatesSnapshot: true,
     method: 'POST',

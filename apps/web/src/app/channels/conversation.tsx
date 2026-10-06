@@ -400,6 +400,7 @@ export function Conversation({
                 key={item.key}
                 turn={item.turn}
                 agent={agent}
+                channelId={channel.id}
                 xray={xray}
                 animateXray={xrayAnimated}
                 startedAt={item.turn.startedAt}

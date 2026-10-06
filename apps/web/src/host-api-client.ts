@@ -200,6 +200,8 @@ export const workspaceApi = {
     ),
   resolveOutbound: (outboundId: string, action: 'retry' | 'confirm-delivered', options?: HostRequestOptions) =>
     callHostApi(HostApiContracts.resolveOutbound, { outboundId }, { action }, options),
+  getChannelToolCall: (channelId: string, callId: string, options?: HostRequestOptions) =>
+    callHostApi(HostApiContracts.getChannelToolCall, { channelId, callId }, undefined, options),
   getChannelActivity: (
     query: { readonly window?: string; readonly bucket?: string } = {},
     options?: HostRequestOptions,

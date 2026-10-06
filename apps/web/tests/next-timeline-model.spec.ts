@@ -1,11 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import {
-  buildTimeline,
-  dayLabel,
-  presentToolInput,
-  relativeTime,
-  type RuntimeTurn,
-} from '../src/app/channels/timeline-model.js'
+import { buildTimeline, dayLabel, relativeTime, type RuntimeTurn } from '../src/app/channels/timeline-model.js'
 import type { ConversationMessage } from '../src/product-runtime.js'
 
 const NOW = new Date(2026, 9, 4, 12, 0).getTime()
@@ -67,24 +61,6 @@ describe('buildTimeline', () => {
     const items = buildTimeline([message('a', '阿青', NOW - 3000)], [turn(1), turn(2)], NOW)
     expect(items.at(-1)).toMatchObject({ kind: 'turn', key: 'turn:2', latest: true })
     expect(items.filter((item) => item.kind === 'turn')).toHaveLength(1)
-  })
-})
-
-describe('presentToolInput', () => {
-  it('shows the text a messaging tool sent, even from a truncated preview', () => {
-    const preview = '{"target":{"type":"current"},"parts":[{"type":"text","text":"诶？\\n我在的"}],"replyTo":"msg_01…'
-    expect(presentToolInput(preview, true)).toEqual({ message: '诶？\n我在的' })
-  })
-
-  it('turns JSON objects into fields and keeps other text', () => {
-    expect(presentToolInput('{"query":"暗色仪表盘","limit":5}', false)).toEqual({
-      fields: [
-        ['query', '暗色仪表盘'],
-        ['limit', '5'],
-      ],
-    })
-    expect(presentToolInput('example.com/notes', false)).toEqual({ raw: 'example.com/notes' })
-    expect(presentToolInput(undefined, false)).toBeUndefined()
   })
 })
 

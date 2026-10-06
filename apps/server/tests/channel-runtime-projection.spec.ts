@@ -10,6 +10,7 @@ import {
 import { describe, expect, it } from 'vitest'
 import { normalizeSessionEvents, shouldBroadcastChannelRuntime } from '../src/channel-runtime-events.ts'
 import {
+  findToolCallDetail,
   previewToolArguments,
   projectCacheUsage,
   projectChannelRuntime,
@@ -190,6 +191,34 @@ describe('channel runtime projection', () => {
       state: 'running',
       inputPreview: '{"query":"天气"}',
     })
+  })
+
+  it('returns one tool call in full, masks secret arguments and bounds a runaway result', () => {
+    const output = 'x'.repeat(70_000)
+    const events = [
+      { type: 'turn/start', turn: 1 },
+      {
+        type: 'tool/call',
+        turn: 1,
+        step: 1,
+        callId: 'call_cmd',
+        name: 'bash',
+        arguments: '{"command":"echo 示例","apiToken":"example-secret"}',
+      },
+      { type: 'tool/result', turn: 1, step: 1, callId: 'call_cmd', failed: false, resultPreview: output },
+    ] as const
+    const detail = findToolCallDetail(events, 'call_cmd')
+    expect(detail).toMatchObject({
+      callId: 'call_cmd',
+      available: true,
+      name: 'bash',
+      inputTruncated: false,
+      resultTruncated: true,
+    })
+    expect(JSON.parse(detail?.input ?? '{}')).toEqual({ command: 'echo 示例', apiToken: '***' })
+    expect(detail?.input).not.toContain('example-secret')
+    expect(detail?.result).toHaveLength(64_000)
+    expect(findToolCallDetail(events, 'call_missing')).toBeUndefined()
   })
 
   it('marks a finished error turn unavailable and redacts secret tool arguments', () => {

@@ -24,6 +24,7 @@
 | 客户端通知 | `GET /api/client-notifications?cursor=` | 返回进程内短暂脱敏事件；无 cursor 只建立当前位置，供在线 Desktop 本地或已认证远程 Session 拉取 |
 | 发送消息 | `POST /api/channels/:channelId/messages` | 仅内置频道入站 |
 | 频道历史 | `GET /api/channels/:channelId/messages` | `(occurredAt, sourceId)` 游标分页；首载、翻页、重连对账 |
+| 单次工具调用 | `GET /api/channels/:channelId/runtime/tools/:callId` | 当前会话中一次工具调用的完整参数与结果：参数格式化为 JSON 并对疑似密钥的键打码，结果为模型收到的文本；两者各上限 64,000 字并标记是否截断。会话已不在内存时返回 404 |
 | 频道工作轨迹 | `GET /api/channels/:channelId/runtime` | 按频道投影 phase、当前工具、待注入、上下文占用、当前 Episode 缓存分析和最近多轮 Turn（含耗时与本步用量）；每轮可带 `startedAt` / `endedAt`（进行中省略）与 `triggerEventId`；首载与重连对账 |
 | 标记已读 | `POST /api/channels/:channelId/read` | 按当前观察者推进单调阅读位置，默认推进到当前最新可见入站；返回该频道 `ChannelActivitySummary` |
 | 排队上下文 | `GET /api/channels/:channelId/pending` | 读取当前 DSH Session 收件箱中尚未被模型看到的频道收录，区分下一步注入与下一轮；`ChannelPendingContext` |

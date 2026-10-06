@@ -393,6 +393,50 @@ export const previewText = (value: string): string => {
   return `${normalized.slice(0, PREVIEW_LIMIT - 1)}…`
 }
 
+/** Full tool detail stays bounded: a runaway command output must not stall the page that opens it. */
+const DETAIL_LIMIT = 64_000
+
+const bounded = (value: string): { readonly text: string; readonly truncated: boolean } =>
+  value.length <= DETAIL_LIMIT
+    ? { text: value, truncated: false }
+    : { text: value.slice(0, DETAIL_LIMIT), truncated: true }
+
+/** Tool arguments for the detail view: pretty JSON with secret-looking keys masked, or the raw string. */
+export const detailToolArguments = (raw: string): string => {
+  const trimmed = raw.trim()
+  try {
+    const parsed = ToolArgumentObjectSchema.safeParse(JSON.parse(trimmed))
+    if (parsed.success) {
+      const redacted = Object.fromEntries(
+        Object.entries(parsed.data).map(([key, value]) => [key, SECRET_KEY.test(key) ? '***' : value]),
+      )
+      return JSON.stringify(redacted, null, 2)
+    }
+  } catch {
+    // Not JSON; keep the model's argument string.
+  }
+  return trimmed
+}
+
+/** One tool call's full arguments and result from normalized session events, or undefined when it is not there. */
+export const findToolCallDetail = (events: readonly RuntimeProjectionEvent[], callId: string) => {
+  const call = events.find((event) => event.type === 'tool/call' && event.callId === callId)
+  if (!call || call.type !== 'tool/call') return undefined
+  const result = events.find((event) => event.type === 'tool/result' && event.callId === callId)
+  const input = call.arguments.trim() ? bounded(detailToolArguments(call.arguments)) : undefined
+  const output =
+    result?.type === 'tool/result' && result.resultPreview !== undefined ? bounded(result.resultPreview) : undefined
+  return {
+    callId,
+    available: true,
+    name: call.name,
+    ...(input ? { input: input.text } : {}),
+    ...(output ? { result: output.text } : {}),
+    inputTruncated: input?.truncated ?? false,
+    resultTruncated: output?.truncated ?? false,
+  }
+}
+
 export const previewToolArguments = (raw: string): string | undefined => {
   const trimmed = raw.trim()
   if (!trimmed) return undefined

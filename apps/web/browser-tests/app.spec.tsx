@@ -1350,10 +1350,8 @@ test.describe('NekroNxt browser projections', () => {
 
   test('renders platform accounts with product labels and a masked account', async () => {
     await withProductPage('/wiring', async (page) => {
-      await page
-        .getByRole('button', { name: /^示例群聊平台/u })
-        .first()
-        .click()
+      // The account node itself; a name match could also hit its channel group's fold toggle.
+      await page.locator(`[data-node="connection:${externalConnectionId}"]`).click()
       await playwrightExpect(page).toHaveURL(new RegExp(`/wiring/connections/${externalConnectionId}$`, 'u'))
       const detail = page.locator('aside').last()
       await playwrightExpect(detail.getByText('尾号 7890', { exact: true })).toBeVisible()

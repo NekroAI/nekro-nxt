@@ -32,7 +32,6 @@ declare const styles: {
   readonly input: string
   readonly jump: string
   readonly knob: string
-  readonly kv: string
   readonly listCount: string
   readonly meta: string
   readonly mine: string
@@ -62,6 +61,7 @@ declare const styles: {
   readonly stack: string
   readonly step: string
   readonly stepArg: string
+  readonly stepChevron: string
   readonly stepFail: string
   readonly stepOk: string
   readonly stepRun: string
@@ -78,6 +78,7 @@ declare const styles: {
   readonly titleLine: string
   readonly toggle: string
   readonly toggleLabel: string
+  readonly toolStep: string
   readonly turn: string
   readonly turnHead: string
   readonly turnRunning: string

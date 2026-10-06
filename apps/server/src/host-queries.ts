@@ -18,6 +18,7 @@ import type { NekroRuntime } from './bootstrap.js'
 import type { WorkspaceProjections } from './workspace-projections.js'
 import {
   emptyChannelRuntimeProjection,
+  findToolCallDetail,
   projectChannelRuntime,
   worstChannelRuntimePhase,
 } from './channel-runtime-projection.js'
@@ -60,6 +61,15 @@ export const assembleChannelRuntime = (
         ? []
         : runtime.host.normalizedSessionEvents(episode.dshSessionId),
   })
+}
+
+/** One tool call of the channel's live session in full, for the step a person opens in the timeline. */
+export const assembleChannelToolCall = (runtime: NekroRuntime, channelId: ChannelId, callId: string) => {
+  const binding = runtime.core.listBindings(channelId)[0]
+  if (!binding) return undefined
+  const episode = runtime.repository.getActiveEpisode(channelId, binding.agentId)
+  if (episode?.dshSessionId === undefined || !runtime.host.tryLiveSession(episode.dshSessionId)) return undefined
+  return findToolCallDetail(runtime.host.normalizedSessionEvents(episode.dshSessionId), callId)
 }
 
 export const projectExtensions = (runtime: NekroRuntime) => {

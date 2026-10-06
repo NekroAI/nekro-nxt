@@ -1,20 +1,15 @@
-import { Check, CircleAlert, Square, X } from 'lucide-react'
+import { Check, ChevronRight, CircleAlert, Square, X } from 'lucide-react'
 import { ToolView } from '../../extension-ui/index.js'
-import { Fragment, memo, useEffect, useState } from 'react'
+import { memo, useEffect, useState } from 'react'
 import { MessageContent, resolveMessageSide } from './message-content.js'
 import type { AgentSummary, ChannelSummary, ConversationMessage } from '../../product-runtime.js'
-import { AgentAvatar, Button, Chip, Spinner, cssVars } from '../../ui-kit/index.js'
+import { AgentAvatar, Button, Chip, Pressable, Spinner, cssVars } from '../../ui-kit/index.js'
 import { MemberAvatar } from '../../ui-kit/avatar.js'
 import { agentAccent, agentHue } from '../model/identity.js'
 import styles from './channels.module.css'
-import {
-  formatDuration,
-  formatTokens,
-  isTurnRunning,
-  isUnconfirmed,
-  presentToolInput,
-  type RuntimeTurn,
-} from './timeline-model.js'
+import { ToolDetail } from './tool-detail.js'
+import { toolSummary } from './tool-presenter.js'
+import { formatDuration, formatTokens, isTurnRunning, isUnconfirmed, type RuntimeTurn } from './timeline-model.js'
 
 type RuntimeStep = RuntimeTurn['steps'][number]
 type RuntimeTool = RuntimeStep['tools'][number]
@@ -122,19 +117,43 @@ const toolState = (tool: RuntimeTool) => {
   return { className: styles.stepFail, icon: <X /> }
 }
 
-function ToolChip({ tool }: { readonly tool: RuntimeTool }) {
+/** One step: a readable summary that opens to what the tool was asked and what it returned. */
+function ToolStep({
+  tool,
+  channelId,
+  agentId,
+}: {
+  readonly tool: RuntimeTool
+  readonly channelId: string | undefined
+  readonly agentId: string | undefined
+}) {
+  const [open, setOpen] = useState(false)
   const state = toolState(tool)
-  const view = presentToolInput(tool.inputPreview, tool.wroteToChannel === true || /send|message/i.test(tool.name))
-  const chipArg = view?.message ?? view?.fields?.map(([, value]) => value).join(' · ') ?? view?.raw
+  const summary = toolSummary(tool.name, tool.inputPreview, tool.wroteToChannel === true)
   return (
-    <span className={[styles.step, state.className].join(' ')}>
-      {state.icon}
-      <b>{tool.displayName}</b>
-      {chipArg ? <span className={styles.stepArg}>{chipArg}</span> : null}
-      {tool.durationMs !== undefined ? (
-        <span className={styles.stepTime}>{formatDuration(tool.durationMs)}</span>
+    <div className={styles.toolStep} data-open={open || undefined}>
+      <Pressable
+        className={[styles.step, state.className].join(' ')}
+        aria-expanded={open}
+        aria-label={`${tool.displayName}${summary ? `：${summary}` : ''}，${open ? '收起详情' : '查看详情'}`}
+        onClick={() => setOpen(!open)}
+      >
+        {state.icon}
+        <b>{tool.displayName}</b>
+        {summary ? <span className={styles.stepArg}>{summary}</span> : null}
+        {tool.durationMs !== undefined ? (
+          <span className={styles.stepTime}>{formatDuration(tool.durationMs)}</span>
+        ) : null}
+        <ChevronRight className={styles.stepChevron} aria-hidden="true" />
+      </Pressable>
+      <ToolView call={toolCall(tool, false)} density="chip" {...(agentId ? { agentId } : {})} />
+      {open ? (
+        <>
+          <ToolDetail tool={tool} channelId={channelId} />
+          <ToolView call={toolCall(tool, true)} density="card" {...(agentId ? { agentId } : {})} />
+        </>
       ) : null}
-    </span>
+    </div>
   )
 }
 
@@ -152,12 +171,13 @@ function ToolCard({
   tool,
   index,
   agentId,
+  channelId,
 }: {
   readonly tool: RuntimeTool
   readonly index: number
   readonly agentId: string | undefined
+  readonly channelId: string | undefined
 }) {
-  const input = presentToolInput(tool.inputPreview, tool.wroteToChannel === true || /send|message/i.test(tool.name))
   return (
     <div className={styles.card} style={cssVars({ '--i': index })}>
       <div className={styles.cardHead}>
@@ -182,44 +202,7 @@ function ToolCard({
           )}
         </span>
       </div>
-      <dl className={styles.kv}>
-        {input?.message !== undefined ? (
-          <>
-            <dt>内容</dt>
-            <dd>{input.message}</dd>
-          </>
-        ) : null}
-        {input?.fields?.map(([key, value]) => (
-          <Fragment key={key}>
-            <dt>{key}</dt>
-            <dd>{value}</dd>
-          </Fragment>
-        ))}
-        {input?.raw !== undefined ? (
-          <>
-            <dt>输入</dt>
-            <dd>{input.raw}</dd>
-          </>
-        ) : null}
-        {tool.resultPreview ? (
-          <>
-            <dt>结果</dt>
-            <dd>{tool.resultPreview}</dd>
-          </>
-        ) : null}
-        {tool.wroteToChannel ? (
-          <>
-            <dt>频道</dt>
-            <dd>
-              {tool.deliveryState === 'sent'
-                ? '已发出消息'
-                : tool.deliveryState === 'unknown'
-                  ? '发出结果未确认'
-                  : '写入频道'}
-            </dd>
-          </>
-        ) : null}
-      </dl>
+      <ToolDetail tool={tool} channelId={channelId} bare />
       <ToolView call={toolCall(tool, true)} density="card" {...(agentId ? { agentId } : {})} />
     </div>
   )
@@ -256,6 +239,7 @@ const turnSummary = (turn: RuntimeTurn): string => {
 export function TurnRow({
   turn,
   agent,
+  channelId,
   xray,
   animateXray,
   startedAt,
@@ -263,6 +247,8 @@ export function TurnRow({
 }: {
   readonly turn: RuntimeTurn
   readonly agent: AgentSummary | undefined
+  /** Lets an opened step load the call's full arguments and result. */
+  readonly channelId?: string | undefined
   readonly xray: boolean
   readonly animateXray: boolean
   readonly startedAt?: number | undefined
@@ -314,7 +300,15 @@ export function TurnRow({
             const thinking = stepThinking(step)
             if (thinking) nodes.push(<ThinkingCard key={`${step.step}:thinking`} text={thinking} index={cardIndex++} />)
             for (const tool of step.tools)
-              nodes.push(<ToolCard key={tool.callId} tool={tool} index={cardIndex++} agentId={agent?.id} />)
+              nodes.push(
+                <ToolCard
+                  key={tool.callId}
+                  tool={tool}
+                  index={cardIndex++}
+                  agentId={agent?.id}
+                  channelId={channelId}
+                />,
+              )
             return nodes
           })}
           {usage.input || usage.output ? (
@@ -328,10 +322,7 @@ export function TurnRow({
       ) : tools.length ? (
         <div className={styles.steps}>
           {tools.map((tool) => (
-            <Fragment key={tool.callId}>
-              <ToolChip tool={tool} />
-              <ToolView call={toolCall(tool, false)} density="chip" {...(agent ? { agentId: agent.id } : {})} />
-            </Fragment>
+            <ToolStep key={tool.callId} tool={tool} channelId={channelId} agentId={agent?.id} />
           ))}
         </div>
       ) : null}
