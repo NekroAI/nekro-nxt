@@ -15,6 +15,7 @@ import { createExtensionsRepository } from './repositories/extensions.js'
 import { createAssetsRepository } from './repositories/assets.js'
 import { createDshPluginRepository, type DshPluginRepository } from './repositories/dsh-plugins.js'
 import { createAuthoringRepository } from './repositories/authoring.js'
+import { createProjectionRepository, type ProjectionRepository } from './repositories/projections.js'
 
 export * from './backup.js'
 export * from './database.js'
@@ -24,6 +25,13 @@ export * from './schema.js'
 export * from './row-schemas.js'
 export type { DshSessionStorageRetirementInput, DshSessionStorageRetirementReport } from './repositories/runtime.js'
 export type { DshPluginRepository } from './repositories/dsh-plugins.js'
+export { OutboundResolutionError } from './repositories/projections.js'
+export type {
+  ChannelReadPosition,
+  OutboundResolutionRecord,
+  ProjectionRepository,
+  UnsettledOutboundRecord,
+} from './repositories/projections.js'
 
 type CurrentRepository = CoreRepository &
   RuntimeRepository &
@@ -64,6 +72,8 @@ export class SqliteCoreRepository implements CurrentRepository {
   readonly #assets
   readonly #dshPlugins
   readonly #authoring
+  /** Client workspace read models: read positions, activity, attention dismissals and delivery resolutions. */
+  readonly projections: ProjectionRepository
 
   constructor(
     database: CoreDatabase,
@@ -78,6 +88,7 @@ export class SqliteCoreRepository implements CurrentRepository {
     this.#assets = createAssetsRepository(database.db)
     this.#dshPlugins = createDshPluginRepository(database.db)
     this.#authoring = createAuthoringRepository(database.db)
+    this.projections = createProjectionRepository(database.db)
   }
 
   getWorkTreeOrder(): WorkTreeOrderRecord {
@@ -161,6 +172,8 @@ export class SqliteCoreRepository implements CurrentRepository {
   }
   readonly tombstoneAgent = (...args: Parameters<CoreRepository['tombstoneAgent']>) =>
     this.#agents.tombstoneAgent(...args)
+  readonly updateAgentAppearance = (...args: Parameters<CoreRepository['updateAgentAppearance']>) =>
+    this.#agents.updateAgentAppearance(...args)
   readonly getAgent = (...args: Parameters<CoreRepository['getAgent']>) => this.#agents.getAgent(...args)
   readonly listAgents = (...args: Parameters<CoreRepository['listAgents']>) => this.#agents.listAgents(...args)
   readonly getAgentRevision = (...args: Parameters<CoreRepository['getAgentRevision']>) =>

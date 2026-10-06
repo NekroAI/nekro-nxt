@@ -1,0 +1,342 @@
+.scrim {
+  position: fixed;
+  inset: 0;
+  z-index: 50;
+  background: rgb(8 15 27 / 0.42);
+  backdrop-filter: blur(3px);
+}
+
+.scrim[data-state='open'] {
+  animation: fadeIn 200ms ease both;
+}
+
+.scrim[data-state='closed'] {
+  animation: fadeOut 160ms ease both;
+}
+
+.dialog {
+  position: fixed;
+  top: 13vh;
+  left: 50%;
+  z-index: 51;
+  display: grid;
+  gap: 16px;
+  width: min(440px, calc(100vw - 32px));
+  max-height: 80vh;
+  overflow: auto;
+  padding: 22px;
+  border: 1px solid var(--line);
+  border-radius: 18px;
+  outline: none;
+  background: var(--surface);
+  box-shadow: var(--sh-3);
+  translate: -50% 0;
+}
+
+.dialog[data-state='open'] {
+  animation: dialogIn 340ms var(--ease) both;
+}
+
+.dialog[data-state='closed'] {
+  animation: dialogOut 160ms ease both;
+}
+
+.wide {
+  width: min(620px, calc(100vw - 32px));
+}
+
+.title {
+  margin: 0;
+  color: var(--fg);
+  font-size: 18px;
+  font-weight: 650;
+  line-height: 1.4;
+}
+
+.body {
+  display: grid;
+  gap: 12px;
+  color: var(--fg-2);
+  font-size: var(--fs-md);
+  line-height: 1.7;
+}
+
+.body p {
+  margin: 0;
+}
+
+.actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.sheet {
+  position: fixed;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 51;
+  display: flex;
+  flex-direction: column;
+  width: min(460px, 100vw);
+  border-left: 1px solid var(--line);
+  outline: none;
+  background: var(--surface);
+  box-shadow: var(--sh-3);
+}
+
+.sheet[data-state='open'] {
+  animation: sheetIn 380ms var(--ease) both;
+}
+
+.sheet[data-state='closed'] {
+  animation: sheetOut 200ms ease both;
+}
+
+.sheetHead {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 16px 18px;
+  border-bottom: 1px solid var(--line);
+}
+
+.sheetHead .title {
+  flex: 1;
+  font-size: var(--fs-lg);
+}
+
+.sheetBody {
+  display: grid;
+  flex: 1;
+  align-content: start;
+  gap: 18px;
+  overflow: auto;
+  padding: 18px;
+}
+
+.sheetFoot {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  padding: 12px 18px;
+  border-top: 1px solid var(--line);
+}
+
+.menu {
+  z-index: 60;
+  display: grid;
+  gap: 2px;
+  min-width: 200px;
+  padding: 6px;
+  border: 1px solid var(--line-2);
+  border-radius: 12px;
+  background: var(--surface);
+  box-shadow: var(--sh-3);
+  transform-origin: var(--radix-dropdown-menu-content-transform-origin);
+}
+
+.menu[data-state='open'] {
+  animation: popIn 220ms var(--ease) both;
+}
+
+.menu[data-state='closed'] {
+  animation: fadeOut 120ms ease both;
+}
+
+.menuItem {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 7px 9px;
+  border-radius: 8px;
+  outline: none;
+  color: var(--fg);
+  font-size: var(--fs-sm);
+  cursor: pointer;
+  user-select: none;
+}
+
+.menuItem svg {
+  width: 15px;
+  height: 15px;
+  color: var(--muted);
+}
+
+.menuItem[data-highlighted] {
+  background: var(--hover);
+}
+
+.menuItem[data-disabled] {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.menuDanger,
+.menuDanger svg {
+  color: var(--bad);
+}
+
+.menuSeparator {
+  height: 1px;
+  margin: 4px 6px;
+  background: var(--line);
+}
+
+.menuLabel {
+  padding: 5px 9px 3px;
+  color: var(--muted);
+  font-size: var(--fs-xs);
+}
+
+.tooltip {
+  z-index: 70;
+  max-width: 280px;
+  padding: 6px 9px;
+  border-radius: 8px;
+  background: var(--fg);
+  box-shadow: var(--sh-2);
+  color: var(--bg);
+  font-size: var(--fs-xs);
+  line-height: 1.5;
+}
+
+.tooltip[data-state='delayed-open'],
+.tooltip[data-state='instant-open'] {
+  animation: popIn 160ms var(--ease) both;
+}
+
+.toasts {
+  position: fixed;
+  bottom: 46px;
+  left: 50%;
+  z-index: 80;
+  display: grid;
+  justify-items: center;
+  gap: 8px;
+  translate: -50% 0;
+  pointer-events: none;
+}
+
+.toast {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  max-width: min(520px, calc(100vw - 32px));
+  padding: 9px 14px 9px 10px;
+  border-radius: 12px;
+  background: var(--fg);
+  box-shadow: var(--sh-3);
+  color: var(--bg);
+  font-size: var(--fs-sm);
+  pointer-events: auto;
+  animation: toastIn 420ms var(--ease) both;
+}
+
+.toast[data-leaving='true'] {
+  animation: toastOut 240ms ease both;
+}
+
+.toastIcon {
+  display: grid;
+  width: 20px;
+  height: 20px;
+  flex: none;
+  place-items: center;
+  border-radius: 50%;
+  background: var(--ok);
+  color: #ffffff;
+}
+
+.toastIcon.bad {
+  background: var(--bad);
+}
+
+.toastIcon svg {
+  width: 12px;
+  height: 12px;
+  stroke-width: 2.6;
+}
+
+.toastAction {
+  margin-left: 4px;
+  padding: 2px 8px;
+  border: 0;
+  border-radius: 6px;
+  background: rgb(255 255 255 / 0.14);
+  color: inherit;
+  font-size: var(--fs-xs);
+  font-weight: 600;
+  cursor: pointer;
+}
+
+@keyframes fadeIn {
+  from {
+    opacity: 0;
+  }
+}
+
+@keyframes fadeOut {
+  to {
+    opacity: 0;
+  }
+}
+
+@keyframes dialogIn {
+  from {
+    opacity: 0;
+    transform: translateY(12px) scale(0.97);
+  }
+}
+
+@keyframes dialogOut {
+  to {
+    opacity: 0;
+    transform: translateY(6px) scale(0.98);
+  }
+}
+
+@keyframes sheetIn {
+  from {
+    transform: translateX(32px);
+    opacity: 0;
+  }
+}
+
+@keyframes sheetOut {
+  to {
+    transform: translateX(24px);
+    opacity: 0;
+  }
+}
+
+@keyframes popIn {
+  from {
+    opacity: 0;
+    transform: scale(0.95) translateY(-4px);
+  }
+}
+
+@keyframes toastIn {
+  from {
+    opacity: 0;
+    transform: translateY(16px) scale(0.95);
+  }
+}
+
+@keyframes toastOut {
+  to {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+}
+
+.srOnly {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}

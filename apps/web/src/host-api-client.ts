@@ -1,5 +1,6 @@
 import { hostReleaseGuard, type HostReleaseGuard } from './host-release-guard.js'
 import {
+  HostApiContracts,
   HostApiErrorSchema,
   buildHostApiContractPath,
   type HostApiContract,
@@ -167,4 +168,67 @@ export async function callHostApi<Contract extends HostApiContract, Output>(
     clearTimeout(timer)
     options.signal?.removeEventListener('abort', abort)
   }
+}
+
+/**
+ * Workspace read models and runtime controls (Decision 2026-10-04 §7). Thin typed calls over the shared
+ * transport; mutations keep its unknown-commit semantics and are never retried automatically.
+ */
+export const workspaceApi = {
+  markChannelRead: (
+    channelId: string,
+    upTo?: { readonly occurredAt: number; readonly sourceId: string },
+    options?: HostRequestOptions,
+  ) =>
+    callHostApi(
+      HostApiContracts.markChannelRead,
+      { channelId },
+      upTo === undefined ? {} : { upTo: { occurredAt: upTo.occurredAt, sourceId: upTo.sourceId } },
+      options,
+    ),
+  listAttention: (options?: HostRequestOptions) => callHostApi(HostApiContracts.listAttention, {}, undefined, options),
+  dismissAttention: (attentionId: string, options?: HostRequestOptions) =>
+    callHostApi(HostApiContracts.dismissAttention, { attentionId }, undefined, options),
+  getChannelPending: (channelId: string, options?: HostRequestOptions) =>
+    callHostApi(HostApiContracts.getChannelPending, { channelId }, undefined, options),
+  stopChannelTask: (channelId: string, expectedEpisodeId?: string, options?: HostRequestOptions) =>
+    callHostApi(
+      HostApiContracts.stopChannelTask,
+      { channelId },
+      expectedEpisodeId === undefined ? {} : { expectedEpisodeId },
+      options,
+    ),
+  resolveOutbound: (outboundId: string, action: 'retry' | 'confirm-delivered', options?: HostRequestOptions) =>
+    callHostApi(HostApiContracts.resolveOutbound, { outboundId }, { action }, options),
+  getChannelActivity: (
+    query: { readonly window?: string; readonly bucket?: string } = {},
+    options?: HostRequestOptions,
+  ) =>
+    callHostApi(
+      HostApiContracts.getChannelActivity,
+      {
+        ...(query.window === undefined ? {} : { window: query.window }),
+        ...(query.bucket === undefined ? {} : { bucket: query.bucket }),
+      },
+      undefined,
+      options,
+    ),
+  updateAgentAppearance: (
+    agentId: string,
+    patch: { readonly hue?: number | null; readonly avatarAssetId?: null },
+    options?: HostRequestOptions,
+  ) =>
+    callHostApi(
+      HostApiContracts.updateAgentAppearance,
+      { agentId },
+      {
+        ...(patch.hue === undefined ? {} : { hue: patch.hue }),
+        ...(patch.avatarAssetId === undefined ? {} : { avatarAssetId: patch.avatarAssetId }),
+      },
+      options,
+    ),
+  uploadAgentAvatar: (agentId: string, bytes: Uint8Array<ArrayBuffer>, options?: HostRequestOptions) =>
+    callHostApi(HostApiContracts.uploadAgentAvatar, { agentId }, { bytes }, options),
+  /** Same-origin URL of the agent's avatar image; it 404s when no avatar is set. */
+  agentAvatarUrl: (agentId: string) => `/api/agents/${encodeURIComponent(agentId)}/avatar`,
 }

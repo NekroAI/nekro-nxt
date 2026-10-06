@@ -17,14 +17,21 @@
 | 快照 | `GET /api/snapshot` | models、connectionAdapters、agents、channels、connections、extensions、dynamic、workTreeOrder；频道与智能体带 `runtimePhase`；历史按频道读取 |
 | 订阅 | `GET /api/events` | SSE 数据面：`channel-fact` 带消息、`runtime` 带裁剪投影；`status` / `binding-change` / 扩展与 DSH 设置仍是信号 |
 | 创建智能体 | `POST /api/agents` | 创建智能体、内置频道与默认 Binding |
-| 删除智能体 | `DELETE /api/agents/:agentId` | 校验当前配置版本和名称确认；先停止全部频道运行、停用扩展并写 tombstone；默认同时 tombstone 仍归属于它的自动创建内置频道，其他频道解绑；保留历史事实和文件 |
+| 删除智能体 | `DELETE /api/agents/:agentId` | 校验当前配置版本和名称确认；先停止全部频道运行、停用扩展并写 tombstone；默认同时 tombstone 仍归属于它的自动创建内置频道，其他频道解绑；保留历史事实；`deleteWorkspace: true` 时同时删除 `workspaces/<agentId>/`，默认保留 |
 | 新建内置频道 | `POST /api/channels` | 在系统托管内置连接上创建未绑定内置频道 |
 | 删除 / 移除频道 | `DELETE /api/channels/:channelId` | 携带预期 Binding；立即停止运行、解除绑定并写 Channel tombstone，保留全部历史；外部频道不影响平台真实对象 |
 | 通知设置 | `PUT /api/settings/notifications` | Core SQLite 保存系统/Bark 渠道和功能开关；Bark Device Key 只保存本机凭据引用 |
 | 客户端通知 | `GET /api/client-notifications?cursor=` | 返回进程内短暂脱敏事件；无 cursor 只建立当前位置，供在线 Desktop 本地或已认证远程 Session 拉取 |
 | 发送消息 | `POST /api/channels/:channelId/messages` | 仅内置频道入站 |
 | 频道历史 | `GET /api/channels/:channelId/messages` | `(occurredAt, sourceId)` 游标分页；首载、翻页、重连对账 |
-| 频道工作轨迹 | `GET /api/channels/:channelId/runtime` | 按频道投影 phase、当前工具、待注入、上下文占用、当前 Episode 缓存分析和最近多轮 Turn（含耗时与本步用量）；首载与重连对账 |
+| 频道工作轨迹 | `GET /api/channels/:channelId/runtime` | 按频道投影 phase、当前工具、待注入、上下文占用、当前 Episode 缓存分析和最近多轮 Turn（含耗时与本步用量）；每轮可带 `startedAt` / `endedAt`（进行中省略）与 `triggerEventId`；首载与重连对账 |
+| 标记已读 | `POST /api/channels/:channelId/read` | 按当前观察者推进单调阅读位置，默认推进到当前最新可见入站；返回该频道 `ChannelActivitySummary` |
+| 排队上下文 | `GET /api/channels/:channelId/pending` | 读取当前 DSH Session 收件箱中尚未被模型看到的频道收录，区分下一步注入与下一轮；`ChannelPendingContext` |
+| 停止当前任务 | `POST /api/channels/:channelId/stop` | 可带 `expectedEpisodeId`；中断当前轮次的生成或工具，不重置上下文、不丢弃已收录消息；空闲时返回 `idle` |
+| 关注列表 | `GET /api/attention` / `POST /api/attention/:attentionId/dismiss` | 聚合需要人处理的状况（`AttentionList`）；忽略按指纹记录，同一状况再次发生得到新指纹 |
+| 处理投递 | `POST /api/outbound/:outboundId/resolve` | `retry` 重新投递失败或未知的物理投递，`confirm-delivered` 记录管理员确认已送达；见 [03 §5 投递处理](03-消息内容与投递协议.md#投递处理) |
+| 频道活跃度 | `GET /api/activity?window=2h&bucket=5m` | 活动频道按对齐时间桶统计入站与出站；窗口不超过 24 小时、间隔不小于 1 分钟、不超过 288 桶 |
+| 智能体外观 | `PATCH /api/agents/:agentId/appearance`、`GET/POST /api/agents/:agentId/avatar` | 色相与可选头像 Asset；不属于版本化配置，修改不产生新 Revision；头像 2 MiB 以内的 PNG/JPEG/WebP/GIF |
 | 上下文操作 | `POST /api/channels/:channelId/context-reset` | 携带 `expectedEpisodeId`；`clear` 中止后无交接清空，`compact` 中止后生成 Handoff 并建立新 Episode |
 | 频道资源 | `GET /api/channels/:channelId/assets/:assetId` | 校验频道访问权后同源读取 |
 | 频道本地名称 | `POST /api/channels/:channelId/display-name` | 只改展示名 |
@@ -70,14 +77,23 @@
 - `runtime` 携带与 `GET /runtime` 相同的裁剪投影（工具预览 160 字、最近 24 轮、可选 occupancy、步骤耗时与用量）和该频道轨迹面 `revision`。占用从 DSH `sessionProjections` 的 `contextPressure` / `tokenUsage` / `contextBreakdown` 投影；缺少窗口或用量样本时省略。服务端在 100ms 合并后再组装。UTF-8 序列化超过约 48 KiB 时只推 `phase` / `summary` / `occupancy` 并标 `truncated`，前端对已打开的工作轨迹回退一次 REST。
 - 步骤用量与快照里智能体最近图片检查的用量共用同一产品协议字段和服务端投影，保留 DSH 提供的可选 `totalTokens`，不自行用输入与输出相加推算；DSH 的 `inputTokens` 不含缓存读取和写入，缺少 `totalTokens` 时界面以输入、缓存读写与输出之和展示合计。后台轨迹与消息推送按频道隔离并记录回调异常（同一频道持续失败只在恢复前记录一次），单个失败不终止宿主或阻断同批其他频道；未通过协议校验的 SSE 帧不进入回放缓冲，也不推进游标。
 - 可回放事件带 `Host epoch:序号` 形式的 SSE `id:`。Web 的共享 `HostEventStream` 先保留浏览器原生重连，使普通网络短断继续自动携带 `Last-Event-ID`；`EventSource` 进入永久关闭状态时按 1、2、4、8、16、30 秒上限退避重建，原生重连超过 5 秒未恢复时也由应用层重建。浏览器重新联网和用户点击「重新连接」会立即重建同一条共享流。连接每次重新打开都刷新权威快照，并对已加载频道重新读取历史与轨迹，因此代理返回 5xx、Host 重启或重建对象丢失浏览器内部游标时也不会留下数据缺口。Host 在内存里保留最近 512 帧；同一 epoch 的窗口内帧补发，窗口外、Host 重启和未来游标都返回 `status.replay = expired`，前端再次执行相同对账。慢客户端最多排队 512 KiB，超过预算就断开并依赖重连对账。权威事实仍是频道 Event Log 和当前 Session 投影，不是这份环形缓冲。
+- `attention-changed` 只携带关注列表 `revision`，前端据此重新读取 `GET /api/attention`。快照失效、动态变化和出站投递事实后约 400ms 合并检查一次，另有 30 秒兜底检查；只有 revision 变化才推送。
 - `status` / `extensions-changed` / `binding-change` / DSH 设置与凭据变更仍是信号，前端刷新对应快照或进度。`dsh-plugin-operation` 使用进程内 Operation ID 报告下载、依赖、构建脚本、校验和提交阶段；进程重启后未提交操作视为中断，staging 在启动时清理。
 - 快照、频道历史和频道轨迹读取携带采集游标 `cursor: { epoch, sequence }`。快照先读取异步辅助信息，再在没有 `await` 的连续执行段采集领域事实及游标；`diagnosticsSampledAt` 表示辅助信息采样时间，智能体图片诊断按 Revision 关联。客户端读取期间保留事件，应用读取结果后重放游标之后的事件；旧游标事件不能覆盖新状态。连接事实和 `snapshot-changed` 失效事件也进入回放缓冲。影响快照的 HTTP 修改在契约中声明 `invalidatesSnapshot`，成功响应后发布失效；诊断和只读 RPC 不触发。已包含在快照采集游标内的失效不重复读取。
 - 快照读取串行执行，期间多次失效合并为一次后续读取；频道轨迹共享在途读取，历史分页按频道串行。每个读取绑定运行实例生命周期，卸载时取消请求，即使传输没有响应取消，迟到的成功或失败也不能写入缓存。
 - JSON、安装包上传与扩展下载共用 `host-api-client.ts` 的传输及边界解析。普通读取默认 30 秒、修改默认 60 秒；安装、导入和导出由契约显式设定 300 秒。网络中断、超时或无效成功响应造成的修改结果标记为未知，修改不自动重试。
 - 不按频道再建 SSE，不把 `assistant/chunk` 或资源二进制推进帧。
 
+### 2.1 工作区读模型
+
+- **观察者身份。** 未读与阅读位置按观察者隔离，Server 从 `x-nxt-viewer` 读取观察者键。远程管理入口总是删除客户端自带的该请求头，并为已认证设备会话写入 `device:<deviceId>`；直连本机 loopback 且没有该头时视为 `local`（Desktop 自带 Host 与本机开发）。观察者键只接受 `local` 和 `device:nxt_device_…`，首次使用时登记到 `read_viewers`。
+- **频道活动。** 快照中每个频道带 `activity`：最近活动时间、最近一条消息预览（成员、智能体、管理员或系统，160 字以内）和当前观察者的未读数。未读只计成员发出的可见消息，不计管理员控制台消息和机器人自身回显，最多报告 99 条并以 `unreadCapped` 标记超出。阅读位置按 `(occurredAt, sourceId)` 单调推进，旧位置不会覆盖新位置。
+- **关注。** `GET /api/attention` 从权威事实即时聚合：未确认或失败的出站投递、以错误、截断或中断结束的轮次（管理员主动停止的不算）、待审批的 Authoring Attempt、失败或重连中的连接、模型不可用或缺少图片能力的智能体。每项指纹由对象和本次状况组成（投递含处理次数，轮次含 Episode 和轮次号，连接含状态和进入该状态的时间），忽略记录保留 30 天。连接进入当前状态的时间只在进程内记录，Host 重启后同一状况会重新出现一次。
+- **停止。** 停止在频道车道内执行：先把当前 Episode 结束原因记为 `cancelled`，再以保留收件箱的方式取消 DSH 当前轮次并等待 Agent 静止。已收录但未被模型看到的消息仍在收件箱，下一条入站会与它们一起进入同一 Episode 的新一轮；停止后不会自动续跑。
+
 ## 3. Web 与 Server
 
+- 工作区读模型和运行控制调用集中在 `host-api-client.ts` 的 `workspaceApi`（标记已读、关注列表与忽略、排队上下文、停止、处理投递、活跃度、外观与头像上传/地址）。
 - `apps/web/src/http-host.ts` 实现 `ProductHostPort`。`apps/web/src/host-event-stream.ts` 是浏览器 SSE 的唯一生命周期所有者，产品快照、DSH 设置和动态 Client 只订阅这条共享流，不各自建立连接。类型化 `actions` 覆盖创建/删除智能体、删除频道、两种上下文操作、发消息、改能力、扩展启停、Authoring 决策/停止/保存、创建/测试连接、修改连接别名和动态审批；决策先提交 Task revision，再由浏览器运行候选，Client evaluate/apply/render 或结算失败必须 reject，不能清空错误或发布成功提示。修改响应明确成功即完成提交，随后由数据层同步快照；同步失败显示“已保存，界面同步失败”，不能诱导重复提交。`host.refresh` 只读取快照，`host.reconnect` 才重建共享流。审批失败不自动重发修改。
 - 每个智能体使用独立产品 SlotCore。Snapshot/SSE 变化驱动 Client Activation 对账；Revision 更新先 dispose 后 mount，刷新与 Server 重启按权威 Activation 恢复。动态 Client 同样按 Host 的 `activeRun` 恢复精确源码和页面，对账键包含 `pluginRunId`，所以同一 Plugin 和 Package 在 Server 重启或重新运行后会先卸载旧 Client 再加载新 Run，不重复执行 Host half、审批或结算。Host Adapter Client 使用独立全局 Runtime，加载当前已安装 Revision 的 Artifact，并接受 Catalog 中的富消息、连接和频道检查器 Slot。Host UI Client 使用第三个独立 Runtime，按 Client Artifact 共享模块实例，每个页面拥有独立错误边界、滚动根和声明式导航 Provider；三类 Registry 不互相注册。
 - Host UI 页面路由固定为 `/apps/:pageInstanceId/*`。Web 使用快照中的 `routeBase`，入口隐藏、Activation 关闭或 Extension 删除后跳转到其他可见扩展页面；没有可见页面时进入对应 Extension 或 DSH 详情。系统图标组和底部工具组不参与扩展排序。

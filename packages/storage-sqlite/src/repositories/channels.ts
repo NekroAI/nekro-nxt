@@ -166,7 +166,7 @@ const toBinding = (input: typeof channelBindings.$inferSelect): BindingRecord =>
   }
 }
 
-const toEvent = (input: typeof channelEvents.$inferSelect): ChannelEventRecord => {
+export const toEvent = (input: typeof channelEvents.$inferSelect): ChannelEventRecord => {
   const row = ChannelEventRowSchema.parse(input)
   return {
     id: row.id,

@@ -1,7 +1,7 @@
 {
   "version": "6",
   "dialect": "sqlite",
-  "id": "3c3df91a-f90d-421d-a34d-9997cf26b807",
+  "id": "af2e8044-c11b-4fe0-806e-8975f77b2277",
   "prevId": "4d89d8f8-1615-43e0-b2ea-d2b8459c7cdf",
   "tables": {
     "admission_events": {
@@ -279,6 +279,76 @@
       },
       "uniqueConstraints": {},
       "checkConstraints": {}
+    },
+    "agent_appearances": {
+      "name": "agent_appearances",
+      "columns": {
+        "agent_id": {
+          "name": "agent_id",
+          "type": "text",
+          "primaryKey": true,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "hue": {
+          "name": "hue",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "avatar_asset_id": {
+          "name": "avatar_asset_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {
+        "agent_appearances_agent_id_agent_definitions_id_fk": {
+          "name": "agent_appearances_agent_id_agent_definitions_id_fk",
+          "tableFrom": "agent_appearances",
+          "tableTo": "agent_definitions",
+          "columnsFrom": [
+            "agent_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        },
+        "agent_appearances_avatar_asset_id_assets_id_fk": {
+          "name": "agent_appearances_avatar_asset_id_assets_id_fk",
+          "tableFrom": "agent_appearances",
+          "tableTo": "assets",
+          "columnsFrom": [
+            "avatar_asset_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "set null",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "checkConstraints": {
+        "agent_appearances_hue_ck": {
+          "name": "agent_appearances_hue_ck",
+          "value": "\"agent_appearances\".\"hue\" IS NULL OR (\"agent_appearances\".\"hue\" >= 0 AND \"agent_appearances\".\"hue\" <= 359)"
+        }
+      }
     },
     "agent_current_revisions": {
       "name": "agent_current_revisions",
@@ -746,6 +816,38 @@
         }
       }
     },
+    "attention_dismissals": {
+      "name": "attention_dismissals",
+      "columns": {
+        "fingerprint": {
+          "name": "fingerprint",
+          "type": "text",
+          "primaryKey": true,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "dismissed_at": {
+          "name": "dismissed_at",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        }
+      },
+      "indexes": {
+        "attention_dismissals_time_idx": {
+          "name": "attention_dismissals_time_idx",
+          "columns": [
+            "dismissed_at"
+          ],
+          "isUnique": false
+        }
+      },
+      "foreignKeys": {},
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "checkConstraints": {}
+    },
     "binding_admission_cutoffs": {
       "name": "binding_admission_cutoffs",
       "columns": {
@@ -1199,6 +1301,86 @@
         }
       },
       "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "checkConstraints": {}
+    },
+    "channel_read_cursors": {
+      "name": "channel_read_cursors",
+      "columns": {
+        "viewer_key": {
+          "name": "viewer_key",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "channel_id": {
+          "name": "channel_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "read_at": {
+          "name": "read_at",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "read_source_id": {
+          "name": "read_source_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {
+        "channel_read_cursors_viewer_key_read_viewers_viewer_key_fk": {
+          "name": "channel_read_cursors_viewer_key_read_viewers_viewer_key_fk",
+          "tableFrom": "channel_read_cursors",
+          "tableTo": "read_viewers",
+          "columnsFrom": [
+            "viewer_key"
+          ],
+          "columnsTo": [
+            "viewer_key"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        },
+        "channel_read_cursors_channel_id_channels_id_fk": {
+          "name": "channel_read_cursors_channel_id_channels_id_fk",
+          "tableFrom": "channel_read_cursors",
+          "tableTo": "channels",
+          "columnsFrom": [
+            "channel_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {
+        "channel_read_cursors_viewer_key_channel_id_pk": {
+          "columns": [
+            "viewer_key",
+            "channel_id"
+          ],
+          "name": "channel_read_cursors_viewer_key_channel_id_pk"
+        }
+      },
       "uniqueConstraints": {},
       "checkConstraints": {}
     },
@@ -3161,14 +3343,6 @@
           "primaryKey": false,
           "notNull": true,
           "autoincrement": false
-        },
-        "config": {
-          "name": "config",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false,
-          "default": "'{}'"
         }
       },
       "indexes": {
@@ -3866,6 +4040,97 @@
         }
       }
     },
+    "outbound_resolutions": {
+      "name": "outbound_resolutions",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "text",
+          "primaryKey": true,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "intent_id": {
+          "name": "intent_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "action": {
+          "name": "action",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "previous_state": {
+          "name": "previous_state",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "previous_deliveries": {
+          "name": "previous_deliveries",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "viewer_key": {
+          "name": "viewer_key",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        }
+      },
+      "indexes": {
+        "outbound_resolutions_intent_idx": {
+          "name": "outbound_resolutions_intent_idx",
+          "columns": [
+            "intent_id",
+            "created_at"
+          ],
+          "isUnique": false
+        }
+      },
+      "foreignKeys": {
+        "outbound_resolutions_intent_id_outbound_intents_id_fk": {
+          "name": "outbound_resolutions_intent_id_outbound_intents_id_fk",
+          "tableFrom": "outbound_resolutions",
+          "tableTo": "outbound_intents",
+          "columnsFrom": [
+            "intent_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "checkConstraints": {
+        "outbound_resolutions_action_ck": {
+          "name": "outbound_resolutions_action_ck",
+          "value": "\"outbound_resolutions\".\"action\" IN ('retry', 'confirm-delivered')"
+        },
+        "outbound_resolutions_previous_state_ck": {
+          "name": "outbound_resolutions_previous_state_ck",
+          "value": "\"outbound_resolutions\".\"previous_state\" IN ('partially-sent', 'failed', 'unknown')"
+        }
+      }
+    },
     "physical_deliveries": {
       "name": "physical_deliveries",
       "columns": {
@@ -4064,6 +4329,30 @@
           "onUpdate": "no action"
         }
       },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "checkConstraints": {}
+    },
+    "read_viewers": {
+      "name": "read_viewers",
+      "columns": {
+        "viewer_key": {
+          "name": "viewer_key",
+          "type": "text",
+          "primaryKey": true,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {},
       "compositePrimaryKeys": {},
       "uniqueConstraints": {},
       "checkConstraints": {}

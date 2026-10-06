@@ -46,7 +46,7 @@ import {
   type DshSessionStoragePreparation,
 } from '@nekro-nxt/storage-sqlite'
 import { randomUUID } from 'node:crypto'
-import { mkdir } from 'node:fs/promises'
+import { mkdir, rm } from 'node:fs/promises'
 import path from 'node:path'
 import { monotonicFactory } from 'ulid'
 import { createProductionAdapterTransport } from './adapter-transport.js'
@@ -110,6 +110,12 @@ export interface AgentEntity {
   readonly createdAt: number
 }
 
+/** `<root>/<agentId>`; rejects ids that could escape the root. */
+export const agentWorkspacePath = (root: string, agentId: AgentId): string => {
+  if (agentId === '.' || agentId === '..' || /[\\/]/u.test(agentId)) throw new Error(`无效的智能体 ID：${agentId}`)
+  return path.join(root, agentId)
+}
+
 export class NekroRuntime {
   upgradeBackupId: string | undefined
   readonly repository: SqliteCoreRepository
@@ -121,6 +127,8 @@ export class NekroRuntime {
   readonly host: DshHostRuntime
   readonly channels: ChannelRuntime
   readonly internalConnectionId: ConnectionId
+  /** Parent of every agent workspace (`<root>/<agentId>/`). */
+  readonly workspaceRoot: string
   readonly extensionService: ExtensionService
   readonly activation: ExtensionActivationCoordinator
   readonly installation: HostExtensionInstallationCoordinator
@@ -158,6 +166,7 @@ export class NekroRuntime {
     readonly host: DshHostRuntime
     readonly channels: ChannelRuntime
     readonly internalConnectionId: ConnectionId
+    readonly workspaceRoot: string
     readonly extensionService: ExtensionService
     readonly activation: ExtensionActivationCoordinator
     readonly extensionBuilder: ExtensionBuilder
@@ -182,6 +191,7 @@ export class NekroRuntime {
     this.authoring = new AuthoringApplicationService(this)
     this.channels = input.channels
     this.internalConnectionId = input.internalConnectionId
+    this.workspaceRoot = input.workspaceRoot
     this.extensionService = input.extensionService
     this.activation = input.activation
     this.credentials = input.credentials
@@ -438,6 +448,7 @@ export class NekroRuntime {
         host,
         channels,
         internalConnectionId,
+        workspaceRoot: authoringWorkspaceRoot,
         extensionService,
         activation,
         extensionBuilder,
@@ -600,7 +611,7 @@ export class NekroRuntime {
    */
   async deleteAgent(
     agentId: AgentId,
-    options: { readonly deleteAutoCreatedBuiltInChannels: boolean },
+    options: { readonly deleteAutoCreatedBuiltInChannels: boolean; readonly deleteWorkspace?: boolean },
   ): Promise<{ readonly unboundChannelIds: readonly ChannelId[]; readonly deletedChannelIds: readonly ChannelId[] }> {
     if (this.#disposed) throw new Error('NekroRuntime is disposed.')
     if (!this.repository.getAgent(agentId)) throw new Error('智能体不存在。')
@@ -629,6 +640,9 @@ export class NekroRuntime {
     }
     this.core.deleteAgent(agentId)
     this.#agents.delete(agentId)
+    // Lanes are stopped and bindings gone, so nothing writes into the workspace any more.
+    if (options.deleteWorkspace)
+      await rm(agentWorkspacePath(this.workspaceRoot, agentId), { recursive: true, force: true })
     return { unboundChannelIds, deletedChannelIds }
   }
 

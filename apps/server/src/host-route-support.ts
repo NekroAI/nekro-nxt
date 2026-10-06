@@ -27,12 +27,14 @@ import type { IncomingMessage, ServerResponse } from 'node:http'
 import path from 'node:path'
 import { z } from 'zod'
 import type { NekroRuntime } from './bootstrap.js'
+import type { WorkspaceProjections } from './workspace-projections.js'
 export interface HostRouteContext {
   readonly readCursor: () => HostApiResponse<'snapshot'>['cursor']
   readonly runtime: NekroRuntime
   readonly registerRoute: (route: WebRoute) => void
   readonly broadcast: (event: HostSseEvent) => void
   readonly broadcastExtensionsChanged: () => void
+  readonly projections: WorkspaceProjections
 }
 export const MAX_JSON_BODY_BYTES = 2 * 1024 * 1024
 
@@ -528,6 +530,9 @@ export const projectHistoryEntry = (runtime: NekroRuntime, entry: ChannelHistory
       occurredAt: entry.occurredAt,
     }
   }
+  const resolution = runtime.repository.projections.getLatestOutboundResolution(
+    OutboundIntentIdSchema.parse(entry.sourceId),
+  )
   return {
     id: entry.sourceId,
     channelId: entry.channelId,
@@ -535,6 +540,9 @@ export const projectHistoryEntry = (runtime: NekroRuntime, entry: ChannelHistory
     parts,
     occurredAt: entry.occurredAt,
     deliveryState: entry.state,
+    ...(resolution === undefined
+      ? {}
+      : { deliveryResolution: { action: resolution.action, resolvedAt: resolution.createdAt } }),
     ...(isAdminConsoleOutbound(entry.sourceTurnId) ? { origin: 'admin-console' as const } : {}),
   }
 }

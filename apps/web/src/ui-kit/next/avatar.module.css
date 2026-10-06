@@ -1,0 +1,105 @@
+.avatar {
+  --h: 230;
+  --g1: hsl(var(--h) 60% 58%);
+  --g2: hsl(calc(var(--h) + 20) 74% 77%);
+  position: relative;
+  display: inline-grid;
+  flex: none;
+  place-items: center;
+  width: 34px;
+  height: 34px;
+  border-radius: 50%;
+  background: linear-gradient(140deg, var(--g2), var(--g1) 70%);
+  box-shadow:
+    inset 0 1px 0 rgb(255 255 255 / 0.3),
+    inset 0 -2px 4px rgb(0 0 0 / 0.08);
+  color: #ffffff;
+  font-size: var(--fs-md);
+  font-weight: 650;
+  line-height: 1;
+  text-shadow: 0 1px 1px rgb(0 0 0 / 0.18);
+  user-select: none;
+}
+
+.avatar img {
+  width: 100%;
+  height: 100%;
+  border-radius: inherit;
+  object-fit: cover;
+}
+
+.xs {
+  width: 18px;
+  height: 18px;
+  font-size: 10px;
+}
+
+.sm {
+  width: 22px;
+  height: 22px;
+  font-size: 11px;
+}
+
+.md {
+  width: 28px;
+  height: 28px;
+  font-size: var(--fs-xs);
+}
+
+.lg {
+  width: 92px;
+  height: 92px;
+  box-shadow:
+    inset 0 2px 0 rgb(255 255 255 / 0.35),
+    0 16px 34px -12px var(--g1);
+  font-size: 38px;
+}
+
+.member {
+  background: hsl(var(--h) 42% var(--mem-bg));
+  box-shadow: inset 0 0 0 1px hsl(var(--h) 30% 50% / 0.15);
+  color: hsl(var(--h) 38% var(--mem-fg));
+  text-shadow: none;
+}
+
+/* 只在智能体真实工作时出现：一颗小点绕头像运行。 */
+.live::before {
+  content: '';
+  position: absolute;
+  inset: -4px;
+  border: 1px solid color-mix(in srgb, var(--g1) 45%, transparent);
+  border-radius: 50%;
+}
+
+.live::after {
+  content: '';
+  position: absolute;
+  top: -4px;
+  left: 50%;
+  width: 6px;
+  height: 6px;
+  margin-left: -3px;
+  border-radius: 50%;
+  background: var(--g1);
+  box-shadow: 0 0 8px var(--g2);
+  transform-origin: 3px calc(var(--size) / 2 + 4px);
+  animation: orbit 2.6s linear infinite;
+}
+
+.lg.live::before {
+  inset: -8px;
+}
+
+.lg.live::after {
+  top: -8px;
+  width: 9px;
+  height: 9px;
+  margin-left: -4.5px;
+  transform-origin: 4.5px calc(var(--size) / 2 + 8px);
+}
+
+@keyframes orbit {
+  to {
+    transform: rotate(360deg);
+  }
+}

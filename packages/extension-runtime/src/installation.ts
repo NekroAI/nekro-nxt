@@ -476,7 +476,7 @@ export class HostExtensionInstallationCoordinator {
       }
       const mounted = this.#mounted.get(extensionId)
       const revision = this.#requireRevision(extensionId, installation.extensionRevisionId)
-      const artifact = await this.#build(revision)
+      const artifact = mounted ? await this.#build(revision) : undefined
       const verification = this.#repository.getExtensionRevisionVerification(revision.id)
       const adapterKey = mounted?.adapterKey ?? verification?.adapter?.key
       if (!adapterKey) throw new Error('已安装 Revision 缺少适配器 key。')
@@ -550,7 +550,8 @@ export class HostExtensionInstallationCoordinator {
   async #uninstallHostUi(extensionId: ExtensionId, installation: HostInstallation): Promise<void> {
     const mounted = this.#mountedHostUi.get(extensionId)
     const revision = this.#requireRevision(extensionId, installation.extensionRevisionId)
-    const artifact = await this.#build(revision)
+    // The artifact only serves to remount after a failed uninstall; an unmounted (or unbuildable) revision needs none.
+    const artifact = mounted ? await this.#build(revision) : undefined
     if (mounted) {
       try {
         await mounted.dispose()

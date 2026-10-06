@@ -189,6 +189,8 @@ describe('model-created channel Assets', () => {
       findAdmissionMessage: () => undefined,
       createHandoffSummary: () => Promise.reject(new Error('not used')),
       cancelSession: () => Promise.reject(new Error('not used')),
+      interruptTurn: () => Promise.reject(new Error('not used')),
+      listPendingAdmissions: () => [],
       admit: () => Promise.reject(new Error('not used')),
       notifyConsoleOutbound: () => Promise.reject(new Error('not used')),
     }

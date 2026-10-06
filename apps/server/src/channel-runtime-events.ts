@@ -7,6 +7,7 @@ import {
 } from './channel-reply-guard.js'
 import type { RuntimeProjectionEvent } from './channel-runtime-projection.js'
 import { projectTokenUsage } from './token-usage.js'
+import { ChannelEventIdSchema, type ChannelEventId } from '@nekro-nxt/contracts'
 
 /** Session log types that change the product runtime projection. Streaming chunks do not. */
 export const CHANNEL_RUNTIME_SSE_EVENT_TYPES = new Set([
@@ -54,14 +55,47 @@ export const normalizeSessionEvents = (
   const result: RuntimeProjectionEvent[] = []
   const firstTokenKeys = new Set<string>()
   const turns = new Set<number>()
+  // A channel admission opens a turn when DSH logs it while no turn is open (it waits for the next
+  // `turn/start`) or before the open turn's first model output. DSH splices the inbox at step start,
+  // so the trigger is logged after `step/start`; input logged after the turn already answered was
+  // injected into a running turn and is not that turn's trigger.
+  let openTurn: number | undefined
+  let openTurnAnswered = false
+  let heldTrigger: ChannelEventId | undefined
+  const triggered = new Set<number>()
+  const assignTrigger = (turn: number, eventId: ChannelEventId): void => {
+    if (triggered.has(turn)) return
+    triggered.add(turn)
+    result.push({ type: 'turn/trigger', turn, eventId })
+  }
   for (const event of events) {
     const at = event.time
+    if ((event.type === 'assistant/message' || event.type === 'tool/call') && event.data.turn === openTurn) {
+      openTurnAnswered = true
+    }
     if (event.type === 'turn/start') {
       turns.add(event.data.turn)
+      openTurn = event.data.turn
+      openTurnAnswered = false
       result.push({ type: 'turn/start', turn: event.data.turn, at })
+      if (heldTrigger !== undefined) {
+        assignTrigger(event.data.turn, heldTrigger)
+        heldTrigger = undefined
+      }
+      continue
+    }
+    if (event.type === 'user/message') {
+      const source = event.data.source
+      const eventId =
+        source.kind === 'nekro-nxt-channel' ? ChannelEventIdSchema.safeParse(source.channelEventIds.at(-1)) : undefined
+      if (eventId?.success === true) {
+        if (openTurn === undefined) heldTrigger = eventId.data
+        else if (!openTurnAnswered) assignTrigger(openTurn, eventId.data)
+      }
       continue
     }
     if (event.type === 'turn/end') {
+      if (openTurn === event.data.turn) openTurn = undefined
       const reason = event.data.reason
       result.push({
         type: 'turn/end',

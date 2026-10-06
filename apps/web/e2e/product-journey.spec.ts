@@ -836,6 +836,7 @@ test("an intelligent-agent can add another channel while replacing that channel'
         unrestrictedFileAccess: false,
       },
       channels: [plan.channelId],
+      appearance: {},
     }
     const channel: HostSnapshot['channels'][number] = {
       id: plan.channelId,
@@ -845,6 +846,7 @@ test("an intelligent-agent can add another channel while replacing that channel'
       displayName: `${plan.displayName} 的内置频道`,
       boundAgentId: plan.agentId,
       runtimePhase: 'idle',
+      activity: { unreadCount: 0, unreadCapped: false },
       bindings: [
         {
           channelId: plan.channelId,
@@ -1230,6 +1232,7 @@ test('external channel exposes processing feedback and per-event trigger control
         displayName: '外部群聊',
         boundAgentId: sourceAgent.id,
         runtimePhase: 'idle',
+        activity: { unreadCount: 0, unreadCapped: false },
         bindings: [binding],
       },
     ],
@@ -1465,6 +1468,7 @@ test('channel context controls and intelligent-agent deletion are guarded and re
           unrestrictedFileAccess: false,
         },
         channels: [channelId],
+        appearance: {},
       },
     ],
     channels: [
@@ -1493,6 +1497,7 @@ test('channel context controls and intelligent-agent deletion are guarded and re
         kind: 'group',
         displayName: '待移除的外部频道',
         runtimePhase: 'idle',
+        activity: { unreadCount: 0, unreadCapped: false },
         bindings: [],
       },
     ],

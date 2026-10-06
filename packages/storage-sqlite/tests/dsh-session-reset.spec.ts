@@ -242,6 +242,8 @@ describe('atomic Session retirement', () => {
       findAdmissionMessage: () => undefined,
       createHandoffSummary: () => Promise.resolve({ summary: '', provider: 'fake', model: 'fake' }),
       cancelSession: () => Promise.resolve(),
+      interruptTurn: () => Promise.resolve({ interrupted: false, retainedPending: 0 }),
+      listPendingAdmissions: () => [],
       admit: ({ admissionId, events }) => {
         admitted.push(...events.map(({ id }) => id))
         return Promise.resolve({ dshMessageId: `message-${admissionId}` })

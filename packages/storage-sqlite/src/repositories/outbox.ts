@@ -37,7 +37,7 @@ type OutboxSlice = Pick<
   | 'listUnsettledOutboundIds'
 >
 
-const toIntent = (input: typeof outboundIntents.$inferSelect): OutboundIntentRecord => {
+export const toIntent = (input: typeof outboundIntents.$inferSelect): OutboundIntentRecord => {
   const row = OutboundIntentRowSchema.parse(input)
   return {
     id: row.id,

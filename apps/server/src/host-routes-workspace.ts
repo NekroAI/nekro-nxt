@@ -27,6 +27,7 @@ export function registerWorkspaceRoutes({
   registerRoute,
   broadcast,
   broadcastExtensionsChanged,
+  projections,
 }: HostRouteContext): () => void {
   const handleExtensionActivationRoute = async (req: IncomingMessage, res: ServerResponse): Promise<void> => {
     const url = new URL(req.url ?? '/', 'http://localhost')
@@ -284,6 +285,23 @@ export function registerWorkspaceRoutes({
         await handleExtensionActivationRoute(req, res)
         return
       }
+      const presentationMatch = /^\/api\/agents\/([^/]+)\/(appearance|avatar)$/u.exec(url.pathname)
+      if (presentationMatch) {
+        let agentId: AgentId
+        try {
+          agentId = AgentIdSchema.parse(decodeURIComponent(presentationMatch[1] ?? ''))
+        } catch {
+          writeError(res, 400, 'invalid-agent', '无效的智能体 ID。')
+          return
+        }
+        await projections.handleAgentRoute(
+          req,
+          res,
+          agentId,
+          presentationMatch[2] === 'avatar' ? 'avatar' : 'appearance',
+        )
+        return
+      }
       const deleteMatch = /^\/api\/agents\/([^/]+)$/.exec(url.pathname)
       if (deleteMatch) {
         if (req.method !== 'DELETE') {
@@ -314,6 +332,7 @@ export function registerWorkspaceRoutes({
           }
           const { unboundChannelIds, deletedChannelIds } = await runtime.deleteAgent(agentId, {
             deleteAutoCreatedBuiltInChannels: parsed.deleteAutoCreatedBuiltInChannels,
+            deleteWorkspace: parsed.deleteWorkspace,
           })
           writeContractJson(res, 200, HostApiContracts.deleteAgent, {
             agentId,
@@ -451,6 +470,19 @@ export function registerWorkspaceRoutes({
         } catch (error) {
           writeError(res, 400, 'channel-create-failed', error instanceof Error ? error.message : String(error))
         }
+        return
+      }
+      const projectionMatch = /^\/api\/channels\/([^/]+)\/(read|pending|stop)$/u.exec(url.pathname)
+      if (projectionMatch) {
+        let channelId: ChannelId
+        try {
+          channelId = ChannelIdSchema.parse(decodeURIComponent(projectionMatch[1] ?? ''))
+        } catch {
+          writeError(res, 400, 'invalid-channel', '无效的频道 ID。')
+          return
+        }
+        const action = projectionMatch[2] === 'read' ? 'read' : projectionMatch[2] === 'pending' ? 'pending' : 'stop'
+        await projections.handleChannelRoute(req, res, channelId, action)
         return
       }
       const messageMatch = /^\/api\/channels\/([^/]+)\/messages$/.exec(url.pathname)

@@ -438,6 +438,7 @@ describe('product store Host mutations', () => {
       expectedCurrentRevisionId: 'arev_context',
       confirmationName: '测试智能体',
       deleteAutoCreatedBuiltInChannels: true,
+      deleteWorkspace: false,
     })
   })
 })

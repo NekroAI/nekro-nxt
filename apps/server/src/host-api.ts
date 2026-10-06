@@ -18,6 +18,8 @@ import { registerExtensionsRoutes } from './host-routes-extensions.js'
 import { registerSettingsRoutes } from './host-routes-settings.js'
 import { registerWorkspaceRoutes } from './host-routes-workspace.js'
 import { PRODUCT_VERSION } from './product-version.js'
+import { viewerKeyFromRequest } from './viewer.js'
+import { WorkspaceProjections } from './workspace-projections.js'
 import {
   HostSseHub,
   parseLastEventId,
@@ -139,7 +141,10 @@ export const createNekroHostApi = (
   }
   const broadcast = (event: HostSseEvent): void => {
     hub.publish(event)
+    if (event.event === 'snapshot-changed' || event.event === 'dynamic-changed') projections.scheduleAttentionCheck()
   }
+  const projections = new WorkspaceProjections(runtime, (event) => hub.publish(event))
+  disposers.push(() => projections.dispose())
   const broadcastExtensionsChanged = (): void => {
     broadcast({ event: 'extensions-changed', data: { changed: true } })
   }
@@ -207,16 +212,16 @@ export const createNekroHostApi = (
       factTimer ??= setTimeout(flushPendingFacts, SSE_FACT_COALESCE_MS)
     }),
   )
-  const queries = new HostQueries(runtime, () => hub.cursor, productMetadata)
-  const buildSnapshot = () => queries.snapshot()
+  const queries = new HostQueries(runtime, () => hub.cursor, productMetadata, projections)
+  const buildSnapshot = (viewerKey: string) => queries.snapshot(viewerKey)
 
   // GET /api/snapshot
   registerRoute({
     kind: 'exact',
     path: '/api/snapshot',
-    handler: async (_req, res) => {
+    handler: async (req, res) => {
       try {
-        writeJson(res, 200, await buildSnapshot())
+        writeJson(res, 200, await buildSnapshot(viewerKeyFromRequest(req)))
       } catch (error) {
         writeError(res, 500, 'snapshot-failed', error instanceof Error ? error.message : String(error))
       }
@@ -289,6 +294,7 @@ export const createNekroHostApi = (
       broadcast,
       broadcastExtensionsChanged,
       readCursor: () => hub.cursor,
+      projections,
     }),
   )
   disposers.push(
@@ -298,6 +304,7 @@ export const createNekroHostApi = (
       broadcast,
       broadcastExtensionsChanged,
       readCursor: () => hub.cursor,
+      projections,
     }),
   )
   disposers.push(
@@ -307,6 +314,7 @@ export const createNekroHostApi = (
       broadcast,
       broadcastExtensionsChanged,
       readCursor: () => hub.cursor,
+      projections,
     }),
   )
   disposers.push(
@@ -316,6 +324,7 @@ export const createNekroHostApi = (
       broadcast,
       broadcastExtensionsChanged,
       readCursor: () => hub.cursor,
+      projections,
     }),
   )
   disposers.push(
@@ -325,8 +334,17 @@ export const createNekroHostApi = (
       broadcast,
       broadcastExtensionsChanged,
       readCursor: () => hub.cursor,
+      projections,
     }),
   )
+
+  projections.registerRoutes({ registerRoute })
+  disposers.push(
+    runtime.channels.subscribeFacts((fact) => {
+      if (fact.kind === 'outbound') projections.scheduleAttentionCheck()
+    }),
+  )
+  projections.scheduleAttentionCheck()
 
   // Catch-all for unknown API endpoints.
   registerRoute({

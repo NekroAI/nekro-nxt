@@ -1062,6 +1062,84 @@ export const bindingAdmissionCutoffs = sqliteTable(
   ],
 )
 
+/** Non-versioned agent presentation: identity hue (0-359) and optional avatar Asset. Never part of a Revision. */
+export const agentAppearances = sqliteTable(
+  'agent_appearances',
+  {
+    agentId: text('agent_id')
+      .$type<AgentId>()
+      .primaryKey()
+      .references(() => agentDefinitions.id, { onDelete: 'cascade' }),
+    hue: integer(),
+    avatarAssetId: text('avatar_asset_id')
+      .$type<AssetId>()
+      .references(() => assets.id, { onDelete: 'set null' }),
+    updatedAt: integer('updated_at').notNull(),
+  },
+  (table) => [
+    check('agent_appearances_hue_ck', sql`${table.hue} IS NULL OR (${table.hue} >= 0 AND ${table.hue} <= 359)`),
+  ],
+)
+
+/** A management viewer: `local` for the loopback console, `device:<id>` for paired remote devices. */
+export const readViewers = sqliteTable('read_viewers', {
+  viewerKey: text('viewer_key').primaryKey(),
+  createdAt: integer('created_at').notNull(),
+})
+
+/** Per-viewer read position in one Channel's inbound history. */
+export const channelReadCursors = sqliteTable(
+  'channel_read_cursors',
+  {
+    viewerKey: text('viewer_key')
+      .notNull()
+      .references(() => readViewers.viewerKey, { onDelete: 'cascade' }),
+    channelId: text('channel_id')
+      .$type<ChannelId>()
+      .notNull()
+      .references(() => channels.id, { onDelete: 'cascade' }),
+    readAt: integer('read_at').notNull(),
+    readSourceId: text('read_source_id').notNull(),
+    updatedAt: integer('updated_at').notNull(),
+  },
+  (table) => [primaryKey({ columns: [table.viewerKey, table.channelId] })],
+)
+
+/** Instance-wide dismissal of one attention item fingerprint. */
+export const attentionDismissals = sqliteTable(
+  'attention_dismissals',
+  {
+    fingerprint: text().primaryKey(),
+    dismissedAt: integer('dismissed_at').notNull(),
+  },
+  (table) => [index('attention_dismissals_time_idx').on(table.dismissedAt)],
+)
+
+/** Administrator resolutions of unsettled Outbound Intents; earlier receipts are kept here, not overwritten silently. */
+export const outboundResolutions = sqliteTable(
+  'outbound_resolutions',
+  {
+    id: text().primaryKey(),
+    intentId: text('intent_id')
+      .$type<OutboundIntentId>()
+      .notNull()
+      .references(() => outboundIntents.id, { onDelete: 'cascade' }),
+    action: text({ enum: ['retry', 'confirm-delivered'] }).notNull(),
+    previousState: text('previous_state', { enum: ['partially-sent', 'failed', 'unknown'] }).notNull(),
+    previousDeliveries: jsonText<JsonValue>('previous_deliveries').notNull(),
+    viewerKey: text('viewer_key').notNull(),
+    createdAt: integer('created_at').notNull(),
+  },
+  (table) => [
+    index('outbound_resolutions_intent_idx').on(table.intentId, table.createdAt),
+    check('outbound_resolutions_action_ck', sql`${table.action} IN ('retry', 'confirm-delivered')`),
+    check(
+      'outbound_resolutions_previous_state_ck',
+      sql`${table.previousState} IN ('partially-sent', 'failed', 'unknown')`,
+    ),
+  ],
+)
+
 export const coreSchema = {
   agentDefinitions,
   agentRevisions,
@@ -1104,4 +1182,9 @@ export const coreSchema = {
   systemSettings,
   dshSessionResets,
   bindingAdmissionCutoffs,
+  agentAppearances,
+  readViewers,
+  channelReadCursors,
+  attentionDismissals,
+  outboundResolutions,
 } as const

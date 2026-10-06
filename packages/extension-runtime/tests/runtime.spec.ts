@@ -3242,6 +3242,28 @@ describe('Host Extension Installation', () => {
     await coordinator.dispose()
   })
 
+  it('uninstalls a persisted installation that never mounted without rebuilding it', async () => {
+    const repository = new MemoryExtensionRepository()
+    const extension = localExtension(extensionId('hostunbuildable'))
+    const hostRevision = revision(revisionId('hostunbuildable1'), extension.id, 1)
+    repository.saveExtensionRevision({
+      extension,
+      revision: hostRevision,
+      verification: adapterVerification(hostRevision.id),
+    })
+    repository.upsertHostInstallation({
+      extensionId: extension.id,
+      extensionRevisionId: hostRevision.id,
+      installedAt: 1,
+    })
+    const coordinator = installationCoordinator(repository, new FakeHostInstallationHost(), {
+      build: () => Promise.reject(new Error('需要重建')),
+    })
+    await coordinator.uninstall(extension.id)
+    expect(repository.getHostInstallation(extension.id)).toBeUndefined()
+    await coordinator.dispose()
+  })
+
   it('rejects an installed row that has no recoverable adapter key', async () => {
     const repository = new MemoryExtensionRepository()
     const extension = localExtension(extensionId('hostmissingkey'))

@@ -1,5 +1,6 @@
 import type {
   AgentId,
+  ChannelEventId,
   ChannelId,
   ChannelRuntimeCache,
   ChannelRuntimeCacheSample,
@@ -44,6 +45,7 @@ export type RuntimeSessionStatus = 'idle' | 'running' | 'missing'
 
 export type RuntimeProjectionEvent =
   | { readonly type: 'turn/start'; readonly turn: number; readonly at?: number }
+  | { readonly type: 'turn/trigger'; readonly turn: number; readonly eventId: ChannelEventId }
   | {
       readonly type: 'channel/response-state'
       readonly turn: number
@@ -165,6 +167,7 @@ type ProjectedTurn = {
   error?: { code: string; message: string }
   startedAt?: number
   endedAt?: number
+  triggerEventId?: ChannelEventId
   steps: Map<number, ProjectedStep>
 }
 
@@ -470,6 +473,10 @@ export const projectChannelRuntime = (input: ChannelRuntimeProjectionInput): Cha
       if (event.at !== undefined) record.startedAt = event.at
       continue
     }
+    if (event.type === 'turn/trigger') {
+      ensureTurn(event.turn).triggerEventId = event.eventId
+      continue
+    }
     if (event.type === 'turn/end') {
       const record = ensureTurn(event.turn)
       const nextState = turnStateFromReason(event.reasonKind)
@@ -565,6 +572,9 @@ export const projectChannelRuntime = (input: ChannelRuntimeProjectionInput): Cha
       ...(elapsedMs(record.startedAt, record.endedAt) === undefined
         ? {}
         : { durationMs: elapsedMs(record.startedAt, record.endedAt) }),
+      ...(record.startedAt === undefined ? {} : { startedAt: record.startedAt }),
+      ...(record.endedAt === undefined ? {} : { endedAt: record.endedAt }),
+      ...(record.triggerEventId === undefined ? {} : { triggerEventId: record.triggerEventId }),
       steps: [...record.steps.values()]
         .sort((left, right) => left.step - right.step)
         .map((step) => {

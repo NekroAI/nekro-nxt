@@ -87,7 +87,9 @@ import {
   type SendMessageResult,
 } from '@nekro-nxt/channel-runtime'
 import {
+  AdmissionIdSchema,
   AssetIdSchema,
+  ChannelEventIdSchema,
   DshPluginEntryIdSchema,
   ChannelMemberIdSchema,
   ExtensionConfigDeclarationSchema,
@@ -3083,6 +3085,45 @@ export class DshHostRuntime implements AgentSessionDriver, ExtensionActivationHo
     if (disposeError !== undefined) {
       throw errorFromUnknown(disposeError, `DSH Session disposal failed: ${dshSessionId}`)
     }
+  }
+
+  /**
+   * Aborts the live turn while keeping the DSH Session and every admitted-but-unconsumed inbox message.
+   * The model or tool step receives the abort signal; queued input waits for the next admission.
+   */
+  async interruptTurn(
+    dshSessionId: string,
+    reason: string,
+  ): Promise<Awaited<ReturnType<AgentSessionDriver['interruptTurn']>>> {
+    this.#assertActive()
+    const agent = this.#context.agents.get(SessionId(dshSessionId))
+    if (!agent) throw new Error(`DSH Agent Session is not live: ${dshSessionId}`)
+    if (agent.status === 'idle') {
+      return { interrupted: false, retainedPending: agent.inbox.nextStep.length + agent.inbox.nextTurn.length }
+    }
+    agent.cancel({ kind: 'hook', reason }, { keepInbox: true })
+    await agent.whenIdle()
+    return { interrupted: true, retainedPending: agent.inbox.nextStep.length + agent.inbox.nextTurn.length }
+  }
+
+  /** Channel admissions that DSH has accepted into its inbox but the model has not consumed yet. */
+  listPendingAdmissions(dshSessionId: string): ReturnType<AgentSessionDriver['listPendingAdmissions']> {
+    this.#assertActive()
+    const agent = this.#context.agents.get(SessionId(dshSessionId))
+    if (!agent) throw new Error(`DSH Agent Session is not live: ${dshSessionId}`)
+    const project = (target: 'next-step' | 'next-turn', messages: readonly UserMessage[]) =>
+      messages.flatMap((message) =>
+        message.source.kind === 'nekro-nxt-channel'
+          ? [
+              {
+                admissionId: AdmissionIdSchema.parse(message.source.admissionId),
+                target,
+                channelEventIds: message.source.channelEventIds.map((id) => ChannelEventIdSchema.parse(id)),
+              },
+            ]
+          : [],
+      )
+    return [...project('next-step', agent.inbox.nextStep), ...project('next-turn', agent.inbox.nextTurn)]
   }
 
   async applyCompatibleRevision(input: Parameters<AgentSessionDriver['applyCompatibleRevision']>[0]): Promise<void> {

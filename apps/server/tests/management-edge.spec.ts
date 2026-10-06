@@ -25,7 +25,14 @@ interface ResponseRecord {
 const request = (
   port: number,
   pathname: string,
-  input: { method?: string; body?: unknown; cookie?: string; csrf?: string; origin?: string } = {},
+  input: {
+    method?: string
+    body?: unknown
+    cookie?: string
+    csrf?: string
+    origin?: string
+    viewer?: string
+  } = {},
 ): Promise<ResponseRecord> =>
   new Promise((resolve, reject) => {
     const encoded = input.body === undefined ? undefined : JSON.stringify(input.body)
@@ -43,6 +50,7 @@ const request = (
           ...(input.cookie === undefined ? {} : { cookie: input.cookie }),
           ...(input.csrf === undefined ? {} : { 'x-nxt-csrf': input.csrf }),
           ...(input.origin === undefined ? {} : { origin: input.origin }),
+          ...(input.viewer === undefined ? {} : { 'x-nxt-viewer': input.viewer }),
         },
       },
       (response) => {
@@ -73,7 +81,7 @@ describe('automatic TLS management edge', () => {
     const repository = new SqliteHostSecurityRepository(database)
     const internal = createServer((req, res) => {
       res.writeHead(200, { 'content-type': 'application/json' })
-      res.end(JSON.stringify({ proxied: true, method: req.method }))
+      res.end(JSON.stringify({ proxied: true, method: req.method, viewer: req.headers['x-nxt-viewer'] ?? null }))
     })
     await new Promise<void>((resolve) => internal.listen(0, '127.0.0.1', resolve))
     const internalAddress = internal.address()
@@ -157,7 +165,13 @@ describe('automatic TLS management edge', () => {
       expect(Array.isArray(cookies)).toBe(true)
       const cookie = Array.isArray(cookies) ? cookies.map((value) => value.split(';')[0]).join('; ') : ''
       const csrf = ManagementSessionResponseSchema.parse(session.json).csrfToken
-      expect((await request(edge.port, '/api/private', { cookie })).status).toBe(200)
+      const viewed = await request(edge.port, '/api/private', { cookie, viewer: 'device:nxt_device_SPOOFED' })
+      expect(viewed.status).toBe(200)
+      // The edge replaces any client-claimed viewer with the authenticated device.
+      expect(viewed.json).toMatchObject({ viewer: `device:${credential.deviceId}` })
+      expect((await request(edge.port, '/health/ready', { viewer: 'device:nxt_device_SPOOFED' })).json).toMatchObject({
+        viewer: null,
+      })
       expect((await request(edge.port, '/api/private', { method: 'POST', body: {}, cookie })).status).toBe(403)
       expect(
         (
