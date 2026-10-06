@@ -197,6 +197,58 @@ export interface NxtLlmResponse {
   readonly usage?: { readonly inputTokens: number; readonly outputTokens: number }
 }
 
+export interface NxtInboundMessage {
+  readonly logicalMessageId: string
+  readonly channel: {
+    readonly id: string
+    readonly kind: 'internal' | 'direct' | 'group'
+    readonly displayName?: string
+  }
+  readonly sender?: NxtMemberSummary
+  readonly text: string
+  /** Whether the message mentions or replies to this agent's bot account. */
+  readonly mentionsAgent: boolean
+  /** Whether the binding's trigger policy would wake the agent without any hook. */
+  readonly wouldTrigger: boolean
+  readonly receivedAt: number
+}
+
+/** All fields optional: returning nothing keeps the default behaviour. */
+export interface NxtInboundDecision {
+  /** `force` needs `mayForceTrigger`; `suppress` keeps the agent asleep for this message. */
+  readonly trigger?: 'default' | 'suppress' | 'force'
+  /** Needs `mayHide`. The message stays in the channel timeline but the agent never sees it. */
+  readonly hideFromAgent?: boolean
+  /** Short note shown to the agent next to the message (max 500 characters). */
+  readonly annotation?: string
+}
+
+/** `nxt` here is bound to the message's channel; it has no prompt registration. */
+export type NxtInboundHandler = (
+  message: NxtInboundMessage,
+  nxt: NxtHostService,
+) => NxtInboundDecision | undefined | Promise<NxtInboundDecision | undefined>
+
+export interface NxtJobScheduleInput {
+  readonly label: string
+  /** One-off run at this epoch millisecond time; mutually exclusive with `cron`. */
+  readonly at?: number
+  /** Five-field cron expression, e.g. `0 8 * * *`; mutually exclusive with `at`. */
+  readonly cron?: string
+  /** IANA time zone for `cron`, default the Host time zone. */
+  readonly timezone?: string
+  /** JSON shown to the agent when the job fires. */
+  readonly payload?: ExtensionJsonValue
+}
+
+export interface NxtJobRecord {
+  readonly jobId: string
+  readonly label: string
+  readonly nextRunAt?: number
+  readonly cron?: string
+  readonly at?: number
+}
+
 /** Read-only view handed to dynamic context renderers; it cannot reach the network or the model. */
 export interface NxtPromptRenderApi {
   readonly storage: Pick<NxtHostService['storage'], 'get' | 'list'>
@@ -241,6 +293,16 @@ export interface NxtHostService {
     }): Promise<{ readonly messages: readonly NxtHistoryMessage[]; readonly next?: string }>
     search(query: string, options?: { readonly limit?: number }): Promise<readonly NxtHistoryMessage[]>
   }
+  readonly jobs: {
+    /**
+     * Wakes the agent in the current channel when due; whether it speaks is up to the agent. Requires
+     * `permissions.capabilities.jobs.runtime`.
+     */
+    schedule(input: NxtJobScheduleInput): Promise<NxtJobRecord>
+    /** This extension's jobs for this agent in the current channel. */
+    list(): Promise<readonly NxtJobRecord[]>
+    cancel(jobId: string): Promise<boolean>
+  }
   readonly llm: {
     /**
      * One completion with the agent's configured model, counted in the agent's usage. Requires
@@ -275,6 +337,11 @@ export interface ExtensionHostEnvironment {
     handle(method: string, handler: ExtensionRpcHandler): () => void
     /** Host-scoped Adapter Revisions register exactly one contribution during factory evaluation. */
     registerAdapter(contribution: AdapterHostContributionV2): () => void
+    /**
+     * Agent extensions that declare `permissions.capabilities.inboundHook` register one inbound handler during
+     * factory evaluation (like `handle`). It runs after the message is stored and before the agent is woken.
+     */
+    onInbound?(handler: NxtInboundHandler): () => void
     /**
      * Current configuration validated against the Manifest config schema. Dynamic runs have no saved configuration;
      * read it as `harness.config?.() ?? {}` so the same source works before and after saving.
@@ -890,6 +957,8 @@ export const NEKRO_NXT_EXTENSION_AUTHORING_REFERENCE: NekroNxtExtensionAuthoring
       'ctx.nxt.context.current() → { agent, channel, latestInbound?: { sender, text } }：当前智能体、频道和最近一条入站消息。',
       'ctx.nxt.history.list({ limit, before }) / search(query)：读取当前频道聊天记录；需要 history: { read: true }。',
       "ctx.nxt.llm.complete({ system, messages: [{ role: 'user', text }], maxOutputTokens }) → { text }：用智能体当前的模型完成一次辅助任务（分析、分类、改写），计入智能体用量；需要 llm: { maxCallsPerTurn, maxOutputTokens }。不能流式输出，也不能调用工具。",
+      "harness.onInbound((message, nxt) => decision)：在 factory 阶段（与 harness.handle 相同）注册唯一的入站处理函数，消息入库后、唤醒智能体前运行；返回 { trigger: 'default' | 'suppress' | 'force', hideFromAgent, annotation } 或不返回。需要 inboundHook: { reads: 'triggered' | 'all', mayHide, mayForceTrigger, timeoutMs }；reads: 'triggered' 只看原本会唤醒智能体的消息。nxt 参数绑定到该消息所在频道，可读写存储、调用模型，但不能注册上下文。超时或抛错按默认处理；消息始终入库，hideFromAgent 只是不让智能体看到。",
+      'ctx.nxt.jobs.schedule({ label, at | cron, timezone, payload }) / list() / cancel(jobId)：在当前频道创建定时任务，到期时以“定时任务到期”事件唤醒智能体，由智能体决定是否发言；需要 jobs: { runtime: { maxActive } }。固定计划写在 jobs.declared: [{ id, label, cron, timezone }]，会在启用它的智能体绑定的每个频道触发。动态运行中创建的任务不会真的触发。',
       "ctx.nxt.prompt.static(name, text) / dynamic(name, render)：向智能体提供补充说明；需要在 context 中按名称声明 { name, kind: 'static' | 'dynamic', maxChars }。",
     ],
     rules: [
@@ -899,6 +968,8 @@ export const NEKRO_NXT_EXTENSION_AUTHORING_REFERENCE: NekroNxtExtensionAuthoring
       '缺少凭据、网络失败或外部服务报错时，工具应返回 { ok: false, message } 这样可读的结果，而不是抛出异常；保存验证会真实调用工具，凭据此时为空。',
       'verification 样例必须没有副作用：验证会真实发出网络请求，样例应是查询而不是提交、发送或付款。',
       '扩展本身不能在频道发言；要发送图片、文件或语音时，返回 assetId 让智能体调用 send_channel_message。',
+      '入站处理函数要快且确定：先做本地判断，确实需要时再调用模型；它看到的是用户消息原文，不要把内容写进日志或外发。',
+      '过滤、防抖、关键词监听这类需求用 onInbound；定时推送、提醒这类需求用 jobs，到期后由智能体自己发言，扩展不直接发送消息。',
     ],
   },
   recoveryRules: [

@@ -18,12 +18,18 @@ import {
 } from '@nekro-nxt/contracts'
 import { canonicalJson } from '@nekro-nxt/core'
 import type { ImportedRevisionVerificationInput, ImportedRevisionVerifier } from '@nekro-nxt/extension-runtime'
-import type { ExtensionToolDefinition, NxtCallContext } from '@nekro-nxt/extension-sdk'
+import type {
+  ExtensionToolDefinition,
+  NxtCallContext,
+  NxtInboundHandler,
+  NxtInboundMessage,
+} from '@nekro-nxt/extension-sdk'
 import { createFakeAdapterHostContext } from '@nekro-nxt/test-harness'
 import { createHash } from 'node:crypto'
 import { pathToFileURL } from 'node:url'
+import { z } from 'zod'
 import { createExtensionEgress } from './extension-egress.js'
-import { memoryNxtStorage } from './extension-host-backends.js'
+import { memoryNxtJobs, memoryNxtStorage } from './extension-host-backends.js'
 import { createNxtHostService } from './extension-host-service.js'
 
 const IMPORT_ORIGIN = {
@@ -506,6 +512,24 @@ const verifyClient = async (
   return evidence
 }
 
+const VERIFICATION_INBOUND_MESSAGE: NxtInboundMessage = {
+  logicalMessageId: 'msg_VERIFY',
+  channel: { id: 'chn_VERIFY', kind: 'group', displayName: '验证频道' },
+  sender: { memberId: 'mbr_VERIFY', displayName: '验证成员' },
+  text: '验证消息',
+  mentionsAgent: true,
+  wouldTrigger: true,
+  receivedAt: 1,
+}
+
+const InboundDecisionSchema = z
+  .object({
+    trigger: z.enum(['default', 'suppress', 'force']).optional(),
+    hideFromAgent: z.boolean().optional(),
+    annotation: z.string().max(2000).optional(),
+  })
+  .strict()
+
 const VERIFICATION_CALL_CONTEXT: NxtCallContext = {
   agent: { id: 'agt_VERIFY', name: '验证智能体' },
   channel: { id: 'chn_VERIFY', kind: 'group', displayName: '验证频道' },
@@ -535,6 +559,7 @@ const createVerificationNxt = (capabilities: ExtensionCapabilities | undefined, 
     {
       fetch: (policy, url, init) => createExtensionEgress({ policy }).fetch(url, init),
       storage: memoryNxtStorage(),
+      jobs: memoryNxtJobs(),
       secret: () => Promise.resolve(undefined),
       // Verification never spends the user's model quota; a fixed reply exercises the call path.
       complete: () => Promise.resolve({ text: '验证模型回复' }),
@@ -563,6 +588,7 @@ const verifyAgentOrHostUi = async (input: ImportedRevisionVerificationInput): Re
   const tools = new Map<string, ExtensionToolDefinition>()
   const toolInvocations: Array<{ name: string; succeeded: boolean }> = []
   let disposePlugin: (() => void | Promise<void>) | undefined
+  let inbound: NxtInboundHandler | undefined
   const nxt = createVerificationNxt(manifest.scope === 'agent' ? manifest.permissions.capabilities : undefined, () =>
     defaultConfig(input),
   )
@@ -586,6 +612,14 @@ const verifyAgentOrHostUi = async (input: ImportedRevisionVerificationInput): Re
             return () => handlers.delete(method)
           },
           registerAdapter: forbiddenAdapter,
+          onInbound: (handler: NxtInboundHandler) => {
+            if (manifest.scope !== 'agent' || manifest.permissions.capabilities?.inboundHook === undefined) {
+              throw new Error('注册 harness.onInbound 需要声明 permissions.capabilities.inboundHook。')
+            }
+            if (inbound !== undefined) throw new Error('一个扩展只能注册一个入站处理函数。')
+            inbound = handler
+            return () => undefined
+          },
           config: () => defaultConfig(input),
         },
         config: defaultConfig(input),
@@ -620,6 +654,20 @@ const verifyAgentOrHostUi = async (input: ImportedRevisionVerificationInput): Re
       toolInvocations.push({ name: tool.name, succeeded: true })
     }
     for (const [method, handler] of handlers) JsonValueSchema.parse(await handler(rpcInputs.get(method) ?? null))
+    if (inbound !== undefined) {
+      const declared = manifest.scope === 'agent' ? manifest.permissions.capabilities?.inboundHook : undefined
+      const decision = await inbound(VERIFICATION_INBOUND_MESSAGE, nxt)
+      if (decision !== undefined && decision !== null) {
+        const parsed = InboundDecisionSchema.safeParse(decision)
+        if (!parsed.success) throw new Error(`入站处理函数返回了无效决定：${parsed.error.issues[0]?.message ?? ''}`)
+        if (parsed.data.hideFromAgent === true && declared?.mayHide !== true) {
+          throw new Error('入站处理函数返回了 hideFromAgent，但没有声明 mayHide。')
+        }
+        if (parsed.data.trigger === 'force' && declared?.mayForceTrigger !== true) {
+          throw new Error('入站处理函数返回了 force，但没有声明 mayForceTrigger。')
+        }
+      }
+    }
     // Context cache discipline: the same storage and call context must render byte-identical dynamic context.
     const first = await nxt.renderDynamicContext()
     const second = await nxt.renderDynamicContext()

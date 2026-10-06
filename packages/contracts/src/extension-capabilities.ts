@@ -5,7 +5,7 @@ import { z } from 'zod'
  * import with an "upgrade NekroNXT" message instead of an opaque schema error. Bump only when a new optional
  * Manifest capability ships; never reuse a level for a different meaning.
  */
-export const EXTENSION_SDK_LEVEL = 3
+export const EXTENSION_SDK_LEVEL = 4
 
 export const ExtensionRequiresSchema = z.object({ sdk: z.number().int().min(1).max(1000) }).strict()
 export type ExtensionRequires = z.output<typeof ExtensionRequiresSchema>
@@ -90,6 +90,51 @@ export const ExtensionLlmCapabilitySchema = z
   .strict()
 export type ExtensionLlmCapability = z.output<typeof ExtensionLlmCapabilitySchema>
 
+export const EXTENSION_INBOUND_HOOK_MAX_TIMEOUT_MS = 15_000
+
+export const ExtensionInboundHookCapabilitySchema = z
+  .object({
+    /** `triggered`: only messages that would wake the agent anyway; `all`: every message in bound channels. */
+    reads: z.enum(['triggered', 'all']),
+    mayHide: z.boolean(),
+    mayForceTrigger: z.boolean(),
+    timeoutMs: z.number().int().min(100).max(EXTENSION_INBOUND_HOOK_MAX_TIMEOUT_MS),
+  })
+  .strict()
+export type ExtensionInboundHookCapability = z.output<typeof ExtensionInboundHookCapabilitySchema>
+
+export const EXTENSION_JOB_MAX_RUNTIME = 50
+
+export const ExtensionDeclaredJobSchema = z
+  .object({
+    id: z
+      .string()
+      .trim()
+      .regex(/^[a-z0-9][a-z0-9-]{0,39}$/u, '定时任务 id 只能使用小写字母、数字和连字符。'),
+    label: z.string().trim().min(1).max(200),
+    cron: z.string().trim().min(9).max(120),
+    timezone: z.string().trim().min(1).max(64).optional(),
+  })
+  .strict()
+export type ExtensionDeclaredJob = z.output<typeof ExtensionDeclaredJobSchema>
+
+export const ExtensionJobsCapabilitySchema = z
+  .object({
+    /** Fixed schedules; each fires in every channel bound to the agent that enables the extension. */
+    declared: z
+      .array(ExtensionDeclaredJobSchema)
+      .max(8)
+      .refine((jobs) => new Set(jobs.map(({ id }) => id)).size === jobs.length, '定时任务 id 不能重复。')
+      .optional(),
+    /** Jobs the extension creates at runtime (`ctx.nxt.jobs.schedule`), at most this many active per agent. */
+    runtime: z
+      .object({ maxActive: z.number().int().min(1).max(EXTENSION_JOB_MAX_RUNTIME) })
+      .strict()
+      .optional(),
+  })
+  .strict()
+export type ExtensionJobsCapability = z.output<typeof ExtensionJobsCapabilitySchema>
+
 /**
  * Optional Host capabilities of an agent-scope Revision. Every field is additive to Manifest V6: an absent field
  * means the Revision cannot use that capability, exactly as before the field existed.
@@ -106,6 +151,8 @@ export const ExtensionCapabilitiesSchema = z
       .object({ read: z.literal(true) })
       .strict()
       .optional(),
+    inboundHook: ExtensionInboundHookCapabilitySchema.optional(),
+    jobs: ExtensionJobsCapabilitySchema.optional(),
     llm: ExtensionLlmCapabilitySchema.optional(),
     context: z
       .array(ExtensionContextContributionSchema)
@@ -150,6 +197,23 @@ export const extensionCapabilitiesExpand = (
   if (next.storage?.scopes.some((scope) => !(previous?.storage?.scopes ?? []).includes(scope))) return true
   if (next.assets !== undefined && previous?.assets === undefined) return true
   if (next.history !== undefined && previous?.history === undefined) return true
+  const hook = next.inboundHook
+  const previousHook = previous?.inboundHook
+  if (
+    hook !== undefined &&
+    (previousHook === undefined ||
+      (hook.reads === 'all' && previousHook.reads === 'triggered') ||
+      (hook.mayHide && !previousHook.mayHide) ||
+      (hook.mayForceTrigger && !previousHook.mayForceTrigger))
+  ) {
+    return true
+  }
+  if (
+    next.jobs?.runtime !== undefined &&
+    (previous?.jobs?.runtime === undefined || next.jobs.runtime.maxActive > previous.jobs.runtime.maxActive)
+  ) {
+    return true
+  }
   if (
     next.llm !== undefined &&
     (previous?.llm === undefined ||
@@ -197,6 +261,38 @@ export const summarizeExtensionCapabilities = (
     items.push({ key: 'assets', risk: 'normal', label: '在当前频道生成图片或文件' })
   if (capabilities.history !== undefined)
     items.push({ key: 'history', risk: 'normal', label: '读取当前频道的聊天记录' })
+  const hook = capabilities.inboundHook
+  if (hook !== undefined) {
+    const effects = [
+      hook.mayHide ? '对智能体隐藏消息' : '',
+      hook.mayForceTrigger ? '让智能体回应原本不会回应的消息' : '',
+    ]
+      .filter((effect) => effect !== '')
+      .join('、')
+    items.push({
+      key: 'inboundHook',
+      risk: hook.reads === 'all' ? 'high' : 'sensitive',
+      label: hook.reads === 'all' ? '查看频道里的全部消息' : '在智能体回应前查看要回应的消息',
+      ...(effects === '' ? {} : { detail: `可以${effects}` }),
+    })
+  }
+  const jobs = capabilities.jobs
+  if (jobs?.declared !== undefined && jobs.declared.length > 0) {
+    items.push({
+      key: 'jobs.declared',
+      risk: 'normal',
+      label: '按固定计划唤醒智能体',
+      detail: jobs.declared.map(({ label }) => label).join('、'),
+    })
+  }
+  if (jobs?.runtime !== undefined) {
+    items.push({
+      key: 'jobs.runtime',
+      risk: 'sensitive',
+      label: '创建定时任务唤醒智能体',
+      detail: `同时最多 ${jobs.runtime.maxActive} 个`,
+    })
+  }
   if (capabilities.llm !== undefined) {
     items.push({
       key: 'llm',

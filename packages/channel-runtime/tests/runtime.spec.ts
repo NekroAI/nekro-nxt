@@ -53,6 +53,8 @@ import { describe, expect, it, vi } from 'vitest'
 import type {
   AdmissionRecord,
   ChannelRuntimeOptions,
+  InboundHookDecision,
+  InboundHookGate,
   AgentSessionDriver,
   DeliveryReceiptRecord,
   EpisodeCloseReason,
@@ -603,7 +605,7 @@ const setup = async (
   idleRolloverMs?: number | false,
   handoffSummary?: AgentSessionDriver['createHandoffSummary'],
   feedbackInteractions?: AdapterConnectionInteractions,
-  admissionOptions: Pick<ChannelRuntimeOptions, 'deferAdmission' | 'canAdmitAgent'> = {},
+  admissionOptions: Pick<ChannelRuntimeOptions, 'deferAdmission' | 'canAdmitAgent' | 'inboundHooks'> = {},
 ) => {
   const coreRepository = new MemoryCoreRepository()
   const runtimeRepository = new MemoryRuntimeRepository(coreRepository)
@@ -2621,5 +2623,91 @@ describe('ChannelRuntime M1 lane', () => {
     await expect(context.runtime.recover()).resolves.toMatchObject({ resumedEpisodes: 1 })
     expect(context.runtimeRepository.admissions).toHaveLength(2)
     expect([...context.runtimeRepository.admissions.values()][1]).toMatchObject({ state: 'logged-to-session' })
+  })
+})
+
+describe('ChannelRuntime extension inbound hooks and scheduled jobs', () => {
+  const hookGate = (decide: (text: string) => InboundHookDecision) => {
+    const stored = new Map<string, InboundHookDecision>()
+    const calls: string[] = []
+    const gate: InboundHookGate = {
+      covers: () => true,
+      decide: ({ event, binding, defaultTriggered }) => {
+        calls.push(`${event.id}:${String(defaultTriggered)}`)
+        const part = event.parts[0]
+        const decision = decide(part?.type === 'text' ? part.text : '')
+        stored.set(`${event.id}:${binding.agentId}`, decision)
+        return Promise.resolve(decision)
+      },
+      stored: (eventId, agentId) => stored.get(`${eventId}:${agentId}`),
+    }
+    return { gate, calls }
+  }
+  const text = (event: AdapterChannelInboundEvent, value: string): AdapterChannelInboundEvent => ({
+    ...event,
+    parts: [{ type: 'text', text: value }],
+  })
+
+  it('keeps hidden messages as facts, out of the agent view, and lets them ride along later Admissions', async () => {
+    const { gate, calls } = hookGate((value) =>
+      value.startsWith('广告') ? { trigger: 'default', hidden: true } : { trigger: 'default', hidden: false },
+    )
+    const harness = await setup(true, undefined, undefined, undefined, { inboundHooks: gate })
+    const hidden = await harness.runtime.acceptChannelInbound(
+      text(inbound(harness.connection.id, harness.channel.id, 'ad', 102), '广告：示例'),
+    )
+    expect(harness.admissionCalls).toHaveLength(0)
+    expect(harness.coreRepository.getChannelEvent(hidden.channelEventId)).toBeDefined()
+    await harness.runtime.acceptChannelInbound(
+      text(inbound(harness.connection.id, harness.channel.id, 'hello', 103), '你好'),
+    )
+    expect(harness.admissionCalls).toHaveLength(1)
+    expect(harness.admissionCalls[0]?.events.map(({ id }) => id)).not.toContain(hidden.channelEventId)
+    expect(calls).toEqual([`${hidden.channelEventId}:true`, expect.stringMatching(/:true$/u)])
+  })
+
+  it('suppresses triggers and carries annotations to the agent', async () => {
+    const { gate } = hookGate((value) =>
+      value === '安静'
+        ? { trigger: 'suppress', hidden: false }
+        : { trigger: 'default', hidden: false, annotation: '情绪：积极' },
+    )
+    const harness = await setup(true, undefined, undefined, undefined, { inboundHooks: gate })
+    await harness.runtime.acceptChannelInbound(
+      text(inbound(harness.connection.id, harness.channel.id, 'quiet', 102), '安静'),
+    )
+    expect(harness.admissionCalls).toHaveLength(0)
+    const loud = await harness.runtime.acceptChannelInbound(
+      text(inbound(harness.connection.id, harness.channel.id, 'loud', 103), '太好了'),
+    )
+    const call = harness.admissionCalls[0]
+    expect(call?.replyRequired).toBe(true)
+    expect(call?.annotations?.get(loud.channelEventId)).toBe('情绪：积极')
+  })
+
+  it('wakes the agent for a due job without a reply obligation and fires each occurrence once', async () => {
+    const harness = await setup()
+    const job = {
+      channelId: harness.channel.id,
+      agentId: harness.agent.definition.id,
+      jobId: 'job_FIXTURE',
+      label: '每日示例提醒',
+      extensionName: '示例扩展',
+      payload: { topic: '示例' },
+      scheduledAt: 1_000,
+      firedAt: 61_000,
+    }
+    const first = await harness.runtime.fireExtensionJob(job)
+    expect(first?.inserted).toBe(true)
+    expect(harness.admissionCalls).toHaveLength(1)
+    expect(harness.admissionCalls[0]?.replyRequired).toBe(false)
+    const fact = harness.coreRepository.getChannelEvent(first!.channelEventId)
+    expect(fact?.kind).toBe('control')
+    expect(fact?.facts?.['extensionJob']).toMatchObject({ jobId: 'job_FIXTURE', delayMinutes: 1 })
+    expect(await harness.runtime.fireExtensionJob({ ...job, firedAt: 62_000 })).toMatchObject({ inserted: false })
+    expect(harness.admissionCalls).toHaveLength(1)
+    expect(
+      await harness.runtime.fireExtensionJob({ ...job, agentId: AgentIdSchema.parse('agt_OTHER') }),
+    ).toBeUndefined()
   })
 })

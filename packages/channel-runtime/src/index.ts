@@ -301,6 +301,8 @@ export interface AgentSessionDriver {
     readonly events: readonly ChannelEventRecord[]
     readonly mode: 'followup' | 'inject'
     readonly replyRequired: boolean
+    /** Extension inbound-hook annotations keyed by Channel Event, rendered next to that event. */
+    readonly annotations?: ReadonlyMap<ChannelEventId, string>
   }): Promise<{ readonly dshMessageId: string }>
   notifyConsoleOutbound(input: {
     readonly dshSessionId: string
@@ -309,6 +311,45 @@ export interface AgentSessionDriver {
     readonly parts: readonly MessagePart[]
   }): Promise<void>
 }
+
+/** What extension inbound hooks decided for one Channel Event and one agent; persisted once and never rewritten. */
+export interface InboundHookDecision {
+  readonly trigger: 'default' | 'suppress' | 'force'
+  readonly hidden: boolean
+  readonly annotation?: string
+}
+
+/**
+ * Extension inbound hooks of the Host. Facts are committed before any hook runs; a decision only changes whether the
+ * agent is woken, whether it sees the message and what annotation travels with it.
+ */
+export interface InboundHookGate {
+  /** Whether any enabled extension of this agent observes inbound messages. */
+  covers(agentId: AgentId): boolean
+  /** Runs the hooks with their own timeout, persists the merged decision and returns it; repeat calls return it. */
+  decide(input: {
+    readonly binding: BindingRecord
+    readonly event: ChannelEventRecord
+    readonly defaultTriggered: boolean
+  }): Promise<InboundHookDecision>
+  stored(eventId: ChannelEventId, agentId: AgentId): InboundHookDecision | undefined
+}
+
+/** A scheduled job of an extension or the built-in reminder that has come due in one bound channel. */
+export interface ExtensionJobFiring {
+  readonly channelId: ChannelId
+  readonly agentId: AgentId
+  readonly jobId: string
+  readonly label: string
+  /** Extension display name, or absent for the built-in reminder. */
+  readonly extensionName?: string
+  readonly payload: JsonValue
+  readonly scheduledAt: number
+  readonly firedAt: number
+}
+
+export const isExtensionJobEvent = (event: Pick<ChannelEventRecord, 'facts'>): boolean =>
+  event.facts?.['extensionJob'] !== undefined
 
 export interface ChannelRuntimeOptions {
   /** Persist inbound facts while Host restores required services and optional extensions. */
@@ -326,6 +367,7 @@ export interface ChannelRuntimeOptions {
   ) => void
   readonly idleRolloverMs?: number | false
   readonly adapterState?: AdapterRuntimeStateStore
+  readonly inboundHooks?: InboundHookGate
 }
 
 export type ContextResetMode = 'clear' | 'compact'
@@ -448,6 +490,7 @@ export class ChannelRuntime {
   readonly #resolveAdapter: ChannelRuntimeOptions['resolveAdapter']
   readonly #isActivityTriggerAllowed: NonNullable<ChannelRuntimeOptions['isActivityTriggerAllowed']>
   readonly #isActivityTriggerEnabledByDefault: NonNullable<ChannelRuntimeOptions['isActivityTriggerEnabledByDefault']>
+  readonly #inboundHooks: InboundHookGate | undefined
   readonly #validateActivityTriggerOverrides: NonNullable<ChannelRuntimeOptions['validateActivityTriggerOverrides']>
   readonly #now: () => number
   readonly #nextUlid: () => string
@@ -472,6 +515,7 @@ export class ChannelRuntime {
     this.#resolveAdapter = options.resolveAdapter
     this.#isActivityTriggerAllowed = options.isActivityTriggerAllowed ?? (() => true)
     this.#isActivityTriggerEnabledByDefault = options.isActivityTriggerEnabledByDefault ?? (() => false)
+    this.#inboundHooks = options.inboundHooks
     this.#validateActivityTriggerOverrides = options.validateActivityTriggerOverrides ?? (() => undefined)
     this.#now = options.now ?? Date.now
     this.#nextUlid = options.nextUlid ?? monotonicFactory()
@@ -506,20 +550,16 @@ export class ChannelRuntime {
     const commit = this.#core.appendInbound(event)
     if (commit.inserted) {
       this.#publishFact({ channelId: event.channelId, kind: 'inbound', sourceId: commit.event.id })
+      const bindings = this.#coreRepository
+        .listBindings(event.channelId)
+        .filter((binding) => this.#admissionState === 'open' && this.#canAdmitAgent(binding.agentId))
+      // Hooks see the committed fact; their decision is stored before any Admission can reference the event.
+      await Promise.all(bindings.map((binding) => this.#decideInboundHooks(binding, commit.event)))
       await Promise.all(
-        this.#coreRepository
-          .listBindings(event.channelId)
+        bindings
           .filter((binding) => {
-            if (this.#admissionState !== 'open' || !this.#canAdmitAgent(binding.agentId)) return false
-            if (
-              isTriggered(
-                binding,
-                commit.event,
-                this.#isActivityTriggerAllowed,
-                this.#isActivityTriggerEnabledByDefault,
-              )
-            )
-              return true
+            if (this.#hookDecision(binding, commit.event)?.hidden === true) return false
+            if (this.#triggered(binding, commit.event)) return true
             const episode = this.#runtimeRepository.getActiveEpisode(binding.channelId, binding.agentId)
             return (
               episode?.dshSessionId !== undefined &&
@@ -536,6 +576,95 @@ export class ChannelRuntime {
       inserted: commit.inserted,
     }
   }
+
+  /**
+   * Commits a due scheduled job as a control fact in its channel and wakes the bound agent like any trigger. The
+   * dedupe key is the job and its scheduled time, so a restart that fires the same occurrence again is a no-op.
+   */
+  async fireExtensionJob(job: ExtensionJobFiring): Promise<InboundCommitResult | undefined> {
+    const channel = this.#coreRepository.getChannel(job.channelId)
+    const binding = this.#coreRepository.getBinding(job.channelId)
+    if (!channel || !binding || binding.agentId !== job.agentId) return undefined
+    const connection = this.#coreRepository.getConnection(channel.connectionId)
+    if (!connection) return undefined
+    const delayMinutes = Math.max(0, Math.round((job.firedAt - job.scheduledAt) / 60_000))
+    return this.acceptChannelInbound({
+      connectionId: channel.connectionId,
+      channelId: channel.id,
+      adapterKey: connection.adapterKey,
+      kind: 'control',
+      parts: [
+        {
+          type: 'text',
+          text: `${job.label}${
+            job.payload === null || (typeof job.payload === 'object' && Object.keys(job.payload).length === 0)
+              ? ''
+              : `\n${JSON.stringify(job.payload)}`
+          }`,
+        },
+      ],
+      platformTimestamp: job.firedAt,
+      receivedAt: job.firedAt,
+      dedupeKey: `extension-job:${job.jobId}:${job.scheduledAt}`,
+      facts: {
+        extensionJob: {
+          jobId: job.jobId,
+          label: job.label,
+          ...(job.extensionName === undefined ? {} : { extensionName: job.extensionName }),
+          scheduledAt: job.scheduledAt,
+          delayMinutes,
+        },
+      },
+    })
+  }
+
+  async #decideInboundHooks(binding: BindingRecord, event: ChannelEventRecord): Promise<void> {
+    const hooks = this.#inboundHooks
+    if (hooks === undefined || event.kind !== 'message-created' || isExtensionJobEvent(event)) return
+    if (!hooks.covers(binding.agentId) || hooks.stored(event.id, binding.agentId) !== undefined) return
+    await hooks.decide({
+      binding,
+      event,
+      defaultTriggered: isTriggered(
+        binding,
+        event,
+        this.#isActivityTriggerAllowed,
+        this.#isActivityTriggerEnabledByDefault,
+      ),
+    })
+  }
+
+  #hookDecision(binding: BindingRecord, event: ChannelEventRecord): InboundHookDecision | undefined {
+    return this.#inboundHooks?.stored(event.id, binding.agentId)
+  }
+
+  /** Product trigger rule: binding policy, then a stored hook decision, then scheduled jobs that always wake. */
+  #triggered(binding: BindingRecord, event: ChannelEventRecord): boolean {
+    if (isExtensionJobEvent(event)) return binding.triggerPolicy !== 'observe-only'
+    const decision = this.#hookDecision(binding, event)
+    if (decision?.hidden === true || decision?.trigger === 'suppress') return false
+    if (decision?.trigger === 'force') return binding.triggerPolicy !== 'observe-only'
+    return isTriggered(binding, event, this.#isActivityTriggerAllowed, this.#isActivityTriggerEnabledByDefault)
+  }
+
+  /** A scheduled job wakes the agent without obliging it to speak. */
+  #replyRequired(binding: BindingRecord, events: readonly ChannelEventRecord[]): boolean {
+    return events.some((event) => !isExtensionJobEvent(event) && this.#triggered(binding, event))
+  }
+
+  #visibleEvents(binding: BindingRecord, events: readonly ChannelEventRecord[]): readonly ChannelEventRecord[] {
+    return events.filter((event) => this.#hookDecision(binding, event)?.hidden !== true)
+  }
+
+  #annotations(binding: BindingRecord, events: readonly ChannelEventRecord[]): ReadonlyMap<ChannelEventId, string> {
+    const annotations = new Map<ChannelEventId, string>()
+    for (const event of events) {
+      const annotation = this.#hookDecision(binding, event)?.annotation
+      if (annotation !== undefined && annotation !== '') annotations.set(event.id, annotation)
+    }
+    return annotations
+  }
+
   /** Reopens admission and sweeps durable backlog; repeat after repairing an Agent quarantine. */
   openAdmission(): Promise<void> {
     if (this.#admissionState === 'disposed') return Promise.reject(new Error('Channel Runtime is disposed.'))
@@ -896,21 +1025,16 @@ export class ChannelRuntime {
             return event
           })
           const binding = this.#coreRepository.getBinding(episode.channelId)
+          const current = binding?.agentId === episode.agentId ? binding : undefined
+          const visible = current === undefined ? events : this.#visibleEvents(current, events)
+          const annotations = current === undefined ? new Map() : this.#annotations(current, visible)
           const result = await this.#sessionDriver.admit({
             dshSessionId,
             admissionId: admission.id,
-            events,
+            events: visible.length > 0 ? visible : events,
             mode: admission.mode,
-            replyRequired:
-              binding?.agentId === episode.agentId &&
-              events.some((candidate) =>
-                isTriggered(
-                  binding,
-                  candidate,
-                  this.#isActivityTriggerAllowed,
-                  this.#isActivityTriggerEnabledByDefault,
-                ),
-              ),
+            replyRequired: current !== undefined && this.#replyRequired(current, visible),
+            ...(annotations.size === 0 ? {} : { annotations }),
           })
           this.#runtimeRepository.completeAdmission(admission.id, result.dshMessageId, lastEventId)
           report.recoveredAdmissions += 1
@@ -1258,12 +1382,14 @@ export class ChannelRuntime {
     const dshSessionId = episode.dshSessionId
     if (dshSessionId === undefined) throw new Error(`Episode has no DSH Session after revision switch: ${episode.id}`)
     if (!this.#admissionAllowed(binding.agentId)) return
+    const candidateEvents = backlog ?? this.#candidateTriggeredEvents(binding, event)
+    // Hidden facts still advance the Admission cursor with visible ones, but never form an Admission on their own.
+    if (this.#visibleEvents(binding, candidateEvents).length === 0) return
     const feedbackLeaseId = await this.#feedback.startProcessingFeedback(binding, episode, event)
     if (!this.#admissionAllowed(binding.agentId)) {
       if (feedbackLeaseId !== undefined) await this.#feedback.cleanupFeedbackLease(feedbackLeaseId, 'cancelled')
       return
     }
-    const candidateEvents = backlog ?? this.#candidateTriggeredEvents(binding, event)
     const existingAdmission = this.#runtimeRepository
       .listRecoverableAdmissions(episode.id)
       .find((candidate) => candidate.eventIds.includes(event.id))
@@ -1284,22 +1410,20 @@ export class ChannelRuntime {
     if (!admission) throw new Error(`Admission was not persisted in target Episode: ${admissionId}`)
     this.#runtimeRepository.claimAdmission(admission.id)
     try {
+      const admitted = admission.eventIds.map((eventId) => {
+        const candidate = this.#coreRepository.getChannelEvent(eventId)
+        if (!candidate) throw new Error(`Admission references a missing Channel Event: ${eventId}`)
+        return candidate
+      })
+      const visible = this.#visibleEvents(binding, admitted)
+      const annotations = this.#annotations(binding, visible)
       const result = await this.#sessionDriver.admit({
         dshSessionId,
         admissionId: admission.id,
-        events: admission.eventIds.map((eventId) => {
-          const candidate = this.#coreRepository.getChannelEvent(eventId)
-          if (!candidate) throw new Error(`Admission references a missing Channel Event: ${eventId}`)
-          return candidate
-        }),
+        events: visible.length > 0 ? visible : admitted,
         mode: admission.mode,
-        replyRequired: admission.eventIds.some((eventId) => {
-          const candidate = this.#coreRepository.getChannelEvent(eventId)
-          return (
-            candidate !== undefined &&
-            isTriggered(binding, candidate, this.#isActivityTriggerAllowed, this.#isActivityTriggerEnabledByDefault)
-          )
-        }),
+        replyRequired: this.#replyRequired(binding, visible),
+        ...(annotations.size === 0 ? {} : { annotations }),
       })
       const lastEventId = admission.eventIds.at(-1)
       if (lastEventId === undefined) throw new Error(`Admission has no events: ${admission.id}`)
@@ -1323,9 +1447,9 @@ export class ChannelRuntime {
     const binding = this.#coreRepository.getBinding(channelId)
     if (!binding || binding.agentId !== agentId) return
     const events = this.#runtimeRepository.listUnadmittedEvents(channelId, agentId, binding.boundAt)
-    const event = events.find((candidate) =>
-      isTriggered(binding, candidate, this.#isActivityTriggerAllowed, this.#isActivityTriggerEnabledByDefault),
-    )
+    // A crash between commit and hook decision leaves undecided facts; decide them before recomputing triggers.
+    for (const candidate of events) await this.#decideInboundHooks(binding, candidate)
+    const event = events.find((candidate) => this.#triggered(binding, candidate))
     // One Admission batches the whole eligible backlog. Replaying the stale list would duplicate it.
     if (event !== undefined) await this.#admit(binding, event, events)
   }

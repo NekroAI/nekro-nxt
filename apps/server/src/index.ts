@@ -184,7 +184,7 @@ import {
   type NxtServiceBackends,
 } from './extension-host-service.js'
 import type { NxtLlmRequest, NxtLlmResponse } from '@nekro-nxt/extension-sdk'
-import { PersistentExtensionMounts } from './persistent-extension-mounts.js'
+import { PersistentExtensionMounts, type PersistentInboundHandler } from './persistent-extension-mounts.js'
 import {
   collectVisibleImageDigests,
   collectVisibleImageResidency,
@@ -2947,6 +2947,8 @@ export class DshHostRuntime implements AgentSessionDriver, ExtensionActivationHo
       projectedEvents.push(
         ...(await this.#imageContext.projectEvent(sessionId, event, admissionImageDigests, imageStats)),
       )
+      const annotation = input.annotations?.get(event.id)
+      if (annotation !== undefined) projectedEvents.push({ type: 'text', text: `[扩展标注] ${annotation}` })
     }
     const message = freezeMessage({
       id: dshMessageId,
@@ -3334,6 +3336,11 @@ export class DshHostRuntime implements AgentSessionDriver, ExtensionActivationHo
 
   verifyDynamicPackage(dshSessionId: string, pluginId: string, packageId: string) {
     return this.#dynamic.verifyDynamicPackage(dshSessionId, pluginId, packageId)
+  }
+
+  /** Activation-level inbound hooks of one agent's enabled extensions. */
+  inboundHandlers(agentId: AgentId): readonly PersistentInboundHandler[] {
+    return this.#extensionMounts.inboundHandlers(agentId)
   }
 
   /** One completion for an extension with the agent's current model; budgets are enforced by the `nxt` service. */

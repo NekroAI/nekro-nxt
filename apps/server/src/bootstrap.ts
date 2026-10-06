@@ -60,13 +60,16 @@ import { DshPluginPackageInstaller } from './dsh-plugin-installer.js'
 import { ServerAdapterHostInstallationHost } from './host-extension-installation.js'
 import { verifyImportedExtensionRevision } from './imported-extension-verifier.js'
 import { createExtensionEgress } from './extension-egress.js'
+import { ExtensionInboundHookGate, memoryInboundHookDecisionStore } from './extension-inbound-hooks.js'
 import {
   createNxtProductBackends,
+  memoryNxtJobs,
+  messagePartsText,
   memoryNxtStorage,
   sqliteNxtStorage,
   type NxtProductFacts,
 } from './extension-host-backends.js'
-import type { NxtServiceBackends } from './extension-host-service.js'
+import { createNxtHostService, type NxtServiceBackends } from './extension-host-service.js'
 import { ChannelExtensionActivationHost, createChannelAsset, DshHostRuntime } from './index.js'
 import { NotificationService } from './notifications.js'
 export type { ConnectionTestResult } from './connection-application.js'
@@ -356,11 +359,13 @@ export class NekroRuntime {
           fetch: nxtFetch,
           complete: nxtComplete,
           storage: sqliteNxtStorage(repository, now),
+          jobs: memoryNxtJobs(),
         }),
         dynamicBackends: createNxtProductBackends(nxtFacts, {
           fetch: nxtFetch,
           complete: nxtComplete,
           storage: memoryNxtStorage(now),
+          jobs: memoryNxtJobs(),
         }),
         describeRevision: (revision: Revision) => ({
           displayName: repository.getExtension(revision.extensionId)?.displayName ?? '扩展',
@@ -421,7 +426,49 @@ export class NekroRuntime {
       })
       hostReference.current = host
 
+      const inboundHooks = new ExtensionInboundHookGate({
+        handlers: (agentId) => host.inboundHandlers(agentId),
+        describe: (handler) => extensionHost.describeRevision(handler.revision),
+        nxtFor: (handler, channelId) => {
+          const described = extensionHost.describeRevision(handler.revision)
+          return createNxtHostService(
+            {
+              mode: 'activation',
+              agentId: handler.agentId,
+              ownerKey: handler.revision.extensionId,
+              displayName: described.displayName,
+              channelId,
+              capabilities: () => described.capabilities,
+              config: () => handler.config,
+            },
+            extensionHost.activationBackends,
+          )
+        },
+        message: (event, defaultTriggered) => {
+          const channel = repository.getChannel(event.channelId)
+          const senderId = event.senderMemberId
+          const senderName = senderId === undefined ? undefined : repository.getChannelMember(senderId)?.displayName
+          return {
+            logicalMessageId: event.logicalMessageId,
+            channel: {
+              id: event.channelId,
+              kind: channel?.kind ?? 'group',
+              ...(channel?.displayName === undefined ? {} : { displayName: channel.displayName }),
+            },
+            ...(senderId === undefined
+              ? {}
+              : { sender: { memberId: senderId, ...(senderName === undefined ? {} : { displayName: senderName }) } }),
+            text: messagePartsText(nxtFacts, event.parts),
+            mentionsAgent: event.facts?.['mentionedBot'] === true || event.facts?.['replyToBot'] === true,
+            wouldTrigger: defaultTriggered,
+            receivedAt: event.receivedAt,
+          }
+        },
+        store: memoryInboundHookDecisionStore(),
+        now,
+      })
       const channels = new ChannelRuntime(core, repository, repository, host, {
+        inboundHooks,
         deferAdmission: options.deferAdmission ?? false,
         canAdmitAgent: (agentId) => host.canRunAgent(agentId),
         now,

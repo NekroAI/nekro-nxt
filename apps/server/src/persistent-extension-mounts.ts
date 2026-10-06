@@ -12,6 +12,7 @@ import {
   type ExtensionPluginFactory,
   type ExtensionToolDefinition,
   type NxtHostService,
+  type NxtInboundHandler,
 } from '@nekro-nxt/extension-sdk'
 import path from 'node:path'
 import { pathToFileURL } from 'node:url'
@@ -53,7 +54,16 @@ interface PersistentExtensionRegistration {
   readonly fibers: Map<string, Fiber>
   readonly mounting: Map<string, Promise<void>>
   readonly handlers: Map<string, (input: ExtensionJsonValue) => ExtensionJsonValue | Promise<ExtensionJsonValue>>
+  /** Activation-level inbound hook; it must run before any Session of the agent exists in a channel. */
+  inbound?: NxtInboundHandler
   active: boolean
+}
+
+export interface PersistentInboundHandler {
+  readonly agentId: AgentRevisionRecord['agentId']
+  readonly revision: Revision
+  readonly config: JsonValue
+  readonly handler: NxtInboundHandler
 }
 
 const ExtensionHostFactorySchema = z.custom<ExtensionPluginFactory<ExtensionHostEnvironment>>(
@@ -114,6 +124,25 @@ export class PersistentExtensionMounts {
     return parseJsonValue(JSON.parse(JSON.stringify(await handler(input))))
   }
 
+  /** Inbound hooks of the agent's active Activations, in stable Extension order. */
+  inboundHandlers(agentId: AgentRevisionRecord['agentId']): readonly PersistentInboundHandler[] {
+    return [...this.#persistentExtensions.values()]
+      .filter((registration) => registration.agentId === agentId && registration.active)
+      .sort((left, right) => left.revision.extensionId.localeCompare(right.revision.extensionId))
+      .flatMap((registration) =>
+        registration.inbound === undefined
+          ? []
+          : [
+              {
+                agentId: registration.agentId,
+                revision: registration.revision,
+                config: registration.config,
+                handler: registration.inbound,
+              },
+            ],
+      )
+  }
+
   async mount(
     agentId: AgentRevisionRecord['agentId'],
     revision: Revision,
@@ -137,6 +166,7 @@ export class PersistentExtensionMounts {
     const key = `${agentId}\0${revision.extensionId}\0${revision.id}`
     if (this.#persistentExtensions.has(key)) throw new Error('Extension Revision is already mounted for this Agent.')
     const handlers = new Map<string, (input: ExtensionJsonValue) => ExtensionJsonValue | Promise<ExtensionJsonValue>>()
+    let inbound: NxtInboundHandler | undefined
     let plugin: ExtensionPluginDefinition | undefined
     if (artifact.hostEntry) {
       let factoryOpen = true
@@ -173,6 +203,16 @@ export class PersistentExtensionMounts {
             registerAdapter: () => {
               throw new Error('宿主适配器不能通过智能体 Activation 加载；请安装这个适配器 Revision。')
             },
+            onInbound: (handler: NxtInboundHandler) => {
+              if (!factoryOpen)
+                throw new Error('harness.onInbound 必须在 factory 阶段注册，不能在每个 Session 中注册。')
+              if (typeof handler !== 'function') throw new TypeError('harness.onInbound 需要一个处理函数。')
+              if (inbound !== undefined) throw new Error('一个扩展只能注册一个入站处理函数。')
+              inbound = handler
+              return () => {
+                inbound = undefined
+              }
+            },
             config: () => config,
           },
           config,
@@ -202,6 +242,7 @@ export class PersistentExtensionMounts {
       fibers: new Map(),
       mounting: new Map(),
       handlers,
+      ...(inbound === undefined ? {} : { inbound }),
       active: true,
     }
     this.#persistentExtensions.set(key, registration)

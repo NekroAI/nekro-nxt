@@ -1,4 +1,5 @@
 import type { Context } from '@deepseek-ai/cordis'
+import { Cron } from 'croner'
 import {
   EXTENSION_CONTEXT_DYNAMIC_MAX_CHARS,
   EXTENSION_STORAGE_DEFAULT_QUOTA_BYTES,
@@ -17,6 +18,7 @@ import type {
   NxtFetchResponse,
   NxtHistoryMessage,
   NxtHostService,
+  NxtJobRecord,
   NxtLlmRequest,
   NxtLlmResponse,
   NxtPromptRenderApi,
@@ -69,6 +71,11 @@ export interface NxtServiceBackends {
   readonly secret: (binding: NxtServiceBinding, key: string) => Promise<string | undefined>
   readonly createAsset: (channelId: string, input: NxtAssetCreateInput) => Promise<NxtAssetRecord>
   readonly callContext: (binding: NxtServiceBinding) => Promise<NxtCallContext>
+  readonly jobs: {
+    schedule(binding: NxtServiceBinding, job: NxtValidatedJob, maxActive: number): Promise<NxtJobRecord>
+    list(binding: NxtServiceBinding): Promise<readonly NxtJobRecord[]>
+    cancel(binding: NxtServiceBinding, jobId: string): Promise<boolean>
+  }
   /** One model completion for the binding's agent; the service enforces the declared caps first. */
   readonly complete: (
     binding: NxtServiceBinding,
@@ -91,6 +98,53 @@ export interface NxtPromptRegistry {
   context(context: { readonly name: string; readonly order: number; readonly text: () => string }): () => void
   /** Subscribes to the first step of every turn; resolves before the step assembles its prompt. */
   onTurnStart(listener: () => Promise<void>): () => void
+}
+
+export type NxtJobSchedule =
+  | { readonly kind: 'once'; readonly at: number }
+  | { readonly kind: 'cron'; readonly cron: string; readonly timezone: string }
+
+export interface NxtValidatedJob {
+  readonly label: string
+  readonly schedule: NxtJobSchedule
+  readonly payload: JsonValue
+  readonly nextRunAt: number
+}
+
+/** Next occurrence strictly after `after`, or `undefined` when a cron never fires again. */
+export const nextJobRun = (schedule: NxtJobSchedule, after: number): number | undefined => {
+  if (schedule.kind === 'once') return schedule.at > after ? schedule.at : undefined
+  return new Cron(schedule.cron, { timezone: schedule.timezone }).nextRun(new Date(after))?.getTime()
+}
+
+const hostTimezone = (): string => Intl.DateTimeFormat().resolvedOptions().timeZone
+
+/** Validates a cron expression and time zone, throwing a readable error the authoring agent can act on. */
+export const parseJobSchedule = (
+  input: {
+    readonly at?: number | undefined
+    readonly cron?: string | undefined
+    readonly timezone?: string | undefined
+  },
+  now: number,
+): NxtJobSchedule => {
+  if ((input.at === undefined) === (input.cron === undefined)) {
+    throw new NxtCapabilityError('定时任务需要且只能提供 at（一次性时间戳）或 cron（周期表达式）之一。')
+  }
+  if (input.at !== undefined) {
+    if (!Number.isSafeInteger(input.at) || input.at <= now) throw new NxtCapabilityError('at 必须是未来的毫秒时间戳。')
+    return { kind: 'once', at: input.at }
+  }
+  const cron = (input.cron ?? '').trim()
+  if (cron.split(/\s+/u).length !== 5) throw new NxtCapabilityError('cron 只支持五段表达式，例如 0 8 * * *。')
+  const timezone = input.timezone ?? hostTimezone()
+  try {
+    // croner validates the time zone lazily, so compute one occurrence to surface both errors here.
+    new Cron(cron, { timezone, paused: true }).nextRun(new Date(now))
+  } catch (error) {
+    throw new NxtCapabilityError(`cron 或时区无效：${error instanceof Error ? error.message : String(error)}`)
+  }
+  return { kind: 'cron', cron, timezone }
 }
 
 export class NxtCapabilityError extends Error {
@@ -341,6 +395,33 @@ export const createNxtHostService = (
         return backends.history.search(binding.channelId, query, limit)
       },
     },
+    jobs: {
+      async schedule(input) {
+        const jobs = requireCapability(binding, 'jobs', 'jobs（定时任务）')
+        if (jobs.runtime === undefined) {
+          throw new NxtCapabilityError('运行时创建定时任务需要声明 permissions.capabilities.jobs.runtime.maxActive。')
+        }
+        const label = typeof input.label === 'string' ? input.label.trim() : ''
+        if (label === '' || label.length > 200) throw new NxtCapabilityError('定时任务 label 需要 1–200 个字符。')
+        const now = Date.now()
+        const schedule = parseJobSchedule(input, now)
+        const nextRunAt = nextJobRun(schedule, now)
+        if (nextRunAt === undefined) throw new NxtCapabilityError('这个计划不会再触发。')
+        return backends.jobs.schedule(
+          binding,
+          { label, schedule, payload: jsonValue(input.payload ?? null), nextRunAt },
+          jobs.runtime.maxActive,
+        )
+      },
+      async list() {
+        requireCapability(binding, 'jobs', 'jobs（定时任务）')
+        return backends.jobs.list(binding)
+      },
+      async cancel(jobId) {
+        requireCapability(binding, 'jobs', 'jobs（定时任务）')
+        return backends.jobs.cancel(binding, jobId)
+      },
+    },
     llm: {
       async complete(request) {
         const llm = requireCapability(binding, 'llm', 'llm（使用智能体的模型）')
@@ -435,6 +516,9 @@ export const createNxtDynamicFacade = (resolve: () => NxtHostService): NxtHostSe
   },
   get history() {
     return resolve().history
+  },
+  get jobs() {
+    return resolve().jobs
   },
   get llm() {
     return resolve().llm

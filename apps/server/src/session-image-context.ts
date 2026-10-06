@@ -211,6 +211,19 @@ export const historyEntrySenderDescription = (
   return `，发送成员：${sender.displayName ?? '未知成员'}（成员标识 ${sender.memberId}）`
 }
 
+/** Header for a due scheduled job; it is a Host fact, not a member message, and does not oblige a reply. */
+const extensionJobHeader = (event: ChannelEventRecord): string | undefined => {
+  const job = event.facts?.['extensionJob']
+  if (job === null || typeof job !== 'object' || Array.isArray(job)) return undefined
+  const source = typeof job['extensionName'] === 'string' ? `扩展「${job['extensionName']}」` : '内置提醒'
+  const scheduledAt = typeof job['scheduledAt'] === 'number' ? new Date(job['scheduledAt']).toISOString() : '未知'
+  const delay =
+    typeof job['delayMinutes'] === 'number' && job['delayMinutes'] > 0
+      ? `；宿主离线导致延迟约 ${job['delayMinutes']} 分钟`
+      : ''
+  return `定时任务到期（来源：${source}；计划时间 ${scheduledAt}${delay}）。这不是成员发言；是否需要在频道发言由你判断，需要时使用 send_channel_message：`
+}
+
 export const DirectImageInspectionValueSchema = z
   .object({
     mode: z.literal('direct'),
@@ -772,8 +785,12 @@ export class SessionImageContext {
     const senderDescription =
       sender === undefined ? '' : `，发送成员：${sender.displayName ?? '未知成员'}（成员标识 ${sender.memberId}）`
     const mentionDescription = event.facts?.['mentionedBot'] === true ? '；该消息提及了当前智能体关联的机器人账号' : ''
+    const job = extensionJobHeader(event)
     const blocks: ContentBlock[] = [
-      { type: 'text', text: `频道消息 ${event.logicalMessageId}${senderDescription}${mentionDescription}：` },
+      {
+        type: 'text',
+        text: job ?? `频道消息 ${event.logicalMessageId}${senderDescription}${mentionDescription}：`,
+      },
     ]
     const seen =
       visibleDigests ??

@@ -65,6 +65,17 @@ import {
   isLegacyAdapterDynamicHostSource,
   wrapAdapterDynamicHostSource,
 } from './adapter-dynamic-harness.js'
+import { INBOUND_DYNAMIC_PROBE_METHOD, wrapInboundDynamicHostSource } from './inbound-dynamic-harness.js'
+import { z } from 'zod'
+
+const InboundProbeDecisionSchema = z
+  .object({
+    trigger: z.enum(['default', 'suppress', 'force']).optional(),
+    hideFromAgent: z.boolean().optional(),
+    annotation: z.string().max(2000).optional(),
+  })
+  .strict()
+  .nullable()
 import { EXTENSION_PRIVATE_SERVICE_KEY_SET } from './extension-context.js'
 import type { DshHostRuntimeOptions } from './index.js'
 import type { SessionRegistry } from './session-registry.js'
@@ -256,6 +267,7 @@ export class NekroNxtDynamicCordisRunner extends DynamicCordisRunnerService {
     { readonly pluginRunId: string; readonly methods: Set<string> }
   >()
   private readonly adapterPackages = new Set<string>()
+  private readonly inboundPackages = new Set<string>()
   /** Capabilities each candidate Package declared; `nxt` calls of a running candidate check against these. */
   private readonly capabilitiesByPackage = new Map<string, ExtensionCapabilities | undefined>()
   private runningPackageId: string | undefined
@@ -455,17 +467,26 @@ export class NekroNxtDynamicCordisRunner extends DynamicCordisRunnerService {
           : this.definingAuthoringSnapshot === undefined && isLegacyAdapterDynamicHostSource(ownedRequest.code.host)
             ? ownedRequest.code.host
             : undefined
+      const inboundHost =
+        adapterHost === undefined &&
+        this.definingAuthoringSnapshot?.scope === 'agent' &&
+        this.definingAuthoringSnapshot.permissions.capabilities?.inboundHook !== undefined
+          ? ownedRequest.code.host
+          : undefined
       const receipt = super.define(
-        adapterHost === undefined
-          ? ownedRequest
-          : {
-              ...ownedRequest,
-              code: { ...ownedRequest.code, host: wrapAdapterDynamicHostSource(adapterHost) },
-            },
+        adapterHost !== undefined
+          ? { ...ownedRequest, code: { ...ownedRequest.code, host: wrapAdapterDynamicHostSource(adapterHost) } }
+          : inboundHost !== undefined
+            ? { ...ownedRequest, code: { ...ownedRequest.code, host: wrapInboundDynamicHostSource(inboundHost) } }
+            : ownedRequest,
       )
       if (adapterHost !== undefined) {
         this.adapterPackages.add(receipt.packageId)
         this.originalHostByPackage.set(receipt.packageId, adapterHost)
+      }
+      if (inboundHost !== undefined) {
+        this.inboundPackages.add(receipt.packageId)
+        this.originalHostByPackage.set(receipt.packageId, inboundHost)
       }
       this.capabilitiesByPackage.set(receipt.packageId, this.definingAuthoringSnapshot?.permissions.capabilities)
       if (ownedRequest.plugin.kind === 'new') this.state = { ...state, primaryPluginId: receipt.pluginId }
@@ -507,6 +528,10 @@ export class NekroNxtDynamicCordisRunner extends DynamicCordisRunnerService {
 
   isAdapterPackage(packageId: string): boolean {
     return this.adapterPackages.has(packageId)
+  }
+
+  isInboundPackage(packageId: string): boolean {
+    return this.inboundPackages.has(packageId)
   }
 
   override async run(
@@ -583,16 +608,17 @@ export class NekroNxtDynamicCordisRunner extends DynamicCordisRunnerService {
     const clientRpcEvidence = this.clientRpcMethodsByPackage.get(packageId)
     const clientRpcMethods =
       clientRpcEvidence?.pluginRunId === row.activeRun.pluginRunId ? clientRpcEvidence.methods : new Set<string>()
+    const publicHandlers = row.activeRun.handlers.filter((method) => method !== INBOUND_DYNAMIC_PROBE_METHOD)
     const clientCallableHandlers = this.isAdapterPackage(packageId)
-      ? row.activeRun.handlers.filter((method) => method !== ADAPTER_DYNAMIC_EVIDENCE_METHOD)
-      : row.activeRun.handlers
+      ? publicHandlers.filter((method) => method !== ADAPTER_DYNAMIC_EVIDENCE_METHOD)
+      : publicHandlers
     if (pkg?.hasClientHalf && clientCallableHandlers.some((method) => !clientRpcMethods.has(method))) {
       throw new Error('Dynamic Client preview has not called every registered Host RPC for this Run.')
     }
     return {
       pluginRunId: row.activeRun.pluginRunId,
       toolNames: this.toolNamesByPackage.get(packageId) ?? [],
-      rpcMethods: row.activeRun.handlers,
+      rpcMethods: publicHandlers,
       renderedPanels: clientEvidence?.renderedPanels ?? [],
       renderedToolViews: clientEvidence?.renderedToolViews ?? [],
       renderedMessageRenderers: clientEvidence?.renderedMessageRenderers ?? [],
@@ -694,6 +720,7 @@ export class NekroNxtDynamicCordisRunner extends DynamicCordisRunnerService {
         this.clientEvidenceByPackage.delete(pkg.packageId)
         this.clientRpcMethodsByPackage.delete(pkg.packageId)
         this.adapterPackages.delete(pkg.packageId)
+        this.inboundPackages.delete(pkg.packageId)
         this.originalHostByPackage.delete(pkg.packageId)
       }
     }
@@ -1169,6 +1196,24 @@ export class DynamicAuthoringRuntime {
       if (JSON.stringify(result.value).length > 16 * 1024)
         throw new Error(`Dynamic RPC verification exceeded 16 KiB: ${method}`)
       contributions.push({ kind: 'rpc', method, ...(verificationInput === undefined ? {} : { verificationInput }) })
+    }
+    if (runner.isInboundPackage(packageId)) {
+      const probe = await runner.invoke(
+        CordisDynamicPluginId(pluginId),
+        CordisDynamicPluginRunId(evidence.pluginRunId),
+        INBOUND_DYNAMIC_PROBE_METHOD,
+        null,
+      )
+      if (!probe.ok) throw new Error(`入站处理函数验证失败：${probe.message}`)
+      const declared = permissions.capabilities?.inboundHook
+      const decision = InboundProbeDecisionSchema.safeParse(probe.value)
+      if (!decision.success) throw new Error('入站处理函数应返回 { trigger?, hideFromAgent?, annotation? } 或不返回。')
+      if (decision.data?.hideFromAgent === true && declared?.mayHide !== true) {
+        throw new Error('入站处理函数返回了 hideFromAgent，但没有声明 mayHide。')
+      }
+      if (decision.data?.trigger === 'force' && declared?.mayForceTrigger !== true) {
+        throw new Error('入站处理函数返回了 force，但没有声明 mayForceTrigger。')
+      }
     }
     contributions.push(...evidence.renderedPanels)
     for (const tool of evidence.renderedToolViews) {

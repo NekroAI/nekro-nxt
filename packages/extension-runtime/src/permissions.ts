@@ -40,6 +40,17 @@ const canonicalCapabilities = (capabilities: ExtensionCapabilities): ExtensionCa
     ...(capabilities.assets === undefined ? {} : { assets: capabilities.assets }),
     ...(capabilities.history === undefined ? {} : { history: capabilities.history }),
     ...(capabilities.llm === undefined ? {} : { llm: capabilities.llm }),
+    ...(capabilities.inboundHook === undefined ? {} : { inboundHook: capabilities.inboundHook }),
+    ...(capabilities.jobs === undefined
+      ? {}
+      : {
+          jobs: {
+            ...(capabilities.jobs.declared === undefined
+              ? {}
+              : { declared: [...capabilities.jobs.declared].sort((left, right) => left.id.localeCompare(right.id)) }),
+            ...(capabilities.jobs.runtime === undefined ? {} : { runtime: capabilities.jobs.runtime }),
+          },
+        }),
     ...(capabilities.context === undefined
       ? {}
       : { context: [...capabilities.context].sort((left, right) => left.name.localeCompare(right.name)) }),

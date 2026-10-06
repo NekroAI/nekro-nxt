@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from 'vitest'
 import { configSchema, type ExtensionCapabilities, type JsonValue } from '@nekro-nxt/contracts'
 import { extensionManifestSchema } from '@nekro-nxt/extension-runtime'
 import type { NxtCallContext, NxtPromptRenderApi } from '@nekro-nxt/extension-sdk'
-import { memoryNxtStorage, resolveExtensionSecret } from '../src/extension-host-backends.js'
+import { memoryNxtJobs, memoryNxtStorage, resolveExtensionSecret } from '../src/extension-host-backends.js'
 import {
   createNxtHostService,
   NxtCapabilityError,
@@ -47,6 +47,7 @@ const fixture = (capabilities: ExtensionCapabilities | undefined, config: JsonVa
     fetch,
     complete,
     storage: memoryNxtStorage(() => 1),
+    jobs: memoryNxtJobs(),
     secret: (binding, key) =>
       resolveExtensionSecret(
         { resolveCredential: (reference) => Promise.resolve(`secret-of:${reference}`) },
@@ -212,6 +213,27 @@ describe('nxt Host service', () => {
     await expect(nxt.llm.complete({ messages: [{ role: 'user', text: '新一轮' }] })).resolves.toMatchObject({
       text: 'reply:1:256',
     })
+  })
+
+  it('validates job schedules and enforces the runtime job quota', async () => {
+    const missing = fixture({ jobs: { declared: [] } })
+    await expect(missing.nxt.jobs.schedule({ label: '提醒', at: Date.now() + 60_000 })).rejects.toThrow(/runtime/u)
+
+    const { nxt } = fixture({ jobs: { runtime: { maxActive: 2 } } })
+    await expect(nxt.jobs.schedule({ label: '提醒' })).rejects.toThrow(/at.*cron|cron.*at/u)
+    await expect(nxt.jobs.schedule({ label: '提醒', at: 1 })).rejects.toThrow(/未来/u)
+    await expect(nxt.jobs.schedule({ label: '提醒', cron: '* * *' })).rejects.toThrow(/五段/u)
+    await expect(nxt.jobs.schedule({ label: '提醒', cron: '0 8 * * *', timezone: 'Not/AZone' })).rejects.toThrow(
+      /时区/u,
+    )
+    const daily = await nxt.jobs.schedule({ label: '每日早报', cron: '0 8 * * *', timezone: 'Asia/Shanghai' })
+    expect(daily).toMatchObject({ label: '每日早报', cron: '0 8 * * *' })
+    expect(daily.nextRunAt).toBeGreaterThan(Date.now())
+    await nxt.jobs.schedule({ label: '一次', at: Date.now() + 60_000, payload: { topic: '示例' } })
+    await expect(nxt.jobs.schedule({ label: '超额', at: Date.now() + 60_000 })).rejects.toThrow(/最多保留 2/u)
+    expect((await nxt.jobs.list()).map(({ label }) => label)).toEqual(['每日早报', '一次'])
+    expect(await nxt.jobs.cancel(daily.jobId)).toBe(true)
+    expect(await nxt.jobs.cancel(daily.jobId)).toBe(false)
   })
 
   it('reads secrets only from Host credential references', async () => {

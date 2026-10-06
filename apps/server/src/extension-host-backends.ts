@@ -12,7 +12,13 @@ import {
 } from '@nekro-nxt/contracts'
 import type { CoreRepository } from '@nekro-nxt/core'
 import { z } from 'zod'
-import type { NxtAssetCreateInput, NxtAssetRecord, NxtCallContext, NxtHistoryMessage } from '@nekro-nxt/extension-sdk'
+import type {
+  NxtAssetCreateInput,
+  NxtAssetRecord,
+  NxtCallContext,
+  NxtHistoryMessage,
+  NxtJobRecord,
+} from '@nekro-nxt/extension-sdk'
 import { ExtensionStorageQuotaError } from '@nekro-nxt/storage-sqlite'
 import type {
   NxtServiceBackends,
@@ -111,7 +117,7 @@ export const resolveExtensionSecret = async (
  */
 export const createNxtProductBackends = (
   facts: NxtProductFacts,
-  infrastructure: Pick<NxtServiceBackends, 'fetch' | 'storage' | 'diagnostic' | 'complete'>,
+  infrastructure: Pick<NxtServiceBackends, 'fetch' | 'storage' | 'diagnostic' | 'complete' | 'jobs'>,
 ): NxtServiceBackends => ({
   ...infrastructure,
   secret: (binding: NxtServiceBinding, key: string) => resolveExtensionSecret(facts, binding.config(), key),
@@ -304,6 +310,42 @@ export const memoryNxtStorage = (now: () => number = Date.now): NxtStorageBacken
         }),
         ...(keys.length > options.limit && last !== undefined ? { next: last } : {}),
       })
+    },
+  }
+}
+
+/**
+ * Jobs of dynamic runs and verification: recorded so a candidate can schedule, list and cancel, but never fired,
+ * because an unsaved candidate must not wake the agent later.
+ */
+export const memoryNxtJobs = (): NxtServiceBackends['jobs'] => {
+  const jobs = new Map<
+    string,
+    { readonly ownerKey: string; readonly channelId: string; readonly record: NxtJobRecord }
+  >()
+  let sequence = 0
+  const owned = (binding: NxtServiceBinding) =>
+    [...jobs.values()].filter((job) => job.ownerKey === binding.ownerKey && job.channelId === binding.channelId)
+  return {
+    schedule: (binding, job, maxActive) => {
+      if (owned(binding).length >= maxActive) {
+        return Promise.reject(new Error(`这个扩展同时最多保留 ${maxActive} 个定时任务，请先取消不需要的任务。`))
+      }
+      sequence += 1
+      const record: NxtJobRecord = {
+        jobId: `job_PREVIEW${sequence}`,
+        label: job.label,
+        nextRunAt: job.nextRunAt,
+        ...(job.schedule.kind === 'cron' ? { cron: job.schedule.cron } : { at: job.schedule.at }),
+      }
+      jobs.set(record.jobId, { ownerKey: binding.ownerKey, channelId: binding.channelId, record })
+      return Promise.resolve(record)
+    },
+    list: (binding) => Promise.resolve(owned(binding).map(({ record }) => record)),
+    cancel: (binding, jobId) => {
+      const job = jobs.get(jobId)
+      if (job === undefined || job.ownerKey !== binding.ownerKey) return Promise.resolve(false)
+      return Promise.resolve(jobs.delete(jobId))
     },
   }
 }

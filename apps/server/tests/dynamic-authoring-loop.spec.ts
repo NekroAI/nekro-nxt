@@ -385,6 +385,72 @@ describe('dynamic authoring closed loop', () => {
     }
   })
 
+  it('verifies an inbound hook in the dynamic run and hides matching messages once enabled', async () => {
+    const { runtime, entity, dshSessionId } = await startAuthoringSession()
+    const host = `harness.onInbound(async (message, nxt) => {
+  if (message.text.startsWith('广告')) return { hideFromAgent: true }
+  const seen = (await nxt.storage.get('seen')) ?? 0
+  await nxt.storage.set('seen', seen + 1)
+  return { annotation: '已见消息 ' + (seen + 1) }
+})
+return { inject: ['nxt'], apply() {} }`
+    const capabilities: ExtensionCapabilities = {
+      storage: { scopes: ['agent'] },
+      inboundHook: { reads: 'all', mayHide: true, mayForceTrigger: false, timeoutMs: 1000 },
+    }
+    try {
+      const defined = runtime.host.defineDynamicAuthoringPackage(dshSessionId, {
+        plugin: { kind: 'new', idPrefix: 'guard' },
+        name: '广告过滤',
+        purpose: '对智能体隐藏广告消息。',
+        scope: 'agent' as const,
+        code: { host },
+        resources: {},
+        permissions: { permissions: [], networkOrigins: [], capabilities },
+        contributions: [],
+      })
+      await expect(
+        runtime.host.runDynamicPackage(dshSessionId, defined.pluginId, defined.packageId, 'run'),
+      ).resolves.toMatchObject({ ok: true, status: 'running' })
+      const task = runtime.repository.listAuthoringTasks(entity.agentId)[0]!
+      const attempt = runtime.repository.listAuthoringAttempts(task.id).at(-1)!
+      expect(runtime.repository.getAuthoringTask(task.id)?.status).toBe('ready')
+      expect(JSON.stringify(attempt.verification ?? {})).not.toContain('__nekro_nxt_inbound_probe')
+
+      const saved = await runtime.authoring.save({
+        taskId: task.id,
+        attemptId: attempt.id,
+        displayName: '广告过滤',
+        slug: 'ad-guard',
+        description: '隐藏广告消息。',
+      })
+      const requirement = runtime.activation.getPermissionRequirement(
+        entity.agentId,
+        saved.extension.id,
+        saved.revision.id,
+      )
+      await runtime.activation.activate({
+        agentId: entity.agentId,
+        extensionId: saved.extension.id,
+        revisionId: saved.revision.id,
+        permissionApproval: { permissionDigest: requirement.permissionDigest },
+      })
+
+      await runtime.internalChannel.postMessage({
+        channelId: entity.channelId,
+        clientEventId: 'ad-message',
+        parts: [{ type: 'text', text: '广告：示例商品' }],
+      })
+      const binding = runtime.repository.getBinding(entity.channelId)!
+      const pending = runtime.repository.listUnadmittedEvents(entity.channelId, entity.agentId, binding.boundAt)
+      const ad = pending.find((event) => event.parts[0]?.type === 'text' && event.parts[0].text.startsWith('广告'))
+      expect(ad).toBeDefined()
+      expect(runtime.repository.getChannelEvent(ad!.id)).toBeDefined()
+    } finally {
+      await runtime.dispose()
+    }
+  })
+
   it('refuses to save a Revision whose materialized artifact fails at runtime', async () => {
     const runtime = await createRuntime()
     try {
