@@ -1,0 +1,29 @@
+.extensionPage {
+  display: grid;
+  grid-template-columns: 240px minmax(0, 1fr);
+  height: 100%;
+  min-height: 0;
+}
+
+.extensionNavigation {
+  min-height: 0;
+  overflow: auto;
+  padding: 12px 10px;
+  border-right: 1px solid var(--line);
+  background: color-mix(in srgb, var(--side) 60%, var(--bg));
+}
+
+.extensionCanvas {
+  min-width: 0;
+  min-height: 0;
+}
+
+@media (max-width: 760px) {
+  .extensionPage {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .extensionNavigation {
+    display: none;
+  }
+}

@@ -257,6 +257,8 @@ interface ToastItem {
   readonly message: string
   readonly tone: 'ok' | 'bad'
   readonly action?: { readonly label: string; readonly run: () => void } | undefined
+  /** A newer toast of the same group replaces this one instead of stacking. */
+  readonly group?: string | undefined
   readonly leaving: boolean
 }
 
@@ -265,23 +267,32 @@ let nextId = 1
 const listeners = new Set<() => void>()
 const emit = () => listeners.forEach((listener) => listener())
 
-/** Short result feedback for an action. Failures stay a little longer. */
+const dismissToast = (id: number): void => {
+  if (!toasts.some((item) => item.id === id && !item.leaving)) return
+  toasts = toasts.map((item) => (item.id === id ? { ...item, leaving: true } : item))
+  emit()
+  setTimeout(() => {
+    toasts = toasts.filter((item) => item.id !== id)
+    emit()
+  }, 240)
+}
+
+/**
+ * Short result feedback for an action. Failures are announced assertively and stay longer; a `group` keeps only
+ * the latest result of the same action.
+ */
 export function toast(
   message: string,
-  options: { readonly tone?: 'ok' | 'bad'; readonly action?: ToastItem['action'] } = {},
+  options: { readonly tone?: 'ok' | 'bad'; readonly action?: ToastItem['action']; readonly group?: string } = {},
 ): void {
   const id = nextId++
-  toasts = [...toasts.slice(-2), { id, message, tone: options.tone ?? 'ok', action: options.action, leaving: false }]
+  const kept = options.group === undefined ? toasts : toasts.filter((item) => item.group !== options.group)
+  toasts = [
+    ...kept.slice(-2),
+    { id, message, tone: options.tone ?? 'ok', action: options.action, group: options.group, leaving: false },
+  ]
   emit()
-  const ttl = options.tone === 'bad' ? 5200 : 2600
-  setTimeout(() => {
-    toasts = toasts.map((item) => (item.id === id ? { ...item, leaving: true } : item))
-    emit()
-    setTimeout(() => {
-      toasts = toasts.filter((item) => item.id !== id)
-      emit()
-    }, 240)
-  }, ttl)
+  setTimeout(() => dismissToast(id), options.tone === 'bad' ? 5200 : 2600)
 }
 
 export function Toaster() {
@@ -293,9 +304,14 @@ export function Toaster() {
     () => toasts,
   )
   return (
-    <div className={styles.toasts} role="status" aria-live="polite">
+    <div className={styles.toasts}>
       {items.map((item) => (
-        <div key={item.id} className={styles.toast} data-leaving={item.leaving}>
+        <div
+          key={item.id}
+          className={styles.toast}
+          data-leaving={item.leaving}
+          role={item.tone === 'bad' ? 'alert' : 'status'}
+        >
           <span className={[styles.toastIcon, item.tone === 'bad' ? styles.bad : ''].join(' ')}>
             {item.tone === 'bad' ? <TriangleAlert /> : <Check />}
           </span>
@@ -305,6 +321,14 @@ export function Toaster() {
               {item.action.label}
             </button>
           ) : null}
+          <button
+            type="button"
+            className={styles.toastClose}
+            aria-label="关闭通知"
+            onClick={() => dismissToast(item.id)}
+          >
+            <X aria-hidden="true" />
+          </button>
         </div>
       ))}
     </div>

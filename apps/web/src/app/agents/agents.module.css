@@ -471,3 +471,9 @@
   color: var(--muted);
   font-size: var(--fs-sm);
 }
+
+.createProvider {
+  display: grid;
+  gap: 14px;
+  padding: 16px;
+}

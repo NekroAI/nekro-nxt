@@ -1,6 +1,6 @@
 import { useGo } from '../model/nav.js'
 import { Hammer, Upload } from 'lucide-react'
-import { useRef, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { Link, Navigate, useLocation } from 'react-router-dom'
 import { HostApiContracts, type HostApiResponse } from '@nekro-nxt/contracts'
 import { callHostApi } from '../../host-api-client.js'
@@ -44,6 +44,8 @@ export default function WorkshopSpace() {
   const extensions = useProductStore((state) => state.extensions)
   const agents = useProductStore((state) => state.agents)
   const route = parse(pathname)
+  const [dragging, setDragging] = useState(false)
+  const [dropped, setDropped] = useState<File>()
   const task = route?.kind === 'task' ? tasks.find((item) => item.id === route.id) : undefined
   const extension = route?.kind === 'extension' ? extensions.find((item) => item.id === route.id) : undefined
   useCrumb('工坊', task?.title ?? extension?.name)
@@ -60,10 +62,33 @@ export default function WorkshopSpace() {
 
   return (
     <div className={styles.space}>
-      <aside className={styles.list} aria-label="工坊">
+      <aside
+        className={styles.list}
+        aria-label="工坊"
+        data-extension-drop-zone=""
+        data-dragging={dragging || undefined}
+        onDragEnter={(event) => {
+          if (!event.dataTransfer.types.includes('Files')) return
+          event.preventDefault()
+          setDragging(true)
+        }}
+        onDragOver={(event) => {
+          if (event.dataTransfer.types.includes('Files')) event.preventDefault()
+        }}
+        onDragLeave={(event) => {
+          if (event.relatedTarget instanceof Node && event.currentTarget.contains(event.relatedTarget)) return
+          setDragging(false)
+        }}
+        onDrop={(event) => {
+          event.preventDefault()
+          setDragging(false)
+          const file = event.dataTransfer.files[0]
+          if (file) setDropped(file)
+        }}
+      >
         <div className={styles.listHead}>
           <h2>工坊</h2>
-          <ImportButton onImported={(id) => navigate(`/workshop/extensions/${id}`)} />
+          <ImportButton dropped={dropped} onImported={(id) => navigate(`/workshop/extensions/${id}`)} />
         </div>
         <div className={styles.listBody}>
           <SelectionList selectedKey={selected}>
@@ -181,7 +206,14 @@ function Start() {
   )
 }
 
-function ImportButton({ onImported }: { readonly onImported: (extensionId: string) => void }) {
+/** Imports a `.nxt-extension` chosen with the button or dropped anywhere on the workshop list. */
+function ImportButton({
+  dropped,
+  onImported,
+}: {
+  readonly dropped: File | undefined
+  readonly onImported: (extensionId: string) => void
+}) {
   const input = useRef<HTMLInputElement>(null)
   const hostActions = useHostActions()
   const [inspection, setInspection] = useState<Inspection>()
@@ -201,6 +233,10 @@ function ImportButton({ onImported }: { readonly onImported: (extensionId: strin
       toast(error instanceof Error ? error.message : String(error), { tone: 'bad' })
     }
   }
+  useEffect(() => {
+    if (dropped) void inspect(dropped)
+    // A new drop is a new File object; inspect each one once.
+  }, [dropped])
   const commit = async () => {
     if (!inspection) return
     setBusy(true)

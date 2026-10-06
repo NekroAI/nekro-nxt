@@ -14,6 +14,12 @@
   background: color-mix(in srgb, var(--side) 60%, var(--bg));
 }
 
+.list[data-dragging='true'] {
+  outline: 2px dashed var(--accent);
+  outline-offset: -6px;
+  background: color-mix(in srgb, var(--accent-soft) 60%, var(--side));
+}
+
 .listHead {
   display: flex;
   align-items: center;

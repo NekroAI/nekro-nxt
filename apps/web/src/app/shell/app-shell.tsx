@@ -3,7 +3,7 @@ import { ReleaseBanner } from '../system/compatibility.js'
 import { Activity, Bell, Cable, MessagesSquare, Search, Server, Settings, Sparkles, Wrench } from 'lucide-react'
 import { useEffect, useRef, useState } from 'react'
 import { Link, NavLink, Outlet, useLocation } from 'react-router-dom'
-import { useDesktopInstance } from '../../desktop-shell.js'
+import { useDesktopInstance, type DesktopInstanceStatus } from '../../desktop-shell.js'
 import { useProductStore } from '../../product-runtime.js'
 import { Kbd, StatusDot, useIndicator, type Tone, cssVars, Pressable } from '../../ui-kit/next/index.js'
 import { useAttention } from '../model/attention.js'
@@ -62,10 +62,20 @@ function Rail() {
   )
 }
 
+const desktopStatusLabel: Record<DesktopInstanceStatus, string> = {
+  ready: '运行正常',
+  connecting: '正在连接',
+  unstable: '连接不稳定',
+  'authentication-required': '需要重新认证',
+  incompatible: '版本不兼容',
+  offline: '无法连接',
+}
+
 function TopBar({ onSearch }: { readonly onSearch: () => void }) {
   const crumb = useCurrentCrumb()
   const attention = useAttention()
   const desktop = useDesktopInstance()
+  const [switcherOpen, setSwitcherOpen] = useState(false)
   const hostStatus = useProductStore((state) => state.host.status)
   const instanceTone: Tone = desktop.enabled
     ? desktop.presentation.status === 'ready'
@@ -91,8 +101,18 @@ function TopBar({ onSearch }: { readonly onSearch: () => void }) {
         <Pressable
           type="button"
           className={styles.instance}
-          onClick={() => void window.nekroDesktopShell?.openInstanceSwitcher()}
-          aria-label={`服务实例：${desktop.presentation.displayName}`}
+          data-desktop-instance-switcher=""
+          aria-expanded={switcherOpen}
+          aria-label={`管理并添加远程服务实例：${desktop.presentation.displayName} · ${desktopStatusLabel[desktop.presentation.status]}`}
+          onClick={() => {
+            if (switcherOpen) {
+              setSwitcherOpen(false)
+              void window.nekroDesktopShell?.closeInstanceSwitcher()
+              return
+            }
+            setSwitcherOpen(true)
+            void window.nekroDesktopShell?.openInstanceSwitcher().finally(() => setSwitcherOpen(false))
+          }}
         >
           {instance}
         </Pressable>
@@ -199,7 +219,7 @@ export function AppShell() {
       <Rail />
       <main className={styles.main}>
         <ReleaseBanner />
-        <div key={space} className={[styles.canvas, styles.canvasEnter].join(' ')}>
+        <div key={space} data-canvas="" className={[styles.canvas, styles.canvasEnter].join(' ')}>
           <Outlet />
         </div>
       </main>

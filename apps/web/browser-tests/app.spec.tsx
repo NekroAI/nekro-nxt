@@ -344,6 +344,145 @@ const providerSettingsSnapshot = {
     },
   ],
 } as const
+
+const memberDirectory = {
+  total: 1,
+  items: [
+    {
+      identityId: 'pid_membera',
+      displayName: '成员甲',
+      adapter: { key: 'fixture-beta', displayName: '示例群聊平台' },
+      connection: { id: externalConnectionId, displayName: '示例群聊平台' },
+      activeChannelCount: 1,
+      channelPreview: [{ id: externalChannelId, displayName: '产品讨论群', kind: 'group' }],
+      historicalOnly: false,
+    },
+  ],
+  facets: {
+    adapters: [{ key: 'fixture-beta', displayName: '示例群聊平台', userCount: 1 }],
+    connections: [{ id: externalConnectionId, adapterKey: 'fixture-beta', displayName: '示例群聊平台', userCount: 1 }],
+  },
+} as const
+
+/**
+ * Workspace read models every space may load. Anything not stubbed fails the test instead of falling through the
+ * Vite proxy to a developer's real Host.
+ */
+const installWorkspaceStubs = async (page: Page): Promise<void> => {
+  await page.route('**/api/**', (route) =>
+    route.fulfill({
+      status: 501,
+      contentType: 'application/json',
+      body: JSON.stringify({
+        error: {
+          code: 'unstubbed',
+          message: `未模拟的接口：${route.request().method()} ${new URL(route.request().url()).pathname}`,
+        },
+      }),
+    }),
+  )
+  await page.route('**/api/attention', (route) => route.fulfill({ json: { revision: 'fixture', items: [] } }))
+  await page.route('**/api/activity*', (route) =>
+    route.fulfill({ json: { from: 0, to: 7_200_000, bucketMs: 300_000, channels: [] } }),
+  )
+  await page.route('**/api/channels/*/read', (route) => {
+    const channelId = new URL(route.request().url()).pathname.split('/')[3]
+    return route.fulfill({ json: { channelId, activity: { unreadCount: 0, unreadCapped: false } } })
+  })
+  await page.route('**/api/channels/*/pending', (route) => {
+    const channelId = new URL(route.request().url()).pathname.split('/')[3]
+    return route.fulfill({ json: { channelId, items: [] } })
+  })
+  await page.route('**/api/agents/*/revisions', (route) =>
+    route.fulfill({
+      json: {
+        agentId: browserAgentId,
+        currentRevisionId: browserRevisionId,
+        revisions: [
+          {
+            id: browserRevisionId,
+            revision: 1,
+            createdAt: 1_725_000_000_000,
+            displayName: '资料员',
+            model: { provider: 'openai', model: 'gpt-5' },
+            changedFields: [],
+            current: true,
+          },
+        ],
+      },
+    }),
+  )
+  await page.route('**/api/authoring/tasks/*', (route) =>
+    route.fulfill({ json: { task: workshopTask, attempts: [workshopTask.candidateAttempt], events: [] } }),
+  )
+  await page.route('**/api/channels/*/messages?*', (route) =>
+    route.fulfill({ json: { cursor: { epoch: 'fixture', sequence: 0 }, messages: [], hasMore: false } }),
+  )
+  await page.route('**/api/channels/*/runtime', (route) => {
+    const channelId = new URL(route.request().url()).pathname.split('/')[3]
+    return route.fulfill({
+      json: {
+        cursor: { epoch: 'fixture', sequence: 0 },
+        channelId,
+        phase: 'idle',
+        summary: '',
+        pendingInjectCount: 0,
+        turns: [],
+      },
+    })
+  })
+  await page.route('**/api/dsh/plugins', (route) => route.fulfill({ json: { plugins: [] } }))
+  await page.route('**/api/dsh/settings', (route) => route.fulfill({ json: { namespaces: [] } }))
+}
+
+const workshopTask = {
+  id: 'aut_fixturetask',
+  agentId: browserAgentId,
+  channelId: browserChannelId,
+  episodeId: browserEpisodeId,
+  title: '技术探针',
+  requirementSummary: '验证动态界面审批。',
+  status: 'awaiting-approval',
+  approvalPolicy: 'risk-stable',
+  revision: 2,
+  candidateAttempt: {
+    id: 'aua_fixtureattempt',
+    ordinal: 1,
+    name: '技术探针',
+    purpose: '验证动态界面审批。',
+    state: 'awaiting-approval',
+    riskDigest: 'e'.repeat(64),
+    host: { status: 'absent', waitingFor: [] },
+    client: { status: 'pending', waitingFor: [] },
+    createdAt: 1_725_000_000_000,
+  },
+  createdAt: 1_725_000_000_000,
+  updatedAt: 1_725_000_000_000,
+} as const
+
+const wechatAdapter = {
+  key: 'wechat-ilink',
+  displayName: '微信 iLink',
+  description: '接收微信私聊文本消息',
+  provisioning: 'user-created',
+  aliasEditable: true,
+  channelDiscovery: 'adapter-observed',
+  channelKinds: ['direct'],
+  activities: [],
+  features: {},
+  diagnostics: { receive: true, send: true },
+  creation: { mode: 'qr-login', actionLabel: '扫码登录', pendingLabel: '等待扫码确认…' },
+  configSchema: wechatIlinkConfigSchema,
+} as const
+
+const wechatLogin = {
+  loginId: 'login-fixture',
+  adapterKey: 'wechat-ilink',
+  status: 'pending',
+  qrCodeUrl: 'https://qr.example.invalid/login-fixture',
+  message: '请使用平台应用扫码并确认登录。',
+} as const
+
 test.describe('NekroNxt browser projections', () => {
   test.describe.configure({ mode: 'default', timeout: 30_000 })
   let server: ViteDevServer
@@ -391,6 +530,7 @@ test.describe('NekroNxt browser projections', () => {
       }
     })
     const parsedSnapshot = HostApiContracts.snapshot.response.parse(snapshot)
+    await installWorkspaceStubs(page)
     await installSnapshotHealthRoutes(page, parsedSnapshot)
     await page.route('**/api/snapshot', (request) =>
       request.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(parsedSnapshot) }),
@@ -472,6 +612,8 @@ test.describe('NekroNxt browser projections', () => {
               ? [
                   {
                     turn: 1,
+                    startedAt: 1_725_000_000_500,
+                    endedAt: 1_725_000_003_000,
                     state: 'completed',
                     producedReply: true,
                     responseState: 'sent',
@@ -503,6 +645,8 @@ test.describe('NekroNxt browser projections', () => {
                   },
                   {
                     turn: 2,
+                    startedAt: 1_725_000_004_000,
+                    endedAt: 1_725_000_005_000,
                     state: 'completed',
                     producedReply: false,
                     responseState: 'not-required',
@@ -542,17 +686,15 @@ test.describe('NekroNxt browser projections', () => {
         body: JSON.stringify(providerSettingsSnapshot),
       }),
     )
-    await page.route('**/api/platform-users*', (request) =>
-      request.fulfill({
-        status: 200,
-        contentType: 'application/json',
-        body: JSON.stringify({
-          total: 0,
-          items: [],
-          facets: { adapters: [], connections: [] },
-        }),
-      }),
-    )
+    await page.route('**/api/platform-users*', (request) => {
+      const query = new URL(request.request().url()).searchParams.get('query') ?? ''
+      return request.fulfill({
+        json:
+          query && !'成员甲'.includes(query)
+            ? { total: 0, items: [], facets: memberDirectory.facets }
+            : memberDirectory,
+      })
+    })
     await setup?.(page)
     try {
       await page.goto(`${baseUrl}${route}`)
@@ -564,206 +706,167 @@ test.describe('NekroNxt browser projections', () => {
     }
   }
 
-  test('keeps the Desktop service-instance entry available across redirects and navigation when the bridge exists', async () => {
+  /** Reads a value the page's init script left on `window`. */
+  const windowValue = (page: Page, name: string): Promise<unknown> =>
+    page.evaluate((key): unknown => Reflect.get(window, key), name)
+  /** Calls a callback the page's init script left on `window`. */
+  const callWindow = (page: Page, name: string, argument: unknown): Promise<void> =>
+    page.evaluate(
+      ([key, value]) => {
+        const callback: unknown = Reflect.get(window, key)
+        if (typeof callback === 'function') Reflect.apply(callback, undefined, [value])
+      },
+      [name, argument] as const,
+    )
+
+  const desktopShell = async (page: Page, script: string): Promise<void> => {
+    await page.addInitScript(script)
+  }
+
+  test('keeps the Desktop service-instance entry in the top bar across spaces and toggles the switcher', async () => {
     await withProductPage(
       '/',
       async (page) => {
         const instanceButton = page.getByRole('button', { name: /^管理并添加远程服务实例：远程开发环境/u })
-        await playwrightExpect(page).toHaveURL(new RegExp(`/work/channels/${browserChannelId}$`, 'u'))
-        await playwrightExpect(instanceButton).toBeVisible()
+        await playwrightExpect(page).toHaveURL(/\/live$/u)
         await playwrightExpect(instanceButton).toHaveAccessibleName('管理并添加远程服务实例：远程开发环境 · 运行正常')
 
-        await page.getByRole('link', { name: '用户' }).click()
-        await playwrightExpect(page).toHaveURL(/\/users$/u)
+        await page.getByRole('link', { name: '接线' }).click()
+        await playwrightExpect(page).toHaveURL(/\/wiring/u)
         await playwrightExpect(instanceButton).toBeVisible()
 
         await page.getByRole('link', { name: '设置' }).click()
-        await playwrightExpect(page).toHaveURL(/\/settings$/u)
+        await playwrightExpect(page).toHaveURL(/\/settings\/models$/u)
         await playwrightExpect(instanceButton).toBeVisible()
         await instanceButton.click()
-        await playwrightExpect
-          .poll(() =>
-            page.evaluate(
-              () => (window as Window & { __instanceSwitcherOpenCount?: number }).__instanceSwitcherOpenCount,
-            ),
-          )
-          .toBe(1)
+        await playwrightExpect.poll(() => windowValue(page, '__instanceSwitcherOpenCount')).toBe(1)
         await playwrightExpect(instanceButton).toHaveAttribute('aria-expanded', 'true')
         await instanceButton.click()
         await playwrightExpect(instanceButton).toHaveAttribute('aria-expanded', 'false')
-        await playwrightExpect
-          .poll(() =>
-            page.evaluate(
-              () => (window as Window & { __instanceSwitcherCloseCount?: number }).__instanceSwitcherCloseCount,
-            ),
-          )
-          .toBe(1)
-        await playwrightExpect
-          .poll(() =>
-            page.evaluate(
-              () => (window as Window & { __instanceSwitcherOpenCount?: number }).__instanceSwitcherOpenCount,
-            ),
-          )
-          .toBe(1)
+        await playwrightExpect.poll(() => windowValue(page, '__instanceSwitcherCloseCount')).toBe(1)
+        await playwrightExpect.poll(() => windowValue(page, '__instanceSwitcherOpenCount')).toBe(1)
       },
       browserSnapshot,
-      async (page) => {
-        await page.addInitScript(() => {
-          const testWindow = window as Window & {
-            __instanceSwitcherOpenCount?: number
-            __instanceSwitcherCloseCount?: number
-            __resolveInstanceSwitcher?: () => void
-          }
-          testWindow.__instanceSwitcherOpenCount = 0
-          testWindow.__instanceSwitcherCloseCount = 0
-          Object.defineProperty(window, 'nekroDesktopShell', {
-            configurable: true,
-            value: {
-              getCurrentInstancePresentation: () =>
-                Promise.resolve({ revision: 1, displayName: '远程开发环境', status: 'ready' as const }),
-              openInstanceSwitcher: () => {
-                testWindow.__instanceSwitcherOpenCount = (testWindow.__instanceSwitcherOpenCount ?? 0) + 1
-                return new Promise<void>((resolve) => {
-                  testWindow.__resolveInstanceSwitcher = resolve
-                })
+      (page) =>
+        desktopShell(
+          page,
+          `(() => {
+            window.__instanceSwitcherOpenCount = 0
+            window.__instanceSwitcherCloseCount = 0
+            Object.defineProperty(window, 'nekroDesktopShell', {
+              configurable: true,
+              value: {
+                getCurrentInstancePresentation: () =>
+                  Promise.resolve({ revision: 1, displayName: '远程开发环境', status: 'ready' }),
+                openInstanceSwitcher: () => {
+                  window.__instanceSwitcherOpenCount += 1
+                  return new Promise((resolve) => { window.__resolveInstanceSwitcher = resolve })
+                },
+                closeInstanceSwitcher: () => {
+                  window.__instanceSwitcherCloseCount += 1
+                  window.__resolveInstanceSwitcher?.()
+                  return Promise.resolve()
+                },
+                subscribeCurrentInstanceStatus: () => () => undefined,
               },
-              closeInstanceSwitcher: () => {
-                testWindow.__instanceSwitcherCloseCount = (testWindow.__instanceSwitcherCloseCount ?? 0) + 1
-                testWindow.__resolveInstanceSwitcher?.()
-                return Promise.resolve()
-              },
-              subscribeCurrentInstanceStatus: () => () => undefined,
-            },
-          })
-        })
-      },
+            })
+          })()`,
+        ),
     )
   })
 
   test('does not let an older Desktop presentation request overwrite a newer subscribed event', async () => {
     await withProductPage(
-      '/',
+      '/live',
       async (page) => {
         const entry = page.getByRole('button', { name: /^管理并添加远程服务实例：北辰实例/u })
         await playwrightExpect(entry).toHaveAccessibleName('管理并添加远程服务实例：北辰实例 · 无法连接')
-        await page.evaluate(() => {
-          ;(
-            window as Window & {
-              __resolveInitialDesktopPresentation?: (state: {
-                revision: number
-                displayName: string
-                status: 'ready'
-              }) => void
-            }
-          ).__resolveInitialDesktopPresentation?.({ revision: 4, displayName: '旧实例名称', status: 'ready' })
+        await callWindow(page, '__resolveInitialDesktopPresentation', {
+          revision: 4,
+          displayName: '旧实例名称',
+          status: 'ready',
         })
         await page.waitForTimeout(20)
         await playwrightExpect(entry).toHaveAccessibleName('管理并添加远程服务实例：北辰实例 · 无法连接')
       },
       browserSnapshot,
-      async (page) => {
-        await page.addInitScript(() => {
-          const testWindow = window as Window & {
-            __resolveInitialDesktopPresentation?: (state: {
-              revision: number
-              displayName: string
-              status: 'ready'
-            }) => void
-          }
-          Object.defineProperty(window, 'nekroDesktopShell', {
+      (page) =>
+        desktopShell(
+          page,
+          `Object.defineProperty(window, 'nekroDesktopShell', {
             configurable: true,
             value: {
               getCurrentInstancePresentation: () =>
-                new Promise((resolve) => {
-                  testWindow.__resolveInitialDesktopPresentation = resolve
-                }),
+                new Promise((resolve) => { window.__resolveInitialDesktopPresentation = resolve }),
               openInstanceSwitcher: () => Promise.resolve(),
               closeInstanceSwitcher: () => Promise.resolve(),
-              subscribeCurrentInstanceStatus: (listener: (state: unknown) => void) => {
-                queueMicrotask(() => listener({ revision: 5, displayName: '北辰实例', status: 'offline' as const }))
+              subscribeCurrentInstanceStatus: (listener) => {
+                queueMicrotask(() => listener({ revision: 5, displayName: '北辰实例', status: 'offline' }))
                 return () => undefined
               },
             },
-          })
-        })
-      },
+          })`,
+        ),
     )
   })
 
   test('accepts protocol-1 Desktop shapes without revision and keeps subscription arrival order', async () => {
     await withProductPage(
-      '/',
+      '/live',
       async (page) => {
         const entry = page.getByRole('button', { name: /^管理并添加远程服务实例：旧版远程实例/u })
         await playwrightExpect(entry).toHaveAccessibleName('管理并添加远程服务实例：旧版远程实例 · 无法连接')
-        await page.evaluate(() => {
-          ;(
-            window as Window & {
-              __publishLegacyDesktopPresentation?: (state: { displayName: string; status: 'ready' | 'offline' }) => void
-            }
-          ).__publishLegacyDesktopPresentation?.({ displayName: '旧版远程实例', status: 'ready' })
+        await callWindow(page, '__publishLegacyDesktopPresentation', {
+          displayName: '旧版远程实例',
+          status: 'ready',
         })
         await playwrightExpect(entry).toHaveAccessibleName('管理并添加远程服务实例：旧版远程实例 · 运行正常')
-        await page.evaluate(() => {
-          ;(
-            window as Window & {
-              __resolveLegacyInitialDesktopPresentation?: (state: { displayName: string; status: 'ready' }) => void
-            }
-          ).__resolveLegacyInitialDesktopPresentation?.({ displayName: '迟到初始实例', status: 'ready' })
+        await callWindow(page, '__resolveLegacyInitialDesktopPresentation', {
+          displayName: '迟到初始实例',
+          status: 'ready',
         })
         await page.waitForTimeout(20)
         await playwrightExpect(entry).toHaveAccessibleName('管理并添加远程服务实例：旧版远程实例 · 运行正常')
       },
       browserSnapshot,
-      async (page) => {
-        await page.addInitScript(() => {
-          const testWindow = window as Window & {
-            __publishLegacyDesktopPresentation?: (state: unknown) => void
-            __resolveLegacyInitialDesktopPresentation?: (state: unknown) => void
-          }
-          Object.defineProperty(window, 'nekroDesktopShell', {
+      (page) =>
+        desktopShell(
+          page,
+          `Object.defineProperty(window, 'nekroDesktopShell', {
             configurable: true,
             value: {
               getCurrentInstancePresentation: () =>
-                new Promise((resolve) => {
-                  testWindow.__resolveLegacyInitialDesktopPresentation = resolve
-                }),
+                new Promise((resolve) => { window.__resolveLegacyInitialDesktopPresentation = resolve }),
               openInstanceSwitcher: () => Promise.resolve(),
               closeInstanceSwitcher: () => Promise.resolve(),
-              subscribeCurrentInstanceStatus: (listener: (state: unknown) => void) => {
-                testWindow.__publishLegacyDesktopPresentation = listener
-                queueMicrotask(() => listener({ displayName: '旧版远程实例', status: 'offline' as const }))
+              subscribeCurrentInstanceStatus: (listener) => {
+                window.__publishLegacyDesktopPresentation = listener
+                queueMicrotask(() => listener({ displayName: '旧版远程实例', status: 'offline' }))
                 return () => undefined
               },
             },
-          })
-        })
-      },
+          })`,
+        ),
     )
   })
 
   test('keeps model provider setup inside the create page when no models exist', async () => {
-    const snapshot = {
-      ...browserSnapshot,
-      models: [],
-    }
     await withProductPage(
-      '/work/agents/new',
+      '/agents/new',
       async (page) => {
         await playwrightExpect(page.getByRole('dialog')).toHaveCount(0)
-        await playwrightExpect(page.getByRole('heading', { name: '创建智能体' })).toBeVisible()
+        await playwrightExpect(page.getByRole('heading', { name: '新建智能体' })).toBeVisible()
         await page.getByLabel('名称').fill('临时智能体')
         await playwrightExpect(page.getByText('当前没有可用模型。请先保存一个供应商。', { exact: true })).toBeVisible()
         await playwrightExpect(page.getByRole('button', { name: '保存供应商' })).toBeVisible()
-        await playwrightExpect(page.locator('body')).not.toContainText('请先在设置中配置模型供应商')
+        await playwrightExpect(page).toHaveURL(/\/agents\/new$/u)
+        await playwrightExpect(page.getByLabel('名称')).toHaveValue('临时智能体')
       },
-      snapshot,
+      { ...browserSnapshot, models: [] },
       async (page) => {
         await page.route('**/api/llm/providers', (request) =>
           request.fulfill({
-            status: 200,
-            contentType: 'application/json',
-            body: JSON.stringify({
+            json: {
               writable: true,
               protocols: ['openai-completions'],
               providers: [
@@ -780,7 +883,7 @@ test.describe('NekroNxt browser projections', () => {
                   models: [],
                 },
               ],
-            }),
+            },
           }),
         )
       },
@@ -788,68 +891,37 @@ test.describe('NekroNxt browser projections', () => {
   })
 
   test('edits structured persona references with keyboard-safe chips and a 10–20 line viewport', async () => {
-    await withProductPage(
-      '/work/agents/new',
-      async (page) => {
-        const editor = page.getByRole('textbox', { name: '人设' })
-        await playwrightExpect(editor).toBeVisible()
-        const initialHeight = await editor.evaluate((element) => element.getBoundingClientRect().height)
-        expect(initialHeight).toBeGreaterThanOrEqual(240)
+    await withProductPage('/agents/new', async (page) => {
+      const editor = page.getByRole('textbox', { name: '设定' })
+      await playwrightExpect(editor).toBeVisible()
+      const initialHeight = await editor.evaluate((element) => element.getBoundingClientRect().height)
+      expect(initialHeight).toBeGreaterThanOrEqual(240)
 
-        await editor.fill('优先参考 @成员')
-        const member = page.getByRole('option', { name: /成员甲/u })
-        await playwrightExpect(member).toBeVisible()
-        await member.click()
-        await playwrightExpect(editor.getByText('@成员甲')).toBeVisible()
+      await editor.fill('优先参考 @成员')
+      const member = page.getByRole('option', { name: /成员甲/u })
+      await playwrightExpect(member).toBeVisible()
+      await member.click()
+      await playwrightExpect(editor.getByText('@成员甲')).toBeVisible()
 
-        await editor.press('Backspace')
-        await editor.press('Backspace')
-        await playwrightExpect(editor.getByText('@成员甲')).toHaveCount(0)
+      await editor.press('Backspace')
+      await editor.press('Backspace')
+      await playwrightExpect(editor.getByText('@成员甲')).toHaveCount(0)
 
-        await editor.fill(Array.from({ length: 25 }, (_, index) => `第 ${index + 1} 行`).join('\n'))
-        const cappedHeight = await editor.evaluate((element) => element.getBoundingClientRect().height)
-        expect(cappedHeight).toBeGreaterThan(initialHeight)
-        expect(cappedHeight).toBeLessThanOrEqual(466)
-      },
-      browserSnapshot,
-      async (page) => {
-        await page.route('**/api/platform-users*', (request) =>
-          request.fulfill({
-            status: 200,
-            contentType: 'application/json',
-            body: JSON.stringify({
-              total: 1,
-              items: [
-                {
-                  identityId: 'pid_membera',
-                  displayName: '成员甲',
-                  adapter: { key: 'fixture-beta', displayName: '示例群聊平台' },
-                  connection: { id: browserConnectionId, displayName: '测试账号' },
-                  activeChannelCount: 1,
-                  channelPreview: [{ id: browserChannelId, displayName: '资料讨论组', kind: 'group' }],
-                  historicalOnly: false,
-                },
-              ],
-              facets: {
-                adapters: [{ key: 'fixture-beta', displayName: '示例群聊平台', userCount: 1 }],
-                connections: [
-                  { id: browserConnectionId, adapterKey: 'fixture-beta', displayName: '测试账号', userCount: 1 },
-                ],
-              },
-            }),
-          }),
-        )
-      },
-    )
+      await editor.fill(Array.from({ length: 25 }, (_, index) => `第 ${index + 1} 行`).join('\n'))
+      const cappedHeight = await editor.evaluate((element) => element.getBoundingClientRect().height)
+      expect(cappedHeight).toBeGreaterThan(initialHeight)
+      expect(cappedHeight).toBeLessThanOrEqual(466)
+    })
   })
 
   test('preserves intelligent-agent drafts and the persona cursor across an authoritative Host refresh', async () => {
     let snapshotRequests = 0
     await withProductPage(
-      `/work/agents/${browserAgentId}`,
+      `/agents/${browserAgentId}`,
       async (page) => {
+        await page.getByRole('button', { name: '编辑' }).click()
         const name = page.getByLabel('名称')
-        const editor = page.getByRole('textbox', { name: '人设' })
+        const editor = page.getByRole('textbox', { name: '设定' })
         await playwrightExpect(name).toHaveValue('资料员')
         await playwrightExpect(editor).toHaveText('严谨、简洁')
 
@@ -859,7 +931,7 @@ test.describe('NekroNxt browser projections', () => {
           element.focus()
           const walker = document.createTreeWalker(element, NodeFilter.SHOW_TEXT)
           const text = walker.nextNode()
-          if (!(text instanceof Text)) throw new Error('人设草稿缺少文本节点。')
+          if (!(text instanceof Text)) throw new Error('设定草稿缺少文本节点。')
           const offset = Math.max(1, text.data.length - 2)
           const range = document.createRange()
           range.setStart(text, offset)
@@ -877,7 +949,7 @@ test.describe('NekroNxt browser projections', () => {
 
         await playwrightExpect(name).toHaveValue('资料员草稿')
         await playwrightExpect(editor).toHaveText('草稿内容保持在这里')
-        await playwrightExpect(page.getByRole('button', { name: '保存新配置' })).toBeEnabled()
+        await playwrightExpect(page.getByRole('button', { name: '发布新版本' })).toBeEnabled()
         expect(
           await editor.evaluate(() => {
             const selection = window.getSelection()
@@ -889,37 +961,31 @@ test.describe('NekroNxt browser projections', () => {
       async (page) => {
         await page.route('**/api/snapshot', async (request) => {
           snapshotRequests += 1
-          await request.fulfill({
-            status: 200,
-            contentType: 'application/json',
-            body: JSON.stringify(browserSnapshot),
-          })
+          await request.fulfill({ json: browserSnapshot })
         })
       },
     )
   })
 
   test('renders authoritative intelligent-agent and extension data without technical identifiers', async () => {
-    await withProductPage('/work', async (page) => {
-      await playwrightExpect(page.getByRole('link', { name: /资料员/u }).first()).toBeVisible()
-      await playwrightExpect(page.getByRole('link', { name: '工作' })).toBeVisible()
-      await playwrightExpect(page.locator('body')).not.toContainText(browserAgentId)
-      await playwrightExpect(page.locator('body')).not.toContainText(browserRevisionId)
+    await withProductPage('/agents', async (page) => {
+      await playwrightExpect(page).toHaveURL(new RegExp(`/agents/${browserAgentId}$`, 'u'))
+      await playwrightExpect(page.getByRole('heading', { name: '资料员' })).toBeVisible()
+      await playwrightExpect(page.getByRole('heading', { name: '版本' })).toBeVisible()
+      await playwrightExpect(page.locator('main')).not.toContainText(browserAgentId)
+      await playwrightExpect(page.locator('main')).not.toContainText(browserRevisionId)
     })
 
-    await withProductPage('/extensions', async (page) => {
-      await playwrightExpect(page.getByRole('link', { name: /文档复核/u })).toBeVisible()
-      await playwrightExpect(page.getByText('1 个智能体正在使用', { exact: true })).toBeVisible()
-      await playwrightExpect(page.getByRole('combobox', { name: '查看修订' })).toBeVisible()
-      await playwrightExpect(page.getByText('智能体工具 · document_review', { exact: true })).toBeVisible()
-      await page.getByRole('combobox', { name: '查看修订' }).click()
-      await page.getByRole('option', { name: /r2/u }).click()
-      await playwrightExpect(page.getByText('智能体工具 · legacy_review', { exact: true })).toBeVisible()
-      await playwrightExpect(page.getByRole('button', { name: '删除本地扩展' })).toBeVisible()
-      await playwrightExpect(page.getByLabel('选择 .nxt-extension 文件')).toHaveCount(1)
-      await playwrightExpect(page.locator('body')).not.toContainText('使用进度')
-      await playwrightExpect(page.locator('body')).not.toContainText(browserExtensionRevisionId)
-      await playwrightExpect(page.locator('body')).not.toContainText('Revision')
+    await withProductPage(`/workshop/extensions/${browserExtensionId}`, async (page) => {
+      await playwrightExpect(page.getByRole('heading', { name: '文档复核' })).toBeVisible()
+      await playwrightExpect(page.getByText('1 个智能体使用', { exact: true }).first()).toBeVisible()
+      await playwrightExpect(page.getByRole('listitem').filter({ hasText: 'document_review' })).toBeVisible()
+      await page.getByRole('button', { name: /^r2/u }).click()
+      await playwrightExpect(page.getByRole('listitem').filter({ hasText: 'legacy_review' })).toBeVisible()
+      await playwrightExpect(page.getByRole('button', { name: '删除扩展' })).toBeVisible()
+      await playwrightExpect(page.getByRole('button', { name: '导入扩展' })).toBeVisible()
+      await playwrightExpect(page.locator('main')).not.toContainText(browserExtensionRevisionId)
+      await playwrightExpect(page.locator('main')).not.toContainText('Revision')
     })
   })
 
@@ -984,12 +1050,10 @@ test.describe('NekroNxt browser projections', () => {
         if (!(frame instanceof HTMLElement) || !(content instanceof HTMLElement)) throw new Error('missing frame')
         if (!(header instanceof HTMLElement) || !(section instanceof HTMLElement)) throw new Error('missing content')
         const style = getComputedStyle(frame)
-        const viewportRect = viewport.getBoundingClientRect()
         const contentRect = content.getBoundingClientRect()
         const headerRect = header.getBoundingClientRect()
         const sectionRect = section.getBoundingClientRect()
         return {
-          viewportWidth: viewportRect.width,
           insets: {
             top: Number.parseFloat(style.paddingTop),
             right: Number.parseFloat(style.paddingRight),
@@ -1014,15 +1078,17 @@ test.describe('NekroNxt browser projections', () => {
       '/apps/hup_geometrynavigation/overview',
       async (page) => {
         await playwrightExpect(page.getByRole('heading', { name: '本周概览', exact: true })).toBeVisible()
-        await playwrightExpect(page.getByRole('button', { name: '本周概览', exact: true })).toHaveAttribute(
+        const navigation = page.getByRole('complementary', { name: '交付检查台导航' })
+        await playwrightExpect(navigation.getByRole('button', { name: '本周概览', exact: true })).toHaveAttribute(
           'aria-current',
           'page',
         )
+        await playwrightExpect(page.getByText('扩展页面', { exact: true }).first()).toBeVisible()
         await assertGeometry(page, 32)
         await page.setViewportSize({ width: 1920, height: 1080 })
         await page.goto(`${baseUrl}/apps/hup_geometryfull/overview`)
         await playwrightExpect(page.getByRole('heading', { name: '本周概览', exact: true })).toBeVisible()
-        await playwrightExpect(page.locator('aside[aria-label="对象列"]')).toHaveAttribute('aria-hidden', 'true')
+        await playwrightExpect(page.getByRole('complementary', { name: /导航$/u })).toHaveCount(0)
         await assertGeometry(page, 40)
       },
       snapshot,
@@ -1034,17 +1100,15 @@ test.describe('NekroNxt browser projections', () => {
           const source = request.request().url().includes('geometryfull') ? fullWidthPage : navigationPage
           return request.fulfill({ status: 200, contentType: 'text/javascript', body: moduleSource(source) })
         })
-        await page.route('**/api/host-ui/pages/*/diagnostic', (request) =>
-          request.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ ok: true }) }),
-        )
+        await page.route('**/api/host-ui/pages/*/diagnostic', (request) => request.fulfill({ json: { ok: true } }))
       },
     )
   })
 
-  test('inspects an extension dropped onto the managed import surface', async () => {
+  test('inspects an extension dropped onto the workshop list', async () => {
     let inspectRequests = 0
     await withProductPage(
-      `/extensions/${browserExtensionId}`,
+      `/workshop/extensions/${browserExtensionId}`,
       async (page) => {
         const dropZone = page.locator('[data-extension-drop-zone]')
         await playwrightExpect(dropZone).toBeVisible()
@@ -1058,8 +1122,9 @@ test.describe('NekroNxt browser projections', () => {
           element.dispatchEvent(new DragEvent('dragenter', { bubbles: true, cancelable: true, dataTransfer: transfer }))
           element.dispatchEvent(new DragEvent('drop', { bubbles: true, cancelable: true, dataTransfer: transfer }))
         })
-        await playwrightExpect(page.getByText('共享扩展', { exact: true })).toBeVisible()
-        await playwrightExpect(page.getByRole('button', { name: '导入为未启用扩展' })).toBeVisible()
+        const dialog = page.getByRole('dialog', { name: '导入「共享扩展」' })
+        await playwrightExpect(dialog).toBeVisible()
+        await playwrightExpect(dialog.getByRole('button', { name: '导入' })).toBeVisible()
         expect(inspectRequests).toBe(1)
       },
       browserSnapshot,
@@ -1068,9 +1133,7 @@ test.describe('NekroNxt browser projections', () => {
           inspectRequests += 1
           expect(request.request().postDataBuffer()?.byteLength).toBeGreaterThan(0)
           await request.fulfill({
-            status: 200,
-            contentType: 'application/json',
-            body: JSON.stringify({
+            json: {
               token: 'import-token',
               extensionId: 'ext_shared',
               revisionId: 'xrv_shared',
@@ -1079,148 +1142,66 @@ test.describe('NekroNxt browser projections', () => {
               scope: 'agent',
               idempotent: false,
               slugConflict: false,
-            }),
+            },
           })
         })
       },
     )
   })
 
-  test('shows the platform-user directory and keeps filters in the URL', async () => {
+  test('finds platform members in the account detail and through the command palette', async () => {
+    const queries: string[] = []
     await withProductPage(
-      '/users',
+      `/wiring/connections/${externalConnectionId}`,
       async (page) => {
-        await playwrightExpect(page.getByRole('heading', { name: '平台用户' })).toBeVisible()
-        await playwrightExpect(page.getByText('成员甲', { exact: true })).toBeVisible()
+        const members = page.locator('section').filter({ has: page.getByRole('heading', { name: /^成员/u }) })
+        await playwrightExpect(members).toContainText('成员甲')
+        await page.getByLabel('查找成员').fill('成员甲')
+        await playwrightExpect.poll(() => queries.includes('成员甲')).toBe(true)
+        await playwrightExpect(members).toContainText('成员甲')
         await playwrightExpect(page.locator('body')).not.toContainText('pid_membera')
-        await page.getByLabel('搜索名称').fill('成员甲')
-        await playwrightExpect(page).toHaveURL(/\/users\?query=/u)
-        await page.getByRole('button', { name: '清除筛选' }).click()
-        await playwrightExpect(page).toHaveURL(/\/users$/u)
+
+        await page.keyboard.press('ControlOrMeta+k')
+        const palette = page.getByRole('dialog')
+        await palette.getByRole('combobox', { name: '搜索' }).fill('成员甲')
+        const option = palette.getByRole('option', { name: /成员甲/u })
+        await playwrightExpect(option).toBeVisible()
+        await option.click()
+        await playwrightExpect(page).toHaveURL(new RegExp(`/channels/${externalChannelId}$`, 'u'))
       },
       browserSnapshot,
       async (page) => {
-        await page.route('**/api/platform-users*', (request) =>
-          request.fulfill({
-            status: 200,
-            contentType: 'application/json',
-            body: JSON.stringify({
-              total: 1,
-              items: [
-                {
-                  identityId: 'pid_membera',
-                  displayName: '成员甲',
-                  adapter: { key: 'fixture-beta', displayName: '示例群聊平台' },
-                  connection: { id: browserConnectionId, displayName: '测试账号' },
-                  activeChannelCount: 1,
-                  channelPreview: [{ id: browserChannelId, displayName: '资料讨论组', kind: 'group' }],
-                  historicalOnly: false,
-                },
-              ],
-              facets: {
-                adapters: [{ key: 'fixture-beta', displayName: '示例群聊平台', userCount: 1 }],
-                connections: [
-                  { id: browserConnectionId, adapterKey: 'fixture-beta', displayName: '测试账号', userCount: 1 },
-                ],
-              },
-            }),
-          }),
-        )
+        await page.route('**/api/platform-users*', (request) => {
+          const query = new URL(request.request().url()).searchParams.get('query') ?? ''
+          queries.push(query)
+          return request.fulfill({ json: memberDirectory })
+        })
       },
     )
   })
 
-  test('keeps intelligent-agent configuration on the workbench instead of sending users away', async () => {
-    await withProductPage(`/work/agents/${browserAgentId}?tab=capabilities`, async (page) => {
-      await playwrightExpect(page.getByRole('button', { name: '保存凭据' })).toBeVisible()
-      await playwrightExpect(page.getByRole('button', { name: '前往频道提出需求' })).toHaveCount(0)
-      await playwrightExpect(page.getByRole('button', { name: '查看创造进度' }).first()).toBeVisible()
+  test('keeps intelligent-agent configuration on its own page', async () => {
+    await withProductPage(`/agents/${browserAgentId}`, async (page) => {
+      await playwrightExpect(page.getByLabel('DeepSeek API 密钥')).toBeVisible()
+      await playwrightExpect(page.getByRole('button', { name: '保存', exact: true })).toBeDisabled()
+      await playwrightExpect(page.getByLabel('资料员对话 的触发方式')).toBeVisible()
+      await playwrightExpect(page.getByRole('switch', { name: '为资料员启用文档复核' })).toBeChecked()
       await playwrightExpect(page.locator('body')).not.toContainText('设置 → DSH 扩展')
-    })
-
-    await withProductPage(`/work/agents/${browserAgentId}?tab=channels`, async (page) => {
-      await playwrightExpect(page.getByLabel('响应方式').first()).toBeVisible()
-      await playwrightExpect(page.getByRole('button', { name: '绑定频道' })).toBeVisible()
-    })
-
-    await withProductPage(`/work/agents/${browserAgentId}?tab=extensions`, async (page) => {
-      await playwrightExpect(page.getByRole('switch', { name: '停用“文档复核”' })).toBeChecked()
-      await playwrightExpect(page.locator('body')).not.toContainText('可在扩展页面查看已保存的扩展和启用状态。')
     })
   })
 
-  test('tracks system-access dragging continuously and previews the nearest snap stop before commit', async () => {
+  test('asks before granting a higher system-access level and sends the matching capabilities', async () => {
     const capabilityRequests: unknown[] = []
     await withProductPage(
-      `/work/agents/${browserAgentId}?tab=capabilities`,
+      `/agents/${browserAgentId}`,
       async (page) => {
-        const range = page.getByLabel('系统访问等级')
-        await playwrightExpect(range).toBeVisible()
-        const geometry = await page.locator('[data-access-level-stop]').evaluateAll((stops) => {
-          const track = stops[0]?.parentElement?.previousElementSibling?.getBoundingClientRect()
-          const stopRects = stops.map((stop) => stop.getBoundingClientRect())
-          const labels = stops[0]?.parentElement?.parentElement?.querySelectorAll('[data-access-level-label]') ?? []
-          const labelRects = Array.from(labels).map((label) => label.getBoundingClientRect())
-          return {
-            trackCenterY: track ? track.top + track.height / 2 : 0,
-            trackLeft: track?.left ?? 0,
-            trackWidth: track?.width ?? 0,
-            stopCentersY: stopRects.map((rect) => rect.top + rect.height / 2),
-            stopCentersX: stopRects.map((rect) => rect.left + rect.width / 2),
-            labelTops: labelRects.map((rect) => rect.top),
-            labelLeft: labelRects[0]?.left ?? 0,
-            middleLabelCentersX: labelRects.slice(1, 3).map((rect) => rect.left + rect.width / 2),
-            labelRight: labelRects[3]?.right ?? 0,
-          }
-        })
-        const stopOffsets = geometry.stopCentersY.map((center) => center - geometry.trackCenterY)
-        expect(
-          stopOffsets.every((offset) => Math.abs(offset) < 0.75),
-          JSON.stringify(stopOffsets),
-        ).toBe(true)
-        const expectedStopCenters = Array.from(
-          { length: 4 },
-          (_, index) => geometry.trackLeft + (geometry.trackWidth * index) / 3,
-        )
-        expect(
-          geometry.stopCentersX.every((center, index) => Math.abs(center - expectedStopCenters[index]!) < 0.75),
-        ).toBe(true)
-        expect(Math.abs(geometry.labelLeft - geometry.stopCentersX[0]!) < 0.75).toBe(true)
-        expect(Math.abs(geometry.middleLabelCentersX[0]! - geometry.stopCentersX[1]!) < 0.75).toBe(true)
-        expect(Math.abs(geometry.middleLabelCentersX[1]! - geometry.stopCentersX[2]!) < 0.75).toBe(true)
-        expect(Math.abs(geometry.labelRight - geometry.stopCentersX[3]!) < 0.75).toBe(true)
-        expect(Math.max(...geometry.labelTops) - Math.min(...geometry.labelTops)).toBeLessThan(0.75)
-
-        await range.scrollIntoViewIfNeeded()
-        // Native mouse coordinates require the animated control to be stable.
-        await range.click({ trial: true })
-        const box = await range.boundingBox()
-        if (!box) throw new Error('系统访问等级滑块没有可用几何尺寸。')
-        const y = box.y + box.height / 2
-        const hitTarget = await page.evaluate(
-          ({ x, y: targetY }) => {
-            const element = document.elementFromPoint(x, targetY)
-            return {
-              tag: element?.tagName,
-              type: element instanceof HTMLInputElement ? element.type : undefined,
-              disabled: element instanceof HTMLInputElement ? element.disabled : undefined,
-              pointerEvents: element ? getComputedStyle(element).pointerEvents : undefined,
-            }
-          },
-          { x: box.x + box.width * 0.54, y },
-        )
-        expect(hitTarget).toMatchObject({ tag: 'INPUT', type: 'range', disabled: false, pointerEvents: 'auto' })
-        await page.mouse.move(box.x + box.width * 0.54, y)
-        await page.mouse.down()
-        await page.mouse.move(box.x + box.width * 0.58, y, { steps: 8 })
-
-        const continuousValue = Number(await range.inputValue())
-        expect(continuousValue).toBeGreaterThan(1.5)
-        expect(continuousValue).toBeLessThan(2)
-        await playwrightExpect(page.locator('[data-access-level-stop="2"]')).toHaveAttribute('data-snap-target', '')
+        const levels = page.getByRole('radiogroup', { name: '系统访问' })
+        await playwrightExpect(levels.getByRole('radio', { name: '基础权限' })).toHaveAttribute('aria-checked', 'true')
+        await levels.getByRole('radio', { name: '运行命令' }).click()
+        const confirm = page.getByRole('dialog', { name: '允许资料员运行命令？' })
+        await playwrightExpect(confirm).toBeVisible()
         expect(capabilityRequests).toHaveLength(0)
-
-        await page.mouse.up()
+        await confirm.getByRole('button', { name: '允许' }).click()
         await playwrightExpect.poll(() => capabilityRequests.length).toBe(1)
         expect(capabilityRequests[0]).toMatchObject({
           fileTools: true,
@@ -1233,9 +1214,7 @@ test.describe('NekroNxt browser projections', () => {
         await page.route('**/api/agents/*/capabilities', async (request) => {
           capabilityRequests.push(request.request().postDataJSON())
           await request.fulfill({
-            status: 200,
-            contentType: 'application/json',
-            body: JSON.stringify({
+            json: {
               currentRevisionId: browserRevisionId,
               capabilities: {
                 subagents: false,
@@ -1245,120 +1224,133 @@ test.describe('NekroNxt browser projections', () => {
                 developmentShell: true,
                 unrestrictedFileAccess: false,
               },
-            }),
+            },
           })
         })
       },
     )
   })
 
-  test('renders platform accounts with product labels and binds without leaving the connection page', async () => {
-    await withProductPage('/connections', async (page) => {
-      await page.getByRole('link', { name: /示例群聊平台/u }).click()
-      await playwrightExpect(page.getByText('尾号 7890', { exact: true })).toBeVisible()
-      await playwrightExpect(page.locator('body')).toContainText('内置频道')
-      await playwrightExpect(page.getByRole('button', { name: '绑定智能体' })).toBeVisible()
-      await playwrightExpect(page.locator('body')).not.toContainText('前往绑定频道')
+  test('renders platform accounts with product labels and a masked account', async () => {
+    await withProductPage('/wiring', async (page) => {
+      await page
+        .getByRole('link', { name: /示例群聊平台/u })
+        .first()
+        .click()
+      await playwrightExpect(page).toHaveURL(new RegExp(`/wiring/connections/${externalConnectionId}$`, 'u'))
+      const detail = page.locator('aside').last()
+      await playwrightExpect(detail.getByText('尾号 7890', { exact: true })).toBeVisible()
+      await playwrightExpect(detail).toContainText('产品讨论群')
       await playwrightExpect(page.locator('body')).not.toContainText('1234567890')
-      await playwrightExpect(page.locator('body')).not.toContainText('websocket-resumed-internal-enum')
       await playwrightExpect(page.locator('body')).not.toContainText('adapterKey')
+      await playwrightExpect(page.locator('body')).not.toContainText('opaque-group-alpha')
     })
   })
 
   test('creates a Connection with an alias and edits the alias without changing platform identity', async () => {
     let createRequestBody: unknown
-    await withProductPage(`/connections/${browserConnectionId}?create=1`, async (page) => {
-      await page.route('**/api/connections', async (request) => {
-        createRequestBody = request.request().postDataJSON()
-        await request.fulfill({
-          status: 201,
-          contentType: 'application/json',
-          body: JSON.stringify({ connectionId: externalConnectionId, adapterKey: 'fixture-beta' }),
+    await withProductPage(
+      '/wiring/new',
+      async (page) => {
+        await page
+          .getByRole('main')
+          .getByRole('button', { name: /^示例群聊平台/u })
+          .click()
+        await page.getByLabel('名称').fill('项目机器人')
+        await page.getByRole('button', { name: '添加账号' }).click()
+        await playwrightExpect(page).toHaveURL(/\/wiring/u)
+        await playwrightExpect
+          .poll(() => createRequestBody)
+          .toMatchObject({
+            alias: '项目机器人',
+            adapterKey: 'fixture-beta',
+          })
+      },
+      browserSnapshot,
+      async (page) => {
+        await page.route('**/api/connections', async (request) => {
+          createRequestBody = request.request().postDataJSON()
+          await request.fulfill({
+            status: 201,
+            json: { connectionId: externalConnectionId, adapterKey: 'fixture-beta' },
+          })
         })
-      })
-      const dialog = page.getByRole('dialog')
-      await dialog.getByLabel('平台').click()
-      await page.getByRole('option', { name: '示例群聊平台' }).click()
-      await page.getByRole('button', { name: '填写连接信息' }).click()
-      await page.getByLabel('连接别名').fill('项目机器人')
-      await page.getByRole('button', { name: '创建连接' }).click()
-      await playwrightExpect(page.getByRole('dialog')).toBeHidden()
-    })
-    expect(createRequestBody).toMatchObject({ alias: '项目机器人', adapterKey: 'fixture-beta' })
+      },
+    )
 
-    const aliasedSnapshot = {
+    let currentAlias = '项目机器人'
+    const aliased = () => ({
       ...browserSnapshot,
       connections: browserSnapshot.connections.map((connection) =>
-        connection.id === externalConnectionId ? { ...connection, alias: '项目机器人' } : connection,
+        connection.id === externalConnectionId
+          ? { ...connection, ...(currentAlias ? { alias: currentAlias } : {}) }
+          : connection,
       ),
-    }
-    let currentAlias = '项目机器人'
+    })
     await withProductPage(
-      `/connections/${externalConnectionId}`,
+      `/wiring/connections/${externalConnectionId}`,
       async (page) => {
-        await page.route('**/api/snapshot', async (request) => {
-          await request.fulfill({
-            status: 200,
-            contentType: 'application/json',
-            body: JSON.stringify({
-              ...aliasedSnapshot,
-              connections: aliasedSnapshot.connections.map((connection) =>
-                connection.id === externalConnectionId ? { ...connection, alias: currentAlias } : connection,
-              ),
-            }),
-          })
-        })
-        await page.route(`**/api/connections/${externalConnectionId}/alias`, async (request) => {
-          currentAlias = HostApiContracts.updateConnectionAlias.parseRequest(request.request().postDataJSON()).alias
-          await request.fulfill({
-            status: 200,
-            contentType: 'application/json',
-            body: JSON.stringify({
-              connectionId: externalConnectionId,
-              ...(currentAlias ? { alias: currentAlias } : {}),
-            }),
-          })
-        })
-        await playwrightExpect(page.getByText('项目机器人', { exact: true }).first()).toBeVisible()
-        await page.getByLabel('辨识名').fill('研发机器人')
-        await page.getByRole('button', { name: '保存别名' }).click()
-        await playwrightExpect(page.getByText('研发机器人', { exact: true }).first()).toBeVisible()
-        await page.getByRole('button', { name: '清除' }).click()
-        await playwrightExpect(page.getByText('示例群聊平台', { exact: true }).first()).toBeVisible()
-        await playwrightExpect(page.getByLabel('辨识名')).toHaveValue('')
+        const detail = page.locator('aside').last()
+        await playwrightExpect(detail.getByRole('heading', { name: '项目机器人' })).toBeVisible()
+        await detail.getByLabel('名称').fill('研发机器人')
+        await detail.getByRole('button', { name: '保存', exact: true }).click()
+        await playwrightExpect(detail.getByRole('heading', { name: '研发机器人' })).toBeVisible()
+        await detail.getByLabel('名称').fill('')
+        await detail.getByRole('button', { name: '保存', exact: true }).click()
+        await playwrightExpect(detail.getByRole('heading', { name: '示例群聊平台' })).toBeVisible()
+        await playwrightExpect(detail.getByLabel('名称')).toHaveValue('')
       },
-      aliasedSnapshot,
+      aliased(),
+      async (page) => {
+        await page.route('**/api/snapshot', (request) => request.fulfill({ json: aliased() }))
+        await page.route(`**/api/connections/${externalConnectionId}/alias`, async (request) => {
+          currentAlias =
+            HostApiContracts.updateConnectionAlias.parseRequest(request.request().postDataJSON()).alias ?? ''
+          await request.fulfill({
+            json: { connectionId: externalConnectionId, ...(currentAlias ? { alias: currentAlias } : {}) },
+          })
+        })
+      },
     )
   })
 
   test('commits only the Composer while typing a channel draft', async () => {
     await withProductPage(
-      `/work/channels/${browserChannelId}`,
+      `/channels/${browserChannelId}`,
       async (page) => {
-        await playwrightExpect(page.getByLabel('上下文占用')).toBeVisible()
+        const input = page.getByRole('textbox', { name: '消息' })
+        await playwrightExpect(input).toBeVisible()
+        await playwrightExpect(page.getByText('只属于当前频道', { exact: true })).toBeVisible()
         await page.evaluate(() => window.dispatchEvent(new Event('reset-ui-render-counts')))
-        await page.getByRole('textbox', { name: '消息内容' }).pressSequentially('连续输入测试')
-        const counts = await page.evaluate(() => {
-          const counts: unknown = Reflect.get(window, '__nxtRenderCounts')
-          return counts
-        })
+        await input.pressSequentially('连续输入测试')
+        const counts = await windowValue(page, '__nxtRenderCounts')
         expect(counts, JSON.stringify(counts)).toMatchObject({
-          ChannelComposer: 6,
-          ChannelMessageListBase: 0,
-          MessageRowBase: 0,
-          ChannelRuntimeMetrics: 0,
+          Composer: 6,
+          Conversation: 0,
+          MessageRow: 0,
+          TurnRow: 0,
+          ChannelInspector: 0,
+          ChannelList: 0,
         })
       },
       browserSnapshot,
       async (page) => {
         await page.route('**/api/events', () => undefined)
         await page.addInitScript(() => {
-          type Fiber = { type?: { name?: string }; flags: number; child?: Fiber; sibling?: Fiber }
+          type Fiber = {
+            type?: { name?: string; type?: { name?: string } }
+            flags: number
+            child?: Fiber
+            sibling?: Fiber
+            alternate?: Fiber | null
+          }
           const counts: Record<string, number> = {
-            ChannelComposer: 0,
-            ChannelMessageListBase: 0,
-            MessageRowBase: 0,
-            ChannelRuntimeMetrics: 0,
+            Composer: 0,
+            Conversation: 0,
+            MessageRow: 0,
+            TurnRow: 0,
+            ChannelInspector: 0,
+            ChannelList: 0,
           }
           window.addEventListener('reset-ui-render-counts', () => {
             for (const name of Object.keys(counts)) counts[name] = 0
@@ -1370,12 +1362,13 @@ test.describe('NekroNxt browser projections', () => {
               renderers: new Map(),
               inject: () => 1,
               onCommitFiberRoot: (_id: number, root: { current: Fiber }) => {
+                // As React DevTools does: a subtree whose child list was reused did not render in this commit.
                 const visit = (fiber: Fiber | undefined): void => {
                   if (!fiber) return
-                  const name = fiber.type?.name?.replace(/\d+$/u, '')
+                  const name = (fiber.type?.name ?? fiber.type?.type?.name)?.replace(/\d+$/u, '')
                   if (name && Object.hasOwn(counts, name) && (fiber.flags & 1) !== 0)
                     counts[name] = (counts[name] ?? 0) + 1
-                  visit(fiber.child)
+                  if (!fiber.alternate || fiber.child !== fiber.alternate.child) visit(fiber.child)
                   visit(fiber.sibling)
                 }
                 visit(root.current)
@@ -1388,142 +1381,76 @@ test.describe('NekroNxt browser projections', () => {
     )
   })
 
-  test('retains independent channel drafts across views and navigation without replacing history DOM', async () => {
-    await withProductPage(`/work/channels/${browserChannelId}`, async (page) => {
-      const input = page.getByRole('textbox', { name: '消息内容' })
+  test('retains independent channel drafts across channel switches and navigation', async () => {
+    await withProductPage(`/channels/${browserChannelId}`, async (page) => {
+      const input = page.getByRole('textbox', { name: '消息' })
       const message = await page.getByText('只属于当前频道', { exact: true }).elementHandle()
       await input.fill('频道甲的草稿')
-      expect(await message.evaluate((element) => element.isConnected)).toBe(true)
-      await page.getByRole('tab', { name: '工作轨迹' }).click()
-      await page.getByRole('tab', { name: '会话', exact: true }).click()
+      expect(await message?.evaluate((element) => element.isConnected)).toBe(true)
+      await page.getByRole('button', { name: '透视' }).click()
+      await page.getByRole('button', { name: '透视' }).click()
       await playwrightExpect(input).toHaveValue('频道甲的草稿')
-      await page.locator(`a[href="/work/channels/${externalChannelId}"]`).first().click()
+      await page.locator(`a[href="/channels/${externalChannelId}"]`).first().click()
+      await playwrightExpect(page).toHaveURL(new RegExp(`/channels/${externalChannelId}$`, 'u'))
       await playwrightExpect(input).toHaveValue('')
       await input.fill('频道乙的草稿')
-      await page.locator(`a[href="/work/channels/${browserChannelId}"]`).first().click()
+      await page.locator(`a[href="/channels/${browserChannelId}"]`).first().click()
       await playwrightExpect(input).toHaveValue('频道甲的草稿')
-      await page.locator('a[href="/settings"]').first().click()
-      await playwrightExpect(page).toHaveURL(/\/settings$/u)
+      await page.getByRole('link', { name: '设置' }).click()
+      await playwrightExpect(page).toHaveURL(/\/settings\/models$/u)
       await page.goBack()
-      await playwrightExpect(input).toHaveValue('频道甲的草稿')
+      await playwrightExpect(page.getByRole('textbox', { name: '消息' })).toHaveValue('频道甲的草稿')
     })
   })
 
-  test('isolates Channel messages, renders a true empty state, and names the send target', async () => {
-    await withProductPage(`/work/channels/${browserChannelId}`, async (page) => {
+  test('isolates Channel messages, names the send target and reveals tool work with x-ray', async () => {
+    await withProductPage(`/channels/${browserChannelId}`, async (page) => {
       await playwrightExpect(page.getByText('只属于当前频道', { exact: true })).toBeVisible()
       await playwrightExpect(page.locator('body')).not.toContainText('不能混入当前频道')
-      await playwrightExpect(page.getByText('发给智能体', { exact: true })).toBeVisible()
-      await playwrightExpect(page.locator('[data-conversation-title]').getByText('空闲', { exact: true })).toBeVisible()
-      await playwrightExpect(page.getByLabel('空闲状态说明')).toHaveCount(0)
-      await playwrightExpect(page.getByLabel('上下文占用')).toContainText('已用 3.2k')
-      await playwrightExpect(page.getByLabel('上下文组成')).toContainText('对话 1.9k')
-      const generationPerformance = page.getByLabel('生成表现')
-      await playwrightExpect(generationPerformance).toContainText('最近请求首 Token')
-      await playwrightExpect(generationPerformance).toContainText('400ms')
-      await playwrightExpect(generationPerformance).toContainText('50')
-      await playwrightExpect(generationPerformance).toContainText('会话平均首 Token')
-      await playwrightExpect(generationPerformance).toContainText('生成速度 2/2')
-      const cacheAnalysis = page.getByLabel('缓存分析')
-      for (const kind of ['cache', 'performance']) {
-        const frame = page.locator(`[data-runtime-data-surface="${kind}"]`)
-        await playwrightExpect(frame).toBeVisible()
-        expect(
-          await frame.evaluate((element) => {
-            const style = getComputedStyle(element)
-            return [style.borderTopWidth, style.borderRightWidth, style.borderBottomWidth, style.borderLeftWidth]
-          }),
-        ).toEqual(['0px', '0px', '0px', '0px'])
-      }
-      const cacheBox = await cacheAnalysis.boundingBox()
-      const performanceBox = await generationPerformance.boundingBox()
-      expect(cacheBox?.y).toBeLessThan(performanceBox?.y ?? 0)
-      await playwrightExpect(cacheAnalysis).toContainText('最近一次输入缓存覆盖')
-      await playwrightExpect(cacheAnalysis).toContainText('会话加权覆盖')
-      await playwrightExpect(cacheAnalysis).toContainText('累计读取 1.8k')
-      await playwrightExpect(cacheAnalysis).toContainText('数据覆盖 2/2 次请求')
-      const captureDirectory = process.env['NEKRO_VISUAL_CAPTURE']
-      if (captureDirectory) {
-        await mkdir(captureDirectory, { recursive: true })
-        await page.screenshot({ path: join(captureDirectory, 'channel-runtime-light-1440.png'), fullPage: true })
-        await page.evaluate(() => window.localStorage.setItem('nekro-nxt.theme', 'dark'))
-        await page.reload()
-        await page.screenshot({ path: join(captureDirectory, 'channel-runtime-dark-1440.png'), fullPage: true })
-        await page.evaluate(() => window.localStorage.setItem('nekro-nxt.theme', 'light'))
-        await page.reload()
-        await generationPerformance.scrollIntoViewIfNeeded()
-        await page.screenshot({ path: join(captureDirectory, 'channel-performance-light-1440.png'), fullPage: true })
-        await page.evaluate(() => window.localStorage.setItem('nekro-nxt.theme', 'dark'))
-        await page.reload()
-        await generationPerformance.scrollIntoViewIfNeeded()
-        await page.screenshot({ path: join(captureDirectory, 'channel-performance-dark-1440.png'), fullPage: true })
-        await page.evaluate(() => window.localStorage.setItem('nekro-nxt.theme', 'light'))
-        await page.reload()
-      }
-      await playwrightExpect(page.getByRole('link', { name: /资料员/u }).first()).toBeVisible()
-      const chatTab = page.getByRole('tab', { name: '会话' })
-      const trajectoryTab = page.getByRole('tab', { name: '工作轨迹' })
-      await playwrightExpect(chatTab).toBeVisible()
-      await playwrightExpect(trajectoryTab).toBeVisible()
-      await playwrightExpect(chatTab).toHaveAttribute('aria-selected', 'true')
-      await playwrightExpect(page.getByLabel('响应方式')).toBeVisible()
-      await playwrightExpect(page.getByRole('button', { name: '更换' })).toBeVisible()
-      await playwrightExpect(page.getByRole('button', { name: '管理' })).toBeVisible()
-      await playwrightExpect(page.getByLabel('工作轨迹时间轴')).toHaveCount(0)
-      await chatTab.focus()
-      await page.keyboard.press('ArrowRight')
-      await playwrightExpect(trajectoryTab).toHaveAttribute('aria-selected', 'true')
-      await playwrightExpect(page.getByLabel('消息内容')).toHaveCount(0)
-      await playwrightExpect(page.getByRole('columnheader', { name: '事件' })).toBeVisible()
-      await playwrightExpect(page.getByLabel('工作轨迹时间轴')).toBeVisible()
-      await playwrightExpect(page.getByLabel('工作轨迹时间轴')).toContainText('内部')
-      await playwrightExpect(page.getByLabel('工作轨迹时间轴')).toContainText('发送')
-      const turnBoundary = page.getByRole('button', { name: 'Turn 2', exact: true })
-      await playwrightExpect(turnBoundary).toBeVisible()
-      const turnBox = await turnBoundary.boundingBox()
-      expect(turnBox?.width).toBeGreaterThanOrEqual(28)
-      expect(turnBox?.height).toBeGreaterThanOrEqual(80)
-      const sendMark = page.getByRole('button', { name: /发送频道消息/u })
-      const sendBox = await sendMark.boundingBox()
-      expect(sendBox?.width).toBeGreaterThanOrEqual(27.9)
-      expect(sendBox?.height).toBeGreaterThanOrEqual(27.9)
-      await sendMark.click()
-      const trajectoryInspector = page.locator('aside[aria-label="工作轨迹"]')
-      await playwrightExpect(trajectoryInspector.getByRole('heading', { name: '发出的内容' })).toBeVisible()
-      await playwrightExpect(trajectoryInspector.getByText('活动改到 19:30。')).toBeVisible()
-      const readRow = page.getByRole('row').filter({ hasText: '读取文件' })
-      await readRow.focus()
-      await page.keyboard.press('Enter')
-      await playwrightExpect(readRow).toHaveAttribute('aria-current', 'true')
-      await page.keyboard.press('ArrowDown')
-      const sendRow = page.getByRole('row').filter({ hasText: '发送频道消息' })
-      await playwrightExpect(sendRow).toBeFocused()
-      await playwrightExpect(sendRow).toHaveAttribute('aria-current', 'true')
-      await playwrightExpect(page.getByRole('button', { name: '摘要' })).toHaveCount(0)
-      await trajectoryTab.focus()
-      await page.keyboard.press('ArrowLeft')
-      await playwrightExpect(chatTab).toHaveAttribute('aria-selected', 'true')
-      await playwrightExpect(page.getByLabel('工作轨迹时间轴')).toHaveCount(0)
-      await playwrightExpect(page.getByLabel('响应方式')).toBeVisible()
-      await playwrightExpect(page.locator('body')).not.toContainText('管理绑定')
-      await playwrightExpect(page.locator('body')).not.toContainText('编辑频道绑定')
-      await playwrightExpect(page.locator('body')).not.toContainText('正在使用工具')
+      await playwrightExpect(page.getByRole('textbox', { name: '消息' })).toHaveAttribute(
+        'placeholder',
+        '给 资料员 发消息',
+      )
+      const inspector = page.getByRole('complementary', { name: '频道信息' })
+      await playwrightExpect(inspector.getByText('资料员', { exact: true }).first()).toBeVisible()
+      await playwrightExpect(inspector.getByRole('heading', { name: '上下文' })).toBeVisible()
+
+      // Without x-ray a turn is a summary: tool chips, no internal reasoning.
+      await playwrightExpect(page.getByText('读取文件', { exact: true }).first()).toBeVisible()
+      await playwrightExpect(page.getByText('先核对公告。', { exact: true })).toHaveCount(0)
+      await page.getByRole('button', { name: '透视' }).click()
+      await playwrightExpect(page.getByRole('button', { name: '透视' })).toHaveAttribute('aria-pressed', 'true')
+
+      await playwrightExpect(page.getByText('读取文件', { exact: true }).first()).toBeVisible()
+      await playwrightExpect(page.getByText('活动改到 19:30。', { exact: true })).toBeVisible()
+      await playwrightExpect(page.getByText('先核对公告。', { exact: true })).toBeVisible()
+      await playwrightExpect(page.locator('body')).not.toContainText('call_read')
+      await playwrightExpect(page.locator('body')).not.toContainText('internal-main-platform-id')
     })
 
-    await withProductPage(`/work/channels/${emptyChannelId}`, async (page) => {
-      await playwrightExpect(page.getByText('还没有消息', { exact: true })).toBeVisible()
-      await playwrightExpect(page.getByText('发给智能体', { exact: true })).toBeVisible()
+    await withProductPage(`/channels/${emptyChannelId}`, async (page) => {
+      await playwrightExpect(page.getByRole('textbox', { name: '消息' })).toHaveAttribute(
+        'placeholder',
+        '给 资料员 发消息',
+      )
+      await playwrightExpect(page.locator('body')).not.toContainText('只属于当前频道')
     })
   })
 
-  test('shows real dynamic state without displaying package or approval identifiers', async () => {
-    await withProductPage('/work/creator', async (page) => {
-      await playwrightExpect(page.getByRole('button', { name: /技术探针/u })).toBeVisible()
-      await playwrightExpect(page.getByText('等待确认', { exact: true }).first()).toBeVisible()
-      await playwrightExpect(page.locator('body')).not.toContainText('technical-plugin-id')
-      await playwrightExpect(page.locator('body')).not.toContainText('technical-package-id')
-      await playwrightExpect(page.locator('body')).not.toContainText('approval-internal-id')
-    })
+  test('shows real creation state without displaying package or approval identifiers', async () => {
+    await withProductPage(
+      `/workshop/tasks/${workshopTask.id}`,
+      async (page) => {
+        await playwrightExpect(page.getByRole('heading', { name: '技术探针' })).toBeVisible()
+        await playwrightExpect(page.getByText('等待确认', { exact: true }).first()).toBeVisible()
+        await playwrightExpect(page.getByRole('button', { name: '允许运行' })).toBeVisible()
+        await playwrightExpect(page.locator('body')).not.toContainText('technical-plugin-id')
+        await playwrightExpect(page.locator('body')).not.toContainText('technical-package-id')
+        await playwrightExpect(page.locator('body')).not.toContainText('approval-internal-id')
+        await playwrightExpect(page.locator('body')).not.toContainText(workshopTask.candidateAttempt.id)
+      },
+      { ...browserSnapshot, authoringTasks: [workshopTask] },
+    )
   })
 
   test('uses the NekroNXT settings surface without mounting the DSH native WebUI', async () => {
@@ -1585,6 +1512,7 @@ test.describe('NekroNxt browser projections', () => {
     const firstCredentialDelete = new Promise<void>((resolve) => {
       releaseFirstCredentialDelete = resolve
     })
+    await installWorkspaceStubs(page)
     await installSnapshotHealthRoutes(page, browserSnapshot)
     await page.route('**/api/snapshot', (request) =>
       request.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(browserSnapshot) }),
@@ -1685,7 +1613,7 @@ test.describe('NekroNxt browser projections', () => {
       })
     })
     try {
-      await page.goto(`${baseUrl}/settings?tab=dsh-extensions`)
+      await page.goto(`${baseUrl}/settings/dsh`)
       await playwrightExpect(page.getByText('DeepSeek 网页搜索', { exact: true }).first()).toBeVisible()
       await playwrightExpect(page.getByText('内置', { exact: true }).first()).toBeVisible()
       await playwrightExpect(page.getByText('用户安装', { exact: true }).first()).toBeVisible()
@@ -1819,6 +1747,7 @@ test.describe('NekroNxt browser projections', () => {
       revision: 3,
       writable: true,
     }
+    await installWorkspaceStubs(page)
     await installSnapshotHealthRoutes(page, browserSnapshot)
     await page.route('**/api/snapshot', (route) =>
       route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(browserSnapshot) }),
@@ -1849,7 +1778,7 @@ test.describe('NekroNxt browser projections', () => {
       })
     })
     try {
-      await page.goto(`${baseUrl}/settings?tab=dsh-extensions`)
+      await page.goto(`${baseUrl}/settings/dsh`)
       await playwrightExpect(page.getByText('runtime-extra', { exact: true }).first()).toBeVisible()
       await playwrightExpect(page.getByText('其他扩展', { exact: true }).first()).toBeVisible()
       await playwrightExpect(page.getByText(/当前 DSH Host 运行时注册/)).toBeVisible()
@@ -1872,28 +1801,22 @@ test.describe('NekroNxt browser projections', () => {
     const page = await browser.newPage({ viewport: { width: 1440, height: 900 } })
     const pageErrors: string[] = []
     let snapshotRequests = 0
+    await installWorkspaceStubs(page)
     await installSnapshotHealthRoutes(page, browserSnapshot)
     page.on('pageerror', (error) => pageErrors.push(error.message))
     await page.route('**/api/snapshot', (request) => {
       snapshotRequests += 1
-      if (snapshotRequests === 1) {
-        return request.fulfill({
-          status: 200,
-          contentType: 'application/json',
-          body: JSON.stringify(browserSnapshot),
-        })
-      }
+      if (snapshotRequests === 1) return request.fulfill({ json: browserSnapshot })
       return request.abort('failed')
     })
     await page.route('**/api/events', (request) =>
       request.fulfill({ status: 200, contentType: 'text/event-stream', body: '' }),
     )
     try {
-      await page.goto(`${baseUrl}/work`)
-      await playwrightExpect(page.getByRole('link', { name: /资料员/u }).first()).toBeVisible()
-      await playwrightExpect(page.getByText('连接不稳定', { exact: true }).first()).toBeVisible({ timeout: 8_000 })
-      await playwrightExpect(page.getByText('当前显示最近一次同步的数据。', { exact: true })).toBeVisible()
-      await playwrightExpect(page.getByRole('link', { name: /资料员/u }).first()).toBeVisible()
+      await page.goto(`${baseUrl}/agents/${browserAgentId}`)
+      await playwrightExpect(page.getByRole('heading', { name: '资料员' })).toBeVisible()
+      await playwrightExpect(page.getByText(/连接不稳定/u).first()).toBeVisible({ timeout: 8_000 })
+      await playwrightExpect(page.getByRole('heading', { name: '资料员' })).toBeVisible()
       expect(pageErrors).toEqual([])
     } finally {
       await page.close()
@@ -1901,36 +1824,44 @@ test.describe('NekroNxt browser projections', () => {
   })
 
   test('keeps priority layouts within the desktop viewport at 1100, 1440, and 1920 pixels', async () => {
-    test.setTimeout(20_000)
+    test.setTimeout(30_000)
 
     const cases = [
-      { width: 1100, height: 720, route: '/connections', name: 'connections-1100', marker: '示例群聊平台' },
+      { width: 1100, height: 720, route: '/wiring', name: 'wiring-1100', marker: '示例群聊平台' },
       {
         width: 1440,
         height: 900,
-        route: `/work/channels/${browserChannelId}`,
+        route: `/channels/${browserChannelId}`,
         name: 'channel-1440',
         marker: '只属于当前频道',
       },
       {
         width: 1440,
         height: 900,
-        route: `/work/channels/${browserChannelId}`,
+        route: `/channels/${browserChannelId}`,
         name: 'channel-dark-1440',
         marker: '只属于当前频道',
         colorScheme: 'dark',
       },
-      { width: 1920, height: 1080, route: '/work', name: 'agents-1920', marker: '资料员' },
+      { width: 1920, height: 1080, route: `/agents/${browserAgentId}`, name: 'agents-1920', marker: '资料员' },
       {
         width: 1440,
         height: 900,
-        route: '/work',
+        route: `/agents/${browserAgentId}`,
         name: 'agents-dark-reduced-motion-1440',
         marker: '资料员',
         colorScheme: 'dark',
         reducedMotion: 'reduce',
       },
-      { width: 1440, height: 900, route: '/settings', name: 'settings-1440', marker: 'API 密钥已保存' },
+      { width: 1440, height: 900, route: '/settings/models', name: 'settings-1440', marker: 'API 密钥已保存' },
+      { width: 1440, height: 900, route: '/live', name: 'live-1440', marker: '现场' },
+      {
+        width: 1100,
+        height: 720,
+        route: `/workshop/extensions/${browserExtensionId}`,
+        name: 'workshop-1100',
+        marker: '文档复核',
+      },
     ] as const
     const captureDirectory = process.env['NEKRO_VISUAL_CAPTURE']
     if (captureDirectory) await mkdir(captureDirectory, { recursive: true })
@@ -1941,37 +1872,43 @@ test.describe('NekroNxt browser projections', () => {
         colorScheme: 'colorScheme' in scenario ? scenario.colorScheme : 'light',
         reducedMotion: 'reducedMotion' in scenario ? scenario.reducedMotion : 'no-preference',
       })
+      await installWorkspaceStubs(page)
       await installSnapshotHealthRoutes(page, browserSnapshot)
-      await page.route('**/api/snapshot', (request) =>
-        request.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(browserSnapshot) }),
-      )
+      await page.route('**/api/snapshot', (request) => request.fulfill({ json: browserSnapshot }))
       await page.route('**/api/channels/*/messages?*', (request) => {
         const channelId = new URL(request.request().url()).pathname.split('/')[3]
         return request.fulfill({
-          status: 200,
-          contentType: 'application/json',
-          body: JSON.stringify({
+          json: {
             cursor: { epoch: 'fixture', sequence: 0 },
             messages: browserSnapshot.messages.filter((message) => message.channelId === channelId),
             hasMore: false,
-          }),
+          },
+        })
+      })
+      await page.route('**/api/channels/*/runtime', (request) => {
+        const channelId = new URL(request.request().url()).pathname.split('/')[3]
+        return request.fulfill({
+          json: {
+            cursor: { epoch: 'fixture', sequence: 0 },
+            channelId,
+            agentId: browserAgentId,
+            phase: 'idle',
+            summary: '智能体当前空闲。',
+            pendingInjectCount: 0,
+            turns: [],
+          },
         })
       })
       await page.route('**/api/events', (request) =>
         request.fulfill({ status: 200, contentType: 'text/event-stream', body: '' }),
       )
-      await page.route('**/api/llm/providers', (request) =>
-        request.fulfill({
-          status: 200,
-          contentType: 'application/json',
-          body: JSON.stringify(providerSettingsSnapshot),
-        }),
-      )
+      await page.route('**/api/llm/providers', (request) => request.fulfill({ json: providerSettingsSnapshot }))
+      await page.route('**/api/platform-users*', (request) => request.fulfill({ json: memberDirectory }))
       try {
         await page.goto(`${baseUrl}${scenario.route}`)
         await playwrightExpect(page.getByText(scenario.marker, { exact: true }).first()).toBeVisible()
         const overflow = await page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth)
-        expect(overflow).toBeLessThanOrEqual(0)
+        expect(overflow, scenario.name).toBeLessThanOrEqual(0)
         if (captureDirectory) {
           await page.screenshot({ path: join(captureDirectory, `${scenario.name}.png`), fullPage: true })
         }
@@ -1980,69 +1917,37 @@ test.describe('NekroNxt browser projections', () => {
       }
     }
   })
-  test('keeps the add-account action visible while a system-managed connection is selected', async () => {
+
+  test('lets a system-managed account selection still add a QR-login account', async () => {
     const snapshot = HostApiContracts.snapshot.response.parse({
       ...browserSnapshot,
-      connectionAdapters: [
-        ...browserSnapshot.connectionAdapters,
-        {
-          key: 'wechat-ilink',
-          displayName: '微信 iLink',
-          description: '接收微信私聊文本消息',
-          provisioning: 'user-created',
-          aliasEditable: true,
-          channelDiscovery: 'adapter-observed',
-          channelKinds: ['direct'],
-          activities: [],
-          features: {},
-          diagnostics: { receive: true, send: true },
-          creation: { mode: 'qr-login', actionLabel: '扫码登录', pendingLabel: '等待扫码确认…' },
-          configSchema: wechatIlinkConfigSchema,
-        },
-      ],
+      connectionAdapters: [...browserSnapshot.connectionAdapters, wechatAdapter],
     })
 
     await withProductPage(
-      `/connections/${browserConnectionId}`,
+      `/wiring/connections/${browserConnectionId}`,
       async (page) => {
-        const addLink = page.getByRole('link', { name: '添加平台连接' })
-        await playwrightExpect(addLink).toBeVisible()
-        await addLink.click()
-
-        const dialog = page.getByRole('dialog')
-        await playwrightExpect(dialog.getByText('选择要连接的平台账号。', { exact: true })).toBeVisible()
-        await dialog.getByLabel('平台').click()
-        await playwrightExpect(page.getByRole('option', { name: '微信 iLink' })).toBeVisible()
-        await page.getByRole('option', { name: '微信 iLink' }).click()
+        const add = page.getByRole('button', { name: '添加账号' })
+        await playwrightExpect(add).toBeVisible()
+        await add.click()
+        await playwrightExpect(page).toHaveURL(/\/wiring\/new$/u)
+        await page
+          .getByRole('main')
+          .getByRole('button', { name: /^微信 iLink/u })
+          .click()
         await page.getByRole('button', { name: '扫码登录' }).click()
 
-        await playwrightExpect(dialog.getByText('使用平台应用扫码登录。登录成功后会自动创建平台连接。')).toBeVisible()
-        const qrImage = dialog.getByRole('img', { name: '微信 iLink 扫码登录二维码' })
+        const qrImage = page.getByRole('img', { name: '微信 iLink登录二维码' })
         await playwrightExpect(qrImage).toBeVisible()
         await playwrightExpect(qrImage).toHaveAttribute('src', /^data:image\/svg\+xml;charset=UTF-8,/u)
-        await playwrightExpect(dialog).not.toContainText('打开二维码链接')
-        await playwrightExpect(dialog).not.toContainText('https://qr.example.invalid/login-fixture')
-        await playwrightExpect(dialog.getByText('请使用平台应用扫码并确认登录。', { exact: true })).toBeVisible()
-        await playwrightExpect(dialog).not.toContainText('机器人账号 ID')
-        await playwrightExpect(dialog).not.toContainText('访问令牌')
-        await playwrightExpect(dialog).not.toContainText('API 地址')
-        await playwrightExpect(dialog).not.toContainText('CDN 地址')
+        await playwrightExpect(page.locator('main')).not.toContainText('https://qr.example.invalid/login-fixture')
+        await playwrightExpect(page.locator('main')).not.toContainText('机器人账号 ID')
+        await playwrightExpect(page.locator('main')).not.toContainText('访问令牌')
       },
       snapshot,
       async (page) => {
-        await page.route('**/api/connection-logins', async (request) => {
-          await request.fulfill({
-            status: 201,
-            contentType: 'application/json',
-            body: JSON.stringify({
-              loginId: 'login-fixture',
-              adapterKey: 'wechat-ilink',
-              status: 'pending',
-              qrCodeUrl: 'https://qr.example.invalid/login-fixture',
-              message: '请使用平台应用扫码并确认登录。',
-            }),
-          })
-        })
+        await page.route('**/api/connection-logins', (request) => request.fulfill({ status: 201, json: wechatLogin }))
+        await page.route('**/api/connection-logins/login-fixture', (request) => request.fulfill({ json: wechatLogin }))
       },
     )
   })
@@ -2050,104 +1955,40 @@ test.describe('NekroNxt browser projections', () => {
   test('keeps the wechat iLink QR login open across host refreshes', async () => {
     const snapshot = HostApiContracts.snapshot.response.parse({
       ...browserSnapshot,
-      connectionAdapters: [
-        ...browserSnapshot.connectionAdapters,
-        {
-          key: 'wechat-ilink',
-          displayName: '微信 iLink',
-          description: '接收微信私聊文本消息',
-          provisioning: 'user-created',
-          aliasEditable: true,
-          channelDiscovery: 'adapter-observed',
-          channelKinds: ['direct'],
-          activities: [],
-          features: {},
-          diagnostics: { receive: true, send: true },
-          creation: { mode: 'qr-login', actionLabel: '扫码登录', pendingLabel: '等待扫码确认…' },
-          configSchema: wechatIlinkConfigSchema,
-        },
-      ],
+      connectionAdapters: [...browserSnapshot.connectionAdapters, wechatAdapter],
     })
 
     let snapshotRequests = 0
     await withProductPage(
-      '/connections/' + browserConnectionId + '?create=1&adapter=wechat-ilink',
+      '/wiring/new?adapter=wechat-ilink',
       async (page) => {
-        const dialog = page.getByRole('dialog')
-        await playwrightExpect(dialog.getByText('登录 微信 iLink')).toBeVisible()
+        await playwrightExpect(page.getByRole('heading', { name: '添加微信 iLink账号' })).toBeVisible()
         await page.getByRole('button', { name: '扫码登录' }).click()
-        const qrImage = dialog.getByRole('img', { name: '微信 iLink 扫码登录二维码' })
+        const qrImage = page.getByRole('img', { name: '微信 iLink登录二维码' })
         await playwrightExpect(qrImage).toBeVisible()
-        await playwrightExpect(qrImage).toHaveAttribute('src', /^data:image\/svg\+xml;charset=UTF-8,/u)
         const requestsBeforeRefresh = snapshotRequests
         await page.evaluate(() => window.dispatchEvent(new Event('online')))
         await playwrightExpect.poll(() => snapshotRequests).toBeGreaterThan(requestsBeforeRefresh)
-        await playwrightExpect(dialog.getByText('登录 微信 iLink')).toBeVisible()
+        await playwrightExpect(page.getByRole('heading', { name: '添加微信 iLink账号' })).toBeVisible()
         await playwrightExpect(qrImage).toBeVisible()
-        await playwrightExpect(dialog).not.toContainText('选择平台')
+        await playwrightExpect(page.getByRole('heading', { name: '添加平台账号' })).toHaveCount(0)
       },
       snapshot,
       async (page) => {
-        let loginStarted = false
         await page.route('**/api/snapshot', async (request) => {
           snapshotRequests += 1
-          await request.fulfill({
-            status: 200,
-            contentType: 'application/json',
-            body: JSON.stringify(loginStarted ? browserSnapshot : snapshot),
-          })
+          await request.fulfill({ json: snapshot })
         })
-        await page.route('**/api/connection-logins', async (request) => {
-          loginStarted = true
-          await request.fulfill({
-            status: 201,
-            contentType: 'application/json',
-            body: JSON.stringify({
-              loginId: 'login-fixture',
-              adapterKey: 'wechat-ilink',
-              status: 'pending',
-              qrCodeUrl: 'https://qr.example.invalid/login-fixture',
-              message: '请使用平台应用扫码并确认登录。',
-            }),
-          })
-        })
-        await page.route('**/api/connection-logins/login-fixture', async (request) => {
-          await request.fulfill({
-            status: 200,
-            contentType: 'application/json',
-            body: JSON.stringify({
-              loginId: 'login-fixture',
-              adapterKey: 'wechat-ilink',
-              status: 'pending',
-              qrCodeUrl: 'https://qr.example.invalid/login-fixture',
-              message: '请使用平台应用扫码并确认登录。',
-            }),
-          })
-        })
+        await page.route('**/api/connection-logins', (request) => request.fulfill({ status: 201, json: wechatLogin }))
+        await page.route('**/api/connection-logins/login-fixture', (request) => request.fulfill({ json: wechatLogin }))
       },
     )
   })
 
-  test('renders and updates the wechat iLink inbound media setting from connection details', async () => {
+  test('renders and updates the wechat iLink inbound media setting from account details', async () => {
     const wechatSnapshot = HostApiContracts.snapshot.response.parse({
       ...browserSnapshot,
-      connectionAdapters: [
-        ...browserSnapshot.connectionAdapters,
-        {
-          key: 'wechat-ilink',
-          displayName: '微信 iLink',
-          description: '接收微信私聊文本消息',
-          provisioning: 'user-created',
-          aliasEditable: true,
-          channelDiscovery: 'adapter-observed',
-          channelKinds: ['direct'],
-          activities: [],
-          features: {},
-          diagnostics: { receive: true, send: true },
-          creation: { mode: 'qr-login', actionLabel: '扫码登录', pendingLabel: '等待扫码确认…' },
-          configSchema: wechatIlinkConfigSchema,
-        },
-      ],
+      connectionAdapters: [...browserSnapshot.connectionAdapters, wechatAdapter],
       connections: [
         ...browserSnapshot.connections,
         {
@@ -2165,10 +2006,9 @@ test.describe('NekroNxt browser projections', () => {
     let updateRequestBody: unknown
 
     await withProductPage(
-      '/connections/' + wechatConnectionId,
+      `/wiring/connections/${wechatConnectionId}`,
       async (page) => {
-        await playwrightExpect(page.getByText('连接设置', { exact: true })).toBeVisible()
-        await playwrightExpect(page.getByText('入站媒体接收', { exact: true })).toBeVisible()
+        await playwrightExpect(page.getByRole('heading', { name: '连接设置' })).toBeVisible()
         const toggle = page.getByRole('switch', { name: '入站媒体接收' })
         await playwrightExpect(toggle).toHaveAttribute('aria-checked', 'false')
         await toggle.click()
@@ -2176,24 +2016,19 @@ test.describe('NekroNxt browser projections', () => {
       },
       wechatSnapshot,
       async (page) => {
-        await page.route('**/api/snapshot', async (request) => {
-          await request.fulfill({
-            status: 200,
-            contentType: 'application/json',
-            body: JSON.stringify({
+        await page.route('**/api/snapshot', (request) =>
+          request.fulfill({
+            json: {
               ...wechatSnapshot,
               connections: wechatSnapshot.connections.map((connection) =>
                 connection.id === wechatConnectionId
-                  ? {
-                      ...connection,
-                      configuration: { enableInboundMedia: inboundMediaEnabled },
-                    }
+                  ? { ...connection, configuration: { enableInboundMedia: inboundMediaEnabled } }
                   : connection,
               ),
-            }),
-          })
-        })
-        await page.route('**/api/connections/' + wechatConnectionId + '/configuration', async (request) => {
+            },
+          }),
+        )
+        await page.route(`**/api/connections/${wechatConnectionId}/configuration`, async (request) => {
           updateRequestBody = request.request().postDataJSON()
           const value =
             HostApiContracts.updateConnectionConfiguration.parseRequest(updateRequestBody).configuration[
@@ -2202,12 +2037,7 @@ test.describe('NekroNxt browser projections', () => {
           if (typeof value !== 'boolean') throw new Error('Expected a boolean inbound-media setting.')
           inboundMediaEnabled = value
           await request.fulfill({
-            status: 200,
-            contentType: 'application/json',
-            body: JSON.stringify({
-              connectionId: wechatConnectionId,
-              configuration: { enableInboundMedia: inboundMediaEnabled },
-            }),
+            json: { connectionId: wechatConnectionId, configuration: { enableInboundMedia: inboundMediaEnabled } },
           })
         })
       },

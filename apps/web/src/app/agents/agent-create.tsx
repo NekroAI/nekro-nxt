@@ -5,7 +5,8 @@ import { promptDocumentFromText, type PromptDocumentV1 } from '@nekro-nxt/contra
 import { PromptReferenceEditor } from '../../components/prompt-reference-editor.js'
 import { agentModelKey, createAgentDraft } from './agent-create-draft.js'
 import { useProductStore } from '../../product-runtime.js'
-import { Banner, Button, Field, Input, Select, toast } from '../../ui-kit/next/index.js'
+import { AddModelProviderForm } from '../../llm-settings.js'
+import { Banner, Button, Field, Input, Panel, Select, toast } from '../../ui-kit/next/index.js'
 import { useProductApi } from '../model/store.js'
 import styles from './agents.module.css'
 
@@ -57,18 +58,7 @@ export function AgentCreate() {
       <div className={styles.createHead}>
         <h1>新建智能体</h1>
       </div>
-      {models.length === 0 ? (
-        <Banner
-          tone="warn"
-          action={
-            <Button size="small" onClick={() => navigate('/settings/models')}>
-              添加模型
-            </Button>
-          }
-        >
-          还没有可用模型
-        </Banner>
-      ) : null}
+
       <Field label="名称">
         <Input
           value={name}
@@ -85,15 +75,30 @@ export function AgentCreate() {
         placeholder="她是谁、怎么说话、在群里负责什么"
         onChange={(document, text) => setPersona({ document, text })}
       />
-      <Field label="模型">
-        <Select
-          value={model ? agentModelKey(model) : ''}
-          {...(model ? {} : { placeholder: '选择模型' })}
-          options={models.map((item) => ({ value: agentModelKey(item), label: `${item.providerName} · ${item.name}` }))}
-          onChange={(event) => setModelKey(event.target.value)}
-          disabled={models.length === 0}
-        />
-      </Field>
+      {models.length === 0 ? (
+        <Panel className={styles.createProvider}>
+          <Banner tone="warn">当前没有可用模型。请先保存一个供应商。</Banner>
+          {/* Saving here keeps the name and persona already typed above. */}
+          <AddModelProviderForm
+            onSaved={() => {
+              const first = api.getState().models[0]
+              if (first) setModelKey(agentModelKey(first))
+            }}
+          />
+        </Panel>
+      ) : (
+        <Field label="模型">
+          <Select
+            value={model ? agentModelKey(model) : ''}
+            {...(model ? {} : { placeholder: '选择模型' })}
+            options={models.map((item) => ({
+              value: agentModelKey(item),
+              label: `${item.providerName} · ${item.name}`,
+            }))}
+            onChange={(event) => setModelKey(event.target.value)}
+          />
+        </Field>
+      )}
       <div className={styles.createActions}>
         <Button variant="ghost" onClick={() => window.history.back()}>
           取消

@@ -9,7 +9,8 @@ import { createServer, type Connect, type ViteDevServer } from 'vite'
 const harnessModule = `
   import React, { useRef, useState } from 'react'
   import { createRoot } from 'react-dom/client'
-  import { NotificationCenter, notify } from '/src/components/notifications.tsx'
+  import { notify } from '/src/components/notifications.tsx'
+  import { Toaster } from '/src/ui-kit/next/index.ts'
   import { installStableCursorIntent } from '/src/cursor-stability.ts'
   import { Button, Dialog, IconButton, MessageEnter, ResizeHandle, NxtMotionProvider, Tooltip } from '/src/ui-kit/index.tsx'
   import '/src/ui-kit/tokens.css'
@@ -61,7 +62,7 @@ const harnessModule = `
       >
         <div style={{ height: longContent ? 1200 : 20 }}>{longContent ? '可滚动内容' : '短内容'}</div>
       </Dialog>
-      <NotificationCenter />
+      <Toaster />
     </main>
     </Tooltip.Provider>
   }

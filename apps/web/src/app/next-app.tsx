@@ -1,20 +1,60 @@
-import { lazy, Suspense, type ReactNode } from 'react'
-import { Navigate, Route, Routes, useParams } from 'react-router-dom'
-import { useProductStore } from '../product-runtime.js'
+import { lazy, Suspense, useEffect, type ComponentType, type ReactNode } from 'react'
+import { Navigate, Route, Routes } from 'react-router-dom'
 import { ExtensionUiProvider } from '../extension-ui/index.js'
 import { DynamicClientProvider } from '../dynamic-client-coordinator.js'
-import { HostUiClientProvider, HostUiPageCanvas } from '../host-ui-client.js'
+import { HostUiClientProvider } from '../host-ui-client.js'
 import { Skeleton, Toaster, TooltipProvider } from '../ui-kit/next/index.js'
 import { AppShell } from './shell/app-shell.js'
-import { CrumbProvider, useCrumb } from './shell/crumb.js'
+import { CrumbProvider } from './shell/crumb.js'
+import { ExtensionPage } from './system/extension-page.js'
 import { useAppearanceEffects } from './model/theme.js'
 
-const LiveSpace = lazy(() => import('./live/live-space.js'))
-const ChannelsSpace = lazy(() => import('./channels/channels-space.js'))
-const AgentsSpace = lazy(() => import('./agents/agents-space.js'))
-const WorkshopSpace = lazy(() => import('./workshop/workshop-space.js'))
-const WiringSpace = lazy(() => import('./wiring/wiring-space.js'))
-const SettingsSpace = lazy(() => import('./settings/settings-space.js'))
+/**
+ * A space loaded on demand that renders synchronously once its module is in memory. `React.lazy` alone would still
+ * suspend for one frame on first render even after a prefetch, flashing the skeleton between spaces.
+ */
+function preloadable(load: () => Promise<{ readonly default: ComponentType }>) {
+  let Loaded: ComponentType | undefined
+  const remember = () =>
+    load().then((module) => {
+      Loaded = module.default
+      return module
+    })
+  const Lazy = lazy(remember)
+  function Space() {
+    return Loaded ? <Loaded /> : <Lazy />
+  }
+  return { Space, preload: () => remember().then(() => undefined) }
+}
+
+const live = preloadable(() => import('./live/live-space.js'))
+const channels = preloadable(() => import('./channels/channels-space.js'))
+const agents = preloadable(() => import('./agents/agents-space.js'))
+const workshop = preloadable(() => import('./workshop/workshop-space.js'))
+const wiring = preloadable(() => import('./wiring/wiring-space.js'))
+const settings = preloadable(() => import('./settings/settings-space.js'))
+const LiveSpace = live.Space
+const ChannelsSpace = channels.Space
+const AgentsSpace = agents.Space
+const WorkshopSpace = workshop.Space
+const WiringSpace = wiring.Space
+const SettingsSpace = settings.Space
+
+/** Loads every space once the first screen is idle, so switching spaces never waits on a skeleton. */
+function usePrefetchSpaces(): void {
+  useEffect(() => {
+    const load = () => {
+      for (const space of [live, channels, agents, workshop, wiring, settings])
+        void space.preload().catch(() => undefined)
+    }
+    if ('requestIdleCallback' in window) {
+      const handle = window.requestIdleCallback(load, { timeout: 2000 })
+      return () => window.cancelIdleCallback(handle)
+    }
+    const timer = setTimeout(load, 800)
+    return () => clearTimeout(timer)
+  }, [])
+}
 
 function Loading() {
   return (
@@ -26,16 +66,6 @@ function Loading() {
   )
 }
 
-/** Extension-owned page: the Host UI runtime renders it; the shell only names it. */
-function ExtensionPage() {
-  const { pageInstanceId } = useParams()
-  const title = useProductStore(
-    (state) => state.hostUi.pages.find((page) => page.pageInstanceId === pageInstanceId)?.title,
-  )
-  useCrumb('扩展页面', title)
-  return <HostUiPageCanvas />
-}
-
 const space = (node: ReactNode) => <Suspense fallback={<Loading />}>{node}</Suspense>
 
 /**
@@ -44,6 +74,7 @@ const space = (node: ReactNode) => <Suspense fallback={<Loading />}>{node}</Susp
  */
 export function NextApp() {
   useAppearanceEffects()
+  usePrefetchSpaces()
   return (
     <DynamicClientProvider>
       <ExtensionUiProvider>

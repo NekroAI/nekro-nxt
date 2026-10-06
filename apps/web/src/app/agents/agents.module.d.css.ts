@@ -6,6 +6,7 @@ declare const styles: {
   readonly create: string
   readonly createActions: string
   readonly createHead: string
+  readonly createProvider: string
   readonly danger: string
   readonly diff: string
   readonly diffAdd: string

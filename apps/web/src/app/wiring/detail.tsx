@@ -3,7 +3,7 @@ import { PanelSlot } from '../../extension-ui/index.js'
 import { MessagesSquare, Trash2, Unplug, UsersRound } from 'lucide-react'
 import { useEffect, useMemo, useState } from 'react'
 
-import type { HostApiResponse } from '@nekro-nxt/contracts'
+import { configFields, type HostApiResponse } from '@nekro-nxt/contracts'
 import { connectionDisplayName, useProductStore, type ConnectionSummary } from '../../product-runtime.js'
 import {
   AgentAvatar,
@@ -23,6 +23,12 @@ import { useProductApi } from '../model/store.js'
 import styles from './wiring.module.css'
 
 type Members = HostApiResponse<'listPlatformUsers'>
+
+/** Platform account ids are personal identifiers: show only the last four characters. */
+export const maskedAccount = (reference: string): string => {
+  const trimmed = reference.trim()
+  return trimmed.length <= 4 ? '已提供' : `尾号 ${trimmed.slice(-4)}`
+}
 
 const failure = (error: unknown) => toast(error instanceof Error ? error.message : String(error), { tone: 'bad' })
 
@@ -82,6 +88,23 @@ function ConnectionDetail({ connection }: { readonly connection: ConnectionSumma
   useEffect(() => setAlias(connection.alias ?? ''), [connection.id, connection.alias])
 
   const tone = connectionTone(connection.state)
+  // Boolean adapter options are safe to change on a live account; each switch saves immediately.
+  const settings = useMemo(
+    () => (descriptor ? configFields(descriptor.configSchema).filter((field) => field.kind === 'boolean') : []),
+    [descriptor],
+  )
+  const [settingPending, setSettingPending] = useState(false)
+  const saveSetting = async (key: string, enabled: boolean) => {
+    setSettingPending(true)
+    try {
+      await api.getState().updateConnectionConfiguration(connection.id, { [key]: enabled })
+      toast('连接设置已保存')
+    } catch (error) {
+      failure(error)
+    } finally {
+      setSettingPending(false)
+    }
+  }
   const own = channels.filter((channel) => channel.connectionId === connection.id)
   const activities = useMemo(
     () =>
@@ -141,6 +164,12 @@ function ConnectionDetail({ connection }: { readonly connection: ConnectionSumma
           {connection.state}
           {connection.lastEvent ? <span className={styles.end}>{connection.lastEvent}</span> : null}
         </div>
+        {connection.accountReference ? (
+          <div>
+            平台账号
+            <span className={styles.end}>{maskedAccount(connection.accountReference)}</span>
+          </div>
+        ) : null}
         {connection.lastError ? <div className={styles.error}>{connection.lastError}</div> : null}
       </div>
 
@@ -148,6 +177,7 @@ function ConnectionDetail({ connection }: { readonly connection: ConnectionSumma
         <Field label="名称">
           <div className={styles.inline}>
             <Input
+              aria-label="名称"
               value={alias}
               onChange={(event) => setAlias(event.target.value)}
               placeholder={connection.adapter}
@@ -162,6 +192,26 @@ function ConnectionDetail({ connection }: { readonly connection: ConnectionSumma
             </Button>
           </div>
         </Field>
+      ) : null}
+
+      {connection.userManaged && settings.length > 0 ? (
+        <section>
+          <h3 className={styles.detailTitle}>连接设置</h3>
+          {settings.map((field) => (
+            <SwitchRow
+              key={field.key}
+              title={field.title}
+              description={field.hint}
+              checked={
+                typeof connection.configuration?.[field.key] === 'boolean'
+                  ? connection.configuration[field.key] === true
+                  : field.default === true
+              }
+              disabled={settingPending}
+              onCheckedChange={(checked) => void saveSetting(field.key, checked)}
+            />
+          ))}
+        </section>
       ) : null}
 
       <section>

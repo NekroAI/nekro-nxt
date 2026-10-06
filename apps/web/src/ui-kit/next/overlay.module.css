@@ -259,6 +259,32 @@
   stroke-width: 2.6;
 }
 
+.toastClose {
+  display: grid;
+  width: 22px;
+  height: 22px;
+  margin-right: -4px;
+  place-items: center;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+  transition:
+    background var(--dur-1),
+    color var(--dur-1);
+}
+
+.toastClose:hover {
+  background: var(--hover);
+  color: var(--fg);
+}
+
+.toastClose svg {
+  width: 13px;
+  height: 13px;
+}
+
 .toastAction {
   margin-left: 4px;
   padding: 2px 8px;

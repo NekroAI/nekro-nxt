@@ -17,6 +17,7 @@ declare const styles: {
   readonly title: string
   readonly toast: string
   readonly toastAction: string
+  readonly toastClose: string
   readonly toastIcon: string
   readonly toasts: string
   readonly tooltip: string
