@@ -690,6 +690,7 @@ export function registerSettingsRoutes({
                     ...(entry.name === undefined ? {} : { name: entry.name }),
                     ...(entry.contextWindow === undefined ? {} : { contextWindow: entry.contextWindow }),
                     ...(entry.maxTokens === undefined ? {} : { maxTokens: entry.maxTokens }),
+                    ...(entry.inputModalities === undefined ? {} : { inputModalities: entry.inputModalities }),
                   })),
                 }),
           }),
@@ -705,13 +706,26 @@ export function registerSettingsRoutes({
     path: '/api/llm/providers',
     handler: async (req, res) => {
       const url = new URL(req.url ?? '/', 'http://localhost')
-      const match = /^\/api\/llm\/providers\/([^/]+)(\/removal-impact)?$/.exec(url.pathname)
+      const match = /^\/api\/llm\/providers\/([^/]+)(\/removal-impact|\/restore-models)?$/.exec(url.pathname)
       if (!match) {
         writeError(res, 404, 'not-found', `未定义路由：${req.method} ${url.pathname}。`)
         return
       }
-      if (match[2] ? req.method !== 'GET' : req.method !== 'POST' && req.method !== 'DELETE') {
-        writeError(res, 405, 'method-not-allowed', match[2] ? '只支持 GET。' : '只支持 POST/DELETE。')
+      const restoreModels = match[2] === '/restore-models'
+      const removalImpact = match[2] === '/removal-impact'
+      if (
+        removalImpact
+          ? req.method !== 'GET'
+          : restoreModels
+            ? req.method !== 'POST'
+            : req.method !== 'POST' && req.method !== 'DELETE'
+      ) {
+        writeError(
+          res,
+          405,
+          'method-not-allowed',
+          removalImpact ? '只支持 GET。' : restoreModels ? '只支持 POST。' : '只支持 POST/DELETE。',
+        )
         return
       }
       try {
@@ -720,7 +734,20 @@ export function registerSettingsRoutes({
           writeError(res, 404, 'not-found', `未定义路由：${req.method} ${url.pathname}。`)
           return
         }
-        if (match[2]) {
+        if (restoreModels) {
+          const params = HostApiContracts.llmRestoreProviderModels.parseParams({
+            provider: decodeURIComponent(encodedProvider),
+          })
+          const input = HostApiContracts.llmRestoreProviderModels.parseRequest(await readJsonBody(req))
+          writeContractJson(
+            res,
+            200,
+            HostApiContracts.llmRestoreProviderModels,
+            await runtime.host.restoreLlmProviderModels(params.provider, input.expectedRevision),
+          )
+          return
+        }
+        if (removalImpact) {
           const params = HostApiContracts.llmProviderRemovalImpact.parseParams({
             provider: decodeURIComponent(encodedProvider),
           })
@@ -766,6 +793,7 @@ export function registerSettingsRoutes({
                     ...(model.name === undefined ? {} : { name: model.name }),
                     ...(model.contextWindow === undefined ? {} : { contextWindow: model.contextWindow }),
                     ...(model.maxTokens === undefined ? {} : { maxTokens: model.maxTokens }),
+                    ...(model.inputModalities === undefined ? {} : { inputModalities: model.inputModalities }),
                   })),
                 }),
           }),

@@ -948,6 +948,8 @@ test('model settings keep unconfigured providers behind the add flow', async ({ 
             configured: true,
             credential: { configured: true, writable: true },
             models: [{ id: 'deepseek-v4-flash', name: 'DeepSeek V4 Flash' }],
+            modelsCustomized: false,
+            discoverable: true,
           },
           {
             provider: 'idle-provider',
@@ -960,6 +962,8 @@ test('model settings keep unconfigured providers behind the add flow', async ({ 
             configured: false,
             credential: { configured: false, writable: true },
             models: [],
+            modelsCustomized: false,
+            discoverable: true,
           },
         ],
       },
@@ -970,5 +974,72 @@ test('model settings keep unconfigured providers behind the add flow', async ({ 
   await expect(page.getByRole('button', { name: /未配置供应商/u })).toHaveCount(0)
   await page.getByRole('button', { name: '添加供应商' }).first().click()
   await expect(page.getByRole('dialog')).toContainText('未配置供应商')
+  expect(failures, failures.join('\n')).toEqual([])
+})
+
+test('model settings edit a fixed catalog with vision models and restore its defaults', async ({ page }, testInfo) => {
+  const failures = installRuntimeFailureGate(page)
+  await installProductRoutes(page)
+  let saveRequest: unknown
+  let restoreRequested = false
+  const provider = (customized: boolean) => ({
+    provider: 'synthetic-fixed',
+    displayName: '固定目录供应商',
+    settingsNs: 'llm-deepseek',
+    settingsPath: [],
+    settingsRevision: 4,
+    declared: false,
+    active: true,
+    configured: true,
+    credential: { configured: true, writable: true },
+    models: [
+      { id: 'synthetic-flash', name: 'Synthetic Flash', contextWindow: 1_000_000, inputModalities: ['text', 'image'] },
+      { id: 'synthetic-pro', name: 'Synthetic Pro', contextWindow: 1_000_000, inputModalities: ['text'] },
+      ...(customized ? [{ id: 'synthetic-next', name: 'synthetic-next', inputModalities: ['text', 'image'] }] : []),
+    ],
+    modelsCustomized: customized,
+    discoverable: false,
+  })
+  const body = (customized: boolean) =>
+    JSON.stringify({ writable: true, protocols: ['openai-completions'], providers: [provider(customized)] })
+  await page.route('**/api/llm/providers', (route) =>
+    route.fulfill({ status: 200, contentType: 'application/json', body: body(false) }),
+  )
+  await page.route('**/api/llm/providers/synthetic-fixed', (route) => {
+    saveRequest = route.request().postDataJSON()
+    return route.fulfill({ status: 200, contentType: 'application/json', body: body(true) })
+  })
+  await page.route('**/api/llm/providers/synthetic-fixed/restore-models', (route) => {
+    restoreRequested = true
+    return route.fulfill({ status: 200, contentType: 'application/json', body: body(false) })
+  })
+
+  await page.setViewportSize({ width: 1440, height: 1000 })
+  await page.goto('/settings/models')
+  const table = page.getByRole('table', { name: '模型列表' })
+  await expect(table.getByRole('row')).toHaveCount(3)
+  await expect(page.getByRole('switch', { name: 'synthetic-flash支持图片输入' })).toBeChecked()
+  await expect(page.getByRole('switch', { name: 'synthetic-pro支持图片输入' })).not.toBeChecked()
+  await expect(page.getByRole('button', { name: '获取可用模型' })).toHaveCount(0)
+  await expect(page.getByRole('button', { name: '恢复默认模型' })).toHaveCount(0)
+
+  await page.getByRole('button', { name: '添加模型' }).click()
+  await table.getByRole('textbox', { name: '模型 ID' }).last().fill('synthetic-next')
+  await page.getByRole('switch', { name: 'synthetic-next支持图片输入' }).click()
+  await assertViewportIntegrity(page)
+  await capture(page, testInfo, 'model-catalog-editor')
+  await page.getByRole('button', { name: '保存供应商' }).click()
+  await expect.poll(() => saveRequest).toBeDefined()
+  expect(HostApiContracts.llmSaveProvider.request.parse(saveRequest).models).toEqual([
+    { id: 'synthetic-flash', name: 'Synthetic Flash', contextWindow: 1_000_000, inputModalities: ['text', 'image'] },
+    { id: 'synthetic-pro', name: 'Synthetic Pro', contextWindow: 1_000_000, inputModalities: ['text'] },
+    { id: 'synthetic-next', inputModalities: ['text', 'image'] },
+  ])
+
+  await expect(page.getByText('已自定义', { exact: true })).toBeVisible()
+  await page.getByRole('button', { name: '恢复默认模型' }).click()
+  await page.getByRole('dialog').getByRole('button', { name: '恢复默认模型' }).click()
+  await expect.poll(() => restoreRequested).toBe(true)
+  await expect(table.getByRole('row')).toHaveCount(3)
   expect(failures, failures.join('\n')).toEqual([])
 })

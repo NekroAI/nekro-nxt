@@ -45,6 +45,7 @@ import {
 import { agentAccent, agentHue, agentPhase, isAgentWorking, isTriggerPolicy, triggerLabel } from '../model/identity.js'
 import { useExtensionActivation } from '../../extension-ui/index.js'
 import { useProductApi } from '../model/store.js'
+import { missingAgentModel, replacementModel } from './model-health.js'
 import styles from './agents.module.css'
 
 const failure = (error: unknown) => toast(error instanceof Error ? error.message : String(error), { tone: 'bad' })
@@ -529,12 +530,26 @@ export function AgentProfile({ agent }: { readonly agent: AgentSummary }) {
     : undefined
   const noModel = !agent.modelRef || models.length === 0
   // The saved model can disappear from its provider's list (retired upstream); the agent may still try to run it.
-  const missingModel =
-    !noModel &&
-    agent.modelRef !== undefined &&
-    !models.some((model) => model.provider === agent.modelRef?.provider && model.id === agent.modelRef.model)
-      ? agent.modelRef.model
-      : undefined
+  const missing = noModel ? undefined : missingAgentModel(agent, models)
+  const missingModel = missing?.model
+  const replacement = missing ? replacementModel(missing, models) : undefined
+  const switchModel = async (model: ModelSummary) => {
+    try {
+      await api.getState().reviseAgent({
+        agentId: agent.id,
+        ...(agent.currentRevisionId ? { expectedCurrentRevisionId: agent.currentRevisionId } : {}),
+        displayName: agent.name,
+        persona: promptDocumentPlainText(agent.personaDocument),
+        personaDocument: agent.personaDocument,
+        model,
+        imagePolicy: agent.imagePolicy,
+        dynamicClientApprovalPolicy: agent.dynamicClientApprovalPolicy,
+      })
+      toast(`已改用 ${model.name}`)
+    } catch (error) {
+      failure(error)
+    }
+  }
   const noVision = !noModel && !missingModel && agent.imageDiagnostics.route.mode === 'unavailable'
 
   const changeTrigger = async (
@@ -592,9 +607,15 @@ export function AgentProfile({ agent }: { readonly agent: AgentSummary }) {
           <Banner
             tone="warn"
             action={
-              <Button size="small" onClick={() => setEditing(true)}>
-                更换模型
-              </Button>
+              replacement ? (
+                <Button size="small" onClick={() => void switchModel(replacement)}>
+                  改用 {replacement.name}
+                </Button>
+              ) : (
+                <Button size="small" onClick={() => setEditing(true)}>
+                  更换模型
+                </Button>
+              )
             }
           >
             默认模型 {missingModel} 已不在供应商的模型列表中，可能已停用；看图能力也无法确认

@@ -13,6 +13,8 @@ const entry = {
   configured: true,
   active: true,
   models: [],
+  modelsCustomized: false,
+  discoverable: true,
 }
 const settings = (providers: HostApiResponse<'llmProviders'>['providers']): HostApiResponse<'llmProviders'> => ({
   writable: true,

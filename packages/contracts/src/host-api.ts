@@ -1486,12 +1486,16 @@ export const HostSseEventSchema = z.discriminatedUnion('event', [
 
 export type HostSseEvent = z.output<typeof HostSseEventSchema>
 
+/** Request content a model accepts; `image` enables native vision for agents using the model. */
+export const LlmModelInputModalitiesSchema = z.array(z.enum(['text', 'image'])).min(1)
+
 export const LlmProviderModelSchema = z
   .object({
     id: NonEmptyStringSchema,
     name: NonEmptyStringSchema,
     contextWindow: z.number().int().positive().optional(),
     maxTokens: z.number().int().positive().optional(),
+    inputModalities: LlmModelInputModalitiesSchema.optional(),
   })
   .strict()
 
@@ -1501,6 +1505,7 @@ export const LlmDiscoveredModelSchema = z
     name: NonEmptyStringSchema.optional(),
     contextWindow: z.number().int().positive().optional(),
     maxTokens: z.number().int().positive().optional(),
+    inputModalities: LlmModelInputModalitiesSchema.optional(),
   })
   .strict()
 
@@ -1522,6 +1527,10 @@ export const LlmProviderViewSchema = z
     api: NonEmptyStringSchema.optional(),
     credential: LlmProviderCredentialSchema.optional(),
     models: z.array(LlmProviderModelSchema),
+    /** The model list was edited on this host; built-in providers can restore their own catalog. */
+    modelsCustomized: z.boolean(),
+    /** The provider's adapter can list the models its endpoint offers. */
+    discoverable: z.boolean(),
   })
   .strict()
 
@@ -2424,6 +2433,15 @@ export const HostApiContracts = {
     invalidatesSnapshot: true,
     method: 'DELETE',
     path: '/api/llm/providers/:provider',
+    params: llmProviderParam,
+    request: z.object({ expectedRevision: z.number().int().nonnegative() }).strict(),
+    response: LlmProviderSettingsSchema,
+    error: HostApiErrorSchema,
+  }),
+  llmRestoreProviderModels: defineContract({
+    invalidatesSnapshot: true,
+    method: 'POST',
+    path: '/api/llm/providers/:provider/restore-models',
     params: llmProviderParam,
     request: z.object({ expectedRevision: z.number().int().nonnegative() }).strict(),
     response: LlmProviderSettingsSchema,
