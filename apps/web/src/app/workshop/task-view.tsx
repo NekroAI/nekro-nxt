@@ -22,6 +22,7 @@ import {
 } from '../../ui-kit/next/index.js'
 import { relativeTime } from '../channels/timeline-model.js'
 import { agentAccent, agentHue } from '../model/identity.js'
+import { useExtensionActivation } from '../../extension-ui/index.js'
 import { useProductApi } from '../model/store.js'
 import { SaveDialog } from './save-dialog.js'
 import {
@@ -65,6 +66,7 @@ const savedExtensionId = (detail: TaskDetail | undefined): string | undefined =>
 
 export function TaskView({ task }: { readonly task: AuthoringTask }) {
   const api = useProductApi()
+  const activation = useExtensionActivation()
   const navigate = useGo()
   const agent = useProductStore((state) => state.agents.find((item) => item.id === task.agentId))
   const channel = useProductStore((state) => state.channels.find((item) => item.id === task.channelId))
@@ -114,6 +116,7 @@ export function TaskView({ task }: { readonly task: AuthoringTask }) {
 
   return (
     <div className={styles.page} style={cssVars({ '--agent-accent': agent ? agentAccent(agent) : undefined })}>
+      {activation.dialog}
       <header className={styles.hero}>
         <div className={styles.heroInner}>
           <div className={styles.heroMeta}>
@@ -197,7 +200,7 @@ export function TaskView({ task }: { readonly task: AuthoringTask }) {
             saved &&
             void run(
               'enable',
-              () => api.getState().setExtensionActive(saved.id, task.agentId, true),
+              () => activation.setActive({ extensionId: saved.id, agentId: task.agentId, enabled: true }),
               `${agent?.name ?? '智能体'}已开始使用「${saved.name}」`,
             )
           }

@@ -31,6 +31,7 @@ import {
   cssVars,
 } from '../../ui-kit/next/index.js'
 import { agentAccent, agentHue, agentPhase, isAgentWorking, isTriggerPolicy, triggerLabel } from '../model/identity.js'
+import { useExtensionActivation } from '../../extension-ui/index.js'
 import { useProductApi } from '../model/store.js'
 import styles from './agents.module.css'
 
@@ -235,6 +236,7 @@ function SkillRow({
 
 function Skills({ agent }: { readonly agent: AgentSummary }) {
   const api = useProductApi()
+  const activation = useExtensionActivation()
   const availability = useProductStore((state) => state.capabilityAvailability)
   const extensions = useProductStore((state) => state.extensions)
   const [pendingLevel, setPendingLevel] = useState<AgentAccessLevel | null>(null)
@@ -252,8 +254,13 @@ function Skills({ agent }: { readonly agent: AgentSummary }) {
     set({ fileTools: level >= 1, developmentShell: level >= 2, unrestrictedFileAccess: level >= 3 })
   const toggleExtension = async (extensionId: string, enabled: boolean, revisionId: string | undefined) => {
     try {
-      await api.getState().setExtensionActive(extensionId, agent.id, enabled, revisionId)
-      toast(enabled ? '已启用' : '已停用')
+      const changed = await activation.setActive({
+        extensionId,
+        agentId: agent.id,
+        enabled,
+        ...(revisionId === undefined ? {} : { revisionId }),
+      })
+      if (changed) toast(enabled ? '已启用' : '已停用')
     } catch (error) {
       failure(error)
     }
@@ -262,6 +269,7 @@ function Skills({ agent }: { readonly agent: AgentSummary }) {
 
   return (
     <div className={styles.skills}>
+      {activation.dialog}
       <SkillRow
         icon={<FolderCog />}
         title="系统访问"

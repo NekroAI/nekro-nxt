@@ -477,7 +477,7 @@ export function createProductStore(
       })
       return { extensionId: result['extensionId'], revisionId: result['revisionId'] }
     },
-    setExtensionActive: async (id, agentId, enabled, selectedRevisionId) => {
+    setExtensionActive: async (id, agentId, enabled, selectedRevisionId, permissionDigest) => {
       const extensionId = requireValue(id, '缺少本地扩展标识，请刷新页面后重试。')
       const targetAgentId = requireValue(agentId, '缺少目标智能体，请刷新页面后重试。')
       const extension = useProductStore.getState().extensions.find((candidate) => candidate.id === extensionId)
@@ -491,7 +491,12 @@ export function createProductStore(
           '此本地扩展缺少可启用版本，请重新保存后重试。',
           'missing-prerequisite',
         )
-        await requireHost().actions['extensions.activate']({ extensionId, agentId: targetAgentId, revisionId })
+        await requireHost().actions['extensions.activate']({
+          extensionId,
+          agentId: targetAgentId,
+          revisionId,
+          ...(permissionDigest === undefined ? {} : { permissionApproval: { permissionDigest } }),
+        })
         return
       }
       await requireHost().actions['extensions.deactivate']({

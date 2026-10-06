@@ -11,7 +11,7 @@ import { PromptReferenceEditor } from '../components/prompt-reference-editor.js'
 import { EmptyState, InlineFeedback, PageHeader } from '../components/product-feedback.js'
 import { AddModelProviderForm } from '../llm-settings.js'
 import { WebSearchCredentialForm } from '../web-search-credential.js'
-import { PanelSlot } from '../extension-ui/index.js'
+import { PanelSlot, useExtensionActivation } from '../extension-ui/index.js'
 import {
   AGENT_ACCESS_LEVELS,
   agentAccessCapabilities,
@@ -679,6 +679,7 @@ const sameAgentProfile = (left: AgentProfileDraft, right: AgentProfileDraft): bo
 
 export function AgentManagePage() {
   const useProductRuntimeUi = useProductRuntime().uiStore
+  const activation = useExtensionActivation()
 
   const useProductStore = useProductRuntime().store
 
@@ -933,12 +934,13 @@ export function AgentManagePage() {
     if (extensionPendingId) return
     setExtensionPendingId(extension.id)
     try {
-      await useProductStore.getState().setExtensionActive(extension.id, agent.id, enabled)
-      notify(
-        `${enabled ? '已启用' : '已停用'}“${extension.name}”。`,
-        'success',
-        `agent-extension:${agent.id}:${extension.id}`,
-      )
+      const changed = await activation.setActive({ extensionId: extension.id, agentId: agent.id, enabled })
+      if (changed)
+        notify(
+          `${enabled ? '已启用' : '已停用'}“${extension.name}”。`,
+          'success',
+          `agent-extension:${agent.id}:${extension.id}`,
+        )
     } catch (error) {
       notify(
         error instanceof Error ? error.message : String(error),
@@ -983,6 +985,7 @@ export function AgentManagePage() {
 
   return (
     <StageCrossfade swapKey={agent.id}>
+      {activation.dialog}
       <div className={styles.workbenchPage} style={workbenchStyle}>
         <div className={styles.workbenchDoc}>
           {inspectorCollapsed ? (

@@ -568,7 +568,17 @@ export interface ProductState {
     readonly description: string
     readonly targetExtensionId?: string
   }): Promise<SavedDynamicExtension>
-  setExtensionActive(id: string, agentId: string, enabled: boolean, revisionId?: string): Promise<void>
+  /**
+   * Enables or disables an agent extension. `permissionDigest` is the user's approval of exactly the permissions
+   * that Revision declares; the Host refuses activation without it when approval is required.
+   */
+  setExtensionActive(
+    id: string,
+    agentId: string,
+    enabled: boolean,
+    revisionId?: string,
+    permissionDigest?: string,
+  ): Promise<void>
   setHostExtensionInstalled(id: string, revisionId: string | null, permissionDigest?: string): Promise<void>
   reportHostExtensionClientDiagnostic(input: {
     readonly extensionId: string

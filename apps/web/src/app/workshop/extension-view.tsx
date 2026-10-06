@@ -21,6 +21,7 @@ import {
 } from '../../ui-kit/next/index.js'
 import { relativeTime } from '../channels/timeline-model.js'
 import { agentHue } from '../model/identity.js'
+import { useExtensionActivation } from '../../extension-ui/index.js'
 import { useProductApi } from '../model/store.js'
 import { contributionParts, extensionUsage, scopeLabel } from './workshop-model.js'
 import styles from './workshop.module.css'
@@ -139,16 +140,21 @@ export function ExtensionView({ extension }: { readonly extension: LocalExtensio
 
 /** Agent-scoped extensions: one row per agent with its revision and an on/off switch. */
 function AgentUsage({ extension }: { readonly extension: LocalExtensionSummary }) {
-  const api = useProductApi()
   const agents = useProductStore((state) => state.agents)
   const [pending, setPending] = useState('')
+  const activation = useExtensionActivation()
   const usable = extension.revisions.filter((item) => item.format === undefined || item.format === 'current')
   const latestUsable = usable.at(-1)
 
   const change = async (agentId: string, enabled: boolean, revisionId?: string) => {
     setPending(agentId)
     try {
-      await api.getState().setExtensionActive(extension.id, agentId, enabled, revisionId)
+      await activation.setActive({
+        extensionId: extension.id,
+        agentId,
+        enabled,
+        ...(revisionId === undefined ? {} : { revisionId }),
+      })
     } catch (error) {
       failure(error)
     } finally {
@@ -158,6 +164,7 @@ function AgentUsage({ extension }: { readonly extension: LocalExtensionSummary }
 
   return (
     <Section title="使用">
+      {activation.dialog}
       {agents.length === 0 ? (
         <Panel className={styles.quiet}>还没有智能体。</Panel>
       ) : (

@@ -24,6 +24,8 @@ export { createClientContext, mountClient, type MountedClient } from './client.j
 export { createExtensionData } from './data.js'
 export { extensionUiKit, extensionReactFacade } from './ui-kit.js'
 export { HOST_ICONS } from './icons.js'
+export { useExtensionActivation } from './activation.js'
+export { PERMISSION_LABELS, permissionLines } from './permissions.js'
 export {
   HostUiPageCanvas as ExtensionPageCanvas,
   HostUiObjectPane as ExtensionPageNavigation,

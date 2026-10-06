@@ -35,7 +35,7 @@ import {
 } from '../ui-kit/index.js'
 import styles from './product-pages.module.css'
 import { DynamicClientSlots } from '../dynamic-client-coordinator.js'
-import { PanelSlot } from '../extension-ui/index.js'
+import { PanelSlot, useExtensionActivation } from '../extension-ui/index.js'
 import { authoringTaskPresentation } from '../authoring-task-status.js'
 
 const extensionLabel = (activeAgentCount: number): string =>
@@ -247,6 +247,7 @@ export const contractVersionLabel = (version: string): string =>
 
 export function ExtensionsPage() {
   const useProductStore = useProductRuntime().store
+  const activation = useExtensionActivation()
 
   const hostActions = useHostActions()
   const { extensionId = '' } = useParams()
@@ -281,12 +282,18 @@ export function ExtensionsPage() {
     if (pendingAgentId) return
     setPendingAgentId(agentId)
     try {
-      await useProductStore.getState().setExtensionActive(extension.id, agentId, enabled, revisionId)
-      notify(
-        `${enabled ? '已为' : '已停止让'}${agentName}${enabled ? '启用' : '使用'}“${extension.name}”。`,
-        'success',
-        `extension-activation:${extension.id}:${agentId}`,
-      )
+      const changed = await activation.setActive({
+        extensionId: extension.id,
+        agentId,
+        enabled,
+        ...(revisionId === undefined ? {} : { revisionId }),
+      })
+      if (changed)
+        notify(
+          `${enabled ? '已为' : '已停止让'}${agentName}${enabled ? '启用' : '使用'}“${extension.name}”。`,
+          'success',
+          `extension-activation:${extension.id}:${agentId}`,
+        )
     } catch (error) {
       notify(
         error instanceof Error ? error.message : String(error),
@@ -394,6 +401,7 @@ export function ExtensionsPage() {
 
   return (
     <div className={[styles.page, styles.desktopPage, styles.extensionsPage].join(' ')} data-product-page="extensions">
+      {activation.dialog}
       <PageHeader
         icon={Boxes}
         title={selected?.name ?? '扩展库'}
